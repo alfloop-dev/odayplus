@@ -16,9 +16,9 @@ from .contracts import (
 )
 
 MODEL_READY_SQL_PATH = Path(__file__).with_name("sql") / "model_ready_views.sql"
-MODEL_READY_CONTRACT_VERSION = "2026-07-24.1"
+MODEL_READY_CONTRACT_VERSION = "2026-07-26.1"
 
-PREREQUISITE_COLUMNS: Mapping[str, tuple[str, ...]] = {
+REQUIRED_PREREQUISITE_COLUMNS: Mapping[str, tuple[str, ...]] = {
     "core.transactions": (
         "transaction_id",
         "store_id",
@@ -42,6 +42,50 @@ PREREQUISITE_COLUMNS: Mapping[str, tuple[str, ...]] = {
         "status",
         "finished_at",
     ),
+}
+
+OPTIONAL_PREREQUISITE_COLUMNS: Mapping[str, tuple[str, ...]] = {
+    "external_data.real_estate_transactions": (
+        "transaction_id",
+        "source_id",
+        "authority_partition",
+        "source_record_id",
+        "source_variant_id",
+        "municipality",
+        "district",
+        "transaction_target",
+        "transaction_date",
+        "land_area_sqm",
+        "building_area_sqm",
+        "room_count",
+        "hall_count",
+        "bathroom_count",
+        "building_type",
+        "main_use",
+        "main_material",
+        "completion_date",
+        "completion_year",
+        "completion_month",
+        "parking_area_sqm",
+        "has_elevator",
+        "total_price_twd",
+        "last_seen_run_id",
+    ),
+    "external_data.real_estate_ingestion_runs": (
+        "run_id",
+        "source_id",
+        "dataset_id",
+        "license_id",
+        "schema_sha256",
+        "source_snapshot_id",
+        "fetched_at",
+        "status",
+    ),
+}
+
+PREREQUISITE_COLUMNS: Mapping[str, tuple[str, ...]] = {
+    **REQUIRED_PREREQUISITE_COLUMNS,
+    **OPTIONAL_PREREQUISITE_COLUMNS,
 }
 
 
@@ -71,10 +115,19 @@ class InstallationClient(Protocol):
 class ModelReadyViewPreflight:
     missing_relations: tuple[str, ...]
     missing_columns: Mapping[str, tuple[str, ...]]
+    optional_missing_relations: tuple[str, ...]
+    optional_missing_columns: Mapping[str, tuple[str, ...]]
 
     @property
     def ready(self) -> bool:
         return not self.missing_relations and not self.missing_columns
+
+    @property
+    def official_outcomes_ready(self) -> bool:
+        return (
+            not self.optional_missing_relations
+            and not self.optional_missing_columns
+        )
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -86,11 +139,26 @@ class ModelReadyViewPreflight:
                 relation: list(columns)
                 for relation, columns in sorted(self.missing_columns.items())
             },
+            "optional_missing_relations": list(self.optional_missing_relations),
+            "optional_missing_columns": {
+                relation: list(columns)
+                for relation, columns in sorted(
+                    self.optional_missing_columns.items()
+                )
+            },
             "forecast_source": "core.transactions",
             "optional_outcome_models": {
                 "avm": {
                     "trainable": False,
                     "reason": "MATURE_REALIZED_TRANSACTION_OUTCOME_RELATION_MISSING",
+                },
+                "listing_property_avm": {
+                    "trainable": self.official_outcomes_ready,
+                    "reason": (
+                        None
+                        if self.official_outcomes_ready
+                        else "OFFICIAL_REAL_ESTATE_OUTCOME_RELATION_MISSING"
+                    ),
                 },
                 "sitescore": {
                     "trainable": False,
@@ -102,7 +170,7 @@ class ModelReadyViewPreflight:
                 },
                 "avm-liquidity": {
                     "trainable": False,
-                    "reason": "MATURE_LIQUIDITY_EVENT_RELATION_MISSING",
+                    "reason": "OFFICIAL_SALE_OUTCOME_HAS_NO_MARKETING_INTERVAL",
                 },
             },
         }
@@ -119,9 +187,26 @@ class ModelReadyViewInstaller:
         self.sql_path = sql_path
 
     def preflight(self) -> ModelReadyViewPreflight:
+        required_missing_relations, required_missing_columns = (
+            self._inspect_prerequisites(REQUIRED_PREREQUISITE_COLUMNS)
+        )
+        optional_missing_relations, optional_missing_columns = (
+            self._inspect_prerequisites(OPTIONAL_PREREQUISITE_COLUMNS)
+        )
+        return ModelReadyViewPreflight(
+            missing_relations=required_missing_relations,
+            missing_columns=required_missing_columns,
+            optional_missing_relations=optional_missing_relations,
+            optional_missing_columns=optional_missing_columns,
+        )
+
+    def _inspect_prerequisites(
+        self,
+        requirements: Mapping[str, tuple[str, ...]],
+    ) -> tuple[tuple[str, ...], Mapping[str, tuple[str, ...]]]:
         missing_relations: list[str] = []
         missing_columns: dict[str, tuple[str, ...]] = {}
-        for relation, required_columns in PREREQUISITE_COLUMNS.items():
+        for relation, required_columns in requirements.items():
             row = self.client.query_one(
                 "SELECT to_regclass(?) AS relation",
                 (relation,),
@@ -142,10 +227,7 @@ class ModelReadyViewInstaller:
             )
             if missing:
                 missing_columns[relation] = missing
-        return ModelReadyViewPreflight(
-            missing_relations=tuple(missing_relations),
-            missing_columns=missing_columns,
-        )
+        return tuple(missing_relations), missing_columns
 
     def install(self) -> dict[str, Any]:
         preflight = self.preflight()
@@ -161,7 +243,7 @@ class ModelReadyViewInstaller:
         with self.client.transaction():
             self.client.execute(
                 "SELECT pg_advisory_xact_lock(hashtext("
-                "'oday-plus:model-ready-views:2026-07-24.1'))"
+                "'oday-plus:model-ready-views:2026-07-26.1'))"
             )
             self.client.execute("SET LOCAL lock_timeout = '10s'")
             self.client.execute("SET LOCAL statement_timeout = '5min'")
@@ -183,6 +265,31 @@ class ModelReadyViewInstaller:
             "SELECT to_regclass(?) AS relation",
             ("model_ready.forecast_training_view",),
         )
+        dealroom_avm = self.client.query_one(
+            "SELECT relation_name, view_name, view_version, contract_state, "
+            "training_enabled, blocked_reason, installer_sha256 "
+            "FROM model_ready.view_contracts "
+            "WHERE relation_name = ?",
+            ("model_ready.valuation_view",),
+        )
+        listing_property_avm = self.client.query_one(
+            "SELECT relation_name, view_name, view_version, contract_state, "
+            "training_enabled, blocked_reason, installer_sha256 "
+            "FROM model_ready.view_contracts "
+            "WHERE relation_name = ?",
+            ("model_ready.listing_property_valuation_view",),
+        )
+        listing_property_relation = self.client.query_one(
+            "SELECT to_regclass(?) AS relation",
+            ("model_ready.listing_property_valuation_view",),
+        )
+        liquidity = self.client.query_one(
+            "SELECT relation_name, view_name, view_version, contract_state, "
+            "training_enabled, blocked_reason, installer_sha256 "
+            "FROM model_ready.view_contracts "
+            "WHERE relation_name = ?",
+            ("model_ready.avm_liquidity_training_view",),
+        )
         if (
             not forecast
             or forecast.get("view_version") != "forecast-training-view-v2"
@@ -195,12 +302,74 @@ class ModelReadyViewInstaller:
             raise ModelReadyViewInstallError(
                 "installed forecast view did not satisfy the registered contract"
             )
+        if (
+            not dealroom_avm
+            or dealroom_avm.get("view_version") != "valuation-view-v1"
+            or dealroom_avm.get("contract_state") != "BLOCKED"
+            or dealroom_avm.get("training_enabled") is not False
+            or dealroom_avm.get("blocked_reason")
+            != "MATURE_REALIZED_TRANSACTION_OUTCOME_RELATION_MISSING"
+            or dealroom_avm.get("installer_sha256") != digest
+        ):
+            raise ModelReadyViewInstallError(
+                "DealRoom AVM contract did not remain fail-closed"
+            )
+        if preflight.official_outcomes_ready:
+            if (
+                not listing_property_avm
+                or listing_property_avm.get("view_version")
+                != "listing-property-valuation-view-v1"
+                or listing_property_avm.get("contract_state") != "ACTIVE"
+                or listing_property_avm.get("training_enabled") is not True
+                or listing_property_avm.get("installer_sha256") != digest
+                or not listing_property_relation
+                or listing_property_relation.get("relation") is None
+            ):
+                raise ModelReadyViewInstallError(
+                    "listing-property valuation view did not satisfy the "
+                    "registered contract"
+                )
+        elif (
+            not listing_property_avm
+            or listing_property_avm.get("contract_state") != "BLOCKED"
+            or listing_property_avm.get("training_enabled") is not False
+            or listing_property_avm.get("blocked_reason")
+            != "OFFICIAL_REAL_ESTATE_OUTCOME_RELATION_MISSING"
+            or listing_property_avm.get("installer_sha256") != digest
+            or (
+                listing_property_relation
+                and listing_property_relation.get("relation") is not None
+            )
+        ):
+            raise ModelReadyViewInstallError(
+                "missing optional official outcomes did not remain fail-closed"
+            )
+        if (
+            not liquidity
+            or liquidity.get("contract_state") != "BLOCKED"
+            or liquidity.get("training_enabled") is not False
+            or liquidity.get("blocked_reason")
+            != "OFFICIAL_SALE_OUTCOME_HAS_NO_MARKETING_INTERVAL"
+            or liquidity.get("installer_sha256") != digest
+        ):
+            raise ModelReadyViewInstallError(
+                "AVM liquidity contract did not remain fail-closed"
+            )
         return {
             "status": "installed",
             "contract_version": MODEL_READY_CONTRACT_VERSION,
             "sql_sha256": digest,
             "forecast": dict(forecast),
-            "optional_outcome_models_trainable": False,
+            "dealroom_avm": dict(dealroom_avm),
+            "listing_property_avm": dict(listing_property_avm),
+            "avm_liquidity": dict(liquidity),
+            "optional_outcome_models_trainable": {
+                "avm": False,
+                "listing_property_avm": preflight.official_outcomes_ready,
+                "sitescore": False,
+                "heatzone": False,
+                "avm-liquidity": False,
+            },
         }
 
 
@@ -214,6 +383,13 @@ def _validate_sql_contract(sql: str) -> None:
         "AS prediction_origin_time",
         "AS label_maturity_time",
         "AS is_training_eligible",
+        "CREATE OR REPLACE VIEW model_ready.listing_property_valuation_view",
+        "FROM external_data.real_estate_transactions AS outcome",
+        "external_data.real_estate_ingestion_runs AS ingestion",
+        "'listing-property-valuation-view-v1'::text AS view_version",
+        "total_price_twd::double precision AS realized_transaction_price",
+        "'MATURE_REALIZED_TRANSACTION_OUTCOME_RELATION_MISSING'",
+        "'OFFICIAL_SALE_OUTCOME_HAS_NO_MARKETING_INTERVAL'",
     )
     missing = tuple(fragment for fragment in required_fragments if fragment not in sql)
     if missing:
@@ -227,6 +403,10 @@ def _validate_sql_contract(sql: str) -> None:
         raise ModelReadyViewInstallError(
             "model-ready SQL contains prohibited row-generation constructs: "
             + ", ".join(found)
+        )
+    if "create or replace view model_ready.valuation_view" in lowered:
+        raise ModelReadyViewInstallError(
+            "official sale outcomes must not replace the DealRoom AVM relation"
         )
 
 

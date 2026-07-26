@@ -28,9 +28,13 @@ from scripts.models.install_views import (
     main as install_views_main,
 )
 from scripts.models.release import (
+    BoundedModelTrainingRelease,
     _temporal_split,
     _validate_regression_temporally,
     prepare_model_rows,
+)
+from scripts.models.release import (
+    main as release_main,
 )
 from scripts.models.storage import (
     GcsArtifactStore,
@@ -156,7 +160,7 @@ class FakeInstallationClient:
         self.relations = set(self.columns) - set(missing_relations)
         self.executions: list[tuple[str, tuple[Any, ...]]] = []
         self.transactions = 0
-        self.contract: dict[str, Any] | None = None
+        self.contracts: dict[str, dict[str, Any]] = {}
 
     @contextmanager
     def transaction(self) -> Any:
@@ -167,7 +171,19 @@ class FakeInstallationClient:
         self.executions.append((sql, params))
         if "CREATE OR REPLACE VIEW model_ready.forecast_training_view" in sql:
             self.relations.add("model_ready.forecast_training_view")
-            self.contract = {
+            official_ready = {
+                "external_data.real_estate_transactions",
+                "external_data.real_estate_ingestion_runs",
+            } <= self.relations
+            if official_ready:
+                self.relations.add(
+                    "model_ready.listing_property_valuation_view"
+                )
+            else:
+                self.relations.discard(
+                    "model_ready.listing_property_valuation_view"
+                )
+            self.contracts["model_ready.forecast_training_view"] = {
                 "relation_name": "model_ready.forecast_training_view",
                 "view_name": "forecast_training_view",
                 "view_version": "forecast-training-view-v2",
@@ -176,8 +192,40 @@ class FakeInstallationClient:
                 "blocked_reason": None,
                 "installer_sha256": None,
             }
-        if sql.startswith("UPDATE model_ready.view_contracts") and self.contract:
-            self.contract["installer_sha256"] = params[0]
+            self.contracts["model_ready.valuation_view"] = {
+                "relation_name": "model_ready.valuation_view",
+                "view_name": "valuation_view",
+                "view_version": "valuation-view-v1",
+                "contract_state": "BLOCKED",
+                "training_enabled": False,
+                "blocked_reason": "MATURE_REALIZED_TRANSACTION_OUTCOME_RELATION_MISSING",
+                "installer_sha256": None,
+            }
+            self.contracts["model_ready.listing_property_valuation_view"] = {
+                "relation_name": "model_ready.listing_property_valuation_view",
+                "view_name": "listing_property_valuation_view",
+                "view_version": "listing-property-valuation-view-v1",
+                "contract_state": "ACTIVE" if official_ready else "BLOCKED",
+                "training_enabled": official_ready,
+                "blocked_reason": (
+                    None
+                    if official_ready
+                    else "OFFICIAL_REAL_ESTATE_OUTCOME_RELATION_MISSING"
+                ),
+                "installer_sha256": None,
+            }
+            self.contracts["model_ready.avm_liquidity_training_view"] = {
+                "relation_name": "model_ready.avm_liquidity_training_view",
+                "view_name": "avm_liquidity_training_view",
+                "view_version": "avm-liquidity-training-view-v1",
+                "contract_state": "BLOCKED",
+                "training_enabled": False,
+                "blocked_reason": "OFFICIAL_SALE_OUTCOME_HAS_NO_MARKETING_INTERVAL",
+                "installer_sha256": None,
+            }
+        if sql.startswith("UPDATE model_ready.view_contracts"):
+            for contract in self.contracts.values():
+                contract["installer_sha256"] = params[0]
 
     def query_one(
         self,
@@ -187,7 +235,8 @@ class FakeInstallationClient:
         if "to_regclass" in sql:
             return {"relation": params[0] if params[0] in self.relations else None}
         if "FROM model_ready.view_contracts" in sql:
-            return dict(self.contract) if self.contract else None
+            contract = self.contracts.get(str(params[0]))
+            return dict(contract) if contract else None
         return None
 
     def query(
@@ -401,7 +450,7 @@ def test_production_training_settings_fail_closed_on_local_or_placeholder(
         ProductionTrainingSettings.from_environment()
 
 
-def test_model_ready_sql_is_real_causal_and_blocks_missing_outcomes() -> None:
+def test_model_ready_sql_uses_real_forecast_and_official_avm_outcomes() -> None:
     sql = MODEL_READY_SQL_PATH.read_text(encoding="utf-8")
     lowered = sql.lower()
     assert "from core.transactions as txn" in lowered
@@ -420,11 +469,20 @@ def test_model_ready_sql_is_real_causal_and_blocks_missing_outcomes() -> None:
     assert "tenant_id" in lowered
     assert "store_id" in lowered
     assert "forecast-training-view-v2" in lowered
+    assert "from external_data.real_estate_transactions as outcome" in lowered
+    assert "external_data.real_estate_ingestion_runs as ingestion" in lowered
+    assert "government-open-data-license-v1" in lowered
+    assert "total_price_twd::double precision as realized_transaction_price" in lowered
+    assert "listing-property-valuation-view-v1" in lowered
+    assert "official_sale_outcome_has_no_marketing_interval" in lowered
     assert "mature_realized_transaction_outcome_relation_missing" in lowered
     assert "mature_candidate_site_outcome_relation_missing" in lowered
     assert "point_in_time_geo_outcome_relation_missing" in lowered
-    assert "mature_liquidity_event_relation_missing" in lowered
     assert "create or replace view model_ready.valuation_view" not in lowered
+    assert (
+        "create or replace view model_ready.listing_property_valuation_view"
+        in lowered
+    )
     assert "create or replace view model_ready.candidate_site_view" not in lowered
     assert "create or replace view model_ready.heatzone_training_view" not in lowered
     assert "create or replace view model_ready.avm_liquidity_training_view" not in lowered
@@ -442,7 +500,21 @@ def test_model_ready_view_installer_preflights_and_applies_one_sql_transaction()
     assert result["status"] == "installed"
     assert len(result["sql_sha256"]) == 64
     assert result["forecast"]["installer_sha256"] == result["sql_sha256"]
-    assert result["optional_outcome_models_trainable"] is False
+    assert result["dealroom_avm"]["contract_state"] == "BLOCKED"
+    assert result["dealroom_avm"]["installer_sha256"] == result["sql_sha256"]
+    assert result["listing_property_avm"]["contract_state"] == "ACTIVE"
+    assert (
+        result["listing_property_avm"]["installer_sha256"]
+        == result["sql_sha256"]
+    )
+    assert result["avm_liquidity"]["contract_state"] == "BLOCKED"
+    assert result["optional_outcome_models_trainable"] == {
+        "avm": False,
+        "listing_property_avm": True,
+        "sitescore": False,
+        "heatzone": False,
+        "avm-liquidity": False,
+    }
     assert client.transactions == 1
     assert any(
         "pg_advisory_xact_lock" in statement
@@ -479,6 +551,36 @@ def test_model_ready_view_install_and_inventory_fail_closed(
     assert not inventory.ready
     assert inventory.blocked_reason == "MODEL_READY_CONTRACT_REGISTRY_MISSING"
     assert inventory.to_dict()["ready"] is False
+
+
+def test_model_ready_view_install_keeps_forecast_independent_of_official_data() -> None:
+    client = FakeInstallationClient(
+        missing_relations=(
+            "external_data.real_estate_transactions",
+            "external_data.real_estate_ingestion_runs",
+        ),
+    )
+    installer = ModelReadyViewInstaller(client)
+
+    preflight = installer.preflight()
+    assert preflight.ready
+    assert not preflight.official_outcomes_ready
+    assert set(preflight.optional_missing_relations) == {
+        "external_data.real_estate_transactions",
+        "external_data.real_estate_ingestion_runs",
+    }
+
+    result = installer.install()
+
+    assert result["forecast"]["contract_state"] == "ACTIVE"
+    assert result["listing_property_avm"]["contract_state"] == "BLOCKED"
+    assert (
+        result["listing_property_avm"]["blocked_reason"]
+        == "OFFICIAL_REAL_ESTATE_OUTCOME_RELATION_MISSING"
+    )
+    assert not result["optional_outcome_models_trainable"][
+        "listing_property_avm"
+    ]
 
 
 def test_gcs_artifact_store_is_content_addressed_and_verifies_bytes() -> None:
@@ -740,6 +842,85 @@ def test_promotion_approval_is_version_bound_and_prohibits_self_review() -> None
             version="2026.07.24.1",
             requested_by="ml-training-operator",
         )
+
+
+def test_listing_property_avm_production_promotion_is_explicitly_blocked() -> None:
+    application = BoundedModelTrainingRelease.__new__(
+        BoundedModelTrainingRelease
+    )
+    spec = MODEL_SPECS["listing_property_avm"]
+
+    assert not spec.production_release_enabled
+    assert (
+        spec.production_block_reason
+        == "NO_PRODUCTION_RUNTIME_CONSUMER_OR_LIVE_INFERENCE_SMOKE"
+    )
+    with pytest.raises(
+        ModelTrainingConfigurationError,
+        match="NO_PRODUCTION_RUNTIME_CONSUMER_OR_LIVE_INFERENCE_SMOKE",
+    ):
+        application.promote(
+            spec=spec,
+            version="2026.07.26.1",
+            approval_payload=_approval(
+                model_name="listing_property_avm",
+                model_version="2026.07.26.1",
+                release_type="full",
+            ),
+            rollback_target="2026.07.25.1",
+        )
+
+
+@pytest.mark.parametrize("release_type", ("full", "canary"))
+def test_listing_property_avm_production_cli_fails_closed(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+    release_type: str,
+) -> None:
+    _production_env(monkeypatch)
+    approval_path = tmp_path / f"{release_type}-approval.json"
+    approval_path.write_text(
+        json.dumps(
+            _approval(
+                model_name="listing_property_avm",
+                model_version="2026.07.26.1",
+                release_type=release_type,
+            )
+        ),
+        encoding="utf-8",
+    )
+    application = BoundedModelTrainingRelease.__new__(
+        BoundedModelTrainingRelease
+    )
+    resources = SimpleNamespace(
+        application=application,
+        close=lambda: None,
+    )
+
+    exit_code = release_main(
+        [
+            "promote",
+            "--model",
+            "listing_property_avm",
+            "--version",
+            "2026.07.26.1",
+            "--approval-file",
+            str(approval_path),
+            "--rollback-target",
+            "2026.07.25.1",
+        ],
+        resource_builder=lambda _settings: resources,
+    )
+
+    assert exit_code == 2
+    failure = json.loads(capsys.readouterr().err)
+    assert failure["status"] == "failed-closed"
+    assert "production release is BLOCKED" in failure["message"]
+    assert (
+        "NO_PRODUCTION_RUNTIME_CONSUMER_OR_LIVE_INFERENCE_SMOKE"
+        in failure["message"]
+    )
 
 
 def test_documented_package_contains_no_embedded_credentials() -> None:

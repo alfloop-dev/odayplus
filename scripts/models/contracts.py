@@ -94,6 +94,8 @@ class ModelSpec:
     event_column: str | None = None
     label_maturity_column: str | None = None
     scope_columns: tuple[str, ...] = ()
+    production_release_enabled: bool = True
+    production_block_reason: str | None = None
 
     @property
     def required_columns(self) -> tuple[str, ...]:
@@ -200,6 +202,66 @@ MODEL_SPECS: dict[str, ModelSpec] = {
         intended_use="Human-reviewed asset valuation range support",
         not_intended_use="Automatic acquisition, disposal, or binding fair-value approval",
         risk_level="R4",
+    ),
+    "listing_property_avm": ModelSpec(
+        key="listing_property_avm",
+        model_name="listing_property_avm",
+        relation="model_ready.listing_property_valuation_view",
+        expected_view_version="listing-property-valuation-view-v1",
+        kind=ModelKind.REGRESSION,
+        algorithm="lightgbm_quantile",
+        label_name="realized_transaction_price",
+        label_column="realized_transaction_price",
+        label_version="listing-property-realized-transaction-price-v1",
+        feature_schema_version="listing-property-valuation-view-v1",
+        feature_set_id="fs_listing_property_official_sale_v1",
+        label_set_id="ls_listing_property_official_sale_v1",
+        temporal_column="realized_transaction_at",
+        label_maturity_column="label_maturity_time",
+        segment_column="market_segment",
+        feature_columns=(
+            "municipality",
+            "district",
+            "transaction_target",
+            "land_area_sqm",
+            "building_area_sqm",
+            "room_count",
+            "hall_count",
+            "bathroom_count",
+            "building_type",
+            "main_use",
+            "main_material",
+            "building_age_years",
+            "completion_year_known",
+            "parking_area_sqm",
+            "has_elevator",
+            "elevator_known",
+        ),
+        scope_columns=(
+            "source_id",
+            "authority_partition",
+            "source_variant_id",
+            "municipality",
+            "district",
+        ),
+        minimum_rows=120,
+        holdout_fraction=0.20,
+        minimum_segment_rows=5,
+        max_normalized_mae=0.30,
+        min_p80_coverage=0.70,
+        intended_use=(
+            "Human-reviewed Taiwan listing-property valuation research from "
+            "official realized sale outcomes"
+        ),
+        not_intended_use=(
+            "DealRoom AVM runtime scoring, automatic acquisition or disposal, "
+            "binding fair-value approval, or time-on-market inference"
+        ),
+        risk_level="R4",
+        production_release_enabled=False,
+        production_block_reason=(
+            "NO_PRODUCTION_RUNTIME_CONSUMER_OR_LIVE_INFERENCE_SMOKE"
+        ),
     ),
     "sitescore": ModelSpec(
         key="sitescore",
