@@ -1,0 +1,144 @@
+{
+  "schema": "oday-plus.package10-wave-ack.v1",
+  "task_id": "ODP-P10-CAN-001-R3C",
+  "title": "Package 10 Governance delayed-envelope crash remediation",
+  "status": "implementation_complete_pending_independent_review",
+  "program_status": "awaiting_antigravity4_independent_review",
+  "owner": "Claude2",
+  "reviewer": "Antigravity4",
+  "coordinator": "Codex",
+  "prepared_at": "2026-07-26T19:45:00Z",
+  "worktree": "/tmp/pantheon-worker-worktrees/oday-plus-package10-supervisor-20260726/oday-plus-package10-supervisor-20260726/odp-p10-can-001-r3c",
+  "branch": "task/ODP-P10-CAN-001-R3C",
+  "pickup_head": "05dac94fafb1387c93d738adb94d1e0d148b44db",
+  "changes_committed": true,
+  "commits": {
+    "rejected_checkpoints": [
+      {
+        "sha": "a937ad206d3071d519ed2d1debd052a19d2b7373",
+        "subject": "ODP-P10-CAN-001-R3C: anchor governance envelope boundary",
+        "rejection_reason": "The normalizers repaired foreign rows instead of rejecting them: module defaulted to \"Govern\", requestor to \"未提供申請人\", submittedAt to \"未提供送出時間\", status to \"pending\", priority to \"medium\". A Today decision card could therefore render as a governance approval with invented fields."
+      },
+      {
+        "sha": "56895a35f488449ed8fc2540678db750daf1da5b",
+        "subject": "ODP-P10-CAN-001-R3C: anchor Govern navigation-path regression coverage",
+        "rejection_reason": "Its regression coverage asserted the fabricating behaviour above (a dropped shell card was expected to keep rendering its title), so it pinned the rejected contract."
+      }
+    ],
+    "correction_commit": {
+      "sha": "c743d34afa767b6dd41909833e83a3ae414b9e61",
+      "subject": "ODP-P10-CAN-001-R3C: anchor governance row admission correction",
+      "history_rewrite": false,
+      "note": "New forward commit on the same task branch; the rejected checkpoints are preserved as history."
+    },
+    "ack_commit": {
+      "sha": null,
+      "subject": "ODP-P10-CAN-001-R3C: record governance envelope remediation ACK",
+      "note": "A commit cannot contain its own hash; the exact SHA is captured in the ai-status delivery metadata and in the task PR."
+    }
+  },
+  "root_cause": {
+    "reported_error": "TypeError: Cannot read properties of undefined (reading 'toLowerCase') at moduleClass() — apps/web/features/operator/GovernanceWorkspace.tsx",
+    "mechanism": "normalizeShellEnvelope sets envelope.approvals = the Today decision cards ({id,title,meta,status,cta,tone,target}). OperatorConsole passed that array into GovernanceWorkspace, so the module/status badge helpers ran .toLowerCase() on fields the cards never carry. A navigation that happened before the bootstrap envelope resolved looked healthy; the crash only appeared once the delayed envelope landed on the Govern route."
+  },
+  "remediation": {
+    "principle": "Admission, not repair. A record is admitted only if it carries the fields that identify it as governance data; every other field is carried through only when present and textual, and an absent field stays absent and is rendered as an explicit unavailable marker.",
+    "changes": [
+      {
+        "path": "apps/web/features/operator/governance/governanceEnvelope.ts",
+        "summary": "Admission gate for external governance rows. Required: approval id/module/title/status, decision id/module/item, audit id/action, status-board rows fully reported (named subject + status + boolean health + note), evidence packages fully reported. No default is ever substituted; non-textual values (for example the canonical AVM structured systemRecommendation) are treated as absent instead of reaching the render path."
+      },
+      {
+        "path": "apps/web/features/operator/governanceTypes.ts",
+        "summary": "Contract made honest: requestor/submittedAt, decision content and audit category/timestamp are optional because the canonical Governance modules (SiteScore / AVM / NetPlan / PriceOps) legitimately omit them, and GovernanceApprovalStatus stays open so a raw API status is reported as-is instead of coerced to \"pending\"."
+      },
+      {
+        "path": "apps/web/features/operator/GovernanceWorkspace.tsx",
+        "summary": "Badge helpers stay total; absent fields render the explicit 未提供 marker instead of 中 / 系統 / a stand-in name; audit rows without a category no longer add a nameless filter chip; rows supplied by a caller that stops supplying a governance feed are cleared rather than left stale."
+      },
+      {
+        "path": "apps/web/features/operator/OperatorConsole.tsx",
+        "summary": "envelope.approvals is no longer forwarded to Govern. Only explicitly governance-shaped bootstrap side channels (governanceApprovals / governanceDecisions / governanceAuditRows) are forwarded, through the admission gate, and a side channel the new envelope does not carry is cleared so rows from a superseded envelope cannot survive."
+      },
+      {
+        "path": "apps/web/features/operator/__tests__/GovernanceDelayedEnvelope.test.tsx",
+        "summary": "Regression coverage: drop-not-repair for foreign and malformed rows, explicit unavailable markers for incomplete governance rows, side-channel withdrawal at both the workspace and the console, API-as-source-of-truth over shell rows, production fail-closed, and the three navigation paths plus direct route and reload under a delayed envelope (19 tests)."
+      }
+    ],
+    "not_changed": [
+      "tests/e2e/** (owned by ODP-P10-CAN-003-R3A)",
+      "apps/api/** and the Governance snapshot API contract",
+      "Package 10 canonical visual layer"
+    ]
+  },
+  "verification": {
+    "ports": {
+      "web": 3201,
+      "api": 8199,
+      "note": "ODP-P10-CAN-003-R3A owns 3100/8099; those servers were never reused. ODP_PLAYWRIGHT_REUSE_EXISTING=0 and ODP_API_BASE_URL=http://127.0.0.1:8199 were used, and no command exit status was masked (set -o pipefail, real exit codes reported below)."
+    },
+    "commands": [
+      {
+        "command": "npm run test --workspace=@oday-plus/web",
+        "result": "pass",
+        "detail": "33 test files / 252 tests passed, including the 19 ODP-P10-CAN-001-R3C regression tests. One earlier run of the same suite additionally reported a vitest teardown EnvironmentTeardownError (\"Closing rpc while onUserConsoleLog was pending\") from StoreOpsPackage10Parity.test.tsx with all 252 tests still passing; the re-run was clean, so that error is a flaky worker teardown race and not a test failure."
+      },
+      { "command": "npm run typecheck --workspace=@oday-plus/web", "result": "pass" },
+      { "command": "npm run typecheck", "result": "pass" },
+      { "command": "npm run build", "result": "pass" },
+      {
+        "command": "OPSBOARD_PORT=3201 ODP_API_PORT=8199 ODP_API_BASE_URL=http://127.0.0.1:8199 ODP_PLAYWRIGHT_REUSE_EXISTING=0 npx playwright test tests/e2e/operator-governance.spec.ts --project=chromium --workers=1",
+        "result": "fail",
+        "detail": "1 passed, 3 failed (exit 1). The failures are pre-existing spec/product misalignment owned by ODP-P10-CAN-003-R3A and are not caused by this task; see governance_e2e_failures below."
+      },
+      {
+        "command": "node /tmp/govern-probe-3201.mjs (standalone runtime probe, outside tests/e2e, against web 3201 / api 8199)",
+        "result": "pass",
+        "detail": "All five acceptance paths clean with the shell envelope allowed to land first: workspace nav 治理稽核, Today→門市營運→治理稽核, 待核准 approval chip, direct /operator?ws=govern, and reload. Each rendered data-screen-label=\"Govern 治理稽核\" with zero route-error nodes and zero console/page errors."
+      },
+      {
+        "command": "node /tmp/govern-rows-probe.mjs (standalone runtime probe)",
+        "result": "pass",
+        "detail": "Live Governance API snapshot (source=api: 4 approvals, 3 decisions, 6 audit rows, 2 evidence packages, 6 status groups) renders in full through the admission gate: 4 queue rows (\"4 待處理 · 4 全部\"), 3 decision cards, 6 audit rows, and zero 未提供 markers. No real governance row is dropped by the stricter gate."
+      }
+    ],
+    "governance_e2e_failures": {
+      "owner": "ODP-P10-CAN-003-R3A",
+      "claim": "pre-existing, not introduced by ODP-P10-CAN-001-R3C",
+      "evidence": "At the pickup head 05dac94 the canonical Govern workspace already contained zero <table> elements and zero English decision buttons (git show 05dac94:apps/web/features/operator/GovernanceWorkspace.tsx | grep -cE '<table|>Reject<' -> 0; the decision actions are 核准 / 退回修改 / 駁回). This task's diff neither removes a table nor renames a button.",
+      "failing_tests": [
+        {
+          "test": "Govern approval return is blocked without a sufficient reason",
+          "cause": "The spec waits for getByRole('button', { name: 'Reject', exact: true }); the canonical UI renders 駁回. The preceding step — clicking the API-sourced approval \"Approve SiteScore override\" — succeeds, which also shows the admission gate keeps the API rows."
+        },
+        {
+          "test": "Govern surfaces Store/Growth decisions and a pending Network approval",
+          "cause": "The spec asserts on page.locator('table'); the canonical Decision Log renders article cards."
+        },
+        {
+          "test": "Evidence Package export produces a record and an audit event",
+          "cause": "The spec asserts on page.locator('table'); the canonical Audit Trail renders article rows."
+        }
+      ],
+      "conflict_gate": "Fixing these requires editing tests/e2e/operator-governance.spec.ts, which is one of the 16 specs owned by ODP-P10-CAN-003-R3A. Per the pickup conflict gate this is an immediate NO-GO for this task; it is reported instead of edited."
+    }
+  },
+  "acceptance": [
+    { "item": "delayed shell envelope navigation has no route-error", "state": "met", "evidence": "runtime probe on web 3201 / api 8199: five paths, zero route-error nodes, zero page errors; plus 19 unit regression tests" },
+    { "item": "three navigation paths plus direct route and reload pass", "state": "met", "evidence": "runtime probe paths 1-3 plus direct route and reload; mirrored by the console tests in GovernanceDelayedEnvelope.test.tsx" },
+    { "item": "Governance API remains source of truth", "state": "met", "evidence": "snapshot rows still override external props; runtime probe renders all 4/3/6/2 API rows unchanged" },
+    { "item": "no production fixture fallback", "state": "met", "evidence": "production fail-closed test still asserts the unavailable gate; fixtures remain gated behind operatorFixturesAllowed()" },
+    { "item": "malformed external fields do not crash", "state": "met", "evidence": "malformed-row tests plus total badge helpers and explicit 未提供 markers" },
+    { "item": "regression unit coverage", "state": "met", "evidence": "apps/web/features/operator/__tests__/GovernanceDelayedEnvelope.test.tsx (19 tests)" },
+    { "item": "web unit typecheck build and governance Playwright pass", "state": "partial", "evidence": "web unit, web typecheck, root typecheck and build pass; the governance Playwright spec has 3 failures owned by ODP-P10-CAN-003-R3A (see governance_e2e_failures)" },
+    { "item": "no R3A E2E files changed", "state": "met", "evidence": "the task diff touches only apps/web/features/operator/** and this ACK" },
+    { "item": "Antigravity independent review", "state": "pending", "evidence": "Antigravity priority dispatch run antigravity-20260726T190405Z-94136315 ended on an account-level Individual quota limit; review is not fabricated and the task stays in review" }
+  ],
+  "conflicts": [
+    {
+      "task_id": "ODP-P10-CAN-003-R3A",
+      "rule": "R3A owns the 16 canonical E2E specs and ports 3100/8099; R3C owns the product fix and verified only on 3201/8199",
+      "observed": "No writable-path overlap. The three governance Playwright failures are in R3A's specs and are reported, not edited."
+    }
+  ]
+}
