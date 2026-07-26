@@ -245,6 +245,9 @@ function Meta({ label, value }: { label: string; value: string }) {
   return <div><div className={styles.metaCaption}>{label}</div><div className={styles.metaValue}>{value || "UNAVAILABLE"}</div></div>;
 }
 
+/** Same withheld-value marker the evidence panel renders for masked cells. */
+const MASKED_MARKER = "•••• [MASKED]";
+
 /**
  * Preserved input is built from the durable API-backed intake record, not from
  * parsed output alone. Retrieval can fail before parsing ever starts, so a
@@ -265,7 +268,14 @@ export function buildPreservedInput(record: AssistedIntake): Record<string, unkn
     preserved[key] = value;
   };
 
-  put("originalUrl", record.originalUrl);
+  // A below-CONFIDENTIAL clearance gets `originalUrl: null` plus the masking
+  // flag from the API. Report it as withheld rather than silently absent.
+  const masking = record as AssistedIntake & { originalUrl_masked?: boolean };
+  if (masking.originalUrl_masked === true) {
+    preserved.originalUrl = MASKED_MARKER;
+  } else {
+    put("originalUrl", record.originalUrl);
+  }
   put("canonicalUrl", record.canonicalUrl);
   put("heatZoneId", record.heatZoneId);
   put("sourceId", record.sourceId);
@@ -274,7 +284,7 @@ export function buildPreservedInput(record: AssistedIntake): Record<string, unkn
   for (const field of Object.values(record.parsedFields ?? {})) {
     if (!field?.key) continue;
     if (field.masked === true) {
-      preserved[field.key] = "•••• [MASKED]";
+      preserved[field.key] = MASKED_MARKER;
       continue;
     }
     put(field.key, field.correctedValue ?? field.normalizedValue ?? field.sourceValue);

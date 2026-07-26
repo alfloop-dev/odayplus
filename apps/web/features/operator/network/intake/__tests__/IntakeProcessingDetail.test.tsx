@@ -253,6 +253,13 @@ describe("IntakeProcessingDetail production composition", () => {
       originalUrl: "https://source.example/listing/101",
       contact_phone: "•••• [MASKED]",
     });
+
+    // Below-CONFIDENTIAL clearance: the API nulls originalUrl and flags it.
+    // Withheld must read as withheld, never as an absent submission.
+    expect(buildPreservedInput({
+      ...intake({ originalUrl: null as unknown as string, canonicalUrl: "", heatZoneId: null, sourceId: "", parsedFields: {} }),
+      originalUrl_masked: true,
+    } as AssistedIntake)).toEqual({ originalUrl: "•••• [MASKED]" });
   });
 
   it("scopes the 390px CSS contract to POSSIBLE_MATCH and preserves typed values", () => {
