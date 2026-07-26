@@ -336,6 +336,9 @@ def _score_feature(
     mature_revenue_prediction: RevenuePredictionBand | None = None,
     model_version: str = SITESCORE_MODEL_VERSION,
 ) -> SiteScoreReport:
+    feature_snapshot_time, snapshot_time_missing = _resolve_feature_snapshot_time(
+        feature, fallback=prediction_origin_time
+    )
     demand = (
         _bounded(feature.heat_zone_score / 100.0)
         if feature.heat_zone_score
@@ -395,12 +398,17 @@ def _score_feature(
         confidence=round(confidence, 4),
         model_version=model_version,
         feature_version=feature.view_version,
-        feature_snapshot_time=feature.feature_snapshot_time,
+        feature_snapshot_time=feature_snapshot_time,
         prediction_origin_time=prediction_origin_time,
         scored_at=scored_at,
         heat_zone_id=feature.heat_zone_id,
         source_snapshot_ids=feature.source_snapshot_ids,
-        warnings=_warnings(feature, confidence),
+        warnings=_warnings(
+            feature,
+            confidence,
+            feature_snapshot_time=feature_snapshot_time,
+            snapshot_time_missing=snapshot_time_missing,
+        ),
     )
 
 
@@ -512,15 +520,47 @@ def _factors(
     return tuple(positives), tuple(negatives)
 
 
-def _warnings(feature: SiteScoreFeatureInput, confidence: float) -> tuple[str, ...]:
+def _warnings(
+    feature: SiteScoreFeatureInput,
+    confidence: float,
+    *,
+    feature_snapshot_time: datetime,
+    snapshot_time_missing: bool,
+) -> tuple[str, ...]:
     warnings: list[str] = []
     if confidence < 0.5:
         warnings.append("low_confidence")
     if not feature.source_snapshot_ids:
         warnings.append("missing_source_snapshot_ids")
-    if feature.feature_snapshot_time > datetime.now(UTC):
+    if snapshot_time_missing:
+        warnings.append("missing_feature_snapshot_time")
+    elif feature_snapshot_time > datetime.now(UTC):
         warnings.append("future_feature_snapshot_time")
     return tuple(warnings)
+
+
+def _resolve_feature_snapshot_time(
+    feature: SiteScoreFeatureInput,
+    *,
+    fallback: datetime,
+) -> tuple[datetime, bool]:
+    """Resolve the report's point-in-time instant as tz-aware UTC.
+
+    ``SiteScoreFeatureInput.feature_snapshot_time`` is optional so the
+    production model boundary can reject rows that never carried a
+    point-in-time snapshot (see :func:`to_sitescore_model_row`). The
+    deterministic baseline path still has to emit a concrete instant for the
+    report contract, so it falls back to the prediction origin and reports the
+    gap as a ``missing_feature_snapshot_time`` warning rather than presenting
+    the fallback as a real snapshot.
+    """
+
+    snapshot_time = feature.feature_snapshot_time
+    if snapshot_time is None:
+        return fallback, True
+    if snapshot_time.tzinfo is None:
+        return snapshot_time.replace(tzinfo=UTC), False
+    return snapshot_time, False
 
 
 def _coerce_feature(
@@ -546,7 +586,9 @@ def to_sitescore_model_row(
         missing.append("target_format_code")
     if not value.h3_index:
         missing.append("h3_index")
-    if value.latitude == 0.0 and value.longitude == 0.0:
+    # Both coordinates are required: a half-geocoded row (one axis still 0.0)
+    # is not a usable point-in-time location and must not reach the model.
+    if value.latitude == 0.0 or value.longitude == 0.0:
         missing.append("location(latitude/longitude)")
     if value.prior_90d_cell_net_revenue is None:
         missing.append("prior_90d_cell_net_revenue")

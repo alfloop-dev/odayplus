@@ -695,7 +695,13 @@ def test_canonical_scoring_fails_closed_when_point_in_time_features_missing(
                 json={"actorRoleId": "siteReviewer"},
             )
         assert scored.status_code == 503
-        assert "missing features" in scored.json()["detail"]["message"].lower()
+        detail = scored.json()["detail"]
+        assert "missing features" in detail["message"].lower()
+        # An incomplete feature row is a permanent data gap: re-issuing the
+        # same score request cannot succeed, so it must not be advertised as
+        # retryable.
+        assert detail["code"] == "SITESCORE_FEATURE_CONTRACT_INCOMPLETE"
+        assert detail["retryable"] is False
     finally:
         harness.close()
 
@@ -835,6 +841,9 @@ def test_canonical_scoring_fails_closed_when_feature_snapshot_time_is_stale_or_m
                 json={"actorRoleId": "siteReviewer"},
             )
         assert scored.status_code == 503
-        assert "stale" in scored.json()["detail"]["message"].lower()
+        detail = scored.json()["detail"]
+        assert "stale" in detail["message"].lower()
+        assert detail["code"] == "SITESCORE_FEATURE_CONTRACT_INCOMPLETE"
+        assert detail["retryable"] is False
     finally:
         harness.close()

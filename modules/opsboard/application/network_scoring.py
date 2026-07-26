@@ -57,6 +57,12 @@ class NetworkScoringGateError(RuntimeError):
         self.missing = missing or []
 
 
+# Codes whose cause is a permanent property of the candidate's feature row.
+# Retrying the same candidate reproduces the same failure, so the operator
+# client must be told to fix the data instead of re-issuing the request.
+NON_RETRYABLE_SCORING_CODES = frozenset({"SITESCORE_FEATURE_CONTRACT_INCOMPLETE"})
+
+
 class NetworkScoringRuntimeUnavailable(RuntimeError):
     """Raised when canonical SiteScore execution cannot run in production."""
 
@@ -64,11 +70,15 @@ class NetworkScoringRuntimeUnavailable(RuntimeError):
         super().__init__(message)
         self.code = code
 
+    @property
+    def retryable(self) -> bool:
+        return self.code not in NON_RETRYABLE_SCORING_CODES
+
     def to_detail(self) -> dict[str, Any]:
         return {
             "code": self.code,
             "message": str(self),
-            "retryable": True,
+            "retryable": self.retryable,
         }
 
 
@@ -662,10 +672,17 @@ class NetworkScoringService:
                 model_runtime=self._model_runtime,
                 require_production_model=True,
             ).score_candidates_with_execution([candidate["canonicalFeature"]])
-        except (ProductionModelRuntimeError, ValueError) as exc:
+        except ProductionModelRuntimeError as exc:
             raise NetworkScoringRuntimeUnavailable(
                 str(exc),
                 code=getattr(exc, "code", "SITESCORE_RUNTIME_UNAVAILABLE"),
+            ) from exc
+        except ValueError as exc:
+            # Incomplete / stale point-in-time feature contract: fail closed,
+            # but as a permanent data gap rather than a transient outage.
+            raise NetworkScoringRuntimeUnavailable(
+                str(exc),
+                code=getattr(exc, "code", "SITESCORE_FEATURE_CONTRACT_INCOMPLETE"),
             ) from exc
         report = execution.reports[0]
         return self._scorecard_from_report(report)

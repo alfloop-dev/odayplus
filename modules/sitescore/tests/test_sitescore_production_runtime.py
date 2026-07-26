@@ -15,7 +15,12 @@ from modules.sitescore import (
     SiteScoreRuntimeConfigurationError,
 )
 from modules.sitescore.application.reporting import SiteScoreReportService
-from modules.sitescore.domain.scoring import SITESCORE_FEATURE_VERSION
+from modules.sitescore.domain.scoring import (
+    SITESCORE_FEATURE_VERSION,
+    SiteScoreFeatureInput,
+    score_site,
+    to_sitescore_model_row,
+)
 from modules.sitescore.workers.scoring_worker import SiteScoreScoringWorker
 from shared.infrastructure.persistence import (
     DurableSiteScoreRepository,
@@ -208,3 +213,55 @@ def test_production_flag_cannot_enable_fixed_scorecard(
         assert len(runtime.calls) == 1
     finally:
         engine.close()
+
+
+def test_baseline_scoring_survives_absent_feature_snapshot_time() -> None:
+    """The optional point-in-time field must not break the baseline path.
+
+    ``feature_snapshot_time`` is optional so the production boundary can reject
+    rows without a real snapshot. The deterministic baseline (used by listing
+    promotion) still has to produce a serializable report, flagged with an
+    explicit warning instead of a fabricated snapshot.
+    """
+
+    report = score_site(
+        SiteScoreFeatureInput(
+            candidate_site_id="candidate-baseline-001",
+            heat_zone_score=84.0,
+            monthly_rent=52_000.0,
+            area_ping=24.0,
+            comparable_store_count=5,
+        ),
+        prediction_origin_time=NOW,
+    )
+    assert report.feature_snapshot_time == NOW
+    assert "missing_feature_snapshot_time" in report.warnings
+    assert report.to_dict()["feature_snapshot_time"] == NOW.isoformat()
+    assert report.to_summary_dict()["featureSnapshotTime"] == NOW.isoformat()
+
+
+def test_baseline_scoring_normalizes_naive_feature_snapshot_time() -> None:
+    report = score_site(
+        SiteScoreFeatureInput(
+            candidate_site_id="candidate-baseline-002",
+            feature_snapshot_time=NOW.replace(tzinfo=None),
+            heat_zone_score=84.0,
+            comparable_store_count=5,
+        ),
+        prediction_origin_time=NOW,
+    )
+    assert report.feature_snapshot_time == NOW
+    assert "missing_feature_snapshot_time" not in report.warnings
+
+
+@pytest.mark.parametrize(
+    ("latitude", "longitude"),
+    [(25.033964, 0.0), (0.0, 121.564468), (0.0, 0.0)],
+)
+def test_production_model_row_rejects_half_geocoded_location(
+    latitude: float,
+    longitude: float,
+) -> None:
+    feature = _feature() | {"latitude": latitude, "longitude": longitude}
+    with pytest.raises(ValueError, match=r"location\(latitude/longitude\)"):
+        to_sitescore_model_row(feature)
