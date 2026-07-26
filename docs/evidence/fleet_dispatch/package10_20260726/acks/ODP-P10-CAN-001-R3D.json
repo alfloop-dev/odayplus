@@ -1,0 +1,191 @@
+{
+  "schema": "oday-plus.package10-wave-ack.v1",
+  "task_id": "ODP-P10-CAN-001-R3D",
+  "title": "Package 10 retryable intake preserved-input remediation",
+  "status": "implemented_awaiting_independent_review",
+  "program_status": "owner_verified_review_not_yet_performed",
+  "owner": "Claude2",
+  "reviewer": "Antigravity4",
+  "prepared_at": "2026-07-26T19:53:00Z",
+  "worktree": "/tmp/pantheon-worker-worktrees/oday-plus-package10-supervisor-20260726/oday-plus-package10-supervisor-20260726/odp-p10-can-001-r3d",
+  "branch": "task/ODP-P10-CAN-001-R3D",
+  "pickup_head": "13b21f91807edaf40c58f63fa2f2fe60ce130055",
+  "pickup_head_note": "Exact canonical target named in the dispatch: origin/fix/package10-final-20260725 at 13b21f91 (docs(fleet): retire legacy governance E2E contract). The task branch was already at this commit at pickup; no rebase was required.",
+  "changes_committed": true,
+  "commits": {
+    "product_commit": {
+      "sha": "0f8e5f7323c2ede825172e5c2535bd646dfc4e69",
+      "subject": "ODP-P10-CAN-001-R3D: anchor preserved-input product boundary",
+      "files": [
+        "apps/web/features/operator/network/intake/IntakeProcessingDetail.tsx",
+        "apps/web/features/operator/network/intake/IntakeErrorRecovery.tsx",
+        "apps/web/features/operator/network/intake/__tests__/IntakeProcessingDetail.test.tsx",
+        "apps/web/features/operator/network/intake/__tests__/IntakeErrorRecovery.test.tsx"
+      ]
+    },
+    "masking_commit": {
+      "sha": "537f680f5db2e1e29923fb12a4e77e3a6f65cb98",
+      "subject": "ODP-P10-CAN-001-R3D: mark withheld originalUrl in preserved input",
+      "files": [
+        "apps/web/features/operator/network/intake/IntakeProcessingDetail.tsx",
+        "apps/web/features/operator/network/intake/__tests__/IntakeProcessingDetail.test.tsx"
+      ]
+    },
+    "ack_commit": {
+      "sha": null,
+      "subject": "ODP-P10-CAN-001-R3D: record retryable intake preserved-input ACK",
+      "note": "A commit cannot contain its own hash. The exact ACK commit SHA and its pushed state are captured in the ai-status delivery metadata, the handoff note, and the task PR."
+    }
+  },
+  "finding_addressed": {
+    "reported_by": "ODP-P10-CAN-003-R3A",
+    "symptom": "After submitting https://www.synthetic.example/detail-50000001.html the durable intake reached retryable FAILED with ODP-INTAKE-RETRIEVAL-TIMEOUT, and 展開保留輸入參數 (Preserved Input) rendered {} instead of the submitted URL.",
+    "root_cause": "IntakeProcessingDetail built preservedInput exclusively from record.parsedFields. Retrieval fails before parsing for this corpus entry (modules/external_data/application/assisted_intake.py returns a RetrievalFailure with no raw payload), so parsedFields is {} while the durable record still carries originalUrl, canonicalUrl, heatZoneId, sourceId and intakeMethod.",
+    "design_requirement": "docs/design/ODAY_PLUS_ASSISTED_LISTING_INTAKE_DESIGN_REQUIREMENTS.md section 7 — user-entered corrections and input must survive retryable failures."
+  },
+  "remediation": {
+    "IntakeProcessingDetail.tsx": [
+      "Added exported buildPreservedInput(record) that reads the durable API-backed AssistedIntake record: originalUrl, canonicalUrl, heatZoneId, sourceId, intakeMethod.",
+      "Parsed/normalized/corrected field values are layered on top of that submission context so an operator correction still wins over normalized and source values.",
+      "Values the record does not supply (null, undefined, empty string) are omitted rather than filled with a placeholder; no business value is fabricated.",
+      "Server-masked parsed cells emit the same '•••• [MASKED]' marker EvidencePanel already renders.",
+      "A below-CONFIDENTIAL clearance receives originalUrl=null plus originalUrl_masked=true from modules/listing/application/intake_authorization.py; that case reports the masked marker so a withheld URL is not mistaken for an absent submission.",
+      "Returns null when the record supplies nothing at all."
+    ],
+    "IntakeErrorRecovery.tsx": [
+      "The preserved-input drawer renders an explicit '保留輸入參數 UNAVAILABLE' marker (data-testid error-preserved-input-unavailable) instead of printing {} when nothing durable is available.",
+      "The JSON body carries data-testid error-preserved-input-json inside the existing error-preserved-input-box.",
+      "The existing purpose-binding redaction of token / password / secret / cred keys is unchanged."
+    ],
+    "no_shadow_state": "No sessionStorage, localStorage, module-level cache, fixture, or component-local copy of the submission was added. The drawer is a pure projection of the record prop, so page reload and retry both re-read the durable API record."
+  },
+  "acceptance_evidence": [
+    {
+      "criterion": "pre-parse retryable failure preserves originalUrl",
+      "result": "pass",
+      "evidence": "IntakeProcessingDetail.test.tsx 'preserves the durable submitted URL when retrieval fails before parsing' renders stage FAILED with parsedFields {} and the ODP-INTAKE-RETRIEVAL-TIMEOUT failure, opens the drawer, and asserts error-preserved-input-box contains https://www.synthetic.example/detail-50000001.html and is not '{}'."
+    },
+    {
+      "criterion": "canonical URL and corrected values preserved when available",
+      "result": "pass",
+      "evidence": "IntakeProcessingDetail.test.tsx 'layers corrected field values over the durable submission context' asserts the corrected address wins over normalized/source and that originalUrl and canonicalUrl are both present; heatZoneId coverage is in the pre-parse test."
+    },
+    {
+      "criterion": "sensitive keys redacted",
+      "result": "pass",
+      "evidence": "IntakeErrorRecovery.test.tsx 'redacts credential-class keys under purpose binding while keeping business values' asserts token / password / secret / credential values are replaced by [REDACTED_PURPOSE_BINDING] while the URL and address values survive."
+    },
+    {
+      "criterion": "missing values absent or explicitly unavailable, nothing fabricated",
+      "result": "pass",
+      "evidence": "IntakeProcessingDetail.test.tsx 'builds preserved input only from values the intake record supplies' asserts empty/null record fields are omitted, an all-empty record yields null, a masked parsed cell yields '•••• [MASKED]', and a flagged withheld originalUrl yields the masked marker. IntakeErrorRecovery.test.tsx 'declares preserved input unavailable instead of rendering an empty object' covers the drawer copy."
+    },
+    {
+      "criterion": "no browser-only fixture shadow state",
+      "result": "pass",
+      "evidence": "The diff adds no storage API, no fixture import, and no state hook holding submission data; buildPreservedInput is a pure function of the record prop, memoized on record identity only."
+    },
+    {
+      "criterion": "no R3A E2E files changed",
+      "result": "pass",
+      "evidence": "git diff --name-only 13b21f91807edaf40c58f63fa2f2fe60ce130055 HEAD lists only the four apps/web intake files; zero tests/e2e/**, zero apps/api/**, zero AssistedIntakeSection.tsx, zero archived design evidence."
+    },
+    {
+      "criterion": "Antigravity independent review",
+      "result": "not_performed",
+      "evidence": "Not issued. See review.blocked_reason."
+    }
+  ],
+  "verification_results": {
+    "run_at": "2026-07-26T19:47:00Z",
+    "run_by": "Claude2",
+    "head_verified": "537f680f5db2e1e29923fb12a4e77e3a6f65cb98",
+    "commands": [
+      {
+        "command": "npm run test --workspace=@oday-plus/web -- IntakeProcessingDetail",
+        "result": "1 file / 31 tests passed",
+        "exit_code": 0
+      },
+      {
+        "command": "npm run test --workspace=@oday-plus/web -- IntakeErrorRecovery",
+        "result": "1 file / 4 tests passed",
+        "exit_code": 0
+      },
+      {
+        "command": "npm run test --workspace=@oday-plus/web",
+        "result": "33 files / 240 tests passed",
+        "exit_code": 0
+      },
+      {
+        "command": "npm run typecheck --workspace=@oday-plus/web",
+        "result": "tsc --noEmit clean",
+        "exit_code": 0
+      },
+      {
+        "command": "npm run typecheck",
+        "result": "openapi-client, ui, ui-domain, web all clean",
+        "exit_code": 0
+      },
+      {
+        "command": "npm run build",
+        "result": "next build compiled successfully; /operator and /intake/[intakeId] routes emitted",
+        "exit_code": 0
+      },
+      {
+        "command": "git diff --check",
+        "result": "clean",
+        "exit_code": 0
+      }
+    ],
+    "not_run": [
+      {
+        "command": "Playwright operator-network-assisted-intake.spec.ts",
+        "reason": "Not in this task's verification list. The retry spec at the pickup head no longer asserts preserved-input content (see e2e_observations), so running it would not exercise this fix. ODP-P10-CAN-003-R3A owns restoring that assertion and reruns the 25-test spec and the 16-spec/107-test gate after this task merges."
+      }
+    ]
+  },
+  "e2e_observations": {
+    "reported_not_edited": true,
+    "note": "Reported under the conflict gate, not acted on: tests/e2e/** is owned by ODP-P10-CAN-003-R3A and was not touched.",
+    "items": [
+      {
+        "file": "tests/e2e/operator-network-assisted-intake.spec.ts",
+        "test": "retryable failure shows code, correlation and next action, and retry preserves input",
+        "observation": "At pickup head 13b21f91 this test no longer asserts the preserved-input content the dispatch describes; it asserts only stage, failure text and a retry button. The open coordinator blocker on ODP-P10-CAN-003-R3A already requires R3A to restore the originalUrl preserved-input coverage after this product fix merges."
+      },
+      {
+        "file": "tests/e2e/operator-network-assisted-intake.spec.ts and tests/e2e/operator-assisted-listing-intake.spec.ts",
+        "observation": "Both specs target data-testid intake-failure-panel and intake-retry-button. Neither testid exists anywhere in apps/web at 13b21f91; the canonical Package 10 recovery surface exposes intake-error-recovery, error-code, error-retryable-badge, error-next-action, error-action-retry, error-toggle-preserved-input and error-preserved-input-box. This is spec-to-runtime misalignment in R3A-owned files. No testid was renamed or aliased in this task, because doing so would edit the Package 10 recovery contract to fit a stale locator rather than the reverse. R3A or the coordinator must decide whether the specs realign or the gap returns to ODP-P10-CAN-001-R3B."
+      }
+    ]
+  },
+  "conflict_gate": {
+    "ODP-P10-CAN-003-R3A": "no overlap — R3A owns tests/e2e/**, this task changed only apps/web intake product and unit-test files",
+    "ODP-P10-CAN-001-R3C": "no overlap — R3C owns apps/web/features/operator Governance files, this task owns network/intake recovery files",
+    "forbidden_paths_touched": []
+  },
+  "review": {
+    "self_review_forbidden": true,
+    "independent_reviewer": "Antigravity4",
+    "independent_review_status": "not_performed",
+    "blocked_reason": "Antigravity4 provider quota is unavailable at account level. The recorded failures are run antigravity-20260726T190405Z-94136315 and the 2026-07-26T19:36:28Z review_ready_dispatch, both 'Individual quota reached', with reset estimate 2026-07-28T17:38:59Z. Per the dispatch instruction the review was neither issued nor retried, and it was not fabricated or self-approved.",
+    "history": [
+      {
+        "at": "2026-07-26T19:53:00Z",
+        "by": "Claude2",
+        "action": "owner_implementation",
+        "head": "537f680f5db2e1e29923fb12a4e77e3a6f65cb98",
+        "note": "Product fix plus unit coverage implemented and verified by the owner. Independent review still required before this task may leave review state."
+      }
+    ]
+  },
+  "web_e2e_modified": false,
+  "api_modified": false,
+  "files_changed_by_this_task": [
+    "apps/web/features/operator/network/intake/IntakeProcessingDetail.tsx",
+    "apps/web/features/operator/network/intake/IntakeErrorRecovery.tsx",
+    "apps/web/features/operator/network/intake/__tests__/IntakeProcessingDetail.test.tsx",
+    "apps/web/features/operator/network/intake/__tests__/IntakeErrorRecovery.test.tsx",
+    "docs/evidence/fleet_dispatch/package10_20260726/acks/ODP-P10-CAN-001-R3D.json"
+  ]
+}
