@@ -355,7 +355,7 @@ SELECT
             coalesce(land_area_sqm, 0) > 0
             OR coalesce(building_area_sqm, 0) > 0
         )
-        AND fetched_at < fetched_at + interval '1 microsecond'
+        AND fetched_at <= CURRENT_TIMESTAMP
     ) AS is_training_eligible,
     FALSE AS is_scoring_eligible,
     CASE

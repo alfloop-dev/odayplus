@@ -103,156 +103,200 @@ class OfficialRealEstateOutcomeStore:
             ):
                 projection_records[identity] = record
 
-        with self.client.transaction():
-            self.client.execute(
-                "SELECT pg_advisory_xact_lock(hashtextextended(?, 0))",
-                (f"oday-plus:official-real-estate:source:{source.source_id}",),
-            )
-            self.client.execute(
-                "SELECT pg_advisory_xact_lock(hashtextextended(?, 0))",
-                (
-                    "oday-plus:official-real-estate:snapshot:"
-                    f"{source.source_id}:{batch.source_snapshot_id}:{PARSER_VERSION}",
-                ),
-            )
-            existing_run = self.client.query_one(
-                "SELECT status, parsed_row_count, projection_row_count, "
-                "observation_row_count, inserted_row_count, updated_row_count, "
-                "unchanged_row_count, stale_row_count "
-                "FROM external_data.real_estate_ingestion_runs "
-                "WHERE run_id = ?",
-                (batch.run_id,),
-            )
-            if existing_run and existing_run.get("status") == "SUCCEEDED":
-                return {
-                    "status": "already_applied",
-                    "run_id": str(batch.run_id),
-                    "source_id": source.source_id,
-                    "source_snapshot_id": batch.source_snapshot_id,
-                    "content_sha256": batch.artifact.content_sha256,
-                    "schema_sha256": batch.schema_sha256,
-                    "parsed_row_count": int(existing_run["parsed_row_count"]),
-                    "projection_row_count": int(existing_run["projection_row_count"]),
-                    "observation_row_count": int(
-                        existing_run["observation_row_count"]
-                    ),
-                    "inserted_row_count": int(existing_run["inserted_row_count"]),
-                    "updated_row_count": int(existing_run["updated_row_count"]),
-                    "unchanged_row_count": int(existing_run["unchanged_row_count"]),
-                    "stale_row_count": int(existing_run["stale_row_count"]),
-                }
-            self.client.execute(
-                "INSERT INTO external_data.real_estate_ingestion_runs ("
-                "run_id, source_id, dataset_id, source_url, metadata_url, publisher, "
-                "license_id, parser_version, content_type, content_sha256, "
-                "schema_sha256, source_snapshot_id, content_length_bytes, etag, "
-                "source_published_at, fetched_at, source_order_at, status, "
-                "parsed_row_count, projection_row_count, observation_row_count"
-                ") VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, "
-                "'RUNNING', ?, ?, ?) "
-                "ON CONFLICT (run_id) DO UPDATE SET "
-                "status = 'RUNNING', error_code = NULL, error_message = NULL, "
-                "completed_at = NULL, updated_at = CURRENT_TIMESTAMP",
-                (
-                    batch.run_id,
-                    source.source_id,
-                    source.dataset_id,
-                    source.source_url,
-                    source.metadata_url,
-                    source.publisher,
-                    source.license_id,
-                    PARSER_VERSION,
-                    batch.artifact.content_type,
-                    batch.artifact.content_sha256,
-                    batch.schema_sha256,
-                    batch.source_snapshot_id,
-                    len(batch.artifact.content),
-                    batch.artifact.etag,
-                    batch.artifact.source_published_at,
-                    batch.artifact.fetched_at,
-                    source_order_at,
-                    len(batch.records),
-                    0,
-                    0,
-                ),
-            )
-            existing_records = {
-                str(row["transaction_id"]): row
-                for row in self.client.query(
-                    "SELECT transaction_id, identity_fingerprint, "
-                    "raw_record_sha256, last_source_order_at, "
-                    "last_source_snapshot_id "
-                    "FROM external_data.real_estate_transactions "
-                    "WHERE source_id = ?",
-                    (source.source_id,),
+        try:
+            with self.client.transaction():
+                self.client.execute(
+                    "SELECT pg_advisory_xact_lock(hashtextextended(?, 0))",
+                    (f"oday-plus:official-real-estate:source:{source.source_id}",),
                 )
-            }
-            inserted_count = 0
-            updated_count = 0
-            unchanged_count = 0
-            stale_count = 0
-            for identity, record in projection_records.items():
-                prior = existing_records.get(identity)
-                if prior is None:
-                    inserted_count += 1
+                self.client.execute(
+                    "SELECT pg_advisory_xact_lock(hashtextextended(?, 0))",
+                    (
+                        "oday-plus:official-real-estate:snapshot:"
+                        f"{source.source_id}:{batch.source_snapshot_id}:{PARSER_VERSION}",
+                    ),
+                )
+                existing_run = self.client.query_one(
+                    "SELECT status, parsed_row_count, projection_row_count, "
+                    "observation_row_count, inserted_row_count, updated_row_count, "
+                    "unchanged_row_count, stale_row_count "
+                    "FROM external_data.real_estate_ingestion_runs "
+                    "WHERE run_id = ?",
+                    (batch.run_id,),
+                )
+                if existing_run and existing_run.get("status") == "SUCCEEDED":
+                    return {
+                        "status": "already_applied",
+                        "run_id": str(batch.run_id),
+                        "source_id": source.source_id,
+                        "dataset_id": source.dataset_id,
+                        "license_id": source.license_id,
+                        "source_snapshot_id": batch.source_snapshot_id,
+                        "content_sha256": batch.artifact.content_sha256,
+                        "schema_sha256": batch.schema_sha256,
+                        "parsed_row_count": int(existing_run["parsed_row_count"]),
+                        "projection_row_count": int(existing_run["projection_row_count"]),
+                        "observation_row_count": int(
+                            existing_run["observation_row_count"]
+                        ),
+                        "inserted_row_count": int(existing_run["inserted_row_count"]),
+                        "updated_row_count": int(existing_run["updated_row_count"]),
+                        "unchanged_row_count": int(existing_run["unchanged_row_count"]),
+                        "stale_row_count": int(existing_run["stale_row_count"]),
+                    }
+                self.client.execute(
+                    "INSERT INTO external_data.real_estate_ingestion_runs ("
+                    "run_id, source_id, dataset_id, source_url, metadata_url, publisher, "
+                    "license_id, parser_version, content_type, content_sha256, "
+                    "schema_sha256, source_snapshot_id, content_length_bytes, etag, "
+                    "source_published_at, fetched_at, source_order_at, status, "
+                    "parsed_row_count, projection_row_count, observation_row_count"
+                    ") VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, "
+                    "'RUNNING', ?, ?, ?) "
+                    "ON CONFLICT (run_id) DO UPDATE SET "
+                    "status = 'RUNNING', error_code = NULL, error_message = NULL, "
+                    "completed_at = NULL, updated_at = CURRENT_TIMESTAMP",
+                    (
+                        batch.run_id,
+                        source.source_id,
+                        source.dataset_id,
+                        source.source_url,
+                        source.metadata_url,
+                        source.publisher,
+                        source.license_id,
+                        PARSER_VERSION,
+                        batch.artifact.content_type,
+                        batch.artifact.content_sha256,
+                        batch.schema_sha256,
+                        batch.source_snapshot_id,
+                        len(batch.artifact.content),
+                        batch.artifact.etag,
+                        batch.artifact.source_published_at,
+                        batch.artifact.fetched_at,
+                        source_order_at,
+                        len(batch.records),
+                        0,
+                        0,
+                    ),
+                )
+                existing_records = {
+                    str(row["transaction_id"]): row
+                    for row in self.client.query(
+                        "SELECT transaction_id, identity_fingerprint, "
+                        "raw_record_sha256, last_source_order_at, "
+                        "last_source_snapshot_id "
+                        "FROM external_data.real_estate_transactions "
+                        "WHERE source_id = ?",
+                        (source.source_id,),
+                    )
+                }
+                inserted_count = 0
+                updated_count = 0
+                unchanged_count = 0
+                stale_count = 0
+                for identity, record in projection_records.items():
+                    prior = existing_records.get(identity)
+                    if prior is None:
+                        inserted_count += 1
+                        self._upsert_projection(
+                            batch,
+                            record,
+                            source_order_at=source_order_at,
+                        )
+                        continue
+                    prior_order = _timestamp(prior["last_source_order_at"])
+                    if source_order_at < prior_order:
+                        stale_count += 1
+                        continue
+                    if source_order_at == prior_order:
+                        if (
+                            str(prior["last_source_snapshot_id"])
+                            == batch.source_snapshot_id
+                            and str(prior["raw_record_sha256"])
+                            == record.raw_record_sha256
+                        ):
+                            unchanged_count += 1
+                        else:
+                            stale_count += 1
+                        continue
+                    if (
+                        str(prior["raw_record_sha256"]) != record.raw_record_sha256
+                        or str(prior["identity_fingerprint"]) != record.identity_fingerprint
+                    ):
+                        updated_count += 1
+                    else:
+                        unchanged_count += 1
                     self._upsert_projection(
                         batch,
                         record,
                         source_order_at=source_order_at,
                     )
-                    continue
-                if str(prior["identity_fingerprint"]) != record.identity_fingerprint:
-                    raise OfficialRealEstateSourceError(
-                        "persisted authority natural identity fingerprint changed "
-                        f"for transaction {identity}"
+                for record in batch.records:
+                    self._insert_observation(
+                        batch,
+                        record,
+                        source_order_at=source_order_at,
                     )
-                prior_order = _timestamp(prior["last_source_order_at"])
-                if source_order_at < prior_order:
-                    stale_count += 1
-                    continue
-                if source_order_at == prior_order:
-                    if (
-                        str(prior["last_source_snapshot_id"])
-                        == batch.source_snapshot_id
-                        and str(prior["raw_record_sha256"])
-                        == record.raw_record_sha256
-                    ):
-                        unchanged_count += 1
-                    else:
-                        stale_count += 1
-                    continue
-                if str(prior["raw_record_sha256"]) != record.raw_record_sha256:
-                    updated_count += 1
-                else:
-                    unchanged_count += 1
-                self._upsert_projection(
-                    batch,
-                    record,
-                    source_order_at=source_order_at,
+                self.client.execute(
+                    "UPDATE external_data.real_estate_ingestion_runs SET "
+                    "status = 'SUCCEEDED', projection_row_count = ?, "
+                    "observation_row_count = ?, inserted_row_count = ?, "
+                    "updated_row_count = ?, unchanged_row_count = ?, stale_row_count = ?, "
+                    "completed_at = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP "
+                    "WHERE run_id = ?",
+                    (
+                        len(projection_records),
+                        len(batch.records),
+                        inserted_count,
+                        updated_count,
+                        unchanged_count,
+                        stale_count,
+                        batch.run_id,
+                    ),
                 )
-            for record in batch.records:
-                self._insert_observation(
-                    batch,
-                    record,
-                    source_order_at=source_order_at,
-                )
-            self.client.execute(
-                "UPDATE external_data.real_estate_ingestion_runs SET "
-                "status = 'SUCCEEDED', projection_row_count = ?, "
-                "observation_row_count = ?, inserted_row_count = ?, "
-                "updated_row_count = ?, unchanged_row_count = ?, stale_row_count = ?, "
-                "completed_at = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP "
-                "WHERE run_id = ?",
-                (
-                    len(projection_records),
-                    len(batch.records),
-                    inserted_count,
-                    updated_count,
-                    unchanged_count,
-                    stale_count,
-                    batch.run_id,
-                ),
-            )
+        except Exception as exc:
+            try:
+                with self.client.transaction():
+                    self.client.execute(
+                        "INSERT INTO external_data.real_estate_ingestion_runs ("
+                        "run_id, source_id, dataset_id, source_url, metadata_url, publisher, "
+                        "license_id, parser_version, content_type, content_sha256, "
+                        "schema_sha256, source_snapshot_id, content_length_bytes, etag, "
+                        "source_published_at, fetched_at, source_order_at, status, "
+                        "parsed_row_count, projection_row_count, observation_row_count, "
+                        "error_code, error_message, completed_at"
+                        ") VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, "
+                        "'FAILED', ?, 0, 0, ?, ?, CURRENT_TIMESTAMP) "
+                        "ON CONFLICT (run_id) DO UPDATE SET "
+                        "status = 'FAILED', error_code = EXCLUDED.error_code, "
+                        "error_message = EXCLUDED.error_message, "
+                        "completed_at = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP",
+                        (
+                            batch.run_id,
+                            source.source_id,
+                            source.dataset_id,
+                            source.source_url,
+                            source.metadata_url,
+                            source.publisher,
+                            source.license_id,
+                            PARSER_VERSION,
+                            batch.artifact.content_type,
+                            batch.artifact.content_sha256,
+                            batch.schema_sha256,
+                            batch.source_snapshot_id,
+                            len(batch.artifact.content),
+                            batch.artifact.etag,
+                            batch.artifact.source_published_at,
+                            batch.artifact.fetched_at,
+                            source_order_at,
+                            len(batch.records),
+                            exc.__class__.__name__,
+                            str(exc)[:500],
+                        ),
+                    )
+            except Exception:
+                pass
+            raise
         return {
             "status": "succeeded",
             "run_id": str(batch.run_id),
