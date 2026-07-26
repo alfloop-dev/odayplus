@@ -55,16 +55,30 @@ def test_producer_and_worker_share_canonical_versioned_schema() -> None:
 
 
 @pytest.mark.parametrize(
-    ("mutation", "expected_path"),
+    ("mutation", "expected_path", "expected_validator"),
     [
-        (lambda envelope: envelope.pop("tenant_id"), []),
-        (lambda envelope: envelope.update(signal_version="2.0.0"), ["signal_version"]),
-        (lambda envelope: envelope["subject"].pop("entity_id"), ["subject"]),
-        (lambda envelope: envelope.update(produced_at="2026-06-26T10:00:00"), ["produced_at"]),
-        (lambda envelope: envelope.update(unversioned_field=True), []),
+        (lambda envelope: envelope.pop("tenant_id"), [], "required"),
+        (
+            lambda envelope: envelope.update(signal_version="2.0.0"),
+            ["signal_version"],
+            "pattern",
+        ),
+        (lambda envelope: envelope["subject"].pop("entity_id"), ["subject"], "required"),
+        (
+                lambda envelope: envelope.update(produced_at="2026-06-26T10:00:00"),
+                ["produced_at"],
+                "format",
+        ),
+        (
+            lambda envelope: envelope.update(unversioned_field=True),
+            [],
+            "additionalProperties",
+        ),
     ],
 )
-def test_schema_rejects_invalid_or_unsupported_envelopes(mutation, expected_path) -> None:
+def test_schema_rejects_invalid_or_unsupported_envelopes(
+    mutation, expected_path, expected_validator
+) -> None:
     contract = _contract()
     invalid = deepcopy(contract["EXAMPLE_SIGNAL_PAYLOAD"])
     mutation(invalid)
@@ -73,12 +87,16 @@ def test_schema_rejects_invalid_or_unsupported_envelopes(mutation, expected_path
         _validator(contract).validate(invalid)
 
     assert list(exc_info.value.absolute_path)[: len(expected_path)] == expected_path
+    assert exc_info.value.validator == expected_validator
 
 
 def test_v1_payload_allows_additive_fields_for_backward_compatibility() -> None:
     contract = _contract()
     additive = deepcopy(contract["EXAMPLE_SIGNAL_PAYLOAD"])
+    additive["signal_version"] = "1.1.0"
     additive["payload"]["future_optional_field"] = {"introduced_in": "1.1.0"}
+    additive["payload"]["decision"]["decision_channel"] = "automated"
+    additive["payload"]["evidence"]["drift_score"] = 0.02
 
     _validator(contract).validate(additive)
 

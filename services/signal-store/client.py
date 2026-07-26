@@ -16,7 +16,7 @@ from dataclasses import dataclass
 from datetime import datetime
 from enum import StrEnum
 from pathlib import Path
-from typing import Literal, Protocol, TypedDict, runtime_checkable
+from typing import Literal, Protocol, Required, TypedDict, runtime_checkable
 
 JsonScalar = str | int | float | bool | None
 JsonValue = JsonScalar | Mapping[str, "JsonValue"] | Sequence["JsonValue"]
@@ -89,7 +89,7 @@ class SignalSubject(TypedDict):
 class SignalTrace(TypedDict, total=False):
     """Trace fields shared with API/event contracts."""
 
-    correlation_id: str
+    correlation_id: Required[str]
     causation_id: str | None
     request_id: str | None
     source_event_id: str | None
