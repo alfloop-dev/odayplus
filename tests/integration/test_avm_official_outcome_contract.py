@@ -2,6 +2,9 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from alembic.config import Config
+from alembic.script import ScriptDirectory
+
 from models.shared_ml.production_contracts import (
     PRODUCTION_MODEL_CONTRACTS,
     production_model_names,
@@ -32,6 +35,10 @@ def test_official_outcome_migration_has_bounded_source_and_provenance_contracts(
         "completion_month INTEGER",
         "authority_partition TEXT NOT NULL",
         "source_variant_id TEXT NOT NULL",
+        "identity_fingerprint TEXT NOT NULL",
+        "last_source_order_at TIMESTAMPTZ NOT NULL",
+        "projection_row_count INTEGER NOT NULL",
+        "stale_row_count INTEGER NOT NULL",
     ):
         assert fragment in sql
     assert (
@@ -39,8 +46,16 @@ def test_official_outcome_migration_has_bounded_source_and_provenance_contracts(
         "source_variant_id )" in normalized
     )
     assert (
-        "FOREIGN KEY ( source_id, authority_partition, source_record_id, "
+        "FOREIGN KEY ( transaction_id, source_id, authority_partition, source_record_id, "
         "source_variant_id )" in normalized
+    )
+    assert (
+        "UNIQUE ( transaction_id, source_id, authority_partition, "
+        "source_record_id, source_variant_id )" in normalized
+    )
+    assert (
+        "PRIMARY KEY ( run_id, transaction_id, source_file, source_row_number )"
+        in normalized
     )
 
 
@@ -133,3 +148,9 @@ def test_migration_path_is_versioned_and_committed_under_infra_db() -> None:
         MIGRATION_PATH
         == Path("infra/db/migrations/000009_official_real_estate_outcomes.sql").resolve()
     )
+    config = Config("infra/db/migrations/alembic.ini")
+    script = ScriptDirectory.from_config(config)
+    assert script.get_heads() == ["0003"]
+    revision = script.get_revision("0003")
+    assert revision is not None
+    assert revision.down_revision == "0002"

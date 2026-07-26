@@ -28,9 +28,13 @@ from scripts.models.install_views import (
     main as install_views_main,
 )
 from scripts.models.release import (
+    BoundedModelTrainingRelease,
     _temporal_split,
     _validate_regression_temporally,
     prepare_model_rows,
+)
+from scripts.models.release import (
+    main as release_main,
 )
 from scripts.models.storage import (
     GcsArtifactStore,
@@ -167,7 +171,18 @@ class FakeInstallationClient:
         self.executions.append((sql, params))
         if "CREATE OR REPLACE VIEW model_ready.forecast_training_view" in sql:
             self.relations.add("model_ready.forecast_training_view")
-            self.relations.add("model_ready.listing_property_valuation_view")
+            official_ready = {
+                "external_data.real_estate_transactions",
+                "external_data.real_estate_ingestion_runs",
+            } <= self.relations
+            if official_ready:
+                self.relations.add(
+                    "model_ready.listing_property_valuation_view"
+                )
+            else:
+                self.relations.discard(
+                    "model_ready.listing_property_valuation_view"
+                )
             self.contracts["model_ready.forecast_training_view"] = {
                 "relation_name": "model_ready.forecast_training_view",
                 "view_name": "forecast_training_view",
@@ -190,9 +205,13 @@ class FakeInstallationClient:
                 "relation_name": "model_ready.listing_property_valuation_view",
                 "view_name": "listing_property_valuation_view",
                 "view_version": "listing-property-valuation-view-v1",
-                "contract_state": "ACTIVE",
-                "training_enabled": True,
-                "blocked_reason": None,
+                "contract_state": "ACTIVE" if official_ready else "BLOCKED",
+                "training_enabled": official_ready,
+                "blocked_reason": (
+                    None
+                    if official_ready
+                    else "OFFICIAL_REAL_ESTATE_OUTCOME_RELATION_MISSING"
+                ),
                 "installer_sha256": None,
             }
             self.contracts["model_ready.avm_liquidity_training_view"] = {
@@ -534,6 +553,36 @@ def test_model_ready_view_install_and_inventory_fail_closed(
     assert inventory.to_dict()["ready"] is False
 
 
+def test_model_ready_view_install_keeps_forecast_independent_of_official_data() -> None:
+    client = FakeInstallationClient(
+        missing_relations=(
+            "external_data.real_estate_transactions",
+            "external_data.real_estate_ingestion_runs",
+        ),
+    )
+    installer = ModelReadyViewInstaller(client)
+
+    preflight = installer.preflight()
+    assert preflight.ready
+    assert not preflight.official_outcomes_ready
+    assert set(preflight.optional_missing_relations) == {
+        "external_data.real_estate_transactions",
+        "external_data.real_estate_ingestion_runs",
+    }
+
+    result = installer.install()
+
+    assert result["forecast"]["contract_state"] == "ACTIVE"
+    assert result["listing_property_avm"]["contract_state"] == "BLOCKED"
+    assert (
+        result["listing_property_avm"]["blocked_reason"]
+        == "OFFICIAL_REAL_ESTATE_OUTCOME_RELATION_MISSING"
+    )
+    assert not result["optional_outcome_models_trainable"][
+        "listing_property_avm"
+    ]
+
+
 def test_gcs_artifact_store_is_content_addressed_and_verifies_bytes() -> None:
     transport = FakeGcsTransport()
     store = GcsArtifactStore(
@@ -793,6 +842,85 @@ def test_promotion_approval_is_version_bound_and_prohibits_self_review() -> None
             version="2026.07.24.1",
             requested_by="ml-training-operator",
         )
+
+
+def test_listing_property_avm_production_promotion_is_explicitly_blocked() -> None:
+    application = BoundedModelTrainingRelease.__new__(
+        BoundedModelTrainingRelease
+    )
+    spec = MODEL_SPECS["listing_property_avm"]
+
+    assert not spec.production_release_enabled
+    assert (
+        spec.production_block_reason
+        == "NO_PRODUCTION_RUNTIME_CONSUMER_OR_LIVE_INFERENCE_SMOKE"
+    )
+    with pytest.raises(
+        ModelTrainingConfigurationError,
+        match="NO_PRODUCTION_RUNTIME_CONSUMER_OR_LIVE_INFERENCE_SMOKE",
+    ):
+        application.promote(
+            spec=spec,
+            version="2026.07.26.1",
+            approval_payload=_approval(
+                model_name="listing_property_avm",
+                model_version="2026.07.26.1",
+                release_type="full",
+            ),
+            rollback_target="2026.07.25.1",
+        )
+
+
+@pytest.mark.parametrize("release_type", ("full", "canary"))
+def test_listing_property_avm_production_cli_fails_closed(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+    release_type: str,
+) -> None:
+    _production_env(monkeypatch)
+    approval_path = tmp_path / f"{release_type}-approval.json"
+    approval_path.write_text(
+        json.dumps(
+            _approval(
+                model_name="listing_property_avm",
+                model_version="2026.07.26.1",
+                release_type=release_type,
+            )
+        ),
+        encoding="utf-8",
+    )
+    application = BoundedModelTrainingRelease.__new__(
+        BoundedModelTrainingRelease
+    )
+    resources = SimpleNamespace(
+        application=application,
+        close=lambda: None,
+    )
+
+    exit_code = release_main(
+        [
+            "promote",
+            "--model",
+            "listing_property_avm",
+            "--version",
+            "2026.07.26.1",
+            "--approval-file",
+            str(approval_path),
+            "--rollback-target",
+            "2026.07.25.1",
+        ],
+        resource_builder=lambda _settings: resources,
+    )
+
+    assert exit_code == 2
+    failure = json.loads(capsys.readouterr().err)
+    assert failure["status"] == "failed-closed"
+    assert "production release is BLOCKED" in failure["message"]
+    assert (
+        "NO_PRODUCTION_RUNTIME_CONSUMER_OR_LIVE_INFERENCE_SMOKE"
+        in failure["message"]
+    )
 
 
 def test_documented_package_contains_no_embedded_credentials() -> None:

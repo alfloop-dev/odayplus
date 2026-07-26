@@ -164,7 +164,8 @@ def test_ntpc_csv_parser_keeps_impossible_legacy_day_without_inventing_one() -> 
     record = batch.records[0]
     assert record.municipality == "新北市"
     assert record.authority_partition == "ntpc-real-estate-sales.csv"
-    assert record.source_variant_id.startswith("row-sha256:")
+    assert record.source_variant_id == "authority-natural:v1"
+    assert len(record.identity_fingerprint) == 64
     assert record.source_record_id == "RPOFFICIAL002"
     assert record.completion_date is None
     assert record.completion_year == 1965
@@ -200,7 +201,7 @@ def test_moi_identity_includes_authority_partition_for_reused_record_ids() -> No
     assert taipei.transaction_id != new_taipei.transaction_id
 
 
-def test_duplicate_provider_ids_use_authoritative_variant_or_fail_closed() -> None:
+def test_duplicate_provider_ids_preserve_corrections_or_fail_closed() -> None:
     payload = _csv_bytes(
         [
             list(NTPC_HEADERS),
@@ -216,12 +217,49 @@ def test_duplicate_provider_ids_use_authoritative_variant_or_fail_closed() -> No
     }
     assert len({record.transaction_id for record in batch.records}) == 2
 
-    duplicate = _ntpc_row(rps27="AMBIGUOUS-001", rps32="")
-    with pytest.raises(OfficialRealEstateSchemaDrift, match="identity remains ambiguous"):
+    original = _ntpc_row(
+        rps27="CORRECTED-001",
+        rps32="",
+        rps21_amountsunitdollars="16000000",
+        rps26="initial publication",
+    )
+    corrected = _ntpc_row(
+        rps27="CORRECTED-001",
+        rps32="",
+        rps21_amountsunitdollars="16500000",
+        rps26="non-key correction",
+    )
+    corrected_batch = parse_official_real_estate(
+        _artifact(
+            "ntpc",
+            _csv_bytes([list(NTPC_HEADERS), original, corrected]),
+        )
+    )
+    assert len(corrected_batch.records) == 2
+    assert len({record.transaction_id for record in corrected_batch.records}) == 1
+    assert {
+        record.source_variant_id for record in corrected_batch.records
+    } == {"authority-natural:v1"}
+    assert len(
+        {record.identity_fingerprint for record in corrected_batch.records}
+    ) == 1
+    assert len(
+        {record.raw_record_sha256 for record in corrected_batch.records}
+    ) == 2
+
+    conflicting = _ntpc_row(
+        rps27="CORRECTED-001",
+        rps32="",
+        rps02="新北市板橋區另一條路９９號",
+    )
+    with pytest.raises(
+        OfficialRealEstateSchemaDrift,
+        match="authority natural identity collision",
+    ):
         parse_official_real_estate(
             _artifact(
                 "ntpc",
-                _csv_bytes([list(NTPC_HEADERS), duplicate, duplicate]),
+                _csv_bytes([list(NTPC_HEADERS), original, conflicting]),
             )
         )
 
@@ -321,9 +359,11 @@ class _OutcomeClient:
 
     def query_one(
         self,
-        _sql: str,
-        _params: tuple[Any, ...] = (),
+        sql: str,
+        params: tuple[Any, ...] = (),
     ) -> dict[str, Any] | None:
+        if "to_regclass" in sql:
+            return {"relation": params[0]}
         return None
 
     def query(
@@ -342,7 +382,16 @@ def test_store_applies_atomic_upsert_with_raw_observation_provenance() -> None:
 
     assert result["status"] == "succeeded"
     assert result["parsed_row_count"] == 1
+    assert result["projection_row_count"] == 1
+    assert result["observation_row_count"] == 1
     assert result["inserted_row_count"] == 1
+    assert result["updated_row_count"] == 0
+    assert result["unchanged_row_count"] == 0
+    assert result["stale_row_count"] == 0
+    assert sum(
+        "pg_advisory_xact_lock" in sql
+        for sql, _params in client.executions
+    ) == 2
     assert any(
         "real_estate_transaction_observations" in sql and "CAST(? AS JSONB)" in sql
         for sql, _params in client.executions

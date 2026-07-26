@@ -94,6 +94,8 @@ class ModelSpec:
     event_column: str | None = None
     label_maturity_column: str | None = None
     scope_columns: tuple[str, ...] = ()
+    production_release_enabled: bool = True
+    production_block_reason: str | None = None
 
     @property
     def required_columns(self) -> tuple[str, ...]:
@@ -256,6 +258,10 @@ MODEL_SPECS: dict[str, ModelSpec] = {
             "binding fair-value approval, or time-on-market inference"
         ),
         risk_level="R4",
+        production_release_enabled=False,
+        production_block_reason=(
+            "NO_PRODUCTION_RUNTIME_CONSUMER_OR_LIVE_INFERENCE_SMOKE"
+        ),
     ),
     "sitescore": ModelSpec(
         key="sitescore",

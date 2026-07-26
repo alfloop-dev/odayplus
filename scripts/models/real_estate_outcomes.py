@@ -4,6 +4,7 @@ import argparse
 import json
 import os
 from collections.abc import Mapping
+from datetime import datetime
 from pathlib import Path
 from typing import Any, Protocol
 
@@ -62,18 +63,63 @@ class OfficialRealEstateOutcomeStore:
         self.client = client
         self.migration_path = migration_path
 
-    def install_schema(self) -> None:
+    def require_schema(self) -> None:
         sql = self.migration_path.read_text(encoding="utf-8")
         _validate_migration(sql)
-        self.client.execute(sql)
+        missing = []
+        for relation in (
+            "external_data.real_estate_ingestion_runs",
+            "external_data.real_estate_transactions",
+            "external_data.real_estate_transaction_observations",
+        ):
+            row = self.client.query_one(
+                "SELECT to_regclass(?) AS relation",
+                (relation,),
+            )
+            if not row or row.get("relation") is None:
+                missing.append(relation)
+        if missing:
+            raise OfficialRealEstateSourceError(
+                "official outcome schema is not migrated; run Alembic upgrade "
+                "before ingestion: " + ", ".join(missing)
+            )
 
     def upsert(self, batch: ParsedOfficialRealEstateBatch) -> Mapping[str, Any]:
         source = batch.artifact.source
+        self.require_schema()
+        source_order_at = (
+            batch.artifact.source_published_at or batch.artifact.fetched_at
+        )
+        projection_records: dict[str, OfficialRealEstateTransaction] = {}
+        for record in batch.records:
+            identity = str(record.transaction_id)
+            current = projection_records.get(identity)
+            if current is None or (
+                record.source_file,
+                record.source_row_number,
+            ) > (
+                current.source_file,
+                current.source_row_number,
+            ):
+                projection_records[identity] = record
+
         with self.client.transaction():
-            self.install_schema()
+            self.client.execute(
+                "SELECT pg_advisory_xact_lock(hashtextextended(?, 0))",
+                (f"oday-plus:official-real-estate:source:{source.source_id}",),
+            )
+            self.client.execute(
+                "SELECT pg_advisory_xact_lock(hashtextextended(?, 0))",
+                (
+                    "oday-plus:official-real-estate:snapshot:"
+                    f"{source.source_id}:{batch.source_snapshot_id}:{PARSER_VERSION}",
+                ),
+            )
             existing_run = self.client.query_one(
-                "SELECT status, parsed_row_count, inserted_row_count, "
-                "updated_row_count FROM external_data.real_estate_ingestion_runs "
+                "SELECT status, parsed_row_count, projection_row_count, "
+                "observation_row_count, inserted_row_count, updated_row_count, "
+                "unchanged_row_count, stale_row_count "
+                "FROM external_data.real_estate_ingestion_runs "
                 "WHERE run_id = ?",
                 (batch.run_id,),
             )
@@ -86,16 +132,24 @@ class OfficialRealEstateOutcomeStore:
                     "content_sha256": batch.artifact.content_sha256,
                     "schema_sha256": batch.schema_sha256,
                     "parsed_row_count": int(existing_run["parsed_row_count"]),
+                    "projection_row_count": int(existing_run["projection_row_count"]),
+                    "observation_row_count": int(
+                        existing_run["observation_row_count"]
+                    ),
                     "inserted_row_count": int(existing_run["inserted_row_count"]),
                     "updated_row_count": int(existing_run["updated_row_count"]),
+                    "unchanged_row_count": int(existing_run["unchanged_row_count"]),
+                    "stale_row_count": int(existing_run["stale_row_count"]),
                 }
             self.client.execute(
                 "INSERT INTO external_data.real_estate_ingestion_runs ("
                 "run_id, source_id, dataset_id, source_url, metadata_url, publisher, "
                 "license_id, parser_version, content_type, content_sha256, "
                 "schema_sha256, source_snapshot_id, content_length_bytes, etag, "
-                "source_published_at, fetched_at, status, parsed_row_count"
-                ") VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'RUNNING', ?) "
+                "source_published_at, fetched_at, source_order_at, status, "
+                "parsed_row_count, projection_row_count, observation_row_count"
+                ") VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, "
+                "'RUNNING', ?, ?, ?) "
                 "ON CONFLICT (run_id) DO UPDATE SET "
                 "status = 'RUNNING', error_code = NULL, error_message = NULL, "
                 "completed_at = NULL, updated_at = CURRENT_TIMESTAMP",
@@ -116,18 +170,18 @@ class OfficialRealEstateOutcomeStore:
                     batch.artifact.etag,
                     batch.artifact.source_published_at,
                     batch.artifact.fetched_at,
+                    source_order_at,
                     len(batch.records),
+                    0,
+                    0,
                 ),
             )
             existing_records = {
-                (
-                    str(row["authority_partition"]),
-                    str(row["source_record_id"]),
-                    str(row["source_variant_id"]),
-                ): str(row["raw_record_sha256"])
+                str(row["transaction_id"]): row
                 for row in self.client.query(
-                    "SELECT authority_partition, source_record_id, "
-                    "source_variant_id, raw_record_sha256 "
+                    "SELECT transaction_id, identity_fingerprint, "
+                    "raw_record_sha256, last_source_order_at, "
+                    "last_source_snapshot_id "
                     "FROM external_data.real_estate_transactions "
                     "WHERE source_id = ?",
                     (source.source_id,),
@@ -135,25 +189,69 @@ class OfficialRealEstateOutcomeStore:
             }
             inserted_count = 0
             updated_count = 0
-            for record in batch.records:
-                prior_digest = existing_records.get(
-                    (
-                        record.authority_partition,
-                        record.source_record_id,
-                        record.source_variant_id,
-                    )
-                )
-                if prior_digest is None:
+            unchanged_count = 0
+            stale_count = 0
+            for identity, record in projection_records.items():
+                prior = existing_records.get(identity)
+                if prior is None:
                     inserted_count += 1
-                elif prior_digest != record.raw_record_sha256:
+                    self._upsert_projection(
+                        batch,
+                        record,
+                        source_order_at=source_order_at,
+                    )
+                    continue
+                if str(prior["identity_fingerprint"]) != record.identity_fingerprint:
+                    raise OfficialRealEstateSourceError(
+                        "persisted authority natural identity fingerprint changed "
+                        f"for transaction {identity}"
+                    )
+                prior_order = _timestamp(prior["last_source_order_at"])
+                if source_order_at < prior_order:
+                    stale_count += 1
+                    continue
+                if source_order_at == prior_order:
+                    if (
+                        str(prior["last_source_snapshot_id"])
+                        == batch.source_snapshot_id
+                        and str(prior["raw_record_sha256"])
+                        == record.raw_record_sha256
+                    ):
+                        unchanged_count += 1
+                    else:
+                        stale_count += 1
+                    continue
+                if str(prior["raw_record_sha256"]) != record.raw_record_sha256:
                     updated_count += 1
-                self._upsert_record(batch, record)
+                else:
+                    unchanged_count += 1
+                self._upsert_projection(
+                    batch,
+                    record,
+                    source_order_at=source_order_at,
+                )
+            for record in batch.records:
+                self._insert_observation(
+                    batch,
+                    record,
+                    source_order_at=source_order_at,
+                )
             self.client.execute(
                 "UPDATE external_data.real_estate_ingestion_runs SET "
-                "status = 'SUCCEEDED', inserted_row_count = ?, updated_row_count = ?, "
+                "status = 'SUCCEEDED', projection_row_count = ?, "
+                "observation_row_count = ?, inserted_row_count = ?, "
+                "updated_row_count = ?, unchanged_row_count = ?, stale_row_count = ?, "
                 "completed_at = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP "
                 "WHERE run_id = ?",
-                (inserted_count, updated_count, batch.run_id),
+                (
+                    len(projection_records),
+                    len(batch.records),
+                    inserted_count,
+                    updated_count,
+                    unchanged_count,
+                    stale_count,
+                    batch.run_id,
+                ),
             )
         return {
             "status": "succeeded",
@@ -165,12 +263,16 @@ class OfficialRealEstateOutcomeStore:
             "content_sha256": batch.artifact.content_sha256,
             "schema_sha256": batch.schema_sha256,
             "parsed_row_count": len(batch.records),
+            "projection_row_count": len(projection_records),
+            "observation_row_count": len(batch.records),
             "inserted_row_count": inserted_count,
             "updated_row_count": updated_count,
+            "unchanged_row_count": unchanged_count,
+            "stale_row_count": stale_count,
         }
 
     def inventory(self) -> Mapping[str, Any]:
-        self.install_schema()
+        self.require_schema()
         source_rows = self.client.query(
             "SELECT source_id, count(*) AS transaction_count, "
             "min(transaction_date) AS transaction_min, "
@@ -192,32 +294,120 @@ class OfficialRealEstateOutcomeStore:
             "recent_runs": [_jsonable(row) for row in run_rows],
         }
 
-    def _upsert_record(
+    def _upsert_projection(
         self,
         batch: ParsedOfficialRealEstateBatch,
         record: OfficialRealEstateTransaction,
+        *,
+        source_order_at: Any,
     ) -> None:
+        columns = (
+            "transaction_id",
+            "source_id",
+            "authority_partition",
+            "source_record_id",
+            "source_variant_id",
+            "identity_fingerprint",
+            "municipality",
+            "district",
+            "transaction_target",
+            "address",
+            "transaction_date",
+            "transaction_count_summary",
+            "land_area_sqm",
+            "urban_land_use",
+            "non_urban_land_use",
+            "non_urban_land_designation",
+            "transferred_floor",
+            "total_floors",
+            "building_type",
+            "main_use",
+            "main_material",
+            "completion_date",
+            "completion_year",
+            "completion_month",
+            "building_area_sqm",
+            "room_count",
+            "hall_count",
+            "bathroom_count",
+            "has_partition",
+            "has_management",
+            "total_price_twd",
+            "unit_price_twd_sqm",
+            "parking_type",
+            "parking_area_sqm",
+            "parking_price_twd",
+            "remarks",
+            "main_building_area_sqm",
+            "auxiliary_building_area_sqm",
+            "balcony_area_sqm",
+            "has_elevator",
+            "transfer_number",
+            "first_seen_run_id",
+            "last_seen_run_id",
+            "last_source_snapshot_id",
+            "last_source_order_at",
+            "first_observed_at",
+            "last_observed_at",
+            "raw_record_sha256",
+        )
+        values = (
+            record.transaction_id,
+            record.source_id,
+            record.authority_partition,
+            record.source_record_id,
+            record.source_variant_id,
+            record.identity_fingerprint,
+            record.municipality,
+            record.district,
+            record.transaction_target,
+            record.address,
+            record.transaction_date,
+            record.transaction_count_summary,
+            record.land_area_sqm,
+            record.urban_land_use,
+            record.non_urban_land_use,
+            record.non_urban_land_designation,
+            record.transferred_floor,
+            record.total_floors,
+            record.building_type,
+            record.main_use,
+            record.main_material,
+            record.completion_date,
+            record.completion_year,
+            record.completion_month,
+            record.building_area_sqm,
+            record.room_count,
+            record.hall_count,
+            record.bathroom_count,
+            record.has_partition,
+            record.has_management,
+            record.total_price_twd,
+            record.unit_price_twd_sqm,
+            record.parking_type,
+            record.parking_area_sqm,
+            record.parking_price_twd,
+            record.remarks,
+            record.main_building_area_sqm,
+            record.auxiliary_building_area_sqm,
+            record.balcony_area_sqm,
+            record.has_elevator,
+            record.transfer_number,
+            batch.run_id,
+            batch.run_id,
+            batch.source_snapshot_id,
+            source_order_at,
+            batch.artifact.fetched_at,
+            batch.artifact.fetched_at,
+            record.raw_record_sha256,
+        )
+        placeholders = ", ".join("?" for _column in columns)
         self.client.execute(
             "INSERT INTO external_data.real_estate_transactions ("
-            "transaction_id, source_id, authority_partition, source_record_id, "
-            "source_variant_id, municipality, district, transaction_target, address, "
-            "transaction_date, transaction_count_summary, land_area_sqm, "
-            "urban_land_use, non_urban_land_use, non_urban_land_designation, "
-            "transferred_floor, total_floors, building_type, main_use, "
-            "main_material, completion_date, completion_year, completion_month, "
-            "building_area_sqm, room_count, hall_count, bathroom_count, "
-            "has_partition, has_management, total_price_twd, unit_price_twd_sqm, "
-            "parking_type, parking_area_sqm, parking_price_twd, remarks, "
-            "main_building_area_sqm, auxiliary_building_area_sqm, "
-            "balcony_area_sqm, has_elevator, transfer_number, first_seen_run_id, "
-            "last_seen_run_id, "
-            "first_observed_at, last_observed_at, raw_record_sha256"
-            ") VALUES ("
-            "?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, "
-            "?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, "
-            "?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, "
-            "?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?"
-            ") ON CONFLICT ("
+            + ", ".join(columns)
+            + ") VALUES ("
+            + placeholders
+            + ") ON CONFLICT ("
             "source_id, authority_partition, source_record_id, source_variant_id"
             ") "
             "DO UPDATE SET "
@@ -252,64 +442,36 @@ class OfficialRealEstateOutcomeStore:
             "has_elevator = EXCLUDED.has_elevator, "
             "transfer_number = EXCLUDED.transfer_number, "
             "last_seen_run_id = EXCLUDED.last_seen_run_id, "
-            "last_observed_at = EXCLUDED.last_observed_at, "
+            "last_source_snapshot_id = EXCLUDED.last_source_snapshot_id, "
+            "last_source_order_at = EXCLUDED.last_source_order_at, "
+            "last_observed_at = greatest("
+            "external_data.real_estate_transactions.last_observed_at, "
+            "EXCLUDED.last_observed_at), "
             "raw_record_sha256 = EXCLUDED.raw_record_sha256, "
-            "updated_at = CURRENT_TIMESTAMP",
-            (
-                record.transaction_id,
-                record.source_id,
-                record.authority_partition,
-                record.source_record_id,
-                record.source_variant_id,
-                record.municipality,
-                record.district,
-                record.transaction_target,
-                record.address,
-                record.transaction_date,
-                record.transaction_count_summary,
-                record.land_area_sqm,
-                record.urban_land_use,
-                record.non_urban_land_use,
-                record.non_urban_land_designation,
-                record.transferred_floor,
-                record.total_floors,
-                record.building_type,
-                record.main_use,
-                record.main_material,
-                record.completion_date,
-                record.completion_year,
-                record.completion_month,
-                record.building_area_sqm,
-                record.room_count,
-                record.hall_count,
-                record.bathroom_count,
-                record.has_partition,
-                record.has_management,
-                record.total_price_twd,
-                record.unit_price_twd_sqm,
-                record.parking_type,
-                record.parking_area_sqm,
-                record.parking_price_twd,
-                record.remarks,
-                record.main_building_area_sqm,
-                record.auxiliary_building_area_sqm,
-                record.balcony_area_sqm,
-                record.has_elevator,
-                record.transfer_number,
-                batch.run_id,
-                batch.run_id,
-                batch.artifact.fetched_at,
-                batch.artifact.fetched_at,
-                record.raw_record_sha256,
-            ),
+            "updated_at = CURRENT_TIMESTAMP "
+            "WHERE EXCLUDED.identity_fingerprint = "
+            "external_data.real_estate_transactions.identity_fingerprint "
+            "AND EXCLUDED.last_source_order_at > "
+            "external_data.real_estate_transactions.last_source_order_at",
+            values,
         )
+
+    def _insert_observation(
+        self,
+        batch: ParsedOfficialRealEstateBatch,
+        record: OfficialRealEstateTransaction,
+        *,
+        source_order_at: Any,
+    ) -> None:
         self.client.execute(
             "INSERT INTO external_data.real_estate_transaction_observations ("
             "run_id, transaction_id, source_id, authority_partition, "
             "source_record_id, source_variant_id, source_file, source_row_number, "
-            "raw_record_sha256, raw_fields, observed_at"
-            ") VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, CAST(? AS JSONB), ?) "
-            "ON CONFLICT (run_id, transaction_id) DO NOTHING",
+            "raw_record_sha256, raw_fields, observed_at, source_order_at, "
+            "source_snapshot_id"
+            ") VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, CAST(? AS JSONB), ?, ?, ?) "
+            "ON CONFLICT (run_id, transaction_id, source_file, source_row_number) "
+            "DO NOTHING",
             (
                 batch.run_id,
                 record.transaction_id,
@@ -327,6 +489,8 @@ class OfficialRealEstateOutcomeStore:
                     separators=(",", ":"),
                 ),
                 batch.artifact.fetched_at,
+                source_order_at,
+                batch.source_snapshot_id,
             ),
         )
 
@@ -338,9 +502,20 @@ def _validate_migration(sql: str) -> None:
         "CREATE TABLE IF NOT EXISTS external_data.real_estate_transaction_observations",
         "license_id = 'government-open-data-license-v1'",
         "content_sha256 ~ '^[0-9a-f]{64}$'",
+        "identity_fingerprint TEXT NOT NULL",
+        "last_source_order_at TIMESTAMPTZ NOT NULL",
+        "projection_row_count INTEGER NOT NULL",
+        "stale_row_count INTEGER NOT NULL",
         "raw_fields JSONB NOT NULL",
     )
     missing = [fragment for fragment in required if fragment not in sql]
+    normalized = " ".join(sql.split())
+    composite_lineage_fk = (
+        "FOREIGN KEY ( transaction_id, source_id, authority_partition, "
+        "source_record_id, source_variant_id )"
+    )
+    if composite_lineage_fk not in normalized:
+        missing.append(composite_lineage_fk)
     if missing:
         raise OfficialRealEstateSourceError(
             "official outcome migration is incomplete: " + ", ".join(missing)
@@ -477,6 +652,12 @@ def main(
 
 def _jsonable(row: Mapping[str, Any]) -> dict[str, Any]:
     return {str(key): value for key, value in row.items()}
+
+
+def _timestamp(value: Any) -> datetime:
+    if hasattr(value, "tzinfo"):
+        return value
+    return datetime.fromisoformat(str(value).replace("Z", "+00:00"))
 
 
 if __name__ == "__main__":

@@ -18,7 +18,7 @@ from .contracts import (
 MODEL_READY_SQL_PATH = Path(__file__).with_name("sql") / "model_ready_views.sql"
 MODEL_READY_CONTRACT_VERSION = "2026-07-26.1"
 
-PREREQUISITE_COLUMNS: Mapping[str, tuple[str, ...]] = {
+REQUIRED_PREREQUISITE_COLUMNS: Mapping[str, tuple[str, ...]] = {
     "core.transactions": (
         "transaction_id",
         "store_id",
@@ -42,6 +42,9 @@ PREREQUISITE_COLUMNS: Mapping[str, tuple[str, ...]] = {
         "status",
         "finished_at",
     ),
+}
+
+OPTIONAL_PREREQUISITE_COLUMNS: Mapping[str, tuple[str, ...]] = {
     "external_data.real_estate_transactions": (
         "transaction_id",
         "source_id",
@@ -80,6 +83,11 @@ PREREQUISITE_COLUMNS: Mapping[str, tuple[str, ...]] = {
     ),
 }
 
+PREREQUISITE_COLUMNS: Mapping[str, tuple[str, ...]] = {
+    **REQUIRED_PREREQUISITE_COLUMNS,
+    **OPTIONAL_PREREQUISITE_COLUMNS,
+}
+
 
 class ModelReadyViewInstallError(RuntimeError):
     """Raised when model-ready views cannot be installed as a bound contract."""
@@ -107,10 +115,19 @@ class InstallationClient(Protocol):
 class ModelReadyViewPreflight:
     missing_relations: tuple[str, ...]
     missing_columns: Mapping[str, tuple[str, ...]]
+    optional_missing_relations: tuple[str, ...]
+    optional_missing_columns: Mapping[str, tuple[str, ...]]
 
     @property
     def ready(self) -> bool:
         return not self.missing_relations and not self.missing_columns
+
+    @property
+    def official_outcomes_ready(self) -> bool:
+        return (
+            not self.optional_missing_relations
+            and not self.optional_missing_columns
+        )
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -122,6 +139,13 @@ class ModelReadyViewPreflight:
                 relation: list(columns)
                 for relation, columns in sorted(self.missing_columns.items())
             },
+            "optional_missing_relations": list(self.optional_missing_relations),
+            "optional_missing_columns": {
+                relation: list(columns)
+                for relation, columns in sorted(
+                    self.optional_missing_columns.items()
+                )
+            },
             "forecast_source": "core.transactions",
             "optional_outcome_models": {
                 "avm": {
@@ -129,10 +153,10 @@ class ModelReadyViewPreflight:
                     "reason": "MATURE_REALIZED_TRANSACTION_OUTCOME_RELATION_MISSING",
                 },
                 "listing_property_avm": {
-                    "trainable": self.ready,
+                    "trainable": self.official_outcomes_ready,
                     "reason": (
                         None
-                        if self.ready
+                        if self.official_outcomes_ready
                         else "OFFICIAL_REAL_ESTATE_OUTCOME_RELATION_MISSING"
                     ),
                 },
@@ -163,9 +187,26 @@ class ModelReadyViewInstaller:
         self.sql_path = sql_path
 
     def preflight(self) -> ModelReadyViewPreflight:
+        required_missing_relations, required_missing_columns = (
+            self._inspect_prerequisites(REQUIRED_PREREQUISITE_COLUMNS)
+        )
+        optional_missing_relations, optional_missing_columns = (
+            self._inspect_prerequisites(OPTIONAL_PREREQUISITE_COLUMNS)
+        )
+        return ModelReadyViewPreflight(
+            missing_relations=required_missing_relations,
+            missing_columns=required_missing_columns,
+            optional_missing_relations=optional_missing_relations,
+            optional_missing_columns=optional_missing_columns,
+        )
+
+    def _inspect_prerequisites(
+        self,
+        requirements: Mapping[str, tuple[str, ...]],
+    ) -> tuple[tuple[str, ...], Mapping[str, tuple[str, ...]]]:
         missing_relations: list[str] = []
         missing_columns: dict[str, tuple[str, ...]] = {}
-        for relation, required_columns in PREREQUISITE_COLUMNS.items():
+        for relation, required_columns in requirements.items():
             row = self.client.query_one(
                 "SELECT to_regclass(?) AS relation",
                 (relation,),
@@ -186,10 +227,7 @@ class ModelReadyViewInstaller:
             )
             if missing:
                 missing_columns[relation] = missing
-        return ModelReadyViewPreflight(
-            missing_relations=tuple(missing_relations),
-            missing_columns=missing_columns,
-        )
+        return tuple(missing_relations), missing_columns
 
     def install(self) -> dict[str, Any]:
         preflight = self.preflight()
@@ -276,18 +314,35 @@ class ModelReadyViewInstaller:
             raise ModelReadyViewInstallError(
                 "DealRoom AVM contract did not remain fail-closed"
             )
-        if (
+        if preflight.official_outcomes_ready:
+            if (
+                not listing_property_avm
+                or listing_property_avm.get("view_version")
+                != "listing-property-valuation-view-v1"
+                or listing_property_avm.get("contract_state") != "ACTIVE"
+                or listing_property_avm.get("training_enabled") is not True
+                or listing_property_avm.get("installer_sha256") != digest
+                or not listing_property_relation
+                or listing_property_relation.get("relation") is None
+            ):
+                raise ModelReadyViewInstallError(
+                    "listing-property valuation view did not satisfy the "
+                    "registered contract"
+                )
+        elif (
             not listing_property_avm
-            or listing_property_avm.get("view_version")
-            != "listing-property-valuation-view-v1"
-            or listing_property_avm.get("contract_state") != "ACTIVE"
-            or listing_property_avm.get("training_enabled") is not True
+            or listing_property_avm.get("contract_state") != "BLOCKED"
+            or listing_property_avm.get("training_enabled") is not False
+            or listing_property_avm.get("blocked_reason")
+            != "OFFICIAL_REAL_ESTATE_OUTCOME_RELATION_MISSING"
             or listing_property_avm.get("installer_sha256") != digest
-            or not listing_property_relation
-            or listing_property_relation.get("relation") is None
+            or (
+                listing_property_relation
+                and listing_property_relation.get("relation") is not None
+            )
         ):
             raise ModelReadyViewInstallError(
-                "listing-property valuation view did not satisfy the registered contract"
+                "missing optional official outcomes did not remain fail-closed"
             )
         if (
             not liquidity
@@ -310,7 +365,7 @@ class ModelReadyViewInstaller:
             "avm_liquidity": dict(liquidity),
             "optional_outcome_models_trainable": {
                 "avm": False,
-                "listing_property_avm": True,
+                "listing_property_avm": preflight.official_outcomes_ready,
                 "sitescore": False,
                 "heatzone": False,
                 "avm-liquidity": False,

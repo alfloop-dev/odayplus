@@ -5,6 +5,7 @@ import hashlib
 import io
 import json
 import re
+import unicodedata
 import zipfile
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass, replace
@@ -194,6 +195,7 @@ class OfficialRealEstateTransaction:
     authority_partition: str
     source_record_id: str
     source_variant_id: str
+    identity_fingerprint: str
     municipality: str
     district: str
     transaction_target: str
@@ -538,6 +540,7 @@ def _transaction_from_row(
         authority_partition=source_file,
         source_record_id=source_record_id,
         source_variant_id="primary",
+        identity_fingerprint="",
         municipality=municipality,
         district=district,
         transaction_target=transaction_target,
@@ -591,35 +594,40 @@ def _resolve_source_identities(
     records: list[OfficialRealEstateTransaction],
 ) -> list[OfficialRealEstateTransaction]:
     resolved: list[OfficialRealEstateTransaction] = []
-    seen: set[tuple[str, str, str, str]] = set()
+    seen: dict[tuple[str, str, str, str], str] = {}
     for record in records:
         if record.source_id == SOURCES["moi"].source_id:
             variant = "primary"
         else:
-            # The NTPC feed currently reuses some provider record IDs. Prefer
-            # its transfer number; retain a content-addressed row when absent.
+            # rps27 is the authority's durable record identity. Transfer number
+            # disambiguates genuine multi-transfer rows when it is present.
+            # Without it, keep one stable natural identity and preserve later
+            # corrections as observations rather than creating new sales.
             variant = (
-                f"transfer:{record.transfer_number}"
+                f"transfer:{_identity_text(record.transfer_number)}"
                 if record.transfer_number
-                else f"row-sha256:{record.raw_record_sha256}"
+                else "authority-natural:v1"
             )
+        fingerprint = _identity_fingerprint(record)
         key = (
             record.source_id,
             record.authority_partition,
             record.source_record_id,
             variant,
         )
-        if key in seen:
+        prior_fingerprint = seen.get(key)
+        if prior_fingerprint is not None and prior_fingerprint != fingerprint:
             raise OfficialRealEstateSchemaDrift(
-                "source identity remains ambiguous after authority-partition "
-                "and row-checksum resolution"
+                "authority natural identity collision: the same source record "
+                "changed transaction date, address, or transaction target"
             )
-        seen.add(key)
+        seen[key] = fingerprint
         resolved.append(
             replace(
                 record,
                 transaction_id=_transaction_id(record, variant),
                 source_variant_id=variant,
+                identity_fingerprint=fingerprint,
             )
         )
     return resolved
@@ -636,6 +644,21 @@ def _transaction_id(
             f"{record.source_record_id}:{source_variant_id}"
         ),
     )
+
+
+def _identity_fingerprint(record: OfficialRealEstateTransaction) -> str:
+    payload = (
+        record.transaction_date.isoformat(),
+        _identity_text(record.address),
+        _identity_text(record.transaction_target),
+    )
+    return hashlib.sha256(
+        json.dumps(payload, ensure_ascii=False, separators=(",", ":")).encode()
+    ).hexdigest()
+
+
+def _identity_text(value: str | None) -> str:
+    return " ".join(unicodedata.normalize("NFKC", value or "").split())
 
 
 def _validate_moi_schema(payload: bytes) -> None:

@@ -24,18 +24,35 @@ CREATE TABLE IF NOT EXISTS external_data.real_estate_ingestion_runs (
     etag TEXT,
     source_published_at TIMESTAMPTZ,
     fetched_at TIMESTAMPTZ NOT NULL,
+    source_order_at TIMESTAMPTZ NOT NULL,
     status TEXT NOT NULL CHECK (status IN ('RUNNING', 'SUCCEEDED', 'FAILED')),
     parsed_row_count INTEGER NOT NULL DEFAULT 0 CHECK (
         parsed_row_count >= 0
         AND parsed_row_count <= 250000
     ),
+    projection_row_count INTEGER NOT NULL DEFAULT 0 CHECK (
+        projection_row_count >= 0
+        AND projection_row_count <= parsed_row_count
+    ),
+    observation_row_count INTEGER NOT NULL DEFAULT 0 CHECK (
+        observation_row_count >= 0
+        AND observation_row_count <= parsed_row_count
+    ),
     inserted_row_count INTEGER NOT NULL DEFAULT 0 CHECK (
         inserted_row_count >= 0
-        AND inserted_row_count <= parsed_row_count
+        AND inserted_row_count <= projection_row_count
     ),
     updated_row_count INTEGER NOT NULL DEFAULT 0 CHECK (
         updated_row_count >= 0
-        AND updated_row_count <= parsed_row_count
+        AND updated_row_count <= projection_row_count
+    ),
+    unchanged_row_count INTEGER NOT NULL DEFAULT 0 CHECK (
+        unchanged_row_count >= 0
+        AND unchanged_row_count <= projection_row_count
+    ),
+    stale_row_count INTEGER NOT NULL DEFAULT 0 CHECK (
+        stale_row_count >= 0
+        AND stale_row_count <= projection_row_count
     ),
     error_code TEXT,
     error_message TEXT,
@@ -80,6 +97,21 @@ CREATE TABLE IF NOT EXISTS external_data.real_estate_ingestion_runs (
     CHECK (
         (status = 'FAILED' AND error_code IS NOT NULL AND completed_at IS NOT NULL)
         OR status <> 'FAILED'
+    ),
+    CHECK (
+        inserted_row_count
+        + updated_row_count
+        + unchanged_row_count
+        + stale_row_count
+        = projection_row_count
+    ),
+    CHECK (
+        source_published_at IS NULL
+        OR source_order_at = source_published_at
+    ),
+    CHECK (
+        source_published_at IS NOT NULL
+        OR source_order_at = fetched_at
     )
 );
 
@@ -94,6 +126,9 @@ CREATE TABLE IF NOT EXISTS external_data.real_estate_transactions (
     authority_partition TEXT NOT NULL CHECK (authority_partition <> ''),
     source_record_id TEXT NOT NULL CHECK (source_record_id <> ''),
     source_variant_id TEXT NOT NULL CHECK (source_variant_id <> ''),
+    identity_fingerprint TEXT NOT NULL CHECK (
+        identity_fingerprint ~ '^[0-9a-f]{64}$'
+    ),
     municipality TEXT NOT NULL,
     district TEXT NOT NULL,
     transaction_target TEXT NOT NULL,
@@ -151,6 +186,8 @@ CREATE TABLE IF NOT EXISTS external_data.real_estate_transactions (
         external_data.real_estate_ingestion_runs(run_id),
     last_seen_run_id UUID NOT NULL REFERENCES
         external_data.real_estate_ingestion_runs(run_id),
+    last_source_snapshot_id TEXT NOT NULL,
+    last_source_order_at TIMESTAMPTZ NOT NULL,
     first_observed_at TIMESTAMPTZ NOT NULL,
     last_observed_at TIMESTAMPTZ NOT NULL,
     raw_record_sha256 TEXT NOT NULL CHECK (
@@ -159,6 +196,13 @@ CREATE TABLE IF NOT EXISTS external_data.real_estate_transactions (
     created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
     UNIQUE (
+        source_id,
+        authority_partition,
+        source_record_id,
+        source_variant_id
+    ),
+    UNIQUE (
+        transaction_id,
         source_id,
         authority_partition,
         source_record_id,
@@ -177,8 +221,7 @@ COMMENT ON TABLE external_data.real_estate_transactions IS
 CREATE TABLE IF NOT EXISTS external_data.real_estate_transaction_observations (
     run_id UUID NOT NULL REFERENCES
         external_data.real_estate_ingestion_runs(run_id) ON DELETE RESTRICT,
-    transaction_id UUID NOT NULL REFERENCES
-        external_data.real_estate_transactions(transaction_id) ON DELETE RESTRICT,
+    transaction_id UUID NOT NULL,
     source_id TEXT NOT NULL,
     authority_partition TEXT NOT NULL CHECK (authority_partition <> ''),
     source_record_id TEXT NOT NULL CHECK (source_record_id <> ''),
@@ -190,15 +233,24 @@ CREATE TABLE IF NOT EXISTS external_data.real_estate_transaction_observations (
     ),
     raw_fields JSONB NOT NULL CHECK (jsonb_typeof(raw_fields) = 'object'),
     observed_at TIMESTAMPTZ NOT NULL,
+    source_order_at TIMESTAMPTZ NOT NULL,
+    source_snapshot_id TEXT NOT NULL CHECK (source_snapshot_id <> ''),
     created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    PRIMARY KEY (run_id, transaction_id),
+    PRIMARY KEY (
+        run_id,
+        transaction_id,
+        source_file,
+        source_row_number
+    ),
     FOREIGN KEY (
+        transaction_id,
         source_id,
         authority_partition,
         source_record_id,
         source_variant_id
     )
         REFERENCES external_data.real_estate_transactions(
+            transaction_id,
             source_id,
             authority_partition,
             source_record_id,
@@ -232,4 +284,9 @@ CREATE INDEX IF NOT EXISTS idx_real_estate_observations_record
         source_record_id,
         source_variant_id,
         observed_at DESC
+    );
+CREATE INDEX IF NOT EXISTS idx_real_estate_observations_snapshot
+    ON external_data.real_estate_transaction_observations(
+        source_snapshot_id,
+        source_order_at DESC
     );

@@ -231,6 +231,12 @@ FROM point_in_time;
 COMMENT ON VIEW model_ready.forecast_training_view IS
     'v2: tenant/store daily revenue labels from core.transactions; all features use only prior dates.';
 
+DO $official_outcome_view$
+BEGIN
+    IF to_regclass('external_data.real_estate_transactions') IS NOT NULL
+       AND to_regclass('external_data.real_estate_ingestion_runs') IS NOT NULL
+    THEN
+        EXECUTE $listing_property_view$
 CREATE OR REPLACE VIEW model_ready.listing_property_valuation_view AS
 WITH ranked_official_sales AS (
     SELECT
@@ -368,9 +374,18 @@ SELECT
         ELSE NULL
     END AS exclusion_reason
 FROM official_sale_features;
+$listing_property_view$;
 
+        EXECUTE $listing_property_comment$
 COMMENT ON VIEW model_ready.listing_property_valuation_view IS
-    'v1: official MOI/NTPC property-sale research outcomes; not the DealRoom AVM runtime contract.';
+    'v1: official MOI/NTPC property-sale research outcomes; not the DealRoom AVM runtime contract.'
+$listing_property_comment$;
+    ELSE
+        EXECUTE
+            'DROP VIEW IF EXISTS model_ready.listing_property_valuation_view';
+    END IF;
+END
+$official_outcome_view$;
 
 INSERT INTO model_ready.view_contracts (
     relation_name,
@@ -411,13 +426,31 @@ INSERT INTO model_ready.view_contracts (
         'model_ready.listing_property_valuation_view',
         'listing_property_valuation_view',
         'listing-property-valuation-view-v1',
-        ARRAY[
-            'external_data.real_estate_transactions',
-            'external_data.real_estate_ingestion_runs'
-        ],
-        'ACTIVE',
-        TRUE,
-        NULL,
+        CASE
+            WHEN to_regclass('external_data.real_estate_transactions') IS NOT NULL
+             AND to_regclass('external_data.real_estate_ingestion_runs') IS NOT NULL
+            THEN ARRAY[
+                'external_data.real_estate_transactions',
+                'external_data.real_estate_ingestion_runs'
+            ]
+            ELSE ARRAY[]::text[]
+        END,
+        CASE
+            WHEN to_regclass('external_data.real_estate_transactions') IS NOT NULL
+             AND to_regclass('external_data.real_estate_ingestion_runs') IS NOT NULL
+            THEN 'ACTIVE'
+            ELSE 'BLOCKED'
+        END,
+        (
+            to_regclass('external_data.real_estate_transactions') IS NOT NULL
+            AND to_regclass('external_data.real_estate_ingestion_runs') IS NOT NULL
+        ),
+        CASE
+            WHEN to_regclass('external_data.real_estate_transactions') IS NOT NULL
+             AND to_regclass('external_data.real_estate_ingestion_runs') IS NOT NULL
+            THEN NULL
+            ELSE 'OFFICIAL_REAL_ESTATE_OUTCOME_RELATION_MISSING'
+        END,
         CURRENT_TIMESTAMP
     ),
     (
@@ -444,10 +477,7 @@ INSERT INTO model_ready.view_contracts (
         'model_ready.avm_liquidity_training_view',
         'avm_liquidity_training_view',
         'avm-liquidity-training-view-v1',
-        ARRAY[
-            'external_data.real_estate_transactions',
-            'external_data.real_estate_ingestion_runs'
-        ],
+        ARRAY[]::text[],
         'BLOCKED',
         FALSE,
         'OFFICIAL_SALE_OUTCOME_HAS_NO_MARKETING_INTERVAL',

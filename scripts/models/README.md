@@ -48,12 +48,45 @@ mature realized outcomes. `listing_property_avm` is a separate research
 training contract over official MOI/NTPC property-sale outcomes. Its
 municipality/area/building features are not compatible with the DealRoom
 `dealroom_avm` runtime contract and do not satisfy platform model readiness.
+It may produce bounded training and backtest artifacts, but production
+promotion is explicitly blocked with
+`NO_PRODUCTION_RUNTIME_CONSUMER_OR_LIVE_INFERENCE_SMOKE` until a compatible
+runtime consumer and live inference smoke contract are committed.
 HeatZone additionally requires point-in-time geo feature history so later POI,
 competitor, listing, or store updates cannot leak into older training rows.
 The installer registers each missing contract as `BLOCKED` and does not create
 an empty or inferred outcome view. `asset.valuation_runs`, SiteScore
 recommendations, fixture constants, and current predictions are not accepted
 as labels.
+
+## Official NTPC identity and replay
+
+The 2026-07-26 NTPC authority snapshot contains 50,665 rows. Of those, 36,502
+omit `rps32` (transfer number). The stable fallback identity is:
+
+```text
+(source_id, authority_partition, rps27, authority-natural:v1)
+```
+
+The 36,502 affected rows contain 36,500 distinct `rps27` values. The two
+repeated IDs account for four source rows; each pair has the same normalized
+transaction date, address, and transaction target while price, area, parking
+count, or remarks differ. They are treated as authority corrections to one
+transaction, not four sales. Every source row remains an immutable observation;
+the last authority row in the snapshot is the current projection.
+
+A SHA-256 fingerprint of NFKC-normalized transaction date, address, and target
+detects true natural-key collisions without putting mutable price, area,
+parking, room, or remarks fields into identity. A fingerprint conflict fails
+closed. Newer source snapshots update the projection; older or equal-order
+snapshots retain observation evidence but cannot replace values or
+`last_seen_run_id`. Source and snapshot advisory locks plus the deterministic
+run ID make concurrent replay return one stable receipt and one set of counters.
+
+The outcome schema is revision `0003` in the Alembic chain. Backfill does not
+install DDL; run `alembic -c infra/db/migrations/alembic.ini upgrade head`
+first. Forecast view installation remains independent: missing official
+outcome tables leave only `listing_property_avm` blocked.
 
 ## Runtime inputs
 
