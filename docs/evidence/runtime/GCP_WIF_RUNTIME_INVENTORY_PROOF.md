@@ -366,4 +366,3 @@ git diff --check origin/dev
 - [x] **Required Cloud Run/SQL/GCS/MLflow/provider resources are inventoried**: Fully inventoried matching Terraform HCL definitions.
 - [x] **No long-lived GCP_SA_KEY is introduced**: WIF is strictly enforced, `GCP_SA_KEY` fallback removed from `.github/workflows/deploy-dev.yml`.
 - [x] **Exact commands and redacted evidence are committed**: Captured in `docs/evidence/runtime/GCP_WIF_RUNTIME_INVENTORY_PROOF.md`.
-
