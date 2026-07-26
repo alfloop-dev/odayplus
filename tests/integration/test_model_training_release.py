@@ -401,7 +401,7 @@ def test_production_training_settings_fail_closed_on_local_or_placeholder(
         ProductionTrainingSettings.from_environment()
 
 
-def test_model_ready_sql_is_real_causal_and_blocks_missing_outcomes() -> None:
+def test_model_ready_sql_is_real_causal_and_activates_supported_outcomes() -> None:
     sql = MODEL_READY_SQL_PATH.read_text(encoding="utf-8")
     lowered = sql.lower()
     assert "from core.transactions as txn" in lowered
@@ -421,12 +421,21 @@ def test_model_ready_sql_is_real_causal_and_blocks_missing_outcomes() -> None:
     assert "store_id" in lowered
     assert "forecast-training-view-v2" in lowered
     assert "mature_realized_transaction_outcome_relation_missing" in lowered
-    assert "mature_candidate_site_outcome_relation_missing" in lowered
-    assert "point_in_time_geo_outcome_relation_missing" in lowered
     assert "mature_liquidity_event_relation_missing" in lowered
+    assert "create or replace view model_ready.candidate_site_view" in lowered
+    assert "candidate-site-view-v2" in lowered
+    assert "realized_90d_net_revenue" in lowered
+    assert "anchor.feature_cutoff_time - interval '90 days'" in lowered
+    assert "source_txn.event_time < anchor.feature_cutoff_time" in lowered
+    assert "create or replace view model_ready.heatzone_training_view" in lowered
+    assert "heatzone-training-view-v2" in lowered
+    assert "realized_28d_cell_net_revenue" in lowered
+    assert "origin.feature_cutoff_time - interval '90 days'" in lowered
+    assert "source_txn.event_time < origin.feature_cutoff_time" in lowered
+    assert "source_txn.event_time >= origin.feature_cutoff_time" in lowered
+    assert "count(distinct day.partition_date)" in lowered
+    assert "identity_available_at < feature_cutoff_time" in lowered
     assert "create or replace view model_ready.valuation_view" not in lowered
-    assert "create or replace view model_ready.candidate_site_view" not in lowered
-    assert "create or replace view model_ready.heatzone_training_view" not in lowered
     assert "create or replace view model_ready.avm_liquidity_training_view" not in lowered
     assert "asset.valuation_runs" not in lowered
     assert "expansion.site_score_runs" not in lowered
@@ -528,40 +537,50 @@ def test_model_ready_inventory_reports_missing_realized_labels() -> None:
     assert inventory.labeled_row_count == 0
 
 
-def test_model_ready_inventory_reports_outcome_contract_block() -> None:
+def test_sitescore_model_spec_binds_real_opened_store_outcome_contract() -> None:
     spec = MODEL_SPECS["sitescore"]
-    inventory = PostgresModelReadySource(
-        FakeQueryClient(
-            columns=spec.required_columns,
-            contract_trainable=False,
-            contract_version=spec.expected_view_version,
-            blocked_reason="MATURE_CANDIDATE_SITE_OUTCOME_RELATION_MISSING",
-        )
-    ).inventory(spec)
-    assert not inventory.ready
-    assert not inventory.contract_trainable
-    assert (
-        inventory.blocked_reason
-        == "MATURE_CANDIDATE_SITE_OUTCOME_RELATION_MISSING"
+    assert spec.expected_view_version == "candidate-site-view-v2"
+    assert spec.label_column == "realized_90d_net_revenue"
+    assert spec.temporal_column == "opened_on"
+    assert spec.label_maturity_column == "label_maturity_time"
+    assert spec.segment_column == "target_format_code"
+    assert {
+        "tenant_id",
+        "store_id",
+        "h3_index",
+        "prior_90d_cell_net_revenue",
+        "prior_90d_cell_transaction_count",
+        "prior_90d_cell_store_count",
+    } <= set(spec.required_columns)
+    assert {"rent_amount", "area_ping", "frontage_m", "rent_per_ping"}.isdisjoint(
+        spec.required_columns
     )
-    assert inventory.to_dict()["ready"] is False
 
 
-def test_heatzone_trainer_is_registered_but_point_in_time_data_fails_closed() -> None:
+def test_heatzone_model_spec_binds_real_point_in_time_cell_outcome_contract() -> None:
     spec = MODEL_SPECS["heatzone"]
-    inventory = PostgresModelReadySource(
-        FakeQueryClient(
-            columns=spec.required_columns,
-            contract_trainable=False,
-            contract_version=spec.expected_view_version,
-            blocked_reason="POINT_IN_TIME_GEO_OUTCOME_RELATION_MISSING",
-        )
-    ).inventory(spec)
-
     assert spec.algorithm == "catboost_regressor"
     assert spec.model_name == "heatzone_priority"
-    assert not inventory.ready
-    assert inventory.blocked_reason == "POINT_IN_TIME_GEO_OUTCOME_RELATION_MISSING"
+    assert spec.expected_view_version == "heatzone-training-view-v2"
+    assert spec.label_column == "realized_28d_cell_net_revenue"
+    assert spec.temporal_column == "origin_date"
+    assert spec.label_maturity_column == "label_maturity_time"
+    assert spec.segment_column == "h3_index"
+    assert {
+        "tenant_id",
+        "h3_index",
+        "prior_28d_cell_net_revenue",
+        "prior_90d_cell_net_revenue",
+        "prior_28d_transaction_count",
+        "prior_90d_transaction_count",
+        "prior_90d_transaction_days",
+    } <= set(spec.required_columns)
+    assert {
+        "poi_count",
+        "competitor_count",
+        "active_listing_count",
+        "median_listing_rent",
+    }.isdisjoint(spec.required_columns)
 
 
 def test_postgres_source_uses_bounded_ordered_query() -> None:
