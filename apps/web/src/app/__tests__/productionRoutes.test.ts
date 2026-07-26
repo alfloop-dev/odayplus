@@ -10,7 +10,6 @@ const API_BOUND_ROUTES = [
   "expansion/page.tsx",
   "franchisee/page.tsx",
   "interventions/page.tsx",
-  "intake/[intakeId]/page.tsx",
   "learning/page.tsx",
   "netplan/page.tsx",
   "notifications/page.tsx",
@@ -57,7 +56,10 @@ describe("production API route rendering", () => {
       "utf8",
     );
 
-    expect(source).toContain("<ExpansionWorkspace");
+    expect(source).toContain("<OperatorConsole");
+    expect(source).toContain('export const dynamic = "force-dynamic"');
+    expect(source).toContain('ws: "network"');
+    expect(source).toContain('tab: "radar"');
     expect(source).toContain('dialog: "detail"');
     expect(source).toContain("selected: intakeId");
     expect(source).not.toContain("redirect(");

@@ -79,6 +79,7 @@ export type NetworkFindAreasWorkspaceProps = {
   rebalanceStores?: RebalanceStore[];
   selectedHeatZoneId?: string;
   activeLens?: NetworkFindAreasLens;
+  initialTabId?: string;
   trackedHeatZoneIds?: string[];
   /**
    * Active operator console role. Binds the Network Review read/decide security
@@ -464,6 +465,7 @@ export function NetworkFindAreasWorkspace({
   callbacks,
   candidates: candidatesInput,
   heatZones: heatZonesInput,
+  initialTabId,
   listings: listingsInput,
   listingSources: listingSourcesInput,
   rebalanceStores: rebalanceStoresInput,
@@ -491,7 +493,9 @@ export function NetworkFindAreasWorkspace({
   const [localTrackedIds, setLocalTrackedIds] = useState(
     () => new Set(trackedHeatZoneIds ?? (fixturesAllowed ? ["HZ-01"] : [])),
   );
-  const activeTab = parseNetworkTabIndex(searchParams);
+  const activeTab = searchParams.get("tab")
+    ? parseNetworkTabIndex(searchParams)
+    : parseNetworkTabIndex(`tab=${initialTabId ?? ""}`);
   const [networkSnapshot, setNetworkSnapshot] = useState<NetworkListingsSnapshot | null>(null);
   const [networkApiError, setNetworkApiError] = useState<string | null>(null);
   const [networkLoadState, setNetworkLoadState] = useState<OperatorDataAvailability>(

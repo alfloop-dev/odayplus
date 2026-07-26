@@ -15,9 +15,11 @@ import type {
   TransitionReceipt,
 } from "@oday-plus/openapi-client";
 import { DurableReceiptPanel } from "./DurableReceiptPanel";
+import { AssignmentSlaSummary } from "./AssignmentSlaSummary";
 import { EvidencePanel } from "./EvidencePanel";
 import styles from "./intake.module.css";
 import { IntakeDialogShell } from "./IntakeDialogShell";
+import { AssistedEntryForm } from "./IntakeDetailDialog";
 import { IntakeErrorRecovery } from "./IntakeErrorRecovery";
 import type { IntakeApiError } from "./intakeClient";
 import { IntakeStageTimeline } from "./IntakeStageTimeline";
@@ -60,6 +62,11 @@ export type IntakeProcessingDetailProps = {
   slaReceipt?: SlaReceipt;
   correctionReceipts?: CorrectionReceipt[];
   onClose: () => void;
+  onAssistedEntrySave?: (input: {
+    fields: Record<string, string>;
+    riskSummary: string;
+    riskAcknowledged: boolean;
+  }) => void;
   onDecide?: (kind: IntakeDecisionKind) => void;
   onOpenFix?: (fieldKey: string) => void;
   onRetry?: (overrides?: { overrideRetryBudget?: boolean; riskAcknowledged?: boolean }) => void;
@@ -110,6 +117,7 @@ export function IntakeProcessingDetail({
   slaReceipt,
   correctionReceipts = [],
   onClose,
+  onAssistedEntrySave,
   onDecide,
   onOpenFix,
   onRetry,
@@ -356,15 +364,32 @@ export function IntakeProcessingDetail({
 
         {/* Tab 1: Timeline */}
         {activeTab === "timeline" && (
-          <IntakeStageTimeline
-            record={record}
-            history={history}
-            jobs={jobs}
-            sla={sla}
-            canReplay={canReplay}
-            onReplayJob={onReplayDlq}
-            onCancel={onCancel}
-          />
+          <>
+            {record.stage === "AWAITING_ASSISTED_ENTRY" && onAssistedEntrySave ? (
+              <AssistedEntryForm
+                busy={busy}
+                canEdit={canCorrect}
+                onSave={onAssistedEntrySave}
+              />
+            ) : null}
+            <AssignmentSlaSummary
+              busy={busy}
+              onClaim={onClaimAssignment}
+              onOpenPause={onOpenPause}
+              onOpenTransfer={onOpenTransfer}
+              onResume={onResumeSla}
+              record={record}
+            />
+            <IntakeStageTimeline
+              record={record}
+              history={history}
+              jobs={jobs}
+              sla={sla}
+              canReplay={canReplay}
+              onReplayJob={onReplayDlq}
+              onCancel={onCancel}
+            />
+          </>
         )}
 
         {/* Tab 2: Evidence */}

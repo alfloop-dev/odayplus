@@ -161,6 +161,12 @@ function ProductionExpansionWorkspace({
           <ProductionNetworkListings
             activeRoleId={resolveIntakeRole(searchParams)}
             binding={liveNetwork}
+            initialDialog={
+              selectedFromQuery(searchParams.dialog) === "detail"
+                ? "detail"
+                : undefined
+            }
+            initialSelectedId={selectedFromQuery(searchParams.selected)}
             selectedHeatZoneId={selectedFromQuery(searchParams.heatZone)}
           />
         ) : null}
@@ -244,10 +250,14 @@ function ProductionHeatZones({ binding }: { binding?: ApiBinding<HeatZoneScore> 
 function ProductionNetworkListings({
   activeRoleId,
   binding,
+  initialDialog,
+  initialSelectedId,
   selectedHeatZoneId,
 }: {
   activeRoleId: OperatorRoleId;
   binding?: ApiBinding<NetworkListingRadarSnapshot>;
+  initialDialog?: "detail";
+  initialSelectedId?: string;
   selectedHeatZoneId?: string;
 }) {
   const snapshot = binding?.items[0];
@@ -255,6 +265,8 @@ function ProductionNetworkListings({
     <>
       <AssistedIntakeSection
         activeRoleId={activeRoleId}
+        initialDialog={initialDialog}
+        initialSelectedId={initialSelectedId}
         selectedHeatZoneId={selectedHeatZoneId}
       />
       <ProductionDataState binding={binding} resource="Listing radar" testId="exp-production-data-state">
@@ -652,6 +664,12 @@ function ListingsPage({ searchParams }: { searchParams: SearchParams }) {
         <WorkspaceNav active="listings" />
         <AssistedIntakeSection
           activeRoleId={activeRoleId}
+          initialDialog={
+            selectedFromQuery(searchParams.dialog) === "detail"
+              ? "detail"
+              : undefined
+          }
+          initialSelectedId={selectedFromQuery(searchParams.selected)}
           selectedHeatZoneId={selectedHeatZoneId}
         />
         <ImportSummary />

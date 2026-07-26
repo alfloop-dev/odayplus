@@ -76,6 +76,25 @@ describe("NetworkFindAreasWorkspace route and gate behavior", () => {
     expect(screen.queryByTestId("operator-data-unavailable")).not.toBeInTheDocument();
   });
 
+  it("uses the server-provided Radar tab on the durable intake route", () => {
+    navigation.pathname = "/intake/IN-3001";
+    navigation.search = "";
+
+    render(
+      <NetworkFindAreasWorkspace
+        initialTabId="radar"
+        liveCandidates={unavailableCandidates}
+        liveHeatZones={unavailableHeatZones}
+      />,
+    );
+
+    expect(screen.getByTestId("network-tab-1")).toHaveAttribute(
+      "aria-selected",
+      "true",
+    );
+    expect(screen.getByTestId("listing-radar-panel")).toBeInTheDocument();
+  });
+
   it("writes a history entry without dropping unrelated query parameters", () => {
     navigation.search =
       "ws=network&tab=radar&tenant=tw&selected=IN-3011&flag=a&flag=b";

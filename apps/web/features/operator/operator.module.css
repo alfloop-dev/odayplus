@@ -2756,19 +2756,30 @@
   .console:has(.todayWorkspaceApi) .workspaceNav {
     width: 100%;
     flex: 1 0 100%;
-    flex-wrap: nowrap !important;
     justify-content: flex-start;
-    overflow-x: auto;
     overscroll-behavior-x: contain;
     scrollbar-width: thin;
   }
 
   .console:has(.todayWorkspaceApi) .topActions {
     order: 2;
+    flex-wrap: wrap !important;
+    overflow: visible;
+  }
+
+  .console:has(.todayWorkspaceApi) .topActions > .popoverAnchor:first-child {
+    min-width: 160px;
+    flex: 1 1 160px;
+  }
+
+  .console:has(.todayWorkspaceApi) .topActions .searchBox {
+    width: 100%;
   }
 
   .console:has(.todayWorkspaceApi) .workspaceNav {
     order: 3;
+    flex-wrap: nowrap !important;
+    overflow-x: auto;
   }
 
   .console:has(.todayWorkspaceApi) .shell {

@@ -2,7 +2,7 @@
 
 - doc_id: ODP-OC-R7-UPLIFT-001
 - date: 2026-07-25
-- status: dispatched
+- status: implementation complete locally; remote approval blocked
 - target_branch: `dev`
 - baseline_ref: `origin/dev@a13a1075258be98222e5bddd0acd99636179a149`
 - canonical_design: R7 / Package 10
@@ -41,20 +41,20 @@ Workers must read these together:
 
 | Task | Status | Owner | Scope |
 |---|---|---|---|
-| `ODP-OC-R7-RUNTIME-001` | done locally, not merged | Codex + Helmholtz | Cloud Run audience, bounded upstream/bootstrap timeout, explicit 504 |
-| `ODP-OC-R7-SHELL-001` | done locally, not merged | Codex | R7 compact shell for every workspace; retain static navigation during data gates |
-| `ODP-OC-R7-ROUTE-001` | done locally, not merged | Turing (`019f9b84-b8c4-77e2-aab0-1a067fadb52e`) | URL-restorable Network tab and intake cold-open; isolate intake from unrelated Network gates |
-| `ODP-OC-R7-TODAY-001` | in progress | Hume (`019f9b92-1bc2-7ee2-8dc0-7763332805e7`) | Package 10 Today composition using live envelope only |
-| `ODP-OC-R7-INTAKE-VIS-001` | in progress | Hubble (`019f9b90-fd47-77a0-a67d-82164eb7f11f`) | State Matrix, durable detail label, side-by-side compare, promotion confirmation |
-| `ODP-OC-R7-STORE-001` | in progress | Descartes (`019f9b9a-1ce7-7b72-9d1c-f861ba57c346`) | Store Ops page-by-page visual and interaction parity |
-| `ODP-OC-R7-GROWTH-001` | in progress | Goodall (`019f9b9a-37e1-7ed3-882f-840ce86c7248`) | Growth page-by-page visual and interaction parity |
-| `ODP-OC-R7-NETWORK-001` | in progress | Lovelace (`019f9b9e-4c9e-7e23-9ffa-1cfb9fc30297`) | Find Areas, Listing Radar, Candidate, SiteScore, Compare, Review, Rebalance parity |
-| `ODP-OC-R7-GOVERN-001` | in progress | Kierkegaard (`019f9b9a-4f1b-7b51-b4f2-7e84c9f810b0`) | Governance approvals, decision evidence, and audit feed parity |
+| `ODP-OC-R7-RUNTIME-001` | implementation complete, local integration | Codex + Helmholtz | Cloud Run audience, bounded upstream/bootstrap timeout, explicit 504 |
+| `ODP-OC-R7-SHELL-001` | implementation complete, local integration | Codex | R7 compact shell for every workspace; retain static navigation during data gates |
+| `ODP-OC-R7-ROUTE-001` | implementation complete, local integration | Turing (`019f9b84-b8c4-77e2-aab0-1a067fadb52e`) | URL-restorable Network tab and intake cold-open; isolate intake from unrelated Network gates |
+| `ODP-OC-R7-TODAY-001` | implementation complete, local integration | Hume (`019f9b92-1bc2-7ee2-8dc0-7763332805e7`) | Package 10 Today composition using live envelope only |
+| `ODP-OC-R7-INTAKE-VIS-001` | implementation complete, local integration | Hubble (`019f9b90-fd47-77a0-a67d-82164eb7f11f`) | State Matrix, durable detail label, side-by-side compare, promotion confirmation |
+| `ODP-OC-R7-STORE-001` | implementation complete, local integration | Descartes (`019f9b9a-1ce7-7b72-9d1c-f861ba57c346`) | Store Ops page-by-page visual and interaction parity |
+| `ODP-OC-R7-GROWTH-001` | implementation complete, local integration | Goodall (`019f9b9a-37e1-7ed3-882f-840ce86c7248`) | Growth page-by-page visual and interaction parity |
+| `ODP-OC-R7-NETWORK-001` | implementation complete, local integration | Lovelace (`019f9b9e-4c9e-7e23-9ffa-1cfb9fc30297`) | Find Areas, Listing Radar, Candidate, SiteScore, Compare, Review, Rebalance parity |
+| `ODP-OC-R7-GOVERN-001` | implementation complete, local integration | Kierkegaard (`019f9b9a-4f1b-7b51-b4f2-7e84c9f810b0`) | Governance approvals, decision evidence, and audit feed parity |
 | `ODP-OC-R7-REMOTE-VQA-001` | blocked on deploy credentials | QA Fleet | Authenticated Cloud Run visual regression at 390, 1024, and 1440 px |
 | `ODP-OC-R7-DEPLOY-001` | blocked external | Human/Ops + Codex2 | Configure WIF or deploy service credentials, deploy exact SHA, verify traffic and rollback |
 
 Current local integration branch:
-`fix/package10-live-parity-20260725`.
+`fix/package10-final-20260725`.
 
 ## Route Contract
 
@@ -72,6 +72,26 @@ These are separate acceptance surfaces and all must be checked:
 
 The product routes may reuse a shared surface, but they may not drift into
 visually and behaviorally independent versions.
+
+## Local Integration Verification
+
+Verified on `fix/package10-final-20260725`:
+
+- `/intake/IN-3001` now renders inside the R7 Operator Console Network Radar
+  instead of the legacy Expansion/OpsBoard workspace.
+- The durable route opens `Intake 收件處理詳情頁` from the real intake list/get
+  API flow and survives list refresh races.
+- `Intake 狀態矩陣` exposes all 12 processing stages, 5 source-policy states,
+  5 match outcomes, and 15 error/conflict contracts.
+- Chromium checks at 1440, 1024, and 390 px returned HTTP 200 with no document
+  width overflow.
+- Web verification: 35 test files, 276 tests passed; TypeScript passed.
+- Package 10 and Cloud Run contract verification: 24 tests passed.
+- Package 10 source gate: ZIP SHA, HTML SHA, and 40/40 canonical screen labels
+  passed.
+
+This is local integration evidence only. It does not close
+`ODP-OC-R7-REMOTE-VQA-001` or authorize production rollout.
 
 ## Acceptance Gates
 

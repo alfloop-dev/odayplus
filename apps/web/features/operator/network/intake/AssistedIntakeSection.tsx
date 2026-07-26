@@ -19,12 +19,11 @@ import { getOperatorRole } from "../../navigation";
 import styles from "./intake.module.css";
 import { ListingInboxIntakeView } from "./ListingInboxIntakeView";
 import { IntakeDecisionDialog } from "./IntakeDecisionDialog";
-import { IntakeDetailDialog } from "./IntakeDetailDialog";
+import { IntakeProcessingDetail } from "./IntakeProcessingDetail";
 import { IntakeFieldFixDialog } from "./IntakeFieldFixDialog";
-import {
-  PromotionReviewPanel,
-  type PromotionRequestInput,
-  type PromotionReviewInput,
+import type {
+  PromotionRequestInput,
+  PromotionReviewInput,
 } from "./PromotionReviewPanel";
 import type { ScoreReplayInput } from "./SiteScoreJobStatus";
 import { TransferIntakeDialog } from "./TransferIntakeDialog";
@@ -42,6 +41,7 @@ import { canPerform, canView } from "./intakePermissions";
 import { operatorSubjectId } from "../../operatorSecurityHeaders";
 import { isOperatorProductionMode } from "../../operatorDataMode";
 import { DECISION_API_ACTION, type IntakeDecisionKind } from "./intakeTypes";
+import type { IntakeUrlState } from "./types";
 
 // Container for the assisted listing intake slice (ODP-OC-R5-011).
 //
@@ -58,10 +58,14 @@ import { DECISION_API_ACTION, type IntakeDecisionKind } from "./intakeTypes";
 export function AssistedIntakeSection({
   activeRoleId,
   activeSubjectId,
+  initialDialog,
+  initialSelectedId,
   selectedHeatZoneId,
 }: {
   activeRoleId: OperatorRoleId;
   activeSubjectId?: string;
+  initialDialog?: IntakeUrlState["dialog"];
+  initialSelectedId?: string;
   selectedHeatZoneId?: string;
 }) {
   const router = useRouter();
@@ -99,9 +103,20 @@ export function AssistedIntakeSection({
   }, [activeSubjectId]);
 
   const urlState = useMemo(() => parseUrlState(searchParams), [searchParams]);
+  const durableRouteSelectedId = useMemo(() => {
+    const match = /^\/intake\/([^/]+)$/.exec(pathname);
+    return match ? decodeURIComponent(match[1]) : undefined;
+  }, [pathname]);
 
-  const selectedId = urlState.selectedId;
-  const dialog = urlState.dialog;
+  const selectedId =
+    urlState.selectedId ??
+    initialSelectedId ??
+    durableRouteSelectedId ??
+    null;
+  const dialog =
+    urlState.dialog ??
+    initialDialog ??
+    (durableRouteSelectedId ? "detail" : null);
   const fixFieldKey = urlState.fixFieldKey;
   const decisionKind = urlState.decisionKind as any;
   const asgKind = urlState.decisionKind === "transfer" ? "transfer" : urlState.decisionKind === "pause" ? "pause" : null;
@@ -137,8 +152,8 @@ export function AssistedIntakeSection({
       filters: urlState.filters,
       sort: urlState.sort,
       view: urlState.view,
-      selectedId: urlState.selectedId,
-      dialog: urlState.dialog,
+      selectedId,
+      dialog,
       activeSection: urlState.activeSection,
       fixFieldKey: urlState.fixFieldKey,
       decisionKind: urlState.decisionKind,
@@ -148,7 +163,7 @@ export function AssistedIntakeSection({
     };
     const newParams = serializeUrlState(nextState, searchParams);
     router.replace(`${pathname}?${newParams.toString()}`);
-  }, [urlState, searchParams, pathname, router]);
+  }, [urlState, selectedId, dialog, searchParams, pathname, router]);
 
   const role = getOperatorRole(activeRoleId);
   const client = useMemo(
@@ -173,7 +188,16 @@ export function AssistedIntakeSection({
     setLoadState("loading");
     const result = await intakeApi.list(client, { ...inboxQuery, selectedHeatZoneId });
     if (result.ok) {
-      setRecords(result.value.items);
+      setRecords((current) => {
+        if (dialog !== "detail" || !selectedId) return result.value.items;
+        if (result.value.items.some((item) => item.id === selectedId)) {
+          return result.value.items;
+        }
+        const durableSelection = current.find((item) => item.id === selectedId);
+        return durableSelection
+          ? [durableSelection, ...result.value.items]
+          : result.value.items;
+      });
       setPageData(result.value);
       setLoadState("ready");
       setLoadError(null);
@@ -181,7 +205,14 @@ export function AssistedIntakeSection({
       setLoadState("error");
       setLoadError(result.error);
     }
-  }, [activeRoleId, client, inboxQuery, selectedHeatZoneId]);
+  }, [
+    activeRoleId,
+    client,
+    dialog,
+    inboxQuery,
+    selectedHeatZoneId,
+    selectedId,
+  ]);
 
   useEffect(() => {
     void refresh();
@@ -323,6 +354,10 @@ export function AssistedIntakeSection({
   }, [selected, gateKey, gateSnapshots]);
 
   function closeDialog() {
+    if (durableRouteSelectedId) {
+      router.replace("/operator?ws=network&tab=radar");
+      return;
+    }
     updateUrlState({ dialog: null, selectedId: null, fixFieldKey: null, decisionKind: null, receiptId: null });
     setActionError(null);
     submitKeyRef.current = null;
@@ -926,9 +961,6 @@ export function AssistedIntakeSection({
   const currentSubjectId = operatorSubjectId(activeRoleId, sessionSubjectId);
   const canPromote =
     canPerform("promote", activeRoleId) && Boolean(currentSubjectId);
-  // The promotion section renders on the READY branch of the real detail
-  // (UX-SCR-EXP-003F) — once a decision receipt exists it stays visible on
-  // every later saga state so the receipt and score job remain reachable.
   const promotionIsHydrating =
     selected &&
     promotionHydration.intakeId === selected.id &&
@@ -937,36 +969,6 @@ export function AssistedIntakeSection({
     selected &&
     promotionHydration.intakeId === selected.id &&
     promotionHydration.state === "ready";
-  const promotionSection = promotionIsHydrating ? (
-    <div aria-live="polite" className={styles.noteBox} data-testid="promotion-hydration-status" role="status">
-      正在載入既有晉升決策與工作收據…
-    </div>
-  ) : selected && promotionIsHydrated &&
-    (selectedPromotion || (selected.stage === "READY" && promotionGateHash)) ? (
-      <PromotionReviewPanel
-        busy={promotionBusy}
-        canReplayScore={canPromote}
-        canRequest={canPromote}
-        canReview={canPromote}
-        currentOperator={{
-          id: currentSubjectId,
-          name: role.label,
-          role: activeRoleId,
-        }}
-        error={promotionError}
-        gateSnapshotSha256={promotionGateHash ?? ""}
-        idempotencyReplayed={promotionReplayed}
-        onLookupDecision={selectedPromotion ? handleLookupPromotionDecision : undefined}
-        onRefresh={handleConflictRefresh}
-        onReplayScore={handleReplayScore}
-        onRequestPromotion={handleRequestPromotion}
-        onReviewPromotion={handleReviewPromotion}
-        promotion={selectedPromotion}
-        record={selected}
-        scoreJob={selectedScoreJob}
-      />
-    ) : undefined;
-
   return (
     <>
       <ListingInboxIntakeView
@@ -1019,7 +1021,7 @@ export function AssistedIntakeSection({
       ) : null}
 
       {dialog === "detail" && selected ? (
-        <IntakeDetailDialog
+        <IntakeProcessingDetail
           busy={busy}
           canCorrect={canPerform("correct", activeRoleId)}
           canDecide={canPerform("decide", activeRoleId)}
@@ -1042,6 +1044,7 @@ export function AssistedIntakeSection({
             updateUrlState({ dialog: "fix", fixFieldKey: fieldKey });
           }}
           onRetry={handleRetry}
+          onRefresh={handleConflictRefresh}
           record={selected}
           assignmentReceipt={assignmentReceipts[selected.id]}
           slaReceipt={slaReceipts[selected.id]}
@@ -1055,7 +1058,32 @@ export function AssistedIntakeSection({
             updateUrlState({ dialog: "assignmentSla", decisionKind: "pause" });
           }}
           onResumeSla={handleResumeSla}
-          promotionSection={promotionSection}
+          promotion={selectedPromotion}
+          scoreJob={selectedScoreJob}
+          currentOperator={
+            promotionIsHydrated &&
+            (selectedPromotion || (selected.stage === "READY" && promotionGateHash))
+              ? {
+                  id: currentSubjectId,
+                  name: role.label,
+                  role: activeRoleId,
+                }
+              : undefined
+          }
+          gateSnapshotSha256={promotionGateHash}
+          promotionBusy={promotionBusy || Boolean(promotionIsHydrating)}
+          promotionError={promotionError}
+          promotionIdempotencyReplayed={promotionReplayed}
+          canRequestPromotion={canPromote}
+          canReviewPromotion={canPromote}
+          canReplayScore={canPromote}
+          onLookupPromotionDecision={
+            selectedPromotion ? handleLookupPromotionDecision : undefined
+          }
+          onReplayScore={handleReplayScore}
+          onRequestPromotion={handleRequestPromotion}
+          onReviewPromotion={handleReviewPromotion}
+          testId="intake-detail-dialog"
         />
       ) : null}
 

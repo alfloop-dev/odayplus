@@ -579,7 +579,7 @@ function FieldRow({
   );
 }
 
-function AssistedEntryForm({
+export function AssistedEntryForm({
   busy,
   canEdit,
   onSave,

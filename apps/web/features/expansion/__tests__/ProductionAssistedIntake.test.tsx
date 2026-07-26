@@ -7,13 +7,19 @@ import { ExpansionWorkspace } from "../ExpansionWorkspace";
 vi.mock("../../operator/network/intake/AssistedIntakeSection.tsx", () => ({
   AssistedIntakeSection: ({
     activeRoleId,
+    initialDialog,
+    initialSelectedId,
     selectedHeatZoneId,
   }: {
     activeRoleId: string;
+    initialDialog?: string;
+    initialSelectedId?: string;
     selectedHeatZoneId?: string;
   }) => (
     <section
+      data-dialog={initialDialog}
       data-role={activeRoleId}
+      data-selected={initialSelectedId}
       data-heat-zone={selectedHeatZoneId}
       data-testid="production-assisted-intake"
     />
@@ -43,6 +49,29 @@ describe("production Expansion composition", () => {
     expect(screen.getByTestId("exp-production-data-state")).toHaveAttribute(
       "data-state",
       "unconfigured",
+    );
+  });
+
+  it("forwards the durable intake route state without requiring browser query params", () => {
+    render(
+      <ExpansionWorkspace
+        isProduction
+        searchParams={{
+          dialog: "detail",
+          selected: "IN-3001",
+          role: "expansion-manager",
+        }}
+        view="listings"
+      />,
+    );
+
+    expect(screen.getByTestId("production-assisted-intake")).toHaveAttribute(
+      "data-selected",
+      "IN-3001",
+    );
+    expect(screen.getByTestId("production-assisted-intake")).toHaveAttribute(
+      "data-dialog",
+      "detail",
     );
   });
 });

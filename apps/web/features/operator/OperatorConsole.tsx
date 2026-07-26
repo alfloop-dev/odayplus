@@ -1278,6 +1278,7 @@ export function OperatorConsole({ searchParams = {} }: { searchParams?: Record<s
         ) : activeWorkspaceId === "network" ? (
           <NetworkFindAreasWorkspace
             activeRoleId={activeRoleId}
+            initialTabId={activeTabId}
             liveCandidates={liveNetworkBindings?.candidates}
             liveHeatZones={liveNetworkBindings?.heatZones}
             callbacks={{

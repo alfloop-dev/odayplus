@@ -63,6 +63,22 @@ describe("operator data mode", () => {
     ).toBe(true);
     expect(
       operatorFixturesAllowed({
+        deployEnv: "e2e",
+        e2eMode: "true",
+        nodeEnv: "development",
+        productMode: "poc",
+      }),
+    ).toBe(true);
+    expect(
+      operatorFixturesAllowed({
+        deployEnv: "e2e",
+        e2eMode: "false",
+        nodeEnv: "development",
+        productMode: "poc",
+      }),
+    ).toBe(false);
+    expect(
+      operatorFixturesAllowed({
         deployEnv: "production",
         nodeEnv: "development",
         productMode: "poc",

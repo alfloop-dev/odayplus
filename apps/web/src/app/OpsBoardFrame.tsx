@@ -85,7 +85,8 @@ export function OpsBoardFrame({
   // Shared shell parity fix for every operator workspace (ODP-OC-R4-004 Growth,
   // ODP-OC-R4-005 Network, …). ShellProvider is kept so @oday-plus/ui components
   // still resolve role/theme/density context.
-  const isOperator = pathname.startsWith("/operator");
+  const isOperator =
+    pathname.startsWith("/operator") || pathname.startsWith("/intake/");
 
   // The franchisee portal is not an operator surface (ODP-PGAP-SHELL-001).
   // Wrapping it in the OpsBoard chrome would (a) show a franchisee the operator

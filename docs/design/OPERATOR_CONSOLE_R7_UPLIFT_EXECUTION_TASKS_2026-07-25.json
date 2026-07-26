@@ -2,7 +2,7 @@
   "schema": "oday-plus.fleet-execution-tasks.v2",
   "doc_id": "ODP-OC-R7-UPLIFT-001",
   "generated_at": "2026-07-25",
-  "status": "dispatched",
+  "status": "implementation_complete_local_remote_blocked",
   "target_branch": "dev",
   "baseline_ref": "a13a1075258be98222e5bddd0acd99636179a149",
   "canonical_design": {
@@ -21,72 +21,96 @@
       "sha": "a13a1075258be98222e5bddd0acd99636179a149",
       "conclusion": "failure",
       "rollout_executed": false
+    },
+    "local_integration_vqa": {
+      "branch": "fix/package10-final-20260725",
+      "durable_route": "/intake/IN-3001",
+      "r7_operator_shell": true,
+      "api_backed_intake_list_and_get": true,
+      "viewports": [
+        390,
+        1024,
+        1440
+      ],
+      "horizontal_overflow": false,
+      "web_test_files_passed": 35,
+      "web_tests_passed": 276,
+      "typescript_passed": true,
+      "package10_cloud_run_contract_tests_passed": 24,
+      "canonical_screen_labels_passed": 40,
+      "remote_visual_approval": false
     }
   },
   "tasks": [
     {
       "id": "ODP-OC-R7-RUNTIME-001",
-      "status": "done_local_not_merged",
+      "status": "implementation_complete_local_integration",
       "owner": "Codex+Helmholtz",
       "scope": ["Cloud Run service audience", "BFF upstream timeout", "bootstrap error transition"],
-      "local_commits": ["6fd6076a"]
+      "local_commits": ["91f7f37f"]
     },
     {
       "id": "ODP-OC-R7-SHELL-001",
-      "status": "done_local_not_merged",
+      "status": "implementation_complete_local_integration",
       "owner": "Codex",
       "scope": ["global R7 compact shell", "static navigation during production data gates"],
-      "local_commits": ["bd5b99f8"]
+      "local_commits": ["8c098b63"]
     },
     {
       "id": "ODP-OC-R7-ROUTE-001",
-      "status": "done_local_not_merged",
+      "status": "implementation_complete_local_integration",
       "owner": "Turing (019f9b84-b8c4-77e2-aab0-1a067fadb52e)",
       "agent_id": "019f9b84-b8c4-77e2-aab0-1a067fadb52e",
       "scope": ["Network tab URL state", "cold open/reload/back/forward", "intake gate isolation"],
-      "local_commits": ["f5a995d3"]
+      "local_commits": ["42312354"]
     },
     {
       "id": "ODP-OC-R7-TODAY-001",
-      "status": "in_progress",
+      "status": "implementation_complete_local_integration",
       "owner": "Hume (019f9b92-1bc2-7ee2-8dc0-7763332805e7)",
       "agent_id": "019f9b92-1bc2-7ee2-8dc0-7763332805e7",
-      "scope": ["Today Package 10 composition", "responsive live-envelope rendering"]
+      "scope": ["Today Package 10 composition", "responsive live-envelope rendering"],
+      "local_commits": ["f8228079"]
     },
     {
       "id": "ODP-OC-R7-INTAKE-VIS-001",
-      "status": "in_progress",
+      "status": "implementation_complete_local_integration",
       "owner": "Hubble (019f9b90-fd47-77a0-a67d-82164eb7f11f)",
       "agent_id": "019f9b90-fd47-77a0-a67d-82164eb7f11f",
-      "scope": ["State Matrix", "durable detail surface", "side-by-side compare", "promotion confirmation"]
+      "scope": ["State Matrix", "durable detail surface", "side-by-side compare", "promotion confirmation"],
+      "local_commits": ["9baad987"]
     },
     {
       "id": "ODP-OC-R7-STORE-001",
-      "status": "in_progress",
+      "status": "implementation_complete_local_integration",
       "owner": "Descartes (019f9b9a-1ce7-7b72-9d1c-f861ba57c346)",
       "agent_id": "019f9b9a-1ce7-7b72-9d1c-f861ba57c346",
-      "scope": ["Store Ops Package 10 visual and interaction parity"]
+      "scope": ["Store Ops Package 10 visual and interaction parity"],
+      "local_commits": ["8008b684"]
     },
     {
       "id": "ODP-OC-R7-GROWTH-001",
-      "status": "in_progress",
+      "status": "implementation_complete_local_integration",
       "owner": "Goodall (019f9b9a-37e1-7ed3-882f-840ce86c7248)",
       "agent_id": "019f9b9a-37e1-7ed3-882f-840ce86c7248",
-      "scope": ["Growth Package 10 visual and interaction parity"]
+      "scope": ["Growth Package 10 visual and interaction parity"],
+      "local_commits": ["919f3676"]
     },
     {
       "id": "ODP-OC-R7-NETWORK-001",
-      "status": "in_progress",
+      "status": "implementation_complete_local_integration",
       "owner": "Lovelace (019f9b9e-4c9e-7e23-9ffa-1cfb9fc30297)",
       "agent_id": "019f9b9e-4c9e-7e23-9ffa-1cfb9fc30297",
-      "scope": ["Find Areas", "Listing Radar", "Candidate", "SiteScore", "Compare", "Review", "Rebalance"]
+      "scope": ["Find Areas", "Listing Radar", "Candidate", "SiteScore", "Compare", "Review", "Rebalance"],
+      "local_commits": ["b5768a84"]
     },
     {
       "id": "ODP-OC-R7-GOVERN-001",
-      "status": "in_progress",
+      "status": "implementation_complete_local_integration",
       "owner": "Kierkegaard (019f9b9a-4f1b-7b51-b4f2-7e84c9f810b0)",
       "agent_id": "019f9b9a-4f1b-7b51-b4f2-7e84c9f810b0",
-      "scope": ["Governance approvals", "decision evidence", "audit feed"]
+      "scope": ["Governance approvals", "decision evidence", "audit feed"],
+      "local_commits": ["919f3676"]
     },
     {
       "id": "ODP-OC-R7-REMOTE-VQA-001",
