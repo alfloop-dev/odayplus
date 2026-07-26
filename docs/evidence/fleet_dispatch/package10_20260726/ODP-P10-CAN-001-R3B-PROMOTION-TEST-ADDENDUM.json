@@ -1,0 +1,26 @@
+{
+  "addendum_id": "ODP-P10-CAN-001-R3B-ADD-002",
+  "parent_task": "ODP-P10-CAN-001-R3B",
+  "status": "ready_for_pickup",
+  "prepared": "2026-07-26",
+  "reason": "The canonical continuous promotion section conflicts with a stale unit integration test that still requires tab-promotion.",
+  "additional_writable_path": "apps/web/features/operator/network/intake/__tests__/PromotionSagaIntegration.test.tsx",
+  "authorized_changes": [
+    "remove tab-promotion interactions and assertions",
+    "assert the continuous intake-promotion-section and promotion-review-panel",
+    "preserve all promotion API, permission, second-actor, idempotency, conflict, receipt, and failure assertions"
+  ],
+  "forbidden": [
+    "production compatibility tab or marker",
+    "test skip",
+    "assertion weakening",
+    "tests/e2e changes",
+    "API changes",
+    "auth changes"
+  ],
+  "exit_gates": [
+    "zero production tab-promotion marker or control",
+    "complete web unit suite passes",
+    "R3B ACK cites this committed addendum and exact test diff"
+  ]
+}
