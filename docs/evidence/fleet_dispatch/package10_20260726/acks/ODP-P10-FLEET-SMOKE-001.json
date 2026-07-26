@@ -1,0 +1,71 @@
+{
+  "task_id": "ODP-P10-FLEET-SMOKE-001",
+  "status": "pass",
+  "picked_up_at": "2026-07-26T11:34:29Z",
+  "completed_at": "2026-07-26T11:35:14Z",
+  "worktree": "/home/lupin/oday-plus-package10-final",
+  "branch": "fix/package10-final-20260725",
+  "head_sha": "2d468f04b6b9cbf7315c971483c580ec7a17ae52",
+  "read_before_work": [
+    "docs/evidence/fleet_dispatch/package10_20260726/FLEET_HEALTH_SMOKE_TASK.md",
+    "docs_archive/00_source_zips/operator_console/r7-20260720-package-10/manifest.json",
+    "docs_archive/00_source_zips/operator_console/r7-20260720-package-10/extracted/Oday Plus Operator Console.dc.html"
+  ],
+  "checks": {
+    "current_branch": {
+      "command": "git branch --show-current",
+      "expected": "fix/package10-final-20260725",
+      "actual": "fix/package10-final-20260725",
+      "result": "pass"
+    },
+    "archive_zip_exists": {
+      "path": "docs_archive/00_source_zips/operator_console/r7-20260720-package-10/Oday Plus 營運管理後台 (10).zip",
+      "actual_size_bytes": 5142475,
+      "result": "pass"
+    },
+    "canonical_html_exists": {
+      "path": "docs_archive/00_source_zips/operator_console/r7-20260720-package-10/extracted/Oday Plus Operator Console.dc.html",
+      "actual_size_bytes": 586129,
+      "result": "pass"
+    },
+    "archive_zip_sha256": {
+      "command": "sha256sum 'docs_archive/00_source_zips/operator_console/r7-20260720-package-10/Oday Plus 營運管理後台 (10).zip'",
+      "expected": "d1583a00496f928b0765c1756c9671fedf615f12c84c00494d454c983645d7f8",
+      "actual": "d1583a00496f928b0765c1756c9671fedf615f12c84c00494d454c983645d7f8",
+      "result": "pass"
+    },
+    "canonical_html_sha256": {
+      "command": "sha256sum 'docs_archive/00_source_zips/operator_console/r7-20260720-package-10/extracted/Oday Plus Operator Console.dc.html'",
+      "expected": "cc4e6ae97462bc99b1c2353c792cb3bec40d51a6c5efcfde165e5f47105e661d",
+      "actual": "cc4e6ae97462bc99b1c2353c792cb3bec40d51a6c5efcfde165e5f47105e661d",
+      "result": "pass"
+    },
+    "manifest_identifies_package_10": {
+      "command": "cat docs_archive/00_source_zips/operator_console/r7-20260720-package-10/manifest.json",
+      "manifest_path": "docs_archive/00_source_zips/operator_console/r7-20260720-package-10/manifest.json",
+      "actual_source_filename": "Oday Plus 營運管理後台 (10).zip",
+      "actual_version": "R7",
+      "actual_demo_state_version": "oday-plus-r7-20260720",
+      "result": "pass"
+    },
+    "clean_before_ack": {
+      "command": "git status --porcelain=v1 --untracked-files=all",
+      "actual": "",
+      "result": "pass"
+    },
+    "write_scope": {
+      "expected": [
+        "docs/evidence/fleet_dispatch/package10_20260726/acks/ODP-P10-FLEET-SMOKE-001.json"
+      ],
+      "actual": [
+        "docs/evidence/fleet_dispatch/package10_20260726/acks/ODP-P10-FLEET-SMOKE-001.json"
+      ],
+      "result": "pass"
+    }
+  },
+  "changed_paths": [
+    "docs/evidence/fleet_dispatch/package10_20260726/acks/ODP-P10-FLEET-SMOKE-001.json"
+  ],
+  "conflicts": [],
+  "next": "Fleet pickup health is proven after the environment restart. Resume Package 10 execution from CAN-003-R1B, then run CAN-003-R2 and CAN-004 in the declared sequence."
+}
