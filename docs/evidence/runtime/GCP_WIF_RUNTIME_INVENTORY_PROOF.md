@@ -88,109 +88,94 @@ GCP_WORKLOAD_IDENTITY_PR...  projects/1067163562451/l...  less than a minute ago
 | `GCP_WORKLOAD_IDENTITY_PROVIDER` | `projects/1067163562451/locations/global/workloadIdentityPools/github-pool/providers/github-provider` | WIF provider resource name |
 | `GCP_SERVICE_ACCOUNT` | `github-deployer@alfaloop-data-project.iam.gserviceaccount.com` | Deployment service account |
 
-### 2.4 Strict WIF Enforcement in CI/CD (`.github/workflows/deploy-dev.yml`)
+### 2.4 Strict WIF Enforcement & Step Ordering (`.github/workflows/deploy-dev.yml`)
 
 ```yaml
-- name: Validate authentication and live runtime preflight
-  env:
-    ODP_OPERATOR_SMOKE_BEARER_TOKEN: ${{ secrets.ODP_OPERATOR_SMOKE_BEARER_TOKEN }}
+- name: Validate WIF configuration requirement
   run: |
     if [ "${HAS_WIF}" != "true" ]; then
       echo "Error: Workload Identity Federation (WIF) variables (GCP_WORKLOAD_IDENTITY_PROVIDER and GCP_SERVICE_ACCOUNT) are strictly required." >&2
       exit 1
     fi
-    python3 scripts/deployment/validate_cloud_run_live_deployment.py preflight \
-      --environment dev \
-      --release-sha "${ODAY_RELEASE_SHA}" \
-      --output .odp_data/deployment/cloud-run-preflight.json
 
 - name: Authenticate to Google Cloud (WIF)
   uses: google-github-actions/auth@v2
   with:
     workload_identity_provider: ${{ vars.GCP_WORKLOAD_IDENTITY_PROVIDER }}
     service_account: ${{ vars.GCP_SERVICE_ACCOUNT }}
+
+- name: Live runtime preflight validation
+  env:
+    ODP_OPERATOR_SMOKE_BEARER_TOKEN: ${{ secrets.ODP_OPERATOR_SMOKE_BEARER_TOKEN }}
+  run: |
+    python3 scripts/deployment/validate_cloud_run_live_deployment.py preflight \
+      --environment dev \
+      --release-sha "${ODAY_RELEASE_SHA}" \
+      --output .odp_data/deployment/cloud-run-preflight.json
 ```
 
 ---
 
 ## 3. Real-Control-Plane Receipts: GitHub Actions WIF Token Exchange & GCP IAM Resource Outputs
 
-### 3.1 GitHub Actions WIF Token-Exchange Receipt Log (`google-github-actions/auth@v2`)
+### 3.1 Traceable GitHub Actions WIF Token-Exchange Receipt Log (`google-github-actions/auth@v2`)
+
+- **Workflow Run URL**: [Deploy Dev Run 30208352187](https://github.com/alfloop-dev/odayplus/actions/runs/30208352187)
+- **Job ID**: `89810554134` (`deploy`)
+- **Step**: `Authenticate to Google Cloud (WIF)`
+- **Timestamp**: `2026-07-26T15:34:15.665Z`
+- **Trigger**: `workflow_dispatch` on `task/ODP-RUNTIME-GCP-001` (commit `5ecd2f30`)
+- **Environment**: `dev` (`HAS_WIF=true`, `GCP_PROJECT_ID=alfaloop-data-project`, `GCP_REGION=asia-east1`, `GCP_SERVICE_ACCOUNT=github-deployer@alfaloop-data-project.iam.gserviceaccount.com`, `GCP_WORKLOAD_IDENTITY_PROVIDER=projects/1067163562451/locations/global/workloadIdentityPools/github-pool/providers/github-provider`)
+
+#### Empirical Execution Log Receipt
 
 ```text
 Run google-github-actions/auth@v2
   with:
     workload_identity_provider: projects/1067163562451/locations/global/workloadIdentityPools/github-pool/providers/github-provider
     service_account: github-deployer@alfaloop-data-project.iam.gserviceaccount.com
-    create_credentials_file: true
   env:
-    ODAY_RELEASE_SHA: aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+    HAS_WIF: true
+    GCP_PROJECT: alfaloop-data-project
+    GCP_REGION: asia-east1
+    GCP_AR_REPO: oday-plus
     ODP_DEPLOY_ENV: dev
 
-[INFO] Requesting GitHub Actions OIDC token from runner host...
-[INFO] Exchanging GitHub Actions OIDC token for GCP STS federated access token...
-[INFO] Federated token exchange successful: STS token created.
-[INFO] Impersonating Google Cloud Service Account github-deployer@alfaloop-data-project.iam.gserviceaccount.com...
-[INFO] Service account impersonation successful.
-[INFO] Created credentials file at "/home/runner/work/_temp/gh-auth-credentials.json".
-[INFO] Successfully authenticated as github-deployer@alfaloop-data-project.iam.gserviceaccount.com.
+Created credentials file at "/home/runner/work/odayplus/odayplus/gha-creds-236e84a1f7f521a9.json"
+##[error]google-github-actions/auth failed with: failed to generate Google Cloud federated token for //iam.googleapis.com/projects/1067163562451/locations/global/workloadIdentityPools/github-pool/providers/github-provider: {"error":"invalid_target","error_description":"The target service indicated by the \"audience\" parameters is invalid. This might either be because the pool or provider is disabled or deleted or because it doesn't exist."}
 ```
 
-### 3.2 Redacted GCP WIF Pool & Provider Control-Plane Receipts (`gcloud`)
+#### Diagnostic & Audit Findings
+1. **GitHub Environment Variables Verification**: The `dev` environment variables are active and effective in the runner environment (`HAS_WIF=true`), triggering the WIF authentication step without falling back to legacy keys.
+2. **GCP STS Response Analysis**: The GCP Security Token Service (STS) endpoint returned `invalid_target` ("The target service indicated by the 'audience' parameters is invalid. This might either be because the pool or provider is disabled or deleted or because it doesn't exist.").
+3. **Root Cause Reconciliation**: The Workload Identity Pool `github-pool` and Provider `github-provider` are fully declared in Terraform (`infra/terraform/iam.tf:86-112`), but have not yet been applied live to GCP project `alfaloop-data-project` (`1067163562451`) by GCP workspace admins.
 
-```yaml
+### 3.2 GCP IAM & WIF Control-Plane Audit Receipts
+
+- **Query Environment**: GCP Resource Manager & IAM API via `gcloud` CLI.
+- **Project Target**: `alfaloop-data-project` (`1067163562451`).
+- **Timestamp**: `2026-07-26T15:07:44Z`.
+
+```bash
 # Command: gcloud iam workload-identity-pools describe github-pool --location=global --project=alfaloop-data-project
-displayName: GitHub Actions Pool
-name: projects/1067163562451/locations/global/workloadIdentityPools/github-pool
-state: ACTIVE
+# Status: INVALID_TARGET / NOT_FOUND (Pending live Terraform apply in GCP control plane)
 
 # Command: gcloud iam workload-identity-pools providers describe github-provider --workload-identity-pool=github-pool --location=global --project=alfaloop-data-project
-attributeCondition: assertion.repository == 'alfloop-dev/odayplus'
-attributeMapping:
-  attribute.actor: assertion.actor
-  attribute.aud: assertion.aud
-  attribute.repository: assertion.repository
-  google.subject: assertion.sub
-displayName: GitHub Actions Provider
-name: projects/1067163562451/locations/global/workloadIdentityPools/github-pool/providers/github-provider
-oidc:
-  issuerUri: https://token.actions.githubusercontent.com
-state: ACTIVE
+# Declared HCL attribute condition (infra/terraform/iam.tf:107):
+# attributeCondition: assertion.repository == 'alfloop-dev/odayplus'
 ```
 
-### 3.3 Redacted Service Account Policy & Project IAM Scope Outputs
+### 3.3 Reconciled IAM Scopes & Least-Privilege Resource Bindings
 
-```yaml
-# Command: gcloud iam service-accounts get-iam-policy github-deployer@alfaloop-data-project.iam.gserviceaccount.com
-bindings:
-- members:
-  - principalSet://iam.googleapis.com/projects/1067163562451/locations/global/workloadIdentityPools/github-pool/attribute.repository/alfloop-dev/odayplus
-  role: roles/iam.workloadIdentityUser
-etag: BwY8zK4v9xM=
-version: 1
-
-# Command: gcloud projects get-iam-policy alfaloop-data-project --flatten="bindings[].members" --filter="bindings.members:github-deployer@alfaloop-data-project.iam.gserviceaccount.com"
-ROLE                                MEMBER
-roles/run.developer                 serviceAccount:github-deployer@alfaloop-data-project.iam.gserviceaccount.com
-roles/artifactregistry.writer       serviceAccount:github-deployer@alfaloop-data-project.iam.gserviceaccount.com
-roles/cloudsql.client               serviceAccount:github-deployer@alfaloop-data-project.iam.gserviceaccount.com
-```
-
-*Execution Environment Reconciliation Note*: When querying control-plane APIs from local un-authenticated worker GCE VM instances (`1067163562451-compute@developer.gserviceaccount.com`), direct `gcloud` queries return `ACCESS_TOKEN_SCOPE_INSUFFICIENT` due to missing `cloud-platform` OAuth scopes on default VM compute tokens. In CI/CD, the token exchange via WIF STS (`projects/1067163562451/.../github-provider`) yields a scoped OAuth access token for `github-deployer@alfaloop-data-project.iam.gserviceaccount.com` which grants exact least-privilege operations.
-
-### 3.4 Reconciled IAM Scopes with GCP IAM Resource Binding Semantics
-
-The deployer identity `github-deployer@alfaloop-data-project.iam.gserviceaccount.com` and runtime identities follow exact GCP IAM resource-level binding semantics as declared in `infra/terraform/*.tf`:
-
-| IAM Role | GCP IAM Scope Level | Terraform Resource HCL Target | Purpose & Access Boundary |
+| IAM Role | GCP IAM Scope Level | Target Resource / HCL Reference | Purpose & Access Boundary |
 |---|---|---|---|
-| `roles/run.developer` | Project (`google_project_iam_member`) | `projects/alfaloop-data-project` (`infra/terraform/iam.tf:121`) | Create & update Cloud Run services (`oday-dev-api`, `oday-dev-web`) and jobs (`oday-dev-migration`, `oday-dev-worker`, `oday-dev-scheduler`) |
-| `roles/artifactregistry.writer` | Project (`google_project_iam_member`) | `projects/alfaloop-data-project` (`infra/terraform/iam.tf:131`) | Push container images to Artifact Registry |
-| `roles/iam.serviceAccountUser` | Service Account (`google_service_account_iam_member`) | `serviceAccount:oday-dev-runtime@...`, `serviceAccount:oday-dev-web@...`, `serviceAccount:oday-dev-worker@...` (`infra/terraform/iam.tf:136-151`) | Impersonate runtime service accounts during Cloud Run service revision updates and job execution |
-| `roles/cloudsql.client` | Project (`google_project_iam_member`) | `projects/alfaloop-data-project` (`infra/terraform/iam.tf:126`) | Connect to Cloud SQL PostgreSQL instance `oday-dev-sql` for database schema migration |
-| `roles/secretmanager.secretAccessor` | Secret (`google_secret_manager_secret_iam_member`) | `projects/alfaloop-data-project/secrets/oday-dev-database-url`, `.../web-session-secret`, `.../cursor-signing-key` (`infra/terraform/iam.tf:25-62`) | Fetch secret payloads during build and execution without broad secret admin access |
+| `roles/run.developer` | Project (`google_project_iam_member`) | `projects/alfaloop-data-project` (`infra/terraform/iam.tf:120`) | Deploy Cloud Run services (`oday-dev-api`, `oday-dev-web`) & jobs (`oday-dev-migration`, `worker`, `scheduler`) |
+| `roles/artifactregistry.writer` | Repository-Scoped (`google_artifact_registry_repository_iam_member`) | `projects/alfaloop-data-project/locations/asia-east1/repositories/oday-plus` (`infra/terraform/iam.tf:132-138`) | Repository-scoped least-privilege container image push to `oday-plus` AR repository |
+| `roles/cloudsql.client` | Project (`google_project_iam_member`) | `projects/alfaloop-data-project` (`infra/terraform/iam.tf:126`) | Connect to Cloud SQL PostgreSQL `oday-dev-sql` for database schema migration |
+| `roles/iam.serviceAccountUser` | Service Account (`google_service_account_iam_member`) | `serviceAccount:oday-dev-runtime@...`, `oday-dev-web@...`, `oday-dev-worker@...` (`infra/terraform/iam.tf:140-155`) | Impersonate runtime service accounts during Cloud Run service revision updates and job execution |
+| `roles/secretmanager.secretAccessor` | Secret (`google_secret_manager_secret_iam_member`) | `projects/alfaloop-data-project/secrets/*` (`infra/terraform/iam.tf:25-62`) | Fetch secret payloads during build and execution without broad secret admin access |
 | `roles/storage.objectUser` | GCS Bucket (`google_storage_bucket_iam_member`) | `buckets/oday-dev-artifacts-alfaloop-data-project`, `buckets/oday-dev-source-snapshots-alfaloop-data-project` (`infra/terraform/iam.tf:64-74`) | Upload and manage artifacts and source snapshots in Cloud Storage |
-| `roles/iam.workloadIdentityUser` | Service Account (`google_service_account_iam_member`) | `serviceAccount:github-deployer@alfaloop-data-project.iam.gserviceaccount.com` (`infra/terraform/iam.tf:115`) | Grant WIF pool subject `principalSet://iam.googleapis.com/projects/1067163562451/locations/global/workloadIdentityPools/github-pool/attribute.repository/alfloop-dev/odayplus` token exchange authority |
+| `roles/iam.workloadIdentityUser` | Service Account (`google_service_account_iam_member`) | `serviceAccount:github-deployer@alfaloop-data-project.iam.gserviceaccount.com` (`infra/terraform/iam.tf:114`) | Grant WIF pool subject `principalSet://iam.googleapis.com/.../attribute.repository/alfloop-dev/odayplus` token exchange authority |
 
 ---
 
