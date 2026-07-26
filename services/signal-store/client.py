@@ -328,10 +328,18 @@ CONSUMER_ASSUMPTIONS: tuple[str, ...] = (
     "Signals are tenant-scoped; consumers must pass tenant_id for every read or state change.",
     "idempotency_key is stable for a business signal and must reject body mismatches.",
     "signal_type follows '<domain>.<event_or_intent>.v<major>' and is versioned independently.",
-    "produced_at, effective_at, expires_at, and evidence timestamps are ISO-8601 strings.",
+    "Consumers must reject unsupported signal_version or signal_type major versions.",
+    "produced_at, effective_at, expires_at, and evidence timestamps are ISO-8601 strings with "
+    "an explicit UTC offset; stores compare normalized instants rather than source offsets.",
+    "Consumers must not act before effective_at and must reject or expire signals after expires_at.",
     "Prediction, decision, execution, and outcome remain separate; signals may request execution "
     "but do not bypass approval policy.",
     "Consumers must lease before side effects and then mark_consumed or reject_signal.",
+    "Delivery is at least once; lease expiry can redeliver a signal, so side effects must use "
+    "signal_id or idempotency_key for deduplication.",
+    "Only the active lease owner may mark a signal consumed or rejected.",
+    "Polling order and page tokens are store-defined; consumers must not infer priority or "
+    "chronology from signal_id or page_token.",
     "Unknown additive payload fields must be ignored by consumers and preserved by stores.",
     "PII should be referenced by entity ids, not copied into the signal payload.",
 )
