@@ -1,18 +1,68 @@
 {
   "schema": "oday-plus.package10-wave-ack.v1",
   "task_id": "ODP-P10-CAN-001-R3B",
-    "status": "rejected_add_006_ready_for_supervisor",
-    "program_status": "no_go_pending_add_006",
-    "prepared_at": "2026-07-26T15:21:00Z",
-  "worktree": "/home/lupin/oday-plus-package10-final",
-  "branch": "fix/package10-final-20260725",
-  "pickup_head": "c8dd829dc9c1b6f784b6ed124df4369a25ca4b8b",
+    "status": "add_006_remediated_pending_antigravity_review",
+    "program_status": "no_go_pending_independent_review_and_coordinator_acceptance",
+    "prepared_at": "2026-07-26T16:05:00Z",
+  "worktree": "/tmp/pantheon-worker-worktrees/oday-plus-package10-supervisor-20260726/oday-plus-package10-supervisor-20260726/odp-p10-can-001-r3b",
+  "branch": "task/ODP-P10-CAN-001-R3B",
+  "pickup_head": "689083a43b653cff39b391541f2ac7829c78f27a",
     "changes_committed": true,
     "changes_pushed": true,
     "checkpoint_commit": "4bf419e14a62a7cb24a85e117a0eef2f16c09d76",
     "checkpoint_ref": "origin/fix/package10-final-20260725",
     "checkpoint_kind": "no_go_supervisor_handoff",
     "coordinator_review": "seventh_visual_runtime_rejection_add_006_ready",
+    "add_006_implementation": {
+        "owner": "Claude",
+        "reviewer": "Antigravity",
+        "coordinator": "Codex",
+        "task_branch": "task/ODP-P10-CAN-001-R3B",
+        "pickup_head": "689083a43b653cff39b391541f2ac7829c78f27a",
+        "implementation_commit": "f7fc68233d22d66f12991833c4e234436c76e094",
+        "evidence_and_ack_commit": "72fea66",
+        "pushed_ref": "origin/task/ODP-P10-CAN-001-R3B",
+        "read_set": "ODP-P10-CAN-001-R3B-VISUAL-RUNTIME-REMEDIATION-ADDENDUM.md/.json, the parent R3B dispatch/task ledger, PACKAGE_10_INTAKE_DETAIL_CANONICALIZATION_EXECUTION_ADDENDUM_2026-07-26.md, ADD-001..ADD-005, the canonical Package 10 tablet/mobile detail evidence, the rejected runtime-r3b screenshots, and this ACK",
+        "write_set": "parent R3B write set plus the ADD-006 authorized apps/web/features/operator/NetworkFindAreasWorkspace.tsx and apps/web/features/operator/network/__tests__/NetworkFindAreasWorkspace.route-gate.test.tsx; tests/e2e/**, apps/api/**, auth middleware, source-policy decisions and permission rules were not edited",
+        "changed_paths": [
+            "apps/web/features/operator/NetworkFindAreasWorkspace.tsx",
+            "apps/web/features/operator/network/ListingRadarPanel.tsx",
+            "apps/web/features/operator/network/__tests__/NetworkFindAreasWorkspace.route-gate.test.tsx",
+            "apps/web/features/operator/network/intake/AssistedIntakeSection.tsx",
+            "apps/web/features/operator/network/intake/EvidencePanel.tsx",
+            "apps/web/features/operator/network/intake/ListingCompareTable.tsx",
+            "apps/web/features/operator/network/intake/__tests__/IntakeProcessingDetail.test.tsx",
+            "apps/web/features/operator/network/intake/intake.module.css",
+            "docs/evidence/design_review/assisted_listing_intake_r7_package10/runtime-r3b/detail-390.png",
+            "docs/evidence/design_review/assisted_listing_intake_r7_package10/runtime-r3b/detail-1024.png",
+            "docs/evidence/design_review/assisted_listing_intake_r7_package10/runtime-r3b/detail-1440.png",
+            "docs/evidence/design_review/assisted_listing_intake_r7_package10/runtime-r3b/direct-detail-1440.png",
+            "docs/evidence/design_review/assisted_listing_intake_r7_package10/runtime-r3b/add006-runtime-geometry.json",
+            "docs/evidence/fleet_dispatch/package10_20260726/acks/ODP-P10-CAN-001-R3B.json"
+        ],
+        "findings_and_remediation": [
+            {
+                "finding": "Operator and durable direct routes rendered the Network heading, KPI strip, expansion stepper, tab strip, compliance strip and status/toast rows before the canonical detail (detail top 1104.34/696.42/543.23/494.44).",
+                "remediation": "NetworkFindAreasWorkspace now detects the intake detail context from both entry points (/intake/<id> and selected=<id> with dialog detail/fix/decide/assignmentSla) and returns a workspace whose FIRST child is the Listing Radar panel. In that context the Network heading, KPI strip, ExpansionStepper, tab strip and the unrelated Network tab data gate are not rendered at all, ListingRadarPanel suppresses its compliance strip, and AssistedIntakeSection renders its status/toast row after the detail layer instead of before it. Source cards and the Listing Radar stay below the detail inside the same single production graph; no modal, drawer, fixed overlay, nested card or retired detail tab was introduced.",
+                "measured_result": "detail top 356.14 at 390px, 168 at 1024px, 126 at 1440px operator and 116 on the direct 1440 route; surfacesBeforeDetail is empty at every viewport; sourceCardsBelowDetail and listingRadarBelowDetail are true at every viewport."
+            },
+            {
+                "finding": "Native parsed-lineage and match-review th/td received .fieldCell { display: flex }, which removed table-cell layout and collapsed every column into the first narrow one with character-per-line wrapping.",
+                "remediation": ".fieldCell no longer sets display and now only carries cell typography, padding, border and vertical-align; the vertical label/chip/value composition moved into a new .fieldCellStack wrapper rendered inside each cell in EvidencePanel and ListingCompareTable. Native table/thead/tbody/tr/th/td markup is unchanged. Only at <=759px does parsed lineage stack (block cells plus the existing data-label ::before, with data-label added to the lineage cells); desktop and tablet cells never receive flex/grid/block.",
+                "measured_result": "computed cell display is table-cell at 1024px and 1440px; lineage table width 1118 with 262-285px columns at 1440px and 942 with 223-240px columns at 1024px; comparison table width 1118/942 with 166-476px columns; at 390px lineage cells are full-width 328px blocks with no character-per-line text, POSSIBLE_MATCH comparison is replaced by the visible inline DESKTOP_REQUIRED state, and no viewport has document horizontal overflow."
+            },
+            {
+                "finding": "validResourceVersion accepted integer 0 although the API If-Match contract in apps/api/app/routes/listings.py is ^W/\"[1-9][0-9]*\"$.",
+                "remediation": "validResourceVersion now accepts positive integers only and is exported for executable coverage. Assignment and SLA authority derivation, the typed guards, the controls, the dialogs and the direct handlers all inherit the change and continue to fail closed with RESOURCE_VERSION_UNAVAILABLE.",
+                "measured_result": "New tests prove 0, -1, -12, 1.5, 0.5, \"1\", \"0\", \"\", true, null, undefined, NaN, Infinity, {} and [3] all yield null while 1, 2, 12, 34 and MAX_SAFE_INTEGER are accepted, and a parameterised container test over zero, negative, fraction, string, null and undefined versions proves the claim/transfer/pause/resume controls and dialogs are suppressed, both guards return RESOURCE_VERSION_UNAVAILABLE, and no /api/v1/assignments/* or /api/v1/sla-instances/* claim, transfer, pause or resume endpoint is invoked."
+            },
+            {
+                "finding": "The first real six-test accessibility run lost the Listing Radar click during hydration: network-tab-1 was clicked, the page stayed on Find Areas and intake-add-button never appeared.",
+                "remediation": "The Network tab selection is no longer derived only from a URL that initial preference hydration, shell bootstrap and URL hydration can still be racing. changeActiveTab commits the requested tab to workspace state at click time alongside the router.push; the committed selection stays authoritative while the URL still reports the tab it was clicked from, and is released as soon as the URL reports any other tab so deep links and browser back/forward remain authoritative. No retry, sleep, timeout change or weakened assertion was added to the canonical E2E spec, and NetworkShell/ExpansionStepper markup was not touched.",
+                "measured_result": "A route-gate test proves the click survives a re-render that re-publishes the stale server tab, and that a later URL tab (review, then areas) takes over again. The unchanged six-test accessibility spec then passed 6/6 twice consecutively."
+            }
+        ]
+    },
   "authority": {
     "corrected_prerequisite_document": "docs/design/PACKAGE_10_INTAKE_DETAIL_CANONICALIZATION_EXECUTION_ADDENDUM_2026-07-26.md",
     "corrected_prerequisite_text_verified": "Program recovery and the R3A retirement prerequisite are committed and pushed.",
@@ -49,6 +99,7 @@
             "docs/evidence/fleet_dispatch/package10_20260726/ODP-P10-CAN-001-R3B-VISUAL-RUNTIME-REMEDIATION-ADDENDUM.json"
         ],
         "visual_runtime_remediation_addendum_write_set": "parent R3B paths plus NetworkFindAreasWorkspace.tsx and NetworkFindAreasWorkspace.route-gate.test.tsx; no further canonical E2E edits",
+        "visual_runtime_remediation_addendum_read_set": "both ADD-006 artifacts, the parent R3B task/dispatch ledger, the canonicalization execution addendum, ADD-001 through ADD-005, the canonical Package 10 tablet/mobile detail evidence, the rejected runtime-r3b screenshots, and this ACK were read at pickup HEAD 689083a43b653cff39b391541f2ac7829c78f27a",
     "predecessor_ack": "docs/evidence/fleet_dispatch/package10_20260726/acks/ODP-P10-CAN-001-R3A.json"
   },
   "result": {
@@ -70,10 +121,13 @@
   "created_paths": [
     "apps/web/features/operator/network/intake/AssistedEntryForm.tsx",
     "apps/web/features/operator/network/intake/intakeFreshness.ts",
+    "docs/evidence/design_review/assisted_listing_intake_r7_package10/runtime-r3b/add006-runtime-geometry.json",
     "docs/evidence/fleet_dispatch/package10_20260726/acks/ODP-P10-CAN-001-R3B.json"
   ],
   "modified_paths": [
+    "apps/web/features/operator/NetworkFindAreasWorkspace.tsx",
     "apps/web/features/operator/OperatorConsole.tsx",
+    "apps/web/features/operator/network/__tests__/NetworkFindAreasWorkspace.route-gate.test.tsx",
     "apps/web/features/operator/network/ListingRadarPanel.tsx",
     "apps/web/features/operator/network/intake/AssignmentSlaSummary.tsx",
     "apps/web/features/operator/network/intake/AssistedIntakeSection.tsx",
@@ -103,15 +157,15 @@
   ],
   "gates": {
     "focused_unit": {
-      "command": "npm run test --workspace=@oday-plus/web -- --run features/operator/network/intake/__tests__/IntakeProcessingDetail.test.tsx features/operator/network/intake/__tests__/PromotionSagaIntegration.test.tsx features/operator/network/intake/__tests__/Package10VisualP1.test.tsx features/operator/network/intake/__tests__/AssignmentSlaSummary.test.tsx features/operator/__tests__/OperatorConsole.test.tsx",
+      "command": "npm run test --workspace=@oday-plus/web -- --run features/operator/network/__tests__/NetworkFindAreasWorkspace.route-gate.test.tsx features/operator/network/intake/__tests__/IntakeProcessingDetail.test.tsx",
       "status": "pass",
-      "result": "5 files, 50 tests"
+      "result": "2 files, 39 tests"
     },
     "full_web_unit": {
       "command": "npm run test --workspace=@oday-plus/web",
       "status": "pass",
-      "result": "32 files, 218 tests",
-      "note": "Final rerun passed with exit code 0."
+      "result": "32 files, 233 tests",
+      "note": "Exit code 0; 15 tests added by ADD-006 over the previous 218."
     },
     "web_typecheck": {
       "command": "npm run typecheck --workspace=@oday-plus/web",
@@ -120,34 +174,53 @@
     "root_typecheck": {
       "command": "npm run typecheck",
       "status": "pass",
-      "result": "all seven TypeScript workspaces passed"
+      "result": "exit code 0 across every TypeScript workspace"
     },
     "root_build": {
       "command": "npm run build",
       "status": "pass",
-      "result": "/operator, /intake/[intakeId], and /franchisee built",
-      "warnings": "three pre-existing autoprefixer start/end compatibility warnings"
+      "result": "exit code 0; /operator, /intake/[intakeId], and /franchisee built",
+      "warnings": "pre-existing autoprefixer start/end compatibility warnings only"
     },
         "canonical_accessibility_playwright": {
-            "command": "PATH=\"/home/lupin/oday-plus-package10-final/.venv/bin:$PATH\" UV_CACHE_DIR=/tmp/oday-r3b-uv-cache npx playwright test tests/e2e/operator-assisted-listing-intake-a11y.spec.ts",
-            "status": "pass_with_recorded_navigation_flake",
-            "result": "Coordinator environment allowed both servers. Initial full run failed 1 test and skipped 5 because network-tab-1 click was lost during hydration; focused rerun passed 1/1; subsequent unchanged full run passed 6/6 in 2.2 minutes. ADD-006 requires the unchanged suite to pass twice consecutively after remediation.",
-            "spec_diff": "only the addendum-authorized retired Dialog screen-label selector changed to the canonical Intake full-page label",
-            "prior_checkpoint": "The fourth-remediation run passed 6/6 before later product changes; current coordinator rerun now proves 6/6 but not two-run stability."
+            "command": "PATH=\"$PWD/.venv/bin:$PATH\" UV_CACHE_DIR=/tmp/oday-p10-add006-uv npx playwright test tests/e2e/operator-assisted-listing-intake-a11y.spec.ts",
+            "status": "pass",
+            "result": "Run 1 (cold FastAPI + Next dev boot) passed 6/6 in 1.4 minutes; run 2, executed immediately afterwards on the identical product SHA and unchanged spec, passed 6/6 in 57.6 seconds. Two consecutive full-suite passes with zero failed and zero skipped tests; the hydration navigation loss did not reproduce.",
+            "spec_diff": "unchanged in ADD-006; the only historical diff remains the addendum-authorized retired Dialog screen-label selector",
+            "logs": ["run 1 exit 0, 6 passed", "run 2 exit 0, 6 passed"],
+            "prior_checkpoint": "The rejected coordinator run lost the network-tab-1 click during hydration (1 failed, 5 skipped) before a focused rerun passed."
         },
         "canonical_visual_runtime": {
-            "status": "fail",
+            "status": "pass",
+            "command": "real FastAPI (uv) plus Next dev on :3100, canonical add-dialog submit of the POSSIBLE_MATCH source URL, then Operator inbox open at 390/1024/1440 and durable /intake/IN-3001",
             "screenshots": [
                 "docs/evidence/design_review/assisted_listing_intake_r7_package10/runtime-r3b/detail-390.png",
                 "docs/evidence/design_review/assisted_listing_intake_r7_package10/runtime-r3b/detail-1024.png",
                 "docs/evidence/design_review/assisted_listing_intake_r7_package10/runtime-r3b/detail-1440.png",
                 "docs/evidence/design_review/assisted_listing_intake_r7_package10/runtime-r3b/direct-detail-1440.png"
             ],
-            "result": "Detail begins at y=1104.34/696.42/543.23 for 390/1024/1440 operator routes and y=494.44 for the 1440 direct route because Network heading, KPI, stepper, tabs and status chrome still precede it. Native lineage and comparison cells use display:flex and collapse into a narrow first column with character-per-line wrapping. Document horizontal overflow itself was absent."
+            "measurements": "docs/evidence/design_review/assisted_listing_intake_r7_package10/runtime-r3b/add006-runtime-geometry.json",
+            "geometry": {
+                "operator_390": { "topbar_height": 278, "detail_top": 356.14, "detail_width": 350, "surfaces_before_detail": [], "document_scroll_width": 390, "viewport_width": 390, "horizontal_overflow": false },
+                "operator_1024": { "topbar_height": 109, "detail_top": 168, "detail_width": 984, "surfaces_before_detail": [], "document_scroll_width": 1024, "viewport_width": 1024, "horizontal_overflow": false },
+                "operator_1440": { "topbar_height": 67, "detail_top": 126, "detail_width": 1160, "surfaces_before_detail": [], "document_scroll_width": 1440, "viewport_width": 1440, "horizontal_overflow": false },
+                "direct_1440": { "topbar_height": 57, "detail_top": 116, "detail_width": 1160, "surfaces_before_detail": [], "document_scroll_width": 1440, "viewport_width": 1440, "horizontal_overflow": false }
+            },
+            "result": "The detail is the first surface under the global topbar/status banner on both entry points; no Network heading, KPI strip, expansion stepper, tab strip, compliance strip or intake status/toast row precedes it at any viewport, while source cards and the Listing Radar remain below it. Lineage and comparison cells compute to table-cell at 1024px and 1440px with 223-285px lineage columns and 166-476px comparison columns across the full 942/1118px table width; at 390px lineage cells are 328px full-width blocks with no character-per-line text and the ambiguous POSSIBLE_MATCH comparison is replaced by the visible inline DESKTOP_REQUIRED state. No viewport has document horizontal overflow. Retired detail tabs, the StateMatrix launcher, the tab-promotion marker and a simultaneously mounted inbox are all absent at runtime."
         },
         "resource_version_contract": {
-            "status": "fail",
-            "result": "validResourceVersion accepts integer 0 while apps/api/app/routes/listings.py accepts only positive If-Match values matching ^W/\"[1-9][0-9]*\"$."
+            "status": "pass",
+            "result": "validResourceVersion accepts positive integers only, matching apps/api/app/routes/listings.py ^W/\"[1-9][0-9]*\"$. Executable coverage proves 0, negative, fraction, string, empty string, boolean, null, undefined, NaN, Infinity, object and array inputs all fail closed, and that zero/negative/fraction/string/null/undefined assignment and SLA versions suppress every claim, transfer, pause and resume control and dialog, return RESOURCE_VERSION_UNAVAILABLE from both guards, and invoke none of the four endpoints."
+        },
+        "navigation_stability": {
+            "status": "pass",
+            "result": "A Network tab selection is committed to workspace state at click time and released as soon as the URL reports a different tab, so a Listing Radar click cannot be dropped by initial preference hydration, shell bootstrap or URL hydration while deep links and browser back/forward stay authoritative. No retry, sleep, timeout change or weakened assertion was added to the canonical E2E spec."
+        },
+        "regression_responsive_e2e": {
+            "command": "npx playwright test tests/e2e/operator-assisted-listing-intake-mobile.spec.ts",
+            "status": "pass",
+            "result": "4/4 passed: zero page-level horizontal overflow on the 390px inbox, the 390px detail with DESKTOP_REQUIRED, the 1024px tablet detail and the 1440px desktop detail with full side-by-side comparison. This spec was not edited.",
+            "note": "Its generated screenshots under docs/evidence/completion/ODP-INTAKE-UX-QA-001 belong to another wave and were restored, not committed."
         },
     "static_production_import_orphan_layout_responsive": {
       "status": "pass",
@@ -366,14 +439,34 @@
             "remediation_task": "ODP-P10-CAN-001-R3B-ADD-006",
             "dispatch": "Claude owner, Antigravity reviewer, Codex coordinator",
             "result": "no_go_ready_for_supervisor_dispatch"
+        },
+        {
+            "review_round": "add_006_visual_runtime_remediation",
+            "decision": "owner_implemented_pending_independent_review",
+            "owner": "Claude",
+            "pickup_sha": "689083a43b653cff39b391541f2ac7829c78f27a",
+            "findings": [
+                "Network heading, KPI strip, expansion stepper, tab strip, compliance strip and status/toast rows preceded the canonical detail on Operator and durable direct routes",
+                "native lineage and comparison th/td received display:flex and collapsed into one narrow column",
+                "validResourceVersion accepted resource version zero",
+                "the Listing Radar click could be lost during initial preference, bootstrap or URL hydration"
+            ],
+            "remediation": [
+                "made the Listing Radar panel the first workspace child in every intake detail context, suppressed the Network heading/KPI/stepper/tab strip and the unrelated tab data gate there, suppressed the compliance strip in the panel, and moved the intake status/toast row after the detail layer while keeping source cards and the radar below it",
+                "removed display from .fieldCell, moved the vertical composition into a .fieldCellStack wrapper inside each native cell, and stacked parsed lineage only at <=759px with the existing data-label pattern",
+                "restricted validResourceVersion to positive integers matching the API If-Match contract and proved every rejected input fails closed without invoking claim, transfer, pause or resume",
+                "committed the requested Network tab to workspace state at click time and released it as soon as the URL reports a different tab, without touching the canonical E2E spec, NetworkShell or ExpansionStepper"
+            ],
+            "gates": "focused route-gate and intake suites 39/39; full web unit 32 files 233 tests; web and root typecheck; root build; unchanged six-test accessibility spec 6/6 twice consecutively; recaptured 390/1024/1440 and direct-route runtime screenshots with measured geometry; unedited responsive E2E spec 4/4; git diff --check clean",
+            "result": "remediated_pending_antigravity_independent_review"
         }
     ],
     "remaining_risks": [
-        "ADD-006 must move the canonical detail above Network workspace chrome on Operator and direct routes while retaining source cards and Listing Radar below.",
-        "ADD-006 must restore readable native lineage and compare table layout at 390px, 1024px and 1440px.",
-        "ADD-006 must reject resource version zero and prove no assignment/SLA endpoint invocation.",
-        "The unchanged accessibility suite must pass twice consecutively after the navigation hydration race is remediated.",
-        "The rejected implementation and evidence are preserved in pushed no-go checkpoint 4bf419e14a62a7cb24a85e117a0eef2f16c09d76; this is not an accepted R3B exit checkpoint."
+        "Antigravity has not yet performed the required independent visual and contract review, and Codex has not accepted the result; R3B stays no-go until both happen.",
+        "The two consecutive accessibility passes were produced in this worker environment (cold FastAPI + Next dev boot, then an immediate rerun). The coordinator should reproduce the two-run gate in the coordinator environment before acceptance.",
+        "The intake detail context intentionally hides the Network tab strip, so the return path out of the detail is the canonical intake return/deep-link control rather than a Network tab.",
+        "Pre-existing E2E specs that still assert retired R3A/R3B intake surfaces (for example operator-network-assisted-intake.spec.ts) were not touched and remain outside the ADD-006 write set.",
+        "The rejected implementation and evidence remain preserved in pushed no-go checkpoint 4bf419e14a62a7cb24a85e117a0eef2f16c09d76."
     ],
-    "next": "Create and push a no-go checkpoint so the dedicated supervisor can dispatch ADD-006 to Claude; Antigravity must independently review the returned implementation before coordinator acceptance."
+    "next": "Antigravity performs the independent visual and contract review of the ADD-006 implementation on task/ODP-P10-CAN-001-R3B; Codex then accepts or rejects. CAN-002 must not start until the coordinator accepts a committed and pushed R3B ACK and exact product SHA."
 }
