@@ -19,6 +19,16 @@ import {
 } from "./components";
 import { DesignStoreOpsWorkspace } from "./DesignAlignedWorkspaces";
 import { GovernanceWorkspace } from "./GovernanceWorkspace";
+import {
+  normalizeGovernanceApprovals,
+  normalizeGovernanceAuditRows,
+  normalizeGovernanceDecisionRows,
+} from "./governance/governanceEnvelope";
+import type {
+  GovernanceApproval,
+  GovernanceAuditRow,
+  GovernanceDecisionRow,
+} from "./governanceTypes";
 import { GrowthWorkspace } from "./GrowthWorkspace";
 import { NetworkFindAreasWorkspace } from "./NetworkFindAreasWorkspace";
 import { StoreOpsWorkflowDialogs } from "./StoreOpsWorkflowDialogs";
@@ -345,9 +355,9 @@ export function OperatorConsole({ searchParams = {} }: { searchParams?: Record<s
   const [liveNotifications, setLiveNotifications] = useState<any[]>(fixturesAllowed ? notifications : []);
   const [liveIssues, setLiveIssues] = useState<Issue[]>(fixturesAllowed ? ISSUE_FIXTURES : []);
   const [liveNetworkBindings, setLiveNetworkBindings] = useState<NetworkFindAreasBindings | null>(null);
-  const [liveApprovals, setLiveApprovals] = useState<any[]>([]);
-  const [liveGovernanceDecisions, setLiveGovernanceDecisions] = useState<any[]>([]);
-  const [liveGovernanceAuditRows, setLiveGovernanceAuditRows] = useState<any[]>([]);
+  const [liveApprovals, setLiveApprovals] = useState<GovernanceApproval[]>([]);
+  const [liveGovernanceDecisions, setLiveGovernanceDecisions] = useState<GovernanceDecisionRow[]>([]);
+  const [liveGovernanceAuditRows, setLiveGovernanceAuditRows] = useState<GovernanceAuditRow[]>([]);
 
   const getSecurityHeaders = (roleId: OperatorRoleId) => {
     return operatorSecurityHeaders(roleId);
@@ -364,7 +374,14 @@ export function OperatorConsole({ searchParams = {} }: { searchParams?: Record<s
         ? nextEnvelope.notifications
         : notifications,
     );
-    setLiveApprovals(nextEnvelope.approvals);
+    // `nextEnvelope.approvals` is an alias of the Today decision cards, not a
+    // governance approval feed: it carries no module / requestor / submittedAt.
+    // The Govern workspace binds to /api/v1/operator/governance/snapshot, so
+    // only explicitly governance-shaped bootstrap side channels are forwarded,
+    // and always through the governance normalizers.
+    if (Array.isArray(record?.governanceApprovals)) {
+      setLiveApprovals(normalizeGovernanceApprovals(record.governanceApprovals));
+    }
 
     if (Array.isArray(record?.issues)) {
       setLiveIssues(record.issues as Issue[]);
@@ -372,10 +389,10 @@ export function OperatorConsole({ searchParams = {} }: { searchParams?: Record<s
       setLiveIssues([]);
     }
     if (Array.isArray(record?.governanceDecisions)) {
-      setLiveGovernanceDecisions(record.governanceDecisions);
+      setLiveGovernanceDecisions(normalizeGovernanceDecisionRows(record.governanceDecisions));
     }
     if (Array.isArray(record?.governanceAuditRows)) {
-      setLiveGovernanceAuditRows(record.governanceAuditRows);
+      setLiveGovernanceAuditRows(normalizeGovernanceAuditRows(record.governanceAuditRows));
     }
   };
 

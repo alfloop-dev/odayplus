@@ -21,6 +21,13 @@ import {
   type GovernanceStatusBoard,
   type GovernanceStatusRow,
 } from "./governance/governanceLoader";
+import {
+  normalizeGovernanceApprovals,
+  normalizeGovernanceAuditRows,
+  normalizeGovernanceDecisionRows,
+  normalizeGovernanceEvidencePackages,
+  normalizeGovernanceStatusBoard,
+} from "./governance/governanceEnvelope";
 import { OperatorDataUnavailableGate } from "./OperatorDataUnavailableGate";
 import {
   isSeedDataSource,
@@ -302,21 +309,38 @@ export function inspectGovernanceSnapshot(
     snapshot.auditRows,
     snapshot.evidencePackages,
     ...statusGroups,
-  ].some((rows) => rows.length > 0);
+  ].some((rows) => Array.isArray(rows) && rows.length > 0);
 
   return hasRequiredShape && hasRows ? "ready" : "empty";
 }
 
 export function GovernanceWorkspace({
-  approvals,
-  decisions,
-  auditRows,
+  approvals: approvalsProp,
+  decisions: decisionsProp,
+  auditRows: auditRowsProp,
   role = "營運主管",
   roleId,
   canDecide = true,
   callbacks,
 }: GovernanceWorkspaceProps) {
   const fixturesAllowed = operatorFixturesAllowed();
+
+  // Callers hand these rows over from the Operator shell envelope, which is a
+  // different producer with a different row shape. Normalize at the boundary so
+  // a foreign or malformed record can never reach the render path.
+  const approvals = useMemo(
+    () => (approvalsProp ? normalizeGovernanceApprovals(approvalsProp) : undefined),
+    [approvalsProp],
+  );
+  const decisions = useMemo(
+    () => (decisionsProp ? normalizeGovernanceDecisionRows(decisionsProp) : undefined),
+    [decisionsProp],
+  );
+  const auditRows = useMemo(
+    () => (auditRowsProp ? normalizeGovernanceAuditRows(auditRowsProp) : undefined),
+    [auditRowsProp],
+  );
+
   const [localApprovals, setLocalApprovals] = useState<GovernanceApproval[]>(
     approvals ?? (fixturesAllowed ? fallbackApprovals : []),
   );
@@ -399,22 +423,29 @@ export function GovernanceWorkspace({
       );
       return false;
     }
-    const statusRows = snapshot.statusBoard
-      ? Object.values(snapshot.statusBoard).flatMap((rows) => rows ?? [])
+    // The snapshot stays the governance source of truth, but its rows are
+    // still external input: normalize before they reach component state.
+    const apiApprovals = normalizeGovernanceApprovals(snapshot.approvals);
+    const apiDecisions = normalizeGovernanceDecisionRows(snapshot.decisions);
+    const apiAuditRows = normalizeGovernanceAuditRows(snapshot.auditRows);
+    const apiEvidencePackages = normalizeGovernanceEvidencePackages(snapshot.evidencePackages);
+    const statusBoard = normalizeGovernanceStatusBoard(snapshot.statusBoard);
+    const statusRows = statusBoard
+      ? Object.values(statusBoard).flatMap((rows) => rows ?? [])
       : [];
     const hasData =
-      snapshot.approvals.length > 0 ||
-      snapshot.decisions.length > 0 ||
-      snapshot.auditRows.length > 0 ||
-      snapshot.evidencePackages.length > 0 ||
+      apiApprovals.length > 0 ||
+      apiDecisions.length > 0 ||
+      apiAuditRows.length > 0 ||
+      apiEvidencePackages.length > 0 ||
       statusRows.length > 0;
-    setLocalApprovals(snapshot.approvals);
-    setLocalDecisions(snapshot.decisions);
-    setLocalAuditRows(snapshot.auditRows);
-    if (snapshot.statusBoard) setApiStatusBoard(snapshot.statusBoard);
-    if (snapshot.evidencePackages?.length) {
+    setLocalApprovals(apiApprovals);
+    setLocalDecisions(apiDecisions);
+    setLocalAuditRows(apiAuditRows);
+    if (statusBoard) setApiStatusBoard(statusBoard);
+    if (apiEvidencePackages.length) {
       setEvdHist(
-        snapshot.evidencePackages.map((pkg) => ({
+        apiEvidencePackages.map((pkg) => ({
           id: pkg.id,
           range: pkg.range,
           mod: pkg.mod,
@@ -425,9 +456,9 @@ export function GovernanceWorkspace({
       );
     }
     setSelectedApprovalId((current) =>
-      snapshot.approvals.some((approval) => approval.id === current)
+      apiApprovals.some((approval) => approval.id === current)
         ? current
-        : snapshot.approvals[0]?.id ?? "",
+        : apiApprovals[0]?.id ?? "",
     );
     setApiActive(true);
     if (inspection === "seed") {
@@ -1499,7 +1530,16 @@ function EvidenceDetail({
   );
 }
 
-function approvalStatusLabel(value: string) {
+/**
+ * Badge helpers run against externally sourced rows, so they must stay total:
+ * a missing or non-string field renders a neutral badge instead of throwing.
+ */
+function badgeText(value: unknown): string {
+  return typeof value === "string" ? value : "";
+}
+
+function approvalStatusLabel(value: unknown) {
+  const raw = badgeText(value);
   const labels: Record<string, string> = {
     pending: "待核准",
     approved: "已核准",
@@ -1507,21 +1547,22 @@ function approvalStatusLabel(value: string) {
     rejected: "已駁回",
     escalated: "已升級",
   };
-  return labels[value.toLowerCase()] ?? value;
+  return labels[raw.toLowerCase()] ?? (raw || "未提供狀態");
 }
 
-function priorityLabel(value: string) {
+function priorityLabel(value: unknown) {
+  const raw = badgeText(value);
   const labels: Record<string, string> = {
     low: "低",
     medium: "中",
     high: "高",
     critical: "極高",
   };
-  return labels[value.toLowerCase()] ?? value;
+  return labels[raw.toLowerCase()] ?? (raw || "中");
 }
 
-function priorityClass(value: string) {
-  const normalized = value.toLowerCase();
+function priorityClass(value: unknown) {
+  const normalized = badgeText(value).toLowerCase();
   if (normalized === "critical" || normalized === "high") {
     return `${styles.badge} ${styles.badgeDanger}`;
   }
@@ -1531,8 +1572,8 @@ function priorityClass(value: string) {
   return styles.badge;
 }
 
-function moduleClass(value: string) {
-  const normalized = value.toLowerCase();
+function moduleClass(value: unknown) {
+  const normalized = badgeText(value).toLowerCase();
   const tone =
     normalized === "growth"
       ? styles.moduleGrowth
@@ -1544,7 +1585,8 @@ function moduleClass(value: string) {
   return `${styles.moduleBadge} ${tone}`;
 }
 
-function auditCategoryLabel(value: string) {
+function auditCategoryLabel(value: unknown) {
+  const raw = badgeText(value);
   const labels: Record<string, string> = {
     issue: "Issue",
     camera: "影像調閱",
@@ -1554,11 +1596,11 @@ function auditCategoryLabel(value: string) {
     export: "匯出",
     system: "系統",
   };
-  return labels[value.toLowerCase()] ?? value;
+  return labels[raw.toLowerCase()] ?? (raw || "系統");
 }
 
-function statusClass(value: string) {
-  const normalized = value.toLowerCase().replace(/[^a-z0-9]+/g, "");
+function statusClass(value: unknown) {
+  const normalized = badgeText(value).toLowerCase().replace(/[^a-z0-9]+/g, "");
   if (normalized.includes("reject") || normalized === "critical" || normalized === "missing") {
     return `${styles.badge} ${styles.badgeDanger}`;
   }

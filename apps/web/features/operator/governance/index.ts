@@ -26,3 +26,14 @@ export type {
   GovernanceDecisionResult,
   EvidencePackageRecord,
 } from "./governanceLoader";
+
+export {
+  normalizeGovernanceApproval,
+  normalizeGovernanceApprovals,
+  normalizeGovernanceAuditRow,
+  normalizeGovernanceAuditRows,
+  normalizeGovernanceDecisionRow,
+  normalizeGovernanceDecisionRows,
+  normalizeGovernanceEvidencePackages,
+  normalizeGovernanceStatusBoard,
+} from "./governanceEnvelope";
