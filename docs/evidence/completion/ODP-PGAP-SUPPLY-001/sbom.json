@@ -1,10 +1,10 @@
 {
   "bomFormat": "CycloneDX",
   "specVersion": "1.5",
-  "serialNumber": "urn:uuid:sha256-879b76b3a0ef49f0dd4d0ada81a761d2",
+  "serialNumber": "urn:uuid:sha256-94a7a9fe0439e06b101baf8e29b2aa54",
   "version": 1,
   "metadata": {
-    "timestamp": "2026-07-24T19:59:57.104075+00:00",
+    "timestamp": "2026-07-26T15:36:43.633919+00:00",
     "component": {
       "name": "oday-plus",
       "version": "0.1.0",
@@ -13,15 +13,15 @@
     "properties": [
       {
         "name": "git-sha",
-        "value": "4b31709b7d0f0ba410a22ae05e1ee8bc74eba5fb"
+        "value": "68dad0188cb834ee44cb8de1a0121593bbe2b345"
       },
       {
         "name": "sbom-hash",
-        "value": "879b76b3a0ef49f0dd4d0ada81a761d2711dda41ae3a4cc509deb104c9848f3d"
+        "value": "94a7a9fe0439e06b101baf8e29b2aa5467a2376fb0f5444fb8e56967355054e9"
       },
       {
         "name": "sbom-content-digest",
-        "value": "sha256:087574a57a3c91f987ec7cb604aefa79fe83569b584f0fbb6752a50d6cb3146a"
+        "value": "sha256:e6e298242e3f16b81d3cfbd707d93929f1fafb395cad217b39482bd2b6e4f743"
       }
     ]
   },
@@ -3878,10 +3878,10 @@
     },
     {
       "name": "anyio",
-      "version": "4.14.1",
+      "version": "4.13.0",
       "type": "library",
-      "purl": "pkg:pypi/anyio@4.14.1",
-      "bom-ref": "pkg:pypi/anyio@4.14.1"
+      "purl": "pkg:pypi/anyio@4.13.0",
+      "bom-ref": "pkg:pypi/anyio@4.13.0"
     },
     {
       "name": "appdirs",
@@ -4374,6 +4374,13 @@
       "bom-ref": "pkg:pypi/httpcore@1.0.9"
     },
     {
+      "name": "httpcore2",
+      "version": "2.9.1",
+      "type": "library",
+      "purl": "pkg:pypi/httpcore2@2.9.1",
+      "bom-ref": "pkg:pypi/httpcore2@2.9.1"
+    },
+    {
       "name": "httptools",
       "version": "0.8.0",
       "type": "library",
@@ -4386,6 +4393,13 @@
       "type": "library",
       "purl": "pkg:pypi/httpx@0.28.1",
       "bom-ref": "pkg:pypi/httpx@0.28.1"
+    },
+    {
+      "name": "httpx2",
+      "version": "2.9.1",
+      "type": "library",
+      "purl": "pkg:pypi/httpx2@2.9.1",
+      "bom-ref": "pkg:pypi/httpx2@2.9.1"
     },
     {
       "name": "huey",
@@ -5296,6 +5310,13 @@
       "type": "library",
       "purl": "pkg:pypi/triad@1.0.2",
       "bom-ref": "pkg:pypi/triad@1.0.2"
+    },
+    {
+      "name": "truststore",
+      "version": "0.10.4",
+      "type": "library",
+      "purl": "pkg:pypi/truststore@0.10.4",
+      "bom-ref": "pkg:pypi/truststore@0.10.4"
     },
     {
       "name": "typer",
