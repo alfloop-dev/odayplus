@@ -88,6 +88,7 @@ class CanonicalStore(Protocol):
         final_cursor: str | None,
         processed_count: int,
         reconciliation: ReconciliationResult,
+        partition_complete: bool,
         finished_at: datetime,
     ) -> None: ...
 
@@ -129,7 +130,7 @@ class _PostgresLookup(MappingLookup):
         if row is None:
             raise MissingMappingError(
                 QuarantineReason.MISSING_MERCHANT_MAPPING,
-                f"Missing merchant mapping for source merchant {source_merchant_id}"
+                f"Missing merchant mapping for source merchant {source_merchant_id}",
             )
         identity = MerchantIdentity(
             source_merchant_id,
@@ -157,14 +158,14 @@ class _PostgresLookup(MappingLookup):
         if row is None:
             raise MissingMappingError(
                 QuarantineReason.MISSING_PLACE_MAPPING,
-                f"Missing place mapping for source place {source_place_id}"
+                f"Missing place mapping for source place {source_place_id}",
             )
         brand_code = str(row[2])
         prefix = "fongniao_"
         if not brand_code.startswith(prefix):
             raise MissingMappingError(
                 QuarantineReason.TENANT_OWNERSHIP_MISMATCH,
-                f"Place {source_place_id} is not owned by a fongniao merchant tenant"
+                f"Place {source_place_id} is not owned by a fongniao merchant tenant",
             )
         identity = StoreIdentity(
             source_place_id=source_place_id,
@@ -232,9 +233,7 @@ class PsycopgCanonicalStore:
 
     def install(self) -> None:
         path = Path(__file__).with_name("sql") / "control_schema.sql"
-        sql = path.read_text(encoding="utf-8").replace(
-            "{{control_schema}}", self._schema
-        )
+        sql = path.read_text(encoding="utf-8").replace("{{control_schema}}", self._schema)
         with self._connect() as connection:
             connection.execute(sql)
 
@@ -255,6 +254,8 @@ class PsycopgCanonicalStore:
                 ) VALUES (%s, 'fongniao_prod', %s, %s, 'RUNNING', %s, %s)
                 ON CONFLICT (run_id) DO UPDATE SET
                     status = 'RUNNING',
+                    reconciled = FALSE,
+                    partition_complete = FALSE,
                     error_type = NULL,
                     error_message = NULL
                 """,  # nosec B608 -- DataPlaneConfig validates the schema identifier.
@@ -279,9 +280,7 @@ class PsycopgCanonicalStore:
                     with connection.transaction():
                         self._project_one(connection, lookup, source_kind, envelope)
                         self._resolve_quarantine(connection, envelope)
-                    valid.append(
-                        f"{envelope.source_snapshot_id}:{envelope.content_sha256}"
-                    )
+                    valid.append(f"{envelope.source_snapshot_id}:{envelope.content_sha256}")
                 except SourceContractError as exc:
                     reason = exc.reason_code.value
                     reason_counts[reason] = reason_counts.get(reason, 0) + 1
@@ -320,9 +319,7 @@ class PsycopgCanonicalStore:
                 projection.brand_id,
             )
         elif source_kind is SourceKind.PLACE:
-            projection = project_place(
-                envelope, lookup, self._status_contract
-            )
+            projection = project_place(envelope, lookup, self._status_contract)
             self._upsert_place(connection, projection)
             self._upsert_place_geography(connection, envelope, projection)
             if projection.address_id is not None:
@@ -355,9 +352,7 @@ class PsycopgCanonicalStore:
             SourceKind.TRANSACTION,
             SourceKind.TRADE,
         }:
-            projection = project_transaction(
-                envelope, lookup, self._status_contract
-            )
+            projection = project_transaction(envelope, lookup, self._status_contract)
             self._upsert_transaction(connection, envelope, projection)
             self._lineage(
                 connection,
@@ -397,9 +392,7 @@ class PsycopgCanonicalStore:
                 UUID(envelope.source_snapshot_id),
             )
         elif source_kind is SourceKind.DEVICE_LOG:
-            projection = project_machine_status_event(
-                envelope, lookup, self._status_contract
-            )
+            projection = project_machine_status_event(envelope, lookup, self._status_contract)
             self._upsert_machine_status_event(connection, envelope, projection)
             self._lineage(
                 connection,
@@ -469,9 +462,7 @@ class PsycopgCanonicalStore:
             ),
         )
 
-    def _resolve_quarantine(
-        self, connection: Any, envelope: SourceEnvelope
-    ) -> None:
+    def _resolve_quarantine(self, connection: Any, envelope: SourceEnvelope) -> None:
         connection.execute(
             f"""
             UPDATE {self._schema}.quarantined_records
@@ -630,24 +621,15 @@ class PsycopgCanonicalStore:
             f"""
             INSERT INTO {self._schema}.place_geography (
                 source_snapshot_id, source_id, tenant_id, store_id,
-                raw_address, normalized_address, latitude, longitude,
+                raw_address, normalized_address, city, district,
+                latitude, longitude, geocode_confidence,
                 h3_res_8, h3_res_9, h3_res_10, h3_derivation_version,
-                run_id, observed_at
+                run_id, valid_from, observed_at
             ) VALUES (
-                %s, %s, %s, %s, %s, %s, %s, %s,
-                %s, %s, %s, %s, %s, %s
+                %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s,
+                %s, %s, %s, %s, %s, %s, %s
             )
-            ON CONFLICT (source_snapshot_id) DO UPDATE SET
-                raw_address = EXCLUDED.raw_address,
-                normalized_address = EXCLUDED.normalized_address,
-                latitude = EXCLUDED.latitude,
-                longitude = EXCLUDED.longitude,
-                h3_res_8 = EXCLUDED.h3_res_8,
-                h3_res_9 = EXCLUDED.h3_res_9,
-                h3_res_10 = EXCLUDED.h3_res_10,
-                h3_derivation_version = EXCLUDED.h3_derivation_version,
-                run_id = EXCLUDED.run_id,
-                observed_at = EXCLUDED.observed_at
+            ON CONFLICT (source_snapshot_id) DO NOTHING
             """,  # nosec B608 -- DataPlaneConfig validates the schema identifier.
             (
                 envelope.source_snapshot_id,
@@ -656,17 +638,17 @@ class PsycopgCanonicalStore:
                 projection.store_id,
                 projection.raw_address,
                 projection.normalized_address,
+                getattr(projection, "city", None),
+                getattr(projection, "district", None),
                 projection.latitude,
                 projection.longitude,
+                1.0 if projection.latitude is not None else None,
                 projection.h3_res_8,
                 projection.h3_res_9,
                 projection.h3_res_10,
-                (
-                    "stable_h3_index-v1"
-                    if projection.h3_res_9 is not None
-                    else None
-                ),
+                ("stable_h3_index-v1" if projection.h3_res_9 is not None else None),
                 envelope.run_id,
+                getattr(projection, "effective_from", envelope.observed_at),
                 envelope.observed_at,
             ),
         )
@@ -789,6 +771,7 @@ class PsycopgCanonicalStore:
                 projection.ingested_at,
             ),
         )
+
     @staticmethod
     def _upsert_device(connection: Any, projection: Any) -> None:
         connection.execute(
@@ -950,10 +933,7 @@ class PsycopgCanonicalStore:
                 projection.run_date,
                 projection.source_account_ref_hash,
                 json.dumps(
-                    {
-                        key: str(value)
-                        for key, value in projection.feature_snapshot.items()
-                    },
+                    {key: str(value) for key, value in projection.feature_snapshot.items()},
                     sort_keys=True,
                 ),
                 projection.segment_id,
@@ -1033,11 +1013,7 @@ class PsycopgCanonicalStore:
                 run_id, tenant_id, canonical_table, canonical_id
             ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
             ON CONFLICT (source_snapshot_id, canonical_table, canonical_id)
-            DO UPDATE SET
-                run_id = EXCLUDED.run_id,
-                tenant_id = EXCLUDED.tenant_id,
-                content_sha256 = EXCLUDED.content_sha256,
-                projected_at = CURRENT_TIMESTAMP
+            DO NOTHING
             """,  # nosec B608 -- DataPlaneConfig validates the schema identifier.
             (
                 envelope.source_snapshot_id,
@@ -1143,9 +1119,7 @@ class PsycopgCanonicalStore:
                 (run_id, source_kind.value),
             ).fetchall()
         raw_checksum = aggregate_checksum([f"{row[0]}:{row[1]}" for row in raw_rows])
-        canonical_checksum = aggregate_checksum(
-            [f"{row[0]}:{row[1]}" for row in canonical_rows]
-        )
+        canonical_checksum = aggregate_checksum([f"{row[0]}:{row[1]}" for row in canonical_rows])
         return ReconciliationResult(
             source_total=source_count,
             valid_loaded=len(canonical_rows),
@@ -1156,9 +1130,7 @@ class PsycopgCanonicalStore:
             raw_checksum=raw_checksum,
             valid_checksum=valid_checksum,
             canonical_checksum=canonical_checksum,
-            quarantine_reason_counts={
-                str(row[0]): int(row[1]) for row in quarantine_rows
-            },
+            quarantine_reason_counts={str(row[0]): int(row[1]) for row in quarantine_rows},
         )
 
     def complete_run(
@@ -1168,6 +1140,7 @@ class PsycopgCanonicalStore:
         final_cursor: str | None,
         processed_count: int,
         reconciliation: ReconciliationResult,
+        partition_complete: bool,
         finished_at: datetime,
     ) -> None:
         status = "SUCCEEDED" if reconciliation.reconciled else "RECONCILIATION_FAILED"
@@ -1180,6 +1153,8 @@ class PsycopgCanonicalStore:
                     processed_count = %s,
                     valid_loaded = %s,
                     quarantined_count = %s,
+                    reconciled = %s,
+                    partition_complete = %s,
                     source_checksum = %s,
                     raw_checksum = %s,
                     canonical_checksum = %s,
@@ -1192,6 +1167,8 @@ class PsycopgCanonicalStore:
                     processed_count,
                     reconciliation.valid_loaded,
                     reconciliation.quarantined_count,
+                    reconciliation.reconciled,
+                    partition_complete,
                     reconciliation.source_checksum,
                     reconciliation.raw_checksum,
                     reconciliation.canonical_checksum,

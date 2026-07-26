@@ -20,6 +20,7 @@ from modules.sitescore.domain.scoring import (
     SiteScoreReport,
     score_sites,
     score_sites_from_model_predictions,
+    to_sitescore_model_row,
 )
 from modules.sitescore.infrastructure.repositories import (
     InMemorySiteScoreRepository,
@@ -101,7 +102,7 @@ class SiteScoreReportService:
             )
             inference = runtime.infer(
                 service="sitescore",
-                rows=[_feature_mapping(feature) for feature in feature_rows],
+                rows=[to_sitescore_model_row(feature) for feature in feature_rows],
                 expected_feature_schema_version=SITESCORE_FEATURE_VERSION,
             )
             reports = score_sites_from_model_predictions(
@@ -116,6 +117,7 @@ class SiteScoreReportService:
                     )
                 ],
                 model_version=inference.binding.model_id,
+                output_transform=inference.model_metadata.get("output_transform"),
                 prediction_origin_time=prediction_origin_time,
                 scored_at=scored_at,
             )

@@ -6,6 +6,7 @@ from typing import Any
 
 import pytest
 
+from models.shared_ml.output_contracts import SITESCORE_OUTPUT_TRANSFORM
 from models.shared_ml.production_runtime import ModelInferenceResult
 from models.shared_ml.registry import ModelAlias, ModelStage, ModelVersion
 from models.shared_ml.scoring_binding import ModelBinding
@@ -61,12 +62,24 @@ class RecordingRuntime:
             upper=(360_000.0,) * count,
             engine="lightgbm.LGBMRegressor",
             artifact_sha256="sha256:" + ("a" * 64),
+            model_metadata={
+                "output_transform": dict(SITESCORE_OUTPUT_TRANSFORM),
+            },
         )
 
 
 def _feature() -> dict[str, Any]:
     return {
         "candidate_site_id": "candidate-live-001",
+        "tenant_id": "tenant-live-001",
+        "target_format_code": "ODAY_G2",
+        "h3_index": "8926308280fffff",
+        "latitude": 25.033964,
+        "longitude": 121.564468,
+        "geocode_confidence": 0.98,
+        "prior_90d_cell_net_revenue": 1_800_000.0,
+        "prior_90d_cell_transaction_count": 720,
+        "prior_90d_cell_store_count": 4,
         "heat_zone_score": 84.0,
         "monthly_rent": 52_000.0,
         "area_ping": 24.0,
@@ -95,10 +108,18 @@ def test_production_worker_invokes_model_runtime_and_survives_restart(
             runtime_mode="production",
         ).run(features=[_feature()], prediction_origin_time=NOW)
         report_id = result.reports[0].report_id
-        assert result.reports[0].m12.p50 == 315_000.0
+        assert result.reports[0].m12.p50 == 106_531.25
         assert result.reports[0].model_version == "sitescore:approved-2026.07.24"
         assert runtime.calls[0]["service"] == "sitescore"
-        assert runtime.calls[0]["rows"][0]["source_snapshot_ids"]
+        assert set(runtime.calls[0]["rows"][0]) >= {
+            "tenant_id",
+            "target_format_code",
+            "h3_index",
+            "prior_90d_cell_net_revenue",
+            "prior_90d_cell_transaction_count",
+            "prior_90d_cell_store_count",
+            "source_snapshot_ids",
+        }
     finally:
         engine.close()
 
@@ -106,7 +127,7 @@ def test_production_worker_invokes_model_runtime_and_survives_restart(
     try:
         restored = reopened.get_report(report_id)
         assert restored is not None
-        assert restored.m12.p50 == 315_000.0
+        assert restored.m12.p50 == 106_531.25
         assert reopened.latest("candidate-live-001") == restored
     finally:
         reopened_engine.close()
@@ -139,6 +160,28 @@ def test_production_rejects_missing_memory_or_model_bindings(tmp_path: Path) -> 
         engine.close()
 
 
+def test_production_adapter_rejects_legacy_v1_feature_rows(tmp_path: Path) -> None:
+    engine, repository = _repository(tmp_path / "sitescore.sqlite3")
+    try:
+        legacy = {
+            "candidate_site_id": "candidate-legacy-001",
+            "heat_zone_score": 84.0,
+            "monthly_rent": 52_000.0,
+            "area_ping": 24.0,
+            "feature_snapshot_time": NOW.isoformat(),
+            "view_version": "candidate-site-view-v1",
+            "source_snapshot_ids": ["legacy-snapshot"],
+        }
+        with pytest.raises(ValueError, match="v2 model input is missing"):
+            SiteScoreReportService(
+                repository=repository,
+                model_runtime=RecordingRuntime(),
+                runtime_mode="production",
+            ).score_candidates([legacy])
+    finally:
+        engine.close()
+
+
 def test_production_flag_cannot_enable_fixed_scorecard(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -161,7 +204,7 @@ def test_production_flag_cannot_enable_fixed_scorecard(
             require_production_model=False,
             runtime_mode="production",
         ).score_candidates([_feature()])
-        assert reports[0].m12.p50 == 315_000.0
+        assert reports[0].m12.p50 == 106_531.25
         assert len(runtime.calls) == 1
     finally:
         engine.close()

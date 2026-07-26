@@ -106,19 +106,13 @@ class FakeQueryClient:
         if "to_regclass" in sql:
             if params[0] == "model_ready.view_contracts":
                 return {
-                    "relation": (
-                        "model_ready.view_contracts"
-                        if self.registry_exists
-                        else None
-                    )
+                    "relation": ("model_ready.view_contracts" if self.registry_exists else None)
                 }
             return {"relation": params[0] if self.exists else None}
         if "FROM model_ready.view_contracts" in sql:
             return {
                 "view_version": self.contract_version,
-                "contract_state": (
-                    "ACTIVE" if self.contract_trainable else "BLOCKED"
-                ),
+                "contract_state": ("ACTIVE" if self.contract_trainable else "BLOCKED"),
                 "training_enabled": self.contract_trainable,
                 "blocked_reason": self.blocked_reason,
                 "installer_sha256": "b" * 64,
@@ -150,12 +144,13 @@ class FakeInstallationClient:
         from scripts.models.install_views import PREREQUISITE_COLUMNS
 
         self.columns = {
-            relation: tuple(columns)
-            for relation, columns in PREREQUISITE_COLUMNS.items()
+            relation: tuple(columns) for relation, columns in PREREQUISITE_COLUMNS.items()
         }
         self.relations = set(self.columns) - set(missing_relations)
         self.executions: list[tuple[str, tuple[Any, ...]]] = []
         self.transactions = 0
+        self.transaction_active = False
+        self.verification_transaction_states: list[bool] = []
         self.contracts: dict[str, dict[str, Any]] = {}
         self.prerequisite_counts = {
             "total_store_rows": 250,
@@ -173,7 +168,11 @@ class FakeInstallationClient:
     @contextmanager
     def transaction(self) -> Any:
         self.transactions += 1
-        yield self
+        self.transaction_active = True
+        try:
+            yield self
+        finally:
+            self.transaction_active = False
 
     def execute(self, sql: str, params: tuple[Any, ...] = ()) -> None:
         self.executions.append((sql, params))
@@ -192,8 +191,9 @@ class FakeInstallationClient:
                     "installer_sha256": None,
                 }
         if sql.startswith("UPDATE model_ready.view_contracts"):
-            for contract in self.contracts.values():
-                contract["installer_sha256"] = params[0]
+            for relation_name in params[1:]:
+                if relation_name in self.contracts:
+                    self.contracts[relation_name]["installer_sha256"] = params[0]
 
     def query_one(
         self,
@@ -201,6 +201,8 @@ class FakeInstallationClient:
         params: tuple[Any, ...] = (),
     ) -> dict[str, Any] | None:
         if "to_regclass" in sql:
+            if str(params[0]).startswith("model_ready."):
+                self.verification_transaction_states.append(self.transaction_active)
             return {"relation": params[0] if params[0] in self.relations else None}
         if "AS total_store_rows" in sql:
             return dict(self.prerequisite_counts)
@@ -213,14 +215,13 @@ class FakeInstallationClient:
     ) -> list[dict[str, Any]]:
         if "information_schema.columns" in sql:
             relation = f"{params[0]}.{params[1]}"
-            return [
-                {"column_name": column}
-                for column in self.columns.get(relation, ())
-            ]
+            return [{"column_name": column} for column in self.columns.get(relation, ())]
         if "FROM model_ready.view_contracts" in sql:
+            self.verification_transaction_states.append(self.transaction_active)
             return [
                 dict(self.contracts[relation])
-                for relation in sorted(self.contracts)
+                for relation in sorted(params or self.contracts)
+                if relation in self.contracts
             ]
         return []
 
@@ -265,13 +266,10 @@ def test_production_database_url_accepts_only_a_named_cloud_sql_socket() -> None
 
 
 def test_api_runtime_declares_the_production_gcs_client() -> None:
-    dependencies = tomllib.loads(
-        Path("pyproject.toml").read_text(encoding="utf-8")
-    )["project"]["dependencies"]
-    assert any(
-        dependency.startswith("google-cloud-storage")
-        for dependency in dependencies
-    )
+    dependencies = tomllib.loads(Path("pyproject.toml").read_text(encoding="utf-8"))["project"][
+        "dependencies"
+    ]
+    assert any(dependency.startswith("google-cloud-storage") for dependency in dependencies)
 
 
 def _approval(**changes: str) -> dict[str, object]:
@@ -330,6 +328,7 @@ def _loaded(rows: list[dict[str, Any]]) -> LoadedModelReadyRows:
             1000,
         ),
         query_sha256="a" * 64,
+        as_of_time=datetime(2026, 8, 1, tzinfo=UTC),
     )
 
 
@@ -371,10 +370,7 @@ def test_mlflow_server_command_uses_remote_backend_and_disables_artifact_proxy()
 
 def test_mlflow_server_accepts_only_exact_cloud_sql_socket_binding() -> None:
     instance = "alfaloop-data-project:asia-east1:oday-plus-dev-postgres"
-    backend = (
-        "postgresql://runtime:secret@/mlflow"
-        f"?host=/cloudsql/{instance}"
-    )
+    backend = f"postgresql://runtime:secret@/mlflow?host=/cloudsql/{instance}"
     settings = MlflowServerSettings(
         backend_store_uri=backend,
         default_artifact_root="gs://oday-models/production",
@@ -394,9 +390,7 @@ def test_mlflow_server_accepts_only_exact_cloud_sql_socket_binding() -> None:
             backend_store_uri=backend,
             default_artifact_root="gs://oday-models/production",
             allowed_hosts="oday-mlflow.internal",
-            cloud_sql_instance=(
-                "alfaloop-data-project:asia-east1:different-postgres"
-            ),
+            cloud_sql_instance=("alfaloop-data-project:asia-east1:different-postgres"),
         ).validate()
 
 
@@ -456,6 +450,11 @@ def test_model_ready_sql_is_real_causal_and_activates_supported_outcomes() -> No
     assert "source_txn.event_time >= origin.feature_cutoff_time" in lowered
     assert "count(distinct day.partition_date)" in lowered
     assert "identity_available_at < feature_cutoff_time" in lowered
+    assert "authority.source_kind = 'orders'" in lowered
+    assert "ingestion.reconciled" in lowered
+    assert "ingestion.partition_complete" in lowered
+    assert "from data_plane.place_geography as place" in lowered
+    assert "place.valid_from <= txn.event_time" in lowered
     assert "create or replace view model_ready.valuation_view" not in lowered
     assert "create or replace view model_ready.avm_liquidity_training_view" not in lowered
     assert "asset.valuation_runs" not in lowered
@@ -466,19 +465,24 @@ def test_model_ready_sql_is_real_causal_and_activates_supported_outcomes() -> No
 
 def test_model_ready_view_installer_preflights_and_applies_one_sql_transaction() -> None:
     client = FakeInstallationClient()
+    client.contracts["model_ready.unrelated_view"] = {
+        "relation_name": "model_ready.unrelated_view",
+        "view_name": "unrelated_view",
+        "view_version": "unrelated-v1",
+        "contract_state": "ACTIVE",
+        "training_enabled": True,
+        "blocked_reason": None,
+        "installer_sha256": "unchanged",
+    }
     installer = ModelReadyViewInstaller(client)
     preflight = installer.preflight()
     assert preflight.ready
     inventory = preflight.to_dict()
-    assert inventory["optional_outcome_models"]["sitescore"][
-        "contract_installable"
-    ] is True
-    assert inventory["optional_outcome_models"]["heatzone"][
-        "contract_installable"
-    ] is True
-    assert inventory["eligible_row_prerequisite_evidence"]["counts"][
-        "stores_missing_opened_on"
-    ] == 30
+    assert inventory["optional_outcome_models"]["sitescore"]["contract_installable"] is True
+    assert inventory["optional_outcome_models"]["heatzone"]["contract_installable"] is True
+    assert (
+        inventory["eligible_row_prerequisite_evidence"]["counts"]["stores_missing_opened_on"] == 30
+    )
     result = installer.install()
     assert result["status"] == "installed"
     assert len(result["sql_sha256"]) == 64
@@ -491,28 +495,22 @@ def test_model_ready_view_installer_preflights_and_applies_one_sql_transaction()
         contract["installer_sha256"] == result["sql_sha256"]
         for contract in result["active_contracts"].values()
     )
-    assert result["eligible_row_prerequisite_evidence"][
-        "sitescore_anchor_prerequisite_rows"
-    ] == 205
+    assert result["eligible_row_prerequisite_evidence"]["sitescore_anchor_prerequisite_rows"] == 205
     assert result["minimum_data_checks"] == "trainer"
     assert client.transactions == 1
-    assert any(
-        "pg_advisory_xact_lock" in statement
-        for statement, _params in client.executions
-    )
+    assert client.contracts["model_ready.unrelated_view"]["installer_sha256"] == "unchanged"
+    assert client.verification_transaction_states
+    assert all(client.verification_transaction_states)
+    assert any("pg_advisory_xact_lock" in statement for statement, _params in client.executions)
 
 
 def test_model_ready_view_preflight_requires_opening_and_geo_columns() -> None:
     client = FakeInstallationClient()
     client.columns["core.stores"] = tuple(
-        column
-        for column in client.columns["core.stores"]
-        if column != "opened_on"
+        column for column in client.columns["core.stores"] if column != "opened_on"
     )
-    client.columns["core.address_locations"] = tuple(
-        column
-        for column in client.columns["core.address_locations"]
-        if column != "h3_res_9"
+    client.columns["data_plane.place_geography"] = tuple(
+        column for column in client.columns["data_plane.place_geography"] if column != "h3_res_9"
     )
 
     preflight = ModelReadyViewInstaller(client).preflight()
@@ -520,7 +518,7 @@ def test_model_ready_view_preflight_requires_opening_and_geo_columns() -> None:
     assert not preflight.ready
     assert preflight.missing_columns == {
         "core.stores": ("opened_on",),
-        "core.address_locations": ("h3_res_9",),
+        "data_plane.place_geography": ("h3_res_9",),
     }
     assert preflight.prerequisite_counts == {}
 
@@ -530,15 +528,16 @@ def test_model_ready_view_install_rejects_non_active_geo_contract() -> None:
         def execute(self, sql: str, params: tuple[Any, ...] = ()) -> None:
             super().execute(sql, params)
             if "CREATE OR REPLACE VIEW model_ready.forecast_training_view" in sql:
-                self.contracts["model_ready.heatzone_training_view"][
-                    "contract_state"
-                ] = "BLOCKED"
+                self.contracts["model_ready.heatzone_training_view"]["contract_state"] = "BLOCKED"
 
     with pytest.raises(
         RuntimeError,
         match="model_ready.heatzone_training_view: not ACTIVE",
     ):
-        ModelReadyViewInstaller(InactiveGeoContractClient()).install()
+        client = InactiveGeoContractClient()
+        ModelReadyViewInstaller(client).install()
+    assert client.verification_transaction_states
+    assert all(client.verification_transaction_states)
 
 
 def test_model_ready_view_install_and_inventory_fail_closed(
@@ -637,6 +636,14 @@ def test_sitescore_model_spec_binds_real_opened_store_outcome_contract() -> None
     assert {"rent_amount", "area_ping", "frontage_m", "rent_per_ping"}.isdisjoint(
         spec.required_columns
     )
+    assert spec.output_transform == {
+        "version": "sitescore-90d-net-revenue-to-mature-monthly-v1",
+        "kind": "fixed_horizon_sum_to_monthly_rate",
+        "input_unit": "TWD_NET_REVENUE_90D",
+        "output_unit": "TWD_NET_REVENUE_MONTHLY",
+        "horizon_days": 90,
+        "days_per_month": 30.4375,
+    }
 
 
 def test_heatzone_model_spec_binds_real_point_in_time_cell_outcome_contract() -> None:
@@ -663,6 +670,14 @@ def test_heatzone_model_spec_binds_real_point_in_time_cell_outcome_contract() ->
         "active_listing_count",
         "median_listing_rent",
     }.isdisjoint(spec.required_columns)
+    assert spec.output_transform == {
+        "version": "heatzone-28d-revenue-percentile-priority-v1",
+        "kind": "batch_percentile_rank",
+        "input_unit": "TWD_NET_REVENUE_28D",
+        "output_unit": "PRIORITY_SCORE_0_100",
+        "direction": "higher_is_better",
+        "tie_method": "average",
+    }
 
 
 def test_postgres_source_uses_bounded_ordered_query() -> None:
@@ -696,9 +711,7 @@ def test_prepare_rows_uses_canonical_lineage_and_never_fills_missing_features() 
         "postgres:model_ready.forecast_training_view:sha256:" + "a" * 64,
         "snapshot-0001",
     ]
-    assert set(first["features"]) == set(
-        MODEL_SPECS["forecastops"].feature_columns
-    )
+    assert set(first["features"]) == set(MODEL_SPECS["forecastops"].feature_columns)
     assert "daily_net_revenue" not in first["features"]
     assert first["labels"]["daily_net_revenue"] > 0
 
@@ -722,15 +735,39 @@ def test_prepare_rows_requires_source_lineage_and_strict_causal_time() -> None:
         prepare_model_rows(MODEL_SPECS["forecastops"], _loaded(rows))
 
 
+def test_prepare_rows_allows_labels_to_mature_after_prediction_origin() -> None:
+    rows = _raw_forecast_rows(120)
+    maturity = datetime(2026, 7, 30, tzinfo=UTC)
+    for row in rows:
+        row["label_maturity_time"] = maturity
+
+    prepared = prepare_model_rows(MODEL_SPECS["forecastops"], _loaded(rows))
+
+    assert (
+        prepared[0].mapping["feature_snapshot_time"] < prepared[0].mapping["prediction_origin_time"]
+    )
+    assert (
+        prepared[0].mapping["prediction_origin_time"] < prepared[0].mapping["label_maturity_time"]
+    )
+    assert prepared[0].mapping["label_maturity_time"] <= prepared[0].mapping["training_as_of_time"]
+
+
+def test_prepare_rows_rejects_labels_not_mature_at_training_as_of() -> None:
+    rows = _raw_forecast_rows(120)
+    for row in rows:
+        row["label_maturity_time"] = datetime(2026, 8, 2, tzinfo=UTC)
+
+    with pytest.raises(ModelReadyDataError, match="training as_of_time"):
+        prepare_model_rows(MODEL_SPECS["forecastops"], _loaded(rows))
+
+
 def test_temporal_validation_uses_future_holdout_and_segment_gates() -> None:
     prepared = prepare_model_rows(
         MODEL_SPECS["forecastops"],
         _loaded(_raw_forecast_rows(120)),
     )
     training, holdout = _temporal_split(prepared, holdout_fraction=0.20)
-    assert max(row.temporal_value for row in training) < min(
-        row.temporal_value for row in holdout
-    )
+    assert max(row.temporal_value for row in training) < min(row.temporal_value for row in holdout)
 
     class PerfectEstimator:
         def predict(self, rows: list[dict[str, Any]]) -> tuple[float, ...]:

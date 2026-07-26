@@ -232,18 +232,27 @@ COMMENT ON VIEW model_ready.forecast_training_view IS
     'v2: tenant/store daily revenue labels from core.transactions; all features use only prior dates.';
 
 CREATE OR REPLACE VIEW model_ready.candidate_site_view AS
-WITH successful_transaction_days AS (
+WITH authoritative_order_days AS (
     SELECT
+        tenant.tenant_id,
         ingestion.partition_key::date AS partition_date,
         max(ingestion.finished_at) AS finished_at,
         array_agg(DISTINCT ingestion.run_id::text ORDER BY ingestion.run_id::text)
             AS run_ids
     FROM data_plane.ingestion_runs AS ingestion
-    WHERE ingestion.source_kind IN ('orders', 'transaction', 'trade')
+    CROSS JOIN (
+        SELECT DISTINCT tenant_id
+        FROM core.stores
+    ) AS tenant
+    WHERE ingestion.source_kind = 'orders'
       AND ingestion.status = 'SUCCEEDED'
+      AND ingestion.reconciled
+      AND ingestion.partition_complete
+      AND ingestion.quarantined_count = 0
+      AND ingestion.processed_count = ingestion.valid_loaded
       AND ingestion.finished_at IS NOT NULL
       AND ingestion.partition_key ~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}$'
-    GROUP BY ingestion.partition_key::date
+    GROUP BY tenant.tenant_id, ingestion.partition_key::date
 ),
 transaction_source AS (
     SELECT
@@ -254,23 +263,42 @@ transaction_source AS (
         txn.observation_time,
         txn.ingested_at,
         txn.net_amount,
-        address.h3_res_9 AS h3_index,
+        geography.h3_res_9 AS h3_index,
         source.source_snapshot_ids,
         source.lineage_complete,
         source.source_available_at
     FROM core.transactions AS txn
     INNER JOIN core.stores AS store
         ON store.store_id = txn.store_id
-    INNER JOIN core.address_locations AS address
-        ON address.address_id = store.address_id
+    INNER JOIN data_plane.transaction_authority AS authority
+        ON authority.transaction_id = txn.transaction_id
+       AND authority.source_kind = 'orders'
+    INNER JOIN LATERAL (
+        SELECT
+            place.source_snapshot_id,
+            place.run_id,
+            place.h3_res_9,
+            place.observed_at
+        FROM data_plane.place_geography AS place
+        WHERE place.tenant_id = store.tenant_id
+          AND place.store_id = store.store_id
+          AND place.valid_from <= txn.event_time
+        ORDER BY place.valid_from DESC, place.observed_at DESC
+        LIMIT 1
+    ) AS geography ON TRUE
+    INNER JOIN data_plane.ingestion_runs AS geography_run
+        ON geography_run.run_id = geography.run_id
     LEFT JOIN LATERAL (
         SELECT
-            array_agg(
-                DISTINCT lineage.source_snapshot_id::text
-                ORDER BY lineage.source_snapshot_id::text
+            array_append(
+                array_agg(
+                    DISTINCT lineage.source_snapshot_id::text
+                    ORDER BY lineage.source_snapshot_id::text
+                ),
+                geography.source_snapshot_id::text
             ) AS source_snapshot_ids,
             (
-                count(DISTINCT lineage.canonical_table) = 3
+                count(DISTINCT lineage.canonical_table) = 2
                 AND bool_and(
                     ingestion.status = 'SUCCEEDED'
                     AND ingestion.finished_at IS NOT NULL
@@ -283,13 +311,17 @@ transaction_source AS (
                         )
                     )
                 )
+                AND geography_run.status = 'SUCCEEDED'
+                AND geography_run.finished_at IS NOT NULL
             ) AS lineage_complete,
             max(
                 greatest(
                     lineage.projected_at,
                     ingestion.finished_at,
                     txn.observation_time,
-                    txn.ingested_at
+                    txn.ingested_at,
+                    geography.observed_at,
+                    geography_run.finished_at
                 )
             ) AS source_available_at
         FROM data_plane.canonical_lineage AS lineage
@@ -305,11 +337,6 @@ transaction_source AS (
                 (
                     lineage.canonical_table = 'core.stores'
                     AND lineage.canonical_id = store.store_id
-                )
-                OR
-                (
-                    lineage.canonical_table = 'core.address_locations'
-                    AND lineage.canonical_id = address.address_id
                 )
           )
     ) AS source ON TRUE
@@ -340,33 +367,61 @@ store_anchor AS (
                 THEN store.opened_on::timestamp AT TIME ZONE 'UTC'
             ELSE NULL
         END AS feature_cutoff_time,
-        address.address_id,
-        address.latitude::double precision AS latitude,
-        address.longitude::double precision AS longitude,
-        address.geocode_confidence::double precision AS geocode_confidence,
-        address.h3_res_9 AS h3_index,
+        geography.latitude::double precision AS latitude,
+        geography.longitude::double precision AS longitude,
+        geography.geocode_confidence::double precision AS geocode_confidence,
+        geography.h3_res_9 AS h3_index,
         identity_source.source_snapshot_ids AS identity_snapshot_ids,
         identity_source.identity_relation_count,
         identity_source.lineage_complete AS identity_lineage_complete,
         identity_source.source_available_at AS identity_available_at
     FROM core.stores AS store
-    LEFT JOIN core.address_locations AS address
-        ON address.address_id = store.address_id
     LEFT JOIN LATERAL (
         SELECT
-            array_agg(
-                DISTINCT lineage.source_snapshot_id::text
-                ORDER BY lineage.source_snapshot_id::text
+            place.source_snapshot_id,
+            place.run_id,
+            place.latitude,
+            place.longitude,
+            place.geocode_confidence,
+            place.h3_res_9,
+            place.observed_at
+        FROM data_plane.place_geography AS place
+        WHERE place.tenant_id = store.tenant_id
+          AND place.store_id = store.store_id
+          AND store.opened_on IS NOT NULL
+          AND place.valid_from <=
+                store.opened_on::timestamp AT TIME ZONE 'UTC'
+        ORDER BY place.valid_from DESC, place.observed_at DESC
+        LIMIT 1
+    ) AS geography ON TRUE
+    LEFT JOIN data_plane.ingestion_runs AS geography_run
+        ON geography_run.run_id = geography.run_id
+    LEFT JOIN LATERAL (
+        SELECT
+            array_append(
+                array_agg(
+                    DISTINCT lineage.source_snapshot_id::text
+                    ORDER BY lineage.source_snapshot_id::text
+                ),
+                geography.source_snapshot_id::text
             ) AS source_snapshot_ids,
-            count(DISTINCT lineage.canonical_table) AS identity_relation_count,
+            count(DISTINCT lineage.canonical_table) + 1
+                AS identity_relation_count,
             (
-                count(DISTINCT lineage.canonical_table) = 2
+                count(DISTINCT lineage.canonical_table) = 1
                 AND bool_and(
                     ingestion.status = 'SUCCEEDED'
                     AND ingestion.finished_at IS NOT NULL
                 )
+                AND geography_run.status = 'SUCCEEDED'
+                AND geography_run.finished_at IS NOT NULL
             ) AS lineage_complete,
-            max(greatest(lineage.projected_at, ingestion.finished_at))
+            max(greatest(
+                lineage.projected_at,
+                ingestion.finished_at,
+                geography.observed_at,
+                geography_run.finished_at
+            ))
                 AS source_available_at
         FROM data_plane.canonical_lineage AS lineage
         INNER JOIN data_plane.ingestion_runs AS ingestion
@@ -376,12 +431,6 @@ store_anchor AS (
                 (
                     lineage.canonical_table = 'core.stores'
                     AND lineage.canonical_id = store.store_id
-                )
-                OR
-                (
-                    address.address_id IS NOT NULL
-                    AND lineage.canonical_table = 'core.address_locations'
-                    AND lineage.canonical_id = address.address_id
                 )
           )
     ) AS identity_source ON TRUE
@@ -409,7 +458,7 @@ evaluated AS (
     FROM store_anchor AS anchor
     LEFT JOIN LATERAL (
         SELECT
-            sum(source_txn.net_amount)::double precision
+            coalesce(sum(source_txn.net_amount), 0)::double precision
                 AS prior_90d_cell_net_revenue,
             count(*)::bigint AS prior_90d_cell_transaction_count,
             count(DISTINCT source_txn.store_id)::integer
@@ -444,12 +493,12 @@ evaluated AS (
     ) AS prior_snapshots ON TRUE
     LEFT JOIN LATERAL (
         SELECT
-            sum(source_txn.net_amount)::double precision
+            coalesce(sum(source_txn.net_amount), 0)::double precision
                 AS realized_90d_net_revenue,
             count(*)::bigint AS label_transaction_count,
             (
-                count(*) > 0
-                AND bool_and(source_txn.lineage_complete)
+                count(*) = 0
+                OR bool_and(source_txn.lineage_complete)
             ) AS lineage_complete,
             max(source_txn.source_available_at) AS source_available_at
         FROM transaction_source AS source_txn
@@ -475,9 +524,10 @@ evaluated AS (
             count(DISTINCT day.partition_date)::integer AS covered_days,
             array_agg(DISTINCT run_id ORDER BY run_id) AS run_ids,
             max(day.finished_at) AS source_available_at
-        FROM successful_transaction_days AS day
+        FROM authoritative_order_days AS day
         LEFT JOIN LATERAL unnest(day.run_ids) AS run_id ON TRUE
-        WHERE day.partition_date >= anchor.opened_on - 90
+        WHERE day.tenant_id = anchor.tenant_id
+          AND day.partition_date >= anchor.opened_on - 90
           AND day.partition_date < anchor.opened_on
           AND day.finished_at < anchor.feature_cutoff_time
     ) AS prior_coverage ON TRUE
@@ -486,9 +536,10 @@ evaluated AS (
             count(DISTINCT day.partition_date)::integer AS covered_days,
             array_agg(DISTINCT run_id ORDER BY run_id) AS run_ids,
             max(day.finished_at) AS source_available_at
-        FROM successful_transaction_days AS day
+        FROM authoritative_order_days AS day
         LEFT JOIN LATERAL unnest(day.run_ids) AS run_id ON TRUE
-        WHERE day.partition_date >= anchor.opened_on
+        WHERE day.tenant_id = anchor.tenant_id
+          AND day.partition_date >= anchor.opened_on
           AND day.partition_date < anchor.opened_on + 90
     ) AS label_coverage ON TRUE
 ),
@@ -545,6 +596,7 @@ SELECT
     prior_run_available_at AS feature_partition_available_at,
     90::integer AS label_horizon_days,
     realized_90d_net_revenue,
+    label_transaction_count,
     latitude,
     longitude,
     geocode_confidence,
@@ -583,7 +635,6 @@ SELECT
         AND prior_90d_cell_transaction_count > 0
         AND label_covered_days = 90
         AND label_lineage_complete
-        AND label_transaction_count > 0
         AND label_maturity_time <= CURRENT_TIMESTAMP
         AND cardinality(source_snapshot_ids) > 0
     ) AS is_training_eligible,
@@ -607,7 +658,6 @@ SELECT
             THEN 'PRIOR_CELL_HISTORY_MISSING'
         WHEN label_covered_days <> 90 THEN 'LABEL_90D_PARTITION_COVERAGE_INCOMPLETE'
         WHEN NOT label_lineage_complete THEN 'LABEL_LINEAGE_INCOMPLETE'
-        WHEN label_transaction_count = 0 THEN 'REALIZED_REVENUE_LABEL_MISSING'
         WHEN label_maturity_time > CURRENT_TIMESTAMP THEN 'LABEL_NOT_MATURE'
         WHEN cardinality(source_snapshot_ids) = 0 THEN 'SOURCE_LINEAGE_MISSING'
         ELSE NULL
@@ -615,41 +665,41 @@ SELECT
 FROM materialized;
 
 COMMENT ON VIEW model_ready.candidate_site_view IS
-    'v2: historical opened-store SiteScore rows. Label is realized TWD net revenue in the fixed 90-day post-opening horizon; features and identity evidence must be available strictly before opening.';
+    'v2: historical opened-store SiteScore rows. Label is realized TWD net revenue in the complete 90-day post-opening horizon, including legitimate zero outcomes; features and immutable geography evidence must be available strictly before opening.';
 
 CREATE OR REPLACE VIEW model_ready.heatzone_training_view AS
-WITH successful_transaction_days AS (
+WITH authoritative_order_days AS (
     SELECT
+        tenant.tenant_id,
         ingestion.partition_key::date AS partition_date,
         max(ingestion.finished_at) AS finished_at,
         array_agg(DISTINCT ingestion.run_id::text ORDER BY ingestion.run_id::text)
             AS run_ids
     FROM data_plane.ingestion_runs AS ingestion
-    WHERE ingestion.source_kind IN ('orders', 'transaction', 'trade')
+    CROSS JOIN (
+        SELECT DISTINCT tenant_id
+        FROM core.stores
+    ) AS tenant
+    WHERE ingestion.source_kind = 'orders'
       AND ingestion.status = 'SUCCEEDED'
+      AND ingestion.reconciled
+      AND ingestion.partition_complete
+      AND ingestion.quarantined_count = 0
+      AND ingestion.processed_count = ingestion.valid_loaded
       AND ingestion.finished_at IS NOT NULL
       AND ingestion.partition_key ~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}$'
-    GROUP BY ingestion.partition_key::date
+    GROUP BY tenant.tenant_id, ingestion.partition_key::date
 ),
 store_source AS (
     SELECT
         store.tenant_id,
         store.store_id,
         store.opened_on,
-        address.address_id,
-        address.h3_res_9 AS h3_index,
-        address.city AS admin_city,
-        address.district AS admin_district,
-        address.latitude::double precision AS latitude,
-        address.longitude::double precision AS longitude,
-        address.geocode_confidence::double precision AS geocode_confidence,
         identity_source.source_snapshot_ids,
         identity_source.identity_relation_count,
         identity_source.lineage_complete,
         identity_source.source_available_at
     FROM core.stores AS store
-    INNER JOIN core.address_locations AS address
-        ON address.address_id = store.address_id
     LEFT JOIN LATERAL (
         SELECT
             array_agg(
@@ -658,7 +708,7 @@ store_source AS (
             ) AS source_snapshot_ids,
             count(DISTINCT lineage.canonical_table) AS identity_relation_count,
             (
-                count(DISTINCT lineage.canonical_table) = 2
+                count(DISTINCT lineage.canonical_table) = 1
                 AND bool_and(
                     ingestion.status = 'SUCCEEDED'
                     AND ingestion.finished_at IS NOT NULL
@@ -670,20 +720,10 @@ store_source AS (
         INNER JOIN data_plane.ingestion_runs AS ingestion
             ON ingestion.run_id = lineage.run_id
         WHERE lineage.tenant_id = store.tenant_id
-          AND (
-                (
-                    lineage.canonical_table = 'core.stores'
-                    AND lineage.canonical_id = store.store_id
-                )
-                OR
-                (
-                    lineage.canonical_table = 'core.address_locations'
-                    AND lineage.canonical_id = address.address_id
-                )
-          )
+          AND lineage.canonical_table = 'core.stores'
+          AND lineage.canonical_id = store.store_id
     ) AS identity_source ON TRUE
     WHERE store.opened_on IS NOT NULL
-      AND address.h3_res_9 IS NOT NULL
 ),
 transaction_source AS (
     SELECT
@@ -694,23 +734,42 @@ transaction_source AS (
         txn.observation_time,
         txn.ingested_at,
         txn.net_amount,
-        address.h3_res_9 AS h3_index,
+        geography.h3_res_9 AS h3_index,
         source.source_snapshot_ids,
         source.lineage_complete,
         source.source_available_at
     FROM core.transactions AS txn
     INNER JOIN core.stores AS store
         ON store.store_id = txn.store_id
-    INNER JOIN core.address_locations AS address
-        ON address.address_id = store.address_id
+    INNER JOIN data_plane.transaction_authority AS authority
+        ON authority.transaction_id = txn.transaction_id
+       AND authority.source_kind = 'orders'
+    INNER JOIN LATERAL (
+        SELECT
+            place.source_snapshot_id,
+            place.run_id,
+            place.h3_res_9,
+            place.observed_at
+        FROM data_plane.place_geography AS place
+        WHERE place.tenant_id = store.tenant_id
+          AND place.store_id = store.store_id
+          AND place.valid_from <= txn.event_time
+        ORDER BY place.valid_from DESC, place.observed_at DESC
+        LIMIT 1
+    ) AS geography ON TRUE
+    INNER JOIN data_plane.ingestion_runs AS geography_run
+        ON geography_run.run_id = geography.run_id
     LEFT JOIN LATERAL (
         SELECT
-            array_agg(
-                DISTINCT lineage.source_snapshot_id::text
-                ORDER BY lineage.source_snapshot_id::text
+            array_append(
+                array_agg(
+                    DISTINCT lineage.source_snapshot_id::text
+                    ORDER BY lineage.source_snapshot_id::text
+                ),
+                geography.source_snapshot_id::text
             ) AS source_snapshot_ids,
             (
-                count(DISTINCT lineage.canonical_table) = 3
+                count(DISTINCT lineage.canonical_table) = 2
                 AND bool_and(
                     ingestion.status = 'SUCCEEDED'
                     AND ingestion.finished_at IS NOT NULL
@@ -723,13 +782,17 @@ transaction_source AS (
                         )
                     )
                 )
+                AND geography_run.status = 'SUCCEEDED'
+                AND geography_run.finished_at IS NOT NULL
             ) AS lineage_complete,
             max(
                 greatest(
                     lineage.projected_at,
                     ingestion.finished_at,
                     txn.observation_time,
-                    txn.ingested_at
+                    txn.ingested_at,
+                    geography.observed_at,
+                    geography_run.finished_at
                 )
             ) AS source_available_at
         FROM data_plane.canonical_lineage AS lineage
@@ -746,16 +809,11 @@ transaction_source AS (
                     lineage.canonical_table = 'core.stores'
                     AND lineage.canonical_id = store.store_id
                 )
-                OR
-                (
-                    lineage.canonical_table = 'core.address_locations'
-                    AND lineage.canonical_id = address.address_id
-                )
           )
     ) AS source ON TRUE
     WHERE txn.transaction_status = 'succeeded'
       AND txn.currency = 'TWD'
-      AND address.h3_res_9 IS NOT NULL
+      AND geography.h3_res_9 IS NOT NULL
 ),
 transaction_snapshot_source AS (
     SELECT
@@ -773,37 +831,79 @@ transaction_snapshot_source AS (
 cell_origin AS (
     SELECT
         store_source.tenant_id,
-        store_source.h3_index,
+        geography.h3_res_9 AS h3_index,
         day.partition_date AS origin_date,
         day.partition_date::timestamp AT TIME ZONE 'UTC'
             AS feature_cutoff_time,
-        min(store_source.admin_city) AS admin_city,
-        min(store_source.admin_district) AS admin_district,
-        avg(store_source.latitude)::double precision AS cell_latitude,
-        avg(store_source.longitude)::double precision AS cell_longitude,
-        avg(store_source.geocode_confidence)::double precision
+        min(geography.city) AS admin_city,
+        min(geography.district) AS admin_district,
+        avg(geography.latitude)::double precision AS cell_latitude,
+        avg(geography.longitude)::double precision AS cell_longitude,
+        avg(geography.geocode_confidence)::double precision
             AS average_geocode_confidence,
         count(DISTINCT store_source.store_id)::integer
             AS prior_opened_store_count,
         bool_and(
-            store_source.identity_relation_count = 2
+            store_source.identity_relation_count = 1
             AND store_source.lineage_complete
-            AND store_source.source_available_at <
+            AND geography_run.status = 'SUCCEEDED'
+            AND geography_run.finished_at IS NOT NULL
+            AND greatest(
+                store_source.source_available_at,
+                geography.observed_at,
+                geography_run.finished_at
+            ) <
                 day.partition_date::timestamp AT TIME ZONE 'UTC'
         ) AS identity_lineage_complete,
-        max(store_source.source_available_at) AS identity_available_at
-    FROM successful_transaction_days AS day
+        max(greatest(
+            store_source.source_available_at,
+            geography.observed_at,
+            geography_run.finished_at
+        )) AS identity_available_at,
+        array_agg(
+            DISTINCT snapshot_id
+            ORDER BY snapshot_id
+        ) AS identity_snapshot_ids
+    FROM authoritative_order_days AS day
     INNER JOIN store_source
-        ON store_source.opened_on < day.partition_date
+        ON store_source.tenant_id = day.tenant_id
+       AND store_source.opened_on < day.partition_date
+    INNER JOIN LATERAL (
+        SELECT
+            place.source_snapshot_id,
+            place.run_id,
+            place.h3_res_9,
+            place.city,
+            place.district,
+            place.latitude,
+            place.longitude,
+            place.geocode_confidence,
+            place.observed_at
+        FROM data_plane.place_geography AS place
+        WHERE place.tenant_id = store_source.tenant_id
+          AND place.store_id = store_source.store_id
+          AND place.valid_from <=
+                day.partition_date::timestamp AT TIME ZONE 'UTC'
+        ORDER BY place.valid_from DESC, place.observed_at DESC
+        LIMIT 1
+    ) AS geography ON TRUE
+    INNER JOIN data_plane.ingestion_runs AS geography_run
+        ON geography_run.run_id = geography.run_id
+    CROSS JOIN LATERAL unnest(
+        array_append(
+            coalesce(store_source.source_snapshot_ids, ARRAY[]::text[]),
+            geography.source_snapshot_id::text
+        )
+    ) AS snapshot_id
+    WHERE geography.h3_res_9 IS NOT NULL
     GROUP BY
         store_source.tenant_id,
-        store_source.h3_index,
+        geography.h3_res_9,
         day.partition_date
 ),
 evaluated AS (
     SELECT
         origin.*,
-        identity_snapshots.source_snapshot_ids AS identity_snapshot_ids,
         prior.prior_28d_cell_net_revenue,
         prior.prior_90d_cell_net_revenue,
         prior.prior_28d_transaction_count,
@@ -826,24 +926,15 @@ evaluated AS (
     FROM cell_origin AS origin
     LEFT JOIN LATERAL (
         SELECT
-            array_agg(DISTINCT snapshot_id ORDER BY snapshot_id)
-                AS source_snapshot_ids
-        FROM store_source AS source_store
-        CROSS JOIN LATERAL unnest(
-            coalesce(source_store.source_snapshot_ids, ARRAY[]::text[])
-        ) AS snapshot_id
-        WHERE source_store.tenant_id = origin.tenant_id
-          AND source_store.h3_index = origin.h3_index
-          AND source_store.opened_on < origin.origin_date
-    ) AS identity_snapshots ON TRUE
-    LEFT JOIN LATERAL (
-        SELECT
-            sum(source_txn.net_amount)
+            coalesce(
+                sum(source_txn.net_amount)
                 FILTER (
                     WHERE source_txn.event_time >=
                         origin.feature_cutoff_time - interval '28 days'
-                )::double precision AS prior_28d_cell_net_revenue,
-            sum(source_txn.net_amount)::double precision
+                ),
+                0
+            )::double precision AS prior_28d_cell_net_revenue,
+            coalesce(sum(source_txn.net_amount), 0)::double precision
                 AS prior_90d_cell_net_revenue,
             count(*)
                 FILTER (
@@ -883,12 +974,12 @@ evaluated AS (
     ) AS prior_snapshots ON TRUE
     LEFT JOIN LATERAL (
         SELECT
-            sum(source_txn.net_amount)::double precision
+            coalesce(sum(source_txn.net_amount), 0)::double precision
                 AS realized_28d_cell_net_revenue,
             count(*)::bigint AS label_transaction_count,
             (
-                count(*) > 0
-                AND bool_and(source_txn.lineage_complete)
+                count(*) = 0
+                OR bool_and(source_txn.lineage_complete)
             ) AS lineage_complete,
             max(source_txn.source_available_at) AS source_available_at
         FROM transaction_source AS source_txn
@@ -914,9 +1005,10 @@ evaluated AS (
             count(DISTINCT day.partition_date)::integer AS covered_days,
             array_agg(DISTINCT run_id ORDER BY run_id) AS run_ids,
             max(day.finished_at) AS source_available_at
-        FROM successful_transaction_days AS day
+        FROM authoritative_order_days AS day
         LEFT JOIN LATERAL unnest(day.run_ids) AS run_id ON TRUE
-        WHERE day.partition_date >= origin.origin_date - 90
+        WHERE day.tenant_id = origin.tenant_id
+          AND day.partition_date >= origin.origin_date - 90
           AND day.partition_date < origin.origin_date
           AND day.finished_at < origin.feature_cutoff_time
     ) AS prior_coverage ON TRUE
@@ -925,9 +1017,10 @@ evaluated AS (
             count(DISTINCT day.partition_date)::integer AS covered_days,
             array_agg(DISTINCT run_id ORDER BY run_id) AS run_ids,
             max(day.finished_at) AS source_available_at
-        FROM successful_transaction_days AS day
+        FROM authoritative_order_days AS day
         LEFT JOIN LATERAL unnest(day.run_ids) AS run_id ON TRUE
-        WHERE day.partition_date >= origin.origin_date
+        WHERE day.tenant_id = origin.tenant_id
+          AND day.partition_date >= origin.origin_date
           AND day.partition_date < origin.origin_date + 28
     ) AS label_coverage ON TRUE
 ),
@@ -981,6 +1074,7 @@ SELECT
     prior_run_available_at AS feature_partition_available_at,
     28::integer AS label_horizon_days,
     realized_28d_cell_net_revenue,
+    label_transaction_count,
     cell_latitude,
     cell_longitude,
     average_geocode_confidence,
@@ -1020,7 +1114,6 @@ SELECT
         AND prior_90d_transaction_count > 0
         AND label_covered_days = 28
         AND label_lineage_complete
-        AND label_transaction_count > 0
         AND label_maturity_time <= CURRENT_TIMESTAMP
         AND cardinality(source_snapshot_ids) > 0
     ) AS is_training_eligible,
@@ -1040,7 +1133,6 @@ SELECT
         WHEN prior_90d_transaction_count = 0 THEN 'PRIOR_CELL_HISTORY_MISSING'
         WHEN label_covered_days <> 28 THEN 'LABEL_28D_PARTITION_COVERAGE_INCOMPLETE'
         WHEN NOT label_lineage_complete THEN 'LABEL_LINEAGE_INCOMPLETE'
-        WHEN label_transaction_count = 0 THEN 'REALIZED_CELL_REVENUE_LABEL_MISSING'
         WHEN label_maturity_time > CURRENT_TIMESTAMP THEN 'LABEL_NOT_MATURE'
         WHEN cardinality(source_snapshot_ids) = 0 THEN 'SOURCE_LINEAGE_MISSING'
         ELSE NULL
@@ -1048,7 +1140,7 @@ SELECT
 FROM materialized;
 
 COMMENT ON VIEW model_ready.heatzone_training_view IS
-    'v2: tenant/H3/date HeatZone rows. Label is realized TWD cell net revenue in the next 28 complete source days; every feature uses transactions and opened-store identity available strictly before origin.';
+    'v2: tenant/H3/date HeatZone rows. Label is realized TWD cell net revenue, including legitimate zero outcomes, in the next 28 complete authoritative-order days; every feature and H3 assignment uses immutable evidence available strictly before origin.';
 
 INSERT INTO model_ready.view_contracts (
     relation_name,
@@ -1091,10 +1183,11 @@ INSERT INTO model_ready.view_contracts (
         'candidate-site-view-v2',
         ARRAY[
             'core.stores',
-            'core.address_locations',
             'core.transactions',
             'data_plane.canonical_lineage',
-            'data_plane.ingestion_runs'
+            'data_plane.ingestion_runs',
+            'data_plane.place_geography',
+            'data_plane.transaction_authority'
         ],
         'ACTIVE',
         TRUE,
@@ -1107,10 +1200,11 @@ INSERT INTO model_ready.view_contracts (
         'heatzone-training-view-v2',
         ARRAY[
             'core.stores',
-            'core.address_locations',
             'core.transactions',
             'data_plane.canonical_lineage',
-            'data_plane.ingestion_runs'
+            'data_plane.ingestion_runs',
+            'data_plane.place_geography',
+            'data_plane.transaction_authority'
         ],
         'ACTIVE',
         TRUE,

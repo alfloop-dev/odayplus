@@ -2,17 +2,21 @@ from __future__ import annotations
 
 import os
 import re
-from dataclasses import dataclass
+from collections.abc import Mapping
+from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from enum import StrEnum
+from typing import Any
 from urllib.parse import parse_qs, urlparse
 
+from models.shared_ml.output_contracts import (
+    HEATZONE_OUTPUT_TRANSFORM,
+    SITESCORE_OUTPUT_TRANSFORM,
+)
 from models.shared_ml.production_contracts import PRODUCTION_MODEL_CONTRACTS
 
 _LOCAL_HOSTS = {"", "localhost", "127.0.0.1", "::1"}
-_CLOUD_SQL_SOCKET_RE = re.compile(
-    r"^/cloudsql/[a-z][a-z0-9-]{4,29}:[a-z0-9-]+:[a-z][a-z0-9-]+$"
-)
+_CLOUD_SQL_SOCKET_RE = re.compile(r"^/cloudsql/[a-z][a-z0-9-]{4,29}:[a-z0-9-]+:[a-z][a-z0-9-]+$")
 _PLACEHOLDER_TOKENS = (
     "<",
     ">",
@@ -94,6 +98,7 @@ class ModelSpec:
     event_column: str | None = None
     label_maturity_column: str | None = None
     scope_columns: tuple[str, ...] = ()
+    output_transform: Mapping[str, Any] = field(default_factory=dict)
 
     @property
     def required_columns(self) -> tuple[str, ...]:
@@ -107,9 +112,7 @@ class ModelSpec:
             "is_training_eligible",
         )
         optional_event = (self.event_column,) if self.event_column else ()
-        optional_maturity = (
-            (self.label_maturity_column,) if self.label_maturity_column else ()
-        )
+        optional_maturity = (self.label_maturity_column,) if self.label_maturity_column else ()
         return tuple(
             dict.fromkeys(
                 (
@@ -237,6 +240,7 @@ MODEL_SPECS: dict[str, ModelSpec] = {
         intended_use="Human-reviewed Candidate Site prioritization",
         not_intended_use="Automatic site promotion, lease approval, or ambiguous identity merge",
         risk_level="R4",
+        output_transform=SITESCORE_OUTPUT_TRANSFORM,
     ),
     "heatzone": ModelSpec(
         key="heatzone",
@@ -276,10 +280,10 @@ MODEL_SPECS: dict[str, ModelSpec] = {
         min_p80_coverage=0.65,
         intended_use="Human-reviewed HeatZone expansion-priority ranking",
         not_intended_use=(
-            "Automatic property acquisition, Candidate Site promotion, "
-            "or source-policy override"
+            "Automatic property acquisition, Candidate Site promotion, or source-policy override"
         ),
         risk_level="R4",
+        output_transform=HEATZONE_OUTPUT_TRANSFORM,
     ),
     "avm-liquidity": ModelSpec(
         key="avm-liquidity",
@@ -357,9 +361,7 @@ class ProductionTrainingSettings:
             )
         _reject_placeholder(self.git_sha, "ODP_RELEASE_COMMIT_SHA")
         if not self.actor:
-            raise ModelTrainingConfigurationError(
-                "ODP_MODEL_TRAINING_ACTOR is required"
-            )
+            raise ModelTrainingConfigurationError("ODP_MODEL_TRAINING_ACTOR is required")
         _reject_placeholder(self.actor, "ODP_MODEL_TRAINING_ACTOR")
 
     def redacted_summary(self) -> dict[str, str]:
@@ -394,8 +396,7 @@ def require_approval_document(
     )
     if prohibited_keys:
         raise ModelTrainingConfigurationError(
-            "approval document contains prohibited credential fields: "
-            + ", ".join(prohibited_keys)
+            "approval document contains prohibited credential fields: " + ", ".join(prohibited_keys)
         )
     required = {
         "approval_id",
@@ -435,13 +436,9 @@ def require_approval_document(
     }:
         raise ModelTrainingConfigurationError("approval release_type is unsupported")
     try:
-        approved_at = datetime.fromisoformat(
-            normalized["approved_at"].replace("Z", "+00:00")
-        )
+        approved_at = datetime.fromisoformat(normalized["approved_at"].replace("Z", "+00:00"))
     except ValueError as exc:
-        raise ModelTrainingConfigurationError(
-            "approval approved_at must be ISO-8601"
-        ) from exc
+        raise ModelTrainingConfigurationError("approval approved_at must be ISO-8601") from exc
     if approved_at.tzinfo is None:
         raise ModelTrainingConfigurationError("approval approved_at must include timezone")
     return normalized
@@ -467,9 +464,7 @@ def _require_remote_url(value: str, *, field: str, schemes: set[str]) -> None:
     _reject_placeholder(value, field)
     parsed = urlparse(value)
     if parsed.scheme.lower() not in schemes:
-        raise ModelTrainingConfigurationError(
-            f"{field} must use {', '.join(sorted(schemes))}"
-        )
+        raise ModelTrainingConfigurationError(f"{field} must use {', '.join(sorted(schemes))}")
     socket_hosts = parse_qs(parsed.query).get("host", ())
     cloud_sql_socket = (
         field == "ODAY_DATABASE_URL"

@@ -13,9 +13,7 @@ from apps.data_platform.store import PsycopgCanonicalStore, _PostgresLookup
 
 def _schema() -> str:
     return (
-        Path(__file__).parents[1]
-        .joinpath("sql", "control_schema.sql")
-        .read_text(encoding="utf-8")
+        Path(__file__).parents[1].joinpath("sql", "control_schema.sql").read_text(encoding="utf-8")
     )
 
 
@@ -35,11 +33,10 @@ def test_partial_geography_and_machine_event_evidence_are_durable() -> None:
     assert "normalized_address TEXT," in schema
     assert "h3_res_9 VARCHAR(15)," in schema
     assert "h3_derivation_version TEXT" in schema
+    assert "valid_from TIMESTAMPTZ NOT NULL" in schema
+    assert "ix_data_plane_place_geography_pit" in schema
     assert "CHECK ((latitude IS NULL) = (longitude IS NULL))" in schema
-    assert (
-        "CREATE TABLE IF NOT EXISTS "
-        "{{control_schema}}.machine_status_event_evidence" in schema
-    )
+    assert "CREATE TABLE IF NOT EXISTS {{control_schema}}.machine_status_event_evidence" in schema
     assert "device_log_minimized_v1" in schema
 
 
@@ -50,13 +47,13 @@ def test_quarantine_and_lineage_are_run_and_snapshot_scoped() -> None:
     assert "reason_code TEXT NOT NULL" in schema
     assert "canonical_lineage" in schema
     assert "content_sha256 TEXT NOT NULL" in schema
+    assert "reconciled BOOLEAN NOT NULL DEFAULT FALSE" in schema
+    assert "partition_complete BOOLEAN NOT NULL DEFAULT FALSE" in schema
 
 
 def test_owner_mapping_schema_has_every_governed_live_enum() -> None:
     contract = json.loads(
-        Path(__file__).parents[1]
-        .joinpath("status_mapping.schema.json")
-        .read_text(encoding="utf-8")
+        Path(__file__).parents[1].joinpath("status_mapping.schema.json").read_text(encoding="utf-8")
     )
     properties = contract["properties"]["mappings"]["properties"]
     assert set(properties) == {
@@ -181,9 +178,7 @@ def test_ai_and_domain_upsert_bindings_match_control_schema(
             observed_at=forecast_envelope.observed_at,
         ),
     )
-    learning_envelope = _envelope(
-        envelope_factory, SourceKind.AI_CONSUMER_KMEANS_V1
-    )
+    learning_envelope = _envelope(envelope_factory, SourceKind.AI_CONSUMER_KMEANS_V1)
     store._upsert_learning_import(
         connection,
         learning_envelope,
@@ -262,11 +257,14 @@ def test_place_geography_evidence_keeps_snapshot_run_and_h3_derivation(
             store_id=UUID("00000000-0000-4000-8000-000000000011"),
             raw_address="台北市信義區信義路五段7號",
             normalized_address="台北市信義區信義路五段7號",
+            city="台北市",
+            district="信義區",
             latitude=Decimal("25.033964"),
             longitude=Decimal("121.564468"),
             h3_res_8="8826308281fffff",
             h3_res_9="8926308280fffff",
             h3_res_10="8a26308280f7fff",
+            effective_from=envelope.observed_at,
         ),
     )
 
@@ -275,6 +273,30 @@ def test_place_geography_evidence_keeps_snapshot_run_and_h3_derivation(
     assert "run_id" in sql
     assert "h3_derivation_version" in sql
     assert "stable_h3_index-v1" in params
+    assert "ON CONFLICT (source_snapshot_id) DO NOTHING" in sql
+    assert "DO UPDATE" not in sql
+
+
+def test_content_addressed_lineage_replay_never_rewrites_identity_or_availability(
+    envelope_factory,
+) -> None:
+    connection = _CaptureConnection()
+    store = _store()
+    envelope = _envelope(envelope_factory, SourceKind.PLACE)
+
+    store._lineage(
+        connection,
+        envelope,
+        UUID("00000000-0000-4000-8000-000000000001"),
+        "core.stores",
+        UUID("00000000-0000-4000-8000-000000000011"),
+    )
+
+    sql, _params = connection.statements[0]
+    assert "ON CONFLICT (source_snapshot_id, canonical_table, canonical_id)" in sql
+    assert "DO NOTHING" in sql
+    assert "DO UPDATE" not in sql
+    assert "projected_at" not in sql.split("VALUES", maxsplit=1)[0]
 
 
 def test_empty_partition_reconciles_when_dlt_did_not_create_a_raw_table() -> None:
