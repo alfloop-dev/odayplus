@@ -303,10 +303,16 @@ function toDomSafeId(value: string): string {
 }
 
 export function OperatorConsole({ searchParams = {} }: { searchParams?: Record<string, string | string[] | undefined> }) {
+  const intakeDetailOpen = isIntakeDetailOpen(searchParams);
   const fixturesAllowed = operatorFixturesAllowed();
   const [activeRoleId, setActiveRoleId] = useState<OperatorRoleId>(DEFAULT_OPERATOR_ROLE_ID);
-  const [activeWorkspaceId, setActiveWorkspaceId] = useState<WorkspaceId>(DEFAULT_WORKSPACE_ID);
-  const [activeTabId, setActiveTabId] = useState("overview");
+  const [activeWorkspaceId, setActiveWorkspaceId] = useState<WorkspaceId>(() => {
+    const requested = typeof searchParams.ws === "string" ? searchParams.ws : "";
+    return isWorkspaceId(requested) ? requested : DEFAULT_WORKSPACE_ID;
+  });
+  const [activeTabId, setActiveTabId] = useState(
+    typeof searchParams.tab === "string" ? searchParams.tab : "overview",
+  );
   const [activeStoreOpsDialog, setActiveStoreOpsDialog] = useState<StoreOpsWorkflowDialogType | null>(null);
   const [selectedStoreOpsIssue, setSelectedStoreOpsIssue] = useState<Issue | undefined>(undefined);
   const [selectedEntityId, setSelectedEntityId] = useState<string | null>(null);
@@ -399,6 +405,8 @@ export function OperatorConsole({ searchParams = {} }: { searchParams?: Record<s
   const liveWorkQueue = shellEnvelope.workQueue;
   const liveDecisions = shellEnvelope.decisions;
   const canRenderWorkspace = fixturesAllowed || shellDataStatus === "ready";
+  const canRenderDirectIntake =
+    intakeDetailOpen && activeWorkspaceId === "network";
 
   useEffect(() => {
     const storedRole = getOperatorRole(window.sessionStorage.getItem(roleStorageKey));
@@ -974,7 +982,12 @@ export function OperatorConsole({ searchParams = {} }: { searchParams?: Record<s
 
   return (
     <div
-      className={[styles.console, styles.consoleNetworkParity].join(" ")}
+      className={[
+        styles.console,
+        styles.consoleNetworkParity,
+        intakeDetailOpen ? "operatorIntakeDetailOpen" : "",
+      ].filter(Boolean).join(" ")}
+      data-intake-detail-open={intakeDetailOpen ? "true" : undefined}
       data-testid="operator-console"
     >
       <header className={styles.topbar} data-screen-label="Top Navigation">
@@ -1258,7 +1271,7 @@ export function OperatorConsole({ searchParams = {} }: { searchParams?: Record<s
       </div>
 
       <main className={styles.shell}>
-        {!canRenderWorkspace ? (
+        {!canRenderWorkspace && !canRenderDirectIntake ? (
           <OperatorDataUnavailableGate
             detail={shellLoadError}
             onRetry={() => setShellReloadToken((token) => token + 1)}
@@ -1399,6 +1412,20 @@ export function OperatorConsole({ searchParams = {} }: { searchParams?: Record<s
       {toast ? <div className={styles.toast}>{toast}</div> : null}
     </div>
   );
+}
+
+export function isIntakeDetailOpen(
+  searchParams: Record<string, string | string[] | undefined>,
+): boolean {
+  const value = (key: string) => {
+    const current = searchParams[key];
+    return Array.isArray(current) ? current[0] : current;
+  };
+  const dialog = value("dialog");
+  return value("ws") === "network"
+    && value("tab") === "radar"
+    && Boolean(value("selected"))
+    && (dialog === "detail" || dialog === "fix" || dialog === "decide" || dialog === "assignmentSla");
 }
 
 function WorkspaceChrome({

@@ -243,9 +243,8 @@ async function openPromotionPanel() {
   const row = await screen.findByTestId(`intake-inbox-row-${INTAKE_ID}`);
   fireEvent.click(row);
   await screen.findByTestId("intake-detail-dialog");
-  // Package 10 keeps promotion in its own evidence-backed detail tab.
-  const promotionTab = await screen.findByTestId("tab-promotion");
-  fireEvent.click(promotionTab);
+  // Package 10 renders promotion continuously in the production detail.
+  await screen.findByTestId("intake-promotion-section");
   await screen.findByTestId("promotion-review-panel");
   await screen.findByTestId("promotion-request-form");
 }
@@ -365,7 +364,8 @@ describe("promotion saga — live operator route integration", () => {
     );
     const row = await screen.findByTestId(`intake-inbox-row-${INTAKE_ID}`);
     fireEvent.click(row);
-    fireEvent.click(await screen.findByTestId("tab-promotion"));
+    await screen.findByTestId("intake-promotion-section");
+    await screen.findByTestId("promotion-review-panel");
 
     await waitFor(() => {
       expect(screen.getByTestId("promotion-status-badge").textContent).toContain("SCORE_FAILED");

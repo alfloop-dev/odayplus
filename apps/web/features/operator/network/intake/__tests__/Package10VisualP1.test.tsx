@@ -2,14 +2,8 @@ import React, { act } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createRoot, type Root } from "react-dom/client";
 import { IntakeProcessingDetail } from "../IntakeProcessingDetail";
-import { IntakeStageTimeline } from "../IntakeStageTimeline";
-import { ListingCompareTable } from "../ListingCompareTable";
-import {
-  INTAKE_ERROR_MATRIX,
-  INTAKE_STAGE_MATRIX,
-  MATCH_OUTCOME_MATRIX,
-  SOURCE_POLICY_MATRIX,
-} from "../StateMatrix";
+import { resolveTargetListing } from "../AssistedIntakeSection";
+import { toTargetListingData } from "../../ListingRadarPanel";
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -112,18 +106,6 @@ const possibleMatchRecord: any = {
   },
 };
 
-const targetListing = {
-  id: "LST-1002",
-  sourceId: "591_123456",
-  canonicalUrl: "https://rent.591.com.tw/123456",
-  address: "台北市信義區松高路12號",
-  area: "45",
-  floor: "5F",
-  listingType: "店面",
-  rent: "35000",
-  status: "ACTIVE",
-};
-
 describe("Package 10 intake visual P1", () => {
   it("uses the exact canonical intake detail screen label", () => {
     render(<IntakeProcessingDetail onClose={vi.fn()} record={possibleMatchRecord} />);
@@ -134,43 +116,73 @@ describe("Package 10 intake visual P1", () => {
     expect(surface).not.toBeNull();
   });
 
-  it("opens the canonical state matrix, renders every required contract, and closes with Escape", () => {
-    render(<IntakeStageTimeline record={possibleMatchRecord} />);
-
-    const trigger = byTestId("open-intake-state-matrix") as HTMLButtonElement;
-    trigger.focus();
-    act(() => trigger.click());
-
-    const matrix = byTestId("intake-state-matrix");
-    expect(matrix.getAttribute("data-screen-label")).toBe("Intake 狀態矩陣");
-    expect(INTAKE_STAGE_MATRIX).toHaveLength(12);
-    expect(SOURCE_POLICY_MATRIX).toHaveLength(5);
-    expect(MATCH_OUTCOME_MATRIX).toHaveLength(5);
-    expect(INTAKE_ERROR_MATRIX).toHaveLength(15);
-    expect(byTestId("matrix-stages-CANCELLED").textContent).toContain("CANCELLED");
-    expect(byTestId("matrix-source-policy-POLICY_UNKNOWN").textContent).toContain("fail-closed");
-    expect(byTestId("matrix-match-outcomes-POSSIBLE_MATCH").textContent).toContain("絕不自動合併");
-    expect(
-      byTestId("matrix-errors-422 RISK_ACKNOWLEDGEMENT_REQUIRED").textContent,
-    ).toContain("風險");
-
-    act(() => {
-      document.dispatchEvent(new KeyboardEvent("keydown", { bubbles: true, key: "Escape" }));
-    });
-    expect(document.body.querySelector('[data-testid="intake-state-matrix"]')).toBeNull();
-    expect(document.activeElement).toBe(trigger);
-  });
-
   it("renders a three-column desktop current/submitted comparison with text markers and a mobile fallback", () => {
-    render(<ListingCompareTable record={possibleMatchRecord} targetListing={targetListing} />);
+    render(<IntakeProcessingDetail onClose={vi.fn()} record={possibleMatchRecord} />);
 
-    const headers = Array.from(byTestId("compare-table-grid").querySelectorAll('[role="columnheader"]'));
+    const headers = Array.from(byTestId("compare-table-grid").querySelectorAll("thead th"));
     expect(headers).toHaveLength(3);
     expect(headers[1]?.textContent).toContain("既有物件");
     expect(headers[2]?.textContent).toContain("本次送件");
     expect(byTestId("signal-con-rent").textContent).toContain("▲ 矛盾");
-    expect(byTestId("signal-match-address").textContent).toContain("✓ 一致");
+    expect(byTestId("agreeing-signals-list").textContent).toContain("地址一致");
+    expect(byTestId("contradicting-signals-list").textContent).toContain("35,000 → 38,000");
     expect(byTestId("intake-desktop-required").textContent).toContain("DESKTOP_REQUIRED");
-    expect(byTestId("intake-desktop-required").textContent).toContain("#intake/IN-3011");
+    expect(byTestId("intake-desktop-required").textContent).toContain("/intake/IN-3011");
+  });
+
+  it("passes authoritative target fields by targetListingId and normalizes signal aliases", () => {
+    const record = {
+      ...possibleMatchRecord,
+      matchResult: {
+        ...possibleMatchRecord.matchResult,
+        agreeingSignals: [
+          { key: "normalizedAddress", label: "地址", agrees: true, detail: "API 地址一致" },
+        ],
+        contradictingSignals: [
+          { key: "areaPing", label: "坪數", agrees: false, detail: "API 坪數矛盾" },
+        ],
+      },
+    };
+    const authoritativeTarget = toTargetListingData({
+      id: "LST-1002",
+      sourceId: "SRC-AUTH-22",
+      sourceUrl: "https://example.test/listings/LST-1002",
+      address: "台北市信義區松高路12號",
+      areaPing: 45,
+      floor: "5F",
+      rentPerMonth: 35000,
+      status: "parsed",
+      heatZoneId: "HZ-TPE-XINYI",
+      geocodeConfidence: 0.99,
+      hardRuleFailures: [],
+    });
+    const target = resolveTargetListing(
+      [{ id: "LST-OTHER", address: "不應顯示" }, authoritativeTarget],
+      record.matchResult.targetListingId,
+    );
+
+    render(<IntakeProcessingDetail onClose={vi.fn()} record={record} targetListing={target} />);
+
+    expect(byTestId("compare-row-sourceId").textContent).toContain("SRC-AUTH-22");
+    expect(byTestId("compare-row-sourceUrl").textContent).toContain("https://example.test/listings/LST-1002");
+    expect(byTestId("signal-unavailable-canonicalUrl")).toBeTruthy();
+    expect(byTestId("signal-match-address").textContent).toContain("✓ 一致");
+    expect(byTestId("signal-con-area").textContent).toContain("▲ 矛盾");
+    expect(byTestId("compare-row-area").textContent).toContain("API 坪數矛盾");
+  });
+
+  it("marks absent authoritative values unavailable and never matched", () => {
+    render(
+      <IntakeProcessingDetail
+        onClose={vi.fn()}
+        record={possibleMatchRecord}
+        targetListing={{ id: "LST-1002", address: "台北市信義區松高路12號" }}
+      />,
+    );
+
+    expect(byTestId("signal-unavailable-listingType").textContent).toContain("[UNAVAILABLE]");
+    expect(byTestId("compare-row-listingType").textContent).not.toContain("Matched");
+    expect(byTestId("signal-unavailable-canonicalUrl").textContent).toContain("不可用");
+    expect(document.body.querySelector('[data-testid="signal-match-listingType"]')).toBeNull();
   });
 });

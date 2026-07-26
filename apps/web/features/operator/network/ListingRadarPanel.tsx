@@ -25,6 +25,22 @@ type NetworkListingDetail = Listing & {
   sourceUrl?: string;
 };
 
+export function toTargetListingData(listing: NetworkListingDetail) {
+  return {
+    id: listing.id,
+    sourceId: listing.sourceId,
+    sourceListingId: listing.sourceListingId,
+    sourceUrl: listing.sourceUrl,
+    address: listing.address,
+    area: listing.areaPing,
+    floor: listing.floor,
+    // The API-bound listing contract has no authoritative listing type.
+    listingType: undefined,
+    rent: listing.rentPerMonth,
+    status: listing.status,
+  };
+}
+
 export function ListingRadarPanel({
   activeRoleId,
   busyListingId,
@@ -100,11 +116,15 @@ export function ListingRadarPanel({
 
       {/*
         "Network URL 收件佇列" sits directly under the compliance banner and
-        above the source cards, per the Package 7 layout. It owns its own API
+        above the source cards, per the Package 10 layout. It owns its own API
         binding. The radar below is API-bound in production and may use fixtures
         only in local/POC mode.
       */}
-      <AssistedIntakeSection activeRoleId={activeRoleId} selectedHeatZoneId={selectedHeatZoneId} />
+      <AssistedIntakeSection
+        activeRoleId={activeRoleId}
+        selectedHeatZoneId={selectedHeatZoneId}
+        targetListings={listings.map(toTargetListingData)}
+      />
 
       <div className={styles.sourceSummaryGrid} aria-label="Listing sources">
         {sources.map((source) => (

@@ -8,6 +8,8 @@ import { matchLabel, matchTone } from "./intakeTypes";
 export type TargetListingData = {
   id?: string;
   sourceId?: string;
+  sourceListingId?: string;
+  sourceUrl?: string;
   canonicalUrl?: string;
   address?: string;
   area?: string | number;
@@ -24,17 +26,59 @@ export type ListingCompareRow = {
   submissionValue: string;
   changed: boolean;
   contradiction: boolean;
+  unavailable: boolean;
   detail: string;
 };
+
+const SIGNAL_KEY_ALIASES: Readonly<Record<string, string>> = {
+  sourceId: "sourceId",
+  source_id: "sourceId",
+  sourceUrl: "sourceUrl",
+  source_url: "sourceUrl",
+  canonicalUrl: "canonicalUrl",
+  canonical_url: "canonicalUrl",
+  providerListingId: "sourceListingId",
+  provider_listing_id: "sourceListingId",
+  sourceListingId: "sourceListingId",
+  source_listing_id: "sourceListingId",
+  normalizedAddress: "address",
+  normalized_address: "address",
+  address: "address",
+  address_raw: "address",
+  areaPing: "area",
+  area_ping: "area",
+  area: "area",
+  ping: "area",
+  floor: "floor",
+  floor_number: "floor",
+  listingType: "listingType",
+  listing_type: "listingType",
+  propertyType: "listingType",
+  property_type: "listingType",
+  rent: "rent",
+  rent_amount: "rent",
+  rentPerMonth: "rent",
+  rent_per_month: "rent",
+  asking_price: "rent",
+  price: "rent",
+  status: "status",
+  listing_status: "status",
+};
+
+export function normalizeCompareSignalKey(key: string): string {
+  return SIGNAL_KEY_ALIASES[key] ?? key;
+}
 
 export function ListingCompareTable({
   record,
   targetListing,
   className,
+  detailHref,
 }: {
   record: AssistedIntake;
   targetListing?: TargetListingData | null;
   className?: string;
+  detailHref?: string;
 }) {
   const match = record.matchResult;
   const outcome: MatchOutcome | undefined = match?.outcome;
@@ -55,8 +99,15 @@ export function ListingCompareTable({
   // Construct standard compare rows as per task brief:
   // source ID, canonical URL, address, area, floor, listing type, rent/price, status, confidence, contradictions
   const compareRows = useMemo<ListingCompareRow[]>(() => {
-    const agreeingKeys = new Set((match?.agreeingSignals ?? []).map((s) => s.key));
-    const contradictingMap = new Map((match?.contradictingSignals ?? []).map((s) => [s.key, s.detail]));
+    const agreeingKeys = new Set(
+      (match?.agreeingSignals ?? []).map((signal) => normalizeCompareSignalKey(signal.key)),
+    );
+    const contradictingMap = new Map(
+      (match?.contradictingSignals ?? []).map((signal) => [
+        normalizeCompareSignalKey(signal.key),
+        signal.detail,
+      ]),
+    );
     const parsedValue = (...keys: string[]) => keys.map((key) => parsedMap.get(key)).find((value) => value !== undefined);
 
     const fields: Array<{
@@ -70,6 +121,18 @@ export function ListingCompareTable({
         label: "來源 ID (Source ID)",
         targetVal: targetListing?.sourceId,
         subVal: record.sourceId,
+      },
+      {
+        key: "sourceUrl",
+        label: "來源網址 (Source URL)",
+        targetVal: targetListing?.sourceUrl,
+        subVal: record.originalUrl,
+      },
+      {
+        key: "sourceListingId",
+        label: "提供者物件 ID (Provider Listing ID)",
+        targetVal: targetListing?.sourceListingId,
+        subVal: parsedValue("providerListingId", "provider_listing_id", "sourceListingId", "source_listing_id"),
       },
       {
         key: "canonicalUrl",
@@ -121,15 +184,16 @@ export function ListingCompareTable({
       const isContradiction = contradictingMap.has(field.key);
       const isAgreeing = agreeingKeys.has(field.key);
       const valuesComparable = targetStr !== "—" && subStr !== "—";
+      const unavailable = !valuesComparable;
       const isChanged = (valuesComparable && targetStr !== subStr) || isContradiction;
       let detail = "—";
 
       if (isContradiction) {
         detail = contradictingMap.get(field.key) || "資料不符，存在矛盾訊號";
+      } else if (unavailable) {
+        detail = "資料不可用，無法判定一致";
       } else if (isAgreeing) {
         detail = "資訊一致";
-      } else if (!valuesComparable) {
-        detail = "缺少可比較值";
       } else if (isChanged) {
         detail = "數值變更";
       } else {
@@ -143,6 +207,7 @@ export function ListingCompareTable({
         submissionValue: subStr,
         changed: isChanged,
         contradiction: isContradiction,
+        unavailable,
         detail,
       };
     });
@@ -188,40 +253,49 @@ export function ListingCompareTable({
         <strong>變更摘要 (Screen-Reader Summary)：</strong> {changeSummaryText}
       </div>
 
-      <div className={styles.desktopOnlyNote} data-testid="intake-desktop-required">
+      {outcome === "POSSIBLE_MATCH" ? <div className={styles.desktopOnlyNote} data-testid="intake-desktop-required">
         <strong>DESKTOP_REQUIRED — POSSIBLE_MATCH 完整比對需在桌面完成</strong>
         <span>
           行動版可查看狀態與簡單確認；side-by-side 欄位比對與識別決策請改用桌面開啟。Deep link
-          已保留：<code>#intake/{record.id}</code>，你的輸入不會遺失。
+          已保留：<a href={detailHref ?? `/intake/${record.id}`}>{detailHref ?? `/intake/${record.id}`}</a>，你的輸入不會遺失。
         </span>
-      </div>
+        <span data-testid="intake-mobile-preserved-values">
+          已保留輸入：
+          {compareRows
+            .filter((row) => row.submissionValue !== "—")
+            .map((row) => `${row.label}=${row.submissionValue}`)
+            .join("；") || "UNAVAILABLE"}
+        </span>
+      </div> : null}
 
-      <div
+      <table
         aria-label="Current and submitted values"
         className={styles.compareGrid}
         data-testid="compare-table-grid"
-        role="table"
       >
-        <div className={styles.fieldsHeadCell} role="columnheader">欄位</div>
-        <div className={styles.fieldsHeadCell} role="columnheader">既有物件 ({targetId || "無"})</div>
-        <div className={styles.fieldsHeadCell} role="columnheader">本次送件 ({record.id})</div>
-
-        {compareRows.map((row) => (
-          <div
-            data-testid={`compare-row-${row.key}`}
-            key={row.key}
-            role="row"
-            style={{ display: "contents" }}
-          >
-            <div
+        <thead>
+          <tr>
+            <th className={styles.fieldsHeadCell} scope="col">欄位</th>
+            <th className={styles.fieldsHeadCell} scope="col">既有物件 ({targetId || "UNAVAILABLE"})</th>
+            <th className={styles.fieldsHeadCell} scope="col">本次送件 ({record.id})</th>
+          </tr>
+        </thead>
+        <tbody>
+          {compareRows.map((row) => (
+            <tr data-testid={`compare-row-${row.key}`} key={row.key}>
+            <th
               className={`${styles.fieldCell} ${row.changed ? styles.compareCellChanged : ""}`}
               data-label="欄位"
-              role="rowheader"
+              scope="row"
             >
               <span className={styles.fieldLabelText}>{row.label}</span>
               {row.contradiction ? (
                 <span className={styles.changeChip} data-testid={`signal-con-${row.key}`}>
                   ▲ 矛盾 (Contradiction)
+                </span>
+              ) : row.unavailable ? (
+                <span className={styles.unavailableChip} data-testid={`signal-unavailable-${row.key}`}>
+                  ? 不可用 [UNAVAILABLE]
                 </span>
               ) : row.changed ? (
                 <span className={styles.changeChip} data-testid={`signal-changed-${row.key}`}>
@@ -233,24 +307,23 @@ export function ListingCompareTable({
                 </span>
               )}
               <span className={styles.metaSub}>{row.detail}</span>
-            </div>
-            <div
+            </th>
+            <td
               className={`${styles.fieldCell} ${styles.sourceValue} ${row.changed ? styles.compareCellChanged : ""}`}
               data-label="既有物件"
-              role="cell"
             >
               <span>{row.targetValue}</span>
-            </div>
-            <div
+            </td>
+            <td
               className={`${styles.fieldCell} ${row.changed ? styles.compareCellChanged : ""}`}
               data-label="本次送件"
-              role="cell"
             >
               <span className={row.changed ? styles.correctedValue : undefined}>{row.submissionValue}</span>
-            </div>
-          </div>
-        ))}
-      </div>
+            </td>
+          </tr>
+          ))}
+        </tbody>
+      </table>
 
       {/* Summary metrics bar */}
       <div className={styles.metaGrid} style={{ marginTop: "12px", paddingTop: "8px", borderTop: "1px solid #eef1f6" }}>
