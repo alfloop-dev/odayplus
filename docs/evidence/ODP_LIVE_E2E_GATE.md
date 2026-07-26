@@ -119,6 +119,33 @@ python3 scripts/e2e/check_live_e2e_gate.py \
 Missing inputs return exit code `1` before any request is issued, so an
 unconfigured gate can never be mistaken for a passing one.
 
+## Provenance spellings the runtime actually emits
+
+A fail-closed gate is only useful if a healthy deployment can pass it. Two
+provenance fields are spelled differently by the two surfaces that publish them,
+and both were verified against the runtime source rather than against the test
+doubles:
+
+| Surface | Field | Healthy value |
+| --- | --- | --- |
+| `GET /readiness` | `details.data.origin.kind` | `authoritative` — the readiness probe publishes `OperatorLiveRepository.data_origin` verbatim (`apps/api/oday_api/main.py`, `modules/opsboard/application/operator_live_repository.py`) |
+| `GET /api/v1/operator/bootstrap` | `meta.dataOrigin.kind` | `live` — `OperatorStateService._build_envelope` rewrites `kind` to the resolved data mode |
+| `GET /api/v1/operator/bootstrap` | `meta.dataMode` | `live` — the envelope declares its mode under `meta`, not at the top level |
+
+So the gate accepts `authoritative` **or** `live` for an origin kind, and reads
+the declared data mode from `modes`/`details` (readiness) **or** `meta`
+(envelope). The surrogate spellings (`fixture`, `r4-seed`) and the degraded
+spelling (`unavailable`) still block.
+
+### Known latent defect in a neighbouring gate (not fixed here)
+
+`scripts/e2e/check_live_production_data.py` asserts
+`origin.get("kind") == "live"` against the same `/readiness` surface, which the
+runtime never emits there. That gate is not wired into any deploy workflow, so
+it blocks nothing today, but it would fail closed on the wrong dependency the
+first time it is run against a healthy live deployment. Flagged for its owner
+rather than loosened here, because it is a different task's deliverable.
+
 ## Tests
 
 `tests/e2e/test_live_e2e_gate.py` starts from a fully live, fully passing
@@ -126,3 +153,12 @@ deployment and breaks exactly one runtime fact per test, asserting both that the
 gate fails and that it names the dependency an operator would repair.
 `tests/ops/test_cloud_run_live_deployment.py` pins the gate's position in the
 deploy script between traffic promotion and release commit.
+
+Because doubles that merely restate the gate's own assumptions can stay green
+while the gate is unable to pass against the deployed runtime, the suite also
+carries anti-drift contract tests that read the runtime source directly: the
+origin kind emitted by `OperatorLiveRepository`, the `meta.dataMode` key the
+operator envelope writes, every API path the gate calls, the `external-fetch`
+job type registration in `apps/worker/oday_worker/handlers.py`, the audit
+integrity envelope in `shared/audit/events.py`, and the `/login?returnTo=`
+redirect in `apps/web/src/middleware.ts`.

@@ -147,7 +147,11 @@ def readiness_payload() -> dict[str, Any]:
                 "mode": "live",
                 "liveReady": True,
                 "operatorRepositoryReady": True,
-                "origin": {"kind": "live", "persistenceMode": "postgresql"},
+                # `/readiness` publishes `OperatorLiveRepository.data_origin`
+                # verbatim, and that property spells a healthy origin
+                # "authoritative" -- it is never rewritten to "live" on this
+                # surface (only the operator envelope's meta.dataOrigin is).
+                "origin": {"kind": "authoritative", "persistenceMode": "postgresql"},
                 "operatorRepositoryProbe": {"ready": True, "persistenceMode": "postgresql"},
                 "blockingReasons": [],
             },
@@ -280,11 +284,21 @@ def live_routes(**overrides: Any) -> dict[str, Any]:
         "anon GET /api/v1/operator/bootstrap": response(
             401, {"error": {"code": "unauthenticated"}}
         ),
+        # The real shape of the operator envelope built by
+        # OperatorStateService._build_envelope: provenance lives under `meta`,
+        # not at the top level.
         "GET /api/v1/operator/bootstrap": response(
             200,
             {
-                "data_mode": "live",
-                "data_source": "postgresql://operator-live",
+                "meta": {
+                    "source": "operator-shell-production",
+                    "dataMode": "live",
+                    "dataOrigin": {
+                        "kind": "live",
+                        "sourceId": "operator-live-repository",
+                        "persistenceMode": "postgresql",
+                    },
+                },
                 "modules": ["today", "network"],
             },
         ),
@@ -498,6 +512,22 @@ def test_fixture_marker_in_readiness_blocks_as_data_binding() -> None:
     assert "data-binding" in report["blocking_dependencies"]
 
 
+def test_degraded_operator_repository_origin_blocks_on_postgresql() -> None:
+    """"unavailable" is the readiness spelling for a missing live repository."""
+    payload = readiness_payload()
+    payload["details"]["data"]["origin"] = {
+        "kind": "unavailable",
+        "sourceId": None,
+        "persistenceMode": "postgresql",
+    }
+    routes = live_routes(**{"anon GET /readiness": response(200, payload)})
+
+    _, report = run_gate(routes)
+
+    blocker = next(b for b in report["blockers"] if b["check"] == "runtime:data_origin")
+    assert blocker["dependency"] == "postgresql"
+
+
 # ---------------------------------------------------------------------------
 # Authentication boundary
 # ---------------------------------------------------------------------------
@@ -536,6 +566,35 @@ def test_operator_bootstrap_serving_seed_data_blocks() -> None:
     _, report = run_gate(routes)
 
     assert "auth:operator_bootstrap:provenance" in blocker_names(report)
+
+
+def test_operator_envelope_declaring_fixture_mode_under_meta_blocks() -> None:
+    """The envelope declares its mode at meta.dataMode, and the gate reads it.
+
+    A gate that only knew the readiness shape would read no mode at all here
+    and block every release -- including a healthy one -- on a missing field.
+    """
+    routes = live_routes(
+        **{
+            "GET /api/v1/operator/bootstrap": response(
+                200,
+                {
+                    "meta": {
+                        "source": "operator-shell-api-envelope",
+                        "dataMode": "fixture",
+                        "dataOrigin": {"kind": "fixture", "sourceId": "r4-seed"},
+                    }
+                },
+            )
+        }
+    )
+    _, report = run_gate(routes)
+
+    blocker = next(
+        b for b in report["blockers"] if b["check"] == "auth:operator_bootstrap:provenance"
+    )
+    assert blocker["dependency"] == "data-binding"
+    assert "data_mode=fixture" in blocker["detail"]
 
 
 def run_gate_with_web(web_response: Any) -> dict[str, Any]:
@@ -901,3 +960,83 @@ def test_cli_fails_closed_without_any_configuration(tmp_path: Path) -> None:
     assert report["ok"] is False
     assert report["blocking_dependencies"] == ["config"]
     assert all(blocker["next_action"] for blocker in report["blockers"])
+
+
+# ---------------------------------------------------------------------------
+# Anti-drift: the gate's expectations are pinned to the real runtime code, not
+# to the doubles above. Fixtures that merely restate the gate's assumptions can
+# stay green while the gate is unable to pass against the deployed runtime.
+# ---------------------------------------------------------------------------
+
+
+def test_readiness_origin_kind_emitted_by_the_runtime_is_accepted() -> None:
+    """`/readiness` publishes OperatorLiveRepository.data_origin verbatim.
+
+    That property spells a healthy origin "authoritative". Asserting "live"
+    here would make the gate permanently red against a healthy deployment.
+    """
+    from modules.opsboard.application.operator_live_repository import (
+        OperatorLiveRepository,
+    )
+
+    class _Persistence:
+        mode = "postgresql"
+
+    origin = OperatorLiveRepository(_Persistence()).data_origin
+
+    assert origin["kind"] in gate.LIVE_ORIGIN_KINDS
+    assert str(origin["persistenceMode"]).lower() in gate.POSTGRES_MODES
+
+
+def test_operator_envelope_mode_key_is_the_one_the_gate_reads() -> None:
+    """The envelope declares its mode at meta.dataMode; the gate must read it."""
+    source = (
+        ROOT / "modules/opsboard/application/operator_state.py"
+    ).read_text(encoding="utf-8")
+
+    assert '"dataMode": (' in source, "operator envelope no longer emits meta.dataMode"
+    assert gate._declared_data_mode({"meta": {"dataMode": "live"}}) == "live"
+    assert gate._declared_data_mode({"meta": {"dataMode": "fixture"}}) == "fixture"
+
+
+def test_every_api_path_the_gate_calls_is_routed_by_the_deployed_api() -> None:
+    """A 404 from a renamed route would be reported as a runtime dependency."""
+    main = (ROOT / "apps/api/oday_api/main.py").read_text(encoding="utf-8")
+    operator = (ROOT / "apps/api/app/routes/operator.py").read_text(encoding="utf-8")
+    learninghub = (ROOT / "apps/api/app/routes/learninghub.py").read_text(encoding="utf-8")
+    external = (ROOT / "apps/api/app/routes/external_data.py").read_text(encoding="utf-8")
+
+    assert '@api.get("/platform/version"' in main
+    assert '@api.get("/readiness"' in main
+    assert '@platform_router.post("/jobs"' in main
+    assert '@platform_router.get("/jobs/{job_id}"' in main
+    assert '@platform_router.get("/audit/events"' in main
+    assert '@router.get("/bootstrap"' in operator
+    assert 'prefix="/operator"' in operator
+    assert '"/models",' in learninghub
+    assert 'prefix="/learninghub"' in learninghub
+    assert '@router.get("/ingestion-runs"' in external
+    assert 'prefix="/external-data"' in external
+
+
+def test_worker_probe_job_type_is_registered_by_the_deployed_worker() -> None:
+    """An unregistered job type would never reach a terminal success."""
+    handlers = (ROOT / "apps/worker/oday_worker/handlers.py").read_text(encoding="utf-8")
+
+    assert f'EXTERNAL_FETCH_JOB_TYPE = "{gate.WORKER_PROBE_JOB_TYPE}"' in handlers
+    assert "registry.register(EXTERNAL_FETCH_JOB_TYPE, handle_external_fetch)" in handlers
+
+
+def test_audit_receipt_integrity_envelope_matches_the_runtime_serializer() -> None:
+    source = (ROOT / "shared/audit/events.py").read_text(encoding="utf-8")
+
+    assert 'payload["integrity"] = {' in source
+    assert '"sequence": self.sequence,' in source
+    assert '"event_hash": self.event_hash,' in source
+
+
+def test_web_login_redirect_contract_matches_the_deployed_middleware() -> None:
+    middleware = (ROOT / "apps/web/src/middleware.ts").read_text(encoding="utf-8")
+
+    assert 'new URL("/login", request.url)' in middleware
+    assert '"returnTo",' in middleware

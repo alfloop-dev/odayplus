@@ -61,6 +61,15 @@ PRODUCTION_PROVIDER_IDS_ENV = "ODP_PRODUCTION_PROVIDER_IDS"
 
 SHA_PATTERN = re.compile(r"^[0-9a-f]{40}$")
 POSTGRES_MODES = frozenset({"postgres", "postgresql"})
+# The two surfaces that publish operator provenance spell a healthy origin
+# differently. ``/readiness`` returns the repository's own kind
+# (``OperatorLiveRepository.data_origin`` -> ``authoritative``); the operator
+# envelope rewrites ``meta.dataOrigin.kind`` to the resolved data mode
+# (``live``). Both healthy spellings are accepted here so the gate does not
+# fail closed on a value the runtime can never emit. The surrogate spellings
+# (``fixture``, ``r4-seed``) and the degraded spelling (``unavailable``) are
+# still rejected.
+LIVE_ORIGIN_KINDS = frozenset({"authoritative", "live"})
 ARTIFACT_SCHEMES = frozenset({"gs", "https", "s3", "mlflow-artifacts"})
 DENIED_STATUSES = frozenset({401, 403})
 TERMINAL_JOB_STATUSES = frozenset({"succeeded", "failed", "cancelled"})
@@ -465,9 +474,24 @@ def _failure_detail(response: HttpResponse, *, expected: str = "") -> str:
 
 
 def _declared_data_mode(payload: Mapping[str, Any]) -> str:
+    """Read the declared data mode from whichever envelope shape carries it.
+
+    The readiness probe nests it under ``modes``/``details``; the operator
+    envelope declares it as ``meta.dataMode``. A gate that only knew the
+    readiness shape would read ``""`` from a perfectly healthy operator
+    response and block the release for a missing field rather than a missing
+    dependency.
+    """
     modes = _as_dict(payload.get("modes"))
     data = _as_dict(modes.get("data")) or _as_dict(_as_dict(payload.get("details")).get("data"))
-    for candidate in (data.get("mode"), payload.get("data_mode"), payload.get("dataMode")):
+    meta = _as_dict(payload.get("meta"))
+    for candidate in (
+        data.get("mode"),
+        payload.get("data_mode"),
+        payload.get("dataMode"),
+        meta.get("dataMode"),
+        meta.get("data_mode"),
+    ):
         if isinstance(candidate, str) and candidate.strip():
             return candidate.strip().lower()
     return ""
@@ -672,7 +696,7 @@ def _check_runtime_readiness(
         data.get("mode") == "live"
         and data.get("liveReady") is True
         and data.get("operatorRepositoryReady") is True
-        and origin.get("kind") == "live"
+        and str(origin.get("kind") or "").lower() in LIVE_ORIGIN_KINDS
         and str(origin.get("persistenceMode")).lower() in POSTGRES_MODES
         and probe.get("ready") is True,
         "runtime:data_origin",
