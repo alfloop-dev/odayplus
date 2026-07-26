@@ -58,8 +58,12 @@ import {
   type NetworkFindAreasViewModel,
   type NetworkFindAreasZoneViewModel,
 } from "./networkFindAreasViewModel";
-import { HeatZoneMap } from "../map/HeatZoneMap";
-import type { HeatZone as MapHeatZone, Listing as MapListing, CandidateSite as MapCandidateSite } from "../expansion/data";
+import { HeatZoneMap } from "./network/HeatZoneMap";
+import type {
+  CandidateSite as MapCandidateSite,
+  HeatZone as MapHeatZone,
+  Listing as MapListing,
+} from "./network/mapTypes";
 
 export type NetworkFindAreasWorkspaceCallbacks = {
   onSelectHeatZone?: (heatZone: OperatorHeatZone) => void;

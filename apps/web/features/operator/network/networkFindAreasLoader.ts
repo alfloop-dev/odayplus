@@ -19,10 +19,10 @@
  */
 
 import type { OdpApiClient } from "@oday-plus/openapi-client";
-import type { ApiBinding } from "../../src/lib/api/binding.ts";
-import { loadApiBinding } from "../../src/lib/api/binding.ts";
-import type { Candidate, Listing, OperatorHeatZone } from "./types.ts";
-import { payloadContainsSeedData } from "./operatorDataMode.ts";
+import type { ApiBinding } from "../../../src/lib/api/binding.ts";
+import { loadApiBinding } from "../../../src/lib/api/binding.ts";
+import type { Candidate, Listing, OperatorHeatZone } from "../types.ts";
+import { payloadContainsSeedData } from "../operatorDataMode.ts";
 
 // ---------------------------------------------------------------------------
 // Re-exported binding types used by NetworkFindAreasWorkspace

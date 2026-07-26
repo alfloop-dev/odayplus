@@ -1,5 +1,5 @@
 /**
- * Role vocabulary — the personas the OpsBoard serves (visual system §2).
+ * Role vocabulary for ODay Plus product surfaces.
  * Roles drive role-aware navigation: items the role cannot access are NOT
  * rendered (component contracts §3.3, §6.2 — not disabled, omitted).
  */

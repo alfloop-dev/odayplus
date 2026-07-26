@@ -1,3 +1,4 @@
+/* Canonical Package 10 network map runtime. */
 .mapShell {
   display: grid;
   grid-template-rows: auto minmax(380px, 1fr) auto;

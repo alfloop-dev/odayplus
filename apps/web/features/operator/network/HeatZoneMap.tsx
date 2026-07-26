@@ -6,9 +6,9 @@ import { GeoJsonLayer, ScatterplotLayer, TextLayer } from "@deck.gl/layers";
 import DeckGL from "@deck.gl/react";
 import { cellToBoundary } from "h3-js";
 import maplibregl from "maplibre-gl";
-import type { CandidateSite, HeatZone, Listing } from "../expansion/data.ts";
-import { resolveProductionMode } from "../operations/ProductionDataState.tsx";
-import styles from "./map.module.css";
+import type { CandidateSite, HeatZone, Listing } from "./mapTypes.ts";
+import { isOperatorProductionMode } from "../operatorDataMode.ts";
+import styles from "./heatZoneMap.module.css";
 
 type Freshness = {
   status: string;
@@ -87,7 +87,8 @@ export function HeatZoneMap({
   productionMode: productionModeProp,
   dataSource = "fixture",
 }: HeatZoneMapProps) {
-  const productionMode = resolveProductionMode(productionModeProp);
+  const productionMode =
+    productionModeProp === true || isOperatorProductionMode();
   const mapContainerRef = useRef<HTMLDivElement | null>(null);
   const mapRef = useRef<maplibregl.Map | null>(null);
   const [viewState, setViewState] = useState({
