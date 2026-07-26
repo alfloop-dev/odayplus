@@ -25,6 +25,7 @@ from modules.netplan import (
     NetPlanProductionExecutor,
     NetPlanService,
 )
+from modules.opsboard.application.network_listings import NetworkListingService
 from modules.opsboard.application.network_scoring import NetworkScoringService
 from modules.opsboard.application.operator_live_repository import (
     OperatorLiveRepository,
@@ -1052,5 +1053,111 @@ def test_operator_convert_without_cell_aggregates_still_fails_closed(
         assert "prior_90d_cell_net_revenue" in detail["message"]
         assert detail["code"] == "SITESCORE_FEATURE_CONTRACT_INCOMPLETE"
         assert detail["retryable"] is False
+    finally:
+        harness.close()
+
+
+@pytest.mark.parametrize(
+    ("heat_zone_id", "label"),
+    [
+        (None, "null"),
+        ("", "empty"),
+        ("   ", "whitespace"),
+        ("\t\n", "whitespace-control"),
+    ],
+)
+def test_operator_candidate_write_rejects_blank_heat_zone_before_persistence(
+    tmp_path: Path,
+    heat_zone_id: str | None,
+    label: str,
+) -> None:
+    """M7: a blank heat zone must be rejected, not persisted as ``""``.
+
+    Drives the production writer (``save_candidate`` -> ``_sync_candidate_to_repo``)
+    rather than the repository, because the regression was in the dict round
+    trip: the guard only checked for an absent key, so ``None``/``""``/blank
+    values reached ``CandidateSiteDraft`` as ``""`` and made the candidate
+    unjoinable to its H3 cell aggregates. The durable read-back proves the
+    rejection happened before persistence, not after a partial write.
+    """
+
+    harness = CanonicalHarness(tmp_path / f"operator-heatzone-{label}.sqlite3")
+    _seed_convertible_listing(harness, "tenant-a")
+    try:
+        with TestClient(harness.app()) as client:
+            converted = client.post(
+                f"{BASE}/network-listings/listings/listing-convert-1/convert",
+                headers=_headers("tenant-a", idempotency_key=f"convert-hz-{label}"),
+                json={"actorRoleId": "expansionManager"},
+            )
+            assert converted.status_code == 200, converted.text
+            candidate_id = converted.json()["candidate"]["id"]
+
+        repository = harness.listing("tenant-a")
+        before = repository.list_candidates()
+        assert len(before) == 1
+        good_heat_zone_id = before[0].heat_zone_id
+        assert good_heat_zone_id.strip()
+
+        service = NetworkListingService(
+            listing_repository=repository,
+            intake_repository=DurableAssistedIntakeRepository(
+                harness.scoped("tenant-a")
+            ),
+            seed_fixtures=False,
+        )
+        candidate = service.get_candidate(candidate_id)
+        assert candidate is not None
+        candidate = {**candidate, "heatZoneId": heat_zone_id}
+
+        with pytest.raises(ValueError, match="no usable heatZoneId"):
+            service.save_candidate(candidate)
+
+        # Nothing partial was written: the stored candidate still carries the
+        # original heat zone and the point-in-time contract.
+        after = harness.listing("tenant-a").list_candidates()
+        assert len(after) == 1
+        assert after[0].heat_zone_id == good_heat_zone_id
+        assert after[0].prior_90d_cell_net_revenue == 180_000.0
+        assert after[0].feature_snapshot_time is not None
+    finally:
+        harness.close()
+
+
+def test_operator_candidate_write_rejects_missing_heat_zone_key(
+    tmp_path: Path,
+) -> None:
+    """M7 (absent key): the original gap must stay closed too."""
+
+    harness = CanonicalHarness(tmp_path / "operator-heatzone-missing.sqlite3")
+    _seed_convertible_listing(harness, "tenant-a")
+    try:
+        with TestClient(harness.app()) as client:
+            converted = client.post(
+                f"{BASE}/network-listings/listings/listing-convert-1/convert",
+                headers=_headers("tenant-a", idempotency_key="convert-hz-missing"),
+                json={"actorRoleId": "expansionManager"},
+            )
+            assert converted.status_code == 200, converted.text
+            candidate_id = converted.json()["candidate"]["id"]
+
+        repository = harness.listing("tenant-a")
+        service = NetworkListingService(
+            listing_repository=repository,
+            intake_repository=DurableAssistedIntakeRepository(
+                harness.scoped("tenant-a")
+            ),
+            seed_fixtures=False,
+        )
+        candidate = service.get_candidate(candidate_id)
+        assert candidate is not None
+        candidate = {k: v for k, v in candidate.items() if k != "heatZoneId"}
+
+        with pytest.raises(ValueError, match="no usable heatZoneId"):
+            service.save_candidate(candidate)
+
+        after = harness.listing("tenant-a").list_candidates()
+        assert len(after) == 1
+        assert after[0].heat_zone_id.strip()
     finally:
         harness.close()

@@ -621,10 +621,17 @@ class NetworkListingService:
             address_id=addr_obj.address_id,
             site_status=d["status"],
         )
-        if "heatZoneId" not in d:
-            raise KeyError(
-                f"candidate {d['id']!r} has no heatZoneId; refusing to persist a "
-                "candidate site with an unknown heat zone"
+        heat_zone_id = d.get("heatZoneId")
+        # A blank heat zone is the same data gap as an absent one: it makes the
+        # candidate unjoinable to its H3 cell aggregates, so every later
+        # SiteScore v2 lookup would silently score against the wrong cell.
+        # Reject missing, null, empty and whitespace-only before persistence
+        # rather than storing "" and failing open downstream.
+        if not isinstance(heat_zone_id, str) or not heat_zone_id.strip():
+            raise ValueError(
+                f"candidate {d['id']!r} has no usable heatZoneId "
+                f"({heat_zone_id!r}); refusing to persist a candidate site "
+                "with an unknown heat zone"
             )
         # feasibility_flags are the recorded hard-rule verdict, not something to
         # re-derive here: recomputing on every sync silently rewrote
@@ -635,7 +642,7 @@ class NetworkListingService:
             address=addr_obj,
             candidate_site=cand_site,
             feasibility_flags=tuple(d.get("feasibilityFlags") or ()),
-            heat_zone_id=d["heatZoneId"] or "",
+            heat_zone_id=heat_zone_id,
             listing_source=listing.get("sourceId") or "",
             status=ListingPipelineStatus.CANDIDATE,
             prior_90d_cell_net_revenue=_optional_number(

@@ -6,7 +6,10 @@ from typing import Any
 
 import pytest
 
-from models.shared_ml.output_contracts import SITESCORE_OUTPUT_TRANSFORM
+from models.shared_ml.output_contracts import (
+    SITESCORE_OUTPUT_TRANSFORM,
+    ModelOutputContractError,
+)
 from models.shared_ml.production_runtime import ModelInferenceResult
 from models.shared_ml.registry import ModelAlias, ModelStage, ModelVersion
 from models.shared_ml.scoring_binding import ModelBinding
@@ -265,3 +268,80 @@ def test_production_model_row_rejects_half_geocoded_location(
     feature = _feature() | {"latitude": latitude, "longitude": longitude}
     with pytest.raises(ValueError, match=r"location\(latitude/longitude\)"):
         to_sitescore_model_row(feature)
+
+
+class _MetadataRuntime(RecordingRuntime):
+    """Runtime whose inference result carries a broken ``model_metadata``."""
+
+    def __init__(self, metadata: Any) -> None:
+        super().__init__()
+        self._metadata = metadata
+
+    def infer(self, **kwargs: Any) -> ModelInferenceResult:
+        self.calls.append(kwargs)
+        count = len(kwargs["rows"])
+        return ModelInferenceResult(
+            binding=self.binding,
+            point=(315_000.0,) * count,
+            lower=(270_000.0,) * count,
+            upper=(360_000.0,) * count,
+            engine="lightgbm.LGBMRegressor",
+            artifact_sha256="sha256:" + ("a" * 64),
+            model_metadata=self._metadata,
+        )
+
+
+@pytest.mark.parametrize(
+    ("metadata", "expected"),
+    [
+        (None, "type NoneType"),
+        ("output_transform=90d", "type str"),
+        ([("output_transform", {})], "type list"),
+        ({}, "declared no output_transform"),
+        ({"feature_schema_version": SITESCORE_FEATURE_VERSION}, "declared no output"),
+    ],
+)
+def test_production_scoring_fails_closed_on_unusable_model_metadata(
+    tmp_path: Path,
+    metadata: Any,
+    expected: str,
+) -> None:
+    """M6: a runtime with no usable ``model_metadata`` must not score.
+
+    The regression this guards is silent degradation, not a crash: the previous
+    code passed ``output_transform=None`` onwards, which surfaced as a generic
+    "output transform is missing" contract error and hid the fact that the
+    registered model returned no metadata to check at all.
+    """
+
+    engine, repository = _repository(tmp_path / "sitescore-metadata.sqlite3")
+    runtime = _MetadataRuntime(metadata)
+    try:
+        service = SiteScoreReportService(
+            repository=repository,
+            model_runtime=runtime,
+            runtime_mode="production",
+        )
+        with pytest.raises(ModelOutputContractError, match=expected):
+            service.score_candidates([_feature()])
+        # Fail closed means fail *before* persistence.
+        assert repository.history("candidate-live-001") == []
+        assert repository.latest("candidate-live-001") is None
+    finally:
+        engine.close()
+
+
+def test_production_scoring_accepts_declared_output_transform(tmp_path: Path) -> None:
+    """Control for the test above: a conforming transform still scores."""
+
+    engine, repository = _repository(tmp_path / "sitescore-metadata-ok.sqlite3")
+    runtime = _MetadataRuntime({"output_transform": dict(SITESCORE_OUTPUT_TRANSFORM)})
+    try:
+        reports = SiteScoreReportService(
+            repository=repository,
+            model_runtime=runtime,
+            runtime_mode="production",
+        ).score_candidates([_feature()], prediction_origin_time=NOW)
+        assert reports[0].m12.p50 == 106_531.25
+    finally:
+        engine.close()
