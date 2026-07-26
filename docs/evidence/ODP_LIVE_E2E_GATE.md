@@ -252,3 +252,34 @@ happy-path test red, as does renaming `probeEvidence` in the readiness handler,
 mis-classifying `geocode.primary_api` in the pinned registry mirror, moving the
 URL resolution back into the gate's argv, and restoring the silent web-check
 skip.
+
+## Verification record
+
+Run on `task/ODP-LIVE-E2E-001` before review handoff:
+
+```
+uv run pytest tests/e2e/test_live_e2e_gate.py tests/ops/test_cloud_run_live_deployment.py -q
+# 89 passed
+
+uv run ruff check scripts/e2e/check_live_e2e_gate.py \
+  tests/e2e/test_live_e2e_gate.py tests/ops/test_cloud_run_live_deployment.py
+# All checks passed!
+
+git diff --check origin/dev...HEAD
+# clean
+```
+
+The `Required ≠ schedulable` claim was also confirmed directly against the
+runtime rather than only through the suite's doubles:
+
+```
+uv run python -c "from modules.external_data.connectors.provider_registry import provider_registry; \
+from modules.external_data.workers.scheduled_fetch import _SCHEDULABLE_CATEGORIES; \
+print([(p.provider_id, p.category in _SCHEDULABLE_CATEGORIES) for p in provider_registry()])"
+```
+
+which reports `geocode.primary_api` and `competitor.manual_source` as the only
+non-schedulable providers. Of the required set, the snapshot subset is
+`admin_boundary.official_dataset` and `poi.commercial_api` — non-empty, so the
+ingestion-run assertions cannot pass vacuously — and `geocode.primary_api` is
+the single exemption, carried by `runtime:provider_probe:*`.
