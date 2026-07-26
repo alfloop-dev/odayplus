@@ -50,6 +50,7 @@ esac
 PREFLIGHT_REPORT="${PREFLIGHT_REPORT:-.odp_data/deployment/cloud-run-preflight.json}"
 SMOKE_REPORT="${SMOKE_REPORT:-.odp_data/deployment/cloud-run-smoke.json}"
 MIGRATION_COMPAT_REPORT="${MIGRATION_COMPAT_REPORT:-.odp_data/deployment/cloud-run-migration-compatibility.json}"
+LIVE_E2E_REPORT="${LIVE_E2E_REPORT:-.odp_data/deployment/live-e2e-gate.json}"
 JOB_REPORT_DIR="${JOB_REPORT_DIR:-.odp_data/deployment/cloud-run-jobs}"
 source scripts/deployment/cloud_run_release_traffic.sh
 
@@ -498,6 +499,26 @@ upsert_scheduler_trigger \
   "${ODP_WORKER_CRON}"
 promote_service_traffic "${API_SERVICE}" "${API_REVISION}"
 promote_service_traffic "${WEB_SERVICE}" "${WEB_REVISION}"
+
+# ODP-LIVE-E2E-001: the release is serving but is not committed yet. The live
+# E2E gate drives the promoted release the way an operator would -- authenticate,
+# read the operator bootstrap, enqueue durable work, watch the worker take it to
+# a terminal state, read the durable audit receipt back -- and rejects any
+# fixture/mock surrogate or missing MLflow production alias. Because this runs
+# before DEPLOYMENT_COMMITTED, a failure falls through the EXIT trap and rolls
+# traffic and the scheduler triggers back to the previous release.
+echo "Running fail-closed live E2E acceptance gate against the promoted release..."
+python3 scripts/e2e/check_live_e2e_gate.py \
+  --api-url "$(service_snapshot_url "${API_CANDIDATE_DESCRIPTION}")" \
+  --web-url "$(service_snapshot_url "${WEB_CANDIDATE_DESCRIPTION}")" \
+  --expected-sha "${ODAY_RELEASE_SHA}" \
+  --expected-deployment "${ODP_LIVE_E2E_DEPLOYMENT_MODE:-production}" \
+  --worker-job "${WORKER_CANDIDATE_JOB}" \
+  --gcp-region "${GCP_REGION}" \
+  --gcp-project "${GCP_PROJECT}" \
+  --worker-deadline-seconds "${ODP_LIVE_E2E_WORKER_DEADLINE_SECONDS:-600}" \
+  --output "${LIVE_E2E_REPORT}"
+
 DEPLOYMENT_COMMITTED=true
 
 echo "=== Cloud Run deployment passed all live-data gates ==="

@@ -820,3 +820,22 @@ def test_job_smoke_rejects_failed_execution_and_missing_provider_secrets() -> No
     assert "jobs-smoke:scheduler:release_sha" in failed
     assert "jobs-smoke:scheduler:secret_bindings" in failed
     assert "jobs-smoke:scheduler:execution" in failed
+
+
+def test_deploy_script_runs_the_live_e2e_gate_before_committing_the_release() -> None:
+    """ODP-LIVE-E2E-001: a red live E2E gate must fall through to the rollback trap."""
+    text = DEPLOY_SCRIPT.read_text(encoding="utf-8")
+
+    gate = text.index("scripts/e2e/check_live_e2e_gate.py")
+    web_cut = text.index('promote_service_traffic "${WEB_SERVICE}"')
+    committed = text.index("DEPLOYMENT_COMMITTED=true")
+
+    # Promoted (so the gate exercises the release users will get) but not yet
+    # committed (so `handle_deployment_exit` can still restore the old traffic).
+    assert web_cut < gate < committed
+    assert '--expected-sha "${ODAY_RELEASE_SHA}"' in text
+    assert '--worker-job "${WORKER_CANDIDATE_JOB}"' in text
+    assert '--output "${LIVE_E2E_REPORT}"' in text
+    # The report lands next to the other deployment proofs so the workflow's
+    # existing `.odp_data/deployment/*.json` upload picks it up.
+    assert 'LIVE_E2E_REPORT="${LIVE_E2E_REPORT:-.odp_data/deployment/' in text
