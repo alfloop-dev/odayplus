@@ -1,0 +1,641 @@
+{
+  "schema": "oday-plus.package10-canonical-runtime-execution.v1",
+  "program_id": "ODP-P10-CANONICAL-R3",
+  "status": "no_go_pending_CAN001_R3",
+  "next": "ODP-P10-CAN-001-R3A",
+  "persistence_state": "pending_coordinator_checkpoint",
+  "worktree": "/home/lupin/oday-plus-package10-final",
+  "branch": "fix/package10-final-20260725",
+  "canonical": {
+    "package": 10,
+    "zip_sha256": "d1583a00496f928b0765c1756c9671fedf615f12c84c00494d454c983645d7f8",
+    "html_sha256": "cc4e6ae97462bc99b1c2353c792cb3bec40d51a6c5efcfde165e5f47105e661d",
+    "routes": ["/operator", "/intake/[intakeId]", "/franchisee"]
+  },
+  "verified_inventory": {
+    "pages": {"total": 41, "canonical_keep": 3, "redirect_only": 1, "delete_legacy_runtime": 37},
+    "e2e": {"total_specs": 34, "canonical_specs": 16, "legacy_specs_delete": 18, "chromium_tests": 107},
+    "api_security": {"files": 8, "tests_collected": 69, "stale_conflicting_count": 71}
+  },
+  "mandatory_wave_protocol": [
+    "read committed program and dispatch documents and immediately preceding committed ACK",
+    "inspect assignments, ACKs, and repository evidence for other-LLM conflicts",
+    "change only authorized paths and update only own ACK",
+    "run wave gates and git diff --check",
+    "obtain and record coordinator review",
+    "commit authorized paths and push exact SHA to origin/fix/package10-final-20260725",
+    "transfer ownership only after coordinator confirms committed ACK and pushed SHA"
+  ],
+  "rejected_evidence": ["chat", "/tmp", "dirty /home/lupin/oday-plus", "uncommitted worktree", "route-only retirement", "direct orphan-component mount"],
+  "parent_task": {
+    "task_id": "ODP-P10-CAN-001-R3",
+    "status": "split_into_sequential_R3A_R3B",
+    "children": ["ODP-P10-CAN-001-R3A", "ODP-P10-CAN-001-R3B"],
+    "pass_condition": "Both child ACKs are committed and pushed in order."
+  },
+  "strict_wave_order": [
+    {
+      "order": 1,
+      "task_id": "ODP-P10-CAN-001-R3A",
+      "initial_status": "blocked_pending_program_recovery_checkpoint",
+      "ack_path": "docs/evidence/fleet_dispatch/package10_20260726/acks/ODP-P10-CAN-001-R3A.json",
+      "start_checkpoint": "Recovery documents and program recovery ACK coordinator-reviewed, committed, and pushed",
+      "exit_checkpoint": "R3A gates pass; coordinator reviews; only authorized paths and the R3A ACK are committed and pushed; ACK records the full SHA and pushed ref",
+      "persistence_protocol": "Ownership transfers only after coordinator confirms the committed ACK and pushed SHA."
+    },
+    {
+      "order": 2,
+      "task_id": "ODP-P10-CAN-001-R3B",
+      "initial_status": "blocked_on_CAN001_R3A",
+      "ack_path": "docs/evidence/fleet_dispatch/package10_20260726/acks/ODP-P10-CAN-001-R3B.json",
+      "start_checkpoint": "R3A pass ACK committed and pushed",
+      "exit_checkpoint": "R3B gates pass; coordinator reviews; only authorized paths and the R3B ACK are committed and pushed; ACK records the full SHA and pushed ref",
+      "persistence_protocol": "Ownership transfers only after coordinator confirms the committed ACK and pushed SHA."
+    },
+    {
+      "order": 3,
+      "task_id": "ODP-P10-CAN-002-R3",
+      "initial_status": "blocked_on_CAN001_R3B",
+      "ack_path": "docs/evidence/fleet_dispatch/package10_20260726/acks/ODP-P10-CAN-002-R3.json",
+      "start_checkpoint": "R3B pass ACK committed and pushed",
+      "exit_checkpoint": "CAN-002 gates pass; coordinator reviews; only authorized paths and the CAN-002 ACK are committed and pushed; ACK records the full SHA and pushed ref",
+      "persistence_protocol": "Ownership transfers only after coordinator confirms the committed ACK and pushed SHA."
+    },
+    {
+      "order": 4,
+      "task_id": "ODP-P10-CAN-003-R3A",
+      "initial_status": "blocked_on_CAN002_R3",
+      "ack_path": "docs/evidence/fleet_dispatch/package10_20260726/acks/ODP-P10-CAN-003-R3A.json",
+      "start_checkpoint": "CAN-002 pass ACK committed and pushed",
+      "exit_checkpoint": "CAN-003-R3A gates pass; coordinator reviews; only authorized paths and the R3A ACK are committed and pushed; ACK records the full SHA and pushed ref",
+      "persistence_protocol": "Ownership transfers only after coordinator confirms the committed ACK and pushed SHA."
+    },
+    {
+      "order": 5,
+      "task_id": "ODP-P10-CAN-003-R3B",
+      "initial_status": "blocked_on_CAN003_R3A",
+      "ack_path": "docs/evidence/fleet_dispatch/package10_20260726/acks/ODP-P10-CAN-003-R3B.json",
+      "start_checkpoint": "CAN-003-R3A pass ACK committed and pushed",
+      "exit_checkpoint": "CAN-003-R3B 107/107 gate passes unchanged; coordinator reviews; only its ACK is committed and pushed and records the full SHA and pushed ref",
+      "persistence_protocol": "Ownership transfers only after coordinator confirms the committed ACK and pushed SHA."
+    },
+    {
+      "order": 6,
+      "task_id": "ODP-P10-CAN-004-R3",
+      "initial_status": "blocked_on_CAN003_R3B",
+      "ack_path": "docs/evidence/fleet_dispatch/package10_20260726/acks/ODP-P10-CAN-004-R3.json",
+      "start_checkpoint": "CAN-003-R3B 107/107 ACK committed and pushed",
+      "exit_checkpoint": "Release evidence is reconciled, coordinator-approved, committed, and pushed; deployment is claimed only with a real deployment receipt",
+      "persistence_protocol": "Closure exists only at the coordinator-confirmed committed ACK and pushed SHA."
+    }
+  ],
+  "tasks": {
+    "ODP-P10-CAN-001-R3A": {
+      "status": "blocked_pending_program_recovery_checkpoint",
+      "objective": "Remove the old OpsBoard visual runtime while preserving Package 10 domain/API behavior; do not redesign intake detail.",
+      "canonical_pages_to_keep": [
+        "apps/web/src/app/operator/page.tsx",
+        "apps/web/src/app/intake/[intakeId]/page.tsx",
+        "apps/web/src/app/franchisee/page.tsx"
+      ],
+      "page_delete_paths": [
+        "apps/web/src/app/page.tsx",
+        "apps/web/src/app/adlift/page.tsx",
+        "apps/web/src/app/admin/page.tsx",
+        "apps/web/src/app/admin/audit/page.tsx",
+        "apps/web/src/app/audit/page.tsx",
+        "apps/web/src/app/avm/page.tsx",
+        "apps/web/src/app/expansion/page.tsx",
+        "apps/web/src/app/interventions/page.tsx",
+        "apps/web/src/app/learning/page.tsx",
+        "apps/web/src/app/map/page.tsx",
+        "apps/web/src/app/netplan/page.tsx",
+        "apps/web/src/app/notifications/page.tsx",
+        "apps/web/src/app/operations/page.tsx",
+        "apps/web/src/app/pricing/page.tsx",
+        "apps/web/src/app/search/page.tsx",
+        "apps/web/src/app/settings/page.tsx",
+        "apps/web/src/app/tasks/page.tsx",
+        "apps/web/src/app/w/ai/models/page.tsx",
+        "apps/web/src/app/w/ai/models/[modelName]/page.tsx",
+        "apps/web/src/app/w/ai/models/[modelName]/[version]/page.tsx",
+        "apps/web/src/app/w/ai/releases/page.tsx",
+        "apps/web/src/app/w/ai/releases/[releaseId]/page.tsx",
+        "apps/web/src/app/w/audit/decisions/page.tsx",
+        "apps/web/src/app/w/audit/decisions/[decisionId]/page.tsx",
+        "apps/web/src/app/w/audit/evidence/page.tsx",
+        "apps/web/src/app/w/dealroom/cases/page.tsx",
+        "apps/web/src/app/w/dealroom/cases/[caseId]/page.tsx",
+        "apps/web/src/app/w/expansion/page.tsx",
+        "apps/web/src/app/w/expansion/candidates/page.tsx",
+        "apps/web/src/app/w/expansion/heatzone/page.tsx",
+        "apps/web/src/app/w/expansion/listings/page.tsx",
+        "apps/web/src/app/w/expansion/sitescore/page.tsx",
+        "apps/web/src/app/w/expansion/sitescore/[reportId]/page.tsx",
+        "apps/web/src/app/w/network/scenarios/page.tsx",
+        "apps/web/src/app/w/network/scenarios/[scenarioId]/page.tsx",
+        "apps/web/src/app/w/operations/alerts/page.tsx",
+        "apps/web/src/app/w/operations/forecast/page.tsx",
+        "apps/web/src/app/w/operations/forecast/[storeId]/page.tsx"
+      ],
+      "page_delete_ownership": {"delete_legacy_runtime": 37, "redirect_only": ["apps/web/src/app/page.tsx"]},
+      "route_remnant_delete_paths": [
+        "apps/web/src/app/w/expansion/listings/error.tsx",
+        "apps/web/src/app/w/expansion/listings/loading.tsx"
+      ],
+      "redirect_contract": {
+        "/": "/operator",
+        "retired_expansion_and_map_urls": "/operator?ws=network",
+        "retired_pricing_and_adlift_urls": "/operator?ws=growth",
+        "retired_audit_and_admin_urls": "/operator?ws=govern",
+        "every_other_retired_visual_url": "/operator",
+        "implementation_path": "apps/web/next.config.mjs",
+        "rule": "Preserve old bookmarks, not old components."
+      },
+      "migrations": [
+        {"source": "apps/web/features/map/HeatZoneMap.tsx", "target": "apps/web/features/operator/network/HeatZoneMap.tsx", "required_change": "Move the live map; replace resolveProductionMode with isOperatorProductionMode plus explicit-true override"},
+        {"source": "apps/web/features/map/map.module.css", "target": "apps/web/features/operator/network/heatZoneMap.module.css", "required_change": "Move styles and update the import"},
+        {"source": "HeatZone, Listing, CandidateSite declarations in apps/web/features/expansion/data.ts", "target": "apps/web/features/operator/network/mapTypes.ts", "required_change": "Move only map-facing type contracts; do not retain expansion fixture imports"},
+        {"source": "apps/web/features/operator/networkFindAreasLoader.ts", "target": "apps/web/features/operator/network/networkFindAreasLoader.ts", "required_change": "Move the API binding/adapters unchanged and update OperatorConsole.tsx"},
+        {"source": "formatStamp in apps/web/features/shell/HomeWorkspace.tsx", "target": "apps/web/features/shell/formatStamp.ts", "required_change": "Preserve the helper used by FranchiseeWorkspace.tsx before deleting HomeWorkspace.tsx"}
+      ],
+      "feature_roots_to_delete": [
+        "apps/web/features/adlift", "apps/web/features/audit", "apps/web/features/avm",
+        "apps/web/features/expansion", "apps/web/features/intervention",
+        "apps/web/features/learninghub", "apps/web/features/map",
+        "apps/web/features/netplan", "apps/web/features/operations", "apps/web/features/priceops"
+      ],
+      "shell_paths_to_delete": [
+        "apps/web/src/app/OpsBoardFrame.tsx",
+        "apps/web/features/shell/AcknowledgeButton.tsx",
+        "apps/web/features/shell/AdminWorkspace.tsx",
+        "apps/web/features/shell/AssignTaskForm.tsx",
+        "apps/web/features/shell/HomeWorkspace.tsx",
+        "apps/web/features/shell/NotificationsWorkspace.tsx",
+        "apps/web/features/shell/OfflineBanner.tsx",
+        "apps/web/features/shell/PreferencesForm.tsx",
+        "apps/web/features/shell/RoleWorkspacesForm.tsx",
+        "apps/web/features/shell/SearchKeyboardNav.tsx",
+        "apps/web/features/shell/SearchWorkspace.tsx",
+        "apps/web/features/shell/SettingsForm.tsx",
+        "apps/web/features/shell/SettingsWorkspace.tsx",
+        "apps/web/features/shell/TaskCenterWorkspace.tsx"
+      ],
+      "legacy_spec_paths_to_delete": [
+        "tests/e2e/e2e-api-bound-ui.spec.ts", "tests/e2e/e2e-avm-netplan-learning-audit-product.spec.ts",
+        "tests/e2e/e2e-avm-netplan.spec.ts", "tests/e2e/e2e-exp.spec.ts",
+        "tests/e2e/e2e-expansion-product.spec.ts", "tests/e2e/e2e-intervention-price-ad.spec.ts",
+        "tests/e2e/e2e-learning-audit.spec.ts", "tests/e2e/e2e-map-a11y.spec.ts",
+        "tests/e2e/e2e-map-live-boundary.spec.ts", "tests/e2e/e2e-map-resilience.spec.ts",
+        "tests/e2e/e2e-map-tooltip-evidence.spec.ts", "tests/e2e/e2e-map.spec.ts",
+        "tests/e2e/e2e-ops-intervention-price-ad-product.spec.ts", "tests/e2e/e2e-ops.spec.ts",
+        "tests/e2e/e2e-pgap-ux-001.spec.ts", "tests/e2e/opsboard-shell.spec.ts",
+        "tests/e2e/shell-product-mobile.spec.ts", "tests/e2e/shell-product.spec.ts"
+      ],
+      "additional_writable_paths": [
+        "apps/web/next.config.mjs", "apps/web/src/app/layout.tsx", "apps/web/src/app/error.tsx",
+        "apps/web/src/app/global-error.tsx", "apps/web/src/app/loading.tsx", "apps/web/src/app/not-found.tsx",
+        "apps/web/src/app/__tests__/productionRoutes.test.ts", "apps/web/features/operator/OperatorConsole.tsx",
+        "apps/web/features/operator/NetworkFindAreasWorkspace.tsx", "apps/web/features/operator/operatorDataMode.ts",
+        "apps/web/features/operator/network/HeatZoneMap.tsx", "apps/web/features/operator/network/heatZoneMap.module.css",
+        "apps/web/features/operator/network/mapTypes.ts", "apps/web/features/operator/network/networkFindAreasLoader.ts",
+        "apps/web/features/shell/FranchiseeWorkspace.tsx", "apps/web/features/shell/formatStamp.ts",
+        "packages/ui/src/nav/routes.ts",
+        "docs/evidence/fleet_dispatch/package10_20260726/acks/ODP-P10-CAN-001-R3A.json"
+      ],
+      "forbidden_paths": ["intake visual files", "apps/api/**", "the 16 canonical E2E specs"],
+      "gates": {
+        "commands": ["npm test --workspace=@oday-plus/web", "npm run typecheck --workspace=@oday-plus/web", "npm run build --workspace=@oday-plus/web", "npx playwright test --list --project=chromium <the 16 canonical specs>", "git diff --check"],
+        "static": ["executable page inventory equals exactly the three keep paths", "ten retired feature roots, OpsBoardFrame.tsx, old loader path, and 13 old shell files are absent", "imports contain no retired feature root or OpsBoardFrame", "shared navigation contains no retired href", "all 18 legacy specs are absent and all 16 canonical specs remain", "/operator, /intake/[intakeId], and /franchisee build successfully"]
+      }
+    },
+    "ODP-P10-CAN-001-R3B": {
+      "status": "blocked_on_CAN001_R3A",
+      "objective": "Replace the production tabbed intake detail with the Package 10 continuous full-page composition.",
+      "writable_paths": [
+        "apps/web/src/app/intake/[intakeId]/page.tsx", "apps/web/src/app/intake/layout.tsx",
+        "apps/web/src/app/operator/operator-layout.css", "apps/web/features/operator/OperatorConsole.tsx",
+        "apps/web/features/operator/network/intake/AssistedIntakeSection.tsx",
+        "apps/web/features/operator/network/intake/ListingInboxIntakeView.tsx",
+        "apps/web/features/operator/network/intake/IntakeProcessingDetail.tsx",
+        "apps/web/features/operator/network/intake/AssistedEntryForm.tsx",
+        "apps/web/features/operator/network/intake/intakeFreshness.ts",
+        "apps/web/features/operator/network/intake/ListingCompareTable.tsx",
+        "apps/web/features/operator/network/intake/MatchEvidencePanel.tsx",
+        "apps/web/features/operator/network/intake/AssignmentSlaSummary.tsx",
+        "apps/web/features/operator/network/intake/DurableReceiptPanel.tsx",
+        "apps/web/features/operator/network/intake/EvidencePanel.tsx",
+        "apps/web/features/operator/network/intake/IntakeErrorRecovery.tsx",
+        "apps/web/features/operator/network/intake/IntakeStageTimeline.tsx",
+        "apps/web/features/operator/network/intake/PromotionReviewPanel.tsx",
+        "apps/web/features/operator/network/intake/SiteScoreJobStatus.tsx",
+        "apps/web/features/operator/network/intake/StateMatrix.tsx",
+        "apps/web/features/operator/network/intake/intake.module.css",
+        "apps/web/features/operator/network/intake/intakeClient.ts",
+        "apps/web/features/operator/network/intake/intakeTypes.ts",
+        "apps/web/features/operator/network/intake/types.ts",
+        "apps/web/features/operator/network/intake/urlState.ts",
+        "apps/web/features/operator/network/intake/index.ts",
+        "apps/web/features/operator/network/intake/__tests__/AssignmentSlaSummary.test.tsx",
+        "apps/web/features/operator/network/intake/__tests__/IdentityDecisionPanel.test.tsx",
+        "apps/web/features/operator/network/intake/__tests__/IntakeProcessingDetail.test.tsx",
+        "apps/web/features/operator/network/intake/__tests__/Package10VisualP1.test.tsx",
+        "docs/evidence/fleet_dispatch/package10_20260726/acks/ODP-P10-CAN-001-R3B.json"
+      ],
+      "orphan_delete_paths": [
+        "apps/web/features/operator/network/intake/IntakeDetailDialog.tsx",
+        "apps/web/features/operator/network/intake/IdentityDecisionPanel.tsx",
+        "apps/web/features/operator/network/intake/AssistedIntakeQueuePanel.tsx",
+        "apps/web/features/operator/network/intake/IntakeAssignmentSlaDialog.tsx"
+      ],
+      "helper_migrations": [
+        {"symbol": "AssistedEntryForm", "source": "apps/web/features/operator/network/intake/IntakeDetailDialog.tsx", "target": "apps/web/features/operator/network/intake/AssistedEntryForm.tsx"},
+        {"symbol": "isSnapshotStale", "source": "apps/web/features/operator/network/intake/IntakeDetailDialog.tsx", "target": "apps/web/features/operator/network/intake/intakeFreshness.ts"},
+        {"symbol": "ListingCompareTable", "source": "apps/web/features/operator/network/intake/ListingCompareTable.tsx", "target_composition": "apps/web/features/operator/network/intake/IntakeProcessingDetail.tsx"},
+        {"symbol": "MatchEvidencePanel", "source": "apps/web/features/operator/network/intake/MatchEvidencePanel.tsx", "target_composition": "apps/web/features/operator/network/intake/IntakeProcessingDetail.tsx"}
+      ],
+      "unit_test_actions": [
+        {"path": "apps/web/features/operator/network/intake/__tests__/AssignmentSlaSummary.test.tsx", "action": "migrate old detail mounts"},
+        {"path": "apps/web/features/operator/network/intake/__tests__/IdentityDecisionPanel.test.tsx", "action": "migrate assertions, then delete"},
+        {"path": "apps/web/features/operator/network/intake/__tests__/IntakeProcessingDetail.test.tsx", "action": "rewrite for canonical detail and moved helper"},
+        {"path": "apps/web/features/operator/network/intake/__tests__/Package10VisualP1.test.tsx", "action": "migrate direct orphan mount to production detail"}
+      ],
+      "continuous_sections_in_order": [
+        "Return/deep-link header", "Submission summary", "Assignment/SLA", "Real processing stages",
+        "Source policy and evidence", "Parsed, normalized, and corrected values", "Match evidence",
+        "Desktop/tablet side-by-side comparison and human decision", "Durable receipts and WORM",
+        "Promotion review and site-score status", "Timeline and error recovery"
+      ],
+      "responsive_requirements": ["390px POSSIBLE_MATCH renders inline DESKTOP_REQUIRED", "1024px renders the complete comparison", "detail is one continuous full-page composition without detail tabs", "direct route, reload, back/forward, and inbox return are durable"],
+      "forbidden_paths": ["tests/e2e/**", "apps/api/**", "auth middleware", "source-policy decisions", "permission rules"],
+      "gates": ["npm test --workspace=@oday-plus/web", "npm run typecheck --workspace=@oday-plus/web", "npm run build --workspace=@oday-plus/web", "npx playwright test tests/e2e/operator-assisted-listing-intake-a11y.spec.ts --project=chromium", "git diff --check", "zero orphan intake files/imports", "one production detail composition", "no active Package 6/7 visual-baseline wording"]
+    },
+    "ODP-P10-CAN-002-R3": {
+      "status": "blocked_on_CAN001_R3B",
+      "writable_by_default": ["docs/evidence/fleet_dispatch/package10_20260726/acks/ODP-P10-CAN-002-R3.json"],
+      "conditional_writable_paths": ["apps/api/**", "packages/openapi-client/**"],
+      "conditional_fix_rule": "Only after an unchanged named test proves a real contract defect.",
+      "forbidden_paths": ["web visual files", "tests/e2e/**"],
+      "pytest_files": [
+        "tests/contract/test_operator_assisted_listing_api.py",
+        "tests/contract/test_operator_network_listings_api.py",
+        "tests/contract/test_operator_network_rebalance_api.py",
+        "tests/contract/test_operator_network_review_api.py",
+        "tests/contract/test_operator_network_scoring_api.py",
+        "tests/integration/test_operator_canonical_wiring.py",
+        "tests/security/test_assisted_listing_intake_authorization_matrix.py",
+        "tests/security/test_operator_security_platform.py"
+      ],
+      "expected_tests_collected": 69,
+      "stale_conflicting_count": 71,
+      "requirements": ["tenant headers", "source policy", "self-review denial", "second actor", "idempotency", "version conflicts", "audit/WORM evidence", "promotion", "all remain fail-closed"],
+      "gates": ["exact eight-file 69-test collection", "git diff --check"]
+    },
+    "ODP-P10-CAN-003-R3A": {
+      "status": "blocked_on_CAN002_R3",
+      "canonical_spec_paths": [
+        "tests/e2e/e2e-network-find-areas-api-binding.spec.ts", "tests/e2e/e2e-operator-console.spec.ts",
+        "tests/e2e/operator-assisted-listing-intake-a11y.spec.ts", "tests/e2e/operator-assisted-listing-intake-mobile.spec.ts",
+        "tests/e2e/operator-assisted-listing-intake.spec.ts", "tests/e2e/operator-governance.spec.ts",
+        "tests/e2e/operator-growth.spec.ts", "tests/e2e/operator-network-assisted-intake.spec.ts",
+        "tests/e2e/operator-network-listings.spec.ts", "tests/e2e/operator-network-rebalance.spec.ts",
+        "tests/e2e/operator-network-review.spec.ts", "tests/e2e/operator-network-scoring.spec.ts",
+        "tests/e2e/operator-shell-today.spec.ts", "tests/e2e/operator-store-ops.spec.ts",
+        "tests/e2e/product-e2e-env.spec.ts", "tests/e2e/shell-resource-binding.spec.ts"
+      ],
+      "ack_path": "docs/evidence/fleet_dispatch/package10_20260726/acks/ODP-P10-CAN-003-R3A.json",
+      "requirements": ["align assertions without removing or weakening required behavior", "continuous detail", "real source/field/signal/compare/decision data", "390px DESKTOP_REQUIRED", "1024px full flow", "1440px full flow", "durable reload/return", "axe", "API reads/writes", "fail-closed states"],
+      "product_gap_rule": "A missing required UI returns the program to ODP-P10-CAN-001-R3B."
+    },
+    "ODP-P10-CAN-003-R3B": {
+      "status": "blocked_on_CAN003_R3A",
+      "writable_paths": ["docs/evidence/fleet_dispatch/package10_20260726/acks/ODP-P10-CAN-003-R3B.json"],
+      "expected_spec_files": 16,
+      "expected_chromium_tests": 107,
+      "mode": "read-only",
+      "requirements": ["Run the 16 canonical specs unchanged."],
+      "forbidden_paths": ["product files", "test files", "config files", "snapshot files", "helper files"]
+    },
+    "ODP-P10-CAN-004-R3": {
+      "status": "blocked_on_CAN003_R3B",
+      "writable_paths": ["release evidence", "docs/evidence/fleet_dispatch/package10_20260726/acks/ODP-P10-CAN-004-R3.json"],
+      "gates": ["reconcile all committed ACKs", "unit", "typecheck", "build", "axe", "route/import/orphan gates", "69 API/security tests", "107 Chromium tests", "verify archive hashes", "rebase against current origin/dev", "rerun gates", "push exact commit", "record deployment readiness"],
+      "deployment_rule": "Do not claim deployment without a real deployment receipt."
+    }
+  },
+  "path_contracts": {
+    "ODP-P10-CAN-001-R3A": {
+      "canonical_keep": [
+        "apps/web/src/app/operator/page.tsx",
+        "apps/web/src/app/intake/[intakeId]/page.tsx",
+        "apps/web/src/app/franchisee/page.tsx"
+      ],
+      "delete_page_paths": [
+        "apps/web/src/app/page.tsx",
+        "apps/web/src/app/adlift/page.tsx",
+        "apps/web/src/app/admin/page.tsx",
+        "apps/web/src/app/admin/audit/page.tsx",
+        "apps/web/src/app/audit/page.tsx",
+        "apps/web/src/app/avm/page.tsx",
+        "apps/web/src/app/expansion/page.tsx",
+        "apps/web/src/app/interventions/page.tsx",
+        "apps/web/src/app/learning/page.tsx",
+        "apps/web/src/app/map/page.tsx",
+        "apps/web/src/app/netplan/page.tsx",
+        "apps/web/src/app/notifications/page.tsx",
+        "apps/web/src/app/operations/page.tsx",
+        "apps/web/src/app/pricing/page.tsx",
+        "apps/web/src/app/search/page.tsx",
+        "apps/web/src/app/settings/page.tsx",
+        "apps/web/src/app/tasks/page.tsx",
+        "apps/web/src/app/w/ai/models/page.tsx",
+        "apps/web/src/app/w/ai/models/[modelName]/page.tsx",
+        "apps/web/src/app/w/ai/models/[modelName]/[version]/page.tsx",
+        "apps/web/src/app/w/ai/releases/page.tsx",
+        "apps/web/src/app/w/ai/releases/[releaseId]/page.tsx",
+        "apps/web/src/app/w/audit/decisions/page.tsx",
+        "apps/web/src/app/w/audit/decisions/[decisionId]/page.tsx",
+        "apps/web/src/app/w/audit/evidence/page.tsx",
+        "apps/web/src/app/w/dealroom/cases/page.tsx",
+        "apps/web/src/app/w/dealroom/cases/[caseId]/page.tsx",
+        "apps/web/src/app/w/expansion/page.tsx",
+        "apps/web/src/app/w/expansion/candidates/page.tsx",
+        "apps/web/src/app/w/expansion/heatzone/page.tsx",
+        "apps/web/src/app/w/expansion/listings/page.tsx",
+        "apps/web/src/app/w/expansion/sitescore/page.tsx",
+        "apps/web/src/app/w/expansion/sitescore/[reportId]/page.tsx",
+        "apps/web/src/app/w/network/scenarios/page.tsx",
+        "apps/web/src/app/w/network/scenarios/[scenarioId]/page.tsx",
+        "apps/web/src/app/w/operations/alerts/page.tsx",
+        "apps/web/src/app/w/operations/forecast/page.tsx",
+        "apps/web/src/app/w/operations/forecast/[storeId]/page.tsx"
+      ],
+      "delete_route_remnants": [
+        "apps/web/src/app/w/expansion/listings/error.tsx",
+        "apps/web/src/app/w/expansion/listings/loading.tsx"
+      ],
+      "migrations": [
+        {
+          "from": "apps/web/features/map/HeatZoneMap.tsx",
+          "to": "apps/web/features/operator/network/HeatZoneMap.tsx",
+          "symbols": ["HeatZoneMap"],
+          "constraint": "Replace resolveProductionMode with isOperatorProductionMode plus explicit-true override."
+        },
+        {
+          "from": "apps/web/features/map/map.module.css",
+          "to": "apps/web/features/operator/network/heatZoneMap.module.css",
+          "symbols": ["all HeatZoneMap styles"]
+        },
+        {
+          "from": "apps/web/features/expansion/data.ts",
+          "to": "apps/web/features/operator/network/mapTypes.ts",
+          "symbols": ["HeatZone", "Listing", "CandidateSite"]
+        },
+        {
+          "from": "apps/web/features/operator/networkFindAreasLoader.ts",
+          "to": "apps/web/features/operator/network/networkFindAreasLoader.ts",
+          "symbols": ["HeatZoneBinding", "ListingBinding", "CandidateBinding", "NetworkFindAreasBindings", "loadNetworkFindAreasBindings"],
+          "constraint": "Preserve API adapters and fail-closed binding behavior."
+        },
+        {
+          "from": "apps/web/features/shell/HomeWorkspace.tsx",
+          "to": "apps/web/features/shell/formatStamp.ts",
+          "symbols": ["formatStamp"],
+          "constraint": "Update FranchiseeWorkspace before deleting HomeWorkspace."
+        }
+      ],
+      "delete_feature_roots": [
+        "apps/web/features/adlift",
+        "apps/web/features/audit",
+        "apps/web/features/avm",
+        "apps/web/features/expansion",
+        "apps/web/features/intervention",
+        "apps/web/features/learninghub",
+        "apps/web/features/map",
+        "apps/web/features/netplan",
+        "apps/web/features/operations",
+        "apps/web/features/priceops"
+      ],
+      "delete_shell_paths": [
+        "apps/web/src/app/OpsBoardFrame.tsx",
+        "apps/web/features/shell/AcknowledgeButton.tsx",
+        "apps/web/features/shell/AdminWorkspace.tsx",
+        "apps/web/features/shell/AssignTaskForm.tsx",
+        "apps/web/features/shell/HomeWorkspace.tsx",
+        "apps/web/features/shell/NotificationsWorkspace.tsx",
+        "apps/web/features/shell/OfflineBanner.tsx",
+        "apps/web/features/shell/PreferencesForm.tsx",
+        "apps/web/features/shell/RoleWorkspacesForm.tsx",
+        "apps/web/features/shell/SearchKeyboardNav.tsx",
+        "apps/web/features/shell/SearchWorkspace.tsx",
+        "apps/web/features/shell/SettingsForm.tsx",
+        "apps/web/features/shell/SettingsWorkspace.tsx",
+        "apps/web/features/shell/TaskCenterWorkspace.tsx"
+      ],
+      "delete_legacy_e2e_paths": [
+        "tests/e2e/e2e-api-bound-ui.spec.ts",
+        "tests/e2e/e2e-avm-netplan-learning-audit-product.spec.ts",
+        "tests/e2e/e2e-avm-netplan.spec.ts",
+        "tests/e2e/e2e-exp.spec.ts",
+        "tests/e2e/e2e-expansion-product.spec.ts",
+        "tests/e2e/e2e-intervention-price-ad.spec.ts",
+        "tests/e2e/e2e-learning-audit.spec.ts",
+        "tests/e2e/e2e-map-a11y.spec.ts",
+        "tests/e2e/e2e-map-live-boundary.spec.ts",
+        "tests/e2e/e2e-map-resilience.spec.ts",
+        "tests/e2e/e2e-map-tooltip-evidence.spec.ts",
+        "tests/e2e/e2e-map.spec.ts",
+        "tests/e2e/e2e-ops-intervention-price-ad-product.spec.ts",
+        "tests/e2e/e2e-ops.spec.ts",
+        "tests/e2e/e2e-pgap-ux-001.spec.ts",
+        "tests/e2e/opsboard-shell.spec.ts",
+        "tests/e2e/shell-product-mobile.spec.ts",
+        "tests/e2e/shell-product.spec.ts"
+      ],
+      "additional_writable_paths": [
+        "apps/web/next.config.mjs",
+        "apps/web/src/app/layout.tsx",
+        "apps/web/src/app/error.tsx",
+        "apps/web/src/app/global-error.tsx",
+        "apps/web/src/app/loading.tsx",
+        "apps/web/src/app/not-found.tsx",
+        "apps/web/src/app/__tests__/productionRoutes.test.ts",
+        "apps/web/features/operator/OperatorConsole.tsx",
+        "apps/web/features/operator/NetworkFindAreasWorkspace.tsx",
+        "apps/web/features/operator/operatorDataMode.ts",
+        "apps/web/features/operator/network/HeatZoneMap.tsx",
+        "apps/web/features/operator/network/heatZoneMap.module.css",
+        "apps/web/features/operator/network/mapTypes.ts",
+        "apps/web/features/operator/network/networkFindAreasLoader.ts",
+        "apps/web/features/shell/FranchiseeWorkspace.tsx",
+        "apps/web/features/shell/formatStamp.ts",
+        "packages/ui/src/nav/routes.ts",
+        "docs/evidence/fleet_dispatch/package10_20260726/acks/ODP-P10-CAN-001-R3A.json"
+      ],
+      "redirect_contract": {
+        "/": "/operator",
+        "retired_expansion_and_map": "/operator?ws=network",
+        "retired_pricing_and_adlift": "/operator?ws=growth",
+        "retired_audit_and_admin": "/operator?ws=govern",
+        "all_other_retired_visual_urls": "/operator",
+        "implementation_path": "apps/web/next.config.mjs"
+      },
+      "forbidden_paths": ["apps/web/features/operator/network/intake/**", "apps/api/**", "16 canonical E2E spec edits", "docs_archive/**"]
+    },
+    "ODP-P10-CAN-001-R3B": {
+      "writable_paths": [
+        "apps/web/src/app/intake/[intakeId]/page.tsx",
+        "apps/web/src/app/intake/layout.tsx",
+        "apps/web/src/app/operator/operator-layout.css",
+        "apps/web/features/operator/OperatorConsole.tsx",
+        "apps/web/features/operator/network/intake/AssistedIntakeSection.tsx",
+        "apps/web/features/operator/network/intake/ListingInboxIntakeView.tsx",
+        "apps/web/features/operator/network/intake/IntakeProcessingDetail.tsx",
+        "apps/web/features/operator/network/intake/AssistedEntryForm.tsx",
+        "apps/web/features/operator/network/intake/intakeFreshness.ts",
+        "apps/web/features/operator/network/intake/ListingCompareTable.tsx",
+        "apps/web/features/operator/network/intake/MatchEvidencePanel.tsx",
+        "apps/web/features/operator/network/intake/AssignmentSlaSummary.tsx",
+        "apps/web/features/operator/network/intake/DurableReceiptPanel.tsx",
+        "apps/web/features/operator/network/intake/EvidencePanel.tsx",
+        "apps/web/features/operator/network/intake/IntakeErrorRecovery.tsx",
+        "apps/web/features/operator/network/intake/IntakeStageTimeline.tsx",
+        "apps/web/features/operator/network/intake/PromotionReviewPanel.tsx",
+        "apps/web/features/operator/network/intake/SiteScoreJobStatus.tsx",
+        "apps/web/features/operator/network/intake/StateMatrix.tsx",
+        "apps/web/features/operator/network/intake/intake.module.css",
+        "apps/web/features/operator/network/intake/intakeClient.ts",
+        "apps/web/features/operator/network/intake/intakeTypes.ts",
+        "apps/web/features/operator/network/intake/types.ts",
+        "apps/web/features/operator/network/intake/urlState.ts",
+        "apps/web/features/operator/network/intake/index.ts",
+        "apps/web/features/operator/network/intake/__tests__/AssignmentSlaSummary.test.tsx",
+        "apps/web/features/operator/network/intake/__tests__/IdentityDecisionPanel.test.tsx",
+        "apps/web/features/operator/network/intake/__tests__/IntakeProcessingDetail.test.tsx",
+        "apps/web/features/operator/network/intake/__tests__/Package10VisualP1.test.tsx",
+        "docs/evidence/fleet_dispatch/package10_20260726/acks/ODP-P10-CAN-001-R3B.json"
+      ],
+      "migrations": [
+        {
+          "symbol": "AssistedEntryForm",
+          "from": "apps/web/features/operator/network/intake/IntakeDetailDialog.tsx",
+          "to": "apps/web/features/operator/network/intake/AssistedEntryForm.tsx"
+        },
+        {
+          "symbol": "isSnapshotStale",
+          "from": "apps/web/features/operator/network/intake/IntakeDetailDialog.tsx",
+          "to": "apps/web/features/operator/network/intake/intakeFreshness.ts"
+        },
+        {
+          "symbol": "ListingCompareTable",
+          "from": "apps/web/features/operator/network/intake/ListingCompareTable.tsx",
+          "to_composition": "apps/web/features/operator/network/intake/IntakeProcessingDetail.tsx"
+        },
+        {
+          "symbol": "MatchEvidencePanel",
+          "from": "apps/web/features/operator/network/intake/MatchEvidencePanel.tsx",
+          "to_composition": "apps/web/features/operator/network/intake/IntakeProcessingDetail.tsx"
+        }
+      ],
+      "delete_paths": [
+        "apps/web/features/operator/network/intake/IntakeDetailDialog.tsx",
+        "apps/web/features/operator/network/intake/IdentityDecisionPanel.tsx",
+        "apps/web/features/operator/network/intake/AssistedIntakeQueuePanel.tsx",
+        "apps/web/features/operator/network/intake/IntakeAssignmentSlaDialog.tsx"
+      ],
+      "delete_unit_test_paths": [
+        "apps/web/features/operator/network/intake/__tests__/IdentityDecisionPanel.test.tsx"
+      ],
+      "forbidden_paths": ["tests/e2e/**", "apps/api/**", "apps/web/src/lib/auth/**", "docs_archive/**", "task ledgers", "another wave ACK"]
+    },
+    "ODP-P10-CAN-003-R3A": {
+      "canonical_spec_paths": [
+        "tests/e2e/e2e-network-find-areas-api-binding.spec.ts",
+        "tests/e2e/e2e-operator-console.spec.ts",
+        "tests/e2e/operator-assisted-listing-intake-a11y.spec.ts",
+        "tests/e2e/operator-assisted-listing-intake-mobile.spec.ts",
+        "tests/e2e/operator-assisted-listing-intake.spec.ts",
+        "tests/e2e/operator-governance.spec.ts",
+        "tests/e2e/operator-growth.spec.ts",
+        "tests/e2e/operator-network-assisted-intake.spec.ts",
+        "tests/e2e/operator-network-listings.spec.ts",
+        "tests/e2e/operator-network-rebalance.spec.ts",
+        "tests/e2e/operator-network-review.spec.ts",
+        "tests/e2e/operator-network-scoring.spec.ts",
+        "tests/e2e/operator-shell-today.spec.ts",
+        "tests/e2e/operator-store-ops.spec.ts",
+        "tests/e2e/product-e2e-env.spec.ts",
+        "tests/e2e/shell-resource-binding.spec.ts"
+      ],
+      "ack_path": "docs/evidence/fleet_dispatch/package10_20260726/acks/ODP-P10-CAN-003-R3A.json"
+    }
+  },
+  "gate_commands": {
+    "web_unit": "npm test --workspace=@oday-plus/web",
+    "web_typecheck": "npm run typecheck --workspace=@oday-plus/web",
+    "web_build": "npm run build --workspace=@oday-plus/web",
+    "axe": "npx playwright test tests/e2e/operator-assisted-listing-intake-a11y.spec.ts --project=chromium",
+    "diff_check": "git diff --check"
+  },
+  "waves": [
+    {
+      "order": 1,
+      "task_id": "ODP-P10-CAN-001-R3A",
+      "status": "blocked_pending_program_recovery_checkpoint",
+      "owns": ["37 legacy page deletions", "1 redirect-only page retirement", "old route redirects", "10 legacy feature roots", "old shell and OpsBoardFrame", "shared navigation", "networkFindAreasLoader migration", "18 legacy visual specs"],
+      "forbidden": ["intake internal redesign", "16 canonical E2E spec edits"],
+      "gates": ["web unit", "web typecheck", "web build", "route/import/orphan/navigation inventory", "16 canonical specs collect unchanged", "git diff --check"],
+      "next": "ODP-P10-CAN-001-R3B"
+    },
+    {
+      "order": 2,
+      "task_id": "ODP-P10-CAN-001-R3B",
+      "status": "blocked_on_CAN001_R3A",
+      "owns": ["production intake detail integration", "durable /intake/[intakeId] composition", "intake internal helper migration", "unit-test migration", "four intake orphan deletions"],
+      "requirements": ["continuous full-page 1160px detail", "source policy and value provenance", "match confidence and agreeing/contradictory signals", "desktop side-by-side compare", "390px inline DESKTOP_REQUIRED for POSSIBLE_MATCH", "tablet full functionality", "assignment/SLA", "WORM/receipts", "promotion", "human decisions", "timeline", "durable return/deep link"],
+      "forbidden": ["route/feature/spec retirement owned by R3A", "tests/e2e/** edits"],
+      "gates": ["web unit", "web typecheck", "web build", "unchanged intake axe Chromium spec", "intake import/orphan/layout/responsive gates", "git diff --check"],
+      "next": "ODP-P10-CAN-002-R3"
+    },
+    {
+      "order": 3,
+      "task_id": "ODP-P10-CAN-002-R3",
+      "status": "blocked_on_CAN001_R3B",
+      "owns": ["API/security contract re-verification"],
+      "pytest_files": ["tests/contract/test_operator_assisted_listing_api.py", "tests/contract/test_operator_network_listings_api.py", "tests/contract/test_operator_network_rebalance_api.py", "tests/contract/test_operator_network_review_api.py", "tests/contract/test_operator_network_scoring_api.py", "tests/integration/test_operator_canonical_wiring.py", "tests/security/test_assisted_listing_intake_authorization_matrix.py", "tests/security/test_operator_security_platform.py"],
+      "expected_tests_collected": 69,
+      "requirements": ["fail-closed permissions", "tenant boundary", "source policy", "self-review denial", "idempotency", "version conflict", "audit/WORM", "promotion"],
+      "gates": ["69-test API/security suite", "git diff --check"],
+      "next": "ODP-P10-CAN-003-R3A"
+    },
+    {
+      "order": 4,
+      "task_id": "ODP-P10-CAN-003-R3A",
+      "status": "blocked_on_CAN002_R3",
+      "owns": ["16 canonical E2E spec assertion and responsive alignment"],
+      "rule": "missing required UI is a product no-go to R3B, never permission to weaken a canonical assertion",
+      "gates": ["continuous detail and compare coverage", "390/1024/1440 responsive coverage", "durable route", "axe", "API reads/writes and fail-closed coverage", "git diff --check"],
+      "next": "ODP-P10-CAN-003-R3B"
+    },
+    {
+      "order": 5,
+      "task_id": "ODP-P10-CAN-003-R3B",
+      "status": "blocked_on_CAN003_R3A",
+      "owns": ["read-only complete Chromium gate"],
+      "expected_specs": 16,
+      "expected_chromium_tests": 107,
+      "forbidden": ["product edits", "test edits", "configuration edits"],
+      "gates": ["107 Chromium tests unchanged", "git diff --check"],
+      "next": "ODP-P10-CAN-004-R3"
+    },
+    {
+      "order": 6,
+      "task_id": "ODP-P10-CAN-004-R3",
+      "status": "blocked_on_CAN003_R3B",
+      "owns": ["release", "integration", "evidence reconciliation", "deployment readiness"],
+      "gates": ["all prior ACK/SHA reconciliation", "unit/typecheck/build/axe/route/import/orphan", "69 API/security tests", "107 Chromium tests", "archive hashes", "integration rebase gates", "real deployment receipt for deployment claim", "git diff --check"],
+      "next": "program_closure"
+    }
+  ],
+  "blockers": ["program recovery documents are not coordinator-checkpointed", "R3A retirement incomplete", "R3B canonical intake integration incomplete"]
+}

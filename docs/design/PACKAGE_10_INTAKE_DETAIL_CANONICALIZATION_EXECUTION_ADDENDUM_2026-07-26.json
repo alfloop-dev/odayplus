@@ -1,0 +1,289 @@
+{
+  "schema": "oday-plus.package10-intake-canonicalization-addendum.v1",
+  "addendum_id": "ODP-P10-INTAKE-CANON-001",
+  "current_status": "no_go_pending_CAN001_R3",
+  "next": "ODP-P10-CAN-001-R3A",
+  "persistence_state": "pending_coordinator_checkpoint",
+  "owner_wave": "ODP-P10-CAN-001-R3B",
+  "predecessor": "ODP-P10-CAN-001-R3A",
+  "persistence_state": "pending_coordinator_checkpoint",
+  "canonical_package": 10,
+  "canonical_html_landmark": "data-screen-label=\"Intake 收件處理詳情頁\"",
+  "binding_decisions": {
+    "VDR-003": "At 390px POSSIBLE_MATCH renders inline DESKTOP_REQUIRED; tablet retains the complete compare and correction flow.",
+    "VDR-005": "The detail survives direct open, reload, browser back/forward and return to the same inbox context.",
+    "VDR-009": "Production contains one intake UI.",
+    "detail_layout": "Full-page layer below Top Navigation, max-width 1160px, one continuous scrolling document without Timeline/Evidence/Receipts/Error tabs."
+  },
+  "current_noncanonical_composition": "IntakeProcessingDetail -> IntakeDialogShell -> Timeline/Evidence/Receipts/Error tabbed modal",
+  "production_import_graph": [
+    "apps/web/src/app/operator/page.tsx",
+    "apps/web/features/operator/OperatorConsole.tsx",
+    "apps/web/features/operator/NetworkFindAreasWorkspace.tsx",
+    "apps/web/features/operator/network/ListingRadarPanel.tsx",
+    "apps/web/features/operator/network/intake/AssistedIntakeSection.tsx",
+    "apps/web/features/operator/network/intake/ListingInboxIntakeView.tsx",
+    "apps/web/features/operator/network/intake/IntakeProcessingDetail.tsx"
+  ],
+  "durable_route_path": "apps/web/src/app/intake/[intakeId]/page.tsx",
+  "production_detail_path": "apps/web/features/operator/network/intake/IntakeProcessingDetail.tsx",
+  "continuous_sections": [
+    {
+      "order": 1,
+      "id": "return_deep_link_header",
+      "required": ["intake ID", "stage", "outcome", "policy", "version", "preserved inbox context"]
+    },
+    {
+      "order": 2,
+      "id": "submission_summary",
+      "required": ["original URL", "canonical URL", "source", "submitter", "submitted time", "owner", "HeatZone or area"]
+    },
+    {
+      "order": 3,
+      "id": "assignment_sla",
+      "required": ["queue", "claim", "transfer", "pause and resume", "due state", "version conflict", "handoff reason", "assignment receipts"]
+    },
+    {
+      "order": 4,
+      "id": "processing_stages",
+      "required": [
+        "SUBMITTED",
+        "CHECKING_IDENTITY",
+        "CHECKING_SOURCE_POLICY",
+        "AWAITING_ASSISTED_ENTRY",
+        "RETRIEVING",
+        "PARSING",
+        "MATCHING",
+        "NEEDS_REVIEW",
+        "READY",
+        "QUARANTINED",
+        "FAILED"
+      ],
+      "fabricated_percentage_allowed": false
+    },
+    {
+      "order": 5,
+      "id": "source_policy_worm_evidence",
+      "required": [
+        "original and canonical URL",
+        "captured and observed time",
+        "snapshot ID and hash",
+        "parser version",
+        "correlation ID",
+        "policy decision, version and expiry",
+        "WORM state",
+        "purpose binding",
+        "classification",
+        "retention and legal hold",
+        "masking and export state",
+        "actor, role and time",
+        "evidence receipt"
+      ]
+    },
+    {
+      "order": 6,
+      "id": "error_recovery",
+      "required": [
+        "policy block",
+        "auth wall",
+        "source removal",
+        "bot challenge",
+        "retryable and non-retryable parser failure",
+        "partial result",
+        "stale snapshot",
+        "quarantine",
+        "error code",
+        "correlation ID",
+        "occurred time",
+        "next action",
+        "preserved corrections"
+      ]
+    },
+    {
+      "order": 7,
+      "id": "assisted_entry",
+      "required": ["ASSISTED_ENTRY_ONLY"],
+      "forbidden_inputs": ["raw credentials", "cookies", "tokens", "private endpoints"]
+    },
+    {
+      "order": 8,
+      "id": "parsed_data_lineage",
+      "groups": ["identity", "location", "commercial", "property", "provenance"],
+      "states": ["parsed", "normalized", "manually corrected", "missing", "low confidence"],
+      "reason_required_for": ["identity", "address", "rent", "area", "matching"]
+    },
+    {
+      "order": 9,
+      "id": "match_result_and_signals",
+      "outcomes": ["NEW", "EXACT_DUPLICATE", "REVISION", "POSSIBLE_MATCH", "QUARANTINED"],
+      "required": [
+        "confidence",
+        "target",
+        "source ID",
+        "canonical URL",
+        "normalized address",
+        "area",
+        "floor",
+        "listing type",
+        "price or rent",
+        "agreeing signals",
+        "contradictory signals",
+        "screen-reader change summary"
+      ]
+    },
+    {
+      "order": 10,
+      "id": "desktop_tablet_compare",
+      "required": ["existing values", "submitted values", "text, icon or pattern change marker in addition to color"]
+    },
+    {
+      "order": 11,
+      "id": "human_decisions",
+      "actions": ["建立新物件", "加入既有物件版本", "標記重複", "送交資料管理員"],
+      "possible_match_auto_merge_allowed": false,
+      "required": ["reason", "before and after", "actor", "timestamp", "version", "second actor and risk safeguards"]
+    },
+    {
+      "order": 12,
+      "id": "promotion_sitescore",
+      "required": ["review summary", "non-optimistic write", "job state", "candidate and report IDs", "durable receipt"]
+    },
+    {
+      "order": 13,
+      "id": "receipts_timeline_audit",
+      "presentation": "continuous sections, not tabs"
+    }
+  ],
+  "responsive": {
+    "desktop": ">=1160 full continuous detail and side-by-side comparison",
+    "tablet": "760-1159 full submission, status, correction, comparison, decision, receipt and promotion functionality",
+    "mobile": "<760 submission, queue and status, claim, simple unambiguous confirmation, receipt, return and deep link remain operable",
+    "mobile_possible_match": "Replace side-by-side comparison and identity decision controls with inline DESKTOP_REQUIRED, preserve input, and expose durable /intake/{intakeId}.",
+    "mobile_nonambiguous": "A stacked change summary is allowed.",
+    "viewports": [390, 1024, 1440],
+    "horizontal_overflow_allowed": false,
+    "content_max_width_px": 1160,
+    "position": "below Package 10 Top Navigation"
+  },
+  "migrate_before_delete": [
+    {
+      "symbol": "AssistedEntryForm",
+      "from": "apps/web/features/operator/network/intake/IntakeDetailDialog.tsx",
+      "to": "apps/web/features/operator/network/intake/AssistedEntryForm.tsx"
+    },
+    {
+      "symbol": "isSnapshotStale",
+      "from": "apps/web/features/operator/network/intake/IntakeDetailDialog.tsx",
+      "to": "apps/web/features/operator/network/intake/intakeFreshness.ts"
+    },
+    {
+      "symbol": "ListingCompareTable",
+      "from": "apps/web/features/operator/network/intake/ListingCompareTable.tsx",
+      "to_composition": "apps/web/features/operator/network/intake/IntakeProcessingDetail.tsx",
+      "delete_source": false
+    },
+    {
+      "symbol": "MatchEvidencePanel",
+      "from": "apps/web/features/operator/network/intake/MatchEvidencePanel.tsx",
+      "to_composition": "apps/web/features/operator/network/intake/IntakeProcessingDetail.tsx",
+      "delete_source": false
+    },
+    {
+      "symbol": "unique assignment and SLA readable state",
+      "from": "apps/web/features/operator/network/intake/IntakeAssignmentSlaDialog.tsx",
+      "to": "apps/web/features/operator/network/intake/AssignmentSlaSummary.tsx or apps/web/features/operator/network/intake/IntakeProcessingDetail.tsx"
+    },
+    {
+      "symbol": "direct route context",
+      "from": "apps/web/src/app/intake/[intakeId]/page.tsx and apps/web/features/operator/network/intake/urlState.ts",
+      "to": "the single production detail route and preserved inbox return context"
+    }
+  ],
+  "delete_after_migration": [
+    "apps/web/features/operator/network/intake/IntakeDetailDialog.tsx",
+    "apps/web/features/operator/network/intake/IdentityDecisionPanel.tsx",
+    "apps/web/features/operator/network/intake/AssistedIntakeQueuePanel.tsx",
+    "apps/web/features/operator/network/intake/IntakeAssignmentSlaDialog.tsx"
+  ],
+  "unit_test_delete_after_assertion_migration": [
+    "apps/web/features/operator/network/intake/__tests__/IdentityDecisionPanel.test.tsx"
+  ],
+  "retained_modal_shell_contract": {
+    "path": "apps/web/features/operator/network/intake/IntakeDialogShell.tsx",
+    "allowed_callers": ["add", "field fix", "transfer", "pause", "decision confirmation"],
+    "production_detail_may_import": false
+  },
+  "unit_test_actions": [
+    {
+      "path": "apps/web/features/operator/network/intake/__tests__/Package10VisualP1.test.tsx",
+      "action": "Rewrite to mount AssistedIntakeSection or production IntakeProcessingDetail through real props and assert integrated compare and signals."
+    },
+    {
+      "path": "apps/web/features/operator/network/intake/__tests__/IdentityDecisionPanel.test.tsx",
+      "action": "Delete after moving needed comparison and signal assertions to the production-detail suite."
+    },
+    {
+      "path": "apps/web/features/operator/network/intake/__tests__/AssignmentSlaSummary.test.tsx",
+      "action": "Remove IntakeDetailDialog mounts and assert the production assignment and SLA section."
+    },
+    {
+      "path": "apps/web/features/operator/network/intake/__tests__/IntakeProcessingDetail.test.tsx",
+      "action": "Import isSnapshotStale from intakeFreshness and add continuous order, no-tabs, real compare and signals, mobile DESKTOP_REQUIRED, tablet full compare, durable route and return-context coverage."
+    }
+  ],
+  "api_security_preservation": {
+    "authoritative_existing_responses_only": true,
+    "allowed_adaptation_paths": [
+      "apps/web/features/operator/network/intake/intakeClient.ts",
+      "apps/web/features/operator/network/intake/intakeTypes.ts",
+      "apps/web/features/operator/network/intake/types.ts"
+    ],
+    "forbidden": [
+      "invented target listing or match-signal values",
+      "production fixture fallback",
+      "endpoint semantic changes",
+      "tenant or actor weakening",
+      "source-policy weakening",
+      "permission or self-review weakening",
+      "second-actor weakening",
+      "idempotency or ETag conflict weakening",
+      "WORM or receipt weakening",
+      "optimistic merge, split, decision or promotion",
+      "weakening canonical assertions"
+    ],
+    "missing_authoritative_comparison_data_resolution": "Record a no-go blocker for ODP-P10-CAN-002-R3; placeholders are forbidden."
+  },
+  "writable_boundary": "Exactly the ODP-P10-CAN-001-R3B writable_paths in PACKAGE_10_CANONICAL_RUNTIME_EXECUTION_TASKS_2026-07-26.json.",
+  "forbidden_paths": [
+    "tests/e2e/**",
+    "apps/api/**",
+    "apps/web/src/lib/auth/**",
+    "docs_archive/**",
+    "task ledgers",
+    "another wave's ACK"
+  ],
+  "gates": [
+    "npm test --workspace=@oday-plus/web",
+    "npm run typecheck --workspace=@oday-plus/web",
+    "npm run build --workspace=@oday-plus/web",
+    "npx playwright test tests/e2e/operator-assisted-listing-intake-a11y.spec.ts --project=chromium",
+    "the unchanged accessibility spec is the axe gate",
+    "one reachable production intake detail",
+    "four alternate or orphan files and imports absent",
+    "production imports ListingCompareTable and MatchEvidencePanel",
+    "production detail does not import IntakeDialogShell",
+    "continuous sections without detail tabs",
+    "390px POSSIBLE_MATCH renders inline DESKTOP_REQUIRED",
+    "1024px and 1440px retain full comparison and correction",
+    "direct /intake/{id} open, reload and return restore the record and inbox context",
+    "no page-level overflow at 390, 1024 or 1440",
+    "no active Package 6/7 visual-baseline wording",
+    "API, auth, source policy, permissions, WORM and receipts remain fail-closed",
+    "git diff --check"
+  ],
+  "blockers": [
+    "program recovery persistence remains pending coordinator checkpoint",
+    "ODP-P10-CAN-001-R3A retirement has not transferred ownership"
+  ],
+  "pass_requires_commit_and_push": true
+}
