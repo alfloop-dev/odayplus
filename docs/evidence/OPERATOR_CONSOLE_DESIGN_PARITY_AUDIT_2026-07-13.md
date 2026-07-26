@@ -1,3 +1,10 @@
+> **SUPERSEDED (2026-07-25).** This audit predates the R5 (Package 7) React
+> implementation. It graded the operator console "Partial" *before* the 37-label
+> work landed. It must NOT be used to claim the current React is "divergent": the
+> CI gate `scripts/e2e/check_product_grade_ci_gates.py` verifies all 37 R5 labels
+> are implemented. Canonical design is now R7/Package 10; remaining work is a delta,
+> see `docs/design/OPERATOR_CONSOLE_R7_UPLIFT_EXECUTION_TASKS_2026-07-25.md`.
+
 # Operator Console Design Parity Audit
 
 Date: 2026-07-13
