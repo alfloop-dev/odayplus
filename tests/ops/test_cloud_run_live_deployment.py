@@ -839,3 +839,26 @@ def test_deploy_script_runs_the_live_e2e_gate_before_committing_the_release() ->
     # The report lands next to the other deployment proofs so the workflow's
     # existing `.odp_data/deployment/*.json` upload picks it up.
     assert 'LIVE_E2E_REPORT="${LIVE_E2E_REPORT:-.odp_data/deployment/' in text
+
+
+def test_live_e2e_gate_urls_are_resolved_before_the_gate_invocation() -> None:
+    """A command substitution inside argv would hand the gate a blank URL.
+
+    `set -e` does not trip on a failing `$( )` expanded into an argument list,
+    so the gate would silently run against an empty origin. Resolving into
+    variables first makes the failure fatal, and the explicit emptiness guard
+    covers a helper that exits 0 with no output.
+    """
+    text = DEPLOY_SCRIPT.read_text(encoding="utf-8")
+
+    resolve = text.index(
+        'LIVE_E2E_API_URL="$(service_snapshot_url "${API_CANDIDATE_DESCRIPTION}")"'
+    )
+    guard = text.index('if [[ -z "${LIVE_E2E_API_URL}" || -z "${LIVE_E2E_WEB_URL}" ]]; then')
+    gate = text.index("scripts/e2e/check_live_e2e_gate.py")
+
+    assert resolve < guard < gate
+    assert '--api-url "${LIVE_E2E_API_URL}"' in text
+    assert '--web-url "${LIVE_E2E_WEB_URL}"' in text
+    assert '--api-url "$(service_snapshot_url' not in text
+    assert '--web-url "$(service_snapshot_url' not in text

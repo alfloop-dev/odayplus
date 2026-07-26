@@ -85,6 +85,36 @@ DEFAULT_REQUIRED_PROVIDER_IDS = (
     "poi.commercial_api",
 )
 
+# Being *required in live mode* and being *able to produce an ingestion run* are
+# two different facts, and conflating them is how this gate can demand evidence
+# the runtime is structurally incapable of emitting.
+#
+# Only providers whose registry category is snapshot-schedulable ever reach
+# ``ExternalFetchScheduler.run_once`` -- the single writer of ingestion runs,
+# behind both ``handle_external_fetch`` and ``POST /external-data/ingestion-runs``.
+# Everything else (geocode is an address-lookup enrichment source, competitor is
+# manual attestation) raises ``provider_not_schedulable``, so a ``SUCCEEDED``
+# ingestion run for it cannot exist in *any* healthy environment.
+#
+# Liveness for those providers is therefore proven on the surface that actually
+# exercises them: ``/readiness`` -> ``details.provider.probeEvidence``, whose
+# geocode probe issues a real authenticated POST and validates the returned
+# coordinates. That probe runs for every required provider, so the snapshot
+# providers are covered by it *and* by their persisted ingestion run.
+#
+# Both maps mirror ``provider_registry()`` and
+# ``scheduled_fetch._SCHEDULABLE_CATEGORIES``; they are pinned rather than
+# imported for the reason above, and tests/e2e/test_live_e2e_gate.py binds them
+# back to the runtime so an unmirrored registry change fails the anti-drift suite.
+PROVIDER_CATEGORIES: Mapping[str, str] = {
+    "listing.partner_feed": "listing",
+    "poi.commercial_api": "poi",
+    "geocode.primary_api": "geocode",
+    "admin_boundary.official_dataset": "admin_boundary",
+    "competitor.manual_source": "competitor_manual",
+}
+SNAPSHOT_SCHEDULABLE_CATEGORIES = frozenset({"listing", "poi", "admin_boundary"})
+
 # models.shared_ml.production_contracts.PRODUCTION_MODEL_CONTRACTS, pinned here
 # for the same reason. A service whose MLflow ``production`` alias is missing
 # must fail the gate rather than silently shrink the required set.
@@ -100,8 +130,9 @@ WORKER_PROBE_JOB_TYPE = "external-fetch"
 
 DEPENDENCY_ACTIONS: Mapping[str, str] = {
     "config": (
-        "Set the gate inputs (API URL, release SHA, operator bearer token, role) "
-        "in the deploy workflow environment."
+        "Set the gate inputs (API URL, web URL, release SHA, operator bearer "
+        "token, role, ODP_PRODUCTION_PROVIDER_IDS) in the deploy workflow "
+        "environment."
     ),
     "release": (
         "Re-run the deployment so the serving revision carries the expected "
@@ -196,10 +227,44 @@ class GateConfig:
     allow_http: bool = False
 
     @property
+    def unknown_provider_ids(self) -> tuple[str, ...]:
+        """Required ids the pinned registry mirror does not know (registry drift)."""
+
+        return tuple(
+            provider_id
+            for provider_id in self.required_provider_ids
+            if provider_id not in PROVIDER_CATEGORIES
+        )
+
+    @property
+    def snapshot_provider_ids(self) -> tuple[str, ...]:
+        """Required providers that can actually produce a persisted ingestion run."""
+
+        return tuple(
+            provider_id
+            for provider_id in self.required_provider_ids
+            if PROVIDER_CATEGORIES.get(provider_id) in SNAPSHOT_SCHEDULABLE_CATEGORIES
+        )
+
+    @property
+    def enrichment_provider_ids(self) -> tuple[str, ...]:
+        """Required providers proven only by the live readiness probe."""
+
+        return tuple(
+            provider_id
+            for provider_id in self.required_provider_ids
+            if provider_id not in self.snapshot_provider_ids
+        )
+
+    @property
     def probe_provider_id(self) -> str:
+        # The worker probe enqueues an ``external-fetch`` job, so the provider it
+        # names must be snapshot-schedulable. Defaulting to
+        # ``required_provider_ids[0]`` only ever worked by alphabetical luck.
         if self.worker_probe_provider_id:
             return self.worker_probe_provider_id
-        return self.required_provider_ids[0] if self.required_provider_ids else ""
+        snapshot = self.snapshot_provider_ids
+        return snapshot[0] if snapshot else ""
 
 
 @dataclass
@@ -556,6 +621,52 @@ def validate_config(config: GateConfig) -> list[CheckResult]:
     )
     _check(
         checks,
+        not config.unknown_provider_ids,
+        "config:provider_registry_known",
+        (
+            "all required providers are classified"
+            if not config.unknown_provider_ids
+            else (
+                f"unclassified={','.join(config.unknown_provider_ids)} "
+                "(PROVIDER_CATEGORIES has drifted from provider_registry())"
+            )
+        ),
+        "config",
+    )
+    # Without at least one snapshot-schedulable provider the ingestion-run
+    # assertions would iterate an empty set and pass vacuously.
+    _check(
+        checks,
+        bool(config.snapshot_provider_ids),
+        "config:snapshot_providers",
+        (
+            ",".join(config.snapshot_provider_ids)
+            or "no required provider can produce an ingestion run"
+        ),
+        "config",
+    )
+    _check(
+        checks,
+        bool(config.probe_provider_id)
+        and config.probe_provider_id in config.snapshot_provider_ids,
+        "config:worker_probe_provider",
+        (
+            f"probeProvider={config.probe_provider_id or '<missing>'} "
+            f"schedulable={','.join(config.snapshot_provider_ids) or 'none'}"
+        ),
+        "config",
+    )
+    # An empty --web-url used to silently drop the protected-route assertion
+    # while the gate still reported ok. The web origin is part of the release.
+    _check(
+        checks,
+        bool(config.web_url),
+        "config:web_url",
+        config.web_url or f"missing {WEB_URL_ENV}",
+        "config",
+    )
+    _check(
+        checks,
         config.worker_deadline_seconds > 0 and config.poll_interval_seconds > 0,
         "config:worker_polling",
         (
@@ -676,6 +787,8 @@ def _check_runtime_readiness(
         ),
         "mlflow",
     )
+    _check_provider_probe_evidence(provider, config=config, checks=checks)
+
     capabilities = _as_dict(models.get("capabilities"))
     for service in sorted(REQUIRED_MODEL_BINDINGS):
         capability = _as_dict(capabilities.get(service))
@@ -723,6 +836,59 @@ def _check_runtime_readiness(
         "none" if not markers else f"paths={markers[:10]}",
         "data-binding",
     )
+
+
+def _check_provider_probe_evidence(
+    provider: Mapping[str, Any], *, config: GateConfig, checks: list[CheckResult]
+) -> None:
+    """Assert per-provider live connectivity from the readiness probe evidence.
+
+    ``details.provider.probeEvidence`` is ``ProviderConnectivityResult.to_dict()``:
+    one entry per required provider, each recording whether an authenticated
+    request reached the upstream and returned a schema-valid payload. For
+    ``geocode.primary_api`` that probe is a real POST whose response coordinates
+    are range-validated, which is the only surface that can prove geocode
+    liveness -- geocode can never appear in the ingestion-run history.
+
+    Freshness is intentionally not asserted against the gate runner's clock:
+    ``/readiness`` recomputes any probe older than
+    ``ODP_EXTERNAL_PROVIDER_PROBE_MAX_AGE_SECONDS``, so a healthy deployment
+    always answers with a fresh probe, and a wall-clock comparison would only
+    add a skew-driven way to fail a healthy release.
+    """
+
+    evidence = _as_dict(provider.get("probeEvidence"))
+    probes = evidence.get("probes")
+    probes = [row for row in probes if isinstance(row, dict)] if isinstance(probes, list) else []
+    by_provider = {str(row.get("provider_id") or ""): row for row in probes}
+
+    for provider_id in config.required_provider_ids:
+        probe = by_provider.get(provider_id)
+        if probe is None:
+            _check(
+                checks,
+                False,
+                f"runtime:provider_probe:{provider_id}",
+                "readiness published no connectivity probe for a required live provider",
+                "provider",
+            )
+            continue
+        _check(
+            checks,
+            probe.get("connectivity_healthy") is True
+            and probe.get("authentication_accepted") is True
+            and probe.get("response_valid") is True
+            and probe.get("schema_valid") is True
+            and str(probe.get("reason_code") or "") == "ok",
+            f"runtime:provider_probe:{provider_id}",
+            (
+                f"connectivityHealthy={probe.get('connectivity_healthy')} "
+                f"authenticated={probe.get('authentication_accepted')} "
+                f"schemaValid={probe.get('schema_valid')} "
+                f"reasonCode={probe.get('reason_code') or '<missing>'}"
+            ),
+            "provider",
+        )
 
 
 def _check_authenticated_operator(
@@ -915,7 +1081,10 @@ def _check_source_data(
     )
 
     latest = _latest_run_by_provider(items)
-    for provider_id in config.required_provider_ids:
+    # Only snapshot-schedulable providers can have an ingestion run at all; the
+    # enrichment providers in the required set are proven by
+    # ``runtime:provider_probe:*`` instead. See PROVIDER_CATEGORIES.
+    for provider_id in config.snapshot_provider_ids:
         run = latest.get(provider_id)
         if run is None:
             _check(
@@ -1194,6 +1363,9 @@ def evaluate_gate(
             "web_url_configured": bool(config.web_url),
             "operator_credential_configured": bool(config.bearer_token),
             "required_provider_ids": list(config.required_provider_ids),
+            "snapshot_provider_ids": list(config.snapshot_provider_ids),
+            "enrichment_provider_ids": list(config.enrichment_provider_ids),
+            "worker_probe_provider_id": config.probe_provider_id,
             "secret_values_redacted": True,
         },
     }
@@ -1210,7 +1382,17 @@ def evaluate_gate(
             checks=checks,
         )
         _check_authenticated_operator(http=http, config=config, checks=checks)
-        if web_http is not None:
+        # A missing/unusable web client is a blocker, not a silently skipped
+        # check: the protected-route assertion is part of the release contract.
+        if web_http is None:
+            _check(
+                checks,
+                False,
+                "auth:web_operator_requires_login",
+                f"no usable web origin for {config.web_url or '<missing>'}",
+                "config",
+            )
+        else:
             _check_web_login(http=web_http, checks=checks)
         _check_model_lineage(
             http.request("GET", "/api/v1/learninghub/models"), checks=checks
@@ -1286,9 +1468,20 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         "--required-provider",
         action="append",
         default=None,
-        help="Provider id that must have a populated live ingestion run (repeatable).",
+        help=(
+            "Provider id required in live mode (repeatable). Snapshot-schedulable "
+            "ids must also have a populated ingestion run; enrichment ids are "
+            "proven by the readiness connectivity probe."
+        ),
     )
-    parser.add_argument("--worker-probe-provider", default="")
+    parser.add_argument(
+        "--worker-probe-provider",
+        default="",
+        help=(
+            "Provider the external-fetch worker probe enqueues. Must be "
+            "snapshot-schedulable; defaults to the first schedulable required id."
+        ),
+    )
     parser.add_argument("--worker-job", default="")
     parser.add_argument("--gcp-region", default=os.environ.get("GCP_REGION", ""))
     parser.add_argument("--gcp-project", default=os.environ.get("GCP_PROJECT", ""))

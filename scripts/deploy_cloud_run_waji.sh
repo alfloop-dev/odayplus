@@ -508,9 +508,19 @@ promote_service_traffic "${WEB_SERVICE}" "${WEB_REVISION}"
 # before DEPLOYMENT_COMMITTED, a failure falls through the EXIT trap and rolls
 # traffic and the scheduler triggers back to the previous release.
 echo "Running fail-closed live E2E acceptance gate against the promoted release..."
+# Resolve the served origins into variables first. Inside the argv of the gate
+# invocation a failing command substitution would expand to an empty string
+# without tripping `set -e`, handing the gate a blank URL.
+LIVE_E2E_API_URL="$(service_snapshot_url "${API_CANDIDATE_DESCRIPTION}")"
+LIVE_E2E_WEB_URL="$(service_snapshot_url "${WEB_CANDIDATE_DESCRIPTION}")"
+if [[ -z "${LIVE_E2E_API_URL}" || -z "${LIVE_E2E_WEB_URL}" ]]; then
+  echo "Live E2E gate cannot run: served origin lookup returned empty" \
+    "(api='${LIVE_E2E_API_URL}' web='${LIVE_E2E_WEB_URL}')." >&2
+  exit 1
+fi
 python3 scripts/e2e/check_live_e2e_gate.py \
-  --api-url "$(service_snapshot_url "${API_CANDIDATE_DESCRIPTION}")" \
-  --web-url "$(service_snapshot_url "${WEB_CANDIDATE_DESCRIPTION}")" \
+  --api-url "${LIVE_E2E_API_URL}" \
+  --web-url "${LIVE_E2E_WEB_URL}" \
   --expected-sha "${ODAY_RELEASE_SHA}" \
   --expected-deployment "${ODP_LIVE_E2E_DEPLOYMENT_MODE:-production}" \
   --worker-job "${WORKER_CANDIDATE_JOB}" \
@@ -522,8 +532,8 @@ python3 scripts/e2e/check_live_e2e_gate.py \
 DEPLOYMENT_COMMITTED=true
 
 echo "=== Cloud Run deployment passed all live-data gates ==="
-echo "API Endpoint: $(service_snapshot_url "${API_CANDIDATE_DESCRIPTION}")"
-echo "Web Endpoint: $(service_snapshot_url "${WEB_CANDIDATE_DESCRIPTION}")"
+echo "API Endpoint: ${LIVE_E2E_API_URL}"
+echo "Web Endpoint: ${LIVE_E2E_WEB_URL}"
 echo "Migration Job: ${MIGRATION_CANDIDATE_JOB}"
 echo "Worker Job: ${WORKER_CANDIDATE_JOB} (${WORKER_SCHEDULE_NAME})"
 echo "Scheduler Job: ${SCHEDULER_CANDIDATE_JOB} (${SCHEDULER_SCHEDULE_NAME})"

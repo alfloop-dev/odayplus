@@ -96,6 +96,9 @@ class FakeClock:
         self.value += seconds
 
 
+_UNSET = object()
+
+
 def response(status: int, payload: dict[str, Any] | None = None, **kwargs: Any) -> Any:
     return gate.HttpResponse(status=status, payload=payload or {}, **kwargs)
 
@@ -103,6 +106,65 @@ def response(status: int, payload: dict[str, Any] | None = None, **kwargs: Any) 
 # ---------------------------------------------------------------------------
 # Passing live deployment fixtures
 # ---------------------------------------------------------------------------
+
+
+def schedulable_required_provider_ids() -> tuple[str, ...]:
+    """Required providers a real ``ExternalFetchScheduler`` would accept.
+
+    Derived from the *runtime* registry, not from the gate's own constants, so a
+    fixture can never fabricate an ingestion run the runtime cannot produce.
+    """
+
+    from modules.external_data.connectors.provider_registry import provider_registry
+    from modules.external_data.workers.scheduled_fetch import _SCHEDULABLE_CATEGORIES
+
+    schedulable = {
+        provider.provider_id
+        for provider in provider_registry()
+        if provider.category in _SCHEDULABLE_CATEGORIES
+    }
+    return tuple(
+        provider_id
+        for provider_id in gate.DEFAULT_REQUIRED_PROVIDER_IDS
+        if provider_id in schedulable
+    )
+
+
+def provider_probe(provider_id: str, **overrides: Any) -> dict[str, Any]:
+    probe = {
+        "provider_id": provider_id,
+        "configuration_valid": True,
+        "connectivity_healthy": True,
+        "authentication_accepted": True,
+        "response_valid": True,
+        "schema_valid": True,
+        "checked_at": "2026-07-26T14:59:30+00:00",
+        "expires_at": "2026-07-26T15:00:30+00:00",
+        "latency_ms": 42,
+        "http_status": 200,
+        "reason_code": "ok",
+    }
+    probe.update(overrides)
+    return probe
+
+
+def provider_probe_evidence(**overrides: Any) -> dict[str, Any]:
+    evidence = {
+        "status": "healthy",
+        "mode": "live",
+        "configuration_valid": True,
+        "connectivity_healthy": True,
+        "correlation_id": "corr-provider-probe-20260726",
+        "checked_at": "2026-07-26T14:59:30+00:00",
+        "expires_at": "2026-07-26T15:00:30+00:00",
+        "required_provider_ids": list(gate.DEFAULT_REQUIRED_PROVIDER_IDS),
+        "probes": [
+            provider_probe(provider_id)
+            for provider_id in gate.DEFAULT_REQUIRED_PROVIDER_IDS
+        ],
+    }
+    evidence.update(overrides)
+    return evidence
 
 
 def readiness_payload() -> dict[str, Any]:
@@ -126,6 +188,7 @@ def readiness_payload() -> dict[str, Any]:
                 "connectivityHealthy": True,
                 "healthy": True,
                 "live": True,
+                "probeEvidence": provider_probe_evidence(),
             },
             "models": {
                 "mode": "mlflow-production",
@@ -226,7 +289,10 @@ def ingestion_run(provider_id: str, *, total: int = 4, accepted: int = 3) -> dic
 
 
 def ingestion_payload() -> dict[str, Any]:
-    runs = [ingestion_run(provider_id) for provider_id in gate.DEFAULT_REQUIRED_PROVIDER_IDS]
+    # Only the providers a real scheduler can run. Fabricating a SUCCEEDED run
+    # for an enrichment provider (geocode) would make the fixture assert
+    # something the runtime is structurally incapable of producing.
+    runs = [ingestion_run(provider_id) for provider_id in schedulable_required_provider_ids()]
     return {"items": runs, "count": len(runs)}
 
 
@@ -334,6 +400,9 @@ def config(**overrides: Any) -> Any:
         "expected_sha": EXPECTED_SHA,
         "bearer_token": "operator-token-value",
         "operator_role": "ops_admin",
+        # The web origin is part of the release contract: the gate now blocks
+        # rather than silently skipping the protected-route assertion.
+        "web_url": WEB_URL,
         "worker_deadline_seconds": 60.0,
         "poll_interval_seconds": 5.0,
     }
@@ -341,11 +410,22 @@ def config(**overrides: Any) -> Any:
     return gate.GateConfig(**values)
 
 
+def passing_web_http() -> Any:
+    return FakeHttp(
+        {
+            "anon GET /operator": response(
+                302, location=f"{WEB_URL}/login?returnTo=%2Foperator"
+            )
+        }
+    )
+
+
 def run_gate(
     routes: dict[str, Any] | None = None,
     *,
     cfg: Any = None,
     worker_driver: Any = None,
+    web_http: Any = _UNSET,
 ) -> tuple[list[Any], dict[str, Any]]:
     clock = FakeClock()
     return gate.evaluate_gate(
@@ -354,6 +434,7 @@ def run_gate(
         worker_driver=worker_driver or FakeWorkerDriver(),
         correlation_id=CORRELATION_ID,
         now=NOW,
+        web_http=passing_web_http() if web_http is _UNSET else web_http,
         monotonic=clock.monotonic,
         sleep=clock.sleep,
     )
@@ -598,17 +679,7 @@ def test_operator_envelope_declaring_fixture_mode_under_meta_blocks() -> None:
 
 
 def run_gate_with_web(web_response: Any) -> dict[str, Any]:
-    clock = FakeClock()
-    _, report = gate.evaluate_gate(
-        config(web_url=WEB_URL),
-        http=FakeHttp(live_routes()),
-        worker_driver=FakeWorkerDriver(),
-        correlation_id=CORRELATION_ID,
-        now=NOW,
-        web_http=FakeHttp({"anon GET /operator": web_response}),
-        monotonic=clock.monotonic,
-        sleep=clock.sleep,
-    )
+    _, report = run_gate(web_http=FakeHttp({"anon GET /operator": web_response}))
     return report
 
 
@@ -703,17 +774,155 @@ def test_empty_ingestion_history_blocks() -> None:
 
 
 def test_missing_required_provider_run_blocks() -> None:
+    dropped = schedulable_required_provider_ids()[0]
     payload = ingestion_payload()
-    payload["items"] = [
-        item for item in payload["items"] if item["provider_id"] != "geocode.primary_api"
-    ]
+    payload["items"] = [item for item in payload["items"] if item["provider_id"] != dropped]
     routes = live_routes(
         **{"GET /api/v1/external-data/ingestion-runs?limit=100": response(200, payload)}
     )
 
     _, report = run_gate(routes)
 
-    assert "data:geocode.primary_api:run_exists" in blocker_names(report)
+    assert f"data:{dropped}:run_exists" in blocker_names(report)
+    assert "external-data" in report["blocking_dependencies"]
+
+
+def test_enrichment_provider_needs_no_ingestion_run() -> None:
+    """The regression that made this gate roll back every healthy deploy.
+
+    ``geocode.primary_api`` is required in live mode but is not
+    snapshot-schedulable, so no ``SUCCEEDED`` ingestion run for it can exist in
+    any environment. Demanding one made the gate unpassable.
+    """
+    payload = ingestion_payload()
+
+    assert all(item["provider_id"] != "geocode.primary_api" for item in payload["items"])
+
+    _, report = run_gate(
+        live_routes(
+            **{"GET /api/v1/external-data/ingestion-runs?limit=100": response(200, payload)}
+        )
+    )
+
+    assert report["ok"] is True, report["blockers"]
+    assert report["inputs"]["enrichment_provider_ids"] == ["geocode.primary_api"]
+
+
+def test_unhealthy_geocode_probe_blocks_on_provider() -> None:
+    """Geocode liveness is proven by the surface that actually calls it."""
+    readiness = readiness_payload()
+    readiness["details"]["provider"]["probeEvidence"]["probes"] = [
+        provider_probe(provider_id)
+        if provider_id != "geocode.primary_api"
+        else provider_probe(
+            provider_id,
+            connectivity_healthy=False,
+            schema_valid=False,
+            reason_code="schema_invalid",
+        )
+        for provider_id in gate.DEFAULT_REQUIRED_PROVIDER_IDS
+    ]
+
+    _, report = run_gate(live_routes(**{"anon GET /readiness": response(200, readiness)}))
+
+    blocker = next(
+        b
+        for b in report["blockers"]
+        if b["check"] == "runtime:provider_probe:geocode.primary_api"
+    )
+    assert blocker["dependency"] == "provider"
+    assert "schema_invalid" in blocker["detail"]
+
+
+def test_readiness_without_probe_evidence_for_a_required_provider_blocks() -> None:
+    readiness = readiness_payload()
+    readiness["details"]["provider"]["probeEvidence"]["probes"] = [
+        probe
+        for probe in readiness["details"]["provider"]["probeEvidence"]["probes"]
+        if probe["provider_id"] != "geocode.primary_api"
+    ]
+
+    _, report = run_gate(live_routes(**{"anon GET /readiness": response(200, readiness)}))
+
+    assert "runtime:provider_probe:geocode.primary_api" in blocker_names(report)
+    assert "provider" in report["blocking_dependencies"]
+
+
+def test_provider_aggregate_health_alone_cannot_carry_a_broken_provider() -> None:
+    """The aggregate booleans stay green; only the per-provider probe fails."""
+    readiness = readiness_payload()
+    readiness["details"]["provider"]["probeEvidence"] = {}
+
+    _, report = run_gate(live_routes(**{"anon GET /readiness": response(200, readiness)}))
+
+    assert "runtime:provider" not in blocker_names(report)
+    assert {
+        f"runtime:provider_probe:{provider_id}"
+        for provider_id in gate.DEFAULT_REQUIRED_PROVIDER_IDS
+    } <= blocker_names(report)
+
+
+def test_worker_probe_provider_must_be_snapshot_schedulable() -> None:
+    _, report = run_gate(cfg=config(worker_probe_provider_id="geocode.primary_api"))
+
+    blocker = next(
+        b for b in report["blockers"] if b["check"] == "config:worker_probe_provider"
+    )
+    assert blocker["dependency"] == "config"
+    assert "geocode.primary_api" in blocker["detail"]
+
+
+def test_worker_probe_defaults_to_a_schedulable_provider() -> None:
+    _, report = run_gate()
+
+    probe_provider = report["inputs"]["worker_probe_provider_id"]
+    assert probe_provider in schedulable_required_provider_ids()
+    assert report["inputs"]["snapshot_provider_ids"] == list(
+        schedulable_required_provider_ids()
+    )
+
+
+def test_required_set_without_any_schedulable_provider_blocks() -> None:
+    _, report = run_gate(
+        cfg=config(required_provider_ids=("geocode.primary_api",)),
+        routes=live_routes(),
+    )
+
+    assert "config:snapshot_providers" in blocker_names(report)
+    assert report["ok"] is False
+
+
+def test_unclassified_required_provider_blocks_as_registry_drift() -> None:
+    _, report = run_gate(
+        cfg=config(
+            required_provider_ids=(
+                "admin_boundary.official_dataset",
+                "brand_new.provider",
+            )
+        )
+    )
+
+    blocker = next(
+        b for b in report["blockers"] if b["check"] == "config:provider_registry_known"
+    )
+    assert "brand_new.provider" in blocker["detail"]
+
+
+def test_missing_web_url_blocks_instead_of_skipping_the_route_assertion() -> None:
+    _, report = run_gate(cfg=config(web_url=""), web_http=None)
+
+    names = blocker_names(report)
+    assert "config:web_url" in names
+    assert report["ok"] is False
+
+
+def test_unusable_web_client_blocks_the_protected_route_check() -> None:
+    _, report = run_gate(web_http=None)
+
+    blocker = next(
+        b for b in report["blockers"] if b["check"] == "auth:web_operator_requires_login"
+    )
+    assert WEB_URL in blocker["detail"]
 
 
 def test_zero_row_ingestion_run_blocks() -> None:
@@ -1017,6 +1226,151 @@ def test_every_api_path_the_gate_calls_is_routed_by_the_deployed_api() -> None:
     assert 'prefix="/learninghub"' in learninghub
     assert '@router.get("/ingestion-runs"' in external
     assert 'prefix="/external-data"' in external
+
+
+def test_pinned_provider_categories_match_the_runtime_registry() -> None:
+    """The gate's registry mirror must not drift from provider_registry()."""
+    from modules.external_data.connectors.provider_registry import provider_registry
+    from modules.external_data.workers.scheduled_fetch import _SCHEDULABLE_CATEGORIES
+
+    assert gate.PROVIDER_CATEGORIES == {
+        provider.provider_id: provider.category.value for provider in provider_registry()
+    }
+    assert gate.SNAPSHOT_SCHEDULABLE_CATEGORIES == {
+        category.value for category in _SCHEDULABLE_CATEGORIES
+    }
+
+
+def test_required_provider_ids_match_the_runtime_live_required_set() -> None:
+    from modules.external_data.connectors.provider_registry import (
+        REQUIRED_PRODUCTION_PROVIDER_IDS,
+    )
+
+    assert set(gate.DEFAULT_REQUIRED_PROVIDER_IDS) == set(REQUIRED_PRODUCTION_PROVIDER_IDS)
+
+
+def test_ingestion_run_requirement_is_bound_to_scheduler_schedulability() -> None:
+    """The set the gate demands runs for == the set a scheduler would accept.
+
+    This is the binding the previous revision lacked: the gate required a
+    persisted SUCCEEDED ingestion run for every required provider, including
+    ``geocode.primary_api``, which ``ExternalFetchScheduler`` refuses with
+    ``provider_not_schedulable``. The requirement is now derived from the same
+    category rule the scheduler enforces.
+    """
+    from modules.external_data.connectors.provider_registry import provider_registry
+    from modules.external_data.workers.scheduled_fetch import _SCHEDULABLE_CATEGORIES
+
+    schedulable = {
+        provider.provider_id
+        for provider in provider_registry()
+        if provider.category in _SCHEDULABLE_CATEGORIES
+    }
+    cfg = config()
+
+    assert set(cfg.snapshot_provider_ids) == schedulable & set(
+        gate.DEFAULT_REQUIRED_PROVIDER_IDS
+    )
+    assert set(cfg.enrichment_provider_ids).isdisjoint(schedulable)
+    assert cfg.probe_provider_id in schedulable
+
+
+def test_scheduler_really_refuses_every_enrichment_provider_the_gate_exempts() -> None:
+    """Behavioural proof, not a restatement of the category constants."""
+    from modules.external_data.workers.scheduled_fetch import (
+        ExternalFetchProviderConfigurationError,
+        ExternalFetchScheduler,
+    )
+
+    scheduler = ExternalFetchScheduler(env={})
+    for provider_id in config().enrichment_provider_ids:
+        with pytest.raises(ExternalFetchProviderConfigurationError) as excinfo:
+            scheduler._assert_provider_schedulable_and_selected(provider_id)
+        assert excinfo.value.code == "provider_not_schedulable"
+
+    for provider_id in config().snapshot_provider_ids:
+        scheduler._assert_provider_schedulable_and_selected(provider_id)
+
+
+def _live_readiness_details_from_the_real_app(*, healthy: bool) -> dict[str, Any]:
+    """Boot the deployed API and read `/readiness` details.provider for real.
+
+    Nothing here is fabricated by this test file: the probe evidence is
+    serialized by `ProviderProbeEvidence.to_dict` and published by the real
+    readiness handler, so a key rename in either would fail the gate check
+    below instead of quietly passing against a fixture.
+    """
+    from datetime import UTC, datetime, timedelta
+    from types import SimpleNamespace
+
+    from fastapi.testclient import TestClient
+
+    from apps.api.oday_api.main import create_app
+    from modules.external_data.connectors.provider_connectivity import (
+        ProviderConnectivityResult,
+        ProviderProbeEvidence,
+    )
+    from modules.external_data.connectors.provider_registry import ExternalProviderMode
+
+    checked_at = datetime.now(UTC)
+    probes = tuple(
+        ProviderProbeEvidence(
+            provider_id=provider_id,
+            configuration_valid=True,
+            connectivity_healthy=healthy,
+            authentication_accepted=healthy,
+            response_valid=healthy,
+            schema_valid=healthy,
+            checked_at=checked_at,
+            expires_at=checked_at + timedelta(seconds=60),
+            latency_ms=7,
+            http_status=200 if healthy else 401,
+            reason_code="ok" if healthy else "unauthorized",
+        )
+        for provider_id in gate.DEFAULT_REQUIRED_PROVIDER_IDS
+    )
+    connectivity = ProviderConnectivityResult(
+        mode=ExternalProviderMode.LIVE,
+        correlation_id="corr-live-e2e-probe",
+        configuration_valid=True,
+        connectivity_healthy=healthy,
+        checked_at=checked_at,
+        expires_at=checked_at + timedelta(seconds=60),
+        required_provider_ids=gate.DEFAULT_REQUIRED_PROVIDER_IDS,
+        probes=probes,
+    )
+    app = create_app(
+        external_provider_validation=SimpleNamespace(
+            ok=True, errors=(), mode=SimpleNamespace(value="live")
+        ),
+        external_provider_connectivity_probe=lambda **_kwargs: connectivity,
+    )
+    body = TestClient(app).get("/readiness").json()
+    return body["details"]["provider"]
+
+
+def test_gate_reads_probe_evidence_the_real_readiness_endpoint_emits() -> None:
+    provider = _live_readiness_details_from_the_real_app(healthy=True)
+    checks: list[Any] = []
+
+    gate._check_provider_probe_evidence(provider, config=config(), checks=checks)
+
+    assert checks, "readiness published no probe evidence the gate could read"
+    assert {check.name for check in checks} == {
+        f"runtime:provider_probe:{provider_id}"
+        for provider_id in gate.DEFAULT_REQUIRED_PROVIDER_IDS
+    }
+    assert all(check.ok for check in checks), [c for c in checks if not c.ok]
+
+
+def test_gate_rejects_an_unhealthy_probe_the_real_readiness_endpoint_emits() -> None:
+    provider = _live_readiness_details_from_the_real_app(healthy=False)
+    checks: list[Any] = []
+
+    gate._check_provider_probe_evidence(provider, config=config(), checks=checks)
+
+    failed = {check.name for check in checks if not check.ok}
+    assert "runtime:provider_probe:geocode.primary_api" in failed
 
 
 def test_worker_probe_job_type_is_registered_by_the_deployed_worker() -> None:
