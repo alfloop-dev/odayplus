@@ -117,7 +117,11 @@ class SiteScoreReportService:
                     )
                 ],
                 model_version=inference.binding.model_id,
-                output_transform=inference.model_metadata.get("output_transform"),
+                output_transform=(
+                    getattr(inference, "model_metadata", {}).get("output_transform")
+                    if isinstance(getattr(inference, "model_metadata", None), dict)
+                    else None
+                ),
                 prediction_origin_time=prediction_origin_time,
                 scored_at=scored_at,
             )

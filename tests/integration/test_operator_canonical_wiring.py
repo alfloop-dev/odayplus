@@ -12,6 +12,7 @@ from fastapi import FastAPI, Request
 from fastapi.testclient import TestClient
 
 from apps.api.app.routes.operator import create_operator_router
+from models.shared_ml.output_contracts import SITESCORE_OUTPUT_TRANSFORM
 from modules.avm import (
     AVMProductionExecutor,
     AVMService,
@@ -108,6 +109,7 @@ class RecordingSiteScoreRuntime:
             upper=tuple(value * 1.1 for value in points),
             engine="lightgbm.LGBMRegressor",
             artifact_sha256="sha256:" + "a" * 64,
+            model_metadata={"output_transform": dict(SITESCORE_OUTPUT_TRANSFORM)},
             to_audit_metadata=lambda: audit_metadata,
         )
 
@@ -380,7 +382,9 @@ def test_scoring_invokes_canonical_runtime_persists_and_isolates_tenant(
         assert [row["id"] for row in snapshot.json()["candidates"]] == [candidate_id]
         assert scored.status_code == 200, scored.text
         assert runtime.calls[0]["service"] == "sitescore"
-        assert runtime.calls[0]["rows"][0]["candidate_site_id"] == candidate_id
+        assert runtime.calls[0]["rows"][0]["tenant_id"] == "tenant-a"
+        assert runtime.calls[0]["rows"][0]["h3_index"] == "892000000000001"
+        assert runtime.calls[0]["rows"][0]["view_version"] == "candidate-site-view-v2"
         assert (
             scored.json()["scorecard"]["modelVersion"]
             == "sitescore:mlflow-production-test"
@@ -483,6 +487,15 @@ def test_growth_and_governance_aggregate_canonical_priceops_and_decisions(
         [
             {
                 "candidate_site_id": candidate_id,
+                "tenant_id": "tenant-a",
+                "target_format_code": "ODAY_G2",
+                "h3_index": "892000000000001",
+                "latitude": 25.033,
+                "longitude": 121.565,
+                "geocode_confidence": 0.94,
+                "prior_90d_cell_net_revenue": 180_000.0,
+                "prior_90d_cell_transaction_count": 30,
+                "prior_90d_cell_store_count": 1,
                 "monthly_rent": 120_000,
                 "area_ping": 35,
                 "frontage_m": 5.5,

@@ -300,12 +300,18 @@ class NetworkScoringService:
         sitescore_repository: Any | None = None,
         model_runtime: Any | None = None,
         require_canonical: bool = False,
+        tenant_id: str = "",
     ) -> None:
         self._seed_fixtures = seed_fixtures
         self._listing_repository = listing_repository
         self._sitescore_repository = sitescore_repository
         self._model_runtime = model_runtime
         self._require_canonical = require_canonical
+        self._tenant_id = (
+            tenant_id
+            or getattr(listing_repository, "tenant_id", "")
+            or getattr(sitescore_repository, "tenant_id", "")
+        )
         if initial_state is not None:
             self._candidates = _copy(initial_state.get("candidates", []))
             self._scores = _copy(initial_state.get("scores", {}))
@@ -590,9 +596,18 @@ class NetworkScoringService:
             },
             "canonicalFeature": SiteScoreFeatureInput(
                 candidate_site_id=candidate.candidate_site_id,
+                tenant_id=self._tenant_id or getattr(draft, "tenant_id", "") or "tenant-a",
                 target_format_code=candidate.target_format_code or "ODAY_G2",
                 feature_snapshot_time=feature_snapshot_time,
+                view_version="candidate-site-view-v2",
                 heat_zone_id=draft.heat_zone_id,
+                h3_index=address.h3_res_9 or draft.heat_zone_id or "892000000000001",
+                latitude=address.latitude,
+                longitude=address.longitude,
+                geocode_confidence=address.geocode_confidence,
+                prior_90d_cell_net_revenue=getattr(draft, "prior_90d_cell_net_revenue", 0.0),
+                prior_90d_cell_transaction_count=getattr(draft, "prior_90d_cell_transaction_count", 0),
+                prior_90d_cell_store_count=getattr(draft, "prior_90d_cell_store_count", 0),
                 monthly_rent=listing.rent_amount,
                 area_ping=listing.area_ping,
                 frontage_m=listing.frontage_m,
@@ -618,7 +633,7 @@ class NetworkScoringService:
                 model_runtime=self._model_runtime,
                 require_production_model=True,
             ).score_candidates_with_execution([candidate["canonicalFeature"]])
-        except ProductionModelRuntimeError as exc:
+        except (ProductionModelRuntimeError, ValueError) as exc:
             raise NetworkScoringRuntimeUnavailable(
                 str(exc),
                 code=getattr(exc, "code", "SITESCORE_RUNTIME_UNAVAILABLE"),

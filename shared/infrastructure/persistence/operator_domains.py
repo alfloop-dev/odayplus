@@ -27,7 +27,12 @@ class TenantScopedDocumentStore:
 
     def __init__(self, store: SqliteDocumentStore, tenant_id: str) -> None:
         self._store = store
+        self._tenant_id = tenant_id.strip()
         self._partition = _tenant_partition(tenant_id)
+
+    @property
+    def tenant_id(self) -> str:
+        return self._tenant_id
 
     @property
     def engine(self) -> Any:
