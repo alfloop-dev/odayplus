@@ -62,6 +62,7 @@ jobs:
       ODP_AUTH_ISSUER: ${{ vars.ODP_AUTH_ISSUER }}
       ODP_AUTH_AUDIENCES: ${{ vars.ODP_AUTH_AUDIENCES }}
       ODP_AUTH_JWKS_URI: ${{ vars.ODP_AUTH_JWKS_URI }}
+      ODP_AUTH_PRINCIPAL_MAP_SECRET: ${{ vars.ODP_AUTH_PRINCIPAL_MAP_SECRET }}
       ODP_WEB_OIDC_ISSUER: ${{ vars.ODP_WEB_OIDC_ISSUER }}
       ODP_WEB_OIDC_CLIENT_ID: ${{ vars.ODP_WEB_OIDC_CLIENT_ID }}
       ODP_OPERATOR_SMOKE_ROLE: ${{ vars.ODP_OPERATOR_SMOKE_ROLE }}
@@ -102,18 +103,12 @@ jobs:
       - name: Generate SBOM
         run: python3 scripts/security/generate_sbom.py
 
-      - name: Validate authentication and live runtime preflight
-        env:
-          ODP_OPERATOR_SMOKE_BEARER_TOKEN: ${{ secrets.ODP_OPERATOR_SMOKE_BEARER_TOKEN }}
+      - name: Validate deployment authentication configuration
         run: |
           if [ "${HAS_WIF}" != "true" ] && [ "${HAS_GCP_SA_KEY}" != "true" ]; then
             echo "Error: configure WIF variables or the GCP_SA_KEY secret." >&2
             exit 1
           fi
-          python3 scripts/deployment/validate_cloud_run_live_deployment.py preflight \
-            --environment dev \
-            --release-sha "${ODAY_RELEASE_SHA}" \
-            --output .odp_data/deployment/cloud-run-preflight.json
 
       - name: Authenticate to Google Cloud (WIF)
         if: ${{ env.HAS_WIF == 'true' }}
@@ -131,13 +126,19 @@ jobs:
       - name: Set up Cloud SDK
         uses: google-github-actions/setup-gcloud@v2
 
+      - name: Validate live runtime preflight
+        run: |
+          python3 scripts/deployment/validate_cloud_run_live_deployment.py preflight \
+            --environment dev \
+            --release-sha "${ODAY_RELEASE_SHA}" \
+            --output .odp_data/deployment/cloud-run-preflight.json
+
       - name: Install Cosign
         uses: sigstore/cosign-installer@v3
 
       - name: Build, push, deploy, and verify Cloud Run
         env:
           IMAGE_TAG: dev-${{ github.sha }}
-          ODP_OPERATOR_SMOKE_BEARER_TOKEN: ${{ secrets.ODP_OPERATOR_SMOKE_BEARER_TOKEN }}
         run: ./scripts/deploy_cloud_run_waji.sh
 
       - name: Upload deployment validation reports

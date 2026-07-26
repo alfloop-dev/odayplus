@@ -407,7 +407,10 @@ export async function exchangeAuthorizationCode(
       nowSeconds + sessionTtl,
       claims.exp as number,
     ),
-    accessToken: token.access_token,
+    // The API authentication boundary verifies a JWT. OAuth access tokens
+    // may be opaque (Google is one example), while the ID token has already
+    // passed signature, issuer, audience, expiry, and nonce verification above.
+    accessToken: token.id_token,
     tokenType: "Bearer",
     subject: claims.sub as string,
   };

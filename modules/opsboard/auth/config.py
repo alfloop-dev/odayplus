@@ -13,6 +13,7 @@ falling back to the insecure header-trust stub (``principal_from_headers``).
 
 from __future__ import annotations
 
+import json
 import os
 from collections.abc import Mapping
 from dataclasses import dataclass, field
@@ -36,6 +37,10 @@ class AuthBoundaryConfig:
     jwks_cache_ttl_seconds: int = 300
     leeway_seconds: int = 60
     live_input_declared: bool = False
+    principal_mapping_declared: bool = False
+    principal_mappings: Mapping[str, Mapping[str, object]] = field(
+        default_factory=dict
+    )
 
     @property
     def is_configured(self) -> bool:
@@ -103,6 +108,7 @@ def config_from_env(
     - ``ODP_AUTH_JWKS_URI`` (production IdP JSON Web Key Set endpoint)
     - ``ODP_AUTH_JWKS_CACHE_TTL_SECONDS``
     - ``ODP_AUTH_LEEWAY_SECONDS``
+    - ``ODP_AUTH_PRINCIPAL_MAP`` (JSON object keyed by verified subject/email)
 
     Only symmetric (HS256) keys are read from the environment; asymmetric JWKS
     material is injected programmatically via :class:`AuthBoundaryConfig` so
@@ -119,6 +125,8 @@ def config_from_env(
         if not sep or not kid or not secret:
             continue
         keys[kid] = SigningKey(kid=kid, algorithm="HS256", secret=secret.encode("utf-8"))
+    principal_mapping_value = source.get("ODP_AUTH_PRINCIPAL_MAP")
+    principal_mappings = _parse_principal_mappings(principal_mapping_value)
     # Record raw live-input presence *before* parsing can discard it. A set but
     # malformed ODP_AUTH_HS256_KEYS (or an issuer/audiences typo) must keep the
     # boundary active and fail closed, never downgrade to header trust
@@ -151,6 +159,8 @@ def config_from_env(
         jwks_cache_ttl_seconds=max(30, jwks_ttl),
         leeway_seconds=max(0, leeway),
         live_input_declared=live_input_declared,
+        principal_mapping_declared=principal_mapping_value is not None,
+        principal_mappings=principal_mappings,
     )
 
 
@@ -158,3 +168,27 @@ def _split_csv(value: str | None) -> list[str]:
     if not value:
         return []
     return [part.strip() for part in value.split(",") if part.strip()]
+
+
+def _parse_principal_mappings(
+    value: str | None,
+) -> dict[str, Mapping[str, object]]:
+    """Parse deployment-owned principal mappings without widening on errors."""
+
+    if not value:
+        return {}
+    try:
+        payload = json.loads(value)
+    except (TypeError, ValueError, json.JSONDecodeError):
+        return {}
+    if not isinstance(payload, dict):
+        return {}
+    mappings: dict[str, Mapping[str, object]] = {}
+    for identifier, attributes in payload.items():
+        if (
+            isinstance(identifier, str)
+            and identifier.strip()
+            and isinstance(attributes, dict)
+        ):
+            mappings[identifier.strip()] = attributes
+    return mappings

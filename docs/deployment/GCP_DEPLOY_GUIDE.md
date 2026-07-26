@@ -14,6 +14,12 @@ The deployment pipeline is configured via GitHub Variables and Secrets, falling 
 | `GCP_REGION` | Repository / Environment | The GCP target region. | `asia-east1` |
 | `GCP_AR_REPO` | Repository / Environment | The name of the GCP Artifact Registry repository. | `oday-plus` |
 
+The environment also provides `ODP_AUTH_PRINCIPAL_MAP_SECRET`, a Secret
+Manager reference containing a JSON object keyed by a verified OIDC `sub` or
+verified email. Each entry supplies the platform roles and tenant/scope used by
+the API authorization boundary. Generic OIDC provider claims are never treated
+as platform authorization by themselves.
+
 ### 2. Authentication Configuration (Choose WIF or Service Account Key)
 
 For security, **Workload Identity Federation (WIF)** is highly recommended. The workflow supports fallback to a traditional **Service Account JSON Key** if WIF is not configured.
@@ -41,6 +47,12 @@ If the deployment runs and neither Option A (both `GCP_WORKLOAD_IDENTITY_PROVIDE
 
 1. **Pre-flight Validation**: The workflow contains a `Validate GCP Deployment Variables` step that performs sanity checks and prints clear diagnostics.
 2. **Local Script Safety**: The script `scripts/deploy_cloud_run_waji.sh` checks the same environment variables and aborts execution before building any Docker images.
+
+After both candidate revisions are deployed, the deployment script mints a
+short-lived Google-signed ID token for the authenticated deployer service
+account immediately before the Operator bootstrap smoke check. No expiring
+bearer token is stored as a long-lived GitHub secret or consumed during image
+build time.
 
 ---
 

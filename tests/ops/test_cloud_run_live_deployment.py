@@ -474,8 +474,11 @@ def test_workflows_do_not_reference_secrets_in_step_if() -> None:
         assert "ODP_COMPETITOR_MANUAL_SOURCE_STATUS: disabled" in text
         assert "ODP_COMPETITOR_MANUAL_SOURCE_ATTESTATION_SECRET" not in text
         assert "validate_cloud_run_live_deployment.py preflight" in text
-        assert "ODP_OPERATOR_SMOKE_BEARER_TOKEN" in text
+        assert "ODP_OPERATOR_SMOKE_BEARER_TOKEN" not in text
+        assert "gcloud auth print-identity-token" not in text
+        assert "secrets.ODP_OPERATOR_SMOKE_BEARER_TOKEN" not in text
         assert "ODP_AUTH_JWKS_URI" in text
+        assert "ODP_AUTH_PRINCIPAL_MAP_SECRET" in text
         assert "ODP_POI_PROVIDER_URL" in text
         assert "ODP_ADMIN_BOUNDARY_PROVIDER_URL" in text
         assert "ODP_WEB_OIDC_CLIENT_ID" in text
@@ -512,13 +515,16 @@ def test_deploy_script_preflights_before_build_and_uses_secret_references() -> N
     )
     migration_gate = text.rindex("run_migration_compatibility_gate")
     candidate_smoke = text.index("validate_cloud_run_live_deployment.py smoke")
+    smoke_token_mint = text.index("gcloud auth print-identity-token")
     api_cut = text.index('promote_service_traffic "${API_SERVICE}"')
     web_cut = text.index('promote_service_traffic "${WEB_SERVICE}"')
     committed = text.index("DEPLOYMENT_COMMITTED=true")
-    assert migration_gate < candidate_smoke < api_cut < web_cut < committed
+    assert migration_gate < smoke_token_mint < candidate_smoke < api_cut < web_cut < committed
+    assert 'if [ -z "${ODP_OPERATOR_SMOKE_BEARER_TOKEN:-}" ]' in text
     assert '--set-secrets="${API_SECRET_BINDINGS}"' in text
     assert '--set-secrets="${WEB_SECRET_BINDINGS}"' in text
     assert "ODAY_DATABASE_URL=${ODAY_DATABASE_URL_SECRET}" in text
+    assert "ODP_AUTH_PRINCIPAL_MAP=${ODP_AUTH_PRINCIPAL_MAP_SECRET}" in text
     assert "ODP_WEB_OIDC_CLIENT_SECRET=${ODP_WEB_OIDC_CLIENT_SECRET_SECRET}" in text
     assert "ODP_WEB_SESSION_SECRET=${ODP_WEB_SESSION_SECRET_SECRET}" in text
     assert "ODAY_RELEASE_SHA" in text
