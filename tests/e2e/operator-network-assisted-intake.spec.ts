@@ -166,7 +166,7 @@ test.describe("Assisted Listing Intake — Package 7 product surfaces", () => {
     page,
   }) => {
     await openRadarAsExpansionManager(page);
-    await expect(page.getByTestId("intake-queue-empty")).toBeVisible();
+    await expect(page.getByTestId("intake-inbox-empty")).toBeVisible();
 
     await page.getByTestId("intake-add-button").click();
     // Double-submit guard: the button is inert until a URL is entered.
@@ -181,11 +181,13 @@ test.describe("Assisted Listing Intake — Package 7 product surfaces", () => {
     await expect(page.getByTestId("intake-detail-match")).toHaveText("新物件");
 
     // Source evidence is present at the point of decision.
-    await expect(page.getByTestId("intake-correlation-id")).not.toHaveText("—");
-    await expect(page.getByTestId("intake-stage-stepper")).toBeVisible();
+    await expect(page.getByTestId("evidence-correlation-id")).not.toHaveText(
+      "UNAVAILABLE",
+    );
+    await expect(page.getByTestId("timeline-stepper")).toBeVisible();
 
     // The record is durable: it survives closing the dialog and reloading.
-    await page.getByRole("button", { name: "關閉" }).click();
+    await page.getByTestId("intake-return-button").click();
     await page.reload();
     await page.getByTestId("network-tab-1").click();
     await expect(page.getByTestId("intake-queue-rows")).toBeVisible();
@@ -198,14 +200,14 @@ test.describe("Assisted Listing Intake — Package 7 product surfaces", () => {
     await openRadarAsExpansionManager(page);
     await submitUrl(page, URLS.clean);
     const firstId = await page.getByTestId("intake-detail-id").textContent();
-    await page.getByRole("button", { name: "關閉" }).click();
+    await page.getByTestId("intake-return-button").click();
 
     await submitUrl(page, URLS.clean);
     const secondId = await page.getByTestId("intake-detail-id").textContent();
 
     // Same terminal record returned — the duplicate did not spawn a new intake.
     expect(secondId).toBe(firstId);
-    await page.getByRole("button", { name: "關閉" }).click();
+    await page.getByTestId("intake-return-button").click();
     await expect(page.getByTestId(`intake-row-${firstId}`)).toHaveCount(1);
   });
 
@@ -225,7 +227,7 @@ test.describe("Assisted Listing Intake — Package 7 product surfaces", () => {
     await expect(page.getByTestId("intake-no-auto-note")).toBeVisible();
     await expect(page.getByTestId("intake-change-summary")).toBeVisible();
 
-    await page.getByTestId("intake-decide-create").click();
+    await page.getByTestId("decide-action-create").click();
     // Review summary is shown BEFORE the decision commits.
     await expect(page.getByTestId("intake-decide-summary")).toBeVisible();
     await expect(page.getByTestId("intake-decide-note")).toContainText(
@@ -403,7 +405,7 @@ test.describe("Assisted Listing Intake — Package 7 product surfaces", () => {
     expect(correctKeys[0]).not.toBe("<none>");
     expect(correctKeys[0]).toContain("intake-correct-");
 
-    await page.getByTestId("intake-decide-create").click();
+    await page.getByTestId("decide-action-create").click();
     await page
       .getByTestId("intake-decide-reason")
       .fill("實地確認樓層與提供者 ID 為不同物件，判定為新物件。");
@@ -433,7 +435,7 @@ test.describe("Assisted Listing Intake — Package 7 product surfaces", () => {
     await expect(page.getByTestId("intake-detail-stage")).toHaveText(
       "待人工補錄",
     );
-    await expect(page.getByTestId("intake-policy-chip")).toHaveText(
+    await expect(page.getByTestId("intake-detail-dialog")).toContainText(
       "僅人工補錄",
     );
     // No retrieval happened: there is no capture, and the entry form is offered.
@@ -477,11 +479,13 @@ test.describe("Assisted Listing Intake — Package 7 product surfaces", () => {
     await submitUrl(page, URLS.unknown);
 
     await expect(page.getByTestId("intake-detail-stage")).toHaveText("已隔離");
-    await expect(page.getByTestId("intake-policy-chip")).toHaveText("政策未知");
+    await expect(page.getByTestId("intake-detail-dialog")).toContainText(
+      "政策未知",
+    );
     await expect(page.getByTestId("intake-policy-reason")).not.toBeEmpty();
     // Quarantine routes to governance review, not to listing creation.
-    await expect(page.getByTestId("intake-decide-steward")).toBeVisible();
-    await expect(page.getByTestId("intake-decide-create")).toHaveCount(0);
+    await expect(page.getByTestId("decide-action-steward")).toBeVisible();
+    await expect(page.getByTestId("decide-action-create")).toHaveCount(0);
   });
 
   test("retryable failure shows code, correlation and next action, and retry preserves input", async ({
@@ -510,7 +514,7 @@ test.describe("Assisted Listing Intake — Package 7 product surfaces", () => {
     await expect(page.getByTestId("intake-detail-match")).toHaveText(
       "版本更新",
     );
-    const revise = page.getByTestId("intake-decide-revise");
+    const revise = page.getByTestId("decide-action-revise");
     await expect(revise).toBeVisible();
     await expect(revise).toContainText("L-2024");
   });
@@ -542,11 +546,11 @@ test.describe("Assisted Listing Intake — Package 7 product surfaces", () => {
     await openRadarAsExpansionManager(page);
 
     await submitUrl(page, URLS.possible);
-    await page.getByRole("button", { name: "關閉" }).click();
+    await page.getByTestId("intake-return-button").click();
     await submitUrl(page, URLS.timeout);
-    await page.getByRole("button", { name: "關閉" }).click();
+    await page.getByTestId("intake-return-button").click();
     await submitUrl(page, URLS.assistedOnly);
-    await page.getByRole("button", { name: "關閉" }).click();
+    await page.getByTestId("intake-return-button").click();
 
     await expect(page.getByTestId("intake-count-needs-review")).toHaveText("1");
     await expect(page.getByTestId("intake-count-blocked")).toHaveText("1");
@@ -564,7 +568,7 @@ test.describe("Assisted Listing Intake — Package 7 product surfaces", () => {
 
     await expect(page.getByTestId("intake-no-access")).toBeVisible();
     // It must not imply "no submissions exist", and must offer no write action.
-    await expect(page.getByTestId("intake-queue-empty")).toHaveCount(0);
+    await expect(page.getByTestId("intake-inbox-empty")).toHaveCount(0);
     await expect(page.getByTestId("intake-add-button")).toHaveCount(0);
   });
 
@@ -604,7 +608,7 @@ test.describe("Assisted Listing Intake — Package 7 product surfaces", () => {
     await expect(page.getByTestId("intake-detail-stage")).toHaveText(
       "待人工補錄",
     );
-    await expect(page.getByTestId("intake-policy-chip")).toHaveText(
+    await expect(page.getByTestId("intake-detail-dialog")).toContainText(
       "需授權帳號",
     );
     await expect(page.getByTestId("intake-policy-reason")).toContainText(

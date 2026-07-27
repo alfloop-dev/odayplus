@@ -108,7 +108,7 @@ async function submitUrl(page: Page, url: string) {
 }
 
 async function decideCreate(page: Page) {
-  await page.getByTestId("intake-decide-create").click();
+  await page.getByTestId("decide-action-create").click();
   await page
     .getByTestId("intake-decide-reason")
     .fill("QA 已核對來源、地址、租金與比對證據，建立獨立物件。");
@@ -217,7 +217,9 @@ test("canonical 2: assisted-entry-only keeps URL and validates durable manual in
   await expect(page.getByTestId("intake-detail-stage")).toHaveText(
     "待人工補錄",
   );
-  await expect(page.getByTestId("intake-policy-chip")).toHaveText("僅人工補錄");
+  await expect(page.getByTestId("intake-detail-dialog")).toContainText(
+    "僅人工補錄",
+  );
   await page.getByTestId("assisted-save").click();
   await expect(page.getByTestId("intake-assisted-error")).toContainText(
     "地址、租金、坪數",
@@ -235,10 +237,12 @@ test("canonical 2: assisted-entry-only keeps URL and validates durable manual in
 
   await page.getByTestId("assisted-risk-ack").check();
   await page.getByTestId("assisted-save").click();
-  await expect(page.getByTestId("intake-fields-grid")).toBeVisible({
+  await expect(page.getByTestId("intake-parsed-lineage")).toBeVisible({
     timeout: 15_000,
   });
-  await expect(page.getByTestId("intake-timeline")).toContainText("人工補錄");
+  await expect(page.getByTestId("intake-timeline-audit-section")).toContainText(
+    "人工補錄",
+  );
 });
 
 test("canonical 3: possible match requires explicit reason and risk acknowledgement", async ({
@@ -255,7 +259,7 @@ test("canonical 3: possible match requires explicit reason and risk acknowledgem
     "不會自動合併",
   );
 
-  await page.getByTestId("intake-decide-create").click();
+  await page.getByTestId("decide-action-create").click();
   await page.getByTestId("intake-decide-submit").click();
   await expect(page.getByTestId("intake-decide-error")).toContainText(
     "必須填寫原因",
@@ -435,9 +439,11 @@ test("source policy fails closed for blocked and unknown sources", async ({
   ] as const) {
     await submitUrl(page, url);
     await expect(page.getByTestId("intake-detail-stage")).toHaveText("已隔離");
-    await expect(page.getByTestId("intake-policy-chip")).toHaveText(policy);
-    await expect(page.getByTestId("intake-decide-steward")).toBeVisible();
-    await page.getByRole("button", { name: "關閉" }).click();
+    await expect(page.getByTestId("intake-detail-dialog")).toContainText(
+      policy,
+    );
+    await expect(page.getByTestId("decide-action-steward")).toBeVisible();
+    await page.getByTestId("intake-return-button").click();
   }
 });
 
@@ -462,7 +468,7 @@ test("governance reviewer gets masked read-only intake while unrelated roles fai
 }) => {
   await openRadar(page, "expansion-manager", "qa-role-seed-manager");
   const intakeId = await submitUrl(page, URLS.possible);
-  await page.getByRole("button", { name: "關閉" }).click();
+  await page.getByTestId("intake-return-button").click();
 
   await setOperatorSession(page, "pm-audit", "qa-governance-reviewer");
   await page.reload();
@@ -482,7 +488,7 @@ test("governance reviewer gets masked read-only intake while unrelated roles fai
   await expect(
     page.getByTestId("intake-masked-contactPhone").first(),
   ).toContainText("FIELD_MASKED");
-  await page.getByRole("button", { name: "關閉" }).click();
+  await page.getByTestId("intake-return-button").click();
 
   for (const [role, systemRole] of [
     ["ops-lead", "operations_manager"],
