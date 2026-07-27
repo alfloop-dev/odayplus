@@ -12,6 +12,7 @@ import argparse
 import importlib
 import inspect
 import json
+import math
 import os
 import re
 import sys
@@ -40,6 +41,9 @@ PLACEHOLDER_VALUES = {
 }
 FORBIDDEN_DATA_MARKERS = ("fixture", "mock", "seed", "in-memory", "sqlite")
 PRODUCTION_PROVIDER_IDS_ENV = "ODP_PRODUCTION_PROVIDER_IDS"
+PROVIDER_PROBE_TIMEOUT_ENV = "ODP_EXTERNAL_PROVIDER_PROBE_TIMEOUT_SECONDS"
+MIN_PROVIDER_PROBE_TIMEOUT_SECONDS = 0.05
+MAX_PROVIDER_PROBE_TIMEOUT_SECONDS = 10.0
 # See modules.external_data.connectors.provider_registry.REQUIRED_PRODUCTION_PROVIDER_IDS
 # for the rationale: listing.partner_feed is a fully-implemented bulk channel that
 # requires a signed licensed-data partner (absent today). Listings are sourced live
@@ -76,6 +80,7 @@ REQUIRED_PUBLIC_CONFIG = (
     "ODP_FORECAST_ENGINE",
     "ODP_FORECAST_MODEL",
     PRODUCTION_PROVIDER_IDS_ENV,
+    PROVIDER_PROBE_TIMEOUT_ENV,
     "ODP_AUTH_ISSUER",
     "ODP_AUTH_AUDIENCES",
     "ODP_AUTH_JWKS_URI",
@@ -117,6 +122,33 @@ class CheckResult:
 
 def _configured(value: str) -> bool:
     return value.strip().lower() not in PLACEHOLDER_VALUES
+
+
+def _bounded_provider_probe_timeout_check(env: Mapping[str, str]) -> CheckResult:
+    raw_value = env.get(PROVIDER_PROBE_TIMEOUT_ENV, "").strip()
+    try:
+        timeout_seconds = float(raw_value)
+    except ValueError:
+        timeout_seconds = math.nan
+    ok = (
+        math.isfinite(timeout_seconds)
+        and MIN_PROVIDER_PROBE_TIMEOUT_SECONDS
+        <= timeout_seconds
+        <= MAX_PROVIDER_PROBE_TIMEOUT_SECONDS
+    )
+    return CheckResult(
+        ok=ok,
+        name=f"runtime:{PROVIDER_PROBE_TIMEOUT_ENV}",
+        detail=(
+            f"bounded={timeout_seconds:g}s"
+            if ok
+            else (
+                "must be a finite number between "
+                f"{MIN_PROVIDER_PROBE_TIMEOUT_SECONDS:g} and "
+                f"{MAX_PROVIDER_PROBE_TIMEOUT_SECONDS:g} seconds"
+            )
+        ),
+    )
 
 
 def _write_report(path: Path | None, payload: dict[str, Any]) -> None:
@@ -638,6 +670,8 @@ def preflight_checks(
                 detail=f"expected={expected} actual={actual or '<missing>'}",
             )
         )
+
+    checks.append(_bounded_provider_probe_timeout_check(env))
 
     forecast_binding = (
         env.get("ODP_FORECAST_ENGINE", "").strip().lower(),

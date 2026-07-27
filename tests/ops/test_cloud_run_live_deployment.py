@@ -49,6 +49,7 @@ def complete_env() -> dict[str, str]:
     env["ODP_OPERATOR_SMOKE_BEARER_TOKEN"] = "redacted-token-value"
     env.update(validator.REQUIRED_RUNTIME_VALUES)
     env["ODP_PRODUCTION_PROVIDER_IDS"] = ",".join(sorted(validator.REQUIRED_PRODUCT_PROVIDER_IDS))
+    env["ODP_EXTERNAL_PROVIDER_PROBE_TIMEOUT_SECONDS"] = "8"
     env["ODP_DEPLOY_ENV"] = "dev"
     env["ODAY_RELEASE_SHA"] = EXPECTED_SHA
     env["ODP_FORECAST_ENGINE"] = "statsforecast"
@@ -119,6 +120,24 @@ def test_preflight_requires_listing_config_when_listing_is_selected() -> None:
     assert by_name["secret-reference:ODP_LISTING_PROVIDER_API_KEY_SECRET"].ok is False
 
 
+@pytest.mark.parametrize("value", ["", "0", "10.01", "nan", "infinity", "not-a-number"])
+def test_preflight_rejects_missing_or_unbounded_provider_probe_timeout(value: str) -> None:
+    env = complete_env()
+    env["ODP_EXTERNAL_PROVIDER_PROBE_TIMEOUT_SECONDS"] = value
+
+    checks = validator.preflight_checks(
+        env=env,
+        expected_environment="dev",
+        expected_sha=EXPECTED_SHA,
+        root=ROOT,
+    )
+    by_name = {check.name: check for check in checks}
+
+    timeout_check = by_name["runtime:ODP_EXTERNAL_PROVIDER_PROBE_TIMEOUT_SECONDS"]
+    assert timeout_check.ok is False
+    assert "between 0.05 and 10 seconds" in timeout_check.detail
+
+
 def _run_deploy_config_gate(
     tmp_path: Path,
     *,
@@ -148,6 +167,7 @@ def _run_deploy_config_gate(
         "ODP_WORKER_CRON": "*/5 * * * *",
         "ODP_SCHEDULER_CRON": "0 * * * *",
         "ODP_SCHEDULER_TIME_ZONE": "Asia/Taipei",
+        "ODP_EXTERNAL_PROVIDER_PROBE_TIMEOUT_SECONDS": "8",
     }
     if forecast_engine is not None:
         env["ODP_FORECAST_ENGINE"] = forecast_engine
@@ -537,6 +557,10 @@ def test_workflows_do_not_reference_secrets_in_step_if() -> None:
         assert "ODP_WORKER_CRON" in text
         assert "ODP_SCHEDULER_CRON" in text
         assert "ODP_PRODUCTION_PROVIDER_IDS" in text
+        assert (
+            "ODP_EXTERNAL_PROVIDER_PROBE_TIMEOUT_SECONDS: "
+            "${{ vars.ODP_EXTERNAL_PROVIDER_PROBE_TIMEOUT_SECONDS }}" in text
+        )
         assert "ODP_COMPETITOR_MANUAL_SOURCE_STATUS: disabled" in text
         assert "ODP_COMPETITOR_MANUAL_SOURCE_ATTESTATION_SECRET" not in text
         assert "validate_cloud_run_live_deployment.py preflight" in text
@@ -607,6 +631,8 @@ def test_deploy_script_preflights_before_build_and_uses_secret_references() -> N
     )
     assert "restore_scheduler_trigger" in text
     assert "ODP_PRODUCTION_PROVIDER_IDS" in text
+    assert ': "${ODP_EXTERNAL_PROVIDER_PROBE_TIMEOUT_SECONDS:?' in text
+    assert '"ODP_EXTERNAL_PROVIDER_PROBE_TIMEOUT_SECONDS",' in text
     assert "ODP_COMPETITOR_MANUAL_SOURCE_ATTESTATION" not in text
     assert "oday-local" not in text
     assert "postgresql://" not in text
