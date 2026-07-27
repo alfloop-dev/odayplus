@@ -389,7 +389,10 @@ class StoreOpeningBackfillEngine:
         select_sql = (
             "SELECT tenant_id, opened_on FROM stores WHERE store_id = %s"
             if is_sqlite
-            else "SELECT tenant_id, opened_on FROM core.stores WHERE store_id = %s"
+            else (
+                "SELECT tenant_id, opened_on FROM core.stores "
+                "WHERE store_id = %s FOR UPDATE"
+            )
         )
         update_sql = (
             "UPDATE stores SET opened_on = %s, updated_at = CURRENT_TIMESTAMP WHERE store_id = %s AND tenant_id = %s"

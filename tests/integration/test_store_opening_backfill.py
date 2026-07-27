@@ -12,7 +12,9 @@ from __future__ import annotations
 
 import json
 import sqlite3
+import threading
 import uuid
+from concurrent.futures import ThreadPoolExecutor
 from datetime import date
 from pathlib import Path
 
@@ -665,3 +667,107 @@ def test_postgresql_store_opening_backfill_and_lineage(intake_blank_db):
             (store_id,),
         )
         assert cur.fetchone()[0] == 1
+
+        # 6. Two real concurrent transactions cannot persist conflicting
+        # canonical dates or split the canonical and authority lineage.
+        concurrent_store_id = uuid.uuid4()
+        concurrent_snapshots = (uuid.uuid4(), uuid.uuid4())
+        concurrent_dates = ("2026-05-01", "2026-05-02")
+        cur.execute(
+            "INSERT INTO core.stores "
+            "(store_id, tenant_id, brand_id, store_name, opened_on) "
+            "VALUES (%s, %s, %s, 'Concurrent PG Store', NULL)",
+            (concurrent_store_id, tenant_id, brand_id),
+        )
+        for index, concurrent_snapshot_id in enumerate(concurrent_snapshots):
+            cur.execute(
+                """
+                INSERT INTO intake.source_snapshots (
+                    source_snapshot_id, tenant_id, intake_id, source_id,
+                    raw_object_uri, content_sha256, media_type, byte_length,
+                    captured_at, observed_at, capture_method, retention_class,
+                    encryption_key_ref
+                ) VALUES (%s, %s, %s, %s, %s, %s, 'application/json', 1,
+                          now(), now(), 'APPROVED_FEED', 'BUSINESS_5Y',
+                          'kms://test')
+                """,
+                (
+                    concurrent_snapshot_id,
+                    tenant_id,
+                    intake_id,
+                    source_id,
+                    f"gs://authority/concurrent-{index}",
+                    str(index + 1) * 64,
+                ),
+            )
+
+        start = threading.Barrier(2)
+
+        def run_concurrent_writer(writer_index):
+            record = {
+                "source_id": source_id,
+                "snapshot_id": str(concurrent_snapshots[writer_index]),
+                "tenant_id": str(tenant_id),
+                "store_id": str(concurrent_store_id),
+                "opened_on": concurrent_dates[writer_index],
+            }
+            with intake_blank_db.connect(autocommit=False) as writer_conn:
+                writer_engine = StoreOpeningBackfillEngine(
+                    db_conn=writer_conn,
+                    schema="data_plane",
+                )
+                start.wait(timeout=10)
+                try:
+                    writer_engine.run_backfill(
+                        snapshot_id=concurrent_snapshots[writer_index],
+                        tenant_id=tenant_id,
+                        records=[record],
+                    )
+                except UnauthoritativeStoreOpeningError:
+                    return ("rejected", writer_index)
+                return ("persisted", writer_index)
+
+        with ThreadPoolExecutor(max_workers=2) as executor:
+            outcomes = list(executor.map(run_concurrent_writer, (0, 1)))
+
+        assert sorted(outcome for outcome, _ in outcomes) == [
+            "persisted",
+            "rejected",
+        ]
+        winner_index = next(
+            writer_index
+            for outcome, writer_index in outcomes
+            if outcome == "persisted"
+        )
+        winner_snapshot = concurrent_snapshots[winner_index]
+        winner_date = date.fromisoformat(concurrent_dates[winner_index])
+
+        cur.execute(
+            "SELECT opened_on FROM core.stores WHERE store_id = %s",
+            (concurrent_store_id,),
+        )
+        assert cur.fetchone()[0] == winner_date
+        cur.execute(
+            """
+            SELECT source_snapshot_id, content_sha256
+            FROM data_plane.canonical_lineage
+            WHERE canonical_table = 'core.stores' AND canonical_id = %s
+            """,
+            (concurrent_store_id,),
+        )
+        canonical_rows = cur.fetchall()
+        cur.execute(
+            """
+            SELECT source_snapshot_id, opened_on, content_sha256
+            FROM intake.store_opening_authority_lineage
+            WHERE store_id = %s
+            """,
+            (concurrent_store_id,),
+        )
+        authority_rows = cur.fetchall()
+        assert len(canonical_rows) == 1
+        assert len(authority_rows) == 1
+        assert canonical_rows[0][0] == winner_snapshot
+        assert authority_rows[0][0] == winner_snapshot
+        assert authority_rows[0][1] == winner_date
+        assert canonical_rows[0][1] == authority_rows[0][2]
