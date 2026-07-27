@@ -131,6 +131,11 @@ jobs:
       - name: Set up Python
         run: uv python install 3.12
 
+      - name: Install locked runtime dependencies
+        run: |
+          uv sync --frozen
+          echo "${GITHUB_WORKSPACE}/.venv/bin" >> "${GITHUB_PATH}"
+
       - name: Run Secret Scan
         run: python3 scripts/security/secret_scan.py
 

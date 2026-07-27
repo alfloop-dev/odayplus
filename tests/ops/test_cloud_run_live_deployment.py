@@ -506,6 +506,16 @@ def test_dev_deploy_has_non_mutating_wif_oidc_smoke_gate() -> None:
     assert all(command not in smoke for command in mutating_commands)
 
 
+def test_dev_deploy_installs_locked_dependencies_before_preflight() -> None:
+    text = WORKFLOWS[0].read_text(encoding="utf-8")
+
+    assert "uv sync --frozen" in text
+    assert 'echo "${GITHUB_WORKSPACE}/.venv/bin" >> "${GITHUB_PATH}"' in text
+    assert text.index("uv sync --frozen") < text.index(
+        "validate_cloud_run_live_deployment.py preflight"
+    )
+
+
 def test_deploy_script_preflights_before_build_and_uses_secret_references() -> None:
     text = DEPLOY_SCRIPT.read_text(encoding="utf-8")
 
