@@ -216,7 +216,9 @@ test.describe("Assisted Listing Intake — Package 7 product surfaces", () => {
     // Same terminal record returned — the duplicate did not spawn a new intake.
     expect(secondId).toBe(firstId);
     await page.getByTestId("intake-return-button").click();
-    await expect(page.getByTestId(`intake-row-${firstId}`)).toHaveCount(1);
+    await expect(page.getByTestId(`intake-inbox-row-${firstId}`)).toHaveCount(
+      1,
+    );
   });
 
   test("possible match requires a human decision and refuses an empty reason", async ({

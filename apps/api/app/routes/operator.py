@@ -1055,7 +1055,10 @@ def create_operator_router(
                     TenantScopedDocumentStore(document_store, tenant_id)
                 ),
                 initial_state=state,
-                seed_fixtures=False,
+                # Canonical fixture state may exist only behind the explicit
+                # test-reset gate (ODP_E2E_MODE): production keeps the durable
+                # listing aggregate fail-closed empty until real intake writes.
+                seed_fixtures=allow_test_reset,
             ),
             exporter=lambda service: service.export_state(),
             mutating_methods={

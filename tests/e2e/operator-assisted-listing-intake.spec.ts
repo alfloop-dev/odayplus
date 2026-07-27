@@ -169,16 +169,20 @@ async function reopenIntakeAs(
 ) {
   await setOperatorSession(page, role, subject);
   await page.reload();
-  await page.getByTestId("network-tab-1").click();
-  await expect(page.getByTestId("intake-inbox-view")).toBeVisible({
-    timeout: 15_000,
-  });
+  // Package 10: while the durable URL context (selected + dialog=detail) is
+  // active, the intake detail owns the whole workspace surface and no Network
+  // tab strip precedes it. Only when that restoration did not happen may the
+  // reviewer navigate through the Listing Radar tab and the inbox row.
   const detailDialog = page.getByTestId("intake-detail-dialog");
   const restoredFromUrl = await detailDialog
     .waitFor({ state: "visible", timeout: 5_000 })
     .then(() => true)
     .catch(() => false);
   if (!restoredFromUrl) {
+    await page.getByTestId("network-tab-1").click();
+    await expect(page.getByTestId("intake-inbox-view")).toBeVisible({
+      timeout: 15_000,
+    });
     await page.getByTestId(`intake-inbox-row-${intakeId}`).click();
   }
   await expect(detailDialog).toBeVisible({ timeout: 15_000 });

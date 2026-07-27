@@ -5,10 +5,13 @@ import {
 } from "./_operatorBackendLock";
 
 const API_BASE_URL = process.env.ODP_API_BASE_URL ?? "http://127.0.0.1:8099";
+// Manager identity: the staff role's record-owner filter would blank the
+// listings array and turn every durable API assertion below into a vacuous
+// pass against an empty payload.
 const NETWORK_HEADERS = {
   "x-subject-id": "operator-expansion-manager",
-  "x-roles": "expansion_user",
-  "x-operator-role": "expansion-staff",
+  "x-roles": "expansion_user,site_reviewer",
+  "x-operator-role": "expansion-manager",
   "x-tenant-id": "tenant-a",
 };
 
@@ -86,7 +89,10 @@ test.describe("ODP-OC-R4-005 Network Listing Radar", () => {
     const listing = body.listings.find(
       (item: { id: string }) => item.id === "L-2024",
     );
-    expect(listing).toBeUndefined();
+    expect(listing).toMatchObject({
+      status: "candidate",
+      candidateId: "CS-1001",
+    });
     await api.dispose();
   });
 
@@ -131,7 +137,17 @@ test.describe("ODP-OC-R4-005 Network Listing Radar", () => {
     const source = body.listings.find(
       (item: { id: string }) => item.id === "L-2029",
     );
-    expect(source).toBeUndefined();
+    const target = body.listings.find(
+      (item: { id: string }) => item.id === "L-2025",
+    );
+    const archived = body.listings.find(
+      (item: { id: string }) => item.id === "L-2030",
+    );
+    expect(source.sourceEvidence).toContain("EV-L-2029-RAW-591");
+    expect(source.mergedIntoId).toBe("L-2025");
+    expect(target.sourceEvidence).toContain("EV-L-2029-RAW-591");
+    expect(archived.status).toBe("archived");
+    expect(archived.archivedReason).toContain("Hard-rule archive");
 
     // The reason the operator typed and the risk summary they acknowledged both
     // reach the audit event — not a default invented by the UI.
@@ -146,6 +162,7 @@ test.describe("ODP-OC-R4-005 Network Listing Radar", () => {
     );
     expect(mergeAudit.metadata.riskAcknowledged).toBe(true);
     expect(mergeAudit.correlationId).toBeTruthy();
+    expect(source.mergeReason).toBe(OPERATOR_REASON);
     await api.dispose();
   });
 
@@ -185,10 +202,22 @@ test.describe("ODP-OC-R4-005 Network Listing Radar", () => {
     await page.getByTestId("listing-merge-close").click();
     await expect(page.getByTestId("listing-merge-dialog")).toBeHidden();
 
-    // The durable state never moved: no merge audit event was written.
+    // The durable state never moved: no merge, no audit event, no reason.
     const api = await apiContext();
     const snapshot = await api.get("/api/v1/operator/network-listings");
     const body = await snapshot.json();
+    const source = body.listings.find(
+      (item: { id: string }) => item.id === "L-2029",
+    );
+    const target = body.listings.find(
+      (item: { id: string }) => item.id === "L-2025",
+    );
+    expect(source.mergedIntoId).toBeFalsy();
+    expect(source.mergeReason).toBeFalsy();
+    // L-2029 is SEEDED as a duplicate candidate, so its status proves nothing.
+    // The merge's actual effect is moving source evidence onto the target and
+    // writing an audit event — neither may have happened.
+    expect(target.sourceEvidence).not.toContain("EV-L-2029-RAW-591");
     expect(
       body.auditEvents.filter(
         (event: { action: string }) => event.action === "listing.merge",
@@ -242,6 +271,10 @@ test.describe("ODP-OC-R4-005 Network Listing Radar", () => {
     );
     expect(mergeEvents).toHaveLength(1);
     expect(mergeEvents[0].metadata.reason).toBe(OPERATOR_REASON);
+    const source = body.listings.find(
+      (item: { id: string }) => item.id === "L-2029",
+    );
+    expect(source.mergeReason).toBe(OPERATOR_REASON);
     await api.dispose();
   });
 

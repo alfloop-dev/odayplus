@@ -692,6 +692,14 @@ class NetworkListingService:
                 "mergedAt": listing.get("mergedAt"),
                 "mergeReason": listing.get("mergeReason"),
                 "mergedSourceListingIds": listing.get("mergedSourceListingIds"),
+                # Candidate linkage and archive provenance live only on the
+                # dict layer; without them a rebuild from the repository turns
+                # a converted listing back into an unlinked row and drops the
+                # governed archive reason.
+                "candidateId": listing.get("candidateId"),
+                "convertedAt": listing.get("convertedAt"),
+                "archivedReason": listing.get("archivedReason"),
+                "archivedAt": listing.get("archivedAt"),
                 # SiteScore v2 point-in-time cell aggregates. The domain Listing
                 # has no field for them, so without this a restart (or any
                 # listing write) drops the contract and every candidate later
