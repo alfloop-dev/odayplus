@@ -407,8 +407,8 @@ def test_conflicting_observation_is_quarantined_not_overwritten(geography_db):
         (STORE_A,),
     )
     assert evidence_count == [(2,)]
-    # The run row accounts for the quarantined observation in its
-    # full-partition totals: 2 canonical + 1 unresolved quarantine.
+    # The conflict remains immutable audit evidence, but it is not effective
+    # unresolved coverage because this source already has canonical geography.
     runs = _rows(
         geography_db,
         """
@@ -417,7 +417,52 @@ def test_conflicting_observation_is_quarantined_not_overwritten(geography_db):
         FROM data_plane.ingestion_runs
         """,
     )
-    assert runs == [("SUCCEEDED", 3, 2, 1, True, True)]
+    assert runs == [("SUCCEEDED", 2, 2, 0, True, True)]
+
+
+def test_replayed_rejects_accumulate_audit_without_inflating_effective_quarantine(
+    geography_db,
+):
+    payloads = _default_payloads()
+    key_a = next(key for key in payloads if "大肚" in key)
+    key_b = next(key for key in payloads if "屏東" in key)
+    payloads[key_a] = _geocode_payload(
+        latitude=24.1394693,
+        longitude=120.5508707,
+        city="不存在市",
+        district="不存在區",
+        request_id="reject-a-first",
+    )
+    payloads[key_b] = _geocode_payload(
+        latitude=35.68,
+        longitude=139.76,
+        city="屏東縣",
+        district="屏東市",
+        request_id="reject-b-first",
+    )
+    first = _engine(geography_db, payloads).run()
+
+    replay_payloads = dict(payloads)
+    replay_payloads[key_a] = dict(payloads[key_a], request_id="reject-a-replay")
+    replay_payloads[key_b] = dict(payloads[key_b], request_id="reject-b-replay")
+    second = _engine(geography_db, replay_payloads).run()
+
+    assert first.quarantined_after == second.quarantined_after == 2
+    assert second.reconciled and second.partition_complete
+    # Four immutable observations exist (two sources x two provider replies),
+    # while the effective unresolved projection remains two sources.
+    assert _rows(
+        geography_db,
+        "SELECT count(*), count(DISTINCT source_id) "
+        "FROM data_plane.quarantined_records WHERE resolved_at IS NULL",
+    ) == [(4, 2)]
+    assert _rows(
+        geography_db,
+        """
+        SELECT processed_count, valid_loaded, quarantined_count, reconciled
+        FROM data_plane.ingestion_runs
+        """,
+    ) == [(2, 0, 2, True)]
 
 
 def test_admin_mismatch_and_out_of_market_are_quarantined(geography_db):

@@ -357,9 +357,20 @@ class PlaceGeographyBackfill:
             (run_id,),
         )[0]
         (quarantined,) = self._execute(
-            f"SELECT count(*) FROM {self._schema}.quarantined_records "  # nosec B608
-            "WHERE run_id = %s::uuid AND resolved_at IS NULL",
-            (run_id,),
+            f"""
+            SELECT count(DISTINCT quarantine.source_id)
+            FROM {self._schema}.quarantined_records AS quarantine
+            WHERE quarantine.run_id = %s::uuid
+              AND quarantine.source_kind = %s
+              AND quarantine.resolved_at IS NULL
+              AND NOT EXISTS (
+                  SELECT 1
+                  FROM {self._schema}.place_geography AS canonical
+                  WHERE canonical.run_id = quarantine.run_id
+                    AND canonical.source_id = quarantine.source_id
+              )
+            """,  # nosec B608 -- schema identifier validated in __init__.
+            (run_id, SOURCE_KIND),
         )[0]
         return int(canonical), int(quarantined)
 
@@ -368,13 +379,14 @@ class PlaceGeographyBackfill:
         report.canonical_after = canonical_after
         report.quarantined_after = quarantined_after
         canonical_delta = canonical_after - baseline[0]
-        quarantined_delta = quarantined_after - baseline[1]
-        # A same-day replay reuses the deterministic run id, so reconcile the
-        # delta this execution produced. Replayed quarantines hit
-        # ON CONFLICT DO NOTHING, hence <= for the quarantine delta.
+        # Quarantine observations are immutable audit rows and may grow on a
+        # replay when a live response has a fresh content-addressed snapshot.
+        # ``quarantined_after`` is instead the effective unresolved projection:
+        # one row per source, excluding sources already represented by
+        # canonical geography (for example GEOGRAPHY_CONFLICT observations).
         report.reconciled = (
             canonical_delta == report.inserted
-            and 0 <= quarantined_delta <= report.quarantined_total
+            and canonical_after + quarantined_after == report.processed
         )
         report.partition_complete = (
             report.processed + report.skipped_no_address >= report.eligible_stores
