@@ -193,10 +193,12 @@ class LeanSignalConsumer:
             )
             return ConsumptionOutcome.RETRYABLE_FAILURE
         if claim is ProcessingClaim.COMPLETED:
-            message.ack()
-            return ConsumptionOutcome.REPLAYED
+            return self._ack(message, ConsumptionOutcome.REPLAYED)
         if claim is ProcessingClaim.IN_PROGRESS:
             message.reject(retryable=True, reason="execution_in_doubt")
+            return ConsumptionOutcome.RETRYABLE_FAILURE
+        if claim is not ProcessingClaim.ACQUIRED:
+            message.reject(retryable=True, reason="invalid_receipt_claim_state")
             return ConsumptionOutcome.RETRYABLE_FAILURE
 
         try:
@@ -222,13 +224,25 @@ class LeanSignalConsumer:
                 signal_id=signal_id,
                 result_ref=result_ref,
             )
-            message.ack()
         except Exception as exc:
             message.reject(
                 retryable=True, reason=f"receipt_completion_failure: {type(exc).__name__}"
             )
             return ConsumptionOutcome.RETRYABLE_FAILURE
-        return ConsumptionOutcome.CONSUMED
+        return self._ack(message, ConsumptionOutcome.CONSUMED)
+
+    @staticmethod
+    def _ack(
+        message: BrokerMessage, success_outcome: ConsumptionOutcome
+    ) -> ConsumptionOutcome:
+        try:
+            message.ack()
+        except Exception as exc:
+            message.reject(
+                retryable=True, reason=f"broker_ack_failure: {type(exc).__name__}"
+            )
+            return ConsumptionOutcome.RETRYABLE_FAILURE
+        return success_outcome
 
     @staticmethod
     def _decode(body: bytes) -> dict[str, Any]:

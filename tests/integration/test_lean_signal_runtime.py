@@ -136,6 +136,42 @@ def test_receipt_completion_failure_cannot_repeat_execution_side_effect() -> Non
     assert not first.acked and not redelivery.acked
 
 
+def test_unknown_receipt_claim_state_fails_closed_before_handler() -> None:
+    class InvalidClaimStore(runtime.InMemoryReceiptStore):
+        def claim(self, **_kwargs):
+            return None
+
+    calls = 0
+
+    def handle(_envelope):
+        nonlocal calls
+        calls += 1
+        return "execution:42"
+
+    message = Message(signal())
+    instance = runtime.LeanSignalConsumer(
+        handler=handle,
+        receipts=InvalidClaimStore(),
+        now=lambda: datetime(2026, 6, 26, 4, tzinfo=UTC),
+    )
+
+    assert instance.consume(message) == runtime.ConsumptionOutcome.RETRYABLE_FAILURE
+    assert message.rejection == (True, "invalid_receipt_claim_state")
+    assert message.acked is False
+    assert calls == 0
+
+
+def test_broker_ack_failure_is_not_reported_as_receipt_completion_failure() -> None:
+    class FailingAckMessage(Message):
+        def ack(self) -> None:
+            raise OSError("broker unavailable")
+
+    message = FailingAckMessage(signal())
+
+    assert consumer().consume(message) == runtime.ConsumptionOutcome.RETRYABLE_FAILURE
+    assert message.rejection == (True, "broker_ack_failure: OSError")
+
+
 def test_time_window_and_handler_failures_have_explicit_retry_semantics() -> None:
     future = signal()
     future["effective_at"] = "2026-06-26T05:00:00Z"
