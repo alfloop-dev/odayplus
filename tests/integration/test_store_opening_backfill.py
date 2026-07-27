@@ -376,7 +376,13 @@ def test_unseeded_store_fails_closed_in_memory():
         engine.run_backfill(snapshot_id=snapshot_id, tenant_id=tenant_id, records=records)
 
 
-def test_cli_runner_and_connector_facade(tmp_path: Path):
+def test_cli_runner_and_connector_facade(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    for env_name in (
+        "ODAY_DATABASE_URL",
+        "ODP_DATABASE_URL",
+        "INTAKE_TEST_DATABASE_URL",
+    ):
+        monkeypatch.delenv(env_name, raising=False)
     snapshot_id = uuid.uuid4()
     tenant_id = uuid.uuid4()
     store_id = uuid.uuid4()
