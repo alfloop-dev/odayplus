@@ -59,7 +59,7 @@
     "data_owner": "Expansion Operations / POS Data Platform",
     "required_fields_per_store": {
       "tenant_id": "tenant UUID matching PG16 core.stores.tenant_id",
-      "store_id": "store UUID matching PG16 core.stores.id",
+      "store_id": "store UUID matching PG16 core.stores.store_id",
       "opened_on": "ISO 8601 date YYYY-MM-DD, first day of real commercial operation",
       "authority_type": "e.g. AUDITED_MERCHANT_RECORD | REGULATORY_FILING | POS_FIRST_TRADING_DAY",
       "provenance": "system of record + record locator",

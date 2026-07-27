@@ -76,7 +76,7 @@ identity", and the backfill remains fail closed.
 - **Owner of the missing data:** Expansion Operations / POS Data Platform.
 - **Required record format (per store):**
   - `tenant_id` — tenant UUID matching PG16 `core.stores.tenant_id`
-  - `store_id` — store UUID matching PG16 `core.stores.id`
+  - `store_id` — store UUID matching PG16 `core.stores.store_id`
   - `opened_on` — ISO 8601 calendar date (`YYYY-MM-DD`) of first day of real
     commercial operation
   - `authority_type` — e.g. `AUDITED_MERCHANT_RECORD`, `REGULATORY_FILING`,
