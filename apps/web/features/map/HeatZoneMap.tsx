@@ -43,7 +43,6 @@ type HeatZoneMapProps = {
 };
 
 type ZoneFeature = GeoJSON.Feature<GeoJSON.Polygon, HeatZone>;
-type PickInfo = { object?: unknown; layer?: { id?: string } | null };
 type LayerKey = "h3" | "listings" | "candidates" | "confidence" | "freshness" | "risk";
 type LayerState = Record<LayerKey, boolean>;
 
@@ -90,6 +89,7 @@ export function HeatZoneMap({
   const productionMode = resolveProductionMode(productionModeProp);
   const mapContainerRef = useRef<HTMLDivElement | null>(null);
   const mapRef = useRef<maplibregl.Map | null>(null);
+  const deckRenderVersionRef = useRef(0);
   const [viewState, setViewState] = useState({
     longitude: 121.48,
     latitude: 25.0,
@@ -183,7 +183,7 @@ export function HeatZoneMap({
       window.__odpHeatZoneMapProject = projectMapCoordinate;
       setMapReady(true);
     };
-    map.once("render", markMapReady);
+    map.once("idle", markMapReady);
     map.resize();
     fitToZones(map, initialMapData.visibleZones.length ? initialMapData.visibleZones : initialMapData.zones);
     map.triggerRepaint();
@@ -254,7 +254,7 @@ export function HeatZoneMap({
 
     return () => {
       map.off("move", syncDeckView);
-      map.off("render", markMapReady);
+      map.off("idle", markMapReady);
       setMapReady(false);
       if (window.__odpHeatZoneMapProject === projectMapCoordinate) {
         delete window.__odpHeatZoneMapProject;
@@ -311,13 +311,6 @@ export function HeatZoneMap({
     });
   };
 
-  const handlePick = (info: PickInfo) => {
-    const layerId = info.layer?.id;
-    if (!layerId || !info.object) return;
-    const href = pickHref(layerId, info.object, layers);
-    if (href) window.location.assign(href);
-  };
-
   const handleCanvasClick = (event: MouseEvent<HTMLDivElement>) => {
     const map = mapRef.current;
     if (!map) return;
@@ -327,6 +320,13 @@ export function HeatZoneMap({
     if (href) {
       event.stopPropagation();
       window.location.assign(href);
+    }
+  };
+  const handleDeckAfterRender = () => {
+    deckRenderVersionRef.current += 1;
+    if (mapContainerRef.current) {
+      mapContainerRef.current.dataset.deckLayers = encodeLayerState(layers);
+      mapContainerRef.current.dataset.deckRenderVersion = String(deckRenderVersionRef.current);
     }
   };
 
@@ -426,7 +426,7 @@ export function HeatZoneMap({
         <DeckGL
           controller={false}
           layers={deckLayers}
-          onClick={handlePick}
+          onAfterRender={handleDeckAfterRender}
           pickingRadius={8}
           style={{ cursor: "crosshair", inset: "0", pointerEvents: "auto", position: "absolute", zIndex: "1" }}
           viewState={viewState}
