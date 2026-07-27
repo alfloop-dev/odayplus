@@ -128,6 +128,10 @@ class DurableSiteScoreRepository:
     def __init__(self, store: SqliteDocumentStore) -> None:
         self._store = store
 
+    @property
+    def tenant_id(self) -> str:
+        return getattr(self._store, "tenant_id", "")
+
     def save_report(self, report: SiteScoreReport) -> SiteScoreReport:
         version = self._store.count_in_group(self._C, report.candidate_site_id) + 1
         versioned = report.with_version(
@@ -1730,6 +1734,10 @@ class DurableListingRepository:
 
     def __init__(self, store: SqliteDocumentStore) -> None:
         self._store = store
+
+    @property
+    def tenant_id(self) -> str:
+        return getattr(self._store, "tenant_id", "")
 
     def has_duplicate(self, key: ListingDedupKey) -> bool:
         return (

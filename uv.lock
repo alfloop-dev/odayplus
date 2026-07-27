@@ -2677,6 +2677,7 @@ dependencies = [
 [package.dev-dependencies]
 dev = [
     { name = "jsonpath-ng" },
+    { name = "jsonschema" },
     { name = "openapi-spec-validator" },
     { name = "pytest" },
     { name = "ruff" },
@@ -2718,6 +2719,7 @@ requires-dist = [
 [package.metadata.requires-dev]
 dev = [
     { name = "jsonpath-ng", specifier = ">=1.8.0" },
+    { name = "jsonschema", specifier = ">=4.23" },
     { name = "openapi-spec-validator", specifier = ">=0.9.0" },
     { name = "pytest", specifier = ">=8" },
     { name = "ruff", specifier = ">=0.6" },
