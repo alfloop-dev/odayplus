@@ -1,0 +1,506 @@
+{
+  "schema": "oday-plus.package10-wave-ack.v1",
+  "task_id": "ODP-P10-CAN-001-R3B",
+    "status": "add_006_remediated_and_independently_reviewed",
+    "program_status": "independent_review_approved_pending_coordinator_acceptance",
+    "prepared_at": "2026-07-26T16:05:00Z",
+    "closed_out_at": "2026-07-26T16:40:00Z",
+  "worktree": "/tmp/pantheon-worker-worktrees/oday-plus-package10-supervisor-20260726/oday-plus-package10-supervisor-20260726/odp-p10-can-001-r3b",
+  "branch": "task/ODP-P10-CAN-001-R3B",
+  "pickup_head": "689083a43b653cff39b391541f2ac7829c78f27a",
+    "changes_committed": true,
+    "changes_pushed": true,
+    "checkpoint_commit": "4bf419e14a62a7cb24a85e117a0eef2f16c09d76",
+    "checkpoint_ref": "origin/fix/package10-final-20260725",
+    "checkpoint_kind": "no_go_supervisor_handoff",
+    "coordinator_review": "seventh_visual_runtime_rejection_add_006_ready",
+    "add_006_implementation": {
+        "owner": "Claude",
+        "reviewer": "Antigravity",
+        "coordinator": "Codex",
+        "task_branch": "task/ODP-P10-CAN-001-R3B",
+        "pickup_head": "689083a43b653cff39b391541f2ac7829c78f27a",
+        "implementation_commit": "f7fc68233d22d66f12991833c4e234436c76e094",
+        "evidence_and_ack_commit": "e6ed422e17b6aa9774c5f368ebe2fe421872caac",
+        "evidence_and_ack_commit_note": "The earlier ACK recorded 72fea66, an orphaned pre-push revision of the same evidence commit that reached no branch. The reviewed and pushed evidence commit is e6ed422e17b6aa9774c5f368ebe2fe421872caac.",
+        "pushed_ref": "origin/task/ODP-P10-CAN-001-R3B",
+        "read_set": "ODP-P10-CAN-001-R3B-VISUAL-RUNTIME-REMEDIATION-ADDENDUM.md/.json, the parent R3B dispatch/task ledger, PACKAGE_10_INTAKE_DETAIL_CANONICALIZATION_EXECUTION_ADDENDUM_2026-07-26.md, ADD-001..ADD-005, the canonical Package 10 tablet/mobile detail evidence, the rejected runtime-r3b screenshots, and this ACK",
+        "write_set": "parent R3B write set plus the ADD-006 authorized apps/web/features/operator/NetworkFindAreasWorkspace.tsx and apps/web/features/operator/network/__tests__/NetworkFindAreasWorkspace.route-gate.test.tsx; tests/e2e/**, apps/api/**, auth middleware, source-policy decisions and permission rules were not edited",
+        "changed_paths": [
+            "apps/web/features/operator/NetworkFindAreasWorkspace.tsx",
+            "apps/web/features/operator/network/ListingRadarPanel.tsx",
+            "apps/web/features/operator/network/__tests__/NetworkFindAreasWorkspace.route-gate.test.tsx",
+            "apps/web/features/operator/network/intake/AssistedIntakeSection.tsx",
+            "apps/web/features/operator/network/intake/EvidencePanel.tsx",
+            "apps/web/features/operator/network/intake/ListingCompareTable.tsx",
+            "apps/web/features/operator/network/intake/__tests__/IntakeProcessingDetail.test.tsx",
+            "apps/web/features/operator/network/intake/intake.module.css",
+            "docs/evidence/design_review/assisted_listing_intake_r7_package10/runtime-r3b/detail-390.png",
+            "docs/evidence/design_review/assisted_listing_intake_r7_package10/runtime-r3b/detail-1024.png",
+            "docs/evidence/design_review/assisted_listing_intake_r7_package10/runtime-r3b/detail-1440.png",
+            "docs/evidence/design_review/assisted_listing_intake_r7_package10/runtime-r3b/direct-detail-1440.png",
+            "docs/evidence/design_review/assisted_listing_intake_r7_package10/runtime-r3b/add006-runtime-geometry.json",
+            "docs/evidence/fleet_dispatch/package10_20260726/acks/ODP-P10-CAN-001-R3B.json"
+        ],
+        "findings_and_remediation": [
+            {
+                "finding": "Operator and durable direct routes rendered the Network heading, KPI strip, expansion stepper, tab strip, compliance strip and status/toast rows before the canonical detail (detail top 1104.34/696.42/543.23/494.44).",
+                "remediation": "NetworkFindAreasWorkspace now detects the intake detail context from both entry points (/intake/<id> and selected=<id> with dialog detail/fix/decide/assignmentSla) and returns a workspace whose FIRST child is the Listing Radar panel. In that context the Network heading, KPI strip, ExpansionStepper, tab strip and the unrelated Network tab data gate are not rendered at all, ListingRadarPanel suppresses its compliance strip, and AssistedIntakeSection renders its status/toast row after the detail layer instead of before it. Source cards and the Listing Radar stay below the detail inside the same single production graph; no modal, drawer, fixed overlay, nested card or retired detail tab was introduced.",
+                "measured_result": "detail top 356.14 at 390px, 168 at 1024px, 126 at 1440px operator and 116 on the direct 1440 route; surfacesBeforeDetail is empty at every viewport; sourceCardsBelowDetail and listingRadarBelowDetail are true at every viewport."
+            },
+            {
+                "finding": "Native parsed-lineage and match-review th/td received .fieldCell { display: flex }, which removed table-cell layout and collapsed every column into the first narrow one with character-per-line wrapping.",
+                "remediation": ".fieldCell no longer sets display and now only carries cell typography, padding, border and vertical-align; the vertical label/chip/value composition moved into a new .fieldCellStack wrapper rendered inside each cell in EvidencePanel and ListingCompareTable. Native table/thead/tbody/tr/th/td markup is unchanged. Only at <=759px does parsed lineage stack (block cells plus the existing data-label ::before, with data-label added to the lineage cells); desktop and tablet cells never receive flex/grid/block.",
+                "measured_result": "computed cell display is table-cell at 1024px and 1440px; lineage table width 1118 with 262-285px columns at 1440px and 942 with 223-240px columns at 1024px; comparison table width 1118/942 with 166-476px columns; at 390px lineage cells are full-width 328px blocks with no character-per-line text, POSSIBLE_MATCH comparison is replaced by the visible inline DESKTOP_REQUIRED state, and no viewport has document horizontal overflow."
+            },
+            {
+                "finding": "validResourceVersion accepted integer 0 although the API If-Match contract in apps/api/app/routes/listings.py is ^W/\"[1-9][0-9]*\"$.",
+                "remediation": "validResourceVersion now accepts positive integers only and is exported for executable coverage. Assignment and SLA authority derivation, the typed guards, the controls, the dialogs and the direct handlers all inherit the change and continue to fail closed with RESOURCE_VERSION_UNAVAILABLE.",
+                "measured_result": "New tests prove 0, -1, -12, 1.5, 0.5, \"1\", \"0\", \"\", true, null, undefined, NaN, Infinity, {} and [3] all yield null while 1, 2, 12, 34 and MAX_SAFE_INTEGER are accepted, and a parameterised container test over zero, negative, fraction, string, null and undefined versions proves the claim/transfer/pause/resume controls and dialogs are suppressed, both guards return RESOURCE_VERSION_UNAVAILABLE, and no /api/v1/assignments/* or /api/v1/sla-instances/* claim, transfer, pause or resume endpoint is invoked."
+            },
+            {
+                "finding": "The first real six-test accessibility run lost the Listing Radar click during hydration: network-tab-1 was clicked, the page stayed on Find Areas and intake-add-button never appeared.",
+                "remediation": "The Network tab selection is no longer derived only from a URL that initial preference hydration, shell bootstrap and URL hydration can still be racing. changeActiveTab commits the requested tab to workspace state at click time alongside the router.push; the committed selection stays authoritative while the URL still reports the tab it was clicked from, and is released as soon as the URL reports any other tab so deep links and browser back/forward remain authoritative. No retry, sleep, timeout change or weakened assertion was added to the canonical E2E spec, and NetworkShell/ExpansionStepper markup was not touched.",
+                "measured_result": "A route-gate test proves the click survives a re-render that re-publishes the stale server tab, and that a later URL tab (review, then areas) takes over again. The unchanged six-test accessibility spec then passed 6/6 twice consecutively."
+            }
+        ]
+    },
+  "authority": {
+    "corrected_prerequisite_document": "docs/design/PACKAGE_10_INTAKE_DETAIL_CANONICALIZATION_EXECUTION_ADDENDUM_2026-07-26.md",
+    "corrected_prerequisite_text_verified": "Program recovery and the R3A retirement prerequisite are committed and pushed.",
+    "listing_radar_addendum": [
+      "docs/evidence/fleet_dispatch/package10_20260726/ODP-P10-CAN-001-R3B-LISTING-RADAR-ADDENDUM.md",
+      "docs/evidence/fleet_dispatch/package10_20260726/ODP-P10-CAN-001-R3B-LISTING-RADAR-ADDENDUM.json"
+    ],
+    "promotion_test_addendum": [
+      "docs/evidence/fleet_dispatch/package10_20260726/ODP-P10-CAN-001-R3B-PROMOTION-TEST-ADDENDUM.md",
+      "docs/evidence/fleet_dispatch/package10_20260726/ODP-P10-CAN-001-R3B-PROMOTION-TEST-ADDENDUM.json"
+    ],
+    "promotion_test_addendum_read_set": "both committed addendum artifacts were read in full at ff36e473768510334a3242b1d615caa681801a34",
+    "promotion_test_addendum_write_set": "parent R3B paths plus only apps/web/features/operator/network/intake/__tests__/PromotionSagaIntegration.test.tsx",
+    "direct_api_a11y_addendum": [
+      "docs/evidence/fleet_dispatch/package10_20260726/ODP-P10-CAN-001-R3B-DIRECT-API-A11Y-ADDENDUM.md",
+      "docs/evidence/fleet_dispatch/package10_20260726/ODP-P10-CAN-001-R3B-DIRECT-API-A11Y-ADDENDUM.json"
+    ],
+    "direct_api_a11y_addendum_read_set": "both committed fourth-remediation addendum artifacts, the parent R3B dispatch/task/audit documents, all referenced prior R3B addenda, and this ACK were read at pickup HEAD bc7426ffb27d8c8bd746411b9e03e229dc85ad35",
+    "direct_api_a11y_addendum_write_set": "parent R3B paths plus only playwright.config.ts and tests/e2e/operator-assisted-listing-intake-a11y.spec.ts under the narrow fourth-addendum limits",
+    "assignment_truth_addendum": [
+      "docs/evidence/fleet_dispatch/package10_20260726/ODP-P10-CAN-001-R3B-ASSIGNMENT-TRUTH-ADDENDUM.md",
+      "docs/evidence/fleet_dispatch/package10_20260726/ODP-P10-CAN-001-R3B-ASSIGNMENT-TRUTH-ADDENDUM.json"
+    ],
+    "assignment_truth_addendum_read_set": "both ADD-004 artifacts, the parent task and canonicalization addendum, all prior R3B addenda, and the current ACK were read at pickup HEAD 4fe0b63cc7b4bd9bccaa9f97ea94b1286bf2d047",
+    "assignment_truth_addendum_write_set": "no additional paths; only the parent/prior R3B write set and this ACK",
+        "resource_version_audit_addendum": [
+            "docs/evidence/fleet_dispatch/package10_20260726/ODP-P10-CAN-001-R3B-RESOURCE-VERSION-AUDIT-ADDENDUM.md",
+            "docs/evidence/fleet_dispatch/package10_20260726/ODP-P10-CAN-001-R3B-RESOURCE-VERSION-AUDIT-ADDENDUM.json"
+        ],
+        "resource_version_audit_addendum_read_set": "both ADD-005 artifacts, the parent task/canonicalization documents, all prior R3B addenda, and this ACK were read at pickup HEAD c8dd829dc9c1b6f784b6ed124df4369a25ca4b8b",
+        "resource_version_audit_addendum_write_set": "no additional paths; playwright.config.ts and the canonical E2E spec were not further edited",
+        "visual_runtime_remediation_addendum": [
+            "docs/evidence/fleet_dispatch/package10_20260726/ODP-P10-CAN-001-R3B-VISUAL-RUNTIME-REMEDIATION-ADDENDUM.md",
+            "docs/evidence/fleet_dispatch/package10_20260726/ODP-P10-CAN-001-R3B-VISUAL-RUNTIME-REMEDIATION-ADDENDUM.json"
+        ],
+        "visual_runtime_remediation_addendum_write_set": "parent R3B paths plus NetworkFindAreasWorkspace.tsx and NetworkFindAreasWorkspace.route-gate.test.tsx; no further canonical E2E edits",
+        "visual_runtime_remediation_addendum_read_set": "both ADD-006 artifacts, the parent R3B task/dispatch ledger, the canonicalization execution addendum, ADD-001 through ADD-005, the canonical Package 10 tablet/mobile detail evidence, the rejected runtime-r3b screenshots, and this ACK were read at pickup HEAD 689083a43b653cff39b391541f2ac7829c78f27a",
+    "predecessor_ack": "docs/evidence/fleet_dispatch/package10_20260726/acks/ODP-P10-CAN-001-R3A.json"
+  },
+  "result": {
+    "production_graph": "OperatorConsole -> NetworkFindAreasWorkspace -> ListingRadarPanel -> AssistedIntakeSection exclusively renders either ListingInboxIntakeView or the IntakeProcessingDetail full-page layer; inbox and detail are never rendered together",
+    "detail_composition": "normal-flow full-page layer immediately below the real Package 10 topbar with one continuous max-width 1160px document in binding-addendum order; no stale fixed offset and no Timeline, Evidence, Receipts, or Error detail tabs",
+    "durable_route": "/intake/[intakeId] enters the same production composition and bypasses only the unrelated shell bootstrap loading/error surface; auth, permissions, API bindings and fail-closed behavior remain; opening uses router.push and return uses router.replace while preserving filters, sorting, view, and selected intake query context",
+    "comparison": "ListingRadar passes authoritative listing values selected by matchResult.targetListingId into ListingCompareTable; an explicit conservative alias map normalizes known signal keys without parsing detail; contradictions retain precedence; unavailable values are never labeled matched",
+    "authoritative_listing_type": "The API-bound Listing and NetworkListingDetail contracts do not expose listingType. Production passes listingType: undefined explicitly and renders ? 不可用 [UNAVAILABLE]; no value is inferred or fabricated.",
+    "responsive": "below 760px the stylesheet has no unscoped compareGrid suppression: only possibleMatchOutcome comparison/identity decisions are hidden and replaced by inline DESKTOP_REQUIRED with durable link and preserved typed values; NEW, EXACT_DUPLICATE, REVISION, and simple confirmation comparison/decisions remain unsuppressed; tablet and desktop retain the full workflow",
+    "evidence_lineage": "source policy and evidence use only authoritative API values with explicit UNAVAILABLE states; sourceUrl is not labeled canonicalUrl; parsed, normalized, corrected, correction reason, low-confidence, missing, and masked states are preserved in grouped lineage; no parser, snapshot, or classification fallback is invented",
+    "conditional_recovery": "error/recovery renders only for authoritative error, FAILED, QUARANTINED, or failed/dead-letter job state",
+    "record_failure_recovery": "FAILED and QUARANTINED records use authoritative record.failure when no action error exists, preserving code, summary, nextAction, retryable, runtime failure correlation/time fields when supplied, record correlation fallback, and explicit UNAVAILABLE time when the API contract omits it",
+    "continuous_promotion": "promotion renders directly as intake-promotion-section -> promotion-review-panel with no production tab-promotion marker or compatibility wrapper",
+    "document_overflow": "OperatorConsole marks only durable network/radar detail contexts with operatorIntakeDetailOpen; operator-layout.css neutralizes legacy console and topbar minimum widths, caps the document at 100vw, and leaves the Package 10 top navigation horizontally operable at 390px and 1024px",
+    "security": "assignment actions derive If-Match only from an authoritative assignment receipt version or conservative explicit assignment resource-version field; SLA actions do the same from SLA authority. Claim, transfer, pause and resume controls/dialogs/handlers fail closed with RESOURCE_VERSION_UNAVAILABLE when the corresponding token is absent. No assignment/SLA action uses intake record.version.",
+    "audit_and_jobs": "the audit UI renders only the safe event envelope and never raw-renders arbitrary metadata or beforeAfter; both nested detail classes remain explicitly unavailable pending a classified/masked API contract. Legacy SLA ID/state/due remain visible independently while missing durable receipt reads SLA RECEIPT: UNAVAILABLE.",
+    "accessibility": "hydrated job badges use #334155/#ffffff for normal states and #991b1b/#ffffff for failed/dead-letter states; deterministic production-helper tests prove every covered state is at least 4.5:1"
+  },
+  "created_paths": [
+    "apps/web/features/operator/network/intake/AssistedEntryForm.tsx",
+    "apps/web/features/operator/network/intake/intakeFreshness.ts",
+    "docs/evidence/design_review/assisted_listing_intake_r7_package10/runtime-r3b/add006-runtime-geometry.json",
+    "docs/evidence/fleet_dispatch/package10_20260726/acks/ODP-P10-CAN-001-R3B.json"
+  ],
+  "modified_paths": [
+    "apps/web/features/operator/NetworkFindAreasWorkspace.tsx",
+    "apps/web/features/operator/OperatorConsole.tsx",
+    "apps/web/features/operator/network/__tests__/NetworkFindAreasWorkspace.route-gate.test.tsx",
+    "apps/web/features/operator/network/ListingRadarPanel.tsx",
+    "apps/web/features/operator/network/intake/AssignmentSlaSummary.tsx",
+    "apps/web/features/operator/network/intake/AssistedIntakeSection.tsx",
+    "apps/web/features/operator/network/intake/EvidencePanel.tsx",
+    "apps/web/features/operator/network/intake/IntakeErrorRecovery.tsx",
+    "apps/web/features/operator/network/intake/IntakeProcessingDetail.tsx",
+    "apps/web/features/operator/network/intake/IntakeStageTimeline.tsx",
+    "apps/web/features/operator/network/intake/ListingCompareTable.tsx",
+    "apps/web/features/operator/network/intake/__tests__/AssignmentSlaSummary.test.tsx",
+    "apps/web/features/operator/network/intake/__tests__/IntakeProcessingDetail.test.tsx",
+    "apps/web/features/operator/network/intake/__tests__/Package10VisualP1.test.tsx",
+    "apps/web/features/operator/network/intake/__tests__/PromotionSagaIntegration.test.tsx",
+    "apps/web/features/operator/network/intake/index.ts",
+    "apps/web/features/operator/network/intake/intake.module.css",
+    "apps/web/features/operator/network/intake/intakeClient.ts",
+    "apps/web/features/operator/network/intake/intakeTypes.ts",
+    "apps/web/src/app/operator/operator-layout.css",
+    "playwright.config.ts",
+    "tests/e2e/operator-assisted-listing-intake-a11y.spec.ts"
+  ],
+  "deleted_paths": [
+    "apps/web/features/operator/network/intake/AssistedIntakeQueuePanel.tsx",
+    "apps/web/features/operator/network/intake/IdentityDecisionPanel.tsx",
+    "apps/web/features/operator/network/intake/IntakeAssignmentSlaDialog.tsx",
+    "apps/web/features/operator/network/intake/IntakeDetailDialog.tsx",
+    "apps/web/features/operator/network/intake/__tests__/IdentityDecisionPanel.test.tsx"
+  ],
+  "gates": {
+    "focused_unit": {
+      "command": "npm run test --workspace=@oday-plus/web -- --run features/operator/network/__tests__/NetworkFindAreasWorkspace.route-gate.test.tsx features/operator/network/intake/__tests__/IntakeProcessingDetail.test.tsx",
+      "status": "pass",
+      "result": "2 files, 39 tests"
+    },
+    "full_web_unit": {
+      "command": "npm run test --workspace=@oday-plus/web",
+      "status": "pass",
+      "result": "32 files, 233 tests",
+      "note": "Exit code 0; 15 tests added by ADD-006 over the previous 218."
+    },
+    "web_typecheck": {
+      "command": "npm run typecheck --workspace=@oday-plus/web",
+      "status": "pass"
+    },
+    "root_typecheck": {
+      "command": "npm run typecheck",
+      "status": "pass",
+      "result": "exit code 0 across every TypeScript workspace"
+    },
+    "root_build": {
+      "command": "npm run build",
+      "status": "pass",
+      "result": "exit code 0; /operator, /intake/[intakeId], and /franchisee built",
+      "warnings": "pre-existing autoprefixer start/end compatibility warnings only"
+    },
+        "canonical_accessibility_playwright": {
+            "command": "PATH=\"$PWD/.venv/bin:$PATH\" UV_CACHE_DIR=/tmp/oday-p10-add006-uv npx playwright test tests/e2e/operator-assisted-listing-intake-a11y.spec.ts",
+            "status": "pass",
+            "result": "Run 1 (cold FastAPI + Next dev boot) passed 6/6 in 1.4 minutes; run 2, executed immediately afterwards on the identical product SHA and unchanged spec, passed 6/6 in 57.6 seconds. Two consecutive full-suite passes with zero failed and zero skipped tests; the hydration navigation loss did not reproduce.",
+            "spec_diff": "unchanged in ADD-006; the only historical diff remains the addendum-authorized retired Dialog screen-label selector",
+            "logs": ["run 1 exit 0, 6 passed", "run 2 exit 0, 6 passed"],
+            "prior_checkpoint": "The rejected coordinator run lost the network-tab-1 click during hydration (1 failed, 5 skipped) before a focused rerun passed."
+        },
+        "canonical_visual_runtime": {
+            "status": "pass",
+            "command": "real FastAPI (uv) plus Next dev on :3100, canonical add-dialog submit of the POSSIBLE_MATCH source URL, then Operator inbox open at 390/1024/1440 and durable /intake/IN-3001",
+            "screenshots": [
+                "docs/evidence/design_review/assisted_listing_intake_r7_package10/runtime-r3b/detail-390.png",
+                "docs/evidence/design_review/assisted_listing_intake_r7_package10/runtime-r3b/detail-1024.png",
+                "docs/evidence/design_review/assisted_listing_intake_r7_package10/runtime-r3b/detail-1440.png",
+                "docs/evidence/design_review/assisted_listing_intake_r7_package10/runtime-r3b/direct-detail-1440.png"
+            ],
+            "measurements": "docs/evidence/design_review/assisted_listing_intake_r7_package10/runtime-r3b/add006-runtime-geometry.json",
+            "geometry": {
+                "operator_390": { "topbar_height": 278, "detail_top": 356.14, "detail_width": 350, "surfaces_before_detail": [], "document_scroll_width": 390, "viewport_width": 390, "horizontal_overflow": false },
+                "operator_1024": { "topbar_height": 109, "detail_top": 168, "detail_width": 984, "surfaces_before_detail": [], "document_scroll_width": 1024, "viewport_width": 1024, "horizontal_overflow": false },
+                "operator_1440": { "topbar_height": 67, "detail_top": 126, "detail_width": 1160, "surfaces_before_detail": [], "document_scroll_width": 1440, "viewport_width": 1440, "horizontal_overflow": false },
+                "direct_1440": { "topbar_height": 57, "detail_top": 116, "detail_width": 1160, "surfaces_before_detail": [], "document_scroll_width": 1440, "viewport_width": 1440, "horizontal_overflow": false }
+            },
+            "result": "The detail is the first surface under the global topbar/status banner on both entry points; no Network heading, KPI strip, expansion stepper, tab strip, compliance strip or intake status/toast row precedes it at any viewport, while source cards and the Listing Radar remain below it. Lineage and comparison cells compute to table-cell at 1024px and 1440px with 223-285px lineage columns and 166-476px comparison columns across the full 942/1118px table width; at 390px lineage cells are 328px full-width blocks with no character-per-line text and the ambiguous POSSIBLE_MATCH comparison is replaced by the visible inline DESKTOP_REQUIRED state. No viewport has document horizontal overflow. Retired detail tabs, the StateMatrix launcher, the tab-promotion marker and a simultaneously mounted inbox are all absent at runtime."
+        },
+        "resource_version_contract": {
+            "status": "pass",
+            "result": "validResourceVersion accepts positive integers only, matching apps/api/app/routes/listings.py ^W/\"[1-9][0-9]*\"$. Executable coverage proves 0, negative, fraction, string, empty string, boolean, null, undefined, NaN, Infinity, object and array inputs all fail closed, and that zero/negative/fraction/string/null/undefined assignment and SLA versions suppress every claim, transfer, pause and resume control and dialog, return RESOURCE_VERSION_UNAVAILABLE from both guards, and invoke none of the four endpoints."
+        },
+        "navigation_stability": {
+            "status": "pass",
+            "result": "A Network tab selection is committed to workspace state at click time and released as soon as the URL reports a different tab, so a Listing Radar click cannot be dropped by initial preference hydration, shell bootstrap or URL hydration while deep links and browser back/forward stay authoritative. No retry, sleep, timeout change or weakened assertion was added to the canonical E2E spec."
+        },
+        "regression_responsive_e2e": {
+            "command": "npx playwright test tests/e2e/operator-assisted-listing-intake-mobile.spec.ts",
+            "status": "pass",
+            "result": "4/4 passed: zero page-level horizontal overflow on the 390px inbox, the 390px detail with DESKTOP_REQUIRED, the 1024px tablet detail and the 1440px desktop detail with full side-by-side comparison. This spec was not edited.",
+            "note": "Its generated screenshots under docs/evidence/completion/ODP-INTAKE-UX-QA-001 belong to another wave and were restored, not committed."
+        },
+    "static_production_import_orphan_layout_responsive": {
+      "status": "pass",
+      "result": "all four handlers consume a typed guard authority.version and zero assignment/SLA If-Match references selected.version or record.version; container requests execute claim/transfer with assignment versions and pause/resume with SLA versions while intake versions differ; guard and container tests prove absent versions produce RESOURCE_VERSION_UNAVAILABLE and invoke none of the four endpoints; raw audit metadata/beforeAfter JSON rendering remains absent; safe envelope, SLA read-model/receipt distinction and WCAG job colors remain"
+    },
+    "e2e_scope": {
+      "status": "pass",
+      "result": "only tests/e2e/operator-assisted-listing-intake-a11y.spec.ts changed, with the single addendum-authorized screen-label selector replacement; the other E2E files are unchanged"
+    },
+    "git_diff_check": {
+      "command": "git diff --check",
+      "status": "pass"
+    }
+  },
+  "other_llm_conflicts": [
+    {
+      "id": "r3b_listing_radar_scope_omission",
+      "issue": "The original writable list omitted active production-graph Package 7 wording in ListingRadarPanel.tsx.",
+      "resolution": "The committed R3B listing-radar addendum authorizes this wording cleanup; no unrelated behavior was changed."
+    },
+    {
+      "id": "origin_dev_overlap",
+      "issue": "origin/dev is six commits ahead while coordinator HEAD has 26 commits not on origin/dev; known OperatorConsole overlap remains.",
+      "resolution": "No rebase or merge was performed; R3B stayed on coordinator HEAD c8dd829d and within the parent plus prior-addendum path contract."
+    }
+  ],
+  "coordinator_review_history": [
+    {
+      "decision": "rejected",
+      "findings": [
+        "compare signal keys used exact-string matching",
+        "authoritative mapping did not state the listingType limitation",
+        "missing values were incorrectly marked matched",
+        "production-graph coverage did not prove target selection, aliases, and unavailable state"
+      ],
+      "remediation": [
+        "added an explicit conservative canonical signal-key alias table for address, area, source ID, canonical URL, floor, listing type, rent, and status",
+        "inspected the real API-bound Listing and NetworkListingDetail shapes and passed listingType as explicitly unavailable because neither exposes it",
+        "added a text plus icon/pattern unavailable marker with contradiction precedence",
+        "added production-used mapping and targetListingId resolver coverage through IntakeProcessingDetail and ListingCompareTable"
+      ],
+      "result": "rejected_then_remediated"
+    },
+    {
+      "decision": "rejected",
+      "findings": [
+        "detail mode appended IntakeProcessingDetail below the still-rendered inbox instead of replacing it with a canonical full-page layer",
+        "continuous sections did not match the binding-addendum order and timeline/audit was too early",
+        "normal records rendered a red unavailable error surface",
+        "mobile CSS hid decisions for every outcome instead of only POSSIBLE_MATCH comparison/decision controls",
+        "evidence lineage fabricated a parser ID, mislabeled sourceId as snapshot ID, and omitted corrected/missing/masked truth",
+        "sourceUrl was mislabeled canonicalUrl",
+        "an inert promotion navigation control remained",
+        "the instructional StateMatrix launcher remained in the production detail",
+        "production composition and container tests did not prove the required runtime behavior",
+        "ACK did not record the second rejection"
+      ],
+      "remediation": [
+        "made AssistedIntakeSection render inbox or a fixed, independently scrolling detail layer exclusively and preserve query context on return",
+        "reordered the production detail exactly to header, summary, assignment/SLA, stages, source evidence, conditional recovery, assisted entry, lineage, match evidence, compare, decision, promotion, receipts, and timeline/audit last",
+        "gated recovery to authoritative failure states and scoped mobile DESKTOP_REQUIRED behavior to POSSIBLE_MATCH",
+        "rewrote source evidence and parsed-field lineage to preserve only authoritative values and explicit UNAVAILABLE states without invented fallbacks",
+        "separated authoritative sourceUrl from canonicalUrl and left canonicalUrl unavailable when omitted",
+        "removed the promotion button and StateMatrix launcher from production composition",
+        "rewrote IntakeProcessingDetail tests around the production component and added a production-container exclusivity and durable-return test"
+      ],
+      "result": "remediated_pending_second_review"
+    },
+    {
+      "review_round": "third_remediation_addendum",
+      "decision": "rejected",
+      "findings": [
+        "production retained a hidden tab-promotion compatibility wrapper solely for the stale integration test",
+        "mobile comparison hiding was not explicitly scoped to POSSIBLE_MATCH, so normal and unambiguous compare availability was not proven",
+        "FAILED and QUARANTINED detail recovery ignored authoritative record.failure when no actionError prop existed"
+      ],
+      "remediation": [
+        "read and applied committed addendum ODP-P10-CAN-001-R3B-ADD-002, removed every production tab-promotion marker, and updated only the newly authorized PromotionSagaIntegration.test.tsx to assert the continuous intake-promotion-section and promotion-review-panel while preserving all behavior assertions",
+        "added explicit possibleMatchOutcome and unambiguousMatchOutcome markup; below 760px only POSSIBLE_MATCH compare content and identity decisions are hidden behind the inline DESKTOP_REQUIRED state, while normal compare and decisions remain present",
+        "mapped record.failure into IntakeErrorRecovery for FAILED and QUARANTINED when no action error exists and added assertions for code, summary, nextAction, retryability, correlation, and truthful unavailable time"
+      ],
+      "followup_coordinator_rejection": {
+        "decision": "rejected",
+        "finding": "a later unscoped mobile .compareGrid { display:none } rule still hid NEW, EXACT_DUPLICATE, and REVISION comparisons, while the test proved only DOM presence rather than the 390px CSS visibility contract",
+        "corrected_remediation": [
+          "removed the later unscoped mobile compareGrid suppression so display:none applies only beneath possibleMatchOutcome",
+          "strengthened the authorized IntakeProcessingDetail test to read the actual 759px media block, require scoped POSSIBLE_MATCH suppression, reject any unscoped compareGrid suppression, and reject unambiguousMatchOutcome suppression",
+          "proved the POSSIBLE_MATCH inline DESKTOP_REQUIRED state carries the durable intake link and the preserved corrected address value while normal compare and decision markup remains unsuppressed"
+        ]
+      },
+      "result": "followup_rejection_corrected_pending_coordinator_review"
+    },
+    {
+      "decision": "rejected",
+      "findings": [
+        "operator.module.css retained consoleNetworkParity min-width 1280px and topbar min-width 1180px, so the fixed intake layer alone did not prove page-level overflow was eliminated at 390px and 1024px"
+      ],
+      "remediation": [
+        "added a narrowly scoped OperatorConsole detail-open marker for durable network/radar detail, fix, decision, and assignment/SLA contexts",
+        "added operator-layout.css global overrides that remove legacy minimum widths only in that context, constrain html/body/console to 100vw, suppress document horizontal overflow, and keep the top navigation usable through its own horizontal overflow",
+        "added production-shell structural coverage proving detail contexts receive the marker while ordinary inbox context does not"
+      ],
+      "result": "remediated_pending_second_review"
+    },
+    {
+      "review_round": "fourth_remediation_addendum",
+      "decision": "rejected",
+      "pickup_sha": "bc7426ffb27d8c8bd746411b9e03e229dc85ad35",
+      "findings": [
+        "durable /intake/[intakeId] was still blocked by the unrelated global shell bootstrap gate",
+        "target-dependent decisions did not fail closed for missing authoritative target listing, value, or named evidence",
+        "authoritative record audit/fields and hydrated promotion/score jobs were not fully wired into the continuous detail",
+        "deep-link query context and push-on-open versus replace-on-return history semantics were incomplete",
+        "correction, assignment, SLA, and identity decision controls were not all gated by authoritative permission and subject identifiers",
+        "the detail used a stale fixed top offset and mobile/tablet document overflow needed to preserve usable top navigation",
+        "source, provider listing, capture, and audit labels could imply unavailable authority",
+        "the canonical detail contained invalid ARIA and axe contrast failures",
+        "production component/container tests did not cover the direct API, truth, permission, history, responsive, and accessibility contracts",
+        "the Playwright API command and isolated webServer environment could not execute the full canonical accessibility gate",
+        "the canonical accessibility selector still named the retired Dialog surface"
+      ],
+      "remediation": [
+        "initialized the network/radar workspace from the durable pathname and bypassed only the unrelated shell bootstrap loading/error surface for an authenticated direct intake; API, auth, permissions and fail-closed behavior remain",
+        "required the exact authoritative target ID, at least one real target value, and a named agreeing or contradicting signal before enabling target-dependent decisions; signal detail strings are never parsed",
+        "wired record audit/parsed fields, hydrated promotion decisions and score jobs into their continuous sections with explicit UNAVAILABLE states",
+        "preserved query context in the durable detail href, used router.push to open and router.replace to return",
+        "gated correction, decision, claim/transfer and SLA controls by authoritative permissions plus subject, assignment and SLA identifiers; no owner, role, assignee, due date or deadline is synthesized",
+        "moved the canonical detail into normal flow below the real topbar, removed the magic offset, retained the scoped 100vw legacy-min-width override and horizontally usable top navigation",
+        "separated source URL, canonical URL, source/provider identity, provider listing identity, captured/observed timestamps and audit IDs; omitted values render UNAVAILABLE",
+        "replaced comparison and lineage ARIA grids with native tables and corrected the timeline, assignment and unavailable-marker contrast colors",
+        "added production component/container tests for direct shell failure, real pathname, fail-closed targets, authoritative job/audit wiring, permission gates, push/replace history and native semantics",
+        "configured the API through the committed uv environment and supplied the complete isolated-E2E environment only to the web child",
+        "changed only the retired screen-label selector in the canonical E2E spec and preserved all six tests, auth, API assertions, timeouts and retries"
+      ],
+      "result": "remediated_pending_coordinator_visual_review"
+    },
+    {
+      "review_round": "fifth_remediation_addendum",
+      "decision": "rejected",
+      "pickup_sha": "4fe0b63cc7b4bd9bccaa9f97ea94b1286bf2d047",
+      "findings": [
+        "claim fabricated a new assignment, owner role and due date when the authoritative assignment was absent",
+        "claim omitted the API-required If-Match version",
+        "assignment and SLA controls failed open on missing or unknown authoritative state",
+        "audit mode omitted explicit unavailable transition, job and SLA evidence",
+        "Submitted At was omitted from the summary",
+        "legacy audit rows omitted actorRoleId and unsupported event evidence",
+        "the ACK contradicted the synthetic assignment implementation"
+      ],
+      "remediation": [
+        "removed the assignIntake fallback and every synthetic assignment payload value from handleClaim",
+        "restricted claim to authoritative assignment ID with ASSIGNED, TRANSFERRED or ESCALATED status, authorized role and session subject, and sent If-Match W/\"{record.version}\"",
+        "restricted pause to authoritative SLA ID with ON_TRACK, DUE_SOON or OVERDUE and resume to authoritative PAUSED; missing and unknown state displays stable UNAVAILABLE explanations without controls",
+        "rendered explicit UNAVAILABLE states for missing transition history, job data, SLA data/receipt, durable receipts and audit references while retaining hydrated promotion/score-job evidence",
+        "added a distinct Submitted At row that renders an authoritative value when present and UNAVAILABLE for the current legacy model",
+        "rendered authoritative actorRoleId and explicit UNAVAILABLE event version, before/after, metadata and correlation evidence without using current intake version",
+        "added production-container tests for no fallback payload, exact claim endpoint and If-Match, fail-closed assignment/SLA controls and submitted/history/job/SLA/audit-role truth"
+      ],
+      "result": "product_remediated_browser_gate_blocked_by_managed_environment"
+    },
+        {
+            "review_round": "sixth_remediation_addendum",
+      "decision": "rejected",
+      "pickup_sha": "c8dd829dc9c1b6f784b6ed124df4369a25ca4b8b",
+      "findings": [
+        "claim and transfer incorrectly used the intake version for assignment-resource concurrency",
+        "pause and resume incorrectly used the intake version for SLA-resource concurrency",
+        "legacy intake records do not guarantee assignment or SLA resource versions, requiring fail-closed controls",
+        "raw JSON audit metadata and beforeAfter rendering could disclose unclassified nested values",
+        "legacy SLA read-model evidence was conflated with durable SLA receipt availability",
+        "hydrated job badges had insufficient contrast outside the clean axe fixture"
+      ],
+      "remediation": [
+        "derived assignment tokens only from authoritative assignment receipts or explicit assignment resource-version fields and SLA tokens only from equivalent SLA authority",
+        "gated claim, transfer, pause and resume controls, dialogs and handlers on their resource-specific version and displayed stable RESOURCE_VERSION_UNAVAILABLE states",
+        "tested intake version 91, assignment versions 12/13 and SLA versions 34/35 independently; production claim used assignment version 3 while intake version was 7",
+        "removed raw nested audit rendering and retained only event ID, time, action, actor, actor role, target, correlation and message with a classified/masked-contract limitation",
+        "rendered legacy SLA state/due independently and labeled only the missing durable receipt SLA RECEIPT: UNAVAILABLE",
+        "changed hydrated job badge palettes and deterministically proved at least 4.5:1 contrast for completed, running, retrying, failed and dead-letter states"
+      ],
+      "internal_coordinator_rejection": {
+        "decision": "rejected_interrupted_result",
+        "findings": [
+          "guardAssignmentResource and guardSlaResource were referenced but not implemented, producing four TS2304 errors",
+          "claim silently returned on a missing version while other handlers mislabeled missing version as missing ID",
+          "tests proved source counts rather than executing transfer, pause and resume requests"
+        ],
+        "remediation": [
+          "implemented typed assignment and SLA guards used by every handler, with distinct ID errors and RESOURCE_VERSION_UNAVAILABLE carrying UNAVAILABLE time and null correlation",
+          "retained control/dialog suppression and made direct handler guards reject missing authority before endpoint invocation",
+          "added production-container requests for claim, transfer, pause and resume with exact assignment/SLA If-Match assertions and deliberately divergent intake versions",
+          "proved absent versions suppress all controls/dialogs, return stable guard errors and invoke no assignment or SLA endpoint"
+        ]
+            },
+            "result": "internal_rejection_remediated_pending_coordinator_review_with_playwright_environment_block"
+        },
+        {
+            "review_round": "seventh_visual_runtime_review",
+            "decision": "rejected",
+            "pickup_sha": "c8dd829dc9c1b6f784b6ed124df4369a25ca4b8b",
+            "findings": [
+                "Operator and durable direct routes still render Network heading, KPI strip, expansion stepper, tabs, compliance strip and status rows before the canonical detail",
+                "native parsed-lineage and match-review table cells receive display:flex, collapsing readable multi-column layout into one narrow column at 390px, 1024px and 1440px",
+                "the client accepts resource version zero even though the API If-Match contract accepts positive integers only",
+                "the first real six-test accessibility run exposed a lost Listing Radar click during hydration"
+            ],
+            "evidence": [
+                "runtime-r3b/detail-390.png",
+                "runtime-r3b/detail-1024.png",
+                "runtime-r3b/detail-1440.png",
+                "runtime-r3b/direct-detail-1440.png",
+                "initial a11y result 1 failed and 5 skipped",
+                "focused rerun 1 passed",
+                "subsequent full rerun 6 passed"
+            ],
+            "remediation_task": "ODP-P10-CAN-001-R3B-ADD-006",
+            "dispatch": "Claude owner, Antigravity reviewer, Codex coordinator",
+            "result": "no_go_ready_for_supervisor_dispatch"
+        },
+        {
+            "review_round": "add_006_visual_runtime_remediation",
+            "decision": "owner_implemented_pending_independent_review",
+            "owner": "Claude",
+            "pickup_sha": "689083a43b653cff39b391541f2ac7829c78f27a",
+            "findings": [
+                "Network heading, KPI strip, expansion stepper, tab strip, compliance strip and status/toast rows preceded the canonical detail on Operator and durable direct routes",
+                "native lineage and comparison th/td received display:flex and collapsed into one narrow column",
+                "validResourceVersion accepted resource version zero",
+                "the Listing Radar click could be lost during initial preference, bootstrap or URL hydration"
+            ],
+            "remediation": [
+                "made the Listing Radar panel the first workspace child in every intake detail context, suppressed the Network heading/KPI/stepper/tab strip and the unrelated tab data gate there, suppressed the compliance strip in the panel, and moved the intake status/toast row after the detail layer while keeping source cards and the radar below it",
+                "removed display from .fieldCell, moved the vertical composition into a .fieldCellStack wrapper inside each native cell, and stacked parsed lineage only at <=759px with the existing data-label pattern",
+                "restricted validResourceVersion to positive integers matching the API If-Match contract and proved every rejected input fails closed without invoking claim, transfer, pause or resume",
+                "committed the requested Network tab to workspace state at click time and released it as soon as the URL reports a different tab, without touching the canonical E2E spec, NetworkShell or ExpansionStepper"
+            ],
+            "gates": "focused route-gate and intake suites 39/39; full web unit 32 files 233 tests; web and root typecheck; root build; unchanged six-test accessibility spec 6/6 twice consecutively; recaptured 390/1024/1440 and direct-route runtime screenshots with measured geometry; unedited responsive E2E spec 4/4; git diff --check clean",
+            "result": "remediated_pending_antigravity_independent_review"
+        },
+        {
+            "review_round": "add_006_independent_review",
+            "decision": "approved",
+            "reviewer": "Antigravity",
+            "reviewed_at": "2026-07-26T16:16:21Z",
+            "reviewed_sha": "e6ed422e17b6aa9774c5f368ebe2fe421872caac",
+            "reviewed_ref": "task/ODP-P10-CAN-001-R3B",
+            "verdict": "ADD-006 visual runtime remediation independently reviewed and approved by Antigravity. Gates passed: web unit (32 files, 233 tests), web/root typecheck, root build, Playwright a11y E2E 6/6 twice consecutively, geometry and contract verified. Task ready for coordinator acceptance and closeout.",
+            "result": "independently_approved_pending_coordinator_acceptance"
+        }
+    ],
+    "remaining_risks": [
+        "Codex has not yet accepted the reviewed result. R3B is owner-closed and independently approved, but the Package 10 program gate stays with the coordinator, and CAN-002 must not start before that acceptance.",
+        "The two consecutive accessibility passes were produced in this worker environment (cold FastAPI + Next dev boot, then an immediate rerun). The coordinator should reproduce the two-run gate in the coordinator environment before acceptance.",
+        "The intake detail context intentionally hides the Network tab strip, so the return path out of the detail is the canonical intake return/deep-link control rather than a Network tab.",
+        "Pre-existing E2E specs that still assert retired R3A/R3B intake surfaces (for example operator-network-assisted-intake.spec.ts) were not touched and remain outside the ADD-006 write set.",
+        "The rejected implementation and evidence remain preserved in pushed no-go checkpoint 4bf419e14a62a7cb24a85e117a0eef2f16c09d76."
+    ],
+    "closeout": {
+        "owner": "Claude",
+        "reviewer": "Antigravity",
+        "coordinator": "Codex",
+        "dispatch_reason": "owned_finalize_dispatch",
+        "accepted_product_sha": "e6ed422e17b6aa9774c5f368ebe2fe421872caac",
+        "accepted_product_ref": "origin/task/ODP-P10-CAN-001-R3B",
+        "merge_target_branch": "fix/package10-final-20260725",
+        "product_scope_unchanged_at_closeout": "No apps/web, apps/api, tests/e2e, playwright.config.ts, CSS or evidence-screenshot file was touched during closeout. The only closeout edit is this ACK, so the coordinator-facing product SHA remains exactly the SHA Antigravity reviewed.",
+        "reverification": {
+            "note": "Re-run on the reviewed worktree at e6ed422 before the ACK closeout commit, to confirm the approved scope is still true.",
+            "gates": [
+                { "command": "git diff --check", "status": "pass", "result": "exit 0, no whitespace or conflict markers" },
+                { "command": "npm run test --workspace=@oday-plus/web", "status": "pass", "result": "32 files, 233 tests passed" },
+                { "command": "npm run typecheck --workspace=@oday-plus/web", "status": "pass", "result": "tsc --noEmit exit 0" },
+                { "command": "npm run typecheck", "status": "pass", "result": "exit 0 across every TypeScript workspace" },
+                { "command": "npm run build", "status": "pass", "result": "exit 0; /operator, /intake/[intakeId] and /franchisee built" }
+            ],
+            "not_rerun": "The Playwright canonical accessibility gate and the runtime screenshot capture were not re-executed at closeout because no product, spec or configuration file changed after the reviewed SHA. Their evidence stands from the owner run (6/6 twice consecutively) and Antigravity's independent re-run recorded in the add_006_independent_review entry."
+        },
+        "result": "owner_closeout_complete_pending_coordinator_acceptance"
+    },
+    "next": "Codex accepts or rejects R3B against this committed and pushed ACK and product SHA e6ed422e17b6aa9774c5f368ebe2fe421872caac. CAN-002 must not start until the coordinator accepts; at CAN-002 pickup the ODP-SITESCORE-OPERATOR-V2-001 accepted SHA must be reconciled because tests/integration/test_operator_canonical_wiring.py overlaps."
+}

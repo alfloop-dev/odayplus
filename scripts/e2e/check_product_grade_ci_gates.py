@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 import argparse
 import hashlib
+import json
 import os
 import re
 import sys
@@ -8,13 +9,32 @@ from pathlib import Path
 
 # Paths
 ROOT = Path(__file__).resolve().parents[2]
-ZIP_PATH = ROOT / "docs_archive/00_source_zips/operator_console/r5-20260715-package-7/Oday Plus 營運管理後台 (7).zip"
-HTML_PATH = ROOT / "docs_archive/00_source_zips/operator_console/r5-20260715-package-7/extracted/Oday Plus Operator Console.dc.html"
+ZIP_PATH = ROOT / "docs_archive/00_source_zips/operator_console/r7-20260720-package-10/Oday Plus 營運管理後台 (10).zip"
+HTML_PATH = ROOT / "docs_archive/00_source_zips/operator_console/r7-20260720-package-10/extracted/Oday Plus Operator Console.dc.html"
 RELEASE_GO_PATH = ROOT / "docs/evidence/PRODUCT_RELEASE_GO_NO_GO.md"
+REMOTE_VISUAL_APPROVAL_PATH = (
+    ROOT / "docs/evidence/operator_console_r7_remote_visual_approval.json"
+)
 
 # Expected SHA256 hashes
-EXPECTED_ZIP_SHA = "fa1a980d1d0c3fe2102e11ac009a57a1fe25bdb5539f9bd03378c2a628a9b552"
-EXPECTED_HTML_SHA = "1e1bcfa329842216422b1d3ae2a44e7014dc8005cc156e2dcc978a6e4a5c3a2d"
+EXPECTED_ZIP_SHA = "d1583a00496f928b0765c1756c9671fedf615f12c84c00494d454c983645d7f8"
+EXPECTED_HTML_SHA = "cc4e6ae97462bc99b1c2353c792cb3bec40d51a6c5efcfde165e5f47105e661d"
+EXPECTED_SCREEN_LABEL_COUNT = 40
+REQUIRED_VISUAL_VIEWPORTS = {390, 1024, 1440}
+REQUIRED_VISUAL_ROUTES = {
+    "/operator",
+    "/operator?ws=store",
+    "/operator?ws=growth",
+    "/operator?ws=network&tab=radar",
+    "/operator?ws=network&tab=listings",
+    "/operator?ws=govern",
+    "/intake/:intakeId",
+}
+CANONICAL_LABEL_IMPLEMENTATIONS = {
+    # Package 10's combined reference dialog is intentionally implemented as
+    # two focused command dialogs in the canonical runtime.
+    "Dialog 轉交／暫停": {"Dialog 轉交收件", "Dialog 暫停 SLA"},
+}
 
 def get_sha256(filepath):
     if not filepath.exists():
@@ -33,6 +53,45 @@ def extract_labels_from_html(html_path):
     pattern = re.compile(r'data-screen-label=["\']([^"\']+)["\']')
     return set(pattern.findall(content))
 
+
+def validate_remote_visual_approval(path):
+    if not path.exists():
+        return ["remote visual approval artifact is missing"]
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        return [f"remote visual approval artifact is invalid: {exc}"]
+
+    errors = []
+    if payload.get("status") != "approved":
+        errors.append("remote visual approval status must be approved")
+    if payload.get("authenticated") is not True:
+        errors.append("remote visual run must be authenticated")
+    if payload.get("canonical_html_sha256") != EXPECTED_HTML_SHA:
+        errors.append("remote visual run targets the wrong Package 10 HTML")
+    release_sha = payload.get("release_sha")
+    if not isinstance(release_sha, str) or not re.fullmatch(r"[0-9a-f]{40}", release_sha):
+        errors.append("remote visual release_sha must be a full 40-character SHA")
+    if payload.get("web_release_sha") != release_sha:
+        errors.append("remote visual web_release_sha must match release_sha")
+    if payload.get("api_release_sha") != release_sha:
+        errors.append("remote visual api_release_sha must match release_sha")
+    if payload.get("production_fixture_count") != 0:
+        errors.append("remote visual run must prove zero production fixtures")
+
+    viewports = {
+        value for value in payload.get("viewports", []) if isinstance(value, int)
+    }
+    if not REQUIRED_VISUAL_VIEWPORTS.issubset(viewports):
+        errors.append("remote visual run is missing a required viewport")
+    routes = {
+        value for value in payload.get("routes", []) if isinstance(value, str)
+    }
+    if not REQUIRED_VISUAL_ROUTES.issubset(routes):
+        errors.append("remote visual run is missing a required route")
+    return errors
+
+
 def main():
     parser = argparse.ArgumentParser(description="Product-grade CI release gate validator.")
     parser.add_argument("--require-go", action="store_true", help="Enforce go/no-go release authorization presence.")
@@ -47,9 +106,9 @@ def main():
     # 1. Verify ZIP SHA
     zip_sha = get_sha256(ZIP_PATH)
     if zip_sha == EXPECTED_ZIP_SHA:
-        report_lines.append(f"[PASS] Package 7 ZIP SHA verified: {zip_sha}")
+        report_lines.append(f"[PASS] Package 10 ZIP SHA verified: {zip_sha}")
     else:
-        report_lines.append(f"[FAIL] Package 7 ZIP SHA mismatch. Got: {zip_sha}, Expected: {EXPECTED_ZIP_SHA}")
+        report_lines.append(f"[FAIL] Package 10 ZIP SHA mismatch. Got: {zip_sha}, Expected: {EXPECTED_ZIP_SHA}")
         success = False
 
     # 2. Verify HTML SHA
@@ -64,30 +123,24 @@ def main():
     html_labels = extract_labels_from_html(HTML_PATH)
     report_lines.append(f"Found {len(html_labels)} unique data-screen-labels in interactive HTML.")
     
-    # We can also verify that all of them are implemented in the React files.
-    react_labels = {
-        "Dialog Triage",
-        "Dialog Assign",
-        "Dialog Create Action",
-        "Drawer Field Report",
-        "Dialog Outcome Review",
-        "Dialog Escalate",
-        "Dialog Camera Purpose",
-        "Dialog Reply Review",
-        "Dialog Transfer"
-    }
+    # Dynamic screen-label maps are valid, but every canonical label must exist
+    # as an exact source string. Do not pre-seed labels as implementation proof.
+    react_source = []
     features_dir = ROOT / "apps/web/features"
     if features_dir.exists():
-        pattern = re.compile(r'data-screen-label=["\']([^"\']+)["\']')
         for root, _, files in os.walk(features_dir):
             for file in files:
                 if file.endswith((".tsx", ".ts", ".js", ".jsx")):
                     try:
-                        fcontent = Path(root, file).read_text(encoding="utf-8")
-                        react_labels.update(pattern.findall(fcontent))
+                        react_source.append(Path(root, file).read_text(encoding="utf-8"))
                     except Exception:
                         pass
-        
+    source_text = "\n".join(react_source)
+    react_labels = {label for label in html_labels if label in source_text}
+    for canonical_label, implementation_labels in CANONICAL_LABEL_IMPLEMENTATIONS.items():
+        if all(label in source_text for label in implementation_labels):
+            react_labels.add(canonical_label)
+
     # Check if there are any labels in HTML that are missing in React
     missing_in_react = html_labels - react_labels
     if missing_in_react:
@@ -96,15 +149,22 @@ def main():
             report_lines.append(f"  - {label}")
         success = False
     else:
-        report_lines.append("[PASS] All 37 screen labels are implemented in React components.")
+        report_lines.append(
+            f"[PASS] All {EXPECTED_SCREEN_LABEL_COUNT} Package 10 screen labels exist in React source."
+        )
 
-    if len(html_labels) == 37:
-        report_lines.append("[PASS] Total data-screen-label count is exactly 37.")
+    if len(html_labels) == EXPECTED_SCREEN_LABEL_COUNT:
+        report_lines.append(
+            f"[PASS] Total Package 10 data-screen-label count is exactly {EXPECTED_SCREEN_LABEL_COUNT}."
+        )
     else:
-        report_lines.append(f"[FAIL] Total data-screen-label count is {len(html_labels)}, expected 37.")
+        report_lines.append(
+            f"[FAIL] Total data-screen-label count is {len(html_labels)}, "
+            f"expected {EXPECTED_SCREEN_LABEL_COUNT}."
+        )
         success = False
 
-    # 4. Check go/no-go authorization if required
+    # 4. Check go/no-go authorization and authenticated remote visual evidence.
     if args.require_go:
         if RELEASE_GO_PATH.exists():
             content = RELEASE_GO_PATH.read_text(encoding="utf-8").lower()
@@ -116,6 +176,15 @@ def main():
         else:
             report_lines.append("[FAIL] --require-go specified but PRODUCT_RELEASE_GO_NO_GO.md is missing.")
             success = False
+        visual_errors = validate_remote_visual_approval(REMOTE_VISUAL_APPROVAL_PATH)
+        if visual_errors:
+            report_lines.append("[FAIL] Package 10 authenticated remote visual approval is incomplete:")
+            report_lines.extend(f"  - {error}" for error in visual_errors)
+            success = False
+        else:
+            report_lines.append(
+                "[PASS] Package 10 authenticated Cloud Run visual approval is complete."
+            )
 
     if args.report:
         print("\n".join(report_lines))

@@ -8,6 +8,7 @@ export type OperatorDataAvailability =
 
 type RuntimeEnvironment = {
   deployEnv?: string;
+  e2eMode?: string;
   nodeEnv?: string;
   productMode?: string;
   productionMode?: string;
@@ -40,7 +41,11 @@ export function isOperatorProductionMode(
     deployEnv:
       process.env.ODP_DEPLOY_ENV ??
       process.env.ODAY_ENV ??
-      process.env.ODP_ENV,
+      process.env.ODP_ENV ??
+      process.env.NEXT_PUBLIC_ODP_DEPLOY_ENV,
+    e2eMode:
+      process.env.ODP_E2E_MODE ??
+      process.env.NEXT_PUBLIC_ODP_E2E_MODE,
     nodeEnv: process.env.NODE_ENV,
     productMode:
       process.env.ODP_PRODUCT_MODE ??
@@ -52,6 +57,7 @@ export function isOperatorProductionMode(
   return isProductionMode({
     NODE_ENV: environment.nodeEnv,
     ODP_DEPLOY_ENV: environment.deployEnv,
+    ODP_E2E_MODE: environment.e2eMode,
     ODP_PRODUCT_MODE: environment.productMode,
     ODP_REQUIRE_LIVE_DATA: environment.requireLiveData,
     NEXT_PUBLIC_PRODUCTION_MODE: environment.productionMode,

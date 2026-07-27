@@ -3,6 +3,36 @@ body {
   padding: 0 !important;
 }
 
+/*
+ * Intake detail is the sole content layer below the Package 10 top navigation.
+ * Neutralize legacy console minimum widths only while that durable detail
+ * context is open; the top navigation remains horizontally usable.
+ */
+html:has(.operatorIntakeDetailOpen),
+body:has(.operatorIntakeDetailOpen) {
+  width: 100%;
+  min-width: 0 !important;
+  max-width: 100vw;
+  overflow-x: hidden !important;
+}
+
+.operatorIntakeDetailOpen {
+  box-sizing: border-box;
+  width: 100%;
+  min-width: 0 !important;
+  max-width: 100vw !important;
+  overflow-x: hidden !important;
+}
+
+.operatorIntakeDetailOpen > header {
+  box-sizing: border-box;
+  width: 100%;
+  min-width: 0 !important;
+  max-width: 100vw !important;
+  overflow-x: auto;
+  overscroll-behavior-x: contain;
+}
+
 @media (max-width: 768px) {
   #__next,
   body,

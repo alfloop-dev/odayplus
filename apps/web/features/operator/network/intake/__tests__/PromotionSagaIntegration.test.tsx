@@ -243,7 +243,8 @@ async function openPromotionPanel() {
   const row = await screen.findByTestId(`intake-inbox-row-${INTAKE_ID}`);
   fireEvent.click(row);
   await screen.findByTestId("intake-detail-dialog");
-  // The promotion section renders once the gate snapshot hash is computed.
+  // Package 10 renders promotion continuously in the production detail.
+  await screen.findByTestId("intake-promotion-section");
   await screen.findByTestId("promotion-review-panel");
   await screen.findByTestId("promotion-request-form");
 }
@@ -302,6 +303,52 @@ describe("promotion saga — live operator route integration", () => {
     ).toHaveLength(1);
   });
 
+  it("restores a durable route from server-provided initial state", async () => {
+    const record = readyIntake();
+    const { captured, routes, fetchStub } = buildFetchStub(record);
+    routes[`GET /api/v1/operator/network-listings/intake`] = () =>
+      new Response(JSON.stringify({
+        ...inboxPage(record),
+        items: [],
+        total: 0,
+      }), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      });
+    vi.stubGlobal("fetch", fetchStub);
+
+    render(
+      <AssistedIntakeSection
+        activeRoleId="expansion-manager"
+        activeSubjectId={REVIEWER_ID}
+        initialDialog="detail"
+        initialSelectedId={INTAKE_ID}
+      />,
+    );
+
+    await waitFor(() => {
+      expect(
+        requestsTo(
+          captured,
+          "GET",
+          `/api/v1/operator/network-listings/intake/${INTAKE_ID}`,
+        ),
+      ).toHaveLength(1);
+    });
+    expect(await screen.findByTestId("intake-detail-dialog")).toHaveAttribute(
+      "data-screen-label",
+      "Intake 收件處理詳情頁",
+    );
+    expect(screen.getByTestId("intake-detail-id")).toHaveTextContent(INTAKE_ID);
+    expect(
+      requestsTo(
+        captured,
+        "GET",
+        `/api/v1/operator/network-listings/intake/${INTAKE_ID}`,
+      ),
+    ).toHaveLength(1);
+  });
+
   it("hydrates an existing promotion and authoritative job receipt after reload", async () => {
     const record = readyIntake();
     const { captured, routes, fetchStub } = buildFetchStub(record);
@@ -317,6 +364,8 @@ describe("promotion saga — live operator route integration", () => {
     );
     const row = await screen.findByTestId(`intake-inbox-row-${INTAKE_ID}`);
     fireEvent.click(row);
+    await screen.findByTestId("intake-promotion-section");
+    await screen.findByTestId("promotion-review-panel");
 
     await waitFor(() => {
       expect(screen.getByTestId("promotion-status-badge").textContent).toContain("SCORE_FAILED");
@@ -376,6 +425,11 @@ describe("promotion saga — live operator route integration", () => {
     });
     fireEvent.click(screen.getByTestId("promotion-review-ack"));
     fireEvent.click(screen.getByTestId("promotion-approve-btn"));
+    expect(screen.getByTestId("promotion-confirmation-dialog")).toHaveAttribute(
+      "data-screen-label",
+      "Dialog Promotion 核准",
+    );
+    fireEvent.click(screen.getByTestId("promotion-confirm-approve-btn"));
 
     await waitFor(() => {
       expect(
@@ -508,8 +562,10 @@ describe("promotion saga — live operator route integration", () => {
     });
     fireEvent.click(screen.getByTestId("promotion-review-ack"));
     fireEvent.click(screen.getByTestId("promotion-approve-btn"));
+    fireEvent.click(screen.getByTestId("promotion-confirm-approve-btn"));
 
     await screen.findByTestId("promotion-lost-response");
+    expect(screen.getByTestId("promotion-confirmation-error")).toHaveTextContent("Idempotency-Key");
     fireEvent.click(screen.getByTestId("promotion-lookup-btn"));
 
     await waitFor(() => {

@@ -15,11 +15,8 @@ export default function NotFound() {
         testId="shell-state-not-found"
         actions={
           <>
-            <Link href="/" data-testid="not-found-home">
-              回到總覽
-            </Link>
-            <Link href="/search" data-testid="not-found-search">
-              前往全域搜尋
+            <Link href="/operator" data-testid="not-found-home">
+              回到營運管理
             </Link>
           </>
         }

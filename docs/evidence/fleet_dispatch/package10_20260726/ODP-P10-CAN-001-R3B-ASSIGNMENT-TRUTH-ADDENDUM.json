@@ -1,0 +1,93 @@
+{
+  "schema": "oday-plus.package10-wave-addendum.v1",
+  "addendum_id": "ODP-P10-CAN-001-R3B-ADD-004",
+  "parent_task": "ODP-P10-CAN-001-R3B",
+  "status": "ready_for_pickup",
+  "prepared_at": "2026-07-26",
+  "trigger": "coordinator fourth-remediation code review",
+  "program_status": "no_go",
+  "findings": [
+    {
+      "id": "synthetic_assignment_fallback",
+      "severity": "critical",
+      "evidence": "AssistedIntakeSection.handleClaim calls assignIntake without an authoritative assignment and fabricates owner_subject_id, owner_role, and due_at"
+    },
+    {
+      "id": "claim_missing_if_match",
+      "severity": "high",
+      "evidence": "claimAssignment omits the API-required If-Match version and can fail with 428"
+    },
+    {
+      "id": "assignment_sla_fail_open",
+      "severity": "high",
+      "evidence": "claim and pause visibility do not require the authoritative assignment/SLA state needed by the action"
+    },
+    {
+      "id": "missing_history_job_sla_truth",
+      "severity": "high",
+      "evidence": "audit mode omits explicit UNAVAILABLE states when transition history, job data, or SLA data is absent"
+    },
+    {
+      "id": "submitted_time_omitted",
+      "severity": "medium",
+      "evidence": "submission summary omits Submitted At instead of showing UNAVAILABLE for the legacy read model"
+    },
+    {
+      "id": "audit_role_omitted",
+      "severity": "medium",
+      "evidence": "legacy audit rows omit authoritative actorRoleId and do not enumerate unsupported event evidence as UNAVAILABLE"
+    },
+    {
+      "id": "ack_overclaim",
+      "severity": "high",
+      "evidence": "the R3B ACK claims no owner, role, due date, or deadline is synthesized while the product code still synthesizes all three"
+    }
+  ],
+  "required_remediation": [
+    "remove the assignIntake fallback from claim and never synthesize assignment values",
+    "claim only an authoritative assignment with API-required If-Match",
+    "fail closed assignment and SLA controls on authoritative IDs, states, role, and session subject",
+    "show Submitted At as authoritative data or UNAVAILABLE and keep it distinct from captured and observed time",
+    "show explicit UNAVAILABLE states for missing transition history, job data, and SLA data",
+    "show audit actorRoleId when supplied and keep unsupported event evidence UNAVAILABLE",
+    "correct the ACK without claiming coordinator approval"
+  ],
+  "additional_writable_paths": [],
+  "retained_narrow_authorizations": [
+    "playwright.config.ts only for the ADD-003 uv and isolated-E2E webServer changes already made",
+    "tests/e2e/operator-assisted-listing-intake-a11y.spec.ts only for the ADD-003 canonical screen-label selector already made"
+  ],
+  "forbidden": [
+    "apps/api/**",
+    "auth or middleware",
+    "source policy or permission tables",
+    "archives or task ledgers",
+    "package manager files",
+    "any additional E2E change",
+    "removing Package 10 source cards or Listing Radar",
+    "commit push rebase merge deploy or spawn"
+  ],
+  "required_gates": [
+    "focused production-container assignment and missing-data tests",
+    "full web unit suite",
+    "web and root typecheck",
+    "root build",
+    "complete six-test canonical accessibility Playwright spec",
+    "synthetic assignment static scan",
+    "exact scope and E2E scope checks",
+    "git diff --check",
+    "no remaining Fleet-owned process"
+  ],
+  "other_llm_check": {
+    "origin_dev_vs_package10": {
+      "origin_dev_only": 6,
+      "package10_only": 24
+    },
+    "r3b_dirty_path_overlap": 0,
+    "external_integration_risks": [
+      "live-runtime, AVM-outcomes, and model-ready-geo worktrees overlap each other in model contract/release/integration paths",
+      "live-runtime contains a committed auth change requiring final auth regression"
+    ]
+  },
+  "ack_requirement": "record ADD-004 and remain no_go_pending_coordinator_visual_review"
+}

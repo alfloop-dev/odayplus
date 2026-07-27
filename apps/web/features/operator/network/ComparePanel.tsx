@@ -38,9 +38,43 @@ export function ComparePanel({
       </div>
 
       {hasScoringCompare ? (
-        <>
+        <div className={styles.compareWorkspace}>
+          <section className={styles.compareMain}>
+            <div className={styles.tableWrap}>
+              <table className={styles.dataTable} data-testid="network-compare-table">
+                <thead>
+                  <tr>
+                    <th>比較欄位</th>
+                    {compare!.columns.map((column) => (
+                      <th key={column.id} className={column.isBest ? styles.leaderCell : undefined}>
+                        <span className={styles.priorityPill} data-best={column.isBest ? "true" : undefined}>
+                          {column.priority}
+                        </span>{" "}
+                        {column.id} · {column.title}
+                        {column.isBest ? <span className={styles.leaderMark}>▲</span> : null}
+                      </th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody>
+                  {compare!.metrics.map((metric) => (
+                    <tr key={metric.key}>
+                      <th scope="row">{metric.label}</th>
+                      {metric.values.map((value) => (
+                        <td key={value.id} className={value.isBest ? styles.leaderCell : undefined}>
+                          {value.text}
+                        </td>
+                      ))}
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </section>
+
           {compare!.recommendation ? (
-            <div className={styles.compareRecPanel} data-testid="compare-recommendation">
+            <aside className={styles.compareRecommendation} data-testid="compare-recommendation">
+              <div className={styles.filterTitle}>RECOMMENDATION · 系統推薦</div>
               <RecCard
                 variant="primary"
                 testid="compare-primary"
@@ -67,40 +101,18 @@ export function ComparePanel({
                   text={compare!.recommendation.avoid.text}
                 />
               ) : null}
-            </div>
-          ) : null}
-
-          <div className={styles.tableWrap}>
-            <table className={styles.dataTable} data-testid="network-compare-table">
-              <thead>
-                <tr>
-                  <th>比較欄位</th>
-                  {compare!.columns.map((column) => (
-                    <th key={column.id} className={column.isBest ? styles.leaderCell : undefined}>
-                      <span className={styles.priorityPill} data-best={column.isBest ? "true" : undefined}>
-                        {column.priority}
-                      </span>{" "}
-                      {column.id} · {column.title}
-                      {column.isBest ? <span className={styles.leaderMark}>▲</span> : null}
-                    </th>
-                  ))}
-                </tr>
-              </thead>
-              <tbody>
-                {compare!.metrics.map((metric) => (
-                  <tr key={metric.key}>
-                    <th scope="row">{metric.label}</th>
-                    {metric.values.map((value) => (
-                      <td key={value.id} className={value.isBest ? styles.leaderCell : undefined}>
-                        {value.text}
-                      </td>
-                    ))}
-                  </tr>
+              <div className={styles.comparePriorityList} aria-label="Candidate priority">
+                {compare!.recommendation.priorityList.map((item) => (
+                  <div key={item.id}>
+                    <span>{item.priority}</span>
+                    <strong>{item.title}</strong>
+                    <b>{item.score}</b>
+                  </div>
                 ))}
-              </tbody>
-            </table>
-          </div>
-        </>
+              </div>
+            </aside>
+          ) : null}
+        </div>
       ) : fallback.columns.length ? (
         <div className={styles.tableWrap}>
           <table className={styles.dataTable} data-testid="network-compare-table">

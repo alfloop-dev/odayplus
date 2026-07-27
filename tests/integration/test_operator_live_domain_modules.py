@@ -71,7 +71,11 @@ def _headers(tenant_id: str, *, idempotency_key: str | None = None) -> dict[str,
     return headers
 
 
-def _live_app(database_path: Path) -> tuple[FastAPI, Any]:
+def _live_app(
+    database_path: Path,
+    *,
+    allow_test_reset: bool = False,
+) -> tuple[FastAPI, Any]:
     bundle = _durable_bundle(database_path)
     document_store = SqliteDocumentStore(bundle.engine)
 
@@ -114,6 +118,7 @@ def _live_app(database_path: Path) -> tuple[FastAPI, Any]:
             require_live_data=True,
             persistence_mode="postgresql",
             provider_mode="live",
+            allow_test_reset=allow_test_reset,
         ),
         prefix="/api/v1",
     )
@@ -207,6 +212,69 @@ def test_live_router_mounts_all_operator_domain_routes_without_seed_rows(
         assert payloads[3]["stores"] == []
         assert payloads[4]["items"] == []
         assert payloads[5]["approvals"] == []
+    finally:
+        bundle.engine.close()
+
+
+def test_durable_listings_seed_canonical_state_only_behind_test_reset_gate(
+    tmp_path: Path,
+) -> None:
+    # ODP-P10-DEV-LANDING-FIX-001: the durable listing aggregate serves the
+    # canonical Package 10 fixture state only when the explicit test-reset gate
+    # (ODP_E2E_MODE -> allow_test_reset) is on. Production keeps seed_fixtures
+    # off, which the empty-state test above already pins.
+    app, bundle = _live_app(
+        tmp_path / "operator-live-e2e-seed.sqlite3",
+        allow_test_reset=True,
+    )
+    try:
+        with TestClient(app) as client:
+            headers = _headers("tenant-e2e-seeded")
+            snapshot = client.get(f"{BASE}/network-listings", headers=headers)
+            assert snapshot.status_code == 200
+            listing_ids = {
+                listing["id"] for listing in snapshot.json()["listings"]
+            }
+            assert {"L-2024", "L-2025", "L-2029", "L-2030"} <= listing_ids
+
+            converted = client.post(
+                f"{BASE}/network-listings/listings/L-2024/convert",
+                headers=_headers(
+                    "tenant-e2e-seeded",
+                    idempotency_key="e2e-seed-convert-1",
+                ),
+                json={"actorRoleId": "expansionManager"},
+            )
+            assert converted.status_code == 200
+
+            # The conversion is durable: a fresh request rebuilds the service
+            # from persisted state and still sees candidate linkage.
+            after = client.get(
+                f"{BASE}/network-listings", headers=headers
+            ).json()
+            l2024 = next(
+                listing
+                for listing in after["listings"]
+                if listing["id"] == "L-2024"
+            )
+            assert l2024["status"] == "candidate"
+            assert l2024["candidateId"] == "CS-1001"
+
+            # Reset stays available behind the gate and restores the canonical
+            # seed, discarding the conversion.
+            reset = client.post(
+                f"{BASE}/network-listings/reset", headers=headers
+            )
+            assert reset.status_code == 200
+            reseeded = client.get(
+                f"{BASE}/network-listings", headers=headers
+            ).json()
+            l2024_reset = next(
+                listing
+                for listing in reseeded["listings"]
+                if listing["id"] == "L-2024"
+            )
+            assert l2024_reset.get("candidateId") in (None, "")
     finally:
         bundle.engine.close()
 

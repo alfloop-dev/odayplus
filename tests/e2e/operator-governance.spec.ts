@@ -1,8 +1,8 @@
 /**
  * E2E tests for the Govern workspace (治理稽核) — ODP-OC-R4-009.
  *
- * Proves the task acceptance at the UI layer against the archived package-6
- * design (data-screen-label "Govern 治理稽核"):
+ * Proves the task acceptance at the UI layer against the Package 10
+ * governance workspace:
  *
  *   1. Every governance value builder is reachable from workspace navigation:
  *      核准中心 / Decision Log / Audit Trail / Evidence Package 匯出 / 系統狀態盤,
@@ -27,9 +27,8 @@ import { expect, test } from "@playwright/test";
 const GOVERN = '[data-screen-label="Govern 治理稽核"]';
 
 async function openGovern(page: import("@playwright/test").Page) {
-  await page.goto("/operator");
-  await page.getByRole("button", { name: /治理稽核/ }).click();
-  await expect(page.locator(GOVERN)).toBeVisible();
+  await page.goto("/operator?ws=govern");
+  await expect(page.getByTestId("governance-workspace")).toBeVisible();
 }
 
 // ---------------------------------------------------------------------------
@@ -44,16 +43,22 @@ test("Govern workspace exposes all five tabs and the DQ/Model/Connector/SLA/User
 
   // Every tab is reachable from navigation.
   await page.getByTestId("governance-tab-decisions").click();
-  await expect(page.getByRole("heading", { name: "Decision Log" })).toBeVisible();
+  await expect(
+    page.getByRole("heading", { name: "Decision Log" }),
+  ).toBeVisible();
 
   await page.getByTestId("governance-tab-audit").click();
-  await expect(page.getByRole("heading", { name: "Audit Trail" })).toBeVisible();
+  await expect(
+    page.getByRole("heading", { name: "Audit Trail" }),
+  ).toBeVisible();
 
   await page.getByTestId("governance-tab-evidencePackage").click();
   await expect(page.getByTestId("governance-export-button")).toBeVisible();
 
   await page.getByTestId("governance-tab-statusBoard").click();
-  await expect(page.locator('[aria-label="System status board"]')).toBeVisible();
+  await expect(
+    page.locator('[aria-label="System status board"]'),
+  ).toBeVisible();
 
   // The five value builders that must not be unreachable.
   await expect(page.getByText("Data Quality 監控")).toBeVisible();
@@ -67,29 +72,36 @@ test("Govern workspace exposes all five tabs and the DQ/Model/Connector/SLA/User
 // 2. Return / reject require a reason
 // ---------------------------------------------------------------------------
 
-test("Govern approval return is blocked without a sufficient reason", async ({ page }) => {
+test("Govern approval return is blocked without a sufficient reason", async ({
+  page,
+}) => {
   await openGovern(page);
 
   // Target the pending Network approval (distinct from the Store Ops approval
   // exercised by e2e-operator-console FE-05, so the full parallel suite does not
   // collide on shared server state).
-  await page.getByRole("button", { name: "Approve SiteScore override" }).click();
+  await page
+    .getByRole("button", { name: "Approve SiteScore override" })
+    .click();
   await page.locator("#governance-reason").fill("Too short");
-  await page.getByRole("button", { name: "Reject", exact: true }).click();
+  await page.getByRole("button", { name: "駁回", exact: true }).click();
   await expect(page.getByText("退回或駁回理由需至少 10 個字")).toBeVisible();
 
   // A sufficient reason clears the gate and records the decision.
-  const reason = "Reject: competitor density and lease sensitivity exceed the override threshold";
+  const reason =
+    "Reject: competitor density and lease sensitivity exceed the override threshold";
   await page.locator("#governance-reason").fill(reason);
-  await page.getByRole("button", { name: "Reject", exact: true }).click();
-  await expect(page.getByText("已完成決策 (rejected)")).toBeVisible();
+  await page.getByRole("button", { name: "駁回", exact: true }).click();
+  await expect(page.getByText(/已駁回決策/)).toBeVisible();
 });
 
 // ---------------------------------------------------------------------------
 // 3. Store + Growth decisions and pending Network approvals appear
 // ---------------------------------------------------------------------------
 
-test("Govern surfaces Store/Growth decisions and a pending Network approval", async ({ page }) => {
+test("Govern surfaces Store/Growth decisions and a pending Network approval", async ({
+  page,
+}) => {
   await openGovern(page);
 
   // Pending Network approval is reachable in the Approval Center queue.
@@ -97,16 +109,18 @@ test("Govern surfaces Store/Growth decisions and a pending Network approval", as
 
   // Decision Log shows resolved Store Ops + Growth decisions.
   await page.getByTestId("governance-tab-decisions").click();
-  const table = page.locator("table");
-  await expect(table).toContainText("Store Ops");
-  await expect(table).toContainText("Growth");
+  const decisionLog = page.getByRole("region", { name: "Decision Log" });
+  await expect(decisionLog).toContainText("Store Ops");
+  await expect(decisionLog).toContainText("Growth");
 });
 
 // ---------------------------------------------------------------------------
 // 4. Evidence Package export records scope + writes an audit event
 // ---------------------------------------------------------------------------
 
-test("Evidence Package export produces a record and an audit event", async ({ page }) => {
+test("Evidence Package export produces a record and an audit event", async ({
+  page,
+}) => {
   await openGovern(page);
 
   await page.getByTestId("governance-tab-evidencePackage").click();
@@ -118,5 +132,7 @@ test("Evidence Package export produces a record and an audit event", async ({ pa
 
   // The export is recorded in the Audit Trail.
   await page.getByTestId("governance-tab-audit").click();
-  await expect(page.locator("table")).toContainText("Export Evidence Package");
+  await expect(page.getByRole("region", { name: "Audit Trail" })).toContainText(
+    "Export Evidence Package",
+  );
 });

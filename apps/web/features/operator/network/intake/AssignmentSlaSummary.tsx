@@ -1,7 +1,7 @@
 import type { AssistedIntake } from "@oday-plus/openapi-client";
 import styles from "./intake.module.css";
 
-export type SlaStatusState = "ON_TRACK" | "DUE_SOON" | "OVERDUE" | "BREACHED" | "PAUSED";
+export type SlaStatusState = "ON_TRACK" | "DUE_SOON" | "OVERDUE" | "BREACHED" | "PAUSED" | "UNAVAILABLE";
 
 export interface AssignmentSlaSummaryProps {
   record: AssistedIntake;
@@ -14,6 +14,8 @@ export interface AssignmentSlaSummaryProps {
   onComplete?: () => void;
   userRole?: string;
   currentUserId?: string;
+  assignmentResourceVersion?: number | null;
+  slaResourceVersion?: number | null;
   className?: string;
 }
 
@@ -26,7 +28,9 @@ export function computeSlaState(record: AssistedIntake): SlaStatusState {
   }
 
   const dueAt = (record as any).dueAt || (record as any).slaDueAt;
-  if (!dueAt) return "ON_TRACK";
+  if (!dueAt) {
+    return (record as any).slaState === "ON_TRACK" ? "ON_TRACK" : "UNAVAILABLE";
+  }
 
   const dueTime = new Date(dueAt).getTime();
   const now = Date.now();
@@ -72,6 +76,12 @@ export const SLA_STATE_MAP: Record<
     pattern: "[⏸ PAUSED]",
     toneClass: "info",
   },
+  UNAVAILABLE: {
+    label: "UNAVAILABLE",
+    icon: "?",
+    pattern: "[? UNAVAILABLE]",
+    toneClass: "neutral",
+  },
 };
 
 /**
@@ -91,15 +101,23 @@ export function AssignmentSlaSummary({
   onComplete,
   userRole,
   currentUserId,
+  assignmentResourceVersion = null,
+  slaResourceVersion = null,
   className,
 }: AssignmentSlaSummaryProps) {
   const slaState = computeSlaState(record);
   const slaInfo = SLA_STATE_MAP[slaState];
 
-  const currentOwner = record.owner || (record as any).assignedOwner || "未指派 (Unassigned)";
-  const assignedQueue = (record as any).assignedQueue || (record as any).target_owner_role || "治理覆核佇列";
+  const currentOwner = record.owner || (record as any).assignedOwner || "UNAVAILABLE";
+  const assignedQueue = (record as any).assignedQueue || (record as any).target_owner_role || "UNAVAILABLE";
+  const assignmentId = record.assignmentId || "UNAVAILABLE";
+  const assignmentStatus = record.assignmentStatus || "UNAVAILABLE";
+  const assignmentStatusKnown = [
+    "UNASSIGNED", "ASSIGNED", "TRANSFERRED", "ESCALATED", "CLAIMED", "COMPLETED",
+  ].includes(assignmentStatus);
+  const slaInstanceId = record.slaInstanceId || "UNAVAILABLE";
   const dueAtString = (record as any).dueAt || (record as any).slaDueAt || null;
-  const formattedDueAt = dueAtString ? new Date(dueAtString).toLocaleString("zh-TW") : "無時限 (No SLA Limit)";
+  const formattedDueAt = dueAtString ? new Date(dueAtString).toLocaleString("zh-TW") : "UNAVAILABLE";
 
   const isPaused = slaState === "PAUSED";
   const historyItems: any[] = (record as any).assignmentHistory || (record as any).slaHistory || [];
@@ -120,7 +138,9 @@ export function AssignmentSlaSummary({
           <div style={{ fontSize: "14px", fontWeight: 700, marginTop: "2px" }} data-testid="asg-owner">
             {currentOwner}
           </div>
-          <div style={{ fontSize: "10.5px", color: "#94a3b8" }}>佇列：{assignedQueue}</div>
+          <div style={{ fontSize: "10.5px", color: "#475569" }}>佇列：{assignedQueue}</div>
+          <div style={{ fontSize: "10.5px", color: "#475569" }}>Assignment ID：{assignmentId}</div>
+          <div style={{ fontSize: "10.5px", color: "#475569" }}>Assignment Status：{assignmentStatus}</div>
         </div>
 
         {/* SLA Status Card with Text + Icon/Pattern */}
@@ -136,9 +156,31 @@ export function AssignmentSlaSummary({
               {slaInfo.pattern}
             </span>
           </div>
-          <div style={{ fontSize: "10.5px", color: "#94a3b8" }}>到期時間：{formattedDueAt}</div>
+          <div style={{ fontSize: "10.5px", color: "#475569" }}>到期時間：{formattedDueAt}</div>
+          <div style={{ fontSize: "10.5px", color: "#475569" }}>SLA Instance ID：{slaInstanceId}</div>
         </div>
       </div>
+
+      {assignmentId === "UNAVAILABLE" || !assignmentStatusKnown ? (
+        <div className={styles.emptyState} data-testid="assignment-action-unavailable" role="status">
+          ASSIGNMENT ACTIONS: UNAVAILABLE — 後端未提供可操作的 assignment ID 與狀態。
+        </div>
+      ) : null}
+      {slaInstanceId === "UNAVAILABLE" || slaState === "UNAVAILABLE" ? (
+        <div className={styles.emptyState} data-testid="sla-action-unavailable" role="status">
+          SLA ACTIONS: UNAVAILABLE — 後端未提供可操作的 SLA instance ID 與明確狀態。
+        </div>
+      ) : null}
+      {assignmentResourceVersion === null ? (
+        <div className={styles.emptyState} data-testid="assignment-resource-version-unavailable" role="status">
+          RESOURCE_VERSION_UNAVAILABLE — assignment resource version 未由權威收據或 read model 提供。
+        </div>
+      ) : null}
+      {slaResourceVersion === null ? (
+        <div className={styles.emptyState} data-testid="sla-resource-version-unavailable" role="status">
+          RESOURCE_VERSION_UNAVAILABLE — SLA resource version 未由權威收據或 read model 提供。
+        </div>
+      ) : null}
 
       {/* SLA History / Log if present */}
       {historyItems.length > 0 && (
@@ -147,9 +189,9 @@ export function AssignmentSlaSummary({
           <ul style={{ margin: "4px 0 0 0", paddingLeft: "18px", fontSize: "11px", color: "#334155" }}>
             {historyItems.map((item, idx) => (
               <li key={idx} style={{ marginBottom: "2px" }}>
-                <span>[{item.timestamp || item.occurredAt || "時間未知"}] </span>
-                <strong>{item.action || item.type || "變更"}: </strong>
-                <span>{item.note || item.reason || item.description || "無說明"}</span>
+                <span>[{item.timestamp || item.occurredAt || "UNAVAILABLE"}] </span>
+                <strong>{item.action || item.type || "UNAVAILABLE"}: </strong>
+                <span>{item.note || item.reason || item.description || "UNAVAILABLE"}</span>
               </li>
             ))}
           </ul>

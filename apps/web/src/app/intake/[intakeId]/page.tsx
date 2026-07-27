@@ -1,6 +1,4 @@
-import { ExpansionWorkspace } from "../../../../features/expansion/ExpansionWorkspace.tsx";
-import { loadApiBinding } from "../../../lib/api/binding.ts";
-import { getServerApiClient } from "../../../lib/api/client.ts";
+import { OperatorConsole } from "../../../../features/operator/OperatorConsole.tsx";
 
 export const dynamic = "force-dynamic";
 
@@ -12,27 +10,16 @@ type PageProps = {
 export default async function IntakeRoutePage({ params, searchParams }: PageProps) {
   const { intakeId } = await params;
   const resolvedSearchParams = await searchParams;
-  const heatZoneParam = resolvedSearchParams.heatZone;
-  const selectedHeatZoneId = Array.isArray(heatZoneParam)
-    ? heatZoneParam[0]
-    : heatZoneParam;
-  const liveNetwork = await loadApiBinding({
-    client: await getServerApiClient(),
-    fetcher: (client) =>
-      client
-        .getNetworkListings({ selectedHeatZoneId })
-        .then((response) => (response.listings.length > 0 ? [response] : [])),
-  });
 
   return (
-    <ExpansionWorkspace
-      liveNetwork={liveNetwork}
+    <OperatorConsole
       searchParams={{
         ...resolvedSearchParams,
+        ws: "network",
+        tab: "radar",
         selected: intakeId,
         dialog: "detail",
       }}
-      view="listings"
     />
   );
 }

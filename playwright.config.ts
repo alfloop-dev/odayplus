@@ -47,7 +47,7 @@ export default defineConfig({
   ],
   webServer: [
     {
-      command: `python3 -m uvicorn apps.api.oday_api.main:app --host 127.0.0.1 --port ${API_PORT}`,
+      command: `uv run python -m uvicorn apps.api.oday_api.main:app --host 127.0.0.1 --port ${API_PORT}`,
       url: `${API_BASE_URL}/platform/health`,
       timeout: 120_000,
       reuseExistingServer: REUSE_EXISTING_SERVER,
@@ -57,7 +57,18 @@ export default defineConfig({
       url: BASE_URL,
       timeout: 120_000,
       reuseExistingServer: REUSE_EXISTING_SERVER,
-      env: { ODP_API_BASE_URL: API_BASE_URL },
+      env: {
+        ODP_API_BASE_URL: API_BASE_URL,
+        ODP_DATA_BINDING_MODE: "fixture",
+        ODP_DEPLOY_ENV: "e2e",
+        ODP_E2E_MODE: "true",
+        ODP_PRODUCT_MODE: "poc",
+        NEXT_PUBLIC_API_URL: API_BASE_URL,
+        NEXT_PUBLIC_ODP_DATA_BINDING_MODE: "fixture",
+        NEXT_PUBLIC_ODP_DEPLOY_ENV: "e2e",
+        NEXT_PUBLIC_ODP_E2E_MODE: "true",
+        NEXT_PUBLIC_ODP_PRODUCT_MODE: "poc",
+      },
     },
   ],
 });

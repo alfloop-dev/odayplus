@@ -167,14 +167,14 @@ uv run pytest tests/data/test_geo_pipeline.py -q
 
 ```bash
 gh pr view 82 --json headRefOid,isDraft,state,mergeable,statusCheckRollup,url
-PLAYWRIGHT_BASE_URL="$ODP_STAGING_DEPLOY_URL" npx playwright test tests/e2e/e2e-map-live-boundary.spec.ts --project=chromium --retries=1
+PLAYWRIGHT_BASE_URL="$ODP_STAGING_DEPLOY_URL" npx playwright test tests/e2e/operator-network-listings.spec.ts --project=chromium --retries=1
 ```
 
 ### `ODP-MAP-STAGE-002`
 
 ```bash
 gh pr view 82 --json headRefOid,isDraft,state,mergeable,statusCheckRollup,url
-PLAYWRIGHT_BASE_URL="$ODP_STAGING_DEPLOY_URL" npx playwright test tests/e2e/e2e-map-live-boundary.spec.ts --project=chromium --retries=1
+PLAYWRIGHT_BASE_URL="$ODP_STAGING_DEPLOY_URL" npx playwright test tests/e2e/operator-network-listings.spec.ts --project=chromium --retries=1
 ```
 
 ### `ODP-PV-STAGE-001`

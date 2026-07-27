@@ -32,7 +32,7 @@ export default function GlobalError({
           role="alert"
           style={{ maxWidth: "40rem", margin: "0 auto" }}
         >
-          <h1 style={{ fontSize: "1.25rem" }}>OpsBoard 無法載入</h1>
+          <h1 style={{ fontSize: "1.25rem" }}>Oday Plus 無法載入</h1>
           <p>平台發生未預期的錯誤，畫面無法顯示。目前沒有任何資料被寫入或變更。</p>
           <p>請重試；若持續發生，請附上下方代碼通報平台維運。</p>
           {error.digest ? (

@@ -3017,3 +3017,1121 @@
   opacity: 0.55;
   cursor: not-allowed;
 }
+
+/* Package 10 / R7 Network visual parity. */
+.srOnly {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+
+.networkPanelHost {
+  width: 100%;
+  min-width: 0;
+}
+
+.tabs {
+  gap: 2px;
+  border-color: #e3e8f0;
+}
+
+.tab {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 6px;
+  color: #5a6478;
+  font-size: 12.5px;
+  font-weight: 650;
+  padding: 9px 13px;
+}
+
+.tab small {
+  color: #6b7590;
+  font-size: 9px;
+  font-weight: 550;
+  letter-spacing: 0.04em;
+}
+
+.tab[aria-current="page"] {
+  border-color: #2e3a97;
+  color: #2e3a97;
+}
+
+.tab[aria-current="page"] small {
+  color: #2e3a97;
+}
+
+.expansionStepper {
+  gap: 10px;
+  border-color: #e3e8f0;
+  border-radius: 12px;
+  padding: 12px 16px;
+}
+
+.flowHeader span {
+  color: #6e7891;
+  font-weight: 750;
+}
+
+.flowHeader strong {
+  color: #2e3a97;
+}
+
+.expansionStep {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 42px;
+  border-color: #d6dce8;
+  border-radius: 9px;
+  padding: 7px 10px;
+}
+
+.expansionStep[aria-current="step"] {
+  outline: none;
+  border-color: #b9c4ee;
+  box-shadow: 0 0 0 2px rgba(46, 58, 151, 0.1);
+}
+
+.expansionStep[data-state="completed"] {
+  border-color: #c6e6eb;
+  background: #f2fbfc;
+}
+
+.expansionStep[data-state="current"] {
+  border-color: #b9c4ee;
+  background: #eef1fb;
+}
+
+.expansionStep[data-state="next"] {
+  border-color: #d6dce8;
+  background: #ffffff;
+}
+
+.expansionStep[data-state="blocked"] {
+  border-color: #edddb5;
+  background: #fffaf0;
+  color: #96610b;
+}
+
+.expansionStepIndex {
+  flex: 0 0 20px;
+  width: 20px;
+  height: 20px;
+  border: 1.5px solid #c0c7d8;
+  background: #ffffff;
+  color: #6e7891;
+}
+
+.expansionStep[data-state="completed"] .expansionStepIndex {
+  border-color: #0e7c8c;
+  background: #0e7c8c;
+}
+
+.expansionStep[data-state="current"] .expansionStepIndex {
+  border-color: #2e3a97;
+  background: #2e3a97;
+}
+
+.expansionStep[data-state="blocked"] .expansionStepIndex {
+  border-color: #d08700;
+  background: #fbf1dd;
+  color: #96610b;
+}
+
+.expansionStepBody {
+  flex: 1 1 auto;
+}
+
+.expansionStepBody small {
+  color: #6b7590;
+}
+
+.expansionStepState {
+  flex: 0 0 auto;
+  margin-left: auto;
+  max-width: 84px;
+  overflow: hidden;
+  border-radius: 4px;
+  background: #eef1f5;
+  color: #5a6472;
+  font-size: 8.5px;
+  font-weight: 750;
+  padding: 1px 5px;
+  text-overflow: ellipsis;
+  text-transform: none;
+  white-space: nowrap;
+}
+
+.expansionStep[data-state="blocked"] .expansionStepState {
+  background: #fbf1dd;
+  color: #96610b;
+}
+
+.flowBlockNotice {
+  display: flex;
+  align-items: flex-start;
+  gap: 7px;
+  border: 1px solid #edddb5;
+  border-radius: 8px;
+  background: #fbf1dd;
+  color: #96610b;
+  font-size: 11px;
+  font-weight: 650;
+  line-height: 1.5;
+  padding: 7px 11px;
+}
+
+.flowBlockNotice span {
+  display: grid;
+  flex: 0 0 16px;
+  width: 16px;
+  height: 16px;
+  place-items: center;
+  border-radius: 50%;
+  background: #d08700;
+  color: #ffffff;
+  font-size: 10px;
+}
+
+.tabPanel > .panelHeader {
+  min-height: 34px;
+  border-bottom: 0;
+  padding: 0 0 2px;
+}
+
+.tabPanel > .panelHeader h3,
+.tabPanel > .panelHeader p {
+  margin: 0;
+}
+
+.tabPanel > .panelHeader h3 {
+  color: #1c2333;
+  font-size: 14px;
+}
+
+.tabPanel > .panelHeader p {
+  margin-top: 2px;
+  color: #5a6478;
+  font-size: 10.5px;
+  line-height: 1.5;
+}
+
+.sourceCard {
+  gap: 4px;
+  border-color: #e3e8f0;
+  padding: 10px 12px;
+}
+
+.sourceCardHead strong {
+  color: #1c2333;
+  font-size: 11.5px;
+}
+
+.sourceCard p {
+  color: #5a6478;
+  font-size: 10px;
+}
+
+.candidateWorkspace {
+  display: grid;
+  grid-template-columns: 180px minmax(0, 1fr) 348px;
+  gap: 14px;
+  align-items: start;
+}
+
+.pipelinePanel {
+  display: grid;
+  gap: 9px;
+  min-width: 0;
+  border: 1px solid #e3e8f0;
+  border-radius: 12px;
+  background: #ffffff;
+  padding: 13px 14px;
+}
+
+.pipelineFilterList {
+  display: grid;
+  gap: 5px;
+}
+
+.pipelineFilterList button {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  min-width: 0;
+  border: 1px solid #d6dce8;
+  border-radius: 8px;
+  background: #ffffff;
+  color: #3a4362;
+  cursor: pointer;
+  font: inherit;
+  font-size: 11.5px;
+  font-weight: 650;
+  padding: 6px 10px;
+  text-align: left;
+}
+
+.pipelineFilterList button[aria-pressed="true"] {
+  border-color: #2e3a97;
+  background: #2e3a97;
+  color: #ffffff;
+}
+
+.pipelineFilterList button b {
+  margin-left: auto;
+  font-family: "IBM Plex Mono", ui-monospace, monospace;
+  font-size: 10px;
+}
+
+.candidateViewToggle {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 4px;
+}
+
+.candidateViewToggle button {
+  min-width: 0;
+  border: 1px solid #d6dce8;
+  border-radius: 7px;
+  background: #ffffff;
+  color: #3a4362;
+  font: inherit;
+  font-size: 10.5px;
+  font-weight: 700;
+  padding: 4px 0;
+}
+
+.candidateViewToggle button[aria-pressed="true"] {
+  background: #eceffb;
+}
+
+.candidateViewToggle button:disabled {
+  color: #98a1b3;
+}
+
+.candidateBoard {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(252px, 1fr));
+  gap: 10px;
+  min-width: 0;
+}
+
+.candidateCard {
+  display: grid;
+  gap: 6px;
+  min-width: 0;
+  border: 1px solid #e3e8f0;
+  border-radius: 12px;
+  background: #ffffff;
+  cursor: pointer;
+  padding: 12px 14px;
+}
+
+.candidateCard:hover,
+.candidateCard[data-active="true"] {
+  border-color: #b9c4ee;
+  background: #f8f9fd;
+}
+
+.candidateCard[data-tone="risk"] {
+  border-left: 3px solid #c4342c;
+}
+
+.candidateCardHead,
+.candidateCardMeta {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  min-width: 0;
+}
+
+.candidateCardHead > span:first-child,
+.candidateSnapshot {
+  color: #6e7891;
+  font-family: "IBM Plex Mono", ui-monospace, monospace;
+  font-size: 10px;
+}
+
+.candidateCardHead .toneBadge {
+  margin-left: auto;
+}
+
+.candidateCard h4,
+.candidateCard p {
+  margin: 0;
+}
+
+.candidateCard h4 {
+  color: #1c2333;
+  font-size: 13px;
+}
+
+.candidateCard p {
+  overflow: hidden;
+  color: #6e7891;
+  font-size: 10px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.candidateCardMeta {
+  flex-wrap: wrap;
+}
+
+.candidateCardMeta span {
+  color: #3a4362;
+  font-size: 10.5px;
+}
+
+.candidateCardMeta span:first-child {
+  border-radius: 4px;
+  background: #e2f4f6;
+  color: #0e7c8c;
+  font-size: 9.5px;
+  font-weight: 650;
+  padding: 1px 6px;
+}
+
+.candidateScoreLine {
+  display: block;
+  margin-top: 5px;
+  color: #2e3a97;
+  font-size: 11px;
+  font-weight: 750;
+}
+
+.candidateCard .rowActions {
+  justify-content: stretch;
+}
+
+.candidateCard .rowActions button {
+  width: 100%;
+}
+
+.candidateDetailPanel {
+  position: sticky;
+  top: 76px;
+}
+
+.candidateDetailPanel .gateGrid {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  overflow: hidden;
+  border: 1px solid #e9edf4;
+  border-radius: 10px;
+  margin: 0;
+}
+
+.candidateDetailPanel .gateRowItem {
+  grid-template-columns: 16px minmax(0, 1fr);
+  border-radius: 0;
+  background: #ffffff;
+  padding: 6px 9px;
+}
+
+.candidateDetailPanel .gateRowItem small {
+  grid-column: 2;
+  overflow: hidden;
+  font-size: 9.5px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.scoreLabToolbar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.scoreLabToolbar > span {
+  margin-left: auto;
+  font-family: "IBM Plex Mono", ui-monospace, monospace;
+  font-size: 10.5px;
+}
+
+.scoreLabModes {
+  display: flex;
+  gap: 8px;
+}
+
+.scoreLabModes button {
+  border: 1px solid #d6dce8;
+  border-radius: 8px;
+  background: #ffffff;
+  color: #3a4362;
+  cursor: pointer;
+  font: inherit;
+  font-size: 12px;
+  font-weight: 700;
+  padding: 6px 14px;
+}
+
+.scoreLabModes button[aria-pressed="true"] {
+  border-color: #2e3a97;
+  background: #2e3a97;
+  color: #ffffff;
+}
+
+.gateIssue {
+  color: inherit;
+  font-size: 11px;
+  font-weight: 650;
+}
+
+.scoreLabWorkspace {
+  display: grid;
+  grid-template-columns: 250px minmax(0, 1fr);
+  gap: 14px;
+  align-items: start;
+}
+
+.scoreLabPicker {
+  display: grid;
+  gap: 8px;
+  min-width: 0;
+}
+
+.scoreLabPicker button {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  min-width: 0;
+  border: 1px solid #e3e8f0;
+  border-radius: 10px;
+  background: #ffffff;
+  color: #1c2333;
+  cursor: pointer;
+  font: inherit;
+  padding: 10px 12px;
+  text-align: left;
+}
+
+.scoreLabPicker button[aria-current="true"] {
+  border-color: #b9c4ee;
+  background: #eef1fb;
+}
+
+.scoreLabPicker button:disabled {
+  cursor: not-allowed;
+  opacity: 0.72;
+}
+
+.scoreLabPicker button > span:first-child {
+  display: grid;
+  flex: 1 1 auto;
+  gap: 3px;
+  min-width: 0;
+}
+
+.scoreLabPicker strong,
+.scoreLabPicker small {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.scoreLabPicker strong {
+  font-size: 12px;
+}
+
+.scoreLabPicker small {
+  color: #6e7891;
+  font-family: "IBM Plex Mono", ui-monospace, monospace;
+  font-size: 10px;
+}
+
+.scoreLabReportStack {
+  min-width: 0;
+}
+
+.scoreReport[hidden] {
+  display: none;
+}
+
+.scoreReport {
+  gap: 12px;
+  border-color: #e3e8f0;
+  padding: 16px 18px;
+}
+
+.scoreReport .scoreCardHead {
+  align-items: center;
+}
+
+.scoreIdentity {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.scoreNumber {
+  color: #1c2333;
+  font-family: "IBM Plex Mono", ui-monospace, monospace;
+  font-size: 34px;
+  font-weight: 650;
+}
+
+.scoreNumber small {
+  color: #6b7590;
+  font-size: 11px;
+}
+
+.confidenceBadge {
+  border-radius: 999px;
+  background: #eef1f5;
+  color: #5a6472;
+  font-size: 10.5px;
+  font-weight: 700;
+  padding: 2px 10px;
+}
+
+.scoreReportTitle {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+  text-align: right;
+}
+
+.scoreReportTitle strong {
+  color: #1c2333;
+  font-size: 12px;
+}
+
+.scoreReportTitle small,
+.scoreReportTitle span {
+  color: #6e7891;
+  font-family: "IBM Plex Mono", ui-monospace, monospace;
+  font-size: 9.5px;
+}
+
+.scoreReportGrid {
+  display: grid;
+  grid-template-columns: 1.2fr 1fr;
+  gap: 16px;
+  min-width: 0;
+}
+
+.scoreReport .revenuePath {
+  height: 110px;
+}
+
+.scoreReport .scoreMeta {
+  grid-template-columns: 1fr;
+}
+
+.scoreReport .scoreMeta div {
+  display: flex;
+  align-items: baseline;
+  gap: 12px;
+  border-bottom: 1px solid #f1f3f8;
+  padding: 7px 0;
+}
+
+.scoreReport .scoreMeta dd {
+  margin-left: auto;
+  text-align: right;
+}
+
+.scoreDrivers {
+  color: #0e7c8c;
+  font-size: 10.5px;
+  line-height: 1.55;
+}
+
+.scoreReport .subScoreGrid {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.scoreReport .gateRowItem {
+  grid-template-columns: minmax(0, 1fr) auto;
+  font-size: 10.5px;
+}
+
+.compareWorkspace {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 348px;
+  gap: 14px;
+  align-items: start;
+}
+
+.compareMain {
+  min-width: 0;
+}
+
+.compareRecommendation {
+  display: grid;
+  gap: 9px;
+  min-width: 0;
+  border: 1px solid #e3e8f0;
+  border-radius: 12px;
+  background: #ffffff;
+  padding: 15px 16px;
+}
+
+.compareRecommendation .recCard {
+  gap: 5px;
+  border-radius: 10px;
+  padding: 10px 12px;
+}
+
+.compareRecommendation .recCard[data-tone="good"] {
+  border-left: 0;
+  border-color: #c6e6eb;
+  background: #e9f6f8;
+}
+
+.compareRecommendation .recCard[data-tone="watch"] {
+  border-left: 0;
+  background: #fbfcfe;
+}
+
+.compareRecommendation .recCard[data-tone="risk"] {
+  border-left: 0;
+  border-color: #f3cbc7;
+  background: #fbe9e7;
+}
+
+.comparePriorityList {
+  display: grid;
+  gap: 5px;
+  border-top: 1px solid #eef1f6;
+  padding-top: 9px;
+}
+
+.comparePriorityList div {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 8px;
+  color: #3a4362;
+  font-size: 11px;
+}
+
+.comparePriorityList span {
+  color: #6e7891;
+  font-family: "IBM Plex Mono", ui-monospace, monospace;
+  font-size: 9.5px;
+}
+
+.comparePriorityList strong {
+  overflow: hidden;
+  color: #1c2333;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.comparePriorityList b {
+  color: #2e3a97;
+  font-family: "IBM Plex Mono", ui-monospace, monospace;
+}
+
+.reviewDetail,
+.rebalanceDetail {
+  min-width: 0;
+}
+
+.reviewQueueCard,
+.rebalanceStoreButton {
+  box-shadow: none;
+}
+
+.reviewQueueCard[data-active="true"],
+.rebalanceStoreButton[aria-current="true"] {
+  border-color: #b9c4ee;
+  background: #f1f4fd;
+  box-shadow: none;
+}
+
+.reviewDialog {
+  border: 1px solid rgba(227, 232, 240, 0.8);
+}
+
+.reviewDialogInput:focus-visible {
+  border-color: #2e3a97;
+  box-shadow: 0 0 0 3px rgba(46, 58, 151, 0.12);
+}
+
+.reviewDialogFieldLabelWarn + .reviewDialogInput {
+  border-color: #e4c88a;
+  background: #fffdf6;
+}
+
+@media (min-width: 1160px) {
+  .tabPanel[data-screen-label="Network 找區域"] .zoneList {
+    grid-template-columns: repeat(5, minmax(0, 1fr));
+  }
+
+  .candidateDetailPanel,
+  .sourceFilterPanel {
+    position: sticky;
+    top: 76px;
+  }
+}
+
+@media (min-width: 760px) and (max-width: 1159px) {
+  .expansionStepGrid {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+
+  .radarLayout {
+    grid-template-columns: 180px minmax(0, 1fr);
+  }
+
+  .radarLayout > .listingDetailPanel {
+    grid-column: 1 / -1;
+    position: static;
+  }
+
+  .candidateWorkspace {
+    grid-template-columns: 180px minmax(0, 1fr);
+  }
+
+  .candidateDetailPanel {
+    grid-column: 1 / -1;
+    position: static;
+  }
+
+  .scoreLabWorkspace {
+    grid-template-columns: 220px minmax(0, 1fr);
+  }
+
+  .compareWorkspace {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .compareRecommendation {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+
+  .compareRecommendation > .filterTitle,
+  .comparePriorityList {
+    grid-column: 1 / -1;
+  }
+
+  .reviewLayout {
+    grid-template-columns: 300px minmax(0, 1fr);
+  }
+
+  .rebalanceWorkflowGrid {
+    grid-template-columns: 280px minmax(0, 1fr);
+  }
+
+  .tabPanel[data-screen-label="Network 找區域"] {
+    grid-template-columns: 180px minmax(0, 1fr);
+    grid-template-areas:
+      "lens map"
+      "lens tray"
+      "detail detail";
+  }
+
+  .tabPanel[data-screen-label="Network 找區域"] .zoneList {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 759px) {
+  .tabs {
+    margin-inline: -2px;
+    scrollbar-width: thin;
+  }
+
+  .tab {
+    min-height: 42px;
+    padding-inline: 10px;
+  }
+
+  .expansionStepper {
+    padding: 10px;
+  }
+
+  .flowHeader {
+    display: grid;
+    gap: 6px;
+  }
+
+  .flowHeader strong {
+    overflow: visible;
+    white-space: normal;
+  }
+
+  .flowHeader em {
+    margin-left: 0;
+    white-space: normal;
+  }
+
+  .expansionStepGrid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .expansionStep {
+    align-items: flex-start;
+    min-height: 54px;
+  }
+
+  .expansionStepState {
+    max-width: 48px;
+  }
+
+  .flowChain {
+    flex-wrap: nowrap;
+    overflow-x: auto;
+    padding-bottom: 3px;
+  }
+
+  .flowChain button {
+    flex: 0 0 auto;
+  }
+
+  .complianceBanner {
+    font-size: 10.5px;
+  }
+
+  .sourceSummaryGrid {
+    grid-template-columns: 1fr;
+  }
+
+  .radarLayout,
+  .candidateWorkspace,
+  .scoreLabWorkspace,
+  .compareWorkspace,
+  .reviewLayout,
+  .rebalanceWorkflowGrid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .sourceFilterPanel {
+    display: block;
+    overflow-x: auto;
+    padding: 10px;
+  }
+
+  .sourceFilterPanel .filterTitle {
+    margin-bottom: 7px;
+  }
+
+  .sourceFilterList {
+    display: flex;
+    min-width: max-content;
+  }
+
+  .sourceFilterList button {
+    text-align: center;
+  }
+
+  .zoneFilterChip,
+  .filterClearButton {
+    width: auto;
+    margin: 8px 6px 0 0;
+  }
+
+  .radarRow {
+    padding: 10px 12px;
+  }
+
+  .radarRowHead {
+    flex-wrap: wrap;
+  }
+
+  .radarRowHead strong {
+    flex: 1 1 calc(100% - 64px);
+    white-space: normal;
+  }
+
+  .radarRowHead .toneBadge {
+    margin-left: 0;
+  }
+
+  .radarRowMeta span:last-child {
+    width: 100%;
+    margin-left: 0;
+  }
+
+  .pipelinePanel {
+    overflow-x: auto;
+    padding: 10px;
+  }
+
+  .pipelineFilterList {
+    display: flex;
+    min-width: max-content;
+  }
+
+  .pipelineFilterList button {
+    width: auto;
+  }
+
+  .candidateViewToggle {
+    display: none;
+  }
+
+  .candidateBoard {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .candidateDetailPanel {
+    position: static;
+  }
+
+  .candidateDetailPanel .gateGrid {
+    grid-template-columns: 1fr;
+  }
+
+  .scoreLabToolbar {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .scoreLabToolbar > span {
+    margin-left: 0;
+    overflow-wrap: anywhere;
+  }
+
+  .scoreLabModes {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .scoreLabPicker {
+    display: flex;
+    overflow-x: auto;
+    padding-bottom: 3px;
+  }
+
+  .scoreLabPicker button {
+    flex: 0 0 230px;
+  }
+
+  .scoreReport {
+    padding: 13px;
+  }
+
+  .scoreReport .scoreCardHead,
+  .scoreReportGrid {
+    grid-template-columns: 1fr;
+  }
+
+  .scoreReport .scoreCardHead {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .scoreReportTitle {
+    text-align: left;
+  }
+
+  .scoreReport .subScoreGrid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .reasonCols {
+    grid-template-columns: 1fr;
+  }
+
+  .compareRecommendation {
+    padding: 13px;
+  }
+
+  .tableWrap {
+    max-width: 100%;
+    border-radius: 8px;
+  }
+
+  .dataTable {
+    min-width: 720px;
+  }
+
+  .reviewDetail,
+  .rebalanceDetail,
+  .listingDetailPanel {
+    padding: 13px;
+  }
+
+  .reviewMetaGrid,
+  .reviewMetricGrid,
+  .rebalanceSignalGrid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .reviewDecisionBar {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .reviewDecisionBar button {
+    min-width: 0;
+  }
+
+  .reviewHistoryRow,
+  .reviewFactRow {
+    align-items: flex-start;
+  }
+
+  .reviewHistoryTime {
+    width: 74px;
+  }
+
+  .rebalanceDetailHeader,
+  .scenarioTitleRow {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .roiValue {
+    margin-left: 0;
+  }
+
+  .reviewDialogOverlay {
+    align-items: flex-end;
+    padding: 10px;
+  }
+
+  .reviewDialog {
+    width: 100%;
+    max-width: 100%;
+    max-height: 94vh;
+    border-radius: 12px;
+  }
+
+  .workspace > *,
+  .tabPanel > * {
+    width: 100%;
+    max-width: 100%;
+  }
+
+  .tabPanel[data-screen-label="Network 找區域"] {
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-areas:
+      "lens"
+      "map"
+      "tray"
+      "detail";
+  }
+
+  .tabPanel[data-screen-label="Network 找區域"] .lensBar {
+    position: static;
+  }
+
+  .tabPanel[data-screen-label="Network 找區域"] .lensSelector {
+    display: flex;
+    overflow-x: auto;
+  }
+
+  .tabPanel[data-screen-label="Network 找區域"] .lensButton {
+    flex: 0 0 132px;
+  }
+
+  .tabPanel[data-screen-label="Network 找區域"] .legend {
+    display: none;
+  }
+
+  .tabPanel[data-screen-label="Network 找區域"] .zoneList {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}

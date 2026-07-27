@@ -1,5 +1,5 @@
 /*
- * Assisted listing intake surfaces (ODP-OC-R5-011) — Package 7.
+ * Assisted listing intake surfaces — Package 10 canonical runtime.
  *
  * Tones always pair a colour with a glyph or text in the markup, per the
  * design's accessibility rule: state must never be encoded by colour alone.
@@ -236,6 +236,70 @@
   max-height: 94vh;
 }
 
+.intakeFullPage {
+  box-sizing: border-box;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  margin: 0 auto;
+  max-width: 1160px;
+  min-width: 0;
+  padding: 18px 20px 40px;
+  width: 100%;
+}
+
+.intakeDetailLayer {
+  background: #f4f6fa;
+  box-sizing: border-box;
+  min-height: 100dvh;
+  overflow-x: hidden;
+  position: relative;
+  width: 100%;
+}
+
+.intakeFullPageHeader {
+  align-items: flex-start;
+  background: #ffffff;
+  border: 1px solid #e2e8f0;
+  border-radius: 12px;
+  display: grid;
+  gap: 14px;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  padding: 16px;
+}
+
+.intakeHeaderChips,
+.intakeDecisionActions,
+.intakeSectionToolbar {
+  align-items: center;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.intakeSectionToolbar,
+.intakeDecisionSection {
+  justify-content: space-between;
+}
+
+.intakeDecisionSection {
+  align-items: flex-start;
+  background: #f8fafc;
+  border: 1px solid #dbe3ee;
+  border-radius: 10px;
+  display: flex;
+  gap: 16px;
+  margin-top: 12px;
+  padding: 14px;
+}
+
+.intakeDecisionSection p {
+  color: #475569;
+  font-size: 11px;
+  margin: 5px 0 0;
+  max-width: 680px;
+}
+
 .panelNarrow {
   width: 460px;
 }
@@ -296,6 +360,27 @@
   display: flex;
   flex-direction: column;
   gap: 11px;
+}
+
+.timelineHeader {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 12px;
+  flex-wrap: wrap;
+}
+
+.timelineActions {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  flex-wrap: wrap;
+}
+
+.timelineActions .secondaryButton {
+  padding: 4px 9px;
+  font-size: 10.5px;
 }
 
 .dialogFooter {
@@ -612,14 +697,51 @@
   border-bottom: 1px solid #f1f3f8;
 }
 
+.lineageGroupTitle {
+  margin: 18px 0 8px;
+  color: #5a6478;
+  font-size: 10px;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.lineageGrid {
+  border-collapse: collapse;
+  table-layout: fixed;
+  width: 100%;
+}
+
+.lineageGrid th,
+.lineageGrid td {
+  text-align: left;
+  vertical-align: top;
+}
+
+.lineageGrid th:first-child {
+  width: 22%;
+}
+
+/*
+ * `.fieldCell` styles native `th`/`td` elements in the lineage and comparison
+ * tables. It must NOT set `display`: flex/grid/block on a table cell removes
+ * table-cell layout, which collapsed every column into the first one and left
+ * most of the 1160px detail width blank (ADD-006 §3.2). Vertical label/chip
+ * composition belongs to the `.fieldCellStack` wrapper inside the cell.
+ */
 .fieldCell {
   font-size: 10.5px;
   padding: 6px 8px;
   border-bottom: 1px solid #f6f8fb;
   word-break: break-word;
+  vertical-align: top;
+}
+
+.fieldCellStack {
   display: flex;
   flex-direction: column;
   gap: 2px;
+  min-width: 0;
 }
 
 .identityMark {
@@ -689,18 +811,22 @@
 }
 
 .compareGrid {
-  display: grid;
-  grid-template-columns: 110px 1fr 1fr;
+  border-collapse: collapse;
+  table-layout: fixed;
+  width: 100%;
 }
 
-.compareCell {
-  font-size: 10.5px;
-  padding: 6px 8px;
-  border-bottom: 1px solid #f6f8fb;
-  word-break: break-word;
+.compareGrid th,
+.compareGrid td {
+  text-align: left;
+  vertical-align: top;
 }
 
-.compareRowChanged .compareCell {
+.compareGrid th:first-child {
+  width: 150px;
+}
+
+.compareCellChanged {
   background: #fff8e9;
 }
 
@@ -712,6 +838,16 @@
   border-radius: 4px;
   padding: 1px 5px;
   margin-left: 4px;
+}
+
+.unavailableChip {
+  background: #eef1f5;
+  border-radius: 4px;
+  color: #475569;
+  font-size: 8.5px;
+  font-weight: 700;
+  margin-left: 4px;
+  padding: 1px 5px;
 }
 
 .signals {
@@ -852,6 +988,217 @@
   display: none;
 }
 
+/* --- Package 10 canonical state matrix --- */
+.matrixDialog {
+  width: 980px;
+  max-width: 96vw;
+  max-height: 94vh;
+  overflow-y: auto;
+  background: #ffffff;
+  border-radius: 14px;
+  box-shadow: 0 24px 64px rgba(12, 18, 44, 0.3);
+  color: #1c2333;
+}
+
+.matrixHeader {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  padding: 15px 18px 12px;
+  background: #ffffff;
+  border-bottom: 1px solid #eef1f6;
+}
+
+.matrixHeader .dialogClose {
+  margin-left: auto;
+}
+
+.matrixTitle,
+.promotionConfirmTitle {
+  margin: 0;
+  font-size: 15px;
+  font-weight: 700;
+}
+
+.matrixSubtitle,
+.promotionConfirmSubtitle {
+  margin: 3px 0 0;
+  font-size: 10px;
+  line-height: 1.5;
+  color: #6b7590;
+}
+
+.matrixBody {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  padding: 13px 18px 18px;
+}
+
+.matrixGroup {
+  min-width: 0;
+}
+
+.matrixGroupTitle {
+  margin: 0 0 6px;
+  font-size: 10px;
+  font-weight: 700;
+  color: #6e7891;
+  letter-spacing: 0;
+}
+
+.matrixGrid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 6px;
+}
+
+.matrixSplit {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+}
+
+.matrixSplit .matrixGrid {
+  grid-template-columns: 1fr;
+}
+
+.matrixItem {
+  min-width: 0;
+  border: 1px solid #e9edf4;
+  border-radius: 8px;
+  padding: 7px 9px;
+  background: #ffffff;
+}
+
+.matrixItemHead {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.matrixCode {
+  min-width: 0;
+  color: #6e7891;
+  font-size: 9px;
+  overflow-wrap: anywhere;
+}
+
+.matrixNote {
+  margin: 4px 0 0;
+  color: #5a6478;
+  font-size: 9.5px;
+  line-height: 1.5;
+}
+
+.matrixContract {
+  margin: 0;
+  padding: 8px 11px;
+  border: 1px solid #eef1f6;
+  border-radius: 8px;
+  background: #f8fafd;
+  color: #5a6478;
+  font-size: 9.5px;
+  line-height: 1.6;
+}
+
+/* --- Package 10 promotion review confirmation --- */
+.promotionConfirmDialog {
+  width: 520px;
+  max-width: 94vw;
+  max-height: 92vh;
+  overflow-y: auto;
+  background: #ffffff;
+  border-radius: 14px;
+  box-shadow: 0 24px 64px rgba(12, 18, 44, 0.3);
+  color: #1c2333;
+}
+
+.promotionConfirmHeader {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  padding: 16px 18px 0;
+}
+
+.promotionConfirmHeader .dialogClose {
+  margin-left: auto;
+}
+
+.promotionConfirmBody {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 12px 18px 4px;
+}
+
+.reviewSummary {
+  overflow: hidden;
+  border: 1px solid #e9edf4;
+  border-radius: 8px;
+}
+
+.reviewSummaryRow {
+  display: grid;
+  grid-template-columns: 92px minmax(0, 1fr);
+  gap: 10px;
+  padding: 6px 11px;
+  border-top: 1px solid #f1f3f8;
+  font-size: 11px;
+}
+
+.reviewSummaryKey {
+  color: #6e7891;
+  font-weight: 600;
+}
+
+.reviewSummaryValue {
+  min-width: 0;
+  color: #1c2333;
+  overflow-wrap: anywhere;
+}
+
+.promotionImpact {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 8px 11px;
+  border: 1px solid #eef1f6;
+  border-radius: 8px;
+  background: #f8fafd;
+  color: #5a6478;
+  font-size: 10.5px;
+  line-height: 1.6;
+}
+
+.promotionImpact strong {
+  color: #3a4362;
+}
+
+.promotionControlSummary {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 8px 11px;
+  border: 1px solid #bfe3cc;
+  border-radius: 8px;
+  background: #e5f3ea;
+  color: #166534;
+  font-size: 10px;
+  overflow-wrap: anywhere;
+}
+
+.promotionConfirmFooter {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  padding: 12px 18px 16px;
+}
+
 /*
  * Tablet: submitting, status tracking and unambiguous confirmation stay
  * available; the 5-up meta grid folds so labels stay legible.
@@ -871,7 +1218,19 @@
  * Side-by-side comparison is not usable at this width, so it is replaced by an
  * explicit desktop-required state rather than being silently squashed.
  */
-@media (max-width: 720px) {
+@media (max-width: 759px) {
+  .intakeFullPage {
+    gap: 12px;
+    padding: 12px 10px 28px;
+  }
+
+  .intakeFullPageHeader {
+    grid-template-columns: 1fr;
+  }
+
+  .possibleMatchDecision {
+    display: none;
+  }
   .metaGrid {
     grid-template-columns: 1fr 1fr;
   }
@@ -895,27 +1254,59 @@
   }
 
   .fieldsGrid,
-  .compareGrid {
+  .matrixGrid {
     grid-template-columns: 1fr;
   }
 
-  .fieldsHeadCell {
+  .fieldsGrid .fieldsHeadCell {
     display: none;
   }
 
   .fieldCell::before {
     content: attr(data-label);
+    display: block;
     font-size: 8.5px;
     font-weight: 700;
     color: #5a6478;
   }
 
-  .compareHide {
+  /*
+   * Only at 390-759px does parsed lineage stop being a four-column table:
+   * at that width fixed columns are ~85px wide and long URLs, parser IDs and
+   * correlation IDs wrap one character per line. The markup keeps native
+   * table/thead/tbody/tr/th/td semantics; the column header is replaced by the
+   * per-cell `data-label` already used by the comparison table. Desktop and
+   * tablet cells keep table-cell layout (ADD-006 §3.2).
+   */
+  .lineageGrid,
+  .lineageGrid tbody,
+  .lineageGrid tr {
+    display: block;
+    width: 100%;
+  }
+
+  .lineageGrid thead {
+    display: none;
+  }
+
+  .lineageGrid th,
+  .lineageGrid td,
+  .lineageGrid th:first-child {
+    display: block;
+    width: auto;
+  }
+
+  .possibleMatchOutcome .compareGrid,
+  .possibleMatchOutcome .srSummary,
+  .possibleMatchOutcome .intakeDecisionSection,
+  .possibleMatchOutcome .compareGrid + .metaGrid {
     display: none;
   }
 
   .desktopOnlyNote {
-    display: block;
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
     background: #fbf1dd;
     border: 1px solid #f1e2c0;
     border-radius: 8px;
@@ -923,6 +1314,31 @@
     font-size: 10.5px;
     font-weight: 600;
     color: #854d0e;
+  }
+
+  .desktopOnlyNote code {
+    overflow-wrap: anywhere;
+  }
+
+  .matrixSplit {
+    grid-template-columns: 1fr;
+  }
+
+  .matrixHeader,
+  .promotionConfirmHeader {
+    padding-left: 14px;
+    padding-right: 14px;
+  }
+
+  .matrixBody,
+  .promotionConfirmBody {
+    padding-left: 14px;
+    padding-right: 14px;
+  }
+
+  .reviewSummaryRow {
+    grid-template-columns: 1fr;
+    gap: 2px;
   }
 
   .panel {
