@@ -489,6 +489,11 @@ test("governance reviewer gets masked read-only intake while unrelated roles fai
   await openRadar(page, "expansion-manager", "qa-role-seed-manager");
   const intakeId = await submitUrl(page, URLS.possible);
   await page.getByTestId("intake-return-button").click();
+  // Returning to the inbox rewrites the durable URL asynchronously; reloading
+  // before it settles restores the full-page detail view without the tab bar.
+  await expect(page.getByTestId("intake-inbox-view")).toBeVisible({
+    timeout: 15_000,
+  });
 
   await setOperatorSession(page, "pm-audit", "qa-governance-reviewer");
   await page.reload();
@@ -505,10 +510,16 @@ test("governance reviewer gets masked read-only intake while unrelated roles fai
   await expect(page.getByTestId("intake-detail-dialog")).toBeVisible();
   await expect(page.getByTestId("intake-detail-actions")).toHaveCount(0);
   await expect(page.getByTestId("fix-field-address")).toHaveCount(0);
+  // Canonical Package 10 lineage grid renders server-masked fields as
+  // "•••• [MASKED]" inside lineage-row-<key>; the masking view checkbox is
+  // off by default, so [MASKED] here proves the API masked contactPhone.
   await expect(
-    page.getByTestId("intake-masked-contactPhone").first(),
-  ).toContainText("FIELD_MASKED");
+    page.getByTestId("lineage-row-contactPhone").first(),
+  ).toContainText("[MASKED]");
   await page.getByTestId("intake-return-button").click();
+  await expect(page.getByTestId("intake-inbox-view")).toBeVisible({
+    timeout: 15_000,
+  });
 
   for (const [role, systemRole] of [
     ["ops-lead", "operations_manager"],

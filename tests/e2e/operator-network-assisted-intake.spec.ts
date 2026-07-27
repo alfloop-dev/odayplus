@@ -485,7 +485,7 @@ test.describe("Assisted Listing Intake — Package 7 product surfaces", () => {
     // the form and must be accepted before the correction is written.
     await expect(
       page.getByTestId("intake-assisted-risk-summary"),
-    ).toContainText("不具本系統擷取的來源證據");
+    ).toContainText("不具本系統擷取證據");
     await page.getByTestId("assisted-save").click();
     await expect(page.getByTestId("intake-assisted-error")).toContainText(
       "了解人工補錄的風險",
@@ -509,7 +509,12 @@ test.describe("Assisted Listing Intake — Package 7 product surfaces", () => {
     await expect(page.getByTestId("intake-detail-dialog")).toContainText(
       "政策未知",
     );
-    await expect(page.getByTestId("intake-policy-reason")).not.toBeEmpty();
+    // Canonical evidence panel renders "UNAVAILABLE" when the reason is
+    // absent, so assert a real governance reason is present instead.
+    await expect(page.getByTestId("evidence-policy-reason")).toBeVisible();
+    await expect(page.getByTestId("evidence-policy-reason")).not.toContainText(
+      "UNAVAILABLE",
+    );
     // Quarantine routes to governance review, not to listing creation.
     await expect(page.getByTestId("decide-action-steward")).toBeVisible();
     await expect(page.getByTestId("decide-action-create")).toHaveCount(0);
@@ -562,10 +567,11 @@ test.describe("Assisted Listing Intake — Package 7 product surfaces", () => {
     )?.trim();
     expect(id).toBeTruthy();
 
-    // Leave entirely, then return via the durable deep link.
+    // Leave entirely, then return via the canonical durable deep link
+    // (?selected=<id>&dialog=detail). The restored detail view replaces the
+    // tab shell, so no tab click is needed or possible here.
     await page.goto("/operator?ws=today");
-    await page.goto(`/operator?ws=network#intake/${id}`);
-    await page.getByTestId("network-tab-1").click();
+    await page.goto(`/operator?ws=network&tab=radar&selected=${id}&dialog=detail`);
 
     await expect(page.getByTestId("intake-detail-dialog")).toBeVisible({
       timeout: 15_000,
@@ -585,9 +591,14 @@ test.describe("Assisted Listing Intake — Package 7 product surfaces", () => {
     await submitUrl(page, URLS.assistedOnly);
     await page.getByTestId("intake-return-button").click();
 
-    await expect(page.getByTestId("intake-count-needs-review")).toHaveText("1");
-    await expect(page.getByTestId("intake-count-blocked")).toHaveText("1");
-    await expect(page.getByTestId("intake-count-awaiting")).toHaveText("1");
+    // Canonical inbox renders server counts inside the saved-view tab labels.
+    await expect(page.getByTestId("intake-tab-needsReview")).toContainText(
+      "(1)",
+    );
+    await expect(page.getByTestId("intake-tab-blocked")).toContainText("(1)");
+    await expect(page.getByTestId("intake-tab-awaitingEntry")).toContainText(
+      "(1)",
+    );
   });
 
   test("a role without listing permission gets the permission-limited state, not an empty queue", async ({
@@ -644,7 +655,7 @@ test.describe("Assisted Listing Intake — Package 7 product surfaces", () => {
     await expect(page.getByTestId("intake-detail-dialog")).toContainText(
       "需授權帳號",
     );
-    await expect(page.getByTestId("intake-policy-reason")).toContainText(
+    await expect(page.getByTestId("evidence-policy-reason")).toContainText(
       "需經核准之合作帳號",
     );
 
@@ -888,10 +899,18 @@ test.describe("Assisted Listing Intake — Package 7 product surfaces", () => {
 
     await freshPage.addInitScript(() => {
       window.sessionStorage.setItem("oday.operator.role", "expansion-manager");
+      // Fail-closed operator identity: without a session subject the UI
+      // disables every write action, hiding the decide buttons.
+      window.sessionStorage.setItem(
+        "oday.operator.subject",
+        "operator-expansion-manager",
+      );
     });
-    // Navigate directly using deep link
-    await freshPage.goto(`/operator?ws=network#intake/${id}`);
-    await freshPage.getByTestId("network-tab-1").click();
+    // Navigate directly using the canonical durable deep link; the restored
+    // detail view replaces the tab shell, so no tab click is needed.
+    await freshPage.goto(
+      `/operator?ws=network&tab=radar&selected=${id}&dialog=detail`,
+    );
 
     // Verify fields grid is updated and correct value is preserved
     await expect(freshPage.getByTestId("intake-detail-dialog")).toBeVisible({
@@ -925,9 +944,14 @@ test.describe("Assisted Listing Intake — Package 7 product surfaces", () => {
     const anotherPage = await anotherContext.newPage();
     await anotherPage.addInitScript(() => {
       window.sessionStorage.setItem("oday.operator.role", "expansion-manager");
+      window.sessionStorage.setItem(
+        "oday.operator.subject",
+        "operator-expansion-manager",
+      );
     });
-    await anotherPage.goto(`/operator?ws=network#intake/${id}`);
-    await anotherPage.getByTestId("network-tab-1").click();
+    await anotherPage.goto(
+      `/operator?ws=network&tab=radar&selected=${id}&dialog=detail`,
+    );
     await expect(anotherPage.getByTestId("intake-detail-dialog")).toBeVisible({
       timeout: 15_000,
     });
@@ -1021,9 +1045,15 @@ test.describe("Assisted Listing Intake — Package 7 product surfaces", () => {
     const promoteResultData = await promoteRes.json();
     await apiContext.dispose();
 
+    // Package 10 promotion is a reviewed two-actor saga: this endpoint only
+    // records the promotion *request* (candidate creation happens after the
+    // independent review, covered by the canonical assisted-listing spec).
+    expect(promoteResultData.status).toBe("PENDING_REVIEW");
+    expect(promoteResultData.promotion_decision_id).toBeTruthy();
+
     const data1Updated = await getIntakeApi(id1);
     const auditPromote = data1Updated.auditEvents.find(
-      (e: any) => e.action === "intake.promote",
+      (e: any) => e.action === "intake.promote_request",
     );
     expect(auditPromote).toBeDefined();
     expect(auditPromote.actorRoleId).toBe("expansion-manager");
@@ -1031,12 +1061,7 @@ test.describe("Assisted Listing Intake — Package 7 product surfaces", () => {
     expect(auditPromote.message).toContain("Audit test promote reason");
     expect(auditPromote.correlationId).toBe("promote-corr-id-12345");
     expect(auditPromote.metadata.targetListingId).toBe(createdListingId);
-    expect(auditPromote.metadata.candidateId).toBe(
-      promoteResultData.candidate.id,
-    );
     expect(auditPromote.metadata.reason).toBe("Audit test promote reason");
-    expect(auditPromote.metadata.before.listingStatus).toBe("new");
-    expect(auditPromote.metadata.after.listingStatus).toBe("candidate");
     expect(auditPromote.metadata.riskSummary).toBe("測試推廣風險宣告");
     expect(auditPromote.metadata.riskAcknowledged).toBe(true);
   });
