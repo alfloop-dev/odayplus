@@ -236,3 +236,31 @@ python -m scripts.data_platform.backfill \
   --max-records 100000 \
   --allow-device-log
 ```
+
+## Live-Provider Geography Backfill
+
+`python -m apps.data_platform.geography_backfill run` geocodes every current
+canonical store address through the governed live providers
+(`geocode.primary_api`, cross-checked against
+`admin_boundary.official_dataset`, plus one `poi.commercial_api` dataset
+snapshot) and projects point-in-time `data_plane.place_geography` rows with H3
+resolutions 8/9/10. Each provider call's verbatim payload is retained in
+`data_plane.geography_provider_snapshots` (dataset snapshots in
+`data_plane.geo_dataset_snapshots`) under content-addressed snapshot ids, so
+replay is idempotent and every coordinate is provider-attributable.
+Conflicting live observations are quarantined in
+`data_plane.quarantined_records` (`GEOGRAPHY_CONFLICT`); the current canonical
+geography is never overwritten.
+
+Required environment: `ODAY_POSTGRES_DSN` (managed instance only),
+`ODP_EXTERNAL_PROVIDER_MODE=live` (fixture/mock modes are refused), the
+selected-provider variables from the provider registry
+(`ODP_GEOCODE_PROVIDER_URL`/`_API_KEY`, `ODP_POI_PROVIDER_URL`/`_API_KEY`,
+`ODP_ADMIN_BOUNDARY_PROVIDER_URL`/`_TOKEN`, `ODP_PRODUCTION_PROVIDER_IDS`).
+Optional: `ODP_GEO_BACKFILL_RATE_LIMIT_PER_SECOND` (default 5),
+`ODP_GEO_CLOUD_SQL_CONNECTOR=true` with `ODP_GEO_GCP_ACCESS_TOKEN` to use the
+approved cloud-sql-python-connector transport for `/cloudsql/` socket DSNs.
+
+`python -m apps.data_platform.geography_backfill inventory --model heatzone`
+prints the model-ready inventory for the same DSN through
+`scripts.models.storage.PostgresModelReadySource`.

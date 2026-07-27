@@ -871,6 +871,18 @@ class PrimaryGeocodeProvider:
         return False
 
     def lookup(self, normalized_address: NormalizedAddress) -> GeocodeCandidate | None:
+        candidate, _payload = self.lookup_with_payload(normalized_address)
+        return candidate
+
+    def lookup_with_payload(
+        self, normalized_address: NormalizedAddress
+    ) -> tuple[GeocodeCandidate | None, Mapping[str, Any]]:
+        """Geocode and also return the verbatim provider payload.
+
+        Callers that must persist immutable provider evidence (for example the
+        point-in-time geography backfill) need the raw response body, not only
+        the parsed candidate.
+        """
         import time
 
         credential = self._credential_or_raise(self.correlation_id)
@@ -884,8 +896,11 @@ class PrimaryGeocodeProvider:
                 correlation_id=self.correlation_id,
                 retry_budget=self.retry_budget,
             )
-            return _candidate_from_geocode_payload(
-                payload, normalized_address, self.provider.provider_id
+            return (
+                _candidate_from_geocode_payload(
+                    payload, normalized_address, self.provider.provider_id
+                ),
+                payload,
             )
 
         attempts_remaining = self.retry_budget
@@ -900,8 +915,11 @@ class PrimaryGeocodeProvider:
                     correlation_id=self.correlation_id,
                     retry_budget=self.retry_budget,
                 )
-                return _candidate_from_geocode_payload(
-                    payload, normalized_address, self.provider.provider_id
+                return (
+                    _candidate_from_geocode_payload(
+                        payload, normalized_address, self.provider.provider_id
+                    ),
+                    payload,
                 )
             except Exception as exc:
                 if not self._is_retryable_exception(exc):
@@ -1989,9 +2007,9 @@ def assert_listing_provider_selected(
         return
 
     provider = _listing_provider_definition()
-    deployment_mode = source_env.get(
-        "ODP_DEPLOY_ENV", source_env.get("APP_ENV", "development")
-    ).strip().lower()
+    deployment_mode = (
+        source_env.get("ODP_DEPLOY_ENV", source_env.get("APP_ENV", "development")).strip().lower()
+    )
     selected = {
         item.strip()
         for item in source_env.get(PRODUCTION_PROVIDER_IDS_ENV_VAR, "").split(",")
