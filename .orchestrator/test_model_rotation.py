@@ -261,6 +261,12 @@ def test_agy_quota_banner_requires_antigravity_provider():
 
 def test_agy_quota_banner_variants_are_classified():
     variants = (
+        # Verbatim reasons observed in the live .orchestrator/state.json for the
+        # antigravity providers: every real banner carries the upgrade/reset
+        # continuation the signature requires.
+        "Error: Individual quota reached. Please upgrade your subscription to increase your limits. Resets in 10m26s.",
+        "Error: Individual quota reached. Please upgrade your subscription to increase your limits. Resets in 4h47m7s.",
+        "Error: Individual quota reached. Please upgrade your subscription to increase your limits. Resets in 4m57s.",
         "Error: Individual quota reached. Please upgrade your subscription to increase your limits. Resets in 2h21m32s.",
         "Individual quota reached. Resets in 41h23m",
         "individual quota reached - try again in 30 minutes",

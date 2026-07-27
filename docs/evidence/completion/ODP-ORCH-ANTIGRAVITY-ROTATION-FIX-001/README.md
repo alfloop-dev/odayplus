@@ -44,6 +44,19 @@ its upgrade/reset continuation) — and only for providers served by the
 Antigravity adapter (`is_antigravity_provider()`). Ordinary failures stay
 `terminal` and keep incrementing the per-task streak.
 
+The signature is checked against the real thing, not a guess: every agy quota
+reason recorded in the live `.orchestrator/state.json` carries the continuation
+the pattern requires —
+
+```
+Error: Individual quota reached. Please upgrade your subscription to increase your limits. Resets in 10m26s.
+Error: Individual quota reached. Please upgrade your subscription to increase your limits. Resets in 4h47m7s.
+Error: Individual quota reached. Please upgrade your subscription to increase your limits. Resets in 4m57s.
+```
+
+— and those exact strings are asserted in
+`test_agy_quota_banner_variants_are_classified`.
+
 ## Reproduction / verification transcript
 
 `repro_p0_findings.py` adapts to the pre-fix API, so the same script runs
