@@ -193,3 +193,29 @@ from the stale `9909d1e5` PR head is reused:
 
 The refreshed exact PR head must receive new required CI results and independent
 approval from the currently assigned reviewer, Codex9, before merge.
+
+## Model-ready Composition Revalidation
+
+After PR #421 head `5cb20055` passed CI, `origin/dev` advanced again to
+`b3f0fba6` through the approved model-ready composition in PR #417. This task
+branch was rebased onto that exact base. The intervening changes affect model
+data ingestion, release contracts, migrations, and their tests; they do not
+modify SiteScore or OpsBoard. The rebase completed without a content conflict,
+and the task diff remains limited to this receipt.
+
+Fresh runs on 2026-07-27 from the recomposed tree:
+
+- `python3 -m pytest tests/integration/test_operator_canonical_wiring.py
+  modules/sitescore/tests -q -p no:randomly --tb=short` — 29 passed and the
+  unchanged cross-module NetPlan test failed because CVXPY is not installed in
+  this worker environment.
+- The same command with
+  `--deselect tests/integration/test_operator_canonical_wiring.py::test_rebalance_invokes_avm_and_netplan_oss_and_persists_results`
+  — 29 passed, 1 deselected, exit 0.
+- `python3 -m ruff check modules/opsboard/application/network_listings.py
+  modules/sitescore/application/reporting.py
+  modules/sitescore/tests/test_sitescore_production_runtime.py
+  tests/integration/test_operator_canonical_wiring.py` — exit 0.
+
+The new exact PR head must receive fresh required CI results and independent
+approval from Codex9. Approval of `5cb20055` must not be reused.
