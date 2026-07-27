@@ -4,7 +4,6 @@ import importlib.util
 import json
 from pathlib import Path
 
-
 ROOT = Path(__file__).resolve().parents[2]
 SCRIPT_PATH = ROOT / "scripts/e2e/check_product_grade_ci_gates.py"
 SPEC = importlib.util.spec_from_file_location("product_grade_ci_gates", SCRIPT_PATH)
@@ -26,6 +25,11 @@ def valid_remote_visual_payload() -> dict[str, object]:
         "viewports": sorted(GATE.REQUIRED_VISUAL_VIEWPORTS),
         "routes": sorted(GATE.REQUIRED_VISUAL_ROUTES),
     }
+
+
+def test_remote_visual_routes_exclude_retired_expansion_page() -> None:
+    assert "/w/expansion/listings" not in GATE.REQUIRED_VISUAL_ROUTES
+    assert "/operator?ws=network&tab=listings" in GATE.REQUIRED_VISUAL_ROUTES
 
 
 def test_remote_visual_approval_requires_exact_live_release_evidence(tmp_path: Path) -> None:

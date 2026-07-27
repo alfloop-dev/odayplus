@@ -108,4 +108,3 @@ Do not commit, push, rebase, merge, deploy, or spawn another agent. Update only
 the R3B ACK, cite pickup SHA, keep
 `program_status: no_go_pending_coordinator_visual_review`, and return all
 changes uncommitted for coordinator review.
-

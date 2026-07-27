@@ -26,9 +26,14 @@ REQUIRED_VISUAL_ROUTES = {
     "/operator?ws=store",
     "/operator?ws=growth",
     "/operator?ws=network&tab=radar",
+    "/operator?ws=network&tab=listings",
     "/operator?ws=govern",
-    "/w/expansion/listings",
     "/intake/:intakeId",
+}
+CANONICAL_LABEL_IMPLEMENTATIONS = {
+    # Package 10's combined reference dialog is intentionally implemented as
+    # two focused command dialogs in the canonical runtime.
+    "Dialog 轉交／暫停": {"Dialog 轉交收件", "Dialog 暫停 SLA"},
 }
 
 def get_sha256(filepath):
@@ -132,6 +137,9 @@ def main():
                         pass
     source_text = "\n".join(react_source)
     react_labels = {label for label in html_labels if label in source_text}
+    for canonical_label, implementation_labels in CANONICAL_LABEL_IMPLEMENTATIONS.items():
+        if all(label in source_text for label in implementation_labels):
+            react_labels.add(canonical_label)
 
     # Check if there are any labels in HTML that are missing in React
     missing_in_react = html_labels - react_labels

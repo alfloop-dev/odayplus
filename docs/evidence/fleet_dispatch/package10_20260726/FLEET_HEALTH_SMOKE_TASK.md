@@ -59,4 +59,3 @@ The ACK must be valid JSON and contain:
 - `docs/design/**`
 - `docs_archive/**`
 - every file under `docs/evidence/**` except the declared ACK
-

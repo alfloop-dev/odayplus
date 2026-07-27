@@ -134,4 +134,3 @@ workers, timeouts, and assertions must not be weakened.
 The R3B ACK must record this rejection, cite the committed addendum SHA, list
 the exact two newly authorized test/config diffs, and remain no-go until
 coordinator visual review at 390px, 1024px, and 1440px passes.
-
