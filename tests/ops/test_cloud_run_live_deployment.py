@@ -46,7 +46,6 @@ def complete_env() -> dict[str, str]:
             for index, name in enumerate(validator.REQUIRED_SECRET_REFERENCES)
         }
     )
-    env["ODP_OPERATOR_SMOKE_BEARER_TOKEN"] = "redacted-token-value"
     env.update(validator.REQUIRED_RUNTIME_VALUES)
     env["ODP_PRODUCTION_PROVIDER_IDS"] = ",".join(sorted(validator.REQUIRED_PRODUCT_PROVIDER_IDS))
     env["ODP_EXTERNAL_PROVIDER_PROBE_TIMEOUT_SECONDS"] = "8"
@@ -164,6 +163,7 @@ def _run_deploy_config_gate(
         "WORKER_SCHEDULE_NAME": "oday-worker-trigger",
         "SCHEDULER_SCHEDULE_NAME": "oday-scheduler-trigger",
         "ODP_CLOUD_SCHEDULER_SERVICE_ACCOUNT": "scheduler@example.test",
+        "ODP_OPERATOR_SMOKE_SERVICE_ACCOUNT": "smoke@example.test",
         "ODP_WORKER_CRON": "*/5 * * * *",
         "ODP_SCHEDULER_CRON": "0 * * * *",
         "ODP_SCHEDULER_TIME_ZONE": "Asia/Taipei",
@@ -544,7 +544,8 @@ def test_workflows_do_not_reference_secrets_in_step_if() -> None:
         text = workflow.read_text(encoding="utf-8")
         if_lines = [line for line in text.splitlines() if line.strip().startswith("if:")]
         assert all("secrets." not in line for line in if_lines)
-        assert "env.HAS_GCP_SA_KEY" in text
+        assert "GCP_SA_KEY" not in text
+        assert "ODP_OPERATOR_SMOKE_SERVICE_ACCOUNT" in text
         assert 'ODP_REQUIRE_LIVE_DATA: "true"' in text
         assert "ODP_DATA_BINDING_MODE: live" in text
         assert "ODP_PERSISTENCE: postgresql" in text
@@ -564,7 +565,7 @@ def test_workflows_do_not_reference_secrets_in_step_if() -> None:
         assert "ODP_COMPETITOR_MANUAL_SOURCE_STATUS: disabled" in text
         assert "ODP_COMPETITOR_MANUAL_SOURCE_ATTESTATION_SECRET" not in text
         assert "validate_cloud_run_live_deployment.py preflight" in text
-        assert "ODP_OPERATOR_SMOKE_BEARER_TOKEN" in text
+        assert "ODP_OPERATOR_SMOKE_BEARER_TOKEN" not in text
         assert "ODP_AUTH_JWKS_URI" in text
         assert "ODP_POI_PROVIDER_URL" in text
         assert "ODP_ADMIN_BOUNDARY_PROVIDER_URL" in text
@@ -611,6 +612,9 @@ def test_deploy_script_preflights_before_build_and_uses_secret_references() -> N
     assert "ODAY_DATABASE_URL=${ODAY_DATABASE_URL_SECRET}" in text
     assert "ODP_WEB_OIDC_CLIENT_SECRET=${ODP_WEB_OIDC_CLIENT_SECRET_SECRET}" in text
     assert "ODP_WEB_SESSION_SECRET=${ODP_WEB_SESSION_SECRET_SECRET}" in text
+    assert "ODP_AUTH_PRINCIPAL_MAP=${ODP_AUTH_PRINCIPAL_MAP_SECRET}" in text
+    assert '--impersonate-service-account="${ODP_OPERATOR_SMOKE_SERVICE_ACCOUNT}"' in text
+    assert "::add-mask::${ODP_OPERATOR_SMOKE_BEARER_TOKEN}" in text
     assert "ODAY_RELEASE_SHA" in text
     assert "ODP_REQUIRE_LIVE_DATA" in text
     assert "ODP_DATA_BINDING_MODE" in text
