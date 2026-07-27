@@ -177,7 +177,7 @@ test("ODP-OC-FE-05 Governance Workspace details and evidence package export", as
 
   // Test 1: Evidence Package produces mock file entry + audit event
   // Go to Evidence Package 匯出 tab
-  await page.getByRole("button", { name: "Evidence Package 匯出" }).click();
+  await page.getByTestId("governance-tab-evidencePackage").click();
   await expect(
     page.getByRole("button", { name: "產生 Evidence Package", exact: true }),
   ).toBeVisible();
@@ -195,14 +195,14 @@ test("ODP-OC-FE-05 Governance Workspace details and evidence package export", as
   // Go to Audit Trail tab and verify audit event has been written.
   // The Govern workspace is now API-bound (ODP-OC-R4-009): the export audit is
   // attributed to the acting role rather than the former hardcoded mock actor.
-  await page.getByRole("button", { name: "Audit Trail" }).click();
+  await page.getByTestId("governance-tab-audit").click();
   const auditTrail = page.getByRole("region", { name: "Audit Trail" });
   await expect(auditTrail).toContainText("Export Evidence Package");
   await expect(auditTrail).toContainText("營運主管");
 
   // Test 2: Status board renders DQ/Model/Connector/Runbook from fixtures
   // Go to 系統狀態盤 tab
-  await page.getByRole("button", { name: "系統狀態盤" }).click();
+  await page.getByTestId("governance-tab-statusBoard").click();
   await expect(
     page.locator('[aria-label="System status board"]'),
   ).toBeVisible();
