@@ -43,7 +43,6 @@ type HeatZoneMapProps = {
 };
 
 type ZoneFeature = GeoJSON.Feature<GeoJSON.Polygon, HeatZone>;
-type PickInfo = { object?: unknown; layer?: { id?: string } | null };
 type LayerKey = "h3" | "listings" | "candidates" | "confidence" | "freshness" | "risk";
 type LayerState = Record<LayerKey, boolean>;
 
@@ -90,6 +89,7 @@ export function HeatZoneMap({
   const productionMode = resolveProductionMode(productionModeProp);
   const mapContainerRef = useRef<HTMLDivElement | null>(null);
   const mapRef = useRef<maplibregl.Map | null>(null);
+  const deckRenderVersionRef = useRef(0);
   const [viewState, setViewState] = useState({
     longitude: 121.48,
     latitude: 25.0,
@@ -99,6 +99,7 @@ export function HeatZoneMap({
   });
   const [layers, setLayers] = useState<LayerState>(() => layerQuery ? parseLayerState(layerQuery) : readLayerStateFromUrl());
   const [runtimeError, setRuntimeError] = useState("");
+  const [mapReady, setMapReady] = useState(false);
   const [evidenceZoneId, setEvidenceZoneId] = useState(selectedZoneId);
   const previousSelectedZoneId = useRef(selectedZoneId);
   const boundaryConfig = useMemo(() => readMapBoundaryConfig(productionMode), [productionMode]);
@@ -112,9 +113,19 @@ export function HeatZoneMap({
   const productionMapReady = liveProviderConfigured && dataSource === "api" && !runtimeError;
 
   const zoneFeatures = useMemo(() => zones.map(zoneToFeature), [zones]);
-  const visibleZones = boundaryConfig.stateFixture === "empty" || boundaryConfig.stateFixture === "no-geometry" ? [] : zones;
-  const visibleZoneFeatures = boundaryConfig.stateFixture === "empty" || boundaryConfig.stateFixture === "no-geometry" ? [] : zoneFeatures;
-  const visibleListings = boundaryConfig.stateFixture === "partial" ? [] : listings;
+  const geometryHidden = boundaryConfig.stateFixture === "empty" || boundaryConfig.stateFixture === "no-geometry";
+  const visibleZones = useMemo(() => geometryHidden ? [] : zones, [geometryHidden, zones]);
+  const visibleZoneFeatures = useMemo(() => geometryHidden ? [] : zoneFeatures, [geometryHidden, zoneFeatures]);
+  const visibleListings = useMemo(
+    () => boundaryConfig.stateFixture === "partial" ? [] : listings,
+    [boundaryConfig.stateFixture, listings],
+  );
+  const mapDataRef = useRef({
+    selectedZoneId,
+    visibleZoneFeatures,
+    visibleZones,
+    zones,
+  });
   const evidenceZone = useMemo(
     () => zones.find((zone) => zone.id === evidenceZoneId) ?? zones.find((zone) => zone.id === selectedZoneId) ?? zones[0],
     [evidenceZoneId, selectedZoneId, zones],
@@ -130,6 +141,12 @@ export function HeatZoneMap({
     }),
     [candidates, layers, selectedZoneId, visibleListings, visibleZoneFeatures, visibleZones],
   );
+  mapDataRef.current = {
+    selectedZoneId,
+    visibleZoneFeatures,
+    visibleZones,
+    zones,
+  };
 
   useEffect(() => {
     if (productionMode && !productionMapReady) return;
@@ -149,6 +166,7 @@ export function HeatZoneMap({
     });
 
     mapRef.current = map;
+    const initialMapData = mapDataRef.current;
     map.on("error", (event) => {
       setRuntimeError(
         `Map tile boundary error · correlation_id ${boundaryConfig.correlationId} · ${
@@ -160,16 +178,23 @@ export function HeatZoneMap({
       const projected = map.project(coordinates);
       return { x: projected.x, y: projected.y };
     };
+    const markMapReady = () => {
+      if (mapRef.current !== map) return;
+      window.__odpHeatZoneMapProject = projectMapCoordinate;
+      setMapReady(true);
+    };
+    map.once("idle", markMapReady);
     map.resize();
-    fitToZones(map, visibleZones.length ? visibleZones : zones);
-    window.__odpHeatZoneMapProject = projectMapCoordinate;
+    fitToZones(map, initialMapData.visibleZones.length ? initialMapData.visibleZones : initialMapData.zones);
+    map.triggerRepaint();
 
     map.on("load", () => {
+      const mapData = mapDataRef.current;
       map.addSource("odp-local-heatzones", {
         type: "geojson",
         data: {
           type: "FeatureCollection",
-          features: visibleZoneFeatures,
+          features: mapData.visibleZoneFeatures,
         },
       });
       map.addLayer({
@@ -198,19 +223,19 @@ export function HeatZoneMap({
         paint: {
           "line-color": [
             "case",
-            ["==", ["get", "id"], selectedZoneId],
+            ["==", ["get", "id"], mapData.selectedZoneId],
             "#172554",
             "#ffffff",
           ],
           "line-width": [
             "case",
-            ["==", ["get", "id"], selectedZoneId],
+            ["==", ["get", "id"], mapData.selectedZoneId],
             4,
             1.5,
           ],
         },
       });
-      fitToZones(map, visibleZones.length ? visibleZones : zones);
+      fitToZones(map, mapData.visibleZones.length ? mapData.visibleZones : mapData.zones);
       map.resize();
     });
 
@@ -229,6 +254,8 @@ export function HeatZoneMap({
 
     return () => {
       map.off("move", syncDeckView);
+      map.off("idle", markMapReady);
+      setMapReady(false);
       if (window.__odpHeatZoneMapProject === projectMapCoordinate) {
         delete window.__odpHeatZoneMapProject;
       }
@@ -239,11 +266,32 @@ export function HeatZoneMap({
     boundaryConfig,
     productionMapReady,
     productionMode,
-    selectedZoneId,
-    visibleZoneFeatures,
-    visibleZones,
-    zones,
   ]);
+
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map?.isStyleLoaded()) return;
+
+    const source = map.getSource("odp-local-heatzones") as maplibregl.GeoJSONSource | undefined;
+    source?.setData({
+      type: "FeatureCollection",
+      features: visibleZoneFeatures,
+    });
+    if (map.getLayer("odp-local-heatzone-line")) {
+      map.setPaintProperty("odp-local-heatzone-line", "line-color", [
+        "case",
+        ["==", ["get", "id"], selectedZoneId],
+        "#172554",
+        "#ffffff",
+      ]);
+      map.setPaintProperty("odp-local-heatzone-line", "line-width", [
+        "case",
+        ["==", ["get", "id"], selectedZoneId],
+        4,
+        1.5,
+      ]);
+    }
+  }, [selectedZoneId, visibleZoneFeatures]);
 
   useEffect(() => {
     setLayers(layerQuery ? parseLayerState(layerQuery) : readLayerStateFromUrl());
@@ -263,20 +311,23 @@ export function HeatZoneMap({
     });
   };
 
-  const handlePick = (info: PickInfo) => {
-    const layerId = info.layer?.id;
-    if (!layerId || !info.object) return;
-    const href = pickHref(layerId, info.object, layers);
-    if (href) window.location.assign(href);
-  };
-
   const handleCanvasClick = (event: MouseEvent<HTMLDivElement>) => {
     const map = mapRef.current;
     if (!map) return;
     const rect = event.currentTarget.getBoundingClientRect();
     const point = { x: event.clientX - rect.left, y: event.clientY - rect.top };
     const href = nearestPickHref(point, { zones, listings, candidates, layers, map });
-    if (href) window.location.assign(href);
+    if (href) {
+      event.stopPropagation();
+      window.location.assign(href);
+    }
+  };
+  const handleDeckAfterRender = () => {
+    deckRenderVersionRef.current += 1;
+    if (mapContainerRef.current) {
+      mapContainerRef.current.dataset.deckLayers = encodeLayerState(layers);
+      mapContainerRef.current.dataset.deckRenderVersion = String(deckRenderVersionRef.current);
+    }
   };
 
   if (productionMode && !productionMapReady) {
@@ -308,6 +359,7 @@ export function HeatZoneMap({
     <section
       aria-label="Interactive HeatZone map"
       className={styles.mapShell}
+      data-map-ready={mapReady ? "true" : "false"}
       data-selected-zone={selectedZoneId}
       data-testid="heat-zone-map"
     >
@@ -374,7 +426,7 @@ export function HeatZoneMap({
         <DeckGL
           controller={false}
           layers={deckLayers}
-          onClick={handlePick}
+          onAfterRender={handleDeckAfterRender}
           pickingRadius={8}
           style={{ cursor: "crosshair", inset: "0", pointerEvents: "auto", position: "absolute", zIndex: "1" }}
           viewState={viewState}
