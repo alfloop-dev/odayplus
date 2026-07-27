@@ -89,6 +89,9 @@ jobs:
       - name: Test product code
         run: uv run pytest -m "not requires_live_env" tests modules apps shared models
 
+      - name: Test official real-estate outcomes on PostgreSQL 16
+        run: uv run pytest tests/integration/test_official_real_estate_postgresql.py
+
       # Blocks: an API change that never reached the checked-in OpenAPI
       # artifact, an artifact change that never reached the generated client,
       # and any breaking change not listed in

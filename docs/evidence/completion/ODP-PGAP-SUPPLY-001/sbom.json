@@ -1,10 +1,10 @@
 {
   "bomFormat": "CycloneDX",
   "specVersion": "1.5",
-  "serialNumber": "urn:uuid:sha256-879b76b3a0ef49f0dd4d0ada81a761d2",
+  "serialNumber": "urn:uuid:sha256-459c672b6baa26f7b38277b9fb83fa50",
   "version": 1,
   "metadata": {
-    "timestamp": "2026-07-24T19:59:57.104075+00:00",
+    "timestamp": "2026-07-26T16:31:23.989491+00:00",
     "component": {
       "name": "oday-plus",
       "version": "0.1.0",
@@ -13,15 +13,15 @@
     "properties": [
       {
         "name": "git-sha",
-        "value": "4b31709b7d0f0ba410a22ae05e1ee8bc74eba5fb"
+        "value": "cf68e42dfd91c0d8be8ce43dde8bcb9d6a8f08fe"
       },
       {
         "name": "sbom-hash",
-        "value": "879b76b3a0ef49f0dd4d0ada81a761d2711dda41ae3a4cc509deb104c9848f3d"
+        "value": "459c672b6baa26f7b38277b9fb83fa509773acf41f6289219542e1b942414d44"
       },
       {
         "name": "sbom-content-digest",
-        "value": "sha256:087574a57a3c91f987ec7cb604aefa79fe83569b584f0fbb6752a50d6cb3146a"
+        "value": "sha256:bf45c1fd525255f38416ecf233962503c3ff635cee72a0b28726bfa0314bb37c"
       }
     ]
   },
@@ -3878,10 +3878,10 @@
     },
     {
       "name": "anyio",
-      "version": "4.14.1",
+      "version": "4.13.0",
       "type": "library",
-      "purl": "pkg:pypi/anyio@4.14.1",
-      "bom-ref": "pkg:pypi/anyio@4.14.1"
+      "purl": "pkg:pypi/anyio@4.13.0",
+      "bom-ref": "pkg:pypi/anyio@4.13.0"
     },
     {
       "name": "appdirs",
@@ -4148,6 +4148,13 @@
       "type": "library",
       "purl": "pkg:pypi/fastapi@0.138.1",
       "bom-ref": "pkg:pypi/fastapi@0.138.1"
+    },
+    {
+      "name": "fasteners",
+      "version": "0.20",
+      "type": "library",
+      "purl": "pkg:pypi/fasteners@0.20",
+      "bom-ref": "pkg:pypi/fasteners@0.20"
     },
     {
       "name": "filelock",
@@ -4799,6 +4806,13 @@
       "type": "library",
       "purl": "pkg:pypi/pendulum@3.2.0",
       "bom-ref": "pkg:pypi/pendulum@3.2.0"
+    },
+    {
+      "name": "pgserver",
+      "version": "0.1.4",
+      "type": "library",
+      "purl": "pkg:pypi/pgserver@0.1.4",
+      "bom-ref": "pkg:pypi/pgserver@0.1.4"
     },
     {
       "name": "pillow",

@@ -263,6 +263,15 @@ class BoundedModelTrainingRelease:
         approval_payload: dict[str, object],
         rollback_target: str | None,
     ) -> dict[str, Any]:
+        if not spec.production_release_enabled:
+            reason = (
+                spec.production_block_reason
+                or "PRODUCTION_RELEASE_NOT_ENABLED"
+            )
+            raise ModelTrainingConfigurationError(
+                f"{spec.key} production release is BLOCKED: {reason}; "
+                "training and backtest artifacts may not receive release aliases"
+            )
         approval = require_approval_document(
             approval_payload,
             model_name=spec.model_name,
