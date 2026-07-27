@@ -49,6 +49,9 @@ def _at(day: date, hour: int) -> datetime:
     return datetime.combine(day, time(hour=hour), tzinfo=UTC)
 
 
+MODEL_SCORING_NOW = _at(ORIGIN + timedelta(days=30), 0)
+
+
 class _PsycopgInstallationClient:
     def __init__(self, connection) -> None:
         self.connection = connection
@@ -528,7 +531,21 @@ def _prepare_train_reload(
 
 def test_postgresql_views_compute_real_causal_labels_and_isolate_tenants(
     intake_blank_db,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    class _FixedDateTime(datetime):
+        @classmethod
+        def now(cls, tz=None):
+            if tz is not None:
+                return MODEL_SCORING_NOW
+            return MODEL_SCORING_NOW.replace(tzinfo=None)
+
+    # The point-in-time fixture intentionally models a completed historical
+    # training horizon. Bind the runtime freshness check to that scenario's
+    # clock so the test remains deterministic while production keeps its
+    # strict 90-day maximum feature age.
+    monkeypatch.setattr("modules.sitescore.domain.scoring.datetime", _FixedDateTime)
+
     with intake_blank_db.connect() as connection:
         _install_minimal_authoritative_schema(connection)
         tenant_a, target_a, tenant_c, target_c, daily_runs = _seed_point_in_time_history(connection)
