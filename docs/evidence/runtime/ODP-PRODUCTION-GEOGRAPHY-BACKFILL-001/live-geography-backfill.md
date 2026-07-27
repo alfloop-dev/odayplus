@@ -5,6 +5,8 @@ Executor: `Claude3`
 Execution date: `2026-07-27`
 Reviewer: `Codex6`
 
+P0 replay correction executor: `Codex5`; reviewer: `Codex8`.
+
 ## Execution environment (redacted)
 
 - Target: PostgreSQL 16 Cloud SQL instance `alfaloop-data-project:asia-east1:oday-dev-sql`
@@ -85,7 +87,7 @@ empty string, and the live gateway rejects an empty address with HTTP 400
 Verification: `pytest tests/integration/test_place_geography_backfill.py`
 (9 passed, PostgreSQL 16), `ruff check` / `ruff format --check` clean.
 
-## Exact-head replay corrections (commit `042b4f97`)
+## Exact-head replay corrections
 
 Independent review found two replay gaps after the live execution:
 
@@ -101,17 +103,44 @@ Independent review found two replay gaps after the live execution:
    stable content outside that reuse path, the run fails closed and never
    mutates the stored snapshot.
 
-These corrections do not claim a second production backfill. They make the
-next replay deterministic and correct the durable run-row accounting when it
-executes. On the exact task head, the PostgreSQL 16 integration suite proves
-partial-run recovery, cumulative run-row totals, same-partition dataset
-snapshot reuse, immutable-content conflict rejection, quarantine behavior,
+Independent review then found that immutable quarantine observations had
+accumulated to 2007 rows for only 497 distinct source/reason pairs. Counting
+every observation as unresolved made the deterministic run row replay
+dependent and double-counted one `GEOGRAPHY_CONFLICT` source that already had
+canonical geography. Commit `d5ed4201` therefore leaves every immutable audit
+observation intact but defines effective unresolved quarantine as one row per
+distinct source, excluding any source represented in the partition's
+canonical geography.
+
+The corrected exact head was replayed against production PG16 on 2026-07-27
+with explicit `--as-of 2026-07-27`. Both immutable dataset snapshots were
+reused without a live dataset refetch. The live geocoder processed all
+addressed stores and exited 0:
+
+```json
+{"run_id": "00172489-4c56-5c07-a89b-c11f070ec9e9",
+ "eligible_stores": 2442, "processed": 2405, "skipped_no_address": 37,
+ "inserted": 0, "unchanged": 1908,
+ "quarantined_total": 497, "canonical_after": 1909,
+ "quarantined_after": 496, "reconciled": true,
+ "partition_complete": true, "admin_snapshot_reused": true,
+ "poi_snapshot_reused": true}
+```
+
+The 497 observations in this replay contain 496 exclusive unresolved sources
+plus one `GEOGRAPHY_CONFLICT` observation for a source already covered by
+canonical geography. Thus `canonical 1909 + exclusive quarantine 496 = 2405`
+addressed stores, without deleting or resolving audit evidence.
+
+On the exact task head, the PostgreSQL 16 integration suite proves partial-run
+recovery, cumulative run-row totals, same-partition dataset snapshot reuse,
+immutable-content conflict rejection, audit-preserving effective quarantine,
 and idempotent canonical writes:
 
 ```text
 uv run pytest tests/integration/test_place_geography_backfill.py -q
-............                                                     [100%]
-12 passed
+.............                                                    [100%]
+13 passed
 
 uv run ruff check apps/data_platform/geography_backfill.py \
   tests/integration/test_place_geography_backfill.py
@@ -141,9 +170,24 @@ uv run ruff format --check apps/data_platform/geography_backfill.py \
 | Dataset snapshots | `adminboundary-20260727-8ae543f5e03e`, `poi-20260727-f7c9c3154087` |
 
 Quarantine evidence for the run accumulates one row per distinct live
-observation (content-addressed snapshot ids): 935 unresolved rows covering
-496 distinct stores — the same 496 stores the terminal report counts. Earlier
+observation (content-addressed snapshot ids): after the corrected replay,
+2442 unresolved audit rows cover 497 distinct sources. The effective
+unresolved projection contains 496 exclusive sources because the single
+`GEOGRAPHY_CONFLICT` source is also present in canonical geography. Earlier
 executions' differing observations remain recorded, not overwritten.
+
+| Quarantine reason | Immutable audit rows | Distinct sources |
+|---|---:|---:|
+| `ADDRESS_UNNORMALIZABLE` | 1 | 1 |
+| `ADMIN_BOUNDARY_MISMATCH` | 1987 | 298 |
+| `COORDINATES_OUT_OF_MARKET` | 236 | 35 |
+| `GEOCODE_ADMIN_MISMATCH` | 56 | 9 |
+| `GEOCODE_UNRESOLVED` | 160 | 153 |
+| `GEOGRAPHY_CONFLICT` | 2 | 1 |
+
+The persisted run row now reads `SUCCEEDED / processed_count=2405 /
+valid_loaded=1909 / quarantined_count=496 / reconciled=true /
+partition_complete=true`.
 
 ### Admin-boundary vintage finding
 
@@ -198,9 +242,9 @@ layer; they are enumerated here so the fleet can seed follow-up work.
 1. *Approved live provider calls with immutable snapshot and tenant lineage* —
    5337 verbatim provider snapshots + 2 dataset snapshots; every canonical row
    has 1:1 lineage and 0 tenant mismatches.
-2. *Idempotent replay; conflicts quarantined, never overwritten* — four-run
-   replay table above; conflict/quarantine rows accumulate as distinct
-   observations; 0 canonical overwrites.
+2. *Idempotent replay; conflicts quarantined, never overwritten* — corrected
+   production replay exited 0 with 1909 canonical + 496 exclusive unresolved
+   sources; 2442 immutable audit observations remain; 0 canonical overwrites.
 3. *Real observed/valid timestamps, geocode confidence, H3 resolution 9* —
    100% H3 8/9/10 coverage, 0 NULL timestamps, confidence recorded per row.
 4. *HeatZone inventory reports actual train/validation/test counts against
@@ -209,5 +253,6 @@ layer; they are enumerated here so the fleet can seed follow-up work.
 5. *No fixture/mock/synthetic coordinate or inferred `opened_on`* — CLI
    refuses non-live modes; all coordinates are provider-attributable via
    snapshots; `opened_on` left NULL everywhere.
-6. *Independent exact-head review and PG16 integration tests* — 12/12 PG16
-   integration tests pass locally; exact-head review requested from `Codex6`.
+6. *Independent exact-head review and PG16 integration tests* — 13/13 PG16
+   integration tests pass locally; corrected production replay and exact-head
+   review requested from `Codex8`.
