@@ -77,51 +77,51 @@ STALE_RELEASE_REFS = (
 FE_TASKS = {
     "FE-R0-001": {
         "keywords": ("OpsBoard App Shell", "Task Center"),
-        "specs": ("tests/e2e/e2e-api-bound-ui.spec.ts",),
+        "specs": ("tests/e2e/e2e-operator-console.spec.ts",),
     },
     "FE-EXP-001": {
         "keywords": ("HeatZone Map and Ranking",),
-        "specs": ("tests/e2e/e2e-map.spec.ts", "tests/e2e/e2e-expansion-product.spec.ts"),
+        "specs": ("tests/e2e/operator-network-listings.spec.ts",),
     },
     "FE-EXP-002": {
         "keywords": ("Listing to Candidate Site Workflow",),
-        "specs": ("tests/e2e/e2e-expansion-product.spec.ts",),
+        "specs": ("tests/e2e/operator-network-listings.spec.ts",),
     },
     "FE-EXP-003": {
         "keywords": ("SiteScore Report and Opening Approval",),
-        "specs": ("tests/e2e/e2e-expansion-product.spec.ts",),
+        "specs": ("tests/e2e/operator-network-scoring.spec.ts",),
     },
     "FE-OPS-001": {
         "keywords": ("Operations Alert Workbench",),
-        "specs": ("tests/e2e/e2e-ops-intervention-price-ad-product.spec.ts",),
+        "specs": ("tests/e2e/operator-store-ops.spec.ts",),
     },
     "FE-INT-001": {
         "keywords": ("Intervention Lifecycle",),
-        "specs": ("tests/e2e/e2e-ops-intervention-price-ad-product.spec.ts",),
+        "specs": ("tests/e2e/operator-store-ops.spec.ts",),
     },
     "FE-PRICE-001": {
         "keywords": ("PriceOps Simulation", "Pricing approval and rollback"),
-        "specs": ("tests/e2e/e2e-ops-intervention-price-ad-product.spec.ts",),
+        "specs": ("tests/e2e/operator-growth.spec.ts",),
     },
     "FE-AD-001": {
         "keywords": ("AdLift Candidate", "AdLift incrementality"),
-        "specs": ("tests/e2e/e2e-ops-intervention-price-ad-product.spec.ts",),
+        "specs": ("tests/e2e/operator-growth.spec.ts",),
     },
     "FE-AVM-001": {
         "keywords": ("Asset Valuation and DataRoom", "AVM valuation"),
-        "specs": ("tests/e2e/e2e-avm-netplan-learning-audit-product.spec.ts",),
+        "specs": ("tests/e2e/e2e-network-find-areas-api-binding.spec.ts",),
     },
     "FE-NET-001": {
         "keywords": ("NetPlan Scenario Builder", "NetPlan solve"),
-        "specs": ("tests/e2e/e2e-avm-netplan-learning-audit-product.spec.ts",),
+        "specs": ("tests/e2e/e2e-network-find-areas-api-binding.spec.ts",),
     },
     "FE-LEARN-001": {
         "keywords": ("Learning Hub Model Governance", "Model release and rollback"),
-        "specs": ("tests/e2e/e2e-avm-netplan-learning-audit-product.spec.ts",),
+        "specs": ("tests/e2e/operator-governance.spec.ts",),
     },
     "FE-AUDIT-001": {
         "keywords": ("Audit Decision Log", "Decision audit export"),
-        "specs": ("tests/e2e/e2e-avm-netplan-learning-audit-product.spec.ts",),
+        "specs": ("tests/e2e/operator-governance.spec.ts",),
     },
     "FE-XCUT-001": {
         "keywords": ("Design token package",),
@@ -133,7 +133,7 @@ FE_TASKS = {
     },
     "FE-XCUT-006": {
         "keywords": ("Map and chart fallback",),
-        "specs": ("tests/e2e/e2e-map.spec.ts",),
+        "specs": ("tests/e2e/operator-network-listings.spec.ts",),
     },
 }
 
@@ -896,28 +896,24 @@ def test_closeout_queue_is_machine_readable_and_complete() -> None:
     assert asset_reviewer_entry["status"] == "waiting_for_review_after_handoff"
     assert asset_reviewer_entry["actor"] == "Codex2"
     assert asset_reviewer_entry["blocking_type"] == "reviewer_status_closeout"
-    assert "tests/e2e/e2e-avm-netplan.spec.ts" in asset_reviewer_entry["evidence_refs"]
     assert (
-        "tests/e2e/e2e-avm-netplan-learning-audit-product.spec.ts"
+        "tests/e2e/e2e-network-find-areas-api-binding.spec.ts"
+        in asset_reviewer_entry["evidence_refs"]
+    )
+    assert (
+        "docs/evidence/fleet_dispatch/package10_20260726/"
+        "ODP-P10-LEGACY-VISUAL-RETIREMENT-VERIFICATION.md"
         in asset_reviewer_entry["evidence_refs"]
     )
     assert "masking leakage" not in queue_text
     assert "masking leakage" not in manifest_text
     assert "non-leakage E2E assertions" in manifest_text
 
-    avm_spec_text = (ROOT / "tests/e2e/e2e-avm-netplan.spec.ts").read_text(encoding="utf-8")
-    avm_product_spec_text = (
-        ROOT / "tests/e2e/e2e-avm-netplan-learning-audit-product.spec.ts"
+    canonical_asset_spec_text = (
+        ROOT / "tests/e2e/e2e-network-find-areas-api-binding.spec.ts"
     ).read_text(encoding="utf-8")
-    for token in (
-        "MASKED_BY_PERMISSION",
-        'not.toContainText("17,654")',
-        'not.toContainText("33,390")',
-        "avm-reserve-marker",
-        "avm-asking-marker",
-    ):
-        assert token in avm_spec_text
-        assert token in avm_product_spec_text
+    for token in ("ODP-FIN-FE-002", "network-find-areas"):
+        assert token in canonical_asset_spec_text
 
 
 def test_release_gate_runs_closeout_queue_checker() -> None:

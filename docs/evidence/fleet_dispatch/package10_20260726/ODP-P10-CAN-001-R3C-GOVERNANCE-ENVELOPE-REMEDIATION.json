@@ -1,0 +1,48 @@
+{
+  "task_id": "ODP-P10-CAN-001-R3C",
+  "title": "Package 10 Governance delayed-envelope crash remediation",
+  "status": "dispatched",
+  "owner": "Claude2",
+  "reviewer": "Antigravity4",
+  "source_branch": "origin/fix/package10-final-20260725",
+  "finding": {
+    "route": "/operator",
+    "trigger": "wait for the shell bootstrap envelope, then open 治理稽核",
+    "error": "TypeError: Cannot read properties of undefined (reading 'toLowerCase')",
+    "location": "apps/web/features/operator/GovernanceWorkspace.tsx:1534",
+    "cause": "OperatorConsole passes shell approvals without GovernanceApproval.module into GovernanceWorkspace"
+  },
+  "writable_paths": [
+    "apps/web/features/operator/OperatorConsole.tsx",
+    "apps/web/features/operator/GovernanceWorkspace.tsx",
+    "apps/web/features/operator/governanceTypes.ts",
+    "apps/web/features/operator/governance/**",
+    "apps/web/features/operator/**/*Governance*.test.ts",
+    "apps/web/features/operator/**/*Governance*.test.tsx",
+    "docs/evidence/fleet_dispatch/package10_20260726/acks/ODP-P10-CAN-001-R3C.json"
+  ],
+  "forbidden_paths": [
+    "tests/e2e/**",
+    "apps/api/**",
+    "Package 10 canonical HTML and archived design evidence",
+    "legacy or retired Operator visual implementations"
+  ],
+  "acceptance": [
+    "Delayed shell-envelope navigation to Govern has no route-error or uncaught page error",
+    "Today to Govern, delayed Today to Govern, and Store Ops to Govern paths all render the canonical workspace",
+    "Direct Govern navigation and reload remain usable",
+    "Governance API remains the source of truth for approvals, decisions, evidence, reason, actor, correlation and audit",
+    "Production does not use fixture or seed approval fallback",
+    "Malformed external fields fail closed or render explicit unavailable state without route crash",
+    "Regression coverage exists for the shell-envelope shape mismatch",
+    "Web unit, web typecheck, root typecheck, build and governance Playwright verification pass",
+    "No ODP-P10-CAN-003-R3A E2E spec is changed",
+    "Independent Antigravity review is required"
+  ],
+  "conflicts": [
+    {
+      "task_id": "ODP-P10-CAN-003-R3A",
+      "rule": "R3A owns only canonical E2E specs; R3C owns the product fix; no writable-path overlap"
+    }
+  ]
+}

@@ -1,0 +1,189 @@
+{
+  "program_id": "ODP-P10-CANONICAL-R3",
+  "recovery_task_id": "ODP-P10-PROGRAM-RECOVERY-001",
+  "status": "no_go_pending_R3C_R3D_review_and_CAN003",
+  "next": "Accept exact R3C and R3D SHAs, then dispatch ODP-P10-CAN-003-R3A",
+  "worktree": "/home/lupin/oday-plus-package10-final",
+  "branch": "fix/package10-final-20260725",
+  "execution_model": "strict_serial_ownership_transfer",
+  "prepared_at": "2026-07-26T12:01:23Z",
+  "persistence_state": "coordinator_checkpoint_current",
+  "authority_rules": {
+    "accepted": [
+      "committed program documents",
+      "committed dispatch documents",
+      "immediately preceding committed ACK",
+      "coordinator-reviewed committed and pushed SHA"
+    ],
+    "rejected": [
+      "chat claims",
+      "/tmp artifacts",
+      "uncommitted worktree state",
+      "/home/lupin/oday-plus evidence",
+      "route-only retirement claims"
+    ]
+  },
+  "mandatory_wave_protocol": [
+    "verify worktree and branch and read committed program documents, dispatch documents, and immediately preceding committed ACK",
+    "inspect current assignments, ACKs, and repository evidence for other-LLM conflicts and record resolutions",
+    "change only authorized paths and update only the wave's own ACK",
+    "run wave-specific gates and git diff --check",
+    "obtain and record coordinator review",
+    "commit only authorized paths and push the exact commit to origin/fix/package10-final-20260725",
+    "record the full commit SHA, pushed ref, gates, conflicts, and coordinator decision in the ACK",
+    "transfer ownership only after coordinator confirmation of the committed ACK and pushed SHA"
+  ],
+  "committed_read_set": [
+    "docs/evidence/fleet_dispatch/package10_20260726/PROGRAM_LEDGER_RECOVERY_TASK.md",
+    "docs/evidence/fleet_dispatch/PACKAGE_10_CANONICAL_RUNTIME_FLEET_DISPATCH_2026-07-26.md",
+    "docs/evidence/fleet_dispatch/PACKAGE_10_CANONICAL_RUNTIME_FLEET_DISPATCH_2026-07-26.json",
+    "docs/design/PACKAGE_10_CANONICAL_RUNTIME_EXECUTION_TASKS_2026-07-26.md",
+    "docs/design/PACKAGE_10_CANONICAL_RUNTIME_EXECUTION_TASKS_2026-07-26.json",
+    "docs/design/PACKAGE_10_INTAKE_DETAIL_CANONICALIZATION_EXECUTION_ADDENDUM_2026-07-26.md",
+    "docs/design/PACKAGE_10_INTAKE_DETAIL_CANONICALIZATION_EXECUTION_ADDENDUM_2026-07-26.json",
+    "docs/evidence/PACKAGE_10_PAGE_BY_PAGE_RUNTIME_DIFF_2026-07-26.md",
+    "docs/evidence/PACKAGE_10_PAGE_BY_PAGE_RUNTIME_DIFF_2026-07-26.json",
+    "docs/evidence/fleet_dispatch/package10_20260726/ODP-P10-CONFLICT-VISUAL-AUDIT.md",
+    "docs/evidence/fleet_dispatch/package10_20260726/ODP-P10-CONFLICT-VISUAL-AUDIT.json",
+    "docs/evidence/fleet_dispatch/package10_20260726/ODP-P10-LEGACY-VISUAL-RETIREMENT-VERIFICATION.md",
+    "docs/evidence/fleet_dispatch/package10_20260726/ODP-P10-LEGACY-VISUAL-RETIREMENT-VERIFICATION.json",
+    "docs/evidence/fleet_dispatch/package10_20260726/ODP-P10-CAN-001-R3A-ORPHAN-SHELL-ADDENDUM.md",
+    "docs/evidence/fleet_dispatch/package10_20260726/ODP-P10-CAN-001-R3A-ORPHAN-SHELL-ADDENDUM.json",
+    "docs/evidence/fleet_dispatch/package10_20260726/ODP-P10-CAN-001-R3B-LISTING-RADAR-ADDENDUM.md",
+    "docs/evidence/fleet_dispatch/package10_20260726/ODP-P10-CAN-001-R3B-LISTING-RADAR-ADDENDUM.json",
+    "immediately preceding ACK under docs/evidence/fleet_dispatch/package10_20260726/acks/"
+  ],
+  "waves": [
+    {
+      "order": 1,
+      "task_id": "ODP-P10-CAN-001-R3A",
+      "status": "pass_committed_pushed",
+      "scope": "retire old runtime, routes, feature roots, shells, navigation, loader, alternate legacy visuals, and 18 legacy visual specs while preserving canonical routes and reusable nonvisual/API/domain behavior",
+      "forbidden": [
+        "canonical intake redesign implementation",
+        "edits to 16 canonical E2E specs"
+      ],
+      "entry_checkpoint": "committed recovery documents and coordinator-checkpointed ODP-P10-PROGRAM-RECOVERY-001 ACK",
+      "exit_checkpoint": "retirement gates pass and own ACK is coordinator-reviewed, committed, pushed, and records exact SHA",
+      "next": "ODP-P10-CAN-001-R3B"
+    },
+    {
+      "order": 2,
+      "task_id": "ODP-P10-CAN-001-R3B",
+      "status": "pass_merged_by_PR_391",
+      "scope": "canonical intake detail production integration through OperatorConsole -> NetworkFindAreasWorkspace -> AssistedIntakeSection and durable /intake/[intakeId], including continuous full-page detail, source and value provenance, match evidence, desktop compare, 390px inline DESKTOP_REQUIRED, tablet functionality, assignment/SLA, WORM/receipts, promotion, human decisions, timeline, and durable return/deep link",
+      "forbidden": [
+        "edits to canonical E2E specs",
+        "parallel start before R3A ownership transfer"
+      ],
+      "entry_checkpoint": "committed and pushed passing R3A ACK plus coordinator ownership transfer",
+      "exit_checkpoint": "product gates pass and own ACK is coordinator-reviewed, committed, pushed, and records exact SHA",
+      "next": "ODP-P10-CAN-002-R3"
+    },
+    {
+      "order": 3,
+      "task_id": "ODP-P10-CAN-002-R3",
+      "status": "pass_merged_by_PR_393",
+      "scope": "API/security contract re-verification with fail-closed permissions, tenant boundaries, source policy, self-review denial, idempotency, version conflict, audit/WORM evidence, and promotion",
+      "forbidden": [
+        "web visual changes",
+        "E2E changes"
+      ],
+      "entry_checkpoint": "committed and pushed passing R3B ACK plus coordinator ownership transfer",
+      "exit_checkpoint": "API/security gates pass and own ACK is coordinator-reviewed, committed, pushed, and records exact SHA",
+      "next": "ODP-P10-CAN-003-R3A"
+    },
+    {
+      "order": 4,
+      "task_id": "ODP-P10-CAN-003-R3A",
+      "status": "blocked_on_accepted_R3C_and_R3D",
+      "remediation_prerequisites": [
+        "PR #396 exact accepted SHA",
+        "PR #397 exact accepted SHA"
+      ],
+      "scope": "canonical E2E assertion and responsive coverage alignment for the implemented Package 10 runtime",
+      "rule": "a missing required UI is a product no-go and never a stale assertion to weaken",
+      "entry_checkpoint": "committed and pushed passing CAN-002-R3 ACK plus coordinator ownership transfer",
+      "exit_checkpoint": "canonical coverage gates pass and own ACK is coordinator-reviewed, committed, pushed, and records exact SHA",
+      "next": "ODP-P10-CAN-003-R3B"
+    },
+    {
+      "order": 5,
+      "task_id": "ODP-P10-CAN-003-R3B",
+      "status": "blocked_on_CAN003_R3A_and_accepted_R3C_R3D",
+      "scope": "read-only complete Chromium gate with expected count declared from the committed canonical spec inventory at pickup",
+      "forbidden": [
+        "product edits",
+        "test edits",
+        "configuration edits"
+      ],
+      "entry_checkpoint": "committed and pushed passing R3A ACK plus coordinator ownership transfer",
+      "exit_checkpoint": "all declared Chromium tests pass unchanged and own ACK is coordinator-reviewed, committed, pushed, and records exact SHA",
+      "next": "ODP-P10-CAN-004-R3"
+    },
+    {
+      "order": 6,
+      "task_id": "ODP-P10-CAN-004-R3",
+      "status": "blocked_on_CAN003_R3B_and_release_dependencies",
+      "scope": "release, evidence reconciliation, integration, and deployment readiness; deployment requires a real receipt",
+      "entry_checkpoint": "committed and pushed passing R3B ACK plus coordinator ownership transfer",
+      "exit_checkpoint": "release evidence is reconciled, coordinator-approved, committed, and pushed; any deployment claim has a real receipt",
+      "next": "program_closure"
+    }
+  ],
+  "other_llm_conflicts": [
+    {
+      "conflict": "Smoke ACK next field says to resume CAN-003.",
+      "resolution": "Treat as stale health-only evidence; begin with ODP-P10-CAN-001-R3A after the recovery checkpoint."
+    },
+    {
+      "conflict": "Evidence is based on /home/lupin/oday-plus.",
+      "resolution": "Reject as wrong-worktree evidence."
+    },
+    {
+      "conflict": "Route deletion is claimed as complete visual retirement.",
+      "resolution": "Require feature, shell, internal intake visual, navigation, loader, and legacy-spec retirement evidence."
+    },
+    {
+      "conflict": "A test directly mounting an orphan component is claimed as production coverage.",
+      "resolution": "Reject it as runtime evidence and require proof through the production import graph."
+    },
+    {
+      "conflict": "Package 6/7 or OpsBoard visuals are treated as Package 10 authority.",
+      "resolution": "Use only the Package 10 canonical archive and recovered committed documents."
+    },
+    {
+      "conflict": "A canonical assertion is weakened or removed because the product lacks required UI.",
+      "resolution": "Stop the wave and record a product no-go for coordinator resolution."
+    }
+  ],
+  "current_checkpoint": {
+    "program_recovery_docs": "coordinator_reviewed_committed_and_pushed",
+    "persistence_state": "coordinator_checkpoint_current",
+    "dispatch_commit": "ff39d14fc54b9793c5c32e8967e148e47efc6427",
+    "audit_task_commit": "2d45ced639703f7e7a18df7aa0ec981d70c3ea2a",
+    "r3a_product_commit": "ded04ac49504a1d948831eb5077625bef415ab50",
+    "r3a_ack_commit": "2442108400a77ba5fa4adafa8a083461529a03dd",
+    "r3b_merge_commit": "27c40cce28c1c0663e9c4a156e1498fb3fd35dac",
+    "r3b_reviewed_runtime_commit": "e6ed422e17b6aa9774c5f368ebe2fe421872caac",
+    "can002_merge_commit": "05dac94f",
+    "canonical_head": "435c79e3a99839541aa3710d58049010e3ba7ab7",
+    "retirement_verification": [
+      "docs/evidence/fleet_dispatch/package10_20260726/ODP-P10-LEGACY-VISUAL-RETIREMENT-VERIFICATION.md",
+      "docs/evidence/fleet_dispatch/package10_20260726/ODP-P10-LEGACY-VISUAL-RETIREMENT-VERIFICATION.json"
+    ],
+    "r3c_pr": {
+      "number": 396,
+      "head": "7b1502f9",
+      "status": "implementation_complete_pending_Antigravity4_review"
+    },
+    "r3d_pr": {
+      "number": 397,
+      "head": "bb15f75c",
+      "status": "implementation_complete_pending_Antigravity4_review"
+    },
+    "implementation_authorized": true,
+    "next": "Accept exact R3C and R3D SHAs, then dispatch ODP-P10-CAN-003-R3A",
+    "status": "no_go_pending_R3C_R3D_review_and_CAN003"
+  }
+}

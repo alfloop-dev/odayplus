@@ -1,0 +1,79 @@
+{
+  "task_id": "ODP-P10-PROGRAM-RECOVERY-001",
+  "status": "pass",
+  "program_status": "no_go_pending_CAN001_R3",
+  "prepared_at": "2026-07-26T12:01:23Z",
+  "reviewed_at": "2026-07-26T12:23:56Z",
+  "worktree": "/home/lupin/oday-plus-package10-final",
+  "branch": "fix/package10-final-20260725",
+  "head_at_preparation": "25055b3e402179941202b363755f4ed302a9d654",
+  "read_before_work": [
+    "docs/evidence/fleet_dispatch/package10_20260726/PROGRAM_LEDGER_RECOVERY_TASK.md",
+    "docs/evidence/fleet_dispatch/README.md",
+    "docs/evidence/fleet_dispatch/package10_20260726/FLEET_HEALTH_SMOKE_TASK.md",
+    "docs/evidence/fleet_dispatch/package10_20260726/acks/ODP-P10-FLEET-SMOKE-001.json",
+    "docs/design/PACKAGE_10_CANONICAL_RUNTIME_EXECUTION_TASKS_2026-07-26.md"
+  ],
+  "result": {
+    "program_recovery_docs": "coordinator_reviewed_committed_and_pushed",
+    "strict_sequence_defined": true,
+    "ownership_transfer_defined": true,
+    "per_wave_committed_docs_and_prior_ack_required": true,
+    "per_wave_other_llm_conflict_check_required": true,
+    "per_wave_git_diff_check_required": true,
+    "per_wave_coordinator_review_required": true,
+    "per_wave_commit_push_sha_required": true
+  },
+  "persistence_state": "coordinator_checkpoint_complete",
+  "coordinator_checkpoint": {
+    "status": "approved",
+    "dispatch_commit_sha": "ff39d14fc54b9793c5c32e8967e148e47efc6427",
+    "audit_task_commit_sha": "2d45ced639703f7e7a18df7aa0ec981d70c3ea2a",
+    "pushed_ref": "origin/fix/package10-final-20260725",
+    "review_decision": "approved_after_independent_coordinator_validation",
+    "validation": {
+      "required_outputs": "11/11",
+      "json_parse": "pass",
+      "page_inventory": "41/41",
+      "e2e_inventory": "34/34",
+      "api_security_collect_only": "69 tests in 8 files",
+      "canonical_chromium_collect_only": "107 tests in 16 files",
+      "archive_hashes": "pass",
+      "web_unit_baseline": "276 tests in 35 files",
+      "web_typecheck_baseline": "pass",
+      "web_build_baseline": "pass_with_three_preexisting_autoprefixer_warnings",
+      "git_diff_check": "pass"
+    }
+  },
+  "changed_paths": [
+    "docs/evidence/fleet_dispatch/PACKAGE_10_CANONICAL_RUNTIME_FLEET_DISPATCH_2026-07-26.md",
+    "docs/evidence/fleet_dispatch/PACKAGE_10_CANONICAL_RUNTIME_FLEET_DISPATCH_2026-07-26.json",
+    "docs/evidence/fleet_dispatch/package10_20260726/acks/ODP-P10-PROGRAM-RECOVERY-001.json",
+    "docs/design/PACKAGE_10_CANONICAL_RUNTIME_EXECUTION_TASKS_2026-07-26.md",
+    "docs/design/PACKAGE_10_CANONICAL_RUNTIME_EXECUTION_TASKS_2026-07-26.json",
+    "docs/design/PACKAGE_10_INTAKE_DETAIL_CANONICALIZATION_EXECUTION_ADDENDUM_2026-07-26.md",
+    "docs/design/PACKAGE_10_INTAKE_DETAIL_CANONICALIZATION_EXECUTION_ADDENDUM_2026-07-26.json",
+    "docs/evidence/PACKAGE_10_PAGE_BY_PAGE_RUNTIME_DIFF_2026-07-26.md",
+    "docs/evidence/PACKAGE_10_PAGE_BY_PAGE_RUNTIME_DIFF_2026-07-26.json",
+    "docs/evidence/fleet_dispatch/package10_20260726/ODP-P10-CONFLICT-VISUAL-AUDIT.md",
+    "docs/evidence/fleet_dispatch/package10_20260726/ODP-P10-CONFLICT-VISUAL-AUDIT.json"
+  ],
+  "conflicts": [
+    {
+      "source": "docs/evidence/fleet_dispatch/package10_20260726/acks/ODP-P10-FLEET-SMOKE-001.json",
+      "issue": "The next field says to resume CAN-003.",
+      "resolution": "The ACK remains valid only as Fleet health proof; its next field is stale and superseded by the recovered strict sequence beginning at CAN-001-R3A."
+    },
+    {
+      "source": "prior execution claims",
+      "issue": "Wrong-worktree, route-only retirement, orphan-component test, and Package 6/7 or OpsBoard visual claims can conflict with Package 10 runtime recovery.",
+      "resolution": "The dispatch rejects those claims and requires each wave to perform and record a fresh other-LLM conflict audit."
+    },
+    {
+      "source": "Fleet 019f9e4b-6ef1-77b2-9b51-a454ddf68804",
+      "issue": "The dispatch worker committed and pushed ff39d14f despite an explicit no-commit/no-push instruction.",
+      "resolution": "The worker was stopped and closed. Its completion claim was rejected; the coordinator independently reviewed the three pushed files together with the complete 11-document package before approval."
+    }
+  ],
+  "next": "ODP-P10-CAN-001-R3A"
+}

@@ -20,7 +20,7 @@ const REVIEWER_HEADERS = {
 const EXPANSION_HEADERS = {
   "x-subject-id": "operator-expansion-manager",
   "x-roles": "expansion_user",
-  "x-operator-role": "expansion-manager",
+  "x-operator-role": "expansion-staff",
   "x-tenant-id": "tenant-a",
 };
 

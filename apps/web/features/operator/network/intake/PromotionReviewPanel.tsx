@@ -26,6 +26,7 @@ import styles from "./intake.module.css";
 import type { IntakeApiError } from "./intakeClient";
 import type { IntakeTone } from "./intakeTypes";
 import { SiteScoreJobStatus, type ScoreReplayInput } from "./SiteScoreJobStatus";
+import { useModalDialogBehavior } from "../useModalDialogBehavior";
 
 /** zh-TW label per canonical promotion saga state (state contracts §7). */
 export const PROMOTION_STATUS_LABEL: Record<PromotionStatus, string> = {
@@ -154,6 +155,129 @@ export type PromotionReviewPanelProps = {
   testId?: string;
 };
 
+function PromotionConfirmationDialog({
+  busy,
+  currentOperator,
+  errorMessage,
+  errorNextAction,
+  gateSnapshotSha256,
+  idempotencyKey,
+  onClose,
+  onConfirm,
+  promotion,
+  reason,
+  record,
+}: {
+  busy: boolean;
+  currentOperator: PromotionActor;
+  errorMessage?: string | null;
+  errorNextAction?: string | null;
+  gateSnapshotSha256: string;
+  idempotencyKey: string;
+  onClose: () => void;
+  onConfirm: () => void;
+  promotion: PromotionDecisionReceipt;
+  reason: string;
+  record: AssistedIntake;
+}) {
+  const panelRef = useModalDialogBehavior({ dismissible: !busy, onClose });
+  const summary = [
+    ["收件", record.id],
+    ["既有 Listing", promotion.listing_id || "—"],
+    ["提案者", promotion.proposer_subject_id || record.submitter || "—"],
+    ["審查者", `${currentOperator.name}（${currentOperator.id}）`],
+    ["Gate snapshot", gateSnapshotSha256 || "—"],
+    ["核准原因", reason],
+  ] as const;
+
+  return (
+    <div
+      className={`${styles.overlay} ${styles.overlayStacked}`}
+      data-screen-label="Dialog Promotion 核准"
+      data-testid="promotion-confirmation-dialog"
+      onMouseDown={(event) => {
+        if (!busy && event.target === event.currentTarget) onClose();
+      }}
+    >
+      <div
+        aria-describedby="promotion-confirmation-impact"
+        aria-label="核准 Candidate Site promotion"
+        aria-modal="true"
+        className={styles.promotionConfirmDialog}
+        ref={panelRef}
+        role="dialog"
+      >
+        <header className={styles.promotionConfirmHeader}>
+          <div>
+            <h3 className={styles.promotionConfirmTitle}>核准 Candidate Site promotion</h3>
+            <p className={styles.promotionConfirmSubtitle}>決策送出前，請再次核對影響實體與持久化控制。</p>
+          </div>
+          <button
+            aria-label="關閉 Promotion 核准"
+            className={styles.dialogClose}
+            disabled={busy}
+            onClick={onClose}
+            type="button"
+          >
+            ×
+          </button>
+        </header>
+
+        <div className={styles.promotionConfirmBody}>
+          <div className={styles.reviewSummary} data-testid="promotion-review-summary">
+            <div className={styles.sectionHead}>決策前檢視 REVIEW SUMMARY</div>
+            {summary.map(([label, value]) => (
+              <div className={styles.reviewSummaryRow} key={label}>
+                <span className={styles.reviewSummaryKey}>{label}</span>
+                <span className={styles.reviewSummaryValue}>{value}</span>
+              </div>
+            ))}
+          </div>
+
+          <div className={styles.promotionImpact} id="promotion-confirmation-impact">
+            <strong>影響實體：Listing → 新 Candidate</strong>
+            <span>
+              前：無候選點。後：Candidate 建立並排入 SiteScore job。核准後依序執行
+              CANDIDATE_CREATING → CANDIDATE_CREATED → SCORE_QUEUED。
+            </span>
+            <span>Candidate ID、job ID 與 receipt 僅在伺服器 commit 後顯示，不做 optimistic 更新。</span>
+          </div>
+
+          <div className={styles.promotionControlSummary}>
+            <span>✓ 已完成 second-actor 風險確認</span>
+            <code data-testid="promotion-confirm-ifmatch">If-Match W/&quot;{promotion.version}&quot;</code>
+            <code data-testid="promotion-confirm-key">Idempotency-Key {idempotencyKey}</code>
+          </div>
+
+          {errorMessage ? (
+            <div className={styles.errorPanel} data-testid="promotion-confirmation-error" role="alert">
+              <span className={styles.errorSummary}>{errorMessage}</span>
+              {errorNextAction ? <span className={styles.errorNext}>{errorNextAction}</span> : null}
+              <span className={styles.errorMeta}>你的原因與風險確認已保留；重試沿用同一 Idempotency-Key。</span>
+            </div>
+          ) : null}
+        </div>
+
+        <footer className={styles.promotionConfirmFooter}>
+          <button className={styles.secondaryButton} disabled={busy} onClick={onClose} type="button">
+            取消
+          </button>
+          <button
+            className={styles.primaryButton}
+            data-autofocus
+            data-testid="promotion-confirm-approve-btn"
+            disabled={busy}
+            onClick={onConfirm}
+            type="button"
+          >
+            {busy ? "送出中…（等待伺服器確認）" : "核准並開始建立 Candidate"}
+          </button>
+        </footer>
+      </div>
+    </div>
+  );
+}
+
 export function PromotionReviewPanel({
   record,
   promotion = null,
@@ -184,6 +308,7 @@ export function PromotionReviewPanel({
   const [reviewAck, setReviewAck] = useState(false);
   const [localError, setLocalError] = useState<string | null>(null);
   const [attempted, setAttempted] = useState(false);
+  const [reviewConfirmationOpen, setReviewConfirmationOpen] = useState(false);
 
   // Stable idempotency keys. The request key survives retries for the same
   // draft; a fresh request after a REJECTED decision gets a new scope (the
@@ -653,10 +778,10 @@ export function PromotionReviewPanel({
                   className={styles.primaryButton}
                   data-testid="promotion-approve-btn"
                   disabled={busy || !reviewAck || reviewReason.trim().length < 3}
-                  onClick={() => handleReview("APPROVE")}
+                  onClick={() => setReviewConfirmationOpen(true)}
                   type="button"
                 >
-                  {busy ? "提交中…（不做樂觀更新）" : "核准晉升（APPROVE）"}
+                  審查並核准 promotion（second actor）
                 </button>
               </div>
             </>
@@ -745,6 +870,22 @@ export function PromotionReviewPanel({
             promotionStatus={promotion.status}
           />
         </div>
+      ) : null}
+
+      {reviewConfirmationOpen && reviewOpen && promotion && reviewKey ? (
+        <PromotionConfirmationDialog
+          busy={busy}
+          currentOperator={currentOperator}
+          errorMessage={shownError}
+          errorNextAction={error?.nextAction}
+          gateSnapshotSha256={gateSnapshotSha256}
+          idempotencyKey={reviewKey}
+          onClose={() => setReviewConfirmationOpen(false)}
+          onConfirm={() => void handleReview("APPROVE")}
+          promotion={promotion}
+          reason={reviewReason.trim()}
+          record={record}
+        />
       ) : null}
     </section>
   );

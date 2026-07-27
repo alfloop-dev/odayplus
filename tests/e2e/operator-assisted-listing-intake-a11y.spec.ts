@@ -113,7 +113,7 @@ test.describe("VDC-003 Screen Reader Landmarks & Accessibility Attributes", () =
     await page.getByTestId("intake-submit-button").click();
 
     // Detail dialog screen label
-    await expect(page.locator('[data-screen-label="Dialog 收件處理詳情"]')).toBeVisible({
+    await expect(page.locator('[data-screen-label="Intake 收件處理詳情頁"]')).toBeVisible({
       timeout: 15_000,
     });
   });

@@ -1,14 +1,15 @@
 /**
  * Govern workspace (治理稽核) API loader — ODP-OC-R4-009.
  *
- * Dual-mode: runtime API client + embedded fixture fallback.  Mirrors the
- * Growth workspace view-model pattern (growthViewModel.ts):
+ * Runtime API client used by the Govern workspace. Local development may
+ * retain embedded fixtures, while production treats null, seed, empty, and
+ * incomplete snapshots as unavailable:
  *
  *   Read  — fetchGovernanceSnapshot()
  *     GET /api/v1/operator/governance/snapshot → { approvals, decisions,
- *     auditRows, statusBoard, evidencePackages }.  On any network/parse error
- *     it returns null so the workspace keeps rendering its embedded fixtures
- *     (the Govern workspace never breaks when the API is unreachable).
+ *     auditRows, statusBoard, evidencePackages }. On any network/parse error
+ *     it returns null so the workspace can fail closed without fabricating
+ *     operational rows.
  *
  *   Write — submitGovernanceDecision() / exportEvidencePackage()
  *     POST /api/v1/operator/governance/decisions        (approve/return/reject)
@@ -17,7 +18,7 @@
  *     return/reject-requires-reason policy; a 422 is surfaced as a typed error
  *     so the workspace can show the reason requirement.
  *
- * Design source: canonical package 6 (r4-20260707-package-6),
+ * Design source: canonical Package 10 (r7-20260720-package-10),
  * data-screen-label "Govern 治理稽核".
  */
 import type {
@@ -104,8 +105,8 @@ async function apiFetch<T>(
 }
 
 /**
- * Fetch the Govern snapshot.  Returns null when the API is unreachable so the
- * caller falls back to embedded fixtures.
+ * Fetch the Govern snapshot. Returns null when the API is unreachable; the
+ * caller decides whether local fixture mode is explicitly permitted.
  */
 export async function fetchGovernanceSnapshot(
   roleId?: string,

@@ -2,7 +2,6 @@
 
 import type {
   AssistedIntake,
-  IntakeStage,
   JobReceipt,
   SlaReceipt,
   TransitionReceipt,
@@ -19,6 +18,7 @@ export type IntakeStageTimelineProps = {
   onReplayJob?: (jobId: string) => void;
   onCancel?: () => void;
   testId?: string;
+  mode?: "stages" | "audit";
 };
 
 export function IntakeStageTimeline({
@@ -30,36 +30,40 @@ export function IntakeStageTimeline({
   onReplayJob,
   onCancel,
   testId = "intake-stage-timeline",
+  mode = "stages",
 }: IntakeStageTimelineProps) {
   const steps = stageSteps(record);
   const activeJob = jobs.find((j) => j.status === "RUNNING" || j.status === "RETRYING" || j.status === "DEAD_LETTER") ?? jobs[0];
   const isDlq = activeJob?.status === "DEAD_LETTER" || record.stage === "FAILED";
+  const jobBadge = jobStatusBadgeColors(activeJob?.status);
   const isCancelled = (record.stage as string) === "CANCELLED";
 
   return (
     <div className={styles.sectionBox} data-testid={testId} style={{ border: "1px solid #eef1f6", borderRadius: "10px", padding: "14px", background: "#ffffff", marginBottom: "16px" }}>
-      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: "12px" }}>
+      <div className={styles.timelineHeader}>
         <h4 style={{ margin: 0, fontSize: "13px", fontWeight: 700, color: "#1e293b", display: "flex", alignItems: "center", gap: "8px" }}>
           <span>階段時序與執行歷程 STAGE TIMELINE</span>
           <span className={styles.chip} data-tone={stageTone(record.stage)}>
             {stageLabel(record.stage)}
           </span>
         </h4>
-        {onCancel && !isCancelled && record.stage !== "READY" && (
-          <button
-            type="button"
-            onClick={onCancel}
-            className={styles.secondaryButton}
-            style={{ padding: "3px 8px", fontSize: "10.5px", color: "#b3261e" }}
-            data-testid="timeline-cancel-button"
-          >
-            取消流程 (Cancel Intake)
-          </button>
-        )}
+        <div className={styles.timelineActions}>
+          {onCancel && !isCancelled && record.stage !== "READY" && (
+            <button
+              type="button"
+              onClick={onCancel}
+              className={styles.secondaryButton}
+              style={{ color: "#b3261e" }}
+              data-testid="timeline-cancel-button"
+            >
+              取消流程 (Cancel Intake)
+            </button>
+          )}
+        </div>
       </div>
 
       {/* 1. Stepper without fake percentages */}
-      <div
+      {mode === "stages" ? <div
         data-testid="timeline-stepper"
         style={{
           display: "flex",
@@ -82,7 +86,7 @@ export function IntakeStageTimeline({
 
           if (isDone) {
             bg = "#e5f3ea";
-            fg = "#1e7f4f";
+            fg = "#166534";
             borderColor = "#a7f3d0";
           } else if (isFailed) {
             bg = "#fbe9e7";
@@ -144,10 +148,10 @@ export function IntakeStageTimeline({
             </div>
           );
         })}
-      </div>
+      </div> : null}
 
       {/* 2. SLA & Assignment Metadata */}
-      {sla && (
+      {mode === "audit" && (
         <div
           data-testid="timeline-sla-panel"
           style={{
@@ -166,25 +170,28 @@ export function IntakeStageTimeline({
             <span
               style={{
                 fontWeight: 700,
-                color: sla.state === "BREACHED" || sla.state === "OVERDUE" ? "#b3261e" : "#1e7f4f",
+                color: (sla?.state ?? record.slaState) === "BREACHED" || (sla?.state ?? record.slaState) === "OVERDUE" ? "#b3261e" : "#166534",
               }}
             >
-              {sla.state}
+              {sla?.state ?? record.slaState ?? "UNAVAILABLE"}
             </span>
           </div>
           <div>
             <span style={{ color: "#64748b" }}>SLA 到期時間: </span>
-            <span style={{ fontFamily: "monospace", fontWeight: 600 }}>{sla.due_at ?? "—"}</span>
+            <span style={{ fontFamily: "monospace", fontWeight: 600 }}>{sla?.due_at ?? record.dueAt ?? "UNAVAILABLE"}</span>
           </div>
           <div>
             <span style={{ color: "#64748b" }}>暫停時長: </span>
-            <span>{sla.paused_duration_seconds ? `${Math.round(sla.paused_duration_seconds / 60)} 分鐘` : "無"}</span>
+            <span>{sla?.paused_duration_seconds === null || sla?.paused_duration_seconds === undefined ? "UNAVAILABLE" : `${Math.round(sla.paused_duration_seconds / 60)} 分鐘`}</span>
+          </div>
+          <div data-testid="timeline-sla-receipt-state">
+            SLA RECEIPT: {sla ? "AVAILABLE" : "UNAVAILABLE"}
           </div>
         </div>
       )}
 
       {/* 3. Job Execution & DLQ Status */}
-      {activeJob && (
+      {mode === "audit" && (activeJob ? (
         <div
           data-testid="timeline-job-panel"
           style={{
@@ -205,8 +212,8 @@ export function IntakeStageTimeline({
                 fontWeight: 700,
                 padding: "2px 6px",
                 borderRadius: "4px",
-                background: isDlq ? "#f87171" : "#cbd5e1",
-                color: "#ffffff",
+                background: jobBadge.background,
+                color: jobBadge.foreground,
               }}
             >
               {activeJob.status}
@@ -233,10 +240,10 @@ export function IntakeStageTimeline({
             </div>
           )}
         </div>
-      )}
+      ) : <div className={styles.emptyState} data-testid="timeline-job-unavailable">JOB DATA: UNAVAILABLE</div>)}
 
       {/* 4. History Transition Audit Nodes */}
-      {history.length > 0 && (
+      {mode === "audit" && (history.length > 0 ? (
         <div data-testid="timeline-history-nodes" style={{ marginTop: "12px" }}>
           <div style={{ fontSize: "11px", fontWeight: 700, color: "#475569", marginBottom: "8px" }}>
             歷史變更日誌 HISTORY TRANSITIONS ({history.length})
@@ -258,7 +265,7 @@ export function IntakeStageTimeline({
               >
                 <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
                   <span style={{ color: "#64748b", fontFamily: "monospace", fontSize: "10px" }}>
-                    {tx.occurred_at ? new Date(tx.occurred_at).toLocaleTimeString() : "—"}
+                    {tx.occurred_at ? new Date(tx.occurred_at).toLocaleTimeString() : "UNAVAILABLE"}
                   </span>
                   <span style={{ fontWeight: 600, color: "#1e293b" }}>
                     {tx.from_state ? `${tx.from_state} → ` : ""}{tx.to_state}
@@ -275,7 +282,17 @@ export function IntakeStageTimeline({
             ))}
           </div>
         </div>
-      )}
+      ) : <div className={styles.emptyState} data-testid="timeline-history-unavailable">TRANSITION HISTORY: UNAVAILABLE</div>)}
+
     </div>
   );
+}
+
+export function jobStatusBadgeColors(status: string | undefined): {
+  background: string;
+  foreground: string;
+} {
+  return status === "DEAD_LETTER" || status === "FAILED"
+    ? { background: "#991b1b", foreground: "#ffffff" }
+    : { background: "#334155", foreground: "#ffffff" };
 }
