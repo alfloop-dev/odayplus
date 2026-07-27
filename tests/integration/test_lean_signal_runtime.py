@@ -108,6 +108,34 @@ def test_replay_uses_durable_receipt_without_repeating_side_effect() -> None:
     assert first.acked and replay.acked
 
 
+def test_receipt_completion_failure_cannot_repeat_execution_side_effect() -> None:
+    class FailingCompletionStore(runtime.InMemoryReceiptStore):
+        def complete(self, **_kwargs) -> None:
+            raise OSError("receipt backend unavailable")
+
+    calls = 0
+
+    def handle(_envelope):
+        nonlocal calls
+        calls += 1
+        return "execution:42"
+
+    instance = runtime.LeanSignalConsumer(
+        handler=handle,
+        receipts=FailingCompletionStore(),
+        now=lambda: datetime(2026, 6, 26, 4, tzinfo=UTC),
+    )
+    first = Message(signal())
+    redelivery = Message(signal())
+
+    assert instance.consume(first) == runtime.ConsumptionOutcome.RETRYABLE_FAILURE
+    assert first.rejection == (True, "receipt_completion_failure: OSError")
+    assert instance.consume(redelivery) == runtime.ConsumptionOutcome.RETRYABLE_FAILURE
+    assert redelivery.rejection == (True, "execution_in_doubt")
+    assert calls == 1
+    assert not first.acked and not redelivery.acked
+
+
 def test_time_window_and_handler_failures_have_explicit_retry_semantics() -> None:
     future = signal()
     future["effective_at"] = "2026-06-26T05:00:00Z"

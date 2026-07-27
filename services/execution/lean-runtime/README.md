@@ -3,8 +3,8 @@
 `consumer.py` is the execution-side consumer of
 `services/research/schema.json`. It accepts all schema-valid `1.x` payloads,
 rejects unknown envelope fields and unsupported majors, enforces
-`effective_at`/`expires_at`, and records a durable idempotency receipt before
-acknowledging the broker message.
+`effective_at`/`expires_at`, and acquires a durable processing claim before
+execution. It records completion before acknowledging the broker message.
 
 ## Broker adapter boundary
 
@@ -27,7 +27,10 @@ The adapter's non-secret configuration is:
 
 Production composition must fail startup when required configuration, broker
 credentials, a durable receipt store, or DLQ routing is unavailable. A message
-is committed only through `ack()` after a durable receipt. Invalid,
-unsupported, or expired messages call `reject(retryable=False)`; future-dated
-signals and handler failures call `reject(retryable=True)`.
-
+is committed only through `ack()` after a durable completion receipt. The
+receipt store's `claim` operation must be atomic across consumers. If completion
+persistence fails after execution, the claim remains in progress: redelivery
+returns `execution_in_doubt` without repeating the side effect, for operational
+reconciliation. Invalid, unsupported, or expired messages call
+`reject(retryable=False)`; future-dated signals, handler failures, and receipt
+store failures call `reject(retryable=True)`.

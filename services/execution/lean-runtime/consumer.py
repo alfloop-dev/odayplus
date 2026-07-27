@@ -28,6 +28,12 @@ class ConsumptionOutcome(StrEnum):
     RETRYABLE_FAILURE = "retryable_failure"
 
 
+class ProcessingClaim(StrEnum):
+    ACQUIRED = "acquired"
+    IN_PROGRESS = "in_progress"
+    COMPLETED = "completed"
+
+
 class BrokerMessage(Protocol):
     """Minimal boundary an actual Kafka/Redpanda adapter must implement."""
 
@@ -42,12 +48,23 @@ class BrokerMessage(Protocol):
 
 
 class ProcessingReceiptStore(Protocol):
-    """Durable idempotency boundary, keyed within a tenant."""
+    """Durable idempotency boundary, keyed within a tenant.
 
-    def result_for(self, *, tenant_id: str, idempotency_key: str) -> str | None: ...
+    ``claim`` must atomically bind a key to a signal before execution. A claim
+    remains in progress if completion persistence fails, preventing redelivery
+    from repeating an execution side effect.
+    """
 
-    def record(
+    def claim(
+        self, *, tenant_id: str, idempotency_key: str, signal_id: str
+    ) -> ProcessingClaim: ...
+
+    def complete(
         self, *, tenant_id: str, idempotency_key: str, signal_id: str, result_ref: str
+    ) -> None: ...
+
+    def release(
+        self, *, tenant_id: str, idempotency_key: str, signal_id: str
     ) -> None: ...
 
 
@@ -94,20 +111,37 @@ class InMemoryReceiptStore:
     """Test/local implementation; production must inject a durable store."""
 
     def __init__(self) -> None:
-        self._receipts: dict[tuple[str, str], tuple[str, str]] = {}
+        self._receipts: dict[tuple[str, str], tuple[str, str | None]] = {}
 
-    def result_for(self, *, tenant_id: str, idempotency_key: str) -> str | None:
-        receipt = self._receipts.get((tenant_id, idempotency_key))
-        return receipt[1] if receipt else None
+    def claim(
+        self, *, tenant_id: str, idempotency_key: str, signal_id: str
+    ) -> ProcessingClaim:
+        key = (tenant_id, idempotency_key)
+        existing = self._receipts.get(key)
+        if existing is None:
+            self._receipts[key] = (signal_id, None)
+            return ProcessingClaim.ACQUIRED
+        if existing[0] != signal_id:
+            raise ValueError("idempotency key is already bound to another signal")
+        if existing[1] is None:
+            return ProcessingClaim.IN_PROGRESS
+        return ProcessingClaim.COMPLETED
 
-    def record(
+    def complete(
         self, *, tenant_id: str, idempotency_key: str, signal_id: str, result_ref: str
     ) -> None:
         key = (tenant_id, idempotency_key)
         existing = self._receipts.get(key)
-        if existing is not None and existing[0] != signal_id:
-            raise ValueError("idempotency key is already bound to another signal")
+        if existing is None or existing[0] != signal_id:
+            raise ValueError("completion requires the matching processing claim")
         self._receipts[key] = (signal_id, result_ref)
+
+    def release(
+        self, *, tenant_id: str, idempotency_key: str, signal_id: str
+    ) -> None:
+        key = (tenant_id, idempotency_key)
+        if self._receipts.get(key) == (signal_id, None):
+            del self._receipts[key]
 
 
 class LeanSignalConsumer:
@@ -146,25 +180,53 @@ class LeanSignalConsumer:
 
         tenant_id = envelope["tenant_id"]
         idempotency_key = envelope["idempotency_key"]
-        if self._receipts.result_for(
-            tenant_id=tenant_id, idempotency_key=idempotency_key
-        ) is not None:
+        signal_id = envelope["signal_id"]
+        try:
+            claim = self._receipts.claim(
+                tenant_id=tenant_id,
+                idempotency_key=idempotency_key,
+                signal_id=signal_id,
+            )
+        except Exception as exc:
+            message.reject(
+                retryable=True, reason=f"receipt_claim_failure: {type(exc).__name__}"
+            )
+            return ConsumptionOutcome.RETRYABLE_FAILURE
+        if claim is ProcessingClaim.COMPLETED:
             message.ack()
             return ConsumptionOutcome.REPLAYED
+        if claim is ProcessingClaim.IN_PROGRESS:
+            message.reject(retryable=True, reason="execution_in_doubt")
+            return ConsumptionOutcome.RETRYABLE_FAILURE
 
         try:
             result_ref = self._handler(envelope)
             if not result_ref:
                 raise ValueError("handler returned an empty result reference")
-            self._receipts.record(
+        except Exception as exc:
+            try:
+                self._receipts.release(
+                    tenant_id=tenant_id,
+                    idempotency_key=idempotency_key,
+                    signal_id=signal_id,
+                )
+            except Exception:
+                pass
+            message.reject(retryable=True, reason=f"handler_failure: {type(exc).__name__}")
+            return ConsumptionOutcome.RETRYABLE_FAILURE
+
+        try:
+            self._receipts.complete(
                 tenant_id=tenant_id,
                 idempotency_key=idempotency_key,
-                signal_id=envelope["signal_id"],
+                signal_id=signal_id,
                 result_ref=result_ref,
             )
             message.ack()
         except Exception as exc:
-            message.reject(retryable=True, reason=f"handler_failure: {type(exc).__name__}")
+            message.reject(
+                retryable=True, reason=f"receipt_completion_failure: {type(exc).__name__}"
+            )
             return ConsumptionOutcome.RETRYABLE_FAILURE
         return ConsumptionOutcome.CONSUMED
 
@@ -207,4 +269,3 @@ class LeanSignalConsumer:
         if value.tzinfo is None:
             raise ValueError("runtime clock must be timezone-aware")
         return value.astimezone(UTC)
-
