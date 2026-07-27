@@ -1057,6 +1057,8 @@ else:
                 require_live_data=require_live_data,
                 persistence_mode=persistence_mode,
                 provider_mode=provider_mode,
+                allow_test_reset=os.environ.get("ODP_E2E_MODE", "").strip().lower()
+                == "true",
             ),
         )
 

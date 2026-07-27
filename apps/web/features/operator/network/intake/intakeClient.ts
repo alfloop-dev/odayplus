@@ -12,7 +12,7 @@
 //                fetch for read-only snapshots. Listing Radar's merge — the one
 //                high-impact write among them — is typed too, via
 //                ../listingsClient.
-// Composes with: AssistedIntakeQueuePanel + the four intake dialogs.
+// Composes with the canonical intake inbox/detail and action dialogs.
 
 import {
   type AssistedIntake,

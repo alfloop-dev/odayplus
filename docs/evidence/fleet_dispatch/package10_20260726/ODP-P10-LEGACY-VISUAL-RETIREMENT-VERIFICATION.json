@@ -1,0 +1,81 @@
+{
+  "verification_id": "ODP-P10-LEGACY-VISUAL-RETIREMENT-VERIFICATION",
+  "verified_at": "2026-07-26",
+  "worktree": "/home/lupin/oday-plus-package10-final",
+  "branch": "fix/package10-final-20260725",
+  "verified_head": "435c79e3a99839541aa3710d58049010e3ba7ab7",
+  "result": "retirement_verified_at_head",
+  "release_status": "no_go",
+  "checks": {
+    "executable_pages": {
+      "expected": 3,
+      "actual": 3,
+      "paths": [
+        "apps/web/src/app/operator/page.tsx",
+        "apps/web/src/app/intake/[intakeId]/page.tsx",
+        "apps/web/src/app/franchisee/page.tsx"
+      ],
+      "result": "pass"
+    },
+    "deleted_path_inventory": {
+      "source_acks": [
+        "docs/evidence/fleet_dispatch/package10_20260726/acks/ODP-P10-CAN-001-R3A.json",
+        "docs/evidence/fleet_dispatch/package10_20260726/acks/ODP-P10-CAN-001-R3B.json"
+      ],
+      "unique_paths": 117,
+      "surviving_paths": [],
+      "result": "pass"
+    },
+    "retired_css_selectors": {
+      "selectors": [
+        "odp-shell",
+        "odp-skip-link",
+        "odp-header",
+        "odp-env-badge",
+        "odp-iconbtn",
+        "odp-sidebar",
+        "odp-navlink",
+        "odp-main"
+      ],
+      "active_matches": [],
+      "retained_generic_selector": ".odp-select",
+      "result": "pass"
+    },
+    "retired_identity_copy": {
+      "terms": [
+        "OpsBoard",
+        "R0 導覽骨架"
+      ],
+      "active_matches": [],
+      "result": "pass"
+    },
+    "retired_intake_alternatives": {
+      "symbols": [
+        "AssistedIntakeQueuePanel",
+        "IdentityDecisionPanel",
+        "IntakeAssignmentSlaDialog",
+        "IntakeDetailDialog"
+      ],
+      "active_matches": [],
+      "result": "pass"
+    },
+    "canonical_detail_graph": {
+      "component": "apps/web/features/operator/network/intake/IntakeProcessingDetail.tsx",
+      "direct_children": [
+        "ListingCompareTable",
+        "MatchEvidencePanel"
+      ],
+      "production_test": "apps/web/features/operator/network/intake/__tests__/Package10VisualP1.test.tsx",
+      "result": "pass"
+    }
+  },
+  "release_blockers": [
+    "PR #396 requires real Antigravity4 review",
+    "PR #397 requires real Antigravity4 review",
+    "ODP-P10-CAN-003-R3A must consume accepted R3C/R3D SHAs and complete canonical E2E remediation",
+    "ODP-P10-CAN-003-R3B must pass the unchanged 16-spec/107-test Chromium gate",
+    "ODP-P10-CAN-004-R3 must rerun retirement verification against the exact release SHA",
+    "accepted SiteScore, live E2E, WIF, and auth/runtime SHAs remain unreconciled"
+  ],
+  "release_rule": "Any resurrected retired path, selector, alternate intake detail, or legacy E2E spec blocks release; compatibility markup is forbidden."
+}

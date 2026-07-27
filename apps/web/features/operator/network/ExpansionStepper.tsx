@@ -63,13 +63,17 @@ export function ExpansionStepper({
               title={step.summary}
               type="button"
             >
-              <span className={styles.expansionStepIndex}>{index + 1}</span>
+              <span className={styles.expansionStepIndex} aria-hidden="true">
+                {step.state === "completed" ? "✓" : step.state === "blocked" ? "!" : index + 1}
+              </span>
               <span className={styles.expansionStepBody}>
                 <strong>{label.zh}</strong>
                 <small>{label.en}</small>
               </span>
-              <span className={styles.expansionStepEntity}>{step.entityId ?? "缺資料"}</span>
-              <span className={styles.expansionStepState}>{step.state}</span>
+              <span className={styles.expansionStepState}>
+                {step.state === "blocked" ? "缺資料" : step.entityId ?? stateLabel(step.state)}
+              </span>
+              <span className={styles.srOnly}>{step.state}</span>
             </button>
           );
         })}
@@ -89,15 +93,31 @@ export function ExpansionStepper({
           </button>
         ))}
       </div>
+      {steps.some((step) => step.state === "blocked") ? (
+        <div className={styles.flowBlockNotice} role="status">
+          <span aria-hidden="true">!</span>
+          {steps.find((step) => step.state === "blocked")?.summary}
+        </div>
+      ) : null}
     </section>
   );
 }
 
 function nextActionLabel(steps: ExpansionStep[]) {
-  const current = steps.find((step) => step.state === "current");
-  if (current) {
-    return `下一步：${current.summary}`;
+  const currentIndex = steps.findIndex((step) => step.state === "current");
+  const next = currentIndex >= 0 ? steps[currentIndex + 1] : steps.find((step) => step.state === "next");
+  if (next && next.state !== "blocked") {
+    return `下一步：${next.summary}`;
   }
-  const next = steps.find((step) => step.state === "next");
-  return next ? `下一步：${next.summary}` : "流程資料同步中";
+  if (next?.state === "blocked") {
+    return `下一步受阻：${next.summary}`;
+  }
+  return "流程資料同步中";
+}
+
+function stateLabel(state: ExpansionStepState) {
+  if (state === "completed") return "完成";
+  if (state === "current") return "目前";
+  if (state === "next") return "下一步";
+  return "缺資料";
 }

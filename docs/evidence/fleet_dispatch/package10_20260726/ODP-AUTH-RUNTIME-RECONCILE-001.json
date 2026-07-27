@@ -1,0 +1,60 @@
+{
+  "task_id": "ODP-AUTH-RUNTIME-RECONCILE-001",
+  "status": "blocked_on_accepted_dependencies",
+  "owner": "Claude",
+  "reviewer": "Antigravity4",
+  "target_branch": "dev",
+  "package10_consumer": "ODP-P10-CAN-004-R3",
+  "prepared_at": "2026-07-26T22:03:00Z",
+  "audited_inputs": {
+    "pr_384": "b0116794cb0d93f219427e094cbad2df2e6d44e8",
+    "pr_386": "d139aa1210df129ce8b193d6f51905e6c57e2b45",
+    "pr_388": "11439d92de4eb43e223f44e2a3b6081c4f62d4f9",
+    "origin_dev": "941db22dafe226cb6349fa1a706d10bbda21e7c6"
+  },
+  "depends_on": [
+    "ODP-RUNTIME-GCP-001",
+    "ODP-LIVE-E2E-001"
+  ],
+  "decisions": [
+    "PR #386 is authoritative for WIF-only GCP deployment identity.",
+    "PR #384 must not be merged wholesale.",
+    "Verified IdP claims cannot self-assign platform authorization.",
+    "Production principal mapping remains deployment-owned and fail-closed.",
+    "Smoke credentials must be short-lived, masked, and non-persistent.",
+    "PR #388 live E2E remains before DEPLOYMENT_COMMITTED=true.",
+    "Package 10 visual and canonical E2E surfaces are out of scope."
+  ],
+  "writable_paths": [
+    "apps/web/src/lib/auth/**",
+    "modules/opsboard/auth/**",
+    "tests/security/test_opsboard_auth_boundary.py",
+    ".github/workflows/deploy-dev.yml",
+    ".github/workflows/deploy-staging.yml",
+    "scripts/deploy_cloud_run_waji.sh",
+    "scripts/deployment/validate_cloud_run_live_deployment.py",
+    "tests/ops/test_cloud_run_live_deployment.py",
+    "docs/deployment/GCP_DEPLOY_GUIDE.md",
+    "docs/evidence/runtime/**",
+    "docs/evidence/fleet_dispatch/ODP-AUTH-RUNTIME-RECONCILE-001/**"
+  ],
+  "forbidden_paths": [
+    "apps/web/features/operator/**",
+    "apps/web/src/app/operator/**",
+    "apps/web/src/app/intake/**",
+    "tests/e2e/operator-*.spec.ts",
+    "tests/e2e/e2e-operator-console.spec.ts",
+    "docs_archive/**"
+  ],
+  "required_gates": [
+    "uv run pytest -q tests/security/test_opsboard_auth_boundary.py",
+    "uv run pytest -q tests/ops/test_cloud_run_live_deployment.py",
+    "uv run pytest -q tests/e2e/test_live_e2e_gate.py",
+    "python3 infra/terraform/validate_contract.py",
+    "live preflight with exact runtime configuration",
+    "bash -n scripts/deploy_cloud_run_waji.sh",
+    "git diff --check"
+  ],
+  "review_rule": "Claude implementation followed by independent Antigravity4 approval at the exact pushed SHA.",
+  "release_rule": "Only an approved merged SHA may be consumed by ODP-P10-CAN-004-R3."
+}

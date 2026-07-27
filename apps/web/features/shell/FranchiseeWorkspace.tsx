@@ -15,7 +15,7 @@ import type { ApiResource } from "./resource.ts";
 import { ShellDataSource, ShellResourceState } from "./ShellStates.tsx";
 import { FranchiseeActions } from "./FranchiseeActions.tsx";
 import { SEVERITY_LABEL, SEVERITY_TONE, REPORT_CATEGORY_LABEL } from "./vocabulary.ts";
-import { formatStamp } from "./HomeWorkspace.tsx";
+import { formatStamp } from "./formatStamp.ts";
 import styles from "./shell.module.css";
 
 export function FranchiseeWorkspace({

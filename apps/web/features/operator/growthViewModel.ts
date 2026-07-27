@@ -40,8 +40,11 @@ import {
 
 export type ConfidenceLevel = Confidence["level"];
 
-/** The three canonical create-entry draft types (package 6 entry cards). */
+/** The three canonical create-entry draft types (Package 10 entry cards). */
 export type GrowthKind = "offpeak" | "winback" | "priceops";
+
+/** Additional read-only campaign categories present in the Package 10 workbench. */
+export type GrowthActionKind = GrowthKind | "coupon" | "adlift";
 
 /**
  * Growth lifecycle status.  Extends the canonical DecisionStatus with the
@@ -86,6 +89,13 @@ export type PriceOpsRecommendation = {
   confidence: ConfidenceLevel;
   /** PriceOps only ever hands over a recommendation, never an approved decision. */
   decisionStatus: Extract<DecisionStatus, "SYSTEM_RECOMMENDED" | "DRAFT">;
+  /** Optional operational fields supplied by richer PriceOps projections. */
+  store?: string;
+  window?: string;
+  expectedUtilization?: string;
+  marginRisk?: string;
+  rollbackCondition?: string;
+  linkedActionId?: string;
 };
 
 /** Effectiveness verdict for an observed growth action. */
@@ -100,7 +110,7 @@ export type GrowthItem = {
   id: string;
   name: string;
   /** draft type / entry-card kind this action was created from. */
-  kind?: GrowthKind;
+  kind?: GrowthActionKind;
   segmentId: string;
   /** PriceOps recommendation that seeded this draft, if any. */
   sourceRecommendationId?: string;
@@ -114,6 +124,12 @@ export type GrowthItem = {
   evidenceLevel: ConfidenceLevel;
   rationale: string;
   rollbackPlan: string;
+  store?: string;
+  channel?: string;
+  budget?: number;
+  approvalId?: string | null;
+  createdAt?: string;
+  updatedAt?: string;
   audit: {
     decisionId: string;
     correlationId: string;
@@ -198,6 +214,12 @@ export const PRICEOPS_RECOMMENDATIONS: PriceOpsRecommendation[] = [
     constraintDetail: "硬限制通過；競品價差在政策範圍內。",
     confidence: "medium",
     decisionStatus: "SYSTEM_RECOMMENDED",
+    store: "都會晚餐高潛力組",
+    window: "晚餐時段",
+    expectedUtilization: "依門市試算",
+    marginRisk: "低",
+    rollbackCondition: "14 天未達標即回滾",
+    linkedActionId: "growth-7001",
   },
   {
     id: "rec-9002",
@@ -211,6 +233,12 @@ export const PRICEOPS_RECOMMENDATIONS: PriceOpsRecommendation[] = [
     constraintDetail: "軟警告：可比樣本偏少，建議搭配對照組。",
     confidence: "low",
     decisionStatus: "SYSTEM_RECOMMENDED",
+    store: "宵夜外送流失組",
+    window: "宵夜時段",
+    expectedUtilization: "待補樣本",
+    marginRisk: "中",
+    rollbackCondition: "營收低於基準即停止",
+    linkedActionId: "growth-7002",
   },
   {
     id: "rec-9003",
@@ -224,6 +252,11 @@ export const PRICEOPS_RECOMMENDATIONS: PriceOpsRecommendation[] = [
     constraintDetail: "HARD_CONSTRAINT_FAILED：max_delta_pct 6%、競品價差超出政策上限。",
     confidence: "low",
     decisionStatus: "SYSTEM_RECOMMENDED",
+    store: "郊區午餐守成組",
+    window: "午餐時段",
+    expectedUtilization: "—",
+    marginRisk: "高",
+    rollbackCondition: "硬限制未解除，不可執行",
   },
 ];
 
@@ -241,6 +274,9 @@ export const GROWTH_ITEMS: GrowthItem[] = [
     evidenceLevel: "high",
     rationale: "對照組配對通過 pre-trend 檢定；調價後晚餐營收顯著高於基準。",
     rollbackPlan: "回復價目表 pb-2026.06.19，30 分鐘內生效，觀察 48 小時。",
+    store: "都會晚餐高潛力組",
+    channel: "店內告示＋App 價格頁",
+    budget: 0,
     audit: {
       decisionId: "dec-growth-7001",
       correlationId: "corr-growth-7001",
@@ -262,6 +298,9 @@ export const GROWTH_ITEMS: GrowthItem[] = [
     evidenceLevel: "medium",
     rationale: "下調外送費後訂單量未提升，宵夜營收較基準下滑。",
     rollbackPlan: "回復外送費結構 fs-2026.06.17，先 canary 12 小時再全量。",
+    store: "宵夜外送流失組",
+    channel: "App 首頁",
+    budget: 18000,
     audit: {
       decisionId: "dec-growth-7002",
       correlationId: "corr-growth-7002",
@@ -282,6 +321,9 @@ export const GROWTH_ITEMS: GrowthItem[] = [
     evidenceLevel: "low",
     rationale: "觀察期營收微幅上升但未達標，對照組樣本不足以判定因果。",
     rollbackPlan: "回復加價包設定 cfg-2026.06.24；維持既有午餐主力價。",
+    store: "郊區午餐守成組",
+    channel: "店內告示",
+    budget: 12000,
     audit: {
       decisionId: "dec-growth-7003",
       correlationId: "corr-growth-7003",
@@ -302,6 +344,9 @@ export const GROWTH_ITEMS: GrowthItem[] = [
     evidenceLevel: "medium",
     rationale: "活動執行中，觀察窗尚未成熟，暫無成效判定。",
     rollbackPlan: "停用加點推薦模組設定 cfg-2026.07.05。",
+    store: "都會晚餐高潛力組",
+    channel: "App 首頁",
+    budget: 8000,
     audit: {
       decisionId: "dec-growth-7004",
       correlationId: "corr-growth-7004",
@@ -322,6 +367,9 @@ export const GROWTH_ITEMS: GrowthItem[] = [
     evidenceLevel: "low",
     rationale: "草稿：待補齊對照組與 pre-trend 檢定後送審。",
     rollbackPlan: "草稿階段無執行，無需 rollback。",
+    store: "宵夜外送流失組",
+    channel: "LINE 推播",
+    budget: 15000,
     audit: {
       decisionId: "draft-growth-7005",
       correlationId: "corr-growth-7005",
@@ -530,6 +578,30 @@ export async function resolveGrowthApproval(params: {
   };
 }
 
+/** Advance a Growth Action through the server-owned lifecycle. */
+export async function transitionGrowthAction(params: {
+  actionId: string;
+  targetStatus: GrowthStatus;
+}): Promise<{ actionId: string; status: GrowthStatus; correlationId: string } | null> {
+  const correlationId = newCorrelationId();
+  const result = await apiFetch<{
+    id: string;
+    status: GrowthStatus;
+    correlation_id: string;
+  }>(`/actions/${params.actionId}/transition`, {
+    method: "POST",
+    correlationId,
+    headers: { "Idempotency-Key": newIdempotencyKey() },
+    body: JSON.stringify({ targetStatus: params.targetStatus }),
+  });
+  if (!result) return null;
+  return {
+    actionId: result.id,
+    status: result.status,
+    correlationId: result.correlation_id,
+  };
+}
+
 /** Write back effectiveness verdict for a Growth Action. */
 export async function writeGrowthOutcome(params: {
   actionId: string;
@@ -574,10 +646,11 @@ export const growthApiClient = {
   checkGrowthConflicts,
   submitGrowthForApproval,
   resolveGrowthApproval,
+  transitionGrowthAction,
 };
 
 // ---------------------------------------------------------------------------
-// Create-entry cards + five-step builder model (package 6)
+// Create-entry cards + five-step builder model (Package 10)
 // ---------------------------------------------------------------------------
 
 /** The three create-entry cards shown at the top of the Growth workspace. */

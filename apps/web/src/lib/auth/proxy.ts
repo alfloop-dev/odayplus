@@ -38,6 +38,8 @@ const FORWARDED_RESPONSE_HEADERS = [
   "x-correlation-id",
 ] as const;
 
+const UPSTREAM_TIMEOUT_MS = 10_000;
+
 export function buildUpstreamHeaders(options: {
   requestHeaders: Headers;
   accessToken?: string | null;
@@ -118,6 +120,7 @@ export async function proxyApiRequest(
   environment: NodeJS.ProcessEnv = process.env,
   dependencies: {
     resolveServiceIdentityToken?: ServiceIdentityTokenResolver;
+    upstreamTimeoutMs?: number;
   } = {},
 ): Promise<Response> {
   const production = isProductionWebRuntime(environment);
@@ -187,6 +190,13 @@ export async function proxyApiRequest(
       !production && !session && allowLegacyTrustedHeaders(environment),
     serviceIdentityToken,
   });
+  const upstreamTimeoutMs =
+    dependencies.upstreamTimeoutMs !== undefined &&
+    Number.isFinite(dependencies.upstreamTimeoutMs) &&
+    dependencies.upstreamTimeoutMs > 0
+      ? dependencies.upstreamTimeoutMs
+      : UPSTREAM_TIMEOUT_MS;
+  const upstreamSignal = AbortSignal.timeout(upstreamTimeoutMs);
 
   try {
     const response = await fetch(upstreamUrl(baseUrl, request, path), {
@@ -198,6 +208,7 @@ export async function proxyApiRequest(
           : await request.arrayBuffer(),
       redirect: "manual",
       cache: "no-store",
+      signal: upstreamSignal,
     });
     const responseHeaders = new Headers({
       "cache-control": "no-store",
@@ -223,6 +234,14 @@ export async function proxyApiRequest(
       headers: responseHeaders,
     });
   } catch {
+    if (upstreamSignal.aborted) {
+      return authError(
+        504,
+        "WEB_API_UPSTREAM_TIMEOUT",
+        "The upstream API timed out.",
+        true,
+      );
+    }
     return authError(
       502,
       "WEB_API_UPSTREAM_UNAVAILABLE",

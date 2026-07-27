@@ -1,0 +1,56 @@
+{
+  "task_id": "ODP-P10-CAN-001-R3D",
+  "title": "Package 10 retryable intake preserved-input remediation",
+  "status": "dispatched",
+  "owner": "Claude2",
+  "reviewer": "Antigravity4",
+  "source_branch": "origin/fix/package10-final-20260725",
+  "finding": {
+    "route": "/operator?ws=network",
+    "trigger": "submit the timeout URL, open the retryable FAILED intake, then expand Preserved Input",
+    "expected": "durable original URL and any available corrected input",
+    "actual": "{}",
+    "location": "apps/web/features/operator/network/intake/IntakeProcessingDetail.tsx",
+    "cause": "preservedInput is derived only from parsedFields, which is empty when retrieval fails before parsing"
+  },
+  "source_requirements": [
+    "docs/design/ODAY_PLUS_ASSISTED_LISTING_INTAKE_DESIGN_REQUIREMENTS.md",
+    "docs/design/PACKAGE_10_CANONICAL_RUNTIME_EXECUTION_TASKS_2026-07-26.md",
+    "docs/evidence/fleet_dispatch/package10_20260726/ODP-P10-CAN-001-R3D-RETRY-PRESERVED-INPUT-REMEDIATION.md"
+  ],
+  "writable_paths": [
+    "apps/web/features/operator/network/intake/IntakeProcessingDetail.tsx",
+    "apps/web/features/operator/network/intake/IntakeErrorRecovery.tsx",
+    "apps/web/features/operator/network/intake/__tests__/IntakeProcessingDetail.test.tsx",
+    "apps/web/features/operator/network/intake/__tests__/IntakeErrorRecovery.test.tsx",
+    "docs/evidence/fleet_dispatch/package10_20260726/acks/ODP-P10-CAN-001-R3D.json"
+  ],
+  "forbidden_paths": [
+    "tests/e2e/**",
+    "apps/api/**",
+    "apps/web/features/operator/network/intake/AssistedIntakeSection.tsx",
+    "Package 10 canonical HTML and archived design evidence",
+    "legacy or retired Operator visual implementations"
+  ],
+  "acceptance": [
+    "Pre-parse retryable failure exposes durable originalUrl instead of an empty object",
+    "Canonical URL, HeatZone context and corrected field values are preserved when present",
+    "No business value or browser-only fixture state is fabricated",
+    "Sensitive keys remain redacted by purpose binding",
+    "Reload and retry consume the durable API-backed intake record",
+    "Focused and full web unit, web/root typecheck, build and diff checks pass",
+    "No ODP-P10-CAN-003-R3A E2E spec is changed",
+    "R3A reruns its blocked retry test after the exact merged SHA is available",
+    "Independent Antigravity review is required"
+  ],
+  "conflicts": [
+    {
+      "task_id": "ODP-P10-CAN-003-R3A",
+      "rule": "R3A owns E2E assertions; R3D owns preserved-input product code; no overlap"
+    },
+    {
+      "task_id": "ODP-P10-CAN-001-R3C",
+      "rule": "R3C owns Governance files; R3D owns Network intake recovery files; no overlap"
+    }
+  ]
+}

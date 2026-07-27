@@ -134,6 +134,7 @@ def create_operator_router(
     require_live_data: bool = False,
     persistence_mode: str = "memory",
     provider_mode: str = "fixture",
+    allow_test_reset: bool = False,
 ) -> APIRouter:
     """Assemble the modular Operator Console API router.
 
@@ -1054,7 +1055,10 @@ def create_operator_router(
                     TenantScopedDocumentStore(document_store, tenant_id)
                 ),
                 initial_state=state,
-                seed_fixtures=False,
+                # Canonical fixture state may exist only behind the explicit
+                # test-reset gate (ODP_E2E_MODE): production keeps the durable
+                # listing aggregate fail-closed empty until real intake writes.
+                seed_fixtures=allow_test_reset,
             ),
             exporter=lambda service: service.export_state(),
             mutating_methods={
@@ -1280,7 +1284,7 @@ def create_operator_router(
                 ),
                 audit_log=active_audit_log,
                 service_resolver=listing_resolver,
-                allow_reset=False,
+                allow_reset=allow_test_reset,
             )
         )
         router.include_router(
@@ -1293,7 +1297,7 @@ def create_operator_router(
                     "sitescore", Action.EXECUTE, engine=authz_engine
                 ),
                 service_resolver=scoring_resolver,
-                allow_reset=False,
+                allow_reset=allow_test_reset,
             )
         )
         router.include_router(
@@ -1306,7 +1310,7 @@ def create_operator_router(
                     "sitescore", Action.APPROVE, engine=authz_engine
                 ),
                 service_resolver=review_resolver,
-                allow_reset=False,
+                allow_reset=allow_test_reset,
             )
         )
         router.include_router(
@@ -1319,7 +1323,7 @@ def create_operator_router(
                     "listing", Action.UPDATE, engine=authz_engine
                 ),
                 service_resolver=rebalance_resolver,
-                allow_reset=False,
+                allow_reset=allow_test_reset,
             )
         )
         router.include_router(

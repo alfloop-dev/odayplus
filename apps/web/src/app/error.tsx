@@ -36,8 +36,8 @@ export default function RouteError({
             <Button onClick={() => reset()} data-testid="route-error-retry">
               重試
             </Button>
-            <Link href="/" data-testid="route-error-home">
-              回到總覽
+            <Link href="/operator" data-testid="route-error-home">
+              回到營運管理
             </Link>
           </>
         }
