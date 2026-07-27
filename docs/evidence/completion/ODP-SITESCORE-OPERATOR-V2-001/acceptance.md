@@ -149,7 +149,7 @@ contains the fixed code.
 
 The task was reopened after merge so the authorized owner/reviewer pair could
 revalidate the delivered scope at the current `origin/dev` exact head
-`028877c9`. The original delivery commit `b2645e8e` remains an ancestor of
+`a2a3c920`. The original delivery commit `b2645e8e` remains an ancestor of
 `origin/dev` through PR #387 merge commit `2cfc2252`.
 
 Runs on 2026-07-27:
