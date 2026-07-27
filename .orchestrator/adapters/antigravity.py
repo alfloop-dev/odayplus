@@ -3,6 +3,7 @@ from __future__ import annotations
 import os
 from pathlib import Path
 
+import model_rotation
 from common import (
     agent_config_for,
     command_exists,
@@ -143,7 +144,10 @@ class AntigravityAdapter(BaseAdapter):
         workspace_root = delivery_workspace_root(self.config, request.metadata)
 
         command = [cli]
-        model = str(settings.get("model") or "").strip()
+        # Model rotation: cycle Gemini <-> Claude/GPT per the provider's quota
+        # cooldown state (falls back to the static `model` setting when rotation
+        # is disabled). '' means let agy use its default (Gemini) model.
+        model = model_rotation.resolve_active_model(self.config, provider_id, settings).strip()
         if model:
             command.extend(["--model", model])
         print_timeout = str(settings.get("print_timeout") or "").strip()

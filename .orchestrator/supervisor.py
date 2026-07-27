@@ -25,6 +25,7 @@ THIS_DIR = Path(__file__).resolve().parent
 if str(THIS_DIR) not in sys.path:
     sys.path.insert(0, str(THIS_DIR))
 
+import model_rotation
 from adapters import build_adapter
 from adapters.base import DeliveryRequest
 from approval_queue import prune_stale_approvals, resolve_approval
@@ -86,6 +87,11 @@ from task_archive import TaskResolver
 from watch_events import queue_delivery_event, run_scan, trim_seen_events
 
 SIDECAR_READY_PRIORITY_OFFSET = 10
+# Max time the antigravity model-rotation will treat a pool as exhausted before
+# re-probing it. Kept SHORT because Gemini's 5-hour limit is a rolling window
+# that recovers within minutes — a longer cooldown (e.g. trusting the error's
+# "Resets in Xh" hint) falsely locks an already-recovered pool for hours.
+ROTATION_PROBE_COOLDOWN_SECONDS = 1800
 BLOCKED_OWNER_RESCUE_KEYWORDS = (
     "auth",
     "authentication",
@@ -4156,6 +4162,10 @@ def classify_worker_failure(config: dict[str, Any], worker: dict[str, Any], reas
         "free tier quota exceeded",
         "quota will reset after",
         "terminalquotaerror",
+        # Antigravity (`agy`) 5-hour / weekly limit and per-account quota text.
+        "individual quota reached",
+        "quota reached",
+        "please upgrade your subscription to increase your limits",
     }
     retryable_capacity_markers = {
         "status: 429",
@@ -4587,6 +4597,25 @@ def should_pause_dispatch_for_failure_kind(kind: str | None) -> bool:
     )
 
 
+_TRANSIENT_INFRA_REASON_MARKERS = (
+    "timeout waiting for response",
+    "error: timeout",
+    "request timed out",
+    "read timed out",
+    "deadline exceeded",
+    "connection reset",
+    "connection aborted",
+    "socket hang up",
+)
+
+
+def is_transient_infra_reason(reason: str | None) -> bool:
+    if not reason:
+        return False
+    low = str(reason).lower()
+    return any(marker in low for marker in _TRANSIENT_INFRA_REASON_MARKERS)
+
+
 def mark_provider_dispatch_paused(
     config: dict[str, Any],
     state: dict[str, Any],
@@ -4619,6 +4648,35 @@ def mark_provider_dispatch_paused(
             return False
         pause_seconds_key = "quota_terminal_pause_seconds" if effective_pause_kind == "quota_terminal" else "capacity_pause_seconds"
     pause_seconds = max(60, int(settings.get(pause_seconds_key, 900)))
+    # Antigravity model rotation: on a capacity/quota failure, if this provider
+    # can rotate models (Gemini <-> Claude/GPT), record the exhausted pool and
+    # keep dispatching on the other pool instead of hard-pausing. Only fall
+    # through to a real pause when BOTH pools are exhausted.
+    if effective_pause_kind not in {"auth", "provider_config"} and model_rotation.rotation_enabled(config, provider_id):
+        # Do NOT trust the error's "Resets in Xh" reset hint for the cooldown
+        # duration. Gemini's 5-hour limit is a ROLLING window: a momentary hit
+        # reports a multi-hour reset but the account recovers gradually and is
+        # usable again within minutes. Trusting that hint FALSELY LOCKS an
+        # already-recovered pool for hours (this is what silently stalled the
+        # whole antigravity fleet). Use a short fixed probe cooldown instead: if
+        # the pool is still exhausted the next probe just re-cools (one cheap
+        # fast-fail worker), so a recovered pool is never locked for more than
+        # ROTATION_PROBE_COOLDOWN_SECONDS.
+        rotate_cooldown = min(int(pause_seconds), ROTATION_PROBE_COOLDOWN_SECONDS)
+        rotate = model_rotation.record_exhaustion(config, provider_id, rotate_cooldown, reason=reason)
+        write_activity_log(
+            config,
+            {
+                "type": "antigravity_model_rotated",
+                "provider": provider_id,
+                "exhausted_pool": rotate.get("exhausted_pool"),
+                "next_pool": rotate.get("next_pool"),
+                "both_exhausted": rotate.get("both_exhausted"),
+                "message": rotate.get("message"),
+            },
+        )
+        if not rotate.get("both_exhausted"):
+            return False
     blocked_until = (now + timedelta(seconds=pause_seconds)).replace(microsecond=0)
     hinted_blocked_until: str | None = None
     hint_capped = False
@@ -4761,6 +4819,27 @@ def record_task_failure_streak(
         return 0
     bucket = _task_failure_streak_bucket(state)
     key = _failure_streak_key(task_id, provider_id)
+    # Environmental failures (quota/capacity/auth/provider-config) are provider-level
+    # outages, not evidence the agent can't do THIS task. Counting them toward the
+    # per-task failure-loop streak would permanently lock a task out of dispatch
+    # after a transient quota/capacity crash (the whole provider is already paused
+    # separately). Transient infra timeouts (reason text) are the same class: the
+    # transport failed, not the task. Record telemetry but do NOT increment the streak.
+    if should_pause_dispatch_for_failure_kind(failure_kind) or is_transient_infra_reason(reason):
+        existing = dict(bucket.get(key) or {})
+        existing.update(
+            {
+                "task_id": task_id,
+                "provider": provider_id,
+                "last_reason": reason,
+                "last_failure_at": utc_now(),
+                "last_failure_kind": failure_kind or str(existing.get("last_failure_kind") or ""),
+                "last_environmental_failure_at": utc_now(),
+            }
+        )
+        if existing.get("count"):
+            bucket[key] = existing
+        return int(existing.get("count", 0))
     record = dict(bucket.get(key) or {})
     count = int(record.get("count", 0)) + 1
     record.update(
