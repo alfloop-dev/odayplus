@@ -151,11 +151,15 @@ def validate_point_in_time(
                     "feature_snapshot_time",
                 )
             )
-        # Outcome labels commonly mature after prediction. Treating that as a
-        # feature-time violation moves the prediction origin into the future and
-        # leaks the outcome. Model-specific release validation owns label-window
-        # maturity and train/holdout purging; this shared validator only enforces
-        # causal feature availability.
+        if record.label_maturity_time and record.label_maturity_time > record.feature_snapshot_time:
+            issues.append(
+                PointInTimeIssue(
+                    "label_not_mature",
+                    "label_maturity_time must not be after feature_snapshot_time",
+                    row_index,
+                    "label_maturity_time",
+                )
+            )
         for field_name in ("event_time", "observation_time", "available_from"):
             value = record.features.get(field_name)
             if value in (None, ""):

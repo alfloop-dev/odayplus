@@ -15,19 +15,19 @@
   "approved": [
     {
       "signature": "request.required:POST /api/v1/learninghub/releases:approved_by",
-      "task": "ODP-LEARNINGHUB-PROD-FIX-001",
+      "task_id": "ODP-LEARNINGHUB-PROD-FIX-001",
       "reason": "A release must name a distinct approver whose approval is recorded on the model card; the former default could silently fabricate review authority.",
       "migration": "Callers must obtain a recorded model-card approval and send that approver identity in approved_by."
     },
     {
       "signature": "request.type:POST /api/v1/learninghub/releases:requested_by",
-      "task": "ODP-LEARNINGHUB-PROD-FIX-001",
+      "task_id": "ODP-LEARNINGHUB-PROD-FIX-001",
       "reason": "Release actor identity is derived from the authenticated principal instead of trusting an arbitrary request-body default.",
       "migration": "Callers should omit requested_by and authenticate normally; during migration, a supplied value must exactly match the authenticated principal."
     },
     {
       "signature": "request.type:POST /api/v1/learninghub/releases/{release_id}/monitor:evaluated_by",
-      "task": "ODP-LEARNINGHUB-PROD-FIX-001",
+      "task_id": "ODP-LEARNINGHUB-PROD-FIX-001",
       "reason": "Monitor actor identity is derived from the authenticated principal instead of trusting an arbitrary request-body default.",
       "migration": "Callers should omit evaluated_by and authenticate normally; during migration, a supplied value must exactly match the authenticated principal."
     }
