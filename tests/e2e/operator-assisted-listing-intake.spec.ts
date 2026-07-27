@@ -275,7 +275,7 @@ test("canonical 3: possible match requires explicit reason and risk acknowledgem
   await page.getByTestId("intake-decide-submit").click();
 
   await expect(page.getByTestId("intake-detail-stage")).toHaveText("可決策");
-  await expect(page.getByTestId("intake-timeline")).toContainText(
+  await expect(page.getByTestId("intake-timeline-audit-section")).toContainText(
     "現場確認樓層",
   );
 });
@@ -459,7 +459,7 @@ test("retryable retrieval failure exposes code, correlation, recovery and preser
   await expect(page.getByTestId("intake-failure-panel")).toContainText(
     "可重試",
   );
-  await expect(page.getByTestId("intake-correlation-id")).not.toHaveText("—");
+  await expect(page.getByTestId("error-correlation-id")).not.toHaveText("—");
   await expect(page.getByTestId("intake-retry-button")).toBeVisible();
 });
 
@@ -483,8 +483,8 @@ test("governance reviewer gets masked read-only intake while unrelated roles fai
     await page.getByTestId(`intake-inbox-row-${intakeId}`).click();
   }
   await expect(page.getByTestId("intake-detail-dialog")).toBeVisible();
-  await expect(page.getByTestId("intake-decide-denied")).toBeVisible();
-  await expect(page.getByTestId("intake-fix-address")).toBeDisabled();
+  await expect(page.getByTestId("intake-detail-actions")).toHaveCount(0);
+  await expect(page.getByTestId("fix-field-address")).toHaveCount(0);
   await expect(
     page.getByTestId("intake-masked-contactPhone").first(),
   ).toContainText("FIELD_MASKED");

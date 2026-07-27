@@ -226,7 +226,7 @@ test.describe("Assisted Listing Intake — Package 7 product surfaces", () => {
       "疑似重複",
     );
     // Never auto-merged.
-    await expect(page.getByTestId("intake-no-auto-note")).toBeVisible();
+    await expect(page.getByTestId("no-auto-merge-warning")).toBeVisible();
     await expect(page.getByTestId("intake-change-summary")).toBeVisible();
 
     await page.getByTestId("decide-action-create").click();
@@ -266,9 +266,9 @@ test.describe("Assisted Listing Intake — Package 7 product surfaces", () => {
     });
     await expect(page.getByTestId("intake-detail-stage")).toHaveText("可決策");
     // The decision is recorded in the audit trail.
-    await expect(page.getByTestId("intake-timeline")).toContainText(
-      "實地確認樓層",
-    );
+    await expect(
+      page.getByTestId("intake-timeline-audit-section"),
+    ).toContainText("實地確認樓層");
   });
 
   test("identity-field correction demands a reason, then records before/after", async ({
@@ -280,7 +280,7 @@ test.describe("Assisted Listing Intake — Package 7 product surfaces", () => {
       await page.getByTestId("intake-detail-id").textContent()
     )?.trim()!;
 
-    await page.getByTestId("intake-fix-address").click();
+    await page.getByTestId("fix-field-address").click();
     await expect(page.getByTestId("intake-fix-title")).toContainText(
       "修正欄位",
     );
@@ -315,10 +315,12 @@ test.describe("Assisted Listing Intake — Package 7 product surfaces", () => {
       timeout: 15_000,
     });
     // The corrected value is now distinguishable from source and normalized.
-    await expect(page.getByTestId("intake-fields-grid")).toContainText(
+    await expect(page.getByTestId("intake-parsed-lineage")).toContainText(
       "新北市板橋區府中路 26 號 1F",
     );
-    await expect(page.getByTestId("intake-timeline")).toContainText("門牌");
+    await expect(
+      page.getByTestId("intake-timeline-audit-section"),
+    ).toContainText("門牌");
 
     const updatedData = await getIntakeApi(id5);
     expect(updatedData.originalUrl).toBe(URLS.possible);
@@ -384,7 +386,7 @@ test.describe("Assisted Listing Intake — Package 7 product surfaces", () => {
     await openRadarAsExpansionManager(page);
     await submitUrl(page, URLS.possible);
 
-    await page.getByTestId("intake-fix-address").click();
+    await page.getByTestId("fix-field-address").click();
     await page
       .getByTestId("intake-fix-value")
       .fill("新北市板橋區府中路 26 號 1F");
@@ -469,7 +471,7 @@ test.describe("Assisted Listing Intake — Package 7 product surfaces", () => {
     await page.getByTestId("assisted-risk-ack").check();
     await page.getByTestId("assisted-save").click();
 
-    await expect(page.getByTestId("intake-fields-grid")).toBeVisible({
+    await expect(page.getByTestId("intake-parsed-lineage")).toBeVisible({
       timeout: 15_000,
     });
   });
@@ -666,7 +668,7 @@ test.describe("Assisted Listing Intake — Package 7 product surfaces", () => {
     expect(cleanData.capturedAt).not.toBeNull();
     expect(cleanData.rawSnapshot).not.toBeNull();
     expect(cleanData.parserVersion).not.toBeNull();
-    await page.getByRole("button", { name: "關閉" }).click();
+    await page.getByTestId("intake-return-button").click();
 
     // 2. ASSISTED_ENTRY_ONLY
     await submitUrl(page, URLS.assistedOnly);
@@ -677,7 +679,7 @@ test.describe("Assisted Listing Intake — Package 7 product surfaces", () => {
     expect(assistedData.policy).toBe("ASSISTED_ENTRY_ONLY");
     expect(assistedData.capturedAt).toBeNull();
     expect(assistedData.rawSnapshot).toBeNull();
-    await page.getByRole("button", { name: "關閉" }).click();
+    await page.getByTestId("intake-return-button").click();
 
     // 3. AUTH_REQUIRED
     await submitUrl(page, URLS.authRequired);
@@ -688,7 +690,7 @@ test.describe("Assisted Listing Intake — Package 7 product surfaces", () => {
     expect(authData.policy).toBe("AUTH_REQUIRED");
     expect(authData.capturedAt).toBeNull();
     expect(authData.rawSnapshot).toBeNull();
-    await page.getByRole("button", { name: "關閉" }).click();
+    await page.getByTestId("intake-return-button").click();
 
     // 4. SOURCE_BLOCKED
     await submitUrl(page, URLS.blocked);
@@ -700,7 +702,7 @@ test.describe("Assisted Listing Intake — Package 7 product surfaces", () => {
     expect(blockedData.capturedAt).toBeNull();
     expect(blockedData.rawSnapshot).toBeNull();
     expect(blockedData.stage).toBe("QUARANTINED");
-    await page.getByRole("button", { name: "關閉" }).click();
+    await page.getByTestId("intake-return-button").click();
 
     // 5. POLICY_UNKNOWN
     await submitUrl(page, URLS.unknown);
@@ -722,8 +724,14 @@ test.describe("Assisted Listing Intake — Package 7 product surfaces", () => {
     // 1-7: SUBMITTED, CHECKING_IDENTITY, CHECKING_SOURCE_POLICY, RETRIEVING, PARSING, MATCHING, READY
     await submitUrl(page, URLS.clean);
     const stepCodesClean = await page
-      .locator('[data-testid="intake-stage-stepper"] [class*="stepCode"]')
-      .allTextContents();
+      .locator(
+        '[data-testid="timeline-stepper"] [data-testid^="timeline-step-"]',
+      )
+      .evaluateAll((steps) =>
+        steps.map((step) =>
+          step.getAttribute("data-testid")!.replace("timeline-step-", ""),
+        ),
+      );
     expect(stepCodesClean).toEqual([
       "SUBMITTED",
       "CHECKING_IDENTITY",
@@ -733,13 +741,19 @@ test.describe("Assisted Listing Intake — Package 7 product surfaces", () => {
       "MATCHING",
       "READY",
     ]);
-    await page.getByRole("button", { name: "關閉" }).click();
+    await page.getByTestId("intake-return-button").click();
 
     // 8: NEEDS_REVIEW
     await submitUrl(page, URLS.possible);
     const stepCodesPossible = await page
-      .locator('[data-testid="intake-stage-stepper"] [class*="stepCode"]')
-      .allTextContents();
+      .locator(
+        '[data-testid="timeline-stepper"] [data-testid^="timeline-step-"]',
+      )
+      .evaluateAll((steps) =>
+        steps.map((step) =>
+          step.getAttribute("data-testid")!.replace("timeline-step-", ""),
+        ),
+      );
     expect(stepCodesPossible).toEqual([
       "SUBMITTED",
       "CHECKING_IDENTITY",
@@ -749,13 +763,19 @@ test.describe("Assisted Listing Intake — Package 7 product surfaces", () => {
       "MATCHING",
       "NEEDS_REVIEW",
     ]);
-    await page.getByRole("button", { name: "關閉" }).click();
+    await page.getByTestId("intake-return-button").click();
 
     // 9: FAILED
     await submitUrl(page, URLS.timeout);
     const stepCodesTimeout = await page
-      .locator('[data-testid="intake-stage-stepper"] [class*="stepCode"]')
-      .allTextContents();
+      .locator(
+        '[data-testid="timeline-stepper"] [data-testid^="timeline-step-"]',
+      )
+      .evaluateAll((steps) =>
+        steps.map((step) =>
+          step.getAttribute("data-testid")!.replace("timeline-step-", ""),
+        ),
+      );
     expect(stepCodesTimeout).toEqual([
       "SUBMITTED",
       "CHECKING_IDENTITY",
@@ -765,26 +785,38 @@ test.describe("Assisted Listing Intake — Package 7 product surfaces", () => {
       "MATCHING",
       "FAILED",
     ]);
-    await page.getByRole("button", { name: "關閉" }).click();
+    await page.getByTestId("intake-return-button").click();
 
     // 10: AWAITING_ASSISTED_ENTRY
     await submitUrl(page, URLS.assistedOnly);
     const stepCodesAssisted = await page
-      .locator('[data-testid="intake-stage-stepper"] [class*="stepCode"]')
-      .allTextContents();
+      .locator(
+        '[data-testid="timeline-stepper"] [data-testid^="timeline-step-"]',
+      )
+      .evaluateAll((steps) =>
+        steps.map((step) =>
+          step.getAttribute("data-testid")!.replace("timeline-step-", ""),
+        ),
+      );
     expect(stepCodesAssisted).toEqual([
       "SUBMITTED",
       "CHECKING_IDENTITY",
       "CHECKING_SOURCE_POLICY",
       "AWAITING_ASSISTED_ENTRY",
     ]);
-    await page.getByRole("button", { name: "關閉" }).click();
+    await page.getByTestId("intake-return-button").click();
 
     // 11: QUARANTINED
     await submitUrl(page, URLS.unknown);
     const stepCodesUnknown = await page
-      .locator('[data-testid="intake-stage-stepper"] [class*="stepCode"]')
-      .allTextContents();
+      .locator(
+        '[data-testid="timeline-stepper"] [data-testid^="timeline-step-"]',
+      )
+      .evaluateAll((steps) =>
+        steps.map((step) =>
+          step.getAttribute("data-testid")!.replace("timeline-step-", ""),
+        ),
+      );
     expect(stepCodesUnknown).toEqual([
       "SUBMITTED",
       "CHECKING_IDENTITY",
@@ -805,7 +837,7 @@ test.describe("Assisted Listing Intake — Package 7 product surfaces", () => {
     expect(id).toBeTruthy();
 
     // Perform correction on address
-    await page.getByTestId("intake-fix-address").click();
+    await page.getByTestId("fix-field-address").click();
     await page
       .getByTestId("intake-fix-value")
       .fill("新北市板橋區府中路 26 號 1F");
@@ -819,7 +851,7 @@ test.describe("Assisted Listing Intake — Package 7 product surfaces", () => {
     });
 
     // Close detail dialog
-    await page.getByRole("button", { name: "關閉" }).click();
+    await page.getByTestId("intake-return-button").click();
 
     // Create a fresh browser context to prove durability
     const freshContext = await context.browser()!.newContext();
@@ -836,12 +868,12 @@ test.describe("Assisted Listing Intake — Package 7 product surfaces", () => {
     await expect(freshPage.getByTestId("intake-detail-dialog")).toBeVisible({
       timeout: 15_000,
     });
-    await expect(freshPage.getByTestId("intake-fields-grid")).toContainText(
+    await expect(freshPage.getByTestId("intake-parsed-lineage")).toContainText(
       "新北市板橋區府中路 26 號 1F",
     );
 
     // Perform decision in fresh context
-    await freshPage.getByTestId("intake-decide-create").click();
+    await freshPage.getByTestId("decide-action-create").click();
     await freshPage
       .getByTestId("intake-decide-reason")
       .fill("Durability test decision reason");
@@ -886,8 +918,8 @@ test.describe("Assisted Listing Intake — Package 7 product surfaces", () => {
     await submitUrl(page, URLS.clean);
 
     await expect(page.getByTestId("intake-detail-dialog")).toBeVisible();
-    await expect(page.getByTestId("intake-stage-stepper")).toBeVisible();
-    await expect(page.getByTestId("intake-fields-grid")).toBeVisible();
+    await expect(page.getByTestId("timeline-stepper")).toBeVisible();
+    await expect(page.getByTestId("intake-parsed-lineage")).toBeVisible();
   });
 
   test("verify audit envelope for CREATE and PROMOTE decisions", async ({
@@ -900,7 +932,7 @@ test.describe("Assisted Listing Intake — Package 7 product surfaces", () => {
     const id1 = (
       await page.getByTestId("intake-detail-id").textContent()
     )?.trim()!;
-    await page.getByTestId("intake-decide-create").click();
+    await page.getByTestId("decide-action-create").click();
     await page
       .getByTestId("intake-decide-reason")
       .fill("Audit test create reason");
@@ -909,7 +941,7 @@ test.describe("Assisted Listing Intake — Package 7 product surfaces", () => {
     await expect(page.getByTestId("intake-decide-dialog")).toBeHidden({
       timeout: 15_000,
     });
-    await page.getByRole("button", { name: "關閉" }).click();
+    await page.getByTestId("intake-return-button").click();
 
     const data1 = await getIntakeApi(id1);
     expect(data1.parserVersion).toBeTruthy();
@@ -987,7 +1019,7 @@ test.describe("Assisted Listing Intake — Package 7 product surfaces", () => {
     const id2 = (
       await page.getByTestId("intake-detail-id").textContent()
     )?.trim()!;
-    await page.getByTestId("intake-decide-revise").click();
+    await page.getByTestId("decide-action-revise").click();
     await page
       .getByTestId("intake-decide-reason")
       .fill("Audit test revise reason");
@@ -996,7 +1028,7 @@ test.describe("Assisted Listing Intake — Package 7 product surfaces", () => {
     await expect(page.getByTestId("intake-decide-dialog")).toBeHidden({
       timeout: 15_000,
     });
-    await page.getByRole("button", { name: "關閉" }).click();
+    await page.getByTestId("intake-return-button").click();
 
     const data2 = await getIntakeApi(id2);
     expect(data2.parserVersion).toBeTruthy();
@@ -1026,7 +1058,7 @@ test.describe("Assisted Listing Intake — Package 7 product surfaces", () => {
     const id3 = (
       await page.getByTestId("intake-detail-id").textContent()
     )?.trim()!;
-    await page.getByTestId("intake-decide-dup").click();
+    await page.getByTestId("decide-action-dup").click();
     await page
       .getByTestId("intake-decide-reason")
       .fill("Audit test duplicate reason");
@@ -1035,7 +1067,7 @@ test.describe("Assisted Listing Intake — Package 7 product surfaces", () => {
     await expect(page.getByTestId("intake-decide-dialog")).toBeHidden({
       timeout: 15_000,
     });
-    await page.getByRole("button", { name: "關閉" }).click();
+    await page.getByTestId("intake-return-button").click();
 
     const data3 = await getIntakeApi(id3);
     expect(data3.parserVersion).toBeTruthy();
@@ -1065,7 +1097,7 @@ test.describe("Assisted Listing Intake — Package 7 product surfaces", () => {
     const id4 = (
       await page.getByTestId("intake-detail-id").textContent()
     )?.trim()!;
-    await page.getByTestId("intake-decide-steward").click();
+    await page.getByTestId("decide-action-steward").click();
     await page
       .getByTestId("intake-decide-reason")
       .fill("Audit test quarantine reason");
@@ -1074,7 +1106,7 @@ test.describe("Assisted Listing Intake — Package 7 product surfaces", () => {
     await expect(page.getByTestId("intake-decide-dialog")).toBeHidden({
       timeout: 15_000,
     });
-    await page.getByRole("button", { name: "關閉" }).click();
+    await page.getByTestId("intake-return-button").click();
 
     const data4 = await getIntakeApi(id4);
     expect(data4.parserVersion).toBeTruthy();
@@ -1108,7 +1140,7 @@ test.describe("Assisted Listing Intake — Package 7 product surfaces", () => {
     const id5 = (
       await page.getByTestId("intake-detail-id").textContent()
     )?.trim()!;
-    await page.getByRole("button", { name: "關閉" }).click();
+    await page.getByTestId("intake-return-button").click();
 
     const apiContext = await playwrightRequest.newContext({
       baseURL: API_BASE_URL,
