@@ -32,6 +32,7 @@ done
 : "${ODP_SCHEDULER_TIME_ZONE:?Error: ODP_SCHEDULER_TIME_ZONE is required.}"
 : "${ODP_FORECAST_ENGINE:?Error: ODP_FORECAST_ENGINE is required for live deployments.}"
 : "${ODP_FORECAST_MODEL:?Error: ODP_FORECAST_MODEL is required for live deployments.}"
+: "${ODP_EXTERNAL_PROVIDER_PROBE_TIMEOUT_SECONDS:?Error: ODP_EXTERNAL_PROVIDER_PROBE_TIMEOUT_SECONDS is required for live deployments.}"
 
 case "${ODP_FORECAST_ENGINE}:${ODP_FORECAST_MODEL}" in
   statsforecast:seasonal_naive|statsforecast:auto_arima|statsforecast:auto_ets)
@@ -158,7 +159,7 @@ import json
 import os
 import sys
 
-keys = (
+keys = [
     "ODAY_RELEASE_SHA",
     "ODP_DEPLOY_ENV",
     "ODP_REQUIRE_LIVE_DATA",
@@ -167,24 +168,42 @@ keys = (
     "ODP_FORECAST_ENGINE",
     "ODP_FORECAST_MODEL",
     "ODP_EXTERNAL_PROVIDER_MODE",
+    "ODP_EXTERNAL_PROVIDER_PROBE_TIMEOUT_SECONDS",
     "ODP_PERSISTENCE",
     "ODP_OBJECT_STORE",
     "ODP_SNAPSHOT_BUCKET",
     "MLFLOW_TRACKING_URI",
-    "ODP_LISTING_PROVIDER_FEED_URL",
-    "ODP_POI_PROVIDER_URL",
-    "ODP_GEOCODE_PROVIDER_URL",
-    "ODP_ADMIN_BOUNDARY_PROVIDER_URL",
-    "ODP_LISTING_PROVIDER_AUTH_STATUS",
-    "ODP_POI_PROVIDER_AUTH_STATUS",
-    "ODP_GEOCODE_PROVIDER_AUTH_STATUS",
-    "ODP_ADMIN_BOUNDARY_PROVIDER_AUTH_STATUS",
     "ODP_PRODUCTION_PROVIDER_IDS",
     "ODP_COMPETITOR_MANUAL_SOURCE_STATUS",
     "ODP_AUTH_ISSUER",
     "ODP_AUTH_AUDIENCES",
     "ODP_AUTH_JWKS_URI",
-)
+]
+provider_config = {
+    "listing.partner_feed": (
+        "ODP_LISTING_PROVIDER_FEED_URL",
+        "ODP_LISTING_PROVIDER_AUTH_STATUS",
+    ),
+    "poi.commercial_api": (
+        "ODP_POI_PROVIDER_URL",
+        "ODP_POI_PROVIDER_AUTH_STATUS",
+    ),
+    "geocode.primary_api": (
+        "ODP_GEOCODE_PROVIDER_URL",
+        "ODP_GEOCODE_PROVIDER_AUTH_STATUS",
+    ),
+    "admin_boundary.official_dataset": (
+        "ODP_ADMIN_BOUNDARY_PROVIDER_URL",
+        "ODP_ADMIN_BOUNDARY_PROVIDER_AUTH_STATUS",
+    ),
+}
+selected = {
+    item.strip()
+    for item in os.environ["ODP_PRODUCTION_PROVIDER_IDS"].split(",")
+    if item.strip()
+}
+for provider_id in sorted(selected):
+    keys.extend(provider_config.get(provider_id, ()))
 payload = {key: os.environ[key] for key in keys}
 payload["ODAY_ENV"] = os.environ["ODP_DEPLOY_ENV"]
 payload["ODP_ENV"] = os.environ["ODP_DEPLOY_ENV"]
@@ -221,10 +240,24 @@ build_publish_sign "worker" "${WORKER_IMAGE}" "infra/docker/worker.Dockerfile"
 build_publish_sign "scheduler" "${SCHEDULER_IMAGE}" "infra/docker/scheduler.Dockerfile"
 
 API_SECRET_BINDINGS="ODAY_DATABASE_URL=${ODAY_DATABASE_URL_SECRET}"
-API_SECRET_BINDINGS+=",ODP_LISTING_PROVIDER_API_KEY=${ODP_LISTING_PROVIDER_API_KEY_SECRET}"
-API_SECRET_BINDINGS+=",ODP_POI_PROVIDER_API_KEY=${ODP_POI_PROVIDER_API_KEY_SECRET}"
-API_SECRET_BINDINGS+=",ODP_GEOCODE_PROVIDER_API_KEY=${ODP_GEOCODE_PROVIDER_API_KEY_SECRET}"
-API_SECRET_BINDINGS+=",ODP_ADMIN_BOUNDARY_PROVIDER_TOKEN=${ODP_ADMIN_BOUNDARY_PROVIDER_TOKEN_SECRET}"
+IFS=',' read -ra SELECTED_PROVIDER_IDS <<<"${ODP_PRODUCTION_PROVIDER_IDS}"
+for provider_id in "${SELECTED_PROVIDER_IDS[@]}"; do
+  provider_id="${provider_id//[[:space:]]/}"
+  case "${provider_id}" in
+    listing.partner_feed)
+      API_SECRET_BINDINGS+=",ODP_LISTING_PROVIDER_API_KEY=${ODP_LISTING_PROVIDER_API_KEY_SECRET}"
+      ;;
+    poi.commercial_api)
+      API_SECRET_BINDINGS+=",ODP_POI_PROVIDER_API_KEY=${ODP_POI_PROVIDER_API_KEY_SECRET}"
+      ;;
+    geocode.primary_api)
+      API_SECRET_BINDINGS+=",ODP_GEOCODE_PROVIDER_API_KEY=${ODP_GEOCODE_PROVIDER_API_KEY_SECRET}"
+      ;;
+    admin_boundary.official_dataset)
+      API_SECRET_BINDINGS+=",ODP_ADMIN_BOUNDARY_PROVIDER_TOKEN=${ODP_ADMIN_BOUNDARY_PROVIDER_TOKEN_SECRET}"
+      ;;
+  esac
+done
 WEB_SECRET_BINDINGS="ODP_WEB_OIDC_CLIENT_SECRET=${ODP_WEB_OIDC_CLIENT_SECRET_SECRET}"
 WEB_SECRET_BINDINGS+=",ODP_WEB_SESSION_SECRET=${ODP_WEB_SESSION_SECRET_SECRET}"
 
