@@ -1,4 +1,9 @@
-import { expect, request as playwrightRequest, test, type Page } from "@playwright/test";
+import {
+  expect,
+  request as playwrightRequest,
+  test,
+  type Page,
+} from "@playwright/test";
 
 /**
  * Assisted Listing Intake — product E2E (ODP-OC-R5-011 / ODP-OC-R5-004).
@@ -91,7 +96,7 @@ async function openRadarAsExpansionManager(page: Page) {
   });
   await page.goto("/operator?ws=network");
   await page.getByTestId("network-tab-1").click();
-  await expect(page.getByTestId("intake-queue")).toBeVisible();
+  await expect(page.getByTestId("intake-inbox-view")).toBeVisible();
 }
 
 async function submitUrl(page: Page, url: string) {
@@ -100,7 +105,9 @@ async function submitUrl(page: Page, url: string) {
   await expect(dialog).toBeVisible();
   await page.getByTestId("intake-url-input").fill(url);
   await page.getByTestId("intake-submit-button").click();
-  await expect(page.getByTestId("intake-detail-dialog")).toBeVisible({ timeout: 15_000 });
+  await expect(page.getByTestId("intake-detail-dialog")).toBeVisible({
+    timeout: 15_000,
+  });
 }
 
 /** Helper to query direct API details of an intake record */
@@ -122,34 +129,48 @@ async function getIntakeApi(id: string) {
 }
 
 test.describe("Assisted Listing Intake — Package 7 product surfaces", () => {
-  test("all five Package 7 screen labels exist on the real surfaces", async ({ page }) => {
+  test("all five Package 7 screen labels exist on the real surfaces", async ({
+    page,
+  }) => {
     await openRadarAsExpansionManager(page);
 
     // 1. Network URL 收件佇列
-    await expect(page.locator('[data-screen-label="Network URL 收件佇列"]')).toBeVisible();
+    await expect(
+      page.locator('[data-screen-label="Network URL 收件佇列"]'),
+    ).toBeVisible();
 
     // 2. Dialog 從網址新增物件
     await page.getByTestId("intake-add-button").click();
-    await expect(page.locator('[data-screen-label="Dialog 從網址新增物件"]')).toBeVisible();
+    await expect(
+      page.locator('[data-screen-label="Dialog 從網址新增物件"]'),
+    ).toBeVisible();
     await page.getByTestId("intake-url-input").fill(URLS.possible);
     await page.getByTestId("intake-submit-button").click();
 
     // 3. Dialog 收件處理詳情
-    await expect(page.locator('[data-screen-label="Dialog 收件處理詳情"]')).toBeVisible({
+    await expect(
+      page.locator('[data-screen-label="Dialog 收件處理詳情"]'),
+    ).toBeVisible({
       timeout: 15_000,
     });
 
     // 4. Dialog 欄位修正
     await page.getByTestId("intake-fix-address").click();
-    await expect(page.locator('[data-screen-label="Dialog 欄位修正"]')).toBeVisible();
+    await expect(
+      page.locator('[data-screen-label="Dialog 欄位修正"]'),
+    ).toBeVisible();
     await page.getByRole("button", { name: "取消" }).click();
 
     // 5. Dialog 收件決策確認
     await page.getByTestId("intake-decide-create").click();
-    await expect(page.locator('[data-screen-label="Dialog 收件決策確認"]')).toBeVisible();
+    await expect(
+      page.locator('[data-screen-label="Dialog 收件決策確認"]'),
+    ).toBeVisible();
   });
 
-  test("empty state, then a clean URL submits to a durable READY / NEW record", async ({ page }) => {
+  test("empty state, then a clean URL submits to a durable READY / NEW record", async ({
+    page,
+  }) => {
     await openRadarAsExpansionManager(page);
     await expect(page.getByTestId("intake-queue-empty")).toBeVisible();
 
@@ -194,12 +215,18 @@ test.describe("Assisted Listing Intake — Package 7 product surfaces", () => {
     await expect(page.getByTestId(`intake-row-${firstId}`)).toHaveCount(1);
   });
 
-  test("possible match requires a human decision and refuses an empty reason", async ({ page }) => {
+  test("possible match requires a human decision and refuses an empty reason", async ({
+    page,
+  }) => {
     await openRadarAsExpansionManager(page);
     await submitUrl(page, URLS.possible);
 
-    await expect(page.getByTestId("intake-detail-stage")).toHaveText("待人工覆核");
-    await expect(page.getByTestId("intake-detail-match")).toHaveText("疑似重複");
+    await expect(page.getByTestId("intake-detail-stage")).toHaveText(
+      "待人工覆核",
+    );
+    await expect(page.getByTestId("intake-detail-match")).toHaveText(
+      "疑似重複",
+    );
     // Never auto-merged.
     await expect(page.getByTestId("intake-no-auto-note")).toBeVisible();
     await expect(page.getByTestId("intake-change-summary")).toBeVisible();
@@ -207,58 +234,92 @@ test.describe("Assisted Listing Intake — Package 7 product surfaces", () => {
     await page.getByTestId("intake-decide-create").click();
     // Review summary is shown BEFORE the decision commits.
     await expect(page.getByTestId("intake-decide-summary")).toBeVisible();
-    await expect(page.getByTestId("intake-decide-note")).toContainText("不使用 optimistic UI");
+    await expect(page.getByTestId("intake-decide-note")).toContainText(
+      "不使用 optimistic UI",
+    );
 
     // Empty reason is blocked and the dialog stays open — nothing was written.
     await page.getByTestId("intake-decide-submit").click();
-    await expect(page.getByTestId("intake-decide-error")).toContainText("必須填寫原因");
+    await expect(page.getByTestId("intake-decide-error")).toContainText(
+      "必須填寫原因",
+    );
     await expect(page.getByTestId("intake-decide-dialog")).toBeVisible();
 
-    await page.getByTestId("intake-decide-reason").fill("實地確認樓層與提供者 ID 為不同物件，判定為新物件。");
+    await page
+      .getByTestId("intake-decide-reason")
+      .fill("實地確認樓層與提供者 ID 為不同物件，判定為新物件。");
 
     // A reason alone does not commit: the risk must be disclosed AND accepted.
-    await expect(page.getByTestId("intake-decide-risk-summary")).toContainText("物件收件匣");
+    await expect(page.getByTestId("intake-decide-risk-summary")).toContainText(
+      "物件收件匣",
+    );
     await expect(page.getByTestId("intake-decide-risk-ack")).not.toBeChecked();
     await page.getByTestId("intake-decide-submit").click();
-    await expect(page.getByTestId("intake-decide-error")).toContainText("了解此決策的影響");
+    await expect(page.getByTestId("intake-decide-error")).toContainText(
+      "了解此決策的影響",
+    );
     await expect(page.getByTestId("intake-decide-dialog")).toBeVisible();
 
     await page.getByTestId("intake-decide-risk-ack").check();
     await page.getByTestId("intake-decide-submit").click();
 
-    await expect(page.getByTestId("intake-decide-dialog")).toBeHidden({ timeout: 15_000 });
+    await expect(page.getByTestId("intake-decide-dialog")).toBeHidden({
+      timeout: 15_000,
+    });
     await expect(page.getByTestId("intake-detail-stage")).toHaveText("可決策");
     // The decision is recorded in the audit trail.
-    await expect(page.getByTestId("intake-timeline")).toContainText("實地確認樓層");
+    await expect(page.getByTestId("intake-timeline")).toContainText(
+      "實地確認樓層",
+    );
   });
 
-  test("identity-field correction demands a reason, then records before/after", async ({ page }) => {
+  test("identity-field correction demands a reason, then records before/after", async ({
+    page,
+  }) => {
     await openRadarAsExpansionManager(page);
     await submitUrl(page, URLS.possible);
-    const id5 = (await page.getByTestId("intake-detail-id").textContent())?.trim()!;
+    const id5 = (
+      await page.getByTestId("intake-detail-id").textContent()
+    )?.trim()!;
 
     await page.getByTestId("intake-fix-address").click();
-    await expect(page.getByTestId("intake-fix-title")).toContainText("修正欄位");
-    await page.getByTestId("intake-fix-value").fill("新北市板橋區府中路 26 號 1F");
+    await expect(page.getByTestId("intake-fix-title")).toContainText(
+      "修正欄位",
+    );
+    await page
+      .getByTestId("intake-fix-value")
+      .fill("新北市板橋區府中路 26 號 1F");
 
     // Identity field: the reason gate blocks before the request is made.
     await page.getByTestId("intake-fix-submit").click();
-    await expect(page.getByTestId("intake-fix-error")).toContainText("必須填寫原因");
+    await expect(page.getByTestId("intake-fix-error")).toContainText(
+      "必須填寫原因",
+    );
 
-    await page.getByTestId("intake-fix-reason").fill("與房東電話確認門牌為 26 號");
+    await page
+      .getByTestId("intake-fix-reason")
+      .fill("與房東電話確認門牌為 26 號");
 
     // The risk of an identity correction is disclosed and must be accepted; the
     // summary names the field and the before/after values being written.
-    await expect(page.getByTestId("intake-fix-risk-summary")).toContainText("新北市板橋區府中路 26 號 1F");
+    await expect(page.getByTestId("intake-fix-risk-summary")).toContainText(
+      "新北市板橋區府中路 26 號 1F",
+    );
     await page.getByTestId("intake-fix-submit").click();
-    await expect(page.getByTestId("intake-fix-error")).toContainText("了解此修正的影響");
+    await expect(page.getByTestId("intake-fix-error")).toContainText(
+      "了解此修正的影響",
+    );
 
     await page.getByTestId("intake-fix-risk-ack").check();
     await page.getByTestId("intake-fix-submit").click();
 
-    await expect(page.getByTestId("intake-fix-dialog")).toBeHidden({ timeout: 15_000 });
+    await expect(page.getByTestId("intake-fix-dialog")).toBeHidden({
+      timeout: 15_000,
+    });
     // The corrected value is now distinguishable from source and normalized.
-    await expect(page.getByTestId("intake-fields-grid")).toContainText("新北市板橋區府中路 26 號 1F");
+    await expect(page.getByTestId("intake-fields-grid")).toContainText(
+      "新北市板橋區府中路 26 號 1F",
+    );
     await expect(page.getByTestId("intake-timeline")).toContainText("門牌");
 
     const updatedData = await getIntakeApi(id5);
@@ -272,26 +333,38 @@ test.describe("Assisted Listing Intake — Package 7 product surfaces", () => {
     expect(addressField.correctedValue).toBe("新北市板橋區府中路 26 號 1F");
     expect(addressField.correctionReason).toBe("與房東電話確認門牌為 26 號");
 
-    const auditCorrect = updatedData.auditEvents.find((e: any) => e.action === "intake.correct");
+    const auditCorrect = updatedData.auditEvents.find(
+      (e: any) => e.action === "intake.correct",
+    );
     expect(auditCorrect).toBeDefined();
     expect(auditCorrect.metadata.beforeAfter).toBeDefined();
-    const addressChange = auditCorrect.metadata.beforeAfter.find((c: any) => c.field === "address");
+    const addressChange = auditCorrect.metadata.beforeAfter.find(
+      (c: any) => c.field === "address",
+    );
     expect(addressChange).toBeDefined();
     expect(addressChange.before).toBeTruthy();
     expect(addressChange.after).toBe("新北市板橋區府中路 26 號 1F");
   });
 
-  test("correct and decide writes carry retry-stable idempotency keys", async ({ page }) => {
+  test("correct and decide writes carry retry-stable idempotency keys", async ({
+    page,
+  }) => {
     const correctKeys: string[] = [];
     const decideKeys: string[] = [];
     let failFirstCorrect = true;
     let failFirstDecide = true;
 
     await page.route("**/network-listings/intake/*/correct", async (route) => {
-      correctKeys.push(route.request().headers()["idempotency-key"] ?? "<none>");
+      correctKeys.push(
+        route.request().headers()["idempotency-key"] ?? "<none>",
+      );
       if (failFirstCorrect) {
         failFirstCorrect = false;
-        await route.fulfill({ status: 503, contentType: "application/json", body: "{}" });
+        await route.fulfill({
+          status: 503,
+          contentType: "application/json",
+          body: "{}",
+        });
         return;
       }
       await route.continue();
@@ -300,7 +373,11 @@ test.describe("Assisted Listing Intake — Package 7 product surfaces", () => {
       decideKeys.push(route.request().headers()["idempotency-key"] ?? "<none>");
       if (failFirstDecide) {
         failFirstDecide = false;
-        await route.fulfill({ status: 503, contentType: "application/json", body: "{}" });
+        await route.fulfill({
+          status: 503,
+          contentType: "application/json",
+          body: "{}",
+        });
         return;
       }
       await route.continue();
@@ -310,22 +387,32 @@ test.describe("Assisted Listing Intake — Package 7 product surfaces", () => {
     await submitUrl(page, URLS.possible);
 
     await page.getByTestId("intake-fix-address").click();
-    await page.getByTestId("intake-fix-value").fill("新北市板橋區府中路 26 號 1F");
-    await page.getByTestId("intake-fix-reason").fill("與房東電話確認門牌為 26 號");
+    await page
+      .getByTestId("intake-fix-value")
+      .fill("新北市板橋區府中路 26 號 1F");
+    await page
+      .getByTestId("intake-fix-reason")
+      .fill("與房東電話確認門牌為 26 號");
     await page.getByTestId("intake-fix-risk-ack").check();
     await page.getByTestId("intake-fix-submit").click();
     await expect(page.getByTestId("intake-fix-error")).toBeVisible();
-    await expect(page.getByTestId("intake-fix-reason")).toHaveValue("與房東電話確認門牌為 26 號");
+    await expect(page.getByTestId("intake-fix-reason")).toHaveValue(
+      "與房東電話確認門牌為 26 號",
+    );
 
     await page.getByTestId("intake-fix-submit").click();
-    await expect(page.getByTestId("intake-fix-dialog")).toBeHidden({ timeout: 15_000 });
+    await expect(page.getByTestId("intake-fix-dialog")).toBeHidden({
+      timeout: 15_000,
+    });
     expect(correctKeys).toHaveLength(2);
     expect(correctKeys[0]).toBe(correctKeys[1]);
     expect(correctKeys[0]).not.toBe("<none>");
     expect(correctKeys[0]).toContain("intake-correct-");
 
     await page.getByTestId("intake-decide-create").click();
-    await page.getByTestId("intake-decide-reason").fill("實地確認樓層與提供者 ID 為不同物件，判定為新物件。");
+    await page
+      .getByTestId("intake-decide-reason")
+      .fill("實地確認樓層與提供者 ID 為不同物件，判定為新物件。");
     await page.getByTestId("intake-decide-risk-ack").check();
     await page.getByTestId("intake-decide-submit").click();
     await expect(page.getByTestId("intake-decide-error")).toBeVisible();
@@ -334,41 +421,59 @@ test.describe("Assisted Listing Intake — Package 7 product surfaces", () => {
     );
 
     await page.getByTestId("intake-decide-submit").click();
-    await expect(page.getByTestId("intake-decide-dialog")).toBeHidden({ timeout: 15_000 });
+    await expect(page.getByTestId("intake-decide-dialog")).toBeHidden({
+      timeout: 15_000,
+    });
     expect(decideKeys).toHaveLength(2);
     expect(decideKeys[0]).toBe(decideKeys[1]);
     expect(decideKeys[0]).not.toBe("<none>");
     expect(decideKeys[0]).toContain("intake-decide-create-");
   });
 
-  test("assisted-entry-only source keeps the URL and never fetches the page", async ({ page }) => {
+  test("assisted-entry-only source keeps the URL and never fetches the page", async ({
+    page,
+  }) => {
     await openRadarAsExpansionManager(page);
     await submitUrl(page, URLS.assistedOnly);
 
-    await expect(page.getByTestId("intake-detail-stage")).toHaveText("待人工補錄");
-    await expect(page.getByTestId("intake-policy-chip")).toHaveText("僅人工補錄");
+    await expect(page.getByTestId("intake-detail-stage")).toHaveText(
+      "待人工補錄",
+    );
+    await expect(page.getByTestId("intake-policy-chip")).toHaveText(
+      "僅人工補錄",
+    );
     // No retrieval happened: there is no capture, and the entry form is offered.
     await expect(page.getByTestId("intake-captured-at")).toContainText("—");
     await expect(page.getByTestId("intake-assisted-entry")).toBeVisible();
 
     // Required-field gate.
     await page.getByTestId("assisted-save").click();
-    await expect(page.getByTestId("intake-assisted-error")).toContainText("地址、租金、坪數");
+    await expect(page.getByTestId("intake-assisted-error")).toContainText(
+      "地址、租金、坪數",
+    );
 
-    await page.getByTestId("assisted-address").fill("新北市板橋區府中路 26 號 1F");
+    await page
+      .getByTestId("assisted-address")
+      .fill("新北市板橋區府中路 26 號 1F");
     await page.getByTestId("assisted-rent").fill("54000");
     await page.getByTestId("assisted-area").fill("22");
 
     // Hand-keyed values carry no retrieved evidence — that risk is disclosed on
     // the form and must be accepted before the correction is written.
-    await expect(page.getByTestId("intake-assisted-risk-summary")).toContainText("不具本系統擷取的來源證據");
+    await expect(
+      page.getByTestId("intake-assisted-risk-summary"),
+    ).toContainText("不具本系統擷取的來源證據");
     await page.getByTestId("assisted-save").click();
-    await expect(page.getByTestId("intake-assisted-error")).toContainText("了解人工補錄的風險");
+    await expect(page.getByTestId("intake-assisted-error")).toContainText(
+      "了解人工補錄的風險",
+    );
 
     await page.getByTestId("assisted-risk-ack").check();
     await page.getByTestId("assisted-save").click();
 
-    await expect(page.getByTestId("intake-fields-grid")).toBeVisible({ timeout: 15_000 });
+    await expect(page.getByTestId("intake-fields-grid")).toBeVisible({
+      timeout: 15_000,
+    });
   });
 
   test("unapproved source fails closed into quarantine with a governance reason", async ({
@@ -391,7 +496,9 @@ test.describe("Assisted Listing Intake — Package 7 product surfaces", () => {
     await openRadarAsExpansionManager(page);
     await submitUrl(page, URLS.timeout);
 
-    await expect(page.getByTestId("intake-detail-stage")).toHaveText("處理失敗");
+    await expect(page.getByTestId("intake-detail-stage")).toHaveText(
+      "處理失敗",
+    );
     const failure = page.getByTestId("intake-failure-panel");
     await expect(failure).toContainText("ODP-INTAKE-RETRIEVAL-TIMEOUT");
     await expect(failure).toContainText("可重試");
@@ -400,20 +507,28 @@ test.describe("Assisted Listing Intake — Package 7 product surfaces", () => {
     await expect(page.getByTestId("intake-retry-button")).toBeVisible();
   });
 
-  test("revision outcome offers append-version against the matched listing", async ({ page }) => {
+  test("revision outcome offers append-version against the matched listing", async ({
+    page,
+  }) => {
     await openRadarAsExpansionManager(page);
     await submitUrl(page, URLS.revision);
 
-    await expect(page.getByTestId("intake-detail-match")).toHaveText("版本更新");
+    await expect(page.getByTestId("intake-detail-match")).toHaveText(
+      "版本更新",
+    );
     const revise = page.getByTestId("intake-decide-revise");
     await expect(revise).toBeVisible();
     await expect(revise).toContainText("L-2024");
   });
 
-  test("deep link reopens the intake record after leaving the page", async ({ page }) => {
+  test("deep link reopens the intake record after leaving the page", async ({
+    page,
+  }) => {
     await openRadarAsExpansionManager(page);
     await submitUrl(page, URLS.clean);
-    const id = (await page.getByTestId("intake-detail-id").textContent())?.trim();
+    const id = (
+      await page.getByTestId("intake-detail-id").textContent()
+    )?.trim();
     expect(id).toBeTruthy();
 
     // Leave entirely, then return via the durable deep link.
@@ -421,11 +536,15 @@ test.describe("Assisted Listing Intake — Package 7 product surfaces", () => {
     await page.goto(`/operator?ws=network#intake/${id}`);
     await page.getByTestId("network-tab-1").click();
 
-    await expect(page.getByTestId("intake-detail-dialog")).toBeVisible({ timeout: 15_000 });
+    await expect(page.getByTestId("intake-detail-dialog")).toBeVisible({
+      timeout: 15_000,
+    });
     await expect(page.getByTestId("intake-detail-id")).toHaveText(id!);
   });
 
-  test("queue counts reflect real server state across mixed outcomes", async ({ page }) => {
+  test("queue counts reflect real server state across mixed outcomes", async ({
+    page,
+  }) => {
     await openRadarAsExpansionManager(page);
 
     await submitUrl(page, URLS.possible);
@@ -455,7 +574,9 @@ test.describe("Assisted Listing Intake — Package 7 product surfaces", () => {
     await expect(page.getByTestId("intake-add-button")).toHaveCount(0);
   });
 
-  test("dialogs are keyboard operable and Escape closes them", async ({ page }) => {
+  test("dialogs are keyboard operable and Escape closes them", async ({
+    page,
+  }) => {
     await openRadarAsExpansionManager(page);
     await page.getByTestId("intake-add-button").click();
     await expect(page.getByTestId("intake-add-dialog")).toBeVisible();
@@ -486,16 +607,26 @@ test.describe("Assisted Listing Intake — Package 7 product surfaces", () => {
     await openRadarAsExpansionManager(page);
     await submitUrl(page, URLS.authRequired);
 
-    await expect(page.getByTestId("intake-detail-stage")).toHaveText("待人工補錄");
-    await expect(page.getByTestId("intake-policy-chip")).toHaveText("需授權帳號");
-    await expect(page.getByTestId("intake-policy-reason")).toContainText("需經核准之合作帳號");
+    await expect(page.getByTestId("intake-detail-stage")).toHaveText(
+      "待人工補錄",
+    );
+    await expect(page.getByTestId("intake-policy-chip")).toHaveText(
+      "需授權帳號",
+    );
+    await expect(page.getByTestId("intake-policy-reason")).toContainText(
+      "需經核准之合作帳號",
+    );
 
     // No retrieval happened.
-    await expect(page.getByTestId("intake-captured-at")).toContainText("—（未擷取）");
+    await expect(page.getByTestId("intake-captured-at")).toContainText(
+      "—（未擷取）",
+    );
     await expect(page.getByTestId("intake-assisted-entry")).toBeVisible();
 
     // Verify no-fetch via direct API check
-    const id = (await page.getByTestId("intake-detail-id").textContent())?.trim();
+    const id = (
+      await page.getByTestId("intake-detail-id").textContent()
+    )?.trim();
     expect(id).toBeTruthy();
     const data = await getIntakeApi(id!);
     expect(data.policy).toBe("AUTH_REQUIRED");
@@ -503,23 +634,33 @@ test.describe("Assisted Listing Intake — Package 7 product surfaces", () => {
     expect(data.rawSnapshot).toBeNull();
 
     // Fill form and save (re-uses revision address matching L-2024 to transition)
-    await page.getByTestId("assisted-address").fill("台北市信義區松仁路 96 號 1F");
+    await page
+      .getByTestId("assisted-address")
+      .fill("台北市信義區松仁路 96 號 1F");
     await page.getByTestId("assisted-rent").fill("55000");
     await page.getByTestId("assisted-area").fill("18");
     await page.getByTestId("assisted-risk-ack").check();
     await page.getByTestId("assisted-save").click();
 
     // Wait for conversion/match to possible match
-    await expect(page.getByTestId("intake-detail-stage")).toHaveText("待人工覆核");
-    await expect(page.getByTestId("intake-detail-match")).toHaveText("疑似重複");
+    await expect(page.getByTestId("intake-detail-stage")).toHaveText(
+      "待人工覆核",
+    );
+    await expect(page.getByTestId("intake-detail-match")).toHaveText(
+      "疑似重複",
+    );
   });
 
-  test("prove the correct fetch or no-fetch behavior per policy state", async ({ page }) => {
+  test("prove the correct fetch or no-fetch behavior per policy state", async ({
+    page,
+  }) => {
     await openRadarAsExpansionManager(page);
 
     // 1. APPROVED_RETRIEVAL
     await submitUrl(page, URLS.clean);
-    const idClean = (await page.getByTestId("intake-detail-id").textContent())?.trim()!;
+    const idClean = (
+      await page.getByTestId("intake-detail-id").textContent()
+    )?.trim()!;
     const cleanData = await getIntakeApi(idClean);
     expect(cleanData.policy).toBe("APPROVED_RETRIEVAL");
     expect(cleanData.capturedAt).not.toBeNull();
@@ -529,7 +670,9 @@ test.describe("Assisted Listing Intake — Package 7 product surfaces", () => {
 
     // 2. ASSISTED_ENTRY_ONLY
     await submitUrl(page, URLS.assistedOnly);
-    const idAssisted = (await page.getByTestId("intake-detail-id").textContent())?.trim()!;
+    const idAssisted = (
+      await page.getByTestId("intake-detail-id").textContent()
+    )?.trim()!;
     const assistedData = await getIntakeApi(idAssisted);
     expect(assistedData.policy).toBe("ASSISTED_ENTRY_ONLY");
     expect(assistedData.capturedAt).toBeNull();
@@ -538,7 +681,9 @@ test.describe("Assisted Listing Intake — Package 7 product surfaces", () => {
 
     // 3. AUTH_REQUIRED
     await submitUrl(page, URLS.authRequired);
-    const idAuth = (await page.getByTestId("intake-detail-id").textContent())?.trim()!;
+    const idAuth = (
+      await page.getByTestId("intake-detail-id").textContent()
+    )?.trim()!;
     const authData = await getIntakeApi(idAuth);
     expect(authData.policy).toBe("AUTH_REQUIRED");
     expect(authData.capturedAt).toBeNull();
@@ -547,7 +692,9 @@ test.describe("Assisted Listing Intake — Package 7 product surfaces", () => {
 
     // 4. SOURCE_BLOCKED
     await submitUrl(page, URLS.blocked);
-    const idBlocked = (await page.getByTestId("intake-detail-id").textContent())?.trim()!;
+    const idBlocked = (
+      await page.getByTestId("intake-detail-id").textContent()
+    )?.trim()!;
     const blockedData = await getIntakeApi(idBlocked);
     expect(blockedData.policy).toBe("SOURCE_BLOCKED");
     expect(blockedData.capturedAt).toBeNull();
@@ -557,7 +704,9 @@ test.describe("Assisted Listing Intake — Package 7 product surfaces", () => {
 
     // 5. POLICY_UNKNOWN
     await submitUrl(page, URLS.unknown);
-    const idUnknown = (await page.getByTestId("intake-detail-id").textContent())?.trim()!;
+    const idUnknown = (
+      await page.getByTestId("intake-detail-id").textContent()
+    )?.trim()!;
     const unknownData = await getIntakeApi(idUnknown);
     expect(unknownData.policy).toBe("POLICY_UNKNOWN");
     expect(unknownData.capturedAt).toBeNull();
@@ -565,12 +714,16 @@ test.describe("Assisted Listing Intake — Package 7 product surfaces", () => {
     expect(unknownData.stage).toBe("QUARANTINED");
   });
 
-  test("explicit assertion of all 11 stage transitions in the UI stepper", async ({ page }) => {
+  test("explicit assertion of all 11 stage transitions in the UI stepper", async ({
+    page,
+  }) => {
     await openRadarAsExpansionManager(page);
 
     // 1-7: SUBMITTED, CHECKING_IDENTITY, CHECKING_SOURCE_POLICY, RETRIEVING, PARSING, MATCHING, READY
     await submitUrl(page, URLS.clean);
-    const stepCodesClean = await page.locator('[data-testid="intake-stage-stepper"] [class*="stepCode"]').allTextContents();
+    const stepCodesClean = await page
+      .locator('[data-testid="intake-stage-stepper"] [class*="stepCode"]')
+      .allTextContents();
     expect(stepCodesClean).toEqual([
       "SUBMITTED",
       "CHECKING_IDENTITY",
@@ -578,13 +731,15 @@ test.describe("Assisted Listing Intake — Package 7 product surfaces", () => {
       "RETRIEVING",
       "PARSING",
       "MATCHING",
-      "READY"
+      "READY",
     ]);
     await page.getByRole("button", { name: "關閉" }).click();
 
     // 8: NEEDS_REVIEW
     await submitUrl(page, URLS.possible);
-    const stepCodesPossible = await page.locator('[data-testid="intake-stage-stepper"] [class*="stepCode"]').allTextContents();
+    const stepCodesPossible = await page
+      .locator('[data-testid="intake-stage-stepper"] [class*="stepCode"]')
+      .allTextContents();
     expect(stepCodesPossible).toEqual([
       "SUBMITTED",
       "CHECKING_IDENTITY",
@@ -592,13 +747,15 @@ test.describe("Assisted Listing Intake — Package 7 product surfaces", () => {
       "RETRIEVING",
       "PARSING",
       "MATCHING",
-      "NEEDS_REVIEW"
+      "NEEDS_REVIEW",
     ]);
     await page.getByRole("button", { name: "關閉" }).click();
 
     // 9: FAILED
     await submitUrl(page, URLS.timeout);
-    const stepCodesTimeout = await page.locator('[data-testid="intake-stage-stepper"] [class*="stepCode"]').allTextContents();
+    const stepCodesTimeout = await page
+      .locator('[data-testid="intake-stage-stepper"] [class*="stepCode"]')
+      .allTextContents();
     expect(stepCodesTimeout).toEqual([
       "SUBMITTED",
       "CHECKING_IDENTITY",
@@ -606,45 +763,60 @@ test.describe("Assisted Listing Intake — Package 7 product surfaces", () => {
       "RETRIEVING",
       "PARSING",
       "MATCHING",
-      "FAILED"
+      "FAILED",
     ]);
     await page.getByRole("button", { name: "關閉" }).click();
 
     // 10: AWAITING_ASSISTED_ENTRY
     await submitUrl(page, URLS.assistedOnly);
-    const stepCodesAssisted = await page.locator('[data-testid="intake-stage-stepper"] [class*="stepCode"]').allTextContents();
+    const stepCodesAssisted = await page
+      .locator('[data-testid="intake-stage-stepper"] [class*="stepCode"]')
+      .allTextContents();
     expect(stepCodesAssisted).toEqual([
       "SUBMITTED",
       "CHECKING_IDENTITY",
       "CHECKING_SOURCE_POLICY",
-      "AWAITING_ASSISTED_ENTRY"
+      "AWAITING_ASSISTED_ENTRY",
     ]);
     await page.getByRole("button", { name: "關閉" }).click();
 
     // 11: QUARANTINED
     await submitUrl(page, URLS.unknown);
-    const stepCodesUnknown = await page.locator('[data-testid="intake-stage-stepper"] [class*="stepCode"]').allTextContents();
+    const stepCodesUnknown = await page
+      .locator('[data-testid="intake-stage-stepper"] [class*="stepCode"]')
+      .allTextContents();
     expect(stepCodesUnknown).toEqual([
       "SUBMITTED",
       "CHECKING_IDENTITY",
       "CHECKING_SOURCE_POLICY",
-      "QUARANTINED"
+      "QUARANTINED",
     ]);
   });
 
-  test("decisions and corrections survive page reload and a fresh browser context", async ({ page, context }) => {
+  test("decisions and corrections survive page reload and a fresh browser context", async ({
+    page,
+    context,
+  }) => {
     await openRadarAsExpansionManager(page);
     await submitUrl(page, URLS.possible);
-    const id = (await page.getByTestId("intake-detail-id").textContent())?.trim();
+    const id = (
+      await page.getByTestId("intake-detail-id").textContent()
+    )?.trim();
     expect(id).toBeTruthy();
 
     // Perform correction on address
     await page.getByTestId("intake-fix-address").click();
-    await page.getByTestId("intake-fix-value").fill("新北市板橋區府中路 26 號 1F");
-    await page.getByTestId("intake-fix-reason").fill("Durability test correction reason");
+    await page
+      .getByTestId("intake-fix-value")
+      .fill("新北市板橋區府中路 26 號 1F");
+    await page
+      .getByTestId("intake-fix-reason")
+      .fill("Durability test correction reason");
     await page.getByTestId("intake-fix-risk-ack").check();
     await page.getByTestId("intake-fix-submit").click();
-    await expect(page.getByTestId("intake-fix-dialog")).toBeHidden({ timeout: 15_000 });
+    await expect(page.getByTestId("intake-fix-dialog")).toBeHidden({
+      timeout: 15_000,
+    });
 
     // Close detail dialog
     await page.getByRole("button", { name: "關閉" }).click();
@@ -661,18 +833,28 @@ test.describe("Assisted Listing Intake — Package 7 product surfaces", () => {
     await freshPage.getByTestId("network-tab-1").click();
 
     // Verify fields grid is updated and correct value is preserved
-    await expect(freshPage.getByTestId("intake-detail-dialog")).toBeVisible({ timeout: 15_000 });
-    await expect(freshPage.getByTestId("intake-fields-grid")).toContainText("新北市板橋區府中路 26 號 1F");
+    await expect(freshPage.getByTestId("intake-detail-dialog")).toBeVisible({
+      timeout: 15_000,
+    });
+    await expect(freshPage.getByTestId("intake-fields-grid")).toContainText(
+      "新北市板橋區府中路 26 號 1F",
+    );
 
     // Perform decision in fresh context
     await freshPage.getByTestId("intake-decide-create").click();
-    await freshPage.getByTestId("intake-decide-reason").fill("Durability test decision reason");
+    await freshPage
+      .getByTestId("intake-decide-reason")
+      .fill("Durability test decision reason");
     await freshPage.getByTestId("intake-decide-risk-ack").check();
     await freshPage.getByTestId("intake-decide-submit").click();
-    await expect(freshPage.getByTestId("intake-decide-dialog")).toBeHidden({ timeout: 15_000 });
+    await expect(freshPage.getByTestId("intake-decide-dialog")).toBeHidden({
+      timeout: 15_000,
+    });
 
     // Verify the record's stage is durably updated
-    await expect(freshPage.getByTestId("intake-detail-stage")).toHaveText("可決策");
+    await expect(freshPage.getByTestId("intake-detail-stage")).toHaveText(
+      "可決策",
+    );
 
     await freshPage.close();
     await freshContext.close();
@@ -685,14 +867,20 @@ test.describe("Assisted Listing Intake — Package 7 product surfaces", () => {
     });
     await anotherPage.goto(`/operator?ws=network#intake/${id}`);
     await anotherPage.getByTestId("network-tab-1").click();
-    await expect(anotherPage.getByTestId("intake-detail-dialog")).toBeVisible({ timeout: 15_000 });
-    await expect(anotherPage.getByTestId("intake-detail-stage")).toHaveText("可決策");
+    await expect(anotherPage.getByTestId("intake-detail-dialog")).toBeVisible({
+      timeout: 15_000,
+    });
+    await expect(anotherPage.getByTestId("intake-detail-stage")).toHaveText(
+      "可決策",
+    );
 
     await anotherPage.close();
     await anotherContext.close();
   });
 
-  test("tablet viewport folds the 5-up meta grid correctly", async ({ page }) => {
+  test("tablet viewport folds the 5-up meta grid correctly", async ({
+    page,
+  }) => {
     await page.setViewportSize({ width: 768, height: 1024 }); // Tablet viewport
     await openRadarAsExpansionManager(page);
     await submitUrl(page, URLS.clean);
@@ -702,23 +890,33 @@ test.describe("Assisted Listing Intake — Package 7 product surfaces", () => {
     await expect(page.getByTestId("intake-fields-grid")).toBeVisible();
   });
 
-  test("verify audit envelope for CREATE and PROMOTE decisions", async ({ page }) => {
+  test("verify audit envelope for CREATE and PROMOTE decisions", async ({
+    page,
+  }) => {
     await openRadarAsExpansionManager(page);
 
     // 1. CREATE decision
     await submitUrl(page, URLS.possible);
-    const id1 = (await page.getByTestId("intake-detail-id").textContent())?.trim()!;
+    const id1 = (
+      await page.getByTestId("intake-detail-id").textContent()
+    )?.trim()!;
     await page.getByTestId("intake-decide-create").click();
-    await page.getByTestId("intake-decide-reason").fill("Audit test create reason");
+    await page
+      .getByTestId("intake-decide-reason")
+      .fill("Audit test create reason");
     await page.getByTestId("intake-decide-risk-ack").check();
     await page.getByTestId("intake-decide-submit").click();
-    await expect(page.getByTestId("intake-decide-dialog")).toBeHidden({ timeout: 15_000 });
+    await expect(page.getByTestId("intake-decide-dialog")).toBeHidden({
+      timeout: 15_000,
+    });
     await page.getByRole("button", { name: "關閉" }).click();
 
     const data1 = await getIntakeApi(id1);
     expect(data1.parserVersion).toBeTruthy();
     expect(data1.snapshotId).toBeTruthy();
-    const auditCreate = data1.auditEvents.find((e: any) => e.action === "intake.decide.create");
+    const auditCreate = data1.auditEvents.find(
+      (e: any) => e.action === "intake.decide.create",
+    );
     expect(auditCreate).toBeDefined();
     expect(auditCreate.actorRoleId).toBe("expansion-manager");
     expect(auditCreate.occurredAt).toBeTruthy();
@@ -743,31 +941,38 @@ test.describe("Assisted Listing Intake — Package 7 product surfaces", () => {
         "x-operator-role": "expansion-staff",
         "x-tenant-id": "tenant-a",
         "X-Correlation-Id": "promote-corr-id-12345",
-        "Idempotency-Key": "promote-key-12345"
+        "Idempotency-Key": "promote-key-12345",
       },
     });
-    const promoteRes = await apiContext.post(`/api/v1/operator/network-listings/intake/${id1}/promote`, {
-      data: {
-        reason: "Audit test promote reason",
-        riskSummary: "測試推廣風險宣告",
-        riskAcknowledged: true,
-        actorRoleId: "expansion-manager",
-        actorName: "林曉青"
-      }
-    });
+    const promoteRes = await apiContext.post(
+      `/api/v1/operator/network-listings/intake/${id1}/promote`,
+      {
+        data: {
+          reason: "Audit test promote reason",
+          riskSummary: "測試推廣風險宣告",
+          riskAcknowledged: true,
+          actorRoleId: "expansion-manager",
+          actorName: "林曉青",
+        },
+      },
+    );
     expect(promoteRes.status()).toBe(200);
     const promoteResultData = await promoteRes.json();
     await apiContext.dispose();
 
     const data1Updated = await getIntakeApi(id1);
-    const auditPromote = data1Updated.auditEvents.find((e: any) => e.action === "intake.promote");
+    const auditPromote = data1Updated.auditEvents.find(
+      (e: any) => e.action === "intake.promote",
+    );
     expect(auditPromote).toBeDefined();
     expect(auditPromote.actorRoleId).toBe("expansion-manager");
     expect(auditPromote.occurredAt).toBeTruthy();
     expect(auditPromote.message).toContain("Audit test promote reason");
     expect(auditPromote.correlationId).toBe("promote-corr-id-12345");
     expect(auditPromote.metadata.targetListingId).toBe(createdListingId);
-    expect(auditPromote.metadata.candidateId).toBe(promoteResultData.candidate.id);
+    expect(auditPromote.metadata.candidateId).toBe(
+      promoteResultData.candidate.id,
+    );
     expect(auditPromote.metadata.reason).toBe("Audit test promote reason");
     expect(auditPromote.metadata.before.listingStatus).toBe("new");
     expect(auditPromote.metadata.after.listingStatus).toBe("candidate");
@@ -779,18 +984,26 @@ test.describe("Assisted Listing Intake — Package 7 product surfaces", () => {
     await openRadarAsExpansionManager(page);
 
     await submitUrl(page, URLS.revision);
-    const id2 = (await page.getByTestId("intake-detail-id").textContent())?.trim()!;
+    const id2 = (
+      await page.getByTestId("intake-detail-id").textContent()
+    )?.trim()!;
     await page.getByTestId("intake-decide-revise").click();
-    await page.getByTestId("intake-decide-reason").fill("Audit test revise reason");
+    await page
+      .getByTestId("intake-decide-reason")
+      .fill("Audit test revise reason");
     await page.getByTestId("intake-decide-risk-ack").check();
     await page.getByTestId("intake-decide-submit").click();
-    await expect(page.getByTestId("intake-decide-dialog")).toBeHidden({ timeout: 15_000 });
+    await expect(page.getByTestId("intake-decide-dialog")).toBeHidden({
+      timeout: 15_000,
+    });
     await page.getByRole("button", { name: "關閉" }).click();
 
     const data2 = await getIntakeApi(id2);
     expect(data2.parserVersion).toBeTruthy();
     expect(data2.snapshotId).toBeTruthy();
-    const auditRevise = data2.auditEvents.find((e: any) => e.action === "intake.decide.revise");
+    const auditRevise = data2.auditEvents.find(
+      (e: any) => e.action === "intake.decide.revise",
+    );
     expect(auditRevise).toBeDefined();
     expect(auditRevise.actorRoleId).toBe("expansion-manager");
     expect(auditRevise.occurredAt).toBeTruthy();
@@ -810,18 +1023,26 @@ test.describe("Assisted Listing Intake — Package 7 product surfaces", () => {
     await openRadarAsExpansionManager(page);
 
     await submitUrl(page, URLS.possible);
-    const id3 = (await page.getByTestId("intake-detail-id").textContent())?.trim()!;
+    const id3 = (
+      await page.getByTestId("intake-detail-id").textContent()
+    )?.trim()!;
     await page.getByTestId("intake-decide-dup").click();
-    await page.getByTestId("intake-decide-reason").fill("Audit test duplicate reason");
+    await page
+      .getByTestId("intake-decide-reason")
+      .fill("Audit test duplicate reason");
     await page.getByTestId("intake-decide-risk-ack").check();
     await page.getByTestId("intake-decide-submit").click();
-    await expect(page.getByTestId("intake-decide-dialog")).toBeHidden({ timeout: 15_000 });
+    await expect(page.getByTestId("intake-decide-dialog")).toBeHidden({
+      timeout: 15_000,
+    });
     await page.getByRole("button", { name: "關閉" }).click();
 
     const data3 = await getIntakeApi(id3);
     expect(data3.parserVersion).toBeTruthy();
     expect(data3.snapshotId).toBeTruthy();
-    const auditDup = data3.auditEvents.find((e: any) => e.action === "intake.decide.duplicate");
+    const auditDup = data3.auditEvents.find(
+      (e: any) => e.action === "intake.decide.duplicate",
+    );
     expect(auditDup).toBeDefined();
     expect(auditDup.actorRoleId).toBe("expansion-manager");
     expect(auditDup.occurredAt).toBeTruthy();
@@ -841,36 +1062,52 @@ test.describe("Assisted Listing Intake — Package 7 product surfaces", () => {
     await openRadarAsExpansionManager(page);
 
     await submitUrl(page, URLS.possible);
-    const id4 = (await page.getByTestId("intake-detail-id").textContent())?.trim()!;
+    const id4 = (
+      await page.getByTestId("intake-detail-id").textContent()
+    )?.trim()!;
     await page.getByTestId("intake-decide-steward").click();
-    await page.getByTestId("intake-decide-reason").fill("Audit test quarantine reason");
+    await page
+      .getByTestId("intake-decide-reason")
+      .fill("Audit test quarantine reason");
     await page.getByTestId("intake-decide-risk-ack").check();
     await page.getByTestId("intake-decide-submit").click();
-    await expect(page.getByTestId("intake-decide-dialog")).toBeHidden({ timeout: 15_000 });
+    await expect(page.getByTestId("intake-decide-dialog")).toBeHidden({
+      timeout: 15_000,
+    });
     await page.getByRole("button", { name: "關閉" }).click();
 
     const data4 = await getIntakeApi(id4);
     expect(data4.parserVersion).toBeTruthy();
     expect(data4.snapshotId).toBeTruthy();
-    const auditQuarantine = data4.auditEvents.find((e: any) => e.action === "intake.decide.quarantine");
+    const auditQuarantine = data4.auditEvents.find(
+      (e: any) => e.action === "intake.decide.quarantine",
+    );
     expect(auditQuarantine).toBeDefined();
     expect(auditQuarantine.actorRoleId).toBe("expansion-manager");
     expect(auditQuarantine.occurredAt).toBeTruthy();
     expect(auditQuarantine.message).toContain("Audit test quarantine reason");
     expect(auditQuarantine.correlationId).toBeTruthy();
     expect(auditQuarantine.metadata.decision).toBe("quarantine");
-    expect(auditQuarantine.metadata.reason).toBe("Audit test quarantine reason");
+    expect(auditQuarantine.metadata.reason).toBe(
+      "Audit test quarantine reason",
+    );
     expect(auditQuarantine.metadata.riskSummary).toContain("將收件");
     expect(auditQuarantine.metadata.riskAcknowledged).toBe(true);
-    expect(auditQuarantine.metadata.beforeAfter.stage.before).toBe("NEEDS_REVIEW");
-    expect(auditQuarantine.metadata.beforeAfter.stage.after).toBe("QUARANTINED");
+    expect(auditQuarantine.metadata.beforeAfter.stage.before).toBe(
+      "NEEDS_REVIEW",
+    );
+    expect(auditQuarantine.metadata.beforeAfter.stage.after).toBe(
+      "QUARANTINED",
+    );
   });
 
   test("verify audit envelope for REJECT decision", async ({ page }) => {
     await openRadarAsExpansionManager(page);
 
     await submitUrl(page, URLS.possible);
-    const id5 = (await page.getByTestId("intake-detail-id").textContent())?.trim()!;
+    const id5 = (
+      await page.getByTestId("intake-detail-id").textContent()
+    )?.trim()!;
     await page.getByRole("button", { name: "關閉" }).click();
 
     const apiContext = await playwrightRequest.newContext({
@@ -881,26 +1118,31 @@ test.describe("Assisted Listing Intake — Package 7 product surfaces", () => {
         "x-operator-role": "expansion-staff",
         "x-tenant-id": "tenant-a",
         "X-Correlation-Id": "reject-corr-id-12345",
-        "Idempotency-Key": "reject-key-12345"
+        "Idempotency-Key": "reject-key-12345",
       },
     });
-    const rejectRes = await apiContext.post(`/api/v1/operator/network-listings/intake/${id5}/decide`, {
-      data: {
-        action: "reject",
-        reason: "Audit test reject reason",
-        riskSummary: "測試拒絕風險宣告",
-        riskAcknowledged: true,
-        actorRoleId: "expansion-manager",
-        actorName: "林曉青"
-      }
-    });
+    const rejectRes = await apiContext.post(
+      `/api/v1/operator/network-listings/intake/${id5}/decide`,
+      {
+        data: {
+          action: "reject",
+          reason: "Audit test reject reason",
+          riskSummary: "測試拒絕風險宣告",
+          riskAcknowledged: true,
+          actorRoleId: "expansion-manager",
+          actorName: "林曉青",
+        },
+      },
+    );
     expect(rejectRes.status()).toBe(200);
     await apiContext.dispose();
 
     const data5 = await getIntakeApi(id5);
     expect(data5.parserVersion).toBeTruthy();
     expect(data5.snapshotId).toBeTruthy();
-    const auditReject = data5.auditEvents.find((e: any) => e.action === "intake.decide.reject");
+    const auditReject = data5.auditEvents.find(
+      (e: any) => e.action === "intake.decide.reject",
+    );
     expect(auditReject).toBeDefined();
     expect(auditReject.actorRoleId).toBe("expansion-manager");
     expect(auditReject.occurredAt).toBeTruthy();

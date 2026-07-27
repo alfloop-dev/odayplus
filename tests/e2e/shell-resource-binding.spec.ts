@@ -146,14 +146,15 @@ test("ODP-PGAP-SHELL-001 product mode is explicit and defaults production fail-c
   expect(resolveProductMode({ NEXT_PUBLIC_ODP_PRODUCT_MODE: "poc" })).toBe(
     "production",
   );
-  // An explicit value wins over NODE_ENV.
+  // A POC marker cannot weaken a production build without all isolated-E2E
+  // markers.
   expect(
     resolveProductMode({ ODP_PRODUCT_MODE: "poc", NODE_ENV: "production" }),
-  ).toBe("poc");
+  ).toBe("production");
   // A production build defaults to production mode: a wrong guess here costs a
   // visible "unavailable" state, never fake data shown as real.
   expect(resolveProductMode({ NODE_ENV: "production" })).toBe("production");
-  expect(resolveProductMode({ NODE_ENV: "development" })).toBe("poc");
+  expect(resolveProductMode({ NODE_ENV: "development" })).toBe("production");
   // An unrecognised value is not honoured.
   expect(
     resolveProductMode({

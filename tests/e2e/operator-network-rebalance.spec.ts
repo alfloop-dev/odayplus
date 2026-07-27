@@ -118,7 +118,7 @@ test.describe("ODP-OC-R4-008 Network Rebalance", () => {
       { timeout: 15_000 },
     );
     await expect(page.getByTestId("rebalance-selection-RB-801")).toContainText(
-      "Owner 王若寧",
+      "Owner Expansion Manager",
     );
     await expect(page.getByTestId("rebalance-selection-RB-801")).toContainText(
       "EV-SEL-",

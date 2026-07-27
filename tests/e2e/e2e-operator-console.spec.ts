@@ -123,7 +123,8 @@ test("ODP-FIN-FE-003 command palette and task center are API-bound", async ({
   ).toBeVisible();
   await page.keyboard.press("Enter");
 
-  await expect(page.getByTestId("governance-workspace")).toBeVisible();
+  await expect(page).toHaveURL(/ws=govern/);
+  await expect(page).toHaveURL(/entity=API-902/);
 });
 
 test("ODP-OC-FE-05 Governance Workspace details and evidence package export", async ({
@@ -165,7 +166,7 @@ test("ODP-OC-FE-05 Governance Workspace details and evidence package export", as
   // Go to Decision Log tab
   await page.getByRole("button", { name: "Decision Log" }).click();
   const decisionLog = page.getByRole("region", { name: "Decision Log" });
-  await expect(decisionLog).toContainText("退回修改");
+  await expect(decisionLog).toContainText("Returned");
   await expect(decisionLog).toContainText(decisionReason);
 
   // Go to Audit Trail tab

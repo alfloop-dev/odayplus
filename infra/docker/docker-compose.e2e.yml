@@ -27,7 +27,9 @@ services:
       context: ../..
       dockerfile: infra/docker/web.Dockerfile
       args:
-        ODP_API_BASE_URL: http://api:8000
+        # Browser-side typed clients need a host-reachable URL. Server-side
+        # requests still use the internal service URL from the runtime env.
+        ODP_API_BASE_URL: http://localhost:${ODP_E2E_API_PORT:-8099}
         ODP_DATA_BINDING_MODE: fixture
         ODP_PRODUCT_MODE: poc
         ODP_DEPLOY_ENV: e2e
