@@ -1,0 +1,87 @@
+{
+  "task_id": "ODP-STORE-OPENING-AUTHORITY-ACTIVATION-001",
+  "decision": "FAIL_CLOSED",
+  "decision_recorded_at": "2026-07-27T20:11:25Z",
+  "owner": "Claude",
+  "reviewer": "Codex",
+  "rows_mutated": 0,
+  "backfill_executed": false,
+  "source_inventory": [
+    {
+      "source": "pg16_core_stores",
+      "access": "cloud-sql-proxy 127.0.0.1:6433 (secret oday-plus-dev-api-database-url-pg16)",
+      "rows": 2442,
+      "opened_on_non_null": 0,
+      "notes": "No other non-null column matching opening/launch/start/establish/founding/activation; service_start_time is 00:00 daily service hour, not opening authority."
+    },
+    {
+      "source": "pg15_core_stores",
+      "access": "cloud-sql-proxy 127.0.0.1:6432 (secret oday-plus-dev-api-database-url)",
+      "rows": 2442,
+      "opened_on_non_null": 0,
+      "notes": "Same column sweep result as PG16."
+    },
+    {
+      "source": "fongniao_raw.raw_place",
+      "access": "approved immutable legacy capture",
+      "rows": 3516,
+      "document_keys": ["_id", "id", "title", "address", "geolocation", "merchant", "merchantId", "operation", "publish", "type", "createdAt", "updatedAt"],
+      "opening_date_key_counts": {
+        "opened_on": 0, "opening_date": 0, "openingDate": 0, "openedOn": 0,
+        "openedAt": 0, "open_date": 0, "openDate": 0, "launchDate": 0,
+        "launchedAt": 0, "operationStartDate": 0, "establishedAt": 0
+      }
+    },
+    {
+      "source": "fongniao_raw other snapshot tables",
+      "access": "approved immutable legacy capture",
+      "notes": "Only campaign.startDatetime and promotions.start exist; campaign/promotion windows, unrelated to store opening."
+    },
+    {
+      "source": "fongniao production Mongo (direct approved URI)",
+      "access": "direct connection",
+      "status": "UNREACHABLE",
+      "error": "ReplicaSetNoPrimary after 15s",
+      "classification": "external source-access blocker, not proof of absence"
+    }
+  ],
+  "prohibited_substitutes_confirmed_absent": [
+    "created_at inference", "fixtures", "mocks", "synthetic dates", "manual fabrication"
+  ],
+  "downstream_eligibility": {
+    "opened_on_non_null_available": 0,
+    "sitescore_propensity_eligible_stores": 0,
+    "heatzone_pit_label_eligible": 0,
+    "heatzone_dependency_task": "ODP-HEATZONE-PIT-LABEL-AUTHORITY-001",
+    "heatzone_dependency_satisfied": false
+  },
+  "data_request": {
+    "data_owner": "Expansion Operations / POS Data Platform",
+    "required_fields_per_store": {
+      "tenant_id": "tenant UUID matching PG16 core.stores.tenant_id",
+      "store_id": "store UUID matching PG16 core.stores.id",
+      "opened_on": "ISO 8601 date YYYY-MM-DD, first day of real commercial operation",
+      "authority_type": "e.g. AUDITED_MERCHANT_RECORD | REGULATORY_FILING | POS_FIRST_TRADING_DAY",
+      "provenance": "system of record + record locator",
+      "immutable_snapshot": "snapshot UUID + content_sha256"
+    },
+    "required_coverage": "all 2442 PG16 core.stores rows OR explicit eligible-subset store UUID list (missing record within subset fails closed)",
+    "history_requirements": [
+      "dates reflect actual historical opening, not record creation or migration timestamps",
+      "stable under replay via immutable snapshot identity",
+      "point-in-time safe for training labels; corrections arrive as new snapshots, conflicts quarantined not overwritten"
+    ],
+    "access_blocker_to_clear": "fongniao production Mongo URI unreachable (ReplicaSetNoPrimary after 15s) — restoring access enables full upstream collection inventory"
+  },
+  "activation_path": {
+    "engine": "apps/data_platform/store_opening.py",
+    "cli": "scripts/models/store_opening_backfill.py",
+    "tests": "tests/integration/test_store_opening_backfill.py",
+    "delivered_by": "ODP-STORE-OPENING-001 (PR #435, merged to dev)"
+  },
+  "verification_records": [
+    {"ts": "2026-07-27T20:05:02Z", "agent": "Codex", "note": "PG15/PG16 core.stores 2442 rows each, zero opened_on; no other opening-like non-null SQL column; service_start_time not authority"},
+    {"ts": "2026-07-27T20:07:35Z", "agent": "Codex", "note": "fongniao_raw.raw_place 3516 rows key inventory, all opening-date key counts 0; other raw tables only campaign/promotion dates; Mongo ReplicaSetNoPrimary after 15s"},
+    {"ts": "2026-07-27T20:10:00Z", "agent": "Claude", "note": "owner session receipt: proxy ports 6432/6433 reachable; evidence composed and committed, zero rows mutated"}
+  ]
+}
