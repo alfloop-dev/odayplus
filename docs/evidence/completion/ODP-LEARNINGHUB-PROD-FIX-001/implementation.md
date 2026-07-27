@@ -1,7 +1,7 @@
 # ODP-LEARNINGHUB-PROD-FIX-001 · LearningHub MLflow release integrity and authorization closure
 
 - Task: ODP-LEARNINGHUB-PROD-FIX-001 (AI Runtime Fix and Review phase)
-- Owner: Claude · Reviewer: Codex2
+- Owner: Codex6 · Reviewer: Codex2
 - Reviewed source: PR `#384`, exact commit
   `957234d8fbe40586a306c9c3d77388edcb16c899` (branch `task/ODP-LIVE-RUNTIME-002`)
 - Lane ledger: `docs/evidence/fleet_dispatch/ODP-LIVE-RUNTIME-002.md`
@@ -141,6 +141,24 @@ python3 -m pytest -m "not requires_live_env" tests modules apps shared models -q
 # see § Repository suite below
 
 python3 -m ruff check .
+```
+
+Codex6 independently re-ran the task-scoped verification on 2026-07-27:
+
+```
+pytest -q tests/integration/test_learninghub_release.py \
+  modules/learninghub/tests tests/integration/test_model_registry_artifacts.py
+# passed
+
+INTAKE_TEST_DATABASE_URL=postgresql://…@127.0.0.1:55432/oday_plus \
+pytest -q tests/integration/test_learninghub_postgresql_release.py
+# 2 passed against the PostgreSQL 16 task container
+
+python3 -m ruff check apps/api/app/routes/learninghub.py \
+  modules/learninghub tests/integration/test_learninghub_release.py \
+  tests/integration/test_learninghub_postgresql_release.py \
+  tests/integration/test_model_registry_artifacts.py
+# All checks passed
 ```
 
 Mutation checks (each new regression test was confirmed to fail without its
