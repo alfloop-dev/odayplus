@@ -19,7 +19,6 @@ from pathlib import Path
 import pytest
 
 from apps.data_platform.store_opening import (
-    APPROVED_STORE_OPENING_SOURCES,
     MissingStoreOpeningAuthorityError,
     StoreOpeningBackfillEngine,
     TenantIsolationError,
@@ -157,10 +156,7 @@ def test_validate_record_rejects_unapproved_source():
         "opened_on": "2026-05-15",
     }
     with pytest.raises(UnauthoritativeStoreOpeningError, match="Unapproved source identity"):
-        validate_store_opening_record(
-            record,
-            approved_sources=APPROVED_STORE_OPENING_SOURCES,
-        )
+        validate_store_opening_record(record)
 
 
 def test_backfill_engine_persists_opened_on_and_lineage(test_db_conn):
@@ -479,7 +475,7 @@ def test_postgresql_store_opening_backfill_and_lineage(intake_blank_db):
         ).read_text()
         # pgserver bundles PostgreSQL 16 but not contrib/PostGIS. Preserve the
         # production DDL apart from equivalent test-only UUID defaults and
-        # inert geometry storage; 000009 itself is always applied verbatim.
+            # inert geometry storage; 000010 itself is always applied verbatim.
         canonical_ddl = canonical_ddl.replace(
             'CREATE EXTENSION IF NOT EXISTS "uuid-ossp";',
             "",
@@ -518,8 +514,8 @@ def test_postgresql_store_opening_backfill_and_lineage(intake_blank_db):
             end = intake_ddl.index("\n);", start) + 3
             conn.execute(intake_ddl[start:end])
         conn.execute(
-            (migration_root / "000009_store_opening_authority_lineage.sql").read_text()
-        )
+                (migration_root / "000010_store_opening_authority_lineage.sql").read_text()
+            )
 
         cur = conn.cursor()
         tenant_id = uuid.uuid4()

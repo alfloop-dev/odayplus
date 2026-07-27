@@ -129,10 +129,13 @@ def validate_store_opening_record(
     source_id = str(record.get("source_id") or "").strip()
     if not source_id:
         raise UnauthoritativeStoreOpeningError("Missing source identity")
-    if approved_sources is not None and source_id not in approved_sources:
+    source_allowlist = (
+        APPROVED_STORE_OPENING_SOURCES if approved_sources is None else approved_sources
+    )
+    if source_id not in source_allowlist:
         raise UnauthoritativeStoreOpeningError(
             f"Unapproved source identity: {source_id!r}. "
-            f"Approved sources: {sorted(approved_sources)}"
+            f"Approved sources: {sorted(source_allowlist)}"
         )
 
     # Check for explicit inference flag
@@ -211,6 +214,8 @@ class StoreOpeningBackfillEngine:
     """Idempotent, tenant-safe store opening date backfill & lineage engine."""
 
     def __init__(self, db_conn: Any = None, schema: str = "data_plane") -> None:
+        if schema != "data_plane":
+            raise ValueError("store-opening lineage is restricted to the data_plane schema")
         self.db_conn = db_conn
         self.schema = schema
         self._in_memory_stores: dict[str, dict[str, Any]] = {}
@@ -395,7 +400,7 @@ class StoreOpeningBackfillEngine:
         ingestion_run_sql = (
             "INSERT INTO ingestion_runs (run_id, source_database, source_kind, partition_key, status, started_at) VALUES (%s, 'fongniao_prod', 'store_opening_authority', %s, 'SUCCEEDED', CURRENT_TIMESTAMP) ON CONFLICT (run_id) DO NOTHING"
             if is_sqlite
-            else f"INSERT INTO {self.schema}.ingestion_runs (run_id, source_database, source_kind, partition_key, status, started_at) VALUES (%s, 'fongniao_prod', 'store_opening_authority', %s, 'SUCCEEDED', CURRENT_TIMESTAMP) ON CONFLICT (source_kind, partition_key, run_id) DO NOTHING"
+            else "INSERT INTO data_plane.ingestion_runs (run_id, source_database, source_kind, partition_key, status, started_at) VALUES (%s, 'fongniao_prod', 'store_opening_authority', %s, 'SUCCEEDED', CURRENT_TIMESTAMP) ON CONFLICT (source_kind, partition_key, run_id) DO NOTHING"
         )
 
         canonical_lineage_sql = (
@@ -408,8 +413,8 @@ class StoreOpeningBackfillEngine:
             DO NOTHING
             """
             if is_sqlite
-            else f"""
-            INSERT INTO {self.schema}.canonical_lineage (
+            else """
+            INSERT INTO data_plane.canonical_lineage (
                 source_snapshot_id, source_kind, source_id, content_sha256,
                 run_id, tenant_id, canonical_table, canonical_id, projected_at
             ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, CURRENT_TIMESTAMP)
