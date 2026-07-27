@@ -1,0 +1,427 @@
+{
+  "schema": "oday-plus.package10-page-runtime-diff.v1",
+  "audit_id": "ODP-P10-PAGE-AUDIT-001",
+  "current_status": "no_go_pending_CAN001_R3",
+  "next": "ODP-P10-CAN-001-R3B",
+  "persistence_state": "coordinator_checkpoint_complete",
+  "worktree": "/home/lupin/oday-plus-package10-final",
+  "branch": "fix/package10-final-20260725",
+  "audited_head": "25055b3e402179941202b363755f4ed302a9d654",
+  "concurrent_documentation_head_at_validation": "ff39d14f",
+  "runtime_changed_by_concurrent_documentation_commit": false,
+  "recovery_history": {
+    "historical_fleet": "019f9e38...",
+    "worker_result": "timed_out_and_shutdown_without_completion_result",
+    "persisted_checkpoint_commit": "ff39d14fc54b9793c5c32e8967e148e47efc6427",
+    "dispatch_worker_exceeded_persistence_boundary": true,
+    "dispatch_md_json_exist_and_pushed": true,
+    "program_recovery_ack_exists_and_pushed": true,
+    "audit_task_commit": "2d45ced639703f7e7a18df7aa0ec981d70c3ea2a",
+    "full_eleven_document_checkpoint": "coordinator_reviewed_committed_and_pushed"
+  },
+  "canonical": {
+    "package": 10,
+    "zip_sha256": "d1583a00496f928b0765c1756c9671fedf615f12c84c00494d454c983645d7f8",
+    "html_sha256": "cc4e6ae97462bc99b1c2353c792cb3bec40d51a6c5efcfde165e5f47105e661d",
+    "screen_label_count": 40,
+    "routes": [
+      "/operator",
+      "/intake/[intakeId]",
+      "/franchisee"
+    ]
+  },
+  "page_counts": {
+    "canonical_keep": 3,
+    "redirect_only": 1,
+    "delete_legacy_runtime": 37,
+    "nonvisual_infrastructure": 0,
+    "total_executable_pages": 41
+  },
+  "page_action_ownership": {
+    "canonical_keep": {"owner": "ODP-P10-CAN-001-R3A", "action": "preserve three route files; intake detail content integration belongs to R3B"},
+    "redirect_only": {"owner": "ODP-P10-CAN-001-R3A", "action": "delete page after canonical redirect"},
+    "delete_legacy_runtime": {"owner": "ODP-P10-CAN-001-R3A", "action": "delete page after canonical redirect"},
+    "intake_internal_visuals": {"owner": "ODP-P10-CAN-001-R3B", "action": "migrate internals, integrate production detail, migrate tests, delete orphans"}
+  },
+  "audit_method": [
+    "filesystem inventory",
+    "TypeScript production import graph",
+    "Package 10 canonical HTML and VDR-003/VDR-005/VDR-009",
+    "Playwright Chromium collection"
+  ],
+  "pages": {
+    "canonical_keep": [
+      {
+        "route": "/operator",
+        "path": "apps/web/src/app/operator/page.tsx"
+      },
+      {
+        "route": "/intake/[intakeId]",
+        "path": "apps/web/src/app/intake/[intakeId]/page.tsx"
+      },
+      {
+        "route": "/franchisee",
+        "path": "apps/web/src/app/franchisee/page.tsx"
+      }
+    ],
+    "redirect_only": [
+      {
+        "route": "/map",
+        "path": "apps/web/src/app/map/page.tsx",
+        "current_target": "/w/expansion/heatzone",
+        "required_target": "/operator?ws=network&tab=areas",
+        "action": "delete page and move redirect to apps/web/next.config.mjs"
+      }
+    ],
+    "delete_legacy_runtime": [
+      {"route": "/", "path": "apps/web/src/app/page.tsx"},
+      {"route": "/adlift", "path": "apps/web/src/app/adlift/page.tsx"},
+      {"route": "/admin/audit", "path": "apps/web/src/app/admin/audit/page.tsx"},
+      {"route": "/admin", "path": "apps/web/src/app/admin/page.tsx"},
+      {"route": "/audit", "path": "apps/web/src/app/audit/page.tsx"},
+      {"route": "/avm", "path": "apps/web/src/app/avm/page.tsx"},
+      {"route": "/expansion", "path": "apps/web/src/app/expansion/page.tsx"},
+      {"route": "/interventions", "path": "apps/web/src/app/interventions/page.tsx"},
+      {"route": "/learning", "path": "apps/web/src/app/learning/page.tsx"},
+      {"route": "/netplan", "path": "apps/web/src/app/netplan/page.tsx"},
+      {"route": "/notifications", "path": "apps/web/src/app/notifications/page.tsx"},
+      {"route": "/operations", "path": "apps/web/src/app/operations/page.tsx"},
+      {"route": "/pricing", "path": "apps/web/src/app/pricing/page.tsx"},
+      {"route": "/search", "path": "apps/web/src/app/search/page.tsx"},
+      {"route": "/settings", "path": "apps/web/src/app/settings/page.tsx"},
+      {"route": "/tasks", "path": "apps/web/src/app/tasks/page.tsx"},
+      {"route": "/w/ai/models/[modelName]/[version]", "path": "apps/web/src/app/w/ai/models/[modelName]/[version]/page.tsx"},
+      {"route": "/w/ai/models/[modelName]", "path": "apps/web/src/app/w/ai/models/[modelName]/page.tsx"},
+      {"route": "/w/ai/models", "path": "apps/web/src/app/w/ai/models/page.tsx"},
+      {"route": "/w/ai/releases/[releaseId]", "path": "apps/web/src/app/w/ai/releases/[releaseId]/page.tsx"},
+      {"route": "/w/ai/releases", "path": "apps/web/src/app/w/ai/releases/page.tsx"},
+      {"route": "/w/audit/decisions/[decisionId]", "path": "apps/web/src/app/w/audit/decisions/[decisionId]/page.tsx"},
+      {"route": "/w/audit/decisions", "path": "apps/web/src/app/w/audit/decisions/page.tsx"},
+      {"route": "/w/audit/evidence", "path": "apps/web/src/app/w/audit/evidence/page.tsx"},
+      {"route": "/w/dealroom/cases/[caseId]", "path": "apps/web/src/app/w/dealroom/cases/[caseId]/page.tsx"},
+      {"route": "/w/dealroom/cases", "path": "apps/web/src/app/w/dealroom/cases/page.tsx"},
+      {"route": "/w/expansion/candidates", "path": "apps/web/src/app/w/expansion/candidates/page.tsx"},
+      {"route": "/w/expansion/heatzone", "path": "apps/web/src/app/w/expansion/heatzone/page.tsx"},
+      {"route": "/w/expansion/listings", "path": "apps/web/src/app/w/expansion/listings/page.tsx"},
+      {"route": "/w/expansion", "path": "apps/web/src/app/w/expansion/page.tsx"},
+      {"route": "/w/expansion/sitescore/[reportId]", "path": "apps/web/src/app/w/expansion/sitescore/[reportId]/page.tsx"},
+      {"route": "/w/expansion/sitescore", "path": "apps/web/src/app/w/expansion/sitescore/page.tsx"},
+      {"route": "/w/network/scenarios/[scenarioId]", "path": "apps/web/src/app/w/network/scenarios/[scenarioId]/page.tsx"},
+      {"route": "/w/network/scenarios", "path": "apps/web/src/app/w/network/scenarios/page.tsx"},
+      {"route": "/w/operations/alerts", "path": "apps/web/src/app/w/operations/alerts/page.tsx"},
+      {"route": "/w/operations/forecast/[storeId]", "path": "apps/web/src/app/w/operations/forecast/[storeId]/page.tsx"},
+      {"route": "/w/operations/forecast", "path": "apps/web/src/app/w/operations/forecast/page.tsx"}
+    ]
+  },
+  "nonvisual_infrastructure": {
+    "keep": [
+      "apps/web/src/app/api/v1/[...path]/route.ts",
+      "apps/web/src/app/api/v1/route.ts",
+      "apps/web/src/app/auth/callback/route.ts",
+      "apps/web/src/app/auth/logout/route.ts",
+      "apps/web/src/app/auth/session/route.ts",
+      "apps/web/src/app/avm/[...path]/route.ts",
+      "apps/web/src/app/login/route.ts",
+      "apps/web/src/middleware.ts"
+    ],
+    "modify": [
+      "apps/web/src/app/layout.tsx",
+      "apps/web/src/app/loading.tsx",
+      "apps/web/src/app/not-found.tsx",
+      "apps/web/src/app/error.tsx",
+      "apps/web/src/app/global-error.tsx",
+      "apps/web/src/app/operator/layout.tsx",
+      "apps/web/src/app/intake/layout.tsx",
+      "apps/web/next.config.mjs"
+    ],
+    "delete_with_legacy_route": [
+      "apps/web/src/app/w/expansion/listings/error.tsx",
+      "apps/web/src/app/w/expansion/listings/loading.tsx"
+    ]
+  },
+  "production_import_graph": [
+    "apps/web/src/app/operator/page.tsx",
+    "apps/web/features/operator/OperatorConsole.tsx",
+    "apps/web/features/operator/NetworkFindAreasWorkspace.tsx",
+    "apps/web/features/operator/network/ListingRadarPanel.tsx",
+    "apps/web/features/operator/network/intake/AssistedIntakeSection.tsx",
+    "apps/web/features/operator/network/intake/ListingInboxIntakeView.tsx",
+    "apps/web/features/operator/network/intake/IntakeProcessingDetail.tsx"
+  ],
+  "migrations": [
+    {
+      "from": "apps/web/features/map/HeatZoneMap.tsx",
+      "to": "apps/web/features/operator/network/HeatZoneMap.tsx"
+    },
+    {
+      "from": "apps/web/features/map/map.module.css",
+      "to": "apps/web/features/operator/network/HeatZoneMap.module.css"
+    },
+    {
+      "from": "apps/web/features/expansion/data.ts",
+      "to": "apps/web/features/operator/network/mapTypes.ts",
+      "scope": "only HeatZone, Listing, and CandidateSite map types required by canonical runtime"
+    },
+    {
+      "from": "apps/web/features/operator/networkFindAreasLoader.ts",
+      "to": "apps/web/features/operator/network/productionBindings.ts"
+    },
+    {
+      "from": "IntakeDetailDialog.AssistedEntryForm",
+      "to": "apps/web/features/operator/network/intake/AssistedEntryForm.tsx"
+    },
+    {
+      "from": "IntakeDetailDialog.isSnapshotStale",
+      "to": "apps/web/features/operator/network/intake/intakeFreshness.ts"
+    }
+  ],
+  "legacy_feature_roots_to_delete": [
+    "apps/web/features/adlift",
+    "apps/web/features/audit",
+    "apps/web/features/avm",
+    "apps/web/features/expansion",
+    "apps/web/features/intervention",
+    "apps/web/features/learninghub",
+    "apps/web/features/map",
+    "apps/web/features/netplan",
+    "apps/web/features/operations",
+    "apps/web/features/priceops"
+  ],
+  "legacy_feature_inventory": [
+    {"path": "apps/web/features/adlift", "file_count": 2, "canonical_dependency": false, "action": "delete"},
+    {"path": "apps/web/features/audit", "file_count": 3, "canonical_dependency": false, "action": "delete"},
+    {"path": "apps/web/features/avm", "file_count": 3, "canonical_dependency": false, "action": "delete"},
+    {"path": "apps/web/features/expansion", "file_count": 5, "canonical_dependency": true, "action": "move required map types and migrate or delete legacy test, then delete"},
+    {"path": "apps/web/features/intervention", "file_count": 3, "canonical_dependency": false, "action": "delete"},
+    {"path": "apps/web/features/learninghub", "file_count": 3, "canonical_dependency": false, "action": "delete"},
+    {"path": "apps/web/features/map", "file_count": 2, "canonical_dependency": true, "action": "move HeatZoneMap and CSS under features/operator/network, then delete"},
+    {"path": "apps/web/features/netplan", "file_count": 3, "canonical_dependency": false, "action": "delete"},
+    {"path": "apps/web/features/operations", "file_count": 6, "canonical_dependency": false, "action": "delete"},
+    {"path": "apps/web/features/priceops", "file_count": 2, "canonical_dependency": false, "action": "delete"}
+  ],
+  "legacy_feature_file_count": 32,
+  "shell_inventory": {
+    "delete_old_visuals": [
+      "apps/web/features/shell/AcknowledgeButton.tsx",
+      "apps/web/features/shell/AdminWorkspace.tsx",
+      "apps/web/features/shell/AssignTaskForm.tsx",
+      "apps/web/features/shell/HomeWorkspace.tsx",
+      "apps/web/features/shell/NotificationsWorkspace.tsx",
+      "apps/web/features/shell/OfflineBanner.tsx",
+      "apps/web/features/shell/PreferencesForm.tsx",
+      "apps/web/features/shell/RoleWorkspacesForm.tsx",
+      "apps/web/features/shell/SearchKeyboardNav.tsx",
+      "apps/web/features/shell/SearchWorkspace.tsx",
+      "apps/web/features/shell/SettingsForm.tsx",
+      "apps/web/features/shell/SettingsWorkspace.tsx",
+      "apps/web/features/shell/TaskCenterWorkspace.tsx"
+    ],
+    "keep_canonical_franchisee": [
+      "apps/web/features/shell/FranchiseeWorkspace.tsx",
+      "apps/web/features/shell/FranchiseeActions.tsx"
+    ],
+    "keep_or_prune_shared_support": [
+      "apps/web/features/shell/ShellStates.tsx",
+      "apps/web/features/shell/mode.ts",
+      "apps/web/features/shell/resource.ts",
+      "apps/web/features/shell/shell.module.css",
+      "apps/web/features/shell/shellClient.ts",
+      "apps/web/features/shell/vocabulary.ts"
+    ],
+    "required_helper_migration": {
+      "symbol": "formatStamp",
+      "from": "apps/web/features/shell/HomeWorkspace.tsx",
+      "current_caller": "apps/web/features/shell/FranchiseeWorkspace.tsx"
+    },
+    "delete_frame": "apps/web/src/app/OpsBoardFrame.tsx",
+    "migrate_loader": {
+      "from": "apps/web/features/operator/networkFindAreasLoader.ts",
+      "to": "apps/web/features/operator/network/productionBindings.ts"
+    },
+    "replace_navigation": "packages/ui/src/nav/routes.ts"
+  },
+  "intake_findings": {
+    "canonical_detail": "full-page layer below top navigation, max-width 1160px, continuous sections",
+    "current_detail": "IntakeProcessingDetail uses IntakeDialogShell as an 880px/94vh tabbed modal",
+    "production_has_side_by_side_compare": false,
+    "production_has_mobile_desktop_required": false,
+    "orphan_or_alternate_visual_paths": [
+      "apps/web/features/operator/network/intake/AssistedIntakeQueuePanel.tsx",
+      "apps/web/features/operator/network/intake/IdentityDecisionPanel.tsx",
+      "apps/web/features/operator/network/intake/IntakeDetailDialog.tsx",
+      "apps/web/features/operator/network/intake/IntakeAssignmentSlaDialog.tsx"
+    ],
+    "compare_components_to_integrate": [
+      "apps/web/features/operator/network/intake/ListingCompareTable.tsx",
+      "apps/web/features/operator/network/intake/MatchEvidencePanel.tsx"
+    ],
+    "false_runtime_evidence": "apps/web/features/operator/network/intake/__tests__/Package10VisualP1.test.tsx directly mounts ListingCompareTable"
+  },
+  "intake_internal_inventory": [
+    {"file": "AddListingFromUrlDialog.tsx", "disposition": "keep_and_align"},
+    {"file": "AssignmentSlaSummary.tsx", "disposition": "keep_in_continuous_detail"},
+    {"file": "AssistedIntakeQueuePanel.tsx", "disposition": "delete_orphan_package7_visual"},
+    {"file": "AssistedIntakeSection.tsx", "disposition": "keep_production_container"},
+    {"file": "DurableReceiptPanel.tsx", "disposition": "keep_in_continuous_detail"},
+    {"file": "EvidencePanel.tsx", "disposition": "keep_remove_legacy_caller"},
+    {"file": "IdentityDecisionPanel.tsx", "disposition": "delete_after_compare_integration"},
+    {"file": "IntakeAssignmentSlaDialog.tsx", "disposition": "delete_orphan_after_inline_sla"},
+    {"file": "IntakeDecisionDialog.tsx", "disposition": "keep"},
+    {"file": "IntakeDetailDialog.tsx", "disposition": "move_helpers_migrate_tests_then_delete"},
+    {"file": "IntakeDialogShell.tsx", "disposition": "keep_for_true_modals_remove_from_detail"},
+    {"file": "IntakeErrorRecovery.tsx", "disposition": "keep_in_continuous_detail"},
+    {"file": "IntakeFieldFixDialog.tsx", "disposition": "keep"},
+    {"file": "IntakeProcessingDetail.tsx", "disposition": "rebuild_single_package10_full_page_detail"},
+    {"file": "IntakeStageTimeline.tsx", "disposition": "keep_in_continuous_detail"},
+    {"file": "ListingCompareTable.tsx", "disposition": "integrate_into_production_detail"},
+    {"file": "ListingInboxIntakeView.tsx", "disposition": "keep_and_align"},
+    {"file": "MatchEvidencePanel.tsx", "disposition": "integrate_into_production_detail"},
+    {"file": "PauseSlaDialog.tsx", "disposition": "keep"},
+    {"file": "PromotionReviewPanel.tsx", "disposition": "keep_in_continuous_detail"},
+    {"file": "SiteScoreJobStatus.tsx", "disposition": "keep"},
+    {"file": "StateMatrix.tsx", "disposition": "keep_production_reference"},
+    {"file": "TransferIntakeDialog.tsx", "disposition": "keep"},
+    {"file": "index.ts", "disposition": "remove_retired_exports_keep_canonical_exports"},
+    {"file": "intake.module.css", "disposition": "rewrite_detail_breakpoints_remove_retired_selectors_and_package7_wording"},
+    {"file": "intakeClient.ts", "disposition": "keep"},
+    {"file": "intakePermissions.ts", "disposition": "keep_fail_closed"},
+    {"file": "intakeTypes.ts", "disposition": "keep_behavior_remove_package7_wording"},
+    {"file": "types.ts", "disposition": "keep"},
+    {"file": "urlState.ts", "disposition": "keep_verify_durable_route"},
+    {"file": "useIntakeInboxQuery.ts", "disposition": "keep"}
+  ],
+  "intake_internal_file_count": 31,
+  "intake_unit_tests": [
+    {"file": "AddListingFromUrlDialog.test.tsx", "disposition": "keep_and_align"},
+    {"file": "AssignmentSlaSummary.test.tsx", "disposition": "migrate_old_detail_mounts"},
+    {"file": "IdentityDecisionPanel.test.tsx", "disposition": "retire_or_migrate_to_production_integration"},
+    {"file": "IntakeProcessingDetail.test.tsx", "disposition": "rewrite_for_canonical_detail_and_moved_helper"},
+    {"file": "ListingInboxIntakeView.test.tsx", "disposition": "keep_and_align"},
+    {"file": "Package10VisualP1.test.tsx", "disposition": "migrate_direct_orphan_mount_to_production_detail"},
+    {"file": "PromotionReviewPanel.test.tsx", "disposition": "keep"},
+    {"file": "PromotionSagaIntegration.test.tsx", "disposition": "keep_and_align"},
+    {"file": "RealDataReceipt.test.tsx", "disposition": "keep"},
+    {"file": "urlState.test.ts", "disposition": "keep_extend_for_return_and_deep_link"}
+  ],
+  "intake_unit_test_count": 10,
+  "e2e": {
+    "total_spec_count": 34,
+    "canonical_spec_count": 16,
+    "legacy_spec_count": 18,
+    "canonical_chromium_test_count": 107,
+    "collection_result": "Total: 107 tests in 16 files",
+    "canonical_specs": [
+      "tests/e2e/e2e-network-find-areas-api-binding.spec.ts",
+      "tests/e2e/e2e-operator-console.spec.ts",
+      "tests/e2e/operator-assisted-listing-intake-a11y.spec.ts",
+      "tests/e2e/operator-assisted-listing-intake-mobile.spec.ts",
+      "tests/e2e/operator-assisted-listing-intake.spec.ts",
+      "tests/e2e/operator-governance.spec.ts",
+      "tests/e2e/operator-growth.spec.ts",
+      "tests/e2e/operator-network-assisted-intake.spec.ts",
+      "tests/e2e/operator-network-listings.spec.ts",
+      "tests/e2e/operator-network-rebalance.spec.ts",
+      "tests/e2e/operator-network-review.spec.ts",
+      "tests/e2e/operator-network-scoring.spec.ts",
+      "tests/e2e/operator-shell-today.spec.ts",
+      "tests/e2e/operator-store-ops.spec.ts",
+      "tests/e2e/product-e2e-env.spec.ts",
+      "tests/e2e/shell-resource-binding.spec.ts"
+    ],
+    "legacy_specs_to_delete": [
+      "tests/e2e/e2e-api-bound-ui.spec.ts",
+      "tests/e2e/e2e-avm-netplan-learning-audit-product.spec.ts",
+      "tests/e2e/e2e-avm-netplan.spec.ts",
+      "tests/e2e/e2e-exp.spec.ts",
+      "tests/e2e/e2e-expansion-product.spec.ts",
+      "tests/e2e/e2e-intervention-price-ad.spec.ts",
+      "tests/e2e/e2e-learning-audit.spec.ts",
+      "tests/e2e/e2e-map-a11y.spec.ts",
+      "tests/e2e/e2e-map-live-boundary.spec.ts",
+      "tests/e2e/e2e-map-resilience.spec.ts",
+      "tests/e2e/e2e-map-tooltip-evidence.spec.ts",
+      "tests/e2e/e2e-map.spec.ts",
+      "tests/e2e/e2e-ops-intervention-price-ad-product.spec.ts",
+      "tests/e2e/e2e-ops.spec.ts",
+      "tests/e2e/e2e-pgap-ux-001.spec.ts",
+      "tests/e2e/opsboard-shell.spec.ts",
+      "tests/e2e/shell-product-mobile.spec.ts",
+      "tests/e2e/shell-product.spec.ts"
+    ],
+    "canonical_stale_wording": {
+      "path": "tests/e2e/operator-network-assisted-intake.spec.ts",
+      "current": "Package 7 product surfaces",
+      "resolution": "rename during CAN-003-R3A after committed/pushed R3B; do not weaken required assertions"
+    }
+  },
+  "conflicts": [
+    {
+      "id": "stale_smoke_next",
+      "source": "docs/evidence/fleet_dispatch/package10_20260726/acks/ODP-P10-FLEET-SMOKE-001.json",
+      "evidence": "next says to resume CAN-003-R1B",
+      "resolution": "superseded; R3A is committed and pushed, so start ODP-P10-CAN-001-R3B and keep later waves blocked on predecessor ACKs"
+    },
+    {
+      "id": "wrong_worktree",
+      "source": "/home/lupin/oday-plus",
+      "evidence": "branch main at e3f0fb84 with 6442 status entries",
+      "resolution": "reject as Package 10 closure evidence; use /home/lupin/oday-plus-package10-final"
+    },
+    {
+      "id": "route_retirement_not_visual_retirement",
+      "source": "current runtime and import inventory",
+      "evidence": "37 legacy visual pages, 32 legacy feature files, old shell/frame/navigation, and alternate intake visuals remain",
+      "resolution": "R3A must pass route/feature/shell/navigation/loader/spec gates; R3B separately passes intake integration/orphan gates"
+    },
+    {
+      "id": "orphan_unit_test_not_runtime_evidence",
+      "source": "apps/web/features/operator/network/intake/__tests__/Package10VisualP1.test.tsx",
+      "evidence": "directly mounts ListingCompareTable, which production does not import",
+      "resolution": "require production import graph and route-level E2E after integration"
+    },
+    {
+      "id": "program_audit_concurrent_state_change",
+      "source": "historical Fleet 019f9e38...",
+      "evidence": "the Fleet timed out and was shut down without a completion result",
+      "resolution": "do not treat the worker as completion evidence; independently review the later split-worker outputs"
+    },
+    {
+      "id": "dispatch_worker_scope_violation",
+      "source": "Fleet 019f9e4b-6ef1-77b2-9b51-a454ddf68804 and commit ff39d14fc54b9793c5c32e8967e148e47efc6427",
+      "evidence": "the worker committed and pushed three dispatch files despite an explicit no-commit/no-push instruction and then reported the violation",
+      "resolution": "stop and close the worker; accept no completion claim from it; independently inspect the pushed files and supersede the pending ACK only after the complete 11-document package passes coordinator validation"
+    },
+    {
+      "id": "can001_concurrent_split",
+      "source": "commit ff39d14f dispatch ledger",
+      "evidence": "CAN-001 umbrella split into sequential R3A retirement and R3B intake canonicalization",
+      "resolution": "compatible with no_go_pending_CAN001_R3; adopt split and forbid parallel execution"
+    },
+    {
+      "id": "failed_previous_audit_fleet_remediation",
+      "source": "previous audit Fleet coordinator review",
+      "evidence": "execution JSON was a summary, recovery history was stale, and the historical parent umbrella identifier was incorrectly used as executable ownership",
+      "resolution": "rebuild the complete structured peer, assign execution only to ODP-P10-CAN-001-R3A or ODP-P10-CAN-001-R3B, and pass natural validators"
+    }
+  ],
+  "verified_counts": {
+    "executable_page_tsx": 41,
+    "canonical_keep": 3,
+    "redirect_only": 1,
+    "delete_legacy_runtime": 37,
+    "e2e_specs": 34,
+    "canonical_e2e_specs": 16,
+    "legacy_e2e_specs_to_delete": 18,
+    "canonical_chromium_tests": 107,
+    "api_security_pytest_files": 8,
+    "api_security_tests_collected": 69,
+    "stale_api_security_claim": 71
+  },
+  "blockers": [
+    "ODP-P10-CAN-001-R3B canonical intake integration and orphan deletion is incomplete"
+  ],
+  "r3a_product_commit": "ded04ac49504a1d948831eb5077625bef415ab50",
+  "r3a_ack_commit": "2442108400a77ba5fa4adafa8a083461529a03dd",
+  "required_next_task": "ODP-P10-CAN-001-R3B",
+  "forbidden_next_task": "any later wave before committed and pushed predecessor ACK plus coordinator ownership transfer"
+}

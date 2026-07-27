@@ -2,88 +2,47 @@
 
 import { useMemo, useState } from "react";
 import type {
-  AssignmentReceipt,
-  AssistedIntake,
-  AuditReference,
-  CorrectionReceipt,
-  DecisionReceipt,
-  FieldValue,
-  IntakeSubmissionReceipt,
-  JobReceipt,
-  PromotionDecisionReceipt,
-  SlaReceipt,
-  TransitionReceipt,
+  AssignmentReceipt, AssistedIntake, AuditReference, CorrectionReceipt, DecisionReceipt,
+  FieldValue, IntakeSubmissionReceipt, JobReceipt, PromotionDecisionReceipt, SlaReceipt, TransitionReceipt,
 } from "@oday-plus/openapi-client";
+import { AssistedEntryForm } from "./AssistedEntryForm";
+import { AssignmentSlaSummary } from "./AssignmentSlaSummary";
 import { DurableReceiptPanel } from "./DurableReceiptPanel";
 import { EvidencePanel } from "./EvidencePanel";
-import styles from "./intake.module.css";
-import { IntakeDialogShell } from "./IntakeDialogShell";
 import { IntakeErrorRecovery } from "./IntakeErrorRecovery";
 import type { IntakeApiError } from "./intakeClient";
 import { IntakeStageTimeline } from "./IntakeStageTimeline";
+import { ListingCompareTable, type TargetListingData } from "./ListingCompareTable";
+import { MatchEvidencePanel } from "./MatchEvidencePanel";
 import {
-  PromotionReviewPanel,
-  type PromotionActor,
-  type PromotionRequestInput,
-  type PromotionReviewInput,
+  PromotionReviewPanel, type PromotionActor, type PromotionRequestInput, type PromotionReviewInput,
 } from "./PromotionReviewPanel";
 import type { ScoreReplayInput } from "./SiteScoreJobStatus";
 import {
-  decisionOptions,
-  matchLabel,
-  matchTone,
-  policyLabel,
-  policyTone,
-  stageLabel,
-  stageTone,
-  type IntakeDecisionKind,
+  decisionOptions, matchLabel, matchTone, policyLabel, policyTone, stageLabel, stageTone, type IntakeDecisionKind,
 } from "./intakeTypes";
-
-export type IntakeDetailTab = "timeline" | "evidence" | "receipts" | "promotion" | "error";
+import styles from "./intake.module.css";
 
 export type IntakeProcessingDetailProps = {
   record: AssistedIntake;
-  busy?: boolean;
-  canCorrect?: boolean;
-  canDecide?: boolean;
-  canRetry?: boolean;
-  canReplay?: boolean;
-  error?: IntakeApiError | null;
-  history?: TransitionReceipt[];
-  jobs?: JobReceipt[];
-  sla?: SlaReceipt;
-  fields?: FieldValue[];
-  auditReferences?: AuditReference[];
-  submissionReceipt?: IntakeSubmissionReceipt;
-  assignmentReceipt?: AssignmentReceipt;
-  decisionReceipt?: DecisionReceipt | PromotionDecisionReceipt;
-  slaReceipt?: SlaReceipt;
-  correctionReceipts?: CorrectionReceipt[];
+  targetListing?: TargetListingData | null;
+  detailHref?: string;
+  busy?: boolean; canCorrect?: boolean; canDecide?: boolean; canRetry?: boolean; canReplay?: boolean;
+  error?: IntakeApiError | null; history?: TransitionReceipt[]; jobs?: JobReceipt[]; sla?: SlaReceipt;
+  fields?: FieldValue[]; auditReferences?: AuditReference[]; submissionReceipt?: IntakeSubmissionReceipt;
+  assignmentReceipt?: AssignmentReceipt; decisionReceipt?: DecisionReceipt | PromotionDecisionReceipt;
+  slaReceipt?: SlaReceipt; correctionReceipts?: CorrectionReceipt[];
+  assignmentResourceVersion?: number | null; slaResourceVersion?: number | null;
   onClose: () => void;
-  onDecide?: (kind: IntakeDecisionKind) => void;
-  onOpenFix?: (fieldKey: string) => void;
+  onAssistedEntrySave?: (input: { fields: Record<string, string>; riskSummary: string; riskAcknowledged: boolean }) => void;
+  onDecide?: (kind: IntakeDecisionKind) => void; onOpenFix?: (fieldKey: string) => void;
   onRetry?: (overrides?: { overrideRetryBudget?: boolean; riskAcknowledged?: boolean }) => void;
-  onReplayDlq?: (jobId?: string) => void;
-  onCancel?: () => void;
-  onOverride?: (reason: string) => void;
-  onClaimAssignment?: () => void;
-  onOpenTransfer?: () => void;
-  onOpenPause?: () => void;
-  onResumeSla?: () => void;
-  onRefresh?: () => void;
-  testId?: string;
-  // ---- Candidate promotion saga slice (ODP-INTAKE-UX-PROMOTION-001) -------
-  // All optional: when `currentOperator` + `gateSnapshotSha256` are provided
-  // the detail exposes the promotion tab; existing callers are unchanged.
-  promotion?: PromotionDecisionReceipt | null;
-  scoreJob?: JobReceipt | null;
-  currentOperator?: PromotionActor;
-  gateSnapshotSha256?: string;
-  promotionBusy?: boolean;
-  promotionError?: IntakeApiError | null;
-  promotionIdempotencyReplayed?: boolean;
-  canRequestPromotion?: boolean;
-  canReviewPromotion?: boolean;
+  onReplayDlq?: (jobId?: string) => void; onCancel?: () => void; onOverride?: (reason: string) => void;
+  onClaimAssignment?: () => void; onOpenTransfer?: () => void; onOpenPause?: () => void;
+  onResumeSla?: () => void; onRefresh?: () => void; testId?: string;
+  promotion?: PromotionDecisionReceipt | null; scoreJob?: JobReceipt | null; currentOperator?: PromotionActor;
+  gateSnapshotSha256?: string; promotionBusy?: boolean; promotionError?: IntakeApiError | null;
+  promotionIdempotencyReplayed?: boolean; canRequestPromotion?: boolean; canReviewPromotion?: boolean;
   canReplayScore?: boolean;
   onRequestPromotion?: (input: PromotionRequestInput) => Promise<PromotionDecisionReceipt | void> | void;
   onReviewPromotion?: (input: PromotionReviewInput) => Promise<PromotionDecisionReceipt | void> | void;
@@ -91,376 +50,233 @@ export type IntakeProcessingDetailProps = {
   onLookupPromotionDecision?: () => void;
 };
 
-export function IntakeProcessingDetail({
-  record,
-  busy = false,
-  canCorrect = true,
-  canDecide = true,
-  canRetry = true,
-  canReplay = true,
-  error = null,
-  history = [],
-  jobs = [],
-  sla,
-  fields,
-  auditReferences = [],
-  submissionReceipt,
-  assignmentReceipt,
-  decisionReceipt,
-  slaReceipt,
-  correctionReceipts = [],
-  onClose,
-  onDecide,
-  onOpenFix,
-  onRetry,
-  onReplayDlq,
-  onCancel,
-  onOverride,
-  onClaimAssignment,
-  onOpenTransfer,
-  onOpenPause,
-  onResumeSla,
-  onRefresh,
-  testId = "intake-processing-detail",
-  promotion = null,
-  scoreJob = null,
-  currentOperator,
-  gateSnapshotSha256,
-  promotionBusy = false,
-  promotionError = null,
-  promotionIdempotencyReplayed = false,
-  canRequestPromotion = false,
-  canReviewPromotion = false,
-  canReplayScore = false,
-  onRequestPromotion,
-  onReviewPromotion,
-  onReplayScore,
-  onLookupPromotionDecision,
-}: IntakeProcessingDetailProps) {
-  const isFailedOrQuarantined = record.stage === "FAILED" || record.stage === "QUARANTINED" || Boolean(error);
-  const [activeTab, setActiveTab] = useState<IntakeDetailTab>(isFailedOrQuarantined ? "error" : "timeline");
+export function IntakeProcessingDetail(props: IntakeProcessingDetailProps) {
+  const {
+    record, targetListing, detailHref, busy = false, canCorrect = true, canDecide = true, canRetry = true, canReplay = true,
+    error = null, history = [], jobs = [], sla, fields, auditReferences = [], submissionReceipt,
+    assignmentReceipt, decisionReceipt, slaReceipt, correctionReceipts = [],
+    assignmentResourceVersion = null, slaResourceVersion = null, onClose, onAssistedEntrySave,
+    onDecide, onOpenFix, onRetry, onReplayDlq, onCancel, onOverride, onClaimAssignment, onOpenTransfer,
+    onOpenPause, onResumeSla, onRefresh, testId = "intake-detail-dialog", promotion = null,
+    scoreJob = null, currentOperator, gateSnapshotSha256, promotionBusy = false, promotionError = null,
+    promotionIdempotencyReplayed = false, canRequestPromotion = false, canReviewPromotion = false,
+    canReplayScore = false, onRequestPromotion, onReviewPromotion, onReplayScore, onLookupPromotionDecision,
+  } = props;
   const [maskedView, setMaskedView] = useState(false);
-
   const options = decisionOptions(record);
   const outcome = record.matchResult?.outcome;
-
-  // The promotion tab exists only when the container wired the saga slice —
-  // and only once the intake is READY (or a decision receipt already exists),
-  // mirroring the server's WORKFLOW_STATE_DENIED gate.
+  const targetDecisionReady = hasAuthoritativeTargetEvidence(record, targetListing);
+  const targetDependentOutcome =
+    outcome === "POSSIBLE_MATCH" || outcome === "REVISION" || outcome === "EXACT_DUPLICATE";
+  const decisionLocked = targetDependentOutcome && !targetDecisionReady;
+  const evidenceFields = useMemo(() => fields, [fields]);
   const promotionMounted = Boolean(currentOperator && gateSnapshotSha256 !== undefined);
   const promotionAvailable = promotionMounted && (record.stage === "READY" || Boolean(promotion));
+  const recordFailure =
+    record.stage === "FAILED" || record.stage === "QUARANTINED"
+      ? record.failure ?? null
+      : null;
+  const recoveryError = error ?? recordFailure;
+  const hasRecoveryState =
+    Boolean(recoveryError) ||
+    record.stage === "FAILED" ||
+    record.stage === "QUARANTINED" ||
+    jobs.some((job) => job.status === "DEAD_LETTER" || job.status === "FAILED");
+  const preservedInput = record.parsedFields
+    ? Object.fromEntries(Object.values(record.parsedFields).map((field) => [field.key, field.correctedValue ?? field.normalizedValue ?? field.sourceValue]))
+    : null;
+  const providerListingId = authoritativeParsedValue(
+    record,
+    "providerListingId",
+    "provider_listing_id",
+    "sourceListingId",
+    "source_listing_id",
+  );
+  const rawRecord = record as AssistedIntake & {
+    submittedAt?: string | null;
+    submitted_at?: string | null;
+  };
+  const submittedAt = rawRecord.submittedAt ?? rawRecord.submitted_at ?? "UNAVAILABLE";
 
   return (
-    <IntakeDialogShell
-      ariaLabel={`收件處理詳情 ${record.id}`}
-      className={styles.panelWide}
-      onClose={onClose}
-      screenLabel="Dialog 收件處理詳情"
-      testId={testId}
-    >
-      {/* Header */}
-      <div className={styles.dialogHead}>
-        <div style={{ display: "flex", alignItems: "center", gap: "8px", flexWrap: "wrap" }}>
-          <span className={styles.dialogTitle}>收件處理詳情 Intake Processing Detail</span>
-          <span className={styles.rowId} data-testid="intake-detail-id">
-            {record.id}
-          </span>
-          <span className={styles.chip} data-testid="intake-detail-stage" data-tone={stageTone(record.stage)}>
-            {stageLabel(record.stage)}
-          </span>
-          {outcome && (
-            <span className={styles.chip} data-testid="intake-detail-match" data-tone={matchTone(outcome)}>
-              {matchLabel(outcome)}
-            </span>
-          )}
-          <span className={styles.chip} data-tone={policyTone(record.policy)}>
-            {policyLabel(record.policy)}
-          </span>
+    <main className={styles.intakeFullPage} data-screen-label="Intake 收件處理詳情頁" data-testid={testId}>
+      <header className={styles.intakeFullPageHeader} data-testid="intake-detail-header">
+        <button className={styles.secondaryButton} onClick={onClose} type="button" data-testid="intake-return-button">← 返回收件匣</button>
+        <div>
+          <div className={styles.dialogTitle}>收件處理詳情 Intake Processing Detail</div>
+          <div className={styles.intakeHeaderChips}>
+            <span className={styles.rowId} data-testid="intake-detail-id">{record.id}</span>
+            <span className={styles.chip} data-testid="intake-detail-stage" data-tone={stageTone(record.stage)}>{stageLabel(record.stage)}</span>
+            {outcome ? <span className={styles.chip} data-testid="intake-detail-match" data-tone={matchTone(outcome)}>{matchLabel(outcome)}</span> : null}
+            <span className={styles.chip} data-tone={policyTone(record.policy)}>{policyLabel(record.policy)}</span>
+            <span>版本 v{record.version}</span>
+          </div>
+          <a className={styles.deepLink} data-testid="intake-detail-deeplink" href={detailHref ?? `/intake/${record.id}`}>
+            {detailHref ?? `/intake/${record.id}`} · 可直接開啟、重新載入與返回
+          </a>
         </div>
+        {onRefresh ? <button className={styles.secondaryButton} onClick={onRefresh} type="button" data-testid="intake-refresh-button">重新整理</button> : null}
+      </header>
 
-        <div style={{ display: "flex", alignItems: "center", gap: "10px", marginLeft: "auto" }}>
-          <span className={styles.deepLink} data-testid="intake-detail-deeplink">
-            #intake/{record.id}
-          </span>
-          {onRefresh && (
-            <button
-              type="button"
-              onClick={onRefresh}
-              className={styles.secondaryButton}
-              style={{ padding: "3px 8px", fontSize: "11px" }}
-              data-testid="intake-refresh-button"
+      <section className={styles.sectionBox} data-testid="intake-submission-summary">
+        <div className={styles.sectionHead}>送件摘要 SUBMISSION SUMMARY</div>
+        <div className={styles.metaGrid}>
+          <Meta label="原始 URL" value={record.originalUrl} />
+          <Meta label="Canonical URL" value={record.canonicalUrl} />
+          <Meta label="來源提供者 ID／政策" value={`${record.sourceId || "UNAVAILABLE"} · ${record.policyLabel || "UNAVAILABLE"}`} />
+          <Meta label="提供者物件 ID" value={providerListingId} />
+          <Meta label="送件時間 Submitted At" value={submittedAt} />
+          <Meta label="擷取時間 Captured At" value={record.capturedAt ?? "UNAVAILABLE"} />
+          <Meta label="提交者" value={record.submitter || "UNAVAILABLE"} />
+          <Meta label="Owner" value={record.owner || "UNAVAILABLE"} />
+          <Meta label="HeatZone／區域" value={record.heatZoneId ?? "UNAVAILABLE"} />
+        </div>
+      </section>
+
+      <AssignmentSlaSummary assignmentResourceVersion={assignmentResourceVersion} busy={busy}
+        onClaim={onClaimAssignment} onOpenPause={onOpenPause} onOpenTransfer={onOpenTransfer}
+        onResume={onResumeSla} record={record} slaResourceVersion={slaResourceVersion} />
+
+      <section data-testid="intake-processing-stages">
+        <IntakeStageTimeline record={record} mode="stages" onCancel={onCancel} />
+      </section>
+
+      <section data-testid="intake-source-policy-evidence">
+        <div className={styles.intakeSectionToolbar}>
+          <strong>來源政策與 WORM 證據</strong>
+          <label><input checked={maskedView} onChange={(event) => setMaskedView(event.target.checked)} type="checkbox" data-testid="intake-masking-checkbox" /> 資安遮蔽</label>
+        </div>
+        <EvidencePanel record={record} fields={evidenceFields} auditReferences={auditReferences}
+          maskedView={maskedView} section="source" />
+      </section>
+
+      {hasRecoveryState ? <section data-testid="intake-error-recovery-section">
+        <IntakeErrorRecovery error={recoveryError} stage={record.stage} correlationId={record.correlationId}
+          preservedInput={preservedInput} onRetry={canRetry ? onRetry : undefined} onReplayDlq={onReplayDlq}
+          onCancel={onCancel} onOverride={onOverride}
+          onCorrectInput={onOpenFix ? () => onOpenFix(Object.keys(record.parsedFields ?? {})[0] ?? "address_raw") : undefined} />
+      </section> : null}
+
+      {record.stage === "AWAITING_ASSISTED_ENTRY" && onAssistedEntrySave
+        ? <AssistedEntryForm busy={busy} canEdit={canCorrect} onSave={onAssistedEntrySave} /> : null}
+
+      <section data-testid="intake-parsed-lineage">
+        <EvidencePanel record={record} fields={evidenceFields} onOpenFix={canCorrect ? onOpenFix : undefined}
+          maskedView={maskedView} section="lineage" />
+      </section>
+
+      <section data-testid="intake-match-evidence-section"><MatchEvidencePanel record={record} /></section>
+
+      {record.matchResult ? (
+        <section
+          className={outcome === "POSSIBLE_MATCH" ? styles.possibleMatchOutcome : styles.unambiguousMatchOutcome}
+          data-match-outcome={outcome}
+          data-testid="intake-comparison-decision-section"
+        >
+          <ListingCompareTable detailHref={detailHref} record={record} targetListing={targetListing} />
+          {decisionLocked ? (
+            <div className={styles.errorPanel} data-testid="intake-target-decision-lock" role="alert">
+              <strong>AUTHORITATIVE_TARGET_UNAVAILABLE</strong>
+              <span>精確目標物件、可比對值或命名證據尚未由 API 提供；目標相依決策已關閉。</span>
+              {onRefresh ? <button className={styles.secondaryButton} onClick={onRefresh} type="button">重新整理目標資料</button> : null}
+            </div>
+          ) : null}
+          {options.length > 0 && onDecide ? (
+            <div
+              className={`${styles.intakeDecisionSection} ${outcome === "POSSIBLE_MATCH" ? styles.possibleMatchDecision : ""}`}
+              data-testid="intake-detail-actions"
             >
-              🔄 重新整理
-            </button>
-          )}
-          <button aria-label="關閉" className={styles.dialogClose} onClick={onClose} type="button">
-            ×
-          </button>
+              <div>
+                <strong>人工覆核決策 HUMAN DECISION</strong>
+                <p>識別決策須記錄原因、前後值、操作者、時間與版本；高風險動作由後端執行第二操作者與衝突檢查。POSSIBLE_MATCH 絕不自動合併。</p>
+              </div>
+              <div className={styles.intakeDecisionActions}>
+                {options.map((option) => (
+                  <button className={option.kind === "create" ? styles.primaryButton : styles.secondaryButton}
+                    data-testid={`decide-action-${option.kind}`} disabled={busy || !canDecide || decisionLocked}
+                    key={option.kind} onClick={() => onDecide(option.kind)} type="button">{option.label}</button>
+                ))}
+              </div>
+            </div>
+          ) : null}
+        </section>
+      ) : null}
+
+      {promotionAvailable && currentOperator ? (
+        <section data-testid="intake-promotion-section">
+          <PromotionReviewPanel busy={promotionBusy} canReplayScore={canReplayScore} canRequest={canRequestPromotion}
+            canReview={canReviewPromotion} currentOperator={currentOperator} error={promotionError}
+            gateSnapshotSha256={gateSnapshotSha256 ?? ""} idempotencyReplayed={promotionIdempotencyReplayed}
+            onLookupDecision={onLookupPromotionDecision} onRefresh={onRefresh} onReplayScore={onReplayScore}
+            onRequestPromotion={onRequestPromotion} onReviewPromotion={onReviewPromotion} promotion={promotion}
+            record={record} scoreJob={scoreJob} />
+        </section>
+      ) : null}
+
+      <section data-testid="intake-receipts-section">
+        <DurableReceiptPanel record={record} submissionReceipt={submissionReceipt} assignmentReceipt={assignmentReceipt}
+          decisionReceipt={decisionReceipt} slaReceipt={slaReceipt} correctionReceipts={correctionReceipts} />
+      </section>
+
+      <section data-testid="intake-timeline-audit-section">
+        <IntakeStageTimeline record={record} history={history} jobs={jobs} sla={sla} canReplay={canReplay}
+          mode="audit" onReplayJob={onReplayDlq} onCancel={onCancel} />
+        <div className={styles.sectionBox} data-testid="intake-audit-references">
+          <div className={styles.sectionHead}>稽核參照 AUDIT REFERENCES</div>
+          {record.auditEvents?.length ? (
+            <ul>
+              {record.auditEvents.map((event) => (
+                <li key={event.id}>
+                  Time {event.occurredAt || "UNAVAILABLE"} · ID {event.id || "UNAVAILABLE"} · Action {event.action || "UNAVAILABLE"} · Actor {event.actorName || "UNAVAILABLE"} · Actor Role {event.actorRoleId || "UNAVAILABLE"} · Target {event.targetId || "UNAVAILABLE"} · Message {event.message || "UNAVAILABLE"} · Correlation {event.correlationId || "UNAVAILABLE"} · Event Version UNAVAILABLE · Before/After UNAVAILABLE — classified/masked audit detail contract required · Metadata UNAVAILABLE — classified/masked audit detail contract required
+                </li>
+              ))}
+            </ul>
+          ) : <div className={styles.emptyState} data-testid="audit-events-unavailable">AUDIT EVENTS: UNAVAILABLE</div>}
         </div>
-      </div>
-
-      {/* Sub-nav Tabs */}
-      <div
-        style={{
-          display: "flex",
-          alignItems: "center",
-          gap: "4px",
-          padding: "8px 16px",
-          background: "#f8fafc",
-          borderBottom: "1px solid #e2e8f0",
-        }}
-        data-testid="intake-detail-tabs"
-      >
-        <button
-          type="button"
-          onClick={() => setActiveTab("timeline")}
-          style={{
-            padding: "6px 12px",
-            borderRadius: "6px",
-            fontSize: "11.5px",
-            fontWeight: activeTab === "timeline" ? 700 : 500,
-            background: activeTab === "timeline" ? "#ffffff" : "transparent",
-            color: activeTab === "timeline" ? "#2e3a97" : "#64748b",
-            border: activeTab === "timeline" ? "1px solid #cbd5e1" : "none",
-            cursor: "pointer",
-          }}
-          data-testid="tab-timeline"
-        >
-          ⏱️ 階段與時序 (Timeline)
-        </button>
-
-        <button
-          type="button"
-          onClick={() => setActiveTab("evidence")}
-          style={{
-            padding: "6px 12px",
-            borderRadius: "6px",
-            fontSize: "11.5px",
-            fontWeight: activeTab === "evidence" ? 700 : 500,
-            background: activeTab === "evidence" ? "#ffffff" : "transparent",
-            color: activeTab === "evidence" ? "#2e3a97" : "#64748b",
-            border: activeTab === "evidence" ? "1px solid #cbd5e1" : "none",
-            cursor: "pointer",
-          }}
-          data-testid="tab-evidence"
-        >
-          📋 證據與比對 (Evidence)
-        </button>
-
-        <button
-          type="button"
-          onClick={() => setActiveTab("receipts")}
-          style={{
-            padding: "6px 12px",
-            borderRadius: "6px",
-            fontSize: "11.5px",
-            fontWeight: activeTab === "receipts" ? 700 : 500,
-            background: activeTab === "receipts" ? "#ffffff" : "transparent",
-            color: activeTab === "receipts" ? "#2e3a97" : "#64748b",
-            border: activeTab === "receipts" ? "1px solid #cbd5e1" : "none",
-            cursor: "pointer",
-          }}
-          data-testid="tab-receipts"
-        >
-          📜 持久化收據 (Receipts)
-        </button>
-
-        {promotionAvailable && (
-          <button
-            type="button"
-            onClick={() => setActiveTab("promotion")}
-            style={{
-              padding: "6px 12px",
-              borderRadius: "6px",
-              fontSize: "11.5px",
-              fontWeight: activeTab === "promotion" ? 700 : 500,
-              background: activeTab === "promotion" ? "#ffffff" : "transparent",
-              color: activeTab === "promotion" ? "#2e3a97" : "#64748b",
-              border: activeTab === "promotion" ? "1px solid #cbd5e1" : "none",
-              cursor: "pointer",
-            }}
-            data-testid="tab-promotion"
-          >
-            🚀 晉升審查 (Promotion)
-          </button>
-        )}
-
-        <button
-          type="button"
-          onClick={() => setActiveTab("error")}
-          style={{
-            padding: "6px 12px",
-            borderRadius: "6px",
-            fontSize: "11.5px",
-            fontWeight: activeTab === "error" ? 700 : 500,
-            background: activeTab === "error" ? "#fff5f5" : "transparent",
-            color: activeTab === "error" ? "#b91c1c" : "#64748b",
-            border: activeTab === "error" ? "1px solid #fca5a5" : "none",
-            cursor: "pointer",
-            display: "flex",
-            alignItems: "center",
-            gap: "4px",
-          }}
-          data-testid="tab-error"
-        >
-          <span>⚠️ 異常恢復 (Error Recovery)</span>
-          {isFailedOrQuarantined && (
-            <span style={{ width: "8px", height: "8px", borderRadius: "50%", background: "#dc2626" }} />
-          )}
-        </button>
-
-        {/* Data Purpose & Masking Control */}
-        <div style={{ marginLeft: "auto", display: "flex", alignItems: "center", gap: "8px", fontSize: "11px", color: "#64748b" }}>
-          <label style={{ display: "flex", alignItems: "center", gap: "4px", cursor: "pointer" }}>
-            <input
-              type="checkbox"
-              checked={maskedView}
-              onChange={(e) => setMaskedView(e.target.checked)}
-              data-testid="intake-masking-checkbox"
-            />
-            <span>資安遮蔽 (Purpose Binding Masking)</span>
-          </label>
+        <div className={styles.sectionBox} data-testid="intake-authoritative-audit-references">
+          {auditReferences.length ? auditReferences.map((reference) => (
+            <div key={reference.audit_event_id}>{reference.audit_event_id} · {reference.action} · {reference.result}</div>
+          )) : <div className={styles.emptyState} data-testid="audit-references-unavailable">AUDIT REFERENCES: UNAVAILABLE</div>}
         </div>
-      </div>
-
-      {/* Main Body */}
-      <div className={styles.dialogBody} style={{ padding: "16px" }}>
-        {/* Prominent Error Recovery Banner if failed */}
-        {isFailedOrQuarantined && activeTab !== "error" && (
-          <div
-            style={{
-              padding: "8px 12px",
-              borderRadius: "8px",
-              background: "#fef2f2",
-              border: "1px solid #fca5a5",
-              color: "#991b1b",
-              fontSize: "11.5px",
-              marginBottom: "12px",
-              display: "flex",
-              alignItems: "center",
-              justifyContent: "space-between",
-            }}
-            data-testid="intake-error-banner"
-          >
-            <span>⚠️ 此收件目前處於異常或隔離狀態 ({record.stage})，請至異常恢復分頁進行處置。</span>
-            <button
-              type="button"
-              onClick={() => setActiveTab("error")}
-              className={styles.secondaryButton}
-              style={{ padding: "2px 8px", fontSize: "10.5px", color: "#b91c1c", borderColor: "#fca5a5" }}
-            >
-              前往異常處置 →
-            </button>
-          </div>
-        )}
-
-        {/* Tab 1: Timeline */}
-        {activeTab === "timeline" && (
-          <IntakeStageTimeline
-            record={record}
-            history={history}
-            jobs={jobs}
-            sla={sla}
-            canReplay={canReplay}
-            onReplayJob={onReplayDlq}
-            onCancel={onCancel}
-          />
-        )}
-
-        {/* Tab 2: Evidence */}
-        {activeTab === "evidence" && (
-          <EvidencePanel
-            record={record}
-            fields={fields}
-            auditReferences={auditReferences}
-            onOpenFix={onOpenFix}
-            maskedView={maskedView}
-          />
-        )}
-
-        {/* Tab 3: Receipts */}
-        {activeTab === "receipts" && (
-          <DurableReceiptPanel
-            record={record}
-            submissionReceipt={submissionReceipt}
-            assignmentReceipt={assignmentReceipt}
-            decisionReceipt={decisionReceipt}
-            slaReceipt={slaReceipt}
-            correctionReceipts={correctionReceipts}
-          />
-        )}
-
-        {/* Tab: Candidate promotion saga (UX-SCR-EXP-003F) */}
-        {activeTab === "promotion" && promotionAvailable && currentOperator && (
-          <PromotionReviewPanel
-            busy={promotionBusy}
-            canReplayScore={canReplayScore}
-            canRequest={canRequestPromotion}
-            canReview={canReviewPromotion}
-            currentOperator={currentOperator}
-            error={promotionError}
-            gateSnapshotSha256={gateSnapshotSha256 ?? ""}
-            idempotencyReplayed={promotionIdempotencyReplayed}
-            onLookupDecision={onLookupPromotionDecision}
-            onRefresh={onRefresh}
-            onReplayScore={onReplayScore}
-            onRequestPromotion={onRequestPromotion}
-            onReviewPromotion={onReviewPromotion}
-            promotion={promotion}
-            record={record}
-            scoreJob={scoreJob}
-          />
-        )}
-
-        {/* Tab 4: Error Recovery */}
-        {activeTab === "error" && (
-          <IntakeErrorRecovery
-            error={error}
-            stage={record.stage}
-            correlationId={record.correlationId}
-            preservedInput={record.parsedFields ? Object.fromEntries(Object.values(record.parsedFields).map(f => [f.key, (f as any).value ?? f.normalizedValue ?? f.sourceValue])) : null}
-            onRetry={onRetry}
-            onReplayDlq={onReplayDlq}
-            onCancel={onCancel}
-            onOverride={onOverride}
-            onCorrectInput={onOpenFix ? () => onOpenFix(Object.keys(record.parsedFields ?? {})[0] ?? "address_raw") : undefined}
-          />
-        )}
-      </div>
-
-      {/* Decision Actions Footer */}
-      {options.length > 0 && onDecide && (
-        <div
-          style={{
-            padding: "12px 16px",
-            borderTop: "1px solid #e2e8f0",
-            background: "#f8fafc",
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "space-between",
-          }}
-          data-testid="intake-detail-actions"
-        >
-          <div style={{ fontSize: "11px", fontWeight: 600, color: "#475569" }}>
-            人工覆核決策 AFFORDANCES ({options.length} 可選動作)
-          </div>
-          <div style={{ display: "flex", gap: "8px" }}>
-            {options.map((opt) => (
-              <button
-                key={opt.kind}
-                type="button"
-                onClick={() => onDecide(opt.kind)}
-                disabled={busy || !canDecide}
-                className={opt.kind === "create" ? styles.primaryButton : styles.secondaryButton}
-                style={{ padding: "6px 14px", fontSize: "11.5px" }}
-                data-testid={`decide-action-${opt.kind}`}
-              >
-                {opt.label}
-              </button>
-            ))}
-          </div>
-        </div>
-      )}
-    </IntakeDialogShell>
+      </section>
+    </main>
   );
+}
+
+function Meta({ label, value }: { label: string; value: string }) {
+  return <div><div className={styles.metaCaption}>{label}</div><div className={styles.metaValue}>{value || "UNAVAILABLE"}</div></div>;
+}
+
+function authoritativeParsedValue(record: AssistedIntake, ...keys: string[]): string {
+  for (const key of keys) {
+    const field = record.parsedFields?.[key];
+    const value = field?.correctedValue ?? field?.normalizedValue ?? field?.sourceValue;
+    if (value !== null && value !== undefined && value !== "") return String(value);
+  }
+  return "UNAVAILABLE";
+}
+
+export function hasAuthoritativeTargetEvidence(
+  record: AssistedIntake,
+  targetListing?: TargetListingData | null,
+): boolean {
+  const match = record.matchResult;
+  if (!match?.targetListingId || !targetListing || targetListing.id !== match.targetListingId) {
+    return false;
+  }
+  const hasValue = [
+    targetListing.sourceId,
+    targetListing.sourceListingId,
+    targetListing.sourceUrl,
+    targetListing.canonicalUrl,
+    targetListing.address,
+    targetListing.area,
+    targetListing.floor,
+    targetListing.listingType,
+    targetListing.rent,
+    targetListing.status,
+  ].some((value) => value !== null && value !== undefined && value !== "");
+  const hasNamedEvidence =
+    (match.agreeingSignals?.length ?? 0) + (match.contradictingSignals?.length ?? 0) > 0;
+  return hasValue && hasNamedEvidence;
 }

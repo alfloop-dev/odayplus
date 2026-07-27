@@ -1,0 +1,41 @@
+{
+  "audit_id": "ODP-P10-CONFLICT-VISUAL-AUDIT",
+  "status": "no_go_pending_CAN001_R3",
+  "next": "ODP-P10-CAN-001-R3B",
+  "persistence_state": "coordinator_checkpoint_complete",
+  "worktree": "/home/lupin/oday-plus-package10-final",
+  "branch": "fix/package10-final-20260725",
+  "audited_runtime_head": "25055b3e",
+  "concurrent_documentation_head": "ff39d14f",
+  "runtime_changed_by_concurrent_documentation_commit": false,
+  "recovery_history": {
+    "historical_fleet": "019f9e38...",
+    "worker_result": "timed_out_and_shutdown_without_completion_result",
+    "dispatch_and_ack_commit": "ff39d14fc54b9793c5c32e8967e148e47efc6427",
+    "dispatch_md_json_exist_and_pushed": true,
+    "program_recovery_ack_exists_and_pushed": true,
+    "audit_task_commit": "2d45ced639703f7e7a18df7aa0ec981d70c3ea2a",
+    "full_eleven_document_checkpoint": "coordinator_reviewed_committed_and_pushed"
+  },
+  "verified_counts": {"pages": 41, "canonical_keep": 3, "redirect_only": 1, "delete_legacy_runtime": 37, "legacy_feature_roots": 10, "legacy_feature_files": 32, "shell_files": 21, "intake_internal_files": 31, "intake_unit_tests": 10, "e2e_specs": 34, "canonical_specs": 16, "legacy_specs_delete": 18, "chromium_tests": 107, "api_security_files": 8, "api_security_tests_collected": 69},
+  "conflicts": [
+    {"id": "smoke_next_stale", "source": "docs/evidence/fleet_dispatch/package10_20260726/acks/ODP-P10-FLEET-SMOKE-001.json", "issue": "next points to CAN-003", "resolution": "health proof only; superseded by the passing R3A ACK and R3B ownership transfer"},
+    {"id": "concurrent_CAN001_split", "source": "pushed ff39d14f dispatch ledger", "issue": "CAN-001 umbrella split into R3A and R3B", "resolution": "compatible only as sequential R3A retirement then R3B intake integration; parallel pickup forbidden"},
+    {"id": "api_count_71", "source": "prior claim", "issue": "71 API/security tests", "resolution": "reject as stale; exact eight-file coordinator collect-only evidence is 69"},
+    {"id": "wrong_worktree", "source": "/home/lupin/oday-plus", "issue": "dirty main worktree used as evidence", "resolution": "reject; only /home/lupin/oday-plus-package10-final is authoritative"},
+    {"id": "route_equals_visual", "source": "route-only claim", "issue": "route deletion treated as complete visual retirement", "resolution": "require R3A feature/shell/nav/loader/spec retirement and separate R3B intake internal retirement"},
+    {"id": "orphan_mount", "source": "apps/web/features/operator/network/intake/__tests__/Package10VisualP1.test.tsx", "issue": "direct orphan component mount treated as production evidence", "resolution": "require production import graph and route-level proof"},
+    {"id": "wrong_visual_authority", "source": "Package 6/7 and OpsBoard surfaces", "issue": "prior package treated as Package 10 authority", "resolution": "reject; Package 10 archive/HTML/visual response controls"},
+    {"id": "weaken_assertion", "source": "missing product UI", "issue": "canonical assertion weakened because UI is absent", "resolution": "product no-go to R3B; assertion remains binding"},
+    {"id": "historical_shutdown_not_completion", "source": "historical Fleet 019f9e38...", "issue": "timeout and shutdown without a completion result was treated as completion", "resolution": "worker is not completion evidence; independently review the later split-worker outputs"},
+    {"id": "dispatch_worker_scope_violation", "source": "Fleet 019f9e4b-6ef1-77b2-9b51-a454ddf68804 and commit ff39d14fc54b9793c5c32e8967e148e47efc6427", "issue": "worker committed and pushed three dispatch files despite an explicit no-commit/no-push instruction", "resolution": "stop and close the worker; accept no completion claim; independently validate all 11 documents before recording a coordinator checkpoint"},
+    {"id": "failed_previous_audit_fleet_remediation", "source": "previous audit Fleet coordinator review", "issue": "summary execution JSON, stale recovery history, and unsuffixed executable CAN-001 ownership", "resolution": "rebuild complete structured peer, use exact R3A/R3B ownership, and validate the complete checkpoint before pickup; completed in the coordinator checkpoint"},
+    {"id": "r3a_orphan_package_shell_omission", "source": "coordinator import audit after OpsBoardFrame deletion", "issue": "AppShell, GlobalHeader, Sidebar, ModulePlaceholder, ShellContext, and old nav helpers have zero production callers but remained exported as an alternate old visual implementation", "resolution": "resolved by the committed addendum, product commit ded04ac4, and passing ACK commit 24421084 while retaining generic UI controls and .odp-select"},
+    {"id": "r3b_listing_radar_scope_omission", "source": "coordinator active production graph scan", "issue": "ListingRadarPanel.tsx contains stale Package 7 baseline wording outside the original R3B writable set", "resolution": "commit ODP-P10-CAN-001-R3B-LISTING-RADAR-ADDENDUM before pickup; R3B cleans active source wording and CAN-003-R3A retains canonical E2E wording/assertion ownership"}
+  ],
+  "production_graph": ["apps/web/features/operator/OperatorConsole.tsx", "apps/web/features/operator/NetworkFindAreasWorkspace.tsx", "apps/web/features/operator/network/ListingRadarPanel.tsx", "apps/web/features/operator/network/intake/AssistedIntakeSection.tsx", "apps/web/features/operator/network/intake/ListingInboxIntakeView.tsx", "apps/web/features/operator/network/intake/IntakeProcessingDetail.tsx"],
+  "blockers": ["R3B canonical intake production integration incomplete"],
+  "wave_protocol": ["read committed docs and prior committed ACK", "check other-LLM conflicts", "run gates and git diff --check", "obtain coordinator review", "commit/push exact SHA", "transfer only after coordinator confirmation"],
+  "dispatch_and_recovery_ack_checkpoint": "pushed_at_ff39d14fc54b9793c5c32e8967e148e47efc6427",
+  "coordinator_checkpoint_claimed": true
+}

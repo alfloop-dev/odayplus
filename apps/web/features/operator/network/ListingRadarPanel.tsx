@@ -25,9 +25,26 @@ type NetworkListingDetail = Listing & {
   sourceUrl?: string;
 };
 
+export function toTargetListingData(listing: NetworkListingDetail) {
+  return {
+    id: listing.id,
+    sourceId: listing.sourceId,
+    sourceListingId: listing.sourceListingId,
+    sourceUrl: listing.sourceUrl,
+    address: listing.address,
+    area: listing.areaPing,
+    floor: listing.floor,
+    // The API-bound listing contract has no authoritative listing type.
+    listingType: undefined,
+    rent: listing.rentPerMonth,
+    status: listing.status,
+  };
+}
+
 export function ListingRadarPanel({
   activeRoleId,
   busyListingId,
+  intakeDetailOpen = false,
   listings,
   onArchive,
   onConvert,
@@ -39,6 +56,14 @@ export function ListingRadarPanel({
 }: {
   activeRoleId: OperatorRoleId;
   busyListingId?: string | null;
+  /**
+   * True while the canonical intake detail owns the page. Package 10 puts the
+   * detail immediately below the global topbar, so the Network compliance strip
+   * — like the Network heading, KPI strip, stepper and tab strip above this
+   * panel — must not precede it (ADD-006 §3.1). Source cards and the radar stay
+   * below the detail exactly as in the canonical layout.
+   */
+  intakeDetailOpen?: boolean;
   listings: NetworkListingDetail[];
   onArchive?: (listingId: string) => void;
   onConvert?: (listingId: string) => void;
@@ -93,18 +118,24 @@ export function ListingRadarPanel({
 
   return (
     <div className={styles.tabPanel} data-screen-label="Network 物件雷達" data-testid="network-panel-listings" role="tabpanel">
-      <div className={styles.complianceBanner}>
-        <span>COMPLIANCE</span>
-        正式上線前需確認來源授權、服務條款、robots 規則與資料使用範圍。系統支援合作 feed、人工匯入與合規 connector，不實作繞過限制的爬取。
-      </div>
+      {intakeDetailOpen ? null : (
+        <div className={styles.complianceBanner} data-testid="network-compliance-banner">
+          <span>COMPLIANCE</span>
+          正式上線前需確認來源授權、服務條款、robots 規則與資料使用範圍。系統支援合作 feed、人工匯入與合規 connector，不實作繞過限制的爬取。
+        </div>
+      )}
 
       {/*
         "Network URL 收件佇列" sits directly under the compliance banner and
-        above the source cards, per the Package 7 layout. It owns its own API
+        above the source cards, per the Package 10 layout. It owns its own API
         binding. The radar below is API-bound in production and may use fixtures
         only in local/POC mode.
       */}
-      <AssistedIntakeSection activeRoleId={activeRoleId} selectedHeatZoneId={selectedHeatZoneId} />
+      <AssistedIntakeSection
+        activeRoleId={activeRoleId}
+        selectedHeatZoneId={selectedHeatZoneId}
+        targetListings={listings.map(toTargetListingData)}
+      />
 
       <div className={styles.sourceSummaryGrid} aria-label="Listing sources">
         {sources.map((source) => (
@@ -115,7 +146,7 @@ export function ListingRadarPanel({
                 {sourceStatusLabel(source.status)}
               </span>
             </div>
-            <small className={styles.muted}>{source.lastSyncedAt ? `掃描 ${source.lastSyncedAt}` : "人工匯入"}</small>
+            <small className={styles.muted}>{source.lastSyncedAt ? `最近收件 ${source.lastSyncedAt}` : "人工匯入"}</small>
             <p>{source.complianceNote}</p>
             <small className={styles.muted}>新增 {rows.filter((row) => row.sourceId === source.id).length} · 合規模式</small>
           </article>
@@ -238,7 +269,7 @@ export function ListingRadarPanel({
                           }}
                           type="button"
                         >
-                          Convert
+                          轉為候選點
                         </button>
                       ) : null}
                       {canMerge && mergeTarget ? (
@@ -251,7 +282,7 @@ export function ListingRadarPanel({
                           }}
                           type="button"
                         >
-                          Merge
+                          標記重複
                         </button>
                       ) : null}
                       {canArchive ? (
@@ -264,11 +295,11 @@ export function ListingRadarPanel({
                           }}
                           type="button"
                         >
-                          Archive
+                          封存
                         </button>
                       ) : null}
                       {!canConvert && !canMerge && !canArchive ? (
-                        <span className={styles.muted}>{isBusy ? "Saving..." : "No action"}</span>
+                        <span className={styles.muted}>{isBusy ? "寫入中…" : "查看詳情"}</span>
                       ) : null}
                     </div>
                   </article>

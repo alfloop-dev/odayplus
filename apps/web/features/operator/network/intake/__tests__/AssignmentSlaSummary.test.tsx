@@ -6,7 +6,7 @@ import type { AssistedIntake, AssignmentReceipt, SlaReceipt } from "@oday-plus/o
 import { AssignmentSlaSummary, computeSlaState, SLA_STATE_MAP } from "../AssignmentSlaSummary";
 import { TransferIntakeDialog, DEFAULT_TRANSFER_TARGETS } from "../TransferIntakeDialog";
 import { PauseSlaDialog } from "../PauseSlaDialog";
-import { IntakeDetailDialog } from "../IntakeDetailDialog";
+import { IntakeProcessingDetail } from "../IntakeProcessingDetail";
 import type { IntakeApiError } from "../intakeClient";
 
 const sampleIntakeRecord: AssistedIntake = {
@@ -344,7 +344,7 @@ describe("Assignment, SLA, Transfer, Pause, Escalation & Conflict Suite (ODP-INT
       };
 
       const html = renderToString(
-        <IntakeDetailDialog
+        <IntakeProcessingDetail
           busy={false}
           canCorrect={true}
           canDecide={true}
@@ -372,7 +372,7 @@ describe("Assignment, SLA, Transfer, Pause, Escalation & Conflict Suite (ODP-INT
       expect(html).toContain("AUD-ASG-TR-004");
 
       // Versioned audit timeline check
-      expect(html).toContain('data-testid="intake-timeline"');
+      expect(html).toContain('data-testid="intake-timeline-audit-section"');
       expect(html).toContain("轉交給 周育安（資料管理員）");
     });
 
@@ -406,7 +406,7 @@ describe("Assignment, SLA, Transfer, Pause, Escalation & Conflict Suite (ODP-INT
       };
 
       const html = renderToString(
-        <IntakeDetailDialog
+        <IntakeProcessingDetail
           busy={false}
           canCorrect={true}
           canDecide={true}
@@ -436,7 +436,7 @@ describe("Assignment, SLA, Transfer, Pause, Escalation & Conflict Suite (ODP-INT
       expect(html).toContain("AUD-SLA-PAUSE-005");
 
       // Timeline check
-      expect(html).toContain('data-testid="intake-timeline"');
+      expect(html).toContain('data-testid="intake-timeline-audit-section"');
       expect(html).toContain("暫停 SLA 處理時效（原因：等待房東提供租約）");
     });
   });

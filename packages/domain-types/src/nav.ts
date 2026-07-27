@@ -1,11 +1,10 @@
 /**
- * Navigation contracts — the shape the Sidebar consumes (component contracts
- * §3.3). Permission/role gating and read-only marking are first-class so the
- * shell can omit items a role cannot access and badge read-only ones.
+ * Navigation contracts shared by role-aware ODay Plus surfaces.
+ * Permission and read-only metadata remain data-only domain concerns.
  */
 import type { Role } from "./roles.ts";
 
-/** Stable identifier for each top-level OpsBoard work area / route. */
+/** Stable identifier for each top-level ODay Plus work area. */
 export type RouteKey =
   | "home"
   | "tasks"
@@ -26,7 +25,7 @@ export type NavItem = {
   key: RouteKey;
   label: string;
   href: string;
-  /** lucide-style icon name; resolved by the shell, kept data-only here. */
+  /** Lucide-style icon name, kept data-only here. */
   icon?: string;
   /** roles allowed to see this item; empty/undefined = visible to all roles. */
   roles?: Role[];

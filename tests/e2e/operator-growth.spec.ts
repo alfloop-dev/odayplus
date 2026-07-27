@@ -56,27 +56,18 @@ test("Growth workspace renders segments, recommendations, and actions from fixtu
 });
 
 // ---------------------------------------------------------------------------
-// 2. Segment filter
+// 2. Segment card → Package 10 builder handoff
 // ---------------------------------------------------------------------------
 
-test("Growth workspace segment filtering works", async ({ page }) => {
+test("Growth segment card opens a scoped activity draft", async ({ page }) => {
   await page.goto("/operator?ws=growth&gtab=segments");
 
-  const filter = page.getByTestId("growth-segment-filter");
-  await filter.getByText("都會晚餐高潛力組").click();
+  const segmentTable = page.getByTestId("growth-segment-table");
+  const segmentCard = segmentTable.locator("article").filter({ hasText: "都會晚餐高潛力組" });
+  await segmentCard.getByRole("link", { name: "建立活動草稿" }).click();
   await expect(page).toHaveURL(/segment=seg-metro-dinner/);
-
-  // The segment focus scopes the PriceOps recommendations across tabs.
-  await page.getByTestId("growth-tab-priceops").click();
-  const recTable = page.getByTestId("growth-recommendation-table");
-  await expect(recTable).toContainText("晚餐套餐 +3% 加權調價");
-  await expect(recTable).not.toContainText("宵夜外送費 -2% 試點");
-
-  // Clearing the focus returns to all segments.
-  await page.getByTestId("growth-tab-segments").click();
-  await filter.getByText("全部分群").click();
-  await expect(page).toHaveURL(/ws=growth/);
-  await expect(page).not.toHaveURL(/segment=/);
+  await expect(page).toHaveURL(/builder=offpeak/);
+  await expect(page.getByTestId("growth-draft-modal")).toBeVisible();
 });
 
 // ---------------------------------------------------------------------------
@@ -162,7 +153,7 @@ test("HARD_CONSTRAINT_FAILED recommendation has disabled draft button", async ({
 
   const recTable = page.getByTestId("growth-recommendation-table");
   const hardConstraintRow = recTable.locator('tr:has-text("午餐主力商品 +9% 調價")');
-  await expect(hardConstraintRow.getByText("建立草稿")).toHaveAttribute("aria-disabled", "true");
+  await expect(hardConstraintRow.getByText("建立定價草稿")).toHaveAttribute("aria-disabled", "true");
 
   const passRow = recTable.locator('tr:has-text("晚餐套餐 +3% 加權調價")');
   await expect(passRow.getByTestId("growth-draft-rec-9001")).not.toHaveAttribute(
@@ -259,16 +250,17 @@ test("Effective Growth Action can be closed and emits console audit log", async 
 });
 
 // ---------------------------------------------------------------------------
-// 9. Observing action shows PENDING — close button disabled
+// 9. Observing action stays in the lifecycle panel until its window matures
 // ---------------------------------------------------------------------------
 
-test("Observing Growth Action shows PENDING outcome and close is disabled", async ({ page }) => {
+test("Observing Growth Action cannot enter closeout before its window matures", async ({ page }) => {
   await page.goto("/operator?ws=growth&item=growth-7004");
 
   const detailPanel = page.getByTestId("growth-item-detail");
   await expect(detailPanel).toContainText("都會晚餐加點推薦活動");
   await expect(detailPanel).toContainText("觀察中");
 
-  const closeoutPanel = page.getByTestId("growth-closeout-panel");
-  await expect(closeoutPanel.getByTestId("growth-close-button")).toBeDisabled();
+  const transitionPanel = page.getByTestId("growth-transition-panel");
+  await expect(transitionPanel.getByTestId("growth-transition-action")).toBeDisabled();
+  await expect(page.getByTestId("growth-closeout-panel")).toHaveCount(0);
 });

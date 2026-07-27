@@ -19,12 +19,11 @@ import { getOperatorRole } from "../../navigation";
 import styles from "./intake.module.css";
 import { ListingInboxIntakeView } from "./ListingInboxIntakeView";
 import { IntakeDecisionDialog } from "./IntakeDecisionDialog";
-import { IntakeDetailDialog } from "./IntakeDetailDialog";
+import { IntakeProcessingDetail } from "./IntakeProcessingDetail";
 import { IntakeFieldFixDialog } from "./IntakeFieldFixDialog";
-import {
-  PromotionReviewPanel,
-  type PromotionRequestInput,
-  type PromotionReviewInput,
+import type {
+  PromotionRequestInput,
+  PromotionReviewInput,
 } from "./PromotionReviewPanel";
 import type { ScoreReplayInput } from "./SiteScoreJobStatus";
 import { TransferIntakeDialog } from "./TransferIntakeDialog";
@@ -42,6 +41,8 @@ import { canPerform, canView } from "./intakePermissions";
 import { operatorSubjectId } from "../../operatorSecurityHeaders";
 import { isOperatorProductionMode } from "../../operatorDataMode";
 import { DECISION_API_ACTION, type IntakeDecisionKind } from "./intakeTypes";
+import type { IntakeUrlState } from "./types";
+import type { TargetListingData } from "./ListingCompareTable";
 
 // Container for the assisted listing intake slice (ODP-OC-R5-011).
 //
@@ -58,11 +59,17 @@ import { DECISION_API_ACTION, type IntakeDecisionKind } from "./intakeTypes";
 export function AssistedIntakeSection({
   activeRoleId,
   activeSubjectId,
+  initialDialog,
+  initialSelectedId,
   selectedHeatZoneId,
+  targetListings = [],
 }: {
   activeRoleId: OperatorRoleId;
   activeSubjectId?: string;
+  initialDialog?: IntakeUrlState["dialog"];
+  initialSelectedId?: string;
   selectedHeatZoneId?: string;
+  targetListings?: TargetListingData[];
 }) {
   const router = useRouter();
   const pathname = usePathname();
@@ -99,9 +106,20 @@ export function AssistedIntakeSection({
   }, [activeSubjectId]);
 
   const urlState = useMemo(() => parseUrlState(searchParams), [searchParams]);
+  const durableRouteSelectedId = useMemo(() => {
+    const match = /^\/intake\/([^/]+)$/.exec(pathname);
+    return match ? decodeURIComponent(match[1]) : undefined;
+  }, [pathname]);
 
-  const selectedId = urlState.selectedId;
-  const dialog = urlState.dialog;
+  const selectedId =
+    urlState.selectedId ??
+    initialSelectedId ??
+    durableRouteSelectedId ??
+    null;
+  const dialog =
+    urlState.dialog ??
+    initialDialog ??
+    (durableRouteSelectedId ? "detail" : null);
   const fixFieldKey = urlState.fixFieldKey;
   const decisionKind = urlState.decisionKind as any;
   const asgKind = urlState.decisionKind === "transfer" ? "transfer" : urlState.decisionKind === "pause" ? "pause" : null;
@@ -132,13 +150,16 @@ export function AssistedIntakeSection({
     state: "idle" | "loading" | "ready";
   }>({ intakeId: null, state: "idle" });
 
-  const updateUrlState = useCallback((updates: Partial<typeof urlState>) => {
+  const updateUrlState = useCallback((
+    updates: Partial<typeof urlState>,
+    historyMode: "push" | "replace" = "replace",
+  ) => {
     const nextState = {
       filters: urlState.filters,
       sort: urlState.sort,
       view: urlState.view,
-      selectedId: urlState.selectedId,
-      dialog: urlState.dialog,
+      selectedId,
+      dialog,
       activeSection: urlState.activeSection,
       fixFieldKey: urlState.fixFieldKey,
       decisionKind: urlState.decisionKind,
@@ -147,8 +168,8 @@ export function AssistedIntakeSection({
       ...updates,
     };
     const newParams = serializeUrlState(nextState, searchParams);
-    router.replace(`${pathname}?${newParams.toString()}`);
-  }, [urlState, searchParams, pathname, router]);
+    router[historyMode](`${pathname}?${newParams.toString()}`);
+  }, [urlState, selectedId, dialog, searchParams, pathname, router]);
 
   const role = getOperatorRole(activeRoleId);
   const client = useMemo(
@@ -173,7 +194,16 @@ export function AssistedIntakeSection({
     setLoadState("loading");
     const result = await intakeApi.list(client, { ...inboxQuery, selectedHeatZoneId });
     if (result.ok) {
-      setRecords(result.value.items);
+      setRecords((current) => {
+        if (dialog !== "detail" || !selectedId) return result.value.items;
+        if (result.value.items.some((item) => item.id === selectedId)) {
+          return result.value.items;
+        }
+        const durableSelection = current.find((item) => item.id === selectedId);
+        return durableSelection
+          ? [durableSelection, ...result.value.items]
+          : result.value.items;
+      });
       setPageData(result.value);
       setLoadState("ready");
       setLoadError(null);
@@ -181,7 +211,14 @@ export function AssistedIntakeSection({
       setLoadState("error");
       setLoadError(result.error);
     }
-  }, [activeRoleId, client, inboxQuery, selectedHeatZoneId]);
+  }, [
+    activeRoleId,
+    client,
+    dialog,
+    inboxQuery,
+    selectedHeatZoneId,
+    selectedId,
+  ]);
 
   useEffect(() => {
     void refresh();
@@ -323,7 +360,18 @@ export function AssistedIntakeSection({
   }, [selected, gateKey, gateSnapshots]);
 
   function closeDialog() {
-    updateUrlState({ dialog: null, selectedId: null, fixFieldKey: null, decisionKind: null, receiptId: null });
+    if (durableRouteSelectedId) {
+      router.replace(buildInboxReturnHref({
+        ...urlState,
+        selectedId,
+        dialog: null,
+        fixFieldKey: null,
+        decisionKind: null,
+        receiptId: null,
+      }, searchParams));
+      return;
+    }
+    updateUrlState({ dialog: null, selectedId, fixFieldKey: null, decisionKind: null, receiptId: null });
     setActionError(null);
     submitKeyRef.current = null;
     correctionKeyRef.current = null;
@@ -332,7 +380,7 @@ export function AssistedIntakeSection({
   }
 
   function openDetail(intakeId: string) {
-    updateUrlState({ dialog: "detail", selectedId: intakeId });
+    updateUrlState({ dialog: "detail", selectedId: intakeId }, "push");
     setActionError(null);
   }
 
@@ -538,6 +586,17 @@ export function AssistedIntakeSection({
 
   async function handleClaim() {
     if (!client || !selected || busy) return;
+    const authority = guardAssignmentResource(selected, assignmentReceipts[selected.id]);
+    const subjectId = operatorSubjectId(activeRoleId, sessionSubjectId);
+    if (!authority.ok) {
+      setActionError(authority.error);
+      return;
+    }
+    if (
+      !isClaimableAssignmentStatus(selected.assignmentStatus) ||
+      !canPerform("correct", activeRoleId) ||
+      !subjectId
+    ) return;
     setBusy(true);
     setActionError(null);
 
@@ -545,25 +604,11 @@ export function AssistedIntakeSection({
     const correlationId = newCorrelationId();
 
     try {
-      let receipt;
-      if (selected.assignmentId) {
-        receipt = await client.claimAssignment(
-          selected.assignmentId,
-          { reason: "Claiming existing assignment" },
-          { idempotencyKey: key, correlationId }
-        );
-      } else {
-        receipt = await client.assignIntake(
-          selected.id,
-          {
-            owner_subject_id: activeRoleId,
-            owner_role: "reviewer",
-            reason: "Claiming assignment for manual triage review",
-            due_at: new Date(Date.now() + 5 * 24 * 60 * 60 * 1000).toISOString(),
-          },
-          { idempotencyKey: key, correlationId }
-        );
-      }
+      const receipt = await client.claimAssignment(
+        authority.id,
+        { reason: "Claiming existing assignment" },
+        { idempotencyKey: key, correlationId, ifMatch: `W/"${authority.version}"` },
+      );
 
       setToast(`已成功認領收件！指派 ID: ${receipt.assignment_id}`);
       if (receipt) {
@@ -579,7 +624,7 @@ export function AssistedIntakeSection({
       setActionError({
         code: err.code || "CLAIM_ERROR",
         summary: err.message || "認領收件時發生錯誤",
-        occurredAt: new Date().toISOString(),
+        occurredAt: err.occurredAt || "UNAVAILABLE",
         nextAction: "請稍後再試",
         status: err.status,
         retryable: false,
@@ -599,17 +644,9 @@ export function AssistedIntakeSection({
     setBusy(true);
     setActionError(null);
 
-    const asgId = selected.assignmentId;
-    if (!asgId) {
-      setActionError({
-        code: "NO_ASSIGNMENT",
-        summary: "無法轉交：找不到此收件的指派記錄",
-        occurredAt: new Date().toISOString(),
-        nextAction: "請先認領或指派收件",
-        retryable: false,
-        correlationId: null,
-        status: 400,
-      });
+    const authority = guardAssignmentResource(selected, assignmentReceipts[selected.id]);
+    if (!authority.ok) {
+      setActionError(authority.error);
       setBusy(false);
       return;
     }
@@ -619,7 +656,7 @@ export function AssistedIntakeSection({
 
     try {
       const receipt = await client.transferAssignment(
-        asgId,
+        authority.id,
         {
           target_owner_subject_id: payload.target_owner_subject_id,
           target_owner_role: payload.target_owner_role,
@@ -629,7 +666,7 @@ export function AssistedIntakeSection({
         {
           idempotencyKey: key,
           correlationId,
-          ifMatch: `W/"${selected.version}"`,
+          ifMatch: `W/"${authority.version}"`,
         }
       );
 
@@ -667,17 +704,13 @@ export function AssistedIntakeSection({
     setBusy(true);
     setActionError(null);
 
-    const slaId = selected.slaInstanceId;
-    if (!slaId) {
-      setActionError({
-        code: "NO_SLA_INSTANCE",
-        summary: "無法暫停 SLA：找不到此收件的 SLA 實例",
-        occurredAt: new Date().toISOString(),
-        nextAction: "請重新整理收件",
-        retryable: false,
-        correlationId: null,
-        status: 400,
-      });
+    const authority = guardSlaResource(selected, slaReceipts[selected.id]);
+    if (!authority.ok) {
+      setActionError(authority.error);
+      setBusy(false);
+      return;
+    }
+    if (!isActiveSlaState(selected.slaState)) {
       setBusy(false);
       return;
     }
@@ -687,7 +720,7 @@ export function AssistedIntakeSection({
 
     try {
       const receipt = await client.pauseSla(
-        slaId,
+        authority.id,
         {
           reason: payload.reason,
           expected_resume_at: payload.expected_resume_at,
@@ -695,7 +728,7 @@ export function AssistedIntakeSection({
         {
           idempotencyKey: key,
           correlationId,
-          ifMatch: `W/"${selected.version}"`,
+          ifMatch: `W/"${authority.version}"`,
         }
       );
 
@@ -730,17 +763,13 @@ export function AssistedIntakeSection({
     setBusy(true);
     setActionError(null);
 
-    const slaId = selected.slaInstanceId;
-    if (!slaId) {
-      setActionError({
-        code: "NO_SLA_INSTANCE",
-        summary: "無法恢復 SLA：找不到此收件的 SLA 實例",
-        occurredAt: new Date().toISOString(),
-        nextAction: "請重新整理收件",
-        retryable: false,
-        correlationId: null,
-        status: 400,
-      });
+    const authority = guardSlaResource(selected, slaReceipts[selected.id]);
+    if (!authority.ok) {
+      setActionError(authority.error);
+      setBusy(false);
+      return;
+    }
+    if (selected.slaState !== "PAUSED") {
       setBusy(false);
       return;
     }
@@ -750,12 +779,12 @@ export function AssistedIntakeSection({
 
     try {
       const receipt = await client.resumeSla(
-        slaId,
+        authority.id,
         { reason: "Manual resume SLA" },
         {
           idempotencyKey: key,
           correlationId,
-          ifMatch: `W/"${selected.version}"`,
+          ifMatch: `W/"${authority.version}"`,
         }
       );
 
@@ -924,11 +953,33 @@ export function AssistedIntakeSection({
 
   const promotionGateHash = gateKey ? gateSnapshots[gateKey] : undefined;
   const currentSubjectId = operatorSubjectId(activeRoleId, sessionSubjectId);
+  const canCorrect = canPerform("correct", activeRoleId) && Boolean(currentSubjectId);
+  const canDecide = canPerform("decide", activeRoleId) && Boolean(currentSubjectId);
+  const canManageAssignment =
+    canPerform("correct", activeRoleId) && Boolean(currentSubjectId);
+  const assignmentResourceVersion = selected
+    ? authoritativeAssignmentVersion(selected, assignmentReceipts[selected.id])
+    : null;
+  const slaResourceVersion = selected
+    ? authoritativeSlaVersion(selected, slaReceipts[selected.id])
+    : null;
+  const canClaimAssignment =
+    canManageAssignment &&
+    assignmentResourceVersion !== null &&
+    Boolean(selected?.assignmentId) &&
+    isClaimableAssignmentStatus(selected?.assignmentStatus);
+  const canPauseSla =
+    canManageAssignment &&
+    slaResourceVersion !== null &&
+    Boolean(selected?.slaInstanceId) &&
+    isActiveSlaState(selected?.slaState);
+  const canResumeSla =
+    canManageAssignment &&
+    slaResourceVersion !== null &&
+    Boolean(selected?.slaInstanceId) &&
+    selected?.slaState === "PAUSED";
   const canPromote =
     canPerform("promote", activeRoleId) && Boolean(currentSubjectId);
-  // The promotion section renders on the READY branch of the real detail
-  // (UX-SCR-EXP-003F) — once a decision receipt exists it stays visible on
-  // every later saga state so the receipt and score job remain reachable.
   const promotionIsHydrating =
     selected &&
     promotionHydration.intakeId === selected.id &&
@@ -937,39 +988,11 @@ export function AssistedIntakeSection({
     selected &&
     promotionHydration.intakeId === selected.id &&
     promotionHydration.state === "ready";
-  const promotionSection = promotionIsHydrating ? (
-    <div aria-live="polite" className={styles.noteBox} data-testid="promotion-hydration-status" role="status">
-      正在載入既有晉升決策與工作收據…
-    </div>
-  ) : selected && promotionIsHydrated &&
-    (selectedPromotion || (selected.stage === "READY" && promotionGateHash)) ? (
-      <PromotionReviewPanel
-        busy={promotionBusy}
-        canReplayScore={canPromote}
-        canRequest={canPromote}
-        canReview={canPromote}
-        currentOperator={{
-          id: currentSubjectId,
-          name: role.label,
-          role: activeRoleId,
-        }}
-        error={promotionError}
-        gateSnapshotSha256={promotionGateHash ?? ""}
-        idempotencyReplayed={promotionReplayed}
-        onLookupDecision={selectedPromotion ? handleLookupPromotionDecision : undefined}
-        onRefresh={handleConflictRefresh}
-        onReplayScore={handleReplayScore}
-        onRequestPromotion={handleRequestPromotion}
-        onReviewPromotion={handleReviewPromotion}
-        promotion={selectedPromotion}
-        record={selected}
-        scoreJob={selectedScoreJob}
-      />
-    ) : undefined;
-
+  const detailContextOpen =
+    dialog === "detail" || dialog === "fix" || dialog === "decide" || dialog === "assignmentSla";
   return (
     <>
-      <ListingInboxIntakeView
+      {!detailContextOpen ? <ListingInboxIntakeView
         activeRoleId={activeRoleId}
         actionError={actionError}
         busy={busy}
@@ -983,15 +1006,22 @@ export function AssistedIntakeSection({
         pageData={pageData}
         records={records}
         selectedHeatZoneId={selectedHeatZoneId}
-      />
+      /> : null}
 
-      {toast ? (
+      {/*
+        The status/toast row is rendered after the detail layer: in a detail
+        context nothing may precede the canonical detail (ADD-006 §3.1). In the
+        inbox context the inbox above it is still the first surface, so the
+        toast keeps its Package 10 position directly under the queue.
+      */}
+      {detailContextOpen ? null : toast ? (
         <div className={styles.noteBox} data-testid="intake-toast" role="status">
           {toast}
         </div>
       ) : null}
 
       {dialog === "detail" && !selected && detailLoadState === "loading" ? (
+        <div className={styles.intakeDetailLayer}>
         <div
           aria-live="polite"
           className={styles.noteBox}
@@ -999,10 +1029,11 @@ export function AssistedIntakeSection({
           role="status"
         >
           正在從後端載入收件 {selectedId}…
-        </div>
+        </div></div>
       ) : null}
 
       {dialog === "detail" && !selected && detailLoadState === "error" ? (
+        <div className={styles.intakeDetailLayer}>
         <div
           className={styles.errorPanel}
           data-testid="intake-direct-detail-error"
@@ -1015,51 +1046,95 @@ export function AssistedIntakeSection({
           <span className={styles.errorNext}>
             {actionError?.nextAction ?? "請重新整理或返回 Listing 收件匣。"}
           </span>
-        </div>
+        </div></div>
       ) : null}
 
-      {dialog === "detail" && selected ? (
-        <IntakeDetailDialog
+      {detailContextOpen && selected ? (
+        <div className={styles.intakeDetailLayer} data-testid="intake-detail-layer">
+        <IntakeProcessingDetail
           busy={busy}
-          canCorrect={canPerform("correct", activeRoleId)}
-          canDecide={canPerform("decide", activeRoleId)}
+          canCorrect={canCorrect}
+          canDecide={canDecide}
           canRetry={canPerform("retry", activeRoleId)}
           error={actionError}
+          detailHref={buildDurableDetailHref(selected.id, {
+            ...urlState,
+            selectedId: selected.id,
+            dialog: "detail",
+          }, searchParams)}
           onAssistedEntrySave={handleAssistedEntry}
           onClose={closeDialog}
-          onDecide={(kind) => {
+          onDecide={canDecide ? (kind) => {
             decisionKeyRef.current = selected
               ? newIntakeActionIdempotencyKey(selected.id, `decide-${kind}`)
               : null;
             setActionError(null);
             updateUrlState({ dialog: "decide", decisionKind: kind });
-          }}
-          onOpenFix={(fieldKey) => {
+          } : undefined}
+          onOpenFix={canCorrect ? (fieldKey) => {
             correctionKeyRef.current = selected
               ? newIntakeActionIdempotencyKey(selected.id, "correct", fieldKey)
               : null;
             setActionError(null);
             updateUrlState({ dialog: "fix", fixFieldKey: fieldKey });
-          }}
+          } : undefined}
           onRetry={handleRetry}
+          onRefresh={handleConflictRefresh}
           record={selected}
+          targetListing={resolveTargetListing(targetListings, selected.matchResult?.targetListingId)}
           assignmentReceipt={assignmentReceipts[selected.id]}
+          assignmentResourceVersion={assignmentResourceVersion}
+          decisionReceipt={selectedPromotion ?? undefined}
+          jobs={selectedScoreJob ? [selectedScoreJob] : []}
           slaReceipt={slaReceipts[selected.id]}
-          onClaimAssignment={handleClaim}
-          onOpenTransfer={() => {
+          slaResourceVersion={slaResourceVersion}
+          onClaimAssignment={canClaimAssignment ? handleClaim : undefined}
+          onOpenTransfer={canManageAssignment && assignmentResourceVersion !== null && Boolean(selected.owner) && Boolean(selected.assignmentId) ? () => {
             setActionError(null);
             updateUrlState({ dialog: "assignmentSla", decisionKind: "transfer" });
-          }}
-          onOpenPause={() => {
+          } : undefined}
+          onOpenPause={canPauseSla ? () => {
             setActionError(null);
             updateUrlState({ dialog: "assignmentSla", decisionKind: "pause" });
-          }}
-          onResumeSla={handleResumeSla}
-          promotionSection={promotionSection}
+          } : undefined}
+          onResumeSla={canResumeSla ? handleResumeSla : undefined}
+          promotion={selectedPromotion}
+          scoreJob={selectedScoreJob}
+          currentOperator={
+            promotionIsHydrated &&
+            (selectedPromotion || (selected.stage === "READY" && promotionGateHash))
+              ? {
+                  id: currentSubjectId,
+                  name: role.label,
+                  role: activeRoleId,
+                }
+              : undefined
+          }
+          gateSnapshotSha256={promotionGateHash}
+          promotionBusy={promotionBusy || Boolean(promotionIsHydrating)}
+          promotionError={promotionError}
+          promotionIdempotencyReplayed={promotionReplayed}
+          canRequestPromotion={canPromote}
+          canReviewPromotion={canPromote}
+          canReplayScore={canPromote}
+          onLookupPromotionDecision={
+            selectedPromotion ? handleLookupPromotionDecision : undefined
+          }
+          onReplayScore={handleReplayScore}
+          onRequestPromotion={handleRequestPromotion}
+          onReviewPromotion={handleReviewPromotion}
+          testId="intake-detail-dialog"
         />
+        </div>
       ) : null}
 
-      {dialog === "fix" && selected && fixField ? (
+      {detailContextOpen && toast ? (
+        <div className={styles.noteBox} data-testid="intake-toast" role="status">
+          {toast}
+        </div>
+      ) : null}
+
+      {dialog === "fix" && selected && fixField && canCorrect ? (
         <IntakeFieldFixDialog
           busy={busy}
           error={actionError}
@@ -1073,7 +1148,7 @@ export function AssistedIntakeSection({
         />
       ) : null}
 
-      {dialog === "decide" && selected && decisionKind ? (
+      {dialog === "decide" && selected && decisionKind && canDecide ? (
         <IntakeDecisionDialog
           busy={busy}
           error={actionError}
@@ -1088,7 +1163,7 @@ export function AssistedIntakeSection({
         />
       ) : null}
 
-      {dialog === "assignmentSla" && selected && asgKind === "transfer" ? (
+      {dialog === "assignmentSla" && selected && canManageAssignment && assignmentResourceVersion !== null && asgKind === "transfer" ? (
         <TransferIntakeDialog
           busy={busy}
           error={actionError}
@@ -1102,7 +1177,7 @@ export function AssistedIntakeSection({
         />
       ) : null}
 
-      {dialog === "assignmentSla" && selected && asgKind === "pause" ? (
+      {dialog === "assignmentSla" && selected && canPauseSla && asgKind === "pause" ? (
         <PauseSlaDialog
           busy={busy}
           error={actionError}
@@ -1117,4 +1192,120 @@ export function AssistedIntakeSection({
       ) : null}
     </>
   );
+}
+
+export function resolveTargetListing(
+  targetListings: TargetListingData[],
+  targetListingId: string | null | undefined,
+): TargetListingData | undefined {
+  if (!targetListingId) return undefined;
+  return targetListings.find((listing) => listing.id === targetListingId);
+}
+
+export function isClaimableAssignmentStatus(status: string | null | undefined): boolean {
+  return status === "ASSIGNED" || status === "TRANSFERRED" || status === "ESCALATED";
+}
+
+export function isActiveSlaState(state: string | null | undefined): boolean {
+  return state === "ON_TRACK" || state === "DUE_SOON" || state === "OVERDUE";
+}
+
+export function authoritativeAssignmentVersion(
+  record: AssistedIntake,
+  receipt?: AssignmentReceipt,
+): number | null {
+  const raw = record as AssistedIntake & {
+    assignmentVersion?: unknown;
+    assignment_version?: unknown;
+  };
+  return validResourceVersion(receipt?.version ?? raw.assignmentVersion ?? raw.assignment_version);
+}
+
+export function authoritativeSlaVersion(
+  record: AssistedIntake,
+  receipt?: SlaReceipt,
+): number | null {
+  const raw = record as AssistedIntake & {
+    slaVersion?: unknown;
+    sla_version?: unknown;
+  };
+  return validResourceVersion(receipt?.version ?? raw.slaVersion ?? raw.sla_version);
+}
+
+type ResourceAuthority =
+  | { ok: true; id: string; version: number }
+  | { ok: false; error: IntakeApiError };
+
+export function guardAssignmentResource(
+  record: AssistedIntake,
+  receipt?: AssignmentReceipt,
+): ResourceAuthority {
+  if (!record.assignmentId) {
+    return { ok: false, error: unavailableResourceError("ASSIGNMENT_ID_UNAVAILABLE", "assignment ID") };
+  }
+  const version = authoritativeAssignmentVersion(record, receipt);
+  if (version === null) {
+    return { ok: false, error: unavailableResourceError("RESOURCE_VERSION_UNAVAILABLE", "assignment resource version") };
+  }
+  return { ok: true, id: record.assignmentId, version };
+}
+
+export function guardSlaResource(
+  record: AssistedIntake,
+  receipt?: SlaReceipt,
+): ResourceAuthority {
+  if (!record.slaInstanceId) {
+    return { ok: false, error: unavailableResourceError("SLA_INSTANCE_ID_UNAVAILABLE", "SLA instance ID") };
+  }
+  const version = authoritativeSlaVersion(record, receipt);
+  if (version === null) {
+    return { ok: false, error: unavailableResourceError("RESOURCE_VERSION_UNAVAILABLE", "SLA resource version") };
+  }
+  return { ok: true, id: record.slaInstanceId, version };
+}
+
+function unavailableResourceError(code: string, authority: string): IntakeApiError {
+  return {
+    status: 428,
+    code,
+    summary: `${code} — authoritative ${authority} 未提供；操作已關閉。`,
+    nextAction: "請重新整理並等待後端提供權威資源版本。",
+    correlationId: null,
+    occurredAt: "UNAVAILABLE",
+    retryable: false,
+  };
+}
+
+/*
+ * The API If-Match contract (apps/api/app/routes/listings.py) accepts only
+ * `W/"[1-9][0-9]*"`, so version zero is not a usable concurrency token. It must
+ * fail closed here rather than producing an If-Match the backend rejects
+ * (ADD-006 §3.3). Fractions, strings, null and undefined are equally unusable.
+ */
+export function validResourceVersion(value: unknown): number | null {
+  return typeof value === "number" && Number.isInteger(value) && value >= 1 ? value : null;
+}
+
+export function buildInboxReturnHref(
+  state: IntakeUrlState,
+  existingParams?: URLSearchParams,
+): string {
+  const params = serializeUrlState(state, existingParams);
+  params.set("ws", "network");
+  params.set("tab", "radar");
+  return `/operator?${params.toString()}`;
+}
+
+export function buildDurableDetailHref(
+  intakeId: string,
+  state: IntakeUrlState,
+  existingParams?: URLSearchParams,
+): string {
+  const params = serializeUrlState(
+    { ...state, selectedId: intakeId, dialog: "detail" },
+    existingParams,
+  );
+  params.delete("ws");
+  params.delete("tab");
+  return `/intake/${encodeURIComponent(intakeId)}?${params.toString()}`;
 }
