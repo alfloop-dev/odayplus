@@ -5,6 +5,8 @@
 - WIF source audited: `d139aa1210df129ce8b193d6f51905e6c57e2b45`
 - Live-gate source retained: `11439d92de4eb43e223f44e2a3b6081c4f62d4f9`
 - Composition anchor: `4958da6a`
+- Refreshed `origin/dev`: `1c7dd935411ea8e9a85f4635337c846e64cd9523`
+- Post-refresh validation tree: `72009c6a2803a0952079be384d725f0647017f60`
 
 ## Delivered contract
 
@@ -45,3 +47,27 @@ fallback lacked locally installed `vitest/config` and `@vitejs/plugin-react`.
 The changed behavior is the narrow, previously audited ID-token selection from
 `b0116794`; independent exact-head CI must run the repository's normal
 JavaScript dependency bootstrap and Web auth suite.
+
+## Latest-dev refresh
+
+PR #442 was refreshed after `dev` advanced. Merging
+`1c7dd935411ea8e9a85f4635337c846e64cd9523` produced validation tree
+`72009c6a2803a0952079be384d725f0647017f60` without conflicts or changes to
+the task-owned auth and deployment contract.
+
+- `uv run pytest -q tests/security/test_opsboard_auth_boundary.py tests/ops/test_cloud_run_live_deployment.py tests/e2e/test_live_e2e_gate.py`
+  - exit 0; 144 passed; one Starlette deprecation warning.
+- `python3 infra/terraform/validate_contract.py`
+  - exit 0; 14 Terraform files checked.
+- `bash -n scripts/deploy_cloud_run_waji.sh`
+  - exit 0.
+- `git diff --check`
+  - exit 0.
+- Negative search for `GCP_SA_KEY` and static
+  `secrets.ODP_OPERATOR_SMOKE_BEARER_TOKEN`
+  - exit 0; no matches.
+
+The evidence-only commit following this validated tree does not change runtime
+code. GitHub CI and both independent reviewers must nevertheless bind their
+results to the newly pushed PR head; no result for stale head `a50e69b0` is
+reusable.
