@@ -90,3 +90,47 @@ Refresh verification:
 - `python3 scripts/e2e/check_product_release_gate.py`
 - `python3 scripts/e2e/check_product_grade_ci_gates.py --report`
 - `git diff --check`
+
+## 2026-07-27 Dev Refreshes And Canonical Intake Spec Alignment
+
+Three additional `origin/dev` refreshes landed on the PR #419 line, each a
+clean `ort` merge with zero conflicts and zero retired-path restorations:
+
+- `9d9d50b0` — merged dev with map PR #426 stability work.
+- `9c32eba4` — merged dev at `bfc9b7df` (provider-selection PR #418/#433
+  closeout plus map evidence PR #431).
+- `04672167` — merged dev at `611edf13` (store-opening authority PR #435).
+
+The intake Playwright specs were aligned to the canonical Package 10 UI in
+anchors `cddba2f2` and `9b832d87` (the latter restores the supervisor
+worktree-dirt backup `74a8d5e9` lost in the 2026-07-27T19:55Z hard reset):
+
+- Masked governance reads assert the lineage grid `lineage-row-contactPhone`
+  renders the server-masked `[MASKED]` value instead of the retired
+  `intake-masked-*` testids.
+- Policy reasons assert the canonical `evidence-policy-reason` panel instead
+  of the retired `intake-policy-reason` testid.
+- Inbox counts assert the saved-view tab labels
+  (`intake-tab-needsReview|blocked|awaitingEntry`) instead of the retired
+  count badges.
+- Durable reopen uses the canonical deep link
+  `/operator?ws=network&tab=radar&selected=<id>&dialog=detail`; the restored
+  detail view replaces the tab shell, so no `network-tab-*` click exists.
+- Fresh contexts seed `oday.operator.subject` so the fail-closed operator
+  identity keeps write actions enabled.
+- The promote API assertion follows the reviewed two-actor saga: the endpoint
+  records a `PENDING_REVIEW` promotion request and an
+  `intake.promote_request` audit event; candidate creation happens only after
+  independent review.
+
+Refresh verification on the merged head:
+
+- `pytest -q tests/e2e/test_package10_product_grade_ci_gate.py` — passed.
+- `npx vitest run src/app/__tests__/productionRoutes.test.ts` — 7 passed
+  (legacy visual retirement: retired URLs redirect, canonical imports stay
+  off retired feature roots).
+- `ruff check .` — all checks passed.
+- Package 6 / Package 10 ZIP SHA-256 re-verified byte-identical.
+- `npx playwright test tests/e2e/operator-assisted-listing-intake.spec.ts
+  tests/e2e/operator-network-assisted-intake.spec.ts` — see PR #419 CI for
+  the authoritative exact-head product-e2e-gate run.
