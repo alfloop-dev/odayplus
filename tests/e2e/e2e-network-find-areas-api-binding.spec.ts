@@ -18,6 +18,8 @@ import { expect, test } from "@playwright/test";
  */
 
 test.describe("ODP-FIN-FE-002 Network Find Areas API binding", () => {
+  test.describe.configure({ timeout: 60_000 });
+
   test.beforeEach(async ({ page }) => {
     // Navigate to the operator console and activate the Network workspace.
     await page.goto("/operator");

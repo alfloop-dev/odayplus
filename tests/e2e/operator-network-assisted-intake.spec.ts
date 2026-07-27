@@ -129,14 +129,14 @@ async function getIntakeApi(id: string) {
 }
 
 test.describe("Assisted Listing Intake — Package 7 product surfaces", () => {
-  test("all five Package 7 screen labels exist on the real surfaces", async ({
+  test("Package 10 inbox and continuous detail replace retired Package 7 surfaces", async ({
     page,
   }) => {
     await openRadarAsExpansionManager(page);
 
-    // 1. Network URL 收件佇列
+    // 1. Package 10 canonical Listing Inbox
     await expect(
-      page.locator('[data-screen-label="Network URL 收件佇列"]'),
+      page.locator('[data-screen-label="Listing Inbox 收件匣"]'),
     ).toBeVisible();
 
     // 2. Dialog 從網址新增物件
@@ -144,28 +144,22 @@ test.describe("Assisted Listing Intake — Package 7 product surfaces", () => {
     await expect(
       page.locator('[data-screen-label="Dialog 從網址新增物件"]'),
     ).toBeVisible();
-    await page.getByTestId("intake-url-input").fill(URLS.possible);
+    await page.getByTestId("intake-url-input").fill(URLS.clean);
     await page.getByTestId("intake-submit-button").click();
 
-    // 3. Dialog 收件處理詳情
+    // 3. Package 10 continuous intake detail page
     await expect(
-      page.locator('[data-screen-label="Dialog 收件處理詳情"]'),
+      page.locator('[data-screen-label="Intake 收件處理詳情頁"]'),
     ).toBeVisible({
       timeout: 15_000,
     });
 
-    // 4. Dialog 欄位修正
-    await page.getByTestId("intake-fix-address").click();
     await expect(
-      page.locator('[data-screen-label="Dialog 欄位修正"]'),
-    ).toBeVisible();
-    await page.getByRole("button", { name: "取消" }).click();
-
-    // 5. Dialog 收件決策確認
-    await page.getByTestId("intake-decide-create").click();
+      page.locator('[data-screen-label="Network URL 收件佇列"]'),
+    ).toHaveCount(0);
     await expect(
-      page.locator('[data-screen-label="Dialog 收件決策確認"]'),
-    ).toBeVisible();
+      page.locator('[data-screen-label="Dialog 收件處理詳情"]'),
+    ).toHaveCount(0);
   });
 
   test("empty state, then a clean URL submits to a durable READY / NEW record", async ({

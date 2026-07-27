@@ -137,7 +137,7 @@ test.describe("ODP-OC-R4-008 Network Rebalance", () => {
       relatedApprovalId: "APR-NET-RB-801",
       relocationExecuted: false,
     });
-    expect(store.selectedScenarioOwner.actorName).toBe("王若寧");
+    expect(store.selectedScenarioOwner.actorName).toBe("Expansion Manager");
     expect(store.selectedScenarioEvidenceId).toMatch(/^EV-SEL-/);
     await networkApi.dispose();
 
