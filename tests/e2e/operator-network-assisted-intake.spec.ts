@@ -93,6 +93,14 @@ test.beforeEach(async () => {
 async function openRadarAsExpansionManager(page: Page) {
   await page.addInitScript(() => {
     window.sessionStorage.setItem("oday.operator.role", "expansion-manager");
+    // The operator identity is fail-closed: without a session subject the UI
+    // disables every write action (no fabricated operator-<role> fallback
+    // since the OIDC BFF change). Establish the same subject the suite's API
+    // contexts use, exactly as a real authenticated session would.
+    window.sessionStorage.setItem(
+      "oday.operator.subject",
+      "operator-expansion-manager",
+    );
   });
   await page.goto("/operator?ws=network");
   await page.getByTestId("network-tab-1").click();
@@ -116,8 +124,13 @@ async function getIntakeApi(id: string) {
     baseURL: API_BASE_URL,
     extraHTTPHeaders: {
       "x-subject-id": "operator-expansion-manager",
-      "x-roles": "expansion_user",
-      "x-operator-role": "expansion-staff",
+      // Read the durable record as the same manager principal that drove the
+      // UI (expansion-manager maps to expansion_user,site_reviewer). Staff
+      // `view` is ownership-scoped against the record's submitter/owner (a
+      // display label, not this probe's subject id), so a staff read of a
+      // UI-created record correctly fails closed with OWNERSHIP_REQUIRED.
+      "x-roles": "expansion_user,site_reviewer",
+      "x-operator-role": "expansion-manager",
       "x-tenant-id": "tenant-a",
     },
   });
@@ -451,7 +464,9 @@ test.describe("Assisted Listing Intake — Package 7 product surfaces", () => {
       "僅人工補錄",
     );
     // No retrieval happened: there is no capture, and the entry form is offered.
-    await expect(page.getByTestId("intake-captured-at")).toContainText("—");
+    await expect(page.getByTestId("intake-captured-at")).toContainText(
+      "UNAVAILABLE",
+    );
     await expect(page.getByTestId("intake-assisted-entry")).toBeVisible();
 
     // Required-field gate.
@@ -509,12 +524,18 @@ test.describe("Assisted Listing Intake — Package 7 product surfaces", () => {
     await expect(page.getByTestId("intake-detail-stage")).toHaveText(
       "處理失敗",
     );
-    const failure = page.getByTestId("intake-failure-panel");
+    // Canonical Package 10 recovery surface (IntakeErrorRecovery).
+    const failure = page.getByTestId("intake-error-recovery");
     await expect(failure).toContainText("ODP-INTAKE-RETRIEVAL-TIMEOUT");
-    await expect(failure).toContainText("可重試");
-    await expect(failure).toContainText("下一步：");
+    await expect(page.getByTestId("error-retryable-badge")).toContainText(
+      "可自動重試",
+    );
+    await expect(failure).toContainText("建議處置");
+    await expect(page.getByTestId("error-next-action")).not.toHaveText(
+      "UNAVAILABLE",
+    );
 
-    await expect(page.getByTestId("intake-retry-button")).toBeVisible();
+    await expect(page.getByTestId("error-action-retry")).toBeVisible();
   });
 
   test("revision outcome offers append-version against the matched listing", async ({
@@ -629,7 +650,7 @@ test.describe("Assisted Listing Intake — Package 7 product surfaces", () => {
 
     // No retrieval happened.
     await expect(page.getByTestId("intake-captured-at")).toContainText(
-      "—（未擷取）",
+      "UNAVAILABLE",
     );
     await expect(page.getByTestId("intake-assisted-entry")).toBeVisible();
 

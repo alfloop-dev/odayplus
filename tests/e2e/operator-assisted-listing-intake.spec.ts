@@ -314,6 +314,15 @@ test("canonical 4: independent reviewer completes promotion with durable Candida
   await page.getByTestId("promotion-review-ack").check();
   await page.getByTestId("promotion-approve-btn").click();
 
+  // Package 10 approve is two-step: a confirmation dialog shows the review
+  // summary, If-Match and Idempotency-Key before the server commit.
+  const confirmDialog = page.getByTestId("promotion-confirmation-dialog");
+  await expect(confirmDialog).toBeVisible();
+  await expect(page.getByTestId("promotion-review-summary")).toContainText(
+    reviewer,
+  );
+  await page.getByTestId("promotion-confirm-approve-btn").click();
+
   await expect(page.getByTestId("promotion-receipt-status")).toContainText(
     "COMPLETED",
     {
@@ -461,14 +470,17 @@ test("retryable retrieval failure exposes code, correlation, recovery and preser
   await openRadar(page);
   await submitUrl(page, URLS.timeout);
   await expect(page.getByTestId("intake-detail-stage")).toHaveText("處理失敗");
-  await expect(page.getByTestId("intake-failure-panel")).toContainText(
-    "ODP-INTAKE-RETRIEVAL-TIMEOUT",
-  );
-  await expect(page.getByTestId("intake-failure-panel")).toContainText(
-    "可重試",
+  // Canonical Package 10 recovery surface (IntakeErrorRecovery).
+  const failure = page.getByTestId("intake-error-recovery");
+  await expect(failure).toContainText("ODP-INTAKE-RETRIEVAL-TIMEOUT");
+  await expect(page.getByTestId("error-retryable-badge")).toContainText(
+    "可自動重試",
   );
   await expect(page.getByTestId("error-correlation-id")).not.toHaveText("—");
-  await expect(page.getByTestId("intake-retry-button")).toBeVisible();
+  await expect(page.getByTestId("error-correlation-id")).not.toHaveText(
+    "UNAVAILABLE",
+  );
+  await expect(page.getByTestId("error-action-retry")).toBeVisible();
 });
 
 test("governance reviewer gets masked read-only intake while unrelated roles fail closed", async ({

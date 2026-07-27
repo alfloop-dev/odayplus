@@ -126,7 +126,7 @@ export function IntakeProcessingDetail(props: IntakeProcessingDetailProps) {
           <Meta label="來源提供者 ID／政策" value={`${record.sourceId || "UNAVAILABLE"} · ${record.policyLabel || "UNAVAILABLE"}`} />
           <Meta label="提供者物件 ID" value={providerListingId} />
           <Meta label="送件時間 Submitted At" value={submittedAt} />
-          <Meta label="擷取時間 Captured At" value={record.capturedAt ?? "UNAVAILABLE"} />
+          <Meta label="擷取時間 Captured At" value={record.capturedAt ?? "UNAVAILABLE"} testId="intake-captured-at" />
           <Meta label="提交者" value={record.submitter || "UNAVAILABLE"} />
           <Meta label="Owner" value={record.owner || "UNAVAILABLE"} />
           <Meta label="HeatZone／區域" value={record.heatZoneId ?? "UNAVAILABLE"} />
@@ -243,8 +243,8 @@ export function IntakeProcessingDetail(props: IntakeProcessingDetailProps) {
   );
 }
 
-function Meta({ label, value }: { label: string; value: string }) {
-  return <div><div className={styles.metaCaption}>{label}</div><div className={styles.metaValue}>{value || "UNAVAILABLE"}</div></div>;
+function Meta({ label, value, testId }: { label: string; value: string; testId?: string }) {
+  return <div><div className={styles.metaCaption}>{label}</div><div className={styles.metaValue} data-testid={testId}>{value || "UNAVAILABLE"}</div></div>;
 }
 
 function authoritativeParsedValue(record: AssistedIntake, ...keys: string[]): string {

@@ -424,11 +424,18 @@ test.describe("ODP-OC-R4-005 Network Listing Radar", () => {
       "HZ-01",
       { timeout: 15_000 },
     );
+    // MapLibre boots on software WebGL in CI and behind a cold dev-server
+    // compile; give the canvas the same order of patience as the other
+    // first-paint waits instead of expect.poll's 5s default.
     await expect
-      .poll(async () => page.locator(".maplibregl-canvas").count())
+      .poll(async () => page.locator(".maplibregl-canvas").count(), {
+        timeout: 30_000,
+      })
       .toBeGreaterThan(0);
     await expect
-      .poll(async () => canvasHasVisiblePixels(page, ".maplibregl-canvas"))
+      .poll(async () => canvasHasVisiblePixels(page, ".maplibregl-canvas"), {
+        timeout: 30_000,
+      })
       .toBe(true);
 
     await page.getByRole("button", { name: /Fit Brand Fit/ }).click();
