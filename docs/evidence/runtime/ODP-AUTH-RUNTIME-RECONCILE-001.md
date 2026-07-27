@@ -93,3 +93,24 @@ Revalidation on the resulting tree:
 - Web Vitest still cannot bootstrap in this worktree (workspace-package
   registry resolution); the assertion change is validated by the repository CI
   product job on the pushed head.
+
+## Closeout record (2026-07-27)
+
+Reviewer Claude3 approved exact head `84d38f22` (review_approved at
+2026-07-27T22:32:29Z) after independently verifying all six acceptance
+criteria: WIF-only deployment, fail-closed `ODP_AUTH_PRINCIPAL_MAP`
+authorization, deploy-time masked smoke credential, PR #388 live gate
+placement before `DEPLOYMENT_COMMITTED=true`, zero diff on forbidden
+Package 10/operator/intake paths, and the web OIDC id_token bearer
+binding. CI on the exact head was green (run 30309791442:
+orchestrator, product, product-e2e-gate all SUCCESS).
+
+PR #442 (`task/ODP-AUTH-RUNTIME-RECONCILE-001` -> `dev`) merged at
+2026-07-27T22:33:49Z as merge commit `a827565c`; `84d38f22` is verified
+an ancestor of `origin/dev`.
+
+Note on reviewer identity: the acceptance text and the merged commit
+trailer name `Antigravity4` as the reviewer, which predates the reviewer
+rotation; the reviewer of record for this task is `Claude3`, whose
+approval message is bound to the same exact head. This closeout commit
+carries the corrected `Reviewer: Claude3` trailer.
