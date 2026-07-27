@@ -13,6 +13,12 @@ Contract:
   ``geography_provider_snapshots`` under a content-addressed snapshot id.
 - Replay is idempotent: an identical provider response maps to the same
   deterministic ``source_snapshot_id`` and inserts nothing new.
+- Replay is deterministic against prior dataset snapshots: a replay of the
+  same partition reuses the admin/POI snapshot first recorded under the
+  partition's deterministic run id instead of refetching live, so intra-day
+  provider drift cannot conflict with the immutable record. A snapshot id
+  re-issued with different stable content outside that reuse path fails
+  closed with a recovery plan; stored snapshots are never mutated.
 - Conflicting geography (a live observation that disagrees with the current
   canonical geography for a store) is quarantined in
   ``quarantined_records``; the canonical row is never overwritten.
@@ -147,6 +153,10 @@ class BackfillReport:
     partition_key: str
     admin_snapshot_id: str = ""
     poi_snapshot_id: str = ""
+    # True when a same-partition replay deterministically reused the immutable
+    # snapshot recorded by an earlier attempt instead of refetching live.
+    admin_snapshot_reused: bool = False
+    poi_snapshot_reused: bool = False
     eligible_stores: int = 0
     processed: int = 0
     inserted: int = 0
@@ -155,6 +165,11 @@ class BackfillReport:
     quarantined: dict[str, int] = field(default_factory=dict)
     reconciled: bool = False
     partition_complete: bool = False
+    # Durable full-partition totals for the deterministic run id, measured
+    # after this attempt finished. Unlike the per-attempt deltas above they
+    # survive same-day replays and partial-failure recoveries.
+    canonical_after: int = 0
+    quarantined_after: int = 0
 
     @property
     def quarantined_total(self) -> int:
@@ -166,6 +181,8 @@ class BackfillReport:
             "partition_key": self.partition_key,
             "admin_snapshot_id": self.admin_snapshot_id,
             "poi_snapshot_id": self.poi_snapshot_id,
+            "admin_snapshot_reused": self.admin_snapshot_reused,
+            "poi_snapshot_reused": self.poi_snapshot_reused,
             "eligible_stores": self.eligible_stores,
             "processed": self.processed,
             "inserted": self.inserted,
@@ -175,6 +192,8 @@ class BackfillReport:
             "quarantined_total": self.quarantined_total,
             "reconciled": self.reconciled,
             "partition_complete": self.partition_complete,
+            "canonical_after": self.canonical_after,
+            "quarantined_after": self.quarantined_after,
         }
 
 
@@ -346,6 +365,8 @@ class PlaceGeographyBackfill:
 
     def _finalize_run(self, run_id: str, report: BackfillReport, baseline: tuple[int, int]) -> None:
         canonical_after, quarantined_after = self._run_row_counts(run_id)
+        report.canonical_after = canonical_after
+        report.quarantined_after = quarantined_after
         canonical_delta = canonical_after - baseline[0]
         quarantined_delta = quarantined_after - baseline[1]
         # A same-day replay reuses the deterministic run id, so reconcile the
@@ -360,6 +381,11 @@ class PlaceGeographyBackfill:
             if self._limit is None
             else False
         )
+        # The deterministic run id represents the whole durable partition, so
+        # the persisted row carries full-partition totals — not this attempt's
+        # deltas, which stay in the final_cursor report for reconciliation.
+        # processed_count is every row durably accounted for by this run id:
+        # canonical geography plus unresolved quarantines.
         self._execute(
             f"""
             UPDATE {self._schema}.ingestion_runs SET
@@ -375,9 +401,9 @@ class PlaceGeographyBackfill:
             WHERE run_id = %s::uuid
             """,  # nosec B608
             (
-                report.processed,
-                report.inserted,
-                report.quarantined_total,
+                canonical_after + quarantined_after,
+                canonical_after,
+                quarantined_after,
                 report.reconciled,
                 report.partition_complete,
                 json.dumps(report.to_dict(), sort_keys=True),
@@ -407,6 +433,16 @@ class PlaceGeographyBackfill:
     # -- provider snapshots --------------------------------------------------
 
     def _capture_admin_snapshot(self, run_id: str, report: BackfillReport) -> AdminBoundaryIndex:
+        stored = self._stored_run_dataset_snapshot(run_id, getattr(self._admin, "provider_id", ""))
+        if stored is not None:
+            snapshot_id, records = stored
+            report.admin_snapshot_id = snapshot_id
+            report.admin_snapshot_reused = True
+            self._progress(
+                f"run {run_id}: reusing immutable admin snapshot {snapshot_id} "
+                "recorded by an earlier attempt of this partition"
+            )
+            return AdminBoundaryIndex.from_records(snapshot_id, records)
         result = self._admin.fetch_and_ingest()
         raw = result.raw_snapshot
         records = self._persist_dataset_snapshot(
@@ -417,6 +453,16 @@ class PlaceGeographyBackfill:
         return AdminBoundaryIndex.from_records(raw.snapshot_id, records)
 
     def _capture_poi_snapshot(self, run_id: str, report: BackfillReport) -> None:
+        stored = self._stored_run_dataset_snapshot(run_id, getattr(self._poi, "provider_id", ""))
+        if stored is not None:
+            snapshot_id, _records = stored
+            report.poi_snapshot_id = snapshot_id
+            report.poi_snapshot_reused = True
+            self._progress(
+                f"run {run_id}: reusing immutable POI snapshot {snapshot_id} "
+                "recorded by an earlier attempt of this partition"
+            )
+            return
         result = self._poi.fetch_and_ingest()
         raw = result.raw_snapshot
         records = [dict(record) for record in raw.records]
@@ -451,6 +497,30 @@ class PlaceGeographyBackfill:
         ]
         return canonical_content_sha256({"records": stable})
 
+    def _stored_run_dataset_snapshot(
+        self, run_id: str, provider_id: str
+    ) -> tuple[str, list[dict[str, Any]]] | None:
+        """Immutable snapshot recorded by an earlier attempt of this run.
+
+        A same-day replay reuses the deterministic run id, so any dataset
+        snapshot first captured under that run id is the partition's snapshot
+        of record. Reusing it keeps replay deterministic even when the live
+        provider's content has drifted since the first attempt.
+        """
+        if not provider_id:
+            return None
+        rows = self._execute(
+            f"SELECT snapshot_id, records FROM {self._schema}.geo_dataset_snapshots "  # nosec B608
+            "WHERE run_id = %s::uuid AND provider_id = %s "
+            "ORDER BY fetched_at DESC LIMIT 1",
+            (run_id, provider_id),
+        )
+        if not rows:
+            return None
+        snapshot_id, stored = rows[0]
+        records = stored if isinstance(stored, list) else json.loads(stored)
+        return str(snapshot_id), [dict(record) for record in records]
+
     def _persist_dataset_snapshot(
         self,
         run_id: str,
@@ -467,10 +537,22 @@ class PlaceGeographyBackfill:
         if existing:
             stored = existing[0][0]
             stored_records = stored if isinstance(stored, list) else json.loads(stored)
-            if self._stable_dataset_sha256(stored_records) != self._stable_dataset_sha256(records):
+            stored_sha = self._stable_dataset_sha256(stored_records)
+            fetched_sha = self._stable_dataset_sha256(records)
+            if stored_sha != fetched_sha:
                 raise GeographyBackfillError(
-                    f"dataset snapshot {raw.snapshot_id} already recorded with "
-                    "different stable content; immutable snapshot conflict"
+                    f"immutable snapshot conflict: {raw.provider_id} re-issued "
+                    f"snapshot id {raw.snapshot_id} with different stable content "
+                    f"(stored sha256 {stored_sha} != fetched sha256 {fetched_sha}). "
+                    "Failing closed; the stored snapshot is the immutable record "
+                    "and is never mutated or overwritten. Recovery: (1) a replay "
+                    "of the original partition day deterministically reuses the "
+                    "stored snapshot without refetching, so rerun with that "
+                    "partition's --as-of; (2) to capture the drifted content, run "
+                    "a later partition day so the governed gateway issues a fresh "
+                    "snapshot id; (3) if the provider re-issued this id with "
+                    "changed content, escalate both checksums to provider "
+                    "governance before retrying the backfill."
                 )
             # The first persisted capture is the immutable snapshot of record;
             # a replay differing only in volatile timestamps reuses it.

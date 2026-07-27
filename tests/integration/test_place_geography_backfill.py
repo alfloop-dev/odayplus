@@ -9,6 +9,7 @@ layer while every persistence and validation path is the production code).
 
 from __future__ import annotations
 
+import json
 from datetime import UTC, datetime
 from pathlib import Path
 from types import SimpleNamespace
@@ -17,6 +18,7 @@ from uuid import UUID, uuid5
 import pytest
 
 from apps.data_platform.geography_backfill import (
+    GeographyBackfillError,
     PlaceGeographyBackfill,
     canonical_content_sha256,
 )
@@ -348,6 +350,23 @@ def test_replay_of_identical_provider_content_is_idempotent(geography_db):
     )
     assert all(row[0] == datetime(2026, 7, 27, 10, 1, tzinfo=UTC) for row in stored)
 
+    # After the second replay the deterministic run row still carries the
+    # full durable partition (not the replay attempt's zero-insert delta).
+    assert second.canonical_after == 2 and second.quarantined_after == 0
+    runs = _rows(
+        geography_db,
+        """
+        SELECT status, processed_count, valid_loaded, quarantined_count,
+               reconciled, partition_complete, final_cursor
+        FROM data_plane.ingestion_runs
+        """,
+    )
+    assert len(runs) == 1
+    assert runs[0][:6] == ("SUCCEEDED", 2, 2, 0, True, True)
+    attempt = json.loads(runs[0][6])
+    assert attempt["inserted"] == 0 and attempt["unchanged"] == 2
+    assert attempt["canonical_after"] == 2 and attempt["quarantined_after"] == 0
+
 
 def test_conflicting_observation_is_quarantined_not_overwritten(geography_db):
     _engine(geography_db).run()
@@ -388,6 +407,17 @@ def test_conflicting_observation_is_quarantined_not_overwritten(geography_db):
         (STORE_A,),
     )
     assert evidence_count == [(2,)]
+    # The run row accounts for the quarantined observation in its
+    # full-partition totals: 2 canonical + 1 unresolved quarantine.
+    runs = _rows(
+        geography_db,
+        """
+        SELECT status, processed_count, valid_loaded, quarantined_count,
+               reconciled, partition_complete
+        FROM data_plane.ingestion_runs
+        """,
+    )
+    assert runs == [("SUCCEEDED", 3, 2, 1, True, True)]
 
 
 def test_admin_mismatch_and_out_of_market_are_quarantined(geography_db):
@@ -519,6 +549,176 @@ def test_provider_400_rejection_is_quarantined_and_batch_continues(geography_db)
     assert quarantine == [("GEOCODE_REJECTED", "source-place-b")]
     run_status = _rows(geography_db, "SELECT status FROM data_plane.ingestion_runs")
     assert run_status == [("SUCCEEDED",)]
+
+
+class FailAfterFirstCallGeocodeProvider(StubGeocodeProvider):
+    """Resolves the first address then dies with a live-shaped HTTP 500."""
+
+    def lookup_with_payload(self, normalized_address):
+        from modules.external_data.providers.live import GeocodeProviderError
+
+        if self.calls >= 1:
+            raise GeocodeProviderError(
+                "live geocode provider returned HTTP 500",
+                provider_id="geocode.primary_api",
+                correlation_id=self.correlation_id,
+                code="http_error",
+                status_code=500,
+            )
+        return super().lookup_with_payload(normalized_address)
+
+
+def test_run_row_reflects_full_partition_after_partial_failure_recovery(geography_db):
+    """Regression for the 2026-07-27 live incident: after a mid-run
+    infrastructure failure left durable per-store commits behind, the
+    same-day recovery run persisted only its own delta (467/496) in
+    ``ingestion_runs`` while the partition actually held 1909 canonical
+    rows. The run row must describe the full durable partition."""
+    from modules.external_data.providers.live import GeocodeProviderError
+
+    failing = PlaceGeographyBackfill(
+        geography_db,
+        geocode_provider=FailAfterFirstCallGeocodeProvider(_default_payloads()),
+        admin_boundary_provider=_admin_provider(),
+        poi_provider=_poi_provider(),
+        rate_limit_per_second=0.0,
+        clock=lambda: datetime(2026, 7, 27, 12, 0, tzinfo=UTC),
+    )
+    with pytest.raises(GeocodeProviderError):
+        failing.run()
+    # The first attempt durably committed exactly one canonical row
+    # before the infrastructure failure aborted the batch.
+    assert _rows(geography_db, "SELECT count(*) FROM data_plane.place_geography") == [(1,)]
+    assert _rows(geography_db, "SELECT status FROM data_plane.ingestion_runs") == [("FAILED",)]
+
+    recovery = _engine(geography_db).run()
+
+    assert recovery.inserted == 1
+    assert recovery.unchanged == 1
+    assert recovery.reconciled and recovery.partition_complete
+    assert recovery.canonical_after == 2 and recovery.quarantined_after == 0
+
+    runs = _rows(
+        geography_db,
+        """
+        SELECT status, processed_count, valid_loaded, quarantined_count,
+               reconciled, partition_complete, final_cursor,
+               (SELECT count(*) FROM data_plane.place_geography
+                WHERE place_geography.run_id = ingestion_runs.run_id)
+        FROM data_plane.ingestion_runs
+        """,
+    )
+    assert len(runs) == 1
+    # Full-partition totals, coherent with the durable canonical table —
+    # not the recovery attempt's single-insert delta.
+    assert runs[0][:6] == ("SUCCEEDED", 2, 2, 0, True, True)
+    assert runs[0][7] == 2
+    attempt = json.loads(runs[0][6])
+    assert attempt["inserted"] == 1 and attempt["unchanged"] == 1
+    assert attempt["canonical_after"] == 2 and attempt["quarantined_after"] == 0
+
+
+def _drifted_poi_provider() -> StubDatasetProvider:
+    """Same governed snapshot id as ``_poi_provider`` but drifted stable
+    content — the gateway re-serving a dataset-day id after upstream edits."""
+    return StubDatasetProvider(
+        snapshot_id="poi-test-0001",
+        provider_id="poi.commercial_api",
+        contract_id="poi_snapshot",
+        records=[
+            {
+                "source_poi_id": "poi-1",
+                "poi_name": "測試便利商店",
+                "latitude": 24.1394,
+                "longitude": 120.5508,
+            },
+            {
+                "source_poi_id": "poi-2",
+                "poi_name": "當日新增門市",
+                "latitude": 24.1401,
+                "longitude": 120.5511,
+            },
+        ],
+    )
+
+
+def test_same_partition_replay_reuses_immutable_snapshots_without_live_fetch(geography_db):
+    """Regression for the 2026-07-27 live incident: the corrected same-day
+    replay refetched the POI dataset live, the gateway re-issued
+    poi-20260727-* with intra-day drifted content, and the replay died with
+    an immutable snapshot conflict after partial processing. A replay of the
+    same partition must deterministically reuse the snapshots first recorded
+    under the partition's run id and never depend on live content."""
+    first = _engine(geography_db).run()
+    assert first.poi_snapshot_id == "poi-test-0001"
+    assert not first.admin_snapshot_reused and not first.poi_snapshot_reused
+
+    drifted_admin = _admin_provider()
+    drifted_poi = _drifted_poi_provider()
+    replay = PlaceGeographyBackfill(
+        geography_db,
+        geocode_provider=StubGeocodeProvider(_default_payloads()),
+        admin_boundary_provider=drifted_admin,
+        poi_provider=drifted_poi,
+        rate_limit_per_second=0.0,
+        clock=lambda: datetime(2026, 7, 27, 13, 0, tzinfo=UTC),
+    ).run()
+
+    assert replay.admin_snapshot_reused and replay.poi_snapshot_reused
+    assert replay.admin_snapshot_id == "adminboundary-test-0001"
+    assert replay.poi_snapshot_id == "poi-test-0001"
+    # Deterministic replay never touched the live dataset providers.
+    assert drifted_admin.fetches == 0 and drifted_poi.fetches == 0
+    assert replay.reconciled and replay.partition_complete
+    assert replay.canonical_after == 2 and replay.quarantined_after == 0
+    # The immutable snapshot of record kept its original single-POI content.
+    snapshots = _rows(
+        geography_db,
+        "SELECT snapshot_id, record_count FROM data_plane.geo_dataset_snapshots "
+        "ORDER BY snapshot_id",
+    )
+    assert snapshots == [("adminboundary-test-0001", 4), ("poi-test-0001", 1)]
+
+
+def test_reissued_snapshot_id_with_drifted_content_fails_closed(geography_db):
+    """A different partition (new deterministic run id) has no snapshot of
+    record to reuse; if the provider then re-issues an already-recorded
+    snapshot id with different stable content, the run must fail closed with
+    a recovery plan and leave the stored snapshot unmutated."""
+    _engine(geography_db).run()
+    (original_records,) = _rows(
+        geography_db,
+        "SELECT records FROM data_plane.geo_dataset_snapshots WHERE snapshot_id = %s",
+        ("poi-test-0001",),
+    )[0]
+
+    next_day = PlaceGeographyBackfill(
+        geography_db,
+        geocode_provider=StubGeocodeProvider(_default_payloads()),
+        admin_boundary_provider=_admin_provider(),
+        poi_provider=_drifted_poi_provider(),
+        rate_limit_per_second=0.0,
+        clock=lambda: datetime(2026, 7, 28, 12, 0, tzinfo=UTC),
+    )
+    with pytest.raises(GeographyBackfillError) as excinfo:
+        next_day.run()
+
+    message = str(excinfo.value)
+    assert "immutable snapshot conflict" in message
+    assert "poi-test-0001" in message
+    assert "Recovery" in message and "never mutated" in message
+    runs = _rows(
+        geography_db,
+        "SELECT partition_key, status FROM data_plane.ingestion_runs ORDER BY partition_key",
+    )
+    assert runs == [("2026-07-27", "SUCCEEDED"), ("2026-07-28", "FAILED")]
+    # The stored snapshot survives byte-identical.
+    (after_records,) = _rows(
+        geography_db,
+        "SELECT records FROM data_plane.geo_dataset_snapshots WHERE snapshot_id = %s",
+        ("poi-test-0001",),
+    )[0]
+    assert after_records == original_records
 
 
 @pytest.mark.parametrize(
