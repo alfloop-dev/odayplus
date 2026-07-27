@@ -184,7 +184,8 @@ names an independent recorded approver.
 
 ## Latest-dev composition
 
-Codex7 composed `dev` commit `c7c6e925` into the task branch without conflicts.
+Codex7 composed `dev` commit `1c7dd935` (including merged dependency PR #436)
+into the task branch without conflicts.
 The resulting diff against `dev` remains limited to LearningHub, its required
 shared auth/durable-repository integration points, and task-scoped tests and
 evidence.
@@ -208,4 +209,11 @@ python3 -m pytest -q tests/integration/test_learninghub_release.py \
 INTAKE_TEST_DATABASE_URL=postgresql://…@127.0.0.1:55432/… \
 python3 -m pytest -q tests/integration/test_learninghub_postgresql_release.py
 # 3 passed, 0 skipped (PostgreSQL 16)
+
+make api-contract
+# PASS: 4 additive, 3 approved breaking, 0 unapproved breaking
+
+uv run pytest -q tests/integration/test_learninghub_release.py \
+  tests/integration/test_learninghub_postgresql_release.py
+# 30 passed, 3 skipped (PostgreSQL URL not configured for this local rerun)
 ```
