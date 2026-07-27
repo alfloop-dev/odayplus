@@ -1467,6 +1467,92 @@ class _Omit:
 _OMIT = _Omit()
 
 
+def _registration_body(dataset_snapshot_id: str) -> dict[str, object]:
+    return {
+        "version": "2.0.0",
+        "dataset_snapshot_id": dataset_snapshot_id,
+        "metrics": {"w4_smape": 0.11, "p80_coverage": 0.82},
+        "baseline_metrics": {"w4_smape": 0.15, "p80_coverage": 0.78},
+        "thresholds": [
+            {"metric_name": "w4_smape", "max_value": 0.12},
+            {"metric_name": "p80_coverage", "min_value": 0.80},
+        ],
+        "feature_schema_version": "store-machine-timeseries-view-v1",
+        "label_version": "forecast-w4-revenue-v1",
+        "artifact_content": "forgery-regression-model",
+        "rollback_target": "2.0.0",
+        "model_card": {
+            "owner": "ml-owner",
+            "risk_level": "R3",
+            "intended_use": "ForecastOps revenue interval input",
+            "not_intended_use": "Automated business decisions",
+            "feature_set_id": "fs_forecastops_v1",
+            "label_set_id": "ls_forecastops_w4_v1",
+            "training_period": "2026-01-01/2026-05-31",
+            "validation_period": "2026-06-01/2026-06-27",
+            "algorithm": "gradient_boosting",
+            "baseline": "seasonal_naive_v1",
+            "metrics_summary": {"w4_smape": 0.11, "p80_coverage": 0.82},
+            "rollback_conditions": ["p80 coverage regression"],
+            # This is deliberately untrusted and must never become provenance.
+            "approvals": [
+                {
+                    "approver": "forged-reviewer",
+                    "role": "model-review-board",
+                    "decision": "approved",
+                }
+            ],
+        },
+    }
+
+
+def test_release_api_rejects_body_forged_model_card_approval() -> None:
+    from shared.auth import Role
+    from tests.integration._authz import auth_headers
+
+    repository = InMemoryLearningHubRepository()
+    registry = MlflowRegistryAdapter(repository)
+    service = LearningHubService(
+        repository=repository,
+        registry=registry,
+        audit_log=InMemoryAuditLog(),
+    )
+    snapshot = service.register_dataset_snapshot(
+        _rows(), dataset_snapshot_id="forgery-regression-training"
+    )
+    client = _release_api_client(repository, registry)
+    owner_headers = auth_headers(Role.MODEL_OWNER, subject="ml-owner")
+
+    registered = client.post(
+        "/learninghub/models/forecast_revenue_interval/versions",
+        json=_registration_body(snapshot.dataset_snapshot_id),
+        headers=owner_headers,
+    )
+    assert registered.status_code == 201
+    assert registered.json()["model_card"]["approvals"] == []
+
+    forged_release = client.post(
+        "/learninghub/releases",
+        json=_release_body(
+            version="2.0.0",
+            rollback_target="2.0.0",
+            approved_by="forged-reviewer",
+            idempotency_key="forged-release",
+        ),
+        headers=owner_headers,
+    )
+    assert forged_release.status_code == 422
+    assert "does not match a recorded model card approval" in forged_release.json()["detail"]
+
+    approved = client.post(
+        "/learninghub/models/forecast_revenue_interval/versions/2.0.0/approval",
+        json={"decision": "approved"},
+        headers=auth_headers(Role.RELEASE_OWNER, subject="trusted-reviewer"),
+    )
+    assert approved.status_code == 200
+    assert approved.json()["approvals"][0]["approver"] == "trusted-reviewer"
+
+
 def test_release_api_binds_actors_and_matches_the_409_428_contract() -> None:
     from shared.auth import Role
     from tests.integration._authz import auth_headers

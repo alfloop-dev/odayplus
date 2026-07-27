@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from dataclasses import replace
 from typing import Any
 
 from models.shared_ml.artifact_store import (
@@ -79,7 +80,10 @@ else:
         security_review: str = "PASSED"
         release_status: str = "DEV"
         rollback_conditions: list[str] = Field(min_length=1)
-        approvals: list[dict[str, str]] = Field(default_factory=list)
+
+
+    class ModelCardApprovalPayload(BaseModel):
+        decision: str = "approved"
 
 
     class ModelVersionPayload(BaseModel):
@@ -453,6 +457,56 @@ else:
                 ],
             }
 
+        @router.post(
+            "/models/{model_name}/versions/{version}/approval",
+            dependencies=[
+                Depends(
+                    require_permission("model", Action.APPROVE, engine=authz_engine)
+                )
+            ],
+        )
+        def approve_model_card(
+            model_name: str,
+            version: str,
+            body: ModelCardApprovalPayload,
+            request: Request,
+        ) -> dict[str, Any]:
+            card = active_repository.get_model_card(model_name, version)
+            if card is None:
+                raise HTTPException(
+                    status_code=status.HTTP_404_NOT_FOUND,
+                    detail=f"unknown model card {model_name}:{version}",
+                )
+            approver = _trusted_actor(request)
+            if approver == card.owner:
+                raise HTTPException(
+                    status_code=status.HTTP_403_FORBIDDEN,
+                    detail={
+                        "code": "MODEL_CARD_SELF_REVIEW",
+                        "message": "a model card owner cannot approve their own card",
+                    },
+                )
+            decision = body.decision.strip().lower()
+            if decision not in {"approved", "rejected"}:
+                raise HTTPException(
+                    status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                    detail="decision must be approved or rejected",
+                )
+            approval = ModelCardApproval(
+                approver=approver,
+                role="model-review-board",
+                decision=decision,
+            )
+            updated = replace(
+                card,
+                approvals=tuple(
+                    item for item in card.approvals if item.approver != approver
+                )
+                + (approval,),
+            )
+            active_repository.save_model_card(updated)
+            return updated.to_dict()
+
         @router.get("/models/{model_name}/evidence", dependencies=[Depends(require_permission("model", Action.VIEW, engine=authz_engine))])
         def get_model_evidence(model_name: str) -> dict[str, Any]:
             return build_model_registry_evidence(
@@ -554,14 +608,9 @@ else:
             security_review=body.security_review,
             release_status=body.release_status,
             rollback_conditions=body.rollback_conditions,
-            approvals=tuple(
-                ModelCardApproval(
-                    approver=str(approval["approver"]),
-                    role=str(approval.get("role", "model-review-board")),
-                    decision=str(approval.get("decision", "approved")),
-                )
-                for approval in body.approvals
-            ),
+            # Approval provenance is established only by the authenticated
+            # approval endpoint; registration payloads cannot mint it.
+            approvals=(),
         )
 
 

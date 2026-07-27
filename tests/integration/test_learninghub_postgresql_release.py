@@ -4,7 +4,7 @@ import os
 from concurrent.futures import ThreadPoolExecutor
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
-from threading import Barrier
+from threading import Barrier, Event
 from uuid import uuid4
 
 import pytest
@@ -160,6 +160,67 @@ def test_postgresql16_release_advisory_lock_cas_saga_restart_and_worm(
             ("learninghub.release_revisions", model_name),
         )
         restarted_engine.close()
+
+
+def test_postgresql16_release_saga_fence_is_atomic_under_concurrent_writes(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    database_url = os.environ["INTAKE_TEST_DATABASE_URL"]
+    engine_a, repository_a = _repository(database_url)
+    engine_b, repository_b = _repository(database_url)
+    model_name = f"learninghub-fence-{uuid4()}"
+    release_id = f"release-{uuid4()}"
+    saga = ModelReleaseSaga(
+        release_id=release_id,
+        model_name=model_name,
+        idempotency_key=f"fence-{uuid4()}",
+        request_fingerprint=f"sha256:{uuid4().hex}",
+        release_revision=1,
+        operation="MODEL_RELEASE",
+        command={"model_name": model_name, "version": "1.0.0"},
+        version_snapshots=(),
+        alias_snapshots=(),
+        lease_owner="stale-worker",
+        fence_token=1,
+    )
+    repository_a.save_release_saga(saga)
+    stale_reached_put = Event()
+    allow_stale_put = Event()
+    original_put = repository_a._store.put
+
+    def pause_stale_put(collection, doc_id, obj, **kwargs):
+        if collection == repository_a._RELEASE_SAGAS and doc_id == release_id:
+            stale_reached_put.set()
+            allow_stale_put.wait(timeout=0.5)
+        return original_put(collection, doc_id, obj, **kwargs)
+
+    monkeypatch.setattr(repository_a._store, "put", pause_stale_put)
+    stale = saga.evolve(state=ReleaseSagaState.MODEL_STATE_APPLIED)
+    recovery = saga.evolve(
+        lease_owner="recovery-worker",
+        fence_token=2,
+        state=ReleaseSagaState.COMPENSATING,
+    )
+
+    try:
+        with ThreadPoolExecutor(max_workers=2) as executor:
+            stale_future = executor.submit(repository_a.save_release_saga, stale)
+            assert stale_reached_put.wait(timeout=2)
+            recovery_future = executor.submit(repository_b.save_release_saga, recovery)
+            allow_stale_put.set()
+            stale_future.result(timeout=5)
+            recovery_future.result(timeout=5)
+
+        stored = repository_b.get_release_saga(release_id)
+        assert stored.fence_token == 2
+        assert stored.lease_owner == "recovery-worker"
+    finally:
+        engine_a.execute(
+            "DELETE FROM durable_documents WHERE group_key = ?",
+            (model_name,),
+        )
+        engine_a.close()
+        engine_b.close()
 
 
 def test_postgresql16_full_mlflow_release_and_lease_fenced_recovery(
