@@ -25,6 +25,13 @@ SHA-256, and verifies the registered Forecast view/version. The database URL is
 read from the environment and local, SQLite, file, and placeholder resources
 are rejected.
 
+Inventory reports redacted provenance only: distinct tenant and source-snapshot
+counts, the temporal cutoff range, and deterministic chronological
+train/validation/test fifths (60/20/20). It never emits tenant identifiers,
+source row payloads, credentials, or labels. Re-running inventory is read-only;
+re-running the installer replaces the same versioned views and upserts the same
+contract keys.
+
 The Forecast view uses only persisted successful TWD transactions. Its daily
 label is the actual sum of `net_amount`; lag and rolling features use prior
 calendar dates only. Rows require complete source-snapshot lineage, completed
@@ -36,20 +43,57 @@ ingestion runs, 28 daily history rows, a mature label, tenant/store scope, and
 | Key | View | Required realized label | Engine |
 |---|---|---|---|
 | `forecastops` | `model_ready.forecast_training_view` | `daily_net_revenue` | LightGBM quantile |
-| `avm` | `model_ready.valuation_view` | `realized_transaction_price` | LightGBM quantile |
+| `avm` | `model_ready.valuation_view` | DealRoom realized transaction outcome | LightGBM quantile |
+| `listing_property_avm` | `model_ready.listing_property_valuation_view` | official sale `realized_transaction_price` | LightGBM quantile |
 | `sitescore` | `model_ready.candidate_site_view` | `realized_site_success` | CatBoost |
 | `heatzone` | `model_ready.heatzone_training_view` | `realized_demand_score` | CatBoost |
 | `avm-liquidity` | `model_ready.avm_liquidity_training_view` | `duration_days` + `sold` | lifelines CoxPH |
 
-AVM, SiteScore, HeatZone, and AVM liquidity are intentionally non-trainable
-until their canonical outcome relations exist and can expose mature realized
-outcomes. HeatZone additionally requires point-in-time geo feature history so
-later POI, competitor, listing, or store updates cannot leak into older
-training rows.
+DealRoom AVM, SiteScore, HeatZone, and AVM liquidity are intentionally
+non-trainable until their canonical outcome relations exist and can expose
+mature realized outcomes. `listing_property_avm` is a separate research
+training contract over official MOI/NTPC property-sale outcomes. Its
+municipality/area/building features are not compatible with the DealRoom
+`dealroom_avm` runtime contract and do not satisfy platform model readiness.
+It may produce bounded training and backtest artifacts, but production
+promotion is explicitly blocked with
+`NO_PRODUCTION_RUNTIME_CONSUMER_OR_LIVE_INFERENCE_SMOKE` until a compatible
+runtime consumer and live inference smoke contract are committed.
+HeatZone additionally requires point-in-time geo feature history so later POI,
+competitor, listing, or store updates cannot leak into older training rows.
 The installer registers each missing contract as `BLOCKED` and does not create
 an empty or inferred outcome view. `asset.valuation_runs`, SiteScore
 recommendations, fixture constants, and current predictions are not accepted
 as labels.
+
+## Official NTPC identity and replay
+
+The 2026-07-26 NTPC authority snapshot contains 50,665 rows. Of those, 36,502
+omit `rps32` (transfer number). The stable fallback identity is:
+
+```text
+(source_id, authority_partition, rps27, authority-natural:v1)
+```
+
+The 36,502 affected rows contain 36,500 distinct `rps27` values. The two
+repeated IDs account for four source rows; each pair has the same normalized
+transaction date, address, and transaction target while price, area, parking
+count, or remarks differ. They are treated as authority corrections to one
+transaction, not four sales. Every source row remains an immutable observation;
+the last authority row in the snapshot is the current projection.
+
+A SHA-256 fingerprint of NFKC-normalized transaction date, address, and target
+detects true natural-key collisions without putting mutable price, area,
+parking, room, or remarks fields into identity. A fingerprint conflict fails
+closed. Newer source snapshots update the projection; older or equal-order
+snapshots retain observation evidence but cannot replace values or
+`last_seen_run_id`. Source and snapshot advisory locks plus the deterministic
+run ID make concurrent replay return one stable receipt and one set of counters.
+
+The outcome schema is revision `0003` in the Alembic chain. Backfill does not
+install DDL; run `alembic -c infra/db/migrations/alembic.ini upgrade head`
+first. Forecast view installation remains independent: missing official
+outcome tables leave only `listing_property_avm` blocked.
 
 ## Runtime inputs
 
