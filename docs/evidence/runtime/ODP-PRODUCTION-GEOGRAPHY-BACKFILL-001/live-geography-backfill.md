@@ -42,9 +42,12 @@ Deterministic run id `00172489-4c56-5c07-a89b-c11f070ec9e9`, partition
 
 Identity check: `processed (2405) = unchanged (1442) + inserted (467) +
 quarantined (496)` and `eligible (2442) = processed (2405) +
-skipped_no_address (37)`. The `ingestion_runs` row records
+skipped_no_address (37)`. At terminal execution time, before the
+exact-head accounting correction described below, the `ingestion_runs` row
+recorded the last attempt's deltas:
 `SUCCEEDED / processed 2405 / valid_loaded 467 / quarantined 496 /
-reconciled=true / partition_complete=true`.
+reconciled=true / partition_complete=true`. This historical observation is
+retained rather than rewritten as if it came from the corrected build.
 
 ## Idempotent replay, proven live
 
@@ -81,6 +84,43 @@ empty string, and the live gateway rejects an empty address with HTTP 400
 
 Verification: `pytest tests/integration/test_place_geography_backfill.py`
 (9 passed, PostgreSQL 16), `ruff check` / `ruff format --check` clean.
+
+## Exact-head replay corrections (commit `042b4f97`)
+
+Independent review found two replay gaps after the live execution:
+
+1. `ingestion_runs.valid_loaded` and `quarantined_count` reflected the latest
+   attempt's deltas, while the deterministic run row represents the complete
+   partition. Exact head now persists durable full-partition totals
+   (`canonical_after=1909`, `quarantined_after=496`,
+   `processed_count=2405`) and retains per-attempt deltas in `final_cursor`.
+2. A same-partition replay could refetch an admin/POI dataset whose provider
+   retained the snapshot id while changing volatile fetch metadata. Exact
+   head reuses the immutable dataset snapshot already attached to the
+   deterministic run. If a provider reissues a snapshot id with different
+   stable content outside that reuse path, the run fails closed and never
+   mutates the stored snapshot.
+
+These corrections do not claim a second production backfill. They make the
+next replay deterministic and correct the durable run-row accounting when it
+executes. On the exact task head, the PostgreSQL 16 integration suite proves
+partial-run recovery, cumulative run-row totals, same-partition dataset
+snapshot reuse, immutable-content conflict rejection, quarantine behavior,
+and idempotent canonical writes:
+
+```text
+uv run pytest tests/integration/test_place_geography_backfill.py -q
+............                                                     [100%]
+12 passed
+
+uv run ruff check apps/data_platform/geography_backfill.py \
+  tests/integration/test_place_geography_backfill.py
+All checks passed!
+
+uv run ruff format --check apps/data_platform/geography_backfill.py \
+  tests/integration/test_place_geography_backfill.py
+2 files already formatted
+```
 
 ## PG16 end-state verification (queried after the terminal run)
 
@@ -169,5 +209,5 @@ layer; they are enumerated here so the fleet can seed follow-up work.
 5. *No fixture/mock/synthetic coordinate or inferred `opened_on`* — CLI
    refuses non-live modes; all coordinates are provider-attributable via
    snapshots; `opened_on` left NULL everywhere.
-6. *Independent exact-head review and PG16 integration tests* — 9/9 PG16
+6. *Independent exact-head review and PG16 integration tests* — 12/12 PG16
    integration tests pass locally; exact-head review requested from `Codex6`.
