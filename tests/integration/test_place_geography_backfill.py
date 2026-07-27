@@ -88,14 +88,29 @@ class StubGeocodeProvider:
 
 
 class StubDatasetProvider:
+    """Mirrors the governed gateway: one snapshot id per dataset day whose
+    records carry a fresh ``observed_at`` / ``event_time`` on every fetch."""
+
     def __init__(self, *, snapshot_id: str, provider_id: str, contract_id: str, records):
-        now = datetime(2026, 7, 27, 10, 0, tzinfo=UTC)
-        records = [dict(record, snapshot_id=snapshot_id) for record in records]
-        self.result = SimpleNamespace(
+        self.snapshot_id = snapshot_id
+        self.provider_id = provider_id
+        self.contract_id = contract_id
+        self.base_records = records
+        self.fetches = 0
+
+    def fetch_and_ingest(self):
+        self.fetches += 1
+        now = datetime(2026, 7, 27, 10, self.fetches, tzinfo=UTC)
+        stamp = now.isoformat()
+        records = [
+            dict(record, snapshot_id=self.snapshot_id, observed_at=stamp, event_time=stamp)
+            for record in self.base_records
+        ]
+        return SimpleNamespace(
             raw_snapshot=SimpleNamespace(
-                snapshot_id=snapshot_id,
-                provider_id=provider_id,
-                source_contract_id=contract_id,
+                snapshot_id=self.snapshot_id,
+                provider_id=self.provider_id,
+                source_contract_id=self.contract_id,
                 correlation_id="test-correlation",
                 records=tuple(records),
                 checksum_sha256=canonical_content_sha256({"records": records}),
@@ -103,9 +118,6 @@ class StubDatasetProvider:
                 fetched_at=now,
             )
         )
-
-    def fetch_and_ingest(self):
-        return self.result
 
 
 def _admin_provider() -> StubDatasetProvider:
@@ -303,13 +315,19 @@ def test_backfill_projects_live_geography_with_evidence_and_lineage(geography_db
 
 def test_replay_of_identical_provider_content_is_idempotent(geography_db):
     first = _engine(geography_db).run()
-    second = _engine(geography_db).run()
+    second_engine = _engine(geography_db)
+    # A later same-day fetch keeps the dataset snapshot id but refreshes the
+    # volatile observed_at / event_time stamps, like the governed gateway.
+    second_engine._admin.fetches = 7
+    second_engine._poi.fetches = 7
+    second = second_engine.run()
 
     assert first.inserted == 2
     assert second.inserted == 0
     assert second.unchanged == 2
     assert second.quarantined == {}
     assert second.reconciled
+    assert second.admin_snapshot_id == first.admin_snapshot_id
 
     counts = _rows(
         geography_db,
@@ -318,10 +336,17 @@ def test_replay_of_identical_provider_content_is_idempotent(geography_db):
             (SELECT count(*) FROM data_plane.place_geography),
             (SELECT count(*) FROM data_plane.geography_provider_snapshots),
             (SELECT count(*) FROM data_plane.canonical_lineage),
-            (SELECT count(*) FROM data_plane.quarantined_records)
+            (SELECT count(*) FROM data_plane.quarantined_records),
+            (SELECT count(*) FROM data_plane.geo_dataset_snapshots)
         """,
     )
-    assert counts == [(2, 2, 2, 0)]
+    assert counts == [(2, 2, 2, 0, 2)]
+    # The first capture remains the immutable dataset snapshot of record.
+    stored = _rows(
+        geography_db,
+        "SELECT observed_at FROM data_plane.geo_dataset_snapshots ORDER BY snapshot_id",
+    )
+    assert all(row[0] == datetime(2026, 7, 27, 10, 1, tzinfo=UTC) for row in stored)
 
 
 def test_conflicting_observation_is_quarantined_not_overwritten(geography_db):

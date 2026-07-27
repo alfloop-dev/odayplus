@@ -52,6 +52,9 @@ COORDINATE_TOLERANCE = 1e-5
 # The official boundary dataset predates the 2014 Taoyuan special
 # municipality upgrade; both names identify the same admin area.
 ADMIN_CITY_ALIASES = {"桃園市": "桃園縣"}
+# Per-fetch fields the governed gateway refreshes on every call while keeping
+# the same dataset snapshot id; excluded from immutable-content comparison.
+_VOLATILE_DATASET_KEYS = frozenset({"observed_at", "event_time"})
 
 
 class GeographyBackfillError(RuntimeError):
@@ -406,8 +409,9 @@ class PlaceGeographyBackfill:
     def _capture_admin_snapshot(self, run_id: str, report: BackfillReport) -> AdminBoundaryIndex:
         result = self._admin.fetch_and_ingest()
         raw = result.raw_snapshot
-        records = [dict(record) for record in raw.records]
-        self._persist_dataset_snapshot(run_id, raw, records, h3_index_map=None)
+        records = self._persist_dataset_snapshot(
+            run_id, raw, [dict(record) for record in raw.records], h3_index_map=None
+        )
         report.admin_snapshot_id = raw.snapshot_id
         self._commit()
         return AdminBoundaryIndex.from_records(raw.snapshot_id, records)
@@ -433,6 +437,20 @@ class PlaceGeographyBackfill:
         report.poi_snapshot_id = raw.snapshot_id
         self._commit()
 
+    @staticmethod
+    def _stable_dataset_sha256(records: Sequence[Mapping[str, Any]]) -> str:
+        """Checksum over dataset content excluding per-fetch volatile fields.
+
+        The governed gateway keeps one snapshot id per dataset day but stamps
+        ``observed_at`` / ``event_time`` with the request time, so replays of
+        the same snapshot id differ only in those fields.
+        """
+        stable = [
+            {key: value for key, value in record.items() if key not in _VOLATILE_DATASET_KEYS}
+            for record in records
+        ]
+        return canonical_content_sha256({"records": stable})
+
     def _persist_dataset_snapshot(
         self,
         run_id: str,
@@ -440,19 +458,23 @@ class PlaceGeographyBackfill:
         records: list[dict[str, Any]],
         *,
         h3_index_map: dict[str, str] | None,
-    ) -> None:
+    ) -> list[dict[str, Any]]:
         existing = self._execute(
-            f"SELECT content_sha256 FROM {self._schema}.geo_dataset_snapshots "  # nosec B608
+            f"SELECT records FROM {self._schema}.geo_dataset_snapshots "  # nosec B608
             "WHERE snapshot_id = %s",
             (raw.snapshot_id,),
         )
         if existing:
-            if existing[0][0] != raw.checksum_sha256:
+            stored = existing[0][0]
+            stored_records = stored if isinstance(stored, list) else json.loads(stored)
+            if self._stable_dataset_sha256(stored_records) != self._stable_dataset_sha256(records):
                 raise GeographyBackfillError(
-                    f"dataset snapshot {raw.snapshot_id} already recorded with a "
-                    "different checksum; immutable snapshot conflict"
+                    f"dataset snapshot {raw.snapshot_id} already recorded with "
+                    "different stable content; immutable snapshot conflict"
                 )
-            return
+            # The first persisted capture is the immutable snapshot of record;
+            # a replay differing only in volatile timestamps reuses it.
+            return [dict(record) for record in stored_records]
         self._execute(
             f"""
             INSERT INTO {self._schema}.geo_dataset_snapshots (
@@ -480,6 +502,7 @@ class PlaceGeographyBackfill:
                 run_id,
             ),
         )
+        return records
 
     # -- store loop ----------------------------------------------------------
 
