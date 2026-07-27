@@ -1,7 +1,7 @@
 # ODP-SITESCORE-OPERATOR-V2-001 Acceptance Receipt
 
 Task: Wire Operator canonical flow to SiteScore v2 contract
-Owner: Codex · Reviewer: Codex2 · PR: #387 → `dev`
+Owner: Codex · Reviewer: Codex9 · PR: #387 → `dev`; receipt PR: #421
 Integration baseline: PR #381 head `59da5c51`
 
 This receipt records only runs that completed with a terminal exit code on
@@ -170,3 +170,26 @@ SiteScore v2 contract, missing/stale fail-closed paths, tenant isolation, and
 lineage paths all have direct coverage. The reviewer also confirmed PR #387's
 product, product-e2e-gate, and orchestrator CI were green. The sole closeout
 hygiene note was this receipt's stale owner/reviewer header, corrected above.
+
+## Fresh Revalidation After Dev Advanced
+
+PR #421 was refreshed after reviewed P4 merge `88e2dbd4` advanced `origin/dev`.
+Merge commit `958d0c36` composes that exact dev head without changing the
+SiteScore, OpsBoard, NetPlan, or AVM implementation delivered by PR #387.
+These are fresh local runs from the refreshed tree on 2026-07-27; no result
+from the stale `9909d1e5` PR head is reused:
+
+- `python3 -m pytest tests/integration/test_operator_canonical_wiring.py
+  modules/sitescore/tests -q -p no:randomly --tb=short` — 29 passed and the
+  unchanged cross-module NetPlan test failed because CVXPY is not installed in
+  this worker environment.
+- The same command with
+  `--deselect tests/integration/test_operator_canonical_wiring.py::test_rebalance_invokes_avm_and_netplan_oss_and_persists_results`
+  — 29 passed, 1 deselected, exit 0.
+- `python3 -m ruff check modules/opsboard/application/network_listings.py
+  modules/sitescore/application/reporting.py
+  modules/sitescore/tests/test_sitescore_production_runtime.py
+  tests/integration/test_operator_canonical_wiring.py` — exit 0.
+
+The refreshed exact PR head must receive new required CI results and independent
+approval from the currently assigned reviewer, Codex9, before merge.
