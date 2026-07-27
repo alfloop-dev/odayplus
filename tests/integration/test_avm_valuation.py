@@ -149,7 +149,11 @@ def test_finance_approval_state_gates_versions_and_dataroom_export() -> None:
 
 
 def test_avm_api_runs_e2e_valuation_dataroom_export_and_audit() -> None:
-    client = TestClient(create_app(), headers=AVM_HEADERS)
+    client = TestClient(
+        create_app(),
+        headers=AVM_HEADERS,
+        backend_options={"use_uvloop": True},
+    )
     payload = {**_valuation_payload(), "created_by": "ops-lead"}
 
     created = client.post(
@@ -266,7 +270,11 @@ def test_avm_durable_loop_survives_restart(tmp_path) -> None:
     correlation_id = "corr-avm-durable"
     bundle = build_persistence(mode="durable", db_path=db_path)
     try:
-        client = TestClient(create_app(persistence=bundle), headers=AVM_HEADERS)
+        client = TestClient(
+            create_app(persistence=bundle),
+            headers=AVM_HEADERS,
+            backend_options={"use_uvloop": True},
+        )
         payload = {**_valuation_payload(), "created_by": "ops-lead"}
         created = client.post(
             "/avm/cases",
@@ -316,7 +324,11 @@ def test_avm_durable_loop_survives_restart(tmp_path) -> None:
 
     reopened = build_persistence(mode="durable", db_path=db_path)
     try:
-        client = TestClient(create_app(persistence=reopened), headers=AVM_HEADERS)
+        client = TestClient(
+            create_app(persistence=reopened),
+            headers=AVM_HEADERS,
+            backend_options={"use_uvloop": True},
+        )
         replay = client.post(
             "/avm/cases",
             json=payload,

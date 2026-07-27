@@ -47,10 +47,6 @@ from .contracts import (
     ProductionTrainingSettings,
     require_approval_document,
 )
-from .forecast_training import (
-    ForecastHorizonContractError,
-    expand_forecast_horizon_rows,
-)
 from .storage import (
     GcsArtifactStore,
     LoadedModelReadyRows,
@@ -167,6 +163,11 @@ class BoundedModelTrainingRelease:
             "required_label": spec.label_column,
             "minimum_rows": spec.minimum_rows,
             "minimum_rows_satisfied": inventory.labeled_row_count >= spec.minimum_rows,
+            "split_minimum_rows": {
+                "train": max(2, int(spec.minimum_rows * 0.60)),
+                "validation": max(1, int(spec.minimum_rows * 0.20)),
+                "test": max(1, spec.minimum_rows - int(spec.minimum_rows * 0.80)),
+            },
             "trainable": inventory.ready and inventory.labeled_row_count >= spec.minimum_rows,
         }
 
@@ -262,6 +263,15 @@ class BoundedModelTrainingRelease:
         approval_payload: dict[str, object],
         rollback_target: str | None,
     ) -> dict[str, Any]:
+        if not spec.production_release_enabled:
+            reason = (
+                spec.production_block_reason
+                or "PRODUCTION_RELEASE_NOT_ENABLED"
+            )
+            raise ModelTrainingConfigurationError(
+                f"{spec.key} production release is BLOCKED: {reason}; "
+                "training and backtest artifacts may not receive release aliases"
+            )
         approval = require_approval_document(
             approval_payload,
             model_name=spec.model_name,
@@ -349,11 +359,6 @@ class BoundedModelTrainingRelease:
             requested_by=self.actor,
             approved_by=approval["approver"],
             correlation_id=approval["approval_id"],
-            expected_release_revision=self.service.repository.get_release_revision(
-                spec.model_name
-            ),
-            idempotency_key=approval["approval_id"],
-            release_scope="global",
         )
         return {
             "status": "promoted",
@@ -420,6 +425,7 @@ class BoundedModelTrainingRelease:
                 "temporal_validation_sha256": temporal_artifact_sha256,
                 "temporal_validation_required": True,
                 "segment_validation_required": True,
+                "output_transform": dict(spec.output_transform),
             },
         )
         card = _model_card(
@@ -529,6 +535,7 @@ class BoundedModelTrainingRelease:
                 "validation_report_sha256": validation_record.content_digest,
                 "temporal_validation_required": True,
                 "segment_validation_required": True,
+                "output_transform": dict(spec.output_transform),
             },
         )
         card = _model_card(
@@ -564,7 +571,6 @@ class BoundedModelTrainingRelease:
         training_rows, holdout_rows = _temporal_split(
             prepared,
             holdout_fraction=spec.holdout_fraction,
-            purge_label_overlap=spec.key == "forecastops",
         )
         if spec.kind is ModelKind.SURVIVAL:
             return _validate_survival_temporally(
@@ -626,13 +632,7 @@ def prepare_model_rows(
 ) -> tuple[PreparedRow, ...]:
     prepared: list[PreparedRow] = []
     lineage_id = f"postgres:{loaded.relation}:sha256:{loaded.query_sha256}"
-    try:
-        source_rows = (
-            expand_forecast_horizon_rows(loaded.rows) if spec.key == "forecastops" else loaded.rows
-        )
-    except ForecastHorizonContractError as exc:
-        raise ModelReadyDataError(f"{spec.key}: {exc}") from exc
-    for raw in source_rows:
+    for raw in loaded.rows:
         _reject_nonproduction_source_markers(raw)
         try:
             temporal_value = _timestamp(raw[spec.temporal_column])
@@ -660,13 +660,8 @@ def prepare_model_rows(
             raise ModelReadyDataError(
                 f"{spec.key}: feature_snapshot_time must precede prediction_origin_time"
             )
-        if spec.key == "forecastops":
-            if label_maturity_time < prediction_origin_time:
-                raise ModelReadyDataError(
-                    f"{spec.key}: horizon label maturity must not precede prediction origin"
-                )
-        elif label_maturity_time > feature_snapshot_time:
-            raise ModelReadyDataError(f"{spec.key}: label is not mature at feature_snapshot_time")
+        if label_maturity_time > loaded.as_of_time:
+            raise ModelReadyDataError(f"{spec.key}: label is not mature at training as_of_time")
         labels: dict[str, Any] = {spec.label_name: label}
         if spec.event_column:
             if spec.event_column not in raw or raw[spec.event_column] is None:
@@ -706,6 +701,7 @@ def prepare_model_rows(
             "features": feature_values,
             "labels": labels,
             "label_maturity_time": label_maturity_time,
+            "training_as_of_time": loaded.as_of_time,
         }
         prepared.append(
             PreparedRow(
@@ -871,7 +867,6 @@ def _temporal_split(
     rows: Sequence[PreparedRow],
     *,
     holdout_fraction: float,
-    purge_label_overlap: bool = False,
 ) -> tuple[tuple[PreparedRow, ...], tuple[PreparedRow, ...]]:
     unique_times = sorted({row.temporal_value for row in rows})
     if len(unique_times) < 2:
@@ -884,17 +879,8 @@ def _temporal_split(
     cutoff = unique_times[split_index]
     training = tuple(row for row in rows if row.temporal_value < cutoff)
     holdout = tuple(row for row in rows if row.temporal_value >= cutoff)
-    if purge_label_overlap:
-        training = tuple(
-            row
-            for row in training
-            if _timestamp(row.mapping["label_maturity_time"]) < cutoff
-        )
     if len(training) < 2 or len(holdout) < 1:
-        suffix = " after label-window purge" if purge_label_overlap else ""
-        raise ModelReadyDataError(
-            f"temporal split produced an empty or undersized partition{suffix}"
-        )
+        raise ModelReadyDataError("temporal split produced an empty or undersized partition")
     return training, holdout
 
 

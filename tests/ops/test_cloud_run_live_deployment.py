@@ -3,12 +3,15 @@ from __future__ import annotations
 import importlib.util
 import json
 import os
+import re
 import subprocess
 import sys
 from datetime import UTC, datetime, timedelta
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from threading import Thread
+
+import pytest
 
 ROOT = Path(__file__).resolve().parents[2]
 VALIDATOR_PATH = ROOT / "scripts/deployment/validate_cloud_run_live_deployment.py"
@@ -46,11 +49,93 @@ def complete_env() -> dict[str, str]:
     env["ODP_OPERATOR_SMOKE_BEARER_TOKEN"] = "redacted-token-value"
     env.update(validator.REQUIRED_RUNTIME_VALUES)
     env["ODP_PRODUCTION_PROVIDER_IDS"] = ",".join(sorted(validator.REQUIRED_PRODUCT_PROVIDER_IDS))
+    env["ODP_EXTERNAL_PROVIDER_PROBE_TIMEOUT_SECONDS"] = "8"
     env["ODP_DEPLOY_ENV"] = "dev"
     env["ODAY_RELEASE_SHA"] = EXPECTED_SHA
     env["ODP_FORECAST_ENGINE"] = "statsforecast"
     env["ODP_FORECAST_MODEL"] = "seasonal_naive"
+    for provider in validator._provider_definitions(ROOT):
+        if provider.provider_id not in validator.REQUIRED_PRODUCT_PROVIDER_IDS:
+            continue
+        if provider.endpoint_env_var:
+            env[provider.endpoint_env_var] = f"https://{provider.provider_id}.example.test/snapshot"
+        for credential in provider.credentials:
+            if credential.required_in_live:
+                env[f"{credential.env_var}_SECRET"] = "provider-secret:latest"
+                if credential.status_env_var:
+                    env[credential.status_env_var] = "active"
     return env
+
+
+def test_preflight_does_not_require_unselected_listing_partner_config() -> None:
+    env = complete_env()
+    for name in (
+        "ODP_LISTING_PROVIDER_FEED_URL",
+        "ODP_LISTING_PROVIDER_AUTH_STATUS",
+        "ODP_LISTING_PROVIDER_API_KEY_SECRET",
+    ):
+        env.pop(name, None)
+
+    checks = validator.preflight_checks(
+        env=env,
+        expected_environment="dev",
+        expected_sha=EXPECTED_SHA,
+        root=ROOT,
+    )
+    by_name = {check.name: check for check in checks}
+
+    assert all(
+        check.ok
+        for check in checks
+        if check.name.startswith(("config:", "secret-reference:", "runtime:"))
+    )
+    assert "config:ODP_LISTING_PROVIDER_FEED_URL" not in by_name
+    assert "config:ODP_LISTING_PROVIDER_AUTH_STATUS" not in by_name
+    assert "secret-reference:ODP_LISTING_PROVIDER_API_KEY_SECRET" not in by_name
+    for name in (
+        "ODP_POI_PROVIDER_URL",
+        "ODP_GEOCODE_PROVIDER_URL",
+        "ODP_ADMIN_BOUNDARY_PROVIDER_URL",
+    ):
+        assert by_name[f"config:{name}"].ok is True
+
+
+def test_preflight_requires_listing_config_when_listing_is_selected() -> None:
+    env = complete_env()
+    env["ODP_PRODUCTION_PROVIDER_IDS"] += ",listing.partner_feed"
+    env.pop("ODP_LISTING_PROVIDER_FEED_URL", None)
+    env.pop("ODP_LISTING_PROVIDER_AUTH_STATUS", None)
+    env.pop("ODP_LISTING_PROVIDER_API_KEY_SECRET", None)
+
+    checks = validator.preflight_checks(
+        env=env,
+        expected_environment="dev",
+        expected_sha=EXPECTED_SHA,
+        root=ROOT,
+    )
+    by_name = {check.name: check for check in checks}
+
+    assert by_name["config:ODP_LISTING_PROVIDER_FEED_URL"].ok is False
+    assert by_name["config:ODP_LISTING_PROVIDER_AUTH_STATUS"].ok is False
+    assert by_name["secret-reference:ODP_LISTING_PROVIDER_API_KEY_SECRET"].ok is False
+
+
+@pytest.mark.parametrize("value", ["", "0", "10.01", "nan", "infinity", "not-a-number"])
+def test_preflight_rejects_missing_or_unbounded_provider_probe_timeout(value: str) -> None:
+    env = complete_env()
+    env["ODP_EXTERNAL_PROVIDER_PROBE_TIMEOUT_SECONDS"] = value
+
+    checks = validator.preflight_checks(
+        env=env,
+        expected_environment="dev",
+        expected_sha=EXPECTED_SHA,
+        root=ROOT,
+    )
+    by_name = {check.name: check for check in checks}
+
+    timeout_check = by_name["runtime:ODP_EXTERNAL_PROVIDER_PROBE_TIMEOUT_SECONDS"]
+    assert timeout_check.ok is False
+    assert "between 0.05 and 10 seconds" in timeout_check.detail
 
 
 def _run_deploy_config_gate(
@@ -82,6 +167,7 @@ def _run_deploy_config_gate(
         "ODP_WORKER_CRON": "*/5 * * * *",
         "ODP_SCHEDULER_CRON": "0 * * * *",
         "ODP_SCHEDULER_TIME_ZONE": "Asia/Taipei",
+        "ODP_EXTERNAL_PROVIDER_PROBE_TIMEOUT_SECONDS": "8",
     }
     if forecast_engine is not None:
         env["ODP_FORECAST_ENGINE"] = forecast_engine
@@ -471,6 +557,10 @@ def test_workflows_do_not_reference_secrets_in_step_if() -> None:
         assert "ODP_WORKER_CRON" in text
         assert "ODP_SCHEDULER_CRON" in text
         assert "ODP_PRODUCTION_PROVIDER_IDS" in text
+        assert (
+            "ODP_EXTERNAL_PROVIDER_PROBE_TIMEOUT_SECONDS: "
+            "${{ vars.ODP_EXTERNAL_PROVIDER_PROBE_TIMEOUT_SECONDS }}" in text
+        )
         assert "ODP_COMPETITOR_MANUAL_SOURCE_STATUS: disabled" in text
         assert "ODP_COMPETITOR_MANUAL_SOURCE_ATTESTATION_SECRET" not in text
         assert "validate_cloud_run_live_deployment.py preflight" in text
@@ -533,6 +623,7 @@ def test_deploy_script_preflights_before_build_and_uses_secret_references() -> N
     assert "ODP_PERSISTENCE" in text
     assert '"ODP_POI_PROVIDER_URL",' in text
     assert '"ODP_ADMIN_BOUNDARY_PROVIDER_URL",' in text
+    assert 'case "${provider_id}" in' in text
     assert ': "${ODP_FORECAST_ENGINE:?' in text
     assert ': "${ODP_FORECAST_MODEL:?' in text
     assert '"ODP_FORECAST_ENGINE",' in text
@@ -546,6 +637,8 @@ def test_deploy_script_preflights_before_build_and_uses_secret_references() -> N
     )
     assert "restore_scheduler_trigger" in text
     assert "ODP_PRODUCTION_PROVIDER_IDS" in text
+    assert ': "${ODP_EXTERNAL_PROVIDER_PROBE_TIMEOUT_SECONDS:?' in text
+    assert '"ODP_EXTERNAL_PROVIDER_PROBE_TIMEOUT_SECONDS",' in text
     assert "ODP_COMPETITOR_MANUAL_SOURCE_ATTESTATION" not in text
     assert "oday-local" not in text
     assert "postgresql://" not in text
@@ -826,3 +919,154 @@ def test_job_smoke_rejects_failed_execution_and_missing_provider_secrets() -> No
     assert "jobs-smoke:scheduler:release_sha" in failed
     assert "jobs-smoke:scheduler:secret_bindings" in failed
     assert "jobs-smoke:scheduler:execution" in failed
+
+
+def test_deploy_script_runs_the_live_e2e_gate_before_committing_the_release() -> None:
+    """ODP-LIVE-E2E-001: a red live E2E gate must fall through to the rollback trap."""
+    text = DEPLOY_SCRIPT.read_text(encoding="utf-8")
+
+    gate = text.index("scripts/e2e/check_live_e2e_gate.py")
+    web_cut = text.index('promote_service_traffic "${WEB_SERVICE}"')
+    committed = text.index("DEPLOYMENT_COMMITTED=true")
+
+    # Promoted (so the gate exercises the release users will get) but not yet
+    # committed (so `handle_deployment_exit` can still restore the old traffic).
+    assert web_cut < gate < committed
+    assert '--expected-sha "${ODAY_RELEASE_SHA}"' in text
+    assert '--worker-job "${WORKER_CANDIDATE_JOB}"' in text
+    assert '--output "${LIVE_E2E_REPORT}"' in text
+    # The report lands next to the other deployment proofs so the workflow's
+    # existing `.odp_data/deployment/*.json` upload picks it up.
+    assert 'LIVE_E2E_REPORT="${LIVE_E2E_REPORT:-.odp_data/deployment/' in text
+
+
+def test_live_e2e_gate_urls_are_resolved_before_the_gate_invocation() -> None:
+    """A command substitution inside argv would hand the gate a blank URL.
+
+    `set -e` does not trip on a failing `$( )` expanded into an argument list,
+    so the gate would silently run against an empty origin. Resolving into
+    variables first makes the failure fatal, and the explicit emptiness guard
+    covers a helper that exits 0 with no output.
+    """
+    text = DEPLOY_SCRIPT.read_text(encoding="utf-8")
+
+    resolve = text.index(
+        'LIVE_E2E_API_URL="$(service_snapshot_url "${API_CANDIDATE_DESCRIPTION}")"'
+    )
+    guard = text.index('if [[ -z "${LIVE_E2E_API_URL}" || -z "${LIVE_E2E_WEB_URL}" ]]; then')
+    gate = text.index("scripts/e2e/check_live_e2e_gate.py")
+
+    assert resolve < guard < gate
+    assert '--api-url "${LIVE_E2E_API_URL}"' in text
+    assert '--web-url "${LIVE_E2E_WEB_URL}"' in text
+    assert '--api-url "$(service_snapshot_url' not in text
+    assert '--web-url "$(service_snapshot_url' not in text
+
+
+def _workflow_job_env(workflow: Path) -> dict[str, str]:
+    """The literal `env:` values the deploy job exports, `${{ vars.X }}` -> "".
+
+    Repository variables are unset by default, so an expression that only reads
+    `vars.*` reaches the deploy script as an empty string. That is exactly how
+    `ODP_LIVE_E2E_DEPLOYMENT_MODE` behaves on a stock repo.
+    """
+    env: dict[str, str] = {}
+    for line in workflow.read_text(encoding="utf-8").splitlines():
+        match = re.match(r"^ {6}([A-Z][A-Z0-9_]*): (.*)$", line)
+        if not match:
+            continue
+        name, raw = match.group(1), match.group(2).strip()
+        if raw.startswith("${{"):
+            env[name] = ""
+            continue
+        env[name] = raw.strip('"')
+    return env
+
+
+def _deploy_script_expected_deployment(env: dict[str, str]) -> str:
+    """Evaluate the deploy script's own `--expected-deployment` resolution."""
+    text = DEPLOY_SCRIPT.read_text(encoding="utf-8")
+    assignment = next(
+        line.strip()
+        for line in text.splitlines()
+        if line.strip().startswith("LIVE_E2E_DEPLOYMENT_MODE=")
+    )
+    # The gate must be handed the resolved variable, never a literal, or this
+    # evaluation would not describe what the deploy actually passes.
+    assert '--expected-deployment "${LIVE_E2E_DEPLOYMENT_MODE}"' in text
+    completed = subprocess.run(  # noqa: S603 - fixed argv, shell=False
+        ["bash", "-c", f'{assignment}\nprintf "%s" "${{LIVE_E2E_DEPLOYMENT_MODE}}"'],
+        check=True,
+        capture_output=True,
+        text=True,
+        env={"PATH": os.environ.get("PATH", ""), **env},
+    )
+    return completed.stdout
+
+
+def _api_env_payload(env: dict[str, str]) -> dict[str, str]:
+    """Mirror the deploy script's API env payload for the deployment-mode keys."""
+    deploy_env = env["ODP_DEPLOY_ENV"]
+    text = DEPLOY_SCRIPT.read_text(encoding="utf-8")
+    assert 'payload["ODAY_ENV"] = os.environ["ODP_DEPLOY_ENV"]' in text
+    assert 'payload["ODP_ENV"] = os.environ["ODP_DEPLOY_ENV"]' in text
+    return {
+        "ODP_DEPLOY_ENV": deploy_env,
+        "ODAY_ENV": deploy_env,
+        "ODP_ENV": deploy_env,
+        "ODP_PRODUCT_MODE": env.get("ODP_PRODUCT_MODE", ""),
+        "ODP_REQUIRE_LIVE_DATA": env.get("ODP_REQUIRE_LIVE_DATA", ""),
+    }
+
+
+@pytest.mark.parametrize("workflow", WORKFLOWS, ids=lambda path: path.name)
+def test_live_e2e_gate_expects_the_deployment_mode_the_runtime_will_report(
+    workflow: Path,
+) -> None:
+    """ODP-LIVE-E2E-001: `--expected-deployment` must match `deployment_mode()`.
+
+    `details.deploymentMode` is produced by
+    `apps.api.oday_api.runtime_mode.deployment_mode()`, which reads the
+    ODP_DEPLOY_ENV/ODAY_ENV/ODP_ENV triple this deploy writes into the API env
+    payload. Defaulting the gate's expectation to "production" therefore made
+    `runtime:readiness` unsatisfiable on every non-prod deploy — and because the
+    gate runs under `set -e` before `DEPLOYMENT_COMMITTED=true`, every dev deploy
+    promoted and then rolled straight back.
+
+    Nothing is asserted against a literal here: the expectation is evaluated out
+    of the deploy script by bash, and the reported mode is computed by the real
+    runtime function.
+    """
+    from apps.api.oday_api.runtime_mode import deployment_mode, live_data_required
+
+    env = _workflow_job_env(workflow)
+    assert env.get("ODP_DEPLOY_ENV"), f"{workflow.name} declares no ODP_DEPLOY_ENV"
+
+    expected = _deploy_script_expected_deployment(env)
+    reported = deployment_mode(_api_env_payload(env))
+
+    assert expected == reported, (
+        f"{workflow.name}: gate expects deploymentMode={expected!r} but the "
+        f"deployed runtime will report {reported!r}"
+    )
+    # Live-ness is a separate fact, carried by ODP_PRODUCT_MODE /
+    # ODP_REQUIRE_LIVE_DATA. A `dev` deployment mode is still a live runtime, so
+    # the gate must not infer live-ness from the env name.
+    assert live_data_required(_api_env_payload(env)) is True
+
+
+def test_live_e2e_gate_refuses_to_run_without_a_deployment_mode() -> None:
+    """An unset ODP_DEPLOY_ENV must stop the deploy, not silently expect ""."""
+    text = DEPLOY_SCRIPT.read_text(encoding="utf-8")
+
+    guard = text.index('if [[ -z "${LIVE_E2E_DEPLOYMENT_MODE}" ]]; then')
+    gate = text.index("scripts/e2e/check_live_e2e_gate.py")
+
+    assert guard < gate
+    assert _deploy_script_expected_deployment({"ODP_DEPLOY_ENV": "staging"}) == "staging"
+    assert (
+        _deploy_script_expected_deployment(
+            {"ODP_DEPLOY_ENV": "dev", "ODP_LIVE_E2E_DEPLOYMENT_MODE": "production"}
+        )
+        == "production"
+    )

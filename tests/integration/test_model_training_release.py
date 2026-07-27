@@ -28,9 +28,13 @@ from scripts.models.install_views import (
     main as install_views_main,
 )
 from scripts.models.release import (
+    BoundedModelTrainingRelease,
     _temporal_split,
     _validate_regression_temporally,
     prepare_model_rows,
+)
+from scripts.models.release import (
+    main as release_main,
 )
 from scripts.models.storage import (
     GcsArtifactStore,
@@ -97,6 +101,7 @@ class FakeQueryClient:
         self.contract_version = contract_version
         self.blocked_reason = blocked_reason
         self.load_calls: list[tuple[str, tuple[Any, ...]]] = []
+        self.stats_sql: str | None = None
 
     def query_one(
         self,
@@ -106,23 +111,18 @@ class FakeQueryClient:
         if "to_regclass" in sql:
             if params[0] == "model_ready.view_contracts":
                 return {
-                    "relation": (
-                        "model_ready.view_contracts"
-                        if self.registry_exists
-                        else None
-                    )
+                    "relation": ("model_ready.view_contracts" if self.registry_exists else None)
                 }
             return {"relation": params[0] if self.exists else None}
         if "FROM model_ready.view_contracts" in sql:
             return {
                 "view_version": self.contract_version,
-                "contract_state": (
-                    "ACTIVE" if self.contract_trainable else "BLOCKED"
-                ),
+                "contract_state": ("ACTIVE" if self.contract_trainable else "BLOCKED"),
                 "training_enabled": self.contract_trainable,
                 "blocked_reason": self.blocked_reason,
                 "installer_sha256": "b" * 64,
             }
+        self.stats_sql = sql
         return {
             "eligible_count": len(self.rows),
             "labeled_count": len(self.rows),
@@ -150,34 +150,99 @@ class FakeInstallationClient:
         from scripts.models.install_views import PREREQUISITE_COLUMNS
 
         self.columns = {
-            relation: tuple(columns)
-            for relation, columns in PREREQUISITE_COLUMNS.items()
+            relation: tuple(columns) for relation, columns in PREREQUISITE_COLUMNS.items()
         }
         self.relations = set(self.columns) - set(missing_relations)
         self.executions: list[tuple[str, tuple[Any, ...]]] = []
         self.transactions = 0
-        self.contract: dict[str, Any] | None = None
+        self.transaction_active = False
+        self.verification_transaction_states: list[bool] = []
+        self.contracts: dict[str, dict[str, Any]] = {}
+        self.prerequisite_counts = {
+            "total_store_rows": 250,
+            "stores_with_opened_on": 220,
+            "stores_missing_opened_on": 30,
+            "stores_missing_address": 5,
+            "stores_missing_coordinates": 10,
+            "stores_missing_h3_res_9": 12,
+            "stores_missing_format": 3,
+            "sitescore_anchor_prerequisite_rows": 205,
+            "heatzone_cell_prerequisite_rows": 201,
+            "successful_twd_transaction_rows": 10_000,
+        }
 
     @contextmanager
     def transaction(self) -> Any:
         self.transactions += 1
-        yield self
+        self.transaction_active = True
+        try:
+            yield self
+        finally:
+            self.transaction_active = False
 
     def execute(self, sql: str, params: tuple[Any, ...] = ()) -> None:
         self.executions.append((sql, params))
         if "CREATE OR REPLACE VIEW model_ready.forecast_training_view" in sql:
-            self.relations.add("model_ready.forecast_training_view")
-            self.contract = {
-                "relation_name": "model_ready.forecast_training_view",
-                "view_name": "forecast_training_view",
-                "view_version": "forecast-training-view-v2",
-                "contract_state": "ACTIVE",
-                "training_enabled": True,
-                "blocked_reason": None,
+            from scripts.models.install_views import ACTIVE_VIEW_CONTRACTS
+
+            for relation_name, version in ACTIVE_VIEW_CONTRACTS.items():
+                self.relations.add(relation_name)
+                self.contracts[relation_name] = {
+                    "relation_name": relation_name,
+                    "view_name": relation_name.rsplit(".", 1)[-1],
+                    "view_version": version,
+                    "contract_state": "ACTIVE",
+                    "training_enabled": True,
+                    "blocked_reason": None,
+                    "installer_sha256": None,
+                }
+            official_ready = {
+                "external_data.real_estate_transactions",
+                "external_data.real_estate_ingestion_runs",
+            }.issubset(self.relations)
+            if official_ready:
+                self.relations.add(
+                    "model_ready.listing_property_valuation_view"
+                )
+            self.contracts["model_ready.valuation_view"] = {
+                "relation_name": "model_ready.valuation_view",
+                "view_name": "valuation_view",
+                "view_version": "valuation-view-v1",
+                "contract_state": "BLOCKED",
+                "training_enabled": False,
+                "blocked_reason": (
+                    "MATURE_REALIZED_TRANSACTION_OUTCOME_RELATION_MISSING"
+                ),
                 "installer_sha256": None,
             }
-        if sql.startswith("UPDATE model_ready.view_contracts") and self.contract:
-            self.contract["installer_sha256"] = params[0]
+            self.contracts["model_ready.listing_property_valuation_view"] = {
+                "relation_name": "model_ready.listing_property_valuation_view",
+                "view_name": "listing_property_valuation_view",
+                "view_version": "listing-property-valuation-view-v1",
+                "contract_state": "ACTIVE" if official_ready else "BLOCKED",
+                "training_enabled": official_ready,
+                "blocked_reason": (
+                    None
+                    if official_ready
+                    else "OFFICIAL_REAL_ESTATE_OUTCOME_RELATION_MISSING"
+                ),
+                "installer_sha256": None,
+            }
+            self.contracts["model_ready.avm_liquidity_training_view"] = {
+                "relation_name": "model_ready.avm_liquidity_training_view",
+                "view_name": "avm_liquidity_training_view",
+                "view_version": "avm-liquidity-training-view-v1",
+                "contract_state": "BLOCKED",
+                "training_enabled": False,
+                "blocked_reason": (
+                    "OFFICIAL_SALE_OUTCOME_HAS_NO_MARKETING_INTERVAL"
+                ),
+                "installer_sha256": None,
+            }
+        if sql.startswith("UPDATE model_ready.view_contracts"):
+            for relation_name in params[1:]:
+                if relation_name in self.contracts:
+                    self.contracts[relation_name]["installer_sha256"] = params[0]
 
     def query_one(
         self,
@@ -185,9 +250,11 @@ class FakeInstallationClient:
         params: tuple[Any, ...] = (),
     ) -> dict[str, Any] | None:
         if "to_regclass" in sql:
+            if str(params[0]).startswith("model_ready."):
+                self.verification_transaction_states.append(self.transaction_active)
             return {"relation": params[0] if params[0] in self.relations else None}
-        if "FROM model_ready.view_contracts" in sql:
-            return dict(self.contract) if self.contract else None
+        if "AS total_store_rows" in sql:
+            return dict(self.prerequisite_counts)
         return None
 
     def query(
@@ -195,13 +262,17 @@ class FakeInstallationClient:
         sql: str,
         params: tuple[Any, ...] = (),
     ) -> list[dict[str, Any]]:
-        if "information_schema.columns" not in sql:
-            return []
-        relation = f"{params[0]}.{params[1]}"
-        return [
-            {"column_name": column}
-            for column in self.columns.get(relation, ())
-        ]
+        if "information_schema.columns" in sql:
+            relation = f"{params[0]}.{params[1]}"
+            return [{"column_name": column} for column in self.columns.get(relation, ())]
+        if "FROM model_ready.view_contracts" in sql:
+            self.verification_transaction_states.append(self.transaction_active)
+            return [
+                dict(self.contracts[relation])
+                for relation in sorted(params or self.contracts)
+                if relation in self.contracts
+            ]
+        return []
 
 
 def _production_env(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -244,13 +315,10 @@ def test_production_database_url_accepts_only_a_named_cloud_sql_socket() -> None
 
 
 def test_api_runtime_declares_the_production_gcs_client() -> None:
-    dependencies = tomllib.loads(
-        Path("pyproject.toml").read_text(encoding="utf-8")
-    )["project"]["dependencies"]
-    assert any(
-        dependency.startswith("google-cloud-storage")
-        for dependency in dependencies
-    )
+    dependencies = tomllib.loads(Path("pyproject.toml").read_text(encoding="utf-8"))["project"][
+        "dependencies"
+    ]
+    assert any(dependency.startswith("google-cloud-storage") for dependency in dependencies)
 
 
 def _approval(**changes: str) -> dict[str, object]:
@@ -282,9 +350,9 @@ def _raw_forecast_rows(count: int = 120) -> list[dict[str, Any]]:
                 "view_version": "forecast-training-view-v2",
                 "entity_id": store_id,
                 "tenant_id": "tenant-1",
-                "feature_snapshot_time": observed,
-                "prediction_origin_time": observed + timedelta(microseconds=1),
-                "label_maturity_time": observed + timedelta(days=1),
+                "feature_snapshot_time": datetime(2026, 7, 1, tzinfo=UTC),
+                "prediction_origin_time": datetime(2026, 7, 2, tzinfo=UTC),
+                "label_maturity_time": datetime(2026, 7, 1, tzinfo=UTC),
                 "source_snapshot_ids": [f"snapshot-{index:04d}"],
                 "is_training_eligible": True,
                 "date": observed.date(),
@@ -309,6 +377,7 @@ def _loaded(rows: list[dict[str, Any]]) -> LoadedModelReadyRows:
             1000,
         ),
         query_sha256="a" * 64,
+        as_of_time=datetime(2026, 8, 1, tzinfo=UTC),
     )
 
 
@@ -350,10 +419,7 @@ def test_mlflow_server_command_uses_remote_backend_and_disables_artifact_proxy()
 
 def test_mlflow_server_accepts_only_exact_cloud_sql_socket_binding() -> None:
     instance = "alfaloop-data-project:asia-east1:oday-plus-dev-postgres"
-    backend = (
-        "postgresql://runtime:secret@/mlflow"
-        f"?host=/cloudsql/{instance}"
-    )
+    backend = f"postgresql://runtime:secret@/mlflow?host=/cloudsql/{instance}"
     settings = MlflowServerSettings(
         backend_store_uri=backend,
         default_artifact_root="gs://oday-models/production",
@@ -373,9 +439,7 @@ def test_mlflow_server_accepts_only_exact_cloud_sql_socket_binding() -> None:
             backend_store_uri=backend,
             default_artifact_root="gs://oday-models/production",
             allowed_hosts="oday-mlflow.internal",
-            cloud_sql_instance=(
-                "alfaloop-data-project:asia-east1:different-postgres"
-            ),
+            cloud_sql_instance=("alfaloop-data-project:asia-east1:different-postgres"),
         ).validate()
 
 
@@ -401,20 +465,13 @@ def test_production_training_settings_fail_closed_on_local_or_placeholder(
         ProductionTrainingSettings.from_environment()
 
 
-def test_model_ready_sql_is_real_causal_and_blocks_missing_outcomes() -> None:
+def test_model_ready_sql_is_real_causal_and_activates_supported_outcomes() -> None:
     sql = MODEL_READY_SQL_PATH.read_text(encoding="utf-8")
     lowered = sql.lower()
     assert "from core.transactions as txn" in lowered
     assert "inner join core.stores as store" in lowered
     assert "data_plane.canonical_lineage" in lowered
     assert "txn.transaction_status = 'succeeded'" in lowered
-    assert "authoritative_order_partitions" in lowered
-    assert "eligible_store_dates" in lowered
-    assert "cross join authoritative_order_partitions" in lowered
-    assert "left join transaction_daily" in lowered
-    assert "coalesce(transaction_daily.daily_net_revenue, 0.0)" in lowered
-    assert "ingestion.quarantined_count = 0" in lowered
-    assert "ingestion.processed_count = ingestion.valid_loaded" in lowered
     assert "prior.date < target.date" in lowered
     assert "prior.date >= target.date - 28" in lowered
     assert "target.date - 1" in lowered
@@ -427,13 +484,33 @@ def test_model_ready_sql_is_real_causal_and_blocks_missing_outcomes() -> None:
     assert "tenant_id" in lowered
     assert "store_id" in lowered
     assert "forecast-training-view-v2" in lowered
+    assert "from external_data.real_estate_transactions as outcome" in lowered
+    assert "external_data.real_estate_ingestion_runs as ingestion" in lowered
+    assert "government-open-data-license-v1" in lowered
+    assert "total_price_twd::double precision as realized_transaction_price" in lowered
+    assert "listing-property-valuation-view-v1" in lowered
+    assert "official_sale_outcome_has_no_marketing_interval" in lowered
     assert "mature_realized_transaction_outcome_relation_missing" in lowered
-    assert "mature_candidate_site_outcome_relation_missing" in lowered
-    assert "point_in_time_geo_outcome_relation_missing" in lowered
     assert "mature_liquidity_event_relation_missing" in lowered
+    assert "create or replace view model_ready.candidate_site_view" in lowered
+    assert "candidate-site-view-v2" in lowered
+    assert "realized_90d_net_revenue" in lowered
+    assert "anchor.feature_cutoff_time - interval '90 days'" in lowered
+    assert "source_txn.event_time < anchor.feature_cutoff_time" in lowered
+    assert "create or replace view model_ready.heatzone_training_view" in lowered
+    assert "heatzone-training-view-v2" in lowered
+    assert "realized_28d_cell_net_revenue" in lowered
+    assert "origin.feature_cutoff_time - interval '90 days'" in lowered
+    assert "source_txn.event_time < origin.feature_cutoff_time" in lowered
+    assert "source_txn.event_time >= origin.feature_cutoff_time" in lowered
+    assert "count(distinct day.partition_date)" in lowered
+    assert "identity_available_at < feature_cutoff_time" in lowered
+    assert "authority.source_kind = 'orders'" in lowered
+    assert "ingestion.reconciled" in lowered
+    assert "ingestion.partition_complete" in lowered
+    assert "from data_plane.place_geography as place" in lowered
+    assert "place.valid_from <= txn.event_time" in lowered
     assert "create or replace view model_ready.valuation_view" not in lowered
-    assert "create or replace view model_ready.candidate_site_view" not in lowered
-    assert "create or replace view model_ready.heatzone_training_view" not in lowered
     assert "create or replace view model_ready.avm_liquidity_training_view" not in lowered
     assert "asset.valuation_runs" not in lowered
     assert "expansion.site_score_runs" not in lowered
@@ -443,18 +520,79 @@ def test_model_ready_sql_is_real_causal_and_blocks_missing_outcomes() -> None:
 
 def test_model_ready_view_installer_preflights_and_applies_one_sql_transaction() -> None:
     client = FakeInstallationClient()
+    client.contracts["model_ready.unrelated_view"] = {
+        "relation_name": "model_ready.unrelated_view",
+        "view_name": "unrelated_view",
+        "view_version": "unrelated-v1",
+        "contract_state": "ACTIVE",
+        "training_enabled": True,
+        "blocked_reason": None,
+        "installer_sha256": "unchanged",
+    }
     installer = ModelReadyViewInstaller(client)
-    assert installer.preflight().ready
+    preflight = installer.preflight()
+    assert preflight.ready
+    inventory = preflight.to_dict()
+    assert inventory["optional_outcome_models"]["sitescore"]["contract_installable"] is True
+    assert inventory["optional_outcome_models"]["heatzone"]["contract_installable"] is True
+    assert (
+        inventory["eligible_row_prerequisite_evidence"]["counts"]["stores_missing_opened_on"] == 30
+    )
     result = installer.install()
     assert result["status"] == "installed"
     assert len(result["sql_sha256"]) == 64
-    assert result["forecast"]["installer_sha256"] == result["sql_sha256"]
-    assert result["optional_outcome_models_trainable"] is False
-    assert client.transactions == 1
-    assert any(
-        "pg_advisory_xact_lock" in statement
-        for statement, _params in client.executions
+    assert set(result["active_contracts"]) == {
+        "model_ready.forecast_training_view",
+        "model_ready.candidate_site_view",
+        "model_ready.heatzone_training_view",
+    }
+    assert all(
+        contract["installer_sha256"] == result["sql_sha256"]
+        for contract in result["active_contracts"].values()
     )
+    assert result["eligible_row_prerequisite_evidence"]["sitescore_anchor_prerequisite_rows"] == 205
+    assert result["minimum_data_checks"] == "trainer"
+    assert client.transactions == 1
+    assert client.contracts["model_ready.unrelated_view"]["installer_sha256"] == "unchanged"
+    assert client.verification_transaction_states
+    assert all(client.verification_transaction_states)
+    assert any("pg_advisory_xact_lock" in statement for statement, _params in client.executions)
+
+
+def test_model_ready_view_preflight_requires_opening_and_geo_columns() -> None:
+    client = FakeInstallationClient()
+    client.columns["core.stores"] = tuple(
+        column for column in client.columns["core.stores"] if column != "opened_on"
+    )
+    client.columns["data_plane.place_geography"] = tuple(
+        column for column in client.columns["data_plane.place_geography"] if column != "h3_res_9"
+    )
+
+    preflight = ModelReadyViewInstaller(client).preflight()
+
+    assert not preflight.ready
+    assert preflight.missing_columns == {
+        "core.stores": ("opened_on",),
+        "data_plane.place_geography": ("h3_res_9",),
+    }
+    assert preflight.prerequisite_counts == {}
+
+
+def test_model_ready_view_install_rejects_non_active_geo_contract() -> None:
+    class InactiveGeoContractClient(FakeInstallationClient):
+        def execute(self, sql: str, params: tuple[Any, ...] = ()) -> None:
+            super().execute(sql, params)
+            if "CREATE OR REPLACE VIEW model_ready.forecast_training_view" in sql:
+                self.contracts["model_ready.heatzone_training_view"]["contract_state"] = "BLOCKED"
+
+    with pytest.raises(
+        RuntimeError,
+        match="model_ready.heatzone_training_view: not ACTIVE",
+    ):
+        client = InactiveGeoContractClient()
+        ModelReadyViewInstaller(client).install()
+    assert client.verification_transaction_states
+    assert all(client.verification_transaction_states)
 
 
 def test_model_ready_view_install_and_inventory_fail_closed(
@@ -486,6 +624,36 @@ def test_model_ready_view_install_and_inventory_fail_closed(
     assert not inventory.ready
     assert inventory.blocked_reason == "MODEL_READY_CONTRACT_REGISTRY_MISSING"
     assert inventory.to_dict()["ready"] is False
+
+
+def test_model_ready_view_install_keeps_forecast_independent_of_official_data() -> None:
+    client = FakeInstallationClient(
+        missing_relations=(
+            "external_data.real_estate_transactions",
+            "external_data.real_estate_ingestion_runs",
+        ),
+    )
+    installer = ModelReadyViewInstaller(client)
+
+    preflight = installer.preflight()
+    assert preflight.ready
+    assert not preflight.official_outcomes_ready
+    assert set(preflight.optional_missing_relations) == {
+        "external_data.real_estate_transactions",
+        "external_data.real_estate_ingestion_runs",
+    }
+
+    result = installer.install()
+
+    assert result["forecast"]["contract_state"] == "ACTIVE"
+    assert result["listing_property_avm"]["contract_state"] == "BLOCKED"
+    assert (
+        result["listing_property_avm"]["blocked_reason"]
+        == "OFFICIAL_REAL_ESTATE_OUTCOME_RELATION_MISSING"
+    )
+    assert not result["optional_outcome_models_trainable"][
+        "listing_property_avm"
+    ]
 
 
 def test_gcs_artifact_store_is_content_addressed_and_verifies_bytes() -> None:
@@ -535,40 +703,79 @@ def test_model_ready_inventory_reports_missing_realized_labels() -> None:
     assert inventory.labeled_row_count == 0
 
 
-def test_model_ready_inventory_reports_outcome_contract_block() -> None:
-    spec = MODEL_SPECS["sitescore"]
-    inventory = PostgresModelReadySource(
-        FakeQueryClient(
-            columns=spec.required_columns,
-            contract_trainable=False,
-            contract_version=spec.expected_view_version,
-            blocked_reason="MATURE_CANDIDATE_SITE_OUTCOME_RELATION_MISSING",
-        )
-    ).inventory(spec)
-    assert not inventory.ready
-    assert not inventory.contract_trainable
-    assert (
-        inventory.blocked_reason
-        == "MATURE_CANDIDATE_SITE_OUTCOME_RELATION_MISSING"
+def test_global_official_outcome_inventory_does_not_require_tenant_column() -> None:
+    spec = MODEL_SPECS["listing_property_avm"]
+    client = FakeQueryClient(
+        columns=spec.required_columns,
+        contract_version=spec.expected_view_version,
     )
-    assert inventory.to_dict()["ready"] is False
+
+    PostgresModelReadySource(client).inventory(spec)
+
+    assert client.stats_sql is not None
+    assert "NULL::text AS tenant_id" in client.stats_sql
 
 
-def test_heatzone_trainer_is_registered_but_point_in_time_data_fails_closed() -> None:
+def test_sitescore_model_spec_binds_real_opened_store_outcome_contract() -> None:
+    spec = MODEL_SPECS["sitescore"]
+    assert spec.expected_view_version == "candidate-site-view-v2"
+    assert spec.label_column == "realized_90d_net_revenue"
+    assert spec.temporal_column == "opened_on"
+    assert spec.label_maturity_column == "label_maturity_time"
+    assert spec.segment_column == "target_format_code"
+    assert {
+        "tenant_id",
+        "store_id",
+        "h3_index",
+        "prior_90d_cell_net_revenue",
+        "prior_90d_cell_transaction_count",
+        "prior_90d_cell_store_count",
+    } <= set(spec.required_columns)
+    assert {"rent_amount", "area_ping", "frontage_m", "rent_per_ping"}.isdisjoint(
+        spec.required_columns
+    )
+    assert spec.output_transform == {
+        "version": "sitescore-90d-net-revenue-to-mature-monthly-v1",
+        "kind": "fixed_horizon_sum_to_monthly_rate",
+        "input_unit": "TWD_NET_REVENUE_90D",
+        "output_unit": "TWD_NET_REVENUE_MONTHLY",
+        "horizon_days": 90,
+        "days_per_month": 30.4375,
+    }
+
+
+def test_heatzone_model_spec_binds_real_point_in_time_cell_outcome_contract() -> None:
     spec = MODEL_SPECS["heatzone"]
-    inventory = PostgresModelReadySource(
-        FakeQueryClient(
-            columns=spec.required_columns,
-            contract_trainable=False,
-            contract_version=spec.expected_view_version,
-            blocked_reason="POINT_IN_TIME_GEO_OUTCOME_RELATION_MISSING",
-        )
-    ).inventory(spec)
-
     assert spec.algorithm == "catboost_regressor"
     assert spec.model_name == "heatzone_priority"
-    assert not inventory.ready
-    assert inventory.blocked_reason == "POINT_IN_TIME_GEO_OUTCOME_RELATION_MISSING"
+    assert spec.expected_view_version == "heatzone-training-view-v2"
+    assert spec.label_column == "realized_28d_cell_net_revenue"
+    assert spec.temporal_column == "origin_date"
+    assert spec.label_maturity_column == "label_maturity_time"
+    assert spec.segment_column == "h3_index"
+    assert {
+        "tenant_id",
+        "h3_index",
+        "prior_28d_cell_net_revenue",
+        "prior_90d_cell_net_revenue",
+        "prior_28d_transaction_count",
+        "prior_90d_transaction_count",
+        "prior_90d_transaction_days",
+    } <= set(spec.required_columns)
+    assert {
+        "poi_count",
+        "competitor_count",
+        "active_listing_count",
+        "median_listing_rent",
+    }.isdisjoint(spec.required_columns)
+    assert spec.output_transform == {
+        "version": "heatzone-28d-revenue-percentile-priority-v1",
+        "kind": "batch_percentile_rank",
+        "input_unit": "TWD_NET_REVENUE_28D",
+        "output_unit": "PRIORITY_SCORE_0_100",
+        "direction": "higher_is_better",
+        "tie_method": "average",
+    }
 
 
 def test_postgres_source_uses_bounded_ordered_query() -> None:
@@ -593,24 +800,18 @@ def test_postgres_source_uses_bounded_ordered_query() -> None:
 
 
 def test_prepare_rows_uses_canonical_lineage_and_never_fills_missing_features() -> None:
-    rows = _raw_forecast_rows(480)
+    rows = _raw_forecast_rows(120)
     rows[0]["rolling_mean_28"] = None
     prepared = prepare_model_rows(MODEL_SPECS["forecastops"], _loaded(rows))
-    assert prepared
-    assert all(row.mapping["features"]["rolling_mean_28"] is not None for row in prepared)
+    assert len(prepared) == 119
     first = prepared[0].mapping
-    assert first["source_snapshot_ids"][0] == (
-        "postgres:model_ready.forecast_training_view:sha256:" + "a" * 64
-    )
-    assert all(
-        source_id.startswith("snapshot-")
-        for source_id in first["source_snapshot_ids"][1:]
-    )
-    assert set(first["features"]) == set(
-        MODEL_SPECS["forecastops"].feature_columns
-    )
+    assert first["source_snapshot_ids"] == [
+        "postgres:model_ready.forecast_training_view:sha256:" + "a" * 64,
+        "snapshot-0001",
+    ]
+    assert set(first["features"]) == set(MODEL_SPECS["forecastops"].feature_columns)
     assert "daily_net_revenue" not in first["features"]
-    assert first["labels"][MODEL_SPECS["forecastops"].label_name] > 0
+    assert first["labels"]["daily_net_revenue"] > 0
 
 
 def test_prepare_rows_rejects_mock_fixture_or_seed_lineage() -> None:
@@ -622,8 +823,7 @@ def test_prepare_rows_rejects_mock_fixture_or_seed_lineage() -> None:
 
 def test_prepare_rows_requires_source_lineage_and_strict_causal_time() -> None:
     rows = _raw_forecast_rows(120)
-    for row in rows:
-        row["source_snapshot_ids"] = []
+    rows[0]["source_snapshot_ids"] = []
     with pytest.raises(ModelReadyDataError, match="source snapshot lineage"):
         prepare_model_rows(MODEL_SPECS["forecastops"], _loaded(rows))
 
@@ -633,31 +833,43 @@ def test_prepare_rows_requires_source_lineage_and_strict_causal_time() -> None:
         prepare_model_rows(MODEL_SPECS["forecastops"], _loaded(rows))
 
 
+def test_prepare_rows_allows_labels_to_mature_after_prediction_origin() -> None:
+    rows = _raw_forecast_rows(120)
+    maturity = datetime(2026, 7, 30, tzinfo=UTC)
+    for row in rows:
+        row["label_maturity_time"] = maturity
+
+    prepared = prepare_model_rows(MODEL_SPECS["forecastops"], _loaded(rows))
+
+    assert (
+        prepared[0].mapping["feature_snapshot_time"] < prepared[0].mapping["prediction_origin_time"]
+    )
+    assert (
+        prepared[0].mapping["prediction_origin_time"] < prepared[0].mapping["label_maturity_time"]
+    )
+    assert prepared[0].mapping["label_maturity_time"] <= prepared[0].mapping["training_as_of_time"]
+
+
+def test_prepare_rows_rejects_labels_not_mature_at_training_as_of() -> None:
+    rows = _raw_forecast_rows(120)
+    for row in rows:
+        row["label_maturity_time"] = datetime(2026, 8, 2, tzinfo=UTC)
+
+    with pytest.raises(ModelReadyDataError, match="training as_of_time"):
+        prepare_model_rows(MODEL_SPECS["forecastops"], _loaded(rows))
+
+
 def test_temporal_validation_uses_future_holdout_and_segment_gates() -> None:
     prepared = prepare_model_rows(
         MODEL_SPECS["forecastops"],
-        _loaded(_raw_forecast_rows(480)),
+        _loaded(_raw_forecast_rows(120)),
     )
-    training, holdout = _temporal_split(
-        prepared,
-        holdout_fraction=0.20,
-        purge_label_overlap=True,
-    )
-    assert max(row.temporal_value for row in training) < min(
-        row.temporal_value for row in holdout
-    )
-    assert max(
-        row.mapping["label_maturity_time"] for row in training
-    ) < min(row.temporal_value for row in holdout)
+    training, holdout = _temporal_split(prepared, holdout_fraction=0.20)
+    assert max(row.temporal_value for row in training) < min(row.temporal_value for row in holdout)
 
     class PerfectEstimator:
         def predict(self, rows: list[dict[str, Any]]) -> tuple[float, ...]:
-            return tuple(
-                float(row["revenue_lag_1"])
-                + 5.0
-                + 5.0 * (int(row["horizon_weeks"]) * 7 - 1)
-                for row in rows
-            )
+            return tuple(float(row["revenue_lag_1"]) + 5.0 for row in rows)
 
         def predict_interval(
             self,
@@ -690,38 +902,6 @@ def test_temporal_validation_uses_future_holdout_and_segment_gates() -> None:
     }
 
 
-def test_forecast_temporal_split_purges_all_24_week_label_overlap() -> None:
-    prepared = prepare_model_rows(
-        MODEL_SPECS["forecastops"],
-        _loaded(_raw_forecast_rows(480)),
-    )
-    unpurged_training, holdout = _temporal_split(
-        prepared,
-        holdout_fraction=0.20,
-    )
-    purged_training, purged_holdout = _temporal_split(
-        prepared,
-        holdout_fraction=0.20,
-        purge_label_overlap=True,
-    )
-    cutoff = min(row.temporal_value for row in purged_holdout)
-
-    assert purged_holdout == holdout
-    assert len(purged_training) < len(unpurged_training)
-    assert all(
-        row.mapping["label_maturity_time"] < cutoff
-        for row in purged_training
-    )
-    assert any(
-        row.mapping["features"]["horizon_weeks"] == 24
-        for row in purged_training
-    )
-    assert any(
-        row.mapping["label_maturity_time"] >= cutoff
-        for row in unpurged_training
-    )
-
-
 def test_forecast_binding_executes_actual_lightgbm_temporal_training() -> None:
     pytest.importorskip("lightgbm")
     spec = replace(
@@ -729,23 +909,18 @@ def test_forecast_binding_executes_actual_lightgbm_temporal_training() -> None:
         max_normalized_mae=2.0,
         min_p80_coverage=0.0,
     )
-    prepared = prepare_model_rows(spec, _loaded(_raw_forecast_rows(480)))
-    training, holdout = _temporal_split(
-        prepared,
-        holdout_fraction=0.20,
-        purge_label_overlap=True,
-    )
+    prepared = prepare_model_rows(spec, _loaded(_raw_forecast_rows(120)))
+    training, holdout = _temporal_split(prepared, holdout_fraction=0.20)
     report = _validate_regression_temporally(spec, training, holdout)
-    assert report.algorithm == spec.algorithm
-    assert report.training_rows == len(training)
-    assert report.holdout_rows == len(holdout)
+    assert report.algorithm == "lightgbm_quantile"
+    assert report.training_rows + report.holdout_rows == 120
     assert report.passed
     assert np_is_finite(report.metrics["normalized_mae"])
 
 
 def test_segment_validation_fails_when_holdout_has_no_sufficient_segment() -> None:
-    spec = replace(MODEL_SPECS["forecastops"], minimum_segment_rows=10_000)
-    prepared = prepare_model_rows(spec, _loaded(_raw_forecast_rows(480)))
+    spec = replace(MODEL_SPECS["forecastops"], minimum_segment_rows=100)
+    prepared = prepare_model_rows(spec, _loaded(_raw_forecast_rows(120)))
     training, holdout = _temporal_split(prepared, holdout_fraction=0.20)
 
     class Estimator:
@@ -801,6 +976,85 @@ def test_promotion_approval_is_version_bound_and_prohibits_self_review() -> None
             version="2026.07.24.1",
             requested_by="ml-training-operator",
         )
+
+
+def test_listing_property_avm_production_promotion_is_explicitly_blocked() -> None:
+    application = BoundedModelTrainingRelease.__new__(
+        BoundedModelTrainingRelease
+    )
+    spec = MODEL_SPECS["listing_property_avm"]
+
+    assert not spec.production_release_enabled
+    assert (
+        spec.production_block_reason
+        == "NO_PRODUCTION_RUNTIME_CONSUMER_OR_LIVE_INFERENCE_SMOKE"
+    )
+    with pytest.raises(
+        ModelTrainingConfigurationError,
+        match="NO_PRODUCTION_RUNTIME_CONSUMER_OR_LIVE_INFERENCE_SMOKE",
+    ):
+        application.promote(
+            spec=spec,
+            version="2026.07.26.1",
+            approval_payload=_approval(
+                model_name="listing_property_avm",
+                model_version="2026.07.26.1",
+                release_type="full",
+            ),
+            rollback_target="2026.07.25.1",
+        )
+
+
+@pytest.mark.parametrize("release_type", ("full", "canary"))
+def test_listing_property_avm_production_cli_fails_closed(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+    release_type: str,
+) -> None:
+    _production_env(monkeypatch)
+    approval_path = tmp_path / f"{release_type}-approval.json"
+    approval_path.write_text(
+        json.dumps(
+            _approval(
+                model_name="listing_property_avm",
+                model_version="2026.07.26.1",
+                release_type=release_type,
+            )
+        ),
+        encoding="utf-8",
+    )
+    application = BoundedModelTrainingRelease.__new__(
+        BoundedModelTrainingRelease
+    )
+    resources = SimpleNamespace(
+        application=application,
+        close=lambda: None,
+    )
+
+    exit_code = release_main(
+        [
+            "promote",
+            "--model",
+            "listing_property_avm",
+            "--version",
+            "2026.07.26.1",
+            "--approval-file",
+            str(approval_path),
+            "--rollback-target",
+            "2026.07.25.1",
+        ],
+        resource_builder=lambda _settings: resources,
+    )
+
+    assert exit_code == 2
+    failure = json.loads(capsys.readouterr().err)
+    assert failure["status"] == "failed-closed"
+    assert "production release is BLOCKED" in failure["message"]
+    assert (
+        "NO_PRODUCTION_RUNTIME_CONSUMER_OR_LIVE_INFERENCE_SMOKE"
+        in failure["message"]
+    )
 
 
 def test_documented_package_contains_no_embedded_credentials() -> None:

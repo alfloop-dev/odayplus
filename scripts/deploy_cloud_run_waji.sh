@@ -32,6 +32,7 @@ done
 : "${ODP_SCHEDULER_TIME_ZONE:?Error: ODP_SCHEDULER_TIME_ZONE is required.}"
 : "${ODP_FORECAST_ENGINE:?Error: ODP_FORECAST_ENGINE is required for live deployments.}"
 : "${ODP_FORECAST_MODEL:?Error: ODP_FORECAST_MODEL is required for live deployments.}"
+: "${ODP_EXTERNAL_PROVIDER_PROBE_TIMEOUT_SECONDS:?Error: ODP_EXTERNAL_PROVIDER_PROBE_TIMEOUT_SECONDS is required for live deployments.}"
 
 case "${ODP_FORECAST_ENGINE}:${ODP_FORECAST_MODEL}" in
   statsforecast:seasonal_naive|statsforecast:auto_arima|statsforecast:auto_ets)
@@ -50,6 +51,7 @@ esac
 PREFLIGHT_REPORT="${PREFLIGHT_REPORT:-.odp_data/deployment/cloud-run-preflight.json}"
 SMOKE_REPORT="${SMOKE_REPORT:-.odp_data/deployment/cloud-run-smoke.json}"
 MIGRATION_COMPAT_REPORT="${MIGRATION_COMPAT_REPORT:-.odp_data/deployment/cloud-run-migration-compatibility.json}"
+LIVE_E2E_REPORT="${LIVE_E2E_REPORT:-.odp_data/deployment/live-e2e-gate.json}"
 JOB_REPORT_DIR="${JOB_REPORT_DIR:-.odp_data/deployment/cloud-run-jobs}"
 source scripts/deployment/cloud_run_release_traffic.sh
 
@@ -157,7 +159,7 @@ import json
 import os
 import sys
 
-keys = (
+keys = [
     "ODAY_RELEASE_SHA",
     "ODP_DEPLOY_ENV",
     "ODP_REQUIRE_LIVE_DATA",
@@ -166,24 +168,42 @@ keys = (
     "ODP_FORECAST_ENGINE",
     "ODP_FORECAST_MODEL",
     "ODP_EXTERNAL_PROVIDER_MODE",
+    "ODP_EXTERNAL_PROVIDER_PROBE_TIMEOUT_SECONDS",
     "ODP_PERSISTENCE",
     "ODP_OBJECT_STORE",
     "ODP_SNAPSHOT_BUCKET",
     "MLFLOW_TRACKING_URI",
-    "ODP_LISTING_PROVIDER_FEED_URL",
-    "ODP_POI_PROVIDER_URL",
-    "ODP_GEOCODE_PROVIDER_URL",
-    "ODP_ADMIN_BOUNDARY_PROVIDER_URL",
-    "ODP_LISTING_PROVIDER_AUTH_STATUS",
-    "ODP_POI_PROVIDER_AUTH_STATUS",
-    "ODP_GEOCODE_PROVIDER_AUTH_STATUS",
-    "ODP_ADMIN_BOUNDARY_PROVIDER_AUTH_STATUS",
     "ODP_PRODUCTION_PROVIDER_IDS",
     "ODP_COMPETITOR_MANUAL_SOURCE_STATUS",
     "ODP_AUTH_ISSUER",
     "ODP_AUTH_AUDIENCES",
     "ODP_AUTH_JWKS_URI",
-)
+]
+provider_config = {
+    "listing.partner_feed": (
+        "ODP_LISTING_PROVIDER_FEED_URL",
+        "ODP_LISTING_PROVIDER_AUTH_STATUS",
+    ),
+    "poi.commercial_api": (
+        "ODP_POI_PROVIDER_URL",
+        "ODP_POI_PROVIDER_AUTH_STATUS",
+    ),
+    "geocode.primary_api": (
+        "ODP_GEOCODE_PROVIDER_URL",
+        "ODP_GEOCODE_PROVIDER_AUTH_STATUS",
+    ),
+    "admin_boundary.official_dataset": (
+        "ODP_ADMIN_BOUNDARY_PROVIDER_URL",
+        "ODP_ADMIN_BOUNDARY_PROVIDER_AUTH_STATUS",
+    ),
+}
+selected = {
+    item.strip()
+    for item in os.environ["ODP_PRODUCTION_PROVIDER_IDS"].split(",")
+    if item.strip()
+}
+for provider_id in sorted(selected):
+    keys.extend(provider_config.get(provider_id, ()))
 payload = {key: os.environ[key] for key in keys}
 payload["ODAY_ENV"] = os.environ["ODP_DEPLOY_ENV"]
 payload["ODP_ENV"] = os.environ["ODP_DEPLOY_ENV"]
@@ -220,11 +240,24 @@ build_publish_sign "worker" "${WORKER_IMAGE}" "infra/docker/worker.Dockerfile"
 build_publish_sign "scheduler" "${SCHEDULER_IMAGE}" "infra/docker/scheduler.Dockerfile"
 
 API_SECRET_BINDINGS="ODAY_DATABASE_URL=${ODAY_DATABASE_URL_SECRET}"
-API_SECRET_BINDINGS+=",ODP_LISTING_PROVIDER_API_KEY=${ODP_LISTING_PROVIDER_API_KEY_SECRET}"
-API_SECRET_BINDINGS+=",ODP_POI_PROVIDER_API_KEY=${ODP_POI_PROVIDER_API_KEY_SECRET}"
-API_SECRET_BINDINGS+=",ODP_GEOCODE_PROVIDER_API_KEY=${ODP_GEOCODE_PROVIDER_API_KEY_SECRET}"
-API_SECRET_BINDINGS+=",ODP_ADMIN_BOUNDARY_PROVIDER_TOKEN=${ODP_ADMIN_BOUNDARY_PROVIDER_TOKEN_SECRET}"
-API_SECRET_BINDINGS+=",ODP_AUTH_PRINCIPAL_MAP=${ODP_AUTH_PRINCIPAL_MAP_SECRET}"
+IFS=',' read -ra SELECTED_PROVIDER_IDS <<<"${ODP_PRODUCTION_PROVIDER_IDS}"
+for provider_id in "${SELECTED_PROVIDER_IDS[@]}"; do
+  provider_id="${provider_id//[[:space:]]/}"
+  case "${provider_id}" in
+    listing.partner_feed)
+      API_SECRET_BINDINGS+=",ODP_LISTING_PROVIDER_API_KEY=${ODP_LISTING_PROVIDER_API_KEY_SECRET}"
+      ;;
+    poi.commercial_api)
+      API_SECRET_BINDINGS+=",ODP_POI_PROVIDER_API_KEY=${ODP_POI_PROVIDER_API_KEY_SECRET}"
+      ;;
+    geocode.primary_api)
+      API_SECRET_BINDINGS+=",ODP_GEOCODE_PROVIDER_API_KEY=${ODP_GEOCODE_PROVIDER_API_KEY_SECRET}"
+      ;;
+    admin_boundary.official_dataset)
+      API_SECRET_BINDINGS+=",ODP_ADMIN_BOUNDARY_PROVIDER_TOKEN=${ODP_ADMIN_BOUNDARY_PROVIDER_TOKEN_SECRET}"
+      ;;
+  esac
+done
 WEB_SECRET_BINDINGS="ODP_WEB_OIDC_CLIENT_SECRET=${ODP_WEB_OIDC_CLIENT_SECRET_SECRET}"
 WEB_SECRET_BINDINGS+=",ODP_WEB_SESSION_SECRET=${ODP_WEB_SESSION_SECRET_SECRET}"
 
@@ -480,17 +513,6 @@ gcloud run services describe "${WEB_SERVICE}" \
 WEB_REVISION="$(tagged_revision "${WEB_CANDIDATE_DESCRIPTION}" "${WEB_REVISION_TAG}")"
 WEB_URL="$(tagged_revision_url "${WEB_CANDIDATE_DESCRIPTION}" "${WEB_REVISION_TAG}")"
 
-if [ -z "${ODP_OPERATOR_SMOKE_BEARER_TOKEN:-}" ]; then
-  smoke_audience="${ODP_AUTH_AUDIENCES%%,*}"
-  ODP_OPERATOR_SMOKE_BEARER_TOKEN="$(gcloud auth print-identity-token \
-    --audiences="${smoke_audience}" \
-    --include-email)"
-  export ODP_OPERATOR_SMOKE_BEARER_TOKEN
-  if [ "${GITHUB_ACTIONS:-}" = "true" ]; then
-    echo "::add-mask::${ODP_OPERATOR_SMOKE_BEARER_TOKEN}"
-  fi
-fi
-
 echo "Running release-aware smoke checks against tagged candidate revisions..."
 python3 scripts/deployment/validate_cloud_run_live_deployment.py smoke \
   --api-url "${API_URL}" \
@@ -510,11 +532,57 @@ upsert_scheduler_trigger \
   "${ODP_WORKER_CRON}"
 promote_service_traffic "${API_SERVICE}" "${API_REVISION}"
 promote_service_traffic "${WEB_SERVICE}" "${WEB_REVISION}"
+
+# ODP-LIVE-E2E-001: the release is serving but is not committed yet. The live
+# E2E gate drives the promoted release the way an operator would -- authenticate,
+# read the operator bootstrap, enqueue durable work, watch the worker take it to
+# a terminal state, read the durable audit receipt back -- and rejects any
+# fixture/mock surrogate or missing MLflow production alias. Because this runs
+# before DEPLOYMENT_COMMITTED, a failure falls through the EXIT trap and rolls
+# traffic and the scheduler triggers back to the previous release.
+echo "Running fail-closed live E2E acceptance gate against the promoted release..."
+# Resolve the served origins into variables first. Inside the argv of the gate
+# invocation a failing command substitution would expand to an empty string
+# without tripping `set -e`, handing the gate a blank URL.
+LIVE_E2E_API_URL="$(service_snapshot_url "${API_CANDIDATE_DESCRIPTION}")"
+LIVE_E2E_WEB_URL="$(service_snapshot_url "${WEB_CANDIDATE_DESCRIPTION}")"
+if [[ -z "${LIVE_E2E_API_URL}" || -z "${LIVE_E2E_WEB_URL}" ]]; then
+  echo "Live E2E gate cannot run: served origin lookup returned empty" \
+    "(api='${LIVE_E2E_API_URL}' web='${LIVE_E2E_WEB_URL}')." >&2
+  exit 1
+fi
+# `deploymentMode` is what the *runtime* reports back from
+# `apps/api/oday_api/runtime_mode.deployment_mode()`, which reads the
+# ODP_DEPLOY_ENV/ODAY_ENV/ODP_ENV triple this script writes into the API env
+# payload above. So the expectation must be derived from that same value, not
+# from a hardcoded "production": a dev deploy legitimately reports
+# `deploymentMode=dev` while still being a live, production-mode runtime
+# (ODP_PRODUCT_MODE/ODP_REQUIRE_LIVE_DATA carry that, and the gate asserts them
+# separately). Hardcoding "production" made every dev deploy promote and then
+# roll straight back. The var override stays for environments whose runtime env
+# name differs from the deploy env name.
+LIVE_E2E_DEPLOYMENT_MODE="${ODP_LIVE_E2E_DEPLOYMENT_MODE:-${ODP_DEPLOY_ENV}}"
+if [[ -z "${LIVE_E2E_DEPLOYMENT_MODE}" ]]; then
+  echo "Live E2E gate cannot run: neither ODP_LIVE_E2E_DEPLOYMENT_MODE nor" \
+    "ODP_DEPLOY_ENV is set, so the expected deploymentMode is unknown." >&2
+  exit 1
+fi
+python3 scripts/e2e/check_live_e2e_gate.py \
+  --api-url "${LIVE_E2E_API_URL}" \
+  --web-url "${LIVE_E2E_WEB_URL}" \
+  --expected-sha "${ODAY_RELEASE_SHA}" \
+  --expected-deployment "${LIVE_E2E_DEPLOYMENT_MODE}" \
+  --worker-job "${WORKER_CANDIDATE_JOB}" \
+  --gcp-region "${GCP_REGION}" \
+  --gcp-project "${GCP_PROJECT}" \
+  --worker-deadline-seconds "${ODP_LIVE_E2E_WORKER_DEADLINE_SECONDS:-600}" \
+  --output "${LIVE_E2E_REPORT}"
+
 DEPLOYMENT_COMMITTED=true
 
 echo "=== Cloud Run deployment passed all live-data gates ==="
-echo "API Endpoint: $(service_snapshot_url "${API_CANDIDATE_DESCRIPTION}")"
-echo "Web Endpoint: $(service_snapshot_url "${WEB_CANDIDATE_DESCRIPTION}")"
+echo "API Endpoint: ${LIVE_E2E_API_URL}"
+echo "Web Endpoint: ${LIVE_E2E_WEB_URL}"
 echo "Migration Job: ${MIGRATION_CANDIDATE_JOB}"
 echo "Worker Job: ${WORKER_CANDIDATE_JOB} (${WORKER_SCHEDULE_NAME})"
 echo "Scheduler Job: ${SCHEDULER_CANDIDATE_JOB} (${SCHEDULER_SCHEDULE_NAME})"

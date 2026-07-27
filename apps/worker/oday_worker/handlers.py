@@ -90,33 +90,48 @@ def handle_forecast(job: JobRecord, persistence: PersistenceBundle) -> None:
 
 
 def handle_external_fetch(job: JobRecord, persistence: PersistenceBundle) -> None:
-    """Run a scheduled external-source fetch and advance its watermark."""
+    """Run a scheduled external-source fetch and persist its ingestion run.
+
+    This goes through :class:`ExternalIngestionService` rather than driving
+    :class:`ExternalFetchScheduler` directly. The scheduler alone only writes
+    ``external_data.fetch_runs`` (watermark/idempotency state); the queryable
+    :class:`IngestionRunRecord` that ``GET /api/v1/external-data/ingestion-runs``
+    serves lives in ``persistence.ingestion_run_store`` and is written only by
+    the service. Driving the scheduler here meant a deployment whose ingestion
+    ran entirely through the scheduled worker path reported an empty ingestion
+    history unless somebody had manually POSTed an ingestion run.
+    """
     from datetime import timedelta
 
-    from modules.external_data.workers.scheduled_fetch import (
-        ExternalFetchJobSpec,
-        ExternalFetchScheduler,
+    from modules.external_data.application.ingestion_service import (
+        ExternalIngestionService,
     )
+    from modules.external_data.workers.scheduled_fetch import ExternalFetchJobSpec
 
     provider_id = job.payload.get("provider_id", "listing.partner_feed")
     schedule_id = job.payload.get("schedule_id", "hourly-listing")
     freshness_sla_hours = job.payload.get("freshness_sla_hours", 6)
 
-    scheduler = ExternalFetchScheduler(
+    service = ExternalIngestionService(
+        store=persistence.ingestion_run_store,
         state_store=persistence.external_fetch_state_store,
+        audit_log=persistence.audit_log,
     )
     spec = ExternalFetchJobSpec(
         provider_id=provider_id,
         schedule_id=schedule_id,
         freshness_sla=timedelta(hours=freshness_sla_hours),
     )
-    run = scheduler.run_once(
+    outcome = service.run_scheduled(
         spec,
         scheduled_at=datetime.now(UTC),
         correlation_id=job.correlation_id,
     )
-    if run.status == "FAILED":
-        raise RuntimeError(f"External fetch failed: {run.message}")
+    if outcome.record.status == "FAILED":
+        raise RuntimeError(
+            f"External fetch failed for {provider_id}: "
+            f"{outcome.record.message or 'no provider message'}"
+        )
 
 
 def build_default_registry() -> JobRegistry:
