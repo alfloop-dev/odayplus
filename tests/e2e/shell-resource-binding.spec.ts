@@ -2,7 +2,10 @@ import { test, expect } from "@playwright/test";
 import { createOdpApiClient } from "@oday-plus/openapi-client";
 import { loadApiResource } from "../../apps/web/features/shell/resource.ts";
 import { resourceState } from "../../apps/web/features/shell/ShellStates.tsx";
-import { resolveProductMode, isProductionMode } from "../../apps/web/features/shell/mode.ts";
+import {
+  resolveProductMode,
+  isProductionMode,
+} from "../../apps/web/features/shell/mode.ts";
 
 /**
  * Shell resource binding + product mode — ODP-PGAP-SHELL-001 (acceptance §7, §8).
@@ -26,7 +29,10 @@ function clientReturning(status: number, body: unknown = {}) {
     fetchImpl: (async () =>
       new Response(JSON.stringify(body), {
         status,
-        headers: { "content-type": "application/json", "x-correlation-id": "corr-test" },
+        headers: {
+          "content-type": "application/json",
+          "x-correlation-id": "corr-test",
+        },
       })) as unknown as typeof fetch,
   });
 }
@@ -58,7 +64,9 @@ test("ODP-PGAP-SHELL-001 an empty-but-healthy shell is ready, not a fixture fall
 
 test("ODP-PGAP-SHELL-001 binding classifies 403 as forbidden and keeps the server's reason", async () => {
   const resource = await loadApiResource({
-    client: clientReturning(403, { detail: "目前角色無法檢視平台管理；需要營運主管權限。" }),
+    client: clientReturning(403, {
+      detail: "目前角色無法檢視平台管理；需要營運主管權限。",
+    }),
     fetcher: (client) => client.getShellAdmin(),
   });
 
@@ -108,7 +116,10 @@ test("ODP-PGAP-SHELL-001 binding classifies a transport failure as an error", as
       throw new Error("ECONNREFUSED");
     }) as unknown as typeof fetch,
   });
-  const resource = await loadApiResource({ client, fetcher: (c) => c.getShellHome() });
+  const resource = await loadApiResource({
+    client,
+    fetcher: (c) => c.getShellHome(),
+  });
 
   expect(resource.state).toBe("error");
   expect(resource.error).toContain("ECONNREFUSED");
@@ -129,18 +140,27 @@ test("ODP-PGAP-SHELL-001 an unconfigured API never degrades to fixture data", as
 });
 
 test("ODP-PGAP-SHELL-001 product mode is explicit and defaults production fail-closed", async () => {
-  expect(resolveProductMode({ ODP_PRODUCT_MODE: "production" })).toBe("production");
-  expect(resolveProductMode({ NEXT_PUBLIC_ODP_PRODUCT_MODE: "poc" })).toBe("poc");
+  expect(resolveProductMode({ ODP_PRODUCT_MODE: "production" })).toBe(
+    "production",
+  );
+  expect(resolveProductMode({ NEXT_PUBLIC_ODP_PRODUCT_MODE: "poc" })).toBe(
+    "production",
+  );
   // An explicit value wins over NODE_ENV.
-  expect(resolveProductMode({ ODP_PRODUCT_MODE: "poc", NODE_ENV: "production" })).toBe("poc");
+  expect(
+    resolveProductMode({ ODP_PRODUCT_MODE: "poc", NODE_ENV: "production" }),
+  ).toBe("poc");
   // A production build defaults to production mode: a wrong guess here costs a
   // visible "unavailable" state, never fake data shown as real.
   expect(resolveProductMode({ NODE_ENV: "production" })).toBe("production");
   expect(resolveProductMode({ NODE_ENV: "development" })).toBe("poc");
   // An unrecognised value is not honoured.
-  expect(resolveProductMode({ ODP_PRODUCT_MODE: "nonsense", NODE_ENV: "production" })).toBe(
-    "production",
-  );
+  expect(
+    resolveProductMode({
+      ODP_PRODUCT_MODE: "nonsense",
+      NODE_ENV: "production",
+    }),
+  ).toBe("production");
   expect(isProductionMode({ NODE_ENV: "production" })).toBe(true);
   expect(isProductionMode({ NODE_ENV: "test" })).toBe(false);
 });

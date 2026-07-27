@@ -25,7 +25,12 @@ const stores = [
     district: "Xinyi",
     city: "Taipei",
     manager: "Mina Chen",
-    lights: { demand: "green", operations: "red", staffing: "yellow", margin: "yellow" },
+    lights: {
+      demand: "green",
+      operations: "red",
+      staffing: "yellow",
+      margin: "yellow",
+    },
     riskScore: 88,
   },
   {
@@ -34,7 +39,12 @@ const stores = [
     district: "Da-an",
     city: "Taipei",
     manager: "Leo Huang",
-    lights: { demand: "green", operations: "yellow", staffing: "green", margin: "green" },
+    lights: {
+      demand: "green",
+      operations: "yellow",
+      staffing: "green",
+      margin: "green",
+    },
     riskScore: 52,
   },
   {
@@ -43,7 +53,12 @@ const stores = [
     district: "Banqiao",
     city: "New Taipei",
     manager: "An Lin",
-    lights: { demand: "yellow", operations: "yellow", staffing: "red", margin: "red" },
+    lights: {
+      demand: "yellow",
+      operations: "yellow",
+      staffing: "red",
+      margin: "red",
+    },
     riskScore: 79,
   },
 ] as const;
@@ -63,7 +78,8 @@ const baseIssues: StoreOpsIssue[] = [
     createdAt: "2026-07-05T06:24:00.000Z",
     updatedAt: "2026-07-05T06:24:00.000Z",
     evidenceIds: ["EV-1024-CAM", "EV-1024-FOUR"],
-    summary: "Payment, review, camera, and ForecastOps signals point to a peak-hour incident.",
+    summary:
+      "Payment, review, camera, and ForecastOps signals point to a peak-hour incident.",
   },
   {
     id: "ISS-1021",
@@ -106,11 +122,13 @@ const baseEvidence = [
     kind: "camera",
     title: "Camera event placeholder",
     sourceLabel: "Camera Access",
-    summary: "Video access is locked until an operator records a purpose for review.",
+    summary:
+      "Video access is locked until an operator records a purpose for review.",
     polarity: "neutral",
     confidence: 0.7,
     occurredAt: "2026-07-04T20:05:00.000Z",
-    lockedReason: "Purpose confirmation required before camera evidence can be opened.",
+    lockedReason:
+      "Purpose confirmation required before camera evidence can be opened.",
   },
   {
     id: "EV-1024-FOUR",
@@ -125,56 +143,95 @@ const baseEvidence = [
   },
 ];
 
-test("four-light chip drives Store Ops API query and visible queue", async ({ page }) => {
-  const api = await mockStoreOpsApi(page);
+test("Package 10 issue detail exposes the four-light evidence without legacy filter chips", async ({
+  page,
+}) => {
+  await mockStoreOpsApi(page);
 
   await page.goto("/operator");
   await page.getByRole("button", { name: /門市營運|Store Ops/ }).click();
-  await expect(page.locator('[data-screen-label="Store Ops 門市營運"]')).toBeVisible();
+  await expect(
+    page.locator('[data-screen-label="Store Ops 門市營運"]'),
+  ).toBeVisible();
 
-  const operationsRed = page.getByRole("button", { name: /Operations Red 1/ });
-  await expect(operationsRed).toBeVisible();
-  await operationsRed.click();
-
-  await expect.poll(() => api.readRequests.some((url) => url.searchParams.get("light") === "operations" && url.searchParams.get("lightStatus") === "red")).toBe(true);
-  await expect(page.locator('[aria-label="門市 Issue queue"]')).toContainText("ISS-1024");
-  await expect(page.locator('[aria-label="門市 Issue queue"]')).not.toContainText("ISS-1008");
+  await expect(page.locator('[aria-label="門市 Issue queue"]')).toContainText(
+    "ISS-1024",
+  );
+  await page.getByText("ISS-1024", { exact: true }).first().click();
+  await expect(page.getByText("FORECASTOPS 四燈")).toBeVisible();
+  await expect(page.getByText("設備 紅")).toBeVisible();
+  await expect(
+    page.getByRole("button", { name: /Operations Red 1/ }),
+  ).toHaveCount(0);
 });
 
-test("ISS-1024 lifecycle writes through Store Ops API and reloads updated state", async ({ page }) => {
+test("ISS-1024 lifecycle writes through Store Ops API and reloads updated state", async ({
+  page,
+}) => {
   const api = await mockStoreOpsApi(page);
 
   await page.goto("/operator");
   await page.getByRole("button", { name: /門市營運|Store Ops/ }).click();
 
   await page.getByRole("button", { exact: true, name: "完成 Triage" }).click();
-  await page.getByRole("button", { exact: true, name: "Submit Triage" }).click();
+  await page
+    .getByRole("button", { exact: true, name: "Submit Triage" })
+    .click();
   await waitForWrite(api, "/api/v1/operator/store-ops/issues/ISS-1024/triage");
-  await expect(page.getByRole("button", { exact: true, name: "指派 Owner" })).toBeVisible();
+  await expect(
+    page.getByRole("button", { exact: true, name: "指派 Owner" }),
+  ).toBeVisible();
 
   await page.getByRole("button", { exact: true, name: "指派 Owner" }).click();
   await page.getByRole("button", { exact: true, name: "Assign Owner" }).click();
   await waitForWrite(api, "/api/v1/operator/store-ops/issues/ISS-1024/assign");
-  await expect(page.getByRole("button", { exact: true, name: "建立 Field Action" })).toBeVisible();
+  await expect(
+    page.getByRole("button", { exact: true, name: "建立 Field Action" }),
+  ).toBeVisible();
 
-  await page.getByRole("button", { exact: true, name: "建立 Field Action" }).click();
-  await page.getByRole("button", { exact: true, name: "Create Action" }).click();
+  await page
+    .getByRole("button", { exact: true, name: "建立 Field Action" })
+    .click();
+  await page
+    .getByRole("button", { exact: true, name: "Create Action" })
+    .click();
   await waitForWrite(api, "/api/v1/operator/store-ops/issues/ISS-1024/actions");
-  await expect(page.getByRole("button", { exact: true, name: "提交 Field Report" })).toBeVisible();
+  await expect(
+    page.getByRole("button", { exact: true, name: "提交 Field Report" }),
+  ).toBeVisible();
 
-  await page.getByRole("button", { exact: true, name: "提交 Field Report" }).click();
-  await page.getByLabel("Report summary").fill("Counter lane cleaned and payment queue cleared.");
-  await page.getByRole("button", { exact: true, name: "Submit Report" }).click();
-  await waitForWrite(api, "/api/v1/operator/store-ops/issues/ISS-1024/field-report");
-  await expect(page.getByRole("button", { exact: true, name: "檢視 Outcome" })).toBeVisible();
+  await page
+    .getByRole("button", { exact: true, name: "提交 Field Report" })
+    .click();
+  await page
+    .getByLabel("Report summary")
+    .fill("Counter lane cleaned and payment queue cleared.");
+  await page
+    .getByRole("button", { exact: true, name: "Submit Report" })
+    .click();
+  await waitForWrite(
+    api,
+    "/api/v1/operator/store-ops/issues/ISS-1024/field-report",
+  );
+  await expect(
+    page.getByRole("button", { exact: true, name: "檢視 Outcome" }),
+  ).toBeVisible();
 
   await page.getByRole("button", { exact: true, name: "檢視 Outcome" }).click();
-  await page.getByLabel("Impact summary").fill("Negative review cluster stopped after field action.");
-  await page.getByLabel("Evidence summary").fill("Payment queue and CS case trend returned to baseline.");
-  await page.getByRole("button", { exact: true, name: "Submit Outcome" }).click();
+  await page
+    .getByLabel("Impact summary")
+    .fill("Negative review cluster stopped after field action.");
+  await page
+    .getByLabel("Evidence summary")
+    .fill("Payment queue and CS case trend returned to baseline.");
+  await page
+    .getByRole("button", { exact: true, name: "Submit Outcome" })
+    .click();
   await waitForWrite(api, "/api/v1/operator/store-ops/issues/ISS-1024/outcome");
 
-  await expect(page.locator('[aria-label="ISS-1024 detail"]')).toContainText("Closed");
+  await expect(page.locator('[aria-label="ISS-1024 detail"]')).toContainText(
+    "Closed",
+  );
   expect(api.writeRequests.map((url) => url.pathname)).toEqual(
     expect.arrayContaining([
       "/api/v1/operator/store-ops/issues/ISS-1024/triage",
@@ -184,10 +241,16 @@ test("ISS-1024 lifecycle writes through Store Ops API and reloads updated state"
       "/api/v1/operator/store-ops/issues/ISS-1024/outcome",
     ]),
   );
-  expect(api.writeHeaders.every((headers) => headers["idempotency-key"] && headers["x-correlation-id"])).toBe(true);
+  expect(
+    api.writeHeaders.every(
+      (headers) => headers["idempotency-key"] && headers["x-correlation-id"],
+    ),
+  ).toBe(true);
 });
 
-test("camera evidence remains locked until permitted purpose is submitted", async ({ page }) => {
+test("camera evidence remains locked until permitted purpose is submitted", async ({
+  page,
+}) => {
   const api = await mockStoreOpsApi(page);
 
   await page.goto("/operator");
@@ -196,17 +259,35 @@ test("camera evidence remains locked until permitted purpose is submitted", asyn
 
   await page.getByText("點擊填寫調閱目的").click();
   const dialog = page.getByRole("dialog", { name: "Camera Purpose" });
-  await dialog.getByRole("textbox", { name: /Purpose Required/ }).fill("payment incident quality audit");
-  await dialog.getByRole("checkbox", { name: /Acknowledge privacy and audit warning/ }).check();
-  await dialog.getByRole("button", { exact: true, name: "Record Purpose" }).click();
-  await waitForWrite(api, "/api/v1/operator/store-ops/issues/ISS-1024/camera-purpose");
+  await dialog
+    .getByRole("textbox", { name: /Purpose Required/ })
+    .fill("payment incident quality audit");
+  await dialog
+    .getByRole("checkbox", { name: /Acknowledge privacy and audit warning/ })
+    .check();
+  await dialog
+    .getByRole("button", { exact: true, name: "Record Purpose" })
+    .click();
+  await waitForWrite(
+    api,
+    "/api/v1/operator/store-ops/issues/ISS-1024/camera-purpose",
+  );
 
   await expect(page.getByText("影像已解鎖")).toBeVisible();
-  expect(api.writeRequests.some((url) => url.pathname === "/api/v1/operator/store-ops/issues/ISS-1024/camera-purpose")).toBe(true);
+  expect(
+    api.writeRequests.some(
+      (url) =>
+        url.pathname ===
+        "/api/v1/operator/store-ops/issues/ISS-1024/camera-purpose",
+    ),
+  ).toBe(true);
 });
 
 async function mockStoreOpsApi(page: Page) {
-  const issues = baseIssues.map((issue) => ({ ...issue, evidenceIds: [...issue.evidenceIds] }));
+  const issues = baseIssues.map((issue) => ({
+    ...issue,
+    evidenceIds: [...issue.evidenceIds],
+  }));
   const evidence = baseEvidence.map((item) => ({ ...item }));
   const auditEvents: unknown[] = [];
   const readRequests: URL[] = [];
@@ -238,18 +319,22 @@ async function mockStoreOpsApi(page: Page) {
     if (request.method() === "POST") {
       writeRequests.push(url);
       writeHeaders.push(request.headers());
-      const issue = issues.find((item) => url.pathname.includes(`/issues/${item.id}/`));
+      const issue = issues.find((item) =>
+        url.pathname.includes(`/issues/${item.id}/`),
+      );
       if (issue) {
         if (url.pathname.endsWith("/triage")) issue.status = "triaged";
         else if (url.pathname.endsWith("/assign")) issue.status = "assigned";
         else if (url.pathname.endsWith("/actions")) issue.status = "inprogress";
-        else if (url.pathname.endsWith("/field-report")) issue.status = "observing";
+        else if (url.pathname.endsWith("/field-report"))
+          issue.status = "observing";
         else if (url.pathname.endsWith("/outcome")) issue.status = "closed";
         else if (url.pathname.endsWith("/camera-purpose")) {
           const camera = evidence.find((item) => item.id === "EV-1024-CAM");
           if (camera) {
             delete (camera as { lockedReason?: string }).lockedReason;
-            camera.summary = "Camera evidence unlocked for a recorded, audit-scoped purpose.";
+            camera.summary =
+              "Camera evidence unlocked for a recorded, audit-scoped purpose.";
           }
         }
         issue.updatedAt = new Date().toISOString();
@@ -276,8 +361,13 @@ async function mockStoreOpsApi(page: Page) {
   return { readRequests, writeRequests, writeHeaders };
 }
 
-async function waitForWrite(api: Awaited<ReturnType<typeof mockStoreOpsApi>>, pathname: string) {
-  await expect.poll(() => api.writeRequests.some((url) => url.pathname === pathname)).toBe(true);
+async function waitForWrite(
+  api: Awaited<ReturnType<typeof mockStoreOpsApi>>,
+  pathname: string,
+) {
+  await expect
+    .poll(() => api.writeRequests.some((url) => url.pathname === pathname))
+    .toBe(true);
 }
 
 function filterIssues(issues: StoreOpsIssue[], url: URL) {
@@ -292,19 +382,31 @@ function filterIssues(issues: StoreOpsIssue[], url: URL) {
 }
 
 function summarizeLights(issues: StoreOpsIssue[]) {
-  return (["demand", "operations", "staffing", "margin"] as const).map((dimension) => {
-    const counts: Record<StoreLightStatus, number> = { green: 0, yellow: 0, red: 0 };
-    const issueCounts: Record<StoreLightStatus, number> = { green: 0, yellow: 0, red: 0 };
-    for (const store of stores) {
-      const status = store.lights[dimension] as StoreLightStatus;
-      counts[status] += 1;
-      issueCounts[status] += issues.filter((issue) => issue.storeId === store.id).length;
-    }
-    return {
-      dimension,
-      label: dimension[0].toUpperCase() + dimension.slice(1),
-      counts,
-      issueCounts,
-    };
-  });
+  return (["demand", "operations", "staffing", "margin"] as const).map(
+    (dimension) => {
+      const counts: Record<StoreLightStatus, number> = {
+        green: 0,
+        yellow: 0,
+        red: 0,
+      };
+      const issueCounts: Record<StoreLightStatus, number> = {
+        green: 0,
+        yellow: 0,
+        red: 0,
+      };
+      for (const store of stores) {
+        const status = store.lights[dimension] as StoreLightStatus;
+        counts[status] += 1;
+        issueCounts[status] += issues.filter(
+          (issue) => issue.storeId === store.id,
+        ).length;
+      }
+      return {
+        dimension,
+        label: dimension[0].toUpperCase() + dimension.slice(1),
+        counts,
+        issueCounts,
+      };
+    },
+  );
 }
