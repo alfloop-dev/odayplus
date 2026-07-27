@@ -213,6 +213,29 @@ had POSTed by hand. `handle_external_fetch` now goes through
 `ExternalIngestionService.run_scheduled`, so the scheduled path and the manual
 path write the same record to the same store.
 
+One cost this rerouting inherits: `ExternalIngestionService.__init__` calls
+`_rehydrate()`, which reads every persisted run (`list_all`) to re-seed the
+scheduler's watermark state, so the worker now pays that scan once per
+`external-fetch` job instead of the API paying it once per process. The store's
+scan-based lookups (`_rehydrate`, `get_by_window_key`, `get_by_api_key`) are
+pre-existing and shared with the manual POST path; narrowing them is a separate
+change to `DurableIngestionRunStore`, not to this wiring.
+
+The rerouting also changes what the product E2E stack observes, and that is the
+point. `infra/docker/docker-compose.e2e.yml` runs a worker container that drives
+both `ODayScheduler` and `ODayWorker`, so its `external-fetch` job now persists a
+real `IngestionRunRecord` for `listing.partner_feed`. `GET /external-data/freshness`
+serves a hardcoded fixture entry (`snap-expansion-20260628-0100`, echoing the
+*reader's* correlation id) only while the store is empty, so that fallback used
+to be the only thing the expansion spec ever saw. It now sees the ingested
+snapshot (`listing-2026-06-26`) instead — whichever one, decided by container
+start-up timing. `scripts/e2e/seed_product_e2e_data.py` therefore waits for
+`availability.source == "persisted"` before Playwright starts, and
+`tests/e2e/e2e-expansion-product.spec.ts` asserts that persisted evidence and
+cross-checks it against the ingestion run that produced it. If the scheduled
+worker path stops writing ingestion runs, seeding fails with that diagnosis
+rather than silently reverting to the fixture.
+
 `run_once` refuses any provider whose registry category is outside
 `scheduled_fetch._SCHEDULABLE_CATEGORIES` (`listing`, `poi`, `admin_boundary`)
 with `provider_not_schedulable`:
