@@ -30,6 +30,7 @@ class ProviderCategory(StrEnum):
     GEOCODE = "geocode"
     ADMIN_BOUNDARY = "admin_boundary"
     COMPETITOR_MANUAL = "competitor_manual"
+    STORE_OPENING_AUTHORITY = "store_opening_authority"
 
 
 class ProviderAuthMode(StrEnum):
@@ -283,6 +284,28 @@ PROVIDER_REGISTRY: tuple[ExternalProviderDefinition, ...] = (
             export_allowed=False,
         ),
         metadata={"source_type": "manual"},
+    ),
+    ExternalProviderDefinition(
+        provider_id="store_opening_authority",
+        category=ProviderCategory.STORE_OPENING_AUTHORITY,
+        source_contract_id="store_opening_authority_snapshot",
+        connector_class="modules.external_data.connectors.store_opening.StoreOpeningAuthorityConnector",
+        provider_class="modules.external_data.connectors.store_opening.StoreOpeningAuthorityConnector",
+        credentials=(
+            ProviderCredential(
+                env_var="ODP_STORE_OPENING_AUTHORITY_ATTESTATION",
+                auth_mode=ProviderAuthMode.MANUAL_ATTESTATION,
+                status_env_var="ODP_STORE_OPENING_AUTHORITY_STATUS",
+                required_in_live=False,
+            ),
+        ),
+        license=ProviderLicense(
+            attribution="Official store opening date authority",
+            allowed_in_production=True,
+            downstream_use_flags=("internal_decisioning", "audit_evidence"),
+            export_allowed=True,
+        ),
+        metadata={"source_type": "official_registry"},
     ),
 )
 
