@@ -83,12 +83,15 @@ def _create_model_view_prerequisites(database: Any) -> None:
             CREATE SCHEMA core;
             CREATE SCHEMA data_plane;
             CREATE TABLE core.stores (
-                store_id TEXT PRIMARY KEY,
-                tenant_id TEXT NOT NULL
+                store_id UUID PRIMARY KEY,
+                tenant_id UUID NOT NULL,
+                store_format_code TEXT,
+                opened_on DATE,
+                address_id UUID
             );
             CREATE TABLE core.transactions (
-                transaction_id TEXT PRIMARY KEY,
-                store_id TEXT NOT NULL,
+                transaction_id UUID PRIMARY KEY,
+                store_id UUID NOT NULL,
                 event_time TIMESTAMPTZ NOT NULL,
                 observation_time TIMESTAMPTZ NOT NULL,
                 net_amount NUMERIC NOT NULL,
@@ -97,16 +100,44 @@ def _create_model_view_prerequisites(database: Any) -> None:
                 ingested_at TIMESTAMPTZ NOT NULL
             );
             CREATE TABLE data_plane.ingestion_runs (
-                run_id TEXT PRIMARY KEY,
+                run_id UUID PRIMARY KEY,
+                source_kind TEXT NOT NULL,
+                partition_key TEXT NOT NULL,
                 status TEXT NOT NULL,
+                processed_count BIGINT NOT NULL,
+                valid_loaded BIGINT NOT NULL,
+                quarantined_count BIGINT NOT NULL,
+                reconciled BOOLEAN NOT NULL,
+                partition_complete BOOLEAN NOT NULL,
                 finished_at TIMESTAMPTZ
             );
             CREATE TABLE data_plane.canonical_lineage (
-                source_snapshot_id TEXT NOT NULL,
-                run_id TEXT NOT NULL,
-                tenant_id TEXT NOT NULL,
+                source_snapshot_id UUID NOT NULL,
+                run_id UUID NOT NULL,
+                tenant_id UUID NOT NULL,
                 canonical_table TEXT NOT NULL,
-                canonical_id TEXT NOT NULL
+                canonical_id UUID NOT NULL,
+                projected_at TIMESTAMPTZ NOT NULL
+            );
+            CREATE TABLE data_plane.transaction_authority (
+                transaction_id UUID PRIMARY KEY,
+                source_kind TEXT NOT NULL,
+                source_snapshot_id UUID NOT NULL
+            );
+            CREATE TABLE data_plane.place_geography (
+                source_snapshot_id UUID PRIMARY KEY,
+                source_id TEXT NOT NULL,
+                tenant_id UUID NOT NULL,
+                store_id UUID NOT NULL,
+                city TEXT,
+                district TEXT,
+                latitude NUMERIC,
+                longitude NUMERIC,
+                geocode_confidence NUMERIC,
+                h3_res_9 TEXT,
+                run_id UUID NOT NULL,
+                valid_from TIMESTAMPTZ NOT NULL,
+                observed_at TIMESTAMPTZ NOT NULL
             );
             """
         )

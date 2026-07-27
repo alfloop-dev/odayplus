@@ -1,4 +1,4 @@
--- ODay Plus model-ready contracts, version 2026-07-24.1.
+-- ODay Plus model-ready contracts, version 2026-07-26.1.
 --
 -- Apply only after the canonical PostgreSQL and data-plane migrations/backfill.
 -- This artifact creates training rows exclusively by selecting persisted source
@@ -1141,6 +1141,161 @@ FROM materialized;
 
 COMMENT ON VIEW model_ready.heatzone_training_view IS
     'v2: tenant/H3/date HeatZone rows. Label is realized TWD cell net revenue, including legitimate zero outcomes, in the next 28 complete authoritative-order days; every feature and H3 assignment uses immutable evidence available strictly before origin.';
+DO $official_outcome_view$
+BEGIN
+    IF to_regclass('external_data.real_estate_transactions') IS NOT NULL
+       AND to_regclass('external_data.real_estate_ingestion_runs') IS NOT NULL
+    THEN
+        EXECUTE $listing_property_view$
+CREATE OR REPLACE VIEW model_ready.listing_property_valuation_view AS
+WITH ranked_official_sales AS (
+    SELECT
+        outcome.*,
+        ingestion.dataset_id,
+        ingestion.license_id,
+        ingestion.parser_version,
+        ingestion.schema_sha256,
+        ingestion.source_snapshot_id,
+        ingestion.fetched_at,
+        ingestion.status AS ingestion_status,
+        row_number() OVER (
+            PARTITION BY
+                outcome.source_id,
+                outcome.authority_partition,
+                outcome.source_record_id,
+                outcome.source_variant_id
+            ORDER BY
+                ingestion.fetched_at DESC,
+                outcome.transaction_id
+        ) AS authority_rank
+    FROM external_data.real_estate_transactions AS outcome
+    INNER JOIN external_data.real_estate_ingestion_runs AS ingestion
+        ON ingestion.run_id = outcome.last_seen_run_id
+    WHERE ingestion.status = 'SUCCEEDED'
+      AND ingestion.license_id = 'government-open-data-license-v1'
+      AND (
+          (
+              outcome.source_id = 'tw_moi_lvr_land_a'
+              AND ingestion.dataset_id = '25119'
+          )
+          OR
+          (
+              outcome.source_id = 'tw_ntpc_real_estate_sales'
+              AND ingestion.dataset_id =
+                  'acce802d-58cc-4dff-9e7a-9ecc517f78be'
+          )
+      )
+),
+official_sale_features AS (
+    SELECT
+        ranked.*,
+        CASE
+            WHEN ranked.completion_year IS NULL
+              OR ranked.completion_year
+                    > extract(year FROM ranked.transaction_date)::integer
+                THEN 0
+            ELSE
+                extract(year FROM ranked.transaction_date)::integer
+                    - ranked.completion_year
+        END::double precision AS building_age_years,
+        (
+            ranked.completion_year IS NOT NULL
+            AND ranked.completion_year
+                <= extract(year FROM ranked.transaction_date)::integer
+        ) AS completion_year_known,
+        coalesce(ranked.has_elevator, FALSE) AS elevator_value,
+        (ranked.has_elevator IS NOT NULL) AS elevator_known,
+        (
+            ranked.transaction_date::timestamp
+            AT TIME ZONE 'Asia/Taipei'
+        ) AS realized_at
+    FROM ranked_official_sales AS ranked
+    WHERE ranked.authority_rank = 1
+)
+SELECT
+    'listing_property_valuation_view'::text AS view_name,
+    'listing-property-valuation-view-v1'::text AS view_version,
+    concat(
+        'tw-official-sale:',
+        source_id,
+        ':',
+        authority_partition,
+        ':',
+        source_record_id,
+        ':',
+        source_variant_id
+    ) AS entity_id,
+    source_id,
+    authority_partition,
+    source_variant_id,
+    municipality,
+    district,
+    concat_ws(':', municipality, district, transaction_target)
+        AS market_segment,
+    transaction_target,
+    realized_at AS realized_transaction_at,
+    fetched_at AS feature_snapshot_time,
+    fetched_at + interval '1 microsecond' AS prediction_origin_time,
+    fetched_at AS label_maturity_time,
+    total_price_twd::double precision AS realized_transaction_price,
+    coalesce(land_area_sqm, 0)::double precision AS land_area_sqm,
+    coalesce(building_area_sqm, 0)::double precision AS building_area_sqm,
+    coalesce(room_count, 0)::double precision AS room_count,
+    coalesce(hall_count, 0)::double precision AS hall_count,
+    coalesce(bathroom_count, 0)::double precision AS bathroom_count,
+    coalesce(building_type, 'UNKNOWN')::text AS building_type,
+    coalesce(main_use, 'UNKNOWN')::text AS main_use,
+    coalesce(main_material, 'UNKNOWN')::text AS main_material,
+    building_age_years,
+    completion_year_known,
+    coalesce(parking_area_sqm, 0)::double precision AS parking_area_sqm,
+    elevator_value AS has_elevator,
+    elevator_known,
+    ARRAY[source_snapshot_id]::text[] AS source_snapshot_ids,
+    1.0::double precision AS data_quality_score,
+    1.0::double precision AS confidence,
+    (
+        ingestion_status = 'SUCCEEDED'
+        AND license_id = 'government-open-data-license-v1'
+        AND schema_sha256 ~ '^[0-9a-f]{64}$'
+        AND source_snapshot_id ~ '^[a-z0-9_]+:sha256:[0-9a-f]{64}$'
+        AND transaction_date <= (fetched_at AT TIME ZONE 'Asia/Taipei')::date
+        AND total_price_twd > 0
+        AND (
+            coalesce(land_area_sqm, 0) > 0
+            OR coalesce(building_area_sqm, 0) > 0
+        )
+        AND fetched_at <= CURRENT_TIMESTAMP
+    ) AS is_training_eligible,
+    FALSE AS is_scoring_eligible,
+    CASE
+        WHEN ingestion_status <> 'SUCCEEDED' THEN 'SOURCE_RUN_NOT_COMPLETE'
+        WHEN license_id <> 'government-open-data-license-v1'
+            THEN 'SOURCE_LICENSE_MISMATCH'
+        WHEN schema_sha256 !~ '^[0-9a-f]{64}$' THEN 'SOURCE_SCHEMA_UNVERIFIED'
+        WHEN source_snapshot_id !~ '^[a-z0-9_]+:sha256:[0-9a-f]{64}$'
+            THEN 'SOURCE_LINEAGE_MISSING'
+        WHEN transaction_date > (fetched_at AT TIME ZONE 'Asia/Taipei')::date
+            THEN 'TRANSACTION_DATE_AFTER_OBSERVATION'
+        WHEN total_price_twd <= 0 THEN 'REALIZED_PRICE_NOT_POSITIVE'
+        WHEN coalesce(land_area_sqm, 0) <= 0
+         AND coalesce(building_area_sqm, 0) <= 0
+            THEN 'PROPERTY_AREA_MISSING'
+        ELSE NULL
+    END AS exclusion_reason
+FROM official_sale_features;
+$listing_property_view$;
+
+        EXECUTE $listing_property_comment$
+COMMENT ON VIEW model_ready.listing_property_valuation_view IS
+    'v1: official MOI/NTPC property-sale research outcomes; not the DealRoom AVM runtime contract.'
+$listing_property_comment$;
+    ELSE
+        EXECUTE
+            'DROP VIEW IF EXISTS model_ready.listing_property_valuation_view';
+    END IF;
+END
+$official_outcome_view$;
 
 INSERT INTO model_ready.view_contracts (
     relation_name,
@@ -1175,6 +1330,37 @@ INSERT INTO model_ready.view_contracts (
         'BLOCKED',
         FALSE,
         'MATURE_REALIZED_TRANSACTION_OUTCOME_RELATION_MISSING',
+        CURRENT_TIMESTAMP
+    ),
+    (
+        'model_ready.listing_property_valuation_view',
+        'listing_property_valuation_view',
+        'listing-property-valuation-view-v1',
+        CASE
+            WHEN to_regclass('external_data.real_estate_transactions') IS NOT NULL
+             AND to_regclass('external_data.real_estate_ingestion_runs') IS NOT NULL
+            THEN ARRAY[
+                'external_data.real_estate_transactions',
+                'external_data.real_estate_ingestion_runs'
+            ]
+            ELSE ARRAY[]::text[]
+        END,
+        CASE
+            WHEN to_regclass('external_data.real_estate_transactions') IS NOT NULL
+             AND to_regclass('external_data.real_estate_ingestion_runs') IS NOT NULL
+            THEN 'ACTIVE'
+            ELSE 'BLOCKED'
+        END,
+        (
+            to_regclass('external_data.real_estate_transactions') IS NOT NULL
+            AND to_regclass('external_data.real_estate_ingestion_runs') IS NOT NULL
+        ),
+        CASE
+            WHEN to_regclass('external_data.real_estate_transactions') IS NOT NULL
+             AND to_regclass('external_data.real_estate_ingestion_runs') IS NOT NULL
+            THEN NULL
+            ELSE 'OFFICIAL_REAL_ESTATE_OUTCOME_RELATION_MISSING'
+        END,
         CURRENT_TIMESTAMP
     ),
     (
@@ -1218,7 +1404,7 @@ INSERT INTO model_ready.view_contracts (
         ARRAY[]::text[],
         'BLOCKED',
         FALSE,
-        'MATURE_LIQUIDITY_EVENT_RELATION_MISSING',
+        'OFFICIAL_SALE_OUTCOME_HAS_NO_MARKETING_INTERVAL',
         CURRENT_TIMESTAMP
     )
 ON CONFLICT (relation_name) DO UPDATE SET
@@ -1229,3 +1415,7 @@ ON CONFLICT (relation_name) DO UPDATE SET
     training_enabled = EXCLUDED.training_enabled,
     blocked_reason = EXCLUDED.blocked_reason,
     updated_at = CURRENT_TIMESTAMP;
+
+-- The general liquidity contract also remains unavailable without a
+-- MATURE_LIQUIDITY_EVENT_RELATION_MISSING authority; official sale outcomes
+-- add the stricter absence of a marketing interval recorded above.
