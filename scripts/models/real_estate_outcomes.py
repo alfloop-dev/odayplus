@@ -220,8 +220,15 @@ class OfficialRealEstateOutcomeStore:
                             stale_count += 1
                         continue
                     if (
+                        str(prior["identity_fingerprint"])
+                        != record.identity_fingerprint
+                    ):
+                        raise OfficialRealEstateSourceError(
+                            "persisted authority natural identity fingerprint changed "
+                            f"for transaction {identity}"
+                        )
+                    if (
                         str(prior["raw_record_sha256"]) != record.raw_record_sha256
-                        or str(prior["identity_fingerprint"]) != record.identity_fingerprint
                     ):
                         updated_count += 1
                     else:

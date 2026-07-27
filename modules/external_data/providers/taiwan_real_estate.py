@@ -599,15 +599,10 @@ def _resolve_source_identities(
         if record.source_id == SOURCES["moi"].source_id:
             variant = "primary"
         else:
-            # rps27 is the authority's durable record identity. Transfer number
-            # disambiguates genuine multi-transfer rows when it is present.
-            # Without it, keep one stable natural identity and preserve later
-            # corrections as observations rather than creating new sales.
-            variant = (
-                f"transfer:{_identity_text(record.transfer_number)}"
-                if record.transfer_number
-                else "authority-natural:v1"
-            )
+            # rps27 is the authority's durable record identity. rps32 is an
+            # optional presentation field that may appear on a later snapshot;
+            # including it in identity would fork one official sale into two.
+            variant = "authority-natural:v1"
         fingerprint = _identity_fingerprint(record)
         key = (
             record.source_id,

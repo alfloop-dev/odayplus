@@ -16,6 +16,7 @@ from modules.external_data.providers.taiwan_real_estate import (
     NTPC_HEADERS,
     SOURCES,
     DownloadedArtifact,
+    OfficialRealEstateSourceError,
     parse_official_real_estate,
 )
 from scripts.models.install_views import ModelReadyViewInstaller
@@ -321,6 +322,82 @@ def test_snapshot_order_corrections_and_composite_lineage_fk(
                         other.source_snapshot_id,
                     ),
                 )
+    finally:
+        engine.close()
+
+
+def test_identity_correction_fails_closed_and_transfer_number_cannot_fork_sale(
+    intake_blank_db: Any,
+) -> None:
+    _upgrade_official_schema(intake_blank_db)
+    runtime_url, _alembic_url = _urls(intake_blank_db)
+    engine = PostgresEngine(
+        runtime_url,
+        bootstrap=False,
+        validate_schema=False,
+    )
+    store = OfficialRealEstateOutcomeStore(engine)
+    try:
+        initial = _batch(
+            record_id="IDENTITY-001",
+            rows=({"rps32": ""},),
+            fetched_at=datetime(2026, 7, 21, tzinfo=UTC),
+            source_published_at=datetime(2026, 7, 20, tzinfo=UTC),
+        )
+        store.upsert(initial)
+
+        transfer_number_added = _batch(
+            record_id="IDENTITY-001",
+            rows=({"rps32": "1"},),
+            fetched_at=datetime(2026, 7, 23, tzinfo=UTC),
+            source_published_at=datetime(2026, 7, 22, tzinfo=UTC),
+        )
+        receipt = store.upsert(transfer_number_added)
+        assert receipt["updated_row_count"] == 1
+        projection = engine.query_one(
+            "SELECT count(*) AS count, max(transfer_number) AS transfer_number "
+            "FROM external_data.real_estate_transactions "
+            "WHERE source_record_id = ?",
+            ("IDENTITY-001",),
+        )
+        assert projection == {"count": 1, "transfer_number": "1"}
+
+        changed_identity = _batch(
+            record_id="IDENTITY-001",
+            rows=({"rps02": "新北市板橋區範例路２號３樓", "rps32": "1"},),
+            fetched_at=datetime(2026, 7, 25, tzinfo=UTC),
+            source_published_at=datetime(2026, 7, 24, tzinfo=UTC),
+        )
+        with pytest.raises(
+            OfficialRealEstateSourceError,
+            match="identity fingerprint changed",
+        ):
+            store.upsert(changed_identity)
+
+        persisted = engine.query_one(
+            "SELECT address, last_seen_run_id, last_source_snapshot_id "
+            "FROM external_data.real_estate_transactions "
+            "WHERE source_record_id = ?",
+            ("IDENTITY-001",),
+        )
+        assert persisted is not None
+        assert persisted["address"] == "新北市板橋區範例路２號"
+        assert str(persisted["last_seen_run_id"]) == str(
+            transfer_number_added.run_id
+        )
+        assert (
+            persisted["last_source_snapshot_id"]
+            == transfer_number_added.source_snapshot_id
+        )
+        failed = engine.query_one(
+            "SELECT status, error_code FROM "
+            "external_data.real_estate_ingestion_runs WHERE run_id = ?",
+            (changed_identity.run_id,),
+        )
+        assert failed == {
+            "status": "FAILED",
+            "error_code": "OfficialRealEstateSourceError",
+        }
     finally:
         engine.close()
 

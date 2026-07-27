@@ -201,7 +201,7 @@ def test_moi_identity_includes_authority_partition_for_reused_record_ids() -> No
     assert taipei.transaction_id != new_taipei.transaction_id
 
 
-def test_duplicate_provider_ids_preserve_corrections_or_fail_closed() -> None:
+def test_optional_transfer_number_does_not_fork_authority_identity() -> None:
     payload = _csv_bytes(
         [
             list(NTPC_HEADERS),
@@ -212,10 +212,9 @@ def test_duplicate_provider_ids_preserve_corrections_or_fail_closed() -> None:
     batch = parse_official_real_estate(_artifact("ntpc", payload))
 
     assert {record.source_variant_id for record in batch.records} == {
-        "transfer:0202",
-        "transfer:0210",
+        "authority-natural:v1",
     }
-    assert len({record.transaction_id for record in batch.records}) == 2
+    assert len({record.transaction_id for record in batch.records}) == 1
 
     original = _ntpc_row(
         rps27="CORRECTED-001",
