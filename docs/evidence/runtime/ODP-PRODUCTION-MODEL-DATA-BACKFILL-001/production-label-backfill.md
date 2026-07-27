@@ -31,8 +31,9 @@ keys preserve store/tenant ownership, and lineage retains its original
 `tenant_id`; no cross-tenant remapping was performed.
 
 The versioned `scripts/models/sql/model_ready_views.sql` artifact was installed
-under a transaction advisory lock. Installed SQL SHA-256:
-`9f6afdd9b529dd9f8f93f77889de6bc0edac6561969c183e85037c60bde78387`.
+under a transaction advisory lock. After composing the official-outcome
+contract from `dev`, the installed SQL SHA-256 is
+`0bbcad43ed07f81ecd1a6f6a4e7e387efb3abb540b4d98c8d101a0bdd292dca8`.
 
 Both approved GCS locations were inventoried and contained zero objects before
 this activation:
@@ -42,6 +43,19 @@ this activation:
 
 No unproven GCS label object was imported.
 
+The fixed official-source registry was then used to download and atomically
+upsert both approved Taiwan sale-outcome sources:
+
+| Official source | Dataset | Parsed observations | Current projections | Outcome range |
+|---|---|---:|---:|---|
+| Ministry of the Interior | `25119` | 8,456 | 8,456 | 2016-01-04 through 2026-07-08 |
+| New Taipei City Land Administration | `acce802d-58cc-4dff-9e7a-9ecc517f78be` | 50,665 | 50,662 | 2013-03-24 through 2026-12-06 |
+
+Both receipts are `SUCCEEDED`, use
+`government-open-data-license-v1`, retain content/schema SHA-256 and immutable
+source observations, and had zero stale rows. Deterministic run IDs plus
+source/snapshot advisory locks make exact replay idempotent.
+
 ## Redacted model inventory
 
 Inventory exposes aggregates only: no tenant identifier, source payload,
@@ -50,7 +64,8 @@ credential, or label value.
 | Model | Label | Train | Validation | Test | Minimum total | Tenant count | Snapshot count | Temporal cutoff | Result |
 |---|---|---:|---:|---:|---:|---:|---:|---|---|
 | ForecastOps | `daily_net_revenue` | 783 | 260 | 260 | 90 | 413 | 220,597 | 2026-06-19 through 2026-06-22 | usable |
-| AVM | `realized_transaction_price` | 0 | 0 | 0 | 120 | 0 | 0 | none | blocked |
+| Listing-property AVM | official `realized_transaction_price` | 35,471 | 11,823 | 11,823 | 120 | global authority | 2 | 2013-03-23 through 2026-07-07 UTC | research usable |
+| DealRoom AVM | DealRoom realized transaction outcome | 0 | 0 | 0 | 120 | 0 | 0 | none | blocked |
 | SiteScore | `realized_90d_net_revenue` | 0 | 0 | 0 | 200 | 0 | 0 | none | blocked |
 | HeatZone | `realized_28d_cell_net_revenue` | 0 | 0 | 0 | 200 | 0 | 0 | none | blocked |
 
@@ -61,16 +76,22 @@ runs and immutable canonical source-snapshot lineage.
 
 ## Irreducible source gates
 
-These zero counts are business-data gaps, not permission to infer labels.
+The official listing-property contract has 59,117 eligible labeled rows. It is
+intentionally separate from the DealRoom runtime AVM: its government
+municipality/area/building feature schema cannot be silently substituted for
+the DealRoom store/financial feature schema, and production promotion remains
+blocked until a compatible runtime consumer and live inference smoke exist.
 
-- **AVM — source owner: Taiwan Ministry of the Interior / Data Platform.**
-  Required fields are attributable official transaction date, total
-  transaction price, property/parcel address, building area, and property
-  type, plus canonical property/store identity and source snapshot checksum.
-  Earliest activation gate: approve the official real-estate transaction
-  dataset terms and implement its canonical snapshot ingestion and property
-  identity match. `asset.valuation_runs` and model predictions are forbidden
-  substitutes.
+The remaining zero counts are business-data gaps, not permission to infer
+labels.
+
+- **DealRoom AVM — source owner: DealRoom Operations / Asset Data Platform.**
+  Required fields are an attributable completed deal, realized transaction
+  price/time, canonical tenant/store/property identity, and the financial and
+  lease features bound by `model_ready.valuation_view`. Earliest activation
+  gate: persist mature completed-deal outcomes and commit a reviewed identity
+  link. Official listing-property outcomes are available but contract
+  incompatible; `asset.valuation_runs` and predictions remain forbidden labels.
 - **SiteScore — source owner: Expansion Operations and POS Data Platform.**
   Required fields are an attributable `store_id`, actual `opened_on`,
   `store_format_code`, point-in-time address/H3 assignment, and complete
@@ -93,7 +114,8 @@ These zero counts are business-data gaps, not permission to infer labels.
 - Model-ready installer preflight: 270,635 successful TWD transactions,
   2,442 stores, zero SiteScore anchors, zero HeatZone cells.
 - Post-activation model inventory: ForecastOps 1,303 eligible labels with
-  783/260/260 chronological splits; AVM/SiteScore/HeatZone remain zero.
+  783/260/260 chronological splits; official listing-property AVM 59,117 with
+  35,471/11,823/11,823 splits; DealRoom AVM/SiteScore/HeatZone remain zero.
 - Inventory implementation tests:
   `pytest -q tests/integration/test_model_training_release.py
   tests/integration/test_model_ready_geo_views.py

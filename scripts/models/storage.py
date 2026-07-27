@@ -220,10 +220,15 @@ class PostgresModelReadySource:
                 temporal_min=None,
                 temporal_max=None,
             )
+        tenant_projection = (
+            "tenant_id"
+            if "tenant_id" in spec.required_columns
+            else "NULL::text AS tenant_id"
+        )
         stats = (
             self.client.query_one(
                 f"WITH eligible AS ("
-                f"SELECT {spec.temporal_column} AS observed_at, tenant_id, "
+                f"SELECT {spec.temporal_column} AS observed_at, {tenant_projection}, "
                 f"source_snapshot_ids, ntile(5) OVER ("
                 f"ORDER BY {spec.temporal_column}, entity_id"
                 f") AS temporal_fifth "
