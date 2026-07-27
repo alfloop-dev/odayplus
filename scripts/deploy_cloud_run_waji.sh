@@ -183,6 +183,7 @@ keys = (
     "ODP_AUTH_ISSUER",
     "ODP_AUTH_AUDIENCES",
     "ODP_AUTH_JWKS_URI",
+    "ODP_AUTH_SUBJECT_ROLE_BINDINGS",
 )
 payload = {key: os.environ[key] for key in keys}
 payload["ODAY_ENV"] = os.environ["ODP_DEPLOY_ENV"]

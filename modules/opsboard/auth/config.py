@@ -13,6 +13,7 @@ falling back to the insecure header-trust stub (``principal_from_headers``).
 
 from __future__ import annotations
 
+import json
 import os
 from collections.abc import Mapping
 from dataclasses import dataclass, field
@@ -36,6 +37,7 @@ class AuthBoundaryConfig:
     jwks_cache_ttl_seconds: int = 300
     leeway_seconds: int = 60
     live_input_declared: bool = False
+    subject_role_bindings: Mapping[str, frozenset[str]] = field(default_factory=dict)
 
     @property
     def is_configured(self) -> bool:
@@ -143,6 +145,19 @@ def config_from_env(
         jwks_ttl = int(jwks_ttl_raw) if jwks_ttl_raw else 300
     except ValueError:
         jwks_ttl = 300
+    subject_role_bindings: dict[str, frozenset[str]] = {}
+    raw_bindings = (source.get("ODP_AUTH_SUBJECT_ROLE_BINDINGS") or "").strip()
+    if raw_bindings:
+        try:
+            parsed_bindings = json.loads(raw_bindings)
+            if isinstance(parsed_bindings, dict):
+                for subject, roles in parsed_bindings.items():
+                    if isinstance(subject, str) and isinstance(roles, list):
+                        subject_role_bindings[subject] = frozenset(
+                            role for role in roles if isinstance(role, str) and role
+                        )
+        except json.JSONDecodeError:
+            pass
     return AuthBoundaryConfig(
         issuer=issuer,
         audiences=audiences,
@@ -151,6 +166,7 @@ def config_from_env(
         jwks_cache_ttl_seconds=max(30, jwks_ttl),
         leeway_seconds=max(0, leeway),
         live_input_declared=live_input_declared,
+        subject_role_bindings=subject_role_bindings,
     )
 
 

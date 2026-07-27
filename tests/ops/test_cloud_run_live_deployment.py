@@ -476,6 +476,8 @@ def test_workflows_do_not_reference_secrets_in_step_if() -> None:
         assert "validate_cloud_run_live_deployment.py preflight" in text
         assert "ODP_OPERATOR_SMOKE_BEARER_TOKEN" in text
         assert "ODP_AUTH_JWKS_URI" in text
+        if workflow.name == "deploy-dev.yml":
+            assert "ODP_AUTH_SUBJECT_ROLE_BINDINGS" in text
         assert "ODP_POI_PROVIDER_URL" in text
         assert "ODP_ADMIN_BOUNDARY_PROVIDER_URL" in text
         assert "ODP_WEB_OIDC_CLIENT_ID" in text
@@ -491,6 +493,8 @@ def test_dev_deploy_has_non_mutating_wif_oidc_smoke_gate() -> None:
     assert "Authenticate to Google Cloud for read-only smoke" in text
     assert "gcloud auth list" in text
     assert 'gcloud projects describe "${GCP_PROJECT}"' in text
+    assert "gcloud auth print-identity-token" in text
+    assert "secrets.ODP_OPERATOR_SMOKE_BEARER_TOKEN" not in text
 
     smoke = text.split("  wif-oidc-smoke:", 1)[1].split(
         "  e2e-operational-evidence:", 1

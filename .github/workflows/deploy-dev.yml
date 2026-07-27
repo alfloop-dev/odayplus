@@ -100,9 +100,11 @@ jobs:
       ODP_AUTH_ISSUER: ${{ vars.ODP_AUTH_ISSUER }}
       ODP_AUTH_AUDIENCES: ${{ vars.ODP_AUTH_AUDIENCES }}
       ODP_AUTH_JWKS_URI: ${{ vars.ODP_AUTH_JWKS_URI }}
+      ODP_AUTH_SUBJECT_ROLE_BINDINGS: ${{ vars.ODP_AUTH_SUBJECT_ROLE_BINDINGS }}
       ODP_WEB_OIDC_ISSUER: ${{ vars.ODP_WEB_OIDC_ISSUER }}
       ODP_WEB_OIDC_CLIENT_ID: ${{ vars.ODP_WEB_OIDC_CLIENT_ID }}
       ODP_OPERATOR_SMOKE_ROLE: ${{ vars.ODP_OPERATOR_SMOKE_ROLE }}
+      ODP_OPERATOR_SMOKE_SERVICE_ACCOUNT: ${{ vars.ODP_OPERATOR_SMOKE_SERVICE_ACCOUNT }}
       ODAY_DATABASE_URL_SECRET: ${{ vars.ODAY_DATABASE_URL_SECRET }}
       ODP_LISTING_PROVIDER_API_KEY_SECRET: ${{ vars.ODP_LISTING_PROVIDER_API_KEY_SECRET }}
       ODP_POI_PROVIDER_API_KEY_SECRET: ${{ vars.ODP_POI_PROVIDER_API_KEY_SECRET }}
@@ -159,9 +161,30 @@ jobs:
           workload_identity_provider: ${{ vars.GCP_WORKLOAD_IDENTITY_PROVIDER }}
           service_account: ${{ vars.GCP_SERVICE_ACCOUNT }}
 
+      - name: Mint short-lived operator smoke identity token
+        shell: bash
+        run: |
+          set -euo pipefail
+          token="$(gcloud auth print-identity-token \
+            --impersonate-service-account="${ODP_OPERATOR_SMOKE_SERVICE_ACCOUNT}" \
+            --audiences="${ODP_AUTH_AUDIENCES}")"
+          echo "::add-mask::${token}"
+          TOKEN="${token}" python3 - <<'PY'
+          import base64, json, os
+          payload = os.environ["TOKEN"].split(".")[1]
+          payload += "=" * (-len(payload) % 4)
+          claims = json.loads(base64.urlsafe_b64decode(payload))
+          bindings = json.loads(os.environ["ODP_AUTH_SUBJECT_ROLE_BINDINGS"])
+          subject = str(claims.get("sub", ""))
+          if claims.get("aud") != os.environ["ODP_AUTH_AUDIENCES"]:
+              raise SystemExit("minted token audience mismatch")
+          role = os.environ["ODP_OPERATOR_SMOKE_ROLE"].replace("-", "_")
+          if role not in bindings.get(subject, []):
+              raise SystemExit("minted token subject has no configured smoke role binding")
+          PY
+          echo "ODP_OPERATOR_SMOKE_BEARER_TOKEN=${token}" >> "${GITHUB_ENV}"
+
       - name: Live runtime preflight validation
-        env:
-          ODP_OPERATOR_SMOKE_BEARER_TOKEN: ${{ secrets.ODP_OPERATOR_SMOKE_BEARER_TOKEN }}
         run: |
           python3 scripts/deployment/validate_cloud_run_live_deployment.py preflight \
             --environment dev \
@@ -177,7 +200,6 @@ jobs:
       - name: Build, push, deploy, and verify Cloud Run
         env:
           IMAGE_TAG: dev-${{ github.sha }}
-          ODP_OPERATOR_SMOKE_BEARER_TOKEN: ${{ secrets.ODP_OPERATOR_SMOKE_BEARER_TOKEN }}
         run: ./scripts/deploy_cloud_run_waji.sh
 
       - name: Upload deployment validation reports

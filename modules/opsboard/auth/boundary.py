@@ -25,7 +25,7 @@ denying :class:`AuthOutcome` whose ``principal`` is
 from __future__ import annotations
 
 from collections.abc import Mapping
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime
 from typing import Any
 
@@ -44,7 +44,7 @@ from modules.opsboard.auth.jwt import (
 from modules.opsboard.auth.service_identity import ServiceIdentityVerifier
 from shared.audit import AuditEvent, InMemoryAuditLog
 from shared.audit.policy import AuditRecorder
-from shared.auth import ANONYMOUS, Principal
+from shared.auth import ANONYMOUS, Principal, Role
 from shared.observability import (
     MetricCategory,
     MetricDefinition,
@@ -213,6 +213,14 @@ class AuthenticationBoundary:
         principal = principal_from_claims(
             claims, subject=subject, claim_prefix=self._claim_prefix
         )
+        known_roles = {role.value: role for role in Role}
+        bound_roles = frozenset(
+            known_roles[role]
+            for role in self._config.subject_role_bindings.get(subject, ())
+            if role in known_roles
+        )
+        if bound_roles:
+            principal = replace(principal, roles=principal.roles | bound_roles)
         return principal, None
 
     def _validate_claims(
