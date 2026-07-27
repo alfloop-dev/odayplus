@@ -582,10 +582,10 @@ class PsycopgCanonicalStore:
             """
             INSERT INTO core.stores (
                 store_id, tenant_id, brand_id, source_store_id, store_name,
-                store_status, ownership_type, store_format_code, opened_on, address_id,
+                store_status, ownership_type, store_format_code, address_id,
                 effective_from, effective_to, is_current, created_at, updated_at
             ) VALUES (
-                %s, %s, %s, %s, %s, %s, 'owned', %s, %s, %s, %s,
+                %s, %s, %s, %s, %s, %s, 'owned', %s, %s, %s,
                 '9999-12-31 23:59:59+00', TRUE,
                 CURRENT_TIMESTAMP, CURRENT_TIMESTAMP
             )
@@ -597,7 +597,6 @@ class PsycopgCanonicalStore:
                 store_status = EXCLUDED.store_status,
                 ownership_type = 'owned',
                 store_format_code = EXCLUDED.store_format_code,
-                opened_on = COALESCE(EXCLUDED.opened_on, core.stores.opened_on),
                 address_id = EXCLUDED.address_id,
                 is_current = TRUE,
                 updated_at = CURRENT_TIMESTAMP
@@ -610,7 +609,6 @@ class PsycopgCanonicalStore:
                 projection.store_name,
                 projection.store_status,
                 projection.store_format_code,
-                getattr(projection, "opened_on", None),
                 projection.address_id,
                 projection.effective_from,
             ),
