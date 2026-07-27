@@ -2,17 +2,21 @@ from __future__ import annotations
 
 import os
 import re
-from dataclasses import dataclass
+from collections.abc import Mapping
+from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from enum import StrEnum
+from typing import Any
 from urllib.parse import parse_qs, urlparse
 
+from models.shared_ml.output_contracts import (
+    HEATZONE_OUTPUT_TRANSFORM,
+    SITESCORE_OUTPUT_TRANSFORM,
+)
 from models.shared_ml.production_contracts import PRODUCTION_MODEL_CONTRACTS
 
 _LOCAL_HOSTS = {"", "localhost", "127.0.0.1", "::1"}
-_CLOUD_SQL_SOCKET_RE = re.compile(
-    r"^/cloudsql/[a-z][a-z0-9-]{4,29}:[a-z0-9-]+:[a-z][a-z0-9-]+$"
-)
+_CLOUD_SQL_SOCKET_RE = re.compile(r"^/cloudsql/[a-z][a-z0-9-]{4,29}:[a-z0-9-]+:[a-z][a-z0-9-]+$")
 _PLACEHOLDER_TOKENS = (
     "<",
     ">",
@@ -94,6 +98,7 @@ class ModelSpec:
     event_column: str | None = None
     label_maturity_column: str | None = None
     scope_columns: tuple[str, ...] = ()
+    output_transform: Mapping[str, Any] = field(default_factory=dict)
 
     @property
     def required_columns(self) -> tuple[str, ...]:
@@ -107,9 +112,7 @@ class ModelSpec:
             "is_training_eligible",
         )
         optional_event = (self.event_column,) if self.event_column else ()
-        optional_maturity = (
-            (self.label_maturity_column,) if self.label_maturity_column else ()
-        )
+        optional_maturity = (self.label_maturity_column,) if self.label_maturity_column else ()
         return tuple(
             dict.fromkeys(
                 (
@@ -205,29 +208,30 @@ MODEL_SPECS: dict[str, ModelSpec] = {
         key="sitescore",
         model_name=PRODUCTION_MODEL_CONTRACTS["sitescore"].model_name or "",
         relation="model_ready.candidate_site_view",
-        expected_view_version="candidate-site-view-v1",
+        expected_view_version="candidate-site-view-v2",
         kind=ModelKind.REGRESSION,
         algorithm="catboost_regressor",
-        label_name="realized_site_success",
-        label_column="realized_site_success",
-        label_version="sitescore-realized-success-v1",
-        feature_schema_version="candidate-site-view-v1",
-        feature_set_id="fs_sitescore_realized_success_v1",
-        label_set_id="ls_sitescore_realized_success_v1",
-        temporal_column="realized_outcome_at",
-        label_maturity_column="realized_outcome_at",
+        label_name="realized_90d_net_revenue",
+        label_column="realized_90d_net_revenue",
+        label_version="sitescore-realized-90d-net-revenue-v1",
+        feature_schema_version="candidate-site-view-v2",
+        feature_set_id="fs_sitescore_opened_store_pit_v2",
+        label_set_id="ls_sitescore_realized_90d_revenue_v1",
+        temporal_column="opened_on",
+        label_maturity_column="label_maturity_time",
         segment_column="target_format_code",
         feature_columns=(
             "tenant_id",
             "target_format_code",
-            "rent_amount",
-            "area_ping",
-            "frontage_m",
-            "floor",
+            "h3_index",
+            "latitude",
+            "longitude",
             "geocode_confidence",
-            "rent_per_ping",
+            "prior_90d_cell_net_revenue",
+            "prior_90d_cell_transaction_count",
+            "prior_90d_cell_store_count",
         ),
-        scope_columns=("tenant_id",),
+        scope_columns=("tenant_id", "store_id", "h3_index"),
         minimum_rows=200,
         holdout_fraction=0.20,
         minimum_segment_rows=10,
@@ -236,35 +240,37 @@ MODEL_SPECS: dict[str, ModelSpec] = {
         intended_use="Human-reviewed Candidate Site prioritization",
         not_intended_use="Automatic site promotion, lease approval, or ambiguous identity merge",
         risk_level="R4",
+        output_transform=SITESCORE_OUTPUT_TRANSFORM,
     ),
     "heatzone": ModelSpec(
         key="heatzone",
         model_name=PRODUCTION_MODEL_CONTRACTS["heatzone"].model_name or "",
         relation="model_ready.heatzone_training_view",
-        expected_view_version="heatzone-training-view-v1",
+        expected_view_version="heatzone-training-view-v2",
         kind=ModelKind.REGRESSION,
         algorithm="catboost_regressor",
-        label_name="realized_demand_score",
-        label_column="realized_demand_score",
-        label_version="heatzone-realized-demand-v1",
-        feature_schema_version="geo-grid-view-v1",
-        feature_set_id="fs_heatzone_geo_grid_v1",
-        label_set_id="ls_heatzone_realized_demand_v1",
-        temporal_column="prediction_origin_time",
+        label_name="realized_28d_cell_net_revenue",
+        label_column="realized_28d_cell_net_revenue",
+        label_version="heatzone-realized-28d-cell-net-revenue-v1",
+        feature_schema_version="heatzone-training-view-v2",
+        feature_set_id="fs_heatzone_cell_pit_v2",
+        label_set_id="ls_heatzone_realized_28d_cell_revenue_v1",
+        temporal_column="origin_date",
         label_maturity_column="label_maturity_time",
-        segment_column="admin_district",
+        segment_column="h3_index",
         feature_columns=(
+            "tenant_id",
+            "h3_index",
             "h3_resolution",
-            "poi_count",
-            "competitor_count",
-            "active_listing_count",
-            "median_listing_rent",
-            "competitor_capacity",
-            "average_confidence",
-            "existing_store_count",
-            "data_quality_score",
-            "admin_city",
-            "admin_district",
+            "cell_latitude",
+            "cell_longitude",
+            "average_geocode_confidence",
+            "prior_opened_store_count",
+            "prior_28d_cell_net_revenue",
+            "prior_90d_cell_net_revenue",
+            "prior_28d_transaction_count",
+            "prior_90d_transaction_count",
+            "prior_90d_transaction_days",
         ),
         scope_columns=("tenant_id", "h3_index"),
         minimum_rows=200,
@@ -274,10 +280,10 @@ MODEL_SPECS: dict[str, ModelSpec] = {
         min_p80_coverage=0.65,
         intended_use="Human-reviewed HeatZone expansion-priority ranking",
         not_intended_use=(
-            "Automatic property acquisition, Candidate Site promotion, "
-            "or source-policy override"
+            "Automatic property acquisition, Candidate Site promotion, or source-policy override"
         ),
         risk_level="R4",
+        output_transform=HEATZONE_OUTPUT_TRANSFORM,
     ),
     "avm-liquidity": ModelSpec(
         key="avm-liquidity",
@@ -355,9 +361,7 @@ class ProductionTrainingSettings:
             )
         _reject_placeholder(self.git_sha, "ODP_RELEASE_COMMIT_SHA")
         if not self.actor:
-            raise ModelTrainingConfigurationError(
-                "ODP_MODEL_TRAINING_ACTOR is required"
-            )
+            raise ModelTrainingConfigurationError("ODP_MODEL_TRAINING_ACTOR is required")
         _reject_placeholder(self.actor, "ODP_MODEL_TRAINING_ACTOR")
 
     def redacted_summary(self) -> dict[str, str]:
@@ -392,8 +396,7 @@ def require_approval_document(
     )
     if prohibited_keys:
         raise ModelTrainingConfigurationError(
-            "approval document contains prohibited credential fields: "
-            + ", ".join(prohibited_keys)
+            "approval document contains prohibited credential fields: " + ", ".join(prohibited_keys)
         )
     required = {
         "approval_id",
@@ -433,13 +436,9 @@ def require_approval_document(
     }:
         raise ModelTrainingConfigurationError("approval release_type is unsupported")
     try:
-        approved_at = datetime.fromisoformat(
-            normalized["approved_at"].replace("Z", "+00:00")
-        )
+        approved_at = datetime.fromisoformat(normalized["approved_at"].replace("Z", "+00:00"))
     except ValueError as exc:
-        raise ModelTrainingConfigurationError(
-            "approval approved_at must be ISO-8601"
-        ) from exc
+        raise ModelTrainingConfigurationError("approval approved_at must be ISO-8601") from exc
     if approved_at.tzinfo is None:
         raise ModelTrainingConfigurationError("approval approved_at must include timezone")
     return normalized
@@ -465,9 +464,7 @@ def _require_remote_url(value: str, *, field: str, schemes: set[str]) -> None:
     _reject_placeholder(value, field)
     parsed = urlparse(value)
     if parsed.scheme.lower() not in schemes:
-        raise ModelTrainingConfigurationError(
-            f"{field} must use {', '.join(sorted(schemes))}"
-        )
+        raise ModelTrainingConfigurationError(f"{field} must use {', '.join(sorted(schemes))}")
     socket_hosts = parse_qs(parsed.query).get("host", ())
     cloud_sql_socket = (
         field == "ODAY_DATABASE_URL"

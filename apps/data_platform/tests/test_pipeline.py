@@ -43,6 +43,7 @@ def _window() -> BackfillWindow:
 class FakeSource:
     def __init__(self, documents: Sequence[dict[str, Any]]) -> None:
         self.documents = documents
+        self.requested_limits: list[int] = []
 
     def iter_envelopes(
         self,
@@ -54,6 +55,7 @@ class FakeSource:
         limit: int,
     ) -> Iterator[SourceEnvelope]:
         del window
+        self.requested_limits.append(limit)
         selected = [
             document
             for document in self.documents
@@ -74,9 +76,7 @@ class FakeRawLoader:
         self.snapshots: set[str] = set()
         self.fail_on_call = fail_on_call
 
-    def load(
-        self, source_kind: SourceKind, envelopes: Sequence[SourceEnvelope]
-    ) -> RawLoadResult:
+    def load(self, source_kind: SourceKind, envelopes: Sequence[SourceEnvelope]) -> RawLoadResult:
         self.calls += 1
         if self.calls == self.fail_on_call:
             raise TimeoutError("retryable raw destination timeout")
@@ -91,6 +91,7 @@ class FakeCanonicalStore:
         self.run_quarantine: dict[str, dict[str, str]] = {}
         self.canonical_snapshots: set[str] = set()
         self.failed: list[tuple[str, tuple[str, ...]]] = []
+        self.completed: list[tuple[str, dict[str, Any]]] = []
 
     def install(self) -> None:
         return None
@@ -125,9 +126,7 @@ class FakeCanonicalStore:
             except SourceContractError as exc:
                 reason = exc.reason_code.value
                 reasons[reason] = reasons.get(reason, 0) + 1
-                self.run_quarantine[envelope.run_id][
-                    envelope.source_snapshot_id
-                ] = reason
+                self.run_quarantine[envelope.run_id][envelope.source_snapshot_id] = reason
                 continue
             checksum = f"{envelope.source_snapshot_id}:{envelope.content_sha256}"
             valid.append(checksum)
@@ -135,9 +134,7 @@ class FakeCanonicalStore:
             self.canonical_snapshots.add(envelope.source_snapshot_id)
         return ProjectionBatchResult(tuple(valid), reasons)
 
-    def get_checkpoint(
-        self, source_kind: SourceKind, partition_key: str
-    ) -> str | None:
+    def get_checkpoint(self, source_kind: SourceKind, partition_key: str) -> str | None:
         return self.checkpoints.get((source_kind, partition_key))
 
     def record_checkpoint(
@@ -148,9 +145,7 @@ class FakeCanonicalStore:
         processed_count: int,
     ) -> None:
         del processed_count
-        self.checkpoints[(source_kind, partition_key)] = str(
-            envelope.source_document["_id"]
-        )
+        self.checkpoints[(source_kind, partition_key)] = str(envelope.source_document["_id"])
 
     def reconcile(
         self,
@@ -181,7 +176,7 @@ class FakeCanonicalStore:
         )
 
     def complete_run(self, run_id: str, **kwargs: Any) -> None:
-        del run_id, kwargs
+        self.completed.append((run_id, dict(kwargs)))
 
     def fail_run(
         self,
@@ -243,6 +238,58 @@ def test_content_addressed_projection_is_idempotent_across_runs() -> None:
     runner.run_partition(SourceKind.MERCHANT, _window(), resume=False)
     runner.run_partition(SourceKind.MERCHANT, _window(), resume=False)
     assert len(store.canonical_snapshots) == 2
+
+
+def test_partition_is_complete_only_after_a_non_truncated_authoritative_read() -> None:
+    store = FakeCanonicalStore()
+    source = FakeSource([_merchant(1), _merchant(2), _merchant(3)])
+    runner = DataPlaneRunner(
+        _config(),
+        source=source,
+        raw_loader=FakeRawLoader(),
+        canonical_store=store,
+    )
+
+    first = runner.run_partition(
+        SourceKind.MERCHANT,
+        _window(),
+        resume=False,
+        limit=2,
+    )
+    second = runner.run_partition(
+        SourceKind.MERCHANT,
+        _window(),
+        resume=True,
+        limit=2,
+    )
+
+    assert first.processed_count == 2
+    assert source.requested_limits == [3, 3]
+    assert store.completed[0][1]["partition_complete"] is False
+    assert second.processed_count == 1
+    assert store.completed[1][1]["partition_complete"] is True
+
+
+def test_partition_at_exact_limit_is_proven_complete_by_one_row_probe() -> None:
+    store = FakeCanonicalStore()
+    source = FakeSource([_merchant(1), _merchant(2)])
+    runner = DataPlaneRunner(
+        _config(),
+        source=source,
+        raw_loader=FakeRawLoader(),
+        canonical_store=store,
+    )
+
+    summary = runner.run_partition(
+        SourceKind.MERCHANT,
+        _window(),
+        resume=False,
+        limit=2,
+    )
+
+    assert summary.processed_count == 2
+    assert source.requested_limits == [3]
+    assert store.completed[0][1]["partition_complete"] is True
 
 
 def test_retry_resumes_after_last_durable_checkpoint() -> None:
