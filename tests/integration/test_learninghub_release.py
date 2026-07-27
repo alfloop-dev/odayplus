@@ -110,7 +110,10 @@ def _model_card(version: str, dataset_snapshot_id: str, validation_run_id: str) 
             "p80_coverage < 0.75 for 2 consecutive monitoring windows",
             "red_alert_precision drops below approved threshold",
         ),
-        approvals=(ModelCardApproval(approver="reviewer-a", role="model-review-board"),),
+        approvals=(
+            ModelCardApproval(approver="reviewer-a", role="model-review-board"),
+            ModelCardApproval(approver="rollback-reviewer", role="model-risk-owner"),
+        ),
     )
 
 
@@ -152,6 +155,10 @@ def _request_release(service: LearningHubService, **kwargs) -> ModelReleaseDecis
         service.repository.get_release_revision(str(kwargs["model_name"])),
     )
     kwargs.setdefault("idempotency_key", str(kwargs["approval_id"]))
+    # Release actors are always distinct: the requester never approves, and the
+    # approver is the identity recorded on the model card.
+    kwargs.setdefault("requested_by", "ml-owner")
+    kwargs.setdefault("approved_by", "reviewer-a")
     return service.request_release(**kwargs)
 
 
@@ -234,6 +241,7 @@ def test_learninghub_validates_releases_and_rolls_back_model_aliases() -> None:
             "fail_criteria": ["smoke prediction fails"],
             "affected_modules": ["ForecastOps"],
             "requested_by": "on-call",
+            "approved_by": "reviewer-a",
             "correlation_id": "corr-learninghub-4",
             "expected_release_revision": repository.get_release_revision(v2.model_name),
             "idempotency_key": "approval-rollback-001",
@@ -791,6 +799,15 @@ def test_release_worker_requires_revision_and_idempotency_binding() -> None:
             {**payload, "expected_release_revision": 0},
             service=service,
         )
+    bound = {
+        **payload,
+        "expected_release_revision": 0,
+        "idempotency_key": "approval-worker-binding-001",
+    }
+    with pytest.raises(ValueError, match="requested_by"):
+        run_learninghub_release(bound, service=service)
+    with pytest.raises(ValueError, match="approved_by"):
+        run_learninghub_release({**bound, "requested_by": "ml-owner"}, service=service)
 
 
 def test_rollback_rejects_stale_command_and_produces_one_production_version() -> None:
@@ -883,6 +900,9 @@ def test_release_saga_survives_process_interruption_and_recovers(
             engine,
             worm_sink=LocalAppendOnlyWormSink(worm_root),
         ),
+        # The interrupted process leaves no live lease behind, which is what
+        # makes its orphaned saga eligible for takeover by the next worker.
+        release_lease_seconds=0.0,
     )
     v1 = _prepare_candidate(service, "1.0.0")
     v2 = _prepare_candidate(service, "1.1.0")
@@ -1025,6 +1045,8 @@ def test_concurrent_releases_use_per_model_cas_without_cross_compensation() -> N
                 fail_criteria=("release revision conflict",),
                 expected_release_revision=0,
                 idempotency_key=f"concurrent-release-{candidate.version}",
+                requested_by="ml-owner",
+                approved_by="reviewer-a",
             )
         except LearningHubError as exc:
             return exc

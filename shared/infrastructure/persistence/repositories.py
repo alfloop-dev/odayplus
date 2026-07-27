@@ -740,6 +740,7 @@ class DurableLearningHubRepository:
     def save_release_saga(self, saga):
         from modules.learninghub.infrastructure.repositories import (
             LearningHubReleaseConflict,
+            assert_release_saga_fence,
         )
 
         pointer_id = f"{saga.model_name}:{saga.idempotency_key}"
@@ -751,6 +752,7 @@ class DurableLearningHubRepository:
             raise LearningHubReleaseConflict(
                 f"idempotency key already belongs to release {existing_release_id}"
             )
+        assert_release_saga_fence(self.get_release_saga(saga.release_id), saga)
         self._store.put(
             self._RELEASE_SAGAS,
             saga.release_id,

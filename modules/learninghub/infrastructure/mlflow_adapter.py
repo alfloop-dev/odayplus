@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+from collections.abc import Mapping
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
@@ -25,6 +26,21 @@ if TYPE_CHECKING:
 
 _TAG_PREFIX = "oday.model_version."
 _TAG_SCHEMA_VERSION = "1"
+# Governance projection carried on every released MLflow model version. The
+# values live in ``ModelVersion.monitoring_config`` so a release writes them
+# atomically with the rest of the model contract; the runtime resolves them
+# from MLflow tags without reading the durable registry.
+_GOVERNANCE_TAG_KEYS = (
+    "release_id",
+    "release_revision",
+    "approval_id",
+    "release_scope",
+    "requested_by",
+    "release_approved_by",
+    "model_card_checksum",
+    "validation_run_id",
+    "validation_status",
+)
 _LINEAGE_ARTIFACT_ROOT = "oday-lineage/model-versions"
 _STAGE_TO_MLFLOW = {
     ModelStage.DEV: "None",
@@ -268,6 +284,86 @@ class MlflowRegistryAdapter:
     def sync_release_metadata(self, model_version: ModelVersion) -> ModelVersion:
         """Write approval/lineage tags and verify the runtime-visible projection."""
 
+        restored = self._write_release_metadata(model_version)
+        if (
+            restored.approved_by != model_version.approved_by
+            or restored.approved_at != model_version.approved_at
+            or restored.rollback_target != model_version.rollback_target
+        ):
+            raise MlflowAliasSynchronizationError(
+                "MLflow release metadata verification failed for "
+                f"{model_version.model_name}:{model_version.version}"
+            )
+        if model_version.monitoring_config.get("release_id"):
+            self.assert_release_governance(
+                model_name=model_version.model_name,
+                version=model_version.version,
+                expected=release_governance_values(model_version),
+            )
+        return restored
+
+    def restore_release_metadata(self, model_version: ModelVersion) -> ModelVersion:
+        """Rewrite a durable pre-release snapshot back onto MLflow.
+
+        Compensation must undo *metadata*, not only stages and aliases: a failed
+        release that already wrote approval, approval-id, model-card, and
+        validation tags would otherwise leave MLflow advertising an approval
+        that was never committed. Verification failure is reported to the caller
+        so the saga is recorded as ``COMPENSATION_FAILED`` instead of silently
+        drifting.
+        """
+
+        restored = self._write_release_metadata(model_version)
+        if (
+            restored.approved_by != model_version.approved_by
+            or restored.approved_at != model_version.approved_at
+            or restored.rollback_target != model_version.rollback_target
+            or dict(restored.monitoring_config) != dict(model_version.monitoring_config)
+        ):
+            raise MlflowAliasSynchronizationError(
+                "MLflow release metadata restore verification failed for "
+                f"{model_version.model_name}:{model_version.version}"
+            )
+        return restored
+
+    def assert_release_governance(
+        self,
+        *,
+        model_name: str,
+        version: str,
+        expected: Mapping[str, str],
+        alias: ModelAlias | None = None,
+    ) -> None:
+        """Fail closed unless MLflow carries the full approved release projection."""
+
+        tags = self._require_model_version(model_name, version).tags
+        missing = sorted(
+            key for key in _GOVERNANCE_TAG_KEYS if not str(tags.get(self._tag(key), "")).strip()
+        )
+        if missing:
+            raise MlflowAliasSynchronizationError(
+                f"MLflow model version {model_name}:{version} is missing required "
+                "release governance tags: " + ", ".join(missing)
+            )
+        mismatched = sorted(
+            f"{key}={tags.get(self._tag(key))!r}!={str(value)!r}"
+            for key, value in expected.items()
+            if str(tags.get(self._tag(key), "")) != str(value)
+        )
+        if mismatched:
+            raise MlflowAliasSynchronizationError(
+                f"MLflow release governance tags disagree for {model_name}:{version}: "
+                + ", ".join(mismatched)
+            )
+        if alias is not None:
+            resolved = self.get_by_alias(model_name=model_name, alias=alias)
+            if resolved is None or resolved.version != version:
+                raise MlflowAliasSynchronizationError(
+                    f"MLflow alias {model_name}:{alias.value} does not resolve to the "
+                    f"governed release version {version}"
+                )
+
+    def _write_release_metadata(self, model_version: ModelVersion) -> ModelVersion:
         mlflow_version = self._require_model_version(
             model_version.model_name,
             model_version.version,
@@ -284,22 +380,12 @@ class MlflowRegistryAdapter:
             str(mlflow_version.version),
             tags,
         )
-        restored = self._to_domain(
+        return self._to_domain(
             self._require_client().get_model_version(
                 model_version.model_name,
                 str(mlflow_version.version),
             )
         )
-        if (
-            restored.approved_by != model_version.approved_by
-            or restored.approved_at != model_version.approved_at
-            or restored.rollback_target != model_version.rollback_target
-        ):
-            raise MlflowAliasSynchronizationError(
-                "MLflow release metadata verification failed for "
-                f"{model_version.model_name}:{model_version.version}"
-            )
-        return restored
 
     def _reconcile_alias_unsafe(
         self,
@@ -608,7 +694,12 @@ class MlflowRegistryAdapter:
         mlflow_run_id: str,
     ) -> dict[str, str]:
         artifact_sha256 = self._artifact_sha256(model_version)
+        governance = {
+            self._tag(key): value
+            for key, value in release_governance_values(model_version).items()
+        }
         return {
+            **governance,
             self._tag("schema_version"): _TAG_SCHEMA_VERSION,
             self._tag("domain_version"): model_version.version,
             self._tag("artifact_uri"): model_version.artifact_uri,
@@ -717,6 +808,13 @@ class MlflowRegistryAdapter:
         return parsed if parsed.tzinfo else parsed.replace(tzinfo=UTC)
 
 
+def release_governance_values(model_version: ModelVersion) -> dict[str, str]:
+    """Project the governance keys carried in ``monitoring_config`` as tag values."""
+
+    monitoring_config = model_version.monitoring_config
+    return {key: str(monitoring_config.get(key, "") or "") for key in _GOVERNANCE_TAG_KEYS}
+
+
 def _require_remote_tracking_uri(tracking_uri: str | None) -> None:
     if not tracking_uri:
         raise LearningHubRuntimeConfigurationError(
@@ -763,4 +861,8 @@ def _validate_production_model_lineage(model_version: ModelVersion) -> None:
         )
 
 
-__all__ = ["MlflowRegistryAdapter"]
+__all__ = [
+    "MlflowAliasSynchronizationError",
+    "MlflowRegistryAdapter",
+    "release_governance_values",
+]
