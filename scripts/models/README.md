@@ -25,6 +25,13 @@ SHA-256, and verifies the registered Forecast view/version. The database URL is
 read from the environment and local, SQLite, file, and placeholder resources
 are rejected.
 
+Inventory reports redacted provenance only: distinct tenant and source-snapshot
+counts, the temporal cutoff range, and deterministic chronological
+train/validation/test fifths (60/20/20). It never emits tenant identifiers,
+source row payloads, credentials, or labels. Re-running inventory is read-only;
+re-running the installer replaces the same versioned views and upserts the same
+contract keys.
+
 The Forecast view uses only persisted successful TWD transactions. Its daily
 label is the actual sum of `net_amount`; lag and rolling features use prior
 calendar dates only. Rows require complete source-snapshot lineage, completed
