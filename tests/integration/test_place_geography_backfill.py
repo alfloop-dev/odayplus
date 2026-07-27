@@ -420,3 +420,158 @@ def test_admin_mismatch_and_out_of_market_are_quarantined(geography_db):
         "SELECT admin_match FROM data_plane.geography_provider_snapshots ORDER BY store_id",
     )
     assert all(row[0] is False for row in flags)
+
+
+# Observed in the 2026-07-27 production run: a western-order raw address that
+# ``normalize_address`` reduces to the empty string, which the live gateway
+# rejects with HTTP 400 "address required".
+UNNORMALIZABLE_RAW = "1f, No. 14號柳川東路二段西區台中市台灣 403"
+
+
+def _insert_store(connection, *, store_id, tenant_id, source_id, raw_address):
+    address_id = uuid5(NAMESPACE, f"address-{source_id}")
+    connection.execute(
+        "INSERT INTO core.address_locations VALUES (%s, %s)",
+        (address_id, raw_address),
+    )
+    connection.execute(
+        "INSERT INTO core.stores VALUES (%s, %s, %s, %s, TRUE)",
+        (store_id, tenant_id, source_id, address_id),
+    )
+    connection.commit()
+
+
+def test_unnormalizable_address_is_quarantined_without_provider_call(geography_db):
+    from modules.external_data.geo.pipeline import normalize_address
+
+    assert normalize_address(UNNORMALIZABLE_RAW).normalized_address == ""
+    store_id = uuid5(NAMESPACE, "store-unnormalizable")
+    _insert_store(
+        geography_db,
+        store_id=store_id,
+        tenant_id=TENANT_A,
+        source_id="source-place-unnormalizable",
+        raw_address=UNNORMALIZABLE_RAW,
+    )
+
+    engine = _engine(geography_db)
+    report = engine.run()
+
+    assert report.processed == 3
+    assert report.inserted == 2
+    assert report.quarantined == {"ADDRESS_UNNORMALIZABLE": 1}
+    assert report.reconciled
+    # The live provider was never called with an empty address.
+    assert engine._geocode.calls == 2
+    quarantine = _rows(
+        geography_db,
+        "SELECT reason_code, source_id FROM data_plane.quarantined_records",
+    )
+    assert quarantine == [("ADDRESS_UNNORMALIZABLE", "source-place-unnormalizable")]
+    assert _rows(
+        geography_db,
+        "SELECT count(*) FROM data_plane.place_geography WHERE store_id = %s",
+        (store_id,),
+    ) == [(0,)]
+
+
+class Rejecting400GeocodeProvider(StubGeocodeProvider):
+    """Raises a live-shaped HTTP 400 for one address, resolves the rest."""
+
+    def __init__(self, payloads: dict[str, dict], reject_fragment: str) -> None:
+        super().__init__(payloads)
+        self.reject_fragment = reject_fragment
+
+    def lookup_with_payload(self, normalized_address):
+        from modules.external_data.providers.live import GeocodeProviderError
+
+        if self.reject_fragment in normalized_address.normalized_address:
+            self.calls += 1
+            raise GeocodeProviderError(
+                "live geocode provider returned HTTP 400",
+                provider_id="geocode.primary_api",
+                correlation_id=self.correlation_id,
+                code="http_error",
+                status_code=400,
+            )
+        return super().lookup_with_payload(normalized_address)
+
+
+def test_provider_400_rejection_is_quarantined_and_batch_continues(geography_db):
+    engine = PlaceGeographyBackfill(
+        geography_db,
+        geocode_provider=Rejecting400GeocodeProvider(_default_payloads(), "屏東"),
+        admin_boundary_provider=_admin_provider(),
+        poi_provider=_poi_provider(),
+        rate_limit_per_second=0.0,
+        clock=lambda: datetime(2026, 7, 27, 12, 0, tzinfo=UTC),
+    )
+    report = engine.run()
+
+    assert report.processed == 2
+    assert report.inserted == 1
+    assert report.quarantined == {"GEOCODE_REJECTED": 1}
+    assert report.reconciled
+    quarantine = _rows(
+        geography_db,
+        "SELECT reason_code, source_id FROM data_plane.quarantined_records",
+    )
+    assert quarantine == [("GEOCODE_REJECTED", "source-place-b")]
+    run_status = _rows(geography_db, "SELECT status FROM data_plane.ingestion_runs")
+    assert run_status == [("SUCCEEDED",)]
+
+
+@pytest.mark.parametrize(
+    "exc_factory",
+    [
+        pytest.param(
+            lambda live: live.GeocodeProviderAuthError(
+                "auth failed",
+                provider_id="geocode.primary_api",
+                correlation_id="test-correlation",
+                code="unauthorized",
+            ),
+            id="auth",
+        ),
+        pytest.param(
+            lambda live: live.GeocodeProviderError(
+                "live geocode provider returned HTTP 500",
+                provider_id="geocode.primary_api",
+                correlation_id="test-correlation",
+                code="http_error",
+                status_code=500,
+            ),
+            id="http-500",
+        ),
+        pytest.param(
+            lambda live: live.GeocodeProviderTimeoutError(
+                "timed out",
+                provider_id="geocode.primary_api",
+                correlation_id="test-correlation",
+                code="timeout",
+            ),
+            id="timeout",
+        ),
+    ],
+)
+def test_infrastructure_provider_failures_still_abort_the_run(geography_db, exc_factory):
+    from modules.external_data.providers import live
+
+    exc = exc_factory(live)
+
+    class FailingProvider(StubGeocodeProvider):
+        def lookup_with_payload(self, normalized_address):
+            raise exc
+
+    engine = PlaceGeographyBackfill(
+        geography_db,
+        geocode_provider=FailingProvider({}),
+        admin_boundary_provider=_admin_provider(),
+        poi_provider=_poi_provider(),
+        rate_limit_per_second=0.0,
+        clock=lambda: datetime(2026, 7, 27, 12, 0, tzinfo=UTC),
+    )
+    with pytest.raises(type(exc)):
+        engine.run()
+    run_status = _rows(geography_db, "SELECT status FROM data_plane.ingestion_runs")
+    assert run_status == [("FAILED",)]

@@ -528,6 +528,33 @@ class PlaceGeographyBackfill:
             for row in rows
         ]
 
+    @staticmethod
+    def _is_per_address_rejection(exc: Exception) -> bool:
+        """True only for a live-provider HTTP 400 tied to one address.
+
+        Auth, rate-limit, timeout, and 5xx failures are infrastructure and
+        must keep aborting the batch without advancing its checkpoint.
+        """
+        from modules.external_data.providers.live import (
+            GeocodeProviderAuthError,
+            GeocodeProviderError,
+            GeocodeProviderRateLimitError,
+            GeocodeProviderTimeoutError,
+        )
+
+        if not isinstance(exc, GeocodeProviderError):
+            return False
+        if isinstance(
+            exc,
+            (
+                GeocodeProviderAuthError,
+                GeocodeProviderRateLimitError,
+                GeocodeProviderTimeoutError,
+            ),
+        ):
+            return False
+        return exc.status_code == 400
+
     def _throttle(self) -> None:
         if self._min_interval <= 0:
             return
@@ -549,8 +576,52 @@ class PlaceGeographyBackfill:
             return
         report.processed += 1
         normalized = normalize_address(store["raw_address"])
+        if not normalized.normalized_address.strip():
+            record = {"raw_address": store["raw_address"], "error": "empty_normalized_address"}
+            content_sha = canonical_content_sha256(record)
+            self._quarantine(
+                run_id,
+                partition_key,
+                snapshot_id=str(deterministic_snapshot_id(store["store_id"], content_sha)),
+                store=store,
+                content_sha=content_sha,
+                reason_code="ADDRESS_UNNORMALIZABLE",
+                reason_detail=(
+                    f"raw address {store['raw_address']!r} normalized to empty; "
+                    "no live provider call was made"
+                ),
+            )
+            report.quarantined["ADDRESS_UNNORMALIZABLE"] = (
+                report.quarantined.get("ADDRESS_UNNORMALIZABLE", 0) + 1
+            )
+            self._commit()
+            return
         self._throttle()
-        candidate, payload = self._geocode.lookup_with_payload(normalized)
+        try:
+            candidate, payload = self._geocode.lookup_with_payload(normalized)
+        except Exception as exc:
+            if not self._is_per_address_rejection(exc):
+                raise
+            record = {
+                "raw_address": store["raw_address"],
+                "normalized_address": normalized.normalized_address,
+                "error": str(exc),
+            }
+            content_sha = canonical_content_sha256(record)
+            self._quarantine(
+                run_id,
+                partition_key,
+                snapshot_id=str(deterministic_snapshot_id(store["store_id"], content_sha)),
+                store=store,
+                content_sha=content_sha,
+                reason_code="GEOCODE_REJECTED",
+                reason_detail=f"live provider rejected this address: {exc}",
+            )
+            report.quarantined["GEOCODE_REJECTED"] = (
+                report.quarantined.get("GEOCODE_REJECTED", 0) + 1
+            )
+            self._commit()
+            return
         fetched_at = self._clock()
         payload_map = dict(payload) if isinstance(payload, Mapping) else {"raw": str(payload)}
         content_sha = canonical_content_sha256(payload_map)
