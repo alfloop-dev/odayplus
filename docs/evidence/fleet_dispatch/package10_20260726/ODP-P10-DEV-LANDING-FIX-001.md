@@ -58,3 +58,35 @@ No runtime component, retired selector, or alternate intake detail was restored.
 
 This artifact records local reconciliation only. Required GitHub checks and
 independent exact-head review remain mandatory before merge.
+
+## Dev Refresh And CI Contract Remediation
+
+PR #419 was refreshed with `origin/dev` at
+`a2a3c9206d7ea086a32259afbfa10bcf660f021c`. The merge added the P4 router and
+LEAN runtime contract surfaces and produced no conflicts. It did not restore
+any of the 117 retired Package 10 paths.
+
+The first full CI run on `8f79a2f4` exposed three stale contract assertions
+after all 1,729 other product tests passed:
+
+- The external-proof example still named the retired
+  `e2e-map-live-boundary.spec.ts` instead of the surviving canonical
+  `operator-network-listings.spec.ts` command required by its queue entry.
+- The frontend matrix CI test still required retired product-grade E2E files
+  from the pre-Package 10 runtime.
+- The closeout assertion still opened the retired
+  `e2e-avm-netplan.spec.ts` instead of checking the surviving
+  `e2e-network-find-areas-api-binding.spec.ts` evidence.
+
+Those assertions and the example artifact now point at the canonical surviving
+operator specs already exercised by `scripts/e2e/run_product_e2e.sh`. Runtime
+components and routes were not changed. The failed product E2E job itself was
+an independent Docker Hub registry timeout while pulling the test services.
+
+Refresh verification:
+
+- `uv run pytest -q tests/e2e/test_external_proof_handback_artifact.py tests/e2e/test_frontend_execution_matrix_coverage.py tests/e2e/test_package10_product_grade_ci_gate.py` — 40 passed.
+- `uv run ruff check tests/e2e/test_external_proof_handback_artifact.py tests/e2e/test_frontend_execution_matrix_coverage.py tests/e2e/test_package10_product_grade_ci_gate.py`
+- `python3 scripts/e2e/check_product_release_gate.py`
+- `python3 scripts/e2e/check_product_grade_ci_gates.py --report`
+- `git diff --check`
