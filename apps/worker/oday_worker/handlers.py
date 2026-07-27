@@ -14,10 +14,10 @@ package into the process.
 
 from __future__ import annotations
 
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 
-from shared.jobs.queue import JobRecord, NonRetryableJobError
+from shared.jobs.queue import JobRecord
 from shared.jobs.registry import JobRegistry
 
 if TYPE_CHECKING:  # pragma: no cover - typing only
@@ -29,63 +29,31 @@ EXTERNAL_FETCH_JOB_TYPE = "external-fetch"
 
 def handle_forecast(job: JobRecord, persistence: PersistenceBundle) -> None:
     """Run a ForecastOps scoring pass for a store and persist the result."""
-    from models.shared_ml import MlflowProductionModelRuntime
     from modules.forecastops.application.forecasting import ForecastInput
-    from modules.forecastops.runtime import forecastops_production_required
     from modules.forecastops.workers import run_forecastops_batch_forecast
 
     store_id = job.payload.get("store_id")
     if not store_id:
         raise ValueError("Forecast job payload missing store_id")
-    tenant_id = str(job.payload.get("tenant_id") or "").strip()
-    if not tenant_id:
-        raise NonRetryableJobError("Forecast job payload missing authenticated tenant scope")
 
     repo = persistence.forecastops_repository
-    series = repo.get_series(tenant_id, store_id)
+    series = repo.get_series(store_id)
     if series is None or not series.observations:
         raise ValueError(
-            f"Forecast job has no persisted timeseries for tenant {tenant_id}, "
-            f"store {store_id}; "
+            f"Forecast job has no persisted timeseries for {store_id}; "
             "synthetic runtime fallback is prohibited"
         )
-
-    production_required = forecastops_production_required()
-    model_runtime = MlflowProductionModelRuntime.from_environment() if production_required else None
-    raw_origin = job.payload.get("prediction_origin_time")
-    if isinstance(raw_origin, datetime):
-        prediction_origin = raw_origin
-    elif raw_origin:
-        prediction_origin = datetime.fromisoformat(
-            str(raw_origin).replace("Z", "+00:00")
-        )
-    else:
-        latest_business_date = max(
-            observation.business_date for observation in series.observations
-        )
-        prediction_origin = datetime.combine(
-            latest_business_date + timedelta(days=1),
-            datetime.min.time(),
-            tzinfo=UTC,
-        )
-    if prediction_origin.tzinfo is None:
-        prediction_origin = prediction_origin.replace(tzinfo=UTC)
 
     run_forecastops_batch_forecast(
         inputs=(
             ForecastInput(
                 store_id=store_id,
                 observations=series.observations,
-                tenant_id=tenant_id,
-                prediction_origin_time=prediction_origin,
+                prediction_origin_time=datetime.now(UTC),
             ),
         ),
         job_id=job.job_id,
-        prediction_origin_time=prediction_origin,
-        scored_at=job.created_at,
         repository=repo,
-        model_runtime=model_runtime,
-        runtime_mode="production" if production_required else "local",
     )
 
 

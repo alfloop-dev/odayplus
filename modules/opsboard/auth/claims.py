@@ -62,42 +62,26 @@ def _lookup(claims: Mapping[str, Any], key: str, prefix: str) -> Any:
 
 
 def principal_from_claims(
-    claims: Mapping[str, Any],
-    *,
-    subject: str,
-    claim_prefix: str = "odp",
-    principal_mapping: Mapping[str, Any] | None = None,
+    claims: Mapping[str, Any], *, subject: str, claim_prefix: str = "odp"
 ) -> Principal:
     """Build an authenticated :class:`Principal` from verified ``claims``."""
 
-    mapping = principal_mapping or {}
-    mapping_is_authoritative = principal_mapping is not None
-
-    def value(key: str) -> Any:
-        if mapping_is_authoritative:
-            return mapping.get(key)
-        return _lookup(claims, key, claim_prefix)
-
     scope = Scope(
-        tenant_id=(value("tenant_id") or None),
-        brand_ids=_as_str_set(value("brand_ids")),
-        region_ids=_as_str_set(value("region_ids")),
-        store_ids=_as_str_set(value("store_ids")),
+        tenant_id=(_lookup(claims, "tenant_id", claim_prefix) or None),
+        brand_ids=_as_str_set(_lookup(claims, "brand_ids", claim_prefix)),
+        region_ids=_as_str_set(_lookup(claims, "region_ids", claim_prefix)),
+        store_ids=_as_str_set(_lookup(claims, "store_ids", claim_prefix)),
         assigned_area_ids=_as_str_set(
-            value("assigned_area_ids")
+            _lookup(claims, "assigned_area_ids", claim_prefix)
         ),
-        heat_zone_ids=_as_str_set(value("heat_zone_ids")),
-        modules=_as_str_set(value("modules")),
-        clearance=_parse_clearance(value("clearance")),
+        heat_zone_ids=_as_str_set(_lookup(claims, "heat_zone_ids", claim_prefix)),
+        modules=_as_str_set(_lookup(claims, "modules", claim_prefix)),
+        clearance=_parse_clearance(_lookup(claims, "clearance", claim_prefix)),
     )
     return Principal(
         subject_id=subject,
-        roles=_parse_roles(value("roles")),
+        roles=_parse_roles(_lookup(claims, "roles", claim_prefix)),
         scope=scope,
-        attributes={
-            "iss": claims.get("iss"),
-            "email": claims.get("email"),
-            "token_type": "oidc",
-        },
+        attributes={"iss": claims.get("iss"), "token_type": "oidc"},
         authenticated=True,
     )

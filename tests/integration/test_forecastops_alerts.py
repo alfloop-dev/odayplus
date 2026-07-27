@@ -20,7 +20,6 @@ from modules.forecastops import (
 from tests.integration._authz import FORECASTOPS_HEADERS
 
 PREDICTION_TIME = datetime(2026, 6, 27, 9, 0, tzinfo=UTC)
-TENANT_ID = FORECASTOPS_HEADERS["x-tenant-id"]
 
 
 def _observation(day: int, revenue: float, baseline: float = 100_000.0) -> StoreDayObservation:
@@ -40,8 +39,7 @@ def test_store_timeseries_view_groups_and_orders_observations() -> None:
             {"store_id": "store-b", "business_date": "2026-06-02", "actual_revenue": 90_000},
             {"store_id": "store-a", "business_date": "2026-06-02", "actual_revenue": 80_000},
             {"store_id": "store-a", "business_date": "2026-06-01", "actual_revenue": 70_000},
-        ],
-        tenant_id=TENANT_ID,
+        ]
     )
 
     assert [item.store_id for item in series] == ["store-a", "store-b"]
@@ -60,7 +58,6 @@ def test_forecast_job_emits_four_light_alerts_and_handoffs() -> None:
     result = service.forecast(
         [
             ForecastInput(
-                tenant_id=TENANT_ID,
                 store_id="store-001",
                 observations=observations,
                 prediction_origin_time=PREDICTION_TIME,
@@ -95,7 +92,6 @@ def test_batch_worker_persists_versions() -> None:
     repository = InMemoryForecastOpsRepository()
     inputs = [
         {
-            "tenant_id": TENANT_ID,
             "store_id": "store-001",
             "prediction_origin_time": PREDICTION_TIME.isoformat(),
             "observations": [
@@ -236,7 +232,6 @@ def _declining_result(repository: InMemoryForecastOpsRepository):
     return service, service.forecast(
         [
             ForecastInput(
-                tenant_id=TENANT_ID,
                 store_id="store-001",
                 observations=observations,
                 prediction_origin_time=PREDICTION_TIME,
@@ -253,33 +248,26 @@ def test_acknowledge_alert_persists_and_rejects_double_ack() -> None:
     assert alert.status == "open"
 
     acknowledged = service.acknowledge_alert(
-        TENANT_ID,
-        alert.alert_id,
-        actor="ops-manager-01",
-        note="triaged; machine downtime suspected",
+        alert.alert_id, actor="ops-manager-01", note="triaged; machine downtime suspected"
     )
     assert acknowledged.status == "acknowledged"
     assert acknowledged.acknowledged_by == "ops-manager-01"
     assert acknowledged.acknowledged_at is not None
     assert acknowledged.acknowledgement_note == "triaged; machine downtime suspected"
     # Persisted, not just returned.
-    assert repository.get_alert(TENANT_ID, alert.alert_id).status == "acknowledged"
+    assert repository.get_alert(alert.alert_id).status == "acknowledged"
 
     # Acknowledgement is a once-only action.
     with pytest.raises(ForecastOpsError):
-        service.acknowledge_alert(TENANT_ID, alert.alert_id, actor="ops-manager-01")
+        service.acknowledge_alert(alert.alert_id, actor="ops-manager-01")
     # Empty actor is rejected.
     with pytest.raises(ForecastOpsError):
         repository2 = InMemoryForecastOpsRepository()
         service2, result2 = _declining_result(repository2)
-        service2.acknowledge_alert(TENANT_ID, result2.alerts[0].alert_id, actor="  ")
+        service2.acknowledge_alert(result2.alerts[0].alert_id, actor="  ")
     # Unknown id → not-found.
     with pytest.raises(ForecastOpsNotFoundError):
-        service.acknowledge_alert(
-            TENANT_ID,
-            "forecast-alert-does-not-exist",
-            actor="ops-manager-01",
-        )
+        service.acknowledge_alert("forecast-alert-does-not-exist", actor="ops-manager-01")
 
 
 def test_execute_handoff_links_intervention_and_rejects_reexecute() -> None:
@@ -289,7 +277,6 @@ def test_execute_handoff_links_intervention_and_rejects_reexecute() -> None:
     assert handoff.status == "proposed"
 
     executed = service.execute_handoff(
-        TENANT_ID,
         handoff.handoff_id,
         actor="ops-dispatcher-01",
         intervention_id="intervention-linked-001",
@@ -298,18 +285,14 @@ def test_execute_handoff_links_intervention_and_rejects_reexecute() -> None:
     assert executed.executed_by == "ops-dispatcher-01"
     assert executed.executed_at is not None
     assert executed.intervention_id == "intervention-linked-001"
-    assert repository.get_handoff(TENANT_ID, handoff.handoff_id).status == "dispatched"
+    assert repository.get_handoff(handoff.handoff_id).status == "dispatched"
 
     # A handoff cannot be dispatched twice.
     with pytest.raises(ForecastOpsError):
-        service.execute_handoff(TENANT_ID, handoff.handoff_id, actor="ops-dispatcher-01")
+        service.execute_handoff(handoff.handoff_id, actor="ops-dispatcher-01")
     # Unknown id → not-found.
     with pytest.raises(ForecastOpsNotFoundError):
-        service.execute_handoff(
-            TENANT_ID,
-            "intervention-handoff-missing",
-            actor="ops-dispatcher-01",
-        )
+        service.execute_handoff("intervention-handoff-missing", actor="ops-dispatcher-01")
 
 
 def test_api_acknowledge_alert_and_execute_handoff_with_audit() -> None:

@@ -86,7 +86,9 @@ def _install_exact_response_filter(app: Any) -> None:
 
     def exact_openapi() -> dict[str, Any]:
         schema = base_openapi()
-        allowed_by_operation: dict[str, set[str]] = getattr(app.state, _EXACT_RESPONSES_KEY, {})
+        allowed_by_operation: dict[str, set[str]] = getattr(
+            app.state, _EXACT_RESPONSES_KEY, {}
+        )
         for path_item in schema.get("paths", {}).values():
             for operation in path_item.values():
                 if not isinstance(operation, dict):
@@ -128,7 +130,9 @@ def mount_versioned(
         responses={} if exact_responses else ERROR_RESPONSES,
     )
     if exact_responses:
-        allowed_by_operation: dict[str, set[str]] = getattr(app.state, _EXACT_RESPONSES_KEY, {})
+        allowed_by_operation: dict[str, set[str]] = getattr(
+            app.state, _EXACT_RESPONSES_KEY, {}
+        )
         for route in exact_operation_routes:
             operation_id = route.operation_id
             allowed = {str(getattr(route, "status_code", None) or 200)}
@@ -180,34 +184,16 @@ def install_deprecation_headers(app: Any) -> None:
     so a caller can discover the versioned path from the response alone rather
     than from documentation it may never read.
     """
-    from starlette.datastructures import MutableHeaders
+    from starlette.requests import Request
 
-    class DeprecationHeaderMiddleware:
-        def __init__(self, wrapped_app: Any) -> None:
-            self.app = wrapped_app
-
-        async def __call__(self, scope: dict[str, Any], receive: Any, send: Any) -> None:
-            if scope["type"] != "http":
-                await self.app(scope, receive, send)
-                return
-
-            path = str(scope.get("path") or "")
-            matchers: list[re.Pattern[str]] = getattr(
-                app.state,
-                _ALIAS_MATCHERS_KEY,
-                [],
-            )
-            is_alias = not path.startswith(API_V1_PREFIX) and any(
-                matcher.fullmatch(path) for matcher in matchers
-            )
-
-            async def send_with_deprecation(message: dict[str, Any]) -> None:
-                if is_alias and message["type"] == "http.response.start":
-                    headers = MutableHeaders(scope=message)
-                    headers[DEPRECATION_HEADER] = "true"
-                    headers["Link"] = f'<{API_V1_PREFIX}{path}>; rel="successor-version"'
-                await send(message)
-
-            await self.app(scope, receive, send_with_deprecation)
-
-    app.add_middleware(DeprecationHeaderMiddleware)
+    @app.middleware("http")
+    async def _mark_deprecated_alias(request: Request, call_next: Any) -> Any:
+        response = await call_next(request)
+        path = request.url.path
+        if path.startswith(API_V1_PREFIX):
+            return response
+        matchers: list[re.Pattern[str]] = getattr(app.state, _ALIAS_MATCHERS_KEY, [])
+        if any(matcher.fullmatch(path) for matcher in matchers):
+            response.headers[DEPRECATION_HEADER] = "true"
+            response.headers["Link"] = f'<{API_V1_PREFIX}{path}>; rel="successor-version"'
+        return response

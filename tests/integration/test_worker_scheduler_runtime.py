@@ -29,7 +29,6 @@ from shared.jobs.queue import JobRequest, JobStatus
 from shared.jobs.registry import JobRegistry
 
 PROVIDER_ID = "listing.partner_feed"
-FORECAST_TENANT_ID = "tenant-worker-test"
 
 
 @pytest.fixture
@@ -44,16 +43,13 @@ def _queued_of_type(bundle, job_type: str) -> list:
 def _seed_forecast_series(bundle, store_id: str) -> None:
     start = date(2026, 4, 1)
     ForecastOpsService(repository=bundle.forecastops_repository).ingest_timeseries(
-        (
-            StoreDayObservation(
-                store_id=store_id,
-                business_date=start + timedelta(days=index),
-                actual_revenue=80_000 + index * 250 + (index % 7) * 900,
-                source_snapshot_ids=(f"pos-{index:03d}",),
-            )
-            for index in range(70)
-        ),
-        tenant_id=FORECAST_TENANT_ID,
+        StoreDayObservation(
+            store_id=store_id,
+            business_date=start + timedelta(days=index),
+            actual_revenue=80_000 + index * 250 + (index % 7) * 900,
+            source_snapshot_ids=(f"pos-{index:03d}",),
+        )
+        for index in range(70)
     )
 
 
@@ -85,10 +81,7 @@ def test_worker_forecast_job_claims_and_succeeds() -> None:
     bundle = build_persistence()
     _seed_forecast_series(bundle, "store-001")
     job, created = bundle.job_queue.enqueue(
-        JobRequest(
-            job_type="forecast",
-            payload={"store_id": "store-001", "tenant_id": FORECAST_TENANT_ID},
-        ),
+        JobRequest(job_type="forecast", payload={"store_id": "store-001"}),
         correlation_id="corr-forecast",
     )
     assert created is True
@@ -108,15 +101,12 @@ def test_production_forecast_worker_reads_deployment_engine_and_model(
     monkeypatch.setenv("ODP_FORECAST_MODEL", "seasonal_naive")
     bundle = _durable_bundle(db_path)
     try:
-        worker = ForecastOpsForecastWorker(
-            repository=bundle.forecastops_repository,
-            model_runtime=object(),
-        )
+        worker = ForecastOpsForecastWorker(repository=bundle.forecastops_repository)
 
         assert worker.service.production_required is True
         assert worker.service.engine is not None
-        assert worker.service.engine.engine_name == "mlflow_registered_oss"
-        assert worker.service.engine.runtime is not None
+        assert worker.service.engine.engine_name == "statsforecast"
+        assert worker.service.engine.model_name == "seasonal_naive"
     finally:
         bundle.engine.close()
 

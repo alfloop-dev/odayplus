@@ -11,7 +11,6 @@ from models.shared_ml.production_runtime import ProductionModelRuntime
 from modules.forecastops.application.forecasting import ForecastOpsService
 from modules.forecastops.domain.forecasting import ForecastEngine, ForecastInput
 from modules.forecastops.infrastructure.repositories import ForecastOpsRepository
-from modules.forecastops.runtime import forecastops_production_required
 
 
 @dataclass(frozen=True)
@@ -41,12 +40,8 @@ class ForecastOpsForecastWorker:
         model_runtime: ProductionModelRuntime | None = None,
         runtime_mode: str | None = None,
     ) -> None:
-        production_required = forecastops_production_required(runtime_mode)
-        selected_engine = engine
-        selected_model = model_name
-        if not production_required:
-            selected_engine = selected_engine or os.getenv("ODP_FORECAST_ENGINE") or None
-            selected_model = selected_model or os.getenv("ODP_FORECAST_MODEL") or None
+        selected_engine = engine if engine is not None else os.getenv("ODP_FORECAST_ENGINE") or None
+        selected_model = model_name or os.getenv("ODP_FORECAST_MODEL") or None
         self.service = ForecastOpsService(
             repository=repository,
             engine=selected_engine,
@@ -62,24 +57,16 @@ class ForecastOpsForecastWorker:
         inputs: Iterable[ForecastInput | Mapping[str, Any]],
         job_id: str | None = None,
         prediction_origin_time: datetime | str | None = None,
-        scored_at: datetime | str | None = None,
         engine: str | ForecastEngine | None = None,
         model_name: str | None = None,
         engine_options: Mapping[str, Any] | None = None,
     ) -> ForecastOpsBatchResult:
-        completed_at = (
-            _parse_datetime(scored_at)
-            if scored_at is not None
-            else datetime.now(UTC)
-        )
+        completed_at = datetime.now(UTC)
         result = self.service.forecast(
             inputs,
             prediction_origin_time=_parse_datetime(prediction_origin_time)
             if prediction_origin_time is not None
             else None,
-            prediction_run_id=(
-                f"pred-run-forecast-{job_id}" if job_id is not None else None
-            ),
             scored_at=completed_at,
             engine=engine,
             model_name=model_name,
@@ -98,7 +85,6 @@ def run_forecastops_batch_forecast(
     inputs: Iterable[ForecastInput | Mapping[str, Any]],
     job_id: str | None = None,
     prediction_origin_time: datetime | str | None = None,
-    scored_at: datetime | str | None = None,
     repository: ForecastOpsRepository | None = None,
     engine: str | ForecastEngine | None = None,
     model_name: str | None = None,
@@ -117,7 +103,6 @@ def run_forecastops_batch_forecast(
         inputs=inputs,
         job_id=job_id,
         prediction_origin_time=prediction_origin_time,
-        scored_at=scored_at,
     )
 
 

@@ -54,27 +54,13 @@ def test_concurrency_and_soak_execution(load_db_path, tmp_path) -> None:
             resp = client.post(
                 "/jobs",
                 json={"job_type": "forecast", "payload": {"store_id": f"store-{task_id}"}},
-                headers={
-                    "X-Correlation-ID": correlation_id,
-                    "Idempotency-Key": idem_key,
-                    "x-subject-id": "load-forecast-operator",
-                    "x-roles": "operations_manager",
-                    "x-tenant-id": "tenant-load-forecast",
-                },
+                headers={"X-Correlation-ID": correlation_id, "Idempotency-Key": idem_key},
             )
             assert resp.status_code == 202
             job_id = resp.json()["job_id"]
 
             # Step B: Read Job (Read from DB queue)
-            resp_get = client.get(
-                f"/jobs/{job_id}",
-                headers={
-                    "X-Correlation-ID": correlation_id,
-                    "x-subject-id": "load-forecast-operator",
-                    "x-roles": "operations_manager",
-                    "x-tenant-id": "tenant-load-forecast",
-                },
-            )
+            resp_get = client.get(f"/jobs/{job_id}", headers={"X-Correlation-ID": correlation_id})
             assert resp_get.status_code == 200
             assert resp_get.json()["job_id"] == job_id
 
@@ -97,7 +83,8 @@ def test_concurrency_and_soak_execution(load_db_path, tmp_path) -> None:
         task_offset = wave_index * batch_size
         with concurrent.futures.ThreadPoolExecutor(max_workers=concurrency) as executor:
             futures = [
-                executor.submit(run_worker_task, task_offset + index) for index in range(batch_size)
+                executor.submit(run_worker_task, task_offset + index)
+                for index in range(batch_size)
             ]
             for fut in concurrent.futures.as_completed(futures):
                 lat, success, error = fut.result()

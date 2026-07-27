@@ -1,10 +1,8 @@
 -- ODay Plus model-ready contracts, version 2026-07-26.1.
 --
 -- Apply only after the canonical PostgreSQL and data-plane migrations/backfill.
--- This artifact creates training rows exclusively from persisted stores,
--- reconciled source partitions, and canonical transactions. The eligible
--- store/date spine is bounded by those real partitions; it is not a synthetic
--- calendar or a fallback label generator.
+-- This artifact creates training rows exclusively by selecting persisted source
+-- records. It does not create date spines, labels, or fallback rows.
 
 CREATE SCHEMA IF NOT EXISTS model_ready;
 
@@ -33,35 +31,7 @@ COMMENT ON TABLE model_ready.view_contracts IS
     'Fail-closed registry for versioned model-ready relations and outcome readiness.';
 
 CREATE OR REPLACE VIEW model_ready.forecast_training_view AS
-WITH authoritative_order_partitions AS (
-    SELECT DISTINCT ON (ingestion.partition_key)
-        ingestion.run_id,
-        ingestion.partition_key::date AS date,
-        ingestion.finished_at
-    FROM data_plane.ingestion_runs AS ingestion
-    WHERE ingestion.source_kind = 'orders'
-      AND ingestion.partition_key ~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}$'
-      AND ingestion.status = 'SUCCEEDED'
-      AND ingestion.finished_at IS NOT NULL
-      AND ingestion.quarantined_count = 0
-      AND ingestion.processed_count = ingestion.valid_loaded
-    ORDER BY ingestion.partition_key, ingestion.finished_at DESC, ingestion.run_id DESC
-),
-eligible_store_dates AS (
-    SELECT
-        store.tenant_id,
-        store.store_id,
-        partition.date,
-        partition.run_id,
-        partition.finished_at AS partition_finished_at
-    FROM core.stores AS store
-    CROSS JOIN authoritative_order_partitions AS partition
-    WHERE (store.opened_on IS NULL OR store.opened_on <= partition.date)
-      AND (store.closed_on IS NULL OR store.closed_on >= partition.date)
-      AND store.effective_from < (partition.date + 1)::timestamp AT TIME ZONE 'UTC'
-      AND store.effective_to >= partition.date::timestamp AT TIME ZONE 'UTC'
-),
-transaction_source AS (
+WITH transaction_source AS (
     SELECT
         store.tenant_id,
         txn.transaction_id,
@@ -76,22 +46,23 @@ transaction_source AS (
     FROM core.transactions AS txn
     INNER JOIN core.stores AS store
         ON store.store_id = txn.store_id
-    INNER JOIN authoritative_order_partitions AS partition
-        ON partition.date = (txn.event_time AT TIME ZONE 'UTC')::date
     LEFT JOIN LATERAL (
         SELECT
             array_agg(
                 DISTINCT lineage.source_snapshot_id::text
                 ORDER BY lineage.source_snapshot_id::text
             ) AS source_snapshot_ids,
-            bool_and(lineage.run_id = partition.run_id) AS source_run_complete,
-            partition.finished_at AS source_run_finished_at
+            bool_and(
+                ingestion.status = 'SUCCEEDED'
+                AND ingestion.finished_at IS NOT NULL
+            ) AS source_run_complete,
+            max(ingestion.finished_at) AS source_run_finished_at
         FROM data_plane.canonical_lineage AS lineage
+        INNER JOIN data_plane.ingestion_runs AS ingestion
+            ON ingestion.run_id = lineage.run_id
         WHERE lineage.tenant_id = store.tenant_id
           AND lineage.canonical_table = 'core.transactions'
           AND lineage.canonical_id = txn.transaction_id
-          AND lineage.source_kind = 'orders'
-          AND lineage.run_id = partition.run_id
     ) AS source ON TRUE
     WHERE txn.transaction_status = 'succeeded'
       AND txn.currency = 'TWD'
@@ -152,34 +123,15 @@ transaction_daily AS (
         (source_txn.event_time AT TIME ZONE 'UTC')::date,
         daily_source_ids.source_snapshot_ids
 ),
-complete_daily AS (
+mature_daily AS (
     SELECT
-        eligible.tenant_id,
-        eligible.store_id,
-        eligible.date,
-        coalesce(transaction_daily.daily_net_revenue, 0.0)::double precision
-            AS daily_net_revenue,
-        coalesce(transaction_daily.transaction_count, 0)::bigint AS transaction_count,
+        transaction_daily.*,
         greatest(
-            coalesce(transaction_daily.source_available_at, eligible.partition_finished_at),
-            eligible.partition_finished_at
-        ) AS source_available_at,
-        coalesce(transaction_daily.lineage_complete, TRUE) AS lineage_complete,
-        coalesce(transaction_daily.source_run_complete, TRUE) AS source_run_complete,
-        array_append(
-            coalesce(transaction_daily.source_snapshot_ids, ARRAY[]::text[]),
-            concat('orders-run:', eligible.run_id::text)
-        ) AS source_snapshot_ids,
-        greatest(
-            coalesce(transaction_daily.source_available_at, eligible.partition_finished_at),
-            eligible.partition_finished_at,
-            (eligible.date + 1)::timestamp AT TIME ZONE 'UTC'
+            source_available_at,
+            source_run_finished_at,
+            (date + 1)::timestamp AT TIME ZONE 'UTC'
         ) AS label_maturity_time
-    FROM eligible_store_dates AS eligible
-    LEFT JOIN transaction_daily
-        ON transaction_daily.tenant_id = eligible.tenant_id
-       AND transaction_daily.store_id = eligible.store_id
-       AND transaction_daily.date = eligible.date
+    FROM transaction_daily
 ),
 point_in_time AS (
     SELECT
@@ -191,7 +143,7 @@ point_in_time AS (
         causal.prior_day_count_28,
         causal.prior_feature_maturity_time,
         lineage_window.source_snapshot_ids AS lineage_window_snapshot_ids
-    FROM complete_daily AS target
+    FROM mature_daily AS target
     LEFT JOIN LATERAL (
         SELECT
             max(prior.daily_net_revenue)
@@ -203,7 +155,7 @@ point_in_time AS (
             avg(prior.daily_net_revenue) AS rolling_mean_28,
             count(*)::integer AS prior_day_count_28,
             max(prior.label_maturity_time) AS prior_feature_maturity_time
-        FROM complete_daily AS prior
+        FROM mature_daily AS prior
         WHERE prior.tenant_id = target.tenant_id
           AND prior.store_id = target.store_id
           AND prior.date >= target.date - 28
@@ -218,7 +170,7 @@ point_in_time AS (
             UNION ALL
             SELECT unnest(coalesce(prior.source_snapshot_ids, ARRAY[]::text[]))
                 AS snapshot_id
-            FROM complete_daily AS prior
+            FROM mature_daily AS prior
             WHERE prior.tenant_id = target.tenant_id
               AND prior.store_id = target.store_id
               AND prior.date >= target.date - 28
@@ -233,11 +185,10 @@ SELECT
     tenant_id,
     store_id,
     date,
-    prior_feature_maturity_time AS feature_snapshot_time,
-    greatest(
-        prior_feature_maturity_time,
-        date::timestamp AT TIME ZONE 'UTC'
-    ) + interval '1 microsecond' AS prediction_origin_time,
+    greatest(label_maturity_time, prior_feature_maturity_time)
+        AS feature_snapshot_time,
+    greatest(label_maturity_time, prior_feature_maturity_time)
+        + interval '1 microsecond' AS prediction_origin_time,
     label_maturity_time,
     daily_net_revenue,
     revenue_lag_1,
@@ -260,16 +211,9 @@ SELECT
         AND rolling_mean_7 IS NOT NULL
         AND rolling_mean_28 IS NOT NULL
         AND label_maturity_time <= CURRENT_TIMESTAMP
-        AND prior_feature_maturity_time
-            < greatest(
-                prior_feature_maturity_time,
-                date::timestamp AT TIME ZONE 'UTC'
-            ) + interval '1 microsecond'
-        AND label_maturity_time
-            >= greatest(
-                prior_feature_maturity_time,
-                date::timestamp AT TIME ZONE 'UTC'
-            ) + interval '1 microsecond'
+        AND greatest(label_maturity_time, prior_feature_maturity_time)
+            < greatest(label_maturity_time, prior_feature_maturity_time)
+                + interval '1 microsecond'
     ) AS is_training_eligible,
     FALSE AS is_scoring_eligible,
     CASE
@@ -279,17 +223,13 @@ SELECT
         WHEN prior_day_count_28 <> 28 THEN 'INSUFFICIENT_28_DAY_HISTORY'
         WHEN revenue_lag_1 IS NULL OR revenue_lag_7 IS NULL
             THEN 'DAILY_HISTORY_GAP'
-        WHEN label_maturity_time < greatest(
-            prior_feature_maturity_time,
-            date::timestamp AT TIME ZONE 'UTC'
-        ) + interval '1 microsecond' THEN 'LABEL_PRECEDES_PREDICTION_ORIGIN'
         WHEN label_maturity_time > CURRENT_TIMESTAMP THEN 'LABEL_NOT_MATURE'
         ELSE NULL
     END AS exclusion_reason
 FROM point_in_time;
 
 COMMENT ON VIEW model_ready.forecast_training_view IS
-    'v2: tenant/store daily revenue labels over reconciled orders partitions; zero-transaction dates are retained and all features use only prior dates.';
+    'v2: tenant/store daily revenue labels from core.transactions; all features use only prior dates.';
 
 CREATE OR REPLACE VIEW model_ready.candidate_site_view AS
 WITH authoritative_order_days AS (

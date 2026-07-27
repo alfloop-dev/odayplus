@@ -91,15 +91,6 @@ def _build_durable(db_path: str) -> tuple[SqliteEngine, LearningHubService, Dura
     return engine, service, DurableArtifactStore(store)
 
 
-def _release(service: LearningHubService, **kwargs):
-    kwargs.setdefault(
-        "expected_release_revision",
-        service.repository.get_release_revision(str(kwargs["model_name"])),
-    )
-    kwargs.setdefault("idempotency_key", str(kwargs["approval_id"]))
-    return service.request_release(**kwargs)
-
-
 def _feature_and_train(
     service: LearningHubService,
     artifacts: DurableArtifactStore,
@@ -215,8 +206,7 @@ def test_feature_training_artifacts_are_reproducible_and_promotion_is_bound(db_p
         assert artifacts.verify(result.validation_report_artifact.artifact_id)
 
         _register_candidate(service, result)
-        decision = _release(
-            service,
+        decision = service.request_release(
             model_name=MODEL_NAME,
             version="1.0.0",
             release_type=ReleaseType.FULL,
@@ -278,8 +268,7 @@ def test_segment_acceptance_failure_rejects_governed_release(db_path) -> None:
         _register_candidate(service, rejected)
 
         with pytest.raises(LearningHubError, match="passed validation"):
-            _release(
-                service,
+            service.request_release(
                 model_name=MODEL_NAME,
                 version="2.0.0",
                 release_type=ReleaseType.FULL,
@@ -319,8 +308,7 @@ def test_monitoring_comparison_restart_safety_and_governed_rollback(db_path) -> 
         )
         _register_candidate(service, v1)
         _register_candidate(service, v2)
-        _release(
-            service,
+        service.request_release(
             model_name=MODEL_NAME,
             version="1.0.0",
             release_type=ReleaseType.FULL,
@@ -333,8 +321,7 @@ def test_monitoring_comparison_restart_safety_and_governed_rollback(db_path) -> 
             requested_by="ml-owner",
             correlation_id="corr-v1",
         )
-        _release(
-            service,
+        service.request_release(
             model_name=MODEL_NAME,
             version="1.1.0",
             release_type=ReleaseType.CANARY,
@@ -404,8 +391,7 @@ def test_monitoring_comparison_restart_safety_and_governed_rollback(db_path) -> 
             p.input_id for p in stored_comparison.challenger_predictions
         ]
 
-        _release(
-            service2,
+        service2.request_release(
             model_name=MODEL_NAME,
             version="1.1.0",
             release_type=ReleaseType.FULL,
@@ -423,8 +409,6 @@ def test_monitoring_comparison_restart_safety_and_governed_rollback(db_path) -> 
             comparison_id=comparison.comparison_id,
             reason="same-input canary delta breached rollback policy",
             approval_id="approval-rollback-001",
-            expected_release_revision=service2.repository.get_release_revision(MODEL_NAME),
-            idempotency_key="approval-rollback-001",
             requested_by="on-call",
         )
         assert rollback.release_type is ReleaseType.ROLLBACK
