@@ -14,10 +14,11 @@ test("HeatZone map renders nonblank MapLibre canvas with deck layers and local f
   await expect(page.getByLabel("Map layer controls")).toContainText("H3 HeatZones");
   await expect(page.getByLabel("Map legend")).toContainText("candidate site");
 
-  await expect.poll(async () => page.locator(".maplibregl-canvas").count()).toBeGreaterThan(0);
+  await waitForMapReady(page);
+  await expect(page.locator(".maplibregl-canvas")).toHaveCount(1);
   await expect.poll(async () => canvasHasVisiblePixels(page, ".maplibregl-canvas")).toBe(true);
   await expect(page.getByTestId("heat-zone-deck-overlay")).toBeVisible();
-  await expect.poll(async () => page.getByTestId("heat-zone-map-canvas").locator("canvas").count()).toBeGreaterThan(1);
+  await waitForDeckCanvas(page);
 });
 
 test("HeatZone map selection stays synchronized with ranked list and drawer", async ({ page }) => {
@@ -97,7 +98,7 @@ test("HeatZone deck semantic pixels distinguish layers and selected state", asyn
 
   await page.goto("/w/expansion/heatzone?selected=hz-1049&drawer=zone&layers=h3,listings");
   await waitForMapProjection(page);
-  await expect.poll(async () => page.getByTestId("heat-zone-map-canvas").locator("canvas").count()).toBeGreaterThan(1);
+  await waitForDeckCanvas(page);
 
   const listingBlue = await waitForPixelCount(page, [121.5651, 25.0337], isListingBlue, 34, 20);
   const selectedBoundary = cellToBoundary("894ba0a4e23ffff", true) as [number, number][];
@@ -106,22 +107,22 @@ test("HeatZone deck semantic pixels distinguish layers and selected state", asyn
   expect(listingBlue).toBeGreaterThan(20);
   expect(selectedDarkBlue).toBeGreaterThan(6);
 
-  await page.getByRole("checkbox", { name: "Listings" }).uncheck();
+  await waitForDeckRenderAfter(page, "h3", () => page.getByRole("checkbox", { name: "Listings" }).uncheck());
   const listingBlueAfterToggle = await countMapPixelsNear(page, [121.5651, 25.0337], isListingBlue, 34);
 
   expect(listingBlueAfterToggle).toBeLessThan(listingBlue / 2);
 
   await page.goto("/w/expansion/heatzone?selected=hz-1049&drawer=zone&layers=h3,confidence");
   await waitForMapProjection(page);
-  const confidenceBeforeToggle = await captureMapRegion(page, [121.5638, 25.033], 80);
-  await page.getByRole("checkbox", { name: "Confidence" }).uncheck();
-  const confidenceAfterToggle = await captureMapRegion(page, [121.5638, 25.033], 80);
+  const confidenceBeforeToggle = await captureMapCanvas(page);
+  await waitForDeckRenderAfter(page, "h3", () => page.getByRole("checkbox", { name: "Confidence" }).uncheck());
+  const confidenceAfterToggle = await captureMapCanvas(page);
   expect(countChangedPixels(confidenceBeforeToggle, confidenceAfterToggle, 18)).toBeGreaterThan(35);
 
   await page.goto("/w/expansion/heatzone?selected=hz-1049&drawer=zone&layers=h3,freshness");
   await waitForMapProjection(page);
   const freshnessBeforeToggle = await captureMapRegion(page, [121.5638, 25.033], 90);
-  await page.getByRole("checkbox", { name: "Freshness" }).uncheck();
+  await waitForDeckRenderAfter(page, "h3", () => page.getByRole("checkbox", { name: "Freshness" }).uncheck());
   const freshnessAfterToggle = await captureMapRegion(page, [121.5638, 25.033], 90);
   expect(countChangedPixels(freshnessBeforeToggle, freshnessAfterToggle, 30)).toBeGreaterThan(60);
 
@@ -132,7 +133,37 @@ test("HeatZone deck semantic pixels distinguish layers and selected state", asyn
 });
 
 async function waitForMapProjection(page: import("@playwright/test").Page) {
-  await expect.poll(async () => page.evaluate(() => typeof window.__odpHeatZoneMapProject)).toBe("function");
+  await waitForMapReady(page);
+}
+
+async function waitForMapReady(page: import("@playwright/test").Page) {
+  await page.waitForFunction(() => {
+    const map = document.querySelector('[data-testid="heat-zone-map"]');
+    return map?.getAttribute("data-map-ready") === "true" && typeof window.__odpHeatZoneMapProject === "function";
+  });
+}
+
+async function waitForDeckCanvas(page: import("@playwright/test").Page) {
+  await page.waitForFunction(() => {
+    const map = document.querySelector('[data-testid="heat-zone-map-canvas"]');
+    return (
+      map?.querySelectorAll("canvas").length > 1 &&
+      Number(map.getAttribute("data-deck-render-version") ?? "0") > 0
+    );
+  });
+}
+
+async function waitForDeckRenderAfter(
+  page: import("@playwright/test").Page,
+  expectedLayers: string,
+  action: () => Promise<void>,
+) {
+  await action();
+  await page.waitForFunction(
+    (layers) =>
+      document.querySelector('[data-testid="heat-zone-map-canvas"]')?.getAttribute("data-deck-layers") === layers,
+    expectedLayers,
+  );
 }
 
 async function clickMapCoordinate(page: import("@playwright/test").Page, coordinates: [number, number]) {
@@ -223,6 +254,21 @@ async function captureMapRegion(
       const offset = (y * info.width + x) * info.channels;
       pixels.push({ red: data[offset], green: data[offset + 1], blue: data[offset + 2], alpha: data[offset + 3] });
     }
+  }
+  return pixels;
+}
+
+async function captureMapCanvas(page: import("@playwright/test").Page) {
+  const screenshot = await page.getByTestId("heat-zone-map-canvas").screenshot();
+  const { data } = await sharp(screenshot).ensureAlpha().raw().toBuffer({ resolveWithObject: true });
+  const pixels: Rgba[] = [];
+  for (let offset = 0; offset < data.length; offset += 4) {
+    pixels.push({
+      red: data[offset],
+      green: data[offset + 1],
+      blue: data[offset + 2],
+      alpha: data[offset + 3],
+    });
   }
   return pixels;
 }
