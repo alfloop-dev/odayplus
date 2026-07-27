@@ -217,3 +217,53 @@ uv run pytest -q tests/integration/test_learninghub_release.py \
   tests/integration/test_learninghub_postgresql_release.py
 # 30 passed, 3 skipped (PostgreSQL URL not configured for this local rerun)
 ```
+
+## Dev-composition repair (head 49fb527d)
+
+CI run 30306786770 on head `52e54459` failed the `product` job with 12
+failures. All were composition drift against current `dev`, not defects in
+the reviewed LearningHub deliverable:
+
+- `DurableForecastOpsRepository` still carried tenant-scoped method
+  signatures from the retired `task/ODP-LIVE-RUNTIME-002` base, while `dev`'s
+  ForecastOps domain models have no `tenant_id`. Reverted the class to the
+  `dev` canonical implementation (out of `learninghub_only` scope).
+- `modules/learninghub/domain/dataset_snapshot.py` had relaxed the
+  `label_not_mature` point-in-time check. That relaxation belongs to
+  ODP-FORECAST-LEARNINGHUB-TEMPORAL-COMPOSE-001, which must prove no leakage
+  before allowing post-snapshot label maturity. Restored the `dev` canonical
+  fail-closed check; task fixtures set `label_maturity_time` equal to
+  `feature_snapshot_time`, so LearningHub suites are unaffected.
+- `tests/integration/test_production_model_lifecycle.py` still called the
+  pre-fix release API. Updated all `request_release` /
+  `request_rollback_from_comparison` call sites to the governed contract:
+  `expected_release_revision`, `idempotency_key`, and an `approved_by` that
+  matches the approval recorded on the model card.
+- `scripts/openapi/approved_breaking_changes.json` entries used a `task`
+  field; the contract gate requires `task_id`. Renamed the field.
+
+Verification at `49fb527d`:
+
+```
+uv run pytest tests/contract/test_openapi_artifact_and_client.py \
+  tests/data/test_pit_snapshot.py \
+  tests/integration/test_domain_job_receipt_persistence.py \
+  tests/integration/test_durable_repository_wiring.py \
+  tests/integration/test_model_ready_materialization.py \
+  tests/integration/test_operator_live_repository.py \
+  tests/reliability/test_cross_flow_gate.py \
+  modules/forecastops/tests/test_forecastops_production_runtime.py
+# 62 passed
+
+uv run pytest tests/integration/test_production_model_lifecycle.py
+# 3 passed
+
+uv run pytest tests/integration/test_learninghub_release.py \
+  tests/integration/test_model_registry_artifacts.py \
+  tests/integration/test_learninghub_postgresql_release.py \
+  modules/learninghub/tests/
+# 43 passed, 3 skipped (PostgreSQL URL not configured locally)
+
+make api-contract
+# PASS: 4 additive, 3 approved breaking, 0 unapproved breaking
+```
