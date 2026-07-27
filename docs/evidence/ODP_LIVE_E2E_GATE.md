@@ -36,6 +36,19 @@ release SHA.
    production-supported), live and healthy providers, `mlflow-production` model
    bindings with `autoSeeded=false`, a live operator data origin, and an empty
    `blockingReasons` list.
+
+   `deploymentMode` binds the served runtime to the env *this* deploy
+   configured. `apps/api/oday_api/runtime_mode.deployment_mode()` reads the
+   `ODP_DEPLOY_ENV`/`ODAY_ENV`/`ODP_ENV` triple that
+   `scripts/deploy_cloud_run_waji.sh` writes into the API env payload, so a dev
+   deploy reports `deploymentMode=dev`. The deploy script therefore passes
+   `--expected-deployment "${ODP_LIVE_E2E_DEPLOYMENT_MODE:-${ODP_DEPLOY_ENV}}"`
+   and the gate has **no** default for it (`config:expected_deployment` blocks
+   when it is empty). It is not the live-ness assertion — `requireLiveData`,
+   the persistence/provider/model checks, and the surrogate-marker scans carry
+   that; `ODP_PRODUCT_MODE=production` is what makes a dev deploy a
+   production-*mode* runtime. Defaulting this to `production` is the bug that
+   made every dev deploy promote and then roll straight back.
 3. **Authentication** — `GET /api/v1/operator/bootstrap` **without** credentials
    must be rejected with 401/403. An anonymous 200 blocks the release. The same
    route with the operator bearer token and role must return 200 with live
@@ -106,6 +119,7 @@ The dependency vocabulary is `config`, `release`, `api-runtime`, `auth`,
 | `--api-url` | promoted API service URL (`ODP_LIVE_E2E_API_URL`) |
 | `--web-url` | promoted Web service URL (`ODP_LIVE_E2E_WEB_URL`), **required** |
 | `--expected-sha` | `ODAY_RELEASE_SHA` |
+| `--expected-deployment` | `ODP_LIVE_E2E_DEPLOYMENT_MODE` var, else `ODP_DEPLOY_ENV`. **No default** |
 | operator bearer token | `ODP_OPERATOR_SMOKE_BEARER_TOKEN` (read from env, never printed) |
 | `--operator-role` | `ODP_OPERATOR_SMOKE_ROLE` |
 | required provider ids | `--required-provider` (repeatable) or `ODP_PRODUCTION_PROVIDER_IDS` |
@@ -115,6 +129,29 @@ The dependency vocabulary is `config`, `release`, `api-runtime`, `auth`,
 The bearer token is redacted from the report and from stdout. The API origin
 must be a credential-free HTTPS origin on a non-example host; `--allow-http` is
 only for an explicitly controlled non-production target.
+
+### Grants the smoke principal must carry
+
+`--operator-role` (`X-Operator-Role`) only *selects an Operator Console persona*
+among the grants a principal already has; it cannot widen them
+(`apps/api/oday_api/security/dependencies.py:_select_operator_role`). The
+authorization the gate actually needs comes from the platform roles on the smoke
+bearer token, and the routes it calls do not share one role
+(`shared/auth/rbac.py`):
+
+| Route the gate calls | Required permission | Roles granting it |
+| --- | --- | --- |
+| `GET /api/v1/operator/bootstrap` | `operator_console:view` | `operations_manager`, `regional_supervisor`, `expansion_user`, … |
+| `GET /api/v1/learninghub/models` | `model:view` | `model_owner`, `release_owner` |
+| `GET /api/v1/external-data/ingestion-runs` | `integration:view` | `data_owner` |
+| `GET /api/v1/audit/events` | `audit:view` | `data_owner`, `model_owner`, `operations_manager`, … |
+
+So `ODP_OPERATOR_SMOKE_BEARER_TOKEN` must be issued to a principal holding
+**several** roles (e.g. `operations_manager,model_owner,data_owner`). A
+single-role token makes the gate fail on `models:registry` or
+`data:ingestion_runs`; both now report the `auth` dependency rather than
+`mlflow`/`external-data`, so the failure names the credential to widen instead
+of sending an operator to republish an MLflow alias that already exists.
 
 ## Invocation
 
@@ -159,10 +196,24 @@ Being *required in live mode* and being *able to produce an ingestion run* are
 two different facts. Conflating them made an earlier revision of this gate
 unpassable against a healthy deployment, so the distinction is now explicit.
 
-`ExternalFetchScheduler.run_once` is the only writer of ingestion runs — reached
-from both `apps/worker/oday_worker/handlers.py:handle_external_fetch` and
-`POST /external-data/ingestion-runs` via `IngestionService.ingest`. It refuses
-any provider whose registry category is outside
+`ExternalIngestionService` is the only writer of the queryable
+`IngestionRunRecord`s that `GET /api/v1/external-data/ingestion-runs` serves; it
+persists them to `PersistenceBundle.ingestion_run_store`
+(`external_data.ingestion_runs`). It composes `ExternalFetchScheduler.run_once`,
+which owns window idempotency and the watermark and writes only
+`external_data.fetch_runs`.
+
+That distinction used to be a hole: `handle_external_fetch` drove
+`ExternalFetchScheduler` directly, so the deployed path
+(Cloud Scheduler → `external-fetch` job → worker) advanced watermarks without
+ever writing an ingestion run. The only writer reachable in a deployed
+environment was the manual `POST /external-data/ingestion-runs`, which means this
+gate's ingestion-run assertions could not pass on any environment where nobody
+had POSTed by hand. `handle_external_fetch` now goes through
+`ExternalIngestionService.run_scheduled`, so the scheduled path and the manual
+path write the same record to the same store.
+
+`run_once` refuses any provider whose registry category is outside
 `scheduled_fetch._SCHEDULABLE_CATEGORIES` (`listing`, `poi`, `admin_boundary`)
 with `provider_not_schedulable`:
 
@@ -180,6 +231,18 @@ would promote and then roll back every release.
 
 Consequences encoded in the gate:
 
+- The gate produces the evidence it asserts. `_check_worker_and_audit` runs
+  **before** `_check_source_data` and enqueues one `external-fetch` job per
+  entry in `config.snapshot_provider_ids` (the lifecycle/idempotency/audit
+  assertions ride on `config.probe_provider_id`; the rest are asserted terminal
+  via `worker:ingestion_probe:<provider_id>`). Only then does the gate read
+  `GET /api/v1/external-data/ingestion-runs` back. The deployed Cloud Scheduler
+  cron only ever enqueues `listing.partner_feed`
+  (`apps/scheduler/oday_scheduler/main.py`), so without this the required
+  snapshot providers would have no run on a fresh deployment.
+- `CloudRunWorkerDriver` is constructed with
+  `max_jobs = len(snapshot_provider_ids) + 4`, so the single drain can clear
+  every job the gate enqueued plus anything the cron queued meanwhile.
 - `_check_source_data` iterates `config.snapshot_provider_ids`, not
   `required_provider_ids`.
 - `config:snapshot_providers` blocks if the required set contains *no*

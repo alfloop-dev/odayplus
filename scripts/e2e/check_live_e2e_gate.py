@@ -216,7 +216,11 @@ class GateConfig:
     bearer_token: str
     operator_role: str
     web_url: str = ""
-    expected_deployment: str = "production"
+    # The deploy env the runtime is expected to report back as
+    # ``details.deploymentMode``. It mirrors ODP_DEPLOY_ENV, so `dev` and
+    # `staging` are legitimate values; live-ness is asserted separately via
+    # ``requireLiveData`` and the persistence/provider/data-binding checks.
+    expected_deployment: str = ""
     operator_subject: str = "live-e2e-gate"
     operator_tenant: str = ""
     required_provider_ids: tuple[str, ...] = DEFAULT_REQUIRED_PROVIDER_IDS
@@ -521,6 +525,20 @@ def _as_dict(value: Any) -> dict[str, Any]:
     return value if isinstance(value, dict) else {}
 
 
+def _dependency_for(response: HttpResponse, default: str) -> str:
+    """Name the dependency an operator would actually have to repair.
+
+    Every authenticated surface the gate reads is behind a
+    ``require_permission`` guard, and ``X-Operator-Role`` selects a console
+    persona rather than widening grants -- so a 401/403 means the smoke
+    principal is missing a platform role, not that the domain dependency behind
+    the route is broken. Reporting a 403 from ``/learninghub/models`` as an
+    ``mlflow`` blocker sends the operator to republish an alias that is already
+    there, which is the opposite of the actionable failure this gate owes.
+    """
+    return "auth" if response.status in {401, 403} else default
+
+
 def _failure_detail(response: HttpResponse, *, expected: str = "") -> str:
     """Describe a bad response including a bounded excerpt of its body.
 
@@ -583,7 +601,11 @@ def validate_config(config: GateConfig) -> list[CheckResult]:
     except ValueError as exc:
         _check(checks, False, "config:api_url", str(exc), "config")
 
-    if config.web_url:
+    # An empty --web-url used to silently drop the protected-route assertion
+    # while the gate still reported ok. The web origin is part of the release.
+    if not config.web_url:
+        _check(checks, False, "config:web_url", f"missing {WEB_URL_ENV}", "config")
+    else:
         try:
             _normalize_origin(config.web_url, allow_http=config.allow_http)
             _check(checks, True, "config:web_url", "configured deployed Web origin", "config")
@@ -656,13 +678,18 @@ def validate_config(config: GateConfig) -> list[CheckResult]:
         ),
         "config",
     )
-    # An empty --web-url used to silently drop the protected-route assertion
-    # while the gate still reported ok. The web origin is part of the release.
+    # The gate compares this against the runtime's self-reported
+    # ``details.deploymentMode``. Empty means the caller never told the gate
+    # which env it deployed, which would turn the assertion into a comparison
+    # against "" rather than a real binding.
     _check(
         checks,
-        bool(config.web_url),
-        "config:web_url",
-        config.web_url or f"missing {WEB_URL_ENV}",
+        bool(config.expected_deployment),
+        "config:expected_deployment",
+        (
+            config.expected_deployment
+            or "missing --expected-deployment (pass the deploy env, e.g. ODP_DEPLOY_ENV)"
+        ),
         "config",
     )
     _check(
@@ -729,16 +756,23 @@ def _check_runtime_readiness(
     data = _as_dict(details.get("data"))
     probe = _as_dict(data.get("operatorRepositoryProbe"))
 
+    # ``deploymentMode`` binds the served runtime to the env this deploy
+    # configured (ODP_DEPLOY_ENV), so a revision booted with someone else's env
+    # fails. It is *not* the live-ness assertion -- ``requireLiveData`` is, and
+    # the persistence/provider/model/data checks below carry the rest.
+    reported_deployment = str(details.get("deploymentMode") or "").strip().lower()
     _check(
         checks,
         payload.get("status") == "ok"
         and details.get("requireLiveData") is True
-        and details.get("deploymentMode") == config.expected_deployment,
+        and bool(config.expected_deployment)
+        and reported_deployment == config.expected_deployment,
         "runtime:readiness",
         (
             f"status={payload.get('status')} "
             f"requireLiveData={details.get('requireLiveData')} "
-            f"deploymentMode={details.get('deploymentMode')}"
+            f"deploymentMode={details.get('deploymentMode')} "
+            f"expectedDeploymentMode={config.expected_deployment or '<missing>'}"
         ),
         "api-runtime",
     )
@@ -970,7 +1004,7 @@ def _check_model_lineage(
             False,
             "models:registry",
             _failure_detail(response),
-            "mlflow",
+            _dependency_for(response, "mlflow"),
         )
         return
 
@@ -1066,7 +1100,7 @@ def _check_source_data(
             False,
             "data:ingestion_runs",
             _failure_detail(response),
-            "external-data",
+            _dependency_for(response, "external-data"),
         )
         return
 
@@ -1161,15 +1195,45 @@ def _check_source_data(
     )
 
 
-def _enqueue_body(config: GateConfig, idempotency_key: str) -> dict[str, Any]:
+def _enqueue_body(
+    config: GateConfig, idempotency_key: str, *, provider_id: str = ""
+) -> dict[str, Any]:
     return {
         "job_type": WORKER_PROBE_JOB_TYPE,
         "payload": {
-            "provider_id": config.probe_provider_id,
+            "provider_id": provider_id or config.probe_provider_id,
             "schedule_id": "live-e2e-gate",
         },
         "idempotency_key": idempotency_key,
     }
+
+
+def _await_terminal_status(
+    *,
+    http: HttpClient,
+    job_id: str,
+    status_value: str,
+    config: GateConfig,
+    monotonic: Callable[[], float],
+    sleep: Callable[[float], None],
+) -> tuple[str, str]:
+    """Poll one job to a terminal state, returning (status, last detail)."""
+
+    deadline = monotonic() + config.worker_deadline_seconds
+    last_detail = f"status={status_value or '<missing>'}"
+    while status_value not in TERMINAL_JOB_STATUSES and monotonic() < deadline:
+        sleep(config.poll_interval_seconds)
+        polled = http.request("GET", f"/api/v1/jobs/{urllib.parse.quote(job_id)}")
+        if polled.failed or polled.status != 200:
+            last_detail = polled.error or f"status={polled.status}"
+            continue
+        status_value = str(polled.payload.get("status") or "").lower()
+        last_detail = (
+            f"status={status_value or '<missing>'} "
+            f"attempts={polled.payload.get('attempts')} "
+            f"error={polled.payload.get('error_message') or 'none'}"
+        )
+    return status_value, last_detail
 
 
 def _check_worker_and_audit(
@@ -1243,24 +1307,63 @@ def _check_worker_and_audit(
         "worker",
     )
 
+    # Every required snapshot provider needs a persisted ingestion run, and the
+    # scheduled worker path is the only thing that writes one in a deployed
+    # environment (the Cloud Scheduler cron only enqueues
+    # ``listing.partner_feed``). So the gate enqueues the same ``external-fetch``
+    # job for the remaining snapshot providers here, before the single drain,
+    # instead of demanding history that nobody would have produced. This is what
+    # makes ``_check_source_data`` assert real live ingestion rather than a
+    # manual POST somebody had to remember.
+    secondary_jobs: list[tuple[str, str, str]] = []
+    for provider_id in config.snapshot_provider_ids:
+        if provider_id == config.probe_provider_id:
+            continue
+        provider_key = f"{idempotency_key}-{provider_id}"
+        response = http.request(
+            "POST",
+            "/api/v1/jobs",
+            body=_enqueue_body(config, provider_key, provider_id=provider_id),
+            headers={"idempotency-key": provider_key},
+        )
+        if response.failed or response.status != 202:
+            _check(
+                checks,
+                False,
+                f"worker:ingestion_probe:{provider_id}",
+                _failure_detail(response, expected="202"),
+                "worker",
+            )
+            continue
+        provider_job_id = str(response.payload.get("job_id") or "")
+        if not provider_job_id:
+            _check(
+                checks,
+                False,
+                f"worker:ingestion_probe:{provider_id}",
+                "enqueue accepted without a job id",
+                "worker",
+            )
+            continue
+        secondary_jobs.append(
+            (
+                provider_id,
+                provider_job_id,
+                str(_as_dict(response.payload.get("job")).get("status") or "").lower(),
+            )
+        )
+
     drained, drain_detail = worker_driver.drain()
     _check(checks, drained, "worker:drain_trigger", drain_detail, "worker")
 
-    status_value = str(job.get("status") or "").lower()
-    deadline = monotonic() + config.worker_deadline_seconds
-    last_detail = f"status={status_value or '<missing>'}"
-    while status_value not in TERMINAL_JOB_STATUSES and monotonic() < deadline:
-        sleep(config.poll_interval_seconds)
-        polled = http.request("GET", f"/api/v1/jobs/{urllib.parse.quote(job_id)}")
-        if polled.failed or polled.status != 200:
-            last_detail = polled.error or f"status={polled.status}"
-            continue
-        status_value = str(polled.payload.get("status") or "").lower()
-        last_detail = (
-            f"status={status_value or '<missing>'} "
-            f"attempts={polled.payload.get('attempts')} "
-            f"error={polled.payload.get('error_message') or 'none'}"
-        )
+    status_value, last_detail = _await_terminal_status(
+        http=http,
+        job_id=job_id,
+        status_value=str(job.get("status") or "").lower(),
+        config=config,
+        monotonic=monotonic,
+        sleep=sleep,
+    )
 
     _check(
         checks,
@@ -1271,6 +1374,24 @@ def _check_worker_and_audit(
     )
     if isinstance(report.get("worker"), dict):
         report["worker"]["terminal_status"] = status_value or None
+        report["worker"]["ingestion_probe_provider_ids"] = list(config.snapshot_provider_ids)
+
+    for provider_id, provider_job_id, initial_status in secondary_jobs:
+        provider_status, provider_detail = _await_terminal_status(
+            http=http,
+            job_id=provider_job_id,
+            status_value=initial_status,
+            config=config,
+            monotonic=monotonic,
+            sleep=sleep,
+        )
+        _check(
+            checks,
+            provider_status == "succeeded",
+            f"worker:ingestion_probe:{provider_id}",
+            f"{provider_detail} deadline={config.worker_deadline_seconds}s",
+            "worker",
+        )
 
     events_response = http.request(
         "GET",
@@ -1282,7 +1403,7 @@ def _check_worker_and_audit(
             False,
             "audit:durable_receipt",
             _failure_detail(events_response, expected="200"),
-            "audit",
+            _dependency_for(events_response, "audit"),
         )
         return
 
@@ -1397,11 +1518,11 @@ def evaluate_gate(
         _check_model_lineage(
             http.request("GET", "/api/v1/learninghub/models"), checks=checks
         )
-        _check_source_data(
-            http.request("GET", "/api/v1/external-data/ingestion-runs?limit=100"),
-            config=config,
-            checks=checks,
-        )
+        # Worker first, then source data: the worker probe is what drives real
+        # ingestion for every required snapshot provider through the deployed
+        # scheduled path, and the ingestion runs it persists are exactly what
+        # ``_check_source_data`` reads back. Reading the history first meant the
+        # gate asserted evidence that only a manual POST could ever have created.
         _check_worker_and_audit(
             http=http,
             config=config,
@@ -1411,6 +1532,11 @@ def evaluate_gate(
             report=report,
             monotonic=monotonic,
             sleep=sleep,
+        )
+        _check_source_data(
+            http.request("GET", "/api/v1/external-data/ingestion-runs?limit=100"),
+            config=config,
+            checks=checks,
         )
 
     blockers = [
@@ -1455,7 +1581,11 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--api-url", default=os.environ.get(API_URL_ENV, ""))
     parser.add_argument("--web-url", default=os.environ.get(WEB_URL_ENV, ""))
     parser.add_argument("--expected-sha", default=os.environ.get(EXPECTED_SHA_ENV, ""))
-    parser.add_argument("--expected-deployment", default="production")
+    # No default: ``deploymentMode`` is the *deploy env* the runtime reports
+    # (ODP_DEPLOY_ENV -> runtime_mode.deployment_mode()), not the product mode.
+    # A hardcoded "production" default silently failed every non-prod deploy, so
+    # the caller must state which env it deployed.
+    parser.add_argument("--expected-deployment", default="")
     parser.add_argument(
         "--bearer-token-env",
         default=BEARER_TOKEN_ENV,
@@ -1546,6 +1676,10 @@ def main(argv: list[str] | None = None) -> int:
             job=args.worker_job,
             region=args.gcp_region,
             project=args.gcp_project,
+            # One drain must be able to clear every job the gate enqueues: the
+            # lifecycle probe plus one ingestion probe per snapshot provider,
+            # with headroom for anything the scheduler queued meanwhile.
+            max_jobs=len(config.snapshot_provider_ids) + 4,
             timeout=max(config.worker_deadline_seconds, 60.0),
         )
     else:

@@ -518,11 +518,27 @@ if [[ -z "${LIVE_E2E_API_URL}" || -z "${LIVE_E2E_WEB_URL}" ]]; then
     "(api='${LIVE_E2E_API_URL}' web='${LIVE_E2E_WEB_URL}')." >&2
   exit 1
 fi
+# `deploymentMode` is what the *runtime* reports back from
+# `apps/api/oday_api/runtime_mode.deployment_mode()`, which reads the
+# ODP_DEPLOY_ENV/ODAY_ENV/ODP_ENV triple this script writes into the API env
+# payload above. So the expectation must be derived from that same value, not
+# from a hardcoded "production": a dev deploy legitimately reports
+# `deploymentMode=dev` while still being a live, production-mode runtime
+# (ODP_PRODUCT_MODE/ODP_REQUIRE_LIVE_DATA carry that, and the gate asserts them
+# separately). Hardcoding "production" made every dev deploy promote and then
+# roll straight back. The var override stays for environments whose runtime env
+# name differs from the deploy env name.
+LIVE_E2E_DEPLOYMENT_MODE="${ODP_LIVE_E2E_DEPLOYMENT_MODE:-${ODP_DEPLOY_ENV}}"
+if [[ -z "${LIVE_E2E_DEPLOYMENT_MODE}" ]]; then
+  echo "Live E2E gate cannot run: neither ODP_LIVE_E2E_DEPLOYMENT_MODE nor" \
+    "ODP_DEPLOY_ENV is set, so the expected deploymentMode is unknown." >&2
+  exit 1
+fi
 python3 scripts/e2e/check_live_e2e_gate.py \
   --api-url "${LIVE_E2E_API_URL}" \
   --web-url "${LIVE_E2E_WEB_URL}" \
   --expected-sha "${ODAY_RELEASE_SHA}" \
-  --expected-deployment "${ODP_LIVE_E2E_DEPLOYMENT_MODE:-production}" \
+  --expected-deployment "${LIVE_E2E_DEPLOYMENT_MODE}" \
   --worker-job "${WORKER_CANDIDATE_JOB}" \
   --gcp-region "${GCP_REGION}" \
   --gcp-project "${GCP_PROJECT}" \

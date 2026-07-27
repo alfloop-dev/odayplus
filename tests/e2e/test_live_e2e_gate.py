@@ -25,6 +25,10 @@ WEB_URL = "https://oday-web.dev.alfloop.internal"
 CORRELATION_ID = "corr-live-e2e-bbbbbbbbbbbb-1"
 JOB_ID = "job-01HZZ0000000000000000001"
 NOW = "2026-07-26T15:00:00Z"
+# What `runtime_mode.deployment_mode()` reports under the dev deploy workflow:
+# ODP_DEPLOY_ENV=dev. It is the deploy env, not the product mode -- a dev deploy
+# is a production-*mode* runtime (ODP_PRODUCT_MODE) that reports `dev` here.
+DEPLOYMENT_MODE = "dev"
 
 
 def load_checker() -> Any:
@@ -174,7 +178,7 @@ def readiness_payload() -> dict[str, Any]:
         "details": {
             "database": "healthy",
             "requireLiveData": True,
-            "deploymentMode": "production",
+            "deploymentMode": DEPLOYMENT_MODE,
             "persistence": {
                 "configuredMode": "postgresql",
                 "runtimeMode": "postgres",
@@ -296,22 +300,79 @@ def ingestion_payload() -> dict[str, Any]:
     return {"items": runs, "count": len(runs)}
 
 
-def enqueue_payload(*, created: bool = True, status: str = "queued") -> dict[str, Any]:
+def enqueue_payload(
+    *, created: bool = True, status: str = "queued", job_id: str = JOB_ID
+) -> dict[str, Any]:
     return {
-        "job_id": JOB_ID,
+        "job_id": job_id,
         "status": status,
         "correlation_id": CORRELATION_ID,
         "idempotency_key": "live-e2e-bbbbbbbbbbbb-corr",
         "created": created,
         "audit_event_id": "evt-0001",
         "job": {
-            "job_id": JOB_ID,
+            "job_id": job_id,
             "job_type": "external-fetch",
             "status": status,
             "correlation_id": CORRELATION_ID,
             "attempts": 0,
         },
     }
+
+
+def probe_provider_id() -> str:
+    return config().probe_provider_id
+
+
+def secondary_provider_ids() -> tuple[str, ...]:
+    primary = probe_provider_id()
+    return tuple(
+        provider_id
+        for provider_id in schedulable_required_provider_ids()
+        if provider_id != primary
+    )
+
+
+def secondary_job_id(provider_id: str) -> str:
+    return f"job-ingestion-{provider_id}"
+
+
+def jobs_enqueue_route() -> Any:
+    """Model ``POST /api/v1/jobs``: one durable job per idempotency key.
+
+    The gate enqueues the lifecycle probe *and* one ingestion probe per snapshot
+    provider, so a fixture that returns the same job id for every call would hide
+    whether the extra providers were really driven to a terminal state.
+    """
+
+    issued: dict[str, str] = {}
+
+    def handler(body: Any, headers: Any) -> Any:
+        request = body if isinstance(body, dict) else {}
+        payload = request.get("payload") if isinstance(request.get("payload"), dict) else {}
+        provider_id = str(payload.get("provider_id") or "")
+        key = str(request.get("idempotency_key") or "")
+        job_id = (
+            JOB_ID if provider_id == probe_provider_id() else secondary_job_id(provider_id)
+        )
+        created = key not in issued
+        issued[key] = job_id
+        return response(202, enqueue_payload(created=created, job_id=job_id))
+
+    return handler
+
+
+def terminal_job(job_id: str, *, status: str = "succeeded") -> Any:
+    return response(
+        200,
+        {
+            "job_id": job_id,
+            "job_type": "external-fetch",
+            "status": status,
+            "attempts": 1,
+            "error_message": None,
+        },
+    )
 
 
 def audit_payload(*, integrity: bool = True) -> dict[str, Any]:
@@ -372,24 +433,15 @@ def live_routes(**overrides: Any) -> dict[str, Any]:
         "GET /api/v1/external-data/ingestion-runs?limit=100": response(
             200, ingestion_payload()
         ),
-        "POST /api/v1/jobs": [
-            response(202, enqueue_payload(created=True)),
-            response(202, enqueue_payload(created=False)),
-        ],
-        f"GET /api/v1/jobs/{JOB_ID}": response(
-            200,
-            {
-                "job_id": JOB_ID,
-                "job_type": "external-fetch",
-                "status": "succeeded",
-                "attempts": 1,
-                "error_message": None,
-            },
-        ),
+        "POST /api/v1/jobs": jobs_enqueue_route(),
+        f"GET /api/v1/jobs/{JOB_ID}": terminal_job(JOB_ID),
         f"GET /api/v1/audit/events?correlation_id={CORRELATION_ID}": response(
             200, audit_payload()
         ),
     }
+    for provider_id in secondary_provider_ids():
+        job_id = secondary_job_id(provider_id)
+        routes[f"GET /api/v1/jobs/{job_id}"] = terminal_job(job_id)
     routes.update(overrides)
     return routes
 
@@ -403,6 +455,10 @@ def config(**overrides: Any) -> Any:
         # The web origin is part of the release contract: the gate now blocks
         # rather than silently skipping the protected-route assertion.
         "web_url": WEB_URL,
+        # The deploy env this release was deployed under. The gate has no
+        # default for it, because defaulting to "production" fails every
+        # non-prod deploy against a perfectly healthy runtime.
+        "expected_deployment": DEPLOYMENT_MODE,
         "worker_deadline_seconds": 60.0,
         "poll_interval_seconds": 5.0,
     }
@@ -985,14 +1041,17 @@ def test_enqueue_rejection_blocks_on_worker() -> None:
 
 
 def test_non_idempotent_replay_blocks() -> None:
-    routes = live_routes(
-        **{
-            "POST /api/v1/jobs": [
-                response(202, enqueue_payload(created=True)),
-                response(202, {**enqueue_payload(created=True), "job_id": "job-other"}),
-            ]
-        }
-    )
+    default_enqueue = jobs_enqueue_route()
+    calls = {"count": 0}
+
+    def replaying_a_new_job(body: Any, headers: Any) -> Any:
+        calls["count"] += 1
+        if calls["count"] == 2:
+            return response(202, enqueue_payload(created=True, job_id="job-other"))
+        return default_enqueue(body, headers)
+
+    routes = live_routes(**{"POST /api/v1/jobs": replaying_a_new_job})
+    routes["GET /api/v1/jobs/job-other"] = terminal_job("job-other")
     _, report = run_gate(routes)
 
     assert "worker:idempotent_replay" in blocker_names(report)
@@ -1373,12 +1432,208 @@ def test_gate_rejects_an_unhealthy_probe_the_real_readiness_endpoint_emits() -> 
     assert "runtime:provider_probe:geocode.primary_api" in failed
 
 
+def test_expected_deployment_has_no_production_default() -> None:
+    """A "production" default made the gate unsatisfiable on every dev deploy."""
+    args = gate.parse_args(["--api-url", API_URL, "--expected-sha", EXPECTED_SHA])
+
+    assert args.expected_deployment == ""
+
+    _, report = run_gate(cfg=config(expected_deployment=""))
+
+    assert "config:expected_deployment" in blocker_names(report)
+
+
+def test_a_runtime_reporting_another_deploy_env_blocks() -> None:
+    """The check still binds the served runtime to the env this deploy set."""
+    payload = readiness_payload()
+    payload["details"]["deploymentMode"] = "staging"
+    routes = live_routes(**{"anon GET /readiness": response(200, payload)})
+
+    _, report = run_gate(routes)
+
+    blocker = next(b for b in report["blockers"] if b["check"] == "runtime:readiness")
+    assert blocker["dependency"] == "api-runtime"
+    assert "expectedDeploymentMode=dev" in blocker["detail"]
+
+
+def test_a_live_dev_deployment_is_not_rejected_for_not_saying_production() -> None:
+    """Regression guard for the promote-then-rollback loop.
+
+    `deploymentMode` is the deploy env; live-ness is `requireLiveData` plus the
+    persistence/provider/data checks. A healthy dev release must pass.
+    """
+    checks, report = run_gate()
+
+    assert readiness_payload()["details"]["deploymentMode"] == "dev"
+    assert report["ok"] is True, report["blockers"]
+    assert any(check.name == "runtime:readiness" and check.ok for check in checks)
+
+
+def test_the_gate_drives_an_ingestion_probe_for_every_snapshot_provider() -> None:
+    """The gate must produce the ingestion evidence it then demands.
+
+    The deployed Cloud Scheduler cron only enqueues `listing.partner_feed`, so
+    without this the required snapshot providers have no persisted run and
+    `data:<provider>:run_exists` is red on every deploy.
+    """
+    http = FakeHttp(live_routes())
+    clock = FakeClock()
+    _, report = gate.evaluate_gate(
+        config(),
+        http=http,
+        worker_driver=FakeWorkerDriver(),
+        correlation_id=CORRELATION_ID,
+        now=NOW,
+        web_http=passing_web_http(),
+        monotonic=clock.monotonic,
+        sleep=clock.sleep,
+    )
+
+    assert report["ok"] is True, report["blockers"]
+    assert report["worker"]["ingestion_probe_provider_ids"] == list(
+        schedulable_required_provider_ids()
+    )
+    # One enqueue for the lifecycle probe, one replay, one per extra provider.
+    assert http.calls.count("POST /api/v1/jobs") == 2 + len(secondary_provider_ids())
+    for provider_id in secondary_provider_ids():
+        assert f"GET /api/v1/jobs/{secondary_job_id(provider_id)}" in http.calls
+
+    # ...and the ingestion history is read only after the worker has run it.
+    enqueue = http.calls.index("POST /api/v1/jobs")
+    read_back = http.calls.index("GET /api/v1/external-data/ingestion-runs?limit=100")
+    assert enqueue < read_back
+
+
+def test_a_secondary_ingestion_probe_that_never_succeeds_blocks() -> None:
+    provider_id = secondary_provider_ids()[0]
+    job_id = secondary_job_id(provider_id)
+    routes = live_routes(
+        **{
+            f"GET /api/v1/jobs/{job_id}": response(
+                200,
+                {
+                    "job_id": job_id,
+                    "status": "failed",
+                    "attempts": 3,
+                    "error_message": "provider_unreachable",
+                },
+            )
+        }
+    )
+
+    _, report = run_gate(routes)
+
+    blocker = next(
+        b for b in report["blockers"] if b["check"] == f"worker:ingestion_probe:{provider_id}"
+    )
+    assert blocker["dependency"] == "worker"
+    assert "provider_unreachable" in blocker["detail"]
+
+
+@pytest.mark.parametrize(
+    ("path", "check", "domain_dependency"),
+    [
+        ("GET /api/v1/learninghub/models", "models:registry", "mlflow"),
+        (
+            "GET /api/v1/external-data/ingestion-runs?limit=100",
+            "data:ingestion_runs",
+            "external-data",
+        ),
+        (
+            f"GET /api/v1/audit/events?correlation_id={CORRELATION_ID}",
+            "audit:durable_receipt",
+            "audit",
+        ),
+    ],
+)
+@pytest.mark.parametrize("status", [401, 403])
+def test_a_rejected_read_names_auth_not_the_domain_behind_the_route(
+    path: str, check: str, domain_dependency: str, status: int
+) -> None:
+    """Every read the gate makes is behind a `require_permission` guard.
+
+    `X-Operator-Role` selects a console persona, it never widens grants, so a
+    401/403 means the smoke principal lacks a platform role. Reporting that as
+    the domain dependency sends the operator to republish an MLflow alias (or
+    re-run ingestion) that was never the problem.
+    """
+    routes = live_routes(**{path: response(status, {"error": {"code": "forbidden"}})})
+
+    _, report = run_gate(routes)
+
+    blocker = next(b for b in report["blockers"] if b["check"] == check)
+    assert blocker["dependency"] == "auth"
+
+    # A non-auth failure on the same route still names the domain dependency.
+    routes = live_routes(**{path: response(503, {"error": {"code": "unavailable"}})})
+    _, report = run_gate(routes)
+    blocker = next(b for b in report["blockers"] if b["check"] == check)
+    assert blocker["dependency"] == domain_dependency
+
+
 def test_worker_probe_job_type_is_registered_by_the_deployed_worker() -> None:
     """An unregistered job type would never reach a terminal success."""
     handlers = (ROOT / "apps/worker/oday_worker/handlers.py").read_text(encoding="utf-8")
 
     assert f'EXTERNAL_FETCH_JOB_TYPE = "{gate.WORKER_PROBE_JOB_TYPE}"' in handlers
     assert "registry.register(EXTERNAL_FETCH_JOB_TYPE, handle_external_fetch)" in handlers
+
+
+def test_the_worker_probe_writes_the_ingestion_run_the_gate_reads_back() -> None:
+    """The two halves of the gate's data assertion must meet in one store.
+
+    This is the binding the previous revision lacked. ``handle_external_fetch``
+    drove ``ExternalFetchScheduler`` directly, which writes only
+    ``external_data.fetch_runs``; ``GET /external-data/ingestion-runs`` serves
+    ``IngestionRunRecord``s from ``PersistenceBundle.ingestion_run_store``. So
+    the gate's own worker probe could never produce the ingestion run the gate
+    then demanded, and ``data:*:run_exists`` was red on every deployment where
+    nobody had manually POSTed one.
+
+    Nothing here is stubbed at the seam under test: the real handler runs
+    against a real bundle, and the assertion is made on the real HTTP surface
+    the gate calls. The provider is unconfigured so the fetch fails -- which is
+    the stricter case, because it proves the run is persisted by the ingestion
+    service rather than as a side effect of a successful fetch.
+    """
+    from fastapi.testclient import TestClient
+
+    from apps.api.oday_api.main import create_app
+    from apps.worker.oday_worker.handlers import handle_external_fetch
+    from shared.infrastructure.persistence.factory import build_persistence
+    from shared.jobs.queue import JobRecord
+
+    bundle = build_persistence(mode="memory")
+    provider_id = probe_provider_id()
+    job = JobRecord(
+        job_id="job-live-e2e-ingestion",
+        job_type=gate.WORKER_PROBE_JOB_TYPE,
+        payload={"provider_id": provider_id, "schedule_id": "live-e2e-gate"},
+        correlation_id="corr-live-e2e-ingestion",
+    )
+
+    with pytest.raises(RuntimeError):
+        handle_external_fetch(job, bundle)
+
+    client = TestClient(create_app(persistence=bundle))
+    body = client.get(
+        "/api/v1/external-data/ingestion-runs?limit=100",
+        headers={
+            # `integration:view` is the grant this route requires
+            # (shared/auth/rbac.py Role.DATA_OWNER); see the permission matrix
+            # in docs/evidence/ODP_LIVE_E2E_GATE.md for the full set the gate's
+            # smoke principal needs.
+            "x-subject-id": "live-e2e-gate",
+            "x-roles": "data_owner",
+            "x-tenant-id": "tenant-a",
+        },
+    )
+
+    assert body.status_code == 200, body.text
+    runs = body.json()["items"]
+    assert [run["provider_id"] for run in runs] == [provider_id], runs
+    assert runs[0]["schedule_id"] == "live-e2e-gate"
+    assert runs[0]["trigger"] == "scheduled"
 
 
 def test_audit_receipt_integrity_envelope_matches_the_runtime_serializer() -> None:
