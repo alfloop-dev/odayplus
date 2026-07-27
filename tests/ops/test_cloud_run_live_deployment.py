@@ -483,6 +483,29 @@ def test_workflows_do_not_reference_secrets_in_step_if() -> None:
         assert "ODP_WEB_SESSION_SECRET_SECRET" in text
 
 
+def test_dev_deploy_has_non_mutating_wif_oidc_smoke_gate() -> None:
+    text = WORKFLOWS[0].read_text(encoding="utf-8")
+
+    assert "wif-oidc-smoke:" in text
+    assert "needs: [wif-oidc-smoke, e2e-operational-evidence]" in text
+    assert "Authenticate to Google Cloud for read-only smoke" in text
+    assert "gcloud auth list" in text
+    assert 'gcloud projects describe "${GCP_PROJECT}"' in text
+
+    smoke = text.split("  wif-oidc-smoke:", 1)[1].split(
+        "  e2e-operational-evidence:", 1
+    )[0]
+    mutating_commands = (
+        "gcloud run deploy",
+        "gcloud run jobs",
+        "gcloud scheduler jobs create",
+        "gcloud projects add-iam-policy-binding",
+        "gcloud storage buckets create",
+        "terraform apply",
+    )
+    assert all(command not in smoke for command in mutating_commands)
+
+
 def test_deploy_script_preflights_before_build_and_uses_secret_references() -> None:
     text = DEPLOY_SCRIPT.read_text(encoding="utf-8")
 
