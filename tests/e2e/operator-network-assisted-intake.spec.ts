@@ -181,9 +181,11 @@ test.describe("Assisted Listing Intake — Package 7 product surfaces", () => {
     await expect(page.getByTestId("intake-detail-match")).toHaveText("新物件");
 
     // Source evidence is present at the point of decision.
-    await expect(page.getByTestId("evidence-correlation-id")).not.toHaveText(
-      "UNAVAILABLE",
-    );
+    await expect(
+      page
+        .getByTestId("match-evidence-panel")
+        .getByTestId("evidence-correlation-id"),
+    ).not.toHaveText("UNAVAILABLE");
     await expect(page.getByTestId("timeline-stepper")).toBeVisible();
 
     // The record is durable: it survives closing the dialog and reloading.
