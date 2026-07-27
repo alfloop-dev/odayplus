@@ -1,7 +1,7 @@
 # ODP-SITESCORE-OPERATOR-V2-001 Acceptance Receipt
 
 Task: Wire Operator canonical flow to SiteScore v2 contract
-Owner: Claude3 · Reviewer: Antigravity4 · PR: #387 → `dev`
+Owner: Codex · Reviewer: Claude · PR: #387 → `dev`; receipt PR: #421
 Integration baseline: PR #381 head `59da5c51`
 
 This receipt records only runs that completed with a terminal exit code on
@@ -143,7 +143,89 @@ contains the fixed code.
 | Operator canonical workflow supplies the complete SiteScore v2 feature contract | Met | `test_operator_convert_carries_point_in_time_contract_into_scoring`, `test_operator_listing_write_does_not_wipe_candidate_features` (API-driven; no test-side `save_candidate`) |
 | Missing or stale point-in-time inputs still fail closed | Met | `test_canonical_scoring_fails_closed_when_point_in_time_features_missing`, `..._when_feature_snapshot_time_is_stale_or_missing`, `..._when_ungeocoded_cell_has_no_h3`, `test_operator_convert_without_cell_aggregates_still_fails_closed` |
 | Both failing operator canonical wiring tests pass | Met | Run #2, exit 0 |
-| Full product CI and independent review pass before merge | **Not met — open** | Product CI not run to completion by the owner; review pending with Antigravity4 |
+| Full product CI and independent review pass before merge | Met | PR #387 product, product-e2e-gate, and orchestrator CI passed; independent review approved the merged scope |
 
-Owner-side acceptance is claimed only for the first four criteria. The task
-stays `in_progress` pending Antigravity4's review and product CI.
+## Exact-head Revalidation After Reviewer Substitution
+
+The task was reopened after merge so the authorized owner/reviewer pair could
+revalidate the delivered scope at the current `origin/dev` exact head
+`a2a3c920`. The original delivery commit `b2645e8e` remains an ancestor of
+`origin/dev` through PR #387 merge commit `2cfc2252`.
+
+Runs on 2026-07-27:
+
+- `python3 -m pytest tests/integration/test_operator_canonical_wiring.py -q
+  --tb=short` — 14 passed; the one failure was the unchanged NetPlan test
+  because this worker does not have the declared `cvxpy` dependency.
+- The same command with
+  `--deselect tests/integration/test_operator_canonical_wiring.py::test_rebalance_invokes_avm_and_netplan_oss_and_persists_results`
+  — 14 passed, 1 deselected, exit 0.
+- `python3 -m ruff check modules/opsboard/application/network_listings.py
+  modules/sitescore/application/reporting.py
+  modules/sitescore/tests/test_sitescore_production_runtime.py
+  tests/integration/test_operator_canonical_wiring.py` — exit 0.
+
+Codex2's independent review is recorded as APPROVE in task state: the complete
+SiteScore v2 contract, missing/stale fail-closed paths, tenant isolation, and
+lineage paths all have direct coverage. The reviewer also confirmed PR #387's
+product, product-e2e-gate, and orchestrator CI were green. The sole closeout
+hygiene note was this receipt's stale owner/reviewer header, corrected above.
+
+## Fresh Revalidation After Dev Advanced
+
+PR #421 was refreshed after reviewed P4 merge `88e2dbd4` advanced `origin/dev`.
+Merge commit `958d0c36` composes that exact dev head without changing the
+SiteScore, OpsBoard, NetPlan, or AVM implementation delivered by PR #387.
+These are fresh local runs from the refreshed tree on 2026-07-27; no result
+from the stale `9909d1e5` PR head is reused:
+
+- `python3 -m pytest tests/integration/test_operator_canonical_wiring.py
+  modules/sitescore/tests -q -p no:randomly --tb=short` — 29 passed and the
+  unchanged cross-module NetPlan test failed because CVXPY is not installed in
+  this worker environment.
+- The same command with
+  `--deselect tests/integration/test_operator_canonical_wiring.py::test_rebalance_invokes_avm_and_netplan_oss_and_persists_results`
+  — 29 passed, 1 deselected, exit 0.
+- `python3 -m ruff check modules/opsboard/application/network_listings.py
+  modules/sitescore/application/reporting.py
+  modules/sitescore/tests/test_sitescore_production_runtime.py
+  tests/integration/test_operator_canonical_wiring.py` — exit 0.
+
+The refreshed exact PR head must receive new required CI results and independent
+approval from the currently assigned reviewer, Codex9, before merge.
+
+## Model-ready Composition Revalidation
+
+After PR #421 head `5cb20055` passed CI, `origin/dev` advanced again to
+`b3f0fba6` through the approved model-ready composition in PR #417. This task
+branch was rebased onto that exact base. The intervening changes affect model
+data ingestion, release contracts, migrations, and their tests; they do not
+modify SiteScore or OpsBoard. The rebase completed without a content conflict,
+and the task diff remains limited to this receipt.
+
+Fresh runs on 2026-07-27 from the recomposed tree:
+
+- `python3 -m pytest tests/integration/test_operator_canonical_wiring.py
+  modules/sitescore/tests -q -p no:randomly --tb=short` — 29 passed and the
+  unchanged cross-module NetPlan test failed because CVXPY is not installed in
+  this worker environment.
+- The same command with
+  `--deselect tests/integration/test_operator_canonical_wiring.py::test_rebalance_invokes_avm_and_netplan_oss_and_persists_results`
+  — 29 passed, 1 deselected, exit 0.
+- `python3 -m ruff check modules/opsboard/application/network_listings.py
+  modules/sitescore/application/reporting.py
+  modules/sitescore/tests/test_sitescore_production_runtime.py
+  tests/integration/test_operator_canonical_wiring.py` — exit 0.
+
+The new exact PR head must receive fresh required CI results and independent
+approval. Approval of `5cb20055` must not be reused.
+
+## Final Closeout Revalidation
+
+Reviewer Claude independently approved receipt head `d89fcae8` against
+`origin/dev` `611edf13` after confirming a clean composition. The reviewer ran
+the focused suite (29 passed, 1 deselected for the unchanged CVXPY environment
+case) and Ruff, and verified the fail-closed point-in-time, tenant, and lineage
+guards. The owner then merged that exact reviewed `origin/dev` into the task
+branch without content conflicts; this receipt remains the only task-authored
+diff against `dev`.
