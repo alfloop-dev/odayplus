@@ -48,8 +48,8 @@ CREATE TABLE IF NOT EXISTS data_plane.canonical_lineage (
 -- Store opening authority lineage ledger
 CREATE TABLE IF NOT EXISTS intake.store_opening_authority_lineage (
     lineage_id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    source_snapshot_id UUID NOT NULL,
-    source_id VARCHAR(100) NOT NULL,
+    source_snapshot_id UUID NOT NULL REFERENCES intake.source_snapshots(source_snapshot_id),
+    source_id TEXT NOT NULL REFERENCES intake.source_registry(source_id),
     tenant_id UUID NOT NULL REFERENCES core.tenants(tenant_id),
     store_id UUID NOT NULL REFERENCES core.stores(store_id),
     opened_on DATE NOT NULL,

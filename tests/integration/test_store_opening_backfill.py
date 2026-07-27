@@ -11,7 +11,6 @@ Proves:
 from __future__ import annotations
 
 import json
-import os
 import sqlite3
 import uuid
 from datetime import date
@@ -20,6 +19,7 @@ from pathlib import Path
 import pytest
 
 from apps.data_platform.store_opening import (
+    APPROVED_STORE_OPENING_SOURCES,
     MissingStoreOpeningAuthorityError,
     StoreOpeningBackfillEngine,
     TenantIsolationError,
@@ -157,7 +157,10 @@ def test_validate_record_rejects_unapproved_source():
         "opened_on": "2026-05-15",
     }
     with pytest.raises(UnauthoritativeStoreOpeningError, match="Unapproved source identity"):
-        validate_store_opening_record(record)
+        validate_store_opening_record(
+            record,
+            approved_sources=APPROVED_STORE_OPENING_SOURCES,
+        )
 
 
 def test_backfill_engine_persists_opened_on_and_lineage(test_db_conn):
@@ -267,7 +270,10 @@ def test_same_snapshot_conflict_fails_closed_and_rolls_back(test_db_conn):
     engine.run_backfill(snapshot_id=snapshot_id, tenant_id=tenant_id, records=[base])
 
     conflicting = {**base, "opened_on": "2026-06-02"}
-    with pytest.raises(UnauthoritativeStoreOpeningError, match="immutable snapshot"):
+    with pytest.raises(
+        UnauthoritativeStoreOpeningError,
+        match="Conflicting authoritative opened_on",
+    ):
         engine.run_backfill(
             snapshot_id=snapshot_id,
             tenant_id=tenant_id,
@@ -324,6 +330,23 @@ def test_eligible_stores_missing_authority_fails_closed(test_db_conn):
             tenant_id=tenant_id,
             records=records,
             eligible_store_ids=[store1, store2],
+        )
+
+
+def test_database_inventory_derives_missing_eligible_stores(test_db_conn):
+    tenant_id = uuid.uuid4()
+    store_id = uuid.uuid4()
+    test_db_conn.execute(
+        "INSERT INTO stores (store_id, tenant_id, store_name) VALUES (?, ?, ?)",
+        (str(store_id), str(tenant_id), "Missing Authority Store"),
+    )
+    test_db_conn.commit()
+
+    with pytest.raises(MissingStoreOpeningAuthorityError, match=str(store_id)):
+        StoreOpeningBackfillEngine(db_conn=test_db_conn).run_backfill(
+            snapshot_id=uuid.uuid4(),
+            tenant_id=tenant_id,
+            records=[],
         )
 
 
@@ -427,7 +450,7 @@ def test_cli_runner_and_connector_facade(tmp_path: Path, monkeypatch: pytest.Mon
             "--dry-run",
         ]
     )
-    assert code_dry == 0
+    assert code_dry == 1
 
     # Test CLI fail-closed without --dry-run and without DB connection
     code_no_db = cli_main(
@@ -446,119 +469,120 @@ def test_cli_runner_and_connector_facade(tmp_path: Path, monkeypatch: pytest.Mon
 # -----------------------------------------------------------------------------
 # PostgreSQL Real Schema Integration Tests
 # -----------------------------------------------------------------------------
-POSTGRES_DB_URL = os.environ.get("INTAKE_TEST_DATABASE_URL") or os.environ.get("ODP_DATABASE_URL") or os.environ.get("ODAY_DATABASE_URL")
-
-
-@pytest.mark.skipif(
-    not POSTGRES_DB_URL or "postgresql" not in POSTGRES_DB_URL.lower(),
-    reason="PostgreSQL database URL is not configured",
-)
-def test_postgresql_store_opening_backfill_and_lineage():
-    import psycopg
-
-    conn = psycopg.connect(POSTGRES_DB_URL)
-    cur = conn.cursor()
-
-    try:
-        # Bootstrap required schemas & tables
-        cur.execute("CREATE SCHEMA IF NOT EXISTS core;")
-        cur.execute("CREATE SCHEMA IF NOT EXISTS data_plane;")
-        cur.execute("CREATE SCHEMA IF NOT EXISTS intake;")
-
-        cur.execute(
-            """
-            CREATE TABLE IF NOT EXISTS core.tenants (
-                tenant_id UUID PRIMARY KEY,
-                tenant_name VARCHAR(255) NOT NULL
-            );
-            """
+@pytest.mark.requires_live_env
+def test_postgresql_store_opening_backfill_and_lineage(intake_blank_db):
+    """Apply production DDL on disposable PG16 and prove authority/replay/conflict."""
+    migration_root = Path("infra/db/migrations")
+    with intake_blank_db.connect(autocommit=True) as conn:
+        canonical_ddl = (
+            migration_root / "000002_data_domain_canonical_entities.sql"
+        ).read_text()
+        # pgserver bundles PostgreSQL 16 but not contrib/PostGIS. Preserve the
+        # production DDL apart from equivalent test-only UUID defaults and
+        # inert geometry storage; 000009 itself is always applied verbatim.
+        canonical_ddl = canonical_ddl.replace(
+            'CREATE EXTENSION IF NOT EXISTS "uuid-ossp";',
+            "",
+        ).replace(
+            'CREATE EXTENSION IF NOT EXISTS "postgis";',
+            "",
         )
-        cur.execute(
-            """
-            CREATE TABLE IF NOT EXISTS core.brands (
-                brand_id UUID PRIMARY KEY,
-                tenant_id UUID NOT NULL REFERENCES core.tenants(tenant_id),
-                brand_name VARCHAR(255) NOT NULL
-            );
-            """
+        canonical_ddl = canonical_ddl.replace(
+            "uuid_generate_v4()",
+            "gen_random_uuid()",
         )
-        cur.execute(
-            """
-            CREATE TABLE IF NOT EXISTS core.stores (
-                store_id UUID PRIMARY KEY,
-                tenant_id UUID NOT NULL REFERENCES core.tenants(tenant_id),
-                brand_id UUID NOT NULL REFERENCES core.brands(brand_id),
-                store_name VARCHAR(255) NOT NULL,
-                opened_on DATE,
-                updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
-            );
-            """
+        canonical_ddl = canonical_ddl.replace(
+            "GEOMETRY(Point, 4326)",
+            "TEXT",
+        ).replace(
+            "GEOMETRY(Polygon, 4326)",
+            "TEXT",
         )
-        cur.execute(
-            """
-            CREATE TABLE IF NOT EXISTS data_plane.ingestion_runs (
-                run_id UUID PRIMARY KEY,
-                source_database TEXT NOT NULL DEFAULT 'fongniao_prod',
-                source_kind TEXT NOT NULL,
-                partition_key TEXT NOT NULL,
-                status TEXT NOT NULL,
-                started_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
-                UNIQUE (source_kind, partition_key, run_id)
-            );
-            """
+        canonical_ddl = canonical_ddl.replace(
+            "CREATE INDEX IF NOT EXISTS idx_address_locations_geom "
+            "ON core.address_locations USING GIST(geom);",
+            "",
+        ).replace(
+            "CREATE INDEX IF NOT EXISTS idx_h3_cells_geom "
+            "ON geo.h3_cells USING GIST(geom);",
+            "",
         )
-        cur.execute(
-            """
-            CREATE TABLE IF NOT EXISTS data_plane.canonical_lineage (
-                source_snapshot_id UUID NOT NULL,
-                source_kind TEXT NOT NULL,
-                source_id TEXT NOT NULL,
-                content_sha256 TEXT NOT NULL,
-                run_id UUID NOT NULL REFERENCES data_plane.ingestion_runs(run_id),
-                tenant_id UUID NOT NULL REFERENCES core.tenants(tenant_id),
-                canonical_table TEXT NOT NULL,
-                canonical_id UUID NOT NULL,
-                projected_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
-                PRIMARY KEY (source_snapshot_id, canonical_table, canonical_id)
-            );
-            """
+        conn.execute(canonical_ddl)
+        intake_ddl = (
+            migration_root / "assisted_listing_intake" / "001_baseline.sql"
+        ).read_text()
+        conn.execute("CREATE SCHEMA IF NOT EXISTS intake")
+        for table_name in ("source_registry", "intakes", "source_snapshots"):
+            marker = f"CREATE TABLE IF NOT EXISTS intake.{table_name} ("
+            start = intake_ddl.index(marker)
+            end = intake_ddl.index("\n);", start) + 3
+            conn.execute(intake_ddl[start:end])
+        conn.execute(
+            (migration_root / "000009_store_opening_authority_lineage.sql").read_text()
         )
-        cur.execute(
-            """
-            CREATE TABLE IF NOT EXISTS intake.store_opening_authority_lineage (
-                lineage_id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-                source_snapshot_id UUID NOT NULL,
-                source_id VARCHAR(100) NOT NULL,
-                tenant_id UUID NOT NULL REFERENCES core.tenants(tenant_id),
-                store_id UUID NOT NULL REFERENCES core.stores(store_id),
-                opened_on DATE NOT NULL,
-                authority_type VARCHAR(100) NOT NULL,
-                provenance_note TEXT,
-                content_sha256 VARCHAR(64) NOT NULL,
-                projected_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
-                CONSTRAINT uq_store_opening_snapshot UNIQUE (source_snapshot_id, store_id)
-            );
-            """
-        )
-        conn.commit()
 
+        cur = conn.cursor()
         tenant_id = uuid.uuid4()
         brand_id = uuid.uuid4()
         store_id = uuid.uuid4()
         snapshot_id_1 = uuid.uuid4()
+        intake_id = uuid.uuid4()
+        policy_owner = uuid.uuid4()
+        source_id = "SRC-AUTH-STORE-OPENING"
 
-        cur.execute("INSERT INTO core.tenants (tenant_id, tenant_name) VALUES (%s, 'Test Tenant')", (tenant_id,))
-        cur.execute("INSERT INTO core.brands (brand_id, tenant_id, brand_name) VALUES (%s, %s, 'Test Brand')", (brand_id, tenant_id))
+        cur.execute(
+            "INSERT INTO core.tenants (tenant_id, tenant_name) VALUES (%s, 'Test Tenant')",
+            (tenant_id,),
+        )
+        cur.execute(
+            "INSERT INTO core.brands "
+            "(brand_id, tenant_id, brand_code, brand_name) "
+            "VALUES (%s, %s, 'test-brand', 'Test Brand')",
+            (brand_id, tenant_id),
+        )
         cur.execute(
             "INSERT INTO core.stores (store_id, tenant_id, brand_id, store_name, opened_on) VALUES (%s, %s, %s, 'PG Store Test', NULL)",
             (store_id, tenant_id, brand_id),
         )
-        conn.commit()
+        cur.execute(
+            """
+            INSERT INTO intake.source_registry (
+                source_id, display_name, canonicalization_rule_version,
+                retrieval_mode, legal_approval_ref, policy_owner_subject_id,
+                kill_switch, production_enabled
+            ) VALUES (%s, 'Opening Authority', 'v1', 'APPROVED_RETRIEVAL',
+                      'LEGAL-OPEN-001', %s, FALSE, TRUE)
+            """,
+            (source_id, policy_owner),
+        )
+        cur.execute(
+            """
+            INSERT INTO intake.intakes (
+                intake_id, tenant_id, submitter_subject_id, intake_method,
+                source_id, source_policy_state, processing_state, correlation_id
+            ) VALUES (%s, %s, %s, 'APPROVED_FEED', %s,
+                      'APPROVED_RETRIEVAL', 'READY', %s)
+            """,
+            (intake_id, tenant_id, policy_owner, source_id, uuid.uuid4()),
+        )
+        cur.execute(
+            """
+            INSERT INTO intake.source_snapshots (
+                source_snapshot_id, tenant_id, intake_id, source_id,
+                raw_object_uri, content_sha256, media_type, byte_length,
+                captured_at, observed_at, capture_method, retention_class,
+                encryption_key_ref
+            ) VALUES (%s, %s, %s, %s, 'gs://authority/snapshot-1',
+                      %s, 'application/json', 1, now(), now(),
+                      'APPROVED_FEED', 'BUSINESS_5Y', 'kms://test')
+            """,
+            (snapshot_id_1, tenant_id, intake_id, source_id, "a" * 64),
+        )
 
         engine = StoreOpeningBackfillEngine(db_conn=conn, schema="data_plane")
         records = [
             {
-                "source_id": "SRC-AUTH-STORE-OPENING",
+                "source_id": source_id,
                 "snapshot_id": str(snapshot_id_1),
                 "tenant_id": str(tenant_id),
                 "store_id": str(store_id),
@@ -603,28 +627,45 @@ def test_postgresql_store_opening_backfill_and_lineage():
         )
         assert cur.fetchone()[0] == 1
 
-        # 5. Prove conflict & update behavior with new snapshot
+        # 5. A later snapshot cannot silently rewrite the immutable opening date.
         snapshot_id_2 = uuid.uuid4()
+        cur.execute(
+            """
+            INSERT INTO intake.source_snapshots (
+                source_snapshot_id, tenant_id, intake_id, source_id,
+                raw_object_uri, content_sha256, media_type, byte_length,
+                captured_at, observed_at, capture_method, retention_class,
+                encryption_key_ref
+            ) VALUES (%s, %s, %s, %s, 'gs://authority/snapshot-2',
+                      %s, 'application/json', 1, now(), now(),
+                      'APPROVED_FEED', 'BUSINESS_5Y', 'kms://test')
+            """,
+            (snapshot_id_2, tenant_id, intake_id, source_id, "b" * 64),
+        )
         records_snap2 = [
             {
-                "source_id": "SRC-AUTH-STORE-OPENING",
+                "source_id": source_id,
                 "snapshot_id": str(snapshot_id_2),
                 "tenant_id": str(tenant_id),
                 "store_id": str(store_id),
                 "opened_on": "2026-04-15",
             }
         ]
-        res_snap2 = engine.run_backfill(snapshot_id=snapshot_id_2, tenant_id=tenant_id, records=records_snap2)
-        assert res_snap2.updated_count == 1
+        with pytest.raises(
+            UnauthoritativeStoreOpeningError,
+            match="Conflicting authoritative opened_on",
+        ):
+            engine.run_backfill(
+                snapshot_id=snapshot_id_2,
+                tenant_id=tenant_id,
+                records=records_snap2,
+            )
 
         cur.execute("SELECT opened_on FROM core.stores WHERE store_id = %s", (store_id,))
-        assert cur.fetchone()[0] == date(2026, 4, 15)
+        assert cur.fetchone()[0] == date(2026, 4, 12)
 
         cur.execute(
             "SELECT COUNT(*) FROM intake.store_opening_authority_lineage WHERE store_id = %s",
             (store_id,),
         )
-        assert cur.fetchone()[0] == 2
-
-    finally:
-        conn.close()
+        assert cur.fetchone()[0] == 1

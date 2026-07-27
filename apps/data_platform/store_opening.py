@@ -126,11 +126,13 @@ def validate_store_opening_record(
     - record attempts to infer opened_on from created_at / ingestion_time
     - tenant_id or store_id is invalid
     """
-    allowed = approved_sources or APPROVED_STORE_OPENING_SOURCES
     source_id = str(record.get("source_id") or "").strip()
-    if not source_id or source_id not in allowed:
+    if not source_id:
+        raise UnauthoritativeStoreOpeningError("Missing source identity")
+    if approved_sources is not None and source_id not in approved_sources:
         raise UnauthoritativeStoreOpeningError(
-            f"Unapproved source identity: {source_id!r}. Approved sources: {sorted(allowed)}"
+            f"Unapproved source identity: {source_id!r}. "
+            f"Approved sources: {sorted(approved_sources)}"
         )
 
     # Check for explicit inference flag
@@ -259,6 +261,8 @@ class StoreOpeningBackfillEngine:
             record_map_by_store[auth.store_id] = auth
 
         # 2. Check eligible stores fail closed
+        if eligible_store_ids is None:
+            eligible_store_ids = self._eligible_store_ids(target_tenant_id)
         if eligible_store_ids is not None:
             missing_stores: list[str] = []
             for raw_elig in eligible_store_ids:
@@ -296,11 +300,12 @@ class StoreOpeningBackfillEngine:
             for auth in validated_records:
                 s_id_str = str(auth.store_id)
                 existing = self._in_memory_stores.get(s_id_str)
+                if existing is None:
+                    raise TenantIsolationError(
+                        f"Store {auth.store_id} does not exist in store inventory "
+                        f"for tenant {target_tenant_id}"
+                    )
                 if not dry_run:
-                    if existing is None:
-                        raise TenantIsolationError(
-                            f"Store {auth.store_id} does not exist in store inventory for tenant {target_tenant_id}"
-                        )
                     if existing["tenant_id"] != str(target_tenant_id):
                         raise TenantIsolationError(
                             f"Store {auth.store_id} belongs to tenant {existing['tenant_id']}, not target tenant {target_tenant_id}"
@@ -337,6 +342,24 @@ class StoreOpeningBackfillEngine:
             lineage_records=lineage_entries,
         )
 
+    def _eligible_store_ids(self, tenant_id: uuid.UUID) -> list[uuid.UUID]:
+        """Return the authoritative tenant inventory still missing opened_on."""
+        if self.db_conn is None:
+            return [
+                uuid.UUID(store_id)
+                for store_id, store in self._in_memory_stores.items()
+                if store["tenant_id"] == str(tenant_id) and store["opened_on"] is None
+            ]
+        is_sqlite = self._is_sqlite()
+        sql = (
+            "SELECT store_id FROM stores WHERE tenant_id = ? AND opened_on IS NULL"
+            if is_sqlite
+            else "SELECT store_id FROM core.stores WHERE tenant_id = %s AND opened_on IS NULL"
+        )
+        cur = self.db_conn.cursor()
+        cur.execute(sql, (str(tenant_id),))
+        return [uuid.UUID(str(row[0])) for row in cur.fetchall()]
+
     def _is_sqlite(self) -> bool:
         if self.db_conn is None:
             return True
@@ -359,9 +382,9 @@ class StoreOpeningBackfillEngine:
         cur = self.db_conn.cursor()
 
         select_sql = (
-            "SELECT tenant_id FROM stores WHERE store_id = %s"
+            "SELECT tenant_id, opened_on FROM stores WHERE store_id = %s"
             if is_sqlite
-            else "SELECT tenant_id FROM core.stores WHERE store_id = %s"
+            else "SELECT tenant_id, opened_on FROM core.stores WHERE store_id = %s"
         )
         update_sql = (
             "UPDATE stores SET opened_on = %s, updated_at = CURRENT_TIMESTAMP WHERE store_id = %s AND tenant_id = %s"
@@ -426,6 +449,16 @@ class StoreOpeningBackfillEngine:
             WHERE source_snapshot_id = %s AND store_id = %s
             """
         )
+        authority_snapshot_sql = """
+            SELECT sr.retrieval_mode, sr.legal_approval_ref,
+                   sr.license_approval_ref, sr.production_enabled,
+                   sr.kill_switch
+            FROM intake.source_snapshots ss
+            JOIN intake.source_registry sr ON sr.source_id = ss.source_id
+            WHERE ss.source_snapshot_id = %s
+              AND ss.tenant_id = %s
+              AND ss.source_id = %s
+        """
 
         if is_sqlite:
             select_sql = select_sql.replace("%s", "?")
@@ -436,6 +469,30 @@ class StoreOpeningBackfillEngine:
             existing_authority_sql = existing_authority_sql.replace("%s", "?")
 
         try:
+            if not is_sqlite:
+                for auth in validated_records:
+                    cur.execute(
+                        authority_snapshot_sql,
+                        (
+                            str(target_snapshot_id),
+                            str(target_tenant_id),
+                            auth.source_id,
+                        ),
+                    )
+                    authority = cur.fetchone()
+                    approved = (
+                        authority is not None
+                        and authority[0] == "APPROVED_RETRIEVAL"
+                        and (authority[1] or authority[2])
+                        and authority[3] is True
+                        and authority[4] is False
+                    )
+                    if not approved:
+                        raise UnauthoritativeStoreOpeningError(
+                            f"Snapshot {target_snapshot_id} is not bound to an enabled, "
+                            f"approved source registry identity {auth.source_id!r}"
+                        )
+
             # Insert ingestion_runs first so canonical_lineage's FK is satisfied.
             if not dry_run:
                 cur.execute(ingestion_run_sql, (str(run_id), str(target_tenant_id)))
@@ -452,6 +509,17 @@ class StoreOpeningBackfillEngine:
                 if store_tenant != str(target_tenant_id):
                     raise TenantIsolationError(
                         f"Store {auth.store_id} belongs to tenant {store_tenant}, not target tenant {target_tenant_id}"
+                    )
+                existing_opened_on = (
+                    _parse_iso_date_or_datetime(row[1]) if row[1] is not None else None
+                )
+                if (
+                    existing_opened_on is not None
+                    and existing_opened_on != auth.opened_on
+                ):
+                    raise UnauthoritativeStoreOpeningError(
+                        f"Conflicting authoritative opened_on for store {auth.store_id}: "
+                        f"persisted {existing_opened_on}, proposed {auth.opened_on}"
                     )
 
                 opened_val = auth.opened_on.isoformat() if is_sqlite else auth.opened_on
