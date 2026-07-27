@@ -102,6 +102,7 @@ class PlaceProjection:
     store_format_code: str
     effective_from: datetime
 
+
 @dataclass(frozen=True)
 class TransactionProjection:
     source_id: str

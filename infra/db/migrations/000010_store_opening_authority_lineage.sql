@@ -1,4 +1,4 @@
--- Migration: 000009_store_opening_authority_lineage.sql
+-- Migration: 000010_store_opening_authority_lineage.sql
 -- Store Opening Authority & Lineage Schema (ODP-STORE-OPENING-001)
 
 CREATE SCHEMA IF NOT EXISTS data_plane;
@@ -68,7 +68,7 @@ DO $$
 BEGIN
     IF EXISTS (SELECT 1 FROM information_schema.tables WHERE table_schema = 'odp_runtime' AND table_name = 'schema_migrations') THEN
         INSERT INTO odp_runtime.schema_migrations (migration_id, applied_at)
-        VALUES ('000009_store_opening_authority_lineage', CURRENT_TIMESTAMP)
+        VALUES ('000010_store_opening_authority_lineage', CURRENT_TIMESTAMP)
         ON CONFLICT (migration_id) DO NOTHING;
     END IF;
 END $$;

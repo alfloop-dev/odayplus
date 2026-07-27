@@ -33,7 +33,6 @@ class ProviderCategory(StrEnum):
     STORE_OPENING_AUTHORITY = "store_opening_authority"
 
 
-
 class ProviderAuthMode(StrEnum):
     API_KEY = "api_key"
     BEARER_TOKEN = "bearer_token"
@@ -309,7 +308,6 @@ PROVIDER_REGISTRY: tuple[ExternalProviderDefinition, ...] = (
         metadata={"source_type": "official_registry"},
     ),
 )
-
 
 
 def provider_registry() -> tuple[ExternalProviderDefinition, ...]:
