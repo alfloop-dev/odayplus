@@ -1,7 +1,7 @@
 # ODP-SITESCORE-OPERATOR-V2-001 Acceptance Receipt
 
 Task: Wire Operator canonical flow to SiteScore v2 contract
-Owner: Codex · Reviewer: Codex9 · PR: #387 → `dev`; receipt PR: #421
+Owner: Codex · Reviewer: Claude · PR: #387 → `dev`; receipt PR: #421
 Integration baseline: PR #381 head `59da5c51`
 
 This receipt records only runs that completed with a terminal exit code on
@@ -218,4 +218,14 @@ Fresh runs on 2026-07-27 from the recomposed tree:
   tests/integration/test_operator_canonical_wiring.py` — exit 0.
 
 The new exact PR head must receive fresh required CI results and independent
-approval from Codex9. Approval of `5cb20055` must not be reused.
+approval. Approval of `5cb20055` must not be reused.
+
+## Final Closeout Revalidation
+
+Reviewer Claude independently approved receipt head `d89fcae8` against
+`origin/dev` `611edf13` after confirming a clean composition. The reviewer ran
+the focused suite (29 passed, 1 deselected for the unchanged CVXPY environment
+case) and Ruff, and verified the fail-closed point-in-time, tenant, and lineage
+guards. The owner then merged that exact reviewed `origin/dev` into the task
+branch without content conflicts; this receipt remains the only task-authored
+diff against `dev`.
