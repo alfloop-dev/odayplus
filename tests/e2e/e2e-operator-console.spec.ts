@@ -8,7 +8,7 @@ const API_BASE_URL = process.env.ODP_API_BASE_URL ?? "http://127.0.0.1:8099";
 const NETWORK_HEADERS = {
   "x-subject-id": "operator-expansion-manager",
   "x-roles": "expansion_user",
-  "x-operator-role": "expansion-manager",
+  "x-operator-role": "expansion-staff",
   "x-tenant-id": "tenant-a",
 };
 

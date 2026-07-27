@@ -75,7 +75,7 @@ test.beforeEach(async () => {
     extraHTTPHeaders: {
       "x-subject-id": "operator-expansion-manager",
       "x-roles": "expansion_user",
-      "x-operator-role": "expansion-manager",
+      "x-operator-role": "expansion-staff",
       "x-tenant-id": "tenant-a",
     },
   });
@@ -110,7 +110,7 @@ async function getIntakeApi(id: string) {
     extraHTTPHeaders: {
       "x-subject-id": "operator-expansion-manager",
       "x-roles": "expansion_user",
-      "x-operator-role": "expansion-manager",
+      "x-operator-role": "expansion-staff",
       "x-tenant-id": "tenant-a",
     },
   });
@@ -740,7 +740,7 @@ test.describe("Assisted Listing Intake — Package 7 product surfaces", () => {
       extraHTTPHeaders: {
         "x-subject-id": "operator-expansion-manager",
         "x-roles": "expansion_user",
-        "x-operator-role": "expansion-manager",
+        "x-operator-role": "expansion-staff",
         "x-tenant-id": "tenant-a",
         "X-Correlation-Id": "promote-corr-id-12345",
         "Idempotency-Key": "promote-key-12345"
@@ -878,7 +878,7 @@ test.describe("Assisted Listing Intake — Package 7 product surfaces", () => {
       extraHTTPHeaders: {
         "x-subject-id": "operator-expansion-manager",
         "x-roles": "expansion_user",
-        "x-operator-role": "expansion-manager",
+        "x-operator-role": "expansion-staff",
         "x-tenant-id": "tenant-a",
         "X-Correlation-Id": "reject-corr-id-12345",
         "Idempotency-Key": "reject-key-12345"
