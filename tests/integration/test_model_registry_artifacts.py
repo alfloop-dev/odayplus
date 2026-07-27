@@ -193,6 +193,15 @@ def _build_durable(db_path: str) -> tuple[SqliteEngine, LearningHubService, Dura
     return engine, service, DurableArtifactStore(store)
 
 
+def _release(service: LearningHubService, **kwargs):
+    kwargs.setdefault(
+        "expected_release_revision",
+        service.repository.get_release_revision(str(kwargs["model_name"])),
+    )
+    kwargs.setdefault("idempotency_key", str(kwargs["approval_id"]))
+    return service.request_release(**kwargs)
+
+
 # -- 1. lifecycle persistence across restart ----------------------------------
 
 
@@ -203,7 +212,8 @@ def test_full_lifecycle_promote_rollback_survives_restart(db_path) -> None:
         v2, _ = _prepare_candidate(service, artifacts, "1.1.0")
 
         # shadow -> full promote v1 -> full promote v2 (retires v1)
-        service.request_release(
+        _release(
+            service,
             model_name=MODEL_NAME,
             version=v1.version,
             release_type=ReleaseType.SHADOW,
@@ -216,7 +226,8 @@ def test_full_lifecycle_promote_rollback_survives_restart(db_path) -> None:
             requested_by="ml-owner",
             correlation_id="corr-shadow",
         )
-        service.request_release(
+        _release(
+            service,
             model_name=MODEL_NAME,
             version=v1.version,
             release_type=ReleaseType.FULL,
@@ -229,7 +240,8 @@ def test_full_lifecycle_promote_rollback_survives_restart(db_path) -> None:
             requested_by="ml-owner",
             correlation_id="corr-full-1",
         )
-        service.request_release(
+        _release(
+            service,
             model_name=MODEL_NAME,
             version=v2.version,
             release_type=ReleaseType.FULL,
@@ -284,6 +296,8 @@ def test_full_lifecycle_promote_rollback_survives_restart(db_path) -> None:
                 "fail_criteria": ["smoke prediction fails"],
                 "requested_by": "on-call",
                 "correlation_id": "corr-rollback",
+                "expected_release_revision": repo.get_release_revision(MODEL_NAME),
+                "idempotency_key": "approval-rollback-001",
             },
             service=service2,
         )
@@ -392,7 +406,8 @@ def test_registry_evidence_manifest_is_audit_complete(db_path) -> None:
     engine, service, artifacts = _build_durable(db_path)
     try:
         v1, _ = _prepare_candidate(service, artifacts, "1.0.0")
-        service.request_release(
+        _release(
+            service,
             model_name=MODEL_NAME,
             version=v1.version,
             release_type=ReleaseType.FULL,

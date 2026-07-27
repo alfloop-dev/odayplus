@@ -8,6 +8,8 @@ from modules.learninghub.infrastructure.mlflow_adapter import MlflowRegistryAdap
 from modules.learninghub.infrastructure.repositories import (
     InMemoryLearningHubRepository,
     LearningHubRepository,
+    ModelReleaseSaga,
+    ReleaseSagaState,
 )
 
 __all__ = [
@@ -16,4 +18,6 @@ __all__ = [
     "InMemoryLearningHubRepository",
     "LearningHubRepository",
     "MlflowRegistryAdapter",
+    "ModelReleaseSaga",
+    "ReleaseSagaState",
 ]

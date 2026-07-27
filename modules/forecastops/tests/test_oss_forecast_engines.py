@@ -21,6 +21,7 @@ from modules.forecastops import (
 from modules.forecastops.infrastructure import forecast_engines
 
 ORIGIN = datetime(2026, 7, 20, 9, 0, tzinfo=UTC)
+TENANT_ID = "tenant-forecast-oss-test"
 HAS_STATSFORECAST = find_spec("statsforecast") is not None
 HAS_MLFORECAST = find_spec("mlforecast") is not None
 
@@ -38,6 +39,7 @@ def _input(*, days: int = 70, store_id: str = "store-oss-001") -> ForecastInput:
         for index in range(days)
     )
     return ForecastInput(
+        tenant_id=TENANT_ID,
         store_id=store_id,
         observations=observations,
         prediction_origin_time=ORIGIN,
@@ -111,12 +113,15 @@ def test_application_selects_statsforecast_and_persists_run_metadata() -> None:
     forecast = result.forecasts[0]
     assert forecast.engine_name == "statsforecast"
     assert forecast.model_name == "seasonal_naive"
-    assert repository.history(forecast.store_id)[0].model_metadata == forecast.model_metadata
+    assert (
+        repository.history(TENANT_ID, forecast.store_id)[0].model_metadata
+        == forecast.model_metadata
+    )
 
-    run = repository.get_prediction_run(forecast.prediction_run_id)
+    run = repository.get_prediction_run(TENANT_ID, forecast.prediction_run_id)
     assert run is not None
     assert run.model_version_id == forecast.model_version
-    predictions = repository.get_predictions(forecast.prediction_run_id)
+    predictions = repository.get_predictions(TENANT_ID, forecast.prediction_run_id)
     assert predictions[0].explanation_json["engine_name"] == "statsforecast"
     assert predictions[0].explanation_json["model_metadata"]["library"] == "statsforecast"
 
@@ -180,7 +185,7 @@ def test_explicit_oss_engine_fails_closed_when_package_is_missing(
     ):
         service.forecast([_input(days=84)], scored_at=ORIGIN)
 
-    assert repository.latest_forecasts() == []
+    assert repository.latest_forecasts(TENANT_ID) == []
 
 
 def test_selected_oss_engine_rejects_short_history_instead_of_using_heuristic() -> None:

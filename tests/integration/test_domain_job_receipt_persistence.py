@@ -376,13 +376,14 @@ def test_forecast_receipt_and_idempotency_survive_app_restart_by_tenant(
     tmp_path,
 ) -> None:
     db_path = tmp_path / "forecast-receipts.sqlite3"
+    original_payload = _forecast_payload("store-a")
     bundle = _durable_bundle(db_path)
     try:
         first_client = TestClient(create_app(persistence=bundle))
         first = first_client.post(
             "/forecastops/forecast-jobs",
             headers=_headers(FORECASTOPS_HEADERS, TENANT_A, "same-key"),
-            json=_forecast_payload("store-a"),
+            json=original_payload,
         )
         assert first.status_code == 202, first.text
         first_receipt = first.json()
@@ -396,11 +397,19 @@ def test_forecast_receipt_and_idempotency_survive_app_restart_by_tenant(
         replay = second_client.post(
             "/forecastops/forecast-jobs",
             headers=_headers(FORECASTOPS_HEADERS, TENANT_A, "same-key"),
-            json={"inputs": []},
+            json=original_payload,
         )
         assert replay.status_code == 202, replay.text
         assert replay.json()["created"] is False
         assert replay.json()["job_id"] == first_receipt["job_id"]
+
+        conflict = second_client.post(
+            "/forecastops/forecast-jobs",
+            headers=_headers(FORECASTOPS_HEADERS, TENANT_A, "same-key"),
+            json=_forecast_payload("store-a-changed"),
+        )
+        assert conflict.status_code == 409
+        assert conflict.json()["detail"]["code"] == "IDEMPOTENCY_KEY_REUSED"
 
         fetched = second_client.get(
             f"/forecastops/forecast-jobs/{first_receipt['job_id']}",

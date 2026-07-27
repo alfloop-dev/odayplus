@@ -282,9 +282,9 @@ def _raw_forecast_rows(count: int = 120) -> list[dict[str, Any]]:
                 "view_version": "forecast-training-view-v2",
                 "entity_id": store_id,
                 "tenant_id": "tenant-1",
-                "feature_snapshot_time": datetime(2026, 7, 1, tzinfo=UTC),
-                "prediction_origin_time": datetime(2026, 7, 2, tzinfo=UTC),
-                "label_maturity_time": datetime(2026, 7, 1, tzinfo=UTC),
+                "feature_snapshot_time": observed,
+                "prediction_origin_time": observed + timedelta(microseconds=1),
+                "label_maturity_time": observed + timedelta(days=1),
                 "source_snapshot_ids": [f"snapshot-{index:04d}"],
                 "is_training_eligible": True,
                 "date": observed.date(),
@@ -408,6 +408,13 @@ def test_model_ready_sql_is_real_causal_and_blocks_missing_outcomes() -> None:
     assert "inner join core.stores as store" in lowered
     assert "data_plane.canonical_lineage" in lowered
     assert "txn.transaction_status = 'succeeded'" in lowered
+    assert "authoritative_order_partitions" in lowered
+    assert "eligible_store_dates" in lowered
+    assert "cross join authoritative_order_partitions" in lowered
+    assert "left join transaction_daily" in lowered
+    assert "coalesce(transaction_daily.daily_net_revenue, 0.0)" in lowered
+    assert "ingestion.quarantined_count = 0" in lowered
+    assert "ingestion.processed_count = ingestion.valid_loaded" in lowered
     assert "prior.date < target.date" in lowered
     assert "prior.date >= target.date - 28" in lowered
     assert "target.date - 1" in lowered
@@ -586,20 +593,24 @@ def test_postgres_source_uses_bounded_ordered_query() -> None:
 
 
 def test_prepare_rows_uses_canonical_lineage_and_never_fills_missing_features() -> None:
-    rows = _raw_forecast_rows(120)
+    rows = _raw_forecast_rows(480)
     rows[0]["rolling_mean_28"] = None
     prepared = prepare_model_rows(MODEL_SPECS["forecastops"], _loaded(rows))
-    assert len(prepared) == 119
+    assert prepared
+    assert all(row.mapping["features"]["rolling_mean_28"] is not None for row in prepared)
     first = prepared[0].mapping
-    assert first["source_snapshot_ids"] == [
-        "postgres:model_ready.forecast_training_view:sha256:" + "a" * 64,
-        "snapshot-0001",
-    ]
+    assert first["source_snapshot_ids"][0] == (
+        "postgres:model_ready.forecast_training_view:sha256:" + "a" * 64
+    )
+    assert all(
+        source_id.startswith("snapshot-")
+        for source_id in first["source_snapshot_ids"][1:]
+    )
     assert set(first["features"]) == set(
         MODEL_SPECS["forecastops"].feature_columns
     )
     assert "daily_net_revenue" not in first["features"]
-    assert first["labels"]["daily_net_revenue"] > 0
+    assert first["labels"][MODEL_SPECS["forecastops"].label_name] > 0
 
 
 def test_prepare_rows_rejects_mock_fixture_or_seed_lineage() -> None:
@@ -611,7 +622,8 @@ def test_prepare_rows_rejects_mock_fixture_or_seed_lineage() -> None:
 
 def test_prepare_rows_requires_source_lineage_and_strict_causal_time() -> None:
     rows = _raw_forecast_rows(120)
-    rows[0]["source_snapshot_ids"] = []
+    for row in rows:
+        row["source_snapshot_ids"] = []
     with pytest.raises(ModelReadyDataError, match="source snapshot lineage"):
         prepare_model_rows(MODEL_SPECS["forecastops"], _loaded(rows))
 
@@ -624,16 +636,28 @@ def test_prepare_rows_requires_source_lineage_and_strict_causal_time() -> None:
 def test_temporal_validation_uses_future_holdout_and_segment_gates() -> None:
     prepared = prepare_model_rows(
         MODEL_SPECS["forecastops"],
-        _loaded(_raw_forecast_rows(120)),
+        _loaded(_raw_forecast_rows(480)),
     )
-    training, holdout = _temporal_split(prepared, holdout_fraction=0.20)
+    training, holdout = _temporal_split(
+        prepared,
+        holdout_fraction=0.20,
+        purge_label_overlap=True,
+    )
     assert max(row.temporal_value for row in training) < min(
         row.temporal_value for row in holdout
     )
+    assert max(
+        row.mapping["label_maturity_time"] for row in training
+    ) < min(row.temporal_value for row in holdout)
 
     class PerfectEstimator:
         def predict(self, rows: list[dict[str, Any]]) -> tuple[float, ...]:
-            return tuple(float(row["revenue_lag_1"]) + 5.0 for row in rows)
+            return tuple(
+                float(row["revenue_lag_1"])
+                + 5.0
+                + 5.0 * (int(row["horizon_weeks"]) * 7 - 1)
+                for row in rows
+            )
 
         def predict_interval(
             self,
@@ -666,6 +690,38 @@ def test_temporal_validation_uses_future_holdout_and_segment_gates() -> None:
     }
 
 
+def test_forecast_temporal_split_purges_all_24_week_label_overlap() -> None:
+    prepared = prepare_model_rows(
+        MODEL_SPECS["forecastops"],
+        _loaded(_raw_forecast_rows(480)),
+    )
+    unpurged_training, holdout = _temporal_split(
+        prepared,
+        holdout_fraction=0.20,
+    )
+    purged_training, purged_holdout = _temporal_split(
+        prepared,
+        holdout_fraction=0.20,
+        purge_label_overlap=True,
+    )
+    cutoff = min(row.temporal_value for row in purged_holdout)
+
+    assert purged_holdout == holdout
+    assert len(purged_training) < len(unpurged_training)
+    assert all(
+        row.mapping["label_maturity_time"] < cutoff
+        for row in purged_training
+    )
+    assert any(
+        row.mapping["features"]["horizon_weeks"] == 24
+        for row in purged_training
+    )
+    assert any(
+        row.mapping["label_maturity_time"] >= cutoff
+        for row in unpurged_training
+    )
+
+
 def test_forecast_binding_executes_actual_lightgbm_temporal_training() -> None:
     pytest.importorskip("lightgbm")
     spec = replace(
@@ -673,18 +729,23 @@ def test_forecast_binding_executes_actual_lightgbm_temporal_training() -> None:
         max_normalized_mae=2.0,
         min_p80_coverage=0.0,
     )
-    prepared = prepare_model_rows(spec, _loaded(_raw_forecast_rows(120)))
-    training, holdout = _temporal_split(prepared, holdout_fraction=0.20)
+    prepared = prepare_model_rows(spec, _loaded(_raw_forecast_rows(480)))
+    training, holdout = _temporal_split(
+        prepared,
+        holdout_fraction=0.20,
+        purge_label_overlap=True,
+    )
     report = _validate_regression_temporally(spec, training, holdout)
-    assert report.algorithm == "lightgbm_quantile"
-    assert report.training_rows + report.holdout_rows == 120
+    assert report.algorithm == spec.algorithm
+    assert report.training_rows == len(training)
+    assert report.holdout_rows == len(holdout)
     assert report.passed
     assert np_is_finite(report.metrics["normalized_mae"])
 
 
 def test_segment_validation_fails_when_holdout_has_no_sufficient_segment() -> None:
-    spec = replace(MODEL_SPECS["forecastops"], minimum_segment_rows=100)
-    prepared = prepare_model_rows(spec, _loaded(_raw_forecast_rows(120)))
+    spec = replace(MODEL_SPECS["forecastops"], minimum_segment_rows=10_000)
+    prepared = prepare_model_rows(spec, _loaded(_raw_forecast_rows(480)))
     training, holdout = _temporal_split(prepared, holdout_fraction=0.20)
 
     class Estimator:

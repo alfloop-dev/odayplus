@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
@@ -37,7 +37,7 @@ from models.shared_ml import (
 from models.shared_ml.oss_estimators import train_oss_estimator
 from models.shared_ml.production_contracts import PRODUCTION_MODEL_CONTRACTS
 from modules.forecastops.application import RegisteredEstimatorForecastEngine
-from modules.forecastops.domain import ForecastInput
+from modules.forecastops.domain import FORECASTOPS_FEATURE_SCHEMA_ID, ForecastInput
 from modules.heatzone.workers import run_heatzone_batch_score
 from modules.learninghub.infrastructure import (
     InMemoryLearningHubRepository,
@@ -326,7 +326,7 @@ def _binding(service: str) -> ModelBinding:
             feature_schema_version={
                 "sitescore": SITESCORE_FEATURE_VERSION,
                 "heatzone": "geo-grid-view-v1",
-                "forecastops": "store-machine-timeseries-view-v1",
+                "forecastops": FORECASTOPS_FEATURE_SCHEMA_ID,
             }[service],
             label_version=f"{service}-label-v1",
             metrics={},
@@ -344,18 +344,20 @@ def _binding(service: str) -> ModelBinding:
 
 
 def _forecast_input() -> dict[str, Any]:
+    start = date(2026, 6, 1)
     return {
+        "tenant_id": "tenant-live-001",
         "store_id": "store-live-001",
         "prediction_origin_time": NOW.isoformat(),
         "observations": [
             {
-                "business_date": f"2026-07-{day:02d}",
-                "actual_revenue": 100_000 + day * 1_000,
-                "machine_cycles": 20 + day,
+                "business_date": (start + timedelta(days=index)).isoformat(),
+                "actual_revenue": 100_000 + index * 1_000,
+                "machine_cycles": 20 + index,
                 "data_quality_score": 0.95,
-                "source_snapshot_ids": [f"pos-202607{day:02d}"],
+                "source_snapshot_ids": [f"pos-live-{index:03d}"],
             }
-            for day in range(1, 15)
+            for index in range(35)
         ],
     }
 

@@ -116,11 +116,7 @@ def _record_dict(value: Any) -> dict[str, Any]:
         return deepcopy(result) if isinstance(result, dict) else {}
     if is_dataclass(value):
         return asdict(value)
-    return {
-        key: deepcopy(item)
-        for key, item in vars(value).items()
-        if not key.startswith("_")
-    }
+    return {key: deepcopy(item) for key, item in vars(value).items() if not key.startswith("_")}
 
 
 def _value(value: Any, name: str, default: Any = None) -> Any:
@@ -209,15 +205,11 @@ class OperatorLiveRepository:
     ) -> Any:
         method = getattr(repository, method_name, None)
         if not callable(method):
-            raise OperatorLiveRepositoryError(
-                f"{name}: missing tenant-scoped {method_name}()"
-            )
+            raise OperatorLiveRepositoryError(f"{name}: missing tenant-scoped {method_name}()")
         try:
             return method(*args, **kwargs)
         except Exception as exc:
-            raise OperatorLiveRepositoryError(
-                f"{name}: {type(exc).__name__}: {exc}"
-            ) from exc
+            raise OperatorLiveRepositoryError(f"{name}: {type(exc).__name__}: {exc}") from exc
 
     @staticmethod
     def _available(
@@ -318,9 +310,7 @@ class OperatorLiveRepository:
                 TenantScopedDocumentStore,
             )
 
-            return type(repository)(
-                TenantScopedDocumentStore(store, scope.tenant_id)
-            ), None
+            return type(repository)(TenantScopedDocumentStore(store, scope.tenant_id)), None
         except Exception as exc:
             return None, f"{type(exc).__name__}: {exc}"
 
@@ -335,9 +325,7 @@ class OperatorLiveRepository:
             region_codes=scope.region_ids,
             store_ids=scope.store_ids,
         )
-        visible_store_ids = tuple(
-            sorted(str(_value(store, "store_id")) for store in stores)
-        )
+        visible_store_ids = tuple(sorted(str(_value(store, "store_id")) for store in stores))
         if sections["stores"].available:
             transactions, sections["transactions"] = self._read_list(
                 "transactions",
@@ -377,6 +365,7 @@ class OperatorLiveRepository:
                             "forecast_alerts",
                             self._persistence.forecastops_repository,
                             "list_alerts_by_store",
+                            scope.tenant_id,
                             store_id,
                         )
                     )
@@ -575,15 +564,12 @@ class OperatorLiveRepository:
         ingestion_runs = list(sources["ingestion_runs"])
         audit_events = list(sources["audit_events"])
         active_jobs = int(sources["active_jobs"])
-        sections: dict[str, OperatorSectionAvailability] = dict(
-            sources["sections"]
-        )
+        sections: dict[str, OperatorSectionAvailability] = dict(sources["sections"])
         sections["riskRows"] = self._unavailable(
             "operator-risk-projection",
             reason_code="OPERATOR_RISK_PROJECTION_UNAVAILABLE",
             message=(
-                "the Operator risk projection has no tenant-aware authoritative "
-                "repository contract"
+                "the Operator risk projection has no tenant-aware authoritative repository contract"
             ),
         )
 
@@ -609,33 +595,21 @@ class OperatorLiveRepository:
             if _status(_value(item, "transaction_status")).lower() == "succeeded"
         ]
         transaction_net = sum(
-            float(_value(item, "net_amount", 0.0) or 0.0)
-            for item in successful_transactions
+            float(_value(item, "net_amount", 0.0) or 0.0) for item in successful_transactions
         )
         open_listings = sum(
-            1
-            for item in listings
-            if _status(_value(item, "listing_status")).lower() == "active"
+            1 for item in listings if _status(_value(item, "listing_status")).lower() == "active"
         )
 
-        section_payload = {
-            name: availability.to_dict()
-            for name, availability in sections.items()
-        }
+        section_payload = {name: availability.to_dict() for name, availability in sections.items()}
         unavailable_sections = sorted(
-            name
-            for name, availability in sections.items()
-            if availability.state == "unavailable"
+            name for name, availability in sections.items() if availability.state == "unavailable"
         )
         degraded_sections = sorted(
-            name
-            for name, availability in sections.items()
-            if availability.state == "degraded"
+            name for name, availability in sections.items() if availability.state == "degraded"
         )
         available_sections = sorted(
-            name
-            for name, availability in sections.items()
-            if availability.available
+            name for name, availability in sections.items() if availability.available
         )
         data_mode = (
             "unavailable"
@@ -644,10 +618,7 @@ class OperatorLiveRepository:
             if unavailable_sections or degraded_sections
             else "live"
         )
-        record_counts = {
-            name: availability.record_count
-            for name, availability in sections.items()
-        }
+        record_counts = {name: availability.record_count for name, availability in sections.items()}
         queue_availability = (
             "degraded"
             if any(
@@ -673,8 +644,7 @@ class OperatorLiveRepository:
         notification_availability = (
             "degraded"
             if any(
-                sections[name].state != "available"
-                for name in ("forecastAlerts", "ingestionRuns")
+                sections[name].state != "available" for name in ("forecastAlerts", "ingestionRuns")
             )
             else "available"
         )
@@ -772,8 +742,7 @@ class OperatorLiveRepository:
                             sum(
                                 1
                                 for item in stores
-                                if _status(_value(item, "store_status")).lower()
-                                == "open"
+                                if _status(_value(item, "store_status")).lower() == "open"
                             )
                         )
                         if sections["stores"].available
@@ -787,9 +756,7 @@ class OperatorLiveRepository:
                 {
                     "label": "交易淨額",
                     "value": (
-                        f"{transaction_net:.2f}"
-                        if sections["transactions"].available
-                        else None
+                        f"{transaction_net:.2f}" if sections["transactions"].available else None
                     ),
                     "delta": "",
                     "meta": "successful persisted transactions",
@@ -798,11 +765,7 @@ class OperatorLiveRepository:
                 },
                 {
                     "label": "有效物件",
-                    "value": (
-                        str(open_listings)
-                        if sections["listings"].available
-                        else None
-                    ),
+                    "value": (str(open_listings) if sections["listings"].available else None),
                     "delta": "",
                     "meta": "listing repository",
                     "tone": "neutral",
@@ -810,11 +773,7 @@ class OperatorLiveRepository:
                 },
                 {
                     "label": "執行中工作",
-                    "value": (
-                        str(active_jobs)
-                        if sections["activeJobs"].available
-                        else None
-                    ),
+                    "value": (str(active_jobs) if sections["activeJobs"].available else None),
                     "delta": "",
                     "meta": "job repository",
                     "tone": "info" if active_jobs else "neutral",
@@ -868,22 +827,24 @@ class OperatorLiveRepository:
             intervention_id = str(_value(intervention, "intervention_id"))
             kind = _status(_value(intervention, "kind"))
             store_id = str(_value(intervention, "store_id"))
-            workspace = "growth" if kind in {
-                "PRICE_CHANGE",
-                "AD_CAMPAIGN",
-                "PROMOTION",
-                "CRM_RECALL",
-                "OPENING_CAMPAIGN",
-            } else "store"
+            workspace = (
+                "growth"
+                if kind
+                in {
+                    "PRICE_CHANGE",
+                    "AD_CAMPAIGN",
+                    "PROMOTION",
+                    "CRM_RECALL",
+                    "OPENING_CAMPAIGN",
+                }
+                else "store"
+            )
             rows.append(
                 {
                     "id": intervention_id,
                     "title": f"{kind} intervention",
                     "description": str(_value(intervention, "expected_outcome", "")),
-                    "meta": (
-                        f"{store_id} · "
-                        f"{_value(intervention, 'trigger_ref', '')}"
-                    ).strip(" ·"),
+                    "meta": (f"{store_id} · {_value(intervention, 'trigger_ref', '')}").strip(" ·"),
                     "owner": str(_value(intervention, "created_by", "")),
                     "status": status,
                     "time": _iso(_value(intervention, "created_at")),

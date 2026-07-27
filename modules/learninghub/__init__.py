@@ -1,6 +1,7 @@
 """Learning Hub public API."""
 
 from modules.learninghub.application import (
+    AliasReconciliationReceipt,
     GuardrailBreach,
     LearningHubError,
     LearningHubService,
@@ -35,15 +36,22 @@ from modules.learninghub.domain import (
     model_ready_record_from_mapping,
     validate_point_in_time,
 )
-from modules.learninghub.infrastructure import InMemoryLearningHubRepository, MlflowRegistryAdapter
+from modules.learninghub.infrastructure import (
+    InMemoryLearningHubRepository,
+    MlflowRegistryAdapter,
+    ModelReleaseSaga,
+    ReleaseSagaState,
+)
 from modules.learninghub.runtime import LearningHubRuntimeConfigurationError
 from modules.learninghub.workers import (
     LearningHubReleaseWorker,
     run_learninghub_release,
     run_learninghub_release_monitor,
+    run_learninghub_release_recovery,
 )
 
 __all__ = [
+    "AliasReconciliationReceipt",
     "DatasetSnapshot",
     "DatasetSnapshotError",
     "GuardrailBreach",
@@ -57,6 +65,7 @@ __all__ = [
     "MlflowRegistryAdapter",
     "ModelReadyRecord",
     "ModelReleaseDecision",
+    "ModelReleaseSaga",
     "MonitorStatus",
     "MonitoringEvaluation",
     "MonitoringSignalType",
@@ -64,12 +73,14 @@ __all__ = [
     "PointInTimeViolation",
     "RecommendedAction",
     "ReleaseMonitorAssessment",
+    "ReleaseSagaState",
     "ReleaseType",
     "RetrainingRequest",
     "build_dataset_snapshot",
     "evaluate_guardrails",
     "model_ready_record_from_mapping",
     "run_learninghub_release",
+    "run_learninghub_release_recovery",
     "run_learninghub_release_monitor",
     "validate_point_in_time",
     # Feature Registry

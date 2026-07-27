@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
-from datetime import UTC, datetime
+from datetime import UTC, datetime, time, timedelta
 from typing import Any
 
 from models.shared_ml.production_runtime import ProductionModelRuntime
@@ -13,6 +13,7 @@ from modules.forecastops.domain.forecasting import (
     Alert,
     ForecastEngine,
     ForecastInput,
+    ForecastOpsError,
     ForecastOpsNotFoundError,
     ForecastOutput,
     ForecastSeries,
@@ -82,9 +83,12 @@ class ForecastOpsService:
         )
 
     def ingest_timeseries(
-        self, observations: Iterable[StoreDayObservation | Mapping[str, Any]]
+        self,
+        observations: Iterable[StoreDayObservation | Mapping[str, Any]],
+        *,
+        tenant_id: str,
     ) -> list[ForecastSeries]:
-        series = build_store_timeseries(observations)
+        series = build_store_timeseries(observations, tenant_id=tenant_id)
         return [self.repository.save_series(item) for item in series]
 
     def forecast(
@@ -92,16 +96,43 @@ class ForecastOpsService:
         inputs: Iterable[ForecastInput | Mapping[str, Any]],
         *,
         prediction_origin_time: datetime | None = None,
+        prediction_run_id: str | None = None,
         scored_at: datetime | None = None,
         engine: str | ForecastEngine | None = None,
         model_name: str | None = None,
         engine_options: Mapping[str, Any] | None = None,
     ) -> ForecastOpsResult:
         from datetime import UTC
-        from uuid import uuid4
+        from uuid import NAMESPACE_URL, uuid4, uuid5
 
         from shared.domain import ForecastOutput as CanonicalForecastOutput
         from shared.domain import Prediction, PredictionRun
+
+        normalized_inputs = tuple(
+            item if isinstance(item, ForecastInput) else ForecastInput.from_mapping(item)
+            for item in inputs
+        )
+        tenant_ids = {
+            str(item.tenant_id or "").strip()
+            for item in normalized_inputs
+            if str(item.tenant_id or "").strip()
+        }
+        if len(tenant_ids) != 1 or any(
+            not str(item.tenant_id or "").strip() for item in normalized_inputs
+        ):
+            raise ForecastOpsError(
+                "ForecastOps forecast batch requires exactly one authenticated tenant scope"
+            )
+        tenant_id = next(iter(tenant_ids))
+        origins = {
+            _utc_datetime(prediction_origin_time or item.prediction_origin_time)
+            for item in normalized_inputs
+        }
+        if len(origins) != 1:
+            raise ForecastOpsError(
+                "ForecastOps forecast batch requires one prediction origin"
+            )
+        origin = next(iter(origins))
 
         selected_engine = (
             self.engine
@@ -116,10 +147,10 @@ class ForecastOpsService:
             selected_engine,
             production_required=self.production_required,
         )
-        run_id = f"pred-run-forecast-{uuid4()}"
+        run_id = prediction_run_id or f"pred-run-forecast-{uuid4()}"
         forecasts, alerts, handoffs = forecast_stores(
-            inputs,
-            prediction_origin_time=prediction_origin_time,
+            normalized_inputs,
+            prediction_origin_time=origin,
             scored_at=scored_at,
             prediction_run_id=run_id,
             engine=selected_engine,
@@ -127,16 +158,29 @@ class ForecastOpsService:
         saved_forecasts = tuple(self.repository.save_forecast(forecast) for forecast in forecasts)
 
         if saved_forecasts:
-            origin = prediction_origin_time or datetime.now(UTC)
+            feature_snapshots = [
+                datetime.combine(
+                    max(item.observations, key=lambda value: value.business_date).business_date
+                    + timedelta(days=1),
+                    time.min,
+                    tzinfo=UTC,
+                )
+                for item in normalized_inputs
+                if item.observations
+            ]
+            feature_snapshot_time = max(feature_snapshots, default=origin)
+            selected_horizons = sorted(
+                {f"w{item.horizon_days // 7}" for item in normalized_inputs}
+            )
             run = PredictionRun(
                 prediction_run_id=run_id,
                 model_version_id=saved_forecasts[0].model_version,
-                feature_snapshot_time=origin,
+                feature_snapshot_time=feature_snapshot_time,
                 prediction_origin_time=origin,
-                prediction_horizon="w24",
+                prediction_horizon=",".join(selected_horizons),
                 run_status="succeeded",
             )
-            self.repository.save_prediction_run(run)
+            self.repository.save_prediction_run(tenant_id, run)
 
             for f in saved_forecasts:
                 canonical_forecast = CanonicalForecastOutput(
@@ -152,9 +196,10 @@ class ForecastOpsService:
                     turning_point_probability=f.turning_point_probability,
                     sitescore_gap_ratio=f.sitescore_gap_ratio,
                 )
-                self.repository.save_canonical_forecast(canonical_forecast)
+                self.repository.save_canonical_forecast(tenant_id, canonical_forecast)
 
                 pred = Prediction(
+                    prediction_id=f"prediction-{uuid5(NAMESPACE_URL, f'{run_id}:{f.store_id}')}",
                     prediction_run_id=run_id,
                     entity_type="store",
                     entity_id=f.store_id,
@@ -170,16 +215,16 @@ class ForecastOpsService:
                         "model_metadata": dict(f.model_metadata),
                     },
                 )
-                self.repository.save_prediction(pred)
+                self.repository.save_prediction(tenant_id, pred)
 
         return ForecastOpsResult(
             forecasts=saved_forecasts,
             alerts=tuple(self.repository.save_alert(alert) for alert in alerts),
             handoffs=tuple(self.repository.save_handoff(handoff) for handoff in handoffs),
         )
-
     def acknowledge_alert(
         self,
+        tenant_id: str,
         alert_id: str,
         *,
         actor: str,
@@ -188,7 +233,7 @@ class ForecastOpsService:
     ) -> Alert:
         """Acknowledge a persisted four-light alert and persist the acknowledgement."""
 
-        alert = self.repository.get_alert(alert_id)
+        alert = self.repository.get_alert(tenant_id, alert_id)
         if alert is None:
             raise ForecastOpsNotFoundError(f"alert {alert_id} not found")
         acknowledged = alert.acknowledge(actor=actor, note=note, now=now or datetime.now(UTC))
@@ -196,6 +241,7 @@ class ForecastOpsService:
 
     def execute_handoff(
         self,
+        tenant_id: str,
         handoff_id: str,
         *,
         actor: str,
@@ -204,13 +250,17 @@ class ForecastOpsService:
     ) -> InterventionHandoff:
         """Dispatch a proposed intervention handoff, linking the opened case."""
 
-        handoff = self.repository.get_handoff(handoff_id)
+        handoff = self.repository.get_handoff(tenant_id, handoff_id)
         if handoff is None:
             raise ForecastOpsNotFoundError(f"handoff {handoff_id} not found")
         executed = handoff.execute(
             actor=actor, intervention_id=intervention_id, now=now or datetime.now(UTC)
         )
         return self.repository.save_handoff(executed)
+
+
+def _utc_datetime(value: datetime) -> datetime:
+    return value.replace(tzinfo=UTC) if value.tzinfo is None else value.astimezone(UTC)
 
 
 def _resolve_engine(
@@ -243,17 +293,13 @@ def _require_production_engine(
         return
     if engine is None:
         raise ForecastOpsRuntimeConfigurationError(
-            "ForecastOps production requires StatsForecast, MLForecast, or an "
-            "approved registered OSS model runtime"
+            "ForecastOps production requires the registered MLflow estimator runtime"
         )
     engine_name = str(getattr(engine, "engine_name", "")).strip().lower()
-    if engine_name not in {
-        "statsforecast",
-        "mlforecast",
-        "mlflow_registered_oss",
-    }:
+    if engine_name != "mlflow_registered_oss":
         raise ForecastOpsRuntimeConfigurationError(
-            f"ForecastOps production engine {engine_name or '<missing>'!r} is not approved"
+            "ForecastOps production requires engine 'mlflow_registered_oss'; "
+            f"received {engine_name or '<missing>'!r}"
         )
 
 

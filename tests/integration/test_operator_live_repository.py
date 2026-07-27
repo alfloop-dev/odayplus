@@ -30,6 +30,7 @@ from shared.infrastructure.persistence.factory import _durable_bundle, _memory_b
 def _alert(alert_id: str = "alert-live-1") -> Alert:
     return Alert(
         alert_id=alert_id,
+        tenant_id="tenant-live-1",
         store_id="store-live-1",
         alert_level=AlertLevel.RED,
         alert_reason_code="REVENUE_DROP",
@@ -80,10 +81,7 @@ def test_empty_live_repository_is_ready_without_seed_rows() -> None:
     assert envelope["meta"]["dataOrigin"]["complete"] is False
     assert envelope["meta"]["liveReadiness"]["ready"] is True
     assert envelope["meta"]["liveReadiness"]["complete"] is False
-    assert (
-        envelope["meta"]["liveReadiness"]["reasonCode"]
-        == "OPERATOR_LIVE_REPOSITORY_DEGRADED"
-    )
+    assert envelope["meta"]["liveReadiness"]["reasonCode"] == "OPERATOR_LIVE_REPOSITORY_DEGRADED"
     assert envelope["meta"]["sections"]["stores"]["state"] == "available"
     assert envelope["meta"]["sections"]["stores"]["recordCount"] == 0
     assert envelope["meta"]["sections"]["listings"]["state"] == "unavailable"
@@ -200,12 +198,8 @@ def test_live_repository_reads_rows_after_process_restart(tmp_path: Any) -> None
         )
 
         assert repository.probe().ready is True
-        assert [item["id"] for item in envelope["workQueue"]] == [
-            "alert-restart-1"
-        ]
-        assert envelope["meta"]["dataOrigin"]["sourceId"] == (
-            "operator-live-repository"
-        )
+        assert [item["id"] for item in envelope["workQueue"]] == ["alert-restart-1"]
+        assert envelope["meta"]["dataOrigin"]["sourceId"] == ("operator-live-repository")
     finally:
         reopened.engine.close()
 
@@ -232,17 +226,16 @@ def test_create_app_rejects_sqlite_bundle_relabelled_as_postgresql(
 
         assert app.state.operator_live_repository is None
         assert response.status_code == 503
-        assert readiness["details"]["persistence"][
-            "production_persistence_supported"
-        ] is False
+        assert readiness["details"]["persistence"]["production_persistence_supported"] is False
         assert readiness["details"]["data"]["operatorRepositoryReady"] is False
         assert readiness["details"]["data"]["operatorRepositoryProbe"] is None
-        assert "SQLITE_NOT_PRODUCTION_PERSISTENCE" in readiness[
-            "details"
-        ]["data"]["blockingReasons"]
-        assert "OPERATOR_LIVE_REPOSITORY_UNAVAILABLE" in readiness[
-            "details"
-        ]["data"]["blockingReasons"]
+        assert (
+            "SQLITE_NOT_PRODUCTION_PERSISTENCE" in readiness["details"]["data"]["blockingReasons"]
+        )
+        assert (
+            "OPERATOR_LIVE_REPOSITORY_UNAVAILABLE"
+            in readiness["details"]["data"]["blockingReasons"]
+        )
         assert "/api/v1/operator/seed/reset" not in app.openapi()["paths"]
         assert "/api/v1/operator/shell/tasks" in app.openapi()["paths"]
         assert "/api/v1/operator/shell/notifications" in app.openapi()["paths"]
@@ -274,9 +267,7 @@ def test_live_repository_requires_tenant_scope() -> None:
         require_live_data=True,
         persistence_mode="postgresql",
         provider_mode="live",
-        live_repository=OperatorLiveRepository(
-            replace(_memory_bundle(), mode="postgresql")
-        ),
+        live_repository=OperatorLiveRepository(replace(_memory_bundle(), mode="postgresql")),
     )
 
     with pytest.raises(
@@ -387,8 +378,7 @@ def _operator_request(
             "raw_path": b"/api/v1/operator/today",
             "query_string": b"",
             "headers": [
-                (name.encode("latin-1"), value.encode("latin-1"))
-                for name, value in headers.items()
+                (name.encode("latin-1"), value.encode("latin-1")) for name, value in headers.items()
             ],
             "client": ("127.0.0.1", 1234),
             "server": ("testserver", 443),

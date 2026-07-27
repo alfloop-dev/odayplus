@@ -8,6 +8,7 @@ from modules.learninghub.application.monitor import (
     evaluate_guardrails,
 )
 from modules.learninghub.application.release import (
+    AliasReconciliationReceipt,
     LearningHubError,
     LearningHubService,
     ModelReleaseDecision,
@@ -22,6 +23,7 @@ from modules.learninghub.domain import (
 )
 
 __all__ = [
+    "AliasReconciliationReceipt",
     "GuardrailBreach",
     "InferenceComparison",
     "InferenceComparisonMode",

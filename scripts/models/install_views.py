@@ -29,7 +29,14 @@ PREREQUISITE_COLUMNS: Mapping[str, tuple[str, ...]] = {
         "transaction_status",
         "ingested_at",
     ),
-    "core.stores": ("store_id", "tenant_id"),
+    "core.stores": (
+        "store_id",
+        "tenant_id",
+        "opened_on",
+        "closed_on",
+        "effective_from",
+        "effective_to",
+    ),
     "data_plane.canonical_lineage": (
         "source_snapshot_id",
         "run_id",
@@ -39,7 +46,12 @@ PREREQUISITE_COLUMNS: Mapping[str, tuple[str, ...]] = {
     ),
     "data_plane.ingestion_runs": (
         "run_id",
+        "source_kind",
+        "partition_key",
         "status",
+        "processed_count",
+        "valid_loaded",
+        "quarantined_count",
         "finished_at",
     ),
 }

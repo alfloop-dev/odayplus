@@ -6,9 +6,11 @@ from dataclasses import dataclass, field, replace
 from datetime import UTC, date, datetime
 from enum import StrEnum
 from typing import Any, Protocol
-from uuid import uuid4
+from uuid import NAMESPACE_URL, uuid4, uuid5
 
 import numpy as np
+
+from modules.forecastops.model_contract import FORECASTOPS_HORIZON_WEEKS
 
 
 class ForecastOpsError(ValueError):
@@ -34,7 +36,7 @@ class ForecastEngineInputError(ForecastEngineError):
 FORECASTOPS_MODEL_VERSION = "forecastops-baseline-v1"
 FORECASTOPS_FEATURE_VERSION = "store-machine-timeseries-view-v1"
 FOUR_LIGHT_POLICY_VERSION = "four-light-policy-v1"
-FORECAST_HORIZON_WEEKS = (4, 8, 12, 24)
+FORECAST_HORIZON_WEEKS = FORECASTOPS_HORIZON_WEEKS
 
 # Standard-normal quantile z_{0.90}; the P10/P90 band half-width is z * residual
 # coefficient of variation, i.e. a proper 80% central prediction interval.
@@ -138,6 +140,7 @@ class StoreDayObservation:
 
 @dataclass(frozen=True)
 class ForecastSeries:
+    tenant_id: str
     store_id: str
     observations: tuple[StoreDayObservation, ...]
     feature_version: str = FORECASTOPS_FEATURE_VERSION
@@ -150,6 +153,7 @@ class ForecastSeries:
 
     def to_dict(self) -> dict[str, Any]:
         return {
+            "tenant_id": self.tenant_id,
             "store_id": self.store_id,
             "feature_version": self.feature_version,
             "points": [observation.to_dict() for observation in self.observations],
@@ -161,6 +165,7 @@ class ForecastSeries:
 class ForecastInput:
     store_id: str
     observations: tuple[StoreDayObservation, ...]
+    tenant_id: str | None = None
     horizon_days: int = 28
     target_metric: str = "revenue"
     prediction_origin_time: datetime = field(default_factory=lambda: datetime.now(UTC))
@@ -175,6 +180,9 @@ class ForecastInput:
         return cls(
             store_id=store_id,
             observations=tuple(sorted(observations, key=lambda item: item.business_date)),
+            tenant_id=(
+                str(data["tenant_id"]).strip() if data.get("tenant_id") not in {None, ""} else None
+            ),
             horizon_days=int(data.get("horizon_days", 28)),
             target_metric=str(data.get("target_metric") or "revenue"),
             prediction_origin_time=_parse_datetime(
@@ -186,6 +194,7 @@ class ForecastInput:
 @dataclass(frozen=True)
 class ForecastOutput:
     forecast_output_id: str
+    tenant_id: str
     store_id: str
     prediction_run_id: str
     horizon_days: int
@@ -232,6 +241,7 @@ class ForecastOutput:
         return {
             "forecast_output_id": self.forecast_output_id,
             "forecast_version": self.forecast_version,
+            "tenant_id": self.tenant_id,
             "store_id": self.store_id,
             "prediction_run_id": self.prediction_run_id,
             "horizon_days": self.horizon_days,
@@ -264,6 +274,7 @@ class ForecastOutput:
 @dataclass(frozen=True)
 class Alert:
     alert_id: str
+    tenant_id: str
     store_id: str
     alert_level: AlertLevel
     alert_reason_code: str
@@ -299,6 +310,7 @@ class Alert:
     def to_dict(self) -> dict[str, Any]:
         return {
             "alert_id": self.alert_id,
+            "tenant_id": self.tenant_id,
             "store_id": self.store_id,
             "alert_level": self.alert_level.value,
             "alert_reason_code": self.alert_reason_code,
@@ -315,6 +327,7 @@ class Alert:
 @dataclass(frozen=True)
 class InterventionHandoff:
     handoff_id: str
+    tenant_id: str
     alert_id: str
     store_id: str
     intervention_type: str
@@ -351,6 +364,7 @@ class InterventionHandoff:
     def to_dict(self) -> dict[str, Any]:
         return {
             "handoff_id": self.handoff_id,
+            "tenant_id": self.tenant_id,
             "alert_id": self.alert_id,
             "store_id": self.store_id,
             "intervention_type": self.intervention_type,
@@ -366,13 +380,19 @@ class InterventionHandoff:
 
 def build_store_timeseries(
     observations: Iterable[StoreDayObservation | Mapping[str, Any]],
+    *,
+    tenant_id: str,
 ) -> list[ForecastSeries]:
+    normalized_tenant_id = str(tenant_id or "").strip()
+    if not normalized_tenant_id:
+        raise ForecastOpsError("tenant_id is required to build ForecastOps timeseries")
     grouped: dict[str, list[StoreDayObservation]] = defaultdict(list)
     for observation in observations:
         item = _coerce_observation(observation)
         grouped[item.store_id].append(item)
     return [
         ForecastSeries(
+            tenant_id=normalized_tenant_id,
             store_id=store_id,
             observations=tuple(sorted(items, key=lambda item: item.business_date)),
         )
@@ -395,6 +415,8 @@ def forecast_stores(
     handoffs: list[InterventionHandoff] = []
     for item in inputs:
         forecast_input = _coerce_forecast_input(item)
+        if not str(forecast_input.tenant_id or "").strip():
+            raise ForecastOpsError("tenant_id is required for ForecastOps forecasting")
         output = _forecast_one(
             forecast_input,
             prediction_origin_time=prediction_origin_time or forecast_input.prediction_origin_time,
@@ -471,18 +493,32 @@ def _forecast_one(
         model_name = engine_result.model_name
         model_metadata = dict(engine_result.metadata)
 
-    w4 = bands["w4"]
+    if forecast_input.horizon_days % 7:
+        raise ForecastOpsError("ForecastOps horizon_days must be a whole number of weeks")
+    selected_horizon_weeks = forecast_input.horizon_days // 7
+    if selected_horizon_weeks not in FORECAST_HORIZON_WEEKS:
+        supported = ", ".join(str(weeks * 7) for weeks in FORECAST_HORIZON_WEEKS)
+        raise ForecastOpsError(
+            f"ForecastOps horizon_days must be one of the canonical values: {supported}"
+        )
+    selected_band = bands[f"w{selected_horizon_weeks}"]
     gap_ratio = _sitescore_gap_ratio(actual=actual, baseline=baseline)
     return ForecastOutput(
-        forecast_output_id=f"forecast-output-{uuid4()}",
+        forecast_output_id=_stable_id(
+            "forecast-output",
+            prediction_run_id,
+            str(forecast_input.tenant_id),
+            forecast_input.store_id,
+        ),
+        tenant_id=str(forecast_input.tenant_id),
         store_id=forecast_input.store_id,
         prediction_run_id=prediction_run_id,
         horizon_days=forecast_input.horizon_days,
         target_metric=forecast_input.target_metric,
-        p10=w4.p10,
-        p50=w4.p50,
-        p90=w4.p90,
-        w4=w4,
+        p10=selected_band.p10,
+        p50=selected_band.p50,
+        p90=selected_band.p90,
+        w4=bands["w4"],
         w8=bands["w8"],
         w12=bands["w12"],
         w24=bands["w24"],
@@ -515,7 +551,8 @@ def _alert_for(output: ForecastOutput, *, opened_at: datetime) -> Alert:
         level = AlertLevel.GREEN
     reason = "sitescore_gap" if level is not AlertLevel.GREEN else "within_expected_band"
     return Alert(
-        alert_id=f"forecast-alert-{uuid4()}",
+        alert_id=_stable_id("forecast-alert", output.forecast_output_id),
+        tenant_id=output.tenant_id,
         store_id=output.store_id,
         alert_level=level,
         alert_reason_code=reason,
@@ -544,7 +581,8 @@ def _handoff_for(
         return None
     intervention_type = "maintenance" if alert.alert_level is AlertLevel.RED else "promotion"
     return InterventionHandoff(
-        handoff_id=f"intervention-handoff-{uuid4()}",
+        handoff_id=_stable_id("intervention-handoff", alert.alert_id),
+        tenant_id=output.tenant_id,
         alert_id=alert.alert_id,
         store_id=alert.store_id,
         intervention_type=intervention_type,
@@ -565,6 +603,11 @@ def _recommended_actions(level: AlertLevel, output: ForecastOutput) -> list[str]
     if output.trajectory_class == "declining":
         return ["launch_local_promotion", "review_price_packaging"]
     return ["review_local_demand", "create_intervention_candidate"]
+
+
+def _stable_id(prefix: str, *parts: str) -> str:
+    value = ":".join((prefix, *(str(part) for part in parts)))
+    return f"{prefix}-{uuid5(NAMESPACE_URL, value)}"
 
 
 def _trajectory_class(delta_ratio: float) -> str:

@@ -126,6 +126,9 @@ else:
         affected_modules: list[str] = Field(default_factory=list)
         requested_by: str = "system"
         approved_by: str = "model-review-board"
+        expected_release_revision: int = Field(ge=0)
+        idempotency_key: str = Field(min_length=1)
+        release_scope: str = "global"
 
 
     def create_learninghub_router(
@@ -307,6 +310,9 @@ else:
                     requested_by=body.requested_by,
                     approved_by=body.approved_by,
                     correlation_id=request.state.correlation_id,
+                    expected_release_revision=body.expected_release_revision,
+                    idempotency_key=body.idempotency_key,
+                    release_scope=body.release_scope,
                 )
             except (LearningHubError, ValueError) as exc:
                 raise HTTPException(

@@ -3,20 +3,26 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from datetime import UTC, datetime, time
+from datetime import UTC, datetime, time, timedelta
 from statistics import fmean
 from typing import Any
 
 from models.shared_ml.production_runtime import (
     ModelInferenceResult,
+    ProductionModelInputError,
     ProductionModelRuntime,
 )
 from modules.forecastops.domain.forecasting import (
     FORECAST_HORIZON_WEEKS,
-    FORECASTOPS_FEATURE_VERSION,
     ForecastBand,
     ForecastEngineResult,
     ForecastInput,
+)
+from modules.forecastops.model_contract import (
+    FORECASTOPS_FEATURE_SCHEMA_ID,
+    FORECASTOPS_LATEST_OBSERVATION_LAG_DAYS,
+    FORECASTOPS_MIN_HISTORY_DAYS,
+    FORECASTOPS_MODEL_FEATURES,
 )
 
 
@@ -40,7 +46,7 @@ class RegisteredEstimatorForecastEngine:
         inference = self.runtime.infer(
             service="forecastops",
             rows=rows,
-            expected_feature_schema_version=FORECASTOPS_FEATURE_VERSION,
+            expected_feature_schema_version=FORECASTOPS_FEATURE_SCHEMA_ID,
         )
         self.last_inference = inference
         bands = {
@@ -67,35 +73,84 @@ def _feature_row(
     *,
     horizon_weeks: int,
 ) -> dict[str, Any]:
-    observations = list(forecast_input.observations)
+    tenant_id = (forecast_input.tenant_id or "").strip()
+    if not tenant_id:
+        raise ProductionModelInputError("forecastops: production inference requires tenant_id")
+    observations = sorted(
+        forecast_input.observations,
+        key=lambda item: item.business_date,
+    )
+    origin = forecast_input.prediction_origin_time
+    if origin.tzinfo is None:
+        origin = origin.replace(tzinfo=UTC)
+    else:
+        origin = origin.astimezone(UTC)
+    expected_latest_date = origin.date() - timedelta(
+        days=FORECASTOPS_LATEST_OBSERVATION_LAG_DAYS
+    )
+    if any(item.business_date >= origin.date() for item in observations):
+        raise ProductionModelInputError(
+            "forecastops: observations on or after prediction origin are prohibited"
+        )
+    if len(observations) < FORECASTOPS_MIN_HISTORY_DAYS:
+        raise ProductionModelInputError(
+            "forecastops: production inference requires at least "
+            f"{FORECASTOPS_MIN_HISTORY_DAYS} days of live history"
+        )
+    observations = observations[-FORECASTOPS_MIN_HISTORY_DAYS:]
+    latest_business_date = observations[-1].business_date
+    if latest_business_date != expected_latest_date:
+        relation = "stale" if latest_business_date < expected_latest_date else "future"
+        raise ProductionModelInputError(
+            "forecastops: production inference requires history through "
+            f"{expected_latest_date.isoformat()}; latest observation is "
+            f"{latest_business_date.isoformat()} ({relation})"
+        )
+    for previous, current in zip(observations, observations[1:], strict=False):
+        if (current.business_date - previous.business_date).days != 1:
+            raise ProductionModelInputError(
+                "forecastops: production inference requires contiguous daily history"
+            )
+    if any(not item.source_snapshot_ids for item in observations):
+        raise ProductionModelInputError(
+            "forecastops: production inference requires source lineage for every history day"
+        )
+
     latest = observations[-1]
-    latest_date = datetime.combine(latest.business_date, time.min, tzinfo=UTC)
+    feature_snapshot_time = datetime.combine(
+        latest.business_date + timedelta(days=1),
+        time.min,
+        tzinfo=UTC,
+    )
+    if feature_snapshot_time > origin:
+        raise ProductionModelInputError(
+            "forecastops: feature snapshot cannot be after prediction origin"
+        )
     revenues = [float(item.actual_revenue) for item in observations]
-    cycles = [float(item.machine_cycles) for item in observations]
     source_snapshot_ids = sorted(
         {snapshot_id for item in observations for snapshot_id in item.source_snapshot_ids}
     )
-    elapsed_days = max(
-        1,
-        (observations[-1].business_date - observations[0].business_date).days,
-    )
-    return {
+    model_features: dict[str, Any] = {
+        "horizon_weeks": horizon_weeks,
+        "revenue_lag_1": revenues[-1],
+        "revenue_lag_7": revenues[-7],
+        "rolling_mean_28": fmean(revenues),
+        "rolling_mean_7": fmean(revenues[-7:]),
         "store_id": forecast_input.store_id,
+        "tenant_id": tenant_id,
+    }
+    if tuple(model_features) != FORECASTOPS_MODEL_FEATURES:
+        raise RuntimeError("ForecastOps runtime feature order violates its contract")
+    return {
+        **model_features,
         "horizon_weeks": horizon_weeks,
         "horizon_days": horizon_weeks * 7,
-        "latest_actual_revenue": revenues[-1],
-        "trailing_mean_revenue": fmean(revenues),
-        "trailing_7d_mean_revenue": fmean(revenues[-7:]),
-        "trailing_28d_mean_revenue": fmean(revenues[-28:]),
-        "revenue_trend_per_day": (revenues[-1] - revenues[0]) / elapsed_days,
-        "latest_machine_cycles": cycles[-1],
-        "trailing_mean_machine_cycles": fmean(cycles),
         "data_quality_score": min(float(item.data_quality_score) for item in observations),
         "site_score_baseline_p50": latest.site_score_baseline_p50,
         "observation_count": len(observations),
-        "feature_snapshot_time": latest_date.isoformat(),
-        "prediction_origin_time": forecast_input.prediction_origin_time.isoformat(),
-        "view_version": FORECASTOPS_FEATURE_VERSION,
+        "feature_snapshot_time": feature_snapshot_time.isoformat(),
+        "prediction_origin_time": origin.isoformat(),
+        "view_version": FORECASTOPS_FEATURE_SCHEMA_ID,
         "source_snapshot_ids": source_snapshot_ids,
     }
 

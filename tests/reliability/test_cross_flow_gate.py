@@ -33,6 +33,7 @@ from shared.infrastructure.persistence.factory import _durable_bundle
 from shared.jobs.queue import JobStatus
 
 PROVIDER_ID = "listing.partner_feed"
+FORECAST_TENANT_ID = "tenant-cross-flow"
 
 
 @pytest.fixture
@@ -53,13 +54,16 @@ def _drain(worker: ODayWorker, limit: int = 25) -> int:
 def _seed_forecast_series(bundle, store_id: str) -> None:
     start = date(2026, 4, 1)
     ForecastOpsService(repository=bundle.forecastops_repository).ingest_timeseries(
-        StoreDayObservation(
-            store_id=store_id,
-            business_date=start + timedelta(days=index),
-            actual_revenue=90_000 + index * 150 + (index % 7) * 800,
-            source_snapshot_ids=(f"pos-cross-flow-{index:03d}",),
-        )
-        for index in range(70)
+        (
+            StoreDayObservation(
+                store_id=store_id,
+                business_date=start + timedelta(days=index),
+                actual_revenue=90_000 + index * 150 + (index % 7) * 800,
+                source_snapshot_ids=(f"pos-cross-flow-{index:03d}",),
+            )
+            for index in range(70)
+        ),
+        tenant_id=FORECAST_TENANT_ID,
     )
 
 
@@ -105,7 +109,12 @@ def test_cross_flow_gate_migrations_seed_api_worker_scheduler(db_path) -> None:
         response = client.post(
             "/jobs",
             json={"job_type": "forecast", "payload": {"store_id": "store-gate-001"}},
-            headers={"Idempotency-Key": "cross-flow-forecast-1"},
+            headers={
+                "Idempotency-Key": "cross-flow-forecast-1",
+                "x-subject-id": "cross-flow-operator",
+                "x-roles": "operations_manager",
+                "x-tenant-id": FORECAST_TENANT_ID,
+            },
         )
         assert response.status_code == 202, response.text
         body = response.json()
@@ -122,7 +131,7 @@ def test_cross_flow_gate_migrations_seed_api_worker_scheduler(db_path) -> None:
         # Durable side effects: external watermark advanced; a forecast persisted.
         watermark = bundle.external_fetch_state_store.last_success_watermark(PROVIDER_ID)
         assert watermark is not None
-        assert bundle.forecastops_repository.latest_forecasts()
+        assert bundle.forecastops_repository.latest_forecasts(FORECAST_TENANT_ID)
 
         # Audit trail: the API job enqueue recorded an audit event under the
         # request's correlation id.
@@ -133,7 +142,12 @@ def test_cross_flow_gate_migrations_seed_api_worker_scheduler(db_path) -> None:
         replay = client.post(
             "/jobs",
             json={"job_type": "forecast", "payload": {"store_id": "store-gate-001"}},
-            headers={"Idempotency-Key": "cross-flow-forecast-1"},
+            headers={
+                "Idempotency-Key": "cross-flow-forecast-1",
+                "x-subject-id": "cross-flow-operator",
+                "x-roles": "operations_manager",
+                "x-tenant-id": FORECAST_TENANT_ID,
+            },
         )
         assert replay.status_code == 202
         assert replay.json()["job_id"] == forecast_job_id
