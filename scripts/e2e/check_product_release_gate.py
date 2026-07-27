@@ -76,12 +76,22 @@ REQUIRED_FILES = {
 }
 
 REQUIRED_RUNNER_SPECS = (
-    "tests/e2e/e2e-api-bound-ui.spec.ts",
-    "tests/e2e/e2e-map.spec.ts",
-    "tests/e2e/e2e-expansion-product.spec.ts",
-    "tests/e2e/e2e-ops-intervention-price-ad-product.spec.ts",
-    "tests/e2e/e2e-avm-netplan-learning-audit-product.spec.ts",
+    "tests/e2e/e2e-network-find-areas-api-binding.spec.ts",
+    "tests/e2e/e2e-operator-console.spec.ts",
+    "tests/e2e/operator-assisted-listing-intake-a11y.spec.ts",
+    "tests/e2e/operator-assisted-listing-intake-mobile.spec.ts",
+    "tests/e2e/operator-assisted-listing-intake.spec.ts",
+    "tests/e2e/operator-governance.spec.ts",
+    "tests/e2e/operator-growth.spec.ts",
+    "tests/e2e/operator-network-assisted-intake.spec.ts",
+    "tests/e2e/operator-network-listings.spec.ts",
+    "tests/e2e/operator-network-rebalance.spec.ts",
+    "tests/e2e/operator-network-review.spec.ts",
+    "tests/e2e/operator-network-scoring.spec.ts",
+    "tests/e2e/operator-shell-today.spec.ts",
+    "tests/e2e/operator-store-ops.spec.ts",
     "tests/e2e/product-e2e-env.spec.ts",
+    "tests/e2e/shell-resource-binding.spec.ts",
 )
 
 REQUIRED_REPORT_TOKENS = (
