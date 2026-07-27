@@ -220,4 +220,3 @@ METRIC_CONTRACT: Mapping[str, tuple[str, ...]] = {
     "control_plane_router_route_duration_seconds": ("destination",),
     "control_plane_router_oldest_retry_age_seconds": ("destination",),
 }
-
