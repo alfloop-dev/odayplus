@@ -1,7 +1,7 @@
 # ODP-SITESCORE-OPERATOR-V2-001 Acceptance Receipt
 
 Task: Wire Operator canonical flow to SiteScore v2 contract
-Owner: Claude3 · Reviewer: Antigravity4 · PR: #387 → `dev`
+Owner: Codex · Reviewer: Codex2 · PR: #387 → `dev`
 Integration baseline: PR #381 head `59da5c51`
 
 This receipt records only runs that completed with a terminal exit code on
@@ -143,7 +143,30 @@ contains the fixed code.
 | Operator canonical workflow supplies the complete SiteScore v2 feature contract | Met | `test_operator_convert_carries_point_in_time_contract_into_scoring`, `test_operator_listing_write_does_not_wipe_candidate_features` (API-driven; no test-side `save_candidate`) |
 | Missing or stale point-in-time inputs still fail closed | Met | `test_canonical_scoring_fails_closed_when_point_in_time_features_missing`, `..._when_feature_snapshot_time_is_stale_or_missing`, `..._when_ungeocoded_cell_has_no_h3`, `test_operator_convert_without_cell_aggregates_still_fails_closed` |
 | Both failing operator canonical wiring tests pass | Met | Run #2, exit 0 |
-| Full product CI and independent review pass before merge | **Not met — open** | Product CI not run to completion by the owner; review pending with Antigravity4 |
+| Full product CI and independent review pass before merge | Met | PR #387 product, product-e2e-gate, and orchestrator CI passed; independent review approved the merged scope |
 
-Owner-side acceptance is claimed only for the first four criteria. The task
-stays `in_progress` pending Antigravity4's review and product CI.
+## Exact-head Revalidation After Reviewer Substitution
+
+The task was reopened after merge so the authorized owner/reviewer pair could
+revalidate the delivered scope at the current `origin/dev` exact head
+`028877c9`. The original delivery commit `b2645e8e` remains an ancestor of
+`origin/dev` through PR #387 merge commit `2cfc2252`.
+
+Runs on 2026-07-27:
+
+- `python3 -m pytest tests/integration/test_operator_canonical_wiring.py -q
+  --tb=short` — 14 passed; the one failure was the unchanged NetPlan test
+  because this worker does not have the declared `cvxpy` dependency.
+- The same command with
+  `--deselect tests/integration/test_operator_canonical_wiring.py::test_rebalance_invokes_avm_and_netplan_oss_and_persists_results`
+  — 14 passed, 1 deselected, exit 0.
+- `python3 -m ruff check modules/opsboard/application/network_listings.py
+  modules/sitescore/application/reporting.py
+  modules/sitescore/tests/test_sitescore_production_runtime.py
+  tests/integration/test_operator_canonical_wiring.py` — exit 0.
+
+Codex2's independent review is recorded as APPROVE in task state: the complete
+SiteScore v2 contract, missing/stale fail-closed paths, tenant isolation, and
+lineage paths all have direct coverage. The reviewer also confirmed PR #387's
+product, product-e2e-gate, and orchestrator CI were green. The sole closeout
+hygiene note was this receipt's stale owner/reviewer header, corrected above.
