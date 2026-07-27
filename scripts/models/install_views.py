@@ -16,7 +16,7 @@ from .contracts import (
 )
 
 MODEL_READY_SQL_PATH = Path(__file__).with_name("sql") / "model_ready_views.sql"
-MODEL_READY_CONTRACT_VERSION = "2026-07-24.1"
+MODEL_READY_CONTRACT_VERSION = "2026-07-26.3"
 
 PREREQUISITE_COLUMNS: Mapping[str, tuple[str, ...]] = {
     "core.transactions": (
@@ -29,20 +29,108 @@ PREREQUISITE_COLUMNS: Mapping[str, tuple[str, ...]] = {
         "transaction_status",
         "ingested_at",
     ),
-    "core.stores": ("store_id", "tenant_id"),
+    "core.stores": (
+        "store_id",
+        "tenant_id",
+        "store_format_code",
+        "opened_on",
+        "address_id",
+    ),
+    "data_plane.place_geography": (
+        "source_snapshot_id",
+        "tenant_id",
+        "store_id",
+        "latitude",
+        "longitude",
+        "geocode_confidence",
+        "h3_res_9",
+        "run_id",
+        "valid_from",
+        "observed_at",
+    ),
+    "data_plane.transaction_authority": (
+        "transaction_id",
+        "source_kind",
+        "source_snapshot_id",
+    ),
     "data_plane.canonical_lineage": (
         "source_snapshot_id",
         "run_id",
         "tenant_id",
         "canonical_table",
         "canonical_id",
+        "projected_at",
     ),
     "data_plane.ingestion_runs": (
         "run_id",
+        "source_kind",
+        "partition_key",
         "status",
+        "processed_count",
+        "valid_loaded",
+        "quarantined_count",
+        "reconciled",
+        "partition_complete",
         "finished_at",
     ),
 }
+
+ACTIVE_VIEW_CONTRACTS: Mapping[str, str] = {
+    "model_ready.forecast_training_view": "forecast-training-view-v2",
+    "model_ready.candidate_site_view": "candidate-site-view-v2",
+    "model_ready.heatzone_training_view": "heatzone-training-view-v2",
+}
+
+ELIGIBILITY_PREREQUISITE_SQL = """
+SELECT
+    count(*)::bigint AS total_store_rows,
+    count(*) FILTER (WHERE store.opened_on IS NOT NULL)::bigint
+        AS stores_with_opened_on,
+    count(*) FILTER (WHERE store.opened_on IS NULL)::bigint
+        AS stores_missing_opened_on,
+    count(*) FILTER (WHERE geography.source_snapshot_id IS NULL)::bigint
+        AS stores_missing_address,
+    count(*) FILTER (
+        WHERE geography.source_snapshot_id IS NOT NULL
+          AND (geography.latitude IS NULL OR geography.longitude IS NULL)
+    )::bigint AS stores_missing_coordinates,
+    count(*) FILTER (
+        WHERE geography.source_snapshot_id IS NOT NULL
+          AND geography.h3_res_9 IS NULL
+    )::bigint AS stores_missing_h3_res_9,
+    count(*) FILTER (WHERE store.store_format_code IS NULL)::bigint
+        AS stores_missing_format,
+    count(*) FILTER (
+        WHERE store.opened_on IS NOT NULL
+          AND store.store_format_code IS NOT NULL
+          AND geography.latitude IS NOT NULL
+          AND geography.longitude IS NOT NULL
+          AND geography.h3_res_9 IS NOT NULL
+    )::bigint AS sitescore_anchor_prerequisite_rows,
+    count(
+        DISTINCT (store.tenant_id, geography.h3_res_9)
+    ) FILTER (
+        WHERE store.opened_on IS NOT NULL
+          AND geography.latitude IS NOT NULL
+          AND geography.longitude IS NOT NULL
+          AND geography.h3_res_9 IS NOT NULL
+    )::bigint AS heatzone_cell_prerequisite_rows,
+    (
+        SELECT count(*)::bigint
+        FROM core.transactions AS txn
+        WHERE txn.transaction_status = 'succeeded'
+          AND txn.currency = 'TWD'
+    ) AS successful_twd_transaction_rows
+FROM core.stores AS store
+LEFT JOIN LATERAL (
+    SELECT place.*
+    FROM data_plane.place_geography AS place
+    WHERE place.tenant_id = store.tenant_id
+      AND place.store_id = store.store_id
+    ORDER BY place.valid_from DESC, place.observed_at DESC
+    LIMIT 1
+) AS geography ON TRUE
+"""
 
 
 class ModelReadyViewInstallError(RuntimeError):
@@ -71,6 +159,7 @@ class InstallationClient(Protocol):
 class ModelReadyViewPreflight:
     missing_relations: tuple[str, ...]
     missing_columns: Mapping[str, tuple[str, ...]]
+    prerequisite_counts: Mapping[str, int]
 
     @property
     def ready(self) -> bool:
@@ -87,18 +176,31 @@ class ModelReadyViewPreflight:
                 for relation, columns in sorted(self.missing_columns.items())
             },
             "forecast_source": "core.transactions",
+            "eligible_row_prerequisite_evidence": {
+                "counts": dict(sorted(self.prerequisite_counts.items())),
+                "note": (
+                    "These are schema/input prerequisites, not training-eligible "
+                    "row counts; trainer minimum-row checks remain authoritative."
+                ),
+            },
             "optional_outcome_models": {
                 "avm": {
                     "trainable": False,
                     "reason": "MATURE_REALIZED_TRANSACTION_OUTCOME_RELATION_MISSING",
                 },
                 "sitescore": {
-                    "trainable": False,
-                    "reason": "MATURE_CANDIDATE_SITE_OUTCOME_RELATION_MISSING",
+                    "contract_installable": self.ready,
+                    "minimum_training_rows": 200,
+                    "anchor_prerequisite_rows": self.prerequisite_counts.get(
+                        "sitescore_anchor_prerequisite_rows", 0
+                    ),
                 },
                 "heatzone": {
-                    "trainable": False,
-                    "reason": "POINT_IN_TIME_GEO_OUTCOME_RELATION_MISSING",
+                    "contract_installable": self.ready,
+                    "minimum_training_rows": 200,
+                    "cell_prerequisite_rows": self.prerequisite_counts.get(
+                        "heatzone_cell_prerequisite_rows", 0
+                    ),
                 },
                 "avm-liquidity": {
                     "trainable": False,
@@ -137,14 +239,18 @@ class ModelReadyViewInstaller:
                 (schema, table),
             )
             available = {str(item["column_name"]) for item in column_rows}
-            missing = tuple(
-                column for column in required_columns if column not in available
-            )
+            missing = tuple(column for column in required_columns if column not in available)
             if missing:
                 missing_columns[relation] = missing
+        prerequisite_counts: dict[str, int] = {}
+        if not missing_relations and not missing_columns:
+            row = self.client.query_one(ELIGIBILITY_PREREQUISITE_SQL)
+            if row:
+                prerequisite_counts = {str(name): int(value or 0) for name, value in row.items()}
         return ModelReadyViewPreflight(
             missing_relations=tuple(missing_relations),
             missing_columns=missing_columns,
+            prerequisite_counts=prerequisite_counts,
         )
 
     def install(self) -> dict[str, Any]:
@@ -158,10 +264,10 @@ class ModelReadyViewInstaller:
         sql = sql_bytes.decode("utf-8")
         digest = hashlib.sha256(sql_bytes).hexdigest()
         _validate_sql_contract(sql)
+        contracts_by_relation: dict[str, dict[str, Any]] = {}
         with self.client.transaction():
             self.client.execute(
-                "SELECT pg_advisory_xact_lock(hashtext("
-                "'oday-plus:model-ready-views:2026-07-24.1'))"
+                "SELECT pg_advisory_xact_lock(hashtext('oday-plus:model-ready-views:2026-07-26.3'))"
             )
             self.client.execute("SET LOCAL lock_timeout = '10s'")
             self.client.execute("SET LOCAL statement_timeout = '5min'")
@@ -169,50 +275,71 @@ class ModelReadyViewInstaller:
             self.client.execute(
                 "UPDATE model_ready.view_contracts "
                 "SET installer_sha256 = ?, installed_at = CURRENT_TIMESTAMP, "
-                "updated_at = CURRENT_TIMESTAMP",
-                (digest,),
+                "updated_at = CURRENT_TIMESTAMP "
+                "WHERE relation_name IN (?, ?, ?)",
+                (digest, *ACTIVE_VIEW_CONTRACTS),
             )
-        forecast = self.client.query_one(
-            "SELECT relation_name, view_name, view_version, contract_state, "
-            "training_enabled, blocked_reason, installer_sha256 "
-            "FROM model_ready.view_contracts "
-            "WHERE relation_name = ?",
-            ("model_ready.forecast_training_view",),
-        )
-        relation = self.client.query_one(
-            "SELECT to_regclass(?) AS relation",
-            ("model_ready.forecast_training_view",),
-        )
-        if (
-            not forecast
-            or forecast.get("view_version") != "forecast-training-view-v2"
-            or forecast.get("contract_state") != "ACTIVE"
-            or forecast.get("training_enabled") is not True
-            or forecast.get("installer_sha256") != digest
-            or not relation
-            or relation.get("relation") is None
-        ):
-            raise ModelReadyViewInstallError(
-                "installed forecast view did not satisfy the registered contract"
+            contracts = self.client.query(
+                "SELECT relation_name, view_name, view_version, contract_state, "
+                "training_enabled, blocked_reason, installer_sha256 "
+                "FROM model_ready.view_contracts "
+                "WHERE relation_name IN (?, ?, ?) "
+                "ORDER BY relation_name",
+                tuple(ACTIVE_VIEW_CONTRACTS),
             )
+            contracts_by_relation = {
+                str(contract["relation_name"]): dict(contract) for contract in contracts
+            }
+            verification_errors: list[str] = []
+            for relation_name, expected_version in ACTIVE_VIEW_CONTRACTS.items():
+                contract = contracts_by_relation.get(relation_name)
+                relation = self.client.query_one(
+                    "SELECT to_regclass(?) AS relation",
+                    (relation_name,),
+                )
+                if not contract:
+                    verification_errors.append(f"{relation_name}: contract missing")
+                    continue
+                if contract.get("view_version") != expected_version:
+                    verification_errors.append(f"{relation_name}: version mismatch")
+                if contract.get("contract_state") != "ACTIVE":
+                    verification_errors.append(f"{relation_name}: not ACTIVE")
+                if contract.get("training_enabled") is not True:
+                    verification_errors.append(f"{relation_name}: training disabled")
+                if contract.get("installer_sha256") != digest:
+                    verification_errors.append(f"{relation_name}: digest mismatch")
+                if not relation or relation.get("relation") is None:
+                    verification_errors.append(f"{relation_name}: view missing")
+            if verification_errors:
+                raise ModelReadyViewInstallError(
+                    "installed views did not satisfy registered ACTIVE contracts: "
+                    + "; ".join(verification_errors)
+                )
         return {
             "status": "installed",
             "contract_version": MODEL_READY_CONTRACT_VERSION,
             "sql_sha256": digest,
-            "forecast": dict(forecast),
-            "optional_outcome_models_trainable": False,
+            "active_contracts": contracts_by_relation,
+            "eligible_row_prerequisite_evidence": dict(
+                sorted(preflight.prerequisite_counts.items())
+            ),
+            "minimum_data_checks": "trainer",
         }
 
 
 def _validate_sql_contract(sql: str) -> None:
     required_fragments = (
         "CREATE OR REPLACE VIEW model_ready.forecast_training_view",
+        "CREATE OR REPLACE VIEW model_ready.candidate_site_view",
+        "CREATE OR REPLACE VIEW model_ready.heatzone_training_view",
         "FROM core.transactions AS txn",
         "data_plane.canonical_lineage",
         "'forecast-training-view-v2'::text AS view_version",
         "AS feature_snapshot_time",
         "AS prediction_origin_time",
         "AS label_maturity_time",
+        "'candidate-site-view-v2'::text AS view_version",
+        "'heatzone-training-view-v2'::text AS view_version",
         "AS is_training_eligible",
     )
     missing = tuple(fragment for fragment in required_fragments if fragment not in sql)
@@ -225,8 +352,7 @@ def _validate_sql_contract(sql: str) -> None:
     found = tuple(fragment for fragment in prohibited if fragment in lowered)
     if found:
         raise ModelReadyViewInstallError(
-            "model-ready SQL contains prohibited row-generation constructs: "
-            + ", ".join(found)
+            "model-ready SQL contains prohibited row-generation constructs: " + ", ".join(found)
         )
 
 
@@ -251,9 +377,7 @@ def main(
     owned_client = None
     try:
         if client is None:
-            database_url = require_production_database_url(
-                os.getenv("ODAY_DATABASE_URL", "")
-            )
+            database_url = require_production_database_url(os.getenv("ODAY_DATABASE_URL", ""))
             from shared.infrastructure.persistence.postgresql import PostgresEngine
 
             owned_client = PostgresEngine(

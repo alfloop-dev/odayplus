@@ -9,6 +9,7 @@ from modules.heatzone.domain.scoring import (
     HeatZoneState,
     score_heatzones,
     score_heatzones_from_model_predictions,
+    to_heatzone_model_row,
 )
 
 __all__ = [
@@ -20,4 +21,5 @@ __all__ = [
     "HeatZoneState",
     "score_heatzones",
     "score_heatzones_from_model_predictions",
+    "to_heatzone_model_row",
 ]
