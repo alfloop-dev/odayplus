@@ -7635,8 +7635,12 @@ class RuntimeLeaseReconciliationTests(unittest.TestCase):
             pause = state["provider_guardrails"]["dispatch_pauses"]["gemini"]
             self.assertEqual(pause["pause_kind"], "quota_terminal")
             self.assertEqual(pause["worker_run_id"], "gemini-run-dead")
-            streak = state["provider_guardrails"]["task_failure_streaks"]["OPS-LEASE-003:gemini"]
-            self.assertEqual(streak["last_failure_kind"], "quota_terminal")
+            # Provider quota is environmental, not evidence that this task is in
+            # a logic failure loop; provider pause carries the recovery state.
+            self.assertNotIn(
+                "OPS-LEASE-003:gemini",
+                state["provider_guardrails"]["task_failure_streaks"],
+            )
             self.assertIn("capacity", worker["last_error"].lower())
 
     def test_quota_group_cap_blocks_second_slot(self) -> None:

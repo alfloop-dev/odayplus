@@ -2,13 +2,19 @@ from __future__ import annotations
 
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass, field
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from enum import StrEnum
 from typing import Any
 from uuid import uuid4
 
+from models.shared_ml.output_contracts import (
+    SITESCORE_OUTPUT_TRANSFORM,
+    require_output_contract,
+    sitescore_90d_sum_to_monthly,
+)
+
 SITESCORE_MODEL_VERSION = "sitescore-baseline-v1"
-SITESCORE_FEATURE_VERSION = "candidate-site-view-v1"
+SITESCORE_FEATURE_VERSION = "candidate-site-view-v2"
 
 # Mature monthly revenue ceiling (TWD) for a fully-demanded ODay G2 site.
 FORMAT_REVENUE_CAPACITY = 500_000.0
@@ -60,10 +66,18 @@ class SiteScoreFeatureInput:
     """Feature vector for scoring one candidate site."""
 
     candidate_site_id: str
+    tenant_id: str = ""
     target_format_code: str = "ODAY_G2"
-    feature_snapshot_time: datetime = field(default_factory=lambda: datetime.now(UTC))
+    feature_snapshot_time: datetime | None = None
     view_version: str = SITESCORE_FEATURE_VERSION
     heat_zone_id: str = ""
+    h3_index: str = ""
+    latitude: float = 0.0
+    longitude: float = 0.0
+    geocode_confidence: float = 0.0
+    prior_90d_cell_net_revenue: float | None = None
+    prior_90d_cell_transaction_count: int | None = None
+    prior_90d_cell_store_count: int | None = None
     heat_zone_score: float = 0.0  # 0..100 demand signal from HeatZone Radar
     poi_demand_index: float = 0.0  # 0..1 fallback demand when heat_zone_score missing
     monthly_rent: float = 0.0
@@ -87,14 +101,25 @@ class SiteScoreFeatureInput:
 
     @classmethod
     def from_mapping(cls, data: Mapping[str, Any]) -> SiteScoreFeatureInput:
+        prior_rev = data.get("prior_90d_cell_net_revenue")
+        prior_tx = data.get("prior_90d_cell_transaction_count")
+        prior_st = data.get("prior_90d_cell_store_count")
+        feat_time_raw = data.get("feature_snapshot_time")
+
         return cls(
             candidate_site_id=str(data["candidate_site_id"]),
+            tenant_id=str(data.get("tenant_id") or ""),
             target_format_code=str(data.get("target_format_code") or "ODAY_G2"),
-            feature_snapshot_time=_parse_datetime(
-                data.get("feature_snapshot_time") or datetime.now(UTC)
-            ),
+            feature_snapshot_time=_parse_datetime(feat_time_raw) if feat_time_raw else None,
             view_version=str(data.get("view_version") or SITESCORE_FEATURE_VERSION),
             heat_zone_id=str(data.get("heat_zone_id") or ""),
+            h3_index=str(data.get("h3_index") or data.get("heat_zone_id") or ""),
+            latitude=float(data.get("latitude") or 0.0),
+            longitude=float(data.get("longitude") or 0.0),
+            geocode_confidence=_bounded(_first_present(data, "geocode_confidence", default=0.0)),
+            prior_90d_cell_net_revenue=float(prior_rev) if prior_rev is not None else None,
+            prior_90d_cell_transaction_count=int(prior_tx) if prior_tx is not None else None,
+            prior_90d_cell_store_count=int(prior_st) if prior_st is not None else None,
             heat_zone_score=float(
                 _first_present(data, "heat_zone_score", "heatZoneScore", default=0.0)
             ),
@@ -251,6 +276,7 @@ def score_sites_from_model_predictions(
     predictions: Iterable[RevenuePredictionBand],
     *,
     model_version: str,
+    output_transform: Mapping[str, Any] | None,
     prediction_origin_time: datetime | None = None,
     scored_at: datetime | None = None,
 ) -> list[SiteScoreReport]:
@@ -267,6 +293,18 @@ def score_sites_from_model_predictions(
     prediction_rows = list(predictions)
     if len(feature_rows) != len(prediction_rows):
         raise ValueError("SiteScore feature and model prediction counts differ")
+    transform = require_output_contract(
+        output_transform,
+        SITESCORE_OUTPUT_TRANSFORM,
+    )
+    converted_predictions: list[RevenuePredictionBand] = []
+    for prediction in prediction_rows:
+        p10, p50, p90 = sitescore_90d_sum_to_monthly(
+            (prediction.p10, prediction.p50, prediction.p90),
+            contract=transform,
+        )
+        converted_predictions.append(RevenuePredictionBand(p10=p10, p50=p50, p90=p90))
+    prediction_rows = converted_predictions
     return [
         _score_feature(
             feature,
@@ -298,6 +336,9 @@ def _score_feature(
     mature_revenue_prediction: RevenuePredictionBand | None = None,
     model_version: str = SITESCORE_MODEL_VERSION,
 ) -> SiteScoreReport:
+    feature_snapshot_time, snapshot_time_missing = _resolve_feature_snapshot_time(
+        feature, fallback=prediction_origin_time
+    )
     demand = (
         _bounded(feature.heat_zone_score / 100.0)
         if feature.heat_zone_score
@@ -357,12 +398,17 @@ def _score_feature(
         confidence=round(confidence, 4),
         model_version=model_version,
         feature_version=feature.view_version,
-        feature_snapshot_time=feature.feature_snapshot_time,
+        feature_snapshot_time=feature_snapshot_time,
         prediction_origin_time=prediction_origin_time,
         scored_at=scored_at,
         heat_zone_id=feature.heat_zone_id,
         source_snapshot_ids=feature.source_snapshot_ids,
-        warnings=_warnings(feature, confidence),
+        warnings=_warnings(
+            feature,
+            confidence,
+            feature_snapshot_time=feature_snapshot_time,
+            snapshot_time_missing=snapshot_time_missing,
+        ),
     )
 
 
@@ -474,15 +520,47 @@ def _factors(
     return tuple(positives), tuple(negatives)
 
 
-def _warnings(feature: SiteScoreFeatureInput, confidence: float) -> tuple[str, ...]:
+def _warnings(
+    feature: SiteScoreFeatureInput,
+    confidence: float,
+    *,
+    feature_snapshot_time: datetime,
+    snapshot_time_missing: bool,
+) -> tuple[str, ...]:
     warnings: list[str] = []
     if confidence < 0.5:
         warnings.append("low_confidence")
     if not feature.source_snapshot_ids:
         warnings.append("missing_source_snapshot_ids")
-    if feature.feature_snapshot_time > datetime.now(UTC):
+    if snapshot_time_missing:
+        warnings.append("missing_feature_snapshot_time")
+    elif feature_snapshot_time > datetime.now(UTC):
         warnings.append("future_feature_snapshot_time")
     return tuple(warnings)
+
+
+def _resolve_feature_snapshot_time(
+    feature: SiteScoreFeatureInput,
+    *,
+    fallback: datetime,
+) -> tuple[datetime, bool]:
+    """Resolve the report's point-in-time instant as tz-aware UTC.
+
+    ``SiteScoreFeatureInput.feature_snapshot_time`` is optional so the
+    production model boundary can reject rows that never carried a
+    point-in-time snapshot (see :func:`to_sitescore_model_row`). The
+    deterministic baseline path still has to emit a concrete instant for the
+    report contract, so it falls back to the prediction origin and reports the
+    gap as a ``missing_feature_snapshot_time`` warning rather than presenting
+    the fallback as a real snapshot.
+    """
+
+    snapshot_time = feature.feature_snapshot_time
+    if snapshot_time is None:
+        return fallback, True
+    if snapshot_time.tzinfo is None:
+        return snapshot_time.replace(tzinfo=UTC), False
+    return snapshot_time, False
 
 
 def _coerce_feature(
@@ -491,6 +569,81 @@ def _coerce_feature(
     if isinstance(feature, SiteScoreFeatureInput):
         return feature
     return SiteScoreFeatureInput.from_mapping(feature)
+
+
+SITESCORE_FEATURE_MAX_AGE = timedelta(days=90)
+
+
+def to_sitescore_model_row(
+    feature: SiteScoreFeatureInput | Mapping[str, Any],
+) -> Mapping[str, Any]:
+    value = _coerce_feature(feature)
+
+    missing: list[str] = []
+    if not value.tenant_id:
+        missing.append("tenant_id")
+    if not value.target_format_code:
+        missing.append("target_format_code")
+    if not value.h3_index:
+        missing.append("h3_index")
+    # Both coordinates are required: a half-geocoded row (one axis still 0.0)
+    # is not a usable point-in-time location and must not reach the model.
+    if value.latitude == 0.0 or value.longitude == 0.0:
+        missing.append("location(latitude/longitude)")
+    # geocode_confidence is a declared feature column of the sitescore ModelSpec
+    # (scripts/models/contracts.py). It defaults to 0.0 both on the dataclass and
+    # in from_mapping(), so an absent value is indistinguishable from "no
+    # confidence" and must fail closed instead of being scored as 0.0.
+    if not value.geocode_confidence:
+        missing.append("geocode_confidence")
+    if value.prior_90d_cell_net_revenue is None:
+        missing.append("prior_90d_cell_net_revenue")
+    if value.prior_90d_cell_transaction_count is None:
+        missing.append("prior_90d_cell_transaction_count")
+    if value.prior_90d_cell_store_count is None:
+        missing.append("prior_90d_cell_store_count")
+    if value.feature_snapshot_time is None:
+        missing.append("feature_snapshot_time")
+
+    if missing:
+        raise ValueError("SiteScore v2 model input is missing features: " + ", ".join(missing))
+
+    if (
+        value.view_version != SITESCORE_FEATURE_VERSION
+        or not value.source_snapshot_ids
+    ):
+        raise ValueError(
+            f"SiteScore production model input is not a complete {SITESCORE_FEATURE_VERSION} row"
+        )
+
+    now = datetime.now(UTC)
+    snap_time = value.feature_snapshot_time
+    if snap_time.tzinfo is None:
+        snap_time = snap_time.replace(tzinfo=UTC)
+
+    if snap_time > now:
+        raise ValueError(
+            f"SiteScore v2 feature snapshot time {snap_time.isoformat()} is in the future"
+        )
+    if now - snap_time > SITESCORE_FEATURE_MAX_AGE:
+        raise ValueError(
+            f"SiteScore v2 feature snapshot is stale (snapshot_time={snap_time.isoformat()} exceeds max age {SITESCORE_FEATURE_MAX_AGE})"
+        )
+
+    return {
+        "tenant_id": value.tenant_id,
+        "target_format_code": value.target_format_code,
+        "h3_index": value.h3_index,
+        "latitude": value.latitude,
+        "longitude": value.longitude,
+        "geocode_confidence": value.geocode_confidence,
+        "prior_90d_cell_net_revenue": value.prior_90d_cell_net_revenue,
+        "prior_90d_cell_transaction_count": value.prior_90d_cell_transaction_count,
+        "prior_90d_cell_store_count": value.prior_90d_cell_store_count,
+        "feature_snapshot_time": snap_time,
+        "view_version": SITESCORE_FEATURE_VERSION,
+        "source_snapshot_ids": value.source_snapshot_ids,
+    }
 
 
 def _bounded(value: Any) -> float:
@@ -533,4 +686,5 @@ __all__ = [
     "score_site",
     "score_sites",
     "score_sites_from_model_predictions",
+    "to_sitescore_model_row",
 ]

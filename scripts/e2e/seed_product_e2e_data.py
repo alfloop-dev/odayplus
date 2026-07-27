@@ -39,6 +39,7 @@ def main() -> int:
 
     source_fixture = get_json(f"{source_stub_url}/external/listing_raw_snapshot.valid.json")
     health = get_json(f"{api_url}/platform/health")
+    freshness = wait_for_persisted_freshness(api_url)
     avm_case = post_json(
         f"{api_url}/avm/cases",
         {
@@ -155,6 +156,7 @@ def main() -> int:
         "seeded_at": now.isoformat(),
         "api": health,
         "source_fixture_keys": sorted(source_fixture.keys()),
+        "external_freshness": freshness,
         "avm_case_id": avm_case["case_id"],
         "heatzone_job_id": heatzone_job["job_id"],
         "scheduler_job_id": queued_job["job_id"],
@@ -167,6 +169,35 @@ def main() -> int:
     )
     print(json.dumps(summary, indent=2, sort_keys=True))
     return 0
+
+
+def wait_for_persisted_freshness(
+    api_url: str, *, timeout_seconds: float = 180
+) -> dict[str, Any]:
+    """Wait until the scheduled external-fetch worker has persisted its evidence.
+
+    The E2E stack runs a scheduler that enqueues `external-fetch` and a worker
+    that executes it; the worker persists an `IngestionRunRecord`, so
+    `/external-data/freshness` serves durable evidence instead of the poc
+    fixture fallback that only fires while the store is empty. Seeding waits for
+    that transition rather than racing it, otherwise the expansion spec asserts
+    against whichever of the two the container start-up timing happened to
+    produce.
+    """
+    deadline = time.time() + timeout_seconds
+    last: dict[str, Any] | None = None
+    while True:
+        last = get_json(f"{api_url}/external-data/freshness")
+        if last.get("availability", {}).get("source") == "persisted":
+            return last
+        if time.time() >= deadline:
+            break
+        time.sleep(2)
+    raise RuntimeError(
+        "timed out waiting for persisted external-data freshness: the scheduled "
+        "external-fetch worker path wrote no ingestion run. Last response: "
+        + json.dumps(last, sort_keys=True)
+    )
 
 
 def wait_for_url(url: str, *, timeout_seconds: int = 120) -> None:
