@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from datetime import datetime
 from enum import StrEnum
 
 from shared.domain import AddressLocation, CandidateSite, Listing
@@ -68,6 +69,10 @@ class CandidateSiteDraft:
     model_version: str = "SiteScore v2.3"
     dataset_snapshot_id: str = "FS-20260704-0600"
     review_id: str | None = None
+    prior_90d_cell_net_revenue: float | None = None
+    prior_90d_cell_transaction_count: int | None = None
+    prior_90d_cell_store_count: int | None = None
+    feature_snapshot_time: datetime | None = None
 
     def to_card_dict(self) -> dict[str, object]:
         return {

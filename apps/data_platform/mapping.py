@@ -18,6 +18,7 @@ from apps.data_platform.identifiers import (
     transaction_id_for_source,
 )
 from apps.data_platform.serialization import parse_datetime
+from modules.external_data.geo import normalize_address, stable_h3_index
 
 if TYPE_CHECKING:
     from apps.data_platform.status_mapping import StatusMappingContract
@@ -87,8 +88,14 @@ class PlaceProjection:
     brand_id: UUID
     address_id: UUID | None
     raw_address: str | None
+    normalized_address: str | None
+    city: str | None
+    district: str | None
     latitude: Decimal | None
     longitude: Decimal | None
+    h3_res_8: str | None
+    h3_res_9: str | None
+    h3_res_10: str | None
     store_id: UUID
     store_name: str
     store_status: str
@@ -454,6 +461,44 @@ def _coordinates(
     return longitude, latitude
 
 
+def _project_place_geography(
+    raw_address: str | None,
+    latitude: Decimal | None,
+    longitude: Decimal | None,
+) -> tuple[
+    str | None,
+    str | None,
+    str | None,
+    str | None,
+    str | None,
+    str | None,
+]:
+    normalized = normalize_address(raw_address) if raw_address else None
+    h3_indexes: dict[int, str] = {}
+    if latitude is not None and longitude is not None:
+        try:
+            h3_indexes = {
+                resolution: stable_h3_index(
+                    float(latitude),
+                    float(longitude),
+                    resolution,
+                )
+                for resolution in (8, 9, 10)
+            }
+        except ValueError:
+            # Preserve source coordinates, but do not create a market H3 identity
+            # for a point outside the configured operating market.
+            h3_indexes = {}
+    return (
+        normalized.normalized_address if normalized else None,
+        normalized.city or None if normalized else None,
+        normalized.district or None if normalized else None,
+        h3_indexes.get(8),
+        h3_indexes.get(9),
+        h3_indexes.get(10),
+    )
+
+
 def _place_type(
     value: Any, status_contract: StatusMappingContract | None
 ) -> str:
@@ -489,6 +534,14 @@ def project_place(
     longitude, latitude = _coordinates(document)
     source_id = envelope.source_id
     raw_address = _address_text(document.get("address"))
+    (
+        normalized_address,
+        city,
+        district,
+        h3_res_8,
+        h3_res_9,
+        h3_res_10,
+    ) = _project_place_geography(raw_address, latitude, longitude)
     return PlaceProjection(
         source_id=source_id,
         source_merchant_id=source_merchant_id,
@@ -496,8 +549,14 @@ def project_place(
         brand_id=merchant.brand_id,
         address_id=address_id_for_place(source_id) if raw_address else None,
         raw_address=raw_address,
+        normalized_address=normalized_address,
+        city=city,
+        district=district,
         latitude=latitude,
         longitude=longitude,
+        h3_res_8=h3_res_8,
+        h3_res_9=h3_res_9,
+        h3_res_10=h3_res_10,
         store_id=store_id_for_place(source_id),
         store_name=_text(document.get("title"), "place.title"),
         store_status=_place_status(document, status_contract),
