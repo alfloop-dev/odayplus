@@ -32,6 +32,7 @@ done
 : "${ODP_SCHEDULER_TIME_ZONE:?Error: ODP_SCHEDULER_TIME_ZONE is required.}"
 : "${ODP_FORECAST_ENGINE:?Error: ODP_FORECAST_ENGINE is required for live deployments.}"
 : "${ODP_FORECAST_MODEL:?Error: ODP_FORECAST_MODEL is required for live deployments.}"
+: "${ODP_OPERATOR_SMOKE_SERVICE_ACCOUNT:?Error: ODP_OPERATOR_SMOKE_SERVICE_ACCOUNT is required.}"
 : "${ODP_EXTERNAL_PROVIDER_PROBE_TIMEOUT_SECONDS:?Error: ODP_EXTERNAL_PROVIDER_PROBE_TIMEOUT_SECONDS is required for live deployments.}"
 
 case "${ODP_FORECAST_ENGINE}:${ODP_FORECAST_MODEL}" in
@@ -108,6 +109,7 @@ ROLLBACK_ARMED=false
 SCHEDULER_ROLLBACK_ARMED=false
 DEPLOYMENT_COMMITTED=false
 cleanup() {
+  unset ODP_OPERATOR_SMOKE_BEARER_TOKEN
   rm -f \
     "${API_ENV_FILE}" \
     "${WEB_ENV_FILE}" \
@@ -240,6 +242,7 @@ build_publish_sign "worker" "${WORKER_IMAGE}" "infra/docker/worker.Dockerfile"
 build_publish_sign "scheduler" "${SCHEDULER_IMAGE}" "infra/docker/scheduler.Dockerfile"
 
 API_SECRET_BINDINGS="ODAY_DATABASE_URL=${ODAY_DATABASE_URL_SECRET}"
+API_SECRET_BINDINGS+=",ODP_AUTH_PRINCIPAL_MAP=${ODP_AUTH_PRINCIPAL_MAP_SECRET}"
 IFS=',' read -ra SELECTED_PROVIDER_IDS <<<"${ODP_PRODUCTION_PROVIDER_IDS}"
 for provider_id in "${SELECTED_PROVIDER_IDS[@]}"; do
   provider_id="${provider_id//[[:space:]]/}"
@@ -514,6 +517,24 @@ gcloud run services describe "${WEB_SERVICE}" \
   --format=json >"${WEB_CANDIDATE_DESCRIPTION}"
 WEB_REVISION="$(tagged_revision "${WEB_CANDIDATE_DESCRIPTION}" "${WEB_REVISION_TAG}")"
 WEB_URL="$(tagged_revision_url "${WEB_CANDIDATE_DESCRIPTION}" "${WEB_REVISION_TAG}")"
+
+smoke_audience="${ODP_AUTH_AUDIENCES%%,*}"
+if [[ -z "${smoke_audience//[[:space:]]/}" ]]; then
+  echo "Error: ODP_AUTH_AUDIENCES must provide a smoke token audience." >&2
+  exit 1
+fi
+ODP_OPERATOR_SMOKE_BEARER_TOKEN="$(gcloud auth print-identity-token \
+  --impersonate-service-account="${ODP_OPERATOR_SMOKE_SERVICE_ACCOUNT}" \
+  --audiences="${smoke_audience}" \
+  --include-email)"
+if [[ -z "${ODP_OPERATOR_SMOKE_BEARER_TOKEN}" ]]; then
+  echo "Error: failed to mint short-lived smoke identity token." >&2
+  exit 1
+fi
+export ODP_OPERATOR_SMOKE_BEARER_TOKEN
+if [[ "${GITHUB_ACTIONS:-}" == "true" ]]; then
+  echo "::add-mask::${ODP_OPERATOR_SMOKE_BEARER_TOKEN}"
+fi
 
 echo "Running release-aware smoke checks against tagged candidate revisions..."
 python3 scripts/deployment/validate_cloud_run_live_deployment.py smoke \
