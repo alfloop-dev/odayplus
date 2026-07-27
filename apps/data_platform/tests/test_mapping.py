@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime
+from decimal import Decimal
 
 import pytest
 
@@ -27,6 +28,7 @@ from apps.data_platform.mapping import (
     project_place,
     project_transaction,
 )
+from apps.data_platform.source import PLACE_PROJECTION
 from apps.data_platform.status_mapping import StatusMappingContract
 
 
@@ -211,8 +213,38 @@ def test_missing_place_geography_is_preserved_without_synthesis(
     )
     assert projection.address_id is None
     assert projection.raw_address is None
+    assert projection.normalized_address is None
     assert projection.latitude is None
     assert projection.longitude is None
+    assert projection.h3_res_8 is None
+    assert projection.h3_res_9 is None
+    assert projection.h3_res_10 is None
+
+
+def test_place_projects_real_source_coordinates_to_h3(envelope_factory) -> None:
+    projection = project_place(
+        envelope_factory(SourceKind.PLACE, _place_document()),
+        Lookup(),
+    )
+
+    assert projection.raw_address == "Taipei"
+    assert projection.normalized_address == "Taipei"
+    assert projection.latitude == Decimal("25.04")
+    assert projection.longitude == Decimal("121.5")
+    assert projection.h3_res_8
+    assert projection.h3_res_9
+    assert projection.h3_res_10
+
+
+def test_authority_place_contract_does_not_infer_opened_on_from_created_at() -> None:
+    assert {"address", "geolocation", "createdAt"} <= PLACE_PROJECTION.keys()
+    assert not {
+        "opened_on",
+        "openedOn",
+        "openedAt",
+        "open_date",
+        "openDate",
+    }.intersection(PLACE_PROJECTION)
 
 
 def test_device_enforces_merchant_place_tenant(envelope_factory) -> None:
