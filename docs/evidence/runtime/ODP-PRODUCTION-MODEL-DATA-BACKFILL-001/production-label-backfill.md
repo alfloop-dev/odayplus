@@ -1,8 +1,8 @@
 # Production model label backfill evidence
 
-Task: `ODP-PRODUCTION-MODEL-DATA-BACKFILL-001`  
-Executor: `Codex6`  
-Execution date: `2026-07-27`  
+Task: `ODP-PRODUCTION-MODEL-DATA-BACKFILL-001`
+Executor: `Codex6`
+Execution date: `2026-07-27`
 Reviewer: `Codex2`
 
 ## Activated data
