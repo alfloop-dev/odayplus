@@ -76,5 +76,13 @@ with an existing process on `8099`; `.env.e2e` was then used as intended.
 
 Reviewer: Codex2.
 
-Exact-head review and dev merge evidence will be recorded through the task
-status review/approval lifecycle and task PR.
+Codex2 approved exact head
+`524079fc60c361b9ca50dfbed5d11a806f0fc696`. The reviewer confirmed that the
+task-owned `HeatZoneMap`, map E2E, and completion-evidence patch was unchanged
+from the previously approved patch after composing `dev` at `a4afdcf2`, and
+that the refreshed orchestrator, product E2E, and product CI gates all passed.
+
+PR #426 merged that exact head into `dev` at merge commit
+`410365298f05951c665d54f1e64a41c6accc7c28`. Closeout also confirmed with
+`git merge-base --is-ancestor 524079fc origin/dev` and `git diff --check
+524079fc^1..524079fc`.
