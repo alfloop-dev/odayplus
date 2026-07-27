@@ -147,8 +147,11 @@ class AntigravityAdapter(BaseAdapter):
         # Model rotation: cycle Gemini <-> Claude/GPT per the provider's quota
         # cooldown state (falls back to the static `model` setting when rotation
         # is disabled). '' means let agy use its default (Gemini) model.
-        model = model_rotation.resolve_active_model(self.config, provider_id, settings).strip()
+        selection = model_rotation.resolve_active_selection(self.config, provider_id, settings)
+        model = str(selection.get("model") or "").strip()
+        dispatched_pool = model_rotation.normalize_pool(selection.get("pool"))
         if model:
+            # Structured argv: the model string is one argument, never shell text.
             command.extend(["--model", model])
         print_timeout = str(settings.get("print_timeout") or "").strip()
         if print_timeout:
@@ -209,5 +212,10 @@ class AntigravityAdapter(BaseAdapter):
             metadata={
                 "heartbeat_path": str(runtime_paths["heartbeat_path"]),
                 "runner_status_path": str(runtime_paths["status_path"]),
+                # Pool/model this worker was ACTUALLY launched on. A later quota
+                # failure is attributed to this immutable value, so a stale
+                # worker can never cool a pool it never ran on.
+                model_rotation.WORKER_POOL_KEY: dispatched_pool,
+                model_rotation.WORKER_MODEL_KEY: model,
             },
         )

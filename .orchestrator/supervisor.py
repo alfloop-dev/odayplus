@@ -1971,6 +1971,12 @@ def start_worker_for_request(
         "pid": result.pid,
         "heartbeat_path": result_metadata.get("heartbeat_path"),
         "runner_status_path": result_metadata.get("runner_status_path"),
+        # Immutable dispatch-time model pool (antigravity rotation). Quota
+        # failures are recorded against this, not against the pool that happens
+        # to be active when the failure is processed.
+        model_rotation.WORKER_POOL_KEY: model_rotation.normalize_pool(
+            result_metadata.get(model_rotation.WORKER_POOL_KEY)
+        ),
         "notes": result.notes,
         "metadata": result_metadata,
         "request_snapshot": request_snapshot(request),
@@ -4132,6 +4138,42 @@ def is_tool_command_output_failure_line(lines: list[str], idx: int) -> bool:
     return False
 
 
+# Antigravity (`agy`) per-account quota banner. Deliberately NOT a bare
+# "quota reached" substring: ordinary application/test output such as
+# "AssertionError: expected quota reached banner to be hidden" must stay a real
+# task failure. Matching requires agy's full signature (the "Individual quota
+# reached" phrase plus its upgrade/reset continuation) AND an antigravity
+# provider, so only the real provider banner is treated as a quota outage.
+AGY_QUOTA_SIGNATURE_PATTERN = re.compile(
+    r"individual\s+quota\s+reached\b[\s.:,!-]*"
+    r"(?:please\s+upgrade\s+your\s+subscription|resets?\s+in\b|try\s+again\s+(?:in|after)\b)",
+    re.IGNORECASE,
+)
+
+
+def is_antigravity_provider(config: dict[str, Any] | None, provider: str | None) -> bool:
+    """True when `provider` is served by the Antigravity (`agy`) adapter."""
+    provider_id = str(provider or "").strip().lower()
+    if not provider_id:
+        return False
+    if provider_id.startswith("antigravity"):
+        return True
+    providers = (config or {}).get("providers")
+    entry = providers.get(provider_id) if isinstance(providers, dict) else None
+    if not isinstance(entry, dict):
+        return False
+    if str(entry.get("adapter") or entry.get("type") or "").strip().lower() == "antigravity":
+        return True
+    return isinstance(entry.get("antigravity"), dict)
+
+
+def is_antigravity_quota_banner(config: dict[str, Any] | None, provider: str | None, reason: str | None) -> bool:
+    """True only for agy's real per-account quota banner on an agy provider."""
+    if not reason or not is_antigravity_provider(config, provider):
+        return False
+    return bool(AGY_QUOTA_SIGNATURE_PATTERN.search(str(reason)))
+
+
 def classify_worker_failure(config: dict[str, Any], worker: dict[str, Any], reason: str | None) -> dict[str, Any]:
     provider = str(worker.get("provider") or worker.get("agent_id") or "").strip().lower()
     normalized = str(reason or "").lower()
@@ -4162,10 +4204,6 @@ def classify_worker_failure(config: dict[str, Any], worker: dict[str, Any], reas
         "free tier quota exceeded",
         "quota will reset after",
         "terminalquotaerror",
-        # Antigravity (`agy`) 5-hour / weekly limit and per-account quota text.
-        "individual quota reached",
-        "quota reached",
-        "please upgrade your subscription to increase your limits",
     }
     retryable_capacity_markers = {
         "status: 429",
@@ -4194,6 +4232,8 @@ def classify_worker_failure(config: dict[str, Any], worker: dict[str, Any], reas
         return {"kind": "provider_config", "transient": False, "label": "provider config"}
     if any(marker in normalized for marker in auth_markers):
         return {"kind": "auth", "transient": False, "label": "auth"}
+    if is_antigravity_quota_banner(config, provider, reason):
+        return {"kind": "quota_terminal", "transient": False, "label": "quota terminal"}
     if any(marker in normalized for marker in terminal_quota_markers):
         return {"kind": "quota_terminal", "transient": False, "label": "quota terminal"}
     if any(marker in normalized for marker in retryable_capacity_markers):
@@ -4616,6 +4656,14 @@ def is_transient_infra_reason(reason: str | None) -> bool:
     return any(marker in low for marker in _TRANSIENT_INFRA_REASON_MARKERS)
 
 
+def _lookup_worker_record(state: dict[str, Any], worker_run_id: str | None) -> dict[str, Any] | None:
+    run_id = str(worker_run_id or "").strip()
+    if not run_id:
+        return None
+    worker = (state.get("workers") or {}).get(run_id)
+    return worker if isinstance(worker, dict) else None
+
+
 def mark_provider_dispatch_paused(
     config: dict[str, Any],
     state: dict[str, Any],
@@ -4627,6 +4675,7 @@ def mark_provider_dispatch_paused(
     failure_kind: str | None = None,
     pause_kind: str | None = None,
     raw_ref: str | None = None,
+    worker: dict[str, Any] | None = None,
 ) -> bool:
     settings = provider_guardrail_settings(config)
     provider_id = normalize_agent_id(provider or "")
@@ -4663,13 +4712,28 @@ def mark_provider_dispatch_paused(
         # fast-fail worker), so a recovered pool is never locked for more than
         # ROTATION_PROBE_COOLDOWN_SECONDS.
         rotate_cooldown = min(int(pause_seconds), ROTATION_PROBE_COOLDOWN_SECONDS)
-        rotate = model_rotation.record_exhaustion(config, provider_id, rotate_cooldown, reason=reason)
+        # Cool the pool this worker was DISPATCHED on, not whatever pool is
+        # active now. Two concurrent Gemini workers failing on quota must cool
+        # Gemini twice; without the dispatch-time binding the second one would
+        # be attributed to Claude and falsely hard-pause the provider.
+        dispatched_pool = model_rotation.worker_dispatched_pool(
+            worker if isinstance(worker, dict) else _lookup_worker_record(state, worker_run_id)
+        )
+        rotate = model_rotation.record_exhaustion(
+            config,
+            provider_id,
+            rotate_cooldown,
+            reason=reason,
+            pool=dispatched_pool,
+        )
         write_activity_log(
             config,
             {
                 "type": "antigravity_model_rotated",
                 "provider": provider_id,
                 "exhausted_pool": rotate.get("exhausted_pool"),
+                "dispatched_pool": dispatched_pool,
+                "pool_source": rotate.get("pool_source"),
                 "next_pool": rotate.get("next_pool"),
                 "both_exhausted": rotate.get("both_exhausted"),
                 "message": rotate.get("message"),
@@ -6401,6 +6465,7 @@ def poll_workers(config: dict[str, Any], state: dict[str, Any], provider_report:
                     failure_kind=str(failure.get("kind") or ""),
                     pause_kind=failure_kind,
                     raw_ref=raw_ref,
+                    worker=worker,
                 )
             if is_terminal_quota_failure_kind(failure_kind):
                 reassigned_to = maybe_reassign_task_after_worker_failure(
@@ -7025,6 +7090,7 @@ def reconcile_runtime_on_boot(config: dict[str, Any], state: dict[str, Any]) -> 
                     failure_kind=failure_kind,
                     pause_kind=failure_kind,
                     raw_ref=raw_ref,
+                    worker=worker,
                 )
             if is_terminal_quota_failure_kind(failure_kind):
                 reassigned_to = maybe_reassign_task_after_worker_failure(

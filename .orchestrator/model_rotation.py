@@ -43,6 +43,20 @@ UTC = UTC
 _STATE_PATH = Path(__file__).resolve().parent / "runtime" / "antigravity_model_cooldown.json"
 DEFAULT_FALLBACK_MODEL = "Claude Sonnet 4.6 (Thinking)"
 
+POOLS = ("gemini", "claude")
+# Worker metadata keys: the pool/model a worker was ACTUALLY launched on. Quota
+# failures must be recorded against this immutable dispatch-time value, never
+# against `active_pool()` re-read at failure-processing time (see
+# `record_exhaustion`).
+WORKER_POOL_KEY = "antigravity_model_pool"
+WORKER_MODEL_KEY = "antigravity_model"
+
+
+def normalize_pool(pool: Any) -> str | None:
+    """Return 'gemini'/'claude' for a recognised pool name, else None."""
+    value = str(pool or "").strip().lower()
+    return value if value in POOLS else None
+
 
 def _now(now: datetime | None = None) -> datetime:
     return now or datetime.now(UTC)
@@ -121,29 +135,65 @@ def active_pool(config: dict[str, Any] | None, provider_id: str, now: datetime |
     return "gemini"
 
 
+def resolve_active_selection(config: dict[str, Any] | None, provider_id: str | None, settings: dict[str, Any] | None = None, now: datetime | None = None) -> dict[str, Any]:
+    """Pool + model to launch this worker on.
+
+    Returns {"pool": 'gemini'|'claude'|None, "model": str, "rotating": bool}.
+    `pool` is None when rotation is disabled for the provider (legacy static
+    model). Callers must persist `pool` on the worker record so a later quota
+    failure is attributed to the pool the worker actually ran on."""
+    settings = settings if isinstance(settings, dict) else _provider_antigravity_settings(config, provider_id)
+    if not rotation_enabled(config, provider_id):
+        return {"pool": None, "model": str(settings.get("model") or "").strip(), "rotating": False}
+    pool = active_pool(config, str(provider_id or ""), now=now)
+    if pool == "claude":
+        return {"pool": "claude", "model": _fallback_model(config, provider_id), "rotating": True}
+    # 'gemini' or None (both cooling; the probe still goes out on primary) ->
+    # primary model (empty string == agy default Gemini).
+    return {"pool": "gemini", "model": _primary_model(config, provider_id), "rotating": True}
+
+
 def resolve_active_model(config: dict[str, Any] | None, provider_id: str | None, settings: dict[str, Any] | None = None, now: datetime | None = None) -> str:
     """Model string for `agy --model`. '' means agy default (Gemini).
 
     When rotation is disabled, preserve legacy behaviour: return the static
     `model` setting (if any)."""
-    settings = settings if isinstance(settings, dict) else _provider_antigravity_settings(config, provider_id)
-    if not rotation_enabled(config, provider_id):
-        return str(settings.get("model") or "").strip()
-    pool = active_pool(config, str(provider_id or ""), now=now)
-    if pool == "claude":
-        return _fallback_model(config, provider_id)
-    # 'gemini' or None -> primary (empty == agy default Gemini)
-    return _primary_model(config, provider_id)
+    return str(resolve_active_selection(config, provider_id, settings, now=now).get("model") or "")
 
 
-def record_exhaustion(config: dict[str, Any] | None, provider_id: str | None, cooldown_seconds: int, *, reason: str | None = None, now: datetime | None = None) -> dict[str, Any]:
-    """Mark the CURRENTLY-ACTIVE pool as exhausted for `cooldown_seconds`.
+def worker_dispatched_pool(worker: dict[str, Any] | None) -> str | None:
+    """Pool a worker record was actually launched on, or None if unknown.
+
+    Looks at the worker's adapter metadata first, then a top-level mirror, so
+    both freshly-written and legacy worker records resolve."""
+    if not isinstance(worker, dict):
+        return None
+    metadata = worker.get("metadata")
+    if isinstance(metadata, dict):
+        pool = normalize_pool(metadata.get(WORKER_POOL_KEY))
+        if pool:
+            return pool
+    return normalize_pool(worker.get(WORKER_POOL_KEY))
+
+
+def record_exhaustion(config: dict[str, Any] | None, provider_id: str | None, cooldown_seconds: int, *, reason: str | None = None, pool: str | None = None, now: datetime | None = None) -> dict[str, Any]:
+    """Mark the pool a failed worker was DISPATCHED ON as exhausted for `cooldown_seconds`.
+
+    `pool` must be the immutable dispatch-time pool from the worker record.
+    Inferring it from `active_pool()` here is unsafe under concurrency: once
+    worker A cools Gemini, a stale worker B that also ran on Gemini would be
+    attributed to Claude and falsely exhaust both pools. Only fall back to
+    `active_pool()` when the dispatched pool is genuinely unknown (e.g. a
+    delivery that failed before a worker record existed).
 
     Returns {exhausted_pool, next_pool, both_exhausted, message}. When both pools
     are cooling the caller should fall back to a real dispatch pause."""
     now = _now(now)
     pid = str(provider_id or "")
-    pool = active_pool(config, pid, now=now)  # the pool that was in use when it failed
+    pool = normalize_pool(pool)
+    inferred = pool is None
+    if inferred:
+        pool = active_pool(config, pid, now=now)
     if pool is None:
         return {"exhausted_pool": None, "next_pool": None, "both_exhausted": True,
                 "message": f"{pid}: both Gemini and Claude/GPT pools already cooling."}
@@ -165,6 +215,7 @@ def record_exhaustion(config: dict[str, Any] | None, provider_id: str | None, co
         "exhausted_pool": pool,
         "next_pool": next_pool,
         "both_exhausted": both,
+        "pool_source": "inferred" if inferred else "dispatched",
         "message": (
             f"{pid}: {pool} pool exhausted until {until_iso}; "
             + ("both pools now cooling -> real pause." if both else f"rotating to {next_pool}.")
