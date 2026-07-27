@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from enum import StrEnum
 from hashlib import sha256
 from typing import Any
@@ -56,7 +56,10 @@ from modules.learninghub.infrastructure import (
     ModelReleaseSaga,
     ReleaseSagaState,
 )
-from modules.learninghub.infrastructure.repositories import LearningHubReleaseConflict
+from modules.learninghub.infrastructure.repositories import (
+    LearningHubReleaseConflict,
+    LearningHubReleaseFenced,
+)
 from modules.learninghub.runtime import (
     LearningHubRuntimeConfigurationError,
     learninghub_production_required,
@@ -66,6 +69,34 @@ from shared.audit import AuditEvent, AuditRecorder, InMemoryAuditLog
 
 class LearningHubError(ValueError):
     pass
+
+
+class LearningHubConflictError(LearningHubError):
+    """A governed command lost a concurrency boundary (HTTP 409).
+
+    Raised when the compare-and-set release revision is stale, another release
+    is already active for the model, an idempotency key is replayed with a
+    different command, or a fenced-out worker tried to keep writing.
+    """
+
+
+class LearningHubPreconditionRequiredError(LearningHubError):
+    """A governed command omitted a mandatory precondition (HTTP 428).
+
+    Release commands must bind an expected release revision and an idempotency
+    key. A caller that sends neither has no safe retry semantics, so the command
+    is rejected before any state is touched.
+    """
+
+
+# A release execution lease is held while a worker drives a saga. Recovery only
+# takes a saga over once the lease expires, which is what keeps startup or
+# operator recovery from compensating a release another live worker is running.
+DEFAULT_RELEASE_LEASE_SECONDS = 300.0
+
+# Roles that may carry a release approval, mirroring the approval-document
+# contract enforced by ``scripts/models/contracts.require_approval_document``.
+_GOVERNANCE_APPROVAL_ROLES = frozenset({"model-review-board", "model-risk-owner"})
 
 
 class ReleaseType(StrEnum):
@@ -157,7 +188,11 @@ class LearningHubService:
         artifact_store: ArtifactStore | LocalModelArtifactStore | None = None,
         runtime_mode: str | None = None,
         recover_on_startup: bool = True,
+        worker_id: str | None = None,
+        release_lease_seconds: float = DEFAULT_RELEASE_LEASE_SECONDS,
     ) -> None:
+        self.worker_id = worker_id or f"learninghub-worker-{uuid4()}"
+        self.release_lease_seconds = float(release_lease_seconds)
         self.production_required = learninghub_production_required(runtime_mode)
         if self.production_required and (
             repository is None or isinstance(repository, InMemoryLearningHubRepository)
@@ -368,7 +403,7 @@ class LearningHubService:
             tenant_id=tenant_id,
         )
         if not idempotency_key.strip():
-            raise LearningHubError("release requires idempotency_key")
+            raise LearningHubPreconditionRequiredError("release requires idempotency_key")
         command = {
             "model_name": model_name,
             "version": version,
@@ -395,7 +430,7 @@ class LearningHubService:
         if replay is not None:
             if isinstance(replay, ModelReleaseDecision):
                 return replay
-            raise LearningHubError(
+            raise LearningHubConflictError(
                 f"release {replay.release_id} is {replay.state.value}; "
                 "operator recovery is required before retry"
             )
@@ -410,6 +445,8 @@ class LearningHubService:
             release_type=release_type,
             approval_id=approval_id,
             rollback_target=rollback_target,
+            requested_by=requested_by,
+            approved_by=approved_by,
         )
 
         try:
@@ -428,7 +465,7 @@ class LearningHubService:
                     )
                     if isinstance(replay, ModelReleaseDecision):
                         return replay
-                    raise LearningHubError(
+                    raise LearningHubConflictError(
                         f"release {existing.release_id} is {existing.state.value}"
                     )
                 active = self.repository.list_release_sagas(
@@ -458,7 +495,7 @@ class LearningHubService:
             )
             if isinstance(replay, ModelReleaseDecision):
                 return replay
-            raise LearningHubError(str(exc)) from exc
+            raise LearningHubConflictError(str(exc)) from exc
         return self._execute_release_saga(saga)
 
     def _build_release_saga(
@@ -625,6 +662,9 @@ class LearningHubService:
             version_snapshots=version_snapshots,
             alias_snapshots=tuple(alias_snapshots.items()),
             decision=decision,
+            lease_owner=self.worker_id,
+            lease_expires_at=self._lease_expiry(),
+            fence_token=1,
         )
 
     def _execute_release_saga(
@@ -644,10 +684,19 @@ class LearningHubService:
             if release_type is ReleaseType.ROLLBACK and rollback_target
             else None
         )
-        saga = self.repository.save_release_saga(
-            saga.evolve(attempt=saga.attempt + 1, last_error=None)
-        )
         try:
+            # Claiming the attempt is itself a fenced write: a worker that was
+            # taken over between reserving the revision and starting execution
+            # must fail here rather than mutate MLflow.
+            saga = self._save_saga(saga, attempt=saga.attempt + 1, last_error=None)
+            governance = self._release_governance_metadata(
+                model_name=model_name,
+                version=(
+                    rollback_version.version if rollback_version is not None else version
+                ),
+                saga=saga,
+                command=command,
+            )
             if release_type is ReleaseType.FULL:
                 alias_mutations: list[tuple[ModelAlias, str | None]] = []
                 current_production = self.repository.get_alias(
@@ -689,10 +738,7 @@ class LearningHubService:
                         rollback_target=rollback_target,
                         monitoring_config={
                             **dict(model_version.monitoring_config),
-                            "release_id": saga.release_id,
-                            "release_revision": saga.release_revision,
-                            "approval_id": command["approval_id"],
-                            "release_scope": "global",
+                            **governance,
                         },
                     )
                     .with_approval(approved_by)
@@ -708,10 +754,14 @@ class LearningHubService:
                         (ModelAlias.CHAMPION, version),
                     )
                 )
-                saga = self.repository.save_release_saga(
-                    saga.evolve(state=ReleaseSagaState.MODEL_STATE_APPLIED)
-                )
+                saga = self._save_saga(saga, state=ReleaseSagaState.MODEL_STATE_APPLIED)
                 self._synchronize_aliases(model_name, alias_mutations)
+                self.registry.assert_release_governance(
+                    model_name=model_name,
+                    version=version,
+                    expected=governance,
+                    alias=ModelAlias.PRODUCTION,
+                )
             elif release_type is ReleaseType.ROLLBACK:
                 if rollback_version is None:
                     raise LearningHubError("rollback target resolution failed")
@@ -736,10 +786,7 @@ class LearningHubService:
                     ._replace(
                         monitoring_config={
                             **dict(rollback_version.monitoring_config),
-                            "release_id": saga.release_id,
-                            "release_revision": saga.release_revision,
-                            "approval_id": command["approval_id"],
-                            "release_scope": "global",
+                            **governance,
                         }
                     )
                     .with_approval(approved_by)
@@ -751,9 +798,7 @@ class LearningHubService:
                     stage=ModelStage.PRODUCTION,
                 )
                 self.repository.save_model_version(approved_rollback)
-                saga = self.repository.save_release_saga(
-                    saga.evolve(state=ReleaseSagaState.MODEL_STATE_APPLIED)
-                )
+                saga = self._save_saga(saga, state=ReleaseSagaState.MODEL_STATE_APPLIED)
                 self._synchronize_aliases(
                     model_name,
                     (
@@ -762,45 +807,67 @@ class LearningHubService:
                         (ModelAlias.PREVIOUS_PRODUCTION, model_version.version),
                     ),
                 )
+                self.registry.assert_release_governance(
+                    model_name=model_name,
+                    version=rollback_version.version,
+                    expected=governance,
+                    alias=ModelAlias.PRODUCTION,
+                )
             else:
                 alias = (
                     ModelAlias.SHADOW
                     if release_type is ReleaseType.SHADOW
                     else ModelAlias.CANARY
                 )
+                staged_version = model_version.with_stage(target_stage)._replace(
+                    monitoring_config={
+                        **dict(model_version.monitoring_config),
+                        **governance,
+                    }
+                )
+                self.registry.sync_release_metadata(staged_version)
                 self.registry.transition_stage(
                     model_name=model_name, version=version, stage=target_stage
                 )
-                self.repository.save_model_version(model_version.with_stage(target_stage))
-                saga = self.repository.save_release_saga(
-                    saga.evolve(state=ReleaseSagaState.MODEL_STATE_APPLIED)
-                )
+                self.repository.save_model_version(staged_version)
+                saga = self._save_saga(saga, state=ReleaseSagaState.MODEL_STATE_APPLIED)
                 self._synchronize_aliases(model_name, ((alias, version),))
-            saga = self.repository.save_release_saga(
-                saga.evolve(state=ReleaseSagaState.ALIASES_APPLIED)
-            )
+                self.registry.assert_release_governance(
+                    model_name=model_name,
+                    version=version,
+                    expected=governance,
+                    alias=alias,
+                )
+            saga = self._save_saga(saga, state=ReleaseSagaState.ALIASES_APPLIED)
             audit_event = command["audit_event"]
             self.audit_log.record(audit_event)
-            saga = self.repository.save_release_saga(
-                saga.evolve(
-                    state=ReleaseSagaState.AUDIT_RECORDED,
-                    audit_event_id=audit_event.event_id,
-                )
+            saga = self._save_saga(
+                saga,
+                state=ReleaseSagaState.AUDIT_RECORDED,
+                audit_event_id=audit_event.event_id,
             )
             decision = command["decision"]
             self.repository.save_release_decision(decision)
-            saga = self.repository.save_release_saga(
-                saga.evolve(
-                    state=ReleaseSagaState.RECEIPT_RECORDED,
-                    decision=decision,
-                )
+            saga = self._save_saga(
+                saga,
+                state=ReleaseSagaState.RECEIPT_RECORDED,
+                decision=decision,
             )
-            self.repository.save_release_saga(
-                saga.evolve(state=ReleaseSagaState.COMPLETED)
-            )
+            self._save_saga(saga, state=ReleaseSagaState.COMPLETED)
             return decision
+        except LearningHubReleaseFenced as exc:
+            raise LearningHubConflictError(
+                f"release {saga.release_id} was fenced by a recovery owner; "
+                "the recovery owner is authoritative for compensation"
+            ) from exc
         except Exception as exc:
-            compensated = self._compensate_release_saga(saga, failure=exc)
+            try:
+                compensated = self._compensate_release_saga(saga, failure=exc)
+            except LearningHubReleaseFenced as fenced:
+                raise LearningHubConflictError(
+                    f"release {saga.release_id} was fenced by a recovery owner "
+                    "before compensation; the recovery owner is authoritative"
+                ) from fenced
             if compensated.state is ReleaseSagaState.COMPENSATION_FAILED:
                 raise LearningHubError(
                     f"release {saga.release_id} failed and compensation is incomplete: "
@@ -810,6 +877,69 @@ class LearningHubService:
                 f"release {saga.release_id} failed; durable receipt, aliases, "
                 "remote stages, and model metadata were compensated"
             ) from exc
+
+    def _lease_expiry(self) -> datetime:
+        return datetime.now(UTC) + timedelta(seconds=self.release_lease_seconds)
+
+    def _save_saga(self, saga: ModelReleaseSaga, **changes: Any) -> ModelReleaseSaga:
+        """Persist saga progress while renewing (or releasing) this lease.
+
+        Every in-flight write renews the lease so a long release keeps recovery
+        away; reaching a terminal state releases it so the saga is never left
+        pinned to a worker that has finished with it.
+        """
+
+        candidate = saga.evolve(**changes)
+        if candidate.terminal:
+            renewed = candidate.evolve(lease_owner=None, lease_expires_at=None)
+        else:
+            renewed = candidate.evolve(
+                lease_owner=self.worker_id,
+                lease_expires_at=self._lease_expiry(),
+            )
+        return self.repository.save_release_saga(renewed)
+
+    def _release_governance_metadata(
+        self,
+        *,
+        model_name: str,
+        version: str,
+        saga: ModelReleaseSaga,
+        command: Mapping[str, Any],
+    ) -> dict[str, Any]:
+        """Validation and approval facts that must reach the runtime registry.
+
+        These are written into the released ``ModelVersion.monitoring_config``
+        and projected onto MLflow tags, so a production alias can never resolve
+        to a version whose model card, validation run, actor, and approval are
+        unknown to the runtime.
+        """
+
+        model_card = self._require_model_card(model_name, version)
+        validation_run = self._require_validation_run(model_card.validation_run_id)
+        if not validation_run.passed:
+            raise LearningHubError(
+                f"release target {model_name}:{version} requires a passed validation run"
+            )
+        if not model_card.is_complete:
+            raise LearningHubError(
+                f"release target {model_name}:{version} requires a complete model card"
+            )
+        if not model_card.is_approved:
+            raise LearningHubError(
+                f"release target {model_name}:{version} requires an approved model card"
+            )
+        return {
+            "release_id": saga.release_id,
+            "release_revision": saga.release_revision,
+            "approval_id": str(command["approval_id"]),
+            "release_scope": "global",
+            "requested_by": str(command["requested_by"]),
+            "release_approved_by": str(command["approved_by"]),
+            "model_card_checksum": _model_card_checksum(model_card),
+            "validation_run_id": model_card.validation_run_id,
+            "validation_status": validation_run.status.value,
+        }
 
     def _synchronize_aliases(
         self,
@@ -887,6 +1017,12 @@ class LearningHubService:
 
         for snapshot in reversed(tuple(versions)):
             try:
+                self.registry.restore_release_metadata(snapshot)
+            except Exception as exc:
+                errors.append(
+                    f"remote-metadata:{snapshot.version}={type(exc).__name__}: {exc}"
+                )
+            try:
                 self.registry.transition_stage(
                     model_name=model_name,
                     version=snapshot.version,
@@ -926,7 +1062,7 @@ class LearningHubService:
         request_fingerprint: str,
     ) -> object | ModelReleaseSaga:
         if saga.request_fingerprint != request_fingerprint:
-            raise LearningHubError(
+            raise LearningHubConflictError(
                 f"idempotency key {saga.idempotency_key!r} was reused with "
                 "a different release command"
             )
@@ -945,11 +1081,10 @@ class LearningHubService:
         failure: BaseException,
     ) -> ModelReleaseSaga:
         compensation_errors: list[str] = []
-        saga = self.repository.save_release_saga(
-            saga.evolve(
-                state=ReleaseSagaState.COMPENSATING,
-                last_error=f"{type(failure).__name__}: {failure}",
-            )
+        saga = self._save_saga(
+            saga,
+            state=ReleaseSagaState.COMPENSATING,
+            last_error=f"{type(failure).__name__}: {failure}",
         )
         try:
             self.repository.delete_release_decision(saga.release_id)
@@ -1009,11 +1144,10 @@ class LearningHubService:
             if compensation_errors
             else ReleaseSagaState.COMPENSATED
         )
-        return self.repository.save_release_saga(
-            saga.evolve(
-                state=final_state,
-                compensation_errors=tuple(compensation_errors),
-            )
+        return self._save_saga(
+            saga,
+            state=final_state,
+            compensation_errors=tuple(compensation_errors),
         )
 
     def recover_incomplete_releases(
@@ -1022,12 +1156,22 @@ class LearningHubService:
         model_name: str | None = None,
         release_id: str | None = None,
         requested_by: str = "release-recovery",
+        take_over_live_leases: bool = False,
     ) -> tuple[ModelReleaseSaga, ...]:
         """Recover orphaned release intents after startup or operator request.
 
         A committed receipt is the deterministic resume point. Every earlier
         state is compensated back to the snapshots persisted before MLflow was
         touched.
+
+        Recovery only claims a saga whose execution lease has expired (or that
+        this worker already owns). A release another live worker is still
+        driving keeps its lease and is skipped, so startup recovery can never
+        compensate a peer mid-flight. Claiming a saga bumps its fencing token,
+        which permanently locks out the previous owner's writes; a stale worker
+        that wakes up later fails closed instead of resuming into compensated
+        state. ``take_over_live_leases`` is an explicit operator override for a
+        worker that is known to be dead before its lease expires.
         """
 
         if release_id is not None:
@@ -1047,22 +1191,26 @@ class LearningHubService:
                 if saga.terminal:
                     recovered.append(saga)
                     continue
+                if (
+                    not take_over_live_leases
+                    and saga.lease_active()
+                    and saga.lease_owner != self.worker_id
+                ):
+                    self._record_recovery_skipped(saga, requested_by=requested_by)
+                    continue
+                saga = self._claim_release_saga(saga, requested_by=requested_by)
                 durable_receipt = self.repository.get_release_decision(saga.release_id)
                 if (
                     saga.state is ReleaseSagaState.RECEIPT_RECORDED
                     and durable_receipt is not None
                 ):
-                    completed = self.repository.save_release_saga(
-                        saga.evolve(
-                            state=ReleaseSagaState.COMPLETED,
-                            decision=durable_receipt,
-                        )
+                    completed = self._save_saga(
+                        saga,
+                        state=ReleaseSagaState.COMPLETED,
+                        decision=durable_receipt,
                     )
                     recovered.append(completed)
                     continue
-                command = dict(saga.command)
-                command["requested_by"] = requested_by
-                saga = self.repository.save_release_saga(saga.evolve(command=command))
                 recovered.append(
                     self._compensate_release_saga(
                         saga,
@@ -1072,6 +1220,52 @@ class LearningHubService:
                     )
                 )
         return tuple(recovered)
+
+    def _claim_release_saga(
+        self,
+        saga: ModelReleaseSaga,
+        *,
+        requested_by: str,
+    ) -> ModelReleaseSaga:
+        command = dict(saga.command)
+        command["requested_by"] = requested_by
+        return self._save_saga(
+            saga,
+            command=command,
+            fence_token=saga.fence_token + 1,
+        )
+
+    def _record_recovery_skipped(
+        self,
+        saga: ModelReleaseSaga,
+        *,
+        requested_by: str,
+    ) -> None:
+        self.audit_log.record(
+            AuditEvent(
+                event_type="learninghub.model_release_recovery.v1",
+                actor=requested_by,
+                action="skip_recovery",
+                resource=f"model/{saga.model_name}:{saga.command.get('version')}",
+                outcome="lease_held_by_live_worker",
+                correlation_id=str(
+                    saga.command.get("correlation_id", "learninghub-release-recovery")
+                ),
+                metadata={
+                    "release_id": saga.release_id,
+                    "release_revision": saga.release_revision,
+                    "state": saga.state.value,
+                    "lease_owner": saga.lease_owner,
+                    "lease_expires_at": (
+                        saga.lease_expires_at.isoformat()
+                        if saga.lease_expires_at is not None
+                        else None
+                    ),
+                    "fence_token": saga.fence_token,
+                    "scope": "global",
+                },
+            )
+        )
 
     def reconcile_alias(
         self,
@@ -1098,7 +1292,9 @@ class LearningHubService:
                 "alias reconciliation authority must be 'remote' or 'durable'"
             )
         if not idempotency_key.strip():
-            raise LearningHubError("alias reconciliation requires idempotency_key")
+            raise LearningHubPreconditionRequiredError(
+                "alias reconciliation requires idempotency_key"
+            )
         command = {
             "model_name": model_name,
             "alias": alias.value,
@@ -1121,7 +1317,7 @@ class LearningHubService:
                 and isinstance(existing.decision, AliasReconciliationReceipt)
             ):
                 return existing.decision
-            raise LearningHubError(
+            raise LearningHubConflictError(
                 f"reconciliation {existing.release_id} is {existing.state.value}"
             )
 
@@ -1161,6 +1357,9 @@ class LearningHubService:
                             durable_before.version if durable_before is not None else None,
                         ),
                     ),
+                    lease_owner=self.worker_id,
+                    lease_expires_at=self._lease_expiry(),
+                    fence_token=1,
                 )
                 self.repository.save_release_saga(saga)
         except LearningHubReleaseConflict as exc:
@@ -1172,7 +1371,7 @@ class LearningHubService:
                 replay = self._assert_idempotency_fingerprint(existing, fingerprint)
                 if isinstance(replay, AliasReconciliationReceipt):
                     return replay
-            raise LearningHubError(str(exc)) from exc
+            raise LearningHubConflictError(str(exc)) from exc
 
         try:
             resolved = self.registry._reconcile_alias_unsafe(
@@ -1180,9 +1379,7 @@ class LearningHubService:
                 alias=alias,
                 authority=authority,
             )
-            saga = self.repository.save_release_saga(
-                saga.evolve(state=ReleaseSagaState.ALIASES_APPLIED)
-            )
+            saga = self._save_saga(saga, state=ReleaseSagaState.ALIASES_APPLIED)
             audit_event = self.audit_log.record(
                 AuditEvent(
                     event_type="learninghub.alias_reconciliation.v1",
@@ -1221,14 +1418,17 @@ class LearningHubService:
                 idempotency_key=idempotency_key,
             )
             self.repository.save_release_decision(receipt)
-            self.repository.save_release_saga(
-                saga.evolve(
-                    state=ReleaseSagaState.COMPLETED,
-                    decision=receipt,
-                    audit_event_id=audit_event.event_id,
-                )
+            self._save_saga(
+                saga,
+                state=ReleaseSagaState.COMPLETED,
+                decision=receipt,
+                audit_event_id=audit_event.event_id,
             )
             return receipt
+        except LearningHubReleaseFenced as exc:
+            raise LearningHubConflictError(
+                f"alias reconciliation {release_id} was fenced by a recovery owner"
+            ) from exc
         except Exception as exc:
             compensated = self._compensate_release_saga(saga, failure=exc)
             if compensated.state is ReleaseSagaState.COMPENSATION_FAILED:
@@ -1523,9 +1723,16 @@ class LearningHubService:
         release_type: ReleaseType,
         approval_id: str,
         rollback_target: str | None,
+        requested_by: str,
+        approved_by: str,
     ) -> None:
         if not approval_id:
             raise LearningHubError("release requires approval_id")
+        self._assert_release_authority(
+            model_card=model_card,
+            requested_by=requested_by,
+            approved_by=approved_by,
+        )
         if not validation_run.passed:
             raise LearningHubError("release requires passed validation")
         if not model_card.is_complete:
@@ -1540,6 +1747,44 @@ class LearningHubService:
                 raise LearningHubError("rollback requires rollback target")
             if self.repository.get_model_version(model_version.model_name, target) is None:
                 raise LearningHubError(f"unknown rollback target {target}")
+
+    @staticmethod
+    def _assert_release_authority(
+        *,
+        model_card: ModelCard,
+        requested_by: str,
+        approved_by: str,
+    ) -> None:
+        """Bind the release actors to a recorded, independent approval.
+
+        ``requested_by`` is the authenticated caller (the API layer refuses to
+        take it from the request body) and ``approved_by`` must name an approver
+        already recorded on the model card in a governance role. Self-review is
+        rejected, so a single identity can never both request and approve a
+        production release.
+        """
+
+        requester = str(requested_by or "").strip()
+        approver = str(approved_by or "").strip()
+        if not requester:
+            raise LearningHubError("release requires an authenticated requested_by actor")
+        if not approver:
+            raise LearningHubError("release requires an approved_by actor")
+        if requester == approver:
+            raise LearningHubError("model release self-review is prohibited")
+        approvals = [
+            approval for approval in model_card.approvals if approval.decision == "approved"
+        ]
+        matching = [approval for approval in approvals if approval.approver == approver]
+        if not matching:
+            raise LearningHubError(
+                f"approved_by {approver!r} does not match a recorded model card approval"
+            )
+        if not any(approval.role in _GOVERNANCE_APPROVAL_ROLES for approval in matching):
+            raise LearningHubError(
+                f"model card approval by {approver!r} is not held in a governance role "
+                + " or ".join(sorted(_GOVERNANCE_APPROVAL_ROLES))
+            )
 
     def _require_model_version(self, model_name: str, version: str) -> ModelVersion:
         model_version = self.repository.get_model_version(model_name, version)
@@ -1689,8 +1934,11 @@ def _fingerprint_inputs(inputs: Sequence[Mapping[str, Any]]) -> str:
 
 
 __all__ = [
+    "DEFAULT_RELEASE_LEASE_SECONDS",
     "AliasReconciliationReceipt",
+    "LearningHubConflictError",
     "LearningHubError",
+    "LearningHubPreconditionRequiredError",
     "LearningHubService",
     "ModelReleaseDecision",
     "ReleaseType",

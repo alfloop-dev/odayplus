@@ -1,9 +1,12 @@
 """Learning Hub public API."""
 
 from modules.learninghub.application import (
+    DEFAULT_RELEASE_LEASE_SECONDS,
     AliasReconciliationReceipt,
     GuardrailBreach,
+    LearningHubConflictError,
     LearningHubError,
+    LearningHubPreconditionRequiredError,
     LearningHubService,
     ModelReleaseDecision,
     MonitorStatus,
@@ -38,6 +41,8 @@ from modules.learninghub.domain import (
 )
 from modules.learninghub.infrastructure import (
     InMemoryLearningHubRepository,
+    LearningHubReleaseConflict,
+    LearningHubReleaseFenced,
     MlflowRegistryAdapter,
     ModelReleaseSaga,
     ReleaseSagaState,
@@ -51,6 +56,7 @@ from modules.learninghub.workers import (
 )
 
 __all__ = [
+    "DEFAULT_RELEASE_LEASE_SECONDS",
     "AliasReconciliationReceipt",
     "DatasetSnapshot",
     "DatasetSnapshotError",
@@ -58,7 +64,11 @@ __all__ = [
     "InMemoryLearningHubRepository",
     "InferenceComparison",
     "InferenceComparisonMode",
+    "LearningHubConflictError",
     "LearningHubError",
+    "LearningHubPreconditionRequiredError",
+    "LearningHubReleaseConflict",
+    "LearningHubReleaseFenced",
     "LearningHubReleaseWorker",
     "LearningHubService",
     "LearningHubRuntimeConfigurationError",

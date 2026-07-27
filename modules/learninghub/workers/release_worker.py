@@ -21,6 +21,12 @@ class LearningHubReleaseWorker:
             raise ValueError("release worker requires expected_release_revision")
         if not str(payload.get("idempotency_key") or "").strip():
             raise ValueError("release worker requires idempotency_key")
+        # Actors are never defaulted: a queued release carries the identities
+        # that the API bound from its authenticated caller and approval record.
+        if not str(payload.get("requested_by") or "").strip():
+            raise ValueError("release worker requires requested_by")
+        if not str(payload.get("approved_by") or "").strip():
+            raise ValueError("release worker requires approved_by")
         return self.service.request_release(
             model_name=str(payload["model_name"]),
             version=str(payload["version"]),
@@ -32,8 +38,8 @@ class LearningHubReleaseWorker:
             success_criteria=tuple(payload.get("success_criteria", ())),
             fail_criteria=tuple(payload.get("fail_criteria", ())),
             affected_modules=tuple(payload.get("affected_modules", ())),
-            requested_by=str(payload.get("requested_by", "system")),
-            approved_by=str(payload.get("approved_by", "model-review-board")),
+            requested_by=str(payload["requested_by"]),
+            approved_by=str(payload["approved_by"]),
             correlation_id=str(payload.get("correlation_id", "learninghub-release")),
             expected_release_revision=int(payload["expected_release_revision"]),
             idempotency_key=str(payload["idempotency_key"]),

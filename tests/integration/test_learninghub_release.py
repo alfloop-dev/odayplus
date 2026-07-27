@@ -1,7 +1,8 @@
 from __future__ import annotations
 
 from concurrent.futures import ThreadPoolExecutor
-from datetime import UTC, datetime
+from dataclasses import replace
+from datetime import UTC, datetime, timedelta
 from threading import Barrier
 from unittest.mock import patch
 
@@ -10,16 +11,14 @@ import pytest
 from models.shared_ml import (
     MetricThreshold,
     ModelAlias,
-    ModelCard,
     ModelCardApproval,
-    ModelRiskLevel,
     ModelStage,
     ModelVersion,
-    SegmentMetric,
 )
 from modules.learninghub import (
     InMemoryLearningHubRepository,
     LearningHubError,
+    LearningHubReleaseFenced,
     LearningHubService,
     MlflowRegistryAdapter,
     ModelReleaseDecision,
@@ -38,112 +37,18 @@ from shared.infrastructure.persistence import (
     SqliteDocumentStore,
     SqliteEngine,
 )
-
-SNAPSHOT_TIME = datetime(2026, 6, 27, 8, 0, tzinfo=UTC)
-PREDICTION_TIME = datetime(2026, 6, 27, 9, 0, tzinfo=UTC)
-
-
-def _rows() -> list[dict[str, object]]:
-    return [
-        {
-            "view_name": "store_machine_timeseries_view",
-            "view_version": "store-machine-timeseries-view-v1",
-            "entity_id": "store-001",
-            "feature_snapshot_time": SNAPSHOT_TIME.isoformat(),
-            "prediction_origin_time": PREDICTION_TIME.isoformat(),
-            "source_snapshot_ids": ["pos-20260627", "machine-20260627"],
-            "labels": {"w4_revenue": 410_000},
-            "label_maturity_time": SNAPSHOT_TIME.isoformat(),
-            "features": {"event_time": SNAPSHOT_TIME.isoformat(), "revenue_lag_7d": 92_000},
-        },
-        {
-            "view_name": "store_machine_timeseries_view",
-            "view_version": "store-machine-timeseries-view-v1",
-            "entity_id": "store-002",
-            "feature_snapshot_time": SNAPSHOT_TIME.isoformat(),
-            "prediction_origin_time": PREDICTION_TIME.isoformat(),
-            "source_snapshot_ids": ["pos-20260627"],
-            "labels": {"w4_revenue": 380_000},
-            "label_maturity_time": SNAPSHOT_TIME.isoformat(),
-            "features": {"event_time": SNAPSHOT_TIME.isoformat(), "revenue_lag_7d": 88_000},
-        },
-    ]
-
-
-def _model_version(version: str, dataset_snapshot_id: str) -> ModelVersion:
-    return ModelVersion(
-        model_name="forecast_revenue_interval",
-        version=version,
-        artifact_uri=f"gs://oday-artifacts/models/forecast_revenue_interval/{version}/model",
-        dataset_snapshot_id=dataset_snapshot_id,
-        feature_schema_version="store-machine-timeseries-view-v1",
-        label_version="forecast-w4-revenue-v1",
-        metrics={"w4_smape": 0.11, "p80_coverage": 0.82},
-        run_id=f"mlflow-run-{version}",
-        git_sha="abc1234",
-    )
-
-
-def _model_card(version: str, dataset_snapshot_id: str, validation_run_id: str) -> ModelCard:
-    return ModelCard(
-        model_name="forecast_revenue_interval",
-        model_version=version,
-        owner="ml-platform",
-        risk_level=ModelRiskLevel.R3,
-        intended_use="ForecastOps 4/8/12/24 week revenue interval input",
-        not_intended_use="Direct store closure, pricing, or campaign execution",
-        dataset_snapshot_id=dataset_snapshot_id,
-        validation_run_id=validation_run_id,
-        feature_set_id="fs_forecastops_v1",
-        label_set_id="ls_forecastops_w4_v1",
-        training_period="2026-01-01/2026-05-31",
-        validation_period="2026-06-01/2026-06-27",
-        algorithm="seasonal_baseline_plus_gradient_boosting",
-        baseline="seasonal_naive_v1",
-        metrics_summary={"w4_smape": 0.11, "p80_coverage": 0.82},
-        segment_metrics=({"segment_name": "region", "segment_value": "north", "w4_smape": 0.10},),
-        calibration_summary={"p80_coverage": 0.82},
-        explainability_method="feature_importance",
-        limitations=("synthetic fixture validation only",),
-        known_biases=("low volume stores have wider error bands",),
-        rollback_conditions=(
-            "p80_coverage < 0.75 for 2 consecutive monitoring windows",
-            "red_alert_precision drops below approved threshold",
-        ),
-        approvals=(ModelCardApproval(approver="reviewer-a", role="model-review-board"),),
-    )
-
-
-def _prepare_candidate(service: LearningHubService, version: str) -> ModelVersion:
-    snapshot = service.register_dataset_snapshot(
-        _rows(), dataset_snapshot_id=f"forecast-training-{version}"
-    )
-    validation = service.validate_candidate(
-        model_name="forecast_revenue_interval",
-        model_version=version,
-        dataset_snapshot_id=snapshot.dataset_snapshot_id,
-        metrics={"w4_smape": 0.11, "p80_coverage": 0.82},
-        baseline_metrics={"w4_smape": 0.15, "p80_coverage": 0.78},
-        thresholds=(
-            MetricThreshold("w4_smape", max_value=0.12, warning_max_value=0.115),
-            MetricThreshold("p80_coverage", min_value=0.80, warning_min_value=0.81),
-        ),
-        segment_metrics=(
-            SegmentMetric(
-                segment_name="region",
-                segment_value="north",
-                metrics={"w4_smape": 0.10},
-                record_count=1,
-            ),
-        ),
-        calibration_summary={"p80_coverage": 0.82},
-    )
-    assert validation.passed
-    return service.register_model_version(
-        model_version=_model_version(version, snapshot.dataset_snapshot_id),
-        model_card=_model_card(version, snapshot.dataset_snapshot_id, validation.validation_run_id),
-        validation_run=validation,
-    )
+from tests.integration._learninghub_fixtures import (
+    dataset_rows as _rows,
+)
+from tests.integration._learninghub_fixtures import (
+    model_card as _model_card,
+)
+from tests.integration._learninghub_fixtures import (
+    model_version as _model_version,
+)
+from tests.integration._learninghub_fixtures import (
+    prepare_candidate as _prepare_candidate,
+)
 
 
 def _request_release(service: LearningHubService, **kwargs) -> ModelReleaseDecision:
@@ -152,6 +57,10 @@ def _request_release(service: LearningHubService, **kwargs) -> ModelReleaseDecis
         service.repository.get_release_revision(str(kwargs["model_name"])),
     )
     kwargs.setdefault("idempotency_key", str(kwargs["approval_id"]))
+    # Release actors are always distinct: the requester never approves, and the
+    # approver is the identity recorded on the model card.
+    kwargs.setdefault("requested_by", "ml-owner")
+    kwargs.setdefault("approved_by", "reviewer-a")
     return service.request_release(**kwargs)
 
 
@@ -234,6 +143,7 @@ def test_learninghub_validates_releases_and_rolls_back_model_aliases() -> None:
             "fail_criteria": ["smoke prediction fails"],
             "affected_modules": ["ForecastOps"],
             "requested_by": "on-call",
+            "approved_by": "reviewer-a",
             "correlation_id": "corr-learninghub-4",
             "expected_release_revision": repository.get_release_revision(v2.model_name),
             "idempotency_key": "approval-rollback-001",
@@ -791,6 +701,15 @@ def test_release_worker_requires_revision_and_idempotency_binding() -> None:
             {**payload, "expected_release_revision": 0},
             service=service,
         )
+    bound = {
+        **payload,
+        "expected_release_revision": 0,
+        "idempotency_key": "approval-worker-binding-001",
+    }
+    with pytest.raises(ValueError, match="requested_by"):
+        run_learninghub_release(bound, service=service)
+    with pytest.raises(ValueError, match="approved_by"):
+        run_learninghub_release({**bound, "requested_by": "ml-owner"}, service=service)
 
 
 def test_rollback_rejects_stale_command_and_produces_one_production_version() -> None:
@@ -883,6 +802,9 @@ def test_release_saga_survives_process_interruption_and_recovers(
             engine,
             worm_sink=LocalAppendOnlyWormSink(worm_root),
         ),
+        # The interrupted process leaves no live lease behind, which is what
+        # makes its orphaned saga eligible for takeover by the next worker.
+        release_lease_seconds=0.0,
     )
     v1 = _prepare_candidate(service, "1.0.0")
     v2 = _prepare_candidate(service, "1.1.0")
@@ -1025,6 +947,8 @@ def test_concurrent_releases_use_per_model_cas_without_cross_compensation() -> N
                 fail_criteria=("release revision conflict",),
                 expected_release_revision=0,
                 idempotency_key=f"concurrent-release-{candidate.version}",
+                requested_by="ml-owner",
+                approved_by="reviewer-a",
             )
         except LearningHubError as exc:
             return exc
@@ -1212,3 +1136,507 @@ def test_learninghub_blocks_release_without_passed_validation_or_model_card() ->
             success_criteria=("none",),
             fail_criteria=("validation failed",),
         )
+
+
+def test_release_metadata_compensation_restores_remote_governance_tags(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A failed release must not leave an approval advertised in MLflow.
+
+    Stage and alias compensation is not enough: the release also writes
+    approval, approval-id, model-card, and validation tags, and a runtime that
+    resolves the model from MLflow would otherwise read an approval that was
+    never committed.
+    """
+
+    repository = InMemoryLearningHubRepository()
+    registry = MlflowRegistryAdapter(repository)
+    service = LearningHubService(
+        repository=repository,
+        registry=registry,
+        audit_log=InMemoryAuditLog(),
+    )
+    v1 = _prepare_candidate(service, "1.0.0")
+    v2 = _prepare_candidate(service, "1.1.0")
+    _release_full(service, version=v1.version, rollback_target=v1.version)
+    v2_before = repository.get_model_version(v2.model_name, v2.version)
+    durable_set_alias = repository.set_alias
+
+    def fail_on_production_alias(
+        model_name: str,
+        alias: ModelAlias,
+        version: str,
+    ) -> ModelVersion:
+        if alias is ModelAlias.PRODUCTION and version == v2.version:
+            raise RuntimeError("injected durable alias failure")
+        return durable_set_alias(model_name, alias, version)
+
+    monkeypatch.setattr(repository, "set_alias", fail_on_production_alias)
+    with pytest.raises(LearningHubError, match="model metadata were compensated"):
+        _release_full(service, version=v2.version, rollback_target=v1.version)
+
+    restored = registry._to_domain(
+        registry._require_model_version(v2.model_name, v2.version)
+    )
+    assert restored.approved_by is None
+    assert restored.approved_at is None
+    assert restored.rollback_target is None
+    assert dict(restored.monitoring_config) == dict(v2_before.monitoring_config)
+    tags = registry._require_model_version(v2.model_name, v2.version).tags
+    for governance_tag in (
+        "release_id",
+        "approval_id",
+        "release_approved_by",
+        "model_card_checksum",
+        "validation_run_id",
+        "validation_status",
+    ):
+        assert tags[f"oday.model_version.{governance_tag}"] == ""
+    assert repository.get_alias(v1.model_name, ModelAlias.PRODUCTION).version == v1.version
+    assert registry.get_by_alias(
+        model_name=v1.model_name,
+        alias=ModelAlias.PRODUCTION,
+    ).version == v1.version
+
+
+def test_recovery_skips_live_lease_and_fences_the_stale_owner(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Recovery is lease-gated and fenced.
+
+    A second worker must not compensate a release the first worker is still
+    driving, and once it does take an expired lease over, the first worker can
+    never write to that saga again.
+    """
+
+    repository = InMemoryLearningHubRepository()
+    registry = MlflowRegistryAdapter(repository)
+    audit_log = InMemoryAuditLog()
+    worker_a = LearningHubService(
+        repository=repository,
+        registry=registry,
+        audit_log=audit_log,
+        worker_id="worker-a",
+        release_lease_seconds=600.0,
+    )
+    v1 = _prepare_candidate(worker_a, "1.0.0")
+    v2 = _prepare_candidate(worker_a, "1.1.0")
+    _release_full(worker_a, version=v1.version, rollback_target=v1.version)
+
+    save_saga = repository.save_release_saga
+    crashed = False
+
+    def interrupt_after_model_state(saga):
+        nonlocal crashed
+        saved = save_saga(saga)
+        if (
+            saga.state is ReleaseSagaState.MODEL_STATE_APPLIED
+            and saga.command.get("version") == v2.version
+            and not crashed
+        ):
+            crashed = True
+            raise _ProcessInterrupted(saga.state.value)
+        return saved
+
+    monkeypatch.setattr(repository, "save_release_saga", interrupt_after_model_state)
+    with pytest.raises(_ProcessInterrupted):
+        _release_full(worker_a, version=v2.version, rollback_target=v1.version)
+    monkeypatch.setattr(repository, "save_release_saga", save_saga)
+
+    orphaned = repository.list_release_sagas(v2.model_name, include_terminal=False)[0]
+    assert orphaned.lease_owner == "worker-a"
+    assert orphaned.lease_active()
+
+    worker_b = LearningHubService(
+        repository=repository,
+        registry=registry,
+        audit_log=audit_log,
+        worker_id="worker-b",
+    )
+    assert worker_b.recover_incomplete_releases(model_name=v2.model_name) == ()
+    untouched = repository.get_release_saga(orphaned.release_id)
+    assert untouched.state is ReleaseSagaState.MODEL_STATE_APPLIED
+    assert untouched.fence_token == orphaned.fence_token
+    assert any(
+        event.event_type == "learninghub.model_release_recovery.v1"
+        and event.outcome == "lease_held_by_live_worker"
+        and event.metadata["lease_owner"] == "worker-a"
+        for event in audit_log.list_events()
+    )
+
+    # The lease lapses (worker A died); only now may worker B take over.
+    repository.save_release_saga(
+        untouched.evolve(lease_expires_at=datetime.now(UTC) - timedelta(seconds=1))
+    )
+    recovered = worker_b.recover_incomplete_releases(model_name=v2.model_name)
+    assert [saga.state for saga in recovered] == [ReleaseSagaState.COMPENSATED]
+    assert recovered[0].fence_token == orphaned.fence_token + 1
+    assert repository.get_alias(v1.model_name, ModelAlias.PRODUCTION).version == v1.version
+    assert registry.get_by_alias(
+        model_name=v1.model_name,
+        alias=ModelAlias.PRODUCTION,
+    ).version == v1.version
+
+    with pytest.raises(LearningHubReleaseFenced, match="was fenced at token"):
+        repository.save_release_saga(
+            orphaned.evolve(state=ReleaseSagaState.ALIASES_APPLIED)
+        )
+
+
+def test_release_requires_an_independent_recorded_approver() -> None:
+    repository = InMemoryLearningHubRepository()
+    service = LearningHubService(
+        repository=repository,
+        registry=MlflowRegistryAdapter(repository),
+        audit_log=InMemoryAuditLog(),
+    )
+    candidate = _prepare_candidate(service, "1.0.0")
+    command = {
+        "model_name": candidate.model_name,
+        "version": candidate.version,
+        "release_type": ReleaseType.FULL,
+        "reason": "authority gate",
+        "rollback_target": candidate.version,
+        "monitoring_window": "48h",
+        "success_criteria": ("approval is independent",),
+        "fail_criteria": ("self review accepted",),
+    }
+
+    with pytest.raises(LearningHubError, match="self-review is prohibited"):
+        _request_release(
+            service,
+            **command,
+            approval_id="approval-self-review-001",
+            requested_by="reviewer-a",
+            approved_by="reviewer-a",
+        )
+    with pytest.raises(LearningHubError, match="does not match a recorded model card approval"):
+        _request_release(
+            service,
+            **command,
+            approval_id="approval-unknown-approver-001",
+            requested_by="ml-owner",
+            approved_by="model-review-board",
+        )
+    with pytest.raises(LearningHubError, match="requires an authenticated requested_by actor"):
+        _request_release(
+            service,
+            **command,
+            approval_id="approval-anonymous-001",
+            requested_by="   ",
+            approved_by="reviewer-a",
+        )
+
+    card = repository.get_model_card(candidate.model_name, candidate.version)
+    repository.save_model_card(
+        replace(
+            card,
+            approvals=(ModelCardApproval(approver="peer-b", role="peer-engineer"),),
+        )
+    )
+    with pytest.raises(LearningHubError, match="governance role"):
+        _request_release(
+            service,
+            **command,
+            approval_id="approval-ungoverned-role-001",
+            requested_by="ml-owner",
+            approved_by="peer-b",
+        )
+    # Every rejection happens before the CAS boundary, so no revision is burned.
+    assert repository.get_release_revision(candidate.model_name) == 0
+    assert repository.list_release_sagas(candidate.model_name) == []
+
+
+def test_production_release_publishes_model_card_validation_and_approval_tags() -> None:
+    repository = InMemoryLearningHubRepository()
+    registry = MlflowRegistryAdapter(repository)
+    service = LearningHubService(
+        repository=repository,
+        registry=registry,
+        audit_log=InMemoryAuditLog(),
+    )
+    candidate = _prepare_candidate(service, "1.0.0")
+    decision = _release_full(
+        service,
+        version=candidate.version,
+        rollback_target=candidate.version,
+    )
+
+    card = repository.get_model_card(candidate.model_name, candidate.version)
+    validation = repository.get_validation_run(card.validation_run_id)
+    tags = registry._require_model_version(
+        candidate.model_name,
+        candidate.version,
+    ).tags
+    assert tags["oday.model_version.release_id"] == decision.release_id
+    assert tags["oday.model_version.release_revision"] == str(decision.release_revision)
+    assert tags["oday.model_version.approval_id"] == decision.approval_id
+    assert tags["oday.model_version.release_scope"] == "global"
+    assert tags["oday.model_version.requested_by"] == "ml-owner"
+    assert tags["oday.model_version.release_approved_by"] == "reviewer-a"
+    assert tags["oday.model_version.model_card_checksum"] == decision.model_card_checksum
+    assert tags["oday.model_version.validation_run_id"] == card.validation_run_id
+    assert tags["oday.model_version.validation_status"] == validation.status.value
+    assert tags["oday.model_version.approved_by"] == "reviewer-a"
+
+
+def test_release_fails_closed_when_required_governance_tags_are_not_projected(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    repository = InMemoryLearningHubRepository()
+    registry = MlflowRegistryAdapter(repository)
+    service = LearningHubService(
+        repository=repository,
+        registry=registry,
+        audit_log=InMemoryAuditLog(),
+    )
+    v1 = _prepare_candidate(service, "1.0.0")
+    v2 = _prepare_candidate(service, "1.1.0")
+    _release_full(service, version=v1.version, rollback_target=v1.version)
+    write_tags = registry._write_model_version_tags
+
+    def drop_approval_id(model_name: str, mlflow_version: str, tags: dict[str, str]) -> None:
+        write_tags(
+            model_name,
+            mlflow_version,
+            {
+                key: value
+                for key, value in tags.items()
+                if key != "oday.model_version.approval_id"
+            },
+        )
+
+    monkeypatch.setattr(registry, "_write_model_version_tags", drop_approval_id)
+    with pytest.raises(LearningHubError, match="compensated"):
+        _release_full(service, version=v2.version, rollback_target=v1.version)
+
+    assert repository.get_alias(v1.model_name, ModelAlias.PRODUCTION).version == v1.version
+    assert registry.get_by_alias(
+        model_name=v1.model_name,
+        alias=ModelAlias.PRODUCTION,
+    ).version == v1.version
+    assert repository.get_model_version(v2.model_name, v2.version).stage is ModelStage.DEV
+
+
+def _release_api_client(repository: InMemoryLearningHubRepository, registry):
+    from fastapi import FastAPI, Request
+    from fastapi.testclient import TestClient
+
+    from apps.api.app.routes.learninghub import create_learninghub_router
+
+    app = FastAPI()
+
+    @app.middleware("http")
+    async def _correlation_id(request: Request, call_next):
+        request.state.correlation_id = "corr-learninghub-api"
+        return await call_next(request)
+
+    app.include_router(
+        create_learninghub_router(
+            repository=repository,
+            registry=registry,
+            audit_log=InMemoryAuditLog(),
+        )
+    )
+    return TestClient(app, raise_server_exceptions=False)
+
+
+def _release_body(**overrides) -> dict[str, object]:
+    body = {
+        "model_name": "forecast_revenue_interval",
+        "version": "1.0.0",
+        "release_type": "FULL",
+        "reason": "promote validated champion",
+        "approval_id": "approval-api-001",
+        "rollback_target": "1.0.0",
+        "monitoring_window": "48h",
+        "success_criteria": ["production alias resolves"],
+        "fail_criteria": ["coverage regression"],
+        "approved_by": "reviewer-a",
+        "expected_release_revision": 0,
+        "idempotency_key": "release-api-001",
+    }
+    body.update(overrides)
+    return {key: value for key, value in body.items() if value is not _OMIT}
+
+
+class _Omit:
+    pass
+
+
+_OMIT = _Omit()
+
+
+def _registration_body(dataset_snapshot_id: str) -> dict[str, object]:
+    return {
+        "version": "2.0.0",
+        "dataset_snapshot_id": dataset_snapshot_id,
+        "metrics": {"w4_smape": 0.11, "p80_coverage": 0.82},
+        "baseline_metrics": {"w4_smape": 0.15, "p80_coverage": 0.78},
+        "thresholds": [
+            {"metric_name": "w4_smape", "max_value": 0.12},
+            {"metric_name": "p80_coverage", "min_value": 0.80},
+        ],
+        "feature_schema_version": "store-machine-timeseries-view-v1",
+        "label_version": "forecast-w4-revenue-v1",
+        "artifact_content": "forgery-regression-model",
+        "rollback_target": "2.0.0",
+        "model_card": {
+            "owner": "ml-owner",
+            "risk_level": "R3",
+            "intended_use": "ForecastOps revenue interval input",
+            "not_intended_use": "Automated business decisions",
+            "feature_set_id": "fs_forecastops_v1",
+            "label_set_id": "ls_forecastops_w4_v1",
+            "training_period": "2026-01-01/2026-05-31",
+            "validation_period": "2026-06-01/2026-06-27",
+            "algorithm": "gradient_boosting",
+            "baseline": "seasonal_naive_v1",
+            "metrics_summary": {"w4_smape": 0.11, "p80_coverage": 0.82},
+            "rollback_conditions": ["p80 coverage regression"],
+            # This is deliberately untrusted and must never become provenance.
+            "approvals": [
+                {
+                    "approver": "forged-reviewer",
+                    "role": "model-review-board",
+                    "decision": "approved",
+                }
+            ],
+        },
+    }
+
+
+def test_release_api_rejects_body_forged_model_card_approval() -> None:
+    from shared.auth import Role
+    from tests.integration._authz import auth_headers
+
+    repository = InMemoryLearningHubRepository()
+    registry = MlflowRegistryAdapter(repository)
+    service = LearningHubService(
+        repository=repository,
+        registry=registry,
+        audit_log=InMemoryAuditLog(),
+    )
+    snapshot = service.register_dataset_snapshot(
+        _rows(), dataset_snapshot_id="forgery-regression-training"
+    )
+    client = _release_api_client(repository, registry)
+    owner_headers = auth_headers(Role.MODEL_OWNER, subject="ml-owner")
+
+    registered = client.post(
+        "/learninghub/models/forecast_revenue_interval/versions",
+        json=_registration_body(snapshot.dataset_snapshot_id),
+        headers=owner_headers,
+    )
+    assert registered.status_code == 201
+    assert registered.json()["model_card"]["approvals"] == []
+
+    forged_release = client.post(
+        "/learninghub/releases",
+        json=_release_body(
+            version="2.0.0",
+            rollback_target="2.0.0",
+            approved_by="forged-reviewer",
+            idempotency_key="forged-release",
+        ),
+        headers=owner_headers,
+    )
+    assert forged_release.status_code == 422
+    assert "does not match a recorded model card approval" in forged_release.json()["detail"]
+
+    approved = client.post(
+        "/learninghub/models/forecast_revenue_interval/versions/2.0.0/approval",
+        json={"decision": "approved"},
+        headers=auth_headers(Role.RELEASE_OWNER, subject="trusted-reviewer"),
+    )
+    assert approved.status_code == 200
+    assert approved.json()["approvals"][0]["approver"] == "trusted-reviewer"
+
+
+def test_release_api_binds_actors_and_matches_the_409_428_contract() -> None:
+    from shared.auth import Role
+    from tests.integration._authz import auth_headers
+
+    repository = InMemoryLearningHubRepository()
+    registry = MlflowRegistryAdapter(repository)
+    preparer = LearningHubService(
+        repository=repository,
+        registry=registry,
+        audit_log=InMemoryAuditLog(),
+    )
+    _prepare_candidate(preparer, "1.0.0")
+    client = _release_api_client(repository, registry)
+    headers = auth_headers(Role.MODEL_OWNER, subject="ml-owner")
+
+    missing_precondition = client.post(
+        "/learninghub/releases",
+        json=_release_body(expected_release_revision=_OMIT, idempotency_key=_OMIT),
+        headers=headers,
+    )
+    assert missing_precondition.status_code == 428
+    detail = missing_precondition.json()["detail"]
+    assert detail["code"] == "RELEASE_PRECONDITION_REQUIRED"
+    assert "expected_release_revision" in detail["message"]
+    assert "idempotency_key" in detail["message"]
+
+    spoofed_actor = client.post(
+        "/learninghub/releases",
+        json=_release_body(requested_by="someone-else"),
+        headers=headers,
+    )
+    assert spoofed_actor.status_code == 403
+    assert spoofed_actor.json()["detail"]["code"] == "UNTRUSTED_RELEASE_ACTOR"
+
+    self_review = client.post(
+        "/learninghub/releases",
+        json=_release_body(approved_by="ml-owner"),
+        headers=headers,
+    )
+    assert self_review.status_code == 403
+    assert self_review.json()["detail"]["code"] == "MODEL_RELEASE_SELF_REVIEW"
+
+    created = client.post("/learninghub/releases", json=_release_body(), headers=headers)
+    assert created.status_code == 201
+    decision = created.json()
+    # The actor is the authenticated principal, never a body-supplied string.
+    assert decision["requested_by"] == "ml-owner"
+    assert decision["approved_by"] == "reviewer-a"
+    assert repository.get_alias("forecast_revenue_interval", ModelAlias.PRODUCTION).version == (
+        "1.0.0"
+    )
+
+    replayed = client.post("/learninghub/releases", json=_release_body(), headers=headers)
+    assert replayed.status_code == 201
+    assert replayed.json()["release_id"] == decision["release_id"]
+
+    reused_key = client.post(
+        "/learninghub/releases",
+        json=_release_body(reason="a different release command"),
+        headers=headers,
+    )
+    assert reused_key.status_code == 409
+    assert "different release command" in reused_key.json()["detail"]["message"]
+
+    stale_revision = client.post(
+        "/learninghub/releases",
+        json=_release_body(idempotency_key="release-api-002"),
+        headers=headers,
+    )
+    assert stale_revision.status_code == 409
+    conflict_detail = stale_revision.json()["detail"]
+    assert conflict_detail["code"] == "RELEASE_CONFLICT"
+    assert "release revision conflict" in conflict_detail["message"]
+
+    unknown_version = client.post(
+        "/learninghub/releases",
+        json=_release_body(
+            version="9.9.9",
+            expected_release_revision=1,
+            idempotency_key="release-api-003",
+        ),
+        headers=headers,
+    )
+    assert unknown_version.status_code == 422
+
+    anonymous = client.post("/learninghub/releases", json=_release_body())
+    assert anonymous.status_code == 403

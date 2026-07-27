@@ -740,29 +740,39 @@ class DurableLearningHubRepository:
     def save_release_saga(self, saga):
         from modules.learninghub.infrastructure.repositories import (
             LearningHubReleaseConflict,
+            assert_release_saga_fence,
         )
 
+        engine = self._store.engine
         pointer_id = f"{saga.model_name}:{saga.idempotency_key}"
-        existing_release_id = self._store.get(
-            self._RELEASE_SAGA_IDEMPOTENCY,
-            pointer_id,
-        )
-        if existing_release_id is not None and existing_release_id != saga.release_id:
-            raise LearningHubReleaseConflict(
-                f"idempotency key already belongs to release {existing_release_id}"
+        with engine.lock:
+            if getattr(engine, "dialect", None) == "postgresql":
+                engine.query_one(
+                    "SELECT doc_id FROM durable_documents "
+                    "WHERE collection = ? AND doc_id = ? FOR UPDATE",
+                    (self._RELEASE_SAGAS, saga.release_id),
+                )
+            existing_release_id = self._store.get(
+                self._RELEASE_SAGA_IDEMPOTENCY,
+                pointer_id,
             )
-        self._store.put(
-            self._RELEASE_SAGAS,
-            saga.release_id,
-            saga,
-            group_key=saga.model_name,
-        )
-        self._store.put(
-            self._RELEASE_SAGA_IDEMPOTENCY,
-            pointer_id,
-            saga.release_id,
-            group_key=saga.model_name,
-        )
+            if existing_release_id is not None and existing_release_id != saga.release_id:
+                raise LearningHubReleaseConflict(
+                    f"idempotency key already belongs to release {existing_release_id}"
+                )
+            assert_release_saga_fence(self.get_release_saga(saga.release_id), saga)
+            self._store.put(
+                self._RELEASE_SAGAS,
+                saga.release_id,
+                saga,
+                group_key=saga.model_name,
+            )
+            self._store.put(
+                self._RELEASE_SAGA_IDEMPOTENCY,
+                pointer_id,
+                saga.release_id,
+                group_key=saga.model_name,
+            )
         return saga
 
     def get_release_saga(self, release_id):

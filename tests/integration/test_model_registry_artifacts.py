@@ -199,6 +199,10 @@ def _release(service: LearningHubService, **kwargs):
         service.repository.get_release_revision(str(kwargs["model_name"])),
     )
     kwargs.setdefault("idempotency_key", str(kwargs["approval_id"]))
+    # The approver is the identity recorded on the model card and is never the
+    # requester (separation of duties, ODP-LEARNINGHUB-PROD-FIX-001).
+    kwargs.setdefault("requested_by", "ml-owner")
+    kwargs.setdefault("approved_by", "reviewer-a")
     return service.request_release(**kwargs)
 
 
@@ -295,6 +299,7 @@ def test_full_lifecycle_promote_rollback_survives_restart(db_path) -> None:
                 "success_criteria": ["alias points at previous model"],
                 "fail_criteria": ["smoke prediction fails"],
                 "requested_by": "on-call",
+                "approved_by": "reviewer-a",
                 "correlation_id": "corr-rollback",
                 "expected_release_revision": repo.get_release_revision(MODEL_NAME),
                 "idempotency_key": "approval-rollback-001",

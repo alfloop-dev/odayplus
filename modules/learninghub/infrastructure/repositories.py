@@ -35,6 +35,15 @@ class LearningHubReleaseConflict(RuntimeError):
     """Raised when a stale release command loses the per-model CAS boundary."""
 
 
+class LearningHubReleaseFenced(LearningHubReleaseConflict):
+    """Raised when a fenced-out worker tries to write a saga it no longer owns.
+
+    Recovery takes a saga over by bumping its fencing token. Any later write
+    from the previous owner carries the stale token and is rejected here, so a
+    resumed or slow worker can never race the recovery owner's compensation.
+    """
+
+
 class ReleaseSagaState(StrEnum):
     INTENT_RECORDED = "INTENT_RECORDED"
     MODEL_STATE_APPLIED = "MODEL_STATE_APPLIED"
@@ -78,13 +87,47 @@ class ModelReleaseSaga:
     created_at: datetime = field(default_factory=lambda: datetime.now(UTC))
     updated_at: datetime = field(default_factory=lambda: datetime.now(UTC))
     scope: str = "global"
+    lease_owner: str | None = None
+    lease_expires_at: datetime | None = None
+    fence_token: int = 0
 
     @property
     def terminal(self) -> bool:
         return self.state in _TERMINAL_RELEASE_SAGA_STATES
 
+    def lease_active(self, now: datetime | None = None) -> bool:
+        """Whether a worker still holds an unexpired execution lease."""
+
+        if self.terminal or self.lease_owner is None or self.lease_expires_at is None:
+            return False
+        return self.lease_expires_at > (now or datetime.now(UTC))
+
+    def lease_held_by(self, owner: str, now: datetime | None = None) -> bool:
+        return self.lease_owner == owner and self.lease_active(now)
+
     def evolve(self, **changes: Any) -> ModelReleaseSaga:
         return replace(self, updated_at=datetime.now(UTC), **changes)
+
+
+def assert_release_saga_fence(
+    stored: ModelReleaseSaga | None,
+    incoming: ModelReleaseSaga,
+) -> None:
+    """Reject a saga write from a worker that was fenced out by recovery.
+
+    Every repository implementation must call this before persisting a saga so
+    that fencing is a storage-level invariant rather than a service-level
+    convention.
+    """
+
+    if stored is None:
+        return
+    if incoming.fence_token < stored.fence_token:
+        raise LearningHubReleaseFenced(
+            f"release {stored.release_id} was fenced at token {stored.fence_token}; "
+            f"write from stale owner {incoming.lease_owner!r} with token "
+            f"{incoming.fence_token} is rejected"
+        )
 
 
 @runtime_checkable
@@ -265,6 +308,7 @@ class InMemoryLearningHubRepository:
             raise LearningHubReleaseConflict(
                 f"idempotency key already belongs to release {existing_release_id}"
             )
+        assert_release_saga_fence(self._release_sagas.get(saga.release_id), saga)
         self._release_sagas[saga.release_id] = saga
         self._release_saga_idempotency[idempotency_scope] = saga.release_id
         return saga
@@ -415,4 +459,13 @@ class InMemoryLearningHubRepository:
         return self._label_sets.get(label_set_id)
 
 
-__all__ = ["InMemoryLearningHubRepository", "LearningHubRepository", "ReleaseDecisionRecord"]
+__all__ = [
+    "InMemoryLearningHubRepository",
+    "LearningHubReleaseConflict",
+    "LearningHubReleaseFenced",
+    "LearningHubRepository",
+    "ModelReleaseSaga",
+    "ReleaseDecisionRecord",
+    "ReleaseSagaState",
+    "assert_release_saga_fence",
+]
