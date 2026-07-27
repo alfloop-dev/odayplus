@@ -163,6 +163,11 @@ class BoundedModelTrainingRelease:
             "required_label": spec.label_column,
             "minimum_rows": spec.minimum_rows,
             "minimum_rows_satisfied": inventory.labeled_row_count >= spec.minimum_rows,
+            "split_minimum_rows": {
+                "train": max(2, int(spec.minimum_rows * 0.60)),
+                "validation": max(1, int(spec.minimum_rows * 0.20)),
+                "test": max(1, spec.minimum_rows - int(spec.minimum_rows * 0.80)),
+            },
             "trainable": inventory.ready and inventory.labeled_row_count >= spec.minimum_rows,
         }
 

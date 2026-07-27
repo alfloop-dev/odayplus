@@ -101,6 +101,7 @@ class FakeQueryClient:
         self.contract_version = contract_version
         self.blocked_reason = blocked_reason
         self.load_calls: list[tuple[str, tuple[Any, ...]]] = []
+        self.stats_sql: str | None = None
 
     def query_one(
         self,
@@ -121,6 +122,7 @@ class FakeQueryClient:
                 "blocked_reason": self.blocked_reason,
                 "installer_sha256": "b" * 64,
             }
+        self.stats_sql = sql
         return {
             "eligible_count": len(self.rows),
             "labeled_count": len(self.rows),
@@ -699,6 +701,19 @@ def test_model_ready_inventory_reports_missing_realized_labels() -> None:
     assert "realized_transaction_price" in inventory.missing_columns
     assert "realized_transaction_at" in inventory.missing_columns
     assert inventory.labeled_row_count == 0
+
+
+def test_global_official_outcome_inventory_does_not_require_tenant_column() -> None:
+    spec = MODEL_SPECS["listing_property_avm"]
+    client = FakeQueryClient(
+        columns=spec.required_columns,
+        contract_version=spec.expected_view_version,
+    )
+
+    PostgresModelReadySource(client).inventory(spec)
+
+    assert client.stats_sql is not None
+    assert "NULL::text AS tenant_id" in client.stats_sql
 
 
 def test_sitescore_model_spec_binds_real_opened_store_outcome_contract() -> None:
