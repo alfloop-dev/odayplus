@@ -14,7 +14,8 @@ test("HeatZone map renders nonblank MapLibre canvas with deck layers and local f
   await expect(page.getByLabel("Map layer controls")).toContainText("H3 HeatZones");
   await expect(page.getByLabel("Map legend")).toContainText("candidate site");
 
-  await expect.poll(async () => page.locator(".maplibregl-canvas").count()).toBeGreaterThan(0);
+  await waitForMapReady(page);
+  await expect(page.locator(".maplibregl-canvas")).toHaveCount(1);
   await expect.poll(async () => canvasHasVisiblePixels(page, ".maplibregl-canvas")).toBe(true);
   await expect(page.getByTestId("heat-zone-deck-overlay")).toBeVisible();
   await expect.poll(async () => page.getByTestId("heat-zone-map-canvas").locator("canvas").count()).toBeGreaterThan(1);
@@ -132,7 +133,14 @@ test("HeatZone deck semantic pixels distinguish layers and selected state", asyn
 });
 
 async function waitForMapProjection(page: import("@playwright/test").Page) {
-  await expect.poll(async () => page.evaluate(() => typeof window.__odpHeatZoneMapProject)).toBe("function");
+  await waitForMapReady(page);
+}
+
+async function waitForMapReady(page: import("@playwright/test").Page) {
+  await page.waitForFunction(() => {
+    const map = document.querySelector('[data-testid="heat-zone-map"]');
+    return map?.getAttribute("data-map-ready") === "true" && typeof window.__odpHeatZoneMapProject === "function";
+  });
 }
 
 async function clickMapCoordinate(page: import("@playwright/test").Page, coordinates: [number, number]) {
