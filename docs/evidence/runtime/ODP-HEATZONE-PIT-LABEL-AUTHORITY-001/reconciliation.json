@@ -1,9 +1,30 @@
 {
   "task_id": "ODP-HEATZONE-PIT-LABEL-AUTHORITY-001",
   "decision": "FAIL_CLOSED",
-  "decision_recorded_at": "2026-07-27T21:30:00Z",
-  "owner": "Codex6",
-  "reviewer": "Codex",
+  "decision_recorded_at": "2026-07-27T22:08:37Z",
+  "owner": "Claude3",
+  "reviewer": "Claude",
+  "correction": {
+    "supersedes_commit": "5cd8d4a2eee21b335bee98b51de299728a313fad",
+    "defect": "decision_recorded_at 2026-07-27T21:30:00Z postdated the evidence commit timestamp 2026-07-27T21:27:30Z; it was not an authoritative recording time",
+    "resolution": "decision re-recorded at actual write time immediately after a live PG16 re-verification; all fail-closed facts reconfirmed unchanged"
+  },
+  "live_verification": {
+    "verified_at": "2026-07-27T22:08:37Z",
+    "database": "oday",
+    "server_version": "PostgreSQL 16.14",
+    "access": "cloud-sql-proxy 127.0.0.1:6433 (secret oday-plus-dev-api-database-url-pg16)",
+    "queries": [
+      "select count(*), count(opened_on) from core.stores",
+      "select count(*), count(distinct h3_res_9) from data_plane.place_geography"
+    ],
+    "results": {
+      "pg16_store_rows": 2442,
+      "approved_opened_on_rows": 0,
+      "canonical_pit_geography_rows": 1909,
+      "distinct_h3_res_9_cells": 1443
+    }
+  },
   "labels_persisted": 0,
   "dataset_created": false,
   "model_alias_activated": false,

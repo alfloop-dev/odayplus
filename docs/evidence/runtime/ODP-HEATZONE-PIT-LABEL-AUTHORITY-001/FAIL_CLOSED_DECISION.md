@@ -1,9 +1,22 @@
 # HeatZone authoritative PIT label decision
 
-Task: `ODP-HEATZONE-PIT-LABEL-AUTHORITY-001`  
-Executor: `Codex6`  
-Decision date: `2026-07-27`  
-Reviewer: `Codex`
+- Task: `ODP-HEATZONE-PIT-LABEL-AUTHORITY-001`
+- Executor: `Claude3` (initial evidence drafted by `Codex6`)
+- Decision date: `2026-07-27`
+- Reviewer: `Claude`
+
+## Correction record
+
+The initial evidence commit `5cd8d4a2` carried a
+`decision_recorded_at` of `2026-07-27T21:30:00Z`, which postdated that
+commit's own timestamp (`2026-07-27T21:27:30Z`) and therefore was not an
+authoritative recording time. This revision re-records the decision at the
+actual write time (`2026-07-27T22:08:37Z`), immediately after a live PG16
+re-verification (`2026-07-27T22:08:37Z`, PostgreSQL 16.14 via
+cloud-sql-proxy `127.0.0.1:6433`) that reconfirmed every fail-closed fact
+unchanged: 2442 `core.stores` rows, 0 with `opened_on`, 1909
+`data_plane.place_geography` rows across 1443 distinct `h3_res_9` cells.
+No fact, gate, or request below changed.
 
 ## Decision
 
