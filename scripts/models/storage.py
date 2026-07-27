@@ -3,7 +3,7 @@ from __future__ import annotations
 import re
 from collections.abc import Mapping
 from dataclasses import dataclass, field
-from datetime import UTC, datetime
+from datetime import datetime
 from typing import Any, Protocol, runtime_checkable
 from urllib.parse import urlparse
 
@@ -78,7 +78,6 @@ class LoadedModelReadyRows:
     relation: str
     bounds: DataBounds
     query_sha256: str
-    as_of_time: datetime = field(default_factory=lambda: datetime.now(UTC))
 
 
 @runtime_checkable
@@ -164,7 +163,10 @@ class PostgresModelReadySource:
                 spec,
                 registry_exists=True,
                 contract_version=contract_version,
-                reason=str(contract.get("blocked_reason") or "MODEL_READY_CONTRACT_BLOCKED"),
+                reason=str(
+                    contract.get("blocked_reason")
+                    or "MODEL_READY_CONTRACT_BLOCKED"
+                ),
             )
         exists = self.client.query_one(
             "SELECT to_regclass(?) AS relation",
@@ -210,23 +212,20 @@ class PostgresModelReadySource:
                 temporal_min=None,
                 temporal_max=None,
             )
-        stats = (
-            self.client.query_one(
-                f"SELECT "
-                f"count(*) FILTER (WHERE is_training_eligible = true) AS eligible_count, "
-                f"count(*) FILTER (WHERE is_training_eligible = true "
-                f"AND {spec.label_column} IS NOT NULL) AS labeled_count, "
-                f"min({spec.temporal_column}) AS temporal_min, "
-                f"max({spec.temporal_column}) AS temporal_max "
-                f"FROM {spec.relation} "
-                f"WHERE view_name = ? AND view_version = ?",
-                (
-                    relation,
-                    spec.expected_view_version,
-                ),
-            )
-            or {}
-        )
+        stats = self.client.query_one(
+            f"SELECT "
+            f"count(*) FILTER (WHERE is_training_eligible = true) AS eligible_count, "
+            f"count(*) FILTER (WHERE is_training_eligible = true "
+            f"AND {spec.label_column} IS NOT NULL) AS labeled_count, "
+            f"min({spec.temporal_column}) AS temporal_min, "
+            f"max({spec.temporal_column}) AS temporal_max "
+            f"FROM {spec.relation} "
+            f"WHERE view_name = ? AND view_version = ?",
+            (
+                relation,
+                spec.expected_view_version,
+            ),
+        ) or {}
         return ModelReadyInventory(
             model_key=spec.key,
             relation=spec.relation,
@@ -451,14 +450,22 @@ class GcsArtifactStore:
         return self.transport.download(bucket=parsed.netloc, key=parsed.path.lstrip("/"))
 
     def list_artifacts(self, model_name: str) -> list[ArtifactRecord]:
-        return [record for record in self._records.values() if record.model_name == model_name]
+        return [
+            record
+            for record in self._records.values()
+            if record.model_name == model_name
+        ]
 
     def list_artifacts_for_version(
         self,
         model_name: str,
         version: str,
     ) -> list[ArtifactRecord]:
-        return [record for record in self.list_artifacts(model_name) if record.version == version]
+        return [
+            record
+            for record in self.list_artifacts(model_name)
+            if record.version == version
+        ]
 
     def verify(self, artifact_id: str) -> bool:
         record = self.get_artifact(artifact_id)

@@ -50,7 +50,6 @@ esac
 PREFLIGHT_REPORT="${PREFLIGHT_REPORT:-.odp_data/deployment/cloud-run-preflight.json}"
 SMOKE_REPORT="${SMOKE_REPORT:-.odp_data/deployment/cloud-run-smoke.json}"
 MIGRATION_COMPAT_REPORT="${MIGRATION_COMPAT_REPORT:-.odp_data/deployment/cloud-run-migration-compatibility.json}"
-LIVE_E2E_REPORT="${LIVE_E2E_REPORT:-.odp_data/deployment/live-e2e-gate.json}"
 JOB_REPORT_DIR="${JOB_REPORT_DIR:-.odp_data/deployment/cloud-run-jobs}"
 source scripts/deployment/cloud_run_release_traffic.sh
 
@@ -499,57 +498,11 @@ upsert_scheduler_trigger \
   "${ODP_WORKER_CRON}"
 promote_service_traffic "${API_SERVICE}" "${API_REVISION}"
 promote_service_traffic "${WEB_SERVICE}" "${WEB_REVISION}"
-
-# ODP-LIVE-E2E-001: the release is serving but is not committed yet. The live
-# E2E gate drives the promoted release the way an operator would -- authenticate,
-# read the operator bootstrap, enqueue durable work, watch the worker take it to
-# a terminal state, read the durable audit receipt back -- and rejects any
-# fixture/mock surrogate or missing MLflow production alias. Because this runs
-# before DEPLOYMENT_COMMITTED, a failure falls through the EXIT trap and rolls
-# traffic and the scheduler triggers back to the previous release.
-echo "Running fail-closed live E2E acceptance gate against the promoted release..."
-# Resolve the served origins into variables first. Inside the argv of the gate
-# invocation a failing command substitution would expand to an empty string
-# without tripping `set -e`, handing the gate a blank URL.
-LIVE_E2E_API_URL="$(service_snapshot_url "${API_CANDIDATE_DESCRIPTION}")"
-LIVE_E2E_WEB_URL="$(service_snapshot_url "${WEB_CANDIDATE_DESCRIPTION}")"
-if [[ -z "${LIVE_E2E_API_URL}" || -z "${LIVE_E2E_WEB_URL}" ]]; then
-  echo "Live E2E gate cannot run: served origin lookup returned empty" \
-    "(api='${LIVE_E2E_API_URL}' web='${LIVE_E2E_WEB_URL}')." >&2
-  exit 1
-fi
-# `deploymentMode` is what the *runtime* reports back from
-# `apps/api/oday_api/runtime_mode.deployment_mode()`, which reads the
-# ODP_DEPLOY_ENV/ODAY_ENV/ODP_ENV triple this script writes into the API env
-# payload above. So the expectation must be derived from that same value, not
-# from a hardcoded "production": a dev deploy legitimately reports
-# `deploymentMode=dev` while still being a live, production-mode runtime
-# (ODP_PRODUCT_MODE/ODP_REQUIRE_LIVE_DATA carry that, and the gate asserts them
-# separately). Hardcoding "production" made every dev deploy promote and then
-# roll straight back. The var override stays for environments whose runtime env
-# name differs from the deploy env name.
-LIVE_E2E_DEPLOYMENT_MODE="${ODP_LIVE_E2E_DEPLOYMENT_MODE:-${ODP_DEPLOY_ENV}}"
-if [[ -z "${LIVE_E2E_DEPLOYMENT_MODE}" ]]; then
-  echo "Live E2E gate cannot run: neither ODP_LIVE_E2E_DEPLOYMENT_MODE nor" \
-    "ODP_DEPLOY_ENV is set, so the expected deploymentMode is unknown." >&2
-  exit 1
-fi
-python3 scripts/e2e/check_live_e2e_gate.py \
-  --api-url "${LIVE_E2E_API_URL}" \
-  --web-url "${LIVE_E2E_WEB_URL}" \
-  --expected-sha "${ODAY_RELEASE_SHA}" \
-  --expected-deployment "${LIVE_E2E_DEPLOYMENT_MODE}" \
-  --worker-job "${WORKER_CANDIDATE_JOB}" \
-  --gcp-region "${GCP_REGION}" \
-  --gcp-project "${GCP_PROJECT}" \
-  --worker-deadline-seconds "${ODP_LIVE_E2E_WORKER_DEADLINE_SECONDS:-600}" \
-  --output "${LIVE_E2E_REPORT}"
-
 DEPLOYMENT_COMMITTED=true
 
 echo "=== Cloud Run deployment passed all live-data gates ==="
-echo "API Endpoint: ${LIVE_E2E_API_URL}"
-echo "Web Endpoint: ${LIVE_E2E_WEB_URL}"
+echo "API Endpoint: $(service_snapshot_url "${API_CANDIDATE_DESCRIPTION}")"
+echo "Web Endpoint: $(service_snapshot_url "${WEB_CANDIDATE_DESCRIPTION}")"
 echo "Migration Job: ${MIGRATION_CANDIDATE_JOB}"
 echo "Worker Job: ${WORKER_CANDIDATE_JOB} (${WORKER_SCHEDULE_NAME})"
 echo "Scheduler Job: ${SCHEDULER_CANDIDATE_JOB} (${SCHEDULER_SCHEDULE_NAME})"

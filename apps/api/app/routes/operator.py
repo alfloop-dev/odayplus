@@ -1086,7 +1086,6 @@ def create_operator_router(
                 ),
                 model_runtime=require_model_runtime(),
                 require_canonical=True,
-                tenant_id=tenant_id,
             ),
             exporter=lambda service: service.export_state(),
             mutating_methods={

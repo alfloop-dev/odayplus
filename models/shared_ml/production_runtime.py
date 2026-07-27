@@ -9,11 +9,10 @@ artifact format, OSS engine, and live feature inputs have all been verified.
 from __future__ import annotations
 
 import hashlib
-import json
 import math
 import os
 from collections.abc import Callable, Mapping, Sequence
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, Protocol, runtime_checkable
@@ -84,7 +83,6 @@ class ModelInferenceResult:
     upper: tuple[float, ...]
     engine: str
     artifact_sha256: str
-    model_metadata: Mapping[str, Any] = field(default_factory=dict)
 
     def to_audit_metadata(self) -> dict[str, Any]:
         return {
@@ -92,7 +90,6 @@ class ModelInferenceResult:
             "model_engine": self.engine,
             "artifact_sha256": self.artifact_sha256,
             "prediction_count": len(self.point),
-            "model_metadata": dict(self.model_metadata),
         }
 
 
@@ -117,7 +114,6 @@ class _ResolvedExecutableModel:
     binding: ModelBinding
     estimator: LoadedOSSEstimator
     artifact_sha256: str
-    model_metadata: Mapping[str, Any]
 
 
 class MlflowProductionModelRuntime:
@@ -148,7 +144,9 @@ class MlflowProductionModelRuntime:
                 ) from exc
         self.client = client
         self.artifact_loader = artifact_loader or _download_artifact_bytes
-        self.model_names = dict(production_model_names() if model_names is None else model_names)
+        self.model_names = dict(
+            production_model_names() if model_names is None else model_names
+        )
         self._cache: dict[tuple[str, str, str], _ResolvedExecutableModel] = {}
 
     @classmethod
@@ -191,7 +189,6 @@ class MlflowProductionModelRuntime:
             upper=upper,
             engine=executable.estimator.spec.engine,
             artifact_sha256=executable.artifact_sha256,
-            model_metadata=executable.model_metadata,
         )
 
     def resolve(
@@ -227,15 +224,13 @@ class MlflowProductionModelRuntime:
         approved_at_raw = _required_tag(tags, "approved_at", model_name=model_name)
         approved_at = _parse_datetime(approved_at_raw, field_name="approved_at")
         domain_version = _required_tag(tags, "domain_version", model_name=model_name)
-        dataset_snapshot_id = _required_tag(tags, "dataset_snapshot_id", model_name=model_name)
+        dataset_snapshot_id = _required_tag(
+            tags, "dataset_snapshot_id", model_name=model_name
+        )
         feature_schema_version = _required_tag(
             tags, "feature_schema_version", model_name=model_name
         )
         label_version = _required_tag(tags, "label_version", model_name=model_name)
-        model_metadata = _parse_mapping_tag(
-            tags.get(_tag("monitoring_config")),
-            field_name="monitoring_config",
-        )
         artifact_uri = _required_tag(tags, "artifact_uri", model_name=model_name)
         artifact_sha256 = _normalize_sha256(
             _required_tag(tags, "artifact_sha256", model_name=model_name)
@@ -311,7 +306,6 @@ class MlflowProductionModelRuntime:
             binding=binding,
             estimator=estimator,
             artifact_sha256=artifact_sha256,
-            model_metadata=model_metadata,
         )
         self._cache[cache_key] = resolved
         return resolved
@@ -375,7 +369,9 @@ def _validate_live_rows(
             )
         snapshot_time = row.get("feature_snapshot_time")
         if snapshot_time in {None, ""}:
-            raise ProductionModelInputError(f"{service}: row {index} has no feature snapshot time")
+            raise ProductionModelInputError(
+                f"{service}: row {index} has no feature snapshot time"
+            )
         _parse_datetime(str(snapshot_time), field_name="feature_snapshot_time")
         row_schema = row.get("view_version") or row.get("feature_schema_version")
         if row_schema != expected_feature_schema_version:
@@ -431,30 +427,14 @@ def _parse_metrics(value: str | None) -> Mapping[str, float]:
     if not value:
         return {}
     try:
+        import json
+
         decoded = json.loads(value)
         return {str(key): float(metric) for key, metric in decoded.items()}
     except (TypeError, ValueError) as exc:
-        raise ProductionModelLineageError("registered model metrics lineage is invalid") from exc
-
-
-def _parse_mapping_tag(
-    value: str | None,
-    *,
-    field_name: str,
-) -> Mapping[str, Any]:
-    if not value:
-        return {}
-    try:
-        decoded = json.loads(value)
-    except (TypeError, ValueError) as exc:
         raise ProductionModelLineageError(
-            f"registered model {field_name} lineage is invalid"
+            "registered model metrics lineage is invalid"
         ) from exc
-    if not isinstance(decoded, dict):
-        raise ProductionModelLineageError(
-            f"registered model {field_name} lineage must be an object"
-        )
-    return decoded
 
 
 def _normalize_sha256(value: str) -> str:
@@ -490,13 +470,16 @@ def _download_artifact_bytes(uri: str, tracking_uri: str) -> bytes:
 
     from mlflow.artifacts import download_artifacts
 
-    downloaded = Path(download_artifacts(artifact_uri=uri, tracking_uri=tracking_uri))
+    downloaded = Path(
+        download_artifacts(artifact_uri=uri, tracking_uri=tracking_uri)
+    )
     if downloaded.is_file():
         return downloaded.read_bytes()
     candidates = sorted(
         path
         for path in downloaded.rglob("*")
-        if path.is_file() and path.suffix.lower() in {".zip", ".model", ".artifact", ".bin"}
+        if path.is_file()
+        and path.suffix.lower() in {".zip", ".model", ".artifact", ".bin"}
     )
     if len(candidates) != 1:
         raise ProductionModelArtifactError(

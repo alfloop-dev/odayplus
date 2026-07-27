@@ -57,12 +57,6 @@ class NetworkScoringGateError(RuntimeError):
         self.missing = missing or []
 
 
-# Codes whose cause is a permanent property of the candidate's feature row.
-# Retrying the same candidate reproduces the same failure, so the operator
-# client must be told to fix the data instead of re-issuing the request.
-NON_RETRYABLE_SCORING_CODES = frozenset({"SITESCORE_FEATURE_CONTRACT_INCOMPLETE"})
-
-
 class NetworkScoringRuntimeUnavailable(RuntimeError):
     """Raised when canonical SiteScore execution cannot run in production."""
 
@@ -70,15 +64,11 @@ class NetworkScoringRuntimeUnavailable(RuntimeError):
         super().__init__(message)
         self.code = code
 
-    @property
-    def retryable(self) -> bool:
-        return self.code not in NON_RETRYABLE_SCORING_CODES
-
     def to_detail(self) -> dict[str, Any]:
         return {
             "code": self.code,
             "message": str(self),
-            "retryable": self.retryable,
+            "retryable": True,
         }
 
 
@@ -310,18 +300,12 @@ class NetworkScoringService:
         sitescore_repository: Any | None = None,
         model_runtime: Any | None = None,
         require_canonical: bool = False,
-        tenant_id: str = "",
     ) -> None:
         self._seed_fixtures = seed_fixtures
         self._listing_repository = listing_repository
         self._sitescore_repository = sitescore_repository
         self._model_runtime = model_runtime
         self._require_canonical = require_canonical
-        self._tenant_id = (
-            tenant_id
-            or getattr(listing_repository, "tenant_id", "")
-            or getattr(sitescore_repository, "tenant_id", "")
-        )
         if initial_state is not None:
             self._candidates = _copy(initial_state.get("candidates", []))
             self._scores = _copy(initial_state.get("scores", {}))
@@ -569,58 +553,26 @@ class NetworkScoringService:
         ]
 
     def _candidate_from_draft(self, draft: Any) -> dict[str, Any]:
-        listing = draft.listing if hasattr(draft, "listing") else draft["listing"]
-        address = draft.address if hasattr(draft, "address") else draft["address"]
-        candidate = draft.candidate_site if hasattr(draft, "candidate_site") else draft["candidate_site"]
+        listing = draft.listing
+        address = draft.address
+        candidate = draft.candidate_site
         normalized_address = address.normalized_address or address.raw_address
-
-        def field(name: str, default: Any = None) -> Any:
-            """Read a draft field from either a dataclass or a mapping.
-
-            ``getattr`` alone cannot express this: an attribute that is present
-            but ``None`` must not fall through to the mapping lookup, otherwise
-            an explicit "no value recorded" turns into a different default.
-            """
-
-            if isinstance(draft, dict):
-                value = draft.get(name)
-            else:
-                value = getattr(draft, name, None)
-            return default if value is None else value
-
-        feasibility_flags = tuple(field("feasibility_flags", ()) or ())
-        hard_rule_passed = not feasibility_flags
-        heat_zone_id = field("heat_zone_id", "")
-
-        feature_snapshot_time = field("feature_snapshot_time")
-        if feature_snapshot_time and feature_snapshot_time.tzinfo is None:
+        hard_rule_passed = not tuple(draft.feasibility_flags or ())
+        feature_snapshot_time = candidate.created_at
+        if feature_snapshot_time.tzinfo is None:
             feature_snapshot_time = feature_snapshot_time.replace(tzinfo=UTC)
-
-        prior_rev = field("prior_90d_cell_net_revenue")
-        prior_tx = field("prior_90d_cell_transaction_count")
-        prior_st = field("prior_90d_cell_store_count")
-
-        tenant_id = (
-            self._tenant_id
-            or field("tenant_id", "")
-            or getattr(candidate, "tenant_id", "")
-            or ""
-        )
-
-        h3_index = address.h3_res_9 or heat_zone_id or ""
-
         return {
             "id": candidate.candidate_site_id,
             "listingId": listing.listing_id,
-            "heatZoneId": heat_zone_id,
+            "heatZoneId": draft.heat_zone_id,
             "title": normalized_address or candidate.candidate_site_id,
-            "zoneLabel": address.district or heat_zone_id,
+            "zoneLabel": address.district or draft.heat_zone_id,
             "address": normalized_address,
             "district": address.district,
             "modelVersion": "",
             "datasetSnapshotId": listing.snapshot_id,
             "generatedAt": candidate.created_at.isoformat(),
-            "missingEvidence": list(feasibility_flags),
+            "missingEvidence": list(draft.feasibility_flags or ()),
             "data": {
                 "address": {"present": bool(normalized_address)},
                 "geocode": {
@@ -633,23 +585,14 @@ class NetworkScoringService:
                 "hardRule": {
                     "present": True,
                     "pass": hard_rule_passed,
-                    "note": ", ".join(feasibility_flags),
+                    "note": ", ".join(draft.feasibility_flags or ()),
                 },
             },
             "canonicalFeature": SiteScoreFeatureInput(
                 candidate_site_id=candidate.candidate_site_id,
-                tenant_id=tenant_id,
                 target_format_code=candidate.target_format_code or "ODAY_G2",
                 feature_snapshot_time=feature_snapshot_time,
-                view_version="candidate-site-view-v2",
-                heat_zone_id=heat_zone_id,
-                h3_index=h3_index,
-                latitude=address.latitude,
-                longitude=address.longitude,
-                geocode_confidence=address.geocode_confidence,
-                prior_90d_cell_net_revenue=prior_rev,
-                prior_90d_cell_transaction_count=prior_tx,
-                prior_90d_cell_store_count=prior_st,
+                heat_zone_id=draft.heat_zone_id,
                 monthly_rent=listing.rent_amount,
                 area_ping=listing.area_ping,
                 frontage_m=listing.frontage_m,
@@ -679,13 +622,6 @@ class NetworkScoringService:
             raise NetworkScoringRuntimeUnavailable(
                 str(exc),
                 code=getattr(exc, "code", "SITESCORE_RUNTIME_UNAVAILABLE"),
-            ) from exc
-        except ValueError as exc:
-            # Incomplete / stale point-in-time feature contract: fail closed,
-            # but as a permanent data gap rather than a transient outage.
-            raise NetworkScoringRuntimeUnavailable(
-                str(exc),
-                code=getattr(exc, "code", "SITESCORE_FEATURE_CONTRACT_INCOMPLETE"),
             ) from exc
         report = execution.reports[0]
         return self._scorecard_from_report(report)

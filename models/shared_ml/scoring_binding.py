@@ -97,18 +97,18 @@ SCORING_MODEL_SPECS: tuple[ScoringModelSpec, ...] = (
         service="heatzone",
         model_name="heatzone",
         version="baseline-v1",
-        feature_schema_version="heatzone-training-view-v2",
+        feature_schema_version="geo-grid-view-v1",
         dataset_snapshot_id="heatzone-baseline-snapshot-v1",
-        label_version="heatzone-realized-28d-cell-net-revenue-v1",
+        label_version="heatzone-unmet-demand-label-v1",
         metrics={"holdout_ndcg_at_10": 0.71, "coverage": 0.94},
     ),
     ScoringModelSpec(
         service="sitescore",
         model_name="sitescore",
         version="baseline-v1",
-        feature_schema_version="candidate-site-view-v2",
+        feature_schema_version="candidate-site-view-v1",
         dataset_snapshot_id="sitescore-baseline-snapshot-v1",
-        label_version="sitescore-realized-90d-net-revenue-v1",
+        label_version="sitescore-mature-revenue-label-v1",
         metrics={"holdout_mape": 0.18, "pinball_p50": 0.12},
     ),
     ScoringModelSpec(
@@ -171,7 +171,9 @@ class ModelBinding:
             "source_run_id": self.source_run_id,
             "mlflow_run_id": self.mlflow_run_id,
             "model_approved_by": self.approved_by,
-            "model_approved_at": (self.approved_at.isoformat() if self.approved_at else None),
+            "model_approved_at": (
+                self.approved_at.isoformat() if self.approved_at else None
+            ),
             "model_engine": self.engine,
             "binding_resolved_at": self.resolved_at.isoformat(),
         }
@@ -238,7 +240,9 @@ def seed_scoring_models(
                     git_sha=git_sha,
                 )
             )
-            existing = repository.set_alias(spec.model_name, ModelAlias.PRODUCTION, spec.version)
+            existing = repository.set_alias(
+                spec.model_name, ModelAlias.PRODUCTION, spec.version
+            )
         bindings[spec.service] = ModelBinding.from_model_version(
             spec.service, existing, resolved_at=resolved_at
         )

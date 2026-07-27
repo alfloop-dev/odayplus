@@ -11,7 +11,6 @@ from modules.sitescore.domain.scoring import (
     score_site,
     score_sites,
     score_sites_from_model_predictions,
-    to_sitescore_model_row,
 )
 
 __all__ = [
@@ -25,5 +24,4 @@ __all__ = [
     "score_site",
     "score_sites",
     "score_sites_from_model_predictions",
-    "to_sitescore_model_row",
 ]

@@ -6,15 +6,10 @@ from datetime import UTC, datetime
 from enum import StrEnum
 from typing import Any
 
-from models.shared_ml.output_contracts import (
-    HEATZONE_OUTPUT_TRANSFORM,
-    heatzone_revenue_to_priority,
-    require_output_contract,
-)
 from modules.external_data.geo import GeoFeatureSnapshot
 
 HEATZONE_MODEL_VERSION = "heatzone-baseline-v1"
-HEATZONE_FEATURE_VERSION = "heatzone-training-view-v2"
+HEATZONE_FEATURE_VERSION = "geo-grid-view-v1"
 
 
 class HeatZoneState(StrEnum):
@@ -40,7 +35,6 @@ DEFAULT_SCORING_WEIGHTS = HeatZoneScoringWeights()
 @dataclass(frozen=True)
 class HeatZoneFeatureInput:
     h3_index: str
-    tenant_id: str = ""
     h3_resolution: int = 9
     feature_snapshot_time: datetime = field(default_factory=lambda: datetime.now(UTC))
     view_version: str = HEATZONE_FEATURE_VERSION
@@ -56,14 +50,6 @@ class HeatZoneFeatureInput:
     data_quality_score: float = 1.0
     admin_city: str = ""
     admin_district: str = ""
-    cell_latitude: float = 0.0
-    cell_longitude: float = 0.0
-    prior_opened_store_count: int = 0
-    prior_28d_cell_net_revenue: float = 0.0
-    prior_90d_cell_net_revenue: float = 0.0
-    prior_28d_transaction_count: int = 0
-    prior_90d_transaction_count: int = 0
-    prior_90d_transaction_days: int = 0
 
     @classmethod
     def from_geo_feature_snapshot(
@@ -88,7 +74,6 @@ class HeatZoneFeatureInput:
             average_confidence=_value_or_default(snapshot.average_confidence, 1.0),
             source_snapshot_ids=snapshot.source_snapshot_ids,
             existing_store_count=existing_store_count,
-            prior_opened_store_count=existing_store_count,
             realized_revenue_ratio=realized_revenue_ratio,
             admin_city=admin_city,
             admin_district=admin_district,
@@ -98,7 +83,6 @@ class HeatZoneFeatureInput:
     def from_mapping(cls, data: Mapping[str, Any]) -> HeatZoneFeatureInput:
         return cls(
             h3_index=str(data["h3_index"]),
-            tenant_id=str(data.get("tenant_id") or ""),
             h3_resolution=int(data.get("h3_resolution", 9)),
             feature_snapshot_time=_parse_datetime(
                 data.get("feature_snapshot_time") or datetime.now(UTC)
@@ -131,16 +115,6 @@ class HeatZoneFeatureInput:
             data_quality_score=_bounded(_data_quality_score(data)),
             admin_city=str(data.get("admin_city") or ""),
             admin_district=str(data.get("admin_district") or ""),
-            cell_latitude=float(data.get("cell_latitude") or 0.0),
-            cell_longitude=float(data.get("cell_longitude") or 0.0),
-            prior_opened_store_count=int(
-                data.get("prior_opened_store_count") or data.get("existing_store_count") or 0
-            ),
-            prior_28d_cell_net_revenue=float(data.get("prior_28d_cell_net_revenue") or 0.0),
-            prior_90d_cell_net_revenue=float(data.get("prior_90d_cell_net_revenue") or 0.0),
-            prior_28d_transaction_count=int(data.get("prior_28d_transaction_count") or 0),
-            prior_90d_transaction_count=int(data.get("prior_90d_transaction_count") or 0),
-            prior_90d_transaction_days=int(data.get("prior_90d_transaction_days") or 0),
         )
 
 
@@ -245,7 +219,9 @@ def score_heatzones(
     ]
     ranked = sorted(scored, key=lambda item: (-item.score, item.h3_index))
     return [
-        HeatZoneScoreResult(**{**result.__dict__, "priority_rank": index + 1})
+        HeatZoneScoreResult(
+            **{**result.__dict__, "priority_rank": index + 1}
+        )
         for index, result in enumerate(ranked)
     ]
 
@@ -255,7 +231,6 @@ def score_heatzones_from_model_predictions(
     predictions: Iterable[float],
     *,
     model_version: str,
-    output_transform: Mapping[str, Any] | None,
     prediction_origin_time: datetime | None = None,
     scored_at: datetime | None = None,
 ) -> list[HeatZoneScoreResult]:
@@ -264,17 +239,9 @@ def score_heatzones_from_model_predictions(
     origin = prediction_origin_time or datetime.now(UTC)
     scored_time = scored_at or datetime.now(UTC)
     inputs = [_coerce_feature(feature) for feature in features]
-    model_predictions = [float(value) for value in predictions]
-    if len(inputs) != len(model_predictions):
+    model_scores = [float(value) for value in predictions]
+    if len(inputs) != len(model_scores):
         raise ValueError("HeatZone feature and model prediction counts differ")
-    transform = require_output_contract(
-        output_transform,
-        HEATZONE_OUTPUT_TRANSFORM,
-    )
-    model_scores = heatzone_revenue_to_priority(
-        model_predictions,
-        contract=transform,
-    )
     scored = [
         _score_feature(
             feature,
@@ -306,14 +273,10 @@ def _score_feature(
 ) -> HeatZoneScoreResult:
     poi_demand = _bounded(feature.poi_count / 20.0)
     listing_availability = _bounded(feature.active_listing_count / 8.0)
-    competitor_pressure = _bounded(
-        (feature.competitor_count / 8.0) + (feature.competitor_capacity / 40.0)
-    )
+    competitor_pressure = _bounded((feature.competitor_count / 8.0) + (feature.competitor_capacity / 40.0))
     competition_gap = 1.0 - competitor_pressure
     cannibalization_risk = _bounded(feature.existing_store_count / 3.0)
-    unmet_demand = _bounded(
-        (poi_demand * 0.7 + competition_gap * 0.3) * (1.0 - cannibalization_risk * 0.45)
-    )
+    unmet_demand = _bounded((poi_demand * 0.7 + competition_gap * 0.3) * (1.0 - cannibalization_risk * 0.45))
     format_fit = _bounded(poi_demand * 0.6 + listing_availability * 0.4)
     rent_feasibility = _rent_feasibility(feature.median_listing_rent, listing_availability)
     raw_score = (
@@ -337,7 +300,9 @@ def _score_feature(
         h3_index=feature.h3_index,
         h3_resolution=feature.h3_resolution,
         score=round(
-            max(0.0, min(100.0, model_score)) if model_score is not None else raw_score * 100.0,
+            max(0.0, min(100.0, model_score))
+            if model_score is not None
+            else raw_score * 100.0,
             2,
         ),
         priority_rank=priority_rank,
@@ -369,59 +334,6 @@ def _coerce_feature(
     if isinstance(feature, GeoFeatureSnapshot):
         return HeatZoneFeatureInput.from_geo_feature_snapshot(feature)
     return HeatZoneFeatureInput.from_mapping(feature)
-
-
-def to_heatzone_model_row(
-    feature: HeatZoneFeatureInput | GeoFeatureSnapshot | Mapping[str, Any],
-) -> Mapping[str, Any]:
-    if isinstance(feature, Mapping):
-        missing = tuple(
-            name
-            for name in (
-                "tenant_id",
-                "h3_index",
-                "h3_resolution",
-                "cell_latitude",
-                "cell_longitude",
-                "average_geocode_confidence",
-                "prior_opened_store_count",
-                "prior_28d_cell_net_revenue",
-                "prior_90d_cell_net_revenue",
-                "prior_28d_transaction_count",
-                "prior_90d_transaction_count",
-                "prior_90d_transaction_days",
-            )
-            if name not in feature or feature[name] is None
-        )
-        if missing:
-            raise ValueError("HeatZone v2 model input is missing features: " + ", ".join(missing))
-    value = _coerce_feature(feature)
-    if (
-        value.view_version != HEATZONE_FEATURE_VERSION
-        or not value.tenant_id
-        or not value.h3_index
-        or not value.source_snapshot_ids
-    ):
-        raise ValueError(
-            f"HeatZone production model input is not a complete {HEATZONE_FEATURE_VERSION} row"
-        )
-    return {
-        "tenant_id": value.tenant_id,
-        "h3_index": value.h3_index,
-        "h3_resolution": value.h3_resolution,
-        "cell_latitude": value.cell_latitude,
-        "cell_longitude": value.cell_longitude,
-        "average_geocode_confidence": value.average_confidence,
-        "prior_opened_store_count": value.prior_opened_store_count,
-        "prior_28d_cell_net_revenue": value.prior_28d_cell_net_revenue,
-        "prior_90d_cell_net_revenue": value.prior_90d_cell_net_revenue,
-        "prior_28d_transaction_count": value.prior_28d_transaction_count,
-        "prior_90d_transaction_count": value.prior_90d_transaction_count,
-        "prior_90d_transaction_days": value.prior_90d_transaction_days,
-        "feature_snapshot_time": value.feature_snapshot_time,
-        "view_version": HEATZONE_FEATURE_VERSION,
-        "source_snapshot_ids": value.source_snapshot_ids,
-    }
 
 
 def _rent_feasibility(median_listing_rent: float, listing_availability: float) -> float:
@@ -540,5 +452,4 @@ __all__ = [
     "HeatZoneState",
     "score_heatzones",
     "score_heatzones_from_model_predictions",
-    "to_heatzone_model_row",
 ]

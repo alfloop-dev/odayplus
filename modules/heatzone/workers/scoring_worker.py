@@ -19,7 +19,6 @@ from modules.heatzone.domain import (
     HeatZoneScoreResult,
     score_heatzones,
     score_heatzones_from_model_predictions,
-    to_heatzone_model_row,
 )
 
 
@@ -74,7 +73,7 @@ class HeatZoneScoringWorker:
             )
             inference = runtime.infer(
                 service="heatzone",
-                rows=[to_heatzone_model_row(feature) for feature in feature_rows],
+                rows=[_feature_mapping(feature) for feature in feature_rows],
                 expected_feature_schema_version=HEATZONE_FEATURE_VERSION,
             )
             scores = tuple(
@@ -82,7 +81,6 @@ class HeatZoneScoringWorker:
                     feature_rows,
                     inference.point,
                     model_version=inference.binding.model_id,
-                    output_transform=inference.model_metadata.get("output_transform"),
                     prediction_origin_time=_parse_datetime(prediction_origin_time)
                     if prediction_origin_time is not None
                     else None,
@@ -98,7 +96,9 @@ class HeatZoneScoringWorker:
                 )
             )
         warnings = tuple(
-            f"{score.h3_index}: {','.join(score.warnings)}" for score in scores if score.warnings
+            f"{score.h3_index}: {','.join(score.warnings)}"
+            for score in scores
+            if score.warnings
         )
         return HeatZoneBatchScoreResult(
             job_id=effective_job_id,

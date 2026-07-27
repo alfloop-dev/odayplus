@@ -163,7 +163,8 @@ class BoundedModelTrainingRelease:
             "required_label": spec.label_column,
             "minimum_rows": spec.minimum_rows,
             "minimum_rows_satisfied": inventory.labeled_row_count >= spec.minimum_rows,
-            "trainable": inventory.ready and inventory.labeled_row_count >= spec.minimum_rows,
+            "trainable": inventory.ready
+            and inventory.labeled_row_count >= spec.minimum_rows,
         }
 
     def train(
@@ -179,12 +180,14 @@ class BoundedModelTrainingRelease:
         prepared = prepare_model_rows(spec, loaded)
         if len(prepared) < spec.minimum_rows:
             raise ModelReadyDataError(
-                f"{spec.key}: {len(prepared)} clean rows are below minimum {spec.minimum_rows}"
+                f"{spec.key}: {len(prepared)} clean rows are below minimum "
+                f"{spec.minimum_rows}"
             )
         temporal = self._temporal_validation(spec, prepared)
         if not temporal.passed:
             raise ModelReadyDataError(
-                f"{spec.key}: temporal validation failed: " + "; ".join(temporal.failed_rules)
+                f"{spec.key}: temporal validation failed: "
+                + "; ".join(temporal.failed_rules)
             )
 
         snapshot_rows = [row.mapping for row in prepared]
@@ -285,12 +288,16 @@ class BoundedModelTrainingRelease:
             raise ModelTrainingConfigurationError(
                 f"registered candidate {spec.model_name}:{version} is unavailable"
             )
-        validation = self.service.repository.get_validation_run(model_card.validation_run_id)
+        validation = self.service.repository.get_validation_run(
+            model_card.validation_run_id
+        )
         if validation is None or not validation.passed:
             raise ModelTrainingConfigurationError(
                 "promotion requires a persisted passing validation run"
             )
-        model_artifact_sha256 = str(model_version.monitoring_config.get("artifact_sha256") or "")
+        model_artifact_sha256 = str(
+            model_version.monitoring_config.get("artifact_sha256") or ""
+        )
         if not model_artifact_sha256 or not self.artifact_store.verify_uri(
             model_version.artifact_uri,
             model_artifact_sha256,
@@ -298,7 +305,9 @@ class BoundedModelTrainingRelease:
             raise ModelTrainingConfigurationError(
                 "promotion requires a verified immutable GCS model artifact"
             )
-        approved_at = datetime.fromisoformat(approval["approved_at"].replace("Z", "+00:00"))
+        approved_at = datetime.fromisoformat(
+            approval["approved_at"].replace("Z", "+00:00")
+        )
         approval_entry = ModelCardApproval(
             approver=approval["approver"],
             role=approval["role"],
@@ -405,8 +414,12 @@ class BoundedModelTrainingRelease:
             git_sha=self.git_sha,
         )
         if not result.accepted:
-            failures = "; ".join(failure.message for failure in result.validation_run.failed_rules)
-            raise ModelReadyDataError(f"{spec.key}: full-dataset validation failed: {failures}")
+            failures = "; ".join(
+                failure.message for failure in result.validation_run.failed_rules
+            )
+            raise ModelReadyDataError(
+                f"{spec.key}: full-dataset validation failed: {failures}"
+            )
         metrics = {
             **dict(result.model_version.metrics),
             **{f"temporal_{name}": value for name, value in temporal.metrics.items()},
@@ -420,7 +433,6 @@ class BoundedModelTrainingRelease:
                 "temporal_validation_sha256": temporal_artifact_sha256,
                 "temporal_validation_required": True,
                 "segment_validation_required": True,
-                "output_transform": dict(spec.output_transform),
             },
         )
         card = _model_card(
@@ -430,7 +442,9 @@ class BoundedModelTrainingRelease:
             validation_run_id=result.validation_run.validation_run_id,
             temporal=temporal,
             metrics=metrics,
-            bounds=(self.service.repository.get_dataset_snapshot(snapshot_id).time_range),
+            bounds=(
+                self.service.repository.get_dataset_snapshot(snapshot_id).time_range
+            ),
         )
         registered = self.service.register_model_version(
             model_version=model_version,
@@ -465,12 +479,15 @@ class BoundedModelTrainingRelease:
                 duration_days=float(row.mapping["labels"][spec.label_name]),
                 sold=bool(row.mapping["labels"]["event_observed"]),
                 features={
-                    name: float(row.mapping["features"][name]) for name in spec.feature_columns
+                    name: float(row.mapping["features"][name])
+                    for name in spec.feature_columns
                 },
             )
             for row in prepared
         ]
-        adapter = LifelinesLiquiditySurvivalAdapter(model_version=version).fit(survival_rows)
+        adapter = LifelinesLiquiditySurvivalAdapter(model_version=version).fit(
+            survival_rows
+        )
         model_record = self.artifact_store.put_artifact(
             model_name=spec.model_name,
             version=version,
@@ -502,7 +519,9 @@ class BoundedModelTrainingRelease:
             calibration_summary={"temporal_validation": True},
         )
         if not validation.passed:
-            raise ModelReadyDataError(f"{spec.key}: survival validation did not pass release gates")
+            raise ModelReadyDataError(
+                f"{spec.key}: survival validation did not pass release gates"
+            )
         validation_record = self.artifact_store.put_artifact(
             model_name=spec.model_name,
             version=version,
@@ -530,7 +549,6 @@ class BoundedModelTrainingRelease:
                 "validation_report_sha256": validation_record.content_digest,
                 "temporal_validation_required": True,
                 "segment_validation_required": True,
-                "output_transform": dict(spec.output_transform),
             },
         )
         card = _model_card(
@@ -540,7 +558,9 @@ class BoundedModelTrainingRelease:
             validation_run_id=validation.validation_run_id,
             temporal=temporal,
             metrics=metrics,
-            bounds=(self.service.repository.get_dataset_snapshot(snapshot_id).time_range),
+            bounds=(
+                self.service.repository.get_dataset_snapshot(snapshot_id).time_range
+            ),
         )
         registered = self.service.register_model_version(
             model_version=model_version,
@@ -638,7 +658,10 @@ def prepare_model_rows(
             ) from exc
         if not math.isfinite(label):
             raise ModelReadyDataError(f"{spec.key}: label values must be finite")
-        feature_values = {name: _feature_value(raw.get(name)) for name in spec.feature_columns}
+        feature_values = {
+            name: _feature_value(raw.get(name))
+            for name in spec.feature_columns
+        }
         if any(value is None for value in feature_values.values()):
             continue
         segment_value = str(raw.get(spec.segment_column) or "").strip()
@@ -655,8 +678,10 @@ def prepare_model_rows(
             raise ModelReadyDataError(
                 f"{spec.key}: feature_snapshot_time must precede prediction_origin_time"
             )
-        if label_maturity_time > loaded.as_of_time:
-            raise ModelReadyDataError(f"{spec.key}: label is not mature at training as_of_time")
+        if label_maturity_time > feature_snapshot_time:
+            raise ModelReadyDataError(
+                f"{spec.key}: label is not mature at feature_snapshot_time"
+            )
         labels: dict[str, Any] = {spec.label_name: label}
         if spec.event_column:
             if spec.event_column not in raw or raw[spec.event_column] is None:
@@ -680,7 +705,9 @@ def prepare_model_rows(
             )
         )
         if len(source_snapshot_ids) == 1:
-            raise ModelReadyDataError(f"{spec.key}: canonical source snapshot lineage is required")
+            raise ModelReadyDataError(
+                f"{spec.key}: canonical source snapshot lineage is required"
+            )
         mapping = {
             "view_name": str(raw["view_name"]),
             "view_version": str(raw["view_version"]),
@@ -696,7 +723,6 @@ def prepare_model_rows(
             "features": feature_values,
             "labels": labels,
             "label_maturity_time": label_maturity_time,
-            "training_as_of_time": loaded.as_of_time,
         }
         prepared.append(
             PreparedRow(
@@ -792,7 +818,10 @@ def _validate_survival_temporally(
         LiquidityTrainingRecord(
             duration_days=float(row.mapping["labels"][spec.label_name]),
             sold=bool(row.mapping["labels"]["event_observed"]),
-            features={name: float(row.mapping["features"][name]) for name in spec.feature_columns},
+            features={
+                name: float(row.mapping["features"][name])
+                for name in spec.feature_columns
+            },
         )
         for row in training_rows
     ]
@@ -804,7 +833,10 @@ def _validate_survival_temporally(
     predictions = np.asarray(
         [
             adapter.predict(
-                {name: float(row.mapping["features"][name]) for name in spec.feature_columns}
+                {
+                    name: float(row.mapping["features"][name])
+                    for name in spec.feature_columns
+                }
             ).expected_days
             for row in holdout_rows
         ],
@@ -817,7 +849,12 @@ def _validate_survival_temporally(
     zeros = np.zeros_like(labels)
     metrics = _regression_metrics(labels, predictions, zeros, zeros)
     metrics["observed_event_rate"] = float(
-        np.mean([bool(row.mapping["labels"]["event_observed"]) for row in holdout_rows])
+        np.mean(
+            [
+                bool(row.mapping["labels"]["event_observed"])
+                for row in holdout_rows
+            ]
+        )
     )
     baseline_metrics = _regression_metrics(labels, baseline, zeros, zeros)
     segments, segment_failures = _segment_validation(
@@ -868,9 +905,7 @@ def _temporal_split(
         raise ModelReadyDataError(
             "temporal validation requires at least two distinct observation times"
         )
-    split_index = max(
-        1, min(len(unique_times) - 1, int(len(unique_times) * (1 - holdout_fraction)))
-    )
+    split_index = max(1, min(len(unique_times) - 1, int(len(unique_times) * (1 - holdout_fraction))))
     cutoff = unique_times[split_index]
     training = tuple(row for row in rows if row.temporal_value < cutoff)
     holdout = tuple(row for row in rows if row.temporal_value >= cutoff)
@@ -933,7 +968,8 @@ def _regression_metrics(
     if not (labels.shape == predictions.shape == lower.shape == upper.shape):
         raise ModelReadyDataError("validation arrays have inconsistent shapes")
     if labels.size == 0 or not all(
-        np.all(np.isfinite(values)) for values in (labels, predictions, lower, upper)
+        np.all(np.isfinite(values))
+        for values in (labels, predictions, lower, upper)
     ):
         raise ModelReadyDataError("validation arrays must contain finite values")
     denominator = max(float(np.mean(np.abs(labels))), 1e-9)
@@ -966,7 +1002,9 @@ def _model_card(
         feature_set_id=spec.feature_set_id,
         label_set_id=spec.label_set_id,
         training_period=f"{bounds[0].isoformat()}/{bounds[1].isoformat()}",
-        validation_period=(f"{temporal.cutoff}/{bounds[1].isoformat()}"),
+        validation_period=(
+            f"{temporal.cutoff}/{bounds[1].isoformat()}"
+        ),
         algorithm=spec.algorithm,
         baseline="temporal_training_mean",
         metrics_summary=dict(metrics),
@@ -980,7 +1018,9 @@ def _model_card(
             "Only approved canonical model-ready rows inside the bounded snapshot are represented",
             "Predictions require human review in the consuming workflow",
         ),
-        known_biases=("Segments below the configured minimum sample size are not promotable",),
+        known_biases=(
+            "Segments below the configured minimum sample size are not promotable",
+        ),
         privacy_review="PASSED",
         security_review="PASSED",
         release_status="DEV",
@@ -1060,7 +1100,9 @@ def _read_approval(path: Path) -> dict[str, object]:
     try:
         payload = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError) as exc:
-        raise ModelTrainingConfigurationError("approval file must be readable JSON") from exc
+        raise ModelTrainingConfigurationError(
+            "approval file must be readable JSON"
+        ) from exc
     if not isinstance(payload, dict):
         raise ModelTrainingConfigurationError("approval file must contain a JSON object")
     return payload
@@ -1111,7 +1153,10 @@ def main(
         resources = resource_builder(settings)
         if args.command == "inventory":
             keys = MODEL_SPECS if args.model == "all" else (args.model,)
-            result = [resources.application.inventory(MODEL_SPECS[key]) for key in keys]
+            result = [
+                resources.application.inventory(MODEL_SPECS[key])
+                for key in keys
+            ]
             print(
                 json.dumps(
                     {

@@ -23,7 +23,9 @@ class DataPlaneRunError(RuntimeError):
     """Raised when infrastructure or reconciliation prevents a durable run."""
 
 
-def _batches(values: Iterable[SourceEnvelope], size: int) -> Iterator[tuple[SourceEnvelope, ...]]:
+def _batches(
+    values: Iterable[SourceEnvelope], size: int
+) -> Iterator[tuple[SourceEnvelope, ...]]:
     iterator = iter(values)
     while batch := tuple(islice(iterator, size)):
         yield batch
@@ -71,7 +73,9 @@ class DataPlaneRunner:
         run_id = run_id or str(uuid4())
         started_at = datetime.now(UTC)
         resumed_from = (
-            self._store.get_checkpoint(source_kind, window.partition_key) if resume else None
+            self._store.get_checkpoint(source_kind, window.partition_key)
+            if resume
+            else None
         )
         self._store.begin_run(
             run_id,
@@ -86,17 +90,14 @@ class DataPlaneRunner:
         final_cursor = resumed_from
         active_snapshots: Sequence[str] = ()
         try:
-            source_envelopes = self._source.iter_envelopes(
+            envelopes = self._source.iter_envelopes(
                 source_kind,
                 window,
                 run_id=run_id,
                 resume_after=resumed_from,
-                limit=effective_limit + 1,
+                limit=effective_limit,
             )
-            for batch in _batches(
-                islice(source_envelopes, effective_limit),
-                self._config.batch_size,
-            ):
+            for batch in _batches(envelopes, self._config.batch_size):
                 active_snapshots = tuple(value.source_snapshot_id for value in batch)
                 raw_result = self._raw_loader.load(source_kind, batch)
                 if raw_result.loaded_count != len(batch):
@@ -113,12 +114,15 @@ class DataPlaneRunner:
                         "Canonical validation did not account for every raw record"
                     )
                 source_snapshot_checksums.extend(
-                    f"{value.source_snapshot_id}:{value.content_sha256}" for value in batch
+                    f"{value.source_snapshot_id}:{value.content_sha256}"
+                    for value in batch
                 )
                 valid_snapshot_checksums.extend(projection.valid_snapshot_checksums)
                 processed += len(batch)
                 final = batch[-1]
-                final_cursor = str(final.source_document.get("_id") or final.source_id)
+                final_cursor = str(
+                    final.source_document.get("_id") or final.source_id
+                )
                 self._store.record_checkpoint(
                     source_kind,
                     window.partition_key,
@@ -126,7 +130,6 @@ class DataPlaneRunner:
                     processed,
                 )
                 active_snapshots = ()
-            partition_complete = next(source_envelopes, None) is None
             reconciliation = self._store.reconcile(
                 run_id,
                 source_kind,
@@ -140,7 +143,6 @@ class DataPlaneRunner:
                 final_cursor=final_cursor,
                 processed_count=processed,
                 reconciliation=reconciliation,
-                partition_complete=partition_complete,
                 finished_at=finished_at,
             )
             summary = RunSummary(

@@ -25,7 +25,6 @@ THIS_DIR = Path(__file__).resolve().parent
 if str(THIS_DIR) not in sys.path:
     sys.path.insert(0, str(THIS_DIR))
 
-import model_rotation
 from adapters import build_adapter
 from adapters.base import DeliveryRequest
 from approval_queue import prune_stale_approvals, resolve_approval
@@ -87,11 +86,6 @@ from task_archive import TaskResolver
 from watch_events import queue_delivery_event, run_scan, trim_seen_events
 
 SIDECAR_READY_PRIORITY_OFFSET = 10
-# Max time the antigravity model-rotation will treat a pool as exhausted before
-# re-probing it. Kept SHORT because Gemini's 5-hour limit is a rolling window
-# that recovers within minutes — a longer cooldown (e.g. trusting the error's
-# "Resets in Xh" hint) falsely locks an already-recovered pool for hours.
-ROTATION_PROBE_COOLDOWN_SECONDS = 1800
 BLOCKED_OWNER_RESCUE_KEYWORDS = (
     "auth",
     "authentication",
@@ -1971,12 +1965,6 @@ def start_worker_for_request(
         "pid": result.pid,
         "heartbeat_path": result_metadata.get("heartbeat_path"),
         "runner_status_path": result_metadata.get("runner_status_path"),
-        # Immutable dispatch-time model pool (antigravity rotation). Quota
-        # failures are recorded against this, not against the pool that happens
-        # to be active when the failure is processed.
-        model_rotation.WORKER_POOL_KEY: model_rotation.normalize_pool(
-            result_metadata.get(model_rotation.WORKER_POOL_KEY)
-        ),
         "notes": result.notes,
         "metadata": result_metadata,
         "request_snapshot": request_snapshot(request),
@@ -4138,42 +4126,6 @@ def is_tool_command_output_failure_line(lines: list[str], idx: int) -> bool:
     return False
 
 
-# Antigravity (`agy`) per-account quota banner. Deliberately NOT a bare
-# "quota reached" substring: ordinary application/test output such as
-# "AssertionError: expected quota reached banner to be hidden" must stay a real
-# task failure. Matching requires agy's full signature (the "Individual quota
-# reached" phrase plus its upgrade/reset continuation) AND an antigravity
-# provider, so only the real provider banner is treated as a quota outage.
-AGY_QUOTA_SIGNATURE_PATTERN = re.compile(
-    r"individual\s+quota\s+reached\b[\s.:,!-]*"
-    r"(?:please\s+upgrade\s+your\s+subscription|resets?\s+in\b|try\s+again\s+(?:in|after)\b)",
-    re.IGNORECASE,
-)
-
-
-def is_antigravity_provider(config: dict[str, Any] | None, provider: str | None) -> bool:
-    """True when `provider` is served by the Antigravity (`agy`) adapter."""
-    provider_id = str(provider or "").strip().lower()
-    if not provider_id:
-        return False
-    if provider_id.startswith("antigravity"):
-        return True
-    providers = (config or {}).get("providers")
-    entry = providers.get(provider_id) if isinstance(providers, dict) else None
-    if not isinstance(entry, dict):
-        return False
-    if str(entry.get("adapter") or entry.get("type") or "").strip().lower() == "antigravity":
-        return True
-    return isinstance(entry.get("antigravity"), dict)
-
-
-def is_antigravity_quota_banner(config: dict[str, Any] | None, provider: str | None, reason: str | None) -> bool:
-    """True only for agy's real per-account quota banner on an agy provider."""
-    if not reason or not is_antigravity_provider(config, provider):
-        return False
-    return bool(AGY_QUOTA_SIGNATURE_PATTERN.search(str(reason)))
-
-
 def classify_worker_failure(config: dict[str, Any], worker: dict[str, Any], reason: str | None) -> dict[str, Any]:
     provider = str(worker.get("provider") or worker.get("agent_id") or "").strip().lower()
     normalized = str(reason or "").lower()
@@ -4232,8 +4184,6 @@ def classify_worker_failure(config: dict[str, Any], worker: dict[str, Any], reas
         return {"kind": "provider_config", "transient": False, "label": "provider config"}
     if any(marker in normalized for marker in auth_markers):
         return {"kind": "auth", "transient": False, "label": "auth"}
-    if is_antigravity_quota_banner(config, provider, reason):
-        return {"kind": "quota_terminal", "transient": False, "label": "quota terminal"}
     if any(marker in normalized for marker in terminal_quota_markers):
         return {"kind": "quota_terminal", "transient": False, "label": "quota terminal"}
     if any(marker in normalized for marker in retryable_capacity_markers):
@@ -4637,33 +4587,6 @@ def should_pause_dispatch_for_failure_kind(kind: str | None) -> bool:
     )
 
 
-_TRANSIENT_INFRA_REASON_MARKERS = (
-    "timeout waiting for response",
-    "error: timeout",
-    "request timed out",
-    "read timed out",
-    "deadline exceeded",
-    "connection reset",
-    "connection aborted",
-    "socket hang up",
-)
-
-
-def is_transient_infra_reason(reason: str | None) -> bool:
-    if not reason:
-        return False
-    low = str(reason).lower()
-    return any(marker in low for marker in _TRANSIENT_INFRA_REASON_MARKERS)
-
-
-def _lookup_worker_record(state: dict[str, Any], worker_run_id: str | None) -> dict[str, Any] | None:
-    run_id = str(worker_run_id or "").strip()
-    if not run_id:
-        return None
-    worker = (state.get("workers") or {}).get(run_id)
-    return worker if isinstance(worker, dict) else None
-
-
 def mark_provider_dispatch_paused(
     config: dict[str, Any],
     state: dict[str, Any],
@@ -4675,7 +4598,6 @@ def mark_provider_dispatch_paused(
     failure_kind: str | None = None,
     pause_kind: str | None = None,
     raw_ref: str | None = None,
-    worker: dict[str, Any] | None = None,
 ) -> bool:
     settings = provider_guardrail_settings(config)
     provider_id = normalize_agent_id(provider or "")
@@ -4697,50 +4619,6 @@ def mark_provider_dispatch_paused(
             return False
         pause_seconds_key = "quota_terminal_pause_seconds" if effective_pause_kind == "quota_terminal" else "capacity_pause_seconds"
     pause_seconds = max(60, int(settings.get(pause_seconds_key, 900)))
-    # Antigravity model rotation: on a capacity/quota failure, if this provider
-    # can rotate models (Gemini <-> Claude/GPT), record the exhausted pool and
-    # keep dispatching on the other pool instead of hard-pausing. Only fall
-    # through to a real pause when BOTH pools are exhausted.
-    if effective_pause_kind not in {"auth", "provider_config"} and model_rotation.rotation_enabled(config, provider_id):
-        # Do NOT trust the error's "Resets in Xh" reset hint for the cooldown
-        # duration. Gemini's 5-hour limit is a ROLLING window: a momentary hit
-        # reports a multi-hour reset but the account recovers gradually and is
-        # usable again within minutes. Trusting that hint FALSELY LOCKS an
-        # already-recovered pool for hours (this is what silently stalled the
-        # whole antigravity fleet). Use a short fixed probe cooldown instead: if
-        # the pool is still exhausted the next probe just re-cools (one cheap
-        # fast-fail worker), so a recovered pool is never locked for more than
-        # ROTATION_PROBE_COOLDOWN_SECONDS.
-        rotate_cooldown = min(int(pause_seconds), ROTATION_PROBE_COOLDOWN_SECONDS)
-        # Cool the pool this worker was DISPATCHED on, not whatever pool is
-        # active now. Two concurrent Gemini workers failing on quota must cool
-        # Gemini twice; without the dispatch-time binding the second one would
-        # be attributed to Claude and falsely hard-pause the provider.
-        dispatched_pool = model_rotation.worker_dispatched_pool(
-            worker if isinstance(worker, dict) else _lookup_worker_record(state, worker_run_id)
-        )
-        rotate = model_rotation.record_exhaustion(
-            config,
-            provider_id,
-            rotate_cooldown,
-            reason=reason,
-            pool=dispatched_pool,
-        )
-        write_activity_log(
-            config,
-            {
-                "type": "antigravity_model_rotated",
-                "provider": provider_id,
-                "exhausted_pool": rotate.get("exhausted_pool"),
-                "dispatched_pool": dispatched_pool,
-                "pool_source": rotate.get("pool_source"),
-                "next_pool": rotate.get("next_pool"),
-                "both_exhausted": rotate.get("both_exhausted"),
-                "message": rotate.get("message"),
-            },
-        )
-        if not rotate.get("both_exhausted"):
-            return False
     blocked_until = (now + timedelta(seconds=pause_seconds)).replace(microsecond=0)
     hinted_blocked_until: str | None = None
     hint_capped = False
@@ -4883,27 +4761,6 @@ def record_task_failure_streak(
         return 0
     bucket = _task_failure_streak_bucket(state)
     key = _failure_streak_key(task_id, provider_id)
-    # Environmental failures (quota/capacity/auth/provider-config) are provider-level
-    # outages, not evidence the agent can't do THIS task. Counting them toward the
-    # per-task failure-loop streak would permanently lock a task out of dispatch
-    # after a transient quota/capacity crash (the whole provider is already paused
-    # separately). Transient infra timeouts (reason text) are the same class: the
-    # transport failed, not the task. Record telemetry but do NOT increment the streak.
-    if should_pause_dispatch_for_failure_kind(failure_kind) or is_transient_infra_reason(reason):
-        existing = dict(bucket.get(key) or {})
-        existing.update(
-            {
-                "task_id": task_id,
-                "provider": provider_id,
-                "last_reason": reason,
-                "last_failure_at": utc_now(),
-                "last_failure_kind": failure_kind or str(existing.get("last_failure_kind") or ""),
-                "last_environmental_failure_at": utc_now(),
-            }
-        )
-        if existing.get("count"):
-            bucket[key] = existing
-        return int(existing.get("count", 0))
     record = dict(bucket.get(key) or {})
     count = int(record.get("count", 0)) + 1
     record.update(
@@ -6465,7 +6322,6 @@ def poll_workers(config: dict[str, Any], state: dict[str, Any], provider_report:
                     failure_kind=str(failure.get("kind") or ""),
                     pause_kind=failure_kind,
                     raw_ref=raw_ref,
-                    worker=worker,
                 )
             if is_terminal_quota_failure_kind(failure_kind):
                 reassigned_to = maybe_reassign_task_after_worker_failure(
@@ -7090,7 +6946,6 @@ def reconcile_runtime_on_boot(config: dict[str, Any], state: dict[str, Any]) -> 
                     failure_kind=failure_kind,
                     pause_kind=failure_kind,
                     raw_ref=raw_ref,
-                    worker=worker,
                 )
             if is_terminal_quota_failure_kind(failure_kind):
                 reassigned_to = maybe_reassign_task_after_worker_failure(

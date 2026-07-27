@@ -196,48 +196,6 @@ def _copy(value: Any) -> Any:
     return copy.deepcopy(value)
 
 
-def _first_present(data: dict[str, Any], *keys: str) -> Any:
-    """Return the first key that is present and not None.
-
-    Used by the listing/candidate dict round trip so a legitimate ``0`` or
-    ``0.0`` is preserved instead of being swallowed by an ``or`` fallback.
-    """
-
-    for key in keys:
-        value = data.get(key)
-        if value is not None:
-            return value
-    return None
-
-
-def _optional_float(value: Any, *, default: float) -> float:
-    if value is None or value == "":
-        return default
-    return float(value)
-
-
-def _optional_number(value: Any, cast: Any) -> Any:
-    """Cast a point-in-time feature, keeping ``None`` as an explicit gap.
-
-    ``None`` must stay ``None`` rather than becoming ``0``: the SiteScore v2
-    contract distinguishes "no recorded cell activity" (a data gap that fails
-    closed) from a genuine zero.
-    """
-
-    if value is None or value == "":
-        return None
-    return cast(value)
-
-
-def _optional_datetime(value: Any) -> datetime | None:
-    if value is None or value == "":
-        return None
-    if isinstance(value, datetime):
-        return value if value.tzinfo else value.replace(tzinfo=UTC)
-    parsed = datetime.fromisoformat(str(value).replace("Z", "+00:00"))
-    return parsed if parsed.tzinfo else parsed.replace(tzinfo=UTC)
-
-
 def _seed_state() -> dict[str, Any]:
     return {
         "heatZones": [
@@ -460,16 +418,6 @@ class NetworkListingService:
                     cand_obj = self._dict_to_candidate(cand_dict)
                     self._listing_repository.save_candidate(cand_obj)
 
-    def _repo_address(self, address_id: str) -> Any:
-        """Look up a persisted address, tolerating repositories without it."""
-
-        if self._listing_repository is None or not address_id:
-            return None
-        get_address = getattr(self._listing_repository, "get_address", None)
-        if get_address is None:
-            return None
-        return get_address(address_id)
-
     def _get_listing_metadata(self, listing_id: str) -> dict[str, Any]:
         return self._intakes.get_listing_metadata(listing_id)
 
@@ -492,25 +440,9 @@ class NetworkListingService:
             "areaPing": lst.area_ping,
             "floor": lst.floor,
             "frontageMeters": int(lst.frontage_m) if lst.frontage_m else 0,
-            "listingConfidence": lst.confidence,
             "geocodeConfidence": lst.confidence,
             "sourceUrl": lst.snapshot_id,
         }
-        # Carry the persisted geocode through the dict layer. Without this the
-        # round trip loses latitude/longitude/h3 and _dict_to_listing has to
-        # invent them, which is how an ungeocoded listing used to reach the
-        # SiteScore v2 model as a scoreable row.
-        address = self._repo_address(lst.address_id)
-        if address is not None:
-            res.update(
-                {
-                    "address": address.normalized_address or address.raw_address,
-                    "latitude": address.latitude,
-                    "longitude": address.longitude,
-                    "geocodeConfidence": address.geocode_confidence,
-                    "h3Index": address.h3_res_9,
-                }
-            )
         meta = self._get_listing_metadata(lst.listing_id)
         if meta:
             res.update(meta)
@@ -527,11 +459,6 @@ class NetworkListingService:
         from modules.listing.domain.models import ListingDedupKey
         from shared.domain.models import AddressLocation, Listing
         address_id = f"ADDR-{d['id']}"
-        # Confidence and coordinates fail closed. A listing whose geocode was
-        # never resolved must stay at 0.0 so to_sitescore_model_row() rejects
-        # it; defaulting to 1.0 / Taipei city-hall coordinates presented an
-        # ungeocoded listing as a fully-confident point-in-time location.
-        geocode_confidence = _optional_float(d.get("geocodeConfidence"), default=0.0)
         lst = Listing(
             listing_id=d["id"],
             source_listing_id=d["sourceListingId"],
@@ -542,22 +469,16 @@ class NetworkListingService:
             area_ping=float(d["areaPing"]),
             floor=d["floor"],
             frontage_m=float(d.get("frontageMeters") or 0),
-            confidence=_optional_float(
-                d.get("listingConfidence"), default=geocode_confidence
-            ),
+            confidence=float(d.get("geocodeConfidence") or 1.0),
             snapshot_id=d.get("sourceUrl") or "",
         )
         addr = AddressLocation(
             address_id=address_id,
             raw_address=d.get("address") or "",
             normalized_address=d.get("address") or "",
-            latitude=_optional_float(
-                _first_present(d, "latitude", "lat"), default=0.0
-            ),
-            longitude=_optional_float(
-                _first_present(d, "longitude", "lng"), default=0.0
-            ),
-            geocode_confidence=geocode_confidence,
+            latitude=float(d.get("latitude") or d.get("lat") or 25.0339),
+            longitude=float(d.get("longitude") or d.get("lng") or 121.5645),
+            geocode_confidence=float(d.get("geocodeConfidence") or 1.0),
             h3_res_9=d.get("h3Index") or d.get("h3_index") or d.get("heatZoneId") or "",
         )
         key = ListingDedupKey(
@@ -570,7 +491,6 @@ class NetworkListingService:
         return lst, addr, key
 
     def _candidate_to_dict(self, cand: Any) -> dict[str, Any]:
-        snapshot_time = cand.feature_snapshot_time
         res = {
             "id": cand.candidate_site.candidate_site_id,
             "listingId": cand.listing.listing_id,
@@ -583,17 +503,6 @@ class NetworkListingService:
             "modelVersion": "SiteScore v2.3",
             "datasetSnapshotId": "FS-20260704-0600",
             "missingData": [],
-            # SiteScore v2 point-in-time contract. These must survive the dict
-            # round trip: _sync_candidate_to_repo() rewrites the persisted
-            # draft from this dict, so anything omitted here is wiped from an
-            # already-complete candidate on the next operator write.
-            "feasibilityFlags": list(cand.feasibility_flags or ()),
-            "prior90dCellNetRevenue": cand.prior_90d_cell_net_revenue,
-            "prior90dCellTransactionCount": cand.prior_90d_cell_transaction_count,
-            "prior90dCellStoreCount": cand.prior_90d_cell_store_count,
-            "featureSnapshotTime": (
-                snapshot_time.isoformat() if snapshot_time is not None else None
-            ),
         }
         meta = self._get_candidate_metadata(cand.candidate_site.candidate_site_id)
         if meta:
@@ -607,10 +516,7 @@ class NetworkListingService:
         return res
 
     def _dict_to_candidate(self, d: dict[str, Any]) -> Any:
-        from modules.listing.domain.models import (
-            CandidateSiteDraft,
-            ListingPipelineStatus,
-        )
+        from modules.listing.domain.models import CandidateSiteDraft, ListingPipelineStatus
         from shared.domain.models import CandidateSite
         listing = self._listing(d["listingId"])
         lst_obj, addr_obj, _ = self._dict_to_listing(listing)
@@ -621,53 +527,13 @@ class NetworkListingService:
             address_id=addr_obj.address_id,
             site_status=d["status"],
         )
-        heat_zone_id = d.get("heatZoneId")
-        # A blank heat zone is the same data gap as an absent one: it makes the
-        # candidate unjoinable to its H3 cell aggregates, so every later
-        # SiteScore v2 lookup would silently score against the wrong cell.
-        # Reject missing, null, empty and whitespace-only before persistence
-        # rather than storing "" and failing open downstream.
-        if not isinstance(heat_zone_id, str) or not heat_zone_id.strip():
-            raise ValueError(
-                f"candidate {d['id']!r} has no usable heatZoneId "
-                f"({heat_zone_id!r}); refusing to persist a candidate site "
-                "with an unknown heat zone"
-            )
-        # feasibility_flags are the recorded hard-rule verdict, not something to
-        # re-derive here: recomputing on every sync silently rewrote
-        # hardRule.pass / missingEvidence for existing candidates. An absent key
-        # means "no recorded failures", which is what the writer stores.
         return CandidateSiteDraft(
             listing=lst_obj,
             address=addr_obj,
             candidate_site=cand_site,
-            feasibility_flags=tuple(d.get("feasibilityFlags") or ()),
-            heat_zone_id=heat_zone_id,
+            heat_zone_id=d["heatZoneId"],
             listing_source=listing.get("sourceId") or "",
             status=ListingPipelineStatus.CANDIDATE,
-            prior_90d_cell_net_revenue=_optional_number(
-                _first_present(
-                    d, "prior90dCellNetRevenue", "prior_90d_cell_net_revenue"
-                ),
-                float,
-            ),
-            prior_90d_cell_transaction_count=_optional_number(
-                _first_present(
-                    d,
-                    "prior90dCellTransactionCount",
-                    "prior_90d_cell_transaction_count",
-                ),
-                int,
-            ),
-            prior_90d_cell_store_count=_optional_number(
-                _first_present(
-                    d, "prior90dCellStoreCount", "prior_90d_cell_store_count"
-                ),
-                int,
-            ),
-            feature_snapshot_time=_optional_datetime(
-                _first_present(d, "featureSnapshotTime", "feature_snapshot_time")
-            ),
         )
 
     def _sync_listing_to_repo(self, listing_id: str) -> None:
@@ -692,24 +558,6 @@ class NetworkListingService:
                 "mergedAt": listing.get("mergedAt"),
                 "mergeReason": listing.get("mergeReason"),
                 "mergedSourceListingIds": listing.get("mergedSourceListingIds"),
-                # SiteScore v2 point-in-time cell aggregates. The domain Listing
-                # has no field for them, so without this a restart (or any
-                # listing write) drops the contract and every candidate later
-                # converted from this listing fails closed.
-                "prior90dCellNetRevenue": _first_present(
-                    listing, "prior90dCellNetRevenue", "prior_90d_cell_net_revenue"
-                ),
-                "prior90dCellTransactionCount": _first_present(
-                    listing,
-                    "prior90dCellTransactionCount",
-                    "prior_90d_cell_transaction_count",
-                ),
-                "prior90dCellStoreCount": _first_present(
-                    listing, "prior90dCellStoreCount", "prior_90d_cell_store_count"
-                ),
-                "featureSnapshotTime": _first_present(
-                    listing, "featureSnapshotTime", "feature_snapshot_time"
-                ),
             }
             self._save_listing_metadata(listing_id, meta)
 
@@ -858,27 +706,6 @@ class NetworkListingService:
                 "datasetSnapshotId": "FS-20260704-0600",
                 "missingData": [],
                 "reviewId": "RV-1001" if candidate_id == "CS-1001" else None,
-                # Propagate the SiteScore v2 point-in-time contract from the
-                # listing. The prior_90d_cell_* aggregates originate in the
-                # model-ready views (scripts/models/sql/model_ready_views.sql);
-                # this workflow carries whatever the listing recorded and
-                # leaves the value None when it was never resolved, so scoring
-                # fails closed instead of scoring a fabricated zero.
-                "feasibilityFlags": list(listing.get("hardRuleFailures") or ()),
-                "prior90dCellNetRevenue": _first_present(
-                    listing, "prior90dCellNetRevenue", "prior_90d_cell_net_revenue"
-                ),
-                "prior90dCellTransactionCount": _first_present(
-                    listing,
-                    "prior90dCellTransactionCount",
-                    "prior_90d_cell_transaction_count",
-                ),
-                "prior90dCellStoreCount": _first_present(
-                    listing, "prior90dCellStoreCount", "prior_90d_cell_store_count"
-                ),
-                "featureSnapshotTime": _first_present(
-                    listing, "featureSnapshotTime", "feature_snapshot_time"
-                ),
             }
             self._state["candidates"].append(existing)
             if existing.get("reviewId"):

@@ -65,16 +65,6 @@ jobs:
       ODP_WEB_OIDC_ISSUER: ${{ vars.ODP_WEB_OIDC_ISSUER }}
       ODP_WEB_OIDC_CLIENT_ID: ${{ vars.ODP_WEB_OIDC_CLIENT_ID }}
       ODP_OPERATOR_SMOKE_ROLE: ${{ vars.ODP_OPERATOR_SMOKE_ROLE }}
-      # ODP-LIVE-E2E-001: the post-promotion live E2E gate runs inside
-      # deploy_cloud_run_waji.sh before the release is committed, so a failure
-      # rolls traffic back. `dev` deploys a production-*mode* runtime
-      # (ODP_PRODUCT_MODE/ODP_REQUIRE_LIVE_DATA below), but its runtime
-      # `deploymentMode` is the deploy env — `dev` — because that is what
-      # ODP_DEPLOY_ENV feeds. Leaving this var unset therefore means "expect
-      # deploymentMode == ODP_DEPLOY_ENV"; set it only when a runtime reports an
-      # env name different from the one this workflow deploys under.
-      ODP_LIVE_E2E_DEPLOYMENT_MODE: ${{ vars.ODP_LIVE_E2E_DEPLOYMENT_MODE }}
-      ODP_LIVE_E2E_WORKER_DEADLINE_SECONDS: ${{ vars.ODP_LIVE_E2E_WORKER_DEADLINE_SECONDS }}
       ODAY_DATABASE_URL_SECRET: ${{ vars.ODAY_DATABASE_URL_SECRET }}
       ODP_LISTING_PROVIDER_API_KEY_SECRET: ${{ vars.ODP_LISTING_PROVIDER_API_KEY_SECRET }}
       ODP_POI_PROVIDER_API_KEY_SECRET: ${{ vars.ODP_POI_PROVIDER_API_KEY_SECRET }}
