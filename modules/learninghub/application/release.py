@@ -684,16 +684,19 @@ class LearningHubService:
             if release_type is ReleaseType.ROLLBACK and rollback_target
             else None
         )
-        saga = self._save_saga(saga, attempt=saga.attempt + 1, last_error=None)
-        governance = self._release_governance_metadata(
-            model_name=model_name,
-            version=(
-                rollback_version.version if rollback_version is not None else version
-            ),
-            saga=saga,
-            command=command,
-        )
         try:
+            # Claiming the attempt is itself a fenced write: a worker that was
+            # taken over between reserving the revision and starting execution
+            # must fail here rather than mutate MLflow.
+            saga = self._save_saga(saga, attempt=saga.attempt + 1, last_error=None)
+            governance = self._release_governance_metadata(
+                model_name=model_name,
+                version=(
+                    rollback_version.version if rollback_version is not None else version
+                ),
+                saga=saga,
+                command=command,
+            )
             if release_type is ReleaseType.FULL:
                 alias_mutations: list[tuple[ModelAlias, str | None]] = []
                 current_production = self.repository.get_alias(
@@ -1059,7 +1062,7 @@ class LearningHubService:
         request_fingerprint: str,
     ) -> object | ModelReleaseSaga:
         if saga.request_fingerprint != request_fingerprint:
-            raise LearningHubError(
+            raise LearningHubConflictError(
                 f"idempotency key {saga.idempotency_key!r} was reused with "
                 "a different release command"
             )
