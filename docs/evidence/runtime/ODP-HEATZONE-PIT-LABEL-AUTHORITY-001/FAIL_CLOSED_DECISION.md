@@ -94,4 +94,3 @@ maturity, and reproducible snapshot persistence.
   — live PG16 PIT geography reconciliation.
 - `scripts/models/sql/model_ready_views.sql` — executable HeatZone PIT label
   contract.
-
