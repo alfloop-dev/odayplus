@@ -3,6 +3,7 @@
 - Approved task head: `d41d83038151fb80ba4e9bb8024c2468c9b2b4a3`
 - Delivery PR: `#417`
 - Dev merge commit: `b3f0fba62a60ef66e83ce8aecd817ac52d1766ae`
+- Closeout evidence PR: `#425`
 - Reviewer: `Codex2`
 
 The delivery composes the current SiteScore and HeatZone v2 model-ready
