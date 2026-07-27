@@ -256,7 +256,7 @@ test("canonical 3: possible match requires explicit reason and risk acknowledgem
   );
   await expect(page.getByTestId("intake-detail-match")).toHaveText("疑似重複");
   await expect(page.getByTestId("no-auto-merge-warning")).toContainText(
-    "不會自動合併",
+    "絕不自動合併",
   );
 
   await page.getByTestId("decide-action-create").click();

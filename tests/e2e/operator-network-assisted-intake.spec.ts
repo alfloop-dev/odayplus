@@ -189,11 +189,17 @@ test.describe("Assisted Listing Intake — Package 7 product surfaces", () => {
     await expect(page.getByTestId("timeline-stepper")).toBeVisible();
 
     // The record is durable: it survives closing the dialog and reloading.
+    const intakeId = (
+      await page.getByTestId("intake-detail-id").textContent()
+    )?.trim();
+    expect(intakeId).toBeTruthy();
     await page.getByTestId("intake-return-button").click();
-    await page.reload();
+    await page.goto("/operator?ws=network");
     await page.getByTestId("network-tab-1").click();
-    await expect(page.getByTestId("intake-queue-rows")).toBeVisible();
-    await expect(page.getByTestId("intake-count-processing")).toHaveText("0");
+    await expect(page.getByTestId("intake-table")).toBeVisible();
+    await expect(
+      page.getByTestId(`intake-inbox-row-${intakeId}`),
+    ).toBeVisible();
   });
 
   test("exact duplicate is caught before retrieval and never creates a second record", async ({
