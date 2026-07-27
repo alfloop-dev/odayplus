@@ -33,6 +33,8 @@ FORBIDDEN_TIMESTAMP_FIELDS: set[str] = {
     "ingestion_time",
     "sys_created_at",
 }
+STORE_OPENING_RUN_NAMESPACE = uuid.UUID("183ce176-5cf1-4c6f-9099-625b76fb6fab")
+STORE_OPENING_LINEAGE_NAMESPACE = uuid.UUID("e82339e0-5266-4f80-b3a2-f9afc55a86dd")
 
 
 class StoreOpeningError(Exception):
@@ -272,7 +274,12 @@ class StoreOpeningBackfillEngine:
         # 3. Process database updates & lineage
         updated_store_ids: list[uuid.UUID] = []
         lineage_entries: list[dict[str, Any]] = []
-        run_id = uuid.uuid4()
+        # A snapshot/tenant pair is one logical replayable run.  A deterministic
+        # identifier prevents retries from manufacturing new ingestion history.
+        run_id = uuid.uuid5(
+            STORE_OPENING_RUN_NAMESPACE,
+            f"{target_tenant_id}:{target_snapshot_id}",
+        )
 
         if self.db_conn is not None:
             self._apply_db_backfill(
@@ -363,7 +370,7 @@ class StoreOpeningBackfillEngine:
         )
 
         ingestion_run_sql = (
-            "INSERT INTO ingestion_runs (run_id, source_database, source_kind, partition_key, status, started_at) VALUES (%s, 'fongniao_prod', 'store_opening_authority', %s, 'SUCCEEDED', CURRENT_TIMESTAMP)"
+            "INSERT INTO ingestion_runs (run_id, source_database, source_kind, partition_key, status, started_at) VALUES (%s, 'fongniao_prod', 'store_opening_authority', %s, 'SUCCEEDED', CURRENT_TIMESTAMP) ON CONFLICT (run_id) DO NOTHING"
             if is_sqlite
             else f"INSERT INTO {self.schema}.ingestion_runs (run_id, source_database, source_kind, partition_key, status, started_at) VALUES (%s, 'fongniao_prod', 'store_opening_authority', %s, 'SUCCEEDED', CURRENT_TIMESTAMP) ON CONFLICT (source_kind, partition_key, run_id) DO NOTHING"
         )
@@ -374,6 +381,8 @@ class StoreOpeningBackfillEngine:
                 source_snapshot_id, source_kind, source_id, content_sha256,
                 run_id, tenant_id, canonical_table, canonical_id, projected_at
             ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, CURRENT_TIMESTAMP)
+            ON CONFLICT (source_snapshot_id, canonical_table, canonical_id)
+            DO NOTHING
             """
             if is_sqlite
             else f"""
@@ -389,18 +398,32 @@ class StoreOpeningBackfillEngine:
         intake_lineage_sql = (
             """
             INSERT INTO store_opening_authority_lineage (
-                source_snapshot_id, source_id, tenant_id, store_id,
+                lineage_id, source_snapshot_id, source_id, tenant_id, store_id,
                 opened_on, authority_type, provenance_note, content_sha256, projected_at
-            ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, CURRENT_TIMESTAMP)
+            ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, CURRENT_TIMESTAMP)
+            ON CONFLICT (source_snapshot_id, store_id) DO NOTHING
             """
             if is_sqlite
             else """
             INSERT INTO intake.store_opening_authority_lineage (
-                source_snapshot_id, source_id, tenant_id, store_id,
+                lineage_id, source_snapshot_id, source_id, tenant_id, store_id,
                 opened_on, authority_type, provenance_note, content_sha256, projected_at
-            ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, CURRENT_TIMESTAMP)
+            ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, CURRENT_TIMESTAMP)
             ON CONFLICT (source_snapshot_id, store_id)
-            DO UPDATE SET opened_on = EXCLUDED.opened_on, content_sha256 = EXCLUDED.content_sha256, projected_at = CURRENT_TIMESTAMP
+            DO NOTHING
+            """
+        )
+        existing_authority_sql = (
+            """
+            SELECT source_id, tenant_id, opened_on, authority_type, content_sha256
+            FROM store_opening_authority_lineage
+            WHERE source_snapshot_id = %s AND store_id = %s
+            """
+            if is_sqlite
+            else """
+            SELECT source_id, tenant_id, opened_on, authority_type, content_sha256
+            FROM intake.store_opening_authority_lineage
+            WHERE source_snapshot_id = %s AND store_id = %s
             """
         )
 
@@ -410,43 +433,60 @@ class StoreOpeningBackfillEngine:
             ingestion_run_sql = ingestion_run_sql.replace("%s", "?")
             canonical_lineage_sql = canonical_lineage_sql.replace("%s", "?")
             intake_lineage_sql = intake_lineage_sql.replace("%s", "?")
+            existing_authority_sql = existing_authority_sql.replace("%s", "?")
 
-        # 1. Insert ingestion_runs record first so canonical_lineage FK is satisfied
-        if not dry_run:
-            try:
+        try:
+            # Insert ingestion_runs first so canonical_lineage's FK is satisfied.
+            if not dry_run:
                 cur.execute(ingestion_run_sql, (str(run_id), str(target_tenant_id)))
-            except Exception:
-                if not is_sqlite:
-                    raise
 
-        for auth in validated_records:
-            # Check store existence & tenant safety
-            cur.execute(select_sql, (str(auth.store_id),))
-            row = cur.fetchone()
-            if row is not None:
+            for auth in validated_records:
+                # Check store existence & tenant safety even during dry-run.
+                cur.execute(select_sql, (str(auth.store_id),))
+                row = cur.fetchone()
+                if row is None:
+                    raise TenantIsolationError(
+                        f"Store {auth.store_id} does not exist in core.stores for tenant {target_tenant_id}"
+                    )
                 store_tenant = str(row[0])
                 if store_tenant != str(target_tenant_id):
                     raise TenantIsolationError(
                         f"Store {auth.store_id} belongs to tenant {store_tenant}, not target tenant {target_tenant_id}"
                     )
-            elif not dry_run:
-                raise TenantIsolationError(
-                    f"Store {auth.store_id} does not exist in core.stores for tenant {target_tenant_id}"
-                )
 
-
-            if not dry_run:
-                # Update core.stores.opened_on
                 opened_val = auth.opened_on.isoformat() if is_sqlite else auth.opened_on
-                cur.execute(
-                    update_sql,
-                    (opened_val, str(auth.store_id), str(target_tenant_id)),
-                )
-
                 content_sha = hashlib.sha256(json.dumps(auth.to_dict(), sort_keys=True).encode()).hexdigest()
+                cur.execute(
+                    existing_authority_sql,
+                    (str(target_snapshot_id), str(auth.store_id)),
+                )
+                existing_authority = cur.fetchone()
+                if existing_authority is not None:
+                    existing_fingerprint = (
+                        str(existing_authority[0]),
+                        str(existing_authority[1]),
+                        str(existing_authority[2]),
+                        str(existing_authority[3]),
+                        str(existing_authority[4]),
+                    )
+                    proposed_fingerprint = (
+                        auth.source_id,
+                        str(target_tenant_id),
+                        auth.opened_on.isoformat(),
+                        auth.authority_type,
+                        content_sha,
+                    )
+                    if existing_fingerprint != proposed_fingerprint:
+                        raise UnauthoritativeStoreOpeningError(
+                            f"Conflicting authority for store {auth.store_id} in immutable snapshot "
+                            f"{target_snapshot_id}"
+                        )
 
-                # Insert data_plane.canonical_lineage record
-                try:
+                if not dry_run:
+                    cur.execute(
+                        update_sql,
+                        (opened_val, str(auth.store_id), str(target_tenant_id)),
+                    )
                     cur.execute(
                         canonical_lineage_sql,
                         (
@@ -460,15 +500,14 @@ class StoreOpeningBackfillEngine:
                             str(auth.store_id),
                         ),
                     )
-                except Exception:
-                    if not is_sqlite:
-                        raise
-
-                # Insert intake.store_opening_authority_lineage record
-                try:
+                    lineage_id = uuid.uuid5(
+                        STORE_OPENING_LINEAGE_NAMESPACE,
+                        f"{target_snapshot_id}:{auth.store_id}",
+                    )
                     cur.execute(
                         intake_lineage_sql,
                         (
+                            str(lineage_id),
                             str(target_snapshot_id),
                             auth.source_id,
                             str(target_tenant_id),
@@ -479,22 +518,23 @@ class StoreOpeningBackfillEngine:
                             content_sha,
                         ),
                     )
-                except Exception:
-                    if not is_sqlite:
-                        raise
 
-                lineage_entries.append({
-                    "source_snapshot_id": str(target_snapshot_id),
-                    "source_kind": "store_opening_authority",
-                    "source_id": auth.source_id,
-                    "content_sha256": content_sha,
-                    "run_id": str(run_id),
-                    "tenant_id": str(target_tenant_id),
-                    "canonical_table": "core.stores",
-                    "canonical_id": str(auth.store_id),
-                    "opened_on": auth.opened_on.isoformat(),
-                })
-            updated_store_ids.append(auth.store_id)
+                    lineage_entries.append({
+                        "source_snapshot_id": str(target_snapshot_id),
+                        "source_kind": "store_opening_authority",
+                        "source_id": auth.source_id,
+                        "content_sha256": content_sha,
+                        "run_id": str(run_id),
+                        "tenant_id": str(target_tenant_id),
+                        "canonical_table": "core.stores",
+                        "canonical_id": str(auth.store_id),
+                        "opened_on": auth.opened_on.isoformat(),
+                    })
+                updated_store_ids.append(auth.store_id)
 
-        if not dry_run and hasattr(self.db_conn, "commit"):
-            self.db_conn.commit()
+            if not dry_run and hasattr(self.db_conn, "commit"):
+                self.db_conn.commit()
+        except Exception:
+            if hasattr(self.db_conn, "rollback"):
+                self.db_conn.rollback()
+            raise

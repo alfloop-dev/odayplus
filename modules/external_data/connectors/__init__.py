@@ -1,5 +1,4 @@
 """External Data Platform connectors.
-
 Land + validate + canonicalize external datasets (POI, competitor stores,
 listings, administrative boundaries, geocode results) with geocode / H3
 enrichment and a preserved lineage envelope. See ``external.py`` for the
@@ -37,7 +36,6 @@ from modules.external_data.connectors.provider_registry import (
     validate_external_providers,
     validate_external_providers_or_raise,
 )
-
 from modules.external_data.connectors.store_opening import (
     ApprovedStoreOpeningAuthority,
     MissingStoreOpeningAuthorityError,
@@ -84,4 +82,3 @@ __all__ = [
     "validate_external_providers",
     "validate_external_providers_or_raise",
 ]
-

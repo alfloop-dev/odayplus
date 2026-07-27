@@ -199,6 +199,12 @@ def test_backfill_engine_persists_opened_on_and_lineage(test_db_conn):
     assert lin_row[0] == "SRC-AUTH-STORE-OPENING"
     assert lin_row[1] == "core.stores"
     assert lin_row[2] == str(store_id)
+    cur.execute(
+        "SELECT source_id, opened_on FROM store_opening_authority_lineage "
+        "WHERE source_snapshot_id = ? AND store_id = ?",
+        (str(snapshot_id), str(store_id)),
+    )
+    assert cur.fetchone() == ("SRC-AUTH-STORE-OPENING", "2026-06-01")
 
 
 def test_backfill_is_idempotent(test_db_conn):
@@ -232,6 +238,67 @@ def test_backfill_is_idempotent(test_db_conn):
 
     cur.execute("SELECT opened_on FROM stores WHERE store_id = ?", (str(store_id),))
     assert cur.fetchone()[0] == "2026-06-01"
+    cur.execute("SELECT COUNT(*) FROM ingestion_runs")
+    assert cur.fetchone()[0] == 1
+    cur.execute("SELECT COUNT(*) FROM canonical_lineage")
+    assert cur.fetchone()[0] == 1
+    cur.execute("SELECT COUNT(*) FROM store_opening_authority_lineage")
+    assert cur.fetchone()[0] == 1
+
+
+def test_same_snapshot_conflict_fails_closed_and_rolls_back(test_db_conn):
+    snapshot_id = uuid.uuid4()
+    tenant_id = uuid.uuid4()
+    store_id = uuid.uuid4()
+    cur = test_db_conn.cursor()
+    cur.execute(
+        "INSERT INTO stores (store_id, tenant_id, store_name) VALUES (?, ?, ?)",
+        (str(store_id), str(tenant_id), "Immutable Authority Store"),
+    )
+    test_db_conn.commit()
+    engine = StoreOpeningBackfillEngine(db_conn=test_db_conn)
+    base = {
+        "source_id": "SRC-AUTH-STORE-OPENING",
+        "snapshot_id": str(snapshot_id),
+        "tenant_id": str(tenant_id),
+        "store_id": str(store_id),
+        "opened_on": "2026-06-01",
+    }
+    engine.run_backfill(snapshot_id=snapshot_id, tenant_id=tenant_id, records=[base])
+
+    conflicting = {**base, "opened_on": "2026-06-02"}
+    with pytest.raises(UnauthoritativeStoreOpeningError, match="immutable snapshot"):
+        engine.run_backfill(
+            snapshot_id=snapshot_id,
+            tenant_id=tenant_id,
+            records=[conflicting],
+        )
+
+    cur.execute("SELECT opened_on FROM stores WHERE store_id = ?", (str(store_id),))
+    assert cur.fetchone()[0] == "2026-06-01"
+    cur.execute("SELECT COUNT(*) FROM ingestion_runs")
+    assert cur.fetchone()[0] == 1
+
+
+def test_database_dry_run_requires_store_to_exist(test_db_conn):
+    tenant_id = uuid.uuid4()
+    store_id = uuid.uuid4()
+    snapshot_id = uuid.uuid4()
+    with pytest.raises(TenantIsolationError, match="does not exist"):
+        StoreOpeningBackfillEngine(db_conn=test_db_conn).run_backfill(
+            snapshot_id=snapshot_id,
+            tenant_id=tenant_id,
+            records=[
+                {
+                    "source_id": "SRC-AUTH-STORE-OPENING",
+                    "snapshot_id": str(snapshot_id),
+                    "tenant_id": str(tenant_id),
+                    "store_id": str(store_id),
+                    "opened_on": "2026-06-01",
+                }
+            ],
+            dry_run=True,
+        )
 
 
 def test_eligible_stores_missing_authority_fails_closed(test_db_conn):
