@@ -493,7 +493,10 @@ def test_dev_deploy_has_non_mutating_wif_oidc_smoke_gate() -> None:
     assert "Authenticate to Google Cloud for read-only smoke" in text
     assert "gcloud auth list" in text
     assert 'gcloud projects describe "${GCP_PROJECT}"' in text
-    assert "gcloud auth print-identity-token" in text
+    assert "iamcredentials.googleapis.com" in text
+    assert ":generateIdToken" in text
+    assert "ODP_OPERATOR_SMOKE_SUBJECT" in text
+    assert "minted token subject does not match configured smoke subject" in text
     assert "secrets.ODP_OPERATOR_SMOKE_BEARER_TOKEN" not in text
 
     smoke = text.split("  wif-oidc-smoke:", 1)[1].split(

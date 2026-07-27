@@ -105,6 +105,7 @@ jobs:
       ODP_WEB_OIDC_CLIENT_ID: ${{ vars.ODP_WEB_OIDC_CLIENT_ID }}
       ODP_OPERATOR_SMOKE_ROLE: ${{ vars.ODP_OPERATOR_SMOKE_ROLE }}
       ODP_OPERATOR_SMOKE_SERVICE_ACCOUNT: ${{ vars.ODP_OPERATOR_SMOKE_SERVICE_ACCOUNT }}
+      ODP_OPERATOR_SMOKE_SUBJECT: ${{ vars.ODP_OPERATOR_SMOKE_SUBJECT }}
       ODAY_DATABASE_URL_SECRET: ${{ vars.ODAY_DATABASE_URL_SECRET }}
       ODP_LISTING_PROVIDER_API_KEY_SECRET: ${{ vars.ODP_LISTING_PROVIDER_API_KEY_SECRET }}
       ODP_POI_PROVIDER_API_KEY_SECRET: ${{ vars.ODP_POI_PROVIDER_API_KEY_SECRET }}
@@ -165,9 +166,17 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          token="$(gcloud auth print-identity-token \
-            --impersonate-service-account="${ODP_OPERATOR_SMOKE_SERVICE_ACCOUNT}" \
-            --audiences="${ODP_AUTH_AUDIENCES}")"
+          access_token="$(gcloud auth print-access-token)"
+          request_body="$(python3 -c \
+            'import json, os; print(json.dumps({"audience": os.environ["ODP_AUTH_AUDIENCES"], "includeEmail": True}))')"
+          response="$(curl --fail-with-body --silent --show-error \
+            --request POST \
+            --header "Authorization: Bearer ${access_token}" \
+            --header "Content-Type: application/json" \
+            --data "${request_body}" \
+            "https://iamcredentials.googleapis.com/v1/projects/-/serviceAccounts/${ODP_OPERATOR_SMOKE_SERVICE_ACCOUNT}:generateIdToken")"
+          token="$(RESPONSE="${response}" python3 -c \
+            'import json, os; print(json.loads(os.environ["RESPONSE"])["token"])')"
           echo "::add-mask::${token}"
           TOKEN="${token}" python3 - <<'PY'
           import base64, json, os
@@ -178,6 +187,8 @@ jobs:
           subject = str(claims.get("sub", ""))
           if claims.get("aud") != os.environ["ODP_AUTH_AUDIENCES"]:
               raise SystemExit("minted token audience mismatch")
+          if subject != os.environ["ODP_OPERATOR_SMOKE_SUBJECT"]:
+              raise SystemExit("minted token subject does not match configured smoke subject")
           role = os.environ["ODP_OPERATOR_SMOKE_ROLE"].replace("-", "_")
           if role not in bindings.get(subject, []):
               raise SystemExit("minted token subject has no configured smoke role binding")
