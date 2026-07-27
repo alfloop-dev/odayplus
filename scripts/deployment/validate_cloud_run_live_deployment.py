@@ -12,6 +12,7 @@ import argparse
 import importlib
 import inspect
 import json
+import math
 import os
 import re
 import sys
@@ -40,6 +41,9 @@ PLACEHOLDER_VALUES = {
 }
 FORBIDDEN_DATA_MARKERS = ("fixture", "mock", "seed", "in-memory", "sqlite")
 PRODUCTION_PROVIDER_IDS_ENV = "ODP_PRODUCTION_PROVIDER_IDS"
+PROVIDER_PROBE_TIMEOUT_ENV = "ODP_EXTERNAL_PROVIDER_PROBE_TIMEOUT_SECONDS"
+MIN_PROVIDER_PROBE_TIMEOUT_SECONDS = 0.05
+MAX_PROVIDER_PROBE_TIMEOUT_SECONDS = 10.0
 # See modules.external_data.connectors.provider_registry.REQUIRED_PRODUCTION_PROVIDER_IDS
 # for the rationale: listing.partner_feed is a fully-implemented bulk channel that
 # requires a signed licensed-data partner (absent today). Listings are sourced live
@@ -75,15 +79,8 @@ REQUIRED_PUBLIC_CONFIG = (
     "MLFLOW_TRACKING_URI",
     "ODP_FORECAST_ENGINE",
     "ODP_FORECAST_MODEL",
-    "ODP_LISTING_PROVIDER_FEED_URL",
-    "ODP_POI_PROVIDER_URL",
-    "ODP_GEOCODE_PROVIDER_URL",
-    "ODP_ADMIN_BOUNDARY_PROVIDER_URL",
-    "ODP_LISTING_PROVIDER_AUTH_STATUS",
-    "ODP_POI_PROVIDER_AUTH_STATUS",
-    "ODP_GEOCODE_PROVIDER_AUTH_STATUS",
-    "ODP_ADMIN_BOUNDARY_PROVIDER_AUTH_STATUS",
     PRODUCTION_PROVIDER_IDS_ENV,
+    PROVIDER_PROBE_TIMEOUT_ENV,
     "ODP_AUTH_ISSUER",
     "ODP_AUTH_AUDIENCES",
     "ODP_AUTH_JWKS_URI",
@@ -93,10 +90,6 @@ REQUIRED_PUBLIC_CONFIG = (
 )
 REQUIRED_SECRET_REFERENCES = (
     "ODAY_DATABASE_URL_SECRET",
-    "ODP_LISTING_PROVIDER_API_KEY_SECRET",
-    "ODP_POI_PROVIDER_API_KEY_SECRET",
-    "ODP_GEOCODE_PROVIDER_API_KEY_SECRET",
-    "ODP_ADMIN_BOUNDARY_PROVIDER_TOKEN_SECRET",
     "ODP_WEB_OIDC_CLIENT_SECRET_SECRET",
     "ODP_WEB_SESSION_SECRET_SECRET",
 )
@@ -129,6 +122,33 @@ class CheckResult:
 
 def _configured(value: str) -> bool:
     return value.strip().lower() not in PLACEHOLDER_VALUES
+
+
+def _bounded_provider_probe_timeout_check(env: Mapping[str, str]) -> CheckResult:
+    raw_value = env.get(PROVIDER_PROBE_TIMEOUT_ENV, "").strip()
+    try:
+        timeout_seconds = float(raw_value)
+    except ValueError:
+        timeout_seconds = math.nan
+    ok = (
+        math.isfinite(timeout_seconds)
+        and MIN_PROVIDER_PROBE_TIMEOUT_SECONDS
+        <= timeout_seconds
+        <= MAX_PROVIDER_PROBE_TIMEOUT_SECONDS
+    )
+    return CheckResult(
+        ok=ok,
+        name=f"runtime:{PROVIDER_PROBE_TIMEOUT_ENV}",
+        detail=(
+            f"bounded={timeout_seconds:g}s"
+            if ok
+            else (
+                "must be a finite number between "
+                f"{MIN_PROVIDER_PROBE_TIMEOUT_SECONDS:g} and "
+                f"{MAX_PROVIDER_PROBE_TIMEOUT_SECONDS:g} seconds"
+            )
+        ),
+    )
 
 
 def _write_report(path: Path | None, payload: dict[str, Any]) -> None:
@@ -539,6 +559,56 @@ def provider_adapter_checks(
     return checks
 
 
+def selected_provider_config_checks(
+    *,
+    env: Mapping[str, str],
+    production_provider_ids: frozenset[str],
+    root: Path = ROOT,
+) -> list[CheckResult]:
+    """Require endpoint/auth/secret configuration only for selected providers."""
+
+    try:
+        providers = _provider_definitions(root)
+    except Exception as exc:  # noqa: BLE001 - registry import is reported fail-closed
+        return [
+            CheckResult(
+                False,
+                "repository:provider_registry_import",
+                f"cannot import provider registry: {type(exc).__name__}: {exc}",
+            )
+        ]
+
+    checks: list[CheckResult] = []
+    for provider in providers:
+        if provider.provider_id not in production_provider_ids:
+            continue
+        names = []
+        if provider.endpoint_env_var:
+            names.append(("config", provider.endpoint_env_var))
+        for credential in provider.credentials:
+            if not credential.required_in_live:
+                continue
+            names.append(("secret-reference", f"{credential.env_var}_SECRET"))
+            if credential.status_env_var:
+                names.append(("config", credential.status_env_var))
+        for kind, name in names:
+            configured = _configured(env.get(name, ""))
+            checks.append(
+                CheckResult(
+                    configured,
+                    f"{kind}:{name}",
+                    (
+                        "configured (value redacted)"
+                        if kind == "secret-reference" and configured
+                        else "configured"
+                        if configured
+                        else "missing or placeholder"
+                    ),
+                )
+            )
+    return checks
+
+
 def preflight_checks(
     *,
     env: Mapping[str, str],
@@ -601,6 +671,8 @@ def preflight_checks(
             )
         )
 
+    checks.append(_bounded_provider_probe_timeout_check(env))
+
     forecast_binding = (
         env.get("ODP_FORECAST_ENGINE", "").strip().lower(),
         env.get("ODP_FORECAST_MODEL", "").strip().lower(),
@@ -637,6 +709,13 @@ def preflight_checks(
         root=root,
     )
     checks.extend(allowlist_checks)
+    checks.extend(
+        selected_provider_config_checks(
+            env=env,
+            production_provider_ids=production_provider_ids,
+            root=root,
+        )
+    )
     checks.extend(
         repository_capability_checks(
             root,
