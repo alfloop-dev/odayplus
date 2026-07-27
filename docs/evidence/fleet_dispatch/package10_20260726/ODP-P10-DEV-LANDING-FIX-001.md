@@ -134,3 +134,31 @@ Refresh verification on the merged head:
 - `npx playwright test tests/e2e/operator-assisted-listing-intake.spec.ts
   tests/e2e/operator-network-assisted-intake.spec.ts` — see PR #419 CI for
   the authoritative exact-head product-e2e-gate run.
+
+## 2026-07-27 Store-Opening Authority Dev Refresh
+
+After PR #437 advanced `origin/dev` to
+`06f1344617afd67d18b98db3270ffc6b86f18897`, merge
+`4bb2ee0fc0d9b4dcaec9c7e63765d3e4c34a10ed` refreshed PR #419 without
+conflicts. The incoming delta adds only the store-opening authority inventory
+and fail-closed decision evidence; it does not change Package 10 runtime,
+routes, tests, source archives, or retired paths.
+
+Verification on the merge head:
+
+- Package 6 ZIP SHA-256:
+  `db3ea3d68a16a86fe3161ed0517e6072d962a1f46e6b1b7b89af96687aeb4c76`.
+- Package 10 ZIP SHA-256:
+  `d1583a00496f928b0765c1756c9671fedf615f12c84c00494d454c983645d7f8`.
+- `uv run pytest -q tests/e2e/test_package10_product_grade_ci_gate.py` —
+  3 passed.
+- `(cd apps/web && npx vitest run
+  src/app/__tests__/productionRoutes.test.ts)` — 7 passed.
+- `uv run ruff check .orchestrator scripts` — passed.
+- `python3 scripts/e2e/check_product_release_gate.py` — passed.
+- `python3 scripts/e2e/check_product_grade_ci_gates.py --report` — Package
+  10 ZIP, canonical HTML, all 40 screen labels, and exact label count passed.
+- `git diff --check` — passed.
+
+The pushed post-evidence head still requires all three GitHub CI jobs and a
+fresh independent Codex2 exact-head review before merge.
