@@ -71,3 +71,25 @@ The evidence-only commit following this validated tree does not change runtime
 code. GitHub CI and both independent reviewers must nevertheless bind their
 results to the newly pushed PR head; no result for stale head `a50e69b0` is
 reusable.
+
+## Web OIDC test reconciliation with the ID-token bearer contract
+
+CI run 30306838576 on head `8c8a6b0f` failed only in the product job's Node
+workspace checks: `src/lib/auth/__tests__/oidc.test.ts` still asserted that
+`session.accessToken` equals the opaque OAuth `access_token`, while the
+audited implementation (`b0116794`, carried in `4958da6a`) deliberately binds
+the API bearer to the verified `id_token` so the backend JWT boundary can
+validate signatures. The corrected assertion (bearer must equal the verified
+`id_token` and must not be the opaque `access_token`) was restored from the
+supervisor worktree backup
+`odp-auth-runtime-reconcile-001-claude-20260727T220107Z-369f45f2.patch` and is
+now committed; 232 of 233 web tests already passed on the prior head, so this
+is the only Node-side delta.
+
+Revalidation on the resulting tree:
+
+- `uv run pytest tests/security/test_opsboard_auth_boundary.py tests/ops/test_cloud_run_live_deployment.py tests/e2e/test_live_e2e_gate.py`
+  - exit 0; 144 passed; one Starlette deprecation warning.
+- Web Vitest still cannot bootstrap in this worktree (workspace-package
+  registry resolution); the assertion change is validated by the repository CI
+  product job on the pushed head.
