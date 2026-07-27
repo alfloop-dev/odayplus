@@ -53,7 +53,70 @@ def complete_env() -> dict[str, str]:
     env["ODAY_RELEASE_SHA"] = EXPECTED_SHA
     env["ODP_FORECAST_ENGINE"] = "statsforecast"
     env["ODP_FORECAST_MODEL"] = "seasonal_naive"
+    for provider in validator._provider_definitions(ROOT):
+        if provider.provider_id not in validator.REQUIRED_PRODUCT_PROVIDER_IDS:
+            continue
+        if provider.endpoint_env_var:
+            env[provider.endpoint_env_var] = f"https://{provider.provider_id}.example.test/snapshot"
+        for credential in provider.credentials:
+            if credential.required_in_live:
+                env[f"{credential.env_var}_SECRET"] = "provider-secret:latest"
+                if credential.status_env_var:
+                    env[credential.status_env_var] = "active"
     return env
+
+
+def test_preflight_does_not_require_unselected_listing_partner_config() -> None:
+    env = complete_env()
+    for name in (
+        "ODP_LISTING_PROVIDER_FEED_URL",
+        "ODP_LISTING_PROVIDER_AUTH_STATUS",
+        "ODP_LISTING_PROVIDER_API_KEY_SECRET",
+    ):
+        env.pop(name, None)
+
+    checks = validator.preflight_checks(
+        env=env,
+        expected_environment="dev",
+        expected_sha=EXPECTED_SHA,
+        root=ROOT,
+    )
+    by_name = {check.name: check for check in checks}
+
+    assert all(
+        check.ok
+        for check in checks
+        if check.name.startswith(("config:", "secret-reference:", "runtime:"))
+    )
+    assert "config:ODP_LISTING_PROVIDER_FEED_URL" not in by_name
+    assert "config:ODP_LISTING_PROVIDER_AUTH_STATUS" not in by_name
+    assert "secret-reference:ODP_LISTING_PROVIDER_API_KEY_SECRET" not in by_name
+    for name in (
+        "ODP_POI_PROVIDER_URL",
+        "ODP_GEOCODE_PROVIDER_URL",
+        "ODP_ADMIN_BOUNDARY_PROVIDER_URL",
+    ):
+        assert by_name[f"config:{name}"].ok is True
+
+
+def test_preflight_requires_listing_config_when_listing_is_selected() -> None:
+    env = complete_env()
+    env["ODP_PRODUCTION_PROVIDER_IDS"] += ",listing.partner_feed"
+    env.pop("ODP_LISTING_PROVIDER_FEED_URL", None)
+    env.pop("ODP_LISTING_PROVIDER_AUTH_STATUS", None)
+    env.pop("ODP_LISTING_PROVIDER_API_KEY_SECRET", None)
+
+    checks = validator.preflight_checks(
+        env=env,
+        expected_environment="dev",
+        expected_sha=EXPECTED_SHA,
+        root=ROOT,
+    )
+    by_name = {check.name: check for check in checks}
+
+    assert by_name["config:ODP_LISTING_PROVIDER_FEED_URL"].ok is False
+    assert by_name["config:ODP_LISTING_PROVIDER_AUTH_STATUS"].ok is False
+    assert by_name["secret-reference:ODP_LISTING_PROVIDER_API_KEY_SECRET"].ok is False
 
 
 def _run_deploy_config_gate(
@@ -530,6 +593,7 @@ def test_deploy_script_preflights_before_build_and_uses_secret_references() -> N
     assert "ODP_PERSISTENCE" in text
     assert '"ODP_POI_PROVIDER_URL",' in text
     assert '"ODP_ADMIN_BOUNDARY_PROVIDER_URL",' in text
+    assert 'case "${provider_id}" in' in text
     assert ': "${ODP_FORECAST_ENGINE:?' in text
     assert ': "${ODP_FORECAST_MODEL:?' in text
     assert '"ODP_FORECAST_ENGINE",' in text

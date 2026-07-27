@@ -75,14 +75,6 @@ REQUIRED_PUBLIC_CONFIG = (
     "MLFLOW_TRACKING_URI",
     "ODP_FORECAST_ENGINE",
     "ODP_FORECAST_MODEL",
-    "ODP_LISTING_PROVIDER_FEED_URL",
-    "ODP_POI_PROVIDER_URL",
-    "ODP_GEOCODE_PROVIDER_URL",
-    "ODP_ADMIN_BOUNDARY_PROVIDER_URL",
-    "ODP_LISTING_PROVIDER_AUTH_STATUS",
-    "ODP_POI_PROVIDER_AUTH_STATUS",
-    "ODP_GEOCODE_PROVIDER_AUTH_STATUS",
-    "ODP_ADMIN_BOUNDARY_PROVIDER_AUTH_STATUS",
     PRODUCTION_PROVIDER_IDS_ENV,
     "ODP_AUTH_ISSUER",
     "ODP_AUTH_AUDIENCES",
@@ -93,10 +85,6 @@ REQUIRED_PUBLIC_CONFIG = (
 )
 REQUIRED_SECRET_REFERENCES = (
     "ODAY_DATABASE_URL_SECRET",
-    "ODP_LISTING_PROVIDER_API_KEY_SECRET",
-    "ODP_POI_PROVIDER_API_KEY_SECRET",
-    "ODP_GEOCODE_PROVIDER_API_KEY_SECRET",
-    "ODP_ADMIN_BOUNDARY_PROVIDER_TOKEN_SECRET",
     "ODP_WEB_OIDC_CLIENT_SECRET_SECRET",
     "ODP_WEB_SESSION_SECRET_SECRET",
 )
@@ -539,6 +527,56 @@ def provider_adapter_checks(
     return checks
 
 
+def selected_provider_config_checks(
+    *,
+    env: Mapping[str, str],
+    production_provider_ids: frozenset[str],
+    root: Path = ROOT,
+) -> list[CheckResult]:
+    """Require endpoint/auth/secret configuration only for selected providers."""
+
+    try:
+        providers = _provider_definitions(root)
+    except Exception as exc:  # noqa: BLE001 - registry import is reported fail-closed
+        return [
+            CheckResult(
+                False,
+                "repository:provider_registry_import",
+                f"cannot import provider registry: {type(exc).__name__}: {exc}",
+            )
+        ]
+
+    checks: list[CheckResult] = []
+    for provider in providers:
+        if provider.provider_id not in production_provider_ids:
+            continue
+        names = []
+        if provider.endpoint_env_var:
+            names.append(("config", provider.endpoint_env_var))
+        for credential in provider.credentials:
+            if not credential.required_in_live:
+                continue
+            names.append(("secret-reference", f"{credential.env_var}_SECRET"))
+            if credential.status_env_var:
+                names.append(("config", credential.status_env_var))
+        for kind, name in names:
+            configured = _configured(env.get(name, ""))
+            checks.append(
+                CheckResult(
+                    configured,
+                    f"{kind}:{name}",
+                    (
+                        "configured (value redacted)"
+                        if kind == "secret-reference" and configured
+                        else "configured"
+                        if configured
+                        else "missing or placeholder"
+                    ),
+                )
+            )
+    return checks
+
+
 def preflight_checks(
     *,
     env: Mapping[str, str],
@@ -637,6 +675,13 @@ def preflight_checks(
         root=root,
     )
     checks.extend(allowlist_checks)
+    checks.extend(
+        selected_provider_config_checks(
+            env=env,
+            production_provider_ids=production_provider_ids,
+            root=root,
+        )
+    )
     checks.extend(
         repository_capability_checks(
             root,
