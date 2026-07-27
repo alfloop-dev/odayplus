@@ -112,6 +112,7 @@ PROVIDER_CATEGORIES: Mapping[str, str] = {
     "geocode.primary_api": "geocode",
     "admin_boundary.official_dataset": "admin_boundary",
     "competitor.manual_source": "competitor_manual",
+    "store_opening_authority": "store_opening_authority",
 }
 SNAPSHOT_SCHEDULABLE_CATEGORIES = frozenset({"listing", "poi", "admin_boundary"})
 
