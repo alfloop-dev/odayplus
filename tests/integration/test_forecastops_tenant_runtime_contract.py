@@ -103,6 +103,33 @@ def _live_forecast_input(
     )
 
 
+def _declining_forecast_input(
+    *,
+    tenant_id: str = TENANT_ID,
+    store_id: str = "store-forecast-red",
+) -> ForecastInput:
+    """A store far below its SiteScore baseline, so a red alert and handoff open."""
+
+    prediction_origin = datetime(2026, 7, 24, 10, 0, tzinfo=UTC)
+    start = prediction_origin.date() - timedelta(days=35)
+    return ForecastInput(
+        tenant_id=tenant_id,
+        store_id=store_id,
+        observations=tuple(
+            StoreDayObservation(
+                store_id=store_id,
+                business_date=start + timedelta(days=index),
+                actual_revenue=200_000.0 - index * 4_000.0,
+                site_score_baseline_p50=250_000.0,
+                data_quality_score=0.99,
+                source_snapshot_ids=(f"snapshot-red-{index:03d}",),
+            )
+            for index in range(35)
+        ),
+        prediction_origin_time=prediction_origin,
+    )
+
+
 def _live_forecast_mapping() -> dict[str, Any]:
     item = _live_forecast_input()
     return {
@@ -855,3 +882,90 @@ def test_api_and_production_worker_use_registered_runtime_with_identical_horizon
     assert [api_output[f"w{horizon}"]["p50"] for horizon in (4, 8, 12, 24)] == [
         getattr(worker_output, f"w{horizon}").p50 for horizon in (4, 8, 12, 24)
     ]
+
+
+def test_worker_replay_preserves_alert_acknowledgement_and_handoff_execution(
+    tmp_path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """An at-least-once redelivery must not rewind operator lifecycle state."""
+
+    bundle = build_persistence(
+        mode="durable",
+        db_path=tmp_path / "forecast-replay-lifecycle.sqlite3",
+    )
+    repository = bundle.forecastops_repository
+    item = _declining_forecast_input()
+    service = ForecastOpsService(repository=repository)
+    service.ingest_timeseries(item.observations, tenant_id=TENANT_ID)
+    job = JobRecord(
+        job_id="forecast-replay-lifecycle",
+        job_type="forecast",
+        payload={
+            "store_id": item.store_id,
+            "tenant_id": TENANT_ID,
+            "prediction_origin_time": item.prediction_origin_time.isoformat(),
+        },
+        correlation_id="corr-forecast-replay-lifecycle",
+        created_at=item.prediction_origin_time,
+    )
+    monkeypatch.setenv("ODP_REQUIRE_LIVE_DATA", "false")
+
+    try:
+        handle_forecast(job, SimpleNamespace(forecastops_repository=repository))
+        alert = repository.list_alerts(TENANT_ID)[0]
+        handoff = repository.list_handoffs(TENANT_ID)[0]
+        assert alert.status == "open"
+        assert handoff.status == "proposed"
+
+        service.acknowledge_alert(TENANT_ID, alert.alert_id, actor="ops-manager", note="triaged")
+        service.execute_handoff(
+            TENANT_ID,
+            handoff.handoff_id,
+            actor="ops-dispatcher",
+            intervention_id="intervention-replay-001",
+        )
+
+        handle_forecast(job, SimpleNamespace(forecastops_repository=repository))
+
+        replayed_alert = repository.get_alert(TENANT_ID, alert.alert_id)
+        replayed_handoff = repository.get_handoff(TENANT_ID, handoff.handoff_id)
+        assert replayed_alert is not None
+        assert replayed_alert.status == "acknowledged"
+        assert replayed_alert.acknowledged_by == "ops-manager"
+        assert replayed_alert.acknowledged_at is not None
+        assert replayed_handoff is not None
+        assert replayed_handoff.status == "dispatched"
+        assert replayed_handoff.executed_by == "ops-dispatcher"
+        assert replayed_handoff.intervention_id == "intervention-replay-001"
+        assert len(repository.list_alerts(TENANT_ID)) == 1
+        assert len(repository.list_handoffs(TENANT_ID)) == 1
+        assert len(repository.history(TENANT_ID, item.store_id)) == 1
+    finally:
+        bundle.engine.close()
+
+
+def test_batch_scores_every_requested_horizon_for_one_store() -> None:
+    """Two horizons for one store must not collapse into a single forecast."""
+
+    repository = InMemoryForecastOpsRepository()
+    item = _live_forecast_input()
+    result = ForecastOpsService(repository=repository).forecast(
+        [replace(item, horizon_days=28), replace(item, horizon_days=168)],
+        prediction_run_id="pred-run-multi-horizon",
+        scored_at=item.prediction_origin_time,
+    )
+
+    assert [forecast.horizon_days for forecast in result.forecasts] == [28, 168]
+    assert len({forecast.forecast_output_id for forecast in result.forecasts}) == 2
+    week4, week24 = result.forecasts
+    assert (week4.p10, week4.p50, week4.p90) == (week4.w4.p10, week4.w4.p50, week4.w4.p90)
+    assert (week24.p10, week24.p50, week24.p90) == (
+        week24.w24.p10,
+        week24.w24.p50,
+        week24.w24.p90,
+    )
+    assert len(repository.history(TENANT_ID, item.store_id)) == 2
+    predictions = repository.get_predictions(TENANT_ID, "pred-run-multi-horizon")
+    assert len(predictions) == 2
+    assert len({prediction.prediction_id for prediction in predictions}) == 2

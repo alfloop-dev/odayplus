@@ -509,6 +509,11 @@ def _forecast_one(
             prediction_run_id,
             str(forecast_input.tenant_id),
             forecast_input.store_id,
+            # One store may be scored for several canonical horizons inside a
+            # single run; without the horizon in the identity the later inputs
+            # collide with the first and are silently dropped by the
+            # idempotent repository write.
+            f"w{selected_horizon_weeks}",
         ),
         tenant_id=str(forecast_input.tenant_id),
         store_id=forecast_input.store_id,

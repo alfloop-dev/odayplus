@@ -199,7 +199,10 @@ class ForecastOpsService:
                 self.repository.save_canonical_forecast(tenant_id, canonical_forecast)
 
                 pred = Prediction(
-                    prediction_id=f"prediction-{uuid5(NAMESPACE_URL, f'{run_id}:{f.store_id}')}",
+                    prediction_id=(
+                        "prediction-"
+                        f"{uuid5(NAMESPACE_URL, f'{run_id}:{f.store_id}:w{f.horizon_days // 7}')}"
+                    ),
                     prediction_run_id=run_id,
                     entity_type="store",
                     entity_id=f.store_id,
@@ -219,9 +222,36 @@ class ForecastOpsService:
 
         return ForecastOpsResult(
             forecasts=saved_forecasts,
-            alerts=tuple(self.repository.save_alert(alert) for alert in alerts),
-            handoffs=tuple(self.repository.save_handoff(handoff) for handoff in handoffs),
+            alerts=tuple(self._persist_generated_alert(tenant_id, alert) for alert in alerts),
+            handoffs=tuple(
+                self._persist_generated_handoff(tenant_id, handoff) for handoff in handoffs
+            ),
         )
+
+    def _persist_generated_alert(self, tenant_id: str, alert: Alert) -> Alert:
+        """Persist a generated alert without rewinding an already-stored one.
+
+        Alert identity is derived from the deduplicated forecast, so an
+        at-least-once job replay regenerates an alert that is already persisted
+        in its initial ``open`` state. Writing it again would silently discard
+        the operator acknowledgement recorded between the two deliveries.
+        """
+
+        existing = self.repository.get_alert(tenant_id, alert.alert_id)
+        if existing is not None:
+            return existing
+        return self.repository.save_alert(alert)
+
+    def _persist_generated_handoff(
+        self, tenant_id: str, handoff: InterventionHandoff
+    ) -> InterventionHandoff:
+        """Persist a generated handoff without rewinding a dispatched one."""
+
+        existing = self.repository.get_handoff(tenant_id, handoff.handoff_id)
+        if existing is not None:
+            return existing
+        return self.repository.save_handoff(handoff)
+
     def acknowledge_alert(
         self,
         tenant_id: str,
