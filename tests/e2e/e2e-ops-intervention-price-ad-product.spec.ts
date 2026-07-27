@@ -8,12 +8,18 @@ const headers = {
   "x-roles": "finance_legal,expansion_user,operations_manager,regional_supervisor,site_reviewer,data_owner,auditor,executive,model_owner,release_owner,pricing_manager,marketing_manager",
 };
 
+// ForecastOps binds every job, alert, and handoff to the authenticated tenant
+// scope, so its requests must carry a tenant the same way the operator-console
+// specs do. The other product lanes in this spec stay on the shared headers.
+const forecastHeaders = { ...headers, "x-tenant-id": "tenant-a" };
+
 test.setTimeout(90_000);
 
 test("E2E-PV-006 operations, intervention, pricing, and AdLift product loop", async ({ page }, testInfo) => {
   const api = await playwrightRequest.newContext({ extraHTTPHeaders: headers });
 
   const forecast = await api.post(`${API_BASE_URL}/forecastops/forecast-jobs`, {
+    headers: forecastHeaders,
     data: {
       idempotency_key: "pv006-forecast-red-alert",
       prediction_origin_time: "2026-06-28T02:00:00Z",
@@ -37,7 +43,10 @@ test("E2E-PV-006 operations, intervention, pricing, and AdLift product loop", as
   expect(redAlert?.status).toBe("open");
   const acknowledge = await api.post(
     `${API_BASE_URL}/forecastops/alerts/${redAlert.alert_id}/acknowledge`,
-    { data: { actor: "pv006-ops-manager", note: "Red alert triaged from the ops board." } },
+    {
+      headers: forecastHeaders,
+      data: { actor: "pv006-ops-manager", note: "Red alert triaged from the ops board." },
+    },
   );
   expect(acknowledge.status()).toBe(200);
   expect((await acknowledge.json()).status).toBe("acknowledged");
@@ -51,7 +60,10 @@ test("E2E-PV-006 operations, intervention, pricing, and AdLift product loop", as
   const forecastHandoffId = forecastPayload.handoffs[0].handoff_id as string;
   const executeHandoff = await api.post(
     `${API_BASE_URL}/forecastops/intervention-handoffs/${forecastHandoffId}/execute`,
-    { data: { actor: "pv006-ops-dispatcher", intervention_id: interventionId } },
+    {
+      headers: forecastHeaders,
+      data: { actor: "pv006-ops-dispatcher", intervention_id: interventionId },
+    },
   );
   expect(executeHandoff.status()).toBe(200);
   const executedHandoff = await executeHandoff.json();
