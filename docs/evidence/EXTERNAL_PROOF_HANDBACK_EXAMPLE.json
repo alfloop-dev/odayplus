@@ -46,7 +46,7 @@
       "notes": "Example command result. Real handback must cite the current PR #82 headRefOid."
     },
     {
-      "command": "PLAYWRIGHT_BASE_URL=\"$ODP_STAGING_DEPLOY_URL\" npx playwright test tests/e2e/e2e-map-live-boundary.spec.ts --project=chromium --retries=1",
+      "command": "PLAYWRIGHT_BASE_URL=\"$ODP_STAGING_DEPLOY_URL\" npx playwright test tests/e2e/operator-network-listings.spec.ts --project=chromium --retries=1",
       "exit_code": 0,
       "observed_at": "2026-06-30T00:05:00Z",
       "notes": "Example map live-boundary command. Real handback must attach the workflow run or redacted log."

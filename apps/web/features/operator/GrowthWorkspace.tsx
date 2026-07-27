@@ -10,9 +10,7 @@ import {
   buildGrowthViewModel,
   checkGrowthConflicts,
   closeoutGate,
-  confidenceTone,
   conflictLevelTone,
-  constraintTone,
   createGrowthDraft,
   fetchGrowthApiData,
   formatLift,
@@ -20,18 +18,18 @@ import {
   GROWTH_KIND_PRESETS,
   growthKindLabel,
   outcomeLabel,
-  outcomeTone,
-  resolveGrowthApproval,
   submitGrowthForApproval,
+  transitionGrowthAction,
   trendLabel,
-  trendTone,
   writeGrowthOutcome,
   type CloseoutGate,
   type ConflictCheck,
+  type GrowthActionKind,
   type GrowthApiData,
   type GrowthBuilderForm,
   type GrowthItem,
   type GrowthKind,
+  type GrowthStatus,
   type GrowthSegment,
   type PriceOpsRecommendation,
 } from "./growthViewModel.ts";
@@ -41,18 +39,17 @@ import {
   toUnavailableOperatorStatus,
   type OperatorDataAvailability,
 } from "./operatorDataMode";
-import styles from "./operator.module.css";
 import g from "./growth.module.css";
 
 type SearchParams = Record<string, string | string[] | undefined>;
 
-/** Growth tabs (package-6 tab bar): campaign workbench / segments / PriceOps. */
+/** Package 10 Growth tabs: campaign workbench / segments / PriceOps. */
 type GrowthTab = "campaign" | "segments" | "priceops";
 
 const GROWTH_TABS: { id: GrowthTab; label: string }[] = [
-  { id: "campaign", label: "活動 Campaign" },
-  { id: "segments", label: "會員分群 Segments" },
-  { id: "priceops", label: "PriceOps" },
+  { id: "campaign", label: "活動與機會" },
+  { id: "segments", label: "會員分群" },
+  { id: "priceops", label: "PriceOps 定價" },
 ];
 
 /** Inline data-source badge shown next to freshness when rendering from fixture. */
@@ -68,12 +65,13 @@ const requiredActionLabel: Record<CloseoutGate["requiredAction"], string> = {
   STRENGTHEN_EVIDENCE: "補強證據",
 };
 
-/** Eight-step Growth lifecycle used by the detail-panel stepper (package 6). */
-const LIFECYCLE_STEPS = ["草稿", "送審", "核准", "排程", "執行", "觀察", "成效", "結案"];
+/** Eight-step Growth lifecycle used by the Package 10 detail-panel stepper. */
+const LIFECYCLE_STEPS = ["機會", "草稿", "核准", "排程", "執行", "觀察", "成效", "結案"];
 
 const STATUS_STEP: Record<string, number> = {
-  DRAFT: 0,
-  PENDING_APPROVAL: 1,
+  SYSTEM_RECOMMENDED: 0,
+  DRAFT: 1,
+  PENDING_APPROVAL: 2,
   APPROVED: 2,
   SCHEDULED: 3,
   RUNNING: 4,
@@ -112,26 +110,69 @@ const NEXT_STEP: Record<string, string> = {
   CLOSED: "已結案",
 };
 
-const KIND_SHORT: Record<GrowthKind, string> = {
+const KIND_SHORT: Record<GrowthActionKind, string> = {
   offpeak: "離峰促銷",
   winback: "會員召回",
-  priceops: "PriceOps",
+  priceops: "動態定價",
+  coupon: "優惠券",
+  adlift: "AdLift",
 };
+
+const KIND_TONE: Record<GrowthActionKind, string> = {
+  offpeak: g.typeTeal,
+  winback: g.typeIndigo,
+  priceops: g.typePurple,
+  coupon: g.typeAmber,
+  adlift: g.typeGreen,
+};
+
+const TYPE_FILTERS: { id: GrowthActionKind; label: string }[] = [
+  { id: "offpeak", label: "離峰促銷" },
+  { id: "winback", label: "會員召回" },
+  { id: "priceops", label: "動態定價" },
+  { id: "coupon", label: "優惠券" },
+  { id: "adlift", label: "AdLift" },
+];
+
+const STATUS_FILTERS = [
+  { id: "candidate", label: "機會" },
+  { id: "draft", label: "草稿" },
+  { id: "pending", label: "待核准" },
+  { id: "run", label: "執行中" },
+  { id: "out", label: "成效" },
+] as const;
 
 function statusLabel(status: string): string {
   return STATUS_LABEL[status] ?? status;
 }
 
+function matchesStatusFilter(status: string, filter?: string): boolean {
+  if (!filter) return true;
+  const normalized = status.toUpperCase();
+  if (filter === "candidate") return normalized === "SYSTEM_RECOMMENDED";
+  if (filter === "draft") return normalized === "DRAFT";
+  if (filter === "pending") return normalized === "PENDING_APPROVAL";
+  if (filter === "run") {
+    return ["APPROVED", "SCHEDULED", "RUNNING", "EXECUTED", "OBSERVING"].includes(normalized);
+  }
+  if (filter === "out") {
+    return ["OUTCOME_READY", "INEFFECTIVE", "CLOSED"].includes(normalized);
+  }
+  return true;
+}
+
 /** Derive a create-entry kind for an action that predates the entry-card flow. */
-function itemKind(item: GrowthItem): GrowthKind {
+function itemKind(item: GrowthItem): GrowthActionKind {
   if (item.kind) return item.kind;
   if (item.sourceRecommendationId) return "priceops";
-  if (item.name.includes("召回") || item.name.includes("廣告")) return "winback";
+  if (item.name.includes("AdLift") || item.name.includes("廣告")) return "adlift";
+  if (item.name.includes("優惠券")) return "coupon";
+  if (item.name.includes("召回")) return "winback";
   return "offpeak";
 }
 
 /**
- * 營收成長 Growth workspace — package-6 parity.
+ * 營收成長 Growth workspace — Package 10 / R7 parity.
  *
  * A self-contained full-bleed screen (no breadcrumb / nested console header):
  * inline title, three create-entry cards, a tab bar (活動 / 會員分群 / PriceOps)
@@ -225,9 +266,14 @@ export function GrowthWorkspace({
   const fixtureHint = DATA_SOURCE_HINT[vm.dataSource];
 
   // Build an href that keeps the Growth workspace active and preserves the
-  // current tab + selection unless explicitly overridden.
+  // current tab, selection, and unrelated URL state unless explicitly overridden.
   const href = (overrides: Record<string, string | undefined>): string => {
-    const params = new URLSearchParams({ ws: "growth" });
+    const params = new URLSearchParams();
+    for (const [key, value] of Object.entries(searchParams)) {
+      const first = Array.isArray(value) ? value[0] : value;
+      if (first) params.set(key, first);
+    }
+    params.set("ws", "growth");
     const merged: Record<string, string | undefined> = {
       gtab: activeTab === "campaign" ? undefined : activeTab,
       segment: vm.selectedSegment?.id,
@@ -237,10 +283,16 @@ export function GrowthWorkspace({
       ...overrides,
     };
     for (const [key, value] of Object.entries(merged)) {
-      if (value) params.set(key, value);
+      if (value) {
+        params.set(key, value);
+      } else {
+        params.delete(key);
+      }
     }
     return `${basePath}?${params.toString()}`;
   };
+
+  const governHref = `${basePath}?ws=govern`;
 
   return (
     <>
@@ -293,16 +345,21 @@ export function GrowthWorkspace({
             selected={vm.selectedSegment}
           />
         ) : activeTab === "priceops" ? (
-          <RecommendationSection recommendations={vm.recommendations} href={href} />
+          <RecommendationSection
+            recommendations={vm.recommendations}
+            segments={vm.segments}
+            href={href}
+          />
         ) : (
           <CampaignWorkbench
             items={vm.items}
             selected={vm.selectedItem}
-            gate={vm.selectedItemGate}
             segments={vm.segments}
             kindFilter={kindFilter}
             statusFilter={statusFilter}
+            recommendations={vm.recommendations}
             href={href}
+            governHref={governHref}
           />
         )}
       </div>
@@ -329,7 +386,11 @@ function EntryCardsSection({
   href: (o: Record<string, string | undefined>) => string;
 }) {
   return (
-    <div className={g.entryGrid} data-testid="growth-entry-cards">
+    <div
+      className={g.entryGrid}
+      data-screen-label="Growth 建立入口"
+      data-testid="growth-entry-cards"
+    >
       {GROWTH_ENTRY_CARDS.map((card) => (
         <Link
           key={card.kind}
@@ -382,27 +443,7 @@ function SegmentSection({
   href: (o: Record<string, string | undefined>) => string;
 }) {
   return (
-    <section aria-label="Segments">
-      <div className={g.segFilter} data-testid="growth-segment-filter">
-        <span>聚焦：</span>
-        <Link
-          className={g.statusChip}
-          aria-current={selected === null ? "true" : undefined}
-          href={href({ segment: undefined, item: undefined })}
-        >
-          全部分群
-        </Link>
-        {segments.map((segment) => (
-          <Link
-            key={segment.id}
-            className={[g.statusChip, selected?.id === segment.id ? g.statusChipActive : ""].join(" ")}
-            aria-current={selected?.id === segment.id ? "true" : undefined}
-            href={href({ segment: segment.id, item: undefined })}
-          >
-            {segment.name}
-          </Link>
-        ))}
-      </div>
+    <section aria-label="Segments" data-screen-label="Growth 會員分群">
       <div className={g.segGrid} data-testid="growth-segment-table">
         {segments.map((segment) => (
           <article
@@ -412,19 +453,16 @@ function SegmentSection({
           >
             <div className={g.segTop}>
               <span className={g.segName}>{segment.name}</span>
-              <Badge label={trendLabel[segment.trend]} tone={trendTone[segment.trend]} marker="●" />
+              <span className={g[`trend_${segment.trend}`]}>{trendLabel[segment.trend]}</span>
             </div>
             <div className={g.segCount}>{segment.storeCount} 店</div>
             <div className={g.segValue}>
               營收占比 {segment.revenueShare} · {segment.definition}
             </div>
             <div className={g.segPlay}>建議打法：{segment.opportunity}</div>
-            <div className={g.segTop}>
-              <Badge label={segment.dataStatus} tone={dataStatusTone[segment.dataStatus]} marker="◆" />
-            </div>
             <Link
               className={g.segDraftBtn}
-              href={href({ segment: segment.id, builder: "offpeak" })}
+              href={href({ segment: segment.id, builder: "offpeak", item: undefined })}
             >
               建立活動草稿
             </Link>
@@ -433,7 +471,7 @@ function SegmentSection({
       </div>
       <p className={g.tabNote}>
         {fixturesAllowed
-          ? "分群由本機範例資料建立；由分群建立的草稿仍走核准流程。"
+          ? "分群由本機測試資料建立；由分群建立的草稿仍走核准流程。"
           : "分群與模型版本來自 live API；由分群建立的草稿仍走核准流程。"}
       </p>
     </section>
@@ -443,77 +481,93 @@ function SegmentSection({
 /** PriceOps tab — pricing recommendation table (semantic rows for scan + tests). */
 function RecommendationSection({
   recommendations,
+  segments,
   href,
 }: {
   recommendations: PriceOpsRecommendation[];
+  segments: GrowthSegment[];
   href: (o: Record<string, string | undefined>) => string;
 }) {
+  const segmentName = (id: string) => segments.find((segment) => segment.id === id)?.name ?? id;
+
   return (
-    <section aria-label="PriceOps recommendations">
-      <table className={g.priceTable} data-testid="growth-recommendation-table">
-        <caption className={g.tabNote} style={{ captionSide: "bottom" }}>
-          系統建議僅為 SYSTEM_RECOMMENDED；硬限制未通過的建議不可建立草稿，需先由 PriceOps 修正。
-        </caption>
-        <thead>
-          <tr>
-            <th>建議</th>
-            <th>價格</th>
-            <th>營收增量 P50</th>
-            <th>毛利增量 P50</th>
-            <th>信心</th>
-            <th>限制</th>
-            <th>動作</th>
-          </tr>
-        </thead>
-        <tbody>
-          {recommendations.map((rec) => {
-            const blocked = rec.constraintStatus === "HARD_CONSTRAINT_FAILED";
-            return (
-              <tr key={rec.id}>
-                <td>
-                  <strong>{rec.title}</strong>
-                  <div className={g.mono}>{rec.id}</div>
-                </td>
-                <td>
-                  {rec.currentPrice}
-                  <div className={g.priceMono}>{rec.candidatePrice}</div>
-                </td>
-                <td className={g.priceMono}>{formatLift(rec.expectedRevenueLift)}</td>
-                <td className={g.priceMono}>{formatLift(rec.expectedMarginLift)}</td>
-                <td>
-                  <Badge label={rec.confidence} tone={confidenceTone[rec.confidence]} marker="▧" />
-                </td>
-                <td>
-                  <Badge
-                    label={rec.constraintStatus}
-                    tone={constraintTone[rec.constraintStatus]}
-                    marker="!"
-                  />
-                </td>
-                <td>
-                  {blocked ? (
-                    <span
-                      className={styles.secondaryButton}
-                      aria-disabled="true"
-                      title="硬限制未通過，不可建立草稿"
-                    >
-                      建立草稿
+    <section
+      aria-label="PriceOps recommendations"
+      data-screen-label="Growth PriceOps"
+      className={g.priceSection}
+    >
+      <div className={g.priceScroller}>
+        <table className={g.priceTable} data-testid="growth-recommendation-table">
+          <thead>
+            <tr>
+              <th>門市／分群</th>
+              <th>時窗</th>
+              <th>目前價</th>
+              <th>建議價</th>
+              <th>預期利用率</th>
+              <th>預期營收</th>
+              <th>毛利風險</th>
+              <th>回滾條件</th>
+              <th aria-label="動作" />
+            </tr>
+          </thead>
+          <tbody>
+            {recommendations.map((rec) => {
+              const blocked = rec.constraintStatus === "HARD_CONSTRAINT_FAILED";
+              return (
+                <tr key={rec.id}>
+                  <td>
+                    <strong>{rec.store ?? segmentName(rec.segmentId)}</strong>
+                    <span className={g.priceLinked}>
+                      {rec.linkedActionId ? `${rec.linkedActionId} · ` : ""}
+                      {rec.id}
                     </span>
-                  ) : (
-                    <Link
-                      className={styles.primaryButton}
-                      href={href({ draft: rec.id })}
-                      data-testid={`growth-draft-${rec.id}`}
-                    >
-                      建立草稿
-                    </Link>
-                  )}
-                </td>
-              </tr>
-            );
-          })}
-        </tbody>
-      </table>
+                  </td>
+                  <td>{rec.window ?? "待建立草稿"}</td>
+                  <td className={g.priceMono}>{rec.currentPrice}</td>
+                  <td>
+                    <span className={g.priceCandidate}>{rec.candidatePrice}</span>
+                    <span className={g.priceConstraint} data-constraint={rec.constraintStatus}>
+                      {rec.constraintStatus}
+                    </span>
+                  </td>
+                  <td className={g.priceMono}>{rec.expectedUtilization ?? "—"}</td>
+                  <td className={g.pricePositive}>{formatLift(rec.expectedRevenueLift)}</td>
+                  <td>
+                    {rec.marginRisk ?? formatLift(rec.expectedMarginLift)}
+                    <span className={g.priceLinked}>信心 {rec.confidence}</span>
+                  </td>
+                  <td className={g.priceRollback}>
+                    {rec.rollbackCondition ?? "建立草稿時必填"}
+                  </td>
+                  <td>
+                    {blocked ? (
+                      <span
+                        className={g.priceDraftDisabled}
+                        aria-disabled="true"
+                        title={rec.constraintDetail}
+                      >
+                        建立定價草稿
+                      </span>
+                    ) : (
+                      <Link
+                        className={g.priceDraft}
+                        href={href({ draft: rec.id })}
+                        data-testid={`growth-draft-${rec.id}`}
+                      >
+                        建立定價草稿
+                      </Link>
+                    )}
+                  </td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      </div>
+      <p className={g.tabNote}>
+        PriceOps 建議維持 SYSTEM_RECOMMENDED；調價需核准且附回滾條件，硬限制未通過時不可建立草稿。
+      </p>
     </section>
   );
 }
@@ -526,27 +580,29 @@ function RecommendationSection({
 function CampaignWorkbench({
   items,
   selected,
-  gate,
   segments,
   kindFilter,
   statusFilter,
+  recommendations,
   href,
+  governHref,
 }: {
   items: GrowthItem[];
   selected: GrowthItem;
-  gate: CloseoutGate;
   segments: GrowthSegment[];
   kindFilter?: string;
   statusFilter?: string;
+  recommendations: PriceOpsRecommendation[];
   href: (o: Record<string, string | undefined>) => string;
+  governHref: string;
 }) {
   const segmentName = (id: string) => segments.find((s) => s.id === id)?.name ?? id;
-  const statuses = Array.from(new Set(items.map((i) => i.status)));
   const filtered = items.filter((item) => {
     if (kindFilter && itemKind(item) !== kindFilter) return false;
-    if (statusFilter && item.status !== statusFilter) return false;
-    return true;
+    return matchesStatusFilter(item.status, statusFilter);
   });
+  const recommendationFor = (item: GrowthItem) =>
+    recommendations.find((recommendation) => recommendation.id === item.sourceRecommendationId);
 
   return (
     <section className={g.campaign} aria-label="Growth actions">
@@ -564,15 +620,19 @@ function CampaignWorkbench({
             >
               全部類型
             </Link>
-            {GROWTH_ENTRY_CARDS.map((card) => (
+            {TYPE_FILTERS.map((type) => {
+              const count = items.filter((item) => itemKind(item) === type.id).length;
+              return (
               <Link
-                key={card.kind}
-                className={[g.typeChip, kindFilter === card.kind ? g.typeChipActive : ""].join(" ")}
-                href={href({ gkind: kindFilter === card.kind ? undefined : card.kind })}
+                key={type.id}
+                className={[g.typeChip, kindFilter === type.id ? g.typeChipActive : ""].join(" ")}
+                href={href({ gkind: kindFilter === type.id ? undefined : type.id })}
               >
-                {KIND_SHORT[card.kind]}
+                <span>{type.label}</span>
+                {count > 0 ? <span className={g.chipCount}>{count}</span> : null}
               </Link>
-            ))}
+              );
+            })}
           </div>
           <div className={[g.railLabel, g.railLabelMt].join(" ")}>狀態</div>
           <div className={g.statusChipRow}>
@@ -582,13 +642,13 @@ function CampaignWorkbench({
             >
               全部
             </Link>
-            {statuses.map((s) => (
+            {STATUS_FILTERS.map((status) => (
               <Link
-                key={s}
-                className={[g.statusChip, statusFilter === s ? g.statusChipActive : ""].join(" ")}
-                href={href({ gstatus: statusFilter === s ? undefined : s })}
+                key={status.id}
+                className={[g.statusChip, statusFilter === status.id ? g.statusChipActive : ""].join(" ")}
+                href={href({ gstatus: statusFilter === status.id ? undefined : status.id })}
               >
-                {statusLabel(s)}
+                {status.label}
               </Link>
             ))}
           </div>
@@ -605,6 +665,9 @@ function CampaignWorkbench({
         ) : (
           filtered.map((item) => {
             const rowGate = closeoutGate(item);
+            const segment = segments.find((candidate) => candidate.id === item.segmentId);
+            const recommendation = recommendationFor(item);
+            const kind = itemKind(item);
             return (
               <Link
                 key={item.id}
@@ -615,40 +678,44 @@ function CampaignWorkbench({
               >
                 <div className={g.actionTop}>
                   <span className={g.mono}>{item.id}</span>
-                  <Badge label={KIND_SHORT[itemKind(item)]} tone="blue" marker="▧" />
-                  <Badge label={statusLabel(item.status)} tone="gray" marker="◆" />
+                  <span className={[g.typeBadge, KIND_TONE[kind]].join(" ")}>{KIND_SHORT[kind]}</span>
+                  <span className={g.statusBadge}>{statusLabel(item.status)}</span>
                   <span className={g.actionNext}>下一步：{NEXT_STEP[item.status] ?? "—"}</span>
                 </div>
                 <div className={g.actionTitle}>{item.name}</div>
                 <div className={g.actionMeta}>
-                  {segmentName(item.segmentId)} · {item.observationWindow}
+                  {item.store ?? "全品牌"} · {segmentName(item.segmentId)} · {item.observationWindow}
                 </div>
                 <div className={g.metricRow}>
                   <div>
-                    <div className={g.metricK}>目標增量</div>
-                    <div className={g.metricV}>{formatLift(item.targetLift)}</div>
+                    <div className={g.metricK}>預估觸達</div>
+                    <div className={g.metricV}>{segment ? `${segment.storeCount} 店` : "—"}</div>
                   </div>
                   <div>
-                    <div className={g.metricK}>觀察增量</div>
-                    <div className={[g.metricV, (item.observedLift ?? 0) > 0 ? g.metricVpos : ""].join(" ")}>
-                      {formatLift(item.observedLift)}
+                    <div className={g.metricK}>預估增額營收</div>
+                    <div className={[g.metricV, g.metricVpos].join(" ")}>
+                      {formatLift(recommendation?.expectedRevenueLift ?? item.targetLift)}
                     </div>
                   </div>
                   <div>
-                    <div className={g.metricK}>證據</div>
-                    <div className={g.metricV}>{item.evidenceLevel}</div>
+                    <div className={g.metricK}>毛利影響</div>
+                    <div className={g.metricV}>
+                      {recommendation ? formatLift(recommendation.expectedMarginLift) : "待試算"}
+                    </div>
                   </div>
                   <div>
-                    <div className={g.metricK}>成效</div>
-                    <div>
-                      <Badge
-                        label={outcomeLabel[rowGate.outcome]}
-                        tone={outcomeTone[rowGate.outcome]}
-                        marker="●"
-                      />
+                    <div className={g.metricK}>預算</div>
+                    <div className={g.metricV}>
+                      {typeof item.budget === "number" ? `NT$${item.budget.toLocaleString()}` : "—"}
                     </div>
                   </div>
                 </div>
+                {rowGate.outcome !== "PENDING" ? (
+                  <div className={g.outcomeLine}>成效：{outcomeLabel[rowGate.outcome]}</div>
+                ) : null}
+                {item.sourceRecommendationId ? (
+                  <div className={g.sourceLine}>↳ 來源 {item.sourceRecommendationId}</div>
+                ) : null}
               </Link>
             );
           })
@@ -656,31 +723,48 @@ function CampaignWorkbench({
       </div>
 
       {/* Sticky lifecycle detail */}
-      <GrowthActionDetail item={selected} gate={gate} segmentName={segmentName} href={href} />
+      <GrowthActionDetail
+        item={selected}
+        recommendation={recommendationFor(selected)}
+        segmentName={segmentName}
+        href={href}
+        governHref={governHref}
+      />
     </section>
   );
 }
 
 function GrowthActionDetail({
   item,
-  gate,
+  recommendation,
   segmentName,
   href,
+  governHref,
 }: {
   item: GrowthItem;
-  gate: CloseoutGate;
+  recommendation?: PriceOpsRecommendation;
   segmentName: (id: string) => string;
   href: (o: Record<string, string | undefined>) => string;
+  governHref: string;
 }) {
-  const stepIndex = STATUS_STEP[item.status] ?? 0;
+  const [status, setStatus] = useState<GrowthStatus>(item.status);
+
+  useEffect(() => {
+    setStatus(item.status);
+  }, [item.id, item.status]);
+
+  const currentItem = { ...item, status };
+  const gate = closeoutGate(currentItem);
+  const stepIndex = STATUS_STEP[status] ?? 0;
+  const evidenceRisk =
+    item.evidenceLevel === "low" ? "證據信心低，需補強對照組" : `證據信心 ${item.evidenceLevel}`;
+
   return (
     <aside className={g.detailPanel} data-testid="growth-item-detail" aria-label={`${item.name} 詳情`}>
       <div>
         <div className={g.detailIdRow}>
           <span className={g.mono}>{item.id}</span>
-          <Badge label={statusLabel(item.status)} tone="blue" marker="◆" />
-          <Badge label={outcomeLabel[gate.outcome]} tone={outcomeTone[gate.outcome]} marker="●" />
-          <Badge label={`evidence ${item.evidenceLevel}`} tone={confidenceTone[item.evidenceLevel]} marker="▧" />
+          <span className={g.statusBadge}>{statusLabel(status)}</span>
         </div>
         <div className={g.detailTitle}>{item.name}</div>
       </div>
@@ -716,6 +800,13 @@ function GrowthActionDetail({
         </div>
       </div>
 
+      {recommendation ? (
+        <div className={g.aiRecommendation}>
+          <span className={g.aiLabel}>AI 建議</span>
+          <p>{item.rationale}</p>
+        </div>
+      ) : null}
+
       <div className={g.detailStack} data-testid="growth-lift-comparison">
         <div className={g.detailRow}>
           <span className={g.detailRowK}>客群</span>
@@ -726,45 +817,73 @@ function GrowthActionDetail({
           <span className={g.detailRowV}>{formatLift(item.targetLift)}</span>
         </div>
         <div className={g.detailRow}>
-          <span className={g.detailRowK}>觀察增量</span>
-          <span className={g.detailRowV}>{formatLift(item.observedLift)}</span>
+          <span className={g.detailRowK}>預算</span>
+          <span className={g.detailRowV}>
+            {typeof item.budget === "number" ? `NT$${item.budget.toLocaleString()}` : "—"}
+          </span>
         </div>
         <div className={g.detailRow}>
-          <span className={g.detailRowK}>觀察窗</span>
+          <span className={g.detailRowK}>風險</span>
+          <span className={g.detailRowV}>{evidenceRisk}</span>
+        </div>
+        <div className={g.detailRow}>
+          <span className={g.detailRowK}>衝突檢查</span>
+          <span className={g.detailRowV}>
+            {status === "DRAFT" ? "送審前由伺服器檢查" : "已進入核准生命週期"}
+          </span>
+        </div>
+        <div className={g.detailRow}>
+          <span className={g.detailRowK}>排程</span>
           <span className={g.detailRowV}>{item.observationWindow}</span>
+        </div>
+        <div className={g.detailRow}>
+          <span className={g.detailRowK}>成效量測</span>
+          <span className={g.detailRowV}>
+            {item.observedLift === null ? "觀察窗成熟後判定" : formatLift(item.observedLift)}
+          </span>
         </div>
       </div>
 
-      <div className={styles.softBlock}>
-        <h3>目標</h3>
-        <p>{item.objective}</p>
-      </div>
-      <div className={styles.softBlock}>
-        <h3>成效判斷</h3>
-        <p>{item.rationale}</p>
-      </div>
-      <div className={styles.softBlock}>
-        <h3>Rollback 計畫</h3>
-        <p>{item.rollbackPlan}</p>
-      </div>
-
-      {item.status === "DRAFT" || item.status === "PENDING_APPROVAL" ? (
-        <ApprovalFlowPanel item={item} href={href} />
+      {item.sourceRecommendationId ? (
+        <div className={g.sourceDetail}>↳ PriceOps 來源 {item.sourceRecommendationId}</div>
       ) : null}
-      <CloseoutPanel item={item} gate={gate} href={href} />
 
-      <dl className={styles.auditGrid} data-testid="growth-item-audit">
-        <dt>decision_id</dt>
-        <dd>{item.audit.decisionId}</dd>
-        <dt>correlation_id</dt>
-        <dd>{item.audit.correlationId}</dd>
-        <dt>model</dt>
-        <dd>{item.audit.modelVersion}</dd>
-        <dt>policy</dt>
-        <dd>{item.audit.policyVersion}</dd>
-        <dt>feature snapshot</dt>
-        <dd>{item.audit.featureSnapshotTime}</dd>
-      </dl>
+      {status === "DRAFT" || status === "PENDING_APPROVAL" ? (
+        <ApprovalFlowPanel
+          item={currentItem}
+          governHref={governHref}
+          onStatusChange={setStatus}
+        />
+      ) : null}
+      {["APPROVED", "SCHEDULED", "RUNNING", "EXECUTED", "OBSERVING"].includes(status) ? (
+        <LifecycleTransitionPanel
+          item={currentItem}
+          onStatusChange={setStatus}
+        />
+      ) : null}
+      {["OUTCOME_READY", "INEFFECTIVE", "CLOSED"].includes(status) ? (
+        <CloseoutPanel item={currentItem} gate={gate} href={href} />
+      ) : null}
+
+      <div data-testid="growth-item-audit">
+        <div className={g.auditHeading}>AUDIT</div>
+        <div className={g.detailAudit}>
+          <span className={g.detailAuditT}>decision</span>
+          <span>{item.audit.decisionId}</span>
+        </div>
+        <div className={g.detailAudit}>
+          <span className={g.detailAuditT}>model</span>
+          <span>{item.audit.modelVersion}</span>
+        </div>
+        <div className={g.detailAudit}>
+          <span className={g.detailAuditT}>policy</span>
+          <span>{item.audit.policyVersion}</span>
+        </div>
+        <div className={g.detailAudit}>
+          <span className={g.detailAuditT}>snapshot</span>
+          <span>{item.audit.featureSnapshotTime}</span>
+        </div>
+      </div>
     </aside>
   );
 }
@@ -776,12 +895,14 @@ function GrowthActionDetail({
  */
 function ApprovalFlowPanel({
   item,
-  href,
+  governHref,
+  onStatusChange,
 }: {
   item: GrowthItem;
-  href: (o: Record<string, string | undefined>) => string;
+  governHref: string;
+  onStatusChange: (status: GrowthStatus) => void;
 }) {
-  const [approvalId, setApprovalId] = useState<string | null>(null);
+  const [approvalId, setApprovalId] = useState<string | null>(item.approvalId ?? null);
   const [growthStatus, setGrowthStatus] = useState<string>(item.status);
   const [busy, setBusy] = useState(false);
   const [apiError, setApiError] = useState<string | null>(null);
@@ -804,78 +925,95 @@ function ApprovalFlowPanel({
     }
     setApprovalId(result.approval.id);
     setGrowthStatus(result.status);
+    onStatusChange(result.status as GrowthStatus);
     audit("SUBMIT_FOR_APPROVAL", { approvalId: result.approval.id, status: result.status });
   };
 
-  const handleDecision = async (decision: "approved" | "rejected") => {
-    if (busy || !approvalId) return;
-    setBusy(true);
-    setApiError(null);
-    const result = await resolveGrowthApproval({ approvalId, decision, reason: decision === "approved" ? "符合政策" : "退回修改" });
-    setBusy(false);
-    if (!result) {
-      setApiError("核准決策寫入失敗；API 不可用。");
-      return;
-    }
-    setGrowthStatus(result.growthStatus);
-    audit("RESOLVE_APPROVAL", { approvalId, decision, growthStatus: result.growthStatus });
-  };
-
   return (
-    <section className={styles.closeoutPanel} data-testid="growth-approval-panel" data-growth-status={growthStatus}>
-      <h3>送審與核准</h3>
+    <section className={g.actionPanel} data-testid="growth-approval-panel" data-growth-status={growthStatus}>
       {apiError ? (
-        <div className={styles.warningBlock} data-testid="growth-approval-error">
+        <div className={g.inlineError} data-testid="growth-approval-error">
           <p>{apiError}</p>
         </div>
       ) : null}
-      {approvalId ? (
-        <div className={styles.softBlock} data-testid="growth-approval-created">
-          <p>
-            已建立 Govern 核准項 <strong>{approvalId}</strong>（狀態：{growthStatus}）。
-          </p>
-        </div>
+      {approvalId || growthStatus === "PENDING_APPROVAL" ? (
+        <>
+          <div className={g.approvalReceipt} data-testid="growth-approval-created">
+            <span className={g.mono}>{approvalId ?? "Govern approval"}</span>
+            <span className={g.pendingBadge}>待核准</span>
+            <Link href={governHref}>查看 →</Link>
+          </div>
+          <button type="button" className={g.primaryAction} disabled>
+            等待核准
+          </button>
+          <p className={g.actionNote}>核准由營運主管／稽核於治理稽核處理，不在 Growth 內直接決策。</p>
+        </>
       ) : (
-        <p className={styles.subtle}>送審後建立 Govern 核准項，核准通過才進入排程／執行。</p>
-      )}
-      <div className={styles.closeoutActions}>
-        {!approvalId ? (
+        <>
           <button
             type="button"
-            className={styles.primaryButton}
+            className={g.primaryAction}
             onClick={handleSubmit}
             disabled={busy || item.status !== "DRAFT"}
             data-testid="growth-submit-approval"
           >
             {busy ? "送審中…" : "送主管核准"}
           </button>
-        ) : (
-          <>
-            <button
-              type="button"
-              className={styles.primaryButton}
-              onClick={() => handleDecision("approved")}
-              disabled={busy || growthStatus === "APPROVED"}
-              data-testid="growth-approve"
-            >
-              核准
-            </button>
-            <button
-              type="button"
-              className={styles.secondaryButton}
-              onClick={() => handleDecision("rejected")}
-              disabled={busy || growthStatus === "DRAFT"}
-              data-testid="growth-reject"
-            >
-              駁回
-            </button>
-          </>
-        )}
-      </div>
-      <p className={styles.subtle}>
-        <Link className={styles.link} href={href({ item: item.id })}>
-          重新整理狀態
-        </Link>
+          <p className={g.actionNote}>送出後建立 Govern 核准項；伺服器成功回覆前不更新狀態。</p>
+        </>
+      )}
+    </section>
+  );
+}
+
+function LifecycleTransitionPanel({
+  item,
+  onStatusChange,
+}: {
+  item: GrowthItem;
+  onStatusChange: (status: GrowthStatus) => void;
+}) {
+  const transition = ({
+    APPROVED: { target: "SCHEDULED", label: "排程上線" },
+    SCHEDULED: { target: "RUNNING", label: "開始執行" },
+    RUNNING: { target: "OBSERVING", label: "啟動觀察" },
+    EXECUTED: { target: "OBSERVING", label: "啟動觀察" },
+  } as Partial<Record<GrowthStatus, { target: GrowthStatus; label: string }>>)[item.status];
+  const [busy, setBusy] = useState(false);
+  const [apiError, setApiError] = useState<string | null>(null);
+
+  const handleTransition = async () => {
+    if (!transition || busy) return;
+    setBusy(true);
+    setApiError(null);
+    const result = await transitionGrowthAction({
+      actionId: item.id,
+      targetStatus: transition.target,
+    });
+    setBusy(false);
+    if (!result) {
+      setApiError("生命週期更新失敗；狀態未變更，請稍後重試。");
+      return;
+    }
+    onStatusChange(result.status);
+  };
+
+  return (
+    <section className={g.actionPanel} data-testid="growth-transition-panel">
+      {apiError ? <div className={g.inlineError}>{apiError}</div> : null}
+      <button
+        type="button"
+        className={g.primaryAction}
+        disabled={!transition || busy}
+        onClick={handleTransition}
+        data-testid="growth-transition-action"
+      >
+        {busy ? "更新中…" : transition?.label ?? "觀察中"}
+      </button>
+      <p className={g.actionNote}>
+        {transition
+          ? "狀態由伺服器生命週期閘門確認，成功後才更新畫面。"
+          : "觀察窗進行中，期滿後由成效資料進入判定。"}
       </p>
     </section>
   );
@@ -893,7 +1031,7 @@ function CloseoutPanel({
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [isApproved, setIsApproved] = useState(false);
   const [apiError, setApiError] = useState<string | null>(null);
-  const blockClass = gate.canClose ? styles.successBlock : styles.warningBlock;
+  const blockClass = gate.canClose ? g.outcomeSuccess : g.outcomeWarning;
 
   const handleApprove = async () => {
     if (!gate.canClose || isSubmitting) return;
@@ -933,22 +1071,25 @@ function CloseoutPanel({
   };
 
   return (
-    <section className={styles.closeoutPanel} data-testid="growth-closeout-panel">
-      <h3>結案判定</h3>
+    <section
+      className={g.actionPanel}
+      data-screen-label="Dialog Growth Outcome"
+      data-testid="growth-closeout-panel"
+    >
       {isApproved ? (
-        <div className={styles.successBlock} data-testid="growth-closeout-success">
+        <div className={g.outcomeSuccess} data-testid="growth-closeout-success">
           <p>結案已成功提交並記錄稽核日誌。等待後端決策回寫。</p>
-          {apiError ? <p className={styles.subtle}>{apiError}</p> : null}
+          {apiError ? <p className={g.actionNote}>{apiError}</p> : null}
         </div>
       ) : (
         <div className={blockClass} data-testid="growth-closeout-gate" data-can-close={gate.canClose}>
           <p>{gate.reason}</p>
         </div>
       )}
-      <div className={styles.closeoutActions}>
+      <div className={g.closeoutActions}>
         <button
           type="button"
-          className={styles.primaryButton}
+          className={g.primaryAction}
           disabled={!gate.canClose || isApproved || isSubmitting}
           onClick={handleApprove}
           data-testid="growth-close-button"
@@ -956,16 +1097,16 @@ function CloseoutPanel({
           {isSubmitting ? "提交中…" : isApproved ? "已結案" : "結案並回寫成效"}
         </button>
         {gate.requiredAction !== "CLOSE" && !isApproved ? (
-          <span className={styles.secondaryButton} data-testid="growth-required-action">
+          <span className={g.secondaryAction} data-testid="growth-required-action">
             需先：{requiredActionLabel[gate.requiredAction]}
           </span>
         ) : null}
       </div>
-      <p className={styles.auditLine}>
+      <p className={g.actionNote}>
         提交結案等待後端 decision_id，不做 optimistic update；無效活動不可直接結案（decision {item.audit.decisionId}）。
       </p>
-      <p className={styles.subtle}>
-        <Link className={styles.link} href={href({ item: item.id })}>
+      <p className={g.actionNote}>
+        <Link className={g.inlineLink} href={href({ item: item.id })}>
           重新整理判定
         </Link>
       </p>
@@ -976,7 +1117,7 @@ function CloseoutPanel({
 const CHANNEL_OPTIONS = ["LINE 推播", "App 首頁", "店內告示", "店內告示＋App 價格頁"];
 
 /**
- * Five-step Draft Builder (package 6): 基本設定 → 客群／時段 → 預估效益 →
+ * Five-step Draft Builder (Package 10): 基本設定 → 客群／時段 → 預估效益 →
  * 風險／衝突 → 送核准.  Step 4 runs the server conflict gate; a blocked
  * (fail) gate disables submit and surfaces the server's actionable reasons.
  * Step 5 either creates a DRAFT or creates-and-submits it for approval, which
@@ -990,6 +1131,7 @@ function GrowthBuilderModal({
   closeHref: string;
 }) {
   const router = useRouter();
+  const fixturesAllowed = operatorFixturesAllowed();
   const [form, setForm] = useState<GrowthBuilderForm>(initialForm);
   const [step, setStep] = useState(1);
   const [isSubmitting, setIsSubmitting] = useState(false);
@@ -1016,7 +1158,7 @@ function GrowthBuilderModal({
       setBlocked(result.blocked);
     } else {
       setConflicts(null);
-      setBlocked(false);
+      setBlocked(!fixturesAllowed);
     }
   };
 
@@ -1038,7 +1180,9 @@ function GrowthBuilderModal({
   };
 
   const handleCreate = async (sendForApproval: boolean) => {
-    if (isSubmitting || blocked) return;
+    if (isSubmitting || (sendForApproval && (blocked || (!fixturesAllowed && conflicts === null)))) {
+      return;
+    }
     setIsSubmitting(true);
     setApiError(null);
 
@@ -1095,51 +1239,62 @@ function GrowthBuilderModal({
   };
 
   return (
-    <div className={styles.modalBackdrop} data-testid="growth-draft-modal">
+    <div
+      className={g.modalBackdrop}
+      data-screen-label="Dialog Growth Draft Builder"
+      data-testid="growth-draft-modal"
+    >
       <Link
         href={closeHref}
-        className={styles.modalBackdrop}
+        className={g.modalDismiss}
         aria-label="關閉建立草稿視窗"
-        style={{ background: "transparent", zIndex: 1 }}
         tabIndex={-1}
       />
       <div
         role="dialog"
         aria-modal="true"
         aria-labelledby="growth-draft-title"
-        className={styles.modal}
-        style={{ position: "relative", zIndex: 2 }}
+        className={g.builderModal}
         data-step={step}
       >
-        <div className={styles.modalHeader}>
+        <div className={g.builderHeader}>
           <div>
             <h2 id="growth-draft-title">建立 Growth Action 草稿</h2>
-            <p className={styles.subtle}>類型：{growthKindLabel[form.kind]}</p>
+            <p>類型：{growthKindLabel[form.kind]}</p>
           </div>
-          <Link href={closeHref} className={styles.secondaryButton} data-testid="growth-draft-close">
-            關閉
+          <Link
+            href={closeHref}
+            className={g.closeButton}
+            aria-label="關閉"
+            title="關閉"
+            data-testid="growth-draft-close"
+          >
+            ×
           </Link>
         </div>
 
-        <ol className={styles.badgeRow} data-testid="growth-builder-steps">
+        <ol className={g.builderSteps} data-testid="growth-builder-steps">
           {BUILDER_STEPS.map((label, i) => (
-            <li key={label} style={{ listStyle: "none" }}>
-              <Badge
-                label={`${i + 1}. ${label}`}
-                tone={step === i + 1 ? "blue" : step > i + 1 ? "green" : "gray"}
-                marker={step > i + 1 ? "✓" : "●"}
-              />
+            <li
+              key={label}
+              className={[
+                step === i + 1 ? g.builderStepCurrent : "",
+                step > i + 1 ? g.builderStepDone : "",
+              ].join(" ")}
+            >
+              <span>{step > i + 1 ? "✓" : i + 1}</span>
+              <b>{label}</b>
             </li>
           ))}
         </ol>
 
         {apiError ? (
-          <div className={styles.warningBlock} data-testid="growth-draft-api-error">
+          <div className={g.formAlert} data-testid="growth-draft-api-error">
             <p>{apiError}</p>
           </div>
         ) : null}
 
-        <form className={styles.modalForm}>
+        <form className={g.builderForm}>
           {step === 1 ? (
             <div data-testid="growth-builder-step-1">
               <label>
@@ -1213,33 +1368,39 @@ function GrowthBuilderModal({
 
           {step === 4 ? (
             <div data-testid="growth-builder-step-4">
-              <p className={styles.sectionHint}>
+              <p className={g.sectionHint}>
                 伺服器衝突閘門檢查（重疊／PriceOps／預算／打擾／核准）；任一項為 fail 即不可送審。
               </p>
-              {checking ? <p className={styles.subtle}>檢查中…</p> : null}
+              {checking ? <p className={g.actionNote}>檢查中…</p> : null}
               <div
                 data-testid="growth-conflict-panel"
                 data-blocked={blocked}
-                className={blocked ? styles.warningBlock : styles.softBlock}
+                className={blocked ? g.conflictPanelBlocked : g.conflictPanel}
               >
                 {conflicts === null ? (
-                  <p className={styles.subtle}>尚未取得伺服器衝突結果（API 不可用時以人工複核）。</p>
+                  <p className={g.actionNote}>
+                    {fixturesAllowed
+                      ? "尚未取得伺服器衝突結果；本機模式可先保存草稿。"
+                      : "無法取得伺服器衝突結果；Production 已 fail closed，只能保存草稿，不能送審。"}
+                  </p>
                 ) : (
                   conflicts.map((c) => (
-                    <div key={c.id} className={styles.badgeRow} data-testid={`growth-conflict-${c.id}`}>
+                    <div key={c.id} className={g.conflictRow} data-testid={`growth-conflict-${c.id}`}>
                       <Badge
                         label={c.label}
                         tone={conflictLevelTone[c.level]}
                         marker={c.level === "ok" ? "✓" : c.level === "fail" ? "✕" : "!"}
                       />
-                      <span className={styles.subtle}>{c.note}</span>
+                      <span>{c.note}</span>
                     </div>
                   ))
                 )}
               </div>
               {blocked ? (
-                <p className={styles.auditLine} data-testid="growth-conflict-blocked">
-                  存在硬衝突，無法送審——請回上一步調整時段／門市後重新檢查。
+                <p className={g.formAlert} data-testid="growth-conflict-blocked">
+                  {conflicts === null
+                    ? "衝突閘門不可用，Production 已停止送審。"
+                    : "存在硬衝突，無法送審；請回上一步調整時段／門市後重新檢查。"}
                 </p>
               ) : null}
             </div>
@@ -1247,7 +1408,8 @@ function GrowthBuilderModal({
 
           {step === 5 ? (
             <div data-testid="growth-builder-step-5">
-              <dl className={styles.auditGrid}>
+              <div className={g.summaryHeading}>DRAFT SUMMARY</div>
+              <dl className={g.builderSummary}>
                 <dt>活動名稱</dt>
                 <dd>{form.name}</dd>
                 <dt>類型</dt>
@@ -1263,39 +1425,43 @@ function GrowthBuilderModal({
                 <dt>預算</dt>
                 <dd>NT${form.budget}</dd>
               </dl>
+              <p className={g.summaryNote}>
+                建立後 status = <strong>Draft</strong>。「建立並送核准」會建立 Govern 核准請求；
+                核准通過後才能排程上線，PriceOps 必須附回滾條件。
+              </p>
             </div>
           ) : null}
 
-          <div className={styles.modalActions}>
+          <div className={g.builderFooter}>
             {step > 1 ? (
-              <button type="button" className={styles.secondaryButton} onClick={goPrev} data-testid="growth-builder-prev">
-                上一步
+              <button type="button" className={g.secondaryAction} onClick={goPrev} data-testid="growth-builder-prev">
+                ← 上一步
               </button>
             ) : (
-              <Link href={closeHref} className={styles.secondaryButton}>
+              <Link href={closeHref} className={g.secondaryAction}>
                 取消
               </Link>
             )}
             {step < 5 ? (
-              <button type="button" className={styles.primaryButton} onClick={goNext} data-testid="growth-builder-next">
-                下一步
+              <button type="button" className={g.primaryAction} onClick={goNext} data-testid="growth-builder-next">
+                下一步 →
               </button>
             ) : (
               <>
                 <button
                   type="button"
-                  className={styles.secondaryButton}
+                  className={g.secondaryAction}
                   onClick={() => handleCreate(false)}
-                  disabled={isSubmitting || blocked}
+                  disabled={isSubmitting}
                   data-testid="growth-draft-submit"
                 >
                   {isSubmitting ? "建立中…" : "建立草稿"}
                 </button>
                 <button
                   type="button"
-                  className={styles.primaryButton}
+                  className={g.primaryAction}
                   onClick={() => handleCreate(true)}
-                  disabled={isSubmitting || blocked}
+                  disabled={isSubmitting || blocked || (!fixturesAllowed && conflicts === null)}
                   data-testid="growth-draft-submit-approval"
                 >
                   {isSubmitting ? "送審中…" : "建立並送核准"}
@@ -1304,7 +1470,7 @@ function GrowthBuilderModal({
             )}
           </div>
         </form>
-        <p className={styles.auditLine}>
+        <p className={g.builderNote}>
           建立草稿僅產生 DRAFT，不自動執行；送審核准（建立 Govern 核准項）後才進入生命週期。
         </p>
       </div>

@@ -1,3 +1,3 @@
 # UI Package
 
-Shared OpsBoard design system components.
+Shared ODay Plus design-system components.

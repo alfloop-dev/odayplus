@@ -1,0 +1,64 @@
+{
+  "schema": "oday-plus.package10-r3a-orphan-shell-addendum.v1",
+  "addendum_id": "ODP-P10-CAN-001-R3A-ADD-001",
+  "parent_task": "ODP-P10-CAN-001-R3A",
+  "status": "ready_for_pickup",
+  "worktree": "/home/lupin/oday-plus-package10-final",
+  "branch": "fix/package10-final-20260725",
+  "reason": "coordinator import audit found old OpsBoard UI code omitted from the original R3A inventory",
+  "delete_paths": [
+    "packages/ui/src/components/AppShell.tsx",
+    "packages/ui/src/components/GlobalHeader.tsx",
+    "packages/ui/src/components/Sidebar.tsx",
+    "packages/ui/src/components/ModulePlaceholder.tsx",
+    "packages/ui/src/components/ShellContext.tsx",
+    "packages/ui/src/nav/filterNav.ts",
+    "packages/ui/src/nav/routes.ts"
+  ],
+  "writable_paths": [
+    "packages/ui/src/index.ts",
+    "packages/ui/src/styles/shell.css",
+    "packages/ui/README.md",
+    "packages/ui/package.json",
+    "apps/README.md",
+    "apps/web/README.md",
+    "packages/domain-types/src/nav.ts",
+    "packages/domain-types/src/roles.ts",
+    "docs/evidence/fleet_dispatch/package10_20260726/acks/ODP-P10-CAN-001-R3A.json"
+  ],
+  "remove_css_selector_families": [
+    "odp-shell",
+    "odp-skip-link",
+    "odp-header",
+    "odp-env-badge",
+    "odp-iconbtn",
+    "odp-sidebar",
+    "odp-navlink",
+    "odp-main"
+  ],
+  "must_retain": [
+    "packages/ui/src/components/Toolbar.tsx",
+    "packages/ui/src/styles/shell.css:.odp-select",
+    "reusable generic UI components",
+    "three canonical executable pages",
+    "16 canonical E2E specs"
+  ],
+  "forbidden": [
+    "Package 10 intake internal edits",
+    "canonical E2E edits",
+    "API/auth/domain behavior edits",
+    "worker commit or push"
+  ],
+  "gates": [
+    "web unit",
+    "root typecheck",
+    "root build",
+    "107-test canonical Chromium collect",
+    "git diff --check",
+    "seven delete paths absent",
+    "deleted symbols absent from packages/ui exports and production imports",
+    "retired selector families absent while .odp-select remains",
+    "active app/package source and package metadata contain no OpsBoard or R0 navigation skeleton wording"
+  ],
+  "ack_requirement": "cite committed addendum and record the omitted inventory as an other-LLM/task conflict"
+}

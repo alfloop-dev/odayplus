@@ -61,6 +61,10 @@ type StoreOpsLightSummary = {
   issueCounts: Record<StoreLightStatus, number>;
 };
 
+type StoreOpsFullLightStatus = "red" | "orange" | "yellow" | "green";
+type StoreOpsQuickFilterKey = "red" | "orange" | "equipment" | "voice" | "revenue" | "cost";
+type StoreOpsStatusGroup = "all" | "open" | "active" | "observation" | "done";
+
 type StoreOpsApiState = {
   stores: Store[];
   issues: Issue[];
@@ -95,14 +99,12 @@ export function inspectStoreOpsApiPayload(
   const record = payload as Record<string, unknown>;
   if (payloadContainsSeedData(payload) || isSeedDataSource(record.source)) return "seed";
 
-  const source = typeof record.source === "string" ? record.source.trim() : "";
   const issues = Array.isArray(record.issues) ? record.issues : null;
   const stores = Array.isArray(record.stores) ? record.stores : null;
   const evidence = Array.isArray(record.evidence) ? record.evidence : null;
   const auditEvents = Array.isArray(record.auditEvents) ? record.auditEvents : null;
 
   if (
-    !source ||
     !issues ||
     !stores ||
     !evidence ||
@@ -115,13 +117,63 @@ export function inspectStoreOpsApiPayload(
   return "ready";
 }
 
-const lightStatusOrder: StoreLightStatus[] = ["red", "yellow"];
-
 const lightStatusLabels: Record<StoreLightStatus, string> = {
-  green: "Green",
-  yellow: "Yellow",
-  red: "Red",
+  green: "綠燈",
+  yellow: "黃燈",
+  red: "紅燈",
 };
+
+const fullStoreLightOrder: StoreOpsFullLightStatus[] = ["red", "orange", "yellow", "green"];
+
+const fullStoreLightMeta: Record<
+  StoreOpsFullLightStatus,
+  { label: string; note: string; symbol: string }
+> = {
+  red: { label: "紅燈", note: "需立即處置", symbol: "!" },
+  orange: { label: "橙燈", note: "高風險追蹤", symbol: "▲" },
+  yellow: { label: "黃燈", note: "持續觀察", symbol: "•" },
+  green: { label: "綠燈", note: "營運正常", symbol: "✓" },
+};
+
+const quickFilterOptions: Array<{ key: StoreOpsQuickFilterKey; label: string }> = [
+  { key: "red", label: "查看紅燈" },
+  { key: "orange", label: "查看橙燈" },
+  { key: "equipment", label: "設備風險" },
+  { key: "voice", label: "客服聲量" },
+  { key: "revenue", label: "營收偏離" },
+  { key: "cost", label: "成本異常" },
+];
+
+const statusGroupOptions: Array<{ key: StoreOpsStatusGroup; label: string; statuses: Issue["status"][] }> = [
+  { key: "all", label: "全部", statuses: [] },
+  {
+    key: "open",
+    label: "待處理",
+    statuses: ["new", "triaged", "assigned", "waitingapproval", "waitingevidence"],
+  },
+  { key: "active", label: "處置中", statuses: ["inprogress", "executed"] },
+  { key: "observation", label: "觀察／成效", statuses: ["observing", "outcomeready"] },
+  { key: "done", label: "結案／升級", statuses: ["closed", "escalated"] },
+];
+
+const evidenceTabLabels: Partial<Record<EvidenceItem["kind"], string>> = {
+  googleReview: "Google 評價",
+  csCase: "客服案件",
+  camera: "Camera",
+  iot: "IoT 設備",
+  payment: "支付",
+  forecastOps: "ForecastOps",
+  cleaning: "清潔",
+};
+
+function classifyStoreLight(store: Store): StoreOpsFullLightStatus {
+  const statuses = Object.values(store.lights);
+  const yellowCount = statuses.filter((status) => status === "yellow").length;
+  if (statuses.includes("red")) return "red";
+  if (yellowCount >= 2 || store.riskScore >= 70) return "orange";
+  if (yellowCount > 0) return "yellow";
+  return "green";
+}
 
 const kpis = [
   { label: "高風險未指派", value: "1", note: "下一步：完成 Triage 與指派", tone: "danger" },
@@ -446,6 +498,13 @@ export function DesignStoreOpsWorkspace({
   const [selectedSources, setSelectedSources] = useState<string[]>([]);
   const [selectedSeverities, setSelectedSeverities] = useState<Severity[]>([]);
   const [selectedLightFilter, setSelectedLightFilter] = useState<StoreOpsLightFilter | null>(null);
+  const [selectedStoreLightStatus, setSelectedStoreLightStatus] =
+    useState<StoreOpsFullLightStatus | null>(null);
+  const [selectedStatusGroup, setSelectedStatusGroup] = useState<StoreOpsStatusGroup>("all");
+  const [activeQuickFilter, setActiveQuickFilter] = useState<StoreOpsQuickFilterKey | null>(null);
+  const [activeEvidenceTab, setActiveEvidenceTab] = useState<EvidenceItem["kind"]>(
+    (initialTabId as EvidenceItem["kind"]) || "googleReview",
+  );
   const [mineOnly, setMineOnly] = useState(false);
   const [selectedIssueId, setSelectedIssueId] = useState<string>(initialIssueId || "ISS-1024");
 
@@ -470,6 +529,8 @@ export function DesignStoreOpsWorkspace({
       if (searchQuery.trim()) params.set("query", searchQuery.trim());
       selectedSources.forEach((source) => params.append("sources", source));
       selectedSeverities.forEach((severity) => params.append("severities", severity));
+      const selectedStatusOption = statusGroupOptions.find((option) => option.key === selectedStatusGroup);
+      selectedStatusOption?.statuses.forEach((status) => params.append("statuses", status));
       if (mineOnly) params.set("mineOnly", "true");
       params.set("roleId", roleId);
       if (selectedLightFilter) {
@@ -522,31 +583,60 @@ export function DesignStoreOpsWorkspace({
     return () => {
       cancelled = true;
     };
-  }, [fixturesAllowed, searchQuery, selectedSources, selectedSeverities, mineOnly, roleId, selectedLightFilter, storeOpsRefreshToken]);
+  }, [
+    fixturesAllowed,
+    searchQuery,
+    selectedSources,
+    selectedSeverities,
+    selectedStatusGroup,
+    mineOnly,
+    roleId,
+    selectedLightFilter,
+    storeOpsRefreshToken,
+  ]);
 
   const issueSource = apiState?.issues ?? (fixturesAllowed ? propIssues ?? ISSUE_FIXTURES : []);
   const activeStores = apiState?.stores ?? (fixturesAllowed ? STORE_FIXTURES : []);
   const activeEvidence = apiState?.evidence ?? (fixturesAllowed ? EVIDENCE_FIXTURES : []);
   const activeAuditEvents = apiState?.auditEvents ?? (fixturesAllowed ? AUDIT_EVENT_FIXTURES : []);
-  const fourLightSummary = apiState?.fourLightSummary ?? [];
 
   // 3. Apply filters and sort (by severity + SLA)
   const filteredIssues = useMemo(() => {
-    if (apiState) {
-      return issueSource;
-    }
-    return filterStoreOpsIssues(
-      issueSource,
-      {
-        search: searchQuery,
-        statuses: [],
-        sources: selectedSources as any[],
-        severities: selectedSeverities,
-        mineOnly,
-      },
-      roleId
+    const selectedStatuses =
+      statusGroupOptions.find((option) => option.key === selectedStatusGroup)?.statuses ?? [];
+    const baseIssues = apiState
+      ? issueSource
+      : filterStoreOpsIssues(
+          issueSource,
+          {
+            search: searchQuery,
+            statuses: selectedStatuses,
+            sources: selectedSources as any[],
+            severities: selectedSeverities,
+            mineOnly,
+          },
+          roleId
+        );
+    if (!selectedStoreLightStatus) return baseIssues;
+
+    const matchingStoreIds = new Set(
+      activeStores
+        .filter((store) => classifyStoreLight(store) === selectedStoreLightStatus)
+        .map((store) => store.id),
     );
-  }, [apiState, issueSource, searchQuery, selectedSources, selectedSeverities, mineOnly, roleId]);
+    return baseIssues.filter((candidate) => matchingStoreIds.has(candidate.storeId));
+  }, [
+    activeStores,
+    apiState,
+    issueSource,
+    mineOnly,
+    roleId,
+    searchQuery,
+    selectedSeverities,
+    selectedSources,
+    selectedStatusGroup,
+    selectedStoreLightStatus,
+  ]);
 
   // 4. Resolve selected issue
   const issue = useMemo(() => {
@@ -628,6 +718,21 @@ export function DesignStoreOpsWorkspace({
   const evPayment = issueEvidence.find((e) => e.kind === "payment");
   const evIot = issueEvidence.find((e) => e.kind === "iot");
   const evForecastOps = issueEvidence.find((e) => e.kind === "forecastOps");
+  const availableEvidenceTabs = useMemo(
+    () =>
+      Array.from(new Set(issueEvidence.map((item) => item.kind))).filter(
+        (kind) => evidenceTabLabels[kind],
+      ),
+    [issueEvidence],
+  );
+  const activeEvidenceItem = issueEvidence.find((item) => item.kind === activeEvidenceTab);
+
+  useEffect(() => {
+    if (availableEvidenceTabs.length === 0) return;
+    if (!availableEvidenceTabs.includes(activeEvidenceTab)) {
+      setActiveEvidenceTab(availableEvidenceTabs[0]);
+    }
+  }, [activeEvidenceTab, availableEvidenceTabs]);
 
   // 7. Filtered audit timelines
   const localAuditEvents = useMemo(() => {
@@ -639,6 +744,75 @@ export function DesignStoreOpsWorkspace({
     return activeStores.find((s) => s.id === issue.storeId);
   }, [activeStores, issue.storeId]);
 
+  const storesByFullLight = useMemo(() => {
+    const grouped: Record<StoreOpsFullLightStatus, Store[]> = {
+      red: [],
+      orange: [],
+      yellow: [],
+      green: [],
+    };
+    activeStores.forEach((store) => grouped[classifyStoreLight(store)].push(store));
+    return grouped;
+  }, [activeStores]);
+
+  const sourceDistribution = useMemo(() => {
+    const counts = {
+      equipment: 0,
+      voice: 0,
+      revenue: 0,
+      cost: 0,
+    };
+    issueSource.forEach((candidate) => {
+      const kinds = new Set(
+        activeEvidence
+          .filter((item) => item.issueId === candidate.id)
+          .map((item) => item.kind),
+      );
+      if (candidate.source === "iot" || kinds.has("iot")) {
+        counts.equipment += 1;
+      } else if (
+        candidate.source === "googleReview" ||
+        candidate.source === "csCase" ||
+        candidate.source === "camera" ||
+        candidate.source === "cleaning" ||
+        kinds.has("googleReview") ||
+        kinds.has("csCase")
+      ) {
+        counts.voice += 1;
+      } else if (
+        candidate.source === "payment" ||
+        candidate.source === "forecastOps" ||
+        kinds.has("payment") ||
+        kinds.has("forecastOps")
+      ) {
+        counts.revenue += 1;
+      } else {
+        counts.cost += 1;
+      }
+    });
+    const total = Math.max(issueSource.length, 1);
+    return [
+      { key: "equipment", label: "設備／維修", count: counts.equipment, pct: Math.round((counts.equipment / total) * 100) },
+      { key: "voice", label: "客服／評語", count: counts.voice, pct: Math.round((counts.voice / total) * 100) },
+      { key: "revenue", label: "營收偏離", count: counts.revenue, pct: Math.round((counts.revenue / total) * 100) },
+      { key: "cost", label: "成本異常", count: counts.cost, pct: Math.round((counts.cost / total) * 100) },
+    ];
+  }, [activeEvidence, issueSource]);
+
+  const issueTrend = useMemo(() => {
+    const latestUpdatedAt = issueSource.reduce(
+      (latest, candidate) =>
+        candidate.updatedAt && candidate.updatedAt > latest ? candidate.updatedAt : latest,
+      "",
+    );
+    return [
+      `紅燈門市 ${storesByFullLight.red.length} 間`,
+      `高風險 Issue ${issueSource.filter((candidate) => ["critical", "high"].includes(candidate.severity)).length} 件`,
+      `Outcome Ready ${issueSource.filter((candidate) => candidate.status === "outcomeready").length} 件`,
+      latestUpdatedAt ? `更新 ${formatCompactDateTime(latestUpdatedAt)}` : "尚無更新時間",
+    ];
+  }, [issueSource, storesByFullLight.red.length]);
+
   // Interactive callbacks
   const toggleSource = (source: string) => {
     setSelectedSources((prev) =>
@@ -646,22 +820,47 @@ export function DesignStoreOpsWorkspace({
     );
   };
 
-  const toggleSeverity = (severity: Severity) => {
-    setSelectedSeverities((prev) =>
-      prev.includes(severity) ? prev.filter((s) => s !== severity) : [...prev, severity]
-    );
+  const applyStoreLightFilter = (status: StoreOpsFullLightStatus) => {
+    const nextStatus = selectedStoreLightStatus === status ? null : status;
+    setSelectedStoreLightStatus(nextStatus);
+    setActiveQuickFilter(nextStatus === "red" || nextStatus === "orange" ? nextStatus : null);
+    setSelectedSources([]);
+    setSelectedSeverities([]);
+    setSelectedLightFilter(null);
   };
 
-  const toggleLightFilter = (dimension: StoreOpsLightDimension, status: StoreLightStatus) => {
-    setSelectedLightFilter((current) =>
-      current?.dimension === dimension && current.status === status ? null : { dimension, status }
-    );
+  const applyQuickFilter = (key: StoreOpsQuickFilterKey) => {
+    const nextKey = activeQuickFilter === key ? null : key;
+    setActiveQuickFilter(nextKey);
+    setSelectedStoreLightStatus(null);
+    setSelectedSources([]);
+    setSelectedSeverities([]);
+    setSelectedLightFilter(null);
+
+    if (nextKey === "red" || nextKey === "orange") {
+      setSelectedStoreLightStatus(nextKey);
+    } else if (nextKey === "equipment") {
+      setSelectedSources(["iot"]);
+    } else if (nextKey === "voice") {
+      setSelectedSources(["googleReview", "csCase"]);
+    } else if (nextKey === "revenue") {
+      setSelectedSources(["payment", "forecastOps"]);
+    } else if (nextKey === "cost") {
+      setSelectedLightFilter({ dimension: "margin", status: "red" });
+    }
+  };
+
+  const selectStatusGroup = (group: StoreOpsStatusGroup) => {
+    setSelectedStatusGroup(group);
   };
 
   const clearFilters = () => {
     setSelectedSources([]);
     setSelectedSeverities([]);
     setSelectedLightFilter(null);
+    setSelectedStoreLightStatus(null);
+    setSelectedStatusGroup("all");
+    setActiveQuickFilter(null);
     setMineOnly(false);
     setSearchQuery("");
   };
@@ -689,13 +888,30 @@ export function DesignStoreOpsWorkspace({
 
   const primaryActionLabel = getPrimaryActionLabel(issue);
   const secondaryActionLabels = getSecondaryActionLabels(issue);
-  const totalIssueCount =
-    fourLightSummary[0]
-      ? lightStatusOrder.reduce(
-          (total, status) => total + fourLightSummary[0].issueCounts[status],
-          fourLightSummary[0].issueCounts.green,
-        )
-      : issueSource.length;
+  const hasActiveFilters =
+    Boolean(
+      searchQuery ||
+      selectedSources.length ||
+      selectedSeverities.length ||
+      selectedLightFilter ||
+      selectedStoreLightStatus ||
+      selectedStatusGroup !== "all" ||
+      mineOnly,
+    );
+  const activeQuickFilterLabel =
+    quickFilterOptions.find((option) => option.key === activeQuickFilter)?.label ??
+    (selectedStoreLightStatus ? fullStoreLightMeta[selectedStoreLightStatus].label : "");
+
+  const statusGroupCounts = statusGroupOptions.reduce<Record<StoreOpsStatusGroup, number>>(
+    (counts, option) => {
+      counts[option.key] =
+        option.key === "all"
+          ? issueSource.length
+          : issueSource.filter((candidate) => option.statuses.includes(candidate.status)).length;
+      return counts;
+    },
+    { all: 0, open: 0, active: 0, observation: 0, done: 0 },
+  );
 
   if (!fixturesAllowed && storeOpsLoadState !== "ready") {
     return (
@@ -719,165 +935,195 @@ export function DesignStoreOpsWorkspace({
         <p>問題 → 證據 → 指派 → 處置 → 觀察 → 成效，在同一個工作台完成</p>
       </header>
 
-      {fixturesAllowed ? (
-        <div data-screen-label="Store Ops 全店四燈摘要" style={{ background: "#FFFFFF", border: "1px solid #E3E8F0", borderRadius: "12px", padding: "12px 16px", marginBottom: "12px" }}>
-          <div style={{ display: "flex", alignItems: "center", gap: "10px", flexWrap: "wrap" }}>
-            <strong style={{ fontSize: "12px", color: "#1C2333" }}>全店營運狀況（四燈）</strong>
-            <span style={{ fontSize: "11px", color: "#2E7D32" }}>✓ 需求</span>
-            <span style={{ fontSize: "11px", color: "#2E7D32" }}>✓ 設備</span>
-            <span style={{ fontSize: "11px", color: "#2E7D32" }}>✓ 清潔</span>
-            <span style={{ fontSize: "11px", color: "#2E7D32" }}>✓ 利潤</span>
+      <section
+        aria-label="全店四燈摘要"
+        className={styles.storeOverview}
+        data-screen-label="Store Ops 全店四燈摘要"
+      >
+        <div className={styles.fullLightGrid}>
+          {fullStoreLightOrder.map((status) => {
+            const meta = fullStoreLightMeta[status];
+            const active = selectedStoreLightStatus === status;
+            return (
+              <button
+                aria-pressed={active}
+                className={styles.fullLightCard}
+                data-active={active}
+                data-status={status}
+                key={status}
+                onClick={() => applyStoreLightFilter(status)}
+                type="button"
+              >
+                <span>
+                  <i aria-hidden="true">{meta.symbol}</i>
+                  {meta.label}
+                </span>
+                <strong>{storesByFullLight[status].length}</strong>
+                <small>{meta.note}</small>
+              </button>
+            );
+          })}
+        </div>
+
+        <div className={styles.sourceSummary}>
+          <strong>主要異常來源</strong>
+          <div className={styles.sourceBar} aria-label="Issue 來源分布">
+            {sourceDistribution.map((source) => (
+              <i
+                aria-label={`${source.label} ${source.pct}%`}
+                data-source={source.key}
+                key={source.key}
+                style={{ width: `${source.pct}%` }}
+              />
+            ))}
+          </div>
+          <div className={styles.sourceLegend}>
+            {sourceDistribution.map((source) => (
+              <span key={source.key}>
+                <i data-source={source.key} />
+                {source.label}
+                <b>{source.pct}%</b>
+              </span>
+            ))}
           </div>
         </div>
-      ) : null}
+
+        <div className={styles.storeTrend}>
+          <strong>TREND · API SNAPSHOT</strong>
+          {issueTrend.map((trend) => <span key={trend}>{trend}</span>)}
+        </div>
+
+        <div className={styles.quickFilterBar}>
+          <strong>快速篩選</strong>
+          {quickFilterOptions.map((option) => (
+            <button
+              aria-pressed={activeQuickFilter === option.key}
+              className={styles.quickFilter}
+              data-active={activeQuickFilter === option.key}
+              key={option.key}
+              onClick={() => applyQuickFilter(option.key)}
+              type="button"
+            >
+              {option.label}
+            </button>
+          ))}
+          {activeQuickFilterLabel ? (
+            <span className={styles.quickFilterResult}>
+              已套用「{activeQuickFilterLabel}」 · 佇列 {filteredIssues.length} 件
+            </span>
+          ) : null}
+          {hasActiveFilters ? (
+            <button className={styles.clearFilter} onClick={clearFilters} type="button">清除</button>
+          ) : null}
+        </div>
+      </section>
+
       <div className={styles.storeGrid}>
         <aside className={styles.storeQueue} aria-label="門市 Issue queue">
-          <label className={styles.designSearch}>
-            <input
-              placeholder="搜尋標題／門市／編號"
-              value={searchQuery}
-              onChange={(e) => setSearchQuery(e.target.value)}
-            />
-          </label>
-          {fourLightSummary.length > 0 ? (
-            <div className={styles.filterRows} aria-label="Store Ops four-light quick filters">
-              {fourLightSummary.flatMap((item) =>
-                lightStatusOrder.map((status) => {
-                  const isActive = selectedLightFilter?.dimension === item.dimension && selectedLightFilter.status === status;
-                  return (
-                    <button
-                      aria-pressed={isActive}
-                      className={`${styles.filterButton} ${isActive ? styles.filterActive : ""}`}
-                      key={`${item.dimension}-${status}`}
-                      onClick={() => toggleLightFilter(item.dimension, status)}
-                      type="button"
-                    >
-                      {item.label} {lightStatusLabels[status]} {item.issueCounts[status]}
-                    </button>
-                  );
-                })
-              )}
+          <div className={styles.queueFilters}>
+            {activeQuickFilterLabel ? (
+              <div className={styles.appliedFilter}>
+                <span>目前篩選：{activeQuickFilterLabel}</span>
+                <button onClick={clearFilters} type="button">清除</button>
+              </div>
+            ) : null}
+            <label className={styles.designSearch}>
+              <span className={styles.visuallyHidden}>搜尋事件標題、門市或編號</span>
+              <input
+                placeholder="搜尋標題／門市／編號"
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+              />
+            </label>
+            <div className={styles.filterRows} aria-label="Issue 階段">
+              {statusGroupOptions.map((option) => (
+                <button
+                  aria-pressed={selectedStatusGroup === option.key}
+                  className={`${styles.filterButton} ${selectedStatusGroup === option.key ? styles.filterActive : ""}`}
+                  key={option.key}
+                  onClick={() => selectStatusGroup(option.key)}
+                  type="button"
+                >
+                  {option.label} {statusGroupCounts[option.key]}
+                </button>
+              ))}
             </div>
-          ) : null}
-          <div className={styles.filterRows}>
-            <button
-              type="button"
-              className={`${styles.filterButton} ${selectedSources.length === 0 && selectedSeverities.length === 0 && !selectedLightFilter && !mineOnly ? styles.filterActive : ""}`}
-              onClick={clearFilters}
-            >
-              全部 {totalIssueCount}
-            </button>
-            {isStoreOpsLoading ? <span>API</span> : null}
-            <button
-              type="button"
-              className={`${styles.filterButton} ${selectedSeverities.includes("critical") ? styles.filterActive : ""}`}
-              onClick={() => toggleSeverity("critical")}
-            >
-              Critical
-            </button>
-            <button
-              type="button"
-              className={`${styles.filterButton} ${selectedSeverities.includes("high") ? styles.filterActive : ""}`}
-              onClick={() => toggleSeverity("high")}
-            >
-              High
-            </button>
-            <button
-              type="button"
-              className={`${styles.filterButton} ${selectedSeverities.includes("medium") ? styles.filterActive : ""}`}
-              onClick={() => toggleSeverity("medium")}
-            >
-              Medium
-            </button>
-          </div>
-          <div className={styles.filterRows}>
-            <button
-              type="button"
-              className={`${styles.filterButton} ${mineOnly ? styles.filterActive : ""}`}
-              onClick={() => setMineOnly(!mineOnly)}
-            >
-              只看我的
-            </button>
-            <button
-              type="button"
-              className={`${styles.filterButton} ${selectedSources.includes("googleReview") ? styles.filterActive : ""}`}
-              onClick={() => toggleSource("googleReview")}
-            >
-              評價
-            </button>
-            <button
-              type="button"
-              className={`${styles.filterButton} ${selectedSources.includes("csCase") ? styles.filterActive : ""}`}
-              onClick={() => toggleSource("csCase")}
-            >
-              客服
-            </button>
-            <button
-              type="button"
-              className={`${styles.filterButton} ${selectedSources.includes("camera") ? styles.filterActive : ""}`}
-              onClick={() => toggleSource("camera")}
-            >
-              影像
-            </button>
-            <button
-              type="button"
-              className={`${styles.filterButton} ${selectedSources.includes("iot") ? styles.filterActive : ""}`}
-              onClick={() => toggleSource("iot")}
-            >
-              設備
-            </button>
-            <button
-              type="button"
-              className={`${styles.filterButton} ${selectedSources.includes("payment") ? styles.filterActive : ""}`}
-              onClick={() => toggleSource("payment")}
-            >
-              支付
-            </button>
-            <button
-              type="button"
-              className={`${styles.filterButton} ${selectedSources.includes("forecastOps") ? styles.filterActive : ""}`}
-              onClick={() => toggleSource("forecastOps")}
-            >
-              預測
-            </button>
+            <div className={styles.filterRows} aria-label="Issue 來源">
+              <span className={styles.filterLabel}>來源</span>
+              <button
+                type="button"
+                className={`${styles.filterButton} ${mineOnly ? styles.filterActive : ""}`}
+                onClick={() => setMineOnly(!mineOnly)}
+              >
+                只看我的
+              </button>
+              {[
+                ["googleReview", "評價"],
+                ["csCase", "客服"],
+                ["camera", "影像"],
+                ["iot", "設備"],
+                ["payment", "支付"],
+                ["forecastOps", "預測"],
+              ].map(([source, label]) => (
+                <button
+                  className={`${styles.filterButton} ${selectedSources.includes(source) ? styles.filterActive : ""}`}
+                  key={source}
+                  onClick={() => toggleSource(source)}
+                  type="button"
+                >
+                  {label}
+                </button>
+              ))}
+              {isStoreOpsLoading ? <span className={styles.apiLoading}>API 更新中</span> : null}
+            </div>
           </div>
           <div className={styles.storeQueueList}>
             {filteredIssues.map((row) => {
               const next = getPrimaryActionLabel(row);
               return (
-                <div
+                <button
+                  aria-pressed={row.id === issue.id}
                   className={styles.storeQueueItem}
-                  data-active={row.id === selectedIssueId}
+                  data-active={row.id === issue.id}
                   key={row.id}
                   onClick={() => setSelectedIssueId(row.id)}
-                  style={{ cursor: "pointer" }}
+                  type="button"
                 >
                   <span className={styles.storeTopline}>
+                    <i aria-hidden="true" data-tone={getSeverityTone(row.severity)} />
                     <small>{row.id}</small>
-                    <b data-tone={getStatusTone(row.status)}>{getStatusLabel(row.status)}</b>
-                    <b data-tone={getSeverityTone(row.severity)} style={{ marginLeft: "4px" }}>
+                    <b data-tone={getSeverityTone(row.severity)}>
                       {getSeverityLabel(row.severity)}
                     </b>
                     <em>{formatSla(row.slaDueAt)}</em>
                   </span>
                   <strong>{row.title}</strong>
                   <span>{row.storeName}・{getSourceLabel(row.source)}</span>
+                  <span className={styles.queueMeta}>
+                    <b data-tone={getStatusTone(row.status)}>{getStatusLabel(row.status)}</b>
+                    <small>{row.ownerName || "未指派"}</small>
+                  </span>
                   <span className={styles.nextLine}>下一步：{next}</span>
-                </div>
+                </button>
               );
             })}
             {filteredIssues.length === 0 && (
-              <div style={{ padding: "20px", color: "#8794aa", textAlign: "center" }}>沒有匹配的 Issue</div>
+              <div className={styles.queueEmpty}>沒有符合條件的項目，請調整篩選。</div>
             )}
           </div>
         </aside>
 
         <main className={styles.storeDetail} aria-label={`${issue.id} detail`}>
           <section className={styles.issueHero}>
-            <div>
-              <span className={styles.issueId}>{issue.id}</span>
-              <b data-tone={getSeverityTone(issue.severity)}>{getSeverityLabel(issue.severity)}</b>
-              <b data-tone={getStatusTone(issue.status)}>{getStatusLabel(issue.status)}</b>
+            <div className={styles.issueHeroTopline}>
+              <span>
+                <span className={styles.issueId}>{issue.id}</span>
+                <b data-tone={getSeverityTone(issue.severity)}>{getSeverityLabel(issue.severity)}</b>
+                <b data-tone={getStatusTone(issue.status)}>{getStatusLabel(issue.status)}</b>
+              </span>
+              <small>
+                {issue.storeName} · {storeObj?.city ?? "—"} · {getSourceLabel(issue.source)}
+              </small>
             </div>
             <h2>{issue.title}</h2>
             <p>{issue.summary}</p>
@@ -923,10 +1169,20 @@ export function DesignStoreOpsWorkspace({
             </span>
             <span>
               <small>FORECASTOPS 四燈</small>
-              <strong>
+              <strong className={styles.storeLightRow}>
                 {storeObj
-                  ? `需求(${storeObj.lights.demand})・設備(${storeObj.lights.operations})・清潔(${storeObj.lights.staffing})・利潤(${storeObj.lights.margin})`
-                  : "需求・設備・清潔・利潤"}
+                  ? ([
+                      ["需求", storeObj.lights.demand],
+                      ["設備", storeObj.lights.operations],
+                      ["清潔", storeObj.lights.staffing],
+                      ["利潤", storeObj.lights.margin],
+                    ] as const).map(([label, status]) => (
+                      <span data-status={status} key={label}>
+                        <i aria-hidden="true">{status === "green" ? "✓" : status === "red" ? "!" : "•"}</i>
+                        {label} {lightStatusLabels[status]}
+                      </span>
+                    ))
+                  : "API 未提供門市四燈"}
               </strong>
             </span>
           </section>
@@ -1034,8 +1290,52 @@ export function DesignStoreOpsWorkspace({
               </article>
             </div>
 
-            {/* 28-day Revenue Forecast and Anomaly Band Chart */}
-            {fixturesAllowed ? (
+            <div className={styles.evidenceTabs} role="tablist" aria-label="證據來源明細">
+              {availableEvidenceTabs.map((kind) => (
+                <button
+                  aria-selected={activeEvidenceTab === kind}
+                  data-active={activeEvidenceTab === kind}
+                  key={kind}
+                  onClick={() => setActiveEvidenceTab(kind)}
+                  role="tab"
+                  type="button"
+                >
+                  {evidenceTabLabels[kind]}
+                </button>
+              ))}
+              <span>證據來源明細</span>
+            </div>
+
+            {activeEvidenceTab !== "forecastOps" && activeEvidenceItem ? (
+              <div className={styles.evidenceDetail} role="tabpanel">
+                <span>
+                  <small>{evidenceTabLabels[activeEvidenceItem.kind]}</small>
+                  <strong>{activeEvidenceItem.title}</strong>
+                </span>
+                <p>{activeEvidenceItem.summary}</p>
+                <dl>
+                  <div>
+                    <dt>來源</dt>
+                    <dd>{activeEvidenceItem.sourceLabel}</dd>
+                  </div>
+                  <div>
+                    <dt>信心度</dt>
+                    <dd>{Math.round(activeEvidenceItem.confidence * 100)}%</dd>
+                  </div>
+                  <div>
+                    <dt>時間</dt>
+                    <dd>{formatCompactDateTime(activeEvidenceItem.occurredAt)}</dd>
+                  </div>
+                </dl>
+                {activeEvidenceItem.kind === "camera" && activeEvidenceItem.lockedReason ? (
+                  <button onClick={() => onOpenWorkflow("cameraPurpose", issue)} type="button">
+                    輸入調閱目的以檢視
+                  </button>
+                ) : null}
+              </div>
+            ) : null}
+
+            {activeEvidenceTab === "forecastOps" ? (fixturesAllowed ? (
               <div className={styles.forecastChartSection}>
               <h4>28 天門市營運營收預測與異常帶 (Forecast Band Chart)</h4>
               <svg
@@ -1102,7 +1402,7 @@ export function DesignStoreOpsWorkspace({
                 <h4>28 天門市營運營收預測與異常帶</h4>
                 <p>FORECAST_DATA_UNAVAILABLE · Store Ops API 未提供正式 ForecastOps 序列。</p>
               </div>
-            )}
+            )) : null}
 
             <div className={styles.evidenceLists}>
               <section>

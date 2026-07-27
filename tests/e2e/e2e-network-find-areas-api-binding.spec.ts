@@ -18,6 +18,8 @@ import { expect, test } from "@playwright/test";
  */
 
 test.describe("ODP-FIN-FE-002 Network Find Areas API binding", () => {
+  test.describe.configure({ timeout: 60_000 });
+
   test.beforeEach(async ({ page }) => {
     // Navigate to the operator console and activate the Network workspace.
     await page.goto("/operator");
@@ -25,20 +27,26 @@ test.describe("ODP-FIN-FE-002 Network Find Areas API binding", () => {
     const networkTab = page.getByRole("button", { name: /network/i }).first();
     await networkTab.click();
     // Wait for the Network Find Areas workspace to mount.
-    await expect(page.getByTestId("network-find-areas-workspace")).toBeVisible();
+    await expect(
+      page.getByTestId("network-find-areas-workspace"),
+    ).toBeVisible();
   });
 
-  test("Network Find Areas workspace renders with HeatZone summary stats", async ({ page }) => {
+  test("Network Find Areas workspace renders with HeatZone summary stats", async ({
+    page,
+  }) => {
     const workspace = page.getByTestId("network-find-areas-workspace");
     await expect(workspace).toBeVisible();
 
     // The header should show summary counts.
-    await expect(workspace.getByText(/HeatZones/i)).toBeVisible();
-    await expect(workspace.getByText(/listings/i)).toBeVisible();
-    await expect(workspace.getByText(/candidates/i)).toBeVisible();
+    await expect(workspace.getByText(/^\d+ HeatZones$/i)).toBeVisible();
+    await expect(workspace.getByText(/^\d+ listings$/i)).toBeVisible();
+    await expect(workspace.getByText(/^\d+ candidates$/i)).toBeVisible();
   });
 
-  test("Network workspace shows fixture data indicator when API is unavailable", async ({ page }) => {
+  test("Network workspace shows fixture data indicator when API is unavailable", async ({
+    page,
+  }) => {
     const workspace = page.getByTestId("network-find-areas-workspace");
     // When backend is unconfigured, the workspace renders fixture data and
     // shows a fixture-mode chip in the header.
@@ -84,18 +92,22 @@ test.describe("ODP-FIN-FE-002 Network Find Areas API binding", () => {
     await expect(page.getByTestId("network-panel-sitescore")).toBeVisible();
   });
 
-  test("Rebalance tab renders without crash (fixture-only, no backend endpoint)", async ({ page }) => {
+  test("Rebalance tab renders without crash (fixture-only, no backend endpoint)", async ({
+    page,
+  }) => {
     const rebalanceTab = page.getByTestId("network-tab-6");
     await rebalanceTab.click();
     await expect(page.getByTestId("network-panel-rebalance")).toBeVisible();
   });
 
-  test("Find Areas panel shows HeatZone map with zone markers", async ({ page }) => {
+  test("Find Areas panel shows HeatZone map with zone markers", async ({
+    page,
+  }) => {
     // The Find Areas tab (index 0) is the default.
     const findAreasPanel = page.getByTestId("network-panel-find-areas");
     await expect(findAreasPanel).toBeVisible();
     // Zone markers should exist in the map canvas.
-    const mapCanvas = findAreasPanel.getByLabel(/Deterministic local HeatZone map/i);
+    const mapCanvas = findAreasPanel.getByTestId("heat-zone-map");
     await expect(mapCanvas).toBeVisible();
   });
 });

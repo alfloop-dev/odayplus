@@ -1,0 +1,55 @@
+{
+  "addendum_id": "ODP-P10-CAN-001-R3B-ADD-003",
+  "parent_task": "ODP-P10-CAN-001-R3B",
+  "status": "ready_for_pickup",
+  "prepared": "2026-07-26",
+  "trigger": "independent Fleet review plus coordinator Playwright execution",
+  "rejection_findings": [
+    "durable intake route blocked by global Operator shell API gate",
+    "target-dependent decisions do not fail closed when the target listing is unavailable",
+    "authoritative promotion job and read-model data are not consistently composed",
+    "deep link and browser history do not preserve the complete inbox context",
+    "correction assignment SLA and decision controls are not uniformly fail closed",
+    "fixed 64px detail offset can cover a wrapped Top Navigation",
+    "captured submission audit version and source identity labels are inaccurate",
+    "unit tests avoid direct-route history permission and responsive risks",
+    "Playwright web child lacks isolated-E2E runtime markers",
+    "a11y spec retains the retired Dialog detail selector",
+    "detail has serious invalid-ARIA and color-contrast axe violations"
+  ],
+  "additional_writable_paths": [
+    "playwright.config.ts",
+    "tests/e2e/operator-assisted-listing-intake-a11y.spec.ts"
+  ],
+  "test_config_limits": {
+    "a11y_spec": "replace only the retired Dialog detail screen-label selector with the canonical Package 10 full-page selector",
+    "playwright_config": "use the committed uv API environment and complete existing isolated-E2E markers only for Playwright webServer",
+    "forbidden": [
+      "skip or weaken tests",
+      "auth or middleware changes",
+      "retry reporter project worker or timeout changes",
+      "production runtime downgrade"
+    ]
+  },
+  "required_results": [
+    "direct intake mounts independently of unrelated shell bootstrap state",
+    "target-dependent decisions fail closed without authoritative target data",
+    "promotion and score-job receipts are wired when authoritative",
+    "deep link and browser history preserve inbox context",
+    "read-only correction assignment SLA and decision controls are fail closed",
+    "no invented assignment or evidence values",
+    "Top Navigation remains visible at 390 1024 and 1440",
+    "zero page-level horizontal overflow at 390 1024 and 1440",
+    "valid accessible data semantics",
+    "zero serious or critical axe violations",
+    "complete a11y spec passes 6 of 6"
+  ],
+  "forbidden_product_changes": [
+    "apps/api",
+    "auth middleware",
+    "source policy decisions",
+    "permission rules",
+    "source archives"
+  ],
+  "ack_status_until_review": "no_go_pending_coordinator_visual_review"
+}

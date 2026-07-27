@@ -37,7 +37,7 @@ import {
 import {
   loadNetworkFindAreasBindings,
   type NetworkFindAreasBindings,
-} from "./networkFindAreasLoader";
+} from "./network/networkFindAreasLoader";
 import { OperatorDataUnavailableGate } from "./OperatorDataUnavailableGate";
 import {
   inspectOperatorShellPayload,
@@ -59,6 +59,7 @@ import { operatorSecurityHeaders } from "./operatorSecurityHeaders";
 
 const roleStorageKey = "oday.operator.role";
 const workspaceStorageKey = "oday.operator.workspace";
+const operatorBootstrapTimeoutMs = 10_000;
 
 const notifications = [
   {
@@ -163,18 +164,18 @@ const taskCenterFixtures: OperatorTask[] = [
 ];
 
 const commandPageTargets: Array<{ href: string; keywords: string[]; subtitle: string; title: string }> = [
-  { title: "OpsBoard 總覽", subtitle: "跨模組狀態與最近決策", href: "/", keywords: ["home", "overview"] },
-  { title: "任務中心", subtitle: "個人與團隊待辦", href: "/tasks", keywords: ["tasks", "todo"] },
-  { title: "全域搜尋", subtitle: "門市、候選點、決策、模型版本", href: "/search", keywords: ["search"] },
-  { title: "營運監控", subtitle: "四燈、預測帶與根因證據", href: "/operations", keywords: ["operations"] },
-  { title: "展店選址", subtitle: "HeatZone、Listing、SiteScore", href: "/expansion", keywords: ["expansion"] },
-  { title: "干預決策", subtitle: "干預建議與觀察窗", href: "/interventions", keywords: ["interventions"] },
-  { title: "定價", subtitle: "調價方案與保護線", href: "/pricing", keywords: ["pricing"] },
-  { title: "廣告增益", subtitle: "treatment/control 與 iROMI", href: "/adlift", keywords: ["adlift"] },
-  { title: "門市估值", subtitle: "AVM 公允價值與資料室", href: "/avm", keywords: ["avm"] },
-  { title: "網路規劃", subtitle: "NetPlan 情境與 solver", href: "/netplan", keywords: ["netplan"] },
-  { title: "模型與學習", subtitle: "模型版本、release、rollback", href: "/learning", keywords: ["learning"] },
-  { title: "稽核軌跡", subtitle: "決策時間軸與證據包", href: "/audit", keywords: ["audit"] },
+  { title: "營運管理", subtitle: "跨模組狀態與最近決策", href: "/operator", keywords: ["home", "overview"] },
+  { title: "任務中心", subtitle: "個人與團隊待辦", href: "/operator", keywords: ["tasks", "todo"] },
+  { title: "全域搜尋", subtitle: "門市、候選點、決策、模型版本", href: "/operator", keywords: ["search"] },
+  { title: "營運監控", subtitle: "四燈、預測帶與根因證據", href: "/operator?ws=store", keywords: ["operations"] },
+  { title: "展店選址", subtitle: "HeatZone、Listing、SiteScore", href: "/operator?ws=network", keywords: ["expansion"] },
+  { title: "干預決策", subtitle: "干預建議與觀察窗", href: "/operator?ws=store", keywords: ["interventions"] },
+  { title: "定價", subtitle: "調價方案與保護線", href: "/operator?ws=growth", keywords: ["pricing"] },
+  { title: "廣告增益", subtitle: "treatment/control 與 iROMI", href: "/operator?ws=growth", keywords: ["adlift"] },
+  { title: "門市估值", subtitle: "AVM 公允價值與資料室", href: "/operator?ws=network", keywords: ["avm"] },
+  { title: "網路規劃", subtitle: "NetPlan 情境與 solver", href: "/operator?ws=network&tab=rebalance", keywords: ["netplan"] },
+  { title: "模型與學習", subtitle: "模型版本、release、rollback", href: "/operator?ws=govern", keywords: ["learning"] },
+  { title: "稽核軌跡", subtitle: "決策時間軸與證據包", href: "/operator?ws=govern", keywords: ["audit"] },
 ];
 
 const commandGroupLabels: Record<CommandGroup, string> = {
@@ -258,7 +259,9 @@ function normalizeTaskRecord(value: unknown, index: number, source: TaskCenterSo
   const dueLabel =
     getNestedText(record, ["dueLabel", "due_label", "sla", "due", "due_at", "dueAt", "deadline"]) || "No SLA";
   const workspace = inferWorkspace(record);
-  const href = getNestedText(record, ["href", "url"]) || (workspace ? `/operator?ws=${workspace}` : "/tasks");
+  const href =
+    getNestedText(record, ["href", "url"]) ||
+    (workspace ? `/operator?ws=${workspace}` : "/operator");
   const tone = getTaskTone(rawStatus, priority);
 
   return {
@@ -300,10 +303,16 @@ function toDomSafeId(value: string): string {
 }
 
 export function OperatorConsole({ searchParams = {} }: { searchParams?: Record<string, string | string[] | undefined> }) {
+  const intakeDetailOpen = isIntakeDetailOpen(searchParams);
   const fixturesAllowed = operatorFixturesAllowed();
   const [activeRoleId, setActiveRoleId] = useState<OperatorRoleId>(DEFAULT_OPERATOR_ROLE_ID);
-  const [activeWorkspaceId, setActiveWorkspaceId] = useState<WorkspaceId>(DEFAULT_WORKSPACE_ID);
-  const [activeTabId, setActiveTabId] = useState("overview");
+  const [activeWorkspaceId, setActiveWorkspaceId] = useState<WorkspaceId>(() => {
+    const requested = typeof searchParams.ws === "string" ? searchParams.ws : "";
+    return isWorkspaceId(requested) ? requested : DEFAULT_WORKSPACE_ID;
+  });
+  const [activeTabId, setActiveTabId] = useState(
+    typeof searchParams.tab === "string" ? searchParams.tab : "overview",
+  );
   const [activeStoreOpsDialog, setActiveStoreOpsDialog] = useState<StoreOpsWorkflowDialogType | null>(null);
   const [selectedStoreOpsIssue, setSelectedStoreOpsIssue] = useState<Issue | undefined>(undefined);
   const [selectedEntityId, setSelectedEntityId] = useState<string | null>(null);
@@ -378,36 +387,26 @@ export function OperatorConsole({ searchParams = {} }: { searchParams?: Record<s
           label: role.label,
           subtitle: role.subtitle,
         }))
-      : fixturesAllowed
-        ? OPERATOR_ROLES
-        : [];
-  }, [fixturesAllowed, shellEnvelope.navigation.roles]);
+      : OPERATOR_ROLES;
+  }, [shellEnvelope.navigation.roles]);
 
   const activeRole = useMemo(() => {
     return rolesForShell.find((role) => role.id === activeRoleId) ??
-      (fixturesAllowed
-        ? getOperatorRole(activeRoleId)
-        : {
-            allowedWorkspaces: [],
-            id: activeRoleId,
-            label: "",
-            subtitle: "",
-          });
-  }, [activeRoleId, fixturesAllowed, rolesForShell]);
+      getOperatorRole(activeRoleId);
+  }, [activeRoleId, rolesForShell]);
 
   const workspaceNavItems = useMemo(() => {
     return shellEnvelope.navigation.workspaces.length
       ? shellEnvelope.navigation.workspaces
-      : fixturesAllowed
-        ? WORKSPACES
-        : [];
-  }, [fixturesAllowed, shellEnvelope.navigation.workspaces]);
+      : WORKSPACES;
+  }, [shellEnvelope.navigation.workspaces]);
 
   const activeWorkspace = getWorkspace(activeWorkspaceId);
-  const isNetworkWorkspace = activeWorkspaceId === "network";
   const liveWorkQueue = shellEnvelope.workQueue;
   const liveDecisions = shellEnvelope.decisions;
   const canRenderWorkspace = fixturesAllowed || shellDataStatus === "ready";
+  const canRenderDirectIntake =
+    intakeDetailOpen && activeWorkspaceId === "network";
 
   useEffect(() => {
     const storedRole = getOperatorRole(window.sessionStorage.getItem(roleStorageKey));
@@ -450,7 +449,10 @@ export function OperatorConsole({ searchParams = {} }: { searchParams?: Record<s
       setShellLoadError(null);
       try {
         const headers = getSecurityHeaders(activeRoleId);
-        const bootstrapRes = await fetch("/api/v1/operator/bootstrap", { headers });
+        const bootstrapRes = await fetch("/api/v1/operator/bootstrap", {
+          headers,
+          signal: AbortSignal.timeout(operatorBootstrapTimeoutMs),
+        });
         if (!bootstrapRes.ok) {
           throw new Error(`Operator bootstrap returned ${bootstrapRes.status}`);
         }
@@ -980,7 +982,12 @@ export function OperatorConsole({ searchParams = {} }: { searchParams?: Record<s
 
   return (
     <div
-      className={[styles.console, isNetworkWorkspace ? styles.consoleNetworkParity : ""].join(" ")}
+      className={[
+        styles.console,
+        styles.consoleNetworkParity,
+        intakeDetailOpen ? "operatorIntakeDetailOpen" : "",
+      ].filter(Boolean).join(" ")}
+      data-intake-detail-open={intakeDetailOpen ? "true" : undefined}
       data-testid="operator-console"
     >
       <header className={styles.topbar} data-screen-label="Top Navigation">
@@ -1264,7 +1271,7 @@ export function OperatorConsole({ searchParams = {} }: { searchParams?: Record<s
       </div>
 
       <main className={styles.shell}>
-        {!canRenderWorkspace ? (
+        {!canRenderWorkspace && !canRenderDirectIntake ? (
           <OperatorDataUnavailableGate
             detail={shellLoadError}
             onRetry={() => setShellReloadToken((token) => token + 1)}
@@ -1286,6 +1293,7 @@ export function OperatorConsole({ searchParams = {} }: { searchParams?: Record<s
         ) : activeWorkspaceId === "network" ? (
           <NetworkFindAreasWorkspace
             activeRoleId={activeRoleId}
+            initialTabId={activeTabId}
             liveCandidates={liveNetworkBindings?.candidates}
             liveHeatZones={liveNetworkBindings?.heatZones}
             callbacks={{
@@ -1404,6 +1412,20 @@ export function OperatorConsole({ searchParams = {} }: { searchParams?: Record<s
       {toast ? <div className={styles.toast}>{toast}</div> : null}
     </div>
   );
+}
+
+export function isIntakeDetailOpen(
+  searchParams: Record<string, string | string[] | undefined>,
+): boolean {
+  const value = (key: string) => {
+    const current = searchParams[key];
+    return Array.isArray(current) ? current[0] : current;
+  };
+  const dialog = value("dialog");
+  return value("ws") === "network"
+    && value("tab") === "radar"
+    && Boolean(value("selected"))
+    && (dialog === "detail" || dialog === "fix" || dialog === "decide" || dialog === "assignmentSla");
 }
 
 function WorkspaceChrome({

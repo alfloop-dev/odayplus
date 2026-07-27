@@ -106,8 +106,9 @@
                 "AI_NAME=Claude python3 scripts/ai_status.py done ODP-FE-R0-001 \"<finalization message>\""
             ],
             "evidence_refs": [
-                "tests/e2e/opsboard-shell.spec.ts",
-                "tests/e2e/e2e-api-bound-ui.spec.ts",
+                "tests/e2e/e2e-operator-console.spec.ts",
+                "tests/e2e/shell-resource-binding.spec.ts",
+                "docs/evidence/fleet_dispatch/package10_20260726/ODP-P10-LEGACY-VISUAL-RETIREMENT-VERIFICATION.md",
                 "docs/evidence/FRONTEND_FLEET_COMPLETION_AUDIT.md"
             ],
             "blocking_type": "owner_status_closeout"
@@ -122,8 +123,9 @@
                 "AI_NAME=Claude python3 scripts/ai_status.py reopen ODP-FE-EXP-001 \"<missing evidence>\""
             ],
             "evidence_refs": [
-                "tests/e2e/e2e-map.spec.ts",
-                "tests/e2e/e2e-expansion-product.spec.ts",
+                "tests/e2e/operator-network-listings.spec.ts",
+                "tests/e2e/operator-network-scoring.spec.ts",
+                "docs/evidence/fleet_dispatch/package10_20260726/ODP-P10-LEGACY-VISUAL-RETIREMENT-VERIFICATION.md",
                 "docs/design/ODAY_PLUS_EXPANSION_WORKFLOW_BLUEPRINT.md",
                 "docs/design/ODAY_PLUS_HEATZONE_MAP_VISUAL_SPEC.md",
                 "docs/design/ODAY_PLUS_SITESCORE_REPORT_UI_SPEC.md"
@@ -139,9 +141,9 @@
                 "AI_NAME=Claude python3 scripts/ai_status.py handoff ODP-FE-ASSET-001 Codex2 \"<handoff message>\""
             ],
             "evidence_refs": [
-                "apps/web/features/avm/AvmWorkspace.tsx",
-                "tests/e2e/e2e-avm-netplan-learning-audit-product.spec.ts",
-                "tests/e2e/e2e-avm-netplan.spec.ts",
+                "apps/web/features/operator/NetworkFindAreasWorkspace.tsx",
+                "tests/e2e/e2e-network-find-areas-api-binding.spec.ts",
+                "docs/evidence/fleet_dispatch/package10_20260726/ODP-P10-LEGACY-VISUAL-RETIREMENT-VERIFICATION.md",
                 "docs/design/ODAY_PLUS_ASSET_AND_NETPLAN_UI_SPEC.md"
             ],
             "blocking_type": "owner_status_closeout"
@@ -156,9 +158,9 @@
                 "AI_NAME=Codex2 python3 scripts/ai_status.py reopen ODP-FE-ASSET-001 \"<missing evidence>\""
             ],
             "evidence_refs": [
-                "apps/web/features/avm/AvmWorkspace.tsx",
-                "tests/e2e/e2e-avm-netplan-learning-audit-product.spec.ts",
-                "tests/e2e/e2e-avm-netplan.spec.ts",
+                "apps/web/features/operator/NetworkFindAreasWorkspace.tsx",
+                "tests/e2e/e2e-network-find-areas-api-binding.spec.ts",
+                "docs/evidence/fleet_dispatch/package10_20260726/ODP-P10-LEGACY-VISUAL-RETIREMENT-VERIFICATION.md",
                 "docs/design/ODAY_PLUS_ASSET_AND_NETPLAN_UI_SPEC.md"
             ],
             "blocking_type": "reviewer_status_closeout"
@@ -195,7 +197,8 @@
             "status": "done",
             "evidence_refs": [
                 "docs/evidence/ODP_FE_OPS_001_CLOSEOUT.md",
-                "tests/e2e/e2e-ops-intervention-price-ad-product.spec.ts",
+                "tests/e2e/operator-store-ops.spec.ts",
+                "docs/evidence/fleet_dispatch/package10_20260726/ODP-P10-LEGACY-VISUAL-RETIREMENT-VERIFICATION.md",
                 "docs/evidence/FRONTEND_FLEET_COMPLETION_AUDIT.md"
             ],
             "completion_note": "Archived as done; closeout evidence merged via PR #143."
@@ -205,7 +208,8 @@
             "status": "done",
             "evidence_refs": [
                 "docs/evidence/ODP_FE_PRICE_001_CLOSEOUT.md",
-                "tests/e2e/e2e-ops-intervention-price-ad-product.spec.ts",
+                "tests/e2e/operator-growth.spec.ts",
+                "docs/evidence/fleet_dispatch/package10_20260726/ODP-P10-LEGACY-VISUAL-RETIREMENT-VERIFICATION.md",
                 "docs/evidence/FRONTEND_FLEET_COMPLETION_AUDIT.md"
             ],
             "completion_note": "Archived as done after Claude2 review approval and Codex2 owner finalization."
@@ -214,7 +218,8 @@
             "task_id": "ODP-FE-LEARN-001",
             "status": "done",
             "evidence_refs": [
-                "tests/e2e/e2e-avm-netplan-learning-audit-product.spec.ts",
+                "tests/e2e/operator-governance.spec.ts",
+                "docs/evidence/fleet_dispatch/package10_20260726/ODP-P10-LEGACY-VISUAL-RETIREMENT-VERIFICATION.md",
                 "docs/evidence/FRONTEND_FLEET_COMPLETION_AUDIT.md"
             ],
             "completion_note": "Archived as done; Learning/Audit surfaces verified through existing product E2E evidence."
