@@ -2007,9 +2007,9 @@ def assert_listing_provider_selected(
         return
 
     provider = _listing_provider_definition()
-    deployment_mode = source_env.get(
-        "ODP_DEPLOY_ENV", source_env.get("APP_ENV", "development")
-    ).strip().lower()
+    deployment_mode = (
+        source_env.get("ODP_DEPLOY_ENV", source_env.get("APP_ENV", "development")).strip().lower()
+    )
     selected = {
         item.strip()
         for item in source_env.get(PRODUCTION_PROVIDER_IDS_ENV_VAR, "").split(",")
