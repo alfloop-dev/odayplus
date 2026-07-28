@@ -12,10 +12,15 @@ COPY modules ./modules
 COPY shared ./shared
 COPY packages ./packages
 COPY models ./models
+COPY pipelines ./pipelines
+COPY scripts ./scripts
 COPY solver ./solver
 COPY infra/db ./infra/db
 
-RUN pip install --no-cache-dir fastapi uvicorn pydantic numpy scikit-learn statsmodels ortools h3 duckdb sqlalchemy alembic psycopg[binary] httpx pyyaml
+RUN pip install --no-cache-dir \
+    fastapi uvicorn pydantic numpy scikit-learn statsmodels ortools h3 duckdb \
+    sqlalchemy alembic "psycopg[binary,pool]" httpx pyyaml \
+    google-cloud-storage "mlflow>=3.7,<4" "lightgbm>=4.6,<5" "lifelines>=0.30,<1"
 
 EXPOSE 8080
 
