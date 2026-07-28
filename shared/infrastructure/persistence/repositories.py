@@ -267,89 +267,136 @@ class DurableForecastOpsRepository:
     def __init__(self, store: SqliteDocumentStore) -> None:
         self._store = store
 
+    @staticmethod
+    def _collection(base: str, tenant_id: str) -> str:
+        normalized = str(tenant_id or "").strip()
+        if not normalized:
+            raise ValueError("tenant_id is required for ForecastOps persistence")
+        return f"{base}:{normalized}"
+
     def save_series(self, series: ForecastSeries) -> ForecastSeries:
-        self._store.put(self._SERIES, series.store_id, series)
+        self._store.put(self._collection(self._SERIES, series.tenant_id), series.store_id, series)
         return series
 
-    def list_series(self) -> list[ForecastSeries]:
-        return self._store.list_all(self._SERIES)
+    def list_series(self, tenant_id: str) -> list[ForecastSeries]:
+        return self._store.list_all(self._collection(self._SERIES, tenant_id))
 
-    def get_series(self, store_id: str) -> ForecastSeries | None:
-        return self._store.get(self._SERIES, store_id)
+    def get_series(self, tenant_id: str, store_id: str) -> ForecastSeries | None:
+        return self._store.get(self._collection(self._SERIES, tenant_id), store_id)
 
     def save_forecast(self, forecast: ForecastOutput) -> ForecastOutput:
-        version = self._store.count_in_group(self._FORECASTS, forecast.store_id) + 1
-        versioned = forecast.with_version(
-            forecast_version=version,
-            forecast_output_id=f"forecast-output-{uuid4()}",
-        )
-        self._store.append_version(
-            self._FORECASTS,
-            versioned.forecast_output_id,
-            versioned,
-            group_key=versioned.store_id,
-        )
-        return versioned
+        collection = self._collection(self._FORECASTS, forecast.tenant_id)
+        with self._store.engine.lock:
+            existing = self._store.get(collection, forecast.forecast_output_id)
+            if existing is not None:
+                return existing
+            if str(getattr(self._store.engine, "dialect", "")).lower() == "postgresql":
+                self._store.engine.execute(
+                    "SELECT pg_advisory_xact_lock(hashtextextended(?, 0))",
+                    (f"{collection}:{forecast.store_id}",),
+                )
+            version = self._store.count_in_group(collection, forecast.store_id) + 1
+            versioned = forecast.with_version(
+                forecast_version=version,
+                forecast_output_id=forecast.forecast_output_id,
+            )
+            self._store.put(
+                collection,
+                versioned.forecast_output_id,
+                versioned,
+                group_key=versioned.store_id,
+                seq=version,
+            )
+            return versioned
 
-    def latest_forecasts(self) -> list[ForecastOutput]:
-        return self._store.latest_per_group(self._FORECASTS)
+    def latest_forecasts(self, tenant_id: str) -> list[ForecastOutput]:
+        return self._store.latest_per_group(self._collection(self._FORECASTS, tenant_id))
 
-    def history(self, store_id: str) -> list[ForecastOutput]:
-        return self._store.list_by_group(self._FORECASTS, store_id)
+    def history(self, tenant_id: str, store_id: str) -> list[ForecastOutput]:
+        return self._store.list_by_group(self._collection(self._FORECASTS, tenant_id), store_id)
 
     def save_alert(self, alert: Alert) -> Alert:
         self._store.put(
-            self._ALERTS,
+            self._collection(self._ALERTS, alert.tenant_id),
             alert.alert_id,
             alert,
             group_key=alert.store_id,
         )
         return alert
 
-    def list_alerts(self) -> list[Alert]:
-        return self._store.list_all(self._ALERTS)
+    def list_alerts(self, tenant_id: str) -> list[Alert]:
+        return self._store.list_all(self._collection(self._ALERTS, tenant_id))
 
-    def list_alerts_by_store(self, store_id: str) -> list[Alert]:
-        return self._store.list_by_group(self._ALERTS, store_id)
+    def list_alerts_by_store(self, tenant_id: str, store_id: str) -> list[Alert]:
+        return self._store.list_by_group(self._collection(self._ALERTS, tenant_id), store_id)
 
-    def get_alert(self, alert_id: str) -> Alert | None:
-        return self._store.get(self._ALERTS, alert_id)
+    def get_alert(self, tenant_id: str, alert_id: str) -> Alert | None:
+        return self._store.get(self._collection(self._ALERTS, tenant_id), alert_id)
 
     def save_handoff(self, handoff: InterventionHandoff) -> InterventionHandoff:
-        self._store.put(self._HANDOFFS, handoff.handoff_id, handoff)
+        self._store.put(
+            self._collection(self._HANDOFFS, handoff.tenant_id),
+            handoff.handoff_id,
+            handoff,
+        )
         return handoff
 
-    def list_handoffs(self) -> list[InterventionHandoff]:
-        return self._store.list_all(self._HANDOFFS)
+    def list_handoffs(self, tenant_id: str) -> list[InterventionHandoff]:
+        return self._store.list_all(self._collection(self._HANDOFFS, tenant_id))
 
-    def get_handoff(self, handoff_id: str) -> InterventionHandoff | None:
-        return self._store.get(self._HANDOFFS, handoff_id)
+    def get_handoff(self, tenant_id: str, handoff_id: str) -> InterventionHandoff | None:
+        return self._store.get(self._collection(self._HANDOFFS, tenant_id), handoff_id)
 
-    def save_prediction_run(self, run: PredictionRun) -> PredictionRun:
-        self._store.put(self._PREDICTION_RUNS, run.prediction_run_id, run)
+    def save_prediction_run(self, tenant_id: str, run: PredictionRun) -> PredictionRun:
+        self._store.put(
+            self._collection(self._PREDICTION_RUNS, tenant_id),
+            run.prediction_run_id,
+            run,
+        )
         return run
 
-    def get_prediction_run(self, prediction_run_id: str) -> PredictionRun | None:
-        return self._store.get(self._PREDICTION_RUNS, prediction_run_id)
+    def get_prediction_run(self, tenant_id: str, prediction_run_id: str) -> PredictionRun | None:
+        return self._store.get(
+            self._collection(self._PREDICTION_RUNS, tenant_id),
+            prediction_run_id,
+        )
 
-    def save_prediction(self, prediction: Prediction) -> Prediction:
-        self._store.append_version(
-            self._PREDICTIONS,
-            f"prediction-{uuid4()}",
+    def save_prediction(self, tenant_id: str, prediction: Prediction) -> Prediction:
+        collection = self._collection(self._PREDICTIONS, tenant_id)
+        existing = self._store.get(collection, prediction.prediction_id)
+        if existing is not None:
+            return existing
+        self._store.put(
+            collection,
+            prediction.prediction_id,
             prediction,
             group_key=prediction.prediction_run_id,
         )
         return prediction
 
-    def get_predictions(self, prediction_run_id: str) -> list[Prediction]:
-        return self._store.list_by_group(self._PREDICTIONS, prediction_run_id)
+    def get_predictions(self, tenant_id: str, prediction_run_id: str) -> list[Prediction]:
+        return self._store.list_by_group(
+            self._collection(self._PREDICTIONS, tenant_id),
+            prediction_run_id,
+        )
 
-    def save_canonical_forecast(self, forecast: CanonicalForecastOutput) -> CanonicalForecastOutput:
-        self._store.put(self._CANONICAL_FORECASTS, forecast.forecast_output_id, forecast)
+    def save_canonical_forecast(
+        self, tenant_id: str, forecast: CanonicalForecastOutput
+    ) -> CanonicalForecastOutput:
+        self._store.put(
+            self._collection(self._CANONICAL_FORECASTS, tenant_id),
+            forecast.forecast_output_id,
+            forecast,
+        )
         return forecast
 
-    def get_canonical_forecast(self, forecast_output_id: str) -> CanonicalForecastOutput | None:
-        return self._store.get(self._CANONICAL_FORECASTS, forecast_output_id)
+    def get_canonical_forecast(
+        self, tenant_id: str, forecast_output_id: str
+    ) -> CanonicalForecastOutput | None:
+        return self._store.get(
+            self._collection(self._CANONICAL_FORECASTS, tenant_id),
+            forecast_output_id,
+        )
 
 
 class DurableAdLiftRepository:

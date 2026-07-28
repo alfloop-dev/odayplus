@@ -14,6 +14,11 @@ from models.shared_ml.output_contracts import (
     SITESCORE_OUTPUT_TRANSFORM,
 )
 from models.shared_ml.production_contracts import PRODUCTION_MODEL_CONTRACTS
+from modules.forecastops.model_contract import (
+    FORECASTOPS_FEATURE_SCHEMA_ID,
+    FORECASTOPS_LABEL_NAME,
+    FORECASTOPS_MODEL_FEATURES,
+)
 
 _LOCAL_HOSTS = {"", "localhost", "127.0.0.1", "::1"}
 _CLOUD_SQL_SOCKET_RE = re.compile(r"^/cloudsql/[a-z][a-z0-9-]{4,29}:[a-z0-9-]+:[a-z][a-z0-9-]+$")
@@ -101,6 +106,7 @@ class ModelSpec:
     output_transform: Mapping[str, Any] = field(default_factory=dict)
     production_release_enabled: bool = True
     production_block_reason: str | None = None
+    derived_feature_columns: tuple[str, ...] = ()
 
     @property
     def required_columns(self) -> tuple[str, ...]:
@@ -125,7 +131,11 @@ class ModelSpec:
                     *optional_event,
                     *optional_maturity,
                     *self.scope_columns,
-                    *self.feature_columns,
+                    *(
+                        name
+                        for name in self.feature_columns
+                        if name not in self.derived_feature_columns
+                    ),
                 )
             )
         )
@@ -136,26 +146,20 @@ MODEL_SPECS: dict[str, ModelSpec] = {
         key="forecastops",
         model_name=PRODUCTION_MODEL_CONTRACTS["forecastops"].model_name or "",
         relation="model_ready.forecast_training_view",
-        expected_view_version="forecast-training-view-v2",
+        expected_view_version=FORECASTOPS_FEATURE_SCHEMA_ID,
         kind=ModelKind.REGRESSION,
-        algorithm="lightgbm_quantile",
-        label_name="daily_net_revenue",
+        algorithm="lightgbm_regressor",
+        label_name=FORECASTOPS_LABEL_NAME,
         label_column="daily_net_revenue",
-        label_version="forecast-daily-net-revenue-v1",
-        feature_schema_version="forecast-training-view-v2",
-        feature_set_id="fs_forecastops_daily_revenue_v1",
-        label_set_id="ls_forecastops_daily_revenue_v1",
+        label_version="forecast-horizon-average-revenue-v1",
+        feature_schema_version=FORECASTOPS_FEATURE_SCHEMA_ID,
+        feature_set_id="fs_forecastops_horizon_revenue_v1",
+        label_set_id="ls_forecastops_horizon_average_revenue_v1",
         temporal_column="date",
         label_maturity_column="label_maturity_time",
         segment_column="store_id",
-        feature_columns=(
-            "tenant_id",
-            "store_id",
-            "revenue_lag_1",
-            "revenue_lag_7",
-            "rolling_mean_7",
-            "rolling_mean_28",
-        ),
+        feature_columns=FORECASTOPS_MODEL_FEATURES,
+        derived_feature_columns=("horizon_weeks",),
         scope_columns=("tenant_id", "store_id"),
         minimum_rows=90,
         holdout_fraction=0.20,
