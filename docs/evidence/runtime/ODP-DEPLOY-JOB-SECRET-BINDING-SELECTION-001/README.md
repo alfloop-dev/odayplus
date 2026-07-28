@@ -297,6 +297,19 @@ An empty off-dialect source (`"valueSource": {}` on a Knative job) is rejected
 too: gcloud emits one dialect per description, so the key's presence is the
 defect, not its contents.
 
+A uniqueness rule can only be a tightening if the real deployment cannot trip
+it, so that was checked against `scripts/deploy_cloud_run_waji.sh` rather than
+assumed. Each job is deployed with `--env-vars-file="${API_ENV_FILE}"` **and**
+`--set-secrets="${API_SECRET_BINDINGS}"`, which is the one way a required env
+var could arrive twice. It cannot: the env file is written from an explicit
+`keys` allowlist (`ODAY_RELEASE_SHA`, `ODP_PRODUCTION_PROVIDER_IDS`, the deploy
+mode flags, and the selected providers' URL/auth-status keys) that contains no
+secret env var, while `API_SECRET_BINDINGS` is a comma list naming
+`ODAY_DATABASE_URL`, `ODP_AUTH_PRINCIPAL_MAP`, and each selected provider
+credential exactly once. The two sets are disjoint, and
+`ODP_PRODUCTION_PROVIDER_IDS` is supplied only by the env file, so the selection
+entry carries no secret source either.
+
 Regressions: `test_job_smoke_rejects_a_duplicate_required_secret_binding`
 (4 cases), `test_job_smoke_rejects_an_entry_mixing_secret_binding_dialects`
 (4 cases), `test_job_smoke_rejects_a_v2_entry_mixing_secret_binding_dialects`
