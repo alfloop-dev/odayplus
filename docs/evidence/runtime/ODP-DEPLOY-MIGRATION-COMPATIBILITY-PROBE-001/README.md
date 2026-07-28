@@ -105,16 +105,18 @@ missing retry contract.**
   per probe; a retry is only scheduled when backoff plus a full attempt still
   fit inside it, and the last attempt's timeout is clamped to what remains
 
-Retries are attempted **only** for outcomes that carry no verdict from the old
-revision: transport failures (timeout, connection reset/refused) and the
-bounded infrastructure status set `{408, 429, 502, 503, 504}` **when the body is
-not a JSON object**. Anything the old revision actually answered is a verdict
-and is never retried, so all of the following still fail closed on the first
+Retries are attempted **only** when no response was received at all: transport
+failures (timeout, connection reset/refused), classified as
+`ProbeAttempt.provenance == "no_response"`. That is exactly what run
+30402570022 recorded. Any attempt that *received* an HTTP response is final on
+attempt 1, whatever its status or body — a status code is not independent proof
+that the Cloud Run front end rather than the old revision produced it, so it
+never buys a retry. All of the following still fail closed on the first
 response, before candidate traffic and with the rollback trap armed:
 
 - non-200 `/platform/version`
 - `/platform/version` or `/platform/health` returning invalid JSON or a
-  non-object payload at status 200
+  non-object payload at **any** status, including 503
 - `/platform/health` with a missing `database` dependency
 - `/platform/health` with an unhealthy database or a forbidden
   fixture/mock/seed/in-memory/sqlite marker

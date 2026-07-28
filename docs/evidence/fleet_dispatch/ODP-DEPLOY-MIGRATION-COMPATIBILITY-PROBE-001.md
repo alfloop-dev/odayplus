@@ -58,12 +58,18 @@ provider-probe defect.** Full detail and raw log extracts:
   scheduled when its backoff plus a full attempt still fit inside the deadline;
   the attempt timeout is clamped to whatever remains. Both exhaustion modes
   fail the gate.
-- Retryable **only** when the old revision returned no verdict: transport
-  failures, and `{408, 429, 502, 503, 504}` when the body is not a JSON object.
-  Anything the old revision answered is a verdict and is never retried.
+- Retryable **only** when no response was received at all — a transport failure
+  or a timeout. Every attempt that received an HTTP response is final on
+  attempt 1, whatever its status or body. See § 2a.
+- `ProbeAttempt.provenance` (`no_response` / `unparseable_body` /
+  `non_object_body` / `json_object`) is the retry input, and the dataclass
+  rejects a provenance that contradicts the response it describes: a status is
+  present exactly when a response was received, a payload exactly when the body
+  parsed as a JSON object.
 - `compatibility_smoke_checks` drives both probes through that contract and
   records `probe_retry_policy`, `version_probe`, and `health_probe` (per-attempt
-  status, error, elapsed, transient classification) in the gate report.
+  status, error, elapsed, provenance, transient classification) in the gate
+  report.
 - New `compatibility-smoke` flags: `--compat-retry-attempts` (4),
   `--compat-retry-backoff-seconds` (2.0),
   `--compat-retry-max-backoff-seconds` (8.0),
@@ -81,6 +87,37 @@ provider-probe defect.** Full detail and raw log extracts:
   ordering is unchanged: it still runs after the migration job and before
   `gcloud run deploy "${API_SERVICE}"`, with the rollback trap armed.
 
+## 2a. Round 2 — retry narrowed to true no-response (reviewer blocker)
+
+Codex6 rejected exact head `9e7d4c70` (PR #488, comment 5110430397): round 1
+decided retryability from `payload is None`, which is equally true of a request
+that never reached the old revision and of a response whose body we could not
+parse. Combined with a status allowlist, an **HTTP 503 carrying invalid JSON was
+retried** (`transient=true`) instead of failing on attempt 1.
+
+The fix splits *response provenance* from *transport failure* — `payload is
+None` no longer decides anything — and narrows the retry rule to
+`not attempt.response_received`:
+
+- a status code is **not** proof that the Cloud Run front end rather than the
+  old revision produced a response. The deployment has no independent
+  front-end provenance signal, so the status allowlist
+  (`{408, 429, 502, 503, 504}`) is **removed**. Retrying on status could retry
+  away a real verdict — a 503 the old revision itself emitted.
+- this loses nothing against the reported failure: run 30402570022 failed with
+  `The read operation timed out`, i.e. `no_response`, which is still retried.
+- a front-end 503 with an HTML body now fails the gate closed. That is the
+  required posture: a false fail aborts the deploy with rollback preserved.
+
+Regressions added, driven end-to-end from a real HTTP response through
+`probe_json_endpoint` (not from hand-built `ProbeAttempt`s): HTTP 503 with an
+HTML body, an empty body, `[]`, and `"unavailable"` each assert
+`outcome=rejected`, `attempt_count=1`, `transient=false`, and **no sleep**, at
+both the single-probe and `compatibility_smoke_checks` level; the status sweep
+asserts non-retry for `{200, 404, 408, 429, 500, 502, 503, 504}` across all
+three received-response provenances; and `ProbeAttempt` rejects a contradictory
+provenance.
+
 ## 3. Fail-closed surface preserved
 
 All of these still fail on the **first** response, before candidate traffic:
@@ -88,7 +125,7 @@ All of these still fail on the **first** response, before candidate traffic:
 | Condition | Behaviour |
 | --- | --- |
 | non-200 `/platform/version` | 1 attempt, no retry, gate fails |
-| invalid JSON / non-object payload at 200 | 1 attempt, no retry, gate fails |
+| invalid JSON / non-object payload at **any** status, incl. 503 | 1 attempt, no retry, gate fails |
 | `/platform/health` outside `{200, 503}` | gate fails |
 | missing `database` dependency | 1 attempt, no retry, gate fails |
 | unhealthy database | 1 attempt, no retry, gate fails |
@@ -114,16 +151,16 @@ reports the bare string `"healthy"` and still passes.
 
 `docs/evidence/runtime/ODP-DEPLOY-MIGRATION-COMPATIBILITY-PROBE-001/verification-2026-07-28.md`
 
-- focused compatibility tests: 26 passed
-- full ops suite: 371 passed, 20 skipped, 1 pre-existing environmental failure
+- focused compatibility tests: 42 passed
+- full ops suite: 378 passed, 20 skipped, 1 pre-existing environmental failure
   (`uv` binary absent from the worker sandbox; identical on the unmodified base)
 - `ruff format --check`, `ruff check .orchestrator scripts`,
   `ruff check tests modules apps shared models solver pipelines infra`,
   `bash -n scripts/deploy_cloud_run_waji.sh` — clean
 - shipped CLI re-run against the real serving revision → **pass**
 - shipped CLI re-run against a genuinely cold revision → attempt 1 reproduces
-  `The read operation timed out` at 15.059 s, attempt 2 returns 200 in 3.006 s,
-  gate **passes**
+  `The read operation timed out` at 15.062 s classified `no_response`, attempt 2
+  returns 200 in 0.410 s, gate **passes**
 - shipped CLI re-run against a non-API endpoint → **fails closed, exit 1**, one
   attempt per probe
 

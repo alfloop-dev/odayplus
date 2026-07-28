@@ -780,9 +780,23 @@ def _attempt(
     payload: dict | None = None,
     error: str = "",
     elapsed: float = 0.0,
+    provenance: str | None = None,
 ) -> object:
+    # Convenience only: the authoritative classification of a real response is
+    # exercised end-to-end through probe_json_endpoint below, never inferred.
+    if provenance is None:
+        if status is None:
+            provenance = validator.PROBE_NO_RESPONSE
+        elif payload is not None:
+            provenance = validator.PROBE_JSON_OBJECT
+        else:
+            provenance = validator.PROBE_UNPARSEABLE_BODY
     return validator.ProbeAttempt(
-        status=status, payload=payload, error=error, elapsed_seconds=elapsed
+        status=status,
+        payload=payload,
+        error=error,
+        elapsed_seconds=elapsed,
+        provenance=provenance,
     )
 
 
@@ -877,8 +891,8 @@ def test_probe_retry_policy_rejects_unbounded_or_degenerate_configuration(
         )
 
 
-def test_probe_failure_is_transient_only_when_the_old_revision_gave_no_verdict() -> None:
-    # No verdict: worth retrying.
+def test_probe_failure_is_transient_only_when_no_response_was_received() -> None:
+    # Nothing came back: the cold start this contract exists for.
     assert validator.probe_failure_is_transient(_timeout_attempt()) is True
     assert (
         validator.probe_failure_is_transient(
@@ -886,25 +900,137 @@ def test_probe_failure_is_transient_only_when_the_old_revision_gave_no_verdict()
         )
         is True
     )
-    for status in sorted(validator.PROBE_RETRY_STATUSES):
+    # Any received response is final on attempt 1, whatever it carried. A
+    # status code is not proof that the Cloud Run front end -- rather than the
+    # old revision itself -- produced the response, so it never buys a retry.
+    for status in (200, 404, 408, 429, 500, 502, 503, 504):
+        assert validator.probe_failure_is_transient(_attempt(status=status, payload={})) is False
         assert (
             validator.probe_failure_is_transient(
-                _attempt(status=status, error="did not return valid JSON")
+                _attempt(
+                    status=status,
+                    error="did not return valid JSON",
+                    provenance=validator.PROBE_UNPARSEABLE_BODY,
+                )
             )
-            is True
+            is False
+        ), status
+        assert (
+            validator.probe_failure_is_transient(
+                _attempt(
+                    status=status,
+                    error="returned a non-object JSON payload",
+                    provenance=validator.PROBE_NON_OBJECT_BODY,
+                )
+            )
+            is False
+        ), status
+
+
+def test_probe_attempt_rejects_a_provenance_that_contradicts_the_response() -> None:
+    # A received-but-unreadable response cannot be recorded as no-response.
+    with pytest.raises(ValueError):
+        validator.ProbeAttempt(
+            status=503,
+            payload=None,
+            error="did not return valid JSON",
+            elapsed_seconds=0.1,
+            provenance=validator.PROBE_NO_RESPONSE,
         )
-    # A verdict from the old revision is never retried, whatever it says.
-    assert validator.probe_failure_is_transient(_attempt(status=200, payload={})) is False
-    assert validator.probe_failure_is_transient(_attempt(status=500, payload={})) is False
-    assert validator.probe_failure_is_transient(_attempt(status=503, payload={})) is False
-    # Invalid JSON on an otherwise successful response is a defect, not a blip.
-    assert (
-        validator.probe_failure_is_transient(
-            _attempt(status=200, error="did not return valid JSON")
+    with pytest.raises(ValueError):
+        validator.ProbeAttempt(
+            status=None,
+            payload=None,
+            error="timed out",
+            elapsed_seconds=0.1,
+            provenance=validator.PROBE_UNPARSEABLE_BODY,
         )
-        is False
+    with pytest.raises(ValueError):
+        validator.ProbeAttempt(
+            status=200,
+            payload={"status": "ok"},
+            error="",
+            elapsed_seconds=0.1,
+            provenance=validator.PROBE_UNPARSEABLE_BODY,
+        )
+    with pytest.raises(ValueError):
+        validator.ProbeAttempt(
+            status=200, payload=None, error="", elapsed_seconds=0.1, provenance="maybe"
+        )
+
+
+@pytest.mark.parametrize(
+    "body,expected_provenance,expected_error",
+    [
+        ("<html>503 Service Unavailable</html>", validator.PROBE_UNPARSEABLE_BODY, "valid JSON"),
+        ("", validator.PROBE_UNPARSEABLE_BODY, "valid JSON"),
+        ("[]", validator.PROBE_NON_OBJECT_BODY, "non-object"),
+        ('"unavailable"', validator.PROBE_NON_OBJECT_BODY, "non-object"),
+    ],
+)
+def test_probe_json_endpoint_classifies_a_503_body_as_a_received_response(
+    body: str, expected_provenance: str, expected_error: str, monkeypatch
+) -> None:
+    # HTTP 503 with a body the old revision's JSON contract does not satisfy.
+    # `payload is None` here as well as on a timeout -- provenance is what
+    # keeps the two apart.
+    monkeypatch.setattr(validator, "_request", lambda url, **_: (503, "text/html", body))
+    attempt = validator.probe_json_endpoint(
+        "https://oday-api.example/platform/version", headers={}, timeout=1.0
     )
-    assert validator.probe_failure_is_transient(_attempt(status=404, error="not JSON")) is False
+
+    assert attempt.status == 503
+    assert attempt.payload is None
+    assert attempt.provenance == expected_provenance
+    assert attempt.response_received is True
+    assert attempt.has_verdict is False
+    assert expected_error in attempt.error
+    assert validator.probe_failure_is_transient(attempt) is False
+
+
+@pytest.mark.parametrize(
+    "body,expected_provenance",
+    [
+        ("<html>503 Service Unavailable</html>", validator.PROBE_UNPARSEABLE_BODY),
+        ("[]", validator.PROBE_NON_OBJECT_BODY),
+    ],
+)
+def test_compatibility_probe_rejects_a_503_unreadable_body_on_attempt_one(
+    body: str, expected_provenance: str, monkeypatch
+) -> None:
+    """End-to-end: a 503 with an unreadable body must not spend a retry."""
+
+    requests: list[str] = []
+
+    def fake_request(url: str, *, headers, timeout: float):
+        requests.append(url)
+        return 503, "text/html", body
+
+    sleeper = _RecordingSleep()
+    monkeypatch.setattr(validator, "_request", fake_request)
+    checks, report = validator.compatibility_smoke_checks(
+        api_url="https://oday-api.example",
+        web_url="https://oday-web.example",
+        correlation_id="corr-cloud-run-compat-test",
+        timeout=15.0,
+        sleep=sleeper,
+    )
+
+    assert not any(check.ok for check in checks)
+    assert sleeper.delays == []
+    assert requests == [
+        "https://oday-api.example/platform/version",
+        "https://oday-api.example/platform/health",
+    ]
+    for probe in ("version_probe", "health_probe"):
+        assert report[probe]["outcome"] == "rejected", probe
+        assert report[probe]["attempt_count"] == 1, probe
+        assert report[probe]["attempts"][0]["transient"] is False, probe
+        assert report[probe]["attempts"][0]["provenance"] == expected_provenance, probe
+        assert report[probe]["attempts"][0]["status"] == 503, probe
+    # No verdict was recorded, so the gate cannot claim database compatibility.
+    assert "version" not in report
+    assert "health" not in report
 
 
 def test_compatibility_probe_recovers_from_a_bounded_cold_start(monkeypatch) -> None:
@@ -953,7 +1079,15 @@ def test_compatibility_probe_fails_closed_when_attempts_are_exhausted(monkeypatc
         ({"status": 500, "payload": {"status": "error"}}, "status=500", "answered"),
         ({"status": 404, "payload": {"detail": "not found"}}, "status=404", "answered"),
         ({"status": 200, "error": "did not return valid JSON: line 1"}, "valid JSON", "rejected"),
-        ({"status": 200, "error": "returned a non-object JSON payload"}, "non-object", "rejected"),
+        (
+            {
+                "status": 200,
+                "error": "returned a non-object JSON payload",
+                "provenance": validator.PROBE_NON_OBJECT_BODY,
+            },
+            "non-object",
+            "rejected",
+        ),
     ],
 )
 def test_compatibility_version_verdicts_fail_closed_without_retry(

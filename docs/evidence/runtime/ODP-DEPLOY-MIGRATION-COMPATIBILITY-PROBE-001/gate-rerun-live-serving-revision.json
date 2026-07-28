@@ -2,7 +2,7 @@
   "api_url": "https://oday-api-7sxbjoeozq-de.a.run.app",
   "checks": [
     {
-      "detail": "status=200 attempts=1 elapsed=0.1s",
+      "detail": "status=200 attempts=1 elapsed=13.3s",
       "name": "compatibility:/platform/version:http",
       "ok": true
     },
@@ -13,28 +13,28 @@
     }
   ],
   "correlation_id": "corr-cloud-run-compat-dev-7d13f8e162d035ad7318d1f659dfa0f2bd85ca65-rerun",
-  "generated_at": "2026-07-28T22:31:59Z",
+  "generated_at": "2026-07-28T22:50:40Z",
   "health": {
     "correlation_id": "corr-cloud-run-compat-dev-7d13f8e162d035ad7318d1f659dfa0f2bd85ca65-rerun",
     "dependencies": {
       "database": "healthy",
       "external_providers": {
-        "checked_at": "2026-07-28T22:31:59.173623+00:00",
+        "checked_at": "2026-07-28T22:50:40.464992+00:00",
         "configuration_errors": [],
         "configuration_valid": true,
         "connectivity_healthy": true,
         "correlation_id": "corr-cloud-run-compat-dev-7d13f8e162d035ad7318d1f659dfa0f2bd85ca65-rerun",
-        "expires_at": "2026-07-28T22:32:58.541899+00:00",
+        "expires_at": "2026-07-28T22:51:40.166411+00:00",
         "mode": "live",
         "probes": [
           {
             "authentication_accepted": true,
-            "checked_at": "2026-07-28T22:31:58.541899+00:00",
+            "checked_at": "2026-07-28T22:50:40.464992+00:00",
             "configuration_valid": true,
             "connectivity_healthy": true,
-            "expires_at": "2026-07-28T22:32:58.541899+00:00",
+            "expires_at": "2026-07-28T22:51:40.464992+00:00",
             "http_status": 200,
-            "latency_ms": 48,
+            "latency_ms": 2475,
             "provider_id": "admin_boundary.official_dataset",
             "reason_code": "ok",
             "response_valid": true,
@@ -42,12 +42,12 @@
           },
           {
             "authentication_accepted": true,
-            "checked_at": "2026-07-28T22:31:58.615114+00:00",
+            "checked_at": "2026-07-28T22:50:40.439364+00:00",
             "configuration_valid": true,
             "connectivity_healthy": true,
-            "expires_at": "2026-07-28T22:32:58.615114+00:00",
+            "expires_at": "2026-07-28T22:51:40.439364+00:00",
             "http_status": 200,
-            "latency_ms": 121,
+            "latency_ms": 2448,
             "provider_id": "geocode.primary_api",
             "reason_code": "ok",
             "response_valid": true,
@@ -55,12 +55,12 @@
           },
           {
             "authentication_accepted": true,
-            "checked_at": "2026-07-28T22:31:59.173623+00:00",
+            "checked_at": "2026-07-28T22:50:40.166411+00:00",
             "configuration_valid": true,
             "connectivity_healthy": true,
-            "expires_at": "2026-07-28T22:32:59.173623+00:00",
+            "expires_at": "2026-07-28T22:51:40.166411+00:00",
             "http_status": 200,
-            "latency_ms": 678,
+            "latency_ms": 2175,
             "provider_id": "poi.commercial_api",
             "reason_code": "ok",
             "response_valid": true,
@@ -84,7 +84,7 @@
         "liveReady": false,
         "mode": "unavailable",
         "operatorRepositoryProbe": {
-          "checkedAt": "2026-07-28T22:31:59.494018+00:00",
+          "checkedAt": "2026-07-28T22:50:40.512134+00:00",
           "errors": [],
           "persistenceMode": "postgresql",
           "ready": true,
@@ -172,22 +172,22 @@
         "live": true,
         "mode": "live",
         "probeEvidence": {
-          "checked_at": "2026-07-28T22:31:59.173623+00:00",
+          "checked_at": "2026-07-28T22:50:40.464992+00:00",
           "configuration_errors": [],
           "configuration_valid": true,
           "connectivity_healthy": true,
           "correlation_id": "corr-cloud-run-compat-dev-7d13f8e162d035ad7318d1f659dfa0f2bd85ca65-rerun",
-          "expires_at": "2026-07-28T22:32:58.541899+00:00",
+          "expires_at": "2026-07-28T22:51:40.166411+00:00",
           "mode": "live",
           "probes": [
             {
               "authentication_accepted": true,
-              "checked_at": "2026-07-28T22:31:58.541899+00:00",
+              "checked_at": "2026-07-28T22:50:40.464992+00:00",
               "configuration_valid": true,
               "connectivity_healthy": true,
-              "expires_at": "2026-07-28T22:32:58.541899+00:00",
+              "expires_at": "2026-07-28T22:51:40.464992+00:00",
               "http_status": 200,
-              "latency_ms": 48,
+              "latency_ms": 2475,
               "provider_id": "admin_boundary.official_dataset",
               "reason_code": "ok",
               "response_valid": true,
@@ -195,12 +195,12 @@
             },
             {
               "authentication_accepted": true,
-              "checked_at": "2026-07-28T22:31:58.615114+00:00",
+              "checked_at": "2026-07-28T22:50:40.439364+00:00",
               "configuration_valid": true,
               "connectivity_healthy": true,
-              "expires_at": "2026-07-28T22:32:58.615114+00:00",
+              "expires_at": "2026-07-28T22:51:40.439364+00:00",
               "http_status": 200,
-              "latency_ms": 121,
+              "latency_ms": 2448,
               "provider_id": "geocode.primary_api",
               "reason_code": "ok",
               "response_valid": true,
@@ -208,12 +208,12 @@
             },
             {
               "authentication_accepted": true,
-              "checked_at": "2026-07-28T22:31:59.173623+00:00",
+              "checked_at": "2026-07-28T22:50:40.166411+00:00",
               "configuration_valid": true,
               "connectivity_healthy": true,
-              "expires_at": "2026-07-28T22:32:59.173623+00:00",
+              "expires_at": "2026-07-28T22:51:40.166411+00:00",
               "http_status": 200,
-              "latency_ms": 678,
+              "latency_ms": 2175,
               "provider_id": "poi.commercial_api",
               "reason_code": "ok",
               "response_valid": true,
@@ -232,20 +232,21 @@
     },
     "service": "oday-api",
     "status": "unhealthy",
-    "time": "2026-07-28T22:31:59.494089+00:00",
+    "time": "2026-07-28T22:50:40.512190+00:00",
     "version": "0.1.0"
   },
   "health_probe": {
     "attempt_count": 1,
     "attempts": [
       {
-        "elapsed_seconds": 1.946,
+        "elapsed_seconds": 2.59,
         "error": "",
+        "provenance": "json_object",
         "status": 503,
         "transient": false
       }
     ],
-    "elapsed_seconds": 1.946,
+    "elapsed_seconds": 2.59,
     "outcome": "answered"
   },
   "ok": true,
@@ -264,19 +265,20 @@
     "release_sha": "8ec12c02",
     "service": "oday-api",
     "status": "ok",
-    "time": "2026-07-28T22:31:57.548847+00:00"
+    "time": "2026-07-28T22:50:37.920159+00:00"
   },
   "version_probe": {
     "attempt_count": 1,
     "attempts": [
       {
-        "elapsed_seconds": 0.062,
+        "elapsed_seconds": 13.274,
         "error": "",
+        "provenance": "json_object",
         "status": 200,
         "transient": false
       }
     ],
-    "elapsed_seconds": 0.062,
+    "elapsed_seconds": 13.274,
     "outcome": "answered"
   },
   "web_url": "https://oday-web-7sxbjoeozq-de.a.run.app"

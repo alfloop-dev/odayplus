@@ -1664,15 +1664,22 @@ def smoke_checks(
 # against a single 15.0s attempt and failed the gate even though the old
 # revision answered `/platform/version` with 200 and reported a healthy
 # database. Retrying is therefore about outlasting instance startup, never
-# about tolerating an answer we dislike -- see PROBE_RETRY_STATUSES.
+# about tolerating an answer we dislike -- see probe_failure_is_transient.
 COMPATIBILITY_PROBE_ATTEMPTS = 4
 COMPATIBILITY_PROBE_BACKOFF_SECONDS = 2.0
 COMPATIBILITY_PROBE_MAX_BACKOFF_SECONDS = 8.0
 COMPATIBILITY_PROBE_DEADLINE_SECONDS = 120.0
-# Statuses Cloud Run's front end emits while an instance is still starting or
-# is shedding load. They are only treated as transient when the body is *not* a
-# JSON object, i.e. when the old revision itself never got to answer.
-PROBE_RETRY_STATUSES = frozenset({408, 429, 502, 503, 504})
+# Where a probe attempt stopped. This -- not `payload is None` -- is what
+# decides retryability, because `payload is None` is equally true of a request
+# that never reached the old revision and of a response the old revision sent
+# with a body we could not parse.
+PROBE_NO_RESPONSE = "no_response"  # transport failure or timeout: nothing came back
+PROBE_UNPARSEABLE_BODY = "unparseable_body"  # a response arrived; its body was not JSON
+PROBE_NON_OBJECT_BODY = "non_object_body"  # a response arrived; its JSON was not an object
+PROBE_JSON_OBJECT = "json_object"  # a response arrived with a JSON object body
+PROBE_PROVENANCES = frozenset(
+    {PROBE_NO_RESPONSE, PROBE_UNPARSEABLE_BODY, PROBE_NON_OBJECT_BODY, PROBE_JSON_OBJECT}
+)
 # Positive allowlist rather than a substring probe: `"unhealthy" in text` is
 # true for the literal dependency value `"unhealthy"`, so a substring test
 # would pass the very verdict this gate exists to catch.
@@ -1709,18 +1716,40 @@ def _database_reads_healthy(health: Mapping[str, Any]) -> bool:
 
 @dataclass(frozen=True)
 class ProbeAttempt:
-    """One request to an old-revision probe endpoint. Never raises."""
+    """One request to an old-revision probe endpoint. Never raises.
+
+    ``provenance`` is mandatory and self-consistent by construction: a status
+    is present exactly when a response was received, and a payload exactly
+    when that response's body parsed as a JSON object. Callers therefore
+    cannot silently classify a received-but-unreadable response as a
+    no-response transport failure.
+    """
 
     status: int | None
     payload: dict[str, Any] | None
     error: str
     elapsed_seconds: float
+    provenance: str
+
+    def __post_init__(self) -> None:
+        if self.provenance not in PROBE_PROVENANCES:
+            raise ValueError(f"unknown probe provenance: {self.provenance!r}")
+        if (self.provenance == PROBE_NO_RESPONSE) != (self.status is None):
+            raise ValueError("probe status is present exactly when a response was received")
+        if (self.provenance == PROBE_JSON_OBJECT) != (self.payload is not None):
+            raise ValueError("probe payload is present exactly when the body was a JSON object")
+
+    @property
+    def response_received(self) -> bool:
+        """True when an HTTP response arrived, whatever its status or body."""
+
+        return self.provenance != PROBE_NO_RESPONSE
 
     @property
     def has_verdict(self) -> bool:
-        """True when the old revision returned a payload we can judge."""
+        """True when the old revision returned a JSON object we can judge."""
 
-        return self.payload is not None
+        return self.provenance == PROBE_JSON_OBJECT
 
 
 @dataclass(frozen=True)
@@ -1784,6 +1813,7 @@ class ProbeResult:
                     "status": attempt.status,
                     "error": attempt.error,
                     "elapsed_seconds": round(attempt.elapsed_seconds, 3),
+                    "provenance": attempt.provenance,
                     "transient": probe_failure_is_transient(attempt),
                 }
                 for attempt in self.attempts
@@ -1803,19 +1833,22 @@ class ProbeResult:
 def probe_failure_is_transient(attempt: ProbeAttempt) -> bool:
     """Decide whether ``attempt`` may be retried.
 
-    Fail-closed rule: anything the old revision actually answered is a verdict
-    and is never retried, so a non-200 version, invalid JSON, a missing
-    database dependency, and an unhealthy database all stop the gate on the
-    first response. Only outcomes that carry no verdict are transient --
-    transport failures and Cloud Run front-end statuses returned without a JSON
-    body.
+    Only a true no-response outcome is transient: a transport failure or a
+    timeout where nothing came back, which is exactly what run 30402570022
+    recorded ("The read operation timed out") and exactly what a Cloud Run cold
+    start produces.
+
+    Every attempt that *received* an HTTP response is final on attempt 1,
+    whatever it contained -- a non-200 version, a body that is not JSON, JSON
+    that is not an object, a missing database dependency, or an unhealthy
+    database. Retrying a received response would require independent proof
+    that the Cloud Run front end rather than the old revision produced it; the
+    deployment has no such provenance signal, and treating a status code as
+    that proof would let a real verdict (a 503 the old revision itself emitted)
+    be retried away.
     """
 
-    if attempt.has_verdict:
-        return False
-    if attempt.status is None:
-        return True
-    return attempt.status in PROBE_RETRY_STATUSES
+    return not attempt.response_received
 
 
 def probe_json_endpoint(
@@ -1836,8 +1869,11 @@ def probe_json_endpoint(
             payload=None,
             error=str(exc) or type(exc).__name__,
             elapsed_seconds=monotonic() - started,
+            provenance=PROBE_NO_RESPONSE,
         )
     elapsed = monotonic() - started
+    # Past this point a response exists -- `_request` converts HTTPError into a
+    # status and body -- so every remaining outcome is a received response.
     try:
         payload = json.loads(body)
     except json.JSONDecodeError as exc:
@@ -1846,6 +1882,7 @@ def probe_json_endpoint(
             payload=None,
             error=f"{url} did not return valid JSON: {exc}",
             elapsed_seconds=elapsed,
+            provenance=PROBE_UNPARSEABLE_BODY,
         )
     if not isinstance(payload, dict):
         return ProbeAttempt(
@@ -1853,8 +1890,15 @@ def probe_json_endpoint(
             payload=None,
             error=f"{url} returned a non-object JSON payload",
             elapsed_seconds=elapsed,
+            provenance=PROBE_NON_OBJECT_BODY,
         )
-    return ProbeAttempt(status=status, payload=payload, error="", elapsed_seconds=elapsed)
+    return ProbeAttempt(
+        status=status,
+        payload=payload,
+        error="",
+        elapsed_seconds=elapsed,
+        provenance=PROBE_JSON_OBJECT,
+    )
 
 
 def probe_with_bounded_retry(
@@ -1914,6 +1958,7 @@ def probe_with_bounded_retry(
                 payload=None,
                 error=f"probe deadline of {policy.deadline_seconds}s elapsed before any attempt",
                 elapsed_seconds=0.0,
+                provenance=PROBE_NO_RESPONSE,
             )
         ]
     return ProbeResult(final=attempts[-1], attempts=attempts, exhausted=exhausted)

@@ -7,18 +7,27 @@ Owner: Claude2 · Reviewer: Codex6 · Branch:
 ## Focused compatibility tests
 
 ```
-python3 -m pytest tests/ops/test_cloud_run_live_deployment.py -q \
-  -k "compat or probe_retry or probe_json or probe_failure"
+python3 -m pytest tests/ops/test_cloud_run_live_deployment.py -q -k "compat or probe"
 ```
 
-→ **26 passed, 291 deselected**. Covers:
+→ **42 passed**. Covers:
 
 - `ProbeRetryPolicy` backoff is exponential and capped (`[0, 2, 4, 8, 8, 8]`)
   and the policy rejects a zero/negative attempt count, per-attempt timeout,
   backoff, or deadline, so an unbounded retry contract cannot be configured
-- `probe_failure_is_transient` retries only outcomes with no verdict —
-  transport errors and `{408, 429, 502, 503, 504}` without a JSON body — and
-  never retries a payload the old revision returned, nor invalid JSON at 200
+- `probe_failure_is_transient` retries **only** a no-response outcome
+  (transport failure / timeout). The status sweep asserts non-retry for
+  `{200, 404, 408, 429, 500, 502, 503, 504}` across all three
+  received-response provenances (`json_object`, `unparseable_body`,
+  `non_object_body`) — see § Round 2 below
+- `probe_json_endpoint` classifies a real HTTP 503 carrying an HTML body, an
+  empty body, `[]`, or `"unavailable"` as a *received response*
+  (`response_received=True`, `transient=false`), and `ProbeAttempt` raises on a
+  provenance that contradicts its status/payload
+- end-to-end through `compatibility_smoke_checks`: a 503 with an unparseable or
+  non-object body gives `outcome=rejected`, `attempt_count=1`,
+  `transient=false`, **no sleep**, one request per probe, and no
+  `version`/`health` payload in the report
 - cold-start recovery: `[timeout, timeout, 200]` passes the gate with exactly
   3 attempts and backoff `[2.0, 4.0]`
 - exhausted attempts fail closed with `outcome=attempts_exhausted`, and no
@@ -43,7 +52,7 @@ python3 -m pytest tests/ops/test_cloud_run_live_deployment.py -q \
 python3 -m pytest tests/ops/ -p no:cacheprovider
 ```
 
-→ **371 passed, 1 failed, 20 skipped**.
+→ **378 passed, 1 failed, 20 skipped**.
 
 The single failure is
 `test_deploy_preflight_imports_runtime_dependencies_via_locked_python`, which
@@ -67,7 +76,8 @@ bash -n scripts/deploy_cloud_run_waji.sh
 ## Live gate re-runs against Cloud Run
 
 All three ran the shipped CLI with the exact flags
-`run_migration_compatibility_gate` now passes.
+`run_migration_compatibility_gate` now passes. Re-run at round-2 head after the
+provenance change; the reports in this directory are those runs' raw output.
 
 ### 1. Serving revision — passes (`gate-rerun-live-serving-revision.json`)
 
@@ -76,25 +86,39 @@ All three ran the shipped CLI with the exact flags
 
 ```
 Cloud Run migration compatibility smoke passed.   exit=0
-version: attempts=1 status=200 elapsed=0.062s
-health:  attempts=1 status=503 elapsed=1.946s  -> database compatible
+version: attempts=1 status=200 elapsed=13.274s provenance=json_object
+health:  attempts=1 status=503 elapsed=2.590s   provenance=json_object
+         dependencies.database == "healthy"  -> database compatible
 ```
+
+This re-run is itself a measurement of the reported failure mode: the *serving*
+revision had scaled to zero again and took **13.3 s** to answer attempt 1 —
+1.7 s inside the 15 s single-attempt budget that run 30402570022 blew through.
 
 ### 2. Cold revision — retry recovers it (`gate-rerun-cold-revision-retry.json`)
 
-`--api-url https://authcand---oday-api-7sxbjoeozq-de.a.run.app`, an idle
-0 %-traffic tagged revision, i.e. the exact condition of run 30402570022:
+`--api-url https://live-3875485e---oday-api-7sxbjoeozq-de.a.run.app`
+(revision `oday-api-00003-lez`), an idle 0 %-traffic tagged revision, i.e. the
+exact condition of run 30402570022:
 
 ```
 Cloud Run migration compatibility smoke passed.   exit=0
-version attempt 1: The read operation timed out   (15.059s, transient=true)
-version attempt 2: status=200                     (3.006s)
-health  attempt 1: status=503                     (0.679s) -> database compatible
+version attempt 1: The read operation timed out   (15.062s, provenance=no_response, transient=true)
+version attempt 2: status=200                     (0.410s, provenance=json_object)
+health  attempt 1: status=503                     (0.600s, provenance=json_object) -> database compatible
 ```
 
-Attempt 1 reproduces the original failure string verbatim; the bounded retry
-turns it into a pass in 18.1 s of probing plus one 2 s backoff. **This is the
+Attempt 1 reproduces the original failure string verbatim and is classified
+`no_response` — the one provenance round 2 still retries; the bounded retry
+turns it into a pass in 15.5 s of probing plus one 2 s backoff. **This is the
 end-to-end proof that the shipped code fixes the reported failure.**
+
+Round 1 ran this against the `authcand` tag (`oday-api-00007-koz`) and got the
+same shape (attempt 1 timeout 15.059 s, attempt 2 status 200). At round-2
+re-run time `authcand` was still warm from that probe — it answered in 61 ms,
+so it could not reproduce a cold start on demand — and `live-3875485e` was used
+instead. Both are 0 %-traffic revisions of `oday-api` with no `minScale`, which
+is the property under test; nothing in the retry contract is revision-specific.
 
 ### 3. Fail-closed still holds (`gate-rerun-fail-closed-invalid-json.json`)
 
@@ -103,12 +127,55 @@ with HTML:
 
 ```
 Cloud Run migration compatibility smoke failed (fail-closed):   exit=1
-- compatibility:/platform/version:http: ... did not return valid JSON ... (attempts=1 elapsed=3.2s)
+- compatibility:/platform/version:http: ... did not return valid JSON ... (attempts=1 elapsed=2.4s)
 - compatibility:/platform/health:database: ... did not return valid JSON ... (attempts=1 elapsed=0.2s)
+version_probe.outcome = rejected  attempt_count=1  provenance=unparseable_body  transient=false
+health_probe.outcome  = rejected  attempt_count=1  provenance=unparseable_body  transient=false
 ```
 
-Invalid JSON at status 200 is a verdict, not a blip: one attempt, no retry,
-exit 1.
+A body we cannot parse is a defect, not a blip: one attempt, no retry, exit 1.
+Round 1's report recorded `outcome=answered` here, from an intermediate
+in-session build; the shipped code classifies it `rejected` and this file is the
+re-run that proves it.
+
+## Round 2 — Codex6 blocker on exact head `9e7d4c70`
+
+PR #488, review comment 5110430397: `ProbeAttempt.payload=None` conflated a
+transport/no-response failure with a *received* response whose body was
+malformed or not an object. With the status allowlist that meant an **HTTP 503
+carrying invalid JSON was retried** (`transient=true`) rather than rejected on
+attempt 1.
+
+Fixed by making provenance explicit and mandatory, and by narrowing the retry
+rule to true no-response:
+
+| Attempt outcome | `provenance` | `status` | `payload` | retried? |
+| --- | --- | --- | --- | --- |
+| transport failure / timeout | `no_response` | `None` | `None` | **yes** |
+| response, body not JSON | `unparseable_body` | int | `None` | no |
+| response, JSON not an object | `non_object_body` | int | `None` | no |
+| response, JSON object | `json_object` | int | dict | no |
+
+- `probe_failure_is_transient` is now `not attempt.response_received`. The
+  status allowlist `{408, 429, 502, 503, 504}` is **deleted**: a status code is
+  not independent proof that the Cloud Run front end, rather than the old
+  revision, produced the response, and retrying on status could retry away a
+  genuine 503 verdict from the old revision.
+- `ProbeAttempt.__post_init__` enforces the table: a status is present exactly
+  when a response was received, a payload exactly when the body parsed as a
+  JSON object, and the provenance must be one of the four. A caller cannot
+  re-create the conflation by hand.
+- Nothing is lost against the reported failure: run 30402570022 failed with
+  `The read operation timed out` — `no_response` — which is still retried.
+  A front-end 503 with an HTML body now fails the gate closed, which is the
+  required posture (a false fail aborts the deploy, rollback preserved).
+- `version_probe` / `health_probe` report entries now carry `provenance`
+  alongside `transient`, so the gate report shows *why* an attempt was or was
+  not retried.
+
+Round 1's regressions built `ProbeAttempt`s by hand, which is how the
+conflation survived them. The new ones drive a real HTTP response through
+`probe_json_endpoint` and `compatibility_smoke_checks`.
 
 ## Scope guard
 

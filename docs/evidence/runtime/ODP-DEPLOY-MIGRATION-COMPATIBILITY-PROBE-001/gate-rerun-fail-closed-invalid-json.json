@@ -2,7 +2,7 @@
   "api_url": "https://oday-web-7sxbjoeozq-de.a.run.app",
   "checks": [
     {
-      "detail": "https://oday-web-7sxbjoeozq-de.a.run.app/platform/version did not return valid JSON: Expecting value: line 1 column 1 (char 0) (attempts=1 elapsed=3.2s)",
+      "detail": "https://oday-web-7sxbjoeozq-de.a.run.app/platform/version did not return valid JSON: Expecting value: line 1 column 1 (char 0) (attempts=1 elapsed=2.4s)",
       "name": "compatibility:/platform/version:http",
       "ok": false
     },
@@ -13,19 +13,20 @@
     }
   ],
   "correlation_id": "corr-cloud-run-compat-dev-failclosed-20260728",
-  "generated_at": "2026-07-28T22:33:01Z",
+  "generated_at": "2026-07-28T22:49:55Z",
   "health_probe": {
     "attempt_count": 1,
     "attempts": [
       {
-        "elapsed_seconds": 0.198,
+        "elapsed_seconds": 0.2,
         "error": "https://oday-web-7sxbjoeozq-de.a.run.app/platform/health did not return valid JSON: Expecting value: line 1 column 1 (char 0)",
+        "provenance": "unparseable_body",
         "status": 200,
         "transient": false
       }
     ],
-    "elapsed_seconds": 0.198,
-    "outcome": "answered"
+    "elapsed_seconds": 0.2,
+    "outcome": "rejected"
   },
   "ok": false,
   "probe_retry_policy": {
@@ -41,14 +42,15 @@
     "attempt_count": 1,
     "attempts": [
       {
-        "elapsed_seconds": 3.179,
+        "elapsed_seconds": 2.405,
         "error": "https://oday-web-7sxbjoeozq-de.a.run.app/platform/version did not return valid JSON: Expecting value: line 1 column 1 (char 0)",
+        "provenance": "unparseable_body",
         "status": 200,
         "transient": false
       }
     ],
-    "elapsed_seconds": 3.179,
-    "outcome": "answered"
+    "elapsed_seconds": 2.405,
+    "outcome": "rejected"
   },
   "web_url": "https://oday-web-7sxbjoeozq-de.a.run.app"
 }
