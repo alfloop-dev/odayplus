@@ -49,6 +49,8 @@ into its output.
 | `runbook/eligibility-model-fidelity-probe.py` | — | The read-only probe that produced it. Temp relations only, transaction rolled back. |
 | `lineage_activation_loss.json` | — | Defect E: activation deleted 1 841 `canonical_lineage` rows it could not re-insert, leaving 1 693 transactions unattested on the target while the source held them (see §8). Carries the live measurement and a deterministic before/after reproduction. |
 | `runbook/lineage-activation-loss-probe.py` | — | The probe that produced it. Reproduces the loss over a scratch schema created and rolled back inside one transaction. |
+| `lineage_convergence_rehearsal.json` | — | The Defect E fix rehearsed on the **live** pair: the real `activate` relation chain run twice inside a rolled-back transaction, fix backed out vs in place, so the fix is proven where it will actually run rather than only on a scratch schema (see §8). Carries per-relation counts and the chain's wall clock. |
+| `runbook/lineage-convergence-rehearsal.py` | — | The rehearsal that produced it. Same advisory lock and statement timeout as `run_activation`; both arms roll back and neither commits. |
 | `settle_state.json` | — | Written by the finisher **immediately before** `activate`: the incomplete partitions and abandoned-lineage ownership that were true at that moment. The two conditions the gate no longer blocks on, stated instead of hidden (see §7, v6). |
 
 Reproduce any of them with the DSN pair and the Cloud SQL proxy attestation in
@@ -1058,6 +1060,53 @@ dates the target has never held, so they cannot trigger it at all; the exposure
 is dates re-ingested *after* they were already activated, which is exactly what
 `-s1` did to 2026-06-23. The final activation therefore both repairs the
 existing 1 693 transactions and no longer creates new casualties.
+
+### The fix rehearsed where it will actually run
+
+The reproduction above is deterministic, but it holds one row on a scratch
+schema. `prune_sql`'s fail-closed keeper check reads correct on the page and is
+wrong only because it interrogates *staging* rather than the post-insert
+*target* — a defect a second reading of the SQL had already failed to catch
+once. So the fix was measured instead of re-read.
+`lineage_convergence_rehearsal.json` drives the **real** `copy_relation` over
+the **real** `ACTIVATION_RELATIONS` chain, in dependency order, against the live
+PG15 source and PG16 target, under the same advisory lock and statement timeout
+as `run_activation`. Both arms roll back; the only variable is whether
+`canonical_lineage` carries `refresh_key`. (`ingestion_runs` keeps its
+`refresh_key` in both arms — that is Defect B's fix and is not under test.)
+
+This matters at exactly one moment. §8's loss probe recorded that a destroyed
+row is restored by the *next* activation, which is reassuring for a system that
+activates continuously and worthless here: the finisher activates **once**, at
+the end, immediately after a backfill in which every resumed partition
+re-pointed its lineage. Whatever the unfixed arm destroys is what the acceptance
+receipt would have been missing, permanently.
+
+- **The unfixed arm still destroys.** Pre-fix code run against today's target
+  prunes a lineage row it cannot re-insert and strips a transaction of its last
+  attestation — `baseline_keys_deleted = 1`, and nothing would have restored it.
+- **The fixed arm destroys nothing.** `target_rows_pruned = 0`,
+  `baseline_keys_deleted = 0`, and the row the other arm deleted is instead
+  `refreshed` in place, carrying the new `run_id` across a content-derived key
+  the target already held.
+- **Activation repairs the existing damage under either arm.** The 1 842
+  transactions the target currently holds without any lineage drop to **0**
+  after the fixed arm and to **1** after the unfixed one: rows *absent* from the
+  target are re-inserted by the plain `ON CONFLICT DO NOTHING` insert regardless,
+  so the arms differ only on rows the target still holds under a superseded run.
+  That is the precise shape of the defect, confirmed on live data.
+- **The chain fits the finisher's budget with two orders of magnitude to
+  spare** — 94 s fixed, 113 s unfixed, against a first escalating budget of
+  3600 s. Nothing had measured a full copy chain against that number before.
+
+The exposure measured *today* is one row rather than a tranche, because `-s1`'s
+casualties are already gone from the target and re-insert cleanly. That is a
+statement about the current target, not about the acceptance run: `-b1`..`-b4`
+each land dates under fresh runs, and any partition that resumes re-points its
+lineage under a new `run_id` — every one of those is a row the unfixed code
+would have deleted at exactly the moment there is no next activation to restore
+it. The rehearsal was run twice, eight minutes apart, and R1–R3 came out
+identical both times.
 
 The view's NULL-swallowing `bool_and` is **left as it is** and reported here
 instead. Tightening it is a change to a canonical model contract that other

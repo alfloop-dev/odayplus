@@ -1,0 +1,267 @@
+{
+  "artifact": "lineage_convergence_rehearsal",
+  "task": "ODP-FORECAST-AUTHORITATIVE-HISTORY-BACKFILL-001",
+  "captured_at": "2026-07-28T21:32:54Z",
+  "captured_by": "Claude3",
+  "what_this_is": "The finisher's activate, run twice against the live PG15 source and PG16 target inside a transaction that is rolled back: once with the Defect E fix backed out of canonical_lineage, once with it in place. Only refresh_key on canonical_lineage differs between the arms.",
+  "read_only_in_effect": true,
+  "rollback_proof": "no arm commits; both call rollback() before closing the target",
+  "redaction": "row counts, run counts, relation names and calendar dates only",
+  "before": {
+    "lineage_rows_core_transactions": 375442,
+    "transactions": 376998,
+    "transactions_without_any_lineage": 1842,
+    "transactions_without_any_lineage_by_date": [
+      {
+        "event_date": "2026-06-23",
+        "transactions": 1839
+      },
+      {
+        "event_date": "2026-07-26",
+        "transactions": 3
+      }
+    ]
+  },
+  "arms": [
+    {
+      "arm": "unfixed_prune_only",
+      "relations": [
+        {
+          "relation": "core.tenants",
+          "copied_columns": 5,
+          "source_rows_selected": 1354,
+          "target_rows_before": 1354,
+          "target_rows_inserted": 0,
+          "target_rows_refreshed": 0,
+          "target_rows_pruned": 0,
+          "target_rows_after": 1354,
+          "elapsed_seconds": 0.9
+        },
+        {
+          "relation": "core.brands",
+          "copied_columns": 9,
+          "source_rows_selected": 1354,
+          "target_rows_before": 1354,
+          "target_rows_inserted": 0,
+          "target_rows_refreshed": 0,
+          "target_rows_pruned": 0,
+          "target_rows_after": 1354,
+          "elapsed_seconds": 0.3
+        },
+        {
+          "relation": "core.address_locations",
+          "copied_columns": 18,
+          "source_rows_selected": 2405,
+          "target_rows_before": 2405,
+          "target_rows_inserted": 0,
+          "target_rows_refreshed": 0,
+          "target_rows_pruned": 0,
+          "target_rows_after": 2405,
+          "elapsed_seconds": 2.0
+        },
+        {
+          "relation": "core.stores",
+          "copied_columns": 19,
+          "source_rows_selected": 2442,
+          "target_rows_before": 2442,
+          "target_rows_inserted": 0,
+          "target_rows_refreshed": 0,
+          "target_rows_pruned": 0,
+          "target_rows_after": 2442,
+          "elapsed_seconds": 0.5
+        },
+        {
+          "relation": "core.machines",
+          "copied_columns": 16,
+          "source_rows_selected": 7562,
+          "target_rows_before": 7562,
+          "target_rows_inserted": 0,
+          "target_rows_refreshed": 0,
+          "target_rows_pruned": 0,
+          "target_rows_after": 7562,
+          "elapsed_seconds": 0.8
+        },
+        {
+          "relation": "core.transactions",
+          "copied_columns": 21,
+          "source_rows_selected": 497652,
+          "target_rows_before": 376998,
+          "target_rows_inserted": 120697,
+          "target_rows_refreshed": 0,
+          "target_rows_pruned": 0,
+          "target_rows_after": 497695,
+          "elapsed_seconds": 50.5
+        },
+        {
+          "relation": "data_plane.ingestion_runs",
+          "copied_columns": 17,
+          "source_rows_selected": 62,
+          "target_rows_before": 48,
+          "target_rows_inserted": 16,
+          "target_rows_refreshed": 1,
+          "target_rows_pruned": 0,
+          "target_rows_after": 64,
+          "elapsed_seconds": 18.5
+        },
+        {
+          "relation": "data_plane.canonical_lineage",
+          "copied_columns": 9,
+          "source_rows_selected": 498010,
+          "target_rows_before": 377351,
+          "target_rows_inserted": 122605,
+          "target_rows_refreshed": 0,
+          "target_rows_pruned": 1,
+          "target_rows_after": 499955,
+          "elapsed_seconds": 39.2
+        }
+      ],
+      "chain_elapsed_seconds": 112.6,
+      "after": {
+        "lineage_rows_core_transactions": 498046,
+        "transactions": 497695,
+        "transactions_without_any_lineage": 1,
+        "transactions_without_any_lineage_by_date": [
+          {
+            "event_date": "2026-06-27",
+            "transactions": 1
+          }
+        ],
+        "baseline_keys_deleted": 1,
+        "baseline_keys_repointed_in_place": 0,
+        "transactions_stripped_of_all_lineage": 1
+      },
+      "committed": false
+    },
+    {
+      "arm": "fixed_refresh_then_prune",
+      "relations": [
+        {
+          "relation": "core.tenants",
+          "copied_columns": 5,
+          "source_rows_selected": 1354,
+          "target_rows_before": 1354,
+          "target_rows_inserted": 0,
+          "target_rows_refreshed": 0,
+          "target_rows_pruned": 0,
+          "target_rows_after": 1354,
+          "elapsed_seconds": 1.3
+        },
+        {
+          "relation": "core.brands",
+          "copied_columns": 9,
+          "source_rows_selected": 1354,
+          "target_rows_before": 1354,
+          "target_rows_inserted": 0,
+          "target_rows_refreshed": 0,
+          "target_rows_pruned": 0,
+          "target_rows_after": 1354,
+          "elapsed_seconds": 0.7
+        },
+        {
+          "relation": "core.address_locations",
+          "copied_columns": 18,
+          "source_rows_selected": 2405,
+          "target_rows_before": 2405,
+          "target_rows_inserted": 0,
+          "target_rows_refreshed": 0,
+          "target_rows_pruned": 0,
+          "target_rows_after": 2405,
+          "elapsed_seconds": 1.5
+        },
+        {
+          "relation": "core.stores",
+          "copied_columns": 19,
+          "source_rows_selected": 2442,
+          "target_rows_before": 2442,
+          "target_rows_inserted": 0,
+          "target_rows_refreshed": 0,
+          "target_rows_pruned": 0,
+          "target_rows_after": 2442,
+          "elapsed_seconds": 0.8
+        },
+        {
+          "relation": "core.machines",
+          "copied_columns": 16,
+          "source_rows_selected": 7562,
+          "target_rows_before": 7562,
+          "target_rows_inserted": 0,
+          "target_rows_refreshed": 0,
+          "target_rows_pruned": 0,
+          "target_rows_after": 7562,
+          "elapsed_seconds": 1.7
+        },
+        {
+          "relation": "core.transactions",
+          "copied_columns": 21,
+          "source_rows_selected": 498348,
+          "target_rows_before": 376998,
+          "target_rows_inserted": 121388,
+          "target_rows_refreshed": 0,
+          "target_rows_pruned": 0,
+          "target_rows_after": 498386,
+          "elapsed_seconds": 46.2
+        },
+        {
+          "relation": "data_plane.ingestion_runs",
+          "copied_columns": 17,
+          "source_rows_selected": 62,
+          "target_rows_before": 48,
+          "target_rows_inserted": 16,
+          "target_rows_refreshed": 1,
+          "target_rows_pruned": 0,
+          "target_rows_after": 64,
+          "elapsed_seconds": 5.3
+        },
+        {
+          "relation": "data_plane.canonical_lineage",
+          "copied_columns": 9,
+          "source_rows_selected": 498692,
+          "target_rows_before": 377351,
+          "target_rows_inserted": 123282,
+          "target_rows_refreshed": 1,
+          "target_rows_pruned": 0,
+          "target_rows_after": 500633,
+          "elapsed_seconds": 36.1
+        }
+      ],
+      "chain_elapsed_seconds": 93.7,
+      "after": {
+        "lineage_rows_core_transactions": 498724,
+        "transactions": 498386,
+        "transactions_without_any_lineage": 0,
+        "transactions_without_any_lineage_by_date": [],
+        "baseline_keys_deleted": 0,
+        "baseline_keys_repointed_in_place": 1,
+        "transactions_stripped_of_all_lineage": 0
+      },
+      "committed": false
+    }
+  ],
+  "findings": {
+    "R1_unfixed_destroys": {
+      "baseline_keys_deleted": 1,
+      "transactions_stripped_of_all_lineage": 1,
+      "lineage_rows_pruned": 1,
+      "meaning": "What the acceptance activation would have destroyed if it ran the pre-fix code today. The finisher activates exactly once, so nothing would restore these."
+    },
+    "R2_fixed_destroys": {
+      "baseline_keys_deleted": 0,
+      "transactions_stripped_of_all_lineage": 0,
+      "lineage_rows_refreshed": 1,
+      "lineage_rows_pruned": 0,
+      "meaning": "Rows the fix re-points in place instead of deleting. A refreshed row is one the pre-fix code would have dropped: the insert conflicts on a content-derived key it already holds, so only an UPDATE can carry the new run_id across."
+    },
+    "R3_repair": {
+      "transactions_without_any_lineage_before": 1842,
+      "transactions_without_any_lineage_after_fixed": 0,
+      "transactions_without_any_lineage_after_unfixed": 1,
+      "meaning": "Whether activation repairs the damage the earlier activation already did. Rows absent from the target are re-inserted by the plain ON CONFLICT DO NOTHING insert in either arm; the arms differ only on rows the target still holds under a superseded run."
+    },
+    "R4_chain_cost": {
+      "unfixed_seconds": 112.6,
+      "fixed_seconds": 93.7,
+      "finisher_first_budget_seconds": 3600,
+      "meaning": "Wall clock for the whole relation chain, against the finisher's first escalating budget. Excludes probe_target, which activate runs after the copies."
+    }
+  }
+}
