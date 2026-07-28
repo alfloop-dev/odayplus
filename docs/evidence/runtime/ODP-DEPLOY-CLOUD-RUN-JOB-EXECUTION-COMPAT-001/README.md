@@ -52,11 +52,19 @@ OR-list call.
 | several entries, unparsable timestamp | `creation timestamp ... is unparsable` |
 | newest timestamp shared by two entries | `the latest execution is ambiguous` |
 | execution belongs to another job | `does not belong to job` |
+| ownership references conflict or are malformed | `does not belong to job` |
+| no ownership reference, even with a matching name prefix | `does not belong to job` |
 | execution ran but failed | unchanged: `jobs-smoke:<kind>:execution` fails |
 
 The last row is the pre-existing `_execution_completed` gate (`succeededCount>=1`
 and `failedCount==0` with a `Completed` condition). It is unchanged and still
 covered by `test_job_smoke_rejects_failed_execution_and_missing_provider_secrets`.
+
+Job ownership is proven only by the Knative job label or v2 `job` reference.
+Every ownership reference present in a mixed-schema entry must be a non-empty
+string and must identify the requested job. Execution-name prefixes are not
+ownership evidence because distinct job names can share a prefix (for example,
+`worker-job` and `worker-job-canary`).
 
 ## Unchanged by this task
 
@@ -144,6 +152,29 @@ uv run --frozen pytest tests/ops/test_cloud_run_live_deployment.py -q   # 62 pas
 uv run --frozen ruff check scripts/deployment/validate_cloud_run_live_deployment.py tests/ops/test_cloud_run_live_deployment.py
 uv run --frozen ruff format --check scripts/deployment/validate_cloud_run_live_deployment.py tests/ops/test_cloud_run_live_deployment.py
 git diff --check origin/dev HEAD
+```
+
+### Ownership convergence remediation
+
+Codex6's exact-head review at `0960cfd` found two ownership gaps in the list
+resolver: a matching Knative label could mask a conflicting v2 `job` reference,
+and an unlabelled execution such as `worker-job-canary-*` could pass the
+`worker-job` name-prefix fallback.
+
+The resolver now requires at least one explicit ownership reference, requires
+every present reference to be a non-empty string naming the requested job, and
+does not infer ownership from the execution name. Dedicated regressions cover
+both the conflicting-reference and shared-prefix cases.
+
+The focused checks were re-executed against the task-owned working-tree diff on
+top of `0960cfd`, all passing:
+
+```text
+bash -n scripts/deploy_cloud_run_waji.sh
+uv run --frozen pytest tests/ops/test_cloud_run_live_deployment.py -q   # 63 passed
+uv run --frozen ruff check scripts/deployment/validate_cloud_run_live_deployment.py tests/ops/test_cloud_run_live_deployment.py
+uv run --frozen ruff format --check scripts/deployment/validate_cloud_run_live_deployment.py tests/ops/test_cloud_run_live_deployment.py
+git diff --check origin/dev
 ```
 
 Exact-head CI and independent Codex6 review remain required before merge. After

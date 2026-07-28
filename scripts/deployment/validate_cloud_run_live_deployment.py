@@ -1795,21 +1795,24 @@ def _execution_created_at(entry: Mapping[str, Any], *, index: int) -> datetime:
     return parsed if parsed.tzinfo else parsed.replace(tzinfo=UTC)
 
 
-def _execution_matches_job(entry: Mapping[str, Any], *, name: str, job: str) -> bool:
+def _execution_matches_job(entry: Mapping[str, Any], *, job: str) -> bool:
     metadata = entry.get("metadata")
     labels = metadata.get("labels") if isinstance(metadata, Mapping) else None
     references: list[str] = []
     if isinstance(labels, Mapping):
         for key in ("run.googleapis.com/job", "job"):
+            if key not in labels:
+                continue
             value = labels.get(key)
-            if isinstance(value, str) and value.strip():
-                references.append(value.strip().rsplit("/", 1)[-1])
-    value = entry.get("job")
-    if isinstance(value, str) and value.strip():
+            if not isinstance(value, str) or not value.strip():
+                return False
+            references.append(value.strip().rsplit("/", 1)[-1])
+    if "job" in entry:
+        value = entry.get("job")
+        if not isinstance(value, str) or not value.strip():
+            return False
         references.append(value.strip().rsplit("/", 1)[-1])
-    if references:
-        return any(reference == job for reference in references)
-    return name == job or name.startswith(f"{job}-")
+    return bool(references) and all(reference == job for reference in references)
 
 
 def resolve_latest_execution_name(payload: Any, *, job: str | None = None) -> str:
@@ -1839,7 +1842,7 @@ def resolve_latest_execution_name(payload: Any, *, job: str | None = None) -> st
         if not isinstance(entry, Mapping):
             raise ValueError(f"executions[{index}] is not a JSON object")
         name = _execution_short_name(entry, index=index)
-        if job and not _execution_matches_job(entry, name=name, job=job):
+        if job and not _execution_matches_job(entry, job=job):
             raise ValueError(f"executions[{index}] {name!r} does not belong to job {job!r}")
         candidates.append((entry, name))
 

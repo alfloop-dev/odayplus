@@ -1318,12 +1318,25 @@ def test_latest_execution_resolution_rejects_a_foreign_job_execution() -> None:
     with pytest.raises(ValueError, match="does not belong to job"):
         validator.resolve_latest_execution_name(payload, job="scheduler-job")
 
-    # Without labels the generated `<job>-<suffix>` name is the only evidence.
+    # An execution name is not ownership evidence: job names may share prefixes.
     unlabelled = [
-        {"metadata": {"name": "other-job-00001", "creationTimestamp": "2026-07-24T10:00:00Z"}}
+        {
+            "metadata": {
+                "name": "worker-job-canary-00001",
+                "creationTimestamp": "2026-07-24T10:00:00Z",
+            }
+        }
     ]
     with pytest.raises(ValueError, match="does not belong to job"):
-        validator.resolve_latest_execution_name(unlabelled, job="scheduler-job")
+        validator.resolve_latest_execution_name(unlabelled, job="worker-job")
+
+
+def test_latest_execution_resolution_rejects_conflicting_job_references() -> None:
+    execution = _knative_execution("worker-job-00001", "2026-07-24T10:00:00Z")
+    execution["job"] = "projects/p/locations/asia-east1/jobs/other-job"
+
+    with pytest.raises(ValueError, match="does not belong to job"):
+        validator.resolve_latest_execution_name([execution], job="worker-job")
 
 
 def test_resolve_latest_execution_cli_prints_name_and_exits_nonzero_when_unprovable(
