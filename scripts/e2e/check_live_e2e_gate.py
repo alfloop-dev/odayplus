@@ -119,12 +119,48 @@ SNAPSHOT_SCHEDULABLE_CATEGORIES = frozenset({"listing", "poi", "admin_boundary"}
 # models.shared_ml.production_contracts.PRODUCTION_MODEL_CONTRACTS, pinned here
 # for the same reason. A service whose MLflow ``production`` alias is missing
 # must fail the gate rather than silently shrink the required set.
+#
+# GOVERNED_DISABLED_SERVICES: services that are governed-disabled in the current
+# PG16 data maturity cycle. A governed-disabled service must NOT have a
+# production alias in MLflow; instead the runtime capability record must carry
+# full receipt-backed evidence (reasonCode equal to the capability record's,
+# real observed/eligible counts with observedAt + inventoryVersion lineage, a
+# separate activationThreshold, source contract, owner, activation gate, and
+# autoSeeded=False). The gate accepts absence of a production alias for these
+# services ONLY when their capability record has complete evidence.
+# ForecastOps is always required to have a real approved production alias.
 REQUIRED_MODEL_BINDINGS: Mapping[str, str] = {
     "avm": "dealroom_avm",
     "forecastops": "forecast_revenue_interval",
     "heatzone": "heatzone_priority",
     "sitescore": "sitescore_propensity",
 }
+# Services that are governed-disabled in the current data-maturity cycle.
+# Must stay in sync with production_contracts.governed_disabled_services();
+# anti-drift tests in tests/e2e/test_live_e2e_gate.py enforce this.
+GOVERNED_DISABLED_SERVICES: frozenset[str] = frozenset({"avm", "heatzone", "sitescore"})
+# Required evidence fields that every governed-disabled capability must expose.
+# Counts are receipt-backed observations (observedAt + inventoryVersion carry
+# the lineage); activationThreshold is the separate policy gate, never a count.
+_GOVERNED_DISABLED_EVIDENCE_FIELDS = (
+    "reasonCode",
+    "observedCount",
+    "eligibleCount",
+    "activationThreshold",
+    "sourceContract",
+    "owner",
+    "activationGate",
+    "observedAt",
+    "inventoryVersion",
+)
+_GOVERNED_DISABLED_TEXT_FIELDS = (
+    "reasonCode",
+    "sourceContract",
+    "owner",
+    "activationGate",
+    "observedAt",
+    "inventoryVersion",
+)
 PRODUCTION_ALIAS = "production"
 
 WORKER_PROBE_JOB_TYPE = "external-fetch"
@@ -827,16 +863,73 @@ def _check_runtime_readiness(
     capabilities = _as_dict(models.get("capabilities"))
     for service in sorted(REQUIRED_MODEL_BINDINGS):
         capability = _as_dict(capabilities.get(service))
-        _check(
-            checks,
-            capability.get("available") is True and not capability.get("reasonCode"),
-            f"runtime:model_capability:{service}",
-            (
-                f"available={capability.get('available')} "
-                f"reasonCode={capability.get('reasonCode') or 'none'}"
-            ),
-            "mlflow",
-        )
+        if service in GOVERNED_DISABLED_SERVICES:
+            # Governed-disabled: available must be False, and full evidence
+            # must be present in governedDisabledEvidence.
+            evidence = _as_dict(capability.get("governedDisabledEvidence"))
+            reason_code = str(capability.get("reasonCode") or "").strip()
+            evidence_reason = str(evidence.get("reasonCode") or "").strip()
+            counts_valid = all(
+                isinstance(evidence.get(field), int)
+                and not isinstance(evidence.get(field), bool)
+                and evidence[field] >= 0
+                for field in ("observedCount", "eligibleCount")
+            )
+            activation_threshold = evidence.get("activationThreshold")
+            activation_threshold_valid = (
+                isinstance(activation_threshold, int)
+                and not isinstance(activation_threshold, bool)
+                and activation_threshold > 0
+            )
+            text_fields_valid = all(
+                isinstance(evidence.get(field), str) and bool(evidence[field].strip())
+                for field in _GOVERNED_DISABLED_TEXT_FIELDS
+            )
+            evidence_complete = (
+                bool(reason_code)
+                and capability.get("governedDisabled") is True
+                and capability.get("available") is False
+                # The evidence must describe the same fact as the capability
+                # record; a diverging reasonCode means the evidence was authored
+                # for a different (or stale) disablement decision.
+                and evidence_reason == reason_code
+                # autoSeeded=False in the evidence is a hard requirement;
+                # True means synthetic/fixture data was substituted.
+                and evidence.get("autoSeeded") is False
+                # bool is an int subclass in Python, so reject it explicitly.
+                # observedCount=0 remains valid receipt-backed evidence.
+                and counts_valid
+                and activation_threshold_valid
+                and text_fields_valid
+            )
+
+            _check(
+                checks,
+                evidence_complete,
+                f"runtime:model_capability:{service}",
+                (
+                    f"governedDisabled=True available={capability.get('available')} "
+                    f"reasonCode={reason_code or '<missing>'} "
+                    f"evidenceReasonCode={evidence_reason or '<missing>'} "
+                    f"evidenceComplete={evidence_complete} "
+                    f"evidenceAutoSeeded={evidence.get('autoSeeded')} "
+                    f"inventoryVersion={evidence.get('inventoryVersion') or '<missing>'} "
+                    f"observedAt={evidence.get('observedAt') or '<missing>'}"
+                ),
+                "mlflow",
+            )
+        else:
+            # Active service (ForecastOps): must be available=True with no reasonCode.
+            _check(
+                checks,
+                capability.get("available") is True and not capability.get("reasonCode"),
+                f"runtime:model_capability:{service}",
+                (
+                    f"available={capability.get('available')} "
+                    f"reasonCode={capability.get('reasonCode') or 'none'}"
+                ),
+                "mlflow",
+            )
 
     origin = _as_dict(data.get("origin"))
     _check(
@@ -1020,6 +1113,29 @@ def _check_model_lineage(
     )
 
     for service, model_name in sorted(REQUIRED_MODEL_BINDINGS.items()):
+        if service in GOVERNED_DISABLED_SERVICES:
+            # A governed-disabled service must NOT have a production alias.
+            # The runtime capability record carries the evidence instead.
+            # Having an alias for a governed-disabled service is itself a blocker
+            # (it would mean a fabricated alias was published).
+            aliased_gd = [
+                item
+                for item in items
+                if str(item.get("model_name") or "") == model_name
+                and PRODUCTION_ALIAS in [str(a) for a in (item.get("aliases") or [])]
+            ]
+            _check(
+                checks,
+                len(aliased_gd) == 0,
+                f"models:{service}:no_fabricated_alias",
+                (
+                    "governed-disabled service must not have a production alias "
+                    f"(model={model_name} found={len(aliased_gd)})"
+                ),
+                "mlflow",
+            )
+            continue
+
         aliased = [
             item
             for item in items

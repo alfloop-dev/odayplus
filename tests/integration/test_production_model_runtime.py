@@ -144,7 +144,17 @@ def _registered_runtime(
             },
         )
     )
-    return MlflowProductionModelRuntime(tracking_uri=tracking_uri), artifact_path
+    return (
+        MlflowProductionModelRuntime(
+            tracking_uri=tracking_uri,
+            # Explicitly declare the sitescore name mapping for this integration
+            # test. Since sitescore is governed-disabled in production, the default
+            # production_model_names() no longer includes it; the test exercises the
+            # runtime directly with a real registered artifact.
+            model_names={"sitescore": SITESCORE_MODEL_NAME},
+        ),
+        artifact_path,
+    )
 
 
 def test_real_lightgbm_artifact_reload_and_sitescore_inference(tmp_path: Path) -> None:
