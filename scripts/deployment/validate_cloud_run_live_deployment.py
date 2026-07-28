@@ -1885,19 +1885,31 @@ class _JobApiSchema:
     names secret bindings with `env_source_key`.`secretKeyRef`.`reference_key`.
     Keeping them in one record is what lets the container path a description
     actually uses decide which secret schema that description may use.
+
+    `reference_members` is the closed set of fields this API version defines
+    inside `secretKeyRef`: Knative's `SecretKeySelector` carries `name`, `key`,
+    `optional`, and the deprecated `localObjectReference`, and Cloud Run v2's
+    carries `secret` and `version`. It is the dialect's own fact for the same
+    reason the other two are, and it is what lets a planted member inside an
+    otherwise valid reference be told apart from the shape gcloud emits.
     """
 
     container_path: tuple[str, ...]
     env_source_key: str
     reference_key: str
+    reference_members: frozenset[str]
 
     @property
     def container_path_label(self) -> str:
         return ".".join(self.container_path)
 
     @property
+    def source_reference_label(self) -> str:
+        return f"{self.env_source_key}.secretKeyRef"
+
+    @property
     def reference_label(self) -> str:
-        return f"{self.env_source_key}.secretKeyRef.{self.reference_key}"
+        return f"{self.source_reference_label}.{self.reference_key}"
 
 
 #: The only two dialects `gcloud run jobs describe --format=json` emits:
@@ -1911,9 +1923,21 @@ _JOB_API_SCHEMAS: tuple[_JobApiSchema, ...] = (
         ("spec", "template", "spec", "template", "spec", "containers"),
         "valueFrom",
         "name",
+        frozenset({"name", "key", "optional", "localObjectReference"}),
     ),
-    _JobApiSchema(("template", "template", "containers"), "valueSource", "secret"),
+    _JobApiSchema(
+        ("template", "template", "containers"),
+        "valueSource",
+        "secret",
+        frozenset({"secret", "version"}),
+    ),
 )
+
+#: The only env-source member Cloud Run resolves. Knative's `EnvVarSource` also
+#: defines `configMapKeyRef`, `fieldRef`, and `resourceFieldRef`, and Cloud Run
+#: supports none of them, so their presence beside a valid `secretKeyRef` is
+#: never a shape `gcloud run jobs describe` emits.
+_ENV_SOURCE_SECRET_MEMBER = "secretKeyRef"
 
 
 def _resolve_path(payload: Any, path: tuple[str, ...]) -> Any:
@@ -2086,6 +2110,52 @@ def _foreign_secret_binding_locations(
     return tuple(sorted(set(locations)))
 
 
+def _unsupported_secret_source_members(
+    entry: Mapping[str, Any], schema: _JobApiSchema
+) -> tuple[str, ...]:
+    """Return every member inside the accepted secret source Cloud Run cannot resolve.
+
+    Rounds 6 and 7 made the *entry* carry exactly one source; nothing looked
+    inside the accepted source itself. `_secret_reference_name` reads
+    `secretKeyRef` and `_foreign_secret_binding_locations` reports only the
+    other dialect's keys, so an entry holding a valid
+    `valueFrom.secretKeyRef.name` beside a `valueFrom.configMapKeyRef` passed
+    with zero failing checks — a second env source inside the accepted dialect,
+    naming a ConfigMap value Cloud Run v1 explicitly does not support and any
+    other reader may prefer. The v2 mirror
+    (`valueSource.secretKeyRef` plus `valueSource.configMapKeyRef`) passed the
+    same way.
+
+    Two levels are reported, both by presence rather than by payload, matching
+    the round-6 and round-7 decision that the key is the defect:
+
+    - members of the env source other than `secretKeyRef` (`valueFrom.fieldRef`,
+      `valueSource.configMapKeyRef`, …), none of which Cloud Run resolves;
+    - members inside `secretKeyRef` that this dialect's `SecretKeySelector` does
+      not define, so a planted field cannot ride along inside an otherwise valid
+      reference.
+
+    Cross-dialect reference keys (`valueFrom.secretKeyRef.secret`) are the
+    round-6 rule's business and are reported by
+    `_foreign_secret_binding_locations`, which the caller consults first.
+    """
+
+    source = entry.get(schema.env_source_key)
+    if not isinstance(source, Mapping):
+        return ()
+    locations = [
+        f"{schema.env_source_key}.{key}" for key in source if str(key) != _ENV_SOURCE_SECRET_MEMBER
+    ]
+    reference = source.get(_ENV_SOURCE_SECRET_MEMBER)
+    if isinstance(reference, Mapping):
+        locations.extend(
+            f"{schema.source_reference_label}.{key}"
+            for key in reference
+            if str(key) not in schema.reference_members
+        )
+    return tuple(sorted({str(location) for location in locations}))
+
+
 def _declared_secret_source_locations(
     entry: Mapping[str, Any], schema: _JobApiSchema
 ) -> tuple[str, ...]:
@@ -2200,6 +2270,14 @@ def _secret_binding_proof(
     the literal resolves differently. An env entry `gcloud` emits carries a
     literal or a secret source, never both, so the key's presence beside a
     secret source is the defect.
+
+    "Exactly one secret source" is enforced inside the accepted source as well
+    as around it: `_unsupported_secret_source_members` rejects any env-source
+    member beside `secretKeyRef` — `configMapKeyRef` above all, which Cloud Run
+    v1 does not support — and any member inside `secretKeyRef` this dialect's
+    selector does not define. Without it a valid `valueFrom.secretKeyRef.name`
+    beside a `valueFrom.configMapKeyRef` proved a binding while declaring a
+    second source for the same env var.
     """
 
     if not entries:
@@ -2223,6 +2301,13 @@ def _secret_binding_proof(
         return False, (
             f"binding declares off-schema secret sources ({','.join(foreign)}); "
             f"this job's dialect is {schema.reference_label}"
+        )
+    unsupported = _unsupported_secret_source_members(entry, schema)
+    if unsupported:
+        return False, (
+            f"binding declares env source members Cloud Run does not resolve "
+            f"({','.join(unsupported)}); the only supported source is "
+            f"{schema.reference_label}"
         )
     if not _secret_reference_name(entry, schema):
         return False, f"binding declares no usable {schema.reference_label}"

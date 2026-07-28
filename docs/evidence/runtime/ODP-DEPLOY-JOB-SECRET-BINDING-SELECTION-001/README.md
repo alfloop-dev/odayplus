@@ -85,6 +85,11 @@ textual. `job_secret_binding_checks` does four things:
    and `_foreign_secret_binding_locations` rejects anything else the entry
    carries: the other dialect's env source, a `secretKeyRef` hoisted to the top
    level, or the other dialect's reference key inside this dialect's own source.
+   "Exactly one source" also holds *inside* the accepted source:
+   `_unsupported_secret_source_members` rejects any member of `valueFrom` /
+   `valueSource` other than `secretKeyRef` — `configMapKeyRef` first of all,
+   which Cloud Run v1 does not support — and any member inside `secretKeyRef`
+   that the dialect's own `SecretKeySelector` does not define.
 
 Substring scanning is gone for this check: a job that merely mentions
 `ODAY_DATABASE_URL` in a label or an argument no longer satisfies it.
@@ -111,6 +116,9 @@ Substring scanning is gone for this check: a job that merely mentions
 | a valid binding beside a conflicting off-dialect source (`valueSource` on a Knative job, or the reverse) | `secret_bindings` fails, naming the off-schema location and this job's dialect |
 | a valid binding beside a top-level `secretKeyRef` | same |
 | `valueFrom.secretKeyRef` carrying both `name` and `secret` | same |
+| a valid binding beside another member of its **own** env source (`valueFrom.configMapKeyRef`, `valueFrom.fieldRef`, `valueFrom.resourceFieldRef`, and the `valueSource` mirrors) | `secret_bindings` fails, naming the member and the only source Cloud Run resolves — v1 does not support `configMapKeyRef` |
+| `secretKeyRef` carrying a member its own dialect does not define (`valueFrom.secretKeyRef.value`, `valueSource.secretKeyRef.key`) | same — a planted field cannot ride along inside a valid reference |
+| `valueFrom.secretKeyRef.optional` (a field the Knative selector really defines) | passes — the member rule is an allowlist of the API's own fields, not a two-key rule |
 | a valid binding beside an empty off-dialect source (`"valueSource": {}`) | same — a source gcloud does not emit |
 | a valid binding beside a blank or non-string literal (`"value"` set to `""`, `"   "`, `0`, `false`, `[]`, `{}`, or `null`) | same — an env entry carries a literal or a secret source, never both |
 | plaintext `ODP_PRODUCTION_PROVIDER_IDS` on an entry that also declares an off-dialect secret source | `provider_selection` **and** `secret_bindings` fail: the selection is unprovable |
@@ -378,6 +386,64 @@ and `test_job_smoke_rejects_a_selection_entry_declaring_an_empty_same_dialect_so
 (3 same-dialect sources, both dialects). The v2 mirrors go through a new
 `_v2_job_with_envs` helper that exposes the env knobs `_knative_job` already had.
 
+## Round 8: the accepted source was never read past `secretKeyRef`
+
+Rounds 6 and 7 made the env *entry* carry exactly one secret source. Nothing
+looked **inside** that source. `_secret_reference_name` reads `secretKeyRef` and
+`_foreign_secret_binding_locations` reports only the *other dialect's* keys, so
+a member sitting beside `secretKeyRef` in the accepted dialect's own source was
+invisible. Verified against head `d3dfeb13` — every crafted description below
+fails **no** check at all (`_failed_names(checks) == set()`):
+
+| crafted description at `d3dfeb13` | result |
+| --- | --- |
+| required secret with a valid `valueFrom.secretKeyRef.name` **and** a `valueFrom.configMapKeyRef` | passed |
+| the same with `valueFrom.fieldRef` and with `valueFrom.resourceFieldRef` | passed |
+| the v2 mirror: valid `valueSource.secretKeyRef.secret` **and** `valueSource.configMapKeyRef` (also `fieldRef`) | passed |
+| `valueFrom.secretKeyRef` carrying a planted `value` beside a valid `name` (v2: a `key` beside a valid `secret`) | passed |
+
+`configMapKeyRef` is the load-bearing case Codex6 named. Knative's
+`EnvVarSource` defines it, **Cloud Run v1 does not support it**, and an entry
+declaring it names a second value for one env var — exactly the ambiguity round
+6 rejected across dialects and round 7 rejected for `value` keys, one level
+further in. The planted-member row is the same fail-open inside the reference:
+a `value` beside `name` is not the other dialect's key, so the round-6 rule
+never saw it.
+
+The fix is one more presence rule, `_unsupported_secret_source_members`, applied
+in `_secret_binding_proof` after the off-dialect check:
+
+- **A secret source declares only `secretKeyRef`.** Any other member of
+  `valueFrom` / `valueSource` fails closed, named in the detail (`binding
+  declares env source members Cloud Run does not resolve
+  (valueFrom.configMapKeyRef); the only supported source is
+  valueFrom.secretKeyRef.name`).
+- **A reference declares only its own dialect's selector fields.**
+  `_JobApiSchema` gains `reference_members` — Knative's `SecretKeySelector`
+  (`name`, `key`, `optional`, the deprecated `localObjectReference`) and Cloud
+  Run v2's (`secret`, `version`) — so the rule is an allowlist of fields the
+  APIs really define rather than a two-key rule. `optional` on a Knative job
+  still passes, pinned by
+  `test_job_smoke_accepts_the_optional_members_each_dialect_defines`.
+
+Cross-dialect keys inside `secretKeyRef` (`valueFrom.secretKeyRef.secret`) stay
+the round-6 rule's business: the off-dialect check runs first, so those details
+and their round-6 assertions are unchanged.
+
+The real deployment cannot trip either rule, checked against
+`scripts/deploy_cloud_run_waji.sh` rather than assumed:
+`gcloud run jobs deploy --set-secrets` is the only way secrets reach these jobs,
+and it emits `secretKeyRef` alone — there is no `--set-config-maps` or
+equivalent anywhere in the deploy path, and Cloud Run has no ConfigMap resource
+to bind. Nothing in the script can produce a second source member.
+
+Regressions: `test_job_smoke_rejects_a_knative_source_member_beside_secret_key_ref`
+(3 members), `test_job_smoke_rejects_a_v2_source_member_beside_secret_key_ref`
+(2 members on the v2 container path),
+`test_job_smoke_rejects_a_member_planted_inside_the_secret_key_ref` (both
+dialects), and the `optional` control. Each asserts the planted name never
+reaches the detail or the report.
+
 ## Check and report surface
 
 `jobs-smoke:<kind>:secret_bindings` keeps its name, so the deploy gate and any
@@ -409,12 +475,12 @@ placed in the job description never reaches the detail text or the report.
 
 ## Focused verification
 
-Executed from the task branch on the round-7 tree (parent `15e7ec64`), with
+Executed from the task branch on the round-8 tree (parent `d3dfeb13`), with
 `export PATH="$HOME/.local/bin:$PATH"`:
 
 ```text
-python3 -m pytest tests/ops/test_cloud_run_live_deployment.py -p no:randomly   # 118 passed
-python3 -m pytest tests/ops -p no:randomly                                     # 173 passed, 20 skipped
+python3 -m pytest tests/ops/test_cloud_run_live_deployment.py -p no:randomly   # 125 passed
+python3 -m pytest tests/ops -p no:randomly                                     # 180 passed, 20 skipped
 python3 -m ruff check scripts/deployment/validate_cloud_run_live_deployment.py tests/ops/test_cloud_run_live_deployment.py
 python3 -m ruff format --check scripts/deployment/validate_cloud_run_live_deployment.py tests/ops/test_cloud_run_live_deployment.py
 git diff --check
@@ -431,8 +497,10 @@ The focused-file count by round was 87 at `76063434` (round 2), 93 at `49e65382`
 (round 3, six new regressions), 94 at `5b9c430a` (round 4, the sidecar test), 97
 at `dd4acb0b` (round 5, the two crossed-whole-schema regressions plus the
 both-dialects control), 107 at `15e7ec64` (round 6, ten uniqueness and
-mixed-dialect regressions), and 118 now — round 7 adds eleven presence-rule
-cases, each asserting on both container paths.
+mixed-dialect regressions), 118 at `d3dfeb13` (round 7, eleven presence-rule
+cases, each asserting on both container paths), and 125 now — round 8 adds six
+source-member regressions plus the `optional` control that pins the allowlist
+against over-tightening.
 
 Each round's regressions fail against that round's pre-fix validator, verified by
 restoring the parent commit's
@@ -451,8 +519,15 @@ literal-payload cases fail with
 `assert 'jobs-smoke:migration:secret_bindings' in set()` and the three
 same-dialect source cases with
 `assert 'jobs-smoke:migration:provider_selection' in set()`, which is the
-independent reproduction of both fail-opens Codex6 reported at that head. The
-control tests
+independent reproduction of both fail-opens Codex6 reported at that head. For
+round 8 against `d3dfeb13` the restore run reports `6 failed, 119 passed`:
+exactly the six new source-member cases fail, each with
+`assert 'jobs-smoke:<kind>:secret_bindings' in set()` — the pre-fix validator
+returning zero failing checks for a required secret that declares
+`configMapKeyRef` beside a valid `secretKeyRef`, on both container paths, which
+is the reproduction of the round-8 review finding. The seventh new test, the
+`optional` control, passes against both validators, so the tightening is proven
+narrow. The control tests
 (`test_job_smoke_accepts_each_dialect_at_its_own_container_path` and the run
 30376737123 receipt) pass against both validators.
 

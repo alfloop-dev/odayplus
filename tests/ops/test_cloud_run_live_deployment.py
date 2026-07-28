@@ -1821,6 +1821,177 @@ def test_job_smoke_rejects_a_selection_entry_declaring_an_empty_same_dialect_sou
     assert v2_report["selected_provider_ids"] == []
 
 
+#: Env-source members that sat inside the *accepted* dialect's source beside a
+#: valid `secretKeyRef` and produced zero failing checks. `configMapKeyRef` is
+#: the load-bearing case: Knative defines it, Cloud Run does not support it, and
+#: it names a second value for the same env var. The last entry is a member
+#: planted inside `secretKeyRef` itself, which the round-6 cross-dialect rule
+#: never looked for because it is not the other dialect's key.
+_UNSUPPORTED_KNATIVE_SOURCE_MEMBERS: tuple[tuple[dict[str, object], str], ...] = (
+    (
+        {"configMapKeyRef": {"name": "attacker-controlled-config", "key": "latest"}},
+        "valueFrom.configMapKeyRef",
+    ),
+    ({"fieldRef": {"fieldPath": "metadata.name"}}, "valueFrom.fieldRef"),
+    (
+        {"resourceFieldRef": {"resource": "limits.memory"}},
+        "valueFrom.resourceFieldRef",
+    ),
+)
+
+_UNSUPPORTED_V2_SOURCE_MEMBERS: tuple[tuple[dict[str, object], str], ...] = (
+    (
+        {"configMapKeyRef": {"secret": "attacker-controlled-config", "version": "latest"}},
+        "valueSource.configMapKeyRef",
+    ),
+    ({"fieldRef": {"fieldPath": "metadata.name"}}, "valueSource.fieldRef"),
+)
+
+
+@pytest.mark.parametrize(
+    ("extra_member", "location"),
+    _UNSUPPORTED_KNATIVE_SOURCE_MEMBERS,
+)
+def test_job_smoke_rejects_a_knative_source_member_beside_secret_key_ref(
+    extra_member: dict[str, object], location: str
+) -> None:
+    """A second source *inside* the accepted dialect is still a second source.
+
+    Rounds 6 and 7 made the entry carry exactly one source but never looked
+    inside it. A required secret entry with a valid `valueFrom.secretKeyRef`
+    plus `valueFrom.configMapKeyRef` therefore returned zero failing checks,
+    although Cloud Run v1 does not support `configMapKeyRef` and the entry names
+    two values for one env var.
+    """
+
+    entry = dict(_knative_secret_env("ODP_POI_PROVIDER_API_KEY"))
+    entry["valueFrom"] = {**entry["valueFrom"], **extra_member}
+    job = _knative_job(
+        secret_envs=(
+            _knative_secret_env("ODAY_DATABASE_URL"),
+            entry,
+            _knative_secret_env("ODP_GEOCODE_PROVIDER_API_KEY"),
+            _knative_secret_env("ODP_ADMIN_BOUNDARY_PROVIDER_TOKEN"),
+        )
+    )
+
+    checks, report = _job_checks(job)
+    detail = _detail(checks, "jobs-smoke:migration:secret_bindings")
+
+    assert "jobs-smoke:migration:secret_bindings" in _failed_names(checks)
+    assert "ODP_POI_PROVIDER_API_KEY" in detail
+    assert location in detail
+    assert "valueFrom.secretKeyRef.name" in detail
+    assert "ODP_POI_PROVIDER_API_KEY" not in report["secret_bound_env_vars"]
+    assert "attacker-controlled-config" not in json.dumps(report)
+
+
+@pytest.mark.parametrize(
+    ("extra_member", "location"),
+    _UNSUPPORTED_V2_SOURCE_MEMBERS,
+)
+def test_job_smoke_rejects_a_v2_source_member_beside_secret_key_ref(
+    extra_member: dict[str, object], location: str
+) -> None:
+    """The v2 mirror of the same fail-open, pinned on its own container path."""
+
+    entry = dict(_v2_secret_env("ODP_POI_PROVIDER_API_KEY"))
+    entry["valueSource"] = {**entry["valueSource"], **extra_member}
+    job = _v2_job_with_envs(
+        secret_envs=(
+            _v2_secret_env("ODAY_DATABASE_URL"),
+            entry,
+            _v2_secret_env("ODP_GEOCODE_PROVIDER_API_KEY"),
+            _v2_secret_env("ODP_ADMIN_BOUNDARY_PROVIDER_TOKEN"),
+        )
+    )
+
+    checks, report = _job_checks(job, kind="worker")
+    detail = _detail(checks, "jobs-smoke:worker:secret_bindings")
+
+    assert "jobs-smoke:worker:secret_bindings" in _failed_names(checks)
+    assert "ODP_POI_PROVIDER_API_KEY" in detail
+    assert location in detail
+    assert "valueSource.secretKeyRef.secret" in detail
+    assert "ODP_POI_PROVIDER_API_KEY" not in report["secret_bound_env_vars"]
+    assert "attacker-controlled-config" not in json.dumps(report)
+
+
+def test_job_smoke_rejects_a_member_planted_inside_the_secret_key_ref() -> None:
+    """A reference carries only the fields its own dialect defines.
+
+    Knative's `SecretKeySelector` is `name`/`key`/`optional`; Cloud Run v2's is
+    `secret`/`version`. A `value` planted beside a valid reference is not the
+    other dialect's key, so the round-6 cross-dialect rule never saw it.
+    """
+
+    knative_entry = dict(_knative_secret_env("ODP_POI_PROVIDER_API_KEY"))
+    knative_entry["valueFrom"] = {
+        "secretKeyRef": {
+            **knative_entry["valueFrom"]["secretKeyRef"],
+            "value": "sk-live-plaintext",
+        }
+    }
+    knative = _knative_job(
+        secret_envs=(
+            _knative_secret_env("ODAY_DATABASE_URL"),
+            knative_entry,
+            _knative_secret_env("ODP_GEOCODE_PROVIDER_API_KEY"),
+            _knative_secret_env("ODP_ADMIN_BOUNDARY_PROVIDER_TOKEN"),
+        )
+    )
+
+    knative_checks, knative_report = _job_checks(knative)
+    knative_detail = _detail(knative_checks, "jobs-smoke:migration:secret_bindings")
+
+    assert "jobs-smoke:migration:secret_bindings" in _failed_names(knative_checks)
+    assert "valueFrom.secretKeyRef.value" in knative_detail
+    assert "sk-live-plaintext" not in knative_detail
+    assert "sk-live-plaintext" not in json.dumps(knative_report)
+
+    v2_entry = dict(_v2_secret_env("ODP_POI_PROVIDER_API_KEY"))
+    v2_entry["valueSource"] = {
+        "secretKeyRef": {**v2_entry["valueSource"]["secretKeyRef"], "key": "latest"}
+    }
+    v2 = _v2_job_with_envs(
+        secret_envs=(
+            _v2_secret_env("ODAY_DATABASE_URL"),
+            v2_entry,
+            _v2_secret_env("ODP_GEOCODE_PROVIDER_API_KEY"),
+            _v2_secret_env("ODP_ADMIN_BOUNDARY_PROVIDER_TOKEN"),
+        )
+    )
+
+    v2_checks, _ = _job_checks(v2, kind="worker")
+    v2_detail = _detail(v2_checks, "jobs-smoke:worker:secret_bindings")
+
+    assert "jobs-smoke:worker:secret_bindings" in _failed_names(v2_checks)
+    assert "valueSource.secretKeyRef.key" in v2_detail
+
+
+def test_job_smoke_accepts_the_optional_members_each_dialect_defines() -> None:
+    """The member rule is an allowlist of real API fields, not a two-key rule.
+
+    Knative's selector may carry `optional`; a job that uses it still binds a
+    secret, so the tightening must not fail a shape the API defines.
+    """
+
+    entry = dict(_knative_secret_env("ODP_POI_PROVIDER_API_KEY"))
+    entry["valueFrom"] = {"secretKeyRef": {**entry["valueFrom"]["secretKeyRef"], "optional": False}}
+    job = _knative_job(
+        secret_envs=(
+            _knative_secret_env("ODAY_DATABASE_URL"),
+            entry,
+            _knative_secret_env("ODP_GEOCODE_PROVIDER_API_KEY"),
+            _knative_secret_env("ODP_ADMIN_BOUNDARY_PROVIDER_TOKEN"),
+        )
+    )
+
+    checks, _ = _job_checks(job)
+
+    assert all(check.ok for check in checks), _failed_names(checks)
+
+
 def test_job_smoke_accepts_each_dialect_at_its_own_container_path() -> None:
     """The discriminator must not break the two shapes gcloud really emits."""
 
