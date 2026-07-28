@@ -43,6 +43,12 @@ into its output.
 | `backwards_window_store_density.json` | — | Whether the backwards windows actually hold the stores the critical path donates to them: no gap day across the 24-day span, and 421 stores trading every day of it against an independently projected 419 (see §7). Carries its own grain and control range. |
 | `backwards_window_store_density_probe.pod.yaml` | — | The exact read-only Pod that produced it. One aggregation, counts only; place ids never leave the pod. |
 | `runbook/deadline-guard-v1.sh` | — | Fourth keeper. Extends `activeDeadlineSeconds` on the Active slice before it can be killed, because a deadline kill is what created Defect D and there is no safe kill for this workload. |
+| `backwards_window_store_mappability.json` | — | Whether the backwards stores survive `require_place` mapping against the current-state `core.stores` dimension: attrition is date-independent and 420 of the 421 always-trading backwards stores are mappable (see §7). |
+| `backwards_window_mappability_probe.pod.yaml` | — | The exact read-only Pod that produced it. Both sides exchange salted 16-hex digests; no place id in pod logs. |
+| `eligibility_model_fidelity.json` | — | The critical-path projection's eligibility rule and `forecast_training_view` run against **one** PG16 snapshot and set-compared: the model admits nothing the view rejects, so h28 = 419 is a floor (see §8). |
+| `runbook/eligibility-model-fidelity-probe.py` | — | The read-only probe that produced it. Temp relations only, transaction rolled back. |
+| `lineage_activation_loss.json` | — | Defect E: activation deleted 1 841 `canonical_lineage` rows it could not re-insert, leaving 1 693 transactions unattested on the target while the source held them (see §8). Carries the live measurement and a deterministic before/after reproduction. |
+| `runbook/lineage-activation-loss-probe.py` | — | The probe that produced it. Reproduces the loss over a scratch schema created and rolled back inside one transaction. |
 | `settle_state.json` | — | Written by the finisher **immediately before** `activate`: the incomplete partitions and abandoned-lineage ownership that were true at that moment. The two conditions the gate no longer blocks on, stated instead of hidden (see §7, v6). |
 
 Reproduce any of them with the DSN pair and the Cloud SQL proxy attestation in
@@ -979,7 +985,88 @@ bound is row-level quarantine for other reasons (`INVALID_AMOUNT`,
 count without removing it from a store-day, so they cannot break a consecutive
 run, and they remain a matter for the post-activation `verify`.
 
-## 8. After state
+## 8. Defect E — activation destroyed lineage, and the view declined to notice
+
+Everything in §7 that put `-b3` on the critical path was computed by
+`horizon-critical-path-probe.py`, which **re-implements** the view's eligibility
+rule on the source plane. The number acceptance is judged on comes from
+`model_ready.forecast_training_view`, and the two had never been compared.
+`eligibility_model_fidelity.json` compares them properly — both run against one
+PG16 snapshot, so no state drift can explain a disagreement, and the eligible
+`(tenant, store, date)` **sets** are compared rather than the counts, which
+could agree by coincidence.
+
+Result: identical grain (24 441 store-days each side) and
+**`only_in_model` = 0** — the model admits nothing the view rejects. So
+`h28 = 419` is a **floor**, not an over-count, and the `-b3` attribution stands.
+The model is conservative by 378 store-days (h7: view 432 vs model 428).
+
+Chasing *why* it is conservative found a defect neither plane had reported.
+
+**The loss.** On the target, 1 690 of 2026-06-23's 5 606 qualifying transactions
+carry no `canonical_lineage` row at all; the source carries lineage for every
+one of them. Not staleness: the target's newest lineage row is `projected_at`
+`2026-07-28T14:34:34Z`, the missing rows were projected at `12:28`, and the run
+that owns them (`85294064`, partition `2026-06-23__06-24`, `SUCCEEDED`) is
+itself present in the target. Counted globally, the source holds 377 283 rows
+projected at or before the target's own cutoff and the target holds 375 442 —
+**1 841 rows destroyed by the copy**, across exactly two dates.
+
+**Mechanism.** `canonical_lineage`'s primary key is
+`(source_snapshot_id, canonical_table, canonical_id)`, and `source_snapshot_id`
+is derived from record **content**. Slice `-s1` re-projected 2026-06-23 under a
+new run, which changes `run_id` and nothing else — the key is identical. So:
+
+1. `INSERT ... ON CONFLICT DO NOTHING` discards the re-pointed row, because the
+   target already holds that key under the old run.
+2. `prune_sql` then deletes the target's old row: no staged row matches its
+   `(run_id, canonical_id)`, and the fail-closed keeper check passes because a
+   staged row *does* exist for its `canonical_id`.
+
+The guard added in §4 was meant to make stripping a record's last lineage
+impossible, and it does look for a keeper — but it interrogates **staging**,
+i.e. what the source holds, not what the target will hold after an insert that
+may have been discarded. Both steps behaved as written; the composition loses
+the row.
+
+**Why nothing reported it.** `transaction_daily.lineage_complete` is
+`bool_and(cardinality(source_snapshot_ids) > 0)`. A transaction with no lineage
+at all makes that expression NULL, and `bool_and` **ignores** NULLs — so a day
+where 1 690 of 5 606 transactions have no lineage whatsoever still reports
+`lineage_complete`, `data_quality_score = 1.0` and `is_training_eligible`. Two
+defects cancelling: activation destroys the attestation, the view declines to
+notice. That is also the whole reason the projection model looked pessimistic —
+it coalesces the same test to `FALSE`, so it was the only thing in the system
+telling the truth about 2026-06-23.
+
+**Fix.** `canonical_lineage` now declares
+`refresh_key = ("source_snapshot_id", "canonical_table", "canonical_id")` — the
+primary key. The re-pointed `run_id` is written in place before the prune runs,
+so the prune finds nothing superseded. This reuses the same convergence step
+`ingestion_runs` already used; no new machinery. `prune_sql` is unchanged, and
+the reproduction in `lineage_activation_loss.json` drives the **real** builders
+over a scratch schema created and rolled back inside one transaction:
+prune-only leaves the transaction with **0** lineage rows, refresh-then-prune
+leaves **1**, re-pointed at the run that completed.
+`test_every_pruning_relation_can_also_refresh_in_place` now makes the pairing
+structural rather than a fact about today's two relations.
+
+**Blast radius, and why it is not on the backwards critical path.** A row is
+lost only on the activation that *follows* its re-pointing, and the next
+activation restores it — the blocking row is gone by then. `-b1`..`-b4` ingest
+dates the target has never held, so they cannot trigger it at all; the exposure
+is dates re-ingested *after* they were already activated, which is exactly what
+`-s1` did to 2026-06-23. The final activation therefore both repairs the
+existing 1 693 transactions and no longer creates new casualties.
+
+The view's NULL-swallowing `bool_and` is **left as it is** and reported here
+instead. Tightening it is a change to a canonical model contract that other
+tasks read, it would make the reported horizon counts *fall* rather than rise,
+and with Defect E fixed there is no longer a known population of
+lineage-less transactions for it to mask. Naming it is what this evidence owes
+the reviewer; changing it is not this task's call.
+
+## 9. After state
 
 Populated once `-s3`/`-s4`/`-s5` reach `Complete`, the source meets the settling
 condition above, and activation runs. See

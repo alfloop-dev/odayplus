@@ -50,7 +50,7 @@ Usage: source /tmp/odp-forecast-dsn.env && python3 eligibility-model-fidelity-pr
 import json
 import os
 from collections import Counter, defaultdict
-from datetime import date, datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 
 import psycopg
 
@@ -163,7 +163,7 @@ def model_eligible(present, attested):
 
 def main():
     dsn = os.environ["ODAY_DATABASE_URL"]
-    started = datetime.now(timezone.utc)
+    started = datetime.now(UTC)
     with psycopg.connect(dsn, connect_timeout=30) as conn:
         conn.execute("SET statement_timeout = '45min'")
 

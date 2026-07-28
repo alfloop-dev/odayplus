@@ -88,9 +88,14 @@ class Relation:
 
     ``refresh_key``
         Columns identifying an already-present target row whose remaining
-        columns should be re-read from the source. Use only for relations whose
-        lifecycle legitimately advances in place (an ingestion run reaching a
-        terminal status), never for immutable records.
+        columns should be re-read from the source. Use only where the source
+        legitimately advances a row in place -- an ingestion run reaching a
+        terminal status, or a lineage pointer moving to the run that superseded
+        an abandoned one -- never to rewrite the record a row describes.
+        A relation that prunes needs one whenever an updated source row keeps
+        its target primary key, because the insert cannot deliver such a row and
+        the prune would otherwise delete the stale one with nothing to replace
+        it.
     ``prune_superseded_by``
         Columns identifying a target row that no longer exists in the source
         selection. Such rows are deleted, but only when the source still holds
@@ -140,10 +145,22 @@ ACTIVATION_RELATIONS: tuple[Relation, ...] = (
     # A run abandoned mid-flight leaves lineage the source later re-projects
     # under the run that completed. Drop the superseded pointer, but never the
     # last lineage a transaction has.
+    #
+    # The refresh key is the primary key, because that is the only way a
+    # re-pointed row can reach the target at all. ``source_snapshot_id`` is
+    # derived from record CONTENT, so re-projecting an unchanged record under a
+    # new run keeps the primary key and changes only ``run_id`` -- the insert
+    # then conflicts and is discarded, and the prune afterwards sees no staged
+    # row for the target's old ``(run_id, canonical_id)`` while a staged keeper
+    # does exist for the ``canonical_id``, so it deletes the row it was supposed
+    # to re-point. The transaction is left with no lineage on the target even
+    # though the source holds it. Refreshing first re-points the pointer in
+    # place, which both repairs the row and leaves the prune nothing to delete.
     Relation(
         "data_plane",
         "canonical_lineage",
         source_predicate="canonical_table = 'core.transactions'",
+        refresh_key=("source_snapshot_id", "canonical_table", "canonical_id"),
         prune_superseded_by=("run_id", "canonical_id"),
         prune_keep_key=("canonical_id",),
     ),

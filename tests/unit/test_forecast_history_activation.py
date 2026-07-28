@@ -250,12 +250,12 @@ def test_source_catalog_degrades_when_a_source_relation_is_absent() -> None:
     assert catalog["canonical_transactions"]["available"] is True
 
 
-def test_only_ingestion_runs_refresh_and_only_lineage_prunes() -> None:
+def test_only_lifecycle_relations_converge_and_only_lineage_prunes() -> None:
     """Immutable records must never be rewritten or dropped by a replay."""
 
     refreshing = {r.qualified for r in ACTIVATION_RELATIONS if r.refresh_key}
     pruning = {r.qualified for r in ACTIVATION_RELATIONS if r.prune_superseded_by}
-    assert refreshing == {"data_plane.ingestion_runs"}
+    assert refreshing == {"data_plane.ingestion_runs", "data_plane.canonical_lineage"}
     assert pruning == {"data_plane.canonical_lineage"}
 
     runs = next(r for r in ACTIVATION_RELATIONS if r.table == "ingestion_runs")
@@ -263,6 +263,29 @@ def test_only_ingestion_runs_refresh_and_only_lineage_prunes() -> None:
     assert runs.refresh_key == ("run_id",)
     assert lineage.prune_superseded_by == ("run_id", "canonical_id")
     assert lineage.prune_keep_key == ("canonical_id",)
+
+
+def test_every_pruning_relation_can_also_refresh_in_place() -> None:
+    """A prune without a refresh can delete a row the insert cannot replace.
+
+    ``canonical_lineage``'s primary key is content-derived, so re-projecting an
+    unchanged record under the run that superseded an abandoned one produces a
+    row with the SAME key and a new ``run_id``. ``ON CONFLICT DO NOTHING``
+    discards it, and the prune then drops the target's old row because no staged
+    row matches its ``(run_id, canonical_id)`` while a staged keeper exists for
+    its ``canonical_id`` -- stripping the record's only lineage. Measured on the
+    live target before this rule existed: 1 841 lineage rows lost, 1 693
+    transactions left with none (lineage_activation_loss.json).
+    """
+
+    for relation in ACTIVATION_RELATIONS:
+        if not relation.prune_superseded_by:
+            continue
+        assert relation.refresh_key, (
+            f"{relation.qualified} prunes superseded rows but cannot re-point "
+            "one in place; an updated row keeping its target key would be "
+            "deleted with nothing to replace it"
+        )
 
 
 def test_prune_configuration_fails_closed_without_a_keep_key() -> None:
@@ -280,6 +303,38 @@ def test_refresh_sql_updates_every_shared_column_outside_the_key() -> None:
     assert '"finished_at" = staged."finished_at"' in statement
     assert 'WHERE tgt."run_id" = staged."run_id"' in statement
     # A converged row must not be rewritten.
+    assert "IS DISTINCT FROM" in statement
+
+
+def test_lineage_refresh_repoints_the_run_without_rewriting_the_record() -> None:
+    """The lineage refresh must move the pointer and nothing else.
+
+    Matching on the whole primary key is what makes this safe: it can only ever
+    touch the row the source is re-projecting, and the record it describes
+    (``source_id``, ``content_sha256``, ``tenant_id``) is keyed by content, so
+    an updated row that changed any of those would carry a DIFFERENT
+    ``source_snapshot_id`` and be inserted rather than refreshed.
+    """
+
+    lineage = next(r for r in ACTIVATION_RELATIONS if r.table == "canonical_lineage")
+    columns = (
+        "source_snapshot_id",
+        "source_kind",
+        "source_id",
+        "content_sha256",
+        "run_id",
+        "tenant_id",
+        "canonical_table",
+        "canonical_id",
+        "projected_at",
+    )
+    statement, updatable = refresh_sql(lineage, columns, "activation_stage")
+    assert "run_id" in updatable
+    # The primary key is matched, never assigned.
+    for key in ("source_snapshot_id", "canonical_table", "canonical_id"):
+        assert f'tgt."{key}" = staged."{key}"' in statement
+        assert f'"{key}" = staged."{key}", ' not in statement
+    assert 'UPDATE data_plane.canonical_lineage AS tgt SET' in statement
     assert "IS DISTINCT FROM" in statement
 
 

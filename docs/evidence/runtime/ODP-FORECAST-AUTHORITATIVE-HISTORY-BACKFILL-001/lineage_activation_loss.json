@@ -1,0 +1,47 @@
+{
+  "captured_at": "2026-07-28T21:04:52.124411+00:00",
+  "defect": "Activation deletes canonical_lineage rows it could not re-insert. The primary key is content-derived, so a row re-projected under a new run keeps its key; ON CONFLICT DO NOTHING discards it and the prune then drops the target's old row, whose keeper check passes because it interrogates STAGING rather than the post-insert TARGET.",
+  "masked_by": "forecast_training_view's lineage_complete is bool_and(cardinality(source_snapshot_ids) > 0); a transaction with no lineage contributes NULL and bool_and ignores NULLs, so the day still reports fully attested with data_quality_score 1.0.",
+  "fix": "canonical_lineage now declares refresh_key = the primary key, so the re-pointed run_id is written in place before the prune runs and the prune finds nothing superseded.",
+  "live_measurement": {
+    "target_activation_cutoff": "2026-07-28T14:34:34.674224+00:00",
+    "source_rows_projected_at_or_before_cutoff": 377283,
+    "target_rows": 375442,
+    "rows_lost_by_activation": 1841,
+    "transactions_without_lineage_on_target": 1693,
+    "transactions_without_lineage_on_source": 0,
+    "target_dates_affected": [
+      {
+        "date": "2026-06-23",
+        "qualifying": 5606,
+        "no_lineage": 1690
+      },
+      {
+        "date": "2026-07-26",
+        "qualifying": 10677,
+        "no_lineage": 3
+      }
+    ],
+    "staleness_excluded": "every missing row was projected before the target's own cutoff, so the activation had it staged and still did not land it"
+  },
+  "deterministic_reproduction": {
+    "before_fix__prune_only": {
+      "inserted": 0,
+      "refreshed": 0,
+      "pruned": 1,
+      "lineage_rows_left_for_the_transaction": 0,
+      "run_id_left": "NONE",
+      "outcome": "LINEAGE DESTROYED: the record has no lineage on the target"
+    },
+    "after_fix__refresh_then_prune": {
+      "inserted": 0,
+      "refreshed": 1,
+      "pruned": 0,
+      "lineage_rows_left_for_the_transaction": 1,
+      "run_id_left": "run-SUCCEEDED",
+      "outcome": "re-pointed in place to run-SUCCEEDED"
+    }
+  },
+  "reproduction_method": "real prune_sql/refresh_sql over a scratch schema created and rolled back inside one transaction; no persisted relation touched",
+  "fix_verified": true
+}
