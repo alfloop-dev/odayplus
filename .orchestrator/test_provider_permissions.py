@@ -124,6 +124,56 @@ class ProviderPermissionsTest(unittest.TestCase):
         self.assertEqual(evaluation["decision"], "allow")
         self.assertEqual(evaluation["risk_class"], "safe_read")
 
+    def test_taskoutput_is_auto_allowed_as_exact_read_only_tool(self) -> None:
+        evaluation = permission_broker.evaluate_tool_request(
+            "TaskOutput",
+            {"task_id": "byld6bjnj", "block": True, "timeout": 600000},
+            {},
+        )
+
+        self.assertEqual(evaluation["decision"], "allow")
+        self.assertEqual(evaluation["risk_class"], "safe_read")
+        self.assertEqual(evaluation["reason"], "TaskOutput is read-only.")
+
+    def test_taskoutput_allow_does_not_broaden_adjacent_permission_classes(self) -> None:
+        cases = {
+            "unknown": (
+                permission_broker.evaluate_tool_request("TaskOutputWrite", {}, {}),
+                ("defer", "unknown"),
+            ),
+            "network": (
+                permission_broker.evaluate_tool_request("WebFetch", {"url": "https://example.com"}, {}),
+                ("defer", "network"),
+            ),
+            "bash": (
+                permission_broker.evaluate_tool_request("Bash", {"command": "curl https://example.com"}, {}),
+                ("defer", "needs_review"),
+            ),
+            "edit": (
+                permission_broker.evaluate_tool_request("Edit", {"file_path": "/tmp/outside.txt"}, {}),
+                ("deny", "out_of_workspace"),
+            ),
+            "agent": (
+                permission_broker.evaluate_tool_request(
+                    "Agent",
+                    {
+                        "description": "Implement a fix",
+                        "prompt": "Edit the permission broker and update tests.",
+                        "subagent_type": "Explore",
+                    },
+                    {},
+                ),
+                ("defer", "unknown"),
+            ),
+        }
+
+        for name, (evaluation, expected) in cases.items():
+            with self.subTest(name=name):
+                self.assertEqual(
+                    (evaluation["decision"], evaluation["risk_class"]),
+                    expected,
+                )
+
     def test_read_only_agent_explore_request_is_auto_allowed(self) -> None:
         evaluation = permission_broker.evaluate_tool_request(
             "Agent",
