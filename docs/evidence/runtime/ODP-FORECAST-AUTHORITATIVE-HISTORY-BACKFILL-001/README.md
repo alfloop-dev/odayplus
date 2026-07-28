@@ -1095,11 +1095,36 @@ inside the predicted band, and it looked like a confirmation. Twenty-five
 minutes later it read 520 over 11 246 and was still climbing. A partial
 partition can only under-count, so it will always appear to respect an upper
 bound; reading one mid-flight manufactures a pass out of an unfinished write.
-**The receipt committed here therefore scores zero dates and lists four
-exclusions.** That is the correct state at capture time, not a null result: it
+**The receipt was therefore first committed scoring zero dates and listing four
+exclusions.** That was the correct state at capture time, not a null result: it
 is the record that the method was fixed, and its guards demonstrated, *before*
 any backwards date could be scored — so the numbers it eventually reports cannot
 have been fitted to them.
+
+**The first backwards date is now scored, and the invariant held** (receipt
+re-captured 22:46Z, one date). 2026-05-17 became scoreable the moment
+`2026-05-18__2026-05-19` reached SUCCEEDED — exactly the one-behind-the-frontier
+cadence the second rule predicts — and it lands **520 stores against an upstream
+bound of 527**, `landed/upstream = 0.9867`. So the falsifiable claim survives its
+first real test in the backwards regime: nothing landed that the density
+measurement did not already contain, which is the condition every one of
+419 / 421 / 420 rests on.
+
+The calibration reads the other way, and in the direction that costs nothing.
+The `0.9715` mapping rate predicts 512 stores and 520 landed — the projection
+**under**-states by 8 stores. That is the same sign the `-s4` backtest found on
+its holdout (both arms under-stated, optimistic recall .937), now reproduced two
+months from its donors rather than days from them, which is the regime the
+backtest could not reach. A projection that under-states cannot manufacture
+criterion 3; if this sign holds across `-b2` and `-b3`, the measured h28 should
+land at or above the projected 406, not below it.
+
+One date is one date, and the honest limit is that the remaining three
+`-b1` dates are still excluded — 2026-05-18 and 2026-05-19 because
+`2026-05-19__2026-05-20` is still writing, 2026-05-16 and 2026-05-22 permanently,
+as stragglers. The claim this supports is that the invariant has not been
+breached where it could first be tested, not that the projection is confirmed.
+Re-run after `-b2` and `-b3`.
 
 One performance note worth keeping. `canonical_lineage`'s unique index leads
 with `source_snapshot_id`, because it exists to serve the ingestion upsert's
