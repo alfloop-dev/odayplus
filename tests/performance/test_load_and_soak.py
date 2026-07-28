@@ -14,6 +14,7 @@ from fastapi.testclient import TestClient
 
 from apps.api.oday_api.main import create_app
 from shared.infrastructure.persistence.factory import _durable_bundle
+from tests.integration._authz import FORECASTOPS_HEADERS
 
 
 @pytest.fixture
@@ -53,14 +54,30 @@ def test_concurrency_and_soak_execution(load_db_path, tmp_path) -> None:
             # Step A: Enqueue Job (Write to DB queue)
             resp = client.post(
                 "/jobs",
-                json={"job_type": "forecast", "payload": {"store_id": f"store-{task_id}"}},
-                headers={"X-Correlation-ID": correlation_id, "Idempotency-Key": idem_key},
+                json={
+                    "job_type": "forecast",
+                    "payload": {
+                        "tenant_id": FORECASTOPS_HEADERS["x-tenant-id"],
+                        "store_id": f"store-{task_id}",
+                    },
+                },
+                headers={
+                    **FORECASTOPS_HEADERS,
+                    "X-Correlation-ID": correlation_id,
+                    "Idempotency-Key": idem_key,
+                },
             )
             assert resp.status_code == 202
             job_id = resp.json()["job_id"]
 
             # Step B: Read Job (Read from DB queue)
-            resp_get = client.get(f"/jobs/{job_id}", headers={"X-Correlation-ID": correlation_id})
+            resp_get = client.get(
+                f"/jobs/{job_id}",
+                headers={
+                    **FORECASTOPS_HEADERS,
+                    "X-Correlation-ID": correlation_id,
+                },
+            )
             assert resp_get.status_code == 200
             assert resp_get.json()["job_id"] == job_id
 

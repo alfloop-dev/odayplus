@@ -24,11 +24,19 @@ from models.shared_ml import (
     ModelRiskLevel,
     ModelStage,
     ModelVersion,
+    compute_content_digest,
 )
 from models.shared_ml.oss_estimators import EstimatorTrainingResult, train_oss_estimator
 from modules.avm.domain.liquidity import LiquidityTrainingRecord
 from modules.avm.infrastructure import LifelinesLiquiditySurvivalAdapter
-from modules.learninghub import LearningHubService, MlflowRegistryAdapter, ReleaseType
+from modules.learninghub import (
+    LearningHubService,
+    MlflowRegistryAdapter,
+    ModelReleaseDecision,
+    ModelReleaseSaga,
+    ReleaseSagaState,
+    ReleaseType,
+)
 from pipelines.features import FeaturePipelineRunner
 from pipelines.training import TrainingPipelineRunner
 from shared.infrastructure.persistence.audit_log import DurableAuditLog
@@ -47,6 +55,7 @@ from .contracts import (
     ProductionTrainingSettings,
     require_approval_document,
 )
+from .forecast_training import ForecastHorizonContractError, expand_forecast_horizon_rows
 from .storage import (
     GcsArtifactStore,
     LoadedModelReadyRows,
@@ -284,6 +293,30 @@ class BoundedModelTrainingRelease:
             raise ModelTrainingConfigurationError(
                 "CANARY/FULL release requires an existing approved rollback target"
             )
+        approval_bytes = _canonical_json(approval_payload)
+        idempotency_key = _promotion_idempotency_key(
+            model_name=spec.model_name,
+            version=version,
+            approval_id=approval["approval_id"],
+        )
+        # A lost-response retry must return the durable decision of the saga this
+        # approval already created. The saga is resolved before the current
+        # release revision is recomputed: after a committed release the revision
+        # has advanced, so a recomputed expected_release_revision would change
+        # the request fingerprint and turn a legitimate replay into a conflict.
+        existing_saga = self.service.repository.get_release_saga_by_idempotency(
+            spec.model_name,
+            idempotency_key,
+        )
+        if existing_saga is not None:
+            return self._replay_promotion(
+                saga=existing_saga,
+                spec=spec,
+                version=version,
+                approval=approval,
+                approval_bytes=approval_bytes,
+                rollback_target=rollback_target,
+            )
         model_version = self.service.repository.get_model_version(spec.model_name, version)
         model_card = self.service.repository.get_model_card(spec.model_name, version)
         if model_version is None or model_card is None:
@@ -314,7 +347,6 @@ class BoundedModelTrainingRelease:
             model_card,
             approvals=tuple(model_card.approvals) + (approval_entry,),
         )
-        approval_bytes = _canonical_json(approval_payload)
         approval_record = self.artifact_store.put_artifact(
             model_name=spec.model_name,
             version=version,
@@ -336,6 +368,9 @@ class BoundedModelTrainingRelease:
             model_version=approved_version,
             model_card=approved_card,
             validation_run=validation,
+        )
+        expected_release_revision = self.service.repository.get_release_revision(
+            spec.model_name
         )
         decision = self.service.request_release(
             model_name=spec.model_name,
@@ -359,16 +394,89 @@ class BoundedModelTrainingRelease:
             requested_by=self.actor,
             approved_by=approval["approver"],
             correlation_id=approval["approval_id"],
+            expected_release_revision=expected_release_revision,
+            idempotency_key=idempotency_key,
+            approval_sha256=approval_record.content_digest,
         )
         return {
             "status": "promoted",
+            "replayed": False,
             "model_name": spec.model_name,
             "version": version,
             "release_type": release_type.value,
             "release_id": decision.release_id,
+            "release_revision": decision.release_revision,
             "approval_id": approval["approval_id"],
             "approval_sha256": approval_record.content_digest,
             "rollback_target": rollback_target,
+        }
+
+    def _replay_promotion(
+        self,
+        *,
+        saga: ModelReleaseSaga,
+        spec: ModelSpec,
+        version: str,
+        approval: Mapping[str, Any],
+        approval_bytes: bytes,
+        rollback_target: str | None,
+    ) -> dict[str, Any]:
+        command = dict(saga.command)
+        approval_sha256 = compute_content_digest(approval_bytes)
+        expected_command_binding = {
+            "model_name": spec.model_name,
+            "version": version,
+            "release_type": _RELEASE_TYPES[
+                str(approval["release_type"]).lower()
+            ].value,
+            "reason": approval["reason"],
+            "approval_id": approval["approval_id"],
+            "rollback_target": rollback_target,
+            "monitoring_window": "48h",
+            "success_criteria": [
+                "production registry alias resolves",
+                "live inference smoke test passes",
+                "outcome guardrails remain within approved thresholds",
+            ],
+            "fail_criteria": [
+                "artifact lineage mismatch",
+                "live inference failure",
+                "approved validation threshold breach",
+            ],
+            "affected_modules": [spec.key],
+            "requested_by": self.actor,
+            "approved_by": approval["approver"],
+            "correlation_id": approval["approval_id"],
+            "approval_sha256": approval_sha256,
+            "release_scope": "global",
+        }
+        if any(command.get(field) != value for field, value in expected_command_binding.items()):
+            raise ModelTrainingConfigurationError(
+                f"promotion idempotency key for {spec.model_name}:{version} is "
+                "already bound to a different release command"
+            )
+        if saga.state is not ReleaseSagaState.COMPLETED:
+            raise ModelTrainingConfigurationError(
+                f"existing release {saga.release_id} for approval "
+                f"{approval['approval_id']} is {saga.state.value}; operator "
+                "recovery is required before the promotion can be retried"
+            )
+        decision = saga.decision
+        if not isinstance(decision, ModelReleaseDecision):
+            raise ModelTrainingConfigurationError(
+                f"completed release {saga.release_id} has no durable decision receipt"
+            )
+        return {
+            "status": "promoted",
+            "replayed": True,
+            "model_name": spec.model_name,
+            "version": version,
+            "release_type": decision.release_type.value,
+            "release_id": decision.release_id,
+            "release_revision": decision.release_revision,
+            "approval_id": approval["approval_id"],
+            "approval_sha256": approval_sha256,
+            "rollback_target": decision.rollback_target,
         }
 
     def _train_regression_candidate(
@@ -632,7 +740,16 @@ def prepare_model_rows(
 ) -> tuple[PreparedRow, ...]:
     prepared: list[PreparedRow] = []
     lineage_id = f"postgres:{loaded.relation}:sha256:{loaded.query_sha256}"
-    for raw in loaded.rows:
+    rows: Sequence[Mapping[str, Any]] = loaded.rows
+    if spec.key == "forecastops":
+        # The model-ready view serves daily rows; the horizon contract trains on
+        # leakage-safe horizon-average targets whose maturity is bounded by the
+        # declared observation window.
+        try:
+            rows = expand_forecast_horizon_rows(rows)
+        except ForecastHorizonContractError as exc:
+            raise ModelReadyDataError(f"{spec.key}: {exc}") from exc
+    for raw in rows:
         _reject_nonproduction_source_markers(raw)
         try:
             temporal_value = _timestamp(raw[spec.temporal_column])
@@ -1059,6 +1176,30 @@ def _reject_nonproduction_source_markers(row: Mapping[str, Any]) -> None:
             raise ModelReadyDataError(
                 f"model-ready row contains blocked source marker in {field_name}"
             )
+
+
+def _promotion_idempotency_key(
+    *,
+    model_name: str,
+    version: str,
+    approval_id: str,
+) -> str:
+    """Deterministic approval-bound release idempotency key.
+
+    Derived only from the approved release identity, so a lost-response retry
+    of the same approval always resolves to the same durable saga while a
+    different approval can never collide with it.
+    """
+
+    material = _canonical_json(
+        {
+            "approval_id": approval_id,
+            "model_name": model_name,
+            "version": version,
+        }
+    )
+    digest = compute_content_digest(material).removeprefix("sha256:")
+    return f"model-promotion-{digest}"
 
 
 def _read_approval(path: Path) -> dict[str, object]:

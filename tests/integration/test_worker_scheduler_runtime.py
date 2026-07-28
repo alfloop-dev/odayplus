@@ -23,12 +23,14 @@ import pytest
 from apps.scheduler.oday_scheduler.main import ODayScheduler
 from apps.worker.oday_worker.main import ODayWorker
 from modules.forecastops import ForecastOpsService, StoreDayObservation
+from modules.forecastops.runtime import ForecastOpsRuntimeConfigurationError
 from modules.forecastops.workers import ForecastOpsForecastWorker
 from shared.infrastructure.persistence.factory import _durable_bundle, build_persistence
 from shared.jobs.queue import JobRequest, JobStatus
 from shared.jobs.registry import JobRegistry
 
 PROVIDER_ID = "listing.partner_feed"
+TENANT_ID = "tenant-test"
 
 
 @pytest.fixture
@@ -43,13 +45,16 @@ def _queued_of_type(bundle, job_type: str) -> list:
 def _seed_forecast_series(bundle, store_id: str) -> None:
     start = date(2026, 4, 1)
     ForecastOpsService(repository=bundle.forecastops_repository).ingest_timeseries(
-        StoreDayObservation(
-            store_id=store_id,
-            business_date=start + timedelta(days=index),
-            actual_revenue=80_000 + index * 250 + (index % 7) * 900,
-            source_snapshot_ids=(f"pos-{index:03d}",),
-        )
-        for index in range(70)
+        (
+            StoreDayObservation(
+                store_id=store_id,
+                business_date=start + timedelta(days=index),
+                actual_revenue=80_000 + index * 250 + (index % 7) * 900,
+                source_snapshot_ids=(f"pos-{index:03d}",),
+            )
+            for index in range(70)
+        ),
+        tenant_id=TENANT_ID,
     )
 
 
@@ -81,7 +86,10 @@ def test_worker_forecast_job_claims_and_succeeds() -> None:
     bundle = build_persistence()
     _seed_forecast_series(bundle, "store-001")
     job, created = bundle.job_queue.enqueue(
-        JobRequest(job_type="forecast", payload={"store_id": "store-001"}),
+        JobRequest(
+            job_type="forecast",
+            payload={"tenant_id": TENANT_ID, "store_id": "store-001"},
+        ),
         correlation_id="corr-forecast",
     )
     assert created is True
@@ -91,7 +99,7 @@ def test_worker_forecast_job_claims_and_succeeds() -> None:
     assert bundle.job_queue.get(job.job_id).status == JobStatus.SUCCEEDED
 
 
-def test_production_forecast_worker_reads_deployment_engine_and_model(
+def test_production_forecast_worker_rejects_unregistered_baseline_configuration(
     db_path: str,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -101,12 +109,11 @@ def test_production_forecast_worker_reads_deployment_engine_and_model(
     monkeypatch.setenv("ODP_FORECAST_MODEL", "seasonal_naive")
     bundle = _durable_bundle(db_path)
     try:
-        worker = ForecastOpsForecastWorker(repository=bundle.forecastops_repository)
-
-        assert worker.service.production_required is True
-        assert worker.service.engine is not None
-        assert worker.service.engine.engine_name == "statsforecast"
-        assert worker.service.engine.model_name == "seasonal_naive"
+        with pytest.raises(
+            ForecastOpsRuntimeConfigurationError,
+            match="registered MLflow estimator runtime",
+        ):
+            ForecastOpsForecastWorker(repository=bundle.forecastops_repository)
     finally:
         bundle.engine.close()
 
