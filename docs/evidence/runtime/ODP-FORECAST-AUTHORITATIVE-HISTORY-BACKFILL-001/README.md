@@ -36,6 +36,9 @@ into its output.
 | `orders_history_backfill_jobs.applied.json` | — | The `-b1`/`-b2`/`-b3` backwards-extension Job manifests that close §7 without any destructive action. Secrets appear only as `secretKeyRef` names, never values. |
 | `per_store_streak_headroom.json` | — | Per-store transacting-day runs measured over the landed span, proving per-store eligibility tracks the global span rather than trailing it (see §7). Carries its own predicate and window. |
 | `slice_deadline_headroom.json` | — | Why `activeDeadlineSeconds` was raised 14400→28800 on the remaining slices, and the measurement that forced it. |
+| `lineage_projection_throughput.json` | — | What actually governs a partition's wall-clock: lineage projection is ~90 % of it, at a rate that has fallen to 209 rows/min. Turns slice sizing from a tripwire into a projection, and shows the raised deadline has only ~18 % throughput margin (see §7). |
+| `runbook/lineage-throughput-probe.py` | — | The read-only probe that produced it. Two aggregate `SELECT`s; excludes resumed stub partitions and says how many it dropped. |
+| `runbook/deadline-guard-v1.sh` | — | Fourth keeper. Extends `activeDeadlineSeconds` on the Active slice before it can be killed, because a deadline kill is what created Defect D and there is no safe kill for this workload. |
 | `settle_state.json` | — | Written by the finisher **immediately before** `activate`: the incomplete partitions and abandoned-lineage ownership that were true at that moment. The two conditions the gate no longer blocks on, stated instead of hidden (see §7, v6). |
 
 Reproduce any of them with the DSN pair and the Cloud SQL proxy attestation in
@@ -758,6 +761,70 @@ running backfill slice, which is why the probe requests 10 m CPU / 64 Mi: while
 a slice is active that node sits at ~96 % of allocatable memory, and a probe
 that could not fit would sit `Pending` and delay the very slice it was written
 not to disturb.
+
+### What actually governs a partition's wall-clock, and why the deadline is now guarded
+
+Slice sizing was defended, up to this point, by a tripwire: measure each
+partition, and if one exceeds 80 minutes, raise that slice's
+`activeDeadlineSeconds`. That was the honest thing to write while the cause was
+unknown — per-partition duration is demonstrably **not** a function of partition
+size, since `-s1` projected 13 693 rows in 19.4 min while `-s4` took 52.8 min for
+12 214. But a tripwire fires after the fact and only helps if somebody is awake,
+and `-b1`..`-b4` and `-s5` run unattended for many hours.
+
+`runbook/lineage-throughput-probe.py` finds the governing quantity, because every
+`canonical_lineage` row carries `run_id` and `projected_at` and so each run leaves
+a per-minute trace of its own work. Receipt:
+`lineage_projection_throughput.json`, 18 full-length partitions.
+
+- **Lineage projection is 89.6 % of a partition's wall-clock on average.** A
+  partition is not an ingest that happens to write lineage; it is a lineage
+  projection with an ingest at the front. `core.transactions` rows land in a
+  single bulk commit inside the partition's first minute — the remaining ~50
+  minutes of `-s4`'s first partition were projection.
+- **Its throughput is not stable and has been falling**: ~620–820 rows/min
+  across early `-s1`, 209–765 across `-s3`/`-s4`, with the slowest full-length
+  partition at **209.2 rows/min**. Duration is therefore predictable after all —
+  `rows ÷ rate` — but only against a rate that drifts.
+
+Two numbers had to be kept out of that. A partition **resumed** after a kill has
+only a few hundred records left and reports thousands of rows/min; those are
+measurements of a different thing, and including them lifts the `-s3`/`-s4` mean
+from ~414 to ~931 rows/min. That is precisely the sort of figure that would
+justify a deadline which then kills a slice, so the probe excludes any partition
+whose projection span is under 5 minutes and reports how many it dropped.
+
+Planning against the **slowest** recent partition rather than the mean — the
+question is not how fast it usually goes but whether the slow case still
+finishes — the heaviest day seen (13 693 rows) costs 65.5 min, so six partitions
+cost **392.7 min against the raised 480 min budget**. It fits. The sharper
+number is the other one: a slice exactly fills the budget at **171.2 rows/min**,
+and the current worst case is 209.2. **The margin on the raised deadline is
+about 18 % of throughput, not a comfortable multiple.**
+
+That margin is too thin to leave unattended, so the tripwire is now a fourth
+keeper, `runbook/deadline-guard-v1.sh`. Every 5 minutes it finds the single
+Active slice and, if it is within 45 minutes of its deadline, extends it by 2 h
+up to a 16 h cap. Its one and only mutation is raising
+`activeDeadlineSeconds`; it never suspends, resumes or deletes a Job, and it
+matches only this task's `93cb9f94-` slices, never the unrelated
+orders-history Jobs sharing the namespace. All four of its paths — discovery,
+liveness, the cap branch and the patch itself — were exercised against the live
+`-s4` before it was armed, the patch verified as a no-op that left the same pod
+at `RESTARTS 0` with its age unbroken.
+
+One design point is worth stating because the obvious alternative is wrong. The
+tempting rule is "extend only if the job is provably progressing, otherwise let
+it die". Here there is **no such thing as a safe deadline kill**: a hung slice
+has already committed lineage rows, and the kill is exactly what strands them —
+that is Defect D, and it is permanent. An over-extended hung slice merely costs
+node time and is undone by suspending it by hand. So the guard extends even when
+liveness cannot be proven, bounded by the cap, and makes the doubt loud instead:
+it measures `max(projected_at)` on every decision and logs `liveness=OK` /
+`STALE` / `UNKNOWN(db-unreachable)`. `projected_at` is the only external liveness
+signal that exists for a running partition — a `RUNNING` row in
+`ingestion_runs` reports `valid_loaded = 0` until it finishes, and
+`ingested_at` is a single early burst.
 
 ## 8. After state
 

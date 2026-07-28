@@ -1,0 +1,291 @@
+{
+  "artifact": "lineage_projection_throughput",
+  "task": "ODP-FORECAST-AUTHORITATIVE-HISTORY-BACKFILL-001",
+  "captured_at": "2026-07-28T19:38:03Z",
+  "captured_by": "Claude3",
+  "what_this_is": "Measure what actually governs orders-history partition wall-clock.\n\nMotivation. The per-partition duration measurements were honest that they could\nnot explain themselves: duration is NOT a function of partition row count (-s1\nloaded 13 693 rows in 19.4 min; -s4 loaded 12 214 in 52.8 min), so slice sizing\ncould only be defended with a tripwire -- \"if a partition exceeds 80 min, raise\nthat slice's activeDeadlineSeconds\". A tripwire fires after the fact and needs\nsomeone awake. This probe looks one layer down for the governing quantity, which\nis what turns the tripwire into a projection.\n\nMethod. Every `data_plane.canonical_lineage` row carries `run_id` and\n`projected_at`, so each ingestion run leaves a per-minute trace of its own\nprojection work. For each run we take the lineage row count, the span from first\nto last `projected_at`, and the resulting rows/minute; then we compare that span\nagainst the run's total wall-clock to see what share of a partition is lineage\nprojection.\n\nWhy it matters beyond sizing: `projected_at` advancing is a LIVE liveness signal,\nabout one row every 0.2s. `ingestion_runs` cannot provide one -- a RUNNING run\nreports valid_loaded = 0 until it finishes -- and `core.transactions.ingested_at`\ncannot either, because rows land in a single bulk commit in the partition's first\nminute. Lineage projection is the only place a running partition is observable\nfrom outside the pod, which is what the deadline guard is built on.\n\nRead-only. Two aggregate SELECTs against the source (PG15) plane. No writes, no\nDDL, no job mutation.\n\nUsage: source /tmp/odp-forecast-dsn.env && python3 lineage-throughput-probe.py",
+  "read_only": true,
+  "redaction": "run ids truncated to 8 chars; counts, timestamps and rates only. No store, member, order id, amount or any row content.",
+  "slices": [
+    {
+      "slice": "s1",
+      "active_deadline_seconds": 14400,
+      "partitions": [
+        {
+          "run_id": "85294064",
+          "partition_key": "2026-06-23__2026-06-24",
+          "status": "SUCCEEDED",
+          "valid_loaded": 6160,
+          "run_minutes": 3.5,
+          "lineage_rows": 6159,
+          "lineage_span_minutes": 1.8,
+          "lineage_rows_per_minute": 3418.8,
+          "lineage_share_of_run": 0.515
+        },
+        {
+          "run_id": "5cc0f29b",
+          "partition_key": "2026-06-24__2026-06-25",
+          "status": "SUCCEEDED",
+          "valid_loaded": 6239,
+          "run_minutes": 11.7,
+          "lineage_rows": 6239,
+          "lineage_span_minutes": 9.5,
+          "lineage_rows_per_minute": 657.3,
+          "lineage_share_of_run": 0.811
+        },
+        {
+          "run_id": "b9a7a44a",
+          "partition_key": "2026-06-25__2026-06-26",
+          "status": "SUCCEEDED",
+          "valid_loaded": 5173,
+          "run_minutes": 9.6,
+          "lineage_rows": 5171,
+          "lineage_span_minutes": 8.4,
+          "lineage_rows_per_minute": 617.1,
+          "lineage_share_of_run": 0.873
+        },
+        {
+          "run_id": "ffe7c633",
+          "partition_key": "2026-06-26__2026-06-27",
+          "status": "SUCCEEDED",
+          "valid_loaded": 7649,
+          "run_minutes": 12.5,
+          "lineage_rows": 7649,
+          "lineage_span_minutes": 11.3,
+          "lineage_rows_per_minute": 679.9,
+          "lineage_share_of_run": 0.9
+        },
+        {
+          "run_id": "1b52f537",
+          "partition_key": "2026-06-27__2026-06-28",
+          "status": "SUCCEEDED",
+          "valid_loaded": 11486,
+          "run_minutes": 17.8,
+          "lineage_rows": 11485,
+          "lineage_span_minutes": 16.3,
+          "lineage_rows_per_minute": 702.9,
+          "lineage_share_of_run": 0.918
+        },
+        {
+          "run_id": "9f50dbe9",
+          "partition_key": "2026-06-28__2026-06-29",
+          "status": "SUCCEEDED",
+          "valid_loaded": 13693,
+          "run_minutes": 19.4,
+          "lineage_rows": 13687,
+          "lineage_span_minutes": 18.2,
+          "lineage_rows_per_minute": 752.8,
+          "lineage_share_of_run": 0.937
+        },
+        {
+          "run_id": "6fa26367",
+          "partition_key": "2026-06-29__2026-06-30",
+          "status": "SUCCEEDED",
+          "valid_loaded": 7920,
+          "run_minutes": 10.5,
+          "lineage_rows": 7918,
+          "lineage_span_minutes": 9.6,
+          "lineage_rows_per_minute": 822.7,
+          "lineage_share_of_run": 0.917
+        },
+        {
+          "run_id": "c802a45c",
+          "partition_key": "2026-06-30__2026-07-01",
+          "status": "SUCCEEDED",
+          "valid_loaded": 6933,
+          "run_minutes": 10.2,
+          "lineage_rows": 6932,
+          "lineage_span_minutes": 9.3,
+          "lineage_rows_per_minute": 742.3,
+          "lineage_share_of_run": 0.915
+        },
+        {
+          "run_id": "def3b7e9",
+          "partition_key": "2026-07-01__2026-07-02",
+          "status": "SUCCEEDED",
+          "valid_loaded": 6928,
+          "run_minutes": 25.0,
+          "lineage_rows": 6926,
+          "lineage_span_minutes": 23.9,
+          "lineage_rows_per_minute": 289.9,
+          "lineage_share_of_run": 0.956
+        },
+        {
+          "run_id": "0157f8d9",
+          "partition_key": "2026-07-02__2026-07-03",
+          "status": "SUCCEEDED",
+          "valid_loaded": 6800,
+          "run_minutes": 27.0,
+          "lineage_rows": 6798,
+          "lineage_span_minutes": 23.9,
+          "lineage_rows_per_minute": 284.6,
+          "lineage_share_of_run": 0.885
+        },
+        {
+          "run_id": "f8f2314c",
+          "partition_key": "2026-07-03__2026-07-04",
+          "status": "SUCCEEDED",
+          "valid_loaded": 7633,
+          "run_minutes": 30.4,
+          "lineage_rows": 7633,
+          "lineage_span_minutes": 26.0,
+          "lineage_rows_per_minute": 293.0,
+          "lineage_share_of_run": 0.857
+        },
+        {
+          "run_id": "65e2f66e",
+          "partition_key": "2026-07-04__2026-07-05",
+          "status": "SUCCEEDED",
+          "valid_loaded": 10628,
+          "run_minutes": 25.7,
+          "lineage_rows": 10626,
+          "lineage_span_minutes": 21.2,
+          "lineage_rows_per_minute": 501.2,
+          "lineage_share_of_run": 0.825
+        },
+        {
+          "run_id": "29179df8",
+          "partition_key": "2026-07-05__2026-07-06",
+          "status": "SUCCEEDED",
+          "valid_loaded": 12344,
+          "run_minutes": 24.8,
+          "lineage_rows": 12340,
+          "lineage_span_minutes": 22.3,
+          "lineage_rows_per_minute": 553.0,
+          "lineage_share_of_run": 0.9
+        },
+        {
+          "run_id": "069b0984",
+          "partition_key": "2026-07-06__2026-07-07",
+          "status": "RUNNING",
+          "valid_loaded": 0,
+          "lineage_rows": 4752,
+          "lineage_span_minutes": 7.9,
+          "lineage_rows_per_minute": 598.3
+        }
+      ]
+    },
+    {
+      "slice": "s3",
+      "active_deadline_seconds": 14400,
+      "partitions": [
+        {
+          "run_id": "5efc0a7d",
+          "partition_key": "2026-07-06__2026-07-07",
+          "status": "SUCCEEDED",
+          "valid_loaded": 2570,
+          "run_minutes": 0.9,
+          "lineage_rows": 2569,
+          "lineage_span_minutes": 0.6,
+          "lineage_rows_per_minute": 4035.2,
+          "lineage_share_of_run": 0.707
+        },
+        {
+          "run_id": "1ed5b4e1",
+          "partition_key": "2026-07-07__2026-07-08",
+          "status": "SUCCEEDED",
+          "valid_loaded": 6592,
+          "run_minutes": 10.1,
+          "lineage_rows": 6589,
+          "lineage_span_minutes": 9.2,
+          "lineage_rows_per_minute": 712.5,
+          "lineage_share_of_run": 0.916
+        },
+        {
+          "run_id": "2f85c1cb",
+          "partition_key": "2026-07-08__2026-07-09",
+          "status": "SUCCEEDED",
+          "valid_loaded": 6661,
+          "run_minutes": 10.2,
+          "lineage_rows": 6658,
+          "lineage_span_minutes": 8.7,
+          "lineage_rows_per_minute": 764.5,
+          "lineage_share_of_run": 0.854
+        },
+        {
+          "run_id": "7c71ab3d",
+          "partition_key": "2026-07-09__2026-07-10",
+          "status": "SUCCEEDED",
+          "valid_loaded": 7427,
+          "run_minutes": 25.1,
+          "lineage_rows": 7426,
+          "lineage_span_minutes": 23.6,
+          "lineage_rows_per_minute": 314.9,
+          "lineage_share_of_run": 0.939
+        },
+        {
+          "run_id": "6f2e5f95",
+          "partition_key": "2026-07-10__2026-07-11",
+          "status": "SUCCEEDED",
+          "valid_loaded": 7665,
+          "run_minutes": 37.1,
+          "lineage_rows": 7664,
+          "lineage_span_minutes": 32.7,
+          "lineage_rows_per_minute": 234.5,
+          "lineage_share_of_run": 0.881
+        },
+        {
+          "run_id": "6d5b01d1",
+          "partition_key": "2026-07-11__2026-07-12",
+          "status": "SUCCEEDED",
+          "valid_loaded": 6443,
+          "run_minutes": 33.9,
+          "lineage_rows": 6441,
+          "lineage_span_minutes": 30.8,
+          "lineage_rows_per_minute": 209.2,
+          "lineage_share_of_run": 0.908
+        }
+      ]
+    },
+    {
+      "slice": "s4",
+      "active_deadline_seconds": 28800,
+      "partitions": [
+        {
+          "run_id": "02485370",
+          "partition_key": "2026-07-12__2026-07-13",
+          "status": "SUCCEEDED",
+          "valid_loaded": 12214,
+          "run_minutes": 52.8,
+          "lineage_rows": 12213,
+          "lineage_span_minutes": 49.7,
+          "lineage_rows_per_minute": 245.9,
+          "lineage_share_of_run": 0.94
+        },
+        {
+          "run_id": "6839709a",
+          "partition_key": "2026-07-13__2026-07-14",
+          "status": "RUNNING",
+          "valid_loaded": 0,
+          "lineage_rows": 2784,
+          "lineage_span_minutes": 10.6,
+          "lineage_rows_per_minute": 261.7
+        }
+      ]
+    }
+  ],
+  "summary": {
+    "full_length_partitions_measured": 18,
+    "resumed_stub_partitions_excluded": 2,
+    "lineage_share_of_run_mean": 0.896,
+    "all_slices": {
+      "rows_per_minute_min": 209.2,
+      "rows_per_minute_max": 822.7,
+      "rows_per_minute_mean": 521.0
+    },
+    "recent_slices_s3_s4": {
+      "rows_per_minute_min": 209.2,
+      "rows_per_minute_max": 764.5,
+      "rows_per_minute_mean": 413.6
+    },
+    "deadline_projection": {
+      "planning_rate_rows_per_minute": 209.2,
+      "basis": "slowest full-length partition on the two most recent slices",
+      "worst_case_partition_minutes": 65.5,
+      "worst_case_slice_minutes": 392.7,
+      "budget_minutes": 480.0,
+      "fits": true,
+      "rate_at_which_a_slice_exactly_fills_the_budget": 171.2
+    }
+  }
+}
