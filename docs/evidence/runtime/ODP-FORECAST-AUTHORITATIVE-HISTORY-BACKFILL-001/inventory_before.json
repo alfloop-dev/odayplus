@@ -1,0 +1,1693 @@
+{
+  "mode": "inventory",
+  "source": {
+    "relations": {
+      "core.address_locations": 2405,
+      "core.brands": 1354,
+      "core.machines": 7562,
+      "core.stores": 2442,
+      "core.tenants": 1354,
+      "core.transactions": 373165,
+      "data_plane.canonical_lineage": 638740,
+      "data_plane.ingestion_runs": 131
+    },
+    "source_catalog": {
+      "canonical_lineage": {
+        "available": true,
+        "by_canonical_table": [
+          {
+            "canonical_table": "core.transactions",
+            "last_projected_at": "2026-07-28T14:15:42.669677+00:00",
+            "lineage_rows": 373808,
+            "run_count": 45,
+            "tenant_count": 583
+          },
+          {
+            "canonical_table": "data_plane.forecast_inputs",
+            "last_projected_at": "2026-07-28T02:16:38.461967+00:00",
+            "lineage_rows": 202300,
+            "run_count": 6,
+            "tenant_count": 572
+          },
+          {
+            "canonical_table": "data_plane.learning_import_lineage",
+            "last_projected_at": "2026-07-25T02:29:28.110296+00:00",
+            "lineage_rows": 33836,
+            "run_count": 1,
+            "tenant_count": 322
+          },
+          {
+            "canonical_table": "core.machines",
+            "last_projected_at": "2026-07-28T01:15:22.666549+00:00",
+            "lineage_rows": 12930,
+            "run_count": 5,
+            "tenant_count": 744
+          },
+          {
+            "canonical_table": "data_plane.domain_inputs",
+            "last_projected_at": "2026-07-28T02:26:10.735063+00:00",
+            "lineage_rows": 8867,
+            "run_count": 8,
+            "tenant_count": 1331
+          },
+          {
+            "canonical_table": "core.stores",
+            "last_projected_at": "2026-07-28T01:01:24.373983+00:00",
+            "lineage_rows": 2446,
+            "run_count": 3,
+            "tenant_count": 1037
+          },
+          {
+            "canonical_table": "core.address_locations",
+            "last_projected_at": "2026-07-28T01:01:24.373983+00:00",
+            "lineage_rows": 2409,
+            "run_count": 3,
+            "tenant_count": 1022
+          },
+          {
+            "canonical_table": "core.tenants",
+            "last_projected_at": "2026-07-28T01:00:32.967616+00:00",
+            "lineage_rows": 1355,
+            "run_count": 2,
+            "tenant_count": 1354
+          },
+          {
+            "canonical_table": "core.brands",
+            "last_projected_at": "2026-07-28T01:00:32.967616+00:00",
+            "lineage_rows": 1355,
+            "run_count": 2,
+            "tenant_count": 1354
+          }
+        ],
+        "relation": "data_plane.canonical_lineage"
+      },
+      "canonical_transactions": {
+        "available": true,
+        "by_status": [
+          {
+            "currency": "TWD",
+            "source_system": "fongniao_prod",
+            "transaction_count": 338217,
+            "transaction_status": "succeeded"
+          },
+          {
+            "currency": "THB",
+            "source_system": "fongniao_prod",
+            "transaction_count": 21730,
+            "transaction_status": "succeeded"
+          },
+          {
+            "currency": "TWD",
+            "source_system": "fongniao_prod",
+            "transaction_count": 5267,
+            "transaction_status": "failed"
+          },
+          {
+            "currency": "MYR",
+            "source_system": "fongniao_prod",
+            "transaction_count": 4279,
+            "transaction_status": "succeeded"
+          },
+          {
+            "currency": "HKD",
+            "source_system": "fongniao_prod",
+            "transaction_count": 4036,
+            "transaction_status": "succeeded"
+          },
+          {
+            "currency": "TWD",
+            "source_system": "fongniao_prod",
+            "transaction_count": 176,
+            "transaction_status": "refunded"
+          },
+          {
+            "currency": "VND",
+            "source_system": "fongniao_prod",
+            "transaction_count": 174,
+            "transaction_status": "succeeded"
+          },
+          {
+            "currency": "HKD",
+            "source_system": "fongniao_prod",
+            "transaction_count": 42,
+            "transaction_status": "failed"
+          },
+          {
+            "currency": "SGD",
+            "source_system": "fongniao_prod",
+            "transaction_count": 15,
+            "transaction_status": "succeeded"
+          },
+          {
+            "currency": "VND",
+            "source_system": "fongniao_prod",
+            "transaction_count": 12,
+            "transaction_status": "failed"
+          },
+          {
+            "currency": "SGD",
+            "source_system": "fongniao_prod",
+            "transaction_count": 2,
+            "transaction_status": "refunded"
+          }
+        ],
+        "distinct_machines": 0,
+        "distinct_stores": 633,
+        "event_time_max": "2026-07-27T23:59:45.400000+00:00",
+        "event_time_min": "2026-05-22T23:59:36.632000+00:00",
+        "forecastable_rows": 338170,
+        "forecastable_store_count": 597,
+        "forecastable_tenant_count": 547,
+        "relation": "core.transactions",
+        "rows": 373889
+      },
+      "ingestion_runs": {
+        "available": true,
+        "by_source_kind_status": [
+          {
+            "first_started_at": "2026-07-24T18:37:36.298807+00:00",
+            "last_finished_at": "2026-07-28T02:26:15.219268+00:00",
+            "processed": 35307,
+            "quarantined": 1471,
+            "run_count": 6,
+            "source_kind": "ai_consumer_kmeans_v1",
+            "status": "SUCCEEDED",
+            "valid_loaded": 33836
+          },
+          {
+            "first_started_at": "2026-07-27T01:29:53.363693+00:00",
+            "last_finished_at": null,
+            "processed": 0,
+            "quarantined": 0,
+            "run_count": 1,
+            "source_kind": "ai_revenue_stats",
+            "status": "RUNNING",
+            "valid_loaded": 0
+          },
+          {
+            "first_started_at": "2026-07-24T18:11:32.432826+00:00",
+            "last_finished_at": "2026-07-28T02:16:50.699050+00:00",
+            "processed": 232377,
+            "quarantined": 7539,
+            "run_count": 6,
+            "source_kind": "ai_revenue_stats",
+            "status": "SUCCEEDED",
+            "valid_loaded": 224838
+          },
+          {
+            "first_started_at": "2026-07-24T18:31:35.512750+00:00",
+            "last_finished_at": "2026-07-28T02:17:26.926392+00:00",
+            "processed": 3295,
+            "quarantined": 120,
+            "run_count": 6,
+            "source_kind": "campaign",
+            "status": "SUCCEEDED",
+            "valid_loaded": 3175
+          },
+          {
+            "first_started_at": "2026-07-24T17:44:56.665843+00:00",
+            "last_finished_at": "2026-07-28T01:15:42.935475+00:00",
+            "processed": 85900,
+            "quarantined": 48112,
+            "run_count": 9,
+            "source_kind": "device",
+            "status": "SUCCEEDED",
+            "valid_loaded": 37788
+          },
+          {
+            "first_started_at": "2026-07-24T17:54:46.254271+00:00",
+            "last_finished_at": "2026-07-24T17:55:51.893115+00:00",
+            "processed": 0,
+            "quarantined": 0,
+            "run_count": 2,
+            "source_kind": "device_daily_statistics",
+            "status": "FAILED",
+            "valid_loaded": 0
+          },
+          {
+            "first_started_at": "2026-07-24T18:11:04.924822+00:00",
+            "last_finished_at": "2026-07-28T01:27:19.156005+00:00",
+            "processed": 0,
+            "quarantined": 0,
+            "run_count": 7,
+            "source_kind": "device_daily_statistics",
+            "status": "SUCCEEDED",
+            "valid_loaded": 0
+          },
+          {
+            "first_started_at": "2026-07-24T17:31:18.456805+00:00",
+            "last_finished_at": "2026-07-24T17:31:39.708276+00:00",
+            "processed": 0,
+            "quarantined": 0,
+            "run_count": 2,
+            "source_kind": "merchant",
+            "status": "FAILED",
+            "valid_loaded": 0
+          },
+          {
+            "first_started_at": "2026-07-24T17:33:51.711275+00:00",
+            "last_finished_at": "2026-07-28T01:00:33.110084+00:00",
+            "processed": 7182,
+            "quarantined": 412,
+            "run_count": 11,
+            "source_kind": "merchant",
+            "status": "SUCCEEDED",
+            "valid_loaded": 6770
+          },
+          {
+            "first_started_at": "2026-07-24T18:52:15.887969+00:00",
+            "last_finished_at": "2026-07-24T18:53:08.264341+00:00",
+            "processed": 0,
+            "quarantined": 0,
+            "run_count": 2,
+            "source_kind": "orders",
+            "status": "FAILED",
+            "valid_loaded": 0
+          },
+          {
+            "first_started_at": "2026-07-24T22:56:27.102080+00:00",
+            "last_finished_at": null,
+            "processed": 0,
+            "quarantined": 0,
+            "run_count": 2,
+            "source_kind": "orders",
+            "status": "RUNNING",
+            "valid_loaded": 0
+          },
+          {
+            "first_started_at": "2026-07-24T17:51:00.728007+00:00",
+            "last_finished_at": "2026-07-28T14:02:02.689609+00:00",
+            "processed": 395034,
+            "quarantined": 25721,
+            "run_count": 48,
+            "source_kind": "orders",
+            "status": "SUCCEEDED",
+            "valid_loaded": 369313
+          },
+          {
+            "first_started_at": "2026-07-24T17:34:08.433666+00:00",
+            "last_finished_at": "2026-07-24T17:34:32.294879+00:00",
+            "processed": 0,
+            "quarantined": 0,
+            "run_count": 2,
+            "source_kind": "place",
+            "status": "FAILED",
+            "valid_loaded": 0
+          },
+          {
+            "first_started_at": "2026-07-24T17:44:09.756359+00:00",
+            "last_finished_at": "2026-07-28T01:01:24.580564+00:00",
+            "processed": 17555,
+            "quarantined": 5345,
+            "run_count": 9,
+            "source_kind": "place",
+            "status": "SUCCEEDED",
+            "valid_loaded": 12210
+          },
+          {
+            "first_started_at": "2026-07-24T18:31:59.504881+00:00",
+            "last_finished_at": "2026-07-28T02:23:16.760689+00:00",
+            "processed": 26750,
+            "quarantined": 167,
+            "run_count": 6,
+            "source_kind": "product",
+            "status": "SUCCEEDED",
+            "valid_loaded": 26583
+          },
+          {
+            "first_started_at": "2026-07-24T18:35:52.812042+00:00",
+            "last_finished_at": "2026-07-28T02:25:10.942981+00:00",
+            "processed": 9650,
+            "quarantined": 251,
+            "run_count": 6,
+            "source_kind": "products",
+            "status": "SUCCEEDED",
+            "valid_loaded": 9399
+          },
+          {
+            "first_started_at": "2026-07-24T18:37:00.323245+00:00",
+            "last_finished_at": "2026-07-28T02:26:11.204820+00:00",
+            "processed": 5120,
+            "quarantined": 0,
+            "run_count": 6,
+            "source_kind": "promotions",
+            "status": "SUCCEEDED",
+            "valid_loaded": 5120
+          }
+        ],
+        "orders_partition_coverage": [
+          {
+            "partition_key": "2026-05-23__2026-05-24",
+            "run_count": 2,
+            "status": "FAILED"
+          },
+          {
+            "partition_key": "2026-05-23__2026-05-24",
+            "run_count": 1,
+            "status": "SUCCEEDED"
+          },
+          {
+            "partition_key": "2026-05-24__2026-05-25",
+            "run_count": 1,
+            "status": "SUCCEEDED"
+          },
+          {
+            "partition_key": "2026-05-25__2026-05-26",
+            "run_count": 1,
+            "status": "SUCCEEDED"
+          },
+          {
+            "partition_key": "2026-05-26__2026-05-27",
+            "run_count": 1,
+            "status": "SUCCEEDED"
+          },
+          {
+            "partition_key": "2026-05-27__2026-05-28",
+            "run_count": 1,
+            "status": "SUCCEEDED"
+          },
+          {
+            "partition_key": "2026-05-28__2026-05-29",
+            "run_count": 1,
+            "status": "SUCCEEDED"
+          },
+          {
+            "partition_key": "2026-05-29__2026-05-30",
+            "run_count": 1,
+            "status": "SUCCEEDED"
+          },
+          {
+            "partition_key": "2026-05-30__2026-05-31",
+            "run_count": 1,
+            "status": "SUCCEEDED"
+          },
+          {
+            "partition_key": "2026-05-31__2026-06-01",
+            "run_count": 1,
+            "status": "SUCCEEDED"
+          },
+          {
+            "partition_key": "2026-06-01__2026-06-02",
+            "run_count": 1,
+            "status": "SUCCEEDED"
+          },
+          {
+            "partition_key": "2026-06-02__2026-06-03",
+            "run_count": 1,
+            "status": "SUCCEEDED"
+          },
+          {
+            "partition_key": "2026-06-03__2026-06-04",
+            "run_count": 1,
+            "status": "SUCCEEDED"
+          },
+          {
+            "partition_key": "2026-06-04__2026-06-05",
+            "run_count": 1,
+            "status": "SUCCEEDED"
+          },
+          {
+            "partition_key": "2026-06-05__2026-06-06",
+            "run_count": 1,
+            "status": "SUCCEEDED"
+          },
+          {
+            "partition_key": "2026-06-06__2026-06-07",
+            "run_count": 1,
+            "status": "SUCCEEDED"
+          },
+          {
+            "partition_key": "2026-06-07__2026-06-08",
+            "run_count": 1,
+            "status": "SUCCEEDED"
+          },
+          {
+            "partition_key": "2026-06-08__2026-06-09",
+            "run_count": 1,
+            "status": "SUCCEEDED"
+          },
+          {
+            "partition_key": "2026-06-09__2026-06-10",
+            "run_count": 1,
+            "status": "SUCCEEDED"
+          },
+          {
+            "partition_key": "2026-06-10__2026-06-11",
+            "run_count": 1,
+            "status": "SUCCEEDED"
+          },
+          {
+            "partition_key": "2026-06-11__2026-06-12",
+            "run_count": 1,
+            "status": "SUCCEEDED"
+          },
+          {
+            "partition_key": "2026-06-12__2026-06-13",
+            "run_count": 1,
+            "status": "SUCCEEDED"
+          },
+          {
+            "partition_key": "2026-06-13__2026-06-14",
+            "run_count": 1,
+            "status": "SUCCEEDED"
+          },
+          {
+            "partition_key": "2026-06-14__2026-06-15",
+            "run_count": 1,
+            "status": "SUCCEEDED"
+          },
+          {
+            "partition_key": "2026-06-15__2026-06-16",
+            "run_count": 1,
+            "status": "SUCCEEDED"
+          },
+          {
+            "partition_key": "2026-06-16__2026-06-17",
+            "run_count": 1,
+            "status": "SUCCEEDED"
+          },
+          {
+            "partition_key": "2026-06-17__2026-06-18",
+            "run_count": 1,
+            "status": "SUCCEEDED"
+          },
+          {
+            "partition_key": "2026-06-18__2026-06-19",
+            "run_count": 1,
+            "status": "SUCCEEDED"
+          },
+          {
+            "partition_key": "2026-06-19__2026-06-20",
+            "run_count": 1,
+            "status": "SUCCEEDED"
+          },
+          {
+            "partition_key": "2026-06-20__2026-06-21",
+            "run_count": 1,
+            "status": "SUCCEEDED"
+          },
+          {
+            "partition_key": "2026-06-21__2026-06-22",
+            "run_count": 1,
+            "status": "SUCCEEDED"
+          },
+          {
+            "partition_key": "2026-06-22__2026-06-23",
+            "run_count": 1,
+            "status": "SUCCEEDED"
+          },
+          {
+            "partition_key": "2026-06-23__2026-06-24",
+            "run_count": 1,
+            "status": "RUNNING"
+          },
+          {
+            "partition_key": "2026-06-23__2026-06-24",
+            "run_count": 1,
+            "status": "SUCCEEDED"
+          },
+          {
+            "partition_key": "2026-06-24__2026-06-25",
+            "run_count": 1,
+            "status": "SUCCEEDED"
+          },
+          {
+            "partition_key": "2026-06-25__2026-06-26",
+            "run_count": 1,
+            "status": "SUCCEEDED"
+          },
+          {
+            "partition_key": "2026-06-26__2026-06-27",
+            "run_count": 1,
+            "status": "SUCCEEDED"
+          },
+          {
+            "partition_key": "2026-06-27__2026-06-28",
+            "run_count": 1,
+            "status": "SUCCEEDED"
+          },
+          {
+            "partition_key": "2026-06-28__2026-06-29",
+            "run_count": 1,
+            "status": "SUCCEEDED"
+          },
+          {
+            "partition_key": "2026-06-29__2026-06-30",
+            "run_count": 1,
+            "status": "SUCCEEDED"
+          },
+          {
+            "partition_key": "2026-06-30__2026-07-01",
+            "run_count": 1,
+            "status": "SUCCEEDED"
+          },
+          {
+            "partition_key": "2026-07-01__2026-07-02",
+            "run_count": 1,
+            "status": "RUNNING"
+          },
+          {
+            "partition_key": "2026-07-23__2026-07-24",
+            "run_count": 4,
+            "status": "SUCCEEDED"
+          },
+          {
+            "partition_key": "2026-07-24__2026-07-25",
+            "run_count": 1,
+            "status": "SUCCEEDED"
+          },
+          {
+            "partition_key": "2026-07-25__2026-07-26",
+            "run_count": 1,
+            "status": "SUCCEEDED"
+          },
+          {
+            "partition_key": "2026-07-26__2026-07-27",
+            "run_count": 2,
+            "status": "SUCCEEDED"
+          },
+          {
+            "partition_key": "2026-07-27__2026-07-28",
+            "run_count": 1,
+            "status": "SUCCEEDED"
+          }
+        ],
+        "relation": "data_plane.ingestion_runs"
+      },
+      "quarantine": {
+        "available": true,
+        "by_source_kind_reason": [
+          {
+            "reason_code": "MISSING_REQUIRED_FIELD",
+            "record_count": 17003,
+            "resolved_count": 0,
+            "retryable": false,
+            "source_kind": "orders"
+          },
+          {
+            "reason_code": "MISSING_REQUIRED_FIELD",
+            "record_count": 7255,
+            "resolved_count": 0,
+            "retryable": false,
+            "source_kind": "device"
+          },
+          {
+            "reason_code": "MISSING_PLACE_MAPPING",
+            "record_count": 6840,
+            "resolved_count": 0,
+            "retryable": false,
+            "source_kind": "ai_revenue_stats"
+          },
+          {
+            "reason_code": "INVALID_AMOUNT",
+            "record_count": 6700,
+            "resolved_count": 6700,
+            "retryable": false,
+            "source_kind": "orders"
+          },
+          {
+            "reason_code": "MISSING_PLACE_MAPPING",
+            "record_count": 3547,
+            "resolved_count": 0,
+            "retryable": false,
+            "source_kind": "device"
+          },
+          {
+            "reason_code": "MISSING_REQUIRED_FIELD",
+            "record_count": 1471,
+            "resolved_count": 0,
+            "retryable": false,
+            "source_kind": "ai_consumer_kmeans_v1"
+          },
+          {
+            "reason_code": "MISSING_PLACE_MAPPING",
+            "record_count": 1275,
+            "resolved_count": 0,
+            "retryable": false,
+            "source_kind": "orders"
+          },
+          {
+            "reason_code": "MISSING_REQUIRED_FIELD",
+            "record_count": 1020,
+            "resolved_count": 0,
+            "retryable": false,
+            "source_kind": "place"
+          },
+          {
+            "reason_code": "UNSUPPORTED_STATUS",
+            "record_count": 534,
+            "resolved_count": 214,
+            "retryable": false,
+            "source_kind": "orders"
+          },
+          {
+            "reason_code": "MISSING_REQUIRED_FIELD",
+            "record_count": 73,
+            "resolved_count": 0,
+            "retryable": false,
+            "source_kind": "merchant"
+          },
+          {
+            "reason_code": "MISSING_REQUIRED_FIELD",
+            "record_count": 51,
+            "resolved_count": 0,
+            "retryable": false,
+            "source_kind": "products"
+          },
+          {
+            "reason_code": "MISSING_MERCHANT_MAPPING",
+            "record_count": 51,
+            "resolved_count": 0,
+            "retryable": false,
+            "source_kind": "place"
+          },
+          {
+            "reason_code": "MISSING_MERCHANT_MAPPING",
+            "record_count": 45,
+            "resolved_count": 0,
+            "retryable": false,
+            "source_kind": "device"
+          },
+          {
+            "reason_code": "MISSING_MERCHANT_MAPPING",
+            "record_count": 34,
+            "resolved_count": 0,
+            "retryable": false,
+            "source_kind": "product"
+          },
+          {
+            "reason_code": "TENANT_OWNERSHIP_MISMATCH",
+            "record_count": 27,
+            "resolved_count": 0,
+            "retryable": false,
+            "source_kind": "device"
+          },
+          {
+            "reason_code": "MISSING_REQUIRED_FIELD",
+            "record_count": 19,
+            "resolved_count": 0,
+            "retryable": false,
+            "source_kind": "campaign"
+          },
+          {
+            "reason_code": "OPERATION_MAPPING_UNAPPROVED",
+            "record_count": 10,
+            "resolved_count": 0,
+            "retryable": false,
+            "source_kind": "merchant"
+          },
+          {
+            "reason_code": "MISSING_PLACE_MAPPING",
+            "record_count": 4,
+            "resolved_count": 0,
+            "retryable": false,
+            "source_kind": "campaign"
+          },
+          {
+            "reason_code": "TENANT_OWNERSHIP_MISMATCH",
+            "record_count": 1,
+            "resolved_count": 0,
+            "retryable": false,
+            "source_kind": "campaign"
+          }
+        ],
+        "relation": "data_plane.quarantined_records"
+      },
+      "raw_landing": {
+        "available": true,
+        "distinct_content_hashes": 392562,
+        "distinct_runs": 45,
+        "observed_at_max": "2026-07-28T14:02:03.372942+00:00",
+        "observed_at_min": "2026-07-24T18:37:57.597227+00:00",
+        "relation": "fongniao_raw.raw_orders",
+        "rows": 392562,
+        "source_updated_at_max": "2026-07-28T00:54:03.016000+00:00",
+        "source_updated_at_min": "2026-05-23T00:00:02.915000+00:00"
+      },
+      "transaction_authority": {
+        "available": true,
+        "by_source_kind_rank": [
+          {
+            "authority_rank": 1,
+            "last_updated_at": "2026-07-28T14:15:05.177316+00:00",
+            "snapshot_count": 373678,
+            "source_kind": "orders",
+            "transaction_count": 373678
+          }
+        ],
+        "relation": "data_plane.transaction_authority"
+      }
+    },
+    "transaction_coverage": {
+      "calendar_gaps": [
+        "2026-07-01..2026-07-23"
+      ],
+      "daily_partitions": [
+        {
+          "date": "2026-05-22",
+          "store_count": 3,
+          "tenant_count": 3,
+          "transaction_count": 3
+        },
+        {
+          "date": "2026-05-23",
+          "store_count": 527,
+          "tenant_count": 495,
+          "transaction_count": 9012
+        },
+        {
+          "date": "2026-05-24",
+          "store_count": 532,
+          "tenant_count": 496,
+          "transaction_count": 11016
+        },
+        {
+          "date": "2026-05-25",
+          "store_count": 512,
+          "tenant_count": 483,
+          "transaction_count": 6162
+        },
+        {
+          "date": "2026-05-26",
+          "store_count": 512,
+          "tenant_count": 482,
+          "transaction_count": 5356
+        },
+        {
+          "date": "2026-05-27",
+          "store_count": 511,
+          "tenant_count": 484,
+          "transaction_count": 5507
+        },
+        {
+          "date": "2026-05-28",
+          "store_count": 508,
+          "tenant_count": 481,
+          "transaction_count": 5489
+        },
+        {
+          "date": "2026-05-29",
+          "store_count": 524,
+          "tenant_count": 493,
+          "transaction_count": 5938
+        },
+        {
+          "date": "2026-05-30",
+          "store_count": 538,
+          "tenant_count": 502,
+          "transaction_count": 8868
+        },
+        {
+          "date": "2026-05-31",
+          "store_count": 534,
+          "tenant_count": 502,
+          "transaction_count": 10602
+        },
+        {
+          "date": "2026-06-01",
+          "store_count": 519,
+          "tenant_count": 492,
+          "transaction_count": 5869
+        },
+        {
+          "date": "2026-06-02",
+          "store_count": 522,
+          "tenant_count": 491,
+          "transaction_count": 5131
+        },
+        {
+          "date": "2026-06-03",
+          "store_count": 525,
+          "tenant_count": 497,
+          "transaction_count": 5146
+        },
+        {
+          "date": "2026-06-04",
+          "store_count": 513,
+          "tenant_count": 485,
+          "transaction_count": 4757
+        },
+        {
+          "date": "2026-06-05",
+          "store_count": 518,
+          "tenant_count": 488,
+          "transaction_count": 6025
+        },
+        {
+          "date": "2026-06-06",
+          "store_count": 535,
+          "tenant_count": 503,
+          "transaction_count": 10044
+        },
+        {
+          "date": "2026-06-07",
+          "store_count": 536,
+          "tenant_count": 504,
+          "transaction_count": 10810
+        },
+        {
+          "date": "2026-06-08",
+          "store_count": 523,
+          "tenant_count": 493,
+          "transaction_count": 6219
+        },
+        {
+          "date": "2026-06-09",
+          "store_count": 520,
+          "tenant_count": 490,
+          "transaction_count": 5485
+        },
+        {
+          "date": "2026-06-10",
+          "store_count": 537,
+          "tenant_count": 508,
+          "transaction_count": 7661
+        },
+        {
+          "date": "2026-06-11",
+          "store_count": 533,
+          "tenant_count": 503,
+          "transaction_count": 6639
+        },
+        {
+          "date": "2026-06-12",
+          "store_count": 538,
+          "tenant_count": 508,
+          "transaction_count": 7766
+        },
+        {
+          "date": "2026-06-13",
+          "store_count": 551,
+          "tenant_count": 518,
+          "transaction_count": 12105
+        },
+        {
+          "date": "2026-06-14",
+          "store_count": 546,
+          "tenant_count": 512,
+          "transaction_count": 11035
+        },
+        {
+          "date": "2026-06-15",
+          "store_count": 540,
+          "tenant_count": 507,
+          "transaction_count": 7477
+        },
+        {
+          "date": "2026-06-16",
+          "store_count": 539,
+          "tenant_count": 510,
+          "transaction_count": 7439
+        },
+        {
+          "date": "2026-06-17",
+          "store_count": 542,
+          "tenant_count": 513,
+          "transaction_count": 7252
+        },
+        {
+          "date": "2026-06-18",
+          "store_count": 545,
+          "tenant_count": 511,
+          "transaction_count": 7380
+        },
+        {
+          "date": "2026-06-19",
+          "store_count": 544,
+          "tenant_count": 511,
+          "transaction_count": 9476
+        },
+        {
+          "date": "2026-06-20",
+          "store_count": 546,
+          "tenant_count": 514,
+          "transaction_count": 8577
+        },
+        {
+          "date": "2026-06-21",
+          "store_count": 544,
+          "tenant_count": 510,
+          "transaction_count": 10769
+        },
+        {
+          "date": "2026-06-22",
+          "store_count": 536,
+          "tenant_count": 506,
+          "transaction_count": 6347
+        },
+        {
+          "date": "2026-06-23",
+          "store_count": 537,
+          "tenant_count": 506,
+          "transaction_count": 5606
+        },
+        {
+          "date": "2026-06-24",
+          "store_count": 543,
+          "tenant_count": 509,
+          "transaction_count": 5743
+        },
+        {
+          "date": "2026-06-25",
+          "store_count": 523,
+          "tenant_count": 492,
+          "transaction_count": 4643
+        },
+        {
+          "date": "2026-06-26",
+          "store_count": 537,
+          "tenant_count": 504,
+          "transaction_count": 7069
+        },
+        {
+          "date": "2026-06-27",
+          "store_count": 553,
+          "tenant_count": 519,
+          "transaction_count": 10533
+        },
+        {
+          "date": "2026-06-28",
+          "store_count": 558,
+          "tenant_count": 520,
+          "transaction_count": 12431
+        },
+        {
+          "date": "2026-06-29",
+          "store_count": 538,
+          "tenant_count": 507,
+          "transaction_count": 6888
+        },
+        {
+          "date": "2026-06-30",
+          "store_count": 542,
+          "tenant_count": 509,
+          "transaction_count": 6022
+        },
+        {
+          "date": "2026-07-01",
+          "store_count": 521,
+          "tenant_count": 495,
+          "transaction_count": 4114
+        },
+        {
+          "date": "2026-07-23",
+          "store_count": 550,
+          "tenant_count": 516,
+          "transaction_count": 5954
+        },
+        {
+          "date": "2026-07-24",
+          "store_count": 552,
+          "tenant_count": 518,
+          "transaction_count": 6446
+        },
+        {
+          "date": "2026-07-25",
+          "store_count": 565,
+          "tenant_count": 531,
+          "transaction_count": 8506
+        },
+        {
+          "date": "2026-07-26",
+          "store_count": 568,
+          "tenant_count": 533,
+          "transaction_count": 10676
+        },
+        {
+          "date": "2026-07-27",
+          "store_count": 554,
+          "tenant_count": 522,
+          "transaction_count": 6224
+        }
+      ],
+      "distinct_dates": 46,
+      "max_date": "2026-07-27",
+      "min_date": "2026-05-22"
+    }
+  },
+  "target": {
+    "forecast_windows": {
+      "available": true,
+      "eligible_max_date": "2026-06-22",
+      "eligible_min_date": "2026-06-19",
+      "eligible_store_count": 434,
+      "exclusion_reasons": {
+        "ELIGIBLE": 1303,
+        "INSUFFICIENT_28_DAY_HISTORY": 17385,
+        "SOURCE_RUN_NOT_COMPLETE": 453
+      },
+      "horizon_windows": {
+        "h14": {
+          "complete_windows": 0,
+          "stores_with_complete_window": 0
+        },
+        "h168": {
+          "complete_windows": 0,
+          "stores_with_complete_window": 0
+        },
+        "h28": {
+          "complete_windows": 0,
+          "stores_with_complete_window": 0
+        },
+        "h56": {
+          "complete_windows": 0,
+          "stores_with_complete_window": 0
+        },
+        "h7": {
+          "complete_windows": 0,
+          "stores_with_complete_window": 0
+        },
+        "h84": {
+          "complete_windows": 0,
+          "stores_with_complete_window": 0
+        }
+      },
+      "longest_eligible_streak_days": 4,
+      "longest_streak_end": "2026-06-22",
+      "longest_streak_start": "2026-06-19",
+      "rows": 19141,
+      "stores_with_any_streak": 434,
+      "tenant_count": 547,
+      "training_eligible_rows": 1303
+    },
+    "relations": {
+      "core.address_locations": 2405,
+      "core.brands": 1354,
+      "core.machines": 7562,
+      "core.stores": 2442,
+      "core.tenants": 1354,
+      "core.transactions": 298599,
+      "data_plane.canonical_lineage": 300508,
+      "data_plane.ingestion_runs": 37
+    },
+    "source_catalog": {
+      "canonical_lineage": {
+        "available": true,
+        "by_canonical_table": [
+          {
+            "canonical_table": "core.transactions",
+            "last_projected_at": "2026-07-27T01:29:03.982150+00:00",
+            "lineage_rows": 298599,
+            "run_count": 36,
+            "tenant_count": 583
+          },
+          {
+            "canonical_table": "data_plane.place_geography",
+            "last_projected_at": "2026-07-27T19:45:15.426822+00:00",
+            "lineage_rows": 1909,
+            "run_count": 1,
+            "tenant_count": 810
+          }
+        ],
+        "relation": "data_plane.canonical_lineage"
+      },
+      "canonical_transactions": {
+        "available": true,
+        "by_status": [
+          {
+            "currency": "TWD",
+            "source_system": "fongniao_prod",
+            "transaction_count": 270635,
+            "transaction_status": "succeeded"
+          },
+          {
+            "currency": "THB",
+            "source_system": "fongniao_prod",
+            "transaction_count": 17325,
+            "transaction_status": "succeeded"
+          },
+          {
+            "currency": "TWD",
+            "source_system": "fongniao_prod",
+            "transaction_count": 3630,
+            "transaction_status": "failed"
+          },
+          {
+            "currency": "MYR",
+            "source_system": "fongniao_prod",
+            "transaction_count": 3467,
+            "transaction_status": "succeeded"
+          },
+          {
+            "currency": "HKD",
+            "source_system": "fongniao_prod",
+            "transaction_count": 3228,
+            "transaction_status": "succeeded"
+          },
+          {
+            "currency": "TWD",
+            "source_system": "fongniao_prod",
+            "transaction_count": 143,
+            "transaction_status": "refunded"
+          },
+          {
+            "currency": "VND",
+            "source_system": "fongniao_prod",
+            "transaction_count": 138,
+            "transaction_status": "succeeded"
+          },
+          {
+            "currency": "HKD",
+            "source_system": "fongniao_prod",
+            "transaction_count": 19,
+            "transaction_status": "failed"
+          },
+          {
+            "currency": "SGD",
+            "source_system": "fongniao_prod",
+            "transaction_count": 8,
+            "transaction_status": "succeeded"
+          },
+          {
+            "currency": "VND",
+            "source_system": "fongniao_prod",
+            "transaction_count": 4,
+            "transaction_status": "failed"
+          },
+          {
+            "currency": "SGD",
+            "source_system": "fongniao_prod",
+            "transaction_count": 2,
+            "transaction_status": "refunded"
+          }
+        ],
+        "distinct_machines": 0,
+        "distinct_stores": 632,
+        "event_time_max": "2026-07-26T23:59:51.732000+00:00",
+        "event_time_min": "2026-05-22T23:59:36.632000+00:00",
+        "forecastable_rows": 270635,
+        "forecastable_store_count": 596,
+        "forecastable_tenant_count": 547,
+        "relation": "core.transactions",
+        "rows": 298599
+      },
+      "ingestion_runs": {
+        "available": true,
+        "by_source_kind_status": [
+          {
+            "first_started_at": "2026-07-24T22:56:27.102080+00:00",
+            "last_finished_at": null,
+            "processed": 0,
+            "quarantined": 0,
+            "run_count": 1,
+            "source_kind": "orders",
+            "status": "RUNNING",
+            "valid_loaded": 0
+          },
+          {
+            "first_started_at": "2026-07-24T18:37:57.534285+00:00",
+            "last_finished_at": "2026-07-27T01:29:18.777659+00:00",
+            "processed": 311536,
+            "quarantined": 14668,
+            "run_count": 35,
+            "source_kind": "orders",
+            "status": "SUCCEEDED",
+            "valid_loaded": 296868
+          },
+          {
+            "first_started_at": "2026-07-27T19:17:31.212254+00:00",
+            "last_finished_at": "2026-07-27T20:37:59.785694+00:00",
+            "processed": 2405,
+            "quarantined": 496,
+            "run_count": 1,
+            "source_kind": "place_geography",
+            "status": "SUCCEEDED",
+            "valid_loaded": 1909
+          }
+        ],
+        "orders_partition_coverage": [
+          {
+            "partition_key": "2026-05-23__2026-05-24",
+            "run_count": 1,
+            "status": "SUCCEEDED"
+          },
+          {
+            "partition_key": "2026-05-24__2026-05-25",
+            "run_count": 1,
+            "status": "SUCCEEDED"
+          },
+          {
+            "partition_key": "2026-05-25__2026-05-26",
+            "run_count": 1,
+            "status": "SUCCEEDED"
+          },
+          {
+            "partition_key": "2026-05-26__2026-05-27",
+            "run_count": 1,
+            "status": "SUCCEEDED"
+          },
+          {
+            "partition_key": "2026-05-27__2026-05-28",
+            "run_count": 1,
+            "status": "SUCCEEDED"
+          },
+          {
+            "partition_key": "2026-05-28__2026-05-29",
+            "run_count": 1,
+            "status": "SUCCEEDED"
+          },
+          {
+            "partition_key": "2026-05-29__2026-05-30",
+            "run_count": 1,
+            "status": "SUCCEEDED"
+          },
+          {
+            "partition_key": "2026-05-30__2026-05-31",
+            "run_count": 1,
+            "status": "SUCCEEDED"
+          },
+          {
+            "partition_key": "2026-05-31__2026-06-01",
+            "run_count": 1,
+            "status": "SUCCEEDED"
+          },
+          {
+            "partition_key": "2026-06-01__2026-06-02",
+            "run_count": 1,
+            "status": "SUCCEEDED"
+          },
+          {
+            "partition_key": "2026-06-02__2026-06-03",
+            "run_count": 1,
+            "status": "SUCCEEDED"
+          },
+          {
+            "partition_key": "2026-06-03__2026-06-04",
+            "run_count": 1,
+            "status": "SUCCEEDED"
+          },
+          {
+            "partition_key": "2026-06-04__2026-06-05",
+            "run_count": 1,
+            "status": "SUCCEEDED"
+          },
+          {
+            "partition_key": "2026-06-05__2026-06-06",
+            "run_count": 1,
+            "status": "SUCCEEDED"
+          },
+          {
+            "partition_key": "2026-06-06__2026-06-07",
+            "run_count": 1,
+            "status": "SUCCEEDED"
+          },
+          {
+            "partition_key": "2026-06-07__2026-06-08",
+            "run_count": 1,
+            "status": "SUCCEEDED"
+          },
+          {
+            "partition_key": "2026-06-08__2026-06-09",
+            "run_count": 1,
+            "status": "SUCCEEDED"
+          },
+          {
+            "partition_key": "2026-06-09__2026-06-10",
+            "run_count": 1,
+            "status": "SUCCEEDED"
+          },
+          {
+            "partition_key": "2026-06-10__2026-06-11",
+            "run_count": 1,
+            "status": "SUCCEEDED"
+          },
+          {
+            "partition_key": "2026-06-11__2026-06-12",
+            "run_count": 1,
+            "status": "SUCCEEDED"
+          },
+          {
+            "partition_key": "2026-06-12__2026-06-13",
+            "run_count": 1,
+            "status": "SUCCEEDED"
+          },
+          {
+            "partition_key": "2026-06-13__2026-06-14",
+            "run_count": 1,
+            "status": "SUCCEEDED"
+          },
+          {
+            "partition_key": "2026-06-14__2026-06-15",
+            "run_count": 1,
+            "status": "SUCCEEDED"
+          },
+          {
+            "partition_key": "2026-06-15__2026-06-16",
+            "run_count": 1,
+            "status": "SUCCEEDED"
+          },
+          {
+            "partition_key": "2026-06-16__2026-06-17",
+            "run_count": 1,
+            "status": "SUCCEEDED"
+          },
+          {
+            "partition_key": "2026-06-17__2026-06-18",
+            "run_count": 1,
+            "status": "SUCCEEDED"
+          },
+          {
+            "partition_key": "2026-06-18__2026-06-19",
+            "run_count": 1,
+            "status": "SUCCEEDED"
+          },
+          {
+            "partition_key": "2026-06-19__2026-06-20",
+            "run_count": 1,
+            "status": "SUCCEEDED"
+          },
+          {
+            "partition_key": "2026-06-20__2026-06-21",
+            "run_count": 1,
+            "status": "SUCCEEDED"
+          },
+          {
+            "partition_key": "2026-06-21__2026-06-22",
+            "run_count": 1,
+            "status": "SUCCEEDED"
+          },
+          {
+            "partition_key": "2026-06-22__2026-06-23",
+            "run_count": 1,
+            "status": "SUCCEEDED"
+          },
+          {
+            "partition_key": "2026-06-23__2026-06-24",
+            "run_count": 1,
+            "status": "RUNNING"
+          },
+          {
+            "partition_key": "2026-07-23__2026-07-24",
+            "run_count": 1,
+            "status": "SUCCEEDED"
+          },
+          {
+            "partition_key": "2026-07-24__2026-07-25",
+            "run_count": 1,
+            "status": "SUCCEEDED"
+          },
+          {
+            "partition_key": "2026-07-25__2026-07-26",
+            "run_count": 1,
+            "status": "SUCCEEDED"
+          },
+          {
+            "partition_key": "2026-07-26__2026-07-27",
+            "run_count": 1,
+            "status": "SUCCEEDED"
+          }
+        ],
+        "relation": "data_plane.ingestion_runs"
+      },
+      "quarantine": {
+        "available": true,
+        "by_source_kind_reason": [
+          {
+            "reason_code": "ADMIN_BOUNDARY_MISMATCH",
+            "record_count": 1987,
+            "resolved_count": 0,
+            "retryable": false,
+            "source_kind": "place_geography"
+          },
+          {
+            "reason_code": "COORDINATES_OUT_OF_MARKET",
+            "record_count": 236,
+            "resolved_count": 0,
+            "retryable": false,
+            "source_kind": "place_geography"
+          },
+          {
+            "reason_code": "GEOCODE_UNRESOLVED",
+            "record_count": 160,
+            "resolved_count": 0,
+            "retryable": false,
+            "source_kind": "place_geography"
+          },
+          {
+            "reason_code": "GEOCODE_ADMIN_MISMATCH",
+            "record_count": 56,
+            "resolved_count": 0,
+            "retryable": false,
+            "source_kind": "place_geography"
+          },
+          {
+            "reason_code": "GEOGRAPHY_CONFLICT",
+            "record_count": 2,
+            "resolved_count": 0,
+            "retryable": false,
+            "source_kind": "place_geography"
+          },
+          {
+            "reason_code": "ADDRESS_UNNORMALIZABLE",
+            "record_count": 1,
+            "resolved_count": 0,
+            "retryable": false,
+            "source_kind": "place_geography"
+          }
+        ],
+        "relation": "data_plane.quarantined_records"
+      },
+      "raw_landing": {
+        "available": false,
+        "relation": "fongniao_raw.raw_orders"
+      },
+      "transaction_authority": {
+        "available": true,
+        "by_source_kind_rank": [],
+        "relation": "data_plane.transaction_authority"
+      }
+    },
+    "transaction_coverage": {
+      "calendar_gaps": [
+        "2026-06-23..2026-07-23"
+      ],
+      "daily_partitions": [
+        {
+          "date": "2026-05-22",
+          "store_count": 3,
+          "tenant_count": 3,
+          "transaction_count": 3
+        },
+        {
+          "date": "2026-05-23",
+          "store_count": 527,
+          "tenant_count": 495,
+          "transaction_count": 9012
+        },
+        {
+          "date": "2026-05-24",
+          "store_count": 532,
+          "tenant_count": 496,
+          "transaction_count": 11016
+        },
+        {
+          "date": "2026-05-25",
+          "store_count": 512,
+          "tenant_count": 483,
+          "transaction_count": 6162
+        },
+        {
+          "date": "2026-05-26",
+          "store_count": 512,
+          "tenant_count": 482,
+          "transaction_count": 5356
+        },
+        {
+          "date": "2026-05-27",
+          "store_count": 511,
+          "tenant_count": 484,
+          "transaction_count": 5507
+        },
+        {
+          "date": "2026-05-28",
+          "store_count": 508,
+          "tenant_count": 481,
+          "transaction_count": 5489
+        },
+        {
+          "date": "2026-05-29",
+          "store_count": 524,
+          "tenant_count": 493,
+          "transaction_count": 5938
+        },
+        {
+          "date": "2026-05-30",
+          "store_count": 538,
+          "tenant_count": 502,
+          "transaction_count": 8868
+        },
+        {
+          "date": "2026-05-31",
+          "store_count": 534,
+          "tenant_count": 502,
+          "transaction_count": 10602
+        },
+        {
+          "date": "2026-06-01",
+          "store_count": 519,
+          "tenant_count": 492,
+          "transaction_count": 5869
+        },
+        {
+          "date": "2026-06-02",
+          "store_count": 522,
+          "tenant_count": 491,
+          "transaction_count": 5131
+        },
+        {
+          "date": "2026-06-03",
+          "store_count": 525,
+          "tenant_count": 497,
+          "transaction_count": 5146
+        },
+        {
+          "date": "2026-06-04",
+          "store_count": 513,
+          "tenant_count": 485,
+          "transaction_count": 4757
+        },
+        {
+          "date": "2026-06-05",
+          "store_count": 518,
+          "tenant_count": 488,
+          "transaction_count": 6025
+        },
+        {
+          "date": "2026-06-06",
+          "store_count": 535,
+          "tenant_count": 503,
+          "transaction_count": 10044
+        },
+        {
+          "date": "2026-06-07",
+          "store_count": 536,
+          "tenant_count": 504,
+          "transaction_count": 10810
+        },
+        {
+          "date": "2026-06-08",
+          "store_count": 523,
+          "tenant_count": 493,
+          "transaction_count": 6219
+        },
+        {
+          "date": "2026-06-09",
+          "store_count": 520,
+          "tenant_count": 490,
+          "transaction_count": 5485
+        },
+        {
+          "date": "2026-06-10",
+          "store_count": 537,
+          "tenant_count": 508,
+          "transaction_count": 7661
+        },
+        {
+          "date": "2026-06-11",
+          "store_count": 533,
+          "tenant_count": 503,
+          "transaction_count": 6639
+        },
+        {
+          "date": "2026-06-12",
+          "store_count": 538,
+          "tenant_count": 508,
+          "transaction_count": 7766
+        },
+        {
+          "date": "2026-06-13",
+          "store_count": 551,
+          "tenant_count": 518,
+          "transaction_count": 12105
+        },
+        {
+          "date": "2026-06-14",
+          "store_count": 546,
+          "tenant_count": 512,
+          "transaction_count": 11035
+        },
+        {
+          "date": "2026-06-15",
+          "store_count": 540,
+          "tenant_count": 507,
+          "transaction_count": 7477
+        },
+        {
+          "date": "2026-06-16",
+          "store_count": 539,
+          "tenant_count": 510,
+          "transaction_count": 7439
+        },
+        {
+          "date": "2026-06-17",
+          "store_count": 542,
+          "tenant_count": 513,
+          "transaction_count": 7252
+        },
+        {
+          "date": "2026-06-18",
+          "store_count": 545,
+          "tenant_count": 511,
+          "transaction_count": 7380
+        },
+        {
+          "date": "2026-06-19",
+          "store_count": 544,
+          "tenant_count": 511,
+          "transaction_count": 9476
+        },
+        {
+          "date": "2026-06-20",
+          "store_count": 546,
+          "tenant_count": 514,
+          "transaction_count": 8577
+        },
+        {
+          "date": "2026-06-21",
+          "store_count": 544,
+          "tenant_count": 510,
+          "transaction_count": 10769
+        },
+        {
+          "date": "2026-06-22",
+          "store_count": 536,
+          "tenant_count": 506,
+          "transaction_count": 6347
+        },
+        {
+          "date": "2026-06-23",
+          "store_count": 453,
+          "tenant_count": 428,
+          "transaction_count": 1690
+        },
+        {
+          "date": "2026-07-23",
+          "store_count": 550,
+          "tenant_count": 516,
+          "transaction_count": 5954
+        },
+        {
+          "date": "2026-07-24",
+          "store_count": 552,
+          "tenant_count": 518,
+          "transaction_count": 6446
+        },
+        {
+          "date": "2026-07-25",
+          "store_count": 565,
+          "tenant_count": 531,
+          "transaction_count": 8506
+        },
+        {
+          "date": "2026-07-26",
+          "store_count": 568,
+          "tenant_count": 533,
+          "transaction_count": 10677
+        }
+      ],
+      "distinct_dates": 37,
+      "max_date": "2026-07-26",
+      "min_date": "2026-05-22"
+    }
+  }
+}
