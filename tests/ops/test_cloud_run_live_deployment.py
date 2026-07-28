@@ -1253,6 +1253,290 @@ def test_job_smoke_rejects_failed_execution_and_missing_provider_secrets() -> No
     assert "jobs-smoke:scheduler:execution" in failed
 
 
+def _knative_execution(name: str, created: str, *, job: str = "worker-job") -> dict[str, object]:
+    return {
+        "metadata": {
+            "name": name,
+            "creationTimestamp": created,
+            "labels": {"run.googleapis.com/job": job},
+        }
+    }
+
+
+def _v2_execution(name: str, created: str, *, job: str = "worker-job") -> dict[str, object]:
+    return {
+        "name": f"projects/p/locations/asia-east1/jobs/{job}/executions/{name}",
+        "createTime": created,
+        "job": f"projects/p/locations/asia-east1/jobs/{job}",
+    }
+
+
+@pytest.mark.parametrize("builder", [_knative_execution, _v2_execution])
+def test_latest_execution_resolves_newest_name_across_gcloud_schemas(builder) -> None:
+    """ODP-DEPLOY-CLOUD-RUN-JOB-EXECUTION-COMPAT-001: no describe-latest dependency."""
+    payload = [
+        builder("worker-job-00002", "2026-07-24T10:05:00Z"),
+        builder("worker-job-00001", "2026-07-24T10:00:00Z"),
+        builder("worker-job-00003", "2026-07-24T10:09:31.123456789Z"),
+    ]
+
+    assert validator.resolve_latest_execution_name(payload, job="worker-job") == "worker-job-00003"
+    # A single execution needs no ordering evidence at all.
+    assert validator.resolve_latest_execution_name([builder("worker-job-00007", "")]) == (
+        "worker-job-00007"
+    )
+    # gcloud emits a bare array; an API-shaped wrapper stays readable.
+    assert validator.resolve_latest_execution_name({"items": payload}) == "worker-job-00003"
+
+
+@pytest.mark.parametrize(
+    ("payload", "expected"),
+    [
+        ([], "no Cloud Run Job execution was found"),
+        ({"items": []}, "no Cloud Run Job execution was found"),
+        ("worker-job-00001", "must be a JSON array"),
+        ([{"metadata": {"creationTimestamp": "2026-07-24T10:00:00Z"}}], "no resolvable execution"),
+        (["worker-job-00001"], "is not a JSON object"),
+        (
+            [
+                _knative_execution("worker-job-00001", "2026-07-24T10:00:00Z"),
+                {"metadata": {"name": "worker-job-00002"}},
+            ],
+            "no creation timestamp",
+        ),
+        (
+            [
+                _knative_execution("worker-job-00001", "2026-07-24T10:00:00Z"),
+                _knative_execution("worker-job-00002", "not-a-timestamp"),
+            ],
+            "is unparsable",
+        ),
+        (
+            [
+                _knative_execution("worker-job-00001", "2026-07-24T10:00:00Z"),
+                _knative_execution("worker-job-00002", "2026-07-24T10:00:00Z"),
+            ],
+            "ambiguous",
+        ),
+    ],
+)
+def test_latest_execution_resolution_fails_closed(payload: object, expected: str) -> None:
+    with pytest.raises(ValueError) as excinfo:
+        validator.resolve_latest_execution_name(payload)
+
+    assert expected in str(excinfo.value)
+
+
+def test_latest_execution_resolution_rejects_a_foreign_job_execution() -> None:
+    payload = [_knative_execution("scheduler-job-00001", "2026-07-24T10:00:00Z", job="other-job")]
+
+    with pytest.raises(ValueError, match="does not belong to job"):
+        validator.resolve_latest_execution_name(payload, job="scheduler-job")
+
+    # Without labels the generated `<job>-<suffix>` name is the only evidence.
+    unlabelled = [
+        {"metadata": {"name": "other-job-00001", "creationTimestamp": "2026-07-24T10:00:00Z"}}
+    ]
+    with pytest.raises(ValueError, match="does not belong to job"):
+        validator.resolve_latest_execution_name(unlabelled, job="scheduler-job")
+
+
+def test_resolve_latest_execution_cli_prints_name_and_exits_nonzero_when_unprovable(
+    tmp_path: Path,
+) -> None:
+    executions = tmp_path / "worker-execution-list.json"
+    executions.write_text(
+        json.dumps(
+            [
+                _knative_execution("worker-job-00001", "2026-07-24T10:00:00Z"),
+                _knative_execution("worker-job-00002", "2026-07-24T10:07:00Z"),
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    resolved = subprocess.run(
+        [
+            sys.executable,
+            str(VALIDATOR_PATH),
+            "resolve-latest-execution",
+            f"--executions={executions}",
+            "--job=worker-job",
+        ],
+        cwd=ROOT,
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    assert resolved.returncode == 0, resolved.stderr
+    assert resolved.stdout.strip() == "worker-job-00002"
+
+    executions.write_text("[]", encoding="utf-8")
+    empty = subprocess.run(
+        [
+            sys.executable,
+            str(VALIDATOR_PATH),
+            "resolve-latest-execution",
+            f"--executions={executions}",
+            "--job=worker-job",
+        ],
+        cwd=ROOT,
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    assert empty.returncode == 1
+    assert empty.stdout.strip() == ""
+    assert "fail-closed" in empty.stderr
+
+    malformed = subprocess.run(
+        [
+            sys.executable,
+            str(VALIDATOR_PATH),
+            "resolve-latest-execution",
+            f"--executions={tmp_path / 'missing.json'}",
+        ],
+        cwd=ROOT,
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    assert malformed.returncode == 1
+    assert malformed.stdout.strip() == ""
+
+
+def _extract_shell_function(text: str, name: str) -> str:
+    start = text.index(f"{name}() {{")
+    return text[start : text.index("\n}\n", start) + len("\n}\n")]
+
+
+def _run_capture_latest_execution(
+    tmp_path: Path, *, executions: str
+) -> tuple[subprocess.CompletedProcess[str], Path, Path]:
+    """Execute the deploy script's capture helper against a stubbed gcloud."""
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    executions_file = tmp_path / "executions.json"
+    executions_file.write_text(executions, encoding="utf-8")
+    gcloud_log = tmp_path / "gcloud.log"
+    gcloud = bin_dir / "gcloud"
+    gcloud.write_text(
+        "#!/bin/sh\n"
+        f'printf "%s\\n" "$*" >>"{gcloud_log}"\n'
+        'case "$4" in\n'
+        f'  list) cat "{executions_file}" ;;\n'
+        '  describe) printf \'{"metadata": {"name": "%s"}}\\n\' "$5" ;;\n'
+        '  *) echo "unexpected gcloud call: $*" >&2; exit 64 ;;\n'
+        "esac\n",
+        encoding="utf-8",
+    )
+    gcloud.chmod(0o755)
+
+    receipt = tmp_path / "worker-execution.json"
+    deploy_text = DEPLOY_SCRIPT.read_text(encoding="utf-8")
+    capture_function = _extract_shell_function(deploy_text, "capture_latest_execution")
+    harness = tmp_path / "harness.sh"
+    harness.write_text(
+        "set -euo pipefail\n"
+        'GCP_REGION="asia-east1"\n'
+        'GCP_PROJECT="oday-plus"\n'
+        f'run_locked_python() {{ "{sys.executable}" "$@"; }}\n'
+        f"{capture_function}"
+        f'capture_latest_execution "worker-job" "{receipt}"\n',
+        encoding="utf-8",
+    )
+    result = subprocess.run(
+        ["/bin/bash", str(harness)],
+        cwd=ROOT,
+        env={**os.environ, "PATH": f"{bin_dir}{os.pathsep}{os.environ['PATH']}"},
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    return result, receipt, gcloud_log
+
+
+def test_capture_latest_execution_describes_the_newest_execution_by_exact_name(
+    tmp_path: Path,
+) -> None:
+    """Runtime proof: list resolves the name, describe is called with that name."""
+    result, receipt, gcloud_log = _run_capture_latest_execution(
+        tmp_path,
+        executions=json.dumps(
+            [
+                _knative_execution("worker-job-00001", "2026-07-24T10:00:00Z"),
+                _knative_execution("worker-job-00002", "2026-07-24T10:07:00Z"),
+            ]
+        ),
+    )
+
+    assert result.returncode == 0, result.stderr
+    calls = gcloud_log.read_text(encoding="utf-8").splitlines()
+    assert calls[0].startswith("run jobs executions list --job=worker-job")
+    assert calls[1].startswith("run jobs executions describe worker-job-00002 ")
+    assert "describe-latest" not in gcloud_log.read_text(encoding="utf-8")
+    assert json.loads(receipt.read_text(encoding="utf-8")) == {
+        "metadata": {"name": "worker-job-00002"}
+    }
+
+
+@pytest.mark.parametrize(
+    "executions",
+    ["[]", '[{"metadata": {"creationTimestamp": "2026-07-24T10:00:00Z"}}]', "not-json"],
+)
+def test_capture_latest_execution_fails_closed_without_describing_anything(
+    tmp_path: Path, executions: str
+) -> None:
+    result, receipt, gcloud_log = _run_capture_latest_execution(tmp_path, executions=executions)
+
+    assert result.returncode != 0
+    assert not receipt.exists()
+    assert "describe" not in gcloud_log.read_text(encoding="utf-8")
+
+
+def test_deploy_script_captures_job_proof_without_describe_latest() -> None:
+    """The deploy runner's gcloud version must not decide whether proof exists."""
+    text = DEPLOY_SCRIPT.read_text(encoding="utf-8")
+
+    assert "describe-latest" not in text
+    assert "gcloud run jobs executions list" in text
+    assert 'gcloud run jobs executions describe "${execution_name}"' in text
+    assert "resolve-latest-execution" in text
+    assert '--executions="${list_file}"' in text
+    assert '--job="${job}"' in text
+    # Resolution must precede the exact-name describe, which precedes the proof.
+    resolve = text.index("resolve-latest-execution")
+    describe = text.index('gcloud run jobs executions describe "${execution_name}"')
+    assert text.index("gcloud run jobs executions list") < resolve < describe
+    assert describe < text.index("validate_cloud_run_live_deployment.py jobs-smoke")
+    # The resolver runs under the locked interpreter like every other validator.
+    assert (
+        'execution_name="$(run_locked_python \\\n'
+        "    scripts/deployment/validate_cloud_run_live_deployment.py "
+        "resolve-latest-execution \\\n"
+    ) in text
+    # Both the success proof and the failure forensics share one resolver.
+    assert text.count("capture_latest_execution ") == 2
+    assert (
+        'capture_latest_execution "${job}" "${JOB_REPORT_DIR}/${kind}-execution.json" || true'
+    ) in text
+    # A failed execution still stops the deployment and hits the rollback trap.
+    failure_capture = text.index('capture_latest_execution "${job}" "${JOB_REPORT_DIR}')
+    assert failure_capture < text.index(
+        'echo "Error: ${kind} Cloud Run Job failed; deployment stopped." >&2'
+    )
+    assert "handle_deployment_exit" in text
+
+    result = subprocess.run(
+        ["bash", "-n", str(DEPLOY_SCRIPT)],
+        cwd=ROOT,
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    assert result.returncode == 0, result.stderr
+
+
 def test_deploy_script_runs_the_live_e2e_gate_before_committing_the_release() -> None:
     """ODP-LIVE-E2E-001: a red live E2E gate must fall through to the rollback trap."""
     text = DEPLOY_SCRIPT.read_text(encoding="utf-8")
