@@ -1,0 +1,23 @@
+{
+  "deletes": {
+    "canonical_lineage": 4752,
+    "checkpoints": 1
+  },
+  "mode": "plan",
+  "requires_reingest_of": "2026-07-06__2026-07-07",
+  "scope": {
+    "checkpoint_run_id": "5efc0a7d-e0b6-4012-ae72-1f2b18c9201d",
+    "lineage_rows": 4752,
+    "lineage_tables": [
+      "core.transactions"
+    ],
+    "partition_key": "2026-07-06__2026-07-07",
+    "run_id": "069b0984-3cc0-4fbb-811f-07616e148a88",
+    "source_kind": "orders",
+    "status": "RUNNING",
+    "successor_runs": [
+      "5efc0a7d-e0b6-4012-ae72-1f2b18c9201d"
+    ]
+  },
+  "transactions_left_without_lineage": 4752
+}

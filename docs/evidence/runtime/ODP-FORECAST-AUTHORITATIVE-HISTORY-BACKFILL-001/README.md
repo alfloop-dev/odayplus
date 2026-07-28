@@ -398,9 +398,38 @@ evidence and the automation cannot disagree about what is settled. That gate is
 also scoped to `source_kind = 'orders'`, which is what keeps `87423a49` from
 deadlocking the finisher forever on a defect outside this task.
 
+### The delete is reversible, and that was checked rather than asserted
+
+The approval this repair is parked on is easier to give if the downside is
+bounded, so the rollback path was verified before asking for it — not after.
+
+The `apply` backup already exists at `/tmp/odp-lineage-backup-069b0984.json`
+(2.4 MB, taken 16:41Z). It is full-fidelity rather than a summary:
+
+| Backup section | Contents |
+| --- | --- |
+| `lineage` | 4 752 rows carrying **all nine** `data_plane.canonical_lineage` columns, including `source_snapshot_id`, `content_sha256` and `projected_at` |
+| `checkpoints` | the 1 partition checkpoint row |
+| `run` | the `069b0984` `ingestion_runs` record itself |
+
+Because `source_snapshot_id` and `content_sha256` are captured verbatim, a
+`restore` reproduces the exact primary keys that were deleted — the restored
+rows are the original rows, not equivalent ones. `restore` is covered by
+`test_restore_rejects_an_empty_backup`, so the one way a restore could silently
+no-op (an empty or truncated backup) is refused rather than reported as success.
+
+This does **not** make the delete safe to run unreviewed — it makes the blast
+radius recoverable if the re-ingest behaves unexpectedly. The irreversible part
+was never the rows; it is that the source database is shared, so the window
+between the delete and `-s6` completing is visible to anything else reading it.
+
 **Status: parked.** Deleting governed lineage from the shared source database is
 a destructive, human-gated action. It has not been executed. Everything else in
 this task proceeds without it; only the final 28-day window depends on it.
+
+Re-planned at 17:19Z against the live source and the scope is unchanged — still
+4 752 lineage rows and 1 checkpoint, still exactly one run. The plan is stable,
+so approval does not need to be re-scoped when it arrives.
 
 ## 7. After state
 
