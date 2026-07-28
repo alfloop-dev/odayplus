@@ -1,0 +1,54 @@
+# Deploy Dev run 30376737123 failure excerpt
+# SHA: dda726155a399487474ae148b4dc1c3294ea9463
+# Job: deploy / Step 13: Build, push, deploy, and verify Cloud Run
+# Step 13 started: 2026-07-28T16:11:48Z / completed: 2026-07-28T16:21:00Z
+
+# --- PREFLIGHT PASSED ---
+2026-07-28T16:11:24.8799515Z Cloud Run live deployment preflight passed.
+2026-07-28T16:11:24.8800273Z report=.odp_data/deployment/cloud-run-preflight.json
+
+# --- IMAGES BUILT, PUSHED, COSIGN-SIGNED, COSIGN-VERIFIED ---
+# oday-api, oday-worker, oday-scheduler all built and pushed
+# oday-scheduler final verification:
+2026-07-28T16:19:07.4590250Z Verification for asia-east1-docker.pkg.dev/alfaloop-data-project/oday-plus-dev/oday-scheduler:dev-dda726155a399487474ae148b4dc1c3294ea9463 --
+2026-07-28T16:19:07.4592680Z The following checks were performed on each of these signatures:
+2026-07-28T16:19:07.4593301Z   - The cosign claims were validated
+2026-07-28T16:19:07.4593889Z   - Existence of the claims in the transparency log was verified offline
+2026-07-28T16:19:07.4594807Z   - The code-signing certificate was verified using trusted certificate authority certificates
+
+# --- TRAFFIC SNAPSHOT RECORDED ---
+2026-07-28T16:19:07.5019202Z Recording the existing API/Web traffic before any runtime mutation...
+
+# --- MIGRATION JOB DEPLOYED AND EXECUTED SUCCESSFULLY ---
+2026-07-28T16:19:19.4569397Z Deploying container to Cloud Run job [oday-migration-r-dda726155a39] in project [alfaloop-data-project] region [asia-east1]
+2026-07-28T16:19:22.5092660Z Done.
+2026-07-28T16:19:22.5667550Z Job [oday-migration-r-dda726155a39] has successfully been deployed.
+2026-07-28T16:20:48.6377131Z Execution [oday-migration-r-dda726155a39-ndb4l] has successfully completed.
+
+# --- MIGRATION JOB SMOKE FAILED (fail-closed) ---
+2026-07-28T16:20:53.9686825Z Cloud Run migration Job smoke failed (fail-closed):
+2026-07-28T16:20:53.9687873Z - jobs-smoke:migration:secret_bindings: database and provider secret environment bindings are configured
+2026-07-28T16:20:53.9689163Z report=.odp_data/deployment/cloud-run-jobs/migration-validation.json
+
+# --- ROLLBACK TRIGGERED ---
+2026-07-28T16:20:53.9796042Z Deployment failed; restoring the recorded API/Web traffic split.
+2026-07-28T16:20:54.0173890Z Restoring oday-api traffic to oday-api-00005-gin=100...
+2026-07-28T16:20:57.3806350Z Traffic:
+2026-07-28T16:20:57.3806601Z   0%   oday-api-00003-lez
+2026-07-28T16:20:57.3807049Z          live-3875485e: https://live-3875485e---oday-api-7sxbjoeozq-de.a.run.app
+2026-07-28T16:20:57.3807523Z   100% oday-api-00005-gin
+2026-07-28T16:20:57.3808711Z   0%   oday-api-00007-koz
+2026-07-28T16:20:57.3809282Z          authcand:      https://authcand---oday-api-7sxbjoeozq-de.a.run.app
+2026-07-28T16:20:57.3809712Z   0%   oday-api-probe8
+2026-07-28T16:21:00.0014629Z Traffic (oday-web):
+2026-07-28T16:21:00.0014880Z   0%   oday-web-00004-cef
+2026-07-28T16:21:00.0015823Z   0%   oday-web-00006-jen
+2026-07-28T16:21:00.0016242Z          candidate:     https://candidate---oday-web-7sxbjoeozq-de.a.run.app
+2026-07-28T16:21:00.0016704Z   100% oday-web-00008-ws4
+2026-07-28T16:21:00.2101918Z ##[error]Process completed with exit code 1.
+
+# NOTE: This run did NOT fail with describe-latest (previous run's issue).
+# ODP-DEPLOY-CLOUD-RUN-JOB-EXECUTION-COMPAT-001 fix reached Step 13 and the
+# migration job executed successfully. The failure is now at the post-execution
+# smoke check: jobs-smoke:migration:secret_bindings.
+# The job execution proof was captured (the old gcloud SDK compat issue is resolved).
