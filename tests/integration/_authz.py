@@ -31,7 +31,10 @@ AUDIT_HEADERS = auth_headers(Role.AUDITOR)
 AUDIT_LEGAL_HEADERS = auth_headers(Role.FINANCE_LEGAL, subject="legal-a")
 AUDIT_RECORDS_HEADERS = auth_headers(Role.RECORDS_MANAGER, subject="records-a")
 AVM_HEADERS = auth_headers(Role.FINANCE_LEGAL)
-FORECASTOPS_HEADERS = auth_headers(Role.OPERATIONS_MANAGER)
+FORECASTOPS_HEADERS = {
+    **auth_headers(Role.OPERATIONS_MANAGER),
+    "x-tenant-id": "tenant-test",
+}
 # Expansion domain: EXPANSION_USER holds heatzone view/create and listing
 # view/create/update (ROLE_PERMISSIONS in shared.auth.rbac).
 HEATZONE_HEADERS = auth_headers(Role.EXPANSION_USER)

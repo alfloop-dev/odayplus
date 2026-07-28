@@ -90,33 +90,43 @@ def handle_forecast(job: JobRecord, persistence: PersistenceBundle) -> None:
 
 
 def handle_external_fetch(job: JobRecord, persistence: PersistenceBundle) -> None:
-    """Run a scheduled external-source fetch and advance its watermark."""
+    """Run a scheduled external-source fetch and persist its ingestion run.
+
+    The scheduler alone only writes fetch watermark state. Route the worker
+    through the ingestion service so the queryable run and audit evidence are
+    committed by the same execution path.
+    """
     from datetime import timedelta
 
-    from modules.external_data.workers.scheduled_fetch import (
-        ExternalFetchJobSpec,
-        ExternalFetchScheduler,
+    from modules.external_data.application.ingestion_service import (
+        ExternalIngestionService,
     )
+    from modules.external_data.workers.scheduled_fetch import ExternalFetchJobSpec
 
     provider_id = job.payload.get("provider_id", "listing.partner_feed")
     schedule_id = job.payload.get("schedule_id", "hourly-listing")
     freshness_sla_hours = job.payload.get("freshness_sla_hours", 6)
 
-    scheduler = ExternalFetchScheduler(
+    service = ExternalIngestionService(
+        store=persistence.ingestion_run_store,
         state_store=persistence.external_fetch_state_store,
+        audit_log=persistence.audit_log,
     )
     spec = ExternalFetchJobSpec(
         provider_id=provider_id,
         schedule_id=schedule_id,
         freshness_sla=timedelta(hours=freshness_sla_hours),
     )
-    run = scheduler.run_once(
+    outcome = service.run_scheduled(
         spec,
         scheduled_at=datetime.now(UTC),
         correlation_id=job.correlation_id,
     )
-    if run.status == "FAILED":
-        raise RuntimeError(f"External fetch failed: {run.message}")
+    if outcome.record.status == "FAILED":
+        raise RuntimeError(
+            f"External fetch failed for {provider_id}: "
+            f"{outcome.record.message or 'no provider message'}"
+        )
 
 
 def build_default_registry() -> JobRegistry:
