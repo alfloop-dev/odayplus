@@ -928,6 +928,57 @@ upstream pre-image, cannot predict per-store mapping attrition, and does not
 substitute for the post-activation `verify`. The queue stands unchanged — no
 rescope, no reorder, no extra slice is indicated.
 
+### Mapping attrition, the gap that check left open
+
+Finding D4 above names its own limit: an upstream distinct-place count is a
+pre-image, and it *cannot predict per-store mapping attrition*. That limit is
+load-bearing rather than cosmetic. `store.py::_PostgresLookup.require_place`
+resolves every transaction's `place` against `core.stores` joined to
+`core.brands`, requiring `brand_code` to start with `fongniao_`; a missing row
+raises `MissingMappingError` and the transaction is **quarantined, never
+projected**. `core.stores` is a *current-state* dimension, so a store that
+traded densely in early May but has since left the upstream `places` collection
+has no row today and would contribute zero landed store-days. And
+`mapping.py::project_transaction` needs no other identity lookup — no device, no
+machine, no member — so place mappability is the **only** per-store attrition
+channel between a dense upstream day and a landed store-day. A date-dependent
+cliff here would have invalidated both brackets at once, and would have surfaced
+only after `-b3` had already spent its eight hours.
+
+`backwards_window_store_mappability.json` closes it. The Atlas side must run
+in-cluster (IP allowlist) while `core.stores` is reachable only locally through
+the proxy, so rather than add a `cloud-sql-proxy` sidecar to a pod on a node
+already at ~96 % memory — which risks leaving it `Pending` and delaying the
+running slice — the two sides exchange a fixed, documented, non-secret digest,
+`sha256("odp-mappability-v1|" + place_id)[:16]`. No plaintext identifier reaches
+the pod log, so the density probe's redaction discipline survives intact and the
+intersection is still exact.
+
+- **Attrition is date-independent.** Backwards places map at 0.9715 (545/561),
+  the landed control fortnight at 0.9711 (571/588) — a differential of
+  +0.04 pp, with the backwards window marginally *better*. There is no early-May
+  cliff of departed stores.
+- **The cohort that decides criterion 3 is essentially untouched.** Of the 421
+  stores trading every one of the 24 backwards days, **420 are mappable** and
+  exactly one is not; the control fortnight has the identical shape, 485 of 486.
+  Attrition costs the projection about one store, not a tranche.
+- **The method is exact where it can be checked.** On the landed control
+  fortnight it predicts 571 distinct stores and 485 trading all 14 days;
+  `core.transactions` holds 571 and 485, with **zero** predicted-but-absent and
+  **zero** landed-but-unpredicted. Every predicted full-window store is a landed
+  full-window store, so `mappable ⇒ lands` with no observed slippage. That makes
+  the backwards number a validated prediction rather than an estimate.
+- **It independently reproduces the density receipt** — 561 backwards places,
+  588 control places, 421 full-24 stores, recomputed from scratch. The two
+  receipts agree at the digest level, not merely at the headline.
+
+Three independent routes now agree on the same figure: landed-streak donation
+419, upstream density 421, mappability-adjusted **420**. What this still does not
+bound is row-level quarantine for other reasons (`INVALID_AMOUNT`,
+`STATUS_MAPPING_UNAPPROVED`, contract violations) — those cut a store's order
+count without removing it from a store-day, so they cannot break a consecutive
+run, and they remain a matter for the post-activation `verify`.
+
 ## 8. After state
 
 Populated once `-s3`/`-s4`/`-s5` reach `Complete`, the source meets the settling

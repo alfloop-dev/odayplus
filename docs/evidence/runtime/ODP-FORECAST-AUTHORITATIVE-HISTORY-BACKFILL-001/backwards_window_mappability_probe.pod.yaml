@@ -1,0 +1,213 @@
+apiVersion: v1
+kind: Pod
+metadata:
+  name: odp-backwards-mappability-probe
+  namespace: oday-dev
+  labels:
+    app.kubernetes.io/name: odp-backwards-mappability-probe
+  annotations:
+    oday.plus/purpose: "read-only probe emitting salted place-id digests per window so per-store MAPPING ATTRITION can be measured against core.stores without logging identifiers"
+    oday.plus/task: "ODP-FORECAST-AUTHORITATIVE-HISTORY-BACKFILL-001"
+spec:
+  restartPolicy: Never
+  serviceAccountName: oday-data-platform
+  # Must be private-pool: the upstream is MongoDB Atlas and its IP allowlist
+  # admits only this node pool's Cloud NAT egress. An identical probe pinned to
+  # default-pool fails with ServerSelectionTimeoutError -- README section 7.
+  nodeSelector:
+    cloud.google.com/gke-nodepool: private-pool
+  securityContext:
+    fsGroup: 65532
+    runAsGroup: 65532
+    runAsNonRoot: true
+    runAsUser: 65532
+    seccompProfile:
+      type: RuntimeDefault
+  volumes:
+    - name: state
+      emptyDir: {}
+  containers:
+    - name: probe
+      image: asia-east1-docker.pkg.dev/alfaloop-data-project/oday/data-platform@sha256:f60383b620e93c3aeca5416fa3ef43aa0c583223e22912dc95377406cc5d86e6
+      securityContext:
+        allowPrivilegeEscalation: false
+        capabilities:
+          drop: ["ALL"]
+        readOnlyRootFilesystem: true
+        runAsNonRoot: true
+      # Same sizing rationale as the density probe: the private-pool node runs
+      # one backfill slice at a time and sits at ~96% of allocatable memory
+      # while a slice is active, so the probe must fit in what remains or it
+      # sits Pending and delays the very slice it must not disturb.
+      resources:
+        requests:
+          cpu: 10m
+          memory: 64Mi
+        limits:
+          cpu: 500m
+          memory: 512Mi
+      env:
+        - name: TMPDIR
+          value: /var/lib/oday
+        - name: ODP_DATA_MONGO_DATABASE
+          value: fongniao_prod
+        - name: ODP_DATA_MONGO_URI
+          valueFrom:
+            secretKeyRef:
+              name: oday-data-platform-runtime
+              key: mongodb-uri
+      volumeMounts:
+        - name: state
+          mountPath: /var/lib/oday
+      command:
+        - python
+        - -c
+        - |
+          # Read-only MAPPABILITY probe for
+          # ODP-FORECAST-AUTHORITATIVE-HISTORY-BACKFILL-001.
+          #
+          # WHY THIS EXISTS
+          # ---------------
+          # backwards_window_store_density.json corroborated that the upstream
+          # carries 421 stores trading on every one of the 24 backwards days,
+          # against an independently projected h28 of 419. Its own finding D4
+          # names the one thing it could not settle:
+          #
+          #   "this measures the upstream pre-image of a transacting store-day,
+          #    not landed rows. It cannot predict per-store mapping attrition."
+          #
+          # That gap is load-bearing. apps/data_platform/store.py::require_place
+          # resolves every transaction's place against core.stores (joined to
+          # core.brands, brand_code must start with 'fongniao_'); a place with no
+          # such row raises MissingMappingError and the transaction is
+          # QUARANTINED, never projected. core.stores is a CURRENT-STATE
+          # dimension, so a store that traded in early May but has since left the
+          # upstream `places` collection has no row today and would contribute
+          # zero landed store-days no matter how densely it traded then.
+          # project_transaction needs no other lookup (no device, no machine),
+          # so place mappability is the ONLY per-store attrition channel.
+          #
+          # WHAT IT EMITS, AND WHY IT IS SAFE
+          # ---------------------------------
+          # The join has to happen against core.stores, which this pod cannot
+          # reach -- adding a cloud-sql-proxy sidecar would raise the pod's
+          # footprint on a node already at ~96% memory and risk delaying the
+          # running slice. So the join key is exported instead of the identifier:
+          # a fixed, documented, non-secret digest
+          #
+          #     sha256("odp-mappability-v1|" + place_id).hexdigest()[:16]
+          #
+          # recomputed identically on the Postgres side. This keeps the density
+          # probe's redaction discipline literally intact -- no plaintext place
+          # identifier ever reaches the pod log -- while still permitting an
+          # exact set intersection.
+          #
+          # CONTROL RANGE
+          # -------------
+          # The same digests are emitted for a LANDED, attested control
+          # fortnight. Mapping attrition is only a threat to criterion 3 if it is
+          # DATE-DEPENDENT: if backwards-window places map at the same rate as
+          # control-fortnight places, then whatever attrition exists is a
+          # constant already reflected in the landed measurements that produced
+          # the 419 projection. The control range is what turns this from an
+          # absolute count into a differential claim.
+          #
+          # Grain is byte-for-byte the density probe's: state=TRADE_SUCCESS,
+          # currency = `currency or payment.currency` uppercased = TWD, day =
+          # createdAt in UTC, store = `place`.
+          import hashlib, json, os
+          from collections import defaultdict
+          from datetime import date, datetime, timedelta, timezone
+          from pymongo import MongoClient
+
+          UTC = timezone.utc
+          SALT = "odp-mappability-v1|"
+
+          def digest(place_id):
+              return hashlib.sha256(
+                  (SALT + place_id).encode("utf-8")
+              ).hexdigest()[:16]
+
+          client = MongoClient(os.environ["ODP_DATA_MONGO_URI"])
+          orders = client[os.environ["ODP_DATA_MONGO_DATABASE"]]["orders"]
+
+          # b4..b1 cover 2026-04-29..2026-05-23 (exclusive upper bound).
+          BACK_START, BACK_END = "2026-04-29", "2026-05-23"
+          # Landed, attested, uncontested-by-Defect-D control fortnight -- the
+          # identical range the density probe used, so the two receipts compose.
+          CTRL_START, CTRL_END = "2026-06-10", "2026-06-24"
+
+          def dt(value):
+              return datetime.fromisoformat(value).replace(tzinfo=UTC)
+
+          def days_between(start, end):
+              d0, d1 = date.fromisoformat(start), date.fromisoformat(end)
+              out = []
+              while d0 < d1:
+                  out.append(d0.isoformat())
+                  d0 += timedelta(days=1)
+              return out
+
+          pipeline = [
+              {"$match": {
+                  "state": "TRADE_SUCCESS",
+                  "place": {"$ne": None},
+                  "$or": [
+                      {"createdAt": {"$gte": dt(BACK_START), "$lt": dt(BACK_END)}},
+                      {"createdAt": {"$gte": dt(CTRL_START), "$lt": dt(CTRL_END)}},
+                  ],
+              }},
+              {"$match": {
+                  "$expr": {"$eq": [
+                      {"$toUpper": {"$ifNull": ["$currency", "$payment.currency"]}},
+                      "TWD",
+                  ]},
+              }},
+              {"$group": {
+                  "_id": {
+                      "place": "$place",
+                      "day": {"$dateToString": {
+                          "format": "%Y-%m-%d", "date": "$createdAt", "timezone": "UTC",
+                      }},
+                  },
+                  "orders": {"$sum": 1},
+              }},
+          ]
+
+          per_place_days = defaultdict(set)
+          for row in orders.aggregate(pipeline, allowDiskUse=True):
+              per_place_days[str(row["_id"]["place"])].add(row["_id"]["day"])
+
+          def coverage_map(start, end):
+              # digest -> number of days in [start, end) the place transacted.
+              window = set(days_between(start, end))
+              out = {}
+              for place, days in per_place_days.items():
+                  hit = len(days & window)
+                  if hit:
+                      out[digest(place)] = hit
+              return out
+
+          back = coverage_map(BACK_START, BACK_END)
+          ctrl = coverage_map(CTRL_START, CTRL_END)
+          out = {
+              "probe": "backwards_window_mappability",
+              "database": os.environ["ODP_DATA_MONGO_DATABASE"],
+              "collection": "orders",
+              "digest": "sha256(SALT + place_id)[:16], SALT=" + SALT,
+              "grain": ("distinct place per createdAt UTC day, "
+                        "state=TRADE_SUCCESS and currency=TWD"),
+              "windows": {
+                  "backwards_b1_b4": {
+                      "start": BACK_START, "end_exclusive": BACK_END,
+                      "days": len(days_between(BACK_START, BACK_END)),
+                  },
+                  "landed_control": {
+                      "start": CTRL_START, "end_exclusive": CTRL_END,
+                      "days": len(days_between(CTRL_START, CTRL_END)),
+                  },
+              },
+              "backwards_coverage_by_digest": back,
+              "control_coverage_by_digest": ctrl,
+          }
+          print("ODP_PROBE_RESULT " + json.dumps(out, sort_keys=True))
