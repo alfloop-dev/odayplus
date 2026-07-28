@@ -68,6 +68,48 @@ def test_cooldown_expiry_returns_to_gemini(tmp_path):
     assert mr.active_pool(CFG, "antigravity5", now=later) == "gemini"
 
 
+def test_shared_account_alias_skips_gemini_until_authoritative_reset(tmp_path):
+    _isolate(tmp_path)
+    now = datetime(2026, 7, 28, 11, 36, 35, tzinfo=UTC)
+    cfg = {
+        "providers": {
+            alias: {
+                "quota_group": "antigravity-shared",
+                "antigravity": {"model_rotation": CFG["providers"]["antigravity5"]["antigravity"]["model_rotation"]},
+            }
+            for alias in ("antigravity", "antigravity2")
+        }
+    }
+    reset = mr.parse_reset_seconds("Individual quota reached. Resets in 4h13m28s.")
+    mr.record_exhaustion(cfg, "antigravity2", reset or 0, pool="gemini", now=now)
+
+    # Successful Claude completion and task lifecycle transitions do not touch
+    # the durable account cooldown; another logical alias selects Claude too.
+    before_reset = now + timedelta(hours=4)
+    assert mr.resolve_active_selection(cfg, "antigravity", now=before_reset)["pool"] == "claude"
+    assert mr.resolve_active_selection(cfg, "antigravity2", now=before_reset)["pool"] == "claude"
+    after_reset = now + timedelta(hours=4, minutes=13, seconds=29)
+    assert mr.resolve_active_selection(cfg, "antigravity", now=after_reset)["pool"] == "gemini"
+
+
+def test_distinct_profiles_do_not_share_account_cooldown(tmp_path):
+    _isolate(tmp_path)
+    cfg = {
+        "providers": {
+            alias: {
+                "antigravity": {
+                    "config_home": home,
+                    "model_rotation": {"enabled": True},
+                }
+            }
+            for alias, home in (("antigravity5", "/profiles/a"), ("antigravity6", "/profiles/b"))
+        }
+    }
+    mr.record_exhaustion(cfg, "antigravity5", 900, pool="gemini")
+    assert mr.resolve_active_selection(cfg, "antigravity5")["pool"] == "claude"
+    assert mr.resolve_active_selection(cfg, "antigravity6")["pool"] == "gemini"
+
+
 def test_reset_hint_parsing():
     assert mr.parse_reset_seconds("Resets in 2h21m32s.") == 2 * 3600 + 21 * 60 + 32
     assert mr.parse_reset_seconds("refresh in 40 minutes") == 2400
@@ -93,6 +135,10 @@ def test_full_chain_rotates_instead_of_pausing(tmp_path):
     settings = cfg["providers"]["antigravity5"]["antigravity"]
     assert mr.resolve_active_model(cfg, "antigravity5", settings) == "Claude Sonnet 4.6 (Thinking)"
     assert sv.antigravity_pool_fallback_available(cfg, "antigravity5") is True
+    entry = mr.status("antigravity5")["antigravity5"]
+    until = datetime.fromisoformat(entry["gemini_until"].replace("Z", "+00:00"))
+    # The 2h21m32s reset hint, rather than the old 15-minute probe, is durable.
+    assert until - datetime.now(UTC) > timedelta(hours=2, minutes=20)
 
 
 def test_same_worker_failure_rotates_only_once(tmp_path):
