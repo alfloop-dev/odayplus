@@ -2086,10 +2086,45 @@ def _authoritative_task_container(
 #: name from an operator-supplied `*_SECRET` variable, so a cross-project secret
 #: is a supported deployment and rejecting the path form would over-tighten a
 #: schema this task must keep supporting.
+#: A numeric resource component is bounded as well as shaped, and rounds 10 and
+#: 11 pinned only the shape. A Secret Manager version number and a Cloud
+#: Resource Manager project number are both int64 values, so
+#: `9223372036854775808` — and any longer decimal — matched `[1-9][0-9]*` while
+#: naming a version Secret Manager cannot hold and a project number Cloud
+#: Resource Manager never issues. Both are range checked here, against the
+#: signed int64 maximum, in the canonical no-leading-zero form the services emit.
+_MAX_INT64 = 2**63 - 1
+_MAX_INT64_DIGITS = len(str(_MAX_INT64))
+_RESOURCE_NUMBER_PATTERN = re.compile(r"[1-9][0-9]*")
+
+
+def _usable_resource_number(value: str) -> bool:
+    """Return whether `value` is a canonical positive int64 resource number.
+
+    The shape is re-stated rather than assumed from the caller's own match, so
+    the predicate is total on any string and no caller can route a non-numeric
+    component into `int()`. The digit count is checked before the conversion for
+    the same reason: an arbitrarily long decimal is out of range by length
+    alone, and CPython refuses to convert one past its integer-string limit, so
+    counting digits first keeps an oversized selector a rejection rather than an
+    exception.
+    """
+
+    if _RESOURCE_NUMBER_PATTERN.fullmatch(value) is None:
+        return False
+    if len(value) > _MAX_INT64_DIGITS:
+        return False
+    return int(value) <= _MAX_INT64
+
+
 _SECRET_ID_PATTERN = re.compile(r"[A-Za-z0-9_-]{1,255}")
-_SECRET_PROJECT_PATTERN = re.compile(r"[1-9][0-9]*|[a-z][a-z0-9-]{4,28}[a-z0-9]")
+_SECRET_PROJECT_ID_PATTERN = re.compile(r"[a-z][a-z0-9-]{4,28}[a-z0-9]")
+_SECRET_PROJECT_PATTERN = re.compile(
+    rf"{_RESOURCE_NUMBER_PATTERN.pattern}|{_SECRET_PROJECT_ID_PATTERN.pattern}"
+)
 _SECRET_PATH_PATTERN = re.compile(
-    rf"projects/(?:{_SECRET_PROJECT_PATTERN.pattern})/secrets/(?:{_SECRET_ID_PATTERN.pattern})"
+    rf"projects/(?P<project>{_SECRET_PROJECT_PATTERN.pattern})"
+    rf"/secrets/(?:{_SECRET_ID_PATTERN.pattern})"
 )
 
 
@@ -2105,6 +2140,11 @@ def _usable_secret_name(value: Any) -> bool:
     Secret Manager does not resolve while the binding passed with zero failing
     checks. A name that is not identical to its own `strip()` is rejected
     outright, for the same reason a version is.
+
+    Round 13 closed the range on the path form's project segment: the segment
+    was matched lexically, so a cross-project name carrying a project number
+    above the int64 maximum named a project Cloud Resource Manager cannot have
+    issued while the binding passed with zero failing checks.
     """
 
     if not isinstance(value, str):
@@ -2113,10 +2153,15 @@ def _usable_secret_name(value: Any) -> bool:
         return False
     if not _configured(value):
         return False
-    return (
-        _SECRET_ID_PATTERN.fullmatch(value) is not None
-        or _SECRET_PATH_PATTERN.fullmatch(value) is not None
-    )
+    if _SECRET_ID_PATTERN.fullmatch(value) is not None:
+        return True
+    path = _SECRET_PATH_PATTERN.fullmatch(value)
+    if path is None:
+        return False
+    project = path.group("project")
+    if _SECRET_PROJECT_ID_PATTERN.fullmatch(project) is not None:
+        return True
+    return _usable_resource_number(project)
 
 
 def _secret_reference_name(entry: Mapping[str, Any], schema: _JobApiSchema) -> str:
@@ -2237,15 +2282,17 @@ def _unsupported_secret_source_members(
 #:
 #: - the literal `latest`, lowercase, which is a reserved word rather than an
 #:   alias — `Latest` and `LATEST` are neither the literal nor a legal alias;
-#: - a positive version number, written canonically. Secret Manager numbers
-#:   versions from 1, so `0` is not a version, and it never emits `007`;
+#: - a positive version number, written canonically and inside the int64 range a
+#:   version number is. Secret Manager numbers versions from 1, so `0` is not a
+#:   version, it never emits `007`, and `9223372036854775808` is past the last
+#:   number a version can carry rather than a very high version;
 #: - a version alias: a leading letter, then letters, digits, `_` and `-`, at
 #:   most **63** characters. That is the alias limit; 255 is the limit on a
 #:   secret *name*, a different resource, and using it here let a 64- to
 #:   255-character selector through. `latest` and `NEW` are reserved and cannot
 #:   name an alias in any case, so `new`, `New`, and `NEW` resolve to nothing.
 _SECRET_VERSION_LITERAL_LATEST = "latest"
-_SECRET_VERSION_NUMBER_PATTERN = re.compile(r"[1-9][0-9]*")
+_SECRET_VERSION_NUMBER_PATTERN = _RESOURCE_NUMBER_PATTERN
 _SECRET_VERSION_ALIAS_PATTERN = re.compile(r"[A-Za-z][A-Za-z0-9_-]{0,62}")
 _RESERVED_SECRET_VERSION_ALIASES = frozenset({"latest", "new"})
 
@@ -2259,6 +2306,10 @@ def _usable_secret_version(value: Any) -> bool:
     selector is a defect in the description, not something this validator may
     normalize away on the deployment's behalf. `_usable_secret_name` reads the
     other selector member under the same rule.
+
+    Round 13 added the bound the number carries: a version number is an int64,
+    so a selector of `9223372036854775808` or longer pinned a version Secret
+    Manager cannot resolve while the mandatory binding around it passed.
     """
 
     if not isinstance(value, str):
@@ -2270,7 +2321,7 @@ def _usable_secret_version(value: Any) -> bool:
     if value == _SECRET_VERSION_LITERAL_LATEST:
         return True
     if _SECRET_VERSION_NUMBER_PATTERN.fullmatch(value):
-        return True
+        return _usable_resource_number(value)
     if value.lower() in _RESERVED_SECRET_VERSION_ALIASES:
         return False
     return _SECRET_VERSION_ALIAS_PATTERN.fullmatch(value) is not None

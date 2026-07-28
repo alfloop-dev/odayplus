@@ -2008,12 +2008,28 @@ _ALIAS_255 = "a" + "b" * 254
 _SECRET_ID_255 = "a" + "b" * 254
 _SECRET_ID_256 = "a" + "b" * 255
 
+#: Round 13: a Secret Manager version number and a Cloud Resource Manager
+#: project number are int64 resource components, and rounds 10 and 11 checked
+#: only their lexical shape. `9223372036854775808` is the first decimal past the
+#: signed int64 maximum, so it named a version Secret Manager cannot hold and a
+#: project number that service never issued while the mandatory binding around
+#: it reported zero failed checks. The 30-digit form is the same defect written
+#: long enough that no int64 reader can accept it either. `9223372036854775807`
+#: is the boundary control that keeps the range check from over-tightening onto
+#: the last number each component may really carry.
+_INT64_MAX = str(2**63 - 1)
+_OVER_INT64 = str(2**63)
+_LONG_OVER_INT64 = "1" + "0" * 29
+
 #: The two forms a Cloud Run secret binding may name a secret in. Both are kept
 #: accepted because `scripts/deploy_cloud_run_waji.sh` takes every name from an
 #: operator-supplied `*_SECRET` variable, so a cross-project secret is a
 #: deployment this proof must not fail.
 _CROSS_PROJECT_SECRET = f"projects/oday-plus-prod/secrets/{_POI_SECRET}"
 _CROSS_PROJECT_NUMBER_SECRET = f"projects/123456789012/secrets/{_POI_SECRET}"
+_CROSS_PROJECT_INT64_MAX_SECRET = f"projects/{_INT64_MAX}/secrets/{_POI_SECRET}"
+_CROSS_PROJECT_OVER_INT64_SECRET = f"projects/{_OVER_INT64}/secrets/{_POI_SECRET}"
+_CROSS_PROJECT_LONG_OVER_INT64_SECRET = f"projects/{_LONG_OVER_INT64}/secrets/{_POI_SECRET}"
 
 #: Round 11: names Secret Manager does not resolve. Round 10 fixed the version
 #: member's grammar and stated the rule behind it — the description is the
@@ -2039,6 +2055,11 @@ _UNUSABLE_SECRET_NAMES: tuple[object, ...] = (
     f"projects//secrets/{_POI_SECRET}",
     "projects/oday-plus-prod/secrets/",
     f"projects/oday-plus-prod/secrets/{_POI_SECRET}/versions/1",
+    # Round 13: a project *number* segment above the int64 range names a project
+    # Cloud Resource Manager cannot have issued, so the secret behind it does
+    # not resolve however well-formed the path around it looks.
+    pytest.param(_CROSS_PROJECT_OVER_INT64_SECRET, id="cross-project-number-over-int64"),
+    pytest.param(_CROSS_PROJECT_LONG_OVER_INT64_SECRET, id="cross-project-number-30-digits"),
     pytest.param(1, id="non-string-int"),
     pytest.param(None, id="non-string-none"),
 )
@@ -2053,6 +2074,7 @@ _USABLE_SECRET_NAMES: tuple[object, ...] = (
     pytest.param(_SECRET_ID_255, id="secret-id-255-chars"),
     pytest.param(_CROSS_PROJECT_SECRET, id="cross-project-path"),
     pytest.param(_CROSS_PROJECT_NUMBER_SECRET, id="cross-project-number-path"),
+    pytest.param(_CROSS_PROJECT_INT64_MAX_SECRET, id="cross-project-number-int64-max"),
 )
 
 #: Selectors whose member *names* all sit inside the dialect's allowlist while
@@ -2102,6 +2124,11 @@ _UNUSABLE_KNATIVE_SELECTORS: tuple[tuple[dict[str, object], str], ...] = (
     ({"name": _POI_SECRET, "key": "\tlatest\n"}, "key"),
     ({"name": _POI_SECRET, "key": " 1 "}, "key"),
     ({"name": _POI_SECRET, "key": "007"}, "key"),
+    # Round 13: the range the version number carries. A canonical decimal above
+    # the int64 maximum, at any length, pins a version Secret Manager cannot
+    # hold, so it selects nothing however lexical the digits are.
+    ({"name": _POI_SECRET, "key": _OVER_INT64}, "key"),
+    ({"name": _POI_SECRET, "key": _LONG_OVER_INT64}, "key"),
     (
         {
             "name": _POI_SECRET,
@@ -2137,6 +2164,10 @@ _UNUSABLE_V2_SELECTORS: tuple[tuple[dict[str, object], str], ...] = (
     ({"secret": _POI_SECRET, "version": "\tlatest\n"}, "version"),
     ({"secret": _POI_SECRET, "version": " 1 "}, "version"),
     ({"secret": _POI_SECRET, "version": "007"}, "version"),
+    # Round 13: the int64 range is a Secret Manager fact, so the v2 `version`
+    # member is bounded exactly as the Knative `key` member is.
+    ({"secret": _POI_SECRET, "version": _OVER_INT64}, "version"),
+    ({"secret": _POI_SECRET, "version": _LONG_OVER_INT64}, "version"),
 )
 
 
@@ -2241,6 +2272,7 @@ _USABLE_VERSION_SELECTORS: tuple[object, ...] = (
     "prod_pinned",
     "prod-v1",
     pytest.param(_ALIAS_63, id="alias-63-chars"),
+    pytest.param(_INT64_MAX, id="version-int64-max"),
 )
 
 
@@ -2442,6 +2474,114 @@ def test_job_smoke_accepts_every_usable_v2_secret_name(secret: str) -> None:
 
     assert all(check.ok for check in checks), _failed_names(checks)
     assert "ODP_POI_PROVIDER_API_KEY" in report["secret_bound_env_vars"]
+
+
+def _database_selector_with_out_of_range_number(
+    component: str, *, name_key: str, version_key: str
+) -> tuple[dict[str, object], str]:
+    """Return the round-13 probe selector for `ODAY_DATABASE_URL` and its member.
+
+    One numeric component of the mandatory database selector is replaced by the
+    first decimal past the signed int64 maximum: either the version it pins or
+    the project number of the cross-project path naming the secret. Everything
+    else about the description stays exactly what gcloud emits, so the only
+    thing under test is whether an unresolvable number still proves a mandatory
+    binding.
+    """
+
+    secret = "oday-database-url"
+    if component == "version":
+        return {name_key: secret, version_key: _OVER_INT64}, version_key
+    return {name_key: f"projects/{_OVER_INT64}/secrets/{secret}", version_key: "latest"}, name_key
+
+
+@pytest.mark.parametrize("component", ("version", "project-number"))
+def test_job_smoke_rejects_an_out_of_range_knative_database_number(component: str) -> None:
+    """Round 13: numeric selector components were checked lexically, not bounded.
+
+    `_SECRET_VERSION_NUMBER_PATTERN` and the numeric branch of
+    `_SECRET_PROJECT_PATTERN` are both `[1-9][0-9]*`, so `9223372036854775808`
+    matched each of them while Secret Manager version numbers and Cloud Resource
+    Manager project numbers are int64. Planting it in the one binding no
+    selection can drop left `jobs-smoke:migration:secret_bindings` reporting zero
+    failed checks for a mandatory `ODAY_DATABASE_URL` that cannot resolve.
+    """
+
+    selector, member = _database_selector_with_out_of_range_number(
+        component, name_key="name", version_key="key"
+    )
+    job = _knative_job(
+        secret_envs=(
+            {"name": "ODAY_DATABASE_URL", "valueFrom": {"secretKeyRef": selector}},
+            *(_knative_secret_env(env_var) for env_var in SELECTED_PROVIDER_SECRET_ENVS),
+        )
+    )
+
+    checks, report = _job_checks(job)
+    detail = _detail(checks, "jobs-smoke:migration:secret_bindings")
+
+    assert "jobs-smoke:migration:secret_bindings" in _failed_names(checks)
+    assert "ODAY_DATABASE_URL" in detail
+    assert f"valueFrom.secretKeyRef.{member}" in detail
+    assert _OVER_INT64 not in detail
+    assert "ODAY_DATABASE_URL" not in report["secret_bound_env_vars"]
+
+
+@pytest.mark.parametrize("component", ("version", "project-number"))
+def test_job_smoke_rejects_an_out_of_range_v2_database_number(component: str) -> None:
+    """The same probe on the Cloud Run v2 container path.
+
+    The int64 bound belongs to the Secret Manager and Cloud Resource Manager
+    resources, not to a dialect, so both descriptions had the identical
+    fail-open and both must reject the identical number.
+    """
+
+    selector, member = _database_selector_with_out_of_range_number(
+        component, name_key="secret", version_key="version"
+    )
+    job = _v2_job_with_envs(
+        secret_envs=(
+            {"name": "ODAY_DATABASE_URL", "valueSource": {"secretKeyRef": selector}},
+            *(_v2_secret_env(env_var) for env_var in SELECTED_PROVIDER_SECRET_ENVS),
+        )
+    )
+
+    checks, report = _job_checks(job, kind="worker")
+    detail = _detail(checks, "jobs-smoke:worker:secret_bindings")
+
+    assert "jobs-smoke:worker:secret_bindings" in _failed_names(checks)
+    assert "ODAY_DATABASE_URL" in detail
+    assert f"valueSource.secretKeyRef.{member}" in detail
+    assert _OVER_INT64 not in detail
+    assert "ODAY_DATABASE_URL" not in report["secret_bound_env_vars"]
+
+
+@pytest.mark.parametrize(
+    ("value", "expected"),
+    (
+        ("1", True),
+        ("42", True),
+        pytest.param(_INT64_MAX, True, id="int64-max"),
+        pytest.param(_OVER_INT64, False, id="int64-max-plus-one"),
+        pytest.param(_LONG_OVER_INT64, False, id="thirty-digits"),
+        pytest.param("9" * 5000, False, id="beyond-int-string-conversion-limit"),
+        ("0", False),
+        ("007", False),
+        ("-1", False),
+        ("1_0", False),
+        ("", False),
+        ("latest", False),
+    ),
+)
+def test_resource_number_range_check_is_total_and_bounded(value: str, expected: bool) -> None:
+    """The shared numeric guard both selector members route their digits through.
+
+    The digit count is checked before the conversion, so a decimal past
+    CPython's integer-string limit is a rejection rather than a `ValueError`
+    raised out of the middle of a deployment proof.
+    """
+
+    assert validator._usable_resource_number(value) is expected
 
 
 #: Ways to pad a required env-var name so that `str.strip()` maps it back onto

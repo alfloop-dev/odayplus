@@ -98,9 +98,12 @@ textual. `job_secret_binding_checks` does four things:
    mandatory binding — and to carry no deprecated `localObjectReference` beside
    `name`. "Resolvable" is Secret Manager's grammar, not an approximation of it:
    `_usable_secret_version` accepts the exact literal `latest`, a canonical
-   version number, or an alias of at most 63 characters starting with a letter,
-   and rejects the reserved words `latest` and `NEW` in every other case as well
-   as any selector carrying surrounding whitespace.
+   version number **inside the int64 range a version number is**, or an alias of
+   at most 63 characters starting with a letter, and rejects the reserved words
+   `latest` and `NEW` in every other case as well as any selector carrying
+   surrounding whitespace. Both numeric resource components route through one
+   guard, `_usable_resource_number`: the version number here, and the project
+   number of a cross-project secret path in `_usable_secret_name`.
 
 Substring scanning is gone for this check: a job that merely mentions
 `ODAY_DATABASE_URL` in a label or an argument no longer satisfies it.
@@ -139,12 +142,16 @@ Substring scanning is gone for this check: a job that merely mentions
 | an alias of 64 characters or more (up to the 255-character secret-*name* limit round 9 borrowed) | same — a version alias is capped at 63 characters |
 | a selector with surrounding whitespace (`" latest "`, `"latest "`, `"\tlatest\n"`, `" 1 "`) | same — the description is the proof, so it is read as gcloud emitted it and never normalized |
 | a padded version number (`"007"`) | same — versions are numbered from 1 and gcloud emits them canonically |
+| a version number above the signed int64 maximum (`9223372036854775808`, or any longer decimal) | same — a version number is an int64, so this is past the last number a version can carry rather than a very high version |
+| a version number of exactly `9223372036854775807` | passes — that is the last int64, so the range check does not narrow the numbers a version may really use |
 | v2 `secretKeyRef` with no `version` | passes — Cloud Run v2 leaves `version` optional; only v1's `key` is required |
 | Knative `name` (or v2 `secret`) holding a character Secret Manager does not allow in a secret ID — a space, `.`, `/`, `!`, or non-ASCII | `secret_bindings` fails — a secret ID is letters, digits, `-` and `_` only, so this names no secret |
 | a secret name of 256 characters or more | same — a secret ID is capped at 255 |
 | a secret name with surrounding whitespace (`" oday-database-url "`, `"oday-database-url "`, `"\today-database-url\n"`) | same — the name is read exactly as gcloud emitted it, under the rule that already governs the version member |
 | a secret name of at most 255 characters using letters, digits, `-` or `_` | passes — that is the secret ID grammar, so mixed case, digits, and underscores are all legitimate |
 | `projects/<project>/secrets/<secret ID>`, with the project as a number or a 6–30 character project ID | passes — the documented cross-project form, and the deploy script takes every name from an operator-supplied `*_SECRET` variable |
+| a cross-project path whose project **number** is above the signed int64 maximum (`projects/9223372036854775808/secrets/<id>`, or any longer decimal) | `secret_bindings` fails — a project number is an int64, so Cloud Resource Manager cannot have issued it and the secret behind the path does not resolve |
+| a cross-project path with the project number `9223372036854775807` | passes — the last int64 is the boundary control on the same rule |
 | a path-shaped name with an empty segment (`projects//secrets/<id>`, `projects/<p>/secrets/`) or a longer `projects/<p>/secrets/<id>/versions/N` | `secret_bindings` fails — neither is the documented form, and a version path does not name the secret a binding references |
 | `valueFrom.secretKeyRef.localObjectReference` | `secret_bindings` fails — Knative's superseded way of naming the same secret `name` names, so the selector names two |
 | a valid binding beside an empty off-dialect source (`"valueSource": {}`) | same — a source gcloud does not emit |
@@ -765,6 +772,57 @@ distinct names sharing a prefix (`ODP_REQUIRE_LIVE_DATA` and
 `ODP_REQUIRE_LIVE_DATA_STRICT`) are not twins, so the twin rule cannot start
 rejecting descriptions a real deployment emits.
 
+## Round 13: numeric components were shaped but never bounded
+
+Rounds 10 and 11 wrote a grammar for each selector member. Both grammars spell a
+numeric resource component `[1-9][0-9]*`, which fixes its *shape* — canonical,
+no leading zero, never `0` — and says nothing about its *range*. A Secret Manager
+version number and a Cloud Resource Manager project number are int64 values, so
+every decimal above the signed int64 maximum matched a pattern while naming a
+resource neither service can hold. Found by Codex6 at head `cdb28c9a` and
+reproduced there before the fix, by restoring that commit's validator under the
+new test file:
+
+| planted component in the required `ODAY_DATABASE_URL` selector at `cdb28c9a` | result |
+| --- | --- |
+| version `9223372036854775808` (Knative `key`) | passed, `_failed_names(checks) == set()` |
+| version `9223372036854775808` (v2 `version`) | passed, `_failed_names(checks) == set()` |
+| name `projects/9223372036854775808/secrets/oday-database-url` (Knative) | passed, `_failed_names(checks) == set()` |
+| the same path in the v2 `secret` member | passed, `_failed_names(checks) == set()` |
+
+Each row is the acceptance "database and every selected provider secret remain
+mandatory" proven by a binding that cannot resolve: Secret Manager has no version
+`9223372036854775808` to select, and Cloud Resource Manager never issued that
+project number, so the deployed job would start without a database URL while
+`jobs-smoke:<kind>:secret_bindings` reported zero failed checks. `ODAY_DATABASE_URL`
+is the sharpest carrier because no provider selection can drop it, but the same
+number passed in any selected provider's selector.
+
+The fix is one guard both members route their digits through,
+`_usable_resource_number`, which re-states the canonical shape and then caps the
+value at `2**63 - 1`. `_SECRET_PROJECT_PATTERN`'s numeric branch is now named
+(`_RESOURCE_NUMBER_PATTERN`) and shared with `_SECRET_VERSION_NUMBER_PATTERN`, and
+`_SECRET_PATH_PATTERN` captures its project segment so `_usable_secret_name` can
+range check a project *number* while leaving a project *ID* — which has no range
+— matched by `_SECRET_PROJECT_ID_PATTERN` alone. The digit count is compared
+against the maximum's own digit count *before* `int()` is called, so a decimal
+longer than CPython's integer-string conversion limit is a rejection rather than a
+`ValueError` raised out of the middle of a deployment proof. No check is added or
+renamed, and the planted number never reaches a detail or the report: both new
+regressions assert `9223372036854775808 not in detail`.
+
+Regressions: four cases on
+`test_job_smoke_rejects_an_out_of_range_knative_database_number` and its v2 mirror
+(version and project number, per dialect — Codex6's probe verbatim); the
+out-of-range and 30-digit project-number paths added to `_UNUSABLE_SECRET_NAMES`,
+which both dialects' name tests run; the out-of-range and 30-digit version numbers
+added to `_UNUSABLE_KNATIVE_SELECTORS` and `_UNUSABLE_V2_SELECTORS`; and 12 direct
+cases on `test_resource_number_range_check_is_total_and_bounded`, including a
+5000-digit selector that pins the pre-`int()` length guard. Controls, so the range
+check cannot over-tighten: `9223372036854775807` as a version selector on both
+dialects, and `projects/9223372036854775807/secrets/<id>` as a secret name on
+both dialects — the last number each component may really carry.
+
 ## Check and report surface
 
 `jobs-smoke:<kind>:secret_bindings` keeps its name, so the deploy gate and any
@@ -796,26 +854,23 @@ placed in the job description never reaches the detail text or the report.
 
 ## Focused verification
 
-Executed from the task branch on the round-12 tree (parent `c59651f2`):
+Executed from the task branch on the round-13 tree (parent `cdb28c9a`):
 
 ```text
-python3 -m pytest tests/ops/test_cloud_run_live_deployment.py                  # 263 passed, 1 deselected
-python3 -m pytest tests/ops                                                    # 318 passed, 20 skipped, 1 deselected
+python3 -m pytest tests/ops/test_cloud_run_live_deployment.py                  # 292 passed
+python3 -m pytest tests/ops                                                    # 347 passed, 20 skipped
 python3 -m ruff check scripts/deployment/validate_cloud_run_live_deployment.py tests/ops/test_cloud_run_live_deployment.py
 python3 -m ruff format --check scripts/deployment/validate_cloud_run_live_deployment.py tests/ops/test_cloud_run_live_deployment.py
 git diff --check
 ```
 
-Ruff check, ruff format `--check`, and `git diff --check` all passed. The one
-deselected case is
-`test_deploy_preflight_imports_runtime_dependencies_via_locked_python`, the
-environmental failure earlier rounds reported: it shells out to `uv`, which is
-absent from this worker's `PATH`, so it fails with
-`Error: required command 'uv' is not installed.` before reaching any assertion
-about this task's code. It is untouched by this branch — the whole diff is the
-validator, this test file's secret-binding cases, and this document — and it
-passes wherever `uv` is installed, which includes CI. Every other case in both
-runs passes.
+Ruff check, ruff format `--check`, and `git diff --check` all passed. Nothing is
+deselected this round: `test_deploy_preflight_imports_runtime_dependencies_via_locked_python`
+shells out to `uv`, and earlier rounds deselected it because `uv` was absent from
+this worker's default `PATH`; the round-13 runs above export
+`$HOME/.local/bin` first, so it runs and passes like the rest. That test is
+untouched by this branch — the whole diff is the validator, this test file's
+secret-binding cases, and this document.
 
 The focused-file count by round was 87 at `76063434` (round 2), 93 at `49e65382`
 (round 3, six new regressions), 94 at `5b9c430a` (round 4, the sidecar test), 97
@@ -830,10 +885,14 @@ v2 no-`version` case), 187 at `d9f2f007` (round 10, 26 version-grammar
 regressions — 13 per dialect — plus seven controls: the 63-character alias on
 the Knative side, and the whole usable-selector set re-run on the v2 container
 path), 231 at `c59651f2` (round 11, 32 secret-name regressions — 16 per dialect
-— plus 12 controls, six usable names on each dialect), and 264 now — round 12
-adds 32 env-var-name regressions (20 secret-name, 10 selection-name, and the two
-padded twins) plus one control. The 264 counts the `uv`-dependent preflight
-case, which the round-12 run deselects; 263 ran.
+— plus 12 controls, six usable names on each dialect), 264 at `cdb28c9a` (round
+12, 32 env-var-name regressions — 20 secret-name, 10 selection-name, and the two
+padded twins — plus one control; the 264 counts the `uv`-dependent preflight
+case, which the round-12 run deselected, so 263 ran), and 292 now — round 13
+adds 24 numeric-range regressions (12 direct cases on the shared guard, four
+`ODAY_DATABASE_URL` probe cases, four out-of-range secret-name cases, and four
+out-of-range version selectors, the last three groups mirrored across both
+dialects) plus four boundary controls.
 
 Each round's regressions fail against that round's pre-fix validator, verified by
 restoring the parent commit's
@@ -900,9 +959,22 @@ the round changes that shape from one accidental failing check to an explicit
 rejection of the description on both checks, and the new tests assert the
 stronger behaviour. The one passing case is the round-12 control,
 `test_job_smoke_accepts_exact_env_names_beside_unrelated_ones`, which passes
-against both validators, so the twin rule is proven narrow. The control tests
-(`test_job_smoke_accepts_each_dialect_at_its_own_container_path` and the run
-30376737123 receipt) pass against both validators.
+against both validators, so the twin rule is proven narrow. For round 13 against
+`cdb28c9a` — restoring that head's
+`scripts/deployment/validate_cloud_run_live_deployment.py` under the round-13
+test file — the whole focused file reports `24 failed, 268 passed`, which is
+every one of this round's 28 new cases except its four controls. Twelve are the
+direct guard cases, which fail because `_usable_resource_number` does not exist
+at that head; the other twelve are the behavioural reproduction, and all twelve
+fail with the pre-fix validator returning **zero** failing checks: the four
+`ODAY_DATABASE_URL` probe cases (`assert 'jobs-smoke:<kind>:secret_bindings' in
+_failed_names(checks)` against a `set()`, version and project number, on both
+container paths — Codex6's probe verbatim), the four out-of-range project-number
+names, and the four out-of-range version selectors. The four controls
+(`9223372036854775807` as a version and as a project number, each on both
+dialects) pass against both validators, so the range check is proven narrow. The
+control tests (`test_job_smoke_accepts_each_dialect_at_its_own_container_path`
+and the run 30376737123 receipt) pass against both validators.
 
 Exact-head CI and an independent Codex6 review are required before merge. After
 merge, ODP-P10-DEV-REDEPLOY-VERIFY-001 must re-run from the exact merged `dev`
@@ -967,3 +1039,11 @@ passed `product-e2e-gate`, `performance-gate`, and `orchestrator`, with
 as a second clearance of the perf-budget diagnosis and not as the merge
 evidence: the exact head to read is round 12's, and CI must go green there
 before merge.
+
+**Round 12 head `cdb28c9a`.** Run
+[30397575928](https://github.com/alfloop-dev/odayplus/actions/runs/30397575928)
+passed all four required checks — `product`, `product-e2e-gate`,
+`performance-gate`, and `orchestrator` — which Codex6's round-12 review recorded
+independently. Round 13 moves the head, so that run is no longer the exact-head
+evidence: CI must go green on the round-13 head before merge, and the perf budget
+stays untouched by this round's diff as well.
