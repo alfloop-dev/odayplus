@@ -298,7 +298,6 @@ class BoundedModelTrainingRelease:
             model_name=spec.model_name,
             version=version,
             approval_id=approval["approval_id"],
-            release_type=release_name,
         )
         # A lost-response retry must return the durable decision of the saga this
         # approval already created. The saga is resolved before the current
@@ -316,6 +315,7 @@ class BoundedModelTrainingRelease:
                 version=version,
                 approval=approval,
                 approval_bytes=approval_bytes,
+                rollback_target=rollback_target,
             )
         model_version = self.service.repository.get_model_version(spec.model_name, version)
         model_card = self.service.repository.get_model_card(spec.model_name, version)
@@ -396,6 +396,7 @@ class BoundedModelTrainingRelease:
             correlation_id=approval["approval_id"],
             expected_release_revision=expected_release_revision,
             idempotency_key=idempotency_key,
+            approval_sha256=approval_record.content_digest,
         )
         return {
             "status": "promoted",
@@ -418,13 +419,38 @@ class BoundedModelTrainingRelease:
         version: str,
         approval: Mapping[str, Any],
         approval_bytes: bytes,
+        rollback_target: str | None,
     ) -> dict[str, Any]:
         command = dict(saga.command)
-        if (
-            str(command.get("model_name") or "") != spec.model_name
-            or str(command.get("version") or "") != version
-            or str(command.get("approval_id") or "") != approval["approval_id"]
-        ):
+        approval_sha256 = compute_content_digest(approval_bytes)
+        expected_command_binding = {
+            "model_name": spec.model_name,
+            "version": version,
+            "release_type": _RELEASE_TYPES[
+                str(approval["release_type"]).lower()
+            ].value,
+            "reason": approval["reason"],
+            "approval_id": approval["approval_id"],
+            "rollback_target": rollback_target,
+            "monitoring_window": "48h",
+            "success_criteria": [
+                "production registry alias resolves",
+                "live inference smoke test passes",
+                "outcome guardrails remain within approved thresholds",
+            ],
+            "fail_criteria": [
+                "artifact lineage mismatch",
+                "live inference failure",
+                "approved validation threshold breach",
+            ],
+            "affected_modules": [spec.key],
+            "requested_by": self.actor,
+            "approved_by": approval["approver"],
+            "correlation_id": approval["approval_id"],
+            "approval_sha256": approval_sha256,
+            "release_scope": "global",
+        }
+        if any(command.get(field) != value for field, value in expected_command_binding.items()):
             raise ModelTrainingConfigurationError(
                 f"promotion idempotency key for {spec.model_name}:{version} is "
                 "already bound to a different release command"
@@ -449,7 +475,7 @@ class BoundedModelTrainingRelease:
             "release_id": decision.release_id,
             "release_revision": decision.release_revision,
             "approval_id": approval["approval_id"],
-            "approval_sha256": compute_content_digest(approval_bytes),
+            "approval_sha256": approval_sha256,
             "rollback_target": decision.rollback_target,
         }
 
@@ -1157,7 +1183,6 @@ def _promotion_idempotency_key(
     model_name: str,
     version: str,
     approval_id: str,
-    release_type: str,
 ) -> str:
     """Deterministic approval-bound release idempotency key.
 
@@ -1170,7 +1195,6 @@ def _promotion_idempotency_key(
         {
             "approval_id": approval_id,
             "model_name": model_name,
-            "release_type": release_type,
             "version": version,
         }
     )

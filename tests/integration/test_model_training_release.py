@@ -1140,15 +1140,79 @@ def test_promote_rejects_reusing_an_approval_for_a_different_command() -> None:
         approval_payload=_approval(model_version=version),
         rollback_target=None,
     )
-    saga = application.service.repository.list_release_sagas(DEFAULT_MODEL_NAME)[0]
-    application.service.repository.save_release_saga(
-        saga.evolve(command={**saga.command, "approval_id": "MRB-OTHER"})
-    )
     with pytest.raises(ModelTrainingConfigurationError, match="different release command"):
         application.promote(
             spec=spec,
             version=version,
-            approval_payload=_approval(model_version=version),
+            approval_payload=_approval(
+                model_version=version,
+                release_type="canary",
+            ),
+            rollback_target="2026.07.23.1",
+        )
+
+
+@pytest.mark.parametrize(
+    ("field", "mutated_value"),
+    (
+        ("reason", "Approval reason was changed after commit"),
+        ("approver", "different-reviewer"),
+        ("approved_at", "2026-07-24T12:00:01Z"),
+    ),
+)
+def test_promote_replay_rejects_post_commit_approval_mutation(
+    field: str,
+    mutated_value: str,
+) -> None:
+    spec = MODEL_SPECS["forecastops"]
+    application = _promotion_application()
+    version = "2026.07.24.1"
+    _register_promotable_candidate(application, version)
+    approval = _approval(model_version=version)
+    application.promote(
+        spec=spec,
+        version=version,
+        approval_payload=approval,
+        rollback_target=None,
+    )
+
+    with pytest.raises(ModelTrainingConfigurationError, match="different release command"):
+        application.promote(
+            spec=spec,
+            version=version,
+            approval_payload={**approval, field: mutated_value},
+            rollback_target=None,
+        )
+
+
+def test_promote_replay_rejects_mutated_persisted_approval_digest() -> None:
+    spec = MODEL_SPECS["forecastops"]
+    application = _promotion_application()
+    repository = application.service.repository
+    version = "2026.07.24.1"
+    _register_promotable_candidate(application, version)
+    approval = _approval(model_version=version)
+    application.promote(
+        spec=spec,
+        version=version,
+        approval_payload=approval,
+        rollback_target=None,
+    )
+    saga = repository.list_release_sagas(DEFAULT_MODEL_NAME)[0]
+    repository.save_release_saga(
+        saga.evolve(
+            command={
+                **saga.command,
+                "approval_sha256": "sha256:" + "0" * 64,
+            }
+        )
+    )
+
+    with pytest.raises(ModelTrainingConfigurationError, match="different release command"):
+        application.promote(
+            spec=spec,
+            version=version,
+            approval_payload=approval,
             rollback_target=None,
         )
 
