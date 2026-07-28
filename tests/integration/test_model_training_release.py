@@ -12,6 +12,13 @@ from typing import Any
 import pytest
 
 from infra.mlflow.runtime import MlflowServerSettings, MlflowServerSettingsError
+from models.shared_ml import MetricThreshold, ModelAlias, SegmentMetric
+from modules.learninghub import (
+    InMemoryLearningHubRepository,
+    LearningHubConflictError,
+    LearningHubService,
+    ReleaseSagaState,
+)
 from scripts.models.contracts import (
     MODEL_SPECS,
     DataBounds,
@@ -42,6 +49,12 @@ from scripts.models.storage import (
     LoadedModelReadyRows,
     ModelReadyDataError,
     PostgresModelReadySource,
+)
+from tests.integration._learninghub_fixtures import (
+    DEFAULT_MODEL_NAME,
+    dataset_rows,
+    model_card,
+    model_version,
 )
 
 
@@ -982,6 +995,221 @@ def test_promotion_approval_is_version_bound_and_prohibits_self_review() -> None
             version="2026.07.24.1",
             requested_by="ml-training-operator",
         )
+
+
+class _RacedReleaseRepository(InMemoryLearningHubRepository):
+    """Serves one stale release revision, as if a concurrent release landed
+    between the promotion wrapper's revision read and the release guard."""
+
+    stale_revision_once: int | None = None
+
+    def get_release_revision(self, model_name: str) -> int:
+        if self.stale_revision_once is not None:
+            stale, self.stale_revision_once = self.stale_revision_once, None
+            return stale
+        return super().get_release_revision(model_name)
+
+
+def _promotion_application(
+    repository: InMemoryLearningHubRepository | None = None,
+) -> BoundedModelTrainingRelease:
+    service = LearningHubService(repository=repository)
+    store = GcsArtifactStore(
+        "gs://oday-model-artifacts/production",
+        FakeGcsTransport(),
+    )
+    return BoundedModelTrainingRelease(
+        source=SimpleNamespace(),
+        service=service,
+        artifact_store=store,
+        git_sha="abc1234",
+        actor="ml-training-operator",
+    )
+
+
+def _register_promotable_candidate(
+    application: BoundedModelTrainingRelease,
+    version: str,
+) -> None:
+    service = application.service
+    snapshot = service.register_dataset_snapshot(
+        dataset_rows(),
+        dataset_snapshot_id=f"{DEFAULT_MODEL_NAME}-training-{version}",
+    )
+    validation = service.validate_candidate(
+        model_name=DEFAULT_MODEL_NAME,
+        model_version=version,
+        dataset_snapshot_id=snapshot.dataset_snapshot_id,
+        metrics={"w4_smape": 0.11, "p80_coverage": 0.82},
+        baseline_metrics={"w4_smape": 0.15, "p80_coverage": 0.78},
+        thresholds=(
+            MetricThreshold("w4_smape", max_value=0.12),
+            MetricThreshold("p80_coverage", min_value=0.80),
+        ),
+        segment_metrics=(
+            SegmentMetric(
+                segment_name="region",
+                segment_value="north",
+                metrics={"w4_smape": 0.10},
+                record_count=1,
+            ),
+        ),
+        calibration_summary={"p80_coverage": 0.82},
+    )
+    assert validation.passed
+    artifact = application.artifact_store.put_artifact(
+        model_name=DEFAULT_MODEL_NAME,
+        version=version,
+        kind="model",
+        data=f"trained-model-{version}".encode(),
+        metadata={"dataset_snapshot_id": snapshot.dataset_snapshot_id},
+    )
+    candidate = model_version(version, snapshot.dataset_snapshot_id)._replace(
+        artifact_uri=artifact.uri,
+        monitoring_config={"artifact_sha256": artifact.content_digest},
+    )
+    service.register_model_version(
+        model_version=candidate,
+        model_card=model_card(
+            version,
+            snapshot.dataset_snapshot_id,
+            validation.validation_run_id,
+        ),
+        validation_run=validation,
+    )
+
+
+def test_promote_first_success_and_identical_replay_share_one_durable_release() -> None:
+    spec = MODEL_SPECS["forecastops"]
+    assert spec.production_release_enabled
+    assert spec.model_name == DEFAULT_MODEL_NAME
+    application = _promotion_application()
+    repository = application.service.repository
+    version = "2026.07.24.1"
+    _register_promotable_candidate(application, version)
+    approval_payload = _approval(model_version=version)
+
+    first = application.promote(
+        spec=spec,
+        version=version,
+        approval_payload=approval_payload,
+        rollback_target=None,
+    )
+
+    assert first["status"] == "promoted"
+    assert first["replayed"] is False
+    assert first["release_revision"] == 1
+    assert repository.get_alias(DEFAULT_MODEL_NAME, ModelAlias.SHADOW).version == version
+    sagas = repository.list_release_sagas(DEFAULT_MODEL_NAME)
+    assert [saga.state for saga in sagas] == [ReleaseSagaState.COMPLETED]
+    approvals_after_first = repository.get_model_card(DEFAULT_MODEL_NAME, version).approvals
+
+    # Identical replay against the normal post-commit repository state: the
+    # release revision has already advanced, so only approval-bound saga
+    # resolution can return the durable decision instead of a conflict.
+    replay = application.promote(
+        spec=spec,
+        version=version,
+        approval_payload=approval_payload,
+        rollback_target=None,
+    )
+
+    assert replay["status"] == "promoted"
+    assert replay["replayed"] is True
+    assert replay["release_id"] == first["release_id"]
+    assert replay["release_revision"] == first["release_revision"]
+    assert replay["approval_sha256"] == first["approval_sha256"]
+    assert repository.get_release_revision(DEFAULT_MODEL_NAME) == 1
+    assert len(repository.list_release_sagas(DEFAULT_MODEL_NAME)) == 1
+    assert len(repository.list_release_decisions()) == 1
+    assert repository.get_alias(DEFAULT_MODEL_NAME, ModelAlias.SHADOW).version == version
+    assert (
+        repository.get_model_card(DEFAULT_MODEL_NAME, version).approvals
+        == approvals_after_first
+    )
+
+
+def test_promote_rejects_reusing_an_approval_for_a_different_command() -> None:
+    spec = MODEL_SPECS["forecastops"]
+    application = _promotion_application()
+    version = "2026.07.24.1"
+    _register_promotable_candidate(application, version)
+    application.promote(
+        spec=spec,
+        version=version,
+        approval_payload=_approval(model_version=version),
+        rollback_target=None,
+    )
+    saga = application.service.repository.list_release_sagas(DEFAULT_MODEL_NAME)[0]
+    application.service.repository.save_release_saga(
+        saga.evolve(command={**saga.command, "approval_id": "MRB-OTHER"})
+    )
+    with pytest.raises(ModelTrainingConfigurationError, match="different release command"):
+        application.promote(
+            spec=spec,
+            version=version,
+            approval_payload=_approval(model_version=version),
+            rollback_target=None,
+        )
+
+
+def test_promote_incomplete_saga_replay_requires_operator_recovery() -> None:
+    spec = MODEL_SPECS["forecastops"]
+    application = _promotion_application()
+    version = "2026.07.24.1"
+    _register_promotable_candidate(application, version)
+    application.promote(
+        spec=spec,
+        version=version,
+        approval_payload=_approval(model_version=version),
+        rollback_target=None,
+    )
+    repository = application.service.repository
+    saga = repository.list_release_sagas(DEFAULT_MODEL_NAME)[0]
+    repository.save_release_saga(saga.evolve(state=ReleaseSagaState.COMPENSATING))
+    with pytest.raises(ModelTrainingConfigurationError, match="operator recovery"):
+        application.promote(
+            spec=spec,
+            version=version,
+            approval_payload=_approval(model_version=version),
+            rollback_target=None,
+        )
+
+
+def test_promote_rejects_stale_release_revision_without_mutation() -> None:
+    spec = MODEL_SPECS["forecastops"]
+    repository = _RacedReleaseRepository()
+    application = _promotion_application(repository)
+    first_version = "2026.07.24.1"
+    _register_promotable_candidate(application, first_version)
+    application.promote(
+        spec=spec,
+        version=first_version,
+        approval_payload=_approval(model_version=first_version),
+        rollback_target=None,
+    )
+    assert repository.get_release_revision(DEFAULT_MODEL_NAME) == 1
+
+    second_version = "2026.07.25.1"
+    _register_promotable_candidate(application, second_version)
+    repository.stale_revision_once = 0
+    with pytest.raises(LearningHubConflictError, match="release revision conflict"):
+        application.promote(
+            spec=spec,
+            version=second_version,
+            approval_payload=_approval(
+                approval_id="MRB-2026-0018",
+                model_version=second_version,
+            ),
+            rollback_target=None,
+        )
+
+    assert repository.get_release_revision(DEFAULT_MODEL_NAME) == 1
+    assert repository.get_alias(DEFAULT_MODEL_NAME, ModelAlias.SHADOW).version == first_version
+    assert repository.get_alias(DEFAULT_MODEL_NAME, ModelAlias.PRODUCTION) is None
+    sagas = repository.list_release_sagas(DEFAULT_MODEL_NAME)
+    assert len(sagas) == 1
+    assert sagas[0].command["version"] == first_version
 
 
 def test_listing_property_avm_production_promotion_is_explicitly_blocked() -> None:
