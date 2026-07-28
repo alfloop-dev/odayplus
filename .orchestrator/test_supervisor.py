@@ -7421,6 +7421,82 @@ class RuntimeLeaseReconciliationTests(unittest.TestCase):
                 1,
             )
 
+    def test_restart_preserves_one_live_claude_worker_without_redispatch(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            config = self._config(root)
+            config["providers"]["claude"] = {"delivery_mode": "claude_cli", "quota_group": "claude"}
+            config["agents"]["claude"] = {
+                "id": "claude",
+                "display_name": "Claude",
+                "provider": "claude",
+            }
+            config["ready_dispatcher"]["agent_order"] = ["claude"]
+            task = {
+                "id": "ODP-TASKOUTPUT-LIVE",
+                "status": "in_progress",
+                "owner": "Claude",
+                "reviewer": "Codex",
+                "depends_on": [],
+            }
+            (root / "ai-status.json").write_text(json.dumps({"tasks": [task]}), encoding="utf-8")
+            (root / "event-queue.jsonl").write_text(
+                json.dumps(
+                    {
+                        "event_id": "evt-claude",
+                        "task_id": task["id"],
+                        "target_agent": "claude",
+                        "target_display_name": "Claude",
+                        "reason": "owned_in_progress_dispatch",
+                    }
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+            state = {
+                "queue": {
+                    "events": {
+                        "evt-claude": {
+                            "status": "started",
+                            "run_id": "claude-run-live",
+                        }
+                    }
+                },
+                "workers": {
+                    "claude-run-live": {
+                        "run_id": "claude-run-live",
+                        "status": "running",
+                        "provider": "claude",
+                        "agent_id": "claude",
+                        "task_id": task["id"],
+                        "queue_event_id": "evt-claude",
+                        "pid": 4242,
+                    }
+                },
+            }
+
+            with (
+                mock.patch.object(supervisor, "pid_is_alive", return_value=True),
+                mock.patch.object(supervisor, "queue_delivery_event") as queue_delivery_event,
+                mock.patch.object(supervisor, "scan_live_worker_pids_by_agent", return_value={"Claude": [4242]}),
+            ):
+                supervisor.reconcile_runtime_on_boot(config, state)
+                dispatched = supervisor.dispatch_ready_tasks(
+                    config,
+                    state,
+                    provider_report={"providers": {"claude": {"auth_ready": True}}},
+                )
+
+            active_for_task = [
+                worker
+                for worker in state["workers"].values()
+                if worker.get("task_id") == task["id"] and worker.get("status") == "running"
+            ]
+            self.assertFalse(dispatched)
+            self.assertEqual(len(active_for_task), 1)
+            self.assertEqual(active_for_task[0]["run_id"], "claude-run-live")
+            queue_delivery_event.assert_not_called()
+
     def test_reconcile_runtime_fails_running_worker_when_pid_is_missing(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             root = Path(tmpdir)
