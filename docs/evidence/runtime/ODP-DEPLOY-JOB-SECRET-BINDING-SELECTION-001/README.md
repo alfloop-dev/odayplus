@@ -58,14 +58,17 @@ and then requires every check to pass.
 The requirement is now derived, not hardcoded, and it is structural rather than
 textual. `job_secret_binding_checks` does four things:
 
-1. **Reads the job's own env, in either schema.** `_iter_job_containers` finds
-   container mappings by shape, so both the Knative
-   (`spec.template.spec.template.spec.containers`) and the v2
-   (`template.template.containers`) layouts are supported. Migration, worker,
-   and scheduler jobs all use the same reader.
+1. **Reads the job's own env, from the authoritative task template only.**
+   `_authoritative_job_containers` resolves containers at exactly one of the two
+   canonical paths — Knative `spec.template.spec.template.spec.containers` or v2
+   `template.template.containers` — and rejects a description whose containers
+   are absent, declared at both paths, or accompanied by a `containers` key
+   anywhere off that path. Migration, worker, and scheduler jobs all use the
+   same reader.
 2. **Reads the selection from the deployed job.** The plaintext
    `ODP_PRODUCTION_PROVIDER_IDS` env entry of the job under test is the
-   authority for what that job actually selected.
+   authority for what that job actually selected, and it must occur exactly once
+   across the authoritative container set.
 3. **Derives the required secrets from the provider registry.**
    `required_job_secret_env_vars` returns `ODAY_DATABASE_URL` plus every
    `required_in_live` credential `env_var` of each selected provider, read from
@@ -101,6 +104,11 @@ Substring scanning is gone for this check: a job that merely mentions
 | `valueSource.secretKeyRef.name` (Knative key in the v2 source) | same — not a Cloud Run schema |
 | no plaintext `ODP_PRODUCTION_PROVIDER_IDS` in the job | `provider_selection` **and** `secret_bindings` both fail: the selection is unprovable |
 | `ODP_PRODUCTION_PROVIDER_IDS` supplied only as a secret reference | same — an unreadable selection proves nothing |
+| `ODP_PRODUCTION_PROVIDER_IDS` declared twice, with different values | same — the effective selection is ambiguous |
+| `ODP_PRODUCTION_PROVIDER_IDS` declared twice, identically, or once per container | same — nothing proves which one the runtime reads |
+| secret refs planted at `metadata.containers` (or any off-path `containers`) | same — the description is rejected before any binding is read |
+| containers declared at both the Knative and the v2 path | same — the authoritative task template is ambiguous |
+| no containers at either canonical path, or an empty/non-object container list | same |
 | selection names a provider the registry does not know | `provider_selection` and `secret_bindings` fail |
 | provider registry cannot be imported | both fail with the import error |
 | job selection ≠ release `ODP_PRODUCTION_PROVIDER_IDS` | `selected_provider_release_match` fails |
@@ -111,11 +119,61 @@ The empty-`valueSource` rows are a deliberate tightening: the previous fixtures
 used `{"name": "...", "valueSource": {}}`, which is not a binding gcloud emits
 and which proves nothing about Secret Manager.
 
-The last three rows close a gap Codex6 found at head `d6bb605a`: the reference
-lookup had walked `(valueFrom, valueSource, entry)` × `(secret, name)`, so six
-shapes resolved where only two are real. All three off-schema shapes are now
-parametrized regression cases in
-`test_job_smoke_rejects_malformed_secret_binding` (9 cases total).
+The three off-schema `secretKeyRef` rows close a gap Codex6 found at head
+`d6bb605a`: the reference lookup had walked
+`(valueFrom, valueSource, entry)` × `(secret, name)`, so six shapes resolved
+where only two are real. All three off-schema shapes are now parametrized
+regression cases in `test_job_smoke_rejects_malformed_secret_binding`
+(9 cases total).
+
+## Round 3: the two exploits Codex6 found at head `76063434`
+
+Both were real bypasses of a check that reported `ok`. Both now fail closed, and
+each has a regression that fails against the pre-fix validator.
+
+### 1. Containers were located by shape, so any mapping could carry the proof
+
+`_iter_job_containers` walked the whole description and yielded every list under
+a `containers` key. A description whose real Knative task template bound **zero**
+secrets therefore satisfied `secret_bindings` by planting the refs at
+`metadata.containers` — a path Cloud Run never runs anything from.
+
+Containers are now read only from the two canonical paths, one of which must be
+present and unambiguous, and a `containers` key found anywhere else rejects the
+whole description rather than contributing env entries. Off-path locations are
+named in the failure detail (`metadata.containers`), so a genuinely new gcloud
+schema surfaces as an explicit rejection to be reviewed, not as a silent pass.
+
+Regressions: `test_job_smoke_rejects_secret_refs_planted_outside_the_task_template`
+(planted beside a real template, and planted with no real template at all) and
+`test_job_smoke_rejects_an_ambiguous_or_unreadable_task_template`.
+
+### 2. The selection was the first plaintext hit, so a wider one could hide
+
+`_job_plaintext_env` took the first nonempty `value` for each env name and
+`break`ed. A description declaring `ODP_PRODUCTION_PROVIDER_IDS` twice — the
+three normal providers first, then `...,listing.partner_feed` — was validated
+against the narrow first value and passed without
+`ODP_LISTING_PROVIDER_API_KEY`, while nothing establishes which occurrence the
+runtime reads.
+
+`_job_selected_provider_ids` replaces it: the env var must occur **exactly once**
+across the authoritative container set and be readable plaintext. A duplicate
+(conflicting or identical, same container or a sibling), a secret-bound
+occurrence, and a missing or blank value all leave the selection unprovable and
+fail `provider_selection` and `secret_bindings` together. Uniqueness rather than
+consistency is the rule because a repeated env var has no defined winner, and
+`gcloud run jobs deploy --set-env-vars` emits it once.
+
+Regression: `test_job_smoke_rejects_a_duplicate_provider_selection` (3 cases:
+conflicting, identical, plaintext-beside-secret) and
+`test_job_smoke_rejects_a_selection_declared_by_a_second_container`.
+
+The scheduler fixture in
+`test_job_smoke_rejects_failed_execution_and_missing_provider_secrets` was moved
+onto the canonical Knative path; it had sat at `spec.template.containers` and
+would otherwise have been rejected as off-path before reaching the missing-secret
+assertion it exists to make.
 
 ## Check and report surface
 
@@ -148,17 +206,23 @@ placed in the job description never reaches the detail text or the report.
 
 ## Focused verification
 
-Executed from the task branch on the review-round-2 tree (parent `d6bb605a`):
+Executed from the task branch on the review-round-3 tree (parent `76063434`):
 
 ```text
-uv run --frozen pytest tests/ops/test_cloud_run_live_deployment.py -q   # 87 passed
-uv run --frozen pytest tests/ops -q                                     # 162 passed
+uv run --frozen pytest tests/ops/test_cloud_run_live_deployment.py -q   # 93 passed
+uv run --frozen pytest tests/ops -q                                     # 168 passed
 uv run --frozen ruff check .                                            # All checks passed
 uv run --frozen ruff format --check scripts/deployment/validate_cloud_run_live_deployment.py tests/ops/test_cloud_run_live_deployment.py
 git diff --check
 ```
 
-All commands passed. `uv` must be on `PATH`
+All commands passed; round 2 was 87 and 162 at `76063434`, so the six new tests
+are the whole delta. Each of the six fails against the pre-fix validator —
+verified by restoring `76063434`'s
+`scripts/deployment/validate_cloud_run_live_deployment.py` under the new test
+file, which yields `6 failed`.
+
+`uv` must be on `PATH`
 (`export PATH="$HOME/.local/bin:$PATH"` on the worker image): the suite executes
 the real deploy script through
 `test_deploy_preflight_imports_runtime_dependencies_via_locked_python`, whose

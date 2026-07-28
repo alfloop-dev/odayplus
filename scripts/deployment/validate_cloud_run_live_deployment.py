@@ -1872,28 +1872,95 @@ def resolve_latest_execution_name(payload: Any, *, job: str | None = None) -> st
     return ordered[0][1]
 
 
-def _iter_job_containers(payload: Any) -> Iterator[Mapping[str, Any]]:
-    """Yield every container mapping in a Cloud Run Job description.
+class JobDescriptionError(ValueError):
+    """A Job description cannot be read as an authoritative task template."""
 
-    `gcloud run jobs describe --format=json` nests containers differently across
-    releases (Knative `spec.template.spec.template.spec.containers` versus v2
-    `template.template.containers`), so the containers are located by shape
-    rather than by a hardcoded path.
-    """
+
+#: The only two paths `gcloud run jobs describe --format=json` places task
+#: containers at: Knative (`spec.template.spec.template.spec.containers`) and
+#: Cloud Run v2 (`template.template.containers`). Nothing else is a task
+#: template, so nothing else may contribute env bindings.
+_JOB_CONTAINER_PATHS: tuple[tuple[str, ...], ...] = (
+    ("spec", "template", "spec", "template", "spec", "containers"),
+    ("template", "template", "containers"),
+)
+
+
+def _resolve_path(payload: Any, path: tuple[str, ...]) -> Any:
+    """Return the value at `path`, or `None` when any hop is not a mapping."""
+
+    current: Any = payload
+    for key in path:
+        if not isinstance(current, Mapping) or key not in current:
+            return None
+        current = current[key]
+    return current
+
+
+def _iter_containers_key_paths(payload: Any, prefix: tuple[Any, ...] = ()) -> Iterator[tuple]:
+    """Yield the path of every `containers` key anywhere in a description."""
 
     if isinstance(payload, Mapping):
-        containers = payload.get("containers")
-        if isinstance(containers, list):
-            for container in containers:
-                if isinstance(container, Mapping):
-                    yield container
         for key, value in payload.items():
+            path = (*prefix, key)
             if key == "containers":
-                continue
-            yield from _iter_job_containers(value)
+                yield path
+            yield from _iter_containers_key_paths(value, path)
     elif isinstance(payload, list):
-        for item in payload:
-            yield from _iter_job_containers(item)
+        for index, item in enumerate(payload):
+            yield from _iter_containers_key_paths(item, (*prefix, index))
+
+
+def _authoritative_job_containers(job_description: Mapping[str, Any]) -> list[Mapping[str, Any]]:
+    """Return the task containers of a Job description, or fail closed.
+
+    Locating containers by shape let a crafted description satisfy the secret
+    proof from anywhere in the payload — `metadata.containers` with planted
+    secret refs passed while the real task template bound nothing. Containers
+    are therefore read only from the two canonical paths, and a description is
+    rejected when they are absent, declared at both paths (ambiguous), or
+    accompanied by a `containers` key off those paths.
+    """
+
+    present = [
+        (path, _resolve_path(job_description, path))
+        for path in _JOB_CONTAINER_PATHS
+        if _resolve_path(job_description, path) is not None
+    ]
+    if not present:
+        raise JobDescriptionError(
+            "job description declares no containers at "
+            f"{' or '.join('.'.join(path) for path in _JOB_CONTAINER_PATHS)}"
+        )
+    if len(present) > 1:
+        raise JobDescriptionError(
+            "job description declares containers at both "
+            f"{' and '.join('.'.join(path) for path, _ in present)}; "
+            "the authoritative task template is ambiguous"
+        )
+
+    canonical_path, containers = present[0]
+    off_path = sorted(
+        ".".join(str(key) for key in path)
+        for path in _iter_containers_key_paths(job_description)
+        if path != canonical_path
+    )
+    if off_path:
+        raise JobDescriptionError(
+            f"job description declares containers outside {'.'.join(canonical_path)}: "
+            f"{','.join(off_path)}"
+        )
+
+    if not isinstance(containers, list) or not containers:
+        raise JobDescriptionError(
+            f"{'.'.join(canonical_path)} is not a non-empty list of containers"
+        )
+    for index, container in enumerate(containers):
+        if not isinstance(container, Mapping):
+            raise JobDescriptionError(
+                f"{'.'.join(canonical_path)}[{index}] is not a container object"
+            )
+    return list(containers)
 
 
 #: The only two env-var-to-secret schemas Cloud Run emits, as
@@ -1935,7 +2002,7 @@ def _job_env_entries(job_description: Mapping[str, Any]) -> dict[str, list[Mappi
     """Group every container env entry of a Job description by env-var name."""
 
     entries: dict[str, list[Mapping[str, Any]]] = {}
-    for container in _iter_job_containers(job_description):
+    for container in _authoritative_job_containers(job_description):
         env = container.get("env")
         if not isinstance(env, list):
             continue
@@ -1949,17 +2016,42 @@ def _job_env_entries(job_description: Mapping[str, Any]) -> dict[str, list[Mappi
     return entries
 
 
-def _job_plaintext_env(entries: Mapping[str, list[Mapping[str, Any]]]) -> dict[str, str]:
-    """Return the plaintext (non-secret) env values declared by a Job."""
+def _job_selected_provider_ids(entries: Mapping[str, list[Mapping[str, Any]]]) -> str:
+    """Return the single readable provider selection a Job declares.
 
-    plaintext: dict[str, str] = {}
-    for name, occurrences in entries.items():
-        for entry in occurrences:
-            value = entry.get("value")
-            if isinstance(value, str) and value.strip():
-                plaintext[name] = value.strip()
-                break
-    return plaintext
+    Taking the first nonempty plaintext occurrence let a description declare the
+    selection twice — the three normal providers first, `listing.partner_feed`
+    second — and be validated against the narrower first value. Exactly one
+    occurrence is therefore required across the authoritative container set, and
+    it must be readable plaintext: a duplicate, a secret-bound value, or a value
+    that is missing or blank leaves the selection unprovable.
+    """
+
+    occurrences = entries.get(PRODUCTION_PROVIDER_IDS_ENV, [])
+    if not occurrences:
+        raise JobDescriptionError(
+            f"job declares no plaintext {PRODUCTION_PROVIDER_IDS_ENV}; "
+            "the selected provider set is unprovable"
+        )
+    if len(occurrences) > 1:
+        raise JobDescriptionError(
+            f"job declares {PRODUCTION_PROVIDER_IDS_ENV} {len(occurrences)} times; "
+            "the selected provider set is ambiguous"
+        )
+
+    entry = occurrences[0]
+    if _secret_reference_name(entry):
+        raise JobDescriptionError(
+            f"{PRODUCTION_PROVIDER_IDS_ENV} is bound to a secret reference and cannot be read; "
+            "the selected provider set is unprovable"
+        )
+    value = entry.get("value")
+    if not isinstance(value, str) or not value.strip():
+        raise JobDescriptionError(
+            f"job declares no plaintext {PRODUCTION_PROVIDER_IDS_ENV}; "
+            "the selected provider set is unprovable"
+        )
+    return value.strip()
 
 
 def _secret_binding_proof(entries: list[Mapping[str, Any]]) -> tuple[bool, str]:
@@ -2030,16 +2122,24 @@ def job_secret_binding_checks(
 
     selection_check = f"jobs-smoke:{kind}:provider_selection"
     bindings_check = f"jobs-smoke:{kind}:secret_bindings"
-    entries = _job_env_entries(job_description)
-    plaintext_env = _job_plaintext_env(entries)
-    raw_selection = plaintext_env.get(PRODUCTION_PROVIDER_IDS_ENV, "")
+    report: dict[str, Any] = {
+        "selected_provider_ids": [],
+        "secret_values_redacted": True,
+    }
+
+    try:
+        entries = _job_env_entries(job_description)
+        raw_selection = _job_selected_provider_ids(entries)
+    except JobDescriptionError as exc:
+        return [
+            CheckResult(False, selection_check, str(exc)),
+            CheckResult(False, bindings_check, str(exc)),
+        ], report
+
     selected_ids = frozenset(
         provider_id.strip() for provider_id in raw_selection.split(",") if provider_id.strip()
     )
-    report: dict[str, Any] = {
-        "selected_provider_ids": sorted(selected_ids),
-        "secret_values_redacted": True,
-    }
+    report["selected_provider_ids"] = sorted(selected_ids)
 
     if not selected_ids:
         detail = (

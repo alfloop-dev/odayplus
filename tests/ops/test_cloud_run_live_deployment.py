@@ -1470,6 +1470,128 @@ def test_job_smoke_fails_closed_when_selection_is_only_secret_bound() -> None:
     assert "jobs-smoke:migration:secret_bindings" in _failed_names(checks)
 
 
+def test_job_smoke_rejects_secret_refs_planted_outside_the_task_template() -> None:
+    """Secrets only count where Cloud Run actually runs the task.
+
+    Locating containers by shape meant any mapping with a `containers` key
+    satisfied the proof, so a description whose real task template bound nothing
+    passed by planting the same refs under `metadata`.
+    """
+
+    fully_bound = _job_container(
+        kind="migration",
+        sha=RUN_30376737123_SHA,
+        provider_ids=RUN_30376737123_PROVIDER_IDS,
+        secret_envs=tuple(
+            _knative_secret_env(env_var)
+            for env_var in ("ODAY_DATABASE_URL", *SELECTED_PROVIDER_SECRET_ENVS)
+        ),
+    )
+
+    planted = _knative_job(secret_envs=())
+    assert isinstance(planted["metadata"], dict)
+    planted["metadata"]["containers"] = [fully_bound]
+
+    checks, report = _job_checks(planted)
+    failed = _failed_names(checks)
+    detail = _detail(checks, "jobs-smoke:migration:secret_bindings")
+
+    assert "jobs-smoke:migration:provider_selection" in failed
+    assert "jobs-smoke:migration:secret_bindings" in failed
+    assert "metadata.containers" in detail
+    assert report["selected_provider_ids"] == []
+    assert "secret_bound_env_vars" not in report
+
+    # The same planted containers with no authoritative task template at all
+    # must fail closed too, rather than being adopted as the task template.
+    orphaned = {
+        "metadata": {"name": "oday-migration", "containers": [fully_bound]},
+        "spec": {"template": {"spec": {}}},
+    }
+
+    orphan_checks, _ = _job_checks(orphaned)
+
+    assert "jobs-smoke:migration:provider_selection" in _failed_names(orphan_checks)
+    assert "jobs-smoke:migration:secret_bindings" in _failed_names(orphan_checks)
+
+
+def test_job_smoke_rejects_an_ambiguous_or_unreadable_task_template() -> None:
+    unbound = _job_container(
+        kind="migration",
+        sha=RUN_30376737123_SHA,
+        provider_ids=f"{RUN_30376737123_PROVIDER_IDS},listing.partner_feed",
+        secret_envs=(),
+    )
+    both_schemas = dict(_knative_job())
+    both_schemas["template"] = {"template": {"containers": [unbound]}}
+
+    ambiguous_checks, _ = _job_checks(both_schemas)
+
+    assert "jobs-smoke:migration:secret_bindings" in _failed_names(ambiguous_checks)
+    assert "ambiguous" in _detail(ambiguous_checks, "jobs-smoke:migration:secret_bindings")
+
+    for empty in (
+        {"spec": {"template": {"spec": {"template": {"spec": {"containers": []}}}}}},
+        {"spec": {"template": {"spec": {"template": {"spec": {"containers": "poi"}}}}}},
+        {"spec": {"template": {"spec": {"template": {"spec": {"containers": ["poi"]}}}}}},
+        {"metadata": {"name": "oday-migration"}},
+    ):
+        checks, report = _job_checks(empty)
+
+        assert "jobs-smoke:migration:provider_selection" in _failed_names(checks)
+        assert "jobs-smoke:migration:secret_bindings" in _failed_names(checks)
+        assert report["selected_provider_ids"] == []
+
+
+@pytest.mark.parametrize(
+    "duplicate",
+    [
+        # The exploit: the narrow selection is validated while a later, wider
+        # one silently selects a provider whose secret is never required.
+        {
+            "name": "ODP_PRODUCTION_PROVIDER_IDS",
+            "value": f"{RUN_30376737123_PROVIDER_IDS},listing.partner_feed",
+        },
+        # An identical repeat is still ambiguous: nothing proves which one the
+        # runtime reads.
+        {"name": "ODP_PRODUCTION_PROVIDER_IDS", "value": RUN_30376737123_PROVIDER_IDS},
+        # A plaintext occurrence beside a secret-bound one is unreadable.
+        _knative_secret_env("ODP_PRODUCTION_PROVIDER_IDS"),
+    ],
+)
+def test_job_smoke_rejects_a_duplicate_provider_selection(duplicate: dict[str, object]) -> None:
+    job = _knative_job(extra_envs=(duplicate,))
+
+    checks, report = _job_checks(job)
+    failed = _failed_names(checks)
+
+    assert "jobs-smoke:migration:provider_selection" in failed
+    assert "jobs-smoke:migration:secret_bindings" in failed
+    assert "ambiguous" in _detail(checks, "jobs-smoke:migration:provider_selection")
+    assert report["selected_provider_ids"] == []
+
+
+def test_job_smoke_rejects_a_selection_declared_by_a_second_container() -> None:
+    """A duplicate in a sidecar is a duplicate: the selection stays unprovable."""
+
+    job = _knative_job()
+    containers = job["spec"]["template"]["spec"]["template"]["spec"]["containers"]  # type: ignore[index]
+    assert isinstance(containers, list)
+    containers.append(
+        _job_container(
+            kind="migration",
+            sha=RUN_30376737123_SHA,
+            provider_ids=f"{RUN_30376737123_PROVIDER_IDS},listing.partner_feed",
+            secret_envs=(),
+        )
+    )
+
+    checks, _ = _job_checks(job)
+
+    assert "jobs-smoke:migration:provider_selection" in _failed_names(checks)
+    assert "jobs-smoke:migration:secret_bindings" in _failed_names(checks)
+
+
 def test_job_smoke_rejects_unknown_selected_provider_id() -> None:
     job = _knative_job(provider_ids=f"{RUN_30376737123_PROVIDER_IDS},poi.not_a_provider")
 
@@ -1535,19 +1657,28 @@ def test_job_smoke_rejects_failed_execution_and_missing_provider_secrets() -> No
         "metadata": {"name": "scheduler-job", "labels": {}},
         "spec": {
             "template": {
-                "containers": [
-                    {
-                        "image": "registry/scheduler:latest",
-                        "args": ["scripts/deployment/cloud_run_job_entrypoint.py", "scheduler"],
-                        "env": [
-                            {
-                                "name": "ODP_PRODUCTION_PROVIDER_IDS",
-                                "value": RUN_30376737123_PROVIDER_IDS,
-                            },
-                            _knative_secret_env("ODAY_DATABASE_URL"),
-                        ],
+                "spec": {
+                    "template": {
+                        "spec": {
+                            "containers": [
+                                {
+                                    "image": "registry/scheduler:latest",
+                                    "args": [
+                                        "scripts/deployment/cloud_run_job_entrypoint.py",
+                                        "scheduler",
+                                    ],
+                                    "env": [
+                                        {
+                                            "name": "ODP_PRODUCTION_PROVIDER_IDS",
+                                            "value": RUN_30376737123_PROVIDER_IDS,
+                                        },
+                                        _knative_secret_env("ODAY_DATABASE_URL"),
+                                    ],
+                                }
+                            ]
+                        }
                     }
-                ]
+                }
             }
         },
     }
