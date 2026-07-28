@@ -232,14 +232,11 @@ def test_deploy_script_runs_repository_validators_with_locked_python() -> None:
     assert "for cmd in python3 uv gcloud docker; do" in text
     assert 'uv run --frozen python "$@"' in text
     for invocation in (
-        "run_locked_python "
-        "scripts/deployment/validate_cloud_run_live_deployment.py preflight",
-        "run_locked_python "
-        "scripts/deployment/validate_cloud_run_live_deployment.py jobs-smoke",
+        "run_locked_python scripts/deployment/validate_cloud_run_live_deployment.py preflight",
+        "run_locked_python scripts/deployment/validate_cloud_run_live_deployment.py jobs-smoke",
         "run_locked_python "
         "scripts/deployment/validate_cloud_run_live_deployment.py compatibility-smoke",
-        "run_locked_python "
-        "scripts/deployment/validate_cloud_run_live_deployment.py smoke",
+        "run_locked_python scripts/deployment/validate_cloud_run_live_deployment.py smoke",
         "run_locked_python scripts/e2e/check_live_e2e_gate.py",
     ):
         assert invocation in text
@@ -621,10 +618,7 @@ class DeterministicRuntimeHandler(BaseHTTPRequestHandler):
                                 "errors": (
                                     []
                                     if self.operator_repository_ready
-                                    else [
-                                        "OperatorLiveRepositoryError: stores: "
-                                        "connection refused"
-                                    ]
+                                    else ["OperatorLiveRepositoryError: stores: connection refused"]
                                 ),
                             },
                             "origin": self._operator_origin(),
@@ -884,10 +878,7 @@ def test_provider_probe_timeout_band_matches_runtime_connector() -> None:
 
     # The connector clamps with _bounded_float(minimum=0.05, maximum=MAX_...).
     assert validator.MIN_PROVIDER_PROBE_TIMEOUT_SECONDS == 0.05
-    assert (
-        validator.MAX_PROVIDER_PROBE_TIMEOUT_SECONDS
-        == connectivity.MAX_PROBE_TIMEOUT_SECONDS
-    )
+    assert validator.MAX_PROVIDER_PROBE_TIMEOUT_SECONDS == connectivity.MAX_PROBE_TIMEOUT_SECONDS
     check = validator._bounded_provider_probe_timeout_check(
         {
             "ODP_EXTERNAL_PROVIDER_PROBE_TIMEOUT_SECONDS": str(
@@ -950,14 +941,8 @@ def test_deploy_script_preflights_before_build_and_uses_secret_references() -> N
     assert ': "${ODP_FORECAST_MODEL:?' in text
     assert '"ODP_FORECAST_ENGINE",' in text
     assert '"ODP_FORECAST_MODEL",' in text
-    assert (
-        'API_SERVICE_AUDIENCE="$(service_snapshot_url '
-        '"${API_CANDIDATE_DESCRIPTION}")"'
-    ) in text
-    assert (
-        'python3 - "${WEB_ENV_FILE}" "${API_URL}" '
-        '"${API_SERVICE_AUDIENCE}" <<\'PY\''
-    ) in text
+    assert ('API_SERVICE_AUDIENCE="$(service_snapshot_url "${API_CANDIDATE_DESCRIPTION}")"') in text
+    assert ('python3 - "${WEB_ENV_FILE}" "${API_URL}" "${API_SERVICE_AUDIENCE}" <<\'PY\'') in text
     assert '"ODP_API_BASE_URL": sys.argv[2],' in text
     assert '"ODP_API_SERVICE_AUDIENCE": sys.argv[3],' in text
     assert text.count('--env-vars-file="${API_ENV_FILE}"') == 4
