@@ -105,9 +105,10 @@ Substring scanning is gone for this check: a job that merely mentions
 | no plaintext `ODP_PRODUCTION_PROVIDER_IDS` in the job | `provider_selection` **and** `secret_bindings` both fail: the selection is unprovable |
 | `ODP_PRODUCTION_PROVIDER_IDS` supplied only as a secret reference | same — an unreadable selection proves nothing |
 | `ODP_PRODUCTION_PROVIDER_IDS` declared twice, with different values | same — the effective selection is ambiguous |
-| `ODP_PRODUCTION_PROVIDER_IDS` declared twice, identically, or once per container | same — nothing proves which one the runtime reads |
+| `ODP_PRODUCTION_PROVIDER_IDS` declared twice, identically | same — nothing proves which one the runtime reads |
 | secret refs planted at `metadata.containers` (or any off-path `containers`) | same — the description is rejected before any binding is read |
 | containers declared at both the Knative and the v2 path | same — the authoritative task template is ambiguous |
+| the task template declares more than one container (secrets or selection in a sidecar) | same — the authoritative task container is ambiguous |
 | no containers at either canonical path, or an empty/non-object container list | same |
 | selection names a provider the registry does not know | `provider_selection` and `secret_bindings` fail |
 | provider registry cannot be imported | both fail with the import error |
@@ -158,7 +159,7 @@ against the narrow first value and passed without
 runtime reads.
 
 `_job_selected_provider_ids` replaces it: the env var must occur **exactly once**
-across the authoritative container set and be readable plaintext. A duplicate
+inside the authoritative task container and be readable plaintext. A duplicate
 (conflicting or identical, same container or a sibling), a secret-bound
 occurrence, and a missing or blank value all leave the selection unprovable and
 fail `provider_selection` and `secret_bindings` together. Uniqueness rather than
@@ -174,6 +175,31 @@ The scheduler fixture in
 onto the canonical Knative path; it had sat at `spec.template.containers` and
 would otherwise have been rejected as off-path before reaching the missing-secret
 assertion it exists to make.
+
+## Round 4: the same planting exploit, one level down
+
+Round 3 fixed *where* containers come from but still merged env across **every**
+container in the authoritative task template. That left the identical bypass
+inside the canonical path: a job whose real task container binds nothing passes
+`secret_bindings` as long as a **sidecar** in the same template carries
+`ODAY_DATABASE_URL` and all three selected provider secrets. Verified against
+head `49e65382` — the crafted description fails **no** check at all
+(`_failed_names(checks) == set()`).
+
+Nothing in a Cloud Run job description says which container runs the task
+(`image`/`args` are attacker-controlled in the same payload), so a second
+container makes the question unanswerable rather than merely harder.
+`_authoritative_task_container` therefore requires the task template to declare
+**exactly one** container and reads env only from it; anything else fails
+`provider_selection` and `secret_bindings` with
+`job task template declares N containers`. This matches what
+`scripts/deploy_cloud_run_waji.sh` creates — `gcloud run jobs deploy` with one
+image and no `--container` sidecars — so a sidecar arriving later is a
+deliberate deployment change that must be reviewed here, not silently trusted.
+
+Regressions: `test_job_smoke_rejects_secrets_bound_only_by_a_sidecar_container`
+(the exploit above) and `test_job_smoke_rejects_a_selection_declared_by_a_second_container`
+(unchanged intent, now rejected at the container count).
 
 ## Check and report surface
 
@@ -206,21 +232,26 @@ placed in the job description never reaches the detail text or the report.
 
 ## Focused verification
 
-Executed from the task branch on the review-round-3 tree (parent `76063434`):
+Executed from the task branch on the round-4 tree (parent `49e65382`):
 
 ```text
-uv run --frozen pytest tests/ops/test_cloud_run_live_deployment.py -q   # 93 passed
-uv run --frozen pytest tests/ops -q                                     # 168 passed
+uv run --frozen pytest tests/ops/test_cloud_run_live_deployment.py -q   # 94 passed
+uv run --frozen pytest tests/ops -q                                     # 169 passed
 uv run --frozen ruff check .                                            # All checks passed
 uv run --frozen ruff format --check scripts/deployment/validate_cloud_run_live_deployment.py tests/ops/test_cloud_run_live_deployment.py
 git diff --check
 ```
 
-All commands passed; round 2 was 87 and 162 at `76063434`, so the six new tests
-are the whole delta. Each of the six fails against the pre-fix validator —
-verified by restoring `76063434`'s
+All commands passed. The counts by round were 87/162 at `76063434` (round 2),
+93/168 at `49e65382` (round 3, six new regressions), and 94/169 now: round 4
+adds `test_job_smoke_rejects_secrets_bound_only_by_a_sidecar_container`.
+
+Each round's regressions fail against that round's pre-fix validator, verified by
+restoring the parent commit's
 `scripts/deployment/validate_cloud_run_live_deployment.py` under the new test
-file, which yields `6 failed`.
+file: `6 failed` for round 3 against `76063434`, and for round 4 against
+`49e65382` the sidecar test fails with `assert 'jobs-smoke:migration:provider_selection'
+in set()` — the pre-fix validator passes the crafted job with zero failing checks.
 
 `uv` must be on `PATH`
 (`export PATH="$HOME/.local/bin:$PATH"` on the worker image): the suite executes

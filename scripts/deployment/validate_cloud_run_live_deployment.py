@@ -1963,6 +1963,26 @@ def _authoritative_job_containers(job_description: Mapping[str, Any]) -> list[Ma
     return list(containers)
 
 
+def _authoritative_task_container(job_description: Mapping[str, Any]) -> Mapping[str, Any]:
+    """Return the one container the secret proof may read, or fail closed.
+
+    Reading env across every container in the task template is the same bypass
+    one level down: a job whose real task container binds nothing still proved
+    the full secret set as long as a sidecar carried it. The deploy script
+    (`scripts/deploy_cloud_run_waji.sh`) creates single-container jobs, so a
+    second container makes "which container runs the task" unanswerable from
+    the description alone and the job is rejected rather than guessed at.
+    """
+
+    containers = _authoritative_job_containers(job_description)
+    if len(containers) != 1:
+        raise JobDescriptionError(
+            f"job task template declares {len(containers)} containers; "
+            "the authoritative task container is ambiguous"
+        )
+    return containers[0]
+
+
 #: The only two env-var-to-secret schemas Cloud Run emits, as
 #: `(env source field, secret reference field)`. Knative names the secret in
 #: `valueFrom.secretKeyRef.name`; Cloud Run v2 names it in
@@ -1999,20 +2019,20 @@ def _secret_reference_name(entry: Mapping[str, Any]) -> str:
 
 
 def _job_env_entries(job_description: Mapping[str, Any]) -> dict[str, list[Mapping[str, Any]]]:
-    """Group every container env entry of a Job description by env-var name."""
+    """Group the authoritative task container's env entries by env-var name."""
 
     entries: dict[str, list[Mapping[str, Any]]] = {}
-    for container in _authoritative_job_containers(job_description):
-        env = container.get("env")
-        if not isinstance(env, list):
+    container = _authoritative_task_container(job_description)
+    env = container.get("env")
+    if not isinstance(env, list):
+        return entries
+    for entry in env:
+        if not isinstance(entry, Mapping):
             continue
-        for entry in env:
-            if not isinstance(entry, Mapping):
-                continue
-            name = entry.get("name")
-            if not isinstance(name, str) or not name.strip():
-                continue
-            entries.setdefault(name.strip(), []).append(entry)
+        name = entry.get("name")
+        if not isinstance(name, str) or not name.strip():
+            continue
+        entries.setdefault(name.strip(), []).append(entry)
     return entries
 
 
@@ -2022,9 +2042,9 @@ def _job_selected_provider_ids(entries: Mapping[str, list[Mapping[str, Any]]]) -
     Taking the first nonempty plaintext occurrence let a description declare the
     selection twice — the three normal providers first, `listing.partner_feed`
     second — and be validated against the narrower first value. Exactly one
-    occurrence is therefore required across the authoritative container set, and
-    it must be readable plaintext: a duplicate, a secret-bound value, or a value
-    that is missing or blank leaves the selection unprovable.
+    occurrence is therefore required inside the authoritative task container,
+    and it must be readable plaintext: a duplicate, a secret-bound value, or a
+    value that is missing or blank leaves the selection unprovable.
     """
 
     occurrences = entries.get(PRODUCTION_PROVIDER_IDS_ENV, [])

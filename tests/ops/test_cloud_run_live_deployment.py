@@ -1571,25 +1571,64 @@ def test_job_smoke_rejects_a_duplicate_provider_selection(duplicate: dict[str, o
     assert report["selected_provider_ids"] == []
 
 
-def test_job_smoke_rejects_a_selection_declared_by_a_second_container() -> None:
-    """A duplicate in a sidecar is a duplicate: the selection stays unprovable."""
-
-    job = _knative_job()
+def _with_sidecar(job: dict[str, object], sidecar: dict[str, object]) -> dict[str, object]:
     containers = job["spec"]["template"]["spec"]["template"]["spec"]["containers"]  # type: ignore[index]
     assert isinstance(containers, list)
-    containers.append(
+    containers.append(sidecar)
+    return job
+
+
+def test_job_smoke_rejects_a_selection_declared_by_a_second_container() -> None:
+    """A second container makes the selection unprovable, not merely wider."""
+
+    job = _with_sidecar(
+        _knative_job(),
         _job_container(
             kind="migration",
             sha=RUN_30376737123_SHA,
             provider_ids=f"{RUN_30376737123_PROVIDER_IDS},listing.partner_feed",
             secret_envs=(),
-        )
+        ),
     )
 
-    checks, _ = _job_checks(job)
+    checks, report = _job_checks(job)
 
     assert "jobs-smoke:migration:provider_selection" in _failed_names(checks)
     assert "jobs-smoke:migration:secret_bindings" in _failed_names(checks)
+    assert "ambiguous" in _detail(checks, "jobs-smoke:migration:provider_selection")
+    assert report["selected_provider_ids"] == []
+
+
+def test_job_smoke_rejects_secrets_bound_only_by_a_sidecar_container() -> None:
+    """Merging env across containers was the planting exploit one level down.
+
+    The task container declares the selection and binds nothing; a sidecar
+    inside the same authoritative task template carries the whole required
+    secret set. Reading env across the container list proved secrets the task
+    that runs the migration never receives, so the description is rejected.
+    """
+
+    job = _with_sidecar(
+        _knative_job(secret_envs=()),
+        _job_container(
+            kind="migration",
+            sha=RUN_30376737123_SHA,
+            provider_ids=None,
+            secret_envs=tuple(
+                _knative_secret_env(env_var)
+                for env_var in ("ODAY_DATABASE_URL", *SELECTED_PROVIDER_SECRET_ENVS)
+            ),
+        ),
+    )
+
+    checks, report = _job_checks(job)
+    failed = _failed_names(checks)
+
+    assert "jobs-smoke:migration:provider_selection" in failed
+    assert "jobs-smoke:migration:secret_bindings" in failed
+    assert "2 containers" in _detail(checks, "jobs-smoke:migration:secret_bindings")
+    assert report["selected_provider_ids"] == []
+    assert "secret_bound_env_vars" not in report
 
 
 def test_job_smoke_rejects_unknown_selected_provider_id() -> None:
