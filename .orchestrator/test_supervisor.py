@@ -7643,6 +7643,98 @@ class RuntimeLeaseReconciliationTests(unittest.TestCase):
             )
             self.assertIn("capacity", worker["last_error"].lower())
 
+    def test_antigravity_boot_reconciliation_preserves_owner_for_claude_pool(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            config = self._config(root)
+            config["providers"]["antigravity5"] = {
+                "delivery_mode": "antigravity",
+                "antigravity": {
+                    "model_rotation": {
+                        "enabled": True,
+                        "primary_model": "",
+                        "fallback_model": "Claude Sonnet 4.6 (Thinking)",
+                    }
+                },
+            }
+            config["agents"]["antigravity5"] = {
+                "id": "antigravity5",
+                "display_name": "Antigravity5",
+                "provider": "antigravity5",
+            }
+            (root / "ai-status.json").write_text(
+                json.dumps(
+                    {
+                        "tasks": [
+                            {
+                                "id": "ODP-AGY-LIVE",
+                                "status": "in_progress",
+                                "owner": "Antigravity5",
+                                "reviewer": "Claude",
+                                "depends_on": [],
+                            }
+                        ]
+                    }
+                ),
+                encoding="utf-8",
+            )
+            (root / "event-queue.jsonl").write_text(
+                json.dumps(
+                    {
+                        "event_id": "evt-agy",
+                        "task_id": "ODP-AGY-LIVE",
+                        "target_agent": "antigravity5",
+                    }
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+            log_path = root / "agy-quota.log"
+            log_path.write_text(
+                "Error: Individual quota reached. Please upgrade your subscription "
+                "to increase your limits. Resets in 2h21m32s.\n",
+                encoding="utf-8",
+            )
+            worker = {
+                "run_id": "agy-run-dead",
+                "status": "running",
+                "provider": "antigravity5",
+                "agent_id": "antigravity5",
+                "task_id": "ODP-AGY-LIVE",
+                "queue_event_id": "evt-agy",
+                "pid": 987654,
+                "log_path": str(log_path),
+                "antigravity_model_pool": "gemini",
+                "metadata": {"antigravity_model_pool": "gemini"},
+            }
+            state = {
+                "queue": {"events": {"evt-agy": {"status": "started", "run_id": "agy-run-dead"}}},
+                "workers": {"agy-run-dead": worker},
+            }
+
+            previous_state_path = supervisor.model_rotation._STATE_PATH
+            supervisor.model_rotation._STATE_PATH = root / "model-cooldown.json"
+            try:
+                with (
+                    mock.patch.object(supervisor, "pid_is_alive", return_value=False),
+                    mock.patch.object(supervisor, "write_failure_evidence", return_value="evidence/agy.json"),
+                    mock.patch.object(supervisor, "maybe_reassign_task_after_worker_failure") as reassign,
+                ):
+                    self.assertTrue(supervisor.reconcile_runtime_on_boot(config, state))
+                    self.assertFalse(supervisor.reconcile_runtime_on_boot(config, state))
+                    self.assertEqual(
+                        supervisor.model_rotation.resolve_active_selection(config, "antigravity5")["pool"],
+                        "claude",
+                    )
+            finally:
+                supervisor.model_rotation._STATE_PATH = previous_state_path
+
+            reassign.assert_not_called()
+            self.assertEqual(worker["status"], "failed")
+            self.assertEqual(state["queue"]["events"]["evt-agy"]["status"], "failed")
+            processed = state["provider_guardrails"]["processed_model_rotation_failures"]
+            self.assertEqual(list(processed), ["agy-run-dead"])
+
     def test_quota_group_cap_blocks_second_slot(self) -> None:
         config = {
             "ready_dispatcher": {"max_concurrent_per_quota_group": {"codex1": 1}},
