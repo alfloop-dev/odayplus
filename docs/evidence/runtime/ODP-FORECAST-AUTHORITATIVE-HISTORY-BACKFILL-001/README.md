@@ -222,6 +222,11 @@ store, which clears the 28-day bar.
 
 ### Settling condition
 
+> **Superseded by §6.** Condition 2 below assumed re-running a partition always
+> re-points an abandoned run's lineage. That holds only when the abandoned run
+> committed nothing; see Defect D for the measured counter-example and the
+> repair it requires.
+
 A Job killed by `activeDeadlineSeconds` leaves its in-flight
 `data_plane.ingestion_runs` row at `RUNNING` **permanently** — nothing
 transitions it, and re-running the partition opens a *new* run rather than
@@ -241,7 +246,90 @@ abandoned run to zero owned rows — which is precisely how the earlier
 source, down from the 1 839 it held). Until that re-projection lands, activating
 would only copy the poison forward.
 
-## 6. After state
+## 6. Defect D — a resumed partition leaves unreconciled lineage that no re-run can repair
+
+The settling condition in §5 assumed that re-running a partition re-points the
+abandoned run's lineage. **Measured against the source, that is only true when
+the abandoned run committed nothing.** It does not hold in general, and it did
+not hold here.
+
+Compare the two casualties on `data_plane.ingestion_runs`:
+
+| Run | Partition | Status | `processed_count` | Lineage owned |
+| --- | --- | --- | --- | --- |
+| `3d0937f1` | `2026-06-23__2026-06-24` | `RUNNING` (abandoned) | 0 | 0 |
+| `85294064` | `2026-06-23__2026-06-24` | `SUCCEEDED` | 6 472 | all |
+| `069b0984` | `2026-07-06__2026-07-07` | `RUNNING` (abandoned) | 0 | **4 752** |
+| `5efc0a7d` | `2026-07-06__2026-07-07` | `SUCCEEDED` | 2 721 | 2 721 |
+
+`3d0937f1` was killed before it committed a single batch, so the re-run rebuilt
+the day from nothing and the partition healed on its own. `069b0984` was killed
+by the §5 deadline *after* committing 4 752 batches, and the resuming run
+`5efc0a7d` picked up from its checkpoint — finishing the partition in 52 seconds
+because it only had 2 721 records left to read.
+
+Those 4 752 lineage rows can never be re-pointed by re-running the partition.
+`canonical_lineage` is written with
+`ON CONFLICT (source_snapshot_id, canonical_table, canonical_id) DO NOTHING`, and
+`source_snapshot_id` is `snapshot_id_for_content(kind, source_id, content_sha256)`
+— derived from content, so an unchanged record re-read from the source produces
+the *same* key and the insert is silently discarded, preserving the original
+`run_id`. There is no `DELETE` against `canonical_lineage` anywhere in
+`apps/data_platform/`. The attribution is immovable by any supported operation.
+
+Measured blast radius, by `event_time` date:
+
+| Date | Poisoned `core.transactions` |
+| --- | --- |
+| 2026-07-05 | 4 |
+| 2026-07-06 | 4 749 |
+
+Four transactions are enough to disqualify 2026-07-05 outright, because
+`source_run_complete` is a `bool_and`. That severs the contiguous span at
+2026-07-05/07-06 and caps continuous coverage at 44 days — an h28 window needs
+56, so the 28-day acceptance bar becomes unreachable no matter how many of the
+remaining partitions land. Healing this partition is mandatory, not cosmetic.
+
+### Why the view is not the thing to change
+
+It is tempting to redefine `source_run_complete` in terms of the *partition*
+rather than the individual run — the resume design does deliberately build one
+partition out of several runs, so the current `bool_and` is arguably modelling
+the wrong unit.
+
+That would be wrong here. Reconciliation runs at the end of a run, over the
+checksums that run accumulated: `5efc0a7d` reconciled its own 2 721 records and
+nothing else. **No run ever reconciled the 4 752.** Relaxing the view would
+admit records whose source/raw/canonical checksums were never compared to
+anything, which is precisely the "mark immature data eligible" outcome this
+task's acceptance forbids. The strictness is load-bearing; the data is what is
+wrong.
+
+This is a genuine platform defect worth its own follow-up: on a resumed
+partition, the records committed by the earlier run are never reconciled by
+anyone. Either the resuming run should reconcile the whole partition, or it
+should re-attribute the prior run's lineage to itself.
+
+### The repair
+
+Make partition `2026-07-06__2026-07-07` genuinely ingested and reconciled by a
+single run, rather than laundering the existing rows:
+
+1. Back up the abandoned run's lineage, the run row, and the partition
+   checkpoint (`/tmp/odp-lineage-backup-069b0984.json`, 4 752 rows).
+2. Delete the 4 752 `canonical_lineage` rows owned by `069b0984` and the
+   partition's `checkpoints` row.
+3. Re-run the partition, which — with no checkpoint to resume from — re-reads
+   the full day from the authoritative upstream, re-projects every record, and
+   reconciles all ~7 473 in one run.
+
+Nothing is fabricated: every re-created row is re-derived from the system of
+record. `core.transactions` itself is not deleted, only re-projected through the
+same idempotent upsert. The step is reversible in both directions — the backup
+restores the prior state exactly, and a failed re-run leaves the affected
+transactions merely lineage-less (already ineligible, no worse) and re-runnable.
+
+## 7. After state
 
 Populated once `-s3`/`-s4`/`-s5` reach `Complete`, the source meets the settling
 condition above, and activation runs. See
