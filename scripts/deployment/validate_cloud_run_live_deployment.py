@@ -1892,12 +1892,30 @@ class _JobApiSchema:
     carries `secret` and `version`. It is the dialect's own fact for the same
     reason the other two are, and it is what lets a planted member inside an
     otherwise valid reference be told apart from the shape gcloud emits.
+
+    A name allowlist is not a shape: it says which members may appear, never
+    what they may hold. The remaining fields carry that half of the dialect,
+    because the *meaning* of a selector member is as much an API-version fact
+    as its name:
+
+    - `version_key` names the member that selects the Secret Manager version
+      (Knative `key`, v2 `version`), and `version_required` records that Cloud
+      Run v1 documents `key` as required while v2 leaves `version` optional.
+    - `mandatory_flag_key` names the member that decides whether the Secret or
+      key must exist at all — Knative's `optional`, which v2 does not define.
+    - `deprecated_members` are members the version still defines but no longer
+      accepts as a source of truth (Knative's `localObjectReference`, the
+      pre-`name` way to name the same secret).
     """
 
     container_path: tuple[str, ...]
     env_source_key: str
     reference_key: str
     reference_members: frozenset[str]
+    version_key: str
+    version_required: bool
+    mandatory_flag_key: str | None
+    deprecated_members: frozenset[str]
 
     @property
     def container_path_label(self) -> str:
@@ -1924,12 +1942,20 @@ _JOB_API_SCHEMAS: tuple[_JobApiSchema, ...] = (
         "valueFrom",
         "name",
         frozenset({"name", "key", "optional", "localObjectReference"}),
+        version_key="key",
+        version_required=True,
+        mandatory_flag_key="optional",
+        deprecated_members=frozenset({"localObjectReference"}),
     ),
     _JobApiSchema(
         ("template", "template", "containers"),
         "valueSource",
         "secret",
         frozenset({"secret", "version"}),
+        version_key="version",
+        version_required=False,
+        mandatory_flag_key=None,
+        deprecated_members=frozenset(),
     ),
 )
 
@@ -2156,6 +2182,77 @@ def _unsupported_secret_source_members(
     return tuple(sorted({str(location) for location in locations}))
 
 
+#: A Secret Manager version selector is `latest`, a positive version number, or
+#: a version alias (letters, digits, `_` and `-`, starting with a letter, at
+#: most 255 characters). `latest` is itself alias-shaped, so the alias pattern
+#: covers it. `0` is not a version: Secret Manager numbers versions from 1.
+_SECRET_VERSION_NUMBER_PATTERN = re.compile(r"[0-9]+")
+_SECRET_VERSION_ALIAS_PATTERN = re.compile(r"[A-Za-z][A-Za-z0-9_-]{0,254}")
+
+
+def _usable_secret_version(value: Any) -> bool:
+    """Return whether a selector member names a resolvable secret version."""
+
+    if not isinstance(value, str):
+        return False
+    text = value.strip()
+    if not text or not _configured(text):
+        return False
+    if _SECRET_VERSION_NUMBER_PATTERN.fullmatch(text):
+        return int(text) >= 1
+    return _SECRET_VERSION_ALIAS_PATTERN.fullmatch(text) is not None
+
+
+def _malformed_secret_selector_members(
+    entry: Mapping[str, Any], schema: _JobApiSchema
+) -> tuple[str, ...]:
+    """Return every defined selector member this binding fills in unusably.
+
+    Round 8 closed the reference to the members each dialect defines, but an
+    allowlist of *names* says nothing about what those names may hold, so a
+    member could be present, defined, and still cancel the binding it sits in.
+    Three shapes passed the proof with zero failing checks:
+
+    - `optional: true`, which tells Cloud Run the Secret or key need not exist.
+      The env var is then simply absent at runtime, so the binding is not the
+      mandatory one the database and every selected provider secret require.
+      Only the explicit `false` — not `"false"`, `0`, or `null`, which are not
+      the boolean the API defines — means the same thing as leaving it out.
+    - a missing `key`, which Cloud Run v1 documents as required. Without it no
+      version is selected, so nothing about the reference resolves.
+    - a blank or unusable `key`/`version`, which names no version either.
+
+    `localObjectReference` is rejected on presence: it is Knative's superseded
+    way of naming the same secret `name` names, so a selector carrying both has
+    two names for one binding and gcloud emits neither shape.
+
+    Only member paths are reported, never member payloads, so a planted value
+    cannot reach the report through the failure detail.
+    """
+
+    source = entry.get(schema.env_source_key)
+    if not isinstance(source, Mapping):
+        return ()
+    reference = source.get(_ENV_SOURCE_SECRET_MEMBER)
+    if not isinstance(reference, Mapping):
+        return ()
+
+    label = schema.source_reference_label
+    problems: list[str] = []
+    for member in sorted(schema.deprecated_members):
+        if member in reference:
+            problems.append(f"{label}.{member} is deprecated and renames the same secret")
+    if schema.version_key in reference:
+        if not _usable_secret_version(reference[schema.version_key]):
+            problems.append(f"{label}.{schema.version_key} is not a usable secret version")
+    elif schema.version_required:
+        problems.append(f"{label}.{schema.version_key} is required and missing")
+    flag_key = schema.mandatory_flag_key
+    if flag_key is not None and flag_key in reference and reference[flag_key] is not False:
+        problems.append(f"{label}.{flag_key} must be absent or exactly false")
+    return tuple(problems)
+
+
 def _declared_secret_source_locations(
     entry: Mapping[str, Any], schema: _JobApiSchema
 ) -> tuple[str, ...]:
@@ -2278,6 +2375,13 @@ def _secret_binding_proof(
     selector does not define. Without it a valid `valueFrom.secretKeyRef.name`
     beside a `valueFrom.configMapKeyRef` proved a binding while declaring a
     second source for the same env var.
+
+    Finally the members the dialect does define must be filled in usably, which
+    `_malformed_secret_selector_members` decides. A name allowlist accepted
+    `optional: true` — a binding Cloud Run is free to resolve to nothing — and a
+    missing or blank `key`, which selects no version, as proof of a mandatory
+    secret. Both contradict what this proof exists to assert, so both fail
+    closed here.
     """
 
     if not entries:
@@ -2311,6 +2415,13 @@ def _secret_binding_proof(
         )
     if not _secret_reference_name(entry, schema):
         return False, f"binding declares no usable {schema.reference_label}"
+    malformed = _malformed_secret_selector_members(entry, schema)
+    if malformed:
+        return False, (
+            f"binding declares an unusable {schema.source_reference_label} "
+            f"({'; '.join(malformed)}); a mandatory secret must select a usable "
+            "version and may not be optional"
+        )
     return True, "bound to a Secret Manager reference (value redacted)"
 
 

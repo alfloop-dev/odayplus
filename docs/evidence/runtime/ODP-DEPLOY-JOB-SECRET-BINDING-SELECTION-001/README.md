@@ -89,7 +89,14 @@ textual. `job_secret_binding_checks` does four things:
    `_unsupported_secret_source_members` rejects any member of `valueFrom` /
    `valueSource` other than `secretKeyRef` — `configMapKeyRef` first of all,
    which Cloud Run v1 does not support — and any member inside `secretKeyRef`
-   that the dialect's own `SecretKeySelector` does not define.
+   that the dialect's own `SecretKeySelector` does not define. The members it
+   *does* define must then say something usable:
+   `_malformed_secret_selector_members` requires the selector to pick a
+   resolvable Secret Manager version (Knative's `key` is required, v2's
+   `version` optional but never blank), to leave Knative's `optional` absent or
+   exactly `false` — a secret Cloud Run may resolve to nothing is not a
+   mandatory binding — and to carry no deprecated `localObjectReference` beside
+   `name`.
 
 Substring scanning is gone for this check: a job that merely mentions
 `ODAY_DATABASE_URL` in a label or an argument no longer satisfies it.
@@ -118,7 +125,14 @@ Substring scanning is gone for this check: a job that merely mentions
 | `valueFrom.secretKeyRef` carrying both `name` and `secret` | same |
 | a valid binding beside another member of its **own** env source (`valueFrom.configMapKeyRef`, `valueFrom.fieldRef`, `valueFrom.resourceFieldRef`, and the `valueSource` mirrors) | `secret_bindings` fails, naming the member and the only source Cloud Run resolves — v1 does not support `configMapKeyRef` |
 | `secretKeyRef` carrying a member its own dialect does not define (`valueFrom.secretKeyRef.value`, `valueSource.secretKeyRef.key`) | same — a planted field cannot ride along inside a valid reference |
-| `valueFrom.secretKeyRef.optional` (a field the Knative selector really defines) | passes — the member rule is an allowlist of the API's own fields, not a two-key rule |
+| `valueFrom.secretKeyRef.optional: false` (a field the Knative selector really defines) | passes — the member rule is an allowlist of the API's own fields, not a two-key rule |
+| `valueFrom.secretKeyRef.optional: true` | `secret_bindings` fails — the Secret or key need not exist, so this is not the mandatory binding the database and every selected provider secret require |
+| `optional` set to anything that is not the boolean `false` (`"true"`, `"false"`, `1`, `0`, `null`) | same — a non-boolean is not the field the API defines, so no reader can be assumed to read it as `false` |
+| Knative `secretKeyRef` with no `key` | `secret_bindings` fails — Cloud Run v1 documents `key` as required, and without it no version is selected |
+| Knative `key` (or v2 `version`) blank, whitespace, non-string, `null`, `"0"`, a placeholder, or otherwise not a version selector | same — it names no resolvable Secret Manager version |
+| Knative `key` (or v2 `version`) set to `latest`, a version number, or a version alias | passes — all three are what Secret Manager resolves |
+| v2 `secretKeyRef` with no `version` | passes — Cloud Run v2 leaves `version` optional; only v1's `key` is required |
+| `valueFrom.secretKeyRef.localObjectReference` | `secret_bindings` fails — Knative's superseded way of naming the same secret `name` names, so the selector names two |
 | a valid binding beside an empty off-dialect source (`"valueSource": {}`) | same — a source gcloud does not emit |
 | a valid binding beside a blank or non-string literal (`"value"` set to `""`, `"   "`, `0`, `false`, `[]`, `{}`, or `null`) | same — an env entry carries a literal or a secret source, never both |
 | plaintext `ODP_PRODUCTION_PROVIDER_IDS` on an entry that also declares an off-dialect secret source | `provider_selection` **and** `secret_bindings` fail: the selection is unprovable |
@@ -422,9 +436,10 @@ in `_secret_binding_proof` after the off-dialect check:
   `_JobApiSchema` gains `reference_members` — Knative's `SecretKeySelector`
   (`name`, `key`, `optional`, the deprecated `localObjectReference`) and Cloud
   Run v2's (`secret`, `version`) — so the rule is an allowlist of fields the
-  APIs really define rather than a two-key rule. `optional` on a Knative job
-  still passes, pinned by
-  `test_job_smoke_accepts_the_optional_members_each_dialect_defines`.
+  APIs really define rather than a two-key rule. `optional: false` on a Knative
+  job still passes, pinned by
+  `test_job_smoke_accepts_the_optional_members_each_dialect_defines`. What those
+  members may *hold* was left unread, which is round 9 below.
 
 Cross-dialect keys inside `secretKeyRef` (`valueFrom.secretKeyRef.secret`) stay
 the round-6 rule's business: the off-dialect check runs first, so those details
@@ -443,6 +458,92 @@ Regressions: `test_job_smoke_rejects_a_knative_source_member_beside_secret_key_r
 `test_job_smoke_rejects_a_member_planted_inside_the_secret_key_ref` (both
 dialects), and the `optional` control. Each asserts the planted name never
 reaches the detail or the report.
+
+## Round 9: the members were allowlisted by name and never read
+
+Round 8 closed the reference to the members each dialect defines. An allowlist
+of *names* says which members may appear, never what they may hold, so a member
+could be present, defined, inside the allowlist, and still cancel the binding it
+sits in. Verified against head `a2a0106b` — every crafted description below
+fails **no** check at all (`_failed_names(checks) == set()`):
+
+| crafted description at `a2a0106b` | result |
+| --- | --- |
+| required secret with a valid `valueFrom.secretKeyRef.name` and `"optional": true` | passed |
+| the same with `optional` set to `"true"`, `"false"`, `1`, `0`, or `null` | passed |
+| `valueFrom.secretKeyRef` with a valid `name` and **no** `key` | passed |
+| `key` set to `""`, `"   "`, `"0"`, `"-1"`, `"latest version"`, `1`, `null`, or `"placeholder"` | passed |
+| the v2 mirror: `valueSource.secretKeyRef.version` set to `""`, `"  "`, `"0"`, `"latest version"`, `1`, or `null` | passed |
+| valid `name` beside a `localObjectReference` naming `attacker-controlled-secret` | passed |
+| `ODAY_DATABASE_URL` itself bound with `"optional": true` | passed |
+
+The `optional: true` row is the load-bearing one Codex6 named. Cloud Run v1
+defines `optional` as *whether the Secret or its key must be defined*: with it
+set, a missing secret is not an error and the env var is simply absent at
+runtime. A binding that Cloud Run is free to resolve to nothing is not the
+mandatory binding this proof exists to assert, so accepting it contradicted the
+"database and every selected provider secret remain mandatory" acceptance
+directly — including for `ODAY_DATABASE_URL`. The `key` rows contradict
+"malformed missing or plaintext secret bindings fail closed" the same way: v1
+documents `key` as **required**, and a missing, blank, or unusable one selects
+no Secret Manager version, so nothing about the reference resolves.
+
+The fix reads the members the dialect defines instead of only naming them.
+`_JobApiSchema` gains the semantic half of each dialect beside
+`reference_members`, because the *meaning* of a selector member is as much an
+API-version fact as its name:
+
+- `version_key` / `version_required` — Knative selects the version with `key`,
+  which Cloud Run v1 documents as required; Cloud Run v2 selects it with
+  `version`, which the v2 API leaves optional. The asymmetry is the API's, and
+  it is recorded rather than flattened: a v2 selector with no `version` still
+  passes, pinned by
+  `test_job_smoke_accepts_a_v2_selector_without_a_declared_version`.
+- `mandatory_flag_key` — Knative's `optional`, which v2 does not define.
+- `deprecated_members` — Knative's `localObjectReference`, the pre-`name` way of
+  naming the same secret.
+
+`_malformed_secret_selector_members` applies them in `_secret_binding_proof`
+after the reference name resolves:
+
+- **A mandatory secret may not be optional.** `optional` must be absent or the
+  boolean `false` exactly. `"false"`, `0`, and `null` are not the field the API
+  defines, so no reader can be assumed to treat them as `false`, and they fail
+  closed alongside `true`.
+- **A binding selects a usable version.** `_usable_secret_version` accepts what
+  Secret Manager resolves — `latest`, a version number ≥ 1, or a version alias
+  (leading letter, then letters, digits, `_`, `-`) — and rejects blanks,
+  non-strings, `0`, and the placeholder values `_configured` already rejects for
+  secret names. Knative's `key` must additionally be present.
+- **A selector names one secret.** `localObjectReference` is rejected on
+  presence: it is superseded by `name`, so a selector carrying both has two
+  names for one binding and gcloud emits neither shape.
+
+The detail names member paths only, never member payloads
+(`binding declares an unusable valueFrom.secretKeyRef
+(valueFrom.secretKeyRef.optional must be absent or exactly false); a mandatory
+secret must select a usable version and may not be optional`), so the round-2
+redaction assertions extend to this round unchanged.
+
+The real deployment cannot trip these rules, checked against
+`scripts/deploy_cloud_run_waji.sh` rather than assumed. Secrets reach these jobs
+only through `--set-secrets="${API_SECRET_BINDINGS}"`, whose entries are
+`ENV=<secret-ref>` built from the `*_SECRET` deployment variables. `gcloud run
+jobs deploy --set-secrets` requires a version in each reference and emits it as
+`key`; it has no flag that emits `optional` or `localObjectReference` at all.
+Every binding the deploy path produces therefore carries a usable `key` and
+neither rejected member.
+
+Regressions: `test_job_smoke_rejects_an_unusable_knative_secret_selector`
+(16 selectors), `test_job_smoke_rejects_an_unusable_v2_secret_selector`
+(6 on the v2 container path),
+`test_job_smoke_rejects_an_optional_database_secret_binding` (the same defect on
+`ODAY_DATABASE_URL`, which is required for every selection), and two controls
+that pin the tightening as narrow:
+`test_job_smoke_accepts_every_usable_knative_version_selector` (`latest`, `1`,
+`42`, `prod_pinned`, `prod-v1`) and
+`test_job_smoke_accepts_a_v2_selector_without_a_declared_version`. The round-8
+`optional: false` control is unchanged and still passes.
 
 ## Check and report surface
 
@@ -475,12 +576,12 @@ placed in the job description never reaches the detail text or the report.
 
 ## Focused verification
 
-Executed from the task branch on the round-8 tree (parent `d3dfeb13`), with
+Executed from the task branch on the round-9 tree (parent `a2a0106b`), with
 `export PATH="$HOME/.local/bin:$PATH"`:
 
 ```text
-python3 -m pytest tests/ops/test_cloud_run_live_deployment.py -p no:randomly   # 125 passed
-python3 -m pytest tests/ops -p no:randomly                                     # 180 passed, 20 skipped
+python3 -m pytest tests/ops/test_cloud_run_live_deployment.py                  # 154 passed
+python3 -m pytest tests/ops                                                    # 209 passed, 20 skipped
 python3 -m ruff check scripts/deployment/validate_cloud_run_live_deployment.py tests/ops/test_cloud_run_live_deployment.py
 python3 -m ruff format --check scripts/deployment/validate_cloud_run_live_deployment.py tests/ops/test_cloud_run_live_deployment.py
 git diff --check
@@ -498,9 +599,11 @@ The focused-file count by round was 87 at `76063434` (round 2), 93 at `49e65382`
 at `dd4acb0b` (round 5, the two crossed-whole-schema regressions plus the
 both-dialects control), 107 at `15e7ec64` (round 6, ten uniqueness and
 mixed-dialect regressions), 118 at `d3dfeb13` (round 7, eleven presence-rule
-cases, each asserting on both container paths), and 125 now — round 8 adds six
+cases, each asserting on both container paths), 125 at `a2a0106b` (round 8, six
 source-member regressions plus the `optional` control that pins the allowlist
-against over-tightening.
+against over-tightening), and 154 now — round 9 adds 23 unusable-selector
+regressions plus six controls (five usable Knative version selectors and the
+v2 no-`version` case).
 
 Each round's regressions fail against that round's pre-fix validator, verified by
 restoring the parent commit's
@@ -527,7 +630,15 @@ returning zero failing checks for a required secret that declares
 `configMapKeyRef` beside a valid `secretKeyRef`, on both container paths, which
 is the reproduction of the round-8 review finding. The seventh new test, the
 `optional` control, passes against both validators, so the tightening is proven
-narrow. The control tests
+narrow. For round 9 against `a2a0106b` the restore run — the round-9 test file
+copied into a detached worktree at `a2a0106b` — reports `23 failed` out of the
+29 newly selected cases: the 16 unusable Knative selectors, the six unusable v2
+selectors, and the optional `ODAY_DATABASE_URL` binding all fail with
+`assert 'jobs-smoke:<kind>:secret_bindings' in set()`, the pre-fix validator
+returning zero failing checks for every one of them, which is the independent
+reproduction of the probes Codex6 ran at that head. The remaining six selected
+cases are the round-9 controls, and they pass against both validators. The
+control tests
 (`test_job_smoke_accepts_each_dialect_at_its_own_container_path` and the run
 30376737123 receipt) pass against both validators.
 

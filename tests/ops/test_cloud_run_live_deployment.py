@@ -1992,6 +1992,207 @@ def test_job_smoke_accepts_the_optional_members_each_dialect_defines() -> None:
     assert all(check.ok for check in checks), _failed_names(checks)
 
 
+#: The secret every one of these selectors claims to bind.
+_POI_SECRET = "odp-poi-provider-api-key"
+
+#: Selectors whose member *names* all sit inside the dialect's allowlist while
+#: the payloads cancel the binding they are supposed to prove. Round 8 closed
+#: the reference to the members Knative defines but never read them, so each of
+#: these returned zero failing checks:
+#:
+#: - `optional: true` tells Cloud Run the Secret or key need not exist, so the
+#:   env var may simply be absent — the opposite of a mandatory binding;
+#: - a non-boolean `optional` is not the field the API defines at all, so no
+#:   reader can be assumed to treat it as `false`;
+#: - Cloud Run v1 documents `key` as required, and a missing, blank, or
+#:   unusable one selects no version, so the reference resolves to nothing;
+#: - `localObjectReference` is Knative's superseded way of naming the secret
+#:   `name` already names, so a selector holding both names two secrets.
+_UNUSABLE_KNATIVE_SELECTORS: tuple[tuple[dict[str, object], str], ...] = (
+    ({"name": _POI_SECRET, "key": "latest", "optional": True}, "optional"),
+    ({"name": _POI_SECRET, "key": "latest", "optional": "true"}, "optional"),
+    ({"name": _POI_SECRET, "key": "latest", "optional": "false"}, "optional"),
+    ({"name": _POI_SECRET, "key": "latest", "optional": 1}, "optional"),
+    ({"name": _POI_SECRET, "key": "latest", "optional": 0}, "optional"),
+    ({"name": _POI_SECRET, "key": "latest", "optional": None}, "optional"),
+    ({"name": _POI_SECRET}, "key"),
+    ({"name": _POI_SECRET, "key": ""}, "key"),
+    ({"name": _POI_SECRET, "key": "   "}, "key"),
+    ({"name": _POI_SECRET, "key": "0"}, "key"),
+    ({"name": _POI_SECRET, "key": "latest version"}, "key"),
+    ({"name": _POI_SECRET, "key": "-1"}, "key"),
+    ({"name": _POI_SECRET, "key": 1}, "key"),
+    ({"name": _POI_SECRET, "key": None}, "key"),
+    ({"name": _POI_SECRET, "key": "placeholder"}, "key"),
+    (
+        {
+            "name": _POI_SECRET,
+            "key": "latest",
+            "localObjectReference": {"name": "attacker-controlled-secret"},
+        },
+        "localObjectReference",
+    ),
+)
+
+#: The v2 mirror. Cloud Run v2 documents `secret` as required and leaves
+#: `version` optional, so only an unusable *declared* version is a defect here;
+#: the absent-version control lives in
+#: `test_job_smoke_accepts_a_v2_selector_without_a_declared_version`.
+_UNUSABLE_V2_SELECTORS: tuple[tuple[dict[str, object], str], ...] = (
+    ({"secret": _POI_SECRET, "version": ""}, "version"),
+    ({"secret": _POI_SECRET, "version": "  "}, "version"),
+    ({"secret": _POI_SECRET, "version": "0"}, "version"),
+    ({"secret": _POI_SECRET, "version": "latest version"}, "version"),
+    ({"secret": _POI_SECRET, "version": 1}, "version"),
+    ({"secret": _POI_SECRET, "version": None}, "version"),
+)
+
+
+@pytest.mark.parametrize(("selector", "member"), _UNUSABLE_KNATIVE_SELECTORS)
+def test_job_smoke_rejects_an_unusable_knative_secret_selector(
+    selector: dict[str, object], member: str
+) -> None:
+    """A member the dialect defines still has to say something usable.
+
+    `reference_members` is a name allowlist: it decided which members may
+    appear and never what they may hold, so a selected provider secret could be
+    declared `optional: true` — free to resolve to nothing — or select no
+    version at all, and `jobs-smoke:migration:secret_bindings` still passed.
+    """
+
+    entry = {"name": "ODP_POI_PROVIDER_API_KEY", "valueFrom": {"secretKeyRef": selector}}
+    job = _knative_job(
+        secret_envs=(
+            _knative_secret_env("ODAY_DATABASE_URL"),
+            entry,
+            _knative_secret_env("ODP_GEOCODE_PROVIDER_API_KEY"),
+            _knative_secret_env("ODP_ADMIN_BOUNDARY_PROVIDER_TOKEN"),
+        )
+    )
+
+    checks, report = _job_checks(job)
+    detail = _detail(checks, "jobs-smoke:migration:secret_bindings")
+
+    assert "jobs-smoke:migration:secret_bindings" in _failed_names(checks)
+    assert "ODP_POI_PROVIDER_API_KEY" in detail
+    assert f"valueFrom.secretKeyRef.{member}" in detail
+    assert "ODP_POI_PROVIDER_API_KEY" not in report["secret_bound_env_vars"]
+    assert "attacker-controlled-secret" not in json.dumps(report)
+    assert "attacker-controlled-secret" not in detail
+
+
+@pytest.mark.parametrize(("selector", "member"), _UNUSABLE_V2_SELECTORS)
+def test_job_smoke_rejects_an_unusable_v2_secret_selector(
+    selector: dict[str, object], member: str
+) -> None:
+    """The same fail-open on the Cloud Run v2 container path."""
+
+    entry = {"name": "ODP_POI_PROVIDER_API_KEY", "valueSource": {"secretKeyRef": selector}}
+    job = _v2_job_with_envs(
+        secret_envs=(
+            _v2_secret_env("ODAY_DATABASE_URL"),
+            entry,
+            _v2_secret_env("ODP_GEOCODE_PROVIDER_API_KEY"),
+            _v2_secret_env("ODP_ADMIN_BOUNDARY_PROVIDER_TOKEN"),
+        )
+    )
+
+    checks, report = _job_checks(job, kind="worker")
+    detail = _detail(checks, "jobs-smoke:worker:secret_bindings")
+
+    assert "jobs-smoke:worker:secret_bindings" in _failed_names(checks)
+    assert "ODP_POI_PROVIDER_API_KEY" in detail
+    assert f"valueSource.secretKeyRef.{member}" in detail
+    assert "ODP_POI_PROVIDER_API_KEY" not in report["secret_bound_env_vars"]
+
+
+def test_job_smoke_rejects_an_optional_database_secret_binding() -> None:
+    """The database secret is mandatory under the same rule as provider keys.
+
+    `ODAY_DATABASE_URL` is required for every selection, so a selector that
+    lets Cloud Run resolve it to nothing is exactly the binding this proof
+    exists to reject.
+    """
+
+    job = _knative_job(
+        secret_envs=(
+            {
+                "name": "ODAY_DATABASE_URL",
+                "valueFrom": {
+                    "secretKeyRef": {
+                        "name": "oday-database-url",
+                        "key": "latest",
+                        "optional": True,
+                    }
+                },
+            },
+            *(_knative_secret_env(env_var) for env_var in SELECTED_PROVIDER_SECRET_ENVS),
+        )
+    )
+
+    checks, report = _job_checks(job)
+    detail = _detail(checks, "jobs-smoke:migration:secret_bindings")
+
+    assert "jobs-smoke:migration:secret_bindings" in _failed_names(checks)
+    assert "ODAY_DATABASE_URL" in detail
+    assert "valueFrom.secretKeyRef.optional" in detail
+    assert "ODAY_DATABASE_URL" not in report["secret_bound_env_vars"]
+
+
+@pytest.mark.parametrize("key", ["latest", "1", "42", "prod_pinned", "prod-v1"])
+def test_job_smoke_accepts_every_usable_knative_version_selector(key: str) -> None:
+    """Fail-closed must not narrow to the one version string gcloud defaults to.
+
+    Secret Manager resolves `latest`, a version number, and a version alias, so
+    a job pinned to `1` or to an alias binds its secret just as mandatorily as
+    the `latest` shape `--set-secrets` emits.
+    """
+
+    entry = {
+        "name": "ODP_POI_PROVIDER_API_KEY",
+        "valueFrom": {"secretKeyRef": {"name": _POI_SECRET, "key": key, "optional": False}},
+    }
+    job = _knative_job(
+        secret_envs=(
+            _knative_secret_env("ODAY_DATABASE_URL"),
+            entry,
+            _knative_secret_env("ODP_GEOCODE_PROVIDER_API_KEY"),
+            _knative_secret_env("ODP_ADMIN_BOUNDARY_PROVIDER_TOKEN"),
+        )
+    )
+
+    checks, report = _job_checks(job)
+
+    assert all(check.ok for check in checks), _failed_names(checks)
+    assert "ODP_POI_PROVIDER_API_KEY" in report["secret_bound_env_vars"]
+
+
+def test_job_smoke_accepts_a_v2_selector_without_a_declared_version() -> None:
+    """Cloud Run v2 leaves `version` optional; only v1's `key` is required.
+
+    The required/optional split is a per-dialect API fact, so tightening the
+    Knative side must not invent a requirement the v2 API does not state.
+    """
+
+    entry = {
+        "name": "ODP_POI_PROVIDER_API_KEY",
+        "valueSource": {"secretKeyRef": {"secret": _POI_SECRET}},
+    }
+    job = _v2_job_with_envs(
+        secret_envs=(
+            _v2_secret_env("ODAY_DATABASE_URL"),
+            entry,
+            _v2_secret_env("ODP_GEOCODE_PROVIDER_API_KEY"),
+            _v2_secret_env("ODP_ADMIN_BOUNDARY_PROVIDER_TOKEN"),
+        )
+    )
+
+    checks, report = _job_checks(job, kind="worker")
+
+    assert "jobs-smoke:worker:secret_bindings" not in _failed_names(checks)
+    assert "ODP_POI_PROVIDER_API_KEY" in report["secret_bound_env_vars"]
+
+
 def test_job_smoke_accepts_each_dialect_at_its_own_container_path() -> None:
     """The discriminator must not break the two shapes gcloud really emits."""
 
