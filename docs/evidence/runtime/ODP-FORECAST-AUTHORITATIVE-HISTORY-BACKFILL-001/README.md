@@ -43,7 +43,7 @@ into its output.
 | `horizon_critical_path_after_s4.json` | — | The same probe re-run once `-s4` was real rather than projected. The backwards family now reads h28 = 406 against the gap-fill family's 2, and `landed_measured` carries the first real 28-day window (see §7). |
 | `donor_projection_backtest.json` | — | The donor rule behind those projections, scored against a blind holdout — the four dates `-s4` landed after the projection was cached. Per-date recall/precision, the continuity score island length actually depends on, and the attestation assumption (see §7). |
 | `runbook/donor-projection-backtest.py` | — | The backtest that produced it. Imports the donor logic from the probe under test rather than restating it; read-only, and it scores no in-flight slice. |
-| `backwards_landing_validation.json` | — | The backwards projection scored against backwards dates as they land, closing the distance limit the `-s4` backtest leaves open. Committed at zero scored dates and four exclusions — the method and its guards fixed before any backwards date could be scored (see §7). |
+| `backwards_landing_validation.json` | — | The backwards projection scored against backwards dates as they land, closing the distance limit the `-s4` backtest leaves open. First committed at zero scored dates — the method and its guards fixed before any backwards date could be scored; now 3 dates scored, 0 upper-bound breaches (see §7). |
 | `runbook/backwards-landing-validation.py` | — | The probe that produces it. **Re-run after each backwards slice completes**; it strengthens monotonically as `-b2`..`-b4` land. |
 | `backwards_window_store_density.json` | — | Whether the backwards windows actually hold the stores the critical path donates to them: no gap day across the 24-day span, and 421 stores trading every day of it against an independently projected 419 (see §7). Carries its own grain and control range. |
 | `backwards_window_store_density_probe.pod.yaml` | — | The exact read-only Pod that produced it. One aggregation, counts only; place ids never leave the pod. |
@@ -1101,29 +1101,43 @@ is the record that the method was fixed, and its guards demonstrated, *before*
 any backwards date could be scored — so the numbers it eventually reports cannot
 have been fitted to them.
 
-**The first backwards date is now scored, and the invariant held** (receipt
-re-captured 22:46Z, one date). 2026-05-17 became scoreable the moment
-`2026-05-18__2026-05-19` reached SUCCEEDED — exactly the one-behind-the-frontier
-cadence the second rule predicts — and it lands **520 stores against an upstream
-bound of 527**, `landed/upstream = 0.9867`. So the falsifiable claim survives its
-first real test in the backwards regime: nothing landed that the density
-measurement did not already contain, which is the condition every one of
-419 / 421 / 420 rests on.
+**Three backwards dates are now scored, and the invariant held on every one**
+(receipt re-captured 23:28Z; **0 breaches**). Each became scoreable exactly one
+behind the partition frontier, as the second completeness rule predicts —
+2026-05-17 when `2026-05-18__2026-05-19` reached SUCCEEDED, then 05-18 and 05-19
+as `2026-05-19__2026-05-20` finished:
+
+| date | landed stores | upstream bound | landed/upstream | predicted | error |
+| --- | --- | --- | --- | --- | --- |
+| 2026-05-17 | 520 | 527 | 0.9867 | 512 | +8 |
+| 2026-05-18 | 511 | 517 | 0.9884 | 502 | +9 |
+| 2026-05-19 | 505 | 511 | 0.9883 | 496 | +9 |
+
+So the falsifiable claim survives its first real tests in the backwards regime:
+nothing landed that the density measurement did not already contain, which is the
+condition every one of 419 / 421 / 420 rests on. Note also that the landed store
+counts themselves — 520 / 511 / 505 — are the same magnitude the upstream density
+probe reported for early May, which is the population `-b3`'s 406 was computed
+over.
 
 The calibration reads the other way, and in the direction that costs nothing.
-The `0.9715` mapping rate predicts 512 stores and 520 landed — the projection
-**under**-states by 8 stores. That is the same sign the `-s4` backtest found on
-its holdout (both arms under-stated, optimistic recall .937), now reproduced two
-months from its donors rather than days from them, which is the regime the
-backtest could not reach. A projection that under-states cannot manufacture
-criterion 3; if this sign holds across `-b2` and `-b3`, the measured h28 should
-land at or above the projected 406, not below it.
+The `0.9715` mapping rate under-states landed stores on all three dates, by 8, 9
+and 9, at a strikingly stable `landed/upstream` of 0.9867–0.9884 (mean 0.9878).
+That is the same sign the `-s4` backtest found on its holdout (both arms
+under-stated, optimistic recall .937), now reproduced **two months** from its
+donors rather than days from them — the regime the backtest explicitly could not
+reach. A projection that under-states cannot manufacture criterion 3; if this
+sign holds across `-b2` and `-b3`, the measured h28 should land at or above the
+projected 406, not below it.
 
-One date is one date, and the honest limit is that the remaining three
-`-b1` dates are still excluded — 2026-05-18 and 2026-05-19 because
-`2026-05-19__2026-05-20` is still writing, 2026-05-16 and 2026-05-22 permanently,
-as stragglers. The claim this supports is that the invariant has not been
-breached where it could first be tested, not that the projection is confirmed.
+The honest limits. Three dates are three dates, and they are all from `-b1`, the
+slice nearest the landed era; `-b3` sits three weeks further back and is where
+criterion 3 is actually decided. Two `-b1` dates stay excluded permanently —
+2026-05-16 and 2026-05-22, the stragglers — and 2026-05-20 is excluded because
+its own partition is still writing. And the invariant tested here is
+per-date presence, not the per-store *continuity* that h28 needs: a date can land
+its full store count while individual stores still break their islands. That
+continuity claim is the one the `-s4` backtest scored and this probe does not.
 Re-run after `-b2` and `-b3`.
 
 One performance note worth keeping. `canonical_lineage`'s unique index leads

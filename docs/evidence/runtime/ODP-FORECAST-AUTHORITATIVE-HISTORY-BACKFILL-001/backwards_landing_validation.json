@@ -1,5 +1,5 @@
 {
-  "captured_at": "2026-07-28T22:46:07.014605+00:00",
+  "captured_at": "2026-07-28T23:28:36.512930+00:00",
   "purpose": "Score the backwards projection against backwards dates as they land. Closes the one limit donor_projection_backtest.json could not: its holdout sat days from its donors, these dates sit in the projected regime itself.",
   "prediction_under_test": {
     "upper_bound": "upstream distinct places at the view's grain, from backwards_window_store_density.json. Landed stores can never exceed it -- an unresolvable place is quarantined by store.py::require_place and lands nothing. A breach falsifies the density measurement as a description of what lands.",
@@ -24,20 +24,11 @@
         "excluded_reason": "no SUCCEEDED run owns this date's own whole-day partition -- it is a timezone-edge straggler pulled in by a neighbouring window's bound, not an ingested trading day"
       },
       {
-        "date": "2026-05-18",
-        "landed_stores": 511,
-        "landed_txns": 6112,
-        "upstream_stores": 517,
-        "upstream_orders": 6128,
-        "own_partition_succeeded": true,
-        "excluded_reason": "not every owning ingestion run is SUCCEEDED -- the partition is still being written, or holds unreconciled lineage"
-      },
-      {
-        "date": "2026-05-19",
-        "landed_stores": 376,
-        "landed_txns": 1115,
-        "upstream_stores": 511,
-        "upstream_orders": 5406,
+        "date": "2026-05-20",
+        "landed_stores": 477,
+        "landed_txns": 2680,
+        "upstream_stores": 515,
+        "upstream_orders": 5504,
         "own_partition_succeeded": false,
         "excluded_reason": "no SUCCEEDED run owns this date's own whole-day partition -- it is a timezone-edge straggler pulled in by a neighbouring window's bound, not an ingested trading day"
       },
@@ -53,16 +44,16 @@
     ]
   },
   "summary": {
-    "dates_scored": 1,
+    "dates_scored": 3,
     "upper_bound_breaches": 0,
     "breach_dates": [],
     "landed_over_upstream_min": 0.9867,
-    "landed_over_upstream_max": 0.9867,
-    "landed_over_upstream_mean": 0.9867,
+    "landed_over_upstream_max": 0.9884,
+    "landed_over_upstream_mean": 0.9878,
     "mapping_rate_used_as_prediction": 0.97148,
     "prediction_error_stores_min": 8,
-    "prediction_error_stores_max": 8,
-    "prediction_error_stores_mean": 8.0
+    "prediction_error_stores_max": 9,
+    "prediction_error_stores_mean": 8.67
   },
   "per_date": [
     {
@@ -76,6 +67,30 @@
       "landed_over_upstream": 0.9867,
       "predicted_landed_stores": 512,
       "prediction_error_stores": 8
+    },
+    {
+      "date": "2026-05-18",
+      "landed_stores": 511,
+      "landed_txns": 6112,
+      "upstream_stores": 517,
+      "upstream_orders": 6128,
+      "own_partition_succeeded": true,
+      "within_upper_bound": true,
+      "landed_over_upstream": 0.9884,
+      "predicted_landed_stores": 502,
+      "prediction_error_stores": 9
+    },
+    {
+      "date": "2026-05-19",
+      "landed_stores": 505,
+      "landed_txns": 5391,
+      "upstream_stores": 511,
+      "upstream_orders": 5406,
+      "own_partition_succeeded": true,
+      "within_upper_bound": true,
+      "landed_over_upstream": 0.9883,
+      "predicted_landed_stores": 496,
+      "prediction_error_stores": 9
     }
   ]
 }
