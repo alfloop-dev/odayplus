@@ -274,6 +274,42 @@ def find_pending(state: dict[str, Any], approval_id: str) -> tuple[int, dict[str
     return -1, None
 
 
+def find_worker_deferred_approval(
+    state: dict[str, Any],
+    *,
+    worker_run_id: str,
+    tool_use_id: str | None = None,
+    tool_name: str | None = None,
+    tool_input: dict[str, Any] | None = None,
+) -> dict[str, Any] | None:
+    """Return the approval already correlated with one worker's deferred tool use.
+
+    Both pending and resolved entries are searched so a worker that already
+    resumed past a deferral never adopts the same tool use a second time.
+    `tool_use_id` is the strongest correlation key; entries recorded without one
+    fall back to the tool name plus the tool-input signature.
+    """
+    if not worker_run_id:
+        return None
+    normalized_tool_use_id = str(tool_use_id or "").strip()
+    signature = approval_tool_input_signature(tool_input if tool_input is not None else {})
+    items = [*state.get("pending", []), *state.get("history", [])]
+    for item in reversed(items):
+        if not isinstance(item, dict) or item.get("worker_run_id") != worker_run_id:
+            continue
+        item_tool_use_id = str(item.get("tool_use_id") or "").strip()
+        if normalized_tool_use_id and item_tool_use_id:
+            if item_tool_use_id == normalized_tool_use_id:
+                return item
+            continue
+        if tool_name and item.get("tool_name") != tool_name:
+            continue
+        if str(item.get("tool_input_signature") or "") != signature:
+            continue
+        return item
+    return None
+
+
 def _apply_remember_rule(config: dict[str, Any], item: dict[str, Any], decision: str) -> None:
     if not item.get("remember") or item.get("provider") != "claude":
         return

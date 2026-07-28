@@ -28,7 +28,12 @@ if str(THIS_DIR) not in sys.path:
 import model_rotation
 from adapters import build_adapter
 from adapters.base import DeliveryRequest
-from approval_queue import prune_stale_approvals, resolve_approval
+from approval_queue import (
+    create_approval,
+    find_worker_deferred_approval,
+    prune_stale_approvals,
+    resolve_approval,
+)
 from common import (
     agent_config_for,
     command_exists,
@@ -5950,6 +5955,137 @@ def worker_supports_approval_resume(config: dict[str, Any], worker: dict[str, An
     )
 
 
+DEFERRED_TOOL_RISK_CLASS = "claude_deferred_tool"
+
+
+def _deferred_tool_use_receipt(worker: dict[str, Any]) -> dict[str, Any] | None:
+    """Return the worker's `stop_reason=tool_deferred` payload when it is usable."""
+    payload = worker.get("deferred_tool_use")
+    if not isinstance(payload, dict):
+        return None
+    tool_name = str(payload.get("name") or "").strip()
+    if not tool_name:
+        return None
+    tool_input = payload.get("input")
+    return {
+        "tool_use_id": str(payload.get("id") or "").strip(),
+        "tool_name": tool_name,
+        "tool_input": tool_input if isinstance(tool_input, dict) else {},
+    }
+
+
+def _deferred_tool_suggested_rule(tool_name: str, tool_input: dict[str, Any]) -> str | None:
+    if tool_name == "Bash":
+        shell_command = tool_input.get("command") or tool_input.get("cmd") or tool_input.get("raw_command")
+        if shell_command:
+            return f"Bash({shell_command})"
+        return None
+    return tool_name or None
+
+
+def _deferred_tool_broker_decision(config: dict[str, Any], tool_name: str, tool_input: dict[str, Any]) -> dict[str, Any] | None:
+    try:
+        from permission_broker import evaluate_tool_request
+    except Exception:  # pragma: no cover - broker is optional at runtime
+        return None
+    try:
+        return evaluate_tool_request(tool_name, tool_input, config)
+    except Exception:  # pragma: no cover - never let classification break the poll loop
+        return None
+
+
+def correlate_deferred_tool_approval(
+    config: dict[str, Any],
+    worker: dict[str, Any],
+    approval_state: dict[str, Any],
+) -> dict[str, Any] | None:
+    """Make a Claude `tool_deferred` receipt durable in this supervisor's queue.
+
+    The Claude CLI can exit with `stop_reason=tool_deferred` while the approval
+    entry that the permission-broker hook was supposed to create never lands in
+    the queue this supervisor reads (a different status root, an uninstalled
+    hook, or a hook that died mid-write). The worker is then left in
+    `waiting_approval` with nothing pending, trips the "approval state
+    disappeared" branch, and its verified worktree gets hard-reset.
+
+    Adopting the receipt here correlates the deferred tool with the worker run
+    *before* any exit cleanup runs. It does not widen what is allowed: the
+    adopted entry is created as `pending` and still needs an explicit allow, and
+    a tool the broker classifies as `deny` is recorded and immediately denied so
+    the worker still fails closed.
+
+    Returns the adopted approval, or None when there is nothing to adopt.
+    """
+    if not _provider_uses_claude_cli(config, worker.get("provider")):
+        return None
+    receipt = _deferred_tool_use_receipt(worker)
+    if receipt is None:
+        return None
+    run_id = str(worker.get("run_id") or "").strip()
+    if not run_id:
+        return None
+    existing = find_worker_deferred_approval(
+        approval_state,
+        worker_run_id=run_id,
+        tool_use_id=receipt["tool_use_id"] or None,
+        tool_name=receipt["tool_name"],
+        tool_input=receipt["tool_input"],
+    )
+    if existing is not None:
+        return None
+
+    tool_name = receipt["tool_name"]
+    tool_input = receipt["tool_input"]
+    broker_decision = _deferred_tool_broker_decision(config, tool_name, tool_input)
+    approval = create_approval(
+        config,
+        {
+            "provider": worker.get("provider"),
+            "agent_id": worker.get("agent_id"),
+            "task_id": worker.get("task_id"),
+            "worker_run_id": run_id,
+            "session_id": worker.get("session_id") or worker.get("resume_token"),
+            "tool_use_id": receipt["tool_use_id"] or None,
+            "tool_name": tool_name,
+            "tool_input": tool_input,
+            "risk_class": (broker_decision or {}).get("risk_class") or DEFERRED_TOOL_RISK_CLASS,
+            "suggested_rule": _deferred_tool_suggested_rule(tool_name, tool_input),
+            "correlation_source": "supervisor_deferred_tool_receipt",
+            "broker_decision": broker_decision,
+        },
+    )
+    approval_id = approval.get("approval_id")
+    worker["deferred_action"] = approval_id
+    worker["deferred_tool_use_id"] = receipt["tool_use_id"] or None
+    write_activity_log(
+        config,
+        {
+            "type": "worker_deferred_approval_recorded",
+            "provider": worker.get("provider"),
+            "task_id": worker.get("task_id"),
+            "message": (
+                f"Recorded deferred {tool_name} approval {approval_id} from the worker's tool_deferred receipt."
+            ),
+            "worker_run_id": run_id,
+            "approval_id": approval_id,
+            "tool_name": tool_name,
+            "risk_class": approval.get("risk_class"),
+        },
+    )
+    if (broker_decision or {}).get("decision") == "deny" and approval_id:
+        try:
+            return resolve_approval(
+                config,
+                approval_id,
+                decision="deny",
+                note=str(broker_decision.get("reason") or "Deferred tool is denied by orchestrator policy."),
+                remember=False,
+            )
+        except KeyError:  # pragma: no cover - resolved concurrently
+            return approval
+    return approval
+
+
 def resume_claude_worker(
     config: dict[str, Any],
     worker: dict[str, Any],
@@ -6034,6 +6170,8 @@ def resume_claude_worker(
     worker["pid"] = process.pid
     worker["status"] = "running"
     worker["deferred_action"] = None
+    worker["deferred_tool_use"] = None
+    worker["deferred_tool_use_id"] = None
     worker["last_event_at"] = _isoformat_utc(now_dt)
     worker["last_heartbeat_at"] = None
     worker["lease_acquired_at"] = _isoformat_utc(now_dt)
@@ -6113,6 +6251,27 @@ def poll_workers(config: dict[str, Any], state: dict[str, Any], provider_report:
             poll_counts["marker_updates"] += 1
             changed = True
         update_from_log(config, worker)
+        try:
+            adopted_approval = correlate_deferred_tool_approval(config, worker, approval_state)
+        except Exception as error:  # pragma: no cover - queue write failures must fail closed, not crash
+            adopted_approval = None
+            write_activity_log(
+                config,
+                {
+                    "type": "worker_deferred_approval_failed",
+                    "provider": worker.get("provider"),
+                    "task_id": worker.get("task_id"),
+                    "message": f"Could not record deferred tool approval for {run_id}: {error}",
+                    "worker_run_id": run_id,
+                },
+            )
+        if adopted_approval is not None:
+            bucket = pending_by_run if adopted_approval.get("status") == "pending" else resolved_by_run
+            bucket.setdefault(run_id, []).append(adopted_approval)
+            approval_state.setdefault(
+                "pending" if adopted_approval.get("status") == "pending" else "history", []
+            ).append(adopted_approval)
+            changed = True
         alive = pid_is_alive(worker.get("pid"))
         if alive and worker.get("status") in active_worker_statuses and worker.get("last_heartbeat_at"):
             if not worker_heartbeat_is_stale(config, worker, now):
