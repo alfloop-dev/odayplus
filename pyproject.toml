@@ -89,4 +89,5 @@ addopts = "-q"
 pythonpath = ["."]
 markers = [
     "requires_live_env: test needs a live multi-repo / CLI / local-path environment and is excluded from CI (run with -m 'not requires_live_env')",
+    "performance: wall-clock SLO measurement that must own its runner; excluded from the shared product suite and enforced by the dedicated CI performance-gate job (run with -m performance)",
 ]
