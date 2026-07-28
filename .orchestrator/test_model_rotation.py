@@ -354,6 +354,53 @@ def test_generic_provider_quota_markers_still_classified():
         assert sv.classify_worker_failure(CFG, {"provider": "claude"}, reason)["kind"] == "quota_terminal", reason
 
 
+# The verbatim banner captured from the live synthetic assistant message that
+# drove task_failure_streaks["ODP-STORE-OPENING-001:claude"] to count=34.
+CLAUDE_SESSION_LIMIT = "You've hit your session limit \u00b7 resets 5pm (UTC)"
+
+
+def test_claude_session_limit_is_quota_not_terminal():
+    """The extra "session" token made this miss "hit your limit" entirely.
+
+    Misclassifying it as `terminal` skipped BOTH the provider pause path and the
+    environmental-failure exemption, so every retry inside one session-limit
+    window incremented the per-task streak.
+    """
+    result = sv.classify_worker_failure(CFG, {"provider": "claude"}, CLAUDE_SESSION_LIMIT)
+    assert result["kind"] == "quota_terminal"
+    assert sv.should_pause_dispatch_for_failure_kind(result["kind"]) is True
+
+
+def test_claude_session_limit_does_not_increment_task_streak():
+    state: dict = {}
+    kind = sv.classify_worker_failure(CFG, {"provider": "claude"}, CLAUDE_SESSION_LIMIT)["kind"]
+    worker = {"task_id": "ODP-SESSION-LIMIT-TEST", "provider": "claude"}
+    for _ in range(3):
+        count = sv.record_task_failure_streak(state, worker, CLAUDE_SESSION_LIMIT, failure_kind=kind)
+    assert count == 0
+    # A genuine task failure on the same provider still counts.
+    assert sv.record_task_failure_streak(
+        state, worker, "TypeError: undefined is not a function", failure_kind="terminal"
+    ) == 1
+
+
+def test_claude_session_limit_banner_is_provider_scoped():
+    """Only Claude providers may read this text as a quota outage."""
+    assert sv.classify_worker_failure(CFG, {"provider": "codex"}, CLAUDE_SESSION_LIMIT)["kind"] == "terminal"
+    # Provider identified through config rather than the id prefix.
+    cfg = {"providers": {"vendory": {"adapter": "claude_cli"}}}
+    assert sv.classify_worker_failure(cfg, {"provider": "vendory"}, CLAUDE_SESSION_LIMIT)["kind"] == "quota_terminal"
+
+
+def test_session_limit_wording_in_task_output_stays_a_task_failure():
+    """Application/test output mentioning the phrase must not become a quota outage."""
+    for reason in (
+        "AssertionError: expected the session limit banner to be hidden",
+        "Playwright: locator('text=session limit') resolved to 0 elements",
+    ):
+        assert sv.classify_worker_failure(CFG, {"provider": "claude"}, reason)["kind"] == "terminal", reason
+
+
 # --- adapter: dispatch-time pool persistence, argv safety, profile isolation --
 
 
