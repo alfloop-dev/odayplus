@@ -38,6 +38,8 @@ into its output.
 | `slice_deadline_headroom.json` | — | Why `activeDeadlineSeconds` was raised 14400→28800 on the remaining slices, and the measurement that forced it. |
 | `lineage_projection_throughput.json` | — | What actually governs a partition's wall-clock: lineage projection is ~90 % of it, at a rate that has fallen to 209 rows/min. Turns slice sizing from a tripwire into a projection, and shows the raised deadline has only ~18 % throughput margin (see §7). |
 | `runbook/lineage-throughput-probe.py` | — | The read-only probe that produced it. Two aggregate `SELECT`s; excludes resumed stub partitions and says how many it dropped. |
+| `horizon_critical_path.json` | — | Which remaining slice actually decides criterion 3, measured against the view's own eligibility rule: the gap-fill family moves h28 from 0 to 2, the backwards family to 419 (see §7). |
+| `runbook/horizon-critical-path-probe.py` | — | The read-only probe that produced it. Mirrors `forecast_training_view` on the source plane; projections are bracketed and labelled as projections. |
 | `runbook/deadline-guard-v1.sh` | — | Fourth keeper. Extends `activeDeadlineSeconds` on the Active slice before it can be killed, because a deadline kill is what created Defect D and there is no safe kill for this workload. |
 | `settle_state.json` | — | Written by the finisher **immediately before** `activate`: the incomplete partitions and abandoned-lineage ownership that were true at that moment. The two conditions the gate no longer blocks on, stated instead of hidden (see §7, v6). |
 
@@ -825,6 +827,67 @@ it measures `max(projected_at)` on every decision and logs `liveness=OK` /
 signal that exists for a running partition — a `RUNNING` row in
 `ingestion_runs` reports `valid_loaded = 0` until it finishes, and
 `ingested_at` is a single early burst.
+
+### Which slice actually decides criterion 3
+
+Driver v4's queue is `-s4, -b1, -b2, -b3, -b4, -s5`, and each slice costs about
+five hours. That ordering was inherited rather than chosen: `-s4`/`-s5` finish
+the ORIGINAL gap-fill plan, `-b1`..`-b4` are the backwards extension added once
+the `2026-05-23` floor turned out to be a window-clamp artifact. Which family
+actually moves acceptance criterion 3 had never been measured, so
+`runbook/horizon-critical-path-probe.py` asks the view's own question — how many
+stores hold `h` consecutive eligible dates — against the landed grid and against
+per-slice counterfactuals. Receipt: `horizon_critical_path.json`.
+
+Landed today, over `2026-05-22..2026-07-27` (58 ingested days, 55 attested):
+**h7 = 438 stores, h14 = 411, h28 = 0**, longest per-store eligible run 23 days.
+Criteria for the 7- and 14-day windows are therefore already met by real data;
+only h28 is outstanding, exactly as expected.
+
+The projection is the useful part, and it is blunt:
+
+| scenario | h7 | h14 | **h28** |
+| --- | --- | --- | --- |
+| landed (measured) | 438 | 411 | **0** |
+| `+ -s4, -s5` (gap-fill) | 470 | 446 | **2** |
+| `+ -b1, -b2, -b3` (backwards) | 462 | 438 | **419** |
+| `+ -b4` | 475 | 440 | **431** |
+| everything | 497 | 473 | **432** |
+
+**The gap-fill family cannot deliver criterion 3 and the backwards family can.**
+Completing `-s4` and `-s5` moves h28 from 0 to 2; `-b1`..`-b3` moves it to 419.
+The reason is the Defect D split: `prior_day_count_28` is counted over
+`mature_daily` with no attestation filter, so `2026-07-05`/`07-06` do not erase
+their neighbours from anyone's prior window — they only lose their own
+eligibility, cutting each store's eligible-date island in two. The upper island
+tops out at `2026-07-07..07-27`, twenty-one days, so no amount of gap-filling
+reaches twenty-eight. Only the island below the split can grow, and it grows
+downwards. This does not make `-s4`/`-s5` waste: the `2026-07-06..07-22` hole is
+a real hole in the authoritative history and criteria 1 and 4 are about
+coverage. It does mean **`-b3` is the acceptance gate**, and everything after it
+in the queue is margin.
+
+The queue was NOT reordered even so. `-s4` is mid-partition, and suspending a
+Job deletes its pod — which is precisely the mechanism that created Defect D, a
+permanent and unrepairable hole, to save at most five hours on a run of roughly
+thirty. The remaining queue is already critical-path-first (`-b1`, `-b2`, `-b3`
+before `-b4` and `-s5`), so there is nothing to gain by touching it.
+
+Two honesty notes about the projection. Counterfactual days add no revenue and
+change no predicate; they mark a date present and attested for the stores
+projected to be trading, so this projects island LENGTH only. And the donor rule
+is where the probe's first run was wrong: it donated the store set of the
+nearest landed date, which for every backwards date is `2026-05-22` — a day
+holding 3 stores and 3 transactions, timezone-edge stragglers pulled in by the
+`2026-05-23` window's lower bound rather than a trading day. Every backwards
+scenario then extended exactly three stores and reported `h28 = 3`, a fact about
+the probe and not about the plan. Donors are now restricted to dense landed days
+and the projection is bracketed: optimistic (traded on the nearest dense day)
+against strict (traded on all seven nearest dense days). The two agree at
+**419 and 419** for `-b1`..`-b3`, so the conclusion does not rest on the
+assumption. It is also consistent with `per_store_streak_headroom.json`, which
+counted 410 stores trading unbroken across the landed 43-day window and left as
+a falsifiable follow-up whether ~410 would hold against a 61-day window.
 
 ## 8. After state
 
