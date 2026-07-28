@@ -2182,25 +2182,47 @@ def _unsupported_secret_source_members(
     return tuple(sorted({str(location) for location in locations}))
 
 
-#: A Secret Manager version selector is `latest`, a positive version number, or
-#: a version alias (letters, digits, `_` and `-`, starting with a letter, at
-#: most 255 characters). `latest` is itself alias-shaped, so the alias pattern
-#: covers it. `0` is not a version: Secret Manager numbers versions from 1.
-_SECRET_VERSION_NUMBER_PATTERN = re.compile(r"[0-9]+")
-_SECRET_VERSION_ALIAS_PATTERN = re.compile(r"[A-Za-z][A-Za-z0-9_-]{0,254}")
+#: A Secret Manager version selector is exactly one of three things, and the
+#: three are not interchangeable spellings of one pattern:
+#:
+#: - the literal `latest`, lowercase, which is a reserved word rather than an
+#:   alias — `Latest` and `LATEST` are neither the literal nor a legal alias;
+#: - a positive version number, written canonically. Secret Manager numbers
+#:   versions from 1, so `0` is not a version, and it never emits `007`;
+#: - a version alias: a leading letter, then letters, digits, `_` and `-`, at
+#:   most **63** characters. That is the alias limit; 255 is the limit on a
+#:   secret *name*, a different resource, and using it here let a 64- to
+#:   255-character selector through. `latest` and `NEW` are reserved and cannot
+#:   name an alias in any case, so `new`, `New`, and `NEW` resolve to nothing.
+_SECRET_VERSION_LITERAL_LATEST = "latest"
+_SECRET_VERSION_NUMBER_PATTERN = re.compile(r"[1-9][0-9]*")
+_SECRET_VERSION_ALIAS_PATTERN = re.compile(r"[A-Za-z][A-Za-z0-9_-]{0,62}")
+_RESERVED_SECRET_VERSION_ALIASES = frozenset({"latest", "new"})
 
 
 def _usable_secret_version(value: Any) -> bool:
-    """Return whether a selector member names a resolvable secret version."""
+    """Return whether a selector member names a resolvable secret version.
+
+    The description is the proof, so the selector is read exactly as gcloud
+    emitted it. Round 9 stripped first and then validated, which made ` latest `
+    prove a binding that Secret Manager does not resolve: whitespace around a
+    selector is a defect in the description, not something this validator may
+    normalize away on the deployment's behalf.
+    """
 
     if not isinstance(value, str):
         return False
-    text = value.strip()
-    if not text or not _configured(text):
+    if not value or value != value.strip():
         return False
-    if _SECRET_VERSION_NUMBER_PATTERN.fullmatch(text):
-        return int(text) >= 1
-    return _SECRET_VERSION_ALIAS_PATTERN.fullmatch(text) is not None
+    if not _configured(value):
+        return False
+    if value == _SECRET_VERSION_LITERAL_LATEST:
+        return True
+    if _SECRET_VERSION_NUMBER_PATTERN.fullmatch(value):
+        return True
+    if value.lower() in _RESERVED_SECRET_VERSION_ALIASES:
+        return False
+    return _SECRET_VERSION_ALIAS_PATTERN.fullmatch(value) is not None
 
 
 def _malformed_secret_selector_members(

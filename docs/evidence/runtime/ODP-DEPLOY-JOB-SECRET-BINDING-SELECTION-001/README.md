@@ -96,7 +96,11 @@ textual. `job_secret_binding_checks` does four things:
    `version` optional but never blank), to leave Knative's `optional` absent or
    exactly `false` — a secret Cloud Run may resolve to nothing is not a
    mandatory binding — and to carry no deprecated `localObjectReference` beside
-   `name`.
+   `name`. "Resolvable" is Secret Manager's grammar, not an approximation of it:
+   `_usable_secret_version` accepts the exact literal `latest`, a canonical
+   version number, or an alias of at most 63 characters starting with a letter,
+   and rejects the reserved words `latest` and `NEW` in every other case as well
+   as any selector carrying surrounding whitespace.
 
 Substring scanning is gone for this check: a job that merely mentions
 `ODAY_DATABASE_URL` in a label or an argument no longer satisfies it.
@@ -130,7 +134,11 @@ Substring scanning is gone for this check: a job that merely mentions
 | `optional` set to anything that is not the boolean `false` (`"true"`, `"false"`, `1`, `0`, `null`) | same — a non-boolean is not the field the API defines, so no reader can be assumed to read it as `false` |
 | Knative `secretKeyRef` with no `key` | `secret_bindings` fails — Cloud Run v1 documents `key` as required, and without it no version is selected |
 | Knative `key` (or v2 `version`) blank, whitespace, non-string, `null`, `"0"`, a placeholder, or otherwise not a version selector | same — it names no resolvable Secret Manager version |
-| Knative `key` (or v2 `version`) set to `latest`, a version number, or a version alias | passes — all three are what Secret Manager resolves |
+| Knative `key` (or v2 `version`) set to the exact literal `latest`, a canonical version number, or an alias of at most 63 characters | passes — those three are what Secret Manager resolves |
+| Knative `key` (or v2 `version`) set to `latest` or `NEW` in any other case (`Latest`, `LATEST`, `new`, `New`, `NEW`) | `secret_bindings` fails — both are reserved words, not alias names, and only the lowercase `latest` literal resolves |
+| an alias of 64 characters or more (up to the 255-character secret-*name* limit round 9 borrowed) | same — a version alias is capped at 63 characters |
+| a selector with surrounding whitespace (`" latest "`, `"latest "`, `"\tlatest\n"`, `" 1 "`) | same — the description is the proof, so it is read as gcloud emitted it and never normalized |
+| a padded version number (`"007"`) | same — versions are numbered from 1 and gcloud emits them canonically |
 | v2 `secretKeyRef` with no `version` | passes — Cloud Run v2 leaves `version` optional; only v1's `key` is required |
 | `valueFrom.secretKeyRef.localObjectReference` | `secret_bindings` fails — Knative's superseded way of naming the same secret `name` names, so the selector names two |
 | a valid binding beside an empty off-dialect source (`"valueSource": {}`) | same — a source gcloud does not emit |
@@ -514,7 +522,9 @@ after the reference name resolves:
   Secret Manager resolves — `latest`, a version number ≥ 1, or a version alias
   (leading letter, then letters, digits, `_`, `-`) — and rejects blanks,
   non-strings, `0`, and the placeholder values `_configured` already rejects for
-  secret names. Knative's `key` must additionally be present.
+  secret names. Knative's `key` must additionally be present. Round 9 wrote that
+  grammar too loosely; round 10 below is the correction, and it is the rule in
+  force.
 - **A selector names one secret.** `localObjectReference` is rejected on
   presence: it is superseded by `name`, so a selector carrying both has two
   names for one binding and gcloud emits neither shape.
@@ -544,6 +554,71 @@ that pin the tightening as narrow:
 `42`, `prod_pinned`, `prod-v1`) and
 `test_job_smoke_accepts_a_v2_selector_without_a_declared_version`. The round-8
 `optional: false` control is unchanged and still passes.
+
+## Round 10: the version grammar was borrowed from the wrong resource
+
+Round 9 started reading the selector members instead of only naming them, but it
+wrote the version grammar from memory rather than from Secret Manager's, and
+three mistakes fell out of that. Verified against head `39cf252c` — every
+selector below fails **no** check at all (`_failed_names(checks) == set()`):
+
+| crafted description at `39cf252c` | result |
+| --- | --- |
+| `key` / `version` set to `"NEW"`, `"new"`, or `"New"` | passed |
+| `key` / `version` set to `"Latest"` or `"LATEST"` | passed |
+| a 64-character alias, and a 255-character one | passed |
+| `" latest "`, `" latest"`, `"latest "`, `"\tlatest\n"`, `" 1 "` | passed |
+| `"007"` | passed |
+
+Each row is a selector Secret Manager does not resolve, so each one is a job
+whose "mandatory" secret binds to nothing while
+`jobs-smoke:<kind>:secret_bindings` reports zero failed checks — the same
+fail-open the acceptance "malformed missing or plaintext secret bindings fail
+closed" forbids, and a direct contradiction of round 9's own claim that only
+resolvable versions pass.
+
+The three defects, and what replaces them:
+
+- **The length cap came from the wrong resource.** `{0,254}` is the tail of the
+  255-character limit on a secret *name*. A version **alias** is capped at 63
+  characters, so every length from 64 to 255 was accepted. The pattern is now
+  `[A-Za-z][A-Za-z0-9_-]{0,62}`, and a 63-character alias is kept as an explicit
+  boundary control on both dialects so the correction cannot drift into
+  over-tightening.
+- **The reserved words were not reserved.** `latest` is a reserved selector, not
+  an alias: Secret Manager refuses both `latest` and `NEW` as alias names, in any
+  case. Round 9 let the alias pattern swallow the literal, which made `Latest`,
+  `LATEST`, `new`, `New`, and `NEW` all alias-shaped and therefore accepted. The
+  literal is now matched exactly (`value == "latest"`), and
+  `_RESERVED_SECRET_VERSION_ALIASES` rejects both reserved words case-insensitively
+  before the alias pattern is consulted.
+- **The validator normalized the proof it was checking.** `value.strip()` ran
+  before validation, so ` latest ` was judged as `latest`. The description *is*
+  the proof: whitespace around a selector is a defect in what gcloud emitted, not
+  something this validator may fix on the deployment's behalf. A selector that is
+  not identical to its own `strip()` is now rejected outright.
+
+A version number is also read canonically now (`[1-9][0-9]*` instead of `[0-9]+`
+plus an `int()` cast, which accepted `007`). Secret Manager numbers versions from
+1 and `gcloud run jobs describe` never emits a padded number, so a padded one is
+a description this proof should not vouch for.
+
+The real deployment still cannot trip any of this, checked against
+`scripts/deploy_cloud_run_waji.sh` rather than assumed: bindings reach these jobs
+only through `--set-secrets="${API_SECRET_BINDINGS}"`, and gcloud emits the
+version it resolved — `latest` or a canonical number — with no surrounding
+whitespace and no reserved-word alias.
+
+Regressions: 13 new cases on `test_job_smoke_rejects_an_unusable_knative_secret_selector`
+and the same 13 on `test_job_smoke_rejects_an_unusable_v2_secret_selector`, so
+both container paths are pinned. Controls: `_USABLE_VERSION_SELECTORS` now
+carries the 63-character alias beside `latest`, `1`, `42`, `prod_pinned`, and
+`prod-v1`, and it drives both
+`test_job_smoke_accepts_every_usable_knative_version_selector` and the new
+`test_job_smoke_accepts_every_usable_v2_version_selector` — the acceptance
+boundary is a Secret Manager fact, so both dialects must keep accepting it.
+`test_job_smoke_accepts_a_v2_selector_without_a_declared_version` is unchanged
+and still passes.
 
 ## Check and report surface
 
@@ -576,12 +651,12 @@ placed in the job description never reaches the detail text or the report.
 
 ## Focused verification
 
-Executed from the task branch on the round-9 tree (parent `a2a0106b`), with
+Executed from the task branch on the round-10 tree (parent `39cf252c`), with
 `export PATH="$HOME/.local/bin:$PATH"`:
 
 ```text
-python3 -m pytest tests/ops/test_cloud_run_live_deployment.py                  # 154 passed
-python3 -m pytest tests/ops                                                    # 209 passed, 20 skipped
+python3 -m pytest tests/ops/test_cloud_run_live_deployment.py                  # 187 passed
+python3 -m pytest tests/ops                                                    # 242 passed, 20 skipped
 python3 -m ruff check scripts/deployment/validate_cloud_run_live_deployment.py tests/ops/test_cloud_run_live_deployment.py
 python3 -m ruff format --check scripts/deployment/validate_cloud_run_live_deployment.py tests/ops/test_cloud_run_live_deployment.py
 git diff --check
@@ -601,9 +676,12 @@ both-dialects control), 107 at `15e7ec64` (round 6, ten uniqueness and
 mixed-dialect regressions), 118 at `d3dfeb13` (round 7, eleven presence-rule
 cases, each asserting on both container paths), 125 at `a2a0106b` (round 8, six
 source-member regressions plus the `optional` control that pins the allowlist
-against over-tightening), and 154 now — round 9 adds 23 unusable-selector
-regressions plus six controls (five usable Knative version selectors and the
-v2 no-`version` case).
+against over-tightening), 154 at `39cf252c` (round 9, 23 unusable-selector
+regressions plus six controls — five usable Knative version selectors and the
+v2 no-`version` case), and 187 now — round 10 adds 26 version-grammar
+regressions (13 per dialect) plus seven controls (the 63-character alias on the
+Knative side, and the whole usable-selector set re-run on the v2 container
+path).
 
 Each round's regressions fail against that round's pre-fix validator, verified by
 restoring the parent commit's
@@ -637,8 +715,18 @@ selectors, and the optional `ODAY_DATABASE_URL` binding all fail with
 `assert 'jobs-smoke:<kind>:secret_bindings' in set()`, the pre-fix validator
 returning zero failing checks for every one of them, which is the independent
 reproduction of the probes Codex6 ran at that head. The remaining six selected
-cases are the round-9 controls, and they pass against both validators. The
-control tests
+cases are the round-9 controls, and they pass against both validators. For
+round 10 against `39cf252c` the same restore method — the round-10 test file
+copied into a detached worktree at `39cf252c` — reports `26 failed, 161 passed`:
+exactly the 26 new version-grammar cases fail, 13 with
+`assert 'jobs-smoke:migration:secret_bindings' in set()` and 13 with
+`assert 'jobs-smoke:worker:secret_bindings' in set()`, the pre-fix validator
+returning **zero** failing checks for `NEW`/`new`/`New`, `Latest`/`LATEST`, the
+64- and 255-character aliases, `' latest '` and its whitespace variants, `' 1 '`,
+and `'007'` on both container paths. That is the independent reproduction of the
+three defects Codex6 named at that head. The seven new controls pass against
+both validators, so this round's tightening is proven narrow too. The control
+tests
 (`test_job_smoke_accepts_each_dialect_at_its_own_container_path` and the run
 30376737123 receipt) pass against both validators.
 

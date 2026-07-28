@@ -1995,6 +1995,14 @@ def test_job_smoke_accepts_the_optional_members_each_dialect_defines() -> None:
 #: The secret every one of these selectors claims to bind.
 _POI_SECRET = "odp-poi-provider-api-key"
 
+#: Secret Manager caps a version alias at 63 characters. 255 is the cap on a
+#: secret *name*, a different resource; round 9 validated the alias against that
+#: number, so every length between 64 and 255 was accepted. The 63-character
+#: alias is the boundary control that keeps the correction from over-tightening.
+_ALIAS_63 = "a" + "b" * 62
+_ALIAS_64 = "a" + "b" * 63
+_ALIAS_255 = "a" + "b" * 254
+
 #: Selectors whose member *names* all sit inside the dialect's allowlist while
 #: the payloads cancel the binding they are supposed to prove. Round 8 closed
 #: the reference to the members Knative defines but never read them, so each of
@@ -2024,6 +2032,24 @@ _UNUSABLE_KNATIVE_SELECTORS: tuple[tuple[dict[str, object], str], ...] = (
     ({"name": _POI_SECRET, "key": 1}, "key"),
     ({"name": _POI_SECRET, "key": None}, "key"),
     ({"name": _POI_SECRET, "key": "placeholder"}, "key"),
+    # Round 10: the alias grammar itself. `latest` and `NEW` are reserved words
+    # Secret Manager refuses as alias names in any case, only the exact
+    # lowercase `latest` literal resolves, an alias is capped at 63 characters,
+    # a version number is written canonically, and whitespace around a selector
+    # is a defect in the description rather than something to normalize away.
+    ({"name": _POI_SECRET, "key": "NEW"}, "key"),
+    ({"name": _POI_SECRET, "key": "new"}, "key"),
+    ({"name": _POI_SECRET, "key": "New"}, "key"),
+    ({"name": _POI_SECRET, "key": "Latest"}, "key"),
+    ({"name": _POI_SECRET, "key": "LATEST"}, "key"),
+    ({"name": _POI_SECRET, "key": _ALIAS_64}, "key"),
+    ({"name": _POI_SECRET, "key": _ALIAS_255}, "key"),
+    ({"name": _POI_SECRET, "key": " latest "}, "key"),
+    ({"name": _POI_SECRET, "key": " latest"}, "key"),
+    ({"name": _POI_SECRET, "key": "latest "}, "key"),
+    ({"name": _POI_SECRET, "key": "\tlatest\n"}, "key"),
+    ({"name": _POI_SECRET, "key": " 1 "}, "key"),
+    ({"name": _POI_SECRET, "key": "007"}, "key"),
     (
         {
             "name": _POI_SECRET,
@@ -2045,6 +2071,20 @@ _UNUSABLE_V2_SELECTORS: tuple[tuple[dict[str, object], str], ...] = (
     ({"secret": _POI_SECRET, "version": "latest version"}, "version"),
     ({"secret": _POI_SECRET, "version": 1}, "version"),
     ({"secret": _POI_SECRET, "version": None}, "version"),
+    # Round 10: the same alias grammar, on the v2 container path.
+    ({"secret": _POI_SECRET, "version": "NEW"}, "version"),
+    ({"secret": _POI_SECRET, "version": "new"}, "version"),
+    ({"secret": _POI_SECRET, "version": "New"}, "version"),
+    ({"secret": _POI_SECRET, "version": "Latest"}, "version"),
+    ({"secret": _POI_SECRET, "version": "LATEST"}, "version"),
+    ({"secret": _POI_SECRET, "version": _ALIAS_64}, "version"),
+    ({"secret": _POI_SECRET, "version": _ALIAS_255}, "version"),
+    ({"secret": _POI_SECRET, "version": " latest "}, "version"),
+    ({"secret": _POI_SECRET, "version": " latest"}, "version"),
+    ({"secret": _POI_SECRET, "version": "latest "}, "version"),
+    ({"secret": _POI_SECRET, "version": "\tlatest\n"}, "version"),
+    ({"secret": _POI_SECRET, "version": " 1 "}, "version"),
+    ({"secret": _POI_SECRET, "version": "007"}, "version"),
 )
 
 
@@ -2139,7 +2179,20 @@ def test_job_smoke_rejects_an_optional_database_secret_binding() -> None:
     assert "ODAY_DATABASE_URL" not in report["secret_bound_env_vars"]
 
 
-@pytest.mark.parametrize("key", ["latest", "1", "42", "prod_pinned", "prod-v1"])
+#: Every selector Secret Manager really resolves, including both boundaries the
+#: round-10 tightening runs against: the exact lowercase `latest` literal and an
+#: alias of exactly 63 characters, the longest one the service accepts.
+_USABLE_VERSION_SELECTORS: tuple[object, ...] = (
+    "latest",
+    "1",
+    "42",
+    "prod_pinned",
+    "prod-v1",
+    pytest.param(_ALIAS_63, id="alias-63-chars"),
+)
+
+
+@pytest.mark.parametrize("key", _USABLE_VERSION_SELECTORS)
 def test_job_smoke_accepts_every_usable_knative_version_selector(key: str) -> None:
     """Fail-closed must not narrow to the one version string gcloud defaults to.
 
@@ -2162,6 +2215,35 @@ def test_job_smoke_accepts_every_usable_knative_version_selector(key: str) -> No
     )
 
     checks, report = _job_checks(job)
+
+    assert all(check.ok for check in checks), _failed_names(checks)
+    assert "ODP_POI_PROVIDER_API_KEY" in report["secret_bound_env_vars"]
+
+
+@pytest.mark.parametrize("version", _USABLE_VERSION_SELECTORS)
+def test_job_smoke_accepts_every_usable_v2_version_selector(version: str) -> None:
+    """The same acceptance boundary on the Cloud Run v2 container path.
+
+    The round-10 grammar is a Secret Manager fact, not a dialect fact, so both
+    dialects must reject the same malformed selectors *and* keep accepting the
+    same resolvable ones — otherwise a v2 job pinned to a legal 63-character
+    alias would be failed by a rule written for the Knative shape.
+    """
+
+    entry = {
+        "name": "ODP_POI_PROVIDER_API_KEY",
+        "valueSource": {"secretKeyRef": {"secret": _POI_SECRET, "version": version}},
+    }
+    job = _v2_job_with_envs(
+        secret_envs=(
+            _v2_secret_env("ODAY_DATABASE_URL"),
+            entry,
+            _v2_secret_env("ODP_GEOCODE_PROVIDER_API_KEY"),
+            _v2_secret_env("ODP_ADMIN_BOUNDARY_PROVIDER_TOKEN"),
+        )
+    )
+
+    checks, report = _job_checks(job, kind="worker")
 
     assert all(check.ok for check in checks), _failed_names(checks)
     assert "ODP_POI_PROVIDER_API_KEY" in report["secret_bound_env_vars"]
