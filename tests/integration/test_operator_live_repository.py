@@ -250,6 +250,51 @@ def test_create_app_rejects_sqlite_bundle_relabelled_as_postgresql(
         bundle.engine.close()
 
 
+def test_create_app_injects_live_repository_for_production_postgresql(
+    monkeypatch: Any,
+) -> None:
+    monkeypatch.setenv("ODP_REQUIRE_LIVE_DATA", "true")
+    monkeypatch.setenv("ODP_PERSISTENCE", "postgresql")
+    monkeypatch.delenv("MLFLOW_TRACKING_URI", raising=False)
+    monkeypatch.delenv("ODP_E2E_MODE", raising=False)
+
+    class _ProductionStubEngine:
+        is_production = True
+        dialect = "postgresql"
+
+        def query(self, *_args: Any, **_kwargs: Any) -> list[Any]:
+            return []
+
+        def query_one(self, *_args: Any, **_kwargs: Any) -> dict[str, Any]:
+            return {"ready": 1}
+
+    from shared.infrastructure.persistence.assisted_listing_intake import (
+        DurableAssistedIntakeStore,
+    )
+
+    engine = _ProductionStubEngine()
+    bundle = replace(
+        _memory_bundle(),
+        mode="postgresql",
+        engine=engine,
+        assisted_intake_store=DurableAssistedIntakeStore(SimpleNamespace(engine=engine)),
+    )
+    app = create_app(
+        persistence=bundle,
+        external_provider_validation=SimpleNamespace(ok=True, errors=(), mode="live"),
+    )
+
+    repository = app.state.operator_live_repository
+    assert isinstance(repository, OperatorLiveRepository)
+    probe = repository.probe()
+    assert probe.ready is True
+    assert probe.repository == "OperatorLiveRepository"
+    assert probe.persistence_mode == "postgresql"
+    assert probe.errors == ()
+    assert repository.data_origin["kind"] == "authoritative"
+    assert repository.data_origin["persistenceMode"] == "postgresql"
+
+
 def test_repository_probe_reports_real_dependency_failure() -> None:
     class BrokenStoreRepository:
         def list_stores(self, **_: Any) -> list[Any]:
