@@ -10,7 +10,9 @@ idempotent.
 Modes
 -----
 ``inventory``
-    Read-only. Reports per-relation counts, transaction date coverage, and
+    Read-only. Reports the authoritative transaction-source catalog (raw
+    landing, governed ingestion runs, quarantine, transaction authority,
+    canonical lineage), per-relation counts, date/tenant/store coverage, and
     forecast eligibility on both source and target. Aggregates only.
 ``activate``
     Dependency-ordered, conflict-safe copy of the transaction-attributable
@@ -307,11 +309,13 @@ def transaction_date_coverage(connection: psycopg.Connection) -> dict[str, Any]:
 
     rows = connection.execute(
         """
-        SELECT (event_time AT TIME ZONE 'UTC')::date AS event_date,
+        SELECT (t.event_time AT TIME ZONE 'UTC')::date AS event_date,
                count(*)::bigint AS transaction_count,
-               count(DISTINCT store_id)::bigint AS store_count
-        FROM core.transactions
-        WHERE transaction_status = 'succeeded' AND currency = 'TWD'
+               count(DISTINCT t.store_id)::bigint AS store_count,
+               count(DISTINCT s.tenant_id)::bigint AS tenant_count
+        FROM core.transactions t
+        LEFT JOIN core.stores s ON s.store_id = t.store_id
+        WHERE t.transaction_status = 'succeeded' AND t.currency = 'TWD'
         GROUP BY 1
         ORDER BY 1
         """
@@ -331,6 +335,7 @@ def transaction_date_coverage(connection: psycopg.Connection) -> dict[str, Any]:
                 "date": row[0].isoformat(),
                 "transaction_count": int(row[1]),
                 "store_count": int(row[2]),
+                "tenant_count": int(row[3]),
             }
             for row in rows
         ],
@@ -474,6 +479,188 @@ def forecast_horizon_windows(
     }
 
 
+def _histogram(connection: psycopg.Connection, sql: str) -> list[dict[str, Any]]:
+    """Run an aggregate-only grouping query and return it as plain rows."""
+
+    cursor = connection.execute(sql)
+    columns = [str(description.name) for description in cursor.description or ()]
+    return [
+        {
+            name: (value.isoformat() if hasattr(value, "isoformat") else value)
+            for name, value in zip(columns, row, strict=False)
+        }
+        for row in cursor.fetchall()
+    ]
+
+
+def source_catalog(connection: psycopg.Connection) -> dict[str, Any]:
+    """Report the authoritative transaction-source chain, aggregates only.
+
+    This answers "which sources exist and what do they cover" without reading a
+    single record body: raw landing, governed ingestion runs, quarantine,
+    transaction authority, canonical lineage, and the canonical table itself.
+    Each section degrades to ``{"available": False}`` when the relation is
+    absent, so the same report runs against both the legacy source and the
+    canonical target.
+    """
+
+    sections: dict[str, Any] = {}
+
+    def section(key: str, schema: str, table: str, builder: Any) -> None:
+        if not _relation_exists(connection, schema, table):
+            sections[key] = {"available": False, "relation": f"{schema}.{table}"}
+            return
+        payload = builder()
+        payload["available"] = True
+        payload["relation"] = f"{schema}.{table}"
+        sections[key] = payload
+
+    def raw_landing() -> dict[str, Any]:
+        row = connection.execute(
+            """
+            SELECT count(*)::bigint,
+                   count(DISTINCT run_id)::bigint,
+                   count(DISTINCT content_sha256)::bigint,
+                   min(observed_at), max(observed_at),
+                   min(source_updated_at), max(source_updated_at)
+            FROM fongniao_raw.raw_orders
+            """
+        ).fetchone()
+        return {
+            "rows": int(row[0]) if row else 0,
+            "distinct_runs": int(row[1]) if row else 0,
+            "distinct_content_hashes": int(row[2]) if row else 0,
+            "observed_at_min": row[3].isoformat() if row and row[3] else None,
+            "observed_at_max": row[4].isoformat() if row and row[4] else None,
+            "source_updated_at_min": row[5].isoformat() if row and row[5] else None,
+            "source_updated_at_max": row[6].isoformat() if row and row[6] else None,
+        }
+
+    def ingestion_runs() -> dict[str, Any]:
+        return {
+            "by_source_kind_status": _histogram(
+                connection,
+                """
+                SELECT source_kind, status,
+                       count(*)::bigint AS run_count,
+                       sum(processed_count)::bigint AS processed,
+                       sum(valid_loaded)::bigint AS valid_loaded,
+                       sum(quarantined_count)::bigint AS quarantined,
+                       min(started_at) AS first_started_at,
+                       max(finished_at) AS last_finished_at
+                FROM data_plane.ingestion_runs
+                GROUP BY 1, 2 ORDER BY 1, 2
+                """,
+            ),
+            "orders_partition_coverage": _histogram(
+                connection,
+                """
+                SELECT partition_key, status, count(*)::bigint AS run_count
+                FROM data_plane.ingestion_runs
+                WHERE source_kind = 'orders' AND partition_key IS NOT NULL
+                GROUP BY 1, 2 ORDER BY 1, 2
+                """,
+            ),
+        }
+
+    def quarantine() -> dict[str, Any]:
+        return {
+            "by_source_kind_reason": _histogram(
+                connection,
+                """
+                SELECT source_kind, reason_code, retryable,
+                       count(*)::bigint AS record_count,
+                       count(*) FILTER (WHERE resolved_at IS NOT NULL)::bigint AS resolved_count
+                FROM data_plane.quarantined_records
+                GROUP BY 1, 2, 3 ORDER BY 4 DESC
+                """,
+            )
+        }
+
+    def transaction_authority() -> dict[str, Any]:
+        return {
+            "by_source_kind_rank": _histogram(
+                connection,
+                """
+                SELECT source_kind, authority_rank,
+                       count(*)::bigint AS transaction_count,
+                       count(DISTINCT source_snapshot_id)::bigint AS snapshot_count,
+                       max(updated_at) AS last_updated_at
+                FROM data_plane.transaction_authority
+                GROUP BY 1, 2 ORDER BY 3 DESC
+                """,
+            )
+        }
+
+    def canonical_lineage() -> dict[str, Any]:
+        return {
+            "by_canonical_table": _histogram(
+                connection,
+                """
+                SELECT canonical_table,
+                       count(*)::bigint AS lineage_rows,
+                       count(DISTINCT run_id)::bigint AS run_count,
+                       count(DISTINCT tenant_id)::bigint AS tenant_count,
+                       max(projected_at) AS last_projected_at
+                FROM data_plane.canonical_lineage
+                GROUP BY 1 ORDER BY 2 DESC
+                """,
+            )
+        }
+
+    def canonical_transactions() -> dict[str, Any]:
+        row = connection.execute(
+            """
+            SELECT count(*)::bigint,
+                   count(*) FILTER (
+                       WHERE transaction_status = 'succeeded' AND currency = 'TWD'
+                   )::bigint,
+                   count(DISTINCT store_id)::bigint,
+                   count(DISTINCT machine_id)::bigint,
+                   min(event_time), max(event_time)
+            FROM core.transactions
+            """
+        ).fetchone()
+        tenants = connection.execute(
+            """
+            SELECT count(DISTINCT s.tenant_id)::bigint,
+                   count(DISTINCT t.store_id)::bigint
+            FROM core.transactions t
+            JOIN core.stores s ON s.store_id = t.store_id
+            WHERE t.transaction_status = 'succeeded' AND t.currency = 'TWD'
+            """
+        ).fetchone()
+        return {
+            "rows": int(row[0]) if row else 0,
+            "forecastable_rows": int(row[1]) if row else 0,
+            "distinct_stores": int(row[2]) if row else 0,
+            "distinct_machines": int(row[3]) if row else 0,
+            "event_time_min": row[4].isoformat() if row and row[4] else None,
+            "event_time_max": row[5].isoformat() if row and row[5] else None,
+            "forecastable_tenant_count": int(tenants[0]) if tenants else 0,
+            "forecastable_store_count": int(tenants[1]) if tenants else 0,
+            "by_status": _histogram(
+                connection,
+                """
+                SELECT transaction_status, currency, source_system,
+                       count(*)::bigint AS transaction_count
+                FROM core.transactions
+                GROUP BY 1, 2, 3 ORDER BY 4 DESC
+                """,
+            ),
+        }
+
+    section("raw_landing", "fongniao_raw", "raw_orders", raw_landing)
+    section("ingestion_runs", "data_plane", "ingestion_runs", ingestion_runs)
+    section("quarantine", "data_plane", "quarantined_records", quarantine)
+    section(
+        "transaction_authority", "data_plane", "transaction_authority", transaction_authority
+    )
+    section("canonical_lineage", "data_plane", "canonical_lineage", canonical_lineage)
+    section("canonical_transactions", "core", "transactions", canonical_transactions)
+    return sections
+
+
 def relation_inventory(connection: psycopg.Connection) -> dict[str, int | None]:
     counts: dict[str, int | None] = {}
     for relation in ACTIVATION_RELATIONS:
@@ -523,6 +710,7 @@ def probe_target(
         target.execute(f"SET statement_timeout = {COPY_RELATION_TIMEOUT_MS}")
         return {
             "relations": relation_inventory(target),
+            "source_catalog": source_catalog(target),
             "transaction_coverage": transaction_date_coverage(target),
             "forecast_windows": forecast_horizon_windows(target, horizons=horizons),
         }
@@ -544,6 +732,7 @@ def run_inventory(
             "mode": "inventory",
             "source": {
                 "relations": relation_inventory(source),
+                "source_catalog": source_catalog(source),
                 "transaction_coverage": transaction_date_coverage(source),
             },
             "target": probe_target(target, horizons=horizons),
@@ -572,6 +761,7 @@ def run_activation(
         "mode": "activate",
         "status": "SUCCEEDED",
         "relations": receipts,
+        "target_source_catalog": probe["source_catalog"],
         "target_transaction_coverage": probe["transaction_coverage"],
         "target_forecast_windows": probe["forecast_windows"],
     }
@@ -587,6 +777,7 @@ def run_verify(
     return {
         "mode": "verify",
         "target_relations": probe["relations"],
+        "target_source_catalog": probe["source_catalog"],
         "target_transaction_coverage": probe["transaction_coverage"],
         "target_forecast_windows": probe["forecast_windows"],
     }

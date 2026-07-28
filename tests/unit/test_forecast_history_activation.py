@@ -11,6 +11,7 @@ from scripts.data_plane.forecast_history_activation import (
     parse_horizons,
     require_activation_dsn,
     resolve_copy_columns,
+    source_catalog,
 )
 
 REMOTE_SOURCE = "postgresql://oday_app:secret@10.20.30.40:5432/oday_app"
@@ -171,3 +172,76 @@ def test_activation_relations_are_dependency_ordered_and_transaction_scoped() ->
     assert lineage.source_predicate == "canonical_table = 'core.transactions'"
     assert runs.source_predicate is not None
     assert "canonical_lineage" in runs.source_predicate
+
+
+class _FakeCursor:
+    """Minimal psycopg cursor stand-in returning one canned aggregate row."""
+
+    def __init__(self, rows: list[tuple], description: tuple[str, ...] | None) -> None:
+        self._rows = rows
+        self.description = (
+            tuple(_FakeColumn(name) for name in description) if description else None
+        )
+
+    def fetchone(self) -> tuple | None:
+        return self._rows[0] if self._rows else None
+
+    def fetchall(self) -> list[tuple]:
+        return list(self._rows)
+
+
+class _FakeColumn:
+    def __init__(self, name: str) -> None:
+        self.name = name
+
+
+class _CatalogConnection:
+    """Answers relation-existence probes from ``present`` and nothing else."""
+
+    def __init__(self, present: set[tuple[str, str]]) -> None:
+        self.present = present
+        self.statements: list[str] = []
+
+    def execute(self, sql: str, params: tuple | None = None) -> _FakeCursor:
+        self.statements.append(sql)
+        if "information_schema.tables" in sql and params is not None:
+            schema, table = params[0], params[1]
+            return _FakeCursor([((schema, table) in self.present,)], None)
+        # Every catalog aggregate is answered with an empty, well-shaped result.
+        if "count(*)" in sql and "GROUP BY" not in sql:
+            return _FakeCursor([tuple([0] * 8)], None)
+        return _FakeCursor([], ("bucket", "value"))
+
+
+def test_source_catalog_covers_the_whole_authoritative_chain() -> None:
+    connection = _CatalogConnection(
+        {
+            ("fongniao_raw", "raw_orders"),
+            ("data_plane", "ingestion_runs"),
+            ("data_plane", "quarantined_records"),
+            ("data_plane", "transaction_authority"),
+            ("data_plane", "canonical_lineage"),
+            ("core", "transactions"),
+        }
+    )
+    catalog = source_catalog(connection)
+    assert set(catalog) == {
+        "raw_landing",
+        "ingestion_runs",
+        "quarantine",
+        "transaction_authority",
+        "canonical_lineage",
+        "canonical_transactions",
+    }
+    assert all(section["available"] for section in catalog.values())
+
+
+def test_source_catalog_degrades_when_a_source_relation_is_absent() -> None:
+    # The canonical target has no raw landing schema; the report must still run.
+    connection = _CatalogConnection({("core", "transactions")})
+    catalog = source_catalog(connection)
+    assert catalog["raw_landing"] == {
+        "available": False,
+        "relation": "fongniao_raw.raw_orders",
+    }
+    assert catalog["canonical_transactions"]["available"] is True
