@@ -86,6 +86,20 @@ Collected counts under `tests` on this branch:
 [performance]                                  ->    1 test
 ```
 
+Re-verified at the exact PR head against the path set the `product` job actually
+passes to pytest (`tests modules apps shared models`, not `tests` alone), so the
+proof matches the CI invocation rather than a narrower subset:
+
+```
+[not requires_live_env]                        -> 1945 tests
+[not requires_live_env and not performance]    -> 1944 tests
+```
+
+Diffing the two collection listings shows a single removed entry,
+`tests/performance/test_load_and_soak.py`, and no other file's count changes.
+(The 1805/1945 spread is scope, not drift: the wider set adds the `modules`,
+`apps`, `shared`, and `models` trees. Either way the delta is exactly 1.)
+
 The delta is 1, and `-m performance` resolves to
 `tests/performance/test_load_and_soak.py::test_concurrency_and_soak_execution`.
 `tests/performance/test_acceptance_budgets.py` is unmarked and still runs in the
@@ -124,10 +138,17 @@ CI in the meantime. Aligning the `Makefile` default is a one-line follow-up.
 gh api repos/alfloop-dev/odayplus/actions/jobs/90347667367/logs   # attempt 1: P95 7.518s
 gh api repos/alfloop-dev/odayplus/actions/jobs/90351774215/logs   # attempt 2: P95 6.956s
 
-# Selection proof
+# Selection proof (tests tree only)
 python3 -m pytest -m "not requires_live_env" tests --collect-only -q                     # 1805
 python3 -m pytest -m "not requires_live_env and not performance" tests --collect-only -q # 1804
 python3 -m pytest -m performance tests --collect-only -q                                 # 1
+
+# Selection proof at the exact PR head, using the product job's real path set
+uv run pytest -m "not requires_live_env" \
+  tests modules apps shared models --collect-only -q                                     # 1945
+uv run pytest -m "not requires_live_env and not performance" \
+  tests modules apps shared models --collect-only -q                                     # 1944
+# diff of the two listings: only `tests/performance/test_load_and_soak.py: 1` removed
 
 # Local isolated measurement
 python3 -m pytest tests/performance/test_load_and_soak.py -q   # pass, P95 1.1415s
