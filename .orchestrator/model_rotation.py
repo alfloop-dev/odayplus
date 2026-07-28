@@ -161,6 +161,14 @@ def resolve_active_model(config: dict[str, Any] | None, provider_id: str | None,
     return str(resolve_active_selection(config, provider_id, settings, now=now).get("model") or "")
 
 
+def fallback_pool_available(config: dict[str, Any] | None, provider_id: str | None, now: datetime | None = None) -> bool:
+    """Whether a rotating provider still has a pool available for redispatch."""
+    return bool(
+        rotation_enabled(config, provider_id)
+        and active_pool(config, str(provider_id or ""), now=now) is not None
+    )
+
+
 def worker_dispatched_pool(worker: dict[str, Any] | None) -> str | None:
     """Pool a worker record was actually launched on, or None if unknown.
 

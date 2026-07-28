@@ -216,6 +216,7 @@ def _forecast_input() -> ForecastInput:
         for index in range(70)
     )
     return ForecastInput(
+        tenant_id=FORECASTOPS_HEADERS["x-tenant-id"],
         store_id="store-forecast-e2e",
         observations=observations,
         prediction_origin_time=datetime(2026, 7, 20, 9, 0, tzinfo=UTC),

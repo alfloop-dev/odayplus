@@ -2268,21 +2268,37 @@ def process_queue(config: dict[str, Any], state: dict[str, Any], provider_report
                     )
                     changed = True
                     continue
-            reassigned_to = maybe_reassign_task_after_worker_failure(
-                config,
-                state,
-                failure_worker,
-                failure_summary.get("summary") or failure_reason,
-                terminal=True,
-                force=is_terminal_quota_failure_kind(failure_kind),
-                failure_count=failure_count,
+            preserve_owner_for_pool_fallback = (
+                is_terminal_quota_failure_kind(failure_kind)
+                and antigravity_pool_fallback_available(config, request.provider)
             )
+            reassigned_to = None
+            if not preserve_owner_for_pool_fallback:
+                reassigned_to = maybe_reassign_task_after_worker_failure(
+                    config,
+                    state,
+                    failure_worker,
+                    failure_summary.get("summary") or failure_reason,
+                    terminal=True,
+                    force=is_terminal_quota_failure_kind(failure_kind),
+                    failure_count=failure_count,
+                )
             if reassigned_to:
                 record["status"] = "completed"
                 record["processed_at"] = utc_now()
                 record["error"] = failure_summary.get("summary") or ""
                 if raw_ref:
                     record["raw_ref"] = raw_ref
+                changed = True
+                continue
+            if preserve_owner_for_pool_fallback:
+                _reset_queue_record_for_redispatch(
+                    record,
+                    reason=(
+                        f"{failure_summary.get('summary') or failure_reason}; "
+                        "retrying same Antigravity owner on fallback model pool"
+                    ),
+                )
                 changed = True
                 continue
             record["status"] = "failed"
@@ -4697,6 +4713,16 @@ def mark_provider_dispatch_paused(
             return False
         pause_seconds_key = "quota_terminal_pause_seconds" if effective_pause_kind == "quota_terminal" else "capacity_pause_seconds"
     pause_seconds = max(60, int(settings.get(pause_seconds_key, 900)))
+    processed_rotations = state.setdefault("provider_guardrails", {}).setdefault(
+        "processed_model_rotation_failures", {}
+    )
+    rotation_run_id = str(worker_run_id or (worker or {}).get("run_id") or "").strip()
+    if (
+        rotation_run_id
+        and model_rotation.rotation_enabled(config, provider_id)
+        and rotation_run_id in processed_rotations
+    ):
+        return False
     # Antigravity model rotation: on a capacity/quota failure, if this provider
     # can rotate models (Gemini <-> Claude/GPT), record the exhausted pool and
     # keep dispatching on the other pool instead of hard-pausing. Only fall
@@ -4726,6 +4752,13 @@ def mark_provider_dispatch_paused(
             reason=reason,
             pool=dispatched_pool,
         )
+        if rotation_run_id:
+            processed_rotations[rotation_run_id] = {
+                "provider": provider_id,
+                "task_id": task_id,
+                "pool": rotate.get("exhausted_pool"),
+                "processed_at": utc_now(),
+            }
         write_activity_log(
             config,
             {
@@ -4811,6 +4844,15 @@ def mark_provider_dispatch_paused(
             },
         )
     return changed
+
+
+def antigravity_pool_fallback_available(
+    config: dict[str, Any],
+    provider: str | None,
+) -> bool:
+    """Keep the logical owner while another Antigravity model pool can run."""
+    provider_id = normalize_agent_id(provider or "")
+    return model_rotation.fallback_pool_available(config, provider_id)
 
 
 def clear_provider_dispatch_pause(config: dict[str, Any], state: dict[str, Any], provider: str | None) -> bool:
@@ -6468,15 +6510,19 @@ def poll_workers(config: dict[str, Any], state: dict[str, Any], provider_report:
                     worker=worker,
                 )
             if is_terminal_quota_failure_kind(failure_kind):
-                reassigned_to = maybe_reassign_task_after_worker_failure(
-                    config,
-                    state,
-                    worker,
-                    failure_summary.get("summary") or failure_reason,
-                    terminal=True,
-                    force=True,
-                    failure_count=failure_count,
-                )
+                reassigned_to = None
+                if not antigravity_pool_fallback_available(
+                    config, str(worker.get("provider") or worker.get("agent_id") or "")
+                ):
+                    reassigned_to = maybe_reassign_task_after_worker_failure(
+                        config,
+                        state,
+                        worker,
+                        failure_summary.get("summary") or failure_reason,
+                        terminal=True,
+                        force=True,
+                        failure_count=failure_count,
+                    )
                 if reassigned_to:
                     worker["status"] = "reassigned"
                     worker["reassigned_to"] = reassigned_to
@@ -7093,15 +7139,19 @@ def reconcile_runtime_on_boot(config: dict[str, Any], state: dict[str, Any]) -> 
                     worker=worker,
                 )
             if is_terminal_quota_failure_kind(failure_kind):
-                reassigned_to = maybe_reassign_task_after_worker_failure(
-                    config,
-                    state,
-                    worker,
-                    failure_summary.get("summary") or detected_reason,
-                    terminal=True,
-                    force=True,
-                    failure_count=failure_count,
-                )
+                reassigned_to = None
+                if not antigravity_pool_fallback_available(
+                    config, str(worker.get("provider") or worker.get("agent_id") or "")
+                ):
+                    reassigned_to = maybe_reassign_task_after_worker_failure(
+                        config,
+                        state,
+                        worker,
+                        failure_summary.get("summary") or detected_reason,
+                        terminal=True,
+                        force=True,
+                        failure_count=failure_count,
+                    )
                 if reassigned_to:
                     worker["status"] = "reassigned"
                     worker["reassigned_to"] = reassigned_to

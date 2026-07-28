@@ -21,11 +21,12 @@ from shared.infrastructure.persistence import (
 )
 
 NOW = datetime(2026, 7, 24, 12, 0, tzinfo=UTC)
+TENANT_ID = "tenant-live-001"
 
 
-class RecordingStatsForecastEngine:
-    engine_name = "statsforecast"
-    model_name = "seasonal_naive"
+class RecordingRegisteredEstimatorEngine:
+    engine_name = "mlflow_registered_oss"
+    model_name = "forecast-revenue-lgbm"
 
     def __init__(self) -> None:
         self.calls: list[ForecastInput] = []
@@ -43,9 +44,9 @@ class RecordingStatsForecastEngine:
             },
             engine_name=self.engine_name,
             model_name=self.model_name,
-            model_version="statsforecast-2.0:seasonal_naive",
+            model_version="forecast-revenue-lgbm:2026.07.24",
             metadata={
-                "library": "statsforecast",
+                "library": "mlflow",
                 "adapter_invoked": True,
             },
         )
@@ -54,6 +55,7 @@ class RecordingStatsForecastEngine:
 def _input() -> ForecastInput:
     start = date(2026, 5, 1)
     return ForecastInput(
+        tenant_id=TENANT_ID,
         store_id="store-live-001",
         observations=tuple(
             StoreDayObservation(
@@ -74,12 +76,12 @@ def _repository(path: Path) -> tuple[SqliteEngine, DurableForecastOpsRepository]
     return engine, DurableForecastOpsRepository(SqliteDocumentStore(engine))
 
 
-def test_production_invokes_oss_adapter_and_persists_across_restart(
+def test_production_invokes_registered_estimator_and_persists_across_restart(
     tmp_path: Path,
 ) -> None:
     database = tmp_path / "forecastops.sqlite3"
     engine, repository = _repository(database)
-    adapter = RecordingStatsForecastEngine()
+    adapter = RecordingRegisteredEstimatorEngine()
     try:
         result = ForecastOpsService(
             repository=repository,
@@ -88,17 +90,17 @@ def test_production_invokes_oss_adapter_and_persists_across_restart(
         ).forecast([_input()], prediction_origin_time=NOW, scored_at=NOW)
         output_id = result.forecasts[0].forecast_output_id
         assert len(adapter.calls) == 1
-        assert result.forecasts[0].engine_name == "statsforecast"
+        assert result.forecasts[0].engine_name == "mlflow_registered_oss"
         assert result.forecasts[0].model_metadata["adapter_invoked"] is True
     finally:
         engine.close()
 
     reopened_engine, reopened = _repository(database)
     try:
-        restored = reopened.latest_forecasts()[0]
+        restored = reopened.latest_forecasts(TENANT_ID)[0]
         assert restored.forecast_output_id == output_id
-        assert restored.engine_name == "statsforecast"
-        assert restored.model_version == "statsforecast-2.0:seasonal_naive"
+        assert restored.engine_name == "mlflow_registered_oss"
+        assert restored.model_version == "forecast-revenue-lgbm:2026.07.24"
     finally:
         reopened_engine.close()
 
@@ -125,7 +127,7 @@ def test_production_rejects_memory_missing_and_baseline_engines(
     try:
         with pytest.raises(
             ForecastOpsRuntimeConfigurationError,
-            match="requires StatsForecast",
+            match="registered MLflow estimator",
         ):
             ForecastOpsService(
                 repository=repository,
@@ -133,7 +135,7 @@ def test_production_rejects_memory_missing_and_baseline_engines(
             )
         with pytest.raises(
             ForecastOpsRuntimeConfigurationError,
-            match="requires StatsForecast",
+            match="registered MLflow estimator",
         ):
             ForecastOpsService(
                 repository=repository,

@@ -143,6 +143,7 @@ def test_did_effect_interval_collapses_when_pairs_agree() -> None:
 
 def _forecast_input(store_id: str, revenues: list[float]) -> ForecastInput:
     return ForecastInput(
+        tenant_id="tenant-test",
         store_id=store_id,
         observations=tuple(
             StoreDayObservation(

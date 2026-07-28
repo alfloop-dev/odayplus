@@ -31,8 +31,10 @@ from apps.worker.oday_worker.main import ODayWorker
 from modules.forecastops import ForecastOpsService, StoreDayObservation
 from shared.infrastructure.persistence.factory import _durable_bundle
 from shared.jobs.queue import JobStatus
+from tests.integration._authz import FORECASTOPS_HEADERS
 
 PROVIDER_ID = "listing.partner_feed"
+TENANT_ID = FORECASTOPS_HEADERS["x-tenant-id"]
 
 
 @pytest.fixture
@@ -53,13 +55,16 @@ def _drain(worker: ODayWorker, limit: int = 25) -> int:
 def _seed_forecast_series(bundle, store_id: str) -> None:
     start = date(2026, 4, 1)
     ForecastOpsService(repository=bundle.forecastops_repository).ingest_timeseries(
-        StoreDayObservation(
-            store_id=store_id,
-            business_date=start + timedelta(days=index),
-            actual_revenue=90_000 + index * 150 + (index % 7) * 800,
-            source_snapshot_ids=(f"pos-cross-flow-{index:03d}",),
-        )
-        for index in range(70)
+        (
+            StoreDayObservation(
+                store_id=store_id,
+                business_date=start + timedelta(days=index),
+                actual_revenue=90_000 + index * 150 + (index % 7) * 800,
+                source_snapshot_ids=(f"pos-cross-flow-{index:03d}",),
+            )
+            for index in range(70)
+        ),
+        tenant_id=TENANT_ID,
     )
 
 
@@ -104,8 +109,17 @@ def test_cross_flow_gate_migrations_seed_api_worker_scheduler(db_path) -> None:
         _seed_forecast_series(bundle, "store-gate-001")
         response = client.post(
             "/jobs",
-            json={"job_type": "forecast", "payload": {"store_id": "store-gate-001"}},
-            headers={"Idempotency-Key": "cross-flow-forecast-1"},
+            json={
+                "job_type": "forecast",
+                "payload": {
+                    "tenant_id": TENANT_ID,
+                    "store_id": "store-gate-001",
+                },
+            },
+            headers={
+                **FORECASTOPS_HEADERS,
+                "Idempotency-Key": "cross-flow-forecast-1",
+            },
         )
         assert response.status_code == 202, response.text
         body = response.json()
@@ -122,7 +136,7 @@ def test_cross_flow_gate_migrations_seed_api_worker_scheduler(db_path) -> None:
         # Durable side effects: external watermark advanced; a forecast persisted.
         watermark = bundle.external_fetch_state_store.last_success_watermark(PROVIDER_ID)
         assert watermark is not None
-        assert bundle.forecastops_repository.latest_forecasts()
+        assert bundle.forecastops_repository.latest_forecasts(TENANT_ID)
 
         # Audit trail: the API job enqueue recorded an audit event under the
         # request's correlation id.
@@ -132,8 +146,17 @@ def test_cross_flow_gate_migrations_seed_api_worker_scheduler(db_path) -> None:
         # Idempotency: re-posting the same key does not create a second job.
         replay = client.post(
             "/jobs",
-            json={"job_type": "forecast", "payload": {"store_id": "store-gate-001"}},
-            headers={"Idempotency-Key": "cross-flow-forecast-1"},
+            json={
+                "job_type": "forecast",
+                "payload": {
+                    "tenant_id": TENANT_ID,
+                    "store_id": "store-gate-001",
+                },
+            },
+            headers={
+                **FORECASTOPS_HEADERS,
+                "Idempotency-Key": "cross-flow-forecast-1",
+            },
         )
         assert replay.status_code == 202
         assert replay.json()["job_id"] == forecast_job_id

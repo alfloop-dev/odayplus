@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
@@ -144,7 +144,17 @@ def _registered_runtime(
             },
         )
     )
-    return MlflowProductionModelRuntime(tracking_uri=tracking_uri), artifact_path
+    return (
+        MlflowProductionModelRuntime(
+            tracking_uri=tracking_uri,
+            # Explicitly declare the sitescore name mapping for this integration
+            # test. Since sitescore is governed-disabled in production, the default
+            # production_model_names() no longer includes it; the test exercises the
+            # runtime directly with a real registered artifact.
+            model_names={"sitescore": SITESCORE_MODEL_NAME},
+        ),
+        artifact_path,
+    )
 
 
 def test_real_lightgbm_artifact_reload_and_sitescore_inference(tmp_path: Path) -> None:
@@ -399,18 +409,20 @@ def _binding(service: str) -> ModelBinding:
 
 
 def _forecast_input() -> dict[str, Any]:
+    start = NOW.date() - timedelta(days=28)
     return {
+        "tenant_id": "tenant-live-001",
         "store_id": "store-live-001",
         "prediction_origin_time": NOW.isoformat(),
         "observations": [
             {
-                "business_date": f"2026-07-{day:02d}",
-                "actual_revenue": 100_000 + day * 1_000,
-                "machine_cycles": 20 + day,
+                "business_date": (start + timedelta(days=index)).isoformat(),
+                "actual_revenue": 100_000 + index * 1_000,
+                "machine_cycles": 20 + index,
                 "data_quality_score": 0.95,
-                "source_snapshot_ids": [f"pos-202607{day:02d}"],
+                "source_snapshot_ids": [f"pos-{index:02d}"],
             }
-            for day in range(1, 15)
+            for index in range(28)
         ],
     }
 

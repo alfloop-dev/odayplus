@@ -92,6 +92,33 @@ def test_full_chain_rotates_instead_of_pausing(tmp_path):
     assert not (state.get("provider_guardrails", {}).get("dispatch_pauses") or {})
     settings = cfg["providers"]["antigravity5"]["antigravity"]
     assert mr.resolve_active_model(cfg, "antigravity5", settings) == "Claude Sonnet 4.6 (Thinking)"
+    assert sv.antigravity_pool_fallback_available(cfg, "antigravity5") is True
+
+
+def test_same_worker_failure_rotates_only_once(tmp_path):
+    _isolate(tmp_path)
+    cfg = dict(CFG)
+    cfg["paths"] = {"activity_log": str(pathlib.Path(tmp_path) / "activity.jsonl")}
+    worker = _worker("run-once", "gemini")
+    state: dict = {"workers": {"run-once": worker}}
+
+    for _ in range(2):
+        paused = sv.mark_provider_dispatch_paused(
+            cfg,
+            state,
+            "antigravity5",
+            REAL_ERR,
+            worker_run_id="run-once",
+            failure_kind="quota_terminal",
+            pause_kind="quota_terminal",
+            worker=worker,
+        )
+        assert paused is False
+
+    entry = mr.status("antigravity5")["antigravity5"]
+    assert entry.get("gemini_until")
+    assert entry.get("claude_until") is None
+    assert list(state["provider_guardrails"]["processed_model_rotation_failures"]) == ["run-once"]
 
 
 def _worker(run_id: str, pool: str | None, *, task_id: str = "ODP-TEST-ROT") -> dict:

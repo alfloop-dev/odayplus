@@ -254,6 +254,12 @@ def test_production_avm_reloads_and_executes_real_oss_artifacts(
             tracking_uri="https://mlflow.internal.example",
             client=registry.client,
             artifact_loader=lambda _uri, _tracking_uri: artifact_path.read_bytes(),
+            # AVM is governed-disabled in the production capability registry, so
+            # the default mapping intentionally omits it. This isolated artifact
+            # execution test opts in explicitly without changing live readiness.
+            model_names={
+                "avm": PRODUCTION_MODEL_CONTRACTS["avm"].model_name or "dealroom_avm"
+            },
         ),
         liquidity_runtime=liquidity,
         liquidity_evidence=LiquidityArtifactEvidence(
