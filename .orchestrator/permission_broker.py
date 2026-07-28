@@ -135,7 +135,18 @@ DENY_BASH_PATTERNS = [
     re.compile(r"^chmod 777(\s|$)"),
 ]
 
-SAFE_TOOLS = {"Read", "Grep", "Glob", "LS", "Task", "TodoRead", "TodoWrite", "ReadNotebook", "ToolSearch"}
+SAFE_TOOLS = {
+    "Read",
+    "Grep",
+    "Glob",
+    "LS",
+    "Task",
+    "TaskOutput",
+    "TodoRead",
+    "TodoWrite",
+    "ReadNotebook",
+    "ToolSearch",
+}
 EDIT_TOOLS = {"Edit", "MultiEdit", "Write"}
 NETWORK_TOOLS = {"WebFetch", "WebSearch"}
 SAFE_AGENT_SUBAGENT_TYPES = {"explore", "review"}
