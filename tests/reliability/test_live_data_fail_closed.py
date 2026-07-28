@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from dataclasses import replace
+from types import SimpleNamespace
 from typing import Any
 
 import pytest
@@ -11,7 +13,41 @@ from apps.api import server
 from apps.api.oday_api.main import create_app
 from models import shared_ml
 from modules.opsboard.application import operator_state
+from modules.opsboard.application.operator_live_repository import OperatorLiveRepository
+from shared.infrastructure.persistence.assisted_listing_intake import (
+    DurableAssistedIntakeStore,
+)
 from shared.infrastructure.persistence.factory import _durable_bundle, _memory_bundle
+
+
+class _ProductionStubEngine:
+    """Engine double that satisfies the production-persistence contract."""
+
+    is_production = True
+    dialect = "postgresql"
+
+    def query(self, *_args: Any, **_kwargs: Any) -> list[Any]:
+        return []
+
+    def query_one(self, *_args: Any, **_kwargs: Any) -> dict[str, Any]:
+        return {"ready": 1}
+
+
+class _UnreachableStubEngine(_ProductionStubEngine):
+    def query(self, *_args: Any, **_kwargs: Any) -> list[Any]:
+        raise ConnectionError("database unreachable")
+
+    def query_one(self, *_args: Any, **_kwargs: Any) -> dict[str, Any]:
+        raise ConnectionError("database unreachable")
+
+
+def _production_like_bundle(engine: Any) -> Any:
+    return replace(
+        _memory_bundle(),
+        mode="postgresql",
+        engine=engine,
+        assisted_intake_store=DurableAssistedIntakeStore(SimpleNamespace(engine=engine)),
+    )
 
 
 def route_for(app: Any, target_path: str) -> Any:
@@ -203,6 +239,69 @@ def test_postgres_mode_requires_database_url_without_falling_back(
         match="ODAY_DATABASE_URL is required for PostgreSQL persistence",
     ):
         create_app()
+
+
+def test_production_postgresql_composition_injects_live_operator_repository(
+    monkeypatch: Any,
+) -> None:
+    monkeypatch.setenv("ODP_REQUIRE_LIVE_DATA", "true")
+    monkeypatch.setenv("ODP_PERSISTENCE", "postgresql")
+    monkeypatch.delenv("MLFLOW_TRACKING_URI", raising=False)
+    monkeypatch.delenv("ODP_E2E_MODE", raising=False)
+
+    app = create_app(
+        persistence=_production_like_bundle(_ProductionStubEngine()),
+        external_provider_validation=SimpleNamespace(ok=True, errors=(), mode="fixture"),
+    )
+
+    repository = app.state.operator_live_repository
+    assert isinstance(repository, OperatorLiveRepository)
+    _, body = readiness_payload(app)
+    data = body["details"]["data"]
+    assert data["operatorRepositoryReady"] is True
+    probe = data["operatorRepositoryProbe"]
+    assert probe["ready"] is True
+    assert probe["repository"] == "OperatorLiveRepository"
+    assert probe["persistenceMode"] == "postgresql"
+    assert probe["errors"] == []
+    assert data["origin"]["kind"] == "authoritative"
+    assert "OPERATOR_LIVE_REPOSITORY_UNAVAILABLE" not in data["blockingReasons"]
+
+
+def test_unreachable_live_repository_is_unavailable_not_seed(monkeypatch: Any) -> None:
+    monkeypatch.setenv("ODP_REQUIRE_LIVE_DATA", "true")
+    monkeypatch.setenv("ODP_PERSISTENCE", "postgresql")
+    monkeypatch.delenv("MLFLOW_TRACKING_URI", raising=False)
+    monkeypatch.delenv("ODP_E2E_MODE", raising=False)
+
+    app = create_app(
+        persistence=_production_like_bundle(_UnreachableStubEngine()),
+        external_provider_validation=SimpleNamespace(ok=True, errors=(), mode="fixture"),
+    )
+
+    # The repository is injected (the composition is correct); readiness must
+    # report it as unavailable via a failing probe rather than as seed data.
+    assert isinstance(app.state.operator_live_repository, OperatorLiveRepository)
+    readiness_status, body = readiness_payload(app)
+    assert readiness_status == 503
+    data = body["details"]["data"]
+    assert data["mode"] == "unavailable"
+    assert data["operatorRepositoryReady"] is False
+    assert data["operatorRepositoryProbe"]["ready"] is False
+    assert data["operatorRepositoryProbe"]["errors"]
+    assert "OPERATOR_LIVE_REPOSITORY_UNAVAILABLE" in data["blockingReasons"]
+
+    bootstrap_response = TestClient(app).get(
+        "/api/v1/operator/bootstrap",
+        headers={
+            "x-correlation-id": "corr-live-unreachable",
+            "x-operator-role": "ops-lead",
+            "x-roles": "operations_manager",
+            "x-subject-id": "test-ops-manager",
+        },
+    )
+    assert bootstrap_response.status_code == 503
+    assert "r4-seed" not in bootstrap_response.text
 
 
 def test_production_deployment_implies_live_data_gate(monkeypatch: Any) -> None:
