@@ -135,6 +135,10 @@ def test_full_chain_rotates_instead_of_pausing(tmp_path):
     settings = cfg["providers"]["antigravity5"]["antigravity"]
     assert mr.resolve_active_model(cfg, "antigravity5", settings) == "Claude Sonnet 4.6 (Thinking)"
     assert sv.antigravity_pool_fallback_available(cfg, "antigravity5") is True
+    entry = mr.status("antigravity5")["antigravity5"]
+    until = datetime.fromisoformat(entry["gemini_until"].replace("Z", "+00:00"))
+    # The 2h21m32s reset hint, rather than the old 15-minute probe, is durable.
+    assert until - datetime.now(UTC) > timedelta(hours=2, minutes=20)
 
 
 def test_same_worker_failure_rotates_only_once(tmp_path):
