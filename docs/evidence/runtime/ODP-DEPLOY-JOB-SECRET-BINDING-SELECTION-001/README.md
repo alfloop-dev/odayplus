@@ -112,7 +112,9 @@ Substring scanning is gone for this check: a job that merely mentions
 | a valid binding beside a top-level `secretKeyRef` | same |
 | `valueFrom.secretKeyRef` carrying both `name` and `secret` | same |
 | a valid binding beside an empty off-dialect source (`"valueSource": {}`) | same — a source gcloud does not emit |
+| a valid binding beside a blank or non-string literal (`"value"` set to `""`, `"   "`, `0`, `false`, `[]`, `{}`, or `null`) | same — an env entry carries a literal or a secret source, never both |
 | plaintext `ODP_PRODUCTION_PROVIDER_IDS` on an entry that also declares an off-dialect secret source | `provider_selection` **and** `secret_bindings` fail: the selection is unprovable |
+| plaintext `ODP_PRODUCTION_PROVIDER_IDS` on an entry that also declares an empty **same-dialect** source (`"valueFrom": {}` on a Knative job, `"valueSource": {}` on a v2 job) | same — a declared source makes the literal unreadable, empty or not |
 | Knative container path, every secret in the v2 `valueSource.secretKeyRef.secret` schema | `secret_bindings` fails, naming each env var and the required `valueFrom.secretKeyRef.name` |
 | v2 container path, every secret in the Knative `valueFrom.secretKeyRef.name` schema | `secret_bindings` fails, naming each env var and the required `valueSource.secretKeyRef.secret` |
 | no plaintext `ODP_PRODUCTION_PROVIDER_IDS` in the job | `provider_selection` **and** `secret_bindings` both fail: the selection is unprovable |
@@ -318,6 +320,64 @@ Regressions: `test_job_smoke_rejects_a_duplicate_required_secret_binding`
 ten assert that neither the conflicting secret name nor the plaintext key
 reaches the detail or the report.
 
+## Round 7: presence of a conflicting key was judged by its payload
+
+Round 6 made the binding singular but decided *whether a second source exists*
+by looking at what that source contained. Two predicates asked the wrong
+question, and both reported `ok` for descriptions that declare an env var
+twice. Verified against head `15e7ec64` — every crafted description below
+fails **no** check at all (`_failed_names(checks) == set()`):
+
+| crafted description at `15e7ec64` | result |
+| --- | --- |
+| valid `valueFrom.secretKeyRef.name` on an entry that also sets `"value": ""` (also `"   "`, `"\t\n"`, `0`, `false`, `[]`, `{}`, `null`) | passed |
+| the same eight literals on the v2 path beside a valid `valueSource.secretKeyRef.secret` | passed |
+| plaintext `ODP_PRODUCTION_PROVIDER_IDS` on an entry that also declares `"valueFrom": {}` (also `{"secretKeyRef": {}}`, `{"secretKeyRef": {"key": "latest"}}`) | passed |
+| the same three sources on the v2 path as `"valueSource"` | passed |
+
+- `_secret_binding_proof` tested `isinstance(value, str) and value.strip()`, so
+  only a *truthy string* literal counted as a literal. Every falsy or
+  non-string payload left the entry looking like a pure secret binding while
+  the description still carried a `value` key for any reader that prefers it.
+- `_declares_any_secret_binding` — which guarded the selection read — returned
+  true only when this dialect's reference **resolved** or an **off-dialect**
+  location was present. A same-dialect source that declares a binding without
+  resolving one (`"valueFrom": {}`) was therefore invisible: the gate read the
+  plaintext selection and validated the required secret set against a value the
+  runtime resolves from Secret Manager instead.
+
+Both are now presence rules, matching the round-6 empty-`valueSource` decision
+that the key's presence is the defect rather than its contents:
+
+- **The literal is the `value` key.** `_secret_binding_proof` fails on
+  `"value" in entry` whatever the payload, with a detail that names the key and
+  not its contents (`declares a literal value key beside its secret source;
+  gcloud emits one or the other, never both`). A truthy string keeps its
+  existing `bound to a plaintext value` detail, so the round-2 redaction
+  assertions are unchanged.
+- **A source is any declared source.** `_declared_secret_source_locations`
+  replaces `_declares_any_secret_binding` and reports this dialect's env source
+  key by presence, on top of every off-dialect location round 6 already
+  reported. `_job_selected_provider_ids` fails on any hit and names the
+  locations (`ODP_PRODUCTION_PROVIDER_IDS declares secret sources (valueFrom)
+  beside its literal value`), so `provider_selection` and `secret_bindings`
+  fail together as they already do for the unreadable-selection cases.
+
+The real deployment cannot trip either rule, checked against
+`scripts/deploy_cloud_run_waji.sh` rather than assumed, and it is the same
+disjointness round 6 established: `--env-vars-file` writes an explicit non-secret
+`keys` allowlist and `--set-secrets` names each secret env exactly once, so no
+required secret env var ever receives a `value` key and the
+`ODP_PRODUCTION_PROVIDER_IDS` entry never receives a secret source. `gcloud run
+jobs describe` emits one or the other per env entry, so a description carrying
+both is not a shape the deploy path can produce.
+
+Regressions: `test_job_smoke_rejects_a_secret_binding_carrying_a_literal_value_key`
+(8 literal payloads, each asserted on the Knative **and** the v2 container path)
+and `test_job_smoke_rejects_a_selection_entry_declaring_an_empty_same_dialect_source`
+(3 same-dialect sources, both dialects). The v2 mirrors go through a new
+`_v2_job_with_envs` helper that exposes the env knobs `_knative_job` already had.
+
 ## Check and report surface
 
 `jobs-smoke:<kind>:secret_bindings` keeps its name, so the deploy gate and any
@@ -349,12 +409,12 @@ placed in the job description never reaches the detail text or the report.
 
 ## Focused verification
 
-Executed from the task branch on the round-6 tree (parent `dd4acb0b`), with
+Executed from the task branch on the round-7 tree (parent `15e7ec64`), with
 `export PATH="$HOME/.local/bin:$PATH"`:
 
 ```text
-python3 -m pytest tests/ops/test_cloud_run_live_deployment.py -p no:randomly   # 107 passed
-python3 -m pytest tests/ops -p no:randomly                                     # 162 passed, 20 skipped
+python3 -m pytest tests/ops/test_cloud_run_live_deployment.py -p no:randomly   # 118 passed
+python3 -m pytest tests/ops -p no:randomly                                     # 173 passed, 20 skipped
 python3 -m ruff check scripts/deployment/validate_cloud_run_live_deployment.py tests/ops/test_cloud_run_live_deployment.py
 python3 -m ruff format --check scripts/deployment/validate_cloud_run_live_deployment.py tests/ops/test_cloud_run_live_deployment.py
 git diff --check
@@ -370,8 +430,9 @@ rounds reported,
 The focused-file count by round was 87 at `76063434` (round 2), 93 at `49e65382`
 (round 3, six new regressions), 94 at `5b9c430a` (round 4, the sidecar test), 97
 at `dd4acb0b` (round 5, the two crossed-whole-schema regressions plus the
-both-dialects control), and 107 now — round 6 adds ten uniqueness and
-mixed-dialect regressions.
+both-dialects control), 107 at `15e7ec64` (round 6, ten uniqueness and
+mixed-dialect regressions), and 118 now — round 7 adds eleven presence-rule
+cases, each asserting on both container paths.
 
 Each round's regressions fail against that round's pre-fix validator, verified by
 restoring the parent commit's
@@ -384,7 +445,14 @@ set()`; for round 5 against `5b9c430a` both crossover tests fail with
 'jobs-smoke:migration:secret_bindings' in set()` for the eight binding cases and
 `assert 'jobs-smoke:migration:provider_selection' in set()` for the selection
 case — the pre-fix validator passing every crafted description with zero failing
-checks, reproducing the `[]` the round-6 review reported. The control tests
+checks, reproducing the `[]` the round-6 review reported. For round 7 against
+`15e7ec64` the same restore run reports `11 failed, 107 passed`: the eight
+literal-payload cases fail with
+`assert 'jobs-smoke:migration:secret_bindings' in set()` and the three
+same-dialect source cases with
+`assert 'jobs-smoke:migration:provider_selection' in set()`, which is the
+independent reproduction of both fail-opens Codex6 reported at that head. The
+control tests
 (`test_job_smoke_accepts_each_dialect_at_its_own_container_path` and the run
 30376737123 receipt) pass against both validators.
 

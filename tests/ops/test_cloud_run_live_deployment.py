@@ -1261,6 +1261,40 @@ def _v2_job(
     }
 
 
+def _v2_job_with_envs(
+    *,
+    provider_ids: str | None = RUN_30376737123_PROVIDER_IDS,
+    secret_envs: tuple[dict[str, object], ...] | None = None,
+    extra_envs: tuple[dict[str, object], ...] = (),
+) -> dict[str, object]:
+    """A v2 job description with the env knobs `_knative_job` exposes.
+
+    Lets a Knative regression be mirrored onto the Cloud Run v2 container path
+    without restating the description shape in every test.
+    """
+
+    if secret_envs is None:
+        secret_envs = tuple(
+            _v2_secret_env(env_var)
+            for env_var in ("ODAY_DATABASE_URL", *SELECTED_PROVIDER_SECRET_ENVS)
+        )
+    job = _v2_job(provider_ids=provider_ids)
+    job["template"] = {
+        "template": {
+            "containers": [
+                _job_container(
+                    kind="worker",
+                    sha=RUN_30376737123_SHA,
+                    provider_ids=provider_ids,
+                    secret_envs=secret_envs,
+                    extra_envs=extra_envs,
+                )
+            ]
+        }
+    }
+    return job
+
+
 def _succeeded_execution(name: str = "oday-migration-r-dda726155a39-ndb4l") -> dict[str, object]:
     return {
         "metadata": {"name": name},
@@ -1664,6 +1698,127 @@ def test_job_smoke_rejects_a_selection_entry_carrying_an_off_dialect_secret() ->
     assert "jobs-smoke:migration:provider_selection" in _failed_names(checks)
     assert "jobs-smoke:migration:secret_bindings" in _failed_names(checks)
     assert report["selected_provider_ids"] == []
+
+
+#: Literal payloads that are falsy or not a string. Each one sat beside a valid
+#: `secretKeyRef` and produced zero failing checks while the proof tested
+#: `isinstance(value, str) and value.strip()` instead of the key's presence.
+_BLANK_LITERAL_VALUES: tuple[object, ...] = ("", "   ", "\t\n", 0, False, [], {}, None)
+
+
+@pytest.mark.parametrize("literal", _BLANK_LITERAL_VALUES)
+def test_job_smoke_rejects_a_secret_binding_carrying_a_literal_value_key(
+    literal: object,
+) -> None:
+    """A valid secret reference plus a blank literal is still two sources of truth.
+
+    `gcloud run jobs describe` emits `value` or a secret source for an env
+    entry, never both, so a `value` key beside a `secretKeyRef` means the env
+    var resolves differently for any reader that prefers the literal. Rejecting
+    only truthy strings left every falsy and non-string payload passing.
+    Both dialects are pinned: the exploit is in the shared literal rule, not in
+    one API version's schema.
+    """
+
+    knative_entry = dict(_knative_secret_env("ODP_POI_PROVIDER_API_KEY"))
+    knative_entry["value"] = literal
+    knative = _knative_job(
+        secret_envs=(
+            _knative_secret_env("ODAY_DATABASE_URL"),
+            knative_entry,
+            _knative_secret_env("ODP_GEOCODE_PROVIDER_API_KEY"),
+            _knative_secret_env("ODP_ADMIN_BOUNDARY_PROVIDER_TOKEN"),
+        )
+    )
+
+    knative_checks, knative_report = _job_checks(knative)
+    knative_detail = _detail(knative_checks, "jobs-smoke:migration:secret_bindings")
+
+    assert "jobs-smoke:migration:secret_bindings" in _failed_names(knative_checks)
+    assert "ODP_POI_PROVIDER_API_KEY" in knative_detail
+    assert "literal value key" in knative_detail
+    assert "ODP_POI_PROVIDER_API_KEY" not in knative_report["secret_bound_env_vars"]
+
+    v2_entry = dict(_v2_secret_env("ODP_POI_PROVIDER_API_KEY"))
+    v2_entry["value"] = literal
+    v2 = _v2_job_with_envs(
+        secret_envs=(
+            _v2_secret_env("ODAY_DATABASE_URL"),
+            v2_entry,
+            _v2_secret_env("ODP_GEOCODE_PROVIDER_API_KEY"),
+            _v2_secret_env("ODP_ADMIN_BOUNDARY_PROVIDER_TOKEN"),
+        )
+    )
+
+    v2_checks, v2_report = _job_checks(v2, kind="worker")
+    v2_detail = _detail(v2_checks, "jobs-smoke:worker:secret_bindings")
+
+    assert "jobs-smoke:worker:secret_bindings" in _failed_names(v2_checks)
+    assert "ODP_POI_PROVIDER_API_KEY" in v2_detail
+    assert "literal value key" in v2_detail
+    assert "ODP_POI_PROVIDER_API_KEY" not in v2_report["secret_bound_env_vars"]
+
+
+#: Secret sources written in the job's *own* dialect that declare a binding
+#: without resolving to one. None of them carries the other dialect's keys, so
+#: `_foreign_secret_binding_locations` never saw them and the entry read as
+#: pure plaintext.
+_EMPTY_SAME_DIALECT_SOURCES: tuple[dict[str, object], ...] = (
+    {},
+    {"secretKeyRef": {}},
+    {"secretKeyRef": {"key": "latest"}},
+)
+
+
+@pytest.mark.parametrize("empty_source", _EMPTY_SAME_DIALECT_SOURCES)
+def test_job_smoke_rejects_a_selection_entry_declaring_an_empty_same_dialect_source(
+    empty_source: dict[str, object],
+) -> None:
+    """A selection entry that also declares a secret source is not readable plaintext.
+
+    Round 6 rejected an *off-dialect* source beside the plaintext selection but
+    read the literal happily when the source was this job's own dialect and
+    merely empty. The runtime resolves that entry from Secret Manager, so the
+    plaintext the gate validated against is not what the job receives.
+    """
+
+    knative = _knative_job(
+        provider_ids=None,
+        extra_envs=(
+            {
+                "name": "ODP_PRODUCTION_PROVIDER_IDS",
+                "value": RUN_30376737123_PROVIDER_IDS,
+                "valueFrom": empty_source,
+            },
+        ),
+    )
+
+    knative_checks, knative_report = _job_checks(knative)
+    knative_failed = _failed_names(knative_checks)
+
+    assert "jobs-smoke:migration:provider_selection" in knative_failed
+    assert "jobs-smoke:migration:secret_bindings" in knative_failed
+    assert "valueFrom" in _detail(knative_checks, "jobs-smoke:migration:provider_selection")
+    assert knative_report["selected_provider_ids"] == []
+
+    v2 = _v2_job_with_envs(
+        provider_ids=None,
+        extra_envs=(
+            {
+                "name": "ODP_PRODUCTION_PROVIDER_IDS",
+                "value": RUN_30376737123_PROVIDER_IDS,
+                "valueSource": empty_source,
+            },
+        ),
+    )
+
+    v2_checks, v2_report = _job_checks(v2, kind="worker")
+    v2_failed = _failed_names(v2_checks)
+
+    assert "jobs-smoke:worker:provider_selection" in v2_failed
+    assert "jobs-smoke:worker:secret_bindings" in v2_failed
+    assert "valueSource" in _detail(v2_checks, "jobs-smoke:worker:provider_selection")
+    assert v2_report["selected_provider_ids"] == []
 
 
 def test_job_smoke_accepts_each_dialect_at_its_own_container_path() -> None:

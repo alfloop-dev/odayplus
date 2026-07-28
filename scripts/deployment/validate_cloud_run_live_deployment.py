@@ -2086,12 +2086,30 @@ def _foreign_secret_binding_locations(
     return tuple(sorted(set(locations)))
 
 
-def _declares_any_secret_binding(entry: Mapping[str, Any], schema: _JobApiSchema) -> bool:
-    """Report whether an env entry carries a secret binding in any dialect."""
+def _declared_secret_source_locations(
+    entry: Mapping[str, Any], schema: _JobApiSchema
+) -> tuple[str, ...]:
+    """Return every secret-source location an env entry declares, by key presence.
 
-    return bool(_secret_reference_name(entry, schema)) or bool(
-        _foreign_secret_binding_locations(entry, schema)
-    )
+    `_secret_reference_name` reports this dialect's source only when it fully
+    *resolves* and `_foreign_secret_binding_locations` reports only the
+    off-dialect ones, so an entry carrying `"valueFrom": {}` (or a
+    `secretKeyRef` with no usable reference) beside a plaintext value looked
+    like a pure literal here while declaring a secret source to any other
+    reader. That is how a plaintext `ODP_PRODUCTION_PROVIDER_IDS` with an empty
+    same-dialect source was read as the authoritative selection.
+
+    Presence of the source key is the fact this predicate reports; whether the
+    reference inside it is usable is a separate question answered by
+    `_secret_binding_proof`. `gcloud run jobs describe` emits `value` or a
+    secret source for an env entry, never both and never an empty one, so any
+    declared source makes a literal beside it unreadable rather than redundant.
+    """
+
+    locations = list(_foreign_secret_binding_locations(entry, schema))
+    if schema.env_source_key in entry:
+        locations.append(schema.env_source_key)
+    return tuple(sorted(set(locations)))
 
 
 def _job_env_entries(
@@ -2140,10 +2158,12 @@ def _job_selected_provider_ids(
         )
 
     entry = occurrences[0]
-    if _declares_any_secret_binding(entry, schema):
+    declared_sources = _declared_secret_source_locations(entry, schema)
+    if declared_sources:
         raise JobDescriptionError(
-            f"{PRODUCTION_PROVIDER_IDS_ENV} is bound to a secret reference and cannot be read; "
-            "the selected provider set is unprovable"
+            f"{PRODUCTION_PROVIDER_IDS_ENV} declares secret sources "
+            f"({','.join(declared_sources)}) beside its literal value and cannot be read "
+            "as plaintext; the selected provider set is unprovable"
         )
     value = entry.get("value")
     if not isinstance(value, str) or not value.strip():
@@ -2171,6 +2191,15 @@ def _secret_binding_proof(
     is uniqueness rather than agreement — matching the
     `ODP_PRODUCTION_PROVIDER_IDS` rule — because a repeated env var has no
     defined winner and `gcloud run jobs deploy --set-secrets` emits it once.
+
+    The literal is rejected on the presence of the `value` key, not on the
+    truthiness of what it holds. Testing `isinstance(value, str) and
+    value.strip()` alone let a valid `secretKeyRef` pass while the same entry
+    declared `"value": ""` (or whitespace, `0`, `false`, `[]`, `{}`, `null`) —
+    a second source of truth for the same env var that any reader preferring
+    the literal resolves differently. An env entry `gcloud` emits carries a
+    literal or a secret source, never both, so the key's presence beside a
+    secret source is the defect.
     """
 
     if not entries:
@@ -2184,6 +2213,11 @@ def _secret_binding_proof(
     value = entry.get("value")
     if isinstance(value, str) and value.strip():
         return False, "bound to a plaintext value instead of a secret reference"
+    if "value" in entry:
+        return False, (
+            "declares a literal value key beside its secret source; "
+            "gcloud emits one or the other, never both"
+        )
     foreign = _foreign_secret_binding_locations(entry, schema)
     if foreign:
         return False, (
