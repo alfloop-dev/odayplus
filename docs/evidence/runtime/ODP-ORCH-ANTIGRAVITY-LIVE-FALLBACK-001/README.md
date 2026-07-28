@@ -47,8 +47,20 @@ The unfiltered baseline produced 235 passes and only those three
 produced by the focused regression. It proves the canary dispatch selection
 and reconciliation order without changing Package 10 product behavior.
 
-The blocked live task `ODP-P10-FLEET-CONFLICT-REAUDIT-001` still requires an
-actual supervisor dispatch after this branch is merged into `dev`; this
-worktree has neither the live `.orchestrator/config.json` nor authority to
-fabricate that external run. The live receipt must record
-`antigravity_model_pool=claude` before this task's final acceptance is closed.
+The mandatory post-merge live dispatch occurred after PR #467 merged into
+`dev` at `ee639d581f432a0ccdd2e81cefc5a92f499fa3e7`:
+
+- The first live run, `antigravity-20260728T110603Z-744e5304`, failed with
+  Gemini individual quota. Supervisor recorded that failure exactly once as
+  pool `gemini` at `2026-07-28T11:07:13Z`.
+- Supervisor preserved owner `Antigravity` and task
+  `ODP-P10-FLEET-CONFLICT-REAUDIT-001`, then dispatched fresh run
+  `antigravity-20260728T110727Z-f6ffaade`.
+- The durable worker record and runner status identify the fresh run as
+  `antigravity_model_pool=claude`, model
+  `Claude Sonnet 4.6 (Thinking)`, started at `2026-07-28T11:07:27Z`.
+- At receipt capture (`2026-07-28T11:10:42Z`) the worker was live with a
+  current heartbeat. This receipt proves dispatch routing; completion and
+  delivery of the Package 10 audit remain owned by its separate canary task.
+
+The receipt contains no credentials, prompts, or provider response content.

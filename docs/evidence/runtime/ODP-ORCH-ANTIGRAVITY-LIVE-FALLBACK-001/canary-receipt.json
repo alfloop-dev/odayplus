@@ -11,6 +11,21 @@
   "next_pool": "claude",
   "next_model": "Claude Sonnet 4.6 (Thinking)",
   "provider_paused": false,
-  "live_package_10_canary": "pending_post_merge",
+  "live_package_10_canary": {
+    "status": "claude_pool_dispatched",
+    "source_dev_commit": "ee639d581f432a0ccdd2e81cefc5a92f499fa3e7",
+    "task_id": "ODP-P10-FLEET-CONFLICT-REAUDIT-001",
+    "owner": "Antigravity",
+    "gemini_failure_run_id": "antigravity-20260728T110603Z-744e5304",
+    "gemini_failure_processed_at": "2026-07-28T11:07:13Z",
+    "claude_dispatch_run_id": "antigravity-20260728T110727Z-f6ffaade",
+    "claude_dispatch_started_at": "2026-07-28T11:07:27Z",
+    "antigravity_model_pool": "claude",
+    "antigravity_model": "Claude Sonnet 4.6 (Thinking)",
+    "runner_status_at_capture": "running",
+    "last_heartbeat_at_capture": "2026-07-28T11:10:42Z",
+    "runtime_state_source": "/tmp/oday-plus-supervisor-live-20260726/.orchestrator/state.json",
+    "runner_status_source": "/tmp/oday-plus-supervisor-live-20260726/.orchestrator/worker-runtime/status/antigravity-20260728T110727Z-f6ffaade.json"
+  },
   "verification_test": ".orchestrator/test_supervisor.py::RuntimeLeaseReconciliationTests::test_antigravity_boot_reconciliation_preserves_owner_for_claude_pool"
 }
