@@ -1876,13 +1876,43 @@ class JobDescriptionError(ValueError):
     """A Job description cannot be read as an authoritative task template."""
 
 
-#: The only two paths `gcloud run jobs describe --format=json` places task
-#: containers at: Knative (`spec.template.spec.template.spec.containers`) and
-#: Cloud Run v2 (`template.template.containers`). Nothing else is a task
-#: template, so nothing else may contribute env bindings.
-_JOB_CONTAINER_PATHS: tuple[tuple[str, ...], ...] = (
-    ("spec", "template", "spec", "template", "spec", "containers"),
-    ("template", "template", "containers"),
+@dataclass(frozen=True)
+class _JobApiSchema:
+    """One `gcloud run jobs describe --format=json` dialect.
+
+    A dialect is a single fact, not two independent ones: the API version that
+    places task containers at `container_path` is the same API version that
+    names secret bindings with `env_source_key`.`secretKeyRef`.`reference_key`.
+    Keeping them in one record is what lets the container path a description
+    actually uses decide which secret schema that description may use.
+    """
+
+    container_path: tuple[str, ...]
+    env_source_key: str
+    reference_key: str
+
+    @property
+    def container_path_label(self) -> str:
+        return ".".join(self.container_path)
+
+    @property
+    def reference_label(self) -> str:
+        return f"{self.env_source_key}.secretKeyRef.{self.reference_key}"
+
+
+#: The only two dialects `gcloud run jobs describe --format=json` emits:
+#: Knative (containers at `spec.template.spec.template.spec.containers`,
+#: secrets at `valueFrom.secretKeyRef.name`) and Cloud Run v2 (containers at
+#: `template.template.containers`, secrets at
+#: `valueSource.secretKeyRef.secret`). Nothing else is a task template, so
+#: nothing else may contribute env bindings.
+_JOB_API_SCHEMAS: tuple[_JobApiSchema, ...] = (
+    _JobApiSchema(
+        ("spec", "template", "spec", "template", "spec", "containers"),
+        "valueFrom",
+        "name",
+    ),
+    _JobApiSchema(("template", "template", "containers"), "valueSource", "secret"),
 )
 
 
@@ -1911,8 +1941,10 @@ def _iter_containers_key_paths(payload: Any, prefix: tuple[Any, ...] = ()) -> It
             yield from _iter_containers_key_paths(item, (*prefix, index))
 
 
-def _authoritative_job_containers(job_description: Mapping[str, Any]) -> list[Mapping[str, Any]]:
-    """Return the task containers of a Job description, or fail closed.
+def _authoritative_job_containers(
+    job_description: Mapping[str, Any],
+) -> tuple[_JobApiSchema, list[Mapping[str, Any]]]:
+    """Return the dialect and task containers of a Job description, or fail closed.
 
     Locating containers by shape let a crafted description satisfy the secret
     proof from anywhere in the payload — `metadata.containers` with planted
@@ -1920,50 +1952,56 @@ def _authoritative_job_containers(job_description: Mapping[str, Any]) -> list[Ma
     are therefore read only from the two canonical paths, and a description is
     rejected when they are absent, declared at both paths (ambiguous), or
     accompanied by a `containers` key off those paths.
+
+    The matched path is returned with its schema rather than discarded: it is
+    the discriminator that decides which secret-reference dialect the rest of
+    the proof will accept.
     """
 
     present = [
-        (path, _resolve_path(job_description, path))
-        for path in _JOB_CONTAINER_PATHS
-        if _resolve_path(job_description, path) is not None
+        (schema, _resolve_path(job_description, schema.container_path))
+        for schema in _JOB_API_SCHEMAS
+        if _resolve_path(job_description, schema.container_path) is not None
     ]
     if not present:
         raise JobDescriptionError(
             "job description declares no containers at "
-            f"{' or '.join('.'.join(path) for path in _JOB_CONTAINER_PATHS)}"
+            f"{' or '.join(schema.container_path_label for schema in _JOB_API_SCHEMAS)}"
         )
     if len(present) > 1:
         raise JobDescriptionError(
             "job description declares containers at both "
-            f"{' and '.join('.'.join(path) for path, _ in present)}; "
+            f"{' and '.join(schema.container_path_label for schema, _ in present)}; "
             "the authoritative task template is ambiguous"
         )
 
-    canonical_path, containers = present[0]
+    schema, containers = present[0]
     off_path = sorted(
         ".".join(str(key) for key in path)
         for path in _iter_containers_key_paths(job_description)
-        if path != canonical_path
+        if path != schema.container_path
     )
     if off_path:
         raise JobDescriptionError(
-            f"job description declares containers outside {'.'.join(canonical_path)}: "
+            f"job description declares containers outside {schema.container_path_label}: "
             f"{','.join(off_path)}"
         )
 
     if not isinstance(containers, list) or not containers:
         raise JobDescriptionError(
-            f"{'.'.join(canonical_path)} is not a non-empty list of containers"
+            f"{schema.container_path_label} is not a non-empty list of containers"
         )
     for index, container in enumerate(containers):
         if not isinstance(container, Mapping):
             raise JobDescriptionError(
-                f"{'.'.join(canonical_path)}[{index}] is not a container object"
+                f"{schema.container_path_label}[{index}] is not a container object"
             )
-    return list(containers)
+    return schema, list(containers)
 
 
-def _authoritative_task_container(job_description: Mapping[str, Any]) -> Mapping[str, Any]:
+def _authoritative_task_container(
+    job_description: Mapping[str, Any],
+) -> tuple[_JobApiSchema, Mapping[str, Any]]:
     """Return the one container the secret proof may read, or fail closed.
 
     Reading env across every container in the task template is the same bypass
@@ -1974,58 +2012,54 @@ def _authoritative_task_container(job_description: Mapping[str, Any]) -> Mapping
     the description alone and the job is rejected rather than guessed at.
     """
 
-    containers = _authoritative_job_containers(job_description)
+    schema, containers = _authoritative_job_containers(job_description)
     if len(containers) != 1:
         raise JobDescriptionError(
             f"job task template declares {len(containers)} containers; "
             "the authoritative task container is ambiguous"
         )
-    return containers[0]
+    return schema, containers[0]
 
 
-#: The only two env-var-to-secret schemas Cloud Run emits, as
-#: `(env source field, secret reference field)`. Knative names the secret in
-#: `valueFrom.secretKeyRef.name`; Cloud Run v2 names it in
-#: `valueSource.secretKeyRef.secret`.
-_SECRET_REFERENCE_SCHEMAS: tuple[tuple[str, str], ...] = (
-    ("valueFrom", "name"),
-    ("valueSource", "secret"),
-)
-
-
-def _secret_reference_name(entry: Mapping[str, Any]) -> str:
+def _secret_reference_name(entry: Mapping[str, Any], schema: _JobApiSchema) -> str:
     """Return the Secret Manager reference an env entry binds to, or ``""``.
 
-    Only the two documented schema/key pairs in `_SECRET_REFERENCE_SCHEMAS` are
-    accepted. Anything else — a top-level `secretKeyRef`, or a key crossed over
-    from the other schema such as `valueFrom.secretKeyRef.secret` or
-    `valueSource.secretKeyRef.name` — is not a binding gcloud emits, so it
-    proves nothing about Secret Manager and resolves to `""`. A reference that
-    is absent, empty, or a placeholder resolves to `""` as well, so the caller
+    Only `schema`'s own pair is accepted — the dialect is fixed by the
+    container path the description was resolved at, so a Knative job may bind
+    secrets only through `valueFrom.secretKeyRef.name` and a Cloud Run v2 job
+    only through `valueSource.secretKeyRef.secret`. Accepting either pair
+    regardless of path let a whole description cross over: a Knative-path job
+    binding every secret in the v2 dialect, or the reverse, passed the proof
+    while describing a shape gcloud never emits. Anything else — the other
+    dialect's env source, a top-level `secretKeyRef`, or a key crossed over
+    within this dialect such as `valueFrom.secretKeyRef.secret` — proves
+    nothing about Secret Manager and resolves to `""`. A reference that is
+    absent, empty, or a placeholder resolves to `""` as well, so the caller
     fails closed in every case.
     """
 
-    for source_key, reference_key in _SECRET_REFERENCE_SCHEMAS:
-        source = entry.get(source_key)
-        if not isinstance(source, Mapping):
-            continue
-        reference = source.get("secretKeyRef")
-        if not isinstance(reference, Mapping):
-            continue
-        value = reference.get(reference_key)
-        if isinstance(value, str) and _configured(value):
-            return value.strip()
+    source = entry.get(schema.env_source_key)
+    if not isinstance(source, Mapping):
+        return ""
+    reference = source.get("secretKeyRef")
+    if not isinstance(reference, Mapping):
+        return ""
+    value = reference.get(schema.reference_key)
+    if isinstance(value, str) and _configured(value):
+        return value.strip()
     return ""
 
 
-def _job_env_entries(job_description: Mapping[str, Any]) -> dict[str, list[Mapping[str, Any]]]:
+def _job_env_entries(
+    job_description: Mapping[str, Any],
+) -> tuple[_JobApiSchema, dict[str, list[Mapping[str, Any]]]]:
     """Group the authoritative task container's env entries by env-var name."""
 
     entries: dict[str, list[Mapping[str, Any]]] = {}
-    container = _authoritative_task_container(job_description)
+    schema, container = _authoritative_task_container(job_description)
     env = container.get("env")
     if not isinstance(env, list):
-        return entries
+        return schema, entries
     for entry in env:
         if not isinstance(entry, Mapping):
             continue
@@ -2033,10 +2067,12 @@ def _job_env_entries(job_description: Mapping[str, Any]) -> dict[str, list[Mappi
         if not isinstance(name, str) or not name.strip():
             continue
         entries.setdefault(name.strip(), []).append(entry)
-    return entries
+    return schema, entries
 
 
-def _job_selected_provider_ids(entries: Mapping[str, list[Mapping[str, Any]]]) -> str:
+def _job_selected_provider_ids(
+    entries: Mapping[str, list[Mapping[str, Any]]], schema: _JobApiSchema
+) -> str:
     """Return the single readable provider selection a Job declares.
 
     Taking the first nonempty plaintext occurrence let a description declare the
@@ -2060,7 +2096,7 @@ def _job_selected_provider_ids(entries: Mapping[str, list[Mapping[str, Any]]]) -
         )
 
     entry = occurrences[0]
-    if _secret_reference_name(entry):
+    if _secret_reference_name(entry, schema):
         raise JobDescriptionError(
             f"{PRODUCTION_PROVIDER_IDS_ENV} is bound to a secret reference and cannot be read; "
             "the selected provider set is unprovable"
@@ -2074,8 +2110,15 @@ def _job_selected_provider_ids(entries: Mapping[str, list[Mapping[str, Any]]]) -
     return value.strip()
 
 
-def _secret_binding_proof(entries: list[Mapping[str, Any]]) -> tuple[bool, str]:
-    """Prove one env var is bound to a secret reference, never to a literal."""
+def _secret_binding_proof(
+    entries: list[Mapping[str, Any]], schema: _JobApiSchema
+) -> tuple[bool, str]:
+    """Prove one env var is bound to a secret reference, never to a literal.
+
+    The reference must be written in `schema`'s dialect — the one belonging to
+    the container path this description was resolved at — so a binding borrowed
+    from the other API version is no proof at all.
+    """
 
     if not entries:
         return False, "no env binding is declared"
@@ -2083,8 +2126,8 @@ def _secret_binding_proof(entries: list[Mapping[str, Any]]) -> tuple[bool, str]:
         value = entry.get("value")
         if isinstance(value, str) and value.strip():
             return False, "bound to a plaintext value instead of a secret reference"
-        if not _secret_reference_name(entry):
-            return False, "binding declares no usable secretKeyRef"
+        if not _secret_reference_name(entry, schema):
+            return False, f"binding declares no usable {schema.reference_label}"
     return True, "bound to a Secret Manager reference (value redacted)"
 
 
@@ -2148,8 +2191,8 @@ def job_secret_binding_checks(
     }
 
     try:
-        entries = _job_env_entries(job_description)
-        raw_selection = _job_selected_provider_ids(entries)
+        schema, entries = _job_env_entries(job_description)
+        raw_selection = _job_selected_provider_ids(entries, schema)
     except JobDescriptionError as exc:
         return [
             CheckResult(False, selection_check, str(exc)),
@@ -2220,7 +2263,7 @@ def job_secret_binding_checks(
     failures: list[str] = []
     bound: list[str] = []
     for name in required_env_vars:
-        ok, detail = _secret_binding_proof(entries.get(name, []))
+        ok, detail = _secret_binding_proof(entries.get(name, []), schema)
         if ok:
             bound.append(name)
         else:

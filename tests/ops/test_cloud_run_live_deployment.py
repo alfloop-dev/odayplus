@@ -1444,6 +1444,73 @@ def test_job_smoke_rejects_malformed_secret_binding(malformed: dict[str, object]
     assert "ODP_POI_PROVIDER_API_KEY" in _detail(checks, "jobs-smoke:migration:secret_bindings")
 
 
+def test_job_smoke_rejects_a_knative_job_whose_secrets_use_the_v2_schema() -> None:
+    """The container path fixes the dialect; a whole-description crossover fails.
+
+    Accepting either secret schema regardless of where the containers were
+    found meant a Knative-path job could bind every required secret in the
+    Cloud Run v2 dialect and still pass. `gcloud` never emits that shape, so it
+    proves nothing about Secret Manager and must fail closed.
+    """
+
+    crossed = _knative_job(
+        secret_envs=tuple(
+            _v2_secret_env(env_var)
+            for env_var in ("ODAY_DATABASE_URL", *SELECTED_PROVIDER_SECRET_ENVS)
+        )
+    )
+
+    checks, report = _job_checks(crossed)
+    detail = _detail(checks, "jobs-smoke:migration:secret_bindings")
+
+    assert "jobs-smoke:migration:secret_bindings" in _failed_names(checks)
+    for env_var in ("ODAY_DATABASE_URL", *SELECTED_PROVIDER_SECRET_ENVS):
+        assert env_var in detail
+    assert "valueFrom.secretKeyRef.name" in detail
+    assert report["secret_bound_env_vars"] == []
+
+    # The selection itself is still readable, so only the bindings check fails:
+    # this is a binding-schema defect, not an unreadable task template.
+    assert "jobs-smoke:migration:provider_selection" not in _failed_names(checks)
+
+
+def test_job_smoke_rejects_a_v2_job_whose_secrets_use_the_knative_schema() -> None:
+    """The mirror crossover: v2 container path, Knative `valueFrom` bindings."""
+
+    container = _job_container(
+        kind="worker",
+        sha=RUN_30376737123_SHA,
+        provider_ids=RUN_30376737123_PROVIDER_IDS,
+        secret_envs=tuple(
+            _knative_secret_env(env_var)
+            for env_var in ("ODAY_DATABASE_URL", *SELECTED_PROVIDER_SECRET_ENVS)
+        ),
+    )
+    crossed = _v2_job()
+    crossed["template"] = {"template": {"containers": [container]}}
+
+    checks, report = _job_checks(crossed, kind="worker")
+    detail = _detail(checks, "jobs-smoke:worker:secret_bindings")
+
+    assert "jobs-smoke:worker:secret_bindings" in _failed_names(checks)
+    for env_var in ("ODAY_DATABASE_URL", *SELECTED_PROVIDER_SECRET_ENVS):
+        assert env_var in detail
+    assert "valueSource.secretKeyRef.secret" in detail
+    assert report["secret_bound_env_vars"] == []
+    assert "jobs-smoke:worker:provider_selection" not in _failed_names(checks)
+
+
+def test_job_smoke_accepts_each_dialect_at_its_own_container_path() -> None:
+    """The discriminator must not break the two shapes gcloud really emits."""
+
+    knative_checks, _ = _job_checks(_knative_job())
+    assert all(check.ok for check in knative_checks), _failed_names(knative_checks)
+
+    v2_checks, _ = _job_checks(_v2_job(), kind="worker")
+    assert "jobs-smoke:worker:secret_bindings" not in _failed_names(v2_checks)
+    assert "jobs-smoke:worker:provider_selection" not in _failed_names(v2_checks)
+
+
 @pytest.mark.parametrize("provider_ids", [None, "", "  ,  "])
 def test_job_smoke_fails_closed_without_a_provable_selection(provider_ids: str | None) -> None:
     job = _knative_job(provider_ids=provider_ids)

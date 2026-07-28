@@ -102,6 +102,8 @@ Substring scanning is gone for this check: a job that merely mentions
 | `secretKeyRef` at the top level of the env entry | same — not a Cloud Run schema |
 | `valueFrom.secretKeyRef.secret` (v2 key in the Knative source) | same — not a Cloud Run schema |
 | `valueSource.secretKeyRef.name` (Knative key in the v2 source) | same — not a Cloud Run schema |
+| Knative container path, every secret in the v2 `valueSource.secretKeyRef.secret` schema | `secret_bindings` fails, naming each env var and the required `valueFrom.secretKeyRef.name` |
+| v2 container path, every secret in the Knative `valueFrom.secretKeyRef.name` schema | `secret_bindings` fails, naming each env var and the required `valueSource.secretKeyRef.secret` |
 | no plaintext `ODP_PRODUCTION_PROVIDER_IDS` in the job | `provider_selection` **and** `secret_bindings` both fail: the selection is unprovable |
 | `ODP_PRODUCTION_PROVIDER_IDS` supplied only as a secret reference | same — an unreadable selection proves nothing |
 | `ODP_PRODUCTION_PROVIDER_IDS` declared twice, with different values | same — the effective selection is ambiguous |
@@ -201,6 +203,44 @@ Regressions: `test_job_smoke_rejects_secrets_bound_only_by_a_sidecar_container`
 (the exploit above) and `test_job_smoke_rejects_a_selection_declared_by_a_second_container`
 (unchanged intent, now rejected at the container count).
 
+## Round 5: the schema pair was accepted independently of the container path
+
+Round 4 established *which* container is authoritative but still resolved secret
+references by trying **both** schema pairs on every entry. The container path and
+the secret schema are one fact — the API version that places containers at
+`spec.template.spec.template.spec.containers` is the same one that writes
+`valueFrom.secretKeyRef.name` — and treating them as two independent facts let a
+whole description cross over. Verified against head `5b9c430a`: a Knative job
+whose four required secrets are all written in the v2
+`valueSource.secretKeyRef.secret` schema failed **no** check, and a v2 job whose
+secrets are all written in the Knative `valueFrom.secretKeyRef.name` schema
+failed none either — `_failed_names(checks) == set()` for both. Neither shape is
+one `gcloud run jobs describe` emits, so both were passing on a binding that
+proves nothing about Secret Manager, contradicting the evidence contract this
+file states above and the malformed-bindings-fail-closed acceptance.
+
+The two dialects are now a single record, `_JobApiSchema`, holding the container
+path together with its env source key and secret reference key.
+`_authoritative_job_containers` returns the schema it matched rather than
+discarding it, `_authoritative_task_container` and `_job_env_entries` thread it
+through, and `_secret_reference_name(entry, schema)` accepts only that schema's
+pair. The failure detail names the pair the description owes
+(`binding declares no usable valueFrom.secretKeyRef.name`), so a genuinely new
+gcloud dialect surfaces as an explicit rejection naming what it violated, not a
+silent pass. Cross-dialect keys *within* one source (`valueFrom.secretKeyRef.secret`)
+were already rejected in round 2 and stay rejected — this round closes the case
+where the entire description is consistently in the other dialect.
+
+The selection read is bound the same way: `ODP_PRODUCTION_PROVIDER_IDS` supplied
+through the other dialect's secret source is no longer recognised as a secret
+binding, but it is not readable plaintext either, so it still fails
+`provider_selection` and `secret_bindings` together rather than being read.
+
+Regressions: `test_job_smoke_rejects_a_knative_job_whose_secrets_use_the_v2_schema`,
+`test_job_smoke_rejects_a_v2_job_whose_secrets_use_the_knative_schema`, and
+`test_job_smoke_accepts_each_dialect_at_its_own_container_path`, which pins that
+the discriminator does not break the two shapes gcloud really emits.
+
 ## Check and report surface
 
 `jobs-smoke:<kind>:secret_bindings` keeps its name, so the deploy gate and any
@@ -232,32 +272,40 @@ placed in the job description never reaches the detail text or the report.
 
 ## Focused verification
 
-Executed from the task branch on the round-4 tree (parent `49e65382`):
+Executed from the task branch on the round-5 tree (parent `5b9c430a`):
 
 ```text
-uv run --frozen pytest tests/ops/test_cloud_run_live_deployment.py -q   # 94 passed
-uv run --frozen pytest tests/ops -q                                     # 169 passed
-uv run --frozen ruff check .                                            # All checks passed
-uv run --frozen ruff format --check scripts/deployment/validate_cloud_run_live_deployment.py tests/ops/test_cloud_run_live_deployment.py
+python3 -m pytest tests/ops/test_cloud_run_live_deployment.py -p no:randomly   # 96 passed, 1 failed (uv)
+python3 -m pytest tests/ops -p no:randomly                                     # 151 passed, 20 skipped, 1 failed (uv)
+python3 -m ruff check scripts/deployment/validate_cloud_run_live_deployment.py tests/ops/test_cloud_run_live_deployment.py
+python3 -m ruff format --check scripts/deployment/validate_cloud_run_live_deployment.py tests/ops/test_cloud_run_live_deployment.py
 git diff --check
 ```
 
-All commands passed. The counts by round were 87/162 at `76063434` (round 2),
-93/168 at `49e65382` (round 3, six new regressions), and 94/169 now: round 4
-adds `test_job_smoke_rejects_secrets_bound_only_by_a_sidecar_container`.
+Ruff check, ruff format `--check`, and `git diff --check` all passed. The one
+failure in both pytest runs is
+`test_deploy_preflight_imports_runtime_dependencies_via_locked_python`, which
+executes the real deploy script and needs `uv` on `PATH`
+(`export PATH="$HOME/.local/bin:$PATH"`); `uv` is absent on this worker image, so
+the script's `require_command` guard exits `1` instead of the expected `97`. It
+fails identically on the unmodified tree (`git stash` → same failure), so it is
+environmental, not a regression. Where `uv` is available the run is
+`uv run --frozen pytest ...`, as in earlier rounds.
+
+The focused-file count by round was 87 at `76063434` (round 2), 93 at `49e65382`
+(round 3, six new regressions), 94 at `5b9c430a` (round 4, the sidecar test), and
+97 collected now — round 5 adds the two crossed-whole-schema regressions plus the
+both-dialects-still-accepted control.
 
 Each round's regressions fail against that round's pre-fix validator, verified by
 restoring the parent commit's
 `scripts/deployment/validate_cloud_run_live_deployment.py` under the new test
-file: `6 failed` for round 3 against `76063434`, and for round 4 against
-`49e65382` the sidecar test fails with `assert 'jobs-smoke:migration:provider_selection'
-in set()` — the pre-fix validator passes the crafted job with zero failing checks.
-
-`uv` must be on `PATH`
-(`export PATH="$HOME/.local/bin:$PATH"` on the worker image): the suite executes
-the real deploy script through
-`test_deploy_preflight_imports_runtime_dependencies_via_locked_python`, whose
-`require_command` guard exits `1` without it.
+file: `6 failed` for round 3 against `76063434`; for round 4 against `49e65382`
+the sidecar test fails with `assert 'jobs-smoke:migration:provider_selection' in
+set()`; and for round 5 against `5b9c430a` both crossover tests fail with
+`assert 'jobs-smoke:<kind>:secret_bindings' in set()` — the pre-fix validator
+passes both crossed descriptions with zero failing checks, reproducing the `[]`
+the round-4 review reported. The control test passes against both validators.
 
 Exact-head CI and an independent Codex6 review are required before merge. After
 merge, ODP-P10-DEV-REDEPLOY-VERIFY-001 must re-run from the exact merged `dev`
