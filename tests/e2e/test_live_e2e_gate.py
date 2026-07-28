@@ -201,13 +201,23 @@ def readiness_payload() -> dict[str, Any]:
                 "error": None,
                 "requiredServices": ["avm", "forecastops", "heatzone", "sitescore"],
                 "capabilities": {
-                    service: {
-                        "service": service,
-                        "available": True,
-                        "reasonCode": None,
-                        "error": None,
-                    }
-                    for service in ("avm", "forecastops", "heatzone", "sitescore")
+                    **{
+                        # ForecastOps is active: has a real approved MLflow production alias.
+                        "forecastops": {
+                            "service": "forecastops",
+                            "available": True,
+                            "reasonCode": None,
+                            "governedDisabled": False,
+                            "governedDisabledEvidence": None,
+                            "error": None,
+                        }
+                    },
+                    **{
+                        # AVM, HeatZone, SiteScore: governed-disabled due to PG16 data immaturity.
+                        # available=False, full evidence required, no production alias in MLflow.
+                        service: governed_disabled_capability(service)
+                        for service in ("avm", "heatzone", "sitescore")
+                    },
                 },
             },
             "data": {
@@ -226,22 +236,48 @@ def readiness_payload() -> dict[str, Any]:
     }
 
 
-def models_payload() -> dict[str, Any]:
-    names = {
-        "avm": "dealroom_avm",
-        "forecastops": "forecast_revenue_interval",
-        "heatzone": "heatzone_priority",
-        "sitescore": "sitescore_propensity",
+def governed_disabled_capability(service: str) -> dict[str, Any]:
+    """Return a fully-evidenced governed-disabled capability record.
+
+    Mirrors the structure that ``main.py`` emits when a capability has a
+    ``GovernedDisabledBinding`` in its contract.  All evidence fields are
+    required; a missing field should make the gate fail.
+    """
+    evidence = {
+        "reasonCode": "DATA_CONTRACT_NOT_MATURE",
+        "observedCount": 0,
+        "eligibleCount": {"avm": 500, "heatzone": 400, "sitescore": 300}[service],
+        "sourceContract": f"{service}.outcome_authority.pg16_label_v1",
+        "owner": f"{service}-platform-team",
+        "activationGate": f"Requires PG16 PIT-safe {service} labels and approval",
+        "autoSeeded": False,
     }
     return {
-        "count": len(names),
+        "service": service,
+        "available": False,
+        "reasonCode": "DATA_CONTRACT_NOT_MATURE",
+        "governedDisabled": True,
+        "governedDisabledEvidence": evidence,
+        "error": None,
+    }
+
+
+def models_payload() -> dict[str, Any]:
+    """Return the /learninghub/models payload for a live deployment.
+
+    Only ForecastOps has a real MLflow production alias; AVM/HeatZone/SiteScore
+    are governed-disabled and must NOT have a production alias (the gate will
+    block if they do).
+    """
+    return {
+        "count": 1,
         "items": [
             {
-                "model_name": model_name,
+                "model_name": "forecast_revenue_interval",
                 "version": "7",
-                "model_id": f"{model_name}-7",
-                "artifact_uri": f"gs://odp-dev-artifacts/{model_name}/7",
-                "dataset_snapshot_id": f"snapshot-{service}-20260726",
+                "model_id": "forecast_revenue_interval-7",
+                "artifact_uri": "gs://odp-dev-artifacts/forecast_revenue_interval/7",
+                "dataset_snapshot_id": "snapshot-forecastops-20260726",
                 "feature_schema_version": "3",
                 "label_version": "2",
                 "stage": "production",
@@ -251,7 +287,6 @@ def models_payload() -> dict[str, Any]:
                 "created_at": "2026-07-25T08:00:00+00:00",
                 "metrics": {"rmse": 0.21},
             }
-            for service, model_name in sorted(names.items())
         ],
     }
 
@@ -761,22 +796,23 @@ def test_web_operator_route_served_without_login_blocks() -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_missing_production_alias_blocks_that_service_only() -> None:
+def test_missing_forecastops_production_alias_blocks() -> None:
+    """ForecastOps must always have a real approved production alias."""
     payload = models_payload()
-    for item in payload["items"]:
-        if item["model_name"] == "heatzone_priority":
-            item["aliases"] = ["challenger"]
+    payload["items"][0]["aliases"] = ["challenger"]  # remove production
     routes = live_routes(**{"GET /api/v1/learninghub/models": response(200, payload)})
 
     _, report = run_gate(routes)
 
-    assert "models:heatzone:production_alias" in blocker_names(report)
-    assert "models:avm:production_alias" not in blocker_names(report)
-    blocker = next(b for b in report["blockers"] if b["check"] == "models:heatzone:production_alias")
+    assert "models:forecastops:production_alias" in blocker_names(report)
+    blocker = next(
+        b for b in report["blockers"] if b["check"] == "models:forecastops:production_alias"
+    )
     assert blocker["dependency"] == "mlflow"
 
 
-def test_ambiguous_production_alias_blocks() -> None:
+def test_ambiguous_forecastops_production_alias_blocks() -> None:
+    """Exactly one forecastops production alias version is required."""
     payload = models_payload()
     duplicate = deepcopy(payload["items"][0])
     duplicate["version"] = "8"
@@ -785,21 +821,60 @@ def test_ambiguous_production_alias_blocks() -> None:
 
     _, report = run_gate(routes)
 
-    assert "models:avm:production_alias" in blocker_names(report)
+    assert "models:forecastops:production_alias" in blocker_names(report)
 
 
-def test_non_object_store_artifact_uri_blocks() -> None:
+def test_fabricated_alias_for_governed_disabled_service_blocks() -> None:
+    """Publishing a production alias for a governed-disabled service is forbidden.
+
+    AVM/HeatZone/SiteScore must not have a production alias while they are
+    governed-disabled; such an alias would be fabricated and constitutes a
+    violation of the no-fake-alias acceptance criterion.
+    """
     payload = models_payload()
-    payload["items"][0]["artifact_uri"] = "/var/local/models/dealroom_avm/7"
+    # Inject a fabricated AVM production alias into the registry payload.
+    payload["items"].append(
+        {
+            "model_name": "dealroom_avm",
+            "version": "1",
+            "model_id": "dealroom_avm-1",
+            "artifact_uri": "gs://odp-dev-artifacts/dealroom_avm/1",
+            "dataset_snapshot_id": "snapshot-avm-FABRICATED",
+            "feature_schema_version": "3",
+            "label_version": "2",
+            "stage": "production",
+            "aliases": ["production"],
+            "approved_by": "release-officer",
+            "approved_at": "2026-07-25T09:00:00+00:00",
+            "created_at": "2026-07-25T08:00:00+00:00",
+            "metrics": {"rmse": 0.21},
+        }
+    )
     routes = live_routes(**{"GET /api/v1/learninghub/models": response(200, payload)})
 
     _, report = run_gate(routes)
 
-    blocker = next(b for b in report["blockers"] if b["check"] == "models:avm:artifact_store")
+    assert "models:avm:no_fabricated_alias" in blocker_names(report)
+    blocker = next(
+        b for b in report["blockers"] if b["check"] == "models:avm:no_fabricated_alias"
+    )
+    assert blocker["dependency"] == "mlflow"
+
+
+def test_non_object_store_artifact_uri_blocks() -> None:
+    payload = models_payload()
+    payload["items"][0]["artifact_uri"] = "/var/local/models/forecast_revenue_interval/7"
+    routes = live_routes(**{"GET /api/v1/learninghub/models": response(200, payload)})
+
+    _, report = run_gate(routes)
+
+    blocker = next(
+        b for b in report["blockers"] if b["check"] == "models:forecastops:artifact_store"
+    )
     assert blocker["dependency"] == "object-store"
 
 
-def test_unapproved_model_version_blocks_lineage() -> None:
+def test_unapproved_forecastops_model_version_blocks_lineage() -> None:
     payload = models_payload()
     payload["items"][0]["approved_by"] = None
     payload["items"][0]["approved_at"] = None
@@ -807,7 +882,7 @@ def test_unapproved_model_version_blocks_lineage() -> None:
 
     _, report = run_gate(routes)
 
-    assert "models:avm:lineage" in blocker_names(report)
+    assert "models:forecastops:lineage" in blocker_names(report)
 
 
 # ---------------------------------------------------------------------------
@@ -1285,6 +1360,81 @@ def test_every_api_path_the_gate_calls_is_routed_by_the_deployed_api() -> None:
     assert 'prefix="/learninghub"' in learninghub
     assert '@router.get("/ingestion-runs"' in external
     assert 'prefix="/external-data"' in external
+
+
+def test_governed_disabled_services_set_matches_production_contracts() -> None:
+    """Gate's GOVERNED_DISABLED_SERVICES must not drift from production_contracts.
+
+    If a contract changes from governed-disabled to active (data matured), or a
+    new governed-disabled service is added, the gate set must be updated too.
+    Otherwise the gate would apply the wrong check (alias vs evidence) and either
+    block a healthy deployment or miss a fabricated alias.
+    """
+    from models.shared_ml.production_contracts import governed_disabled_services
+
+    assert gate.GOVERNED_DISABLED_SERVICES == governed_disabled_services()
+
+
+def test_governed_disabled_capability_evidence_missing_field_blocks() -> None:
+    """Every governed-disabled evidence field is required; a missing one blocks."""
+    payload = readiness_payload()
+    # Strip one required field from the AVM governed-disabled evidence.
+    avm_cap = payload["details"]["models"]["capabilities"]["avm"]
+    del avm_cap["governedDisabledEvidence"]["sourceContract"]
+    routes = live_routes(**{"anon GET /readiness": response(200, payload)})
+
+    _, report = run_gate(routes)
+
+    assert "runtime:model_capability:avm" in blocker_names(report)
+    blocker = next(
+        b for b in report["blockers"] if b["check"] == "runtime:model_capability:avm"
+    )
+    assert blocker["dependency"] == "mlflow"
+
+
+def test_governed_disabled_capability_with_auto_seeded_true_blocks() -> None:
+    """autoSeeded=True on a governed-disabled capability is a fixture substitution."""
+    payload = readiness_payload()
+    payload["details"]["models"]["capabilities"]["avm"]["governedDisabledEvidence"][
+        "autoSeeded"
+    ] = True
+    routes = live_routes(**{"anon GET /readiness": response(200, payload)})
+
+    _, report = run_gate(routes)
+
+    assert "runtime:model_capability:avm" in blocker_names(report)
+
+
+def test_governed_disabled_capability_marked_available_blocks() -> None:
+    """A governed-disabled service must have available=False.
+
+    If available=True slips in alongside governed-disabled evidence, the gate
+    would be accepting an inconsistent state where a service claims to be active
+    without the alias lineage the active check would normally require.
+    """
+    payload = readiness_payload()
+    payload["details"]["models"]["capabilities"]["heatzone"]["available"] = True
+    routes = live_routes(**{"anon GET /readiness": response(200, payload)})
+
+    _, report = run_gate(routes)
+
+    assert "runtime:model_capability:heatzone" in blocker_names(report)
+
+
+def test_forecastops_not_active_blocks_even_with_all_governed_disabled_ok() -> None:
+    """ForecastOps must always be active; governed-disabled evidence cannot substitute."""
+    payload = readiness_payload()
+    payload["details"]["models"]["capabilities"]["forecastops"]["available"] = False
+    payload["details"]["models"]["capabilities"]["forecastops"]["reasonCode"] = (
+        "PRODUCTION_BINDING_NOT_RESOLVED"
+    )
+    payload["details"]["models"]["productionBindingsReady"] = False
+    routes = live_routes(**{"anon GET /readiness": response(200, payload)})
+
+    _, report = run_gate(routes)
+
+    assert "runtime:model_capability:forecastops" in blocker_names(report)
+    assert "runtime:model_bindings" in blocker_names(report)
 
 
 def test_pinned_provider_categories_match_the_runtime_registry() -> None:

@@ -17,6 +17,7 @@ from apps.api.oday_api.routes.heatzone import HeatZoneResultStore, create_heatzo
 from apps.api.oday_api.runtime_mode import deployment_mode, live_data_required
 from models.shared_ml.production_contracts import (
     PRODUCTION_MODEL_CONTRACTS,
+    governed_disabled_services,
     production_model_names,
     required_production_model_services,
 )
@@ -156,6 +157,7 @@ else:
         production_model_error: str | None = None
         model_runtime: Any | None = None
         required_model_services = required_production_model_services()
+        _governed_disabled = governed_disabled_services()
         production_model_capabilities: dict[str, dict[str, Any]] = {
             service: {
                 "service": service,
@@ -164,11 +166,20 @@ else:
                 "trainable": contract.trainable,
                 "requiredForPlatformReadiness": (contract.required_for_platform_readiness),
                 "outcomeContractRequired": contract.outcome_contract_required,
+                # Governed-disabled capabilities are available=False but expose
+                # full evidence so the runtime can report productionBindingsReady=True
+                # without fabricating an alias or pretending the service works.
                 "available": False,
                 "reasonCode": (
                     contract.unavailable_reason
-                    if not contract.trainable
+                    if contract.is_governed_disabled or not contract.trainable
                     else "PRODUCTION_BINDING_NOT_RESOLVED"
+                ),
+                "governedDisabled": contract.is_governed_disabled,
+                "governedDisabledEvidence": (
+                    contract.governed_disabled_binding.to_audit_dict()
+                    if contract.governed_disabled_binding is not None
+                    else None
                 ),
                 "error": None,
             }
@@ -779,6 +790,13 @@ else:
                     "sitescore": SITESCORE_FEATURE_VERSION,
                 }
                 for service, feature_schema_version in feature_schema_versions.items():
+                    if service in _governed_disabled:
+                        # Governed-disabled services have no production alias by definition.
+                        # Do not attempt MLflow resolution; the capability record already
+                        # carries full governed-disabled evidence from the contract.
+                        # Attempting to resolve would always fail and would pollute
+                        # production_model_error, breaking the runtime:model_bindings gate check.
+                        continue
                     try:
                         executable = model_runtime.resolve(
                             service=service,
@@ -829,11 +847,23 @@ else:
             production_model_error = (
                 "; ".join(production_composition_errors) if production_composition_errors else None
             )
+            # productionBindingsReady is True when:
+            # - ForecastOps is active (available=True, the only MLflow alias required)
+            # - Every other required service is either active or governed-disabled
+            # - The MLflow runtime and LearningHub registry are both live
+            # A governed-disabled service contributes to readiness because it has
+            # explicit evidence and fails closed; it does NOT require a production alias.
+            forecastops_active = (
+                production_model_capabilities.get("forecastops", {}).get("available") is True
+            )
+            all_required_resolved = all(
+                production_model_capabilities[service]["available"]
+                or service in _governed_disabled
+                for service in required_model_services
+            )
             production_model_bindings_ready = (
-                all(
-                    production_model_capabilities[service]["available"]
-                    for service in required_model_services
-                )
+                forecastops_active
+                and all_required_resolved
                 and model_runtime is not None
                 and learninghub_registry is not None
             )
