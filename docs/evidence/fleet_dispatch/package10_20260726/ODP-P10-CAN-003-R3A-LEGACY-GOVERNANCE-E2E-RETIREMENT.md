@@ -62,4 +62,3 @@ Within the existing R3A ownership of `tests/e2e/operator-governance.spec.ts`:
 Any required content genuinely absent from the canonical runtime is a product
 NO-GO and must be returned to the owning product task before an assertion is
 changed.
-

@@ -248,4 +248,3 @@ Uncommitted work in `/tmp` is never accepted as delivery evidence.
 - the current state is `no_go_pending_CAN001_R3`;
 - no product or test file changed;
 - `git diff --check` passes.
-

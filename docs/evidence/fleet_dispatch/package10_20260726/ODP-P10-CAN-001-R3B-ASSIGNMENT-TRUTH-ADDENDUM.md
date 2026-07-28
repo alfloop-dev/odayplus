@@ -116,4 +116,3 @@ At dispatch preparation:
   integration-test paths. The live-runtime branch also contains a committed
   auth change. These are final integration risks, not permission to edit their
   worktrees during R3B.
-

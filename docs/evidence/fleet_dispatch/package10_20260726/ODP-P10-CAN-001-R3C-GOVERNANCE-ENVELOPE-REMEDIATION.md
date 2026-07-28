@@ -100,4 +100,3 @@ npm run build
 npx playwright test tests/e2e/operator-governance.spec.ts --project=chromium --workers=1
 git diff --check
 ```
-

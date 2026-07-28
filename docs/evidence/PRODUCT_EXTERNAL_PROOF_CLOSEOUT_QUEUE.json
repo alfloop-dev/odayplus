@@ -210,7 +210,7 @@
       ],
       "evidence_refs": [
         "docs/evidence/fleet_dispatch/ODP-MAP-E2E-001-004_WORKER_EVIDENCE.md",
-        "tests/e2e/e2e-map-live-boundary.spec.ts",
+        "docs/evidence/LEGACY_WORKSPACE_UI_RETIREMENT.md",
         "docs/evidence/REMOTE_STAGING_PROOF_RUNBOOK.md"
       ],
       "completion_rule": "Do not close from local MapLibre/deck proof; close only with remote staging endpoint smoke.",
@@ -253,7 +253,7 @@
       ],
       "evidence_refs": [
         "docs/evidence/fleet_dispatch/ODP-MAP-E2E-001-004_WORKER_EVIDENCE.md",
-        "tests/e2e/e2e-map-live-boundary.spec.ts",
+        "docs/evidence/LEGACY_WORKSPACE_UI_RETIREMENT.md",
         "docs/evidence/REMOTE_STAGING_PROOF_RUNBOOK.md"
       ],
       "completion_rule": "Do not close from local geocoder fallback proof; close only with remote staging geocoder smoke.",

@@ -122,4 +122,3 @@ Required negative proofs:
 After Claude pushes an exact SHA, Antigravity4 must independently inspect the
 diff, rerun the focused gates, and issue an explicit approve/reject decision.
 Only an approved merged SHA may be consumed by `ODP-P10-CAN-004-R3`.
-
