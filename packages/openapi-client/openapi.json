@@ -3512,22 +3512,23 @@
         "title": "MergeRequest",
         "type": "object"
       },
+      "ModelCardApprovalPayload": {
+        "properties": {
+          "decision": {
+            "default": "approved",
+            "title": "Decision",
+            "type": "string"
+          }
+        },
+        "title": "ModelCardApprovalPayload",
+        "type": "object"
+      },
       "ModelCardPayload": {
         "properties": {
           "algorithm": {
             "minLength": 1,
             "title": "Algorithm",
             "type": "string"
-          },
-          "approvals": {
-            "items": {
-              "additionalProperties": {
-                "type": "string"
-              },
-              "type": "object"
-            },
-            "title": "Approvals",
-            "type": "array"
           },
           "baseline": {
             "minLength": 1,
@@ -5192,9 +5193,15 @@
       "ReleaseMonitorPayload": {
         "properties": {
           "evaluated_by": {
-            "default": "release-monitor",
-            "title": "Evaluated By",
-            "type": "string"
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Evaluated By"
           },
           "guardrails": {
             "items": {
@@ -5235,9 +5242,21 @@
             "type": "string"
           },
           "approved_by": {
-            "default": "model-review-board",
+            "minLength": 1,
             "title": "Approved By",
             "type": "string"
+          },
+          "expected_release_revision": {
+            "anyOf": [
+              {
+                "minimum": 0.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Expected Release Revision"
           },
           "fail_criteria": {
             "items": {
@@ -5246,6 +5265,17 @@
             "minItems": 1,
             "title": "Fail Criteria",
             "type": "array"
+          },
+          "idempotency_key": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Idempotency Key"
           },
           "model_name": {
             "minLength": 1,
@@ -5262,15 +5292,26 @@
             "title": "Reason",
             "type": "string"
           },
+          "release_scope": {
+            "default": "global",
+            "title": "Release Scope",
+            "type": "string"
+          },
           "release_type": {
             "minLength": 1,
             "title": "Release Type",
             "type": "string"
           },
           "requested_by": {
-            "default": "system",
-            "title": "Requested By",
-            "type": "string"
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Requested By"
           },
           "rollback_target": {
             "anyOf": [
@@ -5305,7 +5346,8 @@
           "approval_id",
           "monitoring_window",
           "success_criteria",
-          "fail_criteria"
+          "fail_criteria",
+          "approved_by"
         ],
         "title": "ReleasePayload",
         "type": "object"
@@ -16119,6 +16161,129 @@
           }
         },
         "summary": "Register Model Version",
+        "tags": [
+          "learninghub"
+        ]
+      }
+    },
+    "/api/v1/learninghub/models/{model_name}/versions/{version}/approval": {
+      "post": {
+        "operationId": "approve_model_card_api_v1_learninghub_models__model_name__versions__version__approval_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "model_name",
+            "required": true,
+            "schema": {
+              "title": "Model Name",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "version",
+            "required": true,
+            "schema": {
+              "title": "Version",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ModelCardApprovalPayload"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Approve Model Card Api V1 Learninghub Models  Model Name  Versions  Version  Approval Post",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Invalid request"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Missing or invalid identity"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Server-derived authorization denied"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Resource not found"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Conflicting state or idempotency replay conflict"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Validation failed"
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Unexpected server error"
+          }
+        },
+        "summary": "Approve Model Card",
         "tags": [
           "learninghub"
         ]
