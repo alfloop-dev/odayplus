@@ -9,6 +9,7 @@ values are consumed for authenticated smoke requests but are never emitted.
 from __future__ import annotations
 
 import argparse
+import contextlib
 import importlib
 import inspect
 import json
@@ -19,10 +20,11 @@ import sys
 import time
 import urllib.error
 import urllib.request
-from collections.abc import Mapping
-from dataclasses import asdict, dataclass
+from collections.abc import Iterator, Mapping
+from dataclasses import asdict, dataclass, replace
 from datetime import UTC, datetime
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -57,6 +59,12 @@ REQUIRED_PRODUCT_PROVIDER_IDS = frozenset(
     }
 )
 MAX_PROVIDER_PROBE_AGE_SECONDS = 300
+POSTGRES_PERSISTENCE_MODES = frozenset({"postgres", "postgresql"})
+OPERATOR_BOOTSTRAP_CHECK = "repository:operator_bootstrap_data_source"
+OPERATOR_WIRING_CHECK = "repository:operator_production_wiring"
+OPERATOR_FIXTURE_WIRING_CHECK = "repository:operator_fixture_wiring_blocked"
+OPERATOR_TENANT_CHECK = "repository:operator_tenant_scope_fail_closed"
+OPERATOR_PROBE_CHECK = "repository:operator_live_probe_contract"
 
 REQUIRED_PUBLIC_CONFIG = (
     "GCP_PROJECT",
@@ -286,33 +294,6 @@ def repository_capability_checks(
         and scheduler_receipt_contract
     )
 
-    operator_state = root / "modules/opsboard/application/operator_state.py"
-    operator_text = operator_state.read_text(encoding="utf-8") if operator_state.exists() else ""
-    has_live_operator_repository = bool(
-        re.search(
-            r"(?:self\._live_repository|operator_repository\s*:)",
-            operator_text,
-        )
-    )
-    live_operator_seed_blocked = False
-    try:
-        operator_module = importlib.import_module("modules.opsboard.application.operator_state")
-        operator_service = operator_module.OperatorStateService(
-            require_live_data=True,
-            persistence_mode="memory",
-            provider_mode="fixture",
-        )
-        operator_payload = operator_service.get_today(role_id="ops-lead")
-        operator_meta = operator_payload.get("meta", {})
-        data_origin = operator_meta.get("dataOrigin", {})
-        live_operator_seed_blocked = (
-            operator_meta.get("dataMode") == "unavailable"
-            and data_origin.get("kind") == "unavailable"
-            and not operator_payload.get("workQueue")
-            and not operator_payload.get("approvals")
-        )
-    except Exception:  # noqa: BLE001 - failed inspection must block deployment
-        live_operator_seed_blocked = False
     provider_registry = root / "modules/external_data/connectors/provider_registry.py"
     provider_registry_text = (
         provider_registry.read_text(encoding="utf-8") if provider_registry.exists() else ""
@@ -372,20 +353,6 @@ def repository_capability_checks(
             ),
         ),
         CheckResult(
-            ok=live_operator_seed_blocked and has_live_operator_repository,
-            name="repository:operator_bootstrap_data_source",
-            detail=(
-                "operator bootstrap is wired to a live repository"
-                if live_operator_seed_blocked and has_live_operator_repository
-                else ("invalid: live-required OperatorStateService still exposes seed data")
-                if not live_operator_seed_blocked
-                else (
-                    "missing: OperatorStateService has no live operator repository; "
-                    "an empty/unavailable response is fail-closed but is not real data"
-                )
-            ),
-        ),
-        CheckResult(
             ok=registry_honors_production_allowlist,
             name="repository:provider_allowlist_runtime",
             detail=(
@@ -398,7 +365,469 @@ def repository_capability_checks(
             ),
         ),
     ]
+    checks.extend(operator_runtime_checks(root))
     checks.extend(provider_adapter_checks(root, production_provider_ids=production_provider_ids))
+    return checks
+
+
+class _ReachableProbeEngine:
+    """Production-shaped engine double whose probe queries succeed."""
+
+    is_production = True
+    dialect = "postgresql"
+
+    def query(self, *_args: Any, **_kwargs: Any) -> list[Any]:
+        return []
+
+    def query_one(self, *_args: Any, **_kwargs: Any) -> dict[str, Any]:
+        return {"ready": 1}
+
+
+class _UnreachableProbeEngine:
+    """Production-shaped engine double whose probe queries fail."""
+
+    is_production = True
+    dialect = "postgresql"
+
+    def query(self, *_args: Any, **_kwargs: Any) -> list[Any]:
+        raise ConnectionError("preflight probe: database unreachable")
+
+    def query_one(self, *_args: Any, **_kwargs: Any) -> dict[str, Any]:
+        raise ConnectionError("preflight probe: database unreachable")
+
+
+@contextlib.contextmanager
+def _environment_overrides(overrides: Mapping[str, str | None]) -> Iterator[None]:
+    previous = {name: os.environ.get(name) for name in overrides}
+    try:
+        for name, value in overrides.items():
+            if value is None:
+                os.environ.pop(name, None)
+            else:
+                os.environ[name] = value
+        yield
+    finally:
+        for name, value in previous.items():
+            if value is None:
+                os.environ.pop(name, None)
+            else:
+                os.environ[name] = value
+
+
+def _import_runtime_module(root: Path, module_name: str) -> Any:
+    root_text = str(root.resolve())
+    if root_text not in sys.path:
+        sys.path.insert(0, root_text)
+    importlib.invalidate_caches()
+    return importlib.import_module(module_name)
+
+
+# apps.api.oday_api.main builds a module-level default app on import. Importing
+# it inside preflight must therefore run under the neutral local composition:
+# the deploy environment's live provider mode and PostgreSQL persistence would
+# otherwise make the import itself demand live secrets and a reachable
+# database. This only neutralizes the import-time side effect - every wiring
+# probe below builds its own app from explicit arguments and its own
+# environment overrides, and no deployment check is weakened by it.
+_MAIN_IMPORT_SAFE_ENVIRONMENT: dict[str, str | None] = {
+    "ODP_REQUIRE_LIVE_DATA": None,
+    "ODP_DEPLOY_ENV": None,
+    "ODAY_ENV": None,
+    "ODP_ENV": None,
+    "APP_ENV": None,
+    "ENVIRONMENT": None,
+    "ODP_PRODUCT_MODE": None,
+    "NODE_ENV": None,
+    "ODP_PERSISTENCE": "memory",
+    "ODP_EXTERNAL_PROVIDER_MODE": None,
+    "MLFLOW_TRACKING_URI": None,
+    "ODP_E2E_MODE": None,
+}
+
+
+def _production_like_bundle(persistence_module: Any, engine: Any) -> Any:
+    """A supported-production persistence double for composition probes.
+
+    Mirrors ``replace(_memory_bundle(), mode="postgresql", engine=...)`` from the
+    integration suite: the engine advertises ``is_production`` exactly as a real
+    ``PostgresEngine`` does, so the probe exercises the same composition gate the
+    runtime trusts, without requiring a reachable database inside preflight.
+    """
+
+    intake_module = importlib.import_module(
+        "shared.infrastructure.persistence.assisted_listing_intake"
+    )
+    return replace(
+        persistence_module._memory_bundle(),
+        mode="postgresql",
+        engine=engine,
+        assisted_intake_store=intake_module.DurableAssistedIntakeStore(
+            SimpleNamespace(engine=engine)
+        ),
+    )
+
+
+def _classify_bootstrap_payload(payload: Any, *, name: str) -> CheckResult:
+    """Distinguish a fail-closed empty response from actual seed exposure."""
+
+    meta = payload.get("meta") if isinstance(payload, Mapping) else None
+    meta = meta if isinstance(meta, Mapping) else {}
+    origin = meta.get("dataOrigin")
+    origin = origin if isinstance(origin, Mapping) else {}
+    origin_kind = str(origin.get("kind", "")).strip().lower()
+    data_mode = str(meta.get("dataMode", "")).strip().lower()
+    row_sections = (
+        "workQueue",
+        "approvals",
+        "notifications",
+        "kpis",
+        "decisions",
+        "riskRows",
+        "auditFeed",
+    )
+    populated = sorted(
+        section for section in row_sections if isinstance(payload, Mapping) and payload.get(section)
+    )
+    if populated or origin_kind in {"fixture", "seed"} or data_mode == "fixture":
+        return CheckResult(
+            False,
+            name,
+            "invalid: live-required OperatorStateService exposes seed/fixture data "
+            f"(data_mode={data_mode or '<missing>'} origin={origin_kind or '<missing>'} "
+            f"populated={','.join(populated) or 'none'})",
+        )
+    if data_mode == "unavailable" and origin_kind == "unavailable":
+        return CheckResult(
+            True,
+            name,
+            "fail-closed: unavailable response with zero fixture rows "
+            "(repository unavailable is not seed exposure)",
+        )
+    return CheckResult(
+        False,
+        name,
+        "unrecognized live-required bootstrap response "
+        f"(data_mode={data_mode or '<missing>'} origin={origin_kind or '<missing>'})",
+    )
+
+
+def _operator_absent_repository_check(operator_state_module: Any) -> CheckResult:
+    name = OPERATOR_BOOTSTRAP_CHECK
+    repository_error = getattr(operator_state_module, "OperatorLiveRepositoryError", None)
+    if not isinstance(repository_error, type):
+        return CheckResult(False, name, "missing: OperatorLiveRepositoryError contract is absent")
+    try:
+        service = operator_state_module.OperatorStateService(
+            require_live_data=True,
+            persistence_mode="memory",
+            provider_mode="fixture",
+        )
+    except Exception as exc:  # noqa: BLE001 - failed inspection must block deployment
+        return CheckResult(
+            False, name, f"operator runtime inspection failed: {type(exc).__name__}: {exc}"
+        )
+    try:
+        payload = service.get_today(role_id="ops-lead")
+    except repository_error as exc:
+        origin_kind = str(service.data_origin.get("kind", "")).strip().lower()
+        fail_closed = origin_kind == "unavailable"
+        return CheckResult(
+            ok=fail_closed,
+            name=name,
+            detail=(
+                f"fail-closed: absent live repository raises {type(exc).__name__} "
+                "with zero fixture rows (repository unavailable is not seed exposure)"
+                if fail_closed
+                else (
+                    "invalid: fail-closed error raised but data origin is "
+                    f"{origin_kind or '<missing>'}"
+                )
+            ),
+        )
+    except Exception as exc:  # noqa: BLE001 - failed inspection must block deployment
+        return CheckResult(
+            False, name, f"operator runtime inspection failed: {type(exc).__name__}: {exc}"
+        )
+    return _classify_bootstrap_payload(payload, name=name)
+
+
+def _operator_missing_tenant_check(
+    operator_state_module: Any,
+    live_repository_module: Any,
+    persistence_module: Any,
+) -> CheckResult:
+    name = OPERATOR_TENANT_CHECK
+    tenant_error = getattr(live_repository_module, "OperatorTenantScopeRequiredError", None)
+    if not isinstance(tenant_error, type):
+        return CheckResult(
+            False, name, "missing: OperatorTenantScopeRequiredError contract is absent"
+        )
+    try:
+        service = operator_state_module.OperatorStateService(
+            require_live_data=True,
+            persistence_mode="postgresql",
+            provider_mode="live",
+            live_repository=live_repository_module.OperatorLiveRepository(
+                _production_like_bundle(persistence_module, _ReachableProbeEngine())
+            ),
+        )
+    except Exception as exc:  # noqa: BLE001 - failed inspection must block deployment
+        return CheckResult(
+            False, name, f"operator runtime inspection failed: {type(exc).__name__}: {exc}"
+        )
+    try:
+        payload = service.get_today(role_id="ops-lead")
+    except tenant_error:
+        origin_kind = str(service.data_origin.get("kind", "")).strip().lower()
+        no_fixture_rows = origin_kind not in {"fixture", "seed"}
+        return CheckResult(
+            ok=no_fixture_rows,
+            name=name,
+            detail=(
+                "fail-closed: live read without an authorized tenant raises "
+                "OperatorTenantScopeRequiredError with zero fixture rows"
+                if no_fixture_rows
+                else f"invalid: tenant-scope failure exposed {origin_kind} data origin"
+            ),
+        )
+    except Exception as exc:  # noqa: BLE001 - failed inspection must block deployment
+        return CheckResult(
+            False,
+            name,
+            "invalid: missing tenant raised "
+            f"{type(exc).__name__} instead of OperatorTenantScopeRequiredError: {exc}",
+        )
+    classified = _classify_bootstrap_payload(payload, name=name)
+    return CheckResult(
+        False,
+        name,
+        "invalid: live read without an authorized tenant returned a payload instead "
+        f"of failing closed ({classified.detail})",
+    )
+
+
+def _operator_probe_contract_check(
+    live_repository_module: Any,
+    persistence_module: Any,
+) -> CheckResult:
+    name = OPERATOR_PROBE_CHECK
+    try:
+        reachable_probe = live_repository_module.OperatorLiveRepository(
+            _production_like_bundle(persistence_module, _ReachableProbeEngine())
+        ).probe()
+        unreachable_probe = live_repository_module.OperatorLiveRepository(
+            _production_like_bundle(persistence_module, _UnreachableProbeEngine())
+        ).probe()
+    except Exception as exc:  # noqa: BLE001 - failed inspection must block deployment
+        return CheckResult(
+            False, name, f"live repository probe inspection failed: {type(exc).__name__}: {exc}"
+        )
+    ok = (
+        bool(reachable_probe.ready)
+        and not reachable_probe.errors
+        and str(getattr(reachable_probe, "repository", "")) == "OperatorLiveRepository"
+        and str(getattr(reachable_probe, "persistence_mode", "")).strip().lower()
+        in POSTGRES_PERSISTENCE_MODES
+        and not unreachable_probe.ready
+        and bool(unreachable_probe.errors)
+    )
+    return CheckResult(
+        ok=ok,
+        name=name,
+        detail=(
+            "live repository probe is ready only when the database is reachable "
+            "and carries repository/persistence provenance"
+            if ok
+            else (
+                "invalid: probe does not distinguish reachable from unreachable "
+                f"repository state (ready={reachable_probe.ready} "
+                f"unreachable_ready={unreachable_probe.ready})"
+            )
+        ),
+    )
+
+
+def _operator_create_app_wiring_checks(
+    main_module: Any,
+    persistence_module: Any,
+) -> list[CheckResult]:
+    create_app = getattr(main_module, "create_app", None)
+    if not callable(create_app):
+        return [
+            CheckResult(
+                False,
+                OPERATOR_WIRING_CHECK,
+                "create_app is unavailable; cannot verify production operator composition",
+            )
+        ]
+    # The provider stub only isolates this composition probe from provider
+    # configuration, which preflight validates separately and fail-closed.
+    # MLFLOW_TRACKING_URI is removed so the model-binding path fails fast and
+    # offline; model readiness has its own gate and stays blocked either way.
+    probe_environment: dict[str, str | None] = {
+        "ODP_REQUIRE_LIVE_DATA": "true",
+        "MLFLOW_TRACKING_URI": None,
+        "ODP_E2E_MODE": None,
+    }
+    provider_validation = SimpleNamespace(ok=True, errors=(), mode="live")
+    try:
+        memory_bundle = persistence_module._memory_bundle()
+        production_bundle = _production_like_bundle(persistence_module, _ReachableProbeEngine())
+        with _environment_overrides({**probe_environment, "ODP_PERSISTENCE": "postgresql"}):
+            production_app = create_app(
+                persistence=production_bundle,
+                external_provider_validation=provider_validation,
+            )
+    except Exception as exc:  # noqa: BLE001 - failed inspection must block deployment
+        return [
+            CheckResult(
+                False,
+                OPERATOR_WIRING_CHECK,
+                f"production create_app composition failed: {type(exc).__name__}: {exc}",
+            )
+        ]
+
+    repository = getattr(
+        getattr(production_app, "state", SimpleNamespace()),
+        "operator_live_repository",
+        None,
+    )
+    origin = getattr(repository, "data_origin", None)
+    origin = origin if isinstance(origin, Mapping) else {}
+    probe = None
+    if repository is not None and callable(getattr(repository, "probe", None)):
+        try:
+            probe = repository.probe()
+        except Exception:  # noqa: BLE001 - a failing probe is reported below
+            probe = None
+    wired = (
+        repository is not None
+        and type(repository).__name__ == "OperatorLiveRepository"
+        and str(origin.get("kind", "")).strip().lower() == "authoritative"
+        and str(origin.get("persistenceMode", "")).strip().lower() in POSTGRES_PERSISTENCE_MODES
+        and probe is not None
+        and bool(probe.ready)
+    )
+    checks = [
+        CheckResult(
+            ok=wired,
+            name=OPERATOR_WIRING_CHECK,
+            detail=(
+                "production PostgreSQL create_app injects OperatorLiveRepository "
+                "with authoritative provenance and a passing live probe"
+                if wired
+                else (
+                    "missing: production create_app did not inject a ready "
+                    "OperatorLiveRepository (repository="
+                    f"{type(repository).__name__ if repository is not None else None} "
+                    f"origin_kind={origin.get('kind') or '<missing>'} "
+                    f"probe_ready={getattr(probe, 'ready', None)})"
+                )
+            ),
+        )
+    ]
+
+    try:
+        with _environment_overrides({**probe_environment, "ODP_PERSISTENCE": "memory"}):
+            fixture_app = create_app(
+                persistence=memory_bundle,
+                external_provider_validation=provider_validation,
+            )
+    except Exception as exc:  # noqa: BLE001 - failed inspection must block deployment
+        checks.append(
+            CheckResult(
+                False,
+                OPERATOR_FIXTURE_WIRING_CHECK,
+                f"memory-mode create_app inspection failed: {type(exc).__name__}: {exc}",
+            )
+        )
+        return checks
+    fixture_repository = getattr(
+        getattr(fixture_app, "state", SimpleNamespace()),
+        "operator_live_repository",
+        "<unset>",
+    )
+    blocked = fixture_repository is None
+    checks.append(
+        CheckResult(
+            ok=blocked,
+            name=OPERATOR_FIXTURE_WIRING_CHECK,
+            detail=(
+                "non-production persistence gets no live operator repository and stays fail-closed"
+                if blocked
+                else ("invalid: fixture/seed persistence received an operator repository binding")
+            ),
+        )
+    )
+    return checks
+
+
+_OPERATOR_RUNTIME_CHECK_CACHE: dict[str, tuple[CheckResult, ...]] = {}
+
+
+def operator_runtime_checks(
+    root: Path = ROOT,
+    *,
+    main_module: Any | None = None,
+    operator_state_module: Any | None = None,
+    live_repository_module: Any | None = None,
+    persistence_module: Any | None = None,
+) -> list[CheckResult]:
+    """Behavioral operator runtime composition checks.
+
+    Executes the real modules instead of scanning source markers so the
+    preflight can (1) prove the production PostgreSQL ``create_app``
+    composition injects ``OperatorLiveRepository``, (2) prove an absent
+    repository or missing tenant fails closed with zero fixture rows, and
+    (3) still block actual seed/fixture exposure - without conflating a
+    correctly fail-closed unavailable repository with seed exposure.
+    """
+
+    injected = any(
+        module is not None
+        for module in (
+            main_module,
+            operator_state_module,
+            live_repository_module,
+            persistence_module,
+        )
+    )
+    cache_key = str(root.resolve())
+    if not injected and cache_key in _OPERATOR_RUNTIME_CHECK_CACHE:
+        return list(_OPERATOR_RUNTIME_CHECK_CACHE[cache_key])
+
+    try:
+        operator_state_module = operator_state_module or _import_runtime_module(
+            root, "modules.opsboard.application.operator_state"
+        )
+        live_repository_module = live_repository_module or _import_runtime_module(
+            root, "modules.opsboard.application.operator_live_repository"
+        )
+        persistence_module = persistence_module or _import_runtime_module(
+            root, "shared.infrastructure.persistence.factory"
+        )
+        if main_module is None:
+            with _environment_overrides(_MAIN_IMPORT_SAFE_ENVIRONMENT):
+                main_module = _import_runtime_module(root, "apps.api.oday_api.main")
+    except Exception as exc:  # noqa: BLE001 - failed inspection must block deployment
+        return [
+            CheckResult(
+                False,
+                OPERATOR_BOOTSTRAP_CHECK,
+                f"cannot import operator runtime for inspection: {type(exc).__name__}: {exc}",
+            )
+        ]
+
+    checks = [
+        _operator_absent_repository_check(operator_state_module),
+        _operator_missing_tenant_check(
+            operator_state_module, live_repository_module, persistence_module
+        ),
+        _operator_probe_contract_check(live_repository_module, persistence_module),
+    ]
+    checks.extend(_operator_create_app_wiring_checks(main_module, persistence_module))
+    if not injected:
+        _OPERATOR_RUNTIME_CHECK_CACHE[cache_key] = tuple(checks)
     return checks
 
 
@@ -970,6 +1399,44 @@ def _contains_forbidden_marker(value: str) -> bool:
     return any(marker in normalized for marker in FORBIDDEN_DATA_MARKERS)
 
 
+def _operator_readiness_check(payload: Mapping[str, Any]) -> CheckResult:
+    """Require a passing live repository probe with read provenance."""
+
+    details = payload.get("details")
+    data_section = details.get("data") if isinstance(details, Mapping) else None
+    data_section = data_section if isinstance(data_section, Mapping) else {}
+    probe = data_section.get("operatorRepositoryProbe")
+    probe = probe if isinstance(probe, Mapping) else {}
+    origin = data_section.get("origin")
+    origin = origin if isinstance(origin, Mapping) else {}
+    origin_text = json.dumps(origin, sort_keys=True).lower()
+    probe_text = json.dumps(probe, sort_keys=True).lower()
+    ok = (
+        data_section.get("operatorRepositoryReady") is True
+        and probe.get("ready") is True
+        and not probe.get("errors")
+        and str(probe.get("persistenceMode", "")).strip().lower() in POSTGRES_PERSISTENCE_MODES
+        and str(origin.get("kind", "")).strip().lower() == "authoritative"
+        and bool(str(origin.get("sourceId") or "").strip())
+        and not _contains_forbidden_marker(origin_text)
+        and not _contains_forbidden_marker(probe_text)
+    )
+    return CheckResult(
+        ok=ok,
+        name="smoke:/readiness:operator_live_repository",
+        detail=(
+            "live operator repository probe passed with authoritative read provenance"
+            if ok
+            else (
+                "missing or failing operator repository probe/provenance: "
+                f"ready={data_section.get('operatorRepositoryReady')} "
+                f"probe_ready={probe.get('ready')} "
+                f"origin_kind={origin.get('kind') or '<missing>'}"
+            )
+        ),
+    )
+
+
 def _operator_source(payload: Mapping[str, Any]) -> str:
     meta = payload.get("meta")
     containers = [payload, meta] if isinstance(meta, Mapping) else [payload]
@@ -1067,6 +1534,7 @@ def smoke_checks(
 
     health = payloads.get("health", {})
     checks.extend(_provider_probe_checks(health))
+    checks.append(_operator_readiness_check(payloads.get("readiness", {})))
     job_queue = _dependency_text(health, "job_queue")
     checks.append(
         CheckResult(
@@ -1120,6 +1588,40 @@ def smoke_checks(
                 detail=(
                     f"data_mode={bootstrap_mode or '<missing>'} "
                     f"data_source={bootstrap_source or '<missing>'}"
+                ),
+            )
+        )
+        bootstrap_meta = bootstrap.get("meta")
+        bootstrap_meta = bootstrap_meta if isinstance(bootstrap_meta, Mapping) else {}
+        bootstrap_origin = bootstrap_meta.get("dataOrigin")
+        bootstrap_origin = bootstrap_origin if isinstance(bootstrap_origin, Mapping) else {}
+        live_readiness = bootstrap_meta.get("liveReadiness")
+        live_readiness = live_readiness if isinstance(live_readiness, Mapping) else {}
+        bootstrap_origin_text = json.dumps(bootstrap_origin, sort_keys=True).lower()
+        report["operator_bootstrap"]["origin_kind"] = (
+            str(bootstrap_origin.get("kind") or "") or None
+        )
+        provenance_ok = (
+            str(bootstrap_origin.get("kind", "")).strip().lower() == "authoritative"
+            and str(bootstrap_origin.get("persistenceMode", "")).strip().lower()
+            in POSTGRES_PERSISTENCE_MODES
+            and bool(str(bootstrap_origin.get("sourceId") or "").strip())
+            and live_readiness.get("ready") is True
+            and not _contains_forbidden_marker(bootstrap_origin_text)
+        )
+        checks.append(
+            CheckResult(
+                ok=provenance_ok,
+                name="smoke:/api/v1/operator/bootstrap:read_provenance",
+                detail=(
+                    "authoritative live repository read provenance verified"
+                    if provenance_ok
+                    else (
+                        f"origin_kind={bootstrap_origin.get('kind') or '<missing>'} "
+                        "persistence_mode="
+                        f"{bootstrap_origin.get('persistenceMode') or '<missing>'} "
+                        f"live_ready={live_readiness.get('ready')}"
+                    )
                 ),
             )
         )
