@@ -823,6 +823,21 @@ check cannot over-tighten: `9223372036854775807` as a version selector on both
 dialects, and `projects/9223372036854775807/secrets/<id>` as a secret name on
 both dialects — the last number each component may really carry.
 
+### Follow-up at `788185cb`: comment placement, no behaviour
+
+Head moves past `e9dea721` for one comment-only commit, called out here so an
+exact-head reviewer does not have to diff for a behaviour change that is not
+there. Round 13 inserted its int64 range note directly above `_MAX_INT64` and
+left the secret-name grammar note stranded above it, thirty lines from the
+`_SECRET_*_PATTERN` declarations it describes — so the block claimed the
+bare-ID and `projects/<project>/secrets/<id>` forms for a constant that names
+neither, and the patterns that do carry those forms read as undocumented. Each
+note now sits on its own declarations, and the secret-name note states what
+round 13 made true of it: the path form's project *number* branch is range
+checked through `_usable_resource_number`, while a project *ID* has no range to
+check. No regex, guard, check, detail, or report string is touched; the counts
+and matrices in this document hold unchanged at the new head.
+
 ## Check and report surface
 
 `jobs-smoke:<kind>:secret_bindings` keeps its name, so the deploy gate and any
@@ -854,7 +869,8 @@ placed in the job description never reaches the detail text or the report.
 
 ## Focused verification
 
-Executed from the task branch on the round-13 tree (parent `cdb28c9a`):
+Executed from the task branch on the round-13 tree (parent `cdb28c9a`), and
+re-run unchanged on the comment-only follow-up tree at `788185cb`:
 
 ```text
 python3 -m pytest tests/ops/test_cloud_run_live_deployment.py                  # 292 passed
