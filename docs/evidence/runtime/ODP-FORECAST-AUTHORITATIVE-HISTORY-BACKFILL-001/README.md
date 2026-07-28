@@ -575,6 +575,30 @@ eight would be 296 and would reproduce Defect C. A deadline kill is not a
 harmless retry, it is exactly how Defect D's permanently unattested lineage was
 created, so each slice must fit its own deadline with margin.
 
+That sizing survives on 18 minutes of headroom, which is not a margin, it is a
+coin flip — and `-s4`'s first partition landed at 32 min against `-s3`'s 37 min
+ceiling, so the ceiling is not falling as the slices move into heavier dates.
+So the deadline itself was raised, on the six task-scoped slices still to run
+(`-s4`, `-b1`..`-b4`, `-s5`), from `14400` to `28800`; receipt in
+`slice_deadline_headroom.json`. `activeDeadlineSeconds` is one of the few
+mutable Job spec fields, and the patch was accepted on the **running** `-s4`
+with no pod disruption — same pod, `RESTARTS 0`, age unbroken across the patch.
+Raising a kill timer cannot alter, delete, or admit a single record: it changes
+no window, no image digest, and no ingestion semantics, only how long a slice
+may take to finish work it was already going to do, and it is reversible by
+patching the value back. `28800` is still a bound, not an absence of one — six
+partitions at the 37 min ceiling is 222 min against 480, so a genuinely hung run
+is still caught.
+
+`-s1`, `-s2`, `-s3` and the parked `-s6` were deliberately left at `14400`:
+`-s1` is the preserved Defect C exhibit and `-s3` the measured baseline the
+sizing argument rests on, and rewriting them would erase the evidence.
+
+The raised deadline does **not** buy wider slices. Six partitions stays. The
+width was chosen so a slice fits its own budget and it still does — now with
+headroom rather than without — and spending that headroom on eight partitions
+would rebuild exactly the Defect C shape this is meant to retire.
+
 `-b4` is not redundant margin. The arithmetic above is a **global** span, while
 `prior_day_count_28` is evaluated per store: a store that transacts on no day in
 the window produces no row and breaks its own streak, so per-store eligibility

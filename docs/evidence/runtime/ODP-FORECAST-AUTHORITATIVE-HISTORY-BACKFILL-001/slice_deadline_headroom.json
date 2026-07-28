@@ -1,0 +1,74 @@
+{
+  "receipt": "slice_deadline_headroom",
+  "task": "ODP-FORECAST-AUTHORITATIVE-HISTORY-BACKFILL-001",
+  "captured_at": "2026-07-28T19:05:00Z",
+  "captured_by": "Claude3",
+
+  "why": [
+    "Defect C is that the orders-history workload template pairs activeDeadlineSeconds=14400 (4h)",
+    "with a window whose partitions cost 4-37 min each, so a wide slice cannot finish itself.",
+    "Defect D is the consequence: a partition killed mid-flight commits canonical_lineage rows",
+    "that no later run can reconcile or delete, permanently costing that day.",
+    "Slice width was already reduced to six partitions to fit inside 14400s. That kept the",
+    "worst case at 222 min against a 240 min budget -- 18 min of headroom, which is not a",
+    "margin, it is a coin flip. This receipt records the second, independent mitigation:",
+    "raising activeDeadlineSeconds on the task-scoped slices so a deadline kill stops being",
+    "the reachable failure mode at all."
+  ],
+
+  "action": {
+    "change": "spec.activeDeadlineSeconds 14400 -> 28800 on task-scoped orders-history slices",
+    "applied_to": ["s4", "s5", "b1", "b2", "b3", "b4"],
+    "not_applied_to": {
+      "s1": "already Failed; left at 14400 as the preserved Defect C exhibit",
+      "s2": "superseded and suspended; left untouched",
+      "s3": "already Complete under 14400; left as the measured baseline",
+      "s6": "parked repair slice, still gated on human approval; not re-armed here"
+    },
+    "mutability_note": "activeDeadlineSeconds is one of the few mutable Job spec fields. The patch was accepted on the RUNNING s4 with no pod disruption: same pod oday-data-platform-orders-history-93cb9f94-s4-qxvsf, RESTARTS 0, age unchanged across the patch.",
+    "non_destructive": "Raising a kill timer cannot alter, delete, or admit any record. It changes no window, no image, no ingestion semantics -- only how long a slice is allowed to finish work it was already going to do. It is reversible by patching the value back.",
+    "still_bounded": "28800s is not 'no deadline'. Six partitions at the 37 min observed ceiling is 222 min; 28800s (480 min) leaves ~2.2x margin while still bounding a genuinely hung run."
+  },
+
+  "measured_partition_minutes": {
+    "note": "All orders partitions run by this task on 2026-07-28, in execution order.",
+    "s1_before_deadline_kill": [4, 12, 10, 13, 18, 19, 10, 10, 25, 27, 30],
+    "s1_outcome": "killed DeadlineExceeded after 13 of 16 partitions -- not a data failure",
+    "s3": [1, 10, 10, 25, 37, 34],
+    "s3_total": 117,
+    "s4_in_flight": [32],
+    "observed_ceiling": 37,
+    "six_partition_worst_case": 222,
+    "old_budget": 240,
+    "new_budget": 480
+  },
+
+  "slice_topology_after": [
+    {"slice": "s1", "window": "2026-06-23..2026-07-09", "deadline_s": 14400, "suspend": false, "state": "Failed"},
+    {"slice": "s2", "window": "2026-07-09..2026-07-24", "deadline_s": 14400, "suspend": true,  "state": "Suspended (superseded)"},
+    {"slice": "s3", "window": "2026-07-06..2026-07-12", "deadline_s": 14400, "suspend": false, "state": "Complete"},
+    {"slice": "s4", "window": "2026-07-12..2026-07-18", "deadline_s": 28800, "suspend": false, "state": "Running since 2026-07-28T18:30:16Z"},
+    {"slice": "b1", "window": "2026-05-17..2026-05-23", "deadline_s": 28800, "suspend": true,  "state": "Suspended (queued)"},
+    {"slice": "b2", "window": "2026-05-11..2026-05-17", "deadline_s": 28800, "suspend": true,  "state": "Suspended (queued)"},
+    {"slice": "b3", "window": "2026-05-05..2026-05-11", "deadline_s": 28800, "suspend": true,  "state": "Suspended (queued)"},
+    {"slice": "b4", "window": "2026-04-29..2026-05-05", "deadline_s": 28800, "suspend": true,  "state": "Suspended (queued)"},
+    {"slice": "s5", "window": "2026-07-18..2026-07-23", "deadline_s": 28800, "suspend": true,  "state": "Suspended (queued)"},
+    {"slice": "s6", "window": "2026-07-06..2026-07-07", "deadline_s": 14400, "suspend": true,  "state": "Suspended (parked repair, human-gated)"}
+  ],
+
+  "what_this_does_not_change": [
+    "Six partitions per slice stays. The width was chosen so a slice fits its own budget, and",
+    "it still does -- with headroom now instead of without. Widening slices on the back of the",
+    "raised deadline would re-introduce the Defect C shape and is deliberately not done.",
+    "Slices still run one at a time and still wait SUSPENDED rather than merely queued: the",
+    "private-pool node pool has exactly one node and does not scale up, and activeDeadlineSeconds",
+    "counts from the Job's startTime rather than from pod scheduling.",
+    "No ingestion code, image digest, window, or view definition is touched."
+  ],
+
+  "verification": {
+    "cluster_read_back": "kubectl -n oday-dev get job ... -o jsonpath '{.spec.activeDeadlineSeconds}' returned 28800 for s4,s5,b1,b2,b3,b4 and 14400 for s1,s2,s3,s6",
+    "windows_read_back": "each slice's ODP_ORDERS_HISTORY_START/_END read back off the cluster and matched the planned windows",
+    "pod_undisturbed": "s4 pod ...-qxvsf remained 2/2 Running with 0 restarts before and after the patch"
+  }
+}
