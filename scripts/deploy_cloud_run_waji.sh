@@ -272,6 +272,42 @@ done
 WEB_SECRET_BINDINGS="ODP_WEB_OIDC_CLIENT_SECRET=${ODP_WEB_OIDC_CLIENT_SECRET_SECRET}"
 WEB_SECRET_BINDINGS+=",ODP_WEB_SESSION_SECRET=${ODP_WEB_SESSION_SECRET_SECRET}"
 
+# gcloud's shortcut for describing a job's newest execution only exists on
+# recent releases, so job proof capture used to depend on the runner's CLI
+# version. Resolve the newest execution through the version-stable
+# `executions list` surface and then describe it by its exact name.
+# Resolution is fail-closed: an empty, malformed, or ambiguous list aborts
+# before any receipt is written.
+capture_latest_execution() {
+  local job="$1"
+  local execution_file="$2"
+  local list_file="${execution_file%.json}-list.json"
+  local execution_name
+  if ! gcloud run jobs executions list \
+    --job="${job}" \
+    --region="${GCP_REGION}" \
+    --project="${GCP_PROJECT}" \
+    --format=json >"${list_file}"; then
+    return 1
+  fi
+  if ! execution_name="$(run_locked_python \
+    scripts/deployment/validate_cloud_run_live_deployment.py resolve-latest-execution \
+    --executions="${list_file}" \
+    --job="${job}")"; then
+    return 1
+  fi
+  if [ -z "${execution_name}" ]; then
+    echo "Error: latest Cloud Run Job execution name resolved empty." >&2
+    return 1
+  fi
+  if ! gcloud run jobs executions describe "${execution_name}" \
+    --region="${GCP_REGION}" \
+    --project="${GCP_PROJECT}" \
+    --format=json >"${execution_file}"; then
+    return 1
+  fi
+}
+
 capture_job_proof() {
   local kind="$1"
   local job="$2"
@@ -281,11 +317,7 @@ capture_job_proof() {
     --region="${GCP_REGION}" \
     --project="${GCP_PROJECT}" \
     --format=json >"${description_file}"
-  gcloud run jobs executions describe-latest \
-    --job="${job}" \
-    --region="${GCP_REGION}" \
-    --project="${GCP_PROJECT}" \
-    --format=json >"${execution_file}"
+  capture_latest_execution "${job}" "${execution_file}"
   run_locked_python scripts/deployment/validate_cloud_run_live_deployment.py jobs-smoke \
     --job-kind="${kind}" \
     --job-description="${description_file}" \
@@ -305,11 +337,9 @@ execute_job() {
     --wait \
     --quiet \
     "$@"; then
-    gcloud run jobs executions describe-latest \
-      --job="${job}" \
-      --region="${GCP_REGION}" \
-      --project="${GCP_PROJECT}" \
-      --format=json >"${JOB_REPORT_DIR}/${kind}-execution.json" || true
+    # Best-effort forensic capture only; the failure below still stops the
+    # deployment and falls through to the rollback trap.
+    capture_latest_execution "${job}" "${JOB_REPORT_DIR}/${kind}-execution.json" || true
     echo "Error: ${kind} Cloud Run Job failed; deployment stopped." >&2
     return 1
   fi
