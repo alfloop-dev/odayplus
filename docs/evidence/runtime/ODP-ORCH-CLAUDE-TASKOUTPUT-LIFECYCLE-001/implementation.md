@@ -45,8 +45,27 @@ require the supervisor-local, gitignored `.orchestrator/config.json`. Those four
 environment-bound cases were excluded from the successful pytest regression
 above.
 
-Pending:
+## Closeout
 
-- independent Codex7 exact-head review
-- CI
-- post-merge live Supervisor restart receipt
+- Codex7 approved exact task head
+  `6400c85e625c9dea19994f80de78b4291ca686ea` with no findings.
+- PR #475 passed `orchestrator`, `product`, `product-e2e-gate`, and
+  `task-review-gate` on integration head
+  `00388bdb512f119c5c7f9ad915380c51269b302f`.
+- PR #475 merged into `dev` at
+  `b4aba4258aca97ab154fdc8fec54e81b355c14a6` on
+  `2026-07-28T13:49:57Z`.
+- The live broker file was deployed from that merge commit. Its SHA-256 was
+  `1ed64d46ea1c115fdc1c33b3bbe57768148dd5d1cf81ff5c16874f764db92391`,
+  matching the merged file, and the live evaluator returned `allow` /
+  `safe_read` for exact `TaskOutput`.
+- The live Supervisor was restarted after merge. The singleton reconciled the
+  existing Codex2 run without redispatch, remained healthy, and completed a
+  successful normal-dispatch loop after watchdog safe mode expired.
+- Runtime-state and OS-process cardinality checks contained no task with more
+  than one live worker before restart, during boot reconciliation, or after
+  normal dispatch resumed.
+
+The structured, non-sensitive receipt is in
+`live-restart-receipt.json`. It contains no prompts, credentials, or provider
+response content.
