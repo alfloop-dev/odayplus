@@ -1759,6 +1759,116 @@ def _execution_completed(payload: Mapping[str, Any]) -> bool:
     return completed and succeeded_count >= 1 and failed_count == 0
 
 
+_EXECUTION_FRACTION_PATTERN = re.compile(r"\.(\d{1,9})")
+
+
+def _execution_short_name(entry: Mapping[str, Any], *, index: int) -> str:
+    """Return the bare execution name from either the v1 or v2 Job schema."""
+
+    metadata = entry.get("metadata")
+    raw = metadata.get("name") if isinstance(metadata, Mapping) else None
+    if not isinstance(raw, str) or not raw.strip():
+        raw = entry.get("name")
+    if not isinstance(raw, str) or not raw.strip():
+        raise ValueError(f"executions[{index}] has no resolvable execution name")
+    return raw.strip().rsplit("/", 1)[-1]
+
+
+def _execution_created_at(entry: Mapping[str, Any], *, index: int) -> datetime:
+    """Return the creation instant from either the v1 or v2 Job schema."""
+
+    metadata = entry.get("metadata")
+    raw = metadata.get("creationTimestamp") if isinstance(metadata, Mapping) else None
+    if not isinstance(raw, str) or not raw.strip():
+        raw = entry.get("createTime") or entry.get("creationTimestamp")
+    if not isinstance(raw, str) or not raw.strip():
+        raise ValueError(f"executions[{index}] has no creation timestamp to order by")
+    text = raw.strip()
+    if text.endswith(("Z", "z")):
+        text = f"{text[:-1]}+00:00"
+    # RFC3339 allows nanosecond precision; datetime only carries microseconds.
+    text = _EXECUTION_FRACTION_PATTERN.sub(lambda match: f".{match.group(1)[:6]}", text, count=1)
+    try:
+        parsed = datetime.fromisoformat(text)
+    except ValueError as exc:
+        raise ValueError(f"executions[{index}] creation timestamp {raw!r} is unparsable") from exc
+    return parsed if parsed.tzinfo else parsed.replace(tzinfo=UTC)
+
+
+def _execution_matches_job(entry: Mapping[str, Any], *, job: str) -> bool:
+    metadata = entry.get("metadata")
+    labels = metadata.get("labels") if isinstance(metadata, Mapping) else None
+    references: list[str] = []
+    if isinstance(labels, Mapping):
+        for key in ("run.googleapis.com/job", "job"):
+            if key not in labels:
+                continue
+            value = labels.get(key)
+            if not isinstance(value, str) or not value.strip():
+                return False
+            references.append(value.strip().rsplit("/", 1)[-1])
+    if "job" in entry:
+        value = entry.get("job")
+        if not isinstance(value, str) or not value.strip():
+            return False
+        references.append(value.strip().rsplit("/", 1)[-1])
+    return bool(references) and all(reference == job for reference in references)
+
+
+def resolve_latest_execution_name(payload: Any, *, job: str | None = None) -> str:
+    """Resolve the newest execution name from a `gcloud run jobs executions list` payload.
+
+    `gcloud run jobs executions describe-latest` only exists on recent gcloud
+    releases, so job proof capture used to depend on the runner's CLI version.
+    The list surface is version-stable but its schema is not: older releases
+    emit the Knative shape (`metadata.name` / `metadata.creationTimestamp`) and
+    newer ones the v2 shape (`name` / `createTime`). Both are accepted; an
+    empty, wrapped-but-empty, malformed, or ambiguous payload fails closed so
+    no deployment can fabricate a job receipt.
+    """
+
+    entries = payload
+    if isinstance(entries, Mapping):
+        for key in ("items", "executions"):
+            wrapped = entries.get(key)
+            if isinstance(wrapped, list):
+                entries = wrapped
+                break
+    if not isinstance(entries, list):
+        raise ValueError("executions payload must be a JSON array of execution objects")
+
+    candidates: list[tuple[Mapping[str, Any], str]] = []
+    for index, entry in enumerate(entries):
+        if not isinstance(entry, Mapping):
+            raise ValueError(f"executions[{index}] is not a JSON object")
+        name = _execution_short_name(entry, index=index)
+        if job and not _execution_matches_job(entry, job=job):
+            raise ValueError(f"executions[{index}] {name!r} does not belong to job {job!r}")
+        candidates.append((entry, name))
+
+    if not candidates:
+        raise ValueError(
+            "no Cloud Run Job execution was found; refusing to emit an unproven receipt"
+        )
+    if len(candidates) == 1:
+        return candidates[0][1]
+
+    ordered = sorted(
+        (
+            (_execution_created_at(entry, index=index), name)
+            for index, (entry, name) in enumerate(candidates)
+        ),
+        key=lambda item: item[0],
+        reverse=True,
+    )
+    if ordered[0][0] == ordered[1][0]:
+        raise ValueError(
+            f"executions {ordered[0][1]!r} and {ordered[1][1]!r} share the newest "
+            "creation timestamp; the latest execution is ambiguous"
+        )
+    return ordered[0][1]
+
+
 def cloud_run_job_checks(
     *,
     kind: str,
@@ -1891,7 +2001,25 @@ def main() -> int:
     jobs_smoke.add_argument("--expected-sha", required=True)
     jobs_smoke.add_argument("--output", type=Path)
 
+    resolve_execution = subparsers.add_parser("resolve-latest-execution")
+    resolve_execution.add_argument("--executions", required=True, type=Path)
+    resolve_execution.add_argument("--job")
+
     args = parser.parse_args()
+    if args.command == "resolve-latest-execution":
+        try:
+            payload = json.loads(args.executions.read_text(encoding="utf-8"))
+            name = resolve_latest_execution_name(payload, job=args.job)
+        except (OSError, ValueError) as exc:
+            print(
+                "Cloud Run latest execution resolution failed (fail-closed): "
+                f"{type(exc).__name__}: {exc}",
+                file=sys.stderr,
+            )
+            return 1
+        print(name)
+        return 0
+
     if args.command == "preflight":
         checks = preflight_checks(
             env=os.environ,
