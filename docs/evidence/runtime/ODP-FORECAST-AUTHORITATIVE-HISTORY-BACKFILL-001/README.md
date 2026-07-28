@@ -40,6 +40,8 @@ into its output.
 | `runbook/lineage-throughput-probe.py` | — | The read-only probe that produced it. Two aggregate `SELECT`s; excludes resumed stub partitions and says how many it dropped. |
 | `horizon_critical_path.json` | — | Which remaining slice actually decides criterion 3, measured against the view's own eligibility rule: the gap-fill family moves h28 from 0 to 2, the backwards family to 419 (see §7). |
 | `runbook/horizon-critical-path-probe.py` | — | The read-only probe that produced it. Mirrors `forecast_training_view` on the source plane; projections are bracketed and labelled as projections. |
+| `backwards_window_store_density.json` | — | Whether the backwards windows actually hold the stores the critical path donates to them: no gap day across the 24-day span, and 421 stores trading every day of it against an independently projected 419 (see §7). Carries its own grain and control range. |
+| `backwards_window_store_density_probe.pod.yaml` | — | The exact read-only Pod that produced it. One aggregation, counts only; place ids never leave the pod. |
 | `runbook/deadline-guard-v1.sh` | — | Fourth keeper. Extends `activeDeadlineSeconds` on the Active slice before it can be killed, because a deadline kill is what created Defect D and there is no safe kill for this workload. |
 | `settle_state.json` | — | Written by the finisher **immediately before** `activate`: the incomplete partitions and abandoned-lineage ownership that were true at that moment. The two conditions the gate no longer blocks on, stated instead of hidden (see §7, v6). |
 
@@ -888,6 +890,43 @@ against strict (traded on all seven nearest dense days). The two agree at
 assumption. It is also consistent with `per_store_streak_headroom.json`, which
 counted 410 stores trading unbroken across the landed 43-day window and left as
 a falsifiable follow-up whether ~410 would hold against a 61-day window.
+
+### The donated store set, checked against the source
+
+Both brackets still shared one assumption: that the backwards dates are trading
+days at all, carrying stores in the numbers the landed era does. Donation is a
+statement about the *source*, and every measurement supporting it had been taken
+on the *target*. `upstream_source_depth_probe.json` does not settle it either —
+it measured order counts, on five sampled days, none below `2026-05-14`. Eleven
+thousand orders can come from two hundred stores or six hundred, and because
+eligibility needs 28 **consecutive** prior days, a single thin day anywhere in
+the span would break every store's run and take `-b3`'s yield toward zero. That
+day would have been found only after roughly eight hours of ingestion.
+
+`backwards_window_store_density.json` measures it directly, at the view's own
+grain — `state = TRADE_SUCCESS`, `currency = TWD`, grouped by `createdAt` UTC
+day, store taken as `place`, which is the upstream pre-image of
+`transaction_daily`'s store-day. Unmapped places quarantine, so an upstream
+distinct-place count is an upper bound on landed stores; a landed control
+fortnight (`2026-06-10..06-23`) measured the identical way cancels that bias,
+since the claim is relative density.
+
+- **No gap day exists.** All 24 days of `2026-04-29..2026-05-22` carry 497–527
+  transacting stores, median 513. No empty day, no sparse day, nothing that can
+  break the consecutive-prior-day requirement.
+- **Early May sits at 0.934 of the control** (median 513 against 549 stores/day)
+  — a smooth secular growth trend, not a cliff. The donated set is therefore
+  mildly generous, so realised `h28` should land a little under 419; criterion 3
+  needs only that complete 28-day windows exist at all.
+- **421 stores trade on every one of the 24 days**, against the 419 the
+  critical-path probe reached from landed PG streaks plus donation. Two
+  independent methods converging on ~420 means criterion 3 no longer rests on a
+  single projection.
+
+This retires the assumption, not the acceptance evidence: it measures the
+upstream pre-image, cannot predict per-store mapping attrition, and does not
+substitute for the post-activation `verify`. The queue stands unchanged — no
+rescope, no reorder, no extra slice is indicated.
 
 ## 8. After state
 
