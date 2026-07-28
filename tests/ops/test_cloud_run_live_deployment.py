@@ -2003,6 +2003,58 @@ _ALIAS_63 = "a" + "b" * 62
 _ALIAS_64 = "a" + "b" * 63
 _ALIAS_255 = "a" + "b" * 254
 
+#: Secret Manager caps a secret *ID* at 255 characters, so 255 is the boundary
+#: control on the name member and 256 is the first length that names nothing.
+_SECRET_ID_255 = "a" + "b" * 254
+_SECRET_ID_256 = "a" + "b" * 255
+
+#: The two forms a Cloud Run secret binding may name a secret in. Both are kept
+#: accepted because `scripts/deploy_cloud_run_waji.sh` takes every name from an
+#: operator-supplied `*_SECRET` variable, so a cross-project secret is a
+#: deployment this proof must not fail.
+_CROSS_PROJECT_SECRET = f"projects/oday-plus-prod/secrets/{_POI_SECRET}"
+_CROSS_PROJECT_NUMBER_SECRET = f"projects/123456789012/secrets/{_POI_SECRET}"
+
+#: Round 11: names Secret Manager does not resolve. Round 10 fixed the version
+#: member's grammar and stated the rule behind it — the description is the
+#: proof, so the validator may not normalize what it checks — but the name
+#: member beside it was still read through `.strip()` under no grammar at all,
+#: so every one of these bound a "mandatory" secret to nothing while
+#: `jobs-smoke:<kind>:secret_bindings` reported zero failed checks.
+_UNUSABLE_SECRET_NAMES: tuple[object, ...] = (
+    " odp-poi-provider-api-key ",
+    " odp-poi-provider-api-key",
+    "odp-poi-provider-api-key ",
+    "\todp-poi-provider-api-key\n",
+    "odp poi provider api key",
+    "odp-poi-provider-api-key!",
+    "odp.poi.provider.api.key",
+    "odp/poi/provider/api/key",
+    pytest.param(_SECRET_ID_256, id="secret-id-256-chars"),
+    "資料庫",
+    ".",
+    # Path-shaped names that are still not the documented path: no project, no
+    # secret ID, and a *version* path, which names a version rather than the
+    # secret the binding must reference.
+    f"projects//secrets/{_POI_SECRET}",
+    "projects/oday-plus-prod/secrets/",
+    f"projects/oday-plus-prod/secrets/{_POI_SECRET}/versions/1",
+    pytest.param(1, id="non-string-int"),
+    pytest.param(None, id="non-string-none"),
+)
+
+#: The acceptance boundary the round-11 tightening must not cross: a bare secret
+#: ID in either allowed character set, the 255-character maximum, and both
+#: documented cross-project path spellings.
+_USABLE_SECRET_NAMES: tuple[object, ...] = (
+    _POI_SECRET,
+    "odp_poi_provider_api_key",
+    "OdpPoiProviderApiKey1",
+    pytest.param(_SECRET_ID_255, id="secret-id-255-chars"),
+    pytest.param(_CROSS_PROJECT_SECRET, id="cross-project-path"),
+    pytest.param(_CROSS_PROJECT_NUMBER_SECRET, id="cross-project-number-path"),
+)
+
 #: Selectors whose member *names* all sit inside the dialect's allowlist while
 #: the payloads cancel the binding they are supposed to prove. Round 8 closed
 #: the reference to the members Knative defines but never read them, so each of
@@ -2272,6 +2324,123 @@ def test_job_smoke_accepts_a_v2_selector_without_a_declared_version() -> None:
     checks, report = _job_checks(job, kind="worker")
 
     assert "jobs-smoke:worker:secret_bindings" not in _failed_names(checks)
+    assert "ODP_POI_PROVIDER_API_KEY" in report["secret_bound_env_vars"]
+
+
+@pytest.mark.parametrize("secret", _UNUSABLE_SECRET_NAMES)
+def test_job_smoke_rejects_an_unusable_knative_secret_name(secret: object) -> None:
+    """The name member has to name a secret, not merely be non-empty.
+
+    Round 10 fixed the version member and named the rule: the description is
+    the proof, so a selector that is not identical to its own `strip()` is a
+    defect in what gcloud emitted. The name member was still `.strip()`ed and
+    matched against no grammar, so ` odp-poi-provider-api-key `,
+    `odp poi provider api key`, a 256-character name, and `.` each proved a
+    mandatory binding that Secret Manager resolves to nothing.
+    """
+
+    entry = {
+        "name": "ODP_POI_PROVIDER_API_KEY",
+        "valueFrom": {"secretKeyRef": {"name": secret, "key": "latest"}},
+    }
+    job = _knative_job(
+        secret_envs=(
+            _knative_secret_env("ODAY_DATABASE_URL"),
+            entry,
+            _knative_secret_env("ODP_GEOCODE_PROVIDER_API_KEY"),
+            _knative_secret_env("ODP_ADMIN_BOUNDARY_PROVIDER_TOKEN"),
+        )
+    )
+
+    checks, report = _job_checks(job)
+    detail = _detail(checks, "jobs-smoke:migration:secret_bindings")
+
+    assert "jobs-smoke:migration:secret_bindings" in _failed_names(checks)
+    assert "ODP_POI_PROVIDER_API_KEY" in detail
+    assert "valueFrom.secretKeyRef.name" in detail
+    assert "ODP_POI_PROVIDER_API_KEY" not in report["secret_bound_env_vars"]
+
+
+@pytest.mark.parametrize("secret", _UNUSABLE_SECRET_NAMES)
+def test_job_smoke_rejects_an_unusable_v2_secret_name(secret: object) -> None:
+    """The same fail-open on the Cloud Run v2 container path.
+
+    What names a resolvable secret is a Secret Manager fact rather than a
+    dialect fact, so the v2 `secret` member answers to the same grammar the
+    Knative `name` member does.
+    """
+
+    entry = {
+        "name": "ODP_POI_PROVIDER_API_KEY",
+        "valueSource": {"secretKeyRef": {"secret": secret, "version": "latest"}},
+    }
+    job = _v2_job_with_envs(
+        secret_envs=(
+            _v2_secret_env("ODAY_DATABASE_URL"),
+            entry,
+            _v2_secret_env("ODP_GEOCODE_PROVIDER_API_KEY"),
+            _v2_secret_env("ODP_ADMIN_BOUNDARY_PROVIDER_TOKEN"),
+        )
+    )
+
+    checks, report = _job_checks(job, kind="worker")
+    detail = _detail(checks, "jobs-smoke:worker:secret_bindings")
+
+    assert "jobs-smoke:worker:secret_bindings" in _failed_names(checks)
+    assert "ODP_POI_PROVIDER_API_KEY" in detail
+    assert "valueSource.secretKeyRef.secret" in detail
+    assert "ODP_POI_PROVIDER_API_KEY" not in report["secret_bound_env_vars"]
+
+
+@pytest.mark.parametrize("secret", _USABLE_SECRET_NAMES)
+def test_job_smoke_accepts_every_usable_knative_secret_name(secret: str) -> None:
+    """Fail-closed must not narrow to the one name shape this deployment uses.
+
+    A secret ID may hold digits, `_`, and mixed case and may run to 255
+    characters, and a cross-project secret is named by its full resource path.
+    Rejecting any of those would fail a supported deployment rather than a
+    malformed description.
+    """
+
+    entry = {
+        "name": "ODP_POI_PROVIDER_API_KEY",
+        "valueFrom": {"secretKeyRef": {"name": secret, "key": "latest"}},
+    }
+    job = _knative_job(
+        secret_envs=(
+            _knative_secret_env("ODAY_DATABASE_URL"),
+            entry,
+            _knative_secret_env("ODP_GEOCODE_PROVIDER_API_KEY"),
+            _knative_secret_env("ODP_ADMIN_BOUNDARY_PROVIDER_TOKEN"),
+        )
+    )
+
+    checks, report = _job_checks(job)
+
+    assert all(check.ok for check in checks), _failed_names(checks)
+    assert "ODP_POI_PROVIDER_API_KEY" in report["secret_bound_env_vars"]
+
+
+@pytest.mark.parametrize("secret", _USABLE_SECRET_NAMES)
+def test_job_smoke_accepts_every_usable_v2_secret_name(secret: str) -> None:
+    """The same acceptance boundary on the Cloud Run v2 container path."""
+
+    entry = {
+        "name": "ODP_POI_PROVIDER_API_KEY",
+        "valueSource": {"secretKeyRef": {"secret": secret, "version": "latest"}},
+    }
+    job = _v2_job_with_envs(
+        secret_envs=(
+            _v2_secret_env("ODAY_DATABASE_URL"),
+            entry,
+            _v2_secret_env("ODP_GEOCODE_PROVIDER_API_KEY"),
+            _v2_secret_env("ODP_ADMIN_BOUNDARY_PROVIDER_TOKEN"),
+        )
+    )
+
+    checks, report = _job_checks(job, kind="worker")
+
+    assert all(check.ok for check in checks), _failed_names(checks)
     assert "ODP_POI_PROVIDER_API_KEY" in report["secret_bound_env_vars"]
 
 

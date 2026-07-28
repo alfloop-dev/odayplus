@@ -140,6 +140,12 @@ Substring scanning is gone for this check: a job that merely mentions
 | a selector with surrounding whitespace (`" latest "`, `"latest "`, `"\tlatest\n"`, `" 1 "`) | same — the description is the proof, so it is read as gcloud emitted it and never normalized |
 | a padded version number (`"007"`) | same — versions are numbered from 1 and gcloud emits them canonically |
 | v2 `secretKeyRef` with no `version` | passes — Cloud Run v2 leaves `version` optional; only v1's `key` is required |
+| Knative `name` (or v2 `secret`) holding a character Secret Manager does not allow in a secret ID — a space, `.`, `/`, `!`, or non-ASCII | `secret_bindings` fails — a secret ID is letters, digits, `-` and `_` only, so this names no secret |
+| a secret name of 256 characters or more | same — a secret ID is capped at 255 |
+| a secret name with surrounding whitespace (`" oday-database-url "`, `"oday-database-url "`, `"\today-database-url\n"`) | same — the name is read exactly as gcloud emitted it, under the rule that already governs the version member |
+| a secret name of at most 255 characters using letters, digits, `-` or `_` | passes — that is the secret ID grammar, so mixed case, digits, and underscores are all legitimate |
+| `projects/<project>/secrets/<secret ID>`, with the project as a number or a 6–30 character project ID | passes — the documented cross-project form, and the deploy script takes every name from an operator-supplied `*_SECRET` variable |
+| a path-shaped name with an empty segment (`projects//secrets/<id>`, `projects/<p>/secrets/`) or a longer `projects/<p>/secrets/<id>/versions/N` | `secret_bindings` fails — neither is the documented form, and a version path does not name the secret a binding references |
 | `valueFrom.secretKeyRef.localObjectReference` | `secret_bindings` fails — Knative's superseded way of naming the same secret `name` names, so the selector names two |
 | a valid binding beside an empty off-dialect source (`"valueSource": {}`) | same — a source gcloud does not emit |
 | a valid binding beside a blank or non-string literal (`"value"` set to `""`, `"   "`, `0`, `false`, `[]`, `{}`, or `null`) | same — an env entry carries a literal or a secret source, never both |
@@ -620,6 +626,73 @@ boundary is a Secret Manager fact, so both dialects must keep accepting it.
 `test_job_smoke_accepts_a_v2_selector_without_a_declared_version` is unchanged
 and still passes.
 
+## Round 11: the rule round 10 wrote was true of one member and false of the one beside it
+
+Round 10 fixed the version member and stated the rule that made the old
+behaviour a defect: *the description is the proof*, so the validator may not
+normalize what it is checking. That rule was never applied to the other selector
+member. `_secret_reference_name` still read the secret **name** through
+`value.strip()` and tested it against no grammar at all — only `_configured`,
+which rejects an empty string and the placeholder words. Found by self-review at
+head `d9f2f007` rather than by the reviewer, and reproduced there before the fix:
+every name below fails **no** check on **both** container paths
+(`_failed_names(checks) == set()`).
+
+| crafted `secretKeyRef.name` / `.secret` at `d9f2f007` | result |
+| --- | --- |
+| `" oday-database-url "`, `" oday-database-url"`, `"oday-database-url "` | passed |
+| `"\today-database-url\n"` | passed |
+| `"oday database url"` (inner space) | passed |
+| `"oday-database-url!"`, `"oday.database.url"`, `"oday/database/url"` | passed |
+| a 256-character name | passed |
+| `"資料庫"` | passed |
+| `"."` | passed |
+| `"projects//secrets/<id>"`, `"projects/<p>/secrets/"` | passed |
+| `"projects/<p>/secrets/<id>/versions/1"` | passed |
+
+Each row is a name Secret Manager does not resolve, so each is a job whose
+mandatory database or selected-provider secret binds to nothing while
+`jobs-smoke:<kind>:secret_bindings` reports zero failed checks — the same
+fail-open the acceptance "malformed missing or plaintext secret bindings fail
+closed" forbids. The whitespace rows are the sharper failure: round 10 rejected
+` latest ` on exactly the reasoning that `.strip()` on the proof is the
+validator repairing the deployment's description for it, and then left the same
+`.strip()` in place one member over.
+
+`_usable_secret_name` now decides the name, under the grammar the API documents
+rather than an assumed one:
+
+- **A bare secret ID** is `[A-Za-z0-9_-]{1,255}`. Secret Manager allows letters,
+  digits, `-` and `_` and nothing else, so a space, `.`, `/`, `!`, or non-ASCII
+  character names no secret, and 256 characters is one past the cap.
+- **A cross-project secret** is `projects/<project>/secrets/<secret ID>`. The
+  project segment is a project number (never written with a leading zero) or a
+  project ID — 6 to 30 characters, opening with a lowercase letter and never
+  closing with a hyphen. Both spellings stay accepted on purpose:
+  `scripts/deploy_cloud_run_waji.sh` takes every name from an operator-supplied
+  `*_SECRET` variable (`ODAY_DATABASE_URL=${ODAY_DATABASE_URL_SECRET}`, and one
+  per selected provider), so a cross-project secret is a supported deployment
+  and rejecting the path form would over-tighten a schema this task must keep
+  supporting. A path with an empty segment, or the longer `.../versions/N` path
+  — which names a version, not the secret a binding references — is not that
+  form and is rejected.
+- **The name is read exactly as gcloud emitted it.** A value that is not
+  identical to its own `strip()` is rejected outright, for the same reason a
+  version is.
+
+The failure surfaces through the existing
+`binding declares no usable <dialect>.secretKeyRef.<name|secret>` detail, so no
+check is added or renamed and the planted name never reaches the detail or the
+report.
+
+Regressions: 16 cases on `test_job_smoke_rejects_an_unusable_knative_secret_name`
+and the same 16 on `test_job_smoke_rejects_an_unusable_v2_secret_name`. Controls:
+six usable names — the deployment's own ID, an underscored one, a mixed-case
+alphanumeric one, the 255-character boundary, and both cross-project path
+spellings — drive `test_job_smoke_accepts_every_usable_knative_secret_name` and
+`test_job_smoke_accepts_every_usable_v2_secret_name`, so the acceptance boundary
+is pinned on both dialects exactly as round 10 pinned the version boundary.
+
 ## Check and report surface
 
 `jobs-smoke:<kind>:secret_bindings` keeps its name, so the deploy gate and any
@@ -651,23 +724,27 @@ placed in the job description never reaches the detail text or the report.
 
 ## Focused verification
 
-Executed from the task branch on the round-10 tree (parent `39cf252c`), with
+Executed from the task branch on the round-11 tree (parent `d9f2f007`), with
 `export PATH="$HOME/.local/bin:$PATH"`:
 
 ```text
-python3 -m pytest tests/ops/test_cloud_run_live_deployment.py                  # 187 passed
-python3 -m pytest tests/ops                                                    # 242 passed, 20 skipped
+python3 -m pytest tests/ops/test_cloud_run_live_deployment.py                  # 230 passed, 1 deselected
+python3 -m pytest tests/ops                                                    # 285 passed, 20 skipped, 1 deselected
 python3 -m ruff check scripts/deployment/validate_cloud_run_live_deployment.py tests/ops/test_cloud_run_live_deployment.py
 python3 -m ruff format --check scripts/deployment/validate_cloud_run_live_deployment.py tests/ops/test_cloud_run_live_deployment.py
 git diff --check
 ```
 
-Ruff check, ruff format `--check`, and `git diff --check` all passed. Both pytest
-runs are fully green on this worker; the single environmental failure earlier
-rounds reported,
-`test_deploy_preflight_imports_runtime_dependencies_via_locked_python`, needs
-`uv` on `PATH` and now passes because `uv` is present
-(`/home/lupin/.local/bin/uv`).
+Ruff check, ruff format `--check`, and `git diff --check` all passed. The one
+deselected case is
+`test_deploy_preflight_imports_runtime_dependencies_via_locked_python`, the
+environmental failure earlier rounds reported: it shells out to `uv`, which is
+absent from this worker's `PATH` on the round-11 run, so it fails with
+`Error: required command 'uv' is not installed.` before reaching any assertion
+about this task's code. It is untouched by this branch — the whole diff is the
+validator, this test file's secret-binding cases, and this document — and it
+passes wherever `uv` is installed, which includes CI. Every other case in both
+runs passes.
 
 The focused-file count by round was 87 at `76063434` (round 2), 93 at `49e65382`
 (round 3, six new regressions), 94 at `5b9c430a` (round 4, the sidecar test), 97
@@ -678,10 +755,12 @@ cases, each asserting on both container paths), 125 at `a2a0106b` (round 8, six
 source-member regressions plus the `optional` control that pins the allowlist
 against over-tightening), 154 at `39cf252c` (round 9, 23 unusable-selector
 regressions plus six controls — five usable Knative version selectors and the
-v2 no-`version` case), and 187 now — round 10 adds 26 version-grammar
-regressions (13 per dialect) plus seven controls (the 63-character alias on the
-Knative side, and the whole usable-selector set re-run on the v2 container
-path).
+v2 no-`version` case), 187 at `d9f2f007` (round 10, 26 version-grammar
+regressions — 13 per dialect — plus seven controls: the 63-character alias on
+the Knative side, and the whole usable-selector set re-run on the v2 container
+path), and 231 now — round 11 adds 32 secret-name regressions (16 per dialect)
+plus 12 controls (six usable names on each dialect). The 231 counts the
+`uv`-dependent preflight case, which the round-11 run deselects; 230 ran.
 
 Each round's regressions fail against that round's pre-fix validator, verified by
 restoring the parent commit's
@@ -725,8 +804,16 @@ returning **zero** failing checks for `NEW`/`new`/`New`, `Latest`/`LATEST`, the
 64- and 255-character aliases, `' latest '` and its whitespace variants, `' 1 '`,
 and `'007'` on both container paths. That is the independent reproduction of the
 three defects Codex6 named at that head. The seven new controls pass against
-both validators, so this round's tightening is proven narrow too. The control
-tests
+both validators, so this round's tightening is proven narrow too. For round 11
+against `d9f2f007` the same restore method reports `28 failed, 202 passed`: 14
+of the 16 crafted names fail on each dialect, every one with
+`assert 'jobs-smoke:<kind>:secret_bindings' in _failed_names(checks)` against a
+`set()`, which is the reproduction of the fail-open above. The two that already
+failed closed before the fix are the non-string names (`1` and `None`) — the old
+`isinstance(value, str)` guard caught those and nothing else — so 14 per dialect
+is the honest size of this round's hole, not 16. All 12 round-11 controls pass
+against both validators, so the name grammar does not narrow what the
+deployment may legitimately reference. The control tests
 (`test_job_smoke_accepts_each_dialect_at_its_own_container_path` and the run
 30376737123 receipt) pass against both validators.
 
@@ -776,3 +863,14 @@ budget; the hosted runner overshot by more than 2x in the 17:12–17:30Z window.
 The perf budget belongs to ODP-PGAP-RELIABILITY-001, not to this task, so it is
 not retuned here. `product` must go green on the exact head before merge —
 re-run it rather than merging around it.
+
+**Cleared at head `d9f2f007`.** Run
+[30394458105](https://github.com/alfloop-dev/odayplus/actions/runs/30394458105)
+passed `product` (19m22s), `product-e2e-gate` (7m51s), `performance-gate`
+(1m32s), and `orchestrator` (33s) with nothing retuned and nothing merged
+around, which confirms the diagnosis above: the failure was the hosted runner's
+contention in the 17:12–17:30Z window, not this diff. `task-review-gate` was the
+only red check, and it reports task status rather than code — it stays red until
+the task moves to review. Round 11 moves the head past `d9f2f007`, so CI must go
+green again on the new exact head before merge; that rerun is the one the
+reviewer should read.

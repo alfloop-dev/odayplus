@@ -2071,6 +2071,54 @@ def _authoritative_task_container(
     return schema, containers[0]
 
 
+#: A Secret Manager secret is named in a Cloud Run binding in exactly one of the
+#: two forms the API documents, and both are checked here rather than assumed:
+#:
+#: - the bare secret ID, for a secret in the deploying project. Secret Manager
+#:   allows letters, digits, `-` and `_`, up to 255 characters, and nothing else
+#:   — no whitespace, no `.`, no `/`, no non-ASCII;
+#: - `projects/<project>/secrets/<secret ID>`, for a cross-project secret. The
+#:   project segment is a project number (which Secret Manager never writes with
+#:   a leading zero) or a project ID: 6 to 30 characters, opening with a
+#:   lowercase letter and never closing with a hyphen.
+#:
+#: Both forms stay accepted because `scripts/deploy_cloud_run_waji.sh` takes each
+#: name from an operator-supplied `*_SECRET` variable, so a cross-project secret
+#: is a supported deployment and rejecting the path form would over-tighten a
+#: schema this task must keep supporting.
+_SECRET_ID_PATTERN = re.compile(r"[A-Za-z0-9_-]{1,255}")
+_SECRET_PROJECT_PATTERN = re.compile(r"[1-9][0-9]*|[a-z][a-z0-9-]{4,28}[a-z0-9]")
+_SECRET_PATH_PATTERN = re.compile(
+    rf"projects/(?:{_SECRET_PROJECT_PATTERN.pattern})/secrets/(?:{_SECRET_ID_PATTERN.pattern})"
+)
+
+
+def _usable_secret_name(value: Any) -> bool:
+    """Return whether a selector member names a resolvable Secret Manager secret.
+
+    Round 10 closed this same fail-open on the *version* member and named the
+    rule that made it a defect: the description is the proof, so the validator
+    may not normalize what it is checking. The name member was still read
+    through `.strip()` and no grammar at all, which left the rule true of one
+    member and false of the one beside it — ` oday-database-url `,
+    `oday database url`, a 256-character name, and `.` each named a secret
+    Secret Manager does not resolve while the binding passed with zero failing
+    checks. A name that is not identical to its own `strip()` is rejected
+    outright, for the same reason a version is.
+    """
+
+    if not isinstance(value, str):
+        return False
+    if not value or value != value.strip():
+        return False
+    if not _configured(value):
+        return False
+    return (
+        _SECRET_ID_PATTERN.fullmatch(value) is not None
+        or _SECRET_PATH_PATTERN.fullmatch(value) is not None
+    )
+
+
 def _secret_reference_name(entry: Mapping[str, Any], schema: _JobApiSchema) -> str:
     """Return the Secret Manager reference an env entry binds to, or ``""``.
 
@@ -2084,8 +2132,10 @@ def _secret_reference_name(entry: Mapping[str, Any], schema: _JobApiSchema) -> s
     dialect's env source, a top-level `secretKeyRef`, or a key crossed over
     within this dialect such as `valueFrom.secretKeyRef.secret` — proves
     nothing about Secret Manager and resolves to `""`. A reference that is
-    absent, empty, or a placeholder resolves to `""` as well, so the caller
-    fails closed in every case.
+    absent, a placeholder, or not a name Secret Manager resolves — which
+    `_usable_secret_name` decides, rather than the bare non-emptiness this used
+    to test — resolves to `""` as well, so the caller fails closed in every
+    case.
     """
 
     source = entry.get(schema.env_source_key)
@@ -2095,8 +2145,8 @@ def _secret_reference_name(entry: Mapping[str, Any], schema: _JobApiSchema) -> s
     if not isinstance(reference, Mapping):
         return ""
     value = reference.get(schema.reference_key)
-    if isinstance(value, str) and _configured(value):
-        return value.strip()
+    if isinstance(value, str) and _usable_secret_name(value):
+        return value
     return ""
 
 
@@ -2207,7 +2257,8 @@ def _usable_secret_version(value: Any) -> bool:
     emitted it. Round 9 stripped first and then validated, which made ` latest `
     prove a binding that Secret Manager does not resolve: whitespace around a
     selector is a defect in the description, not something this validator may
-    normalize away on the deployment's behalf.
+    normalize away on the deployment's behalf. `_usable_secret_name` reads the
+    other selector member under the same rule.
     """
 
     if not isinstance(value, str):
