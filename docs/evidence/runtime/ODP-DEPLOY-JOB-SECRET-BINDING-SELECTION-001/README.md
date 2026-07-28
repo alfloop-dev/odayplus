@@ -168,3 +168,45 @@ Exact-head CI and an independent Codex6 review are required before merge. After
 merge, ODP-P10-DEV-REDEPLOY-VERIFY-001 must re-run from the exact merged `dev`
 SHA; that rerun is the live proof that run 30376737123's migration gate now
 clears with the same provider selection.
+
+## Merge blocker: `product` fails on an unrelated runner-bound perf budget
+
+At head `ef048b0f`, CI run
+[30380735899](https://github.com/alfloop-dev/odayplus/actions/runs/30380735899)
+fails the required `product` check on one test, twice (original and
+`gh run rerun --failed`):
+
+```text
+FAILED tests/performance/test_load_and_soak.py::test_concurrency_and_soak_execution
+  AssertionError: P95 latency 7.518s exceeded budget of 3.0s   # 17:12Z
+  AssertionError: P95 latency 6.956s exceeded budget of 3.0s   # 17:29Z
+1 failed, 1968 passed, 68 deselected
+```
+
+This task cannot be its cause:
+
+- The whole diff is `scripts/deployment/validate_cloud_run_live_deployment.py`
+  (a standalone CLI never imported by the API), `tests/ops/`, and this file.
+- `tests/performance/test_load_and_soak.py` imports only
+  `apps.api.oday_api.main`, `shared.infrastructure.persistence.factory`, and
+  `tests.integration._authz`. There is no import path from the diff to the test.
+- The previous head of this same branch, `d6bb605a`, passed `product` at 16:37Z
+  (run 30379120952), and `dev` at the shared base `dda72615` passed at 16:26Z.
+  The `d6bb605a → ef048b0f` delta is 54 lines across those same three files.
+
+Re-run on the exact failing head, on the worker host:
+
+```text
+export PATH="$HOME/.local/bin:$PATH"
+python3 -m pytest tests/performance/test_load_and_soak.py -q      # 1 passed
+p50=0.499s  p95=1.138s  p99=1.304s  success=150  failure=0  throughput=35.96 req/s
+```
+
+The test drives 150 requests at 10/20/50-way thread concurrency against one
+SQLite file and asserts a wall-clock p95, so it measures the runner's CPU and IO
+contention as much as the application. p95 is 1.138s locally against a 3.0s
+budget; the hosted runner overshot by more than 2x in the 17:12–17:30Z window.
+
+The perf budget belongs to ODP-PGAP-RELIABILITY-001, not to this task, so it is
+not retuned here. `product` must go green on the exact head before merge —
+re-run it rather than merging around it.
