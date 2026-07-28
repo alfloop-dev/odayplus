@@ -1410,6 +1410,22 @@ def test_job_smoke_rejects_plaintext_provider_secret() -> None:
             "name": "ODP_POI_PROVIDER_API_KEY",
             "valueFrom": {"secretKeyRef": {"name": "placeholder", "key": "latest"}},
         },
+        # A `secretKeyRef` hoisted to the top level is not a schema Cloud Run
+        # emits in either API version.
+        {
+            "name": "ODP_POI_PROVIDER_API_KEY",
+            "secretKeyRef": {"name": "odp-poi-provider-api-key", "key": "latest"},
+        },
+        # The v2 reference key inside the Knative env source: neither schema.
+        {
+            "name": "ODP_POI_PROVIDER_API_KEY",
+            "valueFrom": {"secretKeyRef": {"secret": "odp-poi-provider-api-key"}},
+        },
+        # The Knative reference key inside the v2 env source: neither schema.
+        {
+            "name": "ODP_POI_PROVIDER_API_KEY",
+            "valueSource": {"secretKeyRef": {"name": "odp-poi-provider-api-key"}},
+        },
     ],
 )
 def test_job_smoke_rejects_malformed_secret_binding(malformed: dict[str, object]) -> None:

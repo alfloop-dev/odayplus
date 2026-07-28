@@ -75,7 +75,10 @@ textual. `job_secret_binding_checks` does four things:
 4. **Proves each binding is a secret reference.** `_secret_binding_proof`
    accepts only `valueFrom.secretKeyRef.name` (Knative) or
    `valueSource.secretKeyRef.secret` (v2), and only when that reference is not a
-   placeholder.
+   placeholder. Those two schema/key pairs are the whole allowlist
+   (`_SECRET_REFERENCE_SCHEMAS`): a reference key crossed over from the other
+   schema, or a `secretKeyRef` hoisted to the top level of the env entry, is not
+   a shape gcloud emits and is rejected like any other malformed binding.
 
 Substring scanning is gone for this check: a job that merely mentions
 `ODAY_DATABASE_URL` in a label or an argument no longer satisfies it.
@@ -93,6 +96,9 @@ Substring scanning is gone for this check: a job that merely mentions
 | env entry with no `valueFrom`/`valueSource` | `binding declares no usable secretKeyRef` |
 | empty `valueFrom` / `valueSource` / `secretKeyRef` | same |
 | `secretKeyRef` naming a placeholder (`placeholder`, `changeme`, …) | same |
+| `secretKeyRef` at the top level of the env entry | same — not a Cloud Run schema |
+| `valueFrom.secretKeyRef.secret` (v2 key in the Knative source) | same — not a Cloud Run schema |
+| `valueSource.secretKeyRef.name` (Knative key in the v2 source) | same — not a Cloud Run schema |
 | no plaintext `ODP_PRODUCTION_PROVIDER_IDS` in the job | `provider_selection` **and** `secret_bindings` both fail: the selection is unprovable |
 | `ODP_PRODUCTION_PROVIDER_IDS` supplied only as a secret reference | same — an unreadable selection proves nothing |
 | selection names a provider the registry does not know | `provider_selection` and `secret_bindings` fail |
@@ -104,6 +110,12 @@ Substring scanning is gone for this check: a job that merely mentions
 The empty-`valueSource` rows are a deliberate tightening: the previous fixtures
 used `{"name": "...", "valueSource": {}}`, which is not a binding gcloud emits
 and which proves nothing about Secret Manager.
+
+The last three rows close a gap Codex6 found at head `d6bb605a`: the reference
+lookup had walked `(valueFrom, valueSource, entry)` × `(secret, name)`, so six
+shapes resolved where only two are real. All three off-schema shapes are now
+parametrized regression cases in
+`test_job_smoke_rejects_malformed_secret_binding` (9 cases total).
 
 ## Check and report surface
 
@@ -136,11 +148,11 @@ placed in the job description never reaches the detail text or the report.
 
 ## Focused verification
 
-Executed from the task branch at commit `26aaa6cb`:
+Executed from the task branch on the review-round-2 tree (parent `d6bb605a`):
 
 ```text
-uv run --frozen pytest tests/ops/test_cloud_run_live_deployment.py -q   # 84 passed
-uv run --frozen pytest tests/ops -q                                     # 159 passed
+uv run --frozen pytest tests/ops/test_cloud_run_live_deployment.py -q   # 87 passed
+uv run --frozen pytest tests/ops -q                                     # 162 passed
 uv run --frozen ruff check .                                            # All checks passed
 uv run --frozen ruff format --check scripts/deployment/validate_cloud_run_live_deployment.py tests/ops/test_cloud_run_live_deployment.py
 git diff --check

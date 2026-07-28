@@ -1896,24 +1896,38 @@ def _iter_job_containers(payload: Any) -> Iterator[Mapping[str, Any]]:
             yield from _iter_job_containers(item)
 
 
+#: The only two env-var-to-secret schemas Cloud Run emits, as
+#: `(env source field, secret reference field)`. Knative names the secret in
+#: `valueFrom.secretKeyRef.name`; Cloud Run v2 names it in
+#: `valueSource.secretKeyRef.secret`.
+_SECRET_REFERENCE_SCHEMAS: tuple[tuple[str, str], ...] = (
+    ("valueFrom", "name"),
+    ("valueSource", "secret"),
+)
+
+
 def _secret_reference_name(entry: Mapping[str, Any]) -> str:
     """Return the Secret Manager reference an env entry binds to, or ``""``.
 
-    Both env schemas are accepted: Knative `valueFrom.secretKeyRef.name` and v2
-    `valueSource.secretKeyRef.secret`. A reference that is absent, empty, or a
-    placeholder resolves to `""` so the caller can fail closed.
+    Only the two documented schema/key pairs in `_SECRET_REFERENCE_SCHEMAS` are
+    accepted. Anything else — a top-level `secretKeyRef`, or a key crossed over
+    from the other schema such as `valueFrom.secretKeyRef.secret` or
+    `valueSource.secretKeyRef.name` — is not a binding gcloud emits, so it
+    proves nothing about Secret Manager and resolves to `""`. A reference that
+    is absent, empty, or a placeholder resolves to `""` as well, so the caller
+    fails closed in every case.
     """
 
-    for source in (entry.get("valueFrom"), entry.get("valueSource"), entry):
+    for source_key, reference_key in _SECRET_REFERENCE_SCHEMAS:
+        source = entry.get(source_key)
         if not isinstance(source, Mapping):
             continue
         reference = source.get("secretKeyRef")
         if not isinstance(reference, Mapping):
             continue
-        for key in ("secret", "name"):
-            value = reference.get(key)
-            if isinstance(value, str) and _configured(value):
-                return value.strip()
+        value = reference.get(reference_key)
+        if isinstance(value, str) and _configured(value):
+            return value.strip()
     return ""
 
 
