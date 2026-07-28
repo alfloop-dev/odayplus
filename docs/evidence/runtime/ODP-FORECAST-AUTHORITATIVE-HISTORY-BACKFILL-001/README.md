@@ -556,15 +556,29 @@ longer at the other end, which is pure governed ingestion of real records.
 | | Attested span below the split | Eligible dates | h28 |
 | --- | --- | --- | --- |
 | Today | `2026-05-23..2026-07-04` (~44 d) | ~15 | no |
-| After `-b1` | `2026-05-15..2026-07-04` (51 d) | 23 | no |
-| **After `-b2`** | **`2026-05-07..2026-07-04` (59 d)** | **31** | **yes** |
-| After `-b3` | `2026-04-29..2026-07-04` (67 d) | 39 | yes, with margin |
+| After `-b1` | `2026-05-17..2026-07-04` (49 d) | 21 | no |
+| After `-b2` | `2026-05-11..2026-07-04` (55 d) | 27 | no |
+| **After `-b3`** | **`2026-05-05..2026-07-04` (61 d)** | **33** | **yes** |
+| After `-b4` | `2026-04-29..2026-07-04` (67 d) | 39 | yes, with margin |
 
-`-b1` = `2026-05-15..2026-05-23`, `-b2` = `2026-05-07..2026-05-15`,
-`-b3` = `2026-04-29..2026-05-07` — each 8 daily partitions, sized to fit inside
-the 4 h `activeDeadlineSeconds` that Defect C documents, and each derived
-verbatim from the `-s3` manifest exactly as `-s3`/`-s4`/`-s5` were derived from
-`-s2`. Manifests in `orders_history_backfill_jobs.applied.json`.
+`-b1` = `2026-05-17..2026-05-23`, `-b2` = `2026-05-11..2026-05-17`,
+`-b3` = `2026-05-05..2026-05-11`, `-b4` = `2026-04-29..2026-05-05` — **six**
+daily partitions each, not eight, and each derived verbatim from the `-s3`
+manifest exactly as `-s3`/`-s4`/`-s5` were derived from `-s2`. Manifests in
+`orders_history_backfill_jobs.applied.json`; the applied windows are readable
+back off the cluster from each Job's `ODP_ORDERS_HISTORY_START`/`_END`.
+
+Slice width is a **correctness** decision, not a throughput one. `-s3`'s six
+partitions measured 1/10/10/25/37/35 minutes — 118 total, 37 worst case. Six
+worst-case partitions is 222 min against the 240 min `activeDeadlineSeconds`;
+eight would be 296 and would reproduce Defect C. A deadline kill is not a
+harmless retry, it is exactly how Defect D's permanently unattested lineage was
+created, so each slice must fit its own deadline with margin.
+
+`-b4` is not redundant margin. The arithmetic above is a **global** span, while
+`prior_day_count_28` is evaluated per store: a store that transacts on no day in
+the window produces no row and breaks its own streak, so per-store eligibility
+trails the global span. Section 7.1 measures how far.
 
 This is the same governed ingestion path, the same digest-pinned release image,
 and the same immutable-snapshot-plus-run-lineage contract as every other slice.
