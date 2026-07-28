@@ -28,6 +28,7 @@ into its output.
 | `verify_after.json` | `verify` | Target horizon windows after activation |
 | `inventory_after.json` | `inventory` | Source + target state captured after activation |
 | `orders_history_gap_jobs.applied.json` | — | The exact `-s3`/`-s4`/`-s5` Job manifests applied to close the source gap (see §5). Secrets appear only as `secretKeyRef` names, never values. |
+| `lineage_repair_plan.json` | `plan` | Read-only scope of the §6 lineage repair, from `repair_unattested_lineage.py` |
 
 Reproduce any of them with the DSN pair and the Cloud SQL proxy attestation in
 the environment:
@@ -328,6 +329,46 @@ record. `core.transactions` itself is not deleted, only re-projected through the
 same idempotent upsert. The step is reversible in both directions — the backup
 restores the prior state exactly, and a failed re-run leaves the affected
 transactions merely lineage-less (already ineligible, no worse) and re-runnable.
+
+Step 3 is job `-s6` (`2026-07-06..2026-07-07`, already created and suspended,
+§5 topology). It re-reads the whole day because step 2 removes the checkpoint:
+`Pipeline.run_partition` resumes from `data_plane.checkpoints` and the job
+entrypoint exposes no way to disable that, so the checkpoint deletion is what
+makes the re-ingest complete rather than another 52-second no-op.
+
+### The repair is a reviewable tool, not an ad-hoc statement
+
+Steps 1–2 are implemented as `scripts/data_plane/repair_unattested_lineage.py`
+so the delete is bounded by tested guards instead of operator care. It refuses,
+fail-closed, to touch:
+
+| Guard | Refuses when | Why |
+| --- | --- | --- |
+| terminal status | run is `SUCCEEDED`/`FAILED` | that lineage is exactly what the view is meant to trust |
+| reconciliation values | `finished_at`, or any of the three checksums, is non-null | a reconciliation is an attestation even without a terminal status |
+| reported progress | `processed_count` or `valid_loaded` > 0 | same |
+| modelled scope | run owns lineage for any table other than `core.transactions` | one partition re-ingest would not rebuild it, so the delete would be one-way |
+| known window | run has no `partition_key` | there would be nothing to re-ingest |
+
+`plan` is the default and read-only; `apply` additionally requires
+`--confirm-run-id` to repeat the run id and a `--backup` path that is written
+**and re-read** before a single row is deleted; the lineage delete and the
+checkpoint delete share one transaction, and the delete is rolled back if its
+row count disagrees with the plan. `restore` re-inserts the backup.
+
+The module deliberately offers no way to re-point lineage at another run and no
+way to mark a run terminal. Both would make the view report an attestation that
+never happened — the same failure as relaxing the view, just written elsewhere.
+
+`lineage_repair_plan.json` is the read-only plan for `069b0984`, taken against
+the live source: 4 752 lineage rows and 1 checkpoint to delete, and **4 752
+transactions left with no lineage at all** until `-s6` re-attests them. That
+number is reported rather than smoothed over, because it means the delete widens
+the outage until the re-ingest lands.
+
+**Status: parked.** Deleting governed lineage from the shared source database is
+a destructive, human-gated action. It has not been executed. Everything else in
+this task proceeds without it; only the final 28-day window depends on it.
 
 ## 7. After state
 
