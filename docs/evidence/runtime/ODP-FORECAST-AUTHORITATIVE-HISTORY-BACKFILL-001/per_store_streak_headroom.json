@@ -1,0 +1,65 @@
+{
+  "artifact": "per_store_streak_headroom",
+  "task": "ODP-FORECAST-AUTHORITATIVE-HISTORY-BACKFILL-001",
+  "captured_at": "2026-07-28T19:20:00Z",
+  "captured_by": "Claude3",
+
+  "question": "The backwards-extension plan projects a GLOBAL contiguous span. h28 is measured PER STORE. A store that transacts on no day inside the window produces no daily row and breaks its own streak, so per-store eligibility can only trail the global span. Does it trail it by enough to invalidate the plan before the -b slices are spent?",
+
+  "answer": "NO. 410 of 583 stores (70.3%) hold an UNBROKEN transacting-day run across the entire currently landed span. Per-store streaks track the global span almost exactly for the stores that matter, so extending the global floor extends those stores' runs one-for-one.",
+
+  "what_the_gate_actually_requires": {
+    "source": "scripts/models/sql/model_ready_views.sql and scripts/data_plane/forecast_history_activation.py::forecast_horizon_windows",
+    "h28": "a store holding 28 CONSECUTIVE training-eligible calendar dates",
+    "per_eligible_date": "prior_day_count_28 = 28, i.e. a mature_daily row on every one of the 28 preceding days, plus lineage_complete AND source_run_complete on the TARGET day",
+    "therefore": "a store needs 56 consecutive days carrying transactions, of which the trailing 28 must also be attested",
+    "important_semantic": "transaction_daily and mature_daily apply NO filter on lineage_complete or source_run_complete -- those are computed as flags, not predicates. So prior days only have to have been INGESTED, not attested. The Defect D split at 2026-07-05/07-06 therefore does not break the prior-day count; it only removes those two dates as eligible TARGETS, which is what breaks the eligible-date streak there. This is why the fix is to lengthen the span below the split rather than to bridge it."
+  },
+
+  "measurement": {
+    "database": "PG15 source of truth (ODP_LEGACY_DATABASE_URL), core.transactions",
+    "predicate": "transaction_status='succeeded' AND currency='TWD', the same two filters the view's transaction_source CTE applies",
+    "window": "2026-05-23..2026-07-04 (43 days) -- the currently landed span below the Defect D split",
+    "method": "distinct (store_id, event_time::date at UTC), then classic date - row_number() gaps-and-islands per store, then max island length per store",
+    "read_only": true,
+    "redaction": "aggregates only; no store_id, store name, member, order id, or amount appears in this receipt"
+  },
+
+  "result": {
+    "landed_txn_date_range": ["2026-05-22", "2026-07-27"],
+    "landed_txn_rows": 416433,
+    "window_days": 43,
+    "total_stores_in_window": 583,
+    "stores_with_unbroken_run_over_whole_window": 410,
+    "stores_with_run_ge_29d": 466,
+    "stores_with_run_ge_56d": 0,
+    "mean_best_run_days": 36.0,
+    "max_best_run_days": 43
+  },
+
+  "reading_the_result": [
+    "stores_with_run_ge_56d = 0 is NOT a finding about store behaviour. The measurement window is only 43 days wide, so 43 is the arithmetic maximum any run can score. It is the window that is short, not the stores.",
+    "max_best_run_days = 43 equals the window width, confirming the ceiling is the window.",
+    "410 stores at the ceiling means 70.3% of stores transact every single day with no gap at all. For those stores per-store streak == global span, and each additional ingested day below the floor lengthens their run by exactly one.",
+    "mean 36.0 across all 583 stores reflects the long tail of intermittent stores, which were never going to reach h28 and whose absence does not affect whether the criterion is met."
+  ],
+
+  "projection_after_the_b_slices": {
+    "basis": "for the 410 unbroken stores, per-store run length == global ingested span",
+    "after_b1_floor_2026-05-17": {"span_days": 49, "eligible_dates": 21, "h28": false},
+    "after_b2_floor_2026-05-11": {"span_days": 55, "eligible_dates": 27, "h28": false},
+    "after_b3_floor_2026-05-05": {"span_days": 61, "eligible_dates": 33, "h28": true, "h28_windows_per_store": 6},
+    "after_b4_floor_2026-04-29": {"span_days": 67, "eligible_dates": 39, "h28": true, "h28_windows_per_store": 12},
+    "note": "eligible_dates = span_days - 28, ending at 2026-07-04 because 07-05 and 07-06 remain unattested (Defect D)"
+  },
+
+  "residual_risk": {
+    "risk": "a store that transacted daily through June/July might not have existed, or might have been intermittent, in early May -- in which case extending the floor would not extend that store's run.",
+    "why_it_is_low": [
+      "upstream_source_depth_probe.json already measured daily upstream document counts BELOW the landed floor: 2026-05-14 6600, 05-16 11011, 05-18 7037, 05-20 6307, 05-22 7150. These are the same order of magnitude as landed July partitions (07-11 6752, 07-10 8056, 07-09 7787), so the source is at comparable daily density in the target window rather than thinning out.",
+      "the upstream collection holds 2 170 979 documents back to 2024-06-26, so early May is deep inside its history, not near its edge."
+    ],
+    "why_it_was_not_probed_further": "resolving it exactly would need a per-store upstream aggregate. That is declined on two grounds: the established probe redaction explicitly selects no store field, and the private-pool node sits at ~96% memory while a slice runs, so an added Pod risks sitting Pending and delaying -s4. -b4 exists precisely as the margin that absorbs this residual, which is why it is queued ahead of -s5 rather than dropped.",
+    "falsifiable_check": "re-run this same measurement after -b3 lands. If stores_with_unbroken_run_over_whole_window stays near 410 against a 61-day window, the residual is closed empirically rather than by argument."
+  }
+}

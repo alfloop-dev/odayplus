@@ -602,7 +602,59 @@ would rebuild exactly the Defect C shape this is meant to retire.
 `-b4` is not redundant margin. The arithmetic above is a **global** span, while
 `prior_day_count_28` is evaluated per store: a store that transacts on no day in
 the window produces no row and breaks its own streak, so per-store eligibility
-trails the global span. Section 7.1 measures how far.
+trails the global span. The next subsection measures how far.
+
+### How far per-store streaks trail the global span
+
+Measured, not assumed — receipt in `per_store_streak_headroom.json`. Over the
+currently landed span below the split, `2026-05-23..2026-07-04` (43 days),
+**410 of 583 stores hold an unbroken transacting-day run across the entire
+window**. Mean best run is 36.0 days and the maximum is 43.
+
+That maximum is the tell: 43 is the window width, so the run length is capped by
+how much history has been ingested, not by store behaviour. `stores with a run
+≥ 56 d` reads `0` for the same reason and is **not** a finding — no run can
+exceed a 43-day window. For the 410 stores at the ceiling, per-store streak
+*equals* the global span, so every day added below the floor lengthens their run
+by exactly one. The plan's global arithmetic transfers to them one-for-one, and
+`-b3` puts them at 33 eligible dates, or 6 complete h28 windows each.
+
+The 36.0 mean across all 583 stores is the long tail of intermittent stores.
+Those were never going to reach h28 under any amount of backfill, and the
+criterion does not depend on them.
+
+One residual stays open: a store transacting daily through June and July might
+have been intermittent, or not yet trading, in early May, in which case
+extending the floor would not extend *its* run. Two independent facts bound it.
+`upstream_source_depth_probe.json` already measured upstream daily counts below
+the landed floor — `05-14` 6 600, `05-16` 11 011, `05-18` 7 037, `05-20` 6 307,
+`05-22` 7 150 — the same order of magnitude as landed July partitions (`07-11`
+6 752, `07-10` 8 056, `07-09` 7 787), so the source is at comparable daily
+density rather than thinning out; and the collection runs back to `2024-06-26`,
+so early May sits deep inside its history rather than at its edge.
+
+Closing that residual exactly would need a per-store upstream aggregate, which
+is declined on two grounds: the probe's redaction deliberately selects no store
+field, and the `private-pool` node sits at ~96 % memory while a slice runs, so
+an added Pod risks sitting `Pending` and delaying `-s4`. `-b4` is the margin
+that absorbs the residual, which is why it is queued ahead of `-s5` rather than
+dropped. The honest way to close it is empirical: re-run the same measurement
+once `-b3` lands and check the unbroken-run count holds near 410 against a
+61-day window.
+
+### The Defect D split does not break the prior-day count
+
+Worth stating explicitly, because it is easy to read the split as more damaging
+than it is. `transaction_daily` and `mature_daily` apply **no filter** on
+`lineage_complete` or `source_run_complete` — those are computed as *flags*, not
+predicates, and only gate the target row. So `prior_day_count_28` counts a day
+that was merely *ingested*, whether or not it was ever attested.
+
+`2026-07-05` and `2026-07-06` therefore still contribute to the 28-day prior
+window of later dates. What they break is their own eligibility as **targets**,
+and that is what severs the eligible-date streak at the split. This is precisely
+why the fix is to lengthen the span *below* the split rather than to bridge it,
+and it is the mechanism behind the `N - 28` arithmetic used above.
 
 This is the same governed ingestion path, the same digest-pinned release image,
 and the same immutable-snapshot-plus-run-lineage contract as every other slice.
