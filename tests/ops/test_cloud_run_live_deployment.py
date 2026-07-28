@@ -765,6 +765,440 @@ def test_migration_compatibility_smoke_only_requires_old_database_compatibility(
     assert not any("external_providers" in name for name in names)
 
 
+# --- migration compatibility probe: bounded cold-start retry contract --------
+#
+# Deploy Dev run 30402570022 failed this gate because the old revision was
+# scaled to zero and took 28.1s to answer a single 15.0s attempt. The retry
+# contract exists to outlast that cold start and nothing else: every outcome
+# the old revision actually answers is a verdict and must still fail closed on
+# the first response.
+
+
+def _attempt(
+    *,
+    status: int | None = None,
+    payload: dict | None = None,
+    error: str = "",
+    elapsed: float = 0.0,
+) -> object:
+    return validator.ProbeAttempt(
+        status=status, payload=payload, error=error, elapsed_seconds=elapsed
+    )
+
+
+def _timeout_attempt(elapsed: float = 15.0) -> object:
+    return _attempt(error="The read operation timed out", elapsed=elapsed)
+
+
+def _healthy_version() -> object:
+    return _attempt(status=200, payload={"status": "ok", "release_sha": EXPECTED_SHA}, elapsed=1.9)
+
+
+def _health_attempt(database: object, *, status: int = 503) -> object:
+    dependencies: dict[str, object] = {"job_queue": "healthy"}
+    if database is not None:
+        dependencies["database"] = database
+    return _attempt(
+        status=status, payload={"status": "unhealthy", "dependencies": dependencies}, elapsed=0.9
+    )
+
+
+class _ScriptedProbe:
+    """Replays a scripted attempt sequence per endpoint and records timeouts."""
+
+    def __init__(self, *, version: list, health: list) -> None:
+        self._scripts = {"/platform/version": list(version), "/platform/health": list(health)}
+        self.calls: list[tuple[str, float]] = []
+
+    def __call__(self, url: str, *, headers, timeout: float):
+        path = "/platform/health" if url.endswith("/platform/health") else "/platform/version"
+        self.calls.append((path, timeout))
+        script = self._scripts[path]
+        return script.pop(0) if len(script) > 1 else script[0]
+
+    def attempts_for(self, path: str) -> int:
+        return sum(1 for called_path, _ in self.calls if called_path == path)
+
+
+class _RecordingSleep:
+    def __init__(self) -> None:
+        self.delays: list[float] = []
+
+    def __call__(self, seconds: float) -> None:
+        self.delays.append(seconds)
+
+
+class _FakeClock:
+    """Monotonic clock advanced explicitly by the fake probe and fake sleep."""
+
+    def __init__(self) -> None:
+        self.now = 0.0
+
+    def __call__(self) -> float:
+        return self.now
+
+    def advance(self, seconds: float) -> None:
+        self.now += seconds
+
+
+def _run_compatibility(probe: _ScriptedProbe, monkeypatch) -> tuple[list, dict, _RecordingSleep]:
+    sleeper = _RecordingSleep()
+    monkeypatch.setattr(validator, "probe_json_endpoint", probe)
+    checks, report = validator.compatibility_smoke_checks(
+        api_url="https://oday-api.example",
+        web_url="https://oday-web.example",
+        correlation_id="corr-cloud-run-compat-test",
+        timeout=15.0,
+        sleep=sleeper,
+    )
+    return checks, report, sleeper
+
+
+def test_probe_retry_policy_backoff_is_bounded_and_exponential() -> None:
+    policy = validator.ProbeRetryPolicy(
+        attempts=6, timeout_seconds=15.0, backoff_seconds=2.0, max_backoff_seconds=8.0
+    )
+    assert [policy.backoff_for(index) for index in range(1, 7)] == [0.0, 2.0, 4.0, 8.0, 8.0, 8.0]
+
+
+@pytest.mark.parametrize(
+    "attempts,timeout,backoff,deadline",
+    [(0, 15.0, 2.0, 120.0), (4, 0.0, 2.0, 120.0), (4, 15.0, -1.0, 120.0), (4, 15.0, 2.0, 0.0)],
+)
+def test_probe_retry_policy_rejects_unbounded_or_degenerate_configuration(
+    attempts: int, timeout: float, backoff: float, deadline: float
+) -> None:
+    with pytest.raises(ValueError):
+        validator.ProbeRetryPolicy(
+            attempts=attempts,
+            timeout_seconds=timeout,
+            backoff_seconds=backoff,
+            deadline_seconds=deadline,
+        )
+
+
+def test_probe_failure_is_transient_only_when_the_old_revision_gave_no_verdict() -> None:
+    # No verdict: worth retrying.
+    assert validator.probe_failure_is_transient(_timeout_attempt()) is True
+    assert (
+        validator.probe_failure_is_transient(
+            _attempt(error="<urlopen error [Errno 104] Connection reset by peer>")
+        )
+        is True
+    )
+    for status in sorted(validator.PROBE_RETRY_STATUSES):
+        assert (
+            validator.probe_failure_is_transient(
+                _attempt(status=status, error="did not return valid JSON")
+            )
+            is True
+        )
+    # A verdict from the old revision is never retried, whatever it says.
+    assert validator.probe_failure_is_transient(_attempt(status=200, payload={})) is False
+    assert validator.probe_failure_is_transient(_attempt(status=500, payload={})) is False
+    assert validator.probe_failure_is_transient(_attempt(status=503, payload={})) is False
+    # Invalid JSON on an otherwise successful response is a defect, not a blip.
+    assert (
+        validator.probe_failure_is_transient(
+            _attempt(status=200, error="did not return valid JSON")
+        )
+        is False
+    )
+    assert validator.probe_failure_is_transient(_attempt(status=404, error="not JSON")) is False
+
+
+def test_compatibility_probe_recovers_from_a_bounded_cold_start(monkeypatch) -> None:
+    probe = _ScriptedProbe(
+        version=[_timeout_attempt(), _timeout_attempt(), _healthy_version()],
+        health=[_health_attempt("healthy")],
+    )
+    checks, report, sleeper = _run_compatibility(probe, monkeypatch)
+
+    assert all(check.ok for check in checks), [c for c in checks if not c.ok]
+    assert probe.attempts_for("/platform/version") == 3
+    assert probe.attempts_for("/platform/health") == 1
+    assert sleeper.delays == [2.0, 4.0]
+    assert report["version_probe"]["attempt_count"] == 3
+    assert report["version_probe"]["outcome"] == "answered"
+    assert report["health_probe"]["attempt_count"] == 1
+    assert report["probe_retry_policy"] == {
+        "attempts": 4,
+        "per_attempt_timeout_seconds": 15.0,
+        "backoff_seconds": 2.0,
+        "max_backoff_seconds": 8.0,
+        "total_deadline_seconds": 120.0,
+    }
+    assert report["secret_values_redacted"] is True
+
+
+def test_compatibility_probe_fails_closed_when_attempts_are_exhausted(monkeypatch) -> None:
+    probe = _ScriptedProbe(version=[_timeout_attempt()], health=[_timeout_attempt()])
+    checks, report, _ = _run_compatibility(probe, monkeypatch)
+
+    assert not any(check.ok for check in checks)
+    assert probe.attempts_for("/platform/version") == validator.COMPATIBILITY_PROBE_ATTEMPTS
+    assert probe.attempts_for("/platform/health") == validator.COMPATIBILITY_PROBE_ATTEMPTS
+    assert report["version_probe"]["outcome"] == "attempts_exhausted"
+    assert report["health_probe"]["outcome"] == "attempts_exhausted"
+    by_name = {check.name: check.detail for check in checks}
+    assert "The read operation timed out" in by_name["compatibility:/platform/version:http"]
+    assert "attempts_exhausted" in by_name["compatibility:/platform/health:database"]
+    assert "version" not in report
+    assert "health" not in report
+
+
+@pytest.mark.parametrize(
+    "version_attempt_kwargs,expected_detail,expected_outcome",
+    [
+        ({"status": 500, "payload": {"status": "error"}}, "status=500", "answered"),
+        ({"status": 404, "payload": {"detail": "not found"}}, "status=404", "answered"),
+        ({"status": 200, "error": "did not return valid JSON: line 1"}, "valid JSON", "rejected"),
+        ({"status": 200, "error": "returned a non-object JSON payload"}, "non-object", "rejected"),
+    ],
+)
+def test_compatibility_version_verdicts_fail_closed_without_retry(
+    version_attempt_kwargs: dict, expected_detail: str, expected_outcome: str, monkeypatch
+) -> None:
+    probe = _ScriptedProbe(
+        version=[_attempt(**version_attempt_kwargs)], health=[_health_attempt("healthy")]
+    )
+    checks, report, sleeper = _run_compatibility(probe, monkeypatch)
+
+    by_name = {check.name: check for check in checks}
+    version_check = by_name["compatibility:/platform/version:http"]
+    assert version_check.ok is False
+    assert expected_detail in version_check.detail
+    assert probe.attempts_for("/platform/version") == 1
+    assert sleeper.delays == []
+    assert report["version_probe"]["outcome"] == expected_outcome
+
+
+@pytest.mark.parametrize(
+    "database",
+    ["unhealthy", None, "healthy (sqlite)", "degraded", {"status": "unhealthy"}],
+)
+def test_compatibility_database_verdicts_fail_closed_without_retry(
+    database: object, monkeypatch
+) -> None:
+    probe = _ScriptedProbe(version=[_healthy_version()], health=[_health_attempt(database)])
+    checks, _, sleeper = _run_compatibility(probe, monkeypatch)
+
+    by_name = {check.name: check for check in checks}
+    assert by_name["compatibility:/platform/version:http"].ok is True
+    database_check = by_name["compatibility:/platform/health:database"]
+    assert database_check.ok is False
+    assert probe.attempts_for("/platform/health") == 1
+    assert sleeper.delays == []
+
+
+def test_compatibility_health_non_probeable_status_fails_closed(monkeypatch) -> None:
+    probe = _ScriptedProbe(
+        version=[_healthy_version()],
+        health=[_health_attempt("healthy", status=500)],
+    )
+    checks, _, _ = _run_compatibility(probe, monkeypatch)
+
+    by_name = {check.name: check for check in checks}
+    assert by_name["compatibility:/platform/health:database"].ok is False
+
+
+def test_probe_retry_stops_on_the_total_deadline_before_the_attempt_cap() -> None:
+    clock = _FakeClock()
+    sleeper = _RecordingSleep()
+
+    def fake_sleep(seconds: float) -> None:
+        sleeper(seconds)
+        clock.advance(seconds)
+
+    def fake_probe(url: str, *, headers, timeout: float):
+        clock.advance(timeout)
+        return _timeout_attempt(elapsed=timeout)
+
+    result = validator.probe_with_bounded_retry(
+        "https://oday-api.example/platform/version",
+        headers={},
+        policy=validator.ProbeRetryPolicy(
+            attempts=10,
+            timeout_seconds=15.0,
+            backoff_seconds=2.0,
+            max_backoff_seconds=8.0,
+            deadline_seconds=40.0,
+        ),
+        probe=fake_probe,
+        monotonic=clock,
+        sleep=fake_sleep,
+    )
+
+    assert result.exhausted == "deadline_exhausted"
+    assert len(result.attempts) == 2
+    assert clock.now <= 40.0
+    assert result.final.has_verdict is False
+
+
+def test_probe_retry_clamps_the_attempt_timeout_to_the_remaining_deadline() -> None:
+    clock = _FakeClock()
+    seen: list[float] = []
+
+    def fake_probe(url: str, *, headers, timeout: float):
+        seen.append(timeout)
+        clock.advance(timeout)
+        return _timeout_attempt(elapsed=timeout)
+
+    result = validator.probe_with_bounded_retry(
+        "https://oday-api.example/platform/version",
+        headers={},
+        policy=validator.ProbeRetryPolicy(
+            attempts=3, timeout_seconds=15.0, backoff_seconds=1.0, deadline_seconds=5.0
+        ),
+        probe=fake_probe,
+        monotonic=clock,
+        sleep=lambda seconds: clock.advance(seconds),
+    )
+
+    assert seen == [5.0]
+    assert result.exhausted == "deadline_exhausted"
+    assert clock.now <= 5.0
+
+
+def test_probe_json_endpoint_never_raises_and_classifies_the_transport(monkeypatch) -> None:
+    def boom(url: str, *, headers, timeout: float):
+        raise TimeoutError("The read operation timed out")
+
+    monkeypatch.setattr(validator, "_request", boom)
+    attempt = validator.probe_json_endpoint(
+        "https://oday-api.example/platform/version", headers={}, timeout=1.0
+    )
+    assert attempt.status is None
+    assert attempt.payload is None
+    assert attempt.error == "The read operation timed out"
+    assert validator.probe_failure_is_transient(attempt) is True
+
+
+def test_compatibility_database_verdict_is_not_a_substring_match() -> None:
+    # "unhealthy" contains "healthy": a substring probe would pass the exact
+    # verdict this gate exists to catch.
+    assert validator._database_reads_healthy({"dependencies": {"database": "unhealthy"}}) is False
+    assert validator._database_reads_healthy({"dependencies": {"database": "healthy"}}) is True
+    assert validator._database_reads_healthy({"details": {"database": "HEALTHY "}}) is True
+    assert (
+        validator._database_reads_healthy({"dependencies": {"database": {"status": "healthy"}}})
+        is True
+    )
+    assert (
+        validator._database_reads_healthy({"dependencies": {"database": {"status": "unhealthy"}}})
+        is False
+    )
+    assert validator._database_reads_healthy({"dependencies": {}}) is False
+    assert validator._database_reads_healthy({}) is False
+    assert (
+        validator._database_reads_healthy({"dependencies": {"database": "healthy (sqlite)"}})
+        is False
+    )
+
+
+def test_compatibility_smoke_cli_records_the_bounded_retry_contract(tmp_path: Path) -> None:
+    DeterministicRuntimeHandler.release_sha = "b" * 40
+    server, url = start_server()
+    report_path = tmp_path / "cloud-run-migration-compatibility.json"
+    try:
+        result = subprocess.run(
+            [
+                sys.executable,
+                str(VALIDATOR_PATH),
+                "compatibility-smoke",
+                "--api-url",
+                url,
+                "--web-url",
+                url,
+                "--correlation-id",
+                "corr-cloud-run-compat-cli-test",
+                "--timeout",
+                "5",
+                "--compat-retry-attempts",
+                "3",
+                "--compat-retry-backoff-seconds",
+                "1",
+                "--compat-retry-max-backoff-seconds",
+                "4",
+                "--compat-retry-deadline-seconds",
+                "30",
+                "--output",
+                str(report_path),
+            ],
+            cwd=ROOT,
+            check=False,
+            capture_output=True,
+            text=True,
+        )
+    finally:
+        server.shutdown()
+        DeterministicRuntimeHandler.release_sha = EXPECTED_SHA
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    report = json.loads(report_path.read_text(encoding="utf-8"))
+    assert report["ok"] is True
+    assert report["probe_retry_policy"] == {
+        "attempts": 3,
+        "per_attempt_timeout_seconds": 5.0,
+        "backoff_seconds": 1.0,
+        "max_backoff_seconds": 4.0,
+        "total_deadline_seconds": 30.0,
+    }
+    assert report["version_probe"]["attempt_count"] == 1
+    assert report["health_probe"]["outcome"] == "answered"
+    assert report["secret_values_redacted"] is True
+
+
+def test_compatibility_smoke_cli_fails_closed_on_an_unbounded_retry_policy(
+    tmp_path: Path,
+) -> None:
+    report_path = tmp_path / "cloud-run-migration-compatibility.json"
+    result = subprocess.run(
+        [
+            sys.executable,
+            str(VALIDATOR_PATH),
+            "compatibility-smoke",
+            "--api-url",
+            "http://127.0.0.1:1",
+            "--web-url",
+            "http://127.0.0.1:1",
+            "--compat-retry-attempts",
+            "0",
+            "--output",
+            str(report_path),
+        ],
+        cwd=ROOT,
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+
+    assert result.returncode == 1
+    report = json.loads(report_path.read_text(encoding="utf-8"))
+    assert report["ok"] is False
+    assert report["checks"][0]["name"] == "compatibility:retry_policy"
+
+
+def test_migration_compatibility_gate_wires_bounded_retry_flags() -> None:
+    text = DEPLOY_SCRIPT.read_text(encoding="utf-8")
+    gate = text[text.index("run_migration_compatibility_gate() {") :]
+    gate = gate[: gate.index("\n}\n")]
+    for flag in (
+        '--timeout "${MIGRATION_COMPAT_TIMEOUT}"',
+        '--compat-retry-attempts "${MIGRATION_COMPAT_RETRY_ATTEMPTS}"',
+        '--compat-retry-backoff-seconds "${MIGRATION_COMPAT_RETRY_BACKOFF}"',
+        '--compat-retry-max-backoff-seconds "${MIGRATION_COMPAT_RETRY_MAX_BACKOFF}"',
+        '--compat-retry-deadline-seconds "${MIGRATION_COMPAT_RETRY_DEADLINE}"',
+    ):
+        assert flag in gate
+    assert 'MIGRATION_COMPAT_RETRY_ATTEMPTS="${MIGRATION_COMPAT_RETRY_ATTEMPTS:-4}"' in text
+    assert 'MIGRATION_COMPAT_RETRY_DEADLINE="${MIGRATION_COMPAT_RETRY_DEADLINE:-120}"' in text
+    # The gate must still run before any candidate service is deployed.
+    assert text.index("run_migration_compatibility_gate\n") < text.index(
+        'gcloud run deploy "${API_SERVICE}"'
+    )
+
+
 def test_deterministic_smoke_rejects_wrong_sha_memory_and_seed_operator() -> None:
     DeterministicRuntimeHandler.release_sha = "b" * 40
     DeterministicRuntimeHandler.data_mode = "fixture"

@@ -59,6 +59,14 @@ esac
 PREFLIGHT_REPORT="${PREFLIGHT_REPORT:-.odp_data/deployment/cloud-run-preflight.json}"
 SMOKE_REPORT="${SMOKE_REPORT:-.odp_data/deployment/cloud-run-smoke.json}"
 MIGRATION_COMPAT_REPORT="${MIGRATION_COMPAT_REPORT:-.odp_data/deployment/cloud-run-migration-compatibility.json}"
+# Bounded cold-start tolerance for the old-revision compatibility probes.
+# Worst case per probe: 4 x 15s of attempts + 2s + 4s + 8s of backoff = 74s,
+# hard-capped by the 120s deadline. See run_migration_compatibility_gate.
+MIGRATION_COMPAT_TIMEOUT="${MIGRATION_COMPAT_TIMEOUT:-15}"
+MIGRATION_COMPAT_RETRY_ATTEMPTS="${MIGRATION_COMPAT_RETRY_ATTEMPTS:-4}"
+MIGRATION_COMPAT_RETRY_BACKOFF="${MIGRATION_COMPAT_RETRY_BACKOFF:-2}"
+MIGRATION_COMPAT_RETRY_MAX_BACKOFF="${MIGRATION_COMPAT_RETRY_MAX_BACKOFF:-8}"
+MIGRATION_COMPAT_RETRY_DEADLINE="${MIGRATION_COMPAT_RETRY_DEADLINE:-120}"
 LIVE_E2E_REPORT="${LIVE_E2E_REPORT:-.odp_data/deployment/live-e2e-gate.json}"
 JOB_REPORT_DIR="${JOB_REPORT_DIR:-.odp_data/deployment/cloud-run-jobs}"
 source scripts/deployment/cloud_run_release_traffic.sh
@@ -375,12 +383,25 @@ gcloud run jobs deploy "${MIGRATION_CANDIDATE_JOB}" \
 # This gate verifies both the exact migration receipt and backward
 # compatibility with the old revisions that still carry all production
 # traffic. No candidate service is deployed until this passes.
+#
+# The old revision has no minScale and receives no traffic between deploys, so
+# this probe pays a Cloud Run cold start. The retry bounds below are explicit
+# at the call site so the worst-case gate duration stays auditable: per probe
+# at most ${MIGRATION_COMPAT_RETRY_ATTEMPTS} attempts of
+# ${MIGRATION_COMPAT_TIMEOUT}s plus backoff, never past
+# ${MIGRATION_COMPAT_RETRY_DEADLINE}s. Exhausting either bound still fails the
+# gate closed, before any candidate traffic and with the rollback trap armed.
 run_migration_compatibility_gate() {
   execute_job "migration" "${MIGRATION_CANDIDATE_JOB}"
   run_locked_python scripts/deployment/validate_cloud_run_live_deployment.py compatibility-smoke \
     --api-url "${OLD_API_URL}" \
     --web-url "${OLD_WEB_URL}" \
     --correlation-id "corr-cloud-run-compat-${ODP_DEPLOY_ENV}-${ODAY_RELEASE_SHA}" \
+    --timeout "${MIGRATION_COMPAT_TIMEOUT}" \
+    --compat-retry-attempts "${MIGRATION_COMPAT_RETRY_ATTEMPTS}" \
+    --compat-retry-backoff-seconds "${MIGRATION_COMPAT_RETRY_BACKOFF}" \
+    --compat-retry-max-backoff-seconds "${MIGRATION_COMPAT_RETRY_MAX_BACKOFF}" \
+    --compat-retry-deadline-seconds "${MIGRATION_COMPAT_RETRY_DEADLINE}" \
     --output "${MIGRATION_COMPAT_REPORT}"
 }
 run_migration_compatibility_gate
