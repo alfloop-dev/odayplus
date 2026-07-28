@@ -104,6 +104,9 @@ REQUIRED_SECRET_REFERENCES = (
     "ODP_WEB_SESSION_SECRET_SECRET",
 )
 REQUIRED_SECRET_VALUES: tuple[str, ...] = ()
+# The database binding is required by every Cloud Run Job regardless of which
+# external providers the release selects.
+DATABASE_SECRET_ENV = "ODAY_DATABASE_URL"
 REQUIRED_RUNTIME_VALUES = {
     "ODP_REQUIRE_LIVE_DATA": "true",
     "ODP_DATA_BINDING_MODE": "live",
@@ -1869,25 +1872,276 @@ def resolve_latest_execution_name(payload: Any, *, job: str | None = None) -> st
     return ordered[0][1]
 
 
+def _iter_job_containers(payload: Any) -> Iterator[Mapping[str, Any]]:
+    """Yield every container mapping in a Cloud Run Job description.
+
+    `gcloud run jobs describe --format=json` nests containers differently across
+    releases (Knative `spec.template.spec.template.spec.containers` versus v2
+    `template.template.containers`), so the containers are located by shape
+    rather than by a hardcoded path.
+    """
+
+    if isinstance(payload, Mapping):
+        containers = payload.get("containers")
+        if isinstance(containers, list):
+            for container in containers:
+                if isinstance(container, Mapping):
+                    yield container
+        for key, value in payload.items():
+            if key == "containers":
+                continue
+            yield from _iter_job_containers(value)
+    elif isinstance(payload, list):
+        for item in payload:
+            yield from _iter_job_containers(item)
+
+
+def _secret_reference_name(entry: Mapping[str, Any]) -> str:
+    """Return the Secret Manager reference an env entry binds to, or ``""``.
+
+    Both env schemas are accepted: Knative `valueFrom.secretKeyRef.name` and v2
+    `valueSource.secretKeyRef.secret`. A reference that is absent, empty, or a
+    placeholder resolves to `""` so the caller can fail closed.
+    """
+
+    for source in (entry.get("valueFrom"), entry.get("valueSource"), entry):
+        if not isinstance(source, Mapping):
+            continue
+        reference = source.get("secretKeyRef")
+        if not isinstance(reference, Mapping):
+            continue
+        for key in ("secret", "name"):
+            value = reference.get(key)
+            if isinstance(value, str) and _configured(value):
+                return value.strip()
+    return ""
+
+
+def _job_env_entries(job_description: Mapping[str, Any]) -> dict[str, list[Mapping[str, Any]]]:
+    """Group every container env entry of a Job description by env-var name."""
+
+    entries: dict[str, list[Mapping[str, Any]]] = {}
+    for container in _iter_job_containers(job_description):
+        env = container.get("env")
+        if not isinstance(env, list):
+            continue
+        for entry in env:
+            if not isinstance(entry, Mapping):
+                continue
+            name = entry.get("name")
+            if not isinstance(name, str) or not name.strip():
+                continue
+            entries.setdefault(name.strip(), []).append(entry)
+    return entries
+
+
+def _job_plaintext_env(entries: Mapping[str, list[Mapping[str, Any]]]) -> dict[str, str]:
+    """Return the plaintext (non-secret) env values declared by a Job."""
+
+    plaintext: dict[str, str] = {}
+    for name, occurrences in entries.items():
+        for entry in occurrences:
+            value = entry.get("value")
+            if isinstance(value, str) and value.strip():
+                plaintext[name] = value.strip()
+                break
+    return plaintext
+
+
+def _secret_binding_proof(entries: list[Mapping[str, Any]]) -> tuple[bool, str]:
+    """Prove one env var is bound to a secret reference, never to a literal."""
+
+    if not entries:
+        return False, "no env binding is declared"
+    for entry in entries:
+        value = entry.get("value")
+        if isinstance(value, str) and value.strip():
+            return False, "bound to a plaintext value instead of a secret reference"
+        if not _secret_reference_name(entry):
+            return False, "binding declares no usable secretKeyRef"
+    return True, "bound to a Secret Manager reference (value redacted)"
+
+
+def required_job_secret_env_vars(
+    selected_provider_ids: frozenset[str],
+    *,
+    root: Path = ROOT,
+) -> tuple[tuple[str, ...], tuple[str, ...], tuple[str, ...]]:
+    """Return required secret env vars for the selected production providers.
+
+    The result is `(required env vars, unknown provider ids, every provider
+    credential env var known to the registry)`. Only providers named by
+    `ODP_PRODUCTION_PROVIDER_IDS` contribute credentials, which is why an
+    unselected provider such as `listing.partner_feed` cannot demand
+    `ODP_LISTING_PROVIDER_API_KEY`.
+    """
+
+    providers = _provider_definitions(root)
+    by_id = {provider.provider_id: provider for provider in providers}
+    known_credential_env_vars = tuple(
+        sorted(
+            {
+                credential.env_var
+                for provider in providers
+                for credential in provider.credentials
+                if credential.required_in_live
+            }
+        )
+    )
+    unknown_ids = tuple(sorted(selected_provider_ids - by_id.keys()))
+    required: set[str] = {DATABASE_SECRET_ENV}
+    for provider_id in sorted(selected_provider_ids & by_id.keys()):
+        for credential in by_id[provider_id].credentials:
+            if credential.required_in_live:
+                required.add(credential.env_var)
+    return tuple(sorted(required)), unknown_ids, known_credential_env_vars
+
+
+def job_secret_binding_checks(
+    *,
+    kind: str,
+    job_description: Mapping[str, Any],
+    release_provider_ids: str | None = None,
+    root: Path = ROOT,
+) -> tuple[list[CheckResult], dict[str, Any]]:
+    """Prove a Job binds the database and exactly the selected provider secrets.
+
+    Run 30376737123 failed `jobs-smoke:migration:secret_bindings` because the
+    validator demanded `ODP_LISTING_PROVIDER_API_KEY` from a substring scan of
+    the whole job description while `ODP_PRODUCTION_PROVIDER_IDS` selected only
+    `poi.commercial_api`, `geocode.primary_api`, and
+    `admin_boundary.official_dataset`. The requirement is now derived from the
+    provider registry for the providers the Job itself declares as selected.
+    """
+
+    selection_check = f"jobs-smoke:{kind}:provider_selection"
+    bindings_check = f"jobs-smoke:{kind}:secret_bindings"
+    entries = _job_env_entries(job_description)
+    plaintext_env = _job_plaintext_env(entries)
+    raw_selection = plaintext_env.get(PRODUCTION_PROVIDER_IDS_ENV, "")
+    selected_ids = frozenset(
+        provider_id.strip() for provider_id in raw_selection.split(",") if provider_id.strip()
+    )
+    report: dict[str, Any] = {
+        "selected_provider_ids": sorted(selected_ids),
+        "secret_values_redacted": True,
+    }
+
+    if not selected_ids:
+        detail = (
+            f"job declares no plaintext {PRODUCTION_PROVIDER_IDS_ENV}; "
+            "the selected provider set is unprovable"
+        )
+        return [
+            CheckResult(False, selection_check, detail),
+            CheckResult(False, bindings_check, detail),
+        ], report
+
+    try:
+        required_env_vars, unknown_ids, known_credential_env_vars = required_job_secret_env_vars(
+            selected_ids, root=root
+        )
+    except Exception as exc:  # noqa: BLE001 - registry import failure must fail closed
+        detail = f"cannot import provider registry: {type(exc).__name__}: {exc}"
+        return [
+            CheckResult(False, selection_check, detail),
+            CheckResult(False, bindings_check, detail),
+        ], report
+
+    checks = [
+        CheckResult(
+            not unknown_ids,
+            selection_check,
+            (
+                f"selected={','.join(sorted(selected_ids))}"
+                if not unknown_ids
+                else f"unknown provider IDs: {','.join(unknown_ids)}"
+            ),
+        )
+    ]
+
+    if release_provider_ids is not None:
+        release_ids = frozenset(
+            provider_id.strip()
+            for provider_id in release_provider_ids.split(",")
+            if provider_id.strip()
+        )
+        matches = bool(release_ids) and release_ids == selected_ids
+        checks.append(
+            CheckResult(
+                matches,
+                f"jobs-smoke:{kind}:selected_provider_release_match",
+                (
+                    "job selection matches the release provider allowlist"
+                    if matches
+                    else (
+                        f"job selected={','.join(sorted(selected_ids)) or '<none>'} "
+                        f"release selected={','.join(sorted(release_ids)) or '<none>'}"
+                    )
+                ),
+            )
+        )
+        report["release_provider_ids"] = sorted(release_ids)
+
+    failures: list[str] = []
+    bound: list[str] = []
+    for name in required_env_vars:
+        ok, detail = _secret_binding_proof(entries.get(name, []))
+        if ok:
+            bound.append(name)
+        else:
+            failures.append(f"{name}: {detail}")
+    if unknown_ids:
+        failures.append(f"unknown selected provider IDs cannot be proven: {','.join(unknown_ids)}")
+
+    checks.append(
+        CheckResult(
+            not failures,
+            bindings_check,
+            (
+                "database and every selected provider secret are bound to Secret "
+                f"Manager references: {','.join(required_env_vars)}"
+                if not failures
+                else "; ".join(failures)
+            ),
+        )
+    )
+
+    unselected_bound = sorted(
+        name
+        for name in known_credential_env_vars
+        if name not in required_env_vars and name in entries
+    )
+    report.update(
+        {
+            "required_secret_env_vars": list(required_env_vars),
+            "secret_bound_env_vars": sorted(bound),
+            "unselected_provider_secret_env_vars": unselected_bound,
+        }
+    )
+    return checks, report
+
+
 def cloud_run_job_checks(
     *,
     kind: str,
     job_description: Mapping[str, Any],
     execution: Mapping[str, Any],
     expected_sha: str,
+    release_provider_ids: str | None = None,
+    root: Path = ROOT,
 ) -> tuple[list[CheckResult], dict[str, Any]]:
     """Verify a deployed Job spec and its latest completed execution."""
 
     description_text = _json_text(job_description)
     execution_text = _json_text(execution)
-    required_secret_envs = (
-        "oday_database_url",
-        "odp_listing_provider_api_key",
-        "odp_poi_provider_api_key",
-        "odp_geocode_provider_api_key",
-        "odp_admin_boundary_provider_token",
-    )
     expected_mode = "migrate" if kind == "migration" else kind
+    secret_checks, secret_report = job_secret_binding_checks(
+        kind=kind,
+        job_description=job_description,
+        release_provider_ids=release_provider_ids,
+        root=root,
+    )
     checks = [
         CheckResult(
             expected_sha.lower() in description_text,
@@ -1900,11 +2154,7 @@ def cloud_run_job_checks(
             f"jobs-smoke:{kind}:entrypoint",
             f"bounded {expected_mode} entrypoint is configured",
         ),
-        CheckResult(
-            all(name in description_text for name in required_secret_envs),
-            f"jobs-smoke:{kind}:secret_bindings",
-            "database and provider secret environment bindings are configured",
-        ),
+        *secret_checks,
         CheckResult(
             _execution_completed(execution),
             f"jobs-smoke:{kind}:execution",
@@ -1929,8 +2179,8 @@ def cloud_run_job_checks(
             if isinstance(execution.get("metadata"), Mapping)
             else execution.get("name")
         ),
-        "secret_values_redacted": True,
     }
+    report.update(secret_report)
     return checks, report
 
 
@@ -2048,6 +2298,7 @@ def main() -> int:
                 job_description=job_description,
                 execution=execution,
                 expected_sha=args.expected_sha,
+                release_provider_ids=os.environ.get(PRODUCTION_PROVIDER_IDS_ENV),
             )
         except (OSError, ValueError, json.JSONDecodeError) as exc:
             checks = [

@@ -1145,60 +1145,373 @@ def test_worker_and_scheduler_images_use_bounded_job_entrypoint() -> None:
     assert 'CMD ["scheduler"]' in scheduler
 
 
-def test_job_smoke_requires_exact_release_entrypoint_secrets_and_success() -> None:
-    job = {
-        "metadata": {
-            "name": "worker-job",
-            "labels": {"oday-release-sha": EXPECTED_SHA, "oday-runtime": "worker"},
+# Deploy Dev run 30376737123 selected exactly these three providers, so
+# listing.partner_feed was never deployed and its API key was never bound.
+RUN_30376737123_SHA = "dda726155a399487474ae148b4dc1c3294ea9463"
+RUN_30376737123_PROVIDER_IDS = (
+    "poi.commercial_api,geocode.primary_api,admin_boundary.official_dataset"
+)
+SELECTED_PROVIDER_SECRET_ENVS = (
+    "ODP_POI_PROVIDER_API_KEY",
+    "ODP_GEOCODE_PROVIDER_API_KEY",
+    "ODP_ADMIN_BOUNDARY_PROVIDER_TOKEN",
+)
+
+
+def _knative_secret_env(name: str, secret: str | None = None) -> dict[str, object]:
+    """Env entry in the Knative schema gcloud emits for `--set-secrets`."""
+
+    return {
+        "name": name,
+        "valueFrom": {
+            "secretKeyRef": {"name": secret or name.lower().replace("_", "-"), "key": "latest"}
         },
-        "spec": {
-            "template": {
-                "template": {
-                    "containers": [
-                        {
-                            "image": f"registry/worker:dev-{EXPECTED_SHA}",
-                            "command": ["python"],
-                            "args": [
-                                "scripts/deployment/cloud_run_job_entrypoint.py",
-                                "worker",
-                            ],
-                            "env": [
-                                {"name": "ODAY_RELEASE_SHA", "value": EXPECTED_SHA},
-                                {"name": "ODAY_DATABASE_URL", "valueSource": {}},
-                                {"name": "ODP_LISTING_PROVIDER_API_KEY", "valueSource": {}},
-                                {"name": "ODP_POI_PROVIDER_API_KEY", "valueSource": {}},
-                                {"name": "ODP_GEOCODE_PROVIDER_API_KEY", "valueSource": {}},
-                                {
-                                    "name": "ODP_ADMIN_BOUNDARY_PROVIDER_TOKEN",
-                                    "valueSource": {},
-                                },
-                            ],
-                        }
-                    ]
-                }
+    }
+
+
+def _v2_secret_env(name: str, secret: str | None = None) -> dict[str, object]:
+    """Env entry in the Cloud Run v2 schema."""
+
+    return {
+        "name": name,
+        "valueSource": {
+            "secretKeyRef": {
+                "secret": secret or name.lower().replace("_", "-"),
+                "version": "latest",
             }
         },
     }
-    execution = {
-        "metadata": {"name": "worker-job-00001"},
+
+
+def _job_container(
+    *,
+    kind: str,
+    sha: str,
+    provider_ids: str | None,
+    secret_envs: tuple[dict[str, object], ...],
+    extra_envs: tuple[dict[str, object], ...] = (),
+) -> dict[str, object]:
+    mode = "migrate" if kind == "migration" else kind
+    env: list[dict[str, object]] = [{"name": "ODAY_RELEASE_SHA", "value": sha}]
+    if provider_ids is not None:
+        env.append({"name": "ODP_PRODUCTION_PROVIDER_IDS", "value": provider_ids})
+    env.extend(secret_envs)
+    env.extend(extra_envs)
+    return {
+        "image": f"registry/{kind}:dev-{sha}",
+        "command": ["python"],
+        "args": ["scripts/deployment/cloud_run_job_entrypoint.py", mode],
+        "env": env,
+    }
+
+
+def _knative_job(
+    *,
+    kind: str = "migration",
+    name: str = "oday-migration-r-dda726155a39",
+    sha: str = RUN_30376737123_SHA,
+    provider_ids: str | None = RUN_30376737123_PROVIDER_IDS,
+    secret_envs: tuple[dict[str, object], ...] | None = None,
+    extra_envs: tuple[dict[str, object], ...] = (),
+) -> dict[str, object]:
+    """Job description in the schema `gcloud run jobs describe` emits (v1)."""
+
+    if secret_envs is None:
+        secret_envs = tuple(
+            _knative_secret_env(env_var)
+            for env_var in ("ODAY_DATABASE_URL", *SELECTED_PROVIDER_SECRET_ENVS)
+        )
+    container = _job_container(
+        kind=kind,
+        sha=sha,
+        provider_ids=provider_ids,
+        secret_envs=secret_envs,
+        extra_envs=extra_envs,
+    )
+    return {
+        "metadata": {
+            "name": name,
+            "labels": {"oday-release-sha": sha, "oday-runtime": kind},
+        },
+        "spec": {
+            "template": {"spec": {"template": {"spec": {"containers": [container]}}}},
+        },
+    }
+
+
+def _v2_job(
+    *,
+    kind: str = "worker",
+    sha: str = RUN_30376737123_SHA,
+    provider_ids: str | None = RUN_30376737123_PROVIDER_IDS,
+) -> dict[str, object]:
+    container = _job_container(
+        kind=kind,
+        sha=sha,
+        provider_ids=provider_ids,
+        secret_envs=tuple(
+            _v2_secret_env(env_var)
+            for env_var in ("ODAY_DATABASE_URL", *SELECTED_PROVIDER_SECRET_ENVS)
+        ),
+    )
+    return {
+        "name": f"projects/oday/locations/asia-east1/jobs/oday-{kind}",
+        "labels": {"oday-release-sha": sha},
+        "template": {"template": {"containers": [container]}},
+    }
+
+
+def _succeeded_execution(name: str = "oday-migration-r-dda726155a39-ndb4l") -> dict[str, object]:
+    return {
+        "metadata": {"name": name},
         "status": {
             "succeededCount": 1,
             "failedCount": 0,
-            "completionTime": "2026-07-24T10:00:00Z",
+            "completionTime": "2026-07-28T16:00:00Z",
             "conditions": [{"type": "Completed", "state": "CONDITION_SUCCEEDED"}],
         },
     }
 
-    checks, report = validator.cloud_run_job_checks(
-        kind="worker",
+
+def _job_checks(job: dict[str, object], *, kind: str = "migration", **kwargs: object):
+    return validator.cloud_run_job_checks(
+        kind=kind,
         job_description=job,
-        execution=execution,
-        expected_sha=EXPECTED_SHA,
+        execution=_succeeded_execution(),
+        expected_sha=kwargs.pop("expected_sha", RUN_30376737123_SHA),
+        **kwargs,
     )
 
-    assert all(check.ok for check in checks)
-    assert report["job_name"] == "worker-job"
+
+def _failed_names(checks) -> set[str]:
+    return {check.name for check in checks if not check.ok}
+
+
+def _detail(checks, name: str) -> str:
+    return next(check.detail for check in checks if check.name == name)
+
+
+def test_job_smoke_reproduces_run_30376737123_secret_binding_failure() -> None:
+    """The exact migration receipt from run 30376737123 must now pass.
+
+    `oday-migration-r-dda726155a39` executed successfully as
+    `...-ndb4l`, but `jobs-smoke:migration:secret_bindings` failed because the
+    old rule looked for `odp_listing_provider_api_key` anywhere in the job JSON
+    while the release selected only three providers, none of them
+    `listing.partner_feed`.
+    """
+
+    job = _knative_job()
+
+    # The receipt genuinely has no listing key: that is what the old substring
+    # rule tripped on, and it is not a deployment defect.
+    assert "odp_listing_provider_api_key" not in json.dumps(job).lower()
+
+    checks, report = _job_checks(job)
+
+    assert all(check.ok for check in checks), _failed_names(checks)
+    assert report["selected_provider_ids"] == sorted(RUN_30376737123_PROVIDER_IDS.split(","))
+    assert "ODP_LISTING_PROVIDER_API_KEY" not in report["required_secret_env_vars"]
+    assert report["required_secret_env_vars"] == sorted(
+        ("ODAY_DATABASE_URL", *SELECTED_PROVIDER_SECRET_ENVS)
+    )
+    assert report["job_name"] == "oday-migration-r-dda726155a39"
+    assert report["execution_name"] == "oday-migration-r-dda726155a39-ndb4l"
     assert report["secret_values_redacted"] is True
+
+
+def test_job_smoke_requires_listing_secret_only_when_listing_is_selected() -> None:
+    selected = f"{RUN_30376737123_PROVIDER_IDS},listing.partner_feed"
+
+    missing_checks, missing_report = _job_checks(_knative_job(provider_ids=selected))
+
+    assert "jobs-smoke:migration:secret_bindings" in _failed_names(missing_checks)
+    assert "ODP_LISTING_PROVIDER_API_KEY" in _detail(
+        missing_checks, "jobs-smoke:migration:secret_bindings"
+    )
+    assert "ODP_LISTING_PROVIDER_API_KEY" in missing_report["required_secret_env_vars"]
+
+    bound_checks, bound_report = _job_checks(
+        _knative_job(
+            provider_ids=selected,
+            secret_envs=tuple(
+                _knative_secret_env(env_var)
+                for env_var in (
+                    "ODAY_DATABASE_URL",
+                    "ODP_LISTING_PROVIDER_API_KEY",
+                    *SELECTED_PROVIDER_SECRET_ENVS,
+                )
+            ),
+        )
+    )
+
+    assert all(check.ok for check in bound_checks), _failed_names(bound_checks)
+    assert "ODP_LISTING_PROVIDER_API_KEY" in bound_report["secret_bound_env_vars"]
+
+
+def test_job_smoke_requires_database_secret_for_every_selection() -> None:
+    job = _knative_job(
+        secret_envs=tuple(_knative_secret_env(env_var) for env_var in SELECTED_PROVIDER_SECRET_ENVS)
+    )
+
+    checks, report = _job_checks(job)
+
+    assert "jobs-smoke:migration:secret_bindings" in _failed_names(checks)
+    assert "ODAY_DATABASE_URL" in _detail(checks, "jobs-smoke:migration:secret_bindings")
+    assert "ODAY_DATABASE_URL" not in report["secret_bound_env_vars"]
+
+
+def test_job_smoke_requires_every_selected_provider_secret() -> None:
+    for dropped in SELECTED_PROVIDER_SECRET_ENVS:
+        job = _knative_job(
+            secret_envs=tuple(
+                _knative_secret_env(env_var)
+                for env_var in ("ODAY_DATABASE_URL", *SELECTED_PROVIDER_SECRET_ENVS)
+                if env_var != dropped
+            )
+        )
+
+        checks, _ = _job_checks(job)
+
+        assert "jobs-smoke:migration:secret_bindings" in _failed_names(checks)
+        assert dropped in _detail(checks, "jobs-smoke:migration:secret_bindings")
+
+
+def test_job_smoke_rejects_plaintext_provider_secret() -> None:
+    plaintext = "sk-live-real-poi-key"
+    job = _knative_job(
+        secret_envs=(
+            _knative_secret_env("ODAY_DATABASE_URL"),
+            {"name": "ODP_POI_PROVIDER_API_KEY", "value": plaintext},
+            _knative_secret_env("ODP_GEOCODE_PROVIDER_API_KEY"),
+            _knative_secret_env("ODP_ADMIN_BOUNDARY_PROVIDER_TOKEN"),
+        )
+    )
+
+    checks, report = _job_checks(job)
+    detail = _detail(checks, "jobs-smoke:migration:secret_bindings")
+
+    assert "jobs-smoke:migration:secret_bindings" in _failed_names(checks)
+    assert "plaintext" in detail
+    assert plaintext not in detail
+    assert plaintext not in json.dumps(report)
+    assert "ODP_POI_PROVIDER_API_KEY" not in report["secret_bound_env_vars"]
+
+
+@pytest.mark.parametrize(
+    "malformed",
+    [
+        {"name": "ODP_POI_PROVIDER_API_KEY"},
+        {"name": "ODP_POI_PROVIDER_API_KEY", "valueFrom": {}},
+        {"name": "ODP_POI_PROVIDER_API_KEY", "valueSource": {}},
+        {"name": "ODP_POI_PROVIDER_API_KEY", "valueFrom": {"secretKeyRef": {}}},
+        {"name": "ODP_POI_PROVIDER_API_KEY", "valueFrom": {"secretKeyRef": {"name": ""}}},
+        {
+            "name": "ODP_POI_PROVIDER_API_KEY",
+            "valueFrom": {"secretKeyRef": {"name": "placeholder", "key": "latest"}},
+        },
+    ],
+)
+def test_job_smoke_rejects_malformed_secret_binding(malformed: dict[str, object]) -> None:
+    job = _knative_job(
+        secret_envs=(
+            _knative_secret_env("ODAY_DATABASE_URL"),
+            malformed,
+            _knative_secret_env("ODP_GEOCODE_PROVIDER_API_KEY"),
+            _knative_secret_env("ODP_ADMIN_BOUNDARY_PROVIDER_TOKEN"),
+        )
+    )
+
+    checks, _ = _job_checks(job)
+
+    assert "jobs-smoke:migration:secret_bindings" in _failed_names(checks)
+    assert "ODP_POI_PROVIDER_API_KEY" in _detail(checks, "jobs-smoke:migration:secret_bindings")
+
+
+@pytest.mark.parametrize("provider_ids", [None, "", "  ,  "])
+def test_job_smoke_fails_closed_without_a_provable_selection(provider_ids: str | None) -> None:
+    job = _knative_job(provider_ids=provider_ids)
+
+    checks, report = _job_checks(job)
+    failed = _failed_names(checks)
+
+    assert "jobs-smoke:migration:provider_selection" in failed
+    assert "jobs-smoke:migration:secret_bindings" in failed
+    assert report["selected_provider_ids"] == []
+
+
+def test_job_smoke_fails_closed_when_selection_is_only_secret_bound() -> None:
+    """A selection supplied as a secret cannot be read, so it is unprovable."""
+
+    job = _knative_job(
+        provider_ids=None,
+        extra_envs=(_knative_secret_env("ODP_PRODUCTION_PROVIDER_IDS"),),
+    )
+
+    checks, _ = _job_checks(job)
+
+    assert "jobs-smoke:migration:provider_selection" in _failed_names(checks)
+    assert "jobs-smoke:migration:secret_bindings" in _failed_names(checks)
+
+
+def test_job_smoke_rejects_unknown_selected_provider_id() -> None:
+    job = _knative_job(provider_ids=f"{RUN_30376737123_PROVIDER_IDS},poi.not_a_provider")
+
+    checks, _ = _job_checks(job)
+    failed = _failed_names(checks)
+
+    assert "jobs-smoke:migration:provider_selection" in failed
+    assert "poi.not_a_provider" in _detail(checks, "jobs-smoke:migration:provider_selection")
+    assert "jobs-smoke:migration:secret_bindings" in failed
+
+
+def test_job_smoke_flags_release_allowlist_mismatch() -> None:
+    job = _knative_job()
+
+    matched, matched_report = _job_checks(job, release_provider_ids=RUN_30376737123_PROVIDER_IDS)
+    assert all(check.ok for check in matched), _failed_names(matched)
+    assert matched_report["release_provider_ids"] == sorted(RUN_30376737123_PROVIDER_IDS.split(","))
+
+    mismatched, _ = _job_checks(
+        job, release_provider_ids=f"{RUN_30376737123_PROVIDER_IDS},listing.partner_feed"
+    )
+    assert "jobs-smoke:migration:selected_provider_release_match" in _failed_names(mismatched)
+
+    empty, _ = _job_checks(job, release_provider_ids="")
+    assert "jobs-smoke:migration:selected_provider_release_match" in _failed_names(empty)
+
+
+def test_job_smoke_reports_but_allows_an_unselected_bound_provider_secret() -> None:
+    job = _knative_job(
+        extra_envs=(_knative_secret_env("ODP_LISTING_PROVIDER_API_KEY"),),
+    )
+
+    checks, report = _job_checks(job)
+
+    assert all(check.ok for check in checks), _failed_names(checks)
+    assert report["unselected_provider_secret_env_vars"] == ["ODP_LISTING_PROVIDER_API_KEY"]
+
+
+@pytest.mark.parametrize("kind", ["migration", "worker", "scheduler"])
+def test_job_smoke_supports_migration_worker_and_scheduler_schemas(kind: str) -> None:
+    knative_checks, _ = validator.cloud_run_job_checks(
+        kind=kind,
+        job_description=_knative_job(kind=kind, name=f"oday-{kind}"),
+        execution=_succeeded_execution(f"oday-{kind}-00001"),
+        expected_sha=RUN_30376737123_SHA,
+    )
+    v2_checks, v2_report = validator.cloud_run_job_checks(
+        kind=kind,
+        job_description=_v2_job(kind=kind),
+        execution=_succeeded_execution(f"oday-{kind}-00001"),
+        expected_sha=RUN_30376737123_SHA,
+    )
+
+    assert all(check.ok for check in knative_checks), _failed_names(knative_checks)
+    assert all(check.ok for check in v2_checks), _failed_names(v2_checks)
+    assert v2_report["secret_bound_env_vars"] == sorted(
+        ("ODAY_DATABASE_URL", *SELECTED_PROVIDER_SECRET_ENVS)
+    )
 
 
 def test_job_smoke_rejects_failed_execution_and_missing_provider_secrets() -> None:
@@ -1210,7 +1523,13 @@ def test_job_smoke_rejects_failed_execution_and_missing_provider_secrets() -> No
                     {
                         "image": "registry/scheduler:latest",
                         "args": ["scripts/deployment/cloud_run_job_entrypoint.py", "scheduler"],
-                        "env": [{"name": "ODAY_DATABASE_URL", "valueSource": {}}],
+                        "env": [
+                            {
+                                "name": "ODP_PRODUCTION_PROVIDER_IDS",
+                                "value": RUN_30376737123_PROVIDER_IDS,
+                            },
+                            _knative_secret_env("ODAY_DATABASE_URL"),
+                        ],
                     }
                 ]
             }
@@ -1236,6 +1555,43 @@ def test_job_smoke_rejects_failed_execution_and_missing_provider_secrets() -> No
     assert "jobs-smoke:scheduler:release_sha" in failed
     assert "jobs-smoke:scheduler:secret_bindings" in failed
     assert "jobs-smoke:scheduler:execution" in failed
+
+
+def test_jobs_smoke_cli_uses_the_release_provider_allowlist(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    job_path = tmp_path / "migration-job.json"
+    execution_path = tmp_path / "migration-execution.json"
+    output_path = tmp_path / "migration-validation.json"
+    job_path.write_text(json.dumps(_knative_job()), encoding="utf-8")
+    execution_path.write_text(json.dumps(_succeeded_execution()), encoding="utf-8")
+
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "validate_cloud_run_live_deployment.py",
+            "jobs-smoke",
+            "--job-kind=migration",
+            f"--job-description={job_path}",
+            f"--execution={execution_path}",
+            f"--expected-sha={RUN_30376737123_SHA}",
+            f"--output={output_path}",
+        ],
+    )
+
+    monkeypatch.setenv("ODP_PRODUCTION_PROVIDER_IDS", RUN_30376737123_PROVIDER_IDS)
+    assert validator.main() == 0
+    report = json.loads(output_path.read_text(encoding="utf-8"))
+    assert report["ok"] is True
+    assert report["release_provider_ids"] == sorted(RUN_30376737123_PROVIDER_IDS.split(","))
+
+    monkeypatch.setenv("ODP_PRODUCTION_PROVIDER_IDS", "listing.partner_feed")
+    assert validator.main() == 1
+    report = json.loads(output_path.read_text(encoding="utf-8"))
+    assert report["ok"] is False
+    failed = {check["name"] for check in report["checks"] if not check["ok"]}
+    assert "jobs-smoke:migration:selected_provider_release_match" in failed
 
 
 def _knative_execution(name: str, created: str, *, job: str = "worker-job") -> dict[str, object]:
