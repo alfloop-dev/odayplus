@@ -1396,7 +1396,7 @@ def _extract_shell_function(text: str, name: str) -> str:
 
 
 def _run_capture_latest_execution(
-    tmp_path: Path, *, executions: str
+    tmp_path: Path, *, executions: str, or_list_context: bool = False
 ) -> tuple[subprocess.CompletedProcess[str], Path, Path]:
     """Execute the deploy script's capture helper against a stubbed gcloud."""
     bin_dir = tmp_path / "bin"
@@ -1420,6 +1420,9 @@ def _run_capture_latest_execution(
     receipt = tmp_path / "worker-execution.json"
     deploy_text = DEPLOY_SCRIPT.read_text(encoding="utf-8")
     capture_function = _extract_shell_function(deploy_text, "capture_latest_execution")
+    capture_call = f'capture_latest_execution "worker-job" "{receipt}"'
+    if or_list_context:
+        capture_call += " || true"
     harness = tmp_path / "harness.sh"
     harness.write_text(
         "set -euo pipefail\n"
@@ -1427,7 +1430,7 @@ def _run_capture_latest_execution(
         'GCP_PROJECT="oday-plus"\n'
         f'run_locked_python() {{ "{sys.executable}" "$@"; }}\n'
         f"{capture_function}"
-        f'capture_latest_execution "worker-job" "{receipt}"\n',
+        f"{capture_call}\n",
         encoding="utf-8",
     )
     result = subprocess.run(
@@ -1475,6 +1478,26 @@ def test_capture_latest_execution_fails_closed_without_describing_anything(
     result, receipt, gcloud_log = _run_capture_latest_execution(tmp_path, executions=executions)
 
     assert result.returncode != 0
+    assert not receipt.exists()
+    assert "describe" not in gcloud_log.read_text(encoding="utf-8")
+
+
+@pytest.mark.parametrize(
+    "executions",
+    ["[]", '[{"metadata": {"creationTimestamp": "2026-07-24T10:00:00Z"}}]', "not-json"],
+)
+def test_capture_latest_execution_fails_closed_in_execute_job_or_list_context(
+    tmp_path: Path, executions: str
+) -> None:
+    """Failure forensics must not disable the helper's fail-closed boundary."""
+    result, receipt, gcloud_log = _run_capture_latest_execution(
+        tmp_path, executions=executions, or_list_context=True
+    )
+
+    # execute_job intentionally swallows forensic-capture failure, but Bash
+    # disables errexit inside an OR-list function call. Explicit helper returns
+    # must still prevent an empty-name describe and an unproven receipt.
+    assert result.returncode == 0
     assert not receipt.exists()
     assert "describe" not in gcloud_log.read_text(encoding="utf-8")
 

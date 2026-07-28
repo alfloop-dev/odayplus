@@ -283,19 +283,29 @@ capture_latest_execution() {
   local execution_file="$2"
   local list_file="${execution_file%.json}-list.json"
   local execution_name
-  gcloud run jobs executions list \
+  if ! gcloud run jobs executions list \
     --job="${job}" \
     --region="${GCP_REGION}" \
     --project="${GCP_PROJECT}" \
-    --format=json >"${list_file}"
-  execution_name="$(run_locked_python \
+    --format=json >"${list_file}"; then
+    return 1
+  fi
+  if ! execution_name="$(run_locked_python \
     scripts/deployment/validate_cloud_run_live_deployment.py resolve-latest-execution \
     --executions="${list_file}" \
-    --job="${job}")"
-  gcloud run jobs executions describe "${execution_name}" \
+    --job="${job}")"; then
+    return 1
+  fi
+  if [ -z "${execution_name}" ]; then
+    echo "Error: latest Cloud Run Job execution name resolved empty." >&2
+    return 1
+  fi
+  if ! gcloud run jobs executions describe "${execution_name}" \
     --region="${GCP_REGION}" \
     --project="${GCP_PROJECT}" \
-    --format=json >"${execution_file}"
+    --format=json >"${execution_file}"; then
+    return 1
+  fi
 }
 
 capture_job_proof() {
