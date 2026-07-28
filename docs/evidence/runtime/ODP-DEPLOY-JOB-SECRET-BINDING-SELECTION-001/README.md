@@ -157,6 +157,10 @@ Substring scanning is gone for this check: a job that merely mentions
 | `ODP_PRODUCTION_PROVIDER_IDS` supplied only as a secret reference | same — an unreadable selection proves nothing |
 | `ODP_PRODUCTION_PROVIDER_IDS` declared twice, with different values | same — the effective selection is ambiguous |
 | `ODP_PRODUCTION_PROVIDER_IDS` declared twice, identically | same — nothing proves which one the runtime reads |
+| a required secret env declared under a padded name (`"  ODAY_DATABASE_URL  "`, `"\tODP_POI_PROVIDER_API_KEY\n"`, `"ODAY_DATABASE_URL\xa0"`) | `secret_bindings` fails with `no env binding is declared` — entries are keyed by the name the description declares, so a name the runtime does not resolve proves nothing |
+| `ODP_PRODUCTION_PROVIDER_IDS` declared only under a padded name | `provider_selection` **and** `secret_bindings` fail: the selection is unprovable |
+| an exactly named env var beside a padded twin of itself | same — the description is rejected: which one a reader resolves depends on whether it normalizes, and gcloud emits neither name |
+| distinct env names sharing a prefix (`ODP_REQUIRE_LIVE_DATA`, `ODP_REQUIRE_LIVE_DATA_STRICT`) | passes — a shared prefix is not a whitespace twin |
 | secret refs planted at `metadata.containers` (or any off-path `containers`) | same — the description is rejected before any binding is read |
 | containers declared at both the Knative and the v2 path | same — the authoritative task template is ambiguous |
 | the task template declares more than one container (secrets or selection in a sidecar) | same — the authoritative task container is ambiguous |
@@ -693,6 +697,74 @@ spellings — drive `test_job_smoke_accepts_every_usable_knative_secret_name` an
 `test_job_smoke_accepts_every_usable_v2_secret_name`, so the acceptance boundary
 is pinned on both dialects exactly as round 10 pinned the version boundary.
 
+## Round 12: the rule reached both selector members and not the key they hang off
+
+Rounds 10 and 11 stopped normalizing the two `secretKeyRef` members. Neither
+looked at the env var that *names* the binding. `_job_env_entries` filed every
+entry under `name.strip()`, so the rule those two rounds established was true of
+a selector and false of the key it hangs off. Found by self-review at head
+`c59651f2` and reproduced there before the fix: every crafted name below fails
+**no** check on **both** container paths (`_failed_names(checks) == set()`).
+
+| crafted env entry `name` at `c59651f2` | result |
+| --- | --- |
+| `"  ODAY_DATABASE_URL  "`, `" ODAY_DATABASE_URL"`, `"ODAY_DATABASE_URL "` | passed |
+| `"\tODP_POI_PROVIDER_API_KEY\n"` | passed |
+| `"ODAY_DATABASE_URL\xa0"` (non-breaking space) | passed |
+| `" ODP_PRODUCTION_PROVIDER_IDS "` and the same four paddings | passed |
+
+The first three rows are a job whose task container binds `ODAY_DATABASE_URL` —
+or a selected provider's secret — under **no** name the runtime resolves, while
+`jobs-smoke:<kind>:secret_bindings` reports zero failed checks. That is the
+acceptance "database and every selected provider secret remain mandatory" proven
+by an env var that does not exist. The last row is the same hole one level up:
+`ODP_PRODUCTION_PROVIDER_IDS` was read from an entry the runtime does not
+resolve either, so the whole selection — and therefore which provider secrets
+are required at all — came from a value nothing reads. `\xa0` is the sharpest
+case: it is not ASCII whitespace, so it survives any reader that splits on
+spaces, but `str.strip()` removes it.
+
+Entries are now keyed by the name the description declares. Each crafted name
+above stops matching a required one and fails closed through the details that
+already exist — `ODAY_DATABASE_URL: no env binding is declared` and
+`job declares no plaintext ODP_PRODUCTION_PROVIDER_IDS; the selected provider
+set is unprovable` — so again no check is added or renamed, and the planted name
+never reaches a detail or the report.
+
+Exact keys would have *relaxed* one shape on their own, which is why the fix is
+two rules rather than one. Under `name.strip()`, an exact name beside a padded
+twin collapsed into a single key and failed as an ambiguous double binding;
+under exact keys they are two different env vars, so the exact one would prove
+the binding by itself and the twin would be ignored. Whitespace-separated twins
+are therefore rejected explicitly, through
+`_job_env_entries` raising the same `JobDescriptionError` the container-ambiguity
+rules raise: which of the two a reader resolves depends on whether it
+normalizes, which is the disagreement this round exists to remove, and
+`gcloud run jobs describe` emits neither the twin nor a name that is not
+identical to its own `strip()`. Both checks fail, with
+`job task container declares env var names differing only by surrounding
+whitespace (...)`.
+
+What is deliberately **not** normalized-away here, and what stays: the provider
+IDs *inside* the selection value are still compared after `strip()`, because
+that mirrors what the runtime does with the same string —
+`scripts/deploy_cloud_run_waji.sh` reduces each ID with
+`${provider_id//[[:space:]]/}` before choosing secrets, and its env-file writer
+uses `{item.strip() for item in ...split(",")}`. Mirroring the runtime's own
+parse of a value is not the same act as normalizing the API key that value is
+stored under, which no runtime parses at all.
+
+Regressions: 20 secret-name cases (five paddings × `ODAY_DATABASE_URL` and
+`ODP_POI_PROVIDER_API_KEY`, mirrored on both dialects) on
+`test_job_smoke_rejects_a_padded_knative_secret_env_name` and
+`..._v2_secret_env_name`; 10 selection cases on
+`test_job_smoke_rejects_a_padded_knative_selection_env_name` and its v2 mirror;
+and the two twin cases. Control:
+`test_job_smoke_accepts_exact_env_names_beside_unrelated_ones` pins that
+distinct names sharing a prefix (`ODP_REQUIRE_LIVE_DATA` and
+`ODP_REQUIRE_LIVE_DATA_STRICT`) are not twins, so the twin rule cannot start
+rejecting descriptions a real deployment emits.
+
 ## Check and report surface
 
 `jobs-smoke:<kind>:secret_bindings` keeps its name, so the deploy gate and any
@@ -724,12 +796,11 @@ placed in the job description never reaches the detail text or the report.
 
 ## Focused verification
 
-Executed from the task branch on the round-11 tree (parent `d9f2f007`), with
-`export PATH="$HOME/.local/bin:$PATH"`:
+Executed from the task branch on the round-12 tree (parent `c59651f2`):
 
 ```text
-python3 -m pytest tests/ops/test_cloud_run_live_deployment.py                  # 230 passed, 1 deselected
-python3 -m pytest tests/ops                                                    # 285 passed, 20 skipped, 1 deselected
+python3 -m pytest tests/ops/test_cloud_run_live_deployment.py                  # 263 passed, 1 deselected
+python3 -m pytest tests/ops                                                    # 318 passed, 20 skipped, 1 deselected
 python3 -m ruff check scripts/deployment/validate_cloud_run_live_deployment.py tests/ops/test_cloud_run_live_deployment.py
 python3 -m ruff format --check scripts/deployment/validate_cloud_run_live_deployment.py tests/ops/test_cloud_run_live_deployment.py
 git diff --check
@@ -739,7 +810,7 @@ Ruff check, ruff format `--check`, and `git diff --check` all passed. The one
 deselected case is
 `test_deploy_preflight_imports_runtime_dependencies_via_locked_python`, the
 environmental failure earlier rounds reported: it shells out to `uv`, which is
-absent from this worker's `PATH` on the round-11 run, so it fails with
+absent from this worker's `PATH`, so it fails with
 `Error: required command 'uv' is not installed.` before reaching any assertion
 about this task's code. It is untouched by this branch — the whole diff is the
 validator, this test file's secret-binding cases, and this document — and it
@@ -758,9 +829,11 @@ regressions plus six controls — five usable Knative version selectors and the
 v2 no-`version` case), 187 at `d9f2f007` (round 10, 26 version-grammar
 regressions — 13 per dialect — plus seven controls: the 63-character alias on
 the Knative side, and the whole usable-selector set re-run on the v2 container
-path), and 231 now — round 11 adds 32 secret-name regressions (16 per dialect)
-plus 12 controls (six usable names on each dialect). The 231 counts the
-`uv`-dependent preflight case, which the round-11 run deselects; 230 ran.
+path), 231 at `c59651f2` (round 11, 32 secret-name regressions — 16 per dialect
+— plus 12 controls, six usable names on each dialect), and 264 now — round 12
+adds 32 env-var-name regressions (20 secret-name, 10 selection-name, and the two
+padded twins) plus one control. The 264 counts the `uv`-dependent preflight
+case, which the round-12 run deselects; 263 ran.
 
 Each round's regressions fail against that round's pre-fix validator, verified by
 restoring the parent commit's
@@ -813,7 +886,21 @@ failed closed before the fix are the non-string names (`1` and `None`) — the o
 `isinstance(value, str)` guard caught those and nothing else — so 14 per dialect
 is the honest size of this round's hole, not 16. All 12 round-11 controls pass
 against both validators, so the name grammar does not narrow what the
-deployment may legitimately reference. The control tests
+deployment may legitimately reference. For round 12 against `c59651f2` the same
+restore method reports `32 failed, 1 passed` across the newly selected cases.
+Thirty of the 32 are the fail-open itself: the 20 padded secret-name cases and
+the 10 padded selection-name cases each fail with the pre-fix validator
+returning **zero** failing checks, on both container paths, for a container that
+binds the required name nowhere. The remaining two are the padded twins, and
+they are reported honestly rather than counted as fail-opens: at `c59651f2` a
+twin already failed `secret_bindings` with
+`ODAY_DATABASE_URL: declares 2 env bindings; the authoritative secret binding is
+ambiguous` — the collapsed-key reason — while `provider_selection` passed, so
+the round changes that shape from one accidental failing check to an explicit
+rejection of the description on both checks, and the new tests assert the
+stronger behaviour. The one passing case is the round-12 control,
+`test_job_smoke_accepts_exact_env_names_beside_unrelated_ones`, which passes
+against both validators, so the twin rule is proven narrow. The control tests
 (`test_job_smoke_accepts_each_dialect_at_its_own_container_path` and the run
 30376737123 receipt) pass against both validators.
 
@@ -871,6 +958,12 @@ passed `product` (19m22s), `product-e2e-gate` (7m51s), `performance-gate`
 around, which confirms the diagnosis above: the failure was the hosted runner's
 contention in the 17:12–17:30Z window, not this diff. `task-review-gate` was the
 only red check, and it reports task status rather than code — it stays red until
-the task moves to review. Round 11 moves the head past `d9f2f007`, so CI must go
-green again on the new exact head before merge; that rerun is the one the
-reviewer should read.
+the task moves to review.
+
+**Round 11 head `c59651f2`.** Run
+[30396441750](https://github.com/alfloop-dev/odayplus/actions/runs/30396441750)
+passed `product-e2e-gate`, `performance-gate`, and `orchestrator`, with
+`product` still running when round 12 moved the head. That run therefore stands
+as a second clearance of the perf-budget diagnosis and not as the merge
+evidence: the exact head to read is round 12's, and CI must go green there
+before merge.

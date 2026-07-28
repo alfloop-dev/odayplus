@@ -2355,7 +2355,38 @@ def _declared_secret_source_locations(
 def _job_env_entries(
     job_description: Mapping[str, Any],
 ) -> tuple[_JobApiSchema, dict[str, list[Mapping[str, Any]]]]:
-    """Group the authoritative task container's env entries by env-var name."""
+    """Group the authoritative task container's env entries by env-var name.
+
+    Entries are keyed by the name the description declares, never by a
+    normalized form of it. Rounds 10 and 11 closed this same fail-open on the
+    two `secretKeyRef` members and named the rule behind it — the description is
+    the proof, so the validator may not normalize what it checks — but the key
+    those members hang off was still read through `name.strip()`, which left the
+    rule true of the selector and false of the env var naming it. An entry
+    called `"  ODAY_DATABASE_URL  "`, `"\tODP_POI_PROVIDER_API_KEY\n"`, or
+    `"ODP_PRODUCTION_PROVIDER_IDS\xa0"` was filed under the required name, so a
+    mandatory database or selected-provider secret, and the provider selection
+    itself, were proven by an env var whose declared name is not the one the
+    runtime reads — `jobs-smoke:<kind>:secret_bindings` reported zero failed
+    checks for a container that binds the required name nowhere.
+
+    Matching on the declared name makes each of those fail closed through the
+    existing "no env binding is declared" and "job declares no plaintext
+    `ODP_PRODUCTION_PROVIDER_IDS`" details, and it tightens nothing a real
+    description relies on: every name `scripts/deploy_cloud_run_waji.sh` sets is
+    an exact identifier. A blank or non-string name is skipped rather than
+    rejected — it can never equal a required name, so it can never prove one.
+
+    Keying by the declared name would on its own have *relaxed* one shape the
+    normalizing key rejected: an exact name beside a padded twin collapsed into
+    one key and failed as an ambiguous double binding, and under exact keys the
+    two are separate env vars, so the exact one would prove the binding alone.
+    Whitespace-separated twins are therefore rejected here instead. Which of
+    them a reader resolves depends on whether it normalizes — the disagreement
+    this round exists to remove — and `gcloud run jobs describe` emits neither
+    the twin nor a name that is not identical to its own `strip()`, so the
+    description is not a receipt to prove anything from.
+    """
 
     entries: dict[str, list[Mapping[str, Any]]] = {}
     schema, container = _authoritative_task_container(job_description)
@@ -2368,7 +2399,19 @@ def _job_env_entries(
         name = entry.get("name")
         if not isinstance(name, str) or not name.strip():
             continue
-        entries.setdefault(name.strip(), []).append(entry)
+        entries.setdefault(name, []).append(entry)
+
+    by_normalized: dict[str, set[str]] = {}
+    for name in entries:
+        by_normalized.setdefault(name.strip(), set()).add(name)
+    twins = sorted(
+        normalized for normalized, declared in by_normalized.items() if len(declared) > 1
+    )
+    if twins:
+        raise JobDescriptionError(
+            "job task container declares env var names differing only by surrounding "
+            f"whitespace ({','.join(twins)}); the authoritative env binding is ambiguous"
+        )
     return schema, entries
 
 

@@ -2444,6 +2444,205 @@ def test_job_smoke_accepts_every_usable_v2_secret_name(secret: str) -> None:
     assert "ODP_POI_PROVIDER_API_KEY" in report["secret_bound_env_vars"]
 
 
+#: Ways to pad a required env-var name so that `str.strip()` maps it back onto
+#: the name the proof looks for. `\xa0` is a non-breaking space, which is not
+#: ASCII whitespace but is whitespace to `str.strip()` — the widest gap between
+#: what the description declares and what a normalizing reader sees.
+_PADDED_ENV_VAR_NAME_FORMS = (
+    "  {name}  ",
+    "{name} ",
+    " {name}",
+    "\t{name}\n",
+    "{name}\xa0",
+)
+_REQUIRED_SECRET_ENV_VARS = ("ODAY_DATABASE_URL", "ODP_POI_PROVIDER_API_KEY")
+
+
+@pytest.mark.parametrize("form", _PADDED_ENV_VAR_NAME_FORMS)
+@pytest.mark.parametrize("env_var", _REQUIRED_SECRET_ENV_VARS)
+def test_job_smoke_rejects_a_padded_knative_secret_env_name(env_var: str, form: str) -> None:
+    """The env var naming the binding answers to the rule its members do.
+
+    Rounds 10 and 11 stopped normalizing the two `secretKeyRef` members and
+    stated the rule — the description is the proof, so the validator may not
+    normalize what it checks — but the entry's own `name` was still read
+    through `.strip()`. A mandatory database or selected-provider secret
+    declared as `"  ODAY_DATABASE_URL  "` was therefore filed under the
+    required name and proved a binding the runtime does not have, with zero
+    failing checks.
+    """
+
+    padded = form.format(name=env_var)
+    assert padded != env_var and padded.strip() == env_var
+
+    job = _knative_job(
+        secret_envs=tuple(
+            _knative_secret_env(
+                padded if candidate == env_var else candidate,
+                secret=candidate.lower().replace("_", "-"),
+            )
+            for candidate in ("ODAY_DATABASE_URL", *SELECTED_PROVIDER_SECRET_ENVS)
+        )
+    )
+
+    checks, report = _job_checks(job)
+    detail = _detail(checks, "jobs-smoke:migration:secret_bindings")
+
+    assert "jobs-smoke:migration:secret_bindings" in _failed_names(checks)
+    assert f"{env_var}: no env binding is declared" in detail
+    assert env_var not in report["secret_bound_env_vars"]
+
+
+@pytest.mark.parametrize("form", _PADDED_ENV_VAR_NAME_FORMS)
+@pytest.mark.parametrize("env_var", _REQUIRED_SECRET_ENV_VARS)
+def test_job_smoke_rejects_a_padded_v2_secret_env_name(env_var: str, form: str) -> None:
+    """The same fail-open on the Cloud Run v2 container path.
+
+    Which env var a binding names is a property of the entry rather than of the
+    dialect, so the v2 path had the identical hole.
+    """
+
+    padded = form.format(name=env_var)
+
+    job = _v2_job_with_envs(
+        secret_envs=tuple(
+            _v2_secret_env(
+                padded if candidate == env_var else candidate,
+                secret=candidate.lower().replace("_", "-"),
+            )
+            for candidate in ("ODAY_DATABASE_URL", *SELECTED_PROVIDER_SECRET_ENVS)
+        )
+    )
+
+    checks, report = _job_checks(job, kind="worker")
+    detail = _detail(checks, "jobs-smoke:worker:secret_bindings")
+
+    assert "jobs-smoke:worker:secret_bindings" in _failed_names(checks)
+    assert f"{env_var}: no env binding is declared" in detail
+    assert env_var not in report["secret_bound_env_vars"]
+
+
+@pytest.mark.parametrize("form", _PADDED_ENV_VAR_NAME_FORMS)
+def test_job_smoke_rejects_a_padded_knative_selection_env_name(form: str) -> None:
+    """A padded selection name left the provider allowlist unprovable, not read.
+
+    The same `.strip()` filed `" ODP_PRODUCTION_PROVIDER_IDS "` under the name
+    the selection is read from, so a job that declares no readable selection at
+    all was validated against one — and the secret set required of it was
+    derived from a value no runtime resolves.
+    """
+
+    job = _knative_job(
+        provider_ids=None,
+        extra_envs=(
+            {
+                "name": form.format(name="ODP_PRODUCTION_PROVIDER_IDS"),
+                "value": RUN_30376737123_PROVIDER_IDS,
+            },
+        ),
+    )
+
+    checks, report = _job_checks(job)
+    failed = _failed_names(checks)
+
+    assert "jobs-smoke:migration:provider_selection" in failed
+    assert "jobs-smoke:migration:secret_bindings" in failed
+    assert "the selected provider set is unprovable" in _detail(
+        checks, "jobs-smoke:migration:provider_selection"
+    )
+    assert report["selected_provider_ids"] == []
+
+
+@pytest.mark.parametrize("form", _PADDED_ENV_VAR_NAME_FORMS)
+def test_job_smoke_rejects_a_padded_v2_selection_env_name(form: str) -> None:
+    """The same unprovable selection on the Cloud Run v2 container path."""
+
+    job = _v2_job_with_envs(
+        provider_ids=None,
+        extra_envs=(
+            {
+                "name": form.format(name="ODP_PRODUCTION_PROVIDER_IDS"),
+                "value": RUN_30376737123_PROVIDER_IDS,
+            },
+        ),
+    )
+
+    checks, report = _job_checks(job, kind="worker")
+    failed = _failed_names(checks)
+
+    assert "jobs-smoke:worker:provider_selection" in failed
+    assert "jobs-smoke:worker:secret_bindings" in failed
+    assert report["selected_provider_ids"] == []
+
+
+def test_job_smoke_rejects_a_knative_binding_beside_a_padded_twin() -> None:
+    """Exact keys must not relax the shape the normalizing key already rejected.
+
+    Under `name.strip()` an exact name beside a padded twin collapsed into one
+    key and failed as an ambiguous double binding. Keying by the declared name
+    would make them two separate env vars and let the exact one prove the
+    binding alone, so the twin is rejected explicitly: which of the two a reader
+    resolves is exactly the normalizing disagreement this round removes, and
+    gcloud emits neither name.
+    """
+
+    job = _knative_job(
+        secret_envs=(
+            _knative_secret_env("ODAY_DATABASE_URL"),
+            _knative_secret_env("  ODAY_DATABASE_URL  ", secret="some-other-secret"),
+            *(_knative_secret_env(env_var) for env_var in SELECTED_PROVIDER_SECRET_ENVS),
+        )
+    )
+
+    checks, report = _job_checks(job)
+    failed = _failed_names(checks)
+
+    assert "jobs-smoke:migration:secret_bindings" in failed
+    assert "jobs-smoke:migration:provider_selection" in failed
+    assert "differing only by surrounding whitespace" in _detail(
+        checks, "jobs-smoke:migration:secret_bindings"
+    )
+    assert report["selected_provider_ids"] == []
+
+
+def test_job_smoke_rejects_a_v2_binding_beside_a_padded_twin() -> None:
+    """The same fail-closed boundary on the Cloud Run v2 container path."""
+
+    job = _v2_job_with_envs(
+        secret_envs=(
+            _v2_secret_env("ODAY_DATABASE_URL"),
+            _v2_secret_env("\tODAY_DATABASE_URL\n", secret="some-other-secret"),
+            *(_v2_secret_env(env_var) for env_var in SELECTED_PROVIDER_SECRET_ENVS),
+        )
+    )
+
+    checks, _ = _job_checks(job, kind="worker")
+    failed = _failed_names(checks)
+
+    assert "jobs-smoke:worker:secret_bindings" in failed
+    assert "jobs-smoke:worker:provider_selection" in failed
+
+
+def test_job_smoke_accepts_exact_env_names_beside_unrelated_ones() -> None:
+    """Rejecting twins must not reject the names a real description carries.
+
+    Every env var `scripts/deploy_cloud_run_waji.sh` sets is an exact
+    identifier, and distinct names that merely share a prefix are not twins.
+    """
+
+    job = _knative_job(
+        extra_envs=(
+            {"name": "ODP_REQUIRE_LIVE_DATA", "value": "true"},
+            {"name": "ODP_REQUIRE_LIVE_DATA_STRICT", "value": "true"},
+        )
+    )
+
+    checks, report = _job_checks(job)
+
+    assert all(check.ok for check in checks), _failed_names(checks)
+    assert "ODAY_DATABASE_URL" in report["secret_bound_env_vars"]
+
+
 def test_job_smoke_accepts_each_dialect_at_its_own_container_path() -> None:
     """The discriminator must not break the two shapes gcloud really emits."""
 
