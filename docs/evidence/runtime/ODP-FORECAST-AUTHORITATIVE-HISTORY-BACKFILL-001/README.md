@@ -30,6 +30,7 @@ into its output.
 | `orders_history_gap_jobs.applied.json` | — | The exact `-s3`/`-s4`/`-s5` Job manifests applied to close the source gap (see §5). Secrets appear only as `secretKeyRef` names, never values. |
 | `lineage_repair_plan.json` | `plan` | Read-only scope of the §6 lineage repair, from `repair_unattested_lineage.py` |
 | `unattested_lineage_sweep.json` | — | Sweep of **every** non-terminal run in the source, classified, proving the §6 repair scope is exactly one run. Carries its own `sweep_sql`. |
+| `attestation_coverage_after_s3.json` | — | Per-day attestation measured **after** `-s3` landed 2026-07-06..07-11, turning §6's 44-day cap from a projection into a measurement. Carries its own SQL. |
 
 Reproduce any of them with the DSN pair and the Cloud SQL proxy attestation in
 the environment:
@@ -291,6 +292,41 @@ Four transactions are enough to disqualify 2026-07-05 outright, because
 2026-07-05/07-06 and caps continuous coverage at 44 days — an h28 window needs
 56, so the 28-day acceptance bar becomes unreachable no matter how many of the
 remaining partitions land. Healing this partition is mandatory, not cosmetic.
+
+#### The 44-day cap, measured rather than projected
+
+The paragraph above was written before any gap partition had landed, so its
+44 was derived from the source's date span. `attestation_coverage_after_s3.json`
+re-derives it from ingested data, after job `-s3` backfilled
+2026-07-06..2026-07-11 for real. It evaluates the view's own predicate —
+`bool_and(status = 'SUCCEEDED' AND finished_at IS NOT NULL)` over
+`canonical_lineage` rows for `core.transactions` — per day, and separates
+blocking runs into *in flight* (partition has no `SUCCEEDED` run yet, so it will
+settle on its own) and *permanent*, using the same rule as the sweep.
+
+| Scenario | Longest contiguous attested span |
+| --- | --- |
+| After the in-flight run settles, Defect D unrepaired | **44 days** (2026-05-22 .. 2026-07-04) |
+| After the in-flight run settles, Defect D repaired | **51 days** (2026-05-22 .. 2026-07-11) |
+
+The measured 44 matches the projected 44 exactly. The repaired figure is 51 and
+not 66 only because `-s4`/`-s5` had not yet landed 2026-07-12..2026-07-22 at
+capture time; those partitions join the 51 to the already-attested
+2026-07-23..2026-07-27 tail.
+
+Two further results fall out of the same capture, both worth stating because
+they are the cheap ways this diagnosis could have been wrong:
+
+- The permanent holes are exactly `2026-07-05` and `2026-07-06` — no other date
+  on the acceptance surface is blocked by a run that cannot settle. Defect D is
+  the sole permanent obstacle, not one of several.
+- Every landed day has `lineage_complete = true`. The backfill mechanism itself
+  is sound: `-s3`'s six partitions attested cleanly, which is what distinguishes
+  "the ingestion path is broken" from "one interrupted run left a scar".
+
+So the repair is not merely mandatory in principle; with the rest of the
+pipeline now demonstrably working, it is the only remaining blocker between this
+task and acceptance criterion 3.
 
 ### Why the view is not the thing to change
 

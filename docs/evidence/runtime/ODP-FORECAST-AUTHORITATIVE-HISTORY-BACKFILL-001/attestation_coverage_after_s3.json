@@ -1,0 +1,602 @@
+{
+  "captured_at": "2026-07-28T18:19:10.797431+00:00",
+  "purpose": "First per-day attestation measurement taken AFTER real backfilled partitions landed (2026-07-06..2026-07-11 via job -s3). Re-derives README section 6's 44-day cap against ingested data instead of projecting it, and confirms Defect D is the only PERMANENT attestation hole on the acceptance surface.",
+  "method": {
+    "predicate": "Mirrors forecast_training_view: source_run_complete = bool_and(ingestion.status='SUCCEEDED' AND finished_at IS NOT NULL) over canonical_lineage rows for canonical_table='core.transactions'. Evaluated on the SOURCE database because the PG16 target has not been re-activated since -s3 landed.",
+    "inflight_rule": "A blocking run is in_flight (expected to settle on its own) when its partition has no SUCCEEDED run yet, and permanent otherwise -- the same rule as unattested_lineage_sweep.json.",
+    "caveat": "Spans are whole-day: a date counts as attested only if EVERY qualifying transaction on it is attested, which is what the view's bool_and enforces. 2026-07-12..2026-07-22 are absent because jobs -s4/-s5 had not run at capture time.",
+    "days_sql": "WITH txn AS ( SELECT t.transaction_id, t.store_id, (t.event_time AT TIME ZONE 'UTC')::date AS d FROM core.transactions t JOIN core.stores s ON s.store_id = t.store_id WHERE t.transaction_status='succeeded' AND t.currency='TWD' ), per_txn AS ( SELECT txn.d, txn.store_id, txn.transaction_id, count(l.*) AS lineage_rows, bool_and(r.status='SUCCEEDED' AND r.finished_at IS NOT NULL) AS attested FROM txn LEFT JOIN data_plane.canonical_lineage l ON l.canonical_table='core.transactions' AND l.canonical_id=txn.transaction_id LEFT JOIN data_plane.ingestion_runs r ON r.run_id=l.run_id GROUP BY 1,2,3 ) SELECT d, count(DISTINCT store_id), count(*), bool_and(lineage_rows>0), bool_and(coalesce(attested,false)), count(*) FILTER (WHERE NOT coalesce(attested,false)) FROM per_txn GROUP BY d ORDER BY d;",
+    "blocking_runs_sql": "SELECT (t.event_time AT TIME ZONE 'UTC')::date AS d, r.run_id::text, count(*) FROM data_plane.canonical_lineage l JOIN data_plane.ingestion_runs r ON r.run_id=l.run_id JOIN core.transactions t ON t.transaction_id=l.canonical_id WHERE l.canonical_table='core.transactions' AND (r.status<>'SUCCEEDED' OR r.finished_at IS NULL) GROUP BY 1,2 ORDER BY 1;",
+    "inflight_sql": "SELECT r.run_id::text FROM data_plane.ingestion_runs r WHERE (r.status<>'SUCCEEDED' OR r.finished_at IS NULL) AND NOT EXISTS (SELECT 1 FROM data_plane.ingestion_runs s WHERE s.source_kind=r.source_kind AND s.partition_key=r.partition_key AND s.status='SUCCEEDED')"
+  },
+  "inflight_runs": [
+    "6d5b01d1-c7be-4739-8e04-aefabad57356"
+  ],
+  "days": [
+    {
+      "date": "2026-05-22",
+      "stores": 3,
+      "transactions": 3,
+      "lineage_complete": true,
+      "attested_now": true,
+      "unattested_transactions": 0,
+      "blocking_runs": []
+    },
+    {
+      "date": "2026-05-23",
+      "stores": 527,
+      "transactions": 9012,
+      "lineage_complete": true,
+      "attested_now": true,
+      "unattested_transactions": 0,
+      "blocking_runs": []
+    },
+    {
+      "date": "2026-05-24",
+      "stores": 532,
+      "transactions": 11016,
+      "lineage_complete": true,
+      "attested_now": true,
+      "unattested_transactions": 0,
+      "blocking_runs": []
+    },
+    {
+      "date": "2026-05-25",
+      "stores": 512,
+      "transactions": 6162,
+      "lineage_complete": true,
+      "attested_now": true,
+      "unattested_transactions": 0,
+      "blocking_runs": []
+    },
+    {
+      "date": "2026-05-26",
+      "stores": 512,
+      "transactions": 5356,
+      "lineage_complete": true,
+      "attested_now": true,
+      "unattested_transactions": 0,
+      "blocking_runs": []
+    },
+    {
+      "date": "2026-05-27",
+      "stores": 511,
+      "transactions": 5507,
+      "lineage_complete": true,
+      "attested_now": true,
+      "unattested_transactions": 0,
+      "blocking_runs": []
+    },
+    {
+      "date": "2026-05-28",
+      "stores": 508,
+      "transactions": 5489,
+      "lineage_complete": true,
+      "attested_now": true,
+      "unattested_transactions": 0,
+      "blocking_runs": []
+    },
+    {
+      "date": "2026-05-29",
+      "stores": 524,
+      "transactions": 5938,
+      "lineage_complete": true,
+      "attested_now": true,
+      "unattested_transactions": 0,
+      "blocking_runs": []
+    },
+    {
+      "date": "2026-05-30",
+      "stores": 538,
+      "transactions": 8868,
+      "lineage_complete": true,
+      "attested_now": true,
+      "unattested_transactions": 0,
+      "blocking_runs": []
+    },
+    {
+      "date": "2026-05-31",
+      "stores": 534,
+      "transactions": 10602,
+      "lineage_complete": true,
+      "attested_now": true,
+      "unattested_transactions": 0,
+      "blocking_runs": []
+    },
+    {
+      "date": "2026-06-01",
+      "stores": 519,
+      "transactions": 5869,
+      "lineage_complete": true,
+      "attested_now": true,
+      "unattested_transactions": 0,
+      "blocking_runs": []
+    },
+    {
+      "date": "2026-06-02",
+      "stores": 522,
+      "transactions": 5131,
+      "lineage_complete": true,
+      "attested_now": true,
+      "unattested_transactions": 0,
+      "blocking_runs": []
+    },
+    {
+      "date": "2026-06-03",
+      "stores": 525,
+      "transactions": 5146,
+      "lineage_complete": true,
+      "attested_now": true,
+      "unattested_transactions": 0,
+      "blocking_runs": []
+    },
+    {
+      "date": "2026-06-04",
+      "stores": 513,
+      "transactions": 4757,
+      "lineage_complete": true,
+      "attested_now": true,
+      "unattested_transactions": 0,
+      "blocking_runs": []
+    },
+    {
+      "date": "2026-06-05",
+      "stores": 518,
+      "transactions": 6025,
+      "lineage_complete": true,
+      "attested_now": true,
+      "unattested_transactions": 0,
+      "blocking_runs": []
+    },
+    {
+      "date": "2026-06-06",
+      "stores": 535,
+      "transactions": 10044,
+      "lineage_complete": true,
+      "attested_now": true,
+      "unattested_transactions": 0,
+      "blocking_runs": []
+    },
+    {
+      "date": "2026-06-07",
+      "stores": 536,
+      "transactions": 10810,
+      "lineage_complete": true,
+      "attested_now": true,
+      "unattested_transactions": 0,
+      "blocking_runs": []
+    },
+    {
+      "date": "2026-06-08",
+      "stores": 523,
+      "transactions": 6219,
+      "lineage_complete": true,
+      "attested_now": true,
+      "unattested_transactions": 0,
+      "blocking_runs": []
+    },
+    {
+      "date": "2026-06-09",
+      "stores": 520,
+      "transactions": 5485,
+      "lineage_complete": true,
+      "attested_now": true,
+      "unattested_transactions": 0,
+      "blocking_runs": []
+    },
+    {
+      "date": "2026-06-10",
+      "stores": 537,
+      "transactions": 7661,
+      "lineage_complete": true,
+      "attested_now": true,
+      "unattested_transactions": 0,
+      "blocking_runs": []
+    },
+    {
+      "date": "2026-06-11",
+      "stores": 533,
+      "transactions": 6639,
+      "lineage_complete": true,
+      "attested_now": true,
+      "unattested_transactions": 0,
+      "blocking_runs": []
+    },
+    {
+      "date": "2026-06-12",
+      "stores": 538,
+      "transactions": 7766,
+      "lineage_complete": true,
+      "attested_now": true,
+      "unattested_transactions": 0,
+      "blocking_runs": []
+    },
+    {
+      "date": "2026-06-13",
+      "stores": 551,
+      "transactions": 12105,
+      "lineage_complete": true,
+      "attested_now": true,
+      "unattested_transactions": 0,
+      "blocking_runs": []
+    },
+    {
+      "date": "2026-06-14",
+      "stores": 546,
+      "transactions": 11035,
+      "lineage_complete": true,
+      "attested_now": true,
+      "unattested_transactions": 0,
+      "blocking_runs": []
+    },
+    {
+      "date": "2026-06-15",
+      "stores": 540,
+      "transactions": 7477,
+      "lineage_complete": true,
+      "attested_now": true,
+      "unattested_transactions": 0,
+      "blocking_runs": []
+    },
+    {
+      "date": "2026-06-16",
+      "stores": 539,
+      "transactions": 7439,
+      "lineage_complete": true,
+      "attested_now": true,
+      "unattested_transactions": 0,
+      "blocking_runs": []
+    },
+    {
+      "date": "2026-06-17",
+      "stores": 542,
+      "transactions": 7252,
+      "lineage_complete": true,
+      "attested_now": true,
+      "unattested_transactions": 0,
+      "blocking_runs": []
+    },
+    {
+      "date": "2026-06-18",
+      "stores": 545,
+      "transactions": 7380,
+      "lineage_complete": true,
+      "attested_now": true,
+      "unattested_transactions": 0,
+      "blocking_runs": []
+    },
+    {
+      "date": "2026-06-19",
+      "stores": 544,
+      "transactions": 9476,
+      "lineage_complete": true,
+      "attested_now": true,
+      "unattested_transactions": 0,
+      "blocking_runs": []
+    },
+    {
+      "date": "2026-06-20",
+      "stores": 546,
+      "transactions": 8577,
+      "lineage_complete": true,
+      "attested_now": true,
+      "unattested_transactions": 0,
+      "blocking_runs": []
+    },
+    {
+      "date": "2026-06-21",
+      "stores": 544,
+      "transactions": 10769,
+      "lineage_complete": true,
+      "attested_now": true,
+      "unattested_transactions": 0,
+      "blocking_runs": []
+    },
+    {
+      "date": "2026-06-22",
+      "stores": 536,
+      "transactions": 6347,
+      "lineage_complete": true,
+      "attested_now": true,
+      "unattested_transactions": 0,
+      "blocking_runs": []
+    },
+    {
+      "date": "2026-06-23",
+      "stores": 537,
+      "transactions": 5606,
+      "lineage_complete": true,
+      "attested_now": true,
+      "unattested_transactions": 0,
+      "blocking_runs": []
+    },
+    {
+      "date": "2026-06-24",
+      "stores": 543,
+      "transactions": 5743,
+      "lineage_complete": true,
+      "attested_now": true,
+      "unattested_transactions": 0,
+      "blocking_runs": []
+    },
+    {
+      "date": "2026-06-25",
+      "stores": 523,
+      "transactions": 4643,
+      "lineage_complete": true,
+      "attested_now": true,
+      "unattested_transactions": 0,
+      "blocking_runs": []
+    },
+    {
+      "date": "2026-06-26",
+      "stores": 537,
+      "transactions": 7069,
+      "lineage_complete": true,
+      "attested_now": true,
+      "unattested_transactions": 0,
+      "blocking_runs": []
+    },
+    {
+      "date": "2026-06-27",
+      "stores": 553,
+      "transactions": 10533,
+      "lineage_complete": true,
+      "attested_now": true,
+      "unattested_transactions": 0,
+      "blocking_runs": []
+    },
+    {
+      "date": "2026-06-28",
+      "stores": 558,
+      "transactions": 12431,
+      "lineage_complete": true,
+      "attested_now": true,
+      "unattested_transactions": 0,
+      "blocking_runs": []
+    },
+    {
+      "date": "2026-06-29",
+      "stores": 538,
+      "transactions": 6888,
+      "lineage_complete": true,
+      "attested_now": true,
+      "unattested_transactions": 0,
+      "blocking_runs": []
+    },
+    {
+      "date": "2026-06-30",
+      "stores": 542,
+      "transactions": 6022,
+      "lineage_complete": true,
+      "attested_now": true,
+      "unattested_transactions": 0,
+      "blocking_runs": []
+    },
+    {
+      "date": "2026-07-01",
+      "stores": 534,
+      "transactions": 5915,
+      "lineage_complete": true,
+      "attested_now": true,
+      "unattested_transactions": 0,
+      "blocking_runs": []
+    },
+    {
+      "date": "2026-07-02",
+      "stores": 533,
+      "transactions": 5936,
+      "lineage_complete": true,
+      "attested_now": true,
+      "unattested_transactions": 0,
+      "blocking_runs": []
+    },
+    {
+      "date": "2026-07-03",
+      "stores": 542,
+      "transactions": 6551,
+      "lineage_complete": true,
+      "attested_now": true,
+      "unattested_transactions": 0,
+      "blocking_runs": []
+    },
+    {
+      "date": "2026-07-04",
+      "stores": 550,
+      "transactions": 9262,
+      "lineage_complete": true,
+      "attested_now": true,
+      "unattested_transactions": 0,
+      "blocking_runs": []
+    },
+    {
+      "date": "2026-07-05",
+      "stores": 551,
+      "transactions": 10713,
+      "lineage_complete": true,
+      "attested_now": false,
+      "unattested_transactions": 3,
+      "blocking_runs": [
+        {
+          "run_id": "069b0984-3cc0-4fbb-811f-07616e148a88",
+          "transactions": 4,
+          "permanence": "permanent"
+        }
+      ]
+    },
+    {
+      "date": "2026-07-06",
+      "stores": 542,
+      "transactions": 6308,
+      "lineage_complete": true,
+      "attested_now": false,
+      "unattested_transactions": 4165,
+      "blocking_runs": [
+        {
+          "run_id": "069b0984-3cc0-4fbb-811f-07616e148a88",
+          "transactions": 4748,
+          "permanence": "permanent"
+        }
+      ]
+    },
+    {
+      "date": "2026-07-07",
+      "stores": 545,
+      "transactions": 5738,
+      "lineage_complete": true,
+      "attested_now": true,
+      "unattested_transactions": 0,
+      "blocking_runs": []
+    },
+    {
+      "date": "2026-07-08",
+      "stores": 540,
+      "transactions": 5814,
+      "lineage_complete": true,
+      "attested_now": true,
+      "unattested_transactions": 0,
+      "blocking_runs": []
+    },
+    {
+      "date": "2026-07-09",
+      "stores": 544,
+      "transactions": 6506,
+      "lineage_complete": true,
+      "attested_now": true,
+      "unattested_transactions": 0,
+      "blocking_runs": []
+    },
+    {
+      "date": "2026-07-10",
+      "stores": 544,
+      "transactions": 6617,
+      "lineage_complete": true,
+      "attested_now": false,
+      "unattested_transactions": 1,
+      "blocking_runs": [
+        {
+          "run_id": "6d5b01d1-c7be-4739-8e04-aefabad57356",
+          "transactions": 1,
+          "permanence": "in_flight"
+        }
+      ]
+    },
+    {
+      "date": "2026-07-11",
+      "stores": 487,
+      "transactions": 3518,
+      "lineage_complete": true,
+      "attested_now": false,
+      "unattested_transactions": 3518,
+      "blocking_runs": [
+        {
+          "run_id": "6d5b01d1-c7be-4739-8e04-aefabad57356",
+          "transactions": 4488,
+          "permanence": "in_flight"
+        }
+      ]
+    },
+    {
+      "date": "2026-07-23",
+      "stores": 550,
+      "transactions": 5954,
+      "lineage_complete": true,
+      "attested_now": true,
+      "unattested_transactions": 0,
+      "blocking_runs": []
+    },
+    {
+      "date": "2026-07-24",
+      "stores": 552,
+      "transactions": 6446,
+      "lineage_complete": true,
+      "attested_now": true,
+      "unattested_transactions": 0,
+      "blocking_runs": []
+    },
+    {
+      "date": "2026-07-25",
+      "stores": 565,
+      "transactions": 8506,
+      "lineage_complete": true,
+      "attested_now": true,
+      "unattested_transactions": 0,
+      "blocking_runs": []
+    },
+    {
+      "date": "2026-07-26",
+      "stores": 568,
+      "transactions": 10676,
+      "lineage_complete": true,
+      "attested_now": true,
+      "unattested_transactions": 0,
+      "blocking_runs": []
+    },
+    {
+      "date": "2026-07-27",
+      "stores": 554,
+      "transactions": 6224,
+      "lineage_complete": true,
+      "attested_now": true,
+      "unattested_transactions": 0,
+      "blocking_runs": []
+    }
+  ],
+  "contiguous_attested_spans": {
+    "as_measured_now": [
+      [
+        "2026-05-22",
+        "2026-07-04",
+        44
+      ],
+      [
+        "2026-07-07",
+        "2026-07-09",
+        3
+      ],
+      [
+        "2026-07-23",
+        "2026-07-27",
+        5
+      ]
+    ],
+    "after_inflight_settles_defect_d_unrepaired": [
+      [
+        "2026-05-22",
+        "2026-07-04",
+        44
+      ],
+      [
+        "2026-07-07",
+        "2026-07-11",
+        5
+      ],
+      [
+        "2026-07-23",
+        "2026-07-27",
+        5
+      ]
+    ],
+    "after_inflight_settles_and_defect_d_repaired": [
+      [
+        "2026-05-22",
+        "2026-07-11",
+        51
+      ],
+      [
+        "2026-07-23",
+        "2026-07-27",
+        5
+      ]
+    ]
+  },
+  "conclusion": {
+    "permanent_holes": [
+      "2026-07-05",
+      "2026-07-06"
+    ],
+    "longest_span_defect_d_unrepaired": 44,
+    "longest_span_defect_d_repaired": 51,
+    "h28_window_requirement_days": 56
+  }
+}
