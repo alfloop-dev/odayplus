@@ -114,13 +114,19 @@ jobs:
       - name: Generate SBOM
         run: python3 scripts/security/generate_sbom.py
 
+      # The preflight's repository capability checks import the real provider
+      # registry (httpx and friends), so the locked project environment must
+      # exist before it runs. `--frozen` keeps the resolution pinned to uv.lock.
+      - name: Install locked project dependencies
+        run: uv sync --frozen
+
       - name: Validate WIF authentication and live runtime preflight
         run: |
           if [ "${HAS_WIF}" != "true" ]; then
             echo "Error: Workload Identity Federation variables are required." >&2
             exit 1
           fi
-          python3 scripts/deployment/validate_cloud_run_live_deployment.py preflight \
+          uv run --frozen python scripts/deployment/validate_cloud_run_live_deployment.py preflight \
             --environment dev \
             --release-sha "${ODAY_RELEASE_SHA}" \
             --output .odp_data/deployment/cloud-run-preflight.json
