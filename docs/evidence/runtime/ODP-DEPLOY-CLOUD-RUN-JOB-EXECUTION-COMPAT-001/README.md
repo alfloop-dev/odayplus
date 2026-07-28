@@ -36,8 +36,11 @@ the Knative shape (`metadata.name`, `metadata.creationTimestamp`,
 
 The resolver refuses to name an execution it cannot prove is the right one, and
 the shell helper exits non-zero before `describe` is reached, so no receipt file
-is created and `set -euo pipefail` propagates the failure into the existing
-rollback trap.
+is created. The success proof path propagates that failure into the existing
+rollback trap. The failed-job forensics path deliberately swallows capture
+failure with `|| true`, but explicit returns inside the helper still prevent an
+empty-name `describe` or an unproven receipt when Bash disables errexit for the
+OR-list call.
 
 | Input | Outcome |
 | --- | --- |
@@ -118,6 +121,30 @@ git diff --check origin/dev HEAD
 the real deploy script, whose `require_command` guard exits `1` when `uv` is
 missing. That guard is owned by ODP-DEPLOY-SCRIPT-LOCKED-PYTHON-001 and is not
 touched by this task.
+
+### OR-list fail-closed remediation
+
+Codex6's exact-head review at `f9aa4261` identified that Bash disables errexit
+inside `capture_latest_execution` when `execute_job` invokes it as
+`capture_latest_execution ... || true`. The helper now returns explicitly when
+the execution list command fails, the resolver rejects its payload, the
+resolved name is empty, or the exact-name describe fails.
+
+The shell harness now also invokes the real extracted helper in that same
+OR-list context. Empty, nameless, and malformed execution lists are swallowed
+as best-effort forensic failures while still proving that `describe` is never
+called and no execution receipt is created.
+
+The full focused checks were re-executed at anchor commit `077aeb2a`, all
+passing:
+
+```text
+bash -n scripts/deploy_cloud_run_waji.sh
+uv run --frozen pytest tests/ops/test_cloud_run_live_deployment.py -q   # 62 passed
+uv run --frozen ruff check scripts/deployment/validate_cloud_run_live_deployment.py tests/ops/test_cloud_run_live_deployment.py
+uv run --frozen ruff format --check scripts/deployment/validate_cloud_run_live_deployment.py tests/ops/test_cloud_run_live_deployment.py
+git diff --check origin/dev HEAD
+```
 
 Exact-head CI and independent Codex6 review remain required before merge. After
 merge, ODP-P10-DEV-REDEPLOY-VERIFY-001 must be re-run from the exact merged SHA.
