@@ -104,6 +104,9 @@ REQUIRED_SECRET_REFERENCES = (
     "ODP_WEB_SESSION_SECRET_SECRET",
 )
 REQUIRED_SECRET_VALUES: tuple[str, ...] = ()
+# The database binding is required by every Cloud Run Job regardless of which
+# external providers the release selects.
+DATABASE_SECRET_ENV = "ODAY_DATABASE_URL"
 REQUIRED_RUNTIME_VALUES = {
     "ODP_REQUIRE_LIVE_DATA": "true",
     "ODP_DATA_BINDING_MODE": "live",
@@ -1869,25 +1872,918 @@ def resolve_latest_execution_name(payload: Any, *, job: str | None = None) -> st
     return ordered[0][1]
 
 
+class JobDescriptionError(ValueError):
+    """A Job description cannot be read as an authoritative task template."""
+
+
+@dataclass(frozen=True)
+class _JobApiSchema:
+    """One `gcloud run jobs describe --format=json` dialect.
+
+    A dialect is a single fact, not two independent ones: the API version that
+    places task containers at `container_path` is the same API version that
+    names secret bindings with `env_source_key`.`secretKeyRef`.`reference_key`.
+    Keeping them in one record is what lets the container path a description
+    actually uses decide which secret schema that description may use.
+
+    `reference_members` is the closed set of fields this API version defines
+    inside `secretKeyRef`: Knative's `SecretKeySelector` carries `name`, `key`,
+    `optional`, and the deprecated `localObjectReference`, and Cloud Run v2's
+    carries `secret` and `version`. It is the dialect's own fact for the same
+    reason the other two are, and it is what lets a planted member inside an
+    otherwise valid reference be told apart from the shape gcloud emits.
+
+    A name allowlist is not a shape: it says which members may appear, never
+    what they may hold. The remaining fields carry that half of the dialect,
+    because the *meaning* of a selector member is as much an API-version fact
+    as its name:
+
+    - `version_key` names the member that selects the Secret Manager version
+      (Knative `key`, v2 `version`), and `version_required` records that Cloud
+      Run v1 documents `key` as required while v2 leaves `version` optional.
+    - `mandatory_flag_key` names the member that decides whether the Secret or
+      key must exist at all — Knative's `optional`, which v2 does not define.
+    - `deprecated_members` are members the version still defines but no longer
+      accepts as a source of truth (Knative's `localObjectReference`, the
+      pre-`name` way to name the same secret).
+    """
+
+    container_path: tuple[str, ...]
+    env_source_key: str
+    reference_key: str
+    reference_members: frozenset[str]
+    version_key: str
+    version_required: bool
+    mandatory_flag_key: str | None
+    deprecated_members: frozenset[str]
+
+    @property
+    def container_path_label(self) -> str:
+        return ".".join(self.container_path)
+
+    @property
+    def source_reference_label(self) -> str:
+        return f"{self.env_source_key}.secretKeyRef"
+
+    @property
+    def reference_label(self) -> str:
+        return f"{self.source_reference_label}.{self.reference_key}"
+
+
+#: The only two dialects `gcloud run jobs describe --format=json` emits:
+#: Knative (containers at `spec.template.spec.template.spec.containers`,
+#: secrets at `valueFrom.secretKeyRef.name`) and Cloud Run v2 (containers at
+#: `template.template.containers`, secrets at
+#: `valueSource.secretKeyRef.secret`). Nothing else is a task template, so
+#: nothing else may contribute env bindings.
+_JOB_API_SCHEMAS: tuple[_JobApiSchema, ...] = (
+    _JobApiSchema(
+        ("spec", "template", "spec", "template", "spec", "containers"),
+        "valueFrom",
+        "name",
+        frozenset({"name", "key", "optional", "localObjectReference"}),
+        version_key="key",
+        version_required=True,
+        mandatory_flag_key="optional",
+        deprecated_members=frozenset({"localObjectReference"}),
+    ),
+    _JobApiSchema(
+        ("template", "template", "containers"),
+        "valueSource",
+        "secret",
+        frozenset({"secret", "version"}),
+        version_key="version",
+        version_required=False,
+        mandatory_flag_key=None,
+        deprecated_members=frozenset(),
+    ),
+)
+
+#: The only env-source member Cloud Run resolves. Knative's `EnvVarSource` also
+#: defines `configMapKeyRef`, `fieldRef`, and `resourceFieldRef`, and Cloud Run
+#: supports none of them, so their presence beside a valid `secretKeyRef` is
+#: never a shape `gcloud run jobs describe` emits.
+_ENV_SOURCE_SECRET_MEMBER = "secretKeyRef"
+
+
+def _resolve_path(payload: Any, path: tuple[str, ...]) -> Any:
+    """Return the value at `path`, or `None` when any hop is not a mapping."""
+
+    current: Any = payload
+    for key in path:
+        if not isinstance(current, Mapping) or key not in current:
+            return None
+        current = current[key]
+    return current
+
+
+def _iter_containers_key_paths(payload: Any, prefix: tuple[Any, ...] = ()) -> Iterator[tuple]:
+    """Yield the path of every `containers` key anywhere in a description."""
+
+    if isinstance(payload, Mapping):
+        for key, value in payload.items():
+            path = (*prefix, key)
+            if key == "containers":
+                yield path
+            yield from _iter_containers_key_paths(value, path)
+    elif isinstance(payload, list):
+        for index, item in enumerate(payload):
+            yield from _iter_containers_key_paths(item, (*prefix, index))
+
+
+def _authoritative_job_containers(
+    job_description: Mapping[str, Any],
+) -> tuple[_JobApiSchema, list[Mapping[str, Any]]]:
+    """Return the dialect and task containers of a Job description, or fail closed.
+
+    Locating containers by shape let a crafted description satisfy the secret
+    proof from anywhere in the payload — `metadata.containers` with planted
+    secret refs passed while the real task template bound nothing. Containers
+    are therefore read only from the two canonical paths, and a description is
+    rejected when they are absent, declared at both paths (ambiguous), or
+    accompanied by a `containers` key off those paths.
+
+    The matched path is returned with its schema rather than discarded: it is
+    the discriminator that decides which secret-reference dialect the rest of
+    the proof will accept.
+    """
+
+    present = [
+        (schema, _resolve_path(job_description, schema.container_path))
+        for schema in _JOB_API_SCHEMAS
+        if _resolve_path(job_description, schema.container_path) is not None
+    ]
+    if not present:
+        raise JobDescriptionError(
+            "job description declares no containers at "
+            f"{' or '.join(schema.container_path_label for schema in _JOB_API_SCHEMAS)}"
+        )
+    if len(present) > 1:
+        raise JobDescriptionError(
+            "job description declares containers at both "
+            f"{' and '.join(schema.container_path_label for schema, _ in present)}; "
+            "the authoritative task template is ambiguous"
+        )
+
+    schema, containers = present[0]
+    off_path = sorted(
+        ".".join(str(key) for key in path)
+        for path in _iter_containers_key_paths(job_description)
+        if path != schema.container_path
+    )
+    if off_path:
+        raise JobDescriptionError(
+            f"job description declares containers outside {schema.container_path_label}: "
+            f"{','.join(off_path)}"
+        )
+
+    if not isinstance(containers, list) or not containers:
+        raise JobDescriptionError(
+            f"{schema.container_path_label} is not a non-empty list of containers"
+        )
+    for index, container in enumerate(containers):
+        if not isinstance(container, Mapping):
+            raise JobDescriptionError(
+                f"{schema.container_path_label}[{index}] is not a container object"
+            )
+    return schema, list(containers)
+
+
+def _authoritative_task_container(
+    job_description: Mapping[str, Any],
+) -> tuple[_JobApiSchema, Mapping[str, Any]]:
+    """Return the one container the secret proof may read, or fail closed.
+
+    Reading env across every container in the task template is the same bypass
+    one level down: a job whose real task container binds nothing still proved
+    the full secret set as long as a sidecar carried it. The deploy script
+    (`scripts/deploy_cloud_run_waji.sh`) creates single-container jobs, so a
+    second container makes "which container runs the task" unanswerable from
+    the description alone and the job is rejected rather than guessed at.
+    """
+
+    schema, containers = _authoritative_job_containers(job_description)
+    if len(containers) != 1:
+        raise JobDescriptionError(
+            f"job task template declares {len(containers)} containers; "
+            "the authoritative task container is ambiguous"
+        )
+    return schema, containers[0]
+
+
+#: A numeric resource component is bounded as well as shaped, and rounds 10 and
+#: 11 pinned only the shape. A Secret Manager version number and a Cloud
+#: Resource Manager project number are both int64 values, so
+#: `9223372036854775808` — and any longer decimal — matched `[1-9][0-9]*` while
+#: naming a version Secret Manager cannot hold and a project number Cloud
+#: Resource Manager never issues. Both route through the one guard below, which
+#: caps them at the signed int64 maximum in the canonical no-leading-zero form
+#: the services emit.
+_MAX_INT64 = 2**63 - 1
+_MAX_INT64_DIGITS = len(str(_MAX_INT64))
+_RESOURCE_NUMBER_PATTERN = re.compile(r"[1-9][0-9]*")
+
+
+def _usable_resource_number(value: str) -> bool:
+    """Return whether `value` is a canonical positive int64 resource number.
+
+    The shape is re-stated rather than assumed from the caller's own match, so
+    the predicate is total on any string and no caller can route a non-numeric
+    component into `int()`. The digit count is checked before the conversion for
+    the same reason: an arbitrarily long decimal is out of range by length
+    alone, and CPython refuses to convert one past its integer-string limit, so
+    counting digits first keeps an oversized selector a rejection rather than an
+    exception.
+    """
+
+    if _RESOURCE_NUMBER_PATTERN.fullmatch(value) is None:
+        return False
+    if len(value) > _MAX_INT64_DIGITS:
+        return False
+    return int(value) <= _MAX_INT64
+
+
+#: A Secret Manager secret is named in a Cloud Run binding in exactly one of the
+#: two forms the API documents, and both are checked here rather than assumed:
+#:
+#: - the bare secret ID, for a secret in the deploying project. Secret Manager
+#:   allows letters, digits, `-` and `_`, up to 255 characters, and nothing else
+#:   — no whitespace, no `.`, no `/`, no non-ASCII;
+#: - `projects/<project>/secrets/<secret ID>`, for a cross-project secret. The
+#:   project segment is a project number (which Secret Manager never writes with
+#:   a leading zero) or a project ID: 6 to 30 characters, opening with a
+#:   lowercase letter and never closing with a hyphen.
+#:
+#: Both forms stay accepted because `scripts/deploy_cloud_run_waji.sh` takes each
+#: name from an operator-supplied `*_SECRET` variable, so a cross-project secret
+#: is a supported deployment and rejecting the path form would over-tighten a
+#: schema this task must keep supporting.
+#:
+#: The project *number* branch is range checked as well as matched, through
+#: `_usable_resource_number`; a project *ID* has no range to check.
+_SECRET_ID_PATTERN = re.compile(r"[A-Za-z0-9_-]{1,255}")
+_SECRET_PROJECT_ID_PATTERN = re.compile(r"[a-z][a-z0-9-]{4,28}[a-z0-9]")
+_SECRET_PROJECT_PATTERN = re.compile(
+    rf"{_RESOURCE_NUMBER_PATTERN.pattern}|{_SECRET_PROJECT_ID_PATTERN.pattern}"
+)
+_SECRET_PATH_PATTERN = re.compile(
+    rf"projects/(?P<project>{_SECRET_PROJECT_PATTERN.pattern})"
+    rf"/secrets/(?:{_SECRET_ID_PATTERN.pattern})"
+)
+
+
+def _usable_secret_name(value: Any) -> bool:
+    """Return whether a selector member names a resolvable Secret Manager secret.
+
+    Round 10 closed this same fail-open on the *version* member and named the
+    rule that made it a defect: the description is the proof, so the validator
+    may not normalize what it is checking. The name member was still read
+    through `.strip()` and no grammar at all, which left the rule true of one
+    member and false of the one beside it — ` oday-database-url `,
+    `oday database url`, a 256-character name, and `.` each named a secret
+    Secret Manager does not resolve while the binding passed with zero failing
+    checks. A name that is not identical to its own `strip()` is rejected
+    outright, for the same reason a version is.
+
+    Round 13 closed the range on the path form's project segment: the segment
+    was matched lexically, so a cross-project name carrying a project number
+    above the int64 maximum named a project Cloud Resource Manager cannot have
+    issued while the binding passed with zero failing checks.
+    """
+
+    if not isinstance(value, str):
+        return False
+    if not value or value != value.strip():
+        return False
+    if not _configured(value):
+        return False
+    if _SECRET_ID_PATTERN.fullmatch(value) is not None:
+        return True
+    path = _SECRET_PATH_PATTERN.fullmatch(value)
+    if path is None:
+        return False
+    project = path.group("project")
+    if _SECRET_PROJECT_ID_PATTERN.fullmatch(project) is not None:
+        return True
+    return _usable_resource_number(project)
+
+
+def _secret_reference_name(entry: Mapping[str, Any], schema: _JobApiSchema) -> str:
+    """Return the Secret Manager reference an env entry binds to, or ``""``.
+
+    Only `schema`'s own pair is accepted — the dialect is fixed by the
+    container path the description was resolved at, so a Knative job may bind
+    secrets only through `valueFrom.secretKeyRef.name` and a Cloud Run v2 job
+    only through `valueSource.secretKeyRef.secret`. Accepting either pair
+    regardless of path let a whole description cross over: a Knative-path job
+    binding every secret in the v2 dialect, or the reverse, passed the proof
+    while describing a shape gcloud never emits. Anything else — the other
+    dialect's env source, a top-level `secretKeyRef`, or a key crossed over
+    within this dialect such as `valueFrom.secretKeyRef.secret` — proves
+    nothing about Secret Manager and resolves to `""`. A reference that is
+    absent, a placeholder, or not a name Secret Manager resolves — which
+    `_usable_secret_name` decides, rather than the bare non-emptiness this used
+    to test — resolves to `""` as well, so the caller fails closed in every
+    case.
+    """
+
+    source = entry.get(schema.env_source_key)
+    if not isinstance(source, Mapping):
+        return ""
+    reference = source.get("secretKeyRef")
+    if not isinstance(reference, Mapping):
+        return ""
+    value = reference.get(schema.reference_key)
+    if isinstance(value, str) and _usable_secret_name(value):
+        return value
+    return ""
+
+
+def _foreign_secret_binding_locations(
+    entry: Mapping[str, Any], schema: _JobApiSchema
+) -> tuple[str, ...]:
+    """Return every off-dialect secret-binding location an env entry declares.
+
+    `_secret_reference_name` only *reads* `schema`'s pair; it ignores whatever
+    else the entry carries. Ignoring is not rejecting: an entry holding a valid
+    `valueFrom.secretKeyRef.name` beside a conflicting
+    `valueSource.secretKeyRef.secret` resolved to the first and passed, so a
+    description could name one secret to the proof and another to any reader
+    that prefers the other dialect. `gcloud run jobs describe` emits exactly one
+    dialect per description and exactly one secret source per env entry, so a
+    second one is never redundant detail — it makes the binding ambiguous, and
+    the caller fails closed instead of picking a winner.
+
+    Reported locations are the other dialect's env source (`valueSource` on a
+    Knative job and the reverse), a `secretKeyRef` hoisted to the top level of
+    the entry, and the other dialect's reference key inside this dialect's own
+    source (`valueFrom.secretKeyRef.secret`).
+    """
+
+    locations: list[str] = []
+    if "secretKeyRef" in entry:
+        locations.append("secretKeyRef")
+    for other in _JOB_API_SCHEMAS:
+        if other.env_source_key != schema.env_source_key and other.env_source_key in entry:
+            locations.append(other.env_source_key)
+    source = entry.get(schema.env_source_key)
+    reference = source.get("secretKeyRef") if isinstance(source, Mapping) else None
+    if isinstance(reference, Mapping):
+        for other in _JOB_API_SCHEMAS:
+            if other.reference_key != schema.reference_key and other.reference_key in reference:
+                locations.append(f"{schema.env_source_key}.secretKeyRef.{other.reference_key}")
+    return tuple(sorted(set(locations)))
+
+
+def _unsupported_secret_source_members(
+    entry: Mapping[str, Any], schema: _JobApiSchema
+) -> tuple[str, ...]:
+    """Return every member inside the accepted secret source Cloud Run cannot resolve.
+
+    Rounds 6 and 7 made the *entry* carry exactly one source; nothing looked
+    inside the accepted source itself. `_secret_reference_name` reads
+    `secretKeyRef` and `_foreign_secret_binding_locations` reports only the
+    other dialect's keys, so an entry holding a valid
+    `valueFrom.secretKeyRef.name` beside a `valueFrom.configMapKeyRef` passed
+    with zero failing checks — a second env source inside the accepted dialect,
+    naming a ConfigMap value Cloud Run v1 explicitly does not support and any
+    other reader may prefer. The v2 mirror
+    (`valueSource.secretKeyRef` plus `valueSource.configMapKeyRef`) passed the
+    same way.
+
+    Two levels are reported, both by presence rather than by payload, matching
+    the round-6 and round-7 decision that the key is the defect:
+
+    - members of the env source other than `secretKeyRef` (`valueFrom.fieldRef`,
+      `valueSource.configMapKeyRef`, …), none of which Cloud Run resolves;
+    - members inside `secretKeyRef` that this dialect's `SecretKeySelector` does
+      not define, so a planted field cannot ride along inside an otherwise valid
+      reference.
+
+    Cross-dialect reference keys (`valueFrom.secretKeyRef.secret`) are the
+    round-6 rule's business and are reported by
+    `_foreign_secret_binding_locations`, which the caller consults first.
+    """
+
+    source = entry.get(schema.env_source_key)
+    if not isinstance(source, Mapping):
+        return ()
+    locations = [
+        f"{schema.env_source_key}.{key}" for key in source if str(key) != _ENV_SOURCE_SECRET_MEMBER
+    ]
+    reference = source.get(_ENV_SOURCE_SECRET_MEMBER)
+    if isinstance(reference, Mapping):
+        locations.extend(
+            f"{schema.source_reference_label}.{key}"
+            for key in reference
+            if str(key) not in schema.reference_members
+        )
+    return tuple(sorted({str(location) for location in locations}))
+
+
+#: A Secret Manager version selector is exactly one of three things, and the
+#: three are not interchangeable spellings of one pattern:
+#:
+#: - the literal `latest`, lowercase, which is a reserved word rather than an
+#:   alias — `Latest` and `LATEST` are neither the literal nor a legal alias;
+#: - a positive version number, written canonically and inside the int64 range a
+#:   version number is. Secret Manager numbers versions from 1, so `0` is not a
+#:   version, it never emits `007`, and `9223372036854775808` is past the last
+#:   number a version can carry rather than a very high version;
+#: - a version alias: a leading letter, then letters, digits, `_` and `-`, at
+#:   most **63** characters. That is the alias limit; 255 is the limit on a
+#:   secret *name*, a different resource, and using it here let a 64- to
+#:   255-character selector through. `latest` and `NEW` are reserved and cannot
+#:   name an alias in any case, so `new`, `New`, and `NEW` resolve to nothing.
+_SECRET_VERSION_LITERAL_LATEST = "latest"
+_SECRET_VERSION_NUMBER_PATTERN = _RESOURCE_NUMBER_PATTERN
+_SECRET_VERSION_ALIAS_PATTERN = re.compile(r"[A-Za-z][A-Za-z0-9_-]{0,62}")
+_RESERVED_SECRET_VERSION_ALIASES = frozenset({"latest", "new"})
+
+
+def _usable_secret_version(value: Any) -> bool:
+    """Return whether a selector member names a resolvable secret version.
+
+    The description is the proof, so the selector is read exactly as gcloud
+    emitted it. Round 9 stripped first and then validated, which made ` latest `
+    prove a binding that Secret Manager does not resolve: whitespace around a
+    selector is a defect in the description, not something this validator may
+    normalize away on the deployment's behalf. `_usable_secret_name` reads the
+    other selector member under the same rule.
+
+    Round 13 added the bound the number carries: a version number is an int64,
+    so a selector of `9223372036854775808` or longer pinned a version Secret
+    Manager cannot resolve while the mandatory binding around it passed.
+    """
+
+    if not isinstance(value, str):
+        return False
+    if not value or value != value.strip():
+        return False
+    if not _configured(value):
+        return False
+    if value == _SECRET_VERSION_LITERAL_LATEST:
+        return True
+    if _SECRET_VERSION_NUMBER_PATTERN.fullmatch(value):
+        return _usable_resource_number(value)
+    if value.lower() in _RESERVED_SECRET_VERSION_ALIASES:
+        return False
+    return _SECRET_VERSION_ALIAS_PATTERN.fullmatch(value) is not None
+
+
+def _malformed_secret_selector_members(
+    entry: Mapping[str, Any], schema: _JobApiSchema
+) -> tuple[str, ...]:
+    """Return every defined selector member this binding fills in unusably.
+
+    Round 8 closed the reference to the members each dialect defines, but an
+    allowlist of *names* says nothing about what those names may hold, so a
+    member could be present, defined, and still cancel the binding it sits in.
+    Three shapes passed the proof with zero failing checks:
+
+    - `optional: true`, which tells Cloud Run the Secret or key need not exist.
+      The env var is then simply absent at runtime, so the binding is not the
+      mandatory one the database and every selected provider secret require.
+      Only the explicit `false` — not `"false"`, `0`, or `null`, which are not
+      the boolean the API defines — means the same thing as leaving it out.
+    - a missing `key`, which Cloud Run v1 documents as required. Without it no
+      version is selected, so nothing about the reference resolves.
+    - a blank or unusable `key`/`version`, which names no version either.
+
+    `localObjectReference` is rejected on presence: it is Knative's superseded
+    way of naming the same secret `name` names, so a selector carrying both has
+    two names for one binding and gcloud emits neither shape.
+
+    Only member paths are reported, never member payloads, so a planted value
+    cannot reach the report through the failure detail.
+    """
+
+    source = entry.get(schema.env_source_key)
+    if not isinstance(source, Mapping):
+        return ()
+    reference = source.get(_ENV_SOURCE_SECRET_MEMBER)
+    if not isinstance(reference, Mapping):
+        return ()
+
+    label = schema.source_reference_label
+    problems: list[str] = []
+    for member in sorted(schema.deprecated_members):
+        if member in reference:
+            problems.append(f"{label}.{member} is deprecated and renames the same secret")
+    if schema.version_key in reference:
+        if not _usable_secret_version(reference[schema.version_key]):
+            problems.append(f"{label}.{schema.version_key} is not a usable secret version")
+    elif schema.version_required:
+        problems.append(f"{label}.{schema.version_key} is required and missing")
+    flag_key = schema.mandatory_flag_key
+    if flag_key is not None and flag_key in reference and reference[flag_key] is not False:
+        problems.append(f"{label}.{flag_key} must be absent or exactly false")
+    return tuple(problems)
+
+
+def _declared_secret_source_locations(
+    entry: Mapping[str, Any], schema: _JobApiSchema
+) -> tuple[str, ...]:
+    """Return every secret-source location an env entry declares, by key presence.
+
+    `_secret_reference_name` reports this dialect's source only when it fully
+    *resolves* and `_foreign_secret_binding_locations` reports only the
+    off-dialect ones, so an entry carrying `"valueFrom": {}` (or a
+    `secretKeyRef` with no usable reference) beside a plaintext value looked
+    like a pure literal here while declaring a secret source to any other
+    reader. That is how a plaintext `ODP_PRODUCTION_PROVIDER_IDS` with an empty
+    same-dialect source was read as the authoritative selection.
+
+    Presence of the source key is the fact this predicate reports; whether the
+    reference inside it is usable is a separate question answered by
+    `_secret_binding_proof`. `gcloud run jobs describe` emits `value` or a
+    secret source for an env entry, never both and never an empty one, so any
+    declared source makes a literal beside it unreadable rather than redundant.
+    """
+
+    locations = list(_foreign_secret_binding_locations(entry, schema))
+    if schema.env_source_key in entry:
+        locations.append(schema.env_source_key)
+    return tuple(sorted(set(locations)))
+
+
+def _job_env_entries(
+    job_description: Mapping[str, Any],
+) -> tuple[_JobApiSchema, dict[str, list[Mapping[str, Any]]]]:
+    """Group the authoritative task container's env entries by env-var name.
+
+    Entries are keyed by the name the description declares, never by a
+    normalized form of it. Rounds 10 and 11 closed this same fail-open on the
+    two `secretKeyRef` members and named the rule behind it — the description is
+    the proof, so the validator may not normalize what it checks — but the key
+    those members hang off was still read through `name.strip()`, which left the
+    rule true of the selector and false of the env var naming it. An entry
+    called `"  ODAY_DATABASE_URL  "`, `"\tODP_POI_PROVIDER_API_KEY\n"`, or
+    `"ODP_PRODUCTION_PROVIDER_IDS\xa0"` was filed under the required name, so a
+    mandatory database or selected-provider secret, and the provider selection
+    itself, were proven by an env var whose declared name is not the one the
+    runtime reads — `jobs-smoke:<kind>:secret_bindings` reported zero failed
+    checks for a container that binds the required name nowhere.
+
+    Matching on the declared name makes each of those fail closed through the
+    existing "no env binding is declared" and "job declares no plaintext
+    `ODP_PRODUCTION_PROVIDER_IDS`" details, and it tightens nothing a real
+    description relies on: every name `scripts/deploy_cloud_run_waji.sh` sets is
+    an exact identifier. A blank or non-string name is skipped rather than
+    rejected — it can never equal a required name, so it can never prove one.
+
+    Keying by the declared name would on its own have *relaxed* one shape the
+    normalizing key rejected: an exact name beside a padded twin collapsed into
+    one key and failed as an ambiguous double binding, and under exact keys the
+    two are separate env vars, so the exact one would prove the binding alone.
+    Whitespace-separated twins are therefore rejected here instead. Which of
+    them a reader resolves depends on whether it normalizes — the disagreement
+    this round exists to remove — and `gcloud run jobs describe` emits neither
+    the twin nor a name that is not identical to its own `strip()`, so the
+    description is not a receipt to prove anything from.
+    """
+
+    entries: dict[str, list[Mapping[str, Any]]] = {}
+    schema, container = _authoritative_task_container(job_description)
+    env = container.get("env")
+    if not isinstance(env, list):
+        return schema, entries
+    for entry in env:
+        if not isinstance(entry, Mapping):
+            continue
+        name = entry.get("name")
+        if not isinstance(name, str) or not name.strip():
+            continue
+        entries.setdefault(name, []).append(entry)
+
+    by_normalized: dict[str, set[str]] = {}
+    for name in entries:
+        by_normalized.setdefault(name.strip(), set()).add(name)
+    twins = sorted(
+        normalized for normalized, declared in by_normalized.items() if len(declared) > 1
+    )
+    if twins:
+        raise JobDescriptionError(
+            "job task container declares env var names differing only by surrounding "
+            f"whitespace ({','.join(twins)}); the authoritative env binding is ambiguous"
+        )
+    return schema, entries
+
+
+def _job_selected_provider_ids(
+    entries: Mapping[str, list[Mapping[str, Any]]], schema: _JobApiSchema
+) -> str:
+    """Return the single readable provider selection a Job declares.
+
+    Taking the first nonempty plaintext occurrence let a description declare the
+    selection twice — the three normal providers first, `listing.partner_feed`
+    second — and be validated against the narrower first value. Exactly one
+    occurrence is therefore required inside the authoritative task container,
+    and it must be readable plaintext: a duplicate, a secret-bound value, or a
+    value that is missing or blank leaves the selection unprovable.
+    """
+
+    occurrences = entries.get(PRODUCTION_PROVIDER_IDS_ENV, [])
+    if not occurrences:
+        raise JobDescriptionError(
+            f"job declares no plaintext {PRODUCTION_PROVIDER_IDS_ENV}; "
+            "the selected provider set is unprovable"
+        )
+    if len(occurrences) > 1:
+        raise JobDescriptionError(
+            f"job declares {PRODUCTION_PROVIDER_IDS_ENV} {len(occurrences)} times; "
+            "the selected provider set is ambiguous"
+        )
+
+    entry = occurrences[0]
+    declared_sources = _declared_secret_source_locations(entry, schema)
+    if declared_sources:
+        raise JobDescriptionError(
+            f"{PRODUCTION_PROVIDER_IDS_ENV} declares secret sources "
+            f"({','.join(declared_sources)}) beside its literal value and cannot be read "
+            "as plaintext; the selected provider set is unprovable"
+        )
+    value = entry.get("value")
+    if not isinstance(value, str) or not value.strip():
+        raise JobDescriptionError(
+            f"job declares no plaintext {PRODUCTION_PROVIDER_IDS_ENV}; "
+            "the selected provider set is unprovable"
+        )
+    return value.strip()
+
+
+def _secret_binding_proof(
+    entries: list[Mapping[str, Any]], schema: _JobApiSchema
+) -> tuple[bool, str]:
+    """Prove one env var has exactly one secret-reference binding, never a literal.
+
+    The reference must be written in `schema`'s dialect — the one belonging to
+    the container path this description was resolved at — so a binding borrowed
+    from the other API version is no proof at all.
+
+    Exactly one entry may declare the env var, and that entry may declare
+    exactly one secret source. Validating every occurrence instead let a
+    description bind `ODP_POI_PROVIDER_API_KEY` twice, to two different secrets,
+    and pass: both entries are individually well formed, but nothing in the
+    description says which one the runtime reads, so neither is proof. The rule
+    is uniqueness rather than agreement — matching the
+    `ODP_PRODUCTION_PROVIDER_IDS` rule — because a repeated env var has no
+    defined winner and `gcloud run jobs deploy --set-secrets` emits it once.
+
+    The literal is rejected on the presence of the `value` key, not on the
+    truthiness of what it holds. Testing `isinstance(value, str) and
+    value.strip()` alone let a valid `secretKeyRef` pass while the same entry
+    declared `"value": ""` (or whitespace, `0`, `false`, `[]`, `{}`, `null`) —
+    a second source of truth for the same env var that any reader preferring
+    the literal resolves differently. An env entry `gcloud` emits carries a
+    literal or a secret source, never both, so the key's presence beside a
+    secret source is the defect.
+
+    "Exactly one secret source" is enforced inside the accepted source as well
+    as around it: `_unsupported_secret_source_members` rejects any env-source
+    member beside `secretKeyRef` — `configMapKeyRef` above all, which Cloud Run
+    v1 does not support — and any member inside `secretKeyRef` this dialect's
+    selector does not define. Without it a valid `valueFrom.secretKeyRef.name`
+    beside a `valueFrom.configMapKeyRef` proved a binding while declaring a
+    second source for the same env var.
+
+    Finally the members the dialect does define must be filled in usably, which
+    `_malformed_secret_selector_members` decides. A name allowlist accepted
+    `optional: true` — a binding Cloud Run is free to resolve to nothing — and a
+    missing or blank `key`, which selects no version, as proof of a mandatory
+    secret. Both contradict what this proof exists to assert, so both fail
+    closed here.
+    """
+
+    if not entries:
+        return False, "no env binding is declared"
+    if len(entries) > 1:
+        return False, (
+            f"declares {len(entries)} env bindings; the authoritative secret binding is ambiguous"
+        )
+
+    entry = entries[0]
+    value = entry.get("value")
+    if isinstance(value, str) and value.strip():
+        return False, "bound to a plaintext value instead of a secret reference"
+    if "value" in entry:
+        return False, (
+            "declares a literal value key beside its secret source; "
+            "gcloud emits one or the other, never both"
+        )
+    foreign = _foreign_secret_binding_locations(entry, schema)
+    if foreign:
+        return False, (
+            f"binding declares off-schema secret sources ({','.join(foreign)}); "
+            f"this job's dialect is {schema.reference_label}"
+        )
+    unsupported = _unsupported_secret_source_members(entry, schema)
+    if unsupported:
+        return False, (
+            f"binding declares env source members Cloud Run does not resolve "
+            f"({','.join(unsupported)}); the only supported source is "
+            f"{schema.reference_label}"
+        )
+    if not _secret_reference_name(entry, schema):
+        return False, f"binding declares no usable {schema.reference_label}"
+    malformed = _malformed_secret_selector_members(entry, schema)
+    if malformed:
+        return False, (
+            f"binding declares an unusable {schema.source_reference_label} "
+            f"({'; '.join(malformed)}); a mandatory secret must select a usable "
+            "version and may not be optional"
+        )
+    return True, "bound to a Secret Manager reference (value redacted)"
+
+
+def required_job_secret_env_vars(
+    selected_provider_ids: frozenset[str],
+    *,
+    root: Path = ROOT,
+) -> tuple[tuple[str, ...], tuple[str, ...], tuple[str, ...]]:
+    """Return required secret env vars for the selected production providers.
+
+    The result is `(required env vars, unknown provider ids, every provider
+    credential env var known to the registry)`. Only providers named by
+    `ODP_PRODUCTION_PROVIDER_IDS` contribute credentials, which is why an
+    unselected provider such as `listing.partner_feed` cannot demand
+    `ODP_LISTING_PROVIDER_API_KEY`.
+    """
+
+    providers = _provider_definitions(root)
+    by_id = {provider.provider_id: provider for provider in providers}
+    known_credential_env_vars = tuple(
+        sorted(
+            {
+                credential.env_var
+                for provider in providers
+                for credential in provider.credentials
+                if credential.required_in_live
+            }
+        )
+    )
+    unknown_ids = tuple(sorted(selected_provider_ids - by_id.keys()))
+    required: set[str] = {DATABASE_SECRET_ENV}
+    for provider_id in sorted(selected_provider_ids & by_id.keys()):
+        for credential in by_id[provider_id].credentials:
+            if credential.required_in_live:
+                required.add(credential.env_var)
+    return tuple(sorted(required)), unknown_ids, known_credential_env_vars
+
+
+def job_secret_binding_checks(
+    *,
+    kind: str,
+    job_description: Mapping[str, Any],
+    release_provider_ids: str | None = None,
+    root: Path = ROOT,
+) -> tuple[list[CheckResult], dict[str, Any]]:
+    """Prove a Job binds the database and exactly the selected provider secrets.
+
+    Run 30376737123 failed `jobs-smoke:migration:secret_bindings` because the
+    validator demanded `ODP_LISTING_PROVIDER_API_KEY` from a substring scan of
+    the whole job description while `ODP_PRODUCTION_PROVIDER_IDS` selected only
+    `poi.commercial_api`, `geocode.primary_api`, and
+    `admin_boundary.official_dataset`. The requirement is now derived from the
+    provider registry for the providers the Job itself declares as selected.
+    """
+
+    selection_check = f"jobs-smoke:{kind}:provider_selection"
+    bindings_check = f"jobs-smoke:{kind}:secret_bindings"
+    report: dict[str, Any] = {
+        "selected_provider_ids": [],
+        "secret_values_redacted": True,
+    }
+
+    try:
+        schema, entries = _job_env_entries(job_description)
+        raw_selection = _job_selected_provider_ids(entries, schema)
+    except JobDescriptionError as exc:
+        return [
+            CheckResult(False, selection_check, str(exc)),
+            CheckResult(False, bindings_check, str(exc)),
+        ], report
+
+    selected_ids = frozenset(
+        provider_id.strip() for provider_id in raw_selection.split(",") if provider_id.strip()
+    )
+    report["selected_provider_ids"] = sorted(selected_ids)
+
+    if not selected_ids:
+        detail = (
+            f"job declares no plaintext {PRODUCTION_PROVIDER_IDS_ENV}; "
+            "the selected provider set is unprovable"
+        )
+        return [
+            CheckResult(False, selection_check, detail),
+            CheckResult(False, bindings_check, detail),
+        ], report
+
+    try:
+        required_env_vars, unknown_ids, known_credential_env_vars = required_job_secret_env_vars(
+            selected_ids, root=root
+        )
+    except Exception as exc:  # noqa: BLE001 - registry import failure must fail closed
+        detail = f"cannot import provider registry: {type(exc).__name__}: {exc}"
+        return [
+            CheckResult(False, selection_check, detail),
+            CheckResult(False, bindings_check, detail),
+        ], report
+
+    checks = [
+        CheckResult(
+            not unknown_ids,
+            selection_check,
+            (
+                f"selected={','.join(sorted(selected_ids))}"
+                if not unknown_ids
+                else f"unknown provider IDs: {','.join(unknown_ids)}"
+            ),
+        )
+    ]
+
+    if release_provider_ids is not None:
+        release_ids = frozenset(
+            provider_id.strip()
+            for provider_id in release_provider_ids.split(",")
+            if provider_id.strip()
+        )
+        matches = bool(release_ids) and release_ids == selected_ids
+        checks.append(
+            CheckResult(
+                matches,
+                f"jobs-smoke:{kind}:selected_provider_release_match",
+                (
+                    "job selection matches the release provider allowlist"
+                    if matches
+                    else (
+                        f"job selected={','.join(sorted(selected_ids)) or '<none>'} "
+                        f"release selected={','.join(sorted(release_ids)) or '<none>'}"
+                    )
+                ),
+            )
+        )
+        report["release_provider_ids"] = sorted(release_ids)
+
+    failures: list[str] = []
+    bound: list[str] = []
+    for name in required_env_vars:
+        ok, detail = _secret_binding_proof(entries.get(name, []), schema)
+        if ok:
+            bound.append(name)
+        else:
+            failures.append(f"{name}: {detail}")
+    if unknown_ids:
+        failures.append(f"unknown selected provider IDs cannot be proven: {','.join(unknown_ids)}")
+
+    checks.append(
+        CheckResult(
+            not failures,
+            bindings_check,
+            (
+                "database and every selected provider secret are bound to Secret "
+                f"Manager references: {','.join(required_env_vars)}"
+                if not failures
+                else "; ".join(failures)
+            ),
+        )
+    )
+
+    unselected_bound = sorted(
+        name
+        for name in known_credential_env_vars
+        if name not in required_env_vars and name in entries
+    )
+    report.update(
+        {
+            "required_secret_env_vars": list(required_env_vars),
+            "secret_bound_env_vars": sorted(bound),
+            "unselected_provider_secret_env_vars": unselected_bound,
+        }
+    )
+    return checks, report
+
+
 def cloud_run_job_checks(
     *,
     kind: str,
     job_description: Mapping[str, Any],
     execution: Mapping[str, Any],
     expected_sha: str,
+    release_provider_ids: str | None = None,
+    root: Path = ROOT,
 ) -> tuple[list[CheckResult], dict[str, Any]]:
     """Verify a deployed Job spec and its latest completed execution."""
 
     description_text = _json_text(job_description)
     execution_text = _json_text(execution)
-    required_secret_envs = (
-        "oday_database_url",
-        "odp_listing_provider_api_key",
-        "odp_poi_provider_api_key",
-        "odp_geocode_provider_api_key",
-        "odp_admin_boundary_provider_token",
-    )
     expected_mode = "migrate" if kind == "migration" else kind
+    secret_checks, secret_report = job_secret_binding_checks(
+        kind=kind,
+        job_description=job_description,
+        release_provider_ids=release_provider_ids,
+        root=root,
+    )
     checks = [
         CheckResult(
             expected_sha.lower() in description_text,
@@ -1900,11 +2796,7 @@ def cloud_run_job_checks(
             f"jobs-smoke:{kind}:entrypoint",
             f"bounded {expected_mode} entrypoint is configured",
         ),
-        CheckResult(
-            all(name in description_text for name in required_secret_envs),
-            f"jobs-smoke:{kind}:secret_bindings",
-            "database and provider secret environment bindings are configured",
-        ),
+        *secret_checks,
         CheckResult(
             _execution_completed(execution),
             f"jobs-smoke:{kind}:execution",
@@ -1929,8 +2821,8 @@ def cloud_run_job_checks(
             if isinstance(execution.get("metadata"), Mapping)
             else execution.get("name")
         ),
-        "secret_values_redacted": True,
     }
+    report.update(secret_report)
     return checks, report
 
 
@@ -2048,6 +2940,7 @@ def main() -> int:
                 job_description=job_description,
                 execution=execution,
                 expected_sha=args.expected_sha,
+                release_provider_ids=os.environ.get(PRODUCTION_PROVIDER_IDS_ENV),
             )
         except (OSError, ValueError, json.JSONDecodeError) as exc:
             checks = [
