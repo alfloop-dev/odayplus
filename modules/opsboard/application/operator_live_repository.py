@@ -377,6 +377,7 @@ class OperatorLiveRepository:
                             "forecast_alerts",
                             self._persistence.forecastops_repository,
                             "list_alerts_by_store",
+                            scope.tenant_id,
                             store_id,
                         )
                     )

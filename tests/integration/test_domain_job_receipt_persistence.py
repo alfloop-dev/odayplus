@@ -396,7 +396,7 @@ def test_forecast_receipt_and_idempotency_survive_app_restart_by_tenant(
         replay = second_client.post(
             "/forecastops/forecast-jobs",
             headers=_headers(FORECASTOPS_HEADERS, TENANT_A, "same-key"),
-            json={"inputs": []},
+            json=_forecast_payload("store-a"),
         )
         assert replay.status_code == 202, replay.text
         assert replay.json()["created"] is False

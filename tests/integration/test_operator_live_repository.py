@@ -30,6 +30,7 @@ from shared.infrastructure.persistence.factory import _durable_bundle, _memory_b
 def _alert(alert_id: str = "alert-live-1") -> Alert:
     return Alert(
         alert_id=alert_id,
+        tenant_id="tenant-live-1",
         store_id="store-live-1",
         alert_level=AlertLevel.RED,
         alert_reason_code="REVENUE_DROP",
