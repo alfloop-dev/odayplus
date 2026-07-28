@@ -1,12 +1,17 @@
 # ODP-P10-DEV-REDEPLOY-VERIFY-001 runtime evidence
 
 - Task: `ODP-P10-DEV-REDEPLOY-VERIFY-001`
-- Owner: Claude2
+- Owner: Antigravity3 (current); Claude2 (run 30362772798)
 - Independent reviewer: Codex6
-- Target ref: `origin/dev` @ `450c7faddda32155fadce6c36cfdeed623a385a3`
-  (merge of PR #474, `ODP-DEPLOY-SCRIPT-LOCKED-PYTHON-001`)
-- Result: **BLOCKED — the dev redeploy failed, so Package 10 Operator runtime
+- Result: **BLOCKED — both deploy runs have failed. Package 10 Operator runtime
   parity is not proven and must not be claimed.**
+
+**Run history:**
+
+| Run | SHA | Trigger | Result | Failure |
+|---|---|---|---|---|
+| [30362772798](https://github.com/alfloop-dev/odayplus/actions/runs/30362772798) | `450c7fadd` (PR #474) | push | failure | `gcloud run jobs executions describe-latest` rejected by runner SDK |
+| [30376737123](https://github.com/alfloop-dev/odayplus/actions/runs/30376737123) | `dda726155a` (PR #479) | push | failure | `jobs-smoke:migration:secret_bindings` fail-closed |
 
 This directory is evidence only. Per the task conflict gate, no product code,
 deploy script, workflow, Package 10 archive, or retired path was modified.
@@ -189,10 +194,146 @@ git ls-tree -r --name-only origin/dev                 # retired-path survivor di
 | File | Contents |
 |---|---|
 | `README.md` | this report |
-| `deploy-run-30362772798.json` | full job/step receipt for the failed Deploy Dev run |
-| `deploy-failure-excerpt.log` | verbatim ANSI-stripped log excerpts: preflight, migration job, failure, rollback |
-| `cloud-run-preflight.json` | unmodified `cloud-run-dev-validation` artifact from the run |
-| `cloud-run-post-rollback-state.json` | `oday-api` / `oday-web` traffic, revisions, and release-SHA labels after rollback |
-| `migration-job-receipt.json` | structured migration receipt at the target release SHA |
+| `deploy-run-30362772798.json` | full job/step receipt for the failed Deploy Dev run (SHA 450c7fadd) |
+| `deploy-failure-excerpt.log` | verbatim ANSI-stripped log excerpts: preflight, migration job, failure, rollback (run 30362772798) |
+| `cloud-run-preflight.json` | unmodified `cloud-run-dev-validation` artifact from run 30362772798 |
+| `cloud-run-post-rollback-state.json` | `oday-api` / `oday-web` traffic, revisions, and release-SHA labels after rollback (run 30362772798) |
+| `migration-job-receipt.json` | structured migration receipt at SHA 450c7fadd |
 | `worker-dispatch-receipts.json` | the two preserved Antigravity3 quota failures plus Supervisor events |
 | `package10-contract-verification.txt` | 40-screen contract and 117-retired-path re-verification at `origin/dev` |
+| `deploy-run-30376737123.json` | full job/step receipt for Deploy Dev run 30376737123 (SHA dda726155a) |
+| `deploy-failure-excerpt-run-30376737123.log` | verbatim log excerpts: preflight, images, migration execution, smoke fail, rollback |
+| `cloud-run-preflight-run-30376737123.json` | unmodified `cloud-run-dev-validation` artifact from run 30376737123 |
+| `cloud-run-post-rollback-state-run-30376737123.json` | Cloud Run traffic state after rollback, reconstructed from logs |
+
+---
+
+## 8. Deploy Dev run 30376737123 (SHA dda726155a, PR #479)
+
+`Deploy Dev` run [`30376737123`](https://github.com/alfloop-dev/odayplus/actions/runs/30376737123)
+was triggered by the `push` of the merge commit of PR #479
+(`ODP-DEPLOY-CLOUD-RUN-JOB-EXECUTION-COMPAT-001`) at `2026-07-28T16:07:28Z`,
+running on exactly the required SHA — no re-dispatch needed.
+
+| Field | Value |
+|---|---|
+| Head branch / SHA | `dev` / `dda726155a399487474ae148b4dc1c3294ea9463` |
+| Event | `push` |
+| `e2e-operational-evidence` job | **success** |
+| `deploy` job | **failure** at step 13 |
+| Started | `2026-07-28T16:07:28Z` |
+| Completed | `2026-07-28T16:21:05Z` |
+
+Full step-by-step receipt: `deploy-run-30376737123.json`.
+
+### What changed from the previous run
+
+`ODP-DEPLOY-CLOUD-RUN-JOB-EXECUTION-COMPAT-001` replaced the
+`gcloud run jobs executions describe-latest` call sites in
+`scripts/deploy_cloud_run_waji.sh`. As a result the script progressed
+significantly further than run `30362772798`:
+
+- Preflight: 72 checks, 0 failures (`ok: true`, `release_sha: dda726155a...`)
+- Images built, pushed, cosign-signed, cosign-verified: `oday-api`, `oday-worker`,
+  `oday-scheduler` (3× Verification PASSED)
+- Traffic snapshot recorded
+- Migration Cloud Run Job `oday-migration-r-dda726155a39` deployed and executed:
+  `Execution [oday-migration-r-dda726155a39-ndb4l] has successfully completed.`
+
+### Where run 30376737123 failed
+
+The deploy failed at the migration job smoke validator, immediately after execution
+confirmed success:
+
+```text
+Cloud Run migration Job smoke failed (fail-closed):
+- jobs-smoke:migration:secret_bindings: database and provider secret environment bindings are configured
+report=.odp_data/deployment/cloud-run-jobs/migration-validation.json
+Deployment failed; restoring the recorded API/Web traffic split.
+##[error]Process completed with exit code 1.
+```
+
+Verbatim excerpt: `deploy-failure-excerpt-run-30376737123.log`.
+
+The failing check is `jobs-smoke:migration:secret_bindings`. This is a
+fail-closed smoke gate that validates the migration job's secret environment
+bindings after execution. The migration job itself ran to completion, but
+the post-execution smoke report (`cloud-run-jobs/migration-validation.json`)
+did not pass the binding verification.
+
+**Note on artifact availability:** Step 14 (`Upload deployment validation reports`)
+successfully ran and uploaded `.odp_data/deployment/*.json`. However the job smoke
+report path is `.odp_data/deployment/cloud-run-jobs/migration-validation.json` —
+a subdirectory not matched by the non-recursive `*.json` glob. This means the
+failing report was NOT uploaded to the artifact. Only `cloud-run-preflight.json`
+is available in the artifact (`cloud-run-dev-validation`). This is the same
+artifact-upload gap noted in §5 for the previous run.
+
+`scripts/**` is a forbidden path for this task. See §9 for the recommended
+remediation task.
+
+## 9. Cloud Run state after run 30376737123 rollback
+
+The rollback worked correctly. Because the failure happened before the API/Web
+candidate revisions are created, **no `oday-api` or `oday-web` revision carries
+`oday-release-sha=dda726155a399487474ae148b4dc1c3294ea9463`**, and traffic
+remains on the pre-run release:
+
+| Service | Serving revision (100%) | Release SHA label |
+|---|---|---|
+| `oday-api` | `oday-api-00005-gin` | none (pre-run) |
+| `oday-web` | `oday-web-00008-ws4` | none (pre-run) |
+
+Reconstructed from log (gcloud not scoped on this host): `cloud-run-post-rollback-state-run-30376737123.json`.
+
+The migration Cloud Run Job `oday-migration-r-dda726155a39` executed
+successfully at the target release SHA. As with the previous run, the dev
+database was migrated to `dda726155a` while API/Web traffic serves the
+pre-run schema revision.
+
+## 10. Acceptance status (run 30376737123)
+
+| # | Acceptance criterion | Status | Basis |
+|---|---|---|---|
+| 1 | Deploy Dev runs from exact merged `origin/dev` SHA and completes successfully | **FAIL** | Ran on `dda726155a`; concluded `failure`; `deploy-run-30376737123.json` |
+| 2 | Cloud Run API and web revisions report the deployed release SHA | **FAIL** | No revision carries the label; `cloud-run-post-rollback-state-run-30376737123.json` |
+| 3 | Operator API returns live non-placeholder data and fails closed on invalid access | **NOT REACHED** | Release never served traffic |
+| 4 | `/operator` leaves loading state and renders Package 10 canonical shell at desktop and mobile | **NOT REACHED** | Same |
+| 5 | All 40 Package 10 screen contracts and 117 retired visual paths remain verified | **PASS (source scope)** | `package10-contract-verification.txt` (unchanged, applies to both SHA) |
+| 6 | Independent Codex6 evidence review and CI pass before closeout | **PENDING** | Requires this evidence PR |
+
+## 11. Recommended remediation tasks (not performed here)
+
+### 11a. Migration job smoke binding failure (NEW)
+
+A separate task is required:
+
+- **Scope:** investigate why `jobs-smoke:migration:secret_bindings` fails
+  fail-closed. The migration job executed successfully
+  (`oday-migration-r-dda726155a39-ndb4l`), so the job definition was deployed,
+  but the smoke validator rejected the binding configuration in its post-execution
+  report. The smoke report (`cloud-run-jobs/migration-validation.json`) was not
+  retrievable due to the artifact glob being non-recursive.
+- **Also fix:** the artifact upload path (`if-no-files-found: ignore`,
+  `.odp_data/deployment/*.json`) must be made recursive or explicitly include
+  `cloud-run-jobs/*.json` so smoke reports are recoverable.
+- **Then:** once the smoke check passes, re-dispatch this task.
+
+### 11b. gcloud SDK compat (resolved by ODP-DEPLOY-CLOUD-RUN-JOB-EXECUTION-COMPAT-001)
+
+Confirmed resolved: run 30376737123 passed the `describe-latest` call sites
+and progressed to post-execution smoke. No further action on this defect.
+
+## 12. Verification commands (run 30376737123)
+
+```text
+git fetch origin dev --prune
+git rev-parse origin/dev                              # dda726155a399487474ae148b4dc1c3294ea9463
+gh run view 30376737123 -R alfloop-dev/odayplus --json status,conclusion,jobs
+gh api repos/alfloop-dev/odayplus/actions/jobs/90335080135/logs
+gh run download 30376737123 -R alfloop-dev/odayplus -n cloud-run-dev-validation
+gcloud run services describe oday-api --region asia-east1 --project alfaloop-data-project --format='json(status.traffic)'
+gcloud run services describe oday-web --region asia-east1 --project alfaloop-data-project --format='json(status.traffic)'
+gcloud run jobs describe oday-migration-r-dda726155a39 --region asia-east1 --project alfaloop-data-project --format=json
+gcloud run jobs executions list --job oday-migration-r-dda726155a39 --region asia-east1 --project alfaloop-data-project
+```
