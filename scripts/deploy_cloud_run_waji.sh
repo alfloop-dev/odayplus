@@ -10,12 +10,19 @@ set -euo pipefail
 
 echo "=== Starting ODay Plus Cloud Run Deployment ==="
 
-for cmd in python3 gcloud docker; do
+for cmd in python3 uv gcloud docker; do
   if ! command -v "$cmd" >/dev/null 2>&1; then
     echo "Error: required command '$cmd' is not installed." >&2
     exit 1
   fi
 done
+
+# Repository-aware validators import project runtime modules and dependencies.
+# Always resolve them through uv.lock; the runner's system Python is reserved
+# for the explicitly standard-library-only inline serializers below.
+run_locked_python() {
+  uv run --frozen python "$@"
+}
 
 : "${ODP_DEPLOY_ENV:?Error: ODP_DEPLOY_ENV is required.}"
 : "${ODAY_RELEASE_SHA:?Error: ODAY_RELEASE_SHA is required.}"
@@ -57,7 +64,7 @@ JOB_REPORT_DIR="${JOB_REPORT_DIR:-.odp_data/deployment/cloud-run-jobs}"
 source scripts/deployment/cloud_run_release_traffic.sh
 
 echo "Running fail-closed live deployment preflight..."
-python3 scripts/deployment/validate_cloud_run_live_deployment.py preflight \
+run_locked_python scripts/deployment/validate_cloud_run_live_deployment.py preflight \
   --environment "${ODP_DEPLOY_ENV}" \
   --release-sha "${ODAY_RELEASE_SHA}" \
   --output "${PREFLIGHT_REPORT}"
@@ -156,6 +163,7 @@ handle_deployment_exit() {
 trap handle_deployment_exit EXIT
 mkdir -p "${JOB_REPORT_DIR}"
 
+# This deterministic serializer imports only Python's standard library.
 python3 - "${API_ENV_FILE}" <<'PY'
 import json
 import os
@@ -278,7 +286,7 @@ capture_job_proof() {
     --region="${GCP_REGION}" \
     --project="${GCP_PROJECT}" \
     --format=json >"${execution_file}"
-  python3 scripts/deployment/validate_cloud_run_live_deployment.py jobs-smoke \
+  run_locked_python scripts/deployment/validate_cloud_run_live_deployment.py jobs-smoke \
     --job-kind="${kind}" \
     --job-description="${description_file}" \
     --execution="${execution_file}" \
@@ -339,7 +347,7 @@ gcloud run jobs deploy "${MIGRATION_CANDIDATE_JOB}" \
 # traffic. No candidate service is deployed until this passes.
 run_migration_compatibility_gate() {
   execute_job "migration" "${MIGRATION_CANDIDATE_JOB}"
-  python3 scripts/deployment/validate_cloud_run_live_deployment.py compatibility-smoke \
+  run_locked_python scripts/deployment/validate_cloud_run_live_deployment.py compatibility-smoke \
     --api-url "${OLD_API_URL}" \
     --web-url "${OLD_WEB_URL}" \
     --correlation-id "corr-cloud-run-compat-${ODP_DEPLOY_ENV}-${ODAY_RELEASE_SHA}" \
@@ -450,6 +458,7 @@ execute_job "scheduler" "${SCHEDULER_CANDIDATE_JOB}"
 execute_job "worker" "${WORKER_CANDIDATE_JOB}" \
   --args="scripts/deployment/cloud_run_job_entrypoint.py,worker,--max-jobs,1"
 
+# This deterministic serializer imports only Python's standard library.
 python3 - "${WEB_ENV_FILE}" "${API_URL}" "${API_SERVICE_AUDIENCE}" <<'PY'
 import json
 import os
@@ -537,7 +546,7 @@ if [[ "${GITHUB_ACTIONS:-}" == "true" ]]; then
 fi
 
 echo "Running release-aware smoke checks against tagged candidate revisions..."
-python3 scripts/deployment/validate_cloud_run_live_deployment.py smoke \
+run_locked_python scripts/deployment/validate_cloud_run_live_deployment.py smoke \
   --api-url "${API_URL}" \
   --web-url "${WEB_URL}" \
   --expected-sha "${ODAY_RELEASE_SHA}" \
@@ -590,7 +599,7 @@ if [[ -z "${LIVE_E2E_DEPLOYMENT_MODE}" ]]; then
     "ODP_DEPLOY_ENV is set, so the expected deploymentMode is unknown." >&2
   exit 1
 fi
-python3 scripts/e2e/check_live_e2e_gate.py \
+run_locked_python scripts/e2e/check_live_e2e_gate.py \
   --api-url "${LIVE_E2E_API_URL}" \
   --web-url "${LIVE_E2E_WEB_URL}" \
   --expected-sha "${ODAY_RELEASE_SHA}" \
