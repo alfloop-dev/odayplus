@@ -317,7 +317,9 @@ def test_deploy_preflight_imports_runtime_dependencies_via_locked_python(
     report = json.loads(report_path.read_text(encoding="utf-8"))
     assert report["ok"] is True
     checks = {check["name"]: check for check in report["checks"]}
-    assert checks["repository:provider_registry_import"]["ok"] is True
+    assert "repository:provider_registry_import" not in checks
+    for provider_id in validator.REQUIRED_PRODUCT_PROVIDER_IDS:
+        assert checks[f"repository:provider_adapter:{provider_id}"]["ok"] is True
     assert checks["repository:operator_bootstrap_data_source"]["ok"] is True
 
 
