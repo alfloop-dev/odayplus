@@ -1,0 +1,16 @@
+{
+  "task_id": "ODP-ORCH-ANTIGRAVITY-LIVE-FALLBACK-001",
+  "receipt_kind": "deterministic_supervisor_lifecycle_regression",
+  "source_commit": "b07be6c393de983b15288053f6c1cddc2ed5df8c",
+  "logical_agent": "Antigravity5",
+  "failed_run_id": "agy-run-dead",
+  "failed_pool": "gemini",
+  "failure_kind": "quota_terminal",
+  "owner_reassignment_called": false,
+  "failure_processed_count": 1,
+  "next_pool": "claude",
+  "next_model": "Claude Sonnet 4.6 (Thinking)",
+  "provider_paused": false,
+  "live_package_10_canary": "pending_post_merge",
+  "verification_test": ".orchestrator/test_supervisor.py::RuntimeLeaseReconciliationTests::test_antigravity_boot_reconciliation_preserves_owner_for_claude_pool"
+}
