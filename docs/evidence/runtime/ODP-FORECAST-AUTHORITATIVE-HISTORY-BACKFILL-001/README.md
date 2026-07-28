@@ -38,8 +38,11 @@ into its output.
 | `slice_deadline_headroom.json` | — | Why `activeDeadlineSeconds` was raised 14400→28800 on the remaining slices, and the measurement that forced it. |
 | `lineage_projection_throughput.json` | — | What actually governs a partition's wall-clock: lineage projection is ~90 % of it, at a rate that has fallen to 209 rows/min. Turns slice sizing from a tripwire into a projection, and shows the raised deadline has only ~18 % throughput margin (see §7). |
 | `runbook/lineage-throughput-probe.py` | — | The read-only probe that produced it. Two aggregate `SELECT`s; excludes resumed stub partitions and says how many it dropped. |
-| `horizon_critical_path.json` | — | Which remaining slice actually decides criterion 3, measured against the view's own eligibility rule: the gap-fill family moves h28 from 0 to 2, the backwards family to 419 (see §7). |
+| `horizon_critical_path.json` | — | Which remaining slice actually decides criterion 3, measured against the view's own eligibility rule: the gap-fill family moves h28 from 0 to 2, the backwards family to 419 (see §7). Captured while `-s4` was still projected; `horizon_critical_path_after_s4.json` re-measures it at 406 with `-s4` real. |
 | `runbook/horizon-critical-path-probe.py` | — | The read-only probe that produced it. Mirrors `forecast_training_view` on the source plane; projections are bracketed and labelled as projections. |
+| `horizon_critical_path_after_s4.json` | — | The same probe re-run once `-s4` was real rather than projected. The backwards family now reads h28 = 406 against the gap-fill family's 2, and `landed_measured` carries the first real 28-day window (see §7). |
+| `donor_projection_backtest.json` | — | The donor rule behind those projections, scored against a blind holdout — the four dates `-s4` landed after the projection was cached. Per-date recall/precision, the continuity score island length actually depends on, and the attestation assumption (see §7). |
+| `runbook/donor-projection-backtest.py` | — | The backtest that produced it. Imports the donor logic from the probe under test rather than restating it; read-only, and it scores no in-flight slice. |
 | `backwards_window_store_density.json` | — | Whether the backwards windows actually hold the stores the critical path donates to them: no gap day across the 24-day span, and 421 stores trading every day of it against an independently projected 419 (see §7). Carries its own grain and control range. |
 | `backwards_window_store_density_probe.pod.yaml` | — | The exact read-only Pod that produced it. One aggregation, counts only; place ids never leave the pod. |
 | `runbook/deadline-guard-v1.sh` | — | Fourth keeper. Extends `activeDeadlineSeconds` on the Active slice before it can be killed, because a deadline kill is what created Defect D and there is no safe kill for this workload. |
@@ -986,6 +989,66 @@ bound is row-level quarantine for other reasons (`INVALID_AMOUNT`,
 `STATUS_MAPPING_UNAPPROVED`, contract violations) — those cut a store's order
 count without removing it from a store-day, so they cannot break a consecutive
 run, and they remain a matter for the post-activation `verify`.
+
+### The donor rule itself, scored against a blind holdout
+
+The three routes above all corroborate the *population* the projection runs
+over. None of them tests the **rule** that turns a landed store set into a
+projected one, and that rule is what produced 419 in the first place: a store
+gets a not-yet-ingested date if it traded on the nearest dense landed day
+(optimistic) or on every one of the nearest seven (strict). No donor projection
+had ever been compared against an outcome, for the plain reason that until now
+no projected date had subsequently landed.
+
+`-s4` supplied one, and it is blind in the strict sense rather than the
+convenient one. The critical-path probe's grid was cached at **19:54Z** while
+`-s4` was still mid-flight: it held 2026-07-12 and 2026-07-13, the two
+partitions the slice had finished by then, and nothing from 2026-07-14 onwards.
+Those four dates landed afterwards under the same Job. The projection for them
+was therefore made with none of their data, and
+`donor_projection_backtest.json` scores it against what arrived. The donor logic
+is **imported** from `horizon-critical-path-probe.py` rather than restated, so
+what is scored is the code under test.
+
+- **Both rules under-state a single day, and neither invents much.** Over the
+  four dates, optimistic recall **0.937** at precision **0.975**; strict recall
+  **0.851** at precision **0.994**. The rule's error is overwhelmingly one of
+  omission — the stores it names really did trade.
+- **The bracket contains the truth on the quantity that matters.** Per-date
+  recall is the wrong score for h28, because the rule is all-or-none per store
+  while a real store can trade three days of four and break its island. Scored
+  on the population trading **every** holdout date: **519 actual**, against
+  **529** optimistic and **464** strict. The optimistic arm runs ~2 % high, the
+  strict arm ~11 % low, and the measured value sits between them. The bracket
+  brackets — demonstrated rather than asserted, which is what it was introduced
+  to do after the 2026-05-22 straggler collapsed the first version of the probe.
+- **All four holdout dates landed fully attested**, so the counterfactual's
+  second assumption — that a projected date is attested as well as present —
+  also held. Nothing in the rule's optimism hides there.
+- **Re-measured with `-s4` real rather than projected, the attribution is
+  unchanged.** `-b1..-b3` moves h28 to **406** (it read 419 when those dates
+  were projected); `-b4` adds 11 more; the gap-fill family still reaches **2**.
+  The 3 % drop is in the direction the backtest predicts for the optimistic arm,
+  and 406 versus 2 is not a margin any plausible rule error closes. `-b3`
+  remains the gate.
+- **The first real 28-day window now exists.** `landed_measured` reports
+  h7 = 459, h14 = 411, **h28 = 1**, longest per-store eligible run 28 days —
+  up from h7 = 438 / h14 = 411 / h28 = 0 / 23 days before `-s4`. One store is
+  not criterion 3, but the quantity is no longer structurally zero.
+
+Two limits, stated rather than buried. The holdout dates sit one to five days
+from their donors and extend an island *forwards*; `-b1..-b4` sit up to two
+months from theirs, so this bounds the rule's error in the favourable regime.
+It could have falsified the rule outright and did not, but a clean result here
+is a lower bound on the error, not a guarantee at two months' distance — which
+is exactly why the density and mappability probes measure the backwards
+population against the source instead of projecting it. Read the three together.
+Second, the re-measured `landed_measured` block above was captured at 21:46Z,
+eight minutes after the driver resumed `-b1`, so its ingested span opens at
+2026-05-16 and includes two partial in-flight dates. They are excluded from the
+backtest's holdout by construction, and they sit far below any eligible date, so
+they do not move the horizon counts; they are noted because the span figure in
+that receipt would otherwise look like a slice had completed.
 
 ## 8. Defect E — activation destroyed lineage, and the view declined to notice
 

@@ -1,0 +1,247 @@
+{
+  "captured_at": "2026-07-28T21:50:50.242164+00:00",
+  "purpose": "Score the donor rule behind horizon_critical_path.json against a blind holdout. The -b3 critical-path decision rests on that rule's projection of which stores trade on not-yet-ingested dates; -s4 is the first time a projected date has subsequently landed.",
+  "holdout": {
+    "dates": [
+      "2026-07-14",
+      "2026-07-15",
+      "2026-07-16",
+      "2026-07-17"
+    ],
+    "why_blind": "pre grid was fetched while -s4 was mid-flight, holding only the partitions it had finished by then; the holdout dates carried no data at projection time and landed afterwards under the same Job",
+    "pre_fetched_at": "2026-07-28T19:54:09.767061+00:00",
+    "post_fetched_at": "2026-07-28T21:46:34.980687+00:00",
+    "pre_span_days": 58,
+    "post_span_days": 64,
+    "excluded_in_flight_dates": [
+      "2026-05-16",
+      "2026-05-17"
+    ],
+    "why_excluded": "dates outside -s4's window that appeared between the two fetches belong to -b1, which was still RUNNING and commits as it goes. They are partial, so scoring against them would charge the rule for stores not yet read."
+  },
+  "method": {
+    "donor_logic": "imported from horizon-critical-path-probe.py (apply_slices, dense_dates) so the code scored is the code under test",
+    "optimistic": "store traded on the nearest dense landed day",
+    "strict": "store traded on every one of the nearest 7 dense landed days",
+    "dense": "store count >= half the landed median",
+    "regime_caveat": "holdout dates sit 1-5 days from their donors and extend an island forwards; -b1..-b4 sit up to two months from theirs. This bounds the rule's error in the favourable regime -- it can falsify the rule, and a clean result is a lower bound on error rather than a guarantee at two months' distance. The distance question is measured directly, not projected, by backwards_window_store_density.json and backwards_window_store_mappability.json."
+  },
+  "per_date": [
+    {
+      "date": "2026-07-14",
+      "landed_attested_stores": 548,
+      "landed_fully_attested": true,
+      "donors_used": {
+        "optimistic": [
+          "2026-07-13"
+        ],
+        "strict_count": 7,
+        "max_donor_distance_days": 7
+      },
+      "optimistic": {
+        "actual_stores": 548,
+        "projected_stores": 529,
+        "hit": 515,
+        "missed_by_rule": 33,
+        "invented_by_rule": 14,
+        "recall": 0.9398,
+        "precision": 0.9735
+      },
+      "strict": {
+        "actual_stores": 548,
+        "projected_stores": 473,
+        "hit": 469,
+        "missed_by_rule": 79,
+        "invented_by_rule": 4,
+        "recall": 0.8558,
+        "precision": 0.9915
+      }
+    },
+    {
+      "date": "2026-07-15",
+      "landed_attested_stores": 555,
+      "landed_fully_attested": true,
+      "donors_used": {
+        "optimistic": [
+          "2026-07-13"
+        ],
+        "strict_count": 7,
+        "max_donor_distance_days": 8
+      },
+      "optimistic": {
+        "actual_stores": 555,
+        "projected_stores": 529,
+        "hit": 519,
+        "missed_by_rule": 36,
+        "invented_by_rule": 10,
+        "recall": 0.9351,
+        "precision": 0.9811
+      },
+      "strict": {
+        "actual_stores": 555,
+        "projected_stores": 473,
+        "hit": 470,
+        "missed_by_rule": 85,
+        "invented_by_rule": 3,
+        "recall": 0.8468,
+        "precision": 0.9937
+      }
+    },
+    {
+      "date": "2026-07-16",
+      "landed_attested_stores": 547,
+      "landed_fully_attested": true,
+      "donors_used": {
+        "optimistic": [
+          "2026-07-13"
+        ],
+        "strict_count": 7,
+        "max_donor_distance_days": 8
+      },
+      "optimistic": {
+        "actual_stores": 547,
+        "projected_stores": 529,
+        "hit": 515,
+        "missed_by_rule": 32,
+        "invented_by_rule": 14,
+        "recall": 0.9415,
+        "precision": 0.9735
+      },
+      "strict": {
+        "actual_stores": 547,
+        "projected_stores": 470,
+        "hit": 468,
+        "missed_by_rule": 79,
+        "invented_by_rule": 2,
+        "recall": 0.8556,
+        "precision": 0.9957
+      }
+    },
+    {
+      "date": "2026-07-17",
+      "landed_attested_stores": 554,
+      "landed_fully_attested": true,
+      "donors_used": {
+        "optimistic": [
+          "2026-07-13"
+        ],
+        "strict_count": 7,
+        "max_donor_distance_days": 8
+      },
+      "optimistic": {
+        "actual_stores": 554,
+        "projected_stores": 529,
+        "hit": 515,
+        "missed_by_rule": 39,
+        "invented_by_rule": 14,
+        "recall": 0.9296,
+        "precision": 0.9735
+      },
+      "strict": {
+        "actual_stores": 554,
+        "projected_stores": 471,
+        "hit": 469,
+        "missed_by_rule": 85,
+        "invented_by_rule": 2,
+        "recall": 0.8466,
+        "precision": 0.9958
+      }
+    }
+  ],
+  "totals": {
+    "optimistic": {
+      "actual_stores": 2204,
+      "projected_stores": 2116,
+      "hit": 2064,
+      "missed_by_rule": 140,
+      "invented_by_rule": 52,
+      "recall": 0.9365,
+      "precision": 0.9754
+    },
+    "strict": {
+      "actual_stores": 2204,
+      "projected_stores": 1887,
+      "hit": 1876,
+      "missed_by_rule": 328,
+      "invented_by_rule": 11,
+      "recall": 0.8512,
+      "precision": 0.9942
+    }
+  },
+  "continuity": {
+    "note": "stores present on EVERY holdout date. The donor rule is all-or-none per store, so its per-date set is also its continuous set; reality churns day to day. This is the comparison island length depends on.",
+    "actual_stores_on_every_holdout_date": 519,
+    "optimistic": {
+      "actual_stores": 519,
+      "projected_stores": 529,
+      "hit": 502,
+      "missed_by_rule": 17,
+      "invented_by_rule": 27,
+      "recall": 0.9672,
+      "precision": 0.949
+    },
+    "strict": {
+      "actual_stores": 519,
+      "projected_stores": 464,
+      "hit": 458,
+      "missed_by_rule": 61,
+      "invented_by_rule": 6,
+      "recall": 0.8825,
+      "precision": 0.9871
+    }
+  },
+  "attestation": {
+    "holdout_dates_not_fully_attested": [],
+    "note": "the counterfactual marks projected dates attested as well as present; a landed holdout date that is not fully attested would make the rule optimistic in a way the store-set score cannot see"
+  },
+  "end_to_end": {
+    "measured_before_holdout": {
+      "stores_with_any_eligible_date": 479,
+      "max_streak_days": 23,
+      "horizon_windows": {
+        "h7": 438,
+        "h14": 411,
+        "h28": 0,
+        "h56": 0,
+        "h84": 0,
+        "h168": 0
+      }
+    },
+    "measured_after_holdout": {
+      "stores_with_any_eligible_date": 483,
+      "max_streak_days": 28,
+      "horizon_windows": {
+        "h7": 459,
+        "h14": 411,
+        "h28": 1,
+        "h56": 0,
+        "h84": 0,
+        "h168": 0
+      }
+    },
+    "projected_optimistic": {
+      "stores_with_any_eligible_date": 483,
+      "max_streak_days": 23,
+      "horizon_windows": {
+        "h7": 438,
+        "h14": 411,
+        "h28": 0,
+        "h56": 0,
+        "h84": 0,
+        "h168": 0
+      }
+    },
+    "projected_strict": {
+      "stores_with_any_eligible_date": 483,
+      "max_streak_days": 23,
+      "horizon_windows": {
+        "h7": 438,
+        "h14": 411,
+        "h28": 0,
+        "h56": 0,
+        "h84": 0,
+        "h168": 0
+      }
+    }
+  }
+}

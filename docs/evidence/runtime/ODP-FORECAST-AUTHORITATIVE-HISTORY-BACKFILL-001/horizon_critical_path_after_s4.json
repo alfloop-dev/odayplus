@@ -1,0 +1,182 @@
+{
+  "captured_at": "2026-07-28T21:46:43.676592+00:00",
+  "purpose": "Attribute acceptance criterion 3 to a specific slice. Measures the landed per-store eligible-date islands, then re-computes them under slice-completion counterfactuals to show which remaining family of Jobs can produce a 28-day horizon window and which cannot.",
+  "method": {
+    "plane": "SOURCE PG15 (target PG16 not re-activated since -s3; re-activating while a partition is RUNNING is forbidden)",
+    "eligibility": "target date attested (lineage_complete AND source_run_complete) AND prior_day_count_28 = 28, where the prior count has NO attestation filter -- matching the view's point_in_time LATERAL",
+    "horizon_window": "h consecutive eligible dates for one store (gaps-and-islands, as forecast_horizon_windows)",
+    "counterfactual": "a slice's window is marked ingested+attested for stores projected to be trading then; it adds no revenue and is a projection of island LENGTH only. Defect D days 2026-07-05/07-06 are never healed by any counterfactual.",
+    "donor_rule": "optimistic = traded on the nearest DENSE landed day; strict = traded on all of the nearest 7 dense landed days. Dense = store count >= half the landed median, which excludes timezone-edge stragglers such as 2026-05-22 (3 stores). Donating from 2026-05-22 is what made this probe's first run report h28 = 3 for every backwards scenario.",
+    "measured_vs_projected": "landed_measured is measured; every other scenario is projected and bracketed",
+    "daily_sql": "WITH src AS ( SELECT store.tenant_id, txn.transaction_id, txn.store_id, (txn.event_time AT TIME ZONE 'UTC')::date AS d, source.source_run_complete, coalesce(cardinality(source.source_snapshot_ids), 0) > 0 AS has_lineage FROM core.transactions AS txn INNER JOIN core.stores AS store ON store.store_id = txn.store_id LEFT JOIN LATERAL ( SELECT array_agg(DISTINCT lineage.source_snapshot_id::text) AS source_snapshot_ids, bool_and( ingestion.status = 'SUCCEEDED' AND ingestion.finished_at IS NOT NULL ) AS source_run_complete FROM data_plane.canonical_lineage AS lineage INNER JOIN data_plane.ingestion_runs AS ingestion ON ingestion.run_id = lineage.run_id WHERE lineage.tenant_id = store.tenant_id AND lineage.canonical_table = 'core.transactions' AND lineage.canonical_id = txn.transaction_id ) AS source ON TRUE WHERE txn.transaction_status = 'succeeded' AND txn.currency = 'TWD' ) SELECT store_id::text, d, coalesce(bool_and(has_lineage), FALSE) AND coalesce(bool_and(source_run_complete), FALSE) AS attested FROM src GROUP BY store_id, d ORDER BY store_id, d;",
+    "source_fetched_at": "2026-07-28T21:46:34.980687+00:00"
+  },
+  "landed_per_store_streaks": {
+    "note": "longest run of consecutive ELIGIBLE dates per store, landed. This is the quantity horizon windows are cut from.",
+    "stores": 597,
+    "distribution": {
+      "ge_1": 483,
+      "ge_7": 459,
+      "ge_14": 411,
+      "ge_21": 1,
+      "ge_23": 1,
+      "ge_28": 1
+    }
+  },
+  "landed_sparse_days_excluded_as_donors": [
+    {
+      "date": "2026-05-16",
+      "stores": 1
+    },
+    {
+      "date": "2026-05-22",
+      "stores": 3
+    }
+  ],
+  "landed_span": {
+    "ingested_first": "2026-05-16",
+    "ingested_last": "2026-07-27",
+    "ingested_day_count": 64,
+    "attested_day_count": 60,
+    "permanent_unattested_days": [
+      "2026-07-05",
+      "2026-07-06"
+    ]
+  },
+  "slice_windows": {
+    "s4": {
+      "start": "2026-07-12",
+      "end_exclusive": "2026-07-18"
+    },
+    "s5": {
+      "start": "2026-07-18",
+      "end_exclusive": "2026-07-23"
+    },
+    "b1": {
+      "start": "2026-05-17",
+      "end_exclusive": "2026-05-23"
+    },
+    "b2": {
+      "start": "2026-05-11",
+      "end_exclusive": "2026-05-17"
+    },
+    "b3": {
+      "start": "2026-05-05",
+      "end_exclusive": "2026-05-11"
+    },
+    "b4": {
+      "start": "2026-04-29",
+      "end_exclusive": "2026-05-05"
+    }
+  },
+  "scenarios": {
+    "landed_measured": {
+      "stores_with_any_eligible_date": 483,
+      "max_streak_days": 28,
+      "horizon_windows": {
+        "h7": 459,
+        "h14": 411,
+        "h28": 1,
+        "h56": 0,
+        "h84": 0,
+        "h168": 0
+      }
+    },
+    "plus_gapfill_s4_s5__optimistic": {
+      "stores_with_any_eligible_date": 496,
+      "max_streak_days": 38,
+      "horizon_windows": {
+        "h7": 470,
+        "h14": 445,
+        "h28": 2,
+        "h56": 0,
+        "h84": 0,
+        "h168": 0
+      }
+    },
+    "plus_gapfill_s4_s5__strict": {
+      "stores_with_any_eligible_date": 496,
+      "max_streak_days": 38,
+      "horizon_windows": {
+        "h7": 470,
+        "h14": 444,
+        "h28": 2,
+        "h56": 0,
+        "h84": 0,
+        "h168": 0
+      }
+    },
+    "plus_backwards_b1_b2_b3__optimistic": {
+      "stores_with_any_eligible_date": 494,
+      "max_streak_days": 34,
+      "horizon_windows": {
+        "h7": 476,
+        "h14": 432,
+        "h28": 406,
+        "h56": 0,
+        "h84": 0,
+        "h168": 0
+      }
+    },
+    "plus_backwards_b1_b2_b3__strict": {
+      "stores_with_any_eligible_date": 494,
+      "max_streak_days": 34,
+      "horizon_windows": {
+        "h7": 475,
+        "h14": 432,
+        "h28": 406,
+        "h56": 0,
+        "h84": 0,
+        "h168": 0
+      }
+    },
+    "plus_backwards_b1_b2_b3_b4__optimistic": {
+      "stores_with_any_eligible_date": 502,
+      "max_streak_days": 40,
+      "horizon_windows": {
+        "h7": 482,
+        "h14": 434,
+        "h28": 417,
+        "h56": 0,
+        "h84": 0,
+        "h168": 0
+      }
+    },
+    "plus_backwards_b1_b2_b3_b4__strict": {
+      "stores_with_any_eligible_date": 497,
+      "max_streak_days": 40,
+      "horizon_windows": {
+        "h7": 481,
+        "h14": 434,
+        "h28": 417,
+        "h56": 0,
+        "h84": 0,
+        "h168": 0
+      }
+    },
+    "plus_all_remaining__optimistic": {
+      "stores_with_any_eligible_date": 508,
+      "max_streak_days": 40,
+      "horizon_windows": {
+        "h7": 492,
+        "h14": 466,
+        "h28": 418,
+        "h56": 0,
+        "h84": 0,
+        "h168": 0
+      }
+    },
+    "plus_all_remaining__strict": {
+      "stores_with_any_eligible_date": 504,
+      "max_streak_days": 40,
+      "horizon_windows": {
+        "h7": 491,
+        "h14": 465,
+        "h28": 418,
+        "h56": 0,
+        "h84": 0,
+        "h168": 0
+      }
+    }
+  }
+}
