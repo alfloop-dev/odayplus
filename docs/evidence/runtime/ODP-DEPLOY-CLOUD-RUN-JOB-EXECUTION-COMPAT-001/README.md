@@ -1,0 +1,97 @@
+# ODP-DEPLOY-CLOUD-RUN-JOB-EXECUTION-COMPAT-001 evidence
+
+## Version dependency removed
+
+`scripts/deploy_cloud_run_waji.sh` captured every Cloud Run Job receipt with
+gcloud's shortcut subcommand for a job's newest execution. That subcommand only
+exists on recent gcloud releases, so whether Deploy Dev could produce migration,
+scheduler, and worker proof at all depended on the runner image's CLI version
+rather than on the deployment itself. On a runner without it the command exits
+with an unrecognised-argument error, which aborts the deployment inside the
+migration gate — before the API/Web candidates are ever deployed.
+
+The shortcut is gone. `grep -c describe-latest scripts/deploy_cloud_run_waji.sh`
+now returns `0`, and `tests/ops/test_cloud_run_live_deployment.py::
+test_deploy_script_captures_job_proof_without_describe_latest` pins that.
+
+## Delivered boundary
+
+Both the success path (`capture_job_proof`) and the failure forensics path
+(`execute_job`) now share one helper, `capture_latest_execution`:
+
+1. `gcloud run jobs executions list --job=<job> --format=json` — a surface that
+   has existed for as long as Cloud Run Jobs themselves.
+2. `validate_cloud_run_live_deployment.py resolve-latest-execution` resolves the
+   newest execution name from that list, under `run_locked_python`.
+3. `gcloud run jobs executions describe <exact-name> --format=json` writes the
+   receipt that `jobs-smoke` validates.
+
+`resolve_latest_execution_name` reads both schemas gcloud emits across versions:
+the Knative shape (`metadata.name`, `metadata.creationTimestamp`,
+`metadata.labels."run.googleapis.com/job"`) and the v2 shape (`name`,
+`createTime`, `job`), including RFC3339 nanosecond precision and a bare or
+`items`/`executions`-wrapped array.
+
+## Fail-closed matrix
+
+The resolver refuses to name an execution it cannot prove is the right one, and
+the shell helper exits non-zero before `describe` is reached, so no receipt file
+is created and `set -euo pipefail` propagates the failure into the existing
+rollback trap.
+
+| Input | Outcome |
+| --- | --- |
+| empty list (`[]`, `{"items": []}`) | `no Cloud Run Job execution was found` |
+| payload is not an array | `must be a JSON array of execution objects` |
+| entry is not an object | `executions[i] is not a JSON object` |
+| entry has no name | `no resolvable execution name` |
+| several entries, one without a timestamp | `no creation timestamp to order by` |
+| several entries, unparsable timestamp | `creation timestamp ... is unparsable` |
+| newest timestamp shared by two entries | `the latest execution is ambiguous` |
+| execution belongs to another job | `does not belong to job` |
+| execution ran but failed | unchanged: `jobs-smoke:<kind>:execution` fails |
+
+The last row is the pre-existing `_execution_completed` gate (`succeededCount>=1`
+and `failedCount==0` with a `Completed` condition). It is unchanged and still
+covered by `test_job_smoke_rejects_failed_execution_and_missing_provider_secrets`.
+
+## Unchanged by this task
+
+- `jobs-smoke` proof schema, report keys, and check names.
+- Migration → candidate → smoke → traffic-cut → scheduler gate ordering.
+- `handle_deployment_exit` traffic and Cloud Scheduler rollback semantics.
+- Workflows, API, Package 10, model registry, and OperatorStateService.
+
+The only new artifact is an additive `<kind>-execution-list.json` alongside the
+existing `<kind>-execution.json` receipt in `JOB_REPORT_DIR`.
+
+## Focused verification
+
+Executed from the task branch at commit
+`b49de876dd65c5873cb27763fb48441b7786d9a4`:
+
+```text
+bash -n scripts/deploy_cloud_run_waji.sh
+uv run --frozen pytest tests/ops/test_cloud_run_live_deployment.py -q   # 59 passed
+uv run --frozen ruff check scripts/deployment/validate_cloud_run_live_deployment.py tests/ops/test_cloud_run_live_deployment.py
+uv run --frozen ruff format --check scripts/deployment/validate_cloud_run_live_deployment.py
+git diff --check
+```
+
+All commands passed.
+
+Verification is not limited to source-text assertions. A focused shell harness
+extracts the real `capture_latest_execution` function from the deploy script and
+runs it against a stubbed `gcloud` that records every invocation:
+
+- with two executions listed, the recorded calls are
+  `run jobs executions list --job=worker-job ...` followed by
+  `run jobs executions describe worker-job-00002 ...` — the newest name, by
+  exact name, with no shortcut subcommand in the log, and the receipt file
+  contains that execution.
+- with an empty list, a nameless entry, or non-JSON list output, the helper
+  exits non-zero, `describe` is never invoked, and the receipt file does not
+  exist.
+
+Exact-head CI and independent Codex6 review remain required before merge. After
+merge, ODP-P10-DEV-REDEPLOY-VERIFY-001 must be re-run from the exact merged SHA.
