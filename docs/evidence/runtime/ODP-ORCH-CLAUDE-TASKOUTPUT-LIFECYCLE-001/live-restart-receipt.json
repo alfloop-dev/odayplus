@@ -1,0 +1,79 @@
+{
+  "task_id": "ODP-ORCH-CLAUDE-TASKOUTPUT-LIFECYCLE-001",
+  "pull_request": {
+    "number": 475,
+    "approved_task_head": "6400c85e625c9dea19994f80de78b4291ca686ea",
+    "integration_head": "00388bdb512f119c5c7f9ad915380c51269b302f",
+    "merge_sha": "b4aba4258aca97ab154fdc8fec54e81b355c14a6",
+    "merged_at": "2026-07-28T13:49:57Z",
+    "required_checks": {
+      "orchestrator": "success",
+      "product": "success",
+      "product-e2e-gate": "success",
+      "task-review-gate": "success"
+    }
+  },
+  "live_deployment": {
+    "repo_root": "/home/lupin/oday-plus-supervisor-live",
+    "file": ".orchestrator/permission_broker.py",
+    "source_merge_sha": "b4aba4258aca97ab154fdc8fec54e81b355c14a6",
+    "live_sha256": "1ed64d46ea1c115fdc1c33b3bbe57768148dd5d1cf81ff5c16874f764db92391",
+    "merged_sha256": "1ed64d46ea1c115fdc1c33b3bbe57768148dd5d1cf81ff5c16874f764db92391",
+    "evaluated_at": "2026-07-28T13:51:16Z",
+    "taskoutput_evaluation": {
+      "decision": "allow",
+      "risk_class": "safe_read",
+      "reason": "TaskOutput is read-only."
+    }
+  },
+  "restart": {
+    "requested_at": "2026-07-28T13:51:28Z",
+    "old_supervisor_pid": 4095699,
+    "watchdog_candidate_pid": 4143256,
+    "singleton_supervisor_pid": 4143343,
+    "singleton_started_at": "2026-07-28T13:51:33Z",
+    "first_successful_loop_at": "2026-07-28T13:51:36Z",
+    "watchdog_safe_mode_until": "2026-07-28T13:53:28Z",
+    "post_safe_mode_successful_loop_at": "2026-07-28T13:55:29Z",
+    "post_safe_mode_loop_duration_ms": 19000,
+    "health": "healthy",
+    "lifecycle": "running",
+    "last_loop_error": null,
+    "live_supervisor_process_count": 1
+  },
+  "worker_cardinality": {
+    "pre_restart": {
+      "captured_at": "2026-07-28T13:51:16Z",
+      "running_count_by_task": {
+        "ODP-DEPLOY-CLOUD-RUN-JOB-EXECUTION-COMPAT-001": 1,
+        "ODP-FORECAST-AUTHORITATIVE-HISTORY-BACKFILL-001": 1,
+        "ODP-ORCH-CLAUDE-TASKOUTPUT-LIFECYCLE-001": 1
+      },
+      "duplicate_running_tasks": []
+    },
+    "first_boot": {
+      "captured_at": "2026-07-28T13:52:10Z",
+      "running_count_by_task": {
+        "ODP-ORCH-CLAUDE-TASKOUTPUT-LIFECYCLE-001": 1
+      },
+      "duplicate_running_tasks": []
+    },
+    "post_safe_mode": {
+      "captured_at": "2026-07-28T13:55:33Z",
+      "runtime_state_running_count_by_task": {
+        "ODP-FORECAST-AUTHORITATIVE-HISTORY-BACKFILL-001": 1,
+        "ODP-ORCH-CLAUDE-TASKOUTPUT-LIFECYCLE-001": 1
+      },
+      "os_live_runner_count_by_task": {
+        "ODP-DEPLOY-CLOUD-RUN-JOB-EXECUTION-COMPAT-001": 1,
+        "ODP-FORECAST-AUTHORITATIVE-HISTORY-BACKFILL-001": 1,
+        "ODP-ORCH-CLAUDE-TASKOUTPUT-LIFECYCLE-001": 1
+      },
+      "duplicate_running_tasks": [],
+      "active_task_count_over_one_violations": []
+    },
+    "preserved_task_run_id": "codex-20260728T130908Z-ebf11510",
+    "result": "pass"
+  },
+  "sensitive_content_included": false
+}
