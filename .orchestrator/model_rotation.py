@@ -5,8 +5,8 @@ idling when one 5-hour limit is hit.
 Self-contained and feature-flagged: only providers whose `antigravity` settings
 carry `model_rotation.enabled = true` are affected. Everything else is a no-op.
 
-State lives in `.orchestrator/runtime/antigravity_model_cooldown.json`:
-    { "<provider_id>": {"gemini_until": "<iso>|null", "claude_until": "<iso>|null"} }
+State lives in `.orchestrator/runtime/antigravity_model_cooldown.json`, keyed by
+the shared account/profile rather than a worker alias.
 
 Both the adapter (model selection at dispatch) and the supervisor (recording an
 exhausted pool on capacity/quota failure) call into this one module so their view
@@ -14,6 +14,7 @@ of "which pool is active" can never diverge.
 """
 from __future__ import annotations
 
+import hashlib
 import json
 import re
 from datetime import UTC, datetime
@@ -79,6 +80,22 @@ def _provider_antigravity_settings(config: dict[str, Any] | None, provider_id: s
     return settings if isinstance(settings, dict) else {}
 
 
+def cooldown_scope(config: dict[str, Any] | None, provider_id: str | None) -> str:
+    """Stable state key for the account used by an Antigravity provider alias."""
+    providers = (config or {}).get("providers", {}) or {}
+    pid = str(provider_id or "").strip()
+    provider = providers.get(pid) if isinstance(providers.get(pid), dict) else {}
+    settings = _provider_antigravity_settings(config, pid)
+    explicit = provider.get("quota_group") or provider.get("account_group") or settings.get("account_group")
+    if explicit:
+        return f"account:{str(explicit).strip().lower()}"
+    profile = str(settings.get("config_home") or settings.get("home") or "").strip()
+    if profile:
+        digest = hashlib.sha256(str(Path(profile).expanduser()).encode()).hexdigest()[:16]
+        return f"profile:{digest}"
+    return "account:antigravity-default" if pid.lower().startswith("antigravity") else pid
+
+
 def rotation_config(config: dict[str, Any] | None, provider_id: str | None) -> dict[str, Any]:
     settings = _provider_antigravity_settings(config, provider_id)
     rc = settings.get("model_rotation")
@@ -121,7 +138,7 @@ def _entry(state: dict[str, Any], provider_id: str) -> dict[str, Any]:
 def active_pool(config: dict[str, Any] | None, provider_id: str, now: datetime | None = None) -> str | None:
     """Return 'gemini', 'claude', or None (both pools currently cooling down)."""
     now = _now(now)
-    entry = _entry(_load(), str(provider_id or ""))
+    entry = _entry(_load(), cooldown_scope(config, provider_id))
     gemini_until = _parse(entry.get("gemini_until"))
     claude_until = _parse(entry.get("claude_until"))
     gemini_cooling = gemini_until is not None and now < gemini_until
@@ -198,6 +215,7 @@ def record_exhaustion(config: dict[str, Any] | None, provider_id: str | None, co
     are cooling the caller should fall back to a real dispatch pause."""
     now = _now(now)
     pid = str(provider_id or "")
+    scope = cooldown_scope(config, pid)
     pool = normalize_pool(pool)
     inferred = pool is None
     if inferred:
@@ -208,14 +226,16 @@ def record_exhaustion(config: dict[str, Any] | None, provider_id: str | None, co
     until = (now.replace(microsecond=0)).timestamp() + max(60, int(cooldown_seconds or 900))
     until_iso = datetime.fromtimestamp(until, tz=UTC).isoformat().replace("+00:00", "Z")
     state = _load()
-    entry = dict(_entry(state, pid))
+    entry = dict(_entry(state, scope))
     if pool == "gemini":
         entry["gemini_until"] = until_iso
     else:
         entry["claude_until"] = until_iso
     entry["last_reason"] = (str(reason or "").strip()[:200]) or entry.get("last_reason")
     entry["updated_at"] = now.replace(microsecond=0).isoformat().replace("+00:00", "Z")
-    state[pid] = entry
+    entry["scope"] = scope
+    entry["trigger_provider"] = pid
+    state[scope] = entry
     _save(state)
     next_pool = active_pool(config, pid, now=now)
     both = next_pool is None
@@ -235,5 +255,13 @@ def status(provider_id: str | None = None) -> dict[str, Any]:
     """Introspection helper for humans/tests."""
     state = _load()
     if provider_id:
-        return {str(provider_id): _entry(state, str(provider_id))}
+        pid = str(provider_id)
+        direct = _entry(state, pid)
+        if direct:
+            return {pid: direct}
+        matches = [
+            entry for entry in state.values()
+            if isinstance(entry, dict) and str(entry.get("trigger_provider") or "") == pid
+        ]
+        return {pid: matches[-1] if matches else {}}
     return state

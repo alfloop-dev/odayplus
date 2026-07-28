@@ -4728,16 +4728,14 @@ def mark_provider_dispatch_paused(
     # keep dispatching on the other pool instead of hard-pausing. Only fall
     # through to a real pause when BOTH pools are exhausted.
     if effective_pause_kind not in {"auth", "provider_config"} and model_rotation.rotation_enabled(config, provider_id):
-        # Do NOT trust the error's "Resets in Xh" reset hint for the cooldown
-        # duration. Gemini's 5-hour limit is a ROLLING window: a momentary hit
-        # reports a multi-hour reset but the account recovers gradually and is
-        # usable again within minutes. Trusting that hint FALSELY LOCKS an
-        # already-recovered pool for hours (this is what silently stalled the
-        # whole antigravity fleet). Use a short fixed probe cooldown instead: if
-        # the pool is still exhausted the next probe just re-cools (one cheap
-        # fast-fail worker), so a recovered pool is never locked for more than
-        # ROTATION_PROBE_COOLDOWN_SECONDS.
         rotate_cooldown = min(int(pause_seconds), ROTATION_PROBE_COOLDOWN_SECONDS)
+        # A real agy quota banner carries an authoritative reset countdown.
+        # Persist it across task completion/review/reopen so another alias on
+        # the same account does not probe Gemini prematurely.
+        if effective_pause_kind == "quota_terminal":
+            reset_seconds = model_rotation.parse_reset_seconds(reason)
+            if reset_seconds is not None:
+                rotate_cooldown = max(rotate_cooldown, reset_seconds)
         # Cool the pool this worker was DISPATCHED on, not whatever pool is
         # active now. Two concurrent Gemini workers failing on quota must cool
         # Gemini twice; without the dispatch-time binding the second one would
