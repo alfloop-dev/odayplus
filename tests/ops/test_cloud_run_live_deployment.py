@@ -1500,6 +1500,172 @@ def test_job_smoke_rejects_a_v2_job_whose_secrets_use_the_knative_schema() -> No
     assert "jobs-smoke:worker:provider_selection" not in _failed_names(checks)
 
 
+@pytest.mark.parametrize(
+    "duplicate",
+    [
+        # The exploit: two well-formed bindings naming different secrets. Both
+        # entries validate individually, and nothing says which one the runtime
+        # reads, so the proof names a secret the task may never receive.
+        _knative_secret_env("ODP_POI_PROVIDER_API_KEY", "attacker-controlled-secret"),
+        # An identical repeat is ambiguous for the same reason the duplicate
+        # selection is: a repeated env var has no defined winner.
+        _knative_secret_env("ODP_POI_PROVIDER_API_KEY"),
+        # A plaintext occurrence beside the secret-bound one.
+        {"name": "ODP_POI_PROVIDER_API_KEY", "value": "sk-live-real-poi-key"},
+        # An off-schema second occurrence is still a second occurrence.
+        {"name": "ODP_POI_PROVIDER_API_KEY", "valueFrom": {"secretKeyRef": {}}},
+    ],
+)
+def test_job_smoke_rejects_a_duplicate_required_secret_binding(
+    duplicate: dict[str, object],
+) -> None:
+    """A required env may be bound exactly once, whatever the second entry says."""
+
+    job = _knative_job(extra_envs=(duplicate,))
+
+    checks, report = _job_checks(job)
+    detail = _detail(checks, "jobs-smoke:migration:secret_bindings")
+
+    assert "jobs-smoke:migration:secret_bindings" in _failed_names(checks)
+    assert "ODP_POI_PROVIDER_API_KEY" in detail
+    assert "ambiguous" in detail
+    assert "ODP_POI_PROVIDER_API_KEY" not in report["secret_bound_env_vars"]
+    assert "sk-live-real-poi-key" not in json.dumps(report)
+    assert "sk-live-real-poi-key" not in detail
+
+    # The selection is untouched, so this is a binding defect only.
+    assert "jobs-smoke:migration:provider_selection" not in _failed_names(checks)
+
+
+@pytest.mark.parametrize(
+    ("mixed", "expected_location"),
+    [
+        # The exploit: a valid Knative binding beside a conflicting v2 one. The
+        # reader took the first and ignored the second, so one description named
+        # two different secrets depending on who read it.
+        (
+            {
+                "name": "ODP_POI_PROVIDER_API_KEY",
+                "valueFrom": {"secretKeyRef": {"name": "odp-poi-provider-api-key"}},
+                "valueSource": {"secretKeyRef": {"secret": "attacker-controlled-secret"}},
+            },
+            "valueSource",
+        ),
+        # A `secretKeyRef` hoisted to the top level beside a valid binding.
+        (
+            {
+                "name": "ODP_POI_PROVIDER_API_KEY",
+                "valueFrom": {"secretKeyRef": {"name": "odp-poi-provider-api-key"}},
+                "secretKeyRef": {"name": "attacker-controlled-secret"},
+            },
+            "secretKeyRef",
+        ),
+        # Both dialects' reference keys inside this dialect's own source.
+        (
+            {
+                "name": "ODP_POI_PROVIDER_API_KEY",
+                "valueFrom": {
+                    "secretKeyRef": {
+                        "name": "odp-poi-provider-api-key",
+                        "secret": "attacker-controlled-secret",
+                    }
+                },
+            },
+            "valueFrom.secretKeyRef.secret",
+        ),
+        # An empty off-dialect source is still a source gcloud does not emit.
+        (
+            {
+                "name": "ODP_POI_PROVIDER_API_KEY",
+                "valueFrom": {"secretKeyRef": {"name": "odp-poi-provider-api-key"}},
+                "valueSource": {},
+            },
+            "valueSource",
+        ),
+    ],
+)
+def test_job_smoke_rejects_an_entry_mixing_secret_binding_dialects(
+    mixed: dict[str, object], expected_location: str
+) -> None:
+    """One env entry may declare one secret source, in this job's dialect only."""
+
+    job = _knative_job(
+        secret_envs=(
+            _knative_secret_env("ODAY_DATABASE_URL"),
+            mixed,
+            _knative_secret_env("ODP_GEOCODE_PROVIDER_API_KEY"),
+            _knative_secret_env("ODP_ADMIN_BOUNDARY_PROVIDER_TOKEN"),
+        )
+    )
+
+    checks, report = _job_checks(job)
+    detail = _detail(checks, "jobs-smoke:migration:secret_bindings")
+
+    assert "jobs-smoke:migration:secret_bindings" in _failed_names(checks)
+    assert "ODP_POI_PROVIDER_API_KEY" in detail
+    assert expected_location in detail
+    assert "valueFrom.secretKeyRef.name" in detail
+    assert "ODP_POI_PROVIDER_API_KEY" not in report["secret_bound_env_vars"]
+    assert "attacker-controlled-secret" not in detail
+    assert "attacker-controlled-secret" not in json.dumps(report)
+
+
+def test_job_smoke_rejects_a_v2_entry_mixing_secret_binding_dialects() -> None:
+    """The mirror: a v2 job whose binding also carries the Knative source."""
+
+    container = _job_container(
+        kind="worker",
+        sha=RUN_30376737123_SHA,
+        provider_ids=RUN_30376737123_PROVIDER_IDS,
+        secret_envs=(
+            _v2_secret_env("ODAY_DATABASE_URL"),
+            {
+                "name": "ODP_POI_PROVIDER_API_KEY",
+                "valueSource": {"secretKeyRef": {"secret": "odp-poi-provider-api-key"}},
+                "valueFrom": {"secretKeyRef": {"name": "attacker-controlled-secret"}},
+            },
+            _v2_secret_env("ODP_GEOCODE_PROVIDER_API_KEY"),
+            _v2_secret_env("ODP_ADMIN_BOUNDARY_PROVIDER_TOKEN"),
+        ),
+    )
+    mixed = _v2_job()
+    mixed["template"] = {"template": {"containers": [container]}}
+
+    checks, report = _job_checks(mixed, kind="worker")
+    detail = _detail(checks, "jobs-smoke:worker:secret_bindings")
+
+    assert "jobs-smoke:worker:secret_bindings" in _failed_names(checks)
+    assert "ODP_POI_PROVIDER_API_KEY" in detail
+    assert "valueFrom" in detail
+    assert "valueSource.secretKeyRef.secret" in detail
+    assert "attacker-controlled-secret" not in json.dumps(report)
+
+
+def test_job_smoke_rejects_a_selection_entry_carrying_an_off_dialect_secret() -> None:
+    """A plaintext selection is unreadable once the entry also binds a secret.
+
+    Reading the plaintext and ignoring the off-dialect binding beside it would
+    validate against a value the runtime may never see.
+    """
+
+    job = _knative_job(
+        provider_ids=None,
+        extra_envs=(
+            {
+                "name": "ODP_PRODUCTION_PROVIDER_IDS",
+                "value": RUN_30376737123_PROVIDER_IDS,
+                "valueSource": {"secretKeyRef": {"secret": "odp-production-provider-ids"}},
+            },
+        ),
+    )
+
+    checks, report = _job_checks(job)
+
+    assert "jobs-smoke:migration:provider_selection" in _failed_names(checks)
+    assert "jobs-smoke:migration:secret_bindings" in _failed_names(checks)
+    assert report["selected_provider_ids"] == []
+
+
 def test_job_smoke_accepts_each_dialect_at_its_own_container_path() -> None:
     """The discriminator must not break the two shapes gcloud really emits."""
 

@@ -75,13 +75,16 @@ textual. `job_secret_binding_checks` does four things:
    `modules.external_data.connectors.provider_registry`. Adding, renaming, or
    re-scoping a provider credential updates the deploy gate with no second copy
    of the mapping to drift.
-4. **Proves each binding is a secret reference.** `_secret_binding_proof`
-   accepts only `valueFrom.secretKeyRef.name` (Knative) or
-   `valueSource.secretKeyRef.secret` (v2), and only when that reference is not a
-   placeholder. Those two schema/key pairs are the whole allowlist
-   (`_SECRET_REFERENCE_SCHEMAS`): a reference key crossed over from the other
-   schema, or a `secretKeyRef` hoisted to the top level of the env entry, is not
-   a shape gcloud emits and is rejected like any other malformed binding.
+4. **Proves each binding is exactly one secret reference.**
+   `_secret_binding_proof` requires the required env var to be declared by
+   **exactly one** env entry, that entry to declare **exactly one** secret
+   source, and that source to be this job's own dialect —
+   `valueFrom.secretKeyRef.name` (Knative) or `valueSource.secretKeyRef.secret`
+   (v2), and only when the reference is not a placeholder. The container path
+   picks the dialect (`_JOB_API_SCHEMAS` holds the two paths with their pairs),
+   and `_foreign_secret_binding_locations` rejects anything else the entry
+   carries: the other dialect's env source, a `secretKeyRef` hoisted to the top
+   level, or the other dialect's reference key inside this dialect's own source.
 
 Substring scanning is gone for this check: a job that merely mentions
 `ODAY_DATABASE_URL` in a label or an argument no longer satisfies it.
@@ -102,6 +105,14 @@ Substring scanning is gone for this check: a job that merely mentions
 | `secretKeyRef` at the top level of the env entry | same — not a Cloud Run schema |
 | `valueFrom.secretKeyRef.secret` (v2 key in the Knative source) | same — not a Cloud Run schema |
 | `valueSource.secretKeyRef.name` (Knative key in the v2 source) | same — not a Cloud Run schema |
+| a required secret env declared twice, naming different secrets | `secret_bindings` fails — the authoritative binding is ambiguous |
+| a required secret env declared twice, naming the same secret | same — a repeated env var has no defined winner |
+| a required secret env bound once and set to a plaintext value once | same |
+| a valid binding beside a conflicting off-dialect source (`valueSource` on a Knative job, or the reverse) | `secret_bindings` fails, naming the off-schema location and this job's dialect |
+| a valid binding beside a top-level `secretKeyRef` | same |
+| `valueFrom.secretKeyRef` carrying both `name` and `secret` | same |
+| a valid binding beside an empty off-dialect source (`"valueSource": {}`) | same — a source gcloud does not emit |
+| plaintext `ODP_PRODUCTION_PROVIDER_IDS` on an entry that also declares an off-dialect secret source | `provider_selection` **and** `secret_bindings` fail: the selection is unprovable |
 | Knative container path, every secret in the v2 `valueSource.secretKeyRef.secret` schema | `secret_bindings` fails, naming each env var and the required `valueFrom.secretKeyRef.name` |
 | v2 container path, every secret in the Knative `valueFrom.secretKeyRef.name` schema | `secret_bindings` fails, naming each env var and the required `valueSource.secretKeyRef.secret` |
 | no plaintext `ODP_PRODUCTION_PROVIDER_IDS` in the job | `provider_selection` **and** `secret_bindings` both fail: the selection is unprovable |
@@ -241,6 +252,59 @@ Regressions: `test_job_smoke_rejects_a_knative_job_whose_secrets_use_the_v2_sche
 `test_job_smoke_accepts_each_dialect_at_its_own_container_path`, which pins that
 the discriminator does not break the two shapes gcloud really emits.
 
+## Round 6: a binding was well formed but not unique
+
+Rounds 3–5 established *which container* and *which dialect* the proof reads.
+Neither made the binding itself singular, so the check could report `ok` for a
+description that names two different secrets for the same env var. Verified
+against head `dd4acb0b` — all four crafted descriptions below fail **no** check
+at all (`_failed_names(checks) == set()`), while the unmodified receipt fixture
+still passes:
+
+| crafted description at `dd4acb0b` | result |
+| --- | --- |
+| `ODP_POI_PROVIDER_API_KEY` bound twice, to `odp-poi-provider-api-key` and to `attacker-controlled-secret` | passed |
+| one entry with valid `valueFrom.secretKeyRef.name` **and** conflicting `valueSource.secretKeyRef.secret` | passed |
+| one `valueFrom.secretKeyRef` carrying both `name` and a conflicting `secret` | passed |
+| valid `valueFrom.secretKeyRef.name` beside a top-level `secretKeyRef` naming another secret | passed |
+
+Both defects are the same mistake in two places: the proof *read* one binding
+and *ignored* whatever else the entry or the env list declared. Ignoring is not
+rejecting. A description could therefore name one secret to this gate and a
+different one to any reader that prefers the other occurrence or the other
+dialect, which is exactly the crossed/off-schema shape the fail-closed matrix
+above claims is rejected.
+
+Two rules close it:
+
+- **One entry per required env.** `_secret_binding_proof` now fails when the
+  authoritative task container declares a required env var more than once,
+  whatever the extra entries say — different secret, identical secret,
+  plaintext, or malformed. Uniqueness rather than agreement, matching the
+  `ODP_PRODUCTION_PROVIDER_IDS` rule from round 3: a repeated env var has no
+  defined winner, and `gcloud run jobs deploy --set-secrets` emits it once.
+- **One secret source per entry.** `_foreign_secret_binding_locations(entry,
+  schema)` returns every secret-binding location outside this job's dialect —
+  the other dialect's env source, a top-level `secretKeyRef`, and the other
+  dialect's reference key inside this dialect's own source. Any hit rejects the
+  binding and the detail names both the off-schema location and the dialect the
+  description owes (`binding declares off-schema secret sources (valueSource);
+  this job's dialect is valueFrom.secretKeyRef.name`). The same predicate guards
+  the selection read, so a plaintext `ODP_PRODUCTION_PROVIDER_IDS` that also
+  carries an off-dialect secret source is unprovable rather than read.
+
+An empty off-dialect source (`"valueSource": {}` on a Knative job) is rejected
+too: gcloud emits one dialect per description, so the key's presence is the
+defect, not its contents.
+
+Regressions: `test_job_smoke_rejects_a_duplicate_required_secret_binding`
+(4 cases), `test_job_smoke_rejects_an_entry_mixing_secret_binding_dialects`
+(4 cases), `test_job_smoke_rejects_a_v2_entry_mixing_secret_binding_dialects`
+(the mirror on the v2 container path), and
+`test_job_smoke_rejects_a_selection_entry_carrying_an_off_dialect_secret`. All
+ten assert that neither the conflicting secret name nor the plaintext key
+reaches the detail or the report.
+
 ## Check and report surface
 
 `jobs-smoke:<kind>:secret_bindings` keeps its name, so the deploy gate and any
@@ -272,40 +336,44 @@ placed in the job description never reaches the detail text or the report.
 
 ## Focused verification
 
-Executed from the task branch on the round-5 tree (parent `5b9c430a`):
+Executed from the task branch on the round-6 tree (parent `dd4acb0b`), with
+`export PATH="$HOME/.local/bin:$PATH"`:
 
 ```text
-python3 -m pytest tests/ops/test_cloud_run_live_deployment.py -p no:randomly   # 96 passed, 1 failed (uv)
-python3 -m pytest tests/ops -p no:randomly                                     # 151 passed, 20 skipped, 1 failed (uv)
+python3 -m pytest tests/ops/test_cloud_run_live_deployment.py -p no:randomly   # 107 passed
+python3 -m pytest tests/ops -p no:randomly                                     # 162 passed, 20 skipped
 python3 -m ruff check scripts/deployment/validate_cloud_run_live_deployment.py tests/ops/test_cloud_run_live_deployment.py
 python3 -m ruff format --check scripts/deployment/validate_cloud_run_live_deployment.py tests/ops/test_cloud_run_live_deployment.py
 git diff --check
 ```
 
-Ruff check, ruff format `--check`, and `git diff --check` all passed. The one
-failure in both pytest runs is
-`test_deploy_preflight_imports_runtime_dependencies_via_locked_python`, which
-executes the real deploy script and needs `uv` on `PATH`
-(`export PATH="$HOME/.local/bin:$PATH"`); `uv` is absent on this worker image, so
-the script's `require_command` guard exits `1` instead of the expected `97`. It
-fails identically on the unmodified tree (`git stash` → same failure), so it is
-environmental, not a regression. Where `uv` is available the run is
-`uv run --frozen pytest ...`, as in earlier rounds.
+Ruff check, ruff format `--check`, and `git diff --check` all passed. Both pytest
+runs are fully green on this worker; the single environmental failure earlier
+rounds reported,
+`test_deploy_preflight_imports_runtime_dependencies_via_locked_python`, needs
+`uv` on `PATH` and now passes because `uv` is present
+(`/home/lupin/.local/bin/uv`).
 
 The focused-file count by round was 87 at `76063434` (round 2), 93 at `49e65382`
-(round 3, six new regressions), 94 at `5b9c430a` (round 4, the sidecar test), and
-97 collected now — round 5 adds the two crossed-whole-schema regressions plus the
-both-dialects-still-accepted control.
+(round 3, six new regressions), 94 at `5b9c430a` (round 4, the sidecar test), 97
+at `dd4acb0b` (round 5, the two crossed-whole-schema regressions plus the
+both-dialects control), and 107 now — round 6 adds ten uniqueness and
+mixed-dialect regressions.
 
 Each round's regressions fail against that round's pre-fix validator, verified by
 restoring the parent commit's
 `scripts/deployment/validate_cloud_run_live_deployment.py` under the new test
 file: `6 failed` for round 3 against `76063434`; for round 4 against `49e65382`
 the sidecar test fails with `assert 'jobs-smoke:migration:provider_selection' in
-set()`; and for round 5 against `5b9c430a` both crossover tests fail with
-`assert 'jobs-smoke:<kind>:secret_bindings' in set()` — the pre-fix validator
-passes both crossed descriptions with zero failing checks, reproducing the `[]`
-the round-4 review reported. The control test passes against both validators.
+set()`; for round 5 against `5b9c430a` both crossover tests fail with
+`assert 'jobs-smoke:<kind>:secret_bindings' in set()`; and for round 6 against
+`dd4acb0b` exactly the ten new cases fail — `assert
+'jobs-smoke:migration:secret_bindings' in set()` for the eight binding cases and
+`assert 'jobs-smoke:migration:provider_selection' in set()` for the selection
+case — the pre-fix validator passing every crafted description with zero failing
+checks, reproducing the `[]` the round-6 review reported. The control tests
+(`test_job_smoke_accepts_each_dialect_at_its_own_container_path` and the run
+30376737123 receipt) pass against both validators.
 
 Exact-head CI and an independent Codex6 review are required before merge. After
 merge, ODP-P10-DEV-REDEPLOY-VERIFY-001 must re-run from the exact merged `dev`

@@ -2050,6 +2050,50 @@ def _secret_reference_name(entry: Mapping[str, Any], schema: _JobApiSchema) -> s
     return ""
 
 
+def _foreign_secret_binding_locations(
+    entry: Mapping[str, Any], schema: _JobApiSchema
+) -> tuple[str, ...]:
+    """Return every off-dialect secret-binding location an env entry declares.
+
+    `_secret_reference_name` only *reads* `schema`'s pair; it ignores whatever
+    else the entry carries. Ignoring is not rejecting: an entry holding a valid
+    `valueFrom.secretKeyRef.name` beside a conflicting
+    `valueSource.secretKeyRef.secret` resolved to the first and passed, so a
+    description could name one secret to the proof and another to any reader
+    that prefers the other dialect. `gcloud run jobs describe` emits exactly one
+    dialect per description and exactly one secret source per env entry, so a
+    second one is never redundant detail — it makes the binding ambiguous, and
+    the caller fails closed instead of picking a winner.
+
+    Reported locations are the other dialect's env source (`valueSource` on a
+    Knative job and the reverse), a `secretKeyRef` hoisted to the top level of
+    the entry, and the other dialect's reference key inside this dialect's own
+    source (`valueFrom.secretKeyRef.secret`).
+    """
+
+    locations: list[str] = []
+    if "secretKeyRef" in entry:
+        locations.append("secretKeyRef")
+    for other in _JOB_API_SCHEMAS:
+        if other.env_source_key != schema.env_source_key and other.env_source_key in entry:
+            locations.append(other.env_source_key)
+    source = entry.get(schema.env_source_key)
+    reference = source.get("secretKeyRef") if isinstance(source, Mapping) else None
+    if isinstance(reference, Mapping):
+        for other in _JOB_API_SCHEMAS:
+            if other.reference_key != schema.reference_key and other.reference_key in reference:
+                locations.append(f"{schema.env_source_key}.secretKeyRef.{other.reference_key}")
+    return tuple(sorted(set(locations)))
+
+
+def _declares_any_secret_binding(entry: Mapping[str, Any], schema: _JobApiSchema) -> bool:
+    """Report whether an env entry carries a secret binding in any dialect."""
+
+    return bool(_secret_reference_name(entry, schema)) or bool(
+        _foreign_secret_binding_locations(entry, schema)
+    )
+
+
 def _job_env_entries(
     job_description: Mapping[str, Any],
 ) -> tuple[_JobApiSchema, dict[str, list[Mapping[str, Any]]]]:
@@ -2096,7 +2140,7 @@ def _job_selected_provider_ids(
         )
 
     entry = occurrences[0]
-    if _secret_reference_name(entry, schema):
+    if _declares_any_secret_binding(entry, schema):
         raise JobDescriptionError(
             f"{PRODUCTION_PROVIDER_IDS_ENV} is bound to a secret reference and cannot be read; "
             "the selected provider set is unprovable"
@@ -2113,21 +2157,41 @@ def _job_selected_provider_ids(
 def _secret_binding_proof(
     entries: list[Mapping[str, Any]], schema: _JobApiSchema
 ) -> tuple[bool, str]:
-    """Prove one env var is bound to a secret reference, never to a literal.
+    """Prove one env var has exactly one secret-reference binding, never a literal.
 
     The reference must be written in `schema`'s dialect — the one belonging to
     the container path this description was resolved at — so a binding borrowed
     from the other API version is no proof at all.
+
+    Exactly one entry may declare the env var, and that entry may declare
+    exactly one secret source. Validating every occurrence instead let a
+    description bind `ODP_POI_PROVIDER_API_KEY` twice, to two different secrets,
+    and pass: both entries are individually well formed, but nothing in the
+    description says which one the runtime reads, so neither is proof. The rule
+    is uniqueness rather than agreement — matching the
+    `ODP_PRODUCTION_PROVIDER_IDS` rule — because a repeated env var has no
+    defined winner and `gcloud run jobs deploy --set-secrets` emits it once.
     """
 
     if not entries:
         return False, "no env binding is declared"
-    for entry in entries:
-        value = entry.get("value")
-        if isinstance(value, str) and value.strip():
-            return False, "bound to a plaintext value instead of a secret reference"
-        if not _secret_reference_name(entry, schema):
-            return False, f"binding declares no usable {schema.reference_label}"
+    if len(entries) > 1:
+        return False, (
+            f"declares {len(entries)} env bindings; the authoritative secret binding is ambiguous"
+        )
+
+    entry = entries[0]
+    value = entry.get("value")
+    if isinstance(value, str) and value.strip():
+        return False, "bound to a plaintext value instead of a secret reference"
+    foreign = _foreign_secret_binding_locations(entry, schema)
+    if foreign:
+        return False, (
+            f"binding declares off-schema secret sources ({','.join(foreign)}); "
+            f"this job's dialect is {schema.reference_label}"
+        )
+    if not _secret_reference_name(entry, schema):
+        return False, f"binding declares no usable {schema.reference_label}"
     return True, "bound to a Secret Manager reference (value redacted)"
 
 
