@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from dataclasses import replace
 from typing import Any
 
 from models.shared_ml.artifact_store import (
@@ -12,7 +13,13 @@ from models.shared_ml.model_card import ModelCard, ModelCardApproval, ModelRiskL
 from models.shared_ml.oss_capabilities import inspect_oss_stack
 from models.shared_ml.registry import ModelStage, ModelVersion
 from models.shared_ml.validation import MetricThreshold, SegmentMetric
-from modules.learninghub.application import LearningHubError, LearningHubService, ReleaseType
+from modules.learninghub.application import (
+    LearningHubConflictError,
+    LearningHubError,
+    LearningHubPreconditionRequiredError,
+    LearningHubService,
+    ReleaseType,
+)
 from modules.learninghub.runtime import (
     LearningHubRuntimeConfigurationError,
     learninghub_production_required,
@@ -73,7 +80,10 @@ else:
         security_review: str = "PASSED"
         release_status: str = "DEV"
         rollback_conditions: list[str] = Field(min_length=1)
-        approvals: list[dict[str, str]] = Field(default_factory=list)
+
+
+    class ModelCardApprovalPayload(BaseModel):
+        decision: str = "approved"
 
 
     class ModelVersionPayload(BaseModel):
@@ -110,7 +120,8 @@ else:
     class ReleaseMonitorPayload(BaseModel):
         observed_metrics: dict[str, float] = Field(min_length=1)
         guardrails: list[MonitorGuardrailPayload] = Field(min_length=1)
-        evaluated_by: str = "release-monitor"
+        # Bound from the authenticated principal, like release actors.
+        evaluated_by: str | None = None
 
 
     class ReleasePayload(BaseModel):
@@ -124,8 +135,16 @@ else:
         success_criteria: list[str] = Field(min_length=1)
         fail_criteria: list[str] = Field(min_length=1)
         affected_modules: list[str] = Field(default_factory=list)
-        requested_by: str = "system"
-        approved_by: str = "model-review-board"
+        # ``requested_by`` is bound from the authenticated principal. It stays in
+        # the schema only so a client that echoes it back gets an explicit
+        # mismatch rejection instead of silently having its value ignored.
+        requested_by: str | None = None
+        approved_by: str = Field(min_length=1)
+        # Optional in the schema, mandatory in the contract: a missing
+        # precondition is answered with 428, not a schema-level 422.
+        expected_release_revision: int | None = Field(default=None, ge=0)
+        idempotency_key: str | None = None
+        release_scope: str = "global"
 
 
     def create_learninghub_router(
@@ -207,7 +226,7 @@ else:
                 active_audit_log,
                 request,
                 "learninghub.dataset_registered.v1",
-                "system",
+                _trusted_actor(request),
                 "register_dataset_snapshot",
                 f"learninghub/dataset-snapshots/{snapshot.dataset_snapshot_id}",
                 {"entity_count": snapshot.entity_count},
@@ -280,7 +299,7 @@ else:
                 active_audit_log,
                 request,
                 "learninghub.model_registered.v1",
-                "system",
+                _trusted_actor(request),
                 "register_model_version",
                 f"learninghub/models/{model_name}/versions/{body.version}",
                 {
@@ -292,6 +311,48 @@ else:
 
         @router.post("/releases", status_code=status.HTTP_201_CREATED, dependencies=[Depends(require_permission("model", Action.PUBLISH, engine=authz_engine))])
         def request_release(body: ReleasePayload, request: Request) -> dict[str, Any]:
+            requested_by = _trusted_actor(request)
+            if body.requested_by is not None and body.requested_by.strip() != requested_by:
+                raise HTTPException(
+                    status_code=status.HTTP_403_FORBIDDEN,
+                    detail={
+                        "code": "UNTRUSTED_RELEASE_ACTOR",
+                        "message": (
+                            "requested_by must match the authenticated principal; "
+                            "release actors are never taken from the request body"
+                        ),
+                    },
+                )
+            if body.approved_by.strip() == requested_by:
+                raise HTTPException(
+                    status_code=status.HTTP_403_FORBIDDEN,
+                    detail={
+                        "code": "MODEL_RELEASE_SELF_REVIEW",
+                        "message": (
+                            "the authenticated requester cannot also be the release "
+                            "approver"
+                        ),
+                    },
+                )
+            missing_preconditions = sorted(
+                name
+                for name, present in (
+                    ("expected_release_revision", body.expected_release_revision is not None),
+                    ("idempotency_key", bool((body.idempotency_key or "").strip())),
+                )
+                if not present
+            )
+            if missing_preconditions:
+                raise HTTPException(
+                    status_code=status.HTTP_428_PRECONDITION_REQUIRED,
+                    detail={
+                        "code": "RELEASE_PRECONDITION_REQUIRED",
+                        "message": (
+                            "release commands must bind "
+                            + " and ".join(missing_preconditions)
+                        ),
+                    },
+                )
             try:
                 decision = service.request_release(
                     model_name=body.model_name,
@@ -304,10 +365,29 @@ else:
                     success_criteria=body.success_criteria,
                     fail_criteria=body.fail_criteria,
                     affected_modules=body.affected_modules,
-                    requested_by=body.requested_by,
+                    requested_by=requested_by,
                     approved_by=body.approved_by,
                     correlation_id=request.state.correlation_id,
+                    expected_release_revision=int(body.expected_release_revision),
+                    idempotency_key=str(body.idempotency_key),
+                    release_scope=body.release_scope,
                 )
+            except LearningHubPreconditionRequiredError as exc:
+                raise HTTPException(
+                    status_code=status.HTTP_428_PRECONDITION_REQUIRED,
+                    detail={
+                        "code": "RELEASE_PRECONDITION_REQUIRED",
+                        "message": str(exc),
+                    },
+                ) from exc
+            except LearningHubConflictError as exc:
+                raise HTTPException(
+                    status_code=status.HTTP_409_CONFLICT,
+                    detail={
+                        "code": "RELEASE_CONFLICT",
+                        "message": str(exc),
+                    },
+                ) from exc
             except (LearningHubError, ValueError) as exc:
                 raise HTTPException(
                     status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
@@ -321,12 +401,23 @@ else:
         def monitor_release(
             release_id: str, body: ReleaseMonitorPayload, request: Request
         ) -> dict[str, Any]:
+            evaluated_by = _trusted_actor(request)
+            if body.evaluated_by is not None and body.evaluated_by.strip() != evaluated_by:
+                raise HTTPException(
+                    status_code=status.HTTP_403_FORBIDDEN,
+                    detail={
+                        "code": "UNTRUSTED_MONITOR_ACTOR",
+                        "message": (
+                            "evaluated_by must match the authenticated principal"
+                        ),
+                    },
+                )
             try:
                 assessment = service.monitor_release(
                     release_id=release_id,
                     observed_metrics=body.observed_metrics,
                     guardrails=[_threshold(item) for item in body.guardrails],
-                    evaluated_by=body.evaluated_by,
+                    evaluated_by=evaluated_by,
                     correlation_id=request.state.correlation_id,
                 )
             except (LearningHubError, ValueError) as exc:
@@ -365,6 +456,56 @@ else:
                     if getattr(decision, "model_name", None) == model_name
                 ],
             }
+
+        @router.post(
+            "/models/{model_name}/versions/{version}/approval",
+            dependencies=[
+                Depends(
+                    require_permission("model", Action.APPROVE, engine=authz_engine)
+                )
+            ],
+        )
+        def approve_model_card(
+            model_name: str,
+            version: str,
+            body: ModelCardApprovalPayload,
+            request: Request,
+        ) -> dict[str, Any]:
+            card = active_repository.get_model_card(model_name, version)
+            if card is None:
+                raise HTTPException(
+                    status_code=status.HTTP_404_NOT_FOUND,
+                    detail=f"unknown model card {model_name}:{version}",
+                )
+            approver = _trusted_actor(request)
+            if approver == card.owner:
+                raise HTTPException(
+                    status_code=status.HTTP_403_FORBIDDEN,
+                    detail={
+                        "code": "MODEL_CARD_SELF_REVIEW",
+                        "message": "a model card owner cannot approve their own card",
+                    },
+                )
+            decision = body.decision.strip().lower()
+            if decision not in {"approved", "rejected"}:
+                raise HTTPException(
+                    status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                    detail="decision must be approved or rejected",
+                )
+            approval = ModelCardApproval(
+                approver=approver,
+                role="model-review-board",
+                decision=decision,
+            )
+            updated = replace(
+                card,
+                approvals=tuple(
+                    item for item in card.approvals if item.approver != approver
+                )
+                + (approval,),
+            )
+            active_repository.save_model_card(updated)
+            return updated.to_dict()
 
         @router.get("/models/{model_name}/evidence", dependencies=[Depends(require_permission("model", Action.VIEW, engine=authz_engine))])
         def get_model_evidence(model_name: str) -> dict[str, Any]:
@@ -467,15 +608,33 @@ else:
             security_review=body.security_review,
             release_status=body.release_status,
             rollback_conditions=body.rollback_conditions,
-            approvals=tuple(
-                ModelCardApproval(
-                    approver=str(approval["approver"]),
-                    role=str(approval.get("role", "model-review-board")),
-                    decision=str(approval.get("decision", "approved")),
-                )
-                for approval in body.approvals
-            ),
+            # Approval provenance is established only by the authenticated
+            # approval endpoint; registration payloads cannot mint it.
+            approvals=(),
         )
+
+
+    def _trusted_actor(request: Request) -> str:
+        """Resolve the authenticated caller; never trust a body-supplied actor.
+
+        ``require_permission`` puts the verified principal on request state, so
+        an actor identity that reaches the audit log or a release approval is
+        always the one the auth boundary established.
+        """
+
+        principal = getattr(request.state, "operator_principal", None)
+        subject_id = str(getattr(principal, "subject_id", "") or "").strip()
+        if not subject_id:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail={
+                    "code": "AUTHENTICATED_ACTOR_REQUIRED",
+                    "message": (
+                        "Learning Hub actions require an authenticated principal"
+                    ),
+                },
+            )
+        return subject_id
 
 
     def _record_audit(

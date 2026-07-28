@@ -18,6 +18,8 @@ from modules.learninghub import (
     InMemoryLearningHubRepository,
     LearningHubRuntimeConfigurationError,
     LearningHubService,
+    ModelReleaseSaga,
+    ReleaseSagaState,
 )
 from modules.learninghub.infrastructure.mlflow_adapter import MlflowRegistryAdapter
 from shared.audit import InMemoryAuditLog
@@ -179,6 +181,52 @@ def test_production_registration_invokes_registry_and_survives_restart(
         assert reopened_artifacts.verify(card_artifact_id)
     finally:
         reopened_engine.close()
+
+
+def test_production_startup_recovers_orphaned_release_intent(tmp_path: Path) -> None:
+    database = tmp_path / "learninghub-startup-recovery.sqlite3"
+    engine, repository, _, _ = _durable(database)
+    release_id = "release-startup-recovery-001"
+    try:
+        with repository.release_guard(MODEL_NAME, expected_revision=0) as revision:
+            repository.save_release_saga(
+                ModelReleaseSaga(
+                    release_id=release_id,
+                    model_name=MODEL_NAME,
+                    idempotency_key=release_id,
+                    request_fingerprint="sha256:" + ("a" * 64),
+                    release_revision=revision,
+                    operation="MODEL_RELEASE",
+                    command={
+                        "model_name": MODEL_NAME,
+                        "version": VERSION,
+                        "requested_by": "interrupted-release-worker",
+                        "correlation_id": release_id,
+                    },
+                    version_snapshots=(),
+                    alias_snapshots=(),
+                )
+            )
+    finally:
+        engine.close()
+
+    reopened, restarted_repository, artifacts, audit = _durable(database)
+    try:
+        LearningHubService(
+            repository=restarted_repository,
+            registry=RecordingRemoteRegistry(restarted_repository),  # type: ignore[arg-type]
+            audit_log=audit,  # type: ignore[arg-type]
+            artifact_store=artifacts,
+            runtime_mode="production",
+        )
+        saga = restarted_repository.get_release_saga(release_id)
+        assert saga is not None
+        assert saga.state is ReleaseSagaState.COMPENSATED
+        events = audit.list_events(correlation_id=release_id)
+        assert events[-1].event_type == "learninghub.model_release_compensation.v1"
+        assert events[-1].outcome == "compensated"
+    finally:
+        reopened.close()
 
 
 def test_production_rejects_implicit_or_memory_bindings(tmp_path: Path) -> None:
