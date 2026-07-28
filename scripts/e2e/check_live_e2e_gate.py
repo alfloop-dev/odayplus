@@ -153,6 +153,14 @@ _GOVERNED_DISABLED_EVIDENCE_FIELDS = (
     "observedAt",
     "inventoryVersion",
 )
+_GOVERNED_DISABLED_TEXT_FIELDS = (
+    "reasonCode",
+    "sourceContract",
+    "owner",
+    "activationGate",
+    "observedAt",
+    "inventoryVersion",
+)
 PRODUCTION_ALIAS = "production"
 
 WORKER_PROBE_JOB_TYPE = "external-fetch"
@@ -861,10 +869,26 @@ def _check_runtime_readiness(
             evidence = _as_dict(capability.get("governedDisabledEvidence"))
             reason_code = str(capability.get("reasonCode") or "").strip()
             evidence_reason = str(evidence.get("reasonCode") or "").strip()
+            counts_valid = all(
+                isinstance(evidence.get(field), int)
+                and not isinstance(evidence.get(field), bool)
+                and evidence[field] >= 0
+                for field in ("observedCount", "eligibleCount")
+            )
+            activation_threshold = evidence.get("activationThreshold")
+            activation_threshold_valid = (
+                isinstance(activation_threshold, int)
+                and not isinstance(activation_threshold, bool)
+                and activation_threshold > 0
+            )
+            text_fields_valid = all(
+                isinstance(evidence.get(field), str) and bool(evidence[field].strip())
+                for field in _GOVERNED_DISABLED_TEXT_FIELDS
+            )
             evidence_complete = (
                 bool(reason_code)
                 and capability.get("governedDisabled") is True
-                and capability.get("available") is not True
+                and capability.get("available") is False
                 # The evidence must describe the same fact as the capability
                 # record; a diverging reasonCode means the evidence was authored
                 # for a different (or stale) disablement decision.
@@ -872,15 +896,11 @@ def _check_runtime_readiness(
                 # autoSeeded=False in the evidence is a hard requirement;
                 # True means synthetic/fixture data was substituted.
                 and evidence.get("autoSeeded") is False
-                and all(
-                    # String fields must be non-empty; integer count fields must be present
-                    # (observedCount=0 is a valid value meaning no eligible rows yet observed).
-                    (
-                        evidence.get(field) is not None
-                        and evidence.get(field) != ""
-                    )
-                    for field in _GOVERNED_DISABLED_EVIDENCE_FIELDS
-                )
+                # bool is an int subclass in Python, so reject it explicitly.
+                # observedCount=0 remains valid receipt-backed evidence.
+                and counts_valid
+                and activation_threshold_valid
+                and text_fields_valid
             )
 
             _check(

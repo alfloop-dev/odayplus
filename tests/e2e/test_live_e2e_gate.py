@@ -1526,6 +1526,72 @@ def test_governed_disabled_capability_marked_available_blocks() -> None:
     assert "runtime:model_capability:heatzone" in blocker_names(report)
 
 
+@pytest.mark.parametrize("available", [_UNSET, None])
+def test_governed_disabled_capability_requires_explicit_false(available: Any) -> None:
+    """Missing or null availability cannot masquerade as governed-disabled."""
+    payload = readiness_payload()
+    capability = payload["details"]["models"]["capabilities"]["avm"]
+    if available is _UNSET:
+        del capability["available"]
+    else:
+        capability["available"] = available
+
+    _, report = run_gate(
+        live_routes(**{"anon GET /readiness": response(200, payload)})
+    )
+
+    assert "runtime:model_capability:avm" in blocker_names(report)
+
+
+@pytest.mark.parametrize(
+    ("field", "invalid_value"),
+    [
+        ("observedCount", "fabricated"),
+        ("observedCount", -1),
+        ("observedCount", True),
+        ("eligibleCount", "fabricated"),
+        ("eligibleCount", -1),
+        ("eligibleCount", False),
+        ("activationThreshold", 0),
+        ("activationThreshold", -1),
+        ("activationThreshold", "100"),
+        ("activationThreshold", True),
+    ],
+)
+def test_governed_disabled_evidence_rejects_invalid_numbers(
+    field: str, invalid_value: Any
+) -> None:
+    """Counts and activation policy must carry strict non-boolean integers."""
+    payload = readiness_payload()
+    payload["details"]["models"]["capabilities"]["avm"]["governedDisabledEvidence"][
+        field
+    ] = invalid_value
+
+    _, report = run_gate(
+        live_routes(**{"anon GET /readiness": response(200, payload)})
+    )
+
+    assert "runtime:model_capability:avm" in blocker_names(report)
+
+
+@pytest.mark.parametrize("field", gate._GOVERNED_DISABLED_TEXT_FIELDS)
+@pytest.mark.parametrize("invalid_value", [None, "", "   ", 17])
+def test_governed_disabled_evidence_requires_non_empty_text(
+    field: str, invalid_value: Any
+) -> None:
+    """Governance and lineage fields must be actual non-empty strings."""
+    payload = readiness_payload()
+    payload["details"]["models"]["capabilities"]["avm"]["governedDisabledEvidence"][
+        field
+    ] = invalid_value
+
+    _, report = run_gate(
+        live_routes(**{"anon GET /readiness": response(200, payload)})
+    )
+
+    assert "runtime:model_capability:avm" in blocker_names(report)
+
+
 def test_forecastops_not_active_blocks_even_with_all_governed_disabled_ok() -> None:
     """ForecastOps must always be active; governed-disabled evidence cannot substitute."""
     payload = readiness_payload()
