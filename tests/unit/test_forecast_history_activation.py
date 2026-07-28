@@ -8,6 +8,7 @@ from scripts.data_plane.forecast_history_activation import (
     ACTIVATION_RELATIONS,
     ActivationConfig,
     ForecastHistoryActivationError,
+    parse_horizons,
     require_activation_dsn,
     resolve_copy_columns,
 )
@@ -140,6 +141,19 @@ def test_resolve_copy_columns_requires_both_relations() -> None:
         resolve_copy_columns({}, {"a": (True, False)}, relation="core.stores")
     with pytest.raises(ForecastHistoryActivationError, match="source relation"):
         resolve_copy_columns({"a": (True, False)}, {}, relation="core.stores")
+
+
+def test_parse_horizons_dedupes_and_preserves_order() -> None:
+    assert parse_horizons(" 28, 7 ,14, 28 ") == (28, 7, 14)
+
+
+def test_parse_horizons_fails_closed_on_unusable_input() -> None:
+    with pytest.raises(ForecastHistoryActivationError, match="not an integer"):
+        parse_horizons("28,two-weeks")
+    with pytest.raises(ForecastHistoryActivationError, match="positive day count"):
+        parse_horizons("28,0")
+    with pytest.raises(ForecastHistoryActivationError, match="at least one horizon"):
+        parse_horizons(" , ")
 
 
 def test_activation_relations_are_dependency_ordered_and_transaction_scoped() -> None:

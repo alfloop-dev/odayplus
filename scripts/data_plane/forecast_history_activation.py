@@ -55,6 +55,11 @@ _PLACEHOLDER_TOKENS = ("<", ">", "change-me", "changeme", "example", "placeholde
 ACTIVATION_LOCK_KEY = 8_243_517_190_244_601_337
 COPY_RELATION_TIMEOUT_MS = 900_000
 
+# Reported by default because the acceptance bar is stated in these terms. The
+# trainer's own horizons live in ``modules.forecastops.model_contract`` and can
+# be measured with ``--horizons``.
+DEFAULT_HORIZON_DAYS: tuple[int, ...] = (7, 14, 28)
+
 CANONICAL_TRANSACTION_TABLE = "core.transactions"
 
 
@@ -351,7 +356,7 @@ def _relation_exists(connection: psycopg.Connection, schema: str, name: str) -> 
 def forecast_horizon_windows(
     connection: psycopg.Connection,
     *,
-    horizons: Sequence[int] = (7, 14, 28),
+    horizons: Sequence[int] = DEFAULT_HORIZON_DAYS,
 ) -> dict[str, Any]:
     """Report canonical horizon windows the target training view can produce.
 
@@ -479,7 +484,33 @@ def relation_inventory(connection: psycopg.Connection) -> dict[str, int | None]:
     return counts
 
 
-def probe_target(target: psycopg.Connection) -> dict[str, Any]:
+def parse_horizons(value: str) -> tuple[int, ...]:
+    """Parse a comma-separated horizon-day list, failing closed on bad input."""
+
+    horizons: list[int] = []
+    for token in value.split(","):
+        candidate = token.strip()
+        if not candidate:
+            continue
+        try:
+            days = int(candidate)
+        except ValueError as error:
+            raise ForecastHistoryActivationError(
+                f"horizon {candidate!r} is not an integer number of days"
+            ) from error
+        if days <= 0:
+            raise ForecastHistoryActivationError(f"horizon {days} must be a positive day count")
+        horizons.append(days)
+    if not horizons:
+        raise ForecastHistoryActivationError("at least one horizon is required")
+    return tuple(dict.fromkeys(horizons))
+
+
+def probe_target(
+    target: psycopg.Connection,
+    *,
+    horizons: Sequence[int] = DEFAULT_HORIZON_DAYS,
+) -> dict[str, Any]:
     """Measure the target without persisting anything.
 
     ``forecast_horizon_windows`` needs ``CREATE TEMP TABLE``, which PostgreSQL
@@ -493,13 +524,17 @@ def probe_target(target: psycopg.Connection) -> dict[str, Any]:
         return {
             "relations": relation_inventory(target),
             "transaction_coverage": transaction_date_coverage(target),
-            "forecast_windows": forecast_horizon_windows(target),
+            "forecast_windows": forecast_horizon_windows(target, horizons=horizons),
         }
     finally:
         target.rollback()
 
 
-def run_inventory(config: ActivationConfig) -> dict[str, Any]:
+def run_inventory(
+    config: ActivationConfig,
+    *,
+    horizons: Sequence[int] = DEFAULT_HORIZON_DAYS,
+) -> dict[str, Any]:
     with (
         psycopg.connect(config.source_dsn) as source,
         psycopg.connect(config.target_dsn) as target,
@@ -511,11 +546,15 @@ def run_inventory(config: ActivationConfig) -> dict[str, Any]:
                 "relations": relation_inventory(source),
                 "transaction_coverage": transaction_date_coverage(source),
             },
-            "target": probe_target(target),
+            "target": probe_target(target, horizons=horizons),
         }
 
 
-def run_activation(config: ActivationConfig) -> dict[str, Any]:
+def run_activation(
+    config: ActivationConfig,
+    *,
+    horizons: Sequence[int] = DEFAULT_HORIZON_DAYS,
+) -> dict[str, Any]:
     receipts: list[dict[str, Any]] = []
     with (
         psycopg.connect(config.source_dsn) as source,
@@ -528,7 +567,7 @@ def run_activation(config: ActivationConfig) -> dict[str, Any]:
             for relation in ACTIVATION_RELATIONS:
                 receipts.append(copy_relation(source, target, relation))
                 target.commit()
-        probe = probe_target(target)
+        probe = probe_target(target, horizons=horizons)
     return {
         "mode": "activate",
         "status": "SUCCEEDED",
@@ -538,9 +577,13 @@ def run_activation(config: ActivationConfig) -> dict[str, Any]:
     }
 
 
-def run_verify(config: ActivationConfig) -> dict[str, Any]:
+def run_verify(
+    config: ActivationConfig,
+    *,
+    horizons: Sequence[int] = DEFAULT_HORIZON_DAYS,
+) -> dict[str, Any]:
     with psycopg.connect(config.target_dsn) as target:
-        probe = probe_target(target)
+        probe = probe_target(target, horizons=horizons)
     return {
         "mode": "verify",
         "target_relations": probe["relations"],
@@ -557,15 +600,21 @@ def main(argv: Sequence[str] | None = None) -> int:
         default=None,
         help="Optional path for the JSON receipt; stdout is always written.",
     )
+    parser.add_argument(
+        "--horizons",
+        default=",".join(str(days) for days in DEFAULT_HORIZON_DAYS),
+        help="Comma-separated horizon lengths in days to measure.",
+    )
     args = parser.parse_args(argv)
 
+    horizons = parse_horizons(args.horizons)
     config = ActivationConfig.from_env()
     if args.mode == "inventory":
-        payload = run_inventory(config)
+        payload = run_inventory(config, horizons=horizons)
     elif args.mode == "activate":
-        payload = run_activation(config)
+        payload = run_activation(config, horizons=horizons)
     else:
-        payload = run_verify(config)
+        payload = run_verify(config, horizons=horizons)
 
     rendered = json.dumps(payload, indent=2, sort_keys=True)
     if args.output:
