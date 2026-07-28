@@ -1,0 +1,350 @@
+{
+  "checks": [
+    {
+      "detail": "configured",
+      "name": "config:GCP_PROJECT",
+      "ok": true
+    },
+    {
+      "detail": "configured",
+      "name": "config:GCP_REGION",
+      "ok": true
+    },
+    {
+      "detail": "configured",
+      "name": "config:GCP_AR_REPO",
+      "ok": true
+    },
+    {
+      "detail": "configured",
+      "name": "config:GCP_CLOUD_SQL_INSTANCE",
+      "ok": true
+    },
+    {
+      "detail": "configured",
+      "name": "config:API_SERVICE",
+      "ok": true
+    },
+    {
+      "detail": "configured",
+      "name": "config:WEB_SERVICE",
+      "ok": true
+    },
+    {
+      "detail": "configured",
+      "name": "config:MIGRATION_JOB",
+      "ok": true
+    },
+    {
+      "detail": "configured",
+      "name": "config:WORKER_JOB",
+      "ok": true
+    },
+    {
+      "detail": "configured",
+      "name": "config:SCHEDULER_JOB",
+      "ok": true
+    },
+    {
+      "detail": "configured",
+      "name": "config:WORKER_SCHEDULE_NAME",
+      "ok": true
+    },
+    {
+      "detail": "configured",
+      "name": "config:SCHEDULER_SCHEDULE_NAME",
+      "ok": true
+    },
+    {
+      "detail": "configured",
+      "name": "config:ODP_CLOUD_RUN_RUNTIME_SERVICE_ACCOUNT",
+      "ok": true
+    },
+    {
+      "detail": "configured",
+      "name": "config:ODP_CLOUD_SCHEDULER_SERVICE_ACCOUNT",
+      "ok": true
+    },
+    {
+      "detail": "configured",
+      "name": "config:ODP_WORKER_CRON",
+      "ok": true
+    },
+    {
+      "detail": "configured",
+      "name": "config:ODP_SCHEDULER_CRON",
+      "ok": true
+    },
+    {
+      "detail": "configured",
+      "name": "config:ODP_SCHEDULER_TIME_ZONE",
+      "ok": true
+    },
+    {
+      "detail": "configured",
+      "name": "config:ODP_SNAPSHOT_BUCKET",
+      "ok": true
+    },
+    {
+      "detail": "configured",
+      "name": "config:MLFLOW_TRACKING_URI",
+      "ok": true
+    },
+    {
+      "detail": "configured",
+      "name": "config:ODP_FORECAST_ENGINE",
+      "ok": true
+    },
+    {
+      "detail": "configured",
+      "name": "config:ODP_FORECAST_MODEL",
+      "ok": true
+    },
+    {
+      "detail": "configured",
+      "name": "config:ODP_PRODUCTION_PROVIDER_IDS",
+      "ok": true
+    },
+    {
+      "detail": "configured",
+      "name": "config:ODP_EXTERNAL_PROVIDER_PROBE_TIMEOUT_SECONDS",
+      "ok": true
+    },
+    {
+      "detail": "configured",
+      "name": "config:ODP_AUTH_ISSUER",
+      "ok": true
+    },
+    {
+      "detail": "configured",
+      "name": "config:ODP_AUTH_AUDIENCES",
+      "ok": true
+    },
+    {
+      "detail": "configured",
+      "name": "config:ODP_AUTH_JWKS_URI",
+      "ok": true
+    },
+    {
+      "detail": "configured",
+      "name": "config:ODP_OPERATOR_SMOKE_SERVICE_ACCOUNT",
+      "ok": true
+    },
+    {
+      "detail": "configured",
+      "name": "config:ODP_WEB_OIDC_ISSUER",
+      "ok": true
+    },
+    {
+      "detail": "configured",
+      "name": "config:ODP_WEB_OIDC_CLIENT_ID",
+      "ok": true
+    },
+    {
+      "detail": "configured",
+      "name": "config:ODP_OPERATOR_SMOKE_ROLE",
+      "ok": true
+    },
+    {
+      "detail": "configured (value redacted)",
+      "name": "secret-reference:ODAY_DATABASE_URL_SECRET",
+      "ok": true
+    },
+    {
+      "detail": "configured (value redacted)",
+      "name": "secret-reference:ODP_AUTH_PRINCIPAL_MAP_SECRET",
+      "ok": true
+    },
+    {
+      "detail": "configured (value redacted)",
+      "name": "secret-reference:ODP_WEB_OIDC_CLIENT_SECRET_SECRET",
+      "ok": true
+    },
+    {
+      "detail": "configured (value redacted)",
+      "name": "secret-reference:ODP_WEB_SESSION_SECRET_SECRET",
+      "ok": true
+    },
+    {
+      "detail": "expected=dev actual=dev",
+      "name": "runtime:ODP_DEPLOY_ENV",
+      "ok": true
+    },
+    {
+      "detail": "expected=true actual=true",
+      "name": "runtime:ODP_REQUIRE_LIVE_DATA",
+      "ok": true
+    },
+    {
+      "detail": "expected=live actual=live",
+      "name": "runtime:ODP_DATA_BINDING_MODE",
+      "ok": true
+    },
+    {
+      "detail": "expected=production actual=production",
+      "name": "runtime:ODP_PRODUCT_MODE",
+      "ok": true
+    },
+    {
+      "detail": "expected=live actual=live",
+      "name": "runtime:ODP_EXTERNAL_PROVIDER_MODE",
+      "ok": true
+    },
+    {
+      "detail": "expected=postgresql actual=postgresql",
+      "name": "runtime:ODP_PERSISTENCE",
+      "ok": true
+    },
+    {
+      "detail": "expected=gcs actual=gcs",
+      "name": "runtime:ODP_OBJECT_STORE",
+      "ok": true
+    },
+    {
+      "detail": "expected=disabled actual=disabled",
+      "name": "runtime:ODP_COMPETITOR_MANUAL_SOURCE_STATUS",
+      "ok": true
+    },
+    {
+      "detail": "bounded=3s",
+      "name": "runtime:ODP_EXTERNAL_PROVIDER_PROBE_TIMEOUT_SECONDS",
+      "ok": true
+    },
+    {
+      "detail": "supported=statsforecast:seasonal_naive",
+      "name": "runtime:forecast_binding",
+      "ok": true
+    },
+    {
+      "detail": "valid 40-character release SHA",
+      "name": "runtime:ODAY_RELEASE_SHA",
+      "ok": true
+    },
+    {
+      "detail": "selected=admin_boundary.official_dataset,geocode.primary_api,poi.commercial_api",
+      "name": "runtime:ODP_PRODUCTION_PROVIDER_IDS",
+      "ok": true
+    },
+    {
+      "detail": "all selected provider IDs exist",
+      "name": "runtime:production_provider_ids_known",
+      "ok": true
+    },
+    {
+      "detail": "all required product providers selected",
+      "name": "runtime:required_product_providers",
+      "ok": true
+    },
+    {
+      "detail": "all selected providers are production-enabled",
+      "name": "runtime:production_provider_licenses",
+      "ok": true
+    },
+    {
+      "detail": "competitor.manual_source is disabled for production",
+      "name": "runtime:competitor_manual_disabled",
+      "ok": true
+    },
+    {
+      "detail": "configured",
+      "name": "config:ODP_POI_PROVIDER_URL",
+      "ok": true
+    },
+    {
+      "detail": "configured (value redacted)",
+      "name": "secret-reference:ODP_POI_PROVIDER_API_KEY_SECRET",
+      "ok": true
+    },
+    {
+      "detail": "configured",
+      "name": "config:ODP_POI_PROVIDER_AUTH_STATUS",
+      "ok": true
+    },
+    {
+      "detail": "configured",
+      "name": "config:ODP_GEOCODE_PROVIDER_URL",
+      "ok": true
+    },
+    {
+      "detail": "configured (value redacted)",
+      "name": "secret-reference:ODP_GEOCODE_PROVIDER_API_KEY_SECRET",
+      "ok": true
+    },
+    {
+      "detail": "configured",
+      "name": "config:ODP_GEOCODE_PROVIDER_AUTH_STATUS",
+      "ok": true
+    },
+    {
+      "detail": "configured",
+      "name": "config:ODP_ADMIN_BOUNDARY_PROVIDER_URL",
+      "ok": true
+    },
+    {
+      "detail": "configured (value redacted)",
+      "name": "secret-reference:ODP_ADMIN_BOUNDARY_PROVIDER_TOKEN_SECRET",
+      "ok": true
+    },
+    {
+      "detail": "configured",
+      "name": "config:ODP_ADMIN_BOUNDARY_PROVIDER_AUTH_STATUS",
+      "ok": true
+    },
+    {
+      "detail": "supported PostgreSQL persistence adapter is wired through build_persistence",
+      "name": "repository:production_database_adapter",
+      "ok": true
+    },
+    {
+      "detail": "worker image, Cloud Run Job execution, schedule, and terminal receipt checks are wired",
+      "name": "repository:worker_runtime",
+      "ok": true
+    },
+    {
+      "detail": "scheduler image, Cloud Run Job execution, schedule, and enqueue receipt checks are wired",
+      "name": "repository:scheduler_runtime",
+      "ok": true
+    },
+    {
+      "detail": "migration Cloud Run Job executes and validates before API/worker/scheduler deployment",
+      "name": "repository:migration_runtime",
+      "ok": true
+    },
+    {
+      "detail": "candidate revisions deploy without traffic, pass smoke, then promote with rollback armed",
+      "name": "repository:release_traffic",
+      "ok": true
+    },
+    {
+      "detail": "invalid: live-required OperatorStateService still exposes seed data",
+      "name": "repository:operator_bootstrap_data_source",
+      "ok": false
+    },
+    {
+      "detail": "provider registry honors ODP_PRODUCTION_PROVIDER_IDS",
+      "name": "repository:provider_allowlist_runtime",
+      "ok": true
+    },
+    {
+      "detail": "importable class=modules.external_data.providers.live.PoiCommercialApiProvider",
+      "name": "repository:provider_adapter:poi.commercial_api",
+      "ok": true
+    },
+    {
+      "detail": "importable class=modules.external_data.providers.live.PrimaryGeocodeProvider",
+      "name": "repository:provider_adapter:geocode.primary_api",
+      "ok": true
+    },
+    {
+      "detail": "importable class=modules.external_data.providers.live.AdminBoundaryDatasetProvider",
+      "name": "repository:provider_adapter:admin_boundary.official_dataset",
+      "ok": true
+    }
+  ],
+  "environment": "dev",
+  "generated_at": "2026-07-28T00:28:26Z",
+  "ok": false,
+  "release_sha": "b607d216144869014b5eca50ab552c5ba7f6bb41",
+  "schema_version": 1,
+  "secret_values_redacted": true
+}
