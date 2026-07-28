@@ -10,6 +10,7 @@ from datetime import UTC, datetime, timedelta
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from threading import Thread
+from types import SimpleNamespace
 
 import pytest
 
@@ -238,8 +239,118 @@ def test_preflight_reports_current_repository_runtime_capabilities() -> None:
     assert by_name["repository:scheduler_runtime"].ok is True
     assert by_name["repository:migration_runtime"].ok is True
     assert by_name["repository:release_traffic"].ok is True
-    assert "repository:operator_bootstrap_data_source" in by_name
     assert by_name["repository:provider_allowlist_runtime"].ok is True
+    # The live-required operator runtime is correctly fail-closed today: an
+    # absent repository raises instead of exposing seed rows, and the real
+    # production composition injects the live repository.
+    bootstrap_check = by_name["repository:operator_bootstrap_data_source"]
+    assert bootstrap_check.ok is True
+    assert "fail-closed" in bootstrap_check.detail
+    assert by_name["repository:operator_production_wiring"].ok is True
+    assert by_name["repository:operator_fixture_wiring_blocked"].ok is True
+    assert by_name["repository:operator_tenant_scope_fail_closed"].ok is True
+    assert by_name["repository:operator_live_probe_contract"].ok is True
+
+
+class _FakeRepositoryError(RuntimeError):
+    pass
+
+
+def _fake_operator_state_module(
+    *,
+    payload: dict[str, object] | None = None,
+    error: Exception | None = None,
+) -> SimpleNamespace:
+    class _FakeOperatorStateService:
+        def __init__(self, **_kwargs: object) -> None:
+            pass
+
+        @property
+        def data_origin(self) -> dict[str, object]:
+            return {"kind": "unavailable", "sourceId": None}
+
+        def get_today(self, **_kwargs: object) -> dict[str, object] | None:
+            if error is not None:
+                raise error
+            return payload
+
+    return SimpleNamespace(
+        OperatorLiveRepositoryError=_FakeRepositoryError,
+        OperatorStateService=_FakeOperatorStateService,
+    )
+
+
+def _fake_main_module(operator_live_repository: object | None = None) -> SimpleNamespace:
+    return SimpleNamespace(
+        create_app=lambda **_kwargs: SimpleNamespace(
+            state=SimpleNamespace(operator_live_repository=operator_live_repository)
+        )
+    )
+
+
+def test_operator_checks_block_seed_exposure_but_allow_fail_closed_unavailable() -> None:
+    seed_payload = {
+        "meta": {
+            "dataMode": "fixture",
+            "dataOrigin": {"kind": "fixture", "sourceId": "r4-seed"},
+        },
+        "workQueue": [{"id": "task-seed-1"}],
+        "approvals": [],
+    }
+    checks = validator.operator_runtime_checks(
+        ROOT,
+        operator_state_module=_fake_operator_state_module(payload=seed_payload),
+        main_module=_fake_main_module(),
+    )
+    by_name = {check.name: check for check in checks}
+    seed_check = by_name["repository:operator_bootstrap_data_source"]
+    assert seed_check.ok is False
+    assert "seed/fixture" in seed_check.detail
+
+    unavailable_payload = {
+        "meta": {
+            "dataMode": "unavailable",
+            "dataOrigin": {"kind": "unavailable", "sourceId": None},
+        },
+        "workQueue": [],
+        "approvals": [],
+    }
+    checks = validator.operator_runtime_checks(
+        ROOT,
+        operator_state_module=_fake_operator_state_module(payload=unavailable_payload),
+        main_module=_fake_main_module(),
+    )
+    by_name = {check.name: check for check in checks}
+    unavailable_check = by_name["repository:operator_bootstrap_data_source"]
+    assert unavailable_check.ok is True
+    assert "fail-closed" in unavailable_check.detail
+
+    raising_checks = validator.operator_runtime_checks(
+        ROOT,
+        operator_state_module=_fake_operator_state_module(
+            error=_FakeRepositoryError("Operator live repository is not configured")
+        ),
+        main_module=_fake_main_module(),
+    )
+    raising_by_name = {check.name: check for check in raising_checks}
+    raising_check = raising_by_name["repository:operator_bootstrap_data_source"]
+    assert raising_check.ok is True
+    assert "not seed exposure" in raising_check.detail
+
+
+def test_operator_wiring_check_requires_injected_live_repository() -> None:
+    checks = validator.operator_runtime_checks(ROOT, main_module=_fake_main_module())
+    by_name = {check.name: check for check in checks}
+    assert by_name["repository:operator_production_wiring"].ok is False
+    assert "did not inject" in by_name["repository:operator_production_wiring"].detail
+    assert by_name["repository:operator_fixture_wiring_blocked"].ok is True
+
+    checks = validator.operator_runtime_checks(
+        ROOT, main_module=_fake_main_module(operator_live_repository=object())
+    )
+    by_name = {check.name: check for check in checks}
+    assert by_name["repository:operator_production_wiring"].ok is False
+    assert by_name["repository:operator_fixture_wiring_blocked"].ok is False
 
 
 def test_preflight_imports_every_registry_provider_adapter() -> None:
@@ -325,9 +436,24 @@ class DeterministicRuntimeHandler(BaseHTTPRequestHandler):
     data_mode = "live"
     database_mode = "postgresql"
     operator_source = "postgresql"
+    operator_repository_ready = True
+    operator_origin_kind = "authoritative"
     missing_provider_id = ""
     failed_provider_id = ""
     probe_age_seconds = 0
+
+    @classmethod
+    def _operator_origin(cls) -> dict[str, object]:
+        return {
+            "kind": cls.operator_origin_kind,
+            "sourceId": (
+                "operator-live-repository"
+                if cls.operator_origin_kind == "authoritative"
+                else "r4-seed"
+            ),
+            "repository": "OperatorLiveRepository",
+            "persistenceMode": cls.database_mode,
+        }
 
     def do_GET(self) -> None:  # noqa: N802 - stdlib handler contract
         if self.path == "/platform/version":
@@ -383,7 +509,29 @@ class DeterministicRuntimeHandler(BaseHTTPRequestHandler):
                 {
                     "status": "ok",
                     "data_mode": self.data_mode,
-                    "details": {"database": {"status": "healthy", "mode": self.database_mode}},
+                    "details": {
+                        "database": {"status": "healthy", "mode": self.database_mode},
+                        "data": {
+                            "mode": self.data_mode,
+                            "liveReady": self.operator_repository_ready,
+                            "operatorRepositoryReady": self.operator_repository_ready,
+                            "operatorRepositoryProbe": {
+                                "ready": self.operator_repository_ready,
+                                "checkedAt": datetime.now(UTC).isoformat(),
+                                "repository": "OperatorLiveRepository",
+                                "persistenceMode": self.database_mode,
+                                "errors": (
+                                    []
+                                    if self.operator_repository_ready
+                                    else [
+                                        "OperatorLiveRepositoryError: stores: "
+                                        "connection refused"
+                                    ]
+                                ),
+                            },
+                            "origin": self._operator_origin(),
+                        },
+                    },
                 }
             )
             return
@@ -396,6 +544,15 @@ class DeterministicRuntimeHandler(BaseHTTPRequestHandler):
                     "meta": {
                         "dataMode": self.data_mode,
                         "dataSource": self.operator_source,
+                        "dataOrigin": self._operator_origin(),
+                        "liveReadiness": {
+                            "ready": self.operator_repository_ready,
+                            "reasonCode": (
+                                "OPERATOR_LIVE_REPOSITORY_READY"
+                                if self.operator_repository_ready
+                                else "OPERATOR_LIVE_REPOSITORY_UNAVAILABLE"
+                            ),
+                        },
                     },
                     "today": {"queue": []},
                 }
@@ -521,6 +678,7 @@ def test_deterministic_smoke_rejects_wrong_sha_memory_and_seed_operator() -> Non
     DeterministicRuntimeHandler.data_mode = "fixture"
     DeterministicRuntimeHandler.database_mode = "in-memory"
     DeterministicRuntimeHandler.operator_source = "canonical-r4-seed"
+    DeterministicRuntimeHandler.operator_origin_kind = "fixture"
     server, url = start_server()
     try:
         checks, _ = run_smoke(url)
@@ -530,13 +688,36 @@ def test_deterministic_smoke_rejects_wrong_sha_memory_and_seed_operator() -> Non
         DeterministicRuntimeHandler.data_mode = "live"
         DeterministicRuntimeHandler.database_mode = "postgresql"
         DeterministicRuntimeHandler.operator_source = "postgresql"
+        DeterministicRuntimeHandler.operator_origin_kind = "authoritative"
 
     failed = {check.name for check in checks if not check.ok}
     assert "smoke:/platform/version:release_sha" in failed
     assert "smoke:/platform/health:live_data_mode" in failed
     assert "smoke:/platform/health:database" in failed
     assert "smoke:/readiness:database" in failed
+    assert "smoke:/readiness:operator_live_repository" in failed
     assert "smoke:/api/v1/operator/bootstrap:provenance" in failed
+    assert "smoke:/api/v1/operator/bootstrap:read_provenance" in failed
+
+
+def test_deterministic_smoke_requires_ready_operator_live_repository_probe() -> None:
+    DeterministicRuntimeHandler.operator_repository_ready = False
+    server, url = start_server()
+    try:
+        checks, _ = run_smoke(url)
+    finally:
+        server.shutdown()
+        DeterministicRuntimeHandler.operator_repository_ready = True
+
+    by_name = {check.name: check for check in checks}
+    readiness_check = by_name["smoke:/readiness:operator_live_repository"]
+    assert readiness_check.ok is False
+    assert "probe" in readiness_check.detail
+    provenance_check = by_name["smoke:/api/v1/operator/bootstrap:read_provenance"]
+    assert provenance_check.ok is False
+    # An unavailable repository blocks candidate promotion, but the failure is
+    # reported as a failing probe, not as seed exposure.
+    assert by_name["smoke:/api/v1/operator/bootstrap:provenance"].ok is True
 
 
 def test_workflows_do_not_reference_secrets_in_step_if() -> None:
