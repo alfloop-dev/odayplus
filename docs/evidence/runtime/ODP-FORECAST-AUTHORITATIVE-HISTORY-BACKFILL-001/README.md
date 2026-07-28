@@ -312,6 +312,30 @@ partition, the records committed by the earlier run are never reconciled by
 anyone. Either the resuming run should reconcile the whole partition, or it
 should re-attribute the prior run's lineage to itself.
 
+### Why the ingestion code is not the thing to change either — in this task
+
+The follow-up above is the correct durable fix, and the narrower half of it
+(`_lineage` in `apps/data_platform/store.py` upserting `run_id` when the
+incumbent run is non-terminal, instead of `DO NOTHING`) would make a re-ingest
+heal this partition with no delete at all. It is still not the move here, for a
+reason that is structural rather than aesthetic.
+
+The backfill does not run this checkout. Every `orders-history` Job in §5 is
+pinned by digest —
+`asia-east1-docker.pkg.dev/.../data-platform@sha256:f60383b6…` in all three
+applied manifests — so the code that writes `canonical_lineage` is whatever was
+built at that release SHA. Changing `store.py` on this task branch would change
+nothing about what `-s6` does; it would first have to merge, rebuild, republish,
+and re-pin, and only then could the partition be re-ingested. That is a release
+cycle standing between this task and its own acceptance bar, on a shared
+ingestion path used by every pipeline, to repair 4 752 rows in one of them.
+
+The delete is the smaller change precisely because it is not a change: it runs
+against the data, under a tested tool, with a verified restore, and leaves the
+platform's behaviour for every other pipeline exactly as the release SHA defines
+it. The code fix belongs in the follow-up, where it can be reviewed as the
+platform change it actually is.
+
 ### The repair
 
 Make partition `2026-07-06__2026-07-07` genuinely ingested and reconciled by a
