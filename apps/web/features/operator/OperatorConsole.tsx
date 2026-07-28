@@ -19,6 +19,11 @@ import {
 } from "./components";
 import { DesignStoreOpsWorkspace } from "./DesignAlignedWorkspaces";
 import { GovernanceWorkspace } from "./GovernanceWorkspace";
+import {
+  normalizeGovernanceApprovals,
+  normalizeGovernanceAuditRows,
+  normalizeGovernanceDecisionRows,
+} from "./governance/governanceEnvelope";
 import { GrowthWorkspace } from "./GrowthWorkspace";
 import { NetworkFindAreasWorkspace } from "./NetworkFindAreasWorkspace";
 import { StoreOpsWorkflowDialogs } from "./StoreOpsWorkflowDialogs";

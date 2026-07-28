@@ -21,6 +21,13 @@ import {
   type GovernanceStatusBoard,
   type GovernanceStatusRow,
 } from "./governance/governanceLoader";
+import {
+  normalizeGovernanceApprovals,
+  normalizeGovernanceAuditRows,
+  normalizeGovernanceDecisionRows,
+  normalizeGovernanceEvidencePackages,
+  normalizeGovernanceStatusBoard,
+} from "./governance/governanceEnvelope";
 import { OperatorDataUnavailableGate } from "./OperatorDataUnavailableGate";
 import {
   isSeedDataSource,
@@ -430,22 +437,29 @@ export function GovernanceWorkspace({
       );
       return false;
     }
-    const statusRows = snapshot.statusBoard
-      ? Object.values(snapshot.statusBoard).flatMap((rows) => rows ?? [])
+    // The snapshot stays the governance source of truth, but its rows are
+    // still external input: normalize before they reach component state.
+    const apiApprovals = normalizeGovernanceApprovals(snapshot.approvals);
+    const apiDecisions = normalizeGovernanceDecisionRows(snapshot.decisions);
+    const apiAuditRows = normalizeGovernanceAuditRows(snapshot.auditRows);
+    const apiEvidencePackages = normalizeGovernanceEvidencePackages(snapshot.evidencePackages);
+    const statusBoard = normalizeGovernanceStatusBoard(snapshot.statusBoard);
+    const statusRows = statusBoard
+      ? Object.values(statusBoard).flatMap((rows) => rows ?? [])
       : [];
     const hasData =
-      snapshot.approvals.length > 0 ||
-      snapshot.decisions.length > 0 ||
-      snapshot.auditRows.length > 0 ||
-      snapshot.evidencePackages.length > 0 ||
+      apiApprovals.length > 0 ||
+      apiDecisions.length > 0 ||
+      apiAuditRows.length > 0 ||
+      apiEvidencePackages.length > 0 ||
       statusRows.length > 0;
-    setLocalApprovals(snapshot.approvals);
-    setLocalDecisions(snapshot.decisions);
-    setLocalAuditRows(snapshot.auditRows);
-    if (snapshot.statusBoard) setApiStatusBoard(snapshot.statusBoard);
-    if (snapshot.evidencePackages?.length) {
+    setLocalApprovals(apiApprovals);
+    setLocalDecisions(apiDecisions);
+    setLocalAuditRows(apiAuditRows);
+    if (statusBoard) setApiStatusBoard(statusBoard);
+    if (apiEvidencePackages.length) {
       setEvdHist(
-        snapshot.evidencePackages.map((pkg) => ({
+        apiEvidencePackages.map((pkg) => ({
           id: pkg.id,
           range: pkg.range,
           mod: pkg.mod,
@@ -456,9 +470,9 @@ export function GovernanceWorkspace({
       );
     }
     setSelectedApprovalId((current) =>
-      snapshot.approvals.some((approval) => approval.id === current)
+      apiApprovals.some((approval) => approval.id === current)
         ? current
-        : snapshot.approvals[0]?.id ?? "",
+        : apiApprovals[0]?.id ?? "",
     );
     setApiActive(true);
     if (inspection === "seed") {
