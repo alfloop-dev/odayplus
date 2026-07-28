@@ -356,12 +356,28 @@ def forecast_horizon_windows(
     """Report canonical horizon windows the target training view can produce.
 
     A window of ``h`` days exists for a store when it holds ``h`` consecutive
-    training-eligible calendar dates. Nothing here materializes rows; it only
-    measures what the persisted view already yields.
+    training-eligible calendar dates. No persisted row is created or changed:
+    the only relations written are ``ON COMMIT DROP`` temporary ones, and
+    callers roll the probing transaction back (see :func:`probe_target`).
     """
 
     if not _relation_exists(connection, "model_ready", "forecast_training_view"):
         return {"available": False, "reason": "model_ready.forecast_training_view is absent"}
+
+    # The view re-derives 28-day causal features per row, so it is scanned once
+    # into a temporary projection and every aggregate below reads that instead.
+    connection.execute("DROP TABLE IF EXISTS pg_temp.forecast_eligibility_probe")
+    connection.execute(
+        """
+        CREATE TEMP TABLE forecast_eligibility_probe ON COMMIT DROP AS
+        SELECT tenant_id, store_id, date, is_training_eligible, exclusion_reason
+        FROM model_ready.forecast_training_view
+        """
+    )
+    connection.execute(
+        "CREATE INDEX ON pg_temp.forecast_eligibility_probe (tenant_id, store_id, date)"
+    )
+    connection.execute("ANALYZE pg_temp.forecast_eligibility_probe")
 
     totals = connection.execute(
         """
@@ -371,43 +387,52 @@ def forecast_horizon_windows(
                count(DISTINCT store_id) FILTER (WHERE is_training_eligible)::bigint,
                min(date) FILTER (WHERE is_training_eligible),
                max(date) FILTER (WHERE is_training_eligible)
-        FROM model_ready.forecast_training_view
+        FROM pg_temp.forecast_eligibility_probe
         """
     ).fetchone()
 
     exclusions = connection.execute(
         """
         SELECT coalesce(exclusion_reason, 'ELIGIBLE'), count(*)::bigint
-        FROM model_ready.forecast_training_view
+        FROM pg_temp.forecast_eligibility_probe
         GROUP BY 1 ORDER BY 2 DESC
         """
     ).fetchall()
 
-    # Consecutive eligible dates per store, via the classic date - row_number gaps
-    # and islands grouping.
-    runs = connection.execute(
+    # Consecutive eligible dates per store, via the classic date - row_number
+    # gaps-and-islands grouping, materialized once for every horizon question.
+    connection.execute("DROP TABLE IF EXISTS pg_temp.forecast_eligible_streaks")
+    connection.execute(
         """
+        CREATE TEMP TABLE forecast_eligible_streaks ON COMMIT DROP AS
         WITH eligible AS (
             SELECT tenant_id, store_id, date,
                    date - (row_number() OVER (
                        PARTITION BY tenant_id, store_id ORDER BY date
                    ))::int AS island
-            FROM model_ready.forecast_training_view
+            FROM pg_temp.forecast_eligibility_probe
             WHERE is_training_eligible
-        ),
-        streaks AS (
-            SELECT tenant_id, store_id, island,
-                   count(*)::bigint AS streak_days,
-                   min(date) AS streak_start,
-                   max(date) AS streak_end
-            FROM eligible
-            GROUP BY tenant_id, store_id, island
         )
-        SELECT max(streak_days)::bigint AS longest_streak,
-               min(streak_start) FILTER (WHERE streak_days = (SELECT max(streak_days) FROM streaks)),
-               max(streak_end) FILTER (WHERE streak_days = (SELECT max(streak_days) FROM streaks)),
-               count(DISTINCT store_id)::bigint AS stores_with_streak
-        FROM streaks
+        SELECT tenant_id, store_id, island,
+               count(*)::bigint AS streak_days,
+               min(date) AS streak_start,
+               max(date) AS streak_end
+        FROM eligible
+        GROUP BY tenant_id, store_id, island
+        """
+    )
+
+    runs = connection.execute(
+        """
+        SELECT max(streak_days)::bigint,
+               min(streak_start) FILTER (
+                   WHERE streak_days = (SELECT max(streak_days) FROM pg_temp.forecast_eligible_streaks)
+               ),
+               max(streak_end) FILTER (
+                   WHERE streak_days = (SELECT max(streak_days) FROM pg_temp.forecast_eligible_streaks)
+               ),
+               count(DISTINCT store_id)::bigint
+        FROM pg_temp.forecast_eligible_streaks
         """
     ).fetchone()
 
@@ -415,23 +440,10 @@ def forecast_horizon_windows(
     for horizon in horizons:
         row = connection.execute(
             """
-            WITH eligible AS (
-                SELECT tenant_id, store_id, date,
-                       date - (row_number() OVER (
-                           PARTITION BY tenant_id, store_id ORDER BY date
-                       ))::int AS island
-                FROM model_ready.forecast_training_view
-                WHERE is_training_eligible
-            ),
-            streaks AS (
-                SELECT tenant_id, store_id, island, count(*)::bigint AS streak_days
-                FROM eligible
-                GROUP BY tenant_id, store_id, island
-            )
             SELECT
-                coalesce(sum(greatest(streak_days - %s + 1, 0)), 0)::bigint AS complete_windows,
-                count(DISTINCT store_id) FILTER (WHERE streak_days >= %s)::bigint AS stores
-            FROM streaks
+                coalesce(sum(greatest(streak_days - %s + 1, 0)), 0)::bigint,
+                count(DISTINCT store_id) FILTER (WHERE streak_days >= %s)::bigint
+            FROM pg_temp.forecast_eligible_streaks
             """,
             (horizon, horizon),
         ).fetchone()
@@ -467,24 +479,39 @@ def relation_inventory(connection: psycopg.Connection) -> dict[str, int | None]:
     return counts
 
 
+def probe_target(target: psycopg.Connection) -> dict[str, Any]:
+    """Measure the target without persisting anything.
+
+    ``forecast_horizon_windows`` needs ``CREATE TEMP TABLE``, which PostgreSQL
+    forbids in a read-only transaction, so the probe runs in a normal
+    transaction that is always rolled back. Only ``pg_temp`` relations are
+    written, and the rollback drops them.
+    """
+
+    try:
+        target.execute(f"SET statement_timeout = {COPY_RELATION_TIMEOUT_MS}")
+        return {
+            "relations": relation_inventory(target),
+            "transaction_coverage": transaction_date_coverage(target),
+            "forecast_windows": forecast_horizon_windows(target),
+        }
+    finally:
+        target.rollback()
+
+
 def run_inventory(config: ActivationConfig) -> dict[str, Any]:
     with (
         psycopg.connect(config.source_dsn) as source,
         psycopg.connect(config.target_dsn) as target,
     ):
         source.read_only = True
-        target.read_only = True
         return {
             "mode": "inventory",
             "source": {
                 "relations": relation_inventory(source),
                 "transaction_coverage": transaction_date_coverage(source),
             },
-            "target": {
-                "relations": relation_inventory(target),
-                "transaction_coverage": transaction_date_coverage(target),
-                "forecast_windows": forecast_horizon_windows(target),
-            },
+            "target": probe_target(target),
         }
 
 
@@ -501,25 +528,25 @@ def run_activation(config: ActivationConfig) -> dict[str, Any]:
             for relation in ACTIVATION_RELATIONS:
                 receipts.append(copy_relation(source, target, relation))
                 target.commit()
-        coverage = transaction_date_coverage(target)
-        windows = forecast_horizon_windows(target)
+        probe = probe_target(target)
     return {
         "mode": "activate",
         "status": "SUCCEEDED",
         "relations": receipts,
-        "target_transaction_coverage": coverage,
-        "target_forecast_windows": windows,
+        "target_transaction_coverage": probe["transaction_coverage"],
+        "target_forecast_windows": probe["forecast_windows"],
     }
 
 
 def run_verify(config: ActivationConfig) -> dict[str, Any]:
     with psycopg.connect(config.target_dsn) as target:
-        target.read_only = True
-        return {
-            "mode": "verify",
-            "target_transaction_coverage": transaction_date_coverage(target),
-            "target_forecast_windows": forecast_horizon_windows(target),
-        }
+        probe = probe_target(target)
+    return {
+        "mode": "verify",
+        "target_relations": probe["relations"],
+        "target_transaction_coverage": probe["transaction_coverage"],
+        "target_forecast_windows": probe["forecast_windows"],
+    }
 
 
 def main(argv: Sequence[str] | None = None) -> int:
