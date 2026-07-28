@@ -350,9 +350,9 @@ def _raw_forecast_rows(count: int = 120) -> list[dict[str, Any]]:
                 "view_version": "forecast-training-view-v2",
                 "entity_id": store_id,
                 "tenant_id": "tenant-1",
-                "feature_snapshot_time": datetime(2026, 7, 1, tzinfo=UTC),
-                "prediction_origin_time": datetime(2026, 7, 2, tzinfo=UTC),
-                "label_maturity_time": datetime(2026, 7, 1, tzinfo=UTC),
+                "feature_snapshot_time": observed,
+                "prediction_origin_time": observed + timedelta(microseconds=1),
+                "label_maturity_time": observed + timedelta(days=1),
                 "source_snapshot_ids": [f"snapshot-{index:04d}"],
                 "is_training_eligible": True,
                 "date": observed.date(),
@@ -803,15 +803,18 @@ def test_prepare_rows_uses_canonical_lineage_and_never_fills_missing_features() 
     rows = _raw_forecast_rows(120)
     rows[0]["rolling_mean_28"] = None
     prepared = prepare_model_rows(MODEL_SPECS["forecastops"], _loaded(rows))
-    assert len(prepared) == 119
+    # 120 daily rows = 60 days x 2 stores -> 33 w4 + 5 w8 horizon rows per
+    # store; the store-1 day-0 origin with the missing feature drops its two
+    # horizon rows.
+    assert len(prepared) == 74
     first = prepared[0].mapping
-    assert first["source_snapshot_ids"] == [
-        "postgres:model_ready.forecast_training_view:sha256:" + "a" * 64,
-        "snapshot-0001",
-    ]
+    lineage = "postgres:model_ready.forecast_training_view:sha256:" + "a" * 64
+    assert lineage in first["source_snapshot_ids"]
+    # lineage plus the 28 daily source snapshots of the w4 observation window
+    assert len(first["source_snapshot_ids"]) == 29
     assert set(first["features"]) == set(MODEL_SPECS["forecastops"].feature_columns)
     assert "daily_net_revenue" not in first["features"]
-    assert first["labels"]["daily_net_revenue"] > 0
+    assert first["labels"][MODEL_SPECS["forecastops"].label_name] > 0
 
 
 def test_prepare_rows_rejects_mock_fixture_or_seed_lineage() -> None:
@@ -834,12 +837,7 @@ def test_prepare_rows_requires_source_lineage_and_strict_causal_time() -> None:
 
 
 def test_prepare_rows_allows_labels_to_mature_after_prediction_origin() -> None:
-    rows = _raw_forecast_rows(120)
-    maturity = datetime(2026, 7, 30, tzinfo=UTC)
-    for row in rows:
-        row["label_maturity_time"] = maturity
-
-    prepared = prepare_model_rows(MODEL_SPECS["forecastops"], _loaded(rows))
+    prepared = prepare_model_rows(MODEL_SPECS["forecastops"], _loaded(_raw_forecast_rows(120)))
 
     assert (
         prepared[0].mapping["feature_snapshot_time"] < prepared[0].mapping["prediction_origin_time"]
@@ -869,7 +867,12 @@ def test_temporal_validation_uses_future_holdout_and_segment_gates() -> None:
 
     class PerfectEstimator:
         def predict(self, rows: list[dict[str, Any]]) -> tuple[float, ...]:
-            return tuple(float(row["revenue_lag_1"]) + 5.0 for row in rows)
+            # daily revenue rises 10/day per store, so the horizon average is
+            # revenue_lag_1 + 5 + 5 * (horizon_days - 1) = lag + 35 * weeks.
+            return tuple(
+                float(row["revenue_lag_1"]) + 35.0 * float(row["horizon_weeks"])
+                for row in rows
+            )
 
         def predict_interval(
             self,
@@ -912,8 +915,8 @@ def test_forecast_binding_executes_actual_lightgbm_temporal_training() -> None:
     prepared = prepare_model_rows(spec, _loaded(_raw_forecast_rows(120)))
     training, holdout = _temporal_split(prepared, holdout_fraction=0.20)
     report = _validate_regression_temporally(spec, training, holdout)
-    assert report.algorithm == "lightgbm_quantile"
-    assert report.training_rows + report.holdout_rows == 120
+    assert report.algorithm == "lightgbm_regressor"
+    assert report.training_rows + report.holdout_rows == 76
     assert report.passed
     assert np_is_finite(report.metrics["normalized_mae"])
 
@@ -925,7 +928,10 @@ def test_segment_validation_fails_when_holdout_has_no_sufficient_segment() -> No
 
     class Estimator:
         def predict(self, rows: list[dict[str, Any]]) -> tuple[float, ...]:
-            return tuple(float(row["revenue_lag_1"]) + 5.0 for row in rows)
+            return tuple(
+                float(row["revenue_lag_1"]) + 35.0 * float(row["horizon_weeks"])
+                for row in rows
+            )
 
         def predict_interval(
             self,

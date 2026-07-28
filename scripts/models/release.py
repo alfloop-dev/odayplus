@@ -47,6 +47,7 @@ from .contracts import (
     ProductionTrainingSettings,
     require_approval_document,
 )
+from .forecast_training import ForecastHorizonContractError, expand_forecast_horizon_rows
 from .storage import (
     GcsArtifactStore,
     LoadedModelReadyRows,
@@ -632,7 +633,16 @@ def prepare_model_rows(
 ) -> tuple[PreparedRow, ...]:
     prepared: list[PreparedRow] = []
     lineage_id = f"postgres:{loaded.relation}:sha256:{loaded.query_sha256}"
-    for raw in loaded.rows:
+    rows: Sequence[Mapping[str, Any]] = loaded.rows
+    if spec.key == "forecastops":
+        # The model-ready view serves daily rows; the horizon contract trains on
+        # leakage-safe horizon-average targets whose maturity is bounded by the
+        # declared observation window.
+        try:
+            rows = expand_forecast_horizon_rows(rows)
+        except ForecastHorizonContractError as exc:
+            raise ModelReadyDataError(f"{spec.key}: {exc}") from exc
+    for raw in rows:
         _reject_nonproduction_source_markers(raw)
         try:
             temporal_value = _timestamp(raw[spec.temporal_column])

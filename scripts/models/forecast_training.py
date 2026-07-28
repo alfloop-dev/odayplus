@@ -58,17 +58,15 @@ def expand_forecast_horizon_rows(
                     raise ForecastHorizonContractError(
                         "horizon label maturity cannot precede prediction origin"
                     )
-                source_snapshot_ids = sorted(
-                    {
-                        source_id
-                        for row in window
-                        for source_id in _source_ids(row.get("source_snapshot_ids"))
-                    }
-                )
-                if not source_snapshot_ids:
-                    raise ForecastHorizonContractError(
-                        "forecast horizon labels require source snapshot lineage"
-                    )
+                window_source_ids: set[str] = set()
+                for row in window:
+                    row_source_ids = _source_ids(row.get("source_snapshot_ids"))
+                    if not row_source_ids:
+                        raise ForecastHorizonContractError(
+                            "forecast horizon labels require source snapshot lineage"
+                        )
+                    window_source_ids.update(row_source_ids)
+                source_snapshot_ids = sorted(window_source_ids)
                 expanded.append(
                     {
                         **origin,

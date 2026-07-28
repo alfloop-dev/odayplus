@@ -213,6 +213,8 @@ class _UnexpectedRuntime:
 
 
 def _forecast_training_records() -> list[dict[str, object]]:
+    rows = expand_forecast_horizon_rows(_forecast_daily_rows(days=210))
+    training_as_of_time = max(row["label_maturity_time"] for row in rows)
     return [
         {
             "view_name": "forecast_training_view",
@@ -226,11 +228,12 @@ def _forecast_training_records() -> list[dict[str, object]]:
                 FORECASTOPS_LABEL_NAME: row["daily_net_revenue"],
             },
             "label_maturity_time": row["label_maturity_time"].isoformat(),
+            "training_as_of_time": training_as_of_time.isoformat(),
             "features": {
                 feature_name: row[feature_name] for feature_name in FORECASTOPS_MODEL_FEATURES
             },
         }
-        for row in expand_forecast_horizon_rows(_forecast_daily_rows(days=210))
+        for row in rows
     ]
 
 
