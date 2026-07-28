@@ -579,6 +579,37 @@ longer *depends* on repairing them, but the defect is real, the repair plan in
 section 6 stays on file, and the cost is now bounded and stated: the training
 window ends at `2026-07-04` rather than running through the 07-23..07-27 tail.
 
+### The finisher gate had to change, and this is why that is not a weakening
+
+The finisher's settling gate (`runbook/forecast-finisher-v5.sh`) previously had
+two clauses: **(a)** every partition with a non-terminal run also has a
+`SUCCEEDED` run, and **(b)** no non-terminal run still *owns*
+`canonical_lineage` rows. Clause (b) was written while the plan was still to
+repair Defect D, where "a dead run still owns lineage" correctly meant "the
+repair has not landed yet, do not activate".
+
+With the repair off the critical path, clause (b) became a **permanent
+deadlock**: run `069b0984` is dead, keeps its 4 752 lineage rows forever, and
+nothing will ever transition it. The finisher would have waited for a condition
+that cannot occur.
+
+Clause (b) was never a safety property. What makes activation unsafe is a
+partition still **mid-flight**, because `refresh_key` would mirror a genuinely
+in-progress `RUNNING` status into the target and reproduce Defect B from the
+other direction. A permanently abandoned run is not mid-flight — it is settled,
+just settled badly. Its days are *already* excluded by the view as
+`SOURCE_RUN_NOT_COMPLETE`, and blocking activation does not make them eligible;
+it only prevents ever producing evidence about the days that are.
+
+So v5 replaces clause (b) with a direct and **stronger** test of what clause (b)
+was standing in for: no orders Job is `Active` in the cluster, measured against
+Kubernetes rather than inferred from SQL. Clause (a) is kept unchanged, because
+"a killed partition was never re-run" is real incompleteness and must still
+block. Clause (b)'s measurement is not discarded — it is **demoted to a logged
+fact**, so the finisher reports how much lineage is still owned by abandoned
+runs and the cost is stated in the evidence rather than hidden behind a gate
+that never opens.
+
 ### Operational note
 
 The upstream is MongoDB Atlas and its IP allowlist admits only the
