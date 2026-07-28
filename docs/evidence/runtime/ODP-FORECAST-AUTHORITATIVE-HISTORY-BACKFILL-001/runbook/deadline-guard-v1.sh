@@ -132,11 +132,29 @@ except Exception:
 ' 2>/dev/null || echo UNKNOWN
 }
 
-log "deadline guard v1 armed (poll=${POLL_SECONDS}s extend_when_remaining=${EXTEND_WHEN_REMAINING}s extend_by=${EXTEND_BY}s cap=${HARD_CAP_SECONDS}s)"
+# A guard that only speaks when it acts is silent for the first four and a half
+# hours of every slice, and silence is indistinguishable from having died --
+# which matters precisely because this keeper only earns its keep at the one
+# moment it fires. The heartbeat also exercises the discovery path out loud, so
+# a stale kubeconfig or a renamed Job surfaces hours before the deadline rather
+# than at it. Read-only; the heartbeat never patches.
+HEARTBEAT_EVERY=${HEARTBEAT_EVERY:-12}
+poll_count=0
+
+log "deadline guard v1 armed (poll=${POLL_SECONDS}s extend_when_remaining=${EXTEND_WHEN_REMAINING}s extend_by=${EXTEND_BY}s cap=${HARD_CAP_SECONDS}s heartbeat_every=${HEARTBEAT_EVERY}polls)"
 
 while true; do
   refresh_kubeconfig
   read -r name deadline elapsed <<<"$(active_slice)"
+
+  poll_count=$(( poll_count + 1 ))
+  if [ $(( poll_count % HEARTBEAT_EVERY )) -eq 1 ]; then
+    if [ -n "${name:-}" ]; then
+      log "HEARTBEAT $name deadline=${deadline}s elapsed=${elapsed}s remaining=$(( deadline - elapsed ))s"
+    else
+      log "HEARTBEAT no Active $PREFIX slice"
+    fi
+  fi
 
   if [ -n "${name:-}" ]; then
     remaining=$(( deadline - elapsed ))
