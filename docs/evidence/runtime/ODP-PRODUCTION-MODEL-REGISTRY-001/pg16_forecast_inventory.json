@@ -1,0 +1,35 @@
+{
+  "schema_version": "odp-production-model-registry-evidence-v1",
+  "observed_at": "2026-07-28T11:57:12Z",
+  "auto_seeded": false,
+  "execution": {
+    "job": "oday-production-model-registry-001-inventory",
+    "execution": "oday-production-model-registry-001-inventory-pmb8m",
+    "status": "succeeded",
+    "source_commit": "bfc3d86128172c37970c0aff9f59611b1a47e07e"
+  },
+  "binding": {
+    "cloud_sql_instance": "alfaloop-data-project:asia-east1:oday-dev-sql",
+    "database_secret": "oday-plus-dev-api-database-url-pg16:latest",
+    "database_name": "oday",
+    "mlflow_host": "oday-mlflow-7sxbjoeozq-de.a.run.app",
+    "artifact_root": "gs://alfaloop-data-project-oday-plus-model-artifacts/releases"
+  },
+  "forecastops": {
+    "relation": "model_ready.forecast_training_view",
+    "contract_version": "forecast-training-view-v2",
+    "required_label": "daily_net_revenue",
+    "observed_count": 1303,
+    "eligible_count": 1303,
+    "source_snapshot_count": 220597,
+    "tenant_count": 413,
+    "temporal_min": "2026-06-19",
+    "temporal_max": "2026-06-22",
+    "inventory_split": {
+      "train": 783,
+      "validation": 260,
+      "test": 260
+    },
+    "inventory_ready": true
+  }
+}
