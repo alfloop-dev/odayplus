@@ -2071,28 +2071,14 @@ def _authoritative_task_container(
     return schema, containers[0]
 
 
-#: A Secret Manager secret is named in a Cloud Run binding in exactly one of the
-#: two forms the API documents, and both are checked here rather than assumed:
-#:
-#: - the bare secret ID, for a secret in the deploying project. Secret Manager
-#:   allows letters, digits, `-` and `_`, up to 255 characters, and nothing else
-#:   — no whitespace, no `.`, no `/`, no non-ASCII;
-#: - `projects/<project>/secrets/<secret ID>`, for a cross-project secret. The
-#:   project segment is a project number (which Secret Manager never writes with
-#:   a leading zero) or a project ID: 6 to 30 characters, opening with a
-#:   lowercase letter and never closing with a hyphen.
-#:
-#: Both forms stay accepted because `scripts/deploy_cloud_run_waji.sh` takes each
-#: name from an operator-supplied `*_SECRET` variable, so a cross-project secret
-#: is a supported deployment and rejecting the path form would over-tighten a
-#: schema this task must keep supporting.
 #: A numeric resource component is bounded as well as shaped, and rounds 10 and
 #: 11 pinned only the shape. A Secret Manager version number and a Cloud
 #: Resource Manager project number are both int64 values, so
 #: `9223372036854775808` — and any longer decimal — matched `[1-9][0-9]*` while
 #: naming a version Secret Manager cannot hold and a project number Cloud
-#: Resource Manager never issues. Both are range checked here, against the
-#: signed int64 maximum, in the canonical no-leading-zero form the services emit.
+#: Resource Manager never issues. Both route through the one guard below, which
+#: caps them at the signed int64 maximum in the canonical no-leading-zero form
+#: the services emit.
 _MAX_INT64 = 2**63 - 1
 _MAX_INT64_DIGITS = len(str(_MAX_INT64))
 _RESOURCE_NUMBER_PATTERN = re.compile(r"[1-9][0-9]*")
@@ -2117,6 +2103,24 @@ def _usable_resource_number(value: str) -> bool:
     return int(value) <= _MAX_INT64
 
 
+#: A Secret Manager secret is named in a Cloud Run binding in exactly one of the
+#: two forms the API documents, and both are checked here rather than assumed:
+#:
+#: - the bare secret ID, for a secret in the deploying project. Secret Manager
+#:   allows letters, digits, `-` and `_`, up to 255 characters, and nothing else
+#:   — no whitespace, no `.`, no `/`, no non-ASCII;
+#: - `projects/<project>/secrets/<secret ID>`, for a cross-project secret. The
+#:   project segment is a project number (which Secret Manager never writes with
+#:   a leading zero) or a project ID: 6 to 30 characters, opening with a
+#:   lowercase letter and never closing with a hyphen.
+#:
+#: Both forms stay accepted because `scripts/deploy_cloud_run_waji.sh` takes each
+#: name from an operator-supplied `*_SECRET` variable, so a cross-project secret
+#: is a supported deployment and rejecting the path form would over-tighten a
+#: schema this task must keep supporting.
+#:
+#: The project *number* branch is range checked as well as matched, through
+#: `_usable_resource_number`; a project *ID* has no range to check.
 _SECRET_ID_PATTERN = re.compile(r"[A-Za-z0-9_-]{1,255}")
 _SECRET_PROJECT_ID_PATTERN = re.compile(r"[a-z][a-z0-9-]{4,28}[a-z0-9]")
 _SECRET_PROJECT_PATTERN = re.compile(
