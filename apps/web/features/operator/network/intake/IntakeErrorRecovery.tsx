@@ -75,6 +75,7 @@ export function IntakeErrorRecovery({
   };
 
   const safeInput = sanitizePreservedInput(preservedInput);
+  const hasPreservedInput = Object.keys(safeInput).length > 0;
 
   const handleConfirmOverride = () => {
     if (!overrideReason.trim() || !riskAcknowledged) return;
@@ -174,9 +175,17 @@ export function IntakeErrorRecovery({
               overflowY: "auto",
             }}
           >
-            <pre style={{ margin: 0, whiteSpace: "pre-wrap" }}>
-              {JSON.stringify(safeInput, null, 2)}
-            </pre>
+            {hasPreservedInput ? (
+              <pre style={{ margin: 0, whiteSpace: "pre-wrap" }} data-testid="error-preserved-input-json">
+                {JSON.stringify(safeInput, null, 2)}
+              </pre>
+            ) : (
+              // Nothing durable came back from the intake record. Say so rather
+              // than rendering `{}`, which reads as "the submission was empty".
+              <span data-testid="error-preserved-input-unavailable">
+                保留輸入參數 UNAVAILABLE — 收件紀錄尚未提供可保留的送件輸入。
+              </span>
+            )}
           </div>
         )}
       </div>
