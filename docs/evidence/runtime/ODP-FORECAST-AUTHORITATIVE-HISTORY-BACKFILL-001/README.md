@@ -31,6 +31,9 @@ into its output.
 | `lineage_repair_plan.json` | `plan` | Read-only scope of the §6 lineage repair, from `repair_unattested_lineage.py` |
 | `unattested_lineage_sweep.json` | — | Sweep of **every** non-terminal run in the source, classified, proving the §6 repair scope is exactly one run. Carries its own `sweep_sql`. |
 | `attestation_coverage_after_s3.json` | — | Per-day attestation measured **after** `-s3` landed 2026-07-06..07-11, turning §6's 44-day cap from a projection into a measurement. Carries its own SQL. |
+| `upstream_source_depth_probe.json` | — | Read-only measurement of how far back the **authoritative upstream** actually goes, proving the landed 2026-05-23 floor is a window-clamp artifact (see §7). Carries its own predicate and redaction statement. |
+| `source_depth_probe.pod.yaml` | — | The exact read-only Pod that produced it. Aggregates only; no write path. |
+| `orders_history_backfill_jobs.applied.json` | — | The `-b1`/`-b2`/`-b3` backwards-extension Job manifests that close §7 without any destructive action. Secrets appear only as `secretKeyRef` names, never values. |
 
 Reproduce any of them with the DSN pair and the Cloud SQL proxy attestation in
 the environment:
@@ -483,15 +486,112 @@ radius recoverable if the re-ingest behaves unexpectedly. The irreversible part
 was never the rows; it is that the source database is shared, so the window
 between the delete and `-s6` completing is visible to anything else reading it.
 
-**Status: parked.** Deleting governed lineage from the shared source database is
-a destructive, human-gated action. It has not been executed. Everything else in
-this task proceeds without it; only the final 28-day window depends on it.
+**Status: parked, and no longer on the critical path.** Deleting governed lineage
+from the shared source database is a destructive, human-gated action. It has not
+been executed and, as of section 7, it does not need to be: the 28-day window is
+reachable without it. The plan below stays on file because the two lost days are
+still genuinely lost, but nothing in this task now waits on it.
 
 Re-planned at 17:19Z against the live source and the scope is unchanged — still
 4 752 lineage rows and 1 checkpoint, still exactly one run. The plan is stable,
-so approval does not need to be re-scoped when it arrives.
+so approval does not need to be re-scoped if it ever arrives.
 
-## 7. After state
+## 7. The 44-day cap was never a ceiling — the source floor is self-inflicted
+
+Sections 5 and 6 concluded that criterion 3 was unreachable: the longest
+contiguous attested span is 44 days (`2026-05-22..2026-07-04`), an h28 window
+needs 56, Defect D permanently costs `2026-07-05` and `2026-07-06`, and the only
+repair is human-gated. Every one of those measurements is correct. The
+**conclusion drawn from them was wrong**, because all of them were taken against
+*landed* data and none of them asked what the authoritative source actually
+holds.
+
+It holds about two years.
+
+| | Landed (`fongniao_raw.raw_orders`) | Upstream (`fongniao_prod.orders`) |
+| --- | --- | --- |
+| Documents | 478 265 | **2 170 979** |
+| Earliest | `2026-05-23T00:00:02.915Z` | **`2024-06-26T13:33:27.431Z`** |
+
+Measured read-only in-cluster by `source_depth_probe.pod.yaml`, receipt in
+`upstream_source_depth_probe.json`.
+
+### Why the floor is an artifact and not a boundary
+
+Three independent facts, any one of which is suggestive and which together are
+conclusive:
+
+- `min(source_updated_at)` is `2026-05-23T00:00:02.915Z` — **2.9 seconds** after
+  the `2026-05-23T00:00:00Z` lower bound of the first orders-history window. A
+  real data boundary does not land 2.9 s past a requested bound; a clamp does.
+- `min(observed_at)` is `2026-07-24T18:37Z`. Every raw row in the table was
+  landed by the 07-24 job or later. There is no older ingestion to have found
+  older data.
+- `render.py` renders `ODP_ORDERS_HISTORY_START` as `end - 62 days`, and the
+  first job ran with `end = 2026-07-24`. `2026-07-24 - 62d = 2026-05-23`,
+  exactly. The floor is the default window.
+
+Nothing older than 2026-05-23 has ever been requested. `_window_query` filters
+Mongo on `$or(updatedAt, createdAt)` with no lower clamp of its own, and
+`_orders_history_window` validates only that the window is ≤ 62 days and sits on
+UTC day boundaries — there is no floor anywhere in the path. The history was
+always available; nobody asked for it.
+
+The days immediately below the floor are dense and continuous, not a sparse
+tail: 6 307–11 011 orders/day across `2026-05-14..2026-05-22`, 179 503 orders in
+`2026-05-01..2026-05-23`, and 115 k–252 k per month back through at least
+2025-11.
+
+### Why this reaches criterion 3 without the section 6 delete
+
+A date `D` is training-eligible only if `D` is attested **and** rows exist for
+`D-28..D-1` (`prior_day_count_28 = 28`). So `N` contiguous attested days yield
+`N - 28` eligible dates, which is where the 56-day requirement comes from.
+
+Sections 5 and 6 treated the Defect D split as something to be *bridged*, which
+requires the delete. It can instead be **left alone**: the attested span below
+the split does not have to reach across `07-05`/`07-06`, it only has to get
+longer at the other end, which is pure governed ingestion of real records.
+
+| | Attested span below the split | Eligible dates | h28 |
+| --- | --- | --- | --- |
+| Today | `2026-05-23..2026-07-04` (~44 d) | ~15 | no |
+| After `-b1` | `2026-05-15..2026-07-04` (51 d) | 23 | no |
+| **After `-b2`** | **`2026-05-07..2026-07-04` (59 d)** | **31** | **yes** |
+| After `-b3` | `2026-04-29..2026-07-04` (67 d) | 39 | yes, with margin |
+
+`-b1` = `2026-05-15..2026-05-23`, `-b2` = `2026-05-07..2026-05-15`,
+`-b3` = `2026-04-29..2026-05-07` — each 8 daily partitions, sized to fit inside
+the 4 h `activeDeadlineSeconds` that Defect C documents, and each derived
+verbatim from the `-s3` manifest exactly as `-s3`/`-s4`/`-s5` were derived from
+`-s2`. Manifests in `orders_history_backfill_jobs.applied.json`.
+
+This is the same governed ingestion path, the same digest-pinned release image,
+and the same immutable-snapshot-plus-run-lineage contract as every other slice.
+No fixture, no synthetic row, no relaxation of the view predicate, no write of
+any kind against the source database, and no human-gated destructive action.
+
+### What Defect D still costs
+
+The two days `2026-07-05` and `2026-07-06` remain permanently unattested and are
+still correctly excluded by the view as `SOURCE_RUN_NOT_COMPLETE`. The task no
+longer *depends* on repairing them, but the defect is real, the repair plan in
+section 6 stays on file, and the cost is now bounded and stated: the training
+window ends at `2026-07-04` rather than running through the 07-23..07-27 tail.
+
+### Operational note
+
+The upstream is MongoDB Atlas and its IP allowlist admits only the
+**private-pool** node pool's Cloud NAT egress. An identical probe pinned to
+`default-pool` — which had spare capacity — failed with
+`ServerSelectionTimeoutError` against all three replica-set members. Anything
+that needs to reach the source must share the single private-pool node with the
+running backfill slice, which is why the probe requests 10 m CPU / 64 Mi: while
+a slice is active that node sits at ~96 % of allocatable memory, and a probe
+that could not fit would sit `Pending` and delay the very slice it was written
+not to disturb.
+
+## 8. After state
 
 Populated once `-s3`/`-s4`/`-s5` reach `Complete`, the source meets the settling
 condition above, and activation runs. See

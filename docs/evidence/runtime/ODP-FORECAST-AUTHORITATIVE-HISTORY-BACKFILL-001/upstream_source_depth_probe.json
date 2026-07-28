@@ -1,0 +1,86 @@
+{
+  "artifact": "upstream_source_depth_probe",
+  "task": "ODP-FORECAST-AUTHORITATIVE-HISTORY-BACKFILL-001",
+  "captured_at": "2026-07-28T18:41:00Z",
+  "question": "Is the landed floor of 2026-05-23 in fongniao_raw.raw_orders a property of the authoritative upstream source, or an artifact of the ingestion windows that have been run so far?",
+  "answer": "ARTIFACT. The upstream holds 2 years of authoritative order history that has never been requested.",
+  "method": {
+    "where": "in-cluster Pod, GKE oday-dev, private-pool node, digest-pinned release image",
+    "image": "asia-east1-docker.pkg.dev/alfaloop-data-project/oday/data-platform@sha256:f60383b620e93c3aeca5416fa3ef43aa0c583223e22912dc95377406cc5d86e6",
+    "manifest": "docs/evidence/runtime/ODP-FORECAST-AUTHORITATIVE-HISTORY-BACKFILL-001/source_depth_probe.pod.yaml",
+    "read_only": true,
+    "operations": [
+      "count_documents",
+      "estimated_document_count",
+      "find_one(projection={field:1,_id:0})"
+    ],
+    "writes": "none - the probe has no write path and never touches PostgreSQL",
+    "predicate": "Byte-for-byte the production window predicate from apps/data_platform/source.py::MongoSource._window_query for a non-snapshot kind: {\"$or\": [{\"updatedAt\": {\"$gte\": start, \"$lt\": end}}, {\"createdAt\": {\"$gte\": start, \"$lt\": end}}]}",
+    "redaction": "Aggregates and two timestamps only. No order id, merchant, store, member, amount, or payload field is selected anywhere in the probe."
+  },
+  "result": {
+    "collection": "orders",
+    "daily_counts_below_landed_floor": {
+      "2026-05-14": 6600,
+      "2026-05-16": 11011,
+      "2026-05-18": 7037,
+      "2026-05-20": 6307,
+      "2026-05-22": 7150
+    },
+    "database": "fongniao_prod",
+    "min_createdAt": "2024-06-26T13:33:27.431000",
+    "min_updatedAt": "2024-06-26T13:33:44.008000",
+    "probe": "upstream_orders_history_depth",
+    "total_documents": 2170979,
+    "window_counts": {
+      "2025-11-01..2025-12-01": 115082,
+      "2025-12-01..2026-01-01": 151490,
+      "2026-01-01..2026-02-01": 165183,
+      "2026-02-01..2026-03-01": 212295,
+      "2026-03-01..2026-04-01": 231258,
+      "2026-04-01..2026-05-01": 252351,
+      "2026-05-01..2026-05-23": 179503,
+      "2026-05-23..2026-06-01": 78451
+    }
+  },
+  "landed_state_for_contrast": {
+    "fongniao_raw.raw_orders": {
+      "rows": 478265,
+      "min_source_updated_at": "2026-05-23T00:00:02.915000+00:00",
+      "max_source_updated_at": "2026-07-28T00:54:03.016000+00:00",
+      "min_observed_at": "2026-07-24T18:37:57.597227+00:00"
+    },
+    "core.transactions": {
+      "min_event_time": "2026-05-22T23:59:36.632000+00:00",
+      "max_event_time": "2026-07-27T23:59:45.400000+00:00"
+    }
+  },
+  "findings": [
+    {
+      "id": "P1",
+      "finding": "The upstream orders collection holds 2170979 documents with min createdAt 2024-06-26T13:33:27Z - about two years of authoritative history. The landed raw table holds 478265 rows, none older than 2026-05-23."
+    },
+    {
+      "id": "P2",
+      "finding": "min(source_updated_at) is 2026-05-23T00:00:02.915Z, 2.9 seconds after the 2026-05-23T00:00:00Z lower bound of the very first orders-history window. A natural data boundary would not land 2.9s past a requested bound. min(observed_at) is 2026-07-24T18:37Z, so every raw row was landed by the 07-24 job or later. Nothing older than 2026-05-23 has ever been asked for."
+    },
+    {
+      "id": "P3",
+      "finding": "The 2026-05-23 floor traces to infra/k8s/data-platform/render.py, which renders ODP_ORDERS_HISTORY_START as end - 62 days. The first job ran with end = 2026-07-24, and 2026-07-24 minus 62 days is exactly 2026-05-23. The floor is the default window, not the source."
+    },
+    {
+      "id": "P4",
+      "finding": "Days immediately below the floor are dense and continuous - 6307 to 11011 orders per day across 2026-05-14..2026-05-22, and 179503 orders in 2026-05-01..2026-05-23. Monthly volume is 115k-252k back through at least 2025-11. Backwards extension lands real, dense history, not a sparse tail."
+    },
+    {
+      "id": "P5",
+      "finding": "The upstream is MongoDB Atlas and its IP allowlist admits only the private-pool node pool's Cloud NAT egress. An identical probe pinned to default-pool failed with ServerSelectionTimeoutError against all three replica-set members. This is why the probe must share the one private-pool node with the backfill slices, and why it is sized to fit in the ~100Mi that remains while a slice is active."
+    }
+  ],
+  "consequence": {
+    "supersedes": "The section 6 conclusion that criterion 3 is unreachable without a human-approved destructive delete against the source DB.",
+    "why": "The 44-day cap was measured against landed data and was real, but it was never a ceiling on the AVAILABLE authoritative history. Defect D permanently costs the two days 2026-07-05 and 2026-07-06, which splits the attested span. The repair-free alternative is to stop trying to bridge that split and instead grow the span that already sits BELOW it.",
+    "arithmetic": "A date D is training-eligible only if D is attested and rows exist for D-28..D-1, so N contiguous attested days yield N-28 eligible dates. The attested span below the Defect D split currently runs 2026-05-23..2026-07-04 (~44 days), giving ~15 eligible dates - short of 28. Extending the span back to 2026-05-07 makes it 59 days, giving 31 eligible dates, which clears the 28-day horizon with margin and needs no delete, no approval, and no change to the view.",
+    "plan": "Two further governed orders-history slices below the floor, each <= 8 daily partitions so it fits inside the 4h activeDeadlineSeconds that Defect C documents: b1 = 2026-05-15..2026-05-23, b2 = 2026-05-07..2026-05-15. A third, b3 = 2026-04-29..2026-05-07, is queued for margin."
+  }
+}

@@ -1,0 +1,130 @@
+apiVersion: v1
+kind: Pod
+metadata:
+  name: odp-source-depth-probe
+  namespace: oday-dev
+  labels:
+    app.kubernetes.io/name: odp-source-depth-probe
+  annotations:
+    oday.plus/purpose: "read-only upstream orders history depth probe (count_documents + min createdAt only)"
+    oday.plus/task: "ODP-FORECAST-AUTHORITATIVE-HISTORY-BACKFILL-001"
+spec:
+  restartPolicy: Never
+  serviceAccountName: oday-data-platform
+  # Must be private-pool: the upstream is MongoDB Atlas and its IP allowlist
+  # admits only this node pool's Cloud NAT egress. An identical probe pinned to
+  # default-pool fails with ServerSelectionTimeoutError against all three
+  # replica-set members -- see README section 7.
+  nodeSelector:
+    cloud.google.com/gke-nodepool: private-pool
+  securityContext:
+    fsGroup: 65532
+    runAsGroup: 65532
+    runAsNonRoot: true
+    runAsUser: 65532
+    seccompProfile:
+      type: RuntimeDefault
+  volumes:
+    - name: state
+      emptyDir: {}
+  containers:
+    - name: probe
+      image: asia-east1-docker.pkg.dev/alfaloop-data-project/oday/data-platform@sha256:f60383b620e93c3aeca5416fa3ef43aa0c583223e22912dc95377406cc5d86e6
+      securityContext:
+        allowPrivilegeEscalation: false
+        capabilities:
+          drop: ["ALL"]
+        readOnlyRootFilesystem: true
+        runAsNonRoot: true
+      # Deliberately tiny. The private-pool node runs one backfill slice at a
+      # time and sits at ~96% of allocatable memory while a slice is active, so
+      # the probe must fit in the ~100Mi that remains or it would sit Pending
+      # and, worse, could delay the slice it is meant not to disturb.
+      resources:
+        requests:
+          cpu: 10m
+          memory: 64Mi
+        limits:
+          cpu: 500m
+          memory: 512Mi
+      env:
+        - name: TMPDIR
+          value: /var/lib/oday
+        - name: ODP_DATA_MONGO_DATABASE
+          value: fongniao_prod
+        - name: ODP_DATA_MONGO_URI
+          valueFrom:
+            secretKeyRef:
+              name: oday-data-platform-runtime
+              key: mongodb-uri
+      volumeMounts:
+        - name: state
+          mountPath: /var/lib/oday
+      command:
+        - python
+        - -c
+        - |
+          # Read-only upstream depth probe for
+          # ODP-FORECAST-AUTHORITATIVE-HISTORY-BACKFILL-001.
+          #
+          # Answers exactly one question: how far back does the authoritative
+          # upstream `orders` collection actually go? The landed
+          # `fongniao_raw.raw_orders` floor of 2026-05-23 is a window-clamp
+          # artifact -- every ingestion window ever run starts there -- not a
+          # property of the source.
+          #
+          # Emits aggregates only: counts and two timestamps. No order id,
+          # merchant, store, member, amount, or payload field is ever selected.
+          import json, os
+          from datetime import datetime, timezone
+          from pymongo import MongoClient, ASCENDING
+
+          UTC = timezone.utc
+          client = MongoClient(os.environ["ODP_DATA_MONGO_URI"])
+          orders = client[os.environ["ODP_DATA_MONGO_DATABASE"]]["orders"]
+
+          def window(start, end):
+              # Byte-for-byte the production predicate from
+              # apps/data_platform/source.py::MongoSource._window_query for a
+              # non-snapshot kind: $or over ("updatedAt", "createdAt").
+              return {"$or": [
+                  {"updatedAt": {"$gte": start, "$lt": end}},
+                  {"createdAt": {"$gte": start, "$lt": end}},
+              ]}
+
+          out = {"probe": "upstream_orders_history_depth",
+                 "database": os.environ["ODP_DATA_MONGO_DATABASE"],
+                 "collection": "orders"}
+
+          for field in ("createdAt", "updatedAt"):
+              doc = orders.find_one({field: {"$ne": None}}, {field: 1, "_id": 0},
+                                    sort=[(field, ASCENDING)])
+              value = doc.get(field) if doc else None
+              out["min_" + field] = value.isoformat() if hasattr(value, "isoformat") else value
+
+          out["total_documents"] = orders.estimated_document_count()
+
+          months = [
+              ("2025-11-01", "2025-12-01"), ("2025-12-01", "2026-01-01"),
+              ("2026-01-01", "2026-02-01"), ("2026-02-01", "2026-03-01"),
+              ("2026-03-01", "2026-04-01"), ("2026-04-01", "2026-05-01"),
+              ("2026-05-01", "2026-05-23"), ("2026-05-23", "2026-06-01"),
+          ]
+          counts = {}
+          for s, e in months:
+              start = datetime.fromisoformat(s).replace(tzinfo=UTC)
+              end = datetime.fromisoformat(e).replace(tzinfo=UTC)
+              counts[s + ".." + e] = orders.count_documents(window(start, end))
+          out["window_counts"] = counts
+
+          # Day-level density immediately below the landed floor: this is the
+          # exact shape a backwards-extension job would ingest.
+          days = {}
+          for day in ("2026-05-14", "2026-05-16", "2026-05-18",
+                      "2026-05-20", "2026-05-22"):
+              start = datetime.fromisoformat(day).replace(tzinfo=UTC)
+              end = datetime.fromisoformat(day + "T23:59:59.999999").replace(tzinfo=UTC)
+              days[day] = orders.count_documents(window(start, end))
+          out["daily_counts_below_landed_floor"] = days
+
+          print("ODP_PROBE_RESULT " + json.dumps(out, sort_keys=True))
