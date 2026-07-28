@@ -13,7 +13,7 @@ import {
   guardSlaResource,
   validResourceVersion,
 } from "../AssistedIntakeSection";
-import { IntakeProcessingDetail } from "../IntakeProcessingDetail";
+import { IntakeProcessingDetail, buildPreservedInput } from "../IntakeProcessingDetail";
 import { jobStatusBadgeColors } from "../IntakeStageTimeline";
 import { isSnapshotStale } from "../intakeFreshness";
 
@@ -164,6 +164,102 @@ describe("IntakeProcessingDetail production composition", () => {
     expect(screen.getByTestId("error-retryable-badge")).toHaveTextContent("不可直接重試");
     expect(screen.getByTestId("error-correlation-id")).toHaveTextContent("corr-record-failure");
     expect(screen.getByTestId("error-occurred-at")).toHaveTextContent("UNAVAILABLE");
+  });
+
+  // ODP-P10-CAN-001-R3D: retrieval can fail before parsing starts, so a
+  // parsedFields-only preserved-input view rendered `{}` and lost the URL the
+  // operator submitted. Preserved input now reads the durable intake record.
+  it("preserves the durable submitted URL when retrieval fails before parsing", () => {
+    render(<IntakeProcessingDetail
+      record={intake({
+        stage: "FAILED",
+        originalUrl: "https://www.synthetic.example/detail-50000001.html",
+        canonicalUrl: "https://www.synthetic.example/detail-50000001.html",
+        heatZoneId: "HZ-TPE",
+        parsedFields: {},
+        matchResult: null,
+        failure: {
+          code: "ODP-INTAKE-RETRIEVAL-TIMEOUT",
+          summary: "來源頁擷取逾時（上游未於 10 秒內回應）。",
+          nextAction: "稍後重試；已填寫的修正內容會保留。",
+          retryable: true,
+        },
+      })}
+      onClose={vi.fn()}
+      onRetry={vi.fn()}
+    />);
+
+    fireEvent.click(screen.getByTestId("error-toggle-preserved-input"));
+    const box = screen.getByTestId("error-preserved-input-box");
+    expect(box).toHaveTextContent("https://www.synthetic.example/detail-50000001.html");
+    expect(box).toHaveTextContent("HZ-TPE");
+    expect(box.textContent).not.toBe("{}");
+    expect(screen.getByTestId("error-retryable-badge")).toHaveTextContent("可自動重試");
+  });
+
+  it("layers corrected field values over the durable submission context", () => {
+    render(<IntakeProcessingDetail
+      record={intake({
+        stage: "FAILED",
+        failure: { code: "PARSER_FAILED", summary: "解析失敗", nextAction: "RETRY", retryable: true },
+      })}
+      onClose={vi.fn()}
+    />);
+
+    fireEvent.click(screen.getByTestId("error-toggle-preserved-input"));
+    const box = screen.getByTestId("error-preserved-input-box");
+    // corrected wins over normalized/source for a field the operator fixed
+    expect(box).toHaveTextContent("台北市信義區松高路 1 號 1F");
+    expect(box).toHaveTextContent("https://source.example/listing/101");
+    expect(box).toHaveTextContent("https://canonical.example/listing/101");
+    // rent_amount carries no value at any lineage level: absent, never fabricated
+    expect(box).not.toHaveTextContent("rent_amount");
+  });
+
+  it("builds preserved input only from values the intake record supplies", () => {
+    expect(buildPreservedInput(intake({
+      originalUrl: "https://www.synthetic.example/detail-50000001.html",
+      canonicalUrl: "",
+      heatZoneId: null,
+      sourceId: "src-591",
+      parsedFields: {},
+    }))).toEqual({
+      originalUrl: "https://www.synthetic.example/detail-50000001.html",
+      sourceId: "src-591",
+    });
+
+    expect(buildPreservedInput(intake({
+      originalUrl: "",
+      canonicalUrl: "",
+      heatZoneId: null,
+      sourceId: "",
+      intakeMethod: undefined,
+      parsedFields: {},
+    }))).toBeNull();
+
+    expect(buildPreservedInput(intake({
+      originalUrl: "https://source.example/listing/101",
+      canonicalUrl: "",
+      heatZoneId: null,
+      sourceId: "",
+      parsedFields: {
+        contact_phone: {
+          key: "contact_phone", label: "聯絡電話", sourceValue: "0912-345-678",
+          normalizedValue: "0912345678", correctedValue: null, correctionReason: null,
+          identity: false, lowConfidence: false, masked: true, mask_reason_code: "PII_CONTACT",
+        },
+      },
+    }))).toEqual({
+      originalUrl: "https://source.example/listing/101",
+      contact_phone: "•••• [MASKED]",
+    });
+
+    // Below-CONFIDENTIAL clearance: the API nulls originalUrl and flags it.
+    // Withheld must read as withheld, never as an absent submission.
+    expect(buildPreservedInput({
+      ...intake({ originalUrl: null as unknown as string, canonicalUrl: "", heatZoneId: null, sourceId: "", parsedFields: {} }),
+      originalUrl_masked: true,
+    } as AssistedIntake)).toEqual({ originalUrl: "•••• [MASKED]" });
   });
 
   it("scopes the 390px CSS contract to POSSIBLE_MATCH and preserves typed values", () => {
