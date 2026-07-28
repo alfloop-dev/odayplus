@@ -1,0 +1,851 @@
+[
+  {
+    "apiVersion": "batch/v1",
+    "kind": "Job",
+    "metadata": {
+      "annotations": {
+        "oday.plus/execution-order": "22-orders-history-gap-1",
+        "oday.plus/hard-limit": "6-days,one-day-partitions,max-250000-per-partition",
+        "oday.plus/image-reference": "asia-east1-docker.pkg.dev/alfaloop-data-project/oday/data-platform@sha256:f60383b620e93c3aeca5416fa3ef43aa0c583223e22912dc95377406cc5d86e6",
+        "oday.plus/manual-only": "true",
+        "oday.plus/release-sha": "93cb9f94ca05818dda5eda1c08d7ab5351d4adc0",
+        "oday.plus/requires-migration-receipt": "true"
+      },
+      "labels": {
+        "app.kubernetes.io/component": "orders-history",
+        "app.kubernetes.io/name": "oday-data-platform",
+        "app.kubernetes.io/version": "93cb9f94ca05818dda5eda1c08d7ab5351d4adc0"
+      },
+      "name": "oday-data-platform-orders-history-93cb9f94-s3",
+      "namespace": "oday-dev"
+    },
+    "spec": {
+      "activeDeadlineSeconds": 14400,
+      "backoffLimit": 1,
+      "suspend": false,
+      "template": {
+        "metadata": {
+          "annotations": {
+            "oday.plus/image-reference": "asia-east1-docker.pkg.dev/alfaloop-data-project/oday/data-platform@sha256:f60383b620e93c3aeca5416fa3ef43aa0c583223e22912dc95377406cc5d86e6",
+            "oday.plus/release-sha": "93cb9f94ca05818dda5eda1c08d7ab5351d4adc0",
+            "oday.plus/requires-migration-receipt": "true"
+          },
+          "labels": {
+            "app.kubernetes.io/component": "orders-history",
+            "app.kubernetes.io/name": "oday-data-platform",
+            "app.kubernetes.io/version": "93cb9f94ca05818dda5eda1c08d7ab5351d4adc0"
+          }
+        },
+        "spec": {
+          "automountServiceAccountToken": true,
+          "containers": [
+            {
+              "args": [
+                "orders-history"
+              ],
+              "env": [
+                {
+                  "name": "ODP_RELEASE_SHA",
+                  "value": "93cb9f94ca05818dda5eda1c08d7ab5351d4adc0"
+                },
+                {
+                  "name": "ODP_IMAGE_REFERENCE",
+                  "value": "asia-east1-docker.pkg.dev/alfaloop-data-project/oday/data-platform@sha256:f60383b620e93c3aeca5416fa3ef43aa0c583223e22912dc95377406cc5d86e6"
+                },
+                {
+                  "name": "ODP_DATA_ENV",
+                  "value": "production"
+                },
+                {
+                  "name": "ODP_DATA_MONGO_DATABASE",
+                  "value": "fongniao_prod"
+                },
+                {
+                  "name": "ODP_DATA_MONGO_URI",
+                  "valueFrom": {
+                    "secretKeyRef": {
+                      "key": "mongodb-uri",
+                      "name": "oday-data-platform-runtime"
+                    }
+                  }
+                },
+                {
+                  "name": "ODP_POSTGRES_HOST",
+                  "value": "127.0.0.1"
+                },
+                {
+                  "name": "ODP_POSTGRES_PORT",
+                  "value": "5432"
+                },
+                {
+                  "name": "ODP_POSTGRES_USER",
+                  "value": "oday_app"
+                },
+                {
+                  "name": "ODP_POSTGRES_DATABASE",
+                  "value": "oday_app"
+                },
+                {
+                  "name": "ODP_POSTGRES_PASSWORD",
+                  "valueFrom": {
+                    "secretKeyRef": {
+                      "key": "postgres-password",
+                      "name": "oday-data-platform-runtime"
+                    }
+                  }
+                },
+                {
+                  "name": "ODP_DATA_RAW_SCHEMA",
+                  "value": "fongniao_raw"
+                },
+                {
+                  "name": "ODP_DATA_CONTROL_SCHEMA",
+                  "value": "data_plane"
+                },
+                {
+                  "name": "ODP_DATA_BATCH_SIZE",
+                  "value": "5000"
+                },
+                {
+                  "name": "ODP_DATA_MAX_RECORDS_PER_RUN",
+                  "value": "250000"
+                },
+                {
+                  "name": "ODP_DATA_CLOUD_SQL_PROXY",
+                  "value": "true"
+                },
+                {
+                  "name": "ODP_DATA_CLOUD_SQL_INSTANCE",
+                  "value": "alfaloop-data-project:asia-east1:oday-plus-dev-postgres"
+                },
+                {
+                  "name": "ODP_DATA_CLOUD_SQL_CONNECTOR_EVIDENCE",
+                  "value": "cloud-sql-auth-proxy-sidecar"
+                },
+                {
+                  "name": "ODP_DATA_STATUS_MAPPING_PATH",
+                  "value": "/var/run/oday/status/status_mapping.json"
+                },
+                {
+                  "name": "ODP_ORDERS_HISTORY_START",
+                  "value": "2026-07-06T00:00:00Z"
+                },
+                {
+                  "name": "ODP_ORDERS_HISTORY_END",
+                  "value": "2026-07-12T00:00:00Z"
+                },
+                {
+                  "name": "ODP_TERMINATION_RECEIPT_PATH",
+                  "value": "/var/run/oday/termination.log"
+                },
+                {
+                  "name": "TMPDIR",
+                  "value": "/var/lib/oday"
+                }
+              ],
+              "image": "asia-east1-docker.pkg.dev/alfaloop-data-project/oday/data-platform@sha256:f60383b620e93c3aeca5416fa3ef43aa0c583223e22912dc95377406cc5d86e6",
+              "imagePullPolicy": "IfNotPresent",
+              "name": "orders-history",
+              "resources": {
+                "limits": {
+                  "cpu": "2",
+                  "memory": "4Gi"
+                },
+                "requests": {
+                  "cpu": "100m",
+                  "memory": "1Gi"
+                }
+              },
+              "securityContext": {
+                "allowPrivilegeEscalation": false,
+                "capabilities": {
+                  "drop": [
+                    "ALL"
+                  ]
+                },
+                "readOnlyRootFilesystem": true,
+                "runAsNonRoot": true
+              },
+              "terminationMessagePath": "/var/run/oday/termination.log",
+              "terminationMessagePolicy": "File",
+              "volumeMounts": [
+                {
+                  "mountPath": "/var/run/oday",
+                  "name": "runtime"
+                },
+                {
+                  "mountPath": "/var/lib/oday",
+                  "name": "state"
+                },
+                {
+                  "mountPath": "/var/run/oday/status",
+                  "name": "status-mapping",
+                  "readOnly": true
+                }
+              ]
+            }
+          ],
+          "initContainers": [
+            {
+              "args": [
+                "--structured-logs",
+                "--address=0.0.0.0",
+                "--port=5432",
+                "alfaloop-data-project:asia-east1:oday-plus-dev-postgres"
+              ],
+              "image": "gcr.io/cloud-sql-connectors/cloud-sql-proxy@sha256:fc224915ef435afeb5b2a9421260a0d31986d5c8b7c7f5783c7f5d5885700cd2",
+              "imagePullPolicy": "IfNotPresent",
+              "name": "cloud-sql-auth-proxy",
+              "resources": {
+                "limits": {
+                  "cpu": "500m",
+                  "memory": "512Mi"
+                },
+                "requests": {
+                  "cpu": "25m",
+                  "memory": "64Mi"
+                }
+              },
+              "restartPolicy": "Always",
+              "securityContext": {
+                "allowPrivilegeEscalation": false,
+                "capabilities": {
+                  "drop": [
+                    "ALL"
+                  ]
+                },
+                "readOnlyRootFilesystem": true,
+                "runAsNonRoot": true
+              },
+              "startupProbe": {
+                "failureThreshold": 30,
+                "periodSeconds": 2,
+                "tcpSocket": {
+                  "port": 5432
+                }
+              },
+              "volumeMounts": [
+                {
+                  "mountPath": "/tmp",
+                  "name": "proxy-tmp"
+                }
+              ]
+            }
+          ],
+          "nodeSelector": {
+            "cloud.google.com/gke-nodepool": "private-pool"
+          },
+          "restartPolicy": "Never",
+          "securityContext": {
+            "fsGroup": 65532,
+            "runAsGroup": 65532,
+            "runAsNonRoot": true,
+            "runAsUser": 65532,
+            "seccompProfile": {
+              "type": "RuntimeDefault"
+            }
+          },
+          "serviceAccountName": "oday-data-platform",
+          "terminationGracePeriodSeconds": 30,
+          "volumes": [
+            {
+              "emptyDir": {},
+              "name": "proxy-tmp"
+            },
+            {
+              "emptyDir": {
+                "sizeLimit": "16Mi"
+              },
+              "name": "runtime"
+            },
+            {
+              "emptyDir": {
+                "sizeLimit": "4Gi"
+              },
+              "name": "state"
+            },
+            {
+              "name": "status-mapping",
+              "secret": {
+                "items": [
+                  {
+                    "key": "status_mapping.json",
+                    "path": "status_mapping.json"
+                  }
+                ],
+                "secretName": "oday-data-platform-status-mapping"
+              }
+            }
+          ]
+        }
+      },
+      "ttlSecondsAfterFinished": 604800
+    }
+  },
+  {
+    "apiVersion": "batch/v1",
+    "kind": "Job",
+    "metadata": {
+      "annotations": {
+        "oday.plus/execution-order": "23-orders-history-gap-2",
+        "oday.plus/hard-limit": "6-days,one-day-partitions,max-250000-per-partition",
+        "oday.plus/image-reference": "asia-east1-docker.pkg.dev/alfaloop-data-project/oday/data-platform@sha256:f60383b620e93c3aeca5416fa3ef43aa0c583223e22912dc95377406cc5d86e6",
+        "oday.plus/manual-only": "true",
+        "oday.plus/release-sha": "93cb9f94ca05818dda5eda1c08d7ab5351d4adc0",
+        "oday.plus/requires-migration-receipt": "true"
+      },
+      "labels": {
+        "app.kubernetes.io/component": "orders-history",
+        "app.kubernetes.io/name": "oday-data-platform",
+        "app.kubernetes.io/version": "93cb9f94ca05818dda5eda1c08d7ab5351d4adc0"
+      },
+      "name": "oday-data-platform-orders-history-93cb9f94-s4",
+      "namespace": "oday-dev"
+    },
+    "spec": {
+      "activeDeadlineSeconds": 14400,
+      "backoffLimit": 1,
+      "suspend": false,
+      "template": {
+        "metadata": {
+          "annotations": {
+            "oday.plus/image-reference": "asia-east1-docker.pkg.dev/alfaloop-data-project/oday/data-platform@sha256:f60383b620e93c3aeca5416fa3ef43aa0c583223e22912dc95377406cc5d86e6",
+            "oday.plus/release-sha": "93cb9f94ca05818dda5eda1c08d7ab5351d4adc0",
+            "oday.plus/requires-migration-receipt": "true"
+          },
+          "labels": {
+            "app.kubernetes.io/component": "orders-history",
+            "app.kubernetes.io/name": "oday-data-platform",
+            "app.kubernetes.io/version": "93cb9f94ca05818dda5eda1c08d7ab5351d4adc0"
+          }
+        },
+        "spec": {
+          "automountServiceAccountToken": true,
+          "containers": [
+            {
+              "args": [
+                "orders-history"
+              ],
+              "env": [
+                {
+                  "name": "ODP_RELEASE_SHA",
+                  "value": "93cb9f94ca05818dda5eda1c08d7ab5351d4adc0"
+                },
+                {
+                  "name": "ODP_IMAGE_REFERENCE",
+                  "value": "asia-east1-docker.pkg.dev/alfaloop-data-project/oday/data-platform@sha256:f60383b620e93c3aeca5416fa3ef43aa0c583223e22912dc95377406cc5d86e6"
+                },
+                {
+                  "name": "ODP_DATA_ENV",
+                  "value": "production"
+                },
+                {
+                  "name": "ODP_DATA_MONGO_DATABASE",
+                  "value": "fongniao_prod"
+                },
+                {
+                  "name": "ODP_DATA_MONGO_URI",
+                  "valueFrom": {
+                    "secretKeyRef": {
+                      "key": "mongodb-uri",
+                      "name": "oday-data-platform-runtime"
+                    }
+                  }
+                },
+                {
+                  "name": "ODP_POSTGRES_HOST",
+                  "value": "127.0.0.1"
+                },
+                {
+                  "name": "ODP_POSTGRES_PORT",
+                  "value": "5432"
+                },
+                {
+                  "name": "ODP_POSTGRES_USER",
+                  "value": "oday_app"
+                },
+                {
+                  "name": "ODP_POSTGRES_DATABASE",
+                  "value": "oday_app"
+                },
+                {
+                  "name": "ODP_POSTGRES_PASSWORD",
+                  "valueFrom": {
+                    "secretKeyRef": {
+                      "key": "postgres-password",
+                      "name": "oday-data-platform-runtime"
+                    }
+                  }
+                },
+                {
+                  "name": "ODP_DATA_RAW_SCHEMA",
+                  "value": "fongniao_raw"
+                },
+                {
+                  "name": "ODP_DATA_CONTROL_SCHEMA",
+                  "value": "data_plane"
+                },
+                {
+                  "name": "ODP_DATA_BATCH_SIZE",
+                  "value": "5000"
+                },
+                {
+                  "name": "ODP_DATA_MAX_RECORDS_PER_RUN",
+                  "value": "250000"
+                },
+                {
+                  "name": "ODP_DATA_CLOUD_SQL_PROXY",
+                  "value": "true"
+                },
+                {
+                  "name": "ODP_DATA_CLOUD_SQL_INSTANCE",
+                  "value": "alfaloop-data-project:asia-east1:oday-plus-dev-postgres"
+                },
+                {
+                  "name": "ODP_DATA_CLOUD_SQL_CONNECTOR_EVIDENCE",
+                  "value": "cloud-sql-auth-proxy-sidecar"
+                },
+                {
+                  "name": "ODP_DATA_STATUS_MAPPING_PATH",
+                  "value": "/var/run/oday/status/status_mapping.json"
+                },
+                {
+                  "name": "ODP_ORDERS_HISTORY_START",
+                  "value": "2026-07-12T00:00:00Z"
+                },
+                {
+                  "name": "ODP_ORDERS_HISTORY_END",
+                  "value": "2026-07-18T00:00:00Z"
+                },
+                {
+                  "name": "ODP_TERMINATION_RECEIPT_PATH",
+                  "value": "/var/run/oday/termination.log"
+                },
+                {
+                  "name": "TMPDIR",
+                  "value": "/var/lib/oday"
+                }
+              ],
+              "image": "asia-east1-docker.pkg.dev/alfaloop-data-project/oday/data-platform@sha256:f60383b620e93c3aeca5416fa3ef43aa0c583223e22912dc95377406cc5d86e6",
+              "imagePullPolicy": "IfNotPresent",
+              "name": "orders-history",
+              "resources": {
+                "limits": {
+                  "cpu": "2",
+                  "memory": "4Gi"
+                },
+                "requests": {
+                  "cpu": "100m",
+                  "memory": "1Gi"
+                }
+              },
+              "securityContext": {
+                "allowPrivilegeEscalation": false,
+                "capabilities": {
+                  "drop": [
+                    "ALL"
+                  ]
+                },
+                "readOnlyRootFilesystem": true,
+                "runAsNonRoot": true
+              },
+              "terminationMessagePath": "/var/run/oday/termination.log",
+              "terminationMessagePolicy": "File",
+              "volumeMounts": [
+                {
+                  "mountPath": "/var/run/oday",
+                  "name": "runtime"
+                },
+                {
+                  "mountPath": "/var/lib/oday",
+                  "name": "state"
+                },
+                {
+                  "mountPath": "/var/run/oday/status",
+                  "name": "status-mapping",
+                  "readOnly": true
+                }
+              ]
+            }
+          ],
+          "initContainers": [
+            {
+              "args": [
+                "--structured-logs",
+                "--address=0.0.0.0",
+                "--port=5432",
+                "alfaloop-data-project:asia-east1:oday-plus-dev-postgres"
+              ],
+              "image": "gcr.io/cloud-sql-connectors/cloud-sql-proxy@sha256:fc224915ef435afeb5b2a9421260a0d31986d5c8b7c7f5783c7f5d5885700cd2",
+              "imagePullPolicy": "IfNotPresent",
+              "name": "cloud-sql-auth-proxy",
+              "resources": {
+                "limits": {
+                  "cpu": "500m",
+                  "memory": "512Mi"
+                },
+                "requests": {
+                  "cpu": "25m",
+                  "memory": "64Mi"
+                }
+              },
+              "restartPolicy": "Always",
+              "securityContext": {
+                "allowPrivilegeEscalation": false,
+                "capabilities": {
+                  "drop": [
+                    "ALL"
+                  ]
+                },
+                "readOnlyRootFilesystem": true,
+                "runAsNonRoot": true
+              },
+              "startupProbe": {
+                "failureThreshold": 30,
+                "periodSeconds": 2,
+                "tcpSocket": {
+                  "port": 5432
+                }
+              },
+              "volumeMounts": [
+                {
+                  "mountPath": "/tmp",
+                  "name": "proxy-tmp"
+                }
+              ]
+            }
+          ],
+          "nodeSelector": {
+            "cloud.google.com/gke-nodepool": "private-pool"
+          },
+          "restartPolicy": "Never",
+          "securityContext": {
+            "fsGroup": 65532,
+            "runAsGroup": 65532,
+            "runAsNonRoot": true,
+            "runAsUser": 65532,
+            "seccompProfile": {
+              "type": "RuntimeDefault"
+            }
+          },
+          "serviceAccountName": "oday-data-platform",
+          "terminationGracePeriodSeconds": 30,
+          "volumes": [
+            {
+              "emptyDir": {},
+              "name": "proxy-tmp"
+            },
+            {
+              "emptyDir": {
+                "sizeLimit": "16Mi"
+              },
+              "name": "runtime"
+            },
+            {
+              "emptyDir": {
+                "sizeLimit": "4Gi"
+              },
+              "name": "state"
+            },
+            {
+              "name": "status-mapping",
+              "secret": {
+                "items": [
+                  {
+                    "key": "status_mapping.json",
+                    "path": "status_mapping.json"
+                  }
+                ],
+                "secretName": "oday-data-platform-status-mapping"
+              }
+            }
+          ]
+        }
+      },
+      "ttlSecondsAfterFinished": 604800
+    }
+  },
+  {
+    "apiVersion": "batch/v1",
+    "kind": "Job",
+    "metadata": {
+      "annotations": {
+        "oday.plus/execution-order": "24-orders-history-gap-3",
+        "oday.plus/hard-limit": "5-days,one-day-partitions,max-250000-per-partition",
+        "oday.plus/image-reference": "asia-east1-docker.pkg.dev/alfaloop-data-project/oday/data-platform@sha256:f60383b620e93c3aeca5416fa3ef43aa0c583223e22912dc95377406cc5d86e6",
+        "oday.plus/manual-only": "true",
+        "oday.plus/release-sha": "93cb9f94ca05818dda5eda1c08d7ab5351d4adc0",
+        "oday.plus/requires-migration-receipt": "true"
+      },
+      "labels": {
+        "app.kubernetes.io/component": "orders-history",
+        "app.kubernetes.io/name": "oday-data-platform",
+        "app.kubernetes.io/version": "93cb9f94ca05818dda5eda1c08d7ab5351d4adc0"
+      },
+      "name": "oday-data-platform-orders-history-93cb9f94-s5",
+      "namespace": "oday-dev"
+    },
+    "spec": {
+      "activeDeadlineSeconds": 14400,
+      "backoffLimit": 1,
+      "suspend": false,
+      "template": {
+        "metadata": {
+          "annotations": {
+            "oday.plus/image-reference": "asia-east1-docker.pkg.dev/alfaloop-data-project/oday/data-platform@sha256:f60383b620e93c3aeca5416fa3ef43aa0c583223e22912dc95377406cc5d86e6",
+            "oday.plus/release-sha": "93cb9f94ca05818dda5eda1c08d7ab5351d4adc0",
+            "oday.plus/requires-migration-receipt": "true"
+          },
+          "labels": {
+            "app.kubernetes.io/component": "orders-history",
+            "app.kubernetes.io/name": "oday-data-platform",
+            "app.kubernetes.io/version": "93cb9f94ca05818dda5eda1c08d7ab5351d4adc0"
+          }
+        },
+        "spec": {
+          "automountServiceAccountToken": true,
+          "containers": [
+            {
+              "args": [
+                "orders-history"
+              ],
+              "env": [
+                {
+                  "name": "ODP_RELEASE_SHA",
+                  "value": "93cb9f94ca05818dda5eda1c08d7ab5351d4adc0"
+                },
+                {
+                  "name": "ODP_IMAGE_REFERENCE",
+                  "value": "asia-east1-docker.pkg.dev/alfaloop-data-project/oday/data-platform@sha256:f60383b620e93c3aeca5416fa3ef43aa0c583223e22912dc95377406cc5d86e6"
+                },
+                {
+                  "name": "ODP_DATA_ENV",
+                  "value": "production"
+                },
+                {
+                  "name": "ODP_DATA_MONGO_DATABASE",
+                  "value": "fongniao_prod"
+                },
+                {
+                  "name": "ODP_DATA_MONGO_URI",
+                  "valueFrom": {
+                    "secretKeyRef": {
+                      "key": "mongodb-uri",
+                      "name": "oday-data-platform-runtime"
+                    }
+                  }
+                },
+                {
+                  "name": "ODP_POSTGRES_HOST",
+                  "value": "127.0.0.1"
+                },
+                {
+                  "name": "ODP_POSTGRES_PORT",
+                  "value": "5432"
+                },
+                {
+                  "name": "ODP_POSTGRES_USER",
+                  "value": "oday_app"
+                },
+                {
+                  "name": "ODP_POSTGRES_DATABASE",
+                  "value": "oday_app"
+                },
+                {
+                  "name": "ODP_POSTGRES_PASSWORD",
+                  "valueFrom": {
+                    "secretKeyRef": {
+                      "key": "postgres-password",
+                      "name": "oday-data-platform-runtime"
+                    }
+                  }
+                },
+                {
+                  "name": "ODP_DATA_RAW_SCHEMA",
+                  "value": "fongniao_raw"
+                },
+                {
+                  "name": "ODP_DATA_CONTROL_SCHEMA",
+                  "value": "data_plane"
+                },
+                {
+                  "name": "ODP_DATA_BATCH_SIZE",
+                  "value": "5000"
+                },
+                {
+                  "name": "ODP_DATA_MAX_RECORDS_PER_RUN",
+                  "value": "250000"
+                },
+                {
+                  "name": "ODP_DATA_CLOUD_SQL_PROXY",
+                  "value": "true"
+                },
+                {
+                  "name": "ODP_DATA_CLOUD_SQL_INSTANCE",
+                  "value": "alfaloop-data-project:asia-east1:oday-plus-dev-postgres"
+                },
+                {
+                  "name": "ODP_DATA_CLOUD_SQL_CONNECTOR_EVIDENCE",
+                  "value": "cloud-sql-auth-proxy-sidecar"
+                },
+                {
+                  "name": "ODP_DATA_STATUS_MAPPING_PATH",
+                  "value": "/var/run/oday/status/status_mapping.json"
+                },
+                {
+                  "name": "ODP_ORDERS_HISTORY_START",
+                  "value": "2026-07-18T00:00:00Z"
+                },
+                {
+                  "name": "ODP_ORDERS_HISTORY_END",
+                  "value": "2026-07-23T00:00:00Z"
+                },
+                {
+                  "name": "ODP_TERMINATION_RECEIPT_PATH",
+                  "value": "/var/run/oday/termination.log"
+                },
+                {
+                  "name": "TMPDIR",
+                  "value": "/var/lib/oday"
+                }
+              ],
+              "image": "asia-east1-docker.pkg.dev/alfaloop-data-project/oday/data-platform@sha256:f60383b620e93c3aeca5416fa3ef43aa0c583223e22912dc95377406cc5d86e6",
+              "imagePullPolicy": "IfNotPresent",
+              "name": "orders-history",
+              "resources": {
+                "limits": {
+                  "cpu": "2",
+                  "memory": "4Gi"
+                },
+                "requests": {
+                  "cpu": "100m",
+                  "memory": "1Gi"
+                }
+              },
+              "securityContext": {
+                "allowPrivilegeEscalation": false,
+                "capabilities": {
+                  "drop": [
+                    "ALL"
+                  ]
+                },
+                "readOnlyRootFilesystem": true,
+                "runAsNonRoot": true
+              },
+              "terminationMessagePath": "/var/run/oday/termination.log",
+              "terminationMessagePolicy": "File",
+              "volumeMounts": [
+                {
+                  "mountPath": "/var/run/oday",
+                  "name": "runtime"
+                },
+                {
+                  "mountPath": "/var/lib/oday",
+                  "name": "state"
+                },
+                {
+                  "mountPath": "/var/run/oday/status",
+                  "name": "status-mapping",
+                  "readOnly": true
+                }
+              ]
+            }
+          ],
+          "initContainers": [
+            {
+              "args": [
+                "--structured-logs",
+                "--address=0.0.0.0",
+                "--port=5432",
+                "alfaloop-data-project:asia-east1:oday-plus-dev-postgres"
+              ],
+              "image": "gcr.io/cloud-sql-connectors/cloud-sql-proxy@sha256:fc224915ef435afeb5b2a9421260a0d31986d5c8b7c7f5783c7f5d5885700cd2",
+              "imagePullPolicy": "IfNotPresent",
+              "name": "cloud-sql-auth-proxy",
+              "resources": {
+                "limits": {
+                  "cpu": "500m",
+                  "memory": "512Mi"
+                },
+                "requests": {
+                  "cpu": "25m",
+                  "memory": "64Mi"
+                }
+              },
+              "restartPolicy": "Always",
+              "securityContext": {
+                "allowPrivilegeEscalation": false,
+                "capabilities": {
+                  "drop": [
+                    "ALL"
+                  ]
+                },
+                "readOnlyRootFilesystem": true,
+                "runAsNonRoot": true
+              },
+              "startupProbe": {
+                "failureThreshold": 30,
+                "periodSeconds": 2,
+                "tcpSocket": {
+                  "port": 5432
+                }
+              },
+              "volumeMounts": [
+                {
+                  "mountPath": "/tmp",
+                  "name": "proxy-tmp"
+                }
+              ]
+            }
+          ],
+          "nodeSelector": {
+            "cloud.google.com/gke-nodepool": "private-pool"
+          },
+          "restartPolicy": "Never",
+          "securityContext": {
+            "fsGroup": 65532,
+            "runAsGroup": 65532,
+            "runAsNonRoot": true,
+            "runAsUser": 65532,
+            "seccompProfile": {
+              "type": "RuntimeDefault"
+            }
+          },
+          "serviceAccountName": "oday-data-platform",
+          "terminationGracePeriodSeconds": 30,
+          "volumes": [
+            {
+              "emptyDir": {},
+              "name": "proxy-tmp"
+            },
+            {
+              "emptyDir": {
+                "sizeLimit": "16Mi"
+              },
+              "name": "runtime"
+            },
+            {
+              "emptyDir": {
+                "sizeLimit": "4Gi"
+              },
+              "name": "state"
+            },
+            {
+              "name": "status-mapping",
+              "secret": {
+                "items": [
+                  {
+                    "key": "status_mapping.json",
+                    "path": "status_mapping.json"
+                  }
+                ],
+                "secretName": "oday-data-platform-status-mapping"
+              }
+            }
+          ]
+        }
+      },
+      "ttlSecondsAfterFinished": 604800
+    }
+  }
+]

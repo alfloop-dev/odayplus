@@ -27,6 +27,7 @@ into its output.
 | `activation_receipt.json` | `activate` | Per-relation copy/refresh/prune counts of the activation run |
 | `verify_after.json` | `verify` | Target horizon windows after activation |
 | `inventory_after.json` | `inventory` | Source + target state captured after activation |
+| `orders_history_gap_jobs.applied.json` | — | The exact `-s3`/`-s4`/`-s5` Job manifests applied to close the source gap (see §5). Secrets appear only as `secretKeyRef` names, never values. |
 
 Reproduce any of them with the DSN pair and the Cloud SQL proxy attestation in
 the environment:
@@ -121,10 +122,10 @@ ingestion:
 - `oday-data-platform-orders-history-93cb9f94-s1` — 2026-06-23 .. 2026-07-09
 - `oday-data-platform-orders-history-93cb9f94-s2` — 2026-07-09 .. 2026-07-24
 
-No job was created or edited for this task; `spec.suspend` is the only field
-touched, and only to release `-s2` after `-s1` reaches `Complete`. Each daily
-partition opens its own `data_plane.ingestion_runs` row with its own checksums,
-so the backfilled days carry exactly the same run lineage as any other day.
+`-s1` did not finish; see **Defect C** below for why, and for the `-s3`/`-s4`/`-s5`
+slices that supersede `-s2` and actually close the gap. Each daily partition
+opens its own `data_plane.ingestion_runs` row with its own checksums, so the
+backfilled days carry exactly the same run lineage as any other day.
 
 The 28-day acceptance bar needs more continuous history than it first appears:
 eligibility itself requires `prior_day_count_28 = 28`, so an h28 window needs 56
@@ -171,9 +172,79 @@ The fix (commit `10c0b78e`) adds two source-driven convergence steps to
 
 Regression coverage lives in `tests/unit/test_forecast_history_activation.py`.
 
-## 5. After state
+## 5. Defect C — the orders-history workload cannot finish its own default window
 
-Populated once both GKE partitions reach `Complete` and activation runs. See
+`-s1` was killed by Kubernetes at 2026-07-28T16:26:37Z with
+`reason: DeadlineExceeded`, exactly four hours after it started. It had not
+failed on data: it had completed 13 of its 16 daily partitions
+(`2026-06-23` .. `2026-07-05` all `SUCCEEDED`) and was mid-way through
+`2026-07-06` when the deadline fired.
+
+This is a defect in the rendered workload, not in this run.
+`infra/k8s/data-platform/workloads.yaml.tpl` pairs
+
+- `activeDeadlineSeconds: 14400` (4 h) on the orders-history Job, with
+- a default window of `end - 62 days` (`render.py`, `orders_history_start`),
+
+while an observed daily partition costs roughly 10–25 minutes. A 62-day window
+therefore needs 10–25 hours and can *never* complete inside its own deadline;
+any window wider than about nine partitions is structurally unable to finish.
+`-s2` (15 days) would have died the same way, so it is left suspended.
+
+The gap is instead closed by three slices derived from `-s2`'s own
+last-applied manifest — same release SHA, same digest-pinned image, same
+`activeDeadlineSeconds`, same service account and sidecar; only the name, the
+`execution-order` / `hard-limit` annotations, and the two window env vars
+differ:
+
+| Job | Window | Partitions |
+| --- | --- | --- |
+| `…-93cb9f94-s3` | 2026-07-06 .. 2026-07-12 | 6 |
+| `…-93cb9f94-s4` | 2026-07-12 .. 2026-07-18 | 6 |
+| `…-93cb9f94-s5` | 2026-07-18 .. 2026-07-23 | 5 |
+
+They run **sequentially, staying suspended until it is their turn**, which is a
+correctness requirement rather than a politeness one. The `private-pool` node
+pool holds exactly one node and does not scale up, so a second unsuspended Job
+only parks its pod in `Pending` — and `activeDeadlineSeconds` counts wall-clock
+from the Job's `startTime`, not from when its pod is actually scheduled. A
+queued-but-unsuspended slice would spend its entire budget waiting for a node
+and then be killed having done nothing. Kubernetes resets `.status.startTime`
+when a suspended Job is resumed, so each slice gets a full, untouched four hours
+at the moment it actually holds the node.
+
+Corrected coverage arithmetic, measured on the source rather than assumed: the
+contiguous run is `2026-05-23 .. 2026-07-05` (44 days) plus
+`2026-07-23 .. 2026-07-27`, leaving the true gap at `2026-07-06 .. 2026-07-22`
+(17 partitions). Closing it yields one contiguous span
+`2026-05-23 .. 2026-07-27` = 66 days → 39 eligible days → 12 h28 windows per
+store, which clears the 28-day bar.
+
+### Settling condition
+
+A Job killed by `activeDeadlineSeconds` leaves its in-flight
+`data_plane.ingestion_runs` row at `RUNNING` **permanently** — nothing
+transitions it, and re-running the partition opens a *new* run rather than
+resurrecting the old one. So "the source is settled" cannot mean "zero
+non-terminal runs"; that condition never becomes true again. The two conditions
+that actually matter before activation are:
+
+1. every partition holding a non-terminal run also holds a `SUCCEEDED` run, and
+2. no non-terminal run still **owns** `canonical_lineage` rows.
+
+Condition 2 is the one with teeth, and it ties directly back to Defect B:
+`source_run_complete` is a `bool_and` over a transaction's runs, so an abandoned
+run that still owns lineage poisons its day's eligibility. Re-running the
+partition re-projects that lineage onto the run that finished, dropping the
+abandoned run to zero owned rows — which is precisely how the earlier
+`2026-06-23` casualty healed (run `3d0937f1` now owns 0 lineage rows on the
+source, down from the 1 839 it held). Until that re-projection lands, activating
+would only copy the poison forward.
+
+## 6. After state
+
+Populated once `-s3`/`-s4`/`-s5` reach `Complete`, the source meets the settling
+condition above, and activation runs. See
 `activation_receipt.json`, `verify_after.json`, and `inventory_after.json`.
 
 Activation is deliberately **not** run while any `orders` partition is still
