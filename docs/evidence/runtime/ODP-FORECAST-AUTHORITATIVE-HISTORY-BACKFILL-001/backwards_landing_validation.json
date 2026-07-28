@@ -1,0 +1,61 @@
+{
+  "captured_at": "2026-07-28T22:12:22.248388+00:00",
+  "purpose": "Score the backwards projection against backwards dates as they land. Closes the one limit donor_projection_backtest.json could not: its holdout sat days from its donors, these dates sit in the projected regime itself.",
+  "prediction_under_test": {
+    "upper_bound": "upstream distinct places at the view's grain, from backwards_window_store_density.json. Landed stores can never exceed it -- an unresolvable place is quarantined by store.py::require_place and lands nothing. A breach falsifies the density measurement as a description of what lands.",
+    "point_prediction": "upper bound x 0.97148 (backwards mapping rate from backwards_window_store_mappability.json). A miss here is a calibration finding, not a falsification.",
+    "window": {
+      "days": 24,
+      "end_exclusive": "2026-05-23",
+      "start": "2026-04-29"
+    }
+  },
+  "completeness": {
+    "rule": "a date is scored only if BOTH hold: a SUCCEEDED run owns its own whole-day partition (it was ingested as a day, rather than clipped in by a neighbouring window's bound), AND every run owning its transactions is SUCCEEDED (the view's own predicate). The two are independent -- 2026-07-06 has a SUCCEEDED partition and still fails the second test, which is Defect D.",
+    "why_two_rules": "the first rule is what excludes 2026-05-16 and 2026-05-22: they are attested, so the view's predicate alone would admit them, but they hold 1 and 3 stores because no partition ever covered them. Scoring a straggler against a ~520-store prediction reports a 500-store shortfall that means nothing.",
+    "excluded": [
+      {
+        "date": "2026-05-16",
+        "landed_stores": 1,
+        "landed_txns": 1,
+        "upstream_stores": 527,
+        "upstream_orders": 9523,
+        "own_partition_succeeded": false,
+        "excluded_reason": "no SUCCEEDED run owns this date's own whole-day partition -- it is a timezone-edge straggler pulled in by a neighbouring window's bound, not an ingested trading day"
+      },
+      {
+        "date": "2026-05-17",
+        "landed_stores": 520,
+        "landed_txns": 11246,
+        "upstream_stores": 527,
+        "upstream_orders": 11287,
+        "own_partition_succeeded": true,
+        "excluded_reason": "not every owning ingestion run is SUCCEEDED -- the partition is still being written, or holds unreconciled lineage"
+      },
+      {
+        "date": "2026-05-18",
+        "landed_stores": 412,
+        "landed_txns": 1382,
+        "upstream_stores": 517,
+        "upstream_orders": 6128,
+        "own_partition_succeeded": false,
+        "excluded_reason": "no SUCCEEDED run owns this date's own whole-day partition -- it is a timezone-edge straggler pulled in by a neighbouring window's bound, not an ingested trading day"
+      },
+      {
+        "date": "2026-05-22",
+        "landed_stores": 3,
+        "landed_txns": 3,
+        "upstream_stores": 523,
+        "upstream_orders": 6205,
+        "own_partition_succeeded": false,
+        "excluded_reason": "no SUCCEEDED run owns this date's own whole-day partition -- it is a timezone-edge straggler pulled in by a neighbouring window's bound, not an ingested trading day"
+      }
+    ]
+  },
+  "summary": {
+    "dates_scored": 0,
+    "upper_bound_breaches": 0,
+    "breach_dates": []
+  },
+  "per_date": []
+}

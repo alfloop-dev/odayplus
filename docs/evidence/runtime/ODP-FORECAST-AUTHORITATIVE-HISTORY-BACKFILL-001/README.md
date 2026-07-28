@@ -43,6 +43,8 @@ into its output.
 | `horizon_critical_path_after_s4.json` | — | The same probe re-run once `-s4` was real rather than projected. The backwards family now reads h28 = 406 against the gap-fill family's 2, and `landed_measured` carries the first real 28-day window (see §7). |
 | `donor_projection_backtest.json` | — | The donor rule behind those projections, scored against a blind holdout — the four dates `-s4` landed after the projection was cached. Per-date recall/precision, the continuity score island length actually depends on, and the attestation assumption (see §7). |
 | `runbook/donor-projection-backtest.py` | — | The backtest that produced it. Imports the donor logic from the probe under test rather than restating it; read-only, and it scores no in-flight slice. |
+| `backwards_landing_validation.json` | — | The backwards projection scored against backwards dates as they land, closing the distance limit the `-s4` backtest leaves open. Committed at zero scored dates and four exclusions — the method and its guards fixed before any backwards date could be scored (see §7). |
+| `runbook/backwards-landing-validation.py` | — | The probe that produces it. **Re-run after each backwards slice completes**; it strengthens monotonically as `-b2`..`-b4` land. |
 | `backwards_window_store_density.json` | — | Whether the backwards windows actually hold the stores the critical path donates to them: no gap day across the 24-day span, and 421 stores trading every day of it against an independently projected 419 (see §7). Carries its own grain and control range. |
 | `backwards_window_store_density_probe.pod.yaml` | — | The exact read-only Pod that produced it. One aggregation, counts only; place ids never leave the pod. |
 | `runbook/deadline-guard-v1.sh` | — | Fourth keeper. Extends `activeDeadlineSeconds` on the Active slice before it can be killed, because a deadline kill is what created Defect D and there is no safe kill for this workload. |
@@ -1049,6 +1051,63 @@ eight minutes after the driver resumed `-b1`, so its ingested span opens at
 backtest's holdout by construction, and they sit far below any eligible date, so
 they do not move the horizon counts; they are noted because the span figure in
 that receipt would otherwise look like a slice had completed.
+
+### Closing the distance limit, as the backwards dates land
+
+The `-s4` backtest bounds the donor rule in the favourable regime and says so.
+The only thing that closes the remaining question is scoring the projection
+against backwards dates themselves, in the regime it was a projection of, and
+`-b1` started producing those at 21:38Z. `runbook/backwards-landing-validation.py`
+is built to be re-run after each backwards slice; it strengthens monotonically as
+`-b2`, `-b3` and `-b4` land. Receipt: `backwards_landing_validation.json`.
+
+It scores two claims of different standing. That landed stores never exceed the
+upstream per-day place count is a **falsifiable invariant** — an unresolvable
+`place` is quarantined by `store.py::require_place` and lands nothing, so a
+breach would mean the density measurement never described the population that
+lands, and 419 / 421 / 420 would all have to be recomputed. That landed stores
+sit near `0.9715 × upstream` is a calibration check, where a miss is
+informative rather than fatal.
+
+Its completeness rule is the substance of it, and it is two rules rather than
+one, because the obvious single rule is wrong in both directions.
+
+- **A date needs a SUCCEEDED run over its own whole-day partition.** 2026-05-16
+  and 2026-05-22 pass the view's attestation predicate and hold 1 and 3 stores,
+  because no partition ever covered them — they are timezone-edge stragglers
+  clipped in by a neighbouring window's bound. Scoring one against a ~520-store
+  prediction reports a 500-store shortfall that means nothing. This is the
+  2026-05-22 straggler that already broke the first critical-path probe,
+  arriving a second time by a different route.
+- **A date also needs every run owning its transactions to be SUCCEEDED**, which
+  is not implied by the first. Partition windows are cut on the source's update
+  cursor while the grain here is `event_time`, so a few transactions always spill
+  across the UTC day boundary: when `2026-05-17__2026-05-18` reached SUCCEEDED,
+  two of 2026-05-17's transactions were owned by the still-RUNNING
+  `2026-05-18__2026-05-19` run, and `bool_and` held the date back. Expect each
+  slice to yield its dates one behind the partition frontier. 2026-07-06 is the
+  same test failing for the other reason — a SUCCEEDED partition whose lineage
+  is unreconciled — which is why both rules are kept separate and both reported.
+
+The guard is not ceremony. Read by hand while `-b1`'s first partition was still
+running, 2026-05-17 showed 518 stores over 8 733 transactions — comfortably
+inside the predicted band, and it looked like a confirmation. Twenty-five
+minutes later it read 520 over 11 246 and was still climbing. A partial
+partition can only under-count, so it will always appear to respect an upper
+bound; reading one mid-flight manufactures a pass out of an unfinished write.
+**The receipt committed here therefore scores zero dates and lists four
+exclusions.** That is the correct state at capture time, not a null result: it
+is the record that the method was fixed, and its guards demonstrated, *before*
+any backwards date could be scored — so the numbers it eventually reports cannot
+have been fitted to them.
+
+One performance note worth keeping. `canonical_lineage`'s unique index leads
+with `source_snapshot_id`, because it exists to serve the ingestion upsert's
+`ON CONFLICT`. A probe that filters on `canonical_id` alone cannot use it, so
+the first version's per-row correlated subquery degraded to one scan of a
+multi-million-row table per transaction and had to be killed after ten minutes.
+Joining the lineage side against the transaction set instead lets the planner
+make a single hash-join pass: 26 s over the same window.
 
 ## 8. Defect E — activation destroyed lineage, and the view declined to notice
 
