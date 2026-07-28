@@ -8,7 +8,10 @@ from scripts.data_plane.forecast_history_activation import (
     ACTIVATION_RELATIONS,
     ActivationConfig,
     ForecastHistoryActivationError,
+    Relation,
     parse_horizons,
+    prune_sql,
+    refresh_sql,
     require_activation_dsn,
     resolve_copy_columns,
     source_catalog,
@@ -245,3 +248,62 @@ def test_source_catalog_degrades_when_a_source_relation_is_absent() -> None:
         "relation": "fongniao_raw.raw_orders",
     }
     assert catalog["canonical_transactions"]["available"] is True
+
+
+def test_only_ingestion_runs_refresh_and_only_lineage_prunes() -> None:
+    """Immutable records must never be rewritten or dropped by a replay."""
+
+    refreshing = {r.qualified for r in ACTIVATION_RELATIONS if r.refresh_key}
+    pruning = {r.qualified for r in ACTIVATION_RELATIONS if r.prune_superseded_by}
+    assert refreshing == {"data_plane.ingestion_runs"}
+    assert pruning == {"data_plane.canonical_lineage"}
+
+    runs = next(r for r in ACTIVATION_RELATIONS if r.table == "ingestion_runs")
+    lineage = next(r for r in ACTIVATION_RELATIONS if r.table == "canonical_lineage")
+    assert runs.refresh_key == ("run_id",)
+    assert lineage.prune_superseded_by == ("run_id", "canonical_id")
+    assert lineage.prune_keep_key == ("canonical_id",)
+
+
+def test_prune_configuration_fails_closed_without_a_keep_key() -> None:
+    with pytest.raises(ForecastHistoryActivationError, match="prune_keep_key"):
+        Relation("data_plane", "canonical_lineage", prune_superseded_by=("run_id",))
+
+
+def test_refresh_sql_updates_every_shared_column_outside_the_key() -> None:
+    relation = Relation("data_plane", "ingestion_runs", refresh_key=("run_id",))
+    statement, updatable = refresh_sql(
+        relation, ("run_id", "status", "finished_at"), "activation_stage"
+    )
+    assert updatable == ("status", "finished_at")
+    assert 'UPDATE data_plane.ingestion_runs AS tgt SET "status" = staged."status"' in statement
+    assert '"finished_at" = staged."finished_at"' in statement
+    assert 'WHERE tgt."run_id" = staged."run_id"' in statement
+    # A converged row must not be rewritten.
+    assert "IS DISTINCT FROM" in statement
+
+
+def test_refresh_sql_fails_closed_when_the_key_is_not_copied() -> None:
+    relation = Relation("data_plane", "ingestion_runs", refresh_key=("run_id",))
+    with pytest.raises(ForecastHistoryActivationError, match="refresh key is not copied"):
+        refresh_sql(relation, ("status",), "activation_stage")
+    with pytest.raises(ForecastHistoryActivationError, match="no columns to refresh"):
+        refresh_sql(relation, ("run_id",), "activation_stage")
+
+
+def test_prune_sql_only_drops_superseded_rows_that_keep_their_lineage() -> None:
+    lineage = next(r for r in ACTIVATION_RELATIONS if r.table == "canonical_lineage")
+    statement = prune_sql(lineage, "activation_stage")
+    assert statement.startswith("DELETE FROM data_plane.canonical_lineage AS tgt")
+    # Never leaves the declared source scope.
+    assert "canonical_table = 'core.transactions'" in statement
+    # Drops only what the source no longer selects...
+    assert (
+        'NOT EXISTS (SELECT 1 FROM "activation_stage" AS staged '
+        'WHERE staged."run_id" = tgt."run_id" AND staged."canonical_id" = tgt."canonical_id")'
+    ) in statement
+    # ...and only while the source still carries lineage for that record.
+    assert (
+        'AND EXISTS (SELECT 1 FROM "activation_stage" AS keeper '
+        'WHERE keeper."canonical_id" = tgt."canonical_id")'
+    ) in statement

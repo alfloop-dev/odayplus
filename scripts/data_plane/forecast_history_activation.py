@@ -16,7 +16,11 @@ Modes
     forecast eligibility on both source and target. Aggregates only.
 ``activate``
     Dependency-ordered, conflict-safe copy of the transaction-attributable
-    relations from source to target under a target advisory lock.
+    relations from source to target under a target advisory lock, followed by
+    the two convergence steps a pure ``ON CONFLICT DO NOTHING`` copy cannot do:
+    refreshing ingestion runs that have since reached a terminal status, and
+    pruning lineage the source has superseded. Both write only values the
+    source holds; neither can leave a transaction without lineage.
 ``verify``
     Read-only. Reports the canonical horizon windows the target
     ``model_ready.forecast_training_view`` can produce.
@@ -75,15 +79,42 @@ class Relation:
 
     ``source_predicate`` restricts the copy to transaction-attributable rows so
     the target never receives lineage that the forecast contract cannot explain.
+
+    ``ON CONFLICT DO NOTHING`` alone cannot keep the target converged on the
+    source: a row copied while the source was mid-flight stays frozen at that
+    intermediate state forever, and a row the source has since superseded stays
+    behind as a stale pointer. The two fields below repair exactly those cases,
+    and only ever from values the source holds right now.
+
+    ``refresh_key``
+        Columns identifying an already-present target row whose remaining
+        columns should be re-read from the source. Use only for relations whose
+        lifecycle legitimately advances in place (an ingestion run reaching a
+        terminal status), never for immutable records.
+    ``prune_superseded_by``
+        Columns identifying a target row that no longer exists in the source
+        selection. Such rows are deleted, but only when the source still holds
+        another row for the same ``prune_keep_key`` -- so pruning can re-point
+        lineage at the run that superseded it and can never strip the last
+        lineage a record has.
     """
 
     schema: str
     table: str
     source_predicate: str | None = None
+    refresh_key: tuple[str, ...] = ()
+    prune_superseded_by: tuple[str, ...] = ()
+    prune_keep_key: tuple[str, ...] = ()
 
     @property
     def qualified(self) -> str:
         return f"{self.schema}.{self.table}"
+
+    def __post_init__(self) -> None:
+        if bool(self.prune_superseded_by) != bool(self.prune_keep_key):
+            raise ForecastHistoryActivationError(
+                f"{self.qualified} must declare prune_superseded_by with prune_keep_key"
+            )
 
 
 # Dependency ordered: parents before children, so every foreign key resolves.
@@ -94,6 +125,9 @@ ACTIVATION_RELATIONS: tuple[Relation, ...] = (
     Relation("core", "stores"),
     Relation("core", "machines"),
     Relation("core", "transactions"),
+    # An ingestion run copied while it was still RUNNING must be allowed to
+    # reach its source terminal status, otherwise the target pins
+    # ``source_run_complete`` false forever.
     Relation(
         "data_plane",
         "ingestion_runs",
@@ -101,11 +135,17 @@ ACTIVATION_RELATIONS: tuple[Relation, ...] = (
             "run_id IN (SELECT run_id FROM data_plane.canonical_lineage "
             "WHERE canonical_table = 'core.transactions')"
         ),
+        refresh_key=("run_id",),
     ),
+    # A run abandoned mid-flight leaves lineage the source later re-projects
+    # under the run that completed. Drop the superseded pointer, but never the
+    # last lineage a transaction has.
     Relation(
         "data_plane",
         "canonical_lineage",
         source_predicate="canonical_table = 'core.transactions'",
+        prune_superseded_by=("run_id", "canonical_id"),
+        prune_keep_key=("canonical_id",),
     ),
 )
 
@@ -257,12 +297,76 @@ def _activation_lock(connection: psycopg.Connection) -> Iterator[None]:
         connection.execute("SELECT pg_advisory_unlock(%s)", (ACTIVATION_LOCK_KEY,))
 
 
+def refresh_sql(
+    relation: Relation, columns: Sequence[str], staging: str
+) -> tuple[str, tuple[str, ...]]:
+    """Build the in-place refresh statement for an already-present target row.
+
+    Only columns the source actually carries are written, and the update is
+    skipped unless at least one of them differs, so a converged target costs
+    nothing and an unchanged row is never rewritten.
+    """
+
+    missing = [name for name in relation.refresh_key if name not in columns]
+    if missing:
+        raise ForecastHistoryActivationError(
+            f"{relation.qualified} refresh key is not copied: {', '.join(sorted(missing))}"
+        )
+    updatable = tuple(name for name in columns if name not in relation.refresh_key)
+    if not updatable:
+        raise ForecastHistoryActivationError(
+            f"{relation.qualified} has no columns to refresh outside its refresh key"
+        )
+    assignments = ", ".join(f"{_quote(name)} = staged.{_quote(name)}" for name in updatable)
+    match = " AND ".join(
+        f"tgt.{_quote(name)} = staged.{_quote(name)}" for name in relation.refresh_key
+    )
+    changed = ", ".join(f"tgt.{_quote(name)}" for name in updatable)
+    staged = ", ".join(f"staged.{_quote(name)}" for name in updatable)
+    return (
+        f"UPDATE {relation.qualified} AS tgt SET {assignments} "
+        f"FROM {_quote(staging)} AS staged "
+        f"WHERE {match} AND ({changed}) IS DISTINCT FROM ({staged})",
+        updatable,
+    )
+
+
+def prune_sql(relation: Relation, staging: str) -> str:
+    """Build the delete that drops target rows the source has superseded.
+
+    The staging table holds exactly the rows the source selects right now, so a
+    target row missing from it is either superseded or was never authoritative.
+    The second ``EXISTS`` is the fail-closed guard: a row is only dropped when
+    the source still carries the same ``prune_keep_key`` under some other row,
+    so pruning re-points a record's lineage and never removes all of it.
+    """
+
+    scope = f" AND {relation.source_predicate}" if relation.source_predicate else ""
+    superseded = " AND ".join(
+        f"staged.{_quote(name)} = tgt.{_quote(name)}" for name in relation.prune_superseded_by
+    )
+    kept = " AND ".join(
+        f"keeper.{_quote(name)} = tgt.{_quote(name)}" for name in relation.prune_keep_key
+    )
+    return (
+        f"DELETE FROM {relation.qualified} AS tgt WHERE TRUE{scope}"
+        f" AND NOT EXISTS (SELECT 1 FROM {_quote(staging)} AS staged WHERE {superseded})"
+        f" AND EXISTS (SELECT 1 FROM {_quote(staging)} AS keeper WHERE {kept})"
+    )
+
+
 def copy_relation(
     source: psycopg.Connection,
     target: psycopg.Connection,
     relation: Relation,
 ) -> dict[str, Any]:
-    """Copy one relation source -> target with ``ON CONFLICT DO NOTHING``."""
+    """Copy one relation source -> target with ``ON CONFLICT DO NOTHING``.
+
+    Insert first, then converge: refresh rows whose source lifecycle advanced
+    after an earlier copy, and prune rows the source has superseded. Both extra
+    steps read the same staging snapshot as the insert, so the whole relation is
+    reconciled against one consistent read of the source.
+    """
 
     columns = resolve_copy_columns(
         _column_map(target, relation),
@@ -292,6 +396,25 @@ def copy_relation(
         f"INSERT INTO {relation.qualified} ({column_sql}) "
         f"SELECT {column_sql} FROM {_quote(staging)} ON CONFLICT DO NOTHING"
     ).rowcount
+
+    refreshed = 0
+    if relation.refresh_key:
+        statement, _ = refresh_sql(relation, columns, staging)
+        target.execute(
+            f"CREATE INDEX ON {_quote(staging)} "
+            f"({', '.join(_quote(name) for name in relation.refresh_key)})"
+        )
+        refreshed = max(int(target.execute(statement).rowcount), 0)
+
+    pruned = 0
+    if relation.prune_superseded_by:
+        for key in (relation.prune_superseded_by, relation.prune_keep_key):
+            target.execute(
+                f"CREATE INDEX ON {_quote(staging)} ({', '.join(_quote(name) for name in key)})"
+            )
+        target.execute(f"ANALYZE {_quote(staging)}")
+        pruned = max(int(target.execute(prune_sql(relation, staging)).rowcount), 0)
+
     target.execute(f"DROP TABLE IF EXISTS pg_temp.{_quote(staging)}")
     after = _count(target, relation.qualified)
     return {
@@ -300,6 +423,8 @@ def copy_relation(
         "source_rows_selected": source_rows,
         "target_rows_before": before,
         "target_rows_inserted": max(int(inserted), 0),
+        "target_rows_refreshed": refreshed,
+        "target_rows_pruned": pruned,
         "target_rows_after": after,
     }
 
