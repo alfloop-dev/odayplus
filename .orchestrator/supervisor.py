@@ -4196,10 +4196,19 @@ def is_antigravity_quota_banner(config: dict[str, Any] | None, provider: str | N
 # extra "session" token — so it used to classify as a plain `terminal` failure,
 # skipping both the provider pause path and the environmental-failure exemption
 # in record_task_failure_streak (observed: a single session-limit window drove
-# ODP-STORE-OPENING-001:claude to count=34). Scoped to Claude providers, like
-# the agy banner above, so unrelated text can never be read as a quota outage.
+# ODP-STORE-OPENING-001:claude to count=34).
+#
+# Deliberately NOT a bare "hit your session limit" substring: provider scoping
+# alone cannot separate the banner from task output, because a Claude worker
+# reports its own application/assertion text too. "AssertionError: expected
+# You've hit your session limit banner to be hidden" is a genuine task failure
+# and must stay `terminal`. Matching therefore requires the banner's reset
+# continuation (observed separator: "·"; also accept the plain/dash forms and
+# an explicit "resets at"), mirroring AGY_QUOTA_SIGNATURE_PATTERN above.
 CLAUDE_SESSION_LIMIT_PATTERN = re.compile(
-    r"hit\s+your\s+session\s+limit\b",
+    r"hit\s+your\s+session\s+limit\b"
+    r"[\s.,!·•|\-–—]*"
+    r"(?:resets?\b|try\s+again\s+(?:in|at|after)\b)",
     re.IGNORECASE,
 )
 

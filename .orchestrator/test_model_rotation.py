@@ -392,13 +392,45 @@ def test_claude_session_limit_banner_is_provider_scoped():
     assert sv.classify_worker_failure(cfg, {"provider": "vendory"}, CLAUDE_SESSION_LIMIT)["kind"] == "quota_terminal"
 
 
-def test_session_limit_wording_in_task_output_stays_a_task_failure():
-    """Application/test output mentioning the phrase must not become a quota outage."""
-    for reason in (
+def test_claude_session_limit_banner_variants_are_classified():
+    """Real banner forms: the phrase plus its reset continuation."""
+    variants = (
+        CLAUDE_SESSION_LIMIT,  # verbatim, "\u00b7" separator
+        "You've hit your session limit - resets 5pm (UTC)",
+        "You have hit your session limit, resets at 17:00 UTC",
+        "hit your session limit. try again in 2 hours",
+    )
+    for reason in variants:
+        assert sv.classify_worker_failure(CFG, {"provider": "claude"}, reason)["kind"] == "quota_terminal", reason
+
+
+def test_exact_trigger_phrase_in_task_output_stays_a_task_failure():
+    """The EXACT banner phrase embedded in application/assertion output.
+
+    Provider scoping cannot separate these from the real banner - a Claude
+    worker reports its own test output too - so the classifier requires the
+    banner's reset continuation. Without that, these genuine task failures were
+    silently converted into quota outages (blocking review finding on #472).
+    """
+    task_failures = (
+        "AssertionError: expected You've hit your session limit banner to be hidden",
+        "FAILED test_copy.py: rendered text You've hit your session limit unexpectedly",
+        "Playwright: locator(\"text=You've hit your session limit\") resolved to 0 elements",
         "AssertionError: expected the session limit banner to be hidden",
-        "Playwright: locator('text=session limit') resolved to 0 elements",
-    ):
+    )
+    for reason in task_failures:
         assert sv.classify_worker_failure(CFG, {"provider": "claude"}, reason)["kind"] == "terminal", reason
+
+
+def test_exact_trigger_phrase_in_task_output_still_increments_streak():
+    """These are real failures, so the failure-loop guard must keep counting them."""
+    state: dict = {}
+    worker = {"task_id": "ODP-SESSION-PHRASE-TEST", "provider": "claude"}
+    reason = "AssertionError: expected You've hit your session limit banner to be hidden"
+    kind = sv.classify_worker_failure(CFG, {"provider": "claude"}, reason)["kind"]
+    assert kind == "terminal"
+    counts = [sv.record_task_failure_streak(state, worker, reason, failure_kind=kind) for _ in range(3)]
+    assert counts == [1, 2, 3]
 
 
 # --- adapter: dispatch-time pool persistence, argv safety, profile isolation --
