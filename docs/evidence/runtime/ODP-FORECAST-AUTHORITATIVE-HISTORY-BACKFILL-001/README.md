@@ -34,6 +34,9 @@ into its output.
 | `upstream_source_depth_probe.json` | — | Read-only measurement of how far back the **authoritative upstream** actually goes, proving the landed 2026-05-23 floor is a window-clamp artifact (see §7). Carries its own predicate and redaction statement. |
 | `source_depth_probe.pod.yaml` | — | The exact read-only Pod that produced it. Aggregates only; no write path. |
 | `orders_history_backfill_jobs.applied.json` | — | The `-b1`/`-b2`/`-b3` backwards-extension Job manifests that close §7 without any destructive action. Secrets appear only as `secretKeyRef` names, never values. |
+| `per_store_streak_headroom.json` | — | Per-store transacting-day runs measured over the landed span, proving per-store eligibility tracks the global span rather than trailing it (see §7). Carries its own predicate and window. |
+| `slice_deadline_headroom.json` | — | Why `activeDeadlineSeconds` was raised 14400→28800 on the remaining slices, and the measurement that forced it. |
+| `settle_state.json` | — | Written by the finisher **immediately before** `activate`: the incomplete partitions and abandoned-lineage ownership that were true at that moment. The two conditions the gate no longer blocks on, stated instead of hidden (see §7, v6). |
 
 Reproduce any of them with the DSN pair and the Cloud SQL proxy attestation in
 the environment:
@@ -228,10 +231,12 @@ store, which clears the 28-day bar.
 
 ### Settling condition
 
-> **Superseded by §6.** Condition 2 below assumed re-running a partition always
-> re-points an abandoned run's lineage. That holds only when the abandoned run
-> committed nothing; see Defect D for the measured counter-example and the
-> repair it requires.
+> **Superseded by §6, then retired entirely in §7 (v6).** Condition 2 below
+> assumed re-running a partition always re-points an abandoned run's lineage.
+> That holds only when the abandoned run committed nothing; see Defect D for the
+> measured counter-example. Both conditions turned out to be permanent
+> deadlocks and are now *reported* in `settle_state.json` rather than gated on —
+> the live gate is "driver done and no orders-history Job `Active`".
 
 A Job killed by `activeDeadlineSeconds` leaves its in-flight
 `data_plane.ingestion_runs` row at `RUNNING` **permanently** — nothing
@@ -699,6 +704,48 @@ block. Clause (b)'s measurement is not discarded — it is **demoted to a logged
 fact**, so the finisher reports how much lineage is still owned by abandoned
 runs and the cost is stated in the evidence rather than hidden behind a gate
 that never opens.
+
+### v6 — clause (a) was the same deadlock, and it is reachable
+
+v5 kept clause (a) on the reasoning above. That reasoning does not survive
+contact with how driver v4 actually behaves. The driver does **not** abort on a
+failed slice: it records the failure, moves to the next job, and always logs
+`BACKFILL-DRIVER-DONE`. So if any slice dies mid-partition — exactly what
+Defect C did to `-s1`, and exactly what the raised `activeDeadlineSeconds`
+defends against — that partition keeps a non-terminal run with no `SUCCEEDED`
+sibling **forever**, the driver finishes, and the finisher spins on
+`unfinished_partitions=1` until the host is rebooted. The result is *no evidence
+at all* about the 40+ days that landed correctly, which is precisely the outcome
+v5's own argument condemns.
+
+Clause (a) is also **subsumed** by the test that replaced clause (b): a
+partition whose run is non-terminal while no Job is `Active` is not in flight.
+It is abandoned — settled, just settled badly — and its day is already excluded
+fail-closed as `SOURCE_RUN_NOT_COMPLETE`.
+
+`runbook/forecast-finisher-v6.sh` therefore reduces the gate to exactly one
+condition (driver done **and** zero `Active` orders-history Jobs, both failing
+closed on an unreachable cluster or database) and gives clause (a) the same
+treatment v5 gave clause (b).
+
+Demoting a gate is only defensible if the cost it guarded becomes **visible**
+rather than silent, and a log line in `/tmp` is neither committed nor evidence.
+So v6 stops discarding both measurements and writes
+[`settle_state.json`](settle_state.json) into the evidence directory next to the
+activation receipt: which partitions were incomplete at activation time, which
+runs still own lineage, and the partition keys that costs. An exact-head
+reviewer can then see what was true when the receipt was taken instead of having
+to trust that nothing was.
+
+One caveat belongs in the evidence rather than only in the script, and
+`settle_state.json` carries it: `transaction_daily` and `mature_daily` filter on
+neither `lineage_complete` nor `source_run_complete`, so a *partially* ingested
+day still contributes a short daily row to later dates' `prior_day_count_28`. An
+abandoned partition therefore costs more than its own eligibility. That is why
+the receipt names the partition keys rather than only counting them — **if a
+reported incomplete partition falls inside the span carrying the h28 windows,
+the correct response is to re-run that slice and re-activate, not to accept the
+receipt.**
 
 ### Operational note
 
