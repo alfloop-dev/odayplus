@@ -29,6 +29,7 @@ into its output.
 | `inventory_after.json` | `inventory` | Source + target state captured after activation |
 | `orders_history_gap_jobs.applied.json` | — | The exact `-s3`/`-s4`/`-s5` Job manifests applied to close the source gap (see §5). Secrets appear only as `secretKeyRef` names, never values. |
 | `lineage_repair_plan.json` | `plan` | Read-only scope of the §6 lineage repair, from `repair_unattested_lineage.py` |
+| `unattested_lineage_sweep.json` | — | Sweep of **every** non-terminal run in the source, classified, proving the §6 repair scope is exactly one run. Carries its own `sweep_sql`. |
 
 Reproduce any of them with the DSN pair and the Cloud SQL proxy attestation in
 the environment:
@@ -365,6 +366,37 @@ the live source: 4 752 lineage rows and 1 checkpoint to delete, and **4 752
 transactions left with no lineage at all** until `-s6` re-attests them. That
 number is reported rather than smoothed over, because it means the delete widens
 the outage until the re-ingest lands.
+
+### The repair scope is one run, and that was verified rather than assumed
+
+Defect D was found while investigating a single partition, so "only `069b0984`
+is affected" started as an artefact of where the investigation happened to look.
+`unattested_lineage_sweep.json` re-derives it independently: it sweeps **every**
+non-terminal run in the source database — not just the orders backfill — and
+classifies each one, so a second instance cannot hide behind the known one.
+
+Twelve non-terminal runs exist. Each is resolved by two questions:
+
+| Verdict | Runs | Basis |
+| --- | --- | --- |
+| `defect_d_permanent` | `069b0984` (07-06, 4 752 rows) | owns `core.transactions` lineage **and** its partition already has a SUCCEEDED successor, so nothing will ever transition it |
+| `in_flight` | `7c71ab3d` (07-09) | owns `core.transactions` lineage but its partition has no SUCCEEDED run yet — it is the `-s3` slice still executing, and settles on its own |
+| `not_applicable` | ten runs | own no lineage at all (self-healed, e.g. `3d0937f1`), or own lineage for another canonical table |
+
+The `not_applicable` group includes one run worth naming, because it looks
+alarming and is not: `87423a49` (partition `2026-07-26__2026-07-27`) is a
+permanently `RUNNING` run holding **20 270** lineage rows. It is out of scope on
+the gate's own terms — its lineage is for `data_plane.forecast_inputs` from
+`ai_revenue_stats`, and `forecast_training_view` joins lineage only
+`WHERE canonical_table = 'core.transactions'`. It is pre-existing damage from
+the 07-27 nightly pipeline, unrelated to this backfill, and this task does not
+repair it. It is recorded here so a reviewer does not have to rediscover it, and
+because it is the same defect class in a different pipeline.
+
+The permanence test above is the same one the finisher gate uses, so the
+evidence and the automation cannot disagree about what is settled. That gate is
+also scoped to `source_kind = 'orders'`, which is what keeps `87423a49` from
+deadlocking the finisher forever on a defect outside this task.
 
 **Status: parked.** Deleting governed lineage from the shared source database is
 a destructive, human-gated action. It has not been executed. Everything else in

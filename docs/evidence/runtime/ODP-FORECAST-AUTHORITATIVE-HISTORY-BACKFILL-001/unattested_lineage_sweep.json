@@ -1,0 +1,189 @@
+{
+  "captured_at": "2026-07-28T17:13:24.348257+00:00",
+  "purpose": "Independent re-verification that Defect D -- unattested core.transactions lineage owned by a run that can never reach a terminal status -- has exactly one instance on this task's acceptance surface. Sweeps EVERY non-terminal run in the source database, not only the orders backfill, so a second instance cannot hide behind the one already known.",
+  "classification_rule": {
+    "acceptance_gate": "forecast_training_view.source_run_complete is a bool_and over runs joined through canonical_lineage WHERE canonical_table = 'core.transactions'. Lineage for any other canonical table cannot poison it.",
+    "permanence": "A non-terminal run is PERMANENTLY stale once its partition already has a SUCCEEDED run: the successor finished, so nothing will ever transition the abandoned row. Without such a successor the run is still IN FLIGHT and is expected to settle on its own -- this is the same criterion the finisher gate uses, so the two cannot disagree."
+  },
+  "sweep_sql": "SELECT r.run_id::text, r.source_kind, r.partition_key, r.status, r.started_at, r.processed_count, l.canonical_table, count(l.*) AS lineage_rows, EXISTS (SELECT 1 FROM data_plane.ingestion_runs s WHERE s.source_kind = r.source_kind AND s.partition_key = r.partition_key AND s.status = 'SUCCEEDED') AS partition_has_succeeded_run FROM data_plane.ingestion_runs r LEFT JOIN data_plane.canonical_lineage l ON l.run_id = r.run_id WHERE r.status <> 'SUCCEEDED' OR r.finished_at IS NULL GROUP BY 1,2,3,4,5,6,7 ORDER BY r.started_at",
+  "runs": [
+    {
+      "run_id": "0db353af-df9c-4c2b-8838-8c1bb9de5654",
+      "source_kind": "merchant",
+      "partition_key": "2026-07-23__2026-07-24",
+      "status": "FAILED",
+      "started_at": "2026-07-24T17:31:18.456805+00:00",
+      "processed_count": 0,
+      "canonical_table": null,
+      "lineage_rows": 0,
+      "partition_has_succeeded_run": true,
+      "verdict": "not_applicable",
+      "reason": "owns no canonical_lineage rows; self-healed, nothing to repair"
+    },
+    {
+      "run_id": "1bb87cb9-50bd-458d-97a3-35fd258caa7b",
+      "source_kind": "merchant",
+      "partition_key": "2026-07-23__2026-07-24",
+      "status": "FAILED",
+      "started_at": "2026-07-24T17:31:38.171724+00:00",
+      "processed_count": 0,
+      "canonical_table": null,
+      "lineage_rows": 0,
+      "partition_has_succeeded_run": true,
+      "verdict": "not_applicable",
+      "reason": "owns no canonical_lineage rows; self-healed, nothing to repair"
+    },
+    {
+      "run_id": "9abe7884-2239-4b15-99e2-d92493dfbfbb",
+      "source_kind": "place",
+      "partition_key": "2026-07-23__2026-07-24",
+      "status": "FAILED",
+      "started_at": "2026-07-24T17:34:08.433666+00:00",
+      "processed_count": 0,
+      "canonical_table": null,
+      "lineage_rows": 0,
+      "partition_has_succeeded_run": true,
+      "verdict": "not_applicable",
+      "reason": "owns no canonical_lineage rows; self-healed, nothing to repair"
+    },
+    {
+      "run_id": "78ee3afb-f43d-4009-a6b7-be780cf3214f",
+      "source_kind": "place",
+      "partition_key": "2026-07-23__2026-07-24",
+      "status": "FAILED",
+      "started_at": "2026-07-24T17:34:29.258252+00:00",
+      "processed_count": 0,
+      "canonical_table": null,
+      "lineage_rows": 0,
+      "partition_has_succeeded_run": true,
+      "verdict": "not_applicable",
+      "reason": "owns no canonical_lineage rows; self-healed, nothing to repair"
+    },
+    {
+      "run_id": "35bd5cf6-4e06-49e5-9fe5-8ebbb6754e46",
+      "source_kind": "device_daily_statistics",
+      "partition_key": "2026-07-23__2026-07-24",
+      "status": "FAILED",
+      "started_at": "2026-07-24T17:54:46.254271+00:00",
+      "processed_count": 0,
+      "canonical_table": null,
+      "lineage_rows": 0,
+      "partition_has_succeeded_run": true,
+      "verdict": "not_applicable",
+      "reason": "owns no canonical_lineage rows; self-healed, nothing to repair"
+    },
+    {
+      "run_id": "706e4a3e-c2b7-4278-9d68-76d70461f1b6",
+      "source_kind": "device_daily_statistics",
+      "partition_key": "2026-07-23__2026-07-24",
+      "status": "FAILED",
+      "started_at": "2026-07-24T17:55:32.417960+00:00",
+      "processed_count": 0,
+      "canonical_table": null,
+      "lineage_rows": 0,
+      "partition_has_succeeded_run": true,
+      "verdict": "not_applicable",
+      "reason": "owns no canonical_lineage rows; self-healed, nothing to repair"
+    },
+    {
+      "run_id": "12b28af3-b19a-41ff-ae9d-e0d4643c10bf",
+      "source_kind": "orders",
+      "partition_key": "2026-05-23__2026-05-24",
+      "status": "FAILED",
+      "started_at": "2026-07-24T18:52:15.887969+00:00",
+      "processed_count": 0,
+      "canonical_table": null,
+      "lineage_rows": 0,
+      "partition_has_succeeded_run": true,
+      "verdict": "not_applicable",
+      "reason": "owns no canonical_lineage rows; self-healed, nothing to repair"
+    },
+    {
+      "run_id": "623fa533-2999-4406-bd56-137adda03fe2",
+      "source_kind": "orders",
+      "partition_key": "2026-05-23__2026-05-24",
+      "status": "FAILED",
+      "started_at": "2026-07-24T18:52:52.582721+00:00",
+      "processed_count": 0,
+      "canonical_table": null,
+      "lineage_rows": 0,
+      "partition_has_succeeded_run": true,
+      "verdict": "not_applicable",
+      "reason": "owns no canonical_lineage rows; self-healed, nothing to repair"
+    },
+    {
+      "run_id": "3d0937f1-708d-4ca8-8ce7-bb9d1ba8d72f",
+      "source_kind": "orders",
+      "partition_key": "2026-06-23__2026-06-24",
+      "status": "RUNNING",
+      "started_at": "2026-07-24T22:56:27.102080+00:00",
+      "processed_count": 0,
+      "canonical_table": null,
+      "lineage_rows": 0,
+      "partition_has_succeeded_run": true,
+      "verdict": "not_applicable",
+      "reason": "owns no canonical_lineage rows; self-healed, nothing to repair"
+    },
+    {
+      "run_id": "87423a49-cd6e-424b-9d58-5012c4bbcd57",
+      "source_kind": "ai_revenue_stats",
+      "partition_key": "2026-07-26__2026-07-27",
+      "status": "RUNNING",
+      "started_at": "2026-07-27T01:29:53.363693+00:00",
+      "processed_count": 0,
+      "canonical_table": "data_plane.forecast_inputs",
+      "lineage_rows": 20270,
+      "partition_has_succeeded_run": true,
+      "verdict": "not_applicable",
+      "reason": "owns 20270 lineage rows for data_plane.forecast_inputs, not core.transactions; outside the view's gate and outside this task's scope"
+    },
+    {
+      "run_id": "069b0984-3cc0-4fbb-811f-07616e148a88",
+      "source_kind": "orders",
+      "partition_key": "2026-07-06__2026-07-07",
+      "status": "RUNNING",
+      "started_at": "2026-07-28T16:15:05.230304+00:00",
+      "processed_count": 0,
+      "canonical_table": "core.transactions",
+      "lineage_rows": 4752,
+      "partition_has_succeeded_run": true,
+      "verdict": "defect_d_permanent",
+      "reason": "partition already has a SUCCEEDED successor, so this run can never transition; its lineage is unattested forever and needs repair"
+    },
+    {
+      "run_id": "7c71ab3d-14e7-48c9-b3db-1d0729be78bf",
+      "source_kind": "orders",
+      "partition_key": "2026-07-09__2026-07-10",
+      "status": "RUNNING",
+      "started_at": "2026-07-28T16:53:28.270626+00:00",
+      "processed_count": 0,
+      "canonical_table": "core.transactions",
+      "lineage_rows": 6142,
+      "partition_has_succeeded_run": false,
+      "verdict": "in_flight",
+      "reason": "no SUCCEEDED run for this partition yet; the run is still executing and is expected to reach a terminal status by itself"
+    }
+  ],
+  "summary": {
+    "runs_swept": 12,
+    "defect_d_permanent": [
+      "069b0984-3cc0-4fbb-811f-07616e148a88"
+    ],
+    "in_flight": [
+      "7c71ab3d-14e7-48c9-b3db-1d0729be78bf"
+    ],
+    "not_applicable": [
+      "0db353af-df9c-4c2b-8838-8c1bb9de5654",
+      "1bb87cb9-50bd-458d-97a3-35fd258caa7b",
+      "9abe7884-2239-4b15-99e2-d92493dfbfbb",
+      "78ee3afb-f43d-4009-a6b7-be780cf3214f",
+      "35bd5cf6-4e06-49e5-9fe5-8ebbb6754e46",
+      "706e4a3e-c2b7-4278-9d68-76d70461f1b6",
+      "12b28af3-b19a-41ff-ae9d-e0d4643c10bf",
+      "623fa533-2999-4406-bd56-137adda03fe2",
+      "3d0937f1-708d-4ca8-8ce7-bb9d1ba8d72f",
+      "87423a49-cd6e-424b-9d58-5012c4bbcd57"
+    ],
+    "conclusion": "Exactly one permanently unattested run on the acceptance surface: 069b0984-3cc0-4fbb-811f-07616e148a88 (2026-07-06__2026-07-07, 4752 rows). The repair scope recorded in section 6 is therefore complete."
+  }
+}
