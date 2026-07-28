@@ -574,6 +574,51 @@ def test_workflows_do_not_reference_secrets_in_step_if() -> None:
         assert "ODP_WEB_SESSION_SECRET_SECRET" in text
 
 
+def test_dev_workflow_bootstraps_locked_dependencies_before_preflight() -> None:
+    """ODP-DEPLOY-PREFLIGHT-CONFIG-001: the preflight's repository capability
+    checks import the real provider registry (httpx and friends), so the deploy
+    job must materialize the locked project environment before the preflight
+    runs — and must run the preflight inside that environment, not on the
+    runner's bare system python3 where the import fails and the deploy dies on
+    a dependency error instead of a real gate.
+    """
+    text = (ROOT / ".github/workflows/deploy-dev.yml").read_text(encoding="utf-8")
+
+    sync = text.index("uv sync --frozen")
+    preflight = text.index("validate_cloud_run_live_deployment.py preflight")
+    assert sync < preflight
+    assert (
+        "uv run --frozen python "
+        "scripts/deployment/validate_cloud_run_live_deployment.py preflight" in text
+    )
+    assert "python3 scripts/deployment/validate_cloud_run_live_deployment.py" not in text
+
+
+def test_provider_probe_timeout_band_matches_runtime_connector() -> None:
+    """The governed dev value for ODP_EXTERNAL_PROVIDER_PROBE_TIMEOUT_SECONDS
+    derives from the runtime connector's own default, and the preflight's
+    accepted band must stay aligned with the connector's clamp band. Drift on
+    either side re-opens the failure this task closed: a value the connector
+    accepts that the preflight rejects (or vice versa).
+    """
+    from modules.external_data.connectors import provider_connectivity as connectivity
+
+    # The connector clamps with _bounded_float(minimum=0.05, maximum=MAX_...).
+    assert validator.MIN_PROVIDER_PROBE_TIMEOUT_SECONDS == 0.05
+    assert (
+        validator.MAX_PROVIDER_PROBE_TIMEOUT_SECONDS
+        == connectivity.MAX_PROBE_TIMEOUT_SECONDS
+    )
+    check = validator._bounded_provider_probe_timeout_check(
+        {
+            "ODP_EXTERNAL_PROVIDER_PROBE_TIMEOUT_SECONDS": str(
+                connectivity.DEFAULT_PROBE_TIMEOUT_SECONDS
+            )
+        }
+    )
+    assert check.ok, check.detail
+
+
 def test_deploy_script_preflights_before_build_and_uses_secret_references() -> None:
     text = DEPLOY_SCRIPT.read_text(encoding="utf-8")
 
