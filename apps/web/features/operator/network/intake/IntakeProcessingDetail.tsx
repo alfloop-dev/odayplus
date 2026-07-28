@@ -82,9 +82,7 @@ export function IntakeProcessingDetail(props: IntakeProcessingDetailProps) {
     record.stage === "FAILED" ||
     record.stage === "QUARANTINED" ||
     jobs.some((job) => job.status === "DEAD_LETTER" || job.status === "FAILED");
-  const preservedInput = record.parsedFields
-    ? Object.fromEntries(Object.values(record.parsedFields).map((field) => [field.key, field.correctedValue ?? field.normalizedValue ?? field.sourceValue]))
-    : null;
+  const preservedInput = useMemo(() => buildPreservedInput(record), [record]);
   const providerListingId = authoritativeParsedValue(
     record,
     "providerListingId",
@@ -245,6 +243,54 @@ export function IntakeProcessingDetail(props: IntakeProcessingDetailProps) {
 
 function Meta({ label, value, testId }: { label: string; value: string; testId?: string }) {
   return <div><div className={styles.metaCaption}>{label}</div><div className={styles.metaValue} data-testid={testId}>{value || "UNAVAILABLE"}</div></div>;
+}
+
+/** Same withheld-value marker the evidence panel renders for masked cells. */
+const MASKED_MARKER = "•••• [MASKED]";
+
+/**
+ * Preserved input is built from the durable API-backed intake record, not from
+ * parsed output alone. Retrieval can fail before parsing ever starts, so a
+ * `parsedFields`-only view renders `{}` and loses the URL the operator actually
+ * submitted (ADD ODP-P10-CAN-001-R3D). Submission context is therefore read
+ * first, then parsed/normalized/corrected field values layered on top so an
+ * operator correction still wins.
+ *
+ * Only values the record actually supplies are emitted: absent values stay
+ * absent rather than being filled with a placeholder, and server-masked cells
+ * keep the same `•••• [MASKED]` marker the evidence panel uses. No browser-only
+ * copy of the submission is kept anywhere.
+ */
+export function buildPreservedInput(record: AssistedIntake): Record<string, unknown> | null {
+  const preserved: Record<string, unknown> = {};
+  const put = (key: string, value: unknown) => {
+    if (value === null || value === undefined || value === "") return;
+    preserved[key] = value;
+  };
+
+  // A below-CONFIDENTIAL clearance gets `originalUrl: null` plus the masking
+  // flag from the API. Report it as withheld rather than silently absent.
+  const masking = record as AssistedIntake & { originalUrl_masked?: boolean };
+  if (masking.originalUrl_masked === true) {
+    preserved.originalUrl = MASKED_MARKER;
+  } else {
+    put("originalUrl", record.originalUrl);
+  }
+  put("canonicalUrl", record.canonicalUrl);
+  put("heatZoneId", record.heatZoneId);
+  put("sourceId", record.sourceId);
+  put("intakeMethod", record.intakeMethod);
+
+  for (const field of Object.values(record.parsedFields ?? {})) {
+    if (!field?.key) continue;
+    if (field.masked === true) {
+      preserved[field.key] = MASKED_MARKER;
+      continue;
+    }
+    put(field.key, field.correctedValue ?? field.normalizedValue ?? field.sourceValue);
+  }
+
+  return Object.keys(preserved).length > 0 ? preserved : null;
 }
 
 function authoritativeParsedValue(record: AssistedIntake, ...keys: string[]): string {
