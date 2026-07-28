@@ -22,6 +22,16 @@ def load_db_path(tmp_path) -> str:
     return str(tmp_path / "load_soak.sqlite3")
 
 
+# ODP-CI-PERFORMANCE-GATE-ISOLATION-001: this is a wall-clock SLO measurement,
+# not a functional test. Sharing a runner with the ~1900-test product suite made
+# the measurement report the runner's residual load instead of the system under
+# test (run 30380735899 failed at P95 7.518s and its exact-head rerun at 6.956s,
+# while the same code measures ~1.1s in an unloaded process). The `performance`
+# marker keeps this test out of the shared product invocation so the dedicated
+# clean-runner performance-gate job can enforce the unchanged 3.0s P95 budget
+# and zero-failure requirement. The budget, concurrency levels, volume, and
+# assertions below are deliberately untouched.
+@pytest.mark.performance
 def test_concurrency_and_soak_execution(load_db_path, tmp_path) -> None:
     """Executable load and soak tests measuring API queue and database behavior
 
