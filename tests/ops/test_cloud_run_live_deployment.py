@@ -891,6 +891,23 @@ def test_probe_retry_policy_rejects_unbounded_or_degenerate_configuration(
         )
 
 
+@pytest.mark.parametrize("field", ["timeout_seconds", "backoff_seconds", "deadline_seconds"])
+@pytest.mark.parametrize("value", [float("nan"), float("inf"), float("-inf")])
+def test_probe_retry_policy_rejects_non_finite_bounds(field: str, value: float) -> None:
+    # NaN slips past every `<= 0` guard and infinity is not a deadline, so both
+    # must raise here -- the one place the CLI turns into a fail-closed report.
+    with pytest.raises(ValueError, match="finite"):
+        validator.ProbeRetryPolicy(**{field: value})
+
+
+@pytest.mark.parametrize("value", [float("nan"), float("inf"), float("-inf")])
+def test_probe_retry_policy_rejects_non_finite_max_backoff_and_attempts(value: float) -> None:
+    with pytest.raises(ValueError, match="finite"):
+        validator.ProbeRetryPolicy(max_backoff_seconds=value)
+    with pytest.raises(ValueError, match="finite"):
+        validator.ProbeRetryPolicy(attempts=value)
+
+
 def test_probe_failure_is_transient_only_when_no_response_was_received() -> None:
     # Nothing came back: the cold start this contract exists for.
     assert validator.probe_failure_is_transient(_timeout_attempt()) is True
@@ -1311,6 +1328,51 @@ def test_compatibility_smoke_cli_fails_closed_on_an_unbounded_retry_policy(
     report = json.loads(report_path.read_text(encoding="utf-8"))
     assert report["ok"] is False
     assert report["checks"][0]["name"] == "compatibility:retry_policy"
+
+
+@pytest.mark.parametrize(
+    "flag",
+    [
+        "--timeout",
+        "--compat-retry-backoff-seconds",
+        "--compat-retry-max-backoff-seconds",
+        "--compat-retry-deadline-seconds",
+    ],
+)
+@pytest.mark.parametrize("value", ["nan", "inf", "-inf"])
+def test_compatibility_smoke_cli_fails_closed_on_a_non_finite_bound(
+    tmp_path: Path, flag: str, value: str
+) -> None:
+    # Regression for `--timeout nan`, which used to reach the socket layer and
+    # die with an unhandled ValueError -- no report, no rollback signal, just a
+    # traceback the deploy gate cannot interpret as a compatibility verdict.
+    report_path = tmp_path / f"cloud-run-migration-compatibility{flag}{value}.json"
+    result = subprocess.run(
+        [
+            sys.executable,
+            str(VALIDATOR_PATH),
+            "compatibility-smoke",
+            "--api-url",
+            "http://127.0.0.1:1",
+            "--web-url",
+            "http://127.0.0.1:1",
+            # `=` form: bare `-inf` would be parsed as an option string.
+            f"{flag}={value}",
+            "--output",
+            str(report_path),
+        ],
+        cwd=ROOT,
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+
+    assert result.returncode == 1, result.stdout + result.stderr
+    assert "Traceback" not in result.stderr
+    report = json.loads(report_path.read_text(encoding="utf-8"))
+    assert report["ok"] is False
+    assert report["checks"][0]["name"] == "compatibility:retry_policy"
+    assert "finite" in report["checks"][0]["detail"]
 
 
 def test_migration_compatibility_gate_wires_bounded_retry_flags() -> None:

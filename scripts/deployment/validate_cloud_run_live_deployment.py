@@ -1761,6 +1761,20 @@ class ProbeRetryPolicy:
     deadline_seconds: float = COMPATIBILITY_PROBE_DEADLINE_SECONDS
 
     def __post_init__(self) -> None:
+        # NaN defeats every ordering check below (all comparisons are False) and
+        # infinity defeats the finite-deadline contract this policy exists to
+        # enforce, so both must be rejected before any bound is interpreted.
+        # Without this the socket layer raises deep inside a probe, past the
+        # caller that turns a bad policy into a fail-closed report.
+        for label, value in (
+            ("attempt count", self.attempts),
+            ("per-attempt timeout", self.timeout_seconds),
+            ("backoff", self.backoff_seconds),
+            ("max backoff", self.max_backoff_seconds),
+            ("total deadline", self.deadline_seconds),
+        ):
+            if not math.isfinite(value):
+                raise ValueError(f"probe retry policy needs a finite {label}, got {value!r}")
         if self.attempts < 1:
             raise ValueError("probe retry policy needs at least one attempt")
         if self.timeout_seconds <= 0:

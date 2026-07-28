@@ -10,11 +10,14 @@ Owner: Claude2 · Reviewer: Codex6 · Branch:
 python3 -m pytest tests/ops/test_cloud_run_live_deployment.py -q -k "compat or probe"
 ```
 
-→ **42 passed**. Covers:
+→ **66 passed**. Covers:
 
 - `ProbeRetryPolicy` backoff is exponential and capped (`[0, 2, 4, 8, 8, 8]`)
   and the policy rejects a zero/negative attempt count, per-attempt timeout,
   backoff, or deadline, so an unbounded retry contract cannot be configured
+- `ProbeRetryPolicy` also rejects `nan` / `inf` / `-inf` on every bound, and the
+  CLI turns each of those into a fail-closed report rather than a traceback —
+  see § Round 3 below
 - `probe_failure_is_transient` retries **only** a no-response outcome
   (transport failure / timeout). The status sweep asserts non-retry for
   `{200, 404, 408, 429, 500, 502, 503, 504}` across all three
@@ -52,14 +55,15 @@ python3 -m pytest tests/ops/test_cloud_run_live_deployment.py -q -k "compat or p
 python3 -m pytest tests/ops/ -p no:cacheprovider
 ```
 
-→ **378 passed, 1 failed, 20 skipped**.
+→ **402 passed, 1 failed, 20 skipped**.
 
 The single failure is
 `test_deploy_preflight_imports_runtime_dependencies_via_locked_python`, which
 fails with `Error: required command 'uv' is not installed.` — the `uv` binary
 is absent from this worker sandbox. Confirmed pre-existing: the same test fails
 identically on the unmodified base commit (`git stash` + re-run). It passes in
-CI, where `uv` is installed.
+CI, where `uv` is installed. It executes `scripts/deploy_cloud_run_waji.sh`,
+which round 3 did not touch.
 
 ## Lint
 
@@ -176,6 +180,66 @@ rule to true no-response:
 Round 1's regressions built `ProbeAttempt`s by hand, which is how the
 conflation survived them. The new ones drive a real HTTP response through
 `probe_json_endpoint` and `compatibility_smoke_checks`.
+
+## Round 3 — Codex6 blocker on exact head `c583bd7f`
+
+PR #488, review comment 5110667275: `ProbeRetryPolicy` accepted `NaN` and
+infinity. Every guard in `__post_init__` was an ordering comparison, and **all
+comparisons against `NaN` are false**, so `timeout_seconds=nan` passed
+`<= 0` and `deadline_seconds=inf` passed `<= 0` — the finite-deadline contract
+this policy exists to enforce was configurable away.
+
+Reproduced on `c583bd7f` before the fix:
+
+```
+$ python3 scripts/deployment/validate_cloud_run_live_deployment.py \
+    compatibility-smoke --api-url http://127.0.0.1:1 --web-url http://127.0.0.1:1 \
+    --timeout nan --output /tmp/nanprobe.json
+...
+  File "/usr/lib/python3.12/socket.py", line 834, in create_connection
+    sock.settimeout(timeout)
+ValueError: Invalid value NaN (not a number)
+```
+
+The `ValueError` is raised by the socket layer *inside* `probe_json_endpoint`,
+which only catches `(TimeoutError, urllib.error.URLError, OSError)`, so it
+escapes past the `except ValueError` in `main` that exists to convert a bad
+policy into a fail-closed report. Result: traceback, **no report file**, and a
+deploy gate with no compatibility verdict to act on.
+
+Fixed by validating finiteness before any bound is interpreted:
+
+```python
+for label, value in (("attempt count", self.attempts), ...):
+    if not math.isfinite(value):
+        raise ValueError(f"probe retry policy needs a finite {label}, got {value!r}")
+```
+
+placed **ahead of** the ordering guards, covering all five fields — attempt
+count, per-attempt timeout, backoff, max backoff, and total deadline.
+
+Same command after the fix:
+
+```
+Cloud Run migration compatibility smoke failed (fail-closed):   exit=1
+- compatibility:retry_policy: probe retry policy needs a finite per-attempt timeout, got nan
+report=/tmp/nanprobe.json
+```
+
+Regressions added:
+
+- unit: `ProbeRetryPolicy` raises `ValueError` matching `finite` for each of
+  `nan` / `inf` / `-inf` on each of the five bounds (15 cases)
+- CLI subprocess: `--timeout`, `--compat-retry-backoff-seconds`,
+  `--compat-retry-max-backoff-seconds`, and `--compat-retry-deadline-seconds`
+  each with `nan` / `inf` / `-inf` (12 cases) must exit 1, emit **no
+  `Traceback`**, and write a report whose first check is
+  `compatibility:retry_policy` with `finite` in the detail. Passing the value as
+  `--flag=-inf` is deliberate: bare `-inf` is parsed by argparse as an option
+  string, not a value.
+
+Round 2's regressions covered zero and negative bounds only, which is how the
+non-finite hole survived them.
 
 ## Scope guard
 

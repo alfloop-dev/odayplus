@@ -151,8 +151,8 @@ reports the bare string `"healthy"` and still passes.
 
 `docs/evidence/runtime/ODP-DEPLOY-MIGRATION-COMPATIBILITY-PROBE-001/verification-2026-07-28.md`
 
-- focused compatibility tests: 42 passed
-- full ops suite: 378 passed, 20 skipped, 1 pre-existing environmental failure
+- focused compatibility tests: 66 passed
+- full ops suite: 402 passed, 20 skipped, 1 pre-existing environmental failure
   (`uv` binary absent from the worker sandbox; identical on the unmodified base)
 - `ruff format --check`, `ruff check .orchestrator scripts`,
   `ruff check tests modules apps shared models solver pipelines infra`,
@@ -163,6 +163,12 @@ reports the bare string `"healthy"` and still passes.
   returns 200 in 0.410 s, gate **passes**
 - shipped CLI re-run against a non-API endpoint → **fails closed, exit 1**, one
   attempt per probe
+- round 3 (Codex6 blocker on `c583bd7f`): `ProbeRetryPolicy` now requires
+  `math.isfinite` on all five bounds before any ordering guard runs. `NaN`
+  defeated every `<= 0` comparison and `--timeout nan` died with an unhandled
+  socket-layer `ValueError` — traceback, no report, no verdict for the gate. Now
+  it is a `compatibility:retry_policy` fail-closed report; 27 new nan/inf/-inf
+  unit and CLI regressions cover it.
 
 ## 6. Follow-ups (not in this task's scope)
 
