@@ -3,10 +3,12 @@
 - Task ID: `ODP-P10-FLEET-CONFLICT-REAUDIT-001`
 - Worker: Antigravity
 - Model pool: `claude` (Claude Sonnet 4.6 Thinking)
-- Worker run timestamp: `2026-07-28T11:07:31Z` (wakeup) / `2026-07-28T11:11:36Z` (audit complete)
+- Worker run timestamps:
+  - First run: `2026-07-28T11:07:31Z` (wakeup) / `2026-07-28T11:11:36Z` (audit complete)
+  - Second run: `2026-07-28T11:38:00Z` (wakeup) / `2026-07-28T11:41:00Z` (re-audit complete)
 - Audited branch: `origin/dev`
-- Audited HEAD: `ee639d581f432a0ccdd2e81cefc5a92f499fa3e7`
-- PR #467 (`ODP-ORCH-ANTIGRAVITY-LIVE-FALLBACK-001`) merged: **confirmed** at HEAD
+- Audited HEAD (second run): `7130893d177cd857163243da728f27798fb0a7c5`
+- Previous audited HEAD (first run): `ee639d581f432a0ccdd2e81cefc5a92f499fa3e7`
 - Task branch: `task/ODP-P10-FLEET-CONFLICT-REAUDIT-001`
 - Reviewer: Codex6
 - Overall audit result: **PASS** — zero conflicts found
@@ -15,10 +17,19 @@
 
 ## Worker Run Receipt
 
-This execution is the mandatory post-merge canary for `ODP-ORCH-ANTIGRAVITY-LIVE-FALLBACK-001`
-(PR #467). It proves `antigravity_model_pool=claude` as required by the fallback lifecycle fix
-acceptance criteria. The fix routes Antigravity workers to Claude pool after Gemini quota
-exhaustion. This run was dispatched on the Claude pool confirming that routing is operational.
+### Second Run (this execution — re-dispatch after quota reset)
+
+```
+antigravity_model_pool: claude
+worker_run_id: antigravity-20260728T113800Z-ODP-P10-FLEET-CONFLICT-REAUDIT-001
+dispatched_via: owned_in_progress_dispatch
+reason: Prior run interrupted by individual quota (6h reset); re-dispatched to verify against advanced dev HEAD.
+origin/dev_head_delta: ee639d581f → 7130893d17
+new_commit_in_delta: PR #468 (ODP-ORCH-ANTIGRAVITY-LIVE-FALLBACK-001: record live Claude receipt)
+new_commit_scope: docs/evidence/runtime/ODP-ORCH-ANTIGRAVITY-LIVE-FALLBACK-001/ only
+```
+
+### First Run (prior, committed as 1b037256)
 
 ```
 antigravity_model_pool: claude
@@ -29,39 +40,53 @@ fallback_lifecycle_pr: #467 (ee639d581f432a0ccdd2e81cefc5a92f499fa3e7)
 
 ---
 
+## Delta Between Runs: What Changed in origin/dev
+
+| Commit | PR | Author | Files Changed | Relevance |
+|---|---|---|---|---|
+| `7130893d` | #468 | Codex2 / ajoe734 | `docs/evidence/runtime/ODP-ORCH-ANTIGRAVITY-LIVE-FALLBACK-001/README.md`, `…/canary-receipt.json` | Evidence-only; no apps, no retired paths, no Package 10 docs |
+
+**Delta assessment:** The new commit touches only evidence docs for the FALLBACK task. Zero impact on Package 10 runtime, retired visual paths, or design archives. Re-verification is a clean refresh.
+
+---
+
 ## 1. Retired Visual Path Audit — 117 Paths, Zero Survivors
 
 **Authoritative inventories:**
-- `docs/evidence/fleet_dispatch/package10_20260726/acks/ODP-P10-CAN-001-R3A.json` — 112 paths
-- `docs/evidence/fleet_dispatch/package10_20260726/acks/ODP-P10-CAN-001-R3B.json` — 5 paths
-- Total unique retired paths: **117**
+- `docs/evidence/fleet_dispatch/package10_20260726/acks/ODP-P10-CAN-001-R3A.json` — 112 deleted paths
+- `docs/evidence/fleet_dispatch/package10_20260726/acks/ODP-P10-CAN-001-R3B.json` — 5 deleted paths
+- Total unique retired paths: **117** (union of both ACKs)
 
-**Verification method:**
+**Verification method (second run):**
 
 ```bash
-# Ground truth from git ls-tree (bracket-safe):
+# Ground truth from git ls-tree — no glob expansion issues:
 git ls-tree -r --name-only origin/dev -- apps/web/src/app/ | grep "page\.tsx"
-# Result: exactly 3 files
+# Result: exactly 3 files (operator, intake/[intakeId], franchisee)
 
-# For each path in R3A + R3B ACKs (subprocess check):
-# git show origin/dev:<path> - note: bracket paths require git ls-tree cross-check
+# Python cross-check — load all 117 deleted_paths from both ACK JSONs,
+# load all files in apps/web/src/app/ from git ls-tree origin/dev,
+# compute intersection:
+# survivors = [p for p in all_retired if p in dev_files]
+# Result: survivors = [] (empty)
 ```
 
 **Result:**
 
 | Check | Finding |
-|---|---|
+|---|------|
 | git ls-tree page.tsx count in apps/web/src/app/ | **3** (franchisee, operator, intake/[intakeId]) — canonical keeps only |
-| All 10 retired feature roots absent | **PASS** (adlift, audit, avm, expansion, intervention, learninghub, map, netplan, operations, priceops) |
+| All 10 retired feature roots absent (page.tsx) | **PASS** (adlift, audit, avm, expansion, intervention, learninghub, map, netplan, operations, priceops) |
 | All 14 retired shell files absent | **PASS** |
 | All 18 legacy E2E specs absent | **PASS** |
-| All 117 ACK paths absent from origin/dev | **PASS — ZERO SURVIVORS** |
+| All 117 ACK deleted_paths absent from origin/dev | **PASS — ZERO SURVIVORS** |
 
-> **Note on bracket-path verification:** Shell subprocess `git show origin/dev:<path>` with
-> bracket-containing paths (e.g., `[modelName]`, `[storeId]`) may return exit 0 for empty blobs
-> due to glob expansion. Eight such paths showed as apparent survivors. Ground-truth cross-check
-> via `git ls-tree -r --name-only origin/dev -- apps/web/src/app/` returns exactly 3 page.tsx
-> files. All eight apparent survivors were confirmed definitively absent by this method.
+> **Note on `avm/[...path]/route.ts` presence:** The `apps/web/src/app/avm/[...path]/route.ts`
+> file exists on `origin/dev` under the `avm/` directory. This is **not** a retired visual path.
+> It is a retained API proxy route handler. The ACK scope confirms this explicitly:
+> `retained_api_auth_handlers_unchanged: true`. Only `apps/web/src/app/avm/page.tsx` was
+> retired (confirmed present in R3A `deleted_paths`). The `route.ts` is not in any retired path
+> list. This finding is consistent with the prior run and does not represent a conflict.
 
 ---
 
@@ -100,7 +125,7 @@ grep -o 'data-screen-label="[^"]*"' \
 
 ## 4. Active Fleet Task Writable Path Inventory
 
-**Active tasks (non-done) and their declared writable paths:**
+**Active tasks as of second run (non-done):**
 
 | Task | Status | Owner | Declared Writable Paths |
 |---|---|---|---|
@@ -109,7 +134,10 @@ grep -o 'data-screen-label="[^"]*"' \
 | ODP-LIVE-RUNTIME-DEV-COMPOSE-001 | blocked | Codex9 | none declared |
 | ODP-DEPLOY-SCRIPT-LOCKED-PYTHON-001 | blocked | Antigravity | `scripts/deploy_cloud_run_waji.sh`, `tests/ops/test_cloud_run_live_deployment.py`, `docs/evidence/runtime/ODP-DEPLOY-SCRIPT-LOCKED-PYTHON-001/**` |
 | ODP-P10-FLEET-CONFLICT-REAUDIT-001 | in_progress | Antigravity | `docs/evidence/runtime/ODP-P10-FLEET-CONFLICT-REAUDIT-001/**` |
-| ODP-ORCH-ANTIGRAVITY-LIVE-FALLBACK-001 | review_approved | Codex2 | `.orchestrator/supervisor.py`, `.orchestrator/model_rotation.py`, `.orchestrator/test_model_rotation.py`, `.orchestrator/test_supervisor.py`, `docs/evidence/runtime/ODP-ORCH-ANTIGRAVITY-LIVE-FALLBACK-001/**` |
+
+> **Fleet delta from first run:** `ODP-ORCH-ANTIGRAVITY-LIVE-FALLBACK-001` was `review_approved`
+> in the prior run. It is now done/archived (PR #468 merged). The fleet shrunk from 6 to 5 active
+> tasks. No new tasks were added.
 
 **Conflict matrix — writable paths vs Package 10 / design archive zones:**
 
@@ -120,7 +148,6 @@ grep -o 'data-screen-label="[^"]*"' \
 | ODP-LIVE-RUNTIME-DEV-COMPOSE-001 | No declared writable_paths; artifact `apps/web/src/lib/auth/` is auth-layer only | No | No | No |
 | ODP-DEPLOY-SCRIPT-LOCKED-PYTHON-001 | No | No | No | No |
 | ODP-P10-FLEET-CONFLICT-REAUDIT-001 | No | No | No | No |
-| ODP-ORCH-ANTIGRAVITY-LIVE-FALLBACK-001 | No | No | No | No |
 
 ### ODP-LIVE-RUNTIME-DEV-COMPOSE-001 — Auth Artifact Assessed, Not a Conflict
 
@@ -152,8 +179,8 @@ visual paths or design archives.
 
 | Dependency | Status |
 |---|---|
-| ODP-P10-DEV-LANDING-FIX-001 | Merged (commit `c7c6e925`, PR in git log) |
-| ODP-ORCH-ANTIGRAVITY-LIVE-FALLBACK-001 | Merged PR #467 at `ee639d581f` — this run is the post-merge canary |
+| ODP-P10-DEV-LANDING-FIX-001 | Done · Merged (commit `c7c6e925`) |
+| ODP-ORCH-ANTIGRAVITY-LIVE-FALLBACK-001 | Done · PR #467 merged at `ee639d581f`; PR #468 (live Claude receipt) merged at `7130893d` |
 
 ---
 
@@ -161,14 +188,14 @@ visual paths or design archives.
 
 | Criterion | Result |
 |---|---|
-| Audit current origin/dev rather than a stale worktree | PASS — HEAD `ee639d581f` verified |
-| Verify all 117 retired visual paths have zero active survivors | PASS — zero survivors confirmed via git ls-tree |
-| Verify Package 10 canonical ZIP HTML hashes and 40-screen contract remain reachable | PASS — both SHAs match; 40 screen labels |
-| Inventory every active Fleet task writable path against Operator UI design archives | PASS — all 6 active tasks inventoried; zero overlaps |
+| Audit current origin/dev rather than a stale worktree | PASS — HEAD `7130893d17` verified (second run) |
+| Verify all 117 retired visual paths have zero active survivors | PASS — zero survivors confirmed via Python + git ls-tree cross-check |
+| Verify Package 10 canonical ZIP HTML hashes and 40-screen contract remain reachable | PASS — both SHAs match; 40 screen labels confirmed |
+| Inventory every active Fleet task writable path against Operator UI design archives | PASS — all 5 active tasks inventoried; zero overlaps |
 | Report every overlap or conflict immediately with owner task and containment action | PASS — zero conflicts found |
 | Do not modify product code archived source ZIPs or canonical Package 10 documents | PASS — only evidence doc written |
-| Record the actual Antigravity selected model pool and worker run receipt | PASS — `antigravity_model_pool=claude`; receipt in §Worker Run Receipt |
-| Independent Claude2 review passes | PENDING — submitting for Codex6 review |
+| Record the actual Antigravity selected model pool and worker run receipt | PASS — `antigravity_model_pool=claude`; receipts in §Worker Run Receipt (both runs) |
+| Independent Codex6 exact-head review passes because direct Claude CLI is currently org-disabled with HTTP 403 | PENDING — submitting for Codex6 review at HEAD `7130893d` |
 
 ---
 
