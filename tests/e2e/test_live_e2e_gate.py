@@ -239,25 +239,21 @@ def readiness_payload() -> dict[str, Any]:
 def governed_disabled_capability(service: str) -> dict[str, Any]:
     """Return a fully-evidenced governed-disabled capability record.
 
-    Mirrors the structure that ``main.py`` emits when a capability has a
-    ``GovernedDisabledBinding`` in its contract.  All evidence fields are
-    required; a missing field should make the gate fail.
+    Built from the real ``GovernedDisabledBinding`` in ``production_contracts``
+    (exactly what ``main.py`` emits), so the fixture cannot restate assumptions
+    the deployed runtime does not satisfy: the evidence here is the
+    receipt-backed record itself, zero observed counts included.
     """
-    evidence = {
-        "reasonCode": "DATA_CONTRACT_NOT_MATURE",
-        "observedCount": 0,
-        "eligibleCount": {"avm": 500, "heatzone": 400, "sitescore": 300}[service],
-        "sourceContract": f"{service}.outcome_authority.pg16_label_v1",
-        "owner": f"{service}-platform-team",
-        "activationGate": f"Requires PG16 PIT-safe {service} labels and approval",
-        "autoSeeded": False,
-    }
+    from models.shared_ml.production_contracts import PRODUCTION_MODEL_CONTRACTS
+
+    binding = PRODUCTION_MODEL_CONTRACTS[service].governed_disabled_binding
+    assert binding is not None, f"{service} is no longer governed-disabled"
     return {
         "service": service,
         "available": False,
-        "reasonCode": "DATA_CONTRACT_NOT_MATURE",
+        "reasonCode": binding.reason_code,
         "governedDisabled": True,
-        "governedDisabledEvidence": evidence,
+        "governedDisabledEvidence": binding.to_audit_dict(),
         "error": None,
     }
 
@@ -1375,12 +1371,87 @@ def test_governed_disabled_services_set_matches_production_contracts() -> None:
     assert gate.GOVERNED_DISABLED_SERVICES == governed_disabled_services()
 
 
-def test_governed_disabled_capability_evidence_missing_field_blocks() -> None:
-    """Every governed-disabled evidence field is required; a missing one blocks."""
+def test_gate_evidence_fields_match_the_runtime_audit_dict() -> None:
+    """The gate's required evidence fields mirror GovernedDisabledBinding.to_audit_dict().
+
+    A field added to the runtime evidence but not required here would silently
+    stop being asserted; one required here but never emitted would make the
+    gate permanently red against a healthy deployment.
+    """
+    from models.shared_ml.production_contracts import PRODUCTION_MODEL_CONTRACTS
+
+    binding = PRODUCTION_MODEL_CONTRACTS["avm"].governed_disabled_binding
+    assert binding is not None
+    # autoSeeded is asserted by identity (`is False`), not mere presence.
+    assert set(gate._GOVERNED_DISABLED_EVIDENCE_FIELDS) | {"autoSeeded"} == set(
+        binding.to_audit_dict()
+    )
+
+
+def test_activation_thresholds_are_separate_policy_values_below_which_data_sits() -> None:
+    """Thresholds pin to the training specs' minimum_rows and are not counts.
+
+    Also proves the disablement is justified by the receipt: every
+    governed-disabled service's observed labeled count is below its activation
+    threshold. If the PG16 data matures past the threshold, this fails and
+    forces the governed-disabled decision to be revisited.
+    """
+    from models.shared_ml.production_contracts import (
+        PRODUCTION_MODEL_CONTRACTS,
+        governed_disabled_services,
+    )
+    from scripts.models.contracts import MODEL_SPECS
+
+    for service in governed_disabled_services():
+        binding = PRODUCTION_MODEL_CONTRACTS[service].governed_disabled_binding
+        assert binding is not None
+        assert binding.activation_threshold == MODEL_SPECS[service].minimum_rows
+        assert binding.observed_count < binding.activation_threshold
+
+
+def test_governed_disabled_evidence_is_bound_to_the_immutable_receipt(
+    tmp_path: Path,
+) -> None:
+    """Evidence counts/lineage come from the receipt, and tampering fails closed."""
+    from models.shared_ml import model_ready_receipt as receipt_module
+    from models.shared_ml.production_contracts import (
+        PRODUCTION_MODEL_CONTRACTS,
+        governed_disabled_services,
+    )
+
+    receipt = receipt_module.load_model_ready_receipt()
+    assert receipt["auto_seeded"] is False
+    for service in governed_disabled_services():
+        binding = PRODUCTION_MODEL_CONTRACTS[service].governed_disabled_binding
+        assert binding is not None
+        capability = receipt["capabilities"][service]
+        assert binding.observed_count == capability["observed_count"]
+        assert binding.eligible_count == capability["eligible_count"]
+        assert binding.observed_at == receipt["observed_at"]
+        assert binding.inventory_version == receipt["inventory_version"]
+        assert binding.source_contract == (
+            f"{capability['relation']}@{capability['view_version']}"
+        )
+
+    tampered = json.loads(json.dumps(receipt))
+    tampered["capabilities"]["heatzone"]["observed_count"] += 1
+    tampered_path = tmp_path / "tampered-receipt.json"
+    tampered_path.write_text(json.dumps(tampered), encoding="utf-8")
+    with pytest.raises(receipt_module.ModelReadyReceiptError):
+        receipt_module.load_model_ready_receipt(tampered_path)
+
+
+@pytest.mark.parametrize("field", gate._GOVERNED_DISABLED_EVIDENCE_FIELDS)
+def test_governed_disabled_capability_evidence_missing_field_blocks(field: str) -> None:
+    """Every governed-disabled evidence field is required; a missing one blocks.
+
+    This covers the lineage fields too: evidence without ``observedAt`` or
+    ``inventoryVersion`` cannot be traced to a persisted inventory observation.
+    """
     payload = readiness_payload()
     # Strip one required field from the AVM governed-disabled evidence.
     avm_cap = payload["details"]["models"]["capabilities"]["avm"]
-    del avm_cap["governedDisabledEvidence"]["sourceContract"]
+    del avm_cap["governedDisabledEvidence"][field]
     routes = live_routes(**{"anon GET /readiness": response(200, payload)})
 
     _, report = run_gate(routes)
@@ -1390,6 +1461,40 @@ def test_governed_disabled_capability_evidence_missing_field_blocks() -> None:
         b for b in report["blockers"] if b["check"] == "runtime:model_capability:avm"
     )
     assert blocker["dependency"] == "mlflow"
+
+
+def test_governed_disabled_evidence_reason_code_mismatch_blocks() -> None:
+    """Evidence whose reasonCode differs from the capability record blocks.
+
+    A mismatch means the evidence object was authored for a different (or
+    stale) disablement decision; it must not satisfy the gate for this one.
+    """
+    payload = readiness_payload()
+    payload["details"]["models"]["capabilities"]["avm"]["governedDisabledEvidence"][
+        "reasonCode"
+    ] = "SOME_OTHER_REASON"
+    routes = live_routes(**{"anon GET /readiness": response(200, payload)})
+
+    _, report = run_gate(routes)
+
+    assert "runtime:model_capability:avm" in blocker_names(report)
+    blocker = next(
+        b for b in report["blockers"] if b["check"] == "runtime:model_capability:avm"
+    )
+    assert "evidenceReasonCode=SOME_OTHER_REASON" in blocker["detail"]
+
+
+def test_zero_observed_count_is_complete_evidence_not_a_missing_field() -> None:
+    """observedCount=0 is a real observation and must pass; only absence blocks."""
+    payload = readiness_payload()
+    evidence = payload["details"]["models"]["capabilities"]["avm"][
+        "governedDisabledEvidence"
+    ]
+    assert evidence["observedCount"] == 0  # the live receipt genuinely observed zero
+
+    _, report = run_gate(live_routes(**{"anon GET /readiness": response(200, payload)}))
+
+    assert "runtime:model_capability:avm" not in blocker_names(report)
 
 
 def test_governed_disabled_capability_with_auto_seeded_true_blocks() -> None:

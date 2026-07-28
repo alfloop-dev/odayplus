@@ -196,14 +196,14 @@ def test_require_live_data_composes_remote_runtime_and_oss_dependencies(
     finally:
         bundle.engine.close()
 
-    assert {service for service, _version in runtime.resolutions} == {
-        "avm",
-        "forecastops",
-        "heatzone",
-        "sitescore",
-    }
+    # Only ForecastOps has a resolvable production alias; AVM, HeatZone and
+    # SiteScore are governed-disabled and must never reach MLflow resolution.
+    assert {service for service, _version in runtime.resolutions} == {"forecastops"}
     assert captured["model_runtime_factory"]["model_names"] == production_model_names()
-    assert captured["avm_executor_factory"]["model_runtime"] is runtime
+    assert production_model_names() == {"forecastops": "forecast_revenue_interval"}
+    # The AVM production executor is only built for an available AVM binding;
+    # governed-disabled AVM composes with no executor and no fabricated alias.
+    assert "avm_executor_factory" not in captured
 
     for name in (
         "forecastops",
@@ -234,7 +234,7 @@ def test_require_live_data_composes_remote_runtime_and_oss_dependencies(
     assert captured["avm"]["audit_log"] is bundle.audit_log
     assert captured["avm"]["job_queue"] is bundle.job_queue
     assert captured["avm"]["require_durable_commands"] is True
-    assert captured["avm"]["production_executor"] is avm_executor
+    assert captured["avm"]["production_executor"] is None
     assert captured["netplan"]["repository"] is bundle.netplan_repository
     assert captured["netplan"]["audit_log"] is bundle.audit_log
     assert captured["netplan"]["production_executor"] is not None
@@ -250,30 +250,41 @@ def test_require_live_data_composes_remote_runtime_and_oss_dependencies(
     assert captured["interventions"]["job_queue"] is bundle.job_queue
     assert captured["interventions"]["require_durable_commands"] is True
     assert captured["operator"]["model_runtime"] is runtime
-    assert captured["operator"]["avm_production_executor"] is avm_executor
+    assert captured["operator"]["avm_production_executor"] is None
     assert captured["operator"]["netplan_production_executor"] is (
         captured["netplan"]["production_executor"]
     )
     assert app.state.domain_runtime_mode == "production"
+    # Governed-disabled services contribute no composition errors and no
+    # scoring bindings; the platform is ready with ForecastOps alone active.
     assert app.state.production_model_error is None
-    assert app.state.production_model_capabilities["heatzone"]["modelName"] == (
-        "heatzone_priority"
-    )
-    assert app.state.production_model_capabilities["heatzone"]["trainable"] is True
-    assert (
-        app.state.production_model_capabilities["heatzone"][
-            "requiredForPlatformReadiness"
-        ]
-        is True
-    )
-    assert app.state.production_model_capabilities["heatzone"]["available"] is True
+    assert app.state.scoring_bindings.keys() == {"forecastops"}
+    heatzone_capability = app.state.production_model_capabilities["heatzone"]
+    assert heatzone_capability["modelName"] == "heatzone_priority"
+    assert heatzone_capability["trainable"] is True
+    assert heatzone_capability["requiredForPlatformReadiness"] is True
+    assert heatzone_capability["available"] is False
+    assert heatzone_capability["governedDisabled"] is True
+    assert heatzone_capability["reasonCode"] == "DATA_CONTRACT_NOT_MATURE"
+    evidence = heatzone_capability["governedDisabledEvidence"]
+    assert evidence["reasonCode"] == heatzone_capability["reasonCode"]
+    assert evidence["autoSeeded"] is False
+    assert evidence["observedCount"] < evidence["activationThreshold"]
+    assert evidence["observedAt"] and evidence["inventoryVersion"]
 
 
-def test_model_aliases_resolve_independently_while_platform_stays_fail_closed(
+def test_governed_disabled_services_stay_fail_closed_while_platform_is_ready(
     monkeypatch: Any,
     tmp_path: Path,
 ) -> None:
-    runtime = SelectiveProductionRuntime("avm", "sitescore")
+    """Governed-disabled services are never resolved and never fabricate aliases.
+
+    Even against a registry that *would* resolve them (the runtime double here
+    resolves anything it is asked for), composition must not ask: the
+    governed-disabled evidence is the capability's terminal state this cycle,
+    and readiness comes from that evidence, not from an alias.
+    """
+    runtime = RecordingProductionRuntime()
     from models.shared_ml import MlflowProductionModelRuntime
 
     monkeypatch.setenv("ODP_REQUIRE_LIVE_DATA", "true")
@@ -293,29 +304,25 @@ def test_model_aliases_resolve_independently_while_platform_stays_fail_closed(
         bundle.engine.close()
 
     capabilities = app.state.production_model_capabilities
-    assert app.state.scoring_bindings.keys() == {"forecastops", "heatzone"}
+    assert {service for service, _version in runtime.resolutions} == {"forecastops"}
+    assert app.state.scoring_bindings.keys() == {"forecastops"}
     assert capabilities["forecastops"]["available"] is True
-    assert capabilities["avm"]["available"] is False
-    assert capabilities["sitescore"]["available"] is False
-    assert capabilities["heatzone"]["available"] is True
-    assert (
-        capabilities["avm"]["reasonCode"]
-        == "PRODUCTION_MODEL_REGISTRY_UNAVAILABLE"
-    )
-    assert app.state.production_model_error is not None
-    assert "avm: PRODUCTION_MODEL_REGISTRY_UNAVAILABLE" in (
-        app.state.production_model_error
-    )
-    assert "sitescore: PRODUCTION_MODEL_REGISTRY_UNAVAILABLE" in (
-        app.state.production_model_error
-    )
+    for service in ("avm", "heatzone", "sitescore"):
+        assert capabilities[service]["available"] is False
+        assert capabilities[service]["governedDisabled"] is True
+        assert capabilities[service]["reasonCode"] == "DATA_CONTRACT_NOT_MATURE"
+        assert capabilities[service]["error"] is None
+        evidence = capabilities[service]["governedDisabledEvidence"]
+        assert evidence["reasonCode"] == capabilities[service]["reasonCode"]
+        assert evidence["autoSeeded"] is False
+    assert app.state.production_model_error is None
 
 
 def test_forecastops_alias_remains_a_required_fail_closed_binding(
     monkeypatch: Any,
     tmp_path: Path,
 ) -> None:
-    runtime = SelectiveProductionRuntime("forecastops", "avm", "sitescore")
+    runtime = SelectiveProductionRuntime("forecastops")
     from models.shared_ml import MlflowProductionModelRuntime
 
     monkeypatch.setenv("ODP_REQUIRE_LIVE_DATA", "true")
@@ -334,7 +341,9 @@ def test_forecastops_alias_remains_a_required_fail_closed_binding(
     finally:
         bundle.engine.close()
 
-    assert app.state.scoring_bindings.keys() == {"heatzone"}
+    # No governed-disabled service may backfill readiness when ForecastOps,
+    # the one required-active binding, fails to resolve.
+    assert app.state.scoring_bindings.keys() == set()
     assert app.state.production_model_capabilities["forecastops"]["available"] is False
     assert "forecastops: PRODUCTION_MODEL_REGISTRY_UNAVAILABLE" in (
         app.state.production_model_error or ""
@@ -344,11 +353,21 @@ def test_forecastops_alias_remains_a_required_fail_closed_binding(
 def test_training_and_runtime_share_canonical_production_model_names() -> None:
     from scripts.models.contracts import MODEL_SPECS
 
+    # Runtime alias resolution only covers non-governed-disabled services...
     assert {
         service: MODEL_SPECS[contract.training_spec_key].model_name
         for service, contract in PRODUCTION_MODEL_CONTRACTS.items()
         if contract.training_spec_key is not None
+        and not contract.is_governed_disabled
     } == production_model_names()
+    # ...but every governed-disabled contract keeps its trainer binding so
+    # activation (once counts pass the threshold) needs no new wiring.
+    for contract in PRODUCTION_MODEL_CONTRACTS.values():
+        if contract.is_governed_disabled:
+            assert contract.trainable is True
+            assert MODEL_SPECS[contract.training_spec_key].model_name == (
+                contract.model_name
+            )
     assert PRODUCTION_MODEL_CONTRACTS["heatzone"].trainable is True
 
 
