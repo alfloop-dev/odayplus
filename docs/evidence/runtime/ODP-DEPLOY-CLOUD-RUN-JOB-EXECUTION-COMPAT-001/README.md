@@ -93,5 +93,31 @@ runs it against a stubbed `gcloud` that records every invocation:
   exits non-zero, `describe` is never invoked, and the receipt file does not
   exist.
 
+### Re-verification after merging `dev`
+
+PR #479 went `BEHIND` when `origin/dev` advanced to
+`8efe18580d7a66fe40fb5483b1b3779d12c5810b`. That commit was merged into the task
+branch as merge commit `499c0f28e9a03bfc375cf1a98ef7f00c5783ed35`. The merge was
+conflict-free and touched only
+`docs/evidence/runtime/ODP-ORCH-CLAUDE-TASKOUTPUT-LIFECYCLE-001/`; the reviewed
+deploy and validator scope is byte-identical, and `git diff origin/dev HEAD`
+still reports exactly the four task artifacts (543 insertions, 32 deletions).
+
+The same focused checks were re-executed at `499c0f28`, all passing:
+
+```text
+bash -n scripts/deploy_cloud_run_waji.sh
+pytest tests/ops/test_cloud_run_live_deployment.py -q   # 59 passed
+ruff check .
+ruff format --check scripts/deployment/validate_cloud_run_live_deployment.py tests/ops/test_cloud_run_live_deployment.py
+git diff --check origin/dev HEAD
+```
+
+`uv` must be on `PATH` for the suite to pass:
+`test_deploy_preflight_imports_runtime_dependencies_via_locked_python` executes
+the real deploy script, whose `require_command` guard exits `1` when `uv` is
+missing. That guard is owned by ODP-DEPLOY-SCRIPT-LOCKED-PYTHON-001 and is not
+touched by this task.
+
 Exact-head CI and independent Codex6 review remain required before merge. After
 merge, ODP-P10-DEV-REDEPLOY-VERIFY-001 must be re-run from the exact merged SHA.
