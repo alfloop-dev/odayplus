@@ -3,7 +3,7 @@
 - Task: `ODP-P10-DEV-REDEPLOY-VERIFY-001`
 - Owner: Antigravity3 (current); Claude2 (run 30362772798)
 - Independent reviewer: Codex6
-- Result: **BLOCKED — both deploy runs have failed. Package 10 Operator runtime
+- Result: **BLOCKED — deploy runs have failed. Package 10 Operator runtime
   parity is not proven and must not be claimed.**
 
 **Run history:**
@@ -12,6 +12,8 @@
 |---|---|---|---|---|
 | [30362772798](https://github.com/alfloop-dev/odayplus/actions/runs/30362772798) | `450c7fadd` (PR #474) | push | failure | `gcloud run jobs executions describe-latest` rejected by runner SDK |
 | [30376737123](https://github.com/alfloop-dev/odayplus/actions/runs/30376737123) | `dda726155a` (PR #479) | push | failure | `jobs-smoke:migration:secret_bindings` fail-closed |
+| [30402570022](https://github.com/alfloop-dev/odayplus/actions/runs/30402570022) | `7d13f8e162` (PR #484) | push | failure | `migration-compatibility-smoke` probe timeout (`/platform/version` & `/platform/health`) |
+
 
 This directory is evidence only. Per the task conflict gate, no product code,
 deploy script, workflow, Package 10 archive, or retired path was modified.
@@ -337,3 +339,95 @@ gcloud run services describe oday-web --region asia-east1 --project alfaloop-dat
 gcloud run jobs describe oday-migration-r-dda726155a39 --region asia-east1 --project alfaloop-data-project --format=json
 gcloud run jobs executions list --job oday-migration-r-dda726155a39 --region asia-east1 --project alfaloop-data-project
 ```
+
+---
+
+## 13. Deploy Dev run 30402570022 (SHA 7d13f8e162, PR #484)
+
+`Deploy Dev` run [`30402570022`](https://github.com/alfloop-dev/odayplus/actions/runs/30402570022)
+was triggered by the `push` of the merge commit of PR #484
+(`ODP-DEPLOY-JOB-SECRET-BINDING-SELECTION-001`) at `2026-07-28T21:55:00Z`,
+running on exactly the required SHA `7d13f8e162d035ad7318d1f659dfa0f2bd85ca65`.
+
+| Field | Value |
+|---|---|
+| Head branch / SHA | `dev` / `7d13f8e162d035ad7318d1f659dfa0f2bd85ca65` |
+| Event | `push` |
+| `e2e-operational-evidence` job | **success** |
+| `deploy` job | **failure** at step 13 |
+| Started | `2026-07-28T21:55:00Z` |
+| Completed | `2026-07-28T22:09:21Z` |
+
+Full step-by-step receipt: `deploy-run-30402570022.json`.
+
+### What changed from the previous run
+
+`ODP-DEPLOY-JOB-SECRET-BINDING-SELECTION-001` (PR #484) fixed the migration job secret bindings validation and updated the workflow artifact upload rules to capture validation reports recursively. As a result:
+
+- Preflight: 72 checks, 0 failures (`ok: true`, `release_sha: 7d13f8e162...`)
+- Images built, pushed, cosign-signed, cosign-verified: `oday-api`, `oday-worker`, `oday-scheduler` (3× Verification PASSED)
+- Migration Cloud Run Job `oday-migration-r-7d13f8e162d0` deployed and executed:
+  `Execution [oday-migration-r-7d13f8e162d0-zg2jr] has successfully completed.`
+- **Migration Job smoke check: PASSED** (`Cloud Run migration Job smoke passed.`)
+- **Artifact upload gap: RESOLVED** (`cloud-run-migration-compatibility.json` captured and uploaded in `cloud-run-dev-validation` artifact).
+
+### Where run 30402570022 failed
+
+The deploy failed during post-migration compatibility smoke testing:
+
+```text
+Cloud Run migration compatibility smoke failed (fail-closed):
+- compatibility:/platform/version:http: The read operation timed out
+- compatibility:/platform/health:database: The read operation timed out
+report=.odp_data/deployment/cloud-run-migration-compatibility.json
+```
+
+Verbatim excerpt: `deploy-failure-excerpt-run-30402570022.log`.
+
+The failing gate is `validate_cloud_run_live_deployment.py migration-compatibility-smoke`.
+It sends HTTP requests to `https://oday-api-7sxbjoeozq-de.a.run.app/platform/version` and `/platform/health` with a 15-second timeout to verify that the currently serving API revision remains compatible with the newly migrated database before candidate revisions receive traffic. Both requests timed out (`The read operation timed out`).
+
+## 14. Cloud Run state after run 30402570022 rollback
+
+The automated rollback restored traffic split correctly:
+
+| Service | Serving revision (100%) | Release SHA label |
+|---|---|---|
+| `oday-api` | `oday-api-00005-gin` | none (pre-run) |
+| `oday-web` | `oday-web-00008-ws4` | none (pre-run) |
+
+Snapshot receipt: `cloud-run-post-rollback-state-run-30402570022.json`.
+
+The migration Cloud Run Job `oday-migration-r-7d13f8e162d0` executed successfully at the target release SHA `7d13f8e162`.
+
+## 15. Acceptance status (run 30402570022)
+
+| # | Acceptance criterion | Status | Basis |
+|---|---|---|---|
+| 1 | Deploy Dev runs from exact merged `origin/dev` SHA and completes successfully | **FAIL** | Ran on `7d13f8e162`; concluded `failure`; `deploy-run-30402570022.json` |
+| 2 | Cloud Run API and web revisions report the deployed release SHA | **FAIL** | No revision carries the label; `cloud-run-post-rollback-state-run-30402570022.json` |
+| 3 | Operator API returns live non-placeholder data and fails closed on invalid access | **NOT REACHED** | Release candidate never served traffic |
+| 4 | `/operator` leaves loading state and renders Package 10 canonical shell at desktop and mobile | **NOT REACHED** | Same |
+| 5 | All 40 Package 10 screen contracts and 117 retired visual paths remain verified | **PASS (source scope)** | `package10-contract-verification.txt` (40/40 screen labels, 117 retired paths, 0 survivors) |
+| 6 | Independent Codex6 evidence review and CI pass before closeout | **PENDING** | Requires this evidence PR |
+
+## 16. Recommended remediation task
+
+### 16a. Migration compatibility smoke probe timeout (NEW)
+
+A separate remediation task is required:
+
+- **Scope:** investigate why `migration-compatibility-smoke` HTTP requests to `https://oday-api-7sxbjoeozq-de.a.run.app/platform/version` and `/platform/health` time out (15s limit) during post-migration validation. Potential root causes include Cloud Run instance cold starts, database connection pool contention post-migration, or probe timeout parameter configuration.
+- **Then:** once the compatibility probe issue is resolved and merged, re-dispatch this task to verify Deploy Dev completion.
+
+## 17. Verification commands (run 30402570022)
+
+```text
+git fetch origin dev --prune
+git rev-parse origin/dev                              # 7d13f8e162d035ad7318d1f659dfa0f2bd85ca65
+HOME=/home/lupin /usr/bin/gh run view 30402570022 -R alfloop-dev/odayplus --json status,conclusion,jobs
+HOME=/home/lupin /usr/bin/gh run download 30402570022 -R alfloop-dev/odayplus -n cloud-run-dev-validation
+cat cloud-run-dev-validation/cloud-run-migration-compatibility.json
+python3 scripts/e2e/check_product_grade_ci_gates.py --report
+```
+
