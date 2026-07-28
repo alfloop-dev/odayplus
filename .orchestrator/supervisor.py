@@ -29,7 +29,7 @@ import model_rotation
 from adapters import build_adapter
 from adapters.base import DeliveryRequest
 from approval_queue import (
-    create_approval,
+    ensure_worker_deferred_approval,
     find_worker_deferred_approval,
     prune_stale_approvals,
     resolve_approval,
@@ -5910,14 +5910,18 @@ def _claude_resume_allowed_tools(approval: dict[str, Any] | None) -> list[str]:
     for value in (
         approval.get("resume_override_rule"),
         approval.get("suggested_rule"),
-        approval.get("tool_name"),
     ):
         if not isinstance(value, str):
             continue
         normalized = value.strip()
         if normalized and normalized not in candidates:
             candidates.append(normalized)
-    return candidates
+    if candidates:
+        return candidates
+    tool_name = approval.get("tool_name")
+    if isinstance(tool_name, str) and tool_name.strip():
+        return [tool_name.strip()]
+    return []
 
 
 def _provider_uses_claude_cli(config: dict[str, Any], provider_id: str | None) -> bool:
@@ -6037,7 +6041,7 @@ def correlate_deferred_tool_approval(
     tool_name = receipt["tool_name"]
     tool_input = receipt["tool_input"]
     broker_decision = _deferred_tool_broker_decision(config, tool_name, tool_input)
-    approval = create_approval(
+    approval, created = ensure_worker_deferred_approval(
         config,
         {
             "provider": worker.get("provider"),
@@ -6060,11 +6064,17 @@ def correlate_deferred_tool_approval(
     write_activity_log(
         config,
         {
-            "type": "worker_deferred_approval_recorded",
+            "type": (
+                "worker_deferred_approval_recorded"
+                if created
+                else "worker_deferred_approval_correlated"
+            ),
             "provider": worker.get("provider"),
             "task_id": worker.get("task_id"),
             "message": (
                 f"Recorded deferred {tool_name} approval {approval_id} from the worker's tool_deferred receipt."
+                if created
+                else f"Correlated existing deferred {tool_name} approval {approval_id} with the worker receipt."
             ),
             "worker_run_id": run_id,
             "approval_id": approval_id,
