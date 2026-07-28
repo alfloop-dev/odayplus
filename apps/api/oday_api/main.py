@@ -88,6 +88,22 @@ def release_version_payload(*, correlation_id: str) -> dict[str, str]:
     }
 
 
+def production_feature_schema_versions() -> dict[str, str]:
+    """Return the canonical runtime schema expected by each production model."""
+
+    from modules.avm.domain import AVM_FEATURE_VERSION
+    from modules.forecastops.model_contract import FORECASTOPS_FEATURE_SCHEMA_ID
+    from modules.heatzone.domain import HEATZONE_FEATURE_VERSION
+    from modules.sitescore.domain import SITESCORE_FEATURE_VERSION
+
+    return {
+        "avm": AVM_FEATURE_VERSION,
+        "forecastops": FORECASTOPS_FEATURE_SCHEMA_ID,
+        "heatzone": HEATZONE_FEATURE_VERSION,
+        "sitescore": SITESCORE_FEATURE_VERSION,
+    }
+
+
 try:
     from fastapi import APIRouter, FastAPI, Header, HTTPException, Request, Response, status
     from fastapi.responses import JSONResponse
@@ -616,18 +632,75 @@ else:
         # balancers that must not be asked to learn a version prefix.
         platform_router = APIRouter()
 
+        def forecast_job_tenant(request: Request, *, action: str) -> str:
+            from apps.api.oday_api.security.dependencies import principal_from_headers
+            from shared.auth import Action, rbac_allows
+
+            principal = principal_from_headers(request.headers)
+            if not principal.authenticated:
+                raise HTTPException(
+                    status_code=status.HTTP_401_UNAUTHORIZED,
+                    detail={
+                        "code": "AUTHENTICATION_REQUIRED",
+                        "message": "Forecast jobs require an authenticated principal",
+                    },
+                    headers={"WWW-Authenticate": "Bearer"},
+                )
+            required_action = Action.EXECUTE if action == "execute" else Action.VIEW
+            if not rbac_allows(principal, "forecastops", required_action):
+                raise HTTPException(
+                    status_code=status.HTTP_403_FORBIDDEN,
+                    detail={
+                        "code": "FORECAST_EXECUTE_FORBIDDEN",
+                        "message": "Principal cannot access ForecastOps jobs",
+                    },
+                )
+            active_tenant_id = str(principal.tenant_id or "").strip()
+            if not active_tenant_id:
+                raise HTTPException(
+                    status_code=status.HTTP_403_FORBIDDEN,
+                    detail={
+                        "code": "TENANT_SCOPE_REQUIRED",
+                        "message": "Forecast jobs require an authenticated tenant scope",
+                    },
+                )
+            return active_tenant_id
+
         @platform_router.post("/jobs", status_code=status.HTTP_202_ACCEPTED, tags=["jobs"])
         def enqueue_job(
             body: JobCreatePayload,
             request: Request,
             idempotency_key: str | None = Header(default=None, alias="Idempotency-Key"),
         ) -> dict[str, Any]:
+            payload = body.payload
+            idempotency_tenant_id: str | None = None
+            if body.job_type == "forecast":
+                active_tenant_id = forecast_job_tenant(request, action="execute")
+                supplied_tenant_id = str(payload.get("tenant_id") or "").strip()
+                if supplied_tenant_id and supplied_tenant_id != active_tenant_id:
+                    raise HTTPException(
+                        status_code=status.HTTP_403_FORBIDDEN,
+                        detail={
+                            "code": "TENANT_SCOPE_MISMATCH",
+                            "message": (
+                                "Forecast job tenant does not match the authenticated tenant scope"
+                            ),
+                        },
+                    )
+                payload = {**payload, "tenant_id": active_tenant_id}
+                idempotency_tenant_id = active_tenant_id
+
             effective_idempotency_key = body.idempotency_key or idempotency_key
+            queue_idempotency_key = effective_idempotency_key
+            if effective_idempotency_key and idempotency_tenant_id is not None:
+                queue_idempotency_key = (
+                    f"forecast:v1:{idempotency_tenant_id}:{effective_idempotency_key}"
+                )
             job, created = job_queue.enqueue(
                 JobRequest(
                     job_type=body.job_type,
-                    payload=body.payload,
-                    idempotency_key=effective_idempotency_key,
+                    payload=payload,
+                    idempotency_key=queue_idempotency_key,
                 ),
                 correlation_id=request.state.correlation_id,
             )
@@ -647,17 +720,33 @@ else:
                 "job_id": job.job_id,
                 "status": job.status.value,
                 "correlation_id": job.correlation_id,
-                "idempotency_key": job.idempotency_key,
+                "idempotency_key": effective_idempotency_key,
                 "job": job.to_dict(),
                 "created": created,
                 "audit_event_id": audit_event.event_id,
             }
 
         @platform_router.get("/jobs/{job_id}", tags=["jobs"])
-        def get_job(job_id: str) -> dict[str, Any]:
+        def get_job(job_id: str, request: Request) -> dict[str, Any]:
             job = job_queue.get(job_id)
             if job is None:
                 raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="job not found")
+            if job.job_type == "forecast":
+                active_tenant_id = forecast_job_tenant(request, action="view")
+                owner_tenant_id = str(job.payload.get("tenant_id") or "").strip()
+                if not owner_tenant_id:
+                    raise HTTPException(
+                        status_code=status.HTTP_403_FORBIDDEN,
+                        detail={
+                            "code": "JOB_TENANT_SCOPE_MISSING",
+                            "message": "Forecast job receipt has no tenant ownership scope",
+                        },
+                    )
+                if owner_tenant_id != active_tenant_id:
+                    raise HTTPException(
+                        status_code=status.HTTP_404_NOT_FOUND,
+                        detail="job not found",
+                    )
             return job.to_dict()
 
         @platform_router.get("/audit/events", tags=["audit"])

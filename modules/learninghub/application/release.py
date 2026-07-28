@@ -395,6 +395,7 @@ class LearningHubService:
         correlation_id: str = "learninghub-release",
         expected_release_revision: int,
         idempotency_key: str,
+        approval_sha256: str | None = None,
         release_scope: str = "global",
         tenant_id: str | None = None,
     ) -> ModelReleaseDecision:
@@ -419,6 +420,7 @@ class LearningHubService:
             "approved_by": approved_by,
             "correlation_id": correlation_id,
             "expected_release_revision": expected_release_revision,
+            "approval_sha256": approval_sha256,
             "release_scope": release_scope,
         }
         request_fingerprint = _release_request_fingerprint(command)

@@ -12,6 +12,13 @@ from typing import Any
 import pytest
 
 from infra.mlflow.runtime import MlflowServerSettings, MlflowServerSettingsError
+from models.shared_ml import MetricThreshold, ModelAlias, SegmentMetric
+from modules.learninghub import (
+    InMemoryLearningHubRepository,
+    LearningHubConflictError,
+    LearningHubService,
+    ReleaseSagaState,
+)
 from scripts.models.contracts import (
     MODEL_SPECS,
     DataBounds,
@@ -42,6 +49,12 @@ from scripts.models.storage import (
     LoadedModelReadyRows,
     ModelReadyDataError,
     PostgresModelReadySource,
+)
+from tests.integration._learninghub_fixtures import (
+    DEFAULT_MODEL_NAME,
+    dataset_rows,
+    model_card,
+    model_version,
 )
 
 
@@ -350,9 +363,9 @@ def _raw_forecast_rows(count: int = 120) -> list[dict[str, Any]]:
                 "view_version": "forecast-training-view-v2",
                 "entity_id": store_id,
                 "tenant_id": "tenant-1",
-                "feature_snapshot_time": datetime(2026, 7, 1, tzinfo=UTC),
-                "prediction_origin_time": datetime(2026, 7, 2, tzinfo=UTC),
-                "label_maturity_time": datetime(2026, 7, 1, tzinfo=UTC),
+                "feature_snapshot_time": observed,
+                "prediction_origin_time": observed + timedelta(microseconds=1),
+                "label_maturity_time": observed + timedelta(days=1),
                 "source_snapshot_ids": [f"snapshot-{index:04d}"],
                 "is_training_eligible": True,
                 "date": observed.date(),
@@ -803,15 +816,18 @@ def test_prepare_rows_uses_canonical_lineage_and_never_fills_missing_features() 
     rows = _raw_forecast_rows(120)
     rows[0]["rolling_mean_28"] = None
     prepared = prepare_model_rows(MODEL_SPECS["forecastops"], _loaded(rows))
-    assert len(prepared) == 119
+    # 120 daily rows = 60 days x 2 stores -> 33 w4 + 5 w8 horizon rows per
+    # store; the store-1 day-0 origin with the missing feature drops its two
+    # horizon rows.
+    assert len(prepared) == 74
     first = prepared[0].mapping
-    assert first["source_snapshot_ids"] == [
-        "postgres:model_ready.forecast_training_view:sha256:" + "a" * 64,
-        "snapshot-0001",
-    ]
+    lineage = "postgres:model_ready.forecast_training_view:sha256:" + "a" * 64
+    assert lineage in first["source_snapshot_ids"]
+    # lineage plus the 28 daily source snapshots of the w4 observation window
+    assert len(first["source_snapshot_ids"]) == 29
     assert set(first["features"]) == set(MODEL_SPECS["forecastops"].feature_columns)
     assert "daily_net_revenue" not in first["features"]
-    assert first["labels"]["daily_net_revenue"] > 0
+    assert first["labels"][MODEL_SPECS["forecastops"].label_name] > 0
 
 
 def test_prepare_rows_rejects_mock_fixture_or_seed_lineage() -> None:
@@ -834,12 +850,7 @@ def test_prepare_rows_requires_source_lineage_and_strict_causal_time() -> None:
 
 
 def test_prepare_rows_allows_labels_to_mature_after_prediction_origin() -> None:
-    rows = _raw_forecast_rows(120)
-    maturity = datetime(2026, 7, 30, tzinfo=UTC)
-    for row in rows:
-        row["label_maturity_time"] = maturity
-
-    prepared = prepare_model_rows(MODEL_SPECS["forecastops"], _loaded(rows))
+    prepared = prepare_model_rows(MODEL_SPECS["forecastops"], _loaded(_raw_forecast_rows(120)))
 
     assert (
         prepared[0].mapping["feature_snapshot_time"] < prepared[0].mapping["prediction_origin_time"]
@@ -869,7 +880,12 @@ def test_temporal_validation_uses_future_holdout_and_segment_gates() -> None:
 
     class PerfectEstimator:
         def predict(self, rows: list[dict[str, Any]]) -> tuple[float, ...]:
-            return tuple(float(row["revenue_lag_1"]) + 5.0 for row in rows)
+            # daily revenue rises 10/day per store, so the horizon average is
+            # revenue_lag_1 + 5 + 5 * (horizon_days - 1) = lag + 35 * weeks.
+            return tuple(
+                float(row["revenue_lag_1"]) + 35.0 * float(row["horizon_weeks"])
+                for row in rows
+            )
 
         def predict_interval(
             self,
@@ -912,8 +928,8 @@ def test_forecast_binding_executes_actual_lightgbm_temporal_training() -> None:
     prepared = prepare_model_rows(spec, _loaded(_raw_forecast_rows(120)))
     training, holdout = _temporal_split(prepared, holdout_fraction=0.20)
     report = _validate_regression_temporally(spec, training, holdout)
-    assert report.algorithm == "lightgbm_quantile"
-    assert report.training_rows + report.holdout_rows == 120
+    assert report.algorithm == "lightgbm_regressor"
+    assert report.training_rows + report.holdout_rows == 76
     assert report.passed
     assert np_is_finite(report.metrics["normalized_mae"])
 
@@ -925,7 +941,10 @@ def test_segment_validation_fails_when_holdout_has_no_sufficient_segment() -> No
 
     class Estimator:
         def predict(self, rows: list[dict[str, Any]]) -> tuple[float, ...]:
-            return tuple(float(row["revenue_lag_1"]) + 5.0 for row in rows)
+            return tuple(
+                float(row["revenue_lag_1"]) + 35.0 * float(row["horizon_weeks"])
+                for row in rows
+            )
 
         def predict_interval(
             self,
@@ -976,6 +995,285 @@ def test_promotion_approval_is_version_bound_and_prohibits_self_review() -> None
             version="2026.07.24.1",
             requested_by="ml-training-operator",
         )
+
+
+class _RacedReleaseRepository(InMemoryLearningHubRepository):
+    """Serves one stale release revision, as if a concurrent release landed
+    between the promotion wrapper's revision read and the release guard."""
+
+    stale_revision_once: int | None = None
+
+    def get_release_revision(self, model_name: str) -> int:
+        if self.stale_revision_once is not None:
+            stale, self.stale_revision_once = self.stale_revision_once, None
+            return stale
+        return super().get_release_revision(model_name)
+
+
+def _promotion_application(
+    repository: InMemoryLearningHubRepository | None = None,
+) -> BoundedModelTrainingRelease:
+    service = LearningHubService(repository=repository)
+    store = GcsArtifactStore(
+        "gs://oday-model-artifacts/production",
+        FakeGcsTransport(),
+    )
+    return BoundedModelTrainingRelease(
+        source=SimpleNamespace(),
+        service=service,
+        artifact_store=store,
+        git_sha="abc1234",
+        actor="ml-training-operator",
+    )
+
+
+def _register_promotable_candidate(
+    application: BoundedModelTrainingRelease,
+    version: str,
+) -> None:
+    service = application.service
+    snapshot = service.register_dataset_snapshot(
+        dataset_rows(),
+        dataset_snapshot_id=f"{DEFAULT_MODEL_NAME}-training-{version}",
+    )
+    validation = service.validate_candidate(
+        model_name=DEFAULT_MODEL_NAME,
+        model_version=version,
+        dataset_snapshot_id=snapshot.dataset_snapshot_id,
+        metrics={"w4_smape": 0.11, "p80_coverage": 0.82},
+        baseline_metrics={"w4_smape": 0.15, "p80_coverage": 0.78},
+        thresholds=(
+            MetricThreshold("w4_smape", max_value=0.12),
+            MetricThreshold("p80_coverage", min_value=0.80),
+        ),
+        segment_metrics=(
+            SegmentMetric(
+                segment_name="region",
+                segment_value="north",
+                metrics={"w4_smape": 0.10},
+                record_count=1,
+            ),
+        ),
+        calibration_summary={"p80_coverage": 0.82},
+    )
+    assert validation.passed
+    artifact = application.artifact_store.put_artifact(
+        model_name=DEFAULT_MODEL_NAME,
+        version=version,
+        kind="model",
+        data=f"trained-model-{version}".encode(),
+        metadata={"dataset_snapshot_id": snapshot.dataset_snapshot_id},
+    )
+    candidate = model_version(version, snapshot.dataset_snapshot_id)._replace(
+        artifact_uri=artifact.uri,
+        monitoring_config={"artifact_sha256": artifact.content_digest},
+    )
+    service.register_model_version(
+        model_version=candidate,
+        model_card=model_card(
+            version,
+            snapshot.dataset_snapshot_id,
+            validation.validation_run_id,
+        ),
+        validation_run=validation,
+    )
+
+
+def test_promote_first_success_and_identical_replay_share_one_durable_release() -> None:
+    spec = MODEL_SPECS["forecastops"]
+    assert spec.production_release_enabled
+    assert spec.model_name == DEFAULT_MODEL_NAME
+    application = _promotion_application()
+    repository = application.service.repository
+    version = "2026.07.24.1"
+    _register_promotable_candidate(application, version)
+    approval_payload = _approval(model_version=version)
+
+    first = application.promote(
+        spec=spec,
+        version=version,
+        approval_payload=approval_payload,
+        rollback_target=None,
+    )
+
+    assert first["status"] == "promoted"
+    assert first["replayed"] is False
+    assert first["release_revision"] == 1
+    assert repository.get_alias(DEFAULT_MODEL_NAME, ModelAlias.SHADOW).version == version
+    sagas = repository.list_release_sagas(DEFAULT_MODEL_NAME)
+    assert [saga.state for saga in sagas] == [ReleaseSagaState.COMPLETED]
+    approvals_after_first = repository.get_model_card(DEFAULT_MODEL_NAME, version).approvals
+
+    # Identical replay against the normal post-commit repository state: the
+    # release revision has already advanced, so only approval-bound saga
+    # resolution can return the durable decision instead of a conflict.
+    replay = application.promote(
+        spec=spec,
+        version=version,
+        approval_payload=approval_payload,
+        rollback_target=None,
+    )
+
+    assert replay["status"] == "promoted"
+    assert replay["replayed"] is True
+    assert replay["release_id"] == first["release_id"]
+    assert replay["release_revision"] == first["release_revision"]
+    assert replay["approval_sha256"] == first["approval_sha256"]
+    assert repository.get_release_revision(DEFAULT_MODEL_NAME) == 1
+    assert len(repository.list_release_sagas(DEFAULT_MODEL_NAME)) == 1
+    assert len(repository.list_release_decisions()) == 1
+    assert repository.get_alias(DEFAULT_MODEL_NAME, ModelAlias.SHADOW).version == version
+    assert (
+        repository.get_model_card(DEFAULT_MODEL_NAME, version).approvals
+        == approvals_after_first
+    )
+
+
+def test_promote_rejects_reusing_an_approval_for_a_different_command() -> None:
+    spec = MODEL_SPECS["forecastops"]
+    application = _promotion_application()
+    version = "2026.07.24.1"
+    _register_promotable_candidate(application, version)
+    application.promote(
+        spec=spec,
+        version=version,
+        approval_payload=_approval(model_version=version),
+        rollback_target=None,
+    )
+    with pytest.raises(ModelTrainingConfigurationError, match="different release command"):
+        application.promote(
+            spec=spec,
+            version=version,
+            approval_payload=_approval(
+                model_version=version,
+                release_type="canary",
+            ),
+            rollback_target="2026.07.23.1",
+        )
+
+
+@pytest.mark.parametrize(
+    ("field", "mutated_value"),
+    (
+        ("reason", "Approval reason was changed after commit"),
+        ("approver", "different-reviewer"),
+        ("approved_at", "2026-07-24T12:00:01Z"),
+    ),
+)
+def test_promote_replay_rejects_post_commit_approval_mutation(
+    field: str,
+    mutated_value: str,
+) -> None:
+    spec = MODEL_SPECS["forecastops"]
+    application = _promotion_application()
+    version = "2026.07.24.1"
+    _register_promotable_candidate(application, version)
+    approval = _approval(model_version=version)
+    application.promote(
+        spec=spec,
+        version=version,
+        approval_payload=approval,
+        rollback_target=None,
+    )
+
+    with pytest.raises(ModelTrainingConfigurationError, match="different release command"):
+        application.promote(
+            spec=spec,
+            version=version,
+            approval_payload={**approval, field: mutated_value},
+            rollback_target=None,
+        )
+
+
+def test_promote_replay_rejects_mutated_persisted_approval_digest() -> None:
+    spec = MODEL_SPECS["forecastops"]
+    application = _promotion_application()
+    repository = application.service.repository
+    version = "2026.07.24.1"
+    _register_promotable_candidate(application, version)
+    approval = _approval(model_version=version)
+    application.promote(
+        spec=spec,
+        version=version,
+        approval_payload=approval,
+        rollback_target=None,
+    )
+    saga = repository.list_release_sagas(DEFAULT_MODEL_NAME)[0]
+    repository.save_release_saga(
+        saga.evolve(
+            command={
+                **saga.command,
+                "approval_sha256": "sha256:" + "0" * 64,
+            }
+        )
+    )
+
+    with pytest.raises(ModelTrainingConfigurationError, match="different release command"):
+        application.promote(
+            spec=spec,
+            version=version,
+            approval_payload=approval,
+            rollback_target=None,
+        )
+
+
+def test_promote_incomplete_saga_replay_requires_operator_recovery() -> None:
+    spec = MODEL_SPECS["forecastops"]
+    application = _promotion_application()
+    version = "2026.07.24.1"
+    _register_promotable_candidate(application, version)
+    application.promote(
+        spec=spec,
+        version=version,
+        approval_payload=_approval(model_version=version),
+        rollback_target=None,
+    )
+    repository = application.service.repository
+    saga = repository.list_release_sagas(DEFAULT_MODEL_NAME)[0]
+    repository.save_release_saga(saga.evolve(state=ReleaseSagaState.COMPENSATING))
+    with pytest.raises(ModelTrainingConfigurationError, match="operator recovery"):
+        application.promote(
+            spec=spec,
+            version=version,
+            approval_payload=_approval(model_version=version),
+            rollback_target=None,
+        )
+
+
+def test_promote_rejects_stale_release_revision_without_mutation() -> None:
+    spec = MODEL_SPECS["forecastops"]
+    repository = _RacedReleaseRepository()
+    application = _promotion_application(repository)
+    first_version = "2026.07.24.1"
+    _register_promotable_candidate(application, first_version)
+    application.promote(
+        spec=spec,
+        version=first_version,
+        approval_payload=_approval(model_version=first_version),
+        rollback_target=None,
+    )
+    assert repository.get_release_revision(DEFAULT_MODEL_NAME) == 1
+
+    second_version = "2026.07.25.1"
+    _register_promotable_candidate(application, second_version)
+    repository.stale_revision_once = 0
+    with pytest.raises(LearningHubConflictError, match="release revision conflict"):
+        application.promote(
+            spec=spec,
+            version=second_version,
+            approval_payload=_approval(
+                approval_id="MRB-2026-0018",
+                model_version=second_version,
+            ),
+            rollback_target=None,
+        )
+
+    assert repository.get_release_revision(DEFAULT_MODEL_NAME) == 1
+    assert repository.get_alias(DEFAULT_MODEL_NAME, ModelAlias.SHADOW).version == first_version
+    assert repository.get_alias(DEFAULT_MODEL_NAME, ModelAlias.PRODUCTION) is None
+    sagas = repository.list_release_sagas(DEFAULT_MODEL_NAME)
+    assert len(sagas) == 1
+    assert sagas[0].command["version"] == first_version
 
 
 def test_listing_property_avm_production_promotion_is_explicitly_blocked() -> None:

@@ -41,6 +41,7 @@ from shared.jobs.queue import JobRequest
 from tests.integration._authz import FORECASTOPS_HEADERS
 
 PREDICTION_TIME = datetime(2026, 6, 27, 9, 0, tzinfo=UTC)
+TENANT_ID = FORECASTOPS_HEADERS["x-tenant-id"]
 
 
 @pytest.fixture
@@ -149,6 +150,7 @@ def test_forecast_service_writes_survive_restart(db_path) -> None:
         result = service.forecast(
             [
                 ForecastInput(
+                    tenant_id=TENANT_ID,
                     store_id="store-001",
                     observations=observations,
                     prediction_origin_time=PREDICTION_TIME,
@@ -166,11 +168,11 @@ def test_forecast_service_writes_survive_restart(db_path) -> None:
     try:
         repo = reopened.forecastops_repository
         assert isinstance(repo, DurableForecastOpsRepository)
-        latest = repo.latest_forecasts()
+        latest = repo.latest_forecasts(TENANT_ID)
         assert len(latest) == 1
         assert latest[0].forecast_output_id == first_id
-        assert len(repo.history("store-001")) == 1
-        assert len(repo.list_alerts()) >= 1
+        assert len(repo.history(TENANT_ID, "store-001")) == 1
+        assert len(repo.list_alerts(TENANT_ID)) >= 1
     finally:
         reopened.engine.close()
 
@@ -237,8 +239,8 @@ def test_durable_forecastops_acknowledge_and_handoff_api_survive_restart(db_path
 
     reopened = _durable_bundle(db_path)
     try:
-        alert = reopened.forecastops_repository.get_alert(alert_id)
-        handoff = reopened.forecastops_repository.get_handoff(handoff_id)
+        alert = reopened.forecastops_repository.get_alert(TENANT_ID, alert_id)
+        handoff = reopened.forecastops_repository.get_handoff(TENANT_ID, handoff_id)
         assert alert is not None
         assert alert.status == "acknowledged"
         assert alert.acknowledged_by == "ops-manager-durable"
@@ -283,7 +285,7 @@ def test_api_jobs_and_audit_persist_across_restart(db_path) -> None:
     correlation_id = "corr-pv-009"
     try:
         app = create_app(persistence=bundle)
-        client = TestClient(app)
+        client = TestClient(app, headers=FORECASTOPS_HEADERS)
         resp = client.post(
             "/jobs",
             json={"job_type": "forecast", "payload": {"store_id": "store-001"}},
@@ -301,7 +303,7 @@ def test_api_jobs_and_audit_persist_across_restart(db_path) -> None:
     reopened = _durable_bundle(db_path)
     try:
         app2 = create_app(persistence=reopened)
-        client2 = TestClient(app2)
+        client2 = TestClient(app2, headers=FORECASTOPS_HEADERS)
 
         # The job written before restart is still retrievable.
         got = client2.get(f"/jobs/{job_id}")
