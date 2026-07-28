@@ -144,7 +144,7 @@ def _run_deploy_config_gate(
     forecast_engine: str | None,
     forecast_model: str | None,
 ) -> subprocess.CompletedProcess[str]:
-    for command in ("python3", "gcloud", "docker"):
+    for command in ("python3", "uv", "gcloud", "docker"):
         stub = tmp_path / command
         stub.write_text(
             '#!/bin/sh\necho "PREFLIGHT_REACHED" >&2\nexit 97\n',
@@ -223,6 +223,102 @@ def test_deploy_accepts_supported_forecast_binding_and_enters_preflight(
 
     assert result.returncode == 97
     assert "PREFLIGHT_REACHED" in result.stderr
+
+
+def test_deploy_script_runs_repository_validators_with_locked_python() -> None:
+    """Every validator with repository imports must resolve from uv.lock."""
+    text = DEPLOY_SCRIPT.read_text(encoding="utf-8")
+
+    assert "for cmd in python3 uv gcloud docker; do" in text
+    assert 'uv run --frozen python "$@"' in text
+    for invocation in (
+        "run_locked_python "
+        "scripts/deployment/validate_cloud_run_live_deployment.py preflight",
+        "run_locked_python "
+        "scripts/deployment/validate_cloud_run_live_deployment.py jobs-smoke",
+        "run_locked_python "
+        "scripts/deployment/validate_cloud_run_live_deployment.py compatibility-smoke",
+        "run_locked_python "
+        "scripts/deployment/validate_cloud_run_live_deployment.py smoke",
+        "run_locked_python scripts/e2e/check_live_e2e_gate.py",
+    ):
+        assert invocation in text
+
+    assert "python3 scripts/deployment/validate_cloud_run_live_deployment.py" not in text
+    assert "python3 scripts/e2e/check_live_e2e_gate.py" not in text
+    assert text.count("python3 - ") == 2
+    assert text.count("imports only Python's standard library") == 2
+
+
+def test_deploy_preflight_imports_runtime_dependencies_via_locked_python(
+    tmp_path: Path,
+) -> None:
+    """Reproduce run 30331484524 with bare Python blocked.
+
+    The failing run had already synced uv.lock, but the deploy script called its
+    preflight with system ``python3`` and could not import httpx or pydantic.
+    This harness makes any non-inline system-Python call fail explicitly; the
+    real preflight must still pass before the stubbed gcloud boundary stops the
+    deployment.
+    """
+    python_stub = tmp_path / "python3"
+    python_stub.write_text(
+        "#!/bin/sh\n"
+        'if [ "${1:-}" != "-" ]; then\n'
+        '  echo "BARE_PYTHON_VALIDATOR_INVOKED" >&2\n'
+        "  exit 86\n"
+        "fi\n"
+        f'exec "{sys.executable}" "$@"\n',
+        encoding="utf-8",
+    )
+    python_stub.chmod(0o755)
+
+    for command in ("gcloud", "docker"):
+        stub = tmp_path / command
+        stub.write_text(
+            '#!/bin/sh\necho "LOCKED_PREFLIGHT_REACHED_GCLOUD" >&2\nexit 97\n',
+            encoding="utf-8",
+        )
+        stub.chmod(0o755)
+
+    report_path = tmp_path / "preflight.json"
+    env = complete_env()
+    env.update(
+        {
+            "PATH": f"{tmp_path}{os.pathsep}{os.environ['PATH']}",
+            "API_SERVICE": "oday-api",
+            "WEB_SERVICE": "oday-web",
+            "MIGRATION_JOB": "oday-migrate",
+            "WORKER_JOB": "oday-worker",
+            "SCHEDULER_JOB": "oday-scheduler",
+            "WORKER_SCHEDULE_NAME": "oday-worker-trigger",
+            "SCHEDULER_SCHEDULE_NAME": "oday-scheduler-trigger",
+            "ODP_CLOUD_SCHEDULER_SERVICE_ACCOUNT": "scheduler@example.test",
+            "ODP_OPERATOR_SMOKE_SERVICE_ACCOUNT": "smoke@example.test",
+            "ODP_WORKER_CRON": "*/5 * * * *",
+            "ODP_SCHEDULER_CRON": "0 * * * *",
+            "ODP_SCHEDULER_TIME_ZONE": "Asia/Taipei",
+            "PREFLIGHT_REPORT": str(report_path),
+            "JOB_REPORT_DIR": str(tmp_path / "job-reports"),
+        }
+    )
+    result = subprocess.run(
+        ["/bin/bash", str(DEPLOY_SCRIPT)],
+        cwd=ROOT,
+        env={**os.environ, **env},
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+
+    assert result.returncode == 97
+    assert "BARE_PYTHON_VALIDATOR_INVOKED" not in result.stderr
+    assert "LOCKED_PREFLIGHT_REACHED_GCLOUD" in result.stderr
+    report = json.loads(report_path.read_text(encoding="utf-8"))
+    assert report["ok"] is True
+    checks = {check["name"]: check for check in report["checks"]}
+    assert checks["repository:provider_registry_import"]["ok"] is True
+    assert checks["repository:operator_bootstrap_data_source"]["ok"] is True
 
 
 def test_preflight_reports_current_repository_runtime_capabilities() -> None:
