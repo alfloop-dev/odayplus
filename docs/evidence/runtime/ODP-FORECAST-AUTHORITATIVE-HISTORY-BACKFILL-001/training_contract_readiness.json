@@ -1,0 +1,120 @@
+{
+  "probe": "training-contract-readiness-probe.py",
+  "generated_at": "2026-07-29T01:07:27.587137+00:00",
+  "question": "Can ODP-PRODUCTION-MODEL-REGISTRY-001 resume training against the PG16 model-ready view as it currently stands?",
+  "method": "Runs the registry's own PostgresModelReadySource.inventory/load and release.prepare_model_rows against the live target; no rule is restated.",
+  "model_contract": {
+    "horizon_weeks": [
+      4,
+      8,
+      12,
+      24
+    ],
+    "shortest_horizon_days": 28,
+    "minimum_rows": 90,
+    "minimum_segment_rows": 7,
+    "holdout_fraction": 0.2,
+    "note": "The shortest window the training path builds is 28 days, so h7/h14 are not training inputs; h28 is the first usable horizon."
+  },
+  "view_state": {
+    "relation": "model_ready.forecast_training_view",
+    "rows_total": 24441,
+    "stores_total": 597,
+    "date_min": "2026-05-22",
+    "date_max": "2026-07-27",
+    "rows_training_eligible": 5210,
+    "stores_training_eligible": 459,
+    "date_min_training_eligible": "2026-06-19",
+    "date_max_training_eligible": "2026-07-01"
+  },
+  "gates": [
+    {
+      "gate": "eligible_rows_exist",
+      "status": "PASS",
+      "detail": "5210 eligible rows over 459 stores, 2026-06-19..2026-07-01"
+    },
+    {
+      "gate": "inventory_ready",
+      "status": "PASS",
+      "detail": "the relation declares a model-ready contract and is trainable"
+    },
+    {
+      "gate": "loader_returns_rows",
+      "status": "PASS",
+      "detail": "5210 eligible labeled rows loaded inside bounds",
+      "rows_loaded": 5210
+    },
+    {
+      "gate": "horizon_expansion_and_row_gates",
+      "status": "FAIL",
+      "detail": "forecastops: daily forecast rows do not contain a complete canonical horizon window"
+    }
+  ],
+  "bounds": {
+    "start": "2026-05-22T00:00:00+00:00",
+    "end": "2026-07-28T00:00:00+00:00",
+    "max_rows": 250000
+  },
+  "inventory": {
+    "model_key": "forecastops",
+    "relation": "model_ready.forecast_training_view",
+    "contract_registry_exists": true,
+    "contract_version": "forecast-training-view-v2",
+    "contract_trainable": true,
+    "blocked_reason": null,
+    "relation_exists": true,
+    "available_columns": [
+      "view_name",
+      "view_version",
+      "entity_id",
+      "tenant_id",
+      "store_id",
+      "date",
+      "feature_snapshot_time",
+      "prediction_origin_time",
+      "label_maturity_time",
+      "daily_net_revenue",
+      "revenue_lag_1",
+      "revenue_lag_7",
+      "rolling_mean_7",
+      "rolling_mean_28",
+      "source_snapshot_ids",
+      "data_quality_score",
+      "confidence",
+      "is_training_eligible",
+      "is_scoring_eligible",
+      "exclusion_reason"
+    ],
+    "missing_columns": [],
+    "eligible_row_count": 5210,
+    "labeled_row_count": 5210,
+    "temporal_min": "2026-06-19",
+    "temporal_max": "2026-07-01",
+    "train_row_count": 3126,
+    "validation_row_count": 1042,
+    "test_row_count": 1042,
+    "tenant_count": 438,
+    "source_snapshot_count": 283488,
+    "ready": true
+  },
+  "horizon_expansion": {
+    "expanded_rows": 0,
+    "error": "daily forecast rows do not contain a complete canonical horizon window",
+    "eligible_span_days": 13,
+    "per_horizon_weeks": {
+      "4": 0,
+      "8": 0,
+      "12": 0,
+      "24": 0
+    }
+  },
+  "verdict": {
+    "data_gates_passed": false,
+    "blocking_gate": "horizon_expansion_and_row_gates",
+    "gates_passed": 3,
+    "gates_evaluated": 4,
+    "not_evaluated": [
+      "_temporal_validation (fits a regression; model-quality gate owned by ODP-PRODUCTION-MODEL-REGISTRY-001, not by this backfill)"
+    ]
+  }
+}

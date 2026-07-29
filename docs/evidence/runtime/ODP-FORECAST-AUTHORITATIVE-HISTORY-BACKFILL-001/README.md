@@ -43,7 +43,7 @@ into its output.
 | `horizon_critical_path_after_s4.json` | — | The same probe re-run once `-s4` was real rather than projected. The backwards family now reads h28 = 406 against the gap-fill family's 2, and `landed_measured` carries the first real 28-day window (see §7). |
 | `donor_projection_backtest.json` | — | The donor rule behind those projections, scored against a blind holdout — the four dates `-s4` landed after the projection was cached. Per-date recall/precision, the continuity score island length actually depends on, and the attestation assumption (see §7). |
 | `runbook/donor-projection-backtest.py` | — | The backtest that produced it. Imports the donor logic from the probe under test rather than restating it; read-only, and it scores no in-flight slice. |
-| `backwards_landing_validation.json` | — | The backwards projection scored against backwards dates as they land, closing the distance limit the `-s4` backtest leaves open. First committed at zero scored dates — the method and its guards fixed before any backwards date could be scored; now 3 dates scored, 0 upper-bound breaches (see §7). |
+| `backwards_landing_validation.json` | — | The backwards projection scored against backwards dates as they land, closing the distance limit the `-s4` backtest leaves open. First committed at zero scored dates — the method and its guards fixed before any backwards date could be scored; now all 6 of `-b1`'s scoreable dates, 0 upper-bound breaches (see §7). |
 | `runbook/backwards-landing-validation.py` | — | The probe that produces it. **Re-run after each backwards slice completes**; it strengthens monotonically as `-b2`..`-b4` land. |
 | `backwards_window_store_density.json` | — | Whether the backwards windows actually hold the stores the critical path donates to them: no gap day across the 24-day span, and 421 stores trading every day of it against an independently projected 419 (see §7). Carries its own grain and control range. |
 | `backwards_window_store_density_probe.pod.yaml` | — | The exact read-only Pod that produced it. One aggregation, counts only; place ids never leave the pod. |
@@ -57,6 +57,9 @@ into its output.
 | `lineage_convergence_rehearsal.json` | — | The Defect E fix rehearsed on the **live** pair: the real `activate` relation chain run twice inside a rolled-back transaction, fix backed out vs in place, so the fix is proven where it will actually run rather than only on a scratch schema (see §8). Carries per-relation counts and the chain's wall clock. |
 | `runbook/lineage-convergence-rehearsal.py` | — | The rehearsal that produced it. Same advisory lock and statement timeout as `run_activation`; both arms roll back and neither commits. |
 | `settle_state.json` | — | Written by the finisher **immediately before** `activate`: the incomplete partitions and abandoned-lineage ownership that were true at that moment. The two conditions the gate no longer blocks on, stated instead of hidden (see §7, v6). |
+| `training_contract_readiness.json` | — | Criterion 5 answered by running the registry's own loader and `prepare_model_rows` against the live target rather than restating their rules: 3 of 4 data gates pass and horizon expansion fails, because the target's eligible span is 13 days against a 28-day shortest horizon. Also shows the target is frozen at an old activation — `SOURCE_RUN_NOT_COMPLETE` from 2026-07-02 on (see §9). |
+| `runbook/training-contract-readiness-probe.py` | — | The probe that produced it. Imports the code under test; stops before `_temporal_validation`, which is the registry task's model-quality gate, and names it under `not_evaluated`. |
+| `runbook/training-contract-probe-runner.sh` | — | Runs that probe detached, like the keepers. A worker turn is shorter than the probe, and a probe killed with its worker leaves a PostgreSQL backend still executing (see §9). |
 
 Reproduce any of them with the DSN pair and the Cloud SQL proxy attestation in
 the environment:
@@ -1327,7 +1330,95 @@ and with Defect E fixed there is no longer a known population of
 lineage-less transactions for it to mask. Naming it is what this evidence owes
 the reviewer; changing it is not this task's call.
 
-## 9. After state
+## 9. Criterion 5, measured instead of assumed — and what it exposes
+
+Four of this task's five acceptance criteria had receipts. The fifth —
+"ODP-PRODUCTION-MODEL-REGISTRY-001 can resume training" — had none, and none of
+the coverage probes answers it, because they all ask how many days landed rather
+than whether the thing that consumes the view can start. Those differ by every
+gate the consumer applies that the coverage probes never model.
+`runbook/training-contract-readiness-probe.py` closes that, on the rule the
+donor backtest set: **import the code under test, never restate it.** It builds
+the real `PostgresModelReadySource` against the live target, calls the real
+`inventory()`/`load()` with the real `MODEL_SPECS["forecastops"]`, and hands the
+result to the real `prepare_model_rows`, so the gates are evaluated in the order
+`train()` applies them. Receipt: `training_contract_readiness.json`.
+
+It stops before `_temporal_validation`, which fits a regression and scores it
+against `max_normalized_mae`/`min_p80_coverage`. That is a model-quality gate
+owned by the registry task, it needs LightGBM, and a history backfill cannot be
+said to pass or fail it. Claiming a gate this probe did not run would be the
+same mistake as the finisher's demoted measurements, so the receipt names it
+under `not_evaluated`.
+
+**Result: 3 of 4 data gates pass, and the run is blocked at horizon expansion.**
+
+| gate | verdict |
+| --- | --- |
+| `eligible_rows_exist` | PASS — 5 210 eligible rows over 459 stores |
+| `inventory_ready` | PASS — contract `forecast-training-view-v2`, trainable |
+| `loader_returns_rows` | PASS — 5 210 eligible labeled rows loaded |
+| `horizon_expansion_and_row_gates` | **FAIL** — "daily forecast rows do not contain a complete canonical horizon window" |
+
+The failure is the expected one and it lands exactly where §7 predicted it
+would. `FORECASTOPS_HORIZON_WEEKS = (4, 8, 12, 24)`, so the shortest window
+`expand_forecast_horizon_rows` will build is **28 days** — h7 and h14, the
+horizons this task has been reporting all along, are not training inputs at all.
+The target's eligible span is **13 days**, `2026-06-19..2026-07-01`, and 13 < 28,
+so **every one of the four declared horizons expands to zero rows**. That the
+critical path was independently placed at `-b3` *because* `-b3` is the slice that
+moves h28 is now a measured agreement rather than a coincidence.
+
+**But the number that matters most here is the eligible span's two endpoints,
+and neither is what a reader of §7 would expect.**
+
+- The floor, `2026-06-19`, is exactly 28 days after `2026-05-22` — the target's
+  own `min(date)`. So the target still begins at the *pre-`-b1`* floor: none of
+  `-b1`'s six days, and none of `-s3`/`-s4`'s, have reached it.
+- The ceiling, `2026-07-01`, is not a maturity boundary. Measured directly from
+  the view's `exclusion_reason`, 2026-06-28 through 07-01 each carry ~434 eligible
+  stores, and then **2026-07-02 holds 334 rows of which zero are eligible, every
+  one `SOURCE_RUN_NOT_COMPLETE`**.
+
+Both endpoints say the same thing: **the PG16 target is frozen at an old
+activation.** That is not a contradiction of §7's `h28 = 1` — it is the
+difference between two databases. `horizon-critical-path-probe.py` reads
+`ODP_LEGACY_DATABASE_URL`, the PG15 **source**, and re-implements the view's
+eligibility there; this probe reads `ODAY_DATABASE_URL`, the PG16 **target**,
+through the real view. So every h7/h14/h28 figure in §7 is a source-side
+projection of what activation *will* produce, and the gap between the two is
+precisely the activation that has not run yet. Worth stating plainly because it
+is easy to misread a source-side projection as a description of the target.
+
+That also makes the Defect B fix load-bearing rather than incidental. The
+frozen `SOURCE_RUN_NOT_COMPLETE` rows from 07-02 onward are the exact shape
+`ON CONFLICT DO NOTHING` could never revisit; `refresh_key` (`10c0b78e`) is what
+lets the next activation reconsider them at all. So criterion 5 needs two
+distinct things, and only one of them is more ingestion: `-b3` for the 28-day
+span, and an activation carrying the Defect B fix to move the target off
+2026-07-01.
+
+Re-run this probe after activation. Until then it is a genuine pre-activation
+baseline — captured, like the landing validation, before it could report a pass.
+
+Two lessons from running it, both in the *reporting* path rather than anything
+under test, and both fixed in `c8c9a09b`. The loader returns `date` as an ISO
+**string**; the span calculation subtracted the cells directly and died with
+`TypeError: unsupported operand type(s) for -: 'str' and 'str'` — after a
+44-minute live run, at the exact moment the receipt was about to record the
+horizon-expansion failure, so the entire measurement was lost to a one-line type
+assumption in a helper that computes nothing anyone gates on. It now coerces via
+`_as_date`, and more importantly the whole descriptive helper is called through
+`_safe_expansion_shape`, which captures any unexpected error as a
+`describe_error` field. A measurement this expensive should degrade to a missing
+paragraph, never to a missing receipt. Third lesson, operational: run it
+**detached** (`runbook/training-contract-probe-runner.sh`). Launched as an
+ordinary child of a worker it dies with the worker and PostgreSQL does not
+notice — the first attempt left a backend still spilling to disk twenty minutes
+after its client was gone, competing for I/O with its own replacement. Terminate
+such a backend explicitly with `pg_terminate_backend`; it will not clear itself.
+
+## 10. After state
 
 Populated once `-s3`/`-s4`/`-s5` reach `Complete`, the source meets the settling
 condition above, and activation runs. See
