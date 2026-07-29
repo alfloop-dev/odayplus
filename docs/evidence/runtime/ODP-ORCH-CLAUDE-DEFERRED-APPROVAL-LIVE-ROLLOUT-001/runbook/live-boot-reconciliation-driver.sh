@@ -622,8 +622,21 @@ RUNNER_GONE=no; pid_owned_by_run "$WORKER_PID" "$WORKER_RUN_ID" || RUNNER_GONE=y
 # still alive when the supervisor comes back, reconcile_runtime_on_boot() sees a
 # live PID and simply refreshes the lease - the missing-process branch this task
 # has to prove is never reached, and `proof_complete` would mean nothing.
-# `pid_owned_by_run` rather than `alive`, so a recycled pid reads as "still
-# there" and aborts, instead of being mistaken for a clean exit.
+#
+# STOP GATE 3 correction. What `pid_owned_by_run` buys here is narrow and must
+# not be overstated: the gate blocks the restart only while the *original*,
+# run-id-bound process is still running. A pid recycled by some unrelated
+# process does NOT abort - it reads as "the original runner is gone", which is
+# the property this gate actually needs.
+#
+# That does leave one honest gap, because the supervisor's own `pid_is_alive()`
+# is pid-only with no run-id binding: under pid recycling the supervisor would
+# see a live pid, refresh the lease and never take the deferred branch, while
+# this gate reads "gone". The run cannot pass vacuously anyway - the lease-
+# refresh path emits no `worker_deferred_approval_recorded/_correlated` event,
+# so `assert-boot-reconciliation.py` fails and the driver aborts there instead.
+# The recycling window is also ~0: the check runs seconds after the runner exit,
+# under a 4-million pid space.
 [[ "$RUNNER_GONE" == yes ]] || fail abort_worker_runner_alive 46 \
   "the test runner (pid $WORKER_PID, run $WORKER_RUN_ID) is still alive after the receipt; boot reconciliation would refresh its lease instead of adopting the deferred receipt"
 

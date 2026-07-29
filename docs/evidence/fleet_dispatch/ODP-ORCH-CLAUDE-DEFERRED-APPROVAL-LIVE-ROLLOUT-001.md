@@ -44,9 +44,12 @@ Not executed. The rollout window has never been opened: as of
 2026-07-29T04:00Z the supervisor is still on its pre-task `MainPID=1197865`,
 `KillMode` is still the shipped `control-group`, the drop-in directory is empty,
 `/tmp/odp-rollout-driver/` does not exist and no approval exists for any test run
-in either queue. The driver is at revision 3 after two coordinator STOP GATEs
-(six findings, then seven) and needs a coordinator recheck before the window is
-opened. See `runbook/CONTINUATION.md` for the finding-by-finding mapping.
+in either queue. The driver is at revision 4 after three coordinator STOP GATEs
+(six findings, then seven, then two) and needs a coordinator recheck before the
+window is opened. See `runbook/CONTINUATION.md` for the finding-by-finding
+mapping. STOP GATE 3's two findings were documentation defects - a vacuously
+clean `git diff --check` receipt and a backwards recycled-pid narrative - so
+revision 4 changes no gate logic.
 
 ## Fleet impact
 

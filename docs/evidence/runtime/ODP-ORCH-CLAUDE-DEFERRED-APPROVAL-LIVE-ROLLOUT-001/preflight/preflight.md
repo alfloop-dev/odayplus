@@ -124,7 +124,7 @@ runtime_root_pointer: /home/lupin/oday-plus-supervisor-live
   1197865    6884       49:08 python3 -u .orchestrator/supervisor.py --verbose
   1208697 1197865       41:52 [python3] <defunct>
   1249622 1197865       11:19 /usr/bin/python3 /home/lupin/oday-plus-supervisor-live/.orchestrator/worker_runner.py --run-id claude-20260729T031503Z-5e9cfd48 --he
-  1249624 1249622       11:19 /home/lupin/.vscode-server/extensions/anthropic.claude-code-2.1.220-linux-x64/resources/native-binary/claude -p 你被喚醒了。  
+  1249624 1249622       11:19 /home/lupin/.vscode-server/extensions/anthropic.claude-code-2.1.220-linux-x64/resources/native-binary/claude -p 你被喚醒了。
 
 ## STOP GATE 2 recheck (2026-07-29T04:0xZ, driver revision 3)
 re_verified_deployed_live_sha256: f0b419cb3fbdff8a3dfbd5fcc9ee7dfd06b005f258a8f13d556e922d06995ee8
@@ -133,6 +133,27 @@ merge_commit_blob_sha256: f0b419cb3fbdff8a3dfbd5fcc9ee7dfd06b005f258a8f13d556e92
 bash_n_driver: OK
 py_compile_assertion: OK
 selftest_assertion: 11/11 PASS -> assertion-selftest.txt
-selftest_driver_gates: 16/16 PASS -> driver-gate-selftest.txt
-git_diff_check: clean
+selftest_driver_gates: 15/15 PASS -> driver-gate-selftest.txt (earlier notes said 16/16; the script has 15 `check` calls and the receipt has 15 `ok` lines - see the STOP GATE 3 recheck)
+git_diff_check: RETRACTED - see the STOP GATE 3 recheck below. The command run
+  was a bare `git diff --check`, which only inspects unstaged changes to tracked
+  files; every file in this evidence directory was untracked at the time, so the
+  clean exit said nothing about them.
 live_state_unchanged_after_checks: MainPID=1197865 KillMode=control-group dropin=empty /tmp/odp-rollout-driver=absent
+
+## Correction applied to this file (STOP GATE 3, driver revision 4)
+Line 127 above - the captured `ps` line for the Claude worker - ended in two
+literal spaces, because the worker's `-p` prompt argument ends in a full-width
+`。` followed by trailing whitespace. Those two spaces were stripped so the
+tree passes `git diff --check`. No other byte of the captured output was
+altered; the command line itself, its pid and its elapsed time are as captured.
+
+## STOP GATE 3 recheck (2026-07-29, driver revision 4)
+scope_of_revision_4: documentation only - no gate logic, thresholds, exit codes
+  or ordering changed relative to revision 3
+bash_n_driver: OK
+py_compile_assertion: OK
+selftest_assertion: 11/11 PASS -> assertion-selftest.txt
+selftest_driver_gates: 15/15 PASS -> driver-gate-selftest.txt (earlier notes said 16/16; the script has 15 `check` calls and the receipt has 15 `ok` lines - see the STOP GATE 3 recheck)
+git_diff_check_against_merge_sha: `git diff --check 647970dae975f4008633a484cde1e63187035544` -> exit 0
+live_state_unchanged_after_checks: see the tail of this file; the live driver
+  has still never been executed

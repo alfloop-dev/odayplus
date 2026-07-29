@@ -30,22 +30,25 @@ What *is* real and already finished:
    hash `f0b419cb3fbdff8a3dfbd5fcc9ee7dfd06b005f258a8f13d556e922d06995ee8`,
    equal to the blob at the merge commit. Backups of the replaced files are at
    `/tmp/odp-rollout-backup/{live,control}-supervisor.py.bak`.
-2. **Preflight - done.** Test suites, Ruff, `git diff --check` and `py_compile`
-   all pass; raw output in `preflight/`.
+2. **Preflight - done.** Test suites, Ruff, `py_compile` and
+   `git diff --check 647970dae975f4008633a484cde1e63187035544` all pass; raw
+   output in `preflight/`. The against-merge-SHA form is the one that counts -
+   see STOP GATE 3 finding 1 below for why the earlier bare `git diff --check`
+   receipt was clean vacuously.
 3. **Assertion self-test - done.** `runbook/selftest-assertion.sh` replays 11
    synthetic activity-log slices through the acceptance assertion, including the
    exact pre-fix regression shape from RACE-001. Output:
    `preflight/assertion-selftest.txt`.
 4. **Driver gate self-test - done.** `live-boot-reconciliation-driver.sh
-   --selftest` exercises the STOP GATE 2 gates (16 checks). Output:
+   --selftest` exercises the STOP GATE 2 gates (15 checks). Output:
    `preflight/driver-gate-selftest.txt`.
 
 Both self-tests touch nothing live and are safe to re-run at any time.
 
 ## Why the window is still closed
 
-The driver has been blocked twice by the coordinator, and is now at **revision
-3**. Revisions 1 and 2 were never executed; do not resurrect either.
+The driver has been blocked three times by the coordinator, and is now at
+**revision 4**. Revisions 1-3 were never executed; do not resurrect any of them.
 
 ### STOP GATE 1 (2026-07-29T03:33:14Z) - six findings, answered in revision 2
 
@@ -60,7 +63,7 @@ gained a throwaway-unit probe of `KillMode=process` semantics.
 
 | # | finding | what revision 2 actually did | revision 3 |
 | --- | --- | --- | --- |
-| 1 | require the old test runner gone | recorded `runner_process_exited` and ignored it - with the runner alive, boot reconciliation refreshes the lease and never takes the deferred path, so a pass would be vacuous | hard gate `abort_worker_runner_alive` (exit 46), bound to the run id so a recycled pid aborts instead of reading as a clean exit |
+| 1 | require the old test runner gone | recorded `runner_process_exited` and ignored it - with the runner alive, boot reconciliation refreshes the lease and never takes the deferred path, so a pass would be vacuous | hard gate `abort_worker_runner_alive` (exit 46), bound to the run id so that only the *original* run-id-bound process blocks the restart (see the STOP GATE 3 correction below) |
 | 2 | require a new MainPID, non-zero and changed | printed `pid A -> pid B` and asserted nothing; MainPID=0 or an unchanged pid would have been read as a successful restart | bounded wait for a non-zero MainPID, then `abort_supervisor_pid_invalid` (47) and `abort_supervisor_pid_unchanged` (48) |
 | 3 | dead-man delay must exceed the bounded waits | flat `15min` against ~18min of legal waiting - a slow-but-valid run would trip its own safety net, pulling the drop-in and restarting the supervisor mid-window | every wait is a named constant; the delay is derived from their sum (**1130 s budget → 2030 s delay**) and `abort_deadman_budget` (42) enforces the inequality |
 | 4 | disarm/reset the dead-man on every exit | disarmed only on the clean path, so every abort left an armed timer that later restarted units behind the operator | disarm + `reset-failed` moved into `restore_all()`, which the EXIT trap and the clean path both call |
@@ -72,7 +75,50 @@ Token-exact matching in finding 5 is not a detail: every Claude worker's wake-up
 prompt contains the string `supervisor.py` inside one long `-p` argument, so a
 substring scan reports every worker on the box as a stray supervisor.
 
-**The gate is still closed.** Revision 3 needs a coordinator/reviewer recheck
+### STOP GATE 3 (2026-07-29T04:07:50Z) - two findings, answered in revision 4
+
+Both findings are about **this document and the driver's comments overclaiming
+what the code does**. No gate logic changed in revision 4; the executable
+behaviour of revision 3 is unchanged and the live state is still untouched.
+
+**(1) The `git diff --check` receipt was clean for the wrong reason.**
+`preflight/ruff-and-diff.txt` recorded a bare `git diff --check` (exit 0) while
+the whole evidence directory was still untracked (`?? docs/evidence/runtime/...`
+appears in that same receipt). A bare `git diff --check` inspects unstaged
+changes to *tracked* files only, so it never looked at these files. Once anchor
+`44e9e62b` made them tracked, the coordinator's
+`git diff --check 647970dae975f4008633a484cde1e63187035544` found real trailing
+whitespace at `preflight/preflight.md:127` - the captured `ps` line for the
+Claude worker, whose `-p` prompt argument ends in a full-width `。` followed by
+two spaces. The whitespace is stripped, the receipt now records the *exact*
+against-merge-SHA command rather than the narrow one, and the preflight summary
+no longer asserts `git_diff_check: clean` on the strength of a command that
+could not have failed.
+
+**(2) The recycled-pid narrative was backwards.** Line 63 above and driver lines
+621-626 claimed that binding the pid to its run id makes a recycled pid *abort*.
+It does the opposite: `pid_owned_by_run` returns false for a recycled foreign
+pid, so `RUNNER_GONE=yes` and the gate passes. That is the correct behaviour for
+this gate - the property it needs is that the *original* runner is gone - but the
+stated reason was false.
+
+The claim that survives: `abort_worker_runner_alive` blocks the restart while,
+and only while, the original run-id-bound process is still running. Note that
+`pid_owned_by_run` is used in the opposite direction for the peer checks
+(`PEER_ALIVE_AFTER_STOP/_START/_FINAL` must be `yes`), and *there* the run-id
+binding genuinely does stop a recycled pid from faking survival - that claim in
+`../README.md` § Peer-survival enforcement is correct and unchanged.
+
+The residual gap, stated plainly: the supervisor's own `pid_is_alive()`
+(`supervisor.py:2331`) is pid-only with no run-id binding, so under pid recycling
+the supervisor would refresh the lease while this gate reads "gone". That cannot
+produce a false `proof_complete`: the lease-refresh path emits no
+`worker_deferred_approval_recorded/_correlated` event, so
+`assert-boot-reconciliation.py` fails and the driver aborts at the assertion
+instead. With `pid_max=4194304` and the check running seconds after the runner
+exits, the window is negligible in any case.
+
+**The gate is still closed.** Revision 4 needs a coordinator/reviewer recheck
 before the window is opened.
 
 ## Before you execute
@@ -81,12 +127,13 @@ before the window is opened.
 W=/tmp/pantheon-worker-worktrees/oday-plus-supervisor-live/odp-orch-claude-deferred-approval-live-rollout-001
 EV=$W/docs/evidence/runtime/ODP-ORCH-CLAUDE-DEFERRED-APPROVAL-LIVE-ROLLOUT-001
 
-# 1. Confirm the gate has been lifted for revision 3 (not for an older one).
+# 1. Confirm the gate has been lifted for revision 4 (not for an older one).
 # 2. Re-run the cheap checks - none of them touch anything live.
 bash -n $EV/runbook/live-boot-reconciliation-driver.sh
 python3 -m py_compile $EV/runbook/assert-boot-reconciliation.py
 $EV/runbook/selftest-assertion.sh                                  # 11 cases
-bash $EV/runbook/live-boot-reconciliation-driver.sh --selftest      # 16 checks
+bash $EV/runbook/live-boot-reconciliation-driver.sh --selftest      # 15 checks
+cd $W && git diff --check 647970dae975f4008633a484cde1e63187035544  # exit 0
 
 # 3. Confirm the starting state is what the driver expects.
 systemctl --user show pantheon-supervisor.service -p KillMode -p ActiveState -p MainPID

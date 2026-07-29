@@ -72,11 +72,18 @@ ruff check /home/lupin/oday-plus-supervisor-live/.orchestrator/supervisor.py \
            /home/lupin/oday-plus/.orchestrator/supervisor.py
 # All checks passed!   (the deployed files themselves)
 
-git diff --check                  # clean
-git diff --check origin/dev...HEAD  # clean
+git diff --check 647970dae975f4008633a484cde1e63187035544   # exit 0
 
 python3 -m py_compile <both deployed files>   # OK
 ```
+
+The whitespace check is quoted against the merge SHA deliberately. The original
+receipt used a bare `git diff --check`, which only inspects unstaged changes to
+*tracked* files - and at that moment this entire evidence directory was still
+untracked, so the clean exit was vacuous and real trailing whitespace survived
+in `preflight/preflight.md`. That was STOP GATE 3 finding 1; see
+`runbook/CONTINUATION.md`. Both forms are preserved in
+`preflight/ruff-and-diff.txt`, the narrow one marked retracted.
 
 Three `test_supervisor.py` cases need the gitignored
 `.orchestrator/config.json`; it was copied from the live runtime root into the
@@ -233,7 +240,7 @@ assertion - including the recorded pre-fix regression shape - and checks every
 verdict. It touches nothing live. Output: `preflight/assertion-selftest.txt`.
 
 `live-boot-reconciliation-driver.sh --selftest` covers the driver's own gates
-with 16 checks against throwaway processes and a throwaway signal directory: the
+with 15 checks against throwaway processes and a throwaway signal directory: the
 dead-man budget inequality, pid/run-id binding (foreign, empty, dead pids all
 rejected), token-exact unmanaged-supervisor detection (a decoy carrying
 `supervisor.py` inside a longer argument must not be reported), and a replay of
@@ -258,14 +265,21 @@ pre-task `MainPID=1197865` (started 02:37:14Z), `KillMode` is still
 `control-group`, the drop-in directory is empty, there is no transient rollout
 or dead-man unit, and no approval exists for any test run in either queue.
 
-Execution has been blocked by two CodexCoordinator STOP GATEs. The first
+Execution has been blocked by three CodexCoordinator STOP GATEs. The first
 (2026-07-29T03:33:14Z) found six defects in driver revision 1; revision 2
 answered them. The second (2026-07-29T03:48:39Z) found seven more, several of
 which would have let a green run mean nothing - a still-live test runner, an
 unasserted MainPID, a dead-man switch that fired inside its own window, a
 watchdog able to spawn a second supervisor mid-proof, and a `proof_complete`
-verdict the EXIT trap immediately overwrote. Revision 3 answers all seven; see
-the mapping table in `runbook/CONTINUATION.md`. It needs a coordinator/reviewer
+verdict the EXIT trap immediately overwrote. Revision 3 answered all seven.
+
+The third (2026-07-29T04:07:50Z) found two *documentation* defects rather than
+gate defects: a `git diff --check` receipt that was clean only because it was
+run while the evidence files were untracked (real trailing whitespace was
+sitting in `preflight/preflight.md:127`), and a backwards explanation of the
+runner-gone gate that claimed a recycled pid aborts when in fact it reads as
+"gone". Revision 4 corrects both without changing any gate logic; see the
+mapping table in `runbook/CONTINUATION.md`. It needs a coordinator/reviewer
 recheck before the window is opened.
 
 What has been completed and is safe to review now: the deployment (section 2),
