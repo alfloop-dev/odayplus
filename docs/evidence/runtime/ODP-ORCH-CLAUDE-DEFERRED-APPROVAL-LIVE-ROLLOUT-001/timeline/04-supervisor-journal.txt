@@ -1,0 +1,58 @@
+2026-07-29T06:08:23+00:00 oday-plus-dev.c.alfaloop-data-project.internal systemd[6884]: Stopping pantheon-supervisor.service - Pantheon supervisor...
+2026-07-29T06:08:23+00:00 oday-plus-dev.c.alfaloop-data-project.internal systemd[6884]: pantheon-supervisor.service: Unit process 154052 (bash) remains running after unit stopped.
+2026-07-29T06:08:23+00:00 oday-plus-dev.c.alfaloop-data-project.internal systemd[6884]: pantheon-supervisor.service: Unit process 154079 (cloud-sql-proxy) remains running after unit stopped.
+2026-07-29T06:08:23+00:00 oday-plus-dev.c.alfaloop-data-project.internal systemd[6884]: pantheon-supervisor.service: Unit process 154184 (cloud-sql-proxy) remains running after unit stopped.
+2026-07-29T06:08:23+00:00 oday-plus-dev.c.alfaloop-data-project.internal systemd[6884]: pantheon-supervisor.service: Unit process 284199 (bash) remains running after unit stopped.
+2026-07-29T06:08:23+00:00 oday-plus-dev.c.alfaloop-data-project.internal systemd[6884]: pantheon-supervisor.service: Unit process 557874 (bash) remains running after unit stopped.
+2026-07-29T06:08:23+00:00 oday-plus-dev.c.alfaloop-data-project.internal systemd[6884]: pantheon-supervisor.service: Unit process 1262944 (bash) remains running after unit stopped.
+2026-07-29T06:08:23+00:00 oday-plus-dev.c.alfaloop-data-project.internal systemd[6884]: pantheon-supervisor.service: Unit process 1262951 (bash) remains running after unit stopped.
+2026-07-29T06:08:23+00:00 oday-plus-dev.c.alfaloop-data-project.internal systemd[6884]: pantheon-supervisor.service: Unit process 1292347 (bash) remains running after unit stopped.
+2026-07-29T06:08:23+00:00 oday-plus-dev.c.alfaloop-data-project.internal systemd[6884]: pantheon-supervisor.service: Unit process 1292431 (bash) remains running after unit stopped.
+2026-07-29T06:08:23+00:00 oday-plus-dev.c.alfaloop-data-project.internal systemd[6884]: pantheon-supervisor.service: Unit process 1468020 (python3) remains running after unit stopped.
+2026-07-29T06:08:23+00:00 oday-plus-dev.c.alfaloop-data-project.internal systemd[6884]: pantheon-supervisor.service: Unit process 1468022 (claude) remains running after unit stopped.
+2026-07-29T06:08:23+00:00 oday-plus-dev.c.alfaloop-data-project.internal systemd[6884]: pantheon-supervisor.service: Unit process 1480555 (sleep) remains running after unit stopped.
+2026-07-29T06:08:23+00:00 oday-plus-dev.c.alfaloop-data-project.internal systemd[6884]: pantheon-supervisor.service: Unit process 1481276 (python3) remains running after unit stopped.
+2026-07-29T06:08:23+00:00 oday-plus-dev.c.alfaloop-data-project.internal systemd[6884]: pantheon-supervisor.service: Unit process 1481278 (claude) remains running after unit stopped.
+2026-07-29T06:08:23+00:00 oday-plus-dev.c.alfaloop-data-project.internal systemd[6884]: pantheon-supervisor.service: Unit process 1483431 (sleep) remains running after unit stopped.
+2026-07-29T06:08:23+00:00 oday-plus-dev.c.alfaloop-data-project.internal systemd[6884]: pantheon-supervisor.service: Unit process 1485060 (sleep) remains running after unit stopped.
+2026-07-29T06:08:23+00:00 oday-plus-dev.c.alfaloop-data-project.internal systemd[6884]: pantheon-supervisor.service: Unit process 1485433 (sleep) remains running after unit stopped.
+2026-07-29T06:08:23+00:00 oday-plus-dev.c.alfaloop-data-project.internal systemd[6884]: pantheon-supervisor.service: Unit process 1485780 (sleep) remains running after unit stopped.
+2026-07-29T06:08:23+00:00 oday-plus-dev.c.alfaloop-data-project.internal systemd[6884]: pantheon-supervisor.service: Unit process 1486657 (bash) remains running after unit stopped.
+2026-07-29T06:08:23+00:00 oday-plus-dev.c.alfaloop-data-project.internal systemd[6884]: pantheon-supervisor.service: Unit process 1486677 (python3) remains running after unit stopped.
+2026-07-29T06:08:23+00:00 oday-plus-dev.c.alfaloop-data-project.internal systemd[6884]: pantheon-supervisor.service: Unit process 1486678 (tail) remains running after unit stopped.
+2026-07-29T06:08:23+00:00 oday-plus-dev.c.alfaloop-data-project.internal systemd[6884]: Stopped pantheon-supervisor.service - Pantheon supervisor.
+2026-07-29T06:08:23+00:00 oday-plus-dev.c.alfaloop-data-project.internal systemd[6884]: pantheon-supervisor.service: Consumed 1h 13min 57.814s CPU time, 4.9G memory peak, 0B memory swap peak.
+2026-07-29T06:08:56+00:00 oday-plus-dev.c.alfaloop-data-project.internal systemd[6884]: pantheon-supervisor.service: Found left-over process 154052 (bash) in control group while starting unit. Ignoring.
+2026-07-29T06:08:56+00:00 oday-plus-dev.c.alfaloop-data-project.internal systemd[6884]: pantheon-supervisor.service: This usually indicates unclean termination of a previous run, or service implementation deficiencies.
+2026-07-29T06:08:56+00:00 oday-plus-dev.c.alfaloop-data-project.internal systemd[6884]: pantheon-supervisor.service: Found left-over process 154079 (cloud-sql-proxy) in control group while starting unit. Ignoring.
+2026-07-29T06:08:56+00:00 oday-plus-dev.c.alfaloop-data-project.internal systemd[6884]: pantheon-supervisor.service: This usually indicates unclean termination of a previous run, or service implementation deficiencies.
+2026-07-29T06:08:56+00:00 oday-plus-dev.c.alfaloop-data-project.internal systemd[6884]: pantheon-supervisor.service: Found left-over process 154184 (cloud-sql-proxy) in control group while starting unit. Ignoring.
+2026-07-29T06:08:56+00:00 oday-plus-dev.c.alfaloop-data-project.internal systemd[6884]: pantheon-supervisor.service: This usually indicates unclean termination of a previous run, or service implementation deficiencies.
+2026-07-29T06:08:56+00:00 oday-plus-dev.c.alfaloop-data-project.internal systemd[6884]: pantheon-supervisor.service: Found left-over process 284199 (bash) in control group while starting unit. Ignoring.
+2026-07-29T06:08:56+00:00 oday-plus-dev.c.alfaloop-data-project.internal systemd[6884]: pantheon-supervisor.service: This usually indicates unclean termination of a previous run, or service implementation deficiencies.
+2026-07-29T06:08:56+00:00 oday-plus-dev.c.alfaloop-data-project.internal systemd[6884]: pantheon-supervisor.service: Found left-over process 557874 (bash) in control group while starting unit. Ignoring.
+2026-07-29T06:08:56+00:00 oday-plus-dev.c.alfaloop-data-project.internal systemd[6884]: pantheon-supervisor.service: This usually indicates unclean termination of a previous run, or service implementation deficiencies.
+2026-07-29T06:08:56+00:00 oday-plus-dev.c.alfaloop-data-project.internal systemd[6884]: pantheon-supervisor.service: Found left-over process 1262944 (bash) in control group while starting unit. Ignoring.
+2026-07-29T06:08:56+00:00 oday-plus-dev.c.alfaloop-data-project.internal systemd[6884]: pantheon-supervisor.service: This usually indicates unclean termination of a previous run, or service implementation deficiencies.
+2026-07-29T06:08:56+00:00 oday-plus-dev.c.alfaloop-data-project.internal systemd[6884]: pantheon-supervisor.service: Found left-over process 1262951 (bash) in control group while starting unit. Ignoring.
+2026-07-29T06:08:56+00:00 oday-plus-dev.c.alfaloop-data-project.internal systemd[6884]: pantheon-supervisor.service: This usually indicates unclean termination of a previous run, or service implementation deficiencies.
+2026-07-29T06:08:56+00:00 oday-plus-dev.c.alfaloop-data-project.internal systemd[6884]: pantheon-supervisor.service: Found left-over process 1292347 (bash) in control group while starting unit. Ignoring.
+2026-07-29T06:08:56+00:00 oday-plus-dev.c.alfaloop-data-project.internal systemd[6884]: pantheon-supervisor.service: This usually indicates unclean termination of a previous run, or service implementation deficiencies.
+2026-07-29T06:08:56+00:00 oday-plus-dev.c.alfaloop-data-project.internal systemd[6884]: pantheon-supervisor.service: Found left-over process 1292431 (bash) in control group while starting unit. Ignoring.
+2026-07-29T06:08:56+00:00 oday-plus-dev.c.alfaloop-data-project.internal systemd[6884]: pantheon-supervisor.service: This usually indicates unclean termination of a previous run, or service implementation deficiencies.
+2026-07-29T06:08:56+00:00 oday-plus-dev.c.alfaloop-data-project.internal systemd[6884]: pantheon-supervisor.service: Found left-over process 1468020 (python3) in control group while starting unit. Ignoring.
+2026-07-29T06:08:56+00:00 oday-plus-dev.c.alfaloop-data-project.internal systemd[6884]: pantheon-supervisor.service: This usually indicates unclean termination of a previous run, or service implementation deficiencies.
+2026-07-29T06:08:56+00:00 oday-plus-dev.c.alfaloop-data-project.internal systemd[6884]: pantheon-supervisor.service: Found left-over process 1468022 (claude) in control group while starting unit. Ignoring.
+2026-07-29T06:08:56+00:00 oday-plus-dev.c.alfaloop-data-project.internal systemd[6884]: pantheon-supervisor.service: This usually indicates unclean termination of a previous run, or service implementation deficiencies.
+2026-07-29T06:08:56+00:00 oday-plus-dev.c.alfaloop-data-project.internal systemd[6884]: pantheon-supervisor.service: Found left-over process 1480555 (sleep) in control group while starting unit. Ignoring.
+2026-07-29T06:08:56+00:00 oday-plus-dev.c.alfaloop-data-project.internal systemd[6884]: pantheon-supervisor.service: This usually indicates unclean termination of a previous run, or service implementation deficiencies.
+2026-07-29T06:08:56+00:00 oday-plus-dev.c.alfaloop-data-project.internal systemd[6884]: pantheon-supervisor.service: Found left-over process 1485780 (sleep) in control group while starting unit. Ignoring.
+2026-07-29T06:08:56+00:00 oday-plus-dev.c.alfaloop-data-project.internal systemd[6884]: pantheon-supervisor.service: This usually indicates unclean termination of a previous run, or service implementation deficiencies.
+2026-07-29T06:08:56+00:00 oday-plus-dev.c.alfaloop-data-project.internal systemd[6884]: pantheon-supervisor.service: Found left-over process 1487045 (sleep) in control group while starting unit. Ignoring.
+2026-07-29T06:08:56+00:00 oday-plus-dev.c.alfaloop-data-project.internal systemd[6884]: pantheon-supervisor.service: This usually indicates unclean termination of a previous run, or service implementation deficiencies.
+2026-07-29T06:08:56+00:00 oday-plus-dev.c.alfaloop-data-project.internal systemd[6884]: pantheon-supervisor.service: Found left-over process 1487422 (sleep) in control group while starting unit. Ignoring.
+2026-07-29T06:08:56+00:00 oday-plus-dev.c.alfaloop-data-project.internal systemd[6884]: pantheon-supervisor.service: This usually indicates unclean termination of a previous run, or service implementation deficiencies.
+2026-07-29T06:08:56+00:00 oday-plus-dev.c.alfaloop-data-project.internal systemd[6884]: pantheon-supervisor.service: Found left-over process 1487471 (sleep) in control group while starting unit. Ignoring.
+2026-07-29T06:08:56+00:00 oday-plus-dev.c.alfaloop-data-project.internal systemd[6884]: pantheon-supervisor.service: This usually indicates unclean termination of a previous run, or service implementation deficiencies.
+2026-07-29T06:08:57+00:00 oday-plus-dev.c.alfaloop-data-project.internal systemd[6884]: Started pantheon-supervisor.service - Pantheon supervisor.
+2026-07-29T06:08:57+00:00 oday-plus-dev.c.alfaloop-data-project.internal bash[1487837]: [2026-07-29 14:08:57] starting supervisor pid=1487837 poll_interval=60.0s source=config config=.orchestrator/config.json
