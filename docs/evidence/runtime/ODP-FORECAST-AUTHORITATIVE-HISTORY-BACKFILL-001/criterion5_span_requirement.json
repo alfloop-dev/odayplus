@@ -1,0 +1,2144 @@
+{
+  "artifact": "criterion5_span_requirement",
+  "task": "ODP-FORECAST-AUTHORITATIVE-HISTORY-BACKFILL-001",
+  "captured_at": "2026-07-29T03:43:45Z",
+  "purpose": "The eligible span criterion 5 requires, derived by running the registry's own horizon expansion and temporal split rather than by reasoning about them. Criterion 3's h28 window is a much weaker condition and every span number produced for this task so far was computed against that one.",
+  "method": {
+    "plane": "contract only -- no database, no cluster, read-only",
+    "imported_under_test": [
+      "scripts.models.forecast_training.expand_forecast_horizon_rows",
+      "scripts.models.release._temporal_split",
+      "scripts.models.release.PreparedRow",
+      "scripts.models.contracts.MODEL_SPECS['forecastops']"
+    ],
+    "input": "A UNIFORM synthetic store x date grid. Not data, not ingested, and nothing is claimed about the target from it. Uniform is the most favourable shape real data can take -- every store trades every date -- so every span below is a NECESSARY condition and a floor. Real stores break their islands and can only need more.",
+    "stores_in_grid": 2,
+    "sweep_range": "1..120 consecutive eligible dates"
+  },
+  "contract": {
+    "horizon_weeks": [
+      4,
+      8,
+      12,
+      24
+    ],
+    "shortest_horizon_days": 28,
+    "minimum_rows": 90,
+    "minimum_segment_rows": 7,
+    "holdout_fraction": 0.2,
+    "segment_column": "store_id",
+    "temporal_column": "date"
+  },
+  "why_the_last_gate_binds": "_temporal_split splits on DISTINCT temporal values (origin dates), not on row counts, so adding stores never adds holdout dates. _segment_validation then requires some single store to carry at least minimum_segment_rows rows IN THE HOLDOUT, and a store contributes at most one row per origin date per qualifying horizon. The longer horizons' origins sit at the start of the span, i.e. in the training partition. So the per-store holdout count is bounded by the number of holdout DATES, which is about a fifth of the eligible origin dates.",
+  "minimum_eligible_dates_by_gate": {
+    "horizon_expansion_and_row_gates": 28,
+    "minimum_rows_at_two_store_grid": 64,
+    "minimum_rows_scaled_to_population": 28,
+    "minimum_segment_rows": 58
+  },
+  "store_count_scaling": {
+    "linearity_check": {
+      "at_eligible_dates": 58,
+      "rows_at_2_stores": 68,
+      "rows_at_4_stores": 136,
+      "rows_per_store_2": 34,
+      "rows_per_store_4": 34,
+      "linear_in_store_count": true,
+      "holdout_dates_unchanged_by_store_count": true
+    },
+    "why": "minimum_rows is the only gate whose answer depends on the store population, and the grid carries two stores. Its grid answer is reported but excluded from the governing gate. Rows scale linearly with store count (measured above) while holdout DATES do not move at all, so for any population of at least minimum_rows stores the gate clears wherever the expansion gate does and never governs. The landed population is in the hundreds.",
+    "store_break_even": 90
+  },
+  "governing_gate": [
+    "minimum_segment_rows"
+  ],
+  "minimum_eligible_dates": 58,
+  "translation": {
+    "eligible_dates_to_attested_days": "prior_day_count_28 = 28, so N contiguous attested days yield N-28 eligible dates. The required contiguous attested span is therefore minimum_eligible_dates + 28.",
+    "required_contiguous_attested_days": 86
+  },
+  "sweep": [
+    {
+      "eligible_dates": 1,
+      "expansion": "raised",
+      "expansion_detail": "daily forecast rows do not contain a complete canonical horizon window",
+      "horizon_expansion_passes": false,
+      "minimum_rows_passes": false,
+      "minimum_segment_rows_passes": false
+    },
+    {
+      "eligible_dates": 2,
+      "expansion": "raised",
+      "expansion_detail": "daily forecast rows do not contain a complete canonical horizon window",
+      "horizon_expansion_passes": false,
+      "minimum_rows_passes": false,
+      "minimum_segment_rows_passes": false
+    },
+    {
+      "eligible_dates": 3,
+      "expansion": "raised",
+      "expansion_detail": "daily forecast rows do not contain a complete canonical horizon window",
+      "horizon_expansion_passes": false,
+      "minimum_rows_passes": false,
+      "minimum_segment_rows_passes": false
+    },
+    {
+      "eligible_dates": 4,
+      "expansion": "raised",
+      "expansion_detail": "daily forecast rows do not contain a complete canonical horizon window",
+      "horizon_expansion_passes": false,
+      "minimum_rows_passes": false,
+      "minimum_segment_rows_passes": false
+    },
+    {
+      "eligible_dates": 5,
+      "expansion": "raised",
+      "expansion_detail": "daily forecast rows do not contain a complete canonical horizon window",
+      "horizon_expansion_passes": false,
+      "minimum_rows_passes": false,
+      "minimum_segment_rows_passes": false
+    },
+    {
+      "eligible_dates": 6,
+      "expansion": "raised",
+      "expansion_detail": "daily forecast rows do not contain a complete canonical horizon window",
+      "horizon_expansion_passes": false,
+      "minimum_rows_passes": false,
+      "minimum_segment_rows_passes": false
+    },
+    {
+      "eligible_dates": 7,
+      "expansion": "raised",
+      "expansion_detail": "daily forecast rows do not contain a complete canonical horizon window",
+      "horizon_expansion_passes": false,
+      "minimum_rows_passes": false,
+      "minimum_segment_rows_passes": false
+    },
+    {
+      "eligible_dates": 8,
+      "expansion": "raised",
+      "expansion_detail": "daily forecast rows do not contain a complete canonical horizon window",
+      "horizon_expansion_passes": false,
+      "minimum_rows_passes": false,
+      "minimum_segment_rows_passes": false
+    },
+    {
+      "eligible_dates": 9,
+      "expansion": "raised",
+      "expansion_detail": "daily forecast rows do not contain a complete canonical horizon window",
+      "horizon_expansion_passes": false,
+      "minimum_rows_passes": false,
+      "minimum_segment_rows_passes": false
+    },
+    {
+      "eligible_dates": 10,
+      "expansion": "raised",
+      "expansion_detail": "daily forecast rows do not contain a complete canonical horizon window",
+      "horizon_expansion_passes": false,
+      "minimum_rows_passes": false,
+      "minimum_segment_rows_passes": false
+    },
+    {
+      "eligible_dates": 11,
+      "expansion": "raised",
+      "expansion_detail": "daily forecast rows do not contain a complete canonical horizon window",
+      "horizon_expansion_passes": false,
+      "minimum_rows_passes": false,
+      "minimum_segment_rows_passes": false
+    },
+    {
+      "eligible_dates": 12,
+      "expansion": "raised",
+      "expansion_detail": "daily forecast rows do not contain a complete canonical horizon window",
+      "horizon_expansion_passes": false,
+      "minimum_rows_passes": false,
+      "minimum_segment_rows_passes": false
+    },
+    {
+      "eligible_dates": 13,
+      "expansion": "raised",
+      "expansion_detail": "daily forecast rows do not contain a complete canonical horizon window",
+      "horizon_expansion_passes": false,
+      "minimum_rows_passes": false,
+      "minimum_segment_rows_passes": false
+    },
+    {
+      "eligible_dates": 14,
+      "expansion": "raised",
+      "expansion_detail": "daily forecast rows do not contain a complete canonical horizon window",
+      "horizon_expansion_passes": false,
+      "minimum_rows_passes": false,
+      "minimum_segment_rows_passes": false
+    },
+    {
+      "eligible_dates": 15,
+      "expansion": "raised",
+      "expansion_detail": "daily forecast rows do not contain a complete canonical horizon window",
+      "horizon_expansion_passes": false,
+      "minimum_rows_passes": false,
+      "minimum_segment_rows_passes": false
+    },
+    {
+      "eligible_dates": 16,
+      "expansion": "raised",
+      "expansion_detail": "daily forecast rows do not contain a complete canonical horizon window",
+      "horizon_expansion_passes": false,
+      "minimum_rows_passes": false,
+      "minimum_segment_rows_passes": false
+    },
+    {
+      "eligible_dates": 17,
+      "expansion": "raised",
+      "expansion_detail": "daily forecast rows do not contain a complete canonical horizon window",
+      "horizon_expansion_passes": false,
+      "minimum_rows_passes": false,
+      "minimum_segment_rows_passes": false
+    },
+    {
+      "eligible_dates": 18,
+      "expansion": "raised",
+      "expansion_detail": "daily forecast rows do not contain a complete canonical horizon window",
+      "horizon_expansion_passes": false,
+      "minimum_rows_passes": false,
+      "minimum_segment_rows_passes": false
+    },
+    {
+      "eligible_dates": 19,
+      "expansion": "raised",
+      "expansion_detail": "daily forecast rows do not contain a complete canonical horizon window",
+      "horizon_expansion_passes": false,
+      "minimum_rows_passes": false,
+      "minimum_segment_rows_passes": false
+    },
+    {
+      "eligible_dates": 20,
+      "expansion": "raised",
+      "expansion_detail": "daily forecast rows do not contain a complete canonical horizon window",
+      "horizon_expansion_passes": false,
+      "minimum_rows_passes": false,
+      "minimum_segment_rows_passes": false
+    },
+    {
+      "eligible_dates": 21,
+      "expansion": "raised",
+      "expansion_detail": "daily forecast rows do not contain a complete canonical horizon window",
+      "horizon_expansion_passes": false,
+      "minimum_rows_passes": false,
+      "minimum_segment_rows_passes": false
+    },
+    {
+      "eligible_dates": 22,
+      "expansion": "raised",
+      "expansion_detail": "daily forecast rows do not contain a complete canonical horizon window",
+      "horizon_expansion_passes": false,
+      "minimum_rows_passes": false,
+      "minimum_segment_rows_passes": false
+    },
+    {
+      "eligible_dates": 23,
+      "expansion": "raised",
+      "expansion_detail": "daily forecast rows do not contain a complete canonical horizon window",
+      "horizon_expansion_passes": false,
+      "minimum_rows_passes": false,
+      "minimum_segment_rows_passes": false
+    },
+    {
+      "eligible_dates": 24,
+      "expansion": "raised",
+      "expansion_detail": "daily forecast rows do not contain a complete canonical horizon window",
+      "horizon_expansion_passes": false,
+      "minimum_rows_passes": false,
+      "minimum_segment_rows_passes": false
+    },
+    {
+      "eligible_dates": 25,
+      "expansion": "raised",
+      "expansion_detail": "daily forecast rows do not contain a complete canonical horizon window",
+      "horizon_expansion_passes": false,
+      "minimum_rows_passes": false,
+      "minimum_segment_rows_passes": false
+    },
+    {
+      "eligible_dates": 26,
+      "expansion": "raised",
+      "expansion_detail": "daily forecast rows do not contain a complete canonical horizon window",
+      "horizon_expansion_passes": false,
+      "minimum_rows_passes": false,
+      "minimum_segment_rows_passes": false
+    },
+    {
+      "eligible_dates": 27,
+      "expansion": "raised",
+      "expansion_detail": "daily forecast rows do not contain a complete canonical horizon window",
+      "horizon_expansion_passes": false,
+      "minimum_rows_passes": false,
+      "minimum_segment_rows_passes": false
+    },
+    {
+      "eligible_dates": 28,
+      "expansion": "built",
+      "horizon_expansion_passes": true,
+      "expanded_rows": 2,
+      "expanded_rows_per_store": 1,
+      "horizons_with_a_complete_window": [
+        4
+      ],
+      "minimum_rows": 90,
+      "minimum_rows_passes": false,
+      "temporal_split": "raised",
+      "temporal_split_detail": "temporal validation requires at least two distinct observation times",
+      "minimum_segment_rows_passes": false
+    },
+    {
+      "eligible_dates": 29,
+      "expansion": "built",
+      "horizon_expansion_passes": true,
+      "expanded_rows": 4,
+      "expanded_rows_per_store": 2,
+      "horizons_with_a_complete_window": [
+        4
+      ],
+      "minimum_rows": 90,
+      "minimum_rows_passes": false,
+      "temporal_split": "split",
+      "training_rows": 2,
+      "holdout_rows": 2,
+      "distinct_holdout_dates": 1,
+      "max_segment_holdout_rows": 1,
+      "minimum_segment_rows": 7,
+      "minimum_segment_rows_passes": false
+    },
+    {
+      "eligible_dates": 30,
+      "expansion": "built",
+      "horizon_expansion_passes": true,
+      "expanded_rows": 6,
+      "expanded_rows_per_store": 3,
+      "horizons_with_a_complete_window": [
+        4
+      ],
+      "minimum_rows": 90,
+      "minimum_rows_passes": false,
+      "temporal_split": "split",
+      "training_rows": 4,
+      "holdout_rows": 2,
+      "distinct_holdout_dates": 1,
+      "max_segment_holdout_rows": 1,
+      "minimum_segment_rows": 7,
+      "minimum_segment_rows_passes": false
+    },
+    {
+      "eligible_dates": 31,
+      "expansion": "built",
+      "horizon_expansion_passes": true,
+      "expanded_rows": 8,
+      "expanded_rows_per_store": 4,
+      "horizons_with_a_complete_window": [
+        4
+      ],
+      "minimum_rows": 90,
+      "minimum_rows_passes": false,
+      "temporal_split": "split",
+      "training_rows": 6,
+      "holdout_rows": 2,
+      "distinct_holdout_dates": 1,
+      "max_segment_holdout_rows": 1,
+      "minimum_segment_rows": 7,
+      "minimum_segment_rows_passes": false
+    },
+    {
+      "eligible_dates": 32,
+      "expansion": "built",
+      "horizon_expansion_passes": true,
+      "expanded_rows": 10,
+      "expanded_rows_per_store": 5,
+      "horizons_with_a_complete_window": [
+        4
+      ],
+      "minimum_rows": 90,
+      "minimum_rows_passes": false,
+      "temporal_split": "split",
+      "training_rows": 8,
+      "holdout_rows": 2,
+      "distinct_holdout_dates": 1,
+      "max_segment_holdout_rows": 1,
+      "minimum_segment_rows": 7,
+      "minimum_segment_rows_passes": false
+    },
+    {
+      "eligible_dates": 33,
+      "expansion": "built",
+      "horizon_expansion_passes": true,
+      "expanded_rows": 12,
+      "expanded_rows_per_store": 6,
+      "horizons_with_a_complete_window": [
+        4
+      ],
+      "minimum_rows": 90,
+      "minimum_rows_passes": false,
+      "temporal_split": "split",
+      "training_rows": 8,
+      "holdout_rows": 4,
+      "distinct_holdout_dates": 2,
+      "max_segment_holdout_rows": 2,
+      "minimum_segment_rows": 7,
+      "minimum_segment_rows_passes": false
+    },
+    {
+      "eligible_dates": 34,
+      "expansion": "built",
+      "horizon_expansion_passes": true,
+      "expanded_rows": 14,
+      "expanded_rows_per_store": 7,
+      "horizons_with_a_complete_window": [
+        4
+      ],
+      "minimum_rows": 90,
+      "minimum_rows_passes": false,
+      "temporal_split": "split",
+      "training_rows": 10,
+      "holdout_rows": 4,
+      "distinct_holdout_dates": 2,
+      "max_segment_holdout_rows": 2,
+      "minimum_segment_rows": 7,
+      "minimum_segment_rows_passes": false
+    },
+    {
+      "eligible_dates": 35,
+      "expansion": "built",
+      "horizon_expansion_passes": true,
+      "expanded_rows": 16,
+      "expanded_rows_per_store": 8,
+      "horizons_with_a_complete_window": [
+        4
+      ],
+      "minimum_rows": 90,
+      "minimum_rows_passes": false,
+      "temporal_split": "split",
+      "training_rows": 12,
+      "holdout_rows": 4,
+      "distinct_holdout_dates": 2,
+      "max_segment_holdout_rows": 2,
+      "minimum_segment_rows": 7,
+      "minimum_segment_rows_passes": false
+    },
+    {
+      "eligible_dates": 36,
+      "expansion": "built",
+      "horizon_expansion_passes": true,
+      "expanded_rows": 18,
+      "expanded_rows_per_store": 9,
+      "horizons_with_a_complete_window": [
+        4
+      ],
+      "minimum_rows": 90,
+      "minimum_rows_passes": false,
+      "temporal_split": "split",
+      "training_rows": 14,
+      "holdout_rows": 4,
+      "distinct_holdout_dates": 2,
+      "max_segment_holdout_rows": 2,
+      "minimum_segment_rows": 7,
+      "minimum_segment_rows_passes": false
+    },
+    {
+      "eligible_dates": 37,
+      "expansion": "built",
+      "horizon_expansion_passes": true,
+      "expanded_rows": 20,
+      "expanded_rows_per_store": 10,
+      "horizons_with_a_complete_window": [
+        4
+      ],
+      "minimum_rows": 90,
+      "minimum_rows_passes": false,
+      "temporal_split": "split",
+      "training_rows": 16,
+      "holdout_rows": 4,
+      "distinct_holdout_dates": 2,
+      "max_segment_holdout_rows": 2,
+      "minimum_segment_rows": 7,
+      "minimum_segment_rows_passes": false
+    },
+    {
+      "eligible_dates": 38,
+      "expansion": "built",
+      "horizon_expansion_passes": true,
+      "expanded_rows": 22,
+      "expanded_rows_per_store": 11,
+      "horizons_with_a_complete_window": [
+        4
+      ],
+      "minimum_rows": 90,
+      "minimum_rows_passes": false,
+      "temporal_split": "split",
+      "training_rows": 16,
+      "holdout_rows": 6,
+      "distinct_holdout_dates": 3,
+      "max_segment_holdout_rows": 3,
+      "minimum_segment_rows": 7,
+      "minimum_segment_rows_passes": false
+    },
+    {
+      "eligible_dates": 39,
+      "expansion": "built",
+      "horizon_expansion_passes": true,
+      "expanded_rows": 24,
+      "expanded_rows_per_store": 12,
+      "horizons_with_a_complete_window": [
+        4
+      ],
+      "minimum_rows": 90,
+      "minimum_rows_passes": false,
+      "temporal_split": "split",
+      "training_rows": 18,
+      "holdout_rows": 6,
+      "distinct_holdout_dates": 3,
+      "max_segment_holdout_rows": 3,
+      "minimum_segment_rows": 7,
+      "minimum_segment_rows_passes": false
+    },
+    {
+      "eligible_dates": 40,
+      "expansion": "built",
+      "horizon_expansion_passes": true,
+      "expanded_rows": 26,
+      "expanded_rows_per_store": 13,
+      "horizons_with_a_complete_window": [
+        4
+      ],
+      "minimum_rows": 90,
+      "minimum_rows_passes": false,
+      "temporal_split": "split",
+      "training_rows": 20,
+      "holdout_rows": 6,
+      "distinct_holdout_dates": 3,
+      "max_segment_holdout_rows": 3,
+      "minimum_segment_rows": 7,
+      "minimum_segment_rows_passes": false
+    },
+    {
+      "eligible_dates": 41,
+      "expansion": "built",
+      "horizon_expansion_passes": true,
+      "expanded_rows": 28,
+      "expanded_rows_per_store": 14,
+      "horizons_with_a_complete_window": [
+        4
+      ],
+      "minimum_rows": 90,
+      "minimum_rows_passes": false,
+      "temporal_split": "split",
+      "training_rows": 22,
+      "holdout_rows": 6,
+      "distinct_holdout_dates": 3,
+      "max_segment_holdout_rows": 3,
+      "minimum_segment_rows": 7,
+      "minimum_segment_rows_passes": false
+    },
+    {
+      "eligible_dates": 42,
+      "expansion": "built",
+      "horizon_expansion_passes": true,
+      "expanded_rows": 30,
+      "expanded_rows_per_store": 15,
+      "horizons_with_a_complete_window": [
+        4
+      ],
+      "minimum_rows": 90,
+      "minimum_rows_passes": false,
+      "temporal_split": "split",
+      "training_rows": 24,
+      "holdout_rows": 6,
+      "distinct_holdout_dates": 3,
+      "max_segment_holdout_rows": 3,
+      "minimum_segment_rows": 7,
+      "minimum_segment_rows_passes": false
+    },
+    {
+      "eligible_dates": 43,
+      "expansion": "built",
+      "horizon_expansion_passes": true,
+      "expanded_rows": 32,
+      "expanded_rows_per_store": 16,
+      "horizons_with_a_complete_window": [
+        4
+      ],
+      "minimum_rows": 90,
+      "minimum_rows_passes": false,
+      "temporal_split": "split",
+      "training_rows": 24,
+      "holdout_rows": 8,
+      "distinct_holdout_dates": 4,
+      "max_segment_holdout_rows": 4,
+      "minimum_segment_rows": 7,
+      "minimum_segment_rows_passes": false
+    },
+    {
+      "eligible_dates": 44,
+      "expansion": "built",
+      "horizon_expansion_passes": true,
+      "expanded_rows": 34,
+      "expanded_rows_per_store": 17,
+      "horizons_with_a_complete_window": [
+        4
+      ],
+      "minimum_rows": 90,
+      "minimum_rows_passes": false,
+      "temporal_split": "split",
+      "training_rows": 26,
+      "holdout_rows": 8,
+      "distinct_holdout_dates": 4,
+      "max_segment_holdout_rows": 4,
+      "minimum_segment_rows": 7,
+      "minimum_segment_rows_passes": false
+    },
+    {
+      "eligible_dates": 45,
+      "expansion": "built",
+      "horizon_expansion_passes": true,
+      "expanded_rows": 36,
+      "expanded_rows_per_store": 18,
+      "horizons_with_a_complete_window": [
+        4
+      ],
+      "minimum_rows": 90,
+      "minimum_rows_passes": false,
+      "temporal_split": "split",
+      "training_rows": 28,
+      "holdout_rows": 8,
+      "distinct_holdout_dates": 4,
+      "max_segment_holdout_rows": 4,
+      "minimum_segment_rows": 7,
+      "minimum_segment_rows_passes": false
+    },
+    {
+      "eligible_dates": 46,
+      "expansion": "built",
+      "horizon_expansion_passes": true,
+      "expanded_rows": 38,
+      "expanded_rows_per_store": 19,
+      "horizons_with_a_complete_window": [
+        4
+      ],
+      "minimum_rows": 90,
+      "minimum_rows_passes": false,
+      "temporal_split": "split",
+      "training_rows": 30,
+      "holdout_rows": 8,
+      "distinct_holdout_dates": 4,
+      "max_segment_holdout_rows": 4,
+      "minimum_segment_rows": 7,
+      "minimum_segment_rows_passes": false
+    },
+    {
+      "eligible_dates": 47,
+      "expansion": "built",
+      "horizon_expansion_passes": true,
+      "expanded_rows": 40,
+      "expanded_rows_per_store": 20,
+      "horizons_with_a_complete_window": [
+        4
+      ],
+      "minimum_rows": 90,
+      "minimum_rows_passes": false,
+      "temporal_split": "split",
+      "training_rows": 32,
+      "holdout_rows": 8,
+      "distinct_holdout_dates": 4,
+      "max_segment_holdout_rows": 4,
+      "minimum_segment_rows": 7,
+      "minimum_segment_rows_passes": false
+    },
+    {
+      "eligible_dates": 48,
+      "expansion": "built",
+      "horizon_expansion_passes": true,
+      "expanded_rows": 42,
+      "expanded_rows_per_store": 21,
+      "horizons_with_a_complete_window": [
+        4
+      ],
+      "minimum_rows": 90,
+      "minimum_rows_passes": false,
+      "temporal_split": "split",
+      "training_rows": 32,
+      "holdout_rows": 10,
+      "distinct_holdout_dates": 5,
+      "max_segment_holdout_rows": 5,
+      "minimum_segment_rows": 7,
+      "minimum_segment_rows_passes": false
+    },
+    {
+      "eligible_dates": 49,
+      "expansion": "built",
+      "horizon_expansion_passes": true,
+      "expanded_rows": 44,
+      "expanded_rows_per_store": 22,
+      "horizons_with_a_complete_window": [
+        4
+      ],
+      "minimum_rows": 90,
+      "minimum_rows_passes": false,
+      "temporal_split": "split",
+      "training_rows": 34,
+      "holdout_rows": 10,
+      "distinct_holdout_dates": 5,
+      "max_segment_holdout_rows": 5,
+      "minimum_segment_rows": 7,
+      "minimum_segment_rows_passes": false
+    },
+    {
+      "eligible_dates": 50,
+      "expansion": "built",
+      "horizon_expansion_passes": true,
+      "expanded_rows": 46,
+      "expanded_rows_per_store": 23,
+      "horizons_with_a_complete_window": [
+        4
+      ],
+      "minimum_rows": 90,
+      "minimum_rows_passes": false,
+      "temporal_split": "split",
+      "training_rows": 36,
+      "holdout_rows": 10,
+      "distinct_holdout_dates": 5,
+      "max_segment_holdout_rows": 5,
+      "minimum_segment_rows": 7,
+      "minimum_segment_rows_passes": false
+    },
+    {
+      "eligible_dates": 51,
+      "expansion": "built",
+      "horizon_expansion_passes": true,
+      "expanded_rows": 48,
+      "expanded_rows_per_store": 24,
+      "horizons_with_a_complete_window": [
+        4
+      ],
+      "minimum_rows": 90,
+      "minimum_rows_passes": false,
+      "temporal_split": "split",
+      "training_rows": 38,
+      "holdout_rows": 10,
+      "distinct_holdout_dates": 5,
+      "max_segment_holdout_rows": 5,
+      "minimum_segment_rows": 7,
+      "minimum_segment_rows_passes": false
+    },
+    {
+      "eligible_dates": 52,
+      "expansion": "built",
+      "horizon_expansion_passes": true,
+      "expanded_rows": 50,
+      "expanded_rows_per_store": 25,
+      "horizons_with_a_complete_window": [
+        4
+      ],
+      "minimum_rows": 90,
+      "minimum_rows_passes": false,
+      "temporal_split": "split",
+      "training_rows": 40,
+      "holdout_rows": 10,
+      "distinct_holdout_dates": 5,
+      "max_segment_holdout_rows": 5,
+      "minimum_segment_rows": 7,
+      "minimum_segment_rows_passes": false
+    },
+    {
+      "eligible_dates": 53,
+      "expansion": "built",
+      "horizon_expansion_passes": true,
+      "expanded_rows": 52,
+      "expanded_rows_per_store": 26,
+      "horizons_with_a_complete_window": [
+        4
+      ],
+      "minimum_rows": 90,
+      "minimum_rows_passes": false,
+      "temporal_split": "split",
+      "training_rows": 40,
+      "holdout_rows": 12,
+      "distinct_holdout_dates": 6,
+      "max_segment_holdout_rows": 6,
+      "minimum_segment_rows": 7,
+      "minimum_segment_rows_passes": false
+    },
+    {
+      "eligible_dates": 54,
+      "expansion": "built",
+      "horizon_expansion_passes": true,
+      "expanded_rows": 54,
+      "expanded_rows_per_store": 27,
+      "horizons_with_a_complete_window": [
+        4
+      ],
+      "minimum_rows": 90,
+      "minimum_rows_passes": false,
+      "temporal_split": "split",
+      "training_rows": 42,
+      "holdout_rows": 12,
+      "distinct_holdout_dates": 6,
+      "max_segment_holdout_rows": 6,
+      "minimum_segment_rows": 7,
+      "minimum_segment_rows_passes": false
+    },
+    {
+      "eligible_dates": 55,
+      "expansion": "built",
+      "horizon_expansion_passes": true,
+      "expanded_rows": 56,
+      "expanded_rows_per_store": 28,
+      "horizons_with_a_complete_window": [
+        4
+      ],
+      "minimum_rows": 90,
+      "minimum_rows_passes": false,
+      "temporal_split": "split",
+      "training_rows": 44,
+      "holdout_rows": 12,
+      "distinct_holdout_dates": 6,
+      "max_segment_holdout_rows": 6,
+      "minimum_segment_rows": 7,
+      "minimum_segment_rows_passes": false
+    },
+    {
+      "eligible_dates": 56,
+      "expansion": "built",
+      "horizon_expansion_passes": true,
+      "expanded_rows": 60,
+      "expanded_rows_per_store": 30,
+      "horizons_with_a_complete_window": [
+        4,
+        8
+      ],
+      "minimum_rows": 90,
+      "minimum_rows_passes": false,
+      "temporal_split": "split",
+      "training_rows": 48,
+      "holdout_rows": 12,
+      "distinct_holdout_dates": 6,
+      "max_segment_holdout_rows": 6,
+      "minimum_segment_rows": 7,
+      "minimum_segment_rows_passes": false
+    },
+    {
+      "eligible_dates": 57,
+      "expansion": "built",
+      "horizon_expansion_passes": true,
+      "expanded_rows": 64,
+      "expanded_rows_per_store": 32,
+      "horizons_with_a_complete_window": [
+        4,
+        8
+      ],
+      "minimum_rows": 90,
+      "minimum_rows_passes": false,
+      "temporal_split": "split",
+      "training_rows": 52,
+      "holdout_rows": 12,
+      "distinct_holdout_dates": 6,
+      "max_segment_holdout_rows": 6,
+      "minimum_segment_rows": 7,
+      "minimum_segment_rows_passes": false
+    },
+    {
+      "eligible_dates": 58,
+      "expansion": "built",
+      "horizon_expansion_passes": true,
+      "expanded_rows": 68,
+      "expanded_rows_per_store": 34,
+      "horizons_with_a_complete_window": [
+        4,
+        8
+      ],
+      "minimum_rows": 90,
+      "minimum_rows_passes": false,
+      "temporal_split": "split",
+      "training_rows": 54,
+      "holdout_rows": 14,
+      "distinct_holdout_dates": 7,
+      "max_segment_holdout_rows": 7,
+      "minimum_segment_rows": 7,
+      "minimum_segment_rows_passes": true
+    },
+    {
+      "eligible_dates": 59,
+      "expansion": "built",
+      "horizon_expansion_passes": true,
+      "expanded_rows": 72,
+      "expanded_rows_per_store": 36,
+      "horizons_with_a_complete_window": [
+        4,
+        8
+      ],
+      "minimum_rows": 90,
+      "minimum_rows_passes": false,
+      "temporal_split": "split",
+      "training_rows": 58,
+      "holdout_rows": 14,
+      "distinct_holdout_dates": 7,
+      "max_segment_holdout_rows": 7,
+      "minimum_segment_rows": 7,
+      "minimum_segment_rows_passes": true
+    },
+    {
+      "eligible_dates": 60,
+      "expansion": "built",
+      "horizon_expansion_passes": true,
+      "expanded_rows": 76,
+      "expanded_rows_per_store": 38,
+      "horizons_with_a_complete_window": [
+        4,
+        8
+      ],
+      "minimum_rows": 90,
+      "minimum_rows_passes": false,
+      "temporal_split": "split",
+      "training_rows": 62,
+      "holdout_rows": 14,
+      "distinct_holdout_dates": 7,
+      "max_segment_holdout_rows": 7,
+      "minimum_segment_rows": 7,
+      "minimum_segment_rows_passes": true
+    },
+    {
+      "eligible_dates": 61,
+      "expansion": "built",
+      "horizon_expansion_passes": true,
+      "expanded_rows": 80,
+      "expanded_rows_per_store": 40,
+      "horizons_with_a_complete_window": [
+        4,
+        8
+      ],
+      "minimum_rows": 90,
+      "minimum_rows_passes": false,
+      "temporal_split": "split",
+      "training_rows": 66,
+      "holdout_rows": 14,
+      "distinct_holdout_dates": 7,
+      "max_segment_holdout_rows": 7,
+      "minimum_segment_rows": 7,
+      "minimum_segment_rows_passes": true
+    },
+    {
+      "eligible_dates": 62,
+      "expansion": "built",
+      "horizon_expansion_passes": true,
+      "expanded_rows": 84,
+      "expanded_rows_per_store": 42,
+      "horizons_with_a_complete_window": [
+        4,
+        8
+      ],
+      "minimum_rows": 90,
+      "minimum_rows_passes": false,
+      "temporal_split": "split",
+      "training_rows": 70,
+      "holdout_rows": 14,
+      "distinct_holdout_dates": 7,
+      "max_segment_holdout_rows": 7,
+      "minimum_segment_rows": 7,
+      "minimum_segment_rows_passes": true
+    },
+    {
+      "eligible_dates": 63,
+      "expansion": "built",
+      "horizon_expansion_passes": true,
+      "expanded_rows": 88,
+      "expanded_rows_per_store": 44,
+      "horizons_with_a_complete_window": [
+        4,
+        8
+      ],
+      "minimum_rows": 90,
+      "minimum_rows_passes": false,
+      "temporal_split": "split",
+      "training_rows": 72,
+      "holdout_rows": 16,
+      "distinct_holdout_dates": 8,
+      "max_segment_holdout_rows": 8,
+      "minimum_segment_rows": 7,
+      "minimum_segment_rows_passes": true
+    },
+    {
+      "eligible_dates": 64,
+      "expansion": "built",
+      "horizon_expansion_passes": true,
+      "expanded_rows": 92,
+      "expanded_rows_per_store": 46,
+      "horizons_with_a_complete_window": [
+        4,
+        8
+      ],
+      "minimum_rows": 90,
+      "minimum_rows_passes": true,
+      "temporal_split": "split",
+      "training_rows": 76,
+      "holdout_rows": 16,
+      "distinct_holdout_dates": 8,
+      "max_segment_holdout_rows": 8,
+      "minimum_segment_rows": 7,
+      "minimum_segment_rows_passes": true
+    },
+    {
+      "eligible_dates": 65,
+      "expansion": "built",
+      "horizon_expansion_passes": true,
+      "expanded_rows": 96,
+      "expanded_rows_per_store": 48,
+      "horizons_with_a_complete_window": [
+        4,
+        8
+      ],
+      "minimum_rows": 90,
+      "minimum_rows_passes": true,
+      "temporal_split": "split",
+      "training_rows": 80,
+      "holdout_rows": 16,
+      "distinct_holdout_dates": 8,
+      "max_segment_holdout_rows": 8,
+      "minimum_segment_rows": 7,
+      "minimum_segment_rows_passes": true
+    },
+    {
+      "eligible_dates": 66,
+      "expansion": "built",
+      "horizon_expansion_passes": true,
+      "expanded_rows": 100,
+      "expanded_rows_per_store": 50,
+      "horizons_with_a_complete_window": [
+        4,
+        8
+      ],
+      "minimum_rows": 90,
+      "minimum_rows_passes": true,
+      "temporal_split": "split",
+      "training_rows": 84,
+      "holdout_rows": 16,
+      "distinct_holdout_dates": 8,
+      "max_segment_holdout_rows": 8,
+      "minimum_segment_rows": 7,
+      "minimum_segment_rows_passes": true
+    },
+    {
+      "eligible_dates": 67,
+      "expansion": "built",
+      "horizon_expansion_passes": true,
+      "expanded_rows": 104,
+      "expanded_rows_per_store": 52,
+      "horizons_with_a_complete_window": [
+        4,
+        8
+      ],
+      "minimum_rows": 90,
+      "minimum_rows_passes": true,
+      "temporal_split": "split",
+      "training_rows": 88,
+      "holdout_rows": 16,
+      "distinct_holdout_dates": 8,
+      "max_segment_holdout_rows": 8,
+      "minimum_segment_rows": 7,
+      "minimum_segment_rows_passes": true
+    },
+    {
+      "eligible_dates": 68,
+      "expansion": "built",
+      "horizon_expansion_passes": true,
+      "expanded_rows": 108,
+      "expanded_rows_per_store": 54,
+      "horizons_with_a_complete_window": [
+        4,
+        8
+      ],
+      "minimum_rows": 90,
+      "minimum_rows_passes": true,
+      "temporal_split": "split",
+      "training_rows": 90,
+      "holdout_rows": 18,
+      "distinct_holdout_dates": 9,
+      "max_segment_holdout_rows": 9,
+      "minimum_segment_rows": 7,
+      "minimum_segment_rows_passes": true
+    },
+    {
+      "eligible_dates": 69,
+      "expansion": "built",
+      "horizon_expansion_passes": true,
+      "expanded_rows": 112,
+      "expanded_rows_per_store": 56,
+      "horizons_with_a_complete_window": [
+        4,
+        8
+      ],
+      "minimum_rows": 90,
+      "minimum_rows_passes": true,
+      "temporal_split": "split",
+      "training_rows": 94,
+      "holdout_rows": 18,
+      "distinct_holdout_dates": 9,
+      "max_segment_holdout_rows": 9,
+      "minimum_segment_rows": 7,
+      "minimum_segment_rows_passes": true
+    },
+    {
+      "eligible_dates": 70,
+      "expansion": "built",
+      "horizon_expansion_passes": true,
+      "expanded_rows": 116,
+      "expanded_rows_per_store": 58,
+      "horizons_with_a_complete_window": [
+        4,
+        8
+      ],
+      "minimum_rows": 90,
+      "minimum_rows_passes": true,
+      "temporal_split": "split",
+      "training_rows": 98,
+      "holdout_rows": 18,
+      "distinct_holdout_dates": 9,
+      "max_segment_holdout_rows": 9,
+      "minimum_segment_rows": 7,
+      "minimum_segment_rows_passes": true
+    },
+    {
+      "eligible_dates": 71,
+      "expansion": "built",
+      "horizon_expansion_passes": true,
+      "expanded_rows": 120,
+      "expanded_rows_per_store": 60,
+      "horizons_with_a_complete_window": [
+        4,
+        8
+      ],
+      "minimum_rows": 90,
+      "minimum_rows_passes": true,
+      "temporal_split": "split",
+      "training_rows": 102,
+      "holdout_rows": 18,
+      "distinct_holdout_dates": 9,
+      "max_segment_holdout_rows": 9,
+      "minimum_segment_rows": 7,
+      "minimum_segment_rows_passes": true
+    },
+    {
+      "eligible_dates": 72,
+      "expansion": "built",
+      "horizon_expansion_passes": true,
+      "expanded_rows": 124,
+      "expanded_rows_per_store": 62,
+      "horizons_with_a_complete_window": [
+        4,
+        8
+      ],
+      "minimum_rows": 90,
+      "minimum_rows_passes": true,
+      "temporal_split": "split",
+      "training_rows": 106,
+      "holdout_rows": 18,
+      "distinct_holdout_dates": 9,
+      "max_segment_holdout_rows": 9,
+      "minimum_segment_rows": 7,
+      "minimum_segment_rows_passes": true
+    },
+    {
+      "eligible_dates": 73,
+      "expansion": "built",
+      "horizon_expansion_passes": true,
+      "expanded_rows": 128,
+      "expanded_rows_per_store": 64,
+      "horizons_with_a_complete_window": [
+        4,
+        8
+      ],
+      "minimum_rows": 90,
+      "minimum_rows_passes": true,
+      "temporal_split": "split",
+      "training_rows": 108,
+      "holdout_rows": 20,
+      "distinct_holdout_dates": 10,
+      "max_segment_holdout_rows": 10,
+      "minimum_segment_rows": 7,
+      "minimum_segment_rows_passes": true
+    },
+    {
+      "eligible_dates": 74,
+      "expansion": "built",
+      "horizon_expansion_passes": true,
+      "expanded_rows": 132,
+      "expanded_rows_per_store": 66,
+      "horizons_with_a_complete_window": [
+        4,
+        8
+      ],
+      "minimum_rows": 90,
+      "minimum_rows_passes": true,
+      "temporal_split": "split",
+      "training_rows": 112,
+      "holdout_rows": 20,
+      "distinct_holdout_dates": 10,
+      "max_segment_holdout_rows": 10,
+      "minimum_segment_rows": 7,
+      "minimum_segment_rows_passes": true
+    },
+    {
+      "eligible_dates": 75,
+      "expansion": "built",
+      "horizon_expansion_passes": true,
+      "expanded_rows": 136,
+      "expanded_rows_per_store": 68,
+      "horizons_with_a_complete_window": [
+        4,
+        8
+      ],
+      "minimum_rows": 90,
+      "minimum_rows_passes": true,
+      "temporal_split": "split",
+      "training_rows": 116,
+      "holdout_rows": 20,
+      "distinct_holdout_dates": 10,
+      "max_segment_holdout_rows": 10,
+      "minimum_segment_rows": 7,
+      "minimum_segment_rows_passes": true
+    },
+    {
+      "eligible_dates": 76,
+      "expansion": "built",
+      "horizon_expansion_passes": true,
+      "expanded_rows": 140,
+      "expanded_rows_per_store": 70,
+      "horizons_with_a_complete_window": [
+        4,
+        8
+      ],
+      "minimum_rows": 90,
+      "minimum_rows_passes": true,
+      "temporal_split": "split",
+      "training_rows": 120,
+      "holdout_rows": 20,
+      "distinct_holdout_dates": 10,
+      "max_segment_holdout_rows": 10,
+      "minimum_segment_rows": 7,
+      "minimum_segment_rows_passes": true
+    },
+    {
+      "eligible_dates": 77,
+      "expansion": "built",
+      "horizon_expansion_passes": true,
+      "expanded_rows": 144,
+      "expanded_rows_per_store": 72,
+      "horizons_with_a_complete_window": [
+        4,
+        8
+      ],
+      "minimum_rows": 90,
+      "minimum_rows_passes": true,
+      "temporal_split": "split",
+      "training_rows": 124,
+      "holdout_rows": 20,
+      "distinct_holdout_dates": 10,
+      "max_segment_holdout_rows": 10,
+      "minimum_segment_rows": 7,
+      "minimum_segment_rows_passes": true
+    },
+    {
+      "eligible_dates": 78,
+      "expansion": "built",
+      "horizon_expansion_passes": true,
+      "expanded_rows": 148,
+      "expanded_rows_per_store": 74,
+      "horizons_with_a_complete_window": [
+        4,
+        8
+      ],
+      "minimum_rows": 90,
+      "minimum_rows_passes": true,
+      "temporal_split": "split",
+      "training_rows": 126,
+      "holdout_rows": 22,
+      "distinct_holdout_dates": 11,
+      "max_segment_holdout_rows": 11,
+      "minimum_segment_rows": 7,
+      "minimum_segment_rows_passes": true
+    },
+    {
+      "eligible_dates": 79,
+      "expansion": "built",
+      "horizon_expansion_passes": true,
+      "expanded_rows": 152,
+      "expanded_rows_per_store": 76,
+      "horizons_with_a_complete_window": [
+        4,
+        8
+      ],
+      "minimum_rows": 90,
+      "minimum_rows_passes": true,
+      "temporal_split": "split",
+      "training_rows": 130,
+      "holdout_rows": 22,
+      "distinct_holdout_dates": 11,
+      "max_segment_holdout_rows": 11,
+      "minimum_segment_rows": 7,
+      "minimum_segment_rows_passes": true
+    },
+    {
+      "eligible_dates": 80,
+      "expansion": "built",
+      "horizon_expansion_passes": true,
+      "expanded_rows": 156,
+      "expanded_rows_per_store": 78,
+      "horizons_with_a_complete_window": [
+        4,
+        8
+      ],
+      "minimum_rows": 90,
+      "minimum_rows_passes": true,
+      "temporal_split": "split",
+      "training_rows": 134,
+      "holdout_rows": 22,
+      "distinct_holdout_dates": 11,
+      "max_segment_holdout_rows": 11,
+      "minimum_segment_rows": 7,
+      "minimum_segment_rows_passes": true
+    },
+    {
+      "eligible_dates": 81,
+      "expansion": "built",
+      "horizon_expansion_passes": true,
+      "expanded_rows": 160,
+      "expanded_rows_per_store": 80,
+      "horizons_with_a_complete_window": [
+        4,
+        8
+      ],
+      "minimum_rows": 90,
+      "minimum_rows_passes": true,
+      "temporal_split": "split",
+      "training_rows": 138,
+      "holdout_rows": 22,
+      "distinct_holdout_dates": 11,
+      "max_segment_holdout_rows": 11,
+      "minimum_segment_rows": 7,
+      "minimum_segment_rows_passes": true
+    },
+    {
+      "eligible_dates": 82,
+      "expansion": "built",
+      "horizon_expansion_passes": true,
+      "expanded_rows": 164,
+      "expanded_rows_per_store": 82,
+      "horizons_with_a_complete_window": [
+        4,
+        8
+      ],
+      "minimum_rows": 90,
+      "minimum_rows_passes": true,
+      "temporal_split": "split",
+      "training_rows": 142,
+      "holdout_rows": 22,
+      "distinct_holdout_dates": 11,
+      "max_segment_holdout_rows": 11,
+      "minimum_segment_rows": 7,
+      "minimum_segment_rows_passes": true
+    },
+    {
+      "eligible_dates": 83,
+      "expansion": "built",
+      "horizon_expansion_passes": true,
+      "expanded_rows": 168,
+      "expanded_rows_per_store": 84,
+      "horizons_with_a_complete_window": [
+        4,
+        8
+      ],
+      "minimum_rows": 90,
+      "minimum_rows_passes": true,
+      "temporal_split": "split",
+      "training_rows": 144,
+      "holdout_rows": 24,
+      "distinct_holdout_dates": 12,
+      "max_segment_holdout_rows": 12,
+      "minimum_segment_rows": 7,
+      "minimum_segment_rows_passes": true
+    },
+    {
+      "eligible_dates": 84,
+      "expansion": "built",
+      "horizon_expansion_passes": true,
+      "expanded_rows": 174,
+      "expanded_rows_per_store": 87,
+      "horizons_with_a_complete_window": [
+        4,
+        8,
+        12
+      ],
+      "minimum_rows": 90,
+      "minimum_rows_passes": true,
+      "temporal_split": "split",
+      "training_rows": 150,
+      "holdout_rows": 24,
+      "distinct_holdout_dates": 12,
+      "max_segment_holdout_rows": 12,
+      "minimum_segment_rows": 7,
+      "minimum_segment_rows_passes": true
+    },
+    {
+      "eligible_dates": 85,
+      "expansion": "built",
+      "horizon_expansion_passes": true,
+      "expanded_rows": 180,
+      "expanded_rows_per_store": 90,
+      "horizons_with_a_complete_window": [
+        4,
+        8,
+        12
+      ],
+      "minimum_rows": 90,
+      "minimum_rows_passes": true,
+      "temporal_split": "split",
+      "training_rows": 156,
+      "holdout_rows": 24,
+      "distinct_holdout_dates": 12,
+      "max_segment_holdout_rows": 12,
+      "minimum_segment_rows": 7,
+      "minimum_segment_rows_passes": true
+    },
+    {
+      "eligible_dates": 86,
+      "expansion": "built",
+      "horizon_expansion_passes": true,
+      "expanded_rows": 186,
+      "expanded_rows_per_store": 93,
+      "horizons_with_a_complete_window": [
+        4,
+        8,
+        12
+      ],
+      "minimum_rows": 90,
+      "minimum_rows_passes": true,
+      "temporal_split": "split",
+      "training_rows": 162,
+      "holdout_rows": 24,
+      "distinct_holdout_dates": 12,
+      "max_segment_holdout_rows": 12,
+      "minimum_segment_rows": 7,
+      "minimum_segment_rows_passes": true
+    },
+    {
+      "eligible_dates": 87,
+      "expansion": "built",
+      "horizon_expansion_passes": true,
+      "expanded_rows": 192,
+      "expanded_rows_per_store": 96,
+      "horizons_with_a_complete_window": [
+        4,
+        8,
+        12
+      ],
+      "minimum_rows": 90,
+      "minimum_rows_passes": true,
+      "temporal_split": "split",
+      "training_rows": 168,
+      "holdout_rows": 24,
+      "distinct_holdout_dates": 12,
+      "max_segment_holdout_rows": 12,
+      "minimum_segment_rows": 7,
+      "minimum_segment_rows_passes": true
+    },
+    {
+      "eligible_dates": 88,
+      "expansion": "built",
+      "horizon_expansion_passes": true,
+      "expanded_rows": 198,
+      "expanded_rows_per_store": 99,
+      "horizons_with_a_complete_window": [
+        4,
+        8,
+        12
+      ],
+      "minimum_rows": 90,
+      "minimum_rows_passes": true,
+      "temporal_split": "split",
+      "training_rows": 172,
+      "holdout_rows": 26,
+      "distinct_holdout_dates": 13,
+      "max_segment_holdout_rows": 13,
+      "minimum_segment_rows": 7,
+      "minimum_segment_rows_passes": true
+    },
+    {
+      "eligible_dates": 89,
+      "expansion": "built",
+      "horizon_expansion_passes": true,
+      "expanded_rows": 204,
+      "expanded_rows_per_store": 102,
+      "horizons_with_a_complete_window": [
+        4,
+        8,
+        12
+      ],
+      "minimum_rows": 90,
+      "minimum_rows_passes": true,
+      "temporal_split": "split",
+      "training_rows": 178,
+      "holdout_rows": 26,
+      "distinct_holdout_dates": 13,
+      "max_segment_holdout_rows": 13,
+      "minimum_segment_rows": 7,
+      "minimum_segment_rows_passes": true
+    },
+    {
+      "eligible_dates": 90,
+      "expansion": "built",
+      "horizon_expansion_passes": true,
+      "expanded_rows": 210,
+      "expanded_rows_per_store": 105,
+      "horizons_with_a_complete_window": [
+        4,
+        8,
+        12
+      ],
+      "minimum_rows": 90,
+      "minimum_rows_passes": true,
+      "temporal_split": "split",
+      "training_rows": 184,
+      "holdout_rows": 26,
+      "distinct_holdout_dates": 13,
+      "max_segment_holdout_rows": 13,
+      "minimum_segment_rows": 7,
+      "minimum_segment_rows_passes": true
+    },
+    {
+      "eligible_dates": 91,
+      "expansion": "built",
+      "horizon_expansion_passes": true,
+      "expanded_rows": 216,
+      "expanded_rows_per_store": 108,
+      "horizons_with_a_complete_window": [
+        4,
+        8,
+        12
+      ],
+      "minimum_rows": 90,
+      "minimum_rows_passes": true,
+      "temporal_split": "split",
+      "training_rows": 190,
+      "holdout_rows": 26,
+      "distinct_holdout_dates": 13,
+      "max_segment_holdout_rows": 13,
+      "minimum_segment_rows": 7,
+      "minimum_segment_rows_passes": true
+    },
+    {
+      "eligible_dates": 92,
+      "expansion": "built",
+      "horizon_expansion_passes": true,
+      "expanded_rows": 222,
+      "expanded_rows_per_store": 111,
+      "horizons_with_a_complete_window": [
+        4,
+        8,
+        12
+      ],
+      "minimum_rows": 90,
+      "minimum_rows_passes": true,
+      "temporal_split": "split",
+      "training_rows": 196,
+      "holdout_rows": 26,
+      "distinct_holdout_dates": 13,
+      "max_segment_holdout_rows": 13,
+      "minimum_segment_rows": 7,
+      "minimum_segment_rows_passes": true
+    },
+    {
+      "eligible_dates": 93,
+      "expansion": "built",
+      "horizon_expansion_passes": true,
+      "expanded_rows": 228,
+      "expanded_rows_per_store": 114,
+      "horizons_with_a_complete_window": [
+        4,
+        8,
+        12
+      ],
+      "minimum_rows": 90,
+      "minimum_rows_passes": true,
+      "temporal_split": "split",
+      "training_rows": 200,
+      "holdout_rows": 28,
+      "distinct_holdout_dates": 14,
+      "max_segment_holdout_rows": 14,
+      "minimum_segment_rows": 7,
+      "minimum_segment_rows_passes": true
+    },
+    {
+      "eligible_dates": 94,
+      "expansion": "built",
+      "horizon_expansion_passes": true,
+      "expanded_rows": 234,
+      "expanded_rows_per_store": 117,
+      "horizons_with_a_complete_window": [
+        4,
+        8,
+        12
+      ],
+      "minimum_rows": 90,
+      "minimum_rows_passes": true,
+      "temporal_split": "split",
+      "training_rows": 206,
+      "holdout_rows": 28,
+      "distinct_holdout_dates": 14,
+      "max_segment_holdout_rows": 14,
+      "minimum_segment_rows": 7,
+      "minimum_segment_rows_passes": true
+    },
+    {
+      "eligible_dates": 95,
+      "expansion": "built",
+      "horizon_expansion_passes": true,
+      "expanded_rows": 240,
+      "expanded_rows_per_store": 120,
+      "horizons_with_a_complete_window": [
+        4,
+        8,
+        12
+      ],
+      "minimum_rows": 90,
+      "minimum_rows_passes": true,
+      "temporal_split": "split",
+      "training_rows": 212,
+      "holdout_rows": 28,
+      "distinct_holdout_dates": 14,
+      "max_segment_holdout_rows": 14,
+      "minimum_segment_rows": 7,
+      "minimum_segment_rows_passes": true
+    },
+    {
+      "eligible_dates": 96,
+      "expansion": "built",
+      "horizon_expansion_passes": true,
+      "expanded_rows": 246,
+      "expanded_rows_per_store": 123,
+      "horizons_with_a_complete_window": [
+        4,
+        8,
+        12
+      ],
+      "minimum_rows": 90,
+      "minimum_rows_passes": true,
+      "temporal_split": "split",
+      "training_rows": 218,
+      "holdout_rows": 28,
+      "distinct_holdout_dates": 14,
+      "max_segment_holdout_rows": 14,
+      "minimum_segment_rows": 7,
+      "minimum_segment_rows_passes": true
+    },
+    {
+      "eligible_dates": 97,
+      "expansion": "built",
+      "horizon_expansion_passes": true,
+      "expanded_rows": 252,
+      "expanded_rows_per_store": 126,
+      "horizons_with_a_complete_window": [
+        4,
+        8,
+        12
+      ],
+      "minimum_rows": 90,
+      "minimum_rows_passes": true,
+      "temporal_split": "split",
+      "training_rows": 224,
+      "holdout_rows": 28,
+      "distinct_holdout_dates": 14,
+      "max_segment_holdout_rows": 14,
+      "minimum_segment_rows": 7,
+      "minimum_segment_rows_passes": true
+    },
+    {
+      "eligible_dates": 98,
+      "expansion": "built",
+      "horizon_expansion_passes": true,
+      "expanded_rows": 258,
+      "expanded_rows_per_store": 129,
+      "horizons_with_a_complete_window": [
+        4,
+        8,
+        12
+      ],
+      "minimum_rows": 90,
+      "minimum_rows_passes": true,
+      "temporal_split": "split",
+      "training_rows": 228,
+      "holdout_rows": 30,
+      "distinct_holdout_dates": 15,
+      "max_segment_holdout_rows": 15,
+      "minimum_segment_rows": 7,
+      "minimum_segment_rows_passes": true
+    },
+    {
+      "eligible_dates": 99,
+      "expansion": "built",
+      "horizon_expansion_passes": true,
+      "expanded_rows": 264,
+      "expanded_rows_per_store": 132,
+      "horizons_with_a_complete_window": [
+        4,
+        8,
+        12
+      ],
+      "minimum_rows": 90,
+      "minimum_rows_passes": true,
+      "temporal_split": "split",
+      "training_rows": 234,
+      "holdout_rows": 30,
+      "distinct_holdout_dates": 15,
+      "max_segment_holdout_rows": 15,
+      "minimum_segment_rows": 7,
+      "minimum_segment_rows_passes": true
+    },
+    {
+      "eligible_dates": 100,
+      "expansion": "built",
+      "horizon_expansion_passes": true,
+      "expanded_rows": 270,
+      "expanded_rows_per_store": 135,
+      "horizons_with_a_complete_window": [
+        4,
+        8,
+        12
+      ],
+      "minimum_rows": 90,
+      "minimum_rows_passes": true,
+      "temporal_split": "split",
+      "training_rows": 240,
+      "holdout_rows": 30,
+      "distinct_holdout_dates": 15,
+      "max_segment_holdout_rows": 15,
+      "minimum_segment_rows": 7,
+      "minimum_segment_rows_passes": true
+    },
+    {
+      "eligible_dates": 101,
+      "expansion": "built",
+      "horizon_expansion_passes": true,
+      "expanded_rows": 276,
+      "expanded_rows_per_store": 138,
+      "horizons_with_a_complete_window": [
+        4,
+        8,
+        12
+      ],
+      "minimum_rows": 90,
+      "minimum_rows_passes": true,
+      "temporal_split": "split",
+      "training_rows": 246,
+      "holdout_rows": 30,
+      "distinct_holdout_dates": 15,
+      "max_segment_holdout_rows": 15,
+      "minimum_segment_rows": 7,
+      "minimum_segment_rows_passes": true
+    },
+    {
+      "eligible_dates": 102,
+      "expansion": "built",
+      "horizon_expansion_passes": true,
+      "expanded_rows": 282,
+      "expanded_rows_per_store": 141,
+      "horizons_with_a_complete_window": [
+        4,
+        8,
+        12
+      ],
+      "minimum_rows": 90,
+      "minimum_rows_passes": true,
+      "temporal_split": "split",
+      "training_rows": 252,
+      "holdout_rows": 30,
+      "distinct_holdout_dates": 15,
+      "max_segment_holdout_rows": 15,
+      "minimum_segment_rows": 7,
+      "minimum_segment_rows_passes": true
+    },
+    {
+      "eligible_dates": 103,
+      "expansion": "built",
+      "horizon_expansion_passes": true,
+      "expanded_rows": 288,
+      "expanded_rows_per_store": 144,
+      "horizons_with_a_complete_window": [
+        4,
+        8,
+        12
+      ],
+      "minimum_rows": 90,
+      "minimum_rows_passes": true,
+      "temporal_split": "split",
+      "training_rows": 256,
+      "holdout_rows": 32,
+      "distinct_holdout_dates": 16,
+      "max_segment_holdout_rows": 16,
+      "minimum_segment_rows": 7,
+      "minimum_segment_rows_passes": true
+    },
+    {
+      "eligible_dates": 104,
+      "expansion": "built",
+      "horizon_expansion_passes": true,
+      "expanded_rows": 294,
+      "expanded_rows_per_store": 147,
+      "horizons_with_a_complete_window": [
+        4,
+        8,
+        12
+      ],
+      "minimum_rows": 90,
+      "minimum_rows_passes": true,
+      "temporal_split": "split",
+      "training_rows": 262,
+      "holdout_rows": 32,
+      "distinct_holdout_dates": 16,
+      "max_segment_holdout_rows": 16,
+      "minimum_segment_rows": 7,
+      "minimum_segment_rows_passes": true
+    },
+    {
+      "eligible_dates": 105,
+      "expansion": "built",
+      "horizon_expansion_passes": true,
+      "expanded_rows": 300,
+      "expanded_rows_per_store": 150,
+      "horizons_with_a_complete_window": [
+        4,
+        8,
+        12
+      ],
+      "minimum_rows": 90,
+      "minimum_rows_passes": true,
+      "temporal_split": "split",
+      "training_rows": 268,
+      "holdout_rows": 32,
+      "distinct_holdout_dates": 16,
+      "max_segment_holdout_rows": 16,
+      "minimum_segment_rows": 7,
+      "minimum_segment_rows_passes": true
+    },
+    {
+      "eligible_dates": 106,
+      "expansion": "built",
+      "horizon_expansion_passes": true,
+      "expanded_rows": 306,
+      "expanded_rows_per_store": 153,
+      "horizons_with_a_complete_window": [
+        4,
+        8,
+        12
+      ],
+      "minimum_rows": 90,
+      "minimum_rows_passes": true,
+      "temporal_split": "split",
+      "training_rows": 274,
+      "holdout_rows": 32,
+      "distinct_holdout_dates": 16,
+      "max_segment_holdout_rows": 16,
+      "minimum_segment_rows": 7,
+      "minimum_segment_rows_passes": true
+    },
+    {
+      "eligible_dates": 107,
+      "expansion": "built",
+      "horizon_expansion_passes": true,
+      "expanded_rows": 312,
+      "expanded_rows_per_store": 156,
+      "horizons_with_a_complete_window": [
+        4,
+        8,
+        12
+      ],
+      "minimum_rows": 90,
+      "minimum_rows_passes": true,
+      "temporal_split": "split",
+      "training_rows": 280,
+      "holdout_rows": 32,
+      "distinct_holdout_dates": 16,
+      "max_segment_holdout_rows": 16,
+      "minimum_segment_rows": 7,
+      "minimum_segment_rows_passes": true
+    },
+    {
+      "eligible_dates": 108,
+      "expansion": "built",
+      "horizon_expansion_passes": true,
+      "expanded_rows": 318,
+      "expanded_rows_per_store": 159,
+      "horizons_with_a_complete_window": [
+        4,
+        8,
+        12
+      ],
+      "minimum_rows": 90,
+      "minimum_rows_passes": true,
+      "temporal_split": "split",
+      "training_rows": 284,
+      "holdout_rows": 34,
+      "distinct_holdout_dates": 17,
+      "max_segment_holdout_rows": 17,
+      "minimum_segment_rows": 7,
+      "minimum_segment_rows_passes": true
+    },
+    {
+      "eligible_dates": 109,
+      "expansion": "built",
+      "horizon_expansion_passes": true,
+      "expanded_rows": 324,
+      "expanded_rows_per_store": 162,
+      "horizons_with_a_complete_window": [
+        4,
+        8,
+        12
+      ],
+      "minimum_rows": 90,
+      "minimum_rows_passes": true,
+      "temporal_split": "split",
+      "training_rows": 290,
+      "holdout_rows": 34,
+      "distinct_holdout_dates": 17,
+      "max_segment_holdout_rows": 17,
+      "minimum_segment_rows": 7,
+      "minimum_segment_rows_passes": true
+    },
+    {
+      "eligible_dates": 110,
+      "expansion": "built",
+      "horizon_expansion_passes": true,
+      "expanded_rows": 330,
+      "expanded_rows_per_store": 165,
+      "horizons_with_a_complete_window": [
+        4,
+        8,
+        12
+      ],
+      "minimum_rows": 90,
+      "minimum_rows_passes": true,
+      "temporal_split": "split",
+      "training_rows": 296,
+      "holdout_rows": 34,
+      "distinct_holdout_dates": 17,
+      "max_segment_holdout_rows": 17,
+      "minimum_segment_rows": 7,
+      "minimum_segment_rows_passes": true
+    },
+    {
+      "eligible_dates": 111,
+      "expansion": "built",
+      "horizon_expansion_passes": true,
+      "expanded_rows": 336,
+      "expanded_rows_per_store": 168,
+      "horizons_with_a_complete_window": [
+        4,
+        8,
+        12
+      ],
+      "minimum_rows": 90,
+      "minimum_rows_passes": true,
+      "temporal_split": "split",
+      "training_rows": 302,
+      "holdout_rows": 34,
+      "distinct_holdout_dates": 17,
+      "max_segment_holdout_rows": 17,
+      "minimum_segment_rows": 7,
+      "minimum_segment_rows_passes": true
+    },
+    {
+      "eligible_dates": 112,
+      "expansion": "built",
+      "horizon_expansion_passes": true,
+      "expanded_rows": 342,
+      "expanded_rows_per_store": 171,
+      "horizons_with_a_complete_window": [
+        4,
+        8,
+        12
+      ],
+      "minimum_rows": 90,
+      "minimum_rows_passes": true,
+      "temporal_split": "split",
+      "training_rows": 308,
+      "holdout_rows": 34,
+      "distinct_holdout_dates": 17,
+      "max_segment_holdout_rows": 17,
+      "minimum_segment_rows": 7,
+      "minimum_segment_rows_passes": true
+    },
+    {
+      "eligible_dates": 113,
+      "expansion": "built",
+      "horizon_expansion_passes": true,
+      "expanded_rows": 348,
+      "expanded_rows_per_store": 174,
+      "horizons_with_a_complete_window": [
+        4,
+        8,
+        12
+      ],
+      "minimum_rows": 90,
+      "minimum_rows_passes": true,
+      "temporal_split": "split",
+      "training_rows": 312,
+      "holdout_rows": 36,
+      "distinct_holdout_dates": 18,
+      "max_segment_holdout_rows": 18,
+      "minimum_segment_rows": 7,
+      "minimum_segment_rows_passes": true
+    },
+    {
+      "eligible_dates": 114,
+      "expansion": "built",
+      "horizon_expansion_passes": true,
+      "expanded_rows": 354,
+      "expanded_rows_per_store": 177,
+      "horizons_with_a_complete_window": [
+        4,
+        8,
+        12
+      ],
+      "minimum_rows": 90,
+      "minimum_rows_passes": true,
+      "temporal_split": "split",
+      "training_rows": 318,
+      "holdout_rows": 36,
+      "distinct_holdout_dates": 18,
+      "max_segment_holdout_rows": 18,
+      "minimum_segment_rows": 7,
+      "minimum_segment_rows_passes": true
+    },
+    {
+      "eligible_dates": 115,
+      "expansion": "built",
+      "horizon_expansion_passes": true,
+      "expanded_rows": 360,
+      "expanded_rows_per_store": 180,
+      "horizons_with_a_complete_window": [
+        4,
+        8,
+        12
+      ],
+      "minimum_rows": 90,
+      "minimum_rows_passes": true,
+      "temporal_split": "split",
+      "training_rows": 324,
+      "holdout_rows": 36,
+      "distinct_holdout_dates": 18,
+      "max_segment_holdout_rows": 18,
+      "minimum_segment_rows": 7,
+      "minimum_segment_rows_passes": true
+    },
+    {
+      "eligible_dates": 116,
+      "expansion": "built",
+      "horizon_expansion_passes": true,
+      "expanded_rows": 366,
+      "expanded_rows_per_store": 183,
+      "horizons_with_a_complete_window": [
+        4,
+        8,
+        12
+      ],
+      "minimum_rows": 90,
+      "minimum_rows_passes": true,
+      "temporal_split": "split",
+      "training_rows": 330,
+      "holdout_rows": 36,
+      "distinct_holdout_dates": 18,
+      "max_segment_holdout_rows": 18,
+      "minimum_segment_rows": 7,
+      "minimum_segment_rows_passes": true
+    },
+    {
+      "eligible_dates": 117,
+      "expansion": "built",
+      "horizon_expansion_passes": true,
+      "expanded_rows": 372,
+      "expanded_rows_per_store": 186,
+      "horizons_with_a_complete_window": [
+        4,
+        8,
+        12
+      ],
+      "minimum_rows": 90,
+      "minimum_rows_passes": true,
+      "temporal_split": "split",
+      "training_rows": 336,
+      "holdout_rows": 36,
+      "distinct_holdout_dates": 18,
+      "max_segment_holdout_rows": 18,
+      "minimum_segment_rows": 7,
+      "minimum_segment_rows_passes": true
+    },
+    {
+      "eligible_dates": 118,
+      "expansion": "built",
+      "horizon_expansion_passes": true,
+      "expanded_rows": 378,
+      "expanded_rows_per_store": 189,
+      "horizons_with_a_complete_window": [
+        4,
+        8,
+        12
+      ],
+      "minimum_rows": 90,
+      "minimum_rows_passes": true,
+      "temporal_split": "split",
+      "training_rows": 340,
+      "holdout_rows": 38,
+      "distinct_holdout_dates": 19,
+      "max_segment_holdout_rows": 19,
+      "minimum_segment_rows": 7,
+      "minimum_segment_rows_passes": true
+    },
+    {
+      "eligible_dates": 119,
+      "expansion": "built",
+      "horizon_expansion_passes": true,
+      "expanded_rows": 384,
+      "expanded_rows_per_store": 192,
+      "horizons_with_a_complete_window": [
+        4,
+        8,
+        12
+      ],
+      "minimum_rows": 90,
+      "minimum_rows_passes": true,
+      "temporal_split": "split",
+      "training_rows": 346,
+      "holdout_rows": 38,
+      "distinct_holdout_dates": 19,
+      "max_segment_holdout_rows": 19,
+      "minimum_segment_rows": 7,
+      "minimum_segment_rows_passes": true
+    },
+    {
+      "eligible_dates": 120,
+      "expansion": "built",
+      "horizon_expansion_passes": true,
+      "expanded_rows": 390,
+      "expanded_rows_per_store": 195,
+      "horizons_with_a_complete_window": [
+        4,
+        8,
+        12
+      ],
+      "minimum_rows": 90,
+      "minimum_rows_passes": true,
+      "temporal_split": "split",
+      "training_rows": 352,
+      "holdout_rows": 38,
+      "distinct_holdout_dates": 19,
+      "max_segment_holdout_rows": 19,
+      "minimum_segment_rows": 7,
+      "minimum_segment_rows_passes": true
+    }
+  ],
+  "limits": "A floor, not a forecast. It says criterion 5 cannot pass below this span; it does not say it passes at this span, because that additionally needs some real store to trade every one of the holdout dates. It is also a statement about today's contract: it is falsified by a change to FORECASTOPS_HORIZON_WEEKS, holdout_fraction, minimum_segment_rows or the split rule, so re-run it after any of those move."
+}
