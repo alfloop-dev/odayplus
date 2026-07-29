@@ -1,0 +1,221 @@
+apiVersion: v1
+kind: Pod
+metadata:
+  name: odp-april-density-probe
+  namespace: oday-dev
+  labels:
+    app.kubernetes.io/name: odp-april-density-probe
+  annotations:
+    oday.plus/purpose: "read-only per-day STORE density probe over the b5..b9 April backwards windows, with the same landed control range"
+    oday.plus/task: "ODP-FORECAST-AUTHORITATIVE-HISTORY-BACKFILL-001"
+spec:
+  restartPolicy: Never
+  serviceAccountName: oday-data-platform
+  # Must be private-pool: the upstream is MongoDB Atlas and its IP allowlist
+  # admits only this node pool's Cloud NAT egress. An identical probe pinned to
+  # default-pool fails with ServerSelectionTimeoutError -- README section 7.
+  nodeSelector:
+    cloud.google.com/gke-nodepool: private-pool
+  securityContext:
+    fsGroup: 65532
+    runAsGroup: 65532
+    runAsNonRoot: true
+    runAsUser: 65532
+    seccompProfile:
+      type: RuntimeDefault
+  volumes:
+    - name: state
+      emptyDir: {}
+  containers:
+    - name: probe
+      image: asia-east1-docker.pkg.dev/alfaloop-data-project/oday/data-platform@sha256:f60383b620e93c3aeca5416fa3ef43aa0c583223e22912dc95377406cc5d86e6
+      securityContext:
+        allowPrivilegeEscalation: false
+        capabilities:
+          drop: ["ALL"]
+        readOnlyRootFilesystem: true
+        runAsNonRoot: true
+      # Deliberately tiny. The private-pool node runs one backfill slice at a
+      # time and sits at ~96% of allocatable memory while a slice is active, so
+      # the probe must fit in the ~100Mi that remains or it would sit Pending
+      # and delay the very slice it is meant not to disturb.
+      resources:
+        requests:
+          cpu: 10m
+          memory: 64Mi
+        limits:
+          cpu: 500m
+          memory: 512Mi
+      env:
+        - name: TMPDIR
+          value: /var/lib/oday
+        - name: ODP_DATA_MONGO_DATABASE
+          value: fongniao_prod
+        - name: ODP_DATA_MONGO_URI
+          valueFrom:
+            secretKeyRef:
+              name: oday-data-platform-runtime
+              key: mongodb-uri
+      volumeMounts:
+        - name: state
+          mountPath: /var/lib/oday
+      command:
+        - python
+        - -c
+        - |
+          # Read-only backwards-window STORE density probe for
+          # ODP-FORECAST-AUTHORITATIVE-HISTORY-BACKFILL-001.
+          #
+          # WHY THIS EXISTS
+          # ---------------
+          # criterion5_span_requirement.json measured that acceptance criterion 5
+          # -- the registry resuming training -- needs 58 eligible dates = 86
+          # contiguous attested days, well past the 56 that criterion 3 needs.
+          # Slices b5..b8 were created to reach it, taking the span down to
+          # 2026-04-05. That is BELOW everything this task has ever measured:
+          # the b1..b4 density probe started at 2026-04-29, and the depth probe
+          # (P4) sampled no day earlier than 2026-05-14. The whole of April is
+          # unmeasured, and four slices (~13h of ingestion) were queued against
+          # it on the strength of a document-count depth probe alone.
+          #
+          # Two ways that could be wrong, both fatal to criterion 5:
+          #   1. April carries materially fewer STORES than the landed era, so
+          #      the span grows without the store population needed to fill a
+          #      holdout;
+          #   2. a single low/zero day inside the window breaks every store's
+          #      run, and the holdout gate needs some single store trading
+          #      continuously across the tail -- one bad day can cost it.
+          #
+          # This measures the same grain the same way, so the April numbers are
+          # directly comparable to the b1..b4 receipt and to its control.
+          #
+          # FAITHFULNESS
+          # ------------
+          # The per-store-day grain is taken byte-for-byte from
+          # scripts/models/sql/model_ready_views.sql: transaction_source filters
+          # transaction_status = 'succeeded' AND currency = 'TWD', and
+          # transaction_daily groups by (event_time AT TIME ZONE 'UTC')::date.
+          # Per apps/data_platform/mapping.py::project_transaction, event_time is
+          # createdAt, currency is `currency or payment.currency` uppercased,
+          # 'succeeded' is state == TRADE_SUCCESS, and store identity descends
+          # from document["place"] via place.store_id. So distinct `place` per
+          # createdAt-UTC-day is the upstream pre-image of a transacting
+          # store-day.
+          #
+          # CONTROL RANGE
+          # -------------
+          # Unmapped places quarantine, so upstream distinct-place counts are an
+          # UPPER BOUND on landed stores. Comparing early May against a LANDED
+          # control range measured the identical way cancels that bias -- the
+          # question is relative density, not absolute.
+          #
+          # REDACTION: place identifiers are used only as in-memory grouping
+          # keys. Output is counts and distributions exclusively.
+          import json, os
+          from collections import defaultdict
+          from datetime import date, datetime, timedelta, timezone
+          from pymongo import MongoClient
+
+          UTC = timezone.utc
+          client = MongoClient(os.environ["ODP_DATA_MONGO_URI"])
+          orders = client[os.environ["ODP_DATA_MONGO_DATABASE"]]["orders"]
+
+          # b9..b5 cover 2026-03-30..2026-04-29 (exclusive upper bound).
+          BACK_START, BACK_END = "2026-03-30", "2026-04-29"
+          # Landed, attested, uncontested-by-Defect-D control fortnight.
+          CTRL_START, CTRL_END = "2026-06-10", "2026-06-24"
+
+          def dt(value):
+              return datetime.fromisoformat(value).replace(tzinfo=UTC)
+
+          def days_between(start, end):
+              d0, d1 = date.fromisoformat(start), date.fromisoformat(end)
+              out = []
+              while d0 < d1:
+                  out.append(d0.isoformat())
+                  d0 += timedelta(days=1)
+              return out
+
+          pipeline = [
+              {"$match": {
+                  "state": "TRADE_SUCCESS",
+                  "place": {"$ne": None},
+                  "$or": [
+                      {"createdAt": {"$gte": dt(BACK_START), "$lt": dt(BACK_END)}},
+                      {"createdAt": {"$gte": dt(CTRL_START), "$lt": dt(CTRL_END)}},
+                  ],
+              }},
+              {"$match": {
+                  "$expr": {"$eq": [
+                      {"$toUpper": {"$ifNull": ["$currency", "$payment.currency"]}},
+                      "TWD",
+                  ]},
+              }},
+              {"$group": {
+                  "_id": {
+                      "place": "$place",
+                      "day": {"$dateToString": {
+                          "format": "%Y-%m-%d", "date": "$createdAt", "timezone": "UTC",
+                      }},
+                  },
+                  "orders": {"$sum": 1},
+              }},
+          ]
+
+          per_day_stores = defaultdict(set)
+          per_day_orders = defaultdict(int)
+          per_place_days = defaultdict(set)
+          for row in orders.aggregate(pipeline, allowDiskUse=True):
+              place = str(row["_id"]["place"])
+              day = row["_id"]["day"]
+              per_day_stores[day].add(place)
+              per_day_orders[day] += row["orders"]
+              per_place_days[place].add(day)
+
+          def summarize(label, start, end):
+              window = days_between(start, end)
+              counts = [len(per_day_stores.get(d, ())) for d in window]
+              present = sorted(counts)
+              n = len(present)
+              median = present[n // 2] if n else 0
+              # Continuity: stores trading on every day of the window, and the
+              # tail that would break a 28-day consecutive run.
+              full = sum(1 for p, ds in per_place_days.items()
+                         if all(d in ds for d in window))
+              universe = set()
+              for d in window:
+                  universe |= per_day_stores.get(d, set())
+              coverage = defaultdict(int)
+              for p in universe:
+                  hit = sum(1 for d in window if d in per_place_days[p])
+                  coverage[hit] += 1
+              return {
+                  "window": {"start": start, "end_exclusive": end, "days": n},
+                  "per_day_store_counts": {d: len(per_day_stores.get(d, ()))
+                                           for d in window},
+                  "per_day_order_counts": {d: per_day_orders.get(d, 0)
+                                           for d in window},
+                  "store_count_min": min(counts) if counts else 0,
+                  "store_count_median": median,
+                  "store_count_max": max(counts) if counts else 0,
+                  "zero_or_sparse_days": [
+                      d for d in window
+                      if len(per_day_stores.get(d, ())) < median // 2
+                  ],
+                  "distinct_stores_in_window": len(universe),
+                  "stores_present_every_day": full,
+                  "store_day_coverage_histogram": {
+                      str(k): coverage[k] for k in sorted(coverage)
+                  },
+              }
+
+          out = {
+              "probe": "april_window_store_density",
+              "database": os.environ["ODP_DATA_MONGO_DATABASE"],
+              "collection": "orders",
+              "grain": ("distinct place per createdAt UTC day, "
+                        "state=TRADE_SUCCESS and currency=TWD"),
+              "backwards_b5_b9": summarize("backwards", BACK_START, BACK_END),
+              "landed_control": summarize("control", CTRL_START, CTRL_END),
+          }
+          print("ODP_PROBE_RESULT " + json.dumps(out, sort_keys=True))

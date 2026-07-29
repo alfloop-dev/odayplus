@@ -109,6 +109,10 @@ neither is claimed.
 | `runbook/canonical-row-drift-rehearsal.py` | — | The rehearsal that produced it. Same advisory lock and statement timeout as `run_activation`; both arms roll back and neither commits. |
 | `activation_relation_closure.json` | — | Whether the copy set is the *right* set, derived from the target catalog rather than from our own list: view-dependency closure plus FK parents vs `ACTIVATION_RELATIONS`. Required 8, copied 8, nothing missing, nothing extra, nothing without a `refresh_key` (see §10). |
 | `runbook/activation-relation-closure-probe.py` | — | The catalog probe that produced it. Imports the copy set from the module under test; exits non-zero on a breach, so it can be re-run as a gate after any change to the view or its foreign keys. |
+| `criterion5_span_requirement.json` | — | The eligible span criterion 5 actually demands, from the registry's own expansion and temporal split rather than from the h28 arithmetic every other span number here uses: governing gate `minimum_segment_rows`, **58 eligible dates = 86 contiguous attested days** (see §11). A floor, not a forecast. |
+| `runbook/criterion5-span-requirement-sweep.py` | — | The sweep that produced it. Imports the functions under test and the real `PreparedRow`; its input is a uniform synthetic grid, which is a parameter sweep of a contract and not data — the limits are stated in §11 and in the module docstring. Touches no database and no cluster. |
+| `runbook/backfill-driver-v5.sh` | — | The driver carrying the extended queue `b2..b8,s5` that §11 sizes. Supersedes v4, which was killed by PID mid-flight at `-b2` before it could log the finisher handshake. |
+| `april_window_store_density_probe.pod.yaml` | — | The `-b1`..`-b4` density probe re-pointed at 2026-03-30..04-29, the April span `-b5`..`-b8` enters and which nothing has ever measured at day grain. **Committed unrun** — the cluster control path is blocked on a human re-auth (§11). Run it before trusting `-b5`..`-b8`. |
 | `evidence_redaction_audit.json` | — | Every identifier-shaped token in this directory, classified against the database. Found and then cleared a real violation; see **Redaction** above. |
 | `runbook/evidence-redaction-audit.py` | — | The audit that produced it. Classifies by table membership rather than by pattern, reports salted fingerprints only, and uses the allowed `run_id` class as its control. |
 | `runbook/redact-fidelity-sample.py` | — | One-shot, kept committed so the rewrite of `eligibility_model_fidelity.json`'s sample fields is reproducible rather than an unexplained diff. Idempotent. |
@@ -1756,7 +1760,165 @@ criterion-5 contract gates that passed in §9 only stay valid across activation
 if activation leaves it alone — and `forecast_history_activation` writes nothing
 in `model_ready` at all.
 
-## 11. After state
+## 11. Criterion 5 needs a much longer span than criterion 3, and nothing had asked
+
+Every span number in this document up to here — 21, 27, 33, 39 eligible dates,
+the `-b3` critical path, the 419/421/420 convergence, the whole backwards queue
+— was computed against one bound: an h28 window needs 28 consecutive eligible
+dates, `N` contiguous attested days yield `N-28` eligible dates, so 56 attested
+days suffice and `-b3` clears it with margin. That arithmetic is correct and
+nothing below revises it. **It is the bound for acceptance criterion 3, and it
+was silently reused as though it were the bound for criterion 5.**
+
+Criterion 5 is *"ODP-PRODUCTION-MODEL-REGISTRY-001 can resume training"*, and
+§9 already established that the registry does not reach the data the way the
+coverage probes do — it never touches `forecast_horizon_windows` at all. It goes
+
+```
+expand_forecast_horizon_rows → prepare_model_rows → _temporal_split → _segment_validation
+```
+
+and three properties of that chain compound into a much stronger requirement:
+
+* `_temporal_split` splits on **distinct temporal values** — origin dates — not
+  on row counts. Adding stores never adds holdout dates.
+* `minimum_segment_rows` (7 for `forecastops`) is applied to the **holdout
+  only**. `_segment_validation` skips any store carrying fewer than that many
+  holdout rows and appends a failure if *no* store survives.
+* A store contributes at most one row per origin date per qualifying horizon,
+  and the longer horizons' origins sit at the **start** of the span — in the
+  training partition, not the holdout. So the extra horizons do not help.
+
+Put together: the holdout is about a fifth of the eligible origin dates, and
+that fifth must reach 7. A span that clears `minimum_rows` (90 rows — trivial
+with hundreds of stores) can still die one gate later.
+
+### The requirement, measured rather than reasoned
+
+The arithmetic above is exactly the kind this task has got wrong before, so it
+is not the evidence. `runbook/criterion5-span-requirement-sweep.py` runs the
+registry's **own** functions — `expand_forecast_horizon_rows`, `_temporal_split`
+and the real `PreparedRow`, imported and not restated — over a sweep of span
+widths, and reports the narrowest span at which each gate first passes. Receipt:
+`criterion5_span_requirement.json`.
+
+| gate | first passes at | note |
+| --- | --- | --- |
+| `horizon_expansion_and_row_gates` | 28 eligible dates | one origin, one horizon |
+| `minimum_rows` (2-store grid) | 64 | grid artifact, see below |
+| `minimum_rows` (scaled to population) | 28 | never governs |
+| **`minimum_segment_rows`** | **58** | **governing** |
+
+**58 eligible dates = 86 contiguous attested days.** The queue as it stood
+bottoms out at `-b4` = `2026-04-29` = 67 attested days = 39 eligible. It clears
+criterion 3 and cannot clear criterion 5.
+
+Confirmed fatal rather than assumed fatal: `TemporalValidationReport` sets
+`passed = not failures`, and `release.py:199` raises
+`temporal validation failed` on it. A segment failure is not a warning.
+
+### What the synthetic grid is, and is not
+
+The sweep's input is a uniform synthetic store × date grid. It is **not data**,
+nothing is ingested, and nothing is claimed about the target from it — the
+question "how many consecutive eligible dates must exist before this gate *can*
+pass?" is a property of the contract, and the honest way to answer it is to ask
+the contract. Stating the limit precisely, because this is the one place a
+synthetic input could be misread as a data claim:
+
+The grid is deliberately **uniform** — every store trades every date — which is
+the most favourable shape real data can take. So 58/86 is a **necessary
+condition and a floor**. Real stores break their islands, so the true
+requirement is at least this and probably more. The sweep says criterion 5
+cannot pass below this span; it does not say it passes at this span, because
+that additionally needs some single real store trading continuously across the
+holdout tail, and no projection settles that.
+
+One gate is store-count dependent and is handled rather than ignored:
+`minimum_rows` counts rows, and the grid carries two stores. Its grid answer
+(64) is reported but excluded from the governing gate, and the scaling that
+justifies excluding it is **measured, not assumed** — the same span at 2 and 4
+stores gives identical rows-per-store (34) and identical holdout dates, so rows
+scale linearly with population while holdout dates do not move at all. For any
+population of at least 90 stores it clears wherever the expansion gate does.
+
+### What was done about it
+
+Four more backwards slices, created suspended, derived verbatim from `-b4`'s
+last-applied manifest with only the name, three annotations and the two window
+env vars differing, and carrying the `28800` deadline that `-b1`..`-b4` were
+patched to:
+
+| slice | window | eligible dates after |
+| --- | --- | --- |
+| `-b5` | 2026-04-23..04-29 | 45 |
+| `-b6` | 2026-04-17..04-23 | 51 |
+| `-b7` | 2026-04-11..04-17 | 57 — *one short of the floor* |
+| `-b8` | 2026-04-05..04-11 | **63 — clears it, +5 margin** |
+| `-b9` | 2026-03-30..04-05 | 69 — **reserve, deliberately not queued** |
+
+`-b9` exists because the floor is a floor. It is the reserve for the one way
+this can still fall short — the holdout needing a store that trades continuously
+across the tail — and it is left unqueued so that resuming it is a decision
+someone makes against a measurement, not a default that spends four more hours.
+
+Driver **v5** carries the extended queue `b2,b3,b4,b5,b6,b7,b8,s5`. `s5` stays
+last for v4's unchanged reason: it extends the post-split island, which tops out
+at 21 days and can never reach 28 on its own.
+
+**What was deliberately not done.** `minimum_segment_rows`, `holdout_fraction`
+and `FORECASTOPS_HORIZON_WEEKS` all sit in this repo and any of them would clear
+the gate in one line. That would move the gate rather than pass it, it is the
+registry task's layer and not this one's, and "the registry can resume training"
+does not mean "the registry's standards were lowered until it could". The span
+was grown with real records through the same governed ingestion path as every
+other slice.
+
+### The measurement this opens, and does not yet close
+
+`-b5`..`-b8` take the span to `2026-04-05`, which is **below everything this
+task has ever measured**. The `-b1`..`-b4` density probe started at
+`2026-04-29`; depth probe P4 sampled no day earlier than `2026-05-14`. The whole
+of April is unmeasured at day grain, and four slices were queued against it on a
+document-count depth probe alone — the same shape of assumption that §7's
+density and mappability probes were written to retire for early May.
+
+`april_window_store_density_probe.pod.yaml` is that probe, derived from the
+`-b1`..`-b4` density probe with only the window and the rationale changed so the
+numbers are directly comparable to it and to its control fortnight. **It has not
+been run**: the cluster control path is blocked (see below), and it is committed
+unrun rather than quietly dropped. Run it before trusting `-b5`..`-b8` to
+deliver the span this section sizes.
+
+### Blocked: the cluster control path needs a human
+
+`gcloud auth print-access-token` for `joe.tsai@dev.cctech-support.com` fails with
+`Reauthentication failed. cannot prompt during non-interactive execution` —
+Workspace session expiry, roughly 16 hours after the credentials were written on
+07-28 11:46. A background worker cannot clear it. The compute service account
+`1067163562451-compute@developer.gserviceaccount.com` still issues tokens but is
+not bound in the cluster's RBAC (`Unauthorized`), so it is not a way around it.
+
+What this does and does not stop:
+
+* **Not affected:** both Cloud SQL proxies, which authorize from the
+  self-refreshing `adc.json` rather than from the gcloud session — the source
+  and target DSNs were both verified live after the failure. Every DB-side probe
+  still runs.
+* **Not affected:** `-b2` itself. Kubernetes does not need our credentials to
+  keep running a Job it has already started.
+* **Stopped:** resuming `-b3` and everything after it, launching the April
+  density probe, and the deadline guard's ability to extend a slice.
+* **Fails closed, correctly:** the finisher's gate calls `active_orders_jobs`,
+  which reports `UNREACHABLE`, and `UNREACHABLE != 0`, so it will not activate
+  against a cluster it cannot see.
+
+Driver v5 self-heals: `refresh_kubeconfig` returns non-zero without writing when
+the token cannot be obtained, so the loop parks on `status=UNREACHABLE` — logged,
+not silent — and picks the queue back up on its own once a human runs
+`gcloud auth login`. Nothing needs restarting after the re-auth.
+
+## 12. After state
 
 Populated once `-s3`/`-s4`/`-s5` reach `Complete`, the source meets the settling
 condition above, and activation runs. See
