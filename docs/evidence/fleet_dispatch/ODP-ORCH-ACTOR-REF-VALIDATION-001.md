@@ -320,3 +320,50 @@ Receipts:
 
 No live state was mutated and no `Codex5/6/8/9` mapping was touched on this
 revision, per the reopen instruction.
+
+## 7. Closeout: integration with `dev` at finalize time
+
+`dev` advanced by 14 commits (through `61b8d46d`, PR #497 for
+`ODP-ORCH-CLAUDE-DEFERRED-APPROVAL-LIVE-ROLLOUT-001`) while PR #496 was waiting
+on its `product` check, so the PR went `BEHIND` and branch protection's strict
+up-to-date requirement blocked the merge.
+
+Integration was done as a forward merge on the task branch — no rebase, no
+force-push:
+
+```
+$ git merge origin/dev --no-edit   # -> 3b90e147
+```
+
+The incoming range touches none of this task's owned files. Verified before
+merging:
+
+```
+$ git diff --name-only $(git merge-base HEAD origin/dev) origin/dev -- \
+    scripts/ai_status.py scripts/test_ai_status.py ai-status.json \
+    docs/evidence/fleet_dispatch/ODP-ORCH-ACTOR-REF-VALIDATION-001.md \
+    docs/evidence/runtime/ODP-ORCH-ACTOR-REF-VALIDATION-001
+  (empty)
+```
+
+Post-merge verification at the integrated head:
+
+```
+$ python3 -m pytest scripts/test_ai_status.py .orchestrator/test_supervisor.py \
+    .orchestrator/test_dispatch_policy.py
+347 passed, 41 subtests passed in 6.61s
+
+$ python3 -m ruff check scripts/ai_status.py scripts/test_ai_status.py
+All checks passed!
+```
+
+The counts match the reviewed revision component-for-component: 98 + 41 subtests
+from `scripts/test_ai_status.py` and 249 from the supervisor/dispatch suites,
+run together here as one invocation.
+
+Because `task-review-gate` is a commit status pinned to a specific head SHA, the
+merge commit left the new head unstamped. Re-stamping it is the reviewer's
+action, not the owner's — `approve` requires `AI_NAME` to equal the assigned
+reviewer, which is precisely the gate this task hardened. The task is therefore
+handed back to `Codex2` to re-emit the gate on the integrated head; the owner
+runs `done` only after PR #496 actually merges into `dev`.
