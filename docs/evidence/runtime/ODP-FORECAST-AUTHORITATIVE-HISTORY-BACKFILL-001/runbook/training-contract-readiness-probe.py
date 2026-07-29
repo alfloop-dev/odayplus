@@ -40,16 +40,24 @@ Scope, stated so the receipt is not over-read. This probe covers the gates that
 depend on DATA AVAILABILITY, which is what this task is responsible for
 delivering: relation inventory, eligible-row load, horizon expansion, the
 row-level lineage/temporal rejections, `minimum_rows`, the temporal split's
-partition sizes, and `minimum_segment_rows` against the holdout. It stops before
-`_temporal_validation`, which fits an actual regression and scores it against
-`max_normalized_mae`/`min_p80_coverage`. That is a model-quality gate owned by
-the registry task, it needs LightGBM, and it is not something a history backfill
-can be said to pass or fail. Reporting a green light for a gate this probe did
-not run would be the same mistake as the finisher's demoted measurements.
+partition sizes, and `minimum_segment_rows` against the holdout. Those, and only
+those, decide `data_gates_passed`.
 
-Read-only. Selects only; no writes, no DDL, no job mutation. Safe to run while a
-backfill slice is in flight -- it touches the PG16 activation target, while the
-slices write the PG15 source.
+It then runs `_temporal_validation` as well -- the last step of `train()` before
+anything is written -- but reports it under `model_quality_probe`, deliberately
+outside the verdict. Its thresholds, `max_normalized_mae` and
+`min_p80_coverage`, belong to ODP-PRODUCTION-MODEL-REGISTRY-001; a history
+backfill cannot be said to pass or fail a regression's accuracy. Running it
+anyway is what lets criterion 5 be answered to the end of the read-only training
+path instead of stopping one step short, and if it fails, the registry task
+learns that from this receipt rather than from its first training run. Reporting
+its result inside `data_gates_passed` would be the same mistake as the
+finisher's demoted measurements; declining to measure it would be the other one.
+
+Read-only. Selects only; no writes, no DDL, no job mutation -- `train()` writes
+nothing until after `_temporal_validation` returns, which is exactly where this
+stops. Safe to run while a backfill slice is in flight: it touches the PG16
+activation target, while the slices write the PG15 source.
 
 Usage:
     source /tmp/odp-forecast-dsn.env && python3 training-contract-readiness-probe.py
@@ -343,8 +351,127 @@ def main() -> int:
         )
     )
 
+    # Descriptive, never gating. Runs last so a failure here cannot cost the
+    # receipt the data gates above, exactly like _safe_expansion_shape.
+    receipt["model_quality_probe"] = _safe_model_quality_probe(spec, prepared)
+
     _write(receipt, blocking=None)
     return 0
+
+
+def _safe_model_quality_probe(spec, prepared) -> dict:
+    """Run the registry's own `_temporal_validation` over the prepared rows.
+
+    This is the last thing `train()` does before it writes anything: `load` ->
+    `prepare_model_rows` -> `_temporal_validation` -> `register_dataset_snapshot`.
+    So the whole read-only prefix of the training path is reachable from here,
+    and running it costs one in-memory model fit on rows this probe has already
+    paid to load.
+
+    Why it is now run rather than declared out of scope. The earlier revision
+    stopped here for three stated reasons, and only two of them survive. It is
+    genuinely a model-quality gate, and its thresholds -- `max_normalized_mae`,
+    `min_p80_coverage` -- are owned by ODP-PRODUCTION-MODEL-REGISTRY-001 rather
+    than by a history backfill, so its verdict stays OUT of `data_gates_passed`
+    and out of `blocking_gate`. But "it needs LightGBM" was an obstacle that is
+    not real on this host (lightgbm 4.7.0 is installed and `lightgbm_regressor`
+    is the spec's own algorithm), and declining to run a reachable, read-only
+    step leaves criterion 5 -- "ODP-PRODUCTION-MODEL-REGISTRY-001 can resume
+    training" -- answered only down to the last gate before the interesting one.
+    Note also that `train()` raises this failure as `ModelReadyDataError`, the
+    same class it raises for missing rows: the registry's own taxonomy does not
+    treat it as purely a modelling concern. Measuring it and labelling whose
+    gate it is beats asserting it was not ours to measure.
+
+    Fidelity: the real method is invoked, not a restatement of it, so the
+    kind-based branch to the survival or regression validator and the temporal
+    split both follow `release.py` if either changes. `_temporal_validation`
+    touches only `self.regression_trainer`, so a namespace carrying the class's
+    own default is the whole dependency -- constructing a real
+    `BoundedModelTrainingRelease` would demand a LearningHub service, an
+    artifact store and a registry, all of which write.
+
+    Redaction: `_segment_validation` puts the segment value -- a store id -- in
+    both its per-segment records and its failure strings. This directory
+    publishes counts only, so segment outcomes are aggregated here and the
+    per-segment records are dropped. Global rule failures name no store and are
+    kept verbatim.
+    """
+    from types import SimpleNamespace
+
+    from scripts.models.release import (
+        BoundedModelTrainingRelease,
+        train_oss_estimator,
+    )
+
+    out = {
+        "what_this_is": (
+            "The registry's own _temporal_validation, run against the rows this "
+            "probe loaded. It fits the spec's estimator on the temporal training "
+            "partition and scores it on the held-out future partition."
+        ),
+        "gates_this_task": False,
+        "owned_by": "ODP-PRODUCTION-MODEL-REGISTRY-001",
+        "why_not_gating": (
+            "max_normalized_mae and min_p80_coverage are model-quality thresholds "
+            "owned by the registry task. A backfill delivers real history; it "
+            "cannot be said to pass or fail a regression's accuracy. This result "
+            "is reported so criterion 5 is answered to the end of the read-only "
+            "training path, and is deliberately excluded from data_gates_passed."
+        ),
+        "model_kind": getattr(spec.kind, "value", str(spec.kind)),
+        "algorithm_requested": spec.algorithm,
+        "thresholds": {
+            "max_normalized_mae": spec.max_normalized_mae,
+            "min_p80_coverage": spec.min_p80_coverage,
+            "minimum_segment_rows": spec.minimum_segment_rows,
+            "holdout_fraction": spec.holdout_fraction,
+        },
+    }
+    started = datetime.now(UTC)
+    try:
+        report = BoundedModelTrainingRelease._temporal_validation(
+            SimpleNamespace(regression_trainer=train_oss_estimator),
+            spec,
+            prepared,
+        )
+    except Exception as exc:  # noqa: BLE001 - descriptive stage, must not lose the receipt
+        out["status"] = "ERROR"
+        out["error"] = f"{type(exc).__name__}: {exc}"
+        out["elapsed_seconds"] = round((datetime.now(UTC) - started).total_seconds(), 1)
+        return out
+
+    segment_prefix = f"{spec.segment_column}="
+    segment_failures = [r for r in report.failed_rules if r.startswith(segment_prefix)]
+    global_failures = [r for r in report.failed_rules if not r.startswith(segment_prefix)]
+    segment_maes = sorted(
+        float(s["metrics"]["normalized_mae"]) for s in report.segments
+    )
+
+    out["status"] = "PASS" if report.passed else "FAIL"
+    out["passed"] = bool(report.passed)
+    out["algorithm_resolved"] = report.algorithm
+    out["training_rows"] = report.training_rows
+    out["holdout_rows"] = report.holdout_rows
+    out["holdout_cutoff"] = report.cutoff
+    out["metrics"] = dict(report.metrics)
+    out["baseline_metrics"] = dict(report.baseline_metrics)
+    out["global_rule_failures"] = global_failures
+    out["segment_outcomes"] = {
+        "segments_scored": len(report.segments),
+        "segments_failing_normalized_mae": len(segment_failures),
+        "normalized_mae_min": segment_maes[0] if segment_maes else None,
+        "normalized_mae_median": (
+            segment_maes[len(segment_maes) // 2] if segment_maes else None
+        ),
+        "normalized_mae_max": segment_maes[-1] if segment_maes else None,
+        "redaction": (
+            "segment values are store ids and are not published; counts and the "
+            "metric distribution only"
+        ),
+    }
+    out["elapsed_seconds"] = round((datetime.now(UTC) - started).total_seconds(), 1)
+    return out
 
 
 def _safe_expansion_shape(spec, loaded) -> dict:
@@ -448,14 +575,26 @@ def _expansion_shape(spec, loaded) -> dict:
 
 def _write(receipt: dict, *, blocking: str | None) -> None:
     passed = [g for g in receipt["gates"] if g["status"] == "PASS"]
+    quality = receipt.get("model_quality_probe")
     receipt["verdict"] = {
         "data_gates_passed": blocking is None,
         "blocking_gate": blocking,
         "gates_passed": len(passed),
         "gates_evaluated": len(receipt["gates"]),
+        # Reported separately from the data gates on purpose: it is measured, it
+        # is not this task's to pass. Only reachable once the data gates clear,
+        # so on a blocked run it is honestly absent rather than assumed.
+        "model_quality_probe": (
+            "not reached (data gates blocked before the training path got there)"
+            if quality is None
+            else f"{quality.get('status')} -- reported, not gating; owned by "
+            "ODP-PRODUCTION-MODEL-REGISTRY-001"
+        ),
         "not_evaluated": [
-            "_temporal_validation (fits a regression; model-quality gate owned by "
-            "ODP-PRODUCTION-MODEL-REGISTRY-001, not by this backfill)"
+            "everything in train() after _temporal_validation -- "
+            "register_dataset_snapshot onward, all of which WRITE (dataset "
+            "snapshot, feature pipeline, artifacts, registry). This probe is "
+            "read-only by construction and stops at the last non-writing step."
         ],
     }
     os.makedirs(os.path.dirname(OUT), exist_ok=True)

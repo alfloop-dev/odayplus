@@ -58,7 +58,7 @@ into its output.
 | `runbook/lineage-convergence-rehearsal.py` | — | The rehearsal that produced it. Same advisory lock and statement timeout as `run_activation`; both arms roll back and neither commits. |
 | `settle_state.json` | — | Written by the finisher **immediately before** `activate`: the incomplete partitions and abandoned-lineage ownership that were true at that moment. The two conditions the gate no longer blocks on, stated instead of hidden (see §7, v6). |
 | `training_contract_readiness.json` | — | Criterion 5 answered by running the registry's own loader and `prepare_model_rows` against the live target rather than restating their rules: 3 of 4 data gates pass and horizon expansion fails, because the target's eligible span is 13 days against a 28-day shortest horizon. Also shows the target is frozen at an old activation — `SOURCE_RUN_NOT_COMPLETE` from 2026-07-02 on (see §9). |
-| `runbook/training-contract-readiness-probe.py` | — | The probe that produced it. Imports the code under test; stops before `_temporal_validation`, which is the registry task's model-quality gate, and names it under `not_evaluated`. |
+| `runbook/training-contract-readiness-probe.py` | — | The probe that produced it. Imports the code under test. Covers the whole read-only prefix of `train()`, including `_temporal_validation` — reported under `model_quality_probe`, outside the verdict, because its thresholds are the registry task's (see §9). |
 | `runbook/training-contract-probe-runner.sh` | — | Runs that probe detached, like the keepers. A worker turn is shorter than the probe, and a probe killed with its worker leaves a PostgreSQL backend still executing (see §9). |
 
 Reproduce any of them with the DSN pair and the Cloud SQL proxy attestation in
@@ -1353,12 +1353,57 @@ the real `PostgresModelReadySource` against the live target, calls the real
 result to the real `prepare_model_rows`, so the gates are evaluated in the order
 `train()` applies them. Receipt: `training_contract_readiness.json`.
 
-It stops before `_temporal_validation`, which fits a regression and scores it
-against `max_normalized_mae`/`min_p80_coverage`. That is a model-quality gate
-owned by the registry task, it needs LightGBM, and a history backfill cannot be
-said to pass or fail it. Claiming a gate this probe did not run would be the
-same mistake as the finisher's demoted measurements, so the receipt names it
-under `not_evaluated`.
+### Where the probe stops, and one reason that turned out not to be real
+
+The first revision stopped before `_temporal_validation` — the step that fits a
+regression and scores it against `max_normalized_mae`/`min_p80_coverage` — for
+three stated reasons. Two of them hold. It genuinely is a model-quality gate,
+its thresholds belong to the registry task, and a history backfill cannot be
+said to pass or fail a regression's accuracy. The third, "it needs LightGBM",
+was an obstacle that does not exist here: `lightgbm` 4.7.0 is installed and
+`lightgbm_regressor` is the spec's own `algorithm`. A reason that is not real is
+worth removing from evidence whether or not it changes the conclusion.
+
+Removing it changes the conclusion. `train()` runs
+`load` → `prepare_model_rows` → `_temporal_validation` → `register_dataset_snapshot`,
+and **everything that writes is on the far side of `_temporal_validation`** —
+the dataset snapshot, the feature pipeline, the artifacts, the registry entry.
+So the entire read-only prefix of the training path is reachable, and the rows
+it needs are ones this probe has already spent forty minutes loading; the
+marginal cost is one in-memory fit, measured at 1.7 s on a 390-row fixture. A
+criterion-5 receipt that stops one step short of the last reachable step, for a
+reason that was not binding, is answering less than it can. Worth noting too
+that `train()` raises this failure as `ModelReadyDataError` — the same class it
+raises for missing rows — so the registry's own taxonomy does not file it purely
+under modelling.
+
+The probe therefore **runs it and reports it outside the verdict**, under
+`model_quality_probe`, with `gates_this_task: false` and the owning task named.
+It cannot move `data_gates_passed` or `blocking_gate`; a `FAIL` there leaves the
+data verdict intact, which is asserted directly in the change's tests. This is
+the same discipline as the finisher's demoted measurements, applied in the other
+direction: *reporting* a measurement inside a verdict it does not belong to
+would be one mistake, and *declining to take* a cheap reachable measurement is
+the other. `not_evaluated` now names what is actually not evaluated — everything
+from `register_dataset_snapshot` onward, all of which writes.
+
+Fidelity and redaction, both load-bearing. The real
+`BoundedModelTrainingRelease._temporal_validation` is invoked rather than
+restated, so the kind-based branch and the temporal split follow `release.py` if
+either changes; it touches only `self.regression_trainer`, so a namespace
+carrying the class's own default supplies the whole dependency, where building a
+real instance would demand a service, an artifact store and a registry — all of
+which write. And `_segment_validation` puts the segment value, **a store id**,
+into both its per-segment records and its failure strings. This directory
+publishes counts only, so segment outcomes are aggregated to a count and a
+metric distribution, global rule failures (which name no store) are kept
+verbatim, and the test asserts no segment value reaches the receipt.
+
+One limit stated plainly: the stage's first run against live data is the
+finisher's post-activation one. It cannot run before then, because the data
+gates block at horizon expansion and there are no prepared rows to fit — so the
+committed pre-activation receipt shows it as `not reached`, which is the honest
+reading rather than a gap.
 
 **Result: 3 of 4 data gates pass, and the run is blocked at horizon expansion.**
 
