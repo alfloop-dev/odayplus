@@ -1,0 +1,13 @@
+{
+  "verdict": "PASS",
+  "mode": "final",
+  "worker_run_id": "claude-20260729T060543Z-a962c8f8",
+  "events_in_slice": 13,
+  "approval_id": "apr-20260729T060857Z-5c04969e",
+  "correlation_event_type": "worker_deferred_approval_recorded",
+  "correlation_index": 8,
+  "first_generic_worker_failed_index": 11,
+  "missing_process_finalizations": 0,
+  "boot_metric_missing_process_failures": 0,
+  "failures": []
+}
