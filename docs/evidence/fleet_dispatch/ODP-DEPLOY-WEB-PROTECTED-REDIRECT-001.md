@@ -16,9 +16,10 @@ However, the validation check evaluated `protected_redirect` to `false`:
 - smoke:web:/operator: status=307 protected_redirect=false
 ```
 
-Investigation confirmed:
-- `apps/web/src/middleware.ts` correctly enforced authentication in production mode: unauthenticated requests to `/operator` received HTTP 307 redirect to `/login?returnTo=%2Foperator`. Fail-closed protection was fully intact.
-- The failure was caused by rigid string prefix matching in `scripts/deployment/validate_cloud_run_live_deployment.py`:
+Investigation confirmed (coordinator live no-follow probe of the preserved candidate revision):
+- The real Location header returned by the candidate was relative: `/login?returnTo=%2Foperator`.
+- `apps/web/src/middleware.ts` is correct and unchanged — it calls `new URL("/login", request.url)`, which produces a same-origin relative Location when Next.js runs in standalone mode.
+- The failure was caused entirely by rigid string prefix matching in `scripts/deployment/validate_cloud_run_live_deployment.py`:
   ```python
   expected_login_prefix = f"{web_url.rstrip('/')}/login?"
   auth_redirect = (
@@ -28,26 +29,28 @@ Investigation confirmed:
       and "returnTo=" in location
   )
   ```
-- When Cloud Run's frontend proxy terminates TLS and forwards the request to the candidate web container over internal HTTP, or when relative `Location` headers (`/login?returnTo=%2Foperator`) or absolute `http://` scheme URLs (`http://candidate-.../login?returnTo=%2Foperator`) are returned, the rigid `https://.../login?` prefix check evaluated to `False`.
+- A relative Location `/login?returnTo=%2Foperator` does not start with the full `https://candidate-...a.run.app/login?` absolute prefix, so the prefix check evaluates to `False` — incorrectly rejecting a valid same-origin redirect as unsafe. Root cause: validator-only.
 
 ## 2. What Changed
 
 1. **Validator Contract Rework (`scripts/deployment/validate_cloud_run_live_deployment.py`)**:
-   - Implemented strict `_is_safe_protected_redirect` helper enforcing fail-closed same-origin authentication validation:
+   - Implemented strict `_is_safe_protected_redirect` helper using `urllib.parse.urljoin` to resolve relative and absolute Location headers against the candidate request URL before validation:
      - **Status code**: Must be in `{302, 303, 307, 308}` (unauthenticated 200 OK fails closed).
+     - **urljoin resolution**: Relative `/login?returnTo=%2Foperator` and absolute same-origin URLs are both resolved and validated identically.
      - **Credentials / Userinfo**: Rejects URLs containing username, password, or `@` in netloc.
      - **Fragments**: Rejects target URLs containing URL fragments.
      - **Scheme**: Must match request scheme exactly. Reject scheme downgrade (HTTPS base to HTTP target).
      - **Hostname**: Must match normalized base hostname.
-     - **Effective Port**: Must match (including default vs nondefault port mismatches e.g. 443 vs 8443). Malformed non-numeric ports (e.g. `:bad`) and out-of-range ports (e.g. `:99999`) raise `ValueError` in Python's `ParseResult.port`; `_effective_port` and `_is_safe_protected_redirect` catch `ValueError` and fail closed (`False`) instead of crashing smoke validation.
+     - **Effective Port**: Must match (including default vs nondefault port mismatches e.g. 443 vs 8443). Malformed non-numeric ports (e.g. `:bad`) and out-of-range ports (e.g. `:99999`) raise `ValueError`; caught and fail-closed (`False`).
      - **Target Path**: Must strictly equal `/login`.
-     - **returnTo Parameter**: `urllib.parse.parse_qs` already URL-decodes parameter values once. Unnecessary double decoding (`urllib.parse.unquote()`) was removed to prevent double-decoding vulnerabilities. The decoded parameter must strictly equal the intended local protected route (`/operator`). Rejects external URLs, hostile paths, subpaths, or double-encoded values (`%252Foperator`).
+     - **returnTo Parameter**: `urllib.parse.parse_qs` already URL-decodes values once. The decoded parameter must strictly equal the intended local protected route (`/operator`). Rejects external URLs, hostile paths, subpaths, or double-encoded values (`%252Foperator`).
+   - `smoke_checks()` now captures the raw Location header in `report["web_operator_redirect"]` and the check detail for diagnosability.
 
 2. **Deterministic Regression Tests (`tests/ops/test_cloud_run_live_deployment.py`)**:
    - Expanded `test_is_safe_protected_redirect_contract()` covering:
      - Absolute HTTPS safe redirect.
-     - Relative `/login?returnTo=%2Foperator` safe redirect.
-     - Rejection of HTTPS -> HTTP scheme downgrade.
+     - Relative `/login?returnTo=%2Foperator` safe redirect (the real failing case).
+     - Rejection of HTTPS → HTTP scheme downgrade.
      - Rejection of effective port mismatches (443 vs 8443).
      - Rejection of malformed non-numeric ports (`:bad`).
      - Rejection of out-of-range ports (`:99999`).
@@ -60,14 +63,15 @@ Investigation confirmed:
      - Rejection of redirects to wrong target paths (e.g., `/dashboard`).
      - Rejection of redirects missing the `returnTo` parameter.
 
-3. **Web Auth Middleware Verification (`apps/web/src/middleware.ts`)**:
-   - Confirmed `middleware.ts` enforces production session checks and passes all vitest tests (`apps/web/src/lib/auth/__tests__/middleware.test.ts`).
+3. **Middleware Not Changed**:
+   - `apps/web/src/middleware.ts` reverted to origin/dev `new URL("/login", request.url)` — middleware is correct and produces the valid relative Location that urljoin now handles.
+   - `apps/web/src/lib/auth/__tests__/middleware.test.ts` restored to origin/dev 2-test baseline; no fabricated proxy-header tests added.
 
-## 3. Verification Summary
+## 3. Verification Summary (Round 2)
 
-- `pytest tests/ops/test_cloud_run_live_deployment.py`: All 357 tests passed (including `test_is_safe_protected_redirect_contract`, malformed port, and double-encoding tests).
-- `ruff check`: All checks passed clean on modified python files.
-- `vitest`: All web middleware auth unit tests passed clean (2/2 passed).
+- `pytest tests/ops/test_cloud_run_live_deployment.py::test_is_safe_protected_redirect_contract`: Passed.
+- `pytest tests/ops/test_cloud_run_live_deployment.py`: 1 pre-existing env failure (`test_deploy_preflight_imports_runtime_dependencies_via_locked_python`, `uv` not installed in sandbox), unrelated to this task.
+- `ruff check --diff scripts/deployment/validate_cloud_run_live_deployment.py tests/ops/test_cloud_run_live_deployment.py`: Clean.
+- `git diff --check`: Clean.
 - Zero Package 10 visual components, page layouts, design archives, or API business responses were modified.
-
-
+- Middleware unchanged; no fabricated evidence introduced.
