@@ -8534,17 +8534,17 @@ def dispatch_priority_for_task(
             try:
                 from ai_status import resolve_task_sha
                 curr_head = resolve_task_sha(str(task.get("id") or ""))
-                if curr_head and curr_head != approved_head:
+                if not curr_head or curr_head != approved_head:
                     return None
             except Exception:
-                pass
+                return None
         try:
             from ai_status import task_pr_ci_status
             _pr_st, ci_status = task_pr_ci_status(str(task.get("id") or ""))
-            if ci_status in {"pending", "failure"}:
+            if ci_status not in {"success", "none"}:
                 return None
         except Exception:
-            pass
+            return None
         return 1
     if (
         task_status == "in_progress"
@@ -9083,27 +9083,29 @@ def dispatch_ready_tasks(
                     current_head = resolve_task_sha(task_id)
                 except Exception as err:
                     console_log(f"Failed to resolve sha for {task_id}: {err}", quiet=SUPERVISOR_LOG_QUIET)
-                if approved_head and current_head and current_head != approved_head:
-                    task["status"] = "review"
-                    task["last_update"] = utc_now()
-                    task["next"] = (
-                        f"Branch HEAD ({current_head[:8]}) mutated after reviewer approval "
-                        f"({approved_head[:8]}); re-review required."
-                    )
-                    task.pop("approved_head", None)
-                    status_path = config_path(config, "status_file")
-                    write_json(status_path, status)
-                    sync_status_pipeline(config)
-                    write_activity_log(
-                        config,
-                        {
-                            "type": "re-review_required",
-                            "task_id": task_id,
-                            "message": task["next"],
-                        },
-                    )
-                    changed = True
-                    continue
+                if approved_head:
+                    if not current_head or current_head != approved_head:
+                        if current_head and current_head != approved_head:
+                            task["status"] = "review"
+                            task["last_update"] = utc_now()
+                            task["next"] = (
+                                f"Branch HEAD ({current_head[:8]}) mutated after reviewer approval "
+                                f"({approved_head[:8]}); re-review required."
+                            )
+                            task.pop("approved_head", None)
+                            status_path = config_path(config, "status_file")
+                            write_json(status_path, status)
+                            sync_status_pipeline(config)
+                            write_activity_log(
+                                config,
+                                {
+                                    "type": "re-review_required",
+                                    "task_id": task_id,
+                                    "message": task["next"],
+                                },
+                            )
+                            changed = True
+                        continue
 
                 ci_status = "unknown"
                 try:
@@ -9150,6 +9152,8 @@ def dispatch_ready_tasks(
                                 "message": msg,
                             },
                         )
+                    continue
+                elif ci_status not in {"success", "none"}:
                     continue
                 else:
                     if task.pop("ci_pending_since_ts", None) is not None:

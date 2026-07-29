@@ -4575,10 +4575,18 @@ def command_done(state: dict[str, Any], args: list[str]) -> None:
         raise SystemExit(f"{task_id} must be review_approved before it can move to done")
     approved_head = task.get("approved_head")
     if approved_head:
-        current_sha = resolve_task_sha(task_id)
-        if current_sha and current_sha != approved_head:
+        current_sha = None
+        try:
+            current_sha = resolve_task_sha(task_id)
+        except Exception as exc:
             raise SystemExit(
-                f"Cannot finalize task {task_id}: current branch HEAD ({current_sha[:8]}) "
+                f"Cannot finalize task {task_id}: unable to resolve current branch HEAD ({exc}). "
+                "Integrity gate failed closed."
+            ) from exc
+        if not current_sha or current_sha != approved_head:
+            display_sha = current_sha[:8] if current_sha else "unresolved"
+            raise SystemExit(
+                f"Cannot finalize task {task_id}: current branch HEAD ({display_sha}) "
                 f"differs from reviewer-approved head ({approved_head[:8]}). "
                 "Strict update-branch merge requires re-review."
             )

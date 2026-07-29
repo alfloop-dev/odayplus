@@ -1807,6 +1807,7 @@ class ProcessQueueDispatchGuardTests(unittest.TestCase):
             mock.patch.object(supervisor, "load_status", return_value=status),
             mock.patch.object(supervisor, "load_event_queue", return_value=[]),
             mock.patch.object(supervisor, "queue_delivery_event", return_value=True) as queue_delivery_event,
+            mock.patch("ai_status.task_pr_ci_status", return_value=("OPEN", "success")),
         ):
             changed = supervisor.dispatch_ready_tasks(self.config, state)
 
@@ -1841,6 +1842,7 @@ class ProcessQueueDispatchGuardTests(unittest.TestCase):
             mock.patch.object(supervisor, "load_status", return_value=status),
             mock.patch.object(supervisor, "load_event_queue", return_value=[]),
             mock.patch.object(supervisor, "queue_delivery_event", return_value=True) as queue_delivery_event,
+            mock.patch("ai_status.task_pr_ci_status", return_value=("OPEN", "success")),
         ):
             changed = supervisor.dispatch_ready_tasks(self.config, state)
 
@@ -5158,6 +5160,7 @@ class ChairReviewDispatchTests(unittest.TestCase):
             mock.patch.object(supervisor, "load_status", return_value=status),
             mock.patch.object(supervisor, "load_event_queue", return_value=[]),
             mock.patch.object(supervisor, "queue_delivery_event") as queue_delivery_event,
+            mock.patch("ai_status.task_pr_ci_status", return_value=("OPEN", "success")),
         ):
             changed = supervisor.dispatch_ready_tasks(self.config, state)
 
@@ -8452,6 +8455,28 @@ class RunSupervisorShellGuardTests(unittest.TestCase):
 
 
 class ReviewHeadFreezeTests(unittest.TestCase):
+    def _build_freeze_test_config(self) -> dict[str, Any]:
+        config = load_test_config()
+        ready_disp = config.setdefault("ready_dispatcher", {})
+        ready_disp["enabled"] = True
+        ready_disp["review_statuses"] = ["review"]
+        ready_disp["finalize_statuses"] = ["review_approved"]
+        ready_disp["owned_statuses"] = ["in_progress", "todo"]
+        ready_disp["active_worker_statuses"] = ["running", "waiting_approval"]
+        max_by_agent = ready_disp.setdefault("max_tasks_per_agent_by_agent", {})
+        max_by_agent["Antigravity4"] = 10
+        max_by_agent["antigravity4"] = 10
+        quota_groups = ready_disp.setdefault("max_concurrent_per_quota_group", {})
+        quota_groups["antigravity4"] = 10
+        quota_groups["antigravity"] = 10
+        agents = config.setdefault("agents", {})
+        agents["antigravity4"] = {
+            "display_name": "Antigravity4",
+            "provider": "antigravity",
+            "adapter": "antigravity",
+        }
+        return config
+
     def test_approve_saves_approved_head_and_rejects_same_owner_reviewer(self) -> None:
         state = {
             "tasks": [
@@ -8499,6 +8524,29 @@ class ReviewHeadFreezeTests(unittest.TestCase):
                     ai_status.command_done(state, ["FREEZE-TEST-003", "Finalize done"])
                 self.assertIn("differs from reviewer-approved head", str(cm.exception))
 
+    def test_command_done_fails_closed_when_sha_unresolved_or_raises(self) -> None:
+        state = {
+            "tasks": [
+                {
+                    "id": "FREEZE-TEST-003B",
+                    "owner": "Antigravity4",
+                    "reviewer": "Claude",
+                    "status": "review_approved",
+                    "approved_head": "1111111122222222333333334444444455555555",
+                }
+            ]
+        }
+        with unittest.mock.patch("ai_status.current_actor_validated", return_value="Antigravity4"):
+            with unittest.mock.patch("ai_status.resolve_task_sha", return_value=None):
+                with self.assertRaises(SystemExit) as cm:
+                    ai_status.command_done(state, ["FREEZE-TEST-003B", "Finalize done"])
+                self.assertIn("differs from reviewer-approved head", str(cm.exception))
+
+            with unittest.mock.patch("ai_status.resolve_task_sha", side_effect=RuntimeError("git error")):
+                with self.assertRaises(SystemExit) as cm:
+                    ai_status.command_done(state, ["FREEZE-TEST-003B", "Finalize done"])
+                self.assertIn("unable to resolve current branch HEAD", str(cm.exception))
+
     def test_supervisor_reverts_mutated_approved_head_to_review_on_disk(self) -> None:
         import tempfile
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -8517,7 +8565,7 @@ class ReviewHeadFreezeTests(unittest.TestCase):
             }
             status_file.write_text(json.dumps(initial_status), encoding="utf-8")
 
-            config = load_test_config()
+            config = self._build_freeze_test_config()
             config["paths"]["status_file"] = str(status_file)
             state = {
                 "seen_event_keys": {},
@@ -8526,21 +8574,22 @@ class ReviewHeadFreezeTests(unittest.TestCase):
             }
 
             ai_status.clear_ai_status_caches()
-            with unittest.mock.patch("ai_status.resolve_task_sha", return_value="8888888822222222333333334444444455555555"):
-                with unittest.mock.patch("supervisor.agent_auto_dispatch_block_reason", return_value=None):
-                    with unittest.mock.patch("supervisor.sync_status_pipeline", return_value=True):
-                        with unittest.mock.patch("supervisor.write_activity_log"):
-                            supervisor.dispatch_ready_tasks(
-                                config,
-                                state,
-                                agent_ids_override=["antigravity4"],
-                            )
-                            # Assert on real on-disk status file!
-                            disk_status = json.loads(status_file.read_text(encoding="utf-8"))
-                            disk_task = disk_status["tasks"][0]
-                            self.assertEqual(disk_task["status"], "review")
-                            self.assertIn("re-review required", disk_task["next"])
-                            self.assertNotIn("approved_head", disk_task)
+            with unittest.mock.patch("supervisor.scan_live_worker_pids_by_agent", return_value={}), \
+                 unittest.mock.patch("supervisor.outstanding_delivery_indexes", return_value=(set(), set(), set())), \
+                 unittest.mock.patch("ai_status.resolve_task_sha", return_value="8888888822222222333333334444444455555555"), \
+                 unittest.mock.patch("supervisor.agent_auto_dispatch_block_reason", return_value=None), \
+                 unittest.mock.patch("supervisor.sync_status_pipeline", return_value=True), \
+                 unittest.mock.patch("supervisor.write_activity_log"):
+                supervisor.dispatch_ready_tasks(
+                    config,
+                    state,
+                    agent_ids_override=["antigravity4"],
+                )
+                disk_status = json.loads(status_file.read_text(encoding="utf-8"))
+                disk_task = disk_status["tasks"][0]
+                self.assertEqual(disk_task["status"], "review")
+                self.assertIn("re-review required", disk_task["next"])
+                self.assertNotIn("approved_head", disk_task)
 
     def test_task_pr_ci_status_handles_checkrun_completed_failure(self) -> None:
         ai_status.clear_ai_status_caches()
@@ -8561,7 +8610,7 @@ class ReviewHeadFreezeTests(unittest.TestCase):
             self.assertEqual(ci_status, "failure")
 
     def test_dispatch_priority_for_task_and_agent_primary_work(self) -> None:
-        config = load_test_config()
+        config = self._build_freeze_test_config()
         task_mutated = {
             "id": "FREEZE-TEST-007",
             "owner": "Antigravity4",
@@ -8578,6 +8627,32 @@ class ReviewHeadFreezeTests(unittest.TestCase):
             self.assertIsNone(prio)
             has_work = supervisor.agent_has_dispatchable_primary_work(config, status_data, "Antigravity4", task_map)
             self.assertFalse(has_work)
+
+    def test_dispatch_priority_fails_closed_on_unresolved_head_or_unknown_ci(self) -> None:
+        config = self._build_freeze_test_config()
+        task = {
+            "id": "FREEZE-TEST-007B",
+            "owner": "Antigravity4",
+            "reviewer": "Claude",
+            "status": "review_approved",
+            "approved_head": "1111111122222222333333334444444455555555",
+        }
+        task_map = {"FREEZE-TEST-007B": task}
+
+        ai_status.clear_ai_status_caches()
+        with unittest.mock.patch("ai_status.resolve_task_sha", return_value=None):
+            self.assertIsNone(supervisor.dispatch_priority_for_task(config, task, "Antigravity4", task_map=task_map))
+
+        with unittest.mock.patch("ai_status.resolve_task_sha", side_effect=RuntimeError("git error")):
+            self.assertIsNone(supervisor.dispatch_priority_for_task(config, task, "Antigravity4", task_map=task_map))
+
+        with unittest.mock.patch("ai_status.resolve_task_sha", return_value="1111111122222222333333334444444455555555"), \
+             unittest.mock.patch("ai_status.task_pr_ci_status", return_value=("OPEN", "unknown")):
+            self.assertIsNone(supervisor.dispatch_priority_for_task(config, task, "Antigravity4", task_map=task_map))
+
+        with unittest.mock.patch("ai_status.resolve_task_sha", return_value="1111111122222222333333334444444455555555"), \
+             unittest.mock.patch("ai_status.task_pr_ci_status", side_effect=RuntimeError("gh error")):
+            self.assertIsNone(supervisor.dispatch_priority_for_task(config, task, "Antigravity4", task_map=task_map))
 
     def test_explicit_re_review_command(self) -> None:
         state = {
@@ -8609,7 +8684,7 @@ class ReviewHeadFreezeTests(unittest.TestCase):
             self.assertNotIn("approved_head", task)
 
     def test_supervisor_suppresses_finalize_dispatch_on_pending_ci(self) -> None:
-        config = load_test_config()
+        config = self._build_freeze_test_config()
         task = {
             "id": "FREEZE-TEST-005",
             "owner": "Antigravity4",
@@ -8625,18 +8700,85 @@ class ReviewHeadFreezeTests(unittest.TestCase):
         status = {"tasks": [task]}
 
         ai_status.clear_ai_status_caches()
-        with unittest.mock.patch("supervisor.load_status", return_value=status):
-            with unittest.mock.patch("ai_status.resolve_task_sha", return_value="1111111122222222333333334444444455555555"):
-                with unittest.mock.patch("ai_status.task_pr_ci_status", return_value=("OPEN", "pending")):
-                    with unittest.mock.patch("supervisor.agent_auto_dispatch_block_reason", return_value=None):
-                        with unittest.mock.patch("supervisor.spawn_background_process") as mock_spawn:
-                            supervisor.dispatch_ready_tasks(
-                                config,
-                                state,
-                                agent_ids_override=["antigravity4"],
-                            )
-                            mock_spawn.assert_not_called()
-                            self.assertEqual(task["status"], "review_approved")
+        # Positive Control: ci_status = "success" MUST dispatch
+        with unittest.mock.patch("supervisor.scan_live_worker_pids_by_agent", return_value={}), \
+             unittest.mock.patch("supervisor.outstanding_delivery_indexes", return_value=(set(), set(), set())), \
+             unittest.mock.patch("supervisor.agent_dispatch_loads", return_value={}), \
+             unittest.mock.patch("supervisor.load_status", return_value=status), \
+             unittest.mock.patch("ai_status.resolve_task_sha", return_value="1111111122222222333333334444444455555555"), \
+             unittest.mock.patch("ai_status.task_pr_ci_status", return_value=("OPEN", "success")), \
+             unittest.mock.patch("supervisor.agent_auto_dispatch_block_reason", return_value=None), \
+             unittest.mock.patch("supervisor.queue_delivery_event", return_value=True) as mock_queue:
+            dispatched = supervisor.dispatch_ready_tasks(
+                config,
+                state,
+                agent_ids_override=["antigravity4"],
+            )
+            self.assertTrue(dispatched)
+            mock_queue.assert_called_once()
+
+        # Test suppression: ci_status = "pending" MUST NOT dispatch
+        with unittest.mock.patch("supervisor.scan_live_worker_pids_by_agent", return_value={}), \
+             unittest.mock.patch("supervisor.outstanding_delivery_indexes", return_value=(set(), set(), set())), \
+             unittest.mock.patch("supervisor.agent_dispatch_loads", return_value={}), \
+             unittest.mock.patch("supervisor.load_status", return_value=status), \
+             unittest.mock.patch("ai_status.resolve_task_sha", return_value="1111111122222222333333334444444455555555"), \
+             unittest.mock.patch("ai_status.task_pr_ci_status", return_value=("OPEN", "pending")), \
+             unittest.mock.patch("supervisor.agent_auto_dispatch_block_reason", return_value=None), \
+             unittest.mock.patch("supervisor.queue_delivery_event", return_value=True) as mock_queue:
+            dispatched = supervisor.dispatch_ready_tasks(
+                config,
+                state,
+                agent_ids_override=["antigravity4"],
+            )
+            self.assertFalse(dispatched)
+            mock_queue.assert_not_called()
+            self.assertEqual(task["status"], "review_approved")
+
+    def test_supervisor_suppresses_finalize_dispatch_on_unresolved_head_or_unknown_ci(self) -> None:
+        config = self._build_freeze_test_config()
+        task = {
+            "id": "FREEZE-TEST-005B",
+            "owner": "Antigravity4",
+            "reviewer": "Claude",
+            "status": "review_approved",
+            "approved_head": "1111111122222222333333334444444455555555",
+        }
+        state = {
+            "seen_event_keys": {},
+            "ready_dispatcher": {"weighted_cursor": 0},
+            "status": {"tasks": [task]},
+        }
+        status = {"tasks": [task]}
+
+        ai_status.clear_ai_status_caches()
+
+        with unittest.mock.patch("supervisor.load_status", return_value=status), \
+             unittest.mock.patch("ai_status.resolve_task_sha", return_value=None), \
+             unittest.mock.patch("ai_status.task_pr_ci_status", return_value=("OPEN", "success")), \
+             unittest.mock.patch("supervisor.agent_auto_dispatch_block_reason", return_value=None), \
+             unittest.mock.patch("supervisor.spawn_background_process") as mock_spawn:
+            supervisor.dispatch_ready_tasks(config, state, agent_ids_override=["antigravity4"])
+            mock_spawn.assert_not_called()
+            self.assertEqual(task["status"], "review_approved")
+
+        with unittest.mock.patch("supervisor.load_status", return_value=status), \
+             unittest.mock.patch("ai_status.resolve_task_sha", return_value="1111111122222222333333334444444455555555"), \
+             unittest.mock.patch("ai_status.task_pr_ci_status", return_value=("OPEN", "unknown")), \
+             unittest.mock.patch("supervisor.agent_auto_dispatch_block_reason", return_value=None), \
+             unittest.mock.patch("supervisor.spawn_background_process") as mock_spawn:
+            supervisor.dispatch_ready_tasks(config, state, agent_ids_override=["antigravity4"])
+            mock_spawn.assert_not_called()
+            self.assertEqual(task["status"], "review_approved")
+
+        with unittest.mock.patch("supervisor.load_status", return_value=status), \
+             unittest.mock.patch("ai_status.resolve_task_sha", return_value="1111111122222222333333334444444455555555"), \
+             unittest.mock.patch("ai_status.task_pr_ci_status", side_effect=RuntimeError("gh error")), \
+             unittest.mock.patch("supervisor.agent_auto_dispatch_block_reason", return_value=None), \
+             unittest.mock.patch("supervisor.spawn_background_process") as mock_spawn:
+            supervisor.dispatch_ready_tasks(config, state, agent_ids_override=["antigravity4"])
+            mock_spawn.assert_not_called()
+            self.assertEqual(task["status"], "review_approved")
 
     def test_task_review_gate_status_check_pending_on_head_mismatch(self) -> None:
         task = {
