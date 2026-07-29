@@ -1,0 +1,38 @@
+# Mutation harness transcript — ODP-DEPLOY-WEB-PROTECTED-REDIRECT-001
+# command: python3 docs/evidence/runtime/ODP-DEPLOY-WEB-PROTECTED-REDIRECT-001/mutation_harness.py
+# repo HEAD: d42e81729b0a8589eb7f5c47342c7a793234707f
+
+baseline: PASS - ......                                                                   [100%]
+M01 KILLED: _effective_port ignores an explicit port - FAILED tests/ops/test_cloud_run_live_deployment.py::test_is_safe_protected_redirect_contract
+M02 KILLED: _effective_port does not fail closed on a malformed port - FAILED tests/ops/test_cloud_run_live_deployment.py::test_is_safe_protected_redirect_contract
+M03 KILLED: _effective_port invents 443 for a non-web scheme - FAILED tests/ops/test_cloud_run_live_deployment.py::test_is_safe_protected_redirect_rejects_ambiguous_or_unparsable_locations
+M04 KILLED: _effective_port uses the wrong http default port - FAILED tests/ops/test_cloud_run_live_deployment.py::test_is_safe_protected_redirect_accepts_default_ports_and_padded_headers
+M05 KILLED: redirect-status guard removed (200 accepted) - FAILED tests/ops/test_cloud_run_live_deployment.py::test_is_safe_protected_redirect_requires_a_redirect_status
+M06 EQUIVALENT: blank-Location guard removed - ......                                                                   [100%]
+M07 KILLED: userinfo guard removed entirely - FAILED tests/ops/test_cloud_run_live_deployment.py::test_is_safe_protected_redirect_rejects_ambiguous_or_unparsable_locations
+M08 KILLED: bare "@" netloc clause removed (username/password kept) - FAILED tests/ops/test_cloud_run_live_deployment.py::test_is_safe_protected_redirect_rejects_ambiguous_or_unparsable_locations
+M09 KILLED: fragment guard removed - FAILED tests/ops/test_cloud_run_live_deployment.py::test_is_safe_protected_redirect_contract
+M10 KILLED: empty-base-scheme guard removed - FAILED tests/ops/test_cloud_run_live_deployment.py::test_is_safe_protected_redirect_rejects_ambiguous_or_unparsable_locations
+M11 KILLED: scheme-equality guard removed (downgrade accepted) - FAILED tests/ops/test_cloud_run_live_deployment.py::test_is_safe_protected_redirect_rejects_scheme_downgrade_at_matching_port
+M12 KILLED: empty-base-host guard removed - FAILED tests/ops/test_cloud_run_live_deployment.py::test_is_safe_protected_redirect_rejects_ambiguous_or_unparsable_locations
+M13 KILLED: host-equality guard removed (external origin accepted) - FAILED tests/ops/test_cloud_run_live_deployment.py::test_is_safe_protected_redirect_contract
+M14 KILLED: undefined-port fail-closed guards removed - FAILED tests/ops/test_cloud_run_live_deployment.py::test_is_safe_protected_redirect_rejects_ambiguous_or_unparsable_locations
+M15 KILLED: port-equality guard removed - FAILED tests/ops/test_cloud_run_live_deployment.py::test_is_safe_protected_redirect_contract
+M16 KILLED: target-path guard removed - FAILED tests/ops/test_cloud_run_live_deployment.py::test_is_safe_protected_redirect_contract
+M17 KILLED: returnTo cardinality guard removed (duplicates accepted) - FAILED tests/ops/test_cloud_run_live_deployment.py::test_is_safe_protected_redirect_rejects_ambiguous_or_unparsable_locations
+M18 KILLED: returnTo presence guard removed - FAILED tests/ops/test_cloud_run_live_deployment.py::test_is_safe_protected_redirect_contract
+M19 KILLED: returnTo value guard removed (hostile returnTo accepted) - FAILED tests/ops/test_cloud_run_live_deployment.py::test_is_safe_protected_redirect_contract
+M20 KILLED: parse_qs keep_blank_values dropped - FAILED tests/ops/test_cloud_run_live_deployment.py::test_is_safe_protected_redirect_rejects_ambiguous_or_unparsable_locations
+M21 KILLED: Location whitespace no longer stripped - FAILED tests/ops/test_cloud_run_live_deployment.py::test_is_safe_protected_redirect_accepts_default_ports_and_padded_headers
+M22 KILLED: relative Location no longer resolved (the original defect) - FAILED tests/ops/test_cloud_run_live_deployment.py::test_is_safe_protected_redirect_accepts_default_ports_and_padded_headers
+M23 KILLED: _redact_location echoes any returnTo value verbatim - FAILED tests/ops/test_cloud_run_live_deployment.py::test_redact_location_masks_credentials_and_parameter_values
+M24 KILLED: _redact_location stops masking userinfo - FAILED tests/ops/test_cloud_run_live_deployment.py::test_redact_location_masks_credentials_and_parameter_values
+M25 KILLED: _redact_location stops masking non-returnTo values - FAILED tests/ops/test_cloud_run_live_deployment.py::test_redact_location_masks_credentials_and_parameter_values
+M26 KILLED: _is_plain_relative_path accepts protocol-relative values - FAILED tests/ops/test_cloud_run_live_deployment.py::test_redact_location_masks_credentials_and_parameter_values
+M27 KILLED: _is_plain_relative_path accepts an embedded scheme - FAILED tests/ops/test_cloud_run_live_deployment.py::test_redact_location_masks_credentials_and_parameter_values
+M28 KILLED: _is_plain_relative_path accepts non-printable payloads - FAILED tests/ops/test_cloud_run_live_deployment.py::test_redact_location_masks_credentials_and_parameter_values
+
+mutants: 28 - killed: 27 - equivalent: 1 - survivors: 0
+  EQUIVALENT M06: The blank-Location short circuit is defensive redundancy: with it removed, an empty or whitespace-only Location still resolves through urljoin to the request URL itself, whose path is /operator, so the target-path guard rejects it anyway. No input distinguishes the two versions, so no test can kill this mutant.
+
+# exit code: 0

@@ -728,6 +728,347 @@ def test_deterministic_smoke_rejects_stale_or_incomplete_provider_evidence() -> 
     assert "smoke:/platform/health:external_providers:poi.commercial_api" in failed
 
 
+def test_is_safe_protected_redirect_contract() -> None:
+    web_url = "https://candidate-93ae1b2e75e1056c---oday-web-7sxbjoeozq-de.a.run.app"
+
+    # Absolute HTTPS safe redirect
+    assert validator._is_safe_protected_redirect(
+        web_url, 307, f"{web_url}/login?returnTo=%2Foperator"
+    ) is True
+
+    # Relative safe redirect
+    assert validator._is_safe_protected_redirect(
+        web_url, 307, "/login?returnTo=%2Foperator"
+    ) is True
+
+    # Hostile scheme downgrade rejection (HTTPS base -> HTTP target must fail)
+    http_web_url = "http://candidate-93ae1b2e75e1056c---oday-web-7sxbjoeozq-de.a.run.app"
+    assert validator._is_safe_protected_redirect(
+        web_url, 307, f"{http_web_url}/login?returnTo=%2Foperator"
+    ) is False
+
+    # Hostile port mismatch rejection (default port 443 vs nondefault port 8443)
+    assert validator._is_safe_protected_redirect(
+        web_url, 307, f"{web_url}:8443/login?returnTo=%2Foperator"
+    ) is False
+
+    # Malformed non-numeric port rejection (must fail closed, not raise ValueError)
+    assert validator._is_safe_protected_redirect(
+        web_url, 307, f"{web_url}:bad/login?returnTo=%2Foperator"
+    ) is False
+
+    # Out-of-range port rejection (must fail closed, not raise ValueError)
+    assert validator._is_safe_protected_redirect(
+        web_url, 307, f"{web_url}:99999/login?returnTo=%2Foperator"
+    ) is False
+
+    # Hostile userinfo rejection
+    assert validator._is_safe_protected_redirect(
+        web_url, 307, "https://user:pass@candidate-93ae1b2e75e1056c---oday-web-7sxbjoeozq-de.a.run.app/login?returnTo=%2Foperator"
+    ) is False
+
+    # Hostile fragment rejection
+    assert validator._is_safe_protected_redirect(
+        web_url, 307, f"{web_url}/login?returnTo=%2Foperator#hostile-fragment"
+    ) is False
+
+    # Hostile external returnTo parameter rejection
+    assert validator._is_safe_protected_redirect(
+        web_url, 307, "/login?returnTo=https%3A%2F%2Fattacker.com"
+    ) is False
+    assert validator._is_safe_protected_redirect(
+        web_url, 307, "/login?returnTo=%2Fevil-path"
+    ) is False
+    assert validator._is_safe_protected_redirect(
+        web_url, 307, "/login?returnTo=%2Foperator%2Fextra"
+    ) is False
+    assert validator._is_safe_protected_redirect(
+        web_url, 307, "/login?returnTo=%252Foperator"
+    ) is False
+
+    # Hostile external origin rejection
+    assert validator._is_safe_protected_redirect(
+        web_url, 307, "https://attacker.com/login?returnTo=%2Foperator"
+    ) is False
+
+    # Hostile protocol-relative origin rejection
+    assert validator._is_safe_protected_redirect(
+        web_url, 307, "//attacker.com/login?returnTo=%2Foperator"
+    ) is False
+
+    # Fail-closed: 200 OK (no redirect performed)
+    assert validator._is_safe_protected_redirect(
+        web_url, 200, None
+    ) is False
+
+    # Fail-closed: 200 OK carrying an otherwise valid login Location. Only the
+    # status guard can reject this, unlike the (200, None) case above.
+    assert validator._is_safe_protected_redirect(
+        web_url, 200, "/login?returnTo=%2Foperator"
+    ) is False
+
+    # Hostile scheme downgrade at a matching effective port. Only the scheme
+    # guard can reject this, unlike the http:// case above (port 80 vs 443).
+    assert validator._is_safe_protected_redirect(
+        web_url,
+        307,
+        "http://candidate-93ae1b2e75e1056c---oday-web-7sxbjoeozq-de.a.run.app:443"
+        "/login?returnTo=%2Foperator",
+    ) is False
+
+    # Redirect to wrong target path
+    assert validator._is_safe_protected_redirect(
+        web_url, 307, "/dashboard?returnTo=%2Foperator"
+    ) is False
+
+    # Redirect to /login without returnTo parameter
+    assert validator._is_safe_protected_redirect(
+        web_url, 307, "/login"
+    ) is False
+
+
+def test_is_safe_protected_redirect_requires_a_redirect_status() -> None:
+    """The status guard alone must reject an otherwise perfect Location.
+
+    Mutation target: dropping ``web_status not in {302, 303, 307, 308}`` must
+    fail this test. A 200 with a valid login Location means the protected page
+    was rendered to an unauthenticated caller, which is exactly the fail-closed
+    condition the smoke check exists to catch.
+    """
+
+    web_url = "https://candidate-93ae1b2e75e1056c---oday-web-7sxbjoeozq-de.a.run.app"
+    safe_location = "/login?returnTo=%2Foperator"
+
+    assert validator._is_safe_protected_redirect(web_url, 200, safe_location) is False
+    assert validator._is_safe_protected_redirect(web_url, 301, safe_location) is False
+    assert validator._is_safe_protected_redirect(web_url, 403, safe_location) is False
+    for status in (302, 303, 307, 308):
+        assert validator._is_safe_protected_redirect(web_url, status, safe_location) is True
+
+
+def test_is_safe_protected_redirect_rejects_scheme_downgrade_at_matching_port() -> None:
+    """The scheme guard alone must reject an http:// target on port 443.
+
+    Mutation target: dropping the scheme comparison must fail this test. The
+    pre-existing ``http://<host>/login`` case is killed by the effective-port
+    guard (80 != 443), so it does not exercise the scheme comparison at all.
+    """
+
+    host = "candidate-93ae1b2e75e1056c---oday-web-7sxbjoeozq-de.a.run.app"
+    web_url = f"https://{host}"
+
+    assert validator._is_safe_protected_redirect(
+        web_url, 307, f"http://{host}:443/login?returnTo=%2Foperator"
+    ) is False
+    # Control: identical URL over https is accepted, so the rejection above is
+    # attributable to the scheme and nothing else.
+    assert validator._is_safe_protected_redirect(
+        web_url, 307, f"https://{host}:443/login?returnTo=%2Foperator"
+    ) is True
+
+
+def test_is_safe_protected_redirect_accepts_default_ports_and_padded_headers() -> None:
+    """Correct default ports and header padding must not fail a valid redirect.
+
+    Both assertions are false-negative guards: nothing else in this file pins
+    them, so a wrong http default port or a dropped ``strip()`` would silently
+    turn a healthy candidate deploy red.
+    """
+
+    host = "candidate-93ae1b2e75e1056c---oday-web-7sxbjoeozq-de.a.run.app"
+
+    # Mutation target: _effective_port's http default. Every other case in this
+    # file uses an https base, where both sides get the same default, so only an
+    # http origin with an explicit :80 distinguishes 80 from any other value.
+    assert validator._is_safe_protected_redirect(
+        f"http://{host}:80", 307, "/login?returnTo=%2Foperator"
+    ) is True
+    assert validator._is_safe_protected_redirect(
+        f"http://{host}", 307, f"http://{host}:80/login?returnTo=%2Foperator"
+    ) is True
+
+    # Mutation target: the location.strip() before urljoin. Surrounding
+    # whitespace is legal header framing, and urlsplit does not strip a trailing
+    # run inside the query, so an unstripped value loses the returnTo match.
+    assert validator._is_safe_protected_redirect(
+        f"https://{host}", 307, "  /login?returnTo=%2Foperator  "
+    ) is True
+
+
+def test_is_safe_protected_redirect_rejects_ambiguous_or_unparsable_locations() -> None:
+    """Cardinality, userinfo-only, empty and unparsable Locations fail closed."""
+
+    host = "candidate-93ae1b2e75e1056c---oday-web-7sxbjoeozq-de.a.run.app"
+    web_url = f"https://{host}"
+
+    # Duplicate returnTo: the intended target is ambiguous, so reject.
+    assert validator._is_safe_protected_redirect(
+        web_url, 307, "/login?returnTo=%2Foperator&returnTo=%2Foperator"
+    ) is False
+    assert validator._is_safe_protected_redirect(
+        web_url, 307, "/login?returnTo=%2Foperator&returnTo=%2Fevil-path"
+    ) is False
+
+    # A blank first returnTo smuggles the real one past a parser that drops
+    # empty values: without keep_blank_values this collapses to a single valid
+    # returnTo and the ambiguity guard never fires.
+    assert validator._is_safe_protected_redirect(
+        web_url, 307, "/login?returnTo=&returnTo=%2Foperator"
+    ) is False
+
+    # Bare "@" delimiter with empty username/password still signals userinfo.
+    assert validator._is_safe_protected_redirect(
+        web_url, 307, f"https://@{host}/login?returnTo=%2Foperator"
+    ) is False
+
+    # Missing / empty / whitespace-only Location header on a redirect status.
+    assert validator._is_safe_protected_redirect(web_url, 307, None) is False
+    assert validator._is_safe_protected_redirect(web_url, 307, "") is False
+    assert validator._is_safe_protected_redirect(web_url, 307, "   ") is False
+
+    # Unparsable IPv6 literal must be caught, not raised.
+    assert validator._is_safe_protected_redirect(
+        web_url, 307, "https://[::1/login?returnTo=%2Foperator"
+    ) is False
+
+    # A base web_url without a usable origin fails closed rather than matching
+    # a same-shaped relative Location.
+    assert validator._is_safe_protected_redirect(
+        "candidate-host-without-scheme", 307, "/login?returnTo=%2Foperator"
+    ) is False
+    assert validator._is_safe_protected_redirect(
+        "", 307, "/login?returnTo=%2Foperator"
+    ) is False
+
+    # Only http/https origins have a defined effective port, so a non-web
+    # scheme fails closed even when scheme, host and path all agree.
+    assert validator._is_safe_protected_redirect(
+        f"ftp://{host}", 307, f"ftp://{host}/login?returnTo=%2Foperator"
+    ) is False
+
+    # A base with a scheme but no host: base and target hostnames are both
+    # empty, so only the explicit empty-host guard rejects this.
+    assert validator._is_safe_protected_redirect(
+        "https:", 307, "/login?returnTo=%2Foperator"
+    ) is False
+
+    # A base with a host and an explicit port but no scheme: host and effective
+    # port both match, so only the explicit empty-scheme guard rejects this.
+    assert validator._is_safe_protected_redirect(
+        f"//{host}:8443", 307, "/login?returnTo=%2Foperator"
+    ) is False
+
+
+def test_redact_location_masks_credentials_and_parameter_values() -> None:
+    """Reports advertise secret_values_redacted, so Location must be sanitised."""
+
+    host = "candidate-93ae1b2e75e1056c---oday-web-7sxbjoeozq-de.a.run.app"
+
+    # The real candidate shape stays fully readable for diagnosis.
+    assert validator._redact_location("/login?returnTo=%2Foperator") == (
+        "/login?returnTo=%2Foperator"
+    )
+
+    # Userinfo credentials never reach the report.
+    redacted = validator._redact_location(
+        f"https://svc-account:hunter2@{host}/login?returnTo=%2Foperator"
+    )
+    assert redacted == f"https://<redacted>@{host}/login?returnTo=%2Foperator"
+    assert "hunter2" not in redacted
+    assert "svc-account" not in redacted
+
+    # Non-returnTo parameter values are masked (session/bearer material).
+    redacted = validator._redact_location(
+        "/login?returnTo=%2Foperator&session=super-secret-token&code=abc123"
+    )
+    assert redacted == "/login?returnTo=%2Foperator&session=<redacted>&code=<redacted>"
+    assert "super-secret-token" not in redacted
+    assert "abc123" not in redacted
+
+    # A hostile returnTo is not echoed verbatim either.
+    redacted = validator._redact_location("/login?returnTo=https%3A%2F%2Fattacker.com")
+    assert redacted == "/login?returnTo=<redacted>"
+    assert "attacker.com" not in redacted
+
+    # Each _is_plain_relative_path clause is pinned separately, since only the
+    # clause named in the comment rejects its case.
+    # Protocol-relative: starts with "/" and carries no "://".
+    redacted = validator._redact_location("/login?returnTo=%2F%2Fattacker.com")
+    assert redacted == "/login?returnTo=<redacted>"
+    assert "attacker.com" not in redacted
+    # Embedded scheme after a leading single slash: not caught by the "//" test.
+    assert validator._redact_location("/login?returnTo=%2Fa%3A%2F%2Fb") == (
+        "/login?returnTo=<redacted>"
+    )
+    # Non-printable payload: passes both textual tests, fails only isprintable.
+    assert validator._redact_location("/login?returnTo=%2Fop%0Aerator") == (
+        "/login?returnTo=<redacted>"
+    )
+
+    # Fragments are dropped to a marker; their presence stays diagnosable.
+    assert validator._redact_location(
+        f"https://{host}/login?returnTo=%2Foperator#token=leak"
+    ) == f"https://{host}/login?returnTo=%2Foperator#<redacted>"
+
+    # Missing / malformed inputs render as markers instead of raising.
+    assert validator._redact_location(None) == "<missing>"
+    assert validator._redact_location("   ") == "<missing>"
+    assert validator._redact_location(f"https://{host}:bad/login") == (
+        f"https://{host}:<invalid-port>/login"
+    )
+    assert validator._redact_location("https://[::1/login") == "<unparsable>"
+
+
+def test_smoke_report_never_carries_a_raw_location_header(monkeypatch) -> None:
+    """smoke_checks() must publish only the redacted Location."""
+
+    hostile_location = (
+        "https://svc:hunter2@candidate-host.example/login"
+        "?returnTo=%2Foperator&session=super-secret-token"
+    )
+
+    def fake_request_without_redirect(url, *, headers, timeout):
+        return 307, hostile_location
+
+    def offline_json_request(url, *, headers, timeout):
+        raise OSError("network disabled in this test")
+
+    monkeypatch.setattr(
+        validator, "_request_without_redirect", fake_request_without_redirect
+    )
+    monkeypatch.setattr(validator, "_json_request", offline_json_request)
+
+    checks, report = validator.smoke_checks(
+        api_url="https://api.invalid",
+        web_url="https://candidate-host.example",
+        expected_sha=None,
+        bearer_token="token",
+        operator_role="operator",
+        operator_subject="subject",
+        operator_tenant="tenant",
+        correlation_id="corr-1",
+        timeout=0.01,
+    )
+
+    redirect_report = report["web_operator_redirect"]
+    assert report["secret_values_redacted"] is True
+    assert "location" not in redirect_report
+    assert redirect_report["protected_redirect"] is False
+    assert redirect_report["location_redacted"] == (
+        "https://<redacted>@candidate-host.example/login"
+        "?returnTo=%2Foperator&session=<redacted>"
+    )
+
+    serialized = json.dumps(
+        {
+            "checks": [[check.ok, check.name, check.detail] for check in checks],
+            "report": report,
+        }
+    )
+    assert "hunter2" not in serialized
+    assert "super-secret-token" not in serialized
+
+
 def test_deterministic_smoke_rejects_provider_specific_auth_failure() -> None:
     DeterministicRuntimeHandler.failed_provider_id = "geocode.primary_api"
     server, url = start_server()
