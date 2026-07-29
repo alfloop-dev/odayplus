@@ -47,12 +47,21 @@ reads the TARGET while ingestion writes the SOURCE.
 Usage: source /tmp/odp-forecast-dsn.env && python3 eligibility-model-fidelity-probe.py
 """
 
+import hashlib
 import json
 import os
 from collections import Counter, defaultdict
 from datetime import UTC, datetime, timedelta
 
 import psycopg
+
+# Shared verbatim with runbook/evidence-redaction-audit.py so a fingerprint in
+# this receipt and one in an audit finding denote the same identifier.
+FINGERPRINT_SALT = "odp-redaction-audit-v1|"
+
+
+def _fingerprint(value) -> str:
+    return hashlib.sha256((FINGERPRINT_SALT + str(value).lower()).encode()).hexdigest()[:12]
 
 OUT = os.environ.get(
     "PROBE_OUT",
@@ -261,11 +270,22 @@ def main():
             "only_in_model": len(only_model),
             "only_in_view": len(only_view),
             "only_in_model_by_view_reason": dict(only_model_reasons.most_common()),
+            # Fingerprinted, not raw. These samples used to publish the tenant
+            # and store uuid verbatim, which this directory's own redaction rule
+            # forbids -- caught by runbook/evidence-redaction-audit.py, which
+            # classifies every identifier-shaped token here against the database.
+            # The sample is illustrative (the finding is only_in_model = 0), so
+            # nothing is lost: a fingerprint still shows whether two rows concern
+            # the same store, which is all the sample was ever read for. Same
+            # salt as the audit, so its findings and this file cross-reference.
+            "sample_identifiers": "salted sha256 fingerprints; raw ids are not published",
             "only_in_model_sample": [
-                [t, s, d.isoformat()] for t, s, d in sorted(only_model, key=str)[:10]
+                [_fingerprint(t), _fingerprint(s), d.isoformat()]
+                for t, s, d in sorted(only_model, key=str)[:10]
             ],
             "only_in_view_sample": [
-                [t, s, d.isoformat()] for t, s, d in sorted(only_view, key=str)[:10]
+                [_fingerprint(t), _fingerprint(s), d.isoformat()]
+                for t, s, d in sorted(only_view, key=str)[:10]
             ],
         },
         "horizons_from_view": horizon_counts(view_eligible),

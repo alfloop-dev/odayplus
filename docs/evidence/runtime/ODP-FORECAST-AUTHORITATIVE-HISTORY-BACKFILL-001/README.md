@@ -11,13 +11,47 @@ exclusively by the governed Mongo-to-PostgreSQL data plane (`apps/data_platform`
 
 ## Redaction
 
-Every artifact in this directory is produced by
-`scripts/data_plane/forecast_history_activation.py`, which emits **aggregates
-only** — counts, distinct counts, min/max dates, and status/reason breakdowns.
-No tenant id, store id, machine id, transaction id, order payload, or free-text
-field is read into a receipt. The redaction is structural, not a post-processing
-step: there is no code path in the module that selects an identifying column
-into its output.
+Receipts carry **aggregates only** — counts, distinct counts, min/max dates, and
+status/reason breakdowns. No tenant id, store id, machine id, transaction id,
+order payload or free-text field is published. Run ids and partition keys are
+published deliberately: they identify ingestion work, not a customer, and the
+evidence is unreadable without them.
+
+**This claim is tested, and testing it found a violation.** The section used to
+say the redaction was structural — that every artifact came from
+`scripts/data_plane/forecast_history_activation.py`, which has no code path
+selecting an identifying column. Both halves were wrong. Most artifacts here are
+written by probes under `runbook/`, not by that module, and one of those probes
+was publishing raw ids: `eligibility_model_fidelity.json` carried 10 tenant ids
+and 10 store ids verbatim in its two illustrative sample fields. The structural
+argument was true of the module it described and simply did not cover the files
+it was claiming to cover.
+
+`runbook/evidence-redaction-audit.py` now checks the promise instead of
+restating it. It extracts every identifier-shaped token from every committed
+file and classifies each one against the database — membership in
+`core.stores` / `core.tenants` / `core.machines` / `core.transactions` /
+`data_plane.ingestion_runs`, rather than resemblance, because store ids and the
+run ids the policy publishes are both UUIDs and no pattern can tell them apart.
+Hits are reported as salted fingerprints, never as values, so the audit cannot
+leak what it is auditing. The `run_id` class is the control: it is allowed, it
+is known to be present, and it must come back non-zero, since a clean report
+from an audit that cannot find an identifier at all would prove nothing.
+
+Current state, `evidence_redaction_audit.json`: 43 files scanned, 14
+identifier-shaped tokens, **all 14 classified as `run_id`** — 0 leaked, 0
+unclassified, control meaningful. The probe now fingerprints its samples at
+source, and the already-committed receipt was rewritten in place by
+`runbook/redact-fidelity-sample.py`, which records the transformation inside the
+file rather than applying it silently.
+
+Two limits stated rather than glossed. The raw values **remain in this branch's
+git history**, in the commits that first added that receipt; removing them means
+rewriting history on a pushed branch, which is a human's call and is flagged
+here rather than done. And the audit covers UUID-shaped identifiers:
+`core.transactions.member_id` is a varchar and unpopulated in this data, and
+monetary amounts are not an identifier set — neither is testable this way and
+neither is claimed.
 
 ## Artifacts
 
@@ -60,6 +94,10 @@ into its output.
 | `training_contract_readiness.json` | — | Criterion 5 answered by running the registry's own loader and `prepare_model_rows` against the live target rather than restating their rules: 3 of 4 data gates pass and horizon expansion fails, because the target's eligible span is 13 days against a 28-day shortest horizon. Also shows the target is frozen at an old activation — `SOURCE_RUN_NOT_COMPLETE` from 2026-07-02 on (see §9). |
 | `runbook/training-contract-readiness-probe.py` | — | The probe that produced it. Imports the code under test. Covers the whole read-only prefix of `train()`, including `_temporal_validation` — reported under `model_quality_probe`, outside the verdict, because its thresholds are the registry task's (see §9). |
 | `runbook/training-contract-probe-runner.sh` | — | Runs that probe detached, like the keepers. A worker turn is shorter than the probe, and a probe killed with its worker leaves a PostgreSQL backend still executing (see §9). |
+| `runbook/training-contract-quality-stage-test.py` | — | Fixture tests for that probe's `model_quality_probe` stage: it returns a verdict, leaks no segment value, contains its own errors, and never moves `data_gates_passed`. Needs no database — the stage's first live run is unattended, so it is tested before then. |
+| `evidence_redaction_audit.json` | — | Every identifier-shaped token in this directory, classified against the database. Found and then cleared a real violation; see **Redaction** above. |
+| `runbook/evidence-redaction-audit.py` | — | The audit that produced it. Classifies by table membership rather than by pattern, reports salted fingerprints only, and uses the allowed `run_id` class as its control. |
+| `runbook/redact-fidelity-sample.py` | — | One-shot, kept committed so the rewrite of `eligibility_model_fidelity.json`'s sample fields is reproducible rather than an unexplained diff. Idempotent. |
 
 Reproduce any of them with the DSN pair and the Cloud SQL proxy attestation in
 the environment:

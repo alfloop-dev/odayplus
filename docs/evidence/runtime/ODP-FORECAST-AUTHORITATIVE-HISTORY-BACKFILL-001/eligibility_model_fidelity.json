@@ -33,56 +33,57 @@
     "only_in_model_sample": [],
     "only_in_view_sample": [
       [
-        "001d1039-c6b0-5a54-83bd-f50e4d2a92b2",
-        "e54ebdf1-f54a-5c97-ab2b-919e21fe1c25",
+        "933d4f5a3c3b",
+        "688f522256fa",
         "2026-06-23"
       ],
       [
-        "002d4471-441c-5a4c-b06b-5e6d4b2933fc",
-        "567db8ab-3118-52a9-9420-80fbd62adcf0",
+        "1f6a0b43fec9",
+        "6966b8112fca",
         "2026-06-23"
       ],
       [
-        "00685792-34f8-5d9b-a668-0655ba2664bf",
-        "3a8471bc-763b-5f36-be52-59dbb9477b79",
+        "62f2dfaae4f6",
+        "b7a99c732bfb",
         "2026-06-23"
       ],
       [
-        "017542b2-7287-50c0-9069-4afa63132d79",
-        "dc011c05-93fb-59b7-8f2e-a6017fd4c87b",
+        "8157c135b83a",
+        "c6d3d12b5777",
         "2026-06-23"
       ],
       [
-        "024ce47e-4430-5864-878f-91ff1c066b20",
-        "508fb917-bfa9-5d89-a1fa-431a875a54f1",
+        "3d99e6caada3",
+        "a3b7fabcfa69",
         "2026-06-23"
       ],
       [
-        "027a5493-0f97-5d9f-a8d8-3ed3eb08c784",
-        "423c2c56-7c41-5541-8a39-1c0f103fbd1f",
+        "8c0dd1479fd1",
+        "883315b34abc",
         "2026-06-23"
       ],
       [
-        "028a1fb8-538f-54a9-b341-6f860c11eba9",
-        "3cf70b98-339e-5ef3-9f1a-1890aa36db49",
+        "43a8f15ab803",
+        "9c54092c779e",
         "2026-06-23"
       ],
       [
-        "029744a6-de08-5370-9ca7-c117435f2819",
-        "3d13d731-98a7-5368-8f72-e0545e641fc8",
+        "1f570fb4f1f5",
+        "ef395a0103a8",
         "2026-06-23"
       ],
       [
-        "02b9340e-b32e-5d72-a42a-6306f42d16f5",
-        "ae4ff208-85bb-56e6-bbe3-94275147472c",
+        "1aef96eabbea",
+        "20319dd5c62c",
         "2026-06-23"
       ],
       [
-        "02fe220c-33f3-5bd3-b48e-f8185f3e3b1f",
-        "81c9be61-c8cd-5bfd-911c-b1536712261d",
+        "5476ab328084",
+        "26573f0d4e97",
         "2026-06-23"
       ]
-    ]
+    ],
+    "sample_identifiers": "salted sha256 fingerprints; raw ids are not published"
   },
   "horizons_from_view": {
     "stores_with_any_eligible_date": 459,
@@ -109,5 +110,6 @@
     }
   },
   "agrees_exactly": false,
-  "verdict": "MODEL CONSERVATIVE: the view admits pairs the model excludes, so the projected h28 = 419 is a FLOOR."
+  "verdict": "MODEL CONSERVATIVE: the view admits pairs the model excludes, so the projected h28 = 419 is a FLOOR.",
+  "redaction": "Counts, dates and fingerprints only. The two sample fields under eligible_pairs originally carried raw tenant and store uuids; they were replaced in place by runbook/redact-fidelity-sample.py after runbook/evidence-redaction-audit.py found them, and the probe that writes this file now fingerprints them at source. The raw values remain in this branch's git history."
 }
