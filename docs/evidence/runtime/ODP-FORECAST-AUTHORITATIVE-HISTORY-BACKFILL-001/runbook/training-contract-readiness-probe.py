@@ -61,7 +61,7 @@ import json
 import os
 import sys
 from collections import Counter, defaultdict
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, date, datetime, timedelta
 
 REPO_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "..", "..", ".."))
 if REPO_ROOT not in sys.path:
@@ -248,27 +248,30 @@ def main() -> int:
         prepared = prepare_model_rows(spec, loaded)
     except ModelReadyDataError as exc:
         gates.append(_gate("horizon_expansion_and_row_gates", "FAIL", str(exc)))
-        receipt["horizon_expansion"] = _expansion_shape(spec, loaded)
+        receipt["horizon_expansion"] = _safe_expansion_shape(spec, loaded)
         _write(receipt, blocking="horizon_expansion_and_row_gates")
         return 1
 
-    expansion = _expansion_shape(spec, loaded)
+    expansion = _safe_expansion_shape(spec, loaded)
     receipt["horizon_expansion"] = expansion
+    built = expansion.get("expanded_rows")
     gates.append(
         _gate(
             "horizon_expansion_and_row_gates",
             "PASS",
             (
-                f"{expansion['expanded_rows']} horizon rows built from "
-                f"{len(loaded.rows)} daily rows; lineage and temporal-order "
-                "rejections all cleared"
+                f"{built if built is not None else 'an undescribed number of'} "
+                f"horizon rows built from {len(loaded.rows)} daily rows; lineage "
+                "and temporal-order rejections all cleared"
             ),
         )
     )
 
     receipt["prepared_rows"] = {
         "count": len(prepared),
-        "dropped_by_row_gates": expansion["expanded_rows"] - len(prepared),
+        "dropped_by_row_gates": (
+            None if built is None else built - len(prepared)
+        ),
         "distinct_segments": len({r.segment_value for r in prepared}),
     }
 
@@ -344,6 +347,56 @@ def main() -> int:
     return 0
 
 
+def _safe_expansion_shape(spec, loaded) -> dict:
+    """Describe the expansion without letting the description sink the receipt.
+
+    `_expansion_shape` is a REPORTING path -- nothing it computes is a gate. The
+    first run of this probe nevertheless lost 44 minutes of live measurement to
+    it: `prepare_model_rows` had already failed with the finding the receipt
+    exists to record, and the descriptive span calculation then raised
+    `TypeError` and took the whole process down before `_write` could run. A
+    measurement this expensive should degrade to a missing paragraph, never to a
+    missing receipt, so any unexpected error here is captured as data instead.
+    """
+    try:
+        return _expansion_shape(spec, loaded)
+    except Exception as exc:  # noqa: BLE001 - deliberately broad; see docstring
+        return {
+            "expanded_rows": None,
+            "describe_error": f"{type(exc).__name__}: {exc}",
+            "note": (
+                "the expansion description failed; this is a reporting-path "
+                "error and says nothing about the gates above, which were "
+                "evaluated against the real loader"
+            ),
+            "per_horizon_weeks": {str(w): None for w in FORECASTOPS_HORIZON_WEEKS},
+        }
+
+
+def _as_date(value):
+    """Coerce a loaded `date` cell to a real date.
+
+    The loader hands `date` back as an ISO **string**, not a `datetime.date`.
+    The first version of this probe subtracted them directly and died with
+    `TypeError: unsupported operand type(s) for -: 'str' and 'str'` -- after a
+    44-minute run, at the exact point the receipt was about to record the
+    horizon-expansion failure, so the whole measurement was lost to a one-line
+    type assumption in the *reporting* path rather than anything under test.
+    Returns None for anything unparseable so a stray cell costs a span estimate
+    rather than the receipt.
+    """
+    if value is None:
+        return None
+    if isinstance(value, datetime):
+        return value.date()
+    if isinstance(value, date):
+        return value
+    try:
+        return date.fromisoformat(str(value)[:10])
+    except ValueError:
+        return None
+
+
 def _expansion_shape(spec, loaded) -> dict:
     """Re-run the expansion alone to describe which horizons the data reaches.
 
@@ -358,7 +411,8 @@ def _expansion_shape(spec, loaded) -> dict:
     )
 
     span_days = None
-    dates = [r.get("date") for r in loaded.rows if r.get("date") is not None]
+    dates = [_as_date(r.get("date")) for r in loaded.rows if r.get("date") is not None]
+    dates = [d for d in dates if d is not None]
     if dates:
         span_days = (max(dates) - min(dates)).days + 1
 
