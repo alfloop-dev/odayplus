@@ -780,11 +780,17 @@ def resolve_actor_reference(
     return canonical
 
 
-def current_actor(default: str = "Codex") -> str:
-    return canonical_agent_name(os.environ.get("AI_NAME", default))
-
-
 def current_actor_validated(default: str = "Codex") -> str:
+    """The one way a command may learn who is calling it.
+
+    There used to be an unvalidated sibling, `current_actor()`, that merely
+    canonicalized `AI_NAME`. Commands that used it let a malformed or
+    unregistered `AI_NAME` reach durable state and the activity log, which is
+    how prose ended up in actor-shaped fields in the first place. It is deleted
+    rather than deprecated: every mutating command must read its actor here, and
+    must do so before its first mutation, so a bad `AI_NAME` fails closed.
+    `test_no_unvalidated_actor_read_remains` keeps it that way.
+    """
     return resolve_actor_reference(os.environ.get("AI_NAME", default), field="AI_NAME")
 
 
@@ -3972,6 +3978,7 @@ def command_assign(state: dict[str, Any], args: list[str]) -> None:
 
     if len(args) < 3:
         raise SystemExit("Usage: assign <task-id> <owner> <reviewer> [title]")
+    actor = current_actor_validated()
     try:
         check_wave_assign(state.get("wave_state") or {})
     except WaveGuardError as exc:
@@ -4027,7 +4034,7 @@ def command_assign(state: dict[str, Any], args: list[str]) -> None:
     append_log(
         {
             "ts": timestamp,
-            "agent": current_actor(),
+            "agent": actor,
             "type": "assign",
             "task_id": task_id,
             "message": f"Assigned {task_id} to {owner} with reviewer {reviewer}",
@@ -4039,8 +4046,7 @@ def command_start(state: dict[str, Any], args: list[str]) -> None:
     if len(args) < 2:
         raise SystemExit("Usage: start <task-id> <message>")
     task_id, message = args[0], args[1]
-    actor = current_actor()
-    ensure_agent(actor)
+    actor = current_actor_validated()
     task = get_task(state, task_id)
     if task is None:
         raise SystemExit(f"Unknown task: {task_id}")
@@ -4059,7 +4065,7 @@ def command_progress(state: dict[str, Any], args: list[str]) -> None:
     if len(args) < 2:
         raise SystemExit("Usage: progress <task-id> <message>")
     task_id, message = args[0], args[1]
-    actor = current_actor()
+    actor = current_actor_validated()
     task = get_task(state, task_id)
     if task is None:
         raise SystemExit(f"Unknown task: {task_id}")
@@ -4078,7 +4084,7 @@ def command_note(state: dict[str, Any], args: list[str]) -> None:
     if len(args) < 2:
         raise SystemExit("Usage: note <task-id> <message>")
     task_id, message = args[0], args[1]
-    actor = current_actor()
+    actor = current_actor_validated()
     task = get_task(state, task_id)
     if task is None:
         raise SystemExit(f"Unknown task: {task_id}")
@@ -4092,8 +4098,7 @@ def command_reopen(state: dict[str, Any], args: list[str]) -> None:
     if len(args) < 2:
         raise SystemExit("Usage: reopen <task-id> <message>")
     task_id, message = args[0], args[1]
-    actor = current_actor()
-    ensure_agent(actor)
+    actor = current_actor_validated()
     task = get_task(state, task_id)
     if task is None:
         if archived_task_snapshot(task_id):
@@ -4404,8 +4409,7 @@ def command_restore_approved(state: dict[str, Any], args: list[str]) -> None:
     if len(args) < 2:
         raise SystemExit("Usage: restore_approved <task-id> <message>")
     task_id, message = args[0], args[1]
-    actor = current_actor()
-    ensure_agent(actor)
+    actor = current_actor_validated()
     task = get_task(state, task_id)
     if task is None:
         raise SystemExit(f"Unknown task: {task_id}")
@@ -4437,8 +4441,7 @@ def command_done(state: dict[str, Any], args: list[str]) -> None:
     if len(args) < 2:
         raise SystemExit("Usage: done <task-id> <message>")
     task_id, message = args[0], args[1]
-    actor = current_actor()
-    ensure_agent(actor)
+    actor = current_actor_validated()
     task = get_task(state, task_id)
     if task is None:
         raise SystemExit(f"Unknown task: {task_id}")
@@ -4475,8 +4478,7 @@ def command_supersede(state: dict[str, Any], args: list[str]) -> None:
         raise SystemExit("Usage: supersede <task-id> <message> [replacement-task-id]")
     task_id, message = args[0], args[1]
     replacement_task_id = args[2].strip() if len(args) > 2 and args[2].strip() else ""
-    actor = current_actor()
-    ensure_agent(actor)
+    actor = current_actor_validated()
     task = get_task(state, task_id)
     if task is None:
         raise SystemExit(f"Unknown task: {task_id}")
@@ -4511,8 +4513,7 @@ def command_approve(state: dict[str, Any], args: list[str]) -> None:
     if len(args) < 2:
         raise SystemExit("Usage: approve <task-id> <message>")
     task_id, message = args[0], args[1]
-    actor = current_actor()
-    ensure_agent(actor)
+    actor = current_actor_validated()
     task = get_task(state, task_id)
     if task is None:
         raise SystemExit(f"Unknown task: {task_id}")
@@ -4553,12 +4554,13 @@ def command_sync(state: dict[str, Any], _args: list[str]) -> None:
 
 
 def command_archive_migrate(state: dict[str, Any], _args: list[str]) -> None:
+    actor = current_actor_validated()
     archived_at = iso_now()
     archived_ids = archive_terminal_tasks_in_state(state, archived_at=archived_at)
     append_log(
         {
             "ts": archived_at,
-            "agent": current_actor(),
+            "agent": actor,
             "type": "archive_migrate",
             "message": f"Archived {len(archived_ids)} terminal tasks from ai-status.json.",
             "task_ids": archived_ids,
@@ -4617,7 +4619,7 @@ def command_wave(state: dict[str, Any], args: list[str]) -> None:
         raise SystemExit("Usage: wave <open <wave-id> | close | freeze>")
 
     subcommand = args[0]
-    actor = current_actor()
+    actor = current_actor_validated()
     timestamp = iso_now()
     wave_state: dict[str, Any] = state.setdefault("wave_state", {})
     planning_state = load_planning_state()
@@ -4835,34 +4837,45 @@ def emit_status_checks_for_changed_tasks(state_before: dict[str, Any], state_aft
             emit_task_review_status_check(after_task, after_status)
 
 
+READ_ONLY_COMMANDS = {
+    "prompt": command_prompt,
+    "show": command_show,
+}
+
+MUTATING_COMMANDS = {
+    "assign": command_assign,
+    "start": command_start,
+    "progress": command_progress,
+    "note": command_note,
+    "reopen": command_reopen,
+    "handoff": command_handoff,
+    "blocker": command_blocker,
+    "retarget_blocker": command_retarget_blocker,
+    "prune_agents": command_prune_agents,
+    "done": command_done,
+    "restore_approved": command_restore_approved,
+    "supersede": command_supersede,
+    "approve": command_approve,
+    "archive_migrate": command_archive_migrate,
+    "sync": command_sync,
+    "wave": command_wave,
+}
+
+# The one mutating command that records nothing under an agent name: `sync`
+# only recomputes derived views. Every other entry in MUTATING_COMMANDS must
+# read its actor through current_actor_validated() before its first mutation.
+# Anything added here is a deliberate, reviewed exemption, not an oversight —
+# `ActorCommandMutationGuardTests` fails if a command escapes both sets.
+ACTORLESS_MUTATING_COMMANDS = frozenset({"sync"})
+
+
 def main(argv: list[str]) -> int:
     state = load_state()
     command = argv[1] if len(argv) > 1 else "sync"
     args = argv[2:]
 
-    read_only_commands = {
-        "prompt": command_prompt,
-        "show": command_show,
-    }
-
-    commands = {
-        "assign": command_assign,
-        "start": command_start,
-        "progress": command_progress,
-        "note": command_note,
-        "reopen": command_reopen,
-        "handoff": command_handoff,
-        "blocker": command_blocker,
-        "retarget_blocker": command_retarget_blocker,
-        "prune_agents": command_prune_agents,
-        "done": command_done,
-        "restore_approved": command_restore_approved,
-        "supersede": command_supersede,
-        "approve": command_approve,
-        "archive_migrate": command_archive_migrate,
-        "sync": command_sync,
-        "wave": command_wave,
-    }
+    read_only_commands = READ_ONLY_COMMANDS
+    commands = MUTATING_COMMANDS
 
     if command in read_only_commands:
         read_only_commands[command](state, args)

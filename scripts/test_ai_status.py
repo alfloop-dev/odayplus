@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 from __future__ import annotations
 
+import ast
 import io
 import json
 import os
@@ -3548,20 +3549,67 @@ class ActorCommandMutationGuardTests(unittest.TestCase):
             with self.subTest(command=label):
                 self._assert_rejected_without_mutation(command, args, env)
 
+    # Every mutating command that records an actor, with arguments that are
+    # valid enough to get past its usage check — so the only thing that can
+    # reject the call is the AI_NAME gate itself.
+    AI_NAME_CASES = {
+        "assign": ["ODP-NEW-001", "Claude", "Codex2"],
+        "start": [TASK_ID, "starting"],
+        "progress": [TASK_ID, "still going"],
+        "note": [TASK_ID, "a note"],
+        "reopen": [TASK_ID, "reopening"],
+        "handoff": [TASK_ID, "Codex2", "please review"],
+        "blocker": [TASK_ID, "blocked", "Codex2"],
+        "retarget_blocker": [TASK_ID, "Codex2", "repair"],
+        "prune_agents": ["--apply", "cleanup"],
+        "restore_approved": [TASK_ID, "restoring"],
+        "done": [TASK_ID, "finished"],
+        "supersede": [TASK_ID, "superseded"],
+        "approve": [TASK_ID, "approved"],
+        "archive_migrate": [],
+        "wave open": ["open", "W-2026-07-29"],
+        "wave close": ["close"],
+    }
+
+    def test_ai_name_case_table_covers_every_actor_bearing_command(self) -> None:
+        """The table below is the contract; this keeps it from silently rotting.
+
+        A new mutating command must either appear here or be declared actorless
+        on purpose. Without this check the table stays green while the surface
+        it claims to cover grows past it — which is exactly how the eleven
+        unvalidated call sites survived the first pass.
+        """
+        covered = {label.split()[0] for label in self.AI_NAME_CASES}
+        expected = set(ai_status.MUTATING_COMMANDS) - ai_status.ACTORLESS_MUTATING_COMMANDS
+        self.assertEqual(expected, covered)
+        self.assertEqual({"sync"}, set(ai_status.ACTORLESS_MUTATING_COMMANDS))
+
     def test_bad_ai_name_is_rejected_by_every_mutating_command(self) -> None:
-        cases = {
-            "handoff": (ai_status.command_handoff, [self.TASK_ID, "Codex2", "please review"]),
-            "blocker": (ai_status.command_blocker, [self.TASK_ID, "blocked", "Codex2"]),
-            "retarget_blocker": (
-                ai_status.command_retarget_blocker,
-                [self.TASK_ID, "Codex2", "repair"],
-            ),
-            "prune_agents": (ai_status.command_prune_agents, ["--apply", "cleanup"]),
-        }
-        for label, (command, args) in cases.items():
+        """Malformed prose and a well-shaped but unregistered name both fail closed.
+
+        `Nessie9` matters as much as the prose case: it passes every shape check
+        and would have been invented as a roster entry by the old tolerant path.
+        """
+        for label, args in self.AI_NAME_CASES.items():
+            command = ai_status.MUTATING_COMMANDS[label.split()[0]]
             for bad_name in (self.PROSE, "Nessie9"):
                 with self.subTest(command=label, ai_name=bad_name[:24]):
                     self._assert_rejected_without_mutation(command, args, {"AI_NAME": bad_name})
+
+    def test_no_unvalidated_actor_read_remains(self) -> None:
+        """The unvalidated `current_actor()` helper must stay deleted.
+
+        Codex2 found the eleven gaps by scanning for this call; encoding the
+        scan means the next one is caught by CI instead of by a reviewer.
+        """
+        tree = ast.parse(Path(ai_status.__file__).read_text(encoding="utf-8"))
+        offenders = [
+            f"line {node.lineno}"
+            for node in ast.walk(tree)
+            if isinstance(node, ast.Name) and node.id == "current_actor"
+        ]
+        self.assertEqual([], offenders)
+        self.assertFalse(hasattr(ai_status, "current_actor"))
 
 
 if __name__ == "__main__":

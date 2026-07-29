@@ -50,9 +50,10 @@ and no worker could finalize or hand off.
 **Caller input — reject before any durable mutation.**
 `resolve_actor_reference()` validates every actor argument supplied on the
 command line — `assign` owner/reviewer, `handoff` target, `blocker` waiting-for,
-`retarget_blocker` target, and `AI_NAME` for `handoff`, `blocker`,
-`retarget_blocker` and `prune_agents` — and exits non-zero before the command
-touches state. A reference is
+`retarget_blocker` target — and `current_actor_validated()` validates `AI_NAME`
+for **every** command that records an actor. Both exit non-zero before the
+command touches state. §6 covers the `AI_NAME` half, which an earlier revision
+of this branch left half-finished. A reference is
 rejected when it is longer than 40 characters, contains control characters,
 looks like a task id (`ODP-P10-FLEET-CONFLICT-REAUDIT-001`), or is not
 name-shaped. A well-shaped but unregistered name is also rejected, with the
@@ -168,11 +169,15 @@ Roster and workload are both 21 valid entries, down from 30 roster entries and
 ## 4. Verification
 
 ```
-python3 -m pytest scripts/test_ai_status.py -q                      # 96 passed
+python3 -m pytest scripts/test_ai_status.py            # 98 passed, 41 subtests
 python3 -m pytest .orchestrator/test_supervisor.py \
-                  .orchestrator/test_dispatch_policy.py -q          # 249 passed
+                  .orchestrator/test_dispatch_policy.py             # 249 passed
 python3 -m ruff check scripts/ai_status.py scripts/test_ai_status.py
 ```
+
+Transcript: `docs/evidence/runtime/ODP-ORCH-ACTOR-REF-VALIDATION-001/verification-r2.txt`.
+(`pytest -q` hides the summary line under this repo's plugin set, hence the
+unquieted form.)
 
 Three test classes in `scripts/test_ai_status.py`:
 
@@ -196,11 +201,17 @@ static table is what admits them; the status-root overlay covering worker
 worktrees; the live path delegating to `common.load_config()` verbatim; and
 `codex3` resolving to `Codex3` rather than folding into `Codex`.
 
-`ActorCommandMutationGuardTests` — for `assign` (owner and reviewer), `handoff`,
-`blocker`, `retarget_blocker` and `prune_agents`, a prose or task-id actor
-argument, an unregistered actor argument, and a bad `AI_NAME` each raise
-`SystemExit` while leaving the serialized state byte-identical, `KNOWN_AGENTS`
-unchanged, and `append_log` uncalled.
+`ActorCommandMutationGuardTests` — a prose or task-id actor argument, an
+unregistered actor argument, and a bad `AI_NAME` each raise `SystemExit` while
+leaving the serialized state byte-identical, `KNOWN_AGENTS` unchanged, and
+`append_log` uncalled. The `AI_NAME` table covers **all 15 actor-bearing
+commands** (§6), against both a malformed prose name and the well-shaped but
+unregistered `Nessie9`. Two structural guards keep the table honest:
+`test_ai_name_case_table_covers_every_actor_bearing_command` compares it against
+`MUTATING_COMMANDS` minus the declared-actorless `sync`, so a new command cannot
+be added without either covering it or exempting it on purpose; and
+`test_no_unvalidated_actor_read_remains` walks the module AST and fails on any
+reference to the deleted `current_actor`.
 
 Live verification is read-only and captured in
 `docs/evidence/runtime/ODP-ORCH-ACTOR-REF-VALIDATION-001/authority-after-correction.txt`.
@@ -244,3 +255,68 @@ exist in the static `KNOWN_AGENTS` table but are absent from the merged config,
 so the Supervisor cannot dispatch them and they are no longer accepted as actor
 references. Their roster rows are left alone. If either lane is revived, declare
 it under `agents` in the config or set `AI_STATUS_EXTRA_AGENTS`.
+
+## 6. Correction: the `AI_NAME` gate covered 4 commands, not all of them
+
+Revision 1 of this branch claimed a fail-before-mutation gate on every mutating
+command. It had one on four. Codex2 rejected it at gate 2 on head `06d28b5b`
+after scanning for the unvalidated reader directly, and the scan was right:
+`current_actor()` merely canonicalized `AI_NAME` and returned it, so eleven
+commands still let a malformed or unregistered name through.
+
+Where it reached, and how far:
+
+| command | old call site | what a bad `AI_NAME` reached |
+| --- | --- | --- |
+| `assign` | activity log, line 4030 | task appended to `tasks[]` first; bad actor then written to the log |
+| `archive_migrate` | line 4561 | tasks archived out of state first; bad actor then written to the log |
+| `start` | 4042 | state mutation + log |
+| `progress` | 4062 | state mutation + log |
+| `note` | 4081 | state mutation + log |
+| `reopen` | 4095 | state mutation + log |
+| `restore_approved` | 4407 | state mutation + log |
+| `done` | 4440 | state mutation + log, including delivery metadata |
+| `supersede` | 4478 | state mutation + log + archive |
+| `approve` | 4514 | state mutation + log |
+| `wave` | 4620 | `wave_state` history entries carry `actor` |
+
+`assign` and `archive_migrate` were the worst of the eleven: they read the actor
+*inside* the `append_log()` call at the end, so the state mutation had already
+happened by the time the name was looked at. The other nine read it early, so
+validating in place was enough; those two had the read hoisted to the top of the
+function.
+
+Three things changed:
+
+1. All eleven now read `current_actor_validated()` before their first mutation.
+   Where the old code followed `current_actor()` with a bare `ensure_agent()`,
+   that call is dropped — `resolve_actor_reference()` already registers the name,
+   and only after it validates.
+2. `current_actor()` is **deleted**, not deprecated. Leaving a tolerant reader
+   next to a strict one is what produced this defect: every new command reached
+   for the shorter name. Nothing outside `ai_status.py` imported it.
+3. `main()`'s command tables are lifted to module scope as `READ_ONLY_COMMANDS`
+   / `MUTATING_COMMANDS`, with `ACTORLESS_MUTATING_COMMANDS = {"sync"}` recording
+   the single deliberate exemption — `sync` only recomputes derived views and
+   records nothing under an agent name. The test table is now checked against
+   these sets, so the coverage claim in §4 is enforced rather than asserted.
+
+Receipts:
+
+- `docs/evidence/runtime/ODP-ORCH-ACTOR-REF-VALIDATION-001/fail-closed-cli-r2.txt`
+  — the real CLI, all 15 actor-bearing commands (16 invocations, counting both
+  `wave` subcommands) × 2 bad names = 32 runs, each `exit=1` with `ai-status.json`
+  and `ai-activity-log.jsonl` byte-identical before and after. Run against a
+  byte-for-byte copy of the live state under `PANTHEON_STATUS_ROOT`, never
+  against the live root. Includes a positive control: `AI_NAME=Claude` still
+  drives `note` to completion and logs `Claude` as the actor, so the gate is
+  fail-closed rather than fail-always.
+- `docs/evidence/runtime/ODP-ORCH-ACTOR-REF-VALIDATION-001/merged-config-authority-r2.txt`
+  — live read-only re-read of the merged config at this head: `Codex3`-`Codex9`
+  still resolve, `human ops` still folds to `Human/Ops`, `Codex5` is still
+  accepted, and the live `ai-status.json` hash is unchanged across the read.
+- `docs/evidence/runtime/ODP-ORCH-ACTOR-REF-VALIDATION-001/verification-r2.txt`
+  — test and lint transcript.
+
+No live state was mutated and no `Codex5/6/8/9` mapping was touched on this
+revision, per the reopen instruction.
