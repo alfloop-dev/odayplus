@@ -1,0 +1,36 @@
+on the runner after a green deploy: 19 files
+
+OLD  path: .odp_data/deployment/*.json  -> 6 uploaded
+   + .odp_data/deployment/api-env.json
+   + .odp_data/deployment/cloud-run-migration-compatibility.json
+   + .odp_data/deployment/cloud-run-preflight.json
+   + .odp_data/deployment/cloud-run-smoke.json
+   + .odp_data/deployment/live-e2e-gate.json
+   + .odp_data/deployment/sbom.json
+
+NEW  explicit allowlist (7 entries) -> 7 uploaded
+   + .odp_data/deployment/cloud-run-jobs/migration-validation.json
+   + .odp_data/deployment/cloud-run-jobs/scheduler-validation.json
+   + .odp_data/deployment/cloud-run-jobs/worker-validation.json
+   + .odp_data/deployment/cloud-run-migration-compatibility.json
+   + .odp_data/deployment/cloud-run-preflight.json
+   + .odp_data/deployment/cloud-run-smoke.json
+   + .odp_data/deployment/live-e2e-gate.json
+
+NEVER uploaded by the new allowlist:
+   - .odp_data/deployment/api-env.json
+   - .odp_data/deployment/cloud-run-jobs/migration-execution-list.json
+   - .odp_data/deployment/cloud-run-jobs/migration-execution.json
+   - .odp_data/deployment/cloud-run-jobs/migration-job.json
+   - .odp_data/deployment/cloud-run-jobs/scheduler-execution-list.json
+   - .odp_data/deployment/cloud-run-jobs/scheduler-execution.json
+   - .odp_data/deployment/cloud-run-jobs/scheduler-job.json
+   - .odp_data/deployment/cloud-run-jobs/worker-env-dump.json
+   - .odp_data/deployment/cloud-run-jobs/worker-execution-list.json
+   - .odp_data/deployment/cloud-run-jobs/worker-execution.json
+   - .odp_data/deployment/cloud-run-jobs/worker-job.json
+   - .odp_data/deployment/sbom.json
+
+unreviewed files the OLD glob would have published: ['.odp_data/deployment/api-env.json', '.odp_data/deployment/sbom.json']
+
+ASSERTIONS OK: 3 Job receipts recovered, 4 validator reports preserved, 9 raw gcloud dumps and 3 decoys excluded.
