@@ -1,8 +1,8 @@
 # Fleet Dispatch Receipt: ODP-ORCH-ANTIGRAVITY-CLAUDE-POOL-CANARY-001
 
-**Task:** Prove Antigravity Claude pool live routing after Gemini exhaustion  
-**Owner:** Antigravity5  
-**Reviewer:** Claude2  
+**Task:** Prove Antigravity Claude pool live routing after Gemini exhaustion
+**Owner:** Antigravity5
+**Reviewer:** Claude2
 **Recorded at:** 2026-07-29T12:10:00Z
 
 ---
@@ -18,7 +18,7 @@ using `Claude Sonnet 4.6 (Thinking)`. No Gemini call was made.
 
 ## Gemini Exhaustion Evidence
 
-**Cooldown state file:** `.orchestrator/runtime/antigravity_model_cooldown.json`  
+**Cooldown state file:** `.orchestrator/runtime/antigravity_model_cooldown.json`
 **Supervisor root:** `/home/lupin/oday-plus-supervisor-live/`
 
 The following scopes had Gemini exhausted as of dispatch time
@@ -33,7 +33,7 @@ The following scopes had Gemini exhausted as of dispatch time
 | `profile:a75ff6de58d2b8f9` | `2026-07-29T19:05:49Z` | antigravity4 |
 | `profile:896a224eb1133db4` | `2026-07-29T19:05:49Z` | antigravity6 |
 
-**Last reason recorded:**  
+**Last reason recorded:**
 `User-provided Antigravity quota panel: Gemini weekly limit exhausted; resets in about 7h04m`
 
 Scope `profile:4e1f30508623fa9a` corresponds to `~/.gemini-ag5` (expanded:
@@ -43,13 +43,13 @@ Scope `profile:4e1f30508623fa9a` corresponds to `~/.gemini-ag5` (expanded:
 
 ## Dispatch Record
 
-**Run ID:** `antigravity5-20260729T120426Z-50b845f3`  
-**Provider:** `antigravity5`  
-**Agent ID:** `antigravity5`  
-**Task ID:** `ODP-ORCH-ANTIGRAVITY-CLAUDE-POOL-CANARY-001`  
-**Status at capture:** `running`  
-**Mode:** `antigravity`  
-**Started at:** `2026-07-29T12:04:26Z`  
+**Run ID:** `antigravity5-20260729T120426Z-50b845f3`
+**Provider:** `antigravity5`
+**Agent ID:** `antigravity5`
+**Task ID:** `ODP-ORCH-ANTIGRAVITY-CLAUDE-POOL-CANARY-001`
+**Status at capture:** `running`
+**Mode:** `antigravity`
+**Started at:** `2026-07-29T12:04:26Z`
 **Lease expires at:** `2026-07-29T12:39:51Z`
 
 ### `antigravity_model_pool` (immutable dispatch metadata)
@@ -59,7 +59,7 @@ Scope `profile:4e1f30508623fa9a` corresponds to `~/.gemini-ag5` (expanded:
 "antigravity_model": "Claude Sonnet 4.6 (Thinking)"
 ```
 
-Source: `state.workers["antigravity5-20260729T120426Z-50b845f3"].metadata`  
+Source: `state.workers["antigravity5-20260729T120426Z-50b845f3"].metadata`
 in `.orchestrator/state.json` (supervisor root).
 
 ### Launch Command (sanitised — no secrets)
@@ -75,14 +75,14 @@ in `.orchestrator/state.json` (supervisor root).
 
 `--model` appears exactly **once**. The model is `Claude Sonnet 4.6 (Thinking)`.
 
-**Log path (no secrets):**  
+**Log path (no secrets):**
 `.orchestrator/logs/20260729T120426592550Z-antigravity5-antigravity5-7dfd42.log`
 
-**Worker runner status file:**  
+**Worker runner status file:**
 `.orchestrator/worker-runtime/status/antigravity5-20260729T120426Z-50b845f3.json`
 
-**Workspace path:**  
-`/tmp/pantheon-worker-worktrees/oday-plus-supervisor-live/odp-orch-antigravity-claude-pool-canary-001`  
+**Workspace path:**
+`/tmp/pantheon-worker-worktrees/oday-plus-supervisor-live/odp-orch-antigravity-claude-pool-canary-001`
 **Branch:** `task/ODP-ORCH-ANTIGRAVITY-CLAUDE-POOL-CANARY-001`
 
 ---

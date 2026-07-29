@@ -1,14 +1,14 @@
 # Runtime Evidence: ODP-ORCH-ANTIGRAVITY-CLAUDE-POOL-CANARY-001
 
-**Capture time:** 2026-07-29T12:10:00Z  
-**Worker:** Antigravity5 (`antigravity5-20260729T120426Z-50b845f3`)  
+**Capture time:** 2026-07-29T12:10:00Z
+**Worker:** Antigravity5 (`antigravity5-20260729T120426Z-50b845f3`)
 **Task:** ODP-ORCH-ANTIGRAVITY-CLAUDE-POOL-CANARY-001
 
 ---
 
 ## Supervisor Worker Record (key fields only)
 
-Source: `/home/lupin/oday-plus-supervisor-live/.orchestrator/state.json`  
+Source: `/home/lupin/oday-plus-supervisor-live/.orchestrator/state.json`
 Key: `state["workers"]["antigravity5-20260729T120426Z-50b845f3"]`
 
 ```json
@@ -77,7 +77,7 @@ Claude pool with `--model "Claude Sonnet 4.6 (Thinking)"`.
 
 ## Provider Configuration
 
-Source: `/home/lupin/oday-plus-supervisor-live/.orchestrator/config.json`  
+Source: `/home/lupin/oday-plus-supervisor-live/.orchestrator/config.json`
 Provider key: `antigravity5`
 
 ```json
