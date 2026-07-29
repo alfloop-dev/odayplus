@@ -143,3 +143,28 @@ unconfigured, which is why every staging run fails closed at step 8. That is a
 deployment-environment configuration item, tracked separately; this task ensures
 that when staging is configured, its first green deploy publishes its receipts
 instead of discarding them.
+
+## 8. Closeout — branch refresh
+
+`dev` advanced by three commits (`0b04761a`, PR #513, an unrelated
+ODP-ORCH-ANTIGRAVITY-CLAUDE-POOL-CANARY-001 evidence drop) after the review of
+exact head `5287b3ce`, leaving PR #515 `BEHIND` under `dev`'s strict
+up-to-date protection. The branch was refreshed by merging `origin/dev` into the
+task branch (`986aacf4`, no conflicts — the two file sets are disjoint).
+
+The refresh does not change the reviewed deliverable. Re-verified after the
+merge:
+
+```
+git diff --stat origin/dev...HEAD     -> same 10 files, +1227 -41, unchanged
+git diff --check origin/dev...HEAD    -> clean
+git diff origin/dev...HEAD -- .github/workflows/deploy-dev.yml -> empty
+python3 -m pytest tests/ops/test_deploy_workflow_contract.py   -> 16 passed
+simulate_staging_artifact_selection.py -> 3 receipts recovered, 5 reports
+                                          preserved, 9 dumps + 3 decoys excluded
+```
+
+Because `task-review-gate` is a commit status bound to a single head SHA, moving
+the head drops it. The gate is re-stamped by handing the task back to
+Antigravity5 for re-approval on the refreshed head rather than by re-emitting it
+from the owner's side.
