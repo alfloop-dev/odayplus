@@ -150,7 +150,7 @@ def main() -> int:
         baseline = json.loads(baseline_path.read_text())
         baseline_refs = actor_references(baseline)
         print()
-        print(f"## byte-for-byte comparison against the audited baseline")
+        print("## byte-for-byte comparison against the audited baseline")
         print(f"  baseline: {baseline_path}")
         print(f"  baseline references: {len(baseline_refs)}   live references: {len(live_refs)}")
         missing = [ref for ref in baseline_refs if ref not in live_refs]

@@ -1,27 +1,40 @@
 # Source verification — exact PR #496 merge commit
-# host date: 2026-07-29T07:14:39Z
+# host date: 2026-07-29T07:39:35Z
 
 ## source identity
 merge commit           : 1d07de67b1b6d75345feb55c2f35e6f39c41817a
 merge subject          : Merge pull request #496 from alfloop-dev/task/ODP-ORCH-ACTOR-REF-VALIDATION-001
-worktree HEAD          : 1d07de67b1b6d75345feb55c2f35e6f39c41817a
-HEAD == merge commit   : True
-blob 1d07de67:scripts/ai_status.py = 73800e2810e4b693f2e940beec582f3a6c27c7ef
+worktree HEAD          : 01d84fc8c54ff574e2a95a29e3c03a7b59aa0d48
+HEAD descends from the merge : True
+blob 1d07de67b1b6d75345feb55c2f35e6f39c41817a:scripts/ai_status.py
+                       = 73800e2810e4b693f2e940beec582f3a6c27c7ef
 sha256 (git show)      : 5e19c1c1ef4729f32470956cad3e3fe5972cb92dee5225a5d65db16df074950d
 sha256 (worktree file) : 5e19c1c1ef4729f32470956cad3e3fe5972cb92dee5225a5d65db16df074950d
 bytes                  : 203611
 
-## git diff check — worktree copy is identical to the merged blob
-$ git diff --exit-code 1d07de67 -- scripts/ai_status.py
+## the deployed source is untouched by this task
+$ git diff --exit-code 1d07de67b1b6d75345feb55c2f35e6f39c41817a -- scripts/ai_status.py
 exit=0 (no difference)
 $ git status --porcelain -- scripts/ai_status.py
 (empty = clean)
+$ git diff --stat 1d07de67b1b6d75345feb55c2f35e6f39c41817a..HEAD -- scripts/
+(empty = this branch touches only docs/evidence)
 
-## focused test + lint from the exact source (run at 2026-07-29T07:14:46Z)
+## focused test + lint from the exact source (run at 2026-07-29T07:39:35Z)
 $ python3 -m pytest scripts/test_ai_status.py
 ........................................................................ [ 73%]
 ..........................      [100%]
-98 passed, 41 subtests passed in 4.83s
+98 passed, 41 subtests passed in 4.67s
 
 $ python3 -m ruff check scripts/ai_status.py scripts/test_ai_status.py
 All checks passed!
+
+## this task's own harness lints clean too
+$ python3 -m ruff check docs/evidence/runtime/ODP-ORCH-ACTOR-REF-LIVE-ROLLOUT-001/*.py
+All checks passed!
+
+## whitespace hygiene (the round-1 reviewer finding)
+$ git diff --check 1d07de67b1b6d75345feb55c2f35e6f39c41817a   # working tree, includes uncommitted evidence
+(no output = clean, exit=0)
+$ git diff --cached --check
+(no output = clean)

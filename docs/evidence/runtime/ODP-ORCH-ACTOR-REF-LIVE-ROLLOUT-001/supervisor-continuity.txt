@@ -1,5 +1,5 @@
-# Supervisor continuity — no restart across the deployment
-# captured: 2026-07-29T07:21:15Z
+# Supervisor continuity — no restart across the atomic re-deployment
+# captured: 2026-07-29T07:38:54Z
 
 ## systemd unit (never started/stopped/restarted/reloaded by this task)
 MainPID=1487837
@@ -10,18 +10,31 @@ ActiveState=active
 SubState=running
 
 ## process identity
-  PID before deploy (07:19:43Z) : 1487837
-  PID now                        : 1487837
-  cmd                            : python3 -u .orchestrator/supervisor.py --verbose
-  cwd                            : /home/lupin/oday-plus-supervisor-live
-  process start time             : Wed Jul 29 06:08:56 2026
-  elapsed                        :    01:12:18
+  PID before round-1 deploy   (07:19:43Z) : 1487837
+  PID before atomic re-deploy (07:38:12Z) : 1487837
+  PID now                                 : 1487837
+  cmd                                     : python3 -u .orchestrator/supervisor.py --verbose
+  cwd                                     : /home/lupin/oday-plus-supervisor-live
+  process start time                      : Wed Jul 29 06:08:56 2026
+  elapsed                                 :    01:29:57
 
-## journal across the swap (deployment ran at 2026-07-29T07:19:43Z)
-Jul 29 07:19:14 oday-plus-dev.c.alfaloop-data-project.internal bash[1487837]: [2026-07-29 15:19:14] supervisor tick: lifecycle=running heartbeat=2026-07-29 15:19:14 lag=81.0s changed=yes mode=active queue=1 approvals=0 active_workers=1
-Jul 29 07:20:35 oday-plus-dev.c.alfaloop-data-project.internal bash[1487837]: [2026-07-29 15:20:35] supervisor tick: lifecycle=running heartbeat=2026-07-29 15:20:34 lag=80.0s changed=yes mode=active queue=1 approvals=0 active_workers=1
+## why the atomic path matters here
+  The Supervisor holds no long-lived fd on the file:
+    open fds under /proc/1487837/fd naming ai_status.py: 0
+  The real readers are short-lived — every worker CLI invocation and every
+  Supervisor-spawned status command opens the file fresh, at arbitrary moments.
+  'install -m' truncates and rewrites the target in place, so a reader that
+  opens mid-write sees a partial file. 'os.replace' publishes by rename(2):
+  each open resolves to the whole old inode or the whole new one, never a
+  half-written file. That is the property this round adds; the bytes were
+  already correct after round 1.
 
-## read-only smoke against the DEPLOYED live-root CLI
+## journal across the atomic swap (re-deployment ran at 2026-07-29T07:38:12Z)
+Jul 29 07:35:45 oday-plus-dev.c.alfaloop-data-project.internal bash[1487837]: [2026-07-29 15:35:45] supervisor tick: lifecycle=running heartbeat=2026-07-29 15:35:45 lag=81.0s changed=yes mode=active queue=1 approvals=0 active_workers=1
+Jul 29 07:37:04 oday-plus-dev.c.alfaloop-data-project.internal bash[1487837]: [2026-07-29 15:37:04] supervisor tick: lifecycle=running heartbeat=2026-07-29 15:37:04 lag=79.0s changed=yes mode=active queue=1 approvals=0 active_workers=1
+Jul 29 07:38:26 oday-plus-dev.c.alfaloop-data-project.internal bash[1487837]: [2026-07-29 15:38:26] supervisor tick: lifecycle=running heartbeat=2026-07-29 15:38:25 lag=81.0s changed=yes mode=active queue=1 approvals=0 active_workers=1
+
+## read-only smoke against the DEPLOYED live-root CLI (post-atomic-swap)
 $ AI_NAME=Claude3 python3 /home/lupin/oday-plus-supervisor-live/scripts/ai_status.py show ODP-ORCH-ACTOR-REF-LIVE-ROLLOUT-001
 {
   "source": "active",
@@ -35,8 +48,4 @@ $ AI_NAME=Claude3 python3 /home/lupin/oday-plus-supervisor-live/scripts/ai_statu
     "status": "in_progress",
     "depends_on": [
       "ODP-ORCH-ACTOR-REF-VALIDATION-001"
-    ],
-    "artifacts": [
-      "docs/evidence/fleet_dispatch/ODP-ORCH-ACTOR-REF-LIVE-ROLLOUT-001.md",
-      "docs/evidence/runtime/ODP-ORCH-ACTOR-REF-LIVE-ROLLOUT-001/"
   exit=0

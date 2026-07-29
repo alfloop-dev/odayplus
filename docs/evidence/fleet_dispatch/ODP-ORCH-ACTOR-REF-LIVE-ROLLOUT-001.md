@@ -1,7 +1,7 @@
 # ODP-ORCH-ACTOR-REF-LIVE-ROLLOUT-001: roll the reviewed actor-reference guard into both live status roots
 
 Owner: Claude3 · Reviewer: Codex2 · Phase: Fleet Control Plane Live Rollout
-Deployed: 2026-07-29T07:19:43Z
+Deployed: 2026-07-29T07:38:12Z (atomic publish; supersedes the 07:19:43Z run)
 
 Depends on ODP-ORCH-ACTOR-REF-VALIDATION-001, merged as PR #496
 (`1d07de67b1b6d75345feb55c2f35e6f39c41817a`).
@@ -9,23 +9,49 @@ Depends on ODP-ORCH-ACTOR-REF-VALIDATION-001, merged as PR #496
 This task deploys one file and proves it. It changes no product code, restarts
 nothing, and edits no task assignment. Receipts live under
 `docs/evidence/runtime/ODP-ORCH-ACTOR-REF-LIVE-ROLLOUT-001/`; the three drivers
-that produced them (`deploy.sh`, `sandbox_cli_matrix.py`,
+that produced them (`deploy.py`, `sandbox_cli_matrix.py`,
 `live_authority_probe.py`) are committed next to their output so the reviewer
 can re-run any of it.
 
+## 0. What round 2 changed, and why
+
+Round 1 was rejected at exact head `01d84fc8`. The bytes it landed were correct
+and every live outcome check passed, but the procedure violated the reviewer's
+stop gate: `deploy.sh` line 62 ran `install -m "$MODE" "$SRC" "$TARGET"`, which
+truncates and rewrites the live target in place. A reader that opens the file
+mid-write sees a partial file. The gate required a verified same-directory
+temporary sibling published by atomic rename.
+
+Round 2 replaces the driver, not the payload:
+
+- `deploy.sh` is **deleted**. `deploy.py` replaces it and is the only driver.
+- Every target is now written to a same-directory sibling
+  (`.ai_status.py.<TASK-ID>.<pid>.tmp`, `O_CREAT|O_EXCL`), `fsync`ed, `chmod`ed
+  to the target's own existing mode, then **verified** — same directory, same
+  filesystem, sha256 == merged blob, byte length, mode, and a `filecmp`
+  byte-for-byte compare — and only then published with
+  `os.replace(sibling, target)` followed by an `fsync` of the directory.
+  Any failed check unlinks the sibling and aborts with the target untouched.
+- The merged blob was re-deployed to both roots through that path at
+  07:38:12Z, with fresh before/after receipts.
+
+The round-1 transcript is kept verbatim as
+`runtime/.../deploy-transcript-round1-superseded.txt`.
+
 ## 1. Source: the merge commit, not a working tree
 
-`deploy.sh` never copies from a checkout. It resolves the blob out of the merge
-commit and materialises it:
+`deploy.py` never copies from a checkout. It resolves the blob out of the merge
+commit and holds the bytes in memory:
 
 ```
 git rev-parse 1d07de67:scripts/ai_status.py   -> 73800e2810e4b693f2e940beec582f3a6c27c7ef
-git cat-file blob 73800e28... > /tmp/ai_status.merged-1d07de67.py
+git cat-file blob 73800e28...                 -> payload
 sha256                                        = 5e19c1c1ef4729f32470956cad3e3fe5972cb92dee5225a5d65db16df074950d
 bytes                                         = 203611
 ```
 
-The task worktree is checked out at exactly that merge commit, and
+The task branch adds nothing under `scripts/`
+(`git diff --stat 1d07de67..HEAD -- scripts/` is empty) and
 `git diff --exit-code 1d07de67 -- scripts/ai_status.py` returns 0 — so the
 tested source and the deployed source are the same bytes.
 
@@ -38,30 +64,64 @@ python3 -m pytest scripts/test_ai_status.py                       # 98 passed, 4
 python3 -m ruff check scripts/ai_status.py scripts/test_ai_status.py   # All checks passed!
 git diff --exit-code 1d07de67 -- scripts/ai_status.py             # exit 0
 git status --porcelain -- scripts/ai_status.py                    # empty
+git diff --check 1d07de67..HEAD                                   # clean
 ```
+
+Re-run at 07:39Z from the round-2 worktree, not carried over from round 1. The
+`git diff --check` trailing-whitespace hit the reviewer flagged was in a diff
+excerpt inside `superseded-delta.txt`; it is stripped, with a note in that file
+recording that no hunk content was altered.
 
 Same receipt as above.
 
-## 3. Deployment
+## 3. Deployment — atomic publish
 
-| root | role | sha256 before | sha256 after | equals merged |
+Net effect across both rounds:
+
+| root | role | sha256 pre-rollout | sha256 now | equals merged |
 | --- | --- | --- | --- | --- |
 | `/home/lupin/oday-plus` | control root (`run-supervisor.sh`, `dashboard_server.py`) | `32b6cdcd…0340da` | `5e19c1c1…4950d` | **True** |
 | `/home/lupin/oday-plus-supervisor-live` | status root the live Supervisor runs from | `216c1a87…66a17b` | `5e19c1c1…4950d` | **True** |
 
-`cmp -s` against the materialised blob reports `identical` for both. File mode
-(`775`) is preserved. Both prior files are backed up under
-`/home/lupin/pantheon-deploy-backups/ODP-ORCH-ACTOR-REF-LIVE-ROLLOUT-001-20260729T071943Z/`,
-with a one-line rollback recorded in `runtime/.../superseded-delta.txt`.
+The 07:38:12Z atomic run's own receipts. Because round 1 had already landed the
+correct bytes, `sha256 before` equals `sha256 after` here — so the proof that
+the file was genuinely republished through the verified-sibling path is the
+**inode change**, which only a rename can produce:
+
+| root | mode | sha256 before → after | inode before → after | verified sibling | published by |
+| --- | --- | --- | --- | --- | --- |
+| `/home/lupin/oday-plus` | 775 → 775 | `5e19c1c1…4950d` → `5e19c1c1…4950d` | 633653 → 633499 | 6/6 checks PASS | `os.replace` |
+| `/home/lupin/oday-plus-supervisor-live` | 775 → 775 | `5e19c1c1…4950d` → `5e19c1c1…4950d` | 588670 → 633653 | 6/6 checks PASS | `os.replace` |
+
+Per-target post-publish assertions, both roots: `target sha256 == merged blob`,
+`target bytes == merged blob`, `mode preserved`, `inode CHANGED (proves rename,
+not in-place write)`, `no temporary sibling left behind` — all PASS, and a glob
+for `.ai_status.py.*.tmp` in each `scripts/` directory reports `none`.
+
+The verification gate is not decorative. `deploy.py --corrupt-payload` flips one
+payload byte after the merged digest is computed and was run against a sandbox
+copy first: the sibling failed `sha256 == merged blob` and the byte-for-byte
+compare, was unlinked, **no rename was issued**, and the sandbox target's
+sha256, bytes, mode and inode were all unchanged. A clean positive rehearsal on
+the same sandbox (deliberately at mode `750`, to show the *target's* mode is
+what gets preserved rather than a hardcoded one) published normally with the
+inode changing. Receipts: `runtime/.../atomic-publish-rehearsal-negative.txt`,
+`runtime/.../atomic-publish-rehearsal-positive.txt`.
 
 Unrelated dirty changes are preserved. `git status --porcelain` was captured in
-each root before and after; with `scripts/ai_status.py` filtered out the two
-inventories are identical — 580 dirty entries in the control root and 21 in the
-status root, none of them touched. The status root's count goes 21 → 22 only
-because `scripts/ai_status.py` itself was clean before and is now modified
-against its ops branch, which is the deployment.
+each root before and after the atomic run; with `scripts/ai_status.py` filtered
+out the two inventories are identical — 580 dirty entries in the control root
+and 22 in the status root, none of them touched. (The status root's count was 21
+before round 1 and is 22 now: `scripts/ai_status.py` itself was clean against
+its ops branch before the rollout and is now modified, which is the deployment.)
 
-Receipt: `runtime/.../deploy-transcript.txt`.
+Rollback still restores from the **first** backup set,
+`…-20260729T071943Z/`, since that is the only one holding the pre-rollout files;
+the atomic run's backups contain the merged blob itself. Exact commands and the
+expected post-rollback hashes: `runtime/.../superseded-delta.txt`.
+
+Receipts: `runtime/.../deploy-transcript.txt` (atomic),
+`runtime/.../deploy-transcript-round1-superseded.txt` (rejected round 1).
 
 ### What the swap superseded
 
@@ -119,6 +179,9 @@ is compared before and after. The `Nessie9` count in
 `ai-activity-log.jsonl` is 1 both times — that is prior evidence prose from
 PR #496's own receipt, not a write from this run.
 
+Both receipts were regenerated at 07:38Z, i.e. against the inodes the atomic
+publish created, not carried over from round 1.
+
 Receipts: `runtime/.../fail-closed-cli-live-root.txt`,
 `runtime/.../fail-closed-cli-control-root.txt`, plus the pre-deployment
 rehearsal `runtime/.../fail-closed-cli-sandbox-rehearsal.txt`.
@@ -151,6 +214,8 @@ Live fingerprints (`ai-status.json`, `ai-activity-log.jsonl`,
 `current-work.md`, `dashboard-bundle.json`) are identical before and after the
 probe.
 
+Both probes were re-run at 07:38Z against the atomically published files.
+
 Receipts: `runtime/.../merged-config-authority-live-root.txt`,
 `runtime/.../merged-config-authority-control-root.txt`,
 `runtime/.../merged-config-authority-pre-deploy.txt`.
@@ -177,20 +242,30 @@ added since audit           : []
 ```
 
 Each of the 18 references also resolves to its own spelling under the deployed
-guard (`exact=True`), so nothing would be re-attributed on the next write.
+guard (`exact=True`), so nothing would be re-attributed on the next write. Still
+18/18 with an identical multiset when re-checked at 07:38Z after the atomic
+publish.
 
 ## 7. Supervisor left running, no restart
 
-| | before deploy | after deploy |
+| | before atomic deploy | after atomic deploy |
 | --- | --- | --- |
 | `MainPID` | 1487837 | 1487837 |
 | `ActiveState/SubState` | active/running | active/running |
 | `ExecMainStartTimestamp` | Wed 2026-07-29 06:08:57 UTC | Wed 2026-07-29 06:08:57 UTC |
 | `NRestarts` | 0 | 0 |
 
-No `systemctl start/stop/restart/reload` was issued. The journal shows the same
-PID ticking on both sides of the 07:19:43Z swap (07:19:14 and 07:20:35), and a
-read-only `show` against the deployed live-root CLI exits 0.
+Same PID and start timestamp as before round 1 at 07:19:43Z, so the process has
+been continuous across both swaps. No `systemctl
+start/stop/restart/reload` was issued by either driver. The journal shows the
+same PID ticking on both sides of the 07:38:12Z atomic swap (07:37:04 and
+07:38:26), and a read-only `show` against the deployed live-root CLI exits 0
+afterwards.
+
+The Supervisor holds no long-lived fd on the file (0 fds under
+`/proc/1487837/fd` name `ai_status.py`). The readers that matter are the
+short-lived CLI invocations, and those are exactly what `os.replace` protects:
+each `open()` resolves to a whole inode, old or new, never a half-written file.
 
 Receipt: `runtime/.../supervisor-continuity.txt`.
 
@@ -225,6 +300,11 @@ but the two configs have drifted.
 ## 9. Scope
 
 Changed: `scripts/ai_status.py` in two live roots (byte-for-byte to the merged
-blob), plus this task's evidence in the repo. Not changed: product code,
-`ai_status.py` content, the Supervisor process, config files, task
-assignments, roster, or any other dirty file in either root.
+blob, published by atomic rename), plus this task's evidence in the repo. Not
+changed: product code, `ai_status.py` content, the Supervisor process, config
+files, task assignments, roster, or any other dirty file in either root.
+
+Round 2 changed the rollout procedure and the evidence only. The repo diff
+against the merge commit touches nothing under `scripts/`, and the driver
+`deploy.sh` was deleted in favour of `deploy.py` so no non-atomic path remains
+committed.

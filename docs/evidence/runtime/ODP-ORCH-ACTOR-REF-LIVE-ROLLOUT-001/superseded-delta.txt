@@ -86,7 +86,8 @@
     +    "human/ops git push origin task/odp-fin-fe-002": "Human/Ops",
          "ops": "Human/Ops",
      }
-     
+  (trailing whitespace stripped from the last context line of the excerpt above so
+   `git diff --check` stays clean; no diff hunk content was altered)
 
   Two groups, and what happens to each under the merged file:
   1. KNOWN_AGENTS target_workload tuning (Claude 20->10, Claude2 10->5, Antigravity2-7 5->30).
@@ -104,6 +105,14 @@
      occurrences in /home/lupin/oday-plus/ai-status.json      : 0
      occurrences in the live status root ai-status.json       : 0
 
-## rollback
-  cp /home/lupin/pantheon-deploy-backups/ODP-ORCH-ACTOR-REF-LIVE-ROLLOUT-001-20260729T071943Z/oday-plus.ai_status.py.bak            /home/lupin/oday-plus/scripts/ai_status.py
-  cp /home/lupin/pantheon-deploy-backups/ODP-ORCH-ACTOR-REF-LIVE-ROLLOUT-001-20260729T071943Z/oday-plus-supervisor-live.ai_status.py.bak /home/lupin/oday-plus-supervisor-live/scripts/ai_status.py
+## rollback — use the FIRST backup set, not the atomic re-deploy's
+  The pre-rollout files are only in the 20260729T071943Z directory. The atomic
+  re-deploy at 07:32:35Z backed up what was already on disk by then, which is the
+  merged blob itself, so restoring from that set would be a no-op. Rollback is:
+
+  install -m 775 /home/lupin/pantheon-deploy-backups/ODP-ORCH-ACTOR-REF-LIVE-ROLLOUT-001-20260729T071943Z/oday-plus.ai_status.py.bak                 /home/lupin/oday-plus/scripts/ai_status.py
+  install -m 775 /home/lupin/pantheon-deploy-backups/ODP-ORCH-ACTOR-REF-LIVE-ROLLOUT-001-20260729T071943Z/oday-plus-supervisor-live.ai_status.py.bak /home/lupin/oday-plus-supervisor-live/scripts/ai_status.py
+
+  verify after rollback:
+    sha256 /home/lupin/oday-plus/scripts/ai_status.py                 -> 32b6cdcdda7c9f4b293af97636fb85c5616a5f18f2700b3c22f00371290340da
+    sha256 /home/lupin/oday-plus-supervisor-live/scripts/ai_status.py -> 216c1a873e9fd34364eab1f6da33cbbffcb71690744004a4553145fe0566a17b

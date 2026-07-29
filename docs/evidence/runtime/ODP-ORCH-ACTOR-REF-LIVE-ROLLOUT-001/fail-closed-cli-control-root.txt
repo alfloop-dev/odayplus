@@ -1,14 +1,14 @@
 # Fail-closed CLI matrix — real CLI, isolated status root
 # ai_status.py under test : /home/lupin/oday-plus/scripts/ai_status.py
 #   sha256                : 5e19c1c1ef4729f32470956cad3e3fe5972cb92dee5225a5d65db16df074950d
-# sandbox status root     : /tmp/actor-ref-rollout-sandbox-inzq
+# sandbox status root     : /tmp/actor-ref-rollout-sandbox-ZYOA
 # live root is read-only here; its fingerprints are re-checked at the end.
 
 ## sandbox baseline
-  ai-status.json           434a5cb1f39b14f0
-  ai-activity-log.jsonl    870eac747fa5bd1a
-  current-work.md          527fa86927a13767
-  roster                   1eb3607163508f01
+  ai-status.json           c2135ab97752ca9a
+  ai-activity-log.jsonl    45662f51f0f29b58
+  current-work.md          1b62f959816c74fa
+  roster                   dfb672f0b8be27c9
 
 ## AI_NAME = malformed prose
 #   value (99 chars): 'STOP FOR CHAIR REVIEW: the rollout window is closed until the coordinator re-checks this exact head'
@@ -82,10 +82,10 @@ wave close             exit=1 state=UNCHANGED log=UNCHANGED roster=UNCHANGED cur
 
 ## live root fingerprints (informational — the live Supervisor keeps running
 ## and writes on its own cadence, so a change here is not attributable to us)
-  ai-status.json           before=434a5cb1f39b14f0 after=434a5cb1f39b14f0 identical=True
-  ai-activity-log.jsonl    before=870eac747fa5bd1a after=870eac747fa5bd1a identical=True
-  current-work.md          before=527fa86927a13767 after=527fa86927a13767 identical=True
-  roster                   before=1eb3607163508f01 after=1eb3607163508f01 identical=True
+  ai-status.json           before=c2135ab97752ca9a after=c2135ab97752ca9a identical=True
+  ai-activity-log.jsonl    before=45662f51f0f29b58 after=45662f51f0f29b58 identical=True
+  current-work.md          before=1b62f959816c74fa after=1b62f959816c74fa identical=True
+  roster                   before=dfb672f0b8be27c9 after=dfb672f0b8be27c9 identical=True
 
 ## hard isolation assertion: the matrix added no occurrence of its own
 ## actor strings to the live root (counts must be identical; a non-zero
