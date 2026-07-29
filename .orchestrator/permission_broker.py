@@ -18,11 +18,16 @@ if str(THIS_DIR) not in sys.path:
 from approval_queue import consume_resume_override, create_approval, find_resume_override
 from common import (
     ROOT,
+    anchor_config_paths,
     approval_tool_input_signature,
+    authoritative_status_root,
+    config_path,
     load_config,
+    load_config_for_status_root,
     load_json,
     load_status,
     normalize_agent_id,
+    repo_root_for_config,
     utc_now,
     write_activity_log,
     write_json,
@@ -196,6 +201,7 @@ UNSAFE_AGENT_MARKERS = (
     "launch",
 )
 SAFE_AGENT_RUN_PATTERNS = (
+    re.compile(r"(?:^|[/\s])run\.(?:py|ts|js)\b"),
     re.compile(r"\brun\s+`?git\s+status\b"),
     re.compile(r"\brun\s+`?git\s+log\b"),
     re.compile(r"\brun\s+`?git\s+diff\b"),
@@ -789,6 +795,18 @@ def _collect_paths(tool_input: dict[str, Any]) -> list[Path]:
 
 def _allowed_workspace_roots(config: dict[str, Any] | None = None) -> list[Path]:
     roots = [ROOT, ROOT.parent / "pantheon"]
+    # A worker runs in a per-task worktree outside ROOT, so without this its own
+    # workspace is out-of-workspace and every Edit/Write is denied. The value is
+    # injected into the worker process by the Supervisor (common.worker_env /
+    # supervisor.resume_claude_worker); the hook subprocess inherits it from the
+    # CLI, so a tool call cannot set it for its own hook. Relative values are
+    # ignored rather than resolved against ROOT — an unanchored value must not
+    # widen the boundary.
+    runtime_workspace = str(os.environ.get("ORCH_WORKSPACE_PATH") or "").strip()
+    if runtime_workspace:
+        candidate = Path(runtime_workspace).expanduser()
+        if candidate.is_absolute():
+            roots.append(candidate.resolve())
     configured = ((config or {}).get("permission_broker", {}) or {}).get("allowed_workspace_roots", [])
     if isinstance(configured, list):
         for item in configured:
@@ -1175,15 +1193,65 @@ def _approval_provider(config: dict[str, Any]) -> str:
     return "claude"
 
 
+def resolve_hook_config() -> tuple[dict[str, Any], Path, str]:
+    """Load the config whose approval queue is authoritative for this process.
+
+    The Claude hook wiring pins one absolute ``permission_broker.py`` path, so
+    the same executable serves every fleet on the host. ``PANTHEON_STATUS_ROOT``
+    is the supervisor's own declaration of which fleet owns this worker, so it
+    -- not ``__file__`` -- decides which approval queue, activity log, and
+    permission-rule file the hook reads and writes.
+
+    Falls back to the module-local root whenever the environment does not name
+    a usable orchestrator root, which keeps standalone and test invocations on
+    exactly their current behaviour.
+    """
+    status_root = authoritative_status_root()
+    if status_root is None:
+        return anchor_config_paths(load_config(), ROOT), ROOT, "module_root"
+    if status_root == ROOT:
+        return anchor_config_paths(load_config(), ROOT), ROOT, "status_root_env"
+    return load_config_for_status_root(status_root), status_root, "status_root_env"
+
+
+def claude_local_settings_path(config: dict[str, Any]) -> Path:
+    """Resolve the settings file holding the permission rules for ``config``'s fleet.
+
+    ``CLAUDE_LOCAL_SETTINGS_PATH`` is anchored to the running module's checkout.
+    A hook that restores rules there while the supervisor suspended them in
+    another root would strand a temporary allow rule in the authoritative fleet.
+    """
+    try:
+        root = repo_root_for_config(config)
+    except KeyError:
+        return CLAUDE_LOCAL_SETTINGS_PATH
+    return root / ".claude" / "settings.local.json"
+
+
+def approval_queue_audit(config: dict[str, Any]) -> dict[str, str]:
+    """Non-secret provenance for every hook decision: which queue root answered."""
+    audit: dict[str, str] = {"module_root": str(ROOT)}
+    try:
+        audit["status_root"] = str(repo_root_for_config(config))
+    except KeyError:
+        pass
+    try:
+        audit["approval_queue_path"] = str(config_path(config, "approval_queue"))
+    except KeyError:
+        pass
+    return audit
+
+
 def remember_rule(config: dict[str, Any], *, decision: str, rule: str) -> dict[str, Any]:
-    settings = load_json(CLAUDE_LOCAL_SETTINGS_PATH, default={}) or {}
+    settings_path = claude_local_settings_path(config)
+    settings = load_json(settings_path, default={}) or {}
     permissions = settings.get("permissions", {})
     bucket = permissions.get(decision, []) or []
     if rule not in bucket:
         bucket.append(rule)
     permissions[decision] = bucket
     settings["permissions"] = permissions
-    write_json(CLAUDE_LOCAL_SETTINGS_PATH, settings)
+    write_json(settings_path, settings)
     write_activity_log(
         config,
         {
@@ -1231,7 +1299,8 @@ def suspend_matching_rules(
     tool_name: str,
     tool_input: dict[str, Any],
 ) -> list[str]:
-    settings = load_json(CLAUDE_LOCAL_SETTINGS_PATH, default={}) or {}
+    settings_path = claude_local_settings_path(config)
+    settings = load_json(settings_path, default={}) or {}
     permissions = settings.get("permissions", {})
     existing_rules = list(permissions.get(bucket, []) or [])
     removed_rules = [rule for rule in existing_rules if _permission_rule_matches(rule, tool_name=tool_name, tool_input=tool_input)]
@@ -1239,7 +1308,7 @@ def suspend_matching_rules(
         return []
     permissions[bucket] = [rule for rule in existing_rules if rule not in removed_rules]
     settings["permissions"] = permissions
-    write_json(CLAUDE_LOCAL_SETTINGS_PATH, settings)
+    write_json(settings_path, settings)
     write_activity_log(
         config,
         {
@@ -1256,7 +1325,8 @@ def suspend_matching_rules(
 def restore_rules(config: dict[str, Any], *, bucket: str, rules: list[str]) -> list[str]:
     if not rules:
         return []
-    settings = load_json(CLAUDE_LOCAL_SETTINGS_PATH, default={}) or {}
+    settings_path = claude_local_settings_path(config)
+    settings = load_json(settings_path, default={}) or {}
     permissions = settings.get("permissions", {})
     existing_rules = list(permissions.get(bucket, []) or [])
     restored: list[str] = []
@@ -1268,7 +1338,7 @@ def restore_rules(config: dict[str, Any], *, bucket: str, rules: list[str]) -> l
         return []
     permissions[bucket] = existing_rules
     settings["permissions"] = permissions
-    write_json(CLAUDE_LOCAL_SETTINGS_PATH, settings)
+    write_json(settings_path, settings)
     write_activity_log(
         config,
         {
@@ -1285,7 +1355,8 @@ def restore_rules(config: dict[str, Any], *, bucket: str, rules: list[str]) -> l
 def add_temporary_allow_rule(config: dict[str, Any], *, rule: str | None) -> bool:
     if not rule:
         return False
-    settings = load_json(CLAUDE_LOCAL_SETTINGS_PATH, default={}) or {}
+    settings_path = claude_local_settings_path(config)
+    settings = load_json(settings_path, default={}) or {}
     permissions = settings.get("permissions", {})
     allow_rules = list(permissions.get("allow", []) or [])
     if rule in allow_rules:
@@ -1293,7 +1364,7 @@ def add_temporary_allow_rule(config: dict[str, Any], *, rule: str | None) -> boo
     allow_rules.append(rule)
     permissions["allow"] = allow_rules
     settings["permissions"] = permissions
-    write_json(CLAUDE_LOCAL_SETTINGS_PATH, settings)
+    write_json(settings_path, settings)
     write_activity_log(
         config,
         {
@@ -1309,14 +1380,15 @@ def add_temporary_allow_rule(config: dict[str, Any], *, rule: str | None) -> boo
 def remove_temporary_allow_rule(config: dict[str, Any], *, rule: str | None) -> bool:
     if not rule:
         return False
-    settings = load_json(CLAUDE_LOCAL_SETTINGS_PATH, default={}) or {}
+    settings_path = claude_local_settings_path(config)
+    settings = load_json(settings_path, default={}) or {}
     permissions = settings.get("permissions", {})
     allow_rules = list(permissions.get("allow", []) or [])
     if rule not in allow_rules:
         return False
     permissions["allow"] = [entry for entry in allow_rules if entry != rule]
     settings["permissions"] = permissions
-    write_json(CLAUDE_LOCAL_SETTINGS_PATH, settings)
+    write_json(settings_path, settings)
     write_activity_log(
         config,
         {
@@ -1344,6 +1416,7 @@ def log_event(config: dict[str, Any], event_name: str, payload: dict[str, Any]) 
             "message": f"{event_name}: {message}",
             "hook_event": event_name,
             "hook_payload": payload,
+            "approval_root": approval_queue_audit(config),
             "ts_local": utc_now(),
         },
     )
@@ -1681,7 +1754,7 @@ def hook_mode(config: dict[str, Any], event_name: str, payload: dict[str, Any]) 
 
 def main() -> int:
     args = parse_args()
-    config = load_config()
+    config, _status_root, _config_source = resolve_hook_config()
 
     if args.command == "classify":
         print(classify_command(args.shell_command))
