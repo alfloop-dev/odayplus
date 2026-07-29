@@ -1,17 +1,27 @@
-"""ODP-DEPLOY-JOB-RECEIPT-UPLOAD-001: Deploy Dev artifact path contract.
+"""Deploy Dev / Deploy Staging artifact path contract.
 
-Deploy Dev run 30436771086 wrote three Cloud Run Job validation receipts —
+ODP-DEPLOY-JOB-RECEIPT-UPLOAD-001: Deploy Dev run 30436771086 wrote three Cloud
+Run Job validation receipts —
 `.odp_data/deployment/cloud-run-jobs/{migration,scheduler,worker}-validation.json`,
 all passing — and published none of them. The upload step's
 `.odp_data/deployment/*.json` glob is not recursive, so the artifact held only
 the three top-level reports and the Job receipts died with the runner.
 
-Replacing the glob with an explicit allowlist fixes that, but an allowlist is a
+ODP-DEPLOY-STAGING-JOB-RECEIPT-UPLOAD-001: Deploy Staging carried the identical
+glob. It has never lost a receipt only because it has never produced one — every
+run to date fails closed at the WIF gate (run 30445252373: "Workload Identity
+Federation variables are required", then "No files were found with the provided
+path: .odp_data/deployment/*.json"). The first genuinely configured staging
+deploy would have dropped its Job receipts exactly as dev did.
+
+Replacing a glob with an explicit allowlist fixes that, but an allowlist is a
 second place that has to stay true: the deploy script decides which receipts
-exist, and nothing forces the workflow to keep up. These tests derive the
-expected file set from `scripts/deploy_cloud_run_waji.sh` itself, so adding a
-fourth Cloud Run Job kind — or renaming a report — fails here instead of
-silently shipping another evidence gap.
+exist, and nothing forces a workflow to keep up. These tests derive the expected
+file set from `scripts/deploy_cloud_run_waji.sh` and from each workflow's own
+steps, then run it against every deploy workflow in one parametrised sweep. So
+adding a fourth Cloud Run Job kind, renaming a report, or landing a third
+environment workflow fails here instead of silently shipping another evidence
+gap — and dev and staging cannot drift apart from each other either.
 
 The allowlist also carries a confidentiality obligation. The same directory
 holds the raw `gcloud run jobs describe` / `executions describe` /
@@ -26,23 +36,80 @@ import importlib.util
 import json
 import re
 import sys
+from dataclasses import dataclass, field
 from pathlib import Path
 
 import pytest
 import yaml
 
 ROOT = Path(__file__).resolve().parents[2]
-DEPLOY_DEV_WORKFLOW = ROOT / ".github/workflows/deploy-dev.yml"
+WORKFLOW_DIR = ROOT / ".github/workflows"
 DEPLOY_SCRIPT = ROOT / "scripts/deploy_cloud_run_waji.sh"
 VALIDATOR_PATH = ROOT / "scripts/deployment/validate_cloud_run_live_deployment.py"
 
 DEPLOYMENT_REPORT_DIR = ".odp_data/deployment"
-UPLOAD_ARTIFACT_NAME = "cloud-run-dev-validation"
 
 # The raw gcloud dumps `capture_job_proof` / `capture_latest_execution` leave
 # beside the receipts. Uploading any of them would publish the deployed
 # environment and its secret selectors.
 UNREDACTED_RECEIPT_SUFFIXES = ("-job.json", "-execution.json", "-execution-list.json")
+
+# Deploy Staging names its remote proof after the run, so the upload path has to
+# carry the same expansion the checker step used. Only run-scoped context is
+# allowed in: an expression that can be steered by workflow input or event
+# payload would put path selection back outside review.
+ALLOWED_PATH_EXPRESSIONS = ("github.run_id",)
+
+# `${GITHUB_RUN_ID}` in a shell `run:` block and `${{ github.run_id }}` in a
+# `with:` value are the same number at runtime; compare them as one token.
+_RUN_ID_FORMS = ("${{ github.run_id }}", "${GITHUB_RUN_ID}", "$GITHUB_RUN_ID")
+_RUN_ID_TOKEN = "<run-id>"
+
+
+@dataclass(frozen=True)
+class DeployWorkflow:
+    """One environment's deploy workflow and the shape its artifact must have."""
+
+    label: str
+    filename: str
+    workflow_name: str
+    job_id: str
+    artifact_name: str
+    # Report trees outside `.odp_data/deployment` this environment may publish.
+    # Each entry still has to be justified file-by-file by a `--output` in the
+    # workflow's own steps (see the workflow-written-reports test), so this only
+    # widens *where* a justified report may live, never *what* may be uploaded.
+    extra_report_roots: tuple[str, ...] = field(default=())
+
+    @property
+    def path(self) -> Path:
+        return WORKFLOW_DIR / self.filename
+
+    @property
+    def allowed_roots(self) -> tuple[str, ...]:
+        return (f"{DEPLOYMENT_REPORT_DIR}/", *self.extra_report_roots)
+
+    def __str__(self) -> str:  # readable parametrised test ids
+        return self.label
+
+
+DEPLOY_WORKFLOWS = (
+    DeployWorkflow(
+        label="dev",
+        filename="deploy-dev.yml",
+        workflow_name="Deploy Dev",
+        job_id="deploy",
+        artifact_name="cloud-run-dev-validation",
+    ),
+    DeployWorkflow(
+        label="staging",
+        filename="deploy-staging.yml",
+        workflow_name="Deploy/Verify Staging",
+        job_id="deploy-staging",
+        artifact_name="remote-staging-proof",
+        extra_report_roots=(".odp_data/remote-staging-proof/",),
+    ),
+)
 
 _spec = importlib.util.spec_from_file_location("odp_deploy_contract_validator", VALIDATOR_PATH)
 assert _spec and _spec.loader
@@ -97,59 +164,123 @@ def _top_level_report_defaults() -> dict[str, str]:
     }
 
 
-def _upload_step() -> dict[str, object]:
-    workflow = yaml.safe_load(DEPLOY_DEV_WORKFLOW.read_text(encoding="utf-8"))
-    steps = workflow["jobs"]["deploy"]["steps"]
+def _normalize_run_id(path: str) -> str:
+    for form in _RUN_ID_FORMS:
+        path = path.replace(form, _RUN_ID_TOKEN)
+    return path
+
+
+def _parsed(workflow: DeployWorkflow) -> dict:
+    return yaml.safe_load(workflow.path.read_text(encoding="utf-8"))
+
+
+def _steps(workflow: DeployWorkflow) -> list[dict]:
+    return [
+        step
+        for step in _parsed(workflow)["jobs"][workflow.job_id]["steps"]
+        if isinstance(step, dict)
+    ]
+
+
+def _upload_step(workflow: DeployWorkflow) -> dict[str, object]:
     uploads = [
         step
-        for step in steps
-        if isinstance(step, dict)
-        and str(step.get("uses", "")).startswith("actions/upload-artifact@")
-        and step.get("with", {}).get("name") == UPLOAD_ARTIFACT_NAME
+        for step in _steps(workflow)
+        if str(step.get("uses", "")).startswith("actions/upload-artifact@")
+        and step.get("with", {}).get("name") == workflow.artifact_name
     ]
-    assert len(uploads) == 1, f"expected exactly one {UPLOAD_ARTIFACT_NAME} upload, got {uploads}"
+    assert len(uploads) == 1, (
+        f"{workflow.filename}: expected exactly one {workflow.artifact_name} upload, got {uploads}"
+    )
     return uploads[0]
 
 
-def _allowlisted_paths() -> list[str]:
-    raw = _upload_step()["with"]["path"]
-    assert isinstance(raw, str), "the upload path must be a literal string, not a template"
+def _allowlisted_paths(workflow: DeployWorkflow) -> list[str]:
+    raw = _upload_step(workflow)["with"]["path"]
+    assert isinstance(raw, str), "the upload path must be a literal block, not a mapping"
     return [line.strip() for line in raw.splitlines() if line.strip()]
 
 
-def test_deploy_dev_workflow_is_valid_yaml_and_still_uploads_on_failure() -> None:
+def _workflow_written_reports(workflow: DeployWorkflow) -> list[str]:
+    """Every `.odp_data` report the workflow's own `run:` steps emit.
+
+    The deploy script's receipts are derived from the script; these are the
+    reports a workflow writes directly (the fail-closed preflight in both, and
+    staging's remote proof). Reading them back out of the step that produced
+    them is what keeps the upload list honest without restating any path here.
+    """
+
+    written: list[str] = []
+    for step in _steps(workflow):
+        run = step.get("run")
+        if not isinstance(run, str):
+            continue
+        for match in re.findall(r'--output[= ]+"?(\.odp_data/[^"\s\\]+)"?', run):
+            normalized = _normalize_run_id(match)
+            if normalized not in written:
+                written.append(normalized)
+    return written
+
+
+@pytest.mark.parametrize("workflow", DEPLOY_WORKFLOWS, ids=str)
+def test_deploy_workflow_is_valid_yaml_and_still_uploads_on_failure(
+    workflow: DeployWorkflow,
+) -> None:
     """A failed deploy is exactly when the receipts matter most."""
 
-    workflow = yaml.safe_load(DEPLOY_DEV_WORKFLOW.read_text(encoding="utf-8"))
-    assert workflow["name"] == "Deploy Dev"
+    assert _parsed(workflow)["name"] == workflow.workflow_name
 
-    step = _upload_step()
+    step = _upload_step(workflow)
     assert step["if"] == "always()"
     # Receipts for stages the run never reached are legitimately absent.
     assert step["with"]["if-no-files-found"] == "ignore"
 
 
-def test_upload_allowlist_covers_every_job_receipt_the_deploy_script_writes() -> None:
+def test_every_deploy_workflow_runs_the_same_receipt_writing_script() -> None:
+    """Why one derivation from the deploy script is valid for both environments.
+
+    `deploy_cloud_run_waji.sh` reads `ODP_DEPLOY_ENV` for naming and gate
+    expectations, not for which reports it emits, so dev and staging produce the
+    same receipt set. If an environment ever forks to its own deploy script that
+    stops being true, and the shared expectations below become a fiction.
+    """
+
+    invocation = "./scripts/deploy_cloud_run_waji.sh"
+    for workflow in DEPLOY_WORKFLOWS:
+        runs = [step.get("run", "") for step in _steps(workflow)]
+        assert any(invocation in run for run in runs), (
+            f"{workflow.filename} no longer runs {invocation}; its receipt set must be "
+            "derived from whatever it runs instead"
+        )
+
+
+@pytest.mark.parametrize("workflow", DEPLOY_WORKFLOWS, ids=str)
+def test_upload_allowlist_covers_every_job_receipt_the_deploy_script_writes(
+    workflow: DeployWorkflow,
+) -> None:
     """The regression run 30436771086 exposed: nested receipts, dropped."""
 
     job_report_dir = _job_report_dir()
-    allowlisted = _allowlisted_paths()
+    allowlisted = _allowlisted_paths(workflow)
 
     for kind in _captured_job_kinds():
         receipt = f"{job_report_dir}/{kind}-validation.json"
         assert receipt in allowlisted, (
             f"{kind} Cloud Run Job receipt {receipt} is written by the deploy script "
-            "but not uploaded by Deploy Dev"
+            f"but not uploaded by {workflow.workflow_name}"
         )
 
     # And the migration/scheduler/worker set is the one the incident named.
     assert set(_captured_job_kinds()) >= {"migration", "scheduler", "worker"}
 
 
-def test_upload_allowlist_keeps_every_top_level_report_the_glob_covered() -> None:
+@pytest.mark.parametrize("workflow", DEPLOY_WORKFLOWS, ids=str)
+def test_upload_allowlist_keeps_every_top_level_report_the_glob_covered(
+    workflow: DeployWorkflow,
+) -> None:
     """Replacing `*.json` must not quietly narrow what was already published."""
 
-    allowlisted = _allowlisted_paths()
+    allowlisted = _allowlisted_paths(workflow)
     defaults = _top_level_report_defaults()
 
     # The reports the deploy script and the live E2E gate write at the top level.
@@ -160,34 +291,106 @@ def test_upload_allowlist_keeps_every_top_level_report_the_glob_covered() -> Non
         "LIVE_E2E_REPORT",
     }
     for shell_var, path in defaults.items():
-        assert path in allowlisted, f"{shell_var} ({path}) is no longer uploaded"
+        assert path in allowlisted, (
+            f"{workflow.workflow_name}: {shell_var} ({path}) is no longer uploaded"
+        )
 
 
-def test_upload_allowlist_excludes_raw_gcloud_dumps_and_wildcards() -> None:
+@pytest.mark.parametrize("workflow", DEPLOY_WORKFLOWS, ids=str)
+def test_upload_allowlist_publishes_every_report_the_workflow_itself_writes(
+    workflow: DeployWorkflow,
+) -> None:
+    """Reports the workflow emits outside the deploy script must survive too.
+
+    Staging's remote proof is the case this exists for: it is the one report the
+    old two-line glob published that a deployment-directory allowlist alone would
+    have thrown away. Anchoring it to the `--output` of the step that writes it
+    means renaming the proof breaks here rather than emptying the artifact.
+    """
+
+    normalized_allowlist = [_normalize_run_id(path) for path in _allowlisted_paths(workflow)]
+    written = _workflow_written_reports(workflow)
+    assert written, f"{workflow.filename}: no `--output .odp_data/...` step found to anchor to"
+
+    for report in written:
+        assert report in normalized_allowlist, (
+            f"{workflow.workflow_name} writes {report} but does not upload it"
+        )
+
+    # And the widened roots are not a blanket allowance: anything the allowlist
+    # publishes from outside the deployment report directory must be one of
+    # these, produced by a step in this same workflow.
+    outside = [
+        path for path in normalized_allowlist if not path.startswith(f"{DEPLOYMENT_REPORT_DIR}/")
+    ]
+    assert set(outside) <= set(written), sorted(set(outside) - set(written))
+
+
+@pytest.mark.parametrize("workflow", DEPLOY_WORKFLOWS, ids=str)
+def test_upload_allowlist_excludes_raw_gcloud_dumps_and_wildcards(
+    workflow: DeployWorkflow,
+) -> None:
     """No unredacted describe output, and no glob that could sweep one in."""
 
-    allowlisted = _allowlisted_paths()
+    allowlisted = _allowlisted_paths(workflow)
     assert allowlisted, "the upload step declares no paths"
 
     for path in allowlisted:
         assert not path.startswith("!"), f"{path}: exclusion patterns make the set non-obvious"
+        for expression in re.findall(r"\$\{\{([^}]*)\}\}", path):
+            assert expression.strip() in ALLOWED_PATH_EXPRESSIONS, (
+                f"{path}: {expression.strip()} can steer path selection outside review"
+            )
+        resolved = _normalize_run_id(path)
         # Literal files only. A glob is what shipped the original defect, and it
         # is also what would publish a future raw dump written into this tree.
-        assert not set(path) & set("*?[]"), f"{path}: the allowlist must name literal files"
-        assert path.startswith(f"{DEPLOYMENT_REPORT_DIR}/"), (
-            f"{path}: uploads must stay inside {DEPLOYMENT_REPORT_DIR}"
+        assert not set(resolved) & set("*?[]"), f"{path}: the allowlist must name literal files"
+        assert resolved.startswith(workflow.allowed_roots), (
+            f"{path}: {workflow.workflow_name} may only upload from {workflow.allowed_roots}"
         )
-        assert path.endswith(".json"), f"{path}: only JSON validator reports may be uploaded"
-        assert ".." not in Path(path).parts, f"{path}: must not escape the report directory"
+        assert resolved.endswith(".json"), f"{path}: only JSON validator reports may be uploaded"
+        assert ".." not in Path(resolved).parts, f"{path}: must not escape the report directory"
         for suffix in UNREDACTED_RECEIPT_SUFFIXES:
-            assert not path.endswith(suffix), (
+            assert not resolved.endswith(suffix), (
                 f"{path}: raw gcloud describe output restates the deployed env block "
                 "and its secret selectors"
             )
 
-    # Nothing outside the deployment report tree: no env files, no SBOM, no
+    # Nothing outside the declared report trees: no env files, no SBOM, no
     # scan output, no checkout paths.
     assert len(allowlisted) == len(set(allowlisted)), "duplicate entries in the upload allowlist"
+
+
+def test_no_workflow_globs_into_the_deployment_report_directory() -> None:
+    """The defect is a pattern, not two files: catch the next copy of it.
+
+    Both deploy workflows were written from the same template, which is how one
+    non-recursive glob became two. This sweeps every workflow in the repository
+    — including any environment added later — rather than only the two named in
+    `DEPLOY_WORKFLOWS`, because a third copy would otherwise ship unreviewed.
+    """
+
+    offenders: list[str] = []
+    for path in sorted(WORKFLOW_DIR.glob("*.y*ml")):
+        parsed = yaml.safe_load(path.read_text(encoding="utf-8"))
+        for job_id, job in (parsed.get("jobs") or {}).items():
+            for step in job.get("steps") or []:
+                if not isinstance(step, dict):
+                    continue
+                if not str(step.get("uses", "")).startswith("actions/upload-artifact@"):
+                    continue
+                raw = str(step.get("with", {}).get("path", ""))
+                for line in raw.splitlines():
+                    entry = line.strip()
+                    if not entry.startswith(DEPLOYMENT_REPORT_DIR):
+                        continue
+                    if set(entry) & set("*?[]"):
+                        offenders.append(f"{path.name}:{job_id}: {entry}")
+
+    assert not offenders, (
+        "wildcard uploads from the deployment report directory publish whatever "
+        f"lands there, including raw gcloud describe dumps: {offenders}"
+    )
 
 
 def test_uploaded_job_receipt_names_the_job_but_never_a_bound_value() -> None:
@@ -196,6 +399,7 @@ def test_uploaded_job_receipt_names_the_job_but_never_a_bound_value() -> None:
     Built from a job description that carries plaintext env values and secret
     selectors, the emitted report must reproduce neither. `secret_values_redacted`
     is the machine-readable claim a reader can check on the artifact itself.
+    Environment-independent: both workflows publish this same writer's output.
     """
 
     sha = "d" * 40
