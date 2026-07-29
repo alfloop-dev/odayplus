@@ -1278,6 +1278,65 @@ def _is_safe_protected_redirect(
         return False
 
 
+def _is_plain_relative_path(value: str) -> bool:
+    """True when a decoded parameter value is a bare same-origin path."""
+
+    return (
+        value.startswith("/")
+        and not value.startswith("//")
+        and "://" not in value
+        and all(ch.isprintable() for ch in value)
+    )
+
+
+def _redact_location(location: str | None) -> str:
+    """Render a Location header for reports without echoing secret material.
+
+    Redirect targets can carry credentials in userinfo or session/bearer values
+    in query parameters, so the raw header must never reach a report that
+    advertises ``secret_values_redacted``. The structure the protected-redirect
+    contract is judged on (scheme, host, effective port, path, parameter names)
+    is preserved; every parameter value is masked except ``returnTo``, which is
+    kept only when it decodes to a bare same-origin path.
+    """
+
+    if not isinstance(location, str) or not location.strip():
+        return "<missing>"
+
+    raw = location.strip()
+    try:
+        parsed = urllib.parse.urlsplit(raw)
+        scheme = f"{parsed.scheme.lower()}:" if parsed.scheme else ""
+
+        netloc = ""
+        if parsed.netloc:
+            host = (parsed.hostname or "<invalid-host>").lower()
+            try:
+                port = f":{parsed.port}" if parsed.port is not None else ""
+            except ValueError:
+                port = ":<invalid-port>"
+            userinfo = "<redacted>@" if "@" in parsed.netloc else ""
+            netloc = f"//{userinfo}{host}{port}"
+
+        query = ""
+        if parsed.query:
+            pairs = urllib.parse.parse_qsl(parsed.query, keep_blank_values=True)
+            if not pairs:
+                query = "?<redacted>"
+            else:
+                rendered = []
+                for key, value in pairs:
+                    if key == "returnTo" and _is_plain_relative_path(value):
+                        rendered.append(f"{key}={urllib.parse.quote(value, safe='')}")
+                    else:
+                        rendered.append(f"{key}=<redacted>")
+                query = "?" + "&".join(rendered)
+
+        fragment = "#<redacted>" if parsed.fragment else ""
+        return f"{scheme}{netloc}{parsed.path}{query}{fragment}"
+    except ValueError:
+        return "<unparsable>"
+
 
 def _json_request(
     url: str,
@@ -1716,9 +1775,10 @@ def smoke_checks(
             timeout=timeout,
         )
         auth_redirect = _is_safe_protected_redirect(web_url, web_status, location)
+        redacted_location = _redact_location(location)
         report["web_operator_redirect"] = {
             "status": web_status,
-            "location": location,
+            "location_redacted": redacted_location,
             "protected_redirect": auth_redirect,
         }
         checks.append(
@@ -1727,7 +1787,7 @@ def smoke_checks(
                 name="smoke:web:/operator",
                 detail=(
                     f"status={web_status} protected_redirect={str(auth_redirect).lower()} "
-                    f"location={location or '<missing>'}"
+                    f"location={redacted_location}"
                 ),
             )
         )

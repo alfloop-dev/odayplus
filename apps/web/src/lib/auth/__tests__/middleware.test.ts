@@ -54,3 +54,4 @@ describe("production protected-route middleware", () => {
     expect(response.headers.get("x-middleware-next")).toBe("1");
   });
 });
+
