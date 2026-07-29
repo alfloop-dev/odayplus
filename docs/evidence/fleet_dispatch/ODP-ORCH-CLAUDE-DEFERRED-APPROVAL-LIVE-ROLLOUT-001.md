@@ -100,16 +100,32 @@ well as unreceipted. Revision 9 routes every probe systemd operation through
 `probe_cmd` (mutating) or `probe_query` (read-only), both of which preserve
 stdout and record label, rc, stdout and stderr; makes receipt completeness part
 of the phase-1 verdict; folds the two new timeouts and the exact call counts into
-the budget (1388 → 1808 s, dead-man 2288 → 2708 s); and adds a static scan that
-fails on any raw or unbounded probe call, exercised in `--selftest` against the
-driver itself and against a fixture containing one of each (`--selftest`
-50 → 63 checks). Revision 9 needs its own exact-head recheck; the previous lift
-covered one exact head only. See `runbook/CONTINUATION.md` for the
+the budget (1388 → 1808 s, dead-man 2288 → 2708 s); and adds a static scan over
+the probe region, exercised in `--selftest` against the driver itself and against
+a fixture containing one raw call and one unbounded reader (`--selftest`
+50 → 63 checks).
+
+STOP GATE 9 is the reviewer's third, and it found that revision 9's scan repeated
+the overclaim it was built to end: `probe_region_scan()` printed every violation
+and then exited **0** whenever the sentinels were present, while the driver
+header, `README.md`, the runbook and the commit message all said it fails on any
+violation - and the committed reproduction recorded `raw=4 reader=6` followed by
+`rc=0`. A caller written to the documented contract would have read revision 8's
+ten bypasses as clean, and the revision-9 self-test asserted only the printed
+counts, so it would not have caught that either. Revision 10 makes the return
+code the verdict (0 clean, 2 violation, 1 no region located - the two failure
+codes deliberately distinct) and asserts the code itself for a clean file, for
+each violation alone and together, and for a file with no sentinels
+(`--selftest` 63 → 71 checks). Detection is unchanged and the counts are
+identical under both scanners. Revision 10 needs its own exact-head recheck; the
+previous lift covered one exact head only. See `runbook/CONTINUATION.md` for the
 finding-by-finding mapping, `preflight/killmode-probe-diagnosis.txt` for the
 probe transcripts, `preflight/stop-gate-7-fail-open-reproduction.txt` for the
-old-vs-new gate comparison and
+old-vs-new gate comparison,
 `preflight/stop-gate-8-raw-probe-call-reproduction.txt` for the scanner run over
-both revisions' probe regions (`raw=4 reader=6` against `raw=0 reader=0`).
+both revisions' probe regions (`raw=4 reader=6` against `raw=0 reader=0`) and
+`preflight/stop-gate-9-scanner-exit-code-reproduction.txt` for the two scanners
+run side by side (same counts, `rc=0` against `rc=2`).
 
 ## Fleet impact
 

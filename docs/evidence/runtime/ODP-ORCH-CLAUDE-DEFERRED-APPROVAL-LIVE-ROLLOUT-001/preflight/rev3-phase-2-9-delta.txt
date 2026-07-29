@@ -5,6 +5,12 @@
 # (479 -> 492 raw, 389 / 389 normalized), because revision 9 changes only the
 # driver header, the wait-budget constants, the phase-1 probe region, the static
 # scan and the selftest - all of which precede the phase-2 banner.
+# re-generated again 2026-07-29T05:57Z against the revision-10 working tree:
+# same result - 479 -> 492 raw, 389 / 389 normalized, the raw diff reproduces
+# byte for byte, and the only normalized difference is still the two
+# `Reviewer: Codex4` -> `Codex2` trailer lines. Revision 10 touches only the
+# static scan's return code and the selftest checks around it, both of which
+# precede the phase-2 banner.
 
 Revisions 4-8 claimed phases 2-9 were "byte-identical to revision 3". That claim
 is false and is withdrawn: three deltas exist. None of them is executable

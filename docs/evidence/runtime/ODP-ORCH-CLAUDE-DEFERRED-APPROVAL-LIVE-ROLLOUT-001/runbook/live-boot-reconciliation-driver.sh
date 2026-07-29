@@ -173,12 +173,38 @@
 #   4. Both new timeouts and the exact call counts are declared constants and are
 #      counted in the dead-man budget: 1388 -> 1808 s, delay 2288 -> 2708 s.
 #   5. A static scan (probe_region_scan) parses this file between the
-#      probe-region sentinels and fails on any raw systemctl/systemd-run call or
+#      probe-region sentinels and reports any raw systemctl/systemd-run call or
 #      any unbounded-reader call that is not routed through the helpers. It runs
 #      in --selftest against this file *and* against a fixture that deliberately
-#      contains both bypasses, so the scan cannot pass vacuously.
+#      contains both bypasses, so the scan cannot pass vacuously. (Revision 9
+#      said the scan "fails on" a violation. It only *printed* one and exited 0;
+#      STOP GATE 9, corrected in revision 10, which is where that wording first
+#      becomes true.)
 #   Nothing else changed: the probe's assertions, the clean-attempt allowlist,
 #   phases 2-9, the exit codes and the phase ordering are untouched.
+#
+# Revision 10 - reviewer Codex2's STOP GATE 9 (2026-07-29T05:45:54Z). Revision 9
+# was never executed either; the live state is still untouched. One change, in
+# the static scan added by revision 9:
+#   1. probe_region_scan() printed every violation and then exited 0 whenever the
+#      sentinels were present, while item 5 above, ../README.md, the runbook and
+#      the revision-9 commit message all said it *fails* on a violation. The
+#      committed reproduction recorded the contradiction in plain sight:
+#      `raw=4 reader=6` for revision 8's probe region, immediately followed by
+#      `rc=0`. A caller writing the documented form - probe_region_scan "$f" ||
+#      fail - would have read a bypassed probe as clean.
+#   2. The return code is now the verdict: 0 clean, 2 at least one violation
+#      (each still printed), 1 the region could not be located. The two failure
+#      codes are distinct so "there is no probe region here" is never read as
+#      "this probe region is bypassed". Detection is unchanged - the printed
+#      counts are identical under both revisions.
+#   3. --selftest asserts the return code directly, not only the printed counts,
+#      for a clean file (this driver and a routed-only fixture), for each
+#      violation on its own (raw-only, reader-only) and together, and for a file
+#      with no sentinels: 63 -> 71 checks.
+#   Nothing else changed: the probe, its receipts and budget, the clean-attempt
+#   allowlist, phases 2-9, the exit codes and the phase ordering are untouched,
+#   and the scan still runs only under --selftest.
 #
 # Fail-safes:
 #   * hard timeouts on every wait;
@@ -765,6 +791,18 @@ EOF
 # Backslash continuations are joined first, so a call split over several lines is
 # judged as one; comment-only lines are dropped.
 #
+# Revision 10 (STOP GATE 9): the return code is the verdict. Revision 9 printed
+# every violation and then exited 0 whenever the sentinels were present, so the
+# committed reproduction recorded `raw=4 reader=6` followed by `rc=0` while this
+# comment, the header and the runbook all said the scan *fails* on a violation.
+# A caller that trusted the documented contract - `probe_region_scan file || ...`
+# - would have read a bypassed probe as clean. The codes are now:
+#   0  sentinels found, no raw call and no unbounded-reader call;
+#   2  sentinels found, at least one violation (each one printed);
+#   1  the region could not be located at all.
+# Both failure codes are distinct so a caller can tell "this file has a bypass"
+# from "this is not a file with a probe region".
+#
 # The sentinels are passed in as two concatenated fragments so that this call
 # site does not itself contain the sentinel text and cannot be mistaken for the
 # region boundary. $1 is the file to scan - --selftest scans this file and, as a
@@ -818,6 +856,13 @@ for hit in raw_hits:
     print("raw: %s" % hit[:160])
 for hit in reader_hits:
     print("reader: %s" % hit[:160])
+
+# The verdict is the exit code, not the printed count: a caller must be able to
+# write `probe_region_scan "$f" || fail` and have that mean what the docs say.
+if raw_hits or reader_hits:
+    print("scan: FAIL %s - %d raw, %d unbounded-reader" % (path, len(raw_hits), len(reader_hits)))
+    raise SystemExit(2)
+print("scan: OK %s - probe region routed through probe_cmd/probe_query" % path)
 PY
 }
 
@@ -968,43 +1013,96 @@ if [[ "${1:-}" == "--selftest" ]]; then
   SIGNAL_DIR="$selftest_probe_signal"
   echo
 
-  echo "## revision 9: no raw systemd call survives in the probe region"
+  echo "## revision 9/10: no raw systemd call survives in the probe region"
   # A static scan, because the STOP GATE 8 finding is precisely that reading the
   # driver did not catch the bypass - twice. The negative control matters as much
   # as the scan: a scanner that reports 0 on everything would pass the first
   # check and prove nothing.
+  #
+  # STOP GATE 9 (revision 10): every case below now asserts the scan's RETURN
+  # CODE as well as its printed counts. Revision 9 asserted only the counts, and
+  # its scanner exited 0 on a violating region - which is why the committed
+  # reproduction showed `raw=4 reader=6` followed by `rc=0` while the docs said
+  # the scan fails on any violation. Codes: 0 clean, 2 violation, 1 no region.
   selftest_scan="$(probe_region_scan "${BASH_SOURCE[0]}")"
+  selftest_scan_rc=$?
   selftest_scan_head="$(printf '%s\n' "$selftest_scan" | head -1)"
   printf '%s\n' "$selftest_scan" | sed -n '2,6p'
+  # "raw=N reader=M" from the summary line; region_lines varies with edits.
+  selftest_scan_counts() { printf '%s\n' "$1" | head -1 | sed 's/^region_lines=[0-9]* //'; }
   check "probe region located in this file" yes \
     "$( [[ "$selftest_scan_head" == region_lines=0* ]] && echo no || echo yes )"
   check "no raw systemctl/systemd-run call in the probe region" "raw=0" \
     "$( printf '%s\n' "$selftest_scan_head" | tr ' ' '\n' | grep '^raw=' )"
   check "no unbounded state reader call in the probe region" "reader=0" \
     "$( printf '%s\n' "$selftest_scan_head" | tr ' ' '\n' | grep '^reader=' )"
+  check "the scan EXITS 0 on this driver" 0 "$selftest_scan_rc"
 
+  # Fixtures. Each is the same region with a different bypass in it, so the
+  # difference between a pass and a fail is the bypass and nothing else.
   selftest_scan_fixture="$(mktemp)"
-  {
-    printf '%s\n' "# >>> probe-region""-begin <<<"
-    printf '%s\n' 'probe_fixture_raw() {'
-    printf '%s\n' '  systemctl --user show "$PROBE_UNIT.service" -p MainPID --value 2>/dev/null'
-    printf '%s\n' '}'
-    printf '%s\n' 'probe_fixture_reader() { load_state "$PROBE_UNIT.service"; }'
-    # The routed form must NOT be reported, or the scan would be unusable.
-    printf '%s\n' 'probe_fixture_ok() {'
-    printf '%s\n' '  probe_cmd "stop" systemctl --user stop "$PROBE_UNIT.service"'
-    printf '%s\n' '}'
-    printf '%s\n' "# >>> probe-region""-end <<<"
-  } > "$selftest_scan_fixture"
-  selftest_scan_neg="$(probe_region_scan "$selftest_scan_fixture" | head -1)"
+  selftest_scan_write() {  # $1 target; remaining args = one region line each
+    local target="$1"; shift
+    {
+      printf '%s\n' "# >>> probe-region""-begin <<<"
+      printf '%s\n' "$@"
+      printf '%s\n' "# >>> probe-region""-end <<<"
+    } > "$target"
+  }
+  # The routed form must NOT be reported, or the scan would be unusable.
+  # The routed call must sit on its own logical line, exactly as it does in the
+  # real region: the scan matches a routed call by the start of the line.
+  selftest_line_ok='  probe_cmd "stop" systemctl --user stop "$PROBE_UNIT.service"'
+  selftest_line_raw='  systemctl --user show "$PROBE_UNIT.service" -p MainPID --value 2>/dev/null'
+  selftest_line_reader='probe_fixture_reader() { load_state "$PROBE_UNIT.service"; }'
+
+  # (a) clean fixture - a region that only routes through the helpers.
+  selftest_scan_write "$selftest_scan_fixture" \
+    'probe_fixture_ok() {' "$selftest_line_ok" '}'
+  selftest_scan_out="$(probe_region_scan "$selftest_scan_fixture")"
+  selftest_scan_rc=$?
+  check "a routed-only fixture reports no violation" "raw=0 reader=0" \
+    "$(selftest_scan_counts "$selftest_scan_out")"
+  check "the scan EXITS 0 on a clean fixture" 0 "$selftest_scan_rc"
+
+  # (b) both bypasses - the revision-9 control, now with its rc asserted.
+  selftest_scan_write "$selftest_scan_fixture" \
+    'probe_fixture_raw() {' "$selftest_line_raw" '}' \
+    "$selftest_line_reader" 'probe_fixture_ok() {' "$selftest_line_ok" '}'
+  selftest_scan_out="$(probe_region_scan "$selftest_scan_fixture")"
+  selftest_scan_rc=$?
+  selftest_scan_neg="$(printf '%s\n' "$selftest_scan_out" | head -1)"
   check "the scan reports a raw call in the control fixture" "raw=1" \
     "$( printf '%s\n' "$selftest_scan_neg" | tr ' ' '\n' | grep '^raw=' )"
   check "the scan reports a reader call in the control fixture" "reader=1" \
     "$( printf '%s\n' "$selftest_scan_neg" | tr ' ' '\n' | grep '^reader=' )"
-  # A file with no sentinels must fail loudly rather than report a clean region.
+  check "the scan EXITS 2 on a violating fixture" 2 "$selftest_scan_rc"
+
+  # (c) raw call only - a violation must fail on its own, not only in company.
+  selftest_scan_write "$selftest_scan_fixture" \
+    'probe_fixture_raw() {' "$selftest_line_raw" '}' \
+    'probe_fixture_ok() {' "$selftest_line_ok" '}'
+  selftest_scan_out="$(probe_region_scan "$selftest_scan_fixture")"
+  selftest_scan_rc=$?
+  check "a raw-call-only fixture reports raw=1 reader=0" "raw=1 reader=0" \
+    "$(selftest_scan_counts "$selftest_scan_out")"
+  check "the scan EXITS 2 on a raw call alone" 2 "$selftest_scan_rc"
+
+  # (d) unbounded reader only.
+  selftest_scan_write "$selftest_scan_fixture" \
+    "$selftest_line_reader" 'probe_fixture_ok() {' "$selftest_line_ok" '}'
+  selftest_scan_out="$(probe_region_scan "$selftest_scan_fixture")"
+  selftest_scan_rc=$?
+  check "a reader-only fixture reports raw=0 reader=1" "raw=0 reader=1" \
+    "$(selftest_scan_counts "$selftest_scan_out")"
+  check "the scan EXITS 2 on an unbounded reader alone" 2 "$selftest_scan_rc"
+
+  # (e) A file with no sentinels must fail loudly rather than report a clean
+  # region - and with its own code, so "no probe region here" is never confused
+  # with "this probe region is bypassed".
   : > "$selftest_scan_fixture"
   probe_region_scan "$selftest_scan_fixture" >/dev/null 2>&1
-  check "a file without the sentinels fails the scan" 1 "$?"
+  check "the scan EXITS 1 on a file without the sentinels" 1 "$?"
   rm -f "$selftest_scan_fixture"
   echo
 

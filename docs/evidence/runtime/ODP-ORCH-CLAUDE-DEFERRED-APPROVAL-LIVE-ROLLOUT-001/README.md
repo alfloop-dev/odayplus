@@ -165,11 +165,24 @@ cannot report `pass` if any is missing or if the receipt count exceeds the
 declared call budget. And a static scan (`probe_region_scan`) parses the driver
 between its `probe-region` sentinels and fails on any raw `systemctl` /
 `systemd-run` call or any unbounded-reader call that is not routed through the
-helpers; `--selftest` runs it against the driver itself and against a fixture
-that deliberately contains one of each, so it cannot pass vacuously.
+helpers; `--selftest` runs it against the driver itself and against fixtures
+that deliberately contain one of each, so it cannot pass vacuously.
 `preflight/stop-gate-8-raw-probe-call-reproduction.txt` runs the same scanner
-over revision 8's probe region (`raw=4 reader=6`) and revision 9's (`raw=0
+over revision 8's probe region (`raw=4 reader=6`) and the current one (`raw=0
 reader=0`), both regions extracted mechanically rather than retyped.
+
+"Fails on" is true only from revision 10 (STOP GATE 9). Revision 9's scanner
+printed every violation and then exited **0** whenever the sentinels were
+present, so the sentence above - and the same sentence in the driver header, the
+runbook and the revision-9 commit message - described a contract the code did
+not honour; the committed reproduction showed it directly, `raw=4 reader=6`
+followed by `rc=0`. The return code is now the verdict (0 clean, 2 violation,
+1 no region located, the two failure codes deliberately distinct), and
+`--selftest` asserts the code itself for a clean file, for each violation alone
+and together, and for a file with no sentinels. The two scanners are run
+side by side over the same regions in
+`preflight/stop-gate-9-scanner-exit-code-reproduction.txt`. Detection never
+changed: the printed counts are identical under both.
 
 ### One attempt per directory
 
@@ -297,7 +310,7 @@ assertion - including the recorded pre-fix regression shape - and checks every
 verdict. It touches nothing live. Output: `preflight/assertion-selftest.txt`.
 
 `live-boot-reconciliation-driver.sh --selftest` covers the driver's own gates
-with 63 checks against throwaway processes and a throwaway signal directory: the
+with 71 checks against throwaway processes and a throwaway signal directory: the
 dead-man budget inequality, pid/run-id binding (foreign, empty, dead pids all
 rejected), token-exact unmanaged-supervisor detection (a decoy carrying
 `supervisor.py` inside a longer argument must not be reported), a replay of the
@@ -313,8 +326,10 @@ never touches `pantheon-supervisor.service`, the drop-in, the dead-man or any
 queue. Since revision 9 it also asserts that phase 1's receipts are complete
 (every required label present, count within the declared budget, every line
 carrying rc, stdout and stderr) and runs the static probe-bypass scan described
-above, together with its negative control. Output:
-`preflight/driver-gate-selftest.txt`.
+above, together with its negative controls - since revision 10 asserting the
+scan's return code, not only its printed counts, for a clean file, for a raw
+call and an unbounded reader alone and together, and for a file with no
+sentinels. Output: `preflight/driver-gate-selftest.txt`.
 
 The live pre-fix behaviour of the same host is already on record in
 `docs/evidence/runtime/ODP-ORCH-CLAUDE-DEFERRED-APPROVAL-RACE-001/README.md`:
@@ -445,10 +460,28 @@ gate self-test grew from 50 to **63** checks.
 reporting `raw=4 reader=6` on revision 8 and `raw=0 reader=0` on revision 9.
 Revision 9 is a driver change and needs its own exact-head recheck.
 
+The ninth (reviewer Codex2, 2026-07-29T05:45:54Z) found that the fix for the
+eighth carried the same defect it was built to prevent. `probe_region_scan()`
+printed every violation and then **exited 0** whenever the sentinels were
+present, while the driver header, this document, the runbook and the revision-9
+commit message all said the scan fails on any violation - and the reproduction
+committed alongside them recorded `raw=4 reader=6` followed by `rc=0`. A caller
+using the documented form, `probe_region_scan "$f" || fail`, would have read
+revision 8's bypassed probe as clean, which is precisely the observability class
+that hid the revision-5 defect for five reviews. Revision 10 makes the return
+code the verdict - 0 clean, 2 violation, 1 no region located, the two failure
+codes distinct - and asserts the code itself in `--selftest` for a clean file,
+for a raw call and an unbounded reader alone and together, and for a file with
+no sentinels: 63 → **71** checks. Detection is untouched; the printed counts are
+identical under both scanners, as
+`preflight/stop-gate-9-scanner-exit-code-reproduction.txt` shows by running both
+over the same regions. Revision 10 is a driver change and needs its own
+exact-head recheck.
+
 What has been completed and is safe to review now: the deployment (section 2),
 its verification (section 3), the restart-safety design (section 4), the
 determinism argument (section 5), the fail-closed assertion with its 11-case
-self-test, and the driver's own 63-check gate self-test.
+self-test, and the driver's own 71-check gate self-test.
 
 ## 7. Approval resolution
 

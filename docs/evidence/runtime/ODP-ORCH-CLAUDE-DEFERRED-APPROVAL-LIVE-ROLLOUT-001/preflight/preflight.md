@@ -278,3 +278,64 @@ deployed_sha256_control: f0b419cb3fbdff8a3dfbd5fcc9ee7dfd06b005f258a8f13d556e922
 window_state: still closed. The driver has never been executed past the 04:31Z
   phase-1 abort, and revision 9 must not be executed until the exact head below
   is re-cleared.
+
+## STOP GATE 9 recheck (2026-07-29T05:5xZ, driver revision 10)
+scope_of_revision_10: one change, confined to the `--selftest`-only static scan
+  added by revision 9. `probe_region_scan()` now returns the verdict: 0 clean,
+  2 at least one violation (each still printed), 1 the region could not be
+  located. Detection logic, the phase-1 probe, its receipts and budget, the
+  clean-attempt allowlist, phases 2-9, the exit codes and the phase ordering are
+  untouched, and the scan is still never called on the live path.
+finding_confirmed_as_named: revision 9's scanner raised SystemExit only for a
+  missing region. With the sentinels present it printed every violation and
+  exited 0 - so the header, ../README.md, the runbook and the revision-9 commit
+  message described a contract the code did not honour, and
+  `probe_region_scan "$f" || fail` would have read revision 8's ten bypasses as
+  clean. The committed reproduction recorded it in plain sight:
+  `raw=4 reader=6` followed by `rc=0`.
+exit_code_reproduction: revision 9's scanner (sed-extracted from git 0d04080c)
+  and revision 10's (sed-extracted from the working tree) run over the same
+  three inputs - revision 8's probe region, the current probe region, a file
+  with no sentinels -> stop-gate-9-scanner-exit-code-reproduction.txt.
+  Counts identical in every case; rc=0 vs rc=2 on the violating region, rc=0 vs
+  rc=0 on the clean one, rc=1 vs rc=1 with no sentinels.
+stop_gate_8_receipt_regenerated: stop-gate-8-raw-probe-call-reproduction.txt
+  re-run against the revision-10 working tree; same extraction commands, same
+  `raw=4 reader=6` / `raw=0 reader=0`, and it now ends in rc=2 where it ended in
+  rc=0.
+selftest_return_code_coverage: the scan's rc is asserted directly, not inferred
+  from the counts - this driver 0, a routed-only fixture 0, a raw call alone 2,
+  an unbounded reader alone 2, both together 2, a file with no sentinels 1. The
+  routed-only fixture also pins the other direction: a call routed through
+  probe_cmd must NOT be reported, or the scan would be unusable.
+bash_n_driver: OK
+bash_n_selftest_assertion: OK
+py_compile_assertion: OK
+selftest_assertion: 11/11 PASS, output identical to the committed receipt
+  (assertion-selftest.txt), so it is not re-committed
+selftest_driver_gates: 71/71 PASS (71 `ok` lines, 0 FAIL; 63 -> 71, all eight
+  new checks on the static scan's return code) -> driver-gate-selftest.txt.
+  The captured output is passed through `sed 's/[[:space:]]*$//'`, as the
+  previous receipts were: `check` pads its label column, so the two lines whose
+  asserted value is the empty string would otherwise carry trailing spaces and
+  fail `git diff --check` once tracked (the STOP GATE 3 lesson). Nothing else is
+  altered.
+rev3_phase_2_9_delta: re-generated against revision 10 - slice still 479 -> 492
+  raw and 389 / 389 normalized, the raw diff reproduces byte for byte, and the
+  only normalized difference is still the two `Reviewer: Codex4` -> `Codex2`
+  trailer lines. Revision 10 changes nothing after the phase-2 banner.
+probe_residue_after_selftest: `pgrep -af odp-killmode-probe` reports exactly one
+  match, this checking shell's own command line - the same substring artefact
+  the token-exact unmanaged-supervisor check exists for. No probe process, unit
+  or cgroup survives.
+live_state_unchanged_after_checks: MainPID=1197865 (ExecMainStartTimestamp Wed
+  2026-07-29 02:37:14 UTC, ActiveState=active) KillMode=control-group
+  dropin=0 entries /home/lupin/.config/systemd/user=7 entries
+  /tmp/odp-rollout-driver=absent timeline/={README.md, attempt-1-*/}
+  odp-* units loaded=0 deadman timer/service=not-found/inactive
+  watchdog timer=active
+deployed_sha256_live: f0b419cb3fbdff8a3dfbd5fcc9ee7dfd06b005f258a8f13d556e922d06995ee8
+deployed_sha256_control: f0b419cb3fbdff8a3dfbd5fcc9ee7dfd06b005f258a8f13d556e922d06995ee8
+window_state: still closed. The driver has never been executed past the 04:31Z
+  phase-1 abort, and revision 10 must not be executed until this exact head is
+  cleared by the coordinator.

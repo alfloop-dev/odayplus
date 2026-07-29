@@ -1,4 +1,4 @@
-# driver gate selftest (2026-07-29T05:37:14Z)
+# driver gate selftest (2026-07-29T05:54:35Z)
 
 ## finding 3: dead-man delay must exceed the bounded wait budget
 total_bounded_wait_s: 1808
@@ -48,13 +48,22 @@ ok    the ControlGroup query is receipted                        yes
 ok    the MainPID queries are receipted                          2
 ok    every receipt line carries rc, stdout and stderr           0
 
-## revision 9: no raw systemd call survives in the probe region
+## revision 9/10: no raw systemd call survives in the probe region
+scan: OK docs/evidence/runtime/ODP-ORCH-CLAUDE-DEFERRED-APPROVAL-LIVE-ROLLOUT-001/runbook/live-boot-reconciliation-driver.sh - probe region routed through probe_cmd/probe_query
 ok    probe region located in this file                          yes
 ok    no raw systemctl/systemd-run call in the probe region      raw=0
 ok    no unbounded state reader call in the probe region         reader=0
+ok    the scan EXITS 0 on this driver                            0
+ok    a routed-only fixture reports no violation                 raw=0 reader=0
+ok    the scan EXITS 0 on a clean fixture                        0
 ok    the scan reports a raw call in the control fixture         raw=1
 ok    the scan reports a reader call in the control fixture      reader=1
-ok    a file without the sentinels fails the scan                1
+ok    the scan EXITS 2 on a violating fixture                    2
+ok    a raw-call-only fixture reports raw=1 reader=0             raw=1 reader=0
+ok    the scan EXITS 2 on a raw call alone                       2
+ok    a reader-only fixture reports raw=0 reader=1               raw=0 reader=1
+ok    the scan EXITS 2 on an unbounded reader alone              2
+ok    the scan EXITS 1 on a file without the sentinels           1
 
 ## revision 7/8: the clean-attempt gate refuses dirty state
 ok    empty timeline+signal dir is clean                         clean

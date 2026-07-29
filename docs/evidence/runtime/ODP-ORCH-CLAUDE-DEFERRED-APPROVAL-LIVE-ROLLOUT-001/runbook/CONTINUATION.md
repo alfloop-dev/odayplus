@@ -48,20 +48,22 @@ What *is* real and already finished:
    --selftest` exercises the STOP GATE 2 gates, phase 1's KillMode probe (since
    revision 6), the clean-attempt gate (since revision 7, hardened in
    revision 8) and, since revision 9, phase 1's receipt completeness plus the
-   static probe-bypass scan and its negative control: 63 checks. Output:
+   static probe-bypass scan and its negative controls - whose *return codes* are
+   asserted since revision 10: 71 checks. Output:
    `preflight/driver-gate-selftest.txt`.
 
 Both self-tests touch nothing live and are safe to re-run at any time.
 
 ## Why the window is still closed
 
-The driver has been blocked eight times - six by the coordinator, twice by
-reviewer Codex2 - and is now at **revision 9**. Only revision 5 was ever
+The driver has been blocked nine times - six by the coordinator, three by
+reviewer Codex2 - and is now at **revision 10**. Only revision 5 was ever
 executed, and only as far as phase 1; do not resurrect any earlier revision.
 
 The executable changes since revision 3 are confined to the phase-1 probe
-(revisions 6, 7 and 9) and the clean-attempt gate that runs before it (revisions
-7 and 8), plus the wait-budget constants those probe changes are counted in.
+(revisions 6, 7 and 9), the clean-attempt gate that runs before it (revisions
+7 and 8) and the `--selftest`-only static scan (revisions 9 and 10), plus the
+wait-budget constants those probe changes are counted in.
 Phases 2-9 carry three deltas from revision 3, all non-executable, and
 they are enumerated - not asserted - in
 `../preflight/rev3-phase-2-9-delta.txt`: one comment block (the STOP GATE 3
@@ -311,7 +313,7 @@ Revision 9:
 | the probe no longer calls `main_pid` / `kill_mode` / `active_state` / `load_state` / `sub_state` at all; those remain in use by phases 2-9, unchanged | the readers are unbounded by design and belong outside the probe |
 | receipt completeness is an input to `PROBE_VERDICT`: `PROBE_REQUIRED_LABELS` must all be present and the receipt count must be within the declared budget | an unreceipted command is an unobserved command; it must fail closed, not read as a clean pass |
 | both timeouts and the exact call counts (7 mutating, 36 read-only) are declared constants folded into the budget: **1388 → 1808 s, delay 2288 → 2708 s** | finding #3 again: the delay is derived from every declared wait |
-| `probe_region_scan()` parses this driver between its `probe-region` sentinels and fails on any raw `systemctl`/`systemd-run` call or unbounded-reader call not routed through the helpers | the claim had already survived two reviews; it needed to stop depending on review attention |
+| `probe_region_scan()` parses this driver between its `probe-region` sentinels and reports any raw `systemctl`/`systemd-run` call or unbounded-reader call not routed through the helpers | the claim had already survived two reviews; it needed to stop depending on review attention |
 | `--selftest` runs that scan against the driver itself, against a fixture containing one raw call and one reader call (must report `raw=1 reader=1`) and against a file with no sentinels (must exit non-zero) | a scanner that reported 0 for everything would otherwise "prove" the fix |
 
 Self-test: 50 → **63** checks, all passing.
@@ -325,7 +327,56 @@ Nothing else changed. Phases 2-9 are untouched, and
 diffs reproduce byte for byte and the slice is still 389 normalized lines on each
 side with the same two Reviewer-trailer lines differing.
 
+Revision 9 said the scan "fails on" a violation. It did not - see STOP GATE 9.
+
 **The gate is closed.** Revision 9 is a driver change, so it needs its own
+exact-head recheck; no earlier lift covers it.
+
+### STOP GATE 9 (reviewer Codex2, 2026-07-29T05:45:54Z) - revision 10
+
+Revision 9 was never executed either. The live state is untouched and the single
+finding below is the only change in revision 10.
+
+**The finding: the scan added to stop the overclaim was itself an overclaim.**
+`probe_region_scan()` printed every violation it found and then exited **0**
+whenever the sentinels were present. Only a missing region produced a non-zero
+code. Meanwhile the driver header (revision 9 item 5), `../README.md`, this file
+and the revision-9 commit message all said the scan *fails* on any raw or
+unbounded call - and the reproduction committed with them recorded the
+contradiction in plain sight: `raw=4 reader=6` for revision 8's probe region,
+immediately followed by `rc=0`.
+
+Why it matters rather than being a wording slip: the whole point of revision 9's
+scan was to stop the "every probe call is bounded and receipted" claim depending
+on review attention. A caller written to the documented contract -
+`probe_region_scan "$f" || fail` - would have accepted revision 8's ten bypasses
+as clean, and the revision-9 `--selftest` would not have caught it either,
+because it asserted only the printed counts. That is the same class of defect as
+the discarded stderr that hid the revision-5 abort for five reviews.
+
+| change in revision 10 | why |
+| --- | --- |
+| the return code is the verdict: `0` clean, `2` at least one violation (each still printed), `1` the region could not be located | the documented contract, now honoured |
+| the two failure codes are deliberately distinct | "there is no probe region in this file" must never be read as "this probe region is bypassed" |
+| `--selftest` asserts the **return code**, not only the counts: this driver and a routed-only fixture must exit 0; a raw call alone, an unbounded reader alone and both together must exit 2 and name the offender; a file with no sentinels must exit 1 | the revision-9 checks would all have passed against the revision-9 scanner |
+| one summary line (`scan: OK` / `scan: FAIL <path> - N raw, M unbounded-reader`) | a receipt should say what it concluded, not leave the reader to count |
+
+Detection logic is unchanged, and the fixtures make that checkable: the printed
+counts are identical under both scanners.
+`../preflight/stop-gate-9-scanner-exit-code-reproduction.txt` runs revision 9's
+scanner and revision 10's - both `sed`-extracted, revision 9's from git - over
+the same three inputs (revision 8's violating region, the current clean region, a
+file with no sentinels): counts identical, `rc=0` against `rc=2` on the violating
+region. `../preflight/stop-gate-8-raw-probe-call-reproduction.txt` was
+regenerated for the same reason and now ends in `rc=2` where it used to end
+in `rc=0`.
+
+Self-test: 63 → **71** checks, all passing. Nothing else changed: the probe, its
+receipts and budget, the clean-attempt allowlist, phases 2-9, the exit codes and
+the phase ordering are untouched, and the scan still runs only under
+`--selftest`, never in the live path.
+
+**The gate is closed.** Revision 10 is a driver change, so it needs its own
 exact-head recheck; no earlier lift covers it.
 
 ## Before you execute
@@ -334,14 +385,14 @@ exact-head recheck; no earlier lift covers it.
 W=/tmp/pantheon-worker-worktrees/oday-plus-supervisor-live/odp-orch-claude-deferred-approval-live-rollout-001
 EV=$W/docs/evidence/runtime/ODP-ORCH-CLAUDE-DEFERRED-APPROVAL-LIVE-ROLLOUT-001
 
-# 1. Confirm the gate has been lifted for THIS exact head (revision 9), not for
+# 1. Confirm the gate has been lifted for THIS exact head (revision 10), not for
 #    an older one. `git rev-parse HEAD` must equal the head the coordinator
-#    named (revision 9), and must equal origin/task/<TASK-ID>.
+#    named (revision 10), and must equal origin/task/<TASK-ID>.
 # 2. Re-run the cheap checks - none of them touch anything live.
 bash -n $EV/runbook/live-boot-reconciliation-driver.sh
 python3 -m py_compile $EV/runbook/assert-boot-reconciliation.py
 $EV/runbook/selftest-assertion.sh                                  # 11 cases
-bash $EV/runbook/live-boot-reconciliation-driver.sh --selftest      # 63 checks
+bash $EV/runbook/live-boot-reconciliation-driver.sh --selftest      # 71 checks
 cd $W && git diff --check 647970dae975f4008633a484cde1e63187035544  # exit 0
 
 # 3. Confirm the starting state is what the driver expects.
