@@ -67,3 +67,18 @@ git diff --check 1e256103 HEAD
 - `test_explicit_re_review_command` (verifies AC2 CLI transition via main)
 - `test_supervisor_suppresses_finalize_dispatch_on_pending_ci` (verifies AC3 / B5)
 - `test_task_review_gate_status_check_pending_on_head_mismatch` (verifies AC4)
+
+## 3. Composed Head Merge & Re-Review Verification
+
+```bash
+# Merged current origin/dev (ad4a066e) into task/ODP-ORCH-REVIEW-HEAD-FREEZE-001
+git merge origin/dev -m "ODP-ORCH-REVIEW-HEAD-FREEZE-001: merge origin/dev"
+
+# Combined CI suite verification:
+/home/lupin/oday-plus-supervisor-live/.venv/bin/pytest -m "not requires_live_env" .orchestrator scripts
+# 545 passed, 10 deselected in 12.37s
+
+/home/lupin/oday-plus-supervisor-live/.venv/bin/ruff check .orchestrator scripts
+# All checks passed!
+```
+
