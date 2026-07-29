@@ -1206,7 +1206,7 @@ def _effective_port(parsed: urllib.parse.ParseResult) -> int | None:
     try:
         if parsed.port is not None:
             return parsed.port
-    except (ValueError, Exception):
+    except ValueError:
         return None
     scheme = parsed.scheme.lower()
     if scheme == "https":
@@ -1274,7 +1274,7 @@ def _is_safe_protected_redirect(
             return False
 
         return True
-    except (ValueError, Exception):
+    except ValueError:
         return False
 
 
