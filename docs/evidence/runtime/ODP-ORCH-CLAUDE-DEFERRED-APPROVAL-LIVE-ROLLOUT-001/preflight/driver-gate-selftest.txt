@@ -1,8 +1,8 @@
-# driver gate selftest (2026-07-29T05:20:21Z)
+# driver gate selftest (2026-07-29T05:37:14Z)
 
 ## finding 3: dead-man delay must exceed the bounded wait budget
-total_bounded_wait_s: 1388
-deadman_delay_s:      2288
+total_bounded_wait_s: 1808
+deadman_delay_s:      2708
 ok    deadman_delay > total_bounded_wait                         yes
 ok    deadman_margin >= 600s                                     yes
 
@@ -39,6 +39,22 @@ ok    residue verdict                                            yes
 ok    no process still carries the probe marker                  0
 ok    probe payload script removed                               no
 ok    probe command receipts captured                            yes
+probe_receipt_count: 18 (declared max 43)
+ok    no required probe receipt is missing
+ok    receipt completeness verdict                               yes
+ok    receipt count is within the declared call budget           yes
+ok    reset-failed is receipted                                  1
+ok    the ControlGroup query is receipted                        yes
+ok    the MainPID queries are receipted                          2
+ok    every receipt line carries rc, stdout and stderr           0
+
+## revision 9: no raw systemd call survives in the probe region
+ok    probe region located in this file                          yes
+ok    no raw systemctl/systemd-run call in the probe region      raw=0
+ok    no unbounded state reader call in the probe region         reader=0
+ok    the scan reports a raw call in the control fixture         raw=1
+ok    the scan reports a reader call in the control fixture      reader=1
+ok    a file without the sentinels fails the scan                1
 
 ## revision 7/8: the clean-attempt gate refuses dirty state
 ok    empty timeline+signal dir is clean                         clean

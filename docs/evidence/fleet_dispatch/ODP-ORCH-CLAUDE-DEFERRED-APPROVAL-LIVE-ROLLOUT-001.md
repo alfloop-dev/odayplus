@@ -55,10 +55,11 @@ shipped `control-group`, the drop-in directory is still empty, the dead-man was
 never armed, `~/.config/systemd/user` is unchanged and no approval exists for
 any test run in either queue.
 
-The driver is at revision 8 after seven STOP GATEs: six coordinator findings,
+The driver is at revision 9 after eight STOP GATEs: six coordinator findings,
 then seven, then two, then an assignment conflict, then one found by execution,
-then one on the fix for that, and finally reviewer Codex2's finding that the fix
-introduced a fail-open gate of its own. STOP GATE 5's finding is that phase 1's `KillMode`
+then one on the fix for that, then reviewer Codex2's finding that the fix
+introduced a fail-open gate of its own, and now the reviewer's finding that the
+probe's own observability claim was overstated. STOP GATE 5's finding is that phase 1's `KillMode`
 probe could never have passed in any revision - it re-created a `systemd-run`
 transient unit under a name its own surviving child still held loaded, with
 stderr discarded on both halves. Revision 6 answered that by writing a
@@ -69,9 +70,10 @@ transient `.service` is proven to work with the leftover child in its cgroup,
 which is also what the real restart does. Revision 7 uses that minimal path,
 writes no unit file at all, asserts the new MainPID and new child as well as the
 old child's survival, cleans up by recorded ownership and cgroup with a residue
-assertion that is part of the verdict, captures every probe command's rc and
-stderr, and refuses to start on a dirty timeline or signal directory so one
-attempt's receipts can never be read as another's (`--selftest` 23 → 39 checks).
+assertion that is part of the verdict, captures the rc and stderr of the probe's
+mutating commands, and refuses to start on a dirty timeline or signal directory
+so one attempt's receipts can never be read as another's (`--selftest` 23 → 39
+checks).
 
 STOP GATE 7 is reviewer Codex2's, on that last gate: `attempt_state_dirty()` was
 fail-open. It listed the timeline root with `find -type f`, so an unexpected
@@ -86,18 +88,34 @@ claim that everything after phase 1 was byte-identical to revision 3: phases 2-9
 carry three non-executable deltas (one comment block, two `Reviewer:` trailer
 lines), enumerated with a normalized diff in
 `preflight/rev3-phase-2-9-delta.txt`, which leaves every gate, threshold, exit
-code and phase ordering there unchanged since revision 3. Revision 8 needs its
-own exact-head recheck; the previous lift covered one exact head only. See
-`runbook/CONTINUATION.md` for the finding-by-finding mapping,
-`preflight/killmode-probe-diagnosis.txt` for the probe transcripts and
-`preflight/stop-gate-7-fail-open-reproduction.txt` for the old-vs-new gate
-comparison.
+code and phase ordering there unchanged since revision 3.
+
+STOP GATE 8 is the reviewer's second, and it is the same class of defect that hid
+the revision-5 bug: the driver claimed every `systemctl`/`systemd-run` call in the
+probe was timeout-bounded with rc and stderr captured, when only the five
+mutating ones were. `show -p ControlGroup`, `reset-failed` (with stderr sent to
+`/dev/null`) and the two `show -p MainPID` reads ran raw, and six further state
+reads went through the shared unbounded readers - outside the dead-man budget as
+well as unreceipted. Revision 9 routes every probe systemd operation through
+`probe_cmd` (mutating) or `probe_query` (read-only), both of which preserve
+stdout and record label, rc, stdout and stderr; makes receipt completeness part
+of the phase-1 verdict; folds the two new timeouts and the exact call counts into
+the budget (1388 → 1808 s, dead-man 2288 → 2708 s); and adds a static scan that
+fails on any raw or unbounded probe call, exercised in `--selftest` against the
+driver itself and against a fixture containing one of each (`--selftest`
+50 → 63 checks). Revision 9 needs its own exact-head recheck; the previous lift
+covered one exact head only. See `runbook/CONTINUATION.md` for the
+finding-by-finding mapping, `preflight/killmode-probe-diagnosis.txt` for the
+probe transcripts, `preflight/stop-gate-7-fail-open-reproduction.txt` for the
+old-vs-new gate comparison and
+`preflight/stop-gate-8-raw-probe-call-reproduction.txt` for the scanner run over
+both revisions' probe regions (`raw=4 reader=6` against `raw=0 reader=0`).
 
 ## Fleet impact
 
 - Supervisor downtime is bounded by the driver's own named wait constants
-  (1388 s in total) and by an independent dead-man's switch armed at
-  1388 s + 900 s = 2288 s, i.e. deliberately longer than the driver's longest
+  (1808 s in total) and by an independent dead-man's switch armed at
+  1808 s + 900 s = 2708 s, i.e. deliberately longer than the driver's longest
   legal run so it cannot fire mid-window.
 - The unrelated peer worker must survive the restart; the driver enforces this
   after the stop, after the start and at the end, binding the pid to its run id.

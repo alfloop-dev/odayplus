@@ -230,3 +230,51 @@ approval_queues: live queue "No pending approvals"; control queue 124 unrelated
 window_state: still closed. The driver has never been executed past the 04:31Z
   phase-1 abort, and revision 8 must not be executed until the exact head below
   is re-cleared.
+
+## STOP GATE 8 recheck (2026-07-29T05:4xZ, driver revision 9)
+scope_of_revision_9: one executable change, confined to the phase-1 probe -
+  every systemd operation there now goes through `probe_cmd` (mutating,
+  PROBE_CMD_TIMEOUT_S=30) or `probe_query` (read-only, PROBE_QUERY_TIMEOUT_S=10),
+  both of which preserve stdout and append a receipt line carrying label, rc,
+  stdout and stderr. Receipt completeness (every required label present, count
+  within the declared budget) is an input to PROBE_VERDICT. The probe no longer
+  calls the shared unbounded readers at all. Phases 2-9, the clean-attempt
+  allowlist, the probe's assertions, the exit codes and the phase ordering are
+  untouched.
+raw_call_reproduction: the revision-9 scanner run over both revisions' probe
+  regions -> stop-gate-8-raw-probe-call-reproduction.txt. Revision 8:
+  `raw=4 reader=6` - `show -p ControlGroup`, `reset-failed` (stderr to
+  /dev/null), two `show -p MainPID`, plus six calls into load_state /
+  active_state / sub_state. Revision 9: `raw=0 reader=0`. Both regions extracted
+  mechanically (rev 8 out of git by line number, rev 9 between its sentinels)
+  and the scanner sed-extracted from the driver, never retyped.
+scanner_is_not_vacuous: --selftest runs the same scan over a fixture holding one
+  raw call and one reader call and requires `raw=1 reader=1`, and over a file
+  with no sentinels and requires a non-zero exit.
+wait_budget: PROBE_QUERY_TIMEOUT_S and the exact call counts (PROBE_MUTATING_CALLS=7,
+  PROBE_QUERY_CALLS=36) are declared and folded into the derivation:
+  TOTAL_BOUNDED_WAIT_S 1388 -> 1808, DEADMAN_DELAY_S 2288 -> 2708.
+  `abort_deadman_budget` (42) still enforces delay > budget.
+bash_n_driver: OK
+bash_n_selftest_assertion: OK
+py_compile_assertion: OK
+selftest_assertion: 11/11 PASS -> assertion-selftest.txt (byte-identical to the
+  committed receipt, so it is not re-committed)
+selftest_driver_gates: 63/63 PASS (63 `ok` lines, 0 FAIL this run; 50 -> 63 - 7
+  receipt-completeness checks and 6 on the static scan) -> driver-gate-selftest.txt
+probe_residue_after_selftest: `pgrep -af odp-killmode-probe` reports exactly one
+  match, and it is this shell's own command line (the pattern is in its argv) -
+  the same substring artefact the token-exact unmanaged-supervisor check exists
+  for. `ps -eo pid,cmd | grep -c '[o]dp-killmode-probe'` counts 2: that shell and
+  its grep. No probe process, unit or cgroup survives.
+live_state_unchanged_after_checks: MainPID=1197865 (ExecMainStartTimestamp Wed
+  2026-07-29 02:37:14 UTC, ActiveState=active) KillMode=control-group
+  dropin=0 entries /home/lupin/.config/systemd/user=7 entries
+  /tmp/odp-rollout-driver=absent timeline/={README.md, attempt-1-*/}
+  odp-* units loaded=0 deadman timer/service=not-found/inactive
+  watchdog timer=active
+deployed_sha256_live: f0b419cb3fbdff8a3dfbd5fcc9ee7dfd06b005f258a8f13d556e922d06995ee8
+deployed_sha256_control: f0b419cb3fbdff8a3dfbd5fcc9ee7dfd06b005f258a8f13d556e922d06995ee8
+window_state: still closed. The driver has never been executed past the 04:31Z
+  phase-1 abort, and revision 9 must not be executed until the exact head below
+  is re-cleared.

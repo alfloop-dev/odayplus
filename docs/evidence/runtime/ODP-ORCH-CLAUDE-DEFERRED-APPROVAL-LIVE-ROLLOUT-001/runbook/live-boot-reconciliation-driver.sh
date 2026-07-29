@@ -115,10 +115,13 @@
 #      marked process, no cgroup and no loaded unit is left (not-found /
 #      inactive / dead). The residue assertion is part of the verdict, so a
 #      probe that leaks fails closed instead of proceeding.
-#   4. Every systemctl/systemd-run call in the probe is bounded by `timeout` and
-#      its rc and stderr are captured to a receipt instead of going to
-#      /dev/null. Discarded stderr is why five review passes missed the
-#      revision-5 defect.
+#   4. The five *mutating* systemctl/systemd-run calls in the probe are bounded
+#      by `timeout` and their rc and stderr are captured to a receipt instead of
+#      going to /dev/null. Discarded stderr is why five review passes missed the
+#      revision-5 defect. (Revisions 7 and 8 claimed this held for *every*
+#      systemd call in the probe; it did not - the read-only state queries and
+#      `reset-failed` still bypassed the helper. STOP GATE 8; fixed in revision
+#      9, which is where the "every call" claim first becomes true.)
 #   5. A clean-attempt gate runs before anything is written: a dirty timeline
 #      root or a leftover verdict/state/exit_code in the signal dir aborts
 #      (50/51) with the previous attempt's artefacts untouched, so one attempt's
@@ -141,6 +144,41 @@
 #   Nothing else changed: phases 1-9, the probe, the budget, the exit codes and
 #   the ordering are untouched, and the only new exit-code mapping is that the
 #   two new root-level verdicts route to the existing 50/51.
+#
+# Revision 9 - reviewer Codex2's STOP GATE 8 (2026-07-29T05:26:49Z). Revision 8
+# was never executed either; the live state is still untouched. One executable
+# change, confined to phase 1's probe:
+#   1. The header above (item 4), ../README.md and the runbook all claimed that
+#      *every* systemctl/systemd-run call in the probe was timeout-bounded with
+#      rc and stderr captured. Only the five mutating calls were. Still raw in
+#      revision 8: `systemctl show -p ControlGroup` in probe_record_cgroup_pids;
+#      `systemctl reset-failed` (with `>/dev/null 2>&1`) and the load/active/sub
+#      queries via the shared readers in probe_cleanup; and the two MainPID reads
+#      plus the state reads in killmode_probe. That is the same observability
+#      class that let the revision-5 defect survive five review passes - an
+#      unbounded query can hang past the dead-man budget, and a discarded stderr
+#      hides why a state read came back empty.
+#   2. Every systemd operation in the probe region now goes through
+#      probe_cmd() (mutating, PROBE_CMD_TIMEOUT_S) or probe_query() (read-only,
+#      PROBE_QUERY_TIMEOUT_S). Both preserve stdout for the caller and append one
+#      receipt line carrying the label, rc, a truncated stdout and a truncated
+#      stderr. The probe no longer calls the shared unbounded readers
+#      (main_pid/kill_mode/active_state/load_state/sub_state) at all; phases 2-9,
+#      which are outside the probe, still use them and are unchanged.
+#   3. Receipt completeness is part of the verdict: PROBE_REQUIRED_LABELS lists
+#      every label a full-path probe must produce, and PROBE_VERDICT can only be
+#      `pass` when none is missing and the receipt count is within the declared
+#      call budget. A probe whose receipts are incomplete now fails closed
+#      instead of being reported as a clean pass.
+#   4. Both new timeouts and the exact call counts are declared constants and are
+#      counted in the dead-man budget: 1388 -> 1808 s, delay 2288 -> 2708 s.
+#   5. A static scan (probe_region_scan) parses this file between the
+#      probe-region sentinels and fails on any raw systemctl/systemd-run call or
+#      any unbounded-reader call that is not routed through the helpers. It runs
+#      in --selftest against this file *and* against a fixture that deliberately
+#      contains both bypasses, so the scan cannot pass vacuously.
+#   Nothing else changed: the probe's assertions, the clean-attempt allowlist,
+#   phases 2-9, the exit codes and the phase ordering are untouched.
 #
 # Fail-safes:
 #   * hard timeouts on every wait;
@@ -194,7 +232,8 @@ START_PID_TRIES=20                # x3s  - waiting for a non-zero MainPID
 APPROVAL_TRIES=100                # x3s  - waiting for the approval to be recorded
 RESOLVE_SETTLE_S=90               # fixed settle after the deny
 PROBE_CHILD_TRIES=20              # x1s  - phase 1: waiting for a probe child pid
-PROBE_CMD_TIMEOUT_S=30            # phase 1: bound on each systemd-run/systemctl call
+PROBE_CMD_TIMEOUT_S=30            # phase 1: bound on each MUTATING probe call
+PROBE_QUERY_TIMEOUT_S=10          # phase 1: bound on each read-only probe query
 PROBE_REAP_TRIES=10               # x1s  - phase 1: waiting for probe pids to die
 PROBE_FIXED_S=8                   # phase 1: the two `sleep 2` settles, rounded up
 FIXED_SLEEPS_S=30                 # the scattered `sleep 1..4` calls, rounded up
@@ -209,16 +248,43 @@ DEADMAN_MARGIN_S=900              # 15 min of headroom on top of the budget
 # which is spent three times per probe_cleanup() call (SIGTERM, SIGKILL, unit
 # garbage collection) and probe_cleanup() itself runs at most twice - once in the
 # probe, once from restore_all().
+#
+# Revision 9 (STOP GATE 8): the probe's read-only queries are bounded too, so
+# they are declared and counted here as well rather than being spent silently -
+# the same finding-#3 rule. Worst case, with probe_cleanup() running twice:
+#
+#   mutating (PROBE_CMD_TIMEOUT_S each), 7 calls:
+#     systemd_run_create, stop, start_existing_unit,
+#     cleanup_stop x2, cleanup_reset_failed x2
+#   read-only (PROBE_QUERY_TIMEOUT_S each), 36 calls:
+#     show_cgroup x4 (after create, after restart, once per cleanup),
+#     show_main_pid_1, show_main_pid_2, state_restart_active,
+#     state_after_stop_{active,sub,load},
+#     cleanup_wait_load  x PROBE_REAP_TRIES x2,
+#     cleanup_state_{load,active,sub} x2
+#
+# The counts are asserted, not assumed: --selftest runs the real probe and checks
+# that the receipt count it produced is within this budget and that every
+# required label is present.
+PROBE_MUTATING_CALLS=7
+PROBE_QUERY_CALLS=$(( 4 + 1 + 1 + 1 + 3 + (PROBE_REAP_TRIES * 2) + 6 ))
+PROBE_MAX_BOUNDED_CALLS=$(( PROBE_MUTATING_CALLS + PROBE_QUERY_CALLS ))
 TOTAL_BOUNDED_WAIT_S=$(( STOP_TIMEOUT_S + WATCHDOG_QUIESCE_TRIES \
   + (RECEIPT_TRIES * 3) + (RUNNER_EXIT_TRIES * 3) + (START_PID_TRIES * 3) \
   + (APPROVAL_TRIES * 3) + RESOLVE_SETTLE_S \
-  + (PROBE_CHILD_TRIES * 2) + (PROBE_CMD_TIMEOUT_S * 5) + (PROBE_REAP_TRIES * 6) \
+  + (PROBE_CHILD_TRIES * 2) + (PROBE_CMD_TIMEOUT_S * PROBE_MUTATING_CALLS) \
+  + (PROBE_QUERY_TIMEOUT_S * PROBE_QUERY_CALLS) + (PROBE_REAP_TRIES * 6) \
   + PROBE_FIXED_S + FIXED_SLEEPS_S ))
 DEADMAN_DELAY_S=$(( TOTAL_BOUNDED_WAIT_S + DEADMAN_MARGIN_S ))
 
 now() { date -u +%Y-%m-%dT%H:%M:%SZ; }
 say() { printf '[%s] %s\n' "$(now)" "$*"; }
 alive() { kill -0 "$1" 2>/dev/null; }
+# Shared state readers for phases 2-9. They are deliberately NOT used inside the
+# phase-1 probe: STOP GATE 8 requires every probe systemd call to be bounded and
+# receipted, and these are neither. The static scan in --selftest enforces that
+# separation, so adding a call to one of them inside the probe region fails the
+# selftest rather than silently reintroducing the bypass.
 main_pid() { systemctl --user show "$UNIT" -p MainPID --value; }
 kill_mode() { systemctl --user show "$UNIT" -p KillMode --value; }
 active_state() { systemctl --user show "$1" -p ActiveState --value; }
@@ -365,19 +431,106 @@ attempt_state_dirty() {
 }
 
 # ------------------------------------------------------------ phase 1 probe --
+# >>> probe-region-begin <<<
+# Everything between these two sentinels is phase 1. No systemd command may be
+# issued here except through probe_cmd() or probe_query(), and none of the shared
+# unbounded readers may be called. probe_region_scan() in --selftest parses this
+# file between the sentinels and fails on any violation, so the rule is enforced
+# mechanically rather than by review attention - the STOP GATE 8 finding was that
+# review attention had already missed it twice.
+#
 # Revision 7 (STOP GATE 6). Every probe command is bounded and its rc/stderr are
 # recorded. Revisions 3-6 sent both halves of the probe to /dev/null, which is
 # the only reason the revision-5 defect survived five review passes: the message
 # systemd printed ("Unit ... was already loaded or has a fragment file") was
 # thrown away.
+#
+# Revision 9 (STOP GATE 8). Revisions 7 and 8 applied that only to the five
+# mutating calls; the read-only state queries and `reset-failed` still ran raw,
+# unbounded, and in reset-failed's case with stderr sent to /dev/null. Now:
+#
+#   probe_cmd    mutating  bounded by PROBE_CMD_TIMEOUT_S    returns the rc
+#   probe_query  read-only bounded by PROBE_QUERY_TIMEOUT_S  prints the value
+#
+# Both preserve the command's stdout and append exactly one receipt line
+# recording the label, the rc, a truncated stdout and a truncated stderr.
+# Receipts are appended to a file, so they survive the command substitutions the
+# query helper is used in - a counter in a shell variable would not.
+
+# One receipt line per bounded probe command. Bounded, single-line and
+# trailing-whitespace-free: this file is committed as evidence.
+probe_record_receipt() {
+  local label="$1" rc="$2" out="$3" err="$4"
+  out="$(printf '%s' "$out" | head -c 200 | tr '\n\t' '  ' | sed 's/[[:space:]]*$//')"
+  err="$(printf '%s' "$err" | head -c 200 | tr '\n\t' '  ' | sed 's/[[:space:]]*$//')"
+  printf '%s rc=%s stdout=%s stderr=%s\n' \
+    "$label" "$rc" "${out:-<empty>}" "${err:-<empty>}" >> "$PROBE_CMD_LOG"
+}
+
+# Mutating probe command. stdout is captured into the receipt rather than
+# discarded, so a systemd message that goes to stdout cannot vanish either.
 probe_cmd() {
   local label="$1"; shift
-  local rc=0 err
-  err="$(timeout "$PROBE_CMD_TIMEOUT_S" "$@" 2>&1 >/dev/null)" || rc=$?
-  # Bounded, single-line and trailing-whitespace-free: this receipt is committed.
-  err="$(printf '%s' "$err" | head -c 400 | tr '\n\t' '  ' | sed 's/[[:space:]]*$//')"
-  printf '%s rc=%s stderr=%s\n' "$label" "$rc" "${err:-<empty>}" >> "$PROBE_CMD_LOG"
+  local rc=0 out err errfile
+  errfile="$(mktemp "$SIGNAL_DIR/probe-stderr.XXXXXX" 2>/dev/null)"
+  # No capture file means no stderr capture, which is the defect this helper
+  # exists to prevent: refuse to run the command at all.
+  if [[ -z "$errfile" ]]; then
+    probe_record_receipt "$label" 125 "" "cannot create a stderr capture file in $SIGNAL_DIR"
+    return 125
+  fi
+  out="$(timeout "$PROBE_CMD_TIMEOUT_S" "$@" 2>"$errfile")" || rc=$?
+  err="$(cat "$errfile" 2>/dev/null)"
+  rm -f "$errfile"
+  probe_record_receipt "$label" "$rc" "$out" "$err"
   return "$rc"
+}
+
+# Read-only probe query: same bounding and receipting, but the value is printed
+# for the caller. A query that times out prints nothing and its rc is recorded,
+# so the assertion above it fails closed instead of reading an empty string as a
+# state.
+probe_query() {
+  local label="$1"; shift
+  local rc=0 out err errfile
+  errfile="$(mktemp "$SIGNAL_DIR/probe-stderr.XXXXXX" 2>/dev/null)"
+  # No capture file means no stderr capture, which is the defect this helper
+  # exists to prevent: refuse to run the command at all.
+  if [[ -z "$errfile" ]]; then
+    probe_record_receipt "$label" 125 "" "cannot create a stderr capture file in $SIGNAL_DIR"
+    return 125
+  fi
+  out="$(timeout "$PROBE_QUERY_TIMEOUT_S" "$@" 2>"$errfile")" || rc=$?
+  err="$(cat "$errfile" 2>/dev/null)"
+  rm -f "$errfile"
+  probe_record_receipt "$label" "$rc" "$out" "$err"
+  printf '%s\n' "$out"
+  return "$rc"
+}
+
+# The only place in the probe region that names `systemctl`, apart from the three
+# probe_cmd call sites. $1 is the receipt label, $2 the property.
+probe_show() {
+  probe_query "$1" systemctl --user show "$PROBE_UNIT.service" -p "$2" --value
+}
+
+# Every label a probe that reaches the end of the happy path must have produced.
+# Receipt completeness is part of the verdict (revision 9): a probe whose
+# receipts are incomplete cannot be distinguished from one whose commands were
+# never bounded, so it must not be reported as a pass.
+PROBE_REQUIRED_LABELS="systemd_run_create show_main_pid_1 stop \
+state_after_stop_active state_after_stop_sub state_after_stop_load \
+start_existing_unit show_main_pid_2 state_restart_active show_cgroup \
+cleanup_stop cleanup_reset_failed cleanup_wait_load cleanup_state_load \
+cleanup_state_active cleanup_state_sub"
+
+probe_receipts_missing() {
+  local label missing=""
+  for label in $PROBE_REQUIRED_LABELS; do
+    grep -q "^$label rc=" "$PROBE_CMD_LOG" 2>/dev/null \
+      || missing="${missing}${missing:+ }$label"
+  done
+  printf '%s' "$missing"
 }
 
 # Every pid this probe has ever owned: the two MainPIDs, the two children, and
@@ -393,7 +546,7 @@ probe_record_pid() {
 # Read the pids systemd currently has in the probe unit's cgroup and record them.
 probe_record_cgroup_pids() {
   local cg pid
-  cg="$(systemctl --user show "$PROBE_UNIT.service" -p ControlGroup --value 2>/dev/null)"
+  cg="$(probe_show show_cgroup ControlGroup)"
   [[ -n "$cg" ]] && PROBE_CGROUP="$cg"
   [[ -n "${PROBE_CGROUP:-}" && -r "/sys/fs/cgroup${PROBE_CGROUP}/cgroup.procs" ]] || return 0
   while read -r pid; do probe_record_pid "$pid"; done \
@@ -417,7 +570,10 @@ probe_live_pids() {
 # Idempotent; a no-op before killmode_probe() has named a probe unit. Called by
 # the probe itself and by restore_all(), i.e. on every exit path.
 probe_cleanup() {
-  [[ -n "${PROBE_UNIT:-}" ]] || return 0
+  # Both must be set together (killmode_probe sets them five lines apart, before
+  # it issues anything). Without the receipt file a bounded command could not be
+  # receipted, so refuse rather than run unreceipted commands.
+  [[ -n "${PROBE_UNIT:-}" && -n "${PROBE_CMD_LOG:-}" ]] || return 0
   probe_record_cgroup_pids
   probe_cmd "cleanup_stop" systemctl --user stop "$PROBE_UNIT.service" || true
 
@@ -430,26 +586,38 @@ probe_cleanup() {
     done
   done
 
-  systemctl --user reset-failed "$PROBE_UNIT.service" >/dev/null 2>&1
+  # Revision 9 (STOP GATE 8): this was `systemctl --user reset-failed ...
+  # >/dev/null 2>&1` - unbounded, and with its stderr discarded, which is
+  # verbatim the pattern that hid the revision-5 defect.
+  probe_cmd "cleanup_reset_failed" systemctl --user reset-failed "$PROBE_UNIT.service" || true
   # A transient unit with no processes left is garbage-collected by systemd, so
   # the resting state asserted below is not-found / inactive / dead. Collection
   # is not instantaneous, so give it the same bounded wait rather than reading
   # the state in the middle of it.
   for tries in $(seq 1 "$PROBE_REAP_TRIES"); do
-    [[ "$(load_state "$PROBE_UNIT.service")" == not-found ]] && break
+    [[ "$(probe_show cleanup_wait_load LoadState)" == not-found ]] && break
     sleep 1
   done
   PROBE_RESIDUE_PIDS="$(probe_live_pids | tr '\n' ' ' | sed 's/[[:space:]]*$//')"
   PROBE_RESIDUE_CGROUP=no
   [[ -n "${PROBE_CGROUP:-}" && -d "/sys/fs/cgroup${PROBE_CGROUP}" ]] && PROBE_RESIDUE_CGROUP=yes
-  PROBE_UNIT_LOAD_AFTER="$(load_state "$PROBE_UNIT.service")"
-  PROBE_UNIT_ACTIVE_AFTER="$(active_state "$PROBE_UNIT.service")"
-  PROBE_UNIT_SUB_AFTER="$(sub_state "$PROBE_UNIT.service")"
+  PROBE_UNIT_LOAD_AFTER="$(probe_show cleanup_state_load LoadState)"
+  PROBE_UNIT_ACTIVE_AFTER="$(probe_show cleanup_state_active ActiveState)"
+  PROBE_UNIT_SUB_AFTER="$(probe_show cleanup_state_sub SubState)"
   PROBE_RESIDUE_CLEAN=no
   [[ -z "$PROBE_RESIDUE_PIDS" && "$PROBE_RESIDUE_CGROUP" == no \
      && "$PROBE_UNIT_LOAD_AFTER" == not-found \
      && "$PROBE_UNIT_ACTIVE_AFTER" == inactive \
      && "$PROBE_UNIT_SUB_AFTER" == dead ]] && PROBE_RESIDUE_CLEAN=yes
+  # Receipt completeness, evaluated after the last bounded call this probe makes
+  # on its own path. It is an input to the verdict, not a footnote.
+  PROBE_RECEIPTS_MISSING="$(probe_receipts_missing)"
+  PROBE_RECEIPT_COUNT="$(grep -c ' rc=' "$PROBE_CMD_LOG" 2>/dev/null)"
+  [[ -n "$PROBE_RECEIPT_COUNT" ]] || PROBE_RECEIPT_COUNT=0
+  PROBE_RECEIPTS_COMPLETE=no
+  [[ -z "$PROBE_RECEIPTS_MISSING" && "$PROBE_RECEIPT_COUNT" -gt 0 \
+     && "$PROBE_RECEIPT_COUNT" -le "$PROBE_MAX_BOUNDED_CALLS" ]] \
+     && PROBE_RECEIPTS_COMPLETE=yes
   rm -f "${PROBE_EXEC:-}" "${PROBE_CHILD_FILE:-}" 2>/dev/null
   return 0
 }
@@ -512,6 +680,9 @@ killmode_probe() {
   PROBE_STATE_AFTER_STOP=""
   PROBE_START_RC=""
   PROBE_RESIDUE_CLEAN=no
+  PROBE_RECEIPTS_COMPLETE=no
+  PROBE_RECEIPTS_MISSING=""
+  PROBE_RECEIPT_COUNT=0
   PROBE_VERDICT=fail
 
   mkdir -p "$SIGNAL_DIR"
@@ -537,7 +708,7 @@ EOF
 
   for _ in $(seq 1 "$PROBE_CHILD_TRIES"); do [[ -s "$PROBE_CHILD_FILE" ]] && break; sleep 1; done
   PROBE_CHILD="$(cat "$PROBE_CHILD_FILE" 2>/dev/null)"
-  PROBE_MAIN_1="$(systemctl --user show "$PROBE_UNIT.service" -p MainPID --value 2>/dev/null)"
+  PROBE_MAIN_1="$(probe_show show_main_pid_1 MainPID)"
   probe_record_pid "$PROBE_CHILD"
   probe_record_pid "$PROBE_MAIN_1"
   probe_record_cgroup_pids
@@ -546,7 +717,7 @@ EOF
     probe_cmd "stop" systemctl --user stop "$PROBE_UNIT.service" || true
     sleep 2
     probe_owns_pid "$PROBE_CHILD" && PROBE_CHILD_SURVIVED=yes
-    PROBE_STATE_AFTER_STOP="$(active_state "$PROBE_UNIT.service")/$(sub_state "$PROBE_UNIT.service")/$(load_state "$PROBE_UNIT.service")"
+    PROBE_STATE_AFTER_STOP="$(probe_show state_after_stop_active ActiveState)/$(probe_show state_after_stop_sub SubState)/$(probe_show state_after_stop_load LoadState)"
 
     # Start the SAME already-loaded transient unit while the leftover child is
     # still in its cgroup - the exact condition the real restart will be in.
@@ -556,12 +727,12 @@ EOF
     for _ in $(seq 1 "$PROBE_CHILD_TRIES"); do [[ -s "$PROBE_CHILD_FILE" ]] && break; sleep 1; done
     sleep 2
     PROBE_CHILD2="$(cat "$PROBE_CHILD_FILE" 2>/dev/null)"
-    PROBE_MAIN_2="$(systemctl --user show "$PROBE_UNIT.service" -p MainPID --value 2>/dev/null)"
+    PROBE_MAIN_2="$(probe_show show_main_pid_2 MainPID)"
     probe_record_pid "$PROBE_CHILD2"
     probe_record_pid "$PROBE_MAIN_2"
     probe_record_cgroup_pids
 
-    [[ "$PROBE_START_RC" -eq 0 && "$(active_state "$PROBE_UNIT.service")" == active \
+    [[ "$PROBE_START_RC" -eq 0 && "$(probe_show state_restart_active ActiveState)" == active \
        && -n "$PROBE_MAIN_2" && "$PROBE_MAIN_2" != "0" && "$PROBE_MAIN_2" != "$PROBE_MAIN_1" ]] \
        && probe_owns_pid "$PROBE_MAIN_2" && PROBE_RESTART_OK=yes
     [[ -n "$PROBE_CHILD2" && "$PROBE_CHILD2" != "$PROBE_CHILD" ]] \
@@ -570,12 +741,84 @@ EOF
   fi
 
   # Cleanup is part of the gate, not an afterthought: a probe that leaks a
-  # process, a cgroup or a loaded unit fails closed.
+  # process, a cgroup or a loaded unit fails closed. Revision 9 adds receipt
+  # completeness for the same reason: an unreceipted command is an unobserved
+  # command, and this task has now been burned twice by exactly that.
   probe_cleanup
   [[ "$PROBE_CHILD_SURVIVED" == yes && "$PROBE_RESTART_OK" == yes \
      && "$PROBE_NEW_CHILD_ALIVE" == yes && "$PROBE_CHILD_SURVIVED_RESTART" == yes \
-     && "$PROBE_RESIDUE_CLEAN" == yes ]] && PROBE_VERDICT=pass
+     && "$PROBE_RESIDUE_CLEAN" == yes && "$PROBE_RECEIPTS_COMPLETE" == yes ]] \
+     && PROBE_VERDICT=pass
   [[ "$PROBE_VERDICT" == pass ]]
+}
+# >>> probe-region-end <<<
+
+# --------------------------------------------- static probe-bypass scan (r9) --
+# STOP GATE 8: the driver claimed for two revisions that every systemd call in
+# the probe was bounded and receipted while several were not, and review missed
+# it both times. This makes the claim mechanically checkable instead.
+#
+# It reads THIS FILE between the probe-region sentinels and reports:
+#   raw     - a logical line issuing `systemctl` or `systemd-run` that does not
+#             start with probe_cmd or probe_query;
+#   reader  - a call to one of the shared unbounded state readers.
+# Backslash continuations are joined first, so a call split over several lines is
+# judged as one; comment-only lines are dropped.
+#
+# The sentinels are passed in as two concatenated fragments so that this call
+# site does not itself contain the sentinel text and cannot be mistaken for the
+# region boundary. $1 is the file to scan - --selftest scans this file and, as a
+# negative control, a fixture containing one of each violation.
+probe_region_scan() {
+  python3 - "$1" "probe-region""-begin" "probe-region""-end" <<'PY'
+import re, sys
+
+path, begin, end = sys.argv[1], sys.argv[2], sys.argv[3]
+lines = open(path, encoding="utf-8").read().splitlines()
+
+start = next((i for i, l in enumerate(lines) if begin in l), None)
+stop = None
+if start is not None:
+    stop = next((i for i, l in enumerate(lines[start + 1:], start + 1) if end in l), None)
+if start is None or stop is None:
+    print("region_lines=0 raw=-1 reader=-1")
+    print("scan: probe region sentinels not found in %s" % path)
+    raise SystemExit(1)
+
+region = lines[start + 1:stop]
+
+# Drop comment-only lines, then join backslash continuations into logical lines.
+logical, buf = [], ""
+for raw_line in region:
+    if raw_line.strip().startswith("#"):
+        continue
+    buf += raw_line.rstrip("\n")
+    if buf.rstrip().endswith("\\"):
+        buf = buf.rstrip()[:-1] + " "
+        continue
+    logical.append(buf)
+    buf = ""
+if buf:
+    logical.append(buf)
+
+READERS = re.compile(r"(?<![\w-])(main_pid|kill_mode|active_state|load_state|sub_state)\b")
+raw_hits, reader_hits = [], []
+for line in logical:
+    stripped = line.strip()
+    if not stripped:
+        continue
+    if "systemctl" in stripped or "systemd-run" in stripped:
+        if not (stripped.startswith("probe_cmd ") or stripped.startswith("probe_query ")):
+            raw_hits.append(stripped)
+    if READERS.search(stripped):
+        reader_hits.append(stripped)
+
+print("region_lines=%d raw=%d reader=%d" % (len(region), len(raw_hits), len(reader_hits)))
+for hit in raw_hits:
+    print("raw: %s" % hit[:160])
+for hit in reader_hits:
+    print("reader: %s" % hit[:160])
+PY
 }
 
 # ---------------------------------------------------------------- selftest ---
@@ -700,8 +943,69 @@ if [[ "${1:-}" == "--selftest" ]]; then
   # Every probe command's rc and stderr were captured, not discarded.
   check "probe command receipts captured" yes \
     "$( [[ -s "$PROBE_CMD_LOG" ]] && echo yes || echo no )"
+
+  # --- revision 9 (STOP GATE 8): completeness of those receipts --------------
+  # Revision 8 receipted only the five mutating calls, so this block would have
+  # failed on it: the three labels below did not exist, and the read-only
+  # queries were unbounded.
+  echo "probe_receipt_count: $PROBE_RECEIPT_COUNT (declared max $PROBE_MAX_BOUNDED_CALLS)"
+  check "no required probe receipt is missing" "" "$PROBE_RECEIPTS_MISSING"
+  check "receipt completeness verdict" yes "$PROBE_RECEIPTS_COMPLETE"
+  check "receipt count is within the declared call budget" yes \
+    "$( [[ "$PROBE_RECEIPT_COUNT" -gt 0 && "$PROBE_RECEIPT_COUNT" -le "$PROBE_MAX_BOUNDED_CALLS" ]] \
+        && echo yes || echo no )"
+  # The three calls that ran raw in revision 8, each now carrying an rc and a
+  # stderr field of its own.
+  check "reset-failed is receipted" 1 \
+    "$( grep -c '^cleanup_reset_failed rc=' "$PROBE_CMD_LOG" )"
+  check "the ControlGroup query is receipted" yes \
+    "$( grep -q '^show_cgroup rc=.* stderr=' "$PROBE_CMD_LOG" && echo yes || echo no )"
+  check "the MainPID queries are receipted" 2 \
+    "$( grep -c '^show_main_pid_[12] rc=' "$PROBE_CMD_LOG" )"
+  check "every receipt line carries rc, stdout and stderr" 0 \
+    "$( grep -cv ' rc=.* stdout=.* stderr=' "$PROBE_CMD_LOG" )"
   rm -rf "$SIGNAL_DIR"
   SIGNAL_DIR="$selftest_probe_signal"
+  echo
+
+  echo "## revision 9: no raw systemd call survives in the probe region"
+  # A static scan, because the STOP GATE 8 finding is precisely that reading the
+  # driver did not catch the bypass - twice. The negative control matters as much
+  # as the scan: a scanner that reports 0 on everything would pass the first
+  # check and prove nothing.
+  selftest_scan="$(probe_region_scan "${BASH_SOURCE[0]}")"
+  selftest_scan_head="$(printf '%s\n' "$selftest_scan" | head -1)"
+  printf '%s\n' "$selftest_scan" | sed -n '2,6p'
+  check "probe region located in this file" yes \
+    "$( [[ "$selftest_scan_head" == region_lines=0* ]] && echo no || echo yes )"
+  check "no raw systemctl/systemd-run call in the probe region" "raw=0" \
+    "$( printf '%s\n' "$selftest_scan_head" | tr ' ' '\n' | grep '^raw=' )"
+  check "no unbounded state reader call in the probe region" "reader=0" \
+    "$( printf '%s\n' "$selftest_scan_head" | tr ' ' '\n' | grep '^reader=' )"
+
+  selftest_scan_fixture="$(mktemp)"
+  {
+    printf '%s\n' "# >>> probe-region""-begin <<<"
+    printf '%s\n' 'probe_fixture_raw() {'
+    printf '%s\n' '  systemctl --user show "$PROBE_UNIT.service" -p MainPID --value 2>/dev/null'
+    printf '%s\n' '}'
+    printf '%s\n' 'probe_fixture_reader() { load_state "$PROBE_UNIT.service"; }'
+    # The routed form must NOT be reported, or the scan would be unusable.
+    printf '%s\n' 'probe_fixture_ok() {'
+    printf '%s\n' '  probe_cmd "stop" systemctl --user stop "$PROBE_UNIT.service"'
+    printf '%s\n' '}'
+    printf '%s\n' "# >>> probe-region""-end <<<"
+  } > "$selftest_scan_fixture"
+  selftest_scan_neg="$(probe_region_scan "$selftest_scan_fixture" | head -1)"
+  check "the scan reports a raw call in the control fixture" "raw=1" \
+    "$( printf '%s\n' "$selftest_scan_neg" | tr ' ' '\n' | grep '^raw=' )"
+  check "the scan reports a reader call in the control fixture" "reader=1" \
+    "$( printf '%s\n' "$selftest_scan_neg" | tr ' ' '\n' | grep '^reader=' )"
+  # A file with no sentinels must fail loudly rather than report a clean region.
+  : > "$selftest_scan_fixture"
+  probe_region_scan "$selftest_scan_fixture" >/dev/null 2>&1
+  check "a file without the sentinels fails the scan" 1 "$?"
+  rm -f "$selftest_scan_fixture"
   echo
 
   echo "## revision 7/8: the clean-attempt gate refuses dirty state"
@@ -1002,12 +1306,15 @@ killmode_probe || true   # the verdict is asserted below, after the receipt
   echo "probe_residual_cgroup: ${PROBE_RESIDUE_CGROUP:-unknown}"
   echo "probe_unit_after_cleanup: ${PROBE_UNIT_LOAD_AFTER:-unknown}/${PROBE_UNIT_ACTIVE_AFTER:-unknown}/${PROBE_UNIT_SUB_AFTER:-unknown}"
   echo "probe_residue_clean: ${PROBE_RESIDUE_CLEAN:-no}"
+  echo "probe_receipts_complete: ${PROBE_RECEIPTS_COMPLETE:-no}"
+  echo "probe_receipts_missing: ${PROBE_RECEIPTS_MISSING:-<none>}"
+  echo "probe_receipt_count: ${PROBE_RECEIPT_COUNT:-0} (declared max ${PROBE_MAX_BOUNDED_CALLS}: ${PROBE_MUTATING_CALLS} mutating @${PROBE_CMD_TIMEOUT_S}s + ${PROBE_QUERY_CALLS} read-only @${PROBE_QUERY_TIMEOUT_S}s)"
   echo "probe_verdict: $PROBE_VERDICT"
-  echo "--- bounded command receipts (rc + stderr) ---"
+  echo "--- bounded command receipts (label, rc, stdout, stderr) ---"
   cat "$PROBE_CMD_LOG" 2>/dev/null || echo "<no command receipts>"
 } | sed 's/[[:space:]]*$//' > "$TL/00-killmode-probe.txt"
 [[ "$PROBE_VERDICT" == pass ]] || fail abort_killmode_probe 26 \
-  "KillMode=process probe failed (child_survived_stop=${PROBE_CHILD_SURVIVED:-no} restarted_with_leftover=${PROBE_RESTART_OK:-no} new_child_alive=${PROBE_NEW_CHILD_ALIVE:-no} child_survived_restart=${PROBE_CHILD_SURVIVED_RESTART:-no} residue_clean=${PROBE_RESIDUE_CLEAN:-no}); refusing to stop the real supervisor"
+  "KillMode=process probe failed (child_survived_stop=${PROBE_CHILD_SURVIVED:-no} restarted_with_leftover=${PROBE_RESTART_OK:-no} new_child_alive=${PROBE_NEW_CHILD_ALIVE:-no} child_survived_restart=${PROBE_CHILD_SURVIVED_RESTART:-no} residue_clean=${PROBE_RESIDUE_CLEAN:-no} receipts_complete=${PROBE_RECEIPTS_COMPLETE:-no} receipts_missing=${PROBE_RECEIPTS_MISSING:-<none>}); refusing to stop the real supervisor"
 
 # ---------------------------------------------------------------- phase 2 ----
 say "installing the temporary KillMode=process drop-in"

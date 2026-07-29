@@ -46,20 +46,23 @@ What *is* real and already finished:
    `preflight/assertion-selftest.txt`.
 4. **Driver gate self-test - done.** `live-boot-reconciliation-driver.sh
    --selftest` exercises the STOP GATE 2 gates, phase 1's KillMode probe (since
-   revision 6) and the clean-attempt gate (since revision 7, hardened in
-   revision 8): 50 checks. Output: `preflight/driver-gate-selftest.txt`.
+   revision 6), the clean-attempt gate (since revision 7, hardened in
+   revision 8) and, since revision 9, phase 1's receipt completeness plus the
+   static probe-bypass scan and its negative control: 63 checks. Output:
+   `preflight/driver-gate-selftest.txt`.
 
 Both self-tests touch nothing live and are safe to re-run at any time.
 
 ## Why the window is still closed
 
-The driver has been blocked seven times - six by the coordinator, once by
-reviewer Codex2 - and is now at **revision 8**. Only revision 5 was ever
+The driver has been blocked eight times - six by the coordinator, twice by
+reviewer Codex2 - and is now at **revision 9**. Only revision 5 was ever
 executed, and only as far as phase 1; do not resurrect any earlier revision.
 
 The executable changes since revision 3 are confined to the phase-1 probe
-(revisions 6 and 7) and the clean-attempt gate that runs before it (revisions 7
-and 8). Phases 2-9 carry three deltas from revision 3, all non-executable, and
+(revisions 6, 7 and 9) and the clean-attempt gate that runs before it (revisions
+7 and 8), plus the wait-budget constants those probe changes are counted in.
+Phases 2-9 carry three deltas from revision 3, all non-executable, and
 they are enumerated - not asserted - in
 `../preflight/rev3-phase-2-9-delta.txt`: one comment block (the STOP GATE 3
 correction) and two `Reviewer: Codex4` → `Codex2` trailer lines inside the
@@ -221,6 +224,7 @@ what the real restart does.
 | every probe pid is bound to a probe-owned argv marker (`probe_owns_pid`) | a recycled pid must not satisfy an assertion, and must not be killed by cleanup |
 | cleanup works from recorded ownership + the unit's cgroup, SIGTERM then SIGKILL, waits for old and new pids, and asserts no residual pid / cgroup and `not-found`/`inactive`/`dead` - as part of the verdict | a probe that leaks must fail closed, not proceed |
 | every probe command bounded by `timeout`, rc and stderr captured into `timeline/00-killmode-probe.txt` | discarded stderr is the only reason the revision-5 defect survived five reviews |
+| ^ that row overstated what revision 7 did: only the five *mutating* calls were routed through the helper. STOP GATE 8 found the four raw calls and six unbounded reader calls that remained; revision 9 is where "every probe command" becomes true | |
 | clean-attempt gate: refuses to start (50 / 51) on a dirty timeline root or signal dir, before the log redirect and before the EXIT trap | one attempt's receipts must never be readable as another's; a refusal must not itself become dirt |
 | attempt 1 archived under `timeline/attempt-1-abort-killmode-probe/`, including its `/tmp` verdict/state/exit_code/driver.log | same reason; the `/tmp` original was moved aside, not deleted |
 | `PROBE_CMD_TIMEOUT_S` / `PROBE_REAP_TRIES` declared and counted in the dead-man budget (1130 → **1388** s, delay 2030 → **2288** s) | finding #3: the delay is derived from every declared wait |
@@ -275,20 +279,69 @@ derivation, the exit codes and the phase ordering are untouched by revision 8.
 **The gate is closed.** Revision 8 is a driver change, so it needs its own
 exact-head recheck; no earlier lift covers it.
 
+### STOP GATE 8 (reviewer Codex2, 2026-07-29T05:26:49Z) - revision 9
+
+Revision 8 was never executed either. The reviewer confirmed revision 8's
+clean-attempt allowlist and evidence-delta corrections independently (worktree
+clean and pushed, driver self-test 50/50, assertion self-test 11/11) and raised
+one new blocking finding, in the same class as the one that hid the revision-5
+defect.
+
+**The finding: "every probe systemd call is bounded and receipted" was false.**
+The driver header, `../README.md` and this runbook all said so from revision 7
+on. Only the five *mutating* calls went through `probe_cmd`. Revision 9's static
+scanner, run over revision 8's own probe region, reports `raw=4 reader=6`:
+
+| what | where | how it ran in revision 8 |
+| --- | --- | --- |
+| `systemctl show -p ControlGroup` | `probe_record_cgroup_pids` | raw, unbounded, `2>/dev/null` |
+| `systemctl reset-failed` | `probe_cleanup` | raw, unbounded, `>/dev/null 2>&1` |
+| `systemctl show -p MainPID` x2 | `killmode_probe` | raw, unbounded, `2>/dev/null` |
+| `load_state` x2, `active_state` x2, `sub_state` x2 | `probe_cleanup`, `killmode_probe` | via the shared readers: unbounded, unreceipted |
+
+Unbounded matters twice over: such a call is outside the dead-man budget (a hung
+`systemctl show` could outlast the derived delay), and a discarded stderr is
+exactly how five review passes missed systemd's "already loaded" refusal.
+
+Revision 9:
+
+| change | why |
+| --- | --- |
+| every probe systemd operation goes through `probe_cmd` (mutating, `PROBE_CMD_TIMEOUT_S=30`) or `probe_query` (read-only, `PROBE_QUERY_TIMEOUT_S=10`); both preserve stdout and append one receipt line with label, rc, stdout and stderr | the finding, applied to read-only queries and `reset-failed` as well |
+| the probe no longer calls `main_pid` / `kill_mode` / `active_state` / `load_state` / `sub_state` at all; those remain in use by phases 2-9, unchanged | the readers are unbounded by design and belong outside the probe |
+| receipt completeness is an input to `PROBE_VERDICT`: `PROBE_REQUIRED_LABELS` must all be present and the receipt count must be within the declared budget | an unreceipted command is an unobserved command; it must fail closed, not read as a clean pass |
+| both timeouts and the exact call counts (7 mutating, 36 read-only) are declared constants folded into the budget: **1388 → 1808 s, delay 2288 → 2708 s** | finding #3 again: the delay is derived from every declared wait |
+| `probe_region_scan()` parses this driver between its `probe-region` sentinels and fails on any raw `systemctl`/`systemd-run` call or unbounded-reader call not routed through the helpers | the claim had already survived two reviews; it needed to stop depending on review attention |
+| `--selftest` runs that scan against the driver itself, against a fixture containing one raw call and one reader call (must report `raw=1 reader=1`) and against a file with no sentinels (must exit non-zero) | a scanner that reported 0 for everything would otherwise "prove" the fix |
+
+Self-test: 50 → **63** checks, all passing.
+`../preflight/stop-gate-8-raw-probe-call-reproduction.txt` runs the same scanner
+over both revisions' probe regions, each extracted mechanically (revision 8's cut
+out of git by line number, revision 9's between its sentinels, the scanner itself
+`sed`-extracted from the driver): `raw=4 reader=6` against `raw=0 reader=0`.
+
+Nothing else changed. Phases 2-9 are untouched, and
+`../preflight/rev3-phase-2-9-delta.txt` was re-generated against revision 9: both
+diffs reproduce byte for byte and the slice is still 389 normalized lines on each
+side with the same two Reviewer-trailer lines differing.
+
+**The gate is closed.** Revision 9 is a driver change, so it needs its own
+exact-head recheck; no earlier lift covers it.
+
 ## Before you execute
 
 ```bash
 W=/tmp/pantheon-worker-worktrees/oday-plus-supervisor-live/odp-orch-claude-deferred-approval-live-rollout-001
 EV=$W/docs/evidence/runtime/ODP-ORCH-CLAUDE-DEFERRED-APPROVAL-LIVE-ROLLOUT-001
 
-# 1. Confirm the gate has been lifted for THIS exact head (revision 8), not for
+# 1. Confirm the gate has been lifted for THIS exact head (revision 9), not for
 #    an older one. `git rev-parse HEAD` must equal the head the coordinator
-#    named, and must equal origin/task/<TASK-ID>.
+#    named (revision 9), and must equal origin/task/<TASK-ID>.
 # 2. Re-run the cheap checks - none of them touch anything live.
 bash -n $EV/runbook/live-boot-reconciliation-driver.sh
 python3 -m py_compile $EV/runbook/assert-boot-reconciliation.py
 $EV/runbook/selftest-assertion.sh                                  # 11 cases
-bash $EV/runbook/live-boot-reconciliation-driver.sh --selftest      # 50 checks
+bash $EV/runbook/live-boot-reconciliation-driver.sh --selftest      # 63 checks
 cd $W && git diff --check 647970dae975f4008633a484cde1e63187035544  # exit 0
 
 # 3. Confirm the starting state is what the driver expects.
@@ -382,7 +435,7 @@ AI_NAME=Claude2 python3 scripts/ai_status.py handoff ODP-ORCH-CLAUDE-DEFERRED-AP
 The EXIT trap restores the supervisor, the watchdog timer and the shipped
 `KillMode`, and disarms the dead-man. If the driver is SIGKILLed the trap does
 not run, and the `odp-rollout-deadman.timer` transient unit performs the same
-restore once the computed delay (2288 s ≈ 38 min from the moment it was armed,
+restore once the computed delay (2708 s ≈ 45 min from the moment it was armed,
 i.e. 900 s after the driver's longest legal run) elapses. Check:
 
 ```bash

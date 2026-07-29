@@ -130,7 +130,7 @@ aborts without ever stopping the supervisor.
 
 The throwaway unit is created **once**, with `systemd-run`, and restarted with
 `systemctl --user start` on that same already-loaded unit. That has been the
-shape since revision 7 and is unchanged in revision 8; the distinction is not
+shape since revision 7 and is unchanged in revisions 8 and 9; the distinction is not
 cosmetic. The first time the driver was actually run
 it aborted at phase 1 (2026-07-29T04:31:15Z, `abort_killmode_probe`) because the
 probe tried to *re-create* the transient unit under a name its own surviving
@@ -148,10 +148,28 @@ Phase 1's cleanup is ownership- and cgroup-based and runs on every exit path
 (from the probe itself and from `restore_all()`): the recorded old and new pids
 plus every pid seen in the probe unit's cgroup are SIGTERMed, then SIGKILLed,
 then waited for, and the probe asserts that no marked process, no cgroup and no
-loaded unit is left (`not-found` / `inactive` / `dead`). Every probe command is
-bounded by `timeout` and its rc and stderr are recorded in
-`timeline/00-killmode-probe.txt`. Discarded stderr is the sole reason the
-revision-5 defect survived five review passes.
+loaded unit is left (`not-found` / `inactive` / `dead`).
+
+Since revision 9 every systemd operation in phase 1 - the mutating ones through
+`probe_cmd`, the read-only state queries through `probe_query` - is bounded by a
+`timeout` and produces one receipt line carrying its label, rc, stdout and
+stderr in `timeline/00-killmode-probe.txt`. Discarded stderr is the sole reason
+the revision-5 defect survived five review passes, and revisions 7 and 8 claimed
+this coverage while four raw calls (`show -p ControlGroup`, `reset-failed` -
+itself `>/dev/null 2>&1` - and the two `show -p MainPID` reads) plus six calls
+into the unbounded shared readers were still bypassing it (STOP GATE 8).
+
+Two things stop that claim from drifting again. Receipt completeness is part of
+the phase-1 verdict: the probe lists the labels a full-path run must produce and
+cannot report `pass` if any is missing or if the receipt count exceeds the
+declared call budget. And a static scan (`probe_region_scan`) parses the driver
+between its `probe-region` sentinels and fails on any raw `systemctl` /
+`systemd-run` call or any unbounded-reader call that is not routed through the
+helpers; `--selftest` runs it against the driver itself and against a fixture
+that deliberately contains one of each, so it cannot pass vacuously.
+`preflight/stop-gate-8-raw-probe-call-reproduction.txt` runs the same scanner
+over revision 8's probe region (`raw=4 reader=6`) and revision 9's (`raw=0
+reader=0`), both regions extracted mechanically rather than retyped.
 
 ### One attempt per directory
 
@@ -178,8 +196,8 @@ Two further precautions cover the restart window:
 * An independent systemd dead-man's switch (`systemd-run --user
   --on-active=<computed>s --unit=odp-rollout-deadman`) is armed **by the driver**
   in phase 3, and its armed state is asserted before the window opens. The delay
-  is derived from the driver's own named wait constants - 1388 s of bounded
-  waiting plus 900 s of margin, so 2288 s - and the driver aborts if that
+  is derived from the driver's own named wait constants - 1808 s of bounded
+  waiting plus 900 s of margin, so 2708 s - and the driver aborts if that
   inequality does not hold. A flat delay shorter than the legal waits would let
   a slow-but-valid run trip its own safety net, pulling the drop-in and
   restarting the supervisor mid-window. If the driver is SIGKILLed so the EXIT
@@ -279,7 +297,7 @@ assertion - including the recorded pre-fix regression shape - and checks every
 verdict. It touches nothing live. Output: `preflight/assertion-selftest.txt`.
 
 `live-boot-reconciliation-driver.sh --selftest` covers the driver's own gates
-with 50 checks against throwaway processes and a throwaway signal directory: the
+with 63 checks against throwaway processes and a throwaway signal directory: the
 dead-man budget inequality, pid/run-id binding (foreign, empty, dead pids all
 rejected), token-exact unmanaged-supervisor detection (a decoy carrying
 `supervisor.py` inside a longer argument must not be reported), a replay of the
@@ -292,7 +310,11 @@ must *not* do: no unit file in the user unit directory, that directory's entry
 count unchanged, and no residual pid, cgroup or loaded unit afterwards. The only
 unit it creates is its own throwaway transient probe, which it removes again; it
 never touches `pantheon-supervisor.service`, the drop-in, the dead-man or any
-queue. Output: `preflight/driver-gate-selftest.txt`.
+queue. Since revision 9 it also asserts that phase 1's receipts are complete
+(every required label present, count within the declared budget, every line
+carrying rc, stdout and stderr) and runs the static probe-bypass scan described
+above, together with its negative control. Output:
+`preflight/driver-gate-selftest.txt`.
 
 The live pre-fix behaviour of the same host is already on record in
 `docs/evidence/runtime/ODP-ORCH-CLAUDE-DEFERRED-APPROVAL-RACE-001/README.md`:
@@ -368,8 +390,10 @@ still in its cgroup. Revision 7 therefore creates the probe unit once with
 unit-file write; asserts the new MainPID and new child as well as the old
 child's survival, each bound to a probe-owned argv marker; makes cleanup
 ownership- and cgroup-based on every exit path with a residue assertion that is
-part of the verdict; captures every probe command's rc and stderr instead of
-discarding them; archives attempt 1 under
+part of the verdict; captures the rc and stderr of every *mutating* probe
+command instead of discarding them (it claimed to cover every probe command;
+that claim was false and is answered by revision 9 below); archives attempt 1
+under
 `timeline/attempt-1-abort-killmode-probe/` and refuses to start on a dirty
 timeline root or signal directory (exit 50 / 51). The gate self-test grew from
 23 to 39 checks. Revision 7 is a driver change, so it needs a fresh coordinator
@@ -401,10 +425,30 @@ side with exactly those two differing, so every gate, threshold, exit code, wait
 constant and phase ordering in phases 2-9 is unchanged since revision 3.
 Revision 8 is a driver change and needs its own exact-head recheck.
 
+The eighth (reviewer Codex2, 2026-07-29T05:26:49Z) accepted revision 8's
+allowlist and evidence corrections and found the next overclaim of the same
+family: the driver header and this document said every `systemctl` /
+`systemd-run` call in the probe was timeout-bounded with rc and stderr captured,
+and only the five *mutating* calls were. Still raw in revision 8:
+`show -p ControlGroup` in `probe_record_cgroup_pids`; `reset-failed` in
+`probe_cleanup`, with its stderr sent to `/dev/null`; and the two
+`show -p MainPID` reads in `killmode_probe` - plus six calls into the shared
+unbounded readers for the load / active / sub states. Unbounded means outside
+the dead-man budget as well as unreceipted. Revision 9 routes every one of them
+through `probe_cmd` (mutating) or `probe_query` (read-only), both of which
+preserve stdout and record label, rc, stdout and stderr; makes receipt
+completeness part of the phase-1 verdict; declares the two timeouts and the exact
+call counts and folds them into the budget (1388 → **1808** s, delay 2288 →
+**2708** s); and adds the static probe-bypass scan with its negative control. The
+gate self-test grew from 50 to **63** checks.
+`preflight/stop-gate-8-raw-probe-call-reproduction.txt` shows the same scanner
+reporting `raw=4 reader=6` on revision 8 and `raw=0 reader=0` on revision 9.
+Revision 9 is a driver change and needs its own exact-head recheck.
+
 What has been completed and is safe to review now: the deployment (section 2),
 its verification (section 3), the restart-safety design (section 4), the
 determinism argument (section 5), the fail-closed assertion with its 11-case
-self-test, and the driver's own 50-check gate self-test.
+self-test, and the driver's own 63-check gate self-test.
 
 ## 7. Approval resolution
 
