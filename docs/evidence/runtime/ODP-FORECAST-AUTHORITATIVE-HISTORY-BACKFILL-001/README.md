@@ -1655,6 +1655,22 @@ including the refund. The evidence would have looked complete, because nothing
 in the before/after pair compares the target's *content* to the source's; they
 compare coverage.
 
+Both measurements above are also **pre-activation**, which is the same gap v7
+closed for criterion 5: the only evidence about content parity would have been
+taken against the target that the acceptance activation then replaced. So the
+live finisher is now **v8**, which adds one stage after `inventory` — this same
+audit, unmodified, against the freshly activated target, written as
+`canonical_row_drift_audit_after_activation.json`. It is read-only and takes
+about four minutes, so it runs *before* the 45-minute criterion-5 probe rather
+than after; it fails soft, because a measurement is not a gate. Everything else
+is v7 verbatim, including the gate and the driver handshake.
+
+Reading it: injected rows must stay 0, and drift should now be 0 too. A small
+non-zero drift is **not** a Defect F regression — the source keeps ingesting, so
+a row written between the copy and the audit reads as drift. Compare against the
+pre-activation 16 953 and against the refresh counts in
+`activation_receipt.json` before concluding anything.
+
 This is the fourth defect in this task whose signature is a conflict clause that
 cannot revisit a row — B on the ingestion ledger, D on lineage attribution, E on
 lineage deletion, F on the fact table — so the pattern is worth stating once,
