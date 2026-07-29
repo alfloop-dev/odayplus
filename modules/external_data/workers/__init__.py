@@ -1,6 +1,8 @@
 """External data worker entry points."""
 
 from modules.external_data.workers.scheduled_fetch import (
+    CONFIGURATION_REASON_CODES,
+    PROVIDER_NOT_SELECTED_REASON_CODE,
     ExternalFetchAlert,
     ExternalFetchJobSpec,
     ExternalFetchProviderConfigurationError,
@@ -16,6 +18,8 @@ from modules.external_data.workers.scheduled_fetch import (
 )
 
 __all__ = [
+    "CONFIGURATION_REASON_CODES",
+    "PROVIDER_NOT_SELECTED_REASON_CODE",
     "ExternalFetchAlert",
     "ExternalFetchJobSpec",
     "ExternalFetchProviderConfigurationError",

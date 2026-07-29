@@ -1,0 +1,31 @@
+# Mutation testing of tests/ops/test_deploy_workflow_contract.py
+# Run in an isolated git worktree at commit c7727020 so the task worktree is never mutated.
+# Each mutation reintroduces a form of the defect; the transcript shows which test catches it.
+
+== BASELINE (unmutated) ==
+........                                                                 [100%]
+
+== M1: revert to the shipped defect, path: .odp_data/deployment/*.json ==
+FAILED tests/ops/test_deploy_workflow_contract.py::test_upload_allowlist_covers_every_job_receipt_the_deploy_script_writes
+FAILED tests/ops/test_deploy_workflow_contract.py::test_upload_allowlist_keeps_every_top_level_report_the_glob_covered
+FAILED tests/ops/test_deploy_workflow_contract.py::test_upload_allowlist_excludes_raw_gcloud_dumps_and_wildcards
+
+== M2: recursive include .odp_data/deployment/**/*.json (sweeps the raw dumps) ==
+FAILED tests/ops/test_deploy_workflow_contract.py::test_upload_allowlist_covers_every_job_receipt_the_deploy_script_writes
+FAILED tests/ops/test_deploy_workflow_contract.py::test_upload_allowlist_keeps_every_top_level_report_the_glob_covered
+FAILED tests/ops/test_deploy_workflow_contract.py::test_upload_allowlist_excludes_raw_gcloud_dumps_and_wildcards
+
+== M3: allowlist silently drops the worker receipt ==
+FAILED tests/ops/test_deploy_workflow_contract.py::test_upload_allowlist_covers_every_job_receipt_the_deploy_script_writes
+
+== M4: allowlist adds the raw worker-job.json describe dump ==
+FAILED tests/ops/test_deploy_workflow_contract.py::test_upload_allowlist_excludes_raw_gcloud_dumps_and_wildcards
+
+== M5: deploy script gains a 4th Cloud Run Job kind, workflow left untouched ==
+FAILED tests/ops/test_deploy_workflow_contract.py::test_upload_allowlist_covers_every_job_receipt_the_deploy_script_writes
+
+== M6: LIVE_E2E_REPORT dropped from the allowlist (coverage regression vs the old glob) ==
+FAILED tests/ops/test_deploy_workflow_contract.py::test_upload_allowlist_keeps_every_top_level_report_the_glob_covered
+
+== RESTORED ==
+........                                                                 [100%]
