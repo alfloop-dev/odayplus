@@ -341,19 +341,60 @@ to eliminate.
 
 ## 6. Live proof result
 
-**Not yet run. The rollout window has never been opened.**
+**Run once, on 2026-07-29 from 06:08:16Z to 06:10:39Z. Terminal verdict
+`proof_complete`, exit code 0.** Receipts in `timeline/`, indexed by
+`timeline/README.md`; the driver's own signal and log are
+`timeline/09-signal.txt` and `timeline/09-driver-log.txt`.
 
-Re-verified against the live host at 2026-07-29T04:56Z, i.e. after the one
-attempt so far and after its artefacts were archived: the `timeline/` root holds
-no receipts (attempt 1 is in `timeline/attempt-1-abort-killmode-probe/`),
-`/tmp/odp-rollout-driver/` does not exist (moved aside to
-`/tmp/odp-rollout-driver-attempt-1-archived-20260729`, not deleted), the
-supervisor is still on its pre-task `MainPID=1197865` (started 02:37:14Z),
-`KillMode` is still `control-group`, the drop-in directory is empty, there is no
-transient rollout or dead-man unit, no process carries a probe marker, and no
-approval exists for any test run in either queue.
+**The acceptance property held.** A real Claude worker
+(`claude-20260729T060543Z-a962c8f8`) emitted `stop_reason=tool_deferred` at
+06:08:56Z for a `Bash` tool use while the supervisor was **stopped**
+(`timeline/02-receipt-window.txt` records `supervisor_active_state_while_receipt_landed: inactive`),
+so the receipt could only be seen for the first time by boot reconciliation. The
+supervisor was started at 06:09:01Z (`1197865 -> 1487837`) and recorded approval
+`apr-20260729T060857Z-5c04969e` with
+`correlation_source: supervisor_deferred_tool_receipt` - the correlated path, not
+a generic failure. The fail-closed ordering assertion passed twice:
 
-Execution has been blocked by seven STOP GATEs - six from the coordinator, the
+* post-boot (`timeline/05-assertion-post-boot.json`): correlation event
+  `worker_deferred_approval_recorded` at index 8, `first_generic_worker_failed_index: null`,
+  `missing_process_finalizations: 0`, `boot_metric_missing_process_failures: 0`;
+* final (`timeline/07-assertion-final.json`), after resolution: correlation still
+  index 8, first generic `worker_failed` at index 11 - strictly *after* it, and
+  that event is the denial finalization carrying the deny note, not a
+  missing-process failure. Both `missing_process_*` counters remain 0.
+
+**Restart safety held.** The unrelated peer worker
+(`claude-20260729T055610Z-75ecff74`, task ODP-ORCH-ACTOR-REF-VALIDATION-001, pid
+bound to that run id at baseline) was alive after the stop, after the start, and
+at final capture; the long-running cgroup residents - the proxy keeper, both
+Cloud SQL proxies, the re-ingest, deadline-guard, forecast-finisher and backfill
+drivers - survive in both `timeline/01-after-stop.txt` and
+`timeline/03-after-start.txt`. No unmanaged supervisor appeared at any of the
+four scan points (before, in-window, after-start, final).
+
+**Nothing privileged was left pending.** Both test approvals were explicitly
+**denied** at 06:09:04Z - the live one and the `PreToolUse` hook's orphan in the
+control queue (`apr-20260729T060854Z-026cbda9`) - so the deferred `wget --version`
+never executed. `timeline/08-final.txt` records `pending_approvals_for_run: 0`
+and `live_queue_pending_count: 0`. Unrelated control-queue approvals were
+filtered out by `worker_run_id` and left untouched.
+
+**The host was restored.** `timeline/99-restore.txt` (06:10:39Z) records the
+supervisor `active` on `MainPID=1487837`, the shipped `KillMode=control-group`,
+the drop-in gone, the watchdog timer back to `active` with its service
+`inactive`, the dead-man timer disarmed, and no unmanaged supervisor. Every one
+of those was independently re-verified against the live host at closeout
+(2026-07-29T06:16Z) and still matches: `systemctl --user show pantheon-supervisor`
+gives `ActiveState=active MainPID=1487837 KillMode=control-group` with
+`DropInPaths=` empty, `pantheon-supervisor-watchdog.timer` is `active` and its
+service `inactive`, `pantheon-supervisor-deadman.timer` is `not-found`, and an
+independent re-run of the driver's own `unmanaged_supervisors` scan excluding
+`1487837` returns none.
+
+### How the driver got here
+
+Execution was blocked by seven STOP GATEs before this run - six from the coordinator, the
 seventh from reviewer Codex2. The first
 (2026-07-29T03:33:14Z) found six defects in driver revision 1; revision 2
 answered them. The second (2026-07-29T03:48:39Z) found seven more, several of
@@ -478,21 +519,64 @@ identical under both scanners, as
 over the same regions. Revision 10 is a driver change and needs its own
 exact-head recheck.
 
-What has been completed and is safe to review now: the deployment (section 2),
-its verification (section 3), the restart-safety design (section 4), the
-determinism argument (section 5), the fail-closed assertion with its 11-case
-self-test, and the driver's own 71-check gate self-test.
+Revision 10 is the revision that ran, on the exact head the coordinator
+rechecked. It is committed byte-exact as executed in
+`runbook/live-boot-reconciliation-driver.sh` and has not been edited since -
+including the one cosmetic defect the run exposed (line 1882, see
+`timeline/README.md`), which is fixed in the receipt and documented rather than
+patched in the script, so the committed driver remains the artefact of record.
+
+### Post-run evidence corrections
+
+Reviewer Codex2 raised a tenth STOP GATE at 2026-07-29T06:12:25Z scoped to the
+evidence closeout only - no re-run, no live-state change. Two things were wrong,
+both fixed without touching a captured timestamp, JSON body or verdict:
+
+1. `timeline/99-restore.txt` is written by the EXIT trap, which fires after the
+   driver's own final commit and push, so the run could not have committed it.
+   It was sitting untracked; it is now committed, and its contents re-verified
+   against the live host as described above.
+2. `timeline/08-final.txt` line 18 ended in a space, which `git diff --check`
+   against the merge base flagged. The trailing space is now gone; an empty
+   `unmanaged_supervisors_final` value means none were found, matching the
+   `<none>` that `99-restore.txt` records for the same probe four seconds later
+   and the independent re-scan at closeout.
+
+Alongside those, the driver's terminal signal, log and phase-1 per-command
+receipts were copied out of the volatile `/tmp/odp-rollout-driver` into
+`timeline/09-*.txt` so the verdict and exit code can be reviewed from the
+repository, and this section and `timeline/README.md` were rewritten - both still
+said the window had never been opened, which stopped being true at 06:08Z.
+`git diff --check 647970da` is clean over the whole branch, the worktree is
+clean, and `HEAD` matches `origin/task/ODP-ORCH-CLAUDE-DEFERRED-APPROVAL-LIVE-ROLLOUT-001`.
 
 ## 7. Approval resolution
 
-*(filled in from `timeline/06-resolve-*.txt` after the proof run)*
+The run produced **two** approval records for one deferred tool use, because the
+`PreToolUse` hook writes to the control tree's queue, which is a different file
+from the one the live supervisor reads. Both were resolved `deny` at
+2026-07-29T06:09:04Z, 7 seconds after they were created, and both resolutions are
+committed in full:
 
-No test approval exists yet, and neither queue holds a pending item for this
-task. The driver denies the probe approval in both the live and the control
-queue - the `PreToolUse` hook writes to the control tree's queue, which is a
-different file from the one the live supervisor reads - filtering strictly by
-`worker_run_id` so the unrelated pending approvals in the control queue are
-untouched, and then asserts that nothing for the test run remains pending.
+| Queue | Approval id | Receipt | Decision |
+| --- | --- | --- | --- |
+| live (boot reconciliation) | `apr-20260729T060857Z-5c04969e` | `timeline/06-resolve-live.txt` | `deny` |
+| control (`PreToolUse` hook orphan) | `apr-20260729T060854Z-026cbda9` | `timeline/06-resolve-control.txt` | `deny` |
+
+Both carry `remember: false`, so no standing rule was created, and both point at
+the same `tool_use_id` (`toolu_01SCpJdoiFmVuQCncHLF5F7h`) and the same
+`tool_input_signature`. The deferred command was `wget --version`, chosen because
+it is harmless and its only purpose was to produce a real `tool_deferred`
+receipt; denying it means it was **never executed**. The live record is the one
+that matters for the acceptance criterion: it carries
+`correlation_source: supervisor_deferred_tool_receipt`, which is the field that
+distinguishes the correlated path from the generic-failure path this task exists
+to prevent.
+
+Resolution filtered strictly by `worker_run_id`, so the unrelated pending
+approvals in the control queue were untouched. After resolution the driver
+asserted, and `timeline/08-final.txt` records, `pending_approvals_for_run: 0` and
+`live_queue_pending_count: 0` - no privileged action is left pending anywhere.
 
 ## 8. Scope
 

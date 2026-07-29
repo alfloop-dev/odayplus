@@ -1,0 +1,5 @@
+signal_dir: /tmp/odp-rollout-driver
+verdict: proof_complete
+state: proof_complete
+exit_code: 0
+control_approval_ids: apr-20260729T060854Z-026cbda9

@@ -44,22 +44,36 @@ inside its own transient systemd unit outside the supervisor cgroup.
 
 ## Status
 
-Not executed. The rollout window has never been opened. The driver ran for the
-first time at 2026-07-29T04:31:10Z, on the head the coordinator had lifted the
-gate for, and aborted fail-closed at phase 1 after five seconds
-(`abort_killmode_probe`, exit 26) - before the drop-in, the restart, the
-deferral and any approval. As of 04:56Z, after that abort and after its
-artefacts were archived under `timeline/attempt-1-abort-killmode-probe/`, the
-supervisor is still on its pre-task `MainPID=1197865`, `KillMode` is still the
-shipped `control-group`, the drop-in directory is still empty, the dead-man was
-never armed, `~/.config/systemd/user` is unchanged and no approval exists for
-any test run in either queue.
+**Executed and passed.** Driver revision 10 opened the window once, on
+2026-07-29 from 06:08:16Z to 06:10:39Z: terminal verdict `proof_complete`, exit
+code 0. A real `tool_deferred` receipt landed at 06:08:56Z while the supervisor
+was `inactive`; the restart (`MainPID 1197865 -> 1487837`) had boot
+reconciliation record approval `apr-20260729T060857Z-5c04969e` with
+`correlation_source: supervisor_deferred_tool_receipt`, ahead of any generic
+`worker_failed` (correlation index 8, first generic failure index 11), with
+`missing_process_finalizations: 0`. The unrelated peer worker survived the whole
+window, both test approvals were denied so the probe command never ran, 0
+approvals remain pending, and the EXIT trap restored `KillMode=control-group`,
+the watchdog timer and a drop-in-free unit. Full narrative and receipts:
+`docs/evidence/runtime/.../README.md` section 6 and `timeline/`.
 
-The driver is at revision 9 after eight STOP GATEs: six coordinator findings,
+The one earlier attempt, at 2026-07-29T04:31:10Z, aborted fail-closed at phase 1
+after five seconds (`abort_killmode_probe`, exit 26) - before the drop-in, the
+restart, the deferral and any approval - and is archived whole under
+`timeline/attempt-1-abort-killmode-probe/`.
+
+Remaining: independent review by Codex2, then closeout.
+
+The driver reached revision 10 after nine STOP GATEs: six coordinator findings,
 then seven, then two, then an assignment conflict, then one found by execution,
 then one on the fix for that, then reviewer Codex2's finding that the fix
-introduced a fail-open gate of its own, and now the reviewer's finding that the
-probe's own observability claim was overstated. STOP GATE 5's finding is that phase 1's `KillMode`
+introduced a fail-open gate of its own, then the reviewer's finding that the
+probe's own observability claim was overstated, and finally the reviewer's
+finding that the scanner built to catch that exited 0 on violations. A tenth
+STOP GATE followed the run itself, scoped to the evidence closeout rather than
+to the driver - the untracked EXIT-trap receipt and a trailing space in
+`timeline/08-final.txt`, both answered without re-running anything; see the
+runtime README's "Post-run evidence corrections". STOP GATE 5's finding is that phase 1's `KillMode`
 probe could never have passed in any revision - it re-created a `systemd-run`
 transient unit under a name its own surviving child still held loaded, with
 stderr discarded on both halves. Revision 6 answered that by writing a
@@ -117,8 +131,8 @@ code the verdict (0 clean, 2 violation, 1 no region located - the two failure
 codes deliberately distinct) and asserts the code itself for a clean file, for
 each violation alone and together, and for a file with no sentinels
 (`--selftest` 63 → 71 checks). Detection is unchanged and the counts are
-identical under both scanners. Revision 10 needs its own exact-head recheck; the
-previous lift covered one exact head only. See `runbook/CONTINUATION.md` for the
+identical under both scanners. Revision 10 got its own exact-head recheck and is
+the revision that ran. See `runbook/CONTINUATION.md` for the
 finding-by-finding mapping, `preflight/killmode-probe-diagnosis.txt` for the
 probe transcripts, `preflight/stop-gate-7-fail-open-reproduction.txt` for the
 old-vs-new gate comparison,
@@ -135,10 +149,10 @@ run side by side (same counts, `rc=0` against `rc=2`).
   legal run so it cannot fire mid-window.
 - The unrelated peer worker must survive the restart; the driver enforces this
   after the stop, after the start and at the end, binding the pid to its run id.
-  At the time of writing the peer is Claude3 on
-  `ODP-FORECAST-AUTHORITATIVE-HISTORY-BACKFILL-001`, but run ids change on every
-  dispatch and are resolved from live supervisor state at execution time - never
-  copied from a note.
+  Run ids change on every dispatch and are resolved from live supervisor state at
+  execution time - never copied from a note. In the run that happened, the peer
+  resolved to `claude-20260729T055610Z-75ecff74` on
+  `ODP-ORCH-ACTOR-REF-VALIDATION-001`, and it was alive at all three checks.
 - Both `pantheon-supervisor-watchdog.timer` **and**
   `pantheon-supervisor-watchdog.service` are stopped for the window and asserted
   inactive: the watchdog is a 60 s `Type=oneshot` unit that recovers the
@@ -153,11 +167,13 @@ run side by side (same counts, `rc=0` against `rc=2`).
 
 - `docs/evidence/runtime/ODP-ORCH-CLAUDE-DEFERRED-APPROVAL-LIVE-ROLLOUT-001/README.md` - rollout record and proof narrative
 - `.../preflight/` - before/after hashes, dirty-state capture, test, Ruff and diff output
-- `.../timeline/` - stop/deferral/start timeline, receipt, activity-log events, journal, approval queue snapshots
-- `.../runbook/` - the driver script and continuation notes
+- `.../timeline/` - the completed run's receipts, indexed file by file in `timeline/README.md`: stop/deferral/start timeline, the `tool_deferred` receipt, activity-log events, journal, approval queue snapshots, both ordering assertions, both denials, the driver's signal and log (`09-*`) and the EXIT trap's restoration receipt (`99-restore.txt`)
+- `.../runbook/` - the driver script as executed, and continuation notes
 
 ## Downstream
 
 `ODP-DEPLOY-WORKER-JOB-EXECUTION-001` is unblocked by the live proof: its worker
 was the run whose deferred `docker build` approval was auto-pruned when the
-pre-fix boot reconciliation failed the run generically.
+pre-fix boot reconciliation failed the run generically. The notification is held
+until Codex2's independent review passes, so that an unblock cannot rest on an
+unreviewed proof.

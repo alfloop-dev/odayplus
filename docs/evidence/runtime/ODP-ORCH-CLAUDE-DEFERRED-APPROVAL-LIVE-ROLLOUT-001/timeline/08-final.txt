@@ -15,4 +15,4 @@ supervisor_kill_mode_restored: control-group
 dropin_present: no
 deadman_timer_state_final: inactive
 watchdog_service_state_final: inactive
-unmanaged_supervisors_final: 
+unmanaged_supervisors_final:

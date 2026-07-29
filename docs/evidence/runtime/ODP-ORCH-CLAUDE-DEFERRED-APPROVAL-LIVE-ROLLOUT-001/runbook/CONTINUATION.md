@@ -2,30 +2,35 @@
 
 Read this first if you are a re-dispatched Claude worker on this task.
 
-Owner: Claude2 · Reviewer: Codex2 (was `Codex4` until STOP GATE 4; see below)
+Owner: Claude3 (was `Claude2`) · Reviewer: Codex2 (was `Codex4` until STOP GATE 4;
+see below)
 
-## Status: the live proof has NOT been run
+## Status: the live proof HAS been run, and passed
 
-**The rollout window has never been opened.** The driver was launched once, at
-2026-07-29T04:31:10Z, and aborted fail-closed at phase 1 five seconds later,
-before the drop-in was installed (see STOP GATE 5). Re-verified against the live
-host at 04:56Z, i.e. after that abort and after archiving its artefacts:
+**Do not run the driver again.** Driver revision 10 opened the window once, on
+2026-07-29 from 06:08:16Z to 06:10:39Z, and completed: terminal verdict
+`proof_complete`, exit code 0. Running it a second time would restart the live
+supervisor for nothing and invalidate the receipts already committed and
+reviewed. Verified against the live host at closeout, 2026-07-29T06:16Z:
 
 | checked | actual state |
 | --- | --- |
-| `systemctl --user show pantheon-supervisor.service` | `MainPID=1197865`, started 02:37:14Z - unchanged since before this task began |
-| `KillMode` | `control-group` (the shipped value) |
-| `.../pantheon-supervisor.service.d/` | exists but **empty** - no drop-in was ever written |
-| `~/.config/systemd/user` | 7 pre-existing entries, unchanged; no probe unit file (revision 6 would have written one; revision 7 writes none) |
-| `/tmp/odp-rollout-driver/` | **absent** - attempt 1's copy was moved to `/tmp/odp-rollout-driver-attempt-1-archived-20260729` and its `verdict`/`state`/`exit_code`/`driver.log` archived in the repo |
-| `timeline/` root | no receipts; attempt 1 is under `timeline/attempt-1-abort-killmode-probe/` |
-| transient units | `odp-rollout-driver` exited rc=26 and was collected; no `odp-rollout-deadman` was ever armed; no probe unit and no process carrying a probe marker |
-| approval queues | no approval for any test run in either queue |
+| `systemctl --user show pantheon-supervisor.service` | `ActiveState=active`, `MainPID=1487837` - the post-restart pid recorded in `timeline/03-after-start.txt` and `99-restore.txt` |
+| `KillMode` | back to the shipped `control-group` |
+| `DropInPaths` | empty - the transient `KillMode=process` drop-in was removed on exit |
+| `pantheon-supervisor-watchdog` | `.timer` `active`, `.service` `inactive` - both restored |
+| `pantheon-supervisor-deadman.timer` | `not-found` - the dead-man was disarmed and collected |
+| unmanaged `supervisor.py` | none, on an independent re-run of the driver's own scan excluding `1487837` |
+| `/tmp/odp-rollout-driver/` | present, holding this run's signal files; `verdict`/`state`/`exit_code`/`driver.log`/`probe-commands.txt` are copied into `timeline/09-*.txt` |
+| `timeline/` root | this run's receipts; attempt 1 remains under `timeline/attempt-1-abort-killmode-probe/` |
+| approval queues | 0 pending for the test run and 0 pending in the live queue; both test approvals explicitly denied |
 
-Everything in this task is therefore still fail-closed. Do not write up a proof
-from any note in this directory: nothing after the deployment has happened yet.
-A file under `timeline/` is **not** evidence that a window ran - read the
-attempt's own README for what its receipts do and do not prove.
+What the run proved is written up in `../README.md` section 6, receipt by
+receipt in `../timeline/README.md`, and the approval resolution in section 7.
+Read those rather than reconstructing it from here.
+
+A file under `timeline/` is still **not** by itself evidence that a window ran -
+attempt 1's receipts sit in the same tree and prove an abort. Read the receipts.
 
 What *is* real and already finished:
 
@@ -54,10 +59,11 @@ What *is* real and already finished:
 
 Both self-tests touch nothing live and are safe to re-run at any time.
 
-## Why the window is still closed
+## Why the window stayed closed for so long
 
-The driver has been blocked nine times - six by the coordinator, three by
-reviewer Codex2 - and is now at **revision 10**. Only revision 5 was ever
+The driver was blocked nine times before it ran - six by the coordinator, three
+by reviewer Codex2 - reaching **revision 10**, which is the revision that
+executed the successful window. Revision 5 was the only other revision ever
 executed, and only as far as phase 1; do not resurrect any earlier revision.
 
 The executable changes since revision 3 are confined to the phase-1 probe
@@ -381,6 +387,13 @@ exact-head recheck; no earlier lift covers it.
 
 ## Before you execute
 
+> **Historical from here to "After a successful window".** The window has already
+> been opened and the proof completed (see Status above). These two sections are
+> kept because they document what the successful run was gated on, and because
+> they are the procedure a *future*, separately authorised window would follow -
+> not an instruction to run anything now. Both start-state preconditions below
+> are deliberately unsatisfied today.
+
 ```bash
 W=/tmp/pantheon-worker-worktrees/oday-plus-supervisor-live/odp-orch-claude-deferred-approval-live-rollout-001
 EV=$W/docs/evidence/runtime/ODP-ORCH-CLAUDE-DEFERRED-APPROVAL-LIVE-ROLLOUT-001
@@ -469,16 +482,27 @@ without completing the proof; `timeline/98-abort-reason.txt` says why.
 
 ## After a successful window
 
+The window succeeded at 06:10:39Z. Steps 1 and 2 are **done**; 3 and 4 are what
+remains.
+
 ```bash
-# 1. Nothing privileged pending in either queue.
+# 1. DONE - nothing privileged pending in either queue. Both test approvals were
+#    denied at 06:09:04Z; timeline/08-final.txt records 0 pending for the run and
+#    0 pending in the live queue. Receipts: timeline/06-resolve-{live,control}.txt.
 cd /home/lupin/oday-plus-supervisor-live && python3 .orchestrator/approval_queue.py list
 cd /home/lupin/oday-plus && python3 .orchestrator/approval_queue.py list
 
-# 2. Fill in sections 6 and 7 of ../README.md from timeline/, then commit.
+# 2. DONE - sections 6 and 7 of ../README.md are written up from timeline/, and
+#    timeline/README.md indexes every receipt. Two things the driver itself could
+#    not commit were closed out afterwards under the reviewer's tenth STOP GATE:
+#    the EXIT trap's 99-restore.txt (written after the driver's own final commit)
+#    and the /tmp signal files, now timeline/09-*.txt.
 # 3. Open the PR to dev and hand off to reviewer Codex2:
 cd $W && /usr/bin/gh pr create --base dev --head task/ODP-ORCH-CLAUDE-DEFERRED-APPROVAL-LIVE-ROLLOUT-001 ...
-AI_NAME=Claude2 python3 scripts/ai_status.py handoff ODP-ORCH-CLAUDE-DEFERRED-APPROVAL-LIVE-ROLLOUT-001 Codex2 "<summary>"
-# 4. Notify/unblock ODP-DEPLOY-WORKER-JOB-EXECUTION-001 (acceptance criterion).
+AI_NAME=Claude3 python3 scripts/ai_status.py handoff ODP-ORCH-CLAUDE-DEFERRED-APPROVAL-LIVE-ROLLOUT-001 Codex2 "<summary>"
+# 4. Notify/unblock ODP-DEPLOY-WORKER-JOB-EXECUTION-001 (acceptance criterion) -
+#    only after Codex2's review passes, so the unblock does not rest on an
+#    unreviewed proof.
 ```
 
 ## If the driver is killed
