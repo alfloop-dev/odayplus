@@ -56,3 +56,7 @@
 2026-07-29T06:08:56+00:00 oday-plus-dev.c.alfaloop-data-project.internal systemd[6884]: pantheon-supervisor.service: This usually indicates unclean termination of a previous run, or service implementation deficiencies.
 2026-07-29T06:08:57+00:00 oday-plus-dev.c.alfaloop-data-project.internal systemd[6884]: Started pantheon-supervisor.service - Pantheon supervisor.
 2026-07-29T06:08:57+00:00 oday-plus-dev.c.alfaloop-data-project.internal bash[1487837]: [2026-07-29 14:08:57] starting supervisor pid=1487837 poll_interval=60.0s source=config config=.orchestrator/config.json
+2026-07-29T06:09:18+00:00 oday-plus-dev.c.alfaloop-data-project.internal bash[1487837]: [2026-07-29 14:09:18] supervisor tick: lifecycle=running heartbeat=2026-07-29 14:09:18 lag=21.0s changed=yes mode=active queue=1 approvals=0 active_workers=1
+2026-07-29T06:09:18+00:00 oday-plus-dev.c.alfaloop-data-project.internal bash[1487837]: [2026-07-29 14:09:18] heartbeat: 2026-07-29 14:09:18 (utc=2026-07-29T06:09:18Z, lag=21.0s)
+2026-07-29T06:09:18+00:00 oday-plus-dev.c.alfaloop-data-project.internal bash[1487837]: [2026-07-29 14:09:18] active workers: claude:ODP-ORCH-ACTOR-REF-VALIDATION-001(running)
+2026-07-29T06:09:18+00:00 oday-plus-dev.c.alfaloop-data-project.internal bash[1487837]: [2026-07-29 14:09:18] queue: evt-20260729T055555Z-2659876b(started)
