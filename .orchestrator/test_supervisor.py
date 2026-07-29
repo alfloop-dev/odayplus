@@ -8750,34 +8750,126 @@ class ReviewHeadFreezeTests(unittest.TestCase):
             "status": {"tasks": [task]},
         }
         status = {"tasks": [task]}
+        APPROVED = "1111111122222222333333334444444455555555"
 
         ai_status.clear_ai_status_caches()
 
-        with unittest.mock.patch("supervisor.load_status", return_value=status), \
+        # Sub-case 1: resolve_task_sha returns None — head cannot be resolved, must suppress.
+        # Positive control: matching head + ci=success MUST dispatch.
+        with unittest.mock.patch("supervisor.scan_live_worker_pids_by_agent", return_value={}), \
+             unittest.mock.patch("supervisor.outstanding_delivery_indexes", return_value=(set(), set(), set())), \
+             unittest.mock.patch("supervisor.agent_dispatch_loads", return_value={}), \
+             unittest.mock.patch("supervisor.load_status", return_value=status), \
+             unittest.mock.patch("ai_status.resolve_task_sha", return_value=APPROVED), \
+             unittest.mock.patch("ai_status.task_pr_ci_status", return_value=("OPEN", "success")), \
+             unittest.mock.patch("supervisor.agent_auto_dispatch_block_reason", return_value=None), \
+             unittest.mock.patch("supervisor.queue_delivery_event", return_value=True) as mock_queue:
+            dispatched = supervisor.dispatch_ready_tasks(
+                config,
+                state,
+                agent_ids_override=["antigravity4"],
+            )
+            self.assertTrue(dispatched)
+            mock_queue.assert_called_once()
+
+        # Negative: resolve_task_sha returns None — must NOT dispatch.
+        state["seen_event_keys"] = {}
+        task["status"] = "review_approved"
+        with unittest.mock.patch("supervisor.scan_live_worker_pids_by_agent", return_value={}), \
+             unittest.mock.patch("supervisor.outstanding_delivery_indexes", return_value=(set(), set(), set())), \
+             unittest.mock.patch("supervisor.agent_dispatch_loads", return_value={}), \
+             unittest.mock.patch("supervisor.load_status", return_value=status), \
              unittest.mock.patch("ai_status.resolve_task_sha", return_value=None), \
              unittest.mock.patch("ai_status.task_pr_ci_status", return_value=("OPEN", "success")), \
              unittest.mock.patch("supervisor.agent_auto_dispatch_block_reason", return_value=None), \
-             unittest.mock.patch("supervisor.spawn_background_process") as mock_spawn:
-            supervisor.dispatch_ready_tasks(config, state, agent_ids_override=["antigravity4"])
-            mock_spawn.assert_not_called()
+             unittest.mock.patch("supervisor.queue_delivery_event", return_value=True) as mock_queue:
+            dispatched = supervisor.dispatch_ready_tasks(
+                config,
+                state,
+                agent_ids_override=["antigravity4"],
+            )
+            self.assertFalse(dispatched)
+            mock_queue.assert_not_called()
             self.assertEqual(task["status"], "review_approved")
 
-        with unittest.mock.patch("supervisor.load_status", return_value=status), \
-             unittest.mock.patch("ai_status.resolve_task_sha", return_value="1111111122222222333333334444444455555555"), \
+        # Sub-case 2: ci_status = "unknown" — must suppress.
+        # Positive control: matching head + ci=success MUST dispatch.
+        state["seen_event_keys"] = {}
+        task["status"] = "review_approved"
+        with unittest.mock.patch("supervisor.scan_live_worker_pids_by_agent", return_value={}), \
+             unittest.mock.patch("supervisor.outstanding_delivery_indexes", return_value=(set(), set(), set())), \
+             unittest.mock.patch("supervisor.agent_dispatch_loads", return_value={}), \
+             unittest.mock.patch("supervisor.load_status", return_value=status), \
+             unittest.mock.patch("ai_status.resolve_task_sha", return_value=APPROVED), \
+             unittest.mock.patch("ai_status.task_pr_ci_status", return_value=("OPEN", "success")), \
+             unittest.mock.patch("supervisor.agent_auto_dispatch_block_reason", return_value=None), \
+             unittest.mock.patch("supervisor.queue_delivery_event", return_value=True) as mock_queue:
+            dispatched = supervisor.dispatch_ready_tasks(
+                config,
+                state,
+                agent_ids_override=["antigravity4"],
+            )
+            self.assertTrue(dispatched)
+            mock_queue.assert_called_once()
+
+        # Negative: ci_status = "unknown" — must NOT dispatch.
+        state["seen_event_keys"] = {}
+        task["status"] = "review_approved"
+        with unittest.mock.patch("supervisor.scan_live_worker_pids_by_agent", return_value={}), \
+             unittest.mock.patch("supervisor.outstanding_delivery_indexes", return_value=(set(), set(), set())), \
+             unittest.mock.patch("supervisor.agent_dispatch_loads", return_value={}), \
+             unittest.mock.patch("supervisor.load_status", return_value=status), \
+             unittest.mock.patch("ai_status.resolve_task_sha", return_value=APPROVED), \
              unittest.mock.patch("ai_status.task_pr_ci_status", return_value=("OPEN", "unknown")), \
              unittest.mock.patch("supervisor.agent_auto_dispatch_block_reason", return_value=None), \
-             unittest.mock.patch("supervisor.spawn_background_process") as mock_spawn:
-            supervisor.dispatch_ready_tasks(config, state, agent_ids_override=["antigravity4"])
-            mock_spawn.assert_not_called()
+             unittest.mock.patch("supervisor.queue_delivery_event", return_value=True) as mock_queue:
+            dispatched = supervisor.dispatch_ready_tasks(
+                config,
+                state,
+                agent_ids_override=["antigravity4"],
+            )
+            self.assertFalse(dispatched)
+            mock_queue.assert_not_called()
             self.assertEqual(task["status"], "review_approved")
 
-        with unittest.mock.patch("supervisor.load_status", return_value=status), \
-             unittest.mock.patch("ai_status.resolve_task_sha", return_value="1111111122222222333333334444444455555555"), \
+        # Sub-case 3: task_pr_ci_status raises — must suppress (fail closed on error).
+        # Positive control: matching head + ci=success MUST dispatch.
+        state["seen_event_keys"] = {}
+        task["status"] = "review_approved"
+        with unittest.mock.patch("supervisor.scan_live_worker_pids_by_agent", return_value={}), \
+             unittest.mock.patch("supervisor.outstanding_delivery_indexes", return_value=(set(), set(), set())), \
+             unittest.mock.patch("supervisor.agent_dispatch_loads", return_value={}), \
+             unittest.mock.patch("supervisor.load_status", return_value=status), \
+             unittest.mock.patch("ai_status.resolve_task_sha", return_value=APPROVED), \
+             unittest.mock.patch("ai_status.task_pr_ci_status", return_value=("OPEN", "success")), \
+             unittest.mock.patch("supervisor.agent_auto_dispatch_block_reason", return_value=None), \
+             unittest.mock.patch("supervisor.queue_delivery_event", return_value=True) as mock_queue:
+            dispatched = supervisor.dispatch_ready_tasks(
+                config,
+                state,
+                agent_ids_override=["antigravity4"],
+            )
+            self.assertTrue(dispatched)
+            mock_queue.assert_called_once()
+
+        # Negative: task_pr_ci_status raises RuntimeError — must NOT dispatch.
+        state["seen_event_keys"] = {}
+        task["status"] = "review_approved"
+        with unittest.mock.patch("supervisor.scan_live_worker_pids_by_agent", return_value={}), \
+             unittest.mock.patch("supervisor.outstanding_delivery_indexes", return_value=(set(), set(), set())), \
+             unittest.mock.patch("supervisor.agent_dispatch_loads", return_value={}), \
+             unittest.mock.patch("supervisor.load_status", return_value=status), \
+             unittest.mock.patch("ai_status.resolve_task_sha", return_value=APPROVED), \
              unittest.mock.patch("ai_status.task_pr_ci_status", side_effect=RuntimeError("gh error")), \
              unittest.mock.patch("supervisor.agent_auto_dispatch_block_reason", return_value=None), \
-             unittest.mock.patch("supervisor.spawn_background_process") as mock_spawn:
-            supervisor.dispatch_ready_tasks(config, state, agent_ids_override=["antigravity4"])
-            mock_spawn.assert_not_called()
+             unittest.mock.patch("supervisor.queue_delivery_event", return_value=True) as mock_queue:
+            dispatched = supervisor.dispatch_ready_tasks(
+                config,
+                state,
+                agent_ids_override=["antigravity4"],
+            )
+            self.assertFalse(dispatched)
+            mock_queue.assert_not_called()
             self.assertEqual(task["status"], "review_approved")
 
     def test_task_review_gate_status_check_pending_on_head_mismatch(self) -> None:
