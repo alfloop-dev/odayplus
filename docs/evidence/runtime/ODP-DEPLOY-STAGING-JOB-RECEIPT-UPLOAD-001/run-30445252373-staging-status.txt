@@ -1,0 +1,42 @@
+Deploy/Verify Staging run 30445252373 (main, 2026-07-29T10:50:55Z) -- gh transcript
+
+$ gh run list --workflow deploy-staging.yml --limit 10 --json conclusion,headBranch,createdAt
+  30445252373  2026-07-29T10:50:55Z  main  failure
+  30437382203  2026-07-29T08:54:11Z  main  failure
+  30431823363  2026-07-29T07:29:08Z  main  failure
+  30419711398  2026-07-29T03:29:34Z  main  failure
+  30414284355  2026-07-29T01:30:57Z  main  failure
+  30404948422  2026-07-28T22:33:03Z  main  failure
+  30390738167  2026-07-28T19:09:53Z  main  failure
+  30379840183  2026-07-28T16:46:41Z  main  failure
+  30369307812  2026-07-28T14:37:43Z  main  failure
+  30364505165  2026-07-28T13:39:25Z  main  failure
+
+Every staging run on record fails. Where:
+
+$ gh run view 30445252373 --json jobs --jq '.jobs[].steps[] | "\(.number) \(.conclusion) \(.name)"'
+  1	success	Set up job
+  2	success	Run actions/checkout@v4
+  3	success	Install uv
+  4	success	Set up Python
+  5	success	Run Secret Scan
+  6	success	Run Python SAST Scan
+  7	success	Generate SBOM
+  8	failure	Validate release authority, WIF, and live runtime
+  9	skipped	Authenticate to Google Cloud (WIF)
+  10	skipped	Set up Cloud SDK
+  11	skipped	Install Cosign
+  12	skipped	Build, push, deploy, and verify Cloud Run
+  13	skipped	Verify configured staging authority endpoint
+  14	success	Upload staging proof reports
+  27	skipped	Post Install uv
+  28	success	Post Run actions/checkout@v4
+  29	success	Complete job
+
+$ gh run view 30445252373 --log-failed | grep -E 'Error:|No files were found'
+  deploy-staging	UNKNOWN STEP	2026-07-29T10:51:23.4215487Z ^[[36;1m  echo "Error: Workload Identity Federation variables are required." >&2^[[0m
+  deploy-staging	UNKNOWN STEP	2026-07-29T10:51:23.4350265Z Error: Workload Identity Federation variables are required.
+  deploy-staging	UNKNOWN STEP	2026-07-29T10:51:23.6176792Z No files were found with the provided path: .odp_data/deployment/*.json
+
+$ gh api repos/alfloop-dev/odayplus/actions/runs/30445252373/artifacts --jq '.artifacts[]'
+  total_count: 0
