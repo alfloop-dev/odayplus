@@ -1,0 +1,17 @@
+t0: 2026-07-29T04:31:10Z
+supervisor_main_pid_before: 1197865
+supervisor_kill_mode_before: control-group
+dropin_present_before: no
+test_worker_run_id: claude-20260729T042601Z-320a456b
+test_worker_pid: 1343891
+test_worker_log: /home/lupin/oday-plus-supervisor-live/.orchestrator/logs/20260729T042601729689Z-claude-claude2-15f4c3.log
+peer_worker_run_id: claude-20260729T041414Z-56d9b446
+peer_worker_pid: 1348782
+peer_worker_task: ODP-FORECAST-AUTHORITATIVE-HISTORY-BACKFILL-001
+peer_pid_bound_to_run_id: yes
+activity_log_lines_before: 3775
+unmanaged_supervisors_before: <none>
+watchdog_timer_state_before: active
+watchdog_service_state_before: inactive
+total_bounded_wait_s: 1130
+deadman_delay_s: 2030

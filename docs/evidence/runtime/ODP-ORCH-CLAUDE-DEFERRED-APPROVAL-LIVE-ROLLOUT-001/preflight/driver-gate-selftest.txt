@@ -1,0 +1,92 @@
+# driver gate selftest (2026-07-29T05:54:35Z)
+
+## finding 3: dead-man delay must exceed the bounded wait budget
+total_bounded_wait_s: 1808
+deadman_delay_s:      2708
+ok    deadman_delay > total_bounded_wait                         yes
+ok    deadman_margin >= 600s                                     yes
+
+## finding 1/4: pid<->run-id binding rejects recycled and foreign pids
+ok    own marker matches                                         yes
+ok    foreign run id rejected                                    no
+ok    empty pid rejected                                         no
+ok    dead pid rejected                                          no
+
+## finding 5: unmanaged supervisor detection is token-exact
+ok    prompt-substring decoy not reported                        no
+ok    exact-token supervisor reported                            yes
+ok    exclusion list drops the reported pid                      no
+ok    live supervisor is managed (excluding MainPID leaves none) 0
+
+## revision 6/7: phase 1's KillMode=process probe actually passes
+ok    probe verdict                                              pass
+ok    unit created once, by systemd-run                          0
+ok    leftover child survives the stop                           yes
+ok    unit is inactive but still loaded after the stop           inactive/dead/loaded
+ok    systemctl start of the existing transient unit succeeds    0
+ok    restart produced a new, different, non-zero MainPID        yes
+ok    restarted unit spawned a new child                         yes
+ok    old child is still alive after the restart                 yes
+ok    old and new MainPID differ                                 no
+ok    no probe unit file left in the user unit dir               0
+ok    user unit dir entry count unchanged                        7
+ok    cleanup left no marked probe process                       yes
+ok    cleanup left no probe cgroup                               no
+ok    probe unit load state                                      not-found
+ok    probe unit active state                                    inactive
+ok    probe unit sub state                                       dead
+ok    residue verdict                                            yes
+ok    no process still carries the probe marker                  0
+ok    probe payload script removed                               no
+ok    probe command receipts captured                            yes
+probe_receipt_count: 18 (declared max 43)
+ok    no required probe receipt is missing
+ok    receipt completeness verdict                               yes
+ok    receipt count is within the declared call budget           yes
+ok    reset-failed is receipted                                  1
+ok    the ControlGroup query is receipted                        yes
+ok    the MainPID queries are receipted                          2
+ok    every receipt line carries rc, stdout and stderr           0
+
+## revision 9/10: no raw systemd call survives in the probe region
+scan: OK docs/evidence/runtime/ODP-ORCH-CLAUDE-DEFERRED-APPROVAL-LIVE-ROLLOUT-001/runbook/live-boot-reconciliation-driver.sh - probe region routed through probe_cmd/probe_query
+ok    probe region located in this file                          yes
+ok    no raw systemctl/systemd-run call in the probe region      raw=0
+ok    no unbounded state reader call in the probe region         reader=0
+ok    the scan EXITS 0 on this driver                            0
+ok    a routed-only fixture reports no violation                 raw=0 reader=0
+ok    the scan EXITS 0 on a clean fixture                        0
+ok    the scan reports a raw call in the control fixture         raw=1
+ok    the scan reports a reader call in the control fixture      reader=1
+ok    the scan EXITS 2 on a violating fixture                    2
+ok    a raw-call-only fixture reports raw=1 reader=0             raw=1 reader=0
+ok    the scan EXITS 2 on a raw call alone                       2
+ok    a reader-only fixture reports raw=0 reader=1               raw=0 reader=1
+ok    the scan EXITS 2 on an unbounded reader alone              2
+ok    the scan EXITS 1 on a file without the sentinels           1
+
+## revision 7/8: the clean-attempt gate refuses dirty state
+ok    empty timeline+signal dir is clean                         clean
+ok    README + archived attempt dir are not dirt                 clean
+ok    a receipt in the timeline root is dirt                     timeline:98-abort-reason.txt
+ok    an unexpected timeline directory is dirt                   timeline:unexpected-receipts
+ok    a symlink named attempt-* is dirt                          timeline:attempt-9-symlink
+ok    a symlinked README.md is dirt                              timeline:README.md
+ok    a dotfile in the timeline root is dirt                     timeline:.leftover
+ok    restored README + attempt dir are clean again              clean
+ok    a leftover verdict is dirt                                 signal:verdict
+ok    a leftover probe-child.pid is dirt                         signal:probe-child.pid
+ok    a leftover probe-commands.txt is dirt                      signal:probe-commands.txt
+ok    a leftover deadman.log is dirt                             signal:deadman.log
+ok    an unknown signal entry is dirt                            signal:leftovers
+ok    an emptied signal dir is clean again                       clean
+ok    a signal root that is not a directory is dirt              signal-root:sig
+
+## finding 6: terminal verdict is preserved, not overwritten by EXIT
+ok    proof_complete survives the EXIT trap                      proof_complete
+ok    exit code recorded alongside the verdict                   0
+ok    abort reason survives a non-zero exit                      abort_no_approval_recorded
+ok    abort exit code recorded                                   18
+ok    unexplained exit falls back to rc marker                   driver_finished_rc_143
+
+SELFTEST PASS

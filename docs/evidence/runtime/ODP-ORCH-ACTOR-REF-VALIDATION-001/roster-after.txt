@@ -1,0 +1,63 @@
+=== agents[] roster (21 entries) ===
+  Claude
+  Claude2
+  Antigravity
+  Antigravity2
+  Antigravity3
+  Antigravity4
+  Antigravity5
+  Antigravity6
+  Antigravity7
+  Gemini
+  Gemini2
+  Codex
+  Codex2
+  Copilot
+  Human/Ops
+  Claude3
+  Codex5
+  Codex6
+  Codex8
+  Codex9
+  CodexCoordinator
+
+=== workload keys (21) ===
+  Claude
+  Claude2
+  Antigravity
+  Antigravity2
+  Antigravity3
+  Antigravity4
+  Antigravity5
+  Antigravity6
+  Antigravity7
+  Gemini
+  Gemini2
+  Codex
+  Codex2
+  Copilot
+  Human/Ops
+  Codex8
+  Codex9
+  Codex5
+  Codex6
+  Claude3
+  CodexCoordinator
+
+=== blockers waiting_for ===
+   0 'Antigravity'        task=ODP-RUNTIME-GCP-001
+   1 'Codex9'             task=ODP-RUNTIME-GCP-001
+   2 'Codex6'             task=ODP-RUNTIME-GCP-001
+   3 'Claude2'            task=ODP-LIVE-RUNTIME-DEV-COMPOSE-001
+   4 'Human/Ops'          task=ODP-PRODUCTION-MODEL-REGISTRY-001
+   5 'Human/Ops'          task=ODP-PRODUCTION-MODEL-REGISTRY-001  [repaired from prose, 66 chars]
+   6 'Codex'              task=ODP-P10-DEV-REDEPLOY-VERIFY-001
+   7 'Antigravity3'       task=ODP-ORCH-CLAUDE-SESSION-LIMIT-REVIEW-001
+   8 'Claude2'            task=ODP-P10-DEV-REDEPLOY-VERIFY-001  [repaired from prose, 314 chars]
+   9 'Antigravity3'       task=ODP-P10-DEV-REDEPLOY-VERIFY-001  [repaired from prose, 58 chars]
+  10 'Claude2'            task=ODP-P10-DEV-REDEPLOY-VERIFY-001
+  11 'CodexCoordinator'   task=ODP-DEPLOY-WORKER-JOB-EXECUTION-001
+  12 'Codex'              task=ODP-DEPLOY-WORKER-JOB-EXECUTION-001
+  13 'Human/Ops'          task=ODP-FORECAST-AUTHORITATIVE-HISTORY-BACKFILL-001
+  14 'Codex'              task=ODP-ORCH-CLAUDE-DEFERRED-APPROVAL-LIVE-ROLLOUT-001
+  15 'Codex2'             task=ODP-ORCH-CLAUDE-DEFERRED-APPROVAL-LIVE-ROLLOUT-001  [repaired from prose, 1446 chars]

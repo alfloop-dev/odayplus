@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 from __future__ import annotations
 
+import ast
 import io
 import json
 import os
@@ -595,8 +596,17 @@ class SidecarTaskTests(unittest.TestCase):
             "TASK_MUTATES_CANONICAL": "false",
             "TASK_AUTO_CREATED_BY": "supervisor-underutilization",
         }
-        with mock.patch.dict(os.environ, env, clear=False):
-            ai_status.command_assign(self.state, ["APP-001-SIDECAR-BFF-HANDOFF", "Gemini", "Copilot"])
+        with (
+            mock.patch.dict(os.environ, env, clear=False),
+            mock.patch.object(
+                ai_status,
+                "configured_agent_names",
+                return_value={"Codex", "Claude2", "Antigravity3"},
+            ),
+        ):
+            # Owner/reviewer must be configured workers: Gemini and Copilot are
+            # KNOWN_AGENTS leftovers the Supervisor cannot dispatch.
+            ai_status.command_assign(self.state, ["APP-001-SIDECAR-BFF-HANDOFF", "Claude2", "Antigravity3"])
 
         task = ai_status.get_task(self.state, "APP-001-SIDECAR-BFF-HANDOFF")
         self.assertIsNotNone(task)
@@ -2849,6 +2859,757 @@ class StatusCheckEmissionTests(unittest.TestCase):
                 {"id": "ODP-001", "status": "review_approved"},
                 "review_approved"
             )
+
+
+class ActorReferenceValidationTests(unittest.TestCase):
+    """Actor-shaped fields must hold agent names, never prose or task ids.
+
+    Regression cover for the synthetic-agent fabrication path: a worker that
+    passed a blocker sentence where an agent name was expected used to mint a
+    permanent fleet agent in ai-status.json.
+    """
+
+    PROSE = (
+        "STOP FOR CODEX2 REVIEW ON EXACT HEAD 6ca4726c (revision 8). Two gates are "
+        "open at once and both need Codex2/coordinator action, not more owner work."
+    )
+    TASK_ID = "ODP-P10-FLEET-CONFLICT-REAUDIT-001"
+    # Stands in for the merged Supervisor config: config.json workers plus the
+    # config.local.json overlay that declares Codex3 through Codex9.
+    CONFIGURED = frozenset(
+        {"Claude", "Claude2", "Claude3", "Antigravity3", "Codex", "Codex2", "Codex5", "Codex8"}
+    )
+
+    def setUp(self) -> None:
+        self.addCleanup(self._restore_roster)
+        self._known_before = dict(ai_status.KNOWN_AGENTS)
+        self._quarantined_before = set(ai_status.QUARANTINED_AGENTS)
+        # Keep every case away from the real merged .orchestrator config.
+        patcher = mock.patch.object(
+            ai_status, "configured_agent_names", return_value=set(self.CONFIGURED)
+        )
+        patcher.start()
+        self.addCleanup(patcher.stop)
+
+    def _restore_roster(self) -> None:
+        ai_status.KNOWN_AGENTS.clear()
+        ai_status.KNOWN_AGENTS.update(self._known_before)
+        ai_status.QUARANTINED_AGENTS.clear()
+        ai_status.QUARANTINED_AGENTS.update(self._quarantined_before)
+
+    def _state(self) -> dict:
+        return {
+            "agents": [
+                {
+                    "name": name,
+                    "capability_lane": [],
+                    "status": "idle",
+                    "current_task_ids": [],
+                    "branch": "",
+                    "next": "",
+                    "last_update": None,
+                }
+                for name in ("Claude", "Codex2")
+            ],
+            "tasks": [
+                {
+                    "id": "ODP-ACTOR-REF-001",
+                    "title": "Actor reference fixture",
+                    "phase": "Fleet Control Plane Integrity",
+                    "owner": "Claude",
+                    "reviewer": "Codex2",
+                    "status": "in_progress",
+                    "depends_on": [],
+                    "artifacts": [],
+                    "acceptance": [],
+                    "next": "",
+                    "last_update": "2026-07-29T00:00:00Z",
+                }
+            ],
+            "handoffs": [],
+            "blockers": [],
+            "workload": {},
+            "workload_summary": {},
+        }
+
+    # -- shape validation ---------------------------------------------------
+
+    def test_valid_named_actors_are_accepted(self) -> None:
+        for name in ("Claude", "Claude2", "Antigravity7", "Codex2", "Human/Ops", "CodexCoordinator"):
+            self.assertIsNone(ai_status.actor_reference_problem(name), name)
+
+    def test_task_id_is_rejected(self) -> None:
+        problem = ai_status.actor_reference_problem(self.TASK_ID)
+        self.assertIsNotNone(problem)
+        self.assertIn("task id", problem)
+
+    def test_prose_is_rejected(self) -> None:
+        problem = ai_status.actor_reference_problem("Remediation task for migration-compat timeout")
+        self.assertIsNotNone(problem)
+        self.assertIn("prose", problem)
+
+    def test_oversized_string_is_rejected(self) -> None:
+        problem = ai_status.actor_reference_problem("x" * 400)
+        self.assertIsNotNone(problem)
+        self.assertIn("max 40", problem)
+
+    def test_empty_reference_is_rejected(self) -> None:
+        self.assertIsNotNone(ai_status.actor_reference_problem(""))
+        self.assertIsNotNone(ai_status.actor_reference_problem(None))
+
+    def test_aliases_and_human_ops_semantics_survive_validation(self) -> None:
+        for raw, expected in (
+            ("agy3", "Antigravity3"),
+            ("claude 2", "Claude2"),
+            ("human ops", "Human/Ops"),
+            ("ops", "Human/Ops"),
+        ):
+            self.assertEqual(
+                expected,
+                ai_status.resolve_actor_reference(raw, field="waiting-for"),
+                raw,
+            )
+
+    def test_unknown_but_well_shaped_actor_is_rejected(self) -> None:
+        with self.assertRaises(SystemExit) as ctx:
+            ai_status.resolve_actor_reference("Nessie9", field="owner")
+        self.assertIn("not a registered agent", str(ctx.exception))
+
+    def test_durable_roster_entry_is_not_an_authority_for_new_input(self) -> None:
+        """A name that only exists in agents[] must not legitimise itself.
+
+        agents[] is exactly where a fabricated actor lands, so accepting it as a
+        declaration would let one bad record validate the next command.
+        """
+        state = self._state()
+        state["agents"].append({"name": "Nessie9", "capability_lane": [], "status": "idle",
+                                "current_task_ids": [], "branch": "", "next": "", "last_update": None})
+        with self.assertRaises(SystemExit) as ctx:
+            ai_status.resolve_actor_reference("Nessie9", field="owner")
+        self.assertIn("agents[] is not a declaration", str(ctx.exception))
+        # The record itself stays readable — reading state must never abort.
+        ai_status.validate_state(state)
+        self.assertIn("Nessie9", [agent["name"] for agent in state["agents"]])
+
+    def test_static_known_agent_without_config_is_rejected(self) -> None:
+        """Gemini/Copilot survive in KNOWN_AGENTS but the Supervisor cannot dispatch them."""
+        for stale in ("Gemini", "Gemini2", "Copilot"):
+            self.assertIn(stale, ai_status.KNOWN_AGENTS, stale)
+            with self.assertRaises(SystemExit, msg=stale) as ctx:
+                ai_status.resolve_actor_reference(stale, field="owner")
+            self.assertIn("not a registered agent", str(ctx.exception))
+
+    def test_non_worker_actors_are_accepted_without_config(self) -> None:
+        for actor in ("Human/Ops", "Orchestrator", "CodexCoordinator"):
+            self.assertEqual(
+                actor, ai_status.resolve_actor_reference(actor, field="waiting-for"), actor
+            )
+
+    def test_extra_agents_env_registers_an_actor(self) -> None:
+        with self.assertRaises(SystemExit):
+            ai_status.resolve_actor_reference("Nessie9", field="owner")
+        with mock.patch.dict(os.environ, {"AI_STATUS_EXTRA_AGENTS": "Nessie9"}):
+            self.assertEqual(
+                "Nessie9", ai_status.resolve_actor_reference("Nessie9", field="owner")
+            )
+
+    # -- no durable mutation on rejection -----------------------------------
+
+    def test_blocker_command_rejects_prose_before_mutating_state(self) -> None:
+        state = self._state()
+        before = json.dumps(state, sort_keys=True)
+        with mock.patch.dict(os.environ, {"AI_NAME": "Claude"}):
+            with self.assertRaises(SystemExit):
+                ai_status.command_blocker(state, ["ODP-ACTOR-REF-001", "message", self.PROSE])
+        self.assertEqual(before, json.dumps(state, sort_keys=True))
+        self.assertNotIn(self.PROSE, ai_status.KNOWN_AGENTS)
+
+    def test_blocker_command_rejects_task_id_before_mutating_state(self) -> None:
+        state = self._state()
+        before = json.dumps(state, sort_keys=True)
+        with mock.patch.dict(os.environ, {"AI_NAME": "Claude"}):
+            with self.assertRaises(SystemExit):
+                ai_status.command_blocker(state, ["ODP-ACTOR-REF-001", "message", self.TASK_ID])
+        self.assertEqual(before, json.dumps(state, sort_keys=True))
+        self.assertNotIn(self.TASK_ID, ai_status.KNOWN_AGENTS)
+
+    def test_assign_rejects_prose_owner(self) -> None:
+        state = self._state()
+        with self.assertRaises(SystemExit):
+            ai_status.command_assign(state, ["ODP-NEW-001", self.PROSE, "Codex2"])
+        self.assertEqual(1, len(state["tasks"]))
+
+    # -- corrupt state on disk stays readable, but never grows the roster ---
+
+    def test_existing_prose_reference_does_not_become_a_durable_agent(self) -> None:
+        state = self._state()
+        state["blockers"].append(
+            {
+                "task_id": "ODP-ACTOR-REF-001",
+                "owner": "Claude",
+                "waiting_for": self.PROSE,
+                "message": "recorded before validation existed",
+                "status": "open",
+                "created_at": "2026-07-29T00:00:00Z",
+            }
+        )
+        ai_status.validate_state(state)
+        ai_status.recompute_agents(state)
+        ai_status.recompute_workload(state)
+
+        roster = [agent["name"] for agent in state["agents"]]
+        self.assertNotIn(self.PROSE, roster)
+        self.assertNotIn(self.PROSE, state["workload"])
+        self.assertIn("Claude", roster)
+
+    def test_invalid_actor_references_are_reported(self) -> None:
+        state = self._state()
+        state["tasks"][0]["waiting_for"] = self.TASK_ID
+        findings = ai_status.invalid_actor_references(state)
+        self.assertEqual(1, len(findings))
+        location, value, problem = findings[0]
+        self.assertIn("waiting_for", location)
+        self.assertEqual(self.TASK_ID, value)
+        self.assertIn("task id", problem)
+
+    # -- audited repair path ------------------------------------------------
+
+    def test_retarget_blocker_repairs_reference_and_keeps_original_text(self) -> None:
+        state = self._state()
+        state["tasks"][0]["status"] = "blocked"
+        state["tasks"][0]["waiting_for"] = self.PROSE
+        state["blockers"].append(
+            {
+                "task_id": "ODP-ACTOR-REF-001",
+                "owner": "Claude",
+                "waiting_for": self.PROSE,
+                "message": "rollout gate",
+                "status": "open",
+                "created_at": "2026-07-29T00:00:00Z",
+            }
+        )
+        with mock.patch.dict(os.environ, {"AI_NAME": "Claude"}), \
+                mock.patch.object(ai_status, "append_log") as logged:
+            ai_status.command_retarget_blocker(
+                state, ["ODP-ACTOR-REF-001", "Codex2", "reviewer owns the gate"]
+            )
+
+        blocker = state["blockers"][0]
+        self.assertEqual("Codex2", blocker["waiting_for"])
+        self.assertEqual(self.PROSE, blocker["original_waiting_for"])
+        self.assertIn(self.PROSE, blocker["message"])
+        self.assertEqual("Claude", blocker["retargeted_by"])
+        self.assertEqual("Codex2", state["tasks"][0]["waiting_for"])
+        logged.assert_called_once()
+
+    def test_retarget_blocker_rejects_a_prose_replacement(self) -> None:
+        state = self._state()
+        state["blockers"].append(
+            {
+                "task_id": "ODP-ACTOR-REF-001",
+                "owner": "Claude",
+                "waiting_for": self.PROSE,
+                "message": "rollout gate",
+                "status": "open",
+                "created_at": "2026-07-29T00:00:00Z",
+            }
+        )
+        with mock.patch.dict(os.environ, {"AI_NAME": "Claude"}):
+            with self.assertRaises(SystemExit):
+                ai_status.command_retarget_blocker(
+                    state, ["ODP-ACTOR-REF-001", self.TASK_ID, "bad replacement"]
+                )
+        self.assertEqual(self.PROSE, state["blockers"][0]["waiting_for"])
+
+    def test_retarget_blocker_leaves_another_owners_valid_blocker_alone(self) -> None:
+        state = self._state()
+        state["blockers"].append(
+            {
+                "task_id": "ODP-ACTOR-REF-001",
+                "owner": "Codex2",
+                "waiting_for": "Antigravity3",
+                "message": "valid blocker owned by someone else",
+                "status": "open",
+                "created_at": "2026-07-29T00:00:00Z",
+            }
+        )
+        with mock.patch.dict(os.environ, {"AI_NAME": "Claude"}), \
+                mock.patch.object(ai_status, "append_log"):
+            ai_status.command_retarget_blocker(
+                state, ["ODP-ACTOR-REF-001", "Claude2", "attempted reassignment"]
+            )
+        self.assertEqual("Antigravity3", state["blockers"][0]["waiting_for"])
+
+    # -- audited cleanup ----------------------------------------------------
+
+    def _roster_state_for_prune(self) -> dict:
+        state = self._state()
+        for name in (self.TASK_ID, "Codex7", "Nessie9"):
+            state["agents"].append(
+                {
+                    "name": name,
+                    "capability_lane": [],
+                    "status": "idle",
+                    "current_task_ids": [],
+                    "branch": "",
+                    "next": "",
+                    "last_update": None,
+                }
+            )
+        state["handoffs"].append(
+            {
+                "task_id": "ODP-ACTOR-REF-001",
+                "from": "Nessie9",
+                "to": "Claude",
+                "message": "still referenced",
+                "status": "done",
+                "created_at": "2026-07-29T00:00:00Z",
+            }
+        )
+        return state
+
+    def test_prune_is_dry_run_by_default(self) -> None:
+        state = self._roster_state_for_prune()
+        before = [agent["name"] for agent in state["agents"]]
+        with mock.patch.dict(os.environ, {"AI_NAME": "Claude"}), \
+                mock.patch("sys.stdout", new_callable=io.StringIO):
+            ai_status.command_prune_agents(state, [])
+        self.assertEqual(before, [agent["name"] for agent in state["agents"]])
+
+    def test_prune_removes_only_unreferenced_synthetic_entries(self) -> None:
+        state = self._roster_state_for_prune()
+        with mock.patch.dict(os.environ, {"AI_NAME": "Claude"}), \
+                mock.patch.object(ai_status, "append_log") as logged, \
+                mock.patch("sys.stdout", new_callable=io.StringIO):
+            ai_status.command_prune_agents(state, ["--apply", "cleanup"])
+
+        roster = [agent["name"] for agent in state["agents"]]
+        # Removed: the task-id entry and the undeclared, unreferenced Codex7.
+        self.assertNotIn(self.TASK_ID, roster)
+        self.assertNotIn("Codex7", roster)
+        # Kept: configured agents and the undeclared-but-referenced Nessie9.
+        self.assertIn("Claude", roster)
+        self.assertIn("Codex2", roster)
+        self.assertIn("Nessie9", roster)
+        self.assertEqual(2, logged.call_count)
+
+    def test_prune_never_removes_a_configured_agent_that_is_idle(self) -> None:
+        state = self._state()
+        state["agents"].append(
+            {
+                "name": "Codex5",
+                "capability_lane": [],
+                "status": "idle",
+                "current_task_ids": [],
+                "branch": "",
+                "next": "",
+                "last_update": None,
+            }
+        )
+        report = {entry["name"]: entry for entry in ai_status.synthetic_roster_entries(state)}
+        self.assertTrue(report["Codex5"]["keep"])
+        self.assertIn("config.local.json", report["Codex5"]["reason"])
+
+    def test_prune_does_not_advertise_static_lanes_as_removable(self) -> None:
+        """Gemini/Copilot are not registered actors, but pruning them is a no-op.
+
+        `recompute_agents()` recreates a roster row for every static
+        `KNOWN_AGENTS` lane, so reporting them as removable would churn the
+        roster on every sync and misreport the result.
+        """
+        state = self._state()
+        state["agents"].append(
+            {
+                "name": "Gemini2",
+                "capability_lane": [],
+                "status": "idle",
+                "current_task_ids": [],
+                "branch": "",
+                "next": "",
+                "last_update": None,
+            }
+        )
+        report = {entry["name"]: entry for entry in ai_status.synthetic_roster_entries(state)}
+        self.assertTrue(report["Gemini2"]["keep"])
+        self.assertIn("no-op", report["Gemini2"]["reason"])
+        # Being kept in the roster is not the same as being a usable actor.
+        with self.assertRaises(SystemExit):
+            ai_status.resolve_actor_reference("Gemini2", field="owner")
+
+    def test_prune_keeps_an_undeclared_agent_that_is_carrying_work(self) -> None:
+        """Cleanup is for dead synthetic entries, never for a busy actor."""
+        state = self._state()
+        state["agents"].append(
+            {
+                "name": "Nessie9",
+                "capability_lane": [],
+                "status": "working",
+                "current_task_ids": ["ODP-ACTOR-REF-001"],
+                "branch": "",
+                "next": "",
+                "last_update": None,
+            }
+        )
+        report = {entry["name"]: entry for entry in ai_status.synthetic_roster_entries(state)}
+        self.assertTrue(report["Nessie9"]["keep"])
+        self.assertIn("live workload", report["Nessie9"]["reason"])
+
+    def test_prune_never_removes_a_config_declared_agent(self) -> None:
+        state = self._state()
+        state["agents"].append(
+            {
+                "name": "Claude3",
+                "capability_lane": [],
+                "status": "idle",
+                "current_task_ids": [],
+                "branch": "",
+                "next": "",
+                "last_update": None,
+            }
+        )
+        with mock.patch.object(ai_status, "configured_agent_names", return_value={"Claude3"}):
+            report = {entry["name"]: entry for entry in ai_status.synthetic_roster_entries(state)}
+        self.assertTrue(report["Claude3"]["keep"])
+        self.assertIn("config.json", report["Claude3"]["reason"])
+
+
+class MergedConfigActorAuthorityTests(unittest.TestCase):
+    """Actor authority must be the config the Supervisor actually dispatches from.
+
+    `common.load_config()` deep-merges `.orchestrator/config.json` with the
+    gitignored `.orchestrator/config.local.json`. On this fleet the overlay is
+    the *only* place Codex3-Codex9 are declared, so reading the tracked half
+    alone would classify six live workers as synthetic.
+    """
+
+    BASE_AGENTS = {
+        "claude": {"display_name": "Claude", "provider": "claude"},
+        "codex2": {"display_name": "Codex2", "provider": "codex"},
+    }
+    OVERLAY_AGENTS = {
+        f"codex{index}": {"display_name": f"Codex{index}", "provider": "codex"}
+        for index in range(3, 10)
+    }
+
+    def setUp(self) -> None:
+        ai_status._MERGED_CONFIG_CACHE.clear()
+        self.addCleanup(ai_status._MERGED_CONFIG_CACHE.clear)
+        self._known_before = dict(ai_status.KNOWN_AGENTS)
+        self.addCleanup(self._restore_roster)
+
+    def _restore_roster(self) -> None:
+        ai_status.KNOWN_AGENTS.clear()
+        ai_status.KNOWN_AGENTS.update(self._known_before)
+
+    def _write_config(self, directory: Path, payload: dict, name: str = "config.json") -> Path:
+        directory.mkdir(parents=True, exist_ok=True)
+        path = directory / name
+        path.write_text(json.dumps(payload), encoding="utf-8")
+        return path
+
+    def test_local_overlay_workers_are_declared_and_match_common_deep_merge(self) -> None:
+        import common
+
+        with tempfile.TemporaryDirectory(prefix="ai-status-merged-config-") as temp_dir:
+            orchestrator_dir = Path(temp_dir) / ".orchestrator"
+            config_file = self._write_config(orchestrator_dir, {"agents": self.BASE_AGENTS})
+            self._write_config(
+                orchestrator_dir, {"agents": self.OVERLAY_AGENTS}, name="config.local.json"
+            )
+            missing_status_overlay = Path(temp_dir) / "status" / ".orchestrator" / "config.local.json"
+
+            with (
+                mock.patch.object(ai_status, "CONFIG_FILE", config_file),
+                mock.patch.object(
+                    ai_status, "STATUS_ROOT_CONFIG_LOCAL_FILE", missing_status_overlay
+                ),
+            ):
+                merged = ai_status.merged_orchestrator_config()
+                names = ai_status.configured_agent_names()
+                accepted = [
+                    ai_status.resolve_actor_reference(name, field="owner")
+                    for name in ("Codex5", "Codex6", "Codex8", "Codex9")
+                ]
+                # Case-folding must land on the declared spelling, not a new name.
+                folded = ai_status.canonical_agent_name("codex5")
+
+        expected = common.deep_merge({"agents": self.BASE_AGENTS}, {"agents": self.OVERLAY_AGENTS})
+        self.assertEqual(expected, merged)
+        self.assertEqual({"Claude", "Codex2"} | {f"Codex{i}" for i in range(3, 10)}, names)
+        self.assertEqual(["Codex5", "Codex6", "Codex8", "Codex9"], accepted)
+        self.assertEqual("Codex5", folded)
+
+    def test_without_the_overlay_the_same_workers_are_not_declared(self) -> None:
+        """Proves the overlay — not a static table — is what admits Codex3-Codex9."""
+        with tempfile.TemporaryDirectory(prefix="ai-status-base-only-") as temp_dir:
+            orchestrator_dir = Path(temp_dir) / ".orchestrator"
+            config_file = self._write_config(orchestrator_dir, {"agents": self.BASE_AGENTS})
+            missing_status_overlay = Path(temp_dir) / "status" / ".orchestrator" / "config.local.json"
+
+            with (
+                mock.patch.object(ai_status, "CONFIG_FILE", config_file),
+                mock.patch.object(
+                    ai_status, "STATUS_ROOT_CONFIG_LOCAL_FILE", missing_status_overlay
+                ),
+            ):
+                self.assertEqual({"Claude", "Codex2"}, ai_status.configured_agent_names())
+                with self.assertRaises(SystemExit):
+                    ai_status.resolve_actor_reference("Codex5", field="owner")
+
+    def test_status_root_overlay_covers_worker_worktrees(self) -> None:
+        """A worktree only checks out the tracked half of the config.
+
+        Workers run `ai_status.py` from a worktree while writing to the live
+        status root, so the live overlay has to be merged from there too or the
+        same command would reject Codex5 in a worktree and accept it at home.
+        """
+        with tempfile.TemporaryDirectory(prefix="ai-status-worktree-config-") as temp_dir:
+            worktree_dir = Path(temp_dir) / "worktree" / ".orchestrator"
+            config_file = self._write_config(worktree_dir, {"agents": self.BASE_AGENTS})
+            live_dir = Path(temp_dir) / "live" / ".orchestrator"
+            status_overlay = self._write_config(
+                live_dir, {"agents": self.OVERLAY_AGENTS}, name="config.local.json"
+            )
+
+            with (
+                mock.patch.object(ai_status, "CONFIG_FILE", config_file),
+                mock.patch.object(ai_status, "STATUS_ROOT_CONFIG_LOCAL_FILE", status_overlay),
+            ):
+                self.assertIn("Codex7", ai_status.configured_agent_names())
+                self.assertEqual(
+                    "Codex7", ai_status.resolve_actor_reference("Codex7", field="owner")
+                )
+
+    def test_live_path_delegates_to_common_load_config(self) -> None:
+        """When pointed at the real config path, use Supervisor's loader verbatim."""
+        import common
+
+        self.assertEqual(common.DEFAULT_CONFIG_PATH, ai_status.CONFIG_FILE)
+        with mock.patch.object(
+            common, "load_config", return_value={"agents": {"nessie": {"display_name": "Nessie9"}}}
+        ) as load_config:
+            ai_status._MERGED_CONFIG_CACHE.clear()
+            names = ai_status.configured_agent_names()
+        load_config.assert_called_once_with()
+        self.assertIn("Nessie9", names)
+
+    def test_codex3_is_its_own_worker_not_an_alias_of_codex(self) -> None:
+        """The retired `codex3 -> Codex` alias would silently reassign a real worker."""
+        self.assertNotIn("codex3", ai_status.AGENT_ALIASES)
+        with mock.patch.object(
+            ai_status, "configured_agent_names", return_value={"Codex", "Codex3"}
+        ):
+            self.assertEqual("Codex3", ai_status.canonical_agent_name("codex3"))
+            self.assertEqual(
+                "Codex3", ai_status.resolve_actor_reference("Codex3", field="owner")
+            )
+
+
+class ActorCommandMutationGuardTests(unittest.TestCase):
+    """Every mutating actor command must fail *before* it touches durable state."""
+
+    PROSE = (
+        "STOP FOR CODEX2 REVIEW ON EXACT HEAD 6ca4726c (revision 8). Two gates are "
+        "open at once and both need Codex2/coordinator action, not more owner work."
+    )
+    TASK_ID = "ODP-ACTOR-REF-001"
+
+    def setUp(self) -> None:
+        self._known_before = dict(ai_status.KNOWN_AGENTS)
+        self._quarantined_before = set(ai_status.QUARANTINED_AGENTS)
+        self.addCleanup(self._restore_roster)
+        patcher = mock.patch.object(
+            ai_status, "configured_agent_names", return_value={"Claude", "Codex2"}
+        )
+        patcher.start()
+        self.addCleanup(patcher.stop)
+        # A real durable write would be a test failure, not a fixture.
+        log_patcher = mock.patch.object(ai_status, "append_log")
+        self.append_log = log_patcher.start()
+        self.addCleanup(log_patcher.stop)
+
+    def _restore_roster(self) -> None:
+        ai_status.KNOWN_AGENTS.clear()
+        ai_status.KNOWN_AGENTS.update(self._known_before)
+        ai_status.QUARANTINED_AGENTS.clear()
+        ai_status.QUARANTINED_AGENTS.update(self._quarantined_before)
+
+    def _state(self) -> dict:
+        return {
+            "agents": [
+                {
+                    "name": name,
+                    "capability_lane": [],
+                    "status": "idle",
+                    "current_task_ids": [],
+                    "branch": "",
+                    "next": "",
+                    "last_update": None,
+                }
+                for name in ("Claude", "Codex2")
+            ],
+            "tasks": [
+                {
+                    "id": self.TASK_ID,
+                    "title": "Actor reference fixture",
+                    "phase": "Fleet Control Plane Integrity",
+                    "owner": "Claude",
+                    "reviewer": "Codex2",
+                    "status": "in_progress",
+                    "depends_on": [],
+                    "artifacts": [],
+                    "acceptance": [],
+                    "next": "",
+                    "last_update": "2026-07-29T00:00:00Z",
+                }
+            ],
+            "handoffs": [],
+            "blockers": [
+                {
+                    "task_id": self.TASK_ID,
+                    "owner": "Claude",
+                    "waiting_for": self.PROSE,
+                    "message": "recorded before validation existed",
+                    "status": "open",
+                    "created_at": "2026-07-29T00:00:00Z",
+                }
+            ],
+            "workload": {},
+            "workload_summary": {},
+        }
+
+    def _assert_rejected_without_mutation(self, command, args, env) -> None:
+        state = self._state()
+        before = json.dumps(state, sort_keys=True)
+        roster_before = set(ai_status.KNOWN_AGENTS)
+        with mock.patch.dict(os.environ, env, clear=False):
+            with mock.patch("sys.stdout", new_callable=io.StringIO):
+                with self.assertRaises(SystemExit):
+                    command(state, args)
+        self.assertEqual(before, json.dumps(state, sort_keys=True))
+        self.assertEqual(roster_before, set(ai_status.KNOWN_AGENTS))
+        self.append_log.assert_not_called()
+
+    def test_bad_actor_argument_is_rejected_by_every_mutating_command(self) -> None:
+        cases = {
+            "assign owner": (
+                ai_status.command_assign,
+                ["ODP-NEW-001", self.PROSE, "Codex2"],
+                {"AI_NAME": "Claude"},
+            ),
+            "assign reviewer": (
+                ai_status.command_assign,
+                ["ODP-NEW-001", "Claude", "ODP-P10-FLEET-CONFLICT-REAUDIT-001"],
+                {"AI_NAME": "Claude"},
+            ),
+            "handoff target": (
+                ai_status.command_handoff,
+                [self.TASK_ID, self.PROSE, "please review"],
+                {"AI_NAME": "Claude"},
+            ),
+            "blocker waiting-for": (
+                ai_status.command_blocker,
+                [self.TASK_ID, "blocked on the gate", self.PROSE],
+                {"AI_NAME": "Claude"},
+            ),
+            "retarget_blocker target": (
+                ai_status.command_retarget_blocker,
+                [self.TASK_ID, self.PROSE, "repair"],
+                {"AI_NAME": "Claude"},
+            ),
+        }
+        for label, (command, args, env) in cases.items():
+            with self.subTest(command=label):
+                self._assert_rejected_without_mutation(command, args, env)
+
+    def test_unregistered_actor_argument_is_rejected_by_every_mutating_command(self) -> None:
+        cases = {
+            "assign owner": (
+                ai_status.command_assign,
+                ["ODP-NEW-001", "Nessie9", "Codex2"],
+                {"AI_NAME": "Claude"},
+            ),
+            "handoff target": (
+                ai_status.command_handoff,
+                [self.TASK_ID, "Nessie9", "please review"],
+                {"AI_NAME": "Claude"},
+            ),
+            "blocker waiting-for": (
+                ai_status.command_blocker,
+                [self.TASK_ID, "blocked on the gate", "Nessie9"],
+                {"AI_NAME": "Claude"},
+            ),
+            "retarget_blocker target": (
+                ai_status.command_retarget_blocker,
+                [self.TASK_ID, "Nessie9", "repair"],
+                {"AI_NAME": "Claude"},
+            ),
+        }
+        for label, (command, args, env) in cases.items():
+            with self.subTest(command=label):
+                self._assert_rejected_without_mutation(command, args, env)
+
+    # Every mutating command that records an actor, with arguments that are
+    # valid enough to get past its usage check — so the only thing that can
+    # reject the call is the AI_NAME gate itself.
+    AI_NAME_CASES = {
+        "assign": ["ODP-NEW-001", "Claude", "Codex2"],
+        "start": [TASK_ID, "starting"],
+        "progress": [TASK_ID, "still going"],
+        "note": [TASK_ID, "a note"],
+        "reopen": [TASK_ID, "reopening"],
+        "handoff": [TASK_ID, "Codex2", "please review"],
+        "blocker": [TASK_ID, "blocked", "Codex2"],
+        "retarget_blocker": [TASK_ID, "Codex2", "repair"],
+        "prune_agents": ["--apply", "cleanup"],
+        "restore_approved": [TASK_ID, "restoring"],
+        "done": [TASK_ID, "finished"],
+        "supersede": [TASK_ID, "superseded"],
+        "approve": [TASK_ID, "approved"],
+        "archive_migrate": [],
+        "wave open": ["open", "W-2026-07-29"],
+        "wave close": ["close"],
+    }
+
+    def test_ai_name_case_table_covers_every_actor_bearing_command(self) -> None:
+        """The table below is the contract; this keeps it from silently rotting.
+
+        A new mutating command must either appear here or be declared actorless
+        on purpose. Without this check the table stays green while the surface
+        it claims to cover grows past it — which is exactly how the eleven
+        unvalidated call sites survived the first pass.
+        """
+        covered = {label.split()[0] for label in self.AI_NAME_CASES}
+        expected = set(ai_status.MUTATING_COMMANDS) - ai_status.ACTORLESS_MUTATING_COMMANDS
+        self.assertEqual(expected, covered)
+        self.assertEqual({"sync"}, set(ai_status.ACTORLESS_MUTATING_COMMANDS))
+
+    def test_bad_ai_name_is_rejected_by_every_mutating_command(self) -> None:
+        """Malformed prose and a well-shaped but unregistered name both fail closed.
+
+        `Nessie9` matters as much as the prose case: it passes every shape check
+        and would have been invented as a roster entry by the old tolerant path.
+        """
+        for label, args in self.AI_NAME_CASES.items():
+            command = ai_status.MUTATING_COMMANDS[label.split()[0]]
+            for bad_name in (self.PROSE, "Nessie9"):
+                with self.subTest(command=label, ai_name=bad_name[:24]):
+                    self._assert_rejected_without_mutation(command, args, {"AI_NAME": bad_name})
+
+    def test_no_unvalidated_actor_read_remains(self) -> None:
+        """The unvalidated `current_actor()` helper must stay deleted.
+
+        Codex2 found the eleven gaps by scanning for this call; encoding the
+        scan means the next one is caught by CI instead of by a reviewer.
+        """
+        tree = ast.parse(Path(ai_status.__file__).read_text(encoding="utf-8"))
+        offenders = [
+            f"line {node.lineno}"
+            for node in ast.walk(tree)
+            if isinstance(node, ast.Name) and node.id == "current_actor"
+        ]
+        self.assertEqual([], offenders)
+        self.assertFalse(hasattr(ai_status, "current_actor"))
 
 
 if __name__ == "__main__":
