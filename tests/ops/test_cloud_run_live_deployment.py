@@ -585,7 +585,7 @@ class DeterministicRuntimeHandler(BaseHTTPRequestHandler):
                     "data_mode": self.data_mode,
                     "dependencies": {
                         "database": {"status": "healthy", "mode": self.database_mode},
-                        "job_queue": {"status": "healthy", "mode": "cloud-run-worker"},
+                        "job_queue": "healthy (durable postgresql job queue)",
                         "external_providers": {
                             "status": ("healthy" if connectivity_healthy else "unhealthy"),
                             "mode": "live",
@@ -810,7 +810,9 @@ def _healthy_version() -> object:
 
 
 def _health_attempt(database: object, *, status: int = 503) -> object:
-    dependencies: dict[str, object] = {"job_queue": "healthy"}
+    dependencies: dict[str, object] = {
+        "job_queue": "healthy (durable postgresql job queue)"
+    }
     if database is not None:
         dependencies["database"] = database
     return _attempt(
@@ -4375,3 +4377,38 @@ def test_live_e2e_gate_refuses_to_run_without_a_deployment_mode() -> None:
         )
         == "production"
     )
+
+
+def test_real_app_platform_health_job_queue_contract() -> None:
+    """Verify real app /platform/health job_queue output against validator contract."""
+    durable_queue_details = "healthy (durable postgresql job queue)"
+    durable_payload = {
+        "status": "ok",
+        "dependencies": {
+            "job_queue": durable_queue_details,
+        },
+    }
+    durable_text = validator._dependency_text(durable_payload, "job_queue")
+    assert "healthy" in durable_text
+    assert not validator._contains_forbidden_marker(durable_text)
+    assert any(m in durable_text for m in ("worker", "cloud", "durable"))
+
+    in_memory_queue_details = "healthy (in-memory job queue)"
+    in_memory_payload = {
+        "status": "ok",
+        "dependencies": {
+            "job_queue": in_memory_queue_details,
+        },
+    }
+    in_memory_text = validator._dependency_text(in_memory_payload, "job_queue")
+    assert validator._contains_forbidden_marker(in_memory_text)
+
+    regressed_payload = {
+        "status": "ok",
+        "dependencies": {
+            "job_queue": "healthy",
+        },
+    }
+    regressed_text = validator._dependency_text(regressed_payload, "job_queue")
+    assert not any(m in regressed_text for m in ("worker", "cloud", "durable"))
+
