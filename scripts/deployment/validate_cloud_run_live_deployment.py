@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import argparse
 import contextlib
+import http.client
 import importlib
 import inspect
 import json
@@ -1657,54 +1658,423 @@ def smoke_checks(
     return checks, report
 
 
+# The migration compatibility gate is the first request the deployment sends to
+# the *old* revision. Dev/staging revisions carry no `minScale` annotation and
+# receive no organic traffic between deployments, so that request reliably pays
+# a Cloud Run cold start: run 30402570022 measured 28.1s of first-byte latency
+# against a single 15.0s attempt and failed the gate even though the old
+# revision answered `/platform/version` with 200 and reported a healthy
+# database. Retrying is therefore about outlasting instance startup, never
+# about tolerating an answer we dislike -- see probe_failure_is_transient.
+COMPATIBILITY_PROBE_ATTEMPTS = 4
+COMPATIBILITY_PROBE_BACKOFF_SECONDS = 2.0
+COMPATIBILITY_PROBE_MAX_BACKOFF_SECONDS = 8.0
+COMPATIBILITY_PROBE_DEADLINE_SECONDS = 120.0
+# Where a probe attempt stopped. This -- not `payload is None` -- is what
+# decides retryability, because `payload is None` is equally true of a request
+# that never reached the old revision and of a response the old revision sent
+# with a body we could not parse.
+PROBE_NO_RESPONSE = "no_response"  # transport failure or timeout: nothing came back
+PROBE_INVALID_REQUEST = "invalid_request"  # the request could not be built: a defective URL
+PROBE_UNPARSEABLE_BODY = "unparseable_body"  # a response arrived; its body was not JSON
+PROBE_NON_OBJECT_BODY = "non_object_body"  # a response arrived; its JSON was not an object
+PROBE_JSON_OBJECT = "json_object"  # a response arrived with a JSON object body
+PROBE_PROVENANCES = frozenset(
+    {
+        PROBE_NO_RESPONSE,
+        PROBE_INVALID_REQUEST,
+        PROBE_UNPARSEABLE_BODY,
+        PROBE_NON_OBJECT_BODY,
+        PROBE_JSON_OBJECT,
+    }
+)
+# Nothing came back, so there is no status to record. These two differ only in
+# whether a retry could ever change the answer: a cold start can be outlasted, a
+# URL we cannot turn into a request cannot.
+PROBE_NO_STATUS_PROVENANCES = frozenset({PROBE_NO_RESPONSE, PROBE_INVALID_REQUEST})
+# Positive allowlist rather than a substring probe: `"unhealthy" in text` is
+# true for the literal dependency value `"unhealthy"`, so a substring test
+# would pass the very verdict this gate exists to catch.
+HEALTHY_DATABASE_STATUSES = frozenset({"healthy", "ok", "up", "pass", "passed"})
+
+
+def _database_status_token(health: Mapping[str, Any]) -> str:
+    """Return the old revision's declared database status, or '' when absent."""
+
+    dependencies = health.get("dependencies")
+    if not isinstance(dependencies, Mapping):
+        dependencies = health.get("details")
+    if not isinstance(dependencies, Mapping):
+        return ""
+    value = dependencies.get("database")
+    if isinstance(value, str):
+        return value.strip().lower()
+    if isinstance(value, Mapping):
+        for key in ("status", "state", "health"):
+            nested = value.get(key)
+            if isinstance(nested, str) and nested.strip():
+                return nested.strip().lower()
+    return ""
+
+
+def _database_reads_healthy(health: Mapping[str, Any]) -> bool:
+    """Fail closed unless the database dependency explicitly reads healthy."""
+
+    token = _database_status_token(health)
+    if token not in HEALTHY_DATABASE_STATUSES:
+        return False
+    return not _contains_forbidden_marker(_dependency_text(health, "database"))
+
+
+@dataclass(frozen=True)
+class ProbeAttempt:
+    """One request to an old-revision probe endpoint. Never raises.
+
+    ``provenance`` is mandatory and self-consistent by construction: a status
+    is present exactly when a response was received, and a payload exactly
+    when that response's body parsed as a JSON object. Callers therefore
+    cannot silently classify a received-but-unreadable response as a
+    no-response transport failure.
+    """
+
+    status: int | None
+    payload: dict[str, Any] | None
+    error: str
+    elapsed_seconds: float
+    provenance: str
+
+    def __post_init__(self) -> None:
+        if self.provenance not in PROBE_PROVENANCES:
+            raise ValueError(f"unknown probe provenance: {self.provenance!r}")
+        if (self.provenance in PROBE_NO_STATUS_PROVENANCES) != (self.status is None):
+            raise ValueError("probe status is present exactly when a response was received")
+        if (self.provenance == PROBE_JSON_OBJECT) != (self.payload is not None):
+            raise ValueError("probe payload is present exactly when the body was a JSON object")
+
+    @property
+    def response_received(self) -> bool:
+        """True when an HTTP response arrived, whatever its status or body."""
+
+        return self.provenance not in PROBE_NO_STATUS_PROVENANCES
+
+    @property
+    def has_verdict(self) -> bool:
+        """True when the old revision returned a JSON object we can judge."""
+
+        return self.provenance == PROBE_JSON_OBJECT
+
+
+@dataclass(frozen=True)
+class ProbeRetryPolicy:
+    attempts: int = COMPATIBILITY_PROBE_ATTEMPTS
+    timeout_seconds: float = 15.0
+    backoff_seconds: float = COMPATIBILITY_PROBE_BACKOFF_SECONDS
+    max_backoff_seconds: float = COMPATIBILITY_PROBE_MAX_BACKOFF_SECONDS
+    deadline_seconds: float = COMPATIBILITY_PROBE_DEADLINE_SECONDS
+
+    def __post_init__(self) -> None:
+        # NaN defeats every ordering check below (all comparisons are False) and
+        # infinity defeats the finite-deadline contract this policy exists to
+        # enforce, so both must be rejected before any bound is interpreted.
+        # Without this the socket layer raises deep inside a probe, past the
+        # caller that turns a bad policy into a fail-closed report.
+        for label, value in (
+            ("attempt count", self.attempts),
+            ("per-attempt timeout", self.timeout_seconds),
+            ("backoff", self.backoff_seconds),
+            ("max backoff", self.max_backoff_seconds),
+            ("total deadline", self.deadline_seconds),
+        ):
+            if not math.isfinite(value):
+                raise ValueError(f"probe retry policy needs a finite {label}, got {value!r}")
+        if self.attempts < 1:
+            raise ValueError("probe retry policy needs at least one attempt")
+        if self.timeout_seconds <= 0:
+            raise ValueError("probe retry policy needs a positive per-attempt timeout")
+        if self.backoff_seconds < 0 or self.max_backoff_seconds < 0:
+            raise ValueError("probe retry policy backoff must not be negative")
+        if self.deadline_seconds <= 0:
+            raise ValueError("probe retry policy needs a positive total deadline")
+
+    def backoff_for(self, attempt_index: int) -> float:
+        """Exponential backoff before attempt ``attempt_index`` (1-based)."""
+
+        if attempt_index < 2:
+            return 0.0
+        delay = self.backoff_seconds * (2 ** (attempt_index - 2))
+        return min(delay, self.max_backoff_seconds)
+
+    def as_report(self) -> dict[str, Any]:
+        return {
+            "attempts": self.attempts,
+            "per_attempt_timeout_seconds": self.timeout_seconds,
+            "backoff_seconds": self.backoff_seconds,
+            "max_backoff_seconds": self.max_backoff_seconds,
+            "total_deadline_seconds": self.deadline_seconds,
+        }
+
+
+@dataclass(frozen=True)
+class ProbeResult:
+    final: ProbeAttempt
+    attempts: list[ProbeAttempt]
+    exhausted: str
+
+    @property
+    def outcome(self) -> str:
+        """`answered` (old revision replied), `rejected` (non-retryable
+        defect such as invalid JSON or a URL we cannot request), or the
+        exhausted bound that stopped us."""
+
+        if self.exhausted:
+            return self.exhausted
+        return "answered" if self.final.has_verdict else "rejected"
+
+    def as_report(self) -> dict[str, Any]:
+        return {
+            "outcome": self.outcome,
+            "attempt_count": len(self.attempts),
+            "elapsed_seconds": round(sum(a.elapsed_seconds for a in self.attempts), 3),
+            "attempts": [
+                {
+                    "status": attempt.status,
+                    "error": attempt.error,
+                    "elapsed_seconds": round(attempt.elapsed_seconds, 3),
+                    "provenance": attempt.provenance,
+                    "transient": probe_failure_is_transient(attempt),
+                }
+                for attempt in self.attempts
+            ],
+        }
+
+    def retry_detail(self) -> str:
+        """Suffix describing how much work the bounded retry contract did."""
+
+        parts = [f"attempts={len(self.attempts)}"]
+        parts.append(f"elapsed={sum(a.elapsed_seconds for a in self.attempts):.1f}s")
+        if self.exhausted:
+            parts.append(self.exhausted)
+        return " ".join(parts)
+
+
+def probe_failure_is_transient(attempt: ProbeAttempt) -> bool:
+    """Decide whether ``attempt`` may be retried.
+
+    Only a true no-response outcome is transient: a transport failure or a
+    timeout where nothing came back, which is exactly what run 30402570022
+    recorded ("The read operation timed out") and exactly what a Cloud Run cold
+    start produces.
+
+    Every attempt that *received* an HTTP response is final on attempt 1,
+    whatever it contained -- a non-200 version, a body that is not JSON, JSON
+    that is not an object, a missing database dependency, or an unhealthy
+    database. Retrying a received response would require independent proof
+    that the Cloud Run front end rather than the old revision produced it; the
+    deployment has no such provenance signal, and treating a status code as
+    that proof would let a real verdict (a 503 the old revision itself emitted)
+    be retried away.
+
+    A request we could not even build (`invalid_request`) also received no
+    response, but it is not transient: nothing was sent, so there is no cold
+    start to outlast, and every retry would rebuild the identical broken
+    request and burn the deadline before failing the same way.
+    """
+
+    return attempt.provenance == PROBE_NO_RESPONSE
+
+
+def probe_json_endpoint(
+    url: str,
+    *,
+    headers: Mapping[str, str],
+    timeout: float,
+    monotonic: Any = time.monotonic,
+) -> ProbeAttempt:
+    """Perform one probe request, converting every failure into a ProbeAttempt."""
+
+    started = monotonic()
+    try:
+        status, _content_type, body = _request(url, headers=headers, timeout=timeout)
+    except (ValueError, http.client.InvalidURL) as exc:
+        # `urllib` refuses to build the request itself -- a malformed URL
+        # (`ValueError: Invalid IPv6 URL`, `UnicodeEncodeError` on a non-latin-1
+        # host) or a host/header it will not put on the wire
+        # (`http.client.InvalidURL`, which is an `HTTPException`, not a
+        # `ValueError`). Neither is a transport event and neither is caught by
+        # the `OSError` arm below, so before this boundary existed the gate died
+        # with a traceback and wrote no compatibility report at all. Classify it
+        # as a received-nothing, non-retryable defect: the caller then fails
+        # closed with exit 1 and a report the deploy script can read.
+        return ProbeAttempt(
+            status=None,
+            payload=None,
+            error=f"{url} is not a requestable URL: {type(exc).__name__}: {exc}",
+            elapsed_seconds=monotonic() - started,
+            provenance=PROBE_INVALID_REQUEST,
+        )
+    except (TimeoutError, urllib.error.URLError, OSError) as exc:
+        return ProbeAttempt(
+            status=None,
+            payload=None,
+            error=str(exc) or type(exc).__name__,
+            elapsed_seconds=monotonic() - started,
+            provenance=PROBE_NO_RESPONSE,
+        )
+    elapsed = monotonic() - started
+    # Past this point a response exists -- `_request` converts HTTPError into a
+    # status and body -- so every remaining outcome is a received response.
+    try:
+        payload = json.loads(body)
+    except json.JSONDecodeError as exc:
+        return ProbeAttempt(
+            status=status,
+            payload=None,
+            error=f"{url} did not return valid JSON: {exc}",
+            elapsed_seconds=elapsed,
+            provenance=PROBE_UNPARSEABLE_BODY,
+        )
+    if not isinstance(payload, dict):
+        return ProbeAttempt(
+            status=status,
+            payload=None,
+            error=f"{url} returned a non-object JSON payload",
+            elapsed_seconds=elapsed,
+            provenance=PROBE_NON_OBJECT_BODY,
+        )
+    return ProbeAttempt(
+        status=status,
+        payload=payload,
+        error="",
+        elapsed_seconds=elapsed,
+        provenance=PROBE_JSON_OBJECT,
+    )
+
+
+def probe_with_bounded_retry(
+    url: str,
+    *,
+    headers: Mapping[str, str],
+    policy: ProbeRetryPolicy,
+    probe: Any = None,
+    monotonic: Any = time.monotonic,
+    sleep: Any = time.sleep,
+) -> ProbeResult:
+    """Drive ``probe`` until it yields a verdict, or the bounds are spent.
+
+    The contract is finite in both dimensions: at most ``policy.attempts``
+    requests, and never past ``policy.deadline_seconds`` measured from the
+    first attempt. A retry is only scheduled when its backoff plus a full
+    attempt still fit inside the deadline; the final attempt's timeout is
+    clamped to whatever time remains. Both exhaustion modes are failures.
+    """
+
+    # Resolved late so tests (and any future caller) can substitute the
+    # transport without the default binding freezing at import time.
+    resolved_probe = probe if probe is not None else probe_json_endpoint
+    started = monotonic()
+    attempts: list[ProbeAttempt] = []
+    exhausted = ""
+    for attempt_index in range(1, policy.attempts + 1):
+        backoff = policy.backoff_for(attempt_index)
+        if backoff:
+            sleep(backoff)
+        remaining = policy.deadline_seconds - (monotonic() - started)
+        if remaining <= 0:
+            exhausted = "deadline_exhausted"
+            break
+        attempt = resolved_probe(
+            url,
+            headers=headers,
+            timeout=min(policy.timeout_seconds, remaining),
+        )
+        attempts.append(attempt)
+        if not probe_failure_is_transient(attempt):
+            return ProbeResult(final=attempt, attempts=attempts, exhausted="")
+        if attempt_index == policy.attempts:
+            exhausted = "attempts_exhausted"
+            break
+        next_backoff = policy.backoff_for(attempt_index + 1)
+        spent = monotonic() - started
+        if spent + next_backoff + policy.timeout_seconds > policy.deadline_seconds:
+            exhausted = "deadline_exhausted"
+            break
+
+    if not attempts:
+        # Only reachable when the deadline was already spent before attempt 1.
+        attempts = [
+            ProbeAttempt(
+                status=None,
+                payload=None,
+                error=f"probe deadline of {policy.deadline_seconds}s elapsed before any attempt",
+                elapsed_seconds=0.0,
+                provenance=PROBE_NO_RESPONSE,
+            )
+        ]
+    return ProbeResult(final=attempts[-1], attempts=attempts, exhausted=exhausted)
+
+
 def compatibility_smoke_checks(
     *,
     api_url: str,
     web_url: str,
     correlation_id: str,
     timeout: float,
+    retry_policy: ProbeRetryPolicy | None = None,
+    sleep: Any = time.sleep,
 ) -> tuple[list[CheckResult], dict[str, Any]]:
     """Verify that the old API can still read the migrated production database."""
 
+    policy = retry_policy or ProbeRetryPolicy(timeout_seconds=timeout)
     checks: list[CheckResult] = []
     report: dict[str, Any] = {
         "api_url": api_url.rstrip("/"),
         "web_url": web_url.rstrip("/"),
         "correlation_id": correlation_id,
         "secret_values_redacted": True,
+        "probe_retry_policy": policy.as_report(),
     }
     headers = {"x-correlation-id": correlation_id}
 
-    try:
-        version_status, version = _json_request(
-            f"{api_url.rstrip('/')}/platform/version",
-            headers=headers,
-            timeout=timeout,
-        )
-        report["version"] = version
+    version_result = probe_with_bounded_retry(
+        f"{api_url.rstrip('/')}/platform/version",
+        headers=headers,
+        policy=policy,
+        sleep=sleep,
+    )
+    report["version_probe"] = version_result.as_report()
+    version_attempt = version_result.final
+    if version_attempt.has_verdict:
+        report["version"] = version_attempt.payload
         checks.append(
             CheckResult(
-                ok=version_status == 200,
+                ok=version_attempt.status == 200,
                 name="compatibility:/platform/version:http",
-                detail=f"status={version_status}",
+                detail=f"status={version_attempt.status} {version_result.retry_detail()}",
             )
         )
-    except (OSError, TimeoutError, ValueError, urllib.error.URLError) as exc:
-        checks.append(CheckResult(False, "compatibility:/platform/version:http", str(exc)))
-
-    try:
-        health_status, health = _json_request(
-            f"{api_url.rstrip('/')}/platform/health",
-            headers=headers,
-            timeout=timeout,
+    else:
+        checks.append(
+            CheckResult(
+                False,
+                "compatibility:/platform/version:http",
+                f"{version_attempt.error} ({version_result.retry_detail()})",
+            )
         )
+
+    health_result = probe_with_bounded_retry(
+        f"{api_url.rstrip('/')}/platform/health",
+        headers=headers,
+        policy=policy,
+        sleep=sleep,
+    )
+    report["health_probe"] = health_result.as_report()
+    health_attempt = health_result.final
+    if health_attempt.has_verdict:
+        health = health_attempt.payload or {}
         report["health"] = health
         database = _dependency_text(health, "database")
-        database_compatible = (
-            health_status in {200, 503}
-            and bool(database)
-            and "healthy" in database
-            and not _contains_forbidden_marker(database)
+        database_compatible = health_attempt.status in {200, 503} and _database_reads_healthy(
+            health
         )
         checks.append(
             CheckResult(
@@ -1713,12 +2083,21 @@ def compatibility_smoke_checks(
                 detail=(
                     "old revision remains compatible with the migrated production database"
                     if database_compatible
-                    else f"status={health_status} database={database or '<missing>'}"
+                    else (
+                        f"status={health_attempt.status} "
+                        f"database={database or '<missing>'} {health_result.retry_detail()}"
+                    )
                 ),
             )
         )
-    except (OSError, TimeoutError, ValueError, urllib.error.URLError) as exc:
-        checks.append(CheckResult(False, "compatibility:/platform/health:database", str(exc)))
+    else:
+        checks.append(
+            CheckResult(
+                False,
+                "compatibility:/platform/health:database",
+                f"{health_attempt.error} ({health_result.retry_detail()})",
+            )
+        )
 
     return checks, report
 
@@ -2882,6 +3261,24 @@ def main() -> int:
         "--correlation-id", default=f"corr-cloud-run-compat-{int(time.time())}"
     )
     compatibility_smoke.add_argument("--timeout", type=float, default=15.0)
+    compatibility_smoke.add_argument(
+        "--compat-retry-attempts", type=int, default=COMPATIBILITY_PROBE_ATTEMPTS
+    )
+    compatibility_smoke.add_argument(
+        "--compat-retry-backoff-seconds",
+        type=float,
+        default=COMPATIBILITY_PROBE_BACKOFF_SECONDS,
+    )
+    compatibility_smoke.add_argument(
+        "--compat-retry-max-backoff-seconds",
+        type=float,
+        default=COMPATIBILITY_PROBE_MAX_BACKOFF_SECONDS,
+    )
+    compatibility_smoke.add_argument(
+        "--compat-retry-deadline-seconds",
+        type=float,
+        default=COMPATIBILITY_PROBE_DEADLINE_SECONDS,
+    )
     compatibility_smoke.add_argument("--output", type=Path)
 
     jobs_smoke = subparsers.add_parser("jobs-smoke")
@@ -2963,11 +3360,27 @@ def main() -> int:
         )
 
     if args.command == "compatibility-smoke":
+        try:
+            policy = ProbeRetryPolicy(
+                attempts=args.compat_retry_attempts,
+                timeout_seconds=args.timeout,
+                backoff_seconds=args.compat_retry_backoff_seconds,
+                max_backoff_seconds=args.compat_retry_max_backoff_seconds,
+                deadline_seconds=args.compat_retry_deadline_seconds,
+            )
+        except ValueError as exc:
+            return _finalize(
+                checks=[CheckResult(False, "compatibility:retry_policy", str(exc))],
+                report={"secret_values_redacted": True},
+                output=args.output,
+                label="Cloud Run migration compatibility smoke",
+            )
         checks, report = compatibility_smoke_checks(
             api_url=args.api_url,
             web_url=args.web_url,
             correlation_id=args.correlation_id,
             timeout=args.timeout,
+            retry_policy=policy,
         )
     else:
         token = os.environ.get("ODP_OPERATOR_SMOKE_BEARER_TOKEN", "")

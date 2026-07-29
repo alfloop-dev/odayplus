@@ -1,0 +1,186 @@
+{
+  "schema_version": 1,
+  "task_id": "ODP-DEPLOY-MIGRATION-COMPATIBILITY-PROBE-001",
+  "source": {
+    "workflow_run": "https://github.com/alfloop-dev/odayplus/actions/runs/30402570022",
+    "workflow": "Deploy Dev",
+    "release_sha": "7d13f8e162d035ad7318d1f659dfa0f2bd85ca65",
+    "correlation_id": "corr-cloud-run-compat-dev-7d13f8e162d035ad7318d1f659dfa0f2bd85ca65",
+    "gcp_project": "alfaloop-data-project",
+    "gcp_region": "asia-east1",
+    "service": "oday-api",
+    "old_revision_serving_100_percent": "oday-api-00005-gin",
+    "old_api_url": "https://oday-api-7sxbjoeozq-de.a.run.app",
+    "query": "resource.type=\"cloud_run_revision\" AND resource.labels.service_name=\"oday-api\" AND timestamp>=\"2026-07-28T22:06:00Z\" AND timestamp<=\"2026-07-28T22:12:00Z\"",
+    "collected_at": "2026-07-28T22:18Z",
+    "collected_by": "Claude2"
+  },
+  "workflow_timeline": [
+    {
+      "timestamp": "2026-07-28T22:08:34.788Z",
+      "event": "migration Cloud Run Job execution oday-migration-r-7d13f8e162d0-zg2jr completed successfully"
+    },
+    {
+      "timestamp": "2026-07-28T22:08:40.468Z",
+      "event": "Cloud Run migration Job smoke passed"
+    },
+    {
+      "timestamp": "2026-07-28T22:09:10.700Z",
+      "event": "compatibility smoke failed: /platform/version:http and /platform/health:database both 'The read operation timed out'"
+    },
+    {
+      "timestamp": "2026-07-28T22:09:10.713Z",
+      "event": "rollback trap restored oday-api-00005-gin=100 and oday-web-00008-ws4=100"
+    }
+  ],
+  "cloud_run_entries": [
+    {
+      "timestamp": "2026-07-28T22:08:40.718129Z",
+      "revision": "oday-api-00005-gin",
+      "severity": "INFO",
+      "kind": "request",
+      "httpRequest": {
+        "latency": "28.121974842s",
+        "protocol": "HTTP/1.1",
+        "remoteIp": "4.242.44.193",
+        "requestMethod": "GET",
+        "requestSize": "353",
+        "requestUrl": "https://oday-api-7sxbjoeozq-de.a.run.app/platform/version",
+        "responseSize": "394",
+        "serverIp": "34.143.78.2",
+        "status": 200,
+        "userAgent": "Python-urllib/3.12"
+      }
+    },
+    {
+      "timestamp": "2026-07-28T22:08:40.739412Z",
+      "revision": "oday-api-00005-gin",
+      "severity": "INFO",
+      "kind": "platform",
+      "textPayload": "Starting new instance. Reason: AUTOSCALING - Instance started due to configured scaling factors (e.g. CPU utilization, request throughput, etc.) or no existing capacity for current traffic."
+    },
+    {
+      "timestamp": "2026-07-28T22:08:55.896714Z",
+      "revision": "oday-api-00005-gin",
+      "severity": "ERROR",
+      "kind": "request",
+      "httpRequest": {
+        "latency": "3.434496876s",
+        "protocol": "HTTP/1.1",
+        "remoteIp": "4.242.44.193",
+        "requestMethod": "GET",
+        "requestSize": "377",
+        "requestUrl": "https://oday-api-7sxbjoeozq-de.a.run.app/platform/health",
+        "responseSize": "6100",
+        "serverIp": "34.143.73.2",
+        "status": 503,
+        "userAgent": "Python-urllib/3.12"
+      }
+    },
+    {
+      "timestamp": "2026-07-28T22:09:10.029604Z",
+      "revision": "oday-api-00005-gin",
+      "severity": "",
+      "kind": "platform",
+      "textPayload": "INFO:     Started server process [1]"
+    },
+    {
+      "timestamp": "2026-07-28T22:09:10.029694Z",
+      "revision": "oday-api-00005-gin",
+      "severity": "",
+      "kind": "platform",
+      "textPayload": "INFO:     Waiting for application startup."
+    },
+    {
+      "timestamp": "2026-07-28T22:09:10.030577Z",
+      "revision": "oday-api-00005-gin",
+      "severity": "",
+      "kind": "platform",
+      "textPayload": "INFO:     Application startup complete."
+    },
+    {
+      "timestamp": "2026-07-28T22:09:10.031650Z",
+      "revision": "oday-api-00005-gin",
+      "severity": "",
+      "kind": "platform",
+      "textPayload": "INFO:     Uvicorn running on http://0.0.0.0:8000 (Press CTRL+C to quit)"
+    },
+    {
+      "timestamp": "2026-07-28T22:09:10.031895Z",
+      "revision": "oday-api-00005-gin",
+      "severity": "INFO",
+      "kind": "platform",
+      "textPayload": "Default STARTUP TCP probe succeeded after 1 attempt for container \"oday-api-1\" on port 8000."
+    },
+    {
+      "timestamp": "2026-07-28T22:09:10.075286Z",
+      "revision": "oday-api-00005-gin",
+      "severity": "",
+      "kind": "application",
+      "jsonPayload": {
+        "action": "GET",
+        "actor": "user",
+        "correlation_id": "corr-cloud-run-compat-dev-7d13f8e162d035ad7318d1f659dfa0f2bd85ca65",
+        "error_code": null,
+        "level": "INFO",
+        "message": "HTTP GET /platform/version ok",
+        "resource": "HTTP",
+        "result": "ok",
+        "service": "oday-api",
+        "timestamp": "2026-07-28T22:09:10.076532+00:00"
+      }
+    },
+    {
+      "timestamp": "2026-07-28T22:09:10.075438Z",
+      "revision": "oday-api-00005-gin",
+      "severity": "",
+      "kind": "platform",
+      "textPayload": "INFO:     169.254.169.126:16438 - \"GET /platform/version HTTP/1.1\" 200 OK"
+    },
+    {
+      "timestamp": "2026-07-28T22:09:13.512385Z",
+      "revision": "oday-api-00005-gin",
+      "severity": "",
+      "kind": "application",
+      "jsonPayload": {
+        "action": "GET",
+        "actor": "user",
+        "correlation_id": "corr-cloud-run-compat-dev-7d13f8e162d035ad7318d1f659dfa0f2bd85ca65",
+        "error_code": null,
+        "level": "INFO",
+        "message": "HTTP GET /platform/health ok",
+        "resource": "HTTP",
+        "result": "ok",
+        "service": "oday-api",
+        "timestamp": "2026-07-28T22:09:13.513557+00:00"
+      }
+    },
+    {
+      "timestamp": "2026-07-28T22:09:13.512556Z",
+      "revision": "oday-api-00005-gin",
+      "severity": "",
+      "kind": "platform",
+      "textPayload": "INFO:     169.254.169.126:16450 - \"GET /platform/health HTTP/1.1\" 503 Service Unavailable"
+    }
+  ],
+  "revision_scaling_config": {
+    "revision": "oday-api-00005-gin",
+    "autoscaling.knative.dev/minScale": null,
+    "autoscaling.knative.dev/maxScale": "2",
+    "run.googleapis.com/startup-cpu-boost": "true",
+    "containerConcurrency": 40,
+    "timeoutSeconds": 300,
+    "note": "no minScale annotation means the old revision is allowed to scale to zero"
+  },
+  "verdict": {
+    "classification": "transient cold start of the old revision",
+    "database_incompatibility": false,
+    "evidence": [
+      "Cloud Run logged 'Starting new instance. Reason: AUTOSCALING - ... no existing capacity for current traffic.' 21ms after the /platform/version request arrived.",
+      "The /platform/version request log records status=200 with latency=28.121974842s, i.e. the old revision answered correctly but 13.1s after the probe's 15.0s client timeout had already elapsed.",
+      "Container startup only finished at 22:09:10.03 ('Application startup complete', 'Default STARTUP TCP probe succeeded'), ~29.3s after the request arrived.",
+      "The application then served both probes carrying the exact deploy correlation id corr-cloud-run-compat-dev-7d13f8e162d035ad7318d1f659dfa0f2bd85ca65: /platform/version result=ok (200) and /platform/health result=ok (503 aggregate).",
+      "The 503 on /platform/health is the pre-existing aggregate status of the old revision, not a database verdict; a warm re-probe of the same revision shows dependencies.database == 'healthy'."
+    ]
+  }
+}
