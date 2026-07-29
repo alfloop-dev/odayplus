@@ -375,8 +375,3 @@ resolves against the authoritative root, which is the whole point of the fix.
 
 Rollback, if it is ever needed, is the one-line restore printed in
 `deploy-transcript.txt` against the backup directory above.
-
-The two stale live queue records from §1 (`apr-20260729T082950Z-578a3304`
-pending in the control root, and the unconsumed override in the live root) were
-left exactly as found — they are the evidence, and reconciling them is
-supervisor work, not a hand edit.
