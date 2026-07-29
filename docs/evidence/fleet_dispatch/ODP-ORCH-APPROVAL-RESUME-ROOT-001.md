@@ -302,7 +302,7 @@ independently recorded in `live-defect-observation.txt` §6, the latter
 byte-compared against the intact live-root copy. Blast radius checked and empty:
 the only worker hook in that span fired at **09:20:00.303Z**, 43 s after the
 restore, against the original bytes (its re-defer is the §1 defect, unrelated);
-no approval-queue entry was created in either root between 09:17 and 09:25; both
+no hook executed and no approval-queue entry was created during the actual symlink-clobber interval 09:18:2xZ through restore 09:19:17.89Z (the 09:17:18Z approval entry apr-20260729T091718Z-05ab271d predated the clobber); both
 files are mode 664 with no leftover siblings, and the control root's dirty
 inventory is unchanged at 580 files. Sandbox copies are now real files, never
 symlinks.
