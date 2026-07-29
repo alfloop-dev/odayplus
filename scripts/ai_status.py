@@ -149,6 +149,11 @@ KNOWN_AGENTS = {
     },
 }
 
+# KNOWN_AGENTS is mutated at runtime by ensure_agent(). Freeze the declared
+# roster so the audited cleanup path can always tell a declared fleet member
+# apart from something that was registered during this process.
+BASELINE_AGENT_NAMES = frozenset(KNOWN_AGENTS)
+
 AGENT_ALIASES = {
     "claude2": "Claude2",
     "claude 2": "Claude2",
@@ -507,8 +512,143 @@ def active_agent_name(name: str | None) -> str:
     return replacement or canonical
 
 
+# ---------------------------------------------------------------------------
+# Actor reference validation
+#
+# Every actor-shaped field (task owner/reviewer/waiting_for, blocker
+# owner/waiting_for, handoff from/to, AI_NAME) must hold an *agent name*, never
+# free prose and never a task id. Before this guard existed, ensure_agent()
+# happily invented a roster entry for whatever string it was handed, so a
+# worker that passed a blocker sentence where an agent name was expected
+# permanently fabricated a synthetic fleet agent in ai-status.json.
+#
+# Two different strictness levels are needed:
+#   * CLI input  -> reject loudly, before any durable state is mutated.
+#   * durable state already on disk -> tolerate, so a single bad record cannot
+#     brick every ai_status command (the 2026-07-20 fleet-wide stall).
+# ---------------------------------------------------------------------------
+
+ACTOR_REFERENCE_MAX_LENGTH = 40
+# One or two `/`-separated segments of letters/digits/`_`/`-`, each starting
+# with a letter. Matches Claude2, Antigravity7, CodexCoordinator, Human/Ops.
+_ACTOR_SEGMENT = r"[A-Za-z][A-Za-z0-9_-]*"
+ACTOR_REFERENCE_RE = re.compile(rf"^{_ACTOR_SEGMENT}(?:/{_ACTOR_SEGMENT})?$")
+# Upper-case, >=3 dash-separated segments: ODP-P10-FLEET-CONFLICT-REAUDIT-001.
+TASK_ID_LIKE_RE = re.compile(r"^[A-Z][A-Z0-9]*(?:-[A-Z0-9]+){2,}$")
+
+# Names registered during this process because they already appear in durable
+# state but are not declared anywhere. Kept out of the durable roster so a
+# corrupt record cannot grow new synthetic fleet agents on every sync.
+QUARANTINED_AGENTS: set[str] = set()
+
+
+def actor_reference_problem(name: str | None) -> str | None:
+    """Return why `name` is unusable as an actor reference, else None.
+
+    `name` is expected to be already canonicalized (aliases resolved), so
+    alias spellings such as "human ops" or "codex (3)" never reach here.
+    """
+    if name is None:
+        return "actor reference is missing"
+    raw = str(name)
+    trimmed = raw.strip()
+    if not trimmed:
+        return "actor reference is empty"
+    if len(trimmed) > ACTOR_REFERENCE_MAX_LENGTH:
+        return (
+            f"actor reference is {len(trimmed)} characters "
+            f"(max {ACTOR_REFERENCE_MAX_LENGTH}); this looks like prose, not an agent name"
+        )
+    if any(char in trimmed for char in "\n\r\t"):
+        return "actor reference contains control characters"
+    if TASK_ID_LIKE_RE.match(trimmed):
+        return "actor reference looks like a task id, not an agent name"
+    if not ACTOR_REFERENCE_RE.match(trimmed):
+        return (
+            "actor reference must be an agent name such as 'Claude2' or 'Human/Ops' "
+            "(letters, digits, '_', '-', at most one '/')"
+        )
+    return None
+
+
+def configured_agent_names() -> set[str]:
+    """Agent names declared by .orchestrator/config.json plus AI_STATUS_EXTRA_AGENTS."""
+    names: set[str] = set()
+    payload = load_json_file(CONFIG_FILE, {})
+    agents = payload.get("agents") if isinstance(payload, dict) else None
+    if isinstance(agents, dict):
+        for agent_id, agent in agents.items():
+            for candidate in (agent_id, (agent or {}).get("display_name")):
+                canonical = canonical_agent_name(candidate)
+                if canonical and actor_reference_problem(canonical) is None:
+                    names.add(canonical)
+    for extra in parse_csv_env("AI_STATUS_EXTRA_AGENTS"):
+        canonical = canonical_agent_name(extra)
+        if canonical and actor_reference_problem(canonical) is None:
+            names.add(canonical)
+    return names
+
+
+def registered_agent_names(state: dict[str, Any] | None = None) -> set[str]:
+    """Actor names this fleet accepts.
+
+    Declared roster + orchestrator config + agents already present in the
+    durable roster (so an existing fleet member keeps working even when it was
+    added before it was declared). Quarantined names are never included.
+    """
+    names = set(BASELINE_AGENT_NAMES)
+    names |= {name for name in KNOWN_AGENTS if name not in QUARANTINED_AGENTS}
+    names |= configured_agent_names()
+    for agent in (state or {}).get("agents", []) or []:
+        canonical = canonical_agent_name(agent.get("name"))
+        if canonical and actor_reference_problem(canonical) is None:
+            names.add(canonical)
+    return {name for name in names if actor_reference_problem(name) is None}
+
+
+def resolve_actor_reference(
+    raw: str | None,
+    *,
+    field: str,
+    state: dict[str, Any] | None = None,
+    allow_empty: bool = False,
+) -> str:
+    """Validate a caller-supplied actor reference, or abort before mutating state."""
+    canonical = active_agent_name(raw)
+    if not canonical:
+        if allow_empty:
+            return ""
+        raise SystemExit(f"Invalid {field}: actor reference is required")
+
+    problem = actor_reference_problem(canonical)
+    if problem is not None:
+        preview = canonical if len(canonical) <= 80 else canonical[:77] + "..."
+        raise SystemExit(
+            f"Invalid {field}: {problem}\n"
+            f"  received: {preview!r}\n"
+            "  Pass an agent name here and put the explanation in the message argument."
+        )
+
+    registered = registered_agent_names(state)
+    if canonical not in registered:
+        raise SystemExit(
+            f"Unknown {field}: {canonical!r} is not a registered agent.\n"
+            f"  registered: {', '.join(sorted(registered))}\n"
+            "  Declare it in .orchestrator/config.json agents, or set "
+            "AI_STATUS_EXTRA_AGENTS to register it explicitly."
+        )
+    ensure_agent(canonical)
+    return canonical
+
+
 def current_actor(default: str = "Codex") -> str:
     return canonical_agent_name(os.environ.get("AI_NAME", default))
+
+
+def current_actor_validated(state: dict[str, Any] | None = None, default: str = "Codex") -> str:
+    return resolve_actor_reference(
+        os.environ.get("AI_NAME", default), field="AI_NAME", state=state
+    )
 
 
 def default_state() -> dict[str, Any]:
@@ -1055,26 +1195,45 @@ def append_log(entry: dict[str, Any]) -> None:
 
 
 def ensure_agent(name: str) -> dict[str, Any]:
-    import re
+    """Register `name` in the in-process roster.
+
+    Tolerant by design: it is also called while loading state that may already
+    contain a corrupt actor reference, and aborting there would make every
+    ai_status command unusable. Anything that fails actor-reference validation
+    is registered as *quarantined* instead: enough for the derived views not to
+    crash, but never promoted into the durable `agents` roster.
+
+    Caller-supplied references must go through resolve_actor_reference() first,
+    which rejects the same values loudly and before any state mutation.
+    """
     canonical = canonical_agent_name(name)
     if canonical not in KNOWN_AGENTS:
-        base_name = re.sub(r'\d+$', '', canonical)
-        template = KNOWN_AGENTS.get(base_name, KNOWN_AGENTS.get("Antigravity"))
+        problem = actor_reference_problem(canonical)
+        if problem is not None:
+            QUARANTINED_AGENTS.add(canonical)
+        base_name = re.sub(r"\d+$", "", canonical) if problem is None else ""
+        template = KNOWN_AGENTS.get(base_name, KNOWN_AGENTS["Antigravity"])
         KNOWN_AGENTS[canonical] = {
             "capability_lane": template["capability_lane"],
-            "default_branch": f"feat/{canonical.lower()}-branch",
-            "target_workload": 5,
+            "default_branch": f"feat/{canonical.lower()}-branch" if problem is None else "",
+            "target_workload": 0 if problem is not None else 5,
         }
     return KNOWN_AGENTS[canonical]
 
 
+def is_quarantined_agent(name: str | None) -> bool:
+    canonical = canonical_agent_name(name)
+    return bool(canonical) and (
+        canonical in QUARANTINED_AGENTS or actor_reference_problem(canonical) is not None
+    )
+
+
 def get_agent(state: dict[str, Any], name: str) -> dict[str, Any]:
     name = canonical_agent_name(name)
-    ensure_agent(name)
+    meta = ensure_agent(name)
     for agent in state["agents"]:
         if agent["name"] == name:
             return agent
-    meta = KNOWN_AGENTS[name]
     agent = {
         "name": name,
         "capability_lane": meta["capability_lane"],
@@ -1084,6 +1243,9 @@ def get_agent(state: dict[str, Any], name: str) -> dict[str, Any]:
         "next": "",
         "last_update": None,
     }
+    if is_quarantined_agent(name):
+        # Never grow the durable roster from an invalid reference.
+        return agent
     state["agents"].append(agent)
     return agent
 
@@ -1602,9 +1764,57 @@ def ensure_review_finalize_handoff(
     )
 
 
+def invalid_actor_references(state: dict[str, Any]) -> list[tuple[str, str, str]]:
+    """Return (location, value, problem) for every unusable actor reference in state."""
+    findings: list[tuple[str, str, str]] = []
+
+    def check(value: Any, location: str, *, required: bool) -> None:
+        canonical = canonical_agent_name(value)
+        if not canonical and not required:
+            return
+        problem = actor_reference_problem(canonical)
+        if problem is not None:
+            findings.append((location, canonical, problem))
+
+    for task in state.get("tasks", []):
+        task_id = task.get("id", "?")
+        check(task.get("owner"), f"task {task_id} owner", required=True)
+        check(task.get("reviewer"), f"task {task_id} reviewer", required=True)
+        check(task.get("waiting_for"), f"task {task_id} waiting_for", required=False)
+    for index, blocker in enumerate(state.get("blockers", [])):
+        check(blocker.get("owner"), f"blockers[{index}] owner", required=True)
+        check(blocker.get("waiting_for"), f"blockers[{index}] waiting_for", required=True)
+    for index, handoff in enumerate(state.get("handoffs", [])):
+        check(handoff.get("from"), f"handoffs[{index}] from", required=True)
+        check(handoff.get("to"), f"handoffs[{index}] to", required=True)
+    for index, agent in enumerate(state.get("agents", []) or []):
+        check(agent.get("name"), f"agents[{index}] name", required=True)
+    return findings
+
+
+def report_invalid_actor_references(state: dict[str, Any]) -> None:
+    findings = invalid_actor_references(state)
+    if not findings:
+        return
+    print(
+        f"Warning: {len(findings)} invalid actor reference(s) in durable state; "
+        "commands still run, but these fields hold prose or task ids instead of agent names:",
+        file=sys.stderr,
+    )
+    for location, value, problem in findings:
+        preview = value if len(value) <= 70 else value[:67] + "..."
+        print(f"  - {location}: {problem} ({preview!r})", file=sys.stderr)
+    print(
+        "  Repair with: ai-status.sh retarget_blocker <task-id> <agent> <reason>\n"
+        "  Then remove leftover roster entries with: ai-status.sh prune_agents --apply",
+        file=sys.stderr,
+    )
+
+
 def validate_state(state: dict[str, Any]) -> None:
     sync_canonical_document_metadata(state)
     normalize_state_agents(state)
+    report_invalid_actor_references(state)
     for task in state["tasks"]:
         ensure_agent(task["owner"])
         ensure_agent(task["reviewer"])
@@ -1657,7 +1867,9 @@ def recompute_agents(state: dict[str, Any]) -> None:
     for task in state["tasks"]:
         by_owner.setdefault(task["owner"], []).append(task)
 
-    for name in KNOWN_AGENTS:
+    for name in list(KNOWN_AGENTS):
+        if is_quarantined_agent(name):
+            continue
         agent = get_agent(state, name)
         owned = by_owner.get(name, [])
         active = [task for task in owned if task["status"] in {"in_progress", "review", "blocked"}]
@@ -1719,28 +1931,36 @@ def recompute_agents(state: dict[str, Any]) -> None:
                 agent["last_update"] = None
 
 
+def _empty_workload_bucket() -> dict[str, int]:
+    return {
+        "total": 0,
+        "active": 0,
+        "blocked": 0,
+        "done": 0,
+        "review": 0,
+        "review_approved": 0,
+        "todo": 0,
+    }
+
+
 def recompute_workload(state: dict[str, Any]) -> None:
     summary: dict[str, dict[str, int]] = {}
     for name in KNOWN_AGENTS:
-        summary[name] = {
-            "total": 0,
-            "active": 0,
-            "blocked": 0,
-            "done": 0,
-            "review": 0,
-            "review_approved": 0,
-            "todo": 0,
-        }
+        summary[name] = _empty_workload_bucket()
 
     for task in state["tasks"]:
         owner = task["owner"]
-        bucket = summary[owner]
+        bucket = summary.setdefault(owner, _empty_workload_bucket())
         bucket["total"] += 1
         bucket[task["status"] if task["status"] in bucket else "todo"] += 1
         if task["status"] in {"in_progress", "review", "blocked"}:
             bucket["active"] += 1
 
-    state["workload"] = {name: KNOWN_AGENTS[name]["target_workload"] for name in KNOWN_AGENTS}
+    state["workload"] = {
+        name: KNOWN_AGENTS[name]["target_workload"]
+        for name in KNOWN_AGENTS
+        if not is_quarantined_agent(name)
+    }
     state["workload_summary"] = summary
 
 
@@ -3619,12 +3839,12 @@ def command_assign(state: dict[str, Any], args: list[str]) -> None:
         check_wave_assign(state.get("wave_state") or {})
     except WaveGuardError as exc:
         raise SystemExit(f"Wave guard rejected assign: {exc}") from exc
-    task_id, owner, reviewer = args[0], canonical_agent_name(args[1]), canonical_agent_name(args[2])
+    task_id = args[0]
+    owner = resolve_actor_reference(args[1], field="owner", state=state)
+    reviewer = resolve_actor_reference(args[2], field="reviewer", state=state)
     title = args[3] if len(args) > 3 else os.environ.get("TASK_TITLE")
     summary_zh = os.environ.get("TASK_SUMMARY_ZH")
     metadata = task_metadata_from_env()
-    ensure_agent(owner)
-    ensure_agent(reviewer)
     if owner == reviewer:
         raise SystemExit("Reviewer cannot equal owner")
 
@@ -3772,10 +3992,9 @@ def command_reopen(state: dict[str, Any], args: list[str]) -> None:
 def command_handoff(state: dict[str, Any], args: list[str]) -> None:
     if len(args) < 3:
         raise SystemExit("Usage: handoff <task-id> <to-agent> <message>")
-    task_id, to_agent, message = args[0], canonical_agent_name(args[1]), args[2]
-    actor = current_actor()
-    ensure_agent(actor)
-    ensure_agent(to_agent)
+    task_id, message = args[0], args[2]
+    to_agent = resolve_actor_reference(args[1], field="handoff target", state=state)
+    actor = current_actor_validated(state)
     task = get_task(state, task_id)
     if task is None:
         raise SystemExit(f"Unknown task: {task_id}")
@@ -3807,10 +4026,9 @@ def command_handoff(state: dict[str, Any], args: list[str]) -> None:
 def command_blocker(state: dict[str, Any], args: list[str]) -> None:
     if len(args) < 3:
         raise SystemExit("Usage: blocker <task-id> <message> <waiting-for>")
-    task_id, message, waiting_for = args[0], args[1], canonical_agent_name(args[2])
-    actor = current_actor()
-    ensure_agent(actor)
-    ensure_agent(waiting_for)
+    task_id, message = args[0], args[1]
+    waiting_for = resolve_actor_reference(args[2], field="waiting-for", state=state)
+    actor = current_actor_validated(state)
     task = get_task(state, task_id)
     if task is None:
         raise SystemExit(f"Unknown task: {task_id}")
@@ -3833,6 +4051,195 @@ def command_blocker(state: dict[str, Any], args: list[str]) -> None:
         }
     )
     append_log({"ts": timestamp, "agent": actor, "type": "blocker", "task_id": task_id, "message": f"Blocked on {waiting_for}: {message}"})
+
+
+def command_retarget_blocker(state: dict[str, Any], args: list[str]) -> None:
+    """Repoint a blocker's waiting_for at a real agent without losing its text.
+
+    Usage: retarget_blocker <task-id> <agent> <reason> [--index N]
+
+    Allowed when the current waiting_for is not a usable actor reference (a
+    repair), or when the caller owns the blocker (a normal reassignment). This
+    keeps the command from becoming a way to silently reassign someone else's
+    valid blocker. `--index N` selects a single blocker of that task by its
+    position in `blockers[]` when the task has several.
+    """
+    positional = [arg for arg in args if not arg.startswith("--")]
+    if len(positional) < 3:
+        raise SystemExit("Usage: retarget_blocker <task-id> <agent> <reason> [--index N]")
+    task_id, reason = positional[0], positional[2]
+    new_actor = resolve_actor_reference(positional[1], field="waiting-for", state=state)
+    actor = current_actor_validated(state)
+
+    selected_index: int | None = None
+    for arg in args:
+        if arg.startswith("--index="):
+            selected_index = int(arg.split("=", 1)[1])
+
+    targets = [
+        blocker
+        for index, blocker in enumerate(state.get("blockers", []))
+        if blocker.get("task_id") == task_id
+        and (selected_index is None or index == selected_index)
+    ]
+    if not targets:
+        raise SystemExit(f"No blocker recorded for task: {task_id}")
+
+    timestamp = iso_now()
+    changed: list[dict[str, Any]] = []
+    for blocker in targets:
+        previous = str(blocker.get("waiting_for") or "")
+        if previous == new_actor:
+            continue
+        repairable = actor_reference_problem(canonical_agent_name(previous)) is not None
+        if not repairable and blocker.get("owner") != actor:
+            # Already a real agent and not ours to reassign — leave it untouched.
+            continue
+        blocker["waiting_for"] = new_actor
+        blocker["original_waiting_for"] = previous
+        blocker["retargeted_by"] = actor
+        blocker["retargeted_at"] = timestamp
+        blocker["retarget_reason"] = reason
+        if repairable and previous and previous not in str(blocker.get("message") or ""):
+            existing = str(blocker.get("message") or "").strip()
+            blocker["message"] = (
+                f"{existing}\n\nRecovered waiting_for text: {previous}" if existing else previous
+            )
+        changed.append(blocker)
+
+    task = get_task(state, task_id)
+    task_repaired = False
+    if task is not None:
+        current = str(task.get("waiting_for") or "")
+        if current and actor_reference_problem(canonical_agent_name(current)) is not None:
+            task["waiting_for"] = new_actor
+            task["last_update"] = timestamp
+            task_repaired = True
+
+    if not changed and not task_repaired:
+        print(
+            f"No change for {task_id}: nothing to repair, and any valid blocker "
+            f"waiting_for belongs to another owner"
+        )
+        return
+
+    append_log(
+        {
+            "ts": timestamp,
+            "agent": actor,
+            "type": "actor_ref_repair",
+            "task_id": task_id,
+            "message": (
+                f"Retargeted {len(changed)} blocker record(s)"
+                f"{' and task waiting_for' if task_repaired else ''} to {new_actor}: {reason}"
+            ),
+        }
+    )
+    print(
+        f"Retargeted {len(changed)} blocker record(s)"
+        f"{' and task waiting_for' if task_repaired else ''} for {task_id} to {new_actor}"
+    )
+
+
+def synthetic_roster_entries(state: dict[str, Any]) -> list[dict[str, Any]]:
+    """Classify every durable roster entry as keep-or-remove for the cleanup path.
+
+    An entry is removable only when it is (a) not part of the declared roster,
+    (b) not declared in orchestrator config, and (c) not referenced by any task,
+    blocker or handoff. A valid actor is never removed just for being idle.
+    """
+    referenced: set[str] = set()
+
+    def mark(value: Any) -> None:
+        canonical = canonical_agent_name(value)
+        if canonical:
+            referenced.add(canonical)
+
+    for task in state.get("tasks", []):
+        mark(task.get("owner"))
+        mark(task.get("reviewer"))
+        mark(task.get("waiting_for"))
+    for blocker in state.get("blockers", []):
+        mark(blocker.get("owner"))
+        mark(blocker.get("waiting_for"))
+    for handoff in state.get("handoffs", []):
+        mark(handoff.get("from"))
+        mark(handoff.get("to"))
+
+    configured = configured_agent_names()
+    report: list[dict[str, Any]] = []
+    for agent in state.get("agents", []) or []:
+        name = canonical_agent_name(agent.get("name"))
+        if name in BASELINE_AGENT_NAMES:
+            reason = "declared in KNOWN_AGENTS"
+        elif name in configured:
+            reason = "declared in .orchestrator/config.json"
+        elif name in referenced:
+            reason = "still referenced by a task, blocker or handoff"
+        else:
+            problem = actor_reference_problem(name)
+            report.append(
+                {
+                    "name": name,
+                    "keep": False,
+                    "reason": problem or "undeclared and unreferenced synthetic roster entry",
+                }
+            )
+            continue
+        report.append({"name": name, "keep": True, "reason": reason})
+    return report
+
+
+def command_prune_agents(state: dict[str, Any], args: list[str]) -> None:
+    """Audited removal of unreferenced synthetic roster entries.
+
+    Usage: prune_agents [--apply] [reason]
+
+    Dry-run by default. Never removes a declared or still-referenced actor.
+    """
+    apply = "--apply" in args
+    reason = next((arg for arg in args if not arg.startswith("--")), "actor reference cleanup")
+    actor = current_actor_validated(state)
+
+    report = synthetic_roster_entries(state)
+    removable = [entry for entry in report if not entry["keep"]]
+
+    for entry in report:
+        verb = "KEEP  " if entry["keep"] else "REMOVE"
+        preview = entry["name"] if len(entry["name"]) <= 70 else entry["name"][:67] + "..."
+        print(f"{verb} {preview!r} — {entry['reason']}")
+
+    if not removable:
+        print("\nNothing to prune: every roster entry is declared or still referenced.")
+        return
+    if not apply:
+        print(f"\nDry run: {len(removable)} entry(ies) would be removed. Re-run with --apply.")
+        return
+
+    doomed = {entry["name"] for entry in removable}
+    state["agents"] = [
+        agent
+        for agent in state.get("agents", [])
+        if canonical_agent_name(agent.get("name")) not in doomed
+    ]
+    for name in doomed:
+        KNOWN_AGENTS.pop(name, None)
+        QUARANTINED_AGENTS.discard(name)
+        state.get("workload", {}).pop(name, None)
+        state.get("workload_summary", {}).pop(name, None)
+
+    timestamp = iso_now()
+    for entry in removable:
+        append_log(
+            {
+                "ts": timestamp,
+                "agent": actor,
+                "type": "agent_pruned",
+                "task_id": "",
+                "message": f"Removed synthetic roster entry {entry['name']!r}: {entry['reason']} ({reason})",
+            }
+        )
+    print(f"\nRemoved {len(removable)} synthetic roster entry(ies).")
 
 
 def command_restore_approved(state: dict[str, Any], args: list[str]) -> None:
@@ -4295,6 +4702,8 @@ def main(argv: list[str]) -> int:
         "reopen": command_reopen,
         "handoff": command_handoff,
         "blocker": command_blocker,
+        "retarget_blocker": command_retarget_blocker,
+        "prune_agents": command_prune_agents,
         "done": command_done,
         "restore_approved": command_restore_approved,
         "supersede": command_supersede,
