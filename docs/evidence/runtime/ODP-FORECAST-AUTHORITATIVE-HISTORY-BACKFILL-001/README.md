@@ -113,6 +113,8 @@ neither is claimed.
 | `runbook/criterion5-span-requirement-sweep.py` | — | The sweep that produced it. Imports the functions under test and the real `PreparedRow`; its input is a uniform synthetic grid, which is a parameter sweep of a contract and not data — the limits are stated in §11 and in the module docstring. Touches no database and no cluster. |
 | `runbook/backfill-driver-v5.sh` | — | The driver carrying the extended queue `b2..b8,s5` that §11 sizes. Supersedes v4, which was killed by PID mid-flight at `-b2` before it could log the finisher handshake. |
 | `april_window_store_density_probe.pod.yaml` | — | The `-b1`..`-b4` density probe re-pointed at 2026-03-30..04-29, the April span `-b5`..`-b8` enters and which nothing has ever measured at day grain. **Committed unrun** — the cluster control path is blocked on a human re-auth (§11). Run it before trusting `-b5`..`-b8`. |
+| `orders_history_backfill_jobs_b5_b9.applied.json` | — | The `-b5`..`-b9` manifests, whose only prior copy was a `/tmp` dump of a now-unreachable cluster. Carries the derivation from `-b4` as a **measurement** (5/5 verbatim, 0 unexpected differences) and the eligible-date ladder that makes `-b8` the criterion-5 gate with `-b7` one day short (see §11). Secrets appear only as `secretKeyRef` names, never values. |
+| `runbook/backwards-slice-derivation-probe.py` | — | The probe that produced it. Flattens both manifests to leaf paths and classifies every difference, so the verbatim-derivation claim is falsifiable rather than inherited; imports the requirement from `criterion5_span_requirement.json` instead of restating 58/86. No database, no cluster. |
 | `evidence_redaction_audit.json` | — | Every identifier-shaped token in this directory, classified against the database. Found and then cleared a real violation; see **Redaction** above. |
 | `runbook/evidence-redaction-audit.py` | — | The audit that produced it. Classifies by table membership rather than by pattern, reports salted fingerprints only, and uses the allowed `run_id` class as its control. |
 | `runbook/redact-fidelity-sample.py` | — | One-shot, kept committed so the rewrite of `eligibility_model_fidelity.json`'s sample fields is reproducible rather than an unexplained diff. Idempotent. |
@@ -1917,6 +1919,82 @@ Driver v5 self-heals: `refresh_kubeconfig` returns non-zero without writing when
 the token cannot be obtained, so the loop parks on `status=UNREACHABLE` — logged,
 not silent — and picks the queue back up on its own once a human runs
 `gcloud auth login`. Nothing needs restarting after the re-auth.
+
+Two things were re-verified independently while blocked, rather than inherited
+from the note that recorded the block. The other three credentialed accounts on
+this host (`elainechen@`, `ray.tsai@`) fail the same reauthentication prompt, and
+their cached tokens expired on 07-27; and the compute service account was
+re-tested against the cluster through an isolated kubeconfig copy — it issues a
+token of full length and the API server answers
+`You must be logged in to the server (Unauthorized)`. The isolation matters: the
+resume recipe's own gotcha is that an unguarded manual refresh blanks `token:` in
+the live kubeconfig, so a credential experiment must never write to the file the
+keepers read.
+
+### `-b8` is the criterion-5 gate, and `-b7` misses by exactly one day
+
+`-b5`..`-b9` were created and suspended in the criterion-5 session, but unlike
+`-b1`..`-b4` they had no committed applied-manifest receipt: the only record of
+what was actually applied lived in a `/tmp` dump, which is neither evidence nor
+survives a supervisor worktree reset — and with the cluster now unreachable, that
+dump was the only copy in existence. `orders_history_backfill_jobs_b5_b9.applied
+.json` (probe `runbook/backwards-slice-derivation-probe.py`) commits it.
+
+It does not merely store the manifests. The sentence "same release SHA, same
+digest-pinned image, same serviceAccount / securityContext / secrets / volumes;
+only the name, the annotations and the two window env vars differ" has been
+copied forward from receipt to receipt since `-s2` without anything recomputing
+it — the same shape of inherited claim that turned out to be half-true for the
+redaction promise and for the README's own "no synthetic row anywhere" opening
+(§10). So the probe flattens both manifests to leaf paths and classifies **every**
+difference into one of four expected families, reporting anything else under
+`unexpected`. Measured: **5 slices checked, 5 verbatim derivations, 0 unexpected
+differences**, each with exactly **2** env differences — the window pair and
+nothing else. The one difference that looks like drift is not: the committed
+`-b4` manifest is the snapshot taken *before* the 14400→28800 patch, so a
+deadline difference is that patch showing through, and it is also the reason
+these five had to set 28800 **explicitly** (last-applied on the earlier slices
+still reads 14400).
+
+The ladder each slice is annotated with — 45/51/57/63/69 eligible dates —
+recomputes exactly from its window, and against
+`criterion5_span_requirement.json`'s governing 58 it says something sharper than
+"`-b5`..`-b8` gives margin":
+
+| slice | window | attested days | eligible dates | vs 58 |
+| --- | --- | --- | --- | --- |
+| `-b5` | 2026-04-23..04-29 | 73 | 45 | short 13 |
+| `-b6` | 2026-04-17..04-23 | 79 | 51 | short 7 |
+| `-b7` | 2026-04-11..04-17 | 85 | 57 | **short 1** |
+| `-b8` | 2026-04-05..04-11 | 91 | 63 | clears |
+| `-b9` (reserve) | 2026-03-30..04-05 | 97 | 69 | clears |
+
+So the criterion-5 gate is **`-b8`**, not the `-b3` that §7 named — `-b3` is
+criterion 3's gate and the two were silently conflated, which is the whole
+subject of this section. `-b7` lands one single day short. The ladder is
+arithmetic on an assumed span end of 2026-07-04, so a one-day error anywhere in
+it moves the gate; the assumptions are named in the receipt rather than left
+implicit.
+
+Why contiguity is not negotiable, and why the upper island cannot help:
+`expand_forecast_horizon_rows` builds each horizon window as
+`ordered[i : i + horizon_days]` and then **rejects it unless the dates equal
+`[origin+0 … origin+horizon_days-1]` exactly**. Eligible dates split across
+islands therefore never combine. 2026-07-05 and 07-06 are Defect D's permanent
+holes and eligibility requires `source_run_complete` on the date itself, so the
+downward-growing run stops dead at 07-04 and the 2026-07-07..07-27 island — 21
+dates, and growing as `-s5` lands — is unavailable to criterion 5 no matter how
+long it gets. That is measured from the code, not assumed: it is the reason the
+requirement is a *contiguous* 86 days rather than 86 dates anywhere.
+
+What is still open, and stated as open: the ladder has never been checked against
+landed data. `backwards_landing_validation.json` scores the store-count
+projection slice by slice, but nothing yet scores the eligible-date ladder
+itself, and `-b5`..`-b8` reach 2026-04-05 — below everything ever measured
+upstream, since the density probe's window starts 04-29 and the depth probe
+sampled nothing before 05-14. `april_window_store_density_probe.pod.yaml` is
+committed **unrun** and needs the cluster, so it is blocked with everything else
+on the re-auth.
 
 ## 12. After state
 

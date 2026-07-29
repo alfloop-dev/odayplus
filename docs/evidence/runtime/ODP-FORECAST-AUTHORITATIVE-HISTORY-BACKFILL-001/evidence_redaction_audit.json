@@ -1,11 +1,11 @@
 {
   "artifact": "evidence_redaction_audit",
   "task": "ODP-FORECAST-AUTHORITATIVE-HISTORY-BACKFILL-001",
-  "captured_at": "2026-07-29T03:34:57Z",
+  "captured_at": "2026-07-29T04:05:50Z",
   "what_this_is": "Every identifier-shaped token in this evidence directory, classified against the database rather than by pattern. Criterion 4 asks for redacted evidence and every receipt promises counts only; this is the test of those promises instead of a restatement of them.",
   "method": "Tokens are extracted from the committed files (small, bounded set) and classified by membership in named tables. The reverse -- searching the evidence for 563k transaction ids -- is both slower and blind to any class not enumerated first. Store ids and the run ids the policy publishes are both UUIDs, so shape cannot separate them and membership is the only sound test.",
   "scope": {
-    "files_scanned": 52,
+    "files_scanned": 58,
     "distinct_identifier_shaped_tokens": 14,
     "leak_classes": [
       "store_id",
@@ -34,5 +34,5 @@
     "redaction_holds": true,
     "caveat": "Covers UUID-shaped identifiers. core.transactions.member_id is a varchar and is unpopulated in this data, and monetary amounts are not an identifier set -- neither is testable this way, and neither is claimed."
   },
-  "elapsed_seconds": 30.8
+  "elapsed_seconds": 32.1
 }
