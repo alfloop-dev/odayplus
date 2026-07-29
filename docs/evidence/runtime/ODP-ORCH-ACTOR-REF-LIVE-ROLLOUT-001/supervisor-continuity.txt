@@ -1,40 +1,68 @@
-# Supervisor continuity — no restart across the atomic re-deployment
-# captured: 2026-07-29T07:38:54Z
+# Supervisor continuity — the gate that now enforces it, and what it read
+# captured: 2026-07-29T07:51:30Z
 
-## systemd unit (never started/stopped/restarted/reloaded by this task)
-MainPID=1487837
-NRestarts=0
-ExecMainStartTimestamp=Wed 2026-07-29 06:08:57 UTC
-ExecMainPID=1487837
-ActiveState=active
-SubState=running
+## the executable gate (round 3), not just these receipts
+Round 2 printed ActiveState/SubState/NRestarts and failed only on MainPID and
+ExecMainStartTimestamp changes, so a unit that went inactive/dead with NRestarts
+0->1 still returned RESULT: PASS. deploy.py now:
+
+  * PREFLIGHT, before any target is touched — the unit must be loaded and
+    active/running, MainPID must be a live PID whose /proc cmdline is the
+    Supervisor, and ExecMainStartTimestamp / NRestarts must be readable.
+    Otherwise: rc 2, every target byte-for-byte untouched.
+  * CONTINUITY, after the last publish — still active/running, and MainPID,
+    ExecMainStartTimestamp and NRestarts each exactly equal to the preflight
+    reading. Any drift fails the run.
+  * A failed or unparseable systemctl query is fatal in either position.
+
+Proof the gate bites: supervisor-gate-selftest.txt (11/11 scenarios, including
+the reviewer's inactive/dead probe and NRestarts 0->1 drift).
+
+## what the gate read during the 07:49:55Z publication
+## supervisor state BEFORE
+  Id                    : pantheon-supervisor.service
+  LoadState             : loaded
+  ActiveState           : active
+  SubState              : running
+  MainPID               : 1487837
+  ExecMainStartTimestamp: Wed 2026-07-29 06:08:57 UTC
+  NRestarts             : 0
+  process cmdline       : python3 -u .orchestrator/supervisor.py --verbose
+  process cwd           : /home/lupin/oday-plus-supervisor-live
+
+## preflight gate (evaluated before any target is touched)
+    PASS  unit loaded and active/running
+    PASS  MainPID is a live process whose cmdline is the Supervisor
+    PASS  continuity pinned to MainPID=1487837, ExecMainStartTimestamp=Wed 2026-07-29 06:08:57 UTC, NRestarts=0
+
+## systemd unit now (never started/stopped/restarted/reloaded by this task)
+  MainPID=1487837
+  NRestarts=0
+  ExecMainStartTimestamp=Wed 2026-07-29 06:08:57 UTC
+  ExecMainPID=1487837
+  Id=pantheon-supervisor.service
+  LoadState=loaded
+  ActiveState=active
+  SubState=running
 
 ## process identity
+  1487837 Wed Jul 29 06:08:56 2026    01:42:33 python3 -u .orchestrator/supervisor.py --verbose
+  cwd  : /home/lupin/oday-plus-supervisor-live
+  open fds under /proc/1487837/fd naming ai_status.py: 0
   PID before round-1 deploy   (07:19:43Z) : 1487837
-  PID before atomic re-deploy (07:38:12Z) : 1487837
+  PID before round-2 deploy   (07:38:12Z) : 1487837
+  PID before round-3 deploy   (07:49:55Z) : 1487837
   PID now                                 : 1487837
-  cmd                                     : python3 -u .orchestrator/supervisor.py --verbose
-  cwd                                     : /home/lupin/oday-plus-supervisor-live
-  process start time                      : Wed Jul 29 06:08:56 2026
-  elapsed                                 :    01:29:57
 
-## why the atomic path matters here
-  The Supervisor holds no long-lived fd on the file:
-    open fds under /proc/1487837/fd naming ai_status.py: 0
-  The real readers are short-lived — every worker CLI invocation and every
-  Supervisor-spawned status command opens the file fresh, at arbitrary moments.
-  'install -m' truncates and rewrites the target in place, so a reader that
-  opens mid-write sees a partial file. 'os.replace' publishes by rename(2):
-  each open resolves to the whole old inode or the whole new one, never a
-  half-written file. That is the property this round adds; the bytes were
-  already correct after round 1.
+## journal straddling the 07:49:55Z atomic swap
+  Jul 29 07:49:11 oday-plus-dev.c.alfaloop-data-project.internal bash[1487837]: [2026-07-29 15:49:11] supervisor tick: lifecycle=running heartbeat=2026-07-29 15:49:10 lag=81.0s changed=yes mode=active queue=1 approvals=0 active_workers=1
+  Jul 29 07:50:30 oday-plus-dev.c.alfaloop-data-project.internal bash[1487837]: [2026-07-29 15:50:30] supervisor tick: lifecycle=running heartbeat=2026-07-29 15:50:30 lag=80.0s changed=yes mode=active queue=1 approvals=0 active_workers=1
 
-## journal across the atomic swap (re-deployment ran at 2026-07-29T07:38:12Z)
-Jul 29 07:35:45 oday-plus-dev.c.alfaloop-data-project.internal bash[1487837]: [2026-07-29 15:35:45] supervisor tick: lifecycle=running heartbeat=2026-07-29 15:35:45 lag=81.0s changed=yes mode=active queue=1 approvals=0 active_workers=1
-Jul 29 07:37:04 oday-plus-dev.c.alfaloop-data-project.internal bash[1487837]: [2026-07-29 15:37:04] supervisor tick: lifecycle=running heartbeat=2026-07-29 15:37:04 lag=79.0s changed=yes mode=active queue=1 approvals=0 active_workers=1
-Jul 29 07:38:26 oday-plus-dev.c.alfaloop-data-project.internal bash[1487837]: [2026-07-29 15:38:26] supervisor tick: lifecycle=running heartbeat=2026-07-29 15:38:25 lag=81.0s changed=yes mode=active queue=1 approvals=0 active_workers=1
+## deployed hashes after the gated publication
+  5e19c1c1ef4729f32470956cad3e3fe5972cb92dee5225a5d65db16df074950d  /home/lupin/oday-plus/scripts/ai_status.py
+  5e19c1c1ef4729f32470956cad3e3fe5972cb92dee5225a5d65db16df074950d  /home/lupin/oday-plus-supervisor-live/scripts/ai_status.py
 
-## read-only smoke against the DEPLOYED live-root CLI (post-atomic-swap)
+## read-only smoke against the DEPLOYED live-root CLI (post-swap)
 $ AI_NAME=Claude3 python3 /home/lupin/oday-plus-supervisor-live/scripts/ai_status.py show ODP-ORCH-ACTOR-REF-LIVE-ROLLOUT-001
 {
   "source": "active",

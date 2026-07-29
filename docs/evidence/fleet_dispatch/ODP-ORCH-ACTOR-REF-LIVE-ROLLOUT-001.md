@@ -1,19 +1,55 @@
 # ODP-ORCH-ACTOR-REF-LIVE-ROLLOUT-001: roll the reviewed actor-reference guard into both live status roots
 
 Owner: Claude3 · Reviewer: Codex2 · Phase: Fleet Control Plane Live Rollout
-Deployed: 2026-07-29T07:38:12Z (atomic publish; supersedes the 07:19:43Z run)
+Deployed: 2026-07-29T07:49:55Z (gated atomic publish; supersedes the 07:38:12Z
+and 07:19:43Z runs)
 
 Depends on ODP-ORCH-ACTOR-REF-VALIDATION-001, merged as PR #496
 (`1d07de67b1b6d75345feb55c2f35e6f39c41817a`).
 
 This task deploys one file and proves it. It changes no product code, restarts
 nothing, and edits no task assignment. Receipts live under
-`docs/evidence/runtime/ODP-ORCH-ACTOR-REF-LIVE-ROLLOUT-001/`; the three drivers
-that produced them (`deploy.py`, `sandbox_cli_matrix.py`,
-`live_authority_probe.py`) are committed next to their output so the reviewer
-can re-run any of it.
+`docs/evidence/runtime/ODP-ORCH-ACTOR-REF-LIVE-ROLLOUT-001/`; the four drivers
+that produced them (`deploy.py`, `supervisor_gate_selftest.py`,
+`sandbox_cli_matrix.py`, `live_authority_probe.py`) are committed next to their
+output so the reviewer can re-run any of it.
 
-## 0. What round 2 changed, and why
+## 0. What round 3 changed, and why
+
+Round 2 was rejected at exact head `afde1048`, and the finding was not about the
+bytes. `deploy.py` printed `ActiveState`, `SubState` and `NRestarts` but only
+*failed* the run on `MainPID` / `ExecMainStartTimestamp` changes. The reviewer
+put a fake `systemctl` in front
+of the driver, made systemd report `inactive/dead` with `NRestarts` 0→1, and
+the driver still answered `RESULT: PASS`, rc 0. The live outcome happened to be
+good; the procedure that was supposed to guarantee it was not fail-closed.
+
+Round 3 fixes the executable gate:
+
+- **Preflight**, evaluated *before any target is touched*: the unit must be
+  `loaded` and `active/running`, `MainPID` must be a live PID whose `/proc`
+  cmdline is the Supervisor, and `ExecMainStartTimestamp` / `NRestarts` must be
+  readable. Otherwise the driver exits **rc 2** with every target byte-for-byte
+  untouched.
+- **Continuity**, after the last publish: the unit must still be
+  `active/running`, and `MainPID`, `ExecMainStartTimestamp` **and** `NRestarts`
+  must each be *exactly* equal to the preflight reading. Any drift fails the run.
+- A failed or unparseable `systemctl` query is **fatal in both positions** —
+  there is no `<unavailable>` sentinel left that could compare equal to itself.
+  Both snapshots are now a single `systemctl show` call, so BEFORE and AFTER are
+  each one consistent read rather than five raced ones.
+- The `--corrupt-payload` rehearsal path is gated too: a supervisor failure
+  cannot be laundered by the payload gate firing "successfully".
+
+The proof is executable, not narrative: `supervisor_gate_selftest.py` drives the
+real `deploy.py` under a scripted fake `systemctl` against throwaway git roots
+(§7a). It reproduces the reviewer's exact probe and asserts the driver refuses.
+
+The merged blob was then re-published to both live roots through the gated path
+at 07:49:55Z, and every live receipt in this document was regenerated against
+the inodes that run created.
+
+## 0b. What round 2 changed, and why
 
 Round 1 was rejected at exact head `01d84fc8`. The bytes it landed were correct
 and every live outcome check passed, but the procedure violated the reviewer's
@@ -67,8 +103,8 @@ git status --porcelain -- scripts/ai_status.py                    # empty
 git diff --check 1d07de67..HEAD                                   # clean
 ```
 
-Re-run at 07:39Z from the round-2 worktree, not carried over from round 1. The
-`git diff --check` trailing-whitespace hit the reviewer flagged was in a diff
+Re-run at 07:52Z from the round-3 worktree, not carried over from an earlier
+round. The `git diff --check` trailing-whitespace hit the reviewer flagged was in a diff
 excerpt inside `superseded-delta.txt`; it is stripped, with a note in that file
 recording that no hunk content was altered.
 
@@ -83,15 +119,21 @@ Net effect across both rounds:
 | `/home/lupin/oday-plus` | control root (`run-supervisor.sh`, `dashboard_server.py`) | `32b6cdcd…0340da` | `5e19c1c1…4950d` | **True** |
 | `/home/lupin/oday-plus-supervisor-live` | status root the live Supervisor runs from | `216c1a87…66a17b` | `5e19c1c1…4950d` | **True** |
 
-The 07:38:12Z atomic run's own receipts. Because round 1 had already landed the
+The 07:49:55Z gated run's own receipts. Because round 1 had already landed the
 correct bytes, `sha256 before` equals `sha256 after` here — so the proof that
 the file was genuinely republished through the verified-sibling path is the
 **inode change**, which only a rename can produce:
 
 | root | mode | sha256 before → after | inode before → after | verified sibling | published by |
 | --- | --- | --- | --- | --- | --- |
-| `/home/lupin/oday-plus` | 775 → 775 | `5e19c1c1…4950d` → `5e19c1c1…4950d` | 633653 → 633499 | 6/6 checks PASS | `os.replace` |
-| `/home/lupin/oday-plus-supervisor-live` | 775 → 775 | `5e19c1c1…4950d` → `5e19c1c1…4950d` | 588670 → 633653 | 6/6 checks PASS | `os.replace` |
+| `/home/lupin/oday-plus` | 775 → 775 | `5e19c1c1…4950d` → `5e19c1c1…4950d` | 633499 → 595636 | 6/6 checks PASS | `os.replace` |
+| `/home/lupin/oday-plus-supervisor-live` | 775 → 775 | `5e19c1c1…4950d` → `5e19c1c1…4950d` | 633653 → 633499 | 6/6 checks PASS | `os.replace` |
+
+The preflight gate ran first and passed against the real unit — `loaded`,
+`active/running`, `MainPID` 1487837 alive with cmdline
+`python3 -u .orchestrator/supervisor.py --verbose` — pinning continuity to
+`MainPID=1487837, ExecMainStartTimestamp=Wed 2026-07-29 06:08:57 UTC,
+NRestarts=0` before the first target was opened.
 
 Per-target post-publish assertions, both roots: `target sha256 == merged blob`,
 `target bytes == merged blob`, `mode preserved`, `inode CHANGED (proves rename,
@@ -100,12 +142,14 @@ for `.ai_status.py.*.tmp` in each `scripts/` directory reports `none`.
 
 The verification gate is not decorative. `deploy.py --corrupt-payload` flips one
 payload byte after the merged digest is computed and was run against a sandbox
-copy first: the sibling failed `sha256 == merged blob` and the byte-for-byte
-compare, was unlinked, **no rename was issued**, and the sandbox target's
-sha256, bytes, mode and inode were all unchanged. A clean positive rehearsal on
-the same sandbox (deliberately at mode `750`, to show the *target's* mode is
-what gets preserved rather than a hardcoded one) published normally with the
-inode changing. Receipts: `runtime/.../atomic-publish-rehearsal-negative.txt`,
+copy first (`/tmp/deploy-atomic-rehearsal-r3`, re-run in round 3 against the
+hardened driver): the sibling failed `sha256 == merged blob` and the
+byte-for-byte compare, was unlinked, **no rename was issued**, and the sandbox
+target's sha256, bytes, mode and inode were all unchanged. A clean positive
+rehearsal on the same sandbox (deliberately at mode `750`, to show the
+*target's* mode is what gets preserved rather than a hardcoded one) published
+normally with the inode changing. Both rehearsals ran the real preflight and
+continuity gates against the real unit, and both passed them. Receipts: `runtime/.../atomic-publish-rehearsal-negative.txt`,
 `runtime/.../atomic-publish-rehearsal-positive.txt`.
 
 Unrelated dirty changes are preserved. `git status --porcelain` was captured in
@@ -117,10 +161,11 @@ its ops branch before the rollout and is now modified, which is the deployment.)
 
 Rollback still restores from the **first** backup set,
 `…-20260729T071943Z/`, since that is the only one holding the pre-rollout files;
-the atomic run's backups contain the merged blob itself. Exact commands and the
+the round-2 and round-3 backups (`…-atomic-20260729T073811Z/`,
+`…-gated-20260729T074954Z/`) contain the merged blob itself. Exact commands and the
 expected post-rollback hashes: `runtime/.../superseded-delta.txt`.
 
-Receipts: `runtime/.../deploy-transcript.txt` (atomic),
+Receipts: `runtime/.../deploy-transcript.txt` (the 07:49:55Z gated run),
 `runtime/.../deploy-transcript-round1-superseded.txt` (rejected round 1).
 
 ### What the swap superseded
@@ -179,8 +224,8 @@ is compared before and after. The `Nessie9` count in
 `ai-activity-log.jsonl` is 1 both times — that is prior evidence prose from
 PR #496's own receipt, not a write from this run.
 
-Both receipts were regenerated at 07:38Z, i.e. against the inodes the atomic
-publish created, not carried over from round 1.
+Both receipts were regenerated at 07:50Z, i.e. against the inodes the gated
+atomic publish created, not carried over from an earlier round.
 
 Receipts: `runtime/.../fail-closed-cli-live-root.txt`,
 `runtime/.../fail-closed-cli-control-root.txt`, plus the pre-deployment
@@ -214,7 +259,7 @@ Live fingerprints (`ai-status.json`, `ai-activity-log.jsonl`,
 `current-work.md`, `dashboard-bundle.json`) are identical before and after the
 probe.
 
-Both probes were re-run at 07:38Z against the atomically published files.
+Both probes were re-run at 07:51Z against the atomically published files.
 
 Receipts: `runtime/.../merged-config-authority-live-root.txt`,
 `runtime/.../merged-config-authority-control-root.txt`,
@@ -243,23 +288,25 @@ added since audit           : []
 
 Each of the 18 references also resolves to its own spelling under the deployed
 guard (`exact=True`), so nothing would be re-attributed on the next write. Still
-18/18 with an identical multiset when re-checked at 07:38Z after the atomic
-publish.
+18/18 with an identical multiset when re-checked at 07:51Z after the gated
+atomic publish.
 
 ## 7. Supervisor left running, no restart
 
-| | before atomic deploy | after atomic deploy |
-| --- | --- | --- |
-| `MainPID` | 1487837 | 1487837 |
-| `ActiveState/SubState` | active/running | active/running |
-| `ExecMainStartTimestamp` | Wed 2026-07-29 06:08:57 UTC | Wed 2026-07-29 06:08:57 UTC |
-| `NRestarts` | 0 | 0 |
+| | preflight (before) | continuity (after) | gate verdict |
+| --- | --- | --- | --- |
+| `Id` / `LoadState` | `pantheon-supervisor.service` / `loaded` | same | PASS |
+| `ActiveState/SubState` | active/running | active/running | PASS |
+| `MainPID` | 1487837 | 1487837 | PASS — identical |
+| `ExecMainStartTimestamp` | Wed 2026-07-29 06:08:57 UTC | Wed 2026-07-29 06:08:57 UTC | PASS — identical |
+| `NRestarts` | 0 | 0 | PASS — identical |
 
-Same PID and start timestamp as before round 1 at 07:19:43Z, so the process has
-been continuous across both swaps. No `systemctl
-start/stop/restart/reload` was issued by either driver. The journal shows the
-same PID ticking on both sides of the 07:38:12Z atomic swap (07:37:04 and
-07:38:26), and a read-only `show` against the deployed live-root CLI exits 0
+These are now gate verdicts, not printed observations: had any cell differed the
+driver would have exited non-zero (§7a). Same PID and start timestamp as before
+round 1 at 07:19:43Z, so the process has been continuous across all three swaps.
+No `systemctl start/stop/restart/reload` was issued by any driver. The journal
+shows the same PID ticking on both sides of the 07:49:55Z swap (07:49:11 and
+07:50:30), and a read-only `show` against the deployed live-root CLI exits 0
 afterwards.
 
 The Supervisor holds no long-lived fd on the file (0 fds under
@@ -268,6 +315,54 @@ short-lived CLI invocations, and those are exactly what `os.replace` protects:
 each `open()` resolves to a whole inode, old or new, never a half-written file.
 
 Receipt: `runtime/.../supervisor-continuity.txt`.
+
+## 7a. The supervisor gate, proved by making it fail
+
+An observed-good outcome is not a fail-closed procedure, which is exactly what
+round 2 was rejected for. `supervisor_gate_selftest.py` runs the real
+`deploy.py` end to end with a scripted fake `systemctl` first on `PATH` and a
+throwaway git root as the target, so any BEFORE/AFTER pair can be forced
+deterministically — no timing, no sleeping, and the live Supervisor is never
+queried, signalled or touched. Each scenario asserts the exit code, whether the
+target was published or left byte-for-byte untouched, and that `RESULT: PASS` is
+absent from every negative run.
+
+```
+ 1. positive control — steady unit                       rc 0, published   PASS
+ 2. preflight — unit is inactive/dead                    rc 2, untouched   PASS
+ 3. preflight — MainPID names a dead process             rc 2, untouched   PASS
+ 4. preflight — MainPID is not the Supervisor            rc 2, untouched   PASS
+ 5. preflight — unit not loaded                          rc 2, untouched   PASS
+ 6. preflight — systemctl query fails                    rc 2, untouched   PASS
+ 7. continuity — NRestarts drifts 0 -> 1                 rc 1, published   PASS
+ 8. continuity — unit died during the deploy             rc 1, published   PASS
+ 9. continuity — restarted with a new PID and start time rc 1, published   PASS
+10. continuity — systemctl query fails afterwards        rc 1, published   PASS
+11. rehearsal mode cannot launder a dead unit            rc 1, untouched   PASS
+summary: 11/11 scenarios behaved as required
+```
+
+Scenario 8 is the reviewer's probe reproduced verbatim — `inactive/dead` with
+`NRestarts` 0→1 — and the driver now prints
+`FAIL  supervisor is inactive/dead after the deploy, expected active/running`
+plus `FAIL  NRestarts changed across the deploy: '0' -> '1'` and exits 1. Under
+round 2's driver that same input returned `RESULT: PASS`.
+
+Scenario 1 is what keeps the other ten honest: with a steady unit the same
+driver must still publish and exit 0, so the failures above are the gate firing
+rather than a driver that refuses unconditionally.
+
+Two design notes the reviewer should check:
+
+- Preflight failures use rc **2** and the transcript states `no target was
+  touched`; post-publish failures use rc **1**. A deploy that is refused and a
+  deploy that ran and then lost the Supervisor are not the same event.
+- Scenarios 7–10 leave the target *published*. That is deliberate and correct:
+  the write itself is atomic and already durable by then, so the gate's job at
+  that point is to fail the run loudly, not to pretend a rename can be undone.
+
+Receipt: `runtime/.../supervisor-gate-selftest.txt`; driver
+`runtime/.../supervisor_gate_selftest.py`.
 
 ## 8. Operational note for the reviewer: worker worktrees need the gitignored config
 
@@ -304,7 +399,9 @@ blob, published by atomic rename), plus this task's evidence in the repo. Not
 changed: product code, `ai_status.py` content, the Supervisor process, config
 files, task assignments, roster, or any other dirty file in either root.
 
-Round 2 changed the rollout procedure and the evidence only. The repo diff
-against the merge commit touches nothing under `scripts/`, and the driver
-`deploy.sh` was deleted in favour of `deploy.py` so no non-atomic path remains
-committed.
+Rounds 2 and 3 changed the rollout procedure and the evidence only. The repo
+diff against the merge commit touches nothing under `scripts/`; `deploy.sh` was
+deleted in favour of `deploy.py` so no non-atomic path remains committed, and
+round 3 added the supervisor gate plus its self-test inside that same driver
+directory. No product code, config file, task assignment or roster entry is
+touched by this task in any round.

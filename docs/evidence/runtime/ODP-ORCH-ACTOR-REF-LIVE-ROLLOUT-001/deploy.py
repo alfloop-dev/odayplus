@@ -24,8 +24,23 @@ This driver enforces that order for every target:
   6. capture AFTER receipts. The inode MUST change: that is the on-disk proof
      the file was published by rename rather than overwritten in place.
 
-Nothing here starts, stops, restarts or reloads the Supervisor; its identity is
-recorded before and after so continuity is auditable.
+Nothing here starts, stops, restarts or reloads the Supervisor, and the run is
+gated on that being observably true — not merely printed:
+
+  * PREFLIGHT, before any target is touched: the unit must be loaded and
+    ``active/running``, ``MainPID`` must be a live PID whose ``/proc`` entry
+    still looks like the Supervisor, and ``ExecMainStartTimestamp`` /
+    ``NRestarts`` must be readable. Anything else aborts with rc 2 and every
+    target byte-for-byte untouched.
+  * CONTINUITY, after the last publish: the unit must still be
+    ``active/running`` and ``MainPID``, ``ExecMainStartTimestamp`` and
+    ``NRestarts`` must each be *exactly* equal to the preflight reading. Any
+    drift fails the run.
+  * A failed or unparseable ``systemctl`` query is fatal in both positions.
+    Round 2 printed ``ActiveState``/``SubState``/``NRestarts`` but only failed
+    on PID and start-timestamp changes, so a unit that went ``inactive/dead``
+    with ``NRestarts`` 0->1 still returned ``RESULT: PASS``. That hole is what
+    this gate closes; ``supervisor_gate_selftest.py`` proves it closed.
 
 Usage:
     deploy.py --merge <commit> --backup-dir <dir> --root <path> [--root <path>]
@@ -34,6 +49,9 @@ Usage:
 ``--corrupt-payload`` is the negative rehearsal: it flips one byte of the
 payload *after* the merged digest is computed, so the verification step in (4)
 must abort before any rename happens. Only ever point that at a sandbox copy.
+
+Exit codes: 0 pass, 1 the run failed after work began, 2 the preflight gate
+refused to start and nothing was touched.
 """
 
 from __future__ import annotations
@@ -49,6 +67,23 @@ from pathlib import Path
 WORKTREE = Path(__file__).resolve().parents[4]
 TASK_ID = "ODP-ORCH-ACTOR-REF-LIVE-ROLLOUT-001"
 
+SUPERVISOR_UNIT = "pantheon-supervisor.service"
+# Queried in a single `systemctl show`, so BEFORE and AFTER are each one
+# consistent snapshot rather than five independently-raced reads.
+SUPERVISOR_PROPS = (
+    "Id",
+    "LoadState",
+    "ActiveState",
+    "SubState",
+    "MainPID",
+    "ExecMainStartTimestamp",
+    "NRestarts",
+)
+# The three fields that must be *identical* across the deploy. A restart moves
+# all three; a restart that happened to reuse the PID still moves the other two.
+CONTINUITY_FIELDS = ("MainPID", "ExecMainStartTimestamp", "NRestarts")
+IDENTITY_MARKER = "supervisor"
+
 
 def sh(*argv: str, cwd: Path | None = None) -> str:
     return subprocess.run(
@@ -60,32 +95,100 @@ def sha256_of(path: Path) -> str:
     return hashlib.sha256(path.read_bytes()).hexdigest()
 
 
-def systemd(prop: str) -> str:
-    proc = subprocess.run(
-        ["systemctl", "--user", "show", "pantheon-supervisor.service", "-p", prop, "--value"],
-        capture_output=True,
-        text=True,
-    )
-    return proc.stdout.strip() or "<unavailable>"
+class SupervisorProbeError(RuntimeError):
+    """The unit's state could not be read. Always fatal — never assumed benign."""
 
 
-def supervisor_block(heading: str) -> dict[str, str]:
-    state = {
-        "MainPID": systemd("MainPID"),
-        "ActiveState": systemd("ActiveState"),
-        "SubState": systemd("SubState"),
-        "ExecMainStartTimestamp": systemd("ExecMainStartTimestamp"),
-        "NRestarts": systemd("NRestarts"),
-    }
-    print(f"## supervisor state {heading}")
-    for key, value in state.items():
-        print(f"  {key:22s}: {value}")
-    pid = state["MainPID"]
-    if pid.isdigit() and Path(f"/proc/{pid}").exists():
-        print(f"  {'process cwd':22s}: {os.readlink(f'/proc/{pid}/cwd')}")
-        print(f"  {'cmdline':22s}: {Path(f'/proc/{pid}/cmdline').read_bytes().decode().replace(chr(0), ' ').strip()}")
-    print()
+def probe_supervisor() -> dict[str, str]:
+    """One `systemctl show` snapshot. A failed or incomplete query raises."""
+    argv = ["systemctl", "--user", "show", SUPERVISOR_UNIT]
+    argv += [f"--property={prop}" for prop in SUPERVISOR_PROPS]
+    try:
+        proc = subprocess.run(argv, capture_output=True, text=True)
+    except OSError as exc:  # systemctl missing entirely
+        raise SupervisorProbeError(f"could not execute systemctl: {exc}") from exc
+    if proc.returncode != 0:
+        detail = (proc.stderr or proc.stdout).strip().splitlines()
+        raise SupervisorProbeError(
+            f"systemctl exited {proc.returncode}: {detail[0] if detail else '<no output>'}"
+        )
+
+    state: dict[str, str] = {}
+    for line in proc.stdout.splitlines():
+        if "=" in line:
+            key, _, value = line.partition("=")
+            state[key.strip()] = value.strip()
+    missing = [p for p in SUPERVISOR_PROPS if not state.get(p)]
+    if missing:
+        raise SupervisorProbeError(f"systemctl did not report {', '.join(missing)}")
     return state
+
+
+def identity_failures(state: dict[str, str]) -> tuple[list[str], dict[str, str]]:
+    """Is MainPID a live process that still looks like the Supervisor?"""
+    pid = state["MainPID"]
+    if not pid.isdigit() or int(pid) <= 0:
+        return [f"MainPID {pid!r} is not a live PID"], {}
+    proc_dir = Path(f"/proc/{pid}")
+    if not proc_dir.exists():
+        return [f"MainPID {pid} has no /proc entry — the process is gone"], {}
+    try:
+        cmdline = proc_dir.joinpath("cmdline").read_bytes().decode(errors="replace")
+        cmdline = cmdline.replace("\0", " ").strip()
+        cwd = os.readlink(str(proc_dir / "cwd"))
+    except OSError as exc:
+        return [f"MainPID {pid} identity unreadable: {exc}"], {}
+    detail = {"cmdline": cmdline, "cwd": cwd}
+    if IDENTITY_MARKER not in cmdline.lower():
+        return [f"MainPID {pid} cmdline is not the Supervisor: {cmdline!r}"], detail
+    return [], detail
+
+
+def preflight_failures(state: dict[str, str]) -> list[str]:
+    """Must the run refuse to start? Evaluated before any target is touched."""
+    failures: list[str] = []
+    if state["Id"] != SUPERVISOR_UNIT:
+        failures.append(f"unit is {state['Id']!r}, expected {SUPERVISOR_UNIT!r}")
+    if state["LoadState"] != "loaded":
+        failures.append(f"LoadState is {state['LoadState']!r}, expected 'loaded'")
+    if state["ActiveState"] != "active":
+        failures.append(f"ActiveState is {state['ActiveState']!r}, expected 'active'")
+    if state["SubState"] != "running":
+        failures.append(f"SubState is {state['SubState']!r}, expected 'running'")
+    if not state["NRestarts"].isdigit():
+        failures.append(f"NRestarts is {state['NRestarts']!r}, not a readable count")
+    stamp = state["ExecMainStartTimestamp"]
+    if not stamp or stamp in {"n/a", "<unavailable>"}:
+        failures.append(f"ExecMainStartTimestamp is {stamp!r} — no start time to pin")
+    failures.extend(identity_failures(state)[0])
+    return failures
+
+
+def continuity_failures(before: dict[str, str], after: dict[str, str]) -> list[str]:
+    """Did the Supervisor survive the deploy as the exact same process?"""
+    failures: list[str] = []
+    if after["ActiveState"] != "active" or after["SubState"] != "running":
+        failures.append(
+            f"supervisor is {after['ActiveState']}/{after['SubState']} after the deploy,"
+            " expected active/running"
+        )
+    if after["LoadState"] != "loaded":
+        failures.append(f"LoadState became {after['LoadState']!r} after the deploy")
+    for field in CONTINUITY_FIELDS:
+        if before[field] != after[field]:
+            failures.append(
+                f"{field} changed across the deploy: {before[field]!r} -> {after[field]!r}"
+            )
+    return failures
+
+
+def supervisor_block(heading: str, state: dict[str, str]) -> None:
+    print(f"## supervisor state {heading}")
+    for key in SUPERVISOR_PROPS:
+        print(f"  {key:22s}: {state[key]}")
+    for key, value in identity_failures(state)[1].items():
+        print(f"  {'process ' + key:22s}: {value}")
+    print()
 
 
 def receipts(target: Path, label: str) -> dict[str, object]:
@@ -202,7 +305,29 @@ def main() -> int:
     print(f"  bytes       : {len(payload)}")
     print()
 
-    before_state = supervisor_block("BEFORE")
+    try:
+        before_state = probe_supervisor()
+    except SupervisorProbeError as exc:
+        print("## supervisor state BEFORE")
+        print(f"  PROBE FAILED: {exc}")
+        print()
+        print("RESULT: FAIL — preflight gate: the Supervisor's state is unreadable,")
+        print("               so no target was touched.")
+        return 2
+
+    supervisor_block("BEFORE", before_state)
+    preflight = preflight_failures(before_state)
+    print("## preflight gate (evaluated before any target is touched)")
+    for label in preflight:
+        print(f"    FAIL  {label}")
+    if preflight:
+        print()
+        print("RESULT: FAIL — preflight gate refused to deploy; no target was touched.")
+        return 2
+    print("    PASS  unit loaded and active/running")
+    print("    PASS  MainPID is a live process whose cmdline is the Supervisor")
+    print(f"    PASS  continuity pinned to {', '.join(f'{f}={before_state[f]}' for f in CONTINUITY_FIELDS)}")
+    print()
 
     failures: list[str] = []
     aborted_targets: list[bool] = []
@@ -274,14 +399,26 @@ def main() -> int:
             failures.append(f"{root}: unrelated dirty inventory changed")
         print()
 
-    after_state = supervisor_block("AFTER")
-    same_pid = before_state["MainPID"] == after_state["MainPID"]
-    same_start = before_state["ExecMainStartTimestamp"] == after_state["ExecMainStartTimestamp"]
-    print(f"  PID unchanged          : {same_pid}")
-    print(f"  start timestamp same   : {same_start}")
-    print(f"  NRestarts before/after : {before_state['NRestarts']} / {after_state['NRestarts']}")
-    if not (same_pid and same_start):
-        failures.append("supervisor identity changed across the deploy")
+    try:
+        after_state: dict[str, str] | None = probe_supervisor()
+    except SupervisorProbeError as exc:
+        after_state = None
+        print("## supervisor state AFTER")
+        print(f"  PROBE FAILED: {exc}")
+        print()
+        failures.append(f"supervisor state unreadable after the deploy: {exc}")
+
+    if after_state is not None:
+        supervisor_block("AFTER", after_state)
+        continuity = continuity_failures(before_state, after_state)
+        print("## continuity gate")
+        for label in continuity:
+            print(f"    FAIL  {label}")
+        failures.extend(continuity)
+        if not continuity:
+            print("    PASS  still active/running")
+            for field in CONTINUITY_FIELDS:
+                print(f"    PASS  {field} identical: {before_state[field]}")
     print("# No systemctl start/stop/restart/reload was issued by this script.")
     print()
 

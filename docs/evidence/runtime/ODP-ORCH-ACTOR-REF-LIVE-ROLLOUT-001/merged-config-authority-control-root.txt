@@ -1,7 +1,7 @@
 # Live merged-config actor authority — read-only probe
 # deployed module        : /home/lupin/oday-plus/scripts/ai_status.py
 #   sha256               : 5e19c1c1ef4729f32470956cad3e3fe5972cb92dee5225a5d65db16df074950d
-# probe run at           : 2026-07-29T07:38:40Z
+# probe run at           : unset
 
 ## config sources this module reads
   ROOT                  = /home/lupin/oday-plus
@@ -71,9 +71,9 @@
   added since audit  : []
 
 ## live fingerprints — this probe never writes
-  ai-status.json           before=c2135ab97752ca9a after=c2135ab97752ca9a identical=True
-  ai-activity-log.jsonl    before=45662f51f0f29b58 after=45662f51f0f29b58 identical=True
-  current-work.md          before=1b62f959816c74fa after=1b62f959816c74fa identical=True
-  dashboard-bundle.json    before=f24a6374ca2076c8 after=f24a6374ca2076c8 identical=True
+  ai-status.json           before=b51b24b254f9000a after=b51b24b254f9000a identical=True
+  ai-activity-log.jsonl    before=d0214ea30366d329 after=d0214ea30366d329 identical=True
+  current-work.md          before=d2eed11acff526cf after=d2eed11acff526cf identical=True
+  dashboard-bundle.json    before=16b1853c2cd4ecec after=16b1853c2cd4ecec identical=True
 
 RESULT: PASS
