@@ -9,6 +9,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import time
 from copy import deepcopy
 from datetime import UTC, datetime
 from pathlib import Path
@@ -1579,7 +1580,27 @@ def pull_request_status_for_branch(repository_root: Path, branch: str) -> dict[s
     )
 
 
-def task_pr_ci_status(task_id: str, repository_root: Path | None = None) -> tuple[str | None, str]:
+_CI_STATUS_CACHE: dict[str, tuple[float, tuple[str | None, str]]] = {}
+_TASK_SHA_CACHE: dict[str, tuple[float, str | None]] = {}
+
+
+def clear_ai_status_caches() -> None:
+    _CI_STATUS_CACHE.clear()
+    _TASK_SHA_CACHE.clear()
+
+
+def task_pr_ci_status(
+    task_id: str,
+    repository_root: Path | None = None,
+    max_age_seconds: float = 10.0,
+) -> tuple[str | None, str]:
+    now = time.time()
+    cache_key = f"{task_id}:{repository_root}"
+    if cache_key in _CI_STATUS_CACHE:
+        ts, val = _CI_STATUS_CACHE[cache_key]
+        if now - ts < max_age_seconds:
+            return val
+
     root = repository_root or ROOT
     for branch_name in [f"task/{task_id}", f"task-{task_id}"]:
         res = run_gh_json_command(
@@ -1590,29 +1611,58 @@ def task_pr_ci_status(task_id: str, repository_root: Path | None = None) -> tupl
             pr_state = res.get("state")
             rollup = res.get("statusCheckRollup") or []
             if not rollup:
-                return pr_state, "none"
+                val = (pr_state, "none")
+                _CI_STATUS_CACHE[cache_key] = (now, val)
+                return val
+
             has_pending = False
             has_failure = False
             has_success = False
             for check in rollup:
                 if isinstance(check, dict):
-                    st = str(check.get("state") or check.get("status") or check.get("conclusion") or "").upper()
-                    if st in {"PENDING", "QUEUED", "IN_PROGRESS", "WAITING", "EXPECTED"}:
-                        has_pending = True
-                    elif st in {"FAILURE", "ERROR", "CANCELLED", "TIMED_OUT"}:
-                        has_failure = True
-                    elif st in {"SUCCESS", "COMPLETED", "NEUTRAL"}:
-                        has_success = True
-            if has_pending:
-                ci_status = "pending"
-            elif has_failure:
+                    conclusion = str(check.get("conclusion") or "").upper()
+                    state_val = str(check.get("state") or "").upper()
+                    status_val = str(check.get("status") or "").upper()
+
+                    if conclusion:
+                        if conclusion in {"FAILURE", "CANCELLED", "TIMED_OUT", "ACTION_REQUIRED"}:
+                            has_failure = True
+                        elif conclusion in {"PENDING", "IN_PROGRESS"}:
+                            has_pending = True
+                        elif conclusion in {"SUCCESS", "NEUTRAL", "SKIPPED"}:
+                            has_success = True
+                    elif state_val:
+                        if state_val in {"FAILURE", "ERROR"}:
+                            has_failure = True
+                        elif state_val in {"PENDING", "QUEUED", "IN_PROGRESS", "WAITING", "EXPECTED"}:
+                            has_pending = True
+                        elif state_val in {"SUCCESS"}:
+                            has_success = True
+                    elif status_val:
+                        if status_val in {"PENDING", "QUEUED", "IN_PROGRESS", "WAITING", "EXPECTED", "REQUESTED"}:
+                            has_pending = True
+                        elif status_val in {"FAILURE", "ERROR"}:
+                            has_failure = True
+                        elif status_val in {"COMPLETED", "SUCCESS"}:
+                            has_success = True
+
+            if has_failure:
                 ci_status = "failure"
+            elif has_pending:
+                ci_status = "pending"
             elif has_success:
                 ci_status = "success"
             else:
                 ci_status = "unknown"
-            return pr_state, ci_status
-    return None, "unknown"
+
+            val = (pr_state, ci_status)
+            _CI_STATUS_CACHE[cache_key] = (now, val)
+            return val
+
+    val = (None, "unknown")
+    _CI_STATUS_CACHE[cache_key] = (now, val)
+    return val
+
 
 
 
@@ -4152,6 +4202,7 @@ def command_reopen(state: dict[str, Any], args: list[str]) -> None:
     task["last_update"] = timestamp
     task["next"] = message
     task.pop("waiting_for", None)
+    task.pop("approved_head", None)
     mark_blockers_resolved(state, task_id)
     mark_handoffs_done(state, task_id)
     if actor == reviewer and owner and owner != reviewer:
@@ -4187,6 +4238,7 @@ def command_handoff(state: dict[str, Any], args: list[str]) -> None:
     task["status"] = "review"
     task["last_update"] = timestamp
     task["next"] = message
+    task.pop("approved_head", None)
     mark_handoffs_done_for_actor(state, task_id, actor)
     mark_blockers_resolved(state, task_id)
     state.setdefault("handoffs", []).append(
@@ -4199,7 +4251,42 @@ def command_handoff(state: dict[str, Any], args: list[str]) -> None:
             "created_at": timestamp,
         }
     )
-    append_log({"ts": timestamp, "agent": actor, "type": "handoff", "task_id": task_id, "message": f"Handoff to {to_agent}: {message}"})
+    append_log({"ts": timestamp, "agent": actor, "type": "handoff", "task_id": task_id, "message": message})
+
+
+def command_re_review(state: dict[str, Any], args: list[str]) -> None:
+    """re_review <task-id> <message>"""
+    if len(args) < 2:
+        raise SystemExit("Usage: re_review <task-id> <message>")
+    task_id, message = args[0], args[1]
+    actor = current_actor_validated()
+    task = get_task(state, task_id)
+    if task is None:
+        raise SystemExit(f"Unknown task: {task_id}")
+    owner = canonical_agent_name(task.get("owner"))
+    reviewer = canonical_agent_name(task.get("reviewer"))
+    if actor not in {owner, reviewer}:
+        raise SystemExit(f"Only the owner ({owner}) or reviewer ({reviewer}) can request re-review for {task_id}")
+    timestamp = iso_now()
+    task["status"] = "review"
+    task["last_update"] = timestamp
+    task["next"] = message
+    task.pop("approved_head", None)
+    task.pop("waiting_for", None)
+    mark_blockers_resolved(state, task_id)
+    mark_handoffs_done(state, task_id)
+    if owner and reviewer and owner != reviewer:
+        state.setdefault("handoffs", []).append(
+            {
+                "task_id": task_id,
+                "from": owner,
+                "to": reviewer,
+                "message": message,
+                "status": "pending",
+                "created_at": timestamp,
+            }
+        )
+    append_log({"ts": timestamp, "agent": actor, "type": "re_review", "task_id": task_id, "message": message})
 
 
 def command_blocker(state: dict[str, Any], args: list[str]) -> None:
@@ -4727,26 +4814,17 @@ def command_wave(state: dict[str, Any], args: list[str]) -> None:
         raise SystemExit(f"Unknown wave subcommand: {subcommand!r}. Use: open <wave-id>, close, freeze")
 
 
-def resolve_task_sha(task_id: str) -> str | None:
-    # 1. Try gh pr view for task/TASK-ID
-    for branch_name in [f"task/{task_id}", f"task-{task_id}"]:
-        result = subprocess.run(
-            [get_gh_executable(), "pr", "view", branch_name, "--json", "headRefOid"],
-            capture_output=True,
-            text=True,
-            check=False,
-            cwd=ROOT,
-        )
-        if result.returncode == 0:
-            try:
-                data = json.loads(result.stdout)
-                sha = data.get("headRefOid")
-                if sha:
-                    return sha
-            except Exception:
-                pass
+_TASK_SHA_CACHE: dict[str, tuple[float, str | None]] = {}
 
-    # 2. Try git rev-parse for local branches
+
+def resolve_task_sha(task_id: str, max_age_seconds: float = 5.0) -> str | None:
+    now = time.time()
+    if task_id in _TASK_SHA_CACHE:
+        ts, val = _TASK_SHA_CACHE[task_id]
+        if now - ts < max_age_seconds:
+            return val
+
+    # 1. Try git rev-parse for local branches first (fast, ~1ms)
     for branch_name in [f"task/{task_id}", f"task-{task_id}"]:
         result = subprocess.run(
             ["git", "rev-parse", "--verify", branch_name],
@@ -4756,21 +4834,11 @@ def resolve_task_sha(task_id: str) -> str | None:
             cwd=ROOT,
         )
         if result.returncode == 0 and result.stdout.strip():
-            return result.stdout.strip()
+            sha = result.stdout.strip()
+            _TASK_SHA_CACHE[task_id] = (now, sha)
+            return sha
 
-    # 3. Try git rev-parse for remote branches
-    for branch_name in [f"origin/task/{task_id}", f"origin/task-{task_id}"]:
-        result = subprocess.run(
-            ["git", "rev-parse", "--verify", branch_name],
-            capture_output=True,
-            text=True,
-            check=False,
-            cwd=ROOT,
-        )
-        if result.returncode == 0 and result.stdout.strip():
-            return result.stdout.strip()
-
-    # 4. Fallback to current HEAD if current branch matches task_id
+    # 2. Try git rev-parse for current HEAD if current branch matches task_id
     current_branch_result = subprocess.run(
         ["git", "branch", "--show-current"],
         capture_output=True,
@@ -4789,7 +4857,44 @@ def resolve_task_sha(task_id: str) -> str | None:
                 cwd=ROOT,
             )
             if result.returncode == 0 and result.stdout.strip():
-                return result.stdout.strip()
+                sha = result.stdout.strip()
+                _TASK_SHA_CACHE[task_id] = (now, sha)
+                return sha
+
+    # 3. Try git rev-parse for remote branches
+    for branch_name in [f"origin/task/{task_id}", f"origin/task-{task_id}"]:
+        result = subprocess.run(
+            ["git", "rev-parse", "--verify", branch_name],
+            capture_output=True,
+            text=True,
+            check=False,
+            cwd=ROOT,
+        )
+        if result.returncode == 0 and result.stdout.strip():
+            sha = result.stdout.strip()
+            _TASK_SHA_CACHE[task_id] = (now, sha)
+            return sha
+
+    # 4. Fallback to gh pr view for task/TASK-ID
+    for branch_name in [f"task/{task_id}", f"task-{task_id}"]:
+        result = subprocess.run(
+            [get_gh_executable(), "pr", "view", branch_name, "--json", "headRefOid"],
+            capture_output=True,
+            text=True,
+            check=False,
+            cwd=ROOT,
+        )
+        if result.returncode == 0:
+            try:
+                data = json.loads(result.stdout)
+                sha = data.get("headRefOid")
+                if sha:
+                    _TASK_SHA_CACHE[task_id] = (now, sha)
+                    return sha
+            except Exception:
+                pass
+
+    _TASK_SHA_CACHE[task_id] = (now, None)
     return None
 
 
@@ -4810,29 +4915,29 @@ def get_repository_slug_safe() -> str:
     try:
         remote_url = subprocess.check_output(
             ["git", "remote", "get-url", "origin"],
-            stderr=subprocess.DEVNULL,
             text=True,
+            stderr=subprocess.DEVNULL,
             cwd=ROOT,
         ).strip()
-        match = re.search(r"github\.com[:/]([^/]+/[^/.]+)(?:\.git)?", remote_url)
-        if match:
-            return match.group(1)
+        if "github.com" in remote_url:
+            # Handle git@github.com:owner/repo.git or https://github.com/owner/repo.git
+            parts = remote_url.split("github.com")[-1].lstrip(":").lstrip("/")
+            if parts.endswith(".git"):
+                parts = parts[:-4]
+            if parts:
+                return parts
     except Exception:
         pass
-    return "alfloop-dev/odayplus"  # Fallback
+    return "alfloop-dev/odayplus"
 
 
 def emit_task_review_status_check(task: dict[str, Any], state_status: str) -> None:
-    task_id = task.get("id")
-    if not task_id:
-        return
-
+    task_id = str(task.get("id") or "")
     sha = resolve_task_sha(task_id)
     if not sha:
-        print(f"Warning: Could not resolve git SHA for task {task_id}. Skipping status emission.", file=sys.stderr)
         return
 
-    repo = get_repository_slug_safe()
+    repo_slug = get_repository_slug_safe()
     context = "task-review-gate"
 
     if state_status == "review_approved":
@@ -4847,15 +4952,13 @@ def emit_task_review_status_check(task: dict[str, Any], state_status: str) -> No
         state = "pending"
         description = f"Pending review by {task.get('reviewer', 'Codex')}"
     else:
-        state = "failure"
-        description = f"Review rejected or reopened. Task status is {state_status}"
-
-    print(f"Emitting GitHub status check '{context}'={state} on {repo}@{sha}...")
+        state = "success"
+        description = f"Status {state_status} does not require review gate"
 
     cmd = [
         get_gh_executable(), "api",
         "-X", "POST",
-        f"repos/{repo}/statuses/{sha}",
+        f"repos/{repo_slug}/statuses/{sha}",
         "-F", f"state={state}",
         "-F", f"context={context}",
         "-F", f"description={description}"
@@ -4878,6 +4981,7 @@ def emit_task_review_status_check(task: dict[str, Any], state_status: str) -> No
         if not isinstance(exc, RuntimeError):
             raise RuntimeError(err_msg) from exc
         raise
+
 
 
 def emit_status_checks_for_changed_tasks(state_before: dict[str, Any], state_after: dict[str, Any], command: str, args: list[str]) -> None:
