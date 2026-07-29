@@ -1,0 +1,128 @@
+# Deployment transcript — atomic publish of the exact merged scripts/ai_status.py
+# host date : 2026-07-29T07:49:55Z
+# driver    : deploy.py (same-dir sibling + verify + os.replace)
+# merge     : 1d07de67b1b6d75345feb55c2f35e6f39c41817a
+# backups   : /home/lupin/pantheon-deploy-backups/ODP-ORCH-ACTOR-REF-LIVE-ROLLOUT-001-gated-20260729T074954Z
+
+## source materialised from the merge commit blob (no working-tree copy)
+  blob        : 73800e2810e4b693f2e940beec582f3a6c27c7ef
+  sha256      : 5e19c1c1ef4729f32470956cad3e3fe5972cb92dee5225a5d65db16df074950d
+  bytes       : 203611
+
+## supervisor state BEFORE
+  Id                    : pantheon-supervisor.service
+  LoadState             : loaded
+  ActiveState           : active
+  SubState              : running
+  MainPID               : 1487837
+  ExecMainStartTimestamp: Wed 2026-07-29 06:08:57 UTC
+  NRestarts             : 0
+  process cmdline       : python3 -u .orchestrator/supervisor.py --verbose
+  process cwd           : /home/lupin/oday-plus-supervisor-live
+
+## preflight gate (evaluated before any target is touched)
+    PASS  unit loaded and active/running
+    PASS  MainPID is a live process whose cmdline is the Supervisor
+    PASS  continuity pinned to MainPID=1487837, ExecMainStartTimestamp=Wed 2026-07-29 06:08:57 UTC, NRestarts=0
+
+## target: /home/lupin/oday-plus/scripts/ai_status.py
+  git branch          : main
+  git HEAD            : e3f0fb84b93e76d52c81b402890dbe08226e4e6f
+  dirty files         : 580
+  dirty inventory     : /home/lupin/pantheon-deploy-backups/ODP-ORCH-ACTOR-REF-LIVE-ROLLOUT-001-gated-20260729T074954Z/oday-plus.dirty-before.txt
+  BEFORE sha256    : 5e19c1c1ef4729f32470956cad3e3fe5972cb92dee5225a5d65db16df074950d
+  BEFORE bytes     : 203611
+  BEFORE mode      : 775
+  BEFORE inode     : 633499
+  BEFORE device    : 2049
+  BEFORE mtime     : 2026-07-29T07:38:12Z
+  backup              : /home/lupin/pantheon-deploy-backups/ODP-ORCH-ACTOR-REF-LIVE-ROLLOUT-001-gated-20260729T074954Z/oday-plus.ai_status.py.bak
+  backup sha256       : 5e19c1c1ef4729f32470956cad3e3fe5972cb92dee5225a5d65db16df074950d
+  rollback            : install -m 775 /home/lupin/pantheon-deploy-backups/ODP-ORCH-ACTOR-REF-LIVE-ROLLOUT-001-gated-20260729T074954Z/oday-plus.ai_status.py.bak /home/lupin/oday-plus/scripts/ai_status.py
+  staged sibling      : /home/lupin/oday-plus/scripts/.ai_status.py.ODP-ORCH-ACTOR-REF-LIVE-ROLLOUT-001.1628040.tmp
+  sibling sha256      : 5e19c1c1ef4729f32470956cad3e3fe5972cb92dee5225a5d65db16df074950d
+  sibling bytes/mode  : 203611 / 775
+  verification before publishing:
+    PASS  same directory as target
+    PASS  same filesystem (rename is atomic)
+    PASS  sha256 == merged blob
+    PASS  byte length == merged blob
+    PASS  mode == target's existing mode
+    PASS  byte-for-byte compare vs blob
+  published           : os.replace(.ai_status.py.ODP-ORCH-ACTOR-REF-LIVE-ROLLOUT-001.1628040.tmp -> ai_status.py) [atomic rename]
+  AFTER  sha256    : 5e19c1c1ef4729f32470956cad3e3fe5972cb92dee5225a5d65db16df074950d
+  AFTER  bytes     : 203611
+  AFTER  mode      : 775
+  AFTER  inode     : 595636
+  AFTER  device    : 2049
+  AFTER  mtime     : 2026-07-29T07:49:55Z
+  post-publish assertions:
+    PASS  target sha256 == merged blob
+    PASS  target bytes == merged blob
+    PASS  mode preserved
+    PASS  inode CHANGED (proves rename, not in-place write)
+    PASS  no temporary sibling left behind
+  leftover siblings   : none
+  dirty files after   : 580
+  every other dirty file unchanged : True
+
+## target: /home/lupin/oday-plus-supervisor-live/scripts/ai_status.py
+  git branch          : ops/ODP-LIVE-SUPERVISOR-20260726
+  git HEAD            : 63656fa7a43d58cb9aaea2f47e5af43e25efed61
+  dirty files         : 22
+  dirty inventory     : /home/lupin/pantheon-deploy-backups/ODP-ORCH-ACTOR-REF-LIVE-ROLLOUT-001-gated-20260729T074954Z/oday-plus-supervisor-live.dirty-before.txt
+  BEFORE sha256    : 5e19c1c1ef4729f32470956cad3e3fe5972cb92dee5225a5d65db16df074950d
+  BEFORE bytes     : 203611
+  BEFORE mode      : 775
+  BEFORE inode     : 633653
+  BEFORE device    : 2049
+  BEFORE mtime     : 2026-07-29T07:38:12Z
+  backup              : /home/lupin/pantheon-deploy-backups/ODP-ORCH-ACTOR-REF-LIVE-ROLLOUT-001-gated-20260729T074954Z/oday-plus-supervisor-live.ai_status.py.bak
+  backup sha256       : 5e19c1c1ef4729f32470956cad3e3fe5972cb92dee5225a5d65db16df074950d
+  rollback            : install -m 775 /home/lupin/pantheon-deploy-backups/ODP-ORCH-ACTOR-REF-LIVE-ROLLOUT-001-gated-20260729T074954Z/oday-plus-supervisor-live.ai_status.py.bak /home/lupin/oday-plus-supervisor-live/scripts/ai_status.py
+  staged sibling      : /home/lupin/oday-plus-supervisor-live/scripts/.ai_status.py.ODP-ORCH-ACTOR-REF-LIVE-ROLLOUT-001.1628040.tmp
+  sibling sha256      : 5e19c1c1ef4729f32470956cad3e3fe5972cb92dee5225a5d65db16df074950d
+  sibling bytes/mode  : 203611 / 775
+  verification before publishing:
+    PASS  same directory as target
+    PASS  same filesystem (rename is atomic)
+    PASS  sha256 == merged blob
+    PASS  byte length == merged blob
+    PASS  mode == target's existing mode
+    PASS  byte-for-byte compare vs blob
+  published           : os.replace(.ai_status.py.ODP-ORCH-ACTOR-REF-LIVE-ROLLOUT-001.1628040.tmp -> ai_status.py) [atomic rename]
+  AFTER  sha256    : 5e19c1c1ef4729f32470956cad3e3fe5972cb92dee5225a5d65db16df074950d
+  AFTER  bytes     : 203611
+  AFTER  mode      : 775
+  AFTER  inode     : 633499
+  AFTER  device    : 2049
+  AFTER  mtime     : 2026-07-29T07:49:55Z
+  post-publish assertions:
+    PASS  target sha256 == merged blob
+    PASS  target bytes == merged blob
+    PASS  mode preserved
+    PASS  inode CHANGED (proves rename, not in-place write)
+    PASS  no temporary sibling left behind
+  leftover siblings   : none
+  dirty files after   : 22
+  every other dirty file unchanged : True
+
+## supervisor state AFTER
+  Id                    : pantheon-supervisor.service
+  LoadState             : loaded
+  ActiveState           : active
+  SubState              : running
+  MainPID               : 1487837
+  ExecMainStartTimestamp: Wed 2026-07-29 06:08:57 UTC
+  NRestarts             : 0
+  process cmdline       : python3 -u .orchestrator/supervisor.py --verbose
+  process cwd           : /home/lupin/oday-plus-supervisor-live
+
+## continuity gate
+    PASS  still active/running
+    PASS  MainPID identical: 1487837
+    PASS  ExecMainStartTimestamp identical: Wed 2026-07-29 06:08:57 UTC
+    PASS  NRestarts identical: 0
+# No systemctl start/stop/restart/reload was issued by this script.
+
+RESULT: PASS — merged blob published atomically to every target

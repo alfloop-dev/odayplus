@@ -1,0 +1,118 @@
+# What each root held before the deployment, and what the swap superseded
+# captured: 2026-07-29T07:21:44Z
+# backups : /home/lupin/pantheon-deploy-backups/ODP-ORCH-ACTOR-REF-LIVE-ROLLOUT-001-20260729T071943Z
+
+## /home/lupin/oday-plus-supervisor-live  (status root the live Supervisor runs from)
+  previous sha256 : 216c1a873e9fd34364eab1f6da33cbbffcb71690744004a4553145fe0566a17b
+  provenance      : byte-identical to dev commit 1a7c0149 (ODP-INTAKE-UX-FND-001, 2026-07-21)
+                    i.e. a clean earlier point on the same dev lineage, no local edits
+  git status before: clean (tracked file matched the ops branch checkout)
+  superseded delta: only the ODP-ORCH-ACTOR-REF-VALIDATION-001 hardening (717 diff lines);
+                    KNOWN_AGENTS target_workload values are identical before and after.
+  proof that no local edit was lost:
+  $ git log --all --find-object=5ad6e74df2ea09fc403e7c424f0f4c551e3158eb -- scripts/ai_status.py
+    cdaec26b9f0cf91d49f2cff39359e57f9bf9f81c 2026-07-29 05:35:13 +0000 ODP-ORCH-ACTOR-REF-VALIDATION-001: anchor actor-ref validation
+    da609089dcd3594581067015f96e60a9cb4b6112 2026-07-26 22:23:07 +0000 ODP-AVM-OFFICIAL-OUTCOMES-REVIEW-001: anchor Claude3 agent registry fix
+    1a7c0149d9ba1f60dc8b3c06c19087b2d8e8c115 2026-07-21 04:41:56 +0000 ODP-INTAKE-UX-FND-001: handle unauthenticated gh status check emission
+
+## /home/lupin/oday-plus  (control root: run-supervisor.sh, dashboard_server.py)
+  previous sha256 : 32b6cdcdda7c9f4b293af97636fb85c5616a5f18f2700b3c22f00371290340da
+  provenance      : dev commit bc212754 (2026-07-09) PLUS 18 lines of uncommitted local edits.
+  This root's HEAD is a squashed 'Initial commit' snapshot with 580 dirty files, so the
+  local edits were never on any branch. They are preserved in the backup above. The exact
+  superseded delta:
+
+    --- /tmp/ctrl-base.py	2026-07-29 07:21:44.711833162 +0000
+    +++ /home/lupin/pantheon-deploy-backups/ODP-ORCH-ACTOR-REF-LIVE-ROLLOUT-001-20260729T071943Z/oday-plus.ai_status.py.bak	2026-07-18 13:02:45.846014263 +0000
+    @@ -75,12 +75,12 @@
+         "Claude": {
+             "capability_lane": ["execution", "control-plane", "governance-review"],
+             "default_branch": "feat/claude-execution-control",
+    -        "target_workload": 20,
+    +        "target_workload": 10,
+         },
+         "Claude2": {
+             "capability_lane": ["execution", "control-plane", "governance-review"],
+             "default_branch": "feat/claude2-execution-control",
+    -        "target_workload": 10,
+    +        "target_workload": 5,
+         },
+         "Antigravity": {
+             "capability_lane": ["gcp", "ci-cd", "runtime-packaging", "worker-ops"],
+    @@ -90,32 +90,32 @@
+         "Antigravity2": {
+             "capability_lane": ["gcp", "ci-cd", "runtime-packaging", "worker-ops"],
+             "default_branch": "feat/antigravity2-research-runtime",
+    -        "target_workload": 5,
+    +        "target_workload": 30,
+         },
+         "Antigravity3": {
+             "capability_lane": ["gcp", "ci-cd", "runtime-packaging", "worker-ops"],
+             "default_branch": "feat/antigravity3-research-runtime",
+    -        "target_workload": 5,
+    +        "target_workload": 30,
+         },
+         "Antigravity4": {
+             "capability_lane": ["gcp", "ci-cd", "runtime-packaging", "worker-ops"],
+             "default_branch": "feat/antigravity4-research-runtime",
+    -        "target_workload": 5,
+    +        "target_workload": 30,
+         },
+         "Antigravity5": {
+             "capability_lane": ["gcp", "ci-cd", "runtime-packaging", "worker-ops"],
+             "default_branch": "feat/antigravity5-research-runtime",
+    -        "target_workload": 5,
+    +        "target_workload": 30,
+         },
+         "Antigravity6": {
+             "capability_lane": ["gcp", "ci-cd", "runtime-packaging", "worker-ops"],
+             "default_branch": "feat/antigravity6-research-runtime",
+    -        "target_workload": 5,
+    +        "target_workload": 30,
+         },
+         "Antigravity7": {
+             "capability_lane": ["gcp", "ci-cd", "runtime-packaging", "worker-ops"],
+             "default_branch": "feat/antigravity7-research-runtime",
+    -        "target_workload": 5,
+    +        "target_workload": 30,
+         },
+         "Gemini": {
+             "capability_lane": ["gcp", "ci-cd", "runtime-packaging", "worker-ops"],
+    @@ -180,6 +180,8 @@
+         "human ops": "Human/Ops",
+         "human/ops": "Human/Ops",
+         "human-ops": "Human/Ops",
+    +    "human/ops to configure credentials and push branch for pr auto-merge": "Human/Ops",
+    +    "human/ops git push origin task/odp-fin-fe-002": "Human/Ops",
+         "ops": "Human/Ops",
+     }
+  (trailing whitespace stripped from the last context line of the excerpt above so
+   `git diff --check` stays clean; no diff hunk content was altered)
+
+  Two groups, and what happens to each under the merged file:
+  1. KNOWN_AGENTS target_workload tuning (Claude 20->10, Claude2 10->5, Antigravity2-7 5->30).
+     The merged file carries the upstream values (Claude 20, Claude2 10, Antigravity 70,
+     Antigravity2-7 5). This control root has no live Supervisor of its own — its stale
+     .orchestrator/supervisor.pid names PID 302531, which no longer exists, and the single
+     running supervisor (PID 1487837) has cwd /home/lupin/oday-plus-supervisor-live and reads
+     that root's copy. The live root's KNOWN_AGENTS values are unchanged by this rollout, so
+     no dispatch weighting actually in force was altered. Flagged for the reviewer anyway:
+     if this tuning is meant to be authoritative it belongs in config.json, not in a local
+     edit to a tracked file.
+  2. Two AGENT_ALIASES entries mapping whole blocker sentences to Human/Ops. These were the
+     manual workaround for prose landing in actor-shaped fields — exactly the defect PR #496
+     fixes at the source. Neither string is present in live state any more:
+     occurrences in /home/lupin/oday-plus/ai-status.json      : 0
+     occurrences in the live status root ai-status.json       : 0
+
+## rollback — use the FIRST backup set, not the atomic re-deploy's
+  The pre-rollout files are only in the 20260729T071943Z directory. The atomic
+  re-deploy at 07:32:35Z backed up what was already on disk by then, which is the
+  merged blob itself, so restoring from that set would be a no-op. Rollback is:
+
+  install -m 775 /home/lupin/pantheon-deploy-backups/ODP-ORCH-ACTOR-REF-LIVE-ROLLOUT-001-20260729T071943Z/oday-plus.ai_status.py.bak                 /home/lupin/oday-plus/scripts/ai_status.py
+  install -m 775 /home/lupin/pantheon-deploy-backups/ODP-ORCH-ACTOR-REF-LIVE-ROLLOUT-001-20260729T071943Z/oday-plus-supervisor-live.ai_status.py.bak /home/lupin/oday-plus-supervisor-live/scripts/ai_status.py
+
+  verify after rollback:
+    sha256 /home/lupin/oday-plus/scripts/ai_status.py                 -> 32b6cdcdda7c9f4b293af97636fb85c5616a5f18f2700b3c22f00371290340da
+    sha256 /home/lupin/oday-plus-supervisor-live/scripts/ai_status.py -> 216c1a873e9fd34364eab1f6da33cbbffcb71690744004a4553145fe0566a17b

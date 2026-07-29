@@ -1,0 +1,79 @@
+# Supervisor continuity — the gate that now enforces it, and what it read
+# captured: 2026-07-29T07:51:30Z
+
+## the executable gate (round 3), not just these receipts
+Round 2 printed ActiveState/SubState/NRestarts and failed only on MainPID and
+ExecMainStartTimestamp changes, so a unit that went inactive/dead with NRestarts
+0->1 still returned RESULT: PASS. deploy.py now:
+
+  * PREFLIGHT, before any target is touched — the unit must be loaded and
+    active/running, MainPID must be a live PID whose /proc cmdline is the
+    Supervisor, and ExecMainStartTimestamp / NRestarts must be readable.
+    Otherwise: rc 2, every target byte-for-byte untouched.
+  * CONTINUITY, after the last publish — still active/running, and MainPID,
+    ExecMainStartTimestamp and NRestarts each exactly equal to the preflight
+    reading. Any drift fails the run.
+  * A failed or unparseable systemctl query is fatal in either position.
+
+Proof the gate bites: supervisor-gate-selftest.txt (11/11 scenarios, including
+the reviewer's inactive/dead probe and NRestarts 0->1 drift).
+
+## what the gate read during the 07:49:55Z publication
+## supervisor state BEFORE
+  Id                    : pantheon-supervisor.service
+  LoadState             : loaded
+  ActiveState           : active
+  SubState              : running
+  MainPID               : 1487837
+  ExecMainStartTimestamp: Wed 2026-07-29 06:08:57 UTC
+  NRestarts             : 0
+  process cmdline       : python3 -u .orchestrator/supervisor.py --verbose
+  process cwd           : /home/lupin/oday-plus-supervisor-live
+
+## preflight gate (evaluated before any target is touched)
+    PASS  unit loaded and active/running
+    PASS  MainPID is a live process whose cmdline is the Supervisor
+    PASS  continuity pinned to MainPID=1487837, ExecMainStartTimestamp=Wed 2026-07-29 06:08:57 UTC, NRestarts=0
+
+## systemd unit now (never started/stopped/restarted/reloaded by this task)
+  MainPID=1487837
+  NRestarts=0
+  ExecMainStartTimestamp=Wed 2026-07-29 06:08:57 UTC
+  ExecMainPID=1487837
+  Id=pantheon-supervisor.service
+  LoadState=loaded
+  ActiveState=active
+  SubState=running
+
+## process identity
+  1487837 Wed Jul 29 06:08:56 2026    01:42:33 python3 -u .orchestrator/supervisor.py --verbose
+  cwd  : /home/lupin/oday-plus-supervisor-live
+  open fds under /proc/1487837/fd naming ai_status.py: 0
+  PID before round-1 deploy   (07:19:43Z) : 1487837
+  PID before round-2 deploy   (07:38:12Z) : 1487837
+  PID before round-3 deploy   (07:49:55Z) : 1487837
+  PID now                                 : 1487837
+
+## journal straddling the 07:49:55Z atomic swap
+  Jul 29 07:49:11 oday-plus-dev.c.alfaloop-data-project.internal bash[1487837]: [2026-07-29 15:49:11] supervisor tick: lifecycle=running heartbeat=2026-07-29 15:49:10 lag=81.0s changed=yes mode=active queue=1 approvals=0 active_workers=1
+  Jul 29 07:50:30 oday-plus-dev.c.alfaloop-data-project.internal bash[1487837]: [2026-07-29 15:50:30] supervisor tick: lifecycle=running heartbeat=2026-07-29 15:50:30 lag=80.0s changed=yes mode=active queue=1 approvals=0 active_workers=1
+
+## deployed hashes after the gated publication
+  5e19c1c1ef4729f32470956cad3e3fe5972cb92dee5225a5d65db16df074950d  /home/lupin/oday-plus/scripts/ai_status.py
+  5e19c1c1ef4729f32470956cad3e3fe5972cb92dee5225a5d65db16df074950d  /home/lupin/oday-plus-supervisor-live/scripts/ai_status.py
+
+## read-only smoke against the DEPLOYED live-root CLI (post-swap)
+$ AI_NAME=Claude3 python3 /home/lupin/oday-plus-supervisor-live/scripts/ai_status.py show ODP-ORCH-ACTOR-REF-LIVE-ROLLOUT-001
+{
+  "source": "active",
+  "task": {
+    "id": "ODP-ORCH-ACTOR-REF-LIVE-ROLLOUT-001",
+    "title": "Roll reviewed actor-reference guard into both live status roots",
+    "summary_zh": "在 PR #496 完整 CI 通過並合併後，將 exact merged scripts/ai_status.py 安全部署到 control root 與 supervisor-live root；不改產品、不重啟 Supervisor、不改動既有 task assignment，並以 sandbox CLI 與 live read-only receipts 證明 fail-closed actor guard 已生效。",
+    "phase": "Fleet Control Plane Live Rollout",
+    "owner": "Claude3",
+    "reviewer": "Codex2",
+    "status": "in_progress",
+    "depends_on": [
+      "ODP-ORCH-ACTOR-REF-VALIDATION-001"
+  exit=0
