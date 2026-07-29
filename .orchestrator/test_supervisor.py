@@ -8591,12 +8591,22 @@ class ReviewHeadFreezeTests(unittest.TestCase):
                 }
             ]
         }
-        with unittest.mock.patch("ai_status.current_actor_validated", return_value="Antigravity4"):
-            ai_status.command_re_review(state, ["FREEZE-TEST-008", "Updated branch with strict merge"])
+        with unittest.mock.patch("ai_status.current_actor_validated", return_value="Antigravity4"), \
+             unittest.mock.patch("ai_status.load_state", return_value=state), \
+             unittest.mock.patch("ai_status.save_state"), \
+             unittest.mock.patch("ai_status.sync_all"), \
+             unittest.mock.patch("ai_status.emit_status_checks_for_changed_tasks"):
+            ai_status.main(["ai_status.py", "re_review", "FREEZE-TEST-008", "Updated branch with strict merge"])
             task = ai_status.get_task(state, "FREEZE-TEST-008")
             self.assertEqual(task["status"], "review")
             self.assertNotIn("approved_head", task)
             self.assertEqual(task["next"], "Updated branch with strict merge")
+
+            task["status"] = "review_approved"
+            task["approved_head"] = "1111111122222222333333334444444455555555"
+            ai_status.main(["ai_status.py", "re-review", "FREEZE-TEST-008", "Alias re-review check"])
+            self.assertEqual(task["status"], "review")
+            self.assertNotIn("approved_head", task)
 
     def test_supervisor_suppresses_finalize_dispatch_on_pending_ci(self) -> None:
         config = load_test_config()
@@ -8648,4 +8658,3 @@ class ReviewHeadFreezeTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
-

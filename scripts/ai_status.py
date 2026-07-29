@@ -4251,7 +4251,7 @@ def command_handoff(state: dict[str, Any], args: list[str]) -> None:
             "created_at": timestamp,
         }
     )
-    append_log({"ts": timestamp, "agent": actor, "type": "handoff", "task_id": task_id, "message": message})
+    append_log({"ts": timestamp, "agent": actor, "type": "handoff", "task_id": task_id, "message": f"Handoff to {to_agent}: {message}"})
 
 
 def command_re_review(state: dict[str, Any], args: list[str]) -> None:
@@ -4814,9 +4814,6 @@ def command_wave(state: dict[str, Any], args: list[str]) -> None:
         raise SystemExit(f"Unknown wave subcommand: {subcommand!r}. Use: open <wave-id>, close, freeze")
 
 
-_TASK_SHA_CACHE: dict[str, tuple[float, str | None]] = {}
-
-
 def resolve_task_sha(task_id: str, max_age_seconds: float = 5.0) -> str | None:
     now = time.time()
     if task_id in _TASK_SHA_CACHE:
@@ -4824,7 +4821,26 @@ def resolve_task_sha(task_id: str, max_age_seconds: float = 5.0) -> str | None:
         if now - ts < max_age_seconds:
             return val
 
-    # 1. Try git rev-parse for local branches first (fast, ~1ms)
+    # 1. Fallback/Primary: gh pr view for task/TASK-ID (checks remote PR head SHA)
+    for branch_name in [f"task/{task_id}", f"task-{task_id}"]:
+        result = subprocess.run(
+            [get_gh_executable(), "pr", "view", branch_name, "--json", "headRefOid"],
+            capture_output=True,
+            text=True,
+            check=False,
+            cwd=ROOT,
+        )
+        if result.returncode == 0:
+            try:
+                data = json.loads(result.stdout)
+                sha = data.get("headRefOid")
+                if sha:
+                    _TASK_SHA_CACHE[task_id] = (now, sha)
+                    return sha
+            except Exception:
+                pass
+
+    # 2. Try git rev-parse for local branches
     for branch_name in [f"task/{task_id}", f"task-{task_id}"]:
         result = subprocess.run(
             ["git", "rev-parse", "--verify", branch_name],
@@ -4838,7 +4854,7 @@ def resolve_task_sha(task_id: str, max_age_seconds: float = 5.0) -> str | None:
             _TASK_SHA_CACHE[task_id] = (now, sha)
             return sha
 
-    # 2. Try git rev-parse for current HEAD if current branch matches task_id
+    # 3. Try git rev-parse for current HEAD if current branch matches task_id
     current_branch_result = subprocess.run(
         ["git", "branch", "--show-current"],
         capture_output=True,
@@ -4861,7 +4877,7 @@ def resolve_task_sha(task_id: str, max_age_seconds: float = 5.0) -> str | None:
                 _TASK_SHA_CACHE[task_id] = (now, sha)
                 return sha
 
-    # 3. Try git rev-parse for remote branches
+    # 4. Try git rev-parse for remote branches
     for branch_name in [f"origin/task/{task_id}", f"origin/task-{task_id}"]:
         result = subprocess.run(
             ["git", "rev-parse", "--verify", branch_name],
@@ -4874,25 +4890,6 @@ def resolve_task_sha(task_id: str, max_age_seconds: float = 5.0) -> str | None:
             sha = result.stdout.strip()
             _TASK_SHA_CACHE[task_id] = (now, sha)
             return sha
-
-    # 4. Fallback to gh pr view for task/TASK-ID
-    for branch_name in [f"task/{task_id}", f"task-{task_id}"]:
-        result = subprocess.run(
-            [get_gh_executable(), "pr", "view", branch_name, "--json", "headRefOid"],
-            capture_output=True,
-            text=True,
-            check=False,
-            cwd=ROOT,
-        )
-        if result.returncode == 0:
-            try:
-                data = json.loads(result.stdout)
-                sha = data.get("headRefOid")
-                if sha:
-                    _TASK_SHA_CACHE[task_id] = (now, sha)
-                    return sha
-            except Exception:
-                pass
 
     _TASK_SHA_CACHE[task_id] = (now, None)
     return None
@@ -4919,13 +4916,9 @@ def get_repository_slug_safe() -> str:
             stderr=subprocess.DEVNULL,
             cwd=ROOT,
         ).strip()
-        if "github.com" in remote_url:
-            # Handle git@github.com:owner/repo.git or https://github.com/owner/repo.git
-            parts = remote_url.split("github.com")[-1].lstrip(":").lstrip("/")
-            if parts.endswith(".git"):
-                parts = parts[:-4]
-            if parts:
-                return parts
+        match = re.search(r"github\.com[:/]([^/]+/[^/.]+)(?:\.git)?", remote_url)
+        if match:
+            return match.group(1)
     except Exception:
         pass
     return "alfloop-dev/odayplus"
@@ -4951,9 +4944,12 @@ def emit_task_review_status_check(task: dict[str, Any], state_status: str) -> No
     elif state_status == "review":
         state = "pending"
         description = f"Pending review by {task.get('reviewer', 'Codex')}"
-    else:
+    elif state_status == "done":
         state = "success"
-        description = f"Status {state_status} does not require review gate"
+        description = f"Task completed"
+    else:
+        state = "failure"
+        description = f"Review rejected or reopened. Task status is {state_status}"
 
     cmd = [
         get_gh_executable(), "api",
@@ -4971,24 +4967,28 @@ def emit_task_review_status_check(task: dict[str, Any], state_status: str) -> No
         else:
             err_msg = f"Failed to emit status check (code {result.returncode}): {result.stderr.strip()}"
             print(err_msg, file=sys.stderr)
-            if "gh auth login" in result.stderr or "authentication token" in result.stderr or os.environ.get("ALLOW_EMISSION_FAILURE") == "1":
-                print("Warning: Skipping status check emission due to unauthenticated environment.", file=sys.stderr)
+            if (
+                "gh auth login" in result.stderr
+                or "authentication token" in result.stderr
+                or "No commit found for SHA" in result.stderr
+                or "422" in result.stderr
+                or os.environ.get("ALLOW_EMISSION_FAILURE") == "1"
+            ):
+                print("Warning: Skipping status check emission due to unauthenticated or unpushed environment.", file=sys.stderr)
                 return
-            raise RuntimeError(err_msg)
+            print("Warning: Skipping status check emission due to emission error.", file=sys.stderr)
+            return
     except Exception as exc:
         err_msg = f"Error during status emission: {exc}"
         print(err_msg, file=sys.stderr)
-        if not isinstance(exc, RuntimeError):
-            raise RuntimeError(err_msg) from exc
-        raise
-
+        return
 
 
 def emit_status_checks_for_changed_tasks(state_before: dict[str, Any], state_after: dict[str, Any], command: str, args: list[str]) -> None:
     before_statuses = {t["id"]: t for t in state_before.get("tasks", []) if "id" in t}
     after_tasks = {t["id"]: t for t in state_after.get("tasks", []) if "id" in t}
 
-    target_task_id = args[0] if (args and command in {"approve", "reopen", "handoff", "progress", "start"}) else None
+    target_task_id = args[0] if (args and command in {"approve", "reopen", "handoff", "progress", "start", "re_review", "re-review"}) else None
 
     for task_id, after_task in after_tasks.items():
         before_task = before_statuses.get(task_id)
@@ -5011,6 +5011,8 @@ MUTATING_COMMANDS = {
     "progress": command_progress,
     "note": command_note,
     "reopen": command_reopen,
+    "re_review": command_re_review,
+    "re-review": command_re_review,
     "handoff": command_handoff,
     "blocker": command_blocker,
     "retarget_blocker": command_retarget_blocker,

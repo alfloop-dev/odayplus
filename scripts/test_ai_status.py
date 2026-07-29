@@ -2776,6 +2776,9 @@ class ActivityLogRotationTests(unittest.TestCase):
 
 
 class StatusCheckEmissionTests(unittest.TestCase):
+    def setUp(self) -> None:
+        ai_status.clear_ai_status_caches()
+
     def test_get_repository_slug_safe_env(self) -> None:
         with mock.patch.dict(os.environ, {"GITHUB_REPOSITORY": "test-owner/test-repo"}):
             self.assertEqual(ai_status.get_repository_slug_safe(), "test-owner/test-repo")
@@ -3558,6 +3561,8 @@ class ActorCommandMutationGuardTests(unittest.TestCase):
         "progress": [TASK_ID, "still going"],
         "note": [TASK_ID, "a note"],
         "reopen": [TASK_ID, "reopening"],
+        "re_review": [TASK_ID, "re-reviewing"],
+        "re-review": [TASK_ID, "re-reviewing"],
         "handoff": [TASK_ID, "Codex2", "please review"],
         "blocker": [TASK_ID, "blocked", "Codex2"],
         "retarget_blocker": [TASK_ID, "Codex2", "repair"],
