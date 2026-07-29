@@ -8530,14 +8530,18 @@ def dispatch_priority_for_task(
         return 0
     if task_status in finalize_statuses and task.get(owner_field) == agent_name:
         approved_head = task.get("approved_head")
-        if approved_head:
-            try:
-                from ai_status import resolve_task_sha
-                curr_head = resolve_task_sha(str(task.get("id") or ""))
-                if not curr_head or curr_head != approved_head:
-                    return None
-            except Exception:
+        # B22: a missing approved_head is not "no freeze configured", it is a task
+        # whose reviewed commit is unknown. Fail closed like every other branch of
+        # this gate; the reviewer clears it with `restore_approved_head`.
+        if not approved_head:
+            return None
+        try:
+            from ai_status import resolve_task_sha
+            curr_head = resolve_task_sha(str(task.get("id") or ""))
+            if not curr_head or curr_head != approved_head:
                 return None
+        except Exception:
+            return None
         try:
             from ai_status import task_pr_ci_status
             _pr_st, ci_status = task_pr_ci_status(str(task.get("id") or ""))
@@ -9083,56 +9087,78 @@ def dispatch_ready_tasks(
                     current_head = resolve_task_sha(task_id)
                 except Exception as err:
                     console_log(f"Failed to resolve sha for {task_id}: {err}", quiet=SUPERVISOR_LOG_QUIET)
-                # Backward compatibility: a task approved before the freeze
-                # shipped has no approved_head, so it is dispatched without the
-                # integrity check rather than being wedged forever. New
-                # approvals cannot reach this state -- command_approve now fails
-                # closed when the head is unresolvable (B20).
-                if approved_head:
-                    if not current_head or current_head != approved_head:
-                        if current_head and current_head != approved_head:
-                            task["status"] = "review"
-                            task["last_update"] = utc_now()
-                            task["next"] = (
-                                f"Branch HEAD ({current_head[:8]}) mutated after reviewer approval "
-                                f"({approved_head[:8]}); re-review required."
-                            )
-                            task.pop("approved_head", None)
+                # B22: a task in a finalize status with no approved_head has no
+                # verifiable reviewed commit, so finalize dispatch fails closed
+                # here too. Pre-freeze tasks do land in this shape, but backward
+                # compatibility has to be an explicit audited migration
+                # (`ai_status.py restore_approved_head`, reviewer-only), not an
+                # automatic bypass of the control this gate exists to apply.
+                # Say so once so the operator sees why the task is parked.
+                if not approved_head:
+                    msg = (
+                        f"Task {task_id} is {task_status} with no reviewer-approved head; "
+                        "finalize dispatch suppressed. The reviewer must attest the reviewed "
+                        f"commit (`restore_approved_head {task_id} <sha> <reason>`) or send it "
+                        "back for re-review."
+                    )
+                    if task.get("next") != msg:
+                        task["next"] = msg
+                        status_path = config_path(config, "status_file")
+                        write_json(status_path, status)
+                        write_activity_log(
+                            config,
+                            {
+                                "type": "approved_head_missing",
+                                "task_id": task_id,
+                                "message": msg,
+                            },
+                        )
+                    continue
+
+                if not current_head or current_head != approved_head:
+                    if current_head and current_head != approved_head:
+                        task["status"] = "review"
+                        task["last_update"] = utc_now()
+                        task["next"] = (
+                            f"Branch HEAD ({current_head[:8]}) mutated after reviewer approval "
+                            f"({approved_head[:8]}); re-review required."
+                        )
+                        task.pop("approved_head", None)
+                        status_path = config_path(config, "status_file")
+                        write_json(status_path, status)
+                        sync_status_pipeline(config)
+                        write_activity_log(
+                            config,
+                            {
+                                "type": "re-review_required",
+                                "task_id": task_id,
+                                "message": task["next"],
+                            },
+                        )
+                        changed = True
+                    else:
+                        # B20: head unresolvable. Suppressing finalize here
+                        # is correct, but doing it silently leaves the task
+                        # parked in review_approved with no explanation for
+                        # the operator. Emit once, not every cycle.
+                        msg = (
+                            f"Cannot verify branch HEAD for task {task_id} against the "
+                            f"reviewer-approved head ({approved_head[:8]}); finalize dispatch "
+                            "suppressed until it resolves."
+                        )
+                        if task.get("next") != msg:
+                            task["next"] = msg
                             status_path = config_path(config, "status_file")
                             write_json(status_path, status)
-                            sync_status_pipeline(config)
                             write_activity_log(
                                 config,
                                 {
-                                    "type": "re-review_required",
+                                    "type": "approved_head_unresolved",
                                     "task_id": task_id,
-                                    "message": task["next"],
+                                    "message": msg,
                                 },
                             )
-                            changed = True
-                        else:
-                            # B20: head unresolvable. Suppressing finalize here
-                            # is correct, but doing it silently leaves the task
-                            # parked in review_approved with no explanation for
-                            # the operator. Emit once, not every cycle.
-                            msg = (
-                                f"Cannot verify branch HEAD for task {task_id} against the "
-                                f"reviewer-approved head ({approved_head[:8]}); finalize dispatch "
-                                "suppressed until it resolves."
-                            )
-                            if task.get("next") != msg:
-                                task["next"] = msg
-                                status_path = config_path(config, "status_file")
-                                write_json(status_path, status)
-                                write_activity_log(
-                                    config,
-                                    {
-                                        "type": "approved_head_unresolved",
-                                        "task_id": task_id,
-                                        "message": msg,
-                                    },
-                                )
-                        continue
+                    continue
 
                 ci_status = "unknown"
                 try:

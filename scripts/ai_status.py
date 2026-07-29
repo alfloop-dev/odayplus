@@ -4546,10 +4546,48 @@ def command_restore_approved(state: dict[str, Any], args: list[str]) -> None:
             "restore_approved requires review_notes_zh to be present as evidence of a prior approval. "
             "Use the normal review lifecycle if the task has not been reviewed yet."
         )
+
+    # B21: this command is the second producer of `review_approved`, so it has to
+    # re-establish the freeze or it manufactures exactly the un-frozen state the
+    # freeze exists to prevent. It must NOT resolve the current head itself --
+    # this is an owner-invokable command, and resolving here would let the owner
+    # self-freeze a head no reviewer ever saw. It may only re-freeze the durable
+    # `last_approved_head` written by `command_approve`, and only while the branch
+    # still sits on it.
+    last_approved_head = task.get("last_approved_head")
+    if not last_approved_head:
+        raise SystemExit(
+            f"Cannot restore {task_id}: no durable reviewer-approved head is recorded, so the "
+            "post-review freeze cannot be re-established and restoring would finalize at an "
+            f"unreviewed commit. Run `re_review {task_id} <reason>` so the reviewer re-stamps "
+            "the head. No restore was recorded."
+        )
+    try:
+        current_sha = resolve_task_sha(task_id)
+    except Exception as exc:
+        raise SystemExit(
+            f"Cannot restore {task_id}: unable to resolve the current branch HEAD ({exc}). "
+            "Integrity gate failed closed; no restore was recorded."
+        ) from exc
+    if not current_sha:
+        raise SystemExit(
+            f"Cannot restore {task_id}: the branch HEAD could not be resolved, so it cannot be "
+            f"checked against the reviewer-approved head ({last_approved_head[:8]}). "
+            "No restore was recorded."
+        )
+    if current_sha != last_approved_head:
+        raise SystemExit(
+            f"Cannot restore {task_id}: the branch has moved to {current_sha[:8]}, past the "
+            f"reviewer-approved head ({last_approved_head[:8]}). The downgrade was not spurious. "
+            f"Run `re_review {task_id} <reason>` so the reviewer stamps the new head. "
+            "No restore was recorded."
+        )
+
     timestamp = iso_now()
     task["status"] = "review_approved"
     task["last_update"] = timestamp
     task["next"] = message
+    task["approved_head"] = last_approved_head
     append_log(
         {
             "ts": timestamp,
@@ -4557,6 +4595,94 @@ def command_restore_approved(state: dict[str, Any], args: list[str]) -> None:
             "type": "restore_approved",
             "task_id": task_id,
             "message": message,
+            "approved_head": last_approved_head,
+        }
+    )
+
+
+def command_restore_approved_head(state: dict[str, Any], args: list[str]) -> None:
+    """restore_approved_head <task-id> <sha> <message>
+
+    B22: `review_approved` with no `approved_head` fails closed everywhere -- in
+    `command_done` and in both supervisor dispatch gates. Pre-freeze tasks and
+    tasks approved by an older build sit in exactly that shape, so they need a way
+    out; making it an automatic bypass is what the freeze exists to stop. This is
+    that way out as an explicit, audited, reviewer-signed attestation of one exact
+    commit: the reviewer names the sha, it must match the immutable PR head, and
+    the restoration is written to the activity log.
+    """
+    if len(args) < 3:
+        raise SystemExit("Usage: restore_approved_head <task-id> <sha> <message>")
+    task_id, requested_sha, message = args[0], args[1].strip(), args[2]
+    actor = current_actor_validated()
+    task = get_task(state, task_id)
+    if task is None:
+        raise SystemExit(f"Unknown task: {task_id}")
+    owner = canonical_agent_name(task.get("owner"))
+    reviewer = canonical_agent_name(task.get("reviewer"))
+    if owner and reviewer and owner == reviewer:
+        raise SystemExit(
+            f"Owner ({owner}) and reviewer ({reviewer}) must be separate identities for task {task_id}"
+        )
+    if reviewer != actor:
+        raise SystemExit(
+            f"Only the reviewer ({reviewer}) can attest the approved head for {task_id}; "
+            "the owner cannot restore the freeze on their own work."
+        )
+    if task.get("status") != "review_approved":
+        raise SystemExit(
+            f"restore_approved_head is only valid when status is review_approved "
+            f"(current: {task.get('status')}). Use `approve` for the normal review lifecycle."
+        )
+    existing_head = task.get("approved_head")
+    if existing_head:
+        raise SystemExit(
+            f"Cannot restore the approved head for {task_id}: it already carries one "
+            f"({existing_head[:8]}). This command only repairs the missing-head shape."
+        )
+    if not re.fullmatch(r"[0-9a-f]{40}", requested_sha):
+        raise SystemExit(
+            f"Cannot restore the approved head for {task_id}: {requested_sha!r} is not a full "
+            "40-character commit sha. Name the exact reviewed commit, not an abbreviation."
+        )
+    try:
+        current_sha = resolve_task_sha(task_id)
+    except Exception as exc:
+        raise SystemExit(
+            f"Cannot restore the approved head for {task_id}: unable to resolve the branch HEAD "
+            f"({exc}). Integrity gate failed closed; nothing was recorded."
+        ) from exc
+    if not current_sha:
+        raise SystemExit(
+            f"Cannot restore the approved head for {task_id}: the branch HEAD could not be "
+            "resolved, so the attested sha cannot be corroborated. Nothing was recorded."
+        )
+    _head_ref_oid, merge_commit = task_pr_head_and_merge_commit(task_id)
+    if merge_commit and requested_sha == merge_commit:
+        raise SystemExit(
+            f"Cannot restore the approved head for {task_id}: {requested_sha[:8]} is the PR merge "
+            "commit, not the reviewed branch head. Attest the head the review actually read."
+        )
+    if requested_sha != current_sha:
+        raise SystemExit(
+            f"Cannot restore the approved head for {task_id}: the attested sha ({requested_sha[:8]}) "
+            f"does not match the task branch head ({current_sha[:8]}). Only the exact current head "
+            f"can be restored; run `re_review {task_id} <reason>` if the branch has moved."
+        )
+
+    timestamp = iso_now()
+    task["approved_head"] = requested_sha
+    task["last_approved_head"] = requested_sha
+    task["last_update"] = timestamp
+    task["next"] = message
+    append_log(
+        {
+            "ts": timestamp,
+            "agent": actor,
+            "type": "approved_head_restored",
+            "task_id": task_id,
+            "message": message,
+            "approved_head": requested_sha,
         }
     )
 
@@ -4573,25 +4699,55 @@ def command_done(state: dict[str, Any], args: list[str]) -> None:
         raise SystemExit(f"Only the owner ({task.get('owner')}) can finalize {task_id} to done")
     if task.get("status") != "review_approved":
         raise SystemExit(f"{task_id} must be review_approved before it can move to done")
+    # B22: the freeze gate runs here, before collect_done_delivery_metadata, and
+    # every branch of it raises. The delivery gates further down are real
+    # defence-in-depth but they are not a backstop for this gate: they check
+    # merge/commit hygiene, not "is this the commit a reviewer read".
     approved_head = task.get("approved_head")
-    if approved_head:
-        current_sha = None
-        try:
-            current_sha = resolve_task_sha(task_id)
-        except Exception as exc:
-            raise SystemExit(
-                f"Cannot finalize task {task_id}: unable to resolve current branch HEAD ({exc}). "
-                "Integrity gate failed closed."
-            ) from exc
-        if not current_sha or current_sha != approved_head:
-            display_sha = current_sha[:8] if current_sha else "unresolved"
-            raise SystemExit(
-                f"Cannot finalize task {task_id}: current branch HEAD ({display_sha}) "
-                f"differs from reviewer-approved head ({approved_head[:8]}). "
-                "Strict update-branch merge requires re-review."
-            )
+    if not approved_head:
+        raise SystemExit(
+            f"Cannot finalize task {task_id}: it is review_approved but carries no "
+            "reviewer-approved head, so there is nothing to verify the branch against. "
+            "This is the pre-freeze (or restored) shape and it fails closed. "
+            f"The reviewer must run `restore_approved_head {task_id} <sha> <reason>` to "
+            f"attest the exact reviewed commit, or `re_review {task_id} <reason>` for a "
+            "fresh review. No finalization was recorded."
+        )
+    current_sha = None
+    try:
+        current_sha = resolve_task_sha(task_id)
+    except Exception as exc:
+        raise SystemExit(
+            f"Cannot finalize task {task_id}: unable to resolve current branch HEAD ({exc}). "
+            "Integrity gate failed closed."
+        ) from exc
+    if not current_sha or current_sha != approved_head:
+        display_sha = current_sha[:8] if current_sha else "unresolved"
+        raise SystemExit(
+            f"Cannot finalize task {task_id}: current branch HEAD ({display_sha}) "
+            f"differs from reviewer-approved head ({approved_head[:8]}). "
+            "Strict update-branch merge requires re-review."
+        )
+
+    # B22-3: record the two commits as distinct facts. `resolve_task_sha` prefers
+    # the PR headRefOid, so a merged PR is verified against the immutable reviewed
+    # head above; the merge commit GitHub created is evidence, never an anchor.
+    head_ref_oid, merge_commit = task_pr_head_and_merge_commit(task_id)
+    if merge_commit and current_sha == merge_commit:
+        raise SystemExit(
+            f"Cannot finalize task {task_id}: the resolved head ({current_sha[:8]}) is the "
+            "PR merge commit, not the reviewed branch head. The merge commit was never "
+            "reviewed and cannot satisfy the approved-head freeze."
+        )
+
     timestamp = iso_now()
     delivery = collect_done_delivery_metadata(task, actor)
+    delivery["approved_head"] = approved_head
+    delivery["verified_head"] = current_sha
+    if head_ref_oid:
+        delivery["pr_head_ref_oid"] = head_ref_oid
+    if merge_commit:
+        delivery["pr_merge_commit"] = merge_commit
     delivery["recorded_at"] = timestamp
     task["status"] = "done"
     task["terminal_outcome"] = "completed"
@@ -4707,6 +4863,11 @@ def command_approve(state: dict[str, Any], args: list[str]) -> None:
     task["next"] = message
     task.pop("waiting_for", None)
     task["approved_head"] = approved_sha
+    # B21: `approved_head` is the *live* freeze and every return-to-review pops it.
+    # `last_approved_head` is the durable record of the last commit a reviewer
+    # actually stamped: it is never popped, so `restore_approved` can re-freeze a
+    # spurious supervisor downgrade without the owner getting to name the head.
+    task["last_approved_head"] = approved_sha
 
     review_notes = parse_delimited_env("REVIEW_NOTES_ZH")
     if review_notes:
@@ -4934,6 +5095,41 @@ def resolve_task_sha(task_id: str, max_age_seconds: float = 5.0) -> str | None:
     return None
 
 
+def task_pr_head_and_merge_commit(task_id: str) -> tuple[str | None, str | None]:
+    """Return ``(headRefOid, mergeCommit_oid)`` for the task PR, or ``(None, None)``.
+
+    B22-3: these are two different commits and the distinction has to be explicit.
+    ``headRefOid`` is the branch tip the reviewer stamped; it is immutable once the
+    PR merges, which is what makes it a usable freeze anchor after merge.
+    ``mergeCommit`` is a *new* commit GitHub creates on the target branch, and it
+    has never been reviewed. Finalizing against it would let an unreviewed commit
+    close the task, so it is recorded as delivery evidence only -- never compared
+    against ``approved_head``.
+    """
+    for branch_name in [f"task/{task_id}", f"task-{task_id}"]:
+        result = subprocess.run(
+            [get_gh_executable(), "pr", "view", branch_name, "--json", "headRefOid,mergeCommit"],
+            capture_output=True,
+            text=True,
+            check=False,
+            cwd=ROOT,
+        )
+        if result.returncode != 0:
+            continue
+        try:
+            data = json.loads(result.stdout)
+        except Exception:
+            continue
+        if not isinstance(data, dict):
+            continue
+        head_ref_oid = data.get("headRefOid") or None
+        merge_commit = data.get("mergeCommit") or {}
+        merge_oid = merge_commit.get("oid") if isinstance(merge_commit, dict) else None
+        if head_ref_oid or merge_oid:
+            return head_ref_oid, (merge_oid or None)
+    return None, None
+
+
 def get_repository_slug_safe() -> str:
     # 1. Try env variable
     env_slug = os.environ.get("GITHUB_REPOSITORY")
@@ -4974,7 +5170,12 @@ def emit_task_review_status_check(task: dict[str, Any], state_status: str) -> No
 
     if state_status == "review_approved":
         approved_head = task.get("approved_head")
-        if approved_head and sha != approved_head:
+        if not approved_head:
+            # B22: no frozen head means nothing corroborates that this commit is
+            # the reviewed one, so the gate cannot claim success for it.
+            state = "pending"
+            description = "review_approved but no reviewer-approved head is recorded; head restoration or re-review required"
+        elif sha != approved_head:
             state = "pending"
             description = f"Branch HEAD ({sha[:8]}) differs from approved head ({approved_head[:8]}); re-review required"
         else:
@@ -5058,6 +5259,7 @@ MUTATING_COMMANDS = {
     "prune_agents": command_prune_agents,
     "done": command_done,
     "restore_approved": command_restore_approved,
+    "restore_approved_head": command_restore_approved_head,
     "supersede": command_supersede,
     "approve": command_approve,
     "archive_migrate": command_archive_migrate,

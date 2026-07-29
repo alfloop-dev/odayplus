@@ -136,6 +136,8 @@ class ReviewApprovedWorkflowTests(unittest.TestCase):
                 ai_status.command_done(self.state, ["REG-002", "Attempted direct completion"])
 
         self.state["tasks"][0]["status"] = "review_approved"
+        approved_head = "1111111122222222333333334444444455555555"
+        self.state["tasks"][0]["approved_head"] = approved_head
 
         with mock.patch.dict(os.environ, {"AI_NAME": "Claude"}, clear=False):
             with self.assertRaises(SystemExit):
@@ -143,6 +145,8 @@ class ReviewApprovedWorkflowTests(unittest.TestCase):
 
         with (
             mock.patch.dict(os.environ, {"AI_NAME": "Codex"}, clear=False),
+            mock.patch.object(ai_status, "resolve_task_sha", return_value=approved_head),
+            mock.patch.object(ai_status, "task_pr_head_and_merge_commit", return_value=(approved_head, None)),
             mock.patch.object(ai_status, "collect_done_delivery_metadata", return_value={}),
             mock.patch.object(ai_status, "archive_task_snapshot", return_value={"task_id": "REG-002"}) as archive_task_snapshot,
         ):
@@ -2828,7 +2832,7 @@ class StatusCheckEmissionTests(unittest.TestCase):
             self.assertEqual(sha, "xyz789")
 
     def test_emit_task_review_status_check_approved(self) -> None:
-        task = {"id": "ODP-001", "reviewer": "Codex"}
+        task = {"id": "ODP-001", "reviewer": "Codex", "approved_head": "sha123"}
         mock_run = mock.Mock()
         mock_run.returncode = 0
 
@@ -3574,6 +3578,7 @@ class ActorCommandMutationGuardTests(unittest.TestCase):
         "retarget_blocker": [TASK_ID, "Codex2", "repair"],
         "prune_agents": ["--apply", "cleanup"],
         "restore_approved": [TASK_ID, "restoring"],
+        "restore_approved_head": [TASK_ID, "1111111122222222333333334444444455555555", "attesting"],
         "done": [TASK_ID, "finished"],
         "supersede": [TASK_ID, "superseded"],
         "approve": [TASK_ID, "approved"],
