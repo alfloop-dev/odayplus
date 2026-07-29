@@ -4445,4 +4445,3 @@ def test_real_app_platform_health_job_queue_contract(tmp_path: Path) -> None:
     assert not any(marker in bare_queue_text for marker in ("worker", "cloud", "durable")), (
         f"bare 'healthy' must not contain any required marker; got: {bare_queue_text!r}"
     )
-
