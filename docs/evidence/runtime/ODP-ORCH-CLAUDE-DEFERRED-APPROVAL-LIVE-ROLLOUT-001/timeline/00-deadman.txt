@@ -1,0 +1,7 @@
+deadman_unit: odp-rollout-deadman.timer
+deadman_delay_s: 2708
+total_bounded_wait_s: 1808
+deadman_margin_s: 900
+deadman_script: /tmp/odp-rollout-driver/deadman-restore.sh
+deadman_timer_state: active
+deadman_next_elapse: 2d 19h 46min 9.309722s

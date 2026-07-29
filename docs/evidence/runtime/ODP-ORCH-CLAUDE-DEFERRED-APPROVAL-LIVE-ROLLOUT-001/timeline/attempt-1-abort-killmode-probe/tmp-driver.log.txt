@@ -1,0 +1,6 @@
+[2026-07-29T04:31:10Z] signal: starting
+[2026-07-29T04:31:11Z] validating KillMode=process semantics on a throwaway unit
+[2026-07-29T04:31:15Z] FATAL: KillMode=process did not preserve a leftover process (or the unit could not restart); refusing to stop the real supervisor
+[2026-07-29T04:31:15Z] signal: abort_killmode_probe
+[2026-07-29T04:31:15Z] driver exiting rc=26; restoring supervisor, watchdog, shipped KillMode and disarming the dead-man
+[2026-07-29T04:31:15Z] preserving terminal verdict: abort_killmode_probe (rc=26)
