@@ -185,8 +185,42 @@ repository state, not a regression introduced here: dev's own
 
 ## 8. Candidate worker execution at the fix head
 
-Recorded in `candidate-worker-execution.md` once the candidate Deploy Dev run
-completes. Local `gcloud` in the worker sandbox cannot be used for this — its
-credentials require an interactive `gcloud auth login` reauthentication — so the
-candidate execution is driven through the Deploy Dev workflow, which
-authenticates by Workload Identity Federation.
+Full write-up: **`candidate-worker-execution.md`**, with receipts
+`candidate-deploy-dev-run-30436771086-worker-pass.log` and
+`candidate-cloud-run-smoke-run-30436771086.json`.
+
+Local `gcloud` in the worker sandbox cannot be used for this — its credentials
+require an interactive `gcloud auth login` reauthentication — so the candidate
+execution was driven through the Deploy Dev workflow, which authenticates by
+Workload Identity Federation.
+
+Deploy Dev run
+[30436771086](https://github.com/alfloop-dev/odayplus/actions/runs/30436771086)
+at exact head `93ae1b2e75e1056c2bfeccd1d59e25e354f4f21f`:
+
+```
+09:01:00 Executing worker Cloud Run Job...
+09:01:22 Execution [oday-worker-r-93ae1b2e75e1-c9gms] has successfully completed.
+09:01:27 Cloud Run worker Job smoke passed.
+```
+
+The worker gate passed on the **first attempt** (`failedCount=0`, one execution,
+22 s) against the same dev configuration that made `…-6fhw5` burn three retries
+and exit `1` in §1–§2. `jobs-smoke:worker:release_sha` binds that execution to
+this head; the run-wide smoke report carries
+`expected_sha = version.release_sha = 93ae1b2e75e1056c2bfeccd1d59e25e354f4f21f`.
+
+The run as a whole is still red, **after** the worker gate: the release-aware
+API/Web smoke fails fail-closed with the single blocking reason
+`PRODUCTION_MODEL_BINDINGS_UNVERIFIED` (avm / heatzone / sitescore
+`DATA_CONTRACT_NOT_MATURE`, forecastops `PRODUCTION_MODEL_REGISTRY_UNAVAILABLE`)
+— a platform model-readiness state owned outside this task, unchanged by this
+branch. The recorded traffic split was then restored to
+`oday-api-00005-gin=100` / `oday-web-00008-ws4=100`, which is the fail-closed
+rollback of acceptance criterion 6 demonstrated live. Migration, migration
+compatibility, and scheduler gates all passed in the same run.
+
+`worker-validation.json` itself could not be retrieved: `deploy-dev.yml` uploads
+the non-recursive glob `.odp_data/deployment/*.json`, and `.github/**` is a
+forbidden path for this task. That gap and its fix are recorded in
+`candidate-worker-execution.md` §1 and §4.
