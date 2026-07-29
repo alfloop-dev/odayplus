@@ -1,0 +1,128 @@
+$ python3 docs/evidence/runtime/ODP-DEPLOY-STAGING-JOB-RECEIPT-UPLOAD-001/simulate_staging_artifact_selection.py --pre-fix
+  (evaluates the path list deploy-staging.yml carried at 88dae2e1)
+
+workflow: .github/workflows/deploy-staging.yml
+on the runner after a green deploy: 20 files
+
+OLD  .odp_data/deployment/*.json + .odp_data/remote-staging-proof/*.json  -> 7 uploaded
+   + .odp_data/deployment/api-env.json
+   + .odp_data/deployment/cloud-run-migration-compatibility.json
+   + .odp_data/deployment/cloud-run-preflight.json
+   + .odp_data/deployment/cloud-run-smoke.json
+   + .odp_data/deployment/live-e2e-gate.json
+   + .odp_data/deployment/sbom.json
+   + .odp_data/remote-staging-proof/staging-30445252373.json
+
+PRE-FIX (replayed) (2 entries) -> 7 uploaded
+   + .odp_data/deployment/api-env.json
+   + .odp_data/deployment/cloud-run-migration-compatibility.json
+   + .odp_data/deployment/cloud-run-preflight.json
+   + .odp_data/deployment/cloud-run-smoke.json
+   + .odp_data/deployment/live-e2e-gate.json
+   + .odp_data/deployment/sbom.json
+   + .odp_data/remote-staging-proof/staging-30445252373.json
+
+NOT uploaded by that list:
+   - .odp_data/deployment/cloud-run-jobs/migration-execution-list.json
+   - .odp_data/deployment/cloud-run-jobs/migration-execution.json
+   - .odp_data/deployment/cloud-run-jobs/migration-job.json
+   - .odp_data/deployment/cloud-run-jobs/migration-validation.json
+   - .odp_data/deployment/cloud-run-jobs/scheduler-execution-list.json
+   - .odp_data/deployment/cloud-run-jobs/scheduler-execution.json
+   - .odp_data/deployment/cloud-run-jobs/scheduler-job.json
+   - .odp_data/deployment/cloud-run-jobs/scheduler-validation.json
+   - .odp_data/deployment/cloud-run-jobs/worker-env-dump.json
+   - .odp_data/deployment/cloud-run-jobs/worker-execution-list.json
+   - .odp_data/deployment/cloud-run-jobs/worker-execution.json
+   - .odp_data/deployment/cloud-run-jobs/worker-job.json
+   - .odp_data/deployment/cloud-run-jobs/worker-validation.json
+
+DEFECT REPRODUCED: 3 Cloud Run Job receipts dropped, 2 unreviewed top-level files published.
+
+================================================================
+
+$ python3 docs/evidence/runtime/ODP-DEPLOY-STAGING-JOB-RECEIPT-UPLOAD-001/simulate_staging_artifact_selection.py
+  (reads the allowlist out of the fixed .github/workflows/deploy-staging.yml)
+
+workflow: .github/workflows/deploy-staging.yml
+on the runner after a green deploy: 20 files
+
+OLD  .odp_data/deployment/*.json + .odp_data/remote-staging-proof/*.json  -> 7 uploaded
+   + .odp_data/deployment/api-env.json
+   + .odp_data/deployment/cloud-run-migration-compatibility.json
+   + .odp_data/deployment/cloud-run-preflight.json
+   + .odp_data/deployment/cloud-run-smoke.json
+   + .odp_data/deployment/live-e2e-gate.json
+   + .odp_data/deployment/sbom.json
+   + .odp_data/remote-staging-proof/staging-30445252373.json
+
+NEW  explicit allowlist (8 entries) -> 8 uploaded
+   + .odp_data/deployment/cloud-run-jobs/migration-validation.json
+   + .odp_data/deployment/cloud-run-jobs/scheduler-validation.json
+   + .odp_data/deployment/cloud-run-jobs/worker-validation.json
+   + .odp_data/deployment/cloud-run-migration-compatibility.json
+   + .odp_data/deployment/cloud-run-preflight.json
+   + .odp_data/deployment/cloud-run-smoke.json
+   + .odp_data/deployment/live-e2e-gate.json
+   + .odp_data/remote-staging-proof/staging-30445252373.json
+
+NOT uploaded by that list:
+   - .odp_data/deployment/api-env.json
+   - .odp_data/deployment/cloud-run-jobs/migration-execution-list.json
+   - .odp_data/deployment/cloud-run-jobs/migration-execution.json
+   - .odp_data/deployment/cloud-run-jobs/migration-job.json
+   - .odp_data/deployment/cloud-run-jobs/scheduler-execution-list.json
+   - .odp_data/deployment/cloud-run-jobs/scheduler-execution.json
+   - .odp_data/deployment/cloud-run-jobs/scheduler-job.json
+   - .odp_data/deployment/cloud-run-jobs/worker-env-dump.json
+   - .odp_data/deployment/cloud-run-jobs/worker-execution-list.json
+   - .odp_data/deployment/cloud-run-jobs/worker-execution.json
+   - .odp_data/deployment/cloud-run-jobs/worker-job.json
+   - .odp_data/deployment/sbom.json
+
+unreviewed files the OLD glob would have published: ['.odp_data/deployment/api-env.json', '.odp_data/deployment/sbom.json']
+
+ASSERTIONS OK: 3 Job receipts recovered, 5 prior reports preserved, 9 raw gcloud dumps and 3 decoys excluded.
+
+================================================================
+
+$ python3 docs/evidence/runtime/ODP-DEPLOY-STAGING-JOB-RECEIPT-UPLOAD-001/simulate_staging_artifact_selection.py --workflow deploy-dev.yml
+  (the same harness over Deploy Dev, unchanged by this task)
+
+workflow: .github/workflows/deploy-dev.yml
+on the runner after a green deploy: 19 files
+
+OLD  .odp_data/deployment/*.json + .odp_data/remote-staging-proof/*.json  -> 6 uploaded
+   + .odp_data/deployment/api-env.json
+   + .odp_data/deployment/cloud-run-migration-compatibility.json
+   + .odp_data/deployment/cloud-run-preflight.json
+   + .odp_data/deployment/cloud-run-smoke.json
+   + .odp_data/deployment/live-e2e-gate.json
+   + .odp_data/deployment/sbom.json
+
+NEW  explicit allowlist (7 entries) -> 7 uploaded
+   + .odp_data/deployment/cloud-run-jobs/migration-validation.json
+   + .odp_data/deployment/cloud-run-jobs/scheduler-validation.json
+   + .odp_data/deployment/cloud-run-jobs/worker-validation.json
+   + .odp_data/deployment/cloud-run-migration-compatibility.json
+   + .odp_data/deployment/cloud-run-preflight.json
+   + .odp_data/deployment/cloud-run-smoke.json
+   + .odp_data/deployment/live-e2e-gate.json
+
+NOT uploaded by that list:
+   - .odp_data/deployment/api-env.json
+   - .odp_data/deployment/cloud-run-jobs/migration-execution-list.json
+   - .odp_data/deployment/cloud-run-jobs/migration-execution.json
+   - .odp_data/deployment/cloud-run-jobs/migration-job.json
+   - .odp_data/deployment/cloud-run-jobs/scheduler-execution-list.json
+   - .odp_data/deployment/cloud-run-jobs/scheduler-execution.json
+   - .odp_data/deployment/cloud-run-jobs/scheduler-job.json
+   - .odp_data/deployment/cloud-run-jobs/worker-env-dump.json
+   - .odp_data/deployment/cloud-run-jobs/worker-execution-list.json
+   - .odp_data/deployment/cloud-run-jobs/worker-execution.json
+   - .odp_data/deployment/cloud-run-jobs/worker-job.json
+   - .odp_data/deployment/sbom.json
+
+unreviewed files the OLD glob would have published: ['.odp_data/deployment/api-env.json', '.odp_data/deployment/sbom.json']
+
+ASSERTIONS OK: 3 Job receipts recovered, 4 prior reports preserved, 9 raw gcloud dumps and 3 decoys excluded.

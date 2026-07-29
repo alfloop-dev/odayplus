@@ -1,0 +1,55 @@
+$ python3 docs/evidence/runtime/ODP-DEPLOY-STAGING-JOB-RECEIPT-UPLOAD-001/mutate_upload_contract.py
+
+BASELINE (unmutated): ................                                                         [100%]
+
+CAUGHT: staging reverts to the original non-recursive glob pair
+  target: deploy-staging.yml
+  failing tests:
+    test_no_workflow_globs_into_the_deployment_report_directory
+    test_upload_allowlist_covers_every_job_receipt_the_deploy_script_writes[staging]
+    test_upload_allowlist_excludes_raw_gcloud_dumps_and_wildcards[staging]
+    test_upload_allowlist_keeps_every_top_level_report_the_glob_covered[staging]
+    test_upload_allowlist_publishes_every_report_the_workflow_itself_writes[staging]
+
+CAUGHT: staging drops the worker Job receipt
+  target: deploy-staging.yml
+  failing tests:
+    test_upload_allowlist_covers_every_job_receipt_the_deploy_script_writes[staging]
+
+CAUGHT: staging drops the remote staging proof
+  target: deploy-staging.yml
+  failing tests:
+    test_upload_allowlist_publishes_every_report_the_workflow_itself_writes[staging]
+
+CAUGHT: staging uploads a raw gcloud describe dump
+  target: deploy-staging.yml
+  failing tests:
+    test_upload_allowlist_excludes_raw_gcloud_dumps_and_wildcards[staging]
+
+CAUGHT: staging re-adds a recursive wildcard alongside the allowlist
+  target: deploy-staging.yml
+  failing tests:
+    test_no_workflow_globs_into_the_deployment_report_directory
+    test_upload_allowlist_excludes_raw_gcloud_dumps_and_wildcards[staging]
+
+CAUGHT: staging proof path drifts from the step that writes it
+  target: deploy-staging.yml
+  failing tests:
+    test_upload_allowlist_excludes_raw_gcloud_dumps_and_wildcards[staging]
+    test_upload_allowlist_publishes_every_report_the_workflow_itself_writes[staging]
+
+CAUGHT: staging publishes an unjustified file from the proof directory
+  target: deploy-staging.yml
+  failing tests:
+    test_upload_allowlist_publishes_every_report_the_workflow_itself_writes[staging]
+
+CAUGHT: dev regresses to the glob the sweep must also catch
+  target: deploy-dev.yml
+  failing tests:
+    test_no_workflow_globs_into_the_deployment_report_directory
+    test_upload_allowlist_covers_every_job_receipt_the_deploy_script_writes[dev]
+    test_upload_allowlist_excludes_raw_gcloud_dumps_and_wildcards[dev]
+    test_upload_allowlist_keeps_every_top_level_report_the_glob_covered[dev]
+    test_upload_allowlist_publishes_every_report_the_workflow_itself_writes[dev]
+
+All 8 mutations caught; worktree restored: ................                                                         [100%]
