@@ -43,7 +43,7 @@ into its output.
 | `horizon_critical_path_after_s4.json` | — | The same probe re-run once `-s4` was real rather than projected. The backwards family now reads h28 = 406 against the gap-fill family's 2, and `landed_measured` carries the first real 28-day window (see §7). |
 | `donor_projection_backtest.json` | — | The donor rule behind those projections, scored against a blind holdout — the four dates `-s4` landed after the projection was cached. Per-date recall/precision, the continuity score island length actually depends on, and the attestation assumption (see §7). |
 | `runbook/donor-projection-backtest.py` | — | The backtest that produced it. Imports the donor logic from the probe under test rather than restating it; read-only, and it scores no in-flight slice. |
-| `backwards_landing_validation.json` | — | The backwards projection scored against backwards dates as they land, closing the distance limit the `-s4` backtest leaves open. First committed at zero scored dates — the method and its guards fixed before any backwards date could be scored; now all 6 of `-b1`'s scoreable dates, 0 upper-bound breaches (see §7). |
+| `backwards_landing_validation.json` | — | The backwards projection scored against backwards dates as they land, closing the distance limit the `-s4` backtest leaves open. First committed at zero scored dates — the method and its guards fixed before any backwards date could be scored; now all 6 of `-b1`'s scoreable dates plus `-b2`'s first (2026-05-11), 0 upper-bound breaches (see §7). |
 | `runbook/backwards-landing-validation.py` | — | The probe that produces it. **Re-run after each backwards slice completes**; it strengthens monotonically as `-b2`..`-b4` land. |
 | `backwards_window_store_density.json` | — | Whether the backwards windows actually hold the stores the critical path donates to them: no gap day across the 24-day span, and 421 stores trading every day of it against an independently projected 419 (see §7). Carries its own grain and control range. |
 | `backwards_window_store_density_probe.pod.yaml` | — | The exact read-only Pod that produced it. One aggregation, counts only; place ids never leave the pod. |
@@ -1174,9 +1174,9 @@ probe reported for early May, which is the population `-b3`'s 406 was computed
 over.
 
 The calibration reads the other way, and in the direction that costs nothing.
-The `0.9715` mapping rate under-states landed stores on all six dates, by 7 to
-11 (mean +9.0), at a strikingly stable `landed/upstream` of 0.9847–0.9922 (mean
-0.9884).
+The `0.9715` mapping rate under-states landed stores on all seven dates, by 7 to
+11 (mean +9.3), at a strikingly stable `landed/upstream` of 0.9847–0.9922 (mean
+0.9890).
 That is the same sign the `-s4` backtest found on its holdout (both arms
 under-stated, optimistic recall .937), now reproduced **two months** from its
 donors rather than days from them — the regime the backtest explicitly could not
@@ -1184,11 +1184,20 @@ reach. A projection that under-states cannot manufacture criterion 3; if this
 sign holds across `-b2` and `-b3`, the measured h28 should land at or above the
 projected 406, not below it.
 
-The honest limits. Six dates are six dates, and they are all from `-b1`, the
-slice nearest the landed era; `-b3` sits three weeks further back and is where
-criterion 3 is actually decided. One date stays excluded — 2026-05-16, whose own
-partition lies below `-b1`'s window and will be covered by `-b2`'s last
-partition. And the invariant tested here is
+The first `-b2` date agrees. `2026-05-11` became scoreable once `-b2`'s second
+partition succeeded, and it is the deepest date measured so far — six days below
+anything `-b1` could reach. It lands 507 stores against a 511 upstream bound:
+within the bound, ratio 0.9922 at the very top of the band the `-b1` dates
+established, and still under-stating the point prediction by 11. So the first
+evidence from outside `-b1` shows the relationship holding rather than decaying
+with distance, which is the specific way it could have failed.
+
+The honest limits. Seven dates are seven dates, and six of them are from `-b1`,
+the slice nearest the landed era; `-b3` sits three weeks further back and is where
+criterion 3 is actually decided. Three of `-b2`'s dates stay excluded for now
+(2026-05-12, 05-13 and 05-16, plus 05-10 below the slice), each waiting on the
+partition that follows it — 05-16's own partition is `-b2`'s last. And the
+invariant tested here is
 per-date presence, not the per-store *continuity* that h28 needs: a date can land
 its full store count while individual stores still break their islands. That
 continuity claim is the one the `-s4` backtest scored and this probe does not.
