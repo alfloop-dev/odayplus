@@ -6,21 +6,25 @@ Owner: Claude2 · Reviewer: Codex2 (was `Codex4` until STOP GATE 4; see below)
 
 ## Status: the live proof has NOT been run
 
-**The rollout window has never been opened.** Re-verified against the live host
-on 2026-07-29T04:00Z, after the STOP GATE 2 rework:
+**The rollout window has never been opened.** The driver was launched once, at
+2026-07-29T04:31:10Z, and aborted fail-closed at phase 1 five seconds later,
+before the drop-in was installed (see STOP GATE 5). Re-verified against the live
+host at 04:37Z, i.e. after that abort:
 
 | checked | actual state |
 | --- | --- |
 | `systemctl --user show pantheon-supervisor.service` | `MainPID=1197865`, started 02:37:14Z - unchanged since before this task began |
 | `KillMode` | `control-group` (the shipped value) |
-| `.../pantheon-supervisor.service.d/` | exists but **empty** - no drop-in |
-| `/tmp/odp-rollout-driver/` | **absent** - the driver has never run |
-| `timeline/` | **empty** |
-| transient units | no `odp-rollout-driver`, no `odp-rollout-deadman` |
+| `.../pantheon-supervisor.service.d/` | exists but **empty** - no drop-in was ever written |
+| `/tmp/odp-rollout-driver/` | present, from the aborted run: `verdict`=`abort_killmode_probe`, `exit_code`=26 |
+| `timeline/` | only the pre-window snapshots and the abort/restore receipts |
+| transient units | `odp-rollout-driver` exited rc=26 and was collected; no `odp-rollout-deadman` was ever armed |
 | approval queues | no approval for any test run in either queue |
 
 Everything in this task is therefore still fail-closed. Do not write up a proof
 from any note in this directory: nothing after the deployment has happened yet.
+`timeline/` holding files is **not** evidence that a window ran - the only
+receipts there are phase 0's snapshots and the abort.
 
 What *is* real and already finished:
 
@@ -40,7 +44,8 @@ What *is* real and already finished:
    exact pre-fix regression shape from RACE-001. Output:
    `preflight/assertion-selftest.txt`.
 4. **Driver gate self-test - done.** `live-boot-reconciliation-driver.sh
-   --selftest` exercises the STOP GATE 2 gates (15 checks). Output:
+   --selftest` exercises the STOP GATE 2 gates and, since revision 6, phase
+   1's KillMode probe (23 checks). Output:
    `preflight/driver-gate-selftest.txt`.
 
 Both self-tests touch nothing live and are safe to re-run at any time.
@@ -157,8 +162,43 @@ self-test". The self-test is 15 checks; the claim of having corrected 16→15
 Nothing executable changed in revision 5: gate logic, thresholds, exit codes and
 ordering are byte-identical to revision 4, and the live state is untouched.
 
-**The gate is still closed.** Revision 5 needs the coordinator's exact-head
-recheck before the window is opened.
+### STOP GATE 5 (2026-07-29T04:31:15Z) - the driver was finally RUN, and phase 1 failed
+
+The coordinator lifted the exact-head gate for `05c3f59d` at 04:26:08Z. The
+driver was launched on it at 04:31:10Z with the two live run ids and aborted
+5 s later at **phase 1**, verdict `abort_killmode_probe`, exit 26 - before the
+drop-in, before any restart, before any deferral. The EXIT trap restored
+everything and the live state is exactly as it was: `MainPID=1197865`,
+`KillMode=control-group`, empty drop-in dir, dead-man inactive, watchdog timer
+active.
+
+**The finding: no revision of this driver could ever have passed phase 1.** The
+probe restarted a `systemd-run` transient unit under the *same name* while its
+leftover child was still alive - and a surviving child keeps that unit `loaded`,
+so systemd-run refuses the name: `Unit ... was already loaded or has a fragment
+file`. `reset-failed` does not unload an inactive unit. Both halves of the probe
+sent stderr to `/dev/null`, so five revisions of review never saw the message.
+The property itself was fine: `probe_child_survived_stop: yes` in the abort
+receipt, and, retested the way the real restart actually happens (a permanent
+unit file), all three properties hold on this host. Raw transcripts:
+`../preflight/killmode-probe-diagnosis.txt`.
+
+Revision 6:
+
+| change | why |
+| --- | --- |
+| phase 1 uses a throwaway unit **file**, started twice | that is what the real restart does; a transient name cannot be reused while a leftover holds it |
+| probe also asserts the leftover is alive **after** the restart | revisions 3-5 only required that the unit came back, which is not the property the window depends on |
+| probe body factored into `killmode_probe()` and exercised by `--selftest` | phase 1 can now be proven green without opening the window; self-test went 15 → **23** checks |
+| `probe_cleanup()` removes the unit file + reloads, called from the probe and from `restore_all()` | a unit file, unlike a transient unit, does not disappear on its own |
+| `PROBE_CHILD_TRIES` / `PROBE_FIXED_S` declared and counted in the dead-man budget | phase 1's waits were always spent, just never counted; finding #3 says the delay is derived from every declared wait |
+
+Nothing else changed: the gates, thresholds, exit codes and ordering of phases
+2-9 are byte-identical to revision 3.
+
+**The gate is closed again.** Revision 6 is a driver change, so it needs a fresh
+coordinator exact-head recheck - the 05c3f59d lift explicitly covered that head
+only.
 
 ## Before you execute
 
@@ -171,7 +211,7 @@ EV=$W/docs/evidence/runtime/ODP-ORCH-CLAUDE-DEFERRED-APPROVAL-LIVE-ROLLOUT-001
 bash -n $EV/runbook/live-boot-reconciliation-driver.sh
 python3 -m py_compile $EV/runbook/assert-boot-reconciliation.py
 $EV/runbook/selftest-assertion.sh                                  # 11 cases
-bash $EV/runbook/live-boot-reconciliation-driver.sh --selftest      # 15 checks
+bash $EV/runbook/live-boot-reconciliation-driver.sh --selftest      # 23 checks
 cd $W && git diff --check 647970dae975f4008633a484cde1e63187035544  # exit 0
 
 # 3. Confirm the starting state is what the driver expects.

@@ -44,18 +44,28 @@ inside its own transient systemd unit outside the supervisor cgroup.
 
 ## Status
 
-Not executed. The rollout window has never been opened: as of
-2026-07-29T04:00Z the supervisor is still on its pre-task `MainPID=1197865`,
-`KillMode` is still the shipped `control-group`, the drop-in directory is empty,
-`/tmp/odp-rollout-driver/` does not exist and no approval exists for any test run
-in either queue. The driver is at revision 5 after four coordinator STOP GATEs
-(six findings, then seven, then two, then an assignment conflict) and needs the
-coordinator's exact-head recheck before the window is opened. See
-`runbook/CONTINUATION.md` for the finding-by-finding mapping. STOP GATE 3's two
-findings were documentation defects - a vacuously clean `git diff --check`
-receipt and a backwards recycled-pid narrative - and STOP GATE 4 was a reviewer
-/ ownership correction, so neither revision 4 nor revision 5 changes any gate
-logic: the executable driver is still revision 3.
+Not executed. The rollout window has never been opened. The driver ran for the
+first time at 2026-07-29T04:31:10Z, on the head the coordinator had lifted the
+gate for, and aborted fail-closed at phase 1 after five seconds
+(`abort_killmode_probe`, exit 26) - before the drop-in, the restart, the
+deferral and any approval. As of 04:37Z, after that abort, the supervisor is
+still on its pre-task `MainPID=1197865`, `KillMode` is still the shipped
+`control-group`, the drop-in directory is still empty, the dead-man was never
+armed and no approval exists for any test run in either queue.
+
+The driver is at revision 6 after five STOP GATEs: six coordinator findings,
+then seven, then two, then an assignment conflict, and now one found by
+execution. STOP GATE 5's finding is that phase 1's `KillMode` probe could never
+have passed in any revision - it restarted a `systemd-run` transient unit under
+a name its own surviving child still held loaded, with stderr discarded on both
+halves. The property under test was fine and is now verified the way the real
+restart happens; revision 6 fixes the probe, adds an after-restart assertion,
+and makes phase 1 provable from `--selftest` (15 → 23 checks). Everything after
+phase 1 is byte-identical to revision 3, as were revisions 4 and 5 (a
+documentation correction and a reviewer/ownership correction). Revision 6 needs
+a fresh coordinator exact-head recheck; the previous lift covered one exact head
+only. See `runbook/CONTINUATION.md` for the finding-by-finding mapping and
+`preflight/killmode-probe-diagnosis.txt` for the probe transcripts.
 
 ## Fleet impact
 

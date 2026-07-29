@@ -70,6 +70,28 @@
 #   7. Stale claims, stale run ids and the obsolete 15min text were removed from
 #      CONTINUATION.md, the fleet brief and the evidence README.
 #
+# Revisions 4 and 5 changed no executable behaviour: revision 4 corrected two
+# documentation overclaims found by STOP GATE 3, revision 5 corrected the
+# reviewer name in two capture-commit templates after STOP GATE 4.
+#
+# Revision 6 - the first finding produced by *running* the driver rather than
+# reading it (2026-07-29T04:31:15Z, verdict `abort_killmode_probe`, exit 26).
+#   1. Phase 1's throwaway probe could never pass, so no revision of this driver
+#      could ever have reached phase 2. It restarted the probe through a second
+#      `systemd-run` under the same transient unit name, and the leftover child
+#      keeps that name loaded, so systemd refuses it ("was already loaded or has
+#      a fragment file"). The probe now uses a throwaway unit *file*, which is
+#      what the real restart actually does, and the file is removed on every
+#      exit path by probe_cleanup() - called from the probe and from
+#      restore_all().
+#   2. The probe additionally asserts that the leftover is still alive *after*
+#      the restart, not merely that the unit came back.
+#   3. Phase 1's waits are now declared constants and are counted in the
+#      dead-man budget instead of being spent silently.
+# The abort itself is the fail-closed path working: it happened before phase 2,
+# so no drop-in, no restart, no deferral and no approval occurred, and the EXIT
+# trap left MainPID 1197865 active on the shipped KillMode=control-group.
+#
 # Fail-safes:
 #   * hard timeouts on every wait;
 #   * an EXIT trap that restores the supervisor, the watchdog timer and the
@@ -99,7 +121,8 @@ LIVE_STATE="$LIVE_ROOT/.orchestrator/state.json"
 UNIT="pantheon-supervisor.service"
 WATCHDOG_TIMER="pantheon-supervisor-watchdog.timer"
 WATCHDOG_SERVICE="pantheon-supervisor-watchdog.service"
-DROPIN_DIR="/home/lupin/.config/systemd/user/pantheon-supervisor.service.d"
+SYSTEMD_USER_DIR="/home/lupin/.config/systemd/user"
+DROPIN_DIR="$SYSTEMD_USER_DIR/pantheon-supervisor.service.d"
 DROPIN="$DROPIN_DIR/10-preserve-workers-on-restart.conf"
 DEADMAN_UNIT="odp-rollout-deadman"
 
@@ -116,12 +139,18 @@ RUNNER_EXIT_TRIES=40              # x3s  - waiting for the runner process to exi
 START_PID_TRIES=20                # x3s  - waiting for a non-zero MainPID
 APPROVAL_TRIES=100                # x3s  - waiting for the approval to be recorded
 RESOLVE_SETTLE_S=90               # fixed settle after the deny
+PROBE_CHILD_TRIES=20              # x1s  - phase 1: waiting for the probe child pid
+PROBE_FIXED_S=8                   # phase 1: the two `sleep 2` settles, rounded up
 FIXED_SLEEPS_S=30                 # the scattered `sleep 1..4` calls, rounded up
 DEADMAN_MARGIN_S=900              # 15 min of headroom on top of the budget
 
+# Revision 6: phase 1's waits are declared here too. They were always spent -
+# revisions 3-5 just never counted them - and the point of finding #3 is that
+# the dead-man delay is derived from *every* declared wait, not from a subset.
 TOTAL_BOUNDED_WAIT_S=$(( STOP_TIMEOUT_S + WATCHDOG_QUIESCE_TRIES \
   + (RECEIPT_TRIES * 3) + (RUNNER_EXIT_TRIES * 3) + (START_PID_TRIES * 3) \
-  + (APPROVAL_TRIES * 3) + RESOLVE_SETTLE_S + FIXED_SLEEPS_S ))
+  + (APPROVAL_TRIES * 3) + RESOLVE_SETTLE_S \
+  + PROBE_CHILD_TRIES + PROBE_FIXED_S + FIXED_SLEEPS_S ))
 DEADMAN_DELAY_S=$(( TOTAL_BOUNDED_WAIT_S + DEADMAN_MARGIN_S ))
 
 now() { date -u +%Y-%m-%dT%H:%M:%SZ; }
@@ -207,9 +236,111 @@ publish_final_state() {
   fi
 }
 
+# ------------------------------------------------------------ phase 1 probe --
+# Revision 6: phase 1's throwaway unit is a real unit *file*, so it has to be
+# removed on every exit path exactly like the drop-in. Idempotent, and a no-op
+# before killmode_probe() has named a probe unit.
+probe_cleanup() {
+  [[ -n "${PROBE_UNIT:-}" ]] || return 0
+  systemctl --user stop "$PROBE_UNIT.service" >/dev/null 2>&1
+  if [[ -e "${PROBE_UNIT_FILE:-}" ]]; then
+    rm -f "$PROBE_UNIT_FILE"
+    systemctl --user daemon-reload >/dev/null 2>&1
+  fi
+  systemctl --user reset-failed "$PROBE_UNIT.service" >/dev/null 2>&1
+}
+
+# Revision 6 (STOP GATE 5 - self-caught by executing the driver rather than
+# reading it). Revisions 3-5 ran this probe as two `systemd-run` calls under one
+# transient unit name, and it could never pass, so the driver could never reach
+# phase 2. The leftover child keeps the first unit *loaded* after it goes
+# inactive, and `systemd-run` then refuses the name outright:
+#
+#   Failed to start transient service unit: Unit odp-km-diag-1351971.service
+#   was already loaded or has a fragment file.
+#
+# `reset-failed` does not help - it clears failed state, it does not unload an
+# inactive unit. The failure was therefore an artefact of transient-name reuse,
+# not the KillMode property under test; the first half of the probe
+# (`probe_child_survived_stop: yes`) had already passed against the live host.
+#
+# A throwaway unit *file* reproduces the real case faithfully, because the real
+# restart is `systemctl start pantheon-supervisor.service` on a permanent unit
+# whose cgroup still holds surviving workers. Measured on this host at
+# 2026-07-29T04:33Z: child survives the stop, the same unit starts again with
+# the leftover in its cgroup, and the leftover is still alive afterwards. Raw
+# transcript of both the broken and the working form:
+# ../preflight/killmode-probe-diagnosis.txt.
+#
+# The third assertion is new: revisions 3-5 only required that the unit came
+# back, not that the leftover was still there afterwards, which is the property
+# the real window actually depends on.
+#
+# Factored into a function so `--selftest` can prove phase 1 passes without
+# opening the window. It touches only its own throwaway unit.
+killmode_probe() {
+  PROBE_UNIT="odp-killmode-probe-$$"
+  PROBE_UNIT_FILE="$SYSTEMD_USER_DIR/$PROBE_UNIT.service"
+  PROBE_CHILD_FILE="$SIGNAL_DIR/probe-child.pid"
+  PROBE_EXEC="$SIGNAL_DIR/probe-child.sh"
+  PROBE_CHILD_SURVIVED=no
+  PROBE_RESTART_OK=no
+  PROBE_CHILD_SURVIVED_RESTART=no
+  PROBE_VERDICT=fail
+
+  mkdir -p "$SIGNAL_DIR" "$SYSTEMD_USER_DIR"
+  rm -f "$PROBE_CHILD_FILE"
+  cat > "$PROBE_EXEC" <<EOF
+#!/usr/bin/env bash
+# Throwaway probe payload for $TASK_ID; removed with the probe unit.
+sleep 900 &
+echo \$! > $PROBE_CHILD_FILE
+sleep 900
+EOF
+  chmod +x "$PROBE_EXEC"
+  cat > "$PROBE_UNIT_FILE" <<EOF
+[Unit]
+Description=ODP $TASK_ID KillMode=process probe (temporary; driver-owned)
+[Service]
+Type=simple
+KillMode=process
+ExecStart=$PROBE_EXEC
+EOF
+  systemctl --user daemon-reload
+  systemctl --user start "$PROBE_UNIT.service" >/dev/null 2>&1
+  for _ in $(seq 1 "$PROBE_CHILD_TRIES"); do [[ -s "$PROBE_CHILD_FILE" ]] && break; sleep 1; done
+  PROBE_CHILD="$(cat "$PROBE_CHILD_FILE" 2>/dev/null)"
+
+  if [[ -n "$PROBE_CHILD" ]]; then
+    systemctl --user stop "$PROBE_UNIT.service" >/dev/null 2>&1
+    sleep 2
+    alive "$PROBE_CHILD" && PROBE_CHILD_SURVIVED=yes
+    # Start the SAME unit again while the leftover child is still in its cgroup -
+    # the exact condition the real restart will be in.
+    rm -f "$PROBE_CHILD_FILE"
+    systemctl --user start "$PROBE_UNIT.service" >/dev/null 2>&1
+    sleep 2
+    [[ "$(active_state "$PROBE_UNIT.service")" == active ]] && PROBE_RESTART_OK=yes
+    alive "$PROBE_CHILD" && PROBE_CHILD_SURVIVED_RESTART=yes
+    [[ "$PROBE_CHILD_SURVIVED" == yes && "$PROBE_RESTART_OK" == yes \
+       && "$PROBE_CHILD_SURVIVED_RESTART" == yes ]] && PROBE_VERDICT=pass
+    systemctl --user stop "$PROBE_UNIT.service" >/dev/null 2>&1
+    kill "$PROBE_CHILD" 2>/dev/null
+    # The restarted instance spawned a second leftover of its own; the stop above
+    # deliberately does not reap it, so kill it here.
+    PROBE_CHILD2="$(cat "$PROBE_CHILD_FILE" 2>/dev/null)"
+    [[ -n "$PROBE_CHILD2" && "$PROBE_CHILD2" != "$PROBE_CHILD" ]] && kill "$PROBE_CHILD2" 2>/dev/null
+  fi
+  probe_cleanup
+  rm -f "$PROBE_EXEC" "$PROBE_CHILD_FILE"
+  [[ "$PROBE_VERDICT" == pass ]]
+}
+
 # ---------------------------------------------------------------- selftest ---
-# Exercises the gates that STOP GATE 2 added, without touching the live unit,
-# the drop-in, the dead-man or any queue. Safe to run at any time.
+# Exercises the gates that STOP GATE 2 added, plus (revision 6) phase 1's
+# KillMode probe. It never touches pantheon-supervisor.service, the drop-in, the
+# dead-man or any queue: the only unit it creates is its own throwaway probe,
+# which it removes again. Safe to run at any time.
 if [[ "${1:-}" == "--selftest" ]]; then
   selftest_failures=0
   check() {
@@ -279,6 +410,40 @@ if [[ "${1:-}" == "--selftest" ]]; then
     "$( unmanaged_supervisors "$(main_pid)" | grep -c . )"
   echo
 
+  echo "## revision 6: phase 1's KillMode=process probe actually passes"
+  # The revision-5 probe reported probe_verdict: fail on this host at
+  # 04:31:15Z, so the driver aborted before phase 2 and no revision of it could
+  # ever have opened the window. This runs the real phase-1 gate - the same
+  # function the driver calls - against its own throwaway unit, and asserts the
+  # three properties the real restart depends on plus its own cleanup.
+  selftest_probe_signal="$SIGNAL_DIR"
+  SIGNAL_DIR="$(mktemp -d)"
+  killmode_probe
+  check "probe verdict" pass "$PROBE_VERDICT"
+  check "leftover child survives the stop" yes "$PROBE_CHILD_SURVIVED"
+  check "same unit restarts with the leftover in its cgroup" yes "$PROBE_RESTART_OK"
+  check "leftover child is still alive after the restart" yes "$PROBE_CHILD_SURVIVED_RESTART"
+  check "probe unit file removed" no \
+    "$( [[ -e "$PROBE_UNIT_FILE" ]] && echo yes || echo no )"
+  # `list-units --all` is not the right question: systemd keeps a `not-found`
+  # stub for a name it has seen, with no fragment and no processes, until the
+  # next reload garbage-collects it. What must be true is that the unit has no
+  # fragment left and is not active.
+  # Rendered as yes/no rather than as the raw (empty) FragmentPath: `check`
+  # pads its columns, so an empty actual value would print a line with trailing
+  # whitespace straight into the committed receipt.
+  check "probe unit has no fragment left" yes \
+    "$( [[ -z "$( systemctl --user show "$PROBE_UNIT.service" -p FragmentPath --value 2>/dev/null )" ]] && echo yes || echo no )"
+  check "probe unit not active" inactive \
+    "$( active_state "$PROBE_UNIT.service" )"
+  # `pgrep -c` prints 0 *and* exits 1 when there is no match, so a `|| echo 0`
+  # fallback would append a second line; count the pids instead.
+  check "probe leftover children reaped" 0 \
+    "$( pgrep -f "$PROBE_EXEC" 2>/dev/null | grep -c . )"
+  rm -rf "$SIGNAL_DIR"
+  SIGNAL_DIR="$selftest_probe_signal"
+  echo
+
   echo "## finding 6: terminal verdict is preserved, not overwritten by EXIT"
   # Replays the exact revision-2 regression against a throwaway signal dir:
   # proof_complete followed by the trap's state write must still read
@@ -332,6 +497,7 @@ exec > >(tee -a "$SIGNAL_DIR/driver.log") 2>&1
 # switch. Restoring the shipped KillMode is part of the contract: the drop-in is
 # a temporary widening of the restart window and must not outlive it.
 restore_all() {
+  probe_cleanup
   if [[ -e "$DROPIN" ]]; then
     rm -f "$DROPIN"
     systemctl --user daemon-reload >/dev/null 2>&1
@@ -359,7 +525,10 @@ restore_report() {
     echo "watchdog_timer_state: $(active_state "$WATCHDOG_TIMER")"
     echo "watchdog_service_state: $(active_state "$WATCHDOG_SERVICE")"
     echo "deadman_timer_state: $(active_state "$DEADMAN_UNIT.timer")"
-    echo "unmanaged_supervisors: $(unmanaged_supervisors "$(main_pid)" | tr '\n' ' ')"
+    # `<none>` rather than an empty tail: the empty case wrote a line ending in
+    # a space into a committed receipt, which is exactly the defect class
+    # STOP GATE 3 caught in preflight/preflight.md.
+    echo "unmanaged_supervisors: $(unmanaged_supervisors "$(main_pid)" | tr '\n' ' ' | sed 's/[[:space:]]*$//' | grep . || echo '<none>')"
   } > "$TL/99-restore.txt"
 }
 
@@ -447,40 +616,22 @@ systemd-cgls --user-unit "$UNIT" --no-pager 2>/dev/null | sed 's/[[:space:]]*$//
 # real unit is touched: a leftover process must survive the stop, and the unit
 # must still start again while that leftover is in the cgroup.
 say "validating KillMode=process semantics on a throwaway unit"
-PROBE_UNIT="odp-killmode-probe-$$"
-PROBE_CHILD_FILE="$SIGNAL_DIR/probe-child.pid"
-rm -f "$PROBE_CHILD_FILE"
-systemd-run --user --unit="$PROBE_UNIT" --property=KillMode=process \
-  /bin/bash -c "sleep 900 & echo \$! > $PROBE_CHILD_FILE; sleep 900" >/dev/null 2>&1
-for _ in $(seq 1 20); do [[ -s "$PROBE_CHILD_FILE" ]] && break; sleep 1; done
-PROBE_CHILD="$(cat "$PROBE_CHILD_FILE" 2>/dev/null)"
-PROBE_VERDICT=fail
-if [[ -n "$PROBE_CHILD" ]]; then
-  systemctl --user stop "$PROBE_UNIT" >/dev/null 2>&1
-  sleep 2
-  PROBE_CHILD_SURVIVED=no; alive "$PROBE_CHILD" && PROBE_CHILD_SURVIVED=yes
-  # Start again while the leftover child is still in the unit cgroup - the exact
-  # condition the real restart will be in.
-  systemctl --user reset-failed "$PROBE_UNIT.service" >/dev/null 2>&1
-  systemd-run --user --unit="$PROBE_UNIT" --property=KillMode=process \
-    /bin/bash -c 'sleep 30' >/dev/null 2>&1
-  sleep 2
-  PROBE_RESTART_OK=no
-  [[ "$(active_state "$PROBE_UNIT.service")" == active ]] && PROBE_RESTART_OK=yes
-  [[ "$PROBE_CHILD_SURVIVED" == yes && "$PROBE_RESTART_OK" == yes ]] && PROBE_VERDICT=pass
-  systemctl --user stop "$PROBE_UNIT" >/dev/null 2>&1
-  kill "$PROBE_CHILD" 2>/dev/null
-fi
-systemctl --user reset-failed "$PROBE_UNIT.service" >/dev/null 2>&1
+# Revision 6: the probe body lives in killmode_probe() so `--selftest` can prove
+# this gate passes without opening the window. See the comment there for why
+# revisions 3-5 could never pass it.
+killmode_probe || true   # the verdict is asserted below, after the receipt
 {
   echo "probe_unit: $PROBE_UNIT"
+  echo "probe_unit_file: $PROBE_UNIT_FILE"
   echo "probe_child_pid: ${PROBE_CHILD:-<none>}"
   echo "probe_child_survived_stop: ${PROBE_CHILD_SURVIVED:-no}"
   echo "probe_unit_restarted_with_leftover: ${PROBE_RESTART_OK:-no}"
+  echo "probe_child_survived_restart: ${PROBE_CHILD_SURVIVED_RESTART:-no}"
+  echo "probe_unit_file_removed: $([[ -e "$PROBE_UNIT_FILE" ]] && echo no || echo yes)"
   echo "probe_verdict: $PROBE_VERDICT"
 } > "$TL/00-killmode-probe.txt"
 [[ "$PROBE_VERDICT" == pass ]] || fail abort_killmode_probe 26 \
-  "KillMode=process did not preserve a leftover process (or the unit could not restart); refusing to stop the real supervisor"
+  "KillMode=process probe failed (child_survived_stop=${PROBE_CHILD_SURVIVED:-no} restarted_with_leftover=${PROBE_RESTART_OK:-no} child_survived_restart=${PROBE_CHILD_SURVIVED_RESTART:-no}); refusing to stop the real supervisor"
 
 # ---------------------------------------------------------------- phase 2 ----
 say "installing the temporary KillMode=process drop-in"

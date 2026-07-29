@@ -1,0 +1,97 @@
+# Diagnosis: why the revision-5 driver aborted at phase 1 (abort_killmode_probe)
+# ODP-ORCH-CLAUDE-DEFERRED-APPROVAL-LIVE-ROLLOUT-001 · Claude2 · 2026-07-29
+#
+# The revision-5 driver was launched at 04:31:10Z on the coordinator-lifted head
+# 05c3f59d and aborted 5 s later, before phase 2, with verdict
+# abort_killmode_probe (exit 26). Nothing live was touched: no drop-in, no
+# restart, no deferral, no approval. This file is the raw evidence for the
+# revision-6 fix.
+
+--------------------------------------------------------------------------------
+1. The abort receipt (timeline/00-killmode-probe.txt, revision 5)
+--------------------------------------------------------------------------------
+probe_unit: odp-killmode-probe-1350716
+probe_child_pid: 1350758
+probe_child_survived_stop: yes
+probe_unit_restarted_with_leftover: no
+probe_verdict: fail
+
+The property under test had in fact PASSED (probe_child_survived_stop: yes).
+Only the restart half failed.
+
+--------------------------------------------------------------------------------
+2. Reproduction of the restart half, with the error the driver had discarded
+--------------------------------------------------------------------------------
+The driver ran both halves through `systemd-run --unit=<same name>` with stderr
+sent to /dev/null. Re-run by hand at 04:32Z with stderr kept:
+
+  $ systemd-run --user --unit=$U --property=KillMode=process \
+      /bin/bash -c "sleep 900 & echo $! > $SF; sleep 900"
+  Running as unit: odp-km-diag-1351971.service; invocation ID: 1e4f6a2f...
+  child=1351995
+
+  $ systemctl --user stop $U
+  child alive after stop: yes
+  unit state after stop: inactive / sub=dead / load=loaded        <-- still LOADED
+
+  $ systemd-run --user --unit=$U --property=KillMode=process /bin/bash -c 'sleep 30'
+  Failed to start transient service unit: Unit odp-km-diag-1351971.service
+  was already loaded or has a fragment file.
+  rc=1
+
+So the second half could never succeed: the surviving child keeps the first
+transient unit loaded, and systemd-run refuses a name that is still loaded.
+`systemctl --user reset-failed` (which the driver called first) does not help -
+it clears failed state, it does not unload an inactive unit.
+
+The failure was an artefact of reusing one transient unit name, not a property
+of KillMode=process, and it would have blocked every run of every revision.
+
+--------------------------------------------------------------------------------
+3. The property, tested the way the real restart actually happens
+--------------------------------------------------------------------------------
+The real window restarts pantheon-supervisor.service - a permanent unit whose
+cgroup still holds surviving workers - with `systemctl start`. Reproduced at
+04:33Z with a throwaway unit FILE (KillMode=process, ExecStart spawns a child
+that outlives its parent), then removed again:
+
+  child=1352914 mainpid=1352912
+  child alive after stop: yes
+  state after stop: inactive/dead
+  start-with-leftover rc=0
+  state after restart: active mainpid=1353037
+  old child still alive after restart: yes
+  cleanup ok: unit=gone
+
+All three properties the live window depends on hold on this host:
+  * KillMode=process leaves the leftover alive across `systemctl stop`;
+  * the same unit starts again while that leftover is still in its cgroup;
+  * the leftover is still alive after the restart.
+
+(An earlier attempt at this same test was invalid and is not the basis for
+anything above: a heredoc escaping slip wrote the literal string `$!` into the
+pid file instead of the child pid, so its "child alive" lines were meaningless.
+It was rerun with the payload in a helper script, which is the transcript shown.)
+
+--------------------------------------------------------------------------------
+4. What revision 6 changes
+--------------------------------------------------------------------------------
+* phase 1 uses a throwaway unit FILE, started twice, instead of two systemd-run
+  calls under one transient name;
+* the probe additionally asserts the leftover is still alive AFTER the restart -
+  revisions 3-5 only required that the unit came back;
+* the probe body is a function (killmode_probe) so `--selftest` exercises the
+  real gate; the self-test grew from 15 to 23 checks;
+* probe_cleanup() removes the unit file and reloads on every exit path, and is
+  called from restore_all() as well as from the probe itself;
+* phase 1's waits are declared constants (PROBE_CHILD_TRIES, PROBE_FIXED_S) and
+  are counted in the dead-man budget instead of being spent silently.
+
+Residue check after all of the above (04:37Z): no probe unit file on disk and no
+probe processes. What does remain is one `not-found/inactive/dead` NAME STUB per
+probe run (the unit names are pid-suffixed, so each run adds one). A
+`daemon-reload` does NOT clear them - measured, not assumed - and neither does
+`reset-failed`; systemd drops them when it garbage-collects unreferenced units.
+They hold no fragment, no cgroup and no processes, so they are cosmetic, but the
+self-test asserts the two things that matter (`FragmentPath` empty and
+`ActiveState=inactive`) rather than pretending the name is gone.

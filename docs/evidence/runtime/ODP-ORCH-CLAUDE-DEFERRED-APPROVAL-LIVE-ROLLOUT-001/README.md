@@ -120,10 +120,21 @@ scope of a live service is a temporary measure and must not outlive its window;
 the resting state of this host is the shipped `KillMode=control-group`.
 
 Before the real unit is touched at all, phase 1 validates the semantics on a
-throwaway `systemd-run` unit: a `KillMode=process` unit is started with a child
-process, stopped (the child must survive), and started again while the leftover
-child is still in the cgroup (the start must succeed). If either half of that
-fails, the driver aborts without ever stopping the supervisor.
+throwaway unit: a `KillMode=process` unit is started with a child process,
+stopped (the child must survive), and started again while the leftover child is
+still in the cgroup (the start must succeed, and the leftover must still be
+alive afterwards). If any of the three fails, the driver aborts without ever
+stopping the supervisor.
+
+The throwaway is a real unit **file**, not a `systemd-run` transient unit. That
+is revision 6, and it is not cosmetic: the transient form could never pass, so
+the driver aborted at phase 1 the first time it was actually run
+(2026-07-29T04:31:15Z, `abort_killmode_probe`). A surviving child keeps a
+transient unit loaded, and `systemd-run` then refuses to reuse the name. The
+unit-file form is also the faithful one, because the real restart is
+`systemctl start` on a permanent unit whose cgroup still holds live workers. See
+`preflight/killmode-probe-diagnosis.txt` for the transcripts and
+`runbook/CONTINUATION.md` § STOP GATE 5.
 
 Two further precautions cover the restart window:
 
@@ -240,11 +251,15 @@ assertion - including the recorded pre-fix regression shape - and checks every
 verdict. It touches nothing live. Output: `preflight/assertion-selftest.txt`.
 
 `live-boot-reconciliation-driver.sh --selftest` covers the driver's own gates
-with 15 checks against throwaway processes and a throwaway signal directory: the
+with 23 checks against throwaway processes and a throwaway signal directory: the
 dead-man budget inequality, pid/run-id binding (foreign, empty, dead pids all
 rejected), token-exact unmanaged-supervisor detection (a decoy carrying
-`supervisor.py` inside a longer argument must not be reported), and a replay of
-the revision-2 verdict-overwrite regression. It also touches nothing live.
+`supervisor.py` inside a longer argument must not be reported), a replay of the
+revision-2 verdict-overwrite regression, and - since revision 6 - phase 1's
+`KillMode` probe itself, run through the same `killmode_probe()` the driver
+calls, so that gate can be proven green without opening the window. The only
+unit it creates is its own throwaway probe, which it removes again; it never
+touches `pantheon-supervisor.service`, the drop-in, the dead-man or any queue.
 Output: `preflight/driver-gate-selftest.txt`.
 
 The live pre-fix behaviour of the same host is already on record in
@@ -289,14 +304,29 @@ Claude2 and reviewer is Codex2, now consistently across `ai-status.json`, the
 fleet brief, `runbook/CONTINUATION.md` and the driver's two capture-commit
 trailer templates. Revision 5 is that text change plus one residual overclaim
 found while re-running the checks (this section previously said the gate
-self-test had 16 checks; it has 15). No executable behaviour differs from
-revision 3. It needs the coordinator's exact-head recheck before the window is
-opened.
+self-test had 16 checks; it had 15). No executable behaviour differs from
+revision 3.
+
+The coordinator lifted the exact-head gate on `05c3f59d` at 04:26:08Z and the
+driver was launched at 04:31:10Z - the first time any revision of it actually
+ran. It aborted 5 s later at phase 1 (`abort_killmode_probe`, exit 26), before
+the drop-in and before any restart, deferral or approval, and the EXIT trap left
+`MainPID=1197865` active on the shipped `KillMode=control-group`. The finding is
+that phase 1's probe could never have passed in any revision: it restarted a
+`systemd-run` transient unit under a name its own surviving child still held
+loaded, and both halves discarded stderr, so five review passes never saw
+systemd's refusal. The property itself was never in doubt - the abort receipt
+records `probe_child_survived_stop: yes`, and all three properties hold when the
+probe is done the way the real restart is done. Revision 6 fixes the probe, adds
+the after-restart assertion, and makes phase 1 provable from `--selftest`
+(15 → 23 checks). Everything downstream of phase 1 is byte-identical to
+revision 3. Revision 6 needs a fresh coordinator exact-head recheck: the
+`05c3f59d` lift covered that head only.
 
 What has been completed and is safe to review now: the deployment (section 2),
 its verification (section 3), the restart-safety design (section 4), the
 determinism argument (section 5), the fail-closed assertion with its 11-case
-self-test, and the driver's own 15-check gate self-test.
+self-test, and the driver's own 23-check gate self-test.
 
 ## 7. Approval resolution
 

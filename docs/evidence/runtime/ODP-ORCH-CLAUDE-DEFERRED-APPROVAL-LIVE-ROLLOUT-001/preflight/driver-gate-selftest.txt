@@ -1,8 +1,8 @@
-# driver gate selftest (2026-07-29T04:12:00Z)
+# driver gate selftest (2026-07-29T04:42:35Z)
 
 ## finding 3: dead-man delay must exceed the bounded wait budget
-total_bounded_wait_s: 1130
-deadman_delay_s:      2030
+total_bounded_wait_s: 1158
+deadman_delay_s:      2058
 ok    deadman_delay > total_bounded_wait                         yes
 ok    deadman_margin >= 600s                                     yes
 
@@ -17,6 +17,16 @@ ok    prompt-substring decoy not reported                        no
 ok    exact-token supervisor reported                            yes
 ok    exclusion list drops the reported pid                      no
 ok    live supervisor is managed (excluding MainPID leaves none) 0
+
+## revision 6: phase 1's KillMode=process probe actually passes
+ok    probe verdict                                              pass
+ok    leftover child survives the stop                           yes
+ok    same unit restarts with the leftover in its cgroup         yes
+ok    leftover child is still alive after the restart            yes
+ok    probe unit file removed                                    no
+ok    probe unit has no fragment left                            yes
+ok    probe unit not active                                      inactive
+ok    probe leftover children reaped                             0
 
 ## finding 6: terminal verdict is preserved, not overwritten by EXIT
 ok    proof_complete survives the EXIT trap                      proof_complete
