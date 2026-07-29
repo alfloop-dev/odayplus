@@ -1,0 +1,13 @@
+{
+  "task_id": "ODP-DEPLOY-JOB-QUEUE-HEALTH-CONTRACT-001",
+  "timestamp": "2026-07-29T11:48:24Z",
+  "durable_postgresql_queue_health_payload": "healthy (durable postgresql job queue)",
+  "in_memory_queue_health_payload": "healthy (in-memory job queue)",
+  "validator_durable_check": "PASS",
+  "validator_in_memory_check": "FAIL_CLOSED (contains forbidden marker 'in-memory')",
+  "validator_bare_healthy_check": "FAIL_CLOSED (missing required marker ('worker', 'cloud', 'durable'))",
+  "linter_check": "PASS",
+  "regression_tests": {
+    "test_real_app_platform_health_job_queue_contract": "PASS"
+  }
+}

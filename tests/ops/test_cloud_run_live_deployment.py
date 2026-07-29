@@ -4375,3 +4375,40 @@ def test_live_e2e_gate_refuses_to_run_without_a_deployment_mode() -> None:
         )
         == "production"
     )
+
+
+def test_real_app_platform_health_job_queue_contract(tmp_path: Path) -> None:
+    """Regression test ensuring real app /platform/health job_queue satisfies validator contract."""
+    from fastapi.testclient import TestClient
+
+    from apps.api.oday_api.main import create_app
+    from shared.infrastructure.persistence.factory import _durable_bundle, _memory_bundle
+
+    # 1. Test durable bundle app (must pass all validator queue markers)
+    durable_bundle = _durable_bundle(tmp_path / "test.db")
+    durable_app = create_app(persistence=durable_bundle)
+    durable_client = TestClient(durable_app)
+    durable_res = durable_client.get("/platform/health")
+    durable_payload = durable_res.json()
+
+    durable_queue_text = validator._dependency_text(durable_payload, "job_queue")
+    assert "healthy" in durable_queue_text
+    assert not validator._contains_forbidden_marker(durable_queue_text)
+    assert any(marker in durable_queue_text for marker in ("worker", "cloud", "durable"))
+
+    # 2. Test in-memory bundle app (fails closed due to forbidden marker)
+    mem_bundle = _memory_bundle()
+    mem_app = create_app(persistence=mem_bundle)
+    mem_client = TestClient(mem_app)
+    mem_res = mem_client.get("/platform/health")
+    mem_payload = mem_res.json()
+
+    mem_queue_text = validator._dependency_text(mem_payload, "job_queue")
+    assert "healthy" in mem_queue_text
+    assert validator._contains_forbidden_marker(mem_queue_text)
+
+    # 3. Test bare "healthy" payload (fails closed due to missing required marker)
+    bare_payload = {"dependencies": {"job_queue": "healthy"}}
+    bare_queue_text = validator._dependency_text(bare_payload, "job_queue")
+    assert not any(marker in bare_queue_text for marker in ("worker", "cloud", "durable"))
+
