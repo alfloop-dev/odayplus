@@ -80,10 +80,7 @@
 #      could ever have reached phase 2. It restarted the probe through a second
 #      `systemd-run` under the same transient unit name, and the leftover child
 #      keeps that name loaded, so systemd refuses it ("was already loaded or has
-#      a fragment file"). The probe now uses a throwaway unit *file*, which is
-#      what the real restart actually does, and the file is removed on every
-#      exit path by probe_cleanup() - called from the probe and from
-#      restore_all().
+#      a fragment file").
 #   2. The probe additionally asserts that the leftover is still alive *after*
 #      the restart, not merely that the unit came back.
 #   3. Phase 1's waits are now declared constants and are counted in the
@@ -91,6 +88,42 @@
 # The abort itself is the fail-closed path working: it happened before phase 2,
 # so no drop-in, no restart, no deferral and no approval occurred, and the EXIT
 # trap left MainPID 1197865 active on the shipped KillMode=control-group.
+# Revision 6's *fix* was rejected by STOP GATE 6 and is not what this file does;
+# see revision 7.
+#
+# Revision 7 - coordinator STOP GATE 6 (2026-07-29T04:43:36Z / 04:45:59Z).
+# Revision 6 was never executed. Its diagnosis of the abort stands; its remedy
+# did not.
+#   1. Revision 6 answered "a transient unit name cannot be reused" by writing a
+#      *persistent* unit file into /home/lupin/.config/systemd/user. That is out
+#      of scope for this task - the driver has no business creating permanent
+#      user units - and it was not necessary. Only a second `systemd-run` under
+#      an already-loaded name fails; `systemctl --user start` on the *existing*
+#      transient .service is proven to work (independent transcript at
+#      2026-07-29T04:39:19Z, reproduced in ../preflight/killmode-probe-diagnosis.txt).
+#      Phase 1 therefore creates its unit exactly once with `systemd-run`, stops
+#      it, and restarts the SAME already-loaded unit with a bounded
+#      `systemctl --user start`. `SYSTEMD_USER_DIR` is gone and the driver writes
+#      no unit file anywhere.
+#   2. The probe asserts all three live processes the real window depends on:
+#      the OLD child (survivor of the stop), the NEW MainPID (non-zero and
+#      different) and the NEW child. Each one is bound to a probe-owned argv
+#      marker, so a recycled pid cannot satisfy any of them.
+#   3. Cleanup is ownership- and cgroup-based and runs on every exit path: the
+#      recorded old/new pids plus every pid seen in the probe unit's cgroup are
+#      SIGTERMed then SIGKILLed, waited for, and the probe then asserts that no
+#      marked process, no cgroup and no loaded unit is left (not-found /
+#      inactive / dead). The residue assertion is part of the verdict, so a
+#      probe that leaks fails closed instead of proceeding.
+#   4. Every systemctl/systemd-run call in the probe is bounded by `timeout` and
+#      its rc and stderr are captured to a receipt instead of going to
+#      /dev/null. Discarded stderr is why five review passes missed the
+#      revision-5 defect.
+#   5. A clean-attempt gate runs before anything is written: a dirty timeline
+#      root or a leftover verdict/state/exit_code in the signal dir aborts
+#      (50/51) with the previous attempt's artefacts untouched, so one attempt's
+#      receipts can never be read as another's. Attempt 1's artefacts are
+#      archived under timeline/attempt-1-abort-killmode-probe/.
 #
 # Fail-safes:
 #   * hard timeouts on every wait;
@@ -121,8 +154,12 @@ LIVE_STATE="$LIVE_ROOT/.orchestrator/state.json"
 UNIT="pantheon-supervisor.service"
 WATCHDOG_TIMER="pantheon-supervisor-watchdog.timer"
 WATCHDOG_SERVICE="pantheon-supervisor-watchdog.service"
-SYSTEMD_USER_DIR="/home/lupin/.config/systemd/user"
-DROPIN_DIR="$SYSTEMD_USER_DIR/pantheon-supervisor.service.d"
+# Revision 7 (STOP GATE 6): the only file this driver writes under
+# /home/lupin/.config/systemd/user is the drop-in it owns and removes. There is
+# deliberately no general `SYSTEMD_USER_DIR` variable any more - revision 6 used
+# one to drop a *persistent* probe unit there, which is out of scope for this
+# task and, per the 04:39:19Z transcript, was never needed.
+DROPIN_DIR="/home/lupin/.config/systemd/user/pantheon-supervisor.service.d"
 DROPIN="$DROPIN_DIR/10-preserve-workers-on-restart.conf"
 DEADMAN_UNIT="odp-rollout-deadman"
 
@@ -139,7 +176,9 @@ RUNNER_EXIT_TRIES=40              # x3s  - waiting for the runner process to exi
 START_PID_TRIES=20                # x3s  - waiting for a non-zero MainPID
 APPROVAL_TRIES=100                # x3s  - waiting for the approval to be recorded
 RESOLVE_SETTLE_S=90               # fixed settle after the deny
-PROBE_CHILD_TRIES=20              # x1s  - phase 1: waiting for the probe child pid
+PROBE_CHILD_TRIES=20              # x1s  - phase 1: waiting for a probe child pid
+PROBE_CMD_TIMEOUT_S=30            # phase 1: bound on each systemd-run/systemctl call
+PROBE_REAP_TRIES=10               # x1s  - phase 1: waiting for probe pids to die
 PROBE_FIXED_S=8                   # phase 1: the two `sleep 2` settles, rounded up
 FIXED_SLEEPS_S=30                 # the scattered `sleep 1..4` calls, rounded up
 DEADMAN_MARGIN_S=900              # 15 min of headroom on top of the budget
@@ -147,10 +186,17 @@ DEADMAN_MARGIN_S=900              # 15 min of headroom on top of the budget
 # Revision 6: phase 1's waits are declared here too. They were always spent -
 # revisions 3-5 just never counted them - and the point of finding #3 is that
 # the dead-man delay is derived from *every* declared wait, not from a subset.
+# Revision 7 adds phase 1's new bounded waits: the `timeout` on each probe
+# command (systemd-run, stop, start, and the two cleanup stops = 5 calls), the
+# child-pid wait which is now spent twice (once per start), and the reap wait,
+# which is spent three times per probe_cleanup() call (SIGTERM, SIGKILL, unit
+# garbage collection) and probe_cleanup() itself runs at most twice - once in the
+# probe, once from restore_all().
 TOTAL_BOUNDED_WAIT_S=$(( STOP_TIMEOUT_S + WATCHDOG_QUIESCE_TRIES \
   + (RECEIPT_TRIES * 3) + (RUNNER_EXIT_TRIES * 3) + (START_PID_TRIES * 3) \
   + (APPROVAL_TRIES * 3) + RESOLVE_SETTLE_S \
-  + PROBE_CHILD_TRIES + PROBE_FIXED_S + FIXED_SLEEPS_S ))
+  + (PROBE_CHILD_TRIES * 2) + (PROBE_CMD_TIMEOUT_S * 5) + (PROBE_REAP_TRIES * 6) \
+  + PROBE_FIXED_S + FIXED_SLEEPS_S ))
 DEADMAN_DELAY_S=$(( TOTAL_BOUNDED_WAIT_S + DEADMAN_MARGIN_S ))
 
 now() { date -u +%Y-%m-%dT%H:%M:%SZ; }
@@ -159,6 +205,8 @@ alive() { kill -0 "$1" 2>/dev/null; }
 main_pid() { systemctl --user show "$UNIT" -p MainPID --value; }
 kill_mode() { systemctl --user show "$UNIT" -p KillMode --value; }
 active_state() { systemctl --user show "$1" -p ActiveState --value; }
+load_state() { systemctl --user show "$1" -p LoadState --value; }
+sub_state() { systemctl --user show "$1" -p SubState --value; }
 
 # Bind a pid to a run id. `kill -0` alone would accept a recycled pid, which
 # would let the driver claim a worker survived when it did not.
@@ -236,103 +284,247 @@ publish_final_state() {
   fi
 }
 
+# ------------------------------------------------- clean-attempt gate (rev 7) -
+# STOP GATE 6: one attempt's receipts must never be readable as another's. The
+# 04:31Z attempt left `abort_killmode_probe`/26 in the signal dir and its
+# snapshots in the timeline root; those are now archived under
+# timeline/attempt-1-abort-killmode-probe/, and a new run refuses to start while
+# anything comparable is present.
+#
+# Prints the first offending entry (`timeline:<name>` / `signal:<name>`) and
+# returns 0 when dirty; prints nothing and returns 1 when clean. `README.md` and
+# archived `attempt-*/` directories are not dirt.
+attempt_state_dirty() {
+  local tl="$1" sig="$2" name
+  if [[ -d "$tl" ]]; then
+    while IFS= read -r name; do
+      [[ "$name" == "README.md" ]] && continue
+      printf 'timeline:%s\n' "$name"
+      return 0
+    done < <(find "$tl" -maxdepth 1 -mindepth 1 -type f -printf '%f\n' 2>/dev/null | sort)
+  fi
+  if [[ -d "$sig" ]]; then
+    for name in verdict state exit_code driver.log; do
+      if [[ -e "$sig/$name" ]]; then
+        printf 'signal:%s\n' "$name"
+        return 0
+      fi
+    done
+  fi
+  return 1
+}
+
 # ------------------------------------------------------------ phase 1 probe --
-# Revision 6: phase 1's throwaway unit is a real unit *file*, so it has to be
-# removed on every exit path exactly like the drop-in. Idempotent, and a no-op
-# before killmode_probe() has named a probe unit.
+# Revision 7 (STOP GATE 6). Every probe command is bounded and its rc/stderr are
+# recorded. Revisions 3-6 sent both halves of the probe to /dev/null, which is
+# the only reason the revision-5 defect survived five review passes: the message
+# systemd printed ("Unit ... was already loaded or has a fragment file") was
+# thrown away.
+probe_cmd() {
+  local label="$1"; shift
+  local rc=0 err
+  err="$(timeout "$PROBE_CMD_TIMEOUT_S" "$@" 2>&1 >/dev/null)" || rc=$?
+  # Bounded, single-line and trailing-whitespace-free: this receipt is committed.
+  err="$(printf '%s' "$err" | head -c 400 | tr '\n\t' '  ' | sed 's/[[:space:]]*$//')"
+  printf '%s rc=%s stderr=%s\n' "$label" "$rc" "${err:-<empty>}" >> "$PROBE_CMD_LOG"
+  return "$rc"
+}
+
+# Every pid this probe has ever owned: the two MainPIDs, the two children, and
+# whatever the unit's cgroup held while it was up. Cleanup works from this list,
+# never from a pattern alone.
+probe_record_pid() {
+  local pid="$1"
+  [[ -n "$pid" && "$pid" != "0" ]] || return 0
+  case " ${PROBE_OWNED_PIDS:-} " in *" $pid "*) return 0 ;; esac
+  PROBE_OWNED_PIDS="${PROBE_OWNED_PIDS:-}${PROBE_OWNED_PIDS:+ }$pid"
+}
+
+# Read the pids systemd currently has in the probe unit's cgroup and record them.
+probe_record_cgroup_pids() {
+  local cg pid
+  cg="$(systemctl --user show "$PROBE_UNIT.service" -p ControlGroup --value 2>/dev/null)"
+  [[ -n "$cg" ]] && PROBE_CGROUP="$cg"
+  [[ -n "${PROBE_CGROUP:-}" && -r "/sys/fs/cgroup${PROBE_CGROUP}/cgroup.procs" ]] || return 0
+  while read -r pid; do probe_record_pid "$pid"; done \
+    < "/sys/fs/cgroup${PROBE_CGROUP}/cgroup.procs"
+}
+
+# A pid is the probe's to kill only if it is still carrying the probe's own argv
+# marker. `kill -0` alone would let a recycled pid be killed instead - the same
+# pid-recycling hazard pid_owned_by_run() exists for.
+probe_owns_pid() { pid_owned_by_run "$1" "$PROBE_MARKER"; }
+
+probe_live_pids() {
+  local pid
+  for pid in ${PROBE_OWNED_PIDS:-}; do probe_owns_pid "$pid" && printf '%s\n' "$pid"; done
+  # Anything the recorded list missed but that still carries the marker.
+  pgrep -f "$PROBE_MARKER" 2>/dev/null | while read -r pid; do
+    case " ${PROBE_OWNED_PIDS:-} " in *" $pid "*) ;; *) printf '%s\n' "$pid" ;; esac
+  done
+}
+
+# Idempotent; a no-op before killmode_probe() has named a probe unit. Called by
+# the probe itself and by restore_all(), i.e. on every exit path.
 probe_cleanup() {
   [[ -n "${PROBE_UNIT:-}" ]] || return 0
-  systemctl --user stop "$PROBE_UNIT.service" >/dev/null 2>&1
-  if [[ -e "${PROBE_UNIT_FILE:-}" ]]; then
-    rm -f "$PROBE_UNIT_FILE"
-    systemctl --user daemon-reload >/dev/null 2>&1
-  fi
+  probe_record_cgroup_pids
+  probe_cmd "cleanup_stop" systemctl --user stop "$PROBE_UNIT.service" || true
+
+  local signal pid tries
+  for signal in TERM KILL; do
+    for pid in $(probe_live_pids); do kill -"$signal" "$pid" 2>/dev/null; done
+    for tries in $(seq 1 "$PROBE_REAP_TRIES"); do
+      [[ -z "$(probe_live_pids)" ]] && break
+      sleep 1
+    done
+  done
+
   systemctl --user reset-failed "$PROBE_UNIT.service" >/dev/null 2>&1
+  # A transient unit with no processes left is garbage-collected by systemd, so
+  # the resting state asserted below is not-found / inactive / dead. Collection
+  # is not instantaneous, so give it the same bounded wait rather than reading
+  # the state in the middle of it.
+  for tries in $(seq 1 "$PROBE_REAP_TRIES"); do
+    [[ "$(load_state "$PROBE_UNIT.service")" == not-found ]] && break
+    sleep 1
+  done
+  PROBE_RESIDUE_PIDS="$(probe_live_pids | tr '\n' ' ' | sed 's/[[:space:]]*$//')"
+  PROBE_RESIDUE_CGROUP=no
+  [[ -n "${PROBE_CGROUP:-}" && -d "/sys/fs/cgroup${PROBE_CGROUP}" ]] && PROBE_RESIDUE_CGROUP=yes
+  PROBE_UNIT_LOAD_AFTER="$(load_state "$PROBE_UNIT.service")"
+  PROBE_UNIT_ACTIVE_AFTER="$(active_state "$PROBE_UNIT.service")"
+  PROBE_UNIT_SUB_AFTER="$(sub_state "$PROBE_UNIT.service")"
+  PROBE_RESIDUE_CLEAN=no
+  [[ -z "$PROBE_RESIDUE_PIDS" && "$PROBE_RESIDUE_CGROUP" == no \
+     && "$PROBE_UNIT_LOAD_AFTER" == not-found \
+     && "$PROBE_UNIT_ACTIVE_AFTER" == inactive \
+     && "$PROBE_UNIT_SUB_AFTER" == dead ]] && PROBE_RESIDUE_CLEAN=yes
+  rm -f "${PROBE_EXEC:-}" "${PROBE_CHILD_FILE:-}" 2>/dev/null
+  return 0
 }
 
 # Revision 6 (STOP GATE 5 - self-caught by executing the driver rather than
-# reading it). Revisions 3-5 ran this probe as two `systemd-run` calls under one
-# transient unit name, and it could never pass, so the driver could never reach
-# phase 2. The leftover child keeps the first unit *loaded* after it goes
-# inactive, and `systemd-run` then refuses the name outright:
+# reading it) diagnosed why revisions 3-5 could never pass this gate: they ran
+# the probe as two `systemd-run` calls under one transient unit name. The
+# leftover child keeps the first unit *loaded* after it goes inactive, and
+# `systemd-run` then refuses the name outright:
 #
 #   Failed to start transient service unit: Unit odp-km-diag-1351971.service
 #   was already loaded or has a fragment file.
 #
 # `reset-failed` does not help - it clears failed state, it does not unload an
-# inactive unit. The failure was therefore an artefact of transient-name reuse,
-# not the KillMode property under test; the first half of the probe
-# (`probe_child_survived_stop: yes`) had already passed against the live host.
+# inactive unit. The failure was therefore an artefact of *recreating* a
+# transient unit, not the KillMode property under test; the first half of the
+# probe (`probe_child_survived_stop: yes`) had already passed against the live
+# host.
 #
-# A throwaway unit *file* reproduces the real case faithfully, because the real
-# restart is `systemctl start pantheon-supervisor.service` on a permanent unit
-# whose cgroup still holds surviving workers. Measured on this host at
-# 2026-07-29T04:33Z: child survives the stop, the same unit starts again with
-# the leftover in its cgroup, and the leftover is still alive afterwards. Raw
-# transcript of both the broken and the working form:
-# ../preflight/killmode-probe-diagnosis.txt.
+# Revision 7 (STOP GATE 6) fixes it the in-scope way, which is also the way the
+# real restart works: `systemctl start` on a unit that already exists. Only a
+# second `systemd-run` under a loaded name fails - starting the SAME
+# already-loaded transient .service is proven to work on this host
+# (2026-07-29T04:39:19Z transcript, ../preflight/killmode-probe-diagnosis.txt):
+# `systemctl --user start` returned rc=0 with the leftover still in the cgroup,
+# gave a new MainPID and a new child, and the old child stayed alive. Revision 6
+# instead wrote a *persistent* unit file under ~/.config/systemd/user, which is
+# out of scope for this driver and unnecessary; that is reverted.
 #
-# The third assertion is new: revisions 3-5 only required that the unit came
-# back, not that the leftover was still there afterwards, which is the property
-# the real window actually depends on.
+# The unit is therefore created exactly once, and no unit file is ever written.
+#
+# Assertions (all four are required, and revisions 3-5 had only the first two):
+#   * the OLD child survives `systemctl stop` - the property the window needs;
+#   * the SAME unit starts again while that leftover is in its cgroup;
+#   * the restart produced a NEW, non-zero, different MainPID and a NEW child -
+#     otherwise "active" could mean the unit never really went down;
+#   * the OLD child is still alive AFTER the restart.
+# Every pid is bound to the probe's own argv marker, so a recycled pid cannot
+# satisfy any of them.
 #
 # Factored into a function so `--selftest` can prove phase 1 passes without
-# opening the window. It touches only its own throwaway unit.
+# opening the window. It touches only its own throwaway transient unit.
 killmode_probe() {
   PROBE_UNIT="odp-killmode-probe-$$"
-  PROBE_UNIT_FILE="$SYSTEMD_USER_DIR/$PROBE_UNIT.service"
+  PROBE_MARKER="odp-killmode-probe-marker-$$-${RANDOM}"
   PROBE_CHILD_FILE="$SIGNAL_DIR/probe-child.pid"
   PROBE_EXEC="$SIGNAL_DIR/probe-child.sh"
+  PROBE_CMD_LOG="$SIGNAL_DIR/probe-commands.txt"
+  PROBE_CREATE_RC=1
+  PROBE_OWNED_PIDS=""
+  PROBE_CGROUP=""
+  PROBE_MAIN_1=""
+  PROBE_MAIN_2=""
+  PROBE_CHILD=""
+  PROBE_CHILD2=""
   PROBE_CHILD_SURVIVED=no
   PROBE_RESTART_OK=no
+  PROBE_NEW_CHILD_ALIVE=no
   PROBE_CHILD_SURVIVED_RESTART=no
+  PROBE_STATE_AFTER_STOP=""
+  PROBE_START_RC=""
+  PROBE_RESIDUE_CLEAN=no
   PROBE_VERDICT=fail
 
-  mkdir -p "$SIGNAL_DIR" "$SYSTEMD_USER_DIR"
-  rm -f "$PROBE_CHILD_FILE"
+  mkdir -p "$SIGNAL_DIR"
+  rm -f "$PROBE_CHILD_FILE" "$PROBE_CMD_LOG"
+  # The payload's two processes both carry $PROBE_MARKER in their argv, which is
+  # what makes ownership-based cleanup safe. `exec` at the end means the unit's
+  # MainPID is exactly one marked process, so the only survivor of a
+  # KillMode=process stop is the marked child.
   cat > "$PROBE_EXEC" <<EOF
 #!/usr/bin/env bash
-# Throwaway probe payload for $TASK_ID; removed with the probe unit.
-sleep 900 &
-echo \$! > $PROBE_CHILD_FILE
-sleep 900
+# Throwaway probe payload for $TASK_ID (driver-owned; no unit file is written).
+python3 -c 'import sys, time; time.sleep(900)' "$PROBE_MARKER-child" &
+echo \$! > "\$1"
+exec python3 -c 'import sys, time; time.sleep(900)' "$PROBE_MARKER-main"
 EOF
   chmod +x "$PROBE_EXEC"
-  cat > "$PROBE_UNIT_FILE" <<EOF
-[Unit]
-Description=ODP $TASK_ID KillMode=process probe (temporary; driver-owned)
-[Service]
-Type=simple
-KillMode=process
-ExecStart=$PROBE_EXEC
-EOF
-  systemctl --user daemon-reload
-  systemctl --user start "$PROBE_UNIT.service" >/dev/null 2>&1
+
+  # ONE systemd-run, ever. The unit is never recreated.
+  probe_cmd "systemd_run_create" systemd-run --user --unit="$PROBE_UNIT" \
+    --property=KillMode=process --property=Type=simple \
+    "$PROBE_EXEC" "$PROBE_CHILD_FILE"
+  PROBE_CREATE_RC=$?
+
   for _ in $(seq 1 "$PROBE_CHILD_TRIES"); do [[ -s "$PROBE_CHILD_FILE" ]] && break; sleep 1; done
   PROBE_CHILD="$(cat "$PROBE_CHILD_FILE" 2>/dev/null)"
+  PROBE_MAIN_1="$(systemctl --user show "$PROBE_UNIT.service" -p MainPID --value 2>/dev/null)"
+  probe_record_pid "$PROBE_CHILD"
+  probe_record_pid "$PROBE_MAIN_1"
+  probe_record_cgroup_pids
 
-  if [[ -n "$PROBE_CHILD" ]]; then
-    systemctl --user stop "$PROBE_UNIT.service" >/dev/null 2>&1
+  if [[ "$PROBE_CREATE_RC" -eq 0 && -n "$PROBE_CHILD" ]] && probe_owns_pid "$PROBE_CHILD"; then
+    probe_cmd "stop" systemctl --user stop "$PROBE_UNIT.service" || true
     sleep 2
-    alive "$PROBE_CHILD" && PROBE_CHILD_SURVIVED=yes
-    # Start the SAME unit again while the leftover child is still in its cgroup -
-    # the exact condition the real restart will be in.
+    probe_owns_pid "$PROBE_CHILD" && PROBE_CHILD_SURVIVED=yes
+    PROBE_STATE_AFTER_STOP="$(active_state "$PROBE_UNIT.service")/$(sub_state "$PROBE_UNIT.service")/$(load_state "$PROBE_UNIT.service")"
+
+    # Start the SAME already-loaded transient unit while the leftover child is
+    # still in its cgroup - the exact condition the real restart will be in.
     rm -f "$PROBE_CHILD_FILE"
-    systemctl --user start "$PROBE_UNIT.service" >/dev/null 2>&1
+    probe_cmd "start_existing_unit" systemctl --user start "$PROBE_UNIT.service"
+    PROBE_START_RC=$?
+    for _ in $(seq 1 "$PROBE_CHILD_TRIES"); do [[ -s "$PROBE_CHILD_FILE" ]] && break; sleep 1; done
     sleep 2
-    [[ "$(active_state "$PROBE_UNIT.service")" == active ]] && PROBE_RESTART_OK=yes
-    alive "$PROBE_CHILD" && PROBE_CHILD_SURVIVED_RESTART=yes
-    [[ "$PROBE_CHILD_SURVIVED" == yes && "$PROBE_RESTART_OK" == yes \
-       && "$PROBE_CHILD_SURVIVED_RESTART" == yes ]] && PROBE_VERDICT=pass
-    systemctl --user stop "$PROBE_UNIT.service" >/dev/null 2>&1
-    kill "$PROBE_CHILD" 2>/dev/null
-    # The restarted instance spawned a second leftover of its own; the stop above
-    # deliberately does not reap it, so kill it here.
     PROBE_CHILD2="$(cat "$PROBE_CHILD_FILE" 2>/dev/null)"
-    [[ -n "$PROBE_CHILD2" && "$PROBE_CHILD2" != "$PROBE_CHILD" ]] && kill "$PROBE_CHILD2" 2>/dev/null
+    PROBE_MAIN_2="$(systemctl --user show "$PROBE_UNIT.service" -p MainPID --value 2>/dev/null)"
+    probe_record_pid "$PROBE_CHILD2"
+    probe_record_pid "$PROBE_MAIN_2"
+    probe_record_cgroup_pids
+
+    [[ "$PROBE_START_RC" -eq 0 && "$(active_state "$PROBE_UNIT.service")" == active \
+       && -n "$PROBE_MAIN_2" && "$PROBE_MAIN_2" != "0" && "$PROBE_MAIN_2" != "$PROBE_MAIN_1" ]] \
+       && probe_owns_pid "$PROBE_MAIN_2" && PROBE_RESTART_OK=yes
+    [[ -n "$PROBE_CHILD2" && "$PROBE_CHILD2" != "$PROBE_CHILD" ]] \
+       && probe_owns_pid "$PROBE_CHILD2" && PROBE_NEW_CHILD_ALIVE=yes
+    probe_owns_pid "$PROBE_CHILD" && PROBE_CHILD_SURVIVED_RESTART=yes
   fi
+
+  # Cleanup is part of the gate, not an afterthought: a probe that leaks a
+  # process, a cgroup or a loaded unit fails closed.
   probe_cleanup
-  rm -f "$PROBE_EXEC" "$PROBE_CHILD_FILE"
+  [[ "$PROBE_CHILD_SURVIVED" == yes && "$PROBE_RESTART_OK" == yes \
+     && "$PROBE_NEW_CHILD_ALIVE" == yes && "$PROBE_CHILD_SURVIVED_RESTART" == yes \
+     && "$PROBE_RESIDUE_CLEAN" == yes ]] && PROBE_VERDICT=pass
   [[ "$PROBE_VERDICT" == pass ]]
 }
 
@@ -410,38 +602,77 @@ if [[ "${1:-}" == "--selftest" ]]; then
     "$( unmanaged_supervisors "$(main_pid)" | grep -c . )"
   echo
 
-  echo "## revision 6: phase 1's KillMode=process probe actually passes"
+  echo "## revision 6/7: phase 1's KillMode=process probe actually passes"
   # The revision-5 probe reported probe_verdict: fail on this host at
   # 04:31:15Z, so the driver aborted before phase 2 and no revision of it could
   # ever have opened the window. This runs the real phase-1 gate - the same
-  # function the driver calls - against its own throwaway unit, and asserts the
-  # three properties the real restart depends on plus its own cleanup.
+  # function the driver calls - against its own throwaway transient unit, and
+  # asserts every property the real restart depends on plus its own cleanup.
   selftest_probe_signal="$SIGNAL_DIR"
   SIGNAL_DIR="$(mktemp -d)"
+  selftest_units_before="$(ls /home/lupin/.config/systemd/user 2>/dev/null | grep -c .)"
   killmode_probe
   check "probe verdict" pass "$PROBE_VERDICT"
+  check "unit created once, by systemd-run" 0 "$PROBE_CREATE_RC"
   check "leftover child survives the stop" yes "$PROBE_CHILD_SURVIVED"
-  check "same unit restarts with the leftover in its cgroup" yes "$PROBE_RESTART_OK"
-  check "leftover child is still alive after the restart" yes "$PROBE_CHILD_SURVIVED_RESTART"
-  check "probe unit file removed" no \
-    "$( [[ -e "$PROBE_UNIT_FILE" ]] && echo yes || echo no )"
-  # `list-units --all` is not the right question: systemd keeps a `not-found`
-  # stub for a name it has seen, with no fragment and no processes, until the
-  # next reload garbage-collects it. What must be true is that the unit has no
-  # fragment left and is not active.
-  # Rendered as yes/no rather than as the raw (empty) FragmentPath: `check`
-  # pads its columns, so an empty actual value would print a line with trailing
-  # whitespace straight into the committed receipt.
-  check "probe unit has no fragment left" yes \
-    "$( [[ -z "$( systemctl --user show "$PROBE_UNIT.service" -p FragmentPath --value 2>/dev/null )" ]] && echo yes || echo no )"
-  check "probe unit not active" inactive \
-    "$( active_state "$PROBE_UNIT.service" )"
+  # After a KillMode=process stop the unit is inactive but still LOADED - that
+  # is precisely why a second `systemd-run` under the same name fails, and
+  # precisely why `systemctl start` on it works.
+  check "unit is inactive but still loaded after the stop" "inactive/dead/loaded" \
+    "$PROBE_STATE_AFTER_STOP"
+  check "systemctl start of the existing transient unit succeeds" 0 "$PROBE_START_RC"
+  check "restart produced a new, different, non-zero MainPID" yes "$PROBE_RESTART_OK"
+  check "restarted unit spawned a new child" yes "$PROBE_NEW_CHILD_ALIVE"
+  check "old child is still alive after the restart" yes "$PROBE_CHILD_SURVIVED_RESTART"
+  check "old and new MainPID differ" no \
+    "$( [[ "$PROBE_MAIN_1" == "$PROBE_MAIN_2" ]] && echo yes || echo no )"
+  # STOP GATE 6: revision 6 wrote a persistent unit file here. Nothing may be
+  # added to the user unit directory by this driver except the drop-in, which
+  # phase 2 owns and which the probe never touches.
+  check "no probe unit file left in the user unit dir" 0 \
+    "$( ls /home/lupin/.config/systemd/user 2>/dev/null | grep -c 'odp-killmode-probe' )"
+  check "user unit dir entry count unchanged" "$selftest_units_before" \
+    "$( ls /home/lupin/.config/systemd/user 2>/dev/null | grep -c . )"
+  # Residue, from the probe's own ownership/cgroup-based cleanup.
+  check "cleanup left no marked probe process" yes \
+    "$( [[ -z "$PROBE_RESIDUE_PIDS" ]] && echo yes || echo no )"
+  check "cleanup left no probe cgroup" no "$PROBE_RESIDUE_CGROUP"
+  check "probe unit load state" not-found "$PROBE_UNIT_LOAD_AFTER"
+  check "probe unit active state" inactive "$PROBE_UNIT_ACTIVE_AFTER"
+  check "probe unit sub state" dead "$PROBE_UNIT_SUB_AFTER"
+  check "residue verdict" yes "$PROBE_RESIDUE_CLEAN"
   # `pgrep -c` prints 0 *and* exits 1 when there is no match, so a `|| echo 0`
   # fallback would append a second line; count the pids instead.
-  check "probe leftover children reaped" 0 \
-    "$( pgrep -f "$PROBE_EXEC" 2>/dev/null | grep -c . )"
+  check "no process still carries the probe marker" 0 \
+    "$( pgrep -f "$PROBE_MARKER" 2>/dev/null | grep -c . )"
+  check "probe payload script removed" no \
+    "$( [[ -e "$PROBE_EXEC" ]] && echo yes || echo no )"
+  # Every probe command's rc and stderr were captured, not discarded.
+  check "probe command receipts captured" yes \
+    "$( [[ -s "$PROBE_CMD_LOG" ]] && echo yes || echo no )"
   rm -rf "$SIGNAL_DIR"
   SIGNAL_DIR="$selftest_probe_signal"
+  echo
+
+  echo "## revision 7: the clean-attempt gate refuses dirty state"
+  # A previous attempt's receipts must never be mistaken for this one's.
+  selftest_gate_dir="$(mktemp -d)"
+  check "empty timeline+signal dir is clean" clean \
+    "$( attempt_state_dirty "$selftest_gate_dir/tl" "$selftest_gate_dir/sig" || echo clean )"
+  mkdir -p "$selftest_gate_dir/tl" "$selftest_gate_dir/sig"
+  : > "$selftest_gate_dir/tl/README.md"
+  mkdir -p "$selftest_gate_dir/tl/attempt-1-abort-killmode-probe"
+  : > "$selftest_gate_dir/tl/attempt-1-abort-killmode-probe/00-before.txt"
+  check "README + archived attempt dir are not dirt" clean \
+    "$( attempt_state_dirty "$selftest_gate_dir/tl" "$selftest_gate_dir/sig" || echo clean )"
+  : > "$selftest_gate_dir/tl/98-abort-reason.txt"
+  check "a receipt in the timeline root is dirt" "timeline:98-abort-reason.txt" \
+    "$( attempt_state_dirty "$selftest_gate_dir/tl" "$selftest_gate_dir/sig" )"
+  rm -f "$selftest_gate_dir/tl/98-abort-reason.txt"
+  : > "$selftest_gate_dir/sig/verdict"
+  check "a leftover verdict is dirt" "signal:verdict" \
+    "$( attempt_state_dirty "$selftest_gate_dir/tl" "$selftest_gate_dir/sig" )"
+  rm -rf "$selftest_gate_dir"
   echo
 
   echo "## finding 6: terminal verdict is preserved, not overwritten by EXIT"
@@ -488,6 +719,28 @@ fi
 # stale or mismatched pid.
 WORKER_RUN_ID="${1:?test worker run id required}"
 PEER_RUN_ID="${2:?unrelated peer worker run id required}"
+
+# STOP GATE 6 clean-attempt gate. This runs before the log redirect, before the
+# EXIT trap and before a single byte is written, precisely so that a refusal
+# leaves the previous attempt's artefacts exactly as they were - and so that the
+# refusal itself cannot become the next run's dirt. Archive them and retry:
+#
+#   mkdir -p "$TL/attempt-<n>-<verdict>"
+#   git -C "$WORKTREE" mv "$TL"/*.txt "$TL"/*.json "$TL/attempt-<n>-<verdict>/"
+#   cp /tmp/odp-rollout-driver/{verdict,state,exit_code,driver.log} \
+#      "$TL/attempt-<n>-<verdict>/"
+#   rm -rf /tmp/odp-rollout-driver
+DIRTY="$(attempt_state_dirty "$TL" "$SIGNAL_DIR" || true)"
+if [[ -n "$DIRTY" ]]; then
+  printf '[%s] FATAL: refusing to start: a previous attempt is still live at %s\n' \
+    "$(now)" "$DIRTY" >&2
+  printf '[%s] archive it under %s/attempt-<n>-<verdict>/ and clear %s first\n' \
+    "$(now)" "$TL" "$SIGNAL_DIR" >&2
+  case "$DIRTY" in
+    timeline:*) exit 50 ;;
+    *)          exit 51 ;;
+  esac
+fi
 
 mkdir -p "$TL" "$SIGNAL_DIR"
 exec > >(tee -a "$SIGNAL_DIR/driver.log") 2>&1
@@ -621,17 +874,31 @@ say "validating KillMode=process semantics on a throwaway unit"
 # revisions 3-5 could never pass it.
 killmode_probe || true   # the verdict is asserted below, after the receipt
 {
-  echo "probe_unit: $PROBE_UNIT"
-  echo "probe_unit_file: $PROBE_UNIT_FILE"
-  echo "probe_child_pid: ${PROBE_CHILD:-<none>}"
+  echo "probe_unit: $PROBE_UNIT.service (transient; created once by systemd-run)"
+  echo "probe_marker: $PROBE_MARKER"
+  echo "probe_unit_file_written: no"
+  echo "probe_create_rc: ${PROBE_CREATE_RC:-<none>}"
+  echo "probe_main_pid_1: ${PROBE_MAIN_1:-<none>}"
+  echo "probe_child_pid_1: ${PROBE_CHILD:-<none>}"
   echo "probe_child_survived_stop: ${PROBE_CHILD_SURVIVED:-no}"
+  echo "probe_unit_state_after_stop: ${PROBE_STATE_AFTER_STOP:-<none>}"
+  echo "probe_start_existing_unit_rc: ${PROBE_START_RC:-<none>}"
+  echo "probe_main_pid_2: ${PROBE_MAIN_2:-<none>}"
+  echo "probe_child_pid_2: ${PROBE_CHILD2:-<none>}"
   echo "probe_unit_restarted_with_leftover: ${PROBE_RESTART_OK:-no}"
+  echo "probe_new_child_alive: ${PROBE_NEW_CHILD_ALIVE:-no}"
   echo "probe_child_survived_restart: ${PROBE_CHILD_SURVIVED_RESTART:-no}"
-  echo "probe_unit_file_removed: $([[ -e "$PROBE_UNIT_FILE" ]] && echo no || echo yes)"
+  echo "probe_cgroup: ${PROBE_CGROUP:-<none>}"
+  echo "probe_residual_pids: ${PROBE_RESIDUE_PIDS:-<none>}"
+  echo "probe_residual_cgroup: ${PROBE_RESIDUE_CGROUP:-unknown}"
+  echo "probe_unit_after_cleanup: ${PROBE_UNIT_LOAD_AFTER:-unknown}/${PROBE_UNIT_ACTIVE_AFTER:-unknown}/${PROBE_UNIT_SUB_AFTER:-unknown}"
+  echo "probe_residue_clean: ${PROBE_RESIDUE_CLEAN:-no}"
   echo "probe_verdict: $PROBE_VERDICT"
-} > "$TL/00-killmode-probe.txt"
+  echo "--- bounded command receipts (rc + stderr) ---"
+  cat "$PROBE_CMD_LOG" 2>/dev/null || echo "<no command receipts>"
+} | sed 's/[[:space:]]*$//' > "$TL/00-killmode-probe.txt"
 [[ "$PROBE_VERDICT" == pass ]] || fail abort_killmode_probe 26 \
-  "KillMode=process probe failed (child_survived_stop=${PROBE_CHILD_SURVIVED:-no} restarted_with_leftover=${PROBE_RESTART_OK:-no} child_survived_restart=${PROBE_CHILD_SURVIVED_RESTART:-no}); refusing to stop the real supervisor"
+  "KillMode=process probe failed (child_survived_stop=${PROBE_CHILD_SURVIVED:-no} restarted_with_leftover=${PROBE_RESTART_OK:-no} new_child_alive=${PROBE_NEW_CHILD_ALIVE:-no} child_survived_restart=${PROBE_CHILD_SURVIVED_RESTART:-no} residue_clean=${PROBE_RESIDUE_CLEAN:-no}); refusing to stop the real supervisor"
 
 # ---------------------------------------------------------------- phase 2 ----
 say "installing the temporary KillMode=process drop-in"

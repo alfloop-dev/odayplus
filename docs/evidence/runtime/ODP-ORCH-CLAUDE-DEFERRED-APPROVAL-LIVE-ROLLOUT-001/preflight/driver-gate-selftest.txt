@@ -1,8 +1,8 @@
-# driver gate selftest (2026-07-29T04:42:35Z)
+# driver gate selftest (2026-07-29T04:56:34Z)
 
 ## finding 3: dead-man delay must exceed the bounded wait budget
-total_bounded_wait_s: 1158
-deadman_delay_s:      2058
+total_bounded_wait_s: 1388
+deadman_delay_s:      2288
 ok    deadman_delay > total_bounded_wait                         yes
 ok    deadman_margin >= 600s                                     yes
 
@@ -18,15 +18,33 @@ ok    exact-token supervisor reported                            yes
 ok    exclusion list drops the reported pid                      no
 ok    live supervisor is managed (excluding MainPID leaves none) 0
 
-## revision 6: phase 1's KillMode=process probe actually passes
+## revision 6/7: phase 1's KillMode=process probe actually passes
 ok    probe verdict                                              pass
+ok    unit created once, by systemd-run                          0
 ok    leftover child survives the stop                           yes
-ok    same unit restarts with the leftover in its cgroup         yes
-ok    leftover child is still alive after the restart            yes
-ok    probe unit file removed                                    no
-ok    probe unit has no fragment left                            yes
-ok    probe unit not active                                      inactive
-ok    probe leftover children reaped                             0
+ok    unit is inactive but still loaded after the stop           inactive/dead/loaded
+ok    systemctl start of the existing transient unit succeeds    0
+ok    restart produced a new, different, non-zero MainPID        yes
+ok    restarted unit spawned a new child                         yes
+ok    old child is still alive after the restart                 yes
+ok    old and new MainPID differ                                 no
+ok    no probe unit file left in the user unit dir               0
+ok    user unit dir entry count unchanged                        7
+ok    cleanup left no marked probe process                       yes
+ok    cleanup left no probe cgroup                               no
+ok    probe unit load state                                      not-found
+ok    probe unit active state                                    inactive
+ok    probe unit sub state                                       dead
+ok    residue verdict                                            yes
+ok    no process still carries the probe marker                  0
+ok    probe payload script removed                               no
+ok    probe command receipts captured                            yes
+
+## revision 7: the clean-attempt gate refuses dirty state
+ok    empty timeline+signal dir is clean                         clean
+ok    README + archived attempt dir are not dirt                 clean
+ok    a receipt in the timeline root is dirt                     timeline:98-abort-reason.txt
+ok    a leftover verdict is dirt                                 signal:verdict
 
 ## finding 6: terminal verdict is preserved, not overwritten by EXIT
 ok    proof_complete survives the EXIT trap                      proof_complete

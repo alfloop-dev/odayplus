@@ -9,22 +9,23 @@ Owner: Claude2 · Reviewer: Codex2 (was `Codex4` until STOP GATE 4; see below)
 **The rollout window has never been opened.** The driver was launched once, at
 2026-07-29T04:31:10Z, and aborted fail-closed at phase 1 five seconds later,
 before the drop-in was installed (see STOP GATE 5). Re-verified against the live
-host at 04:37Z, i.e. after that abort:
+host at 04:56Z, i.e. after that abort and after archiving its artefacts:
 
 | checked | actual state |
 | --- | --- |
 | `systemctl --user show pantheon-supervisor.service` | `MainPID=1197865`, started 02:37:14Z - unchanged since before this task began |
 | `KillMode` | `control-group` (the shipped value) |
 | `.../pantheon-supervisor.service.d/` | exists but **empty** - no drop-in was ever written |
-| `/tmp/odp-rollout-driver/` | present, from the aborted run: `verdict`=`abort_killmode_probe`, `exit_code`=26 |
-| `timeline/` | only the pre-window snapshots and the abort/restore receipts |
-| transient units | `odp-rollout-driver` exited rc=26 and was collected; no `odp-rollout-deadman` was ever armed |
+| `~/.config/systemd/user` | 7 pre-existing entries, unchanged; no probe unit file (revision 6 would have written one; revision 7 writes none) |
+| `/tmp/odp-rollout-driver/` | **absent** - attempt 1's copy was moved to `/tmp/odp-rollout-driver-attempt-1-archived-20260729` and its `verdict`/`state`/`exit_code`/`driver.log` archived in the repo |
+| `timeline/` root | no receipts; attempt 1 is under `timeline/attempt-1-abort-killmode-probe/` |
+| transient units | `odp-rollout-driver` exited rc=26 and was collected; no `odp-rollout-deadman` was ever armed; no probe unit and no process carrying a probe marker |
 | approval queues | no approval for any test run in either queue |
 
 Everything in this task is therefore still fail-closed. Do not write up a proof
 from any note in this directory: nothing after the deployment has happened yet.
-`timeline/` holding files is **not** evidence that a window ran - the only
-receipts there are phase 0's snapshots and the abort.
+A file under `timeline/` is **not** evidence that a window ran - read the
+attempt's own README for what its receipts do and do not prove.
 
 What *is* real and already finished:
 
@@ -44,18 +45,20 @@ What *is* real and already finished:
    exact pre-fix regression shape from RACE-001. Output:
    `preflight/assertion-selftest.txt`.
 4. **Driver gate self-test - done.** `live-boot-reconciliation-driver.sh
-   --selftest` exercises the STOP GATE 2 gates and, since revision 6, phase
-   1's KillMode probe (23 checks). Output:
+   --selftest` exercises the STOP GATE 2 gates, phase 1's KillMode probe (since
+   revision 6) and the clean-attempt gate (since revision 7): 39 checks. Output:
    `preflight/driver-gate-selftest.txt`.
 
 Both self-tests touch nothing live and are safe to re-run at any time.
 
 ## Why the window is still closed
 
-The driver has been blocked four times by the coordinator, and is now at
-**revision 5**. Revisions 1-4 were never executed; do not resurrect any of them.
-Revision 5 differs from revision 4 only in text - the reviewer name in two
-commit-message templates - so every executable gate below is still revision 3's.
+The driver has been blocked six times by the coordinator, and is now at
+**revision 7**. Only revision 5 was ever executed, and only as far as phase 1;
+do not resurrect any earlier revision. Everything downstream of phase 1 has been
+byte-identical to revision 3 since revision 3: the only executable changes in
+revisions 6 and 7 are in the phase-1 probe and, in revision 7, the
+clean-attempt gate that runs before it.
 
 ### STOP GATE 1 (2026-07-29T03:33:14Z) - six findings, answered in revision 2
 
@@ -72,7 +75,7 @@ gained a throwaway-unit probe of `KillMode=process` semantics.
 | --- | --- | --- | --- |
 | 1 | require the old test runner gone | recorded `runner_process_exited` and ignored it - with the runner alive, boot reconciliation refreshes the lease and never takes the deferred path, so a pass would be vacuous | hard gate `abort_worker_runner_alive` (exit 46), bound to the run id so that only the *original* run-id-bound process blocks the restart (see the STOP GATE 3 correction below) |
 | 2 | require a new MainPID, non-zero and changed | printed `pid A -> pid B` and asserted nothing; MainPID=0 or an unchanged pid would have been read as a successful restart | bounded wait for a non-zero MainPID, then `abort_supervisor_pid_invalid` (47) and `abort_supervisor_pid_unchanged` (48) |
-| 3 | dead-man delay must exceed the bounded waits | flat `15min` against ~18min of legal waiting - a slow-but-valid run would trip its own safety net, pulling the drop-in and restarting the supervisor mid-window | every wait is a named constant; the delay is derived from their sum (**1130 s budget → 2030 s delay**) and `abort_deadman_budget` (42) enforces the inequality |
+| 3 | dead-man delay must exceed the bounded waits | flat `15min` against ~18min of legal waiting - a slow-but-valid run would trip its own safety net, pulling the drop-in and restarting the supervisor mid-window | every wait is a named constant; the delay is derived from their sum (**1130 s budget → 2030 s delay** at the time; revision 7's added phase-1 waits make it 1388 → 2288) and `abort_deadman_budget` (42) enforces the inequality |
 | 4 | disarm/reset the dead-man on every exit | disarmed only on the clean path, so every abort left an armed timer that later restarted units behind the operator | disarm + `reset-failed` moved into `restore_all()`, which the EXIT trap and the clean path both call |
 | 5 | stop/check the watchdog service and timer; prove no unmanaged supervisor | stopped the timer only. The watchdog is a `Type=oneshot` unit on a 60 s cycle that `Popen`s `.orchestrator/supervisor.py` directly, so an in-flight run survives `stop <timer>` and can put a second, unmanaged supervisor into the window - which would consume the receipt by normal polling and silently void the proof | timer **and** service stopped and both asserted `inactive` (43, 44); `unmanaged_supervisors()` scans `/proc` for an **exact argv token** and is asserted empty before the window (40), during it (45) and after the restart (49) |
 | 6 | preserve the final `proof_complete` without EXIT overwrite | `signal proof_complete` was immediately overwritten by the trap's `driver_finished_rc_0`, so the documented success check could never observe it and abort reasons were erased too | `terminal()` records the verdict in `state` + `verdict`; `publish_final_state()` preserves it and writes the exit code separately; regression-tested in `--selftest` |
@@ -173,30 +176,52 @@ everything and the live state is exactly as it was: `MainPID=1197865`,
 active.
 
 **The finding: no revision of this driver could ever have passed phase 1.** The
-probe restarted a `systemd-run` transient unit under the *same name* while its
+probe re-created a `systemd-run` transient unit under the *same name* while its
 leftover child was still alive - and a surviving child keeps that unit `loaded`,
 so systemd-run refuses the name: `Unit ... was already loaded or has a fragment
 file`. `reset-failed` does not unload an inactive unit. Both halves of the probe
 sent stderr to `/dev/null`, so five revisions of review never saw the message.
 The property itself was fine: `probe_child_survived_stop: yes` in the abort
-receipt, and, retested the way the real restart actually happens (a permanent
-unit file), all three properties hold on this host. Raw transcripts:
-`../preflight/killmode-probe-diagnosis.txt`.
+receipt. Raw transcripts: `../preflight/killmode-probe-diagnosis.txt`.
 
-Revision 6:
+Revision 6 answered this with a throwaway unit **file** started twice, plus an
+after-restart assertion on the leftover, a `killmode_probe()` function exercised
+by `--selftest` (15 → 23 checks), a `probe_cleanup()` for the unit file, and
+phase 1's waits declared as constants inside the dead-man budget. STOP GATE 6
+rejected the unit-file part; the rest carries into revision 7.
 
-| change | why |
+### STOP GATE 6 (2026-07-29T04:43:36Z, restated by reviewer Codex2 at 04:45:59Z) - revision 7
+
+Revision 6 was never executed. Its diagnosis stands; its remedy does not.
+
+The conclusion revision 6 drew - "a transient unit cannot be restarted" - is
+wrong, and the fix it justified was out of scope: a driver for this task has no
+business writing a persistent unit into `~/.config/systemd/user`.
+**"Already loaded" is a refusal to CREATE, not a refusal to START.** Proven
+independently at 04:39:19Z on a throwaway transient unit: after a
+`KillMode=process` stop the unit is `inactive/dead/loaded` with the old child
+alive, and `systemctl --user start` on that same `.service` returns rc=0 with a
+new MainPID, a new child, and the old child still alive. That is also exactly
+what the real restart does.
+
+| change in revision 7 | why |
 | --- | --- |
-| phase 1 uses a throwaway unit **file**, started twice | that is what the real restart does; a transient name cannot be reused while a leftover holds it |
-| probe also asserts the leftover is alive **after** the restart | revisions 3-5 only required that the unit came back, which is not the property the window depends on |
-| probe body factored into `killmode_probe()` and exercised by `--selftest` | phase 1 can now be proven green without opening the window; self-test went 15 → **23** checks |
-| `probe_cleanup()` removes the unit file + reloads, called from the probe and from `restore_all()` | a unit file, unlike a transient unit, does not disappear on its own |
-| `PROBE_CHILD_TRIES` / `PROBE_FIXED_S` declared and counted in the dead-man budget | phase 1's waits were always spent, just never counted; finding #3 says the delay is derived from every declared wait |
+| the probe unit is created **once** with `systemd-run` and restarted with a bounded `systemctl --user start` on the same `.service` | the in-scope minimal path, proven at 04:39:19Z and re-proven by `--selftest` |
+| `SYSTEMD_USER_DIR` and every unit-file write removed; `DROPIN_DIR` is a literal | the only file this driver puts in that directory is the drop-in it owns and removes |
+| the probe asserts the **new** MainPID (non-zero, different) and the **new** child as well as the old child's survival | "active" alone cannot distinguish a real restart from a unit that never went down |
+| every probe pid is bound to a probe-owned argv marker (`probe_owns_pid`) | a recycled pid must not satisfy an assertion, and must not be killed by cleanup |
+| cleanup works from recorded ownership + the unit's cgroup, SIGTERM then SIGKILL, waits for old and new pids, and asserts no residual pid / cgroup and `not-found`/`inactive`/`dead` - as part of the verdict | a probe that leaks must fail closed, not proceed |
+| every probe command bounded by `timeout`, rc and stderr captured into `timeline/00-killmode-probe.txt` | discarded stderr is the only reason the revision-5 defect survived five reviews |
+| clean-attempt gate: refuses to start (50 / 51) on a dirty timeline root or signal dir, before the log redirect and before the EXIT trap | one attempt's receipts must never be readable as another's; a refusal must not itself become dirt |
+| attempt 1 archived under `timeline/attempt-1-abort-killmode-probe/`, including its `/tmp` verdict/state/exit_code/driver.log | same reason; the `/tmp` original was moved aside, not deleted |
+| `PROBE_CMD_TIMEOUT_S` / `PROBE_REAP_TRIES` declared and counted in the dead-man budget (1130 → **1388** s, delay 2030 → **2288** s) | finding #3: the delay is derived from every declared wait |
+| docs corrected wherever they said a transient unit cannot be restarted | only re-creation fails; `systemctl start` is proven PASS |
 
-Nothing else changed: the gates, thresholds, exit codes and ordering of phases
-2-9 are byte-identical to revision 3.
+Self-test: 23 → **39** checks, all passing. Nothing else changed: the gates,
+thresholds, exit codes and ordering of phases 2-9 are byte-identical to
+revision 3.
 
-**The gate is closed again.** Revision 6 is a driver change, so it needs a fresh
+**The gate is closed again.** Revision 7 is a driver change, so it needs a fresh
 coordinator exact-head recheck - the 05c3f59d lift explicitly covered that head
 only.
 
@@ -206,23 +231,28 @@ only.
 W=/tmp/pantheon-worker-worktrees/oday-plus-supervisor-live/odp-orch-claude-deferred-approval-live-rollout-001
 EV=$W/docs/evidence/runtime/ODP-ORCH-CLAUDE-DEFERRED-APPROVAL-LIVE-ROLLOUT-001
 
-# 1. Confirm the gate has been lifted for THIS exact head (revision 6), not for
+# 1. Confirm the gate has been lifted for THIS exact head (revision 7), not for
 #    an older one. `git rev-parse HEAD` must equal the head the coordinator
 #    named, and must equal origin/task/<TASK-ID>.
 # 2. Re-run the cheap checks - none of them touch anything live.
 bash -n $EV/runbook/live-boot-reconciliation-driver.sh
 python3 -m py_compile $EV/runbook/assert-boot-reconciliation.py
 $EV/runbook/selftest-assertion.sh                                  # 11 cases
-bash $EV/runbook/live-boot-reconciliation-driver.sh --selftest      # 23 checks
+bash $EV/runbook/live-boot-reconciliation-driver.sh --selftest      # 39 checks
 cd $W && git diff --check 647970dae975f4008633a484cde1e63187035544  # exit 0
 
 # 3. Confirm the starting state is what the driver expects.
 systemctl --user show pantheon-supervisor.service -p KillMode -p ActiveState -p MainPID
 ls -la /home/lupin/.config/systemd/user/pantheon-supervisor.service.d/   # expect: empty
-# Since the 04:31Z abort this holds the previous run's verdict, NOT nothing.
-# Expect `abort_killmode_probe` / 26 from that run, or a later abort_* - what
-# must never appear here before a run is `proof_complete`.
-cat /tmp/odp-rollout-driver/verdict /tmp/odp-rollout-driver/exit_code 2>/dev/null
+ls /home/lupin/.config/systemd/user | grep odp-killmode-probe           # expect: nothing
+# Since revision 7 the driver refuses to start on a dirty state, so BOTH of
+# these must be clean before launching:
+#   - $EV/timeline/ contains only README.md and attempt-*/ archives   (else exit 50)
+#   - /tmp/odp-rollout-driver does not exist                          (else exit 51)
+# If either is dirty, archive the previous attempt first - the recipe is in
+# $EV/timeline/README.md - rather than deleting anything.
+ls -A $EV/timeline/
+ls -A /tmp/odp-rollout-driver 2>/dev/null   # expect: no such directory
 
 # 4. Resolve the CURRENT run ids. They change on every dispatch - never reuse
 #    the ids from an older note. The peer is whichever unrelated worker is live.
@@ -298,7 +328,7 @@ AI_NAME=Claude2 python3 scripts/ai_status.py handoff ODP-ORCH-CLAUDE-DEFERRED-AP
 The EXIT trap restores the supervisor, the watchdog timer and the shipped
 `KillMode`, and disarms the dead-man. If the driver is SIGKILLed the trap does
 not run, and the `odp-rollout-deadman.timer` transient unit performs the same
-restore once the computed delay (2030 s ≈ 34 min from the moment it was armed,
+restore once the computed delay (2288 s ≈ 38 min from the moment it was armed,
 i.e. 900 s after the driver's longest legal run) elapses. Check:
 
 ```bash

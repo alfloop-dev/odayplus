@@ -48,30 +48,40 @@ Not executed. The rollout window has never been opened. The driver ran for the
 first time at 2026-07-29T04:31:10Z, on the head the coordinator had lifted the
 gate for, and aborted fail-closed at phase 1 after five seconds
 (`abort_killmode_probe`, exit 26) - before the drop-in, the restart, the
-deferral and any approval. As of 04:37Z, after that abort, the supervisor is
-still on its pre-task `MainPID=1197865`, `KillMode` is still the shipped
-`control-group`, the drop-in directory is still empty, the dead-man was never
-armed and no approval exists for any test run in either queue.
+deferral and any approval. As of 04:56Z, after that abort and after its
+artefacts were archived under `timeline/attempt-1-abort-killmode-probe/`, the
+supervisor is still on its pre-task `MainPID=1197865`, `KillMode` is still the
+shipped `control-group`, the drop-in directory is still empty, the dead-man was
+never armed, `~/.config/systemd/user` is unchanged and no approval exists for
+any test run in either queue.
 
-The driver is at revision 6 after five STOP GATEs: six coordinator findings,
-then seven, then two, then an assignment conflict, and now one found by
-execution. STOP GATE 5's finding is that phase 1's `KillMode` probe could never
-have passed in any revision - it restarted a `systemd-run` transient unit under
-a name its own surviving child still held loaded, with stderr discarded on both
-halves. The property under test was fine and is now verified the way the real
-restart happens; revision 6 fixes the probe, adds an after-restart assertion,
-and makes phase 1 provable from `--selftest` (15 → 23 checks). Everything after
-phase 1 is byte-identical to revision 3, as were revisions 4 and 5 (a
-documentation correction and a reviewer/ownership correction). Revision 6 needs
-a fresh coordinator exact-head recheck; the previous lift covered one exact head
-only. See `runbook/CONTINUATION.md` for the finding-by-finding mapping and
-`preflight/killmode-probe-diagnosis.txt` for the probe transcripts.
+The driver is at revision 7 after six STOP GATEs: six coordinator findings, then
+seven, then two, then an assignment conflict, then one found by execution, and
+now one on the fix for that. STOP GATE 5's finding is that phase 1's `KillMode`
+probe could never have passed in any revision - it re-created a `systemd-run`
+transient unit under a name its own surviving child still held loaded, with
+stderr discarded on both halves. Revision 6 answered that by writing a
+persistent unit file under `~/.config/systemd/user`; STOP GATE 6 rejected it as
+out of scope and as resting on a wrong conclusion. Only *re-creating* a
+transient unit fails - `systemctl --user start` on the same already-loaded
+transient `.service` is proven to work with the leftover child in its cgroup,
+which is also what the real restart does. Revision 7 uses that minimal path,
+writes no unit file at all, asserts the new MainPID and new child as well as the
+old child's survival, cleans up by recorded ownership and cgroup with a residue
+assertion that is part of the verdict, captures every probe command's rc and
+stderr, and refuses to start on a dirty timeline or signal directory so one
+attempt's receipts can never be read as another's (`--selftest` 23 → 39 checks).
+Everything after phase 1 is byte-identical to revision 3, as were revisions 4
+and 5 (a documentation correction and a reviewer/ownership correction). Revision
+7 needs a fresh coordinator exact-head recheck; the previous lift covered one
+exact head only. See `runbook/CONTINUATION.md` for the finding-by-finding
+mapping and `preflight/killmode-probe-diagnosis.txt` for the probe transcripts.
 
 ## Fleet impact
 
 - Supervisor downtime is bounded by the driver's own named wait constants
-  (1130 s in total) and by an independent dead-man's switch armed at
-  1130 s + 900 s = 2030 s, i.e. deliberately longer than the driver's longest
+  (1388 s in total) and by an independent dead-man's switch armed at
+  1388 s + 900 s = 2288 s, i.e. deliberately longer than the driver's longest
   legal run so it cannot fire mid-window.
 - The unrelated peer worker must survive the restart; the driver enforces this
   after the stop, after the start and at the end, binding the pid to its run id.
