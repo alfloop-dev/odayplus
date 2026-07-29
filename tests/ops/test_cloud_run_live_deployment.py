@@ -728,6 +728,52 @@ def test_deterministic_smoke_rejects_stale_or_incomplete_provider_evidence() -> 
     assert "smoke:/platform/health:external_providers:poi.commercial_api" in failed
 
 
+def test_is_safe_protected_redirect_contract() -> None:
+    web_url = "https://candidate-93ae1b2e75e1056c---oday-web-7sxbjoeozq-de.a.run.app"
+
+    # Absolute HTTPS safe redirect
+    assert validator._is_safe_protected_redirect(
+        web_url, 307, f"{web_url}/login?returnTo=%2Foperator"
+    ) is True
+
+    # Absolute HTTP safe redirect (e.g. reverse proxy TLS termination)
+    http_web_url = "http://candidate-93ae1b2e75e1056c---oday-web-7sxbjoeozq-de.a.run.app"
+    assert validator._is_safe_protected_redirect(
+        web_url, 307, f"{http_web_url}/login?returnTo=%2Foperator"
+    ) is True
+
+    # Relative safe redirect
+    assert validator._is_safe_protected_redirect(
+        web_url, 307, "/login?returnTo=%2Foperator"
+    ) is True
+
+    # Hostile external origin rejection
+    assert validator._is_safe_protected_redirect(
+        web_url, 307, "https://attacker.com/login?returnTo=%2Foperator"
+    ) is False
+
+    # Hostile protocol-relative origin rejection
+    assert validator._is_safe_protected_redirect(
+        web_url, 307, "//attacker.com/login?returnTo=%2Foperator"
+    ) is False
+
+    # Fail-closed: 200 OK (no redirect performed)
+    assert validator._is_safe_protected_redirect(
+        web_url, 200, None
+    ) is False
+
+    # Redirect to wrong path
+    assert validator._is_safe_protected_redirect(
+        web_url, 307, "/dashboard?returnTo=%2Foperator"
+    ) is False
+
+    # Redirect to /login without returnTo parameter
+    assert validator._is_safe_protected_redirect(
+        web_url, 307, "/login"
+    ) is False
+
+
+
 def test_deterministic_smoke_rejects_provider_specific_auth_failure() -> None:
     DeterministicRuntimeHandler.failed_provider_id = "geocode.primary_api"
     server, url = start_server()

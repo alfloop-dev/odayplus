@@ -1202,6 +1202,40 @@ def _request_without_redirect(
         return exc.code, exc.headers.get("location")
 
 
+def _is_safe_protected_redirect(
+    web_url: str,
+    web_status: int,
+    location: str | None,
+    *,
+    protected_path: str = "/operator",
+    target_path: str = "/login",
+) -> bool:
+    if web_status not in {302, 303, 307, 308} or not isinstance(location, str) or not location.strip():
+        return False
+
+    request_url = f"{web_url.rstrip('/')}{protected_path}"
+    base_parsed = urllib.parse.urlparse(request_url)
+    resolved_url = urllib.parse.urljoin(request_url, location.strip())
+    target_parsed = urllib.parse.urlparse(resolved_url)
+
+    base_host = (base_parsed.hostname or "").lower()
+    target_host = (target_parsed.hostname or "").lower()
+    if not base_host or base_host != target_host:
+        return False
+
+    if base_parsed.port and target_parsed.port and base_parsed.port != target_parsed.port:
+        return False
+
+    if target_parsed.path != target_path:
+        return False
+
+    query_params = urllib.parse.parse_qs(target_parsed.query)
+    if "returnTo" not in query_params or not any(query_params["returnTo"]):
+        return False
+
+    return True
+
+
 def _json_request(
     url: str,
     *,
@@ -1638,13 +1672,7 @@ def smoke_checks(
             headers=base_headers,
             timeout=timeout,
         )
-        expected_login_prefix = f"{web_url.rstrip('/')}/login?"
-        auth_redirect = (
-            web_status in {302, 303, 307, 308}
-            and isinstance(location, str)
-            and location.startswith(expected_login_prefix)
-            and "returnTo=" in location
-        )
+        auth_redirect = _is_safe_protected_redirect(web_url, web_status, location)
         checks.append(
             CheckResult(
                 ok=auth_redirect,
