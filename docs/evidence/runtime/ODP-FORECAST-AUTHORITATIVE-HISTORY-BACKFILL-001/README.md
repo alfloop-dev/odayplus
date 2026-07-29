@@ -85,7 +85,7 @@ neither is claimed.
 | `horizon_critical_path_after_s4.json` | — | The same probe re-run once `-s4` was real rather than projected. The backwards family now reads h28 = 406 against the gap-fill family's 2, and `landed_measured` carries the first real 28-day window (see §7). |
 | `donor_projection_backtest.json` | — | The donor rule behind those projections, scored against a blind holdout — the four dates `-s4` landed after the projection was cached. Per-date recall/precision, the continuity score island length actually depends on, and the attestation assumption (see §7). |
 | `runbook/donor-projection-backtest.py` | — | The backtest that produced it. Imports the donor logic from the probe under test rather than restating it; read-only, and it scores no in-flight slice. |
-| `backwards_landing_validation.json` | — | The backwards projection scored against backwards dates as they land, closing the distance limit the `-s4` backtest leaves open. First committed at zero scored dates — the method and its guards fixed before any backwards date could be scored; now all 6 of `-b1`'s scoreable dates plus `-b2`'s first (2026-05-11), 0 upper-bound breaches (see §7). |
+| `backwards_landing_validation.json` | — | The backwards projection scored against backwards dates as they land, closing the distance limit the `-s4` backtest leaves open. First committed at zero scored dates — the method and its guards fixed before any backwards date could be scored; now all 6 of `-b1`'s scoreable dates plus `-b2`'s first three (2026-05-11..13), 0 upper-bound breaches (see §7). |
 | `runbook/backwards-landing-validation.py` | — | The probe that produces it. **Re-run after each backwards slice completes**; it strengthens monotonically as `-b2`..`-b4` land. |
 | `backwards_window_store_density.json` | — | Whether the backwards windows actually hold the stores the critical path donates to them: no gap day across the 24-day span, and 421 stores trading every day of it against an independently projected 419 (see §7). Carries its own grain and control range. |
 | `backwards_window_store_density_probe.pod.yaml` | — | The exact read-only Pod that produced it. One aggregation, counts only; place ids never leave the pod. |
@@ -107,6 +107,8 @@ neither is claimed.
 | `runbook/canonical-row-drift-audit.py` | — | The read-only audit that produced it. Server-side digests first so identical groups cost nothing; only disagreeing groups are pulled and diffed. Compares `geom` as EWKB so a rendering difference cannot be reported as drift. |
 | `canonical_row_drift_rehearsal.json` | — | The Defect F fix rehearsed on the **live** pair: the real `activate` chain run twice inside a rolled-back transaction, core relations frozen vs refreshing. Drift 1 847 → 0, exactly 16 953 rows refreshed and 0 pruned, and the chain runs no slower (see §10). |
 | `runbook/canonical-row-drift-rehearsal.py` | — | The rehearsal that produced it. Same advisory lock and statement timeout as `run_activation`; both arms roll back and neither commits. |
+| `activation_relation_closure.json` | — | Whether the copy set is the *right* set, derived from the target catalog rather than from our own list: view-dependency closure plus FK parents vs `ACTIVATION_RELATIONS`. Required 8, copied 8, nothing missing, nothing extra, nothing without a `refresh_key` (see §10). |
+| `runbook/activation-relation-closure-probe.py` | — | The catalog probe that produced it. Imports the copy set from the module under test; exits non-zero on a breach, so it can be re-run as a gate after any change to the view or its foreign keys. |
 | `evidence_redaction_audit.json` | — | Every identifier-shaped token in this directory, classified against the database. Found and then cleared a real violation; see **Redaction** above. |
 | `runbook/evidence-redaction-audit.py` | — | The audit that produced it. Classifies by table membership rather than by pattern, reports salted fingerprints only, and uses the allowed `run_id` class as its control. |
 | `runbook/redact-fidelity-sample.py` | — | One-shot, kept committed so the rewrite of `eligibility_model_fidelity.json`'s sample fields is reproducible rather than an unexplained diff. Idempotent. |
@@ -1224,9 +1226,9 @@ probe reported for early May, which is the population `-b3`'s 406 was computed
 over.
 
 The calibration reads the other way, and in the direction that costs nothing.
-The `0.9715` mapping rate under-states landed stores on all seven dates, by 7 to
-11 (mean +9.3), at a strikingly stable `landed/upstream` of 0.9847–0.9922 (mean
-0.9890).
+The `0.9715` mapping rate under-states landed stores on all nine dates, by 6 to
+11 (mean +8.8), at a strikingly stable `landed/upstream` of 0.9826–0.9922 (mean
+0.9880).
 That is the same sign the `-s4` backtest found on its holdout (both arms
 under-stated, optimistic recall .937), now reproduced **two months** from its
 donors rather than days from them — the regime the backtest explicitly could not
@@ -1234,19 +1236,31 @@ reach. A projection that under-states cannot manufacture criterion 3; if this
 sign holds across `-b2` and `-b3`, the measured h28 should land at or above the
 projected 406, not below it.
 
-The first `-b2` date agrees. `2026-05-11` became scoreable once `-b2`'s second
-partition succeeded, and it is the deepest date measured so far — six days below
-anything `-b1` could reach. It lands 507 stores against a 511 upstream bound:
-within the bound, ratio 0.9922 at the very top of the band the `-b1` dates
-established, and still under-stating the point prediction by 11. So the first
-evidence from outside `-b1` shows the relationship holding rather than decaying
-with distance, which is the specific way it could have failed.
+**`-b2`'s first three dates agree** (receipt re-captured 03:35Z, while `-b2` was
+on its fifth partition). They are the deepest measured so far, six to eight days
+below anything `-b1` could reach:
 
-The honest limits. Seven dates are seven dates, and six of them are from `-b1`,
+| date | landed stores | upstream bound | landed/upstream | predicted | error |
+| --- | --- | --- | --- | --- | --- |
+| 2026-05-11 | 507 | 511 | 0.9922 | 496 | +11 |
+| 2026-05-12 | 507 | 516 | 0.9826 | 501 | +6 |
+| 2026-05-13 | 507 | 514 | 0.9864 | 499 | +8 |
+
+All three sit inside the bound and all three still under-state the point
+prediction, so the relationship holds rather than decaying with distance — the
+specific way it could have failed. Two details are worth stating rather than
+smoothing over. `2026-05-12`'s 0.9826 is a **new low**, just below the 0.9847
+floor the `-b1` dates established, so the band is slightly wider than six dates
+suggested; it is still an under-statement (+6), which is the side that cannot
+manufacture criterion 3. And the landed count is **507 on all three dates**
+while the upstream bound moves 511 → 516 → 514, which is what a stable store
+population with a few days of upstream noise looks like, not a trend.
+
+The honest limits. Nine dates are nine dates, and six of them are from `-b1`,
 the slice nearest the landed era; `-b3` sits three weeks further back and is where
-criterion 3 is actually decided. Three of `-b2`'s dates stay excluded for now
-(2026-05-12, 05-13 and 05-16, plus 05-10 below the slice), each waiting on the
-partition that follows it — 05-16's own partition is `-b2`'s last. And the
+criterion 3 is actually decided. Three dates stay excluded for now (2026-05-14
+and 05-16 from `-b2`, plus 05-10 below the slice), each waiting on the partition
+that follows it — 05-16's own partition is `-b2`'s last. And the
 invariant tested here is
 per-date presence, not the per-store *continuity* that h28 needs: a date can land
 its full store count while individual stores still break their islands. That
@@ -1694,6 +1708,53 @@ is:
 
 The activation copies on the second kind of key while the source updates in
 place on the same key. Three of its relations looked append-only and were not.
+
+### The list itself, checked against the catalog
+
+Fixing every relation in `ACTIVATION_RELATIONS` answers "are the relations we
+listed fixed?". It does not answer the question Defect F actually raises, which
+is **"is the list the right list?"** — and that question has teeth, because both
+the fix *and the audit that found the defect* took their relation set from that
+same constant. A relation the acceptance path reads and the activation never
+copies would have been invisible to both: nothing to compare, so no drift to
+report. The same blind spot, one level up.
+
+So `runbook/activation-relation-closure-probe.py` does not take the list from
+us. It derives what must be copied from the target's own catalog — the
+transitive view-dependency closure of `model_ready.forecast_training_view`
+(recursive through `pg_rewrite`/`pg_depend`, so a view on a view is followed),
+plus the transitive foreign-key parents of those base relations, since a copy
+that lands a child without its parent does not degrade quietly, it aborts — and
+compares that against `ACTIVATION_RELATIONS` *imported* from the module under
+test. Receipt: `activation_relation_closure.json`.
+
+The view reads exactly four base relations and no intermediate views:
+`core.stores`, `core.transactions`, `data_plane.canonical_lineage`,
+`data_plane.ingestion_runs`. Their FK closure adds four more — `core.machines`
+and `core.tenants`, then `core.brands` and `core.address_locations` through
+`stores`. **Required 8, copied 8, `missing` empty, `copied_beyond_requirement`
+empty, `required_without_refresh_key` empty.** The set is exactly closed with no
+slack in either direction, and every relation on it can now be corrected by a
+re-activation rather than frozen at whatever the first copy saw.
+
+Two things this deliberately does not claim. A `refresh_key` means a differing
+row *can* be corrected, not that the target currently agrees with the source —
+that is content, and it has its own receipt in the drift audit above. And the
+closure is a statement about today's catalog: it is falsified by adding a join
+to the view, or a foreign key to one of its base relations, without extending
+`ACTIVATION_RELATIONS`, so re-run it after any change to either.
+
+The registry side is reported rather than required. Criterion 5 reaches the data
+through `PostgresModelReadySource`, which reads `model_ready.view_contracts`
+*before* it reads the view at all. That table is correctly absent from the copy
+set — it is a target-side installation artifact recording which view version is
+installed *here* and its installer digest, so copying the source's row would
+overwrite a statement about this database with one about another. The probe
+records its state anyway (`forecast-training-view-v2`, `ACTIVE`,
+`training_enabled`, no `blocked_reason`, installer digest present) because the
+criterion-5 contract gates that passed in §9 only stay valid across activation
+if activation leaves it alone — and `forecast_history_activation` writes nothing
+in `model_ready` at all.
 
 ## 11. After state
 

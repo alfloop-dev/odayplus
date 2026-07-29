@@ -1,0 +1,189 @@
+{
+  "artifact": "activation_relation_closure",
+  "task": "ODP-FORECAST-AUTHORITATIVE-HISTORY-BACKFILL-001",
+  "captured_at": "2026-07-29T03:33:05.565307+00:00",
+  "purpose": "Defect F fixed the relations we had listed. This asks whether the LIST is right, by deriving what must be copied from the target catalog -- the view's transitive dependency closure plus the transitive FK parents of those base relations -- and comparing it against ACTIVATION_RELATIONS imported from the module under test. Both the Defect F fix and the drift audit that found it took their relation set from that same constant, so a relation the acceptance path reads and the activation never copies would have been invisible to both.",
+  "method": {
+    "plane": "TARGET PG16 catalog only",
+    "view_closure": "recursive pg_rewrite/pg_depend walk from model_ready.forecast_training_view, following referenced relations that are themselves views",
+    "fk_closure": "recursive pg_constraint contype='f' parent walk from those base relations",
+    "copy_set": "scripts.data_plane.forecast_history_activation.ACTIVATION_RELATIONS, imported rather than restated",
+    "read_only": true,
+    "redaction": "relation, constraint, contract state and version strings only; no row data"
+  },
+  "view_dependency_closure": {
+    "view": "model_ready.forecast_training_view",
+    "base_relations": [
+      "core.stores",
+      "core.transactions",
+      "data_plane.canonical_lineage",
+      "data_plane.ingestion_runs"
+    ],
+    "intermediate_views": []
+  },
+  "foreign_key_closure": {
+    "relations": [
+      "core.address_locations",
+      "core.brands",
+      "core.machines",
+      "core.stores",
+      "core.tenants",
+      "core.transactions",
+      "data_plane.canonical_lineage",
+      "data_plane.ingestion_runs"
+    ],
+    "edges": [
+      {
+        "child": "core.brands",
+        "parent": "core.tenants",
+        "constraint": "brands_tenant_id_fkey"
+      },
+      {
+        "child": "core.machines",
+        "parent": "core.stores",
+        "constraint": "machines_store_id_fkey"
+      },
+      {
+        "child": "core.stores",
+        "parent": "core.address_locations",
+        "constraint": "stores_address_id_fkey"
+      },
+      {
+        "child": "core.stores",
+        "parent": "core.brands",
+        "constraint": "stores_brand_id_fkey"
+      },
+      {
+        "child": "core.stores",
+        "parent": "core.tenants",
+        "constraint": "stores_tenant_id_fkey"
+      },
+      {
+        "child": "core.transactions",
+        "parent": "core.machines",
+        "constraint": "transactions_machine_id_fkey"
+      },
+      {
+        "child": "core.transactions",
+        "parent": "core.stores",
+        "constraint": "transactions_store_id_fkey"
+      },
+      {
+        "child": "core.transactions",
+        "parent": "core.transactions",
+        "constraint": "transactions_refund_of_transaction_id_fkey"
+      },
+      {
+        "child": "data_plane.canonical_lineage",
+        "parent": "core.tenants",
+        "constraint": "canonical_lineage_tenant_id_fkey"
+      },
+      {
+        "child": "data_plane.canonical_lineage",
+        "parent": "data_plane.ingestion_runs",
+        "constraint": "canonical_lineage_run_id_fkey"
+      }
+    ],
+    "why_required": "the activation copies parents before children so every foreign key resolves; a required parent left uncopied does not silently degrade, it aborts the copy"
+  },
+  "copy_set": [
+    {
+      "relation": "core.tenants",
+      "refresh_key": [
+        "tenant_id"
+      ],
+      "source_predicate": null,
+      "prune_superseded_by": []
+    },
+    {
+      "relation": "core.brands",
+      "refresh_key": [
+        "brand_id"
+      ],
+      "source_predicate": null,
+      "prune_superseded_by": []
+    },
+    {
+      "relation": "core.address_locations",
+      "refresh_key": [
+        "address_id"
+      ],
+      "source_predicate": null,
+      "prune_superseded_by": []
+    },
+    {
+      "relation": "core.stores",
+      "refresh_key": [
+        "store_id"
+      ],
+      "source_predicate": null,
+      "prune_superseded_by": []
+    },
+    {
+      "relation": "core.machines",
+      "refresh_key": [
+        "machine_id"
+      ],
+      "source_predicate": null,
+      "prune_superseded_by": []
+    },
+    {
+      "relation": "core.transactions",
+      "refresh_key": [
+        "transaction_id"
+      ],
+      "source_predicate": null,
+      "prune_superseded_by": []
+    },
+    {
+      "relation": "data_plane.ingestion_runs",
+      "refresh_key": [
+        "run_id"
+      ],
+      "source_predicate": "run_id IN (SELECT run_id FROM data_plane.canonical_lineage WHERE canonical_table = 'core.transactions')",
+      "prune_superseded_by": []
+    },
+    {
+      "relation": "data_plane.canonical_lineage",
+      "refresh_key": [
+        "source_snapshot_id",
+        "canonical_table",
+        "canonical_id"
+      ],
+      "source_predicate": "canonical_table = 'core.transactions'",
+      "prune_superseded_by": [
+        "run_id",
+        "canonical_id"
+      ]
+    }
+  ],
+  "comparison": {
+    "required_count": 8,
+    "copied_count": 8,
+    "missing": [],
+    "missing_meaning": "required by the acceptance path but never copied. Fatal, and the Defect F shape one level up: there would be no target row to compare, so no drift to report.",
+    "copied_beyond_requirement": [],
+    "copied_beyond_requirement_meaning": "copied without being reachable from the view or its FK parents. Cost rather than correctness, reported so the set cannot grow quietly.",
+    "required_without_refresh_key": [],
+    "required_without_refresh_key_meaning": "copied but frozen on first landing -- Defect F exactly. Must be empty."
+  },
+  "registry_side": {
+    "relation": "model_ready.view_contracts",
+    "copied_by_activation": false,
+    "deliberately_not_copied": "it is a TARGET-side installation artifact recording which view version is installed here and its installer digest. Copying the source's row would overwrite a statement about this database with one about another. forecast_history_activation writes nothing in model_ready, which is why the criterion-5 contract gates measured before activation still hold after it.",
+    "state": {
+      "view_contracts_exists": true,
+      "contract_registered": true,
+      "view_version": "forecast-training-view-v2",
+      "contract_state": "ACTIVE",
+      "training_enabled": true,
+      "blocked_reason": null,
+      "installer_sha256_present": true
+    }
+  },
+  "verdict": {
+    "closed": true,
+    "statement": "Every relation the acceptance path reads is copied, and every one of them can be corrected on a re-activation.",
+    "falsifiable_by": "adding a join to forecast_training_view, or a foreign key to one of its base relations, without extending ACTIVATION_RELATIONS. Re-run after any change to either."
+  }
+}
