@@ -117,6 +117,42 @@ Round-4 finding N2 (the `mode="postgresql"` case is a `dataclasses.replace` spoo
 engine, so no real PostgreSQL is exercised) was accepted as-is by the reviewer for a text-contract
 test; it is documented in the test docstring and the evidence JSON. No change required.
 
+## Round 6 Closeout Refresh (2026-07-29)
+
+Round 6 changed **no application or test code**. It exists because PR #510 sat at
+`mergeStateStatus=BEHIND` after `dev` advanced to `e496be62` (merge of PR #511,
+ODP-DEPLOY-WEB-PROTECTED-REDIRECT-001), and `dev` branch protection is `strict: true`.
+
+| Check | Command | Result |
+|---|---|---|
+| Base refresh | `git merge origin/dev` (commit `2dd7888c`, merging `e496be62`) | Conflict-free; no rebase, no force-push |
+| Task diff unchanged | `git diff --stat origin/dev..HEAD` | 6 files / +289 −6 — `main.py` hunk byte-identical to the approved round-5 revision |
+| Focused ops + reliability tests | `python3 -m pytest tests/ops/test_cloud_run_live_deployment.py tests/reliability/test_health_endpoints.py --tb=no -q` | **369 passed, 1 failed** (the known `uv`-absent preflight test, unrelated) |
+| Ruff check | `python3 -m ruff check apps/api/oday_api/main.py tests/ops/test_cloud_run_live_deployment.py tests/reliability/test_health_endpoints.py` | **All checks passed** |
+| Ruff format (task hunks) | `python3 -m ruff format --check <same 3 files>` | `main.py` and `test_health_endpoints.py` already formatted; see note below |
+| Exact-head CI on `b5800dc5` | GitHub runs `30457920123` / `30457921380` | `orchestrator`, `product-e2e-gate`, `performance-gate` green; `product` green in run `30457920123`, flaky-failed in `30457921380` |
+
+**`ruff format` note**: `tests/ops/test_cloud_run_live_deployment.py` now reports "would reformat",
+but the unformatted block is `test_protected_route_redirect_contract` inherited from `origin/dev`
+(`git show origin/dev:tests/ops/test_cloud_run_live_deployment.py` reports the same). No hunk owned
+by this task is affected, and reformatting a neighbouring task's merged code is out of scope here.
+
+**`product` check note**: the same head SHA produced one green and one failed `product` run. The
+failure is a `vitest` teardown flake in `apps/web` (`EnvironmentTeardownError` /
+`ECONNREFUSED 127.0.0.1:3000` from `StoreOpsPackage10Parity.test.tsx`) with **259 web tests passed
+and 0 test failures**. This task touches no `apps/web` file.
+
+**Discarded worktree dirt**: the supervisor backed up an uncommitted 1-file diff
+(`odp-deploy-job-queue-health-contract-001-claude-20260729T141738Z-04638ccd.patch`) when the
+round-5 worker hit a provider rate limit. Inspected: it is mutant **M2** (the round-1
+`bundle.is_durable` two-branch text) left applied mid-run. It is a deliberate mutation, already
+executed and killed in `mutation-transcript-round5.txt`, not unfinished work. Correctly discarded.
+
+**Review-gate consequence**: pushing the `dev` refresh moves the PR head off `b5800dc5`, so the
+`task-review-gate` commit status stamped on that SHA no longer applies. Per acceptance criterion 7
+("independent Claude exact-head review and merged PR before done") the task is handed back to
+reviewer Claude for exact-head re-review on the refreshed head before `done`.
+
 ## Acceptance Alignment
 - [x] Based on current `origin/dev` (merged `4b329493` in round 5) carrying only the authoritative queue-health fix
 - [x] Added regression coverage invoking real application `/platform/health` composition (reverting `main.py` to the true `dev` baseline fails Case 1; reverting to the round-1 `is_durable` text fails Case 2 — both verified by mutation run)
