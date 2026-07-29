@@ -135,7 +135,8 @@ and re-runs `-k "protected_redirect or redact_location or effective_port"`.
 A mutant is KILLED when that selection fails.
 
 Final result: **28 mutants · 27 killed · 1 equivalent · 0 survivors** (harness
-exit code 0).
+exit code 0). Full run output, including the repo HEAD it was run against:
+`docs/evidence/runtime/ODP-DEPLOY-WEB-PROTECTED-REDIRECT-001/mutation-transcript.txt`.
 
 Gaps this exposed and closed (each of these mutants survived until the test
 named beside it was added — the tests were literally passing without the guard):
