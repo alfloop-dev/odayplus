@@ -1,8 +1,8 @@
 # Deployment transcript — ODP-ORCH-APPROVAL-RESUME-ROOT-001
-# host date  : 2026-07-29T08:58:14Z
+# host date  : 2026-07-29T09:29:10Z
 # driver     : deploy.py (stage-all -> verify-all -> ordered atomic publish)
 # source ref : HEAD
-# backups    : /tmp/odp-bak-p3-r5LwzF
+# backups    : /tmp/odp-bak-pos-w5d0no
 # order      : common.py -> permission_broker.py -> claude_permission_prompt_mcp.py
 
 ## payloads materialised from the source commit (no working-tree copy)
@@ -11,9 +11,9 @@
     sha256 : 53dce620438f9eed24502ef47938da641d7c4da23ca82f7a783f12479a82b361
     bytes  : 39447
   .orchestrator/permission_broker.py
-    blob   : 9b20bce39fdcf9b917c897547bcd6ebd9b8c14da
-    sha256 : bb5c74a6c420d0858cc814311c81f409d2014d5d09734afcd61060017420cd6f
-    bytes  : 61080
+    blob   : fa432835f3723766fbfbc0e0821919c77d91c8fc
+    sha256 : 225c002aadc1117616a79980b1324ed3825406b5ac8fc8b6483c762d8a4bf1e3
+    bytes  : 61883
   .orchestrator/claude_permission_prompt_mcp.py
     blob   : 2f08f0be2b63c35489a5707238be329ba088ec28
     sha256 : 9d9e19138b898fbb4daa4f769836a75c04f7e8b8e63372cfa672c0abc95efc34
@@ -36,20 +36,20 @@
     PASS  continuity pinned to MainPID=1487837, ExecMainStartTimestamp=Wed 2026-07-29 06:08:57 UTC, NRestarts=0
 
 ## phase 1 — stage and verify every sibling (no rename issued)
-  root: /tmp/odp-deploy-sandbox-ZwggRe/oday-plus
+  root: /tmp/odp-deploy-sandbox-54m9jD/oday-plus
     git branch          : master
-    git HEAD            : 923eea8496421ba33c1621008d1d406967ff7d6e
+    git HEAD            : 826f08318cf60a5e063b5e5f5eadc6b2263268d9
     dirty files         : 0
-  target: /tmp/odp-deploy-sandbox-ZwggRe/oday-plus/.orchestrator/common.py
+  target: /tmp/odp-deploy-sandbox-54m9jD/oday-plus/.orchestrator/common.py
     BEFORE sha256    : 1b5334ff427f9b7b37d37bf416842b465cc16088581a7188f95c46d9eafccc31
     BEFORE bytes     : 36744
     BEFORE mode      : 664
-    BEFORE inode     : 1902278
+    BEFORE inode     : 1902738
     BEFORE device    : 2049
-    BEFORE mtime     : 2026-07-29T08:58:14Z
-    backup              : /tmp/odp-bak-p3-r5LwzF/oday-plus.common.py.bak
-    rollback            : install -m 664 /tmp/odp-bak-p3-r5LwzF/oday-plus.common.py.bak /tmp/odp-deploy-sandbox-ZwggRe/oday-plus/.orchestrator/common.py
-    staged sibling      : .common.py.ODP-ORCH-APPROVAL-RESUME-ROOT-001.1715117.tmp
+    BEFORE mtime     : 2026-07-29T09:28:56Z
+    backup              : /tmp/odp-bak-pos-w5d0no/oday-plus.common.py.bak
+    rollback            : install -m 664 /tmp/odp-bak-pos-w5d0no/oday-plus.common.py.bak /tmp/odp-deploy-sandbox-54m9jD/oday-plus/.orchestrator/common.py
+    staged sibling      : .common.py.ODP-ORCH-APPROVAL-RESUME-ROOT-001.1756298.tmp
     sibling sha256      : 53dce620438f9eed24502ef47938da641d7c4da23ca82f7a783f12479a82b361
     sibling bytes/mode  : 39447 / 664
       PASS  same directory as target
@@ -58,34 +58,34 @@
       PASS  byte length == reviewed blob
       PASS  mode == target's existing mode
       PASS  byte-for-byte compare vs blob
-  target: /tmp/odp-deploy-sandbox-ZwggRe/oday-plus/.orchestrator/permission_broker.py
-    BEFORE sha256    : 1ed64d46ea1c115fdc1c33b3bbe57768148dd5d1cf81ff5c16874f764db92391
-    BEFORE bytes     : 58621
+  target: /tmp/odp-deploy-sandbox-54m9jD/oday-plus/.orchestrator/permission_broker.py
+    BEFORE sha256    : c4ecfe5a0f62ca21e6cd565a5ad49c8e3da0aeb7718018f6ed371c52a2c56f00
+    BEFORE bytes     : 58861
     BEFORE mode      : 664
-    BEFORE inode     : 1902602
+    BEFORE inode     : 1902753
     BEFORE device    : 2049
-    BEFORE mtime     : 2026-07-29T08:58:14Z
-    backup              : /tmp/odp-bak-p3-r5LwzF/oday-plus.permission_broker.py.bak
-    rollback            : install -m 664 /tmp/odp-bak-p3-r5LwzF/oday-plus.permission_broker.py.bak /tmp/odp-deploy-sandbox-ZwggRe/oday-plus/.orchestrator/permission_broker.py
-    staged sibling      : .permission_broker.py.ODP-ORCH-APPROVAL-RESUME-ROOT-001.1715117.tmp
-    sibling sha256      : bb5c74a6c420d0858cc814311c81f409d2014d5d09734afcd61060017420cd6f
-    sibling bytes/mode  : 61080 / 664
+    BEFORE mtime     : 2026-07-29T09:28:56Z
+    backup              : /tmp/odp-bak-pos-w5d0no/oday-plus.permission_broker.py.bak
+    rollback            : install -m 664 /tmp/odp-bak-pos-w5d0no/oday-plus.permission_broker.py.bak /tmp/odp-deploy-sandbox-54m9jD/oday-plus/.orchestrator/permission_broker.py
+    staged sibling      : .permission_broker.py.ODP-ORCH-APPROVAL-RESUME-ROOT-001.1756298.tmp
+    sibling sha256      : 225c002aadc1117616a79980b1324ed3825406b5ac8fc8b6483c762d8a4bf1e3
+    sibling bytes/mode  : 61883 / 664
       PASS  same directory as target
       PASS  same filesystem (rename is atomic)
       PASS  sha256 == reviewed blob
       PASS  byte length == reviewed blob
       PASS  mode == target's existing mode
       PASS  byte-for-byte compare vs blob
-  target: /tmp/odp-deploy-sandbox-ZwggRe/oday-plus/.orchestrator/claude_permission_prompt_mcp.py
+  target: /tmp/odp-deploy-sandbox-54m9jD/oday-plus/.orchestrator/claude_permission_prompt_mcp.py
     BEFORE sha256    : 9ba6c1273cc54028ab00d31ce5751b231f7ba2b19232c22e82e60eed2759dd00
     BEFORE bytes     : 8428
     BEFORE mode      : 664
-    BEFORE inode     : 1902601
+    BEFORE inode     : 1902737
     BEFORE device    : 2049
-    BEFORE mtime     : 2026-07-29T08:58:14Z
-    backup              : /tmp/odp-bak-p3-r5LwzF/oday-plus.claude_permission_prompt_mcp.py.bak
-    rollback            : install -m 664 /tmp/odp-bak-p3-r5LwzF/oday-plus.claude_permission_prompt_mcp.py.bak /tmp/odp-deploy-sandbox-ZwggRe/oday-plus/.orchestrator/claude_permission_prompt_mcp.py
-    staged sibling      : .claude_permission_prompt_mcp.py.ODP-ORCH-APPROVAL-RESUME-ROOT-001.1715117.tmp
+    BEFORE mtime     : 2026-07-29T09:28:56Z
+    backup              : /tmp/odp-bak-pos-w5d0no/oday-plus.claude_permission_prompt_mcp.py.bak
+    rollback            : install -m 664 /tmp/odp-bak-pos-w5d0no/oday-plus.claude_permission_prompt_mcp.py.bak /tmp/odp-deploy-sandbox-54m9jD/oday-plus/.orchestrator/claude_permission_prompt_mcp.py
+    staged sibling      : .claude_permission_prompt_mcp.py.ODP-ORCH-APPROVAL-RESUME-ROOT-001.1756298.tmp
     sibling sha256      : 9d9e19138b898fbb4daa4f769836a75c04f7e8b8e63372cfa672c0abc95efc34
     sibling bytes/mode  : 9387 / 664
       PASS  same directory as target
@@ -94,20 +94,20 @@
       PASS  byte length == reviewed blob
       PASS  mode == target's existing mode
       PASS  byte-for-byte compare vs blob
-  root: /tmp/odp-deploy-sandbox-ZwggRe/oday-plus-supervisor-live
+  root: /tmp/odp-deploy-sandbox-54m9jD/oday-plus-supervisor-live
     git branch          : master
-    git HEAD            : 923eea8496421ba33c1621008d1d406967ff7d6e
+    git HEAD            : 6bdcd5398dfde3f3c0a6f2adc176f5c5edcec8b2
     dirty files         : 0
-  target: /tmp/odp-deploy-sandbox-ZwggRe/oday-plus-supervisor-live/.orchestrator/common.py
+  target: /tmp/odp-deploy-sandbox-54m9jD/oday-plus-supervisor-live/.orchestrator/common.py
     BEFORE sha256    : 1b5334ff427f9b7b37d37bf416842b465cc16088581a7188f95c46d9eafccc31
     BEFORE bytes     : 36744
     BEFORE mode      : 664
-    BEFORE inode     : 2161343
+    BEFORE inode     : 2161475
     BEFORE device    : 2049
-    BEFORE mtime     : 2026-07-29T08:58:14Z
-    backup              : /tmp/odp-bak-p3-r5LwzF/oday-plus-supervisor-live.common.py.bak
-    rollback            : install -m 664 /tmp/odp-bak-p3-r5LwzF/oday-plus-supervisor-live.common.py.bak /tmp/odp-deploy-sandbox-ZwggRe/oday-plus-supervisor-live/.orchestrator/common.py
-    staged sibling      : .common.py.ODP-ORCH-APPROVAL-RESUME-ROOT-001.1715117.tmp
+    BEFORE mtime     : 2026-07-29T09:28:56Z
+    backup              : /tmp/odp-bak-pos-w5d0no/oday-plus-supervisor-live.common.py.bak
+    rollback            : install -m 664 /tmp/odp-bak-pos-w5d0no/oday-plus-supervisor-live.common.py.bak /tmp/odp-deploy-sandbox-54m9jD/oday-plus-supervisor-live/.orchestrator/common.py
+    staged sibling      : .common.py.ODP-ORCH-APPROVAL-RESUME-ROOT-001.1756298.tmp
     sibling sha256      : 53dce620438f9eed24502ef47938da641d7c4da23ca82f7a783f12479a82b361
     sibling bytes/mode  : 39447 / 664
       PASS  same directory as target
@@ -116,34 +116,34 @@
       PASS  byte length == reviewed blob
       PASS  mode == target's existing mode
       PASS  byte-for-byte compare vs blob
-  target: /tmp/odp-deploy-sandbox-ZwggRe/oday-plus-supervisor-live/.orchestrator/permission_broker.py
+  target: /tmp/odp-deploy-sandbox-54m9jD/oday-plus-supervisor-live/.orchestrator/permission_broker.py
     BEFORE sha256    : 1ed64d46ea1c115fdc1c33b3bbe57768148dd5d1cf81ff5c16874f764db92391
     BEFORE bytes     : 58621
     BEFORE mode      : 664
-    BEFORE inode     : 2161345
+    BEFORE inode     : 2161490
     BEFORE device    : 2049
-    BEFORE mtime     : 2026-07-29T08:58:14Z
-    backup              : /tmp/odp-bak-p3-r5LwzF/oday-plus-supervisor-live.permission_broker.py.bak
-    rollback            : install -m 664 /tmp/odp-bak-p3-r5LwzF/oday-plus-supervisor-live.permission_broker.py.bak /tmp/odp-deploy-sandbox-ZwggRe/oday-plus-supervisor-live/.orchestrator/permission_broker.py
-    staged sibling      : .permission_broker.py.ODP-ORCH-APPROVAL-RESUME-ROOT-001.1715117.tmp
-    sibling sha256      : bb5c74a6c420d0858cc814311c81f409d2014d5d09734afcd61060017420cd6f
-    sibling bytes/mode  : 61080 / 664
+    BEFORE mtime     : 2026-07-29T09:28:56Z
+    backup              : /tmp/odp-bak-pos-w5d0no/oday-plus-supervisor-live.permission_broker.py.bak
+    rollback            : install -m 664 /tmp/odp-bak-pos-w5d0no/oday-plus-supervisor-live.permission_broker.py.bak /tmp/odp-deploy-sandbox-54m9jD/oday-plus-supervisor-live/.orchestrator/permission_broker.py
+    staged sibling      : .permission_broker.py.ODP-ORCH-APPROVAL-RESUME-ROOT-001.1756298.tmp
+    sibling sha256      : 225c002aadc1117616a79980b1324ed3825406b5ac8fc8b6483c762d8a4bf1e3
+    sibling bytes/mode  : 61883 / 664
       PASS  same directory as target
       PASS  same filesystem (rename is atomic)
       PASS  sha256 == reviewed blob
       PASS  byte length == reviewed blob
       PASS  mode == target's existing mode
       PASS  byte-for-byte compare vs blob
-  target: /tmp/odp-deploy-sandbox-ZwggRe/oday-plus-supervisor-live/.orchestrator/claude_permission_prompt_mcp.py
+  target: /tmp/odp-deploy-sandbox-54m9jD/oday-plus-supervisor-live/.orchestrator/claude_permission_prompt_mcp.py
     BEFORE sha256    : 9ba6c1273cc54028ab00d31ce5751b231f7ba2b19232c22e82e60eed2759dd00
     BEFORE bytes     : 8428
     BEFORE mode      : 664
-    BEFORE inode     : 2161347
+    BEFORE inode     : 2161474
     BEFORE device    : 2049
-    BEFORE mtime     : 2026-07-29T08:58:14Z
-    backup              : /tmp/odp-bak-p3-r5LwzF/oday-plus-supervisor-live.claude_permission_prompt_mcp.py.bak
-    rollback            : install -m 664 /tmp/odp-bak-p3-r5LwzF/oday-plus-supervisor-live.claude_permission_prompt_mcp.py.bak /tmp/odp-deploy-sandbox-ZwggRe/oday-plus-supervisor-live/.orchestrator/claude_permission_prompt_mcp.py
-    staged sibling      : .claude_permission_prompt_mcp.py.ODP-ORCH-APPROVAL-RESUME-ROOT-001.1715117.tmp
+    BEFORE mtime     : 2026-07-29T09:28:56Z
+    backup              : /tmp/odp-bak-pos-w5d0no/oday-plus-supervisor-live.claude_permission_prompt_mcp.py.bak
+    rollback            : install -m 664 /tmp/odp-bak-pos-w5d0no/oday-plus-supervisor-live.claude_permission_prompt_mcp.py.bak /tmp/odp-deploy-sandbox-54m9jD/oday-plus-supervisor-live/.orchestrator/claude_permission_prompt_mcp.py
+    staged sibling      : .claude_permission_prompt_mcp.py.ODP-ORCH-APPROVAL-RESUME-ROOT-001.1756298.tmp
     sibling sha256      : 9d9e19138b898fbb4daa4f769836a75c04f7e8b8e63372cfa672c0abc95efc34
     sibling bytes/mode  : 9387 / 664
       PASS  same directory as target
@@ -154,79 +154,79 @@
       PASS  byte-for-byte compare vs blob
 
 ## phase 2 — ordered atomic publish (common.py first: it is a superset)
-  target: /tmp/odp-deploy-sandbox-ZwggRe/oday-plus/.orchestrator/common.py
-    published           : os.replace(.common.py.ODP-ORCH-APPROVAL-RESUME-ROOT-001.1715117.tmp -> common.py) [atomic rename]
+  target: /tmp/odp-deploy-sandbox-54m9jD/oday-plus/.orchestrator/common.py
+    published           : os.replace(.common.py.ODP-ORCH-APPROVAL-RESUME-ROOT-001.1756298.tmp -> common.py) [atomic rename]
     AFTER  sha256    : 53dce620438f9eed24502ef47938da641d7c4da23ca82f7a783f12479a82b361
     AFTER  bytes     : 39447
     AFTER  mode      : 664
-    AFTER  inode     : 1902559
+    AFTER  inode     : 1902435
     AFTER  device    : 2049
-    AFTER  mtime     : 2026-07-29T08:58:14Z
+    AFTER  mtime     : 2026-07-29T09:29:10Z
       PASS  target sha256 == reviewed blob
       PASS  target bytes == reviewed blob
       PASS  mode preserved
       PASS  inode CHANGED (proves rename, not in-place write)
       PASS  no temporary sibling left behind
-  target: /tmp/odp-deploy-sandbox-ZwggRe/oday-plus/.orchestrator/permission_broker.py
-    published           : os.replace(.permission_broker.py.ODP-ORCH-APPROVAL-RESUME-ROOT-001.1715117.tmp -> permission_broker.py) [atomic rename]
-    AFTER  sha256    : bb5c74a6c420d0858cc814311c81f409d2014d5d09734afcd61060017420cd6f
-    AFTER  bytes     : 61080
+  target: /tmp/odp-deploy-sandbox-54m9jD/oday-plus/.orchestrator/permission_broker.py
+    published           : os.replace(.permission_broker.py.ODP-ORCH-APPROVAL-RESUME-ROOT-001.1756298.tmp -> permission_broker.py) [atomic rename]
+    AFTER  sha256    : 225c002aadc1117616a79980b1324ed3825406b5ac8fc8b6483c762d8a4bf1e3
+    AFTER  bytes     : 61883
     AFTER  mode      : 664
-    AFTER  inode     : 1902604
+    AFTER  inode     : 1902819
     AFTER  device    : 2049
-    AFTER  mtime     : 2026-07-29T08:58:14Z
+    AFTER  mtime     : 2026-07-29T09:29:10Z
       PASS  target sha256 == reviewed blob
       PASS  target bytes == reviewed blob
       PASS  mode preserved
       PASS  inode CHANGED (proves rename, not in-place write)
       PASS  no temporary sibling left behind
-  target: /tmp/odp-deploy-sandbox-ZwggRe/oday-plus/.orchestrator/claude_permission_prompt_mcp.py
-    published           : os.replace(.claude_permission_prompt_mcp.py.ODP-ORCH-APPROVAL-RESUME-ROOT-001.1715117.tmp -> claude_permission_prompt_mcp.py) [atomic rename]
+  target: /tmp/odp-deploy-sandbox-54m9jD/oday-plus/.orchestrator/claude_permission_prompt_mcp.py
+    published           : os.replace(.claude_permission_prompt_mcp.py.ODP-ORCH-APPROVAL-RESUME-ROOT-001.1756298.tmp -> claude_permission_prompt_mcp.py) [atomic rename]
     AFTER  sha256    : 9d9e19138b898fbb4daa4f769836a75c04f7e8b8e63372cfa672c0abc95efc34
     AFTER  bytes     : 9387
     AFTER  mode      : 664
-    AFTER  inode     : 1902605
+    AFTER  inode     : 1902820
     AFTER  device    : 2049
-    AFTER  mtime     : 2026-07-29T08:58:14Z
+    AFTER  mtime     : 2026-07-29T09:29:10Z
       PASS  target sha256 == reviewed blob
       PASS  target bytes == reviewed blob
       PASS  mode preserved
       PASS  inode CHANGED (proves rename, not in-place write)
       PASS  no temporary sibling left behind
-  target: /tmp/odp-deploy-sandbox-ZwggRe/oday-plus-supervisor-live/.orchestrator/common.py
-    published           : os.replace(.common.py.ODP-ORCH-APPROVAL-RESUME-ROOT-001.1715117.tmp -> common.py) [atomic rename]
+  target: /tmp/odp-deploy-sandbox-54m9jD/oday-plus-supervisor-live/.orchestrator/common.py
+    published           : os.replace(.common.py.ODP-ORCH-APPROVAL-RESUME-ROOT-001.1756298.tmp -> common.py) [atomic rename]
     AFTER  sha256    : 53dce620438f9eed24502ef47938da641d7c4da23ca82f7a783f12479a82b361
     AFTER  bytes     : 39447
     AFTER  mode      : 664
-    AFTER  inode     : 2161365
+    AFTER  inode     : 2161614
     AFTER  device    : 2049
-    AFTER  mtime     : 2026-07-29T08:58:15Z
+    AFTER  mtime     : 2026-07-29T09:29:10Z
       PASS  target sha256 == reviewed blob
       PASS  target bytes == reviewed blob
       PASS  mode preserved
       PASS  inode CHANGED (proves rename, not in-place write)
       PASS  no temporary sibling left behind
-  target: /tmp/odp-deploy-sandbox-ZwggRe/oday-plus-supervisor-live/.orchestrator/permission_broker.py
-    published           : os.replace(.permission_broker.py.ODP-ORCH-APPROVAL-RESUME-ROOT-001.1715117.tmp -> permission_broker.py) [atomic rename]
-    AFTER  sha256    : bb5c74a6c420d0858cc814311c81f409d2014d5d09734afcd61060017420cd6f
-    AFTER  bytes     : 61080
+  target: /tmp/odp-deploy-sandbox-54m9jD/oday-plus-supervisor-live/.orchestrator/permission_broker.py
+    published           : os.replace(.permission_broker.py.ODP-ORCH-APPROVAL-RESUME-ROOT-001.1756298.tmp -> permission_broker.py) [atomic rename]
+    AFTER  sha256    : 225c002aadc1117616a79980b1324ed3825406b5ac8fc8b6483c762d8a4bf1e3
+    AFTER  bytes     : 61883
     AFTER  mode      : 664
-    AFTER  inode     : 2161367
+    AFTER  inode     : 2161619
     AFTER  device    : 2049
-    AFTER  mtime     : 2026-07-29T08:58:15Z
+    AFTER  mtime     : 2026-07-29T09:29:10Z
       PASS  target sha256 == reviewed blob
       PASS  target bytes == reviewed blob
       PASS  mode preserved
       PASS  inode CHANGED (proves rename, not in-place write)
       PASS  no temporary sibling left behind
-  target: /tmp/odp-deploy-sandbox-ZwggRe/oday-plus-supervisor-live/.orchestrator/claude_permission_prompt_mcp.py
-    published           : os.replace(.claude_permission_prompt_mcp.py.ODP-ORCH-APPROVAL-RESUME-ROOT-001.1715117.tmp -> claude_permission_prompt_mcp.py) [atomic rename]
+  target: /tmp/odp-deploy-sandbox-54m9jD/oday-plus-supervisor-live/.orchestrator/claude_permission_prompt_mcp.py
+    published           : os.replace(.claude_permission_prompt_mcp.py.ODP-ORCH-APPROVAL-RESUME-ROOT-001.1756298.tmp -> claude_permission_prompt_mcp.py) [atomic rename]
     AFTER  sha256    : 9d9e19138b898fbb4daa4f769836a75c04f7e8b8e63372cfa672c0abc95efc34
     AFTER  bytes     : 9387
     AFTER  mode      : 664
-    AFTER  inode     : 2161369
+    AFTER  inode     : 2161621
     AFTER  device    : 2049
-    AFTER  mtime     : 2026-07-29T08:58:15Z
+    AFTER  mtime     : 2026-07-29T09:29:10Z
       PASS  target sha256 == reviewed blob
       PASS  target bytes == reviewed blob
       PASS  mode preserved
@@ -234,13 +234,13 @@
       PASS  no temporary sibling left behind
 
 ## phase 3 — import smoke test per root
-  /tmp/odp-deploy-sandbox-ZwggRe/oday-plus: PASS  import-ok PANTHEON_STATUS_ROOT
-  /tmp/odp-deploy-sandbox-ZwggRe/oday-plus-supervisor-live: PASS  import-ok PANTHEON_STATUS_ROOT
+  /tmp/odp-deploy-sandbox-54m9jD/oday-plus: PASS  import-ok PANTHEON_STATUS_ROOT
+  /tmp/odp-deploy-sandbox-54m9jD/oday-plus-supervisor-live: PASS  import-ok PANTHEON_STATUS_ROOT
 
 ## leftover staging siblings and dirty inventory
-  /tmp/odp-deploy-sandbox-ZwggRe/oday-plus: leftover siblings none
+  /tmp/odp-deploy-sandbox-54m9jD/oday-plus: leftover siblings none
     every other dirty file unchanged : True
-  /tmp/odp-deploy-sandbox-ZwggRe/oday-plus-supervisor-live: leftover siblings none
+  /tmp/odp-deploy-sandbox-54m9jD/oday-plus-supervisor-live: leftover siblings none
     every other dirty file unchanged : True
 
 ## supervisor state AFTER

@@ -210,10 +210,15 @@ discarded). Added on top: a **phase-3 import smoke test** per root — a set tha
 renames cleanly but cannot import is still a failure — run with
 `PYTHONDONTWRITEBYTECODE=1` so the driver does not dirty the root it is auditing.
 
-Rehearsed against throwaway git roots seeded with the pre-fix modules:
+Rehearsed against throwaway git roots. Round 1 seeded them from `dev`; round 2
+re-ran both **seeded byte-for-byte from what is actually deployed** — the
+control-root sandbox starts at `c4ecfe5a…`, the live-root sandbox at
+`1ed64d46…` — so the rehearsal is a dress rehearsal of the real publish rather
+than of an idealised one. That reseeding is what makes §6's post-publish probe
+meaningful.
 
 - `atomic-publish-rehearsal-negative.txt` — corrupted payload → staging gate
-  aborts, **no rename anywhere**, every target still `1ed64d46…`, rc 0.
+  aborts, **no rename anywhere**, every target still at its seeded sha, rc 0.
 - `atomic-publish-rehearsal-positive.txt` — 6/6 targets published, inode changed
   on each, import smoke test PASS on both roots, unrelated dirty inventory
   unchanged, rc 0.

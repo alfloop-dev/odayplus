@@ -1,14 +1,14 @@
 # Control-root drift blocker — ODP-ORCH-APPROVAL-RESUME-ROOT-001
-# captured (UTC): 2026-07-29T09:22:56Z
-# READ-ONLY: every revision is loaded from an isolated sandbox copy;
+# captured (UTC): 2026-07-29T09:30:38Z
+# READ-ONLY: every revision is loaded from an isolated copy;
 #            nothing under /home/lupin is opened for write.
 
 ## 1. The deployed control-root hook is not any committed revision
-  .orchestrator/common.py                        deployed=1b5334ff427f9b7b  dev@427e3290=1b5334ff427f9b7b  reviewed@2b729993=53dce620438f9eed
-  .orchestrator/permission_broker.py             deployed=c4ecfe5a0f62ca21  dev@427e3290=1ed64d46ea1c115f  reviewed@2b729993=bb5c74a6c420d085
-  .orchestrator/claude_permission_prompt_mcp.py  deployed=9ba6c1273cc54028  dev@427e3290=9ba6c1273cc54028  reviewed@2b729993=9d9e19138b898fbb
+  .orchestrator/common.py                        deployed=1b5334ff427f9b7b  dev@427e3290=1b5334ff427f9b7b  round1@2b729993=53dce620438f9eed  round2@fafe1c55=53dce620438f9eed
+  .orchestrator/permission_broker.py             deployed=c4ecfe5a0f62ca21  dev@427e3290=1ed64d46ea1c115f  round1@2b729993=bb5c74a6c420d085  round2@fafe1c55=225c002aadc11176
+  .orchestrator/claude_permission_prompt_mcp.py  deployed=9ba6c1273cc54028  dev@427e3290=9ba6c1273cc54028  round1@2b729993=9d9e19138b898fbb  round2@fafe1c55=9d9e19138b898fbb
 
-## 2. The drift: two hunks that exist only in the deployed control-root file
+## 2. The drift: hunks that exist only in the deployed control-root file
 --- dev@427e3290:.orchestrator/permission_broker.py
 +++ deployed:/home/lupin/oday-plus/.orchestrator/permission_broker.py
 @@ -135,18 +135,7 @@
@@ -53,38 +53,62 @@
          for item in configured:
 
   Neither hunk has ever existed in git history:
-    git log -S ORCH_WORKSPACE_PATH -- .orchestrator/permission_broker.py -> 0 commits
+    git log -S ORCH_WORKSPACE_PATH -- .orchestrator/permission_broker.py -> 1 commits
   (ORCH_WORKSPACE_PATH is *set* by common.py/supervisor.py in dev, but dev's
    broker never reads it. Only the hand-edited control-root copy does.)
 
-## 3. Consequence of publishing the reviewed blob over it
-# Blocker probe — ODP-ORCH-APPROVAL-RESUME-ROOT-001 criterion 6
-  live worker worktree (ORCH_WORKSPACE_PATH): /tmp/pantheon-worker-worktrees/oday-plus-supervisor-live/odp-orch-approval-resume-root-001
-  config permission_broker.allowed_workspace_roots: ['.', '../execute-plans']
-  probe tool call: Write -> /tmp/pantheon-worker-worktrees/oday-plus-supervisor-live/odp-orch-approval-resume-root-001/docs/evidence/runtime/ODP-ORCH-APPROVAL-RESUME-ROOT-001/x.md
+## 3. What round 1 would have published, vs what is running
+# Worker-worktree workspace probe — ODP-ORCH-APPROVAL-RESUME-ROOT-001
+  live worker worktree (ORCH_WORKSPACE_PATH)       : /tmp/pantheon-worker-worktrees/oday-plus-supervisor-live/odp-orch-approval-resume-root-001
+  config permission_broker.allowed_workspace_roots : ['.', '../execute-plans']
+  ROOT pinned to                                   : /home/lupin/oday-plus
+  probe tool call                                  : Write -> /tmp/pantheon-worker-worktrees/oday-plus-supervisor-live/odp-orch-approval-resume-root-001/docs/evidence/runtime/probe.md
 
-## A. currently deployed control-root hook (c4ecfe5a)
+## deployed-control-root
+   source                    : /tmp/odp-arr-probe/deployed/.orchestrator/permission_broker.py
    reads ORCH_WORKSPACE_PATH : True
    allowed workspace roots   : ['/home/lupin/oday-plus', '/home/lupin/pantheon', '/tmp/pantheon-worker-worktrees/oday-plus-supervisor-live/odp-orch-approval-resume-root-001', '/home/lupin/execute-plans']
    path within workspace     : True
    Write decision            : ALLOW  (repo_write)
    reason                    : Write stays within the repository workspace.
 
-## B. reviewed blob deploy.py would publish (bb5c74a6)
+## round-1-reviewed-blob
+   source                    : /tmp/odp-arr-probe/reviewed/.orchestrator/permission_broker.py
    reads ORCH_WORKSPACE_PATH : False
    allowed workspace roots   : ['/home/lupin/oday-plus', '/home/lupin/pantheon', '/home/lupin/execute-plans']
    path within workspace     : False
    Write decision            : DENY  (out_of_workspace)
    reason                    : Write targets a path outside /home/lupin/oday-plus.
 
-## 4. Blast radius
+RESULT: DENY — round-1-reviewed-blob would stall every worker-worktree write
+  (exit 1 — a DENY verdict is the blocker, not a harness error)
+
+## 4. Round 2: the same probe against the driver-deployed publish set
+# Worker-worktree workspace probe — ODP-ORCH-APPROVAL-RESUME-ROOT-001
+  live worker worktree (ORCH_WORKSPACE_PATH)       : /tmp/pantheon-worker-worktrees/oday-plus-supervisor-live/odp-orch-approval-resume-root-001
+  config permission_broker.allowed_workspace_roots : ['.', '../execute-plans']
+  ROOT pinned to                                   : /home/lupin/oday-plus
+  probe tool call                                  : Write -> /tmp/pantheon-worker-worktrees/oday-plus-supervisor-live/odp-orch-approval-resume-root-001/docs/evidence/runtime/probe.md
+
+## round-2-published-sandbox
+   source                    : /tmp/odp-deploy-sandbox-54m9jD/oday-plus/.orchestrator/permission_broker.py
+   reads ORCH_WORKSPACE_PATH : True
+   allowed workspace roots   : ['/home/lupin/oday-plus', '/home/lupin/pantheon', '/tmp/pantheon-worker-worktrees/oday-plus-supervisor-live/odp-orch-approval-resume-root-001', '/home/lupin/execute-plans']
+   path within workspace     : True
+   Write decision            : ALLOW  (repo_write)
+   reason                    : Write stays within the repository workspace.
+
+RESULT: ALLOW — every probed revision keeps worker-worktree writes allowed
+  (exit 0)
+
+## 5. Blast radius if round 1 had shipped
   /home/lupin/oday-plus/.claude/settings.local.json wires EVERY broker hook to
   /home/lupin/oday-plus/.orchestrator/permission_broker.py, and every live worker
-  runs in /tmp/pantheon-worker-worktrees/... . Publishing the reviewed blob there
+  runs in /tmp/pantheon-worker-worktrees/... . Publishing the round-1 blob there
   makes Edit/Write/MultiEdit in every worker worktree classify as deny
   (out_of_workspace) — a fleet-wide stall, not a degraded mode.
 
   Post-check: the control root is byte-identical to the revision recorded in
-  live-defect-observation.txt section 6 (c4ecfe5a0f62ca21); nothing was published.
+  live-defect-observation.txt section 6; nothing was published to it.
 c4ecfe5a0f62ca21e6cd565a5ad49c8e3da0aeb7718018f6ed371c52a2c56f00  /home/lupin/oday-plus/.orchestrator/permission_broker.py
 1b5334ff427f9b7b37d37bf416842b465cc16088581a7188f95c46d9eafccc31  /home/lupin/oday-plus/.orchestrator/common.py
