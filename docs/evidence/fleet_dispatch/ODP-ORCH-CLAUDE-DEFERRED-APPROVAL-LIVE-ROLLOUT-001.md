@@ -2,7 +2,11 @@
 
 - Parent: ODP-ORCH-CLAUDE-DEFERRED-APPROVAL-RACE-001 (done)
 - Owner lane: fleet control plane / supervisor runtime
-- Reviewer lane: Codex4 (independent review required before closeout)
+- Reviewer lane: Codex2 (independent review required before closeout). The
+  earlier `Codex4` designation in this brief and in the task acceptance list is
+  superseded: `Codex4` is not present in the live Supervisor agents config, so
+  it could never have reviewed this task. Corrected under STOP GATE 4
+  (2026-07-29T04:17:38Z).
 - Branch: `task/ODP-ORCH-CLAUDE-DEFERRED-APPROVAL-LIVE-ROLLOUT-001`
 - Rollout source: merged `dev` commit `647970dae975f4008633a484cde1e63187035544` (PR #492)
 
@@ -44,12 +48,14 @@ Not executed. The rollout window has never been opened: as of
 2026-07-29T04:00Z the supervisor is still on its pre-task `MainPID=1197865`,
 `KillMode` is still the shipped `control-group`, the drop-in directory is empty,
 `/tmp/odp-rollout-driver/` does not exist and no approval exists for any test run
-in either queue. The driver is at revision 4 after three coordinator STOP GATEs
-(six findings, then seven, then two) and needs a coordinator recheck before the
-window is opened. See `runbook/CONTINUATION.md` for the finding-by-finding
-mapping. STOP GATE 3's two findings were documentation defects - a vacuously
-clean `git diff --check` receipt and a backwards recycled-pid narrative - so
-revision 4 changes no gate logic.
+in either queue. The driver is at revision 5 after four coordinator STOP GATEs
+(six findings, then seven, then two, then an assignment conflict) and needs the
+coordinator's exact-head recheck before the window is opened. See
+`runbook/CONTINUATION.md` for the finding-by-finding mapping. STOP GATE 3's two
+findings were documentation defects - a vacuously clean `git diff --check`
+receipt and a backwards recycled-pid narrative - and STOP GATE 4 was a reviewer
+/ ownership correction, so neither revision 4 nor revision 5 changes any gate
+logic: the executable driver is still revision 3.
 
 ## Fleet impact
 

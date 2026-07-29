@@ -279,13 +279,24 @@ run while the evidence files were untracked (real trailing whitespace was
 sitting in `preflight/preflight.md:127`), and a backwards explanation of the
 runner-gone gate that claimed a recycled pid aborts when in fact it reads as
 "gone". Revision 4 corrects both without changing any gate logic; see the
-mapping table in `runbook/CONTINUATION.md`. It needs a coordinator/reviewer
-recheck before the window is opened.
+mapping table in `runbook/CONTINUATION.md`.
+
+The fourth (2026-07-29T04:17:38Z) was an assignment conflict rather than a
+driver defect: ownership had been auto-reassigned to a quota-exhausted lane, and
+the reviewer recorded in this evidence set - `Codex4` - is not present in either
+Supervisor `agents` config, so it could never have been dispatched. Owner is
+Claude2 and reviewer is Codex2, now consistently across `ai-status.json`, the
+fleet brief, `runbook/CONTINUATION.md` and the driver's two capture-commit
+trailer templates. Revision 5 is that text change plus one residual overclaim
+found while re-running the checks (this section previously said the gate
+self-test had 16 checks; it has 15). No executable behaviour differs from
+revision 3. It needs the coordinator's exact-head recheck before the window is
+opened.
 
 What has been completed and is safe to review now: the deployment (section 2),
 its verification (section 3), the restart-safety design (section 4), the
 determinism argument (section 5), the fail-closed assertion with its 11-case
-self-test, and the driver's own 16-check gate self-test.
+self-test, and the driver's own 15-check gate self-test.
 
 ## 7. Approval resolution
 

@@ -157,3 +157,31 @@ selftest_driver_gates: 15/15 PASS -> driver-gate-selftest.txt (earlier notes sai
 git_diff_check_against_merge_sha: `git diff --check 647970dae975f4008633a484cde1e63187035544` -> exit 0
 live_state_unchanged_after_checks: see the tail of this file; the live driver
   has still never been executed
+
+## STOP GATE 4 recheck (2026-07-29T04:2xZ, driver revision 5)
+scope_of_revision_5: text only - reviewer corrected Codex4 -> Codex2 in the
+  fleet brief, CONTINUATION.md and the driver's two capture-commit trailer
+  templates, plus one residual `16-check` overclaim in ../README.md section 6.
+  No gate logic, thresholds, exit codes or ordering changed relative to
+  revision 3.
+reviewer_config_check: `codex4` absent from the `agents` list of
+  /home/lupin/oday-plus-supervisor-live/.orchestrator/config.json (claude,
+  claude2, claude3, antigravity, antigravity2, codex, codex2, antigravity3-7)
+  and of /home/lupin/oday-plus/.orchestrator/config.json (same without
+  claude3); ai-status.json records owner=Claude2 reviewer=Codex2
+bash_n_driver: OK
+bash_n_selftest_assertion: OK
+py_compile_assertion: OK
+selftest_assertion: 11/11 PASS (11 `ok` lines this run)
+selftest_driver_gates: 15/15 PASS (15 `ok` lines this run) -> SELFTEST PASS
+git_diff_check_against_merge_sha: `git diff --check 647970dae975f4008633a484cde1e63187035544` -> exit 0
+trailing_whitespace_scan: clean across the evidence dir and the fleet brief
+live_state_unchanged_after_checks: MainPID=1197865 (ExecMainStartTimestamp Wed
+  2026-07-29 02:37:14 UTC, ActiveState=active) KillMode=control-group
+  dropin=empty /tmp/odp-rollout-driver=absent timeline/=empty
+  odp-rollout transient units=none
+deployed_sha256_live: f0b419cb3fbdff8a3dfbd5fcc9ee7dfd06b005f258a8f13d556e922d06995ee8
+deployed_sha256_control: f0b419cb3fbdff8a3dfbd5fcc9ee7dfd06b005f258a8f13d556e922d06995ee8
+approval_queues: live queue "No pending approvals"; control queue holds 124
+  unrelated pre-existing lines and 0 matching this task id - no test approval
+  has ever been created

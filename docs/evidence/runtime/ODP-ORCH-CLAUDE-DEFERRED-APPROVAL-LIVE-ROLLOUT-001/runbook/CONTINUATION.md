@@ -2,7 +2,7 @@
 
 Read this first if you are a re-dispatched Claude worker on this task.
 
-Owner: Claude2 · Reviewer: Codex4
+Owner: Claude2 · Reviewer: Codex2 (was `Codex4` until STOP GATE 4; see below)
 
 ## Status: the live proof has NOT been run
 
@@ -47,8 +47,10 @@ Both self-tests touch nothing live and are safe to re-run at any time.
 
 ## Why the window is still closed
 
-The driver has been blocked three times by the coordinator, and is now at
-**revision 4**. Revisions 1-3 were never executed; do not resurrect any of them.
+The driver has been blocked four times by the coordinator, and is now at
+**revision 5**. Revisions 1-4 were never executed; do not resurrect any of them.
+Revision 5 differs from revision 4 only in text - the reviewer name in two
+commit-message templates - so every executable gate below is still revision 3's.
 
 ### STOP GATE 1 (2026-07-29T03:33:14Z) - six findings, answered in revision 2
 
@@ -121,8 +123,42 @@ produce a false `proof_complete`: the lease-refresh path emits no
 instead. With `pid_max=4194304` and the check running seconds after the runner
 exits, the window is negligible in any case.
 
-**The gate is still closed.** Revision 4 needs a coordinator/reviewer recheck
-before the window is opened.
+### STOP GATE 4 (2026-07-29T04:17:38Z) - assignment conflict, evidence-only fix
+
+Not a driver finding. After a Claude2 terminal streak the orchestrator
+auto-reassigned the task to Antigravity, whose Gemini weekly quota is exhausted;
+the coordinator restored the configured owner (Claude2) and reviewer (Codex2)
+and ordered the task-scoped evidence corrected before any live execution.
+
+`Codex4` never existed as a dispatchable lane. Verified directly rather than
+taken on trust:
+
+```text
+/home/lupin/oday-plus-supervisor-live/.orchestrator/config.json agents:
+  claude claude2 claude3 antigravity antigravity2 codex codex2
+  antigravity3 antigravity4 antigravity5 antigravity6 antigravity7
+/home/lupin/oday-plus/.orchestrator/config.json agents:
+  (same, without claude3)
+```
+
+Neither Supervisor config contains `codex4`, so no `Codex4` worker could ever
+have been dispatched to review this task. (The name does appear in the
+`agents` list of the live `ai-status.json`, but that list is a registry
+accumulated from status writes - it is not the dispatch config, and it also
+holds several obviously corrupt entries such as whole blocker sentences.)
+Reviewer is `Codex2` in `ai-status.json`, and now also in this file, the fleet
+brief and the driver's two capture-commit trailer templates.
+
+One residual overclaim from revision 4 was found while re-running the checks and
+is fixed here: `../README.md` § 6 still said "the driver's own 16-check gate
+self-test". The self-test is 15 checks; the claim of having corrected 16→15
+"everywhere" had missed this line. Corrected.
+
+Nothing executable changed in revision 5: gate logic, thresholds, exit codes and
+ordering are byte-identical to revision 4, and the live state is untouched.
+
+**The gate is still closed.** Revision 5 needs the coordinator's exact-head
+recheck before the window is opened.
 
 ## Before you execute
 
@@ -130,7 +166,7 @@ before the window is opened.
 W=/tmp/pantheon-worker-worktrees/oday-plus-supervisor-live/odp-orch-claude-deferred-approval-live-rollout-001
 EV=$W/docs/evidence/runtime/ODP-ORCH-CLAUDE-DEFERRED-APPROVAL-LIVE-ROLLOUT-001
 
-# 1. Confirm the gate has been lifted for revision 4 (not for an older one).
+# 1. Confirm the gate has been lifted for revision 5 (not for an older one).
 # 2. Re-run the cheap checks - none of them touch anything live.
 bash -n $EV/runbook/live-boot-reconciliation-driver.sh
 python3 -m py_compile $EV/runbook/assert-boot-reconciliation.py
@@ -201,9 +237,9 @@ cd /home/lupin/oday-plus-supervisor-live && python3 .orchestrator/approval_queue
 cd /home/lupin/oday-plus && python3 .orchestrator/approval_queue.py list
 
 # 2. Fill in sections 6 and 7 of ../README.md from timeline/, then commit.
-# 3. Open the PR to dev and hand off to reviewer Codex4:
+# 3. Open the PR to dev and hand off to reviewer Codex2:
 cd $W && /usr/bin/gh pr create --base dev --head task/ODP-ORCH-CLAUDE-DEFERRED-APPROVAL-LIVE-ROLLOUT-001 ...
-AI_NAME=Claude2 python3 scripts/ai_status.py handoff ODP-ORCH-CLAUDE-DEFERRED-APPROVAL-LIVE-ROLLOUT-001 Codex4 "<summary>"
+AI_NAME=Claude2 python3 scripts/ai_status.py handoff ODP-ORCH-CLAUDE-DEFERRED-APPROVAL-LIVE-ROLLOUT-001 Codex2 "<summary>"
 # 4. Notify/unblock ODP-DEPLOY-WORKER-JOB-EXECUTION-001 (acceptance criterion).
 ```
 

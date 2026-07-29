@@ -835,7 +835,7 @@ Composes with: the deployed supervisor.py in the launch tree and live runtime.
 
 LLM-Agent: Claude2
 Task-ID: $TASK_ID
-Reviewer: Codex4
+Reviewer: Codex2
 Verified: driver capture only; suites recorded in preflight/
 EOF
 git -C "$WORKTREE" commit -F "$SIGNAL_DIR/commit-msg-capture.txt" >/dev/null 2>&1 \
@@ -961,7 +961,7 @@ Composes with: the capture commit from the same live run.
 
 LLM-Agent: Claude2
 Task-ID: $TASK_ID
-Reviewer: Codex4
+Reviewer: Codex2
 Verified: driver capture only; suites recorded in preflight/
 EOF
 git -C "$WORKTREE" commit -F "$SIGNAL_DIR/commit-msg-final.txt" >/dev/null 2>&1 \
