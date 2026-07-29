@@ -1203,8 +1203,11 @@ def _request_without_redirect(
 
 
 def _effective_port(parsed: urllib.parse.ParseResult) -> int | None:
-    if parsed.port is not None:
-        return parsed.port
+    try:
+        if parsed.port is not None:
+            return parsed.port
+    except (ValueError, Exception):
+        return None
     scheme = parsed.scheme.lower()
     if scheme == "https":
         return 443
@@ -1224,51 +1227,56 @@ def _is_safe_protected_redirect(
     if web_status not in {302, 303, 307, 308} or not isinstance(location, str) or not location.strip():
         return False
 
-    raw_location = location.strip()
-    request_url = f"{web_url.rstrip('/')}{protected_path}"
-    base_parsed = urllib.parse.urlparse(request_url)
-    resolved_url = urllib.parse.urljoin(request_url, raw_location)
-    target_parsed = urllib.parse.urlparse(resolved_url)
+    try:
+        raw_location = location.strip()
+        request_url = f"{web_url.rstrip('/')}{protected_path}"
+        base_parsed = urllib.parse.urlparse(request_url)
+        resolved_url = urllib.parse.urljoin(request_url, raw_location)
+        target_parsed = urllib.parse.urlparse(resolved_url)
 
-    # Reject userinfo / credentials in target URL
-    if target_parsed.username or target_parsed.password or "@" in target_parsed.netloc:
+        # Reject userinfo / credentials in target URL
+        if target_parsed.username or target_parsed.password or "@" in target_parsed.netloc:
+            return False
+
+        # Reject fragments in target URL
+        if target_parsed.fragment:
+            return False
+
+        # Scheme must match base scheme (reject scheme downgrade, e.g. https -> http)
+        base_scheme = base_parsed.scheme.lower()
+        target_scheme = target_parsed.scheme.lower()
+        if not base_scheme or base_scheme != target_scheme:
+            return False
+
+        # Hostname must match normalized base hostname
+        base_host = (base_parsed.hostname or "").lower()
+        target_host = (target_parsed.hostname or "").lower()
+        if not base_host or base_host != target_host:
+            return False
+
+        # Effective port must match (including default vs nondefault port mismatches)
+        base_port = _effective_port(base_parsed)
+        target_port = _effective_port(target_parsed)
+        if base_port is None or target_port is None or base_port != target_port:
+            return False
+
+        # Path must match expected target_path (e.g. /login)
+        if target_parsed.path != target_path:
+            return False
+
+        # returnTo parameter (parse_qs already URL-decodes values once; avoid double-decoding)
+        query_params = urllib.parse.parse_qs(target_parsed.query, keep_blank_values=True)
+        return_to_list = query_params.get("returnTo")
+        if not return_to_list or len(return_to_list) != 1:
+            return False
+
+        if return_to_list[0] != protected_path:
+            return False
+
+        return True
+    except (ValueError, Exception):
         return False
 
-    # Reject fragments in target URL
-    if target_parsed.fragment:
-        return False
-
-    # Scheme must match base scheme (reject scheme downgrade, e.g. https -> http)
-    base_scheme = base_parsed.scheme.lower()
-    target_scheme = target_parsed.scheme.lower()
-    if not base_scheme or base_scheme != target_scheme:
-        return False
-
-    # Hostname must match normalized base hostname
-    base_host = (base_parsed.hostname or "").lower()
-    target_host = (target_parsed.hostname or "").lower()
-    if not base_host or base_host != target_host:
-        return False
-
-    # Effective port must match (including default vs nondefault port mismatches)
-    if _effective_port(base_parsed) != _effective_port(target_parsed):
-        return False
-
-    # Path must match expected target_path (e.g. /login)
-    if target_parsed.path != target_path:
-        return False
-
-    # returnTo parameter must decode to exact expected protected route
-    query_params = urllib.parse.parse_qs(target_parsed.query, keep_blank_values=True)
-    return_to_list = query_params.get("returnTo")
-    if not return_to_list or len(return_to_list) != 1:
-        return False
-
-    decoded_return_to = urllib.parse.unquote(return_to_list[0])
-    if decoded_return_to != protected_path:
-        return False
-
-    return True
 
 
 

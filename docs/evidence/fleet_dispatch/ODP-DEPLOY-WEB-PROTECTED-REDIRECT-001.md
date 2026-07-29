@@ -39,9 +39,9 @@ Investigation confirmed:
      - **Fragments**: Rejects target URLs containing URL fragments.
      - **Scheme**: Must match request scheme exactly. Reject scheme downgrade (HTTPS base to HTTP target).
      - **Hostname**: Must match normalized base hostname.
-     - **Effective Port**: Must match (including default vs nondefault port mismatches e.g. 443 vs 8443).
+     - **Effective Port**: Must match (including default vs nondefault port mismatches e.g. 443 vs 8443). Malformed non-numeric ports (e.g. `:bad`) and out-of-range ports (e.g. `:99999`) raise `ValueError` in Python's `ParseResult.port`; `_effective_port` and `_is_safe_protected_redirect` catch `ValueError` and fail closed (`False`) instead of crashing smoke validation.
      - **Target Path**: Must strictly equal `/login`.
-     - **returnTo Parameter**: Decoded `returnTo` parameter must strictly equal the intended local protected route (`/operator`). Rejects external URLs, hostile paths, or subpaths.
+     - **returnTo Parameter**: `urllib.parse.parse_qs` already URL-decodes parameter values once. Unnecessary double decoding (`urllib.parse.unquote()`) was removed to prevent double-decoding vulnerabilities. The decoded parameter must strictly equal the intended local protected route (`/operator`). Rejects external URLs, hostile paths, subpaths, or double-encoded values (`%252Foperator`).
 
 2. **Deterministic Regression Tests (`tests/ops/test_cloud_run_live_deployment.py`)**:
    - Expanded `test_is_safe_protected_redirect_contract()` covering:
@@ -49,9 +49,11 @@ Investigation confirmed:
      - Relative `/login?returnTo=%2Foperator` safe redirect.
      - Rejection of HTTPS -> HTTP scheme downgrade.
      - Rejection of effective port mismatches (443 vs 8443).
+     - Rejection of malformed non-numeric ports (`:bad`).
+     - Rejection of out-of-range ports (`:99999`).
      - Rejection of userinfo in target location.
      - Rejection of target URL fragments.
-     - Rejection of hostile external `returnTo` parameter values (`https://attacker.com`, `/evil-path`, `/operator/extra`).
+     - Rejection of hostile external `returnTo` parameter values (`https://attacker.com`, `/evil-path`, `/operator/extra`, `%252Foperator`).
      - Rejection of hostile external host redirects (`https://attacker.com/login?returnTo=%2Foperator`).
      - Rejection of hostile protocol-relative redirects (`//attacker.com/login?returnTo=%2Foperator`).
      - Rejection of unauthenticated 200 OK responses (fail-closed auth preservation).
@@ -63,8 +65,9 @@ Investigation confirmed:
 
 ## 3. Verification Summary
 
-- `pytest tests/ops/test_cloud_run_live_deployment.py`: All 357 tests passed (including `test_is_safe_protected_redirect_contract`).
+- `pytest tests/ops/test_cloud_run_live_deployment.py`: All 357 tests passed (including `test_is_safe_protected_redirect_contract`, malformed port, and double-encoding tests).
 - `ruff check`: All checks passed clean on modified python files.
 - `vitest`: All web middleware auth unit tests passed clean (2/2 passed).
 - Zero Package 10 visual components, page layouts, design archives, or API business responses were modified.
+
 

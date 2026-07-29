@@ -752,6 +752,16 @@ def test_is_safe_protected_redirect_contract() -> None:
         web_url, 307, f"{web_url}:8443/login?returnTo=%2Foperator"
     ) is False
 
+    # Malformed non-numeric port rejection (must fail closed, not raise ValueError)
+    assert validator._is_safe_protected_redirect(
+        web_url, 307, f"{web_url}:bad/login?returnTo=%2Foperator"
+    ) is False
+
+    # Out-of-range port rejection (must fail closed, not raise ValueError)
+    assert validator._is_safe_protected_redirect(
+        web_url, 307, f"{web_url}:99999/login?returnTo=%2Foperator"
+    ) is False
+
     # Hostile userinfo rejection
     assert validator._is_safe_protected_redirect(
         web_url, 307, "https://user:pass@candidate-93ae1b2e75e1056c---oday-web-7sxbjoeozq-de.a.run.app/login?returnTo=%2Foperator"
@@ -771,6 +781,9 @@ def test_is_safe_protected_redirect_contract() -> None:
     ) is False
     assert validator._is_safe_protected_redirect(
         web_url, 307, "/login?returnTo=%2Foperator%2Fextra"
+    ) is False
+    assert validator._is_safe_protected_redirect(
+        web_url, 307, "/login?returnTo=%252Foperator"
     ) is False
 
     # Hostile external origin rejection
