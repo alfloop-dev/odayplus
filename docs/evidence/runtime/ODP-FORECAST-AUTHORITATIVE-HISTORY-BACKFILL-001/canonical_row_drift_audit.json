@@ -1,0 +1,356 @@
+{
+  "artifact": "canonical_row_drift_audit",
+  "task": "ODP-FORECAST-AUTHORITATIVE-HISTORY-BACKFILL-001",
+  "captured_at": "2026-07-29T03:04:44Z",
+  "captured_by": "Claude3",
+  "what_this_is": "The live PG15 source and PG16 target compared row for row across every core relation the activation copies, testing the two halves of this directory's opening claim: that no row on the target was invented, and that a row which reached the target is still the row the source holds.",
+  "read_only_in_effect": true,
+  "redaction": "counts, column names, dates and digests only; primary keys are read into process memory to compute set differences and are never emitted. The one published amount belongs to a reversed transaction and identifies nobody.",
+  "claim_under_test": "No fixture, synthetic, seed, spine, or auto-generated row is introduced anywhere in this task. Every transaction that reaches the target is a row that already existed in the approved legacy PostgreSQL source.",
+  "relations": [
+    {
+      "relation": "core.tenants",
+      "primary_key": [
+        "tenant_id"
+      ],
+      "grouped_by": "whole relation",
+      "compared_columns": 5,
+      "source_rows": 1354,
+      "target_rows": 1354,
+      "groups_identical": 0,
+      "groups_disagreeing": 1,
+      "injection": {
+        "target_only_rows": 0,
+        "verdict": "CLEAN",
+        "meaning": "A target row whose primary key the source does not hold was not copied from the approved source. Zero is the only passing value: it is what the directory's opening claim asserts."
+      },
+      "drift": {
+        "drifted_rows": 1354,
+        "drifted_columns": {
+          "updated_at": 1354
+        },
+        "timestamp_direction": {
+          "updated_at:source_newer": 1354
+        },
+        "source_only_rows": 0,
+        "meaning": "A shared primary key whose content differs. The target holds a copy taken before the source re-projected the record. source_only_rows is the ordinary backlog the pending activation exists to close, and is not a defect."
+      },
+      "per_group": [
+        {
+          "group": "*",
+          "source_rows": 1354,
+          "target_rows": 1354,
+          "target_only_rows": 0,
+          "source_only_rows": 0,
+          "drifted_rows": 1354,
+          "drifted_columns": {
+            "updated_at": 1354
+          }
+        }
+      ],
+      "elapsed_seconds": 1.5
+    },
+    {
+      "relation": "core.brands",
+      "primary_key": [
+        "brand_id"
+      ],
+      "grouped_by": "whole relation",
+      "compared_columns": 9,
+      "source_rows": 1354,
+      "target_rows": 1354,
+      "groups_identical": 0,
+      "groups_disagreeing": 1,
+      "injection": {
+        "target_only_rows": 0,
+        "verdict": "CLEAN",
+        "meaning": "A target row whose primary key the source does not hold was not copied from the approved source. Zero is the only passing value: it is what the directory's opening claim asserts."
+      },
+      "drift": {
+        "drifted_rows": 1354,
+        "drifted_columns": {
+          "updated_at": 1354
+        },
+        "timestamp_direction": {
+          "updated_at:source_newer": 1354
+        },
+        "source_only_rows": 0,
+        "meaning": "A shared primary key whose content differs. The target holds a copy taken before the source re-projected the record. source_only_rows is the ordinary backlog the pending activation exists to close, and is not a defect."
+      },
+      "per_group": [
+        {
+          "group": "*",
+          "source_rows": 1354,
+          "target_rows": 1354,
+          "target_only_rows": 0,
+          "source_only_rows": 0,
+          "drifted_rows": 1354,
+          "drifted_columns": {
+            "updated_at": 1354
+          }
+        }
+      ],
+      "elapsed_seconds": 1.0
+    },
+    {
+      "relation": "core.address_locations",
+      "primary_key": [
+        "address_id"
+      ],
+      "grouped_by": "whole relation",
+      "compared_columns": 18,
+      "source_rows": 2405,
+      "target_rows": 2405,
+      "groups_identical": 0,
+      "groups_disagreeing": 1,
+      "injection": {
+        "target_only_rows": 0,
+        "verdict": "CLEAN",
+        "meaning": "A target row whose primary key the source does not hold was not copied from the approved source. Zero is the only passing value: it is what the directory's opening claim asserts."
+      },
+      "drift": {
+        "drifted_rows": 2405,
+        "drifted_columns": {
+          "geom": 1493,
+          "normalized_address": 1,
+          "raw_address": 1,
+          "updated_at": 2405
+        },
+        "timestamp_direction": {
+          "updated_at:source_newer": 2405
+        },
+        "source_only_rows": 0,
+        "meaning": "A shared primary key whose content differs. The target holds a copy taken before the source re-projected the record. source_only_rows is the ordinary backlog the pending activation exists to close, and is not a defect."
+      },
+      "per_group": [
+        {
+          "group": "*",
+          "source_rows": 2405,
+          "target_rows": 2405,
+          "target_only_rows": 0,
+          "source_only_rows": 0,
+          "drifted_rows": 2405,
+          "drifted_columns": {
+            "geom": 1493,
+            "normalized_address": 1,
+            "raw_address": 1,
+            "updated_at": 2405
+          }
+        }
+      ],
+      "elapsed_seconds": 6.0
+    },
+    {
+      "relation": "core.stores",
+      "primary_key": [
+        "store_id"
+      ],
+      "grouped_by": "whole relation",
+      "compared_columns": 19,
+      "source_rows": 2442,
+      "target_rows": 2442,
+      "groups_identical": 0,
+      "groups_disagreeing": 1,
+      "injection": {
+        "target_only_rows": 0,
+        "verdict": "CLEAN",
+        "meaning": "A target row whose primary key the source does not hold was not copied from the approved source. Zero is the only passing value: it is what the directory's opening claim asserts."
+      },
+      "drift": {
+        "drifted_rows": 2442,
+        "drifted_columns": {
+          "updated_at": 2442
+        },
+        "timestamp_direction": {
+          "updated_at:source_newer": 2442
+        },
+        "source_only_rows": 0,
+        "meaning": "A shared primary key whose content differs. The target holds a copy taken before the source re-projected the record. source_only_rows is the ordinary backlog the pending activation exists to close, and is not a defect."
+      },
+      "per_group": [
+        {
+          "group": "*",
+          "source_rows": 2442,
+          "target_rows": 2442,
+          "target_only_rows": 0,
+          "source_only_rows": 0,
+          "drifted_rows": 2442,
+          "drifted_columns": {
+            "updated_at": 2442
+          }
+        }
+      ],
+      "elapsed_seconds": 1.5
+    },
+    {
+      "relation": "core.machines",
+      "primary_key": [
+        "machine_id"
+      ],
+      "grouped_by": "whole relation",
+      "compared_columns": 16,
+      "source_rows": 7562,
+      "target_rows": 7562,
+      "groups_identical": 0,
+      "groups_disagreeing": 1,
+      "injection": {
+        "target_only_rows": 0,
+        "verdict": "CLEAN",
+        "meaning": "A target row whose primary key the source does not hold was not copied from the approved source. Zero is the only passing value: it is what the directory's opening claim asserts."
+      },
+      "drift": {
+        "drifted_rows": 7551,
+        "drifted_columns": {
+          "updated_at": 7551
+        },
+        "timestamp_direction": {
+          "updated_at:source_newer": 7551
+        },
+        "source_only_rows": 0,
+        "meaning": "A shared primary key whose content differs. The target holds a copy taken before the source re-projected the record. source_only_rows is the ordinary backlog the pending activation exists to close, and is not a defect."
+      },
+      "per_group": [
+        {
+          "group": "*",
+          "source_rows": 7562,
+          "target_rows": 7562,
+          "target_only_rows": 0,
+          "source_only_rows": 0,
+          "drifted_rows": 7551,
+          "drifted_columns": {
+            "updated_at": 7551
+          }
+        }
+      ],
+      "elapsed_seconds": 3.9
+    },
+    {
+      "relation": "core.transactions",
+      "primary_key": [
+        "transaction_id"
+      ],
+      "grouped_by": "((event_time AT TIME ZONE 'UTC')::date)::text",
+      "compared_columns": 21,
+      "source_rows": 566838,
+      "target_rows": 376998,
+      "groups_identical": 42,
+      "groups_disagreeing": 5,
+      "injection": {
+        "target_only_rows": 0,
+        "verdict": "CLEAN",
+        "meaning": "A target row whose primary key the source does not hold was not copied from the approved source. Zero is the only passing value: it is what the directory's opening claim asserts."
+      },
+      "drift": {
+        "drifted_rows": 1847,
+        "drifted_columns": {
+          "discount_amount": 1,
+          "ingested_at": 1847,
+          "net_amount": 1,
+          "observation_time": 1847,
+          "payment_time": 1,
+          "transaction_status": 1
+        },
+        "timestamp_direction": {
+          "ingested_at:source_newer": 1847,
+          "observation_time:source_newer": 1847
+        },
+        "source_only_rows": 12708,
+        "meaning": "A shared primary key whose content differs. The target holds a copy taken before the source re-projected the record. source_only_rows is the ordinary backlog the pending activation exists to close, and is not a defect."
+      },
+      "per_group": [
+        {
+          "group": "2026-05-22",
+          "source_rows": 6794,
+          "target_rows": 3,
+          "target_only_rows": 0,
+          "source_only_rows": 6791,
+          "drifted_rows": 3,
+          "drifted_columns": {
+            "ingested_at": 3,
+            "observation_time": 3
+          }
+        },
+        {
+          "group": "2026-06-23",
+          "source_rows": 6160,
+          "target_rows": 6160,
+          "target_only_rows": 0,
+          "source_only_rows": 0,
+          "drifted_rows": 1839,
+          "drifted_columns": {
+            "ingested_at": 1839,
+            "observation_time": 1839
+          }
+        },
+        {
+          "group": "2026-06-27",
+          "source_rows": 11486,
+          "target_rows": 11486,
+          "target_only_rows": 0,
+          "source_only_rows": 0,
+          "drifted_rows": 1,
+          "drifted_columns": {
+            "ingested_at": 1,
+            "observation_time": 1
+          }
+        },
+        {
+          "group": "2026-07-02",
+          "source_rows": 6798,
+          "target_rows": 881,
+          "target_only_rows": 0,
+          "source_only_rows": 5917,
+          "drifted_rows": 0,
+          "drifted_columns": {}
+        },
+        {
+          "group": "2026-07-26",
+          "source_rows": 12084,
+          "target_rows": 12084,
+          "target_only_rows": 0,
+          "source_only_rows": 0,
+          "drifted_rows": 4,
+          "drifted_columns": {
+            "discount_amount": 1,
+            "ingested_at": 4,
+            "net_amount": 1,
+            "observation_time": 4,
+            "payment_time": 1,
+            "transaction_status": 1
+          }
+        }
+      ],
+      "elapsed_seconds": 225.0
+    }
+  ],
+  "view_material_impact": {
+    "view_filter": "transaction_status::text = 'succeeded' AND currency::text = 'TWD'",
+    "flagged_days": [
+      "2026-05-22",
+      "2026-06-23",
+      "2026-06-27",
+      "2026-07-02",
+      "2026-07-26"
+    ],
+    "transactions_admitted_by_source": 508912,
+    "transactions_admitted_by_target": 340793,
+    "rows_whose_admission_differs": 1,
+    "rows_admitted_by_both_with_a_different_net_amount": 0,
+    "reversals": [
+      {
+        "source_status": "refunded",
+        "target_status": "succeeded",
+        "source_net_amount": "0.00",
+        "target_net_amount": "230.00",
+        "consequence": "the target admits this row to the training view and the source does not"
+      }
+    ],
+    "meaning": "A row the target admits and the source does not is a transaction the view counts as revenue after the source recorded that it was not. It reaches a training label as a real sale. No amount here identifies anyone; the transaction, store and tenant ids are never read out."
+  },
+  "summary": {
+    "injected_rows_across_all_relations": 0,
+    "drifted_rows_across_all_relations": 16953,
+    "injection_verdict": "CLEAN",
+    "drift_verdict": "STALE_TARGET_ROWS_PRESENT"
+  }
+}

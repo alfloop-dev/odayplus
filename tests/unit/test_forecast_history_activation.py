@@ -250,12 +250,31 @@ def test_source_catalog_degrades_when_a_source_relation_is_absent() -> None:
     assert catalog["canonical_transactions"]["available"] is True
 
 
-def test_only_lifecycle_relations_converge_and_only_lineage_prunes() -> None:
-    """Immutable records must never be rewritten or dropped by a replay."""
+def test_every_relation_converges_and_only_lineage_prunes() -> None:
+    """The target mirrors the source, and only lineage may drop a row.
+
+    This assertion used to read ``refreshing == {ingestion_runs,
+    canonical_lineage}`` under the title "immutable records must never be
+    rewritten by a replay". The premise was false and the test was holding it in
+    place. ``core.transactions`` is not immutable in the source:
+    ``apps/data_platform/store.py`` re-projects a changed upstream record with
+    ``ON CONFLICT (transaction_id) DO UPDATE`` across every column
+    ``forecast_training_view`` reads. Freezing the target against that is not
+    conservatism, it is a stale read -- measured in
+    ``canonical_row_drift_audit.json`` as 1 847 drifted transaction rows, one of
+    them a source ``refunded``/0.00 that the target still reported as
+    ``succeeded``/230.00 and the view still counted as revenue.
+
+    What is genuinely unsafe is DELETION, and that is what stays narrow.
+    """
 
     refreshing = {r.qualified for r in ACTIVATION_RELATIONS if r.refresh_key}
     pruning = {r.qualified for r in ACTIVATION_RELATIONS if r.prune_superseded_by}
-    assert refreshing == {"data_plane.ingestion_runs", "data_plane.canonical_lineage"}
+    assert refreshing == {r.qualified for r in ACTIVATION_RELATIONS}, (
+        "every activation relation must be able to converge on the source; a "
+        "relation left without a refresh key freezes at whatever the first copy "
+        "saw and can never be corrected"
+    )
     assert pruning == {"data_plane.canonical_lineage"}
 
     runs = next(r for r in ACTIVATION_RELATIONS if r.table == "ingestion_runs")
@@ -263,6 +282,33 @@ def test_only_lifecycle_relations_converge_and_only_lineage_prunes() -> None:
     assert runs.refresh_key == ("run_id",)
     assert lineage.prune_superseded_by == ("run_id", "canonical_id")
     assert lineage.prune_keep_key == ("canonical_id",)
+
+
+def test_core_relations_refresh_on_their_primary_key_and_never_prune() -> None:
+    """A ``core`` row may be corrected in place and must never be deleted.
+
+    The refresh key has to be the primary key: it is the only column set that
+    matches a target row one-for-one, so anything wider would leave drifted rows
+    behind and anything narrower would let one staged row rewrite several
+    targets. And no ``core`` relation prunes -- the source selection carries no
+    predicate there, so a missing staged row would mean a read failure rather
+    than a supersession, and deleting on that basis could strip real history.
+    """
+
+    expected = {
+        "core.tenants": ("tenant_id",),
+        "core.brands": ("brand_id",),
+        "core.address_locations": ("address_id",),
+        "core.stores": ("store_id",),
+        "core.machines": ("machine_id",),
+        "core.transactions": ("transaction_id",),
+    }
+    for relation in ACTIVATION_RELATIONS:
+        if relation.schema != "core":
+            continue
+        assert relation.refresh_key == expected[relation.qualified]
+        assert relation.prune_superseded_by == ()
+        assert relation.source_predicate is None
 
 
 def test_every_pruning_relation_can_also_refresh_in_place() -> None:

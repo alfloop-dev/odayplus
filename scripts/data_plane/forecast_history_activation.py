@@ -88,14 +88,37 @@ class Relation:
 
     ``refresh_key``
         Columns identifying an already-present target row whose remaining
-        columns should be re-read from the source. Use only where the source
-        legitimately advances a row in place -- an ingestion run reaching a
-        terminal status, or a lineage pointer moving to the run that superseded
-        an abandoned one -- never to rewrite the record a row describes.
+        columns should be re-read from the source.
         A relation that prunes needs one whenever an updated source row keeps
         its target primary key, because the insert cannot deliver such a row and
         the prune would otherwise delete the stale one with nothing to replace
         it.
+
+        This field used to carry the restriction "never to rewrite the record a
+        row describes" -- refresh the lifecycle, freeze the facts. That reads as
+        conservative and is the opposite: it is what froze a refund out of the
+        target. ``apps/data_platform/store.py`` re-projects a changed upstream
+        record with ``ON CONFLICT (transaction_id) DO UPDATE``, rewriting every
+        column ``model_ready.forecast_training_view`` reads -- ``store_id``,
+        ``event_time``, ``observation_time``, ``ingested_at``, ``net_amount``,
+        ``transaction_status``, ``currency``. A target row copied before such a
+        re-projection can then never be revisited, which is Defect B's mechanism
+        applied to the fact table instead of to the ledger. Measured before this
+        changed (``canonical_row_drift_audit.json``): one 2026-07-26 transaction
+        stood at ``refunded``/0.00 in the source and ``succeeded``/230.00 on the
+        target, so the view counted a refund as a sale and put phantom revenue
+        into a training label, and 1 846 further rows carried stale
+        ``observation_time``/``ingested_at`` -- every drift in the direction of
+        the target holding the older version, none the other way.
+
+        The restriction assumed the target might own something worth protecting.
+        It does not: every ``core`` relation here is a copy of the approved
+        legacy source, which is itself written only by the governed data plane.
+        So the rule is now the mirror rule -- the source is authoritative for the
+        whole row -- and the guard against overreach is ``refresh_sql``'s
+        ``IS DISTINCT FROM``, which rewrites only what actually differs, plus the
+        absence of any ``prune_*`` on these relations, so a refresh can correct a
+        record and can never remove one.
     ``prune_superseded_by``
         Columns identifying a target row that no longer exists in the source
         selection. Such rows are deleted, but only when the source still holds
@@ -123,13 +146,23 @@ class Relation:
 
 
 # Dependency ordered: parents before children, so every foreign key resolves.
+#
+# Every ``core`` relation refreshes on its own primary key. The target holds no
+# authority of its own -- it is a copy of the approved legacy source -- so a row
+# that differs is a stale copy, not a local decision, and leaving it frozen is
+# what let a refunded transaction keep reporting itself as a sale. Measured
+# drift at the time this was added, all of it source-newer:
+# ``core.transactions`` 1 847 rows (one of them a status/amount reversal the
+# view reads), ``core.address_locations`` 2 405, and ``tenants`` / ``brands`` /
+# ``stores`` / ``machines`` in ``updated_at`` only. None of these relations
+# prunes, so a refresh can only correct a row, never remove one.
 ACTIVATION_RELATIONS: tuple[Relation, ...] = (
-    Relation("core", "tenants"),
-    Relation("core", "brands"),
-    Relation("core", "address_locations"),
-    Relation("core", "stores"),
-    Relation("core", "machines"),
-    Relation("core", "transactions"),
+    Relation("core", "tenants", refresh_key=("tenant_id",)),
+    Relation("core", "brands", refresh_key=("brand_id",)),
+    Relation("core", "address_locations", refresh_key=("address_id",)),
+    Relation("core", "stores", refresh_key=("store_id",)),
+    Relation("core", "machines", refresh_key=("machine_id",)),
+    Relation("core", "transactions", refresh_key=("transaction_id",)),
     # An ingestion run copied while it was still RUNNING must be allowed to
     # reach its source terminal status, otherwise the target pins
     # ``source_run_complete`` false forever.
