@@ -1,0 +1,17 @@
+$ python3 -m pytest tests/ops/test_deploy_workflow_contract.py tests/ops/test_cloud_run_live_deployment.py
+E        +  where 1 = CompletedProcess(args=['/bin/bash', '/tmp/pantheon-worker-worktrees/oday-plus-supervisor-live/odp-deploy-job-receipt-u... stdout='=== Starting ODay Plus Cloud Run Deployment ===\n', stderr="Error: required command 'uv' is not installed.\n").returncode
+
+tests/ops/test_cloud_run_live_deployment.py:312: AssertionError
+=========================== short test summary info ============================
+FAILED tests/ops/test_cloud_run_live_deployment.py::test_deploy_preflight_imports_runtime_dependencies_via_locked_python
+1 failed, 363 passed in 23.62s
+
+$ python3 -m ruff check tests/ops/test_deploy_workflow_contract.py
+All checks passed!
+
+$ python3 -m ruff format --check <same files>
+2 files already formatted
+
+$ python3 -c 'yaml.safe_load(deploy-dev.yml)'  # workflow syntax
+parsed OK; jobs: ['e2e-operational-evidence', 'deploy']
+deploy steps: 13
