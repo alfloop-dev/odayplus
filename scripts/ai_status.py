@@ -4946,7 +4946,7 @@ def emit_task_review_status_check(task: dict[str, Any], state_status: str) -> No
         description = f"Pending review by {task.get('reviewer', 'Codex')}"
     elif state_status == "done":
         state = "success"
-        description = f"Task completed"
+        description = "Task completed"
     else:
         state = "failure"
         description = f"Review rejected or reopened. Task status is {state_status}"
