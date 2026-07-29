@@ -1,0 +1,91 @@
+STOP GATE 9 (reviewer Codex2, 2026-07-29T05:45:54Z) - reproduction
+ODP-ORCH-CLAUDE-DEFERRED-APPROVAL-LIVE-ROLLOUT-001 / owner Claude2
+captured: 2026-07-29T05:53:54Z
+
+The finding: probe_region_scan() printed every violation it found and then
+exited 0 whenever the sentinels were present. The driver header, ../README.md,
+the runbook and the revision-9 commit message all said the scan *fails* on any
+raw systemctl/systemd-run call or unbounded-reader call - and the committed
+STOP GATE 8 reproduction itself recorded `raw=4 reader=6` followed by `rc=0`.
+
+Both scanners are extracted mechanically, never retyped: revision 9's out of
+git, revision 10's out of the working tree. Both are run over the same regions -
+revision 8's probe region (the one with four raw calls and six unbounded reader
+calls), revision 10's, and a file with no sentinels - so the only variable is
+the scanner.
+
+$ git show 0d04080c:<driver> | sed -n '/^probe_region_scan() {/,/^}$/p' > scanner-rev9.sh   # 51 lines
+$ sed -n '/^probe_region_scan() {/,/^}$/p' <working-tree driver>            > scanner-rev10.sh  # 58 lines
+$ sed -n '373,579p' rev8-driver.sh          > rev8-region.sh   # probe_cmd()..killmode_probe(), wrapped in the sentinels
+$ sed -n '434,754p' <working-tree driver> > rev10-region.sh  # between its own sentinels
+$ : > no-sentinels.sh
+
+$ . scanner-rev9.sh && probe_region_scan rev8-region.sh   # revision 9 scanner, violating region
+region_lines=207 raw=4 reader=6
+raw: cg="$(systemctl --user show "$PROBE_UNIT.service" -p ControlGroup --value 2>/dev/null)"
+raw: systemctl --user reset-failed "$PROBE_UNIT.service" >/dev/null 2>&1
+raw: PROBE_MAIN_1="$(systemctl --user show "$PROBE_UNIT.service" -p MainPID --value 2>/dev/null)"
+raw: PROBE_MAIN_2="$(systemctl --user show "$PROBE_UNIT.service" -p MainPID --value 2>/dev/null)"
+reader: [[ "$(load_state "$PROBE_UNIT.service")" == not-found ]] && break
+reader: PROBE_UNIT_LOAD_AFTER="$(load_state "$PROBE_UNIT.service")"
+reader: PROBE_UNIT_ACTIVE_AFTER="$(active_state "$PROBE_UNIT.service")"
+reader: PROBE_UNIT_SUB_AFTER="$(sub_state "$PROBE_UNIT.service")"
+reader: PROBE_STATE_AFTER_STOP="$(active_state "$PROBE_UNIT.service")/$(sub_state "$PROBE_UNIT.service")/$(load_state "$PROBE_UNIT.service")"
+reader: [[ "$PROBE_START_RC" -eq 0 && "$(active_state "$PROBE_UNIT.service")" == active         && -n "$PROBE_MAIN_2" && "$PROBE_MAIN_2" != "0" && "$PROBE_MAIN_2" != "$
+rc=0
+
+$ . scanner-rev10.sh && probe_region_scan rev8-region.sh   # revision 10 scanner, same region
+region_lines=207 raw=4 reader=6
+raw: cg="$(systemctl --user show "$PROBE_UNIT.service" -p ControlGroup --value 2>/dev/null)"
+raw: systemctl --user reset-failed "$PROBE_UNIT.service" >/dev/null 2>&1
+raw: PROBE_MAIN_1="$(systemctl --user show "$PROBE_UNIT.service" -p MainPID --value 2>/dev/null)"
+raw: PROBE_MAIN_2="$(systemctl --user show "$PROBE_UNIT.service" -p MainPID --value 2>/dev/null)"
+reader: [[ "$(load_state "$PROBE_UNIT.service")" == not-found ]] && break
+reader: PROBE_UNIT_LOAD_AFTER="$(load_state "$PROBE_UNIT.service")"
+reader: PROBE_UNIT_ACTIVE_AFTER="$(active_state "$PROBE_UNIT.service")"
+reader: PROBE_UNIT_SUB_AFTER="$(sub_state "$PROBE_UNIT.service")"
+reader: PROBE_STATE_AFTER_STOP="$(active_state "$PROBE_UNIT.service")/$(sub_state "$PROBE_UNIT.service")/$(load_state "$PROBE_UNIT.service")"
+reader: [[ "$PROBE_START_RC" -eq 0 && "$(active_state "$PROBE_UNIT.service")" == active         && -n "$PROBE_MAIN_2" && "$PROBE_MAIN_2" != "0" && "$PROBE_MAIN_2" != "$
+scan: FAIL /tmp/odp-gate9-repro/rev8-region.sh - 4 raw, 6 unbounded-reader
+rc=2
+
+$ . scanner-rev9.sh && probe_region_scan rev10-region.sh   # revision 9 scanner, clean region
+region_lines=319 raw=0 reader=0
+rc=0
+
+$ . scanner-rev10.sh && probe_region_scan rev10-region.sh   # revision 10 scanner, clean region
+region_lines=319 raw=0 reader=0
+scan: OK /tmp/odp-gate9-repro/rev10-region.sh - probe region routed through probe_cmd/probe_query
+rc=0
+
+$ . scanner-rev9.sh && probe_region_scan no-sentinels.sh   # revision 9 scanner, no sentinels
+region_lines=0 raw=-1 reader=-1
+scan: probe region sentinels not found in /tmp/odp-gate9-repro/no-sentinels.sh
+rc=1
+
+$ . scanner-rev10.sh && probe_region_scan no-sentinels.sh   # revision 10 scanner, no sentinels
+region_lines=0 raw=-1 reader=-1
+scan: probe region sentinels not found in /tmp/odp-gate9-repro/no-sentinels.sh
+rc=1
+
+Reading of the result
+---------------------
+The printed counts are identical under both scanners - detection was never the
+problem and revision 10 changes none of it. The return code is the whole
+finding:
+
+  violating region   revision 9: rc=0   revision 10: rc=2
+  clean region       revision 9: rc=0   revision 10: rc=0
+  no sentinels       revision 9: rc=1   revision 10: rc=1
+
+rc=0 on a region carrying ten bypasses is exactly what the docs claimed could
+not happen, and it is what the committed STOP GATE 8 receipt recorded. A caller
+writing the documented form - `probe_region_scan "$f" || fail` - would have read
+revision 8's bypassed probe as clean. Revision 10 keeps the missing-sentinel
+code at 1 and gives violations their own code, 2, so "there is no probe region
+in this file" cannot be confused with "this probe region is bypassed".
+
+The driver's --selftest now asserts the return code directly in every shape -
+this driver, a routed-only fixture, a both-bypasses fixture, a raw-only fixture,
+a reader-only fixture and a file with no sentinels - instead of only the printed
+counts: 63 -> 71 checks. See preflight/driver-gate-selftest.txt.

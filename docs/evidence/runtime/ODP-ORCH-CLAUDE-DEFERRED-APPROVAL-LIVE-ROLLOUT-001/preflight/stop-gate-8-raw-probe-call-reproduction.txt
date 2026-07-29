@@ -1,0 +1,72 @@
+STOP GATE 8 (reviewer Codex2, 2026-07-29T05:26:49Z) - reproduction
+ODP-ORCH-CLAUDE-DEFERRED-APPROVAL-LIVE-ROLLOUT-001 / owner Claude2
+captured: 2026-07-29T05:36:43Z
+regenerated against the revision-10 working tree: 2026-07-29T05:54:26Z
+
+The finding: the driver header and the runbook claimed every
+systemctl/systemd-run call in the phase-1 probe was timeout-bounded with rc
+and stderr captured. In revision 8 only the five mutating calls were.
+Below, the working tree's static scanner is run over BOTH revisions' probe
+regions. Neither region is retyped: revision 8's is cut out of git by line
+number, the current one is cut out of the working tree between its sentinels,
+and the scanner function itself is extracted from the working-tree driver
+with sed rather than reimplemented here.
+
+Regenerated because of STOP GATE 9: the run below previously ended in `rc=0`
+for a region with ten bypasses, since revision 9's scanner exited 0 whenever
+the sentinels were present. Revision 10 makes the return code the verdict
+(0 clean / 2 violation / 1 no region); the printed counts are unchanged.
+
+$ git show 6ca4726c:.../live-boot-reconciliation-driver.sh > rev8-driver.sh
+$ grep -n "^probe_cmd() {\|^killmode_probe() {" rev8-driver.sh
+373:probe_cmd() {
+495:killmode_probe() {
+# closing brace of killmode_probe():
+579
+$ sed -n "373,579p" rev8-driver.sh   # wrapped in the two sentinels
+$ grep -n "probe-region-begin\|probe-region-end" <working-tree driver>
+434:# >>> probe-region-begin <<<
+754:# >>> probe-region-end <<<
+$ sed -n "434,754p" <working-tree driver> > rev10-region.sh
+$ sed -n "/^probe_region_scan() {/,/^}$/p" <working-tree driver> > scanner.sh
+$ . scanner.sh && probe_region_scan rev8-region.sh
+region_lines=207 raw=4 reader=6
+raw: cg="$(systemctl --user show "$PROBE_UNIT.service" -p ControlGroup --value 2>/dev/null)"
+raw: systemctl --user reset-failed "$PROBE_UNIT.service" >/dev/null 2>&1
+raw: PROBE_MAIN_1="$(systemctl --user show "$PROBE_UNIT.service" -p MainPID --value 2>/dev/null)"
+raw: PROBE_MAIN_2="$(systemctl --user show "$PROBE_UNIT.service" -p MainPID --value 2>/dev/null)"
+reader: [[ "$(load_state "$PROBE_UNIT.service")" == not-found ]] && break
+reader: PROBE_UNIT_LOAD_AFTER="$(load_state "$PROBE_UNIT.service")"
+reader: PROBE_UNIT_ACTIVE_AFTER="$(active_state "$PROBE_UNIT.service")"
+reader: PROBE_UNIT_SUB_AFTER="$(sub_state "$PROBE_UNIT.service")"
+reader: PROBE_STATE_AFTER_STOP="$(active_state "$PROBE_UNIT.service")/$(sub_state "$PROBE_UNIT.service")/$(load_state "$PROBE_UNIT.service")"
+reader: [[ "$PROBE_START_RC" -eq 0 && "$(active_state "$PROBE_UNIT.service")" == active         && -n "$PROBE_MAIN_2" && "$PROBE_MAIN_2" != "0" && "$PROBE_MAIN_2" != "$
+scan: FAIL /tmp/odp-gate9-repro/rev8-region.sh - 4 raw, 6 unbounded-reader
+rc=2
+
+$ . scanner.sh && probe_region_scan rev10-region.sh
+region_lines=319 raw=0 reader=0
+scan: OK /tmp/odp-gate9-repro/rev10-region.sh - probe region routed through probe_cmd/probe_query
+rc=0
+
+Reading of the result
+---------------------
+raw=4 in revision 8 is exactly the set the reviewer named: the ControlGroup
+query in probe_record_cgroup_pids, reset-failed in probe_cleanup (which also
+sent its stderr to /dev/null - verbatim the pattern that hid the revision-5
+defect), and the two MainPID reads in killmode_probe. reader=6 is the
+read-only state traffic that reached systemd through the shared unbounded
+readers instead of a bounded helper. All ten are unbounded, so none of them
+was covered by the dead-man budget either.
+
+raw=0 reader=0 in the current region is not self-certifying: --selftest runs
+the same scanner over a routed-only fixture (must report raw=0 reader=0 and
+exit 0), over fixtures containing one raw call, one reader call, and both
+(must report the offender and exit 2), and over a file with no sentinels
+(must exit 1). A scanner that reported 0 for everything, or that exited 0 on
+everything, would fail those checks.
+
+The rc=2 above is the STOP GATE 9 correction in effect: this same run
+recorded rc=0 under revision 9's scanner. The side-by-side of the two
+scanners over these same regions is in
+stop-gate-9-scanner-exit-code-reproduction.txt.

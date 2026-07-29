@@ -1,0 +1,13 @@
+ok    post-fix: correlation recorded                 want=PASS got=PASS
+ok    post-fix: failure after correlation (final)    want=PASS got=PASS
+ok    post-fix: same slice rejected pre-resolution   want=FAIL got=FAIL
+ok    pre-fix regression shape is rejected           want=FAIL got=FAIL
+ok    pre-fix regression shape is rejected (final)   want=FAIL got=FAIL
+ok    empty slice is rejected                        want=FAIL got=FAIL
+ok    missing slice is rejected                      want=FAIL got=FAIL
+ok    correlation without approval_id is rejected    want=FAIL got=FAIL
+ok    correlation for a different run is rejected    want=FAIL got=FAIL
+ok    queue write failure is rejected                want=FAIL got=FAIL
+ok    failure preceding correlation is rejected      want=FAIL got=FAIL
+
+all assertion self-tests passed

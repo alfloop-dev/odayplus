@@ -1,0 +1,89 @@
+# Deployment transcript — atomic publish of the exact merged scripts/ai_status.py
+# host date : 2026-07-29T07:49:44Z
+# driver    : deploy.py (same-dir sibling + verify + os.replace)
+# merge     : 1d07de67b1b6d75345feb55c2f35e6f39c41817a
+# backups   : /tmp/deploy-atomic-rehearsal-r3-backups/negative
+# MODE      : NEGATIVE REHEARSAL — payload is corrupted after hashing;
+#             the verification gate must abort before any rename.
+
+## source materialised from the merge commit blob (no working-tree copy)
+  blob        : 73800e2810e4b693f2e940beec582f3a6c27c7ef
+  sha256      : 5e19c1c1ef4729f32470956cad3e3fe5972cb92dee5225a5d65db16df074950d
+  bytes       : 203611
+
+## supervisor state BEFORE
+  Id                    : pantheon-supervisor.service
+  LoadState             : loaded
+  ActiveState           : active
+  SubState              : running
+  MainPID               : 1487837
+  ExecMainStartTimestamp: Wed 2026-07-29 06:08:57 UTC
+  NRestarts             : 0
+  process cmdline       : python3 -u .orchestrator/supervisor.py --verbose
+  process cwd           : /home/lupin/oday-plus-supervisor-live
+
+## preflight gate (evaluated before any target is touched)
+    PASS  unit loaded and active/running
+    PASS  MainPID is a live process whose cmdline is the Supervisor
+    PASS  continuity pinned to MainPID=1487837, ExecMainStartTimestamp=Wed 2026-07-29 06:08:57 UTC, NRestarts=0
+
+## target: /tmp/deploy-atomic-rehearsal-r3/scripts/ai_status.py
+  git branch          : master
+  git HEAD            : bf032ffc75a7b5adeb43d21d9e2d739f04223a80
+  dirty files         : 0
+  dirty inventory     : /tmp/deploy-atomic-rehearsal-r3-backups/negative/deploy-atomic-rehearsal-r3.dirty-before.txt
+  BEFORE sha256    : bad0e3c82f4bc582982309481144d5082237aba23182eec6eeff93dcdf3afe5b
+  BEFORE bytes     : 28
+  BEFORE mode      : 750
+  BEFORE inode     : 1902148
+  BEFORE device    : 2049
+  BEFORE mtime     : 2026-07-29T07:49:44Z
+  backup              : /tmp/deploy-atomic-rehearsal-r3-backups/negative/deploy-atomic-rehearsal-r3.ai_status.py.bak
+  backup sha256       : bad0e3c82f4bc582982309481144d5082237aba23182eec6eeff93dcdf3afe5b
+  rollback            : install -m 750 /tmp/deploy-atomic-rehearsal-r3-backups/negative/deploy-atomic-rehearsal-r3.ai_status.py.bak /tmp/deploy-atomic-rehearsal-r3/scripts/ai_status.py
+  staged sibling      : /tmp/deploy-atomic-rehearsal-r3/scripts/.ai_status.py.ODP-ORCH-ACTOR-REF-LIVE-ROLLOUT-001.1627825.tmp
+  sibling sha256      : 40649e0540e1ffd1eeb6f2a8584dd6d6ab98a5cdc5c2771db79e923072735cac
+  sibling bytes/mode  : 203611 / 750
+  verification before publishing:
+    PASS  same directory as target
+    PASS  same filesystem (rename is atomic)
+    FAIL  sha256 == merged blob
+    PASS  byte length == merged blob
+    PASS  mode == target's existing mode
+    FAIL  byte-for-byte compare vs blob
+  VERIFICATION FAILED -> sibling unlinked, target NOT touched, no rename issued
+  AFTER  sha256    : bad0e3c82f4bc582982309481144d5082237aba23182eec6eeff93dcdf3afe5b
+  AFTER  bytes     : 28
+  AFTER  mode      : 750
+  AFTER  inode     : 1902148
+  AFTER  device    : 2049
+  AFTER  mtime     : 2026-07-29T07:49:44Z
+  post-publish assertions:
+    PASS  target sha256 UNCHANGED by the aborted run
+    PASS  target bytes UNCHANGED
+    PASS  target mode UNCHANGED
+    PASS  target inode UNCHANGED (no rename was issued)
+    PASS  no temporary sibling left behind
+  leftover siblings   : none
+  dirty files after   : 0
+  every other dirty file unchanged : True
+
+## supervisor state AFTER
+  Id                    : pantheon-supervisor.service
+  LoadState             : loaded
+  ActiveState           : active
+  SubState              : running
+  MainPID               : 1487837
+  ExecMainStartTimestamp: Wed 2026-07-29 06:08:57 UTC
+  NRestarts             : 0
+  process cmdline       : python3 -u .orchestrator/supervisor.py --verbose
+  process cwd           : /home/lupin/oday-plus-supervisor-live
+
+## continuity gate
+    PASS  still active/running
+    PASS  MainPID identical: 1487837
+    PASS  ExecMainStartTimestamp identical: Wed 2026-07-29 06:08:57 UTC
+    PASS  NRestarts identical: 0
+# No systemctl start/stop/restart/reload was issued by this script.
+
+RESULT: PASS — verification gate aborted the corrupted payload and left every target byte-for-byte untouched

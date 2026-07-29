@@ -1,0 +1,42 @@
+probe_unit: odp-killmode-probe-1486390.service (transient; created once by systemd-run)
+probe_marker: odp-killmode-probe-marker-1486390-23015
+probe_unit_file_written: no
+probe_create_rc: 0
+probe_main_pid_1: 1486441
+probe_child_pid_1: 1486444
+probe_child_survived_stop: yes
+probe_unit_state_after_stop: inactive/dead/loaded
+probe_start_existing_unit_rc: 0
+probe_main_pid_2: 1486631
+probe_child_pid_2: 1486640
+probe_unit_restarted_with_leftover: yes
+probe_new_child_alive: yes
+probe_child_survived_restart: yes
+probe_cgroup: /user.slice/user-1001.slice/user@1001.service/app.slice/odp-killmode-probe-1486390.service
+probe_residual_pids: <none>
+probe_residual_cgroup: no
+probe_unit_after_cleanup: not-found/inactive/dead
+probe_residue_clean: yes
+probe_receipts_complete: yes
+probe_receipts_missing: <none>
+probe_receipt_count: 18 (declared max 43: 7 mutating @30s + 36 read-only @10s)
+probe_verdict: pass
+--- bounded command receipts (label, rc, stdout, stderr) ---
+systemd_run_create rc=0 stdout=<empty> stderr=Running as unit: odp-killmode-probe-1486390.service; invocation ID: 34b3442649e6488d9f051423e01f6a96
+show_main_pid_1 rc=0 stdout=1486441 stderr=<empty>
+show_cgroup rc=0 stdout=/user.slice/user-1001.slice/user@1001.service/app.slice/odp-killmode-probe-1486390.service stderr=<empty>
+stop rc=0 stdout=<empty> stderr=<empty>
+state_after_stop_active rc=0 stdout=inactive stderr=<empty>
+state_after_stop_sub rc=0 stdout=dead stderr=<empty>
+state_after_stop_load rc=0 stdout=loaded stderr=<empty>
+start_existing_unit rc=0 stdout=<empty> stderr=<empty>
+show_main_pid_2 rc=0 stdout=1486631 stderr=<empty>
+show_cgroup rc=0 stdout=/user.slice/user-1001.slice/user@1001.service/app.slice/odp-killmode-probe-1486390.service stderr=<empty>
+state_restart_active rc=0 stdout=active stderr=<empty>
+show_cgroup rc=0 stdout=/user.slice/user-1001.slice/user@1001.service/app.slice/odp-killmode-probe-1486390.service stderr=<empty>
+cleanup_stop rc=0 stdout=<empty> stderr=<empty>
+cleanup_reset_failed rc=1 stdout=<empty> stderr=Failed to reset failed state of unit odp-killmode-probe-1486390.service: Unit odp-killmode-probe-1486390.service not loaded.
+cleanup_wait_load rc=0 stdout=not-found stderr=<empty>
+cleanup_state_load rc=0 stdout=not-found stderr=<empty>
+cleanup_state_active rc=0 stdout=inactive stderr=<empty>
+cleanup_state_sub rc=0 stdout=dead stderr=<empty>
