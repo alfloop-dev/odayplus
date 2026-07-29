@@ -886,7 +886,8 @@ def test_is_safe_protected_redirect_rejects_ambiguous_or_unparsable_locations() 
         web_url, 307, f"https://@{host}/login?returnTo=%2Foperator"
     ) is False
 
-    # Empty / whitespace-only Location header.
+    # Missing / empty / whitespace-only Location header on a redirect status.
+    assert validator._is_safe_protected_redirect(web_url, 307, None) is False
     assert validator._is_safe_protected_redirect(web_url, 307, "") is False
     assert validator._is_safe_protected_redirect(web_url, 307, "   ") is False
 
@@ -902,6 +903,12 @@ def test_is_safe_protected_redirect_rejects_ambiguous_or_unparsable_locations() 
     ) is False
     assert validator._is_safe_protected_redirect(
         "", 307, "/login?returnTo=%2Foperator"
+    ) is False
+
+    # Only http/https origins have a defined effective port, so a non-web
+    # scheme fails closed even when scheme, host and path all agree.
+    assert validator._is_safe_protected_redirect(
+        f"ftp://{host}", 307, f"ftp://{host}/login?returnTo=%2Foperator"
     ) is False
 
 
