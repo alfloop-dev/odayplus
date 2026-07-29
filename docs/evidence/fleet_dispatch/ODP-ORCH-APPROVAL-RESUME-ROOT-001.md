@@ -1,6 +1,6 @@
 # ODP-ORCH-APPROVAL-RESUME-ROOT-001: fix cross-root deferred approval resume override
 
-Owner: Claude · Reviewer: Antigravity4 · Phase: Orchestrator Control Plane
+Owner: Claude · Reviewer: Antigravity6 (round 1: Antigravity4) · Phase: Orchestrator Control Plane
 
 Depends on ODP-ORCH-CLAUDE-DEFERRED-APPROVAL-LIVE-ROLLOUT-001 (done) and
 ODP-ORCH-ACTOR-REF-LIVE-ROLLOUT-001 (done).
@@ -11,9 +11,10 @@ live under `docs/evidence/runtime/ODP-ORCH-APPROVAL-RESUME-ROOT-001/`; every
 driver that produced them is committed next to its output so the reviewer can
 re-run any of it.
 
-**Status: implementation and proof complete; the live rollout is deliberately
-not executed.** See §7 — the acceptance criterion says deploy *the reviewed
-fix*, and this revision is not reviewed yet.
+**Status: reviewed, merged, and deployed.** Antigravity6 approved exact head
+`bb7d78c1` on 2026-07-29T09:52:26Z; PR #502 merged into `dev` as `bd818ad5` at
+09:57:00Z; the reviewed blobs were published to both authoritative roots at
+09:57:27Z. See §7 for the executed rollout record.
 
 ## 1. The live failure, reproduced from live state
 
@@ -307,44 +308,70 @@ files are mode 664 with no leftover siblings, and the control root's dirty
 inventory is unchanged at 580 files. Sandbox copies are now real files, never
 symlinks.
 
-## 7. What remains before `done`
+## 7. Executed rollout — 2026-07-29
 
-**Round 2 status: not deployed, and deliberately not deployable yet.** The
-round-1 approval (`review_approved`, Antigravity4 @2b729993, *"ready for
-post-merge deploy.py publish"*) was given against a blob that §6 shows would
-have denied every worker write. That approval does not carry over to the
-forward-ported revision, so the publish still has no reviewed source. The task
-therefore goes back to review rather than to `done`.
+The round-1 approval (`review_approved`, Antigravity4 @2b729993, *"ready for
+post-merge deploy.py publish"*) had
+been given against a blob that §6 shows would have denied every worker write, so
+it was returned to review rather than deployed. **Antigravity6 re-reviewed the
+forward-ported revision and approved exact head `bb7d78c1` at 09:52:26Z** (433
+unit tests passed, 10 deselected). Only then did the publish have a reviewed
+source, which is what the rollout criterion asks for.
 
-The rollout criterion is *"deploy the **reviewed** fix … and verify PID restart
-continuity"*. This revision has not been reviewed, and writing to
-`/home/lupin/oday-plus` and `/home/lupin/oday-plus-supervisor-live` mutates live
-fleet infrastructure outside this worktree. Per the rollout discipline
-established by ODP-ORCH-ACTOR-REF-LIVE-ROLLOUT-001, that is coordinator-gated
-and is not a worker's call to make unilaterally.
+Order actually followed: **merge first, publish second**, so what runs live is
+committed code rather than a worktree blob.
 
-So the live publish is **prepared and rehearsed but not executed**. After
-Antigravity4 approves and the PR merges into `dev`, the owner runs:
+1. **Merged.** PR #502 → `dev`, all four required contexts green
+   (`orchestrator`, `product`, `product-e2e-gate`, `task-review-gate` =
+   *"Approved by assigned reviewer Antigravity6"*), merge commit
+   `bd818ad5f95d0fcb23d3de2bda2664d8f15ebd9e` at 09:57:00Z, a real merge (not a
+   squash). The three deployed blobs at `bd818ad5` are byte-identical to the
+   reviewed head `bb7d78c1`, verified by `git cat-file blob` sha256 before the
+   driver ran.
 
-```bash
-python3 docs/evidence/runtime/ODP-ORCH-APPROVAL-RESUME-ROOT-001/deploy.py \
-  --source-ref <merge-commit> \
-  --backup-dir /tmp/odp-approval-resume-root-backup-<stamp> \
-  --root /home/lupin/oday-plus \
-  --root /home/lupin/oday-plus-supervisor-live \
-  | tee docs/evidence/runtime/ODP-ORCH-APPROVAL-RESUME-ROOT-001/deploy-transcript.txt
-```
+2. **Published.** `deploy.py --source-ref bd818ad5… --root /home/lupin/oday-plus
+   --root /home/lupin/oday-plus-supervisor-live`, transcript in
+   `deploy-transcript.txt`, backups in
+   `/tmp/odp-approval-resume-root-backup-20260729T095727Z`. 6/6 targets
+   published, payloads materialised from the commit (never from the working
+   tree), inode changed on every target, no leftover sibling, mode preserved,
+   `common.py` first as §5 requires, phase-3 import smoke test PASS on both
+   roots, and every other dirty file in both roots unchanged (the control root's
+   580-file dirty inventory is untouched).
 
-then re-runs `two_root_acceptance.py --broker-dir /home/lupin/oday-plus` against
-the deployed control root, **plus `control_root_drift_probe.py`, which must
-report `ALLOW (repo_write)` for both revisions it loads** — that is the check
-that would have caught §6 before the publish rather than after. It commits the
-transcript plus both receipts, and only then runs `scripts/ai-status.sh done`. The driver refuses to start (rc 2,
-nothing touched) unless the supervisor is `active/running` with a live
-Supervisor `MainPID`, and fails the run if `MainPID`,
-`ExecMainStartTimestamp` or `NRestarts` moved.
+3. **Continuity.** The Supervisor was never signalled — no `systemctl`
+   start/stop/restart/reload was issued. `MainPID 1487837`,
+   `ExecMainStartTimestamp Wed 2026-07-29 06:08:57 UTC`, `NRestarts 0`,
+   identical before and after, with `active/running` re-asserted after the last
+   rename.
+
+4. **Post-deploy acceptance, against the deployed bytes.**
+   `two_root_acceptance.py --broker-dir /home/lupin/oday-plus` →
+   `receipts/two-root-deployed-control-root.json`: verdict `resume_honoured`,
+   7/7 checks true, `broker_sha256 225c002a…` — i.e. the harness drove the
+   binary that is now wired into every worker's hook, not a copy of it.
+
+5. **The §6 regression check, run where it matters.**
+   `control_root_drift_probe.py` against *both deployed roots*
+   (`post-deploy-drift-probe.txt`): each reads `ORCH_WORKSPACE_PATH`, resolves
+   the live worker worktree into its allowed roots, and returns
+   `Write → ALLOW (repo_write)`. This is the check whose absence let round 1
+   nearly publish a fleet-stalling blob.
+
+6. **Drift ended.** All three modules are now byte-identical across the hook
+   root and the supervisor root, and identical to `dev`:
+
+   ```
+   common.py                      53dce620…   (was 1b5334ff… in both roots)
+   permission_broker.py           225c002a…   (was c4ecfe5a… control / 1ed64d46… live)
+   claude_permission_prompt_mcp.py 9d9e1913…  (was 9ba6c127… in both roots)
+   ```
 
 The two stale live queue records from §1 (`apr-20260729T082950Z-578a3304`
 pending in the control root, and the unconsumed override in the live root) were
 left exactly as found — they are the evidence, and reconciling them is
-supervisor work, not a hand edit.
+supervisor work, not a hand edit. Any *new* deferred approval from this point
+resolves against the authoritative root, which is the whole point of the fix.
+
+Rollback, if it is ever needed, is the one-line restore printed in
+`deploy-transcript.txt` against the backup directory above.
