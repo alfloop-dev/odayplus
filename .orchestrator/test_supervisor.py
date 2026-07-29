@@ -5778,6 +5778,305 @@ class ChairReviewDispatchTests(unittest.TestCase):
         self.assertEqual(write_activity_log.call_args.args[1]["type"], "chair_review_missing_report")
 
 
+class DeferredApprovalCorrelationTests(unittest.TestCase):
+    task_id = "ODP-DEPLOY-JOB-SECRET-BINDING-SELECTION-001"
+    command = "git commit -F /tmp/odp-secret-schema-msg.txt 2>&1 | tail -20"
+
+    def setUp(self) -> None:
+        self.tmpdir = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmpdir.cleanup)
+        self.root = Path(self.tmpdir.name)
+        self.config = {
+            "paths": {
+                "approval_queue": str(self.root / "approval-queue.json"),
+                "state_file": str(self.root / "state.json"),
+                "event_queue": str(self.root / "event-queue.jsonl"),
+                "activity_log": str(self.root / "activity-log.jsonl"),
+                "evidence_dir": str(self.root / "evidence"),
+                "status_file": str(self.root / "ai-status.json"),
+            },
+            "schema": {
+                "tasks_path": "tasks",
+                "task_id_field": "id",
+                "assignee_field": "owner",
+                "reviewer_field": "reviewer",
+            },
+            "supervisor": {"stall_after_seconds": 300},
+            "ready_dispatcher": {
+                "active_worker_statuses": [
+                    "running",
+                    "waiting_approval",
+                    "suspended_approval",
+                    "manual_pending",
+                ]
+            },
+            "providers": {"claude2": {"delivery_mode": "claude_cli"}},
+            "agents": {
+                "claude2": {"id": "claude2", "display_name": "Claude2"},
+                "codex6": {"id": "codex6", "display_name": "Codex6"},
+            },
+        }
+        (self.root / "event-queue.jsonl").write_text("", encoding="utf-8")
+        (self.root / "approval-queue.json").write_text(
+            json.dumps({"pending": [], "history": []}),
+            encoding="utf-8",
+        )
+        self.status = {
+            "tasks": [
+                {
+                    "id": self.task_id,
+                    "status": "in_progress",
+                    "owner": "Claude2",
+                    "reviewer": "Codex6",
+                }
+            ]
+        }
+
+    def _write_deferred_log(self) -> Path:
+        log_path = self.root / "claude2.log"
+        receipt = {
+            "is_error": False,
+            "stop_reason": "tool_deferred",
+            "session_id": "7d919ae4-893a-400b-b13f-b45e5115184b",
+            "terminal_reason": "tool_deferred",
+            "deferred_tool_use": {
+                "id": "toolu_01YZMtMekPkN7JQUG6AdSo1f",
+                "name": "Bash",
+                "input": {
+                    "command": self.command,
+                    "description": "Create task commit",
+                },
+            },
+            "type": "result",
+        }
+        log_path.write_text(json.dumps(receipt) + "\n", encoding="utf-8")
+        return log_path
+
+    def _state_for_deferred_log(self) -> dict[str, object]:
+        return {
+            "queue": {"events": {"evt-1": {"status": "started"}}},
+            "workers": {
+                "run-1": {
+                    "run_id": "run-1",
+                    "task_id": self.task_id,
+                    "provider": "claude2",
+                    "agent_id": "claude2",
+                    "status": "running",
+                    "queue_event_id": "evt-1",
+                    "pid": 999999,
+                    "log_path": str(self._write_deferred_log()),
+                    "last_event_at": "2026-07-28T16:48:00Z",
+                }
+            },
+        }
+
+    def _poll(self, state: dict[str, object], broker_decision: dict[str, str]) -> bool:
+        with (
+            mock.patch.object(
+                supervisor,
+                "load_approval_state",
+                return_value={"pending": [], "history": []},
+            ),
+            mock.patch.object(supervisor, "load_status", return_value=self.status),
+            mock.patch.object(supervisor, "load_provider_report", return_value={}),
+            mock.patch.object(supervisor, "retry_due_workers", return_value=False),
+            mock.patch.object(supervisor, "pid_is_alive", return_value=False),
+            mock.patch.object(
+                supervisor,
+                "_deferred_tool_broker_decision",
+                return_value=broker_decision,
+            ),
+        ):
+            return supervisor.poll_workers(self.config, state)
+
+    def test_normal_poll_makes_claude2_receipt_durable_before_dead_worker_cleanup(self) -> None:
+        state = self._state_for_deferred_log()
+
+        changed = self._poll(
+            state,
+            {"decision": "defer", "risk_class": "git_write"},
+        )
+
+        self.assertTrue(changed)
+        worker = state["workers"]["run-1"]
+        self.assertEqual(worker["status"], "suspended_approval")
+        self.assertEqual(worker["session_id"], "7d919ae4-893a-400b-b13f-b45e5115184b")
+        self.assertEqual(worker["deferred_tool_use"]["input"]["command"], self.command)
+        self.assertEqual(state["queue"]["events"]["evt-1"]["status"], "manual_pending")
+        approval_state = supervisor.load_approval_state(self.config)
+        self.assertEqual(len(approval_state["pending"]), 1)
+        approval = approval_state["pending"][0]
+        self.assertEqual(approval["worker_run_id"], "run-1")
+        self.assertEqual(approval["tool_use_id"], "toolu_01YZMtMekPkN7JQUG6AdSo1f")
+        self.assertEqual(approval["suggested_rule"], f"Bash({self.command})")
+        self.assertEqual(worker["deferred_action"], approval["approval_id"])
+
+    def test_boot_reconciliation_correlates_flushed_receipt_before_missing_process_failure(self) -> None:
+        state = self._state_for_deferred_log()
+
+        with (
+            mock.patch.object(supervisor, "load_status", return_value=self.status),
+            mock.patch.object(supervisor, "pid_is_alive", return_value=False),
+            mock.patch.object(
+                supervisor,
+                "_deferred_tool_broker_decision",
+                return_value={"decision": "defer", "risk_class": "git_write"},
+            ),
+            mock.patch.object(supervisor, "write_activity_log") as write_activity_log,
+        ):
+            changed = supervisor.reconcile_runtime_on_boot(self.config, state)
+
+        self.assertTrue(changed)
+        worker = state["workers"]["run-1"]
+        self.assertEqual(worker["status"], "waiting_approval")
+        self.assertEqual(worker["session_id"], "7d919ae4-893a-400b-b13f-b45e5115184b")
+        self.assertEqual(worker["deferred_tool_use"]["id"], "toolu_01YZMtMekPkN7JQUG6AdSo1f")
+        self.assertEqual(state["queue"]["events"]["evt-1"]["status"], "started")
+        approval_state = supervisor.load_approval_state(self.config)
+        self.assertEqual(len(approval_state["pending"]), 1)
+        self.assertEqual(approval_state["pending"][0]["worker_run_id"], "run-1")
+        activity_types = [call.args[1]["type"] for call in write_activity_log.call_args_list]
+        self.assertNotIn("worker_failed", activity_types)
+        metrics = state.get("worker_runtime_metrics", {})
+        self.assertEqual(metrics.get("totals", {}).get("missing_process_workers_failed", 0), 0)
+
+    def test_boot_reconciliation_fails_closed_when_receipt_cannot_be_persisted(self) -> None:
+        state = self._state_for_deferred_log()
+
+        with (
+            mock.patch.object(supervisor, "load_status", return_value=self.status),
+            mock.patch.object(supervisor, "pid_is_alive", return_value=False),
+            mock.patch.object(
+                supervisor,
+                "correlate_deferred_tool_approval",
+                side_effect=OSError("approval queue unavailable"),
+            ),
+            mock.patch.object(supervisor, "write_activity_log") as write_activity_log,
+        ):
+            changed = supervisor.reconcile_runtime_on_boot(self.config, state)
+
+        self.assertTrue(changed)
+        worker = state["workers"]["run-1"]
+        self.assertEqual(worker["status"], "failed")
+        self.assertIn("process missing", worker["last_error"])
+        self.assertEqual(state["queue"]["events"]["evt-1"]["status"], "failed")
+        self.assertEqual(supervisor.load_approval_state(self.config)["pending"], [])
+        activity_types = [call.args[1]["type"] for call in write_activity_log.call_args_list]
+        self.assertIn("worker_deferred_approval_failed", activity_types)
+        self.assertIn("worker_failed", activity_types)
+        metrics = state["worker_runtime_metrics"]
+        self.assertEqual(metrics["totals"]["missing_process_workers_failed"], 1)
+
+    def test_allowed_scoped_commit_resumes_without_broad_bash(self) -> None:
+        state = self._state_for_deferred_log()
+        self._poll(state, {"decision": "defer", "risk_class": "git_write"})
+        pending = supervisor.load_approval_state(self.config)["pending"][0]
+        resolved = supervisor.resolve_approval(
+            self.config,
+            pending["approval_id"],
+            decision="allow",
+            note="Allow only the staged task commit.",
+            remember=False,
+        )
+        resolved_state = supervisor.load_approval_state(self.config)
+
+        def resume(
+            _config: dict[str, object],
+            worker: dict[str, object],
+            _provider_report: dict[str, object],
+            *,
+            approval: dict[str, object],
+        ) -> dict[str, object]:
+            worker["status"] = "running"
+            worker["deferred_tool_use"] = None
+            return {
+                "command": ["claude", "--resume", str(worker["session_id"])],
+                "allowed_tools": supervisor._claude_resume_allowed_tools(approval),
+            }
+
+        with (
+            mock.patch.object(
+                supervisor,
+                "load_approval_state",
+                return_value=resolved_state,
+            ),
+            mock.patch.object(supervisor, "load_status", return_value=self.status),
+            mock.patch.object(supervisor, "load_provider_report", return_value={}),
+            mock.patch.object(supervisor, "retry_due_workers", return_value=False),
+            mock.patch.object(supervisor, "pid_is_alive", return_value=False),
+            mock.patch.object(
+                supervisor,
+                "resume_claude_worker",
+                side_effect=resume,
+            ) as resume_claude_worker,
+        ):
+            changed = supervisor.poll_workers(self.config, state)
+
+        self.assertTrue(changed)
+        self.assertEqual(state["workers"]["run-1"]["status"], "running")
+        resume_claude_worker.assert_called_once()
+        resumed_approval = resume_claude_worker.call_args.kwargs["approval"]
+        self.assertEqual(resumed_approval["approval_id"], resolved["approval_id"])
+        self.assertEqual(
+            supervisor._claude_resume_allowed_tools(resumed_approval),
+            [f"Bash({self.command})"],
+        )
+        self.assertNotIn("Bash", supervisor._claude_resume_allowed_tools(resumed_approval))
+
+    def test_broker_denied_deferred_tool_fails_closed(self) -> None:
+        state = self._state_for_deferred_log()
+
+        changed = self._poll(
+            state,
+            {
+                "decision": "deny",
+                "risk_class": "forbidden",
+                "reason": "Command is forbidden by policy.",
+            },
+        )
+
+        self.assertTrue(changed)
+        worker = state["workers"]["run-1"]
+        self.assertEqual(worker["status"], "failed")
+        self.assertEqual(state["queue"]["events"]["evt-1"]["status"], "failed")
+        approval_state = supervisor.load_approval_state(self.config)
+        self.assertEqual(approval_state["pending"], [])
+        self.assertEqual(approval_state["history"][0]["decision"], "deny")
+        self.assertEqual(approval_state["history"][0]["note"], "Command is forbidden by policy.")
+
+    def test_missing_deferred_receipt_still_fails_closed(self) -> None:
+        state = {
+            "queue": {"events": {"evt-1": {"status": "manual_pending"}}},
+            "workers": {
+                "run-1": {
+                    "run_id": "run-1",
+                    "task_id": self.task_id,
+                    "provider": "claude2",
+                    "agent_id": "claude2",
+                    "status": "suspended_approval",
+                    "queue_event_id": "evt-1",
+                    "pid": 999999,
+                    "session_id": "session-without-receipt",
+                    "last_event_at": "2026-07-28T16:48:00Z",
+                }
+            },
+        }
+
+        changed = self._poll(
+            state,
+            {"decision": "defer", "risk_class": "git_write"},
+        )
+
+        self.assertTrue(changed)
+        worker = state["workers"]["run-1"]
+        self.assertEqual(worker["status"], "failed")
+        self.assertEqual(
+            worker["last_error"],
+            "Approval state disappeared before the suspended worker could resume.",
+        )
+        self.assertEqual(state["queue"]["events"]["evt-1"]["status"], "failed")
+
+
 class PollWorkersRecoveryTests(unittest.TestCase):
     def test_successful_chair_worker_does_not_scan_report_text_as_provider_failure(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
