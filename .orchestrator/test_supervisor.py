@@ -8640,10 +8640,32 @@ class ReviewHeadFreezeTests(unittest.TestCase):
         task_map = {"FREEZE-TEST-007B": task}
 
         ai_status.clear_ai_status_caches()
-        with unittest.mock.patch("ai_status.resolve_task_sha", return_value=None):
+        # Positive control: matching head + green CI MUST yield the finalize priority.
+        # Without this, a config/schema regression would make every negative
+        # sub-case below pass vacuously (the B13 failure mode).
+        with unittest.mock.patch("ai_status.resolve_task_sha", return_value="1111111122222222333333334444444455555555"), \
+             unittest.mock.patch("ai_status.task_pr_ci_status", return_value=("OPEN", "success")):
+            self.assertEqual(
+                supervisor.dispatch_priority_for_task(config, task, "Antigravity4", task_map=task_map),
+                1,
+            )
+
+        # Head sub-cases pin CI to a *passing* probe so the head gate is the only
+        # thing that can produce None. Leaving task_pr_ci_status unpatched here
+        # lets control fall through to the CI gate, where the real (unmocked)
+        # probe shells out to `gh`, returns ("unknown"), and produces the None
+        # the assertion is checking -- which is how B14/B17/B18 stayed vacuous.
+        with unittest.mock.patch("ai_status.resolve_task_sha", return_value=None), \
+             unittest.mock.patch("ai_status.task_pr_ci_status", return_value=("OPEN", "success")):
             self.assertIsNone(supervisor.dispatch_priority_for_task(config, task, "Antigravity4", task_map=task_map))
 
-        with unittest.mock.patch("ai_status.resolve_task_sha", side_effect=RuntimeError("git error")):
+        with unittest.mock.patch("ai_status.resolve_task_sha", side_effect=RuntimeError("git error")), \
+             unittest.mock.patch("ai_status.task_pr_ci_status", return_value=("OPEN", "success")):
+            self.assertIsNone(supervisor.dispatch_priority_for_task(config, task, "Antigravity4", task_map=task_map))
+
+        # Head drifted off the approved head, CI green: still must not dispatch.
+        with unittest.mock.patch("ai_status.resolve_task_sha", return_value="9999999922222222333333334444444455555555"), \
+             unittest.mock.patch("ai_status.task_pr_ci_status", return_value=("OPEN", "success")):
             self.assertIsNone(supervisor.dispatch_priority_for_task(config, task, "Antigravity4", task_map=task_map))
 
         with unittest.mock.patch("ai_status.resolve_task_sha", return_value="1111111122222222333333334444444455555555"), \
