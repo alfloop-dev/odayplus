@@ -5889,7 +5889,7 @@ class DeferredApprovalCorrelationTests(unittest.TestCase):
         ):
             return supervisor.poll_workers(self.config, state)
 
-    def test_claude2_receipt_is_durable_before_dead_worker_cleanup(self) -> None:
+    def test_normal_poll_makes_claude2_receipt_durable_before_dead_worker_cleanup(self) -> None:
         state = self._state_for_deferred_log()
 
         changed = self._poll(
@@ -5910,6 +5910,62 @@ class DeferredApprovalCorrelationTests(unittest.TestCase):
         self.assertEqual(approval["tool_use_id"], "toolu_01YZMtMekPkN7JQUG6AdSo1f")
         self.assertEqual(approval["suggested_rule"], f"Bash({self.command})")
         self.assertEqual(worker["deferred_action"], approval["approval_id"])
+
+    def test_boot_reconciliation_correlates_flushed_receipt_before_missing_process_failure(self) -> None:
+        state = self._state_for_deferred_log()
+
+        with (
+            mock.patch.object(supervisor, "load_status", return_value=self.status),
+            mock.patch.object(supervisor, "pid_is_alive", return_value=False),
+            mock.patch.object(
+                supervisor,
+                "_deferred_tool_broker_decision",
+                return_value={"decision": "defer", "risk_class": "git_write"},
+            ),
+            mock.patch.object(supervisor, "write_activity_log") as write_activity_log,
+        ):
+            changed = supervisor.reconcile_runtime_on_boot(self.config, state)
+
+        self.assertTrue(changed)
+        worker = state["workers"]["run-1"]
+        self.assertEqual(worker["status"], "waiting_approval")
+        self.assertEqual(worker["session_id"], "7d919ae4-893a-400b-b13f-b45e5115184b")
+        self.assertEqual(worker["deferred_tool_use"]["id"], "toolu_01YZMtMekPkN7JQUG6AdSo1f")
+        self.assertEqual(state["queue"]["events"]["evt-1"]["status"], "started")
+        approval_state = supervisor.load_approval_state(self.config)
+        self.assertEqual(len(approval_state["pending"]), 1)
+        self.assertEqual(approval_state["pending"][0]["worker_run_id"], "run-1")
+        activity_types = [call.args[1]["type"] for call in write_activity_log.call_args_list]
+        self.assertNotIn("worker_failed", activity_types)
+        metrics = state.get("worker_runtime_metrics", {})
+        self.assertEqual(metrics.get("totals", {}).get("missing_process_workers_failed", 0), 0)
+
+    def test_boot_reconciliation_fails_closed_when_receipt_cannot_be_persisted(self) -> None:
+        state = self._state_for_deferred_log()
+
+        with (
+            mock.patch.object(supervisor, "load_status", return_value=self.status),
+            mock.patch.object(supervisor, "pid_is_alive", return_value=False),
+            mock.patch.object(
+                supervisor,
+                "correlate_deferred_tool_approval",
+                side_effect=OSError("approval queue unavailable"),
+            ),
+            mock.patch.object(supervisor, "write_activity_log") as write_activity_log,
+        ):
+            changed = supervisor.reconcile_runtime_on_boot(self.config, state)
+
+        self.assertTrue(changed)
+        worker = state["workers"]["run-1"]
+        self.assertEqual(worker["status"], "failed")
+        self.assertIn("process missing", worker["last_error"])
+        self.assertEqual(state["queue"]["events"]["evt-1"]["status"], "failed")
+        self.assertEqual(supervisor.load_approval_state(self.config)["pending"], [])
+        activity_types = [call.args[1]["type"] for call in write_activity_log.call_args_list]
+        self.assertIn("worker_deferred_approval_failed", activity_types)
+        self.assertIn("worker_failed", activity_types)
+        metrics = state["worker_runtime_metrics"]
+        self.assertEqual(metrics["totals"]["missing_process_workers_failed"], 1)
 
     def test_allowed_scoped_commit_resumes_without_broad_bash(self) -> None:
         state = self._state_for_deferred_log()
