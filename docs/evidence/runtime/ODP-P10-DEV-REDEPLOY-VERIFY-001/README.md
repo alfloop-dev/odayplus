@@ -13,6 +13,7 @@
 | [30362772798](https://github.com/alfloop-dev/odayplus/actions/runs/30362772798) | `450c7fadd` (PR #474) | push | failure | `gcloud run jobs executions describe-latest` rejected by runner SDK |
 | [30376737123](https://github.com/alfloop-dev/odayplus/actions/runs/30376737123) | `dda726155a` (PR #479) | push | failure | `jobs-smoke:migration:secret_bindings` fail-closed |
 | [30402570022](https://github.com/alfloop-dev/odayplus/actions/runs/30402570022) | `7d13f8e162` (PR #484) | push | failure | `migration-compatibility-smoke` probe timeout (`/platform/version` & `/platform/health`) |
+| [30412416116](https://github.com/alfloop-dev/odayplus/actions/runs/30412416116) | `79cf9b67e6` (PR #488) | push | failure | `worker Cloud Run Job` execution failure (`oday-worker-r-79cf9b67e62c-6fhw5`) |
 
 
 This directory is evidence only. Per the task conflict gate, no product code,
@@ -430,4 +431,100 @@ HOME=/home/lupin /usr/bin/gh run download 30402570022 -R alfloop-dev/odayplus -n
 cat cloud-run-dev-validation/cloud-run-migration-compatibility.json
 python3 scripts/e2e/check_product_grade_ci_gates.py --report
 ```
+
+---
+
+## 18. Deploy Dev run 30412416116 (SHA 79cf9b67e6, PR #488)
+
+`Deploy Dev` run [`30412416116`](https://github.com/alfloop-dev/odayplus/actions/runs/30412416116)
+was triggered by the `push` of the merge commit of PR #488
+(`ODP-DEPLOY-MIGRATION-COMPATIBILITY-PROBE-001`) at `2026-07-29T00:52:13Z`,
+running on exactly the required SHA `79cf9b67e62ce9fbd762b6695a214965ea9fe258`.
+
+| Field | Value |
+|---|---|
+| Head branch / SHA | `dev` / `79cf9b67e62ce9fbd762b6695a214965ea9fe258` |
+| Event | `push` |
+| `e2e-operational-evidence` job | **success** |
+| `deploy` job | **failure** at step 13 |
+| Started | `2026-07-29T00:52:13Z` |
+| Completed | `2026-07-29T01:08:22Z` |
+
+Full step-by-step receipt: `deploy-run-30412416116.json`.
+
+### What changed from the previous run
+
+`ODP-DEPLOY-MIGRATION-COMPATIBILITY-PROBE-001` (PR #488) fixed `migration-compatibility-smoke` probe timeouts on cold Cloud Run revisions by introducing bounded retries for transient transport failures and provenance separation. As a result:
+
+- Preflight: 72 checks, 0 failures (`ok: true`, `release_sha: 79cf9b67e6...`)
+- Images built, pushed, cosign-signed, cosign-verified: `oday-api`, `oday-worker`, `oday-scheduler` (3× Verification PASSED)
+- Migration Cloud Run Job `oday-migration-r-79cf9b67e62c` deployed and executed:
+  `Execution [oday-migration-r-79cf9b67e62c-8m2kp] has successfully completed.`
+- **Migration Job smoke check: PASSED** (`Cloud Run migration Job smoke passed.`)
+- **Migration compatibility smoke: PASSED (RESOLVED)** (`compatibility:/platform/version:http` OK attempts=2 elapsed=20.8s, `compatibility:/platform/health:database` OK, `cloud-run-migration-compatibility-run-30412416116.json`).
+- **Scheduler Cloud Run Job & Smoke: PASSED** (`oday-scheduler-r-79cf9b67e62c-fr65q` completed; `Cloud Run scheduler Job smoke passed.`).
+
+### Where run 30412416116 failed
+
+The deploy failed during worker Cloud Run Job execution:
+
+```text
+Executing worker Cloud Run Job...
+Creating execution...
+Provisioning resources.................done
+Starting execution..................................................................done
+Running execution...................................................................failed
+Executing job failed
+ERROR: (gcloud.run.jobs.execute) The execution failed.
+View details about this execution by running:
+gcloud run jobs executions describe oday-worker-r-79cf9b67e62c-6fhw5
+Error: worker Cloud Run Job failed; deployment stopped.
+```
+
+Verbatim excerpt: `deploy-failure-excerpt-run-30412416116.log`.
+
+## 19. Cloud Run state after run 30412416116 rollback
+
+The automated rollback restored traffic split correctly:
+
+| Service | Serving revision (100%) | Release SHA label |
+|---|---|---|
+| `oday-api` | `oday-api-00005-gin` | none (pre-run) |
+| `oday-web` | `oday-web-00008-ws4` | none (pre-run) |
+
+Snapshot receipt: `cloud-run-post-rollback-state-run-30412416116.json`.
+
+The migration Cloud Run Job `oday-migration-r-79cf9b67e62c` and scheduler job `oday-scheduler-r-79cf9b67e62c` executed successfully at target release SHA `79cf9b67e6`.
+
+## 20. Acceptance status (run 30412416116)
+
+| # | Acceptance criterion | Status | Basis |
+|---|---|---|---|
+| 1 | Deploy Dev runs from exact merged `origin/dev` SHA and completes successfully | **FAIL** | Ran on `79cf9b67e6`; concluded `failure`; `deploy-run-30412416116.json` |
+| 2 | Cloud Run API and web revisions report the deployed release SHA | **FAIL** | No revision carries the label; `cloud-run-post-rollback-state-run-30412416116.json` |
+| 3 | Operator API returns live non-placeholder data and fails closed on invalid access | **NOT REACHED** | Release candidate never served traffic |
+| 4 | `/operator` leaves loading state and renders Package 10 canonical shell at desktop and mobile | **NOT REACHED** | Same |
+| 5 | All 40 Package 10 screen contracts and 117 retired visual paths remain verified | **PASS (source scope)** | `package10-contract-verification.txt` (40/40 screen labels, 117 retired paths, 0 survivors) |
+| 6 | Independent Codex6 evidence review and CI pass before closeout | **PENDING** | Requires this evidence PR |
+
+## 21. Recommended remediation task
+
+### 21a. Worker Cloud Run Job execution failure (NEW)
+
+A separate remediation task is required:
+
+- **Scope:** investigate why `oday-worker-r-79cf9b67e62c` execution `oday-worker-r-79cf9b67e62c-6fhw5` failed during execution. Potential root causes include worker entrypoint exception, database connection or migration schema interaction, memory/timeout limits, or background task dependencies.
+- **Then:** once the worker Cloud Run Job failure is resolved and merged to dev, re-dispatch this task to verify Deploy Dev completion.
+
+## 22. Verification commands (run 30412416116)
+
+```text
+git fetch origin dev --prune
+git rev-parse origin/dev                              # 79cf9b67e62ce9fbd762b6695a214965ea9fe258
+HOME=/home/lupin /usr/bin/gh run view 30412416116 -R alfloop-dev/odayplus --json status,conclusion,jobs
+HOME=/home/lupin /usr/bin/gh run download 30412416116 -R alfloop-dev/odayplus -n cloud-run-dev-validation
+cat cloud-run-dev-validation/cloud-run-migration-compatibility.json
+python3 scripts/e2e/check_product_grade_ci_gates.py --report
+```
+
 
