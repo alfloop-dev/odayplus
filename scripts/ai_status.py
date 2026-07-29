@@ -63,6 +63,13 @@ LOG_ROTATE_KEEP_LINES = int(os.environ.get("AI_STATUS_LOG_ROTATE_KEEP_LINES", "1
 CURRENT_WORK_FILE = STATUS_ROOT / "current-work.md"
 DOCS_SITE_DIR = STATUS_ROOT / "docs-site"
 CONFIG_FILE = ROOT / ".orchestrator" / "config.json"
+# The live Supervisor reads its fleet through common.load_config(), which deep-
+# merges `.orchestrator/config.json` with the gitignored `.orchestrator/
+# config.local.json` overlay. Worker worktrees only get the tracked half, so the
+# status-root copy is consulted as well; in the live checkout both paths are the
+# same file and the merge is a no-op.
+CONFIG_LOCAL_FILE = ROOT / ".orchestrator" / "config.local.json"
+STATUS_ROOT_CONFIG_LOCAL_FILE = STATUS_ROOT / ".orchestrator" / "config.local.json"
 PLANNING_STATE_FILE = STATUS_ROOT / ".orchestrator" / "planning-state.json"
 ORCHESTRATOR_STATE_FILE = STATUS_ROOT / ".orchestrator" / "state.json"
 APPROVAL_QUEUE_FILE = STATUS_ROOT / ".orchestrator" / "approval-queue.json"
@@ -149,10 +156,18 @@ KNOWN_AGENTS = {
     },
 }
 
-# KNOWN_AGENTS is mutated at runtime by ensure_agent(). Freeze the declared
-# roster so the audited cleanup path can always tell a declared fleet member
-# apart from something that was registered during this process.
-BASELINE_AGENT_NAMES = frozenset(KNOWN_AGENTS)
+# KNOWN_AGENTS is mutated at runtime by ensure_agent(). This frozen snapshot is
+# NOT an authority for actor validation — a name that only appears here is
+# rejected as an actor reference. It exists solely so the cleanup path can tell
+# that recompute_agents() will recreate a static lane's roster row, and
+# therefore not advertise it as removable.
+BASELINE_KNOWN_AGENT_NAMES = frozenset(KNOWN_AGENTS)
+
+# Actors that legitimately appear in actor-shaped fields without ever being a
+# dispatchable worker: the human gate, the supervisor's own audit identity, and
+# the Codex coordination lane. They are declared here because the Supervisor
+# config only enumerates dispatch targets.
+NON_WORKER_ACTORS = frozenset({"Human/Ops", "Orchestrator", "CodexCoordinator"})
 
 AGENT_ALIASES = {
     "claude2": "Claude2",
@@ -175,8 +190,8 @@ AGENT_ALIASES = {
     "agy7": "Antigravity7",
     "codex2": "Codex2",
     "codex (2)": "Codex2",
-    "codex3": "Codex",
-    "codex (3)": "Codex",
+    # No "codex3" alias: config.local.json declares Codex3 as its own worker,
+    # so folding it into Codex would silently reassign a real fleet member.
     "grok": "Copilot",
     "copilot": "Copilot",
     "copilot host": "Copilot",
@@ -497,7 +512,11 @@ def canonical_agent_name(name: str | None) -> str:
     if not trimmed:
         return ""
     lowered = trimmed.lower()
+    # Case-fold against the declared fleet as well as the in-process table, so a
+    # config.local.json worker such as `codex5` resolves to its declared
+    # spelling `Codex5` instead of being treated as a new name.
     canonical_by_lower = {agent.lower(): agent for agent in KNOWN_AGENTS}
+    canonical_by_lower.update({name.lower(): name for name in registered_agent_names()})
     if lowered in canonical_by_lower:
         return canonical_by_lower[lowered]
     alias_target = AGENT_ALIASES.get(lowered)
@@ -571,38 +590,156 @@ def actor_reference_problem(name: str | None) -> str | None:
     return None
 
 
+def _fallback_deep_merge(base: Any, overlay: Any) -> Any:
+    """Local copy of common.deep_merge for environments without the orchestrator package."""
+    if isinstance(base, dict) and isinstance(overlay, dict):
+        merged = deepcopy(base)
+        for key, value in overlay.items():
+            merged[key] = _fallback_deep_merge(merged[key], value) if key in merged else deepcopy(value)
+        return merged
+    if isinstance(base, list) and isinstance(overlay, list):
+        return deepcopy(overlay)
+    return deepcopy(overlay)
+
+
+def _orchestrator_common() -> Any | None:
+    try:
+        import common as orchestrator_common
+    except Exception:  # pragma: no cover - lean environments without the package
+        return None
+    return orchestrator_common
+
+
+def local_config_overlay_paths() -> list[Path]:
+    """Local overlays to merge on top of CONFIG_FILE, in application order."""
+    paths: list[Path] = [CONFIG_FILE.with_name("config.local.json")]
+    if STATUS_ROOT_CONFIG_LOCAL_FILE not in paths:
+        paths.append(STATUS_ROOT_CONFIG_LOCAL_FILE)
+    return [path for path in paths if path.exists()]
+
+
+def _read_config_json(path: Path) -> dict[str, Any]:
+    """Tolerant JSON read used only by the actor-authority path.
+
+    Deliberately independent of `load_json_file()`: actor validation runs inside
+    almost every command, so it must not be perturbed by tests or callers that
+    patch the general-purpose reader.
+    """
+    try:
+        text = path.read_text(encoding="utf-8").strip()
+    except OSError:
+        return {}
+    if not text:
+        return {}
+    try:
+        payload = json.loads(text)
+    except json.JSONDecodeError:
+        return {}
+    return payload if isinstance(payload, dict) else {}
+
+
+def _config_fingerprint() -> tuple[Any, ...]:
+    fingerprint: list[Any] = []
+    for path in (CONFIG_FILE, CONFIG_FILE.with_name("config.local.json"), STATUS_ROOT_CONFIG_LOCAL_FILE):
+        try:
+            stat = path.stat()
+        except OSError:
+            fingerprint.append((str(path), None))
+        else:
+            fingerprint.append((str(path), stat.st_mtime_ns, stat.st_size))
+    return tuple(fingerprint)
+
+
+_MERGED_CONFIG_CACHE: dict[str, Any] = {}
+
+
+def merged_orchestrator_config() -> dict[str, Any]:
+    """The config as the live Supervisor sees it.
+
+    Dispatchability is decided by `common.load_config()`, which deep-merges
+    `.orchestrator/config.json` with `.orchestrator/config.local.json`. That
+    function is used verbatim when this process points at the same config path,
+    so the two can never drift; otherwise the same deep-merge is applied to
+    whatever `CONFIG_FILE` resolves to.
+
+    Cached against the config files' mtime/size, because actor validation is on
+    the hot path of every command.
+    """
+    fingerprint = _config_fingerprint()
+    if _MERGED_CONFIG_CACHE.get("fingerprint") == fingerprint:
+        return _MERGED_CONFIG_CACHE["payload"]
+
+    common = _orchestrator_common()
+    merge = getattr(common, "deep_merge", None) or _fallback_deep_merge
+    applied: set[Path] = set()
+
+    if common is not None and CONFIG_FILE == getattr(common, "DEFAULT_CONFIG_PATH", None):
+        loaded = common.load_config()
+        payload: dict[str, Any] = loaded if isinstance(loaded, dict) else {}
+        local_path = getattr(common, "LOCAL_CONFIG_PATH", None)
+        if local_path is not None:
+            applied.add(local_path)
+    else:
+        payload = _read_config_json(CONFIG_FILE)
+
+    for overlay_path in local_config_overlay_paths():
+        if overlay_path in applied:
+            continue
+        overlay = _read_config_json(overlay_path)
+        if overlay:
+            payload = merge(payload, overlay)
+            applied.add(overlay_path)
+
+    _MERGED_CONFIG_CACHE["fingerprint"] = fingerprint
+    _MERGED_CONFIG_CACHE["payload"] = payload
+    return payload
+
+
+def extra_actor_names() -> set[str]:
+    """Actor names registered out-of-band through AI_STATUS_EXTRA_AGENTS."""
+    return {
+        name
+        for name in (raw.strip() for raw in parse_csv_env("AI_STATUS_EXTRA_AGENTS"))
+        if name and actor_reference_problem(name) is None
+    }
+
+
 def configured_agent_names() -> set[str]:
-    """Agent names declared by .orchestrator/config.json plus AI_STATUS_EXTRA_AGENTS."""
+    """Worker names the live Supervisor can dispatch.
+
+    Reads the merged config (see `merged_orchestrator_config`), so the workers
+    declared only in the gitignored `config.local.json` overlay — Codex3 through
+    Codex9 on this fleet — count as declared exactly as they do for dispatch.
+    Names are taken as declared and are deliberately not passed through
+    `canonical_agent_name`: this function is what teaches that function how the
+    fleet spells itself.
+    """
     names: set[str] = set()
-    payload = load_json_file(CONFIG_FILE, {})
-    agents = payload.get("agents") if isinstance(payload, dict) else None
+    agents = merged_orchestrator_config().get("agents")
     if isinstance(agents, dict):
         for agent_id, agent in agents.items():
-            for candidate in (agent_id, (agent or {}).get("display_name")):
-                canonical = canonical_agent_name(candidate)
-                if canonical and actor_reference_problem(canonical) is None:
-                    names.add(canonical)
-    for extra in parse_csv_env("AI_STATUS_EXTRA_AGENTS"):
-        canonical = canonical_agent_name(extra)
-        if canonical and actor_reference_problem(canonical) is None:
-            names.add(canonical)
+            entry = agent if isinstance(agent, dict) else {}
+            declared = str(entry.get("display_name") or agent_id or "").strip()
+            if declared and actor_reference_problem(declared) is None:
+                names.add(declared)
     return names
 
 
-def registered_agent_names(state: dict[str, Any] | None = None) -> set[str]:
-    """Actor names this fleet accepts.
+def registered_agent_names() -> set[str]:
+    """Actor names this fleet accepts from the CLI.
 
-    Declared roster + orchestrator config + agents already present in the
-    durable roster (so an existing fleet member keeps working even when it was
-    added before it was declared). Quarantined names are never included.
+    Authority is exactly three things: the merged Supervisor config, the
+    explicitly declared non-worker actors, and AI_STATUS_EXTRA_AGENTS.
+
+    Two tempting sources are deliberately excluded. `KNOWN_AGENTS` is mutated at
+    runtime by `ensure_agent()`, so admitting it would let a name that was
+    invented earlier in the same process validate later calls. The durable
+    `agents[]` roster is exactly where fabricated entries land, so admitting it
+    would let one bad record legitimise itself on the next command. Names that
+    only exist in those two places (retired lanes such as Gemini or Copilot, or
+    a synthetic entry) are readable in state but are not accepted as new input.
     """
-    names = set(BASELINE_AGENT_NAMES)
-    names |= {name for name in KNOWN_AGENTS if name not in QUARANTINED_AGENTS}
-    names |= configured_agent_names()
-    for agent in (state or {}).get("agents", []) or []:
-        canonical = canonical_agent_name(agent.get("name"))
-        if canonical and actor_reference_problem(canonical) is None:
-            names.add(canonical)
+    names = configured_agent_names() | extra_actor_names() | set(NON_WORKER_ACTORS)
     return {name for name in names if actor_reference_problem(name) is None}
 
 
@@ -610,7 +747,6 @@ def resolve_actor_reference(
     raw: str | None,
     *,
     field: str,
-    state: dict[str, Any] | None = None,
     allow_empty: bool = False,
 ) -> str:
     """Validate a caller-supplied actor reference, or abort before mutating state."""
@@ -629,13 +765,16 @@ def resolve_actor_reference(
             "  Pass an agent name here and put the explanation in the message argument."
         )
 
-    registered = registered_agent_names(state)
+    registered = registered_agent_names()
     if canonical not in registered:
         raise SystemExit(
             f"Unknown {field}: {canonical!r} is not a registered agent.\n"
             f"  registered: {', '.join(sorted(registered))}\n"
-            "  Declare it in .orchestrator/config.json agents, or set "
-            "AI_STATUS_EXTRA_AGENTS to register it explicitly."
+            "  Declare it under `agents` in .orchestrator/config.json or "
+            ".orchestrator/config.local.json (the same merged config the "
+            "Supervisor dispatches from), or set AI_STATUS_EXTRA_AGENTS to "
+            "register it explicitly. Being present in ai-status.json agents[] "
+            "is not a declaration."
         )
     ensure_agent(canonical)
     return canonical
@@ -645,10 +784,8 @@ def current_actor(default: str = "Codex") -> str:
     return canonical_agent_name(os.environ.get("AI_NAME", default))
 
 
-def current_actor_validated(state: dict[str, Any] | None = None, default: str = "Codex") -> str:
-    return resolve_actor_reference(
-        os.environ.get("AI_NAME", default), field="AI_NAME", state=state
-    )
+def current_actor_validated(default: str = "Codex") -> str:
+    return resolve_actor_reference(os.environ.get("AI_NAME", default), field="AI_NAME")
 
 
 def default_state() -> dict[str, Any]:
@@ -3840,8 +3977,8 @@ def command_assign(state: dict[str, Any], args: list[str]) -> None:
     except WaveGuardError as exc:
         raise SystemExit(f"Wave guard rejected assign: {exc}") from exc
     task_id = args[0]
-    owner = resolve_actor_reference(args[1], field="owner", state=state)
-    reviewer = resolve_actor_reference(args[2], field="reviewer", state=state)
+    owner = resolve_actor_reference(args[1], field="owner")
+    reviewer = resolve_actor_reference(args[2], field="reviewer")
     title = args[3] if len(args) > 3 else os.environ.get("TASK_TITLE")
     summary_zh = os.environ.get("TASK_SUMMARY_ZH")
     metadata = task_metadata_from_env()
@@ -3993,8 +4130,8 @@ def command_handoff(state: dict[str, Any], args: list[str]) -> None:
     if len(args) < 3:
         raise SystemExit("Usage: handoff <task-id> <to-agent> <message>")
     task_id, message = args[0], args[2]
-    to_agent = resolve_actor_reference(args[1], field="handoff target", state=state)
-    actor = current_actor_validated(state)
+    to_agent = resolve_actor_reference(args[1], field="handoff target")
+    actor = current_actor_validated()
     task = get_task(state, task_id)
     if task is None:
         raise SystemExit(f"Unknown task: {task_id}")
@@ -4027,8 +4164,8 @@ def command_blocker(state: dict[str, Any], args: list[str]) -> None:
     if len(args) < 3:
         raise SystemExit("Usage: blocker <task-id> <message> <waiting-for>")
     task_id, message = args[0], args[1]
-    waiting_for = resolve_actor_reference(args[2], field="waiting-for", state=state)
-    actor = current_actor_validated(state)
+    waiting_for = resolve_actor_reference(args[2], field="waiting-for")
+    actor = current_actor_validated()
     task = get_task(state, task_id)
     if task is None:
         raise SystemExit(f"Unknown task: {task_id}")
@@ -4068,8 +4205,8 @@ def command_retarget_blocker(state: dict[str, Any], args: list[str]) -> None:
     if len(positional) < 3:
         raise SystemExit("Usage: retarget_blocker <task-id> <agent> <reason> [--index N]")
     task_id, reason = positional[0], positional[2]
-    new_actor = resolve_actor_reference(positional[1], field="waiting-for", state=state)
-    actor = current_actor_validated(state)
+    new_actor = resolve_actor_reference(positional[1], field="waiting-for")
+    actor = current_actor_validated()
 
     selected_index: int | None = None
     for arg in args:
@@ -4144,9 +4281,10 @@ def command_retarget_blocker(state: dict[str, Any], args: list[str]) -> None:
 def synthetic_roster_entries(state: dict[str, Any]) -> list[dict[str, Any]]:
     """Classify every durable roster entry as keep-or-remove for the cleanup path.
 
-    An entry is removable only when it is (a) not part of the declared roster,
-    (b) not declared in orchestrator config, and (c) not referenced by any task,
-    blocker or handoff. A valid actor is never removed just for being idle.
+    An entry is removable only when it is (a) not declared in the merged
+    Supervisor config, (b) not an explicit non-worker actor, (c) not carrying
+    live workload, and (d) not referenced by any task, blocker or handoff. A
+    valid actor is never removed just for being idle.
     """
     referenced: set[str] = set()
 
@@ -4167,13 +4305,26 @@ def synthetic_roster_entries(state: dict[str, Any]) -> list[dict[str, Any]]:
         mark(handoff.get("to"))
 
     configured = configured_agent_names()
+    extras = extra_actor_names()
     report: list[dict[str, Any]] = []
     for agent in state.get("agents", []) or []:
         name = canonical_agent_name(agent.get("name"))
-        if name in BASELINE_AGENT_NAMES:
-            reason = "declared in KNOWN_AGENTS"
-        elif name in configured:
-            reason = "declared in .orchestrator/config.json"
+        if name in configured:
+            reason = "declared in the merged Supervisor config (config.json + config.local.json)"
+        elif name in NON_WORKER_ACTORS:
+            reason = "explicitly declared non-worker actor"
+        elif name in extras:
+            reason = "registered through AI_STATUS_EXTRA_AGENTS"
+        elif name in BASELINE_KNOWN_AGENT_NAMES:
+            # Not an authority for validation — resolve_actor_reference still
+            # rejects these — but recompute_agents() recreates a row for every
+            # static lane, so reporting them as removable would be a lie.
+            reason = (
+                "static KNOWN_AGENTS lane; recompute_agents recreates the row, "
+                "so pruning it is a no-op (still not accepted as an actor reference)"
+            )
+        elif agent.get("current_task_ids") or str(agent.get("status") or "") not in ("", "idle"):
+            reason = "carrying live workload; repoint its work before pruning it"
         elif name in referenced:
             reason = "still referenced by a task, blocker or handoff"
         else:
@@ -4199,7 +4350,7 @@ def command_prune_agents(state: dict[str, Any], args: list[str]) -> None:
     """
     apply = "--apply" in args
     reason = next((arg for arg in args if not arg.startswith("--")), "actor reference cleanup")
-    actor = current_actor_validated(state)
+    actor = current_actor_validated()
 
     report = synthetic_roster_entries(state)
     removable = [entry for entry in report if not entry["keep"]]
