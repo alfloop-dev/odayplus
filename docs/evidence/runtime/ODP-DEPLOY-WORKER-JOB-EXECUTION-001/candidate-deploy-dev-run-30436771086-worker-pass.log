@@ -1,0 +1,154 @@
+# Deploy Dev run 30436771086 — candidate at 93ae1b2e75e1056c2bfeccd1d59e25e354f4f21f
+# job: deploy (90526885255), step 'Build, push, deploy, and verify Cloud Run'
+# source: gh api repos/alfloop-dev/odayplus/actions/jobs/90526885255/logs
+# excerpt A: immutable migration -> API candidate -> scheduler -> worker gates
+2026-07-29T08:56:25.1793812Z Deploying immutable migration candidate Cloud Run Job...
+2026-07-29T08:56:28.2443065Z Deploying container to Cloud Run job [oday-migration-r-93ae1b2e75e1] in project [alfaloop-data-project] region [asia-east1]
+2026-07-29T08:56:28.2444032Z Creating job...
+2026-07-29T08:56:32.5112287Z Done.
+2026-07-29T08:56:32.5511125Z Job [oday-migration-r-93ae1b2e75e1] has successfully been deployed.
+2026-07-29T08:56:32.5511590Z
+2026-07-29T08:56:32.5511719Z To execute this job, use:
+2026-07-29T08:56:32.5512116Z gcloud run jobs execute oday-migration-r-93ae1b2e75e1
+2026-07-29T08:56:32.7615954Z Executing migration Cloud Run Job...
+2026-07-29T08:56:33.3944275Z Creating execution...
+2026-07-29T08:58:04.3398066Z Provisioning resources.....................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................done
+2026-07-29T08:58:11.7135381Z Starting execution................................................................................done
+2026-07-29T08:58:25.2757335Z Running execution........................................................................................................................................................done
+2026-07-29T08:58:25.5083764Z Done.
+2026-07-29T08:58:25.5598221Z Execution [oday-migration-r-93ae1b2e75e1-hk7xf] has successfully completed.
+2026-07-29T08:58:25.5598967Z
+2026-07-29T08:58:25.5599261Z View details about this execution by running:
+2026-07-29T08:58:25.5600020Z gcloud run jobs executions describe oday-migration-r-93ae1b2e75e1-hk7xf
+2026-07-29T08:58:25.5600517Z
+2026-07-29T08:58:25.5601569Z Or visit https://console.cloud.google.com/run/jobs/executions/details/asia-east1/oday-migration-r-93ae1b2e75e1-hk7xf?project=1067163562451
+2026-07-29T08:58:31.2911732Z Cloud Run migration Job smoke passed.
+2026-07-29T08:58:31.2912332Z report=.odp_data/deployment/cloud-run-jobs/migration-validation.json
+2026-07-29T08:58:42.6039508Z Cloud Run migration compatibility smoke passed.
+2026-07-29T08:58:42.6040326Z report=.odp_data/deployment/cloud-run-migration-compatibility.json
+2026-07-29T08:58:42.6172653Z Deploying immutable API candidate without production traffic...
+2026-07-29T08:58:45.4866683Z Deploying container to Cloud Run service [oday-api] in project [alfaloop-data-project] region [asia-east1]
+2026-07-29T08:58:45.4868229Z Deploying...
+2026-07-29T08:58:48.2626942Z Setting IAM Policy.........................done
+2026-07-29T09:00:08.5104003Z Creating Revision.......................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................done
+2026-07-29T09:00:09.0756967Z Done.
+2026-07-29T09:00:09.1135026Z Service [oday-api] revision [oday-api-release-93ae1b2e75e1] has been deployed and is serving 0 percent of traffic.
+2026-07-29T09:00:09.1137704Z The revision can be reached directly at https://candidate-93ae1b2e75e1056c---oday-api-7sxbjoeozq-de.a.run.app
+2026-07-29T09:00:10.5083000Z Deploying immutable scheduler candidate Cloud Run Job...
+2026-07-29T09:00:13.3108910Z Deploying container to Cloud Run job [oday-scheduler-r-93ae1b2e75e1] in project [alfaloop-data-project] region [asia-east1]
+2026-07-29T09:00:13.3109710Z Creating job...
+2026-07-29T09:00:16.3180738Z Done.
+2026-07-29T09:00:16.3186788Z Job [oday-scheduler-r-93ae1b2e75e1] has successfully been deployed.
+2026-07-29T09:00:16.3187351Z
+2026-07-29T09:00:16.3187555Z To execute this job, use:
+2026-07-29T09:00:16.3188155Z gcloud run jobs execute oday-scheduler-r-93ae1b2e75e1
+2026-07-29T09:00:16.4989137Z Deploying immutable worker candidate Cloud Run Job...
+2026-07-29T09:00:18.3490845Z Deploying container to Cloud Run job [oday-worker-r-93ae1b2e75e1] in project [alfaloop-data-project] region [asia-east1]
+2026-07-29T09:00:18.3491662Z Creating job...
+2026-07-29T09:00:21.4145497Z Done.
+2026-07-29T09:00:21.4543519Z Job [oday-worker-r-93ae1b2e75e1] has successfully been deployed.
+2026-07-29T09:00:21.4544034Z
+2026-07-29T09:00:21.4544167Z To execute this job, use:
+2026-07-29T09:00:21.4544567Z gcloud run jobs execute oday-worker-r-93ae1b2e75e1
+2026-07-29T09:00:25.1804773Z Updated IAM policy for job [oday-scheduler-r-93ae1b2e75e1].
+2026-07-29T09:00:25.1970541Z bindings:
+2026-07-29T09:00:25.1971003Z - members:
+2026-07-29T09:00:25.1971810Z   - serviceAccount:oday-dev-scheduler@alfaloop-data-project.iam.gserviceaccount.com
+2026-07-29T09:00:25.1972563Z   role: roles/run.invoker
+2026-07-29T09:00:25.1974964Z etag: BwZXvC-jqiE=
+2026-07-29T09:00:25.1975421Z version: 1
+2026-07-29T09:00:28.9709510Z Updated IAM policy for job [oday-worker-r-93ae1b2e75e1].
+2026-07-29T09:00:28.9876029Z bindings:
+2026-07-29T09:00:28.9876692Z - members:
+2026-07-29T09:00:28.9877396Z   - serviceAccount:oday-dev-scheduler@alfaloop-data-project.iam.gserviceaccount.com
+2026-07-29T09:00:28.9878257Z   role: roles/run.invoker
+2026-07-29T09:00:28.9878689Z etag: BwZXvC_dZOM=
+2026-07-29T09:00:28.9879055Z version: 1
+2026-07-29T09:00:29.1496370Z Executing scheduler Cloud Run Job...
+2026-07-29T09:00:29.7686809Z Creating execution...
+2026-07-29T09:00:32.3776202Z Provisioning resources..................done
+2026-07-29T09:00:42.7877198Z Starting execution..............................................................................................................done
+2026-07-29T09:00:53.9157377Z Running execution..............................................................................................................................done
+2026-07-29T09:00:54.1622132Z Done.
+2026-07-29T09:00:54.2067257Z Execution [oday-scheduler-r-93ae1b2e75e1-nt4pc] has successfully completed.
+2026-07-29T09:00:54.2068339Z
+2026-07-29T09:00:54.2071536Z View details about this execution by running:
+2026-07-29T09:00:54.2072670Z gcloud run jobs executions describe oday-scheduler-r-93ae1b2e75e1-nt4pc
+2026-07-29T09:00:54.2073332Z
+2026-07-29T09:00:54.2074177Z Or visit https://console.cloud.google.com/run/jobs/executions/details/asia-east1/oday-scheduler-r-93ae1b2e75e1-nt4pc?project=1067163562451
+2026-07-29T09:01:00.0164886Z Cloud Run scheduler Job smoke passed.
+2026-07-29T09:01:00.0165520Z report=.odp_data/deployment/cloud-run-jobs/scheduler-validation.json
+2026-07-29T09:01:00.0548790Z Executing worker Cloud Run Job...
+2026-07-29T09:01:00.6810430Z Creating execution...
+2026-07-29T09:01:04.2566548Z Provisioning resources....................done
+2026-07-29T09:01:10.1515118Z Starting execution..................................................................done
+2026-07-29T09:01:22.6108561Z Running execution...........................................................................................................................................done
+2026-07-29T09:01:22.8386512Z Done.
+2026-07-29T09:01:22.9151285Z Execution [oday-worker-r-93ae1b2e75e1-c9gms] has successfully completed.
+2026-07-29T09:01:22.9152161Z
+2026-07-29T09:01:22.9152465Z View details about this execution by running:
+2026-07-29T09:01:22.9153360Z gcloud run jobs executions describe oday-worker-r-93ae1b2e75e1-c9gms
+2026-07-29T09:01:22.9153824Z
+2026-07-29T09:01:22.9154570Z Or visit https://console.cloud.google.com/run/jobs/executions/details/asia-east1/oday-worker-r-93ae1b2e75e1-c9gms?project=1067163562451
+2026-07-29T09:01:27.8314804Z Cloud Run worker Job smoke passed.
+2026-07-29T09:01:27.8315857Z report=.odp_data/deployment/cloud-run-jobs/worker-validation.json
+2026-07-29T09:01:27.8915426Z Building and publishing Web image...
+
+# ... (Web image build omitted) ...
+
+# excerpt B: API/Web release-aware smoke and fail-closed traffic restore
+2026-07-29T09:03:47.5509112Z WARNING: This command is using service account impersonation. All API calls will be executed as [oday-dev-smoke-operator@alfaloop-data-project.iam.gserviceaccount.com].
+2026-07-29T09:03:48.3016826Z Running release-aware smoke checks against tagged candidate revisions...
+2026-07-29T09:03:52.8501161Z Cloud Run live deployment smoke failed (fail-closed):
+2026-07-29T09:03:52.8501713Z - smoke:/platform/health:http: status=503
+2026-07-29T09:03:52.8502109Z - smoke:/readiness:http: status=503
+2026-07-29T09:03:52.8502602Z - smoke:/platform/health:live_data_mode: status=unhealthy data_mode=<missing>
+2026-07-29T09:03:52.8503235Z - smoke:/readiness:live_data_mode: status=unhealthy data_mode=<missing>
+2026-07-29T09:03:52.8503869Z - smoke:/platform/health:job_queue: missing or non-worker/in-memory job queue
+2026-07-29T09:03:52.8504662Z - smoke:/api/v1/operator/bootstrap:provenance: data_mode=degraded data_source=operator-shell-production
+2026-07-29T09:03:52.8505945Z - smoke:/api/v1/operator/bootstrap:read_provenance: origin_kind=degraded persistence_mode=postgresql live_ready=True
+2026-07-29T09:03:52.8506710Z - smoke:web:/operator: status=307 protected_redirect=false
+2026-07-29T09:03:52.8507203Z report=.odp_data/deployment/cloud-run-smoke.json
+2026-07-29T09:03:52.8657084Z Deployment failed; restoring the recorded API/Web traffic split.
+2026-07-29T09:03:52.9065922Z Restoring oday-api traffic to oday-api-00005-gin=100...
+2026-07-29T09:03:53.5706172Z Updating traffic...
+2026-07-29T09:03:54.3653694Z Done.
+2026-07-29T09:03:54.4732199Z URL: https://oday-api-7sxbjoeozq-de.a.run.app
+2026-07-29T09:03:54.4732781Z Traffic:
+2026-07-29T09:03:54.4733048Z   0%   oday-api-00003-lez
+2026-07-29T09:03:54.4733730Z          live-3875485e:              https://live-3875485e---oday-api-7sxbjoeozq-de.a.run.app
+2026-07-29T09:03:54.4734484Z   100% oday-api-00005-gin
+2026-07-29T09:03:54.4735160Z          candidate:                  https://candidate---oday-api-7sxbjoeozq-de.a.run.app
+2026-07-29T09:03:54.4736160Z   0%   oday-api-00007-koz
+2026-07-29T09:03:54.4736756Z          authcand:                   https://authcand---oday-api-7sxbjoeozq-de.a.run.app
+2026-07-29T09:03:54.4737424Z   0%   oday-api-probe8
+2026-07-29T09:03:54.4737946Z          probe8:                     https://probe8---oday-api-7sxbjoeozq-de.a.run.app
+2026-07-29T09:03:54.4738601Z   0%   oday-api-release-1d07de67b1b6
+2026-07-29T09:03:54.4739437Z          candidate-1d07de67b1b6d753: https://candidate-1d07de67b1b6d753---oday-api-7sxbjoeozq-de.a.run.app
+2026-07-29T09:03:54.4740372Z   0%   oday-api-release-427e32909c38
+2026-07-29T09:03:54.4741244Z          candidate-427e32909c38339b: https://candidate-427e32909c38339b---oday-api-7sxbjoeozq-de.a.run.app
+2026-07-29T09:03:54.4742191Z   0%   oday-api-release-61b8d46da1ff
+2026-07-29T09:03:54.4743147Z          candidate-61b8d46da1ff4659: https://candidate-61b8d46da1ff4659---oday-api-7sxbjoeozq-de.a.run.app
+2026-07-29T09:03:54.4744123Z   0%   oday-api-release-647970dae975
+2026-07-29T09:03:54.4745056Z          candidate-647970dae975f400: https://candidate-647970dae975f400---oday-api-7sxbjoeozq-de.a.run.app
+2026-07-29T09:03:54.4746371Z   0%   oday-api-release-79cf9b67e62c
+2026-07-29T09:03:54.4747708Z          candidate-79cf9b67e62ce9fb: https://candidate-79cf9b67e62ce9fb---oday-api-7sxbjoeozq-de.a.run.app
+2026-07-29T09:03:54.4748763Z   0%   oday-api-release-93ae1b2e75e1
+2026-07-29T09:03:54.4749681Z          candidate-93ae1b2e75e1056c: https://candidate-93ae1b2e75e1056c---oday-api-7sxbjoeozq-de.a.run.app
+2026-07-29T09:03:54.4750668Z   0%   oday-api-release-fd3d99558e4f
+2026-07-29T09:03:54.4751618Z          candidate-fd3d99558e4fb65f: https://candidate-fd3d99558e4fb65f---oday-api-7sxbjoeozq-de.a.run.app
+2026-07-29T09:03:54.7196021Z Restoring oday-web traffic to oday-web-00008-ws4=100...
+2026-07-29T09:03:55.3738903Z Updating traffic...
+2026-07-29T09:03:57.0131302Z Done.
+2026-07-29T09:03:57.1098497Z URL: https://oday-web-7sxbjoeozq-de.a.run.app
+2026-07-29T09:03:57.1098922Z Traffic:
+2026-07-29T09:03:57.1099175Z   0%   oday-web-00004-cef
+2026-07-29T09:03:57.1099636Z          live-3875485e:              https://live-3875485e---oday-web-7sxbjoeozq-de.a.run.app
+2026-07-29T09:03:57.1100144Z   0%   oday-web-00006-jen
+2026-07-29T09:03:57.1100558Z          candidate:                  https://candidate---oday-web-7sxbjoeozq-de.a.run.app
+2026-07-29T09:03:57.1101008Z   100% oday-web-00008-ws4
+2026-07-29T09:03:57.1101277Z   0%   oday-web-release-93ae1b2e75e1
+2026-07-29T09:03:57.1101840Z          candidate-93ae1b2e75e1056c: https://candidate-93ae1b2e75e1056c---oday-web-7sxbjoeozq-de.a.run.app
+2026-07-29T09:03:57.3024930Z ##[error]Process completed with exit code 1.
+2026-07-29T09:03:57.3093240Z Node 20 is being deprecated. This workflow is running with Node 24 by default. If you need to temporarily use Node 20, you can set the ACTIONS_ALLOW_USE_UNSECURE_NODE_VERSION=true environment variable. For more information see: https://github.blog/changelog/2025-09-19-deprecation-of-node-20-on-github-actions-runners/
+2026-07-29T09:03:57.3094543Z ##[group]Run actions/upload-artifact@v4

@@ -15,7 +15,7 @@ package into the process.
 from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from shared.jobs.queue import JobRecord, NonRetryableJobError
 from shared.jobs.registry import JobRegistry
@@ -101,7 +101,11 @@ def handle_external_fetch(job: JobRecord, persistence: PersistenceBundle) -> Non
     from modules.external_data.application.ingestion_service import (
         ExternalIngestionService,
     )
-    from modules.external_data.workers.scheduled_fetch import ExternalFetchJobSpec
+    from modules.external_data.workers.scheduled_fetch import (
+        CONFIGURATION_REASON_CODES,
+        PROVIDER_NOT_SELECTED_REASON_CODE,
+        ExternalFetchJobSpec,
+    )
 
     provider_id = job.payload.get("provider_id", "listing.partner_feed")
     schedule_id = job.payload.get("schedule_id", "hourly-listing")
@@ -122,11 +126,41 @@ def handle_external_fetch(job: JobRecord, persistence: PersistenceBundle) -> Non
         scheduled_at=datetime.now(UTC),
         correlation_id=job.correlation_id,
     )
-    if outcome.record.status == "FAILED":
-        raise RuntimeError(
-            f"External fetch failed for {provider_id}: "
-            f"{outcome.record.message or 'no provider message'}"
+    record = outcome.record
+    if record.status != "FAILED":
+        return
+
+    reason_code = _external_fetch_reason_code(record)
+    if reason_code == PROVIDER_NOT_SELECTED_REASON_CODE:
+        # ODP_PRODUCTION_PROVIDER_IDS is the operator's explicit statement of
+        # which providers this deployment runs live. A schedule for a provider
+        # left off that list is not applicable here, not broken: the blocked run
+        # and its alert are already persisted for audit, no snapshot was written
+        # and no watermark advanced. Dead-lettering the queue job on top of that
+        # turns a correct operator decision into a permanent deployment blocker,
+        # because the scheduler re-enqueues the same provider every tick.
+        return
+    if reason_code in CONFIGURATION_REASON_CODES:
+        # Fail-closed and fixed for this release + environment: retrying cannot
+        # change the outcome, so dead-letter now while the first attempt still
+        # carries the real reason code.
+        raise NonRetryableJobError(
+            f"External fetch is fail-closed for {provider_id} ({reason_code}): "
+            f"{record.message or 'no provider message'}"
         )
+    raise RuntimeError(
+        f"External fetch failed for {provider_id}: "
+        f"{record.message or 'no provider message'}"
+    )
+
+
+def _external_fetch_reason_code(record: Any) -> str:
+    """Read the reason code the scheduler attached to a blocked fetch run."""
+    for alert in getattr(record, "alerts", ()) or ():
+        code = str(alert.get("reason_code", "") or "").strip()
+        if code:
+            return code
+    return ""
 
 
 def build_default_registry() -> JobRegistry:

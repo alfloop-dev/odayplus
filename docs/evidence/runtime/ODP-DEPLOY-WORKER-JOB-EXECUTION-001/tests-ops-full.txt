@@ -1,0 +1,18 @@
+# exact head: 84babe894ccd5e5379606203fb81519a13f30fcf
+# date: 2026-07-29T08:27:02Z
+# command: python3 -m pytest tests/ops -q --tb=line
+sssssssssssssss.sssss................................................... [ 16%]
+........F............................................................... [ 33%]
+........................................................................ [ 49%]
+........................................................................ [ 66%]
+........................................................................ [ 82%]
+........................................................................ [ 99%]
+..                                                                       [100%]
+=================================== FAILURES ===================================
+E   assert 1 == 97
+     +  where 1 = CompletedProcess(args=['/bin/bash', '/tmp/pantheon-worker-worktrees/oday-plus-supervisor-live/odp-deploy-worker-job-ex... stdout='=== Starting ODay Plus Cloud Run Deployment ===\n', stderr="Error: required command 'uv' is not installed.\n").returncode
+/tmp/pantheon-worker-worktrees/oday-plus-supervisor-live/odp-deploy-worker-job-execution-001/tests/ops/test_cloud_run_live_deployment.py:312: assert 1 == 97
+=========================== short test summary info ============================
+FAILED tests/ops/test_cloud_run_live_deployment.py::test_deploy_preflight_imports_runtime_dependencies_via_locked_python
+# junitxml totals: tests=434 failures=1 errors=0 skipped=20
+# note: pytest's terminal count line is suppressed in this repo's config; junit totals recorded instead.

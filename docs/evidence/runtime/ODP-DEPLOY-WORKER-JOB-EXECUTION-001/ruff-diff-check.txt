@@ -1,0 +1,20 @@
+# exact head: 84babe894ccd5e5379606203fb81519a13f30fcf
+# date: 2026-07-29T08:28:27Z
+# task-owned diff vs origin/dev (427e3290)
+apps/worker/oday_worker/handlers.py
+modules/external_data/workers/__init__.py
+modules/external_data/workers/scheduled_fetch.py
+tests/integration/test_external_scheduled_fetch_worker.py
+tests/ops/test_cloud_run_job_entrypoint.py
+
+# ruff check on the task diff
+All checks passed!
+ruff exit=0
+
+# ruff format --check
+Would reformat: apps/worker/oday_worker/handlers.py
+Would reformat: modules/external_data/workers/scheduled_fetch.py
+Would reformat: tests/integration/test_external_scheduled_fetch_worker.py
+Would reformat: tests/ops/test_cloud_run_job_entrypoint.py
+4 files would be reformatted, 1 file already formatted
+format exit=1
