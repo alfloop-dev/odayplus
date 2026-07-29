@@ -1,0 +1,239 @@
+{
+  "artifact": "canonical_row_drift_rehearsal",
+  "task": "ODP-FORECAST-AUTHORITATIVE-HISTORY-BACKFILL-001",
+  "captured_at": "2026-07-29T03:17:03Z",
+  "captured_by": "Claude3",
+  "what_this_is": "The finisher's activate, run twice against the live PG15 source and PG16 target inside a transaction that is rolled back: once with the core relations frozen as they were, once with each of them refreshing on its primary key. Only refresh_key on the core relations differs between arms.",
+  "read_only_in_effect": false,
+  "committed": false,
+  "how_it_stays_safe": "Both arms write to the target inside one transaction and ROLL BACK -- PostgreSQL offers no other way to observe a multi-statement convergence. The source is opened read_only and is only COPYed out of.",
+  "redaction": "row counts, relation names and elapsed seconds only",
+  "arms": [
+    {
+      "arm": "frozen_core",
+      "source_probe_rows": 567592,
+      "relations": [
+        {
+          "relation": "core.tenants",
+          "copied_columns": 5,
+          "source_rows_selected": 1354,
+          "target_rows_before": 1354,
+          "target_rows_inserted": 0,
+          "target_rows_refreshed": 0,
+          "target_rows_pruned": 0,
+          "target_rows_after": 1354,
+          "elapsed_seconds": 2.9
+        },
+        {
+          "relation": "core.brands",
+          "copied_columns": 9,
+          "source_rows_selected": 1354,
+          "target_rows_before": 1354,
+          "target_rows_inserted": 0,
+          "target_rows_refreshed": 0,
+          "target_rows_pruned": 0,
+          "target_rows_after": 1354,
+          "elapsed_seconds": 0.8
+        },
+        {
+          "relation": "core.address_locations",
+          "copied_columns": 18,
+          "source_rows_selected": 2405,
+          "target_rows_before": 2405,
+          "target_rows_inserted": 0,
+          "target_rows_refreshed": 0,
+          "target_rows_pruned": 0,
+          "target_rows_after": 2405,
+          "elapsed_seconds": 6.0
+        },
+        {
+          "relation": "core.stores",
+          "copied_columns": 19,
+          "source_rows_selected": 2442,
+          "target_rows_before": 2442,
+          "target_rows_inserted": 0,
+          "target_rows_refreshed": 0,
+          "target_rows_pruned": 0,
+          "target_rows_after": 2442,
+          "elapsed_seconds": 0.8
+        },
+        {
+          "relation": "core.machines",
+          "copied_columns": 16,
+          "source_rows_selected": 7562,
+          "target_rows_before": 7562,
+          "target_rows_inserted": 0,
+          "target_rows_refreshed": 0,
+          "target_rows_pruned": 0,
+          "target_rows_after": 7562,
+          "elapsed_seconds": 2.0
+        },
+        {
+          "relation": "core.transactions",
+          "copied_columns": 21,
+          "source_rows_selected": 567773,
+          "target_rows_before": 376998,
+          "target_rows_inserted": 190861,
+          "target_rows_refreshed": 0,
+          "target_rows_pruned": 0,
+          "target_rows_after": 567859,
+          "elapsed_seconds": 126.2
+        },
+        {
+          "relation": "data_plane.ingestion_runs",
+          "copied_columns": 17,
+          "source_rows_selected": 72,
+          "target_rows_before": 48,
+          "target_rows_inserted": 26,
+          "target_rows_refreshed": 1,
+          "target_rows_pruned": 0,
+          "target_rows_after": 74,
+          "elapsed_seconds": 41.5
+        },
+        {
+          "relation": "data_plane.canonical_lineage",
+          "copied_columns": 9,
+          "source_rows_selected": 568410,
+          "target_rows_before": 377351,
+          "target_rows_inserted": 192980,
+          "target_rows_refreshed": 4,
+          "target_rows_pruned": 0,
+          "target_rows_after": 570331,
+          "elapsed_seconds": 105.1
+        }
+      ],
+      "chain_elapsed_seconds": 285.3,
+      "before": {
+        "transactions": 376998,
+        "rows_disagreeing_with_source": 1847,
+        "rows_absent_from_source_probe": 0,
+        "transactions_admitted_by_the_view_filter": 340793
+      },
+      "after": {
+        "transactions": 567859,
+        "rows_disagreeing_with_source": 1847,
+        "rows_absent_from_source_probe": 267,
+        "transactions_admitted_by_the_view_filter": 509270
+      },
+      "committed": false
+    },
+    {
+      "arm": "refreshing_core",
+      "source_probe_rows": 568732,
+      "relations": [
+        {
+          "relation": "core.tenants",
+          "copied_columns": 5,
+          "source_rows_selected": 1354,
+          "target_rows_before": 1354,
+          "target_rows_inserted": 0,
+          "target_rows_refreshed": 1354,
+          "target_rows_pruned": 0,
+          "target_rows_after": 1354,
+          "elapsed_seconds": 2.7
+        },
+        {
+          "relation": "core.brands",
+          "copied_columns": 9,
+          "source_rows_selected": 1354,
+          "target_rows_before": 1354,
+          "target_rows_inserted": 0,
+          "target_rows_refreshed": 1354,
+          "target_rows_pruned": 0,
+          "target_rows_after": 1354,
+          "elapsed_seconds": 1.3
+        },
+        {
+          "relation": "core.address_locations",
+          "copied_columns": 18,
+          "source_rows_selected": 2405,
+          "target_rows_before": 2405,
+          "target_rows_inserted": 0,
+          "target_rows_refreshed": 2405,
+          "target_rows_pruned": 0,
+          "target_rows_after": 2405,
+          "elapsed_seconds": 2.3
+        },
+        {
+          "relation": "core.stores",
+          "copied_columns": 19,
+          "source_rows_selected": 2442,
+          "target_rows_before": 2442,
+          "target_rows_inserted": 0,
+          "target_rows_refreshed": 2442,
+          "target_rows_pruned": 0,
+          "target_rows_after": 2442,
+          "elapsed_seconds": 2.2
+        },
+        {
+          "relation": "core.machines",
+          "copied_columns": 16,
+          "source_rows_selected": 7562,
+          "target_rows_before": 7562,
+          "target_rows_inserted": 0,
+          "target_rows_refreshed": 7551,
+          "target_rows_pruned": 0,
+          "target_rows_after": 7562,
+          "elapsed_seconds": 2.2
+        },
+        {
+          "relation": "core.transactions",
+          "copied_columns": 21,
+          "source_rows_selected": 568950,
+          "target_rows_before": 376998,
+          "target_rows_inserted": 191998,
+          "target_rows_refreshed": 1847,
+          "target_rows_pruned": 0,
+          "target_rows_after": 568996,
+          "elapsed_seconds": 134.3
+        },
+        {
+          "relation": "data_plane.ingestion_runs",
+          "copied_columns": 17,
+          "source_rows_selected": 72,
+          "target_rows_before": 48,
+          "target_rows_inserted": 26,
+          "target_rows_refreshed": 1,
+          "target_rows_pruned": 0,
+          "target_rows_after": 74,
+          "elapsed_seconds": 24.7
+        },
+        {
+          "relation": "data_plane.canonical_lineage",
+          "copied_columns": 9,
+          "source_rows_selected": 569514,
+          "target_rows_before": 377351,
+          "target_rows_inserted": 194084,
+          "target_rows_refreshed": 4,
+          "target_rows_pruned": 0,
+          "target_rows_after": 571435,
+          "elapsed_seconds": 105.1
+        }
+      ],
+      "chain_elapsed_seconds": 274.8,
+      "before": {
+        "transactions": 376998,
+        "rows_disagreeing_with_source": 1847,
+        "rows_absent_from_source_probe": 0,
+        "transactions_admitted_by_the_view_filter": 340793
+      },
+      "after": {
+        "transactions": 568996,
+        "rows_disagreeing_with_source": 0,
+        "rows_absent_from_source_probe": 264,
+        "transactions_admitted_by_the_view_filter": 510312
+      },
+      "committed": false
+    }
+  ],
+  "verdict": {
+    "drift_left_by_the_frozen_arm": 1847,
+    "drift_left_by_the_refreshing_arm": 0,
+    "core_rows_refreshed_frozen_arm": 0,
+    "core_rows_refreshed_refreshing_arm": 16953,
+    "core_rows_pruned_either_arm": 0,
+    "view_admitted_before": 340793,
+    "view_admitted_after_refreshing": 510312,
+    "reading": "The frozen arm is what the acceptance activation would have done: it inserts the backlog and leaves every already-present row at whatever the first copy saw. The refreshing arm converges them. Rows pruned from core must be zero in both arms -- no core relation declares a prune, so a refresh can correct a record and can never remove one."
+  }
+}

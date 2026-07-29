@@ -9,6 +9,14 @@ in this task. Every transaction that reaches the target is a row that already
 existed in the approved legacy PostgreSQL source, which is itself populated
 exclusively by the governed Mongo-to-PostgreSQL data plane (`apps/data_platform`).
 
+**This claim is tested — see §10.** Target rows with no primary key in the
+source: zero, across all six copied `core` relations
+(`canonical_row_drift_audit.json`). The same audit found the converse failing:
+16 953 target rows had drifted from the source they were copied from, including
+a transaction the source records as `refunded` at 0.00 that the target still
+reported as `succeeded` at 230.00 and the view still counted as revenue. That is
+Defect F, and it is fixed.
+
 ## Redaction
 
 Receipts carry **aggregates only** — counts, distinct counts, min/max dates, and
@@ -38,7 +46,7 @@ leak what it is auditing. The `run_id` class is the control: it is allowed, it
 is known to be present, and it must come back non-zero, since a clean report
 from an audit that cannot find an identifier at all would prove nothing.
 
-Current state, `evidence_redaction_audit.json`: 43 files scanned, 14
+Current state, `evidence_redaction_audit.json`: 49 files scanned, 14
 identifier-shaped tokens, **all 14 classified as `run_id`** — 0 leaked, 0
 unclassified, control meaningful. The probe now fingerprints its samples at
 source, and the already-committed receipt was rewritten in place by
@@ -95,6 +103,10 @@ neither is claimed.
 | `runbook/training-contract-readiness-probe.py` | — | The probe that produced it. Imports the code under test. Covers the whole read-only prefix of `train()`, including `_temporal_validation` — reported under `model_quality_probe`, outside the verdict, because its thresholds are the registry task's (see §9). |
 | `runbook/training-contract-probe-runner.sh` | — | Runs that probe detached, like the keepers. A worker turn is shorter than the probe, and a probe killed with its worker leaves a PostgreSQL backend still executing (see §9). |
 | `runbook/training-contract-quality-stage-test.py` | — | Fixture tests for that probe's `model_quality_probe` stage: it returns a verdict, leaks no segment value, contains its own errors, and never moves `data_gates_passed`. Needs no database — the stage's first live run is unattended, so it is tested before then. |
+| `canonical_row_drift_audit.json` | — | Defect F: the live source and target compared row for row across every copied `core` relation, testing this file's opening claim. No injected row anywhere (0 of 6 relations), and 16 953 drifted ones — including a `refunded` transaction the target still counted as a 230.00 sale (see §10). Carries its own method and redaction statement. |
+| `runbook/canonical-row-drift-audit.py` | — | The read-only audit that produced it. Server-side digests first so identical groups cost nothing; only disagreeing groups are pulled and diffed. Compares `geom` as EWKB so a rendering difference cannot be reported as drift. |
+| `canonical_row_drift_rehearsal.json` | — | The Defect F fix rehearsed on the **live** pair: the real `activate` chain run twice inside a rolled-back transaction, core relations frozen vs refreshing. Drift 1 847 → 0, exactly 16 953 rows refreshed and 0 pruned, and the chain runs no slower (see §10). |
+| `runbook/canonical-row-drift-rehearsal.py` | — | The rehearsal that produced it. Same advisory lock and statement timeout as `run_activation`; both arms roll back and neither commits. |
 | `evidence_redaction_audit.json` | — | Every identifier-shaped token in this directory, classified against the database. Found and then cleared a real violation; see **Redaction** above. |
 | `runbook/evidence-redaction-audit.py` | — | The audit that produced it. Classifies by table membership rather than by pattern, reports salted fingerprints only, and uses the allowed `run_id` class as its control. |
 | `runbook/redact-fidelity-sample.py` | — | One-shot, kept committed so the rewrite of `eligibility_model_fidelity.json`'s sample fields is reproducible rather than an unexplained diff. Idempotent. |
@@ -1510,7 +1522,145 @@ notice — the first attempt left a backend still spilling to disk twenty minute
 after its client was gone, competing for I/O with its own replacement. Terminate
 such a backend explicitly with `pg_terminate_backend`; it will not clear itself.
 
-## 10. After state
+## 10. Defect F — the fact table was frozen too, and the view was counting a refund
+
+The first paragraph of this file has claimed since the task opened:
+
+> No fixture, synthetic, seed, spine, or auto-generated row is introduced
+> anywhere in this task. Every transaction that reaches the target is a row that
+> already existed in the approved legacy PostgreSQL source.
+
+That is two claims and nothing had checked either. It is the same shape as the
+redaction promise above — a structural argument about code standing in for a
+measurement of what landed — and that one turned out to be false. The structural
+argument here is real as far as it goes: `forecast_history_activation.py` copies
+and never generates, and `install_views.py` separately rejects
+`generate_series(`, `random(`, `setseed(` and `create table as` from the
+model-ready SQL. Neither statement says what is in the database.
+
+`runbook/canonical-row-drift-audit.py` asks both halves directly, comparing the
+live PG15 source against the live PG16 target across every `core` relation the
+activation copies. An aggregate pass computes a count, a digest of the sorted
+primary keys and a digest of the sorted rows server-side, so identical groups
+cost nothing to prove; only the disagreeing groups are pulled row by row and
+diffed. `geom` is compared as EWKB rather than as text, because a rendering
+difference between two servers would otherwise be indistinguishable from drift.
+
+### The first half holds, by measurement this time
+
+Target rows whose primary key the source does not hold: **zero**, in all six
+relations. Nothing on the target was invented. Criterion 3's prohibition is now
+answered by a receipt (`canonical_row_drift_audit.json`) rather than by the
+paragraph asserting it.
+
+### The second half did not
+
+**16 953 target rows no longer match the source**, and one of them has teeth.
+
+`apps/data_platform/store.py` writes canonical transactions with
+`ON CONFLICT (transaction_id) DO UPDATE`, rewriting `store_id`, `event_time`,
+`observation_time`, `payment_time`, the three amounts, `currency`,
+`transaction_status` and `ingested_at` whenever it re-projects a changed
+upstream record. Seven of those are exactly what `forecast_training_view` reads.
+`Relation("core", "transactions")` carried no `refresh_key`, so `copy_relation`
+reached it with `ON CONFLICT DO NOTHING` and an already-present target row could
+never be revisited. That is **Defect B's mechanism, moved off the ingestion
+ledger and onto the fact table** — and unlike Defect B it was invisible, because
+a stale row looks exactly like a correct one until you ask the source.
+
+The exhibit, on `2026-07-26`: one transaction stands at `refunded` / **0.00** in
+the source and `succeeded` / **230.00** on the target. The view admits rows on
+`transaction_status = 'succeeded'`, so **the target counts a refund as a sale**
+and puts phantom revenue into a training label. One row is not a large error;
+being unable to correct it is the finding. A further 1 846 transaction rows
+carry stale `observation_time` / `ingested_at`, which are not cosmetic either —
+they feed `source_available_at`, hence `label_maturity_time`, and the
+`observation_time >= event_time AND ingested_at >= observation_time` half of
+`source_run_complete`.
+
+Every drift, in every relation, runs **source-newer**. Not one runs the other
+way, which is what a copy that freezes rather than corrupts should look like.
+
+The dimensions drift too: `tenants`, `brands`, `stores` and `machines` in
+`updated_at` only — a column no model-ready view reads — and
+`address_locations` in `geom` on 1 493 rows, which is real data (both servers
+run PostGIS 3.6.0 and the comparison is binary). Only the transaction drift
+reaches the forecast contract, but leaving five relations knowingly frozen after
+writing them down would be worse than fixing them.
+
+### The fix, and why the docstring had to change with it
+
+Every `core` relation now refreshes on its primary key. Two properties keep that
+narrow rather than broad: `refresh_sql` already guards with `IS DISTINCT FROM`,
+so a converged row costs nothing and only genuine drift is rewritten; and no
+`core` relation declares a prune, so a refresh can **correct** a record and can
+never **remove** one.
+
+`refresh_key`'s docstring used to forbid precisely this — *"never to rewrite the
+record a row describes"* — and a unit test named
+`test_only_lifecycle_relations_converge_and_only_lineage_prunes` pinned it, both
+written by this task during the Defect E fix. The restriction reads as
+conservative and is the opposite: it is what froze a refund out of the target.
+It assumed the target owns something worth protecting, and it does not — every
+`core` relation here is a copy of the approved source, which is itself written
+only by the governed data plane. The rule is now the mirror rule, and the
+deletion-side invariant the test was really protecting is asserted directly
+instead: only `canonical_lineage` prunes.
+
+### Rehearsed where it will actually run
+
+Defect E was a case where the deductive reading of this same function looked
+safe and was wrong — `prune_sql`'s fail-closed keeper check is real, it just
+interrogates staging instead of the post-insert target — and 1 841 lineage rows
+were gone before anyone measured. The finisher runs `activate` exactly **once**,
+so there is no second activation to correct a mistake. So
+`runbook/canonical-row-drift-rehearsal.py` follows
+`lineage-convergence-rehearsal.py`: two arms over the real `copy_relation` and
+the real `ACTIVATION_RELATIONS` chain against the live pair, same order, same
+statement timeout, same advisory lock as `run_activation`, each inside a
+transaction that is **rolled back**. One variable — `refresh_key` on the `core`
+relations. `ingestion_runs` and `canonical_lineage` keep theirs in both arms;
+those are Defects B and E and are not under test.
+
+`canonical_row_drift_rehearsal.json`:
+
+| | frozen core (pre-fix) | refreshing core (shipped) |
+| --- | --- | --- |
+| drift left behind | **1 847** | **0** |
+| `core` rows refreshed | 0 | **16 953** |
+| `core` rows pruned | 0 | **0** |
+| chain wall clock | 285.3 s | 274.8 s |
+
+Three things worth reading off that table. The refreshing arm rewrote **16 953
+rows — exactly the count the audit measured as drifted**, relation by relation
+(1 354 / 1 354 / 2 405 / 2 442 / 7 551 / 1 847). A refresh key that failed to
+identify a target row one-for-one would have rewritten more; that it rewrote the
+drifted set and nothing else is the empirical form of the uniqueness argument.
+Pruned stays **0**. And the fix **costs nothing** — the refreshing chain ran
+10 s faster than the frozen one, which is noise on a 4½-minute chain, because
+`IS DISTINCT FROM` means the other 550 000 rows are compared and skipped.
+
+One number in that receipt should not be over-read. The arms report
+`transactions_admitted_by_the_view_filter` as 509 270 and 510 312, and the
+1 042-row gap is **not** the fix: the arms ran five minutes apart against a
+source that `-b2` was still writing to, and `rows_absent_from_source_probe`
+(267 and 264) records the same live growth. The reversal's effect is exactly the
+**−1** the audit isolated, measured against one snapshot of both sides.
+
+### What this changes about the acceptance receipt
+
+Without this fix the acceptance activation would have inserted the backfill
+correctly and left every already-present row at whatever the first copy saw —
+including the refund. The evidence would have looked complete, because nothing
+in the before/after pair compares the target's *content* to the source's; they
+compare coverage. This is the fourth defect in this task whose signature is a
+conflict clause that cannot revisit a row (B on the ledger, E on lineage, F on
+the fact table), and the general lesson is worth stating once: **`ON CONFLICT DO
+NOTHING` is a decision that the first write wins forever**, and it is only safe
+where the source is genuinely append-only. Three of this pipeline's relations
+looked append-only and were not.
+
+## 11. After state
 
 Populated once `-s3`/`-s4`/`-s5` reach `Complete`, the source meets the settling
 condition above, and activation runs. See
