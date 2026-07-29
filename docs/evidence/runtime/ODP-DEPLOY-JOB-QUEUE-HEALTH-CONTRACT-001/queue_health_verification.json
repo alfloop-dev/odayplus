@@ -1,13 +1,17 @@
 {
   "task_id": "ODP-DEPLOY-JOB-QUEUE-HEALTH-CONTRACT-001",
-  "timestamp": "2026-07-29T11:48:24Z",
-  "durable_postgresql_queue_health_payload": "healthy (durable postgresql job queue)",
+  "timestamp": "2026-07-29T12:17:00Z",
+  "queue_text_derivation": "bundle.mode (not bundle.is_durable)",
+  "mode_postgresql_queue_health_payload": "healthy (durable postgresql job queue)",
+  "mode_durable_sqlite_queue_health_payload": "healthy (durable sqlite job queue)",
   "in_memory_queue_health_payload": "healthy (in-memory job queue)",
-  "validator_durable_check": "PASS",
+  "validator_postgresql_mode_check": "PASS (contains 'durable', no forbidden marker)",
+  "validator_durable_sqlite_check": "FAIL_CLOSED (contains forbidden marker 'sqlite')",
   "validator_in_memory_check": "FAIL_CLOSED (contains forbidden marker 'in-memory')",
   "validator_bare_healthy_check": "FAIL_CLOSED (missing required marker ('worker', 'cloud', 'durable'))",
-  "linter_check": "PASS",
+  "linter_check": "pending re-run",
   "regression_tests": {
-    "test_real_app_platform_health_job_queue_contract": "PASS"
-  }
+    "test_real_app_platform_health_job_queue_contract": "pending re-run after B1+B2 fix"
+  },
+  "note": "Previous evidence incorrectly labelled a mode='durable' (SQLite) bundle result as 'durable_postgresql'. The fix derives text from bundle.mode; only mode='postgresql' emits the positive marker."
 }

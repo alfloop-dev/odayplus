@@ -579,11 +579,12 @@ else:
             )
 
             queue_ok = True
-            queue_details = (
-                "healthy (durable postgresql job queue)"
-                if bundle.is_durable
-                else "healthy (in-memory job queue)"
-            )
+            if bundle.mode == "postgresql":
+                queue_details = "healthy (durable postgresql job queue)"
+            elif bundle.mode == "durable":
+                queue_details = "healthy (durable sqlite job queue)"
+            else:
+                queue_details = "healthy (in-memory job queue)"
             try:
                 if bundle.is_durable:
                     bundle.engine.query("SELECT COUNT(*) FROM durable_jobs")
