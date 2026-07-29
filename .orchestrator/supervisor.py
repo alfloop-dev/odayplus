@@ -9083,6 +9083,11 @@ def dispatch_ready_tasks(
                     current_head = resolve_task_sha(task_id)
                 except Exception as err:
                     console_log(f"Failed to resolve sha for {task_id}: {err}", quiet=SUPERVISOR_LOG_QUIET)
+                # Backward compatibility: a task approved before the freeze
+                # shipped has no approved_head, so it is dispatched without the
+                # integrity check rather than being wedged forever. New
+                # approvals cannot reach this state -- command_approve now fails
+                # closed when the head is unresolvable (B20).
                 if approved_head:
                     if not current_head or current_head != approved_head:
                         if current_head and current_head != approved_head:
@@ -9105,6 +9110,28 @@ def dispatch_ready_tasks(
                                 },
                             )
                             changed = True
+                        else:
+                            # B20: head unresolvable. Suppressing finalize here
+                            # is correct, but doing it silently leaves the task
+                            # parked in review_approved with no explanation for
+                            # the operator. Emit once, not every cycle.
+                            msg = (
+                                f"Cannot verify branch HEAD for task {task_id} against the "
+                                f"reviewer-approved head ({approved_head[:8]}); finalize dispatch "
+                                "suppressed until it resolves."
+                            )
+                            if task.get("next") != msg:
+                                task["next"] = msg
+                                status_path = config_path(config, "status_file")
+                                write_json(status_path, status)
+                                write_activity_log(
+                                    config,
+                                    {
+                                        "type": "approved_head_unresolved",
+                                        "task_id": task_id,
+                                        "message": msg,
+                                    },
+                                )
                         continue
 
                 ci_status = "unknown"
@@ -9154,6 +9181,25 @@ def dispatch_ready_tasks(
                         )
                     continue
                 elif ci_status not in {"success", "none"}:
+                    # B20: catch-all for probe states that are neither pending,
+                    # failure, nor green (e.g. "unknown" when `gh` is
+                    # unreachable). Fail closed, but say so once.
+                    msg = (
+                        f"CI status for task {task_id} is unresolved ({ci_status}); "
+                        "finalize dispatch suppressed until it is conclusive."
+                    )
+                    if task.get("next") != msg:
+                        task["next"] = msg
+                        status_path = config_path(config, "status_file")
+                        write_json(status_path, status)
+                        write_activity_log(
+                            config,
+                            {
+                                "type": "ci_status_unresolved",
+                                "task_id": task_id,
+                                "message": msg,
+                            },
+                        )
                     continue
                 else:
                     if task.pop("ci_pending_since_ts", None) is not None:

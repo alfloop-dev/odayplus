@@ -4667,15 +4667,46 @@ def command_approve(state: dict[str, Any], args: list[str]) -> None:
     if task.get("status") != "review":
         raise SystemExit(f"{task_id} must be in review before it can move to review_approved")
 
+    # B20: the approved head is the whole basis of the post-review freeze.
+    # command_done and both supervisor dispatch gates are guarded by
+    # `if approved_head:`, so approving without recording one silently disables
+    # the freeze for that task instead of failing closed. Resolve it *before*
+    # any mutation, so an unresolvable head aborts the approval outright rather
+    # than leaving the task review_approved-but-unfrozen.
+    try:
+        approved_sha = resolve_task_sha(task_id)
+    except Exception as exc:
+        raise SystemExit(
+            f"Cannot approve task {task_id}: unable to resolve the branch HEAD to freeze ({exc}). "
+            "Integrity gate failed closed; no approval was recorded."
+        ) from exc
+    if not approved_sha:
+        raise SystemExit(
+            f"Cannot approve task {task_id}: branch HEAD could not be resolved, so the "
+            "reviewer-approved commit cannot be frozen. Push the task branch (or open its PR) "
+            "and approve again. No approval was recorded."
+        )
+
+    # B20: approved_head is immutable for the lifetime of one approval. Every
+    # transition back to `review` (handoff, reopen, re_review, and the
+    # supervisor's head-drift demotion) pops it, so a task sitting in `review`
+    # while still carrying an approved_head is inconsistent state. Refuse to
+    # overwrite the earlier freeze silently.
+    existing_head = task.get("approved_head")
+    if existing_head and existing_head != approved_sha:
+        raise SystemExit(
+            f"Cannot approve task {task_id}: it still carries an uncleared approved head "
+            f"({existing_head[:8]}) while the branch is now at {approved_sha[:8]}. "
+            f"Run `re_review {task_id} <reason>` to clear the stale freeze first. "
+            "No approval was recorded."
+        )
+
     timestamp = iso_now()
     task["status"] = "review_approved"
     task["last_update"] = timestamp
     task["next"] = message
     task.pop("waiting_for", None)
-
-    approved_sha = resolve_task_sha(task_id)
-    if approved_sha:
-        task["approved_head"] = approved_sha
+    task["approved_head"] = approved_sha
 
     review_notes = parse_delimited_env("REVIEW_NOTES_ZH")
     if review_notes:

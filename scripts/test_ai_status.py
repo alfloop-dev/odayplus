@@ -111,11 +111,17 @@ class ReviewApprovedWorkflowTests(unittest.TestCase):
         }
 
     def test_approve_creates_owner_finalize_handoff(self) -> None:
-        with mock.patch.dict(os.environ, {"AI_NAME": "Claude", "REVIEW_NOTES_ZH": "審查通過||交回 owner 收尾"}, clear=False):
+        # resolve_task_sha is pinned so the approval freezes a known head:
+        # command_approve now fails closed when it cannot resolve one, and an
+        # unpatched probe would shell out to `gh`/`git` for a task id that has
+        # no branch, making this unit test environment-dependent.
+        with mock.patch.dict(os.environ, {"AI_NAME": "Claude", "REVIEW_NOTES_ZH": "審查通過||交回 owner 收尾"}, clear=False), \
+             mock.patch.object(ai_status, "resolve_task_sha", return_value="1111111122222222333333334444444455555555"):
             ai_status.command_approve(self.state, ["REG-002", "Review passed. Owner should finalize."])
 
         task = ai_status.get_task(self.state, "REG-002")
         self.assertEqual(task["status"], "review_approved")
+        self.assertEqual(task["approved_head"], "1111111122222222333333334444444455555555")
         self.assertEqual(task["review_notes_zh"], ["審查通過", "交回 owner 收尾"])
 
         pending = [handoff for handoff in self.state["handoffs"] if handoff["status"] != "done"]

@@ -82,3 +82,162 @@ git merge origin/dev -m "ODP-ORCH-REVIEW-HEAD-FREEZE-001: merge origin/dev"
 # All checks passed!
 ```
 
+## 4. Round 8 (Claude3) — B18 / B19 / B20
+
+Round 7 rejected `d4bca25b`. This round is verified with the method that round 7
+established: every fail-closed claim gets a **mutant**, not a read-through. A gate is
+only considered covered if deleting it turns the suite red.
+
+### 4.1 CI-faithful sandbox
+
+```bash
+mkdir -p /tmp/freeze-r8c && git archive HEAD | tar -x -C /tmp/freeze-r8c
+cp .orchestrator/config.example.json .orchestrator/config.json   # what `make bootstrap` does in CI
+env -u PANTHEON_STATUS_ROOT -u AI_NAME pytest -m "not requires_live_env" \
+    .orchestrator scripts -q --junitxml=/tmp/r8-new2.xml
+# exit=0   tests=607 failures=0 errors=0 skipped=0
+env -u PANTHEON_STATUS_ROOT ruff check .orchestrator scripts
+# All checks passed!
+```
+
+Baseline at round-7 head was 603 tests; this round adds 4.
+
+### 4.2 B18 — FIXED (test integrity)
+
+`test_dispatch_priority_fails_closed_on_unresolved_head_or_unknown_ci` now pins
+`ai_status.task_pr_ci_status` to `("OPEN", "success")` in both head sub-cases, so the
+head gate is the only thing that can produce `None`; adds the `head=match` +
+`ci="success"` -> `assertEqual(prio, 1)` positive control; and adds a drifted-head
+sub-case. It no longer reaches the real `gh`-shelling CI probe from a unit test (AC5
+determinism).
+
+| Mutant | Round 7 | Round 8 |
+|---|---|---|
+| m6 — head gate fails **open** when head unresolvable | SURVIVED | **KILLED** |
+| m12 — head-resolution `except Exception: return None` -> `pass` | SURVIVED | **KILLED** |
+
+Both are killed by exactly
+`test_dispatch_priority_fails_closed_on_unresolved_head_or_unknown_ci`.
+
+No behaviour change: `.orchestrator/supervisor.py` was not touched for B18. The shipped
+gate was already correct; only its test was vacuous.
+
+### 4.3 B19 — FIXED (delivery sequencing)
+
+`origin/dev` was merged into the task branch as a plain two-parent merge (`8a53a645`,
+parents `b9d640e4` + `0b04761a`), preserving reviewer commit `619f30a8`. The round-6
+whitespace defect is folded into this same push:
+
+```bash
+git diff origin/dev...HEAD --check
+# (clean — was: docs/evidence/fleet_dispatch/...md:84: new blank line at EOF)
+```
+
+### 4.4 B20 — approved-head immutability, fail-closed approval, operator signal
+
+Three defects, all in the fail-open direction, all now covered by mutants.
+
+**B20-a — approving without a resolvable head silently disabled the freeze.**
+`command_approve` recorded the head under `if approved_sha:`. Since `command_done` and
+both supervisor dispatch gates are guarded by `if approved_head:`, an unresolvable head
+did not fail closed — it opted the task out of the integrity check entirely, defeating
+AC1 for that task. The head is now resolved *before* any mutation, and an unresolvable
+or raising probe aborts the approval with the task left in `review`.
+
+**B20-b — `approved_head` was silently overwritable.** Every transition back to `review`
+(`handoff`, `reopen`, `re_review`, and the supervisor's head-drift demotion) pops
+`approved_head`, so a task in `review` still carrying one is inconsistent state.
+`command_approve` now refuses to overwrite a *differing* uncleared head and directs the
+operator to `re_review`; re-approving at the same head is still allowed.
+
+**B20-c — suppression was silent.** The unresolved-head path and the catch-all
+unresolved-CI path both used a bare `continue`, unlike the `pending` and `failure`
+branches, so a task sat in `review_approved` with no `next` and no activity-log entry.
+Both now emit once (`approved_head_unresolved`, `ci_status_unresolved`) using the same
+write-only-if-changed pattern, so they do not re-log every supervisor cycle.
+
+The round-7 non-blocking note about the `if approved_head:` backward-compatibility
+bypass is now an explicit comment at the dispatch gate.
+
+### 4.5 Mutation results (all applied to the throwaway sandbox copy)
+
+| # | Mutation | Result |
+|---|---|---|
+| m13 | `command_approve`: `if not approved_sha: raise` -> `if False:` | **KILLED** by `test_approve_fails_closed_when_approved_head_cannot_be_resolved` |
+| m14 | `command_approve`: immutability guard -> `if False:` | **KILLED** by `test_approve_refuses_to_overwrite_uncleared_approved_head` |
+| m15 | `command_approve`: resolve `except` -> `approved_sha = None` | **KILLED** by `test_approve_fails_closed_when_approved_head_cannot_be_resolved` |
+| m16 | `dispatch_ready_tasks`: `approved_head_unresolved` signal -> `elif False:` | **KILLED** by `test_supervisor_emits_operator_signal_for_silent_finalize_suppression` |
+| m17 | `dispatch_ready_tasks`: `ci_status_unresolved` signal -> bare `continue` | **KILLED** by the same test |
+| m18 | `dispatch_ready_tasks`: `elif now_ts - start_ts > 1800:` -> `elif False:` | **KILLED** by `test_ci_pending_escalates_to_operator_after_timeout` |
+| m10 | `dispatch_ready_tasks`: entire `if ci_status == "pending":` -> `if False:` | **KILLED** (SURVIVED in round 7) |
+
+m10 was round 7's non-blocking observation: the CI-pending branch's side effects
+(`ci_pending_since_ts` bookkeeping and the 30-minute escalation notice) had zero
+coverage, because the later catch-all still suppressed dispatch. AC3's escalation half
+is now covered.
+
+### 4.6 New tests
+
+- `test_approve_fails_closed_when_approved_head_cannot_be_resolved` (B20-a; carries a
+  resolvable-head positive control)
+- `test_approve_refuses_to_overwrite_uncleared_approved_head` (B20-b; carries a
+  same-head re-approval positive control)
+- `test_supervisor_emits_operator_signal_for_silent_finalize_suppression` (B20-c;
+  carries a head-match/CI-green dispatch positive control, and asserts signals are
+  emitted once rather than every cycle)
+- `test_ci_pending_escalates_to_operator_after_timeout` (m10 gap / AC3 escalation)
+
+`scripts/test_ai_status.py::test_approve_creates_owner_finalize_handoff` was updated:
+it previously relied on the B20-a fail-open and shelled out to `gh` for a task id with
+no branch. It now pins `resolve_task_sha` and asserts the frozen head.
+
+### 4.7 Scope
+
+```bash
+git diff origin/dev...HEAD --stat
+# .orchestrator/supervisor.py | .orchestrator/test_supervisor.py
+# scripts/ai_status.py        | scripts/test_ai_status.py
+# docs/evidence/**            (fleet_dispatch + runtime review records)
+```
+
+No Package 10 UI, API worker logic, or cloud resources were touched (AC6).
+
+### 4.8 Full mutation matrix on the delivered head
+
+All ten mutants applied to a throwaway sandbox copy; originals restored after each run.
+Round 7 had three survivors, all now killed.
+
+```
+m6    -> KILLED   | test_dispatch_priority_fails_closed_on_unresolved_head_or_unknown_ci
+m12   -> KILLED   | test_dispatch_priority_fails_closed_on_unresolved_head_or_unknown_ci
+m3    -> KILLED   | test_command_done_fails_closed_when_sha_unresolved_or_raises
+m13   -> KILLED   | test_approve_fails_closed_when_approved_head_cannot_be_resolved
+m14   -> KILLED   | test_approve_refuses_to_overwrite_uncleared_approved_head
+m15   -> KILLED   | test_approve_fails_closed_when_approved_head_cannot_be_resolved
+m16   -> KILLED   | test_supervisor_emits_operator_signal_for_silent_finalize_suppression
+m17   -> KILLED   | test_supervisor_emits_operator_signal_for_silent_finalize_suppression
+m18   -> KILLED   | test_ci_pending_escalates_to_operator_after_timeout
+m10   -> KILLED   | test_ci_pending_escalates_to_operator_after_timeout
+```
+
+### 4.9 Non-blocking observation — the suite writes to tracked status files
+
+Running the suite from the repository root (rather than a sandbox) appends real entries
+to the tracked `ai-activity-log.jsonl` and rewrites `dashboard-bundle.json` /
+`docs-site/dashboard-bundle.json`. This is pre-existing: the committed log already
+contains `REG-002` / `APP-001-SIDECAR-BFF-HANDOFF` fixture lines from an earlier leaked
+run, and the leak comes from `ai_status.append_log` / `sync_all` in tests that do not
+patch them.
+
+Scope taken here was to not make it worse:
+
+- the three suppression sub-cases of
+  `test_supervisor_suppresses_finalize_dispatch_on_unresolved_head_or_unknown_ci` now
+  patch `supervisor.write_activity_log` / `supervisor.write_json`, because the new B20-c
+  signals would otherwise have made an existing test start writing to the real log;
+- both new approve tests patch `ai_status.append_log`.
+
+The remaining pre-existing leak (`REG-002` family in `scripts/test_ai_status.py`) is left
+alone deliberately — fixing it would expand this diff into unrelated tests. It is worth a
+follow-up task, ideally an autouse fixture that points the status root at a tmp_path for
+the whole suite.
