@@ -57,6 +57,25 @@ once the FOLLOWING partition also finishes, so expect a slice to yield its dates
 one behind the partition frontier, and the last date of a slice to wait on
 whatever ingests the day after it.
 
+That last paragraph described what the first two rules were *observed* to do,
+and it took a third rule to make it what they GUARANTEE. `bool_and` over owning
+runs only holds a date back once the following run has actually claimed its
+spill rows, which leaves a window -- from the moment the following partition
+starts to the moment it writes those rows -- in which a date passes both tests
+vacuously, on an under-count. 2026-05-21 walked straight into it: its own
+partition succeeded at 00:19Z, `2026-05-22__2026-05-23` was three minutes into
+its run and owned none of 05-21's transactions yet, and the date scored 512
+stores against a 517 upper bound -- comfortably inside the band, indeed at a
+ratio in line with every other date, and therefore invisible as an error. This
+is the mid-flight trap of the paragraph above wearing different clothes: a
+partial read can only under-count, so it always appears to respect an upper
+bound. The third rule closes it structurally rather than by timing: **a date is
+scored only once a SUCCEEDED run also owns the FOLLOWING day's partition**, so
+the only source that can still spill into it is finished. It is a strict
+strengthening -- it can only withhold dates, never admit them -- and it makes
+"one behind the partition frontier" a property of the code instead of a
+description of its luck.
+
 Re-run this after each backwards slice completes; it strengthens monotonically
 as `-b2`, `-b3` and `-b4` land, and it is the only check that closes the
 distance limit the `-s4` backtest left open.
@@ -69,7 +88,7 @@ Usage:
 
 import json
 import os
-from datetime import UTC, date, datetime
+from datetime import UTC, date, datetime, timedelta
 
 import psycopg
 
@@ -179,12 +198,25 @@ def main():
             "upstream_stores": up,
             "upstream_orders": upstream_orders.get(key),
             "own_partition_succeeded": d in covered,
+            "following_partition_succeeded": (d + timedelta(days=1)) in covered,
         }
         if d not in covered:
             entry["excluded_reason"] = (
                 "no SUCCEEDED run owns this date's own whole-day partition -- it "
                 "is a timezone-edge straggler pulled in by a neighbouring "
                 "window's bound, not an ingested trading day"
+            )
+            incomplete.append(entry)
+            continue
+        if (d + timedelta(days=1)) not in covered:
+            entry["excluded_reason"] = (
+                "the FOLLOWING day's partition has no SUCCEEDED run, so a source "
+                "that can still spill transactions into this date is unfinished. "
+                "bool_and over owning runs only holds the date back once that run "
+                "has claimed its spill rows, so between the following partition "
+                "starting and writing them a date passes the other two tests on "
+                "an under-count -- and an under-count always appears to respect "
+                "the upper bound"
             )
             incomplete.append(entry)
             continue
@@ -254,19 +286,30 @@ def main():
         },
         "completeness": {
             "rule": (
-                "a date is scored only if BOTH hold: a SUCCEEDED run owns its "
-                "own whole-day partition (it was ingested as a day, rather than "
-                "clipped in by a neighbouring window's bound), AND every run "
-                "owning its transactions is SUCCEEDED (the view's own predicate). "
-                "The two are independent -- 2026-07-06 has a SUCCEEDED partition "
-                "and still fails the second test, which is Defect D."
+                "a date is scored only if ALL THREE hold: a SUCCEEDED run owns "
+                "its own whole-day partition (it was ingested as a day, rather "
+                "than clipped in by a neighbouring window's bound), a SUCCEEDED "
+                "run also owns the FOLLOWING day's partition (so no unfinished "
+                "source can still spill transactions into this date), AND every "
+                "run owning its transactions is SUCCEEDED (the view's own "
+                "predicate). The three are independent -- 2026-07-06 has a "
+                "SUCCEEDED partition and still fails the third test, which is "
+                "Defect D."
             ),
-            "why_two_rules": (
+            "why_three_rules": (
                 "the first rule is what excludes 2026-05-16 and 2026-05-22: they "
                 "are attested, so the view's predicate alone would admit them, "
                 "but they hold 1 and 3 stores because no partition ever covered "
                 "them. Scoring a straggler against a ~520-store prediction "
-                "reports a 500-store shortfall that means nothing."
+                "reports a 500-store shortfall that means nothing. The second "
+                "rule exists because the third one is not self-enforcing: "
+                "bool_and over owning runs holds a date back only after the "
+                "following run has claimed its cross-midnight spill, so in the "
+                "window between that run starting and writing those rows a date "
+                "passes on an under-count. 2026-05-21 did exactly that at 00:22Z "
+                "-- 512 stores against a 517 bound, at a ratio indistinguishable "
+                "from a real reading. A partial read can only under-count, so it "
+                "always appears to respect an upper bound."
             ),
             "excluded": incomplete,
         },

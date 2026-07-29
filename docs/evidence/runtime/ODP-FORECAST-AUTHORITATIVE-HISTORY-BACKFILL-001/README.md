@@ -1088,6 +1088,22 @@ one, because the obvious single rule is wrong in both directions.
   slice to yield its dates one behind the partition frontier. 2026-07-06 is the
   same test failing for the other reason — a SUCCEEDED partition whose lineage
   is unreconciled — which is why both rules are kept separate and both reported.
+- **A date finally needs a SUCCEEDED run over the FOLLOWING day's partition**,
+  and this third rule was added at 00:25Z because the first two do not actually
+  guarantee what the paragraph above claims they do. `bool_and` over owning runs
+  holds a date back only once the following run has *claimed* its spill rows, so
+  between that run starting and writing them there is a window in which a date
+  passes both earlier tests vacuously, on an under-count. 2026-05-21 walked into
+  it: its own partition succeeded at 00:19Z, `2026-05-22__2026-05-23` was three
+  minutes old and owned none of 05-21's transactions yet, and the date scored
+  512 stores against a 517 bound — a ratio of 0.9903, sitting mid-range
+  among every other scored date and so invisible as an error. It is the same
+  mid-flight trap as the 518→520 hand-reading above, arriving by a third route,
+  and it is worth stating why the trap is so hard to see: a partial read can only
+  ever *under*-count, and an under-count always appears to respect an upper
+  bound. The new rule closes it structurally rather than by timing — it can only
+  withhold dates, never admit them, and it makes "one behind the partition
+  frontier" a property of the code instead of a description of its luck.
 
 The guard is not ceremony. Read by hand while `-b1`'s first partition was still
 running, 2026-05-17 showed 518 stores over 8 733 transactions — comfortably
@@ -1101,17 +1117,26 @@ is the record that the method was fixed, and its guards demonstrated, *before*
 any backwards date could be scored — so the numbers it eventually reports cannot
 have been fitted to them.
 
-**Three backwards dates are now scored, and the invariant held on every one**
-(receipt re-captured 23:28Z; **0 breaches**). Each became scoreable exactly one
-behind the partition frontier, as the second completeness rule predicts —
-2026-05-17 when `2026-05-18__2026-05-19` reached SUCCEEDED, then 05-18 and 05-19
-as `2026-05-19__2026-05-20` finished:
+**Four backwards dates are now scored, and the invariant held on every one**
+(receipt re-captured 00:25Z; **0 breaches**). Each became scoreable exactly one
+behind the partition frontier, which is now enforced rather than observed:
 
 | date | landed stores | upstream bound | landed/upstream | predicted | error |
 | --- | --- | --- | --- | --- | --- |
 | 2026-05-17 | 520 | 527 | 0.9867 | 512 | +8 |
 | 2026-05-18 | 511 | 517 | 0.9884 | 502 | +9 |
 | 2026-05-19 | 505 | 511 | 0.9883 | 496 | +9 |
+| 2026-05-20 | 511 | 515 | 0.9922 | 500 | +11 |
+
+One correction the third rule forces on the 23:28Z capture above. Under the rule
+as it now stands, that capture scored 2026-05-19 a step early: only
+`2026-05-17__2026-05-18` through `2026-05-19__2026-05-20` had succeeded, so
+05-19's own following partition was still the frontier. Re-measured at 00:25Z,
+after two further partitions closed, 05-19 reads 505 stores over 5 391
+transactions — identical to what it read then. So the earlier receipt's numbers
+were right; what was wrong was that nothing in the code guaranteed they would
+be. That is the whole reason the rule is worth adding: the failure mode is not a
+visibly wrong number, it is a right-looking number with no guarantee behind it.
 
 So the falsifiable claim survives its first real tests in the backwards regime:
 nothing landed that the density measurement did not already contain, which is the
@@ -1121,8 +1146,9 @@ probe reported for early May, which is the population `-b3`'s 406 was computed
 over.
 
 The calibration reads the other way, and in the direction that costs nothing.
-The `0.9715` mapping rate under-states landed stores on all three dates, by 8, 9
-and 9, at a strikingly stable `landed/upstream` of 0.9867–0.9884 (mean 0.9878).
+The `0.9715` mapping rate under-states landed stores on all four dates, by 8, 9,
+9 and 11, at a strikingly stable `landed/upstream` of 0.9867–0.9922 (mean
+0.9889).
 That is the same sign the `-s4` backtest found on its holdout (both arms
 under-stated, optimistic recall .937), now reproduced **two months** from its
 donors rather than days from them — the regime the backtest explicitly could not
@@ -1130,11 +1156,12 @@ reach. A projection that under-states cannot manufacture criterion 3; if this
 sign holds across `-b2` and `-b3`, the measured h28 should land at or above the
 projected 406, not below it.
 
-The honest limits. Three dates are three dates, and they are all from `-b1`, the
+The honest limits. Four dates are four dates, and they are all from `-b1`, the
 slice nearest the landed era; `-b3` sits three weeks further back and is where
 criterion 3 is actually decided. Two `-b1` dates stay excluded permanently —
-2026-05-16 and 2026-05-22, the stragglers — and 2026-05-20 is excluded because
-its own partition is still writing. And the invariant tested here is
+2026-05-16 and 2026-05-22, the stragglers — and 2026-05-21 is excluded until
+`2026-05-22__2026-05-23`, the slice's last partition, finishes. And the
+invariant tested here is
 per-date presence, not the per-store *continuity* that h28 needs: a date can land
 its full store count while individual stores still break their islands. That
 continuity claim is the one the `-s4` backtest scored and this probe does not.
