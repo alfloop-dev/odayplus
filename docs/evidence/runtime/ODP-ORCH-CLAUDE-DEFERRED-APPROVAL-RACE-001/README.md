@@ -112,3 +112,28 @@ was retained.
 Changed paths are limited to the supervisor, approval queue, their focused
 tests, and this task evidence directory. No `apps/**`, `modules/**`, deployment
 script, Package 10 design archive, or Package 10 runtime evidence path changed.
+
+## Closeout record (2026-07-29)
+
+Reviewer Codex4 approved exact head
+`7a7f87d7978eb7a9248699d9dc421d1819dbd670` with no blocking finding after
+independently rerunning the focused approval-queue and supervisor suites, Ruff,
+and the diff check. PR #490 merged that head into `dev` at
+2026-07-29T02:32:22Z as merge commit
+`fd3d99558e4fb65f94e0f145a93e7a5e03577d75`; the approved head is verified as
+an ancestor of `origin/dev`.
+
+CI run `30416181111` passed all required jobs: `orchestrator`, `product`,
+`performance-gate`, and `product-e2e-gate`. Owner closeout revalidation on the
+approved tree also passed:
+
+- `python3 -m unittest discover -s .orchestrator -p 'test_approval_queue.py'`
+  (9 tests);
+- `python3 -m unittest discover -s .orchestrator -p 'test_supervisor.py'`
+  (222 tests);
+- focused `uv run --frozen ruff check`;
+- `git diff --check dev...HEAD`.
+
+This closeout record is evidence-only. It does not change the reviewed runtime
+behavior, approval policy, deployment scripts, Package 10 paths, apps, or
+modules.
