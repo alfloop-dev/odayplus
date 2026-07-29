@@ -1,0 +1,68 @@
+# Corrected actor authority - read-only probe against live state
+# Run from the worker worktree with PANTHEON_STATUS_ROOT=/home/lupin/oday-plus-supervisor-live
+# Nothing below mutates ai-status.json.
+
+## Config sources seen by ai_status.py in this worktree
+CONFIG_FILE                : /tmp/pantheon-worker-worktrees/oday-plus-supervisor-live/odp-orch-actor-ref-validation-001/.orchestrator/config.json exists: True
+repo-local overlay         : /tmp/pantheon-worker-worktrees/oday-plus-supervisor-live/odp-orch-actor-ref-validation-001/.orchestrator/config.local.json exists: False
+status-root overlay        : /home/lupin/oday-plus-supervisor-live/.orchestrator/config.local.json exists: True
+overlays actually merged   : ['/home/lupin/oday-plus-supervisor-live/.orchestrator/config.local.json']
+
+## Parity with the loader the live Supervisor dispatches from
+live common.load_config() agents   : ['Antigravity', 'Antigravity2', 'Antigravity3', 'Antigravity4', 'Antigravity5', 'Antigravity6', 'Antigravity7', 'Claude', 'Claude2', 'Claude3', 'Codex', 'Codex2', 'Codex3', 'Codex4', 'Codex5', 'Codex6', 'Codex7', 'Codex8', 'Codex9']
+ai_status.configured_agent_names() : ['Antigravity', 'Antigravity2', 'Antigravity3', 'Antigravity4', 'Antigravity5', 'Antigravity6', 'Antigravity7', 'Claude', 'Claude2', 'Claude3', 'Codex', 'Codex2', 'Codex3', 'Codex4', 'Codex5', 'Codex6', 'Codex7', 'Codex8', 'Codex9']
+identical                          : True
+
+# Worktree caveat: config.local.json is gitignored, so the worktree checkout
+# has only the tracked half. Merging the status-root overlay is what keeps a
+# command's answer the same in a worktree and in the live checkout:
+tracked config.json alone          : ['Antigravity', 'Antigravity2', 'Antigravity3', 'Antigravity4', 'Antigravity5', 'Antigravity6', 'Antigravity7', 'Claude', 'Claude2', 'Claude3', 'Codex', 'Codex2']
+
+## Authority set used by every actor-shaped CLI argument
+non-worker actors     : ['CodexCoordinator', 'Human/Ops', 'Orchestrator']
+AI_STATUS_EXTRA_AGENTS: unset
+registered            : ['Antigravity', 'Antigravity2', 'Antigravity3', 'Antigravity4', 'Antigravity5', 'Antigravity6', 'Antigravity7', 'Claude', 'Claude2', 'Claude3', 'Codex', 'Codex2', 'Codex3', 'Codex4', 'Codex5', 'Codex6', 'Codex7', 'Codex8', 'Codex9', 'CodexCoordinator', 'Human/Ops', 'Orchestrator']
+
+## The overlay-declared workers resolve (six live assignments preserved)
+  accept Codex3             -> Codex3
+  accept Codex4             -> Codex4
+  accept Codex5             -> Codex5
+  accept Codex6             -> Codex6
+  accept Codex7             -> Codex7
+  accept Codex8             -> Codex8
+  accept Codex9             -> Codex9
+  accept codex5             -> Codex5
+  accept Human/Ops          -> Human/Ops
+  accept Orchestrator       -> Orchestrator
+  accept CodexCoordinator   -> CodexCoordinator
+
+## Static KNOWN_AGENTS names with no merged-config declaration are rejected
+  reject Gemini             -> Unknown probe: 'Gemini' is not a registered agent.
+  reject Gemini2            -> Unknown probe: 'Gemini2' is not a registered agent.
+  reject Copilot            -> Unknown probe: 'Copilot' is not a registered agent.
+
+## Live state
+invalid actor references: none
+
+## Roster classification (report only; no cleanup command was run)
+KEEP    Claude - declared in the merged Supervisor config (config.json + config.local.json)
+KEEP    Claude2 - declared in the merged Supervisor config (config.json + config.local.json)
+KEEP    Antigravity - declared in the merged Supervisor config (config.json + config.local.json)
+KEEP    Antigravity2 - declared in the merged Supervisor config (config.json + config.local.json)
+KEEP    Antigravity3 - declared in the merged Supervisor config (config.json + config.local.json)
+KEEP    Antigravity4 - declared in the merged Supervisor config (config.json + config.local.json)
+KEEP    Antigravity5 - declared in the merged Supervisor config (config.json + config.local.json)
+KEEP    Antigravity6 - declared in the merged Supervisor config (config.json + config.local.json)
+KEEP    Antigravity7 - declared in the merged Supervisor config (config.json + config.local.json)
+KEEP    Gemini - static KNOWN_AGENTS lane; recompute_agents recreates the row, so pruning it is a no-op (still not accepted as an actor reference)
+KEEP    Gemini2 - static KNOWN_AGENTS lane; recompute_agents recreates the row, so pruning it is a no-op (still not accepted as an actor reference)
+KEEP    Codex - declared in the merged Supervisor config (config.json + config.local.json)
+KEEP    Codex2 - declared in the merged Supervisor config (config.json + config.local.json)
+KEEP    Copilot - static KNOWN_AGENTS lane; recompute_agents recreates the row, so pruning it is a no-op (still not accepted as an actor reference)
+KEEP    Human/Ops - explicitly declared non-worker actor
+KEEP    Claude3 - declared in the merged Supervisor config (config.json + config.local.json)
+KEEP    Codex5 - declared in the merged Supervisor config (config.json + config.local.json)
+KEEP    Codex6 - declared in the merged Supervisor config (config.json + config.local.json)
+KEEP    Codex8 - declared in the merged Supervisor config (config.json + config.local.json)
+KEEP    Codex9 - declared in the merged Supervisor config (config.json + config.local.json)
+KEEP    CodexCoordinator - explicitly declared non-worker actor

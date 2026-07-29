@@ -30,9 +30,10 @@ KNOWN_AGENTS[<sentence>] = {
 ```
 
 The sentence then appeared as an `agents[]` roster entry and as a `workload`
-key. Nothing ever removed it, so the live roster had accumulated 30 entries for
-a 12-agent fleet: 5 prose/task-id entries plus 3 undeclared, unreferenced ones.
-Baseline receipt: `roster-before.txt`.
+key. Nothing ever removed it, so the live roster had accumulated 30 entries: 4
+prose sentences, 2 task ids, and `Antigravity4/user`, on top of a fleet of 19
+configured workers plus the non-worker actors. Baseline receipt:
+`roster-before.txt`.
 
 The mechanism is self-sustaining. `validate_state()` calls `ensure_agent()` on
 every actor field already on disk, and `recompute_agents()` iterates
@@ -48,8 +49,10 @@ and no worker could finalize or hand off.
 
 **Caller input — reject before any durable mutation.**
 `resolve_actor_reference()` validates every actor argument supplied on the
-command line (`assign` owner/reviewer, `handoff` target, `blocker` waiting-for,
-`AI_NAME`) and exits non-zero before the command touches state. A reference is
+command line — `assign` owner/reviewer, `handoff` target, `blocker` waiting-for,
+`retarget_blocker` target, and `AI_NAME` for `handoff`, `blocker`,
+`retarget_blocker` and `prune_agents` — and exits non-zero before the command
+touches state. A reference is
 rejected when it is longer than 40 characters, contains control characters,
 looks like a task id (`ODP-P10-FLEET-CONFLICT-REAUDIT-001`), or is not
 name-shaped. A well-shaped but unregistered name is also rejected, with the
@@ -63,12 +66,25 @@ records stay readable and every command keeps working; the corruption simply
 stops growing. `validate_state()` prints each invalid reference with its
 location and the repair command.
 
-**Registered actors.** The accepted set is the declared `KNOWN_AGENTS` roster,
-plus agents declared in `.orchestrator/config.json`, plus names already present
-in the durable roster, plus anything listed in `AI_STATUS_EXTRA_AGENTS`. Aliases
-resolve before validation, so `agy3`, `claude 2`, `codex (3)`, `ops`,
-`human ops` and `copilot host` keep working, and `Human/Ops` remains a valid
-one-slash actor name.
+**Registered actors.** The accepted set is exactly three things — see §5, which
+corrects an earlier, narrower revision of this rule:
+
+1. the **merged Supervisor config**: `.orchestrator/config.json` deep-merged with
+   `.orchestrator/config.local.json`, i.e. what `common.load_config()` — the
+   function dispatch itself reads — returns;
+2. the explicit **non-worker actors** `Human/Ops`, `Orchestrator` and
+   `CodexCoordinator`, which appear in actor-shaped fields but are never
+   dispatch targets and so are never in the config;
+3. anything listed in `AI_STATUS_EXTRA_AGENTS`.
+
+The mutable `KNOWN_AGENTS` table and the durable `agents[]` roster are
+deliberately **not** authority. `KNOWN_AGENTS` is mutated at runtime by
+`ensure_agent()`, so admitting it would let a name invented earlier in the same
+process validate a later call; `agents[]` is exactly where fabricated entries
+land, so admitting it would let one bad record legitimise itself on the next
+command. Aliases still resolve before validation (`agy3`, `claude 2`, `ops`,
+`human ops`), and case-folding now consults the merged config, so `codex5`
+resolves to the declared spelling `Codex5`.
 
 **Two audited repair commands.**
 
@@ -81,10 +97,18 @@ one-slash actor name.
   blocker.
 - `prune_agents [--apply] [reason]` removes synthetic roster entries. Dry-run by
   default; prints a KEEP/REMOVE line with a reason for every entry. An entry is
-  removable only when it is undeclared in `KNOWN_AGENTS`, undeclared in
-  `.orchestrator/config.json`, **and** unreferenced by any task, blocker or
-  handoff. Each removal is written to `ai-activity-log.jsonl` as an
-  `agent_pruned` event. A valid actor is never removed for being idle.
+  removable only when it is undeclared in the merged Supervisor config, not a
+  non-worker actor, not registered through `AI_STATUS_EXTRA_AGENTS`, not a
+  static `KNOWN_AGENTS` lane, not carrying live workload, **and** unreferenced by
+  any task, blocker or handoff. Each removal is written to
+  `ai-activity-log.jsonl` as an `agent_pruned` event. A valid actor is never
+  removed for being idle.
+
+  The static-lane rule is a truthfulness rule, not an authority one:
+  `recompute_agents()` recreates a roster row for every `KNOWN_AGENTS` name on
+  the next sync, so reporting `Gemini` or `Copilot` as removable would churn the
+  roster and misreport the outcome. They are kept in the roster and still
+  rejected as actor references.
 
 ## 3. Live roster repair
 
@@ -120,9 +144,17 @@ contains the full STOP-gate text.
 - removed as prose: the four sentences above, once nothing referenced them
 - removed as undeclared and unreferenced: `Antigravity4/user`, `Codex4`,
   `Codex7`
-- **kept** although undeclared in `KNOWN_AGENTS`: `Claude3` (declared in
-  `.orchestrator/config.json`), and `Codex5`, `Codex6`, `Codex8`, `Codex9`,
-  `CodexCoordinator` (still referenced by live tasks, blockers or handoffs)
+- **kept**: `Claude3` (declared in `.orchestrator/config.json`), `Codex5`,
+  `Codex6`, `Codex8`, `Codex9` (declared in `.orchestrator/config.local.json`
+  and referenced by live tasks) and `CodexCoordinator` (non-worker actor)
+
+Two of those removals need the §5 correction read alongside them. `Codex4` and
+`Codex7` are declared in `config.local.json`; the revision that ran the cleanup
+read only the tracked half of the config and classified them as undeclared. They
+had no tasks, blockers or handoffs, so their roster rows were dropped —
+`recompute_agents()` recreates a row the moment either is assigned work, and
+neither lost an assignment. Under the corrected classifier both are KEEP. No
+`Codex5/6/8/9` row or assignment was ever touched.
 
 Ordering matters and the tool enforces it: on the first dry run the four prose
 entries were reported KEEP — "still referenced by a task, blocker or handoff" —
@@ -136,24 +168,79 @@ Roster and workload are both 21 valid entries, down from 30 roster entries and
 ## 4. Verification
 
 ```
-python3 -m pytest scripts/test_ai_status.py -q -k ActorReference   # 20 passed
-python3 -m pytest scripts/test_ai_status.py -q                      # 83 passed
+python3 -m pytest scripts/test_ai_status.py -q                      # 96 passed
 python3 -m pytest .orchestrator/test_supervisor.py \
                   .orchestrator/test_dispatch_policy.py -q          # 249 passed
 python3 -m ruff check scripts/ai_status.py scripts/test_ai_status.py
-AI_NAME=Claude ./scripts/ai-status.sh sync                          # exit 0, no warnings
 ```
 
-`ActorReferenceValidationTests` in `scripts/test_ai_status.py` covers task ids,
-prose, oversized strings, empty references, valid named actors, alias and
-`Human/Ops` preservation, unknown-but-well-shaped rejection, roster-declared
-actors staying usable, byte-identical state after a rejected `blocker` and
-`assign`, corrupt on-disk references never reaching `agents[]` or `workload`,
-`retarget_blocker` preserving the displaced text, `retarget_blocker` refusing a
-prose replacement, another owner's valid blocker being left alone, `prune_agents`
-defaulting to dry-run, pruning only unreferenced synthetic entries, and never
-pruning a declared or config-declared agent.
+Three test classes in `scripts/test_ai_status.py`:
 
-The rehearsal ran first against a copy of the live state under
+`ActorReferenceValidationTests` — task ids, prose, oversized strings, empty
+references, valid named actors, alias and `Human/Ops` preservation,
+unknown-but-well-shaped rejection, **durable `agents[]` not being an authority**,
+**static `KNOWN_AGENTS` names being rejected without a config declaration**,
+**non-worker actors accepted without a config declaration**,
+`AI_STATUS_EXTRA_AGENTS` registration, corrupt on-disk references never reaching
+`agents[]` or `workload`, `retarget_blocker` preserving the displaced text,
+refusing a prose replacement and leaving another owner's valid blocker alone,
+`prune_agents` defaulting to dry-run, pruning only unreferenced synthetic
+entries, keeping a configured worker that is idle, keeping an undeclared agent
+that is carrying work, and not advertising static lanes as removable.
+
+`MergedConfigActorAuthorityTests` — local-overlay parity: a base config plus a
+`config.local.json` overlay declaring `Codex3`-`Codex9`, asserted equal to
+`common.deep_merge` of the two and yielding all nine names; the same fleet
+*without* the overlay rejecting `Codex5`, which proves the overlay rather than a
+static table is what admits them; the status-root overlay covering worker
+worktrees; the live path delegating to `common.load_config()` verbatim; and
+`codex3` resolving to `Codex3` rather than folding into `Codex`.
+
+`ActorCommandMutationGuardTests` — for `assign` (owner and reviewer), `handoff`,
+`blocker`, `retarget_blocker` and `prune_agents`, a prose or task-id actor
+argument, an unregistered actor argument, and a bad `AI_NAME` each raise
+`SystemExit` while leaving the serialized state byte-identical, `KNOWN_AGENTS`
+unchanged, and `append_log` uncalled.
+
+Live verification is read-only and captured in
+`docs/evidence/runtime/ODP-ORCH-ACTOR-REF-VALIDATION-001/authority-after-correction.txt`.
+
+The §3 rehearsal ran first against a copy of the live state under
 `PANTHEON_STATUS_ROOT=/tmp/arv-sandbox`; the live root was only touched after
 the sandbox produced a clean roster.
+
+## 5. Correction: `config.local.json` is part of the declaration authority
+
+An earlier revision of this branch resolved declarations from
+`.orchestrator/config.json` alone. That was wrong. The Supervisor decides
+dispatchability through `common.load_config()`, which deep-merges
+`.orchestrator/config.json` with the gitignored `.orchestrator/config.local.json`
+overlay — and on this fleet that overlay is the *only* place `Codex3` through
+`Codex9` are declared. Reading the tracked half alone classified six live
+workers as synthetic.
+
+What changed:
+
+- `merged_orchestrator_config()` uses `common.load_config()` verbatim when this
+  process points at the same config path, so the two cannot drift; otherwise it
+  applies the same `common.deep_merge` to whatever `CONFIG_FILE` resolves to.
+- Because `config.local.json` is gitignored, a worker worktree only checks out
+  the tracked half. The status-root overlay is merged as well, so a command
+  gives the same answer in a worktree as in the live checkout — otherwise
+  `AI_NAME=Codex5` would work at home and fail under a worker.
+- The `codex3 -> Codex` alias is removed. It predates the overlay and would have
+  silently folded a real worker into another lane.
+- Case-folding consults the merged config, so `codex5` resolves to `Codex5`.
+
+Live receipt (`authority-after-correction.txt`): `configured_agent_names()` is
+identical to the live `common.load_config()` agent list — all 19 workers,
+including `Codex3`-`Codex9` — every one of the six `Codex5/6/8/9` assignments
+resolves, live state has zero invalid actor references, and every roster entry
+classifies as KEEP. **No cleanup or repair command was run against live state on
+this revision.**
+
+Behaviour change worth calling out at review: `Gemini`, `Gemini2` and `Copilot`
+exist in the static `KNOWN_AGENTS` table but are absent from the merged config,
+so the Supervisor cannot dispatch them and they are no longer accepted as actor
+references. Their roster rows are left alone. If either lane is revived, declare
+it under `agents` in the config or set `AI_STATUS_EXTRA_AGENTS`.
