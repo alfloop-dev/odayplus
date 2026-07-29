@@ -206,7 +206,9 @@ only.
 W=/tmp/pantheon-worker-worktrees/oday-plus-supervisor-live/odp-orch-claude-deferred-approval-live-rollout-001
 EV=$W/docs/evidence/runtime/ODP-ORCH-CLAUDE-DEFERRED-APPROVAL-LIVE-ROLLOUT-001
 
-# 1. Confirm the gate has been lifted for revision 5 (not for an older one).
+# 1. Confirm the gate has been lifted for THIS exact head (revision 6), not for
+#    an older one. `git rev-parse HEAD` must equal the head the coordinator
+#    named, and must equal origin/task/<TASK-ID>.
 # 2. Re-run the cheap checks - none of them touch anything live.
 bash -n $EV/runbook/live-boot-reconciliation-driver.sh
 python3 -m py_compile $EV/runbook/assert-boot-reconciliation.py
@@ -217,10 +219,18 @@ cd $W && git diff --check 647970dae975f4008633a484cde1e63187035544  # exit 0
 # 3. Confirm the starting state is what the driver expects.
 systemctl --user show pantheon-supervisor.service -p KillMode -p ActiveState -p MainPID
 ls -la /home/lupin/.config/systemd/user/pantheon-supervisor.service.d/   # expect: empty
-cat /tmp/odp-rollout-driver/state 2>/dev/null                            # expect: absent
+# Since the 04:31Z abort this holds the previous run's verdict, NOT nothing.
+# Expect `abort_killmode_probe` / 26 from that run, or a later abort_* - what
+# must never appear here before a run is `proof_complete`.
+cat /tmp/odp-rollout-driver/verdict /tmp/odp-rollout-driver/exit_code 2>/dev/null
 
 # 4. Resolve the CURRENT run ids. They change on every dispatch - never reuse
 #    the ids from an older note. The peer is whichever unrelated worker is live.
+#    There is often NO live peer: a Claude worker's process exits the moment one
+#    of its own tools is deferred, and the fleet only dispatches when a task is
+#    ready. With no live unrelated worker the driver aborts in preflight
+#    (abort_unknown_peer 22 / abort_peer_identity 24), before phase 1 - that is
+#    the intended fail-closed behaviour, not a defect to work around.
 python3 - <<'PY'
 import json
 state = json.load(open('/home/lupin/oday-plus-supervisor-live/.orchestrator/state.json'))
