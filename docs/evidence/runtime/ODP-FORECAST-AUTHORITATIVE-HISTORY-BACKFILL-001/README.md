@@ -1903,12 +1903,15 @@ not bound in the cluster's RBAC (`Unauthorized`), so it is not a way around it.
 
 What this does and does not stop:
 
-* **Not affected:** both Cloud SQL proxies, which authorize from the
+* ~~**Not affected:** both Cloud SQL proxies, which authorize from the
   self-refreshing `adc.json` rather than from the gcloud session — the source
   and target DSNs were both verified live after the failure. Every DB-side probe
-  still runs.
+  still runs.~~ **This was wrong, and it took 35 minutes to find out — see
+  "the database plane was never independent" below.**
 * **Not affected:** `-b2` itself. Kubernetes does not need our credentials to
-  keep running a Job it has already started.
+  keep running a Job it has already started, and the Job reaches Cloud SQL
+  through its own in-cluster proxy on the workload's service account, not
+  through ours.
 * **Stopped:** resuming `-b3` and everything after it, launching the April
   density probe, and the deadline guard's ability to extend a slice.
 * **Fails closed, correctly:** the finisher's gate calls `active_orders_jobs`,
@@ -1995,6 +1998,93 @@ upstream, since the density probe's window starts 04-29 and the depth probe
 sampled nothing before 05-14. `april_window_store_density_probe.pod.yaml` is
 committed **unrun** and needs the cluster, so it is blocked with everything else
 on the re-auth.
+
+### The database plane was never independent — it was running on a cache
+
+The block above was recorded with a carve-out that made it survivable: the
+cluster was gone, but "every DB-side probe still runs", because the Cloud SQL
+proxies authorize from `adc.json` rather than from the gcloud session, and both
+DSNs were verified live *after* the gcloud failure. That verification was real.
+The conclusion drawn from it was not, and it is the same shape of error as every
+other one in this document — a claim tested once, at a moment when it happened
+to be true, then carried forward as a property.
+
+What the proxy actually does is refresh instance metadata from
+`sqladmin.googleapis.com` on a timer and hold a connection-level cache in
+between. The refresh uses the *same* authorized-user credential, and that
+credential is subject to the *same* Workspace reauthentication policy. So the
+DSNs answered after the gcloud session died not because they were independent of
+it, but because the proxy had not yet needed to refresh. Measured from the
+proxies' own logs:
+
+| time (UTC) | event |
+| --- | --- |
+| ~03:50 | `gcloud auth print-access-token` starts failing — the block as recorded |
+| 04:21:41 | last new connection the **source** proxy accepts normally |
+| 04:25:28 | source proxy: `refresh error … auth: "invalid_grant" "reauth related error (invalid_rapt)"` |
+| 04:30:12 | target proxy fails identically, on its own refresh timer |
+
+`invalid_rapt` is the reauth-proof requirement, not an expired access token: it
+is the same wall `gcloud auth login` clears, arriving ~35 minutes later on a
+different clock. Restarting the proxies does not help and the keeper's respawn
+loop cannot fix it — the credential itself is what needs a human.
+
+So the blocker's blast radius is **the cluster and the database**, not the
+cluster alone. The finisher and driver both already fail closed on an
+unreachable database as well as an unreachable cluster, so nothing unsafe
+follows from it; what changes is that no probe of any kind can run until
+`gcloud auth login`, and the resume recipe's "DB plane unaffected" escape hatch
+does not exist.
+
+The one thing that is genuinely unaffected is `-b2`. It reaches Cloud SQL
+through its own in-cluster proxy on the workload's service account; our local
+credential was never in its path.
+
+### What the ladder validation got, and what it still owes
+
+`runbook/criterion5-ladder-validation.py` was written to close the gap named two
+paragraphs up — nothing had scored the *eligible-date ladder* itself, only the
+store-count projection. It ran into the credential failure mid-flight: the
+15-minute attestation-grid fetch completed and cached at 04:26, and the
+one-second partition query immediately after it died on the first connection the
+proxy could no longer make. **There is no ladder receipt yet.** The probe is
+committed with its measurement unmade rather than with a number reconstructed by
+hand from an earlier query in the same session; a transcribed cache would read
+exactly like a measured one, which is the property that makes it unacceptable
+here.
+
+Two corrections were made to it before it was committed, both derived from
+reading the code rather than from the run:
+
+**The ladder as written names the wrong set of days.** It says "N contiguous
+**attested** days yield N−28 eligible dates". `eligible_dates` — the function
+this probe imports from `horizon-critical-path-probe.py` rather than restating —
+implements `d is attested AND all 28 dates before d are PRESENT`. Attestation is
+required on the *target* date only; the 28 priors are counted over `mature_daily`
+with no attestation filter at all, which is §7's `dd7eccc3` finding. So **the
+bottom 28 days of any span are priors and never need to be attested**, and a
+date becomes eligible when its priors are *ingested*, not when they settle. The
+probe now scores both rules and reports them side by side. They agree in the end
+state, where every ingested day is also attested, which is why the `-b5`..`-b8`
+ladder and the `-b8` gate stand under either reading — but they disagree
+mid-slice by construction, and `-b2`'s half-landed window is exactly such a
+moment. Which rule the landed data obeys is the measurement that is still owed.
+
+**Cheap queries must run before expensive ones.** The first version fetched the
+grid and then ran the partition query, so a database that died in between cost
+the whole run. Reordered, the same failure costs one second. Both halves now
+cache independently, so a re-run after the re-auth pays for the partition query
+alone (`PROBE_REFRESH=0`), and the grid captured at 04:26 is still on disk at
+`/tmp/odp-criterion5-ladder-grid.json` — uncommitted on purpose, since it is
+per-store data and this evidence directory publishes counts only.
+
+One route was checked and closed while the database was still reachable, so that
+it is not re-explored: **there is no local April data to substitute for the
+blocked in-cluster density probe.** `data_plane.forecast_inputs` spans
+2026-07-22..07-30 and holds forward predictions (`legacy_external_model_output`),
+not history; `fongniao_raw.raw_orders` is the ingestion landing zone at ~559k
+rows against Atlas's 2.17M documents, i.e. only what the slices have already
+read. April can only be measured upstream, and upstream needs the cluster.
 
 ## 12. After state
 
