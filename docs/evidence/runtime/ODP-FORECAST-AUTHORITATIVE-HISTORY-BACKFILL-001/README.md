@@ -1653,12 +1653,31 @@ Without this fix the acceptance activation would have inserted the backfill
 correctly and left every already-present row at whatever the first copy saw —
 including the refund. The evidence would have looked complete, because nothing
 in the before/after pair compares the target's *content* to the source's; they
-compare coverage. This is the fourth defect in this task whose signature is a
-conflict clause that cannot revisit a row (B on the ledger, E on lineage, F on
-the fact table), and the general lesson is worth stating once: **`ON CONFLICT DO
-NOTHING` is a decision that the first write wins forever**, and it is only safe
-where the source is genuinely append-only. Three of this pipeline's relations
-looked append-only and were not.
+compare coverage.
+
+This is the fourth defect in this task whose signature is a conflict clause that
+cannot revisit a row — B on the ingestion ledger, D on lineage attribution, E on
+lineage deletion, F on the fact table — so the pattern is worth stating once,
+precisely. `ON CONFLICT DO NOTHING` decides that **the first write wins
+forever**, and whether that is safe depends entirely on what the conflict key
+is:
+
+* **Keyed on a content-derived id** — `source_snapshot_id`, or
+  `(source_snapshot_id, canonical_table, canonical_id)`. Every `DO NOTHING` in
+  `apps/data_platform/store.py` and `geography_backfill.py` is of this kind, and
+  it is the correct shape: a *changed* record hashes to a new key, so it lands
+  as a new row and nothing is lost. The edge it does have is Defect D — an
+  *unchanged* record regenerates the *same* key, so it can never be
+  re-attributed to a different run, which is why a partition killed mid-flight
+  leaves lineage no re-run can repair.
+* **Keyed on a stable business identity** — `run_id`, `transaction_id`,
+  `store_id`. Here a changed record keeps its key, so `DO NOTHING` discards the
+  correction outright and the stale row is permanent. That is Defects B and F,
+  and it is why every relation in `ACTIVATION_RELATIONS` now carries a
+  `refresh_key`.
+
+The activation copies on the second kind of key while the source updates in
+place on the same key. Three of its relations looked append-only and were not.
 
 ## 11. After state
 
