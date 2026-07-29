@@ -1,0 +1,17 @@
+{
+  "task_id": "ODP-DEPLOY-WEB-PROTECTED-REDIRECT-001",
+  "deploy_run_id": "30436771086",
+  "web_url": "https://candidate-93ae1b2e75e1056c---oday-web-7sxbjoeozq-de.a.run.app",
+  "probe_endpoint": "/operator",
+  "status": 307,
+  "observed_location_header": "http://0.0.0.0:8080/login?returnTo=%2Foperator",
+  "root_cause_analysis": {
+    "web_middleware_defect": "Standalone Next.js 15.5.21 (ENV HOSTNAME=0.0.0.0 PORT=8080 in infra/docker/Dockerfile.web) constructed request.url from the bound container address (http://0.0.0.0:8080/operator). In apps/web/src/middleware.ts, calling new URL('/login', request.url) evaluated to http://0.0.0.0:8080/login?returnTo=%2Foperator, emitting Location: http://0.0.0.0:8080/login?returnTo=%2Foperator.",
+    "validator_evaluation": "validate_cloud_run_live_deployment.py _is_safe_protected_redirect correctly rejected http://0.0.0.0:8080/... because scheme=http is a scheme downgrade (base scheme is https) and host=0.0.0.0:8080 is a host mismatch (base host is candidate-93ae1b2e75e1056c---oday-web-7sxbjoeozq-de.a.run.app)."
+  },
+  "remediation": {
+    "apps_web_middleware": "Updated apps/web/src/middleware.ts to resolve the request base origin via ODP_WEB_BASE_URL (if configured) or x-forwarded-proto/x-forwarded-host/host headers. When running behind Cloud Run TLS termination, this emits canonical absolute HTTPS redirects (https://candidate-93ae1b2e75e1056c---oday-web-7sxbjoeozq-de.a.run.app/login?returnTo=%2Foperator).",
+    "deployment_validator": "Updated scripts/deployment/validate_cloud_run_live_deployment.py to capture the raw Location header in smoke:web:/operator check detail and report JSON, enabling immediate diagnosis in future deploy runs."
+  },
+  "captured_at": "2026-07-29T12:00:00Z"
+}

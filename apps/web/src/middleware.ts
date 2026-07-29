@@ -9,6 +9,28 @@ import {
   safeReturnTo,
 } from "./lib/auth/runtime";
 
+function resolveRequestOrigin(request: NextRequest): string {
+  const configured = process.env.ODP_WEB_BASE_URL?.trim();
+  if (configured) {
+    try {
+      return new URL(configured).origin;
+    } catch {
+      // Fall through to header inspection
+    }
+  }
+
+  const forwardedProto = request.headers.get("x-forwarded-proto");
+  const forwardedHost = request.headers.get("x-forwarded-host");
+  const host = forwardedHost || request.headers.get("host");
+
+  if (host) {
+    const proto = (forwardedProto || request.nextUrl.protocol || "https").replace(/:$/, "");
+    return `${proto}://${host}`;
+  }
+
+  return request.nextUrl.origin;
+}
+
 export async function middleware(request: NextRequest): Promise<NextResponse> {
   if (!isProductionWebRuntime()) return NextResponse.next();
 
@@ -17,7 +39,8 @@ export async function middleware(request: NextRequest): Promise<NextResponse> {
   ).catch(() => null);
   if (session) return NextResponse.next();
 
-  const loginUrl = new URL("/login", request.url);
+  const baseOrigin = resolveRequestOrigin(request);
+  const loginUrl = new URL("/login", baseOrigin);
   loginUrl.searchParams.set(
     "returnTo",
     safeReturnTo(`${request.nextUrl.pathname}${request.nextUrl.search}`),

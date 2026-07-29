@@ -1717,11 +1717,19 @@ def smoke_checks(
             timeout=timeout,
         )
         auth_redirect = _is_safe_protected_redirect(web_url, web_status, location)
+        report["web_operator_redirect"] = {
+            "status": web_status,
+            "location": location,
+            "protected_redirect": auth_redirect,
+        }
         checks.append(
             CheckResult(
                 ok=auth_redirect,
                 name="smoke:web:/operator",
-                detail=f"status={web_status} protected_redirect={str(auth_redirect).lower()}",
+                detail=(
+                    f"status={web_status} protected_redirect={str(auth_redirect).lower()} "
+                    f"location={location or '<missing>'}"
+                ),
             )
         )
     except (OSError, TimeoutError, urllib.error.URLError) as exc:

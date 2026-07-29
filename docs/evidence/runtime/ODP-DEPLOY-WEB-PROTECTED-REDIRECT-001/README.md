@@ -3,7 +3,7 @@
 Task: Fix candidate Web protected redirect smoke contract.
 Owner: Antigravity2 · Reviewer: Claude · Phase: Live Runtime Deployment · 2026-07-29
 
-Scope guard: This task changes only the deployment validator protected redirect contract logic and its corresponding ops unit tests. No Package 10 visual components, page layouts, design archives, or API business responses are touched.
+Scope guard: This task updates `apps/web/src/middleware.ts` for base origin resolution behind Cloud Run TLS termination, updates `scripts/deployment/validate_cloud_run_live_deployment.py` to capture raw Location headers in check details and reports, and adds test coverage. No Package 10 visual components, page layouts, design archives, or API business responses are touched.
 
 ## 1. Observed Incident (Deploy Dev run 30436771086)
 
@@ -18,54 +18,26 @@ In Deploy Dev run [30436771086](https://github.com/alfloop-dev/odayplus/actions/
 
 The candidate web service responded with HTTP 307 (Temporary Redirect), but `validate_cloud_run_live_deployment.py` flagged `protected_redirect=false`.
 
-## 2. Root Cause Analysis
+## 2. Captured Header & Root Cause Analysis
 
-1. **Authentication Behavior**:
-   `apps/web/src/middleware.ts` enforces fail-closed authentication for protected routes in production:
-   ```typescript
-   const loginUrl = new URL("/login", request.url);
-   loginUrl.searchParams.set("returnTo", safeReturnTo(`${request.nextUrl.pathname}${request.nextUrl.search}`));
-   return NextResponse.redirect(loginUrl);
-   ```
-   An unauthenticated request to `/operator` correctly receives a 307 redirect to `/login` with `returnTo=/operator`.
+1. **Exact Candidate Location Capture**:
+   - `status`: 307
+   - `observed_location_header`: `http://0.0.0.0:8080/login?returnTo=%2Foperator`
+   - Capture artifact: `docs/evidence/runtime/ODP-DEPLOY-WEB-PROTECTED-REDIRECT-001/candidate-location-capture.json`
 
-2. **Validator Defect**:
-   `scripts/deployment/validate_cloud_run_live_deployment.py` evaluated the redirect using strict prefix matching:
-   ```python
-   expected_login_prefix = f"{web_url.rstrip('/')}/login?"
-   auth_redirect = (
-       web_status in {302, 303, 307, 308}
-       and isinstance(location, str)
-       and location.startswith(expected_login_prefix)
-       and "returnTo=" in location
-   )
-   ```
-   `web_url` in deployment runs is `https://candidate-93ae1b2e75e1056c---oday-web-7sxbjoeozq-de.a.run.app`.
-   When candidate Web returns a relative `Location` header (`/login?returnTo=%2Foperator`) or an absolute HTTP header (`http://candidate-.../login?returnTo=%2Foperator`) due to Cloud Run frontend TLS termination, `location.startswith("https://candidate-.../login?")` returned `False`.
+2. **Root Cause**:
+   - `infra/docker/Dockerfile.web` runs Next 15.5.21 standalone with `ENV HOSTNAME=0.0.0.0 PORT=8080`.
+   - `apps/web/src/middleware.ts` previously evaluated `new URL("/login", request.url)` when redirecting unauthenticated requests. In Next.js standalone mode behind Cloud Run TLS termination, `request.url` evaluates to the bound container host/port (`http://0.0.0.0:8080/operator`), causing middleware to emit `Location: http://0.0.0.0:8080/login?returnTo=%2Foperator`.
+   - The deployment validator `_is_safe_protected_redirect` in `scripts/deployment/validate_cloud_run_live_deployment.py` requires same-origin matching against `web_url` (`https://candidate-...a.run.app`). It correctly rejected `http://0.0.0.0:8080/...` as a scheme downgrade (HTTPS -> HTTP) and host mismatch.
 
-## 3. Remediation & Fail-Closed Protection
+3. **Remediation**:
+   - **`apps/web/src/middleware.ts`**: Updated `middleware.ts` with `resolveRequestOrigin()` to derive the base origin from `ODP_WEB_BASE_URL` (if configured) or reverse proxy headers `x-forwarded-proto` and `x-forwarded-host`/`host`. Under Cloud Run, this produces canonical absolute HTTPS redirects (`https://candidate-...a.run.app/login?returnTo=%2Foperator`).
+   - **`scripts/deployment/validate_cloud_run_live_deployment.py`**: Updated `smoke_checks()` to record `location` in `report["web_operator_redirect"]` and include `location=...` in the `smoke:web:/operator` CheckResult detail for immediate diagnosability.
+   - **Hardened Fail-Closed Validator**: Kept all strict security checks in `_is_safe_protected_redirect`: scheme/host/effective-port matching, userinfo/fragment rejection, single-value returnTo matching `/operator`, and ValueError exception handling.
 
-We implemented `_is_safe_protected_redirect` and `_effective_port` in `scripts/deployment/validate_cloud_run_live_deployment.py`:
-
-## 3. Remediation & Fail-Closed Protection
-
-We implemented `_is_safe_protected_redirect` and `_effective_port` in `scripts/deployment/validate_cloud_run_live_deployment.py`:
+## 3. Implementation Code
 
 ```python
-def _effective_port(parsed: urllib.parse.ParseResult) -> int | None:
-    try:
-        if parsed.port is not None:
-            return parsed.port
-    except (ValueError, Exception):
-        return None
-    scheme = parsed.scheme.lower()
-    if scheme == "https":
-        return 443
-    if scheme == "http":
-        return 80
-    return None
-
-
 def _is_safe_protected_redirect(
     web_url: str,
     web_status: int,
@@ -124,25 +96,22 @@ def _is_safe_protected_redirect(
             return False
 
         return True
-    except (ValueError, Exception):
+    except ValueError:
         return False
 ```
 
-This guarantees:
-- Unauthenticated requests MUST redirect (302/303/307/308). If candidate returns 200 OK without auth, it fails closed (`False`).
-- Relative `/login?returnTo=%2Foperator` and absolute `https://...` on the candidate host with matching scheme, host, and effective port are accepted.
-- Scheme downgrade (e.g. HTTPS base to HTTP target) is rejected (`False`).
+## 4. Security & Fail-Closed Contract Guarantees
+
+- Unauthenticated requests MUST redirect (302/303/307/308). 200 OK without auth fails closed (`False`).
+- Absolute `https://...` on the candidate host with matching scheme, host, and effective port are accepted.
+- Scheme downgrade (HTTPS base to HTTP target) is rejected (`False`).
 - Effective port mismatches (e.g. port 443 vs 8443) are rejected (`False`).
-- Malformed non-numeric ports (e.g. `:bad`) and out-of-range ports (e.g. `:99999`) catch `ValueError` and fail closed (`False`) without crashing smoke validation.
+- Malformed non-numeric ports (e.g. `:bad`) and out-of-range ports (e.g. `:99999`) catch `ValueError` and fail closed (`False`).
 - Userinfo (credentials in target location) and URL fragments are rejected (`False`).
 - Hostile external origin redirects (`https://attacker.com/login`) or protocol-relative URLs (`//attacker.com/login`) are rejected (`False`).
 - Hostile `returnTo` values (`https://attacker.com`, `/evil-path`, `/operator/extra`) and double-encoded values (`%252Foperator`) are rejected (`False`).
-- Redirects to paths other than `/login` or missing/multiple `returnTo` parameters are rejected (`False`).
 
-## 4. Test Verification Receipts
+## 5. Test Verification Receipts
 
-- `pytest tests/ops/test_cloud_run_live_deployment.py`: Passed (357 passed).
-- `ruff check`: All checks passed clean on modified python files.
-- `vitest apps/web/src/lib/auth/__tests__/middleware.test.ts`: Passed (2/2 passed).
-
-
+- `pytest tests/ops/test_cloud_run_live_deployment.py`: Passed (356/357 passed, 1 pre-existing env skip due to missing `uv`).
+- `apps/web/src/lib/auth/__tests__/middleware.test.ts`: Added unit test coverage for reverse proxy headers (`x-forwarded-proto`, `x-forwarded-host`) and `ODP_WEB_BASE_URL`.
