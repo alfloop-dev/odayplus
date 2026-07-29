@@ -1,0 +1,45 @@
+ODP-DEPLOY-STAGING-JOB-RECEIPT-UPLOAD-001 -- verification transcript
+worktree: /tmp/pantheon-worker-worktrees/oday-plus-supervisor-live/odp-deploy-staging-job-receipt-upload-001
+commit under test: ce76cb9e945b6fe759d2b658f852a97932612229  (anchor ce76cb9e)
+
+$ python3 -m pytest tests/ops/test_deploy_workflow_contract.py -q
+................                                                         [100%]
+  16 tests: 6 parametrised across [dev] and [staging], 4 shared.
+
+$ python3 -m pytest tests/ops tests/e2e/test_remote_staging_proof_checker.py -q --tb=no
+.....................                                                    [100%]
+=========================== short test summary info ============================
+FAILED tests/ops/test_cloud_run_live_deployment.py::test_deploy_preflight_imports_runtime_dependencies_via_locked_python
+  453 collected, 1 failed -> 452 passed.
+
+  That failure is environmental and pre-existing. It expects the deploy script's
+  exit 97 and gets 1 from "Error: required command 'uv' is not installed.":
+  $ command -v uv  ->  not installed in this worker sandbox
+
+  Confirmed identical on the parent commit 88dae2e1, which
+  predates this task's changes:
+  $ git worktree add --detach /tmp/odp-parent-check HEAD~1
+  $ cd /tmp/odp-parent-check && python3 -m pytest \
+      tests/ops/test_cloud_run_live_deployment.py::test_deploy_preflight_imports_runtime_dependencies_via_locked_python -q
+    E   assert 1 == 97
+      +  where 1 = CompletedProcess(..., stderr="Error: required command 'uv' is not installed.")
+    FAILED tests/ops/test_cloud_run_live_deployment.py::test_deploy_preflight_imports_runtime_dependencies_via_locked_python
+
+$ python3 -m ruff check tests/ops/test_deploy_workflow_contract.py docs/evidence/runtime/ODP-DEPLOY-STAGING-JOB-RECEIPT-UPLOAD-001/
+All checks passed!
+
+$ python3 -m ruff format --check tests/ops/test_deploy_workflow_contract.py docs/evidence/runtime/ODP-DEPLOY-STAGING-JOB-RECEIPT-UPLOAD-001/
+3 files already formatted
+
+$ python3 -c 'yaml.safe_load(...)' on both deploy workflows
+  deploy-staging.yml: parsed OK; jobs=['deploy-staging']
+  deploy-dev.yml: parsed OK; jobs=['e2e-operational-evidence', 'deploy']
+
+$ python3 docs/evidence/runtime/ODP-DEPLOY-STAGING-JOB-RECEIPT-UPLOAD-001/simulate_staging_artifact_selection.py
+ASSERTIONS OK: 3 Job receipts recovered, 5 prior reports preserved, 9 raw gcloud dumps and 3 decoys excluded.
+
+$ python3 docs/evidence/runtime/ODP-DEPLOY-STAGING-JOB-RECEIPT-UPLOAD-001/simulate_staging_artifact_selection.py --pre-fix
+DEFECT REPRODUCED: 3 Cloud Run Job receipts dropped, 2 unreviewed top-level files published.
+
+$ python3 docs/evidence/runtime/ODP-DEPLOY-STAGING-JOB-RECEIPT-UPLOAD-001/mutate_upload_contract.py
+All 8 mutations caught; worktree restored: ................                                                         [100%]
