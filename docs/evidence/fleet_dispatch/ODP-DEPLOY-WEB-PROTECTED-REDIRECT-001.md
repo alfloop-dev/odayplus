@@ -32,22 +32,30 @@ Investigation confirmed:
 
 ## 2. What Changed
 
-1. **Validator Contract Correction (`scripts/deployment/validate_cloud_run_live_deployment.py`)**:
-   - Replaced fragile string prefix matching with a robust URL parsing validator function `_is_safe_protected_redirect`.
-   - Verified that HTTP status code is in `{302, 303, 307, 308}` (preserving fail-closed auth so unauthenticated requests never render protected content).
-   - Resolved `location` against the candidate request URL using `urllib.parse.urljoin`.
-   - Validated that the target hostname matches the candidate web hostname (rejecting hostile external or protocol-relative redirects such as `https://attacker.com/login` or `//attacker.com`).
-   - Verified that the target path is strictly `/login` and carries a non-empty `returnTo` parameter.
+1. **Validator Contract Rework (`scripts/deployment/validate_cloud_run_live_deployment.py`)**:
+   - Implemented strict `_is_safe_protected_redirect` helper enforcing fail-closed same-origin authentication validation:
+     - **Status code**: Must be in `{302, 303, 307, 308}` (unauthenticated 200 OK fails closed).
+     - **Credentials / Userinfo**: Rejects URLs containing username, password, or `@` in netloc.
+     - **Fragments**: Rejects target URLs containing URL fragments.
+     - **Scheme**: Must match request scheme exactly. Reject scheme downgrade (HTTPS base to HTTP target).
+     - **Hostname**: Must match normalized base hostname.
+     - **Effective Port**: Must match (including default vs nondefault port mismatches e.g. 443 vs 8443).
+     - **Target Path**: Must strictly equal `/login`.
+     - **returnTo Parameter**: Decoded `returnTo` parameter must strictly equal the intended local protected route (`/operator`). Rejects external URLs, hostile paths, or subpaths.
 
 2. **Deterministic Regression Tests (`tests/ops/test_cloud_run_live_deployment.py`)**:
-   - Added `test_is_safe_protected_redirect_contract()` covering:
+   - Expanded `test_is_safe_protected_redirect_contract()` covering:
      - Absolute HTTPS safe redirect.
-     - Absolute HTTP safe redirect (handling reverse proxy TLS termination).
      - Relative `/login?returnTo=%2Foperator` safe redirect.
+     - Rejection of HTTPS -> HTTP scheme downgrade.
+     - Rejection of effective port mismatches (443 vs 8443).
+     - Rejection of userinfo in target location.
+     - Rejection of target URL fragments.
+     - Rejection of hostile external `returnTo` parameter values (`https://attacker.com`, `/evil-path`, `/operator/extra`).
      - Rejection of hostile external host redirects (`https://attacker.com/login?returnTo=%2Foperator`).
      - Rejection of hostile protocol-relative redirects (`//attacker.com/login?returnTo=%2Foperator`).
      - Rejection of unauthenticated 200 OK responses (fail-closed auth preservation).
-     - Rejection of redirects to wrong paths (e.g., `/dashboard`).
+     - Rejection of redirects to wrong target paths (e.g., `/dashboard`).
      - Rejection of redirects missing the `returnTo` parameter.
 
 3. **Web Auth Middleware Verification (`apps/web/src/middleware.ts`)**:
@@ -59,3 +67,4 @@ Investigation confirmed:
 - `ruff check`: All checks passed clean on modified python files.
 - `vitest`: All web middleware auth unit tests passed clean (2/2 passed).
 - Zero Package 10 visual components, page layouts, design archives, or API business responses were modified.
+

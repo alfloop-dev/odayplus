@@ -736,16 +736,42 @@ def test_is_safe_protected_redirect_contract() -> None:
         web_url, 307, f"{web_url}/login?returnTo=%2Foperator"
     ) is True
 
-    # Absolute HTTP safe redirect (e.g. reverse proxy TLS termination)
-    http_web_url = "http://candidate-93ae1b2e75e1056c---oday-web-7sxbjoeozq-de.a.run.app"
-    assert validator._is_safe_protected_redirect(
-        web_url, 307, f"{http_web_url}/login?returnTo=%2Foperator"
-    ) is True
-
     # Relative safe redirect
     assert validator._is_safe_protected_redirect(
         web_url, 307, "/login?returnTo=%2Foperator"
     ) is True
+
+    # Hostile scheme downgrade rejection (HTTPS base -> HTTP target must fail)
+    http_web_url = "http://candidate-93ae1b2e75e1056c---oday-web-7sxbjoeozq-de.a.run.app"
+    assert validator._is_safe_protected_redirect(
+        web_url, 307, f"{http_web_url}/login?returnTo=%2Foperator"
+    ) is False
+
+    # Hostile port mismatch rejection (default port 443 vs nondefault port 8443)
+    assert validator._is_safe_protected_redirect(
+        web_url, 307, f"{web_url}:8443/login?returnTo=%2Foperator"
+    ) is False
+
+    # Hostile userinfo rejection
+    assert validator._is_safe_protected_redirect(
+        web_url, 307, "https://user:pass@candidate-93ae1b2e75e1056c---oday-web-7sxbjoeozq-de.a.run.app/login?returnTo=%2Foperator"
+    ) is False
+
+    # Hostile fragment rejection
+    assert validator._is_safe_protected_redirect(
+        web_url, 307, f"{web_url}/login?returnTo=%2Foperator#hostile-fragment"
+    ) is False
+
+    # Hostile external returnTo parameter rejection
+    assert validator._is_safe_protected_redirect(
+        web_url, 307, "/login?returnTo=https%3A%2F%2Fattacker.com"
+    ) is False
+    assert validator._is_safe_protected_redirect(
+        web_url, 307, "/login?returnTo=%2Fevil-path"
+    ) is False
+    assert validator._is_safe_protected_redirect(
+        web_url, 307, "/login?returnTo=%2Foperator%2Fextra"
+    ) is False
 
     # Hostile external origin rejection
     assert validator._is_safe_protected_redirect(
@@ -762,7 +788,7 @@ def test_is_safe_protected_redirect_contract() -> None:
         web_url, 200, None
     ) is False
 
-    # Redirect to wrong path
+    # Redirect to wrong target path
     assert validator._is_safe_protected_redirect(
         web_url, 307, "/dashboard?returnTo=%2Foperator"
     ) is False
@@ -771,6 +797,7 @@ def test_is_safe_protected_redirect_contract() -> None:
     assert validator._is_safe_protected_redirect(
         web_url, 307, "/login"
     ) is False
+
 
 
 
