@@ -112,3 +112,93 @@ was retained.
 Changed paths are limited to the supervisor, approval queue, their focused
 tests, and this task evidence directory. No `apps/**`, `modules/**`, deployment
 script, Package 10 design archive, or Package 10 runtime evidence path changed.
+
+## Closeout record (2026-07-29)
+
+Reviewer Codex4 approved exact head
+`7a7f87d7978eb7a9248699d9dc421d1819dbd670` with no blocking finding after
+independently rerunning the focused approval-queue and supervisor suites, Ruff,
+and the diff check. PR #490 merged that head into `dev` at
+2026-07-29T02:32:22Z as merge commit
+`fd3d99558e4fb65f94e0f145a93e7a5e03577d75`; the approved head is verified as
+an ancestor of `origin/dev`.
+
+CI run `30416181111` passed all required jobs: `orchestrator`, `product`,
+`performance-gate`, and `product-e2e-gate`. Owner closeout revalidation on the
+approved tree also passed:
+
+- `python3 -m unittest discover -s .orchestrator -p 'test_approval_queue.py'`
+  (9 tests);
+- `python3 -m unittest discover -s .orchestrator -p 'test_supervisor.py'`
+  (222 tests);
+- focused `uv run --frozen ruff check`;
+- `git diff --check dev...HEAD`.
+
+This closeout record is evidence-only. It does not change the reviewed runtime
+behavior, approval policy, deployment scripts, Package 10 paths, apps, or
+modules.
+
+## Live boot-reconciliation follow-up (2026-07-29)
+
+Live acceptance after PR #490 exposed a narrower startup ordering race. Claude2
+run `claude-20260729T024031Z-b69e0aff` emitted
+`stop_reason=tool_deferred` for tool use
+`toolu_01Tz33HVmkHyCxhyP149Q96m`, but Supervisor restarted before its normal
+poll path parsed that flushed result. At `2026-07-29T02:41:37Z`,
+`boot_reconciliation` reported `marker_updates=3` and
+`missing_process_workers_failed=1`: it read the successful runner marker, saw a
+missing PID, and finalized the run with the generic worker-exit reason before
+`poll_workers` could persist the approval.
+
+The normal poll path was independently observed working in run
+`claude-20260729T024153Z-63c8f1f0`, which created approval
+`apr-20260729T024538Z-b08c9762` and emitted
+`worker_deferred_approval_recorded`. This isolated the defect to boot
+reconciliation rather than approval correlation or normal polling.
+
+The follow-up changes only boot ordering:
+
+1. For an active Claude CLI worker, boot reconciliation now reads the flushed
+   result log after runner markers and before evaluating a missing PID.
+2. A usable deferred-tool receipt is correlated with the durable approval
+   queue before generic missing-process finalization.
+3. The worker remains active for the immediately following normal poll, which
+   moves the dead resumable session to `suspended_approval`.
+4. If durable correlation raises an error, boot restores the pre-log active
+   status and continues through the existing missing-process failure path.
+   Broker denial, missing approval, and queue-write failure therefore remain
+   fail closed.
+
+Regression coverage now distinguishes the two paths:
+
+- `test_boot_reconciliation_correlates_flushed_receipt_before_missing_process_failure`
+  reproduces the restart race and proves no `worker_failed` event or
+  `missing_process_workers_failed` increment occurs;
+- `test_normal_poll_makes_claude2_receipt_durable_before_dead_worker_cleanup`
+  preserves the normal-poll behavior;
+- `test_boot_reconciliation_fails_closed_when_receipt_cannot_be_persisted`
+  proves a queue persistence failure still produces the existing generic
+  missing-process failure.
+
+Follow-up verification:
+
+```text
+python3 -m unittest discover -s .orchestrator -p 'test_approval_queue.py'
+# Ran 9 tests ... OK
+
+python3 -m unittest discover -s .orchestrator -p 'test_supervisor.py'
+# Ran 224 tests ... OK
+
+uv run --frozen ruff check \
+  .orchestrator/approval_queue.py \
+  .orchestrator/supervisor.py \
+  .orchestrator/test_approval_queue.py \
+  .orchestrator/test_supervisor.py
+# All checks passed
+
+git diff --check origin/dev...HEAD
+# clean
+```
+
+This follow-up still changes no `apps/**`, `modules/**`, deployment script,
+Package 10 design archive, or Package 10 runtime evidence path.

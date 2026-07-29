@@ -7200,6 +7200,33 @@ def reconcile_runtime_on_boot(config: dict[str, Any], state: dict[str, Any]) -> 
         if marker_changed:
             counts["marker_updates"] += 1
             changed = True
+        status_before_log_update = worker.get("status")
+        if _provider_uses_claude_cli(config, worker.get("provider")):
+            update_from_log(config, worker)
+            if _deferred_tool_use_receipt(worker) is not None:
+                try:
+                    correlate_deferred_tool_approval(
+                        config,
+                        worker,
+                        load_approval_state(config),
+                    )
+                except Exception as error:  # pragma: no cover - queue write failures must fail closed
+                    worker["status"] = status_before_log_update
+                    write_activity_log(
+                        config,
+                        {
+                            "type": "worker_deferred_approval_failed",
+                            "provider": worker.get("provider"),
+                            "task_id": worker.get("task_id"),
+                            "message": f"Could not record deferred tool approval for {run_id} during boot: {error}",
+                            "worker_run_id": run_id,
+                        },
+                    )
+                else:
+                    # A flushed Claude result can outlive its runner process.
+                    # Preserve it for the normal poll path instead of treating
+                    # the missing PID as a generic worker exit.
+                    changed = True
         alive = pid_is_alive(worker.get("pid"))
         missing_process = worker.get("status") in {"running", "stalled"} and not alive
         expired_lease = alive and worker_lease_is_expired(config, worker, now)
