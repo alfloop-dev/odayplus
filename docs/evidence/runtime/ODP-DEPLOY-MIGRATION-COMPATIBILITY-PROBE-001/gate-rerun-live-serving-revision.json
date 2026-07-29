@@ -2,7 +2,7 @@
   "api_url": "https://oday-api-7sxbjoeozq-de.a.run.app",
   "checks": [
     {
-      "detail": "status=200 attempts=1 elapsed=13.3s",
+      "detail": "status=200 attempts=2 elapsed=17.0s",
       "name": "compatibility:/platform/version:http",
       "ok": true
     },
@@ -12,29 +12,29 @@
       "ok": true
     }
   ],
-  "correlation_id": "corr-cloud-run-compat-dev-7d13f8e162d035ad7318d1f659dfa0f2bd85ca65-rerun",
-  "generated_at": "2026-07-28T22:50:40Z",
+  "correlation_id": "corr-cloud-run-compat-dev-r4-20260729",
+  "generated_at": "2026-07-29T00:02:44Z",
   "health": {
-    "correlation_id": "corr-cloud-run-compat-dev-7d13f8e162d035ad7318d1f659dfa0f2bd85ca65-rerun",
+    "correlation_id": "corr-cloud-run-compat-dev-r4-20260729",
     "dependencies": {
       "database": "healthy",
       "external_providers": {
-        "checked_at": "2026-07-28T22:50:40.464992+00:00",
+        "checked_at": "2026-07-29T00:02:44.026670+00:00",
         "configuration_errors": [],
         "configuration_valid": true,
-        "connectivity_healthy": true,
-        "correlation_id": "corr-cloud-run-compat-dev-7d13f8e162d035ad7318d1f659dfa0f2bd85ca65-rerun",
-        "expires_at": "2026-07-28T22:51:40.166411+00:00",
+        "connectivity_healthy": false,
+        "correlation_id": "corr-cloud-run-compat-dev-r4-20260729",
+        "expires_at": "2026-07-29T00:03:43.157496+00:00",
         "mode": "live",
         "probes": [
           {
             "authentication_accepted": true,
-            "checked_at": "2026-07-28T22:50:40.464992+00:00",
+            "checked_at": "2026-07-29T00:02:43.157496+00:00",
             "configuration_valid": true,
             "connectivity_healthy": true,
-            "expires_at": "2026-07-28T22:51:40.464992+00:00",
+            "expires_at": "2026-07-29T00:03:43.157496+00:00",
             "http_status": 200,
-            "latency_ms": 2475,
+            "latency_ms": 2164,
             "provider_id": "admin_boundary.official_dataset",
             "reason_code": "ok",
             "response_valid": true,
@@ -42,29 +42,29 @@
           },
           {
             "authentication_accepted": true,
-            "checked_at": "2026-07-28T22:50:40.439364+00:00",
+            "checked_at": "2026-07-29T00:02:43.307235+00:00",
             "configuration_valid": true,
             "connectivity_healthy": true,
-            "expires_at": "2026-07-28T22:51:40.439364+00:00",
+            "expires_at": "2026-07-29T00:03:43.307235+00:00",
             "http_status": 200,
-            "latency_ms": 2448,
+            "latency_ms": 2313,
             "provider_id": "geocode.primary_api",
             "reason_code": "ok",
             "response_valid": true,
             "schema_valid": true
           },
           {
-            "authentication_accepted": true,
-            "checked_at": "2026-07-28T22:50:40.166411+00:00",
+            "authentication_accepted": false,
+            "checked_at": "2026-07-29T00:02:44.026670+00:00",
             "configuration_valid": true,
-            "connectivity_healthy": true,
-            "expires_at": "2026-07-28T22:51:40.166411+00:00",
-            "http_status": 200,
-            "latency_ms": 2175,
+            "connectivity_healthy": false,
+            "expires_at": "2026-07-29T00:03:44.026670+00:00",
+            "http_status": null,
+            "latency_ms": 3029,
             "provider_id": "poi.commercial_api",
-            "reason_code": "ok",
-            "response_valid": true,
-            "schema_valid": true
+            "reason_code": "timeout",
+            "response_valid": false,
+            "schema_valid": false
           }
         ],
         "required_provider_ids": [
@@ -72,19 +72,21 @@
           "geocode.primary_api",
           "poi.commercial_api"
         ],
-        "status": "healthy"
+        "status": "unhealthy"
       },
       "job_queue": "healthy"
     },
     "modes": {
       "data": {
         "blockingReasons": [
+          "PROVIDER_NOT_LIVE",
+          "PROVIDER_CONNECTIVITY_UNHEALTHY",
           "PRODUCTION_MODEL_BINDINGS_UNVERIFIED"
         ],
         "liveReady": false,
         "mode": "unavailable",
         "operatorRepositoryProbe": {
-          "checkedAt": "2026-07-28T22:50:40.512134+00:00",
+          "checkedAt": "2026-07-29T00:02:44.502764+00:00",
           "errors": [],
           "persistenceMode": "postgresql",
           "ready": true,
@@ -167,27 +169,27 @@
       },
       "provider": {
         "configurationValid": true,
-        "connectivityHealthy": true,
-        "healthy": true,
-        "live": true,
+        "connectivityHealthy": false,
+        "healthy": false,
+        "live": false,
         "mode": "live",
         "probeEvidence": {
-          "checked_at": "2026-07-28T22:50:40.464992+00:00",
+          "checked_at": "2026-07-29T00:02:44.026670+00:00",
           "configuration_errors": [],
           "configuration_valid": true,
-          "connectivity_healthy": true,
-          "correlation_id": "corr-cloud-run-compat-dev-7d13f8e162d035ad7318d1f659dfa0f2bd85ca65-rerun",
-          "expires_at": "2026-07-28T22:51:40.166411+00:00",
+          "connectivity_healthy": false,
+          "correlation_id": "corr-cloud-run-compat-dev-r4-20260729",
+          "expires_at": "2026-07-29T00:03:43.157496+00:00",
           "mode": "live",
           "probes": [
             {
               "authentication_accepted": true,
-              "checked_at": "2026-07-28T22:50:40.464992+00:00",
+              "checked_at": "2026-07-29T00:02:43.157496+00:00",
               "configuration_valid": true,
               "connectivity_healthy": true,
-              "expires_at": "2026-07-28T22:51:40.464992+00:00",
+              "expires_at": "2026-07-29T00:03:43.157496+00:00",
               "http_status": 200,
-              "latency_ms": 2475,
+              "latency_ms": 2164,
               "provider_id": "admin_boundary.official_dataset",
               "reason_code": "ok",
               "response_valid": true,
@@ -195,29 +197,29 @@
             },
             {
               "authentication_accepted": true,
-              "checked_at": "2026-07-28T22:50:40.439364+00:00",
+              "checked_at": "2026-07-29T00:02:43.307235+00:00",
               "configuration_valid": true,
               "connectivity_healthy": true,
-              "expires_at": "2026-07-28T22:51:40.439364+00:00",
+              "expires_at": "2026-07-29T00:03:43.307235+00:00",
               "http_status": 200,
-              "latency_ms": 2448,
+              "latency_ms": 2313,
               "provider_id": "geocode.primary_api",
               "reason_code": "ok",
               "response_valid": true,
               "schema_valid": true
             },
             {
-              "authentication_accepted": true,
-              "checked_at": "2026-07-28T22:50:40.166411+00:00",
+              "authentication_accepted": false,
+              "checked_at": "2026-07-29T00:02:44.026670+00:00",
               "configuration_valid": true,
-              "connectivity_healthy": true,
-              "expires_at": "2026-07-28T22:51:40.166411+00:00",
-              "http_status": 200,
-              "latency_ms": 2175,
+              "connectivity_healthy": false,
+              "expires_at": "2026-07-29T00:03:44.026670+00:00",
+              "http_status": null,
+              "latency_ms": 3029,
               "provider_id": "poi.commercial_api",
-              "reason_code": "ok",
-              "response_valid": true,
-              "schema_valid": true
+              "reason_code": "timeout",
+              "response_valid": false,
+              "schema_valid": false
             }
           ],
           "required_provider_ids": [
@@ -225,28 +227,28 @@
             "geocode.primary_api",
             "poi.commercial_api"
           ],
-          "status": "healthy"
+          "status": "unhealthy"
         }
       },
       "requireLiveData": true
     },
     "service": "oday-api",
     "status": "unhealthy",
-    "time": "2026-07-28T22:50:40.512190+00:00",
+    "time": "2026-07-29T00:02:44.502828+00:00",
     "version": "0.1.0"
   },
   "health_probe": {
     "attempt_count": 1,
     "attempts": [
       {
-        "elapsed_seconds": 2.59,
+        "elapsed_seconds": 3.654,
         "error": "",
         "provenance": "json_object",
         "status": 503,
         "transient": false
       }
     ],
-    "elapsed_seconds": 2.59,
+    "elapsed_seconds": 3.654,
     "outcome": "answered"
   },
   "ok": true,
@@ -261,24 +263,31 @@
   "secret_values_redacted": true,
   "version": {
     "api_version": "0.1.0",
-    "correlation_id": "corr-cloud-run-compat-dev-7d13f8e162d035ad7318d1f659dfa0f2bd85ca65-rerun",
+    "correlation_id": "corr-cloud-run-compat-dev-r4-20260729",
     "release_sha": "8ec12c02",
     "service": "oday-api",
     "status": "ok",
-    "time": "2026-07-28T22:50:37.920159+00:00"
+    "time": "2026-07-29T00:02:40.849364+00:00"
   },
   "version_probe": {
-    "attempt_count": 1,
+    "attempt_count": 2,
     "attempts": [
       {
-        "elapsed_seconds": 13.274,
+        "elapsed_seconds": 15.067,
+        "error": "The read operation timed out",
+        "provenance": "no_response",
+        "status": null,
+        "transient": true
+      },
+      {
+        "elapsed_seconds": 1.948,
         "error": "",
         "provenance": "json_object",
         "status": 200,
         "transient": false
       }
     ],
-    "elapsed_seconds": 13.274,
+    "elapsed_seconds": 17.015,
     "outcome": "answered"
   },
   "web_url": "https://oday-web-7sxbjoeozq-de.a.run.app"

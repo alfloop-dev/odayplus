@@ -1,0 +1,56 @@
+{
+  "api_url": "https://[::1",
+  "checks": [
+    {
+      "detail": "https://[::1/platform/version is not a requestable URL: ValueError: Invalid IPv6 URL (attempts=1 elapsed=0.0s)",
+      "name": "compatibility:/platform/version:http",
+      "ok": false
+    },
+    {
+      "detail": "https://[::1/platform/health is not a requestable URL: ValueError: Invalid IPv6 URL (attempts=1 elapsed=0.0s)",
+      "name": "compatibility:/platform/health:database",
+      "ok": false
+    }
+  ],
+  "correlation_id": "corr-cloud-run-compat-badurl-20260729",
+  "generated_at": "2026-07-29T00:02:11Z",
+  "health_probe": {
+    "attempt_count": 1,
+    "attempts": [
+      {
+        "elapsed_seconds": 0.0,
+        "error": "https://[::1/platform/health is not a requestable URL: ValueError: Invalid IPv6 URL",
+        "provenance": "invalid_request",
+        "status": null,
+        "transient": false
+      }
+    ],
+    "elapsed_seconds": 0.0,
+    "outcome": "rejected"
+  },
+  "ok": false,
+  "probe_retry_policy": {
+    "attempts": 4,
+    "backoff_seconds": 2.0,
+    "max_backoff_seconds": 8.0,
+    "per_attempt_timeout_seconds": 15.0,
+    "total_deadline_seconds": 120.0
+  },
+  "schema_version": 1,
+  "secret_values_redacted": true,
+  "version_probe": {
+    "attempt_count": 1,
+    "attempts": [
+      {
+        "elapsed_seconds": 0.0,
+        "error": "https://[::1/platform/version is not a requestable URL: ValueError: Invalid IPv6 URL",
+        "provenance": "invalid_request",
+        "status": null,
+        "transient": false
+      }
+    ],
+    "elapsed_seconds": 0.0,
+    "outcome": "rejected"
+  },
+  "web_url": "https://[::1"
+}

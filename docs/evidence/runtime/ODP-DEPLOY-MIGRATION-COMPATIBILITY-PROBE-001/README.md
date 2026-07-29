@@ -105,14 +105,17 @@ missing retry contract.**
   per probe; a retry is only scheduled when backoff plus a full attempt still
   fit inside it, and the last attempt's timeout is clamped to what remains
 
-Retries are attempted **only** when no response was received at all: transport
-failures (timeout, connection reset/refused), classified as
+Retries are attempted **only** when a request was actually sent and no response
+came back: transport failures (timeout, connection reset/refused), classified as
 `ProbeAttempt.provenance == "no_response"`. That is exactly what run
 30402570022 recorded. Any attempt that *received* an HTTP response is final on
 attempt 1, whatever its status or body — a status code is not independent proof
 that the Cloud Run front end rather than the old revision produced it, so it
-never buys a retry. All of the following still fail closed on the first
-response, before candidate traffic and with the rollback trap armed:
+never buys a retry. A request `urllib` refuses to build at all
+(`provenance == "invalid_request"`: a malformed URL or unsendable header) is
+likewise final on attempt 1 — nothing was sent, so there is no cold start to
+outlast. All of the following still fail closed on the first response, before
+candidate traffic and with the rollback trap armed:
 
 - non-200 `/platform/version`
 - `/platform/version` or `/platform/health` returning invalid JSON or a
@@ -120,6 +123,7 @@ response, before candidate traffic and with the rollback trap armed:
 - `/platform/health` with a missing `database` dependency
 - `/platform/health` with an unhealthy database or a forbidden
   fixture/mock/seed/in-memory/sqlite marker
+- an `--api-url` that cannot be turned into an HTTP request
 - exhausted attempts or exhausted deadline
 
 Worst case per probe is 4 × 15 s of attempts plus 2 + 4 + 8 s of backoff = 74 s,

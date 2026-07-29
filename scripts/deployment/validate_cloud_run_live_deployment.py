@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import argparse
 import contextlib
+import http.client
 import importlib
 import inspect
 import json
@@ -1674,12 +1675,23 @@ COMPATIBILITY_PROBE_DEADLINE_SECONDS = 120.0
 # that never reached the old revision and of a response the old revision sent
 # with a body we could not parse.
 PROBE_NO_RESPONSE = "no_response"  # transport failure or timeout: nothing came back
+PROBE_INVALID_REQUEST = "invalid_request"  # the request could not be built: a defective URL
 PROBE_UNPARSEABLE_BODY = "unparseable_body"  # a response arrived; its body was not JSON
 PROBE_NON_OBJECT_BODY = "non_object_body"  # a response arrived; its JSON was not an object
 PROBE_JSON_OBJECT = "json_object"  # a response arrived with a JSON object body
 PROBE_PROVENANCES = frozenset(
-    {PROBE_NO_RESPONSE, PROBE_UNPARSEABLE_BODY, PROBE_NON_OBJECT_BODY, PROBE_JSON_OBJECT}
+    {
+        PROBE_NO_RESPONSE,
+        PROBE_INVALID_REQUEST,
+        PROBE_UNPARSEABLE_BODY,
+        PROBE_NON_OBJECT_BODY,
+        PROBE_JSON_OBJECT,
+    }
 )
+# Nothing came back, so there is no status to record. These two differ only in
+# whether a retry could ever change the answer: a cold start can be outlasted, a
+# URL we cannot turn into a request cannot.
+PROBE_NO_STATUS_PROVENANCES = frozenset({PROBE_NO_RESPONSE, PROBE_INVALID_REQUEST})
 # Positive allowlist rather than a substring probe: `"unhealthy" in text` is
 # true for the literal dependency value `"unhealthy"`, so a substring test
 # would pass the very verdict this gate exists to catch.
@@ -1734,7 +1746,7 @@ class ProbeAttempt:
     def __post_init__(self) -> None:
         if self.provenance not in PROBE_PROVENANCES:
             raise ValueError(f"unknown probe provenance: {self.provenance!r}")
-        if (self.provenance == PROBE_NO_RESPONSE) != (self.status is None):
+        if (self.provenance in PROBE_NO_STATUS_PROVENANCES) != (self.status is None):
             raise ValueError("probe status is present exactly when a response was received")
         if (self.provenance == PROBE_JSON_OBJECT) != (self.payload is not None):
             raise ValueError("probe payload is present exactly when the body was a JSON object")
@@ -1743,7 +1755,7 @@ class ProbeAttempt:
     def response_received(self) -> bool:
         """True when an HTTP response arrived, whatever its status or body."""
 
-        return self.provenance != PROBE_NO_RESPONSE
+        return self.provenance not in PROBE_NO_STATUS_PROVENANCES
 
     @property
     def has_verdict(self) -> bool:
@@ -1811,7 +1823,8 @@ class ProbeResult:
     @property
     def outcome(self) -> str:
         """`answered` (old revision replied), `rejected` (non-retryable
-        defect such as invalid JSON), or the exhausted bound that stopped us."""
+        defect such as invalid JSON or a URL we cannot request), or the
+        exhausted bound that stopped us."""
 
         if self.exhausted:
             return self.exhausted
@@ -1860,9 +1873,14 @@ def probe_failure_is_transient(attempt: ProbeAttempt) -> bool:
     deployment has no such provenance signal, and treating a status code as
     that proof would let a real verdict (a 503 the old revision itself emitted)
     be retried away.
+
+    A request we could not even build (`invalid_request`) also received no
+    response, but it is not transient: nothing was sent, so there is no cold
+    start to outlast, and every retry would rebuild the identical broken
+    request and burn the deadline before failing the same way.
     """
 
-    return not attempt.response_received
+    return attempt.provenance == PROBE_NO_RESPONSE
 
 
 def probe_json_endpoint(
@@ -1877,6 +1895,23 @@ def probe_json_endpoint(
     started = monotonic()
     try:
         status, _content_type, body = _request(url, headers=headers, timeout=timeout)
+    except (ValueError, http.client.InvalidURL) as exc:
+        # `urllib` refuses to build the request itself -- a malformed URL
+        # (`ValueError: Invalid IPv6 URL`, `UnicodeEncodeError` on a non-latin-1
+        # host) or a host/header it will not put on the wire
+        # (`http.client.InvalidURL`, which is an `HTTPException`, not a
+        # `ValueError`). Neither is a transport event and neither is caught by
+        # the `OSError` arm below, so before this boundary existed the gate died
+        # with a traceback and wrote no compatibility report at all. Classify it
+        # as a received-nothing, non-retryable defect: the caller then fails
+        # closed with exit 1 and a report the deploy script can read.
+        return ProbeAttempt(
+            status=None,
+            payload=None,
+            error=f"{url} is not a requestable URL: {type(exc).__name__}: {exc}",
+            elapsed_seconds=monotonic() - started,
+            provenance=PROBE_INVALID_REQUEST,
+        )
     except (TimeoutError, urllib.error.URLError, OSError) as exc:
         return ProbeAttempt(
             status=None,

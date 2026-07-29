@@ -2,7 +2,7 @@
   "api_url": "https://live-3875485e---oday-api-7sxbjoeozq-de.a.run.app",
   "checks": [
     {
-      "detail": "status=200 attempts=2 elapsed=15.5s",
+      "detail": "status=200 attempts=1 elapsed=11.5s",
       "name": "compatibility:/platform/version:http",
       "ok": true
     },
@@ -12,10 +12,10 @@
       "ok": true
     }
   ],
-  "correlation_id": "corr-cloud-run-compat-dev-coldstart-cli-round2-20260728",
-  "generated_at": "2026-07-28T23:02:41Z",
+  "correlation_id": "corr-cloud-run-compat-dev-cold-r4-20260729",
+  "generated_at": "2026-07-29T00:03:18Z",
   "health": {
-    "correlation_id": "corr-cloud-run-compat-dev-coldstart-cli-round2-20260728",
+    "correlation_id": "corr-cloud-run-compat-dev-cold-r4-20260729",
     "dependencies": {
       "database": "healthy",
       "external_providers": "unsupported for production live data: mode fixture",
@@ -30,7 +30,7 @@
         "liveReady": false,
         "mode": "unavailable",
         "operatorRepositoryProbe": {
-          "checkedAt": "2026-07-28T23:02:41.986093+00:00",
+          "checkedAt": "2026-07-29T00:03:18.505145+00:00",
           "errors": [],
           "persistenceMode": "postgresql",
           "ready": true,
@@ -68,21 +68,21 @@
     },
     "service": "oday-api",
     "status": "unhealthy",
-    "time": "2026-07-28T23:02:41.986170+00:00",
+    "time": "2026-07-29T00:03:18.505190+00:00",
     "version": "0.1.0"
   },
   "health_probe": {
     "attempt_count": 1,
     "attempts": [
       {
-        "elapsed_seconds": 0.6,
+        "elapsed_seconds": 0.122,
         "error": "",
         "provenance": "json_object",
         "status": 503,
         "transient": false
       }
     ],
-    "elapsed_seconds": 0.6,
+    "elapsed_seconds": 0.122,
     "outcome": "answered"
   },
   "ok": true,
@@ -97,31 +97,24 @@
   "secret_values_redacted": true,
   "version": {
     "api_version": "0.1.0",
-    "correlation_id": "corr-cloud-run-compat-dev-coldstart-cli-round2-20260728",
+    "correlation_id": "corr-cloud-run-compat-dev-cold-r4-20260729",
     "release_sha": "local",
     "service": "oday-api",
     "status": "ok",
-    "time": "2026-07-28T23:02:41.386624+00:00"
+    "time": "2026-07-29T00:03:18.380919+00:00"
   },
   "version_probe": {
-    "attempt_count": 2,
+    "attempt_count": 1,
     "attempts": [
       {
-        "elapsed_seconds": 15.062,
-        "error": "The read operation timed out",
-        "provenance": "no_response",
-        "status": null,
-        "transient": true
-      },
-      {
-        "elapsed_seconds": 0.41,
+        "elapsed_seconds": 11.528,
         "error": "",
         "provenance": "json_object",
         "status": 200,
         "transient": false
       }
     ],
-    "elapsed_seconds": 15.472,
+    "elapsed_seconds": 11.528,
     "outcome": "answered"
   },
   "web_url": "https://oday-web-7sxbjoeozq-de.a.run.app"

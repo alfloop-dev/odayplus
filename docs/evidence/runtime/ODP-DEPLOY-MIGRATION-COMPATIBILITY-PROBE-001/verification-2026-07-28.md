@@ -10,7 +10,7 @@ Owner: Claude2 · Reviewer: Codex6 · Branch:
 python3 -m pytest tests/ops/test_cloud_run_live_deployment.py -q -k "compat or probe"
 ```
 
-→ **66 passed**. Covers:
+→ **74 passed**. Covers:
 
 - `ProbeRetryPolicy` backoff is exponential and capped (`[0, 2, 4, 8, 8, 8]`)
   and the policy rejects a zero/negative attempt count, per-attempt timeout,
@@ -22,7 +22,10 @@ python3 -m pytest tests/ops/test_cloud_run_live_deployment.py -q -k "compat or p
   (transport failure / timeout). The status sweep asserts non-retry for
   `{200, 404, 408, 429, 500, 502, 503, 504}` across all three
   received-response provenances (`json_object`, `unparseable_body`,
-  `non_object_body`) — see § Round 2 below
+  `non_object_body`) — see § Round 2 below — and for `invalid_request`, the
+  no-response provenance that must not be retried — see § Round 4 below
+- a malformed `--api-url` is rejected on attempt 1 with no sleep and no
+  traceback, both directly and through the CLI — see § Round 4 below
 - `probe_json_endpoint` classifies a real HTTP 503 carrying an HTML body, an
   empty body, `[]`, or `"unavailable"` as a *received response*
   (`response_received=True`, `transient=false`), and `ProbeAttempt` raises on a
@@ -55,7 +58,7 @@ python3 -m pytest tests/ops/test_cloud_run_live_deployment.py -q -k "compat or p
 python3 -m pytest tests/ops/ -p no:cacheprovider
 ```
 
-→ **402 passed, 1 failed, 20 skipped**.
+→ **410 passed, 1 failed, 20 skipped**.
 
 The single failure is
 `test_deploy_preflight_imports_runtime_dependencies_via_locked_python`, which
@@ -63,7 +66,7 @@ fails with `Error: required command 'uv' is not installed.` — the `uv` binary
 is absent from this worker sandbox. Confirmed pre-existing: the same test fails
 identically on the unmodified base commit (`git stash` + re-run). It passes in
 CI, where `uv` is installed. It executes `scripts/deploy_cloud_run_waji.sh`,
-which round 3 did not touch.
+which round 4 did not touch.
 
 ## Lint
 
@@ -79,50 +82,50 @@ bash -n scripts/deploy_cloud_run_waji.sh
 
 ## Live gate re-runs against Cloud Run
 
-All three ran the shipped CLI with the exact flags
-`run_migration_compatibility_gate` now passes. Re-run at round-2 head after the
-provenance change; the reports in this directory are those runs' raw output.
+All four ran the shipped CLI with the exact flags
+`run_migration_compatibility_gate` now passes. **Re-run at round-4 head**
+(2026-07-29T00:02–00:05Z) after the `invalid_request` change; the reports in
+this directory are those runs' raw output, not an earlier round's.
 
-### 1. Serving revision — passes (`gate-rerun-live-serving-revision.json`)
+### 1. Serving revision — cold start reproduced and recovered (`gate-rerun-live-serving-revision.json`)
 
 `--api-url https://oday-api-7sxbjoeozq-de.a.run.app` (revision
 `oday-api-00005-gin`, the revision the failed deploy was probing):
 
 ```
 Cloud Run migration compatibility smoke passed.   exit=0
-version: attempts=1 status=200 elapsed=13.274s provenance=json_object
-health:  attempts=1 status=503 elapsed=2.590s   provenance=json_object
+version attempt 1: The read operation timed out   (15.067s, provenance=no_response, transient=true)
+version attempt 2: status=200                     (1.948s,  provenance=json_object)
+health  attempt 1: status=503                     (3.654s,  provenance=json_object)
          dependencies.database == "healthy"  -> database compatible
 ```
 
-This re-run is itself a measurement of the reported failure mode: the *serving*
-revision had scaled to zero again and took **13.3 s** to answer attempt 1 —
-1.7 s inside the 15 s single-attempt budget that run 30402570022 blew through.
+The serving revision had scaled to zero again and blew straight through the
+15 s single-attempt budget that run 30402570022 died on — attempt 1 reproduces
+the original failure string verbatim, on the original revision, at this head.
+The bounded retry then turns it into a pass in 17.0 s of probing plus one 2 s
+backoff. **This is the end-to-end proof that the shipped code fixes the
+reported failure**, and it is a live measurement, not a fixture.
 
-### 2. Cold revision — retry recovers it (`gate-rerun-cold-revision-retry.json`)
+### 2. Idle 0 %-traffic revision — still passes (`gate-rerun-cold-revision-retry.json`)
 
 `--api-url https://live-3875485e---oday-api-7sxbjoeozq-de.a.run.app`
-(revision `oday-api-00003-lez`), an idle 0 %-traffic tagged revision, i.e. the
-exact condition of run 30402570022:
+(revision `oday-api-00003-lez`), an idle 0 %-traffic tagged revision:
 
 ```
 Cloud Run migration compatibility smoke passed.   exit=0
-version attempt 1: The read operation timed out   (15.062s, provenance=no_response, transient=true)
-version attempt 2: status=200                     (0.410s, provenance=json_object)
-health  attempt 1: status=503                     (0.600s, provenance=json_object) -> database compatible
+version attempt 1: status=200  (11.528s, provenance=json_object)
+health  attempt 1: status=503  (0.122s,  provenance=json_object) -> database compatible
 ```
 
-Attempt 1 reproduces the original failure string verbatim and is classified
-`no_response` — the one provenance round 2 still retries; the bounded retry
-turns it into a pass in 15.5 s of probing plus one 2 s backoff. **This is the
-end-to-end proof that the shipped code fixes the reported failure.**
-
-Round 1 ran this against the `authcand` tag (`oday-api-00007-koz`) and got the
-same shape (attempt 1 timeout 15.059 s, attempt 2 status 200). At round-2
-re-run time `authcand` was still warm from that probe — it answered in 61 ms,
-so it could not reproduce a cold start on demand — and `live-3875485e` was used
-instead. Both are 0 %-traffic revisions of `oday-api` with no `minScale`, which
-is the property under test; nothing in the retry contract is revision-specific.
+This run answered **11.5 s** into the 15 s attempt budget, so it did not
+reproduce the timeout — which is itself the point: cold-start latency on these
+revisions straddles the single-attempt budget, sometimes inside it (11.5 s
+here, 13.3 s at round 2) and sometimes outside it (15.1 s at rounds 1–2, and
+re-run 1 above at this head). A single attempt is a coin flip; the bounded
+retry is what makes the gate deterministic. Rounds 1–3 recorded the timeout →
+retry → 200 shape on this URL and on the `authcand` tag; nothing in the retry
+contract is revision-specific.
 
 ### 3. Fail-closed still holds (`gate-rerun-fail-closed-invalid-json.json`)
 
@@ -131,16 +134,29 @@ with HTML:
 
 ```
 Cloud Run migration compatibility smoke failed (fail-closed):   exit=1
-- compatibility:/platform/version:http: ... did not return valid JSON ... (attempts=1 elapsed=2.4s)
-- compatibility:/platform/health:database: ... did not return valid JSON ... (attempts=1 elapsed=0.2s)
+- compatibility:/platform/version:http: ... did not return valid JSON ... (attempts=1 elapsed=3.3s)
+- compatibility:/platform/health:database: ... did not return valid JSON ... (attempts=1 elapsed=0.3s)
 version_probe.outcome = rejected  attempt_count=1  provenance=unparseable_body  transient=false
 health_probe.outcome  = rejected  attempt_count=1  provenance=unparseable_body  transient=false
 ```
 
 A body we cannot parse is a defect, not a blip: one attempt, no retry, exit 1.
-Round 1's report recorded `outcome=answered` here, from an intermediate
-in-session build; the shipped code classifies it `rejected` and this file is the
-re-run that proves it.
+
+### 4. Unrequestable URL fails closed (`gate-rerun-fail-closed-unrequestable-url.json`)
+
+`--api-url 'https://[::1'` with the default 4-attempt / 2 s-backoff policy:
+
+```
+Cloud Run migration compatibility smoke failed (fail-closed):   exit=1
+- compatibility:/platform/version:http: https://[::1/platform/version is not a requestable URL: ValueError: Invalid IPv6 URL (attempts=1 elapsed=0.0s)
+- compatibility:/platform/health:database: ... same ... (attempts=1 elapsed=0.0s)
+version_probe.outcome = rejected  attempt_count=1  provenance=invalid_request  transient=false
+health_probe.outcome  = rejected  attempt_count=1  provenance=invalid_request  transient=false
+real 0m0.162s
+```
+
+Total wall clock 0.162 s under a policy that would have slept 2 + 4 + 8 s had
+the rejection been classified transient — see § Round 4.
 
 ## Round 2 — Codex6 blocker on exact head `9e7d4c70`
 
@@ -240,6 +256,87 @@ Regressions added:
 
 Round 2's regressions covered zero and negative bounds only, which is how the
 non-finite hole survived them.
+
+## Round 4 — Codex6 blocker on exact head `92de5735`
+
+PR #488, review comment 5111023008: `probe_json_endpoint` catches
+`(TimeoutError, urllib.error.URLError, OSError)`. A malformed HTTPS URL fails
+*before* any of those: `urllib.request.Request` raises a bare `ValueError`, and
+`http.client` raises `InvalidURL` — an `HTTPException`, not a `ValueError`.
+Round 1 had moved the compatibility path off `_json_request`, whose callers
+caught `ValueError`, so that boundary was lost.
+
+Reproduced on `92de5735` before the fix:
+
+```
+$ python3 scripts/deployment/validate_cloud_run_live_deployment.py \
+    compatibility-smoke --api-url 'https://[::1' --web-url 'https://[::1' \
+    --output /tmp/badurl-before.json
+...
+  File ".../validate_cloud_run_live_deployment.py", line 1879, in probe_json_endpoint
+    status, _content_type, body = _request(url, headers=headers, timeout=timeout)
+  File "/usr/lib/python3.12/urllib/parse.py", line 514, in urlsplit
+    raise ValueError("Invalid IPv6 URL")
+ValueError: Invalid IPv6 URL
+exit=2   # and no report file was written
+```
+
+Exit 2 with no report is not a fail-closed verdict: the deploy gate parses the
+report, so it learns nothing about compatibility from a traceback.
+
+Fixed with a fifth provenance, `invalid_request`, and a matching arm in
+`probe_json_endpoint`:
+
+| Attempt outcome | `provenance` | `status` | `payload` | retried? |
+| --- | --- | --- | --- | --- |
+| request could not be built | `invalid_request` | `None` | `None` | **no** |
+| transport failure / timeout | `no_response` | `None` | `None` | yes |
+| response, body not JSON | `unparseable_body` | int | `None` | no |
+| response, JSON not an object | `non_object_body` | int | `None` | no |
+| response, JSON object | `json_object` | int | dict | no |
+
+- `except (ValueError, http.client.InvalidURL)` is ordered **before** the
+  `OSError` arm and covers both families (`InvalidURL` is not a `ValueError`;
+  `UnicodeEncodeError` on a non-latin-1 host is).
+- `probe_failure_is_transient` is now `provenance == PROBE_NO_RESPONSE` rather
+  than `not response_received`, so the new provenance is non-retryable by
+  construction: nothing was sent, so there is no cold start to outlast, and
+  every retry would rebuild the identical broken request and burn the deadline.
+- `ProbeAttempt.__post_init__` keeps enforcing the table: `invalid_request`
+  joins `no_response` as a provenance that must carry `status is None`, so a
+  received response can never be recorded as an unbuildable request.
+
+Same command after the fix (full output in
+`gate-rerun-fail-closed-unrequestable-url.json`):
+
+```
+Cloud Run migration compatibility smoke failed (fail-closed):   exit=1
+- compatibility:/platform/version:http: https://[::1/platform/version is not a requestable URL: ValueError: Invalid IPv6 URL (attempts=1 elapsed=0.0s)
+report=...
+```
+
+Regressions added (8 cases, each parametrized over both exception families —
+`https://[::1` → `ValueError`, `https://exa mple.invalid` →
+`http.client.InvalidURL`; neither touches the network, since both are refused
+before a socket is opened):
+
+- direct: `probe_json_endpoint` returns `provenance=invalid_request`,
+  `status=None`, `response_received=False`, `has_verdict=False`, and
+  `probe_failure_is_transient(...) is False`
+- direct: `probe_with_bounded_retry` under a 4-attempt / 2 s-backoff /
+  120 s-deadline policy makes **exactly one attempt**, records
+  `outcome=rejected` with `exhausted=""`, and **never calls `sleep`**
+  (recording sleeper asserts `delays == []`)
+- direct: `compatibility_smoke_checks` fails both checks closed, writes
+  `attempt_count=1` / `outcome=rejected` / `transient=false` for both probes,
+  never sleeps, and records no `version` / `health` payload
+- CLI subprocess: exit **1**, **no `Traceback`** in stderr, a report file that
+  exists and carries the default 4-attempt / 2 s-backoff policy plus both
+  probes rejected on attempt 1, and a total wall clock under 10 s (a transient
+  classification would have slept 2 + 4 + 8 s per probe)
+
+Also extended: the `probe_failure_is_transient` sweep and the
+`ProbeAttempt` provenance-contradiction test now cover `invalid_request`.
 
 ## Scope guard
 

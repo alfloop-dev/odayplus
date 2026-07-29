@@ -58,11 +58,13 @@ provider-probe defect.** Full detail and raw log extracts:
   scheduled when its backoff plus a full attempt still fit inside the deadline;
   the attempt timeout is clamped to whatever remains. Both exhaustion modes
   fail the gate.
-- Retryable **only** when no response was received at all — a transport failure
-  or a timeout. Every attempt that received an HTTP response is final on
-  attempt 1, whatever its status or body. See § 2a.
-- `ProbeAttempt.provenance` (`no_response` / `unparseable_body` /
-  `non_object_body` / `json_object`) is the retry input, and the dataclass
+- Retryable **only** when a request was sent and no response came back — a
+  transport failure or a timeout. Every attempt that received an HTTP response
+  is final on attempt 1, whatever its status or body; so is a request `urllib`
+  refuses to build at all. See § 2a.
+- `ProbeAttempt.provenance` (`no_response` / `invalid_request` /
+  `unparseable_body` / `non_object_body` / `json_object`) is the retry input,
+  and the dataclass
   rejects a provenance that contradicts the response it describes: a status is
   present exactly when a response was received, a payload exactly when the body
   parsed as a JSON object.
@@ -96,8 +98,10 @@ parse. Combined with a status allowlist, an **HTTP 503 carrying invalid JSON was
 retried** (`transient=true`) instead of failing on attempt 1.
 
 The fix splits *response provenance* from *transport failure* — `payload is
-None` no longer decides anything — and narrows the retry rule to
-`not attempt.response_received`:
+None` no longer decides anything — and narrows the retry rule to the
+no-response provenance itself (round 4 tightened the expression from
+`not attempt.response_received` to `provenance == PROBE_NO_RESPONSE` when
+`invalid_request` joined it as a second received-nothing outcome):
 
 - a status code is **not** proof that the Cloud Run front end rather than the
   old revision produced a response. The deployment has no independent
@@ -130,6 +134,7 @@ All of these still fail on the **first** response, before candidate traffic:
 | missing `database` dependency | 1 attempt, no retry, gate fails |
 | unhealthy database | 1 attempt, no retry, gate fails |
 | forbidden fixture/mock/seed/in-memory/sqlite marker | gate fails |
+| `--api-url` that cannot be turned into a request | 1 attempt, no retry, no sleep, gate fails with a report (not a traceback) |
 | attempts or deadline exhausted | gate fails, no `version`/`health` in report |
 
 Not touched: model readiness, external provider readiness, secret handling, and
@@ -151,24 +156,37 @@ reports the bare string `"healthy"` and still passes.
 
 `docs/evidence/runtime/ODP-DEPLOY-MIGRATION-COMPATIBILITY-PROBE-001/verification-2026-07-28.md`
 
-- focused compatibility tests: 66 passed
-- full ops suite: 402 passed, 20 skipped, 1 pre-existing environmental failure
+- focused compatibility tests: 74 passed
+- full ops suite: 410 passed, 20 skipped, 1 pre-existing environmental failure
   (`uv` binary absent from the worker sandbox; identical on the unmodified base)
 - `ruff format --check`, `ruff check .orchestrator scripts`,
   `ruff check tests modules apps shared models solver pipelines infra`,
   `bash -n scripts/deploy_cloud_run_waji.sh` — clean
-- shipped CLI re-run against the real serving revision → **pass**
-- shipped CLI re-run against a genuinely cold revision → attempt 1 reproduces
-  `The read operation timed out` at 15.062 s classified `no_response`, attempt 2
-  returns 200 in 0.410 s, gate **passes**
+- shipped CLI re-run at round-4 head against the real serving revision →
+  attempt 1 reproduces `The read operation timed out` at 15.067 s classified
+  `no_response`, attempt 2 returns 200 in 1.948 s, gate **passes**
+- shipped CLI re-run against an idle 0 %-traffic revision → answered 200 in
+  11.5 s, inside the attempt budget, gate **passes** (cold latency straddles
+  the 15 s budget, which is why the retry contract exists)
 - shipped CLI re-run against a non-API endpoint → **fails closed, exit 1**, one
   attempt per probe
+- shipped CLI re-run with `--api-url 'https://[::1'` → **fails closed, exit 1**
+  in 0.162 s, one attempt per probe, no traceback
 - round 3 (Codex6 blocker on `c583bd7f`): `ProbeRetryPolicy` now requires
   `math.isfinite` on all five bounds before any ordering guard runs. `NaN`
   defeated every `<= 0` comparison and `--timeout nan` died with an unhandled
   socket-layer `ValueError` — traceback, no report, no verdict for the gate. Now
   it is a `compatibility:retry_policy` fail-closed report; 27 new nan/inf/-inf
   unit and CLI regressions cover it.
+- round 4 (Codex6 blocker on `92de5735`): `probe_json_endpoint` caught only
+  `(TimeoutError, URLError, OSError)`, so a malformed HTTPS URL escaped as a
+  bare `ValueError` (or `http.client.InvalidURL`, which is not a `ValueError`)
+  — exit 2, traceback, **no report at all**, regressing the `ValueError`
+  boundary the pre-task `_json_request` callers had. Now a fifth provenance,
+  `invalid_request`, makes request-construction failures a non-retryable
+  rejected verdict: one attempt, no backoff sleep, exit 1 with a report. 8 new
+  regressions (direct probe, bounded retry, `compatibility_smoke_checks`, and
+  CLI subprocess) each cover both exception families.
 
 ## 6. Follow-ups (not in this task's scope)
 

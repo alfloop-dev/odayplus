@@ -6,6 +6,7 @@ import os
 import re
 import subprocess
 import sys
+import time
 from datetime import UTC, datetime, timedelta
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -942,6 +943,17 @@ def test_probe_failure_is_transient_only_when_no_response_was_received() -> None
             )
             is False
         ), status
+    # No response either, but nothing was sent: a URL urllib refuses to turn
+    # into a request cannot be fixed by rebuilding the identical request.
+    assert (
+        validator.probe_failure_is_transient(
+            _attempt(
+                error="is not a requestable URL",
+                provenance=validator.PROBE_INVALID_REQUEST,
+            )
+        )
+        is False
+    )
 
 
 def test_probe_attempt_rejects_a_provenance_that_contradicts_the_response() -> None:
@@ -973,6 +985,15 @@ def test_probe_attempt_rejects_a_provenance_that_contradicts_the_response() -> N
     with pytest.raises(ValueError):
         validator.ProbeAttempt(
             status=200, payload=None, error="", elapsed_seconds=0.1, provenance="maybe"
+        )
+    # A request that was never built has no status to record.
+    with pytest.raises(ValueError):
+        validator.ProbeAttempt(
+            status=503,
+            payload=None,
+            error="is not a requestable URL",
+            elapsed_seconds=0.1,
+            provenance=validator.PROBE_INVALID_REQUEST,
         )
 
 
@@ -1225,6 +1246,80 @@ def test_probe_json_endpoint_never_raises_and_classifies_the_transport(monkeypat
     assert validator.probe_failure_is_transient(attempt) is True
 
 
+# Two malformed HTTPS URLs whose failures escape the `OSError` arm of
+# `probe_json_endpoint`, from two unrelated exception families. Neither reaches
+# the network: `urllib.parse` and `http.client` both refuse before any socket
+# is opened, which is also why a retry could never change the outcome.
+UNREQUESTABLE_URLS = [
+    ("https://[::1", "Invalid IPv6 URL"),  # ValueError, raised building Request
+    ("https://exa mple.invalid", "control characters"),  # http.client.InvalidURL
+]
+
+
+@pytest.mark.parametrize("url,expected_error", UNREQUESTABLE_URLS)
+def test_probe_json_endpoint_rejects_a_url_it_cannot_request(url: str, expected_error: str) -> None:
+    # Regression: a malformed --api-url used to escape probe_json_endpoint as an
+    # unhandled ValueError / InvalidURL, so the gate died with a traceback and
+    # wrote no compatibility report -- no verdict for the deploy script to act
+    # on. It must instead be a non-retryable, received-nothing attempt.
+    attempt = validator.probe_json_endpoint(f"{url}/platform/version", headers={}, timeout=15.0)
+
+    assert attempt.provenance == validator.PROBE_INVALID_REQUEST
+    assert attempt.status is None
+    assert attempt.payload is None
+    assert attempt.response_received is False
+    assert attempt.has_verdict is False
+    assert expected_error in attempt.error
+    assert validator.probe_failure_is_transient(attempt) is False
+
+
+@pytest.mark.parametrize("url,expected_error", UNREQUESTABLE_URLS)
+def test_probe_retry_spends_one_attempt_and_no_backoff_on_an_unrequestable_url(
+    url: str, expected_error: str
+) -> None:
+    sleeper = _RecordingSleep()
+    result = validator.probe_with_bounded_retry(
+        f"{url}/platform/version",
+        headers={},
+        policy=validator.ProbeRetryPolicy(
+            attempts=4, timeout_seconds=15.0, backoff_seconds=2.0, deadline_seconds=120.0
+        ),
+        sleep=sleeper,
+    )
+
+    assert len(result.attempts) == 1
+    assert result.exhausted == ""
+    assert result.outcome == "rejected"
+    assert sleeper.delays == []
+    assert expected_error in result.final.error
+    assert result.as_report()["attempts"][0]["transient"] is False
+
+
+@pytest.mark.parametrize("url,_expected_error", UNREQUESTABLE_URLS)
+def test_compatibility_smoke_fails_closed_on_an_unrequestable_api_url(
+    url: str, _expected_error: str
+) -> None:
+    sleeper = _RecordingSleep()
+    checks, report = validator.compatibility_smoke_checks(
+        api_url=url,
+        web_url="https://oday-web.example",
+        correlation_id="corr-cloud-run-compat-badurl",
+        timeout=15.0,
+        sleep=sleeper,
+    )
+
+    assert [check.ok for check in checks] == [False, False]
+    assert sleeper.delays == []
+    for probe in ("version_probe", "health_probe"):
+        assert report[probe]["outcome"] == "rejected"
+        assert report[probe]["attempt_count"] == 1
+        assert report[probe]["attempts"][0]["provenance"] == validator.PROBE_INVALID_REQUEST
+        assert report[probe]["attempts"][0]["transient"] is False
+    # No verdict was received, so none may be recorded.
+    assert "version" not in report
+    assert "health" not in report
+
+
 def test_compatibility_database_verdict_is_not_a_substring_match() -> None:
     # "unhealthy" contains "healthy": a substring probe would pass the exact
     # verdict this gate exists to catch.
@@ -1373,6 +1468,57 @@ def test_compatibility_smoke_cli_fails_closed_on_a_non_finite_bound(
     assert report["ok"] is False
     assert report["checks"][0]["name"] == "compatibility:retry_policy"
     assert "finite" in report["checks"][0]["detail"]
+
+
+@pytest.mark.parametrize("url,expected_error", UNREQUESTABLE_URLS)
+def test_compatibility_smoke_cli_fails_closed_on_an_unrequestable_url(
+    tmp_path: Path, url: str, expected_error: str
+) -> None:
+    # Regression for `--api-url https://[::1`, which used to die inside
+    # probe_json_endpoint with an unhandled ValueError: exit 2, a traceback, and
+    # no report file at all, so the deploy gate had no compatibility verdict.
+    report_path = tmp_path / "cloud-run-migration-compatibility.json"
+    started = time.monotonic()
+    result = subprocess.run(
+        [
+            sys.executable,
+            str(VALIDATOR_PATH),
+            "compatibility-smoke",
+            "--api-url",
+            url,
+            "--web-url",
+            url,
+            "--correlation-id",
+            "corr-cloud-run-compat-cli-badurl",
+            "--output",
+            str(report_path),
+        ],
+        cwd=ROOT,
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    elapsed = time.monotonic() - started
+
+    assert result.returncode == 1, result.stdout + result.stderr
+    assert "Traceback" not in result.stderr
+    report = json.loads(report_path.read_text(encoding="utf-8"))
+    assert report["ok"] is False
+    # The default policy is in force: 4 attempts with a 2s backoff would have
+    # slept at least 14s had the rejection been classified as transient.
+    assert report["probe_retry_policy"]["attempts"] == 4
+    assert report["probe_retry_policy"]["backoff_seconds"] == 2.0
+    assert elapsed < 10.0
+    for probe in ("version_probe", "health_probe"):
+        assert report[probe]["outcome"] == "rejected"
+        assert report[probe]["attempt_count"] == 1
+        assert report[probe]["attempts"][0]["provenance"] == "invalid_request"
+        assert report[probe]["attempts"][0]["transient"] is False
+    assert all(expected_error in check["detail"] for check in report["checks"])
+    assert {check["name"] for check in report["checks"]} == {
+        "compatibility:/platform/version:http",
+        "compatibility:/platform/health:database",
+    }
 
 
 def test_migration_compatibility_gate_wires_bounded_retry_flags() -> None:

@@ -2,30 +2,30 @@
   "api_url": "https://oday-web-7sxbjoeozq-de.a.run.app",
   "checks": [
     {
-      "detail": "https://oday-web-7sxbjoeozq-de.a.run.app/platform/version did not return valid JSON: Expecting value: line 1 column 1 (char 0) (attempts=1 elapsed=2.4s)",
+      "detail": "https://oday-web-7sxbjoeozq-de.a.run.app/platform/version did not return valid JSON: Expecting value: line 1 column 1 (char 0) (attempts=1 elapsed=3.3s)",
       "name": "compatibility:/platform/version:http",
       "ok": false
     },
     {
-      "detail": "https://oday-web-7sxbjoeozq-de.a.run.app/platform/health did not return valid JSON: Expecting value: line 1 column 1 (char 0) (attempts=1 elapsed=0.2s)",
+      "detail": "https://oday-web-7sxbjoeozq-de.a.run.app/platform/health did not return valid JSON: Expecting value: line 1 column 1 (char 0) (attempts=1 elapsed=0.3s)",
       "name": "compatibility:/platform/health:database",
       "ok": false
     }
   ],
-  "correlation_id": "corr-cloud-run-compat-dev-failclosed-20260728",
-  "generated_at": "2026-07-28T22:49:55Z",
+  "correlation_id": "corr-cloud-run-compat-dev-failclosed-r4-20260729",
+  "generated_at": "2026-07-29T00:03:06Z",
   "health_probe": {
     "attempt_count": 1,
     "attempts": [
       {
-        "elapsed_seconds": 0.2,
+        "elapsed_seconds": 0.283,
         "error": "https://oday-web-7sxbjoeozq-de.a.run.app/platform/health did not return valid JSON: Expecting value: line 1 column 1 (char 0)",
         "provenance": "unparseable_body",
         "status": 200,
         "transient": false
       }
     ],
-    "elapsed_seconds": 0.2,
+    "elapsed_seconds": 0.283,
     "outcome": "rejected"
   },
   "ok": false,
@@ -42,14 +42,14 @@
     "attempt_count": 1,
     "attempts": [
       {
-        "elapsed_seconds": 2.405,
+        "elapsed_seconds": 3.284,
         "error": "https://oday-web-7sxbjoeozq-de.a.run.app/platform/version did not return valid JSON: Expecting value: line 1 column 1 (char 0)",
         "provenance": "unparseable_body",
         "status": 200,
         "transient": false
       }
     ],
-    "elapsed_seconds": 2.405,
+    "elapsed_seconds": 3.284,
     "outcome": "rejected"
   },
   "web_url": "https://oday-web-7sxbjoeozq-de.a.run.app"
