@@ -1,0 +1,23 @@
+# Worker-worktree workspace probe — ODP-ORCH-APPROVAL-RESUME-ROOT-001
+  live worker worktree (ORCH_WORKSPACE_PATH)       : /tmp/pantheon-worker-worktrees/oday-plus-supervisor-live/odp-orch-approval-resume-root-001
+  config permission_broker.allowed_workspace_roots : ['.', '../execute-plans']
+  ROOT pinned to                                   : /home/lupin/oday-plus
+  probe tool call                                  : Write -> /tmp/pantheon-worker-worktrees/oday-plus-supervisor-live/odp-orch-approval-resume-root-001/docs/evidence/runtime/probe.md
+
+## deployed-control-root
+   source                    : /home/lupin/oday-plus/.orchestrator/permission_broker.py
+   reads ORCH_WORKSPACE_PATH : True
+   allowed workspace roots   : ['/home/lupin/oday-plus', '/home/lupin/pantheon', '/tmp/pantheon-worker-worktrees/oday-plus-supervisor-live/odp-orch-approval-resume-root-001', '/home/lupin/execute-plans']
+   path within workspace     : True
+   Write decision            : ALLOW  (repo_write)
+   reason                    : Write stays within the repository workspace.
+
+## deployed-live-root
+   source                    : /home/lupin/oday-plus-supervisor-live/.orchestrator/permission_broker.py
+   reads ORCH_WORKSPACE_PATH : True
+   allowed workspace roots   : ['/home/lupin/oday-plus', '/home/lupin/pantheon', '/tmp/pantheon-worker-worktrees/oday-plus-supervisor-live/odp-orch-approval-resume-root-001', '/home/lupin/execute-plans']
+   path within workspace     : True
+   Write decision            : ALLOW  (repo_write)
+   reason                    : Write stays within the repository workspace.
+
+RESULT: ALLOW — every probed revision keeps worker-worktree writes allowed
