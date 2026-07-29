@@ -41,6 +41,27 @@ _SCHEDULABLE_CATEGORIES = {
     ProviderCategory.ADMIN_BOUNDARY,
 }
 
+#: Reason codes for deterministic *deployment configuration* rejections. The
+#: provider is refused before it is ever contacted, so the outcome is fixed for
+#: a given release + environment: retrying cannot change it, and it carries no
+#: signal about provider health.
+CONFIGURATION_REASON_CODES = frozenset(
+    {
+        "provider_allowlist_required",
+        "provider_not_selected",
+        "provider_not_registered",
+        "provider_not_schedulable",
+        "provider_factory_missing",
+        "live_mode_required",
+        "missing_endpoint",
+        "missing_credential",
+    }
+)
+
+#: The operator's explicit provider allowlist excluded this provider from this
+#: deployment. Unlike its siblings above this is a *decision*, not a fault.
+PROVIDER_NOT_SELECTED_REASON_CODE = "provider_not_selected"
+
 
 class ExternalFetchProviderConfigurationError(RuntimeError):
     """Fail-closed scheduler registration/selection error."""
@@ -403,24 +424,32 @@ class ExternalFetchScheduler:
                 message=f"latest provider observation {observed_at.isoformat()}",
             )
         except Exception as exc:
-            failures, circuit_until = self.state_store.record_failure(
-                spec.provider_id,
-                at=effective_end,
-                policy=self.resilience_policy,
-            )
             reason_code = _provider_failure_code(exc)
-            retry_after = circuit_until or (
-                effective_end + self.resilience_policy.backoff_base * max(1, failures)
-            )
+            if reason_code in CONFIGURATION_REASON_CODES:
+                # The provider was never contacted, so this says nothing about
+                # provider health. Feeding it to the circuit breaker opens the
+                # circuit after two ticks and every later run then reports
+                # "circuit_open" instead of the real reason code -- that is how
+                # the diagnosis was lost on attempts 3 and 4 of execution
+                # oday-worker-r-79cf9b67e62c-6fhw5.
+                retry_after = effective_end + self.resilience_policy.backoff_base
+                detail = f"{type(exc).__name__}: {exc}; provider_health_unaffected=true"
+            else:
+                failures, circuit_until = self.state_store.record_failure(
+                    spec.provider_id,
+                    at=effective_end,
+                    policy=self.resilience_policy,
+                )
+                retry_after = circuit_until or (
+                    effective_end + self.resilience_policy.backoff_base * max(1, failures)
+                )
+                detail = f"{type(exc).__name__}: {exc}; consecutive_failures={failures}"
             alert = _alert(
                 provider_id=spec.provider_id,
                 reason_code=reason_code,
                 occurred_at=effective_end,
                 correlation_id=corr,
-                message=(
-                    f"{type(exc).__name__}: {exc}; consecutive_failures={failures}; "
-                    f"retry_after={retry_after.isoformat()}"
-                ),
+                message=f"{detail}; retry_after={retry_after.isoformat()}",
             )
             run = self._blocked_run(
                 spec,
@@ -690,6 +719,8 @@ def _ensure_utc(value: datetime) -> datetime:
 
 
 __all__ = [
+    "CONFIGURATION_REASON_CODES",
+    "PROVIDER_NOT_SELECTED_REASON_CODE",
     "ExternalFetchJobSpec",
     "ExternalFetchAlert",
     "ExternalFetchProviderConfigurationError",
