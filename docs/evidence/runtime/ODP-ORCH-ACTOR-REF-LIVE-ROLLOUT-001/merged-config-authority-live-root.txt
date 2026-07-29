@@ -1,0 +1,79 @@
+# Live merged-config actor authority — read-only probe
+# deployed module        : /home/lupin/oday-plus-supervisor-live/scripts/ai_status.py
+#   sha256               : 5e19c1c1ef4729f32470956cad3e3fe5972cb92dee5225a5d65db16df074950d
+# probe run at           : 2026-07-29T07:19:55Z
+
+## config sources this module reads
+  ROOT                  = /home/lupin/oday-plus-supervisor-live
+  STATUS_ROOT           = /home/lupin/oday-plus-supervisor-live
+  CONFIG_FILE           = /home/lupin/oday-plus-supervisor-live/.orchestrator/config.json exists: True
+  repo-local overlay    = /home/lupin/oday-plus-supervisor-live/.orchestrator/config.local.json exists: True
+  status-root overlay   = /home/lupin/oday-plus-supervisor-live/.orchestrator/config.local.json exists: True
+
+## authority resolved through the merged config (config.json + config.local.json)
+  configured_agent_names() [19] = ['Antigravity', 'Antigravity2', 'Antigravity3', 'Antigravity4', 'Antigravity5', 'Antigravity6', 'Antigravity7', 'Claude', 'Claude2', 'Claude3', 'Codex', 'Codex2', 'Codex3', 'Codex4', 'Codex5', 'Codex6', 'Codex7', 'Codex8', 'Codex9']
+  registered_agent_names() [22] = ['Antigravity', 'Antigravity2', 'Antigravity3', 'Antigravity4', 'Antigravity5', 'Antigravity6', 'Antigravity7', 'Claude', 'Claude2', 'Claude3', 'Codex', 'Codex2', 'Codex3', 'Codex4', 'Codex5', 'Codex6', 'Codex7', 'Codex8', 'Codex9', 'CodexCoordinator', 'Human/Ops', 'Orchestrator']
+  NON_WORKER_ACTORS = ['CodexCoordinator', 'Human/Ops', 'Orchestrator']
+
+## declared actors resolve exactly (spelling must round-trip unchanged)
+  accept Codex3             -> Codex3             exact=True
+  accept Codex4             -> Codex4             exact=True
+  accept Codex5             -> Codex5             exact=True
+  accept Codex6             -> Codex6             exact=True
+  accept Codex7             -> Codex7             exact=True
+  accept Codex8             -> Codex8             exact=True
+  accept Codex9             -> Codex9             exact=True
+  accept Human/Ops          -> Human/Ops          exact=True
+  accept Orchestrator       -> Orchestrator       exact=True
+  accept CodexCoordinator   -> CodexCoordinator   exact=True
+
+## static KNOWN_AGENTS lanes with no merged-config declaration stay rejected
+  reject Gemini             -> Unknown probe: 'Gemini' is not a registered agent.
+         (present in static KNOWN_AGENTS: True)
+  reject Gemini2            -> Unknown probe: 'Gemini2' is not a registered agent.
+         (present in static KNOWN_AGENTS: True)
+  reject Copilot            -> Unknown probe: 'Copilot' is not a registered agent.
+         (present in static KNOWN_AGENTS: True)
+
+## audited Codex5/6/8/9 assignments in live state
+  distinct tasks carrying one : 6
+    - ODP-FORECAST-AUTHORITATIVE-HISTORY-BACKFILL-001
+    - ODP-LIVE-RUNTIME-DEV-COMPOSE-001
+    - ODP-ORCH-CLAUDE-SESSION-LIMIT-REVIEW-001
+    - ODP-P10-DEV-REDEPLOY-VERIFY-001
+    - ODP-PRODUCTION-MODEL-REGISTRY-001
+    - ODP-RUNTIME-GCP-001
+  total references            : 18
+    ODP-RUNTIME-GCP-001                                  owner        Codex8   resolves=Codex8   exact=True
+    ODP-RUNTIME-GCP-001                                  reviewer     Codex9   resolves=Codex9   exact=True
+    ODP-PRODUCTION-MODEL-REGISTRY-001                    owner        Codex5   resolves=Codex5   exact=True
+    ODP-PRODUCTION-MODEL-REGISTRY-001                    reviewer     Codex8   resolves=Codex8   exact=True
+    ODP-LIVE-RUNTIME-DEV-COMPOSE-001                     owner        Codex9   resolves=Codex9   exact=True
+    ODP-LIVE-RUNTIME-DEV-COMPOSE-001                     reviewer     Codex6   resolves=Codex6   exact=True
+    ODP-FORECAST-AUTHORITATIVE-HISTORY-BACKFILL-001      reviewer     Codex8   resolves=Codex8   exact=True
+    ODP-P10-DEV-REDEPLOY-VERIFY-001                      reviewer     Codex6   resolves=Codex6   exact=True
+    ODP-ORCH-CLAUDE-SESSION-LIMIT-REVIEW-001             reviewer     Codex8   resolves=Codex8   exact=True
+    blocker[ODP-RUNTIME-GCP-001]                         waiting_for  Codex9   resolves=Codex9   exact=True
+    blocker[ODP-RUNTIME-GCP-001]                         waiting_for  Codex6   resolves=Codex6   exact=True
+    blocker[ODP-PRODUCTION-MODEL-REGISTRY-001]           owner        Codex5   resolves=Codex5   exact=True
+    blocker[ODP-PRODUCTION-MODEL-REGISTRY-001]           owner        Codex5   resolves=Codex5   exact=True
+    handoff[ODP-ORCH-CLAUDE-SESSION-LIMIT-REVIEW-001]    from         Codex8   resolves=Codex8   exact=True
+    handoff[ODP-ORCH-CLAUDE-SESSION-LIMIT-REVIEW-001]    from         Codex8   resolves=Codex8   exact=True
+    handoff[ODP-ORCH-CLAUDE-SESSION-LIMIT-REVIEW-001]    from         Codex8   resolves=Codex8   exact=True
+    handoff[ODP-ORCH-CLAUDE-SESSION-LIMIT-REVIEW-001]    from         Codex8   resolves=Codex8   exact=True
+    handoff[ODP-P10-DEV-REDEPLOY-VERIFY-001]             from         Codex6   resolves=Codex6   exact=True
+
+## byte-for-byte comparison against the audited baseline
+  baseline: /tmp/pantheon-worker-worktrees/oday-plus-supervisor-live/odp-orch-actor-ref-live-rollout-001/docs/evidence/runtime/ODP-ORCH-ACTOR-REF-VALIDATION-001/ai-status.after.json
+  baseline references: 18   live references: 18
+  identical multiset : True
+  missing from live  : []
+  added since audit  : []
+
+## live fingerprints — this probe never writes
+  ai-status.json           before=434a5cb1f39b14f0 after=434a5cb1f39b14f0 identical=True
+  ai-activity-log.jsonl    before=02ed3102f92e87ae after=02ed3102f92e87ae identical=True
+  current-work.md          before=527fa86927a13767 after=527fa86927a13767 identical=True
+  dashboard-bundle.json    before=e52e3d5abf678917 after=e52e3d5abf678917 identical=True
+
+RESULT: PASS

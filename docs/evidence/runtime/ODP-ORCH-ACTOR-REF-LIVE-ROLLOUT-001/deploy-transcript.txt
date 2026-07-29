@@ -1,0 +1,65 @@
+# Deployment transcript — exact merged scripts/ai_status.py -> both live roots
+# host date : 2026-07-29T07:19:43Z
+# merge     : 1d07de67b1b6d75345feb55c2f35e6f39c41817a
+# backups   : /home/lupin/pantheon-deploy-backups/ODP-ORCH-ACTOR-REF-LIVE-ROLLOUT-001-20260729T071943Z
+
+## source materialised from the merge commit blob (no working-tree copy)
+  blob        : 73800e2810e4b693f2e940beec582f3a6c27c7ef
+  materialised: /tmp/ai_status.merged-1d07de67.py
+  sha256      : 5e19c1c1ef4729f32470956cad3e3fe5972cb92dee5225a5d65db16df074950d
+  bytes       : 203611
+
+## supervisor state BEFORE
+  MainPID              : 1487837
+  ActiveState/SubState : active/running
+  ExecMainStartTimestamp: Wed 2026-07-29 06:08:57 UTC
+  NRestarts            : 0
+  process cwd          : /home/lupin/oday-plus-supervisor-live
+
+## target: /home/lupin/oday-plus/scripts/ai_status.py
+  git branch      : main
+  git HEAD        : e3f0fb84b93e76d52c81b402890dbe08226e4e6f
+  dirty files     : 580
+  dirty inventory : /home/lupin/pantheon-deploy-backups/ODP-ORCH-ACTOR-REF-LIVE-ROLLOUT-001-20260729T071943Z/oday-plus.dirty-before.txt
+  sha256 BEFORE   : 32b6cdcdda7c9f4b293af97636fb85c5616a5f18f2700b3c22f00371290340da
+  bytes  BEFORE   : 172186
+  mode   BEFORE   : 775
+  backup          : /home/lupin/pantheon-deploy-backups/ODP-ORCH-ACTOR-REF-LIVE-ROLLOUT-001-20260729T071943Z/oday-plus.ai_status.py.bak
+  backup sha256   : 32b6cdcdda7c9f4b293af97636fb85c5616a5f18f2700b3c22f00371290340da
+  sha256 AFTER    : 5e19c1c1ef4729f32470956cad3e3fe5972cb92dee5225a5d65db16df074950d
+  bytes  AFTER    : 203611
+  mode   AFTER    : 775
+  equals merged   : True
+  cmp -s merged   : identical
+  dirty files after: 580
+  unrelated dirty changes preserved (diff of the two inventories, ignoring scripts/ai_status.py):
+    identical — no other file changed state
+
+## target: /home/lupin/oday-plus-supervisor-live/scripts/ai_status.py
+  git branch      : ops/ODP-LIVE-SUPERVISOR-20260726
+  git HEAD        : 63656fa7a43d58cb9aaea2f47e5af43e25efed61
+  dirty files     : 21
+  dirty inventory : /home/lupin/pantheon-deploy-backups/ODP-ORCH-ACTOR-REF-LIVE-ROLLOUT-001-20260729T071943Z/oday-plus-supervisor-live.dirty-before.txt
+  sha256 BEFORE   : 216c1a873e9fd34364eab1f6da33cbbffcb71690744004a4553145fe0566a17b
+  bytes  BEFORE   : 178803
+  mode   BEFORE   : 775
+  backup          : /home/lupin/pantheon-deploy-backups/ODP-ORCH-ACTOR-REF-LIVE-ROLLOUT-001-20260729T071943Z/oday-plus-supervisor-live.ai_status.py.bak
+  backup sha256   : 216c1a873e9fd34364eab1f6da33cbbffcb71690744004a4553145fe0566a17b
+  sha256 AFTER    : 5e19c1c1ef4729f32470956cad3e3fe5972cb92dee5225a5d65db16df074950d
+  bytes  AFTER    : 203611
+  mode   AFTER    : 775
+  equals merged   : True
+  cmp -s merged   : identical
+  dirty files after: 22
+  unrelated dirty changes preserved (diff of the two inventories, ignoring scripts/ai_status.py):
+    identical — no other file changed state
+
+## supervisor state AFTER
+  MainPID              : 1487837
+  ActiveState/SubState : active/running
+  ExecMainStartTimestamp: Wed 2026-07-29 06:08:57 UTC
+  NRestarts            : 0
+  PID unchanged        : True
+  still running        : python3 -u .orchestrator/supervisor.py --verbose
+
+# No systemctl start/stop/restart/reload was issued by this script.
