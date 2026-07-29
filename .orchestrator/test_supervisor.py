@@ -5,18 +5,40 @@ import contextlib
 import json
 import os
 import subprocess
+import sys
 import tempfile
 import unittest
 from datetime import UTC
 from pathlib import Path
+from typing import Any
 from unittest import mock
 
+THIS_DIR = Path(__file__).resolve().parent
+ROOT_DIR = THIS_DIR.parent
+SCRIPTS_DIR = ROOT_DIR / "scripts"
+if str(SCRIPTS_DIR) not in sys.path:
+    sys.path.insert(0, str(SCRIPTS_DIR))
+
+import ai_status
 import supervisor
+
+
+def load_test_config() -> dict[str, Any]:
+    config_file = Path(__file__).with_name("config.json")
+    if not config_file.exists():
+        try:
+            from ai_status import STATUS_ROOT
+            config_file = STATUS_ROOT / ".orchestrator" / "config.json"
+        except Exception:
+            pass
+    if not config_file.exists():
+        config_file = Path(__file__).with_name("config.example.json")
+    return json.loads(config_file.read_text(encoding="utf-8"))
 
 
 class RuntimeConfigTests(unittest.TestCase):
     def test_codex_pair_shares_one_account_quota_group(self) -> None:
-        config = json.loads(Path(__file__).with_name("config.json").read_text(encoding="utf-8"))
+        config = load_test_config()
 
         ready_dispatcher = config["ready_dispatcher"]
         quota_caps = ready_dispatcher["max_concurrent_per_quota_group"]
@@ -32,7 +54,7 @@ class RuntimeConfigTests(unittest.TestCase):
         self.assertEqual(supervisor.agent_dispatch_capacity(config, "codex2"), 4)
 
     def test_claude_concurrency_is_explicitly_capped(self) -> None:
-        config = json.loads(Path(__file__).with_name("config.json").read_text(encoding="utf-8"))
+        config = load_test_config()
 
         ready_dispatcher = config["ready_dispatcher"]
 
@@ -41,7 +63,7 @@ class RuntimeConfigTests(unittest.TestCase):
         self.assertEqual(supervisor.agent_dispatch_capacity(config, "claude"), 3)
 
     def test_claude2_shares_claude_account_quota_group(self) -> None:
-        config = json.loads(Path(__file__).with_name("config.json").read_text(encoding="utf-8"))
+        config = load_test_config()
 
         ready_dispatcher = config["ready_dispatcher"]
         quota_caps = ready_dispatcher["max_concurrent_per_quota_group"]
@@ -8427,6 +8449,128 @@ class RunSupervisorShellGuardTests(unittest.TestCase):
         proc = self._run(["--verbose"], '#!/bin/sh\nexit 11\n')
         self.assertEqual(proc.returncode, 11, proc.stderr)
 
+
+
+class ReviewHeadFreezeTests(unittest.TestCase):
+    def test_approve_saves_approved_head_and_rejects_same_owner_reviewer(self) -> None:
+        state = {
+            "tasks": [
+                {
+                    "id": "FREEZE-TEST-001",
+                    "owner": "Antigravity4",
+                    "reviewer": "Claude",
+                    "status": "review",
+                },
+                {
+                    "id": "FREEZE-TEST-002",
+                    "owner": "Claude",
+                    "reviewer": "Claude",
+                    "status": "review",
+                },
+            ]
+        }
+        with unittest.mock.patch("ai_status.current_actor_validated", return_value="Claude"):
+            with unittest.mock.patch("ai_status.resolve_task_sha", return_value="1111111122222222333333334444444455555555"):
+                with unittest.mock.patch("ai_status.sync_all"):
+                    with self.assertRaises(SystemExit) as cm:
+                        ai_status.command_approve(state, ["FREEZE-TEST-002", "Approve self"])
+                    self.assertIn("must be separate identities", str(cm.exception))
+
+                    ai_status.command_approve(state, ["FREEZE-TEST-001", "Approve valid"])
+                    task = ai_status.get_task(state, "FREEZE-TEST-001")
+                    self.assertEqual(task["status"], "review_approved")
+                    self.assertEqual(task["approved_head"], "1111111122222222333333334444444455555555")
+
+    def test_command_done_rejects_mutated_head(self) -> None:
+        state = {
+            "tasks": [
+                {
+                    "id": "FREEZE-TEST-003",
+                    "owner": "Antigravity4",
+                    "reviewer": "Claude",
+                    "status": "review_approved",
+                    "approved_head": "1111111122222222333333334444444455555555",
+                }
+            ]
+        }
+        with unittest.mock.patch("ai_status.current_actor_validated", return_value="Antigravity4"):
+            with unittest.mock.patch("ai_status.resolve_task_sha", return_value="9999999922222222333333334444444455555555"):
+                with self.assertRaises(SystemExit) as cm:
+                    ai_status.command_done(state, ["FREEZE-TEST-003", "Finalize done"])
+                self.assertIn("differs from reviewer-approved head", str(cm.exception))
+
+    def test_supervisor_reverts_mutated_approved_head_to_review(self) -> None:
+        config = load_test_config()
+        task = {
+            "id": "FREEZE-TEST-004",
+            "owner": "Antigravity4",
+            "reviewer": "Claude",
+            "status": "review_approved",
+            "approved_head": "1111111122222222333333334444444455555555",
+        }
+        state = {
+            "seen_event_keys": {},
+            "ready_dispatcher": {"weighted_cursor": 0},
+            "status": {"tasks": [task]},
+        }
+        status = {"tasks": [task]}
+
+        with unittest.mock.patch("supervisor.load_status", return_value=status):
+            with unittest.mock.patch("ai_status.resolve_task_sha", return_value="8888888822222222333333334444444455555555"):
+                with unittest.mock.patch("supervisor.agent_auto_dispatch_block_reason", return_value=None):
+                    with unittest.mock.patch("supervisor.write_activity_log"):
+                        supervisor.dispatch_ready_tasks(
+                            config,
+                            state,
+                            agent_ids_override=["antigravity4"],
+                        )
+                        self.assertEqual(task["status"], "review")
+                        self.assertIn("re-review required", task["next"])
+
+    def test_supervisor_suppresses_finalize_dispatch_on_pending_ci(self) -> None:
+        config = load_test_config()
+        task = {
+            "id": "FREEZE-TEST-005",
+            "owner": "Antigravity4",
+            "reviewer": "Claude",
+            "status": "review_approved",
+            "approved_head": "1111111122222222333333334444444455555555",
+        }
+        state = {
+            "seen_event_keys": {},
+            "ready_dispatcher": {"weighted_cursor": 0},
+            "status": {"tasks": [task]},
+        }
+        status = {"tasks": [task]}
+
+        with unittest.mock.patch("supervisor.load_status", return_value=status):
+            with unittest.mock.patch("ai_status.resolve_task_sha", return_value="1111111122222222333333334444444455555555"):
+                with unittest.mock.patch("ai_status.task_pr_ci_status", return_value=("OPEN", "pending")):
+                    with unittest.mock.patch("supervisor.agent_auto_dispatch_block_reason", return_value=None):
+                        with unittest.mock.patch("supervisor.spawn_background_process") as mock_spawn:
+                            supervisor.dispatch_ready_tasks(
+                                config,
+                                state,
+                                agent_ids_override=["antigravity4"],
+                            )
+                            mock_spawn.assert_not_called()
+                            self.assertEqual(task["status"], "review_approved")
+
+    def test_task_review_gate_status_check_pending_on_head_mismatch(self) -> None:
+        task = {
+            "id": "FREEZE-TEST-006",
+            "reviewer": "Claude",
+            "approved_head": "1111111122222222333333334444444455555555",
+        }
+        with unittest.mock.patch("ai_status.resolve_task_sha", return_value="7777777722222222333333334444444455555555"):
+            with unittest.mock.patch("ai_status.get_repository_slug_safe", return_value="alfloop-dev/odayplus"):
+                with unittest.mock.patch("subprocess.run") as mock_run:
+                    mock_run.return_value.returncode = 0
+                    ai_status.emit_task_review_status_check(task, "review_approved")
+                    mock_run.assert_called_once()
+                    cmd = mock_run.call_args[0][0]
+                    self.assertIn("state=pending", cmd)
+                    self.assertIn("re-review required", "".join(cmd))
 
 
 if __name__ == "__main__":

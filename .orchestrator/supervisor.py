@@ -8525,6 +8525,22 @@ def dispatch_priority_for_task(
     if task_status in review_statuses and task.get(reviewer_field) == agent_name:
         return 0
     if task_status in finalize_statuses and task.get(owner_field) == agent_name:
+        approved_head = task.get("approved_head")
+        if approved_head:
+            try:
+                from ai_status import resolve_task_sha
+                curr_head = resolve_task_sha(str(task.get("id") or ""))
+                if curr_head and curr_head != approved_head:
+                    return None
+            except Exception:
+                pass
+        try:
+            from ai_status import task_pr_ci_status
+            _pr_st, ci_status = task_pr_ci_status(str(task.get("id") or ""))
+            if ci_status == "pending":
+                return None
+        except Exception:
+            pass
         return 1
     if (
         task_status == "in_progress"
@@ -9055,6 +9071,41 @@ def dispatch_ready_tasks(
                 reason = "review_ready_dispatch"
                 priority = 0
             elif task_status in finalize_statuses and task_owner == target_agent:
+                approved_head = task.get("approved_head")
+                current_head = None
+                try:
+                    from ai_status import resolve_task_sha
+                    current_head = resolve_task_sha(task_id)
+                except Exception:
+                    pass
+                if approved_head and current_head and current_head != approved_head:
+                    task["status"] = "review"
+                    task["last_update"] = utc_now()
+                    task["next"] = (
+                        f"Branch HEAD ({current_head[:8]}) mutated after reviewer approval "
+                        f"({approved_head[:8]}); re-review required."
+                    )
+                    write_activity_log(
+                        config,
+                        {
+                            "type": "re-review_required",
+                            "task_id": task_id,
+                            "message": task["next"],
+                        },
+                    )
+                    changed = True
+                    continue
+
+                ci_status = "unknown"
+                try:
+                    from ai_status import task_pr_ci_status
+                    _pr_st, ci_status = task_pr_ci_status(task_id)
+                except Exception:
+                    pass
+
+                if ci_status == "pending":
+                    continue
+
                 reason = "owned_finalize_dispatch"
                 priority = 1
             elif task_status == "in_progress" and task_owner == target_agent and dependencies_satisfied(task, task_map, dependency_done_statuses):

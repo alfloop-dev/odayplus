@@ -1579,6 +1579,43 @@ def pull_request_status_for_branch(repository_root: Path, branch: str) -> dict[s
     )
 
 
+def task_pr_ci_status(task_id: str, repository_root: Path | None = None) -> tuple[str | None, str]:
+    root = repository_root or ROOT
+    for branch_name in [f"task/{task_id}", f"task-{task_id}"]:
+        res = run_gh_json_command(
+            ["pr", "view", branch_name, "--json", "state,statusCheckRollup"],
+            cwd=root,
+        )
+        if res and isinstance(res, dict):
+            pr_state = res.get("state")
+            rollup = res.get("statusCheckRollup") or []
+            if not rollup:
+                return pr_state, "none"
+            has_pending = False
+            has_failure = False
+            has_success = False
+            for check in rollup:
+                if isinstance(check, dict):
+                    st = str(check.get("state") or check.get("status") or check.get("conclusion") or "").upper()
+                    if st in {"PENDING", "QUEUED", "IN_PROGRESS", "WAITING", "EXPECTED"}:
+                        has_pending = True
+                    elif st in {"FAILURE", "ERROR", "CANCELLED", "TIMED_OUT"}:
+                        has_failure = True
+                    elif st in {"SUCCESS", "COMPLETED", "NEUTRAL"}:
+                        has_success = True
+            if has_pending:
+                ci_status = "pending"
+            elif has_failure:
+                ci_status = "failure"
+            elif has_success:
+                ci_status = "success"
+            else:
+                ci_status = "unknown"
+            return pr_state, ci_status
+    return None, "unknown"
+
+
+
 def format_pull_request_status(pr: dict[str, Any] | None) -> str:
     if not pr:
         return ""
@@ -4449,6 +4486,15 @@ def command_done(state: dict[str, Any], args: list[str]) -> None:
         raise SystemExit(f"Only the owner ({task.get('owner')}) can finalize {task_id} to done")
     if task.get("status") != "review_approved":
         raise SystemExit(f"{task_id} must be review_approved before it can move to done")
+    approved_head = task.get("approved_head")
+    if approved_head:
+        current_sha = resolve_task_sha(task_id)
+        if current_sha and current_sha != approved_head:
+            raise SystemExit(
+                f"Cannot finalize task {task_id}: current branch HEAD ({current_sha[:8]}) "
+                f"differs from reviewer-approved head ({approved_head[:8]}). "
+                "Strict update-branch merge requires re-review."
+            )
     timestamp = iso_now()
     delivery = collect_done_delivery_metadata(task, actor)
     delivery["recorded_at"] = timestamp
@@ -4517,6 +4563,10 @@ def command_approve(state: dict[str, Any], args: list[str]) -> None:
     task = get_task(state, task_id)
     if task is None:
         raise SystemExit(f"Unknown task: {task_id}")
+    owner = canonical_agent_name(task.get("owner"))
+    reviewer = canonical_agent_name(task.get("reviewer"))
+    if owner and reviewer and owner == reviewer:
+        raise SystemExit(f"Owner ({owner}) and reviewer ({reviewer}) must be separate identities for task {task_id}")
     if task.get("reviewer") != actor:
         raise SystemExit(f"Only the reviewer ({task.get('reviewer')}) can approve {task_id}")
     if task.get("status") != "review":
@@ -4527,6 +4577,10 @@ def command_approve(state: dict[str, Any], args: list[str]) -> None:
     task["last_update"] = timestamp
     task["next"] = message
     task.pop("waiting_for", None)
+
+    approved_sha = resolve_task_sha(task_id)
+    if approved_sha:
+        task["approved_head"] = approved_sha
 
     review_notes = parse_delimited_env("REVIEW_NOTES_ZH")
     if review_notes:
@@ -4782,8 +4836,13 @@ def emit_task_review_status_check(task: dict[str, Any], state_status: str) -> No
     context = "task-review-gate"
 
     if state_status == "review_approved":
-        state = "success"
-        description = f"Approved by assigned reviewer {task.get('reviewer', 'Codex')}"
+        approved_head = task.get("approved_head")
+        if approved_head and sha != approved_head:
+            state = "pending"
+            description = f"Branch HEAD ({sha[:8]}) differs from approved head ({approved_head[:8]}); re-review required"
+        else:
+            state = "success"
+            description = f"Approved by assigned reviewer {task.get('reviewer', 'Codex')}"
     elif state_status == "review":
         state = "pending"
         description = f"Pending review by {task.get('reviewer', 'Codex')}"
