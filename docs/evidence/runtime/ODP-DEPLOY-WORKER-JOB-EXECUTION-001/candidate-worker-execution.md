@@ -67,7 +67,7 @@ attempt 1 and exits `0`. That is the deploy-gate-level counterpart of
 `.odp_data/deployment/*.json`, which is not recursive, so nothing under
 `.odp_data/deployment/cloud-run-jobs/` survives the runner. `.github/**` is a
 forbidden path for this task, so the glob is not widened here — it is left as a
-follow-up (see §4). What is retrievable and is recorded above: the gcloud
+follow-up (see §5). What is retrievable and is recorded above: the gcloud
 execution-success line, the `Cloud Run worker Job smoke passed.` gate line (the
 script is `set -e`, so the gate line cannot print unless every check above
 passed), the release-derived job name, and the run-wide release SHA receipt
@@ -146,7 +146,31 @@ reachable through its `candidate-93ae1b2e75e1056c` tag. Migration job, migration
 compatibility smoke, and scheduler job all passed earlier in the same run
 (`08:58:31`, `08:58:42`, `09:01:00`), so no preserved gate regressed.
 
-## 4. Follow-ups (not done here — out of this task's writable paths)
+## 4. Why the proof still holds at the reviewed head
+
+The PR head advanced past `93ae1b2e` when `origin/dev` was merged in to clear a
+`BEHIND` base. The candidate execution is not re-run for that, because the merge
+carries nothing that reaches the worker runtime:
+
+```
+$ git diff --name-only 93ae1b2e..<reviewed head>
+.orchestrator/claude_permission_prompt_mcp.py
+.orchestrator/common.py
+.orchestrator/permission_broker.py
+.orchestrator/test_permission_broker_status_root.py
+docs/evidence/**            (this task's receipts + ODP-ORCH-APPROVAL-RESUME-ROOT-001's)
+```
+
+`.orchestrator/**` is supervisor tooling and is listed in `.dockerignore:11`, so
+`infra/docker/worker.Dockerfile`'s `COPY . .` never sees it; `docs/evidence/**`
+is inert. No file under `apps/worker/`, `modules/external_data/`,
+`shared/`, `scripts/deployment/`, `scripts/deploy_cloud_run_waji.sh`,
+`infra/docker/`, or `tests/` differs between `93ae1b2e` and the reviewed head.
+The worker image and the deploy gate at the reviewed head are byte-identical to
+the ones that produced `oday-worker-r-93ae1b2e75e1-c9gms`, and `93ae1b2e` is an
+ancestor of it.
+
+## 5. Follow-ups (not done here — out of this task's writable paths)
 
 1. `deploy-dev.yml` should upload `.odp_data/deployment/**/*.json` so the
    per-job `*-validation.json` receipts survive the runner. `.github/**` is

@@ -223,4 +223,11 @@ compatibility, and scheduler gates all passed in the same run.
 `worker-validation.json` itself could not be retrieved: `deploy-dev.yml` uploads
 the non-recursive glob `.odp_data/deployment/*.json`, and `.github/**` is a
 forbidden path for this task. That gap and its fix are recorded in
-`candidate-worker-execution.md` §1 and §4.
+`candidate-worker-execution.md` §1 and §5.
+
+The PR head later advanced past `93ae1b2e` to clear a `BEHIND` base. The
+candidate run is not repeated for that: every file that differs between
+`93ae1b2e` and the reviewed head is under `.orchestrator/**` (supervisor
+tooling, excluded by `.dockerignore:11` from `worker.Dockerfile`'s `COPY . .`)
+or `docs/evidence/**`. The worker image and deploy gate are byte-identical.
+`candidate-worker-execution.md` §4 carries the file-level proof.

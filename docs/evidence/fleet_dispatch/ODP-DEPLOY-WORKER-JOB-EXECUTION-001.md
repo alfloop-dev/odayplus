@@ -120,6 +120,14 @@ Receipts: `candidate-worker-execution.md`,
 `candidate-deploy-dev-run-30436771086-worker-pass.log`,
 `candidate-cloud-run-smoke-run-30436771086.json`.
 
+The PR head then advanced past `93ae1b2e` to clear a `BEHIND` base. Everything
+that differs between `93ae1b2e` and the reviewed head is `.orchestrator/**`
+(supervisor tooling, excluded by `.dockerignore:11` from
+`infra/docker/worker.Dockerfile`) or `docs/evidence/**`, so the worker image and
+the deploy gate are byte-identical to the ones that produced
+`oday-worker-r-93ae1b2e75e1-c9gms`. File-level proof in
+`candidate-worker-execution.md` §4.
+
 ## 5. Verification
 
 `docs/evidence/runtime/ODP-DEPLOY-WORKER-JOB-EXECUTION-001/` §7:
