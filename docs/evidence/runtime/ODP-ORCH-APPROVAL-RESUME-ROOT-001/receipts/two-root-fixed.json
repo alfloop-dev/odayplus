@@ -1,0 +1,80 @@
+{
+  "label": "fixed",
+  "verdict": "resume_honoured",
+  "broker_dir": "/tmp/pantheon-worker-worktrees/oday-plus-supervisor-live/odp-orch-approval-resume-root-001",
+  "broker_sha256": "225c002aadc1117616a79980b1324ed3825406b5ac8fc8b6483c762d8a4bf1e3",
+  "control_root": "/tmp/odp-two-root-x9h27jdq/control-root",
+  "authoritative_status_root": "/tmp/odp-two-root-x9h27jdq/live-root",
+  "session_id": "c2cafc00-aa5f-4340-8c49-5eb1aedd30b2",
+  "authoritative_approval_id": "apr-20260729T083018Z-f3737b93",
+  "control_root_approval_id": "apr-20260729T082950Z-578a3304",
+  "tool_name": "Bash",
+  "tool_input_signature": "c72fc7576993344a70e074064b7030120be7585ab228a7c9f953fecdded34fa1",
+  "control_root_queue": "/tmp/odp-two-root-x9h27jdq/control-root/.orchestrator/approval-queue.json",
+  "authoritative_queue": "/tmp/odp-two-root-x9h27jdq/live-root/.orchestrator/approval-queue.json",
+  "phases": {
+    "resume_exact_approved_input": {
+      "event": "PreToolUse",
+      "exit_code": 0,
+      "decision": "allow",
+      "reason": "Coordinator one-time allow: exact command only.",
+      "stderr_tail": []
+    },
+    "different_command_same_session": {
+      "event": "PreToolUse",
+      "exit_code": 0,
+      "decision": "defer",
+      "reason": "Bash command classified as defer: docker run -d --name unrelated postgres:16",
+      "stderr_tail": []
+    },
+    "same_input_foreign_session": {
+      "event": "PreToolUse",
+      "exit_code": 0,
+      "decision": "defer",
+      "reason": "Bash command classified as defer: docker rm -f odp-acceptance-probe-pg >/dev/null 2>&1; docker run -d --name odp-acceptance-probe-pg -e POSTGRES_PASSWORD=probe postgres:16",
+      "stderr_tail": []
+    },
+    "post_tool_use_consume": {
+      "event": "PostToolUse",
+      "exit_code": 0,
+      "decision": null,
+      "reason": null,
+      "stderr_tail": []
+    },
+    "replay_after_consume": {
+      "event": "PreToolUse",
+      "exit_code": 0,
+      "decision": "defer",
+      "reason": "Bash command classified as defer: docker rm -f odp-acceptance-probe-pg >/dev/null 2>&1; docker run -d --name odp-acceptance-probe-pg -e POSTGRES_PASSWORD=probe postgres:16",
+      "stderr_tail": []
+    },
+    "resolved_deny": {
+      "event": "PreToolUse",
+      "exit_code": 0,
+      "decision": "defer",
+      "reason": "Bash command classified as defer: docker rm -f odp-acceptance-probe-pg >/dev/null 2>&1; docker run -d --name odp-acceptance-probe-pg -e POSTGRES_PASSWORD=probe postgres:16",
+      "stderr_tail": []
+    }
+  },
+  "permissions_before": {
+    "allow": [
+      "Bash(docker rm -f odp-acceptance-probe-pg >/dev/null 2>&1; docker run -d --name odp-acceptance-probe-pg -e POSTGRES_PASSWORD=probe postgres:16)"
+    ],
+    "ask": []
+  },
+  "permissions_after": {
+    "allow": [],
+    "ask": [
+      "Bash(docker run *)"
+    ]
+  },
+  "checks": {
+    "resume_honours_authoritative_root": true,
+    "override_consumed_in_authoritative_root": true,
+    "temporary_allow_rule_withdrawn": true,
+    "suspended_ask_rule_restored": true,
+    "override_is_single_use": true,
+    "no_permission_broadening": true,
+    "resolved_deny_never_allows": true
+  }
+}

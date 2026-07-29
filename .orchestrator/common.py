@@ -30,6 +30,7 @@ CLOSEOUT_SPEC_PATH = ORCHESTRATOR_DIR / "skills" / "task-closeout-finalization.m
 WORKER_ANCHOR_SPEC_PATH = ORCHESTRATOR_DIR / "skills" / "worker-anchor-commit.md"
 DEFAULT_CONFIG_PATH = ORCHESTRATOR_DIR / "config.json"
 LOCAL_CONFIG_PATH = ORCHESTRATOR_DIR / "config.local.json"
+STATUS_ROOT_ENV_VAR = "PANTHEON_STATUS_ROOT"
 PLANNING_STATE_PATH = ORCHESTRATOR_DIR / "planning-state.json"
 DEFAULT_PLANNING_SHARED_FILES = [
     ROOT / "docs" / "02-architecture" / "consensus" / "phase1" / "README.md",
@@ -186,6 +187,71 @@ def config_path(config: dict[str, Any], key: str, default: str | None = None) ->
 
 def repo_root_for_config(config: dict[str, Any]) -> Path:
     return config_path(config, "status_file").parents[0]
+
+
+def authoritative_status_root(env: Mapping[str, str] | None = None) -> Path | None:
+    """Resolve the status root the orchestrator declared for the current process.
+
+    A hook executable does not have to live in the checkout whose approval
+    queue is authoritative: the Claude hook wiring pins one absolute
+    ``permission_broker.py`` path, while ``PANTHEON_STATUS_ROOT`` names the
+    fleet that actually owns the worker, its queue, and its permission rules.
+    Module-level ``ROOT`` is derived from ``__file__`` and therefore answers
+    "which copy of the code am I", not "which fleet am I acting for".
+
+    Resolution fails closed. An unset, blank, relative, missing, or
+    non-orchestrator value returns ``None`` so callers keep their existing
+    ``ROOT``-relative behaviour instead of guessing at another root.
+    """
+    source = env if env is not None else os.environ
+    raw = str(source.get(STATUS_ROOT_ENV_VAR) or "").strip()
+    if not raw:
+        return None
+    candidate = Path(os.path.expanduser(raw))
+    if not candidate.is_absolute():
+        return None
+    try:
+        resolved = candidate.resolve(strict=True)
+    except OSError:
+        return None
+    if not resolved.is_dir():
+        return None
+    if not (resolved / ".orchestrator" / "config.json").is_file():
+        return None
+    return resolved
+
+
+def anchor_config_paths(config: dict[str, Any], root: Path) -> dict[str, Any]:
+    """Return a copy of ``config`` whose relative ``paths`` resolve under ``root``.
+
+    ``resolve_path`` anchors relative values to the module-level ``ROOT``, so a
+    config carried across checkouts silently points at the wrong state files.
+    Absolute entries are left untouched: those are explicit operator overrides.
+    """
+    anchored = deepcopy(config)
+    paths = anchored.get("paths")
+    if not isinstance(paths, dict):
+        return anchored
+    for key, value in list(paths.items()):
+        if not isinstance(value, str):
+            continue
+        text = value.strip()
+        if not text:
+            continue
+        candidate = Path(os.path.expanduser(text))
+        if candidate.is_absolute():
+            continue
+        paths[key] = str(root / candidate)
+    return anchored
+
+
+def load_config_for_status_root(root: Path) -> dict[str, Any]:
+    """Load ``root``'s orchestrator config with every relative path anchored to it."""
+    config = load_json(root / ".orchestrator" / "config.json", default={})
+    local_path = root / ".orchestrator" / "config.local.json"
+    if local_path.exists():
+        config = deep_merge(config, load_json(local_path, default={}))
+    return anchor_config_paths(config, root)
 
 
 def _expand_workspace_path(value: Any, *, base: Path) -> Path:
