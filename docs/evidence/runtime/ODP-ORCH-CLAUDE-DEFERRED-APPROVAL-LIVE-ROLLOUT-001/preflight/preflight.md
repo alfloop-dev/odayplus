@@ -185,3 +185,48 @@ deployed_sha256_control: f0b419cb3fbdff8a3dfbd5fcc9ee7dfd06b005f258a8f13d556e922
 approval_queues: live queue "No pending approvals"; control queue holds 124
   unrelated pre-existing lines and 0 matching this task id - no test approval
   has ever been created
+
+## STOP GATE 7 recheck (2026-07-29T05:2xZ, driver revision 8)
+scope_of_revision_8: one executable change, in the revision-7 clean-attempt gate
+  only - `attempt_state_dirty()` was fail-open (timeline listed with
+  `find -type f`, so directories and symlinks passed; signal dir probed for four
+  hardcoded names, so probe-child.pid / probe-commands.txt / deadman files and
+  every unknown entry passed). The allowlist is now exact and both roots are
+  type-checked. Phases 1-9, the probe, the wait budget, the dead-man derivation,
+  the exit codes and the phase ordering are untouched; the two new verdicts
+  (`timeline-root:` / `signal-root:`) route to the existing 50 / 51.
+fail_open_reproduction: revision-7 and revision-8 implementations extracted
+  mechanically from git and from the working tree and run side by side over 12
+  fixtures -> stop-gate-7-fail-open-reproduction.txt. Revision 7 reports CLEAN
+  for 8 of them, including the reviewer's own repro
+  (timeline/unexpected-receipts, signal/probe-commands.txt); revision 8 names
+  the offender in every case.
+phase_2_9_delta_vs_revision_3: 3 deltas, all non-executable, enumerated with a
+  normalized diff -> rev3-phase-2-9-delta.txt. The "byte-identical" claim is
+  withdrawn from ../README.md, ../runbook/CONTINUATION.md and the fleet brief.
+bash_n_driver: OK
+bash_n_selftest_assertion: OK
+py_compile_assertion: OK
+selftest_assertion: 11/11 PASS (11 `ok` lines this run) -> assertion-selftest.txt
+selftest_driver_gates: 50/50 PASS (50 `ok` lines, 0 FAIL this run; 39 -> 50, the
+  15 new checks are on the clean-attempt gate) -> driver-gate-selftest.txt
+git_diff_check_against_merge_sha: `git diff --check 647970dae975f4008633a484cde1e63187035544`
+  -> exit 0, run with the two new receipts already `git add`ed, i.e. tracked -
+  the STOP GATE 3 finding-1 trap. The first run of it was exit 2: unified diff
+  emits a lone space on blank context lines, so rev3-phase-2-9-delta.txt was
+  regenerated through `sed 's/[[:space:]]*$//'`.
+trailing_whitespace_scan: 0 hits across the evidence dir and the fleet brief
+live_state_unchanged_after_checks: MainPID=1197865 (ExecMainStartTimestamp Wed
+  2026-07-29 02:37:14 UTC, ActiveState=active) KillMode=control-group
+  dropin=0 entries /home/lupin/.config/systemd/user=7 entries
+  /tmp/odp-rollout-driver=absent timeline/={README.md, attempt-1-*/}
+  odp-* transient units loaded=0 deadman timer/service=inactive/inactive
+  watchdog timer=active
+deployed_sha256_live: f0b419cb3fbdff8a3dfbd5fcc9ee7dfd06b005f258a8f13d556e922d06995ee8
+deployed_sha256_control: f0b419cb3fbdff8a3dfbd5fcc9ee7dfd06b005f258a8f13d556e922d06995ee8
+approval_queues: live queue "No pending approvals"; control queue 124 unrelated
+  pre-existing lines, 0 matching this task id - no test approval has ever been
+  created
+window_state: still closed. The driver has never been executed past the 04:31Z
+  phase-1 abort, and revision 8 must not be executed until the exact head below
+  is re-cleared.

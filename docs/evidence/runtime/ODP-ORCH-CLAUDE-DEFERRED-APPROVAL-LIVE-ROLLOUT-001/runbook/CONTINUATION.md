@@ -46,19 +46,28 @@ What *is* real and already finished:
    `preflight/assertion-selftest.txt`.
 4. **Driver gate self-test - done.** `live-boot-reconciliation-driver.sh
    --selftest` exercises the STOP GATE 2 gates, phase 1's KillMode probe (since
-   revision 6) and the clean-attempt gate (since revision 7): 39 checks. Output:
-   `preflight/driver-gate-selftest.txt`.
+   revision 6) and the clean-attempt gate (since revision 7, hardened in
+   revision 8): 50 checks. Output: `preflight/driver-gate-selftest.txt`.
 
 Both self-tests touch nothing live and are safe to re-run at any time.
 
 ## Why the window is still closed
 
-The driver has been blocked six times by the coordinator, and is now at
-**revision 7**. Only revision 5 was ever executed, and only as far as phase 1;
-do not resurrect any earlier revision. Everything downstream of phase 1 has been
-byte-identical to revision 3 since revision 3: the only executable changes in
-revisions 6 and 7 are in the phase-1 probe and, in revision 7, the
-clean-attempt gate that runs before it.
+The driver has been blocked seven times - six by the coordinator, once by
+reviewer Codex2 - and is now at **revision 8**. Only revision 5 was ever
+executed, and only as far as phase 1; do not resurrect any earlier revision.
+
+The executable changes since revision 3 are confined to the phase-1 probe
+(revisions 6 and 7) and the clean-attempt gate that runs before it (revisions 7
+and 8). Phases 2-9 carry three deltas from revision 3, all non-executable, and
+they are enumerated - not asserted - in
+`../preflight/rev3-phase-2-9-delta.txt`: one comment block (the STOP GATE 3
+correction) and two `Reviewer: Codex4` → `Codex2` trailer lines inside the
+commit-message heredocs. With comment-only and blank lines removed from both
+sides, the phase-2-to-EOF slice is 389 lines on each side and exactly those two
+lines differ, so every gate, threshold, exit code, wait constant and phase
+ordering in phases 2-9 is unchanged. Earlier revisions of this file said
+"byte-identical"; that was wrong (STOP GATE 7 finding 2) and is withdrawn.
 
 ### STOP GATE 1 (2026-07-29T03:33:14Z) - six findings, answered in revision 2
 
@@ -218,12 +227,53 @@ what the real restart does.
 | docs corrected wherever they said a transient unit cannot be restarted | only re-creation fails; `systemctl start` is proven PASS |
 
 Self-test: 23 → **39** checks, all passing. Nothing else changed: the gates,
-thresholds, exit codes and ordering of phases 2-9 are byte-identical to
-revision 3.
+thresholds, exit codes and ordering of phases 2-9 are as described above -
+unchanged in every executable respect since revision 3.
 
 **The gate is closed again.** Revision 7 is a driver change, so it needs a fresh
 coordinator exact-head recheck - the 05c3f59d lift explicitly covered that head
 only.
+
+### STOP GATE 7 (reviewer Codex2, 2026-07-29T05:07:52Z / 05:08:41Z) - revision 8
+
+Revision 7 was never executed either. The live state is untouched and the two
+findings below are the only changes in revision 8.
+
+**Finding 1 (blocking, executable): `attempt_state_dirty()` was fail-open.**
+The gate that revision 7 added to keep one attempt's receipts from being read as
+another's did not enforce the allowlist it documented:
+
+| what was left | why revision 7 accepted it |
+| --- | --- |
+| any unexpected **directory** in the timeline root, e.g. the reviewer's `timeline/unexpected-receipts/` | the scan was `find -maxdepth 1 -type f`, so only stray *regular files* were ever seen |
+| any **symlink** in the timeline root, including one named `README.md` or `attempt-*` | same reason: a symlink is not `-type f` |
+| `signal/probe-child.pid`, `probe-commands.txt`, `probe-child.sh`, `deadman.log`, `deadman-restore.sh`, `commit-msg-capture.txt`, `control-ids.txt`, dotfiles, subdirectories | the signal scan tested four hardcoded names (`verdict`, `state`, `exit_code`, `driver.log`) and nothing else |
+
+The reviewer reproduced it directly: `timeline/unexpected-receipts` plus
+`signal/probe-commands.txt` returned CLEAN. Revision 8 makes the allowlist
+exact - the timeline root may hold a *regular file* named `README.md` and
+*directories* named `attempt-*`, the signal dir must be absent or completely
+empty - and type-checks the two roots themselves, so a symlinked or
+non-directory root is dirt too. Entry types come from `find`'s `%y`, which does
+not follow symlinks; listing is `-print0` + `LC_ALL=C sort` so the reported
+first offender is deterministic. The two new verdicts (`timeline-root:` /
+`signal-root:`) route to the existing exit codes 50 / 51.
+
+Both implementations, extracted mechanically from git and from the working tree,
+are run side by side over twelve fixtures in
+`../preflight/stop-gate-7-fail-open-reproduction.txt`; the same shapes are
+asserted by 15 checks in `--selftest` (39 → **50** checks, all passing).
+
+**Finding 2 (evidence correctness): the "byte-identical" claim was false.**
+See § Why the window is still closed above and
+`../preflight/rev3-phase-2-9-delta.txt`. The claim is replaced by an enumeration
+of the three actual deltas plus a normalized diff.
+
+Nothing else changed: phases 1-9, the probe, the wait budget, the dead-man
+derivation, the exit codes and the phase ordering are untouched by revision 8.
+
+**The gate is closed.** Revision 8 is a driver change, so it needs its own
+exact-head recheck; no earlier lift covers it.
 
 ## Before you execute
 
@@ -231,24 +281,28 @@ only.
 W=/tmp/pantheon-worker-worktrees/oday-plus-supervisor-live/odp-orch-claude-deferred-approval-live-rollout-001
 EV=$W/docs/evidence/runtime/ODP-ORCH-CLAUDE-DEFERRED-APPROVAL-LIVE-ROLLOUT-001
 
-# 1. Confirm the gate has been lifted for THIS exact head (revision 7), not for
+# 1. Confirm the gate has been lifted for THIS exact head (revision 8), not for
 #    an older one. `git rev-parse HEAD` must equal the head the coordinator
 #    named, and must equal origin/task/<TASK-ID>.
 # 2. Re-run the cheap checks - none of them touch anything live.
 bash -n $EV/runbook/live-boot-reconciliation-driver.sh
 python3 -m py_compile $EV/runbook/assert-boot-reconciliation.py
 $EV/runbook/selftest-assertion.sh                                  # 11 cases
-bash $EV/runbook/live-boot-reconciliation-driver.sh --selftest      # 39 checks
+bash $EV/runbook/live-boot-reconciliation-driver.sh --selftest      # 50 checks
 cd $W && git diff --check 647970dae975f4008633a484cde1e63187035544  # exit 0
 
 # 3. Confirm the starting state is what the driver expects.
 systemctl --user show pantheon-supervisor.service -p KillMode -p ActiveState -p MainPID
 ls -la /home/lupin/.config/systemd/user/pantheon-supervisor.service.d/   # expect: empty
 ls /home/lupin/.config/systemd/user | grep odp-killmode-probe           # expect: nothing
-# Since revision 7 the driver refuses to start on a dirty state, so BOTH of
-# these must be clean before launching:
-#   - $EV/timeline/ contains only README.md and attempt-*/ archives   (else exit 50)
-#   - /tmp/odp-rollout-driver does not exist                          (else exit 51)
+# Since revision 7 the driver refuses to start on a dirty state, and since
+# revision 8 the allowlist is exact, so BOTH of these must hold before launching:
+#   - $EV/timeline/ holds a regular file README.md and directories named
+#     attempt-* and NOTHING else - no other file, directory or symlink,
+#     dotfiles included                                                (else exit 50)
+#   - /tmp/odp-rollout-driver does not exist, or is a completely empty
+#     directory - any entry at all, including probe-child.pid,
+#     probe-commands.txt or deadman.log, is dirt                       (else exit 51)
 # If either is dirty, archive the previous attempt first - the recipe is in
 # $EV/timeline/README.md - rather than deleting anything.
 ls -A $EV/timeline/

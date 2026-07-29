@@ -55,9 +55,10 @@ shipped `control-group`, the drop-in directory is still empty, the dead-man was
 never armed, `~/.config/systemd/user` is unchanged and no approval exists for
 any test run in either queue.
 
-The driver is at revision 7 after six STOP GATEs: six coordinator findings, then
-seven, then two, then an assignment conflict, then one found by execution, and
-now one on the fix for that. STOP GATE 5's finding is that phase 1's `KillMode`
+The driver is at revision 8 after seven STOP GATEs: six coordinator findings,
+then seven, then two, then an assignment conflict, then one found by execution,
+then one on the fix for that, and finally reviewer Codex2's finding that the fix
+introduced a fail-open gate of its own. STOP GATE 5's finding is that phase 1's `KillMode`
 probe could never have passed in any revision - it re-created a `systemd-run`
 transient unit under a name its own surviving child still held loaded, with
 stderr discarded on both halves. Revision 6 answered that by writing a
@@ -71,11 +72,26 @@ old child's survival, cleans up by recorded ownership and cgroup with a residue
 assertion that is part of the verdict, captures every probe command's rc and
 stderr, and refuses to start on a dirty timeline or signal directory so one
 attempt's receipts can never be read as another's (`--selftest` 23 → 39 checks).
-Everything after phase 1 is byte-identical to revision 3, as were revisions 4
-and 5 (a documentation correction and a reviewer/ownership correction). Revision
-7 needs a fresh coordinator exact-head recheck; the previous lift covered one
-exact head only. See `runbook/CONTINUATION.md` for the finding-by-finding
-mapping and `preflight/killmode-probe-diagnosis.txt` for the probe transcripts.
+
+STOP GATE 7 is reviewer Codex2's, on that last gate: `attempt_state_dirty()` was
+fail-open. It listed the timeline root with `find -type f`, so an unexpected
+directory or symlink passed, and probed the signal directory for four hardcoded
+names, so the probe's own `probe-child.pid` / `probe-commands.txt`, the
+dead-man's files, dotfiles and subdirectories passed - the reviewer's
+reproduction returned CLEAN. Revision 8 makes the allowlist exact (a regular
+`README.md` plus `attempt-*` directories; an absent or empty signal directory),
+type-checks both roots and reports a deterministic first offender
+(`--selftest` 39 → 50 checks, 15 on this gate). The same STOP GATE withdrew the
+claim that everything after phase 1 was byte-identical to revision 3: phases 2-9
+carry three non-executable deltas (one comment block, two `Reviewer:` trailer
+lines), enumerated with a normalized diff in
+`preflight/rev3-phase-2-9-delta.txt`, which leaves every gate, threshold, exit
+code and phase ordering there unchanged since revision 3. Revision 8 needs its
+own exact-head recheck; the previous lift covered one exact head only. See
+`runbook/CONTINUATION.md` for the finding-by-finding mapping,
+`preflight/killmode-probe-diagnosis.txt` for the probe transcripts and
+`preflight/stop-gate-7-fail-open-reproduction.txt` for the old-vs-new gate
+comparison.
 
 ## Fleet impact
 

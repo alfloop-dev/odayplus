@@ -1,4 +1,4 @@
-# driver gate selftest (2026-07-29T04:56:34Z)
+# driver gate selftest (2026-07-29T05:20:21Z)
 
 ## finding 3: dead-man delay must exceed the bounded wait budget
 total_bounded_wait_s: 1388
@@ -40,11 +40,22 @@ ok    no process still carries the probe marker                  0
 ok    probe payload script removed                               no
 ok    probe command receipts captured                            yes
 
-## revision 7: the clean-attempt gate refuses dirty state
+## revision 7/8: the clean-attempt gate refuses dirty state
 ok    empty timeline+signal dir is clean                         clean
 ok    README + archived attempt dir are not dirt                 clean
 ok    a receipt in the timeline root is dirt                     timeline:98-abort-reason.txt
+ok    an unexpected timeline directory is dirt                   timeline:unexpected-receipts
+ok    a symlink named attempt-* is dirt                          timeline:attempt-9-symlink
+ok    a symlinked README.md is dirt                              timeline:README.md
+ok    a dotfile in the timeline root is dirt                     timeline:.leftover
+ok    restored README + attempt dir are clean again              clean
 ok    a leftover verdict is dirt                                 signal:verdict
+ok    a leftover probe-child.pid is dirt                         signal:probe-child.pid
+ok    a leftover probe-commands.txt is dirt                      signal:probe-commands.txt
+ok    a leftover deadman.log is dirt                             signal:deadman.log
+ok    an unknown signal entry is dirt                            signal:leftovers
+ok    an emptied signal dir is clean again                       clean
+ok    a signal root that is not a directory is dirt              signal-root:sig
 
 ## finding 6: terminal verdict is preserved, not overwritten by EXIT
 ok    proof_complete survives the EXIT trap                      proof_complete

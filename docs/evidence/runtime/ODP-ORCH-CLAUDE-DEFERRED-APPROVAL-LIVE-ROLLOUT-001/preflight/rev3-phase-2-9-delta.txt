@@ -1,0 +1,109 @@
+# STOP GATE 7 finding 2: what phases 2-9 actually inherit from revision 3
+# generated 2026-07-29T05:20:04Z against anchor 44e9e62b (revision 3) and the revision-8 working tree
+
+Revisions 4-8 claimed phases 2-9 were "byte-identical to revision 3". That claim
+is false and is withdrawn: three deltas exist. None of them is executable
+control flow, and this receipt enumerates all three rather than asserting it.
+
+Both diffs below are piped through `sed 's/[[:space:]]*$//'`, which only strips
+the single space unified diff puts in front of an empty context line. That is
+the STOP GATE 3 lesson applied in advance: an unstripped receipt fails
+`git diff --check` once it is tracked. No other byte is altered.
+
+Slice definition (both sides): from the `# ---- phase 2 ----` banner to EOF.
+
+  git show 44e9e62b:<driver> | awk '/^# -+ phase 2 -+$/{f=1} f'   ->  479 lines
+  awk '/^# -+ phase 2 -+$/{f=1} f' <driver>                       ->  492 lines
+
+## 1. Raw diff of the slice - the complete set of deltas
+@@ -138,8 +138,21 @@
+ # still alive when the supervisor comes back, reconcile_runtime_on_boot() sees a
+ # live PID and simply refreshes the lease - the missing-process branch this task
+ # has to prove is never reached, and `proof_complete` would mean nothing.
+-# `pid_owned_by_run` rather than `alive`, so a recycled pid reads as "still
+-# there" and aborts, instead of being mistaken for a clean exit.
++#
++# STOP GATE 3 correction. What `pid_owned_by_run` buys here is narrow and must
++# not be overstated: the gate blocks the restart only while the *original*,
++# run-id-bound process is still running. A pid recycled by some unrelated
++# process does NOT abort - it reads as "the original runner is gone", which is
++# the property this gate actually needs.
++#
++# That does leave one honest gap, because the supervisor's own `pid_is_alive()`
++# is pid-only with no run-id binding: under pid recycling the supervisor would
++# see a live pid, refresh the lease and never take the deferred branch, while
++# this gate reads "gone". The run cannot pass vacuously anyway - the lease-
++# refresh path emits no `worker_deferred_approval_recorded/_correlated` event,
++# so `assert-boot-reconciliation.py` fails and the driver aborts there instead.
++# The recycling window is also ~0: the check runs seconds after the runner exit,
++# under a 4-million pid space.
+ [[ "$RUNNER_GONE" == yes ]] || fail abort_worker_runner_alive 46 \
+   "the test runner (pid $WORKER_PID, run $WORKER_RUN_ID) is still alive after the receipt; boot reconciliation would refresh its lease instead of adopting the deferred receipt"
+
+@@ -338,7 +351,7 @@
+
+ LLM-Agent: Claude2
+ Task-ID: $TASK_ID
+-Reviewer: Codex4
++Reviewer: Codex2
+ Verified: driver capture only; suites recorded in preflight/
+ EOF
+ git -C "$WORKTREE" commit -F "$SIGNAL_DIR/commit-msg-capture.txt" >/dev/null 2>&1 \
+@@ -464,7 +477,7 @@
+
+ LLM-Agent: Claude2
+ Task-ID: $TASK_ID
+-Reviewer: Codex4
++Reviewer: Codex2
+ Verified: driver capture only; suites recorded in preflight/
+ EOF
+ git -C "$WORKTREE" commit -F "$SIGNAL_DIR/commit-msg-final.txt" >/dev/null 2>&1 \
+
+Enumerated:
+  delta 1  a comment block above `abort_worker_runner_alive` (every added and
+           removed line starts with `#`): the STOP GATE 3 correction of the
+           recycled-pid narrative. +13 comment lines, -2 comment lines.
+  delta 2  `Reviewer: Codex4` -> `Reviewer: Codex2` in the phase-7 capture
+           commit message heredoc.
+  delta 3  the same substitution in the phase-9 final commit message heredoc.
+
+Deltas 2 and 3 are evidence metadata: they change the trailer of a git commit
+message this driver writes, not what the driver does. They were required by
+STOP GATE 4 - `Codex4` is not a dispatchable lane in either supervisor config.
+
+## 2. Normalized diff - comment-only and blank lines removed from both sides
+@@ -272,7 +272,7 @@
+ Composes with: the deployed supervisor.py in the launch tree and live runtime.
+ LLM-Agent: Claude2
+ Task-ID: $TASK_ID
+-Reviewer: Codex4
++Reviewer: Codex2
+ Verified: driver capture only; suites recorded in preflight/
+ EOF
+ git -C "$WORKTREE" commit -F "$SIGNAL_DIR/commit-msg-capture.txt" >/dev/null 2>&1 \
+@@ -377,7 +377,7 @@
+ Composes with: the capture commit from the same live run.
+ LLM-Agent: Claude2
+ Task-ID: $TASK_ID
+-Reviewer: Codex4
++Reviewer: Codex2
+ Verified: driver capture only; suites recorded in preflight/
+ EOF
+ git -C "$WORKTREE" commit -F "$SIGNAL_DIR/commit-msg-final.txt" >/dev/null 2>&1 \
+
+  389 non-comment, non-blank lines on each side; exactly two differ, and both
+  are the Reviewer trailer. Every gate, threshold, exit code, wait constant and
+  phase ordering in phases 2-9 is therefore unchanged from revision 3.
+
+Reproduce:
+
+  git show 44e9e62b:<driver> > /tmp/rev3.sh
+  slice() { awk '/^# -+ phase 2 -+$/{f=1} f' "$1"; }
+  strip() { grep -v '^[[:space:]]*#' | grep -v '^[[:space:]]*$'; }
+  diff -u <(slice /tmp/rev3.sh)         <(slice <driver>)          # section 1
+  diff -u <(slice /tmp/rev3.sh | strip) <(slice <driver> | strip)  # section 2
+
+Scope note: this receipt is about phases 2-9 only. Phase 0, phase 1, the
+clean-attempt gate, the wait budget and the selftest DID change after revision 3
+- that is revisions 6, 7 and 8 - and those changes are described in the driver
+header and in runbook/CONTINUATION.md.

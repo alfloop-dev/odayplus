@@ -125,6 +125,23 @@
 #      receipts can never be read as another's. Attempt 1's artefacts are
 #      archived under timeline/attempt-1-abort-killmode-probe/.
 #
+# Revision 8 - reviewer Codex2's STOP GATE 7 (2026-07-29T05:07:52Z /
+# 05:08:41Z). Revision 7 was never executed either; the live state is still
+# untouched. One executable change, in the revision-7 gate only:
+#   1. attempt_state_dirty() was fail-OPEN. Its timeline scan used
+#      `find -type f`, so an unexpected directory or a symlink in the timeline
+#      root passed; its signal scan tested four hardcoded names, so the probe's
+#      own probe-child.pid / probe-commands.txt / probe-child.sh, the dead-man's
+#      deadman.log / deadman-restore.sh, and anything else, passed. The reviewer
+#      reproduced both (timeline/unexpected-receipts + signal/probe-commands.txt
+#      returned CLEAN). The allowlist is now exact - timeline: a regular
+#      README.md plus attempt-* directories; signal: absent or empty - with the
+#      roots themselves type-checked, and 15 selftest checks covering each shape
+#      the old version let through.
+#   Nothing else changed: phases 1-9, the probe, the budget, the exit codes and
+#   the ordering are untouched, and the only new exit-code mapping is that the
+#   two new root-level verdicts route to the existing 50/51.
+#
 # Fail-safes:
 #   * hard timeouts on every wait;
 #   * an EXIT trap that restores the supervisor, the watchdog timer and the
@@ -291,25 +308,58 @@ publish_final_state() {
 # timeline/attempt-1-abort-killmode-probe/, and a new run refuses to start while
 # anything comparable is present.
 #
-# Prints the first offending entry (`timeline:<name>` / `signal:<name>`) and
-# returns 0 when dirty; prints nothing and returns 1 when clean. `README.md` and
-# archived `attempt-*/` directories are not dirt.
+# Prints the first offending entry and returns 0 when dirty; prints nothing and
+# returns 1 when clean.
+#
+# Revision 8 - STOP GATE 7 finding 1. Revision 7's version was fail-OPEN in two
+# independent ways, both reproduced by the reviewer:
+#   * the timeline was listed with `find -type f`, so an unexpected *directory*
+#     (the reviewer used `timeline/unexpected-receipts`) or a symlink was
+#     silently accepted - only stray regular files were caught;
+#   * the signal dir was probed for four known names, so `probe-child.pid`,
+#     `probe-commands.txt`, `probe-child.sh`, `deadman.log`,
+#     `deadman-restore.sh`, `commit-msg-capture.txt`, `control-ids.txt` or any
+#     unknown entry read as clean.
+# The allowlist is now exact, and anything else is dirt whatever its type:
+#   timeline/  a *regular file* named README.md, and *directories* named
+#              attempt-* ; nothing else, no symlinks, no other names
+#   signal/    nothing at all - the directory must be absent or completely empty
+# Types come from find's `%y`, which does not follow symlinks, so a symlink is
+# rejected even when it carries an allowed name: a symlinked README.md or
+# attempt-*/ would let an arbitrary tree be read as this attempt's evidence.
+# Dotfiles are included - `find -mindepth 1` lists them, unlike a bare glob.
 attempt_state_dirty() {
-  local tl="$1" sig="$2" name
+  local tl="$1" sig="$2" entry type name
+  # The roots themselves: a symlink, or anything that exists but is not a
+  # directory, is dirt. The driver would otherwise `mkdir -p` over it or follow
+  # it somewhere unintended.
+  if [[ -L "$tl" || ( -e "$tl" && ! -d "$tl" ) ]]; then
+    printf 'timeline-root:%s\n' "${tl##*/}"
+    return 0
+  fi
+  if [[ -L "$sig" || ( -e "$sig" && ! -d "$sig" ) ]]; then
+    printf 'signal-root:%s\n' "${sig##*/}"
+    return 0
+  fi
   if [[ -d "$tl" ]]; then
-    while IFS= read -r name; do
-      [[ "$name" == "README.md" ]] && continue
+    while IFS= read -r -d '' entry; do
+      type="${entry%%|*}"
+      name="${entry#*|}"
+      [[ -n "$name" ]] || continue
+      [[ "$type" == f && "$name" == "README.md" ]] && continue
+      [[ "$type" == d && "$name" == attempt-* ]] && continue
       printf 'timeline:%s\n' "$name"
       return 0
-    done < <(find "$tl" -maxdepth 1 -mindepth 1 -type f -printf '%f\n' 2>/dev/null | sort)
+    done < <(find "$tl" -maxdepth 1 -mindepth 1 -printf '%y|%f\0' 2>/dev/null \
+             | LC_ALL=C sort -z -t'|' -k2)
   fi
   if [[ -d "$sig" ]]; then
-    for name in verdict state exit_code driver.log; do
-      if [[ -e "$sig/$name" ]]; then
-        printf 'signal:%s\n' "$name"
-        return 0
-      fi
-    done
+    while IFS= read -r -d '' name; do
+      [[ -n "$name" ]] || continue
+      printf 'signal:%s\n' "$name"
+      return 0
+    done < <(find "$sig" -maxdepth 1 -mindepth 1 -printf '%f\0' 2>/dev/null \
+             | LC_ALL=C sort -z)
   fi
   return 1
 }
@@ -654,25 +704,81 @@ if [[ "${1:-}" == "--selftest" ]]; then
   SIGNAL_DIR="$selftest_probe_signal"
   echo
 
-  echo "## revision 7: the clean-attempt gate refuses dirty state"
+  echo "## revision 7/8: the clean-attempt gate refuses dirty state"
   # A previous attempt's receipts must never be mistaken for this one's.
+  # Revision 8 (STOP GATE 7): every case below that is not "clean" was accepted
+  # as clean by revision 7 unless it happened to be a regular file in the
+  # timeline root or one of four hardcoded signal names. Each offender is
+  # removed again before the next case, so every expectation names the only
+  # offender present.
   selftest_gate_dir="$(mktemp -d)"
-  check "empty timeline+signal dir is clean" clean \
-    "$( attempt_state_dirty "$selftest_gate_dir/tl" "$selftest_gate_dir/sig" || echo clean )"
+  selftest_gate() {
+    attempt_state_dirty "$selftest_gate_dir/tl" "$selftest_gate_dir/sig" || echo clean
+  }
+  check "empty timeline+signal dir is clean" clean "$(selftest_gate)"
   mkdir -p "$selftest_gate_dir/tl" "$selftest_gate_dir/sig"
   : > "$selftest_gate_dir/tl/README.md"
   mkdir -p "$selftest_gate_dir/tl/attempt-1-abort-killmode-probe"
   : > "$selftest_gate_dir/tl/attempt-1-abort-killmode-probe/00-before.txt"
-  check "README + archived attempt dir are not dirt" clean \
-    "$( attempt_state_dirty "$selftest_gate_dir/tl" "$selftest_gate_dir/sig" || echo clean )"
+  check "README + archived attempt dir are not dirt" clean "$(selftest_gate)"
+
   : > "$selftest_gate_dir/tl/98-abort-reason.txt"
   check "a receipt in the timeline root is dirt" "timeline:98-abort-reason.txt" \
-    "$( attempt_state_dirty "$selftest_gate_dir/tl" "$selftest_gate_dir/sig" )"
+    "$(selftest_gate)"
   rm -f "$selftest_gate_dir/tl/98-abort-reason.txt"
+
+  # The reviewer's exact reproduction: revision 7's `find -type f` never saw it.
+  mkdir -p "$selftest_gate_dir/tl/unexpected-receipts"
+  check "an unexpected timeline directory is dirt" "timeline:unexpected-receipts" \
+    "$(selftest_gate)"
+  rmdir "$selftest_gate_dir/tl/unexpected-receipts"
+
+  # A symlink is neither `f` nor `d`, so it is dirt even under an allowed name.
+  ln -s /etc/hostname "$selftest_gate_dir/tl/attempt-9-symlink"
+  check "a symlink named attempt-* is dirt" "timeline:attempt-9-symlink" \
+    "$(selftest_gate)"
+  rm -f "$selftest_gate_dir/tl/attempt-9-symlink"
+  rm -f "$selftest_gate_dir/tl/README.md"
+  ln -s /etc/hostname "$selftest_gate_dir/tl/README.md"
+  check "a symlinked README.md is dirt" "timeline:README.md" "$(selftest_gate)"
+  rm -f "$selftest_gate_dir/tl/README.md"
+  : > "$selftest_gate_dir/tl/README.md"
+  # A dotfile is listed by find even though a bare glob would miss it.
+  : > "$selftest_gate_dir/tl/.leftover"
+  check "a dotfile in the timeline root is dirt" "timeline:.leftover" "$(selftest_gate)"
+  rm -f "$selftest_gate_dir/tl/.leftover"
+  check "restored README + attempt dir are clean again" clean "$(selftest_gate)"
+
   : > "$selftest_gate_dir/sig/verdict"
-  check "a leftover verdict is dirt" "signal:verdict" \
-    "$( attempt_state_dirty "$selftest_gate_dir/tl" "$selftest_gate_dir/sig" )"
+  check "a leftover verdict is dirt" "signal:verdict" "$(selftest_gate)"
+  rm -f "$selftest_gate_dir/sig/verdict"
+
+  # Revision 7's probe writes these three; none of them was in its four-name
+  # signal check, so a probe that died mid-flight left a "clean" signal dir.
+  : > "$selftest_gate_dir/sig/probe-child.pid"
+  check "a leftover probe-child.pid is dirt" "signal:probe-child.pid" "$(selftest_gate)"
+  rm -f "$selftest_gate_dir/sig/probe-child.pid"
+  : > "$selftest_gate_dir/sig/probe-commands.txt"
+  check "a leftover probe-commands.txt is dirt" "signal:probe-commands.txt" \
+    "$(selftest_gate)"
+  rm -f "$selftest_gate_dir/sig/probe-commands.txt"
+  : > "$selftest_gate_dir/sig/deadman.log"
+  check "a leftover deadman.log is dirt" "signal:deadman.log" "$(selftest_gate)"
+  rm -f "$selftest_gate_dir/sig/deadman.log"
+  # Any unknown entry at all, including a dotfile and a directory.
+  mkdir -p "$selftest_gate_dir/sig/leftovers"
+  check "an unknown signal entry is dirt" "signal:leftovers" "$(selftest_gate)"
+  rmdir "$selftest_gate_dir/sig/leftovers"
+  check "an emptied signal dir is clean again" clean "$(selftest_gate)"
+
+  # A non-directory root is dirt in its own right.
+  rm -rf "$selftest_gate_dir/sig"
+  : > "$selftest_gate_dir/sig"
+  check "a signal root that is not a directory is dirt" "signal-root:sig" \
+    "$(selftest_gate)"
+  rm -f "$selftest_gate_dir/sig"
   rm -rf "$selftest_gate_dir"
+  unset -f selftest_gate
   echo
 
   echo "## finding 6: terminal verdict is preserved, not overwritten by EXIT"
@@ -737,8 +843,11 @@ if [[ -n "$DIRTY" ]]; then
   printf '[%s] archive it under %s/attempt-<n>-<verdict>/ and clear %s first\n' \
     "$(now)" "$TL" "$SIGNAL_DIR" >&2
   case "$DIRTY" in
-    timeline:*) exit 50 ;;
-    *)          exit 51 ;;
+    timeline:*|timeline-root:*) exit 50 ;;
+    signal:*|signal-root:*)     exit 51 ;;
+    # Unreachable by construction; kept fail-closed rather than falling through
+    # to a zero exit if a future prefix is ever added without a case arm.
+    *)                          exit 51 ;;
   esac
 fi
 

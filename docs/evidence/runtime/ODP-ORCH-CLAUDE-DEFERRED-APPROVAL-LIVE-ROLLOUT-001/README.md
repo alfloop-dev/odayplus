@@ -129,8 +129,9 @@ assertion. If anything fails - including the probe's own cleanup - the driver
 aborts without ever stopping the supervisor.
 
 The throwaway unit is created **once**, with `systemd-run`, and restarted with
-`systemctl --user start` on that same already-loaded unit. This is revision 7,
-and the distinction is not cosmetic. The first time the driver was actually run
+`systemctl --user start` on that same already-loaded unit. That has been the
+shape since revision 7 and is unchanged in revision 8; the distinction is not
+cosmetic. The first time the driver was actually run
 it aborted at phase 1 (2026-07-29T04:31:15Z, `abort_killmode_probe`) because the
 probe tried to *re-create* the transient unit under a name its own surviving
 child still held loaded, which `systemd-run` refuses. Only re-creation fails:
@@ -278,11 +279,12 @@ assertion - including the recorded pre-fix regression shape - and checks every
 verdict. It touches nothing live. Output: `preflight/assertion-selftest.txt`.
 
 `live-boot-reconciliation-driver.sh --selftest` covers the driver's own gates
-with 39 checks against throwaway processes and a throwaway signal directory: the
+with 50 checks against throwaway processes and a throwaway signal directory: the
 dead-man budget inequality, pid/run-id binding (foreign, empty, dead pids all
 rejected), token-exact unmanaged-supervisor detection (a decoy carrying
 `supervisor.py` inside a longer argument must not be reported), a replay of the
-revision-2 verdict-overwrite regression, the revision-7 clean-attempt gate, and -
+revision-2 verdict-overwrite regression, the clean-attempt gate (15 checks since
+revision 8, covering every shape revision 7 let through), and -
 since revision 6 - phase 1's `KillMode` probe itself, run through the same
 `killmode_probe()` the driver calls, so that gate can be proven green without
 opening the window. Since revision 7 that section also asserts what the probe
@@ -314,7 +316,8 @@ supervisor is still on its pre-task `MainPID=1197865` (started 02:37:14Z),
 transient rollout or dead-man unit, no process carries a probe marker, and no
 approval exists for any test run in either queue.
 
-Execution has been blocked by six coordinator STOP GATEs. The first
+Execution has been blocked by seven STOP GATEs - six from the coordinator, the
+seventh from reviewer Codex2. The first
 (2026-07-29T03:33:14Z) found six defects in driver revision 1; revision 2
 answered them. The second (2026-07-29T03:48:39Z) found seven more, several of
 which would have let a green run mean nothing - a still-live test runner, an
@@ -369,14 +372,39 @@ part of the verdict; captures every probe command's rc and stderr instead of
 discarding them; archives attempt 1 under
 `timeline/attempt-1-abort-killmode-probe/` and refuses to start on a dirty
 timeline root or signal directory (exit 50 / 51). The gate self-test grew from
-23 to 39 checks. Everything downstream of phase 1 remains byte-identical to
-revision 3. Revision 7 is a driver change, so it needs a fresh coordinator
+23 to 39 checks. Revision 7 is a driver change, so it needs a fresh coordinator
 exact-head recheck: the `05c3f59d` lift covered that head only.
+
+The seventh (reviewer Codex2, 2026-07-29T05:07:52Z) is the first STOP GATE
+raised by the reviewer rather than the coordinator, and it found that revision
+7's new clean-attempt gate was itself fail-open. `attempt_state_dirty()` listed
+the timeline root with `find -type f`, so an unexpected *directory* or a symlink
+passed, and it probed the signal directory for four hardcoded names, so the
+probe's own `probe-child.pid` / `probe-commands.txt` / `probe-child.sh`, the
+dead-man's `deadman.log` / `deadman-restore.sh`, dotfiles, subdirectories and
+anything else passed. The reviewer's own reproduction -
+`timeline/unexpected-receipts` plus `signal/probe-commands.txt` - returned
+CLEAN. Revision 8 makes the allowlist exact (a *regular file* `README.md` plus
+`attempt-*` *directories* in the timeline root; an absent or completely empty
+signal directory), type-checks both roots, and reports a deterministic first
+offender. The gate self-test grew from 39 to **50** checks, 15 of them on this
+gate; the old and new implementations are run side by side over twelve fixtures
+in `preflight/stop-gate-7-fail-open-reproduction.txt`.
+
+The same STOP GATE withdrew this document's claim that everything downstream of
+phase 1 was "byte-identical to revision 3". It is not: phases 2-9 carry three
+deltas, all non-executable - one comment block (the STOP GATE 3 correction) and
+two `Reviewer: Codex4` → `Codex2` trailer lines in the commit-message heredocs.
+`preflight/rev3-phase-2-9-delta.txt` enumerates all three and shows the
+normalized slice (comment-only and blank lines removed) to be 389 lines on each
+side with exactly those two differing, so every gate, threshold, exit code, wait
+constant and phase ordering in phases 2-9 is unchanged since revision 3.
+Revision 8 is a driver change and needs its own exact-head recheck.
 
 What has been completed and is safe to review now: the deployment (section 2),
 its verification (section 3), the restart-safety design (section 4), the
 determinism argument (section 5), the fail-closed assertion with its 11-case
-self-test, and the driver's own 39-check gate self-test.
+self-test, and the driver's own 50-check gate self-test.
 
 ## 7. Approval resolution
 
