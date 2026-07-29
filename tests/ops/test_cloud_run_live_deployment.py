@@ -4411,4 +4411,3 @@ def test_real_app_platform_health_job_queue_contract(tmp_path: Path) -> None:
     bare_payload = {"dependencies": {"job_queue": "healthy"}}
     bare_queue_text = validator._dependency_text(bare_payload, "job_queue")
     assert not any(marker in bare_queue_text for marker in ("worker", "cloud", "durable"))
-
