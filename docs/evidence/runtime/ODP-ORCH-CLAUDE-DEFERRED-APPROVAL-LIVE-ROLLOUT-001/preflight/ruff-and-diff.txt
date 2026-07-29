@@ -1,0 +1,19 @@
+$ uv run --frozen ruff check .orchestrator/approval_queue.py .orchestrator/supervisor.py .orchestrator/test_approval_queue.py .orchestrator/test_supervisor.py
+/bin/bash: line 11: uv: command not found
+
+$ git diff --check
+(exit=0)
+
+$ git diff --check origin/dev...HEAD
+(exit=0)
+
+$ git status --porcelain
+?? docs/evidence/runtime/ODP-ORCH-CLAUDE-DEFERRED-APPROVAL-LIVE-ROLLOUT-001/
+$ /home/lupin/oday-plus-supervisor-live/.venv/bin/ruff check .orchestrator/approval_queue.py .orchestrator/supervisor.py .orchestrator/test_approval_queue.py .orchestrator/test_supervisor.py
+All checks passed!
+
+# ruff version: ruff 0.15.20
+
+# same check against the two DEPLOYED files
+$ ruff check /home/lupin/oday-plus-supervisor-live/.orchestrator/supervisor.py /home/lupin/oday-plus/.orchestrator/supervisor.py
+All checks passed!

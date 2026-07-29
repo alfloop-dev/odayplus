@@ -1,0 +1,28 @@
+# driver gate selftest (2026-07-29T04:02:12Z)
+
+## finding 3: dead-man delay must exceed the bounded wait budget
+total_bounded_wait_s: 1130
+deadman_delay_s:      2030
+ok    deadman_delay > total_bounded_wait                         yes
+ok    deadman_margin >= 600s                                     yes
+
+## finding 1/4: pid<->run-id binding rejects recycled and foreign pids
+ok    own marker matches                                         yes
+ok    foreign run id rejected                                    no
+ok    empty pid rejected                                         no
+ok    dead pid rejected                                          no
+
+## finding 5: unmanaged supervisor detection is token-exact
+ok    prompt-substring decoy not reported                        no
+ok    exact-token supervisor reported                            yes
+ok    exclusion list drops the reported pid                      no
+ok    live supervisor is managed (excluding MainPID leaves none) 0
+
+## finding 6: terminal verdict is preserved, not overwritten by EXIT
+ok    proof_complete survives the EXIT trap                      proof_complete
+ok    exit code recorded alongside the verdict                   0
+ok    abort reason survives a non-zero exit                      abort_no_approval_recorded
+ok    abort exit code recorded                                   18
+ok    unexplained exit falls back to rc marker                   driver_finished_rc_143
+
+SELFTEST PASS
