@@ -1,5 +1,5 @@
 {
-  "captured_at": "2026-07-29T00:23:37.266469+00:00",
+  "captured_at": "2026-07-29T00:59:59.235129+00:00",
   "purpose": "Score the backwards projection against backwards dates as they land. Closes the one limit donor_projection_backtest.json could not: its holdout sat days from its donors, these dates sit in the projected regime itself.",
   "prediction_under_test": {
     "upper_bound": "upstream distinct places at the view's grain, from backwards_window_store_density.json. Landed stores can never exceed it -- an unresolvable place is quarantined by store.py::require_place and lands nothing. A breach falsifies the density measurement as a description of what lands.",
@@ -23,40 +23,20 @@
         "own_partition_succeeded": false,
         "following_partition_succeeded": true,
         "excluded_reason": "no SUCCEEDED run owns this date's own whole-day partition -- it is a timezone-edge straggler pulled in by a neighbouring window's bound, not an ingested trading day"
-      },
-      {
-        "date": "2026-05-21",
-        "landed_stores": 512,
-        "landed_txns": 5690,
-        "upstream_stores": 517,
-        "upstream_orders": 5708,
-        "own_partition_succeeded": true,
-        "following_partition_succeeded": false,
-        "excluded_reason": "the FOLLOWING day's partition has no SUCCEEDED run, so a source that can still spill transactions into this date is unfinished. bool_and over owning runs only holds the date back once that run has claimed its spill rows, so between the following partition starting and writing them a date passes the other two tests on an under-count -- and an under-count always appears to respect the upper bound"
-      },
-      {
-        "date": "2026-05-22",
-        "landed_stores": 3,
-        "landed_txns": 3,
-        "upstream_stores": 523,
-        "upstream_orders": 6205,
-        "own_partition_succeeded": false,
-        "following_partition_succeeded": true,
-        "excluded_reason": "no SUCCEEDED run owns this date's own whole-day partition -- it is a timezone-edge straggler pulled in by a neighbouring window's bound, not an ingested trading day"
       }
     ]
   },
   "summary": {
-    "dates_scored": 4,
+    "dates_scored": 6,
     "upper_bound_breaches": 0,
     "breach_dates": [],
-    "landed_over_upstream_min": 0.9867,
+    "landed_over_upstream_min": 0.9847,
     "landed_over_upstream_max": 0.9922,
-    "landed_over_upstream_mean": 0.9889,
+    "landed_over_upstream_mean": 0.9884,
     "mapping_rate_used_as_prediction": 0.97148,
-    "prediction_error_stores_min": 8,
+    "prediction_error_stores_min": 7,
     "prediction_error_stores_max": 11,
-    "prediction_error_stores_mean": 9.25
+    "prediction_error_stores_mean": 9.0
   },
   "per_date": [
     {
@@ -110,6 +90,32 @@
       "landed_over_upstream": 0.9922,
       "predicted_landed_stores": 500,
       "prediction_error_stores": 11
+    },
+    {
+      "date": "2026-05-21",
+      "landed_stores": 512,
+      "landed_txns": 5690,
+      "upstream_stores": 517,
+      "upstream_orders": 5708,
+      "own_partition_succeeded": true,
+      "following_partition_succeeded": true,
+      "within_upper_bound": true,
+      "landed_over_upstream": 0.9903,
+      "predicted_landed_stores": 502,
+      "prediction_error_stores": 10
+    },
+    {
+      "date": "2026-05-22",
+      "landed_stores": 515,
+      "landed_txns": 6178,
+      "upstream_stores": 523,
+      "upstream_orders": 6205,
+      "own_partition_succeeded": true,
+      "following_partition_succeeded": true,
+      "within_upper_bound": true,
+      "landed_over_upstream": 0.9847,
+      "predicted_landed_stores": 508,
+      "prediction_error_stores": 7
     }
   ]
 }

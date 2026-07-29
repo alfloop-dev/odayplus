@@ -1117,9 +1117,10 @@ is the record that the method was fixed, and its guards demonstrated, *before*
 any backwards date could be scored — so the numbers it eventually reports cannot
 have been fitted to them.
 
-**Four backwards dates are now scored, and the invariant held on every one**
-(receipt re-captured 00:25Z; **0 breaches**). Each became scoreable exactly one
-behind the partition frontier, which is now enforced rather than observed:
+**`-b1` is complete — six partitions, all SUCCEEDED, 3h19m — and all six of its
+scoreable dates hold the invariant** (receipt re-captured 00:59Z; **0
+breaches**). Each became scoreable exactly one behind the partition frontier,
+which is now enforced rather than observed:
 
 | date | landed stores | upstream bound | landed/upstream | predicted | error |
 | --- | --- | --- | --- | --- | --- |
@@ -1127,6 +1128,30 @@ behind the partition frontier, which is now enforced rather than observed:
 | 2026-05-18 | 511 | 517 | 0.9884 | 502 | +9 |
 | 2026-05-19 | 505 | 511 | 0.9883 | 496 | +9 |
 | 2026-05-20 | 511 | 515 | 0.9922 | 500 | +11 |
+| 2026-05-21 | 512 | 517 | 0.9903 | 502 | +10 |
+| 2026-05-22 | 515 | 523 | 0.9847 | 508 | +7 |
+
+2026-05-22 is the more interesting of the two new rows. It is the straggler that
+broke the first critical-path probe and forced the first completeness rule —
+the date that read **3 stores** because no partition had ever covered it, only a
+neighbouring window's bound clipping a few transactions in. `-b1`'s last
+partition `2026-05-22__2026-05-23` covered it properly, and it now reads **515
+stores over 6 178 transactions**, at a ratio of 0.9847 that sits inside the band
+every other backwards date occupies. So the straggler was an artifact of
+partition coverage exactly as claimed, and not a real collapse in trading — the
+claim §7 made about it is now measured rather than inferred.
+
+2026-05-21 closes the loop on the rule added an hour earlier. Withheld at 00:22Z
+because its following partition was mid-flight, it scored at 00:59Z once that
+partition succeeded — at **512 stores over 5 690 transactions, byte-identical to
+the premature reading**. So this particular date would have been fine. That is
+the honest result and it does not weaken the rule: the guard can only ever
+withhold, the reading it protects against was directly observed on 2026-05-17
+(8 733 transactions climbing to 11 246 twenty-five minutes later), and a rule
+that is only invoked when it changes the answer is a rule you cannot trust the
+rest of the time. Twice now — 05-19 and 05-21 — the stricter gate has withheld a
+date whose number turned out to be right; both times the value was that the
+number is now *guaranteed*, not merely correct.
 
 One correction the third rule forces on the 23:28Z capture above. Under the rule
 as it now stands, that capture scored 2026-05-19 a step early: only
@@ -1146,9 +1171,9 @@ probe reported for early May, which is the population `-b3`'s 406 was computed
 over.
 
 The calibration reads the other way, and in the direction that costs nothing.
-The `0.9715` mapping rate under-states landed stores on all four dates, by 8, 9,
-9 and 11, at a strikingly stable `landed/upstream` of 0.9867–0.9922 (mean
-0.9889).
+The `0.9715` mapping rate under-states landed stores on all six dates, by 7 to
+11 (mean +9.0), at a strikingly stable `landed/upstream` of 0.9847–0.9922 (mean
+0.9884).
 That is the same sign the `-s4` backtest found on its holdout (both arms
 under-stated, optimistic recall .937), now reproduced **two months** from its
 donors rather than days from them — the regime the backtest explicitly could not
@@ -1156,12 +1181,11 @@ reach. A projection that under-states cannot manufacture criterion 3; if this
 sign holds across `-b2` and `-b3`, the measured h28 should land at or above the
 projected 406, not below it.
 
-The honest limits. Four dates are four dates, and they are all from `-b1`, the
+The honest limits. Six dates are six dates, and they are all from `-b1`, the
 slice nearest the landed era; `-b3` sits three weeks further back and is where
-criterion 3 is actually decided. Two `-b1` dates stay excluded permanently —
-2026-05-16 and 2026-05-22, the stragglers — and 2026-05-21 is excluded until
-`2026-05-22__2026-05-23`, the slice's last partition, finishes. And the
-invariant tested here is
+criterion 3 is actually decided. One date stays excluded — 2026-05-16, whose own
+partition lies below `-b1`'s window and will be covered by `-b2`'s last
+partition. And the invariant tested here is
 per-date presence, not the per-store *continuity* that h28 needs: a date can land
 its full store count while individual stores still break their islands. That
 continuity claim is the one the `-s4` backtest scored and this probe does not.
