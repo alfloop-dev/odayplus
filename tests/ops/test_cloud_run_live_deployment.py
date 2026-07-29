@@ -867,6 +867,34 @@ def test_is_safe_protected_redirect_rejects_scheme_downgrade_at_matching_port() 
     ) is True
 
 
+def test_is_safe_protected_redirect_accepts_default_ports_and_padded_headers() -> None:
+    """Correct default ports and header padding must not fail a valid redirect.
+
+    Both assertions are false-negative guards: nothing else in this file pins
+    them, so a wrong http default port or a dropped ``strip()`` would silently
+    turn a healthy candidate deploy red.
+    """
+
+    host = "candidate-93ae1b2e75e1056c---oday-web-7sxbjoeozq-de.a.run.app"
+
+    # Mutation target: _effective_port's http default. Every other case in this
+    # file uses an https base, where both sides get the same default, so only an
+    # http origin with an explicit :80 distinguishes 80 from any other value.
+    assert validator._is_safe_protected_redirect(
+        f"http://{host}:80", 307, "/login?returnTo=%2Foperator"
+    ) is True
+    assert validator._is_safe_protected_redirect(
+        f"http://{host}", 307, f"http://{host}:80/login?returnTo=%2Foperator"
+    ) is True
+
+    # Mutation target: the location.strip() before urljoin. Surrounding
+    # whitespace is legal header framing, and urlsplit does not strip a trailing
+    # run inside the query, so an unstripped value loses the returnTo match.
+    assert validator._is_safe_protected_redirect(
+        f"https://{host}", 307, "  /login?returnTo=%2Foperator  "
+    ) is True
+
+
 def test_is_safe_protected_redirect_rejects_ambiguous_or_unparsable_locations() -> None:
     """Cardinality, userinfo-only, empty and unparsable Locations fail closed."""
 
@@ -879,6 +907,13 @@ def test_is_safe_protected_redirect_rejects_ambiguous_or_unparsable_locations() 
     ) is False
     assert validator._is_safe_protected_redirect(
         web_url, 307, "/login?returnTo=%2Foperator&returnTo=%2Fevil-path"
+    ) is False
+
+    # A blank first returnTo smuggles the real one past a parser that drops
+    # empty values: without keep_blank_values this collapses to a single valid
+    # returnTo and the ambiguity guard never fires.
+    assert validator._is_safe_protected_redirect(
+        web_url, 307, "/login?returnTo=&returnTo=%2Foperator"
     ) is False
 
     # Bare "@" delimiter with empty username/password still signals userinfo.
@@ -909,6 +944,18 @@ def test_is_safe_protected_redirect_rejects_ambiguous_or_unparsable_locations() 
     # scheme fails closed even when scheme, host and path all agree.
     assert validator._is_safe_protected_redirect(
         f"ftp://{host}", 307, f"ftp://{host}/login?returnTo=%2Foperator"
+    ) is False
+
+    # A base with a scheme but no host: base and target hostnames are both
+    # empty, so only the explicit empty-host guard rejects this.
+    assert validator._is_safe_protected_redirect(
+        "https:", 307, "/login?returnTo=%2Foperator"
+    ) is False
+
+    # A base with a host and an explicit port but no scheme: host and effective
+    # port both match, so only the explicit empty-scheme guard rejects this.
+    assert validator._is_safe_protected_redirect(
+        f"//{host}:8443", 307, "/login?returnTo=%2Foperator"
     ) is False
 
 
@@ -942,6 +989,21 @@ def test_redact_location_masks_credentials_and_parameter_values() -> None:
     redacted = validator._redact_location("/login?returnTo=https%3A%2F%2Fattacker.com")
     assert redacted == "/login?returnTo=<redacted>"
     assert "attacker.com" not in redacted
+
+    # Each _is_plain_relative_path clause is pinned separately, since only the
+    # clause named in the comment rejects its case.
+    # Protocol-relative: starts with "/" and carries no "://".
+    redacted = validator._redact_location("/login?returnTo=%2F%2Fattacker.com")
+    assert redacted == "/login?returnTo=<redacted>"
+    assert "attacker.com" not in redacted
+    # Embedded scheme after a leading single slash: not caught by the "//" test.
+    assert validator._redact_location("/login?returnTo=%2Fa%3A%2F%2Fb") == (
+        "/login?returnTo=<redacted>"
+    )
+    # Non-printable payload: passes both textual tests, fails only isprintable.
+    assert validator._redact_location("/login?returnTo=%2Fop%0Aerator") == (
+        "/login?returnTo=<redacted>"
+    )
 
     # Fragments are dropped to a marker; their presence stays diagnosable.
     assert validator._redact_location(
