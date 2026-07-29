@@ -364,5 +364,71 @@ class OverrideConsumptionTests(TwoRootFixture):
         self.assertFalse((self.control_root / "ai-activity-log.jsonl").exists())
 
 
+class WorkerWorktreeWorkspaceTests(unittest.TestCase):
+    """The hook root is not the worker's root either.
+
+    Same split as the queue defect, one layer down: the hook binary lives in the
+    control root while the worker runs in a per-task worktree outside it. The
+    Supervisor injects ``ORCH_WORKSPACE_PATH``; if the broker ignores it, every
+    ``Edit``/``Write`` a worker makes in its own worktree classifies as
+    ``out_of_workspace`` **deny** — a fleet-wide stall, not degraded mode.
+
+    This pins the boundary in both directions: the named workspace is allowed,
+    and nothing else is.
+    """
+
+    def setUp(self) -> None:
+        self.tmpdir = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmpdir.cleanup)
+        base = Path(self.tmpdir.name)
+        self.root = base / "control-root"
+        self.worktree = base / "worktrees" / "odp-task-001"
+        self.elsewhere = base / "not-a-workspace"
+        for path in (self.root, self.worktree, self.elsewhere):
+            path.mkdir(parents=True)
+        patcher = mock.patch.object(permission_broker, "ROOT", self.root)
+        patcher.start()
+        self.addCleanup(patcher.stop)
+        self.config: dict[str, object] = {"permission_broker": {"allowed_workspace_roots": ["."]}}
+
+    def _decide(self, target: Path, workspace: str | None) -> dict[str, object]:
+        env = {k: v for k, v in os.environ.items() if k != "ORCH_WORKSPACE_PATH"}
+        if workspace is not None:
+            env["ORCH_WORKSPACE_PATH"] = workspace
+        with mock.patch.dict(os.environ, env, clear=True):
+            return permission_broker.evaluate_tool_request(
+                "Write", {"file_path": str(target)}, self.config
+            )
+
+    def test_worker_may_write_inside_the_worktree_the_supervisor_named(self) -> None:
+        verdict = self._decide(self.worktree / "docs/evidence/note.md", str(self.worktree))
+        self.assertEqual(verdict["decision"], "allow")
+        self.assertEqual(verdict["risk_class"], "repo_write")
+
+    def test_without_the_injected_workspace_the_same_write_is_denied(self) -> None:
+        verdict = self._decide(self.worktree / "docs/evidence/note.md", None)
+        self.assertEqual(verdict["decision"], "deny")
+        self.assertEqual(verdict["risk_class"], "out_of_workspace")
+
+    def test_naming_a_workspace_does_not_widen_the_boundary_anywhere_else(self) -> None:
+        verdict = self._decide(self.elsewhere / "note.md", str(self.worktree))
+        self.assertEqual(verdict["decision"], "deny")
+        self.assertEqual(verdict["risk_class"], "out_of_workspace")
+
+    def test_a_relative_workspace_value_is_ignored_rather_than_anchored_to_root(self) -> None:
+        self.assertNotIn(
+            Path("relative/worktree").resolve(),
+            permission_broker._allowed_workspace_roots(self.config),
+        )
+        with mock.patch.dict(os.environ, {"ORCH_WORKSPACE_PATH": "relative/worktree"}):
+            roots = permission_broker._allowed_workspace_roots(self.config)
+        # config "." dedupes into ROOT, so a widened list would be visible here.
+        self.assertEqual(roots, [self.root, self.root.parent / "pantheon"])
+
+    def test_the_control_root_hunk_is_present_so_a_publish_cannot_drop_it(self) -> None:
+        source = Path(permission_broker.__file__).read_text(encoding="utf-8")
+        self.assertIn("ORCH_WORKSPACE_PATH", source)
+
+
 if __name__ == "__main__":
     unittest.main()

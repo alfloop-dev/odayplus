@@ -201,6 +201,7 @@ UNSAFE_AGENT_MARKERS = (
     "launch",
 )
 SAFE_AGENT_RUN_PATTERNS = (
+    re.compile(r"(?:^|[/\s])run\.(?:py|ts|js)\b"),
     re.compile(r"\brun\s+`?git\s+status\b"),
     re.compile(r"\brun\s+`?git\s+log\b"),
     re.compile(r"\brun\s+`?git\s+diff\b"),
@@ -794,6 +795,18 @@ def _collect_paths(tool_input: dict[str, Any]) -> list[Path]:
 
 def _allowed_workspace_roots(config: dict[str, Any] | None = None) -> list[Path]:
     roots = [ROOT, ROOT.parent / "pantheon"]
+    # A worker runs in a per-task worktree outside ROOT, so without this its own
+    # workspace is out-of-workspace and every Edit/Write is denied. The value is
+    # injected into the worker process by the Supervisor (common.worker_env /
+    # supervisor.resume_claude_worker); the hook subprocess inherits it from the
+    # CLI, so a tool call cannot set it for its own hook. Relative values are
+    # ignored rather than resolved against ROOT — an unanchored value must not
+    # widen the boundary.
+    runtime_workspace = str(os.environ.get("ORCH_WORKSPACE_PATH") or "").strip()
+    if runtime_workspace:
+        candidate = Path(runtime_workspace).expanduser()
+        if candidate.is_absolute():
+            roots.append(candidate.resolve())
     configured = ((config or {}).get("permission_broker", {}) or {}).get("allowed_workspace_roots", [])
     if isinstance(configured, list):
         for item in configured:

@@ -131,12 +131,16 @@ the running module:
 - the activity log records the queue root that answered, and the control root
   does not absorb the other fleet's audit trail
 
+Plus 5 tests added in round 2 (§6) pinning the worker-worktree workspace
+boundary in both directions.
+
 ```
 pytest .orchestrator/{test_common,test_approval_queue,test_runtime_state,
   test_provider_permissions,test_permission_broker_status_root,test_supervisor,
   test_dispatch_policy}.py -q -m "not requires_live_env"
-→ 352 passed
-ruff check (5 touched files) → All checks passed
+→ 357 passed, 1 deselected
+pytest .orchestrator -q -m "not requires_live_env" → 433 passed, 10 deselected
+ruff check (touched files) → All checks passed
 ```
 
 `test_provider_permissions.py::…::test_edit_allows_configured_execute_plans_workspace_root`
@@ -220,23 +224,92 @@ Both rehearsals ran against the real live supervisor unit and left it byte-for-b
 alone: `MainPID 1487837`, `ExecMainStartTimestamp Wed 2026-07-29 06:08:57 UTC`,
 `NRestarts 0`, identical before and after.
 
-## 6. Operational finding: the control root is behind
+## 6. Round 2: the control-root drift is not benign — publishing over it
+##    would have denied every worker write
 
-At observation time the two deployed brokers differ:
+Round 1 recorded the drift and judged it harmless: *"the drift is small
+(`SAFE_TOOLS`, one workspace-root pattern) and does not cause this bug."* That
+judgement was wrong in the one direction that matters. It compared shas without
+reading the diff, and the acceptance harness was built against a tree
+byte-identical to the **live root**, so the control root's actual bytes were
+never exercised.
 
 ```
 /home/lupin/oday-plus/.orchestrator/permission_broker.py                 sha256 c4ecfe5a…
 /home/lupin/oday-plus-supervisor-live/.orchestrator/permission_broker.py sha256 1ed64d46…
 ```
 
-The control root — the copy that actually executes every hook on this host — is
-on an **older** revision than the live supervisor root. The drift is small
-(`SAFE_TOOLS`, one workspace-root pattern) and does not cause this bug, but it
-means hook behaviour and supervisor behaviour are not currently the same code.
-The deployment in §7 publishes the same reviewed blobs to both roots, which
-also closes this drift for the three files it touches.
+The control root is not an *older* revision of anything — it is a hand edit that
+has never existed in git history (`git log -S ORCH_WORKSPACE_PATH --
+.orchestrator/permission_broker.py` → 0 commits). It carries two hunks `dev`
+does not have. One of them is load-bearing:
+
+```python
+runtime_workspace = str(os.environ.get("ORCH_WORKSPACE_PATH") or "").strip()
+if runtime_workspace:
+    candidate = Path(runtime_workspace).expanduser()
+    if candidate.is_absolute():
+        roots.append(candidate.resolve())
+```
+
+Every hook on this host is wired to the control-root file, and every live worker
+runs in a per-task worktree under `/tmp/pantheon-worker-worktrees/…`, which is
+outside `ROOT`, outside `ROOT.parent/"pantheon"`, and outside the configured
+`allowed_workspace_roots` (`['.', '../execute-plans']`). Without that hunk,
+`_paths_within_workspace` is false for a worker's own worktree and
+`evaluate_tool_request` returns **deny / `out_of_workspace`** for `Edit`,
+`MultiEdit` and `Write`. Publishing §5's blobs as reviewed in round 1 would have
+stalled the whole fleet, not degraded it.
+
+Proof — both revisions loaded from isolated sandbox copies, `ROOT` pinned to the
+production control root, nothing under `/home/lupin` opened for write
+(`control_root_drift_probe.py`, transcript in `control-root-drift-blocker.txt`):
+
+```
+A. deployed control-root hook (c4ecfe5a)   Write → ALLOW (repo_write)
+B. reviewed blob, round 1  (bb5c74a6)      Write → DENY  (out_of_workspace)
+```
+
+**Resolution.** Both control-root-only hunks are forward-ported into
+`.orchestrator/permission_broker.py`, so what gets published is a strict
+superset of what is already running: the cross-root fix plus the live hook's
+own behaviour, plus `TaskOutput` in `SAFE_TOOLS` which `dev` has and the control
+root lacks. This ends the drift by merging it rather than by bulldozing it —
+after the publish the hook root and the supervisor root run identical, committed
+code.
+
+`ORCH_WORKSPACE_PATH` is injected into the worker process by the Supervisor
+(`common.worker_env` / `supervisor.resume_claude_worker`) and the hook
+subprocess inherits it from the CLI, so a tool call cannot set it for its own
+hook; a relative value is ignored rather than anchored to `ROOT`. Five tests in
+`WorkerWorktreeWorkspaceTests` pin the boundary in both directions: the named
+workspace is allowed, no workspace means the same write is denied, naming a
+workspace widens nothing else, and a relative value adds no root.
+
+### Incident during this round
+
+While building the probe, a `cp` into a sandbox directory of symlinks followed
+those symlinks and overwrote `/home/lupin/oday-plus/.orchestrator/`
+`permission_broker.py` and `common.py` with the round-1 blobs at 09:18:2xZ. They
+were restored by atomic same-directory rename at **09:19:17.89Z** to
+`c4ecfe5a0f62ca21` / `1b5334ff427f9b7b` — the former corroborated by the sha
+independently recorded in `live-defect-observation.txt` §6, the latter
+byte-compared against the intact live-root copy. Blast radius checked and empty:
+the only worker hook in that span fired at **09:20:00.303Z**, 43 s after the
+restore, against the original bytes (its re-defer is the §1 defect, unrelated);
+no approval-queue entry was created in either root between 09:17 and 09:25; both
+files are mode 664 with no leftover siblings, and the control root's dirty
+inventory is unchanged at 580 files. Sandbox copies are now real files, never
+symlinks.
 
 ## 7. What remains before `done`
+
+**Round 2 status: not deployed, and deliberately not deployable yet.** The
+round-1 approval (`review_approved`, Antigravity4 @2b729993, *"ready for
+post-merge deploy.py publish"*) was given against a blob that §6 shows would
+have denied every worker write. That approval does not carry over to the
+forward-ported revision, so the publish still has no reviewed source. The task
+therefore goes back to review rather than to `done`.
 
 The rollout criterion is *"deploy the **reviewed** fix … and verify PID restart
 continuity"*. This revision has not been reviewed, and writing to
@@ -258,8 +331,10 @@ python3 docs/evidence/runtime/ODP-ORCH-APPROVAL-RESUME-ROOT-001/deploy.py \
 ```
 
 then re-runs `two_root_acceptance.py --broker-dir /home/lupin/oday-plus` against
-the deployed control root, commits the transcript plus that receipt, and only
-then runs `scripts/ai-status.sh done`. The driver refuses to start (rc 2,
+the deployed control root, **plus `control_root_drift_probe.py`, which must
+report `ALLOW (repo_write)` for both revisions it loads** — that is the check
+that would have caught §6 before the publish rather than after. It commits the
+transcript plus both receipts, and only then runs `scripts/ai-status.sh done`. The driver refuses to start (rc 2,
 nothing touched) unless the supervisor is `active/running` with a live
 Supervisor `MainPID`, and fails the run if `MainPID`,
 `ExecMainStartTimestamp` or `NRestarts` moved.
