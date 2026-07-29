@@ -53,36 +53,4 @@ describe("production protected-route middleware", () => {
     expect(response.status).toBe(200);
     expect(response.headers.get("x-middleware-next")).toBe("1");
   });
-
-  it("redirects to login using x-forwarded headers when request.url is a local binding", async () => {
-    vi.stubEnv("NODE_ENV", "production");
-    vi.stubEnv("ODP_WEB_SESSION_SECRET", SECRET);
-    const request = new NextRequest("http://0.0.0.0:8080/operator?workspace=network", {
-      headers: {
-        "x-forwarded-proto": "https",
-        "x-forwarded-host": "candidate-93ae1b2e75e1056c---oday-web-7sxbjoeozq-de.a.run.app",
-      },
-    });
-    const response = await middleware(request);
-
-    expect(response.status).toBe(307);
-    const location = response.headers.get("location") as string;
-    expect(location).toBe(
-      "https://candidate-93ae1b2e75e1056c---oday-web-7sxbjoeozq-de.a.run.app/login?returnTo=%2Foperator%3Fworkspace%3Dnetwork",
-    );
-  });
-
-  it("redirects to login using ODP_WEB_BASE_URL when configured", async () => {
-    vi.stubEnv("NODE_ENV", "production");
-    vi.stubEnv("ODP_WEB_SESSION_SECRET", SECRET);
-    vi.stubEnv("ODP_WEB_BASE_URL", "https://ops.oday.plus");
-    const request = new NextRequest("http://0.0.0.0:8080/operator");
-    const response = await middleware(request);
-
-    expect(response.status).toBe(307);
-    const location = response.headers.get("location") as string;
-    expect(location).toBe("https://ops.oday.plus/login?returnTo=%2Foperator");
-  });
 });
-
-

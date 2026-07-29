@@ -1279,7 +1279,6 @@ def _is_safe_protected_redirect(
 
 
 
-
 def _json_request(
     url: str,
     *,

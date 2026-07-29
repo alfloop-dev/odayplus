@@ -812,8 +812,6 @@ def test_is_safe_protected_redirect_contract() -> None:
     ) is False
 
 
-
-
 def test_deterministic_smoke_rejects_provider_specific_auth_failure() -> None:
     DeterministicRuntimeHandler.failed_provider_id = "geocode.primary_api"
     server, url = start_server()

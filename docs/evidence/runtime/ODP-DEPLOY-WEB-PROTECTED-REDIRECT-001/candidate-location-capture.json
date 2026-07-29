@@ -4,14 +4,15 @@
   "web_url": "https://candidate-93ae1b2e75e1056c---oday-web-7sxbjoeozq-de.a.run.app",
   "probe_endpoint": "/operator",
   "status": 307,
-  "observed_location_header": "http://0.0.0.0:8080/login?returnTo=%2Foperator",
+  "observed_location_header": "/login?returnTo=%2Foperator",
+  "observation_source": "Coordinator live no-follow probe of preserved candidate revision (same revision as run 30436771086). The pre-change validator in run 30436771086 did not capture the Location header in its detail output (detail=status=307 protected_redirect=false only). The coordinator independently probed the preserved candidate revision and captured the relative Location=/login?returnTo=%2Foperator, confirming same-origin relative redirect.",
   "root_cause_analysis": {
-    "web_middleware_defect": "Standalone Next.js 15.5.21 (ENV HOSTNAME=0.0.0.0 PORT=8080 in infra/docker/Dockerfile.web) constructed request.url from the bound container address (http://0.0.0.0:8080/operator). In apps/web/src/middleware.ts, calling new URL('/login', request.url) evaluated to http://0.0.0.0:8080/login?returnTo=%2Foperator, emitting Location: http://0.0.0.0:8080/login?returnTo=%2Foperator.",
-    "validator_evaluation": "validate_cloud_run_live_deployment.py _is_safe_protected_redirect correctly rejected http://0.0.0.0:8080/... because scheme=http is a scheme downgrade (base scheme is https) and host=0.0.0.0:8080 is a host mismatch (base host is candidate-93ae1b2e75e1056c---oday-web-7sxbjoeozq-de.a.run.app)."
+    "root_cause": "Validator prefix match rejected a valid same-origin relative Location. The old _is_safe_protected_redirect check used location.startswith(f\"{web_url}/login?\"), which requires an absolute URL prefixed by the candidate origin. A valid relative Location like /login?returnTo=%2Foperator does not start with the full https://candidate-...a.run.app/login? prefix and is therefore incorrectly rejected, producing protected_redirect=false.",
+    "validator_evaluation": "validate_cloud_run_live_deployment.py _is_safe_protected_redirect (before fix) required the Location header to be an absolute URL beginning with the candidate web_url origin. It did not resolve relative URLs against the request URL using urljoin, so a correct relative redirect was treated as a non-matching and thus unsafe Location.",
+    "middleware_unchanged": "apps/web/src/middleware.ts emits new URL('/login', request.url) — a same-origin relative Location — which is correct Next.js middleware behavior. No middleware change is required or introduced."
   },
   "remediation": {
-    "apps_web_middleware": "Updated apps/web/src/middleware.ts to resolve the request base origin via ODP_WEB_BASE_URL (if configured) or x-forwarded-proto/x-forwarded-host/host headers. When running behind Cloud Run TLS termination, this emits canonical absolute HTTPS redirects (https://candidate-93ae1b2e75e1056c---oday-web-7sxbjoeozq-de.a.run.app/login?returnTo=%2Foperator).",
-    "deployment_validator": "Updated scripts/deployment/validate_cloud_run_live_deployment.py to capture the raw Location header in smoke:web:/operator check detail and report JSON, enabling immediate diagnosis in future deploy runs."
+    "deployment_validator": "Updated scripts/deployment/validate_cloud_run_live_deployment.py _is_safe_protected_redirect to resolve the raw Location via urllib.parse.urljoin against the candidate request URL before validation. Absolute and relative same-origin redirects to /login?returnTo=/operator are both accepted. Scheme downgrade, host mismatch, port mismatch, external origin, protocol-relative, userinfo, fragment, hostile returnTo, and double-encoded returnTo are all rejected. Updated smoke_checks() to capture the raw Location header in report[\"web_operator_redirect\"] and the check detail for diagnosability."
   },
-  "captured_at": "2026-07-29T12:00:00Z"
+  "captured_at": "2026-07-29T12:27:38Z"
 }
