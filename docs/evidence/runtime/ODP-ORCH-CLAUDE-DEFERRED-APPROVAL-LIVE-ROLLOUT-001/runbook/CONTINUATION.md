@@ -95,8 +95,11 @@ against-merge-SHA command rather than the narrow one, and the preflight summary
 no longer asserts `git_diff_check: clean` on the strength of a command that
 could not have failed.
 
-**(2) The recycled-pid narrative was backwards.** Line 63 above and driver lines
-621-626 claimed that binding the pid to its run id makes a recycled pid *abort*.
+**(2) The recycled-pid narrative was backwards.** The finding-1 row of the STOP
+GATE 2 table above, and the comment block above `abort_worker_runner_alive` in
+the driver (the coordinator cited them as CONTINUATION.md:63 and driver:625-626,
+which are their pre-correction line numbers), claimed that binding the pid to
+its run id makes a recycled pid *abort*.
 It does the opposite: `pid_owned_by_run` returns false for a recycled foreign
 pid, so `RUNNER_GONE=yes` and the gate passes. That is the correct behaviour for
 this gate - the property it needs is that the *original* runner is gone - but the
