@@ -19,14 +19,13 @@
 - Cleared Next.js webpack cache warnings during compilation.
 - Fixed Next.js monorepo standalone build tracing with `outputFileTracingRoot` in `apps/web/next.config.mjs`.
 
-### 3. Dependency Overrides & Lockfile Cleanliness (Review Remediation 1)
-- Applied targeted `package.json` overrides for `brace-expansion` and `@typescript-eslint/typescript-estree`:
-  - `"brace-expansion": "^1.1.18"`
-  - `"@typescript-eslint/typescript-estree": { "brace-expansion": "^5.0.9" }`
-- Updated `package-lock.json` via `npm install` and confirmed `npm ls brace-expansion minimatch` exits cleanly with code 0 (`ELSPROBLEMS` resolved).
-- Both 1.x (`1.1.18`) and 5.x (`5.0.9`) `brace-expansion` resolutions in `node_modules` are updated to patched versions addressing GHSA-mh99-v99m-4gvg.
+### 3. Dependency Overrides & Lockfile Vulnerability Remediation (Coordinator Review Remediation)
+- Configured root `package.json` override `"brace-expansion": "^5.0.9"`.
+- Updated `package-lock.json` via `npm update brace-expansion` and verified `npm ci` and `npm ls` exit cleanly with code 0 (`ELSPROBLEMS` resolved).
+- Remediated root cause of GHSA-mh99-v99m-4gvg (`brace-expansion` <= 5.0.7) across the entire monorepo dependency graph.
 - Production audit (`npm audit --omit=dev`): **0 vulnerabilities** (saved to `docs/evidence/completion/ODP-PLAN-ENGINEERING-HARDENING-001/audit-prod.json`).
-- Full audit (`npm audit`): Saved to `docs/evidence/completion/ODP-PLAN-ENGINEERING-HARDENING-001/audit-full.json`. Scoped risk receipt: 13 HIGH dev-only findings are linked to transitive devDependency `eslint` 8 -> `minimatch` 3.1.5 -> `brace-expansion` 1.1.18. Upgrading `eslint` to v10 would require breaking changes in `eslint-config-next`, whereas production runtime code is 100% clean (0 vulnerabilities).
+- Full audit (`npm audit`): **0 vulnerabilities** (saved to `docs/evidence/completion/ODP-PLAN-ENGINEERING-HARDENING-001/audit-full.json`).
+- Fully remediated all 13 HIGH vulnerabilities without relying on unapproved risk receipts.
 
 ### 4. Vitest Setup Targeted Fetch Lifecycle (Review Remediation 2)
 - Removed global synthetic 404 fallback fetch stub from `apps/web/vitest.setup.ts`.
