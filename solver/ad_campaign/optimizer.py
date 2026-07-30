@@ -125,7 +125,10 @@ class CampaignSelectionResult:
         }
 
 
-def solve_ad_campaigns(
+from solver.process_isolation import run_in_process_isolation
+
+
+def _solve_ad_campaigns_impl(
     *,
     options: tuple[CampaignOption, ...],
     constraints: CampaignConstraints,
@@ -470,6 +473,31 @@ def _scaled(value: float) -> int:
 
 def _near(left: float, right: float, tolerance: float = 1e-6) -> bool:
     return abs(left - right) <= tolerance
+
+
+def solve_ad_campaigns(
+    *,
+    options: tuple[CampaignOption, ...],
+    constraints: CampaignConstraints,
+    risk_aversion: float = 1.0,
+    max_time_seconds: float = 10.0,
+    isolate_process: bool = True,
+) -> CampaignSelectionResult:
+    """Public solver entrypoint with process isolation contract."""
+    if isolate_process:
+        return run_in_process_isolation(
+            _solve_ad_campaigns_impl,
+            options=options,
+            constraints=constraints,
+            risk_aversion=risk_aversion,
+            max_time_seconds=max_time_seconds,
+        )
+    return _solve_ad_campaigns_impl(
+        options=options,
+        constraints=constraints,
+        risk_aversion=risk_aversion,
+        max_time_seconds=max_time_seconds,
+    )
 
 
 __all__ = [

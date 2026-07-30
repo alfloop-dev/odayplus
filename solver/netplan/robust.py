@@ -10,6 +10,7 @@ from time import monotonic
 from typing import Any
 
 from solver.netplan.model import NetworkAction
+from solver.process_isolation import run_in_process_isolation
 
 SOLVER_VERSION = "robust-netplan-cvxpy-v1"
 STATUS_OPTIMAL = "OPTIMAL"
@@ -129,7 +130,7 @@ class RobustNetPlanResult:
         }
 
 
-def solve_robust_network_plan(
+def _solve_robust_network_plan_impl(
     *,
     options_by_entity: Mapping[str, tuple[ScenarioActionOption, ...]],
     scenarios: tuple[Scenario, ...],
@@ -757,6 +758,40 @@ def _maximum(actual: float, limit: float) -> dict[str, Any]:
 
 def _near(left: float, right: float, tolerance: float = 1e-5) -> bool:
     return abs(left - right) <= tolerance
+
+
+def solve_robust_network_plan(
+    *,
+    options_by_entity: Mapping[str, tuple[ScenarioActionOption, ...]],
+    scenarios: tuple[Scenario, ...],
+    constraints: RobustNetPlanConstraints,
+    objective: RobustObjective = RobustObjective.WEIGHTED_EXPECTED,
+    downside_weight: float = 1.0,
+    cvar_confidence: float = 0.8,
+    preferred_solver: str | None = None,
+    isolate_process: bool = True,
+) -> RobustNetPlanResult:
+    """Public solver entrypoint with process isolation contract."""
+    if isolate_process:
+        return run_in_process_isolation(
+            _solve_robust_network_plan_impl,
+            options_by_entity=options_by_entity,
+            scenarios=scenarios,
+            constraints=constraints,
+            objective=objective,
+            downside_weight=downside_weight,
+            cvar_confidence=cvar_confidence,
+            preferred_solver=preferred_solver,
+        )
+    return _solve_robust_network_plan_impl(
+        options_by_entity=options_by_entity,
+        scenarios=scenarios,
+        constraints=constraints,
+        objective=objective,
+        downside_weight=downside_weight,
+        cvar_confidence=cvar_confidence,
+        preferred_solver=preferred_solver,
+    )
 
 
 __all__ = [
