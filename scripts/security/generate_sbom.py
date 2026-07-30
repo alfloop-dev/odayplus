@@ -513,7 +513,7 @@ def load_license_policy(target_scope: str = "prod") -> tuple[set[str], set[str],
             ex_data = json.loads(EXEMPTIONS_PATH.read_text(encoding="utf-8"))
             for entry in ex_data.get("exemptions", []):
                 status = entry.get("status")
-                entry_valid, entry_violations = validate_exemption_entry(entry, exemption_type="license")
+                entry_valid, entry_violations = validate_exemption_entry(entry, exemption_type="license", base_dir=EXEMPTIONS_PATH.parent)
                 if entry_violations:
                     ex_violations.extend(entry_violations)
 
@@ -639,96 +639,116 @@ def generate_sbom(image_digest: str | None = None, release_digest: str | None = 
     npm_installed_versions: dict[str, str] = {}
     python_installed_versions: dict[str, str] = {}
 
-    # 1. Parse Node dependencies from package-lock.json
+    # 1. Parse Node dependencies from package.json and package-lock.json
+    manifest_path = ROOT / "package.json"
+    if not manifest_path.exists():
+        raise ValueError(f"Required manifest missing: {safe_rel_path(manifest_path)}")
+    try:
+        mdata = json.loads(manifest_path.read_text(encoding="utf-8"))
+    except Exception as e:
+        raise ValueError(f"package.json missing valid JSON schema: {e}") from e
+
+    if not isinstance(mdata, dict):
+        raise ValueError("package.json missing valid dictionary schema")
+
+    deps_dict = mdata.get("dependencies", {})
+    dev_deps_dict = mdata.get("devDependencies", {})
+    if deps_dict and not isinstance(deps_dict, dict):
+        raise ValueError("package.json 'dependencies' field is not an object schema")
+    if dev_deps_dict and not isinstance(dev_deps_dict, dict):
+        raise ValueError("package.json 'devDependencies' field is not an object schema")
+
+    declared_node_deps = set((deps_dict or {}).keys()) | set((dev_deps_dict or {}).keys())
+
     lockfile_path = ROOT / "package-lock.json"
     raw_npm_sub_deps = []
     if not lockfile_path.exists():
         raise ValueError(f"Required dependency inventory missing: {safe_rel_path(lockfile_path)}")
     try:
         data = json.loads(lockfile_path.read_text(encoding="utf-8"))
-        packages = data.get("packages")
-        if not isinstance(packages, dict):
-            raise ValueError("package-lock.json missing valid 'packages' object schema")
-        non_root_packages = {k: v for k, v in packages.items() if k != ""}
-        if not non_root_packages:
-            raise ValueError("package-lock.json missing required non-root dependency inventory")
+    except Exception as e:
+        raise ValueError(f"Failed to parse package-lock.json: {e}") from e
 
-        manifest_path = ROOT / "package.json"
-        if manifest_path.exists():
-            try:
-                mdata = json.loads(manifest_path.read_text(encoding="utf-8"))
-                declared_node_deps = set(mdata.get("dependencies", {}).keys()) | set(mdata.get("devDependencies", {}).keys())
-                if declared_node_deps:
-                    installed_pkg_names = {
-                        v.get("name") or k.replace("node_modules/", "")
-                        for k, v in non_root_packages.items()
-                    }
-                    missing_node = declared_node_deps - installed_pkg_names
-                    if missing_node:
-                        raise ValueError(f"package-lock.json missing declared dependencies: {sorted(missing_node)}")
-            except Exception as e:
-                if "missing declared" in str(e) or "package-lock" in str(e):
-                    raise
+    if not isinstance(data, dict):
+        raise ValueError("package-lock.json missing valid dictionary schema")
 
-        for pkg_path, pkg_info in packages.items():
-            if not pkg_path:  # Root workspace
-                continue
-            pkg_name = pkg_info.get("name") or pkg_path.replace("node_modules/", "")
-            version = pkg_info.get("version", "0.1.0")
-            npm_installed_versions[pkg_name] = version
+    packages = data.get("packages")
+    if not isinstance(packages, dict):
+        raise ValueError("package-lock.json missing valid 'packages' object schema")
+    non_root_packages = {k: v for k, v in packages.items() if k != "" and isinstance(v, dict)}
+    if not non_root_packages:
+        raise ValueError("package-lock.json missing required non-root dependency inventory")
 
-            if pkg_info.get("link"):
-                # Local workspace package: no published artifact bytes; omit hashes (C2)
-                purl = f"pkg:npm/{pkg_name.replace('@', '%40')}@{version}"
-                components.append({
-                    "name": pkg_name,
-                    "version": version,
-                    "type": "library",
-                    "purl": purl,
-                    "bom-ref": purl,
-                    "supplier": {"name": "npm"},
-                    "licenses": [{"license": {"id": "MIT"}}],
-                })
-                root_deps.append(purl)
-                continue
+    if declared_node_deps:
+        installed_pkg_names = {
+            v.get("name") or k.replace("node_modules/", "")
+            for k, v in non_root_packages.items()
+        }
+        missing_node = declared_node_deps - installed_pkg_names
+        if missing_node:
+            raise ValueError(f"package-lock.json missing declared dependencies: {sorted(missing_node)}")
 
-            raw_lic = pkg_info.get("license") or "UNKNOWN"
-            spdx_lic = normalize_spdx_license(raw_lic)
+    for pkg_path, pkg_info in packages.items():
+        if not pkg_path:  # Root workspace
+            continue
+        if not isinstance(pkg_info, dict):
+            raise ValueError(f"package-lock.json entry for '{pkg_path}' is not an object schema")
+        pkg_name = pkg_info.get("name") or pkg_path.replace("node_modules/", "")
+        version = pkg_info.get("version", "0.1.0")
+        npm_installed_versions[pkg_name] = version
 
+        if pkg_info.get("link"):
+            # Local workspace package: no published artifact bytes; omit hashes (C2)
             purl = f"pkg:npm/{pkg_name.replace('@', '%40')}@{version}"
-
-            integrity = pkg_info.get("integrity", "")
-            hashes = []
-            if integrity.startswith("sha512-"):
-                hashes.append({"alg": "SHA-512", "content": integrity.replace("sha512-", "")})
-            elif integrity.startswith("sha256-"):
-                hashes.append({"alg": "SHA-256", "content": integrity.replace("sha256-", "")})
-
-            component_obj: dict = {
+            components.append({
                 "name": pkg_name,
                 "version": version,
                 "type": "library",
                 "purl": purl,
                 "bom-ref": purl,
                 "supplier": {"name": "npm"},
-                "licenses": make_license_entry(spdx_lic),
-            }
-            if hashes:
-                component_obj["hashes"] = hashes
-            components.append(component_obj)
+                "licenses": [{"license": {"id": "MIT"}}],
+            })
             root_deps.append(purl)
+            continue
 
-            sub_deps = pkg_info.get("dependencies", {})
-            if sub_deps:
-                raw_npm_sub_deps.append((purl, sub_deps))
+        raw_lic = pkg_info.get("license") or "UNKNOWN"
+        spdx_lic = normalize_spdx_license(raw_lic)
 
-    except Exception as e:
-        raise ValueError(f"Failed to parse package-lock.json: {e}") from e
+        purl = f"pkg:npm/{pkg_name.replace('@', '%40')}@{version}"
+
+        integrity = pkg_info.get("integrity", "")
+        hashes = []
+        if isinstance(integrity, str):
+            if integrity.startswith("sha512-"):
+                hashes.append({"alg": "SHA-512", "content": integrity.replace("sha512-", "")})
+            elif integrity.startswith("sha256-"):
+                hashes.append({"alg": "SHA-256", "content": integrity.replace("sha256-", "")})
+
+        component_obj: dict = {
+            "name": pkg_name,
+            "version": version,
+            "type": "library",
+            "purl": purl,
+            "bom-ref": purl,
+            "supplier": {"name": "npm"},
+            "licenses": make_license_entry(spdx_lic),
+        }
+        if hashes:
+            component_obj["hashes"] = hashes
+        components.append(component_obj)
+        root_deps.append(purl)
+
+        sub_deps = pkg_info.get("dependencies", {})
+        if sub_deps and isinstance(sub_deps, dict):
+            raw_npm_sub_deps.append((purl, sub_deps))
 
     # Resolve npm sub-dependencies graph purls using exact lockfile versions
     for purl, sub_deps in raw_npm_sub_deps:
         dep_purls = []
         for dep_k, dep_v in sub_deps.items():
+            if not isinstance(dep_v, str):
+                continue
             if dep_v.startswith("file:"):
                 continue
             if dep_k in npm_installed_versions:
@@ -741,7 +761,63 @@ def generate_sbom(image_digest: str | None = None, release_digest: str | None = 
             "dependsOn": dep_purls
         })
 
-    # 2. Parse Python dependencies from uv.lock
+    # 2. Parse Python dependencies from pyproject.toml and uv.lock
+    pyproject_path = ROOT / "pyproject.toml"
+    if not pyproject_path.exists():
+        raise ValueError(f"Required manifest missing: {safe_rel_path(pyproject_path)}")
+    try:
+        with open(pyproject_path, "rb") as f:
+            pdata = tomllib.load(f)
+    except Exception as e:
+        raise ValueError(f"pyproject.toml missing valid TOML schema: {e}") from e
+
+    if not isinstance(pdata, dict):
+        raise ValueError("pyproject.toml missing valid dictionary schema")
+
+    declared_py = set()
+    proj_section = pdata.get("project")
+    if proj_section is not None:
+        if not isinstance(proj_section, dict):
+            raise ValueError("pyproject.toml 'project' section is not a table")
+        p_deps = proj_section.get("dependencies", [])
+        if p_deps:
+            if not isinstance(p_deps, list):
+                raise ValueError("pyproject.toml 'project.dependencies' is not an array")
+            for dep in p_deps:
+                if not isinstance(dep, str):
+                    raise ValueError("pyproject.toml dependency item is not a string")
+                m = re.match(r"^([a-zA-Z0-9_\-\.]+)", dep)
+                if m:
+                    declared_py.add(m.group(1).lower().replace("_", "-"))
+
+        opt_deps = proj_section.get("optional-dependencies", {})
+        if opt_deps:
+            if not isinstance(opt_deps, dict):
+                raise ValueError("pyproject.toml 'project.optional-dependencies' is not a table")
+            for group_name, group_list in opt_deps.items():
+                if not isinstance(group_list, list):
+                    raise ValueError(f"pyproject.toml 'optional-dependencies.{group_name}' is not an array")
+                for dep in group_list:
+                    if not isinstance(dep, str):
+                        raise ValueError("pyproject.toml dependency item is not a string")
+                    m = re.match(r"^([a-zA-Z0-9_\-\.]+)", dep)
+                    if m:
+                        declared_py.add(m.group(1).lower().replace("_", "-"))
+
+    dep_groups = pdata.get("dependency-groups", {})
+    if dep_groups:
+        if not isinstance(dep_groups, dict):
+            raise ValueError("pyproject.toml 'dependency-groups' is not a table")
+        for group_name, group_list in dep_groups.items():
+            if not isinstance(group_list, list):
+                raise ValueError(f"pyproject.toml 'dependency-groups.{group_name}' is not an array")
+            for dep in group_list:
+                if not isinstance(dep, str):
+                    raise ValueError("pyproject.toml dependency item is not a string")
+                m = re.match(r"^([a-zA-Z0-9_\-\.]+)", dep)
+                if m:
+                    declared_py.add(m.group(1).lower().replace("_", "-"))
+
     uv_lock_path = ROOT / "uv.lock"
     raw_py_sub_deps = []
     if not uv_lock_path.exists():
@@ -749,75 +825,76 @@ def generate_sbom(image_digest: str | None = None, release_digest: str | None = 
     try:
         with open(uv_lock_path, "rb") as f:
             uv_data = tomllib.load(f)
-        packages = uv_data.get("package")
-        if not isinstance(packages, list):
-            raise ValueError("uv.lock missing valid 'package' list schema")
-        if not packages:
-            raise ValueError("uv.lock missing required non-root dependency inventory")
+    except Exception as e:
+        raise ValueError(f"Failed to parse uv.lock: {e}") from e
 
-        pyproject_path = ROOT / "pyproject.toml"
-        if pyproject_path.exists():
-            try:
-                with open(pyproject_path, "rb") as f:
-                    pdata = tomllib.load(f)
-                declared_py = set()
-                for dep in pdata.get("project", {}).get("dependencies", []):
-                    m = re.match(r"^([a-zA-Z0-9_\-\.]+)", dep)
-                    if m:
-                        declared_py.add(m.group(1).lower().replace("_", "-"))
-                if declared_py:
-                    installed_py = {p.get("name", "").lower().replace("_", "-") for p in packages if p.get("name")}
-                    missing_py = declared_py - installed_py
-                    if missing_py:
-                        raise ValueError(f"uv.lock missing declared dependencies: {sorted(missing_py)}")
-            except Exception as e:
-                if "missing declared" in str(e) or "uv.lock" in str(e):
-                    raise
+    if not isinstance(uv_data, dict):
+        raise ValueError("uv.lock missing valid dictionary schema")
 
-        for pkg in packages:
-            name = pkg.get("name")
-            version = pkg.get("version")
-            if name and version:
-                python_installed_versions[name] = version
+    packages = uv_data.get("package")
+    if not isinstance(packages, list):
+        raise ValueError("uv.lock missing valid 'package' list schema")
+    if not packages:
+        raise ValueError("uv.lock missing required non-root dependency inventory")
 
-        for pkg in packages:
-            name = pkg.get("name")
-            version = pkg.get("version")
-            if name and version:
-                purl = f"pkg:pypi/{name}@{version}"
-                raw_lic = resolve_python_license(name, expected_version=version)
-                spdx_lic = normalize_spdx_license(raw_lic)
+    if declared_py:
+        installed_py = set()
+        for p in packages:
+            if not isinstance(p, dict):
+                raise ValueError("uv.lock package item is not a table")
+            pname = p.get("name")
+            if pname and isinstance(pname, str):
+                installed_py.add(pname.lower().replace("_", "-"))
+        missing_py = declared_py - installed_py
+        if missing_py:
+            raise ValueError(f"uv.lock missing declared dependencies: {sorted(missing_py)}")
 
-                hashes = []
-                sdist_hash = (pkg.get("sdist") or {}).get("hash", "")
-                wheels = pkg.get("wheels") or []
-                wheel_hash = wheels[0].get("hash", "") if wheels else ""
+    for pkg in packages:
+        if not isinstance(pkg, dict):
+            raise ValueError("uv.lock package entry is not a table schema")
+        name = pkg.get("name")
+        version = pkg.get("version")
+        if name and version and isinstance(name, str) and isinstance(version, str):
+            python_installed_versions[name] = version
 
-                target_hash = sdist_hash or wheel_hash
+    for pkg in packages:
+        name = pkg.get("name")
+        version = pkg.get("version")
+        if name and version and isinstance(name, str) and isinstance(version, str):
+            purl = f"pkg:pypi/{name}@{version}"
+            raw_lic = resolve_python_license(name, expected_version=version)
+            spdx_lic = normalize_spdx_license(raw_lic)
+
+            hashes = []
+            sdist_info = pkg.get("sdist")
+            sdist_hash = (sdist_info.get("hash", "") if isinstance(sdist_info, dict) else "")
+            wheels = pkg.get("wheels")
+            wheel_hash = (wheels[0].get("hash", "") if isinstance(wheels, list) and wheels and isinstance(wheels[0], dict) else "")
+
+            target_hash = sdist_hash or wheel_hash
+            if isinstance(target_hash, str):
                 if target_hash.startswith("sha256:"):
                     hashes.append({"alg": "SHA-256", "content": target_hash.replace("sha256:", "")})
                 elif target_hash.startswith("sha512:"):
                     hashes.append({"alg": "SHA-512", "content": target_hash.replace("sha512:", "")})
 
-                py_component: dict = {
-                    "name": name,
-                    "version": version,
-                    "type": "library",
-                    "purl": purl,
-                    "bom-ref": purl,
-                    "supplier": {"name": "pypi"},
-                    "licenses": make_license_entry(spdx_lic),
-                }
-                if hashes:
-                    py_component["hashes"] = hashes
-                components.append(py_component)
-                root_deps.append(purl)
+            py_component: dict = {
+                "name": name,
+                "version": version,
+                "type": "library",
+                "purl": purl,
+                "bom-ref": purl,
+                "supplier": {"name": "pypi"},
+                "licenses": make_license_entry(spdx_lic),
+            }
+            if hashes:
+                py_component["hashes"] = hashes
+            components.append(py_component)
+            root_deps.append(purl)
 
-                pkg_deps = pkg.get("dependencies", [])
-                if pkg_deps:
-                    raw_py_sub_deps.append((purl, pkg_deps))
-    except Exception as e:
-        raise ValueError(f"Failed to parse uv.lock: {e}") from e
+            pkg_deps = pkg.get("dependencies", [])
+            if pkg_deps and isinstance(pkg_deps, list):
+                raw_py_sub_deps.append((purl, pkg_deps))
 
     # Resolve Python sub-dependencies graph purls using exact lockfile versions
     for purl, pkg_deps in raw_py_sub_deps:
