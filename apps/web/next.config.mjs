@@ -1,8 +1,17 @@
+import path from "path";
+import { fileURLToPath } from "url";
+
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
+
 /** @type {import('next').NextConfig} */
 const nextConfig = {
   reactStrictMode: true,
   // Emit a self-contained server bundle (.next/standalone) for slim Docker images.
   output: "standalone",
+  outputFileTracingRoot: path.join(__dirname, "../../"),
+  experimental: {
+    optimizePackageImports: ["@deck.gl/core", "@deck.gl/layers", "maplibre-gl"],
+  },
   // Workspace packages ship raw TS/TSX (.ts source); Next must transpile them.
   transpilePackages: [
     "@oday-plus/ui",

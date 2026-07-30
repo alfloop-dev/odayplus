@@ -565,8 +565,8 @@ export function DesignStoreOpsWorkspace({
           );
         }
       } catch (error) {
-        console.error("Error loading Store Ops issues:", error);
         if (!cancelled) {
+          console.error("Error loading Store Ops issues:", error);
           setStoreOpsLoadState(fixturesAllowed ? "fixture" : "error");
           setStoreOpsLoadError(
             error instanceof Error ? error.message : "Store Ops API request failed",
