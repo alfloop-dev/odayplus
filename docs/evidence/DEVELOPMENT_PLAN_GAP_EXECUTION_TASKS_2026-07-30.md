@@ -15,6 +15,8 @@ release_claim: no-go-until-final-gate-audit
 本 ledger 將原始完整 WBS／RTM 對照盤點轉成 supervisor／autoworker
 可執行工作。權威缺口定義以
 `DEVELOPMENT_PLAN_IMPLEMENTATION_GAP_MATRIX_2026-07-30.md` 為準。
+該矩陣已逐條登錄 84 個不重複 RTM 項目；本 ledger 的 Wave A–E
+是缺口閉環工作，不是用較少的 task 數量取代 84 項 coverage。
 
 所有 task 必須遵守以下規則：
 

@@ -61,6 +61,28 @@ Notebook」。真正尚未完成的是：
 - 第 80 章 Production Readiness Checklist。
 - 第 81 章最小可正式運作架構。
 
+本矩陣共登錄 **84 個不重複 RTM 項目**（含各 Stage Gate），逐 Stage
+數量為：Stage 0 = 12、Stage 1 = 12、Stage 2 = 10、Stage 3 = 9、
+Stage 4 = 11、Stage 5 = 12、Stage 6 = 11、Stage 7 = 7。這 84 項是
+本次「完整 WBS／RTM 對照」的 coverage baseline；P0/P1/P2 缺口與
+execution tasks 均由這些逐條判定彙整，不以模組名稱或現有測試數量
+替代原始規劃項目。
+
+可用下列唯讀檢查重算 coverage，預期 `rows=84` 且 `unique=84`：
+
+```bash
+python3 - <<'PY'
+import re
+from pathlib import Path
+
+text = Path(
+    "docs/evidence/DEVELOPMENT_PLAN_IMPLEMENTATION_GAP_MATRIX_2026-07-30.md"
+).read_text()
+ids = re.findall(r"\| (PLAN-S[0-7]-(?:\d{3}|GATE)) \|", text)
+print(f"rows={len(ids)} unique={len(set(ids))}")
+PY
+```
+
 ### 2.2 Repository 衍生治理來源
 
 原始 Drive 規劃定義產品目的與能力順序；以下較晚、已核准文件可調整
