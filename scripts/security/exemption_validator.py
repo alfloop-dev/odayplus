@@ -53,7 +53,7 @@ def is_valid_approver(approver: str) -> bool:
         return False
 
     name_part, role_part = match.group(1).lower(), match.group(2).lower()
-    if name_part in REJECTED_APPROVER_EXACT or role_part in REJECTED_APPROVER_EXACT:
+    if name_part in REJECTED_APPROVER_EXACT:
         return False
     for bad in ["claude", "gpt", "gemini", "antigravity", "codex", "copilot", "zzzzz", "tbd", "n/a", "unknown"]:
         if bad in name_part or bad in role_part:

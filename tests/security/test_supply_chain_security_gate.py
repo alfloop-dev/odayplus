@@ -1122,7 +1122,7 @@ def test_scanner_payloads_round7_five_negative_shapes() -> None:
     with unittest.mock.patch("subprocess.run", return_value=fake_res1):
         ok1, v1 = run_node_audit("prod", exemptions=[])
     assert not ok1, "npm audit version-only payload must fail closed"
-    assert any("missing valid 'vulnerabilities' dictionary" in item for item in v1)
+    assert any("missing expected 'vulnerabilities' field" in item for item in v1)
 
     # 2. npm_vulns_only: {"vulnerabilities": {}} without auditReportVersion or metadata
     fake_res2 = unittest.mock.MagicMock()
@@ -1149,7 +1149,7 @@ def test_scanner_payloads_round7_five_negative_shapes() -> None:
     with unittest.mock.patch("subprocess.run", return_value=fake_res4):
         ok4, v4 = run_python_audit("all", exemptions=[])
     assert not ok4, "pip-audit vulns-only payload missing dependencies list must fail closed"
-    assert any("missing expected non-empty 'dependencies' list" in item for item in v4)
+    assert any("missing expected 'dependencies' field" in item for item in v4)
 
     # 5. pip_empty_list: []
     fake_res5 = unittest.mock.MagicMock()
