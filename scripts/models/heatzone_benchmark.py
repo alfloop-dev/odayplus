@@ -132,6 +132,7 @@ def evaluate_heatzone_benchmark(
     baseline_population_ndcg: float = 0.50,
     baseline_survey_rate: float = 0.30,
     benchmark_evidence: dict[str, Any] | None = None,
+    authoritative_evidence_path: Path | None = None,
 ) -> dict[str, Any]:
     """Evaluate HeatZone label inventory and benchmark performance criteria."""
     if (
@@ -182,7 +183,9 @@ def evaluate_heatzone_benchmark(
         }
     else:
         # Evaluate benchmark when sufficient real labels exist
-        evidence_valid = _validate_benchmark_evidence(benchmark_evidence)
+        evidence_valid = _validate_benchmark_evidence(
+            benchmark_evidence, authoritative_path=authoritative_evidence_path
+        )
         ndcg_pass = (
             population_ranking_ndcg is not None
             and population_ranking_ndcg > baseline_population_ndcg
@@ -198,8 +201,8 @@ def evaluate_heatzone_benchmark(
             unavailable_reason = "BENCHMARK_EVIDENCE_NOT_RESOLVED"
             reason = (
                 f"Eligible labels ({eligible_labels}) >= {MINIMUM_REQUIRED_LABELS}, "
-                "but immutable measured benchmark evidence (dataset snapshot, model artifact, "
-                "evaluation split, baseline hash) is unresolved or missing."
+                "but immutable measured benchmark evidence (64-hex snapshot/model/baseline hashes, "
+                "evaluation split) is unresolved against authoritative evidence."
             )
             benchmark_results = {
                 "evaluated": False,
@@ -218,7 +221,7 @@ def evaluate_heatzone_benchmark(
             reason = (
                 f"Eligible labels ({eligible_labels}) >= {MINIMUM_REQUIRED_LABELS}. "
                 "Outperforms population ranking baseline and improves Top-K site survey rate "
-                "with immutable benchmark evidence."
+                "with resolved immutable benchmark evidence."
             )
             benchmark_results = {
                 "evaluated": True,
@@ -272,6 +275,7 @@ def generate_gate1_receipt(
     population_ranking_ndcg: float | None = None,
     top_k_survey_rate: float | None = None,
     benchmark_evidence: dict[str, Any] | None = None,
+    authoritative_evidence_path: Path | None = None,
 ) -> dict[str, Any]:
     """Build canonical Gate 1 benchmark receipt structure bound to inventory lineage."""
     if inventory_receipt is None:
@@ -318,6 +322,7 @@ def generate_gate1_receipt(
         population_ranking_ndcg=population_ranking_ndcg,
         top_k_survey_rate=top_k_survey_rate,
         benchmark_evidence=benchmark_evidence,
+        authoritative_evidence_path=authoritative_evidence_path,
     )
 
     receipt: dict[str, Any] = {
