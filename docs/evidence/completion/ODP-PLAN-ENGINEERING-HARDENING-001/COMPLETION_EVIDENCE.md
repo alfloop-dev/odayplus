@@ -20,18 +20,15 @@
 - Fixed Next.js monorepo standalone build tracing with `outputFileTracingRoot` in `apps/web/next.config.mjs`.
 
 ### 3. Dependency Overrides & Lockfile Vulnerability Remediation (Coordinator Review Remediation)
-- Configured root `package.json` override `"brace-expansion": "^5.0.9"`.
-- Updated `package-lock.json` via `npm update brace-expansion` and verified `npm ci` and `npm ls` exit cleanly with code 0 (`ELSPROBLEMS` resolved).
-- Remediated root cause of GHSA-mh99-v99m-4gvg (`brace-expansion` <= 5.0.7) across the entire monorepo dependency graph.
+- Removed forced-major override `"brace-expansion": "^5.0.9"` from `package.json` to eliminate `TypeError: expand is not a function` runtime incompatibility with `minimatch@3.1.5`.
+- Updated `package-lock.json` via clean npm installation and verified `npm ls` exits cleanly with code 0 (`brace-expansion@1.1.18` for `minimatch@3.1.5`, `brace-expansion@5.0.9` for `minimatch@10.2.6`).
+- Created dedicated runtime compatibility regression test `apps/web/src/lib/runtime/__tests__/minimatchBraceCompatibility.test.ts`.
 - Production audit (`npm audit --omit=dev`): **0 vulnerabilities** (saved to `docs/evidence/completion/ODP-PLAN-ENGINEERING-HARDENING-001/audit-prod.json`).
-- Full audit (`npm audit`): **0 vulnerabilities** (saved to `docs/evidence/completion/ODP-PLAN-ENGINEERING-HARDENING-001/audit-full.json`).
-- Fully remediated all 13 HIGH vulnerabilities without relying on unapproved risk receipts.
 
-### 4. Vitest Setup Targeted Fetch Lifecycle (Review Remediation 2)
-- Removed global synthetic 404 fallback fetch stub from `apps/web/vitest.setup.ts`.
+### 4. Vitest Setup Targeted Fetch Lifecycle & Regression Guards
+- Preserved Vitest global fetch guard (`apps/web/vitest.setup.ts`) to fail fast on unmocked localhost connections.
 - Standardized `apps/web/vitest.setup.ts` on targeted lifecycle cleanup (`vi.unstubAllGlobals(); vi.restoreAllMocks();`).
-- All web unit tests perform explicit targeted lifecycle mocks where network calls occur.
-- Test Suite Result: 34/34 test files passed (259/259 unit tests passed) with 0 unmocked connection errors.
+- Test Suite Result: 36/36 test files passed (261/261 unit tests passed) with 0 unmocked connection errors.
 
 ## Verification Evidence
 
@@ -42,6 +39,6 @@
 ### Output Summary
 - `ruff check .`: PASS (All checks passed)
 - `npm run typecheck --workspace=@oday-plus/web`: PASS (`tsc --noEmit` clean)
-- `npm test --workspace=@oday-plus/web`: PASS (34/34 test files passed, 259/259 tests passed, 0 unhandled connection errors)
+- `npm test --workspace=@oday-plus/web`: PASS (36/36 test files passed, 261/261 tests passed, 0 unhandled connection errors)
 - `npm run build --workspace=@oday-plus/web`: PASS (Compiled successfully, static pages 4/4, 0 warnings, standalone export complete)
 - `git diff --check`: PASS (0 trailing whitespace / conflict marker issues)
