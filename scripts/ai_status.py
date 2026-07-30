@@ -9,6 +9,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import time
 from copy import deepcopy
 from datetime import UTC, datetime
 from pathlib import Path
@@ -1577,6 +1578,92 @@ def pull_request_status_for_branch(repository_root: Path, branch: str) -> dict[s
         ],
         cwd=repository_root,
     )
+
+
+_CI_STATUS_CACHE: dict[str, tuple[float, tuple[str | None, str]]] = {}
+_TASK_SHA_CACHE: dict[str, tuple[float, str | None]] = {}
+
+
+def clear_ai_status_caches() -> None:
+    _CI_STATUS_CACHE.clear()
+    _TASK_SHA_CACHE.clear()
+
+
+def task_pr_ci_status(
+    task_id: str,
+    repository_root: Path | None = None,
+    max_age_seconds: float = 10.0,
+) -> tuple[str | None, str]:
+    now = time.time()
+    cache_key = f"{task_id}:{repository_root}"
+    if cache_key in _CI_STATUS_CACHE:
+        ts, val = _CI_STATUS_CACHE[cache_key]
+        if now - ts < max_age_seconds:
+            return val
+
+    root = repository_root or ROOT
+    for branch_name in [f"task/{task_id}", f"task-{task_id}"]:
+        res = run_gh_json_command(
+            ["pr", "view", branch_name, "--json", "state,statusCheckRollup"],
+            cwd=root,
+        )
+        if res and isinstance(res, dict):
+            pr_state = res.get("state")
+            rollup = res.get("statusCheckRollup") or []
+            if not rollup:
+                val = (pr_state, "none")
+                _CI_STATUS_CACHE[cache_key] = (now, val)
+                return val
+
+            has_pending = False
+            has_failure = False
+            has_success = False
+            for check in rollup:
+                if isinstance(check, dict):
+                    conclusion = str(check.get("conclusion") or "").upper()
+                    state_val = str(check.get("state") or "").upper()
+                    status_val = str(check.get("status") or "").upper()
+
+                    if conclusion:
+                        if conclusion in {"FAILURE", "CANCELLED", "TIMED_OUT", "ACTION_REQUIRED"}:
+                            has_failure = True
+                        elif conclusion in {"PENDING", "IN_PROGRESS"}:
+                            has_pending = True
+                        elif conclusion in {"SUCCESS", "NEUTRAL", "SKIPPED"}:
+                            has_success = True
+                    elif state_val:
+                        if state_val in {"FAILURE", "ERROR"}:
+                            has_failure = True
+                        elif state_val in {"PENDING", "QUEUED", "IN_PROGRESS", "WAITING", "EXPECTED"}:
+                            has_pending = True
+                        elif state_val in {"SUCCESS"}:
+                            has_success = True
+                    elif status_val:
+                        if status_val in {"PENDING", "QUEUED", "IN_PROGRESS", "WAITING", "EXPECTED", "REQUESTED"}:
+                            has_pending = True
+                        elif status_val in {"FAILURE", "ERROR"}:
+                            has_failure = True
+                        elif status_val in {"COMPLETED", "SUCCESS"}:
+                            has_success = True
+
+            if has_failure:
+                ci_status = "failure"
+            elif has_pending:
+                ci_status = "pending"
+            elif has_success:
+                ci_status = "success"
+            else:
+                ci_status = "unknown"
+
+            val = (pr_state, ci_status)
+            _CI_STATUS_CACHE[cache_key] = (now, val)
+            return val
+
+    val = (None, "unknown")
+    _CI_STATUS_CACHE[cache_key] = (now, val)
+    return val
+
+
 
 
 def format_pull_request_status(pr: dict[str, Any] | None) -> str:
@@ -4115,6 +4202,8 @@ def command_reopen(state: dict[str, Any], args: list[str]) -> None:
     task["last_update"] = timestamp
     task["next"] = message
     task.pop("waiting_for", None)
+    task.pop("approved_head", None)
+    task["last_reopened_by"] = actor
     mark_blockers_resolved(state, task_id)
     mark_handoffs_done(state, task_id)
     if actor == reviewer and owner and owner != reviewer:
@@ -4150,6 +4239,7 @@ def command_handoff(state: dict[str, Any], args: list[str]) -> None:
     task["status"] = "review"
     task["last_update"] = timestamp
     task["next"] = message
+    task.pop("approved_head", None)
     mark_handoffs_done_for_actor(state, task_id, actor)
     mark_blockers_resolved(state, task_id)
     state.setdefault("handoffs", []).append(
@@ -4163,6 +4253,41 @@ def command_handoff(state: dict[str, Any], args: list[str]) -> None:
         }
     )
     append_log({"ts": timestamp, "agent": actor, "type": "handoff", "task_id": task_id, "message": f"Handoff to {to_agent}: {message}"})
+
+
+def command_re_review(state: dict[str, Any], args: list[str]) -> None:
+    """re_review <task-id> <message>"""
+    if len(args) < 2:
+        raise SystemExit("Usage: re_review <task-id> <message>")
+    task_id, message = args[0], args[1]
+    actor = current_actor_validated()
+    task = get_task(state, task_id)
+    if task is None:
+        raise SystemExit(f"Unknown task: {task_id}")
+    owner = canonical_agent_name(task.get("owner"))
+    reviewer = canonical_agent_name(task.get("reviewer"))
+    if actor not in {owner, reviewer}:
+        raise SystemExit(f"Only the owner ({owner}) or reviewer ({reviewer}) can request re-review for {task_id}")
+    timestamp = iso_now()
+    task["status"] = "review"
+    task["last_update"] = timestamp
+    task["next"] = message
+    task.pop("approved_head", None)
+    task.pop("waiting_for", None)
+    mark_blockers_resolved(state, task_id)
+    mark_handoffs_done(state, task_id)
+    if owner and reviewer and owner != reviewer:
+        state.setdefault("handoffs", []).append(
+            {
+                "task_id": task_id,
+                "from": owner,
+                "to": reviewer,
+                "message": message,
+                "status": "pending",
+                "created_at": timestamp,
+            }
+        )
+    append_log({"ts": timestamp, "agent": actor, "type": "re_review", "task_id": task_id, "message": message})
 
 
 def command_blocker(state: dict[str, Any], args: list[str]) -> None:
@@ -4422,10 +4547,64 @@ def command_restore_approved(state: dict[str, Any], args: list[str]) -> None:
             "restore_approved requires review_notes_zh to be present as evidence of a prior approval. "
             "Use the normal review lifecycle if the task has not been reviewed yet."
         )
+
+    # B21: this command is the second producer of `review_approved`, so it has to
+    # re-establish the freeze or it manufactures exactly the un-frozen state the
+    # freeze exists to prevent. It must NOT resolve the current head itself --
+    # this is an owner-invokable command, and resolving here would let the owner
+    # self-freeze a head no reviewer ever saw. It may only re-freeze the durable
+    # `last_approved_head` written by `command_approve`, and only while the branch
+    # still sits on it.
+    last_approved_head = task.get("last_approved_head")
+    if not last_approved_head:
+        raise SystemExit(
+            f"Cannot restore {task_id}: no durable reviewer-approved head is recorded, so the "
+            "post-review freeze cannot be re-established and restoring would finalize at an "
+            f"unreviewed commit. Run `re_review {task_id} <reason>` so the reviewer re-stamps "
+            "the head. No restore was recorded."
+        )
+    reviewer = canonical_agent_name(task.get("reviewer"))
+    last_reopened_by = canonical_agent_name(task.get("last_reopened_by"))
+    pending_handoffs = state.get("handoffs", [])
+    has_pending_reviewer_handoff = any(
+        str(h.get("task_id") or "").upper() == str(task_id).upper()
+        and h.get("status") == "pending"
+        and canonical_agent_name(h.get("from")) == reviewer
+        for h in pending_handoffs
+    )
+    if has_pending_reviewer_handoff or (last_reopened_by and last_reopened_by == reviewer):
+        raise SystemExit(
+            f"Cannot restore {task_id}: the task was reopened by the reviewer ({reviewer}). "
+            "Reviewer rejections cannot be restored by the owner; run `re_review` so the "
+            "reviewer can re-examine the work. No restore was recorded."
+        )
+    try:
+        current_sha = resolve_task_sha(task_id)
+    except Exception as exc:
+        raise SystemExit(
+            f"Cannot restore {task_id}: unable to resolve the current branch HEAD ({exc}). "
+            "Integrity gate failed closed; no restore was recorded."
+        ) from exc
+    if not current_sha:
+        raise SystemExit(
+            f"Cannot restore {task_id}: the branch HEAD could not be resolved, so it cannot be "
+            f"checked against the reviewer-approved head ({last_approved_head[:8]}). "
+            "No restore was recorded."
+        )
+    if current_sha != last_approved_head:
+        raise SystemExit(
+            f"Cannot restore {task_id}: the branch has moved to {current_sha[:8]}, past the "
+            f"reviewer-approved head ({last_approved_head[:8]}). The downgrade was not spurious. "
+            f"Run `re_review {task_id} <reason>` so the reviewer stamps the new head. "
+            "No restore was recorded."
+        )
+
     timestamp = iso_now()
     task["status"] = "review_approved"
     task["last_update"] = timestamp
     task["next"] = message
+    task.pop("last_reopened_by", None)
+    task["approved_head"] = last_approved_head
     append_log(
         {
             "ts": timestamp,
@@ -4433,6 +4612,94 @@ def command_restore_approved(state: dict[str, Any], args: list[str]) -> None:
             "type": "restore_approved",
             "task_id": task_id,
             "message": message,
+            "approved_head": last_approved_head,
+        }
+    )
+
+
+def command_restore_approved_head(state: dict[str, Any], args: list[str]) -> None:
+    """restore_approved_head <task-id> <sha> <message>
+
+    B22: `review_approved` with no `approved_head` fails closed everywhere -- in
+    `command_done` and in both supervisor dispatch gates. Pre-freeze tasks and
+    tasks approved by an older build sit in exactly that shape, so they need a way
+    out; making it an automatic bypass is what the freeze exists to stop. This is
+    that way out as an explicit, audited, reviewer-signed attestation of one exact
+    commit: the reviewer names the sha, it must match the immutable PR head, and
+    the restoration is written to the activity log.
+    """
+    if len(args) < 3:
+        raise SystemExit("Usage: restore_approved_head <task-id> <sha> <message>")
+    task_id, requested_sha, message = args[0], args[1].strip(), args[2]
+    actor = current_actor_validated()
+    task = get_task(state, task_id)
+    if task is None:
+        raise SystemExit(f"Unknown task: {task_id}")
+    owner = canonical_agent_name(task.get("owner"))
+    reviewer = canonical_agent_name(task.get("reviewer"))
+    if owner and reviewer and owner == reviewer:
+        raise SystemExit(
+            f"Owner ({owner}) and reviewer ({reviewer}) must be separate identities for task {task_id}"
+        )
+    if reviewer != actor:
+        raise SystemExit(
+            f"Only the reviewer ({reviewer}) can attest the approved head for {task_id}; "
+            "the owner cannot restore the freeze on their own work."
+        )
+    if task.get("status") != "review_approved":
+        raise SystemExit(
+            f"restore_approved_head is only valid when status is review_approved "
+            f"(current: {task.get('status')}). Use `approve` for the normal review lifecycle."
+        )
+    existing_head = task.get("approved_head")
+    if existing_head:
+        raise SystemExit(
+            f"Cannot restore the approved head for {task_id}: it already carries one "
+            f"({existing_head[:8]}). This command only repairs the missing-head shape."
+        )
+    if not re.fullmatch(r"[0-9a-f]{40}", requested_sha):
+        raise SystemExit(
+            f"Cannot restore the approved head for {task_id}: {requested_sha!r} is not a full "
+            "40-character commit sha. Name the exact reviewed commit, not an abbreviation."
+        )
+    try:
+        current_sha = resolve_task_sha(task_id)
+    except Exception as exc:
+        raise SystemExit(
+            f"Cannot restore the approved head for {task_id}: unable to resolve the branch HEAD "
+            f"({exc}). Integrity gate failed closed; nothing was recorded."
+        ) from exc
+    if not current_sha:
+        raise SystemExit(
+            f"Cannot restore the approved head for {task_id}: the branch HEAD could not be "
+            "resolved, so the attested sha cannot be corroborated. Nothing was recorded."
+        )
+    _head_ref_oid, merge_commit = task_pr_head_and_merge_commit(task_id)
+    if merge_commit and requested_sha == merge_commit:
+        raise SystemExit(
+            f"Cannot restore the approved head for {task_id}: {requested_sha[:8]} is the PR merge "
+            "commit, not the reviewed branch head. Attest the head the review actually read."
+        )
+    if requested_sha != current_sha:
+        raise SystemExit(
+            f"Cannot restore the approved head for {task_id}: the attested sha ({requested_sha[:8]}) "
+            f"does not match the task branch head ({current_sha[:8]}). Only the exact current head "
+            f"can be restored; run `re_review {task_id} <reason>` if the branch has moved."
+        )
+
+    timestamp = iso_now()
+    task["approved_head"] = requested_sha
+    task["last_approved_head"] = requested_sha
+    task["last_update"] = timestamp
+    task["next"] = message
+    append_log(
+        {
+            "ts": timestamp,
+            "agent": actor,
+            "type": "approved_head_restored",
+            "task_id": task_id,
+            "message": message,
+            "approved_head": requested_sha,
         }
     )
 
@@ -4449,8 +4716,55 @@ def command_done(state: dict[str, Any], args: list[str]) -> None:
         raise SystemExit(f"Only the owner ({task.get('owner')}) can finalize {task_id} to done")
     if task.get("status") != "review_approved":
         raise SystemExit(f"{task_id} must be review_approved before it can move to done")
+    # B22: the freeze gate runs here, before collect_done_delivery_metadata, and
+    # every branch of it raises. The delivery gates further down are real
+    # defence-in-depth but they are not a backstop for this gate: they check
+    # merge/commit hygiene, not "is this the commit a reviewer read".
+    approved_head = task.get("approved_head")
+    if not approved_head:
+        raise SystemExit(
+            f"Cannot finalize task {task_id}: it is review_approved but carries no "
+            "reviewer-approved head, so there is nothing to verify the branch against. "
+            "This is the pre-freeze (or restored) shape and it fails closed. "
+            f"The reviewer must run `restore_approved_head {task_id} <sha> <reason>` to "
+            f"attest the exact reviewed commit, or `re_review {task_id} <reason>` for a "
+            "fresh review. No finalization was recorded."
+        )
+    current_sha = None
+    try:
+        current_sha = resolve_task_sha(task_id)
+    except Exception as exc:
+        raise SystemExit(
+            f"Cannot finalize task {task_id}: unable to resolve current branch HEAD ({exc}). "
+            "Integrity gate failed closed."
+        ) from exc
+    if not current_sha or current_sha != approved_head:
+        display_sha = current_sha[:8] if current_sha else "unresolved"
+        raise SystemExit(
+            f"Cannot finalize task {task_id}: current branch HEAD ({display_sha}) "
+            f"differs from reviewer-approved head ({approved_head[:8]}). "
+            "Strict update-branch merge requires re-review."
+        )
+
+    # B22-3: record the two commits as distinct facts. `resolve_task_sha` prefers
+    # the PR headRefOid, so a merged PR is verified against the immutable reviewed
+    # head above; the merge commit GitHub created is evidence, never an anchor.
+    head_ref_oid, merge_commit = task_pr_head_and_merge_commit(task_id)
+    if merge_commit and current_sha == merge_commit:
+        raise SystemExit(
+            f"Cannot finalize task {task_id}: the resolved head ({current_sha[:8]}) is the "
+            "PR merge commit, not the reviewed branch head. The merge commit was never "
+            "reviewed and cannot satisfy the approved-head freeze."
+        )
+
     timestamp = iso_now()
     delivery = collect_done_delivery_metadata(task, actor)
+    delivery["approved_head"] = approved_head
+    delivery["verified_head"] = current_sha
+    if head_ref_oid:
+        delivery["pr_head_ref_oid"] = head_ref_oid
+    if merge_commit:
+        delivery["pr_merge_commit"] = merge_commit
     delivery["recorded_at"] = timestamp
     task["status"] = "done"
     task["terminal_outcome"] = "completed"
@@ -4517,16 +4831,61 @@ def command_approve(state: dict[str, Any], args: list[str]) -> None:
     task = get_task(state, task_id)
     if task is None:
         raise SystemExit(f"Unknown task: {task_id}")
+    owner = canonical_agent_name(task.get("owner"))
+    reviewer = canonical_agent_name(task.get("reviewer"))
+    if owner and reviewer and owner == reviewer:
+        raise SystemExit(f"Owner ({owner}) and reviewer ({reviewer}) must be separate identities for task {task_id}")
     if task.get("reviewer") != actor:
         raise SystemExit(f"Only the reviewer ({task.get('reviewer')}) can approve {task_id}")
     if task.get("status") != "review":
         raise SystemExit(f"{task_id} must be in review before it can move to review_approved")
+
+    # B20: the approved head is the whole basis of the post-review freeze.
+    # command_done and both supervisor dispatch gates are guarded by
+    # `if approved_head:`, so approving without recording one silently disables
+    # the freeze for that task instead of failing closed. Resolve it *before*
+    # any mutation, so an unresolvable head aborts the approval outright rather
+    # than leaving the task review_approved-but-unfrozen.
+    try:
+        approved_sha = resolve_task_sha(task_id)
+    except Exception as exc:
+        raise SystemExit(
+            f"Cannot approve task {task_id}: unable to resolve the branch HEAD to freeze ({exc}). "
+            "Integrity gate failed closed; no approval was recorded."
+        ) from exc
+    if not approved_sha:
+        raise SystemExit(
+            f"Cannot approve task {task_id}: branch HEAD could not be resolved, so the "
+            "reviewer-approved commit cannot be frozen. Push the task branch (or open its PR) "
+            "and approve again. No approval was recorded."
+        )
+
+    # B20: approved_head is immutable for the lifetime of one approval. Every
+    # transition back to `review` (handoff, reopen, re_review, and the
+    # supervisor's head-drift demotion) pops it, so a task sitting in `review`
+    # while still carrying an approved_head is inconsistent state. Refuse to
+    # overwrite the earlier freeze silently.
+    existing_head = task.get("approved_head")
+    if existing_head and existing_head != approved_sha:
+        raise SystemExit(
+            f"Cannot approve task {task_id}: it still carries an uncleared approved head "
+            f"({existing_head[:8]}) while the branch is now at {approved_sha[:8]}. "
+            f"Run `re_review {task_id} <reason>` to clear the stale freeze first. "
+            "No approval was recorded."
+        )
 
     timestamp = iso_now()
     task["status"] = "review_approved"
     task["last_update"] = timestamp
     task["next"] = message
     task.pop("waiting_for", None)
+    task.pop("last_reopened_by", None)
+    task["approved_head"] = approved_sha
+    # B21: `approved_head` is the *live* freeze and every return-to-review pops it.
+    # `last_approved_head` is the durable record of the last commit a reviewer
+    # actually stamped: it is never popped, so `restore_approved` can re-freeze a
+    # spurious supervisor downgrade without the owner getting to name the head.
+    task["last_approved_head"] = approved_sha
 
     review_notes = parse_delimited_env("REVIEW_NOTES_ZH")
     if review_notes:
@@ -4673,8 +5032,14 @@ def command_wave(state: dict[str, Any], args: list[str]) -> None:
         raise SystemExit(f"Unknown wave subcommand: {subcommand!r}. Use: open <wave-id>, close, freeze")
 
 
-def resolve_task_sha(task_id: str) -> str | None:
-    # 1. Try gh pr view for task/TASK-ID
+def resolve_task_sha(task_id: str, max_age_seconds: float = 5.0) -> str | None:
+    now = time.time()
+    if task_id in _TASK_SHA_CACHE:
+        ts, val = _TASK_SHA_CACHE[task_id]
+        if now - ts < max_age_seconds:
+            return val
+
+    # 1. Fallback/Primary: gh pr view for task/TASK-ID (checks remote PR head SHA)
     for branch_name in [f"task/{task_id}", f"task-{task_id}"]:
         result = subprocess.run(
             [get_gh_executable(), "pr", "view", branch_name, "--json", "headRefOid"],
@@ -4688,6 +5053,7 @@ def resolve_task_sha(task_id: str) -> str | None:
                 data = json.loads(result.stdout)
                 sha = data.get("headRefOid")
                 if sha:
+                    _TASK_SHA_CACHE[task_id] = (now, sha)
                     return sha
             except Exception:
                 pass
@@ -4702,21 +5068,11 @@ def resolve_task_sha(task_id: str) -> str | None:
             cwd=ROOT,
         )
         if result.returncode == 0 and result.stdout.strip():
-            return result.stdout.strip()
+            sha = result.stdout.strip()
+            _TASK_SHA_CACHE[task_id] = (now, sha)
+            return sha
 
-    # 3. Try git rev-parse for remote branches
-    for branch_name in [f"origin/task/{task_id}", f"origin/task-{task_id}"]:
-        result = subprocess.run(
-            ["git", "rev-parse", "--verify", branch_name],
-            capture_output=True,
-            text=True,
-            check=False,
-            cwd=ROOT,
-        )
-        if result.returncode == 0 and result.stdout.strip():
-            return result.stdout.strip()
-
-    # 4. Fallback to current HEAD if current branch matches task_id
+    # 3. Try git rev-parse for current HEAD if current branch matches task_id
     current_branch_result = subprocess.run(
         ["git", "branch", "--show-current"],
         capture_output=True,
@@ -4735,8 +5091,61 @@ def resolve_task_sha(task_id: str) -> str | None:
                 cwd=ROOT,
             )
             if result.returncode == 0 and result.stdout.strip():
-                return result.stdout.strip()
+                sha = result.stdout.strip()
+                _TASK_SHA_CACHE[task_id] = (now, sha)
+                return sha
+
+    # 4. Try git rev-parse for remote branches
+    for branch_name in [f"origin/task/{task_id}", f"origin/task-{task_id}"]:
+        result = subprocess.run(
+            ["git", "rev-parse", "--verify", branch_name],
+            capture_output=True,
+            text=True,
+            check=False,
+            cwd=ROOT,
+        )
+        if result.returncode == 0 and result.stdout.strip():
+            sha = result.stdout.strip()
+            _TASK_SHA_CACHE[task_id] = (now, sha)
+            return sha
+
+    _TASK_SHA_CACHE[task_id] = (now, None)
     return None
+
+
+def task_pr_head_and_merge_commit(task_id: str) -> tuple[str | None, str | None]:
+    """Return ``(headRefOid, mergeCommit_oid)`` for the task PR, or ``(None, None)``.
+
+    B22-3: these are two different commits and the distinction has to be explicit.
+    ``headRefOid`` is the branch tip the reviewer stamped; it is immutable once the
+    PR merges, which is what makes it a usable freeze anchor after merge.
+    ``mergeCommit`` is a *new* commit GitHub creates on the target branch, and it
+    has never been reviewed. Finalizing against it would let an unreviewed commit
+    close the task, so it is recorded as delivery evidence only -- never compared
+    against ``approved_head``.
+    """
+    for branch_name in [f"task/{task_id}", f"task-{task_id}"]:
+        result = subprocess.run(
+            [get_gh_executable(), "pr", "view", branch_name, "--json", "headRefOid,mergeCommit"],
+            capture_output=True,
+            text=True,
+            check=False,
+            cwd=ROOT,
+        )
+        if result.returncode != 0:
+            continue
+        try:
+            data = json.loads(result.stdout)
+        except Exception:
+            continue
+        if not isinstance(data, dict):
+            continue
+        head_ref_oid = data.get("headRefOid") or None
+        merge_commit = data.get("mergeCommit") or {}
+        merge_oid = merge_commit.get("oid") if isinstance(merge_commit, dict) else None
+        if head_ref_oid or merge_oid:
+            return head_ref_oid, (merge_oid or None)
+    return None, None
 
 
 def get_repository_slug_safe() -> str:
@@ -4756,8 +5165,8 @@ def get_repository_slug_safe() -> str:
     try:
         remote_url = subprocess.check_output(
             ["git", "remote", "get-url", "origin"],
-            stderr=subprocess.DEVNULL,
             text=True,
+            stderr=subprocess.DEVNULL,
             cwd=ROOT,
         ).strip()
         match = re.search(r"github\.com[:/]([^/]+/[^/.]+)(?:\.git)?", remote_url)
@@ -4765,38 +5174,45 @@ def get_repository_slug_safe() -> str:
             return match.group(1)
     except Exception:
         pass
-    return "alfloop-dev/odayplus"  # Fallback
+    return "alfloop-dev/odayplus"
 
 
 def emit_task_review_status_check(task: dict[str, Any], state_status: str) -> None:
-    task_id = task.get("id")
-    if not task_id:
-        return
-
+    task_id = str(task.get("id") or "")
     sha = resolve_task_sha(task_id)
     if not sha:
-        print(f"Warning: Could not resolve git SHA for task {task_id}. Skipping status emission.", file=sys.stderr)
         return
 
-    repo = get_repository_slug_safe()
+    repo_slug = get_repository_slug_safe()
     context = "task-review-gate"
 
     if state_status == "review_approved":
-        state = "success"
-        description = f"Approved by assigned reviewer {task.get('reviewer', 'Codex')}"
+        approved_head = task.get("approved_head")
+        if not approved_head:
+            # B22: no frozen head means nothing corroborates that this commit is
+            # the reviewed one, so the gate cannot claim success for it.
+            state = "pending"
+            description = "review_approved but no reviewer-approved head is recorded; head restoration or re-review required"
+        elif sha != approved_head:
+            state = "pending"
+            description = f"Branch HEAD ({sha[:8]}) differs from approved head ({approved_head[:8]}); re-review required"
+        else:
+            state = "success"
+            description = f"Approved by assigned reviewer {task.get('reviewer', 'Codex')}"
     elif state_status == "review":
         state = "pending"
         description = f"Pending review by {task.get('reviewer', 'Codex')}"
+    elif state_status == "done":
+        state = "success"
+        description = "Task completed"
     else:
         state = "failure"
         description = f"Review rejected or reopened. Task status is {state_status}"
 
-    print(f"Emitting GitHub status check '{context}'={state} on {repo}@{sha}...")
-
     cmd = [
         get_gh_executable(), "api",
         "-X", "POST",
-        f"repos/{repo}/statuses/{sha}",
+        f"repos/{repo_slug}/statuses/{sha}",
         "-F", f"state={state}",
         "-F", f"context={context}",
         "-F", f"description={description}"
@@ -4809,23 +5225,46 @@ def emit_task_review_status_check(task: dict[str, Any], state_status: str) -> No
         else:
             err_msg = f"Failed to emit status check (code {result.returncode}): {result.stderr.strip()}"
             print(err_msg, file=sys.stderr)
-            if "gh auth login" in result.stderr or "authentication token" in result.stderr or os.environ.get("ALLOW_EMISSION_FAILURE") == "1":
-                print("Warning: Skipping status check emission due to unauthenticated environment.", file=sys.stderr)
+            if (
+                "gh auth login" in result.stderr
+                or "authentication token" in result.stderr
+                or "No commit found for SHA" in result.stderr
+                or "422" in result.stderr
+                or os.environ.get("ALLOW_EMISSION_FAILURE") == "1"
+            ):
+                print("Warning: Skipping status check emission due to unauthenticated or unpushed environment.", file=sys.stderr)
                 return
-            raise RuntimeError(err_msg)
+            print("Warning: Skipping status check emission due to emission error.", file=sys.stderr)
+            return
     except Exception as exc:
         err_msg = f"Error during status emission: {exc}"
         print(err_msg, file=sys.stderr)
-        if not isinstance(exc, RuntimeError):
-            raise RuntimeError(err_msg) from exc
-        raise
+        return
 
 
 def emit_status_checks_for_changed_tasks(state_before: dict[str, Any], state_after: dict[str, Any], command: str, args: list[str]) -> None:
     before_statuses = {t["id"]: t for t in state_before.get("tasks", []) if "id" in t}
     after_tasks = {t["id"]: t for t in state_after.get("tasks", []) if "id" in t}
 
-    target_task_id = args[0] if (args and command in {"approve", "reopen", "handoff", "progress", "start"}) else None
+    target_task_id = (
+        args[0]
+        if (
+            args
+            and command
+            in {
+                "approve",
+                "reopen",
+                "handoff",
+                "progress",
+                "start",
+                "re_review",
+                "re-review",
+                "restore_approved",
+                "restore_approved_head",
+            }
+        )
+        else None
+    )
 
     for task_id, after_task in after_tasks.items():
         before_task = before_statuses.get(task_id)
@@ -4848,12 +5287,15 @@ MUTATING_COMMANDS = {
     "progress": command_progress,
     "note": command_note,
     "reopen": command_reopen,
+    "re_review": command_re_review,
+    "re-review": command_re_review,
     "handoff": command_handoff,
     "blocker": command_blocker,
     "retarget_blocker": command_retarget_blocker,
     "prune_agents": command_prune_agents,
     "done": command_done,
     "restore_approved": command_restore_approved,
+    "restore_approved_head": command_restore_approved_head,
     "supersede": command_supersede,
     "approve": command_approve,
     "archive_migrate": command_archive_migrate,
