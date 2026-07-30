@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from functools import partial
+
 import pytest
 from fastapi.testclient import TestClient
 
@@ -186,6 +188,20 @@ def test_probe_package_in_isolation_explicit_highs_solve() -> None:
 def test_process_isolation_raises_error_on_process_crash() -> None:
     with pytest.raises(ValueError, match="Simulated worker failure"):
         run_in_process_isolation(_crashing_worker)
+
+
+def test_process_isolation_large_payload_stdin_transport() -> None:
+    # Repro 1 regression: large payload off argv via stdin transport
+    large_payload = b"x" * 100_000
+    res_len = run_in_process_isolation(len, large_payload)
+    assert res_len == 100_000
+
+
+def test_process_isolation_stdout_flushed_logs_do_not_corrupt_result() -> None:
+    # Repro 2 regression: solver or user print to stdout does not corrupt result transport
+    fn = partial(print, "solver log output", flush=True)
+    res = run_in_process_isolation(fn)
+    assert res is None
 
 
 def test_learninghub_exposes_installed_oss_engine_versions_ready() -> None:
