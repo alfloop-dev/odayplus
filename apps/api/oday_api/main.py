@@ -634,15 +634,42 @@ else:
             from shared.observability import ProductionMetricsExporter, default_registry
 
             sha = release_sha_from_environment()
-            exporter = ProductionMetricsExporter(release_sha=sha, registry=default_registry())
-            return exporter.export_metrics()
+            if require_live_data and (not sha or sha.strip() == "local"):
+                raise ApiError(
+                    status.HTTP_503_SERVICE_UNAVAILABLE,
+                    "Production metrics export requires an exact full 40-character release SHA in environment. Fail-closed gate enforced.",
+                    code="invalid_release_sha",
+                )
+            try:
+                exporter = ProductionMetricsExporter(release_sha=sha, registry=default_registry())
+                return exporter.export_metrics()
+            except ValueError as exc:
+                raise ApiError(
+                    status.HTTP_503_SERVICE_UNAVAILABLE,
+                    f"Production metrics export failed-closed: {exc}",
+                    code="invalid_release_sha",
+                ) from exc
 
         @api.get("/platform/dashboards/provisioned", tags=["platform"])
         def platform_dashboards_provisioned(request: Request) -> dict[str, Any]:
             from shared.observability import render_dashboard_provisioning
 
             sha = release_sha_from_environment()
-            return render_dashboard_provisioning(release_sha=sha)
+            if require_live_data and (not sha or sha.strip() == "local"):
+                raise ApiError(
+                    status.HTTP_503_SERVICE_UNAVAILABLE,
+                    "Production dashboard provisioning requires an exact full 40-character release SHA in environment. Fail-closed gate enforced.",
+                    code="invalid_release_sha",
+                )
+            try:
+                return render_dashboard_provisioning(release_sha=sha)
+            except ValueError as exc:
+                raise ApiError(
+                    status.HTTP_503_SERVICE_UNAVAILABLE,
+                    f"Production dashboard provisioning failed-closed: {exc}",
+                    code="invalid_release_sha",
+                ) from exc
+
 
 
         # Jobs and audit-event reads are product operations, so they are

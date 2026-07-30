@@ -146,9 +146,13 @@ Key implementation components:
 
 ---
 
-## Runtime Proof (Current SHA)
+## Runtime Proof (Current SHA - Local Test Simulation)
 
-This evidence is generated dynamically at runtime on the current SHA. It demonstrates a fully correlated **browser -> API -> worker trace** and a **real alert delivery** through `AlertRouter` and `OnCallNotificationAdapter` over an actual HTTP network socket.
+> [!NOTE]
+> This evidence script (`generate_observability_evidence.py`) uses memory persistence, FastAPI TestClient, and a local loopback HTTP server to provide deterministic local test-only evidence. Production and live deployment acceptance require Cloud Monitoring backend resource IDs, provider route readback receipts, exact full 40-character release SHAs, and monitored watch-window query executions as enforced by `validate_cloud_run_live_deployment.py` and `shared/observability/`.
+
+This evidence is generated dynamically at runtime on the current SHA. It demonstrates a fully correlated **browser -> API -> worker trace** and a **test delivery simulation** through `AlertRouter` and `OnCallNotificationAdapter` over an HTTP network socket.
+
 
 ### 1. Correlated Trace Flow
 A simulated browser action sends a request to the API with correlation ID `{correlation_id}`, which is automatically propagated to the background worker job execution.

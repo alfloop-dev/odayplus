@@ -921,37 +921,91 @@ def test_production_metrics_exporter_and_dashboard_provisioning() -> None:
     registry.set("dlq_message_count", 0.0, labels={"topic": "assisted-listing-intake.dlq"})
     registry.set("netplan_plan_adoption_rate", 0.95)
 
-    test_sha = "b28a6b6d3352"
+    test_sha = "b28a6b6d335293ecb51a72dff3700838e196129c"
 
-    # 1. Test ProductionMetricsExporter binds release_sha to all metric categories
+    # 1. Test ProductionMetricsExporter binds release_sha to all metric categories and outputs readback receipts
     exporter = ProductionMetricsExporter(release_sha=test_sha, registry=registry)
     exported = exporter.export_metrics()
 
     assert exported["release_sha"] == test_sha
+    assert exported["export_receipt_id"] == f"export-rec-{test_sha[:12]}"
+    assert len(exported["monitoring_backend_resource_ids"]) > 0
     assert "api_request_count" in exported["metrics"]
     assert exported["metrics"]["api_request_count"][0]["labels"]["release_sha"] == test_sha
     assert exported["metrics"]["dlq_message_count"][0]["labels"]["release_sha"] == test_sha
     assert exported["metrics"]["netplan_plan_adoption_rate"][0]["labels"]["release_sha"] == test_sha
 
-    # Fail closed on empty SHA
-    with pytest.raises(ValueError, match="release_sha must be provided as a non-empty string"):
-        ProductionMetricsExporter(release_sha="")
+    # Fail closed on empty or non-40-char SHA
+    with pytest.raises(ValueError, match="release_sha must be an exact full 40-character hexadecimal string"):
+        ProductionMetricsExporter(release_sha="b28a6b6d3352")
 
-    # 2. Test render_dashboard_provisioning performs runtime substitution and verifies SLO owner
+    # 2. Test render_dashboard_provisioning performs runtime substitution, verifies SLO owner, and outputs readback receipts
     provisioned = render_dashboard_provisioning(release_sha=test_sha)
 
     traceability = provisioned["release_sha_traceability"]
     assert traceability["exact_sha_binding"] == test_sha
     assert traceability["slo_owner"] == "SRE Lead / Platform Operations"
 
+    readback = provisioned["provisioning_readback"]
+    assert readback["readback_status"] == "PROVISIONED"
+    assert readback["exact_sha_binding"] == test_sha
+    assert "platform-health" in readback["dashboard_resource_ids"]
+
     platform_health = next(d for d in provisioned["dashboards"] if d["id"] == "platform-health")
     panels = {p["title"]: p for p in platform_health["panels"]}
     assert panels["Release SHA traceability"]["label_filter"] == f"release_sha={test_sha}"
     assert panels["Release watch-window receipt"]["label_filter"] == f"release_sha={test_sha}"
 
-    # Fail closed on empty SHA or missing SLO owner
-    with pytest.raises(ValueError, match="release_sha must be provided as a non-empty string"):
-        render_dashboard_provisioning(release_sha="")
+    # Fail closed on non-40-char SHA or missing SLO owner
+    with pytest.raises(ValueError, match="release_sha must be an exact full 40-character hexadecimal string"):
+        render_dashboard_provisioning(release_sha="b28a6b6d3352")
+
+
+def test_platform_observability_endpoints_fail_closed_without_full_sha(monkeypatch: pytest.MonkeyPatch) -> None:
+    from dataclasses import replace
+    from types import SimpleNamespace
+
+    from fastapi.testclient import TestClient
+
+    from apps.api.oday_api.main import create_app
+    from shared.infrastructure.persistence.assisted_listing_intake import DurableAssistedIntakeStore
+    from shared.infrastructure.persistence.factory import _memory_bundle
+
+    class ProbeEngine:
+        is_production = True
+        dialect = "postgresql"
+
+        def query(self, *a, **kw):
+            return []
+
+        def query_one(self, *a, **kw):
+            return {"ready": 1}
+
+    engine = ProbeEngine()
+    bundle = replace(
+        _memory_bundle(),
+        mode="postgresql",
+        engine=engine,
+        assisted_intake_store=DurableAssistedIntakeStore(SimpleNamespace(engine=engine)),
+    )
+
+    monkeypatch.setenv("ODP_REQUIRE_LIVE_DATA", "true")
+    monkeypatch.setenv("ODP_PERSISTENCE", "postgresql")
+    monkeypatch.delenv("ODAY_RELEASE_SHA", raising=False)
+    monkeypatch.delenv("ODP_RELEASE_COMMIT_SHA", raising=False)
+    monkeypatch.delenv("GITHUB_SHA", raising=False)
+    monkeypatch.delenv("COMMIT_SHA", raising=False)
+
+    app = create_app(persistence=bundle, external_provider_validation=lambda: None)
+    client = TestClient(app)
+
+    res_metrics = client.get("/platform/metrics/export")
+    assert res_metrics.status_code == 503
+    assert "invalid_release_sha" in json.dumps(res_metrics.json())
+
+    res_dash = client.get("/platform/dashboards/provisioned")
+    assert res_dash.status_code == 503
+    assert "invalid_release_sha" in json.dumps(res_dash.json())
 
 
 def test_api_telemetry_export() -> None:

@@ -23,9 +23,13 @@ Key implementation components:
 
 ---
 
-## Runtime Proof (Current SHA)
+## Runtime Proof (Current SHA - Local Test Simulation)
 
-This evidence is generated dynamically at runtime on the current SHA. It demonstrates a fully correlated **browser -> API -> worker trace** and a **real alert delivery** through `AlertRouter` and `OnCallNotificationAdapter` over an actual HTTP network socket.
+> [!NOTE]
+> This evidence script (`generate_observability_evidence.py`) uses memory persistence, FastAPI TestClient, and a local loopback HTTP server to provide deterministic local test-only evidence. Production and live deployment acceptance require Cloud Monitoring backend resource IDs, provider route readback receipts, exact full 40-character release SHAs, and monitored watch-window query executions as enforced by `validate_cloud_run_live_deployment.py` and `shared/observability/`.
+
+This evidence is generated dynamically at runtime on the current SHA. It demonstrates a fully correlated **browser -> API -> worker trace** and a **test delivery simulation** through `AlertRouter` and `OnCallNotificationAdapter` over an HTTP network socket.
+
 
 ### 1. Correlated Trace Flow
 A simulated browser action sends a request to the API with correlation ID `corr-obs-test-sha-current-12345`, which is automatically propagated to the background worker job execution.
@@ -48,12 +52,12 @@ A simulated browser action sends a request to the API with correlation ID `corr-
 - **Body**:
 ```json
 {
-  "job_id": "1a8b1172-309b-4f95-a8ee-330a2e707733",
+  "job_id": "39b67c71-2eb1-458c-a886-5b93f80ec325",
   "status": "queued",
   "correlation_id": "corr-obs-test-sha-current-12345",
   "idempotency_key": "idemp-key-1",
   "job": {
-    "job_id": "1a8b1172-309b-4f95-a8ee-330a2e707733",
+    "job_id": "39b67c71-2eb1-458c-a886-5b93f80ec325",
     "job_type": "external-fetch",
     "status": "queued",
     "correlation_id": "corr-obs-test-sha-current-12345",
@@ -61,7 +65,7 @@ A simulated browser action sends a request to the API with correlation ID `corr-
     "payload": {
       "provider_id": "listing.partner_feed"
     },
-    "created_at": "2026-07-30T19:45:17.437869+00:00",
+    "created_at": "2026-07-30T19:50:00.616137+00:00",
     "attempts": 0,
     "leased_until": null,
     "max_retries": 3,
@@ -73,7 +77,7 @@ A simulated browser action sends a request to the API with correlation ID `corr-
     "error_message": null
   },
   "created": true,
-  "audit_event_id": "78be437b-f974-4718-a846-c137082333da"
+  "audit_event_id": "ad94c7d7-7c2f-41ae-8430-11db7575e580"
 }
 ```
 
@@ -84,7 +88,7 @@ The background worker claimed and executed the job. Both the API HTTP span and t
 ```json
 [
   {
-    "span_id": "295744fb93844962",
+    "span_id": "2f451f4acd364156",
     "parent_id": null,
     "name": "HTTP POST /jobs",
     "kind": "api",
@@ -92,7 +96,7 @@ The background worker claimed and executed the job. Both the API HTTP span and t
     "actor_id": "user",
     "status": "ok",
     "error_code": null,
-    "duration_ms": 22.688169,
+    "duration_ms": 32.512756,
     "attributes": {
       "correlation_id": "corr-obs-test-sha-current-12345",
       "request_id": "corr-obs-test-sha-current-12345",
@@ -100,7 +104,7 @@ The background worker claimed and executed the job. Both the API HTTP span and t
     }
   },
   {
-    "span_id": "6f6f9b4913e94524",
+    "span_id": "1a9879bf1d564cf2",
     "parent_id": null,
     "name": "worker-external-fetch",
     "kind": "worker",
@@ -108,10 +112,10 @@ The background worker claimed and executed the job. Both the API HTTP span and t
     "actor_id": "worker",
     "status": "ok",
     "error_code": null,
-    "duration_ms": 2.930498,
+    "duration_ms": 6.046453,
     "attributes": {
       "correlation_id": "corr-obs-test-sha-current-12345",
-      "job_id": "1a8b1172-309b-4f95-a8ee-330a2e707733",
+      "job_id": "39b67c71-2eb1-458c-a886-5b93f80ec325",
       "actor_id": "worker"
     }
   }
@@ -137,21 +141,21 @@ A P1 alert (`audit-write-failure`) was routed to `ops-lead` (per `alerts.json` c
 #### Real Delivery On-Call Receipt Output (Captured directly from OnCallNotificationAdapter)
 ```json
 {
-  "delivery_id": "del-7e6535904283",
-  "notification_id": "1b1ed265-532a-4519-87a9-ac28a060bc19",
+  "delivery_id": "del-d70b05b7474f",
+  "notification_id": "ac3c1829-4548-4567-9dee-0a2a90321a9f",
   "oncall_route": "ops-lead",
   "channel": "webhook",
-  "endpoint": "http://127.0.0.1:33569/api/v1/alerts",
+  "endpoint": "http://127.0.0.1:40019/api/v1/alerts",
   "title": "ALERT: [P1] Audit write failure",
   "detail": "Alert ID: audit-write-failure\nCondition: any audit_event_write_failure_count for high-risk action or export in production\nRunbook: docs/runbooks/observability-and-runbook.md#audit-write-failure\nDetails: Durable storage write timeout on DB query",
   "http_status": 200,
   "status": "DELIVERED",
-  "delivered_at": "2026-07-30T19:45:17.447089+00:00",
+  "delivered_at": "2026-07-30T19:50:00.630022+00:00",
   "response": {
     "status": "delivered",
     "route": "ops-lead",
-    "delivery_id": "del-7e6535904283",
-    "received_at": "2026-07-30T19:45:17.485568+00:00"
+    "delivery_id": "del-d70b05b7474f",
+    "received_at": "2026-07-30T19:50:00.672648+00:00"
   },
   "error": null
 }

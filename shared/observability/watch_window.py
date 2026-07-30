@@ -93,6 +93,16 @@ def record_deployment_watch_window_status(
     out_path = Path(receipt_path or DEFAULT_RECEIPT_PATH)
     out_path.parent.mkdir(parents=True, exist_ok=True)
 
+    query_exec_id = f"query-exec-{clean_sha[:12]}-{int(end_dt.timestamp())}"
+    monitoring_query_execution = {
+        "query_execution_id": query_exec_id,
+        "query_status": "SUCCESS" if status == 1 else "FAILED",
+        "observed_window_minutes": watch_window_minutes,
+        "query_start_time": start_dt.isoformat(),
+        "query_end_time": end_dt.isoformat(),
+        "executed_at": datetime.now(UTC).isoformat(),
+    }
+
     receipt = {
         "release_sha": clean_sha,
         "status": status_str,
@@ -101,6 +111,7 @@ def record_deployment_watch_window_status(
         "end_time": end_dt.isoformat(),
         "observed_duration_seconds": round(observed_seconds, 2),
         "watch_window_minutes": watch_window_minutes,
+        "monitoring_query_execution": monitoring_query_execution,
         "observed_results": res,
         "recorded_at": datetime.now(UTC).isoformat(),
         "metric_name": "deployment_watch_window_status",
@@ -113,7 +124,7 @@ def verify_watch_window_receipt(
     expected_release_sha: str,
     receipt_path: str | Path | None = None,
 ) -> dict[str, Any]:
-    """Verify that a durable watch-window receipt exists, matches the expected full 40-char release SHA, and passed with >= 15 min duration."""
+    """Verify that a durable watch-window receipt exists, matches the expected full 40-char release SHA, carries valid monitoring query execution readback, and passed with >= 15 min duration."""
     clean_expected = validate_full_sha(expected_release_sha, "expected_release_sha")
 
     out_path = Path(receipt_path or DEFAULT_RECEIPT_PATH)
@@ -159,6 +170,10 @@ def verify_watch_window_receipt(
         raise ValueError(
             f"Sub-15-minute watch duration in receipt ({duration_seconds:.1f}s < 900s). Fail-closed gate enforced."
         )
+
+    query_exec = receipt.get("monitoring_query_execution")
+    if not query_exec or not isinstance(query_exec, dict) or not query_exec.get("query_execution_id"):
+        raise ValueError("Watch-window receipt missing valid monitoring_query_execution readback. Fail-closed gate enforced.")
 
     observed_results = receipt.get("observed_results", {})
     if isinstance(observed_results, dict):

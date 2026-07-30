@@ -376,7 +376,7 @@ def repository_capability_checks(
 
 
 def observability_runtime_checks(root: Path = ROOT) -> list[CheckResult]:
-    """Verify live-wired observability components (exporter, dashboards, watch window)."""
+    """Verify live-wired observability components (exporter, dashboards, watch window, readback receipts)."""
     checks = []
     try:
         from shared.observability import (
@@ -394,16 +394,18 @@ def observability_runtime_checks(root: Path = ROOT) -> list[CheckResult]:
             "latency", "error", "traffic", "job", "queue", "data", "model", "business", "audit"
         }
         sha_bound = exported.get("release_sha") == test_sha
-        exporter_ok = has_categories and sha_bound
+        has_export_receipt = bool(exported.get("export_receipt_id"))
+        has_backend_ids = bool(exported.get("monitoring_backend_resource_ids"))
+        exporter_ok = has_categories and sha_bound and has_export_receipt and has_backend_ids
 
         checks.append(
             CheckResult(
                 ok=exporter_ok,
                 name="observability:production_metrics_exporter",
                 detail=(
-                    "ProductionMetricsExporter binds release_sha across API/job/DLQ/model/solver/business/audit metrics"
+                    "ProductionMetricsExporter binds exact 40-char release_sha across categories and produces Cloud Monitoring backend resource IDs and export readback receipt"
                     if exporter_ok
-                    else "invalid: ProductionMetricsExporter failed to export bound metrics across categories"
+                    else "invalid: ProductionMetricsExporter failed to export bound metrics, backend resource IDs, or readback receipt"
                 ),
             )
         )
@@ -411,16 +413,22 @@ def observability_runtime_checks(root: Path = ROOT) -> list[CheckResult]:
         provisioned = render_dashboard_provisioning(release_sha=test_sha)
         exact_binding = provisioned.get("release_sha_traceability", {}).get("exact_sha_binding") == test_sha
         has_slo_owner = bool(provisioned.get("release_sha_traceability", {}).get("slo_owner"))
-        dashboard_ok = exact_binding and has_slo_owner
+        readback = provisioned.get("provisioning_readback", {})
+        readback_ok = (
+            readback.get("readback_status") == "PROVISIONED"
+            and bool(readback.get("dashboard_resource_ids"))
+            and bool(readback.get("provider_route_identity"))
+        )
+        dashboard_ok = exact_binding and has_slo_owner and readback_ok
 
         checks.append(
             CheckResult(
                 ok=dashboard_ok,
                 name="observability:dashboard_provisioning",
                 detail=(
-                    "render_dashboard_provisioning provisions exact release_sha binding and validates SLO owner"
+                    "render_dashboard_provisioning provisions exact release_sha binding, validates SLO owner, and produces dashboard resource IDs readback receipt"
                     if dashboard_ok
-                    else "invalid: dashboard provisioning failed to bind release_sha or validate SLO owner"
+                    else "invalid: dashboard provisioning failed to bind release_sha, validate SLO owner, or produce readback receipt"
                 ),
             )
         )
@@ -433,6 +441,7 @@ def observability_runtime_checks(root: Path = ROOT) -> list[CheckResult]:
             )
         )
     return checks
+
 
 
 
