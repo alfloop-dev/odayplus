@@ -69,6 +69,7 @@
       ],
       "range": "<=5.0.7",
       "nodes": [
+        "node_modules/@typescript-eslint/typescript-estree/node_modules/brace-expansion",
         "node_modules/brace-expansion"
       ],
       "fixAvailable": {
@@ -294,8 +295,8 @@
     "dependencies": {
       "prod": 99,
       "dev": 411,
-      "optional": 95,
-      "peer": 1,
+      "optional": 94,
+      "peer": 0,
       "peerOptional": 0,
       "total": 546
     }
