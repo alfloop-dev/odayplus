@@ -163,7 +163,13 @@ def create_operator_router(
         require_operator_permission,
         require_permission,
     )
-    from shared.auth import AccessRequest, Action, Environment, ResourceDescriptor
+    from shared.auth import (
+        AccessRequest,
+        Action,
+        Environment,
+        Principal,
+        ResourceDescriptor,
+    )
 
     active_audit_log = audit_log or InMemoryAuditLog()
     authz_engine = build_engine(audit_log=active_audit_log)
@@ -238,7 +244,7 @@ def create_operator_router(
 
     def authorize_franchisee_store(
         request: Request,
-        principal: Any,
+        principal: Principal,
         action: Action,
         requested_store_id: str | None,
     ) -> str:

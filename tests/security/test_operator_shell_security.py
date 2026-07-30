@@ -41,6 +41,7 @@ FRANCHISEE_HEADERS = {
     "X-Subject-Id": "franchisee-001",
     "X-Roles": "franchisee",
     "X-Tenant-Id": "tenant-a",
+    "X-Store-Ids": "STORE-001",
 }
 
 READ_PATHS = [
@@ -309,6 +310,7 @@ def test_franchisee_x_subject_id_spoof_and_idempotency_live_boundary(monkeypatch
                 "exp": (now + timedelta(hours=1)).timestamp(),
                 "roles": roles,
                 "tenant_id": "tenant-a",
+                "store_ids": ["STORE-001"],
             }
             token = encode_compact_jwt(payload, key)
             return {"authorization": f"Bearer {token}"}

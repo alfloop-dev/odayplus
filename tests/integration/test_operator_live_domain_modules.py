@@ -523,6 +523,16 @@ def test_live_franchisee_routes_enforce_verified_store_scope_and_audit_denials(
                 f"{BASE}/shell/franchisee",
                 headers=headers,
             )
+            missing_scope = client.get(
+                f"{BASE}/shell/franchisee",
+                headers={
+                    **_franchisee_headers(
+                        "tenant-franchisee-scope",
+                        store_ids="",
+                    ),
+                    "x-correlation-id": "corr-franchisee-missing-store-scope",
+                },
+            )
 
         assert default_view.status_code == 200
         assert default_view.json()["store"]["id"] == "STORE-001"
@@ -533,6 +543,7 @@ def test_live_franchisee_routes_enforce_verified_store_scope_and_audit_denials(
             denied_report.status_code,
         ] == [403, 403, 403]
         assert after.json()["reports"] == []
+        assert missing_scope.status_code == 403
 
         denials = [
             event
@@ -547,6 +558,15 @@ def test_live_franchisee_routes_enforce_verified_store_scope_and_audit_denials(
             "franchisee_portal/STORE-OTHER"
         }
         assert {event.metadata["policy_id"] for event in denials} == {"scope.store"}
+
+        missing_scope_denials = bundle.audit_log.list_events(
+            correlation_id="corr-franchisee-missing-store-scope"
+        )
+        assert len(missing_scope_denials) == 1
+        assert missing_scope_denials[0].outcome == "deny"
+        assert missing_scope_denials[0].metadata["policy_id"] == (
+            "franchisee_isolation"
+        )
     finally:
         bundle.engine.close()
 
