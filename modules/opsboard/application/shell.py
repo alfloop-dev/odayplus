@@ -47,6 +47,7 @@ ADMIN_GRANTS = "operator.shell_admin_grants"
 SETTINGS = "operator.shell_settings"
 FRANCHISEE_ACKS = "operator.shell_franchisee_acks"
 FRANCHISEE_REPORTS = "operator.shell_franchisee_reports"
+AUDIT_EVENTS = "operator.shell_audit_events"
 
 SHELL_COLLECTIONS = (
     TASK_ASSIGNMENTS,
@@ -56,6 +57,7 @@ SHELL_COLLECTIONS = (
     SETTINGS,
     FRANCHISEE_ACKS,
     FRANCHISEE_REPORTS,
+    AUDIT_EVENTS,
 )
 
 
@@ -161,6 +163,63 @@ class ShellForbidden(Exception):
     (authorization) rather than 422 (malformed request). RBAC at the route
     still guards the coarse resource; this is the product-rule layer on top.
     """
+
+
+# ----------------------------------------------------------------------
+# Live state binding
+# ----------------------------------------------------------------------
+
+
+class TenantBoundOperatorStateService:
+    """Bind the shared live read model to one verified request scope.
+
+    ``ShellService`` predates the production live repository and deliberately
+    knows nothing about HTTP principals.  This adapter preserves that boundary:
+    the API resolves the verified tenant/brand/region/store scope once, then
+    every shell read delegates with the same immutable scope.
+    """
+
+    def __init__(
+        self,
+        state_service: OperatorStateService,
+        *,
+        tenant_id: str,
+        brand_ids: tuple[str, ...] = (),
+        region_ids: tuple[str, ...] = (),
+        store_ids: tuple[str, ...] = (),
+    ) -> None:
+        normalized_tenant = tenant_id.strip()
+        if not normalized_tenant:
+            raise ValueError("tenant_id is required for live Operator shell state")
+        self._state = state_service
+        self._scope = {
+            "tenant_id": normalized_tenant,
+            "brand_ids": tuple(brand_ids),
+            "region_ids": tuple(region_ids),
+            "store_ids": tuple(store_ids),
+        }
+
+    def resolve_role(
+        self,
+        *,
+        operator_role_id: str | None = None,
+        subject_id: str | None = None,
+        system_roles: str | None = None,
+    ) -> dict[str, Any]:
+        return self._state.resolve_role(
+            operator_role_id=operator_role_id,
+            subject_id=subject_id,
+            system_roles=system_roles,
+        )
+
+    def get_today(self, **kwargs: Any) -> dict[str, Any]:
+        return self._state.get_today(**kwargs, **self._scope)
+
+    def get_work_queue(self, **kwargs: Any) -> list[dict[str, Any]]:
+        return self._state.get_work_queue(**kwargs, **self._scope)
+
+    def search(self, query: str, **kwargs: Any) -> dict[str, Any]:
+        return self._state.search(query, **kwargs, **self._scope)
 
 
 # ----------------------------------------------------------------------
@@ -329,7 +388,11 @@ class ShellService:
             repository if repository is not None else InMemoryShellRepository()
         )
         self._idempotency_cache: dict[tuple[str, str | None, str], ShellIdempotencyRecord] = {}
-        self._audit_feed: list[dict[str, Any]] = []
+        self._audit_feed = sorted(
+            self._repo.list_records(AUDIT_EVENTS),
+            key=lambda event: str(event.get("occurredAt", "")),
+            reverse=True,
+        )
         self._load_idempotency_cache()
 
     # ------------------------------------------------------------------
@@ -406,9 +469,10 @@ class ShellService:
         message: str,
         metadata: dict[str, Any],
     ) -> dict[str, Any]:
+        audit_event_id = str(uuid4())
         event = {
-            "id": f"AUD-SHELL-{len(self._audit_feed) + 1:04d}",
-            "auditEventId": str(uuid4()),
+            "id": f"AUD-SHELL-{audit_event_id}",
+            "auditEventId": audit_event_id,
             "occurredAt": _now_iso(),
             "actorRoleId": actor_role_id,
             "actorSubjectId": actor_subject_id,
@@ -420,6 +484,7 @@ class ShellService:
             "metadata": _copy(metadata),
         }
         self._audit_feed.insert(0, event)
+        self._repo.save_record(AUDIT_EVENTS, audit_event_id, event)
         return _copy(event)
 
     def list_audit_feed(self) -> list[dict[str, Any]]:
@@ -1523,6 +1588,7 @@ class ShellService:
 
 __all__ = [
     "ADMIN_GRANTS",
+    "AUDIT_EVENTS",
     "DEFAULT_PREFERENCES",
     "ENTRY_POINTS",
     "FRANCHISEE_ACKS",
@@ -1533,6 +1599,7 @@ __all__ = [
     "SEVERITY_ORDER",
     "SHELL_COLLECTIONS",
     "TASK_ASSIGNMENTS",
+    "TenantBoundOperatorStateService",
     "InMemoryShellRepository",
     "ShellConflict",
     "ShellIdempotencyRecord",

@@ -71,10 +71,114 @@ def _headers(tenant_id: str, *, idempotency_key: str | None = None) -> dict[str,
     return headers
 
 
+def _ops_headers(
+    tenant_id: str,
+    *,
+    idempotency_key: str | None = None,
+) -> dict[str, str]:
+    return {
+        **_headers(tenant_id, idempotency_key=idempotency_key),
+        "x-operator-role": "ops-lead",
+    }
+
+
+def _franchisee_headers(
+    tenant_id: str,
+    *,
+    idempotency_key: str | None = None,
+) -> dict[str, str]:
+    headers = {
+        "x-subject-id": f"franchisee-{tenant_id}",
+        "x-roles": "franchisee",
+        "x-tenant-id": tenant_id,
+        "x-correlation-id": f"corr-franchisee-{tenant_id}",
+    }
+    if idempotency_key is not None:
+        headers["idempotency-key"] = idempotency_key
+    return headers
+
+
+class _StaticLiveRepository:
+    """Small non-fixture live projection for canonical shell write tests."""
+
+    @property
+    def data_origin(self) -> dict[str, Any]:
+        return {
+            "kind": "live",
+            "sourceId": "operator-shell-live-test",
+            "persistenceMode": "postgresql",
+        }
+
+    def load_state(self, *, tenant_id: str, **_scope: Any) -> dict[str, Any]:
+        origin = {**self.data_origin, "tenantId": tenant_id}
+        return {
+            "_meta": {
+                "generatedAt": "2026-07-30T12:00:00+00:00",
+                "dataMode": "live",
+                "dataOrigin": origin,
+                "tenantId": tenant_id,
+                "recordCounts": {"workQueue": 1, "notifications": 1},
+                "sections": {
+                    "workQueue": {
+                        "state": "live",
+                        "source": "operator-shell-live-test",
+                        "recordCount": 1,
+                    },
+                    "approvals": {
+                        "state": "live",
+                        "source": "operator-shell-live-test",
+                        "recordCount": 0,
+                    },
+                    "notifications": {
+                        "state": "live",
+                        "source": "operator-shell-live-test",
+                        "recordCount": 1,
+                    },
+                },
+            },
+            "workQueue": [
+                {
+                    "id": "LIVE-STORE-TASK-1",
+                    "title": "門市冷藏櫃檢查",
+                    "status": "open",
+                    "time": "12:00",
+                    "owner": "門市營運",
+                    "meta": "SLA 追蹤",
+                    "tone": "danger",
+                    "workspace": "store",
+                    "roles": ["ops-lead"],
+                    "target": {
+                        "workspace": "store",
+                        "entityId": "LIVE-STORE-TASK-1",
+                        "tab": "overview",
+                    },
+                }
+            ],
+            "notifications": [
+                {
+                    "id": "LIVE-STORE-NOTIFICATION-1",
+                    "title": "冷藏櫃溫度異常",
+                    "detail": "門市需在 SLA 內確認",
+                    "tone": "danger",
+                    "roles": ["ops-lead"],
+                    "target": {
+                        "workspace": "store",
+                        "entityId": "LIVE-STORE-TASK-1",
+                    },
+                }
+            ],
+            "decisions": [],
+            "riskRows": [],
+            "auditFeed": [],
+            "kpis": [],
+        }
+
+
 def _live_app(
     database_path: Path,
     *,
     allow_test_reset: bool = False,
+    live_repository: Any | None = None,
 ) -> tuple[FastAPI, Any]:
     bundle = _durable_bundle(database_path)
     document_store = SqliteDocumentStore(bundle.engine)
@@ -114,7 +218,7 @@ def _live_app(
                 scoped(tenant_id)
             ),
             model_runtime=_UnusedModelRuntime(),
-            live_repository=OperatorLiveRepository(bundle),
+            live_repository=live_repository or OperatorLiveRepository(bundle),
             require_live_data=True,
             persistence_mode="postgresql",
             provider_mode="live",
@@ -154,6 +258,8 @@ def test_live_router_mounts_all_operator_domain_routes_without_seed_rows(
 
         with TestClient(app) as client:
             headers = _headers("tenant-live-empty")
+            ops_headers = _ops_headers("tenant-live-empty")
+            franchisee_headers = _franchisee_headers("tenant-live-empty")
             shell_search = client.get(
                 f"{BASE}/shell/search",
                 headers=headers,
@@ -164,11 +270,12 @@ def test_live_router_mounts_all_operator_domain_routes_without_seed_rows(
                 f"{BASE}/shell/notifications",
                 headers=headers,
             )
-            governed_unavailable = [
-                client.get(f"{BASE}/shell/admin", headers=headers),
-                client.get(f"{BASE}/shell/settings", headers=headers),
-                client.get(f"{BASE}/shell/franchisee", headers=headers),
-            ]
+            shell_admin = client.get(f"{BASE}/shell/admin", headers=ops_headers)
+            shell_settings = client.get(f"{BASE}/shell/settings", headers=headers)
+            shell_franchisee = client.get(
+                f"{BASE}/shell/franchisee",
+                headers=franchisee_headers,
+            )
             payloads = [
                 client.get(f"{BASE}/network-listings", headers=headers).json(),
                 client.get(f"{BASE}/network-scoring", headers=headers).json(),
@@ -181,27 +288,18 @@ def test_live_router_mounts_all_operator_domain_routes_without_seed_rows(
         assert shell_search.status_code == 200
         assert shell_tasks.status_code == 200
         task_payload = shell_tasks.json()
-        assert task_payload["facets"]["sla"]["breached"] is None
-        assert task_payload["facets"]["assignee"]["me"] is None
-        assert task_payload["assignableRoles"] is None
-        assert task_payload["assignability"]["state"] == "unavailable"
+        assert task_payload["facets"]["sla"]["breached"] == 0
+        assert task_payload["facets"]["assignee"]["me"] == 0
+        assert task_payload["assignableRoles"]
         assert shell_notifications.status_code == 200
         notification_payload = shell_notifications.json()
-        assert notification_payload["unacknowledged"] is None
-        assert notification_payload["preferences"]["value"] is None
-        assert (
-            notification_payload["preferences"]["availability"]["state"]
-            == "unavailable"
-        )
-        assert [response.status_code for response in governed_unavailable] == [
-            503,
-            503,
-            503,
-        ]
-        assert {
-            response.json()["detail"]["code"]
-            for response in governed_unavailable
-        } == {"OPERATOR_SHELL_CONTRACT_UNAVAILABLE"}
+        assert notification_payload["unacknowledged"] == 0
+        assert notification_payload["preferences"]["severityFloor"] == "info"
+        assert shell_admin.status_code == 200
+        assert shell_settings.status_code == 200
+        assert shell_settings.json()["isDefault"] is True
+        assert shell_franchisee.status_code == 200
+        assert shell_franchisee.json()["tasks"] == []
 
         serialized = str(payloads)
         assert all(seed_id not in serialized for seed_id in SEED_IDS)
@@ -214,6 +312,170 @@ def test_live_router_mounts_all_operator_domain_routes_without_seed_rows(
         assert payloads[5]["approvals"] == []
     finally:
         bundle.engine.close()
+
+
+def test_live_shell_writes_are_tenant_scoped_and_recover_after_restart(
+    tmp_path: Path,
+) -> None:
+    database_path = tmp_path / "operator-live-shell.sqlite3"
+    repository = _StaticLiveRepository()
+    ops = _ops_headers("tenant-shell-a")
+    franchisee = _franchisee_headers("tenant-shell-a")
+    assignment_body = {
+        "assigneeId": "operator-cs-lead",
+        "assigneeName": "張珮珊",
+        "slaDueAt": "2030-01-01T00:00:00+00:00",
+    }
+
+    first_app, first_bundle = _live_app(
+        database_path,
+        live_repository=repository,
+    )
+    try:
+        with TestClient(first_app) as client:
+            assigned = client.post(
+                f"{BASE}/shell/tasks/LIVE-STORE-TASK-1/assignment",
+                headers={
+                    **ops,
+                    "idempotency-key": "live-shell-assignment-1",
+                },
+                json=assignment_body,
+            )
+            inbox = client.get(f"{BASE}/shell/notifications", headers=ops).json()
+            acknowledged = client.post(
+                (
+                    f"{BASE}/shell/notifications/"
+                    f"{inbox['items'][0]['notificationId']}/acknowledgement"
+                ),
+                headers={**ops, "idempotency-key": "live-shell-notification-1"},
+            )
+            preferences = client.put(
+                f"{BASE}/shell/notifications/preferences",
+                headers={**ops, "idempotency-key": "live-shell-preferences-1"},
+                json={
+                    "channels": {"inApp": True, "email": False},
+                    "severityFloor": "warning",
+                    "digest": "daily",
+                },
+            )
+            settings = client.put(
+                f"{BASE}/shell/settings",
+                headers={**ops, "idempotency-key": "live-shell-settings-1"},
+                json={"values": {"density": "compact"}},
+            )
+            grant = client.put(
+                f"{BASE}/shell/admin/roles/expansion-manager/workspaces",
+                headers={**ops, "idempotency-key": "live-shell-grant-1"},
+                json={"allowedWorkspaces": ["today"]},
+            )
+            franchisee_view = client.get(
+                f"{BASE}/shell/franchisee",
+                headers=franchisee,
+            ).json()
+            franchisee_ack = client.post(
+                f"{BASE}/shell/franchisee/acknowledgement",
+                headers={
+                    **franchisee,
+                    "idempotency-key": "live-shell-franchisee-ack-1",
+                },
+                json={
+                    "notificationId": franchisee_view["notifications"][0][
+                        "notificationId"
+                    ]
+                },
+            )
+            franchisee_report = client.post(
+                f"{BASE}/shell/franchisee/reports",
+                headers={
+                    **franchisee,
+                    "idempotency-key": "live-shell-franchisee-report-1",
+                },
+                json={"category": "equipment", "message": "冷藏櫃溫度異常"},
+            )
+
+        assert [
+            response.status_code
+            for response in (
+                assigned,
+                acknowledged,
+                preferences,
+                settings,
+                grant,
+                franchisee_ack,
+                franchisee_report,
+            )
+        ] == [200] * 7
+        assignment_receipt = assigned.json()
+        grant_audit_id = grant.json()["auditEvent"]["auditEventId"]
+    finally:
+        first_bundle.engine.close()
+
+    reopened_app, reopened_bundle = _live_app(
+        database_path,
+        live_repository=repository,
+    )
+    try:
+        with TestClient(reopened_app) as client:
+            replay = client.post(
+                f"{BASE}/shell/tasks/LIVE-STORE-TASK-1/assignment",
+                headers={
+                    **ops,
+                    "idempotency-key": "live-shell-assignment-1",
+                },
+                json=assignment_body,
+            )
+            task = client.get(
+                f"{BASE}/shell/tasks",
+                headers=ops,
+                params={"taskId": "LIVE-STORE-TASK-1"},
+            ).json()["items"][0]
+            inbox = client.get(f"{BASE}/shell/notifications", headers=ops).json()
+            preferences_after = client.get(
+                f"{BASE}/shell/notifications/preferences",
+                headers=ops,
+            ).json()
+            settings_after = client.get(
+                f"{BASE}/shell/settings",
+                headers=ops,
+            ).json()
+            admin_after = client.get(
+                f"{BASE}/shell/admin",
+                headers=ops,
+            ).json()
+            franchisee_after = client.get(
+                f"{BASE}/shell/franchisee",
+                headers=franchisee,
+            ).json()
+
+            other_tenant_task = client.get(
+                f"{BASE}/shell/tasks",
+                headers=_ops_headers("tenant-shell-b"),
+                params={"taskId": "LIVE-STORE-TASK-1"},
+            ).json()["items"][0]
+            other_tenant_settings = client.get(
+                f"{BASE}/shell/settings",
+                headers=_ops_headers("tenant-shell-b"),
+            ).json()
+
+        assert replay.status_code == 200
+        assert replay.json()["idempotentReplay"] is True
+        assert replay.json()["auditEvent"] == assignment_receipt["auditEvent"]
+        assert task["assigneeName"] == "張珮珊"
+        assert task["slaState"] == "on-track"
+        assert inbox["items"][0]["acknowledged"] is True
+        assert preferences_after["preferences"]["severityFloor"] == "warning"
+        assert settings_after["values"]["density"] == "compact"
+        assert grant_audit_id in {
+            event["auditEventId"] for event in admin_after["auditFeed"]
+        }
+        assert franchisee_after["notifications"][0]["acknowledged"] is True
+        assert [report["message"] for report in franchisee_after["reports"]] == [
+            "冷藏櫃溫度異常"
+        ]
+        assert other_tenant_task["assigneeId"] is None
+        assert other_tenant_settings["isDefault"] is True
+    finally:
+        reopened_bundle.engine.close()
 
 
 def test_durable_listings_seed_canonical_state_only_behind_test_reset_gate(
@@ -500,8 +762,24 @@ def test_live_router_without_document_store_mounts_routes_and_returns_503(
                 f"{BASE}/network-scoring",
                 headers=_headers("tenant-unavailable"),
             )
+            shell_response = client.get(
+                f"{BASE}/shell/settings",
+                headers=_ops_headers("tenant-unavailable"),
+            )
         assert response.status_code == 503
         assert response.json()["detail"]["code"] == ("OPERATOR_DOMAIN_PERSISTENCE_UNAVAILABLE")
+        assert shell_response.status_code == 503
+        assert shell_response.json()["detail"] == {
+            "code": "OPERATOR_SHELL_CONTRACT_UNAVAILABLE",
+            "operation": "operator.shell.persistence",
+            "dependency": "operator_shell_document_store",
+            "state": "unavailable",
+            "reasonCode": "TENANT_BOUND_DURABLE_SHELL_NOT_WIRED",
+            "message": (
+                "operator_shell_document_store has no tenant-bound durable "
+                "production repository wiring"
+            ),
+        }
     finally:
         bundle.engine.close()
 

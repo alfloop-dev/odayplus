@@ -143,16 +143,25 @@ def create_shell_sub_router(
     require_franchisee_view_fn: Callable[..., object],
     require_franchisee_write_fn: Callable[..., object],
     shell_service: ShellService | None = None,
+    shell_service_resolver: Callable[[Request], ShellService] | None = None,
+    include_legacy_reads: bool = True,
 ) -> APIRouter:
     """Return the shell sub-router (console reads + product-shell surface)."""
+    if shell_service is not None and shell_service_resolver is not None:
+        raise ValueError("shell_service and shell_service_resolver are mutually exclusive")
+
     router = APIRouter()
+    legacy_router = APIRouter()
     shell = shell_service or ShellService(state_service)
+
+    def shell_for(request: Request) -> ShellService:
+        return shell_service_resolver(request) if shell_service_resolver is not None else shell
 
     # ------------------------------------------------------------------
     # Legacy Operator Console reads (unchanged contract)
     # ------------------------------------------------------------------
 
-    @router.get("/bootstrap", dependencies=[Depends(require_view_permission_fn)])
+    @legacy_router.get("/bootstrap", dependencies=[Depends(require_view_permission_fn)])
     def bootstrap(
         request: Request,
         x_operator_role: str | None = Header(default=None, alias="X-Operator-Role"),
@@ -171,7 +180,7 @@ def create_shell_sub_router(
             )
         )
 
-    @router.get("/today", dependencies=[Depends(require_view_permission_fn)])
+    @legacy_router.get("/today", dependencies=[Depends(require_view_permission_fn)])
     def get_today(
         request: Request,
         x_operator_role: str | None = Header(default=None, alias="X-Operator-Role"),
@@ -190,7 +199,7 @@ def create_shell_sub_router(
             )
         )
 
-    @router.get("/search", dependencies=[Depends(require_view_permission_fn)])
+    @legacy_router.get("/search", dependencies=[Depends(require_view_permission_fn)])
     def search(
         request: Request,
         q: str = Query(default=""),
@@ -211,6 +220,9 @@ def create_shell_sub_router(
             ),
         )
 
+    if include_legacy_reads:
+        router.include_router(legacy_router)
+
     # ------------------------------------------------------------------
     # Product shell — Home
     # ------------------------------------------------------------------
@@ -224,7 +236,7 @@ def create_shell_sub_router(
         x_correlation_id: str | None = Header(default=None, alias="X-Correlation-Id"),
     ) -> dict[str, Any]:
         """Return the aggregated first screen for the acting role."""
-        return shell.get_home(
+        return shell_for(request).get_home(
             **_context_from_request(
                 request,
                 x_operator_role=x_operator_role,
@@ -251,7 +263,7 @@ def create_shell_sub_router(
         x_correlation_id: str | None = Header(default=None, alias="X-Correlation-Id"),
     ) -> dict[str, Any]:
         """Return the Task Center list with SLA/assignee filters and deep links."""
-        return shell.get_tasks(
+        return shell_for(request).get_tasks(
             sla=sla,
             assignee=assignee,
             status=task_status,
@@ -281,7 +293,7 @@ def create_shell_sub_router(
     ) -> dict[str, Any]:
         """Durably assign a task. Governed, audited, idempotent."""
         try:
-            return shell.assign_task(
+            return shell_for(request).assign_task(
                 task_id=task_id,
                 assignee_id=body.assigneeId,
                 assignee_name=body.assigneeName,
@@ -313,7 +325,7 @@ def create_shell_sub_router(
         x_correlation_id: str | None = Header(default=None, alias="X-Correlation-Id"),
     ) -> dict[str, Any]:
         """Return the durable notification inbox for the acting role."""
-        return shell.get_notifications(
+        return shell_for(request).get_notifications(
             severity=severity,
             acknowledged=acknowledged,
             **_context_from_request(
@@ -345,7 +357,7 @@ def create_shell_sub_router(
             x_correlation_id=x_correlation_id,
         )
         context.pop("correlation_id", None)
-        return shell.get_notification_preferences(**context)
+        return shell_for(request).get_notification_preferences(**context)
 
     @router.put(
         "/shell/notifications/preferences",
@@ -362,7 +374,7 @@ def create_shell_sub_router(
     ) -> dict[str, Any]:
         """Durably persist notification preferences. Audited and idempotent."""
         try:
-            return shell.update_notification_preferences(
+            return shell_for(request).update_notification_preferences(
                 preferences=body.model_dump(),
                 idempotency_key=idempotency_key,
                 **_context_from_request(
@@ -391,7 +403,7 @@ def create_shell_sub_router(
     ) -> dict[str, Any]:
         """Durably acknowledge a notification. Audited and idempotent."""
         try:
-            return shell.acknowledge_notification(
+            return shell_for(request).acknowledge_notification(
                 notification_id=notification_id,
                 idempotency_key=idempotency_key,
                 **_context_from_request(
@@ -420,7 +432,7 @@ def create_shell_sub_router(
         x_correlation_id: str | None = Header(default=None, alias="X-Correlation-Id"),
     ) -> dict[str, Any]:
         """Return authorized cross-domain results and keyboard commands."""
-        return shell.search(
+        return shell_for(request).search(
             q,
             limit=limit,
             **_context_from_request(
@@ -446,7 +458,7 @@ def create_shell_sub_router(
     ) -> dict[str, Any]:
         """Return the role/workspace administration view."""
         try:
-            return shell.get_admin(
+            return shell_for(request).get_admin(
                 **_context_from_request(
                     request,
                     x_operator_role=x_operator_role,
@@ -474,7 +486,7 @@ def create_shell_sub_router(
     ) -> dict[str, Any]:
         """Durably override a role's workspace grants. High-risk, always audited."""
         try:
-            return shell.update_role_workspaces(
+            return shell_for(request).update_role_workspaces(
                 target_role_id=target_role_id,
                 allowed_workspaces=body.allowedWorkspaces,
                 idempotency_key=idempotency_key,
@@ -502,7 +514,7 @@ def create_shell_sub_router(
         x_correlation_id: str | None = Header(default=None, alias="X-Correlation-Id"),
     ) -> dict[str, Any]:
         """Return workspace settings for the acting role."""
-        return shell.get_settings(
+        return shell_for(request).get_settings(
             **_context_from_request(
                 request,
                 x_operator_role=x_operator_role,
@@ -524,7 +536,7 @@ def create_shell_sub_router(
     ) -> dict[str, Any]:
         """Durably persist workspace settings. Governed and audited."""
         try:
-            return shell.update_settings(
+            return shell_for(request).update_settings(
                 values=body.values,
                 idempotency_key=idempotency_key,
                 **_context_from_request(
@@ -550,7 +562,7 @@ def create_shell_sub_router(
         x_correlation_id: str | None = Header(default=None, alias="X-Correlation-Id"),
     ) -> dict[str, Any]:
         """Return the franchisee-scoped view (no operator-only data)."""
-        return shell.get_franchisee_view(
+        return shell_for(request).get_franchisee_view(
             subject_id=principal.subject_id,
             store_id=store_id,
             correlation_id=getattr(request.state, "correlation_id", None) or x_correlation_id,
@@ -568,7 +580,7 @@ def create_shell_sub_router(
     ) -> dict[str, Any]:
         """Record a franchisee acknowledgement. Audited and idempotent."""
         try:
-            return shell.franchisee_acknowledge(
+            return shell_for(request).franchisee_acknowledge(
                 notification_id=body.notificationId,
                 subject_id=principal.subject_id,
                 store_id=body.storeId,
@@ -590,7 +602,7 @@ def create_shell_sub_router(
     ) -> dict[str, Any]:
         """Record a franchisee field report. Audited and idempotent."""
         try:
-            return shell.franchisee_report(
+            return shell_for(request).franchisee_report(
                 category=body.category,
                 message=body.message,
                 subject_id=principal.subject_id,
