@@ -600,9 +600,15 @@ def test_live_franchisee_selected_store_narrows_multi_store_repository_scope(
                 ),
                 params={"storeId": "STORE-001"},
             )
+            missing_support_selection = client.get(
+                f"{BASE}/shell/franchisee",
+                headers=_ops_headers("tenant-franchisee-selection"),
+            )
 
         assert response.status_code == 200
         assert response.json()["meta"]["scope"]["storeId"] == "STORE-001"
+        assert missing_support_selection.status_code == 422
+        assert "__missing_store_scope__" not in missing_support_selection.text
         assert live_repository.load_scopes
         assert {
             tuple(scope["store_ids"]) for scope in live_repository.load_scopes
