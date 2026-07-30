@@ -111,11 +111,17 @@ class ReviewApprovedWorkflowTests(unittest.TestCase):
         }
 
     def test_approve_creates_owner_finalize_handoff(self) -> None:
-        with mock.patch.dict(os.environ, {"AI_NAME": "Claude", "REVIEW_NOTES_ZH": "審查通過||交回 owner 收尾"}, clear=False):
+        # resolve_task_sha is pinned so the approval freezes a known head:
+        # command_approve now fails closed when it cannot resolve one, and an
+        # unpatched probe would shell out to `gh`/`git` for a task id that has
+        # no branch, making this unit test environment-dependent.
+        with mock.patch.dict(os.environ, {"AI_NAME": "Claude", "REVIEW_NOTES_ZH": "審查通過||交回 owner 收尾"}, clear=False), \
+             mock.patch.object(ai_status, "resolve_task_sha", return_value="1111111122222222333333334444444455555555"):
             ai_status.command_approve(self.state, ["REG-002", "Review passed. Owner should finalize."])
 
         task = ai_status.get_task(self.state, "REG-002")
         self.assertEqual(task["status"], "review_approved")
+        self.assertEqual(task["approved_head"], "1111111122222222333333334444444455555555")
         self.assertEqual(task["review_notes_zh"], ["審查通過", "交回 owner 收尾"])
 
         pending = [handoff for handoff in self.state["handoffs"] if handoff["status"] != "done"]
@@ -130,6 +136,8 @@ class ReviewApprovedWorkflowTests(unittest.TestCase):
                 ai_status.command_done(self.state, ["REG-002", "Attempted direct completion"])
 
         self.state["tasks"][0]["status"] = "review_approved"
+        approved_head = "1111111122222222333333334444444455555555"
+        self.state["tasks"][0]["approved_head"] = approved_head
 
         with mock.patch.dict(os.environ, {"AI_NAME": "Claude"}, clear=False):
             with self.assertRaises(SystemExit):
@@ -137,6 +145,8 @@ class ReviewApprovedWorkflowTests(unittest.TestCase):
 
         with (
             mock.patch.dict(os.environ, {"AI_NAME": "Codex"}, clear=False),
+            mock.patch.object(ai_status, "resolve_task_sha", return_value=approved_head),
+            mock.patch.object(ai_status, "task_pr_head_and_merge_commit", return_value=(approved_head, None)),
             mock.patch.object(ai_status, "collect_done_delivery_metadata", return_value={}),
             mock.patch.object(ai_status, "archive_task_snapshot", return_value={"task_id": "REG-002"}) as archive_task_snapshot,
         ):
@@ -173,6 +183,44 @@ class ReviewApprovedWorkflowTests(unittest.TestCase):
         self.assertEqual(len(pending), 1)
         self.assertEqual(pending[0]["from"], "Claude")
         self.assertEqual(pending[0]["to"], "Codex")
+
+    def test_restore_approved_refuses_when_reviewer_reopened(self) -> None:
+        """B23: restore_approved must refuse when the downgrade was a reviewer rejection."""
+        self.state["tasks"][0]["status"] = "review"
+        with mock.patch.dict(os.environ, {"AI_NAME": "Claude"}, clear=False), \
+             mock.patch.object(ai_status, "resolve_task_sha", return_value="1111111122222222333333334444444455555555"):
+            ai_status.command_approve(self.state, ["REG-002", "Approve first"])
+
+        task = ai_status.get_task(self.state, "REG-002")
+        self.assertEqual(task["status"], "review_approved")
+        self.assertEqual(task["last_approved_head"], "1111111122222222333333334444444455555555")
+
+        with mock.patch.dict(os.environ, {"AI_NAME": "Claude"}, clear=False):
+            ai_status.command_reopen(self.state, ["REG-002", "Please address changes"])
+
+        self.assertEqual(task["status"], "in_progress")
+        self.assertEqual(task["last_approved_head"], "1111111122222222333333334444444455555555")
+
+        task["review_notes_zh"] = ["prior note"]
+        with mock.patch.dict(os.environ, {"AI_NAME": "Codex"}, clear=False), \
+             mock.patch.object(ai_status, "resolve_task_sha", return_value="1111111122222222333333334444444455555555"):
+            with self.assertRaises(SystemExit) as cm:
+                ai_status.command_restore_approved(self.state, ["REG-002", "Attempt restore"])
+            self.assertIn("reopened by the reviewer", str(cm.exception))
+
+    def test_restore_approved_head_emits_status_check(self) -> None:
+        """N3: restore_approved_head must trigger status check emission."""
+        state_before = {
+            "tasks": [{"id": "REG-002", "status": "review_approved", "owner": "Codex", "reviewer": "Claude"}]
+        }
+        state_after = {
+            "tasks": [{"id": "REG-002", "status": "review_approved", "approved_head": "1111111122222222333333334444444455555555", "owner": "Codex", "reviewer": "Claude"}]
+        }
+        with mock.patch.object(ai_status, "emit_task_review_status_check") as mock_emit:
+            ai_status.emit_status_checks_for_changed_tasks(
+                state_before, state_after, "restore_approved_head", ["REG-002", "1111111122222222333333334444444455555555", "restore"]
+            )
+            mock_emit.assert_called_once()
 
     def test_normalize_handoffs_adds_finalize_handoff_for_approved_task(self) -> None:
         self.state["tasks"][0]["status"] = "review_approved"
@@ -2776,6 +2824,9 @@ class ActivityLogRotationTests(unittest.TestCase):
 
 
 class StatusCheckEmissionTests(unittest.TestCase):
+    def setUp(self) -> None:
+        ai_status.clear_ai_status_caches()
+
     def test_get_repository_slug_safe_env(self) -> None:
         with mock.patch.dict(os.environ, {"GITHUB_REPOSITORY": "test-owner/test-repo"}):
             self.assertEqual(ai_status.get_repository_slug_safe(), "test-owner/test-repo")
@@ -2819,7 +2870,7 @@ class StatusCheckEmissionTests(unittest.TestCase):
             self.assertEqual(sha, "xyz789")
 
     def test_emit_task_review_status_check_approved(self) -> None:
-        task = {"id": "ODP-001", "reviewer": "Codex"}
+        task = {"id": "ODP-001", "reviewer": "Codex", "approved_head": "sha123"}
         mock_run = mock.Mock()
         mock_run.returncode = 0
 
@@ -3558,11 +3609,14 @@ class ActorCommandMutationGuardTests(unittest.TestCase):
         "progress": [TASK_ID, "still going"],
         "note": [TASK_ID, "a note"],
         "reopen": [TASK_ID, "reopening"],
+        "re_review": [TASK_ID, "re-reviewing"],
+        "re-review": [TASK_ID, "re-reviewing"],
         "handoff": [TASK_ID, "Codex2", "please review"],
         "blocker": [TASK_ID, "blocked", "Codex2"],
         "retarget_blocker": [TASK_ID, "Codex2", "repair"],
         "prune_agents": ["--apply", "cleanup"],
         "restore_approved": [TASK_ID, "restoring"],
+        "restore_approved_head": [TASK_ID, "1111111122222222333333334444444455555555", "attesting"],
         "done": [TASK_ID, "finished"],
         "supersede": [TASK_ID, "superseded"],
         "approve": [TASK_ID, "approved"],
