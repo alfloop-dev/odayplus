@@ -26,6 +26,13 @@
   - No database connection or candidate site records were provided
 - **Handback Action**: Provide a valid PostgreSQL database URL (ODAY_DATABASE_URL / --db-url) or candidate site records.
 
+## Task Closeout & Finalization
+- **Finalized At**: `2026-07-30T19:06:00Z`
+- **Owner**: `Antigravity4`
+- **Reviewer**: `Claude`
+- **PR**: `#525`
+- **Review Head**: `20e76106`
+
 ## Verification
 ```bash
 pytest -q tests -k "sitescore or opening_outcome or model_ready" && git diff --check
