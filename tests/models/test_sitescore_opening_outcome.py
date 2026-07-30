@@ -381,8 +381,7 @@ def test_sitescore_opening_outcome_zero_outcome_cohort_zero_mae_allowed():
 
 
 def test_sitescore_opening_outcome_handback_contains_backfill_metadata(tmp_path):
-    # Fix B2 regression test: Gate 2 handback payload and markdown evidence expose registered backfill task ID, actionable query contract, and receipt requirement
-    import json
+    # Fix B2 regression test: Gate 2 handback payload and markdown evidence expose split outcome backfill and prediction source resolver contracts, executable SQL, and receipt requirement
     from pathlib import Path
 
     result = run_benchmark_from_inventory(db_url=None, records=None)
@@ -391,28 +390,42 @@ def test_sitescore_opening_outcome_handback_contains_backfill_metadata(tmp_path)
     assert handback["handback_required"] is True
     assert handback["backfill_owner"] == "Human/Ops"
     assert handback["backfill_task_id"] == "ODP-PLAN-SITESCORE-OUTCOME-BACKFILL-001"
+    assert handback["prediction_source_task_id"] == "ODP-PLAN-SITESCORE-PREDICTION-SOURCE-001"
 
-    # Verify task registration in ai-status.json
-    ai_status_path = Path(__file__).resolve().parents[2] / "ai-status.json"
-    if ai_status_path.exists():
-        ai_status = json.loads(ai_status_path.read_text(encoding="utf-8"))
-        registered_task_ids = {t["id"] for t in ai_status.get("tasks", [])}
-        assert handback["backfill_task_id"] in registered_task_ids
+    # Verify task registrations against repo-tracked canonical ledger docs/evidence/DEVELOPMENT_PLAN_GAP_EXECUTION_TASKS_2026-07-30.md
+    gap_tasks_path = (
+        Path(__file__).resolve().parents[2]
+        / "docs"
+        / "evidence"
+        / "DEVELOPMENT_PLAN_GAP_EXECUTION_TASKS_2026-07-30.md"
+    )
+    gap_tasks_content = gap_tasks_path.read_text(encoding="utf-8")
+    assert handback["backfill_task_id"] in gap_tasks_content
+    assert handback["prediction_source_task_id"] in gap_tasks_content
 
-    # Verify actionable query contract selects all required M6/M12 outcomes, predictions, bounds, and lineage
+    # Verify split contract payloads
+    outcome_contract = handback["outcome_backfill_contract"]
+    assert outcome_contract["owner"] == "Human/Ops"
+    assert outcome_contract["task_id"] == "ODP-PLAN-SITESCORE-OUTCOME-BACKFILL-001"
+    assert outcome_contract["required_fields"] == ["realized_180d_net_revenue", "realized_365d_net_revenue"]
+
+    pred_contract = handback["prediction_source_contract"]
+    assert pred_contract["task_id"] == "ODP-PLAN-SITESCORE-PREDICTION-SOURCE-001"
+    for col in ["predicted_revenue", "p10", "p90", "dataset_snapshot_id", "model_version", "artifact_lineage_id"]:
+        assert col in pred_contract["required_fields"]
+
+    # Verify executable query contract matches current candidate_site_view schema
     query = handback["backfill_query"]
     assert "model_ready.candidate_site_view" in query
-    for required_col in [
-        "realized_m6_net_revenue",
-        "realized_m12_net_revenue",
-        "predicted_revenue",
-        "p10",
-        "p90",
-        "dataset_snapshot_id",
-        "model_version",
-        "artifact_lineage_id",
+    for baseline_col in [
+        "entity_id",
+        "store_id",
+        "target_format_code",
+        "opened_on",
+        "is_training_eligible",
+        "realized_90d_net_revenue",
     ]:
-        assert required_col in query
+        assert baseline_col in query
 
     assert handback["backfill_receipt_required"] is True
 
@@ -423,6 +436,6 @@ def test_sitescore_opening_outcome_handback_contains_backfill_metadata(tmp_path)
     content = output_evidence.read_text(encoding="utf-8")
     assert "- **Backfill Owner**: `Human/Ops`" in content
     assert "- **Backfill Task ID**: `ODP-PLAN-SITESCORE-OUTCOME-BACKFILL-001`" in content
+    assert "- **Prediction Source Task ID**: `ODP-PLAN-SITESCORE-PREDICTION-SOURCE-001`" in content
     assert "- **Backfill Query**:" in content
     assert "- **Backfill Receipt Required**: `True`" in content
-

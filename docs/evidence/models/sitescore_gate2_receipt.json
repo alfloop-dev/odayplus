@@ -14,7 +14,7 @@
     "handback_payload": {
       "activation_threshold": 200,
       "backfill_owner": "Human/Ops",
-      "backfill_query": "SELECT entity_id, store_id, target_format_code, opened_on, is_training_eligible, realized_90d_net_revenue, realized_180d_net_revenue AS realized_m6_net_revenue, realized_365d_net_revenue AS realized_m12_net_revenue, predicted_revenue, p10, p90, dataset_snapshot_id, model_version, artifact_lineage_id, (CURRENT_DATE - opened_on)::integer AS m6_days, (CURRENT_DATE - opened_on)::integer AS m12_days FROM model_ready.candidate_site_view;",
+      "backfill_query": "SELECT entity_id, store_id, target_format_code, opened_on, is_training_eligible, realized_90d_net_revenue, (CURRENT_DATE - opened_on)::integer AS m6_days, (CURRENT_DATE - opened_on)::integer AS m12_days FROM model_ready.candidate_site_view;",
       "backfill_receipt_required": true,
       "backfill_task_id": "ODP-PLAN-SITESCORE-OUTCOME-BACKFILL-001",
       "eligible_count": 0,
@@ -28,8 +28,34 @@
       "missing_labels_delta": 200,
       "normalized_mae": 0.0,
       "observed_count": 0,
+      "outcome_backfill_contract": {
+        "executable_baseline_query": "SELECT entity_id, store_id, target_format_code, opened_on, is_training_eligible, realized_90d_net_revenue, (CURRENT_DATE - opened_on)::integer AS m6_days, (CURRENT_DATE - opened_on)::integer AS m12_days FROM model_ready.candidate_site_view;",
+        "owner": "Human/Ops",
+        "receipt_required": true,
+        "required_fields": [
+          "realized_180d_net_revenue",
+          "realized_365d_net_revenue"
+        ],
+        "scope": "Provide authoritative M6 (180d) and M12 (365d) post-opening net revenue labels for historical opened candidate sites.",
+        "task_id": "ODP-PLAN-SITESCORE-OUTCOME-BACKFILL-001"
+      },
       "p80_coverage": 0.0,
       "prediction_coverage_ratio": 0.0,
+      "prediction_source_contract": {
+        "owner": "SiteScore Platform Team",
+        "receipt_required": true,
+        "required_fields": [
+          "predicted_revenue",
+          "p10",
+          "p90",
+          "dataset_snapshot_id",
+          "model_version",
+          "artifact_lineage_id"
+        ],
+        "scope": "Provide authoritative prediction-source resolver joining model predictions, p10/p90 interval bounds, and governed dataset snapshot / model / artifact lineage.",
+        "task_id": "ODP-PLAN-SITESCORE-PREDICTION-SOURCE-001"
+      },
+      "prediction_source_task_id": "ODP-PLAN-SITESCORE-PREDICTION-SOURCE-001",
       "provenance": "no_source",
       "reason_code": "NO_SOURCE_INVENTORY",
       "reasons": [
@@ -58,7 +84,7 @@
   "handback": {
     "activation_threshold": 200,
     "backfill_owner": "Human/Ops",
-    "backfill_query": "SELECT entity_id, store_id, target_format_code, opened_on, is_training_eligible, realized_90d_net_revenue, realized_180d_net_revenue AS realized_m6_net_revenue, realized_365d_net_revenue AS realized_m12_net_revenue, predicted_revenue, p10, p90, dataset_snapshot_id, model_version, artifact_lineage_id, (CURRENT_DATE - opened_on)::integer AS m6_days, (CURRENT_DATE - opened_on)::integer AS m12_days FROM model_ready.candidate_site_view;",
+    "backfill_query": "SELECT entity_id, store_id, target_format_code, opened_on, is_training_eligible, realized_90d_net_revenue, (CURRENT_DATE - opened_on)::integer AS m6_days, (CURRENT_DATE - opened_on)::integer AS m12_days FROM model_ready.candidate_site_view;",
     "backfill_receipt_required": true,
     "backfill_task_id": "ODP-PLAN-SITESCORE-OUTCOME-BACKFILL-001",
     "eligible_count": 0,
@@ -72,8 +98,34 @@
     "missing_labels_delta": 200,
     "normalized_mae": 0.0,
     "observed_count": 0,
+    "outcome_backfill_contract": {
+      "executable_baseline_query": "SELECT entity_id, store_id, target_format_code, opened_on, is_training_eligible, realized_90d_net_revenue, (CURRENT_DATE - opened_on)::integer AS m6_days, (CURRENT_DATE - opened_on)::integer AS m12_days FROM model_ready.candidate_site_view;",
+      "owner": "Human/Ops",
+      "receipt_required": true,
+      "required_fields": [
+        "realized_180d_net_revenue",
+        "realized_365d_net_revenue"
+      ],
+      "scope": "Provide authoritative M6 (180d) and M12 (365d) post-opening net revenue labels for historical opened candidate sites.",
+      "task_id": "ODP-PLAN-SITESCORE-OUTCOME-BACKFILL-001"
+    },
     "p80_coverage": 0.0,
     "prediction_coverage_ratio": 0.0,
+    "prediction_source_contract": {
+      "owner": "SiteScore Platform Team",
+      "receipt_required": true,
+      "required_fields": [
+        "predicted_revenue",
+        "p10",
+        "p90",
+        "dataset_snapshot_id",
+        "model_version",
+        "artifact_lineage_id"
+      ],
+      "scope": "Provide authoritative prediction-source resolver joining model predictions, p10/p90 interval bounds, and governed dataset snapshot / model / artifact lineage.",
+      "task_id": "ODP-PLAN-SITESCORE-PREDICTION-SOURCE-001"
+    },
+    "prediction_source_task_id": "ODP-PLAN-SITESCORE-PREDICTION-SOURCE-001",
     "provenance": "no_source",
     "reason_code": "NO_SOURCE_INVENTORY",
     "reasons": [
@@ -81,13 +133,13 @@
     ]
   },
   "integrity": {
-    "content_sha256": "330e61a5a1b215a59ae2ed66dd7e0bf3805395309edaeb5e7918db30003e99a7"
+    "content_sha256": "c15ad8da15ea4f6438c60eb624a1fceb0c6b99f2a77a7ab2536d853dc7970a48"
   },
   "inventory_version": "candidate-site-view-v2",
   "is_governed_disabled": true,
   "kind": "sitescore-opening-outcome-gate2-receipt",
   "model_name": "sitescore_propensity",
-  "observed_at": "2026-07-30T22:43:56.396382Z",
+  "observed_at": "2026-07-30T22:54:53.293368Z",
   "provenance": "no_source",
   "schema_version": 1,
   "service": "sitescore",

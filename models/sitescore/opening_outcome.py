@@ -177,6 +177,11 @@ class SiteScoreOpeningOutcomeBenchmarkResult:
                 f"M6 (180d) and M12 (365d) post-opening transaction history, actual p10/p90 interval bounds, and model predictions."
             )
 
+        executable_query = (
+            "SELECT entity_id, store_id, target_format_code, opened_on, is_training_eligible, "
+            "realized_90d_net_revenue, (CURRENT_DATE - opened_on)::integer AS m6_days, "
+            "(CURRENT_DATE - opened_on)::integer AS m12_days FROM model_ready.candidate_site_view;"
+        )
         return {
             "handback_required": True,
             "reason_code": self.reason_code,
@@ -195,9 +200,32 @@ class SiteScoreOpeningOutcomeBenchmarkResult:
             "p80_coverage": self.p80_coverage,
             "reasons": reasons,
             "handback_action": handback_action,
+            "outcome_backfill_contract": {
+                "owner": "Human/Ops",
+                "task_id": "ODP-PLAN-SITESCORE-OUTCOME-BACKFILL-001",
+                "scope": "Provide authoritative M6 (180d) and M12 (365d) post-opening net revenue labels for historical opened candidate sites.",
+                "required_fields": ["realized_180d_net_revenue", "realized_365d_net_revenue"],
+                "executable_baseline_query": executable_query,
+                "receipt_required": True,
+            },
+            "prediction_source_contract": {
+                "owner": "SiteScore Platform Team",
+                "task_id": "ODP-PLAN-SITESCORE-PREDICTION-SOURCE-001",
+                "scope": "Provide authoritative prediction-source resolver joining model predictions, p10/p90 interval bounds, and governed dataset snapshot / model / artifact lineage.",
+                "required_fields": [
+                    "predicted_revenue",
+                    "p10",
+                    "p90",
+                    "dataset_snapshot_id",
+                    "model_version",
+                    "artifact_lineage_id",
+                ],
+                "receipt_required": True,
+            },
             "backfill_owner": "Human/Ops",
             "backfill_task_id": "ODP-PLAN-SITESCORE-OUTCOME-BACKFILL-001",
-            "backfill_query": "SELECT entity_id, store_id, target_format_code, opened_on, is_training_eligible, realized_90d_net_revenue, realized_180d_net_revenue AS realized_m6_net_revenue, realized_365d_net_revenue AS realized_m12_net_revenue, predicted_revenue, p10, p90, dataset_snapshot_id, model_version, artifact_lineage_id, (CURRENT_DATE - opened_on)::integer AS m6_days, (CURRENT_DATE - opened_on)::integer AS m12_days FROM model_ready.candidate_site_view;",
+            "prediction_source_task_id": "ODP-PLAN-SITESCORE-PREDICTION-SOURCE-001",
+            "backfill_query": executable_query,
             "backfill_receipt_required": True,
         }
 
