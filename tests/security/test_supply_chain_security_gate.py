@@ -1064,3 +1064,151 @@ def test_dev_scoped_license_exemption_does_not_suppress_release_finding(tmp_path
     finally:
         sbom_mod.EXEMPTIONS_PATH = orig_path
 
+
+# ─── Round-7 negative tests (B1, B2, B3) ───
+
+
+def test_generate_sbom_fails_closed_on_empty_parseable_inventories(tmp_path: Path) -> None:
+    """B1 — empty parseable package-lock.json and uv.lock must cause generate_sbom to fail closed."""
+    sys.path.insert(0, str(ROOT))
+    import scripts.security.generate_sbom as sbom_mod
+
+    orig_root = sbom_mod.ROOT
+    try:
+        sbom_mod.ROOT = tmp_path
+        (tmp_path / "package-lock.json").write_text('{"packages": {}}', encoding="utf-8")
+        (tmp_path / "uv.lock").write_text("[package]\n", encoding="utf-8")
+
+        with pytest.raises(ValueError, match="missing required non-root dependency inventory"):
+            sbom_mod.generate_sbom()
+    finally:
+        sbom_mod.ROOT = orig_root
+
+
+def test_generate_sbom_fails_closed_on_manifest_incomplete_inventories(tmp_path: Path) -> None:
+    """B1 — inventories missing declared manifest dependencies must fail closed."""
+    sys.path.insert(0, str(ROOT))
+    import scripts.security.generate_sbom as sbom_mod
+
+    orig_root = sbom_mod.ROOT
+    try:
+        sbom_mod.ROOT = tmp_path
+        (tmp_path / "package.json").write_text('{"dependencies": {"express": "^4.18.0"}}', encoding="utf-8")
+        (tmp_path / "package-lock.json").write_text(
+            json.dumps({"packages": {"": {}, "node_modules/lodash": {"name": "lodash", "version": "4.17.21"}}}),
+            encoding="utf-8",
+        )
+        (tmp_path / "pyproject.toml").write_text('[project]\ndependencies = ["pytest>=7.0"]', encoding="utf-8")
+        (tmp_path / "uv.lock").write_text('[[package]]\nname = "requests"\nversion = "2.31.0"\n', encoding="utf-8")
+
+        with pytest.raises(ValueError, match="missing declared dependencies"):
+            sbom_mod.generate_sbom()
+    finally:
+        sbom_mod.ROOT = orig_root
+
+
+def test_scanner_payloads_round7_five_negative_shapes() -> None:
+    """B2 — test all five incomplete success-shaped scanner payloads fail closed."""
+    import unittest.mock
+    sys.path.insert(0, str(ROOT))
+    from scripts.security.vulnerability_scan import run_node_audit, run_python_audit
+
+    # 1. npm_version_only: {"auditReportVersion": 2}
+    fake_res1 = unittest.mock.MagicMock()
+    fake_res1.stdout = json.dumps({"auditReportVersion": 2})
+    fake_res1.returncode = 0
+    with unittest.mock.patch("subprocess.run", return_value=fake_res1):
+        ok1, v1 = run_node_audit("prod", exemptions=[])
+    assert not ok1, "npm audit version-only payload must fail closed"
+    assert any("missing valid 'vulnerabilities' dictionary" in item for item in v1)
+
+    # 2. npm_vulns_only: {"vulnerabilities": {}} without auditReportVersion or metadata
+    fake_res2 = unittest.mock.MagicMock()
+    fake_res2.stdout = json.dumps({"vulnerabilities": {}})
+    fake_res2.returncode = 0
+    with unittest.mock.patch("subprocess.run", return_value=fake_res2):
+        ok2, v2 = run_node_audit("prod", exemptions=[])
+    assert not ok2, "npm audit vulns-only payload missing scanner metadata must fail closed"
+    assert any("missing valid scanner metadata" in item for item in v2)
+
+    # 3. pip_empty_stdout: ""
+    fake_res3 = unittest.mock.MagicMock()
+    fake_res3.stdout = ""
+    fake_res3.returncode = 0
+    with unittest.mock.patch("subprocess.run", return_value=fake_res3):
+        ok3, v3 = run_python_audit("all", exemptions=[])
+    assert not ok3, "pip-audit empty stdout must fail closed"
+    assert any("empty output" in item for item in v3)
+
+    # 4. pip_vulnerabilities_only: {"vulnerabilities": []}
+    fake_res4 = unittest.mock.MagicMock()
+    fake_res4.stdout = json.dumps({"vulnerabilities": []})
+    fake_res4.returncode = 0
+    with unittest.mock.patch("subprocess.run", return_value=fake_res4):
+        ok4, v4 = run_python_audit("all", exemptions=[])
+    assert not ok4, "pip-audit vulns-only payload missing dependencies list must fail closed"
+    assert any("missing expected non-empty 'dependencies' list" in item for item in v4)
+
+    # 5. pip_empty_list: []
+    fake_res5 = unittest.mock.MagicMock()
+    fake_res5.stdout = json.dumps([])
+    fake_res5.returncode = 0
+    with unittest.mock.patch("subprocess.run", return_value=fake_res5):
+        ok5, v5 = run_python_audit("all", exemptions=[])
+    assert not ok5, "pip-audit empty list payload must fail closed"
+    assert any("empty dependency list schema" in item for item in v5)
+
+
+def test_reproduced_weak_receipt_cannot_suppress_gpl_and_fails_schema(tmp_path: Path) -> None:
+    """B3 — weak receipt (zzzzz, foo, +08:00, reason x) fails schema and cannot suppress GPL-3.0."""
+    sys.path.insert(0, str(ROOT))
+    import scripts.security.generate_sbom as sbom_mod
+    from scripts.security.exemption_validator import validate_exemption_entry
+
+    weak_receipt = {
+        "package_name": "gpl-package",
+        "purl": "pkg:npm/gpl-package@1.0.0",
+        "approved_by": "zzzzz",
+        "approval_reference": "foo",
+        "issued_at": "2026-01-01T00:00:00+08:00",
+        "expires_at": "2099-12-31T23:59:59+08:00",
+        "reason": "x",
+        "status": "active",
+        "scope": "prod",
+    }
+
+    # 1. Schema validation must report all 5 violations
+    valid, violations = validate_exemption_entry(weak_receipt, "license")
+    assert not valid, "Weak receipt must fail positive schema validation"
+    assert any("invalid approver 'zzzzz'" in v for v in violations)
+    assert any("missing valid approval_reference" in v for v in violations)
+    assert any("must be ISO UTC" in v for v in violations)
+    assert any("invalid reason 'x'" in v for v in violations)
+
+    # 2. Policy evaluation must NOT suppress GPL-3.0 and must fail closed
+    weak_exemptions_file = tmp_path / "weak_license_exemptions.json"
+    weak_exemptions_file.write_text(json.dumps({"exemptions": [weak_receipt]}), encoding="utf-8")
+
+    fake_sbom = {
+        "metadata": {"properties": []},
+        "components": [
+            {
+                "name": "gpl-package",
+                "version": "1.0.0",
+                "purl": "pkg:npm/gpl-package@1.0.0",
+                "licenses": [{"license": {"id": "GPL-3.0"}}],
+            }
+        ],
+    }
+
+    orig_path = sbom_mod.EXEMPTIONS_PATH
+    try:
+        sbom_mod.EXEMPTIONS_PATH = weak_exemptions_file
+        is_passed, policy_violations = sbom_mod.check_license_policy(fake_sbom, scope="prod")
+        assert not is_passed, "Weak receipt must NOT suppress GPL-3.0 in release policy evaluation"
+        assert any("Denied license 'GPL-3.0'" in v for v in policy_violations)
+        assert any("invalid approver 'zzzzz'" in v for v in policy_violations)
+    finally:
+        sbom_mod.EXEMPTIONS_PATH = orig_path
+
+

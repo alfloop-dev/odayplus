@@ -20,7 +20,6 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from scripts.security.exemption_validator import (
-    is_valid_approval_reference,
     is_valid_approver,
     validate_exemption_entry,
 )
@@ -650,6 +649,27 @@ def generate_sbom(image_digest: str | None = None, release_digest: str | None = 
         packages = data.get("packages")
         if not isinstance(packages, dict):
             raise ValueError("package-lock.json missing valid 'packages' object schema")
+        non_root_packages = {k: v for k, v in packages.items() if k != ""}
+        if not non_root_packages:
+            raise ValueError("package-lock.json missing required non-root dependency inventory")
+
+        manifest_path = ROOT / "package.json"
+        if manifest_path.exists():
+            try:
+                mdata = json.loads(manifest_path.read_text(encoding="utf-8"))
+                declared_node_deps = set(mdata.get("dependencies", {}).keys()) | set(mdata.get("devDependencies", {}).keys())
+                if declared_node_deps:
+                    installed_pkg_names = {
+                        v.get("name") or k.replace("node_modules/", "")
+                        for k, v in non_root_packages.items()
+                    }
+                    missing_node = declared_node_deps - installed_pkg_names
+                    if missing_node:
+                        raise ValueError(f"package-lock.json missing declared dependencies: {sorted(missing_node)}")
+            except Exception as e:
+                if "missing declared" in str(e) or "package-lock" in str(e):
+                    raise
+
         for pkg_path, pkg_info in packages.items():
             if not pkg_path:  # Root workspace
                 continue
@@ -683,8 +703,6 @@ def generate_sbom(image_digest: str | None = None, release_digest: str | None = 
                 hashes.append({"alg": "SHA-512", "content": integrity.replace("sha512-", "")})
             elif integrity.startswith("sha256-"):
                 hashes.append({"alg": "SHA-256", "content": integrity.replace("sha256-", "")})
-            # C2: No authentic artifact bytes — omit hash entry rather than
-            # emit a coordinate-derived digest that falsely claims integrity.
 
             component_obj: dict = {
                 "name": pkg_name,
@@ -734,6 +752,28 @@ def generate_sbom(image_digest: str | None = None, release_digest: str | None = 
         packages = uv_data.get("package")
         if not isinstance(packages, list):
             raise ValueError("uv.lock missing valid 'package' list schema")
+        if not packages:
+            raise ValueError("uv.lock missing required non-root dependency inventory")
+
+        pyproject_path = ROOT / "pyproject.toml"
+        if pyproject_path.exists():
+            try:
+                with open(pyproject_path, "rb") as f:
+                    pdata = tomllib.load(f)
+                declared_py = set()
+                for dep in pdata.get("project", {}).get("dependencies", []):
+                    m = re.match(r"^([a-zA-Z0-9_\-\.]+)", dep)
+                    if m:
+                        declared_py.add(m.group(1).lower().replace("_", "-"))
+                if declared_py:
+                    installed_py = {p.get("name", "").lower().replace("_", "-") for p in packages if p.get("name")}
+                    missing_py = declared_py - installed_py
+                    if missing_py:
+                        raise ValueError(f"uv.lock missing declared dependencies: {sorted(missing_py)}")
+            except Exception as e:
+                if "missing declared" in str(e) or "uv.lock" in str(e):
+                    raise
+
         for pkg in packages:
             name = pkg.get("name")
             version = pkg.get("version")
@@ -779,7 +819,6 @@ def generate_sbom(image_digest: str | None = None, release_digest: str | None = 
     except Exception as e:
         raise ValueError(f"Failed to parse uv.lock: {e}") from e
 
-
     # Resolve Python sub-dependencies graph purls using exact lockfile versions
     for purl, pkg_deps in raw_py_sub_deps:
         dep_purls = []
@@ -795,6 +834,10 @@ def generate_sbom(image_digest: str | None = None, release_digest: str | None = 
             "ref": purl,
             "dependsOn": dep_purls
         })
+
+    non_root_components = [c for c in components if c.get("bom-ref") != root_purl]
+    if not non_root_components:
+        raise ValueError("Generated SBOM contains no non-root dependency components; inventory incomplete")
 
     # Filter dependencies to avoid dangling bom-ref references
     valid_bom_refs = {c["bom-ref"] for c in components}

@@ -1,8 +1,7 @@
 """Shared exemption schema and receipt validation for OSS license and vulnerability gates."""
 
-from datetime import UTC, datetime, timedelta
 import re
-
+from datetime import UTC, datetime, timedelta
 
 VALID_STATUSES = {"active", "inactive", "review_required"}
 VALID_SCOPES = {"prod", "dev", "all", "production"}
@@ -15,19 +14,25 @@ REJECTED_APPROVER_EXACT = {
     "gpt-4", "gemini", "antigravity", "codex", "copilot", "antigravity5",
     "codex2", "codex5", "codex6", "codex8", "codex9", "codexcoordinator",
     "antigravity2", "antigravity3", "antigravity4", "antigravity6", "antigravity7",
+    "zzzzz",
 }
 
 TRIVIAL_REF_VALUES = {
-    "x", "1", "123", "tbd", "n/a", "none", "null", "undefined", "todo", "test", "a", "b", "c"
+    "x", "1", "123", "tbd", "n/a", "none", "null", "undefined", "todo", "test", "a", "b", "c", "foo", "bar"
+}
+
+TRIVIAL_REASON_VALUES = {
+    "x", "1", "123", "tbd", "n/a", "none", "null", "undefined", "todo", "test", "a", "b", "c", "foo", "bar", "temp", "tmp"
 }
 
 
 def is_valid_approver(approver: str) -> bool:
-    """Validate that the approver is a named human/legal authority and not a bare role or AI agent."""
+    """Validate that the approver is a named human/legal authority and not a bare role, AI agent, or placeholder token."""
     if not approver or not isinstance(approver, str):
         return False
-    app_lower = approver.strip().lower()
-    if not app_lower or len(app_lower) < 5:
+    app_str = approver.strip()
+    app_lower = app_str.lower()
+    if not app_lower or len(app_lower) < 6:
         return False
     if app_lower in REJECTED_APPROVER_EXACT:
         return False
@@ -36,9 +41,22 @@ def is_valid_approver(approver: str) -> bool:
     for pattern in [
         r"\bhuman/ops\b", r"\blegal/ops\b", r"\bsecurity/ops\b", r"\btbd/ops\b",
         r"\bclaude\b", r"\bgpt\b", r"\bgemini\b", r"\bantigravity\b", r"\bcodex\b", r"\bcopilot\b",
-        r"^\s*(ops|legal|security|tbd|n/a|pending)\s*$",
+        r"^\s*(ops|legal|security|tbd|n/a|pending|unknown|none|null|zzzzz)\s*$",
     ]:
         if re.search(pattern, app_lower):
+            return False
+
+    # Positively require named person (at least 2 name words) + role container e.g. "Jane Doe (Legal Counsel)" or "Alice Smith <Security Lead>"
+    role_pattern = r"^([A-Z][a-zA-Z\.\-']+(?:\s+[A-Za-z\.\-']+)+)\s*[\(\<\[]([A-Za-z0-9\s/_\-\.\,\&]{3,})[\)\>\]]$"
+    match = re.match(role_pattern, app_str)
+    if not match:
+        return False
+
+    name_part, role_part = match.group(1).lower(), match.group(2).lower()
+    if name_part in REJECTED_APPROVER_EXACT or role_part in REJECTED_APPROVER_EXACT:
+        return False
+    for bad in ["claude", "gpt", "gemini", "antigravity", "codex", "copilot", "zzzzz", "tbd", "n/a", "unknown"]:
+        if bad in name_part or bad in role_part:
             return False
 
     return True
@@ -49,9 +67,25 @@ def is_valid_approval_reference(ref: str) -> bool:
     if not ref or not isinstance(ref, str):
         return False
     ref_str = ref.strip()
-    if not ref_str or len(ref_str) < 3:
+    if not ref_str or len(ref_str) < 6:
         return False
     if ref_str.lower() in TRIVIAL_REF_VALUES:
+        return False
+    # Enforce resolvable reference format e.g. ODP-PLAN-OSS-LEGAL-POLICY-001, SEC-1234, PR-123, ISSUE-456, LEGAL-2026-001, ADR-001
+    ref_pattern = r"^(PR-?\d+|ISSUE-?\d+|SEC-\d+|LEGAL-\d+|ADR-\d+|POLICY-[A-Z0-9_-]+|[A-Z0-9]+-[A-Z0-9_-]+)$"
+    if not re.match(ref_pattern, ref_str, re.IGNORECASE):
+        return False
+    return True
+
+
+def is_valid_reason(reason: str) -> bool:
+    """Validate that reason is a non-empty, non-trivial explanation of sufficient length."""
+    if not reason or not isinstance(reason, str):
+        return False
+    r_str = reason.strip()
+    if len(r_str) < 10:
+        return False
+    if r_str.lower() in TRIVIAL_REASON_VALUES:
         return False
     return True
 
@@ -91,8 +125,8 @@ def validate_exemption_entry(entry: dict, exemption_type: str = "license") -> tu
 
     # Reason validation
     reason = entry.get("reason")
-    if not reason or not isinstance(reason, str) or not reason.strip():
-        violations.append(f"{label} has empty or missing reason.")
+    if not is_valid_reason(reason):
+        violations.append(f"{label} has invalid reason '{reason}'. Reason must be a non-trivial explanation (min 10 chars).")
 
     # Approver validation
     approver = entry.get("approved_by", "")
@@ -108,12 +142,14 @@ def validate_exemption_entry(entry: dict, exemption_type: str = "license") -> tu
     if not is_valid_approval_reference(app_ref):
         violations.append(f"{label} is missing valid approval_reference.")
 
-    # Issued at timestamp validation
+    # Issued at timestamp validation: must be ISO UTC ending with 'Z' or '+00:00'
     issued_at = entry.get("issued_at")
     issued_dt = None
     if not issued_at or not isinstance(issued_at, str):
         violations.append(f"{label} is missing valid issued_at timestamp.")
     else:
+        if not (issued_at.endswith("Z") or issued_at.endswith("+00:00") or issued_at.endswith("+0000")):
+            violations.append(f"{label} issued_at timestamp '{issued_at}' must be ISO UTC (ending in 'Z' or '+00:00').")
         try:
             issued_dt = datetime.fromisoformat(issued_at.replace("Z", "+00:00"))
             if issued_dt > datetime.now(UTC) + timedelta(minutes=5):
@@ -121,12 +157,14 @@ def validate_exemption_entry(entry: dict, exemption_type: str = "license") -> tu
         except (ValueError, TypeError):
             violations.append(f"{label} has invalid issued_at timestamp: '{issued_at}'.")
 
-    # Expires at timestamp & temporal ordering validation
+    # Expires at timestamp & temporal ordering validation: must be ISO UTC ending with 'Z' or '+00:00'
     expires_at = entry.get("expires_at")
     expires_dt = None
     if not expires_at or not isinstance(expires_at, str):
         violations.append(f"{label} is missing valid expires_at timestamp.")
     else:
+        if not (expires_at.endswith("Z") or expires_at.endswith("+00:00") or expires_at.endswith("+0000")):
+            violations.append(f"{label} expires_at timestamp '{expires_at}' must be ISO UTC (ending in 'Z' or '+00:00').")
         try:
             expires_dt = datetime.fromisoformat(expires_at.replace("Z", "+00:00"))
             if expires_dt < datetime.now(UTC):
@@ -148,3 +186,4 @@ def filter_exemptions_by_scope(exemptions: list[dict], audit_scope: str) -> list
     if audit_scope in {"dev", "full", "all"}:
         return exemptions
     return [e for e in exemptions if e.get("scope", "all") in {"prod", "production", "all"}]
+
