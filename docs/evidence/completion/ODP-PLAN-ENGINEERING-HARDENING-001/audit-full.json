@@ -69,7 +69,6 @@
       ],
       "range": "<=5.0.7",
       "nodes": [
-        "node_modules/@typescript-eslint/typescript-estree/node_modules/brace-expansion",
         "node_modules/brace-expansion"
       ],
       "fixAvailable": {
