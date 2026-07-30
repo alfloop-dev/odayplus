@@ -135,7 +135,10 @@ class SchedulingResult:
         }
 
 
-def solve_intervention_schedule(
+from solver.process_isolation import run_in_process_isolation
+
+
+def _solve_intervention_schedule_impl(
     *,
     tasks: tuple[InterventionTask, ...],
     resources: tuple[Resource, ...],
@@ -649,6 +652,34 @@ def _scaled(value: float) -> int:
 
 def _near(left: float, right: float, tolerance: float = 1e-6) -> bool:
     return abs(left - right) <= tolerance
+
+
+def solve_intervention_schedule(
+    *,
+    tasks: tuple[InterventionTask, ...],
+    resources: tuple[Resource, ...],
+    slots: tuple[TimeSlot, ...],
+    constraints: SchedulingConstraints | None = None,
+    max_time_seconds: float = 20.0,
+    isolate_process: bool = True,
+) -> SchedulingResult:
+    """Public solver entrypoint with process isolation contract."""
+    if isolate_process:
+        return run_in_process_isolation(
+            _solve_intervention_schedule_impl,
+            tasks=tasks,
+            resources=resources,
+            slots=slots,
+            constraints=constraints,
+            max_time_seconds=max_time_seconds,
+        )
+    return _solve_intervention_schedule_impl(
+        tasks=tasks,
+        resources=resources,
+        slots=slots,
+        constraints=constraints,
+        max_time_seconds=max_time_seconds,
+    )
 
 
 __all__ = [
