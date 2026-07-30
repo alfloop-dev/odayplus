@@ -8,6 +8,7 @@ from modules.notifications.infrastructure import (
     ConsoleNotificationAdapter,
     DurableNotificationRepository,
     InMemoryNotificationRepository,
+    OnCallNotificationAdapter,
 )
 
 __all__ = [
@@ -16,6 +17,7 @@ __all__ = [
     "InMemoryNotificationRepository",
     "DurableNotificationRepository",
     "ConsoleNotificationAdapter",
+    "OnCallNotificationAdapter",
     "NotificationAdapter",
     "MockNotificationAdapter",
     "NotificationService",

@@ -523,18 +523,18 @@ def test_worker_and_scheduler_export_telemetry() -> None:
 
 def test_alert_routing_and_real_notification_delivery() -> None:
     from modules.notifications import (
-        ConsoleNotificationAdapter,
         InMemoryNotificationRepository,
         NotificationService,
+        OnCallNotificationAdapter,
     )
     from shared.observability.alerts import AlertRouter
 
     repo = InMemoryNotificationRepository()
-    adapter = ConsoleNotificationAdapter()
+    adapter = OnCallNotificationAdapter(endpoint_url="https://oncall-router.oday.plus/api/v1/alerts")
     service = NotificationService(repository=repo, adapter=adapter)
 
     # Setup preferences
-    service.set_preferences("ops-lead", ["email", "sms"])
+    service.set_preferences("ops-lead", ["webhook", "email"])
 
     # Initialize AlertRouter
     router = AlertRouter(notification_service=service)
@@ -547,33 +547,77 @@ def test_alert_routing_and_real_notification_delivery() -> None:
     routed = router.route_alert("audit-write-failure")
     assert routed["receiver"] == "ops-lead"
 
-    # Verify delivery
-    assert len(adapter.sent_messages) == 1
-    msg = adapter.sent_messages[0]
-    assert msg["notification_id"] == nid
-    assert msg["user_id"] == "ops-lead"
-    assert "ALERT: [P1] Audit write failure" in msg["title"]
-    assert "Durable storage write timeout" in msg["detail"]
+    # Verify real delivery receipt to on-call endpoint
+    assert len(adapter.delivery_receipts) == 1
+    receipt = adapter.delivery_receipts[0]
+    assert receipt["notification_id"] == nid
+    assert receipt["oncall_route"] == "ops-lead"
+    assert receipt["endpoint"] == "https://oncall-router.oday.plus/api/v1/alerts"
+    assert receipt["http_status"] == 200
+    assert receipt["status"] == "DELIVERED"
+    assert receipt["delivery_id"].startswith("del-")
+    assert "ALERT: [P1] Audit write failure" in receipt["title"]
+    assert "Durable storage write timeout" in receipt["detail"]
 
 
 def test_unconfigured_route_fails_closed() -> None:
     from modules.notifications import (
-        ConsoleNotificationAdapter,
         InMemoryNotificationRepository,
         NotificationService,
+        OnCallNotificationAdapter,
     )
     from shared.observability.alerts import AlertRouter
 
     repo = InMemoryNotificationRepository()
-    adapter = ConsoleNotificationAdapter()
+    adapter = OnCallNotificationAdapter()
     service = NotificationService(repository=repo, adapter=adapter)
 
+    # Test 1: Unconfigured routing with default_receiver=None and empty routes
     router = AlertRouter(notification_service=service)
-    # Simulate unconfigured routing where default_receiver is empty/None
     router.config["routing"] = {"default_receiver": None, "routes": []}
 
     with pytest.raises(ValueError, match="is unconfigured. Fail-closed gate enforced."):
         router.route_alert("audit-write-failure")
+
+    with pytest.raises(ValueError, match="is unconfigured. Fail-closed gate enforced."):
+        router.validate_routing_config()
+
+    # Test 2: Route with unmatched severity and missing default_receiver
+    router.config["routing"] = {
+        "default_receiver": None,
+        "routes": [{"severity": "P3", "receiver": "oncall-engineer"}],
+    }
+    with pytest.raises(ValueError, match="is unconfigured. Fail-closed gate enforced."):
+        router.route_alert("audit-write-failure")  # audit-write-failure is P1
+
+
+def test_release_sha_dashboard_traceability_and_watch_window_receipt() -> None:
+    # 1. Verify dashboards.json carries release_sha_traceability and watch-window panels
+    dashboards_path = MONITORING / "dashboards.json"
+    assert dashboards_path.exists()
+    cfg = json.loads(dashboards_path.read_text(encoding="utf-8"))
+
+    traceability = cfg.get("release_sha_traceability", {})
+    assert traceability.get("enabled") is True
+    assert traceability.get("metric_label") == "release_sha"
+    assert traceability.get("watch_window_minutes") == 15
+    assert traceability.get("receipt_required") is True
+
+    platform_health = next(d for d in cfg["dashboards"] if d["id"] == "platform-health")
+    panel_titles = [p["title"] for p in platform_health["panels"]]
+    assert "Release SHA traceability" in panel_titles
+    assert "Release watch-window receipt" in panel_titles
+
+    # 2. Verify runbook documents release-SHA dashboard traceability & watch-window receipt procedure
+    runbook_path = RUNBOOKS / "observability-and-runbook.md"
+    assert runbook_path.exists()
+    runbook_text = runbook_path.read_text(encoding="utf-8")
+
+    assert "## Release-SHA Dashboard Traceability & Watch-Window Receipt" in runbook_text
+    assert "release_sha" in runbook_text
+    assert "WATCH_PASSED" in runbook_text
+    assert "watch_window_minutes" in runbook_text
+
 
 
 def test_api_telemetry_export() -> None:

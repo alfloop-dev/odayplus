@@ -2,6 +2,13 @@
   "$schema": "https://oday.plus/schemas/monitoring/dashboards.v1.json",
   "source_baseline": "ODP-SD-11 §8 (Dashboard)",
   "description": "Cloud Monitoring dashboard definitions. Panel metric refs use the shared.observability metric catalog (PLATFORM_METRICS).",
+  "release_sha_traceability": {
+    "enabled": true,
+    "metric_label": "release_sha",
+    "watch_window_minutes": 15,
+    "receipt_required": true,
+    "receipt_metric": "deployment_watch_window_status"
+  },
   "dashboards": [
     {
       "id": "platform-health",
@@ -15,7 +22,9 @@
         {"title": "Job failures", "metric": "job_failure_count", "viz": "timeseries"},
         {"title": "Event consumer lag", "metric": "event_consumer_lag", "viz": "timeseries"},
         {"title": "DLQ depth", "metric": "dlq_message_count", "viz": "timeseries"},
-        {"title": "DB query latency", "metric": "db_query_latency_ms", "viz": "heatmap"}
+        {"title": "DB query latency", "metric": "db_query_latency_ms", "viz": "heatmap"},
+        {"title": "Release SHA traceability", "metric": "deployment_watch_window_status", "viz": "stat", "label_filter": "release_sha"},
+        {"title": "Release watch-window receipt", "metric": "api_error_count", "viz": "timeseries", "label_filter": "release_sha"}
       ]
     },
     {

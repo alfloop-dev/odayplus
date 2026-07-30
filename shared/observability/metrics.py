@@ -241,6 +241,7 @@ PLATFORM_METRICS: tuple[MetricDefinition, ...] = (
     MetricDefinition("audit_event_replay_count", C, Cat.AUDIT, "Audit dead-letter replay attempts", ("result",)),
     MetricDefinition("audit_evidence_export_count", C, Cat.AUDIT, "Audit evidence exports", ("scope", "result")),
     MetricDefinition("audit_completeness_gap_count", C, Cat.AUDIT, "Missing required audit timeline events", ("rule", "resource", "missing_event_type")),
+    MetricDefinition("deployment_watch_window_status", G, Cat.JOB, "Deployment watch window status (1=WATCH_PASSED, 0=WATCH_FAILED)", ("release_sha", "status")),
 )
 
 
