@@ -23,7 +23,32 @@ EXEMPTIONS_PATH = ROOT / "docs/security/license_exemptions.json"
 NOTICES_PATH = ROOT / "THIRD_PARTY_NOTICES"
 
 SHA256_DIGEST_REGEX = re.compile(r"^sha256:[a-fA-F0-9]{64}$")
+# Kept for backward-compat import; prefer _is_valid_approver() for new checks.
 AI_AGENT_PATTERN = re.compile(r"^(Antigravity|Claude|Codex|Gemini|Copilot|GPT|LLM)\d*$", re.IGNORECASE)
+
+# Positive allowlist of recognised human/legal authority tokens.  A value must
+# contain at least one token (case-insensitive) to be treated as a named approver.
+_APPROVED_ROLE_TOKENS = re.compile(
+    r"(human|legal|security|ops|compliance|officer|director|manager|engineer|counsel)",
+    re.IGNORECASE,
+)
+
+
+def _is_valid_approver(approver: str) -> bool:
+    """Return True only when the approver string names a human/legal authority.
+
+    Rejects:
+    - Empty / whitespace-only strings
+    - Any string containing an AI agent root word (Antigravity, Claude, GPT…)
+    - Strings with no recognised authority token
+    """
+    if not approver or not approver.strip():
+        return False
+    val = approver.strip()
+    # Block any string that embeds an AI agent root word
+    if re.search(r"(Antigravity|Claude|Codex|Gemini|Copilot|GPT|LLM)", val, re.IGNORECASE):
+        return False
+    return bool(_APPROVED_ROLE_TOKENS.search(val))
 
 
 def safe_rel_path(path: Path) -> Path | str:
@@ -466,10 +491,11 @@ def load_license_policy() -> tuple[set[str], set[str], set[str], set[str], set[s
             for entry in ex_data.get("exemptions", []):
                 approver = entry.get("approved_by", "")
                 pkg_name = entry.get("package_name", "unknown")
-                if not approver or AI_AGENT_PATTERN.match(approver.strip()):
+                if not _is_valid_approver(approver):
                     ex_violations.append(
                         f"License exemption for '{pkg_name}' has invalid approver '{approver}'. "
-                        "AI agent names cannot serve as legal approvers; must be Human/Ops or Legal/Ops."
+                        "Approver must be a named human/legal role (e.g. 'Human/Ops', 'Legal/Ops'); "
+                        "AI agent names and placeholder strings cannot serve as legal approvers."
                     )
                 if "purl" in entry:
                     exempt_purls.add(entry["purl"])
@@ -570,6 +596,8 @@ def generate_sbom(image_digest: str | None = None, release_digest: str | None = 
     dependencies = []
 
     # Add Root Component
+    # C2: No authentic artifact bytes exist for the root placeholder; omit hashes
+    # rather than emit a coordinate-derived digest that falsely claims integrity.
     root_purl = "pkg:generic/oday-plus@0.1.0"
     components.append({
         "name": "oday-plus",
@@ -579,7 +607,6 @@ def generate_sbom(image_digest: str | None = None, release_digest: str | None = 
         "bom-ref": root_purl,
         "supplier": {"name": "oday-plus"},
         "licenses": [{"license": {"id": "MIT"}}],
-        "hashes": [{"alg": "SHA-256", "content": hashlib.sha256(b"oday-plus-root").hexdigest()}]
     })
 
     root_deps = []
@@ -601,7 +628,7 @@ def generate_sbom(image_digest: str | None = None, release_digest: str | None = 
                 npm_installed_versions[pkg_name] = version
 
                 if pkg_info.get("link"):
-                    # Local workspace package
+                    # Local workspace package: no published artifact bytes; omit hashes (C2)
                     purl = f"pkg:npm/{pkg_name.replace('@', '%40')}@{version}"
                     components.append({
                         "name": pkg_name,
@@ -611,7 +638,6 @@ def generate_sbom(image_digest: str | None = None, release_digest: str | None = 
                         "bom-ref": purl,
                         "supplier": {"name": "npm"},
                         "licenses": [{"license": {"id": "MIT"}}],
-                        "hashes": [{"alg": "SHA-256", "content": hashlib.sha256(pkg_name.encode()).hexdigest()}]
                     })
                     root_deps.append(purl)
                     continue
@@ -627,12 +653,10 @@ def generate_sbom(image_digest: str | None = None, release_digest: str | None = 
                     hashes.append({"alg": "SHA-512", "content": integrity.replace("sha512-", "")})
                 elif integrity.startswith("sha256-"):
                     hashes.append({"alg": "SHA-256", "content": integrity.replace("sha256-", "")})
-                else:
-                    sub_deps_keys = sorted(list((pkg_info.get("dependencies") or {}).keys()))
-                    content_payload = f"npm:{pkg_name}:{version}:{','.join(sub_deps_keys)}"
-                    hashes.append({"alg": "SHA-256", "content": hashlib.sha256(content_payload.encode()).hexdigest()})
+                # C2: No authentic artifact bytes — omit hash entry rather than
+                # emit a coordinate-derived digest that falsely claims integrity.
 
-                component_obj = {
+                component_obj: dict = {
                     "name": pkg_name,
                     "version": version,
                     "type": "library",
@@ -640,8 +664,9 @@ def generate_sbom(image_digest: str | None = None, release_digest: str | None = 
                     "bom-ref": purl,
                     "supplier": {"name": "npm"},
                     "licenses": make_license_entry(spdx_lic),
-                    "hashes": hashes
                 }
+                if hashes:
+                    component_obj["hashes"] = hashes
                 components.append(component_obj)
                 root_deps.append(purl)
 
@@ -700,12 +725,10 @@ def generate_sbom(image_digest: str | None = None, release_digest: str | None = 
                         hashes.append({"alg": "SHA-256", "content": target_hash.replace("sha256:", "")})
                     elif target_hash.startswith("sha512:"):
                         hashes.append({"alg": "SHA-512", "content": target_hash.replace("sha512:", "")})
-                    else:
-                        dep_names = sorted([d.get("name", "") for d in pkg.get("dependencies", [])])
-                        content_payload = f"pypi:{name}:{version}:{','.join(dep_names)}"
-                        hashes.append({"alg": "SHA-256", "content": hashlib.sha256(content_payload.encode()).hexdigest()})
+                    # C2: No authentic artifact bytes — omit hash entry rather
+                    # than emit a coordinate-derived digest.
 
-                    components.append({
+                    py_component: dict = {
                         "name": name,
                         "version": version,
                         "type": "library",
@@ -713,8 +736,10 @@ def generate_sbom(image_digest: str | None = None, release_digest: str | None = 
                         "bom-ref": purl,
                         "supplier": {"name": "pypi"},
                         "licenses": make_license_entry(spdx_lic),
-                        "hashes": hashes,
-                    })
+                    }
+                    if hashes:
+                        py_component["hashes"] = hashes
+                    components.append(py_component)
                     root_deps.append(purl)
 
                     pkg_deps = pkg.get("dependencies", [])
@@ -800,11 +825,25 @@ def check_license_policy(sbom: dict, require_digests: bool = False) -> tuple[boo
         if not rel_dig or rel_dig == "UNBOUND" or not SHA256_DIGEST_REGEX.match(rel_dig):
             violations.append(f"Release digest is missing, unbound, or invalid format (expected sha256:<64-hex>): '{rel_dig}'")
 
+    # N2: First-party scope guard.  A purl-based exemption is only honoured when
+    # it is also constrained to a first-party package prefix, preventing a
+    # third-party package from registering an exemption purl that happens to
+    # match a deny-listed entry.
+    _FIRST_PARTY_PURL_PREFIXES = ("pkg:generic/oday-plus", "pkg:npm/%40oday-plus/")
+
     for comp in sbom.get("components", []):
         name = comp.get("name", "")
         purl = comp.get("purl", "")
 
-        if purl in exempt_purls or (name in exempt_names and (purl.startswith("pkg:generic/oday-plus") or purl.startswith("pkg:npm/%40oday-plus/"))):
+        purl_exempted = (
+            purl in exempt_purls
+            and any(purl.startswith(pfx) for pfx in _FIRST_PARTY_PURL_PREFIXES)
+        )
+        name_exempted = (
+            name in exempt_names
+            and any(purl.startswith(pfx) for pfx in _FIRST_PARTY_PURL_PREFIXES)
+        )
+        if purl_exempted or name_exempted:
             continue
 
         licenses = comp.get("licenses", [])

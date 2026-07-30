@@ -104,6 +104,17 @@ jobs:
       - name: Generate SBOM and Check Policy
         run: uv run --frozen python3 scripts/security/generate_sbom.py --output .odp_data/deployment/sbom.json --check-policy --check-notices
 
+      # C3/R2 — Explicit prod-scope and full/dev vulnerability audit gate.
+      # These are declared gate steps (not incidental pytest assertions) so that
+      # a release cannot be cut without both receipts being independently logged.
+      # Exemption scope is enforced per-audit: a dev-only receipt cannot suppress
+      # the same finding in the prod audit.
+      - name: Vulnerability Audit — prod scope
+        run: uv run --frozen python3 scripts/security/vulnerability_scan.py --scope prod
+
+      - name: Vulnerability Audit — full/dev scope
+        run: uv run --frozen python3 scripts/security/vulnerability_scan.py --scope full
+
       - name: Validate release authority, WIF, and live runtime
         run: |
           if [ "${ODAY_RELEASE_SHA}" != "${GITHUB_SHA}" ]; then

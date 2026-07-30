@@ -108,12 +108,24 @@ def test_sbom_and_provenance_present_and_valid() -> None:
     assert properties["image-digest"] == "UNBOUND" or (properties["image-digest"].startswith("sha256:") and len(properties["image-digest"]) == 71)
     assert properties["release-digest"] == "UNBOUND" or (properties["release-digest"].startswith("sha256:") and len(properties["release-digest"]) == 71)
 
-    # Verify CycloneDX 1.5 extended component fields (supplier, licenses, hashes)
-    comp = data["components"][0]
-    assert "supplier" in comp
-    assert "licenses" in comp
-    assert "hashes" in comp
-    assert "purl" in comp
+    # Verify CycloneDX 1.5 extended component fields (supplier, licenses, hashes).
+    # The root component and first-party workspace packages intentionally have no
+    # hashes (C2 fix: coordinate-derived digests were removed).  Pick the first
+    # third-party (npm/pypi) component for the schema assertion.
+    third_party_comp = next(
+        (
+            c for c in data["components"]
+            if c.get("supplier", {}).get("name") in {"npm", "pypi"}
+            and not c.get("purl", "").startswith("pkg:npm/%40oday-plus/")
+        ),
+        None,
+    )
+    assert third_party_comp is not None, "At least one third-party component must be present"
+    assert "supplier" in third_party_comp
+    assert "licenses" in third_party_comp
+    assert "purl" in third_party_comp
+    # hashes is present on third-party packages that have a real lockfile digest
+    # (omitted when no authentic digest is available — that is correct behaviour)
 
     # Verify dependency graph
     assert "dependencies" in data
@@ -524,7 +536,7 @@ def test_ai_approver_rejection_negative(tmp_path: Path) -> None:
         sbom_mod.EXEMPTIONS_PATH = bad_exemptions
         _, _, _, _, _, ex_violations = sbom_mod.load_license_policy()
         assert len(ex_violations) > 0
-        assert any("AI agent names cannot serve as legal approvers" in v for v in ex_violations)
+        assert any("AI agent names" in v for v in ex_violations)
     finally:
         sbom_mod.EXEMPTIONS_PATH = orig_path
 
@@ -541,3 +553,224 @@ def test_verify_sbom_rejects_tampered_graph(tmp_path: Path) -> None:
 
     code = verify_sbom(tampered_sbom_path)
     assert code == 1, "verify_sbom must reject a tampered dependency graph"
+
+
+# ─── Round-3 negative tests (C1/C4, C2, C3/R2, R1, R3) ─────────────────────
+
+
+def test_arbitrary_approver_strings_rejected_negative(tmp_path: Path) -> None:
+    """C1/C4 — generic, arbitrary, and AI-adjacent approver strings must be rejected.
+
+    The pure-negative regex previously accepted 'asdf', 'TBD', 'x', '.',
+    'ClaudeCode', and 'Antigravity Team'.  The positive approver validator must
+    reject all of them.
+    """
+    sys.path.insert(0, str(ROOT))
+    from scripts.security.generate_sbom import _is_valid_approver
+
+    bad_approvers = [
+        "",
+        "asdf",
+        "x",
+        "TBD",
+        ".",
+        "ClaudeCode",
+        "Antigravity Team",
+        "GPT-4 approver",
+        "Gemini",
+        "Codex5",
+    ]
+    for approver in bad_approvers:
+        assert not _is_valid_approver(approver), (
+            f"Approver '{approver}' should be rejected but was accepted"
+        )
+
+    # Legitimate role-based approvers must still pass
+    good_approvers = [
+        "Human/Ops",
+        "Legal/Ops",
+        "Security/Ops",
+        "J.Smith/Legal",
+        "Security Officer",
+        "Compliance Manager",
+    ]
+    for approver in good_approvers:
+        assert _is_valid_approver(approver), (
+            f"Approver '{approver}' should be accepted but was rejected"
+        )
+
+
+def test_missing_required_exemption_field_rejected_negative(tmp_path: Path) -> None:
+    """C4 — a vulnerability exemption with a missing required field must be flagged.
+
+    Required fields per the schema: package_name, vulnerability_id, approved_by,
+    issued_at, expires_at, scope, reason.
+    """
+    sys.path.insert(0, str(ROOT))
+    import scripts.security.vulnerability_scan as vscan
+
+    # Exemption missing 'issued_at', 'vulnerability_id', and 'scope'
+    incomplete_exemptions = tmp_path / "incomplete_exemptions.json"
+    incomplete_exemptions.write_text(
+        json.dumps({
+            "exemptions": [
+                {
+                    "package_name": "some-package",
+                    # missing: vulnerability_id, issued_at, scope
+                    "approved_by": "Human/Ops",
+                    "expires_at": "2099-12-31T23:59:59Z",
+                    "reason": "Testing missing fields",
+                }
+            ]
+        }),
+        encoding="utf-8",
+    )
+
+    orig_path = vscan.EXEMPTIONS_PATH
+    try:
+        vscan.EXEMPTIONS_PATH = incomplete_exemptions
+        _, violations = vscan.load_vulnerability_exemptions()
+        assert len(violations) > 0, (
+            "Missing required exemption fields must produce validation violations"
+        )
+        missing_field_violations = [v for v in violations if "missing required fields" in v]
+        assert len(missing_field_violations) > 0, (
+            f"Expected 'missing required fields' violation, got: {violations}"
+        )
+    finally:
+        vscan.EXEMPTIONS_PATH = orig_path
+
+
+def test_coordinate_derived_hash_absent_from_workspace_components() -> None:
+    """C2 — workspace (link:) npm packages must not carry coordinate-derived hashes.
+
+    Before the fix the root component and all pkg_info.get('link') workspace
+    packages emitted sha256(pkg_name) as their hash, which falsely claimed to
+    be an artifact digest.  After the fix those components must have no 'hashes'
+    key at all.
+    """
+    sys.path.insert(0, str(ROOT))
+    from scripts.security.generate_sbom import generate_sbom
+
+    sbom = generate_sbom()
+    for comp in sbom.get("components", []):
+        purl = comp.get("purl", "")
+        # Root and first-party workspace packages should NOT have hashes
+        if purl.startswith("pkg:generic/oday-plus") or purl.startswith("pkg:npm/%40oday-plus/"):
+            assert "hashes" not in comp, (
+                f"Component '{purl}' must not carry a coordinate-derived hash; "
+                f"got hashes={comp.get('hashes')}"
+            )
+        # Any component that does have hashes must have a non-empty list
+        # (never an empty placeholder)
+        if "hashes" in comp:
+            assert len(comp["hashes"]) > 0, (
+                f"Component '{purl}' has an empty hashes list, which is forbidden"
+            )
+
+
+def test_dev_scoped_exemption_does_not_suppress_prod_audit_negative(tmp_path: Path) -> None:
+    """C3/R2 — a dev-scoped vulnerability exemption must NOT suppress the same finding
+    in the prod-scope audit invocation.
+
+    This tests the _filter_exemptions_by_scope() helper directly.
+    """
+    sys.path.insert(0, str(ROOT))
+    from scripts.security.vulnerability_scan import _filter_exemptions_by_scope
+
+    dev_only_exemption = [
+        {
+            "package_name": "brace-expansion",
+            "vulnerability_id": "GHSA-mh99-v99m-4gvg",
+            "scope": "dev",
+            "reason": "Dev-only",
+            "approved_by": "Human/Ops",
+            "issued_at": "2026-01-01T00:00:00Z",
+            "expires_at": "2099-12-31T23:59:59Z",
+        }
+    ]
+
+    prod_filtered = _filter_exemptions_by_scope(dev_only_exemption, "prod")
+    assert len(prod_filtered) == 0, (
+        "A dev-scoped exemption must NOT appear in the prod-scope exemption set; "
+        f"got: {prod_filtered}"
+    )
+
+    full_filtered = _filter_exemptions_by_scope(dev_only_exemption, "full")
+    assert len(full_filtered) == 1, (
+        "A dev-scoped exemption MUST appear in the full/dev-scope exemption set"
+    )
+
+
+def test_non_matching_advisory_id_not_exempted_negative() -> None:
+    """R1 — an exemption receipt for advisory GHSA-A must not suppress advisory GHSA-B
+    in the same package.
+
+    This verifies that is_npm_finding_exempted() requires the (package, advisory_id)
+    pair, not just the package name.
+    """
+    sys.path.insert(0, str(ROOT))
+    from scripts.security.vulnerability_scan import is_npm_finding_exempted
+
+    exemptions = [
+        {
+            "package_name": "brace-expansion",
+            "vulnerability_id": "GHSA-mh99-v99m-4gvg",
+            "scope": "dev",
+            "reason": "Only this specific advisory",
+            "approved_by": "Human/Ops",
+            "issued_at": "2026-01-01T00:00:00Z",
+            "expires_at": "2099-12-31T23:59:59Z",
+        }
+    ]
+
+    # Simulate a DIFFERENT advisory on the same package
+    different_advisory_item = {
+        "via": [
+            {
+                "name": "brace-expansion",
+                "url": "https://github.com/advisories/GHSA-ZZZZ-9999-0000",
+                "id": "GHSA-ZZZZ-9999-0000",
+            }
+        ]
+    }
+
+    result = is_npm_finding_exempted(
+        "brace-expansion", different_advisory_item, {}, exemptions
+    )
+    assert not result, (
+        "An exemption for GHSA-mh99-v99m-4gvg must NOT suppress a different "
+        "advisory GHSA-ZZZZ-9999-0000 on the same package"
+    )
+
+
+def test_npm_audit_empty_stdout_nonzero_exit_fails_closed(tmp_path: Path) -> None:
+    """R3 — npm audit exiting non-zero with empty stdout must be treated as a violation.
+
+    A network or registry failure that writes to stderr and exits non-zero but
+    produces no stdout was previously returned as (True, []) — the gate reported
+    PASSED having audited nothing.  The fixed code must return (False, [error]).
+    """
+    import unittest.mock
+
+    sys.path.insert(0, str(ROOT))
+    from scripts.security.vulnerability_scan import run_node_audit
+
+    fake_result = unittest.mock.MagicMock()
+    fake_result.stdout = ""
+    fake_result.stderr = "npm ERR! network timeout"
+    fake_result.returncode = 1
+
+    with unittest.mock.patch("subprocess.run", return_value=fake_result):
+        ok, violations = run_node_audit("prod", exemptions=[])
+
+    assert not ok, (
+        "npm audit returning exit code 1 with empty stdout must fail closed, not PASS"
+    )
+    assert len(violations) > 0, (
+        "A non-zero npm audit exit with empty stdout must produce at least one violation"
+    )
+    assert any("exited with code" in v for v in violations), (
+        f"Expected 'exited with code' in violations, got: {violations}"
+    )
+

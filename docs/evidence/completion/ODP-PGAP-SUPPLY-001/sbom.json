@@ -1,10 +1,10 @@
 {
   "bomFormat": "CycloneDX",
   "specVersion": "1.5",
-  "serialNumber": "urn:uuid:sha256-6275137769c94cb1d1ca43af8cbdf450",
+  "serialNumber": "urn:uuid:sha256-e150970fda0f3be3e79b06ae960bb58a",
   "version": 1,
   "metadata": {
-    "timestamp": "2026-07-30T19:34:33.087976+00:00",
+    "timestamp": "2026-07-30T20:49:58.526605+00:00",
     "component": {
       "name": "oday-plus",
       "version": "0.1.0",
@@ -13,15 +13,15 @@
     "properties": [
       {
         "name": "git-sha",
-        "value": "57fabce07b79c30b25ab0977c46abd2d6be36c99"
+        "value": "d4bf1c4da481948652779a2cf5d9fd24cd62d0a4"
       },
       {
         "name": "sbom-hash",
-        "value": "6275137769c94cb1d1ca43af8cbdf4502afadc5af9aeb1ef6b6611c46fea0eae"
+        "value": "e150970fda0f3be3e79b06ae960bb58ad9af20be95dcf7aa1e4d18dce94365af"
       },
       {
         "name": "sbom-content-digest",
-        "value": "sha256:6275137769c94cb1d1ca43af8cbdf4502afadc5af9aeb1ef6b6611c46fea0eae"
+        "value": "sha256:e150970fda0f3be3e79b06ae960bb58ad9af20be95dcf7aa1e4d18dce94365af"
       },
       {
         "name": "image-digest",
@@ -53,12 +53,6 @@
             "id": "MIT"
           }
         }
-      ],
-      "hashes": [
-        {
-          "alg": "SHA-256",
-          "content": "16019e4cc35f2431a6294402833b3b7e6db49be634ef6026e35c35b7dbba8470"
-        }
       ]
     },
     {
@@ -75,12 +69,6 @@
           "license": {
             "name": "UNKNOWN"
           }
-        }
-      ],
-      "hashes": [
-        {
-          "alg": "SHA-256",
-          "content": "5259db19c241cf468dc1aa9d753dd05e976cdda28930b618211d4306d7fc45da"
         }
       ]
     },
@@ -2238,12 +2226,6 @@
             "id": "MIT"
           }
         }
-      ],
-      "hashes": [
-        {
-          "alg": "SHA-256",
-          "content": "c21b844389a8b776ac68249338562cb7e55b0ffed03f33691726bed8dccf9c3f"
-        }
       ]
     },
     {
@@ -2260,12 +2242,6 @@
           "license": {
             "id": "MIT"
           }
-        }
-      ],
-      "hashes": [
-        {
-          "alg": "SHA-256",
-          "content": "83bb62b88702ef1992e70c92e7ab2f40ac7e43a7d147d39f5c863a0700ed41e4"
         }
       ]
     },
@@ -2284,12 +2260,6 @@
             "id": "MIT"
           }
         }
-      ],
-      "hashes": [
-        {
-          "alg": "SHA-256",
-          "content": "a43e21ccffff42f2f4344b705a8a67ca64320e5db9e051635132c7c6833cb6fd"
-        }
       ]
     },
     {
@@ -2306,12 +2276,6 @@
           "license": {
             "id": "MIT"
           }
-        }
-      ],
-      "hashes": [
-        {
-          "alg": "SHA-256",
-          "content": "902e5cc4e70a802221a0c0e69efd2c9dae0c631a04020ad8868a86120d3d20ff"
         }
       ]
     },
@@ -2330,12 +2294,6 @@
             "id": "MIT"
           }
         }
-      ],
-      "hashes": [
-        {
-          "alg": "SHA-256",
-          "content": "60d98e2f69b3b4415029e93ef9e31e2e44e9a8c4c4dba1004adb3738060d6cd9"
-        }
       ]
     },
     {
@@ -2352,12 +2310,6 @@
           "license": {
             "id": "MIT"
           }
-        }
-      ],
-      "hashes": [
-        {
-          "alg": "SHA-256",
-          "content": "4ebdb6e12e2f29bd5720ecfaf2318841db85908783a56f8dddc476cbf4346789"
         }
       ]
     },
@@ -2376,12 +2328,6 @@
             "id": "MIT"
           }
         }
-      ],
-      "hashes": [
-        {
-          "alg": "SHA-256",
-          "content": "ff5de90eb7a960845bbfbc77186ff4eec759829bc791db6b31ffc65eb7c1f6fa"
-        }
       ]
     },
     {
@@ -2398,12 +2344,6 @@
           "license": {
             "id": "MIT"
           }
-        }
-      ],
-      "hashes": [
-        {
-          "alg": "SHA-256",
-          "content": "70e22ceeb1da3aec1635cd8cf77e35bc992ab3fa28be408279f4cc3f54d573c4"
         }
       ]
     },
@@ -12473,12 +12413,6 @@
             "name": "UNKNOWN"
           }
         }
-      ],
-      "hashes": [
-        {
-          "alg": "SHA-256",
-          "content": "6f328f4a84dfa90fb4bfdc6612f30939b1f932d90b9b80f1e6e1b606afb5cbea"
-        }
       ]
     },
     {
@@ -12495,12 +12429,6 @@
           "license": {
             "name": "UNKNOWN"
           }
-        }
-      ],
-      "hashes": [
-        {
-          "alg": "SHA-256",
-          "content": "f120444fede5c32980b2b920004da6f032213f62e1e14071ffafb74b766dd5d0"
         }
       ]
     },
@@ -12519,12 +12447,6 @@
             "name": "UNKNOWN"
           }
         }
-      ],
-      "hashes": [
-        {
-          "alg": "SHA-256",
-          "content": "bf01d0c5a58ece92c39f7cf90f27e051870798f1384d997f7570a2407f4de3b8"
-        }
       ]
     },
     {
@@ -12541,12 +12463,6 @@
           "license": {
             "name": "UNKNOWN"
           }
-        }
-      ],
-      "hashes": [
-        {
-          "alg": "SHA-256",
-          "content": "9f9aa52a8efb3fe1f48e5d525416f3001b9485bda511c4d5c715b061e9c5ac71"
         }
       ]
     },
@@ -12565,12 +12481,6 @@
             "name": "UNKNOWN"
           }
         }
-      ],
-      "hashes": [
-        {
-          "alg": "SHA-256",
-          "content": "8bf2c08212f4ab91fff227e777620bb4cfe290d2ef537395ab946f032311eb25"
-        }
       ]
     },
     {
@@ -12588,12 +12498,6 @@
             "name": "UNKNOWN"
           }
         }
-      ],
-      "hashes": [
-        {
-          "alg": "SHA-256",
-          "content": "1bd9867a45b4263fad73f61bbf7cf6f534c58f9b0e2ffeb102b792426d234182"
-        }
       ]
     },
     {
@@ -12610,12 +12514,6 @@
           "license": {
             "name": "UNKNOWN"
           }
-        }
-      ],
-      "hashes": [
-        {
-          "alg": "SHA-256",
-          "content": "096d5414f7b54856403d98a862f164d1983c84c04ecc3e1c3546e2240004b80d"
         }
       ]
     },
@@ -15554,12 +15452,6 @@
           "license": {
             "id": "MIT"
           }
-        }
-      ],
-      "hashes": [
-        {
-          "alg": "SHA-256",
-          "content": "48d5fcc8a3822c49c4b60505ed04a68a231432125ac631e74ee775f2f9ce5896"
         }
       ]
     },

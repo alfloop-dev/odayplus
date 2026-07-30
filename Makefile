@@ -44,6 +44,11 @@ dependency-audit:
 		printf "Skipping dependency audit: package-lock.json is not present yet.\n"; \
 	fi
 	$(UV) run --with pip-audit pip-audit --local
+	# C3/R2 — Explicit prod-scope and full/dev vulnerability gate as declared steps.
+	# Exemption scope is enforced per-invocation; dev-scoped receipts do not apply
+	# to the prod-scope run.
+	$(UV) run python3 scripts/security/vulnerability_scan.py --scope prod
+	$(UV) run python3 scripts/security/vulnerability_scan.py --scope full
 
 
 security: bootstrap dependency-audit
