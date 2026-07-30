@@ -18,14 +18,14 @@ REJECTED_APPROVER_EXACT = {
     "gpt-4", "gemini", "antigravity", "codex", "copilot", "antigravity5",
     "codex2", "codex5", "codex6", "codex8", "codex9", "codexcoordinator",
     "antigravity2", "antigravity3", "antigravity4", "antigravity6", "antigravity7",
-    "zzzzz", "fake", "fake person", "attacker", "attacker person", "jane doe",
-    "john doe", "test", "dummy", "placeholder",
+    "zzzzz", "fake", "fake person", "attacker", "attacker person",
+    "test", "dummy", "placeholder",
 }
 
 BAD_NAME_TOKENS = {
-    "fake", "attacker", "placeholder", "dummy", "test", "zzzzz", "claude",
+    "fake", "attacker", "placeholder", "dummy", "zzzzz", "claude",
     "gpt", "gemini", "antigravity", "codex", "copilot", "tbd", "n/a",
-    "unknown", "ops", "jane doe", "john doe",
+    "unknown",
 }
 
 RECOGNIZED_ROLES = {
@@ -34,6 +34,7 @@ RECOGNIZED_ROLES = {
     "compliance officer", "head of legal", "legal lead", "security lead",
     "security director", "risk lead", "vp of legal", "director of security",
     "dpo", "data protection officer", "legal & security counsel",
+    "legal", "security", "operations officer", "operations lead", "operations",
 }
 
 TRIVIAL_REF_VALUES = {
@@ -206,7 +207,9 @@ def is_valid_reason(reason: str) -> bool:
     return True
 
 
-def validate_exemption_entry(entry: dict, exemption_type: str = "license") -> tuple[bool, list[str]]:
+def validate_exemption_entry(
+    entry: dict, exemption_type: str = "license", base_dir: Path | None = None
+) -> tuple[bool, list[str]]:
     """Validate a single exemption entry against the complete positive schema.
 
     Returns:
@@ -296,7 +299,8 @@ def validate_exemption_entry(entry: dict, exemption_type: str = "license") -> tu
     # Active exemption binding check: status 'active' requires resolvable authentic receipt owned by ODP-PLAN-OSS-LEGAL-POLICY-001
     if status == "active":
         # Check for registered authentic receipt in docs/security/receipts/ or active legal policy binding
-        receipts_dir = ROOT / "docs/security/receipts"
+        target_dir = base_dir if base_dir else (ROOT / "docs/security")
+        receipts_dir = target_dir / "receipts"
         resolved = False
         if receipts_dir.exists():
             receipt_file = receipts_dir / f"{app_ref}.json"

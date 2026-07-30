@@ -639,7 +639,26 @@ def generate_sbom(image_digest: str | None = None, release_digest: str | None = 
     npm_installed_versions: dict[str, str] = {}
     python_installed_versions: dict[str, str] = {}
 
-    # 1. Parse Node dependencies from package.json and package-lock.json
+    # 1. Parse Node dependencies from package-lock.json and package.json
+    lockfile_path = ROOT / "package-lock.json"
+    raw_npm_sub_deps = []
+    if not lockfile_path.exists():
+        raise ValueError(f"Required dependency inventory missing: {safe_rel_path(lockfile_path)}")
+    try:
+        data = json.loads(lockfile_path.read_text(encoding="utf-8"))
+    except Exception as e:
+        raise ValueError(f"Failed to parse package-lock.json: {e}") from e
+
+    if not isinstance(data, dict):
+        raise ValueError("package-lock.json missing valid dictionary schema")
+
+    packages = data.get("packages")
+    if not isinstance(packages, dict):
+        raise ValueError("package-lock.json missing valid 'packages' object schema")
+    non_root_packages = {k: v for k, v in packages.items() if k != "" and isinstance(v, dict)}
+    if not non_root_packages:
+        raise ValueError("package-lock.json missing required non-root dependency inventory")
+
     manifest_path = ROOT / "package.json"
     if not manifest_path.exists():
         raise ValueError(f"Required manifest missing: {safe_rel_path(manifest_path)}")
@@ -659,25 +678,6 @@ def generate_sbom(image_digest: str | None = None, release_digest: str | None = 
         raise ValueError("package.json 'devDependencies' field is not an object schema")
 
     declared_node_deps = set((deps_dict or {}).keys()) | set((dev_deps_dict or {}).keys())
-
-    lockfile_path = ROOT / "package-lock.json"
-    raw_npm_sub_deps = []
-    if not lockfile_path.exists():
-        raise ValueError(f"Required dependency inventory missing: {safe_rel_path(lockfile_path)}")
-    try:
-        data = json.loads(lockfile_path.read_text(encoding="utf-8"))
-    except Exception as e:
-        raise ValueError(f"Failed to parse package-lock.json: {e}") from e
-
-    if not isinstance(data, dict):
-        raise ValueError("package-lock.json missing valid dictionary schema")
-
-    packages = data.get("packages")
-    if not isinstance(packages, dict):
-        raise ValueError("package-lock.json missing valid 'packages' object schema")
-    non_root_packages = {k: v for k, v in packages.items() if k != "" and isinstance(v, dict)}
-    if not non_root_packages:
-        raise ValueError("package-lock.json missing required non-root dependency inventory")
 
     if declared_node_deps:
         installed_pkg_names = {
@@ -761,7 +761,26 @@ def generate_sbom(image_digest: str | None = None, release_digest: str | None = 
             "dependsOn": dep_purls
         })
 
-    # 2. Parse Python dependencies from pyproject.toml and uv.lock
+    # 2. Parse Python dependencies from uv.lock and pyproject.toml
+    uv_lock_path = ROOT / "uv.lock"
+    raw_py_sub_deps = []
+    if not uv_lock_path.exists():
+        raise ValueError(f"Required dependency inventory missing: {safe_rel_path(uv_lock_path)}")
+    try:
+        with open(uv_lock_path, "rb") as f:
+            uv_data = tomllib.load(f)
+    except Exception as e:
+        raise ValueError(f"Failed to parse uv.lock: {e}") from e
+
+    if not isinstance(uv_data, dict):
+        raise ValueError("uv.lock missing valid dictionary schema")
+
+    packages = uv_data.get("package")
+    if not isinstance(packages, list):
+        raise ValueError("uv.lock missing valid 'package' list schema")
+    if not packages:
+        raise ValueError("uv.lock missing required non-root dependency inventory")
+
     pyproject_path = ROOT / "pyproject.toml"
     if not pyproject_path.exists():
         raise ValueError(f"Required manifest missing: {safe_rel_path(pyproject_path)}")
@@ -817,25 +836,6 @@ def generate_sbom(image_digest: str | None = None, release_digest: str | None = 
                 m = re.match(r"^([a-zA-Z0-9_\-\.]+)", dep)
                 if m:
                     declared_py.add(m.group(1).lower().replace("_", "-"))
-
-    uv_lock_path = ROOT / "uv.lock"
-    raw_py_sub_deps = []
-    if not uv_lock_path.exists():
-        raise ValueError(f"Required dependency inventory missing: {safe_rel_path(uv_lock_path)}")
-    try:
-        with open(uv_lock_path, "rb") as f:
-            uv_data = tomllib.load(f)
-    except Exception as e:
-        raise ValueError(f"Failed to parse uv.lock: {e}") from e
-
-    if not isinstance(uv_data, dict):
-        raise ValueError("uv.lock missing valid dictionary schema")
-
-    packages = uv_data.get("package")
-    if not isinstance(packages, list):
-        raise ValueError("uv.lock missing valid 'package' list schema")
-    if not packages:
-        raise ValueError("uv.lock missing required non-root dependency inventory")
 
     if declared_py:
         installed_py = set()
