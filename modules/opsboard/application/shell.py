@@ -47,6 +47,7 @@ ADMIN_GRANTS = "operator.shell_admin_grants"
 SETTINGS = "operator.shell_settings"
 FRANCHISEE_ACKS = "operator.shell_franchisee_acks"
 FRANCHISEE_REPORTS = "operator.shell_franchisee_reports"
+AUDIT_EVENTS = "operator.shell_audit_events"
 
 SHELL_COLLECTIONS = (
     TASK_ASSIGNMENTS,
@@ -56,6 +57,7 @@ SHELL_COLLECTIONS = (
     SETTINGS,
     FRANCHISEE_ACKS,
     FRANCHISEE_REPORTS,
+    AUDIT_EVENTS,
 )
 
 
@@ -161,6 +163,63 @@ class ShellForbidden(Exception):
     (authorization) rather than 422 (malformed request). RBAC at the route
     still guards the coarse resource; this is the product-rule layer on top.
     """
+
+
+# ----------------------------------------------------------------------
+# Live state binding
+# ----------------------------------------------------------------------
+
+
+class TenantBoundOperatorStateService:
+    """Bind the shared live read model to one verified request scope.
+
+    ``ShellService`` predates the production live repository and deliberately
+    knows nothing about HTTP principals.  This adapter preserves that boundary:
+    the API resolves the verified tenant/brand/region/store scope once, then
+    every shell read delegates with the same immutable scope.
+    """
+
+    def __init__(
+        self,
+        state_service: OperatorStateService,
+        *,
+        tenant_id: str,
+        brand_ids: tuple[str, ...] = (),
+        region_ids: tuple[str, ...] = (),
+        store_ids: tuple[str, ...] = (),
+    ) -> None:
+        normalized_tenant = tenant_id.strip()
+        if not normalized_tenant:
+            raise ValueError("tenant_id is required for live Operator shell state")
+        self._state = state_service
+        self._scope = {
+            "tenant_id": normalized_tenant,
+            "brand_ids": tuple(brand_ids),
+            "region_ids": tuple(region_ids),
+            "store_ids": tuple(store_ids),
+        }
+
+    def resolve_role(
+        self,
+        *,
+        operator_role_id: str | None = None,
+        subject_id: str | None = None,
+        system_roles: str | None = None,
+    ) -> dict[str, Any]:
+        return self._state.resolve_role(
+            operator_role_id=operator_role_id,
+            subject_id=subject_id,
+            system_roles=system_roles,
+        )
+
+    def get_today(self, **kwargs: Any) -> dict[str, Any]:
+        return self._state.get_today(**kwargs, **self._scope)
+
+    def get_work_queue(self, **kwargs: Any) -> list[dict[str, Any]]:
+        return self._state.get_work_queue(**kwargs, **self._scope)
+
+    def search(self, query: str, **kwargs: Any) -> dict[str, Any]:
+        return self._state.search(query, **kwargs, **self._scope)
 
 
 # ----------------------------------------------------------------------
@@ -329,7 +388,11 @@ class ShellService:
             repository if repository is not None else InMemoryShellRepository()
         )
         self._idempotency_cache: dict[tuple[str, str | None, str], ShellIdempotencyRecord] = {}
-        self._audit_feed: list[dict[str, Any]] = []
+        self._audit_feed = sorted(
+            self._repo.list_records(AUDIT_EVENTS),
+            key=lambda event: str(event.get("occurredAt", "")),
+            reverse=True,
+        )
         self._load_idempotency_cache()
 
     # ------------------------------------------------------------------
@@ -406,9 +469,10 @@ class ShellService:
         message: str,
         metadata: dict[str, Any],
     ) -> dict[str, Any]:
+        audit_event_id = str(uuid4())
         event = {
-            "id": f"AUD-SHELL-{len(self._audit_feed) + 1:04d}",
-            "auditEventId": str(uuid4()),
+            "id": f"AUD-SHELL-{audit_event_id}",
+            "auditEventId": audit_event_id,
             "occurredAt": _now_iso(),
             "actorRoleId": actor_role_id,
             "actorSubjectId": actor_subject_id,
@@ -420,6 +484,7 @@ class ShellService:
             "metadata": _copy(metadata),
         }
         self._audit_feed.insert(0, event)
+        self._repo.save_record(AUDIT_EVENTS, audit_event_id, event)
         return _copy(event)
 
     def list_audit_feed(self) -> list[dict[str, Any]]:
@@ -1323,7 +1388,9 @@ class ShellService:
         than shown, so a future seed row cannot leak by defaulting open.
         """
         subject = subject_id or "franchisee-unknown"
-        store = store_id or "STORE-001"
+        store = (store_id or "").strip()
+        if not store:
+            raise ShellForbidden("加盟主門市範圍未經驗證。")
         # Read the widest envelope available, then apply the franchisee scope
         # here. The operator role is only a source of rows; none of its
         # role-scoped presentation (KPIs, risk rows, audit feed) is projected.
@@ -1332,6 +1399,7 @@ class ShellService:
             str(record["notificationId"])
             for record in self._repo.list_records(FRANCHISEE_ACKS)
             if str(record.get("subjectId")) == subject
+            and str(record.get("storeId")) == store
         }
 
         tasks = [
@@ -1354,6 +1422,7 @@ class ShellService:
             _copy(record)
             for record in self._repo.list_records(FRANCHISEE_REPORTS)
             if str(record.get("subjectId")) == subject
+            and str(record.get("storeId")) == store
         ]
         reports.sort(key=lambda record: str(record.get("createdAt")), reverse=True)
 
@@ -1383,20 +1452,24 @@ class ShellService:
     ) -> dict[str, Any]:
         """Record a franchisee's acknowledgement of a notification."""
         subject = subject_id or "franchisee-unknown"
+        store = (store_id or "").strip()
+        if not store:
+            raise ShellForbidden("加盟主門市範圍未經驗證。")
+        replay_action = f"franchisee_acknowledge:{store}"
         replay = self._replay(
-            "franchisee_acknowledge",
+            replay_action,
             idempotency_key,
             role_id="franchisee",
             subject_id=subject,
         )
         if replay is not None:
             return replay
-        view = self.get_franchisee_view(subject_id=subject, store_id=store_id)
+        view = self.get_franchisee_view(subject_id=subject, store_id=store)
         known = {str(item["notificationId"]) for item in view["notifications"]}
         if notification_id not in known:
             raise ShellNotFound(f"notification {notification_id} not found")
 
-        ack_id = f"{subject}:{notification_id}"
+        ack_id = f"{subject}:{store}:{notification_id}"
         record = {
             "ackId": ack_id,
             "notificationId": notification_id,
@@ -1429,7 +1502,7 @@ class ShellService:
             "idempotentReplay": False,
         }
         self._remember(
-            "franchisee_acknowledge",
+            replay_action,
             idempotency_key,
             response,
             role_id="franchisee",
@@ -1449,8 +1522,12 @@ class ShellService:
     ) -> dict[str, Any]:
         """Record a franchisee field report."""
         subject = subject_id or "franchisee-unknown"
+        store = (store_id or "").strip()
+        if not store:
+            raise ShellForbidden("加盟主門市範圍未經驗證。")
+        replay_action = f"franchisee_report:{store}"
         replay = self._replay(
-            "franchisee_report",
+            replay_action,
             idempotency_key,
             role_id="franchisee",
             subject_id=subject,
@@ -1470,7 +1547,7 @@ class ShellService:
         record = {
             "reportId": report_id,
             "subjectId": subject,
-            "storeId": store_id or "STORE-001",
+            "storeId": store,
             "category": category,
             "message": body,
             "status": "received",
@@ -1502,7 +1579,7 @@ class ShellService:
             "idempotentReplay": False,
         }
         self._remember(
-            "franchisee_report",
+            replay_action,
             idempotency_key,
             response,
             role_id="franchisee",
@@ -1523,6 +1600,7 @@ class ShellService:
 
 __all__ = [
     "ADMIN_GRANTS",
+    "AUDIT_EVENTS",
     "DEFAULT_PREFERENCES",
     "ENTRY_POINTS",
     "FRANCHISEE_ACKS",
@@ -1533,6 +1611,7 @@ __all__ = [
     "SEVERITY_ORDER",
     "SHELL_COLLECTIONS",
     "TASK_ASSIGNMENTS",
+    "TenantBoundOperatorStateService",
     "InMemoryShellRepository",
     "ShellConflict",
     "ShellIdempotencyRecord",

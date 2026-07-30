@@ -26,6 +26,7 @@ FRANCHISEE_HEADERS = {
     "x-subject-id": "franchisee-001",
     "x-roles": "franchisee",
     "x-tenant-id": "tenant-a",
+    "x-store-ids": "STORE-001",
 }
 
 
