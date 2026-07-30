@@ -7,7 +7,6 @@ import argparse
 import email
 import email.message
 import hashlib
-import importlib.metadata
 import json
 import re
 import subprocess
@@ -171,12 +170,16 @@ def normalize_spdx_license(raw_license: str | None) -> str:
         "ISC License (ISCL)": "ISC",
         "ISC License": "ISC",
         "GNU Lesser General Public License v3 or later (LGPLv3+)": "LGPL-3.0-or-later",
+        "LGPL-3.0": "LGPL-3.0-only",
         "LGPL-3.0-only": "LGPL-3.0-only",
         "LGPL with exceptions": "LGPL-3.0-or-later",
         "Mozilla Public License 2.0 (MPL 2.0)": "MPL-2.0",
         "Python Software Foundation License": "PSF-2.0",
         "PSFL": "PSF-2.0",
         "Zope Public License": "ZPL-2.1",
+        "POSTGRESQL": "PostgreSQL",
+        "PostgreSQL": "PostgreSQL",
+        "CNRI-Python": "CNRI-Python",
         "Dual License": "Apache-2.0 OR BSD-3-Clause",
     }
     return mapping.get(lic, lic)
@@ -215,9 +218,14 @@ def evaluate_license_string(lic_str: str | None, allowed: set[str], denied: set[
     if not lic_str or lic_str.strip() in {"UNKNOWN", ""}:
         return False
     lic_str = lic_str.strip()
-    if lic_str in allowed:
+    norm_lic = normalize_spdx_license(lic_str)
+
+    allowed_lower = {a.lower() for a in allowed}
+    denied_lower = {d.lower() for d in denied}
+
+    if lic_str in allowed or norm_lic in allowed or lic_str.lower() in allowed_lower or norm_lic.lower() in allowed_lower:
         return True
-    if lic_str in denied:
+    if lic_str in denied or norm_lic in denied or lic_str.lower() in denied_lower or norm_lic.lower() in denied_lower:
         return False
 
     # Check composite expressions (e.g., "MIT OR Apache-2.0", "(MIT AND CC0-1.0)")
@@ -228,16 +236,16 @@ def evaluate_license_string(lic_str: str | None, allowed: set[str], denied: set[
         return False
 
     # If any token is denied, fail
-    if any(t in denied for t in tokens):
+    if any(t in denied or normalize_spdx_license(t) in denied or t.lower() in denied_lower for t in tokens):
         return False
 
     # If expression contains OR and at least one part is allowed, pass
     if " OR " in lic_str or "||" in lic_str:
-        if any(t in allowed for t in tokens):
+        if any(t in allowed or normalize_spdx_license(t) in allowed or t.lower() in allowed_lower for t in tokens):
             return True
 
     # Otherwise (AND / WITH / single), all tokens must be allowed
-    return all(t in allowed for t in tokens)
+    return all(t in allowed or normalize_spdx_license(t) in allowed or t.lower() in allowed_lower for t in tokens)
 
 
 VALID_SPDX_IDS = {
@@ -453,9 +461,10 @@ def generate_sbom(image_digest: str | None = None, release_digest: str | None = 
     resolved_release_digest = release_digest if (release_digest and SHA256_DIGEST_REGEX.match(release_digest)) else "UNBOUND"
 
     comp_json = json.dumps(components, sort_keys=True)
-    comp_hash = hashlib.sha256(comp_json.encode("utf-8")).hexdigest()
-    digest_input = f"{git_sha}:{comp_hash}:{resolved_image_digest}:{resolved_release_digest}"
-    sbom_hash = hashlib.sha256(digest_input.encode("utf-8")).hexdigest()
+    dep_json = json.dumps(filtered_dependencies, sort_keys=True)
+    content_hash = hashlib.sha256(f"{comp_json}:{dep_json}".encode()).hexdigest()
+    digest_input = f"{content_hash}:{resolved_image_digest}:{resolved_release_digest}"
+    sbom_hash = hashlib.sha256(digest_input.encode()).hexdigest()
     sbom_digest = f"sha256:{sbom_hash}"
 
     sbom = {
@@ -567,7 +576,7 @@ def check_third_party_notices(sbom: dict) -> tuple[bool, str | None]:
     return True, None
 
 
-def readback_sbom(sbom_path: Path) -> int:
+def readback_sbom(sbom_path: Path, expected_image_digest: str | None = None, expected_release_digest: str | None = None) -> int:
     if not sbom_path.exists():
         print(f"Error: SBOM file does not exist at {sbom_path}", file=sys.stderr)
         return 1
@@ -596,6 +605,18 @@ def readback_sbom(sbom_path: Path) -> int:
     print("\nLicense Breakdown:")
     for lic, count in sorted(license_counts.items(), key=lambda x: x[1], reverse=True):
         print(f"  - {lic}: {count}")
+
+    if expected_image_digest:
+        actual_img = props.get("image-digest", "")
+        if actual_img != expected_image_digest:
+            print(f"❌ Readback Image Digest mismatch: actual='{actual_img}', expected='{expected_image_digest}'", file=sys.stderr)
+            return 1
+
+    if expected_release_digest:
+        actual_rel = props.get("release-digest", "")
+        if actual_rel != expected_release_digest:
+            print(f"❌ Readback Release Digest mismatch: actual='{actual_rel}', expected='{expected_release_digest}'", file=sys.stderr)
+            return 1
 
     return 0
 
@@ -659,13 +680,19 @@ def main() -> int:
     parser.add_argument("--require-digests", action="store_true", help="Require valid sha256:<64-hex> image and release digests in policy check")
     parser.add_argument("--verify", action="store_true", help="Verify committed sbom.json matches active lockfiles")
     parser.add_argument("--readback", action="store_true", help="Read back and display metadata from existing sbom.json")
+    parser.add_argument("--expected-image-digest", type=str, help="Expected image digest during readback verification gate")
+    parser.add_argument("--expected-release-digest", type=str, help="Expected release digest during readback verification gate")
     parser.add_argument("--check-notices", action="store_true", help="Check THIRD_PARTY_NOTICES is up to date fail closed")
     parser.add_argument("--update-notices", action="store_true", help="Generate/update THIRD_PARTY_NOTICES file")
 
     args = parser.parse_args()
 
     if args.readback:
-        return readback_sbom(args.output)
+        return readback_sbom(
+            args.output,
+            expected_image_digest=args.expected_image_digest,
+            expected_release_digest=args.expected_release_digest,
+        )
 
     if args.verify:
         return verify_sbom(args.output, image_digest=args.image_digest, release_digest=args.release_digest)
@@ -700,9 +727,10 @@ def main() -> int:
     args.output.write_text(json.dumps(sbom, indent=2), encoding="utf-8")
     print(f"SBOM successfully generated at {args.output.relative_to(ROOT)}")
     print(f"Total components cataloged: {len(sbom['components'])}")
-    print(f"SBOM Content Digest: {sbom['metadata']['properties'][2]['value']}")
-    print(f"Image Digest: {sbom['metadata']['properties'][3]['value']}")
-    print(f"Release Digest: {sbom['metadata']['properties'][4]['value']}")
+    props = {p["name"]: p["value"] for p in sbom["metadata"]["properties"]}
+    print(f"SBOM Content Digest: {props.get('sbom-content-digest', 'N/A')}")
+    print(f"Image Digest: {props.get('image-digest', 'N/A')}")
+    print(f"Release Digest: {props.get('release-digest', 'N/A')}")
     print(f"License Policy Status: {policy_status}")
 
     # Write THIRD_PARTY_NOTICES only when --update-notices flag is provided

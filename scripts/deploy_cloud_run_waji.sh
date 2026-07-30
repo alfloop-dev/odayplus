@@ -268,7 +268,8 @@ fi
 COSIGN_SIG_REF="$(cosign triangulate "${API_IMAGE}" 2>/dev/null || true)"
 REAL_RELEASE_DIGEST="$(gcloud artifacts docker images describe "${COSIGN_SIG_REF}" --format='value(image_summary.digest)' 2>/dev/null || true)"
 if [[ -z "${REAL_RELEASE_DIGEST}" || ! "${REAL_RELEASE_DIGEST}" =~ ^sha256:[a-fA-F0-9]{64}$ ]]; then
-  REAL_RELEASE_DIGEST="sha256:$(echo -n "${REAL_IMAGE_DIGEST}:${ODAY_RELEASE_SHA}:cosign-signed" | sha256sum | cut -d' ' -f1)"
+  echo "Error: Failed to resolve valid sha256 release attestation digest for ${API_IMAGE}. License policy gate failed closed." >&2
+  exit 1
 fi
 
 run_locked_python scripts/security/generate_sbom.py \
@@ -280,7 +281,9 @@ run_locked_python scripts/security/generate_sbom.py \
 
 mkdir -p .odp_data/deployment
 cp docs/evidence/completion/ODP-PGAP-SUPPLY-001/sbom.json .odp_data/deployment/sbom.json
-run_locked_python scripts/security/generate_sbom.py --readback --output .odp_data/deployment/sbom.json
+run_locked_python scripts/security/generate_sbom.py --readback --output .odp_data/deployment/sbom.json \
+  --expected-image-digest "${REAL_IMAGE_DIGEST}" \
+  --expected-release-digest "${REAL_RELEASE_DIGEST}"
 
 API_SECRET_BINDINGS="ODAY_DATABASE_URL=${ODAY_DATABASE_URL_SECRET}"
 API_SECRET_BINDINGS+=",ODP_AUTH_PRINCIPAL_MAP=${ODP_AUTH_PRINCIPAL_MAP_SECRET}"

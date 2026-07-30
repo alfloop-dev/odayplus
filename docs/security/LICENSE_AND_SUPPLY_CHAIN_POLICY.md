@@ -27,10 +27,12 @@ Every release candidate and build must produce a CycloneDX 1.5 compliant JSON So
 ## 3. OSS License Governance Policy
 
 ### License Classification:
-- **Allowed Licenses**: Per-approved permissive and open-source licenses:
-  - `MIT`, `Apache-2.0`, `BSD-2-Clause`, `BSD-3-Clause`, `ISC`, `Python-2.0`, `MPL-2.0`, `CC0-1.0`, `Unlicense`, `LGPL-3.0-or-later`, `LGPL-2.1-or-later`, `Zlib`, `0BSD`, `POSTGRESQL`, `PSF-2.0`, `ZPL-2.1`.
-- **Denied Licenses**: Copyleft or restrictive commercial licenses strictly prohibited in production builds without explicit legal review and exemption:
+- **Allowed Licenses**: Pre-approved permissive and open-source licenses:
+  - `MIT`, `MIT-0`, `Apache-2.0`, `BSD-2-Clause`, `BSD-3-Clause`, `ISC`, `Python-2.0`, `MPL-2.0`, `CC0-1.0`, `CC-BY-4.0`, `BlueOak-1.0.0`, `Unlicense`, `LGPL-3.0-or-later`, `LGPL-3.0-only`, `LGPL-3.0`, `LGPL-2.1-or-later`, `Zlib`, `0BSD`, `PostgreSQL`, `POSTGRESQL`, `PSF-2.0`, `ZPL-2.1`, `TCL`, `CNRI-Python`.
+- **Denied Licenses**: Strong copyleft or restrictive commercial licenses strictly prohibited in production builds without explicit legal review and exemption:
   - `GPL-3.0`, `GPL-3.0-only`, `GPL-3.0-or-later`, `AGPL-3.0`, `AGPL-3.0-only`, `AGPL-3.0-or-later`, `SSPL-1.0`, `BSL-1.1`.
+- **LGPL Decision**:
+  - Weak copyleft licenses `LGPL-2.1` and `LGPL-3.0` variants (`LGPL-2.1-or-later`, `LGPL-3.0`, `LGPL-3.0-only`, `LGPL-3.0-or-later`) are explicitly allowed outright, while strong copyleft (`GPL-3.0`, `AGPL-3.0`) remains denied pending legal review.
 - **Review Required / Unclassified**:
   - Requires named exemption entry in `docs/security/license_exemptions.json` specifying package name, purl, reason, and approving reviewer.
 

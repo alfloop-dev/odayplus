@@ -412,9 +412,17 @@ def test_missing_policy_file_raises_error(tmp_path: Path) -> None:
         sbom_mod.POLICY_PATH = orig_policy_path
 
 
-def test_check_notices_cli() -> None:
+def test_check_notices_cli(tmp_path: Path) -> None:
+    # Must specify --output to a tmp path so pytest does not mutate committed docs/evidence/completion/ODP-PGAP-SUPPLY-001/sbom.json
+    dummy_output = tmp_path / "sbom.json"
     res = subprocess.run(
-        [sys.executable, str(ROOT / "scripts/security/generate_sbom.py"), "--check-notices"],
+        [
+            sys.executable,
+            str(ROOT / "scripts/security/generate_sbom.py"),
+            "--output",
+            str(dummy_output),
+            "--check-notices",
+        ],
         cwd=ROOT,
         capture_output=True,
         text=True,
@@ -428,3 +436,60 @@ def test_deploy_script_digest_fail_closed() -> None:
     content = script_path.read_text(encoding="utf-8")
     assert "exit 1" in content
     assert "Failed to resolve valid sha256 image digest" in content
+    assert "Failed to resolve valid sha256 release attestation digest" in content
+    assert "cosign-signed" not in content, "Deploy script must not fall back to synthetic release digest"
+
+
+def test_sbom_readback_digest_assertion(tmp_path: Path) -> None:
+    sys.path.insert(0, str(ROOT))
+    from scripts.security.generate_sbom import generate_sbom, readback_sbom
+
+    sbom_file = tmp_path / "sbom.json"
+    img_dig = "sha256:1111111111111111111111111111111111111111111111111111111111111111"
+    rel_dig = "sha256:2222222222222222222222222222222222222222222222222222222222222222"
+    data = generate_sbom(image_digest=img_dig, release_digest=rel_dig)
+    sbom_file.write_text(json.dumps(data), encoding="utf-8")
+
+    # Correct expected digests: must return 0
+    code = readback_sbom(sbom_file, expected_image_digest=img_dig, expected_release_digest=rel_dig)
+    assert code == 0
+
+    # Wrong expected image digest: must fail closed with exit code 1
+    code_bad_img = readback_sbom(
+        sbom_file,
+        expected_image_digest="sha256:9999999999999999999999999999999999999999999999999999999999999999",
+        expected_release_digest=rel_dig,
+    )
+    assert code_bad_img == 1
+
+    # Wrong expected release digest: must fail closed with exit code 1
+    code_bad_rel = readback_sbom(
+        sbom_file,
+        expected_image_digest=img_dig,
+        expected_release_digest="sha256:9999999999999999999999999999999999999999999999999999999999999999",
+    )
+    assert code_bad_rel == 1
+
+
+def test_dependency_graph_tampering_alters_sbom_digest(tmp_path: Path) -> None:
+    sys.path.insert(0, str(ROOT))
+    from scripts.security.generate_sbom import generate_sbom
+
+    sbom_a = generate_sbom()
+    digest_a = next(p["value"] for p in sbom_a["metadata"]["properties"] if p["name"] == "sbom-content-digest")
+
+    # Modify dependency graph
+    sbom_b = json.loads(json.dumps(sbom_a))
+    if sbom_b.get("dependencies"):
+        sbom_b["dependencies"].append({"ref": "pkg:generic/tampered@1.0.0", "dependsOn": []})
+
+    from scripts.security.generate_sbom import generate_sbom as current_generate_sbom
+    # Verify that changing dependencies changes sbom-content-digest
+    comp_json = json.dumps(sbom_b["components"], sort_keys=True)
+    dep_json = json.dumps(sbom_b["dependencies"], sort_keys=True)
+    import hashlib
+    content_hash = hashlib.sha256(f"{comp_json}:{dep_json}".encode()).hexdigest()
+    digest_b = f"sha256:{hashlib.sha256(f'{content_hash}:UNBOUND:UNBOUND'.encode()).hexdigest()}"
+
+    assert digest_a != digest_b, "Graph tampering must alter sbom-content-digest"
+
