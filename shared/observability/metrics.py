@@ -556,9 +556,14 @@ class ProductionMetricsExporter:
         metrics_payload: dict[str, Any] = {}
         time_series_list: list[dict[str, Any]] = []
 
+        posted_metric_types: set[str] = set()
+        posted_series_keys: set[tuple[str, tuple[tuple[str, str], ...]]] = set()
         now_iso = datetime.now(UTC).isoformat()
+
         for metric_name, series_list in raw_snapshot.items():
             bound_series = []
+            m_type = f"custom.googleapis.com/{metric_name}"
+            posted_metric_types.add(m_type)
             for series in series_list:
                 entry = dict(series)
                 labels = dict(entry.get("labels", {}))
@@ -566,11 +571,14 @@ class ProductionMetricsExporter:
                 entry["labels"] = labels
                 bound_series.append(entry)
 
+                label_key = tuple(sorted((str(k), str(v)) for k, v in labels.items()))
+                posted_series_keys.add((m_type, label_key))
+
                 metric_val = float(entry.get("value", entry.get("count", 1.0)))
                 time_series_list.append(
                     {
                         "metric": {
-                            "type": f"custom.googleapis.com/{metric_name}",
+                            "type": m_type,
                             "labels": labels,
                         },
                         "resource": {
@@ -674,6 +682,14 @@ class ProductionMetricsExporter:
 
         verified_points_count = 0
         observed_types: set[str] = set()
+        observed_series_keys: set[tuple[str, tuple[tuple[str, str], ...]]] = set()
+
+        req_start_dt = datetime.fromisoformat(start_iso)
+        if req_start_dt.tzinfo is None:
+            req_start_dt = req_start_dt.replace(tzinfo=UTC)
+        req_end_dt = datetime.fromisoformat(now_iso)
+        if req_end_dt.tzinfo is None:
+            req_end_dt = req_end_dt.replace(tzinfo=UTC)
 
         for ts_item in returned_series:
             if not isinstance(ts_item, dict):
@@ -681,10 +697,16 @@ class ProductionMetricsExporter:
                     "Cloud Monitoring readback contains non-object timeSeries item. Fail-closed gate enforced."
                 )
 
-            metric_type = ts_item.get("metric", {}).get("type")
+            metric_dict = ts_item.get("metric", {})
+            metric_type = metric_dict.get("type")
             if not metric_type or not isinstance(metric_type, str) or not metric_type.strip():
                 raise RuntimeError(
                     "Cloud Monitoring readback timeSeries missing valid metric.type. Fail-closed gate enforced."
+                )
+
+            if metric_type not in posted_metric_types:
+                raise RuntimeError(
+                    f"Cloud Monitoring readback returned metric.type '{metric_type}' which was not exported in POST body. Fail-closed gate enforced."
                 )
 
             res_proj = ts_item.get("resource", {}).get("labels", {}).get("project_id")
@@ -693,7 +715,8 @@ class ProductionMetricsExporter:
                     f"Cloud Monitoring readback timeSeries project mismatch or missing: expected '{gcp_proj}', got '{res_proj}'. Fail-closed gate enforced."
                 )
 
-            metric_sha = ts_item.get("metric", {}).get("labels", {}).get("release_sha")
+            labels_dict = metric_dict.get("labels", {})
+            metric_sha = labels_dict.get("release_sha")
             if not metric_sha or str(metric_sha).strip().lower() != self.release_sha:
                 raise RuntimeError(
                     f"Cloud Monitoring readback timeSeries release_sha mismatch: expected '{self.release_sha}', got '{metric_sha}'. Fail-closed gate enforced."
@@ -726,6 +749,11 @@ class ProductionMetricsExporter:
                         f"Cloud Monitoring readback point in '{metric_type}' has invalid timestamp '{end_ts}': {exc}. Fail-closed gate enforced."
                     ) from exc
 
+                if not (req_start_dt - timedelta(seconds=60) <= pt_dt <= req_end_dt + timedelta(seconds=60)):
+                    raise RuntimeError(
+                        f"Cloud Monitoring readback point timestamp '{end_ts}' in '{metric_type}' lies outside requested query window [{start_iso}, {now_iso}]. Fail-closed gate enforced."
+                    )
+
                 val_dict = pt.get("value")
                 if val_dict is None:
                     raise RuntimeError(
@@ -750,10 +778,24 @@ class ProductionMetricsExporter:
                 verified_points_count += 1
 
             observed_types.add(metric_type)
+            lbl_key = tuple(sorted((str(k), str(v)) for k, v in labels_dict.items()))
+            observed_series_keys.add((metric_type, lbl_key))
 
         if verified_points_count == 0:
             raise RuntimeError(
                 f"Cloud Monitoring readback verified zero valid points for release_sha '{self.release_sha}'. Fail-closed gate enforced."
+            )
+
+        missing_types = posted_metric_types - observed_types
+        if missing_types:
+            raise RuntimeError(
+                f"Cloud Monitoring readback missing exported metric types {sorted(missing_types)}. Fail-closed gate enforced."
+            )
+
+        missing_series = posted_series_keys - observed_series_keys
+        if missing_series:
+            raise RuntimeError(
+                "Cloud Monitoring readback missing exported metric series label sets. Fail-closed gate enforced."
             )
 
         import hashlib

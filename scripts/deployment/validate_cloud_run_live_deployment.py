@@ -391,6 +391,8 @@ def observability_runtime_checks(root: Path = ROOT) -> list[CheckResult]:
         registry = default_registry()
         monitoring_route = "https://monitoring.googleapis.com/v3"
 
+        mock_time_series_store: list[dict] = []
+
         def mock_provider_transport(
             method: str,
             url: str,
@@ -406,13 +408,18 @@ def observability_runtime_checks(root: Path = ROOT) -> list[CheckResult]:
 
             if "timeSeries" in url:
                 if method == "POST":
+                    if isinstance(p_dict, dict) and "timeSeries" in p_dict:
+                        mock_time_series_store.clear()
+                        mock_time_series_store.extend(p_dict["timeSeries"])
                     return 200, {}
                 elif method == "GET":
-                    now_iso = datetime.now(UTC).isoformat()
-                    return 200, {
-                        "gcp_project": g_proj,
-                        "release_sha": r_sha,
-                        "timeSeries": [
+                    now_dt = datetime.now(UTC)
+                    now_iso = now_dt.isoformat()
+                    past_iso = (now_dt - timedelta(minutes=15)).isoformat()
+                    if mock_time_series_store:
+                        ts_return = mock_time_series_store
+                    else:
+                        ts_return = [
                             {
                                 "metric": {
                                     "type": "custom.googleapis.com/api_latency_ms",
@@ -421,12 +428,20 @@ def observability_runtime_checks(root: Path = ROOT) -> list[CheckResult]:
                                 "resource": {"type": "global", "labels": {"project_id": g_proj}},
                                 "points": [
                                     {
-                                        "interval": {"endTime": now_iso},
+                                        "interval": {"endTime": past_iso},
                                         "value": {"doubleValue": 12.5},
-                                    }
+                                    },
+                                    {
+                                        "interval": {"endTime": now_iso},
+                                        "value": {"doubleValue": 14.2},
+                                    },
                                 ],
                             }
-                        ],
+                        ]
+                    return 200, {
+                        "gcp_project": g_proj,
+                        "release_sha": r_sha,
+                        "timeSeries": ts_return,
                     }
             elif "dashboards" in url:
                 if method == "POST":

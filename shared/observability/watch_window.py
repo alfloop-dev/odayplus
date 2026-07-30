@@ -39,6 +39,27 @@ def _parse_iso_utc(ts: datetime | str) -> datetime:
     raise ValueError(f"Invalid timestamp '{ts}'.")
 
 
+ALLOWLISTED_INDEPENDENT_WATCH_METRICS = frozenset(
+    {
+        "custom.googleapis.com/api_request_count",
+        "custom.googleapis.com/api_error_count",
+        "custom.googleapis.com/api_latency_ms",
+        "custom.googleapis.com/db_query_latency_ms",
+        "custom.googleapis.com/job_duration_seconds",
+        "custom.googleapis.com/job_failure_count",
+        "custom.googleapis.com/event_consumer_lag",
+        "custom.googleapis.com/dlq_message_count",
+        "custom.googleapis.com/external_connector_failure_count",
+        "custom.googleapis.com/data_freshness_hours",
+        "custom.googleapis.com/data_quality_score",
+        "custom.googleapis.com/prediction_count",
+        "custom.googleapis.com/model_error_metric",
+        "custom.googleapis.com/audit_event_record_count",
+        "custom.googleapis.com/audit_event_write_failure_count",
+    }
+)
+
+
 def record_deployment_watch_window_status(
     release_sha: str,
     status: int,
@@ -154,6 +175,7 @@ def record_deployment_watch_window_status(
     verified_points_count = 0
     observed_types: set[str] = set()
     point_timestamps: list[datetime] = []
+    point_values: list[float] = []
     observed_errors = 0
     health_passed = True
 
@@ -174,6 +196,12 @@ def record_deployment_watch_window_status(
             raise ValueError(
                 "Monitoring query readback returned deployment_watch_window_status metric type. "
                 "Watch window must be bound to independent health/error/latency provider metrics, not circular status metric. Fail-closed gate enforced."
+            )
+
+        if metric_type not in ALLOWLISTED_INDEPENDENT_WATCH_METRICS:
+            raise ValueError(
+                f"Monitoring query readback returned un-allowlisted metric type '{metric_type}'. "
+                "Watch window requires allowlisted independent health/error/latency signals. Fail-closed gate enforced."
             )
 
         res_proj = ts_item.get("resource", {}).get("labels", {}).get("project_id")
@@ -237,9 +265,14 @@ def record_deployment_watch_window_status(
                     f"Monitoring query readback point in '{metric_type}' has non-numeric value '{val}': {exc}. Fail-closed gate enforced."
                 ) from exc
 
-            if "error" in metric_type or "failure" in metric_type:
+            point_values.append(val_float)
+
+            if "error" in metric_type or "failure" in metric_type or "dlq" in metric_type:
                 if val_float > 0:
                     observed_errors += int(val_float)
+                    health_passed = False
+            elif "latency" in metric_type:
+                if val_float > 5000.0:  # Latency P95/max threshold 5000ms
                     health_passed = False
             elif status == 1 and val_float <= 0:
                 health_passed = False
@@ -253,11 +286,16 @@ def record_deployment_watch_window_status(
             f"Monitoring query readback verified zero valid points for release_sha '{clean_sha}'. Caller-self-attested success rejected. Fail-closed gate enforced."
         )
 
+    if len(point_timestamps) < 2:
+        raise ValueError(
+            f"Monitoring query readback requires multiple timestamped points across watch window (got {len(point_timestamps)} points, window_coverage_seconds=0.0). Single point cannot prove watch window. Fail-closed gate enforced."
+        )
+
     min_pt_ts = min(point_timestamps)
     max_pt_ts = max(point_timestamps)
     point_coverage_seconds = (max_pt_ts - min_pt_ts).total_seconds()
 
-    if observed_seconds >= 900 and point_coverage_seconds < 840 and len(point_timestamps) > 1:
+    if observed_seconds >= 900 and point_coverage_seconds < 840:
         raise ValueError(
             f"Monitoring query readback point timestamps span only {point_coverage_seconds:.1f}s, failing to cover the required 15-minute ({observed_seconds:.1f}s) watch window. Fail-closed gate enforced."
         )
@@ -289,6 +327,7 @@ def record_deployment_watch_window_status(
     import hashlib
 
     sorted_metric_types = sorted(list(observed_types))
+    sorted_iso_timestamps = [pt.isoformat() for pt in sorted(point_timestamps)]
     canonical_receipt_data = {
         "release_sha": clean_sha,
         "gcp_project": gcp_proj,
@@ -300,6 +339,10 @@ def record_deployment_watch_window_status(
         "watch_window_minutes": watch_window_minutes,
         "verified_points_count": verified_points_count,
         "observed_metric_types": sorted_metric_types,
+        "point_timestamps": sorted_iso_timestamps,
+        "point_values": [round(v, 6) for v in point_values],
+        "query_params": query_params,
+        "observed_results": res,
     }
     canonical_receipt_json = json.dumps(canonical_receipt_data, sort_keys=True)
     canonical_receipt_hash = hashlib.sha256(canonical_receipt_json.encode("utf-8")).hexdigest()
@@ -341,6 +384,9 @@ def record_deployment_watch_window_status(
         "watch_window_minutes": watch_window_minutes,
         "verified_points_count": verified_points_count,
         "observed_metric_types": sorted_metric_types,
+        "point_timestamps": sorted_iso_timestamps,
+        "point_values": [round(v, 6) for v in point_values],
+        "query_params": query_params,
         "monitoring_query_execution": monitoring_query_execution,
         "observed_results": res,
         "recorded_at": datetime.now(UTC).isoformat(),
@@ -421,9 +467,9 @@ def verify_watch_window_receipt(
     verified_points_count = receipt.get("verified_points_count") or query_exec.get(
         "verified_points_count"
     )
-    if not isinstance(verified_points_count, int) or verified_points_count <= 0:
+    if not isinstance(verified_points_count, int) or verified_points_count < 2:
         raise ValueError(
-            "Watch-window receipt verified_points_count is missing or non-positive. Fail-closed gate enforced."
+            "Watch-window receipt verified_points_count must be at least 2 for window coverage. Fail-closed gate enforced."
         )
 
     observed_metric_types = receipt.get("observed_metric_types") or query_exec.get(
@@ -434,10 +480,55 @@ def verify_watch_window_receipt(
             "Watch-window receipt missing observed_metric_types list. Fail-closed gate enforced."
         )
 
-    if "custom.googleapis.com/deployment_watch_window_status" in observed_metric_types:
+    for m_type in observed_metric_types:
+        if m_type == "custom.googleapis.com/deployment_watch_window_status":
+            raise ValueError(
+                "Watch-window receipt relies on circular status metric rather than independent provider metrics. Fail-closed gate enforced."
+            )
+        if m_type not in ALLOWLISTED_INDEPENDENT_WATCH_METRICS:
+            raise ValueError(
+                f"Watch-window receipt contains un-allowlisted metric type '{m_type}'. Fail-closed gate enforced."
+            )
+
+    observed_results = receipt.get("observed_results", {})
+    if not isinstance(observed_results, dict):
+        raise ValueError("Watch-window receipt missing valid observed_results object.")
+
+    if (
+        observed_results.get("error_count", 0) > 0
+        or observed_results.get("health_check_pass") is False
+    ):
         raise ValueError(
-            "Watch-window receipt relies on circular status metric rather than independent provider metrics. Fail-closed gate enforced."
+            "Watch-window verification failed or contradictory in observed_results."
         )
+
+    cov_sec = observed_results.get("window_coverage_seconds", 0)
+    if cov_sec < 840:
+        raise ValueError(
+            f"Watch-window receipt window_coverage_seconds ({cov_sec}) is less than required 840s. Fail-closed gate enforced."
+        )
+
+    # Re-validate stored provider_query_response metrics and points
+    provider_resp = query_exec.get("provider_query_response", {})
+    if isinstance(provider_resp, dict):
+        ts_list = provider_resp.get("timeSeries", [])
+        if not isinstance(ts_list, list) or len(ts_list) == 0:
+            raise ValueError("Watch-window receipt provider_query_response contains no timeSeries.")
+        for ts_item in ts_list:
+            if isinstance(ts_item, dict):
+                m_type = ts_item.get("metric", {}).get("type")
+                if m_type == "custom.googleapis.com/deployment_watch_window_status":
+                    raise ValueError(
+                        "Stored provider proof contains circular deployment_watch_window_status metric. Tampered receipt rejected. Fail-closed gate enforced."
+                    )
+                if m_type not in ALLOWLISTED_INDEPENDENT_WATCH_METRICS:
+                    raise ValueError(
+                        f"Stored provider proof contains un-allowlisted metric type '{m_type}'. Tampered receipt rejected. Fail-closed gate enforced."
+                    )
+
+    point_timestamps = receipt.get("point_timestamps", [])
+    point_values = receipt.get("point_values", [])
+    query_params = receipt.get("query_params", {})
 
     import hashlib
 
@@ -452,6 +543,10 @@ def verify_watch_window_receipt(
         "watch_window_minutes": watch_window_minutes,
         "verified_points_count": verified_points_count,
         "observed_metric_types": sorted(observed_metric_types),
+        "point_timestamps": point_timestamps,
+        "point_values": point_values,
+        "query_params": query_params,
+        "observed_results": observed_results,
     }
     expected_hash = hashlib.sha256(
         json.dumps(canonical_receipt_data, sort_keys=True).encode("utf-8")
@@ -466,15 +561,5 @@ def verify_watch_window_receipt(
         raise ValueError(
             f"Watch-window receipt integrity check failed: canonical SHA-256 digest mismatch. Tampered receipt rejected. Expected '{expected_hash}', got '{receipt_hash}'. Fail-closed gate enforced."
         )
-
-    observed_results = receipt.get("observed_results", {})
-    if isinstance(observed_results, dict):
-        if (
-            observed_results.get("error_count", 0) > 0
-            or observed_results.get("health_check_pass") is False
-        ):
-            raise ValueError(
-                "Watch-window verification failed or contradictory in observed_results."
-            )
 
     return receipt

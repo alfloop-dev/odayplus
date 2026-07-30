@@ -719,9 +719,13 @@ def test_release_sha_dashboard_traceability_and_watch_window_receipt(tmp_path: P
                     "resource": {"type": "global", "labels": {"project_id": g_proj}},
                     "points": [
                         {
-                            "interval": {"endTime": end_dt.isoformat()},
+                            "interval": {"endTime": start_dt.isoformat()},
                             "value": {"doubleValue": 12.5},
-                        }
+                        },
+                        {
+                            "interval": {"endTime": end_dt.isoformat()},
+                            "value": {"doubleValue": 14.2},
+                        },
                     ],
                 }
             ],
@@ -792,9 +796,13 @@ def test_watch_window_receipt_negative_cases(tmp_path: Path) -> None:
                     },
                     "points": [
                         {
-                            "interval": {"endTime": end_dt.isoformat()},
+                            "interval": {"endTime": start_dt.isoformat()},
                             "value": {"doubleValue": 12.5},
-                        }
+                        },
+                        {
+                            "interval": {"endTime": end_dt.isoformat()},
+                            "value": {"doubleValue": 14.2},
+                        },
                     ],
                 }
             ],
@@ -1580,3 +1588,229 @@ def test_exporter_fails_on_post_only_transport() -> None:
     )
     with pytest.raises(RuntimeError, match="POST-only transport does not support GET readback"):
         exporter.export_metrics()
+
+
+def test_export_readback_rejects_unexported_attacker_type_or_old_point() -> None:
+    from shared.observability import ProductionMetricsExporter, default_registry
+
+    registry = default_registry()
+    registry.increment(
+        "api_request_count", labels={"service": "api", "route": "/jobs", "status": "200"}
+    )
+    test_sha = "b28a6b6d335293ecb51a72dff3700838e196129c"
+    gcp_proj = "alfaloop-data-project"
+    monitoring_route = "https://monitoring.googleapis.com/v3"
+
+    # Attack 1a: Provider returns unexported attacker metric type
+    def attacker_type_transport(method: str, url: str, params: dict = None, payload: dict = None) -> tuple[int, dict]:
+        if method == "POST":
+            return 200, {}
+        return 200, {
+            "gcp_project": gcp_proj,
+            "release_sha": test_sha,
+            "timeSeries": [
+                {
+                    "metric": {
+                        "type": "custom.googleapis.com/attacker_metric",
+                        "labels": {"release_sha": test_sha},
+                    },
+                    "resource": {"type": "global", "labels": {"project_id": gcp_proj}},
+                    "points": [
+                        {
+                            "interval": {"endTime": datetime.now(UTC).isoformat()},
+                            "value": {"doubleValue": 1.0},
+                        }
+                    ],
+                }
+            ],
+        }
+
+    exporter = ProductionMetricsExporter(
+        release_sha=test_sha,
+        registry=registry,
+        gcp_project=gcp_proj,
+        provider_route=monitoring_route,
+        http_transport=attacker_type_transport,
+    )
+    with pytest.raises(RuntimeError, match="was not exported in POST body"):
+        exporter.export_metrics()
+
+    # Attack 1b: Provider returns point from year 2000 outside query window
+    def old_point_transport(method: str, url: str, params: dict = None, payload: dict = None) -> tuple[int, dict]:
+        if method == "POST":
+            return 200, {}
+        return 200, {
+            "gcp_project": gcp_proj,
+            "release_sha": test_sha,
+            "timeSeries": [
+                {
+                    "metric": {
+                        "type": "custom.googleapis.com/api_request_count",
+                        "labels": {"release_sha": test_sha, "service": "api", "route": "/jobs", "status": "200"},
+                    },
+                    "resource": {"type": "global", "labels": {"project_id": gcp_proj}},
+                    "points": [
+                        {
+                            "interval": {"endTime": "2000-01-01T00:00:00Z"},
+                            "value": {"doubleValue": 1.0},
+                        }
+                    ],
+                }
+            ],
+        }
+
+    exporter_old = ProductionMetricsExporter(
+        release_sha=test_sha,
+        registry=registry,
+        gcp_project=gcp_proj,
+        provider_route=monitoring_route,
+        http_transport=old_point_transport,
+    )
+    with pytest.raises(RuntimeError, match="lies outside requested query window"):
+        exporter_old.export_metrics()
+
+
+def test_watch_window_rejects_single_point_or_unallowlisted_counter(tmp_path: Path) -> None:
+    from datetime import timedelta
+
+    from shared.observability.watch_window import record_deployment_watch_window_status
+
+    test_sha = "b28a6b6d335293ecb51a72dff3700838e196129c"
+    receipt_file = tmp_path / "watch_receipt.json"
+    start_dt = datetime.now(UTC) - timedelta(minutes=20)
+    end_dt = datetime.now(UTC)
+
+    # Attack 2a: Single arbitrary positive point with window_coverage_seconds=0
+    def single_point_transport(method: str, url: str, params: dict = None, payload: dict = None) -> tuple[int, dict]:
+        return 200, {
+            "gcp_project": "alfaloop-data-project",
+            "release_sha": test_sha,
+            "timeSeries": [
+                {
+                    "metric": {
+                        "type": "custom.googleapis.com/api_latency_ms",
+                        "labels": {"release_sha": test_sha},
+                    },
+                    "resource": {"type": "global", "labels": {"project_id": "alfaloop-data-project"}},
+                    "points": [
+                        {
+                            "interval": {"endTime": end_dt.isoformat()},
+                            "value": {"doubleValue": 12.5},
+                        }
+                    ],
+                }
+            ],
+        }
+
+    with pytest.raises(ValueError, match="requires multiple timestamped points"):
+        record_deployment_watch_window_status(
+            release_sha=test_sha,
+            status=1,
+            start_time=start_dt,
+            end_time=end_dt,
+            receipt_path=receipt_file,
+            gcp_project="alfaloop-data-project",
+            provider_route="https://monitoring.googleapis.com/v3",
+            query_transport=single_point_transport,
+        )
+
+    # Attack 2b: Unallowlisted attacker counter metric
+    def attacker_counter_transport(method: str, url: str, params: dict = None, payload: dict = None) -> tuple[int, dict]:
+        return 200, {
+            "gcp_project": "alfaloop-data-project",
+            "release_sha": test_sha,
+            "timeSeries": [
+                {
+                    "metric": {
+                        "type": "custom.googleapis.com/attacker_counter",
+                        "labels": {"release_sha": test_sha},
+                    },
+                    "resource": {"type": "global", "labels": {"project_id": "alfaloop-data-project"}},
+                    "points": [
+                        {
+                            "interval": {"endTime": start_dt.isoformat()},
+                            "value": {"doubleValue": 1.0},
+                        },
+                        {
+                            "interval": {"endTime": end_dt.isoformat()},
+                            "value": {"doubleValue": 1.0},
+                        },
+                    ],
+                }
+            ],
+        }
+
+    with pytest.raises(ValueError, match="un-allowlisted metric type"):
+        record_deployment_watch_window_status(
+            release_sha=test_sha,
+            status=1,
+            start_time=start_dt,
+            end_time=end_dt,
+            receipt_path=receipt_file,
+            gcp_project="alfaloop-data-project",
+            provider_route="https://monitoring.googleapis.com/v3",
+            query_transport=attacker_counter_transport,
+        )
+
+
+def test_verify_watch_window_receipt_rejects_tampered_proof_or_circular_metric(tmp_path: Path) -> None:
+    from datetime import timedelta
+
+    from shared.observability.watch_window import (
+        record_deployment_watch_window_status,
+        verify_watch_window_receipt,
+    )
+
+    test_sha = "b28a6b6d335293ecb51a72dff3700838e196129c"
+    receipt_file = tmp_path / "watch_receipt.json"
+    start_dt = datetime.now(UTC) - timedelta(minutes=20)
+    end_dt = datetime.now(UTC)
+
+    def valid_transport(method: str, url: str, params: dict = None, payload: dict = None) -> tuple[int, dict]:
+        return 200, {
+            "gcp_project": "alfaloop-data-project",
+            "release_sha": test_sha,
+            "timeSeries": [
+                {
+                    "metric": {
+                        "type": "custom.googleapis.com/api_latency_ms",
+                        "labels": {"release_sha": test_sha},
+                    },
+                    "resource": {"type": "global", "labels": {"project_id": "alfaloop-data-project"}},
+                    "points": [
+                        {
+                            "interval": {"endTime": start_dt.isoformat()},
+                            "value": {"doubleValue": 12.5},
+                        },
+                        {
+                            "interval": {"endTime": end_dt.isoformat()},
+                            "value": {"doubleValue": 14.2},
+                        },
+                    ],
+                }
+            ],
+        }
+
+    record_deployment_watch_window_status(
+        release_sha=test_sha,
+        status=1,
+        start_time=start_dt,
+        end_time=end_dt,
+        receipt_path=receipt_file,
+        gcp_project="alfaloop-data-project",
+        provider_route="https://monitoring.googleapis.com/v3",
+        query_transport=valid_transport,
+    )
+
+    # Confirm valid receipt verifies cleanly
+    assert verify_watch_window_receipt(expected_release_sha=test_sha, receipt_path=receipt_file)["status"] == "WATCH_PASSED"
+
+    # Attack 3a: Tamper provider metric in stored receipt to circular status metric with value 0
+    raw_data = json.loads(receipt_file.read_text(encoding="utf-8"))
+    raw_data["monitoring_query_execution"]["provider_query_response"]["timeSeries"][0]["metric"]["type"] = "custom.googleapis.com/deployment_watch_window_status"
+    raw_data["monitoring_query_execution"]["provider_query_response"]["timeSeries"][0]["points"][0]["value"]["doubleValue"] = 0
+    receipt_file.write_text(json.dumps(raw_data), encoding="utf-8")
+
+    with pytest.raises(ValueError, match="Circular deployment_watch_window_status metric|integrity check failed"):
+        verify_watch_window_receipt(expected_release_sha=test_sha, receipt_path=receipt_file)
+
