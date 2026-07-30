@@ -145,3 +145,37 @@ class OnCallNotificationAdapter:
             flush=True,
         )
         return is_success, error_msg
+
+
+import os
+
+
+def get_notification_adapter(
+    endpoint_url: str | None = None,
+    http_transport: Callable[[str, dict], tuple[int, str | dict]] | None = None,
+) -> ConsoleNotificationAdapter | OnCallNotificationAdapter:
+    """Factory to instantiate configured notification adapter based on env / config.
+
+    If NOTIFICATION_ADAPTER_TYPE is set to 'oncall' or ONCALL_ENDPOINT_URL is set:
+      Instantiates OnCallNotificationAdapter with fail-closed configuration validation.
+    If NOTIFICATION_ADAPTER_TYPE is explicitly 'oncall' but endpoint URL is missing/empty/whitespace,
+      raises ValueError to fail closed.
+    Otherwise:
+      Defaults to ConsoleNotificationAdapter.
+    """
+    adapter_type = os.getenv("NOTIFICATION_ADAPTER_TYPE", "").strip().lower()
+    raw_env_endpoint = os.getenv("ONCALL_ENDPOINT_URL")
+
+    if adapter_type == "oncall" or raw_env_endpoint is not None or endpoint_url is not None:
+        target_url = (raw_env_endpoint if raw_env_endpoint is not None else endpoint_url) or ""
+        target_url_str = target_url.strip()
+
+        if adapter_type == "oncall" or raw_env_endpoint is not None or endpoint_url is not None:
+            if not target_url_str:
+                raise ValueError("On-call route endpoint URL missing or empty. Fail-closed gate enforced.")
+            return OnCallNotificationAdapter(endpoint_url=target_url_str, http_transport=http_transport)
+
+    if adapter_type and adapter_type not in {"console", "oncall"}:
+        raise ValueError(f"Unknown notification adapter type '{adapter_type}'. Fail-closed gate enforced.")
+
+    return ConsoleNotificationAdapter()

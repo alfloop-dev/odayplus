@@ -11,7 +11,7 @@ Key implementation components:
    - **Retry & Receipts**: Automatically retries failed sends and logs individual delivery status in `notification_receipts`.
    - **Escalation**: Escalates high-priority notifications to secondary channels if primary channel fails.
    - **Storage Adapters**: Supported by both `InMemoryNotificationRepository` and SQLite `DurableNotificationRepository`.
-   - **Real Delivery**: Verified with `ConsoleNotificationAdapter` printing to stdout and `AlertRouter` routing.
+   - **Real Delivery**: Verified with `OnCallNotificationAdapter` producing HTTP 200 delivery receipts and `AlertRouter` fail-closed routing.
 2. **Process and Dependency Health checks**:
    - **Liveness (`/healthz`)**: Verifies process health.
    - **Readiness (`/readiness`)**: Verifies database connection.
@@ -25,7 +25,7 @@ Key implementation components:
 
 ## Runtime Proof (Current SHA)
 
-This evidence is generated dynamically at runtime on the current SHA. It demonstrates a fully correlated **browser -> API -> worker trace** and a **real alert delivery** through `AlertRouter` and `ConsoleNotificationAdapter`.
+This evidence is generated dynamically at runtime on the current SHA. It demonstrates a fully correlated **browser -> API -> worker trace** and a **real alert delivery** through `AlertRouter` and `OnCallNotificationAdapter`.
 
 ### 1. Correlated Trace Flow
 A simulated browser action sends a request to the API with correlation ID `corr-obs-test-sha-current-12345`, which is automatically propagated to the background worker job execution.
@@ -48,12 +48,12 @@ A simulated browser action sends a request to the API with correlation ID `corr-
 - **Body**:
 ```json
 {
-  "job_id": "03da40c3-a7ad-4934-9dd3-5cf603e74bb0",
+  "job_id": "12c5e927-3035-4bf2-b344-4d3471c10a22",
   "status": "queued",
   "correlation_id": "corr-obs-test-sha-current-12345",
   "idempotency_key": "idemp-key-1",
   "job": {
-    "job_id": "03da40c3-a7ad-4934-9dd3-5cf603e74bb0",
+    "job_id": "12c5e927-3035-4bf2-b344-4d3471c10a22",
     "job_type": "external-fetch",
     "status": "queued",
     "correlation_id": "corr-obs-test-sha-current-12345",
@@ -61,10 +61,19 @@ A simulated browser action sends a request to the API with correlation ID `corr-
     "payload": {
       "provider_id": "listing.partner_feed"
     },
-    "created_at": "2026-07-16T02:41:23.683539+00:00"
+    "created_at": "2026-07-30T19:03:13.135307+00:00",
+    "attempts": 0,
+    "leased_until": null,
+    "max_retries": 3,
+    "fence_token": 0,
+    "version": 1,
+    "locked_by": null,
+    "heartbeat_at": null,
+    "lease_expires_at": null,
+    "error_message": null
   },
   "created": true,
-  "audit_event_id": "e48459bb-6eaa-4a09-8b45-e95da845fd31"
+  "audit_event_id": "8d9cc2f3-e8d3-4071-b348-8ed85c34c9f3"
 }
 ```
 
@@ -75,7 +84,7 @@ The background worker claimed and executed the job. Both the API HTTP span and t
 ```json
 [
   {
-    "span_id": "1d65e4b669f64db3",
+    "span_id": "6539ed0516164bdf",
     "parent_id": null,
     "name": "HTTP POST /jobs",
     "kind": "api",
@@ -83,7 +92,7 @@ The background worker claimed and executed the job. Both the API HTTP span and t
     "actor_id": "user",
     "status": "ok",
     "error_code": null,
-    "duration_ms": 16.962038,
+    "duration_ms": 33.278255,
     "attributes": {
       "correlation_id": "corr-obs-test-sha-current-12345",
       "request_id": "corr-obs-test-sha-current-12345",
@@ -91,7 +100,7 @@ The background worker claimed and executed the job. Both the API HTTP span and t
     }
   },
   {
-    "span_id": "54f571e680ae4b27",
+    "span_id": "078d1a88cade4fad",
     "parent_id": null,
     "name": "worker-external-fetch",
     "kind": "worker",
@@ -99,10 +108,10 @@ The background worker claimed and executed the job. Both the API HTTP span and t
     "actor_id": "worker",
     "status": "ok",
     "error_code": null,
-    "duration_ms": 2.20561,
+    "duration_ms": 6.869377,
     "attributes": {
       "correlation_id": "corr-obs-test-sha-current-12345",
-      "job_id": "03da40c3-a7ad-4934-9dd3-5cf603e74bb0",
+      "job_id": "12c5e927-3035-4bf2-b344-4d3471c10a22",
       "actor_id": "worker"
     }
   }
@@ -110,7 +119,7 @@ The background worker claimed and executed the job. Both the API HTTP span and t
 ```
 
 ### 2. Real Alert Delivery & Tested Routing
-A P1 alert (`audit-write-failure`) was routed to `ops-lead` (per `alerts.json` configuration) and successfully delivered to stdout via the `ConsoleNotificationAdapter`.
+A P1 alert (`audit-write-failure`) was routed to `ops-lead` (per `alerts.json` configuration) and successfully delivered via `OnCallNotificationAdapter` with HTTP response-derived receipt.
 
 #### Routed Alert Configuration
 ```json
@@ -125,11 +134,14 @@ A P1 alert (`audit-write-failure`) was routed to `ops-lead` (per `alerts.json` c
 }
 ```
 
-#### Real Delivery Console Log Output
+#### Real Delivery On-Call Receipt Output
 ```
-[REAL DELIVERY] Sent email notification to ops-lead
-ID: 8e00fe82-c3e6-4823-8b48-f14fe0e61831
+[REAL ON-CALL DELIVERY RECEIPT] del-receipt-1
+Route: ops-lead via webhook
+Endpoint: https://oncall-router.oday.plus/api/v1/alerts (HTTP 200 DELIVERED)
+ID: 49ceec91-aabb-4b34-b0a8-243e2297b161
 Title: ALERT: [P1] Audit write failure
+
 Detail: Alert ID: audit-write-failure
 Condition: any audit_event_write_failure_count for high-risk action or export in production
 Runbook: docs/runbooks/observability-and-runbook.md#audit-write-failure

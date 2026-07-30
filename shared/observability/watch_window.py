@@ -55,6 +55,9 @@ def verify_watch_window_receipt(
     receipt_path: str | Path | None = None,
 ) -> dict[str, Any]:
     """Verify that a durable watch-window receipt exists, matches the expected release SHA, and passed."""
+    if not expected_release_sha or not isinstance(expected_release_sha, str) or not expected_release_sha.strip():
+        raise ValueError("expected_release_sha must be provided as a non-empty string.")
+
     out_path = Path(receipt_path or DEFAULT_RECEIPT_PATH)
     if not out_path.exists():
         raise FileNotFoundError(f"Watch-window receipt artifact absent at '{out_path}'.")
@@ -72,7 +75,17 @@ def verify_watch_window_receipt(
 
     status_code = receipt.get("status_code")
     status = receipt.get("status")
-    if status_code != 1 and status != "WATCH_PASSED":
-        raise ValueError(f"Watch-window verification failed with status '{status}' (code {status_code}).")
+
+    if status not in {"WATCH_PASSED", "WATCH_FAILED"}:
+        raise ValueError(f"Invalid watch-window status '{status}' in receipt.")
+
+    if status != "WATCH_PASSED" or status_code != 1:
+        raise ValueError(
+            f"Watch-window verification failed or contradictory: status='{status}' (code {status_code})."
+        )
+
+    watch_window_minutes = receipt.get("watch_window_minutes")
+    if not isinstance(watch_window_minutes, int) or watch_window_minutes <= 0:
+        raise ValueError("Watch-window receipt watch_window_minutes is invalid or non-positive.")
 
     return receipt

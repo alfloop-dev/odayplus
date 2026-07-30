@@ -41,7 +41,9 @@ from shared.observability.metrics import (
     MetricDefinition,
     MetricsRegistry,
     MetricType,
+    ProductionMetricsExporter,
     default_registry,
+    render_dashboard_provisioning,
 )
 from shared.observability.runtime import Telemetry
 from shared.observability.tracing import (
@@ -83,7 +85,9 @@ __all__ = [
     "MetricsRegistry",
     "MetricType",
     "PLATFORM_METRICS",
+    "ProductionMetricsExporter",
     "default_registry",
+    "render_dashboard_provisioning",
     "Telemetry",
     "E2E_TRACE_KINDS",
     "Span",

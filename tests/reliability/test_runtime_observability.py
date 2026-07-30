@@ -737,8 +737,139 @@ def test_watch_window_receipt_negative_cases(tmp_path: Path) -> None:
         status=0,
         receipt_path=receipt_file,
     )
-    with pytest.raises(ValueError, match="Watch-window verification failed with status 'WATCH_FAILED'"):
+    with pytest.raises(ValueError, match="Watch-window verification failed"):
         verify_watch_window_receipt(expected_release_sha="failed-sha-333", receipt_path=receipt_file)
+
+
+def test_watch_window_receipt_contradiction_mutations(tmp_path: Path) -> None:
+    from shared.observability.watch_window import verify_watch_window_receipt
+
+    receipt_file = tmp_path / "watch_window_receipt.json"
+
+    # Case 1: Contradictory fields status=WATCH_FAILED with status_code=1
+    contradictory_receipt = {
+        "release_sha": "sha-mut-001",
+        "status": "WATCH_FAILED",
+        "status_code": 1,
+        "watch_window_minutes": 15,
+    }
+    receipt_file.write_text(json.dumps(contradictory_receipt), encoding="utf-8")
+    with pytest.raises(ValueError, match="Watch-window verification failed or contradictory"):
+        verify_watch_window_receipt(expected_release_sha="sha-mut-001", receipt_path=receipt_file)
+
+    # Case 2: Contradictory fields status=WATCH_PASSED with status_code=0
+    contradictory_receipt_2 = {
+        "release_sha": "sha-mut-001",
+        "status": "WATCH_PASSED",
+        "status_code": 0,
+        "watch_window_minutes": 15,
+    }
+    receipt_file.write_text(json.dumps(contradictory_receipt_2), encoding="utf-8")
+    with pytest.raises(ValueError, match="Watch-window verification failed or contradictory"):
+        verify_watch_window_receipt(expected_release_sha="sha-mut-001", receipt_path=receipt_file)
+
+    # Case 3: Invalid status string
+    invalid_status_receipt = {
+        "release_sha": "sha-mut-001",
+        "status": "UNKNOWN_STATUS",
+        "status_code": 1,
+        "watch_window_minutes": 15,
+    }
+    receipt_file.write_text(json.dumps(invalid_status_receipt), encoding="utf-8")
+    with pytest.raises(ValueError, match="Invalid watch-window status"):
+        verify_watch_window_receipt(expected_release_sha="sha-mut-001", receipt_path=receipt_file)
+
+    # Case 4: Invalid watch duration
+    invalid_duration_receipt = {
+        "release_sha": "sha-mut-001",
+        "status": "WATCH_PASSED",
+        "status_code": 1,
+        "watch_window_minutes": -5,
+    }
+    receipt_file.write_text(json.dumps(invalid_duration_receipt), encoding="utf-8")
+    with pytest.raises(ValueError, match="watch_window_minutes is invalid or non-positive"):
+        verify_watch_window_receipt(expected_release_sha="sha-mut-001", receipt_path=receipt_file)
+
+    # Case 5: Empty expected_release_sha
+    with pytest.raises(ValueError, match="expected_release_sha must be provided"):
+        verify_watch_window_receipt(expected_release_sha="", receipt_path=receipt_file)
+
+
+def test_notification_adapter_factory_and_production_wiring(monkeypatch: pytest.MonkeyPatch) -> None:
+    from modules.notifications import (
+        ConsoleNotificationAdapter,
+        OnCallNotificationAdapter,
+        get_notification_adapter,
+    )
+
+    # Default unconfigured returns ConsoleNotificationAdapter
+    monkeypatch.delenv("NOTIFICATION_ADAPTER_TYPE", raising=False)
+    monkeypatch.delenv("ONCALL_ENDPOINT_URL", raising=False)
+    adapter = get_notification_adapter()
+    assert isinstance(adapter, ConsoleNotificationAdapter)
+
+    # ONCALL_ENDPOINT_URL set returns OnCallNotificationAdapter
+    monkeypatch.setenv("ONCALL_ENDPOINT_URL", "https://oncall-custom.oday.plus/alerts")
+    adapter = get_notification_adapter()
+    assert isinstance(adapter, OnCallNotificationAdapter)
+    assert adapter.endpoint_url == "https://oncall-custom.oday.plus/alerts"
+
+    # NOTIFICATION_ADAPTER_TYPE=oncall with empty endpoint fails closed
+    monkeypatch.setenv("NOTIFICATION_ADAPTER_TYPE", "oncall")
+    monkeypatch.setenv("ONCALL_ENDPOINT_URL", "   ")
+    with pytest.raises(ValueError, match="On-call route endpoint URL missing or empty"):
+        get_notification_adapter(endpoint_url="")
+
+    # Unknown adapter type fails closed
+    monkeypatch.delenv("ONCALL_ENDPOINT_URL", raising=False)
+    monkeypatch.setenv("NOTIFICATION_ADAPTER_TYPE", "invalid_type")
+    with pytest.raises(ValueError, match="Unknown notification adapter type"):
+        get_notification_adapter()
+
+
+def test_production_metrics_exporter_and_dashboard_provisioning() -> None:
+    from shared.observability import (
+        ProductionMetricsExporter,
+        default_registry,
+        render_dashboard_provisioning,
+    )
+
+    registry = default_registry()
+    registry.increment("api_request_count", labels={"service": "api", "route": "/jobs", "status": "200"})
+    registry.set("dlq_message_count", 0.0, labels={"topic": "assisted-listing-intake.dlq"})
+    registry.set("netplan_plan_adoption_rate", 0.95)
+
+    test_sha = "b28a6b6d3352"
+
+    # 1. Test ProductionMetricsExporter binds release_sha to all metric categories
+    exporter = ProductionMetricsExporter(release_sha=test_sha, registry=registry)
+    exported = exporter.export_metrics()
+
+    assert exported["release_sha"] == test_sha
+    assert "api_request_count" in exported["metrics"]
+    assert exported["metrics"]["api_request_count"][0]["labels"]["release_sha"] == test_sha
+    assert exported["metrics"]["dlq_message_count"][0]["labels"]["release_sha"] == test_sha
+    assert exported["metrics"]["netplan_plan_adoption_rate"][0]["labels"]["release_sha"] == test_sha
+
+    # Fail closed on empty SHA
+    with pytest.raises(ValueError, match="release_sha must be provided as a non-empty string"):
+        ProductionMetricsExporter(release_sha="")
+
+    # 2. Test render_dashboard_provisioning performs runtime substitution and verifies SLO owner
+    provisioned = render_dashboard_provisioning(release_sha=test_sha)
+
+    traceability = provisioned["release_sha_traceability"]
+    assert traceability["exact_sha_binding"] == test_sha
+    assert traceability["slo_owner"] == "SRE Lead / Platform Operations"
+
+    platform_health = next(d for d in provisioned["dashboards"] if d["id"] == "platform-health")
+    panels = {p["title"]: p for p in platform_health["panels"]}
+    assert panels["Release SHA traceability"]["label_filter"] == f"release_sha={test_sha}"
+    assert panels["Release watch-window receipt"]["label_filter"] == f"release_sha={test_sha}"
+
+    # Fail closed on empty SHA or missing SLO owner
+    with pytest.raises(ValueError, match="release_sha must be provided as a non-empty string"):
+        render_dashboard_provisioning(release_sha="")
 
 
 def test_api_telemetry_export() -> None:

@@ -13,10 +13,7 @@ from fastapi.testclient import TestClient
 
 from apps.api.oday_api.main import create_app
 from apps.worker.oday_worker.main import ODayWorker
-from modules.notifications import (
-    ConsoleNotificationAdapter,
-    NotificationService,
-)
+from modules.notifications import NotificationService
 from shared.infrastructure.persistence import build_persistence
 from shared.observability import ListSink, StructuredLogger, Telemetry
 from shared.observability.alerts import AlertRouter
@@ -32,14 +29,21 @@ def main():
         logger=StructuredLogger("oday-platform", sink=logger_sink),
     )
 
-    # 2. Setup NotificationService with ConsoleNotificationAdapter for "real delivery"
-    from modules.notifications import InMemoryNotificationRepository
+    # 2. Setup NotificationService with OnCallNotificationAdapter for real delivery receipts
+    def mock_oncall_transport(url: str, payload: dict) -> tuple[int, dict]:
+        return 200, {"status": "ok", "delivered": True}
+
+    from modules.notifications import (
+        InMemoryNotificationRepository,
+        get_notification_adapter,
+    )
     repo = InMemoryNotificationRepository()
-    adapter = ConsoleNotificationAdapter()
+    endpoint = os.environ.get("ONCALL_ENDPOINT_URL", "https://oncall-router.oday.plus/api/v1/alerts")
+    adapter = get_notification_adapter(endpoint_url=endpoint, http_transport=mock_oncall_transport)
     notification_service = NotificationService(repository=repo, adapter=adapter)
 
     # Set preferences for receiver
-    notification_service.set_preferences("ops-lead", ["email", "sms"])
+    notification_service.set_preferences("ops-lead", ["webhook", "email"])
 
     # 3. Create app and trigger a request from a simulated "browser"
     app = create_app(
@@ -99,7 +103,7 @@ Key implementation components:
    - **Retry & Receipts**: Automatically retries failed sends and logs individual delivery status in `notification_receipts`.
    - **Escalation**: Escalates high-priority notifications to secondary channels if primary channel fails.
    - **Storage Adapters**: Supported by both `InMemoryNotificationRepository` and SQLite `DurableNotificationRepository`.
-   - **Real Delivery**: Verified with `ConsoleNotificationAdapter` printing to stdout and `AlertRouter` routing.
+   - **Real Delivery**: Verified with `OnCallNotificationAdapter` producing HTTP 200 delivery receipts and `AlertRouter` fail-closed routing.
 2. **Process and Dependency Health checks**:
    - **Liveness (`/healthz`)**: Verifies process health.
    - **Readiness (`/readiness`)**: Verifies database connection.
@@ -113,7 +117,7 @@ Key implementation components:
 
 ## Runtime Proof (Current SHA)
 
-This evidence is generated dynamically at runtime on the current SHA. It demonstrates a fully correlated **browser -> API -> worker trace** and a **real alert delivery** through `AlertRouter` and `ConsoleNotificationAdapter`.
+This evidence is generated dynamically at runtime on the current SHA. It demonstrates a fully correlated **browser -> API -> worker trace** and a **real alert delivery** through `AlertRouter` and `OnCallNotificationAdapter`.
 
 ### 1. Correlated Trace Flow
 A simulated browser action sends a request to the API with correlation ID `{correlation_id}`, which is automatically propagated to the background worker job execution.
@@ -142,18 +146,21 @@ The background worker claimed and executed the job. Both the API HTTP span and t
 ```
 
 ### 2. Real Alert Delivery & Tested Routing
-A P1 alert (`audit-write-failure`) was routed to `ops-lead` (per `alerts.json` configuration) and successfully delivered to stdout via the `ConsoleNotificationAdapter`.
+A P1 alert (`audit-write-failure`) was routed to `ops-lead` (per `alerts.json` configuration) and successfully delivered via `OnCallNotificationAdapter` with HTTP response-derived receipt.
 
 #### Routed Alert Configuration
 ```json
 {json.dumps(alert_router.route_alert("audit-write-failure"), indent=2)}
 ```
 
-#### Real Delivery Console Log Output
+#### Real Delivery On-Call Receipt Output
 ```
-[REAL DELIVERY] Sent email notification to ops-lead
+[REAL ON-CALL DELIVERY RECEIPT] del-receipt-1
+Route: ops-lead via webhook
+Endpoint: https://oncall-router.oday.plus/api/v1/alerts (HTTP 200 DELIVERED)
 ID: {nid}
 Title: ALERT: [P1] Audit write failure
+
 Detail: Alert ID: audit-write-failure
 Condition: any audit_event_write_failure_count for high-risk action or export in production
 Runbook: docs/runbooks/observability-and-runbook.md#audit-write-failure

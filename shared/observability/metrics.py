@@ -256,3 +256,93 @@ def default_registry() -> MetricsRegistry:
         for definition in PLATFORM_METRICS:
             _cached_registry.register(definition)
     return _cached_registry
+
+
+import json
+from datetime import UTC, datetime
+from pathlib import Path
+
+
+class ProductionMetricsExporter:
+    """Exports production metric snapshots bound to an exact release_sha.
+
+    Ensures API, job, DLQ, model, solver, business, and audit metric paths
+    are bound to the release_sha label. Fails closed if release_sha is empty.
+    """
+
+    def __init__(
+        self,
+        release_sha: str,
+        registry: MetricsRegistry | None = None,
+    ) -> None:
+        if not release_sha or not isinstance(release_sha, str) or not release_sha.strip():
+            raise ValueError(
+                "release_sha must be provided as a non-empty string for production metrics export. Fail-closed gate enforced."
+            )
+        self.release_sha = release_sha.strip()
+        self.registry = registry or default_registry()
+
+    def export_metrics(self) -> dict[str, Any]:
+        """Export all metric series from the registry with release_sha binding."""
+        raw_snapshot = self.registry.snapshot()
+        exported: dict[str, Any] = {
+            "release_sha": self.release_sha,
+            "exported_at": datetime.now(UTC).isoformat(),
+            "categories": [cat.value for cat in MetricCategory],
+            "metrics": {},
+        }
+        for metric_name, series_list in raw_snapshot.items():
+            bound_series = []
+            for series in series_list:
+                entry = dict(series)
+                labels = dict(entry.get("labels", {}))
+                labels["release_sha"] = self.release_sha
+                entry["labels"] = labels
+                bound_series.append(entry)
+            exported["metrics"][metric_name] = bound_series
+        return exported
+
+
+def render_dashboard_provisioning(
+    release_sha: str,
+    slo_owner: str | None = None,
+    config_path: str | Path | None = None,
+) -> dict[str, Any]:
+    """Perform dynamic runtime substitution of ${RELEASE_SHA} in dashboard definitions.
+
+    Enforces exact release_sha binding, provisions dashboard panel filters across
+    API/job/DLQ/model/solver/business metric paths, and validates SLO ownership.
+    Fails closed if release_sha or slo_owner is missing/empty.
+    """
+    if not release_sha or not isinstance(release_sha, str) or not release_sha.strip():
+        raise ValueError(
+            "release_sha must be provided as a non-empty string for dashboard provisioning. Fail-closed gate enforced."
+        )
+
+    if config_path is None:
+        base_dir = Path(__file__).resolve().parents[2]
+        config_path = base_dir / "infra" / "monitoring" / "dashboards.json"
+    else:
+        config_path = Path(config_path)
+
+    if not config_path.exists():
+        raise ValueError(f"Dashboard configuration file missing at '{config_path}'. Fail-closed gate enforced.")
+
+    raw_text = config_path.read_text(encoding="utf-8")
+    substituted_text = raw_text.replace("${RELEASE_SHA}", release_sha.strip())
+
+    try:
+        data = json.loads(substituted_text)
+    except Exception as e:
+        raise ValueError(f"Malformed dashboard configuration at '{config_path}': {e}") from e
+
+    traceability = data.get("release_sha_traceability", {})
+    configured_slo_owner = slo_owner or traceability.get("slo_owner")
+    if not configured_slo_owner or not str(configured_slo_owner).strip():
+        raise ValueError("SLO owner must be configured and non-empty. Fail-closed gate enforced.")
+
+    traceability["exact_sha_binding"] = release_sha.strip()
+    traceability["slo_owner"] = str(configured_slo_owner).strip()
+    data["release_sha_traceability"] = traceability
+
+    return data

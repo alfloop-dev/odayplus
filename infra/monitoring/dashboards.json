@@ -6,6 +6,7 @@
     "enabled": true,
     "metric_label": "release_sha",
     "exact_sha_binding": "${RELEASE_SHA}",
+    "slo_owner": "SRE Lead / Platform Operations",
     "watch_window_minutes": 15,
     "receipt_required": true,
     "receipt_metric": "deployment_watch_window_status",
