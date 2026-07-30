@@ -1,0 +1,3942 @@
+# THIRD PARTY NOTICES
+
+This file contains notice and license information for open-source and third-party software components included in Oday Plus.
+Generated on: 2026-07-30 17:07:26 UTC
+Total cataloged components: 787
+
+---
+
+## oday-plus (v0.1.0)
+- **Supplier**: oday-plus
+- **PURL**: `pkg:generic/oday-plus@0.1.0`
+- **License**: MIT
+
+## apps/web (v0.1.0)
+- **Supplier**: npm
+- **PURL**: `pkg:npm/apps/web@0.1.0`
+- **License**: MIT
+
+## apps/web/@types/node (v20.14.10)
+- **Supplier**: npm
+- **PURL**: `pkg:npm/apps/web/%40types/node@20.14.10`
+- **License**: MIT
+
+## @adobe/css-tools (v4.5.0)
+- **Supplier**: npm
+- **PURL**: `pkg:npm/%40adobe/css-tools@4.5.0`
+- **License**: MIT
+
+## @axe-core/playwright (v4.12.1)
+- **Supplier**: npm
+- **PURL**: `pkg:npm/%40axe-core/playwright@4.12.1`
+- **License**: MPL-2.0
+
+## @babel/code-frame (v7.29.7)
+- **Supplier**: npm
+- **PURL**: `pkg:npm/%40babel/code-frame@7.29.7`
+- **License**: MIT
+
+## @babel/helper-validator-identifier (v7.29.7)
+- **Supplier**: npm
+- **PURL**: `pkg:npm/%40babel/helper-validator-identifier@7.29.7`
+- **License**: MIT
+
+## @babel/runtime (v7.29.7)
+- **Supplier**: npm
+- **PURL**: `pkg:npm/%40babel/runtime@7.29.7`
+- **License**: MIT
+
+## @deck.gl/core (v9.3.7)
+- **Supplier**: npm
+- **PURL**: `pkg:npm/%40deck.gl/core@9.3.7`
+- **License**: MIT
+
+## @deck.gl/layers (v9.3.7)
+- **Supplier**: npm
+- **PURL**: `pkg:npm/%40deck.gl/layers@9.3.7`
+- **License**: MIT
+
+## @deck.gl/react (v9.3.7)
+- **Supplier**: npm
+- **PURL**: `pkg:npm/%40deck.gl/react@9.3.7`
+- **License**: MIT
+
+## @deck.gl/widgets (v9.3.7)
+- **Supplier**: npm
+- **PURL**: `pkg:npm/%40deck.gl/widgets@9.3.7`
+- **License**: MIT
+
+## @emnapi/core (v1.11.1)
+- **Supplier**: npm
+- **PURL**: `pkg:npm/%40emnapi/core@1.11.1`
+- **License**: MIT
+
+## @emnapi/runtime (v1.11.1)
+- **Supplier**: npm
+- **PURL**: `pkg:npm/%40emnapi/runtime@1.11.1`
+- **License**: MIT
+
+## @emnapi/wasi-threads (v1.2.2)
+- **Supplier**: npm
+- **PURL**: `pkg:npm/%40emnapi/wasi-threads@1.2.2`
+- **License**: MIT
+
+## @eslint-community/eslint-utils (v4.10.1)
+- **Supplier**: npm
+- **PURL**: `pkg:npm/%40eslint-community/eslint-utils@4.10.1`
+- **License**: MIT
+
+## @eslint-community/regexpp (v4.12.2)
+- **Supplier**: npm
+- **PURL**: `pkg:npm/%40eslint-community/regexpp@4.12.2`
+- **License**: MIT
+
+## @eslint/eslintrc (v2.1.4)
+- **Supplier**: npm
+- **PURL**: `pkg:npm/%40eslint/eslintrc@2.1.4`
+- **License**: MIT
+
+## @eslint/js (v8.57.1)
+- **Supplier**: npm
+- **PURL**: `pkg:npm/%40eslint/js@8.57.1`
+- **License**: MIT
+
+## @floating-ui/core (v1.8.0)
+- **Supplier**: npm
+- **PURL**: `pkg:npm/%40floating-ui/core@1.8.0`
+- **License**: MIT
+
+## @floating-ui/dom (v1.8.0)
+- **Supplier**: npm
+- **PURL**: `pkg:npm/%40floating-ui/dom@1.8.0`
+- **License**: MIT
+
+## @floating-ui/utils (v0.2.12)
+- **Supplier**: npm
+- **PURL**: `pkg:npm/%40floating-ui/utils@0.2.12`
+- **License**: MIT
+
+## @humanwhocodes/config-array (v0.13.0)
+- **Supplier**: npm
+- **PURL**: `pkg:npm/%40humanwhocodes/config-array@0.13.0`
+- **License**: Apache-2.0
+
+## @humanwhocodes/module-importer (v1.0.1)
+- **Supplier**: npm
+- **PURL**: `pkg:npm/%40humanwhocodes/module-importer@1.0.1`
+- **License**: Apache-2.0
+
+## @humanwhocodes/object-schema (v2.0.3)
+- **Supplier**: npm
+- **PURL**: `pkg:npm/%40humanwhocodes/object-schema@2.0.3`
+- **License**: BSD-3-Clause
+
+## @img/colour (v1.1.0)
+- **Supplier**: npm
+- **PURL**: `pkg:npm/%40img/colour@1.1.0`
+- **License**: MIT
+
+## @img/sharp-darwin-arm64 (v0.35.3)
+- **Supplier**: npm
+- **PURL**: `pkg:npm/%40img/sharp-darwin-arm64@0.35.3`
+- **License**: Apache-2.0
+
+## @img/sharp-darwin-x64 (v0.35.3)
+- **Supplier**: npm
+- **PURL**: `pkg:npm/%40img/sharp-darwin-x64@0.35.3`
+- **License**: Apache-2.0
+
+## @img/sharp-freebsd-wasm32 (v0.35.3)
+- **Supplier**: npm
+- **PURL**: `pkg:npm/%40img/sharp-freebsd-wasm32@0.35.3`
+- **License**: Apache-2.0
+
+## @img/sharp-libvips-darwin-arm64 (v1.3.2)
+- **Supplier**: npm
+- **PURL**: `pkg:npm/%40img/sharp-libvips-darwin-arm64@1.3.2`
+- **License**: LGPL-3.0-or-later
+
+## @img/sharp-libvips-darwin-x64 (v1.3.2)
+- **Supplier**: npm
+- **PURL**: `pkg:npm/%40img/sharp-libvips-darwin-x64@1.3.2`
+- **License**: LGPL-3.0-or-later
+
+## @img/sharp-libvips-linux-arm (v1.3.2)
+- **Supplier**: npm
+- **PURL**: `pkg:npm/%40img/sharp-libvips-linux-arm@1.3.2`
+- **License**: LGPL-3.0-or-later
+
+## @img/sharp-libvips-linux-arm64 (v1.3.2)
+- **Supplier**: npm
+- **PURL**: `pkg:npm/%40img/sharp-libvips-linux-arm64@1.3.2`
+- **License**: LGPL-3.0-or-later
+
+## @img/sharp-libvips-linux-ppc64 (v1.3.2)
+- **Supplier**: npm
+- **PURL**: `pkg:npm/%40img/sharp-libvips-linux-ppc64@1.3.2`
+- **License**: LGPL-3.0-or-later
+
+## @img/sharp-libvips-linux-riscv64 (v1.3.2)
+- **Supplier**: npm
+- **PURL**: `pkg:npm/%40img/sharp-libvips-linux-riscv64@1.3.2`
+- **License**: LGPL-3.0-or-later
+
+## @img/sharp-libvips-linux-s390x (v1.3.2)
+- **Supplier**: npm
+- **PURL**: `pkg:npm/%40img/sharp-libvips-linux-s390x@1.3.2`
+- **License**: LGPL-3.0-or-later
+
+## @img/sharp-libvips-linux-x64 (v1.3.2)
+- **Supplier**: npm
+- **PURL**: `pkg:npm/%40img/sharp-libvips-linux-x64@1.3.2`
+- **License**: LGPL-3.0-or-later
+
+## @img/sharp-libvips-linuxmusl-arm64 (v1.3.2)
+- **Supplier**: npm
+- **PURL**: `pkg:npm/%40img/sharp-libvips-linuxmusl-arm64@1.3.2`
+- **License**: LGPL-3.0-or-later
+
+## @img/sharp-libvips-linuxmusl-x64 (v1.3.2)
+- **Supplier**: npm
+- **PURL**: `pkg:npm/%40img/sharp-libvips-linuxmusl-x64@1.3.2`
+- **License**: LGPL-3.0-or-later
+
+## @img/sharp-linux-arm (v0.35.3)
+- **Supplier**: npm
+- **PURL**: `pkg:npm/%40img/sharp-linux-arm@0.35.3`
+- **License**: Apache-2.0
+
+## @img/sharp-linux-arm64 (v0.35.3)
+- **Supplier**: npm
+- **PURL**: `pkg:npm/%40img/sharp-linux-arm64@0.35.3`
+- **License**: Apache-2.0
+
+## @img/sharp-linux-ppc64 (v0.35.3)
+- **Supplier**: npm
+- **PURL**: `pkg:npm/%40img/sharp-linux-ppc64@0.35.3`
+- **License**: Apache-2.0
+
+## @img/sharp-linux-riscv64 (v0.35.3)
+- **Supplier**: npm
+- **PURL**: `pkg:npm/%40img/sharp-linux-riscv64@0.35.3`
+- **License**: Apache-2.0
+
+## @img/sharp-linux-s390x (v0.35.3)
+- **Supplier**: npm
+- **PURL**: `pkg:npm/%40img/sharp-linux-s390x@0.35.3`
+- **License**: Apache-2.0
+
+## @img/sharp-linux-x64 (v0.35.3)
+- **Supplier**: npm
+- **PURL**: `pkg:npm/%40img/sharp-linux-x64@0.35.3`
+- **License**: Apache-2.0
+
+## @img/sharp-linuxmusl-arm64 (v0.35.3)
+- **Supplier**: npm
+- **PURL**: `pkg:npm/%40img/sharp-linuxmusl-arm64@0.35.3`
+- **License**: Apache-2.0
+
+## @img/sharp-linuxmusl-x64 (v0.35.3)
+- **Supplier**: npm
+- **PURL**: `pkg:npm/%40img/sharp-linuxmusl-x64@0.35.3`
+- **License**: Apache-2.0
+
+## @img/sharp-wasm32 (v0.35.3)
+- **Supplier**: npm
+- **PURL**: `pkg:npm/%40img/sharp-wasm32@0.35.3`
+- **License**: MIT
+
+## @img/sharp-webcontainers-wasm32 (v0.35.3)
+- **Supplier**: npm
+- **PURL**: `pkg:npm/%40img/sharp-webcontainers-wasm32@0.35.3`
+- **License**: Apache-2.0
+
+## @img/sharp-win32-arm64 (v0.35.3)
+- **Supplier**: npm
+- **PURL**: `pkg:npm/%40img/sharp-win32-arm64@0.35.3`
+- **License**: MIT
+
+## @img/sharp-win32-ia32 (v0.35.3)
+- **Supplier**: npm
+- **PURL**: `pkg:npm/%40img/sharp-win32-ia32@0.35.3`
+- **License**: MIT
+
+## @img/sharp-win32-x64 (v0.35.3)
+- **Supplier**: npm
+- **PURL**: `pkg:npm/%40img/sharp-win32-x64@0.35.3`
+- **License**: MIT
+
+## @jridgewell/sourcemap-codec (v1.5.5)
+- **Supplier**: npm
+- **PURL**: `pkg:npm/%40jridgewell/sourcemap-codec@1.5.5`
+- **License**: MIT
+
+## @loaders.gl/core (v4.4.3)
+- **Supplier**: npm
+- **PURL**: `pkg:npm/%40loaders.gl/core@4.4.3`
+- **License**: MIT
+
+## @loaders.gl/images (v4.4.3)
+- **Supplier**: npm
+- **PURL**: `pkg:npm/%40loaders.gl/images@4.4.3`
+- **License**: MIT
+
+## @loaders.gl/loader-utils (v4.4.3)
+- **Supplier**: npm
+- **PURL**: `pkg:npm/%40loaders.gl/loader-utils@4.4.3`
+- **License**: MIT
+
+## @loaders.gl/schema (v4.4.3)
+- **Supplier**: npm
+- **PURL**: `pkg:npm/%40loaders.gl/schema@4.4.3`
+- **License**: MIT
+
+## @loaders.gl/schema-utils (v4.4.3)
+- **Supplier**: npm
+- **PURL**: `pkg:npm/%40loaders.gl/schema-utils@4.4.3`
+- **License**: MIT
+
+## @loaders.gl/worker-utils (v4.4.3)
+- **Supplier**: npm
+- **PURL**: `pkg:npm/%40loaders.gl/worker-utils@4.4.3`
+- **License**: MIT
+
+## @luma.gl/core (v9.3.6)
+- **Supplier**: npm
+- **PURL**: `pkg:npm/%40luma.gl/core@9.3.6`
+- **License**: MIT
+
+## @luma.gl/engine (v9.3.6)
+- **Supplier**: npm
+- **PURL**: `pkg:npm/%40luma.gl/engine@9.3.6`
+- **License**: MIT
+
+## @luma.gl/shadertools (v9.3.6)
+- **Supplier**: npm
+- **PURL**: `pkg:npm/%40luma.gl/shadertools@9.3.6`
+- **License**: MIT
+
+## @luma.gl/webgl (v9.3.6)
+- **Supplier**: npm
+- **PURL**: `pkg:npm/%40luma.gl/webgl@9.3.6`
+- **License**: MIT
+
+## @mapbox/jsonlint-lines-primitives (v2.0.3)
+- **Supplier**: npm
+- **PURL**: `pkg:npm/%40mapbox/jsonlint-lines-primitives@2.0.3`
+- **License**: MIT
+
+## @mapbox/point-geometry (v1.1.0)
+- **Supplier**: npm
+- **PURL**: `pkg:npm/%40mapbox/point-geometry@1.1.0`
+- **License**: ISC
+
+## @mapbox/tiny-sdf (v2.2.0)
+- **Supplier**: npm
+- **PURL**: `pkg:npm/%40mapbox/tiny-sdf@2.2.0`
+- **License**: BSD-2-Clause
+
+## @mapbox/unitbezier (v0.0.1)
+- **Supplier**: npm
+- **PURL**: `pkg:npm/%40mapbox/unitbezier@0.0.1`
+- **License**: BSD-2-Clause
+
+## @mapbox/vector-tile (v2.0.5)
+- **Supplier**: npm
+- **PURL**: `pkg:npm/%40mapbox/vector-tile@2.0.5`
+- **License**: BSD-3-Clause
+
+## @mapbox/whoots-js (v3.1.0)
+- **Supplier**: npm
+- **PURL**: `pkg:npm/%40mapbox/whoots-js@3.1.0`
+- **License**: ISC
+
+## @maplibre/geojson-vt (v6.1.1)
+- **Supplier**: npm
+- **PURL**: `pkg:npm/%40maplibre/geojson-vt@6.1.1`
+- **License**: ISC
+
+## @maplibre/maplibre-gl-style-spec (v24.10.0)
+- **Supplier**: npm
+- **PURL**: `pkg:npm/%40maplibre/maplibre-gl-style-spec@24.10.0`
+- **License**: ISC
+
+## @maplibre/maplibre-gl-style-spec/@mapbox/unitbezier (v1.0.0)
+- **Supplier**: npm
+- **PURL**: `pkg:npm/%40maplibre/maplibre-gl-style-spec/%40mapbox/unitbezier@1.0.0`
+- **License**: BSD-2-Clause
+
+## @maplibre/mlt (v1.1.12)
+- **Supplier**: npm
+- **PURL**: `pkg:npm/%40maplibre/mlt@1.1.12`
+- **License**: MIT
+
+## @maplibre/vt-pbf (v4.3.2)
+- **Supplier**: npm
+- **PURL**: `pkg:npm/%40maplibre/vt-pbf@4.3.2`
+- **License**: MIT
+
+## @maplibre/vt-pbf/pbf (v5.1.2)
+- **Supplier**: npm
+- **PURL**: `pkg:npm/%40maplibre/vt-pbf/pbf@5.1.2`
+- **License**: BSD-3-Clause
+
+## @math.gl/core (v4.1.0)
+- **Supplier**: npm
+- **PURL**: `pkg:npm/%40math.gl/core@4.1.0`
+- **License**: MIT
+
+## @math.gl/polygon (v4.1.0)
+- **Supplier**: npm
+- **PURL**: `pkg:npm/%40math.gl/polygon@4.1.0`
+- **License**: MIT
+
+## @math.gl/sun (v4.1.0)
+- **Supplier**: npm
+- **PURL**: `pkg:npm/%40math.gl/sun@4.1.0`
+- **License**: MIT
+
+## @math.gl/types (v4.1.0)
+- **Supplier**: npm
+- **PURL**: `pkg:npm/%40math.gl/types@4.1.0`
+- **License**: MIT
+
+## @math.gl/web-mercator (v4.1.0)
+- **Supplier**: npm
+- **PURL**: `pkg:npm/%40math.gl/web-mercator@4.1.0`
+- **License**: MIT
+
+## @napi-rs/wasm-runtime (v1.1.6)
+- **Supplier**: npm
+- **PURL**: `pkg:npm/%40napi-rs/wasm-runtime@1.1.6`
+- **License**: MIT
+
+## @next/env (v15.5.21)
+- **Supplier**: npm
+- **PURL**: `pkg:npm/%40next/env@15.5.21`
+- **License**: MIT
+
+## @next/eslint-plugin-next (v15.5.19)
+- **Supplier**: npm
+- **PURL**: `pkg:npm/%40next/eslint-plugin-next@15.5.19`
+- **License**: MIT
+
+## @next/swc-darwin-arm64 (v15.5.21)
+- **Supplier**: npm
+- **PURL**: `pkg:npm/%40next/swc-darwin-arm64@15.5.21`
+- **License**: MIT
+
+## @next/swc-darwin-x64 (v15.5.21)
+- **Supplier**: npm
+- **PURL**: `pkg:npm/%40next/swc-darwin-x64@15.5.21`
+- **License**: MIT
+
+## @next/swc-linux-arm64-gnu (v15.5.21)
+- **Supplier**: npm
+- **PURL**: `pkg:npm/%40next/swc-linux-arm64-gnu@15.5.21`
+- **License**: MIT
+
+## @next/swc-linux-arm64-musl (v15.5.21)
+- **Supplier**: npm
+- **PURL**: `pkg:npm/%40next/swc-linux-arm64-musl@15.5.21`
+- **License**: MIT
+
+## @next/swc-linux-x64-gnu (v15.5.21)
+- **Supplier**: npm
+- **PURL**: `pkg:npm/%40next/swc-linux-x64-gnu@15.5.21`
+- **License**: MIT
+
+## @next/swc-linux-x64-musl (v15.5.21)
+- **Supplier**: npm
+- **PURL**: `pkg:npm/%40next/swc-linux-x64-musl@15.5.21`
+- **License**: MIT
+
+## @next/swc-win32-arm64-msvc (v15.5.21)
+- **Supplier**: npm
+- **PURL**: `pkg:npm/%40next/swc-win32-arm64-msvc@15.5.21`
+- **License**: MIT
+
+## @next/swc-win32-x64-msvc (v15.5.21)
+- **Supplier**: npm
+- **PURL**: `pkg:npm/%40next/swc-win32-x64-msvc@15.5.21`
+- **License**: MIT
+
+## @nodelib/fs.scandir (v2.1.5)
+- **Supplier**: npm
+- **PURL**: `pkg:npm/%40nodelib/fs.scandir@2.1.5`
+- **License**: MIT
+
+## @nodelib/fs.stat (v2.0.5)
+- **Supplier**: npm
+- **PURL**: `pkg:npm/%40nodelib/fs.stat@2.0.5`
+- **License**: MIT
+
+## @nodelib/fs.walk (v1.2.8)
+- **Supplier**: npm
+- **PURL**: `pkg:npm/%40nodelib/fs.walk@1.2.8`
+- **License**: MIT
+
+## @nolyfill/is-core-module (v1.0.39)
+- **Supplier**: npm
+- **PURL**: `pkg:npm/%40nolyfill/is-core-module@1.0.39`
+- **License**: MIT
+
+## @oday-plus/design-tokens (v0.1.0)
+- **Supplier**: npm
+- **PURL**: `pkg:npm/%40oday-plus/design-tokens@0.1.0`
+- **License**: MIT
+
+## @oday-plus/domain-types (v0.1.0)
+- **Supplier**: npm
+- **PURL**: `pkg:npm/%40oday-plus/domain-types@0.1.0`
+- **License**: MIT
+
+## @oday-plus/openapi-client (v0.1.0)
+- **Supplier**: npm
+- **PURL**: `pkg:npm/%40oday-plus/openapi-client@0.1.0`
+- **License**: MIT
+
+## @oday-plus/schemas (v0.1.0)
+- **Supplier**: npm
+- **PURL**: `pkg:npm/%40oday-plus/schemas@0.1.0`
+- **License**: MIT
+
+## @oday-plus/testkit (v0.1.0)
+- **Supplier**: npm
+- **PURL**: `pkg:npm/%40oday-plus/testkit@0.1.0`
+- **License**: MIT
+
+## @oday-plus/ui (v0.1.0)
+- **Supplier**: npm
+- **PURL**: `pkg:npm/%40oday-plus/ui@0.1.0`
+- **License**: MIT
+
+## @oday-plus/ui-domain (v0.1.0)
+- **Supplier**: npm
+- **PURL**: `pkg:npm/%40oday-plus/ui-domain@0.1.0`
+- **License**: MIT
+
+## @oday-plus/web (v0.1.0)
+- **Supplier**: npm
+- **PURL**: `pkg:npm/%40oday-plus/web@0.1.0`
+- **License**: MIT
+
+## @oxc-project/types (v0.139.0)
+- **Supplier**: npm
+- **PURL**: `pkg:npm/%40oxc-project/types@0.139.0`
+- **License**: MIT
+
+## @playwright/test (v1.61.1)
+- **Supplier**: npm
+- **PURL**: `pkg:npm/%40playwright/test@1.61.1`
+- **License**: Apache-2.0
+
+## @probe.gl/env (v4.1.1)
+- **Supplier**: npm
+- **PURL**: `pkg:npm/%40probe.gl/env@4.1.1`
+- **License**: MIT
+
+## @probe.gl/log (v4.1.1)
+- **Supplier**: npm
+- **PURL**: `pkg:npm/%40probe.gl/log@4.1.1`
+- **License**: MIT
+
+## @probe.gl/stats (v4.1.1)
+- **Supplier**: npm
+- **PURL**: `pkg:npm/%40probe.gl/stats@4.1.1`
+- **License**: MIT
+
+## @rolldown/binding-android-arm64 (v1.1.5)
+- **Supplier**: npm
+- **PURL**: `pkg:npm/%40rolldown/binding-android-arm64@1.1.5`
+- **License**: MIT
+
+## @rolldown/binding-darwin-arm64 (v1.1.5)
+- **Supplier**: npm
+- **PURL**: `pkg:npm/%40rolldown/binding-darwin-arm64@1.1.5`
+- **License**: MIT
+
+## @rolldown/binding-darwin-x64 (v1.1.5)
+- **Supplier**: npm
+- **PURL**: `pkg:npm/%40rolldown/binding-darwin-x64@1.1.5`
+- **License**: MIT
+
+## @rolldown/binding-freebsd-x64 (v1.1.5)
+- **Supplier**: npm
+- **PURL**: `pkg:npm/%40rolldown/binding-freebsd-x64@1.1.5`
+- **License**: MIT
+
+## @rolldown/binding-linux-arm-gnueabihf (v1.1.5)
+- **Supplier**: npm
+- **PURL**: `pkg:npm/%40rolldown/binding-linux-arm-gnueabihf@1.1.5`
+- **License**: MIT
+
+## @rolldown/binding-linux-arm64-gnu (v1.1.5)
+- **Supplier**: npm
+- **PURL**: `pkg:npm/%40rolldown/binding-linux-arm64-gnu@1.1.5`
+- **License**: MIT
+
+## @rolldown/binding-linux-arm64-musl (v1.1.5)
+- **Supplier**: npm
+- **PURL**: `pkg:npm/%40rolldown/binding-linux-arm64-musl@1.1.5`
+- **License**: MIT
+
+## @rolldown/binding-linux-ppc64-gnu (v1.1.5)
+- **Supplier**: npm
+- **PURL**: `pkg:npm/%40rolldown/binding-linux-ppc64-gnu@1.1.5`
+- **License**: MIT
+
+## @rolldown/binding-linux-s390x-gnu (v1.1.5)
+- **Supplier**: npm
+- **PURL**: `pkg:npm/%40rolldown/binding-linux-s390x-gnu@1.1.5`
+- **License**: MIT
+
+## @rolldown/binding-linux-x64-gnu (v1.1.5)
+- **Supplier**: npm
+- **PURL**: `pkg:npm/%40rolldown/binding-linux-x64-gnu@1.1.5`
+- **License**: MIT
+
+## @rolldown/binding-linux-x64-musl (v1.1.5)
+- **Supplier**: npm
+- **PURL**: `pkg:npm/%40rolldown/binding-linux-x64-musl@1.1.5`
+- **License**: MIT
+
+## @rolldown/binding-openharmony-arm64 (v1.1.5)
+- **Supplier**: npm
+- **PURL**: `pkg:npm/%40rolldown/binding-openharmony-arm64@1.1.5`
+- **License**: MIT
+
+## @rolldown/binding-wasm32-wasi (v1.1.5)
+- **Supplier**: npm
+- **PURL**: `pkg:npm/%40rolldown/binding-wasm32-wasi@1.1.5`
+- **License**: MIT
+
+## @rolldown/binding-win32-arm64-msvc (v1.1.5)
+- **Supplier**: npm
+- **PURL**: `pkg:npm/%40rolldown/binding-win32-arm64-msvc@1.1.5`
+- **License**: MIT
+
+## @rolldown/binding-win32-x64-msvc (v1.1.5)
+- **Supplier**: npm
+- **PURL**: `pkg:npm/%40rolldown/binding-win32-x64-msvc@1.1.5`
+- **License**: MIT
+
+## @rolldown/pluginutils (v1.0.1)
+- **Supplier**: npm
+- **PURL**: `pkg:npm/%40rolldown/pluginutils@1.0.1`
+- **License**: MIT
+
+## @rtsao/scc (v1.1.0)
+- **Supplier**: npm
+- **PURL**: `pkg:npm/%40rtsao/scc@1.1.0`
+- **License**: MIT
+
+## @rushstack/eslint-patch (v1.16.1)
+- **Supplier**: npm
+- **PURL**: `pkg:npm/%40rushstack/eslint-patch@1.16.1`
+- **License**: MIT
+
+## @standard-schema/spec (v1.1.0)
+- **Supplier**: npm
+- **PURL**: `pkg:npm/%40standard-schema/spec@1.1.0`
+- **License**: MIT
+
+## @swc/helpers (v0.5.15)
+- **Supplier**: npm
+- **PURL**: `pkg:npm/%40swc/helpers@0.5.15`
+- **License**: Apache-2.0
+
+## @testing-library/dom (v10.4.1)
+- **Supplier**: npm
+- **PURL**: `pkg:npm/%40testing-library/dom@10.4.1`
+- **License**: MIT
+
+## @testing-library/jest-dom (v6.9.1)
+- **Supplier**: npm
+- **PURL**: `pkg:npm/%40testing-library/jest-dom@6.9.1`
+- **License**: MIT
+
+## @testing-library/jest-dom/dom-accessibility-api (v0.6.3)
+- **Supplier**: npm
+- **PURL**: `pkg:npm/%40testing-library/jest-dom/dom-accessibility-api@0.6.3`
+- **License**: MIT
+
+## @testing-library/react (v16.3.2)
+- **Supplier**: npm
+- **PURL**: `pkg:npm/%40testing-library/react@16.3.2`
+- **License**: MIT
+
+## @tybys/wasm-util (v0.10.3)
+- **Supplier**: npm
+- **PURL**: `pkg:npm/%40tybys/wasm-util@0.10.3`
+- **License**: MIT
+
+## @types/aria-query (v5.0.4)
+- **Supplier**: npm
+- **PURL**: `pkg:npm/%40types/aria-query@5.0.4`
+- **License**: MIT
+
+## @types/chai (v5.2.3)
+- **Supplier**: npm
+- **PURL**: `pkg:npm/%40types/chai@5.2.3`
+- **License**: MIT
+
+## @types/deep-eql (v4.0.2)
+- **Supplier**: npm
+- **PURL**: `pkg:npm/%40types/deep-eql@4.0.2`
+- **License**: MIT
+
+## @types/estree (v1.0.9)
+- **Supplier**: npm
+- **PURL**: `pkg:npm/%40types/estree@1.0.9`
+- **License**: MIT
+
+## @types/geojson (v7946.0.16)
+- **Supplier**: npm
+- **PURL**: `pkg:npm/%40types/geojson@7946.0.16`
+- **License**: MIT
+
+## @types/json5 (v0.0.29)
+- **Supplier**: npm
+- **PURL**: `pkg:npm/%40types/json5@0.0.29`
+- **License**: MIT
+
+## @types/node (v26.1.1)
+- **Supplier**: npm
+- **PURL**: `pkg:npm/%40types/node@26.1.1`
+- **License**: MIT
+
+## @types/node/undici-types (v8.3.0)
+- **Supplier**: npm
+- **PURL**: `pkg:npm/%40types/node/undici-types@8.3.0`
+- **License**: MIT
+
+## @types/offscreencanvas (v2019.7.3)
+- **Supplier**: npm
+- **PURL**: `pkg:npm/%40types/offscreencanvas@2019.7.3`
+- **License**: MIT
+
+## @types/prop-types (v15.7.15)
+- **Supplier**: npm
+- **PURL**: `pkg:npm/%40types/prop-types@15.7.15`
+- **License**: MIT
+
+## @types/react (v18.3.12)
+- **Supplier**: npm
+- **PURL**: `pkg:npm/%40types/react@18.3.12`
+- **License**: MIT
+
+## @types/react-dom (v18.3.1)
+- **Supplier**: npm
+- **PURL**: `pkg:npm/%40types/react-dom@18.3.1`
+- **License**: MIT
+
+## @types/whatwg-mimetype (v3.0.2)
+- **Supplier**: npm
+- **PURL**: `pkg:npm/%40types/whatwg-mimetype@3.0.2`
+- **License**: MIT
+
+## @types/ws (v8.18.1)
+- **Supplier**: npm
+- **PURL**: `pkg:npm/%40types/ws@8.18.1`
+- **License**: MIT
+
+## @typescript-eslint/eslint-plugin (v8.65.0)
+- **Supplier**: npm
+- **PURL**: `pkg:npm/%40typescript-eslint/eslint-plugin@8.65.0`
+- **License**: MIT
+
+## @typescript-eslint/eslint-plugin/ignore (v7.0.6)
+- **Supplier**: npm
+- **PURL**: `pkg:npm/%40typescript-eslint/eslint-plugin/ignore@7.0.6`
+- **License**: MIT
+
+## @typescript-eslint/parser (v8.65.0)
+- **Supplier**: npm
+- **PURL**: `pkg:npm/%40typescript-eslint/parser@8.65.0`
+- **License**: MIT
+
+## @typescript-eslint/project-service (v8.65.0)
+- **Supplier**: npm
+- **PURL**: `pkg:npm/%40typescript-eslint/project-service@8.65.0`
+- **License**: MIT
+
+## @typescript-eslint/scope-manager (v8.65.0)
+- **Supplier**: npm
+- **PURL**: `pkg:npm/%40typescript-eslint/scope-manager@8.65.0`
+- **License**: MIT
+
+## @typescript-eslint/tsconfig-utils (v8.65.0)
+- **Supplier**: npm
+- **PURL**: `pkg:npm/%40typescript-eslint/tsconfig-utils@8.65.0`
+- **License**: MIT
+
+## @typescript-eslint/type-utils (v8.65.0)
+- **Supplier**: npm
+- **PURL**: `pkg:npm/%40typescript-eslint/type-utils@8.65.0`
+- **License**: MIT
+
+## @typescript-eslint/types (v8.65.0)
+- **Supplier**: npm
+- **PURL**: `pkg:npm/%40typescript-eslint/types@8.65.0`
+- **License**: MIT
+
+## @typescript-eslint/typescript-estree (v8.65.0)
+- **Supplier**: npm
+- **PURL**: `pkg:npm/%40typescript-eslint/typescript-estree@8.65.0`
+- **License**: MIT
+
+## @typescript-eslint/typescript-estree/balanced-match (v4.0.4)
+- **Supplier**: npm
+- **PURL**: `pkg:npm/%40typescript-eslint/typescript-estree/balanced-match@4.0.4`
+- **License**: MIT
+
+## @typescript-eslint/typescript-estree/brace-expansion (v5.0.7)
+- **Supplier**: npm
+- **PURL**: `pkg:npm/%40typescript-eslint/typescript-estree/brace-expansion@5.0.7`
+- **License**: MIT
+
+## @typescript-eslint/typescript-estree/minimatch (v10.2.5)
+- **Supplier**: npm
+- **PURL**: `pkg:npm/%40typescript-eslint/typescript-estree/minimatch@10.2.5`
+- **License**: BlueOak-1.0.0
+
+## @typescript-eslint/utils (v8.65.0)
+- **Supplier**: npm
+- **PURL**: `pkg:npm/%40typescript-eslint/utils@8.65.0`
+- **License**: MIT
+
+## @typescript-eslint/visitor-keys (v8.65.0)
+- **Supplier**: npm
+- **PURL**: `pkg:npm/%40typescript-eslint/visitor-keys@8.65.0`
+- **License**: MIT
+
+## @typescript-eslint/visitor-keys/eslint-visitor-keys (v5.0.1)
+- **Supplier**: npm
+- **PURL**: `pkg:npm/%40typescript-eslint/visitor-keys/eslint-visitor-keys@5.0.1`
+- **License**: Apache-2.0
+
+## @ungap/structured-clone (v1.3.3)
+- **Supplier**: npm
+- **PURL**: `pkg:npm/%40ungap/structured-clone@1.3.3`
+- **License**: ISC
+
+## @unrs/resolver-binding-android-arm-eabi (v1.12.2)
+- **Supplier**: npm
+- **PURL**: `pkg:npm/%40unrs/resolver-binding-android-arm-eabi@1.12.2`
+- **License**: MIT
+
+## @unrs/resolver-binding-android-arm64 (v1.12.2)
+- **Supplier**: npm
+- **PURL**: `pkg:npm/%40unrs/resolver-binding-android-arm64@1.12.2`
+- **License**: MIT
+
+## @unrs/resolver-binding-darwin-arm64 (v1.12.2)
+- **Supplier**: npm
+- **PURL**: `pkg:npm/%40unrs/resolver-binding-darwin-arm64@1.12.2`
+- **License**: MIT
+
+## @unrs/resolver-binding-darwin-x64 (v1.12.2)
+- **Supplier**: npm
+- **PURL**: `pkg:npm/%40unrs/resolver-binding-darwin-x64@1.12.2`
+- **License**: MIT
+
+## @unrs/resolver-binding-freebsd-x64 (v1.12.2)
+- **Supplier**: npm
+- **PURL**: `pkg:npm/%40unrs/resolver-binding-freebsd-x64@1.12.2`
+- **License**: MIT
+
+## @unrs/resolver-binding-linux-arm-gnueabihf (v1.12.2)
+- **Supplier**: npm
+- **PURL**: `pkg:npm/%40unrs/resolver-binding-linux-arm-gnueabihf@1.12.2`
+- **License**: MIT
+
+## @unrs/resolver-binding-linux-arm-musleabihf (v1.12.2)
+- **Supplier**: npm
+- **PURL**: `pkg:npm/%40unrs/resolver-binding-linux-arm-musleabihf@1.12.2`
+- **License**: MIT
+
+## @unrs/resolver-binding-linux-arm64-gnu (v1.12.2)
+- **Supplier**: npm
+- **PURL**: `pkg:npm/%40unrs/resolver-binding-linux-arm64-gnu@1.12.2`
+- **License**: MIT
+
+## @unrs/resolver-binding-linux-arm64-musl (v1.12.2)
+- **Supplier**: npm
+- **PURL**: `pkg:npm/%40unrs/resolver-binding-linux-arm64-musl@1.12.2`
+- **License**: MIT
+
+## @unrs/resolver-binding-linux-loong64-gnu (v1.12.2)
+- **Supplier**: npm
+- **PURL**: `pkg:npm/%40unrs/resolver-binding-linux-loong64-gnu@1.12.2`
+- **License**: MIT
+
+## @unrs/resolver-binding-linux-loong64-musl (v1.12.2)
+- **Supplier**: npm
+- **PURL**: `pkg:npm/%40unrs/resolver-binding-linux-loong64-musl@1.12.2`
+- **License**: MIT
+
+## @unrs/resolver-binding-linux-ppc64-gnu (v1.12.2)
+- **Supplier**: npm
+- **PURL**: `pkg:npm/%40unrs/resolver-binding-linux-ppc64-gnu@1.12.2`
+- **License**: MIT
+
+## @unrs/resolver-binding-linux-riscv64-gnu (v1.12.2)
+- **Supplier**: npm
+- **PURL**: `pkg:npm/%40unrs/resolver-binding-linux-riscv64-gnu@1.12.2`
+- **License**: MIT
+
+## @unrs/resolver-binding-linux-riscv64-musl (v1.12.2)
+- **Supplier**: npm
+- **PURL**: `pkg:npm/%40unrs/resolver-binding-linux-riscv64-musl@1.12.2`
+- **License**: MIT
+
+## @unrs/resolver-binding-linux-s390x-gnu (v1.12.2)
+- **Supplier**: npm
+- **PURL**: `pkg:npm/%40unrs/resolver-binding-linux-s390x-gnu@1.12.2`
+- **License**: MIT
+
+## @unrs/resolver-binding-linux-x64-gnu (v1.12.2)
+- **Supplier**: npm
+- **PURL**: `pkg:npm/%40unrs/resolver-binding-linux-x64-gnu@1.12.2`
+- **License**: MIT
+
+## @unrs/resolver-binding-linux-x64-musl (v1.12.2)
+- **Supplier**: npm
+- **PURL**: `pkg:npm/%40unrs/resolver-binding-linux-x64-musl@1.12.2`
+- **License**: MIT
+
+## @unrs/resolver-binding-openharmony-arm64 (v1.12.2)
+- **Supplier**: npm
+- **PURL**: `pkg:npm/%40unrs/resolver-binding-openharmony-arm64@1.12.2`
+- **License**: MIT
+
+## @unrs/resolver-binding-wasm32-wasi (v1.12.2)
+- **Supplier**: npm
+- **PURL**: `pkg:npm/%40unrs/resolver-binding-wasm32-wasi@1.12.2`
+- **License**: MIT
+
+## @unrs/resolver-binding-wasm32-wasi/@emnapi/core (v1.10.0)
+- **Supplier**: npm
+- **PURL**: `pkg:npm/%40unrs/resolver-binding-wasm32-wasi/%40emnapi/core@1.10.0`
+- **License**: MIT
+
+## @unrs/resolver-binding-wasm32-wasi/@emnapi/runtime (v1.10.0)
+- **Supplier**: npm
+- **PURL**: `pkg:npm/%40unrs/resolver-binding-wasm32-wasi/%40emnapi/runtime@1.10.0`
+- **License**: MIT
+
+## @unrs/resolver-binding-wasm32-wasi/@emnapi/wasi-threads (v1.2.1)
+- **Supplier**: npm
+- **PURL**: `pkg:npm/%40unrs/resolver-binding-wasm32-wasi/%40emnapi/wasi-threads@1.2.1`
+- **License**: MIT
+
+## @unrs/resolver-binding-win32-arm64-msvc (v1.12.2)
+- **Supplier**: npm
+- **PURL**: `pkg:npm/%40unrs/resolver-binding-win32-arm64-msvc@1.12.2`
+- **License**: MIT
+
+## @unrs/resolver-binding-win32-ia32-msvc (v1.12.2)
+- **Supplier**: npm
+- **PURL**: `pkg:npm/%40unrs/resolver-binding-win32-ia32-msvc@1.12.2`
+- **License**: MIT
+
+## @unrs/resolver-binding-win32-x64-msvc (v1.12.2)
+- **Supplier**: npm
+- **PURL**: `pkg:npm/%40unrs/resolver-binding-win32-x64-msvc@1.12.2`
+- **License**: MIT
+
+## @vitejs/plugin-react (v6.0.4)
+- **Supplier**: npm
+- **PURL**: `pkg:npm/%40vitejs/plugin-react@6.0.4`
+- **License**: MIT
+
+## @vitest/expect (v4.1.10)
+- **Supplier**: npm
+- **PURL**: `pkg:npm/%40vitest/expect@4.1.10`
+- **License**: MIT
+
+## @vitest/mocker (v4.1.10)
+- **Supplier**: npm
+- **PURL**: `pkg:npm/%40vitest/mocker@4.1.10`
+- **License**: MIT
+
+## @vitest/pretty-format (v4.1.10)
+- **Supplier**: npm
+- **PURL**: `pkg:npm/%40vitest/pretty-format@4.1.10`
+- **License**: MIT
+
+## @vitest/runner (v4.1.10)
+- **Supplier**: npm
+- **PURL**: `pkg:npm/%40vitest/runner@4.1.10`
+- **License**: MIT
+
+## @vitest/snapshot (v4.1.10)
+- **Supplier**: npm
+- **PURL**: `pkg:npm/%40vitest/snapshot@4.1.10`
+- **License**: MIT
+
+## @vitest/spy (v4.1.10)
+- **Supplier**: npm
+- **PURL**: `pkg:npm/%40vitest/spy@4.1.10`
+- **License**: MIT
+
+## @vitest/utils (v4.1.10)
+- **Supplier**: npm
+- **PURL**: `pkg:npm/%40vitest/utils@4.1.10`
+- **License**: MIT
+
+## acorn (v8.17.0)
+- **Supplier**: npm
+- **PURL**: `pkg:npm/acorn@8.17.0`
+- **License**: MIT
+
+## acorn-jsx (v5.3.2)
+- **Supplier**: npm
+- **PURL**: `pkg:npm/acorn-jsx@5.3.2`
+- **License**: MIT
+
+## ajv (v6.15.0)
+- **Supplier**: npm
+- **PURL**: `pkg:npm/ajv@6.15.0`
+- **License**: MIT
+
+## ansi-regex (v5.0.1)
+- **Supplier**: npm
+- **PURL**: `pkg:npm/ansi-regex@5.0.1`
+- **License**: MIT
+
+## ansi-styles (v4.3.0)
+- **Supplier**: npm
+- **PURL**: `pkg:npm/ansi-styles@4.3.0`
+- **License**: MIT
+
+## apache-arrow (v21.2.0)
+- **Supplier**: npm
+- **PURL**: `pkg:npm/apache-arrow@21.2.0`
+- **License**: Apache-2.0
+
+## apache-arrow/@types/node (v25.9.5)
+- **Supplier**: npm
+- **PURL**: `pkg:npm/apache-arrow/%40types/node@25.9.5`
+- **License**: MIT
+
+## apache-arrow/undici-types (v7.24.6)
+- **Supplier**: npm
+- **PURL**: `pkg:npm/apache-arrow/undici-types@7.24.6`
+- **License**: MIT
+
+## argparse (v2.0.1)
+- **Supplier**: npm
+- **PURL**: `pkg:npm/argparse@2.0.1`
+- **License**: Python-2.0
+
+## aria-query (v5.3.0)
+- **Supplier**: npm
+- **PURL**: `pkg:npm/aria-query@5.3.0`
+- **License**: Apache-2.0
+
+## array-buffer-byte-length (v1.0.2)
+- **Supplier**: npm
+- **PURL**: `pkg:npm/array-buffer-byte-length@1.0.2`
+- **License**: MIT
+
+## array-includes (v3.1.9)
+- **Supplier**: npm
+- **PURL**: `pkg:npm/array-includes@3.1.9`
+- **License**: MIT
+
+## array.prototype.findlast (v1.2.5)
+- **Supplier**: npm
+- **PURL**: `pkg:npm/array.prototype.findlast@1.2.5`
+- **License**: MIT
+
+## array.prototype.findlastindex (v1.2.6)
+- **Supplier**: npm
+- **PURL**: `pkg:npm/array.prototype.findlastindex@1.2.6`
+- **License**: MIT
+
+## array.prototype.flat (v1.3.3)
+- **Supplier**: npm
+- **PURL**: `pkg:npm/array.prototype.flat@1.3.3`
+- **License**: MIT
+
+## array.prototype.flatmap (v1.3.3)
+- **Supplier**: npm
+- **PURL**: `pkg:npm/array.prototype.flatmap@1.3.3`
+- **License**: MIT
+
+## array.prototype.tosorted (v1.1.4)
+- **Supplier**: npm
+- **PURL**: `pkg:npm/array.prototype.tosorted@1.1.4`
+- **License**: MIT
+
+## arraybuffer.prototype.slice (v1.0.4)
+- **Supplier**: npm
+- **PURL**: `pkg:npm/arraybuffer.prototype.slice@1.0.4`
+- **License**: MIT
+
+## assertion-error (v2.0.1)
+- **Supplier**: npm
+- **PURL**: `pkg:npm/assertion-error@2.0.1`
+- **License**: MIT
+
+## ast-types-flow (v0.0.8)
+- **Supplier**: npm
+- **PURL**: `pkg:npm/ast-types-flow@0.0.8`
+- **License**: MIT
+
+## async-function (v1.0.0)
+- **Supplier**: npm
+- **PURL**: `pkg:npm/async-function@1.0.0`
+- **License**: MIT
+
+## available-typed-arrays (v1.0.7)
+- **Supplier**: npm
+- **PURL**: `pkg:npm/available-typed-arrays@1.0.7`
+- **License**: MIT
+
+## axe-core (v4.12.1)
+- **Supplier**: npm
+- **PURL**: `pkg:npm/axe-core@4.12.1`
+- **License**: MPL-2.0
+
+## axobject-query (v4.1.0)
+- **Supplier**: npm
+- **PURL**: `pkg:npm/axobject-query@4.1.0`
+- **License**: Apache-2.0
+
+## balanced-match (v1.0.2)
+- **Supplier**: npm
+- **PURL**: `pkg:npm/balanced-match@1.0.2`
+- **License**: MIT
+
+## brace-expansion (v1.1.16)
+- **Supplier**: npm
+- **PURL**: `pkg:npm/brace-expansion@1.1.16`
+- **License**: MIT
+
+## braces (v3.0.3)
+- **Supplier**: npm
+- **PURL**: `pkg:npm/braces@3.0.3`
+- **License**: MIT
+
+## buffer-image-size (v0.6.4)
+- **Supplier**: npm
+- **PURL**: `pkg:npm/buffer-image-size@0.6.4`
+- **License**: MIT
+
+## call-bind (v1.0.9)
+- **Supplier**: npm
+- **PURL**: `pkg:npm/call-bind@1.0.9`
+- **License**: MIT
+
+## call-bind-apply-helpers (v1.0.2)
+- **Supplier**: npm
+- **PURL**: `pkg:npm/call-bind-apply-helpers@1.0.2`
+- **License**: MIT
+
+## call-bound (v1.0.4)
+- **Supplier**: npm
+- **PURL**: `pkg:npm/call-bound@1.0.4`
+- **License**: MIT
+
+## callsites (v3.1.0)
+- **Supplier**: npm
+- **PURL**: `pkg:npm/callsites@3.1.0`
+- **License**: MIT
+
+## caniuse-lite (v1.0.30001806)
+- **Supplier**: npm
+- **PURL**: `pkg:npm/caniuse-lite@1.0.30001806`
+- **License**: CC-BY-4.0
+
+## chai (v6.2.2)
+- **Supplier**: npm
+- **PURL**: `pkg:npm/chai@6.2.2`
+- **License**: MIT
+
+## chalk (v4.1.2)
+- **Supplier**: npm
+- **PURL**: `pkg:npm/chalk@4.1.2`
+- **License**: MIT
+
+## client-only (v0.0.1)
+- **Supplier**: npm
+- **PURL**: `pkg:npm/client-only@0.0.1`
+- **License**: MIT
+
+## color-convert (v2.0.1)
+- **Supplier**: npm
+- **PURL**: `pkg:npm/color-convert@2.0.1`
+- **License**: MIT
+
+## color-name (v1.1.4)
+- **Supplier**: npm
+- **PURL**: `pkg:npm/color-name@1.1.4`
+- **License**: MIT
+
+## concat-map (v0.0.1)
+- **Supplier**: npm
+- **PURL**: `pkg:npm/concat-map@0.0.1`
+- **License**: MIT
+
+## convert-source-map (v2.0.0)
+- **Supplier**: npm
+- **PURL**: `pkg:npm/convert-source-map@2.0.0`
+- **License**: MIT
+
+## cross-spawn (v7.0.6)
+- **Supplier**: npm
+- **PURL**: `pkg:npm/cross-spawn@7.0.6`
+- **License**: MIT
+
+## css.escape (v1.5.1)
+- **Supplier**: npm
+- **PURL**: `pkg:npm/css.escape@1.5.1`
+- **License**: MIT
+
+## csstype (v3.2.3)
+- **Supplier**: npm
+- **PURL**: `pkg:npm/csstype@3.2.3`
+- **License**: MIT
+
+## damerau-levenshtein (v1.0.8)
+- **Supplier**: npm
+- **PURL**: `pkg:npm/damerau-levenshtein@1.0.8`
+- **License**: BSD-2-Clause
+
+## data-view-buffer (v1.0.2)
+- **Supplier**: npm
+- **PURL**: `pkg:npm/data-view-buffer@1.0.2`
+- **License**: MIT
+
+## data-view-byte-length (v1.0.2)
+- **Supplier**: npm
+- **PURL**: `pkg:npm/data-view-byte-length@1.0.2`
+- **License**: MIT
+
+## data-view-byte-offset (v1.0.1)
+- **Supplier**: npm
+- **PURL**: `pkg:npm/data-view-byte-offset@1.0.1`
+- **License**: MIT
+
+## debug (v4.4.3)
+- **Supplier**: npm
+- **PURL**: `pkg:npm/debug@4.4.3`
+- **License**: MIT
+
+## deep-is (v0.1.4)
+- **Supplier**: npm
+- **PURL**: `pkg:npm/deep-is@0.1.4`
+- **License**: MIT
+
+## define-data-property (v1.1.4)
+- **Supplier**: npm
+- **PURL**: `pkg:npm/define-data-property@1.1.4`
+- **License**: MIT
+
+## define-properties (v1.2.1)
+- **Supplier**: npm
+- **PURL**: `pkg:npm/define-properties@1.2.1`
+- **License**: MIT
+
+## dequal (v2.0.3)
+- **Supplier**: npm
+- **PURL**: `pkg:npm/dequal@2.0.3`
+- **License**: MIT
+
+## detect-libc (v2.1.2)
+- **Supplier**: npm
+- **PURL**: `pkg:npm/detect-libc@2.1.2`
+- **License**: Apache-2.0
+
+## doctrine (v3.0.0)
+- **Supplier**: npm
+- **PURL**: `pkg:npm/doctrine@3.0.0`
+- **License**: Apache-2.0
+
+## dom-accessibility-api (v0.5.16)
+- **Supplier**: npm
+- **PURL**: `pkg:npm/dom-accessibility-api@0.5.16`
+- **License**: MIT
+
+## dunder-proto (v1.0.1)
+- **Supplier**: npm
+- **PURL**: `pkg:npm/dunder-proto@1.0.1`
+- **License**: MIT
+
+## earcut (v2.2.4)
+- **Supplier**: npm
+- **PURL**: `pkg:npm/earcut@2.2.4`
+- **License**: ISC
+
+## emoji-regex (v9.2.2)
+- **Supplier**: npm
+- **PURL**: `pkg:npm/emoji-regex@9.2.2`
+- **License**: MIT
+
+## entities (v7.0.1)
+- **Supplier**: npm
+- **PURL**: `pkg:npm/entities@7.0.1`
+- **License**: BSD-2-Clause
+
+## es-abstract (v1.24.2)
+- **Supplier**: npm
+- **PURL**: `pkg:npm/es-abstract@1.24.2`
+- **License**: MIT
+
+## es-abstract-get (v1.0.0)
+- **Supplier**: npm
+- **PURL**: `pkg:npm/es-abstract-get@1.0.0`
+- **License**: MIT
+
+## es-define-property (v1.0.1)
+- **Supplier**: npm
+- **PURL**: `pkg:npm/es-define-property@1.0.1`
+- **License**: MIT
+
+## es-errors (v1.3.0)
+- **Supplier**: npm
+- **PURL**: `pkg:npm/es-errors@1.3.0`
+- **License**: MIT
+
+## es-iterator-helpers (v1.4.0)
+- **Supplier**: npm
+- **PURL**: `pkg:npm/es-iterator-helpers@1.4.0`
+- **License**: MIT
+
+## es-module-lexer (v2.3.1)
+- **Supplier**: npm
+- **PURL**: `pkg:npm/es-module-lexer@2.3.1`
+- **License**: MIT
+
+## es-object-atoms (v1.1.2)
+- **Supplier**: npm
+- **PURL**: `pkg:npm/es-object-atoms@1.1.2`
+- **License**: MIT
+
+## es-set-tostringtag (v2.1.0)
+- **Supplier**: npm
+- **PURL**: `pkg:npm/es-set-tostringtag@2.1.0`
+- **License**: MIT
+
+## es-shim-unscopables (v1.1.0)
+- **Supplier**: npm
+- **PURL**: `pkg:npm/es-shim-unscopables@1.1.0`
+- **License**: MIT
+
+## es-to-primitive (v1.3.4)
+- **Supplier**: npm
+- **PURL**: `pkg:npm/es-to-primitive@1.3.4`
+- **License**: MIT
+
+## escape-string-regexp (v4.0.0)
+- **Supplier**: npm
+- **PURL**: `pkg:npm/escape-string-regexp@4.0.0`
+- **License**: MIT
+
+## eslint (v8.57.1)
+- **Supplier**: npm
+- **PURL**: `pkg:npm/eslint@8.57.1`
+- **License**: MIT
+
+## eslint-config-next (v15.5.19)
+- **Supplier**: npm
+- **PURL**: `pkg:npm/eslint-config-next@15.5.19`
+- **License**: MIT
+
+## eslint-import-resolver-node (v0.3.10)
+- **Supplier**: npm
+- **PURL**: `pkg:npm/eslint-import-resolver-node@0.3.10`
+- **License**: MIT
+
+## eslint-import-resolver-node/debug (v3.2.7)
+- **Supplier**: npm
+- **PURL**: `pkg:npm/eslint-import-resolver-node/debug@3.2.7`
+- **License**: MIT
+
+## eslint-import-resolver-typescript (v3.10.1)
+- **Supplier**: npm
+- **PURL**: `pkg:npm/eslint-import-resolver-typescript@3.10.1`
+- **License**: ISC
+
+## eslint-module-utils (v2.14.0)
+- **Supplier**: npm
+- **PURL**: `pkg:npm/eslint-module-utils@2.14.0`
+- **License**: MIT
+
+## eslint-module-utils/debug (v3.2.7)
+- **Supplier**: npm
+- **PURL**: `pkg:npm/eslint-module-utils/debug@3.2.7`
+- **License**: MIT
+
+## eslint-plugin-import (v2.32.0)
+- **Supplier**: npm
+- **PURL**: `pkg:npm/eslint-plugin-import@2.32.0`
+- **License**: MIT
+
+## eslint-plugin-import/debug (v3.2.7)
+- **Supplier**: npm
+- **PURL**: `pkg:npm/eslint-plugin-import/debug@3.2.7`
+- **License**: MIT
+
+## eslint-plugin-import/doctrine (v2.1.0)
+- **Supplier**: npm
+- **PURL**: `pkg:npm/eslint-plugin-import/doctrine@2.1.0`
+- **License**: Apache-2.0
+
+## eslint-plugin-import/semver (v6.3.1)
+- **Supplier**: npm
+- **PURL**: `pkg:npm/eslint-plugin-import/semver@6.3.1`
+- **License**: ISC
+
+## eslint-plugin-jsx-a11y (v6.10.2)
+- **Supplier**: npm
+- **PURL**: `pkg:npm/eslint-plugin-jsx-a11y@6.10.2`
+- **License**: MIT
+
+## eslint-plugin-jsx-a11y/aria-query (v5.3.2)
+- **Supplier**: npm
+- **PURL**: `pkg:npm/eslint-plugin-jsx-a11y/aria-query@5.3.2`
+- **License**: Apache-2.0
+
+## eslint-plugin-react (v7.37.5)
+- **Supplier**: npm
+- **PURL**: `pkg:npm/eslint-plugin-react@7.37.5`
+- **License**: MIT
+
+## eslint-plugin-react-hooks (v5.2.0)
+- **Supplier**: npm
+- **PURL**: `pkg:npm/eslint-plugin-react-hooks@5.2.0`
+- **License**: MIT
+
+## eslint-plugin-react/doctrine (v2.1.0)
+- **Supplier**: npm
+- **PURL**: `pkg:npm/eslint-plugin-react/doctrine@2.1.0`
+- **License**: Apache-2.0
+
+## eslint-plugin-react/semver (v6.3.1)
+- **Supplier**: npm
+- **PURL**: `pkg:npm/eslint-plugin-react/semver@6.3.1`
+- **License**: ISC
+
+## eslint-scope (v7.2.2)
+- **Supplier**: npm
+- **PURL**: `pkg:npm/eslint-scope@7.2.2`
+- **License**: BSD-2-Clause
+
+## eslint-visitor-keys (v3.4.3)
+- **Supplier**: npm
+- **PURL**: `pkg:npm/eslint-visitor-keys@3.4.3`
+- **License**: Apache-2.0
+
+## espree (v9.6.1)
+- **Supplier**: npm
+- **PURL**: `pkg:npm/espree@9.6.1`
+- **License**: BSD-2-Clause
+
+## esquery (v1.7.0)
+- **Supplier**: npm
+- **PURL**: `pkg:npm/esquery@1.7.0`
+- **License**: BSD-3-Clause
+
+## esrecurse (v4.3.0)
+- **Supplier**: npm
+- **PURL**: `pkg:npm/esrecurse@4.3.0`
+- **License**: BSD-2-Clause
+
+## estraverse (v5.3.0)
+- **Supplier**: npm
+- **PURL**: `pkg:npm/estraverse@5.3.0`
+- **License**: BSD-2-Clause
+
+## estree-walker (v3.0.3)
+- **Supplier**: npm
+- **PURL**: `pkg:npm/estree-walker@3.0.3`
+- **License**: MIT
+
+## esutils (v2.0.3)
+- **Supplier**: npm
+- **PURL**: `pkg:npm/esutils@2.0.3`
+- **License**: BSD-2-Clause
+
+## expect-type (v1.4.0)
+- **Supplier**: npm
+- **PURL**: `pkg:npm/expect-type@1.4.0`
+- **License**: Apache-2.0
+
+## fast-deep-equal (v3.1.3)
+- **Supplier**: npm
+- **PURL**: `pkg:npm/fast-deep-equal@3.1.3`
+- **License**: MIT
+
+## fast-glob (v3.3.1)
+- **Supplier**: npm
+- **PURL**: `pkg:npm/fast-glob@3.3.1`
+- **License**: MIT
+
+## fast-glob/glob-parent (v5.1.2)
+- **Supplier**: npm
+- **PURL**: `pkg:npm/fast-glob/glob-parent@5.1.2`
+- **License**: ISC
+
+## fast-json-stable-stringify (v2.1.0)
+- **Supplier**: npm
+- **PURL**: `pkg:npm/fast-json-stable-stringify@2.1.0`
+- **License**: MIT
+
+## fast-levenshtein (v2.0.6)
+- **Supplier**: npm
+- **PURL**: `pkg:npm/fast-levenshtein@2.0.6`
+- **License**: MIT
+
+## fastq (v1.20.1)
+- **Supplier**: npm
+- **PURL**: `pkg:npm/fastq@1.20.1`
+- **License**: ISC
+
+## fdir (v6.5.0)
+- **Supplier**: npm
+- **PURL**: `pkg:npm/fdir@6.5.0`
+- **License**: MIT
+
+## file-entry-cache (v6.0.1)
+- **Supplier**: npm
+- **PURL**: `pkg:npm/file-entry-cache@6.0.1`
+- **License**: MIT
+
+## fill-range (v7.1.1)
+- **Supplier**: npm
+- **PURL**: `pkg:npm/fill-range@7.1.1`
+- **License**: MIT
+
+## find-up (v5.0.0)
+- **Supplier**: npm
+- **PURL**: `pkg:npm/find-up@5.0.0`
+- **License**: MIT
+
+## flat-cache (v3.2.0)
+- **Supplier**: npm
+- **PURL**: `pkg:npm/flat-cache@3.2.0`
+- **License**: MIT
+
+## flatbuffers (v25.9.23)
+- **Supplier**: npm
+- **PURL**: `pkg:npm/flatbuffers@25.9.23`
+- **License**: Apache-2.0
+
+## flatted (v3.4.3)
+- **Supplier**: npm
+- **PURL**: `pkg:npm/flatted@3.4.3`
+- **License**: ISC
+
+## for-each (v0.3.5)
+- **Supplier**: npm
+- **PURL**: `pkg:npm/for-each@0.3.5`
+- **License**: MIT
+
+## fs.realpath (v1.0.0)
+- **Supplier**: npm
+- **PURL**: `pkg:npm/fs.realpath@1.0.0`
+- **License**: ISC
+
+## fsevents (v2.3.2)
+- **Supplier**: npm
+- **PURL**: `pkg:npm/fsevents@2.3.2`
+- **License**: MIT
+
+## function-bind (v1.1.2)
+- **Supplier**: npm
+- **PURL**: `pkg:npm/function-bind@1.1.2`
+- **License**: MIT
+
+## function.prototype.name (v1.2.0)
+- **Supplier**: npm
+- **PURL**: `pkg:npm/function.prototype.name@1.2.0`
+- **License**: MIT
+
+## functions-have-names (v1.2.3)
+- **Supplier**: npm
+- **PURL**: `pkg:npm/functions-have-names@1.2.3`
+- **License**: MIT
+
+## generator-function (v2.0.1)
+- **Supplier**: npm
+- **PURL**: `pkg:npm/generator-function@2.0.1`
+- **License**: MIT
+
+## get-intrinsic (v1.3.0)
+- **Supplier**: npm
+- **PURL**: `pkg:npm/get-intrinsic@1.3.0`
+- **License**: MIT
+
+## get-proto (v1.0.1)
+- **Supplier**: npm
+- **PURL**: `pkg:npm/get-proto@1.0.1`
+- **License**: MIT
+
+## get-symbol-description (v1.1.0)
+- **Supplier**: npm
+- **PURL**: `pkg:npm/get-symbol-description@1.1.0`
+- **License**: MIT
+
+## get-tsconfig (v4.14.0)
+- **Supplier**: npm
+- **PURL**: `pkg:npm/get-tsconfig@4.14.0`
+- **License**: MIT
+
+## gl-matrix (v3.4.4)
+- **Supplier**: npm
+- **PURL**: `pkg:npm/gl-matrix@3.4.4`
+- **License**: MIT
+
+## glob (v7.2.3)
+- **Supplier**: npm
+- **PURL**: `pkg:npm/glob@7.2.3`
+- **License**: ISC
+
+## glob-parent (v6.0.2)
+- **Supplier**: npm
+- **PURL**: `pkg:npm/glob-parent@6.0.2`
+- **License**: ISC
+
+## globals (v13.24.0)
+- **Supplier**: npm
+- **PURL**: `pkg:npm/globals@13.24.0`
+- **License**: MIT
+
+## globalthis (v1.0.4)
+- **Supplier**: npm
+- **PURL**: `pkg:npm/globalthis@1.0.4`
+- **License**: MIT
+
+## gopd (v1.2.0)
+- **Supplier**: npm
+- **PURL**: `pkg:npm/gopd@1.2.0`
+- **License**: MIT
+
+## graphemer (v1.4.0)
+- **Supplier**: npm
+- **PURL**: `pkg:npm/graphemer@1.4.0`
+- **License**: MIT
+
+## h3-js (v4.5.0)
+- **Supplier**: npm
+- **PURL**: `pkg:npm/h3-js@4.5.0`
+- **License**: Apache-2.0
+
+## happy-dom (v20.11.1)
+- **Supplier**: npm
+- **PURL**: `pkg:npm/happy-dom@20.11.1`
+- **License**: MIT
+
+## has-bigints (v1.1.0)
+- **Supplier**: npm
+- **PURL**: `pkg:npm/has-bigints@1.1.0`
+- **License**: MIT
+
+## has-flag (v4.0.0)
+- **Supplier**: npm
+- **PURL**: `pkg:npm/has-flag@4.0.0`
+- **License**: MIT
+
+## has-property-descriptors (v1.0.2)
+- **Supplier**: npm
+- **PURL**: `pkg:npm/has-property-descriptors@1.0.2`
+- **License**: MIT
+
+## has-proto (v1.2.0)
+- **Supplier**: npm
+- **PURL**: `pkg:npm/has-proto@1.2.0`
+- **License**: MIT
+
+## has-symbols (v1.1.0)
+- **Supplier**: npm
+- **PURL**: `pkg:npm/has-symbols@1.1.0`
+- **License**: MIT
+
+## has-tostringtag (v1.0.2)
+- **Supplier**: npm
+- **PURL**: `pkg:npm/has-tostringtag@1.0.2`
+- **License**: MIT
+
+## hasown (v2.0.4)
+- **Supplier**: npm
+- **PURL**: `pkg:npm/hasown@2.0.4`
+- **License**: MIT
+
+## ignore (v5.3.2)
+- **Supplier**: npm
+- **PURL**: `pkg:npm/ignore@5.3.2`
+- **License**: MIT
+
+## import-fresh (v3.3.1)
+- **Supplier**: npm
+- **PURL**: `pkg:npm/import-fresh@3.3.1`
+- **License**: MIT
+
+## imurmurhash (v0.1.4)
+- **Supplier**: npm
+- **PURL**: `pkg:npm/imurmurhash@0.1.4`
+- **License**: MIT
+
+## indent-string (v4.0.0)
+- **Supplier**: npm
+- **PURL**: `pkg:npm/indent-string@4.0.0`
+- **License**: MIT
+
+## inflight (v1.0.6)
+- **Supplier**: npm
+- **PURL**: `pkg:npm/inflight@1.0.6`
+- **License**: ISC
+
+## inherits (v2.0.4)
+- **Supplier**: npm
+- **PURL**: `pkg:npm/inherits@2.0.4`
+- **License**: ISC
+
+## internal-slot (v1.1.0)
+- **Supplier**: npm
+- **PURL**: `pkg:npm/internal-slot@1.1.0`
+- **License**: MIT
+
+## is-array-buffer (v3.0.5)
+- **Supplier**: npm
+- **PURL**: `pkg:npm/is-array-buffer@3.0.5`
+- **License**: MIT
+
+## is-async-function (v2.1.1)
+- **Supplier**: npm
+- **PURL**: `pkg:npm/is-async-function@2.1.1`
+- **License**: MIT
+
+## is-bigint (v1.1.0)
+- **Supplier**: npm
+- **PURL**: `pkg:npm/is-bigint@1.1.0`
+- **License**: MIT
+
+## is-boolean-object (v1.2.2)
+- **Supplier**: npm
+- **PURL**: `pkg:npm/is-boolean-object@1.2.2`
+- **License**: MIT
+
+## is-bun-module (v2.0.0)
+- **Supplier**: npm
+- **PURL**: `pkg:npm/is-bun-module@2.0.0`
+- **License**: MIT
+
+## is-callable (v1.2.7)
+- **Supplier**: npm
+- **PURL**: `pkg:npm/is-callable@1.2.7`
+- **License**: MIT
+
+## is-core-module (v2.16.2)
+- **Supplier**: npm
+- **PURL**: `pkg:npm/is-core-module@2.16.2`
+- **License**: MIT
+
+## is-data-view (v1.0.2)
+- **Supplier**: npm
+- **PURL**: `pkg:npm/is-data-view@1.0.2`
+- **License**: MIT
+
+## is-date-object (v1.1.0)
+- **Supplier**: npm
+- **PURL**: `pkg:npm/is-date-object@1.1.0`
+- **License**: MIT
+
+## is-document.all (v1.0.0)
+- **Supplier**: npm
+- **PURL**: `pkg:npm/is-document.all@1.0.0`
+- **License**: MIT
+
+## is-extglob (v2.1.1)
+- **Supplier**: npm
+- **PURL**: `pkg:npm/is-extglob@2.1.1`
+- **License**: MIT
+
+## is-finalizationregistry (v1.1.1)
+- **Supplier**: npm
+- **PURL**: `pkg:npm/is-finalizationregistry@1.1.1`
+- **License**: MIT
+
+## is-generator-function (v1.1.2)
+- **Supplier**: npm
+- **PURL**: `pkg:npm/is-generator-function@1.1.2`
+- **License**: MIT
+
+## is-glob (v4.0.3)
+- **Supplier**: npm
+- **PURL**: `pkg:npm/is-glob@4.0.3`
+- **License**: MIT
+
+## is-map (v2.0.3)
+- **Supplier**: npm
+- **PURL**: `pkg:npm/is-map@2.0.3`
+- **License**: MIT
+
+## is-negative-zero (v2.0.3)
+- **Supplier**: npm
+- **PURL**: `pkg:npm/is-negative-zero@2.0.3`
+- **License**: MIT
+
+## is-number (v7.0.0)
+- **Supplier**: npm
+- **PURL**: `pkg:npm/is-number@7.0.0`
+- **License**: MIT
+
+## is-number-object (v1.1.1)
+- **Supplier**: npm
+- **PURL**: `pkg:npm/is-number-object@1.1.1`
+- **License**: MIT
+
+## is-path-inside (v3.0.3)
+- **Supplier**: npm
+- **PURL**: `pkg:npm/is-path-inside@3.0.3`
+- **License**: MIT
+
+## is-regex (v1.2.1)
+- **Supplier**: npm
+- **PURL**: `pkg:npm/is-regex@1.2.1`
+- **License**: MIT
+
+## is-set (v2.0.3)
+- **Supplier**: npm
+- **PURL**: `pkg:npm/is-set@2.0.3`
+- **License**: MIT
+
+## is-shared-array-buffer (v1.0.4)
+- **Supplier**: npm
+- **PURL**: `pkg:npm/is-shared-array-buffer@1.0.4`
+- **License**: MIT
+
+## is-string (v1.1.1)
+- **Supplier**: npm
+- **PURL**: `pkg:npm/is-string@1.1.1`
+- **License**: MIT
+
+## is-symbol (v1.1.1)
+- **Supplier**: npm
+- **PURL**: `pkg:npm/is-symbol@1.1.1`
+- **License**: MIT
+
+## is-typed-array (v1.1.15)
+- **Supplier**: npm
+- **PURL**: `pkg:npm/is-typed-array@1.1.15`
+- **License**: MIT
+
+## is-weakmap (v2.0.2)
+- **Supplier**: npm
+- **PURL**: `pkg:npm/is-weakmap@2.0.2`
+- **License**: MIT
+
+## is-weakref (v1.1.1)
+- **Supplier**: npm
+- **PURL**: `pkg:npm/is-weakref@1.1.1`
+- **License**: MIT
+
+## is-weakset (v2.0.4)
+- **Supplier**: npm
+- **PURL**: `pkg:npm/is-weakset@2.0.4`
+- **License**: MIT
+
+## isarray (v2.0.5)
+- **Supplier**: npm
+- **PURL**: `pkg:npm/isarray@2.0.5`
+- **License**: MIT
+
+## isexe (v2.0.0)
+- **Supplier**: npm
+- **PURL**: `pkg:npm/isexe@2.0.0`
+- **License**: ISC
+
+## iterator.prototype (v1.1.5)
+- **Supplier**: npm
+- **PURL**: `pkg:npm/iterator.prototype@1.1.5`
+- **License**: MIT
+
+## js-tokens (v4.0.0)
+- **Supplier**: npm
+- **PURL**: `pkg:npm/js-tokens@4.0.0`
+- **License**: MIT
+
+## js-yaml (v4.3.0)
+- **Supplier**: npm
+- **PURL**: `pkg:npm/js-yaml@4.3.0`
+- **License**: MIT
+
+## json-buffer (v3.0.1)
+- **Supplier**: npm
+- **PURL**: `pkg:npm/json-buffer@3.0.1`
+- **License**: MIT
+
+## json-schema-traverse (v0.4.1)
+- **Supplier**: npm
+- **PURL**: `pkg:npm/json-schema-traverse@0.4.1`
+- **License**: MIT
+
+## json-stable-stringify-without-jsonify (v1.0.1)
+- **Supplier**: npm
+- **PURL**: `pkg:npm/json-stable-stringify-without-jsonify@1.0.1`
+- **License**: MIT
+
+## json-stringify-pretty-compact (v4.0.0)
+- **Supplier**: npm
+- **PURL**: `pkg:npm/json-stringify-pretty-compact@4.0.0`
+- **License**: MIT
+
+## json-with-bigint (v3.5.10)
+- **Supplier**: npm
+- **PURL**: `pkg:npm/json-with-bigint@3.5.10`
+- **License**: MIT
+
+## json5 (v1.0.2)
+- **Supplier**: npm
+- **PURL**: `pkg:npm/json5@1.0.2`
+- **License**: MIT
+
+## jsx-ast-utils (v3.3.5)
+- **Supplier**: npm
+- **PURL**: `pkg:npm/jsx-ast-utils@3.3.5`
+- **License**: MIT
+
+## kdbush (v4.1.0)
+- **Supplier**: npm
+- **PURL**: `pkg:npm/kdbush@4.1.0`
+- **License**: ISC
+
+## keyv (v4.5.4)
+- **Supplier**: npm
+- **PURL**: `pkg:npm/keyv@4.5.4`
+- **License**: MIT
+
+## language-subtag-registry (v0.3.23)
+- **Supplier**: npm
+- **PURL**: `pkg:npm/language-subtag-registry@0.3.23`
+- **License**: CC0-1.0
+
+## language-tags (v1.0.9)
+- **Supplier**: npm
+- **PURL**: `pkg:npm/language-tags@1.0.9`
+- **License**: MIT
+
+## levn (v0.4.1)
+- **Supplier**: npm
+- **PURL**: `pkg:npm/levn@0.4.1`
+- **License**: MIT
+
+## lightningcss (v1.33.0)
+- **Supplier**: npm
+- **PURL**: `pkg:npm/lightningcss@1.33.0`
+- **License**: MPL-2.0
+
+## lightningcss-android-arm64 (v1.33.0)
+- **Supplier**: npm
+- **PURL**: `pkg:npm/lightningcss-android-arm64@1.33.0`
+- **License**: MPL-2.0
+
+## lightningcss-darwin-arm64 (v1.33.0)
+- **Supplier**: npm
+- **PURL**: `pkg:npm/lightningcss-darwin-arm64@1.33.0`
+- **License**: MPL-2.0
+
+## lightningcss-darwin-x64 (v1.33.0)
+- **Supplier**: npm
+- **PURL**: `pkg:npm/lightningcss-darwin-x64@1.33.0`
+- **License**: MPL-2.0
+
+## lightningcss-freebsd-x64 (v1.33.0)
+- **Supplier**: npm
+- **PURL**: `pkg:npm/lightningcss-freebsd-x64@1.33.0`
+- **License**: MPL-2.0
+
+## lightningcss-linux-arm-gnueabihf (v1.33.0)
+- **Supplier**: npm
+- **PURL**: `pkg:npm/lightningcss-linux-arm-gnueabihf@1.33.0`
+- **License**: MPL-2.0
+
+## lightningcss-linux-arm64-gnu (v1.33.0)
+- **Supplier**: npm
+- **PURL**: `pkg:npm/lightningcss-linux-arm64-gnu@1.33.0`
+- **License**: MPL-2.0
+
+## lightningcss-linux-arm64-musl (v1.33.0)
+- **Supplier**: npm
+- **PURL**: `pkg:npm/lightningcss-linux-arm64-musl@1.33.0`
+- **License**: MPL-2.0
+
+## lightningcss-linux-x64-gnu (v1.33.0)
+- **Supplier**: npm
+- **PURL**: `pkg:npm/lightningcss-linux-x64-gnu@1.33.0`
+- **License**: MPL-2.0
+
+## lightningcss-linux-x64-musl (v1.33.0)
+- **Supplier**: npm
+- **PURL**: `pkg:npm/lightningcss-linux-x64-musl@1.33.0`
+- **License**: MPL-2.0
+
+## lightningcss-win32-arm64-msvc (v1.33.0)
+- **Supplier**: npm
+- **PURL**: `pkg:npm/lightningcss-win32-arm64-msvc@1.33.0`
+- **License**: MPL-2.0
+
+## lightningcss-win32-x64-msvc (v1.33.0)
+- **Supplier**: npm
+- **PURL**: `pkg:npm/lightningcss-win32-x64-msvc@1.33.0`
+- **License**: MPL-2.0
+
+## locate-path (v6.0.0)
+- **Supplier**: npm
+- **PURL**: `pkg:npm/locate-path@6.0.0`
+- **License**: MIT
+
+## lodash.merge (v4.6.2)
+- **Supplier**: npm
+- **PURL**: `pkg:npm/lodash.merge@4.6.2`
+- **License**: MIT
+
+## loose-envify (v1.4.0)
+- **Supplier**: npm
+- **PURL**: `pkg:npm/loose-envify@1.4.0`
+- **License**: MIT
+
+## lz-string (v1.5.0)
+- **Supplier**: npm
+- **PURL**: `pkg:npm/lz-string@1.5.0`
+- **License**: MIT
+
+## magic-string (v0.30.21)
+- **Supplier**: npm
+- **PURL**: `pkg:npm/magic-string@0.30.21`
+- **License**: MIT
+
+## maplibre-gl (v5.24.0)
+- **Supplier**: npm
+- **PURL**: `pkg:npm/maplibre-gl@5.24.0`
+- **License**: BSD-3-Clause
+
+## maplibre-gl/earcut (v3.2.3)
+- **Supplier**: npm
+- **PURL**: `pkg:npm/maplibre-gl/earcut@3.2.3`
+- **License**: ISC
+
+## math-intrinsics (v1.1.0)
+- **Supplier**: npm
+- **PURL**: `pkg:npm/math-intrinsics@1.1.0`
+- **License**: MIT
+
+## merge2 (v1.4.1)
+- **Supplier**: npm
+- **PURL**: `pkg:npm/merge2@1.4.1`
+- **License**: MIT
+
+## micromatch (v4.0.8)
+- **Supplier**: npm
+- **PURL**: `pkg:npm/micromatch@4.0.8`
+- **License**: MIT
+
+## micromatch/picomatch (v2.3.2)
+- **Supplier**: npm
+- **PURL**: `pkg:npm/micromatch/picomatch@2.3.2`
+- **License**: MIT
+
+## min-indent (v1.0.1)
+- **Supplier**: npm
+- **PURL**: `pkg:npm/min-indent@1.0.1`
+- **License**: MIT
+
+## minimatch (v3.1.5)
+- **Supplier**: npm
+- **PURL**: `pkg:npm/minimatch@3.1.5`
+- **License**: ISC
+
+## minimist (v1.2.8)
+- **Supplier**: npm
+- **PURL**: `pkg:npm/minimist@1.2.8`
+- **License**: MIT
+
+## mjolnir.js (v3.0.1)
+- **Supplier**: npm
+- **PURL**: `pkg:npm/mjolnir.js@3.0.1`
+- **License**: MIT
+
+## ms (v2.1.3)
+- **Supplier**: npm
+- **PURL**: `pkg:npm/ms@2.1.3`
+- **License**: MIT
+
+## murmurhash-js (v1.0.0)
+- **Supplier**: npm
+- **PURL**: `pkg:npm/murmurhash-js@1.0.0`
+- **License**: MIT
+
+## nanoid (v3.3.16)
+- **Supplier**: npm
+- **PURL**: `pkg:npm/nanoid@3.3.16`
+- **License**: MIT
+
+## napi-postinstall (v0.3.4)
+- **Supplier**: npm
+- **PURL**: `pkg:npm/napi-postinstall@0.3.4`
+- **License**: MIT
+
+## natural-compare (v1.4.0)
+- **Supplier**: npm
+- **PURL**: `pkg:npm/natural-compare@1.4.0`
+- **License**: MIT
+
+## next (v15.5.21)
+- **Supplier**: npm
+- **PURL**: `pkg:npm/next@15.5.21`
+- **License**: MIT
+
+## node-exports-info (v1.6.2)
+- **Supplier**: npm
+- **PURL**: `pkg:npm/node-exports-info@1.6.2`
+- **License**: MIT
+
+## node-exports-info/semver (v6.3.1)
+- **Supplier**: npm
+- **PURL**: `pkg:npm/node-exports-info/semver@6.3.1`
+- **License**: ISC
+
+## object-assign (v4.1.1)
+- **Supplier**: npm
+- **PURL**: `pkg:npm/object-assign@4.1.1`
+- **License**: MIT
+
+## object-inspect (v1.13.4)
+- **Supplier**: npm
+- **PURL**: `pkg:npm/object-inspect@1.13.4`
+- **License**: MIT
+
+## object-keys (v1.1.1)
+- **Supplier**: npm
+- **PURL**: `pkg:npm/object-keys@1.1.1`
+- **License**: MIT
+
+## object.assign (v4.1.7)
+- **Supplier**: npm
+- **PURL**: `pkg:npm/object.assign@4.1.7`
+- **License**: MIT
+
+## object.entries (v1.1.9)
+- **Supplier**: npm
+- **PURL**: `pkg:npm/object.entries@1.1.9`
+- **License**: MIT
+
+## object.fromentries (v2.0.8)
+- **Supplier**: npm
+- **PURL**: `pkg:npm/object.fromentries@2.0.8`
+- **License**: MIT
+
+## object.groupby (v1.0.3)
+- **Supplier**: npm
+- **PURL**: `pkg:npm/object.groupby@1.0.3`
+- **License**: MIT
+
+## object.values (v1.2.1)
+- **Supplier**: npm
+- **PURL**: `pkg:npm/object.values@1.2.1`
+- **License**: MIT
+
+## obug (v2.1.4)
+- **Supplier**: npm
+- **PURL**: `pkg:npm/obug@2.1.4`
+- **License**: MIT
+
+## once (v1.4.0)
+- **Supplier**: npm
+- **PURL**: `pkg:npm/once@1.4.0`
+- **License**: ISC
+
+## optionator (v0.9.4)
+- **Supplier**: npm
+- **PURL**: `pkg:npm/optionator@0.9.4`
+- **License**: MIT
+
+## own-keys (v1.0.2)
+- **Supplier**: npm
+- **PURL**: `pkg:npm/own-keys@1.0.2`
+- **License**: MIT
+
+## p-limit (v3.1.0)
+- **Supplier**: npm
+- **PURL**: `pkg:npm/p-limit@3.1.0`
+- **License**: MIT
+
+## p-locate (v5.0.0)
+- **Supplier**: npm
+- **PURL**: `pkg:npm/p-locate@5.0.0`
+- **License**: MIT
+
+## parent-module (v1.0.1)
+- **Supplier**: npm
+- **PURL**: `pkg:npm/parent-module@1.0.1`
+- **License**: MIT
+
+## path-exists (v4.0.0)
+- **Supplier**: npm
+- **PURL**: `pkg:npm/path-exists@4.0.0`
+- **License**: MIT
+
+## path-is-absolute (v1.0.1)
+- **Supplier**: npm
+- **PURL**: `pkg:npm/path-is-absolute@1.0.1`
+- **License**: MIT
+
+## path-key (v3.1.1)
+- **Supplier**: npm
+- **PURL**: `pkg:npm/path-key@3.1.1`
+- **License**: MIT
+
+## path-parse (v1.0.7)
+- **Supplier**: npm
+- **PURL**: `pkg:npm/path-parse@1.0.7`
+- **License**: MIT
+
+## pathe (v2.0.3)
+- **Supplier**: npm
+- **PURL**: `pkg:npm/pathe@2.0.3`
+- **License**: MIT
+
+## pbf (v4.0.2)
+- **Supplier**: npm
+- **PURL**: `pkg:npm/pbf@4.0.2`
+- **License**: BSD-3-Clause
+
+## picocolors (v1.1.1)
+- **Supplier**: npm
+- **PURL**: `pkg:npm/picocolors@1.1.1`
+- **License**: ISC
+
+## picomatch (v4.0.5)
+- **Supplier**: npm
+- **PURL**: `pkg:npm/picomatch@4.0.5`
+- **License**: MIT
+
+## playwright (v1.61.1)
+- **Supplier**: npm
+- **PURL**: `pkg:npm/playwright@1.61.1`
+- **License**: Apache-2.0
+
+## playwright-core (v1.61.1)
+- **Supplier**: npm
+- **PURL**: `pkg:npm/playwright-core@1.61.1`
+- **License**: Apache-2.0
+
+## possible-typed-array-names (v1.1.0)
+- **Supplier**: npm
+- **PURL**: `pkg:npm/possible-typed-array-names@1.1.0`
+- **License**: MIT
+
+## postcss (v8.5.22)
+- **Supplier**: npm
+- **PURL**: `pkg:npm/postcss@8.5.22`
+- **License**: MIT
+
+## potpack (v2.1.0)
+- **Supplier**: npm
+- **PURL**: `pkg:npm/potpack@2.1.0`
+- **License**: ISC
+
+## preact (v10.29.7)
+- **Supplier**: npm
+- **PURL**: `pkg:npm/preact@10.29.7`
+- **License**: MIT
+
+## prelude-ls (v1.2.1)
+- **Supplier**: npm
+- **PURL**: `pkg:npm/prelude-ls@1.2.1`
+- **License**: MIT
+
+## pretty-format (v27.5.1)
+- **Supplier**: npm
+- **PURL**: `pkg:npm/pretty-format@27.5.1`
+- **License**: MIT
+
+## pretty-format/ansi-styles (v5.2.0)
+- **Supplier**: npm
+- **PURL**: `pkg:npm/pretty-format/ansi-styles@5.2.0`
+- **License**: MIT
+
+## prop-types (v15.8.1)
+- **Supplier**: npm
+- **PURL**: `pkg:npm/prop-types@15.8.1`
+- **License**: MIT
+
+## prop-types/react-is (v16.13.1)
+- **Supplier**: npm
+- **PURL**: `pkg:npm/prop-types/react-is@16.13.1`
+- **License**: MIT
+
+## protocol-buffers-schema (v3.6.1)
+- **Supplier**: npm
+- **PURL**: `pkg:npm/protocol-buffers-schema@3.6.1`
+- **License**: MIT
+
+## punycode (v2.3.1)
+- **Supplier**: npm
+- **PURL**: `pkg:npm/punycode@2.3.1`
+- **License**: MIT
+
+## queue-microtask (v1.2.3)
+- **Supplier**: npm
+- **PURL**: `pkg:npm/queue-microtask@1.2.3`
+- **License**: MIT
+
+## quickselect (v3.0.0)
+- **Supplier**: npm
+- **PURL**: `pkg:npm/quickselect@3.0.0`
+- **License**: ISC
+
+## react (v18.3.1)
+- **Supplier**: npm
+- **PURL**: `pkg:npm/react@18.3.1`
+- **License**: MIT
+
+## react-dom (v18.3.1)
+- **Supplier**: npm
+- **PURL**: `pkg:npm/react-dom@18.3.1`
+- **License**: MIT
+
+## react-is (v17.0.2)
+- **Supplier**: npm
+- **PURL**: `pkg:npm/react-is@17.0.2`
+- **License**: MIT
+
+## redent (v3.0.0)
+- **Supplier**: npm
+- **PURL**: `pkg:npm/redent@3.0.0`
+- **License**: MIT
+
+## reflect.getprototypeof (v1.0.10)
+- **Supplier**: npm
+- **PURL**: `pkg:npm/reflect.getprototypeof@1.0.10`
+- **License**: MIT
+
+## regexp.prototype.flags (v1.5.4)
+- **Supplier**: npm
+- **PURL**: `pkg:npm/regexp.prototype.flags@1.5.4`
+- **License**: MIT
+
+## resolve (v2.0.0-next.7)
+- **Supplier**: npm
+- **PURL**: `pkg:npm/resolve@2.0.0-next.7`
+- **License**: MIT
+
+## resolve-from (v4.0.0)
+- **Supplier**: npm
+- **PURL**: `pkg:npm/resolve-from@4.0.0`
+- **License**: MIT
+
+## resolve-pkg-maps (v1.0.0)
+- **Supplier**: npm
+- **PURL**: `pkg:npm/resolve-pkg-maps@1.0.0`
+- **License**: MIT
+
+## resolve-protobuf-schema (v2.1.0)
+- **Supplier**: npm
+- **PURL**: `pkg:npm/resolve-protobuf-schema@2.1.0`
+- **License**: MIT
+
+## reusify (v1.1.0)
+- **Supplier**: npm
+- **PURL**: `pkg:npm/reusify@1.1.0`
+- **License**: MIT
+
+## rimraf (v3.0.2)
+- **Supplier**: npm
+- **PURL**: `pkg:npm/rimraf@3.0.2`
+- **License**: ISC
+
+## rolldown (v1.1.5)
+- **Supplier**: npm
+- **PURL**: `pkg:npm/rolldown@1.1.5`
+- **License**: MIT
+
+## run-parallel (v1.2.0)
+- **Supplier**: npm
+- **PURL**: `pkg:npm/run-parallel@1.2.0`
+- **License**: MIT
+
+## safe-array-concat (v1.1.4)
+- **Supplier**: npm
+- **PURL**: `pkg:npm/safe-array-concat@1.1.4`
+- **License**: MIT
+
+## safe-push-apply (v1.0.0)
+- **Supplier**: npm
+- **PURL**: `pkg:npm/safe-push-apply@1.0.0`
+- **License**: MIT
+
+## safe-regex-test (v1.1.0)
+- **Supplier**: npm
+- **PURL**: `pkg:npm/safe-regex-test@1.1.0`
+- **License**: MIT
+
+## scheduler (v0.23.2)
+- **Supplier**: npm
+- **PURL**: `pkg:npm/scheduler@0.23.2`
+- **License**: MIT
+
+## semver (v7.8.5)
+- **Supplier**: npm
+- **PURL**: `pkg:npm/semver@7.8.5`
+- **License**: ISC
+
+## set-function-length (v1.2.2)
+- **Supplier**: npm
+- **PURL**: `pkg:npm/set-function-length@1.2.2`
+- **License**: MIT
+
+## set-function-name (v2.0.2)
+- **Supplier**: npm
+- **PURL**: `pkg:npm/set-function-name@2.0.2`
+- **License**: MIT
+
+## set-proto (v1.0.0)
+- **Supplier**: npm
+- **PURL**: `pkg:npm/set-proto@1.0.0`
+- **License**: MIT
+
+## sharp (v0.35.3)
+- **Supplier**: npm
+- **PURL**: `pkg:npm/sharp@0.35.3`
+- **License**: Apache-2.0
+
+## shebang-command (v2.0.0)
+- **Supplier**: npm
+- **PURL**: `pkg:npm/shebang-command@2.0.0`
+- **License**: MIT
+
+## shebang-regex (v3.0.0)
+- **Supplier**: npm
+- **PURL**: `pkg:npm/shebang-regex@3.0.0`
+- **License**: MIT
+
+## side-channel (v1.1.1)
+- **Supplier**: npm
+- **PURL**: `pkg:npm/side-channel@1.1.1`
+- **License**: MIT
+
+## side-channel-list (v1.0.1)
+- **Supplier**: npm
+- **PURL**: `pkg:npm/side-channel-list@1.0.1`
+- **License**: MIT
+
+## side-channel-map (v1.0.1)
+- **Supplier**: npm
+- **PURL**: `pkg:npm/side-channel-map@1.0.1`
+- **License**: MIT
+
+## side-channel-weakmap (v1.0.2)
+- **Supplier**: npm
+- **PURL**: `pkg:npm/side-channel-weakmap@1.0.2`
+- **License**: MIT
+
+## siginfo (v2.0.0)
+- **Supplier**: npm
+- **PURL**: `pkg:npm/siginfo@2.0.0`
+- **License**: ISC
+
+## source-map-js (v1.2.1)
+- **Supplier**: npm
+- **PURL**: `pkg:npm/source-map-js@1.2.1`
+- **License**: BSD-3-Clause
+
+## stable-hash (v0.0.5)
+- **Supplier**: npm
+- **PURL**: `pkg:npm/stable-hash@0.0.5`
+- **License**: MIT
+
+## stackback (v0.0.2)
+- **Supplier**: npm
+- **PURL**: `pkg:npm/stackback@0.0.2`
+- **License**: MIT
+
+## std-env (v4.2.0)
+- **Supplier**: npm
+- **PURL**: `pkg:npm/std-env@4.2.0`
+- **License**: MIT
+
+## stop-iteration-iterator (v1.1.0)
+- **Supplier**: npm
+- **PURL**: `pkg:npm/stop-iteration-iterator@1.1.0`
+- **License**: MIT
+
+## string.prototype.includes (v2.0.1)
+- **Supplier**: npm
+- **PURL**: `pkg:npm/string.prototype.includes@2.0.1`
+- **License**: MIT
+
+## string.prototype.matchall (v4.0.12)
+- **Supplier**: npm
+- **PURL**: `pkg:npm/string.prototype.matchall@4.0.12`
+- **License**: MIT
+
+## string.prototype.repeat (v1.0.0)
+- **Supplier**: npm
+- **PURL**: `pkg:npm/string.prototype.repeat@1.0.0`
+- **License**: MIT
+
+## string.prototype.trim (v1.2.11)
+- **Supplier**: npm
+- **PURL**: `pkg:npm/string.prototype.trim@1.2.11`
+- **License**: MIT
+
+## string.prototype.trimend (v1.0.10)
+- **Supplier**: npm
+- **PURL**: `pkg:npm/string.prototype.trimend@1.0.10`
+- **License**: MIT
+
+## string.prototype.trimstart (v1.0.8)
+- **Supplier**: npm
+- **PURL**: `pkg:npm/string.prototype.trimstart@1.0.8`
+- **License**: MIT
+
+## strip-ansi (v6.0.1)
+- **Supplier**: npm
+- **PURL**: `pkg:npm/strip-ansi@6.0.1`
+- **License**: MIT
+
+## strip-bom (v3.0.0)
+- **Supplier**: npm
+- **PURL**: `pkg:npm/strip-bom@3.0.0`
+- **License**: MIT
+
+## strip-indent (v3.0.0)
+- **Supplier**: npm
+- **PURL**: `pkg:npm/strip-indent@3.0.0`
+- **License**: MIT
+
+## strip-json-comments (v3.1.1)
+- **Supplier**: npm
+- **PURL**: `pkg:npm/strip-json-comments@3.1.1`
+- **License**: MIT
+
+## styled-jsx (v5.1.6)
+- **Supplier**: npm
+- **PURL**: `pkg:npm/styled-jsx@5.1.6`
+- **License**: MIT
+
+## supports-color (v7.2.0)
+- **Supplier**: npm
+- **PURL**: `pkg:npm/supports-color@7.2.0`
+- **License**: MIT
+
+## supports-preserve-symlinks-flag (v1.0.0)
+- **Supplier**: npm
+- **PURL**: `pkg:npm/supports-preserve-symlinks-flag@1.0.0`
+- **License**: MIT
+
+## text-table (v0.2.0)
+- **Supplier**: npm
+- **PURL**: `pkg:npm/text-table@0.2.0`
+- **License**: MIT
+
+## tinybench (v2.9.0)
+- **Supplier**: npm
+- **PURL**: `pkg:npm/tinybench@2.9.0`
+- **License**: MIT
+
+## tinyexec (v1.2.4)
+- **Supplier**: npm
+- **PURL**: `pkg:npm/tinyexec@1.2.4`
+- **License**: MIT
+
+## tinyglobby (v0.2.17)
+- **Supplier**: npm
+- **PURL**: `pkg:npm/tinyglobby@0.2.17`
+- **License**: MIT
+
+## tinyqueue (v3.0.0)
+- **Supplier**: npm
+- **PURL**: `pkg:npm/tinyqueue@3.0.0`
+- **License**: ISC
+
+## tinyrainbow (v3.1.0)
+- **Supplier**: npm
+- **PURL**: `pkg:npm/tinyrainbow@3.1.0`
+- **License**: MIT
+
+## to-regex-range (v5.0.1)
+- **Supplier**: npm
+- **PURL**: `pkg:npm/to-regex-range@5.0.1`
+- **License**: MIT
+
+## ts-api-utils (v2.5.0)
+- **Supplier**: npm
+- **PURL**: `pkg:npm/ts-api-utils@2.5.0`
+- **License**: MIT
+
+## tsconfig-paths (v3.15.0)
+- **Supplier**: npm
+- **PURL**: `pkg:npm/tsconfig-paths@3.15.0`
+- **License**: MIT
+
+## tslib (v2.8.1)
+- **Supplier**: npm
+- **PURL**: `pkg:npm/tslib@2.8.1`
+- **License**: 0BSD
+
+## type-check (v0.4.0)
+- **Supplier**: npm
+- **PURL**: `pkg:npm/type-check@0.4.0`
+- **License**: MIT
+
+## type-fest (v0.20.2)
+- **Supplier**: npm
+- **PURL**: `pkg:npm/type-fest@0.20.2`
+- **License**: MIT
+
+## typed-array-buffer (v1.0.3)
+- **Supplier**: npm
+- **PURL**: `pkg:npm/typed-array-buffer@1.0.3`
+- **License**: MIT
+
+## typed-array-byte-length (v1.0.3)
+- **Supplier**: npm
+- **PURL**: `pkg:npm/typed-array-byte-length@1.0.3`
+- **License**: MIT
+
+## typed-array-byte-offset (v1.0.4)
+- **Supplier**: npm
+- **PURL**: `pkg:npm/typed-array-byte-offset@1.0.4`
+- **License**: MIT
+
+## typed-array-length (v1.0.8)
+- **Supplier**: npm
+- **PURL**: `pkg:npm/typed-array-length@1.0.8`
+- **License**: MIT
+
+## typescript (v5.6.3)
+- **Supplier**: npm
+- **PURL**: `pkg:npm/typescript@5.6.3`
+- **License**: Apache-2.0
+
+## unbox-primitive (v1.1.0)
+- **Supplier**: npm
+- **PURL**: `pkg:npm/unbox-primitive@1.1.0`
+- **License**: MIT
+
+## undici-types (v5.26.5)
+- **Supplier**: npm
+- **PURL**: `pkg:npm/undici-types@5.26.5`
+- **License**: MIT
+
+## unrs-resolver (v1.12.2)
+- **Supplier**: npm
+- **PURL**: `pkg:npm/unrs-resolver@1.12.2`
+- **License**: MIT
+
+## uri-js (v4.4.1)
+- **Supplier**: npm
+- **PURL**: `pkg:npm/uri-js@4.4.1`
+- **License**: BSD-2-Clause
+
+## vite (v8.1.5)
+- **Supplier**: npm
+- **PURL**: `pkg:npm/vite@8.1.5`
+- **License**: MIT
+
+## vite/fsevents (v2.3.3)
+- **Supplier**: npm
+- **PURL**: `pkg:npm/vite/fsevents@2.3.3`
+- **License**: MIT
+
+## vitest (v4.1.10)
+- **Supplier**: npm
+- **PURL**: `pkg:npm/vitest@4.1.10`
+- **License**: MIT
+
+## whatwg-mimetype (v3.0.0)
+- **Supplier**: npm
+- **PURL**: `pkg:npm/whatwg-mimetype@3.0.0`
+- **License**: MIT
+
+## which (v2.0.2)
+- **Supplier**: npm
+- **PURL**: `pkg:npm/which@2.0.2`
+- **License**: ISC
+
+## which-boxed-primitive (v1.1.1)
+- **Supplier**: npm
+- **PURL**: `pkg:npm/which-boxed-primitive@1.1.1`
+- **License**: MIT
+
+## which-builtin-type (v1.2.1)
+- **Supplier**: npm
+- **PURL**: `pkg:npm/which-builtin-type@1.2.1`
+- **License**: MIT
+
+## which-collection (v1.0.2)
+- **Supplier**: npm
+- **PURL**: `pkg:npm/which-collection@1.0.2`
+- **License**: MIT
+
+## which-typed-array (v1.1.22)
+- **Supplier**: npm
+- **PURL**: `pkg:npm/which-typed-array@1.1.22`
+- **License**: MIT
+
+## why-is-node-running (v2.3.0)
+- **Supplier**: npm
+- **PURL**: `pkg:npm/why-is-node-running@2.3.0`
+- **License**: MIT
+
+## word-wrap (v1.2.5)
+- **Supplier**: npm
+- **PURL**: `pkg:npm/word-wrap@1.2.5`
+- **License**: MIT
+
+## wrappy (v1.0.2)
+- **Supplier**: npm
+- **PURL**: `pkg:npm/wrappy@1.0.2`
+- **License**: ISC
+
+## ws (v8.21.1)
+- **Supplier**: npm
+- **PURL**: `pkg:npm/ws@8.21.1`
+- **License**: MIT
+
+## yocto-queue (v0.1.0)
+- **Supplier**: npm
+- **PURL**: `pkg:npm/yocto-queue@0.1.0`
+- **License**: MIT
+
+## packages/design-tokens (v0.1.0)
+- **Supplier**: npm
+- **PURL**: `pkg:npm/packages/design-tokens@0.1.0`
+- **License**: MIT
+
+## packages/domain-types (v0.1.0)
+- **Supplier**: npm
+- **PURL**: `pkg:npm/packages/domain-types@0.1.0`
+- **License**: MIT
+
+## packages/openapi-client (v0.1.0)
+- **Supplier**: npm
+- **PURL**: `pkg:npm/packages/openapi-client@0.1.0`
+- **License**: MIT
+
+## packages/schemas (v0.1.0)
+- **Supplier**: npm
+- **PURL**: `pkg:npm/packages/schemas@0.1.0`
+- **License**: MIT
+
+## packages/testkit (v0.1.0)
+- **Supplier**: npm
+- **PURL**: `pkg:npm/packages/testkit@0.1.0`
+- **License**: MIT
+
+## packages/ui (v0.1.0)
+- **Supplier**: npm
+- **PURL**: `pkg:npm/packages/ui@0.1.0`
+- **License**: MIT
+
+## packages/ui-domain (v0.1.0)
+- **Supplier**: npm
+- **PURL**: `pkg:npm/packages/ui-domain@0.1.0`
+- **License**: MIT
+
+## about-time (v4.2.1)
+- **Supplier**: pypi
+- **PURL**: `pkg:pypi/about-time@4.2.1`
+- **License**: MIT
+
+## absl-py (v2.5.0)
+- **Supplier**: pypi
+- **PURL**: `pkg:pypi/absl-py@2.5.0`
+- **License**: Apache-2.0
+
+## adagio (v0.2.6)
+- **Supplier**: pypi
+- **PURL**: `pkg:pypi/adagio@0.2.6`
+- **License**: Apache-2.0
+
+## aiohappyeyeballs (v2.7.1)
+- **Supplier**: pypi
+- **PURL**: `pkg:pypi/aiohappyeyeballs@2.7.1`
+- **License**: Apache-2.0
+
+## aiohttp (v3.14.3)
+- **Supplier**: pypi
+- **PURL**: `pkg:pypi/aiohttp@3.14.3`
+- **License**: Apache-2.0
+
+## aiosignal (v1.4.0)
+- **Supplier**: pypi
+- **PURL**: `pkg:pypi/aiosignal@1.4.0`
+- **License**: Apache-2.0
+
+## alembic (v1.18.5)
+- **Supplier**: pypi
+- **PURL**: `pkg:pypi/alembic@1.18.5`
+- **License**: MIT
+
+## alive-progress (v3.3.0)
+- **Supplier**: pypi
+- **PURL**: `pkg:pypi/alive-progress@3.3.0`
+- **License**: MIT
+
+## altair (v6.2.2)
+- **Supplier**: pypi
+- **PURL**: `pkg:pypi/altair@6.2.2`
+- **License**: BSD-3-Clause
+
+## annotated-doc (v0.0.4)
+- **Supplier**: pypi
+- **PURL**: `pkg:pypi/annotated-doc@0.0.4`
+- **License**: MIT
+
+## annotated-types (v0.7.0)
+- **Supplier**: pypi
+- **PURL**: `pkg:pypi/annotated-types@0.7.0`
+- **License**: MIT
+
+## antlr4-python3-runtime (v4.13.2)
+- **Supplier**: pypi
+- **PURL**: `pkg:pypi/antlr4-python3-runtime@4.13.2`
+- **License**: BSD-3-Clause
+
+## anyio (v4.13.0)
+- **Supplier**: pypi
+- **PURL**: `pkg:pypi/anyio@4.13.0`
+- **License**: MIT
+
+## appdirs (v1.4.4)
+- **Supplier**: pypi
+- **PURL**: `pkg:pypi/appdirs@1.4.4`
+- **License**: MIT
+
+## attrs (v26.1.0)
+- **Supplier**: pypi
+- **PURL**: `pkg:pypi/attrs@26.1.0`
+- **License**: MIT
+
+## autograd (v1.9.1)
+- **Supplier**: pypi
+- **PURL**: `pkg:pypi/autograd@1.9.1`
+- **License**: MIT
+
+## autograd-gamma (v0.5.0)
+- **Supplier**: pypi
+- **PURL**: `pkg:pypi/autograd-gamma@0.5.0`
+- **License**: MIT
+
+## blinker (v1.9.0)
+- **Supplier**: pypi
+- **PURL**: `pkg:pypi/blinker@1.9.0`
+- **License**: MIT
+
+## cachetools (v7.1.6)
+- **Supplier**: pypi
+- **PURL**: `pkg:pypi/cachetools@7.1.6`
+- **License**: MIT
+
+## catboost (v1.2.10)
+- **Supplier**: pypi
+- **PURL**: `pkg:pypi/catboost@1.2.10`
+- **License**: MIT
+
+## certifi (v2026.6.17)
+- **Supplier**: pypi
+- **PURL**: `pkg:pypi/certifi@2026.6.17`
+- **License**: MPL-2.0
+
+## cffi (v2.1.0)
+- **Supplier**: pypi
+- **PURL**: `pkg:pypi/cffi@2.1.0`
+- **License**: MIT-0
+
+## charset-normalizer (v3.4.9)
+- **Supplier**: pypi
+- **PURL**: `pkg:pypi/charset-normalizer@3.4.9`
+- **License**: MIT
+
+## clarabel (v0.11.1)
+- **Supplier**: pypi
+- **PURL**: `pkg:pypi/clarabel@0.11.1`
+- **License**: Apache-2.0
+
+## click (v8.4.2)
+- **Supplier**: pypi
+- **PURL**: `pkg:pypi/click@8.4.2`
+- **License**: BSD-3-Clause
+
+## cloudpickle (v3.1.2)
+- **Supplier**: pypi
+- **PURL**: `pkg:pypi/cloudpickle@3.1.2`
+- **License**: BSD-3-Clause
+
+## cma (v4.4.4)
+- **Supplier**: pypi
+- **PURL**: `pkg:pypi/cma@4.4.4`
+- **License**: BSD-3-Clause
+
+## colorama (v0.4.6)
+- **Supplier**: pypi
+- **PURL**: `pkg:pypi/colorama@0.4.6`
+- **License**: BSD-3-Clause
+
+## coloredlogs (v14.0)
+- **Supplier**: pypi
+- **PURL**: `pkg:pypi/coloredlogs@14.0`
+- **License**: MIT
+
+## colorlog (v6.12.0)
+- **Supplier**: pypi
+- **PURL**: `pkg:pypi/colorlog@6.12.0`
+- **License**: MIT
+
+## contourpy (v1.3.3)
+- **Supplier**: pypi
+- **PURL**: `pkg:pypi/contourpy@1.3.3`
+- **License**: BSD-3-Clause
+
+## coreforecast (v0.0.18)
+- **Supplier**: pypi
+- **PURL**: `pkg:pypi/coreforecast@0.0.18`
+- **License**: Apache-2.0
+
+## cryptography (v48.0.1)
+- **Supplier**: pypi
+- **PURL**: `pkg:pypi/cryptography@48.0.1`
+- **License**: MIT
+
+## cvxpy (v1.9.2)
+- **Supplier**: pypi
+- **PURL**: `pkg:pypi/cvxpy@1.9.2`
+- **License**: Apache-2.0
+
+## cycler (v0.12.1)
+- **Supplier**: pypi
+- **PURL**: `pkg:pypi/cycler@0.12.1`
+- **License**: BSD-3-Clause
+
+## dagster (v1.13.15)
+- **Supplier**: pypi
+- **PURL**: `pkg:pypi/dagster@1.13.15`
+- **License**: Apache-2.0
+
+## dagster-pipes (v1.13.15)
+- **Supplier**: pypi
+- **PURL**: `pkg:pypi/dagster-pipes@1.13.15`
+- **License**: Apache-2.0
+
+## dagster-shared (v1.13.15)
+- **Supplier**: pypi
+- **PURL**: `pkg:pypi/dagster-shared@1.13.15`
+- **License**: Apache-2.0
+
+## databricks-sdk (v0.122.0)
+- **Supplier**: pypi
+- **PURL**: `pkg:pypi/databricks-sdk@0.122.0`
+- **License**: Apache-2.0
+
+## defusedxml (v0.7.1)
+- **Supplier**: pypi
+- **PURL**: `pkg:pypi/defusedxml@0.7.1`
+- **License**: PSF-2.0
+
+## deprecated (v1.3.1)
+- **Supplier**: pypi
+- **PURL**: `pkg:pypi/deprecated@1.3.1`
+- **License**: MIT
+
+## deprecation (v2.1.0)
+- **Supplier**: pypi
+- **PURL**: `pkg:pypi/deprecation@2.1.0`
+- **License**: MIT
+
+## distro (v1.9.0)
+- **Supplier**: pypi
+- **PURL**: `pkg:pypi/distro@1.9.0`
+- **License**: MIT
+
+## dlt (v1.29.1)
+- **Supplier**: pypi
+- **PURL**: `pkg:pypi/dlt@1.29.1`
+- **License**: Apache-2.0
+
+## docker (v7.2.0)
+- **Supplier**: pypi
+- **PURL**: `pkg:pypi/docker@7.2.0`
+- **License**: Apache-2.0
+
+## docstring-parser (v0.18.0)
+- **Supplier**: pypi
+- **PURL**: `pkg:pypi/docstring-parser@0.18.0`
+- **License**: MIT
+
+## duckdb (v1.5.4)
+- **Supplier**: pypi
+- **PURL**: `pkg:pypi/duckdb@1.5.4`
+- **License**: MIT
+
+## dynaconf (v3.3.3)
+- **Supplier**: pypi
+- **PURL**: `pkg:pypi/dynaconf@3.3.3`
+- **License**: MIT
+
+## evidently (v0.7.21)
+- **Supplier**: pypi
+- **PURL**: `pkg:pypi/evidently@0.7.21`
+- **License**: Apache-2.0
+
+## faker (v40.35.0)
+- **Supplier**: pypi
+- **PURL**: `pkg:pypi/faker@40.35.0`
+- **License**: MIT
+
+## fastapi (v0.138.1)
+- **Supplier**: pypi
+- **PURL**: `pkg:pypi/fastapi@0.138.1`
+- **License**: MIT
+
+## fasteners (v0.20)
+- **Supplier**: pypi
+- **PURL**: `pkg:pypi/fasteners@0.20`
+- **License**: Apache-2.0
+
+## filelock (v3.32.0)
+- **Supplier**: pypi
+- **PURL**: `pkg:pypi/filelock@3.32.0`
+- **License**: MIT
+
+## flask (v3.1.3)
+- **Supplier**: pypi
+- **PURL**: `pkg:pypi/flask@3.1.3`
+- **License**: BSD-3-Clause
+
+## flask-cors (v6.0.5)
+- **Supplier**: pypi
+- **PURL**: `pkg:pypi/flask-cors@6.0.5`
+- **License**: MIT
+
+## fonttools (v4.63.0)
+- **Supplier**: pypi
+- **PURL**: `pkg:pypi/fonttools@4.63.0`
+- **License**: MIT
+
+## formulaic (v1.2.2)
+- **Supplier**: pypi
+- **PURL**: `pkg:pypi/formulaic@1.2.2`
+- **License**: MIT
+
+## frozenlist (v1.8.0)
+- **Supplier**: pypi
+- **PURL**: `pkg:pypi/frozenlist@1.8.0`
+- **License**: Apache-2.0
+
+## fsspec (v2026.6.0)
+- **Supplier**: pypi
+- **PURL**: `pkg:pypi/fsspec@2026.6.0`
+- **License**: BSD-3-Clause
+
+## fugue (v0.9.7)
+- **Supplier**: pypi
+- **PURL**: `pkg:pypi/fugue@0.9.7`
+- **License**: Apache-2.0
+
+## gitdb (v4.0.12)
+- **Supplier**: pypi
+- **PURL**: `pkg:pypi/gitdb@4.0.12`
+- **License**: BSD-3-Clause
+
+## gitpython (v3.1.55)
+- **Supplier**: pypi
+- **PURL**: `pkg:pypi/gitpython@3.1.55`
+- **License**: BSD-3-Clause
+
+## giturlparse (v0.15.0)
+- **Supplier**: pypi
+- **PURL**: `pkg:pypi/giturlparse@0.15.0`
+- **License**: MIT
+
+## google-api-core (v2.33.0)
+- **Supplier**: pypi
+- **PURL**: `pkg:pypi/google-api-core@2.33.0`
+- **License**: Apache-2.0
+
+## google-auth (v2.56.2)
+- **Supplier**: pypi
+- **PURL**: `pkg:pypi/google-auth@2.56.2`
+- **License**: Apache-2.0
+
+## google-cloud-core (v2.6.0)
+- **Supplier**: pypi
+- **PURL**: `pkg:pypi/google-cloud-core@2.6.0`
+- **License**: Apache-2.0
+
+## google-cloud-storage (v3.13.0)
+- **Supplier**: pypi
+- **PURL**: `pkg:pypi/google-cloud-storage@3.13.0`
+- **License**: Apache-2.0
+
+## google-crc32c (v1.8.0)
+- **Supplier**: pypi
+- **PURL**: `pkg:pypi/google-crc32c@1.8.0`
+- **License**: Apache-2.0
+
+## google-resumable-media (v2.10.0)
+- **Supplier**: pypi
+- **PURL**: `pkg:pypi/google-resumable-media@2.10.0`
+- **License**: Apache-2.0
+
+## googleapis-common-protos (v1.75.0)
+- **Supplier**: pypi
+- **PURL**: `pkg:pypi/googleapis-common-protos@1.75.0`
+- **License**: Apache-2.0
+
+## graphemeu (v0.7.2)
+- **Supplier**: pypi
+- **PURL**: `pkg:pypi/graphemeu@0.7.2`
+- **License**: MIT
+
+## graphene (v3.4.3)
+- **Supplier**: pypi
+- **PURL**: `pkg:pypi/graphene@3.4.3`
+- **License**: MIT
+
+## graphql-core (v3.2.11)
+- **Supplier**: pypi
+- **PURL**: `pkg:pypi/graphql-core@3.2.11`
+- **License**: MIT
+
+## graphql-relay (v3.2.0)
+- **Supplier**: pypi
+- **PURL**: `pkg:pypi/graphql-relay@3.2.0`
+- **License**: MIT
+
+## graphviz (v0.21)
+- **Supplier**: pypi
+- **PURL**: `pkg:pypi/graphviz@0.21`
+- **License**: MIT
+
+## great-expectations (v1.19.0)
+- **Supplier**: pypi
+- **PURL**: `pkg:pypi/great-expectations@1.19.0`
+- **License**: Apache-2.0
+
+## greenlet (v3.5.3)
+- **Supplier**: pypi
+- **PURL**: `pkg:pypi/greenlet@3.5.3`
+- **License**: MIT
+
+## grpcio (v1.83.0)
+- **Supplier**: pypi
+- **PURL**: `pkg:pypi/grpcio@1.83.0`
+- **License**: Apache-2.0
+
+## grpcio-health-checking (v1.81.1)
+- **Supplier**: pypi
+- **PURL**: `pkg:pypi/grpcio-health-checking@1.81.1`
+- **License**: Apache-2.0
+
+## gunicorn (v26.0.0)
+- **Supplier**: pypi
+- **PURL**: `pkg:pypi/gunicorn@26.0.0`
+- **License**: MIT
+
+## h11 (v0.16.0)
+- **Supplier**: pypi
+- **PURL**: `pkg:pypi/h11@0.16.0`
+- **License**: MIT
+
+## h3 (v4.5.0)
+- **Supplier**: pypi
+- **PURL**: `pkg:pypi/h3@4.5.0`
+- **License**: Apache-2.0
+
+## highspy (v1.15.1)
+- **Supplier**: pypi
+- **PURL**: `pkg:pypi/highspy@1.15.1`
+- **License**: MIT
+
+## httpcore (v1.0.9)
+- **Supplier**: pypi
+- **PURL**: `pkg:pypi/httpcore@1.0.9`
+- **License**: BSD-3-Clause
+
+## httptools (v0.8.0)
+- **Supplier**: pypi
+- **PURL**: `pkg:pypi/httptools@0.8.0`
+- **License**: MIT
+
+## httpx (v0.28.1)
+- **Supplier**: pypi
+- **PURL**: `pkg:pypi/httpx@0.28.1`
+- **License**: BSD-3-Clause
+
+## huey (v3.3.0)
+- **Supplier**: pypi
+- **PURL**: `pkg:pypi/huey@3.3.0`
+- **License**: MIT
+
+## humanfriendly (v10.0)
+- **Supplier**: pypi
+- **PURL**: `pkg:pypi/humanfriendly@10.0`
+- **License**: MIT
+
+## humanize (v4.16.0)
+- **Supplier**: pypi
+- **PURL**: `pkg:pypi/humanize@4.16.0`
+- **License**: MIT
+
+## idna (v3.18)
+- **Supplier**: pypi
+- **PURL**: `pkg:pypi/idna@3.18`
+- **License**: BSD-3-Clause
+
+## immutabledict (v4.3.1)
+- **Supplier**: pypi
+- **PURL**: `pkg:pypi/immutabledict@4.3.1`
+- **License**: MIT
+
+## importlib-metadata (v9.0.0)
+- **Supplier**: pypi
+- **PURL**: `pkg:pypi/importlib-metadata@9.0.0`
+- **License**: Apache-2.0
+
+## iniconfig (v2.3.0)
+- **Supplier**: pypi
+- **PURL**: `pkg:pypi/iniconfig@2.3.0`
+- **License**: MIT
+
+## interface-meta (v2.0.1)
+- **Supplier**: pypi
+- **PURL**: `pkg:pypi/interface-meta@2.0.1`
+- **License**: MIT
+
+## iterative-telemetry (v0.0.10)
+- **Supplier**: pypi
+- **PURL**: `pkg:pypi/iterative-telemetry@0.0.10`
+- **License**: Apache-2.0
+
+## itsdangerous (v2.2.0)
+- **Supplier**: pypi
+- **PURL**: `pkg:pypi/itsdangerous@2.2.0`
+- **License**: BSD-3-Clause
+
+## jinja2 (v3.1.6)
+- **Supplier**: pypi
+- **PURL**: `pkg:pypi/jinja2@3.1.6`
+- **License**: BSD-3-Clause
+
+## joblib (v1.5.3)
+- **Supplier**: pypi
+- **PURL**: `pkg:pypi/joblib@1.5.3`
+- **License**: BSD-3-Clause
+
+## jsonpath-ng (v1.8.0)
+- **Supplier**: pypi
+- **PURL**: `pkg:pypi/jsonpath-ng@1.8.0`
+- **License**: Apache-2.0
+
+## jsonschema (v4.26.0)
+- **Supplier**: pypi
+- **PURL**: `pkg:pypi/jsonschema@4.26.0`
+- **License**: MIT
+
+## jsonschema-path (v0.5.0)
+- **Supplier**: pypi
+- **PURL**: `pkg:pypi/jsonschema-path@0.5.0`
+- **License**: Apache-2.0
+
+## jsonschema-specifications (v2025.9.1)
+- **Supplier**: pypi
+- **PURL**: `pkg:pypi/jsonschema-specifications@2025.9.1`
+- **License**: MIT
+
+## kiwisolver (v1.5.0)
+- **Supplier**: pypi
+- **PURL**: `pkg:pypi/kiwisolver@1.5.0`
+- **License**: BSD-3-Clause
+
+## lazy-object-proxy (v1.12.0)
+- **Supplier**: pypi
+- **PURL**: `pkg:pypi/lazy-object-proxy@1.12.0`
+- **License**: BSD-2-Clause
+
+## lifelines (v0.30.3)
+- **Supplier**: pypi
+- **PURL**: `pkg:pypi/lifelines@0.30.3`
+- **License**: MIT
+
+## lightgbm (v4.7.0)
+- **Supplier**: pypi
+- **PURL**: `pkg:pypi/lightgbm@4.7.0`
+- **License**: MIT
+
+## litestar (v2.24.0)
+- **Supplier**: pypi
+- **PURL**: `pkg:pypi/litestar@2.24.0`
+- **License**: MIT
+
+## litestar-htmx (v0.5.0)
+- **Supplier**: pypi
+- **PURL**: `pkg:pypi/litestar-htmx@0.5.0`
+- **License**: MIT
+
+## mako (v1.3.12)
+- **Supplier**: pypi
+- **PURL**: `pkg:pypi/mako@1.3.12`
+- **License**: MIT
+
+## markdown-it-py (v4.2.0)
+- **Supplier**: pypi
+- **PURL**: `pkg:pypi/markdown-it-py@4.2.0`
+- **License**: MIT
+
+## markupsafe (v3.0.3)
+- **Supplier**: pypi
+- **PURL**: `pkg:pypi/markupsafe@3.0.3`
+- **License**: BSD-3-Clause
+
+## marshmallow (v3.26.2)
+- **Supplier**: pypi
+- **PURL**: `pkg:pypi/marshmallow@3.26.2`
+- **License**: MIT
+
+## matplotlib (v3.11.1)
+- **Supplier**: pypi
+- **PURL**: `pkg:pypi/matplotlib@3.11.1`
+- **License**: PSF-2.0
+
+## mdurl (v0.1.2)
+- **Supplier**: pypi
+- **PURL**: `pkg:pypi/mdurl@0.1.2`
+- **License**: MIT
+
+## mistune (v3.3.4)
+- **Supplier**: pypi
+- **PURL**: `pkg:pypi/mistune@3.3.4`
+- **License**: BSD-3-Clause
+
+## mlflow (v3.14.0)
+- **Supplier**: pypi
+- **PURL**: `pkg:pypi/mlflow@3.14.0`
+- **License**: Apache-2.0
+
+## mlflow-skinny (v3.14.0)
+- **Supplier**: pypi
+- **PURL**: `pkg:pypi/mlflow-skinny@3.14.0`
+- **License**: Apache-2.0
+
+## mlflow-tracing (v3.14.0)
+- **Supplier**: pypi
+- **PURL**: `pkg:pypi/mlflow-tracing@3.14.0`
+- **License**: Apache-2.0
+
+## mlforecast (v1.1.0)
+- **Supplier**: pypi
+- **PURL**: `pkg:pypi/mlforecast@1.1.0`
+- **License**: MIT
+
+## moocore (v0.3.2)
+- **Supplier**: pypi
+- **PURL**: `pkg:pypi/moocore@0.3.2`
+- **License**: LGPL-2.1-or-later
+
+## msgspec (v0.21.1)
+- **Supplier**: pypi
+- **PURL**: `pkg:pypi/msgspec@0.21.1`
+- **License**: BSD-3-Clause
+
+## multidict (v6.7.1)
+- **Supplier**: pypi
+- **PURL**: `pkg:pypi/multidict@6.7.1`
+- **License**: Apache-2.0
+
+## multipart (v2.0.0)
+- **Supplier**: pypi
+- **PURL**: `pkg:pypi/multipart@2.0.0`
+- **License**: MIT
+
+## mypy-extensions (v1.1.0)
+- **Supplier**: pypi
+- **PURL**: `pkg:pypi/mypy-extensions@1.1.0`
+- **License**: MIT
+
+## narwhals (v2.23.0)
+- **Supplier**: pypi
+- **PURL**: `pkg:pypi/narwhals@2.23.0`
+- **License**: MIT
+
+## nltk (v3.10.0)
+- **Supplier**: pypi
+- **PURL**: `pkg:pypi/nltk@3.10.0`
+- **License**: MIT
+
+## numpy (v2.5.1)
+- **Supplier**: pypi
+- **PURL**: `pkg:pypi/numpy@2.5.1`
+- **License**: MIT
+
+## odayplus (v0.1.0)
+- **Supplier**: pypi
+- **PURL**: `pkg:pypi/odayplus@0.1.0`
+- **License**: MIT
+
+## openapi-schema-validator (v0.9.0)
+- **Supplier**: pypi
+- **PURL**: `pkg:pypi/openapi-schema-validator@0.9.0`
+- **License**: BSD-3-Clause
+
+## openapi-spec-validator (v0.9.0)
+- **Supplier**: pypi
+- **PURL**: `pkg:pypi/openapi-spec-validator@0.9.0`
+- **License**: Apache-2.0
+
+## opentelemetry-api (v1.44.0)
+- **Supplier**: pypi
+- **PURL**: `pkg:pypi/opentelemetry-api@1.44.0`
+- **License**: Apache-2.0
+
+## opentelemetry-proto (v1.44.0)
+- **Supplier**: pypi
+- **PURL**: `pkg:pypi/opentelemetry-proto@1.44.0`
+- **License**: Apache-2.0
+
+## opentelemetry-sdk (v1.44.0)
+- **Supplier**: pypi
+- **PURL**: `pkg:pypi/opentelemetry-sdk@1.44.0`
+- **License**: Apache-2.0
+
+## opentelemetry-semantic-conventions (v0.65b0)
+- **Supplier**: pypi
+- **PURL**: `pkg:pypi/opentelemetry-semantic-conventions@0.65b0`
+- **License**: Apache-2.0
+
+## optuna (v4.9.0)
+- **Supplier**: pypi
+- **PURL**: `pkg:pypi/optuna@4.9.0`
+- **License**: MIT
+
+## orjson (v3.11.9)
+- **Supplier**: pypi
+- **PURL**: `pkg:pypi/orjson@3.11.9`
+- **License**: MIT
+
+## ortools (v9.15.6755)
+- **Supplier**: pypi
+- **PURL**: `pkg:pypi/ortools@9.15.6755`
+- **License**: Apache-2.0
+
+## osqp (v1.1.3)
+- **Supplier**: pypi
+- **PURL**: `pkg:pypi/osqp@1.1.3`
+- **License**: Apache-2.0
+
+## packaging (v26.2)
+- **Supplier**: pypi
+- **PURL**: `pkg:pypi/packaging@26.2`
+- **License**: MIT
+
+## pandas (v2.3.3)
+- **Supplier**: pypi
+- **PURL**: `pkg:pypi/pandas@2.3.3`
+- **License**: BSD-3-Clause
+
+## pathable (v0.6.0)
+- **Supplier**: pypi
+- **PURL**: `pkg:pypi/pathable@0.6.0`
+- **License**: Apache-2.0
+
+## pathlib-abc (v0.5.2)
+- **Supplier**: pypi
+- **PURL**: `pkg:pypi/pathlib-abc@0.5.2`
+- **License**: PSF-2.0
+
+## pathvalidate (v3.3.1)
+- **Supplier**: pypi
+- **PURL**: `pkg:pypi/pathvalidate@3.3.1`
+- **License**: MIT
+
+## patsy (v1.0.2)
+- **Supplier**: pypi
+- **PURL**: `pkg:pypi/patsy@1.0.2`
+- **License**: MIT
+
+## pendulum (v3.2.0)
+- **Supplier**: pypi
+- **PURL**: `pkg:pypi/pendulum@3.2.0`
+- **License**: MIT
+
+## pgserver (v0.1.4)
+- **Supplier**: pypi
+- **PURL**: `pkg:pypi/pgserver@0.1.4`
+- **License**: MIT
+
+## pillow (v12.3.0)
+- **Supplier**: pypi
+- **PURL**: `pkg:pypi/pillow@12.3.0`
+- **License**: MIT
+
+## platformdirs (v4.11.0)
+- **Supplier**: pypi
+- **PURL**: `pkg:pypi/platformdirs@4.11.0`
+- **License**: MIT
+
+## plotly (v5.24.1)
+- **Supplier**: pypi
+- **PURL**: `pkg:pypi/plotly@5.24.1`
+- **License**: MIT
+
+## pluggy (v1.6.0)
+- **Supplier**: pypi
+- **PURL**: `pkg:pypi/pluggy@1.6.0`
+- **License**: MIT
+
+## polyfactory (v3.3.0)
+- **Supplier**: pypi
+- **PURL**: `pkg:pypi/polyfactory@3.3.0`
+- **License**: MIT
+
+## prettytable (v3.18.0)
+- **Supplier**: pypi
+- **PURL**: `pkg:pypi/prettytable@3.18.0`
+- **License**: BSD-3-Clause
+
+## propcache (v0.5.2)
+- **Supplier**: pypi
+- **PURL**: `pkg:pypi/propcache@0.5.2`
+- **License**: Apache-2.0
+
+## proto-plus (v1.28.2)
+- **Supplier**: pypi
+- **PURL**: `pkg:pypi/proto-plus@1.28.2`
+- **License**: Apache-2.0
+
+## protobuf (v6.33.6)
+- **Supplier**: pypi
+- **PURL**: `pkg:pypi/protobuf@6.33.6`
+- **License**: MIT
+
+## psutil (v7.2.2)
+- **Supplier**: pypi
+- **PURL**: `pkg:pypi/psutil@7.2.2`
+- **License**: BSD-3-Clause
+
+## psycopg (v3.3.4)
+- **Supplier**: pypi
+- **PURL**: `pkg:pypi/psycopg@3.3.4`
+- **License**: LGPL-3.0-or-later
+
+## psycopg-binary (v3.3.4)
+- **Supplier**: pypi
+- **PURL**: `pkg:pypi/psycopg-binary@3.3.4`
+- **License**: LGPL-3.0-or-later
+
+## psycopg-pool (v3.3.1)
+- **Supplier**: pypi
+- **PURL**: `pkg:pypi/psycopg-pool@3.3.1`
+- **License**: LGPL-3.0-or-later
+
+## psycopg2-binary (v2.9.12)
+- **Supplier**: pypi
+- **PURL**: `pkg:pypi/psycopg2-binary@2.9.12`
+- **License**: MIT
+
+## pyarrow (v24.0.0)
+- **Supplier**: pypi
+- **PURL**: `pkg:pypi/pyarrow@24.0.0`
+- **License**: Apache-2.0
+
+## pyasn1 (v0.6.4)
+- **Supplier**: pypi
+- **PURL**: `pkg:pypi/pyasn1@0.6.4`
+- **License**: BSD-2-Clause
+
+## pyasn1-modules (v0.4.2)
+- **Supplier**: pypi
+- **PURL**: `pkg:pypi/pyasn1-modules@0.4.2`
+- **License**: BSD-3-Clause
+
+## pycparser (v3.0)
+- **Supplier**: pypi
+- **PURL**: `pkg:pypi/pycparser@3.0`
+- **License**: BSD-3-Clause
+
+## pydantic (v2.13.4)
+- **Supplier**: pypi
+- **PURL**: `pkg:pypi/pydantic@2.13.4`
+- **License**: MIT
+
+## pydantic-core (v2.46.4)
+- **Supplier**: pypi
+- **PURL**: `pkg:pypi/pydantic-core@2.46.4`
+- **License**: MIT
+
+## pydantic-settings (v2.14.2)
+- **Supplier**: pypi
+- **PURL**: `pkg:pypi/pydantic-settings@2.14.2`
+- **License**: MIT
+
+## pygments (v2.20.0)
+- **Supplier**: pypi
+- **PURL**: `pkg:pypi/pygments@2.20.0`
+- **License**: BSD-2-Clause
+
+## pymoo (v0.6.2)
+- **Supplier**: pypi
+- **PURL**: `pkg:pypi/pymoo@0.6.2`
+- **License**: Apache-2.0
+
+## pyomo (v6.10.1)
+- **Supplier**: pypi
+- **PURL**: `pkg:pypi/pyomo@6.10.1`
+- **License**: BSD-3-Clause
+
+## pyparsing (v3.3.2)
+- **Supplier**: pypi
+- **PURL**: `pkg:pypi/pyparsing@3.3.2`
+- **License**: MIT
+
+## pyreadline3 (v3.5.6)
+- **Supplier**: pypi
+- **PURL**: `pkg:pypi/pyreadline3@3.5.6`
+- **License**: BSD-3-Clause
+
+## pytest (v9.1.1)
+- **Supplier**: pypi
+- **PURL**: `pkg:pypi/pytest@9.1.1`
+- **License**: MIT
+
+## python-dateutil (v2.9.0.post0)
+- **Supplier**: pypi
+- **PURL**: `pkg:pypi/python-dateutil@2.9.0.post0`
+- **License**: MIT
+
+## python-dotenv (v1.2.2)
+- **Supplier**: pypi
+- **PURL**: `pkg:pypi/python-dotenv@1.2.2`
+- **License**: BSD-3-Clause
+
+## pytz (v2026.2)
+- **Supplier**: pypi
+- **PURL**: `pkg:pypi/pytz@2026.2`
+- **License**: MIT
+
+## pywin32 (v312)
+- **Supplier**: pypi
+- **PURL**: `pkg:pypi/pywin32@312`
+- **License**: PSF-2.0
+
+## pyyaml (v6.0.3)
+- **Supplier**: pypi
+- **PURL**: `pkg:pypi/pyyaml@6.0.3`
+- **License**: MIT
+
+## qdldl (v0.1.9.post1)
+- **Supplier**: pypi
+- **PURL**: `pkg:pypi/qdldl@0.1.9.post1`
+- **License**: Apache-2.0
+
+## referencing (v0.37.0)
+- **Supplier**: pypi
+- **PURL**: `pkg:pypi/referencing@0.37.0`
+- **License**: MIT
+
+## regex (v2026.7.19)
+- **Supplier**: pypi
+- **PURL**: `pkg:pypi/regex@2026.7.19`
+- **License**: MIT
+
+## requests (v2.34.2)
+- **Supplier**: pypi
+- **PURL**: `pkg:pypi/requests@2.34.2`
+- **License**: Apache-2.0
+
+## requirements-parser (v0.13.1)
+- **Supplier**: pypi
+- **PURL**: `pkg:pypi/requirements-parser@0.13.1`
+- **License**: Apache-2.0
+
+## rfc3339-validator (v0.1.4)
+- **Supplier**: pypi
+- **PURL**: `pkg:pypi/rfc3339-validator@0.1.4`
+- **License**: MIT
+
+## rich (v15.0.0)
+- **Supplier**: pypi
+- **PURL**: `pkg:pypi/rich@15.0.0`
+- **License**: MIT
+
+## rich-argparse (v1.8.0)
+- **Supplier**: pypi
+- **PURL**: `pkg:pypi/rich-argparse@1.8.0`
+- **License**: MIT
+
+## rich-click (v1.9.8)
+- **Supplier**: pypi
+- **PURL**: `pkg:pypi/rich-click@1.9.8`
+- **License**: MIT
+
+## rpds-py (v2026.6.3)
+- **Supplier**: pypi
+- **PURL**: `pkg:pypi/rpds-py@2026.6.3`
+- **License**: MIT
+
+## ruamel-yaml (v0.19.1)
+- **Supplier**: pypi
+- **PURL**: `pkg:pypi/ruamel-yaml@0.19.1`
+- **License**: MIT
+
+## ruff (v0.15.20)
+- **Supplier**: pypi
+- **PURL**: `pkg:pypi/ruff@0.15.20`
+- **License**: MIT
+
+## scikit-learn (v1.9.0)
+- **Supplier**: pypi
+- **PURL**: `pkg:pypi/scikit-learn@1.9.0`
+- **License**: BSD-3-Clause
+
+## scipy (v1.18.0)
+- **Supplier**: pypi
+- **PURL**: `pkg:pypi/scipy@1.18.0`
+- **License**: BSD-3-Clause
+
+## scs (v3.2.11)
+- **Supplier**: pypi
+- **PURL**: `pkg:pypi/scs@3.2.11`
+- **License**: MIT
+
+## semver (v3.0.4)
+- **Supplier**: pypi
+- **PURL**: `pkg:pypi/semver@3.0.4`
+- **License**: BSD-3-Clause
+
+## setuptools (v83.0.0)
+- **Supplier**: pypi
+- **PURL**: `pkg:pypi/setuptools@83.0.0`
+- **License**: MIT
+
+## shellingham (v1.5.4)
+- **Supplier**: pypi
+- **PURL**: `pkg:pypi/shellingham@1.5.4`
+- **License**: MIT
+
+## simplejson (v4.1.1)
+- **Supplier**: pypi
+- **PURL**: `pkg:pypi/simplejson@4.1.1`
+- **License**: MIT
+
+## six (v1.17.0)
+- **Supplier**: pypi
+- **PURL**: `pkg:pypi/six@1.17.0`
+- **License**: MIT
+
+## skops (v0.14.0)
+- **Supplier**: pypi
+- **PURL**: `pkg:pypi/skops@0.14.0`
+- **License**: MIT
+
+## smmap (v5.0.3)
+- **Supplier**: pypi
+- **PURL**: `pkg:pypi/smmap@5.0.3`
+- **License**: BSD-3-Clause
+
+## sniffio (v1.3.1)
+- **Supplier**: pypi
+- **PURL**: `pkg:pypi/sniffio@1.3.1`
+- **License**: MIT
+
+## sparsediffpy (v0.3.0)
+- **Supplier**: pypi
+- **PURL**: `pkg:pypi/sparsediffpy@0.3.0`
+- **License**: Apache-2.0
+
+## sqlalchemy (v2.0.51)
+- **Supplier**: pypi
+- **PURL**: `pkg:pypi/sqlalchemy@2.0.51`
+- **License**: MIT
+
+## sqlglot (v30.13.0)
+- **Supplier**: pypi
+- **PURL**: `pkg:pypi/sqlglot@30.13.0`
+- **License**: MIT
+
+## sqlparse (v0.5.5)
+- **Supplier**: pypi
+- **PURL**: `pkg:pypi/sqlparse@0.5.5`
+- **License**: BSD-3-Clause
+
+## starlette (v1.3.1)
+- **Supplier**: pypi
+- **PURL**: `pkg:pypi/starlette@1.3.1`
+- **License**: BSD-3-Clause
+
+## statsforecast (v2.1.1)
+- **Supplier**: pypi
+- **PURL**: `pkg:pypi/statsforecast@2.1.1`
+- **License**: MIT
+
+## statsmodels (v0.14.6)
+- **Supplier**: pypi
+- **PURL**: `pkg:pypi/statsmodels@0.14.6`
+- **License**: BSD-3-Clause
+
+## structlog (v26.1.0)
+- **Supplier**: pypi
+- **PURL**: `pkg:pypi/structlog@26.1.0`
+- **License**: MIT
+
+## tabulate (v0.10.0)
+- **Supplier**: pypi
+- **PURL**: `pkg:pypi/tabulate@0.10.0`
+- **License**: MIT
+
+## tenacity (v9.1.4)
+- **Supplier**: pypi
+- **PURL**: `pkg:pypi/tenacity@9.1.4`
+- **License**: Apache-2.0
+
+## threadpoolctl (v3.6.0)
+- **Supplier**: pypi
+- **PURL**: `pkg:pypi/threadpoolctl@3.6.0`
+- **License**: BSD-3-Clause
+
+## tomli (v2.4.1)
+- **Supplier**: pypi
+- **PURL**: `pkg:pypi/tomli@2.4.1`
+- **License**: MIT
+
+## tomlkit (v0.15.1)
+- **Supplier**: pypi
+- **PURL**: `pkg:pypi/tomlkit@0.15.1`
+- **License**: MIT
+
+## toposort (v1.10)
+- **Supplier**: pypi
+- **PURL**: `pkg:pypi/toposort@1.10`
+- **License**: MIT
+
+## tqdm (v4.69.0)
+- **Supplier**: pypi
+- **PURL**: `pkg:pypi/tqdm@4.69.0`
+- **License**: MIT
+
+## triad (v1.0.2)
+- **Supplier**: pypi
+- **PURL**: `pkg:pypi/triad@1.0.2`
+- **License**: Apache-2.0
+
+## typer (v0.27.0)
+- **Supplier**: pypi
+- **PURL**: `pkg:pypi/typer@0.27.0`
+- **License**: MIT
+
+## typing-extensions (v4.15.0)
+- **Supplier**: pypi
+- **PURL**: `pkg:pypi/typing-extensions@4.15.0`
+- **License**: PSF-2.0
+
+## typing-inspect (v0.9.0)
+- **Supplier**: pypi
+- **PURL**: `pkg:pypi/typing-inspect@0.9.0`
+- **License**: MIT
+
+## typing-inspection (v0.4.2)
+- **Supplier**: pypi
+- **PURL**: `pkg:pypi/typing-inspection@0.4.2`
+- **License**: MIT
+
+## tzdata (v2026.2)
+- **Supplier**: pypi
+- **PURL**: `pkg:pypi/tzdata@2026.2`
+- **License**: Apache-2.0
+
+## tzlocal (v5.4.4)
+- **Supplier**: pypi
+- **PURL**: `pkg:pypi/tzlocal@5.4.4`
+- **License**: MIT
+
+## ujson (v5.13.0)
+- **Supplier**: pypi
+- **PURL**: `pkg:pypi/ujson@5.13.0`
+- **License**: MIT
+
+## universal-pathlib (v0.3.10)
+- **Supplier**: pypi
+- **PURL**: `pkg:pypi/universal-pathlib@0.3.10`
+- **License**: MIT
+
+## urllib3 (v2.7.0)
+- **Supplier**: pypi
+- **PURL**: `pkg:pypi/urllib3@2.7.0`
+- **License**: MIT
+
+## utilsforecast (v0.2.16)
+- **Supplier**: pypi
+- **PURL**: `pkg:pypi/utilsforecast@0.2.16`
+- **License**: MIT
+
+## uuid6 (v2025.0.1)
+- **Supplier**: pypi
+- **PURL**: `pkg:pypi/uuid6@2025.0.1`
+- **License**: MIT
+
+## uvicorn (v0.50.2)
+- **Supplier**: pypi
+- **PURL**: `pkg:pypi/uvicorn@0.50.2`
+- **License**: BSD-3-Clause
+
+## uvloop (v0.22.1)
+- **Supplier**: pypi
+- **PURL**: `pkg:pypi/uvloop@0.22.1`
+- **License**: MIT
+
+## waitress (v3.0.2)
+- **Supplier**: pypi
+- **PURL**: `pkg:pypi/waitress@3.0.2`
+- **License**: ZPL-2.1
+
+## watchdog (v6.0.0)
+- **Supplier**: pypi
+- **PURL**: `pkg:pypi/watchdog@6.0.0`
+- **License**: Apache-2.0
+
+## watchfiles (v1.2.0)
+- **Supplier**: pypi
+- **PURL**: `pkg:pypi/watchfiles@1.2.0`
+- **License**: MIT
+
+## wcwidth (v0.8.2)
+- **Supplier**: pypi
+- **PURL**: `pkg:pypi/wcwidth@0.8.2`
+- **License**: MIT
+
+## websockets (v16.0)
+- **Supplier**: pypi
+- **PURL**: `pkg:pypi/websockets@16.0`
+- **License**: BSD-3-Clause
+
+## werkzeug (v3.1.8)
+- **Supplier**: pypi
+- **PURL**: `pkg:pypi/werkzeug@3.1.8`
+- **License**: BSD-3-Clause
+
+## win-precise-time (v1.4.2)
+- **Supplier**: pypi
+- **PURL**: `pkg:pypi/win-precise-time@1.4.2`
+- **License**: MIT
+
+## wrapt (v2.2.2)
+- **Supplier**: pypi
+- **PURL**: `pkg:pypi/wrapt@2.2.2`
+- **License**: BSD-2-Clause
+
+## yarl (v1.24.5)
+- **Supplier**: pypi
+- **PURL**: `pkg:pypi/yarl@1.24.5`
+- **License**: Apache-2.0
+
+## zipp (v4.1.0)
+- **Supplier**: pypi
+- **PURL**: `pkg:pypi/zipp@4.1.0`
+- **License**: MIT

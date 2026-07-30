@@ -61,6 +61,20 @@ def test_sast_scan_passes() -> None:
     assert res.returncode == 0, f"SAST scan failed with output:\n{res.stdout}"
 
 
+def test_generate_sbom_cli_help() -> None:
+    res = subprocess.run(
+        [sys.executable, str(ROOT / "scripts/security/generate_sbom.py"), "--help"],
+        cwd=ROOT,
+        capture_output=True,
+        text=True,
+    )
+    assert res.returncode == 0, f"generate_sbom.py --help failed with output:\n{res.stderr}"
+    assert "--image-digest" in res.stdout
+    assert "--release-digest" in res.stdout
+    assert "--check-policy" in res.stdout
+    assert "--readback" in res.stdout
+
+
 def test_sbom_and_provenance_present_and_valid() -> None:
     sbom_path = ROOT / "docs/evidence/completion/ODP-PGAP-SUPPLY-001/sbom.json"
     assert sbom_path.exists(), "SBOM JSON file must be generated"
@@ -70,12 +84,29 @@ def test_sbom_and_provenance_present_and_valid() -> None:
     assert data.get("specVersion") == "1.5"
     assert len(data.get("components", [])) > 0
 
-    # Verify metadata properties (provenance)
+    # Verify metadata properties (provenance and attestations)
     metadata = data.get("metadata", {})
     properties = {p["name"]: p["value"] for p in metadata.get("properties", [])}
     assert "git-sha" in properties
     assert "sbom-content-digest" in properties
+    assert "image-digest" in properties
+    assert "release-digest" in properties
+    assert "policy-status" in properties
+    assert properties["policy-status"] == "PASSED"
     assert properties["sbom-content-digest"].startswith("sha256:")
+    assert properties["image-digest"].startswith("sha256:")
+    assert properties["release-digest"].startswith("sha256:")
+
+    # Verify CycloneDX 1.5 extended component fields (supplier, licenses, hashes)
+    comp = data["components"][0]
+    assert "supplier" in comp
+    assert "licenses" in comp
+    assert "hashes" in comp
+    assert "purl" in comp
+
+    # Verify dependency graph
+    assert "dependencies" in data
+    assert len(data["dependencies"]) > 0
 
     # Fail closed check: verify committed sbom matches current lockfiles (B5)
     sys.path.insert(0, str(ROOT))
@@ -88,10 +119,51 @@ def test_sbom_and_provenance_present_and_valid() -> None:
     )
 
 
+def test_third_party_notices_present_and_valid() -> None:
+    notices_path = ROOT / "THIRD_PARTY_NOTICES"
+    assert notices_path.exists(), "THIRD_PARTY_NOTICES file must exist"
+    content = notices_path.read_text(encoding="utf-8")
+    assert "# THIRD PARTY NOTICES" in content
+    assert "Total cataloged components:" in content
+
+
+def test_sbom_readback_cli() -> None:
+    res = subprocess.run(
+        [sys.executable, str(ROOT / "scripts/security/generate_sbom.py"), "--readback"],
+        cwd=ROOT,
+        capture_output=True,
+        text=True,
+    )
+    assert res.returncode == 0, f"--readback failed with output:\n{res.stderr}"
+    assert "CycloneDX SBOM Readback" in res.stdout
+    assert "Image Digest:" in res.stdout
+    assert "Release Digest:" in res.stdout
+    assert "Policy Status: PASSED" in res.stdout
+
+
+def test_license_policy_fail_closed_negative() -> None:
+    sys.path.insert(0, str(ROOT))
+    from scripts.security.generate_sbom import check_license_policy, generate_sbom
+
+    sbom = generate_sbom()
+    # Inject a component with a denied GPL-3.0 license
+    sbom["components"].append({
+        "name": "vulnerable-forbidden-lib",
+        "version": "1.0.0",
+        "purl": "pkg:npm/vulnerable-forbidden-lib@1.0.0",
+        "licenses": [{"license": {"id": "GPL-3.0"}}]
+    })
+
+    is_passed, violations = check_license_policy(sbom)
+    assert not is_passed, "License policy gate must fail closed when a GPL-3.0 license is present without exemption"
+    assert any("GPL-3.0" in v for v in violations)
+
+
 def test_sign_images_script_executable() -> None:
     script_path = ROOT / "scripts/security/sign_images.sh"
     assert script_path.exists()
     assert (script_path.stat().st_mode & 0o111) != 0, "sign_images.sh must be executable"
+
 
 
 # --- Negative tests verifying that the supply-chain security gates fail closed (B7) ---
