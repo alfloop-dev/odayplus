@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import json
 from datetime import UTC, datetime
 
 import pytest
@@ -14,7 +13,27 @@ from scripts.models.heatzone_benchmark import (
     generate_data_handback_json,
     generate_gate1_receipt,
     main,
+    validate_gate1_receipt,
 )
+
+
+def _mock_inventory_receipt() -> dict:
+    return {
+        "inventory_version": "test-inventory-v1",
+        "observed_at": "2026-07-30T12:00:00Z",
+        "auto_seeded": False,
+        "capabilities": {
+            "heatzone": {
+                "relation": "model_ready.heatzone_training_view",
+                "view_version": "heatzone-training-view-v2",
+                "observed_count": 0,
+                "eligible_count": 0,
+            }
+        },
+        "integrity": {
+            "content_sha256": "1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef"
+        },
+    }
 
 
 def test_heatzone_benchmark_evaluation_fails_closed_when_labels_insufficient() -> None:
@@ -38,6 +57,8 @@ def test_heatzone_benchmark_evaluation_passes_when_sufficient_labels_and_metrics
         top_k_survey_rate=0.60,
     )
     assert result["verdict"] == "PASSED"
+    assert result["governed_disabled"] is False
+    assert result["unavailable_reason"] is None
     assert result["benchmark_results"]["evaluated"] is True
     assert result["benchmark_results"]["population_ranking_outperformed"] is True
     assert result["benchmark_results"]["top_k_survey_rate_improved"] is True
@@ -51,18 +72,36 @@ def test_heatzone_benchmark_evaluation_fails_closed_when_metrics_below_baseline(
         top_k_survey_rate=0.20,        # Below 0.30
     )
     assert result["verdict"] == "FAIL_CLOSED"
+    assert result["governed_disabled"] is True
+    assert result["unavailable_reason"] == "BENCHMARK_METRICS_NOT_MET"
     assert result["benchmark_results"]["evaluated"] is True
     assert result["benchmark_results"]["population_ranking_outperformed"] is False
     assert result["benchmark_results"]["top_k_survey_rate_improved"] is False
 
 
+def test_heatzone_benchmark_evaluation_rejects_negative_or_impossible_counts() -> None:
+    with pytest.raises(ValueError, match="observed_labels must be a non-negative integer"):
+        evaluate_heatzone_benchmark(observed_labels=-1, eligible_labels=0)
+
+    with pytest.raises(ValueError, match="eligible_labels must be a non-negative integer"):
+        evaluate_heatzone_benchmark(observed_labels=100, eligible_labels=-5)
+
+    with pytest.raises(ValueError, match="cannot exceed observed_labels"):
+        evaluate_heatzone_benchmark(observed_labels=50, eligible_labels=100)
+
+
 def test_generate_gate1_receipt_creates_valid_structure_and_sha256() -> None:
     now = datetime(2026, 7, 30, 12, 0, 0, tzinfo=UTC)
-    inventory = {"observed_count": 0, "eligible_count": 0}
-    receipt = generate_gate1_receipt(inventory, evaluated_at=now)
+    inv = _mock_inventory_receipt()
+    receipt = generate_gate1_receipt(inv, evaluated_at=now)
 
     assert receipt["task_id"] == "ODP-PLAN-HEATZONE-OUTCOME-001"
     assert receipt["kind"] == "heatzone-gate1-benchmark-receipt"
+    assert receipt["inventory_version"] == inv["inventory_version"]
+    assert receipt["inventory_observed_at"] == inv["observed_at"]
+    assert receipt["inventory_sha256"] == inv["integrity"]["content_sha256"]
+    assert receipt["relation"] == inv["capabilities"]["heatzone"]["relation"]
+    assert receipt["contract_version"] == inv["capabilities"]["heatzone"]["view_version"]
     assert receipt["auto_seeded"] is False
     assert receipt["verdict"] == "FAIL_CLOSED"
     assert receipt["governed_disabled"] is True
@@ -72,16 +111,79 @@ def test_generate_gate1_receipt_creates_valid_structure_and_sha256() -> None:
     expected_hash = compute_benchmark_receipt_sha256(receipt)
     assert receipt["integrity"]["content_sha256"] == expected_hash
 
+    # Validate against inventory receipt
+    validate_gate1_receipt(receipt, inv)
 
-def test_gate1_receipt_sha256_detects_tampering() -> None:
+
+def test_gate1_receipt_validate_catches_tampered_integrity_hash() -> None:
     now = datetime(2026, 7, 30, 12, 0, 0, tzinfo=UTC)
-    receipt = generate_gate1_receipt({"observed_count": 0, "eligible_count": 0}, evaluated_at=now)
-    original_hash = receipt["integrity"]["content_sha256"]
+    inv = _mock_inventory_receipt()
+    receipt = generate_gate1_receipt(inv, evaluated_at=now)
 
-    # Tamper with count
+    # Tamper with count without recomputing hash
     receipt["eligible_labels"] = 999
-    tampered_hash = compute_benchmark_receipt_sha256(receipt)
-    assert tampered_hash != original_hash
+    with pytest.raises(ValueError, match="Gate 1 receipt integrity mismatch"):
+        validate_gate1_receipt(receipt, inv)
+
+
+def test_gate1_receipt_validate_rejects_forged_passed_receipt() -> None:
+    now = datetime(2026, 7, 30, 12, 0, 0, tzinfo=UTC)
+    inv = _mock_inventory_receipt()
+    receipt = generate_gate1_receipt(
+        inv,
+        evaluated_at=now,
+        observed_labels=999,
+        eligible_labels=999,
+        population_ranking_ndcg=0.9,
+        top_k_survey_rate=0.9,
+    )
+    # Recompute self-consistent hash for forged receipt
+    receipt["integrity"]["content_sha256"] = compute_benchmark_receipt_sha256(receipt)
+
+    # validate_gate1_receipt against actual inventory MUST fail due to count mismatch vs inventory!
+    with pytest.raises(ValueError, match="Receipt observed_labels 999 does not match inventory 0"):
+        validate_gate1_receipt(receipt, inv)
+
+
+def test_gate1_receipt_validate_rejects_contradictory_verdict_states() -> None:
+    inv = _mock_inventory_receipt()
+    receipt = generate_gate1_receipt(inv)
+
+    # Forge receipt to claim PASSED while keeping eligible_labels < 200
+    receipt["verdict"] = "PASSED"
+    receipt["integrity"]["content_sha256"] = compute_benchmark_receipt_sha256(receipt)
+    with pytest.raises(ValueError, match="Receipt verdict must be FAIL_CLOSED when eligible_labels"):
+        validate_gate1_receipt(receipt)
+
+    # Forge receipt to claim PASSED with governed_disabled=True
+    receipt["eligible_labels"] = 250
+    receipt["observed_labels"] = 250
+    receipt["governed_disabled"] = True
+    receipt["integrity"]["content_sha256"] = compute_benchmark_receipt_sha256(receipt)
+    with pytest.raises(ValueError, match="Verdict PASSED contradicts governed_disabled=True"):
+        validate_gate1_receipt(receipt)
+
+
+def test_gate1_receipt_validate_rejects_auto_seeded_true() -> None:
+    inv = _mock_inventory_receipt()
+    receipt = generate_gate1_receipt(inv)
+    receipt["auto_seeded"] = True
+    receipt["integrity"]["content_sha256"] = compute_benchmark_receipt_sha256(receipt)
+    with pytest.raises(ValueError, match="auto_seeded must be False"):
+        validate_gate1_receipt(receipt)
+
+
+def test_report_md_and_handback_json_include_lineage() -> None:
+    inv = _mock_inventory_receipt()
+    receipt = generate_gate1_receipt(inv)
+
+    report_md = generate_benchmark_report_md(receipt)
+    assert f"**Inventory Lineage Version**: `{inv['inventory_version']}`" in report_md
+    assert f"**Inventory SHA256**: `{inv['integrity']['content_sha256']}`" in report_md
+
+    handback_json = generate_data_handback_json(receipt)
+    assert handback_json["inventory_lineage"]["inventory_version"] == inv["inventory_version"]
+    assert handback_json["inventory_lineage"]["inventory_sha256"] == inv["integrity"]["content_sha256"]
 
 
 def test_heatzone_production_contract_remains_governed_disabled() -> None:

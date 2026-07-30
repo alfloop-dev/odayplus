@@ -5,7 +5,7 @@
     "synthetic_labels_allowed": false,
     "top_k_survey_rate_improvement": "survey_rate > baseline_survey_rate (0.30)"
   },
-  "created_at": "2026-07-30T17:03:59.372998Z",
+  "created_at": "2026-07-30T17:42:49.017783Z",
   "current_inventory": {
     "eligible_count": 0,
     "observed_count": 0,
@@ -13,6 +13,13 @@
     "shortfall": 200
   },
   "handback_type": "LABEL_INVENTORY_INSUFFICIENT",
+  "inventory_lineage": {
+    "contract_version": "heatzone-training-view-v2",
+    "inventory_observed_at": "2026-07-25T15:20:00Z",
+    "inventory_sha256": "3f1c8ec4baa1e2f06f5c4e93e82a6258315012b46aacfd3f3e578221aa8b5f44",
+    "inventory_version": "pg16-production-model-inventory-2026-07-25-v1",
+    "relation": "model_ready.heatzone_training_view"
+  },
   "model_name": "heatzone_priority",
   "next_actions": [
     "Ingest real POS transaction history and store opening date authority into PG16 data plane",

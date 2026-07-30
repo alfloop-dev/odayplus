@@ -5,6 +5,7 @@ Audits HeatZone model-ready label inventory against canonical requirements:
 - Outperformance relative to population ranking baseline (NDCG / Top-K precision).
 - Improvement of Top-K field site survey rate (Top-K 現勘率).
 - Strict fail-closed governance (governed-disabled) when inventory or benchmark criteria fail.
+- Binding of Gate 1 receipt to canonical model-ready inventory lineage (version, observed_at, sha256).
 - Prohibition of synthetic, mock, or auto-seeded label rows.
 """
 
@@ -13,11 +14,11 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
-import os
 import sys
+from collections.abc import Sequence
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any, Sequence
+from typing import Any
 
 ROOT = Path(__file__).resolve().parents[2]
 if str(ROOT) not in sys.path:
@@ -55,13 +56,32 @@ def evaluate_heatzone_benchmark(
     baseline_survey_rate: float = 0.30,
 ) -> dict[str, Any]:
     """Evaluate HeatZone label inventory and benchmark performance criteria."""
+    if (
+        not isinstance(observed_labels, int)
+        or isinstance(observed_labels, bool)
+        or observed_labels < 0
+    ):
+        raise ValueError(f"observed_labels must be a non-negative integer, got {observed_labels!r}")
+    if (
+        not isinstance(eligible_labels, int)
+        or isinstance(eligible_labels, bool)
+        or eligible_labels < 0
+    ):
+        raise ValueError(f"eligible_labels must be a non-negative integer, got {eligible_labels!r}")
+    if eligible_labels > observed_labels:
+        raise ValueError(
+            f"eligible_labels ({eligible_labels}) cannot exceed observed_labels ({observed_labels})"
+        )
+
     contract = PRODUCTION_MODEL_CONTRACTS.get("heatzone")
-    is_governed_disabled = contract.unavailable_reason is not None if contract else True
+    contract_reason = contract.unavailable_reason if contract else "DATA_CONTRACT_NOT_MATURE"
 
     insufficient_labels = eligible_labels < MINIMUM_REQUIRED_LABELS
 
     if insufficient_labels:
         verdict = "FAIL_CLOSED"
+        governed_disabled = True
+        unavailable_reason = contract_reason or "DATA_CONTRACT_NOT_MATURE"
         reason = (
             f"Eligible HeatZone label count ({eligible_labels}) is below "
             f"the activation threshold ({MINIMUM_REQUIRED_LABELS}). "
@@ -90,12 +110,16 @@ def evaluate_heatzone_benchmark(
 
         if ndcg_pass and survey_pass:
             verdict = "PASSED"
+            governed_disabled = False
+            unavailable_reason = None
             reason = (
                 f"Eligible labels ({eligible_labels}) >= {MINIMUM_REQUIRED_LABELS}. "
                 "Outperforms population ranking baseline and improves Top-K site survey rate."
             )
         else:
             verdict = "FAIL_CLOSED"
+            governed_disabled = True
+            unavailable_reason = "BENCHMARK_METRICS_NOT_MET"
             reason = (
                 "HeatZone label count met minimum, but model benchmark failed: "
                 f"NDCG pass={ndcg_pass}, Top-K survey rate pass={survey_pass}."
@@ -117,26 +141,65 @@ def evaluate_heatzone_benchmark(
         "observed_labels": observed_labels,
         "eligible_labels": eligible_labels,
         "minimum_required_labels": MINIMUM_REQUIRED_LABELS,
-        "governed_disabled": is_governed_disabled,
-        "unavailable_reason": contract.unavailable_reason if contract else "DATA_CONTRACT_NOT_MATURE",
+        "governed_disabled": governed_disabled,
+        "unavailable_reason": unavailable_reason,
         "benchmark_results": benchmark_results,
     }
 
 
 def generate_gate1_receipt(
-    inventory_summary: dict[str, Any],
+    inventory_receipt: dict[str, Any] | None = None,
     *,
     evaluated_at: datetime | None = None,
+    observed_labels: int | None = None,
+    eligible_labels: int | None = None,
+    population_ranking_ndcg: float | None = None,
+    top_k_survey_rate: float | None = None,
 ) -> dict[str, Any]:
-    """Build canonical Gate 1 benchmark receipt structure."""
+    """Build canonical Gate 1 benchmark receipt structure bound to inventory lineage."""
+    if inventory_receipt is None:
+        inventory_receipt = load_model_ready_receipt()
+
+    inventory_version = inventory_receipt.get("inventory_version")
+    if not isinstance(inventory_version, str) or not inventory_version.strip():
+        raise ValueError("inventory_receipt missing valid inventory_version")
+
+    inventory_observed_at = inventory_receipt.get("observed_at")
+    if not isinstance(inventory_observed_at, str) or not inventory_observed_at.strip():
+        raise ValueError("inventory_receipt missing valid observed_at")
+
+    inventory_integrity = inventory_receipt.get("integrity", {})
+    inventory_sha256 = (
+        inventory_integrity.get("content_sha256")
+        if isinstance(inventory_integrity, dict)
+        else None
+    )
+    if not isinstance(inventory_sha256, str) or not inventory_sha256.strip():
+        raise ValueError("inventory_receipt missing valid integrity.content_sha256")
+
+    heatzone_cap = inventory_receipt.get("capabilities", {}).get("heatzone", {})
+    if not isinstance(heatzone_cap, dict):
+        raise ValueError("inventory_receipt capabilities missing heatzone entry")
+
+    relation = heatzone_cap.get("relation", "model_ready.heatzone_training_view")
+    contract_version = heatzone_cap.get("view_version", "heatzone-training-view-v2")
+
+    inv_observed = heatzone_cap.get("observed_count", 0)
+    inv_eligible = heatzone_cap.get("eligible_count", 0)
+
+    obs_cnt = observed_labels if observed_labels is not None else inv_observed
+    elg_cnt = eligible_labels if eligible_labels is not None else inv_eligible
+
     timestamp = evaluated_at or datetime.now(UTC)
     if timestamp.tzinfo is None or timestamp.utcoffset() is None:
         raise ValueError("evaluated_at must be timezone-aware")
     iso_timestamp = timestamp.astimezone(UTC).isoformat().replace("+00:00", "Z")
 
     eval_res = evaluate_heatzone_benchmark(
-        observed_labels=inventory_summary.get("observed_count", 0),
-        eligible_labels=inventory_summary.get("eligible_count", 0),
+        observed_labels=obs_cnt,
+        eligible_labels=elg_cnt,
+        population_ranking_ndcg=population_ranking_ndcg,
+        top_k_survey_rate=top_k_survey_rate,
     )
 
     receipt: dict[str, Any] = {
@@ -144,9 +207,12 @@ def generate_gate1_receipt(
         "kind": BENCHMARK_RECEIPT_KIND,
         "task_id": "ODP-PLAN-HEATZONE-OUTCOME-001",
         "evaluated_at": iso_timestamp,
+        "inventory_version": inventory_version,
+        "inventory_observed_at": inventory_observed_at,
+        "inventory_sha256": inventory_sha256,
         "auto_seeded": False,
-        "relation": "model_ready.heatzone_training_view",
-        "contract_version": "heatzone-training-view-v2",
+        "relation": relation,
+        "contract_version": contract_version,
         "verdict": eval_res["verdict"],
         "observed_labels": eval_res["observed_labels"],
         "eligible_labels": eval_res["eligible_labels"],
@@ -160,6 +226,7 @@ def generate_gate1_receipt(
             "Model ranking must improve Top-K field site survey efficiency rate",
             "No synthetic, mock, auto-seeded, or simulated labels allowed",
             "Fail-closed governed-disabled binding enforced when inventory or benchmark criteria fail",
+            "Gate 1 receipt must bind immutably to the PG16 model-ready inventory receipt lineage",
         ],
     }
 
@@ -167,6 +234,162 @@ def generate_gate1_receipt(
         "content_sha256": compute_benchmark_receipt_sha256(receipt)
     }
     return receipt
+
+
+def validate_gate1_receipt(
+    receipt: dict[str, Any],
+    inventory_receipt: dict[str, Any] | None = None,
+) -> None:
+    """Fail-closed validation of Gate 1 receipt schema, integrity, governance, and lineage."""
+    if not isinstance(receipt, dict):
+        raise ValueError("Gate 1 receipt must be a JSON dictionary")
+
+    # 1. Integrity hash
+    integrity = receipt.get("integrity")
+    declared_hash = (
+        integrity.get("content_sha256") if isinstance(integrity, dict) else None
+    )
+    actual_hash = compute_benchmark_receipt_sha256(receipt)
+    if declared_hash != actual_hash:
+        raise ValueError(
+            f"Gate 1 receipt integrity mismatch: declared={declared_hash!r}, actual={actual_hash!r}"
+        )
+
+    # 2. Schema and task metadata
+    if receipt.get("schema_version") != BENCHMARK_RECEIPT_SCHEMA_VERSION:
+        raise ValueError(
+            f"Unsupported receipt schema_version={receipt.get('schema_version')!r}"
+        )
+    if receipt.get("kind") != BENCHMARK_RECEIPT_KIND:
+        raise ValueError(f"Unexpected receipt kind={receipt.get('kind')!r}")
+    if receipt.get("task_id") != "ODP-PLAN-HEATZONE-OUTCOME-001":
+        raise ValueError(f"Unexpected task_id={receipt.get('task_id')!r}")
+    if receipt.get("auto_seeded") is not False:
+        raise ValueError("Gate 1 receipt auto_seeded must be False; synthetic labels forbidden")
+
+    # 3. Lineage fields
+    for text_field in (
+        "inventory_version",
+        "inventory_observed_at",
+        "inventory_sha256",
+        "relation",
+        "contract_version",
+    ):
+        val = receipt.get(text_field)
+        if not isinstance(val, str) or not val.strip():
+            raise ValueError(f"Gate 1 receipt field {text_field!r} is missing or empty")
+
+    # 4. Count invariants
+    observed_labels = receipt.get("observed_labels")
+    eligible_labels = receipt.get("eligible_labels")
+    minimum_required = receipt.get("minimum_required_labels")
+
+    if (
+        not isinstance(observed_labels, int)
+        or isinstance(observed_labels, bool)
+        or observed_labels < 0
+    ):
+        raise ValueError(f"observed_labels must be a non-negative integer, got {observed_labels!r}")
+    if (
+        not isinstance(eligible_labels, int)
+        or isinstance(eligible_labels, bool)
+        or eligible_labels < 0
+    ):
+        raise ValueError(f"eligible_labels must be a non-negative integer, got {eligible_labels!r}")
+    if eligible_labels > observed_labels:
+        raise ValueError(
+            f"eligible_labels ({eligible_labels}) cannot exceed observed_labels ({observed_labels})"
+        )
+    if minimum_required != MINIMUM_REQUIRED_LABELS:
+        raise ValueError(
+            f"minimum_required_labels must be {MINIMUM_REQUIRED_LABELS}, got {minimum_required!r}"
+        )
+
+    # 5. Verdict and Governance invariants
+    verdict = receipt.get("verdict")
+    governed_disabled = receipt.get("governed_disabled")
+    unavailable_reason = receipt.get("unavailable_reason")
+    benchmark_results = receipt.get("benchmark_results")
+
+    if not isinstance(benchmark_results, dict):
+        raise ValueError("Gate 1 receipt benchmark_results must be a dictionary")
+
+    if eligible_labels < MINIMUM_REQUIRED_LABELS:
+        if verdict != "FAIL_CLOSED":
+            raise ValueError(
+                f"Receipt verdict must be FAIL_CLOSED when eligible_labels ({eligible_labels}) "
+                f"< {MINIMUM_REQUIRED_LABELS}, got {verdict!r}"
+            )
+        if governed_disabled is not True:
+            raise ValueError(
+                "governed_disabled must be True when eligible_labels < MINIMUM_REQUIRED_LABELS"
+            )
+        if not isinstance(unavailable_reason, str) or not unavailable_reason.strip():
+            raise ValueError("unavailable_reason is required when governed_disabled is True")
+
+    if verdict == "PASSED":
+        if eligible_labels < MINIMUM_REQUIRED_LABELS:
+            raise ValueError(f"Verdict PASSED requires eligible_labels >= {MINIMUM_REQUIRED_LABELS}")
+        if governed_disabled is not False:
+            raise ValueError("Verdict PASSED contradicts governed_disabled=True")
+        if unavailable_reason is not None:
+            raise ValueError(f"Verdict PASSED contradicts unavailable_reason={unavailable_reason!r}")
+        if benchmark_results.get("evaluated") is not True:
+            raise ValueError("Verdict PASSED requires benchmark_results.evaluated=True")
+        if benchmark_results.get("population_ranking_outperformed") is not True:
+            raise ValueError("Verdict PASSED requires population_ranking_outperformed=True")
+        if benchmark_results.get("top_k_survey_rate_improved") is not True:
+            raise ValueError("Verdict PASSED requires top_k_survey_rate_improved=True")
+    elif verdict == "FAIL_CLOSED":
+        if governed_disabled is not True:
+            raise ValueError("Verdict FAIL_CLOSED requires governed_disabled=True")
+        if not isinstance(unavailable_reason, str) or not unavailable_reason.strip():
+            raise ValueError("Verdict FAIL_CLOSED requires a non-empty unavailable_reason")
+    else:
+        raise ValueError(f"Invalid receipt verdict={verdict!r}")
+
+    # 6. Lineage cross-validation against canonical inventory receipt
+    if inventory_receipt is None:
+        try:
+            inventory_receipt = load_model_ready_receipt()
+        except Exception:
+            inventory_receipt = None
+
+    if inventory_receipt is not None:
+        if receipt["inventory_version"] != inventory_receipt.get("inventory_version"):
+            raise ValueError(
+                f"Receipt inventory_version {receipt['inventory_version']!r} does not match "
+                f"inventory receipt {inventory_receipt.get('inventory_version')!r}"
+            )
+        if receipt["inventory_observed_at"] != inventory_receipt.get("observed_at"):
+            raise ValueError(
+                f"Receipt inventory_observed_at {receipt['inventory_observed_at']!r} does not match "
+                f"inventory receipt {inventory_receipt.get('observed_at')!r}"
+            )
+        inv_sha = inventory_receipt.get("integrity", {}).get("content_sha256")
+        if receipt["inventory_sha256"] != inv_sha:
+            raise ValueError(
+                f"Receipt inventory_sha256 {receipt['inventory_sha256']!r} does not match "
+                f"inventory receipt SHA {inv_sha!r}"
+            )
+
+        heatzone_cap = inventory_receipt.get("capabilities", {}).get("heatzone", {})
+        if receipt["relation"] != heatzone_cap.get("relation"):
+            raise ValueError(
+                f"Receipt relation {receipt['relation']!r} does not match inventory {heatzone_cap.get('relation')!r}"
+            )
+        if receipt["contract_version"] != heatzone_cap.get("view_version"):
+            raise ValueError(
+                f"Receipt contract_version {receipt['contract_version']!r} does not match inventory {heatzone_cap.get('view_version')!r}"
+            )
+        if receipt["observed_labels"] != heatzone_cap.get("observed_count"):
+            raise ValueError(
+                f"Receipt observed_labels {receipt['observed_labels']!r} does not match inventory {heatzone_cap.get('observed_count')!r}"
+            )
+        if receipt["eligible_labels"] != heatzone_cap.get("eligible_count"):
+            raise ValueError(
+                f"Receipt eligible_labels {receipt['eligible_labels']!r} does not match inventory {heatzone_cap.get('eligible_count')!r}"
+            )
 
 
 def generate_benchmark_report_md(receipt: dict[str, Any]) -> str:
@@ -180,6 +403,9 @@ def generate_benchmark_report_md(receipt: dict[str, Any]) -> str:
 - **Task ID**: `ODP-PLAN-HEATZONE-OUTCOME-001`
 - **Evaluation Date**: `{receipt["evaluated_at"]}`
 - **Verdict**: **{status_symbol}**
+- **Inventory Lineage Version**: `{receipt["inventory_version"]}`
+- **Inventory Observed At**: `{receipt["inventory_observed_at"]}`
+- **Inventory SHA256**: `{receipt["inventory_sha256"]}`
 - **Relation**: `{receipt["relation"]}` (`{receipt["contract_version"]}`)
 - **Auto Seeded**: `{receipt["auto_seeded"]}` (Forbidden)
 - **Governed Disabled**: `{receipt["governed_disabled"]}` (`{receipt["unavailable_reason"]}`)
@@ -235,6 +461,13 @@ def generate_data_handback_json(receipt: dict[str, Any]) -> dict[str, Any]:
         "created_at": receipt["evaluated_at"],
         "status": "GOVERNED_DISABLED",
         "unavailable_reason": receipt["unavailable_reason"],
+        "inventory_lineage": {
+            "inventory_version": receipt["inventory_version"],
+            "inventory_observed_at": receipt["inventory_observed_at"],
+            "inventory_sha256": receipt["inventory_sha256"],
+            "relation": receipt["relation"],
+            "contract_version": receipt["contract_version"],
+        },
         "current_inventory": {
             "observed_count": receipt["observed_labels"],
             "eligible_count": receipt["eligible_labels"],
@@ -276,14 +509,8 @@ def main(argv: Sequence[str] | None = None) -> int:
     args = parser.parse_args(argv)
 
     if args.command == "generate":
-        # Load checked-in model ready inventory receipt if present to obtain heatzone stats
-        try:
-            inventory_receipt = load_model_ready_receipt()
-            heatzone_info = inventory_receipt.get("capabilities", {}).get("heatzone", {})
-        except Exception:
-            heatzone_info = {"observed_count": 0, "eligible_count": 0}
-
-        gate1_receipt = generate_gate1_receipt(heatzone_info)
+        inventory_receipt = load_model_ready_receipt()
+        gate1_receipt = generate_gate1_receipt(inventory_receipt)
 
         # Write receipt JSON
         args.receipt_output.parent.mkdir(parents=True, exist_ok=True)
@@ -304,16 +531,14 @@ def main(argv: Sequence[str] | None = None) -> int:
         args.handback_output.write_text(encoded_handback, encoding="utf-8")
         print(f"Generated data handback spec at {args.handback_output}")
 
+        # Fail-closed validate the generated receipt
+        validate_gate1_receipt(gate1_receipt, inventory_receipt)
+
     elif args.command == "verify":
         if not args.receipt_output.exists():
             raise FileNotFoundError(f"Receipt file missing: {args.receipt_output}")
         payload = json.loads(args.receipt_output.read_text(encoding="utf-8"))
-        declared_hash = payload.get("integrity", {}).get("content_sha256")
-        actual_hash = compute_benchmark_receipt_sha256(payload)
-        if declared_hash != actual_hash:
-            raise ValueError(f"Integrity check failed! declared={declared_hash}, actual={actual_hash}")
-        if payload.get("auto_seeded") is not False:
-            raise ValueError("Receipt must have auto_seeded=False")
+        validate_gate1_receipt(payload)
         print(f"Gate 1 receipt {args.receipt_output} verification PASSED (verdict: {payload.get('verdict')})")
 
     return 0

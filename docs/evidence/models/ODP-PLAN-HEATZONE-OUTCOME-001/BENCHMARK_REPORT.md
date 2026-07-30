@@ -1,8 +1,11 @@
 # HeatZone Label Inventory Benchmark & Gate 1 Receipt
 
 - **Task ID**: `ODP-PLAN-HEATZONE-OUTCOME-001`
-- **Evaluation Date**: `2026-07-30T17:03:59.372998Z`
+- **Evaluation Date**: `2026-07-30T17:42:49.017783Z`
 - **Verdict**: **❌ FAIL CLOSED**
+- **Inventory Lineage Version**: `pg16-production-model-inventory-2026-07-25-v1`
+- **Inventory Observed At**: `2026-07-25T15:20:00Z`
+- **Inventory SHA256**: `3f1c8ec4baa1e2f06f5c4e93e82a6258315012b46aacfd3f3e578221aa8b5f44`
 - **Relation**: `model_ready.heatzone_training_view` (`heatzone-training-view-v2`)
 - **Auto Seeded**: `False` (Forbidden)
 - **Governed Disabled**: `True` (`DATA_CONTRACT_NOT_MATURE`)
@@ -35,7 +38,7 @@ Eligible HeatZone label count (0) is below the activation threshold (200). Capab
 
 1. **Governed-Disabled Status**: Production binding for `heatzone` model (`heatzone_priority`) remains **governed-disabled** with canonical reason code `DATA_CONTRACT_NOT_MATURE`.
 2. **Zero Synthetic Data Policy**: Synthetic labels, mock rows, auto-seeded entries, or fabricated opening dates are strictly prohibited from model training and release pathways.
-3. **Integrity Envelope**: Receipt content SHA-256 is immutable (`54194c3715f0b1ce51b8d9e9eedf969f14679fc3247a01027d90dfe864899f56`).
+3. **Integrity Envelope**: Receipt content SHA-256 is immutable (`35b86f43f4831adb78c7049c30129de9574e47bd8fc2b9b59e83cc2e040fb922`).
 
 ---
 
