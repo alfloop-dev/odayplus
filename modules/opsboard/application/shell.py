@@ -1388,7 +1388,9 @@ class ShellService:
         than shown, so a future seed row cannot leak by defaulting open.
         """
         subject = subject_id or "franchisee-unknown"
-        store = store_id or "STORE-001"
+        store = (store_id or "").strip()
+        if not store:
+            raise ShellForbidden("加盟主門市範圍未經驗證。")
         # Read the widest envelope available, then apply the franchisee scope
         # here. The operator role is only a source of rows; none of its
         # role-scoped presentation (KPIs, risk rows, audit feed) is projected.
@@ -1397,6 +1399,7 @@ class ShellService:
             str(record["notificationId"])
             for record in self._repo.list_records(FRANCHISEE_ACKS)
             if str(record.get("subjectId")) == subject
+            and str(record.get("storeId")) == store
         }
 
         tasks = [
@@ -1419,6 +1422,7 @@ class ShellService:
             _copy(record)
             for record in self._repo.list_records(FRANCHISEE_REPORTS)
             if str(record.get("subjectId")) == subject
+            and str(record.get("storeId")) == store
         ]
         reports.sort(key=lambda record: str(record.get("createdAt")), reverse=True)
 
@@ -1448,20 +1452,24 @@ class ShellService:
     ) -> dict[str, Any]:
         """Record a franchisee's acknowledgement of a notification."""
         subject = subject_id or "franchisee-unknown"
+        store = (store_id or "").strip()
+        if not store:
+            raise ShellForbidden("加盟主門市範圍未經驗證。")
+        replay_action = f"franchisee_acknowledge:{store}"
         replay = self._replay(
-            "franchisee_acknowledge",
+            replay_action,
             idempotency_key,
             role_id="franchisee",
             subject_id=subject,
         )
         if replay is not None:
             return replay
-        view = self.get_franchisee_view(subject_id=subject, store_id=store_id)
+        view = self.get_franchisee_view(subject_id=subject, store_id=store)
         known = {str(item["notificationId"]) for item in view["notifications"]}
         if notification_id not in known:
             raise ShellNotFound(f"notification {notification_id} not found")
 
-        ack_id = f"{subject}:{notification_id}"
+        ack_id = f"{subject}:{store}:{notification_id}"
         record = {
             "ackId": ack_id,
             "notificationId": notification_id,
@@ -1494,7 +1502,7 @@ class ShellService:
             "idempotentReplay": False,
         }
         self._remember(
-            "franchisee_acknowledge",
+            replay_action,
             idempotency_key,
             response,
             role_id="franchisee",
@@ -1514,8 +1522,12 @@ class ShellService:
     ) -> dict[str, Any]:
         """Record a franchisee field report."""
         subject = subject_id or "franchisee-unknown"
+        store = (store_id or "").strip()
+        if not store:
+            raise ShellForbidden("加盟主門市範圍未經驗證。")
+        replay_action = f"franchisee_report:{store}"
         replay = self._replay(
-            "franchisee_report",
+            replay_action,
             idempotency_key,
             role_id="franchisee",
             subject_id=subject,
@@ -1535,7 +1547,7 @@ class ShellService:
         record = {
             "reportId": report_id,
             "subjectId": subject,
-            "storeId": store_id or "STORE-001",
+            "storeId": store,
             "category": category,
             "message": body,
             "status": "received",
@@ -1567,7 +1579,7 @@ class ShellService:
             "idempotentReplay": False,
         }
         self._remember(
-            "franchisee_report",
+            replay_action,
             idempotency_key,
             response,
             role_id="franchisee",

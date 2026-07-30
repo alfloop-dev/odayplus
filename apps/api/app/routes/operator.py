@@ -163,7 +163,7 @@ def create_operator_router(
         require_operator_permission,
         require_permission,
     )
-    from shared.auth import Action
+    from shared.auth import AccessRequest, Action, Environment, ResourceDescriptor
 
     active_audit_log = audit_log or InMemoryAuditLog()
     authz_engine = build_engine(audit_log=active_audit_log)
@@ -235,6 +235,53 @@ def create_operator_router(
         tenant_id=None if require_live_data else OPERATOR_TENANT_ID,
         engine=authz_engine,
     )
+
+    def authorize_franchisee_store(
+        request: Request,
+        principal: Any,
+        action: Action,
+        requested_store_id: str | None,
+    ) -> str:
+        """Resolve a verified store and enforce object-level franchisee ABAC."""
+
+        requested = (requested_store_id or "").strip() or None
+        scoped_stores = sorted(
+            {
+                str(store_id).strip()
+                for store_id in principal.scope.store_ids
+                if str(store_id).strip()
+            }
+        )
+        # The sentinel deliberately fails franchisee ABAC when no verified
+        # store grant exists, instead of reviving the old STORE-001 default.
+        effective_store = requested or (
+            scoped_stores[0] if scoped_stores else "__missing_store_scope__"
+        )
+        access = AccessRequest(
+            principal=principal,
+            action=action,
+            resource=ResourceDescriptor(
+                type="franchisee_portal",
+                resource_id=effective_store,
+                tenant_id=principal.scope.tenant_id,
+                store_id=effective_store,
+            ),
+            environment=Environment(
+                source_ip=request.client.host if request.client else None,
+                attributes={
+                    "correlation_id": (
+                        getattr(request.state, "correlation_id", None) or "unknown"
+                    )
+                },
+            ),
+        )
+        decision = authz_engine.authorize(access)
+        if not decision.allowed:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail=decision.reason,
+            )
+        return effective_store
 
     if require_live_data:
         # Production exposes only read surfaces backed by the live repository.
@@ -427,6 +474,7 @@ def create_operator_router(
                 require_admin_permission_fn=operator_write_guard,
                 require_franchisee_view_fn=franchisee_view_guard,
                 require_franchisee_write_fn=franchisee_write_guard,
+                authorize_franchisee_store_fn=authorize_franchisee_store,
                 shell_service_resolver=live_shell_service_for_request,
                 include_legacy_reads=False,
             )
@@ -873,6 +921,7 @@ def create_operator_router(
             require_franchisee_write_fn=require_permission(
                 "franchisee_portal", Action.CREATE, engine=authz_engine
             ),
+            authorize_franchisee_store_fn=authorize_franchisee_store,
             shell_service=ShellService(
                 svc,
                 repository=(

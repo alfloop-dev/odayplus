@@ -39,7 +39,7 @@ from modules.opsboard.application.shell import (
     ShellPolicyError,
     ShellService,
 )
-from shared.auth.identity import Principal
+from shared.auth import Action, Principal
 
 # ----------------------------------------------------------------------
 # Request bodies
@@ -142,6 +142,9 @@ def create_shell_sub_router(
     require_admin_permission_fn: Callable[..., object],
     require_franchisee_view_fn: Callable[..., object],
     require_franchisee_write_fn: Callable[..., object],
+    authorize_franchisee_store_fn: Callable[
+        [Request, Principal, Action, str | None], str
+    ],
     shell_service: ShellService | None = None,
     shell_service_resolver: Callable[[Request], ShellService] | None = None,
     include_legacy_reads: bool = True,
@@ -562,9 +565,15 @@ def create_shell_sub_router(
         x_correlation_id: str | None = Header(default=None, alias="X-Correlation-Id"),
     ) -> dict[str, Any]:
         """Return the franchisee-scoped view (no operator-only data)."""
+        effective_store_id = authorize_franchisee_store_fn(
+            request,
+            principal,
+            Action.VIEW,
+            store_id,
+        )
         return shell_for(request).get_franchisee_view(
             subject_id=principal.subject_id,
-            store_id=store_id,
+            store_id=effective_store_id,
             correlation_id=getattr(request.state, "correlation_id", None) or x_correlation_id,
         )
 
@@ -580,10 +589,16 @@ def create_shell_sub_router(
     ) -> dict[str, Any]:
         """Record a franchisee acknowledgement. Audited and idempotent."""
         try:
+            effective_store_id = authorize_franchisee_store_fn(
+                request,
+                principal,
+                Action.CREATE,
+                body.storeId,
+            )
             return shell_for(request).franchisee_acknowledge(
                 notification_id=body.notificationId,
                 subject_id=principal.subject_id,
-                store_id=body.storeId,
+                store_id=effective_store_id,
                 idempotency_key=idempotency_key,
                 correlation_id=getattr(request.state, "correlation_id", None) or x_correlation_id,
             )
@@ -602,11 +617,17 @@ def create_shell_sub_router(
     ) -> dict[str, Any]:
         """Record a franchisee field report. Audited and idempotent."""
         try:
+            effective_store_id = authorize_franchisee_store_fn(
+                request,
+                principal,
+                Action.CREATE,
+                body.storeId,
+            )
             return shell_for(request).franchisee_report(
                 category=body.category,
                 message=body.message,
                 subject_id=principal.subject_id,
-                store_id=body.storeId,
+                store_id=effective_store_id,
                 idempotency_key=idempotency_key,
                 correlation_id=getattr(request.state, "correlation_id", None) or x_correlation_id,
             )

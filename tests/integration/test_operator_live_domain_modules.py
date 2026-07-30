@@ -86,11 +86,13 @@ def _franchisee_headers(
     tenant_id: str,
     *,
     idempotency_key: str | None = None,
+    store_ids: str = "STORE-001",
 ) -> dict[str, str]:
     headers = {
         "x-subject-id": f"franchisee-{tenant_id}",
         "x-roles": "franchisee",
         "x-tenant-id": tenant_id,
+        "x-store-ids": store_ids,
         "x-correlation-id": f"corr-franchisee-{tenant_id}",
     }
     if idempotency_key is not None:
@@ -476,6 +478,77 @@ def test_live_shell_writes_are_tenant_scoped_and_recover_after_restart(
         assert other_tenant_settings["isDefault"] is True
     finally:
         reopened_bundle.engine.close()
+
+
+def test_live_franchisee_routes_enforce_verified_store_scope_and_audit_denials(
+    tmp_path: Path,
+) -> None:
+    app, bundle = _live_app(
+        tmp_path / "operator-live-franchisee-scope.sqlite3",
+        live_repository=_StaticLiveRepository(),
+    )
+    headers = {
+        **_franchisee_headers("tenant-franchisee-scope"),
+        "x-correlation-id": "corr-franchisee-store-scope",
+    }
+    try:
+        with TestClient(app) as client:
+            default_view = client.get(
+                f"{BASE}/shell/franchisee",
+                headers=headers,
+            )
+            denied_view = client.get(
+                f"{BASE}/shell/franchisee",
+                headers=headers,
+                params={"storeId": "STORE-OTHER"},
+            )
+            denied_ack = client.post(
+                f"{BASE}/shell/franchisee/acknowledgement",
+                headers={**headers, "idempotency-key": "cross-store-ack"},
+                json={
+                    "notificationId": "LIVE-STORE-NOTIFICATION-1",
+                    "storeId": "STORE-OTHER",
+                },
+            )
+            denied_report = client.post(
+                f"{BASE}/shell/franchisee/reports",
+                headers={**headers, "idempotency-key": "cross-store-report"},
+                json={
+                    "category": "equipment",
+                    "message": "must not persist",
+                    "storeId": "STORE-OTHER",
+                },
+            )
+            after = client.get(
+                f"{BASE}/shell/franchisee",
+                headers=headers,
+            )
+
+        assert default_view.status_code == 200
+        assert default_view.json()["store"]["id"] == "STORE-001"
+        assert default_view.json()["meta"]["scope"]["storeId"] == "STORE-001"
+        assert [
+            denied_view.status_code,
+            denied_ack.status_code,
+            denied_report.status_code,
+        ] == [403, 403, 403]
+        assert after.json()["reports"] == []
+
+        denials = [
+            event
+            for event in bundle.audit_log.list_events(
+                correlation_id="corr-franchisee-store-scope"
+            )
+            if event.outcome == "deny"
+        ]
+        assert len(denials) == 3
+        assert {event.action for event in denials} == {"view", "create"}
+        assert {event.resource for event in denials} == {
+            "franchisee_portal/STORE-OTHER"
+        }
+        assert {event.metadata["policy_id"] for event in denials} == {"scope.store"}
+    finally:
+        bundle.engine.close()
 
 
 def test_durable_listings_seed_canonical_state_only_behind_test_reset_gate(
