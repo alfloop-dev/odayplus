@@ -45,6 +45,9 @@ release_claim: no-go-until-final-gate-audit
 | B | `ODP-PLAN-AVM-OUTCOME-001` | P1-003 | Antigravity5 | Codex2 | `ODP-PLAN-OSS-LICENSE-GATE-001` |
 | B | `ODP-PLAN-NETPLAN-ACCEPTANCE-001` | P1-006 | Antigravity2 | Claude | `ODP-PLAN-SOLVER-RUNTIME-COMPAT-001` |
 | B | `ODP-PLAN-ENGINEERING-HARDENING-001` | P2 | Antigravity7 | Codex2 | `ODP-PLAN-DEFERRED-OSS-ADR-001` |
+| C | `ODP-PLAN-HEATZONE-LABEL-BACKFILL-001` | P1-001 data gate | Human/Ops | Codex2 | `ODP-PLAN-HEATZONE-OUTCOME-001` |
+| C | `ODP-PLAN-SITESCORE-OUTCOME-BACKFILL-001` | P1-002 data gate | Human/Ops | Claude | `ODP-PLAN-SITESCORE-OUTCOME-001` |
+| C | `ODP-PLAN-AVM-OUTCOME-BACKFILL-001` | P1-003 data gate | Human/Ops | Codex2 | `ODP-PLAN-AVM-OUTCOME-001` |
 | C | `ODP-PLAN-FORECAST-RELEASE-EVIDENCE-001` | P0-004 | Claude3 | Codex2 | existing Forecast inventory/backfill/model-registry tasks |
 | C | `ODP-PLAN-FORECAST-BUSINESS-001` | P1-004 | Antigravity3 | Claude | `ODP-PLAN-FORECAST-RELEASE-EVIDENCE-001` |
 | C | `ODP-PLAN-PRICE-ADLIFT-PILOT-001` | P1-005 | Antigravity6 | Claude | `ODP-PLAN-OBSERVABILITY-LIVE-001` |
@@ -142,6 +145,30 @@ release_claim: no-go-until-final-gate-audit
   `>=120` 成熟成交 outcomes、coverage/價值帶校準達標且 RBAC/audit 通過；
   資料不足時維持 governed-disabled。
 
+### ODP-PLAN-HEATZONE-LABEL-BACKFILL-001
+
+- Class: `human_gate`; owner: `Human/Ops`.
+- Scope: 依 HeatZone data handback contract 提供權威成熟 labels。
+- Acceptance:
+  `>=200` eligible mature labels；dataset hash、lineage、owner、freshness
+  可回讀；禁止 synthetic、fixture 與 auto-seed。
+
+### ODP-PLAN-SITESCORE-OUTCOME-BACKFILL-001
+
+- Class: `human_gate`; owner: `Human/Ops`.
+- Scope: 提供權威開店 outcomes 與 M6/M12 maturity 欄位。
+- Acceptance:
+  `>=200` eligible mature outcomes；M6/M12、dataset hash、lineage、owner、
+  freshness 可回讀；禁止 synthetic、fixture 與 auto-seed。
+
+### ODP-PLAN-AVM-OUTCOME-BACKFILL-001
+
+- Class: `human_gate`; owner: `Human/Ops`.
+- Scope: 提供權威成熟成交 outcomes 與 confidential access receipt。
+- Acceptance:
+  `>=120` eligible mature transactions；dataset hash、lineage、RBAC、owner、
+  freshness 可回讀；禁止 synthetic、fixture 與 auto-seed。
+
 ### ODP-PLAN-FORECAST-BUSINESS-001
 
 - Scope: baseline superiority、segment metrics、四燈 alert
@@ -205,8 +232,9 @@ release_claim: no-go-until-final-gate-audit
 - Scope: 重新執行原始 Stage 0–7／Gate 0–6 RTM，對每項填入 merged SHA、
   deployed SHA、evidence、owner、reviewer 與判定。
 - Acceptance:
-  所有 P0/P1 task done；所有 production proof 可回讀且 exact-SHA；
-  Human/Ops 正式核准；否則維持 NO-GO 並列出唯一剩餘 blockers。
+  所有 P0/P1 task 與三個 Human Data Gate done；所有 production proof
+  可回讀且 exact-SHA；Human/Ops 正式核准；否則維持 NO-GO 並列出
+  唯一剩餘 blockers。
 
 ## 4. 共通 verification
 
@@ -223,4 +251,3 @@ npm run build --workspace=@oday-plus/web
 全套命令應依 touched scope 執行；不得用未執行的命令作為 receipt。最終
 audit 必須另外執行 OpenAPI drift、security/SBOM、canonical Playwright、
 live data、deployment health、model release 與 rollback gates。
-
