@@ -6,6 +6,7 @@ source_audit: docs/evidence/DEVELOPMENT_PLAN_IMPLEMENTATION_GAP_MATRIX_2026-07-3
 source_plan: Google Drive 1RH1XOd7_3VEUIdSEwnNeSXDg379gwZJROvj8EsuAxhU
 status: registered-for-supervisor-execution
 release_claim: no-go-until-final-gate-audit
+governance_addendum: ODP-PLAN-LEDGER-NETPLAN-HUMAN-GATE-001
 ---
 
 # Development Plan Gap Execution Tasks
@@ -17,9 +18,12 @@ release_claim: no-go-until-final-gate-audit
 `DEVELOPMENT_PLAN_IMPLEMENTATION_GAP_MATRIX_2026-07-30.md` 為準。
 該矩陣已逐條登錄 84 個不重複 RTM 項目；本 ledger 的 Wave A–E
 是缺口閉環工作，不是用較少的 task 數量取代 84 項 coverage。
-下表共列出 **24 個治理 task**（含已完成並歸檔的 solver task，以及
-本文件本身的 archive task）；執行中的即時狀態與後續 owner/reviewer
-調整仍以 `ai-status.json` 與 task archive 為準。
+下表共列出 **26 個治理 task**（含已完成並歸檔的 solver task、本文件
+本身的 archive task，以及 2026-07-30 re-audit 補登的 NetPlan ledger
+correction 與 Human/Ops baseline approval gate）。新增 task 不改變 84 個
+RTM coverage rows；它修正的是原 ledger 把技術比較器與真實管理核准混在
+同一 task 的治理缺口。執行中的即時狀態與後續 owner/reviewer 調整仍以
+`ai-status.json` 與 task archive 為準。
 
 所有 task 必須遵守以下規則：
 
@@ -45,23 +49,25 @@ release_claim: no-go-until-final-gate-audit
 | A | `ODP-PLAN-OSS-LICENSE-GATE-001` | P1-007 | Antigravity5 | Claude | — |
 | A | `ODP-PLAN-OBSERVABILITY-LIVE-001` | P1-008 | Antigravity6 | Codex2 | — |
 | A | `ODP-PLAN-DEFERRED-OSS-ADR-001` | P2 | Antigravity7 | Claude | — |
+| A | `ODP-PLAN-LEDGER-NETPLAN-HUMAN-GATE-001` | P1-006 governance correction | CodexCoordinator | Codex | — |
 | B | `ODP-PLAN-ACCEPTANCE-REAL-EXEC-001` | P0-002 | Codex2 | Claude | `ODP-PLAN-GATE-REGISTRY-001` |
 | B | `ODP-PLAN-HEATZONE-OUTCOME-001` | P1-001 | Antigravity3 | Codex2 | — |
 | B | `ODP-PLAN-SITESCORE-OUTCOME-001` | P1-002 | Antigravity4 | Claude | — |
 | B | `ODP-PLAN-SITESCORE-PREDICTION-SOURCE-001` | P1-002 | Antigravity4 | Claude | `ODP-PLAN-SITESCORE-OUTCOME-001` |
 | B | `ODP-PLAN-AVM-OUTCOME-001` | P1-003 | Antigravity5 | Codex2 | `ODP-PLAN-OSS-LICENSE-GATE-001` |
-| B | `ODP-PLAN-NETPLAN-ACCEPTANCE-001` | P1-006 | Antigravity2 | Claude | `ODP-PLAN-SOLVER-RUNTIME-COMPAT-001` |
+| B | `ODP-PLAN-NETPLAN-ACCEPTANCE-001` | P1-006 technical gate | Codex2 | Codex | `ODP-PLAN-SOLVER-RUNTIME-COMPAT-001` |
 | B | `ODP-PLAN-ENGINEERING-HARDENING-001` | P2 | Antigravity7 | Codex2 | `ODP-PLAN-DEFERRED-OSS-ADR-001` |
 | C | `ODP-PLAN-HEATZONE-LABEL-BACKFILL-001` | P1-001 data gate | Human/Ops | Codex2 | `ODP-PLAN-HEATZONE-OUTCOME-001` |
 | C | `ODP-PLAN-SITESCORE-OUTCOME-BACKFILL-001` | P1-002 data gate | Human/Ops | Claude | `ODP-PLAN-SITESCORE-OUTCOME-001` |
 | C | `ODP-PLAN-AVM-OUTCOME-BACKFILL-001` | P1-003 data gate | Human/Ops | Codex2 | `ODP-PLAN-AVM-OUTCOME-001` |
 | C | `ODP-PLAN-OSS-LEGAL-POLICY-001` | P1-007 legal gate | Human/Ops | Claude | — |
+| C | `ODP-PLAN-NETPLAN-BASELINE-APPROVAL-001` | P1-006 business gate | Human/Ops | Codex | `ODP-PLAN-LEDGER-NETPLAN-HUMAN-GATE-001` |
 | C | `ODP-PLAN-FORECAST-RELEASE-EVIDENCE-001` | P0-004 | Claude3 | Codex2 | existing Forecast inventory/backfill/model-registry tasks |
 | C | `ODP-PLAN-FORECAST-BUSINESS-001` | P1-004 | Antigravity3 | Claude | `ODP-PLAN-FORECAST-RELEASE-EVIDENCE-001` |
 | C | `ODP-PLAN-PRICE-ADLIFT-PILOT-001` | P1-005 | Antigravity6 | Claude | `ODP-PLAN-OBSERVABILITY-LIVE-001` |
 | D | `ODP-PLAN-LIVE-STAGING-PROOF-001` | P0-006 | Antigravity | Codex2 | shell, acceptance, forecast release, existing GCP/deploy tasks |
-| D | `ODP-PLAN-UAT-SIGNOFF-001` | P0-005 | Claude | Human/Ops | all module acceptance tasks |
-| E | `ODP-PLAN-FINAL-GATE-AUDIT-001` | final | Codex2 | Human/Ops | all prior tasks |
+| D | `ODP-PLAN-UAT-SIGNOFF-001` | P0-005 | Claude | Human/Ops | all module acceptance tasks + `ODP-PLAN-NETPLAN-BASELINE-APPROVAL-001` |
+| E | `ODP-PLAN-FINAL-GATE-AUDIT-001` | final | Codex2 | Human/Ops | all prior tasks, including both NetPlan addendum tasks |
 
 ## 3. Task contracts
 
@@ -220,10 +226,36 @@ release_claim: no-go-until-final-gate-audit
 ### ODP-PLAN-NETPLAN-ACCEPTANCE-001
 
 - Scope: hard constraints、baseline comparison、alternatives、infeasibility
-  explanation 與 management approval packet。
+  explanation、scenario provenance 與 management approval packet 的
+  fail-closed technical capability。
 - Acceptance:
-  100% hard constraints；優於核准 baseline；替代方案與 infeasibility
-  可解釋；solver provenance 與 scenario data hash 可回讀。
+  100% hard constraints；替代方案與 infeasibility 可解釋；solver
+  provenance、scenario data hash、comparison input/output hash 可回讀；
+  未取得 `ODP-PLAN-NETPLAN-BASELINE-APPROVAL-001` 的 authoritative
+  receipt 前，只能輸出 `BUSINESS_UAT_UNVERIFIED`／`GOVERNED_DISABLED`，
+  不得宣稱「優於核准 baseline」。
+
+### ODP-PLAN-LEDGER-NETPLAN-HUMAN-GATE-001
+
+- Class: `governance_correction`; owner: `CodexCoordinator`; reviewer: `Codex`.
+- Scope:
+  修正原 24-task ledger 漏拆 NetPlan 真實 management baseline approval
+  的問題；新增 Human/Ops gate，並補上 UAT／final gate 直接依賴。
+- Acceptance:
+  matrix 的 84 個 RTM rows 與 Stage 分布維持不變；ledger 可重算為
+  26 個 task；NetPlan technical capability 與 authentic business approval
+  明確分離；文件、`ai-status.json`、UAT 與 final dependencies 一致。
+
+### ODP-PLAN-NETPLAN-BASELINE-APPROVAL-001
+
+- Class: `human_gate`; owner: `Human/Ops`; reviewer: `Codex`.
+- Scope:
+  由具名且可追責的管理 owner 核准 immutable NetPlan baseline、適用
+  scenario/entity domain、policy/constraint/objective/risk penalty 與資料快照。
+- Acceptance:
+  receipt 必須可回讀具名 approver 與角色、`active` status、issued/expiry、
+  approval reference、baseline content hash、solver problem hash 與適用 scope；
+  缺欄、過期、hash mismatch、無法解析或 AI 代簽時必須 fail closed。
 
 ### ODP-PLAN-OSS-LICENSE-GATE-001
 
