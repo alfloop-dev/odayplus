@@ -73,14 +73,19 @@ def test_heatzone_benchmark_evaluation_fails_closed_when_evidence_unresolved() -
     assert "immutable measured benchmark evidence" in result["benchmark_results"]["reason"]
 
 
-def test_heatzone_benchmark_evaluation_passes_when_sufficient_labels_evidence_and_metrics_met() -> None:
+def test_heatzone_benchmark_evaluation_passes_when_sufficient_labels_evidence_and_metrics_met(tmp_path) -> None:
     evidence = _mock_valid_evidence()
+    auth_file = tmp_path / "AUTHORITATIVE_EVIDENCE.json"
+    import json
+    auth_file.write_text(json.dumps(evidence), encoding="utf-8")
+
     result = evaluate_heatzone_benchmark(
         observed_labels=250,
         eligible_labels=250,
         population_ranking_ndcg=0.75,
         top_k_survey_rate=0.60,
         benchmark_evidence=evidence,
+        authoritative_evidence_path=auth_file,
     )
     assert result["verdict"] == "PASSED"
     assert result["governed_disabled"] is False
@@ -91,14 +96,19 @@ def test_heatzone_benchmark_evaluation_passes_when_sufficient_labels_evidence_an
     assert result["benchmark_evidence"] == evidence
 
 
-def test_heatzone_benchmark_evaluation_fails_closed_when_metrics_below_baseline() -> None:
+def test_heatzone_benchmark_evaluation_fails_closed_when_metrics_below_baseline(tmp_path) -> None:
     evidence = _mock_valid_evidence()
+    auth_file = tmp_path / "AUTHORITATIVE_EVIDENCE.json"
+    import json
+    auth_file.write_text(json.dumps(evidence), encoding="utf-8")
+
     result = evaluate_heatzone_benchmark(
         observed_labels=250,
         eligible_labels=250,
         population_ranking_ndcg=0.40,  # Below 0.50
         top_k_survey_rate=0.20,        # Below 0.30
         benchmark_evidence=evidence,
+        authoritative_evidence_path=auth_file,
     )
     assert result["verdict"] == "FAIL_CLOSED"
     assert result["governed_disabled"] is True
@@ -201,6 +211,100 @@ def test_gate1_receipt_validate_rejects_forged_passed_receipt() -> None:
         validate_gate1_receipt(receipt, inv)
 
 
+def test_gate1_receipt_validate_rejects_forged_passed_with_ndcg_below_baseline(tmp_path) -> None:
+    import json
+    evidence = _mock_valid_evidence()
+    auth_file = tmp_path / "AUTHORITATIVE_EVIDENCE.json"
+    auth_file.write_text(json.dumps(evidence), encoding="utf-8")
+
+    inv = _mock_inventory_receipt()
+    inv["capabilities"]["heatzone"]["observed_count"] = 250
+    inv["capabilities"]["heatzone"]["eligible_count"] = 250
+
+    receipt = generate_gate1_receipt(
+        inv,
+        observed_labels=250,
+        eligible_labels=250,
+        population_ranking_ndcg=0.40,  # Below 0.50 baseline
+        top_k_survey_rate=0.60,
+        benchmark_evidence=evidence,
+        authoritative_evidence_path=auth_file,
+    )
+    # Force self-consistent PASSED claims with bad ndcg
+    receipt["verdict"] = "PASSED"
+    receipt["governed_disabled"] = False
+    receipt["unavailable_reason"] = None
+    receipt["benchmark_results"]["evaluated"] = True
+    receipt["benchmark_results"]["population_ranking_outperformed"] = True
+    receipt["benchmark_results"]["top_k_survey_rate_improved"] = True
+    receipt["integrity"]["content_sha256"] = compute_benchmark_receipt_sha256(receipt)
+
+    with pytest.raises(ValueError, match="Verdict PASSED requires observed_ndcg"):
+        validate_gate1_receipt(receipt, inv, authoritative_evidence_path=auth_file)
+
+
+def test_gate1_receipt_validate_rejects_forged_passed_with_survey_rate_below_baseline(tmp_path) -> None:
+    import json
+    evidence = _mock_valid_evidence()
+    auth_file = tmp_path / "AUTHORITATIVE_EVIDENCE.json"
+    auth_file.write_text(json.dumps(evidence), encoding="utf-8")
+
+    inv = _mock_inventory_receipt()
+    inv["capabilities"]["heatzone"]["observed_count"] = 250
+    inv["capabilities"]["heatzone"]["eligible_count"] = 250
+
+    receipt = generate_gate1_receipt(
+        inv,
+        observed_labels=250,
+        eligible_labels=250,
+        population_ranking_ndcg=0.75,
+        top_k_survey_rate=0.20,  # Below 0.30 baseline
+        benchmark_evidence=evidence,
+        authoritative_evidence_path=auth_file,
+    )
+    receipt["verdict"] = "PASSED"
+    receipt["governed_disabled"] = False
+    receipt["unavailable_reason"] = None
+    receipt["benchmark_results"]["evaluated"] = True
+    receipt["benchmark_results"]["population_ranking_outperformed"] = True
+    receipt["benchmark_results"]["top_k_survey_rate_improved"] = True
+    receipt["integrity"]["content_sha256"] = compute_benchmark_receipt_sha256(receipt)
+
+    with pytest.raises(ValueError, match="Verdict PASSED requires observed_survey_rate"):
+        validate_gate1_receipt(receipt, inv, authoritative_evidence_path=auth_file)
+
+
+def test_gate1_receipt_validate_rejects_forged_passed_with_invalid_hash_format(tmp_path) -> None:
+    inv = _mock_inventory_receipt()
+    inv["capabilities"]["heatzone"]["observed_count"] = 250
+    inv["capabilities"]["heatzone"]["eligible_count"] = 250
+
+    bad_evidence = {
+        "dataset_snapshot_hash": "not_a_64_hex_hash",
+        "model_artifact_hash": "b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3",
+        "evaluation_split": "heatzone_test_28d_outcome_v1",
+        "governed_baseline_hash": "c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4",
+    }
+    receipt = generate_gate1_receipt(
+        inv,
+        observed_labels=250,
+        eligible_labels=250,
+        population_ranking_ndcg=0.75,
+        top_k_survey_rate=0.60,
+        benchmark_evidence=bad_evidence,
+    )
+    receipt["verdict"] = "PASSED"
+    receipt["governed_disabled"] = False
+    receipt["unavailable_reason"] = None
+    receipt["benchmark_results"]["evaluated"] = True
+    receipt["benchmark_results"]["population_ranking_outperformed"] = True
+    receipt["benchmark_results"]["top_k_survey_rate_improved"] = True
+    receipt["integrity"]["content_sha256"] = compute_benchmark_receipt_sha256(receipt)
+
+    with pytest.raises(ValueError, match="Verdict PASSED requires valid immutable benchmark_evidence"):
+        validate_gate1_receipt(receipt, inv)
+
+
 def test_gate1_receipt_validate_rejects_passed_without_benchmark_evidence() -> None:
     inv = _mock_inventory_receipt()
     inv["capabilities"]["heatzone"]["observed_count"] = 250
@@ -259,17 +363,50 @@ def test_gate1_receipt_validate_rejects_auto_seeded_true() -> None:
         validate_gate1_receipt(receipt)
 
 
-def test_report_md_and_handback_json_include_lineage() -> None:
+def test_report_md_and_handback_json_verdict_aware_when_passed_and_fail_closed(tmp_path) -> None:
+    import json
+    evidence = _mock_valid_evidence()
+    auth_file = tmp_path / "AUTHORITATIVE_EVIDENCE.json"
+    auth_file.write_text(json.dumps(evidence), encoding="utf-8")
+
     inv = _mock_inventory_receipt()
-    receipt = generate_gate1_receipt(inv)
+    inv["capabilities"]["heatzone"]["observed_count"] = 250
+    inv["capabilities"]["heatzone"]["eligible_count"] = 250
 
-    report_md = generate_benchmark_report_md(receipt)
-    assert f"**Inventory Lineage Version**: `{inv['inventory_version']}`" in report_md
-    assert f"**Inventory SHA256**: `{inv['integrity']['content_sha256']}`" in report_md
+    passed_receipt = generate_gate1_receipt(
+        inv,
+        observed_labels=250,
+        eligible_labels=250,
+        population_ranking_ndcg=0.75,
+        top_k_survey_rate=0.60,
+        benchmark_evidence=evidence,
+        authoritative_evidence_path=auth_file,
+    )
+    assert passed_receipt["verdict"] == "PASSED"
 
-    handback_json = generate_data_handback_json(receipt)
-    assert handback_json["inventory_lineage"]["inventory_version"] == inv["inventory_version"]
-    assert handback_json["inventory_lineage"]["inventory_sha256"] == inv["integrity"]["content_sha256"]
+    report_md = generate_benchmark_report_md(passed_receipt)
+    assert "**Verdict**: **✅ PASSED**" in report_md
+    assert "APPROVED FOR ACTIVATION" in report_md
+    assert "DATA_CONTRACT_NOT_MATURE" not in report_md
+
+    handback_json = generate_data_handback_json(passed_receipt)
+    assert handback_json["status"] == "PASSED"
+    assert handback_json["handback_type"] == "GATE1_BENCHMARK_PASSED"
+    assert handback_json["unavailable_reason"] is None
+    assert handback_json["current_inventory"]["shortfall"] == 0
+
+    # Fail closed receipt
+    fail_receipt = generate_gate1_receipt(_mock_inventory_receipt())
+    assert fail_receipt["verdict"] == "FAIL_CLOSED"
+
+    fail_report_md = generate_benchmark_report_md(fail_receipt)
+    assert "**Verdict**: **❌ FAIL CLOSED**" in fail_report_md
+    assert "DATA_CONTRACT_NOT_MATURE" in fail_report_md
+
+    fail_handback_json = generate_data_handback_json(fail_receipt)
+    assert fail_handback_json["status"] == "GOVERNED_DISABLED"
+    assert fail_handback_json["handback_type"] == "LABEL_INVENTORY_INSUFFICIENT"
+    assert fail_handback_json["current_inventory"]["shortfall"] == 200
 
 
 def test_heatzone_production_contract_remains_governed_disabled() -> None:

@@ -15,6 +15,7 @@ import argparse
 import hashlib
 import json
 import math
+import re
 import sys
 from collections.abc import Sequence
 from datetime import UTC, datetime
@@ -33,8 +34,12 @@ BENCHMARK_RECEIPT_KIND = "heatzone-gate1-benchmark-receipt"
 DEFAULT_RECEIPT_OUTPUT = Path("docs/evidence/models/ODP-PLAN-HEATZONE-OUTCOME-001/GATE1_BENCHMARK_RECEIPT.json")
 DEFAULT_REPORT_OUTPUT = Path("docs/evidence/models/ODP-PLAN-HEATZONE-OUTCOME-001/BENCHMARK_REPORT.md")
 DEFAULT_HANDBACK_OUTPUT = Path("docs/evidence/models/ODP-PLAN-HEATZONE-OUTCOME-001/DATA_HANDBACK.json")
+AUTHORITATIVE_EVIDENCE_PATH = (
+    ROOT / "docs/evidence/models/ODP-PLAN-HEATZONE-OUTCOME-001/AUTHORITATIVE_EVIDENCE.json"
+)
 
 MINIMUM_REQUIRED_LABELS = 200
+HEX_64_PATTERN = re.compile(r"^[0-9a-fA-F]{64}$")
 
 
 def compute_benchmark_receipt_sha256(payload: dict[str, Any]) -> str:
@@ -60,21 +65,62 @@ def _validate_metric_value(name: str, value: float | None) -> None:
         raise ValueError(f"{name} must be in range [0.0, 1.0], got {value!r}")
 
 
-def _validate_benchmark_evidence(evidence: dict[str, Any] | None) -> bool:
-    """Validate presence and completeness of immutable benchmark evidence dict."""
+def resolve_heatzone_benchmark_evidence(
+    evidence: dict[str, Any] | None,
+    *,
+    authoritative_path: Path | None = None,
+) -> bool:
+    """Resolve and hash-check benchmark evidence against authoritative immutable evidence.
+
+    Returns True if evidence is structurally valid (all 64-hex SHA-256 hashes and non-empty evaluation split)
+    AND matches the registered authoritative benchmark evidence artifact on disk.
+    If no registered authoritative evidence artifact exists or the evidence does not match, returns False.
+    """
     if not isinstance(evidence, dict) or not evidence:
         return False
-    required_fields = (
+
+    required_hashes = (
         "dataset_snapshot_hash",
         "model_artifact_hash",
-        "evaluation_split",
         "governed_baseline_hash",
     )
-    for field in required_fields:
+    for field in required_hashes:
         val = evidence.get(field)
-        if not isinstance(val, str) or not val.strip():
+        if not isinstance(val, str) or not HEX_64_PATTERN.match(val):
             return False
-    return True
+
+    split = evidence.get("evaluation_split")
+    if not isinstance(split, str) or not split.strip():
+        return False
+
+    auth_path = authoritative_path or AUTHORITATIVE_EVIDENCE_PATH
+    if not auth_path.exists():
+        return False
+
+    try:
+        content = json.loads(auth_path.read_text(encoding="utf-8"))
+        if not isinstance(content, dict):
+            return False
+        for field in (
+            "dataset_snapshot_hash",
+            "model_artifact_hash",
+            "evaluation_split",
+            "governed_baseline_hash",
+        ):
+            if evidence.get(field) != content.get(field):
+                return False
+        return True
+    except Exception:
+        return False
+
+
+def _validate_benchmark_evidence(
+    evidence: dict[str, Any] | None,
+    *,
+    authoritative_path: Path | None = None,
+) -> bool:
+    """Validate presence, 64-hex format, and authoritative resolution of benchmark evidence."""
+    return resolve_heatzone_benchmark_evidence(evidence, authoritative_path=authoritative_path)
 
 
 def evaluate_heatzone_benchmark(
@@ -313,6 +359,8 @@ def generate_gate1_receipt(
 def validate_gate1_receipt(
     receipt: dict[str, Any],
     inventory_receipt: dict[str, Any] | None = None,
+    *,
+    authoritative_evidence_path: Path | None = None,
 ) -> None:
     """Fail-closed validation of Gate 1 receipt schema, integrity, governance, and lineage."""
     if not isinstance(receipt, dict):
@@ -390,9 +438,13 @@ def validate_gate1_receipt(
 
     # Reject non-finite / out-of-domain metric values
     obs_ndcg = benchmark_results.get("observed_ndcg")
+    base_ndcg = benchmark_results.get("baseline_ndcg")
     obs_survey = benchmark_results.get("observed_survey_rate")
+    base_survey = benchmark_results.get("baseline_survey_rate")
     _validate_metric_value("benchmark_results.observed_ndcg", obs_ndcg)
+    _validate_metric_value("benchmark_results.baseline_ndcg", base_ndcg)
     _validate_metric_value("benchmark_results.observed_survey_rate", obs_survey)
+    _validate_metric_value("benchmark_results.baseline_survey_rate", base_survey)
 
     if eligible_labels < MINIMUM_REQUIRED_LABELS:
         if verdict != "FAIL_CLOSED":
@@ -416,16 +468,34 @@ def validate_gate1_receipt(
             raise ValueError(f"Verdict PASSED contradicts unavailable_reason={unavailable_reason!r}")
         if benchmark_results.get("evaluated") is not True:
             raise ValueError("Verdict PASSED requires benchmark_results.evaluated=True")
+
+        if obs_ndcg is None or base_ndcg is None:
+            raise ValueError("Verdict PASSED requires non-null observed_ndcg and baseline_ndcg")
+        if obs_survey is None or base_survey is None:
+            raise ValueError("Verdict PASSED requires non-null observed_survey_rate and baseline_survey_rate")
+
+        if not (obs_ndcg > base_ndcg):
+            raise ValueError(
+                f"Verdict PASSED requires observed_ndcg ({obs_ndcg}) > baseline_ndcg ({base_ndcg})"
+            )
+        if not (obs_survey > base_survey):
+            raise ValueError(
+                f"Verdict PASSED requires observed_survey_rate ({obs_survey}) > baseline_survey_rate ({base_survey})"
+            )
+
         if benchmark_results.get("population_ranking_outperformed") is not True:
             raise ValueError("Verdict PASSED requires population_ranking_outperformed=True")
         if benchmark_results.get("top_k_survey_rate_improved") is not True:
             raise ValueError("Verdict PASSED requires top_k_survey_rate_improved=True")
 
         benchmark_evidence = receipt.get("benchmark_evidence")
-        if not _validate_benchmark_evidence(benchmark_evidence):
+        if not _validate_benchmark_evidence(
+            benchmark_evidence, authoritative_path=authoritative_evidence_path
+        ):
             raise ValueError(
-                "Verdict PASSED requires valid immutable benchmark_evidence containing "
-                "dataset_snapshot_hash, model_artifact_hash, evaluation_split, and governed_baseline_hash"
+                "Verdict PASSED requires valid immutable benchmark_evidence containing valid 64-hex "
+                "dataset_snapshot_hash, model_artifact_hash, evaluation_split, and governed_baseline_hash "
+                "resolved against registered authoritative evidence"
             )
     elif verdict == "FAIL_CLOSED":
         if governed_disabled is not True:
@@ -487,7 +557,51 @@ def generate_benchmark_report_md(receipt: dict[str, Any]) -> str:
     """Generate human-readable markdown report for HeatZone Gate 1 benchmark."""
     eval_res = receipt["benchmark_results"]
     verdict = receipt["verdict"]
-    status_symbol = "❌ FAIL CLOSED" if verdict == "FAIL_CLOSED" else "✅ PASSED"
+    is_passed = verdict == "PASSED"
+    status_symbol = "✅ PASSED" if is_passed else "❌ FAIL CLOSED"
+
+    gov_disabled_str = str(receipt["governed_disabled"])
+    reason_str = receipt.get("unavailable_reason") or "None (Gate 1 Passed)"
+
+    if is_passed:
+        sec3_governance = (
+            "1. **Capability Binding Status**: Production binding for `heatzone` model (`heatzone_priority`) "
+            "is **APPROVED FOR ACTIVATION** (`governed_disabled = False`).\n"
+            "2. **Zero Synthetic Data Policy**: Synthetic labels, mock rows, auto-seeded entries, or "
+            "fabricated opening dates are strictly prohibited. Verified real mature labels only.\n"
+            f"3. **Integrity Envelope**: Receipt content SHA-256 is immutable (`{receipt['integrity']['content_sha256']}`)."
+        )
+        sec4_handback = (
+            "## 4. Activation Status & Next Steps\n\n"
+            "- HeatZone Gate 1 label inventory and benchmark performance criteria are **PASSED**.\n"
+            "- Capability is ready for downstream model deployment and release workflows.\n"
+        )
+    else:
+        sec3_governance = (
+            f"1. **Governed-Disabled Status**: Production binding for `heatzone` model (`heatzone_priority`) "
+            f"remains **governed-disabled** with canonical reason code `{receipt['unavailable_reason']}`.\n"
+            "2. **Zero Synthetic Data Policy**: Synthetic labels, mock rows, auto-seeded entries, or "
+            "fabricated opening dates are strictly prohibited from model training and release pathways.\n"
+            f"3. **Integrity Envelope**: Receipt content SHA-256 is immutable (`{receipt['integrity']['content_sha256']}`)."
+        )
+        sec4_handback = (
+            "## 4. Actionable Data Handback Requirements\n\n"
+            "To enable future HeatZone model activation, the Expansion Operations / POS Data Platform team must provide:\n"
+            "- At least **200 eligible mature real labels** (with 90 complete prior transaction days and 28 complete forward outcome days per H3 cell origin).\n"
+            "- Approved immutable store opening dates (`opened_on`) and canonical store/geography lineage.\n"
+            "- Audit evidence proving superior performance over population-density sorting and improved field survey rates.\n"
+        )
+
+    obs_ndcg_str = (
+        f"{eval_res.get('observed_ndcg')}"
+        if eval_res.get("observed_ndcg") is not None
+        else "N/A"
+    )
+    obs_survey_str = (
+        f"{eval_res.get('observed_survey_rate')}"
+        if eval_res.get("observed_survey_rate") is not None
+        else "N/A"
+    )
 
     return f"""# HeatZone Label Inventory Benchmark & Gate 1 Receipt
 
@@ -499,7 +613,7 @@ def generate_benchmark_report_md(receipt: dict[str, Any]) -> str:
 - **Inventory SHA256**: `{receipt["inventory_sha256"]}`
 - **Relation**: `{receipt["relation"]}` (`{receipt["contract_version"]}`)
 - **Auto Seeded**: `{receipt["auto_seeded"]}` (Forbidden)
-- **Governed Disabled**: `{receipt["governed_disabled"]}` (`{receipt["unavailable_reason"]}`)
+- **Governed Disabled**: `{gov_disabled_str}` (`{reason_str}`)
 
 ---
 
@@ -517,8 +631,8 @@ def generate_benchmark_report_md(receipt: dict[str, Any]) -> str:
 
 | Benchmark Metric | Observed Value | Baseline Threshold | Status |
 |---|---:|---:|---|
-| Population Density Ranking NDCG | `{eval_res.get("observed_ndcg") or "N/A"}` | `{eval_res.get("baseline_ndcg")}` | {"Skipped (Insufficient Data)" if not eval_res["evaluated"] else ("✅ Outperformed" if eval_res["population_ranking_outperformed"] else "❌ Failed")} |
-| Top-K Field Site Survey Rate | `{eval_res.get("observed_survey_rate") or "N/A"}` | `{eval_res.get("baseline_survey_rate")}` | {"Skipped (Insufficient Data)" if not eval_res["evaluated"] else ("✅ Improved" if eval_res["top_k_survey_rate_improved"] else "❌ Failed")} |
+| Population Density Ranking NDCG | `{obs_ndcg_str}` | `{eval_res.get("baseline_ndcg")}` | {"Skipped (Insufficient Data)" if not eval_res["evaluated"] else ("✅ Outperformed" if eval_res["population_ranking_outperformed"] else "❌ Failed")} |
+| Top-K Field Site Survey Rate | `{obs_survey_str}` | `{eval_res.get("baseline_survey_rate")}` | {"Skipped (Insufficient Data)" if not eval_res["evaluated"] else ("✅ Improved" if eval_res["top_k_survey_rate_improved"] else "❌ Failed")} |
 
 ### Evaluation Notes
 {eval_res["reason"]}
@@ -527,31 +641,52 @@ def generate_benchmark_report_md(receipt: dict[str, Any]) -> str:
 
 ## 3. Fail-Closed Governance & Safety Enforcements
 
-1. **Governed-Disabled Status**: Production binding for `heatzone` model (`heatzone_priority`) remains **governed-disabled** with canonical reason code `DATA_CONTRACT_NOT_MATURE`.
-2. **Zero Synthetic Data Policy**: Synthetic labels, mock rows, auto-seeded entries, or fabricated opening dates are strictly prohibited from model training and release pathways.
-3. **Integrity Envelope**: Receipt content SHA-256 is immutable (`{receipt["integrity"]["content_sha256"]}`).
+{sec3_governance}
 
 ---
 
-## 4. Actionable Data Handback Requirements
-
-To enable future HeatZone model activation, the Expansion Operations / POS Data Platform team must provide:
-- At least **200 eligible mature real labels** (with 90 complete prior transaction days and 28 complete forward outcome days per H3 cell origin).
-- Approved immutable store opening dates (`opened_on`) and canonical store/geography lineage.
-- Audit evidence proving superior performance over population-density sorting and improved field survey rates.
+{sec4_handback.rstrip()}
 """
 
 
 def generate_data_handback_json(receipt: dict[str, Any]) -> dict[str, Any]:
     """Generate structured machine-readable data handback specification."""
+    verdict = receipt["verdict"]
+    is_passed = verdict == "PASSED"
+    eligible_labels = receipt["eligible_labels"]
+    min_required = receipt["minimum_required_labels"]
+    shortfall = max(0, min_required - eligible_labels)
+
+    if is_passed:
+        handback_type = "GATE1_BENCHMARK_PASSED"
+        status = "PASSED"
+        unavailable_reason = None
+        next_actions = [
+            "Proceed to downstream HeatZone model training and release pathways",
+        ]
+    else:
+        status = "GOVERNED_DISABLED"
+        unavailable_reason = receipt["unavailable_reason"]
+        if eligible_labels < min_required:
+            handback_type = "LABEL_INVENTORY_INSUFFICIENT"
+        elif unavailable_reason == "BENCHMARK_EVIDENCE_NOT_RESOLVED":
+            handback_type = "BENCHMARK_EVIDENCE_NOT_RESOLVED"
+        else:
+            handback_type = "BENCHMARK_METRICS_NOT_MET"
+        next_actions = [
+            "Ingest real POS transaction history and store opening date authority into PG16 data plane",
+            "Run scripts/models/install_views.py to refresh model_ready.heatzone_training_view",
+            "Execute python3 scripts/models/heatzone_benchmark.py generate to re-evaluate Gate 1 receipt",
+        ]
+
     return {
         "task_id": "ODP-PLAN-HEATZONE-OUTCOME-001",
         "service": "heatzone",
         "model_name": "heatzone_priority",
-        "handback_type": "LABEL_INVENTORY_INSUFFICIENT",
+        "handback_type": handback_type,
         "created_at": receipt["evaluated_at"],
-        "status": "GOVERNED_DISABLED",
-        "unavailable_reason": receipt["unavailable_reason"],
+        "status": status,
+        "unavailable_reason": unavailable_reason,
         "inventory_lineage": {
             "inventory_version": receipt["inventory_version"],
             "inventory_observed_at": receipt["inventory_observed_at"],
@@ -561,9 +696,9 @@ def generate_data_handback_json(receipt: dict[str, Any]) -> dict[str, Any]:
         },
         "current_inventory": {
             "observed_count": receipt["observed_labels"],
-            "eligible_count": receipt["eligible_labels"],
-            "required_minimum": receipt["minimum_required_labels"],
-            "shortfall": receipt["minimum_required_labels"] - receipt["eligible_labels"],
+            "eligible_count": eligible_labels,
+            "required_minimum": min_required,
+            "shortfall": shortfall,
         },
         "required_schema_fields": [
             "tenant_id",
@@ -583,11 +718,7 @@ def generate_data_handback_json(receipt: dict[str, Any]) -> dict[str, Any]:
             "top_k_survey_rate_improvement": "survey_rate > baseline_survey_rate (0.30)",
             "synthetic_labels_allowed": False,
         },
-        "next_actions": [
-            "Ingest real POS transaction history and store opening date authority into PG16 data plane",
-            "Run scripts/models/install_views.py to refresh model_ready.heatzone_training_view",
-            "Execute python3 scripts/models/heatzone_benchmark.py generate to re-evaluate Gate 1 receipt",
-        ],
+        "next_actions": next_actions,
     }
 
 

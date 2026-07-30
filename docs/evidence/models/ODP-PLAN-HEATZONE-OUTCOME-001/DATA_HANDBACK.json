@@ -5,7 +5,7 @@
     "synthetic_labels_allowed": false,
     "top_k_survey_rate_improvement": "survey_rate > baseline_survey_rate (0.30)"
   },
-  "created_at": "2026-07-30T21:58:23.733780Z",
+  "created_at": "2026-07-30T22:09:43.475478Z",
   "current_inventory": {
     "eligible_count": 0,
     "observed_count": 0,

@@ -1,7 +1,7 @@
 # HeatZone Label Inventory Benchmark & Gate 1 Receipt
 
 - **Task ID**: `ODP-PLAN-HEATZONE-OUTCOME-001`
-- **Evaluation Date**: `2026-07-30T21:58:23.733780Z`
+- **Evaluation Date**: `2026-07-30T22:09:43.475478Z`
 - **Verdict**: **❌ FAIL CLOSED**
 - **Inventory Lineage Version**: `pg16-production-model-inventory-2026-07-25-v1`
 - **Inventory Observed At**: `2026-07-25T15:20:00Z`
@@ -38,7 +38,7 @@ Eligible HeatZone label count (0) is below the activation threshold (200). Capab
 
 1. **Governed-Disabled Status**: Production binding for `heatzone` model (`heatzone_priority`) remains **governed-disabled** with canonical reason code `DATA_CONTRACT_NOT_MATURE`.
 2. **Zero Synthetic Data Policy**: Synthetic labels, mock rows, auto-seeded entries, or fabricated opening dates are strictly prohibited from model training and release pathways.
-3. **Integrity Envelope**: Receipt content SHA-256 is immutable (`cd9f0c298d0a9ec155c9978e2260027e922f1e4253c6658ba378a0c501d4b749`).
+3. **Integrity Envelope**: Receipt content SHA-256 is immutable (`acb8b5e0f90725d34192f6a91af0a7cc97ab6eb4a4a1091c91bfbb75b2fa336c`).
 
 ---
 
