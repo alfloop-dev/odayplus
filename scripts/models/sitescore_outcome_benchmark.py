@@ -28,7 +28,8 @@ def run_benchmark_from_inventory(
 ) -> Any:
     """Load inventory records or evaluate provided candidate site records."""
     if records is not None:
-        return evaluate_sitescore_opening_outcome_benchmark(records)
+        provenance = "provided_records" if records else "no_source"
+        return evaluate_sitescore_opening_outcome_benchmark(records, provenance=provenance)
 
     # In PG16 environment if DB URL is provided
     if db_url and "postgresql" in db_url.lower():
@@ -44,7 +45,9 @@ def run_benchmark_from_inventory(
                         target_format_code,
                         opened_on,
                         is_training_eligible,
-                        realized_90d_net_revenue
+                        realized_90d_net_revenue,
+                        (CURRENT_DATE - opened_on)::integer AS m6_days,
+                        (CURRENT_DATE - opened_on)::integer AS m12_days
                     FROM model_ready.candidate_site_view
                     """
                 )
@@ -58,13 +61,18 @@ def run_benchmark_from_inventory(
                         "opened_on": str(row[3]) if row[3] else None,
                         "is_training_eligible": bool(row[4]),
                         "realized_90d_net_revenue": float(row[5]) if row[5] is not None else 0.0,
+                        "m6_days": int(row[6]) if row[6] is not None else 0,
+                        "m12_days": int(row[7]) if row[7] is not None else 0,
                     })
-                return evaluate_sitescore_opening_outcome_benchmark(fetched)
+                return evaluate_sitescore_opening_outcome_benchmark(fetched, provenance="pg16_query")
         except Exception as exc:
-            print(f"Notice: PostgreSQL inventory query failed ({exc}); running inventory check.", file=sys.stderr)
+            print(f"Notice: PostgreSQL inventory query failed ({exc}); failing closed.", file=sys.stderr)
+            return evaluate_sitescore_opening_outcome_benchmark(
+                [], provenance="unreachable_db", db_error=str(exc)
+            )
 
-    # Default inventory check (0 observed rows from PG16 receipt)
-    return evaluate_sitescore_opening_outcome_benchmark([])
+    # Default inventory check (no source provided)
+    return evaluate_sitescore_opening_outcome_benchmark([], provenance="no_source")
 
 
 def write_evidence_markdown(
@@ -78,7 +86,21 @@ def write_evidence_markdown(
     summary = receipt.get("benchmark_summary", {})
     handback = receipt.get("handback", {})
     observed_at = receipt.get("observed_at", "")
+    provenance = receipt.get("provenance", summary.get("provenance", "unknown"))
     integrity_sha = receipt.get("integrity", {}).get("content_sha256", "")
+
+    labels_status = 'PASS' if summary.get('mature_label_count', 0) >= 200 else 'FAIL (GOVERNED_DISABLED)'
+    pred_cov_status = 'PASS' if summary.get('prediction_coverage_ratio', 0.0) >= 0.70 else 'FAIL'
+    m6_cov_status = 'PASS' if summary.get('m6_coverage_ratio', 0.0) >= 0.70 else 'FAIL'
+    m12_cov_status = 'PASS' if summary.get('m12_coverage_ratio', 0.0) >= 0.70 else 'FAIL'
+    p80_cov_status = 'PASS' if summary.get('p80_coverage', 0.0) >= 0.70 else 'FAIL'
+
+    mae_pass = summary.get('is_gate2_passed', False) or (
+        summary.get('mature_label_count', 0) >= 200
+        and summary.get('prediction_coverage_ratio', 0.0) >= 0.70
+        and summary.get('normalized_mae', 0.0) <= summary.get('max_mae_threshold', 0.25)
+    )
+    mae_status = 'PASS' if mae_pass else 'FAIL (GOVERNED_DISABLED)'
 
     lines = [
         "# Gate 2 Receipt: SiteScore Opening Outcome Calibration Benchmark (ODP-PLAN-SITESCORE-OUTCOME-001)",
@@ -86,24 +108,31 @@ def write_evidence_markdown(
         "- **Task ID**: `ODP-PLAN-SITESCORE-OUTCOME-001`",
         f"- **Observed At**: `{observed_at}`",
         f"- **Gate Status**: `{status}`",
+        f"- **Data Provenance**: `{provenance}`",
         f"- **Is Governed Disabled**: `{receipt.get('is_governed_disabled', False)}`",
         f"- **Integrity Content SHA256**: `{integrity_sha}`",
+    ]
+    if receipt.get("db_error"):
+        lines.append(f"- **Database Error**: `{receipt['db_error']}`")
+
+    lines.extend([
         "",
         "## Benchmark Inventory & Coverage Summary",
         "",
         "| Metric | Observed | Threshold / Required | Status |",
         "| --- | --- | --- | --- |",
-        f"| Mature Labels | {summary.get('mature_label_count', 0)} | >= {summary.get('activation_threshold', 200)} | {'PASS' if summary.get('mature_label_count', 0) >= 200 else 'FAIL (GOVERNED_DISABLED)'} |",
-        f"| M6 Horizon Coverage | {summary.get('m6_coverage_ratio', 0.0):.1%} | >= {summary.get('min_coverage_threshold', 0.70):.1%} | {'PASS' if summary.get('m6_coverage_ratio', 0.0) >= 0.70 else 'FAIL'} |",
-        f"| M12 Horizon Coverage | {summary.get('m12_coverage_ratio', 0.0):.1%} | >= {summary.get('min_coverage_threshold', 0.70):.1%} | {'PASS' if summary.get('m12_coverage_ratio', 0.0) >= 0.70 else 'FAIL'} |",
-        f"| P80 Coverage Ratio | {summary.get('p80_coverage', 0.0):.1%} | >= {summary.get('min_coverage_threshold', 0.70):.1%} | {'PASS' if summary.get('p80_coverage', 0.0) >= 0.70 else 'FAIL'} |",
-        f"| Normalized MAE | {summary.get('normalized_mae', 0.0):.3f} | <= {summary.get('max_mae_threshold', 0.25):.3f} | {'PASS' if summary.get('normalized_mae', 0.0) <= 0.25 else 'FAIL'} |",
+        f"| Mature Labels | {summary.get('mature_label_count', 0)} | >= {summary.get('activation_threshold', 200)} | {labels_status} |",
+        f"| Prediction Coverage | {summary.get('prediction_coverage_ratio', 0.0):.1%} | >= {summary.get('min_coverage_threshold', 0.70):.1%} | {pred_cov_status} |",
+        f"| M6 Horizon Coverage | {summary.get('m6_coverage_ratio', 0.0):.1%} | >= {summary.get('min_coverage_threshold', 0.70):.1%} | {m6_cov_status} |",
+        f"| M12 Horizon Coverage | {summary.get('m12_coverage_ratio', 0.0):.1%} | >= {summary.get('min_coverage_threshold', 0.70):.1%} | {m12_cov_status} |",
+        f"| P80 Coverage Ratio | {summary.get('p80_coverage', 0.0):.1%} | >= {summary.get('min_coverage_threshold', 0.70):.1%} | {p80_cov_status} |",
+        f"| Normalized MAE | {summary.get('normalized_mae', 0.0):.3f} | <= {summary.get('max_mae_threshold', 0.25):.3f} | {mae_status} |",
         "",
         "## Handback & Governance Receipt",
         "",
         f"- **Handback Required**: `{handback.get('handback_required', False)}`",
         f"- **Reason Code**: `{handback.get('reason_code', '')}`",
-    ]
+    ])
 
     if handback.get("reasons"):
         lines.append("- **Audit Reasons**:")

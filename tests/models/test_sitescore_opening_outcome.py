@@ -134,6 +134,7 @@ def test_cli_inventory_runner_and_evidence_doc(tmp_path):
     result = run_benchmark_from_inventory(records=[])
     assert result.mature_label_count == 0
     assert not result.is_gate2_passed
+    assert result.reason_code == "NO_SOURCE_INVENTORY"
 
     receipt = build_sitescore_gate2_receipt(result)
     write_evidence_markdown(receipt, output_evidence)
@@ -142,4 +143,83 @@ def test_cli_inventory_runner_and_evidence_doc(tmp_path):
     content = output_evidence.read_text(encoding="utf-8")
     assert "Gate 2 Receipt: SiteScore Opening Outcome Calibration Benchmark" in content
     assert "REJECTED_GOVERNED_DISABLED" in content
-    assert "MATURE_LABELS_BELOW_THRESHOLD" in content
+    assert "NO_SOURCE_INVENTORY" in content
+
+
+def test_sitescore_opening_outcome_no_predictions_fails_closed():
+    # Repro 1: 220 mature records with outcomes & coverage, but NO model predictions
+    records = []
+    for i in range(220):
+        records.append({
+            "entity_id": f"tenant-001:store-{i:04d}",
+            "store_id": f"store-{i:04d}",
+            "target_format_code": "CONVENIENCE_STANDARD",
+            "opened_on": "2025-01-01",
+            "is_training_eligible": True,
+            "realized_90d_net_revenue": 500_000.0,
+            "m6_days": 180,
+            "m12_days": 365,
+            # No predicted_revenue, p10, p90
+        })
+
+    result = evaluate_sitescore_opening_outcome_benchmark(records)
+    assert result.mature_label_count == 220
+    assert result.prediction_coverage_ratio == 0.0
+    assert not result.is_prediction_coverage_passed
+    assert not result.is_gate2_passed
+    assert result.status == "GOVERNED_DISABLED"
+    assert result.reason_code == "PREDICTION_EVIDENCE_MISSING"
+
+    handback = result.handback_payload
+    assert handback["handback_required"] is True
+    assert handback["governed_disabled"] is True
+    assert handback["reason_code"] == "PREDICTION_EVIDENCE_MISSING"
+    assert any("Prediction coverage (0.0%)" in r for r in handback["reasons"])
+
+
+def test_sitescore_opening_outcome_db_unreachable_fails_closed():
+    # Repro 2: DB connection outage fails closed with distinct reason and provenance
+    result = run_benchmark_from_inventory(db_url="postgresql://nouser:nopass@127.0.0.1:1/nodb")
+    assert result.provenance == "unreachable_db"
+    assert result.reason_code == "DB_INVENTORY_UNREACHABLE"
+    assert result.status == "GOVERNED_DISABLED"
+    assert not result.is_gate2_passed
+    assert result.db_error is not None
+
+    receipt = build_sitescore_gate2_receipt(result)
+    assert receipt["provenance"] == "unreachable_db"
+    assert receipt["gate_status"] == "REJECTED_GOVERNED_DISABLED"
+    assert receipt["handback"]["reason_code"] == "DB_INVENTORY_UNREACHABLE"
+    assert "PostgreSQL model-ready inventory database query failed" in receipt["handback"]["reasons"][0]
+
+
+def test_sitescore_opening_outcome_no_source_fails_closed():
+    result = run_benchmark_from_inventory(db_url=None, records=None)
+    assert result.provenance == "no_source"
+    assert result.reason_code == "NO_SOURCE_INVENTORY"
+    assert result.status == "GOVERNED_DISABLED"
+    assert not result.is_gate2_passed
+
+
+def test_sitescore_opening_outcome_coverage_derived_from_opened_on():
+    # Repro 3: Mature stores with opened_on date derive m6/m12 coverage
+    records = []
+    for i in range(220):
+        records.append({
+            "entity_id": f"tenant-001:store-{i:04d}",
+            "store_id": f"store-{i:04d}",
+            "target_format_code": "CONVENIENCE_STANDARD",
+            "opened_on": "2025-01-01",
+            "is_training_eligible": True,
+            "realized_90d_net_revenue": 500_000.0,
+            "predicted_revenue": 500_000.0,
+            "p10": 400_000.0,
+            "p90": 600_000.0,
+            # Omitting m6_days and m12_days
+        })
+
+    result = evaluate_sitescore_opening_outcome_benchmark(records)
+    assert result.m6_coverage_ratio == 1.0
+    assert result.m12_coverage_ratio == 1.0
+    assert result.is_coverage_passed
+    assert result.is_gate2_passed
