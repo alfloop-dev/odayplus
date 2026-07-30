@@ -16,6 +16,15 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
+
+from scripts.security.exemption_validator import (
+    is_valid_approval_reference,
+    is_valid_approver,
+    validate_exemption_entry,
+)
+
 DEFAULT_OUTPUT_DIR = ROOT / "docs/evidence/completion/ODP-PGAP-SUPPLY-001"
 DEFAULT_OUTPUT_PATH = DEFAULT_OUTPUT_DIR / "sbom.json"
 POLICY_PATH = ROOT / "docs/security/license_policy.json"
@@ -23,50 +32,14 @@ EXEMPTIONS_PATH = ROOT / "docs/security/license_exemptions.json"
 NOTICES_PATH = ROOT / "THIRD_PARTY_NOTICES"
 
 SHA256_DIGEST_REGEX = re.compile(r"^sha256:[a-fA-F0-9]{64}$")
-# Kept for backward-compat import; prefer _is_valid_approver() for new checks.
+# Kept for backward-compat import; prefer is_valid_approver() for new checks.
 AI_AGENT_PATTERN = re.compile(r"^(Antigravity|Claude|Codex|Gemini|Copilot|GPT|LLM)\d*$", re.IGNORECASE)
-
-_ROLE_TOKENS = {
-    "human", "legal", "security", "ops", "compliance", "officer", "director",
-    "manager", "engineer", "counsel", "vp", "head", "lead", "auditor", "attorney"
-}
-_PLACEHOLDER_WORDS = {
-    "tbd", "unknown", "na", "n/a", "pending", "none", "null", "placeholder", "generic", "n", "a", "x"
-}
 
 
 def _is_valid_approver(approver: str) -> bool:
-    """Return True only when the approver identifies a named human/legal authority (name + role).
+    """Validate that the approver is a named human/legal authority."""
+    return is_valid_approver(approver)
 
-    Rejects:
-    - Empty / whitespace-only strings
-    - Strings containing AI agent root words (Antigravity, Claude, Codex, Gemini, Copilot, GPT, LLM)
-    - Bare role tokens (Human/Ops, Legal/Ops, Security/Ops, Ops, Legal, pending-legal, etc.)
-    - Placeholder strings (TBD, unknown, N/A, pending, etc.)
-    - Strings missing a personal name component or missing a role component
-    """
-    if not approver or not approver.strip():
-        return False
-    val = approver.strip()
-    if re.search(r"(Antigravity|Claude|Codex|Gemini|Copilot|GPT|LLM)", val, re.IGNORECASE):
-        return False
-
-    val_normalized = re.sub(r"n/a", "na", val, flags=re.IGNORECASE)
-    words = re.findall(r"[A-Za-z0-9_]+", val_normalized)
-    if not words:
-        return False
-
-    non_role_name_words = [
-        w for w in words
-        if w.lower() not in _ROLE_TOKENS
-        and w.lower() not in _PLACEHOLDER_WORDS
-        and w.lower() not in {"and", "or", "of", "the", "for", "in"}
-        and len(w) >= 2
-    ]
-    role_words = [w for w in words if w.lower() in _ROLE_TOKENS]
-
-    # Must contain at least one personal name word AND at least one role token
-    return bool(non_role_name_words and role_words)
 
 
 def is_first_party_purl(purl: str, prefixes: list[str] | tuple[str, ...] | None = None) -> bool:
@@ -521,7 +494,7 @@ REQUIRED_LICENSE_EXEMPTION_FIELDS = {
 }
 
 
-def load_license_policy() -> tuple[set[str], set[str], set[str], set[str], set[str], list[str]]:
+def load_license_policy(target_scope: str = "prod") -> tuple[set[str], set[str], set[str], set[str], set[str], list[str]]:
     if not POLICY_PATH.exists():
         raise FileNotFoundError(f"License policy file missing at {POLICY_PATH}")
 
@@ -540,45 +513,16 @@ def load_license_policy() -> tuple[set[str], set[str], set[str], set[str], set[s
         try:
             ex_data = json.loads(EXEMPTIONS_PATH.read_text(encoding="utf-8"))
             for entry in ex_data.get("exemptions", []):
-                approver = entry.get("approved_by", "")
-                app_ref = entry.get("approval_reference", "")
-                pkg_name = entry.get("package_name", "unknown")
-                status = entry.get("status", "")
+                status = entry.get("status")
+                entry_valid, entry_violations = validate_exemption_entry(entry, exemption_type="license")
+                if entry_violations:
+                    ex_violations.extend(entry_violations)
 
-                missing = REQUIRED_LICENSE_EXEMPTION_FIELDS - set(entry.keys())
-                if "package_name" not in entry and "purl" not in entry:
-                    missing.add("package_name")
-                if missing:
-                    ex_violations.append(
-                        f"License exemption for '{pkg_name}' is missing required fields: {sorted(missing)}"
-                    )
-
-                if not _is_valid_approver(approver):
-                    ex_violations.append(
-                        f"License exemption for '{pkg_name}' has invalid approver '{approver}'. "
-                        "Approver must be a named human/legal authority (e.g. 'Jane Doe (Legal Counsel)'); "
-                        "AI agent names, bare role tokens, and placeholder strings cannot serve as legal approvers."
-                    )
-
-                if not app_ref or not str(app_ref).strip():
-                    ex_violations.append(
-                        f"License exemption for '{pkg_name}' is missing valid approval_reference."
-                    )
-
-                expires_at = entry.get("expires_at")
-                if expires_at:
-                    try:
-                        exp_dt = datetime.fromisoformat(expires_at.replace("Z", "+00:00"))
-                        if exp_dt < datetime.now(UTC):
-                            ex_violations.append(
-                                f"License exemption for '{pkg_name}' expired at {expires_at}."
-                            )
-                    except ValueError:
-                        ex_violations.append(
-                            f"License exemption for '{pkg_name}' has invalid expires_at date: '{expires_at}'."
-                        )
-
-                if status == "active":
+                if status == "active" and entry_valid:
+                    scope = entry.get("scope", "all")
+                    # Enforce scope: if target_scope is release/prod, dev-scoped exemptions must not suppress findings
+                    if target_scope in {"prod", "production", "release"} and scope not in {"prod", "production", "all"}:
+                        continue
                     if "purl" in entry:
                         exempt_purls.add(entry["purl"])
                     if "package_name" in entry:
@@ -587,6 +531,7 @@ def load_license_policy() -> tuple[set[str], set[str], set[str], set[str], set[s
             raise ValueError(f"Failed to parse license exemptions file {EXEMPTIONS_PATH}: {e}") from e
 
     return allowed, denied, review_req, exempt_purls, exempt_names, ex_violations
+
 
 
 def evaluate_license_string(lic_str: str | None, allowed: set[str], denied: set[str]) -> bool:
@@ -698,66 +643,69 @@ def generate_sbom(image_digest: str | None = None, release_digest: str | None = 
     # 1. Parse Node dependencies from package-lock.json
     lockfile_path = ROOT / "package-lock.json"
     raw_npm_sub_deps = []
-    if lockfile_path.exists():
-        try:
-            data = json.loads(lockfile_path.read_text(encoding="utf-8"))
-            packages = data.get("packages", {})
-            for pkg_path, pkg_info in packages.items():
-                if not pkg_path:  # Root workspace
-                    continue
-                pkg_name = pkg_info.get("name") or pkg_path.replace("node_modules/", "")
-                version = pkg_info.get("version", "0.1.0")
-                npm_installed_versions[pkg_name] = version
+    if not lockfile_path.exists():
+        raise ValueError(f"Required dependency inventory missing: {safe_rel_path(lockfile_path)}")
+    try:
+        data = json.loads(lockfile_path.read_text(encoding="utf-8"))
+        packages = data.get("packages")
+        if not isinstance(packages, dict):
+            raise ValueError("package-lock.json missing valid 'packages' object schema")
+        for pkg_path, pkg_info in packages.items():
+            if not pkg_path:  # Root workspace
+                continue
+            pkg_name = pkg_info.get("name") or pkg_path.replace("node_modules/", "")
+            version = pkg_info.get("version", "0.1.0")
+            npm_installed_versions[pkg_name] = version
 
-                if pkg_info.get("link"):
-                    # Local workspace package: no published artifact bytes; omit hashes (C2)
-                    purl = f"pkg:npm/{pkg_name.replace('@', '%40')}@{version}"
-                    components.append({
-                        "name": pkg_name,
-                        "version": version,
-                        "type": "library",
-                        "purl": purl,
-                        "bom-ref": purl,
-                        "supplier": {"name": "npm"},
-                        "licenses": [{"license": {"id": "MIT"}}],
-                    })
-                    root_deps.append(purl)
-                    continue
-
-                raw_lic = pkg_info.get("license") or "UNKNOWN"
-                spdx_lic = normalize_spdx_license(raw_lic)
-
+            if pkg_info.get("link"):
+                # Local workspace package: no published artifact bytes; omit hashes (C2)
                 purl = f"pkg:npm/{pkg_name.replace('@', '%40')}@{version}"
-
-                integrity = pkg_info.get("integrity", "")
-                hashes = []
-                if integrity.startswith("sha512-"):
-                    hashes.append({"alg": "SHA-512", "content": integrity.replace("sha512-", "")})
-                elif integrity.startswith("sha256-"):
-                    hashes.append({"alg": "SHA-256", "content": integrity.replace("sha256-", "")})
-                # C2: No authentic artifact bytes — omit hash entry rather than
-                # emit a coordinate-derived digest that falsely claims integrity.
-
-                component_obj: dict = {
+                components.append({
                     "name": pkg_name,
                     "version": version,
                     "type": "library",
                     "purl": purl,
                     "bom-ref": purl,
                     "supplier": {"name": "npm"},
-                    "licenses": make_license_entry(spdx_lic),
-                }
-                if hashes:
-                    component_obj["hashes"] = hashes
-                components.append(component_obj)
+                    "licenses": [{"license": {"id": "MIT"}}],
+                })
                 root_deps.append(purl)
+                continue
 
-                sub_deps = pkg_info.get("dependencies", {})
-                if sub_deps:
-                    raw_npm_sub_deps.append((purl, sub_deps))
+            raw_lic = pkg_info.get("license") or "UNKNOWN"
+            spdx_lic = normalize_spdx_license(raw_lic)
 
-        except Exception as e:
-            print(f"Warning: Failed to parse package-lock.json: {e}", file=sys.stderr)
+            purl = f"pkg:npm/{pkg_name.replace('@', '%40')}@{version}"
+
+            integrity = pkg_info.get("integrity", "")
+            hashes = []
+            if integrity.startswith("sha512-"):
+                hashes.append({"alg": "SHA-512", "content": integrity.replace("sha512-", "")})
+            elif integrity.startswith("sha256-"):
+                hashes.append({"alg": "SHA-256", "content": integrity.replace("sha256-", "")})
+            # C2: No authentic artifact bytes — omit hash entry rather than
+            # emit a coordinate-derived digest that falsely claims integrity.
+
+            component_obj: dict = {
+                "name": pkg_name,
+                "version": version,
+                "type": "library",
+                "purl": purl,
+                "bom-ref": purl,
+                "supplier": {"name": "npm"},
+                "licenses": make_license_entry(spdx_lic),
+            }
+            if hashes:
+                component_obj["hashes"] = hashes
+            components.append(component_obj)
+            root_deps.append(purl)
+
+            sub_deps = pkg_info.get("dependencies", {})
+            if sub_deps:
+                raw_npm_sub_deps.append((purl, sub_deps))
+
+    except Exception as e:
+        raise ValueError(f"Failed to parse package-lock.json: {e}") from e
 
     # Resolve npm sub-dependencies graph purls using exact lockfile versions
     for purl, sub_deps in raw_npm_sub_deps:
@@ -778,57 +726,59 @@ def generate_sbom(image_digest: str | None = None, release_digest: str | None = 
     # 2. Parse Python dependencies from uv.lock
     uv_lock_path = ROOT / "uv.lock"
     raw_py_sub_deps = []
-    if uv_lock_path.exists():
-        try:
-            with open(uv_lock_path, "rb") as f:
-                uv_data = tomllib.load(f)
-            packages = uv_data.get("package", [])
-            for pkg in packages:
-                name = pkg.get("name")
-                version = pkg.get("version")
-                if name and version:
-                    python_installed_versions[name] = version
+    if not uv_lock_path.exists():
+        raise ValueError(f"Required dependency inventory missing: {safe_rel_path(uv_lock_path)}")
+    try:
+        with open(uv_lock_path, "rb") as f:
+            uv_data = tomllib.load(f)
+        packages = uv_data.get("package")
+        if not isinstance(packages, list):
+            raise ValueError("uv.lock missing valid 'package' list schema")
+        for pkg in packages:
+            name = pkg.get("name")
+            version = pkg.get("version")
+            if name and version:
+                python_installed_versions[name] = version
 
-            for pkg in packages:
-                name = pkg.get("name")
-                version = pkg.get("version")
-                if name and version:
-                    purl = f"pkg:pypi/{name}@{version}"
-                    raw_lic = resolve_python_license(name, expected_version=version)
-                    spdx_lic = normalize_spdx_license(raw_lic)
+        for pkg in packages:
+            name = pkg.get("name")
+            version = pkg.get("version")
+            if name and version:
+                purl = f"pkg:pypi/{name}@{version}"
+                raw_lic = resolve_python_license(name, expected_version=version)
+                spdx_lic = normalize_spdx_license(raw_lic)
 
-                    hashes = []
-                    sdist_hash = (pkg.get("sdist") or {}).get("hash", "")
-                    wheels = pkg.get("wheels") or []
-                    wheel_hash = wheels[0].get("hash", "") if wheels else ""
+                hashes = []
+                sdist_hash = (pkg.get("sdist") or {}).get("hash", "")
+                wheels = pkg.get("wheels") or []
+                wheel_hash = wheels[0].get("hash", "") if wheels else ""
 
-                    target_hash = sdist_hash or wheel_hash
-                    if target_hash.startswith("sha256:"):
-                        hashes.append({"alg": "SHA-256", "content": target_hash.replace("sha256:", "")})
-                    elif target_hash.startswith("sha512:"):
-                        hashes.append({"alg": "SHA-512", "content": target_hash.replace("sha512:", "")})
-                    # C2: No authentic artifact bytes — omit hash entry rather
-                    # than emit a coordinate-derived digest.
+                target_hash = sdist_hash or wheel_hash
+                if target_hash.startswith("sha256:"):
+                    hashes.append({"alg": "SHA-256", "content": target_hash.replace("sha256:", "")})
+                elif target_hash.startswith("sha512:"):
+                    hashes.append({"alg": "SHA-512", "content": target_hash.replace("sha512:", "")})
 
-                    py_component: dict = {
-                        "name": name,
-                        "version": version,
-                        "type": "library",
-                        "purl": purl,
-                        "bom-ref": purl,
-                        "supplier": {"name": "pypi"},
-                        "licenses": make_license_entry(spdx_lic),
-                    }
-                    if hashes:
-                        py_component["hashes"] = hashes
-                    components.append(py_component)
-                    root_deps.append(purl)
+                py_component: dict = {
+                    "name": name,
+                    "version": version,
+                    "type": "library",
+                    "purl": purl,
+                    "bom-ref": purl,
+                    "supplier": {"name": "pypi"},
+                    "licenses": make_license_entry(spdx_lic),
+                }
+                if hashes:
+                    py_component["hashes"] = hashes
+                components.append(py_component)
+                root_deps.append(purl)
 
-                    pkg_deps = pkg.get("dependencies", [])
-                    if pkg_deps:
-                        raw_py_sub_deps.append((purl, pkg_deps))
-        except Exception as e:
-            print(f"Warning: Failed to parse uv.lock: {e}", file=sys.stderr)
+                pkg_deps = pkg.get("dependencies", [])
+                if pkg_deps:
+                    raw_py_sub_deps.append((purl, pkg_deps))
+    except Exception as e:
+        raise ValueError(f"Failed to parse uv.lock: {e}") from e
+
 
     # Resolve Python sub-dependencies graph purls using exact lockfile versions
     for purl, pkg_deps in raw_py_sub_deps:
@@ -892,8 +842,9 @@ def generate_sbom(image_digest: str | None = None, release_digest: str | None = 
     return sbom
 
 
-def check_license_policy(sbom: dict, require_digests: bool = False) -> tuple[bool, list[str]]:
-    allowed, denied, review_req, exempt_purls, exempt_names, ex_violations = load_license_policy()
+def check_license_policy(sbom: dict, require_digests: bool = False, scope: str = "prod") -> tuple[bool, list[str]]:
+    allowed, denied, review_req, exempt_purls, exempt_names, ex_violations = load_license_policy(target_scope=scope)
+
     violations = list(ex_violations)
 
     # Attestation digests check

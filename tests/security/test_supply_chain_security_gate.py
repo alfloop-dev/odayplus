@@ -857,3 +857,210 @@ def test_npm_audit_empty_stdout_nonzero_exit_fails_closed(tmp_path: Path) -> Non
         f"Expected 'exited with code' in violations, got: {violations}"
     )
 
+
+# ─── Round-6 negative tests (B1, B2, B3) ───
+
+
+def test_generate_sbom_fails_closed_on_malformed_package_lock(tmp_path: Path) -> None:
+    """B1 — malformed package-lock.json must cause generate_sbom to fail closed."""
+    sys.path.insert(0, str(ROOT))
+    import scripts.security.generate_sbom as sbom_mod
+
+    bad_lock = tmp_path / "package-lock.json"
+    bad_lock.write_text("{ malformed json }", encoding="utf-8")
+
+    orig_root = sbom_mod.ROOT
+    try:
+        sbom_mod.ROOT = tmp_path
+        (tmp_path / "uv.lock").write_text("[package]\n", encoding="utf-8")
+        with pytest.raises(ValueError, match="Failed to parse package-lock.json"):
+            sbom_mod.generate_sbom()
+    finally:
+        sbom_mod.ROOT = orig_root
+
+
+def test_generate_sbom_fails_closed_on_missing_package_lock(tmp_path: Path) -> None:
+    """B1 — missing package-lock.json must cause generate_sbom to fail closed."""
+    sys.path.insert(0, str(ROOT))
+    import scripts.security.generate_sbom as sbom_mod
+
+    orig_root = sbom_mod.ROOT
+    try:
+        sbom_mod.ROOT = tmp_path
+        (tmp_path / "uv.lock").write_text("[package]\n", encoding="utf-8")
+        with pytest.raises(ValueError, match="Required dependency inventory missing"):
+            sbom_mod.generate_sbom()
+    finally:
+        sbom_mod.ROOT = orig_root
+
+
+def test_generate_sbom_fails_closed_on_malformed_uv_lock(tmp_path: Path) -> None:
+    """B1 — malformed uv.lock must cause generate_sbom to fail closed."""
+    sys.path.insert(0, str(ROOT))
+    import scripts.security.generate_sbom as sbom_mod
+
+    orig_root = sbom_mod.ROOT
+    try:
+        sbom_mod.ROOT = tmp_path
+        (tmp_path / "package-lock.json").write_text('{"packages": {}}', encoding="utf-8")
+        (tmp_path / "uv.lock").write_text("invalid toml === ", encoding="utf-8")
+        with pytest.raises(ValueError, match="Failed to parse uv.lock"):
+            sbom_mod.generate_sbom()
+    finally:
+        sbom_mod.ROOT = orig_root
+
+
+def test_npm_audit_scanner_error_payload_rejected() -> None:
+    """B2 — parseable npm audit error JSON must be rejected and not return PASS."""
+    import unittest.mock
+    sys.path.insert(0, str(ROOT))
+    from scripts.security.vulnerability_scan import run_node_audit
+
+    fake_res = unittest.mock.MagicMock()
+    fake_res.stdout = json.dumps({"error": {"code": "ENOTFOUND", "summary": "registry unavailable"}})
+    fake_res.returncode = 1
+
+    with unittest.mock.patch("subprocess.run", return_value=fake_res):
+        ok, violations = run_node_audit("prod", exemptions=[])
+
+    assert not ok, "npm audit returning scanner error payload must fail closed"
+    assert any("scanner error payload" in v for v in violations)
+
+
+def test_npm_audit_missing_vulnerabilities_field_rejected() -> None:
+    """B2 — npm audit response missing vulnerabilities field must be rejected."""
+    import unittest.mock
+    sys.path.insert(0, str(ROOT))
+    from scripts.security.vulnerability_scan import run_node_audit
+
+    fake_res = unittest.mock.MagicMock()
+    fake_res.stdout = json.dumps({"status": "unknown"})
+    fake_res.returncode = 1
+
+    with unittest.mock.patch("subprocess.run", return_value=fake_res):
+        ok, violations = run_node_audit("prod", exemptions=[])
+
+    assert not ok, "npm audit missing vulnerabilities field must fail closed"
+    assert any("missing expected 'vulnerabilities' field" in v for v in violations)
+
+
+def test_pip_audit_scanner_error_payload_rejected() -> None:
+    """B2 — parseable pip-audit error JSON must be rejected and not return PASS."""
+    import unittest.mock
+    sys.path.insert(0, str(ROOT))
+    from scripts.security.vulnerability_scan import run_python_audit
+
+    fake_res = unittest.mock.MagicMock()
+    fake_res.stdout = json.dumps({"error": "PyPI index offline"})
+    fake_res.returncode = 1
+
+    with unittest.mock.patch("subprocess.run", return_value=fake_res):
+        ok, violations = run_python_audit("all", exemptions=[])
+
+    assert not ok, "pip-audit returning scanner error payload must fail closed"
+    assert any("scanner error payload" in v for v in violations)
+
+
+def test_pip_audit_missing_dependencies_field_rejected() -> None:
+    """B2 — pip-audit response missing dependencies field must be rejected."""
+    import unittest.mock
+    sys.path.insert(0, str(ROOT))
+    from scripts.security.vulnerability_scan import run_python_audit
+
+    fake_res = unittest.mock.MagicMock()
+    fake_res.stdout = json.dumps({"status": "unknown"})
+    fake_res.returncode = 1
+
+    with unittest.mock.patch("subprocess.run", return_value=fake_res):
+        ok, violations = run_python_audit("all", exemptions=[])
+
+    assert not ok, "pip-audit missing dependencies field must fail closed"
+    assert any("missing expected 'dependencies' field" in v for v in violations)
+
+
+def test_exemption_validator_positive_schema_and_ordering() -> None:
+    """B3 — exemption validator enforces ISO timestamps, temporal ordering, and valid reference contracts."""
+    sys.path.insert(0, str(ROOT))
+    from scripts.security.exemption_validator import validate_exemption_entry
+
+    # Invalid issued_at
+    bad_issued = {
+        "package_name": "pkg-a",
+        "vulnerability_id": "GHSA-123",
+        "status": "active",
+        "approved_by": "TEST-ONLY Jane Doe (Legal Counsel)",
+        "approval_reference": "SEC-REF-001",
+        "issued_at": "not-a-date",
+        "expires_at": "2099-12-31T23:59:59Z",
+        "scope": "dev",
+        "reason": "Testing invalid timestamp",
+    }
+    valid, violations = validate_exemption_entry(bad_issued, "vulnerability")
+    assert not valid
+    assert any("invalid issued_at" in v for v in violations)
+
+    # Trivial approval_reference
+    bad_ref = dict(bad_issued, issued_at="2026-01-01T00:00:00Z", approval_reference="x")
+    valid, violations = validate_exemption_entry(bad_ref, "vulnerability")
+    assert not valid
+    assert any("missing valid approval_reference" in v for v in violations)
+
+    # Invalid temporal ordering (expires_at <= issued_at)
+    bad_order = dict(
+        bad_issued,
+        issued_at="2026-06-01T00:00:00Z",
+        expires_at="2026-01-01T00:00:00Z",
+        approval_reference="SEC-REF-001",
+    )
+    valid, violations = validate_exemption_entry(bad_order, "vulnerability")
+    assert not valid
+    assert any("must be after issued_at" in v for v in violations)
+
+
+def test_dev_scoped_license_exemption_does_not_suppress_release_finding(tmp_path: Path) -> None:
+    """B3 — a dev-scoped license exemption must NOT suppress a GPL finding in release policy evaluation."""
+    sys.path.insert(0, str(ROOT))
+    import scripts.security.generate_sbom as sbom_mod
+
+    dev_exemption = tmp_path / "dev_license_exemption.json"
+    dev_exemption.write_text(
+        json.dumps({
+            "exemptions": [
+                {
+                    "package_name": "gpl-package",
+                    "purl": "pkg:npm/gpl-package@1.0.0",
+                    "reason": "Dev-only license exemption",
+                    "approved_by": "TEST-ONLY Jane Doe (Legal Counsel)",
+                    "approval_reference": "SEC-REF-001",
+                    "status": "active",
+                    "issued_at": "2026-01-01T00:00:00Z",
+                    "expires_at": "2099-12-31T23:59:59Z",
+                    "scope": "dev"
+                }
+            ]
+        }),
+        encoding="utf-8",
+    )
+
+    fake_sbom = {
+        "metadata": {"properties": []},
+        "components": [
+            {
+                "name": "gpl-package",
+                "version": "1.0.0",
+                "purl": "pkg:npm/gpl-package@1.0.0",
+                "licenses": [{"license": {"id": "GPL-3.0"}}],
+            }
+        ],
+    }
+
+    orig_path = sbom_mod.EXEMPTIONS_PATH
+    try:
+        sbom_mod.EXEMPTIONS_PATH = dev_exemption
+        # Release policy check (default scope="prod")
+        is_passed, violations = sbom_mod.check_license_policy(fake_sbom, scope="prod")
+        assert not is_passed, "dev-scoped license exemption must NOT suppress GPL finding in release policy gate"
+        assert any("Denied license 'GPL-3.0'" in v for v in violations)
+    finally:
+        sbom_mod.EXEMPTIONS_PATH = orig_path
+

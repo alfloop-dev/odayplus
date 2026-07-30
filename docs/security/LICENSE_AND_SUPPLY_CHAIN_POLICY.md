@@ -14,7 +14,7 @@ Every release candidate and build must produce a CycloneDX 1.5 compliant JSON So
   - `name`, `version`, `purl` (Package URL), `bom-ref`.
   - `supplier`: Component distribution channel (`npm`, `pypi`).
   - `licenses`: SPDX license identifiers or declared license names.
-  - `hashes`: Package integrity hashes (e.g., SHA-256 or SHA-512).
+  - `hashes`: Package integrity hashes (e.g., SHA-256 or SHA-512) for published packages with authentic artifact bytes; omitted when no authentic artifact bytes exist (such as for local workspace package links).
 - **Dependency Graph Scope**: Top-level `dependencies` array detailing explicit package relationships (`ref` -> `dependsOn`).
 - **Release Attestation Properties**:
   - `git-sha`: Exact Git commit SHA.
@@ -34,7 +34,7 @@ Every release candidate and build must produce a CycloneDX 1.5 compliant JSON So
 - **LGPL Decision**:
   - Weak copyleft licenses `LGPL-2.1` and `LGPL-3.0` variants (`LGPL-2.1-or-later`, `LGPL-3.0`, `LGPL-3.0-only`, `LGPL-3.0-or-later`) are explicitly allowed outright, while strong copyleft (`GPL-3.0`, `AGPL-3.0`) remains denied pending legal review.
 - **Review Required / Unclassified**:
-  - Requires named exemption entry in `docs/security/license_exemptions.json` specifying package name, purl, reason, and approving authority. AI agent names cannot serve as legal approvers; approving authorities must be designated human/ops or legal entities (e.g., `Human/Ops`).
+  - Requires named exemption entry in `docs/security/license_exemptions.json` specifying package name, purl, reason, and approving authority. Approving authorities must be named human/legal authorities (e.g., `"Jane Doe (Legal Counsel)"`). AI agent names, bare role tokens (such as `Human/Ops` or `Legal/Ops`), and placeholder strings cannot serve as legal approvers.
 
 ### Fail-Closed Enforcement:
 The release gate script `scripts/security/generate_sbom.py --check-policy` automatically parses all cataloged dependencies and verifies them against `docs/security/license_policy.json` and `docs/security/license_exemptions.json`.
@@ -57,4 +57,4 @@ Both production and development dependencies are audited continuously across bot
 - **Node Full & Prod Audit**: `npm audit --audit-level=high` (full/dev) and `npm audit --omit=dev --audit-level=high` (prod).
 - **Python Audit**: `uv run --with pip-audit pip-audit --local` (or `python3 scripts/security/vulnerability_scan.py`).
 
-Any `HIGH` or `CRITICAL` vulnerability finding must either be remediated immediately by package version upgrade or documented with an authoritative, non-expired risk receipt in `docs/security/vulnerability_exemptions.json` approved by `Human/Ops` or legal authority before code promotion. AI names cannot serve as risk exemption approvers.
+Any `HIGH` or `CRITICAL` vulnerability finding must either be remediated immediately by package version upgrade or documented with an authoritative, non-expired risk receipt in `docs/security/vulnerability_exemptions.json` approved by a named human/legal authority (e.g., `"Jane Doe (Legal Counsel)"`) before code promotion. AI names, bare role tokens (such as `Human/Ops` or `Legal/Ops`), and placeholder strings cannot serve as risk exemption approvers.
