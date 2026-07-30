@@ -82,6 +82,7 @@ class _Series:
             data["value"] = round(self.value, 6)
         return data
 
+
 class MetricsRegistry:
     """Holds metric definitions and their per-label-set series."""
 
@@ -92,7 +93,9 @@ class MetricsRegistry:
     def register(self, definition: MetricDefinition) -> MetricDefinition:
         existing = self._definitions.get(definition.name)
         if existing is not None and existing != definition:
-            raise ValueError(f"metric {definition.name!r} already registered with a different definition")
+            raise ValueError(
+                f"metric {definition.name!r} already registered with a different definition"
+            )
         self._definitions[definition.name] = definition
         return definition
 
@@ -111,7 +114,9 @@ class MetricsRegistry:
             self._series[key] = series
         return series
 
-    def increment(self, name: str, *, labels: Mapping[str, str] | None = None, amount: float = 1.0) -> None:
+    def increment(
+        self, name: str, *, labels: Mapping[str, str] | None = None, amount: float = 1.0
+    ) -> None:
         series = self._resolve(name, labels)
         if series.definition.type is not MetricType.COUNTER:
             raise TypeError(f"{name!r} is not a counter")
@@ -203,43 +208,130 @@ Cat = MetricCategory
 
 PLATFORM_METRICS: tuple[MetricDefinition, ...] = (
     # §5.1 Technical
-    MetricDefinition("api_request_count", C, Cat.TRAFFIC, "API request volume", ("service", "route", "status")),
-    MetricDefinition("api_error_count", C, Cat.ERROR, "API 4xx/5xx responses", ("service", "route", "status")),
-    MetricDefinition("api_latency_ms", H, Cat.LATENCY, "API latency P50/P95/P99", ("service", "route"), "ms"),
-    MetricDefinition("db_query_latency_ms", H, Cat.LATENCY, "DB query latency", ("query_group",), "ms"),
-    MetricDefinition("job_duration_seconds", H, Cat.JOB, "Batch job duration", ("job_type", "status"), "s"),
-    MetricDefinition("job_failure_count", C, Cat.JOB, "Batch job failures", ("job_type", "error_class")),
-    MetricDefinition("event_consumer_lag", G, Cat.QUEUE, "Event backlog", ("topic", "subscription")),
+    MetricDefinition(
+        "api_request_count", C, Cat.TRAFFIC, "API request volume", ("service", "route", "status")
+    ),
+    MetricDefinition(
+        "api_error_count", C, Cat.ERROR, "API 4xx/5xx responses", ("service", "route", "status")
+    ),
+    MetricDefinition(
+        "api_latency_ms", H, Cat.LATENCY, "API latency P50/P95/P99", ("service", "route"), "ms"
+    ),
+    MetricDefinition(
+        "db_query_latency_ms", H, Cat.LATENCY, "DB query latency", ("query_group",), "ms"
+    ),
+    MetricDefinition(
+        "job_duration_seconds", H, Cat.JOB, "Batch job duration", ("job_type", "status"), "s"
+    ),
+    MetricDefinition(
+        "job_failure_count", C, Cat.JOB, "Batch job failures", ("job_type", "error_class")
+    ),
+    MetricDefinition(
+        "event_consumer_lag", G, Cat.QUEUE, "Event backlog", ("topic", "subscription")
+    ),
     MetricDefinition("dlq_message_count", G, Cat.QUEUE, "Dead-letter queue depth", ("topic",)),
-    MetricDefinition("external_connector_failure_count", C, Cat.ERROR, "External source failures", ("source",)),
+    MetricDefinition(
+        "external_connector_failure_count", C, Cat.ERROR, "External source failures", ("source",)
+    ),
     # §5.2 Data / Model
-    MetricDefinition("data_freshness_hours", G, Cat.DATA, "Data freshness", ("source", "view"), "h"),
+    MetricDefinition(
+        "data_freshness_hours", G, Cat.DATA, "Data freshness", ("source", "view"), "h"
+    ),
     MetricDefinition("data_quality_score", G, Cat.DATA, "Data quality score", ("dataset", "run")),
     MetricDefinition("feature_null_rate", G, Cat.DATA, "Feature null rate", ("feature", "view")),
     MetricDefinition("prediction_count", C, Cat.MODEL, "Prediction volume", ("model", "module")),
-    MetricDefinition("model_error_metric", G, Cat.MODEL, "MAE/MAPE/RMSE", ("model", "horizon", "segment")),
-    MetricDefinition("prediction_interval_coverage", G, Cat.MODEL, "P80/P90 coverage", ("model", "horizon")),
+    MetricDefinition(
+        "model_error_metric", G, Cat.MODEL, "MAE/MAPE/RMSE", ("model", "horizon", "segment")
+    ),
+    MetricDefinition(
+        "prediction_interval_coverage", G, Cat.MODEL, "P80/P90 coverage", ("model", "horizon")
+    ),
     MetricDefinition("drift_score", G, Cat.MODEL, "Feature/model drift", ("feature", "model")),
-    MetricDefinition("model_alias_change_count", C, Cat.MODEL, "Release/rollback count", ("model",)),
+    MetricDefinition(
+        "model_alias_change_count", C, Cat.MODEL, "Release/rollback count", ("model",)
+    ),
     # §5.3 Business KPIs
-    MetricDefinition("heatzone_topk_adoption_rate", G, Cat.BUSINESS, "HeatZone Top-K survey adoption"),
+    MetricDefinition(
+        "heatzone_topk_adoption_rate", G, Cat.BUSINESS, "HeatZone Top-K survey adoption"
+    ),
     MetricDefinition("listing_dedup_accuracy", G, Cat.BUSINESS, "Listing dedup accuracy"),
-    MetricDefinition("sitescore_realization_rate", G, Cat.BUSINESS, "SiteScore M3/M6/M12 realization", ("horizon",)),
-    MetricDefinition("forecast_alert_precision", G, Cat.BUSINESS, "Forecast alert precision/recall/lead time", ("metric",)),
-    MetricDefinition("intervention_recovery_rate", G, Cat.BUSINESS, "Intervention 14/28-day recovery", ("window",)),
-    MetricDefinition("price_hard_constraint_violation_count", C, Cat.BUSINESS, "Price hard-constraint violations"),
-    MetricDefinition("adlift_incremental_gm", G, Cat.BUSINESS, "AdLift incremental GM / iROMI", ("metric",)),
+    MetricDefinition(
+        "sitescore_realization_rate",
+        G,
+        Cat.BUSINESS,
+        "SiteScore M3/M6/M12 realization",
+        ("horizon",),
+    ),
+    MetricDefinition(
+        "forecast_alert_precision",
+        G,
+        Cat.BUSINESS,
+        "Forecast alert precision/recall/lead time",
+        ("metric",),
+    ),
+    MetricDefinition(
+        "intervention_recovery_rate",
+        G,
+        Cat.BUSINESS,
+        "Intervention 14/28-day recovery",
+        ("window",),
+    ),
+    MetricDefinition(
+        "price_hard_constraint_violation_count", C, Cat.BUSINESS, "Price hard-constraint violations"
+    ),
+    MetricDefinition(
+        "adlift_incremental_gm", G, Cat.BUSINESS, "AdLift incremental GM / iROMI", ("metric",)
+    ),
     MetricDefinition("avm_interval_coverage", G, Cat.BUSINESS, "AVM interval coverage"),
-    MetricDefinition("netplan_plan_adoption_rate", G, Cat.BUSINESS, "NetPlan plan adoption/outcome"),
-    MetricDefinition("model_adoption_rate", G, Cat.BUSINESS, "Model adoption / override rate", ("kind",)),
+    MetricDefinition(
+        "netplan_plan_adoption_rate", G, Cat.BUSINESS, "NetPlan plan adoption/outcome"
+    ),
+    MetricDefinition(
+        "model_adoption_rate", G, Cat.BUSINESS, "Model adoption / override rate", ("kind",)
+    ),
     # §7 / §10 Audit trail and evidence export
-    MetricDefinition("audit_event_record_count", C, Cat.AUDIT, "Audit events durably recorded", ("event_type", "action", "result")),
-    MetricDefinition("audit_event_write_failure_count", C, Cat.ERROR, "Audit event write failures", ("event_type", "action", "error_class")),
-    MetricDefinition("audit_event_pipeline_lag_seconds", H, Cat.AUDIT, "Audit pipeline write lag", ("sink", "event_type"), "s"),
-    MetricDefinition("audit_event_replay_count", C, Cat.AUDIT, "Audit dead-letter replay attempts", ("result",)),
-    MetricDefinition("audit_evidence_export_count", C, Cat.AUDIT, "Audit evidence exports", ("scope", "result")),
-    MetricDefinition("audit_completeness_gap_count", C, Cat.AUDIT, "Missing required audit timeline events", ("rule", "resource", "missing_event_type")),
-    MetricDefinition("deployment_watch_window_status", G, Cat.JOB, "Deployment watch window status (1=WATCH_PASSED, 0=WATCH_FAILED)", ("release_sha", "status")),
+    MetricDefinition(
+        "audit_event_record_count",
+        C,
+        Cat.AUDIT,
+        "Audit events durably recorded",
+        ("event_type", "action", "result"),
+    ),
+    MetricDefinition(
+        "audit_event_write_failure_count",
+        C,
+        Cat.ERROR,
+        "Audit event write failures",
+        ("event_type", "action", "error_class"),
+    ),
+    MetricDefinition(
+        "audit_event_pipeline_lag_seconds",
+        H,
+        Cat.AUDIT,
+        "Audit pipeline write lag",
+        ("sink", "event_type"),
+        "s",
+    ),
+    MetricDefinition(
+        "audit_event_replay_count", C, Cat.AUDIT, "Audit dead-letter replay attempts", ("result",)
+    ),
+    MetricDefinition(
+        "audit_evidence_export_count", C, Cat.AUDIT, "Audit evidence exports", ("scope", "result")
+    ),
+    MetricDefinition(
+        "audit_completeness_gap_count",
+        C,
+        Cat.AUDIT,
+        "Missing required audit timeline events",
+        ("rule", "resource", "missing_event_type"),
+    ),
+    MetricDefinition(
+        "deployment_watch_window_status",
+        G,
+        Cat.JOB,
+        "Deployment watch window status (1=WATCH_PASSED, 0=WATCH_FAILED)",
+        ("release_sha", "status"),
+    ),
 )
 
 
@@ -258,7 +350,7 @@ def default_registry() -> MetricsRegistry:
 
 import json
 import os
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 from shared.observability.watch_window import validate_full_sha
@@ -284,7 +376,9 @@ def get_gcp_adc_token() -> str | None:
     except Exception:
         pass
 
-    metadata_url = "http://169.254.169.254/computeMetadata/v1/instance/service-accounts/default/token"
+    metadata_url = (
+        "http://169.254.169.254/computeMetadata/v1/instance/service-accounts/default/token"
+    )
     try:
         import urllib.request
 
@@ -324,7 +418,9 @@ def get_monitoring_provider_route(provider_route: str | None = None) -> str:
                 "On-call alert route cannot be used as a Cloud Monitoring / metrics provider endpoint. Fail-closed gate enforced."
             )
         if not (candidate_str.startswith("http://") or candidate_str.startswith("https://")):
-            raise ValueError("Monitoring provider endpoint must be a valid HTTP/HTTPS URL. Fail-closed gate enforced.")
+            raise ValueError(
+                "Monitoring provider endpoint must be a valid HTTP/HTTPS URL. Fail-closed gate enforced."
+            )
         return candidate_str
 
     return "https://monitoring.googleapis.com/v3"
@@ -375,7 +471,9 @@ class ProductionMetricsExporter:
     ) -> None:
         self.release_sha = validate_full_sha(release_sha, "release_sha")
         self.registry = registry or default_registry()
-        self.gcp_project = gcp_project or os.getenv("GCP_PROJECT") or os.getenv("GOOGLE_CLOUD_PROJECT")
+        self.gcp_project = (
+            gcp_project or os.getenv("GCP_PROJECT") or os.getenv("GOOGLE_CLOUD_PROJECT")
+        )
         self.provider_route = provider_route
         self.http_transport = http_transport or self._default_http_transport
 
@@ -447,7 +545,9 @@ class ProductionMetricsExporter:
     def export_metrics(self) -> dict[str, Any]:
         """Export all metric series from the registry with release_sha binding via Cloud Monitoring timeSeries API and perform independent readback."""
         if not self.gcp_project or not str(self.gcp_project).strip():
-            raise ValueError("GCP_PROJECT environment variable is missing or unconfigured. Fail-closed gate enforced.")
+            raise ValueError(
+                "GCP_PROJECT environment variable is missing or unconfigured. Fail-closed gate enforced."
+            )
 
         route_str = get_monitoring_provider_route(self.provider_route)
         gcp_proj = str(self.gcp_project).strip()
@@ -492,7 +592,11 @@ class ProductionMetricsExporter:
         ]
 
         # 1. Cloud Monitoring projects.timeSeries.create write call (API-native single timeSeries body via POST)
-        write_endpoint = f"{route_str}/projects/{gcp_proj}/timeSeries" if not route_str.endswith("/timeSeries") else route_str
+        write_endpoint = (
+            f"{route_str}/projects/{gcp_proj}/timeSeries"
+            if not route_str.endswith("/timeSeries")
+            else route_str
+        )
         write_request_payload = {
             "timeSeries": time_series_list,
         }
@@ -505,7 +609,9 @@ class ProductionMetricsExporter:
                 payload=write_request_payload,
             )
         except Exception as exc:
-            raise RuntimeError(f"Cloud Monitoring / metrics provider export call failed: {exc}") from exc
+            raise RuntimeError(
+                f"Cloud Monitoring / metrics provider export call failed: {exc}"
+            ) from exc
 
         if not (200 <= http_status < 300):
             raise RuntimeError(
@@ -514,8 +620,11 @@ class ProductionMetricsExporter:
 
         # 2. Independent GET / list readback call to validate persisted metric series and project/release_sha binding
         readback_endpoint = write_endpoint
+        start_iso = (datetime.now(UTC) - timedelta(minutes=15)).isoformat()
         readback_params = {
             "filter": f'metric.labels.release_sha="{self.release_sha}"',
+            "interval.startTime": start_iso,
+            "interval.endTime": now_iso,
         }
 
         try:
@@ -526,7 +635,9 @@ class ProductionMetricsExporter:
                 params=readback_params,
             )
         except Exception as exc:
-            raise RuntimeError(f"Cloud Monitoring / metrics provider readback call failed: {exc}") from exc
+            raise RuntimeError(
+                f"Cloud Monitoring / metrics provider readback call failed: {exc}"
+            ) from exc
 
         if not (200 <= readback_status_code < 300):
             raise RuntimeError(
@@ -534,7 +645,9 @@ class ProductionMetricsExporter:
             )
 
         if not isinstance(readback_resp, dict):
-            raise RuntimeError("Cloud Monitoring / metrics provider returned non-object response. Fail-closed gate enforced.")
+            raise RuntimeError(
+                "Cloud Monitoring / metrics provider returned non-object response. Fail-closed gate enforced."
+            )
 
         # Validate project binding in readback response if present and non-empty
         if readback_resp.get("gcp_project") is not None:
@@ -559,26 +672,95 @@ class ProductionMetricsExporter:
                 f"Cloud Monitoring / metrics provider readback returned zero timeSeries for release_sha '{self.release_sha}'. Fail-closed gate enforced."
             )
 
+        verified_points_count = 0
+        observed_types: set[str] = set()
+
         for ts_item in returned_series:
             if not isinstance(ts_item, dict):
-                raise RuntimeError("Cloud Monitoring readback contains non-object timeSeries item. Fail-closed gate enforced.")
-            res_proj = ts_item.get("resource", {}).get("labels", {}).get("project_id")
-            if res_proj and str(res_proj).strip() != gcp_proj:
                 raise RuntimeError(
-                    f"Cloud Monitoring readback timeSeries project mismatch: expected '{gcp_proj}', got '{res_proj}'. Fail-closed gate enforced."
+                    "Cloud Monitoring readback contains non-object timeSeries item. Fail-closed gate enforced."
                 )
+
+            metric_type = ts_item.get("metric", {}).get("type")
+            if not metric_type or not isinstance(metric_type, str) or not metric_type.strip():
+                raise RuntimeError(
+                    "Cloud Monitoring readback timeSeries missing valid metric.type. Fail-closed gate enforced."
+                )
+
+            res_proj = ts_item.get("resource", {}).get("labels", {}).get("project_id")
+            if not res_proj or str(res_proj).strip() != gcp_proj:
+                raise RuntimeError(
+                    f"Cloud Monitoring readback timeSeries project mismatch or missing: expected '{gcp_proj}', got '{res_proj}'. Fail-closed gate enforced."
+                )
+
             metric_sha = ts_item.get("metric", {}).get("labels", {}).get("release_sha")
             if not metric_sha or str(metric_sha).strip().lower() != self.release_sha:
                 raise RuntimeError(
                     f"Cloud Monitoring readback timeSeries release_sha mismatch: expected '{self.release_sha}', got '{metric_sha}'. Fail-closed gate enforced."
                 )
 
+            pts = ts_item.get("points")
+            if not isinstance(pts, list) or len(pts) == 0:
+                raise RuntimeError(
+                    f"Cloud Monitoring readback timeSeries for '{metric_type}' contains empty points array. Fail-closed gate enforced."
+                )
+
+            for pt in pts:
+                if not isinstance(pt, dict):
+                    raise RuntimeError(
+                        "Cloud Monitoring readback contains non-object point item. Fail-closed gate enforced."
+                    )
+
+                interval = pt.get("interval", {})
+                end_ts = interval.get("endTime") or interval.get("startTime")
+                if not end_ts or not isinstance(end_ts, str):
+                    raise RuntimeError(
+                        f"Cloud Monitoring readback point in '{metric_type}' missing timestamp interval. Fail-closed gate enforced."
+                    )
+                try:
+                    pt_dt = datetime.fromisoformat(end_ts.strip())
+                    if pt_dt.tzinfo is None:
+                        pt_dt = pt_dt.replace(tzinfo=UTC)
+                except Exception as exc:
+                    raise RuntimeError(
+                        f"Cloud Monitoring readback point in '{metric_type}' has invalid timestamp '{end_ts}': {exc}. Fail-closed gate enforced."
+                    ) from exc
+
+                val_dict = pt.get("value")
+                if val_dict is None:
+                    raise RuntimeError(
+                        f"Cloud Monitoring readback point in '{metric_type}' missing value payload. Fail-closed gate enforced."
+                    )
+                val = (
+                    val_dict.get("doubleValue", val_dict.get("int64Value", val_dict.get("value")))
+                    if isinstance(val_dict, dict)
+                    else pt.get("value")
+                )
+                if val is None:
+                    raise RuntimeError(
+                        f"Cloud Monitoring readback point in '{metric_type}' missing numerical value. Fail-closed gate enforced."
+                    )
+                try:
+                    _ = float(val)
+                except (ValueError, TypeError) as exc:
+                    raise RuntimeError(
+                        f"Cloud Monitoring readback point in '{metric_type}' has non-numeric value '{val}': {exc}. Fail-closed gate enforced."
+                    ) from exc
+
+                verified_points_count += 1
+
+            observed_types.add(metric_type)
+
+        if verified_points_count == 0:
+            raise RuntimeError(
+                f"Cloud Monitoring readback verified zero valid points for release_sha '{self.release_sha}'. Fail-closed gate enforced."
+            )
+
         import hashlib
 
-        integrity_digest = hashlib.sha256(
-            f"{gcp_proj}:{self.release_sha}:{len(returned_series)}".encode()
-        ).hexdigest()[:12]
-        export_receipt_id = f"gcp-cm-readback-{self.release_sha[:12]}-{integrity_digest}"
+        digest_payload = f"{gcp_proj}:{self.release_sha}:{len(returned_series)}:{verified_points_count}:{','.join(sorted(observed_types))}"
+        integrity_digest = hashlib.sha256(digest_payload.encode("utf-8")).hexdigest()
+        export_receipt_id = f"gcp-cm-readback-{self.release_sha[:12]}-{integrity_digest[:16]}"
 
         return {
             "release_sha": self.release_sha,
@@ -613,9 +795,13 @@ def render_dashboard_provisioning(
     """
     clean_sha = validate_full_sha(release_sha, "release_sha")
 
-    target_gcp_project = gcp_project or os.getenv("GCP_PROJECT") or os.getenv("GOOGLE_CLOUD_PROJECT")
+    target_gcp_project = (
+        gcp_project or os.getenv("GCP_PROJECT") or os.getenv("GOOGLE_CLOUD_PROJECT")
+    )
     if not target_gcp_project or not str(target_gcp_project).strip():
-        raise ValueError("GCP_PROJECT environment variable is missing or unconfigured. Fail-closed gate enforced.")
+        raise ValueError(
+            "GCP_PROJECT environment variable is missing or unconfigured. Fail-closed gate enforced."
+        )
 
     route_str = get_monitoring_provider_route(provider_route)
     v1_route = route_str.rsplit("/v3", 1)[0] + "/v1" if "/v3" in route_str else f"{route_str}/v1"
@@ -627,7 +813,9 @@ def render_dashboard_provisioning(
         config_path = Path(config_path)
 
     if not config_path.exists():
-        raise ValueError(f"Dashboard configuration file missing at '{config_path}'. Fail-closed gate enforced.")
+        raise ValueError(
+            f"Dashboard configuration file missing at '{config_path}'. Fail-closed gate enforced."
+        )
 
     raw_text = config_path.read_text(encoding="utf-8")
     substituted_text = raw_text.replace("${RELEASE_SHA}", clean_sha)
@@ -662,7 +850,11 @@ def render_dashboard_provisioning(
     last_resp_data: dict[str, Any] = {}
 
     transport = http_transport or ProductionMetricsExporter._default_http_transport
-    endpoint = f"{v1_route}/projects/{gcp_proj}/dashboards" if not v1_route.endswith("/dashboards") else v1_route
+    endpoint = (
+        f"{v1_route}/projects/{gcp_proj}/dashboards"
+        if not v1_route.endswith("/dashboards")
+        else v1_route
+    )
 
     for dash in dashboards_list:
         dash_body = dict(dash) if isinstance(dash, dict) else {}
@@ -684,7 +876,9 @@ def render_dashboard_provisioning(
                 "dashboard_resource_ids": dashboard_resource_ids,
                 "error": f"Dashboard provider adapter connection failed: {exc}",
             }
-            raise ValueError(f"Dashboard provider adapter unreachable or failed: {exc}. Readback status BLOCKED. Fail-closed gate enforced.") from exc
+            raise ValueError(
+                f"Dashboard provider adapter unreachable or failed: {exc}. Readback status BLOCKED. Fail-closed gate enforced."
+            ) from exc
 
         if not (200 <= http_status < 300) or not isinstance(resp_data, dict):
             data["provisioning_readback"] = {
@@ -696,15 +890,25 @@ def render_dashboard_provisioning(
                 "dashboard_resource_ids": dashboard_resource_ids,
                 "error": f"HTTP {http_status}: {resp_data}",
             }
-            raise ValueError(f"Dashboard provider rejected provisioning with HTTP {http_status}: {resp_data}. Readback status LIVE_UNVERIFIED. Fail-closed gate enforced.")
+            raise ValueError(
+                f"Dashboard provider rejected provisioning with HTTP {http_status}: {resp_data}. Readback status LIVE_UNVERIFIED. Fail-closed gate enforced."
+            )
 
         name = resp_data.get("name") or f"projects/{gcp_proj}/dashboards/platform-health"
         created_dashboard_names.append(name)
         last_resp_data = resp_data
 
     # 2. Independent GET readback call to validate created dashboard resource and project binding
-    created_dashboard_name = created_dashboard_names[0] if created_dashboard_names else f"projects/{gcp_proj}/dashboards/platform-health"
-    readback_endpoint = f"{v1_route}/{created_dashboard_name}" if not created_dashboard_name.startswith("http") else created_dashboard_name
+    created_dashboard_name = (
+        created_dashboard_names[0]
+        if created_dashboard_names
+        else f"projects/{gcp_proj}/dashboards/platform-health"
+    )
+    readback_endpoint = (
+        f"{v1_route}/{created_dashboard_name}"
+        if not created_dashboard_name.startswith("http")
+        else created_dashboard_name
+    )
 
     try:
         readback_code, readback_resp = _invoke_transport(
@@ -713,10 +917,14 @@ def render_dashboard_provisioning(
             url=readback_endpoint,
         )
     except Exception as exc:
-        raise ValueError(f"Dashboard provider readback call failed: {exc}. Readback status LIVE_UNVERIFIED. Fail-closed gate enforced.") from exc
+        raise ValueError(
+            f"Dashboard provider readback call failed: {exc}. Readback status LIVE_UNVERIFIED. Fail-closed gate enforced."
+        ) from exc
 
     if not (200 <= readback_code < 300) or not isinstance(readback_resp, dict):
-        raise ValueError(f"Dashboard provider readback failed with HTTP {readback_code}: {readback_resp}. Readback status LIVE_UNVERIFIED. Fail-closed gate enforced.")
+        raise ValueError(
+            f"Dashboard provider readback failed with HTTP {readback_code}: {readback_resp}. Readback status LIVE_UNVERIFIED. Fail-closed gate enforced."
+        )
 
     # Validate project binding in readback response if present and non-empty
     if readback_resp.get("gcp_project") is not None:
@@ -747,7 +955,11 @@ def render_dashboard_provisioning(
         or last_resp_data.get("receipt_id")
         or last_resp_data.get("name")
     )
-    if not provider_receipt_id or not isinstance(provider_receipt_id, str) or provider_receipt_id.startswith("local-"):
+    if (
+        not provider_receipt_id
+        or not isinstance(provider_receipt_id, str)
+        or provider_receipt_id.startswith("local-")
+    ):
         data["provisioning_readback"] = {
             "receipt_id": None,
             "readback_status": "LIVE_UNVERIFIED",
@@ -757,9 +969,13 @@ def render_dashboard_provisioning(
             "dashboard_resource_ids": dashboard_resource_ids,
             "error": "Missing authentic provider-issued receipt_id",
         }
-        raise ValueError("Dashboard provider response missing authentic provider-issued receipt_id. Readback status LIVE_UNVERIFIED. Fail-closed gate enforced.")
+        raise ValueError(
+            "Dashboard provider response missing authentic provider-issued receipt_id. Readback status LIVE_UNVERIFIED. Fail-closed gate enforced."
+        )
 
-    readback_status = readback_resp.get("readback_status", last_resp_data.get("readback_status", "PROVISIONED"))
+    readback_status = readback_resp.get(
+        "readback_status", last_resp_data.get("readback_status", "PROVISIONED")
+    )
     if readback_status != "PROVISIONED":
         data["provisioning_readback"] = {
             "receipt_id": provider_receipt_id,
@@ -770,7 +986,9 @@ def render_dashboard_provisioning(
             "dashboard_resource_ids": dashboard_resource_ids,
             "error": f"Provider readback status '{readback_status}'",
         }
-        raise ValueError(f"Dashboard provider readback status '{readback_status}'. Readback status LIVE_UNVERIFIED. Fail-closed gate enforced.")
+        raise ValueError(
+            f"Dashboard provider readback status '{readback_status}'. Readback status LIVE_UNVERIFIED. Fail-closed gate enforced."
+        )
 
     data["provisioning_readback"] = {
         "receipt_id": provider_receipt_id,

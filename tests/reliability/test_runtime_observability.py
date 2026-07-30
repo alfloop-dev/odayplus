@@ -531,6 +531,7 @@ def test_alert_routing_and_real_notification_delivery() -> None:
     from shared.observability.alerts import AlertRouter
 
     repo = InMemoryNotificationRepository()
+
     def mock_transport(url: str, payload: dict) -> tuple[int, dict]:
         return (200, {"status": "ok", "delivered": True})
 
@@ -625,6 +626,7 @@ def test_unconfigured_route_fails_closed(tmp_path: Path) -> None:
     from shared.observability.alerts import AlertRouter
 
     repo = InMemoryNotificationRepository()
+
     def mock_200_transport(url: str, payload: dict) -> tuple[int, str]:
         return (200, "ok")
 
@@ -643,7 +645,9 @@ def test_unconfigured_route_fails_closed(tmp_path: Path) -> None:
     with pytest.raises(ValueError, match="is unconfigured. Fail-closed gate enforced."):
         router.route_alert("audit-write-failure")
 
-    with pytest.raises(ValueError, match="Alert routing default_receiver or routes must be configured."):
+    with pytest.raises(
+        ValueError, match="Alert routing default_receiver or routes must be configured."
+    ):
         router.validate_routing_config()
 
     # Test 3: Route with unmatched severity and missing default_receiver
@@ -709,14 +713,14 @@ def test_release_sha_dashboard_traceability_and_watch_window_receipt(tmp_path: P
             "timeSeries": [
                 {
                     "metric": {
-                        "type": "custom.googleapis.com/deployment_watch_window_status",
+                        "type": "custom.googleapis.com/api_latency_ms",
                         "labels": {"release_sha": r_sha},
                     },
                     "resource": {"type": "global", "labels": {"project_id": g_proj}},
                     "points": [
                         {
                             "interval": {"endTime": end_dt.isoformat()},
-                            "value": {"doubleValue": 1.0},
+                            "value": {"doubleValue": 12.5},
                         }
                     ],
                 }
@@ -779,11 +783,19 @@ def test_watch_window_receipt_negative_cases(tmp_path: Path) -> None:
             "timeSeries": [
                 {
                     "metric": {
-                        "type": "custom.googleapis.com/deployment_watch_window_status",
+                        "type": "custom.googleapis.com/api_latency_ms",
                         "labels": {"release_sha": valid_sha_1},
                     },
-                    "resource": {"type": "global", "labels": {"project_id": "alfaloop-data-project"}},
-                    "points": [{"value": {"doubleValue": 1.0}}],
+                    "resource": {
+                        "type": "global",
+                        "labels": {"project_id": "alfaloop-data-project"},
+                    },
+                    "points": [
+                        {
+                            "interval": {"endTime": end_dt.isoformat()},
+                            "value": {"doubleValue": 12.5},
+                        }
+                    ],
                 }
             ],
         }
@@ -819,11 +831,19 @@ def test_watch_window_receipt_negative_cases(tmp_path: Path) -> None:
             "timeSeries": [
                 {
                     "metric": {
-                        "type": "custom.googleapis.com/deployment_watch_window_status",
+                        "type": "custom.googleapis.com/api_error_count",
                         "labels": {"release_sha": valid_sha_1},
                     },
-                    "resource": {"type": "global", "labels": {"project_id": "alfaloop-data-project"}},
-                    "points": [{"value": {"doubleValue": 0.0}}],
+                    "resource": {
+                        "type": "global",
+                        "labels": {"project_id": "alfaloop-data-project"},
+                    },
+                    "points": [
+                        {
+                            "interval": {"endTime": end_dt.isoformat()},
+                            "value": {"doubleValue": 5.0},
+                        }
+                    ],
                 }
             ],
         }
@@ -884,9 +904,17 @@ def test_watch_window_binding_mismatch_mutations(tmp_path: Path) -> None:
         return 200, {
             "timeSeries": [
                 {
-                    "metric": {"labels": {"release_sha": valid_sha}},
+                    "metric": {
+                        "type": "custom.googleapis.com/api_latency_ms",
+                        "labels": {"release_sha": valid_sha},
+                    },
                     "resource": {"labels": {"project_id": "wrong-gcp-project"}},
-                    "points": [{"value": {"doubleValue": 1.0}}],
+                    "points": [
+                        {
+                            "interval": {"endTime": end_dt.isoformat()},
+                            "value": {"doubleValue": 12.5},
+                        }
+                    ],
                 }
             ]
         }
@@ -913,9 +941,17 @@ def test_watch_window_binding_mismatch_mutations(tmp_path: Path) -> None:
         return 200, {
             "timeSeries": [
                 {
-                    "metric": {"labels": {"release_sha": "20c620969a90627e4a67053a4708658f99faa07f"}},
+                    "metric": {
+                        "type": "custom.googleapis.com/api_latency_ms",
+                        "labels": {"release_sha": "20c620969a90627e4a67053a4708658f99faa07f"},
+                    },
                     "resource": {"labels": {"project_id": "alfaloop-data-project"}},
-                    "points": [{"value": {"doubleValue": 1.0}}],
+                    "points": [
+                        {
+                            "interval": {"endTime": end_dt.isoformat()},
+                            "value": {"doubleValue": 12.5},
+                        }
+                    ],
                 }
             ]
         }
@@ -953,8 +989,8 @@ def test_watch_window_binding_mismatch_mutations(tmp_path: Path) -> None:
             query_transport=empty_data_transport,
         )
 
-    # Mutation 4: Metric value indicates failure (0.0) when requested status is 1
-    def failed_value_transport(
+    # Mutation 4: Error count > 0 in provider response when requested status is 1
+    def error_count_transport(
         method: str,
         url: str,
         params: dict | None = None,
@@ -963,14 +999,19 @@ def test_watch_window_binding_mismatch_mutations(tmp_path: Path) -> None:
         return 200, {
             "timeSeries": [
                 {
-                    "metric": {"labels": {"release_sha": valid_sha}},
+                    "metric": {
+                        "type": "custom.googleapis.com/api_error_count",
+                        "labels": {"release_sha": valid_sha},
+                    },
                     "resource": {"labels": {"project_id": "alfaloop-data-project"}},
-                    "points": [{"value": {"doubleValue": 0.0}}],
+                    "points": [
+                        {"interval": {"endTime": end_dt.isoformat()}, "value": {"doubleValue": 3.0}}
+                    ],
                 }
             ]
         }
 
-    with pytest.raises(ValueError, match="metric value indicates failure"):
+    with pytest.raises(ValueError, match="metric values indicate health/error failure"):
         record_deployment_watch_window_status(
             release_sha=valid_sha,
             status=1,
@@ -979,10 +1020,123 @@ def test_watch_window_binding_mismatch_mutations(tmp_path: Path) -> None:
             receipt_path=receipt_file,
             gcp_project="alfaloop-data-project",
             provider_route=monitoring_route,
-            query_transport=failed_value_transport,
+            query_transport=error_count_transport,
         )
 
-    # Mutation 5: Passing on-call alert route as monitoring provider_route fails closed
+    # Mutation 5: Circular status metric returned in watch window readback
+    def circular_metric_transport(
+        method: str,
+        url: str,
+        params: dict | None = None,
+        payload: dict | None = None,
+    ) -> tuple[int, dict]:
+        return 200, {
+            "timeSeries": [
+                {
+                    "metric": {
+                        "type": "custom.googleapis.com/deployment_watch_window_status",
+                        "labels": {"release_sha": valid_sha},
+                    },
+                    "resource": {"labels": {"project_id": "alfaloop-data-project"}},
+                    "points": [
+                        {"interval": {"endTime": end_dt.isoformat()}, "value": {"doubleValue": 1.0}}
+                    ],
+                }
+            ]
+        }
+
+    with pytest.raises(ValueError, match="deployment_watch_window_status metric type"):
+        record_deployment_watch_window_status(
+            release_sha=valid_sha,
+            status=1,
+            start_time=start_dt,
+            end_time=end_dt,
+            receipt_path=receipt_file,
+            gcp_project="alfaloop-data-project",
+            provider_route=monitoring_route,
+            query_transport=circular_metric_transport,
+        )
+
+    # Mutation 6: Point timestamp outside requested watch window
+    def out_of_window_transport(
+        method: str,
+        url: str,
+        params: dict | None = None,
+        payload: dict | None = None,
+    ) -> tuple[int, dict]:
+        old_ts = (datetime.now(UTC) - timedelta(hours=5)).isoformat()
+        return 200, {
+            "timeSeries": [
+                {
+                    "metric": {
+                        "type": "custom.googleapis.com/api_latency_ms",
+                        "labels": {"release_sha": valid_sha},
+                    },
+                    "resource": {"labels": {"project_id": "alfaloop-data-project"}},
+                    "points": [{"interval": {"endTime": old_ts}, "value": {"doubleValue": 12.5}}],
+                }
+            ]
+        }
+
+    with pytest.raises(ValueError, match="lies outside requested watch window"):
+        record_deployment_watch_window_status(
+            release_sha=valid_sha,
+            status=1,
+            start_time=start_dt,
+            end_time=end_dt,
+            receipt_path=receipt_file,
+            gcp_project="alfaloop-data-project",
+            provider_route=monitoring_route,
+            query_transport=out_of_window_transport,
+        )
+
+    # Mutation 7: Tampered receipt artifact fails canonical SHA-256 integrity verification
+    def valid_latency_transport(
+        method: str,
+        url: str,
+        params: dict | None = None,
+        payload: dict | None = None,
+    ) -> tuple[int, dict]:
+        return 200, {
+            "timeSeries": [
+                {
+                    "metric": {
+                        "type": "custom.googleapis.com/api_latency_ms",
+                        "labels": {"release_sha": valid_sha},
+                    },
+                    "resource": {"labels": {"project_id": "alfaloop-data-project"}},
+                    "points": [
+                        {
+                            "interval": {"endTime": end_dt.isoformat()},
+                            "value": {"doubleValue": 10.0},
+                        }
+                    ],
+                }
+            ]
+        }
+
+    record_deployment_watch_window_status(
+        release_sha=valid_sha,
+        status=1,
+        start_time=start_dt,
+        end_time=end_dt,
+        receipt_path=receipt_file,
+        gcp_project="alfaloop-data-project",
+        provider_route=monitoring_route,
+        query_transport=valid_latency_transport,
+    )
+
+    # Tamper with receipt file
+    receipt_content = json.loads(receipt_file.read_text(encoding="utf-8"))
+    receipt_content["verified_points_count"] = 999  # Tamper point count
+    receipt_file.write_text(json.dumps(receipt_content, indent=2), encoding="utf-8")
+
+    from shared.observability.watch_window import verify_watch_window_receipt
+
+    with pytest.raises(ValueError, match="canonical SHA-256 digest mismatch"):
+        verify_watch_window_receipt(expected_release_sha=valid_sha, receipt_path=receipt_file)
+
+    # Mutation 8: Passing on-call alert route as monitoring provider_route fails closed
     with pytest.raises(ValueError, match="On-call alert route|ONCALL_ENDPOINT_URL"):
         record_deployment_watch_window_status(
             release_sha=valid_sha,
@@ -1003,7 +1157,9 @@ def test_production_metrics_exporter_and_dashboard_provisioning() -> None:
     )
 
     registry = default_registry()
-    registry.increment("api_request_count", labels={"service": "api", "route": "/jobs", "status": "200"})
+    registry.increment(
+        "api_request_count", labels={"service": "api", "route": "/jobs", "status": "200"}
+    )
     registry.set("dlq_message_count", 0.0, labels={"topic": "assisted-listing-intake.dlq"})
     registry.set("netplan_plan_adoption_rate", 0.95)
 
@@ -1031,8 +1187,17 @@ def test_production_metrics_exporter_and_dashboard_provisioning() -> None:
                     "release_sha": r_sha,
                     "timeSeries": [
                         {
-                            "metric": {"type": "custom.googleapis.com/api_request_count", "labels": {"release_sha": r_sha}},
+                            "metric": {
+                                "type": "custom.googleapis.com/api_request_count",
+                                "labels": {"release_sha": r_sha},
+                            },
                             "resource": {"type": "global", "labels": {"project_id": g_proj}},
+                            "points": [
+                                {
+                                    "interval": {"endTime": datetime.now(UTC).isoformat()},
+                                    "value": {"doubleValue": 1.0},
+                                }
+                            ],
                         }
                     ],
                 }
@@ -1068,7 +1233,9 @@ def test_production_metrics_exporter_and_dashboard_provisioning() -> None:
     assert exported["metrics"]["api_request_count"][0]["labels"]["release_sha"] == test_sha
 
     # Fail closed on missing GCP_PROJECT
-    with pytest.raises(ValueError, match="GCP_PROJECT environment variable is missing or unconfigured"):
+    with pytest.raises(
+        ValueError, match="GCP_PROJECT environment variable is missing or unconfigured"
+    ):
         ProductionMetricsExporter(
             release_sha=test_sha,
             gcp_project="",
@@ -1135,7 +1302,9 @@ def test_production_metrics_exporter_and_dashboard_provisioning() -> None:
     ) -> tuple[int, dict]:
         return 500, {"error": "backend database failure"}
 
-    with pytest.raises(RuntimeError, match="Cloud Monitoring / metrics provider write rejected with HTTP 500"):
+    with pytest.raises(
+        RuntimeError, match="Cloud Monitoring / metrics provider write rejected with HTTP 500"
+    ):
         ProductionMetricsExporter(
             release_sha=test_sha,
             gcp_project="alfaloop-data-project",
@@ -1173,7 +1342,9 @@ def test_production_metrics_exporter_and_dashboard_provisioning() -> None:
             return 200, {}
         return 200, {"readback_status": "SUCCESS"}
 
-    with pytest.raises(ValueError, match="Dashboard provider response missing authentic provider-issued receipt_id"):
+    with pytest.raises(
+        ValueError, match="Dashboard provider response missing authentic provider-issued receipt_id"
+    ):
         render_dashboard_provisioning(
             release_sha=test_sha,
             gcp_project="alfaloop-data-project",
@@ -1191,7 +1362,9 @@ def test_production_metrics_exporter_and_dashboard_provisioning() -> None:
         )
 
 
-def test_platform_observability_endpoints_fail_closed_without_full_sha(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_platform_observability_endpoints_fail_closed_without_full_sha(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     from dataclasses import replace
     from types import SimpleNamespace
 
@@ -1286,7 +1459,9 @@ def test_exporter_and_dashboard_http_method_contract_and_body_structures() -> No
     )
 
     registry = default_registry()
-    registry.increment("api_request_count", labels={"service": "api", "route": "/jobs", "status": "200"})
+    registry.increment(
+        "api_request_count", labels={"service": "api", "route": "/jobs", "status": "200"}
+    )
     test_sha = "b28a6b6d335293ecb51a72dff3700838e196129c"
     gcp_proj = "alfaloop-data-project"
     monitoring_route = "https://monitoring.googleapis.com/v3"
@@ -1303,13 +1478,25 @@ def test_exporter_and_dashboard_http_method_contract_and_body_structures() -> No
         calls.append({"method": method, "url": url, "params": params, "payload": payload})
         if "timeSeries" in url:
             if method == "POST":
-                return 200, {"export_receipt_id": f"gcp-cm-export-{test_sha[:12]}", "readback_status": "SUCCESS"}
+                return 200, {
+                    "export_receipt_id": f"gcp-cm-export-{test_sha[:12]}",
+                    "readback_status": "SUCCESS",
+                }
             elif method == "GET":
                 return 200, {
                     "timeSeries": [
                         {
-                            "metric": {"type": "custom.googleapis.com/api_request_count", "labels": {"release_sha": test_sha}},
+                            "metric": {
+                                "type": "custom.googleapis.com/api_request_count",
+                                "labels": {"release_sha": test_sha},
+                            },
                             "resource": {"type": "global", "labels": {"project_id": gcp_proj}},
+                            "points": [
+                                {
+                                    "interval": {"endTime": datetime.now(UTC).isoformat()},
+                                    "value": {"doubleValue": 1.0},
+                                }
+                            ],
                         }
                     ],
                     "export_receipt_id": f"gcp-cm-export-{test_sha[:12]}",
@@ -1317,7 +1504,10 @@ def test_exporter_and_dashboard_http_method_contract_and_body_structures() -> No
                 }
         elif "dashboards" in url:
             if method == "POST":
-                return 200, {"name": f"projects/{gcp_proj}/dashboards/platform-health", "receipt_id": f"gcp-dash-{test_sha[:12]}"}
+                return 200, {
+                    "name": f"projects/{gcp_proj}/dashboards/platform-health",
+                    "receipt_id": f"gcp-dash-{test_sha[:12]}",
+                }
             elif method == "GET":
                 return 200, {
                     "name": f"projects/{gcp_proj}/dashboards/platform-health",
@@ -1344,7 +1534,9 @@ def test_exporter_and_dashboard_http_method_contract_and_body_structures() -> No
     assert "timeSeries" in calls[0]["payload"]
     assert "gcp_project" not in calls[0]["payload"]  # Native Google API body only!
     assert calls[1]["method"] == "GET"
-    assert calls[1]["params"] == {"filter": f'metric.labels.release_sha="{test_sha}"'}
+    assert calls[1]["params"]["filter"] == f'metric.labels.release_sha="{test_sha}"'
+    assert "interval.startTime" in calls[1]["params"]
+    assert "interval.endTime" in calls[1]["params"]
 
     calls.clear()
     provisioned = render_dashboard_provisioning(

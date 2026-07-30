@@ -399,27 +399,30 @@ def observability_runtime_checks(root: Path = ROOT) -> list[CheckResult]:
         ) -> tuple[int, dict]:
             p_dict = payload or {}
             pr_dict = params or {}
-            g_proj = p_dict.get("gcp_project") or pr_dict.get("gcp_project") or "alfaloop-data-project"
+            g_proj = (
+                p_dict.get("gcp_project") or pr_dict.get("gcp_project") or "alfaloop-data-project"
+            )
             r_sha = p_dict.get("release_sha") or pr_dict.get("release_sha") or test_sha
 
             if "timeSeries" in url:
                 if method == "POST":
                     return 200, {}
                 elif method == "GET":
+                    now_iso = datetime.now(UTC).isoformat()
                     return 200, {
                         "gcp_project": g_proj,
                         "release_sha": r_sha,
                         "timeSeries": [
                             {
                                 "metric": {
-                                    "type": "custom.googleapis.com/deployment_watch_window_status",
+                                    "type": "custom.googleapis.com/api_latency_ms",
                                     "labels": {"release_sha": r_sha},
                                 },
                                 "resource": {"type": "global", "labels": {"project_id": g_proj}},
                                 "points": [
                                     {
-                                        "interval": {"endTime": "2026-07-30T00:00:00Z"},
-                                        "value": {"doubleValue": 1.0},
+                                        "interval": {"endTime": now_iso},
+                                        "value": {"doubleValue": 12.5},
                                     }
                                 ],
                             }
@@ -448,13 +451,29 @@ def observability_runtime_checks(root: Path = ROOT) -> list[CheckResult]:
         exported = exporter.export_metrics()
 
         has_categories = set(exported.get("categories", [])) >= {
-            "latency", "error", "traffic", "job", "queue", "data", "model", "business", "audit"
+            "latency",
+            "error",
+            "traffic",
+            "job",
+            "queue",
+            "data",
+            "model",
+            "business",
+            "audit",
         }
         sha_bound = exported.get("release_sha") == test_sha
-        has_export_receipt = bool(exported.get("export_receipt_id")) and str(exported["export_receipt_id"]).startswith("gcp-cm-readback-")
+        has_export_receipt = bool(exported.get("export_receipt_id")) and str(
+            exported["export_receipt_id"]
+        ).startswith("gcp-cm-readback-")
         has_backend_ids = bool(exported.get("monitoring_backend_resource_ids"))
         readback_success = exported.get("readback_status") == "SUCCESS"
-        exporter_ok = has_categories and sha_bound and has_export_receipt and has_backend_ids and readback_success
+        exporter_ok = (
+            has_categories
+            and sha_bound
+            and has_export_receipt
+            and has_backend_ids
+            and readback_success
+        )
 
         checks.append(
             CheckResult(
@@ -474,7 +493,9 @@ def observability_runtime_checks(root: Path = ROOT) -> list[CheckResult]:
             provider_route=monitoring_route,
             http_transport=mock_provider_transport,
         )
-        exact_binding = provisioned.get("release_sha_traceability", {}).get("exact_sha_binding") == test_sha
+        exact_binding = (
+            provisioned.get("release_sha_traceability", {}).get("exact_sha_binding") == test_sha
+        )
         has_slo_owner = bool(provisioned.get("release_sha_traceability", {}).get("slo_owner"))
         readback = provisioned.get("provisioning_readback", {})
         readback_ok = (
@@ -542,6 +563,7 @@ def observability_runtime_checks(root: Path = ROOT) -> list[CheckResult]:
 
         # Verify watch window recording with monitoring query execution transport
         from datetime import UTC, datetime, timedelta
+
         start_time = datetime.now(UTC) - timedelta(minutes=20)
         end_time = datetime.now(UTC)
         watch_receipt = record_deployment_watch_window_status(
@@ -589,8 +611,6 @@ def observability_runtime_checks(root: Path = ROOT) -> list[CheckResult]:
             )
         )
     return checks
-
-
 
 
 class _ReachableProbeEngine:
@@ -1443,7 +1463,11 @@ def _is_safe_protected_redirect(
     protected_path: str = "/operator",
     target_path: str = "/login",
 ) -> bool:
-    if web_status not in {302, 303, 307, 308} or not isinstance(location, str) or not location.strip():
+    if (
+        web_status not in {302, 303, 307, 308}
+        or not isinstance(location, str)
+        or not location.strip()
+    ):
         return False
 
     try:
