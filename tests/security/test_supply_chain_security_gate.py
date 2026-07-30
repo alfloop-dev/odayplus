@@ -902,7 +902,9 @@ def test_generate_sbom_fails_closed_on_malformed_uv_lock(tmp_path: Path) -> None
     orig_root = sbom_mod.ROOT
     try:
         sbom_mod.ROOT = tmp_path
-        (tmp_path / "package-lock.json").write_text('{"packages": {}}', encoding="utf-8")
+        (tmp_path / "package-lock.json").write_text(
+            '{"packages": {"": {}, "node_modules/foo": {"name": "foo", "version": "1.0.0"}}}', encoding="utf-8"
+        )
         (tmp_path / "uv.lock").write_text("invalid toml === ", encoding="utf-8")
         with pytest.raises(ValueError, match="Failed to parse uv.lock"):
             sbom_mod.generate_sbom()

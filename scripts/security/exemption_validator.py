@@ -46,8 +46,8 @@ def is_valid_approver(approver: str) -> bool:
         if re.search(pattern, app_lower):
             return False
 
-    # Positively require named person (at least 2 name words) + role container e.g. "Jane Doe (Legal Counsel)" or "Alice Smith <Security Lead>"
-    role_pattern = r"^([A-Z][a-zA-Z\.\-']+(?:\s+[A-Za-z\.\-']+)+)\s*[\(\<\[]([A-Za-z0-9\s/_\-\.\,\&]{3,})[\)\>\]]$"
+    # Positively require named person (at least 2 name words) + role container/delimiter e.g. "Jane Doe (Legal Counsel)", "Jane Doe, Legal", "Alice Smith <Security Lead>"
+    role_pattern = r"^([A-Za-z0-9\.\-']+(?:\s+[A-Za-z0-9\.\-']+)+)\s*[\(\<\,\-\[]\s*([A-Za-z0-9\s/_\-\.\,\&]{3,})[\)\>\-\]]?$"
     match = re.match(role_pattern, app_str)
     if not match:
         return False
