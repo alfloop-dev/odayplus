@@ -37,33 +37,79 @@ def run_benchmark_from_inventory(
             import psycopg
             conn = psycopg.connect(db_url)
             with conn.cursor() as cur:
-                cur.execute(
-                    """
-                    SELECT
-                        entity_id,
-                        store_id,
-                        target_format_code,
-                        opened_on,
-                        is_training_eligible,
-                        realized_90d_net_revenue,
-                        (CURRENT_DATE - opened_on)::integer AS m6_days,
-                        (CURRENT_DATE - opened_on)::integer AS m12_days
-                    FROM model_ready.candidate_site_view
-                    """
-                )
-                rows = cur.fetchall()
-                fetched = []
-                for row in rows:
-                    fetched.append({
-                        "entity_id": row[0],
-                        "store_id": str(row[1]),
-                        "target_format_code": row[2],
-                        "opened_on": str(row[3]) if row[3] else None,
-                        "is_training_eligible": bool(row[4]),
-                        "realized_90d_net_revenue": float(row[5]) if row[5] is not None else 0.0,
-                        "m6_days": int(row[6]) if row[6] is not None else 0,
-                        "m12_days": int(row[7]) if row[7] is not None else 0,
-                    })
+                try:
+                    cur.execute(
+                        """
+                        SELECT
+                            entity_id,
+                            store_id,
+                            target_format_code,
+                            opened_on,
+                            is_training_eligible,
+                            realized_90d_net_revenue,
+                            (CURRENT_DATE - opened_on)::integer AS m6_days,
+                            (CURRENT_DATE - opened_on)::integer AS m12_days,
+                            realized_180d_net_revenue AS realized_m6_net_revenue,
+                            realized_365d_net_revenue AS realized_m12_net_revenue,
+                            predicted_revenue,
+                            p10,
+                            p90,
+                            dataset_snapshot_id,
+                            model_version,
+                            artifact_lineage_id
+                        FROM model_ready.candidate_site_view
+                        """
+                    )
+                    rows = cur.fetchall()
+                    fetched = []
+                    for row in rows:
+                        fetched.append({
+                            "entity_id": row[0],
+                            "store_id": str(row[1]),
+                            "target_format_code": row[2],
+                            "opened_on": str(row[3]) if row[3] else None,
+                            "is_training_eligible": bool(row[4]),
+                            "realized_90d_net_revenue": float(row[5]) if row[5] is not None else 0.0,
+                            "m6_days": int(row[6]) if row[6] is not None else 0,
+                            "m12_days": int(row[7]) if row[7] is not None else 0,
+                            "realized_m6_net_revenue": float(row[8]) if row[8] is not None else None,
+                            "realized_m12_net_revenue": float(row[9]) if row[9] is not None else None,
+                            "predicted_revenue": float(row[10]) if row[10] is not None else None,
+                            "p10": float(row[11]) if row[11] is not None else None,
+                            "p90": float(row[12]) if row[12] is not None else None,
+                            "dataset_snapshot_id": str(row[13]) if row[13] else None,
+                            "model_version": str(row[14]) if row[14] else None,
+                            "artifact_lineage_id": str(row[15]) if row[15] else None,
+                        })
+                except Exception:
+                    conn.rollback()
+                    cur.execute(
+                        """
+                        SELECT
+                            entity_id,
+                            store_id,
+                            target_format_code,
+                            opened_on,
+                            is_training_eligible,
+                            realized_90d_net_revenue,
+                            (CURRENT_DATE - opened_on)::integer AS m6_days,
+                            (CURRENT_DATE - opened_on)::integer AS m12_days
+                        FROM model_ready.candidate_site_view
+                        """
+                    )
+                    rows = cur.fetchall()
+                    fetched = []
+                    for row in rows:
+                        fetched.append({
+                            "entity_id": row[0],
+                            "store_id": str(row[1]),
+                            "target_format_code": row[2],
+                            "opened_on": str(row[3]) if row[3] else None,
+                            "is_training_eligible": bool(row[4]),
+                            "realized_90d_net_revenue": float(row[5]) if row[5] is not None else 0.0,
+                            "m6_days": int(row[6]) if row[6] is not None else 0,
+                            "m12_days": int(row[7]) if row[7] is not None else 0,
+                        })
                 return evaluate_sitescore_opening_outcome_benchmark(fetched, provenance="pg16_query")
         except Exception as exc:
             print(f"Notice: PostgreSQL inventory query failed ({exc}); failing closed.", file=sys.stderr)

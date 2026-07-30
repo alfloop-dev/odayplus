@@ -138,6 +138,10 @@ class SiteScoreOpeningOutcomeBenchmarkResult:
             reasons.append(
                 f"Missing governed dataset snapshot or model/artifact lineage (snapshot={self.dataset_snapshot_id}, model_version={self.model_version}, artifact_lineage_id={self.artifact_lineage_id}; requires authoritative prediction-source resolver ODP-PLAN-SITESCORE-PREDICTION-SOURCE-001)"
             )
+            if self.normalized_mae > self.max_mae_threshold:
+                reasons.append(
+                    f"Normalized MAE ({self.normalized_mae:.3f}) exceeds maximum threshold ({self.max_mae_threshold:.3f})"
+                )
             handback_action = "Provide complete governed dataset snapshot ID/hash and model/artifact lineage resolved via authoritative prediction source (ODP-PLAN-SITESCORE-PREDICTION-SOURCE-001)."
         else:
             if not self.is_labels_sufficient:
@@ -192,8 +196,8 @@ class SiteScoreOpeningOutcomeBenchmarkResult:
             "reasons": reasons,
             "handback_action": handback_action,
             "backfill_owner": "Human/Ops",
-            "backfill_task_id": "ODP-SITESCORE-AUTHORITATIVE-OUTCOME-BACKFILL-001",
-            "backfill_query": "SELECT entity_id, store_id, target_format_code, opened_on, is_training_eligible, realized_90d_net_revenue, (CURRENT_DATE - opened_on)::integer AS m6_days, (CURRENT_DATE - opened_on)::integer AS m12_days FROM model_ready.candidate_site_view;",
+            "backfill_task_id": "ODP-PLAN-SITESCORE-OUTCOME-BACKFILL-001",
+            "backfill_query": "SELECT entity_id, store_id, target_format_code, opened_on, is_training_eligible, realized_90d_net_revenue, realized_180d_net_revenue AS realized_m6_net_revenue, realized_365d_net_revenue AS realized_m12_net_revenue, predicted_revenue, p10, p90, dataset_snapshot_id, model_version, artifact_lineage_id, (CURRENT_DATE - opened_on)::integer AS m6_days, (CURRENT_DATE - opened_on)::integer AS m12_days FROM model_ready.candidate_site_view;",
             "backfill_receipt_required": True,
         }
 
@@ -393,8 +397,17 @@ def evaluate_sitescore_opening_outcome_benchmark(
             continue
 
     mean_y = (sum(float(r.get("realized_90d_net_revenue", 0)) for r in mature_records) / mature_label_count) if mature_label_count > 0 else 1.0
-    mae = (sum(errors) / len(errors)) if errors else 0.0
-    normalized_mae = (mae / mean_y) if (mean_y > 0 and errors) else 0.0
+    if errors:
+        mae = sum(errors) / len(errors)
+        if mean_y > 0:
+            normalized_mae = mae / mean_y
+        elif mae == 0.0:
+            normalized_mae = 0.0
+        else:
+            normalized_mae = 999.0
+    else:
+        mae = 0.0
+        normalized_mae = 0.0
     p80_coverage = (in_p80_count / mature_label_count) if mature_label_count > 0 else 0.0
     interval_bounds_coverage_ratio = (interval_bounds_count / mature_label_count) if mature_label_count > 0 else 0.0
 

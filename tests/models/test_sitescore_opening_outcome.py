@@ -338,15 +338,82 @@ def test_sitescore_opening_outcome_negative_values_excluded_by_policy():
     assert result.mature_label_count == 0  # Negative outcomes excluded per policy
 
 
+def test_sitescore_opening_outcome_zero_outcome_cohort_non_zero_mae_fails_closed():
+    # Fix B1 regression test: 220 eligible records with zero outcome (0.0) but non-zero predictions (100,000.0) must fail closed as NORMALIZED_MAE_EXCEEDED instead of normalizing to 0.0
+    records = _generate_candidate_records(
+        220,
+        revenue=0.0,
+        pred_revenue=100_000.0,
+        include_m6_m12_realized=True,
+        include_bounds=True,
+        dataset_snapshot_id="snapshot_sitescore_v2",
+        model_version="candidate-site-view-v2",
+        artifact_lineage_id="art_sitescore_sha256",
+    )
+    result = evaluate_sitescore_opening_outcome_benchmark(records, provenance="authenticated_governed_records")
+
+    assert result.mature_label_count == 220
+    assert result.normalized_mae == 999.0  # Zero-denominator fail closed
+    assert not result.is_mae_passed
+    assert not result.is_gate2_passed
+    assert result.status == "GOVERNED_DISABLED"
+    assert result.reason_code == "MISSING_GOVERNED_LINEAGE"
+    assert any("exceeds maximum threshold" in r for r in result.handback_payload["reasons"])
+
+
+def test_sitescore_opening_outcome_zero_outcome_cohort_zero_mae_allowed():
+    # Fix B1 regression test: Zero outcome (0.0) with zero prediction (0.0) yields normalized MAE 0.0
+    records = _generate_candidate_records(
+        220,
+        revenue=0.0,
+        pred_revenue=0.0,
+        include_m6_m12_realized=True,
+        include_bounds=True,
+        dataset_snapshot_id="snapshot_sitescore_v2",
+        model_version="candidate-site-view-v2",
+        artifact_lineage_id="art_sitescore_sha256",
+    )
+    result = evaluate_sitescore_opening_outcome_benchmark(records, provenance="authenticated_governed_records")
+
+    assert result.mature_label_count == 220
+    assert result.normalized_mae == 0.0
+    assert result.is_mae_passed
+
+
 def test_sitescore_opening_outcome_handback_contains_backfill_metadata(tmp_path):
-    # Fix B2 regression test: Gate 2 handback payload and markdown evidence expose machine-readable backfill owner, task ID, query, and receipt requirement
+    # Fix B2 regression test: Gate 2 handback payload and markdown evidence expose registered backfill task ID, actionable query contract, and receipt requirement
+    import json
+    from pathlib import Path
+
     result = run_benchmark_from_inventory(db_url=None, records=None)
     handback = result.handback_payload
 
     assert handback["handback_required"] is True
     assert handback["backfill_owner"] == "Human/Ops"
-    assert handback["backfill_task_id"] == "ODP-SITESCORE-AUTHORITATIVE-OUTCOME-BACKFILL-001"
-    assert "model_ready.candidate_site_view" in handback["backfill_query"]
+    assert handback["backfill_task_id"] == "ODP-PLAN-SITESCORE-OUTCOME-BACKFILL-001"
+
+    # Verify task registration in ai-status.json
+    ai_status_path = Path(__file__).resolve().parents[2] / "ai-status.json"
+    if ai_status_path.exists():
+        ai_status = json.loads(ai_status_path.read_text(encoding="utf-8"))
+        registered_task_ids = {t["id"] for t in ai_status.get("tasks", [])}
+        assert handback["backfill_task_id"] in registered_task_ids
+
+    # Verify actionable query contract selects all required M6/M12 outcomes, predictions, bounds, and lineage
+    query = handback["backfill_query"]
+    assert "model_ready.candidate_site_view" in query
+    for required_col in [
+        "realized_m6_net_revenue",
+        "realized_m12_net_revenue",
+        "predicted_revenue",
+        "p10",
+        "p90",
+        "dataset_snapshot_id",
+        "model_version",
+        "artifact_lineage_id",
+    ]:
+        assert required_col in query
+
     assert handback["backfill_receipt_required"] is True
 
     receipt = build_sitescore_gate2_receipt(result)
@@ -355,7 +422,7 @@ def test_sitescore_opening_outcome_handback_contains_backfill_metadata(tmp_path)
 
     content = output_evidence.read_text(encoding="utf-8")
     assert "- **Backfill Owner**: `Human/Ops`" in content
-    assert "- **Backfill Task ID**: `ODP-SITESCORE-AUTHORITATIVE-OUTCOME-BACKFILL-001`" in content
+    assert "- **Backfill Task ID**: `ODP-PLAN-SITESCORE-OUTCOME-BACKFILL-001`" in content
     assert "- **Backfill Query**:" in content
     assert "- **Backfill Receipt Required**: `True`" in content
 
