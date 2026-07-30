@@ -8,7 +8,17 @@ describe("Package 10 Store Ops parity", () => {
     vi.stubEnv("NEXT_PUBLIC_PRODUCTION_MODE", "false");
     vi.spyOn(console, "error").mockImplementation(() => undefined);
     window.sessionStorage.clear();
+    vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL) => {
+      const path = new URL(String(input), "http://localhost").pathname;
+      if (path.startsWith("/api/v1/operator/store-ops/issues")) {
+        throw new TypeError("Failed to fetch");
+      }
+      throw new TypeError("Failed to fetch");
+    }));
+
+
   });
+
 
   afterEach(() => {
     cleanup();

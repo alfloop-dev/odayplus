@@ -454,9 +454,23 @@ describe("AssistedIntakeSection production container", () => {
     expect(isIntakeDetailOpen(detailParams)).toBe(true);
     expect(isIntakeDetailOpen({ ...detailParams, dialog: undefined })).toBe(false);
 
+    vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL) => {
+      const path = new URL(String(input), "http://localhost").pathname;
+      if (path === "/api/v1/operator/bootstrap") return json({ code: "OK" }, 200);
+      if (path === "/api/v1/operator/shell/tasks") return json([], 200);
+      if (path === "/auth/session") return json({ subject: "subject-1" }, 200);
+      if (path === "/api/v1/operator/network-listings/intake") return json({
+        items: [possibleMatch], total: 1, page: 1, pageSize: 10,
+        counts: { needsReview: 1, awaitingEntry: 0, processing: 0, blocked: 0, ready: 0 },
+        evidenceState: "complete",
+      });
+      return json({ code: "NOT_FOUND" }, 404);
+    }));
+
     render(<OperatorConsole searchParams={detailParams} />);
     expect(screen.getByTestId("operator-console")).toHaveClass("operatorIntakeDetailOpen");
     expect(screen.getByTestId("operator-console")).toHaveAttribute("data-intake-detail-open", "true");
+
   });
 
   it("replaces the inbox with detail and restores filters and selection on return", async () => {
