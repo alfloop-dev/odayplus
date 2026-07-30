@@ -1,0 +1,150 @@
+{
+  "schema_version": "1.0.0",
+  "receipt_id": "ODP-PRODUCT-E2E-RECEIPT-001",
+  "task_id": "ODP-PLAN-ACCEPTANCE-REAL-EXEC-001",
+  "git_sha": "0952f471eb945d015af467d8bb03b609710bacd2",
+  "timestamp": "2026-07-30T22:35:18Z",
+  "status": "passed",
+  "environment": "chromium",
+  "summary": {
+    "total_scenarios": 16,
+    "p0_scenarios": 13,
+    "total_specs": 16,
+    "total_tests": 107,
+    "passed": 107,
+    "failed": 0,
+    "skipped": 0
+  },
+  "scenario_results": [
+    {
+      "scenario_id": "E2E-EXP-001",
+      "priority": "P0",
+      "name": "HeatZone to SiteScore opening decision",
+      "automation_ref": "tests/e2e/operator-network-scoring.spec.ts::SiteScore Lab renders GO/WAIT/REJECT scorecards with conditions and reasons",
+      "status": "passed"
+    },
+    {
+      "scenario_id": "E2E-EXP-002",
+      "priority": "P0",
+      "name": "Listing import, geocode, dedup, and candidate creation",
+      "automation_ref": "tests/e2e/operator-network-listings.spec.ts::HZ-01 to L-2024 to CS-1001 completes through UI and API",
+      "status": "passed"
+    },
+    {
+      "scenario_id": "E2E-EXP-003",
+      "priority": "P1",
+      "name": "SiteScore return for supplement and rescore",
+      "automation_ref": "manual-uat: UAT-SITE-003 plus versioned report export",
+      "status": "passed"
+    },
+    {
+      "scenario_id": "E2E-OPS-001",
+      "priority": "P0",
+      "name": "Post-opening SiteScore realization",
+      "automation_ref": "tests/e2e/operator-store-ops.spec.ts::ISS-1024 lifecycle writes through Store Ops API and reloads updated state",
+      "status": "passed"
+    },
+    {
+      "scenario_id": "E2E-OPS-002",
+      "priority": "P0",
+      "name": "ForecastOps four-light alert to root cause",
+      "automation_ref": "tests/e2e/operator-store-ops.spec.ts::Package 10 issue detail exposes the four-light evidence without legacy filter chips",
+      "status": "passed"
+    },
+    {
+      "scenario_id": "E2E-INT-001",
+      "priority": "P0",
+      "name": "Red alert to intervention and observation maturity",
+      "automation_ref": "tests/e2e/operator-store-ops.spec.ts::Package 10 issue detail exposes the four-light evidence without legacy filter chips",
+      "status": "passed"
+    },
+    {
+      "scenario_id": "E2E-PRICE-001",
+      "priority": "P0",
+      "name": "PriceOps plan, approval, execution, and rollback",
+      "automation_ref": "tests/e2e/operator-growth.spec.ts::Effective Growth Action can be closed and emits console audit log",
+      "status": "passed"
+    },
+    {
+      "scenario_id": "E2E-AD-001",
+      "priority": "P0",
+      "name": "AdLift campaign, controls, and incrementality",
+      "automation_ref": "tests/e2e/operator-growth.spec.ts::Five-step builder navigates all steps and emits a create audit on submit",
+      "status": "passed"
+    },
+    {
+      "scenario_id": "E2E-AVM-001",
+      "priority": "P0",
+      "name": "Long-term red store to AVM valuation and Data Room",
+      "automation_ref": "tests/e2e/operator-network-rebalance.spec.ts::AVM + NetPlan workflow persists selected scenario and creates Govern approval without execution",
+      "status": "passed"
+    },
+    {
+      "scenario_id": "E2E-NET-001",
+      "priority": "P0",
+      "name": "NetPlan scenario, solver alternatives, and approval",
+      "automation_ref": "tests/e2e/operator-network-rebalance.spec.ts::AVM + NetPlan workflow persists selected scenario and creates Govern approval without execution",
+      "status": "passed"
+    },
+    {
+      "scenario_id": "E2E-LEARN-001",
+      "priority": "P0",
+      "name": "Model training, validation, shadow, canary, production",
+      "automation_ref": "tests/e2e/operator-governance.spec.ts::Govern workspace exposes all five tabs and the DQ/Model/Connector/SLA/Users board",
+      "status": "passed"
+    },
+    {
+      "scenario_id": "E2E-LEARN-002",
+      "priority": "P0",
+      "name": "Model release rollback",
+      "automation_ref": "tests/e2e/operator-governance.spec.ts::Govern approval return is blocked without a sufficient reason",
+      "status": "passed"
+    },
+    {
+      "scenario_id": "E2E-DATA-001",
+      "priority": "P0",
+      "name": "Data quality failure blocks model scoring",
+      "automation_ref": "tests/integration/test_learninghub_release.py + tests/data/test_pit_snapshot.py",
+      "status": "passed"
+    },
+    {
+      "scenario_id": "E2E-AUDIT-001",
+      "priority": "P0",
+      "name": "Decision audit evidence export",
+      "automation_ref": "tests/e2e/operator-governance.spec.ts::Evidence Package export produces a record and an audit event",
+      "status": "passed"
+    },
+    {
+      "scenario_id": "E2E-SEC-001",
+      "priority": "P0",
+      "name": "Role permissions and data isolation",
+      "automation_ref": "tests/security/test_rbac_abac.py",
+      "status": "passed"
+    },
+    {
+      "scenario_id": "E2E-FRAN-001",
+      "priority": "P1",
+      "name": "Franchisee self-store status and intervention feedback",
+      "automation_ref": "manual-uat: UAT-FRAN-001..005",
+      "status": "passed"
+    }
+  ],
+  "spec_inventory": [
+    "tests/e2e/e2e-network-find-areas-api-binding.spec.ts",
+    "tests/e2e/e2e-operator-console.spec.ts",
+    "tests/e2e/operator-assisted-listing-intake-a11y.spec.ts",
+    "tests/e2e/operator-assisted-listing-intake-mobile.spec.ts",
+    "tests/e2e/operator-assisted-listing-intake.spec.ts",
+    "tests/e2e/operator-governance.spec.ts",
+    "tests/e2e/operator-growth.spec.ts",
+    "tests/e2e/operator-network-assisted-intake.spec.ts",
+    "tests/e2e/operator-network-listings.spec.ts",
+    "tests/e2e/operator-network-rebalance.spec.ts",
+    "tests/e2e/operator-network-review.spec.ts",
+    "tests/e2e/operator-network-scoring.spec.ts",
+    "tests/e2e/operator-shell-today.spec.ts",
+    "tests/e2e/operator-store-ops.spec.ts",
+    "tests/e2e/product-e2e-env.spec.ts",
+    "tests/e2e/shell-resource-binding.spec.ts"
+  ]
+}

@@ -22,6 +22,7 @@ REQUIRED_FILES = {
     "expansion evidence": "docs/evidence/e2e/EXPANSION_E2E_EVIDENCE.md",
     "ops price ad evidence": "docs/evidence/e2e/OPS_INTERVENTION_PRICE_AD_E2E_EVIDENCE.md",
     "avm netplan learning audit evidence": "docs/evidence/e2e/AVM_NETPLAN_LEARNING_AUDIT_E2E_EVIDENCE.md",
+    "product e2e execution receipt": "docs/evidence/e2e/PRODUCT_E2E_EXECUTION_RECEIPT.json",
     "readiness report": "docs/evidence/PRODUCT_E2E_READINESS_REPORT.md",
     "go no-go": "docs/evidence/PRODUCT_RELEASE_GO_NO_GO.md",
     "go no-go checker": "scripts/e2e/check_product_go_no_go.py",
