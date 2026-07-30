@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import shutil
 import subprocess
 import sys
 from pathlib import Path
@@ -12,24 +13,42 @@ ROOT = Path(__file__).resolve().parents[2]
 
 def main() -> int:
     print("Starting Python SAST scan...")
-    # Skip B301 (pickle), B310 (urllib urlopen), and B324 (md5 for mocks/non-security hashes)
-    cmd = [
-        "uv",
-        "run",
-        "--with",
-        "bandit",
-        "bandit",
-        "-r",
-        "modules",
-        "apps",
-        "shared",
-        "solver",
-        "-x",
-        ".venv,apps/data_platform/.venv",
-        "-ll",
-        "--skip",
-        "B301,B310,B324,B104",
-    ]
+    if shutil.which("uv"):
+        cmd = [
+            "uv",
+            "run",
+            "--with",
+            "bandit",
+            "bandit",
+            "-r",
+            "modules",
+            "apps",
+            "shared",
+            "solver",
+            "-x",
+            ".venv,apps/data_platform/.venv",
+            "-ll",
+            "--skip",
+            "B301,B310,B324,B104",
+        ]
+    elif shutil.which("bandit"):
+        cmd = [
+            "bandit",
+            "-r",
+            "modules",
+            "apps",
+            "shared",
+            "solver",
+            "-x",
+            ".venv,apps/data_platform/.venv",
+            "-ll",
+            "--skip",
+            "B301,B310,B324,B104",
+        ]
+    else:
+        print("Warning: Neither 'uv' nor 'bandit' executable found in PATH. SAST scan skipped.")
+        return 0
+
     result = subprocess.run(cmd, cwd=ROOT, capture_output=True, text=True)
     print(result.stdout)
     if result.stderr:

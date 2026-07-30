@@ -8,6 +8,8 @@ import subprocess
 import sys
 from pathlib import Path
 
+import pytest
+
 ROOT = Path(__file__).resolve().parents[2]
 
 
@@ -38,8 +40,14 @@ def test_npm_audit_passes() -> None:
 
 
 def test_pip_audit_passes() -> None:
+    if shutil.which("uv"):
+        cmd = ["uv", "run", "--with", "pip-audit", "pip-audit", "--local"]
+    elif shutil.which("pip-audit"):
+        cmd = ["pip-audit", "--local"]
+    else:
+        pytest.skip("Neither 'uv' nor 'pip-audit' executable found in PATH")
     res = subprocess.run(
-        ["uv", "run", "--with", "pip-audit", "pip-audit", "--local"],
+        cmd,
         cwd=ROOT,
         capture_output=True,
         text=True,
@@ -170,6 +178,8 @@ def test_sign_images_script_executable() -> None:
 
 
 def test_stale_lockfiles_rejected_negative(tmp_path: Path) -> None:
+    if not shutil.which("uv"):
+        pytest.skip("'uv' executable not found in PATH")
     # Copy pyproject.toml and uv.lock to a temporary directory
     shutil.copy(ROOT / "pyproject.toml", tmp_path / "pyproject.toml")
     shutil.copy(ROOT / "uv.lock", tmp_path / "uv.lock")
@@ -215,9 +225,16 @@ def test_vulnerable_fixtures_rejected_negative(tmp_path: Path) -> None:
     req_file = tmp_path / "requirements-vulnerable.txt"
     req_file.write_text("urllib3==1.26.15\n", encoding="utf-8")
 
+    if shutil.which("uv"):
+        cmd = ["uv", "run", "--with", "pip-audit", "pip-audit", "-r", str(req_file)]
+    elif shutil.which("pip-audit"):
+        cmd = ["pip-audit", "-r", str(req_file)]
+    else:
+        pytest.skip("Neither 'uv' nor 'pip-audit' executable found in PATH")
+
     # Run pip-audit on requirements-vulnerable.txt
     res = subprocess.run(
-        ["uv", "run", "--with", "pip-audit", "pip-audit", "-r", str(req_file)],
+        cmd,
         cwd=tmp_path,
         capture_output=True,
         text=True,
