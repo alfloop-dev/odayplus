@@ -25,6 +25,9 @@ REQUIRED_FILES = {
     "readiness report": "docs/evidence/PRODUCT_E2E_READINESS_REPORT.md",
     "go no-go": "docs/evidence/PRODUCT_RELEASE_GO_NO_GO.md",
     "go no-go checker": "scripts/e2e/check_product_go_no_go.py",
+    "release gate registry": "docs/evidence/gates/RELEASE_GATE_REGISTRY.json",
+    "release gate registry guide": "docs/evidence/gates/README.md",
+    "release gate registry checker": "scripts/e2e/check_release_gate_registry.py",
     "closeout manifest": "docs/evidence/PRODUCT_RELEASE_CLOSEOUT_MANIFEST.md",
     "closeout playbook": "docs/evidence/PRODUCT_RELEASE_CLOSEOUT_PLAYBOOK.md",
     "closeout queue": "docs/evidence/PRODUCT_RELEASE_CLOSEOUT_QUEUE.json",
@@ -189,6 +192,21 @@ def main() -> int:
             if line.strip()
         )
         errors.append(f"external proof follow-up workflow check failed: {output}")
+
+    gate_registry_check = subprocess.run(
+        [sys.executable, "scripts/e2e/check_release_gate_registry.py"],
+        cwd=ROOT,
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    if gate_registry_check.returncode != 0:
+        output = "\n".join(
+            line
+            for line in (gate_registry_check.stdout + gate_registry_check.stderr).splitlines()
+            if line.strip()
+        )
+        errors.append(f"release gate registry check failed: {output}")
 
     runner = ROOT / "scripts/e2e/run_product_e2e.sh"
     runner_text = runner.read_text(encoding="utf-8") if runner.exists() else ""
