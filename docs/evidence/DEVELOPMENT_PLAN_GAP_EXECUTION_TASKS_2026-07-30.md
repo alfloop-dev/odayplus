@@ -17,6 +17,9 @@ release_claim: no-go-until-final-gate-audit
 `DEVELOPMENT_PLAN_IMPLEMENTATION_GAP_MATRIX_2026-07-30.md` 為準。
 該矩陣已逐條登錄 84 個不重複 RTM 項目；本 ledger 的 Wave A–E
 是缺口閉環工作，不是用較少的 task 數量取代 84 項 coverage。
+下表共列出 **24 個治理 task**（含已完成並歸檔的 solver task，以及
+本文件本身的 archive task）；執行中的即時狀態與後續 owner/reviewer
+調整仍以 `ai-status.json` 與 task archive 為準。
 
 所有 task 必須遵守以下規則：
 
@@ -35,8 +38,9 @@ release_claim: no-go-until-final-gate-audit
 
 | Wave | Task | Gap | Owner | Reviewer | Depends on |
 |---|---|---|---|---|---|
+| A | `ODP-PLAN-GAP-ARCHIVE-001` | 84-item WBS/RTM archive | CodexCoordinator | Claude | — |
 | A | `ODP-PLAN-GATE-REGISTRY-001` | P0-001 | Claude | Antigravity2 | — |
-| A | `ODP-PLAN-CANONICAL-SHELL-LIVE-001` | P0-003 | Antigravity | Codex2 | — |
+| A | `ODP-PLAN-CANONICAL-SHELL-LIVE-001` | P0-003 | Codex | Codex2 | — |
 | A | `ODP-PLAN-SOLVER-RUNTIME-COMPAT-001` | P0-007 | Antigravity2 | Codex2 | — |
 | A | `ODP-PLAN-OSS-LICENSE-GATE-001` | P1-007 | Antigravity5 | Claude | — |
 | A | `ODP-PLAN-OBSERVABILITY-LIVE-001` | P1-008 | Antigravity6 | Codex2 | — |
@@ -60,6 +64,17 @@ release_claim: no-go-until-final-gate-audit
 | E | `ODP-PLAN-FINAL-GATE-AUDIT-001` | final | Codex2 | Human/Ops | all prior tasks |
 
 ## 3. Task contracts
+
+### ODP-PLAN-GAP-ARCHIVE-001
+
+- Scope: 將 Google Drive 原始規劃第 69–81 章逐條對照為 84-item
+  WBS/RTM gap matrix，並保存本 execution ledger、coverage 重算方法、
+  evidence path 與 `NO-GO` release claim。
+- Acceptance:
+  matrix 可重算為 `rows=84 unique=84`，Stage 分布為
+  `12/12/10/9/11/12/11/7`；matrix 與 ledger 經獨立 reviewer
+  精確 head 核准、CI 通過並合併至 `dev`。未合併前 final gate
+  不得完成。
 
 ### ODP-PLAN-GATE-REGISTRY-001
 
