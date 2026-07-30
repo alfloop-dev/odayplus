@@ -9,7 +9,6 @@ import sys
 from dataclasses import dataclass
 from enum import StrEnum
 from importlib import util
-from importlib.metadata import PackageNotFoundError, version
 
 
 class OssCapability(StrEnum):
@@ -102,7 +101,8 @@ try:
         import cvxpy as cp
         y = cp.Variable()
         prob = cp.Problem(cp.Maximize(y), [y <= 10])
-        val = prob.solve()
+        solver_name = "HIGHS" if "HIGHS" in cp.installed_solvers() else None
+        val = prob.solve(solver=solver_name) if solver_name else prob.solve()
         if val is None or abs(val - 10.0) > 1e-4:
             raise RuntimeError("cvxpy minimal solve failed")
 
@@ -120,13 +120,19 @@ print(json.dumps(res))
             [sys.executable, "-c", code],
             capture_output=True,
             text=True,
-            timeout=10,
+            timeout=30,
             env=env,
         )
         if proc.returncode == 0:
-            data = json.loads(proc.stdout.strip())
-            if data.get("available"):
-                return True, data.get("version") or "installed"
+            for line in reversed(proc.stdout.strip().splitlines()):
+                try:
+                    data = json.loads(line)
+                    if isinstance(data, dict) and "available" in data:
+                        if data.get("available"):
+                            return True, data.get("version") or "installed"
+                        break
+                except Exception:
+                    continue
     except Exception:
         pass
     return False, None

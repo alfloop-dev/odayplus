@@ -7,7 +7,8 @@ import os
 import pickle
 import subprocess
 import sys
-from typing import Any, Callable, TypeVar
+from collections.abc import Callable
+from typing import Any, TypeVar
 
 T = TypeVar("T")
 
@@ -16,7 +17,7 @@ class ProcessIsolationError(RuntimeError):
     """Raised when an isolated solver process execution fails."""
 
 
-def run_in_process_isolation(
+def run_in_process_isolation[T](
     func: Callable[..., T],
     *args: Any,
     timeout: float = 60.0,
