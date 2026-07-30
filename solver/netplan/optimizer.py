@@ -20,6 +20,7 @@ from solver.netplan.model import (
     NetPlanConstraints,
     NetworkAction,
 )
+from solver.process_isolation import run_in_process_isolation
 
 
 def _pywraplp():  # noqa: D401
@@ -138,7 +139,7 @@ def _candidate_from_selected(
     )
 
 
-def solve_network_plan(
+def _solve_network_plan_impl(
     *,
     options_by_entity: dict[str, tuple[ActionOption, ...]],
     constraints: NetPlanConstraints,
@@ -591,6 +592,31 @@ def _min_budget_with_required_action_counts(
 
 def _near(left: float, right: float, *, tolerance: float = 1e-6) -> bool:
     return abs(left - right) <= tolerance
+
+
+def solve_network_plan(
+    *,
+    options_by_entity: dict[str, tuple[ActionOption, ...]],
+    constraints: NetPlanConstraints,
+    risk_penalty: float = 100_000.0,
+    alternative_limit: int = 3,
+    isolate_process: bool = True,
+) -> NetworkPlanSolveResult:
+    """Public solver entrypoint with process isolation contract."""
+    if isolate_process:
+        return run_in_process_isolation(
+            _solve_network_plan_impl,
+            options_by_entity=options_by_entity,
+            constraints=constraints,
+            risk_penalty=risk_penalty,
+            alternative_limit=alternative_limit,
+        )
+    return _solve_network_plan_impl(
+        options_by_entity=options_by_entity,
+        constraints=constraints,
+        risk_penalty=risk_penalty,
+        alternative_limit=alternative_limit,
+    )
 
 
 __all__ = [
