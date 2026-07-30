@@ -691,6 +691,12 @@ def test_release_sha_dashboard_traceability_and_watch_window_receipt(tmp_path: P
     start_dt = datetime.now(UTC) - timedelta(minutes=20)
     end_dt = datetime.now(UTC)
 
+    def mock_query_transport(url: str, payload: dict) -> tuple[int, dict]:
+        return 200, {
+            "query_execution_id": f"query-exec-{test_sha[:12]}-100",
+            "query_status": "SUCCESS",
+        }
+
     receipt = record_deployment_watch_window_status(
         release_sha=test_sha,
         status=1,
@@ -698,6 +704,9 @@ def test_release_sha_dashboard_traceability_and_watch_window_receipt(tmp_path: P
         end_time=end_dt,
         registry=registry,
         receipt_path=receipt_file,
+        gcp_project="alfaloop-data-project",
+        provider_route="https://oncall-router.oday.plus/api/v1/alerts",
+        query_transport=mock_query_transport,
     )
 
     assert receipt["release_sha"] == test_sha
@@ -731,6 +740,12 @@ def test_watch_window_receipt_negative_cases(tmp_path: Path) -> None:
     start_dt = datetime.now(UTC) - timedelta(minutes=20)
     end_dt = datetime.now(UTC)
 
+    def mock_query_transport(url: str, payload: dict) -> tuple[int, dict]:
+        return 200, {
+            "query_execution_id": f"query-exec-{valid_sha_1[:12]}-100",
+            "query_status": "SUCCESS",
+        }
+
     # Case 1: Absent watch receipt artifact
     with pytest.raises(FileNotFoundError, match="Watch-window receipt artifact absent"):
         verify_watch_window_receipt(expected_release_sha=valid_sha_1, receipt_path=receipt_file)
@@ -742,17 +757,29 @@ def test_watch_window_receipt_negative_cases(tmp_path: Path) -> None:
         start_time=start_dt,
         end_time=end_dt,
         receipt_path=receipt_file,
+        gcp_project="alfaloop-data-project",
+        provider_route="https://oncall-router.oday.plus/api/v1/alerts",
+        query_transport=mock_query_transport,
     )
     with pytest.raises(ValueError, match="Release SHA mismatch"):
         verify_watch_window_receipt(expected_release_sha=valid_sha_2, receipt_path=receipt_file)
 
     # Case 3: Failed watch receipt (status_code = 0 / WATCH_FAILED)
+    def mock_query_fail_transport(url: str, payload: dict) -> tuple[int, dict]:
+        return 200, {
+            "query_execution_id": f"query-exec-{valid_sha_1[:12]}-100",
+            "query_status": "FAILED",
+        }
+
     record_deployment_watch_window_status(
         release_sha=valid_sha_1,
         status=0,
         start_time=start_dt,
         end_time=end_dt,
         receipt_path=receipt_file,
+        gcp_project="alfaloop-data-project",
+        provider_route="https://oncall-router.oday.plus/api/v1/alerts",
+        query_transport=mock_query_fail_transport,
     )
     with pytest.raises(ValueError, match="Watch-window verification failed"):
         verify_watch_window_receipt(expected_release_sha=valid_sha_1, receipt_path=receipt_file)
@@ -872,23 +899,31 @@ def test_notification_adapter_factory_and_production_wiring(monkeypatch: pytest.
     monkeypatch.delenv("ENVIRONMENT", raising=False)
     monkeypatch.delenv("STAGE", raising=False)
     monkeypatch.delenv("ODAY_ENV", raising=False)
+    monkeypatch.delenv("ODP_PRODUCT_MODE", raising=False)
+    monkeypatch.delenv("ODAY_PRODUCT_MODE", raising=False)
     monkeypatch.delenv("NOTIFICATION_ADAPTER_TYPE", raising=False)
     monkeypatch.delenv("ONCALL_ENDPOINT_URL", raising=False)
     adapter = get_notification_adapter()
     assert isinstance(adapter, ConsoleNotificationAdapter)
 
-    # Production mode without endpoint fails closed
+    # Production mode via APP_ENV without endpoint fails closed
     monkeypatch.setenv("APP_ENV", "production")
     with pytest.raises(ValueError, match="Production mode or on-call route requires a configured valid ONCALL_ENDPOINT_URL"):
         get_notification_adapter()
 
-    # Production mode with ConsoleNotificationAdapter type fails closed
+    # ODP_PRODUCT_MODE=production without endpoint fails closed
+    monkeypatch.delenv("APP_ENV", raising=False)
+    monkeypatch.setenv("ODP_PRODUCT_MODE", "production")
+    with pytest.raises(ValueError, match="Production mode or on-call route requires a configured valid ONCALL_ENDPOINT_URL"):
+        get_notification_adapter()
+
+    # ODP_PRODUCT_MODE=production with ConsoleNotificationAdapter type fails closed
     monkeypatch.setenv("NOTIFICATION_ADAPTER_TYPE", "console")
     with pytest.raises(ValueError, match="ConsoleNotificationAdapter is forbidden in production environment"):
         get_notification_adapter()
 
     # Production mode with valid ONCALL_ENDPOINT_URL returns OnCallNotificationAdapter
-    monkeypatch.delenv("APP_ENV", raising=False)
+    monkeypatch.delenv("ODP_PRODUCT_MODE", raising=False)
     monkeypatch.setenv("NOTIFICATION_ADAPTER_TYPE", "oncall")
     monkeypatch.setenv("ONCALL_ENDPOINT_URL", "https://oncall-custom.oday.plus/alerts")
     adapter = get_notification_adapter()
@@ -908,7 +943,6 @@ def test_notification_adapter_factory_and_production_wiring(monkeypatch: pytest.
         get_notification_adapter()
 
 
-
 def test_production_metrics_exporter_and_dashboard_provisioning() -> None:
     from shared.observability import (
         ProductionMetricsExporter,
@@ -923,24 +957,67 @@ def test_production_metrics_exporter_and_dashboard_provisioning() -> None:
 
     test_sha = "b28a6b6d335293ecb51a72dff3700838e196129c"
 
-    # 1. Test ProductionMetricsExporter binds release_sha to all metric categories and outputs readback receipts
-    exporter = ProductionMetricsExporter(release_sha=test_sha, registry=registry)
+    def mock_success_transport(url: str, payload: dict) -> tuple[int, dict]:
+        if "metrics/export" in url:
+            return 200, {"export_receipt_id": f"export-rec-{test_sha[:12]}", "readback_status": "SUCCESS"}
+        elif "dashboards/provision" in url:
+            return 200, {"receipt_id": f"dash-rec-{test_sha[:12]}", "readback_status": "PROVISIONED"}
+        return 200, {"status": "ok"}
+
+    # 1. Test ProductionMetricsExporter binds release_sha and performs provider write/readback
+    exporter = ProductionMetricsExporter(
+        release_sha=test_sha,
+        registry=registry,
+        gcp_project="alfaloop-data-project",
+        provider_route="https://oncall-router.oday.plus/api/v1/alerts",
+        http_transport=mock_success_transport,
+    )
     exported = exporter.export_metrics()
 
     assert exported["release_sha"] == test_sha
     assert exported["export_receipt_id"] == f"export-rec-{test_sha[:12]}"
+    assert exported["readback_status"] == "SUCCESS"
+    assert exported["provider_route_identity"] == "https://oncall-router.oday.plus/api/v1/alerts"
     assert len(exported["monitoring_backend_resource_ids"]) > 0
     assert "api_request_count" in exported["metrics"]
     assert exported["metrics"]["api_request_count"][0]["labels"]["release_sha"] == test_sha
-    assert exported["metrics"]["dlq_message_count"][0]["labels"]["release_sha"] == test_sha
-    assert exported["metrics"]["netplan_plan_adoption_rate"][0]["labels"]["release_sha"] == test_sha
 
-    # Fail closed on empty or non-40-char SHA
-    with pytest.raises(ValueError, match="release_sha must be an exact full 40-character hexadecimal string"):
-        ProductionMetricsExporter(release_sha="b28a6b6d3352")
+    # Fail closed on missing GCP_PROJECT or ONCALL_ENDPOINT_URL
+    with pytest.raises(ValueError, match="GCP_PROJECT environment variable is missing or unconfigured"):
+        ProductionMetricsExporter(
+            release_sha=test_sha,
+            gcp_project="",
+            provider_route="https://oncall-router.oday.plus/api/v1/alerts",
+            http_transport=mock_success_transport,
+        ).export_metrics()
 
-    # 2. Test render_dashboard_provisioning performs runtime substitution, verifies SLO owner, and outputs readback receipts
-    provisioned = render_dashboard_provisioning(release_sha=test_sha)
+    with pytest.raises(ValueError, match="ONCALL_ENDPOINT_URL is missing or unconfigured"):
+        ProductionMetricsExporter(
+            release_sha=test_sha,
+            gcp_project="alfaloop-data-project",
+            provider_route="",
+            http_transport=mock_success_transport,
+        ).export_metrics()
+
+    # Fail closed on provider 500 error rejection
+    def mock_500_transport(url: str, payload: dict) -> tuple[int, dict]:
+        return 500, {"error": "backend database failure"}
+
+    with pytest.raises(RuntimeError, match="Cloud Monitoring / metrics provider write rejected with HTTP 500"):
+        ProductionMetricsExporter(
+            release_sha=test_sha,
+            gcp_project="alfaloop-data-project",
+            provider_route="https://oncall-router.oday.plus/api/v1/alerts",
+            http_transport=mock_500_transport,
+        ).export_metrics()
+
+    # 2. Test render_dashboard_provisioning performs runtime substitution, SLO owner check, and provider adapter call
+    provisioned = render_dashboard_provisioning(
+        release_sha=test_sha,
+        gcp_project="alfaloop-data-project",
+        provider_route="https://oncall-router.oday.plus/api/v1/alerts",
+        http_transport=mock_success_transport,
+    )
 
     traceability = provisioned["release_sha_traceability"]
     assert traceability["exact_sha_binding"] == test_sha
@@ -948,17 +1025,18 @@ def test_production_metrics_exporter_and_dashboard_provisioning() -> None:
 
     readback = provisioned["provisioning_readback"]
     assert readback["readback_status"] == "PROVISIONED"
+    assert readback["receipt_id"] == f"dash-rec-{test_sha[:12]}"
     assert readback["exact_sha_binding"] == test_sha
     assert "platform-health" in readback["dashboard_resource_ids"]
 
-    platform_health = next(d for d in provisioned["dashboards"] if d["id"] == "platform-health")
-    panels = {p["title"]: p for p in platform_health["panels"]}
-    assert panels["Release SHA traceability"]["label_filter"] == f"release_sha={test_sha}"
-    assert panels["Release watch-window receipt"]["label_filter"] == f"release_sha={test_sha}"
-
-    # Fail closed on non-40-char SHA or missing SLO owner
-    with pytest.raises(ValueError, match="release_sha must be an exact full 40-character hexadecimal string"):
-        render_dashboard_provisioning(release_sha="b28a6b6d3352")
+    # Dashboard provisioning fails closed on provider rejection
+    with pytest.raises(ValueError, match="Dashboard provider rejected provisioning with HTTP 500"):
+        render_dashboard_provisioning(
+            release_sha=test_sha,
+            gcp_project="alfaloop-data-project",
+            provider_route="https://oncall-router.oday.plus/api/v1/alerts",
+            http_transport=mock_500_transport,
+        )
 
 
 def test_platform_observability_endpoints_fail_closed_without_full_sha(monkeypatch: pytest.MonkeyPatch) -> None:

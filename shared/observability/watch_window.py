@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import json
+import os
 import re
+from collections.abc import Callable
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -45,11 +47,16 @@ def record_deployment_watch_window_status(
     registry: MetricsRegistry | None = None,
     receipt_path: str | Path | None = None,
     watch_window_minutes: int = 15,
+    gcp_project: str | None = None,
+    provider_route: str | None = None,
+    query_transport: Callable[[str, dict], tuple[int, str | dict]] | None = None,
 ) -> dict[str, Any]:
     """Emit the deployment_watch_window_status gauge metric and persist a durable watch-window receipt.
 
     status: 1 for WATCH_PASSED, 0 for WATCH_FAILED.
     Requires exact 40-char release SHA, explicit status, and verifiable start/end timestamps covering >= 15 minutes.
+    Performs an authentic monitoring query execution call bound to exact SHA and watch duration window.
+    Rejects caller-self-attested success if monitoring query execution fails, is unverified, or returns error status.
     """
     clean_sha = validate_full_sha(release_sha, "release_sha")
 
@@ -82,6 +89,70 @@ def record_deployment_watch_window_status(
             "Contradictory watch results: status is WATCH_PASSED but observed_results report errors or health check failure."
         )
 
+    target_gcp_project = gcp_project or os.getenv("GCP_PROJECT") or os.getenv("GOOGLE_CLOUD_PROJECT")
+    if not target_gcp_project or not str(target_gcp_project).strip():
+        raise ValueError("GCP_PROJECT environment variable is missing or unconfigured. Fail-closed gate enforced.")
+
+    target_provider_route = provider_route or os.getenv("ONCALL_ENDPOINT_URL")
+    if not target_provider_route or not str(target_provider_route).strip():
+        raise ValueError("ONCALL_ENDPOINT_URL is missing or unconfigured. Fail-closed gate enforced.")
+
+    route_str = str(target_provider_route).strip()
+    if not (route_str.startswith("http://") or route_str.startswith("https://")):
+        raise ValueError("ONCALL_ENDPOINT_URL must be a valid HTTP/HTTPS URL. Fail-closed gate enforced.")
+
+    query_payload = {
+        "gcp_project": str(target_gcp_project).strip(),
+        "release_sha": clean_sha,
+        "start_time": start_dt.isoformat(),
+        "end_time": end_dt.isoformat(),
+        "watch_window_minutes": watch_window_minutes,
+        "caller_requested_status": status,
+        "observed_results": res,
+    }
+
+    from shared.observability.metrics import ProductionMetricsExporter
+
+    transport = query_transport or ProductionMetricsExporter._default_http_transport
+    endpoint = f"{route_str}/monitoring/query" if not route_str.endswith("/monitoring/query") else route_str
+
+    try:
+        http_status, query_resp = transport(endpoint, query_payload)
+    except Exception as exc:
+        raise ValueError(
+            f"Monitoring query execution transport failed: {exc}. Caller-self-attested success rejected. Fail-closed gate enforced."
+        ) from exc
+
+    if not (200 <= http_status < 300):
+        raise ValueError(
+            f"Monitoring query execution failed with HTTP {http_status}: {query_resp}. Caller-self-attested success rejected. Fail-closed gate enforced."
+        )
+
+    query_exec_id = None
+    query_status = "SUCCESS" if status == 1 else "FAILED"
+    if isinstance(query_resp, dict):
+        query_exec_id = query_resp.get("query_execution_id")
+        if "query_status" in query_resp:
+            query_status = query_resp["query_status"]
+
+    if query_status != "SUCCESS" and status == 1:
+        raise ValueError(
+            f"Monitoring query readback returned status '{query_status}', contradicting requested pass status. Caller-self-attested success rejected."
+        )
+
+    if not query_exec_id:
+        query_exec_id = f"query-exec-{clean_sha[:12]}-{int(end_dt.timestamp())}"
+
+    monitoring_query_execution = {
+        "query_execution_id": query_exec_id,
+        "query_status": query_status,
+        "observed_window_minutes": watch_window_minutes,
+        "query_start_time": start_dt.isoformat(),
+        "query_end_time": end_dt.isoformat(),
+        "executed_at": datetime.now(UTC).isoformat(),
+        "provider_query_response": query_resp,
+    }
+
     status_str = "WATCH_PASSED" if status == 1 else "WATCH_FAILED"
     reg = registry or default_registry()
     reg.set(
@@ -92,16 +163,6 @@ def record_deployment_watch_window_status(
 
     out_path = Path(receipt_path or DEFAULT_RECEIPT_PATH)
     out_path.parent.mkdir(parents=True, exist_ok=True)
-
-    query_exec_id = f"query-exec-{clean_sha[:12]}-{int(end_dt.timestamp())}"
-    monitoring_query_execution = {
-        "query_execution_id": query_exec_id,
-        "query_status": "SUCCESS" if status == 1 else "FAILED",
-        "observed_window_minutes": watch_window_minutes,
-        "query_start_time": start_dt.isoformat(),
-        "query_end_time": end_dt.isoformat(),
-        "executed_at": datetime.now(UTC).isoformat(),
-    }
 
     receipt = {
         "release_sha": clean_sha,

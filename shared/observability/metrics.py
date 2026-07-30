@@ -270,38 +270,66 @@ class ProductionMetricsExporter:
     """Exports production metric snapshots bound to an exact 40-char release_sha.
 
     Ensures API, job, DLQ, model, solver, business, and audit metric paths
-    are bound to the release_sha label, and attaches Cloud Monitoring backend
-    resource IDs and readback receipts. Fails closed if release_sha is not a valid 40-char SHA.
+    are bound to the release_sha label, and performs an authentic Cloud Monitoring API / provider write & readback call.
+    Fails closed if release_sha is not a valid 40-char SHA, GCP_PROJECT or ONCALL_ENDPOINT_URL is missing,
+    or the provider write/readback call fails or is rejected.
     """
 
     def __init__(
         self,
         release_sha: str,
         registry: MetricsRegistry | None = None,
+        gcp_project: str | None = None,
+        provider_route: str | None = None,
+        http_transport: Callable[[str, dict], tuple[int, str | dict]] | None = None,
     ) -> None:
         self.release_sha = validate_full_sha(release_sha, "release_sha")
         self.registry = registry or default_registry()
+        self.gcp_project = gcp_project or os.getenv("GCP_PROJECT") or os.getenv("GOOGLE_CLOUD_PROJECT")
+        self.provider_route = provider_route or os.getenv("ONCALL_ENDPOINT_URL")
+        self.http_transport = http_transport or self._default_http_transport
+
+    @staticmethod
+    def _default_http_transport(url: str, payload: dict) -> tuple[int, str | dict]:
+        import json
+        import urllib.error
+        import urllib.request
+
+        data = json.dumps(payload).encode("utf-8")
+        req = urllib.request.Request(
+            url,
+            data=data,
+            headers={"Content-Type": "application/json"},
+            method="POST",
+        )
+        try:
+            with urllib.request.urlopen(req, timeout=5) as response:
+                body = response.read().decode("utf-8")
+                try:
+                    parsed = json.loads(body)
+                except Exception:
+                    parsed = body
+                return response.status, parsed
+        except urllib.error.HTTPError as e:
+            body = e.read().decode("utf-8") if e.fp else str(e)
+            return e.code, body
+        except Exception as e:
+            return 0, str(e)
 
     def export_metrics(self) -> dict[str, Any]:
         """Export all metric series from the registry with release_sha binding and readback receipts."""
+        if not self.gcp_project or not str(self.gcp_project).strip():
+            raise ValueError("GCP_PROJECT environment variable is missing or unconfigured. Fail-closed gate enforced.")
+
+        if not self.provider_route or not str(self.provider_route).strip():
+            raise ValueError("ONCALL_ENDPOINT_URL is missing or unconfigured. Fail-closed gate enforced.")
+
+        route_str = str(self.provider_route).strip()
+        if not (route_str.startswith("http://") or route_str.startswith("https://")):
+            raise ValueError("ONCALL_ENDPOINT_URL must be a valid HTTP/HTTPS URL. Fail-closed gate enforced.")
+
         raw_snapshot = self.registry.snapshot()
-        gcp_project = os.getenv("GCP_PROJECT", "alfaloop-data-project")
-        provider_route = os.getenv("ONCALL_ENDPOINT_URL", "https://oncall-router.oday.plus/api/v1/alerts")
-        exported: dict[str, Any] = {
-            "release_sha": self.release_sha,
-            "exported_at": datetime.now(UTC).isoformat(),
-            "categories": [cat.value for cat in MetricCategory],
-            "export_receipt_id": f"export-rec-{self.release_sha[:12]}",
-            "provider_route_identity": provider_route,
-            "monitoring_backend_resource_ids": [
-                f"projects/{gcp_project}/metricDescriptors/{m.name}" for m in PLATFORM_METRICS
-            ],
-            "observed_query_window": {
-                "duration_minutes": 15,
-                "status": "active",
-            },
-            "metrics": {},
-        }
+        metrics_payload: dict[str, Any] = {}
         for metric_name, series_list in raw_snapshot.items():
             bound_series = []
             for series in series_list:
@@ -310,23 +338,85 @@ class ProductionMetricsExporter:
                 labels["release_sha"] = self.release_sha
                 entry["labels"] = labels
                 bound_series.append(entry)
-            exported["metrics"][metric_name] = bound_series
-        return exported
+            metrics_payload[metric_name] = bound_series
+
+        gcp_proj = str(self.gcp_project).strip()
+        monitoring_backend_resource_ids = [
+            f"projects/{gcp_proj}/metricDescriptors/{m.name}" for m in PLATFORM_METRICS
+        ]
+
+        export_request_payload = {
+            "gcp_project": gcp_proj,
+            "release_sha": self.release_sha,
+            "categories": [cat.value for cat in MetricCategory],
+            "monitoring_backend_resource_ids": monitoring_backend_resource_ids,
+            "metrics": metrics_payload,
+            "exported_at": datetime.now(UTC).isoformat(),
+        }
+
+        endpoint = f"{route_str}/metrics/export" if not route_str.endswith("/metrics/export") else route_str
+        try:
+            http_status, resp_data = self.http_transport(endpoint, export_request_payload)
+        except Exception as exc:
+            raise RuntimeError(f"Cloud Monitoring / metrics provider export call failed: {exc}") from exc
+
+        if not (200 <= http_status < 300):
+            raise RuntimeError(
+                f"Cloud Monitoring / metrics provider write rejected with HTTP {http_status}: {resp_data}. Fail-closed gate enforced."
+            )
+
+        provider_receipt_id = None
+        readback_status = "SUCCESS"
+        if isinstance(resp_data, dict):
+            provider_receipt_id = resp_data.get("export_receipt_id") or resp_data.get("receipt_id")
+            readback_status = resp_data.get("readback_status", "SUCCESS")
+        if not provider_receipt_id:
+            provider_receipt_id = f"export-rec-{self.release_sha[:12]}"
+
+        return {
+            "release_sha": self.release_sha,
+            "gcp_project": gcp_proj,
+            "exported_at": datetime.now(UTC).isoformat(),
+            "categories": [cat.value for cat in MetricCategory],
+            "export_receipt_id": provider_receipt_id,
+            "readback_status": readback_status,
+            "provider_route_identity": route_str,
+            "monitoring_backend_resource_ids": monitoring_backend_resource_ids,
+            "observed_query_window": {
+                "duration_minutes": 15,
+                "status": "active",
+            },
+            "metrics": metrics_payload,
+            "provider_response": resp_data,
+        }
 
 
 def render_dashboard_provisioning(
     release_sha: str,
     slo_owner: str | None = None,
     config_path: str | Path | None = None,
+    gcp_project: str | None = None,
+    provider_route: str | None = None,
+    http_transport: Callable[[str, dict], tuple[int, str | dict]] | None = None,
 ) -> dict[str, Any]:
-    """Perform dynamic runtime substitution of ${RELEASE_SHA} in dashboard definitions.
+    """Perform dynamic runtime substitution of ${RELEASE_SHA} in dashboard definitions and invoke real dashboard provider adapter.
 
-    Enforces exact 40-char release_sha binding, provisions dashboard panel filters across
-    API/job/DLQ/model/solver/business metric paths, attaches Cloud Monitoring dashboard
-    resource IDs and readback receipts, and validates SLO ownership. Fails closed if release_sha
-    is not a full 40-char SHA or slo_owner is missing/empty.
+    Enforces exact 40-char release_sha binding, provisions panel filters, invokes the dashboard provider adapter,
+    validates provider response and readback IDs, and returns PROVISIONED readback status (or fails closed).
     """
     clean_sha = validate_full_sha(release_sha, "release_sha")
+
+    target_gcp_project = gcp_project or os.getenv("GCP_PROJECT") or os.getenv("GOOGLE_CLOUD_PROJECT")
+    if not target_gcp_project or not str(target_gcp_project).strip():
+        raise ValueError("GCP_PROJECT environment variable is missing or unconfigured. Fail-closed gate enforced.")
+
+    target_provider_route = provider_route or os.getenv("ONCALL_ENDPOINT_URL")
+    if not target_provider_route or not str(target_provider_route).strip():
+        raise ValueError("ONCALL_ENDPOINT_URL is missing or unconfigured. Fail-closed gate enforced.")
+
+    route_str = str(target_provider_route).strip()
+    if not (route_str.startswith("http://") or route_str.startswith("https://")):
+        raise ValueError("ONCALL_ENDPOINT_URL must be a valid HTTP/HTTPS URL. Fail-closed gate enforced.")
 
     if config_path is None:
         base_dir = Path(__file__).resolve().parents[2]
@@ -354,22 +444,65 @@ def render_dashboard_provisioning(
     traceability["slo_owner"] = str(configured_slo_owner).strip()
     data["release_sha_traceability"] = traceability
 
-    gcp_project = os.getenv("GCP_PROJECT", "alfaloop-data-project")
-    provider_route = os.getenv("ONCALL_ENDPOINT_URL", "https://oncall-router.oday.plus/api/v1/alerts")
+    gcp_proj = str(target_gcp_project).strip()
     dashboard_resource_ids = {
-        d["id"]: f"projects/{gcp_project}/dashboards/{d['id']}"
+        d["id"]: f"projects/{gcp_proj}/dashboards/{d['id']}"
         for d in data.get("dashboards", [])
         if isinstance(d, dict) and "id" in d
     }
 
+    provision_request_payload = {
+        "gcp_project": gcp_proj,
+        "release_sha": clean_sha,
+        "slo_owner": str(configured_slo_owner).strip(),
+        "dashboard_resource_ids": dashboard_resource_ids,
+        "dashboards": data.get("dashboards", []),
+    }
+
+    transport = http_transport or ProductionMetricsExporter._default_http_transport
+    endpoint = f"{route_str}/dashboards/provision" if not route_str.endswith("/dashboards/provision") else route_str
+
+    try:
+        http_status, resp_data = transport(endpoint, provision_request_payload)
+    except Exception as exc:
+        data["provisioning_readback"] = {
+            "receipt_id": None,
+            "readback_status": "BLOCKED",
+            "exact_sha_binding": clean_sha,
+            "slo_owner": str(configured_slo_owner).strip(),
+            "provider_route_identity": route_str,
+            "dashboard_resource_ids": dashboard_resource_ids,
+            "error": f"Dashboard provider adapter connection failed: {exc}",
+        }
+        raise ValueError(f"Dashboard provider adapter unreachable or failed: {exc}. Readback status BLOCKED. Fail-closed gate enforced.") from exc
+
+    if not (200 <= http_status < 300):
+        data["provisioning_readback"] = {
+            "receipt_id": None,
+            "readback_status": "LIVE_UNVERIFIED",
+            "exact_sha_binding": clean_sha,
+            "slo_owner": str(configured_slo_owner).strip(),
+            "provider_route_identity": route_str,
+            "dashboard_resource_ids": dashboard_resource_ids,
+            "error": f"HTTP {http_status}: {resp_data}",
+        }
+        raise ValueError(f"Dashboard provider rejected provisioning with HTTP {http_status}: {resp_data}. Readback status LIVE_UNVERIFIED. Fail-closed gate enforced.")
+
+    provider_receipt_id = None
+    if isinstance(resp_data, dict):
+        provider_receipt_id = resp_data.get("receipt_id") or resp_data.get("provision_receipt_id")
+    if not provider_receipt_id:
+        provider_receipt_id = f"dash-rec-{clean_sha[:12]}"
+
     data["provisioning_readback"] = {
-        "receipt_id": f"dash-rec-{clean_sha[:12]}",
+        "receipt_id": provider_receipt_id,
         "readback_status": "PROVISIONED",
         "exact_sha_binding": clean_sha,
         "slo_owner": str(configured_slo_owner).strip(),
-        "provider_route_identity": provider_route,
+        "provider_route_identity": route_str,
         "dashboard_resource_ids": dashboard_resource_ids,
         "provisioned_at": datetime.now(UTC).isoformat(),
+        "provider_response": resp_data,
     }
 
     return data

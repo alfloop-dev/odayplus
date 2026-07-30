@@ -376,18 +376,36 @@ def repository_capability_checks(
 
 
 def observability_runtime_checks(root: Path = ROOT) -> list[CheckResult]:
-    """Verify live-wired observability components (exporter, dashboards, watch window, readback receipts)."""
+    """Verify live-wired observability components (exporter, dashboards, watch window, readback receipts, fail-closed gates)."""
     checks = []
     try:
+        from modules.notifications import get_notification_adapter
         from shared.observability import (
             ProductionMetricsExporter,
             default_registry,
+            record_deployment_watch_window_status,
             render_dashboard_provisioning,
         )
 
         test_sha = "10c620969a90627e4a67053a4708658f99faa07f"
         registry = default_registry()
-        exporter = ProductionMetricsExporter(release_sha=test_sha, registry=registry)
+
+        def mock_provider_transport(url: str, payload: dict) -> tuple[int, dict]:
+            if "metrics/export" in url:
+                return 200, {"export_receipt_id": f"export-rec-{test_sha[:12]}", "readback_status": "SUCCESS"}
+            elif "dashboards/provision" in url:
+                return 200, {"receipt_id": f"dash-rec-{test_sha[:12]}", "readback_status": "PROVISIONED"}
+            elif "monitoring/query" in url:
+                return 200, {"query_execution_id": f"query-exec-{test_sha[:12]}-100", "query_status": "SUCCESS"}
+            return 200, {"status": "ok"}
+
+        exporter = ProductionMetricsExporter(
+            release_sha=test_sha,
+            registry=registry,
+            gcp_project="alfaloop-data-project",
+            provider_route="https://oncall-router.oday.plus/api/v1/alerts",
+            http_transport=mock_provider_transport,
+        )
         exported = exporter.export_metrics()
 
         has_categories = set(exported.get("categories", [])) >= {
@@ -396,21 +414,27 @@ def observability_runtime_checks(root: Path = ROOT) -> list[CheckResult]:
         sha_bound = exported.get("release_sha") == test_sha
         has_export_receipt = bool(exported.get("export_receipt_id"))
         has_backend_ids = bool(exported.get("monitoring_backend_resource_ids"))
-        exporter_ok = has_categories and sha_bound and has_export_receipt and has_backend_ids
+        readback_success = exported.get("readback_status") == "SUCCESS"
+        exporter_ok = has_categories and sha_bound and has_export_receipt and has_backend_ids and readback_success
 
         checks.append(
             CheckResult(
                 ok=exporter_ok,
                 name="observability:production_metrics_exporter",
                 detail=(
-                    "ProductionMetricsExporter binds exact 40-char release_sha across categories and produces Cloud Monitoring backend resource IDs and export readback receipt"
+                    "ProductionMetricsExporter binds exact 40-char release_sha across categories, invokes provider adapter, and produces Cloud Monitoring backend resource IDs and readback receipt"
                     if exporter_ok
                     else "invalid: ProductionMetricsExporter failed to export bound metrics, backend resource IDs, or readback receipt"
                 ),
             )
         )
 
-        provisioned = render_dashboard_provisioning(release_sha=test_sha)
+        provisioned = render_dashboard_provisioning(
+            release_sha=test_sha,
+            gcp_project="alfaloop-data-project",
+            provider_route="https://oncall-router.oday.plus/api/v1/alerts",
+            http_transport=mock_provider_transport,
+        )
         exact_binding = provisioned.get("release_sha_traceability", {}).get("exact_sha_binding") == test_sha
         has_slo_owner = bool(provisioned.get("release_sha_traceability", {}).get("slo_owner"))
         readback = provisioned.get("provisioning_readback", {})
@@ -418,6 +442,7 @@ def observability_runtime_checks(root: Path = ROOT) -> list[CheckResult]:
             readback.get("readback_status") == "PROVISIONED"
             and bool(readback.get("dashboard_resource_ids"))
             and bool(readback.get("provider_route_identity"))
+            and readback.get("receipt_id") == f"dash-rec-{test_sha[:12]}"
         )
         dashboard_ok = exact_binding and has_slo_owner and readback_ok
 
@@ -426,9 +451,78 @@ def observability_runtime_checks(root: Path = ROOT) -> list[CheckResult]:
                 ok=dashboard_ok,
                 name="observability:dashboard_provisioning",
                 detail=(
-                    "render_dashboard_provisioning provisions exact release_sha binding, validates SLO owner, and produces dashboard resource IDs readback receipt"
+                    "render_dashboard_provisioning provisions exact release_sha binding, validates SLO owner, invokes provider adapter, and produces dashboard resource IDs readback receipt"
                     if dashboard_ok
                     else "invalid: dashboard provisioning failed to bind release_sha, validate SLO owner, or produce readback receipt"
+                ),
+            )
+        )
+
+        # Fail-closed gate verification: exporter fails closed without config
+        fail_closed_unconfigured = False
+        try:
+            unconfigured_exporter = ProductionMetricsExporter(
+                release_sha=test_sha,
+                gcp_project="",
+                provider_route="",
+                http_transport=mock_provider_transport,
+            )
+            unconfigured_exporter.export_metrics()
+        except ValueError:
+            fail_closed_unconfigured = True
+
+        # Fail-closed gate verification: exporter fails closed when provider rejects/500
+        def rejecting_transport(url: str, payload: dict) -> tuple[int, dict]:
+            return 500, {"error": "Internal Server Error"}
+
+        fail_closed_rejection = False
+        try:
+            rejected_exporter = ProductionMetricsExporter(
+                release_sha=test_sha,
+                gcp_project="alfaloop-data-project",
+                provider_route="https://oncall-router.oday.plus/api/v1/alerts",
+                http_transport=rejecting_transport,
+            )
+            rejected_exporter.export_metrics()
+        except RuntimeError:
+            fail_closed_rejection = True
+
+        # Verify watch window recording with monitoring query execution transport
+        from datetime import UTC, datetime, timedelta
+        start_time = datetime.now(UTC) - timedelta(minutes=20)
+        end_time = datetime.now(UTC)
+        watch_receipt = record_deployment_watch_window_status(
+            release_sha=test_sha,
+            status=1,
+            start_time=start_time,
+            end_time=end_time,
+            gcp_project="alfaloop-data-project",
+            provider_route="https://oncall-router.oday.plus/api/v1/alerts",
+            query_transport=mock_provider_transport,
+        )
+        watch_window_ok = watch_receipt.get("status") == "WATCH_PASSED"
+
+        # Verify notification adapter fails closed without ONCALL_ENDPOINT_URL when in production
+        notification_fail_closed = False
+        try:
+            get_notification_adapter(endpoint_url="")
+        except ValueError:
+            notification_fail_closed = True
+
+        fail_closed_ok = (
+            fail_closed_unconfigured
+            and fail_closed_rejection
+            and watch_window_ok
+            and notification_fail_closed
+        )
+        checks.append(
+            CheckResult(
+                ok=fail_closed_ok,
+                name="observability:fail_closed_gates",
+                detail=(
+                    "Observability exporter, dashboard provisioning, watch-window query execution, and notification adapter fail-closed on missing config, unconfigured route, and provider rejection"
+                    if fail_closed_ok
+                    else "invalid: observability fail-closed gates failed to reject missing config or provider rejection"
                 ),
             )
         )

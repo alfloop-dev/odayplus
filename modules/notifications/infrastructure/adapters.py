@@ -166,7 +166,13 @@ def get_notification_adapter(
     """
     adapter_type = os.getenv("NOTIFICATION_ADAPTER_TYPE", "").strip().lower()
     raw_env_endpoint = os.getenv("ONCALL_ENDPOINT_URL")
-    env = os.getenv("APP_ENV", os.getenv("ENVIRONMENT", os.getenv("STAGE", os.getenv("ODAY_ENV", "")))).strip().lower()
+    env = os.getenv(
+        "ODP_PRODUCT_MODE",
+        os.getenv(
+            "ODAY_PRODUCT_MODE",
+            os.getenv("APP_ENV", os.getenv("ENVIRONMENT", os.getenv("STAGE", os.getenv("ODAY_ENV", "")))),
+        ),
+    ).strip().lower()
     is_prod = env in {"prod", "production", "live", "staging"}
     require_oncall = is_prod or adapter_type == "oncall" or raw_env_endpoint is not None or endpoint_url is not None or os.getenv("REQUIRE_ONCALL_ROUTE", "").strip().lower() in {"1", "true"}
 
