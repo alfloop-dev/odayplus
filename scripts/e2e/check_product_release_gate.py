@@ -220,6 +220,19 @@ def main() -> int:
         if token not in readiness_text:
             errors.append(f"readiness report does not mention {token}")
 
+    # Executable acceptance scenario and test inventory validator
+    try:
+        if str(ROOT) not in sys.path:
+            sys.path.insert(0, str(ROOT))
+        from tests.e2e.test_acceptance_coverage import (
+            validate_acceptance_scenarios_and_inventory,
+        )
+        scenario_errors = validate_acceptance_scenarios_and_inventory(ROOT)
+        if scenario_errors:
+            errors.extend(scenario_errors)
+    except Exception as exc:
+        errors.append(f"acceptance scenario/inventory validator error: {exc}")
+
     closeout_queue_check = subprocess.run(
         [sys.executable, "scripts/e2e/check_product_closeout_queue.py"],
         cwd=ROOT,

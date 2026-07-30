@@ -30,7 +30,7 @@ E2E_SCENARIOS: tuple[E2EScenario, ...] = (
         "HeatZone to SiteScore opening decision",
         "expansion_user + site_reviewer",
         "golden_sitescore_dataset:v1",
-        "tests/e2e/e2e-exp.spec.ts::SiteScore list and detail",
+        "tests/e2e/operator-network-scoring.spec.ts::SiteScore list and detail",
         "/w/expansion/sitescore/ssr-7001",
         ("decision_id", "model_version", "feature_snapshot_time", "correlation_id"),
         True,
@@ -41,7 +41,7 @@ E2E_SCENARIOS: tuple[E2EScenario, ...] = (
         "Listing import, geocode, dedup, and candidate creation",
         "expansion_user",
         "golden_listing_dataset:v1",
-        "tests/e2e/e2e-exp.spec.ts::Listing and Candidate screens",
+        "tests/e2e/operator-network-listings.spec.ts::Listing and Candidate screens",
         "/w/expansion/listings?selected=lst-9003&drawer=listing",
         ("field lineage", "hard_rule", "correlation_id"),
         True,
@@ -63,7 +63,7 @@ E2E_SCENARIOS: tuple[E2EScenario, ...] = (
         "Post-opening SiteScore realization",
         "ops_manager",
         "golden_forecastops_dataset:v1",
-        "tests/e2e/e2e-ops.spec.ts::Store detail",
+        "tests/e2e/operator-store-ops.spec.ts::Store detail",
         "/w/operations/forecast/store-001",
         ("prediction_run_id", "outcome_status", "label_registry"),
         True,
@@ -74,7 +74,7 @@ E2E_SCENARIOS: tuple[E2EScenario, ...] = (
         "ForecastOps four-light alert to root cause",
         "ops_manager",
         "golden_forecastops_dataset:v1",
-        "tests/e2e/e2e-ops.spec.ts::Forecast overview",
+        "tests/e2e/operator-store-ops.spec.ts::Forecast overview",
         "/w/operations/forecast?selected=store-002",
         ("forecast_run_id", "four-light-policy-v1", "correlation_id"),
         True,
@@ -85,7 +85,7 @@ E2E_SCENARIOS: tuple[E2EScenario, ...] = (
         "Red alert to intervention and observation maturity",
         "field_supervisor",
         "golden_intervention_dataset:v1",
-        "tests/e2e/e2e-intervention-price-ad.spec.ts::E2E-INT-001",
+        "tests/e2e/operator-store-ops.spec.ts::E2E-INT-001",
         "/interventions?selected=int-3002&drawer=case",
         ("decision_id", "conflict_check", "observation_window"),
         True,
@@ -96,7 +96,7 @@ E2E_SCENARIOS: tuple[E2EScenario, ...] = (
         "PriceOps plan, approval, execution, and rollback",
         "pricing_user",
         "golden_priceops_dataset:v1",
-        "tests/e2e/e2e-intervention-price-ad.spec.ts::E2E-PRICE-001",
+        "tests/e2e/operator-growth.spec.ts::E2E-PRICE-001",
         "/pricing?selected=price-5102&drawer=plan",
         ("hard_constraint", "rollback_plan", "decision_id"),
         True,
@@ -107,7 +107,7 @@ E2E_SCENARIOS: tuple[E2EScenario, ...] = (
         "AdLift campaign, controls, and incrementality",
         "marketing_user",
         "golden_adlift_dataset:v1",
-        "tests/e2e/e2e-intervention-price-ad.spec.ts::E2E-AD-001",
+        "tests/e2e/operator-growth.spec.ts::E2E-AD-001",
         "/adlift?selected=adlift-8801&drawer=report",
         ("control_match", "pre_trend", "contamination"),
         True,
@@ -118,7 +118,7 @@ E2E_SCENARIOS: tuple[E2EScenario, ...] = (
         "Long-term red store to AVM valuation and Data Room",
         "finance_user + legal_user",
         "golden_avm_dataset:v1",
-        "tests/e2e/e2e-avm-netplan.spec.ts::DealRoomAVM case detail",
+        "tests/e2e/e2e-network-find-areas-api-binding.spec.ts::DealRoomAVM case detail",
         "/w/dealroom/cases/vc-5101",
         ("decision_id", "finance_approval", "avm.dataroom_exported.v1"),
         True,
@@ -129,7 +129,7 @@ E2E_SCENARIOS: tuple[E2EScenario, ...] = (
         "NetPlan scenario, solver alternatives, and approval",
         "executive_user",
         "golden_netplan_dataset:v1",
-        "tests/e2e/e2e-avm-netplan.spec.ts::NetPlan feasible detail",
+        "tests/e2e/e2e-network-find-areas-api-binding.spec.ts::NetPlan feasible detail",
         "/w/network/scenarios/np-6201",
         ("solver_status", "binding_constraints", "approval_id"),
         True,
@@ -140,7 +140,7 @@ E2E_SCENARIOS: tuple[E2EScenario, ...] = (
         "Model training, validation, shadow, canary, production",
         "mlops_user",
         "golden_learninghub_dataset:v1",
-        "tests/e2e/e2e-learning-audit.spec.ts::Learning Hub model detail",
+        "tests/e2e/operator-governance.spec.ts::Learning Hub model detail",
         "/w/ai/models/sitescore-propensity/2.4.0",
         ("model_card", "release_approval", "rollback_target"),
         True,
@@ -151,7 +151,7 @@ E2E_SCENARIOS: tuple[E2EScenario, ...] = (
         "Model release rollback",
         "mlops_user",
         "golden_learninghub_dataset:v1",
-        "tests/e2e/e2e-learning-audit.spec.ts::Learning Hub model detail",
+        "tests/e2e/operator-governance.spec.ts::Learning Hub model detail",
         "/w/ai/models/sitescore-propensity/2.4.0",
         ("rollback_reason", "previous_champion", "audit_event_id"),
         True,
@@ -173,7 +173,7 @@ E2E_SCENARIOS: tuple[E2EScenario, ...] = (
         "Decision audit evidence export",
         "audit_user",
         "audit_snapshot:v1",
-        "tests/e2e/e2e-learning-audit.spec.ts::Audit decision detail",
+        "tests/e2e/operator-governance.spec.ts::Audit decision detail",
         "/w/audit/decisions/decision-netplan-404",
         ("decision_id", "approval_chain", "bundle_checksum"),
         True,
@@ -201,6 +201,96 @@ E2E_SCENARIOS: tuple[E2EScenario, ...] = (
         True,
     ),
 )
+
+DELETED_SPEC_REFERENCES = (
+    "e2e-exp.spec.ts",
+    "e2e-ops.spec.ts",
+    "e2e-intervention-price-ad.spec.ts",
+    "e2e-avm-netplan.spec.ts",
+    "e2e-learning-audit.spec.ts",
+)
+
+EXPECTED_CANONICAL_SPEC_COUNT = 16
+EXPECTED_TEST_INVENTORY_COUNT = 107
+
+
+def validate_acceptance_scenarios_and_inventory(root_path: Path) -> list[str]:
+    """Executable validator for scenario coverage, canonical specs, and test inventory."""
+    import re
+    import subprocess
+    errors: list[str] = []
+
+    # 1. Validate scenario automation refs resolve to existing files and do not use deleted specs
+    for scenario in E2E_SCENARIOS:
+        ref = scenario.automation_ref
+        for deleted_spec in DELETED_SPEC_REFERENCES:
+            if deleted_spec in ref:
+                errors.append(
+                    f"{scenario.scenario_id} cites deleted spec reference: {ref}"
+                )
+
+        if ref.startswith("manual-uat:"):
+            route = scenario.route_or_surface
+            if "#" in route:
+                doc_path_str = route.split("#")[0]
+            else:
+                doc_path_str = route
+            if doc_path_str.startswith("docs/") and not (root_path / doc_path_str).exists():
+                errors.append(f"{scenario.scenario_id} manual UAT doc missing: {doc_path_str}")
+        else:
+            refs = [r.strip() for r in ref.split("+")]
+            for single_ref in refs:
+                file_part = single_ref.split("::")[0].strip()
+                if file_part.startswith("tests/") and not (root_path / file_part).exists():
+                    errors.append(
+                        f"{scenario.scenario_id} automation ref file missing: {file_part}"
+                    )
+
+    # 2. Validate canonical spec files inventory (16 files) and test count (107 tests)
+    e2e_dir = root_path / "tests/e2e"
+    spec_files = sorted([p for p in e2e_dir.glob("*.spec.ts") if p.is_file()])
+    if len(spec_files) != EXPECTED_CANONICAL_SPEC_COUNT:
+        errors.append(
+            f"Expected {EXPECTED_CANONICAL_SPEC_COUNT} Playwright spec files in tests/e2e, "
+            f"found {len(spec_files)}"
+        )
+
+    # Try authoritative playwright --list first
+    try:
+        proc = subprocess.run(
+            ["npx", "playwright", "test", "--list", "--project=chromium"],
+            cwd=root_path,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        match = re.search(r"Total:\s*(\d+)\s*tests\s*in\s*(\d+)\s*files", proc.stdout)
+        if match:
+            pw_tests, pw_files = int(match.group(1)), int(match.group(2))
+            if pw_files != EXPECTED_CANONICAL_SPEC_COUNT:
+                errors.append(
+                    f"Playwright --list reported {pw_files} spec files, expected {EXPECTED_CANONICAL_SPEC_COUNT}"
+                )
+            if pw_tests != EXPECTED_TEST_INVENTORY_COUNT:
+                errors.append(
+                    f"Playwright --list reported {pw_tests} total tests, expected {EXPECTED_TEST_INVENTORY_COUNT}"
+                )
+        else:
+            # Fallback static test header parser (excludes test.describe / test.use / etc.)
+            total_test_cases = 0
+            for spec_path in spec_files:
+                content = spec_path.read_text(encoding="utf-8")
+                matches = len(re.findall(r"^\s*test(?:\.only|\.skip)?\s*\(", content, re.MULTILINE))
+                total_test_cases += matches
+            if total_test_cases != EXPECTED_TEST_INVENTORY_COUNT:
+                errors.append(
+                    f"Expected {EXPECTED_TEST_INVENTORY_COUNT} test cases in Playwright inventory, "
+                    f"found {total_test_cases}"
+                )
+    except Exception as exc:
+        errors.append(f"Failed to validate Playwright test inventory: {exc}")
+
+    return errors
 
 
 def test_all_qa03_scenarios_are_registered_once() -> None:
@@ -243,3 +333,10 @@ def test_acceptance_registry_links_release_review_surfaces() -> None:
     assert "/w/audit/decisions/decision-netplan-404" in surfaces
     assert "AuthorizationEngine" in surfaces
     assert any("Data Quality Center" in surface for surface in surfaces)
+
+
+def test_no_deleted_specs_referenced_and_inventory_consistent() -> None:
+    from pathlib import Path
+    root = Path(__file__).resolve().parents[2]
+    errors = validate_acceptance_scenarios_and_inventory(root)
+    assert errors == [], f"Acceptance scenario validation errors: {errors}"
