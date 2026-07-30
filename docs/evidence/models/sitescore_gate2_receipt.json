@@ -1,15 +1,15 @@
 {
   "benchmark_summary": {
     "activation_threshold": 200,
+    "artifact_lineage_id": null,
     "calibration_summary": {
-      "m12_interval_mae": 0.0,
-      "m1_interval_mae": 0.0,
-      "m3_interval_mae": 0.0,
-      "m6_interval_mae": 0.0,
+      "interval_bounds_coverage_ratio": 0.0,
       "mean_realized_revenue": 1.0,
+      "measured_90d_mae": null,
       "p80_coverage_ratio": 0.0,
       "prediction_coverage_ratio": 0.0
     },
+    "dataset_snapshot_id": null,
     "eligible_count": 0,
     "handback_payload": {
       "activation_threshold": 200,
@@ -17,6 +17,7 @@
       "governed_disabled": true,
       "handback_action": "Provide a valid PostgreSQL database URL (ODAY_DATABASE_URL / --db-url) or candidate site records.",
       "handback_required": true,
+      "interval_bounds_coverage_ratio": 0.0,
       "m12_coverage_ratio": 0.0,
       "m6_coverage_ratio": 0.0,
       "mature_label_count": 0,
@@ -31,12 +32,14 @@
         "No database connection or candidate site records were provided"
       ]
     },
+    "interval_bounds_coverage_ratio": 0.0,
     "is_gate2_passed": false,
     "m12_coverage_ratio": 0.0,
     "m6_coverage_ratio": 0.0,
     "mature_label_count": 0,
     "max_mae_threshold": 0.25,
     "min_coverage_threshold": 0.7,
+    "model_version": null,
     "normalized_mae": 0.0,
     "observed_count": 0,
     "p80_coverage": 0.0,
@@ -54,6 +57,7 @@
     "governed_disabled": true,
     "handback_action": "Provide a valid PostgreSQL database URL (ODAY_DATABASE_URL / --db-url) or candidate site records.",
     "handback_required": true,
+    "interval_bounds_coverage_ratio": 0.0,
     "m12_coverage_ratio": 0.0,
     "m6_coverage_ratio": 0.0,
     "mature_label_count": 0,
@@ -69,13 +73,13 @@
     ]
   },
   "integrity": {
-    "content_sha256": "cedc046e459dafabadf92aef480f3dc78b3cd0b90e676efa2fec0e2ae4d9769a"
+    "content_sha256": "8693b41041755e5d4f7baf955e7b1d2c3166061af40ae99a39e035761f5d974d"
   },
   "inventory_version": "candidate-site-view-v2",
   "is_governed_disabled": true,
   "kind": "sitescore-opening-outcome-gate2-receipt",
   "model_name": "sitescore_propensity",
-  "observed_at": "2026-07-30T17:46:13.086558Z",
+  "observed_at": "2026-07-30T21:46:13.772218Z",
   "provenance": "no_source",
   "schema_version": 1,
   "service": "sitescore",

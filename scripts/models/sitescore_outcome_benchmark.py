@@ -91,6 +91,7 @@ def write_evidence_markdown(
 
     labels_status = 'PASS' if summary.get('mature_label_count', 0) >= 200 else 'FAIL (GOVERNED_DISABLED)'
     pred_cov_status = 'PASS' if summary.get('prediction_coverage_ratio', 0.0) >= 0.70 else 'FAIL'
+    bounds_cov_status = 'PASS' if summary.get('interval_bounds_coverage_ratio', 0.0) >= 0.70 else 'FAIL'
     m6_cov_status = 'PASS' if summary.get('m6_coverage_ratio', 0.0) >= 0.70 else 'FAIL'
     m12_cov_status = 'PASS' if summary.get('m12_coverage_ratio', 0.0) >= 0.70 else 'FAIL'
     p80_cov_status = 'PASS' if summary.get('p80_coverage', 0.0) >= 0.70 else 'FAIL'
@@ -98,6 +99,7 @@ def write_evidence_markdown(
     mae_pass = summary.get('is_gate2_passed', False) or (
         summary.get('mature_label_count', 0) >= 200
         and summary.get('prediction_coverage_ratio', 0.0) >= 0.70
+        and summary.get('interval_bounds_coverage_ratio', 0.0) >= 0.70
         and summary.get('normalized_mae', 0.0) <= summary.get('max_mae_threshold', 0.25)
     )
     mae_status = 'PASS' if mae_pass else 'FAIL (GOVERNED_DISABLED)'
@@ -123,6 +125,7 @@ def write_evidence_markdown(
         "| --- | --- | --- | --- |",
         f"| Mature Labels | {summary.get('mature_label_count', 0)} | >= {summary.get('activation_threshold', 200)} | {labels_status} |",
         f"| Prediction Coverage | {summary.get('prediction_coverage_ratio', 0.0):.1%} | >= {summary.get('min_coverage_threshold', 0.70):.1%} | {pred_cov_status} |",
+        f"| Interval Bounds Coverage | {summary.get('interval_bounds_coverage_ratio', 0.0):.1%} | >= {summary.get('min_coverage_threshold', 0.70):.1%} | {bounds_cov_status} |",
         f"| M6 Horizon Coverage | {summary.get('m6_coverage_ratio', 0.0):.1%} | >= {summary.get('min_coverage_threshold', 0.70):.1%} | {m6_cov_status} |",
         f"| M12 Horizon Coverage | {summary.get('m12_coverage_ratio', 0.0):.1%} | >= {summary.get('min_coverage_threshold', 0.70):.1%} | {m12_cov_status} |",
         f"| P80 Coverage Ratio | {summary.get('p80_coverage', 0.0):.1%} | >= {summary.get('min_coverage_threshold', 0.70):.1%} | {p80_cov_status} |",

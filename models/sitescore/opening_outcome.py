@@ -28,6 +28,10 @@ class SiteScoreOpeningOutcomeBenchmarkResult:
     normalized_mae: float
     p80_coverage: float
     prediction_coverage_ratio: float = 0.0
+    interval_bounds_coverage_ratio: float = 0.0
+    dataset_snapshot_id: str | None = None
+    model_version: str | None = None
+    artifact_lineage_id: str | None = None
     provenance: str = "no_source"
     db_error: str | None = None
     activation_threshold: int = ACTIVATION_THRESHOLD
@@ -35,6 +39,15 @@ class SiteScoreOpeningOutcomeBenchmarkResult:
     max_mae_threshold: float = MAX_MAE_THRESHOLD
     segment_metrics: Sequence[dict[str, Any]] = field(default_factory=tuple)
     calibration_summary: dict[str, Any] = field(default_factory=dict)
+
+    @property
+    def is_lineage_governed(self) -> bool:
+        return bool(
+            self.dataset_snapshot_id
+            and self.model_version
+            and self.artifact_lineage_id
+            and self.provenance in ("pg16_query", "authenticated_governed_records")
+        )
 
     @property
     def is_labels_sufficient(self) -> bool:
@@ -54,15 +67,20 @@ class SiteScoreOpeningOutcomeBenchmarkResult:
         )
 
     @property
+    def is_interval_bounds_passed(self) -> bool:
+        return self.interval_bounds_coverage_ratio >= self.min_coverage_threshold
+
+    @property
     def is_mae_passed(self) -> bool:
         return self.normalized_mae <= self.max_mae_threshold
 
     @property
     def is_gate2_passed(self) -> bool:
         return (
-            self.provenance in ("pg16_query", "provided_records")
+            self.is_lineage_governed
             and self.is_labels_sufficient
             and self.is_coverage_passed
+            and self.is_interval_bounds_passed
             and self.is_mae_passed
         )
 
@@ -76,15 +94,26 @@ class SiteScoreOpeningOutcomeBenchmarkResult:
             return "DB_INVENTORY_UNREACHABLE"
         if self.provenance == "no_source":
             return "NO_SOURCE_INVENTORY"
-        if self.is_gate2_passed:
-            return "GATE2_CRITERIA_MET"
+        if self.provenance == "provided_records":
+            return "UNAUTHENTICATED_PROVENANCE"
+        if not self.is_lineage_governed:
+            return "MISSING_GOVERNED_LINEAGE"
         if not self.is_labels_sufficient:
             return "MATURE_LABELS_BELOW_THRESHOLD"
         if not self.is_prediction_coverage_passed:
             return "PREDICTION_EVIDENCE_MISSING"
-        if not self.is_coverage_passed:
+        if (
+            self.m6_coverage_ratio < self.min_coverage_threshold
+            or self.m12_coverage_ratio < self.min_coverage_threshold
+        ):
             return "M6_M12_COVERAGE_INSUFFICIENT"
-        return "NORMALIZED_MAE_EXCEEDED"
+        if not self.is_interval_bounds_passed:
+            return "INTERVAL_BOUNDS_MISSING"
+        if not self.is_mae_passed:
+            return "NORMALIZED_MAE_EXCEEDED"
+        if self.is_gate2_passed:
+            return "GATE2_CRITERIA_MET"
+        return "GOVERNED_DISABLED"
 
     @property
     def handback_payload(self) -> dict[str, Any]:
@@ -105,6 +134,14 @@ class SiteScoreOpeningOutcomeBenchmarkResult:
         elif self.provenance == "no_source":
             reasons.append("No database connection or candidate site records were provided")
             handback_action = "Provide a valid PostgreSQL database URL (ODAY_DATABASE_URL / --db-url) or candidate site records."
+        elif self.provenance == "provided_records":
+            reasons.append("Provided records are unauthenticated / non-governed activation input")
+            handback_action = "Provide authenticated governed PostgreSQL inventory records with immutable dataset snapshot and model lineage."
+        elif not self.is_lineage_governed:
+            reasons.append(
+                f"Missing governed dataset snapshot or model/artifact lineage (snapshot={self.dataset_snapshot_id}, model_version={self.model_version}, artifact_lineage_id={self.artifact_lineage_id})"
+            )
+            handback_action = "Provide complete governed dataset snapshot ID/hash and model/artifact lineage."
         else:
             if not self.is_labels_sufficient:
                 reasons.append(
@@ -122,6 +159,10 @@ class SiteScoreOpeningOutcomeBenchmarkResult:
                 reasons.append(
                     f"M12 horizon coverage ({self.m12_coverage_ratio:.1%}) is below threshold ({self.min_coverage_threshold:.1%})"
                 )
+            if not self.is_interval_bounds_passed:
+                reasons.append(
+                    f"Interval bounds coverage ({self.interval_bounds_coverage_ratio:.1%}) is below threshold ({self.min_coverage_threshold:.1%})"
+                )
             if self.p80_coverage < self.min_coverage_threshold:
                 reasons.append(
                     f"P80 coverage ({self.p80_coverage:.1%}) is below threshold ({self.min_coverage_threshold:.1%})"
@@ -132,7 +173,7 @@ class SiteScoreOpeningOutcomeBenchmarkResult:
                 )
             handback_action = (
                 f"Provide >= {self.activation_threshold} mature opening outcome labels with complete "
-                f"M6 (180d) and M12 (365d) post-opening transaction history and model predictions."
+                f"M6 (180d) and M12 (365d) post-opening transaction history, actual p10/p90 interval bounds, and model predictions."
             )
 
         return {
@@ -148,6 +189,7 @@ class SiteScoreOpeningOutcomeBenchmarkResult:
             "m6_coverage_ratio": self.m6_coverage_ratio,
             "m12_coverage_ratio": self.m12_coverage_ratio,
             "prediction_coverage_ratio": self.prediction_coverage_ratio,
+            "interval_bounds_coverage_ratio": self.interval_bounds_coverage_ratio,
             "normalized_mae": self.normalized_mae,
             "p80_coverage": self.p80_coverage,
             "reasons": reasons,
@@ -157,10 +199,14 @@ class SiteScoreOpeningOutcomeBenchmarkResult:
     def to_dict(self) -> dict[str, Any]:
         res = {
             "provenance": self.provenance,
+            "dataset_snapshot_id": self.dataset_snapshot_id,
+            "model_version": self.model_version,
+            "artifact_lineage_id": self.artifact_lineage_id,
             "observed_count": self.observed_count,
             "eligible_count": self.eligible_count,
             "mature_label_count": self.mature_label_count,
             "prediction_coverage_ratio": round(self.prediction_coverage_ratio, 4),
+            "interval_bounds_coverage_ratio": round(self.interval_bounds_coverage_ratio, 4),
             "m6_coverage_ratio": round(self.m6_coverage_ratio, 4),
             "m12_coverage_ratio": round(self.m12_coverage_ratio, 4),
             "normalized_mae": round(self.normalized_mae, 4),
@@ -185,6 +231,9 @@ def evaluate_sitescore_opening_outcome_benchmark(
     *,
     provenance: str = "provided_records",
     db_error: str | None = None,
+    dataset_snapshot_id: str | None = None,
+    model_version: str | None = None,
+    artifact_lineage_id: str | None = None,
     activation_threshold: int = ACTIVATION_THRESHOLD,
     min_coverage: float = MIN_COVERAGE_THRESHOLD,
     max_mae: float = MAX_MAE_THRESHOLD,
@@ -196,6 +245,28 @@ def evaluate_sitescore_opening_outcome_benchmark(
 
     if db_error is not None:
         provenance = "unreachable_db"
+
+    # Extract dataset snapshot and model lineage from records if not explicitly passed
+    if not dataset_snapshot_id:
+        for r in records:
+            snap = r.get("dataset_snapshot_id") or r.get("dataset_snapshot_hash")
+            if snap:
+                dataset_snapshot_id = str(snap)
+                break
+
+    if not model_version:
+        for r in records:
+            ver = r.get("model_version")
+            if ver:
+                model_version = str(ver)
+                break
+
+    if not artifact_lineage_id:
+        for r in records:
+            lin = r.get("artifact_lineage_id") or r.get("artifact_hash")
+            if lin:
+                artifact_lineage_id = str(lin)
+                break
 
     observed_count = len(records)
     eligible_count = sum(1 for r in records if r.get("is_training_eligible") or r.get("eligible"))
@@ -217,12 +288,10 @@ def evaluate_sitescore_opening_outcome_benchmark(
     elif isinstance(observed_at, datetime):
         ref_date = observed_at.date()
 
-    def get_days_elapsed(r: dict[str, Any], key: str, req_days: int) -> bool:
-        if r.get(f"m{req_days // 30}_covered", False):
-            return True
+    def get_days_elapsed(r: dict[str, Any], key: str) -> int | None:
         val = r.get(key)
         if val is not None and isinstance(val, (int, float)):
-            return val >= req_days
+            return int(val)
         opened_on = r.get("opened_on")
         if opened_on:
             try:
@@ -231,15 +300,48 @@ def evaluate_sitescore_opening_outcome_benchmark(
                 elif hasattr(opened_on, "year"):
                     d = opened_on
                 else:
-                    return False
-                days = (ref_date - d).days
-                return days >= req_days
+                    return None
+                return (ref_date - d).days
             except Exception:
                 pass
-        return False
+        return None
 
-    m6_mature = sum(1 for r in mature_records if get_days_elapsed(r, "m6_days", 180))
-    m12_mature = sum(1 for r in mature_records if get_days_elapsed(r, "m12_days", 365))
+    def has_explicit_m6_outcome(r: dict[str, Any]) -> bool:
+        # Must have explicit realized M6 outcome data AND store age >= 180 days
+        m6_val = r.get("realized_m6_net_revenue")
+        if m6_val is None:
+            m6_val = r.get("m6_outcome")
+        if m6_val is None:
+            m6_val = r.get("realized_180d_net_revenue")
+        if m6_val is None:
+            m6_val = r.get("realized_m6_revenue")
+        if m6_val is None or float(m6_val) <= 0:
+            return False
+
+        days = get_days_elapsed(r, "m6_days")
+        if days is not None and days >= 180:
+            return True
+        return r.get("m6_covered", False) is True
+
+    def has_explicit_m12_outcome(r: dict[str, Any]) -> bool:
+        # Must have explicit realized M12 outcome data AND store age >= 365 days
+        m12_val = r.get("realized_m12_net_revenue")
+        if m12_val is None:
+            m12_val = r.get("m12_outcome")
+        if m12_val is None:
+            m12_val = r.get("realized_365d_net_revenue")
+        if m12_val is None:
+            m12_val = r.get("realized_m12_revenue")
+        if m12_val is None or float(m12_val) <= 0:
+            return False
+
+        days = get_days_elapsed(r, "m12_days")
+        if days is not None and days >= 365:
+            return True
+        return r.get("m12_covered", False) is True
+
+    m6_mature = sum(1 for r in mature_records if has_explicit_m6_outcome(r))
+    m12_mature = sum(1 for r in mature_records if has_explicit_m12_outcome(r))
 
     m6_coverage_ratio = (m6_mature / mature_label_count) if mature_label_count > 0 else 0.0
     m12_coverage_ratio = (m12_mature / mature_label_count) if mature_label_count > 0 else 0.0
@@ -252,6 +354,8 @@ def evaluate_sitescore_opening_outcome_benchmark(
 
     errors = []
     in_p80_count = 0
+    interval_bounds_count = 0
+
     for r in mature_records:
         pred_val = r.get("predicted_revenue")
         if pred_val is None:
@@ -260,10 +364,16 @@ def evaluate_sitescore_opening_outcome_benchmark(
             y_true = float(r.get("realized_90d_net_revenue", 0))
             y_pred = float(pred_val)
             errors.append(abs(y_true - y_pred))
-            p10 = float(r.get("p10", y_pred * 0.8))
-            p90 = float(r.get("p90", y_pred * 1.2))
-            if p10 <= y_true <= p90:
-                in_p80_count += 1
+
+            p10_raw = r.get("p10")
+            p90_raw = r.get("p90")
+            if p10_raw is not None and p90_raw is not None:
+                p10 = float(p10_raw)
+                p90 = float(p90_raw)
+                if p10 <= p90:
+                    interval_bounds_count += 1
+                    if p10 <= y_true <= p90:
+                        in_p80_count += 1
         except (ValueError, TypeError):
             continue
 
@@ -271,13 +381,12 @@ def evaluate_sitescore_opening_outcome_benchmark(
     mae = (sum(errors) / len(errors)) if errors else 0.0
     normalized_mae = (mae / mean_y) if (mean_y > 0 and errors) else 0.0
     p80_coverage = (in_p80_count / mature_label_count) if mature_label_count > 0 else 0.0
+    interval_bounds_coverage_ratio = (interval_bounds_count / mature_label_count) if mature_label_count > 0 else 0.0
 
     calibration_summary = {
-        "m1_interval_mae": round(mae * 0.33, 2),
-        "m3_interval_mae": round(mae * 0.66, 2),
-        "m6_interval_mae": round(mae * 0.85, 2),
-        "m12_interval_mae": round(mae, 2),
+        "measured_90d_mae": round(mae, 2) if errors else None,
         "prediction_coverage_ratio": round(prediction_coverage_ratio, 4),
+        "interval_bounds_coverage_ratio": round(interval_bounds_coverage_ratio, 4),
         "p80_coverage_ratio": round(p80_coverage, 4),
         "mean_realized_revenue": round(mean_y, 2),
     }
@@ -301,8 +410,8 @@ def evaluate_sitescore_opening_outcome_benchmark(
             "record_count": seg_count,
             "metrics": {
                 "mae": round(seg_mae, 2),
-                "m6_coverage": round(sum(1 for r in seg_records if get_days_elapsed(r, "m6_days", 180)) / seg_count, 4),
-                "m12_coverage": round(sum(1 for r in seg_records if get_days_elapsed(r, "m12_days", 365)) / seg_count, 4),
+                "m6_coverage": round(sum(1 for r in seg_records if has_explicit_m6_outcome(r)) / seg_count, 4),
+                "m12_coverage": round(sum(1 for r in seg_records if has_explicit_m12_outcome(r)) / seg_count, 4),
                 "prediction_coverage": round(len(seg_pred_records) / seg_count, 4),
             },
         })
@@ -316,6 +425,10 @@ def evaluate_sitescore_opening_outcome_benchmark(
         normalized_mae=normalized_mae,
         p80_coverage=p80_coverage,
         prediction_coverage_ratio=prediction_coverage_ratio,
+        interval_bounds_coverage_ratio=interval_bounds_coverage_ratio,
+        dataset_snapshot_id=dataset_snapshot_id,
+        model_version=model_version,
+        artifact_lineage_id=artifact_lineage_id,
         provenance=provenance,
         db_error=db_error,
         activation_threshold=activation_threshold,
@@ -334,12 +447,12 @@ def build_sitescore_opening_outcome_model_card(
     """Build a canonical ModelCard carrying SiteScore opening outcome benchmark calibration results."""
     return ModelCard(
         model_name="sitescore_propensity",
-        model_version=version,
+        model_version=benchmark.model_version or version,
         owner="sitescore-platform-team",
         risk_level=ModelRiskLevel.R4,
         intended_use="Human-reviewed candidate site opening revenue & propensity prioritization",
         not_intended_use="Automatic site lease execution, store opening without human approval",
-        dataset_snapshot_id="snapshot_sitescore_opening_outcome_v2",
+        dataset_snapshot_id=benchmark.dataset_snapshot_id or "snapshot_sitescore_opening_outcome_v2",
         validation_run_id=f"val_sitescore_{int(datetime.now(UTC).timestamp())}",
         feature_set_id="fs_sitescore_opened_store_pit_v2",
         label_set_id="ls_sitescore_realized_90d_revenue_v1",
@@ -352,6 +465,7 @@ def build_sitescore_opening_outcome_model_card(
             "m6_coverage_ratio": float(benchmark.m6_coverage_ratio),
             "m12_coverage_ratio": float(benchmark.m12_coverage_ratio),
             "prediction_coverage_ratio": float(benchmark.prediction_coverage_ratio),
+            "interval_bounds_coverage_ratio": float(benchmark.interval_bounds_coverage_ratio),
             "normalized_mae": float(benchmark.normalized_mae),
             "p80_coverage": float(benchmark.p80_coverage),
         },
@@ -360,7 +474,7 @@ def build_sitescore_opening_outcome_model_card(
         explainability_method="shap_values",
         limitations=[
             "Requires at least 200 mature opening outcome labels with complete M6/M12 post-opening transactions.",
-            "Governed-disabled when label count or M6/M12 window coverage thresholds fail.",
+            "Governed-disabled when label count, M6/M12 window coverage, or interval bound coverage thresholds fail.",
         ],
         known_biases=[
             "Historical opening outcomes reflect store format expansion patterns.",
