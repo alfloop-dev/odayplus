@@ -67,7 +67,7 @@ RTM coverage rows；它修正的是原 ledger 把技術比較器與真實管理�
 | C | `ODP-PLAN-PRICE-ADLIFT-PILOT-001` | P1-005 | Antigravity6 | Claude | `ODP-PLAN-OBSERVABILITY-LIVE-001` |
 | D | `ODP-PLAN-LIVE-STAGING-PROOF-001` | P0-006 | Antigravity | Codex2 | shell, acceptance, forecast release, existing GCP/deploy tasks |
 | D | `ODP-PLAN-UAT-SIGNOFF-001` | P0-005 | Claude | Human/Ops | all module acceptance tasks + `ODP-PLAN-NETPLAN-BASELINE-APPROVAL-001` |
-| E | `ODP-PLAN-FINAL-GATE-AUDIT-001` | final | Codex2 | Human/Ops | all prior tasks, including both NetPlan addendum tasks |
+| E | `ODP-PLAN-FINAL-GATE-AUDIT-001` | final | Codex2 | Human/Ops | all prior tasks + `ODP-PLAN-LEDGER-NETPLAN-HUMAN-GATE-001` + `ODP-PLAN-NETPLAN-BASELINE-APPROVAL-001` |
 
 ## 3. Task contracts
 

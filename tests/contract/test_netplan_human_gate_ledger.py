@@ -50,4 +50,5 @@ def test_uat_and_final_gate_depend_on_authentic_netplan_approval() -> None:
     )
 
     assert "ODP-PLAN-NETPLAN-BASELINE-APPROVAL-001" in uat_row
-    assert "both NetPlan addendum tasks" in final_row
+    assert "ODP-PLAN-LEDGER-NETPLAN-HUMAN-GATE-001" in final_row
+    assert "ODP-PLAN-NETPLAN-BASELINE-APPROVAL-001" in final_row
