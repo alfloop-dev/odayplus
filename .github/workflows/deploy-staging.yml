@@ -102,7 +102,7 @@ jobs:
         run: uv sync --frozen
 
       - name: Generate SBOM and Check Policy
-        run: uv run --frozen python3 scripts/security/generate_sbom.py --check-policy --update-notices
+        run: uv run --frozen python3 scripts/security/generate_sbom.py --check-policy --check-notices
 
       - name: Validate release authority, WIF, and live runtime
         run: |
@@ -180,6 +180,7 @@ jobs:
             .odp_data/deployment/cloud-run-smoke.json
             .odp_data/deployment/cloud-run-migration-compatibility.json
             .odp_data/deployment/live-e2e-gate.json
+            .odp_data/deployment/sbom.json
             .odp_data/deployment/cloud-run-jobs/migration-validation.json
             .odp_data/deployment/cloud-run-jobs/scheduler-validation.json
             .odp_data/deployment/cloud-run-jobs/worker-validation.json

@@ -41,7 +41,8 @@ def test_npm_audit_passes() -> None:
 
 def test_pip_audit_passes() -> None:
     venv_bin = str(ROOT / ".venv/bin")
-    uv_path = shutil.which("uv") or shutil.which("uv", path=f"{venv_bin}:/home/lupin/.local/bin:/home/lupin/.cargo/bin:/usr/local/bin")
+    home_dir = Path.home()
+    uv_path = shutil.which("uv") or shutil.which("uv", path=f"{venv_bin}:{home_dir}/.local/bin:{home_dir}/.cargo/bin:/usr/local/bin")
     pip_audit_path = shutil.which("pip-audit") or shutil.which("pip-audit", path=venv_bin)
     if uv_path:
         cmd = [uv_path, "run", "--with", "pip-audit", "pip-audit", "--local"]
@@ -181,7 +182,8 @@ def test_sign_images_script_executable() -> None:
 
 def test_stale_lockfiles_rejected_negative(tmp_path: Path) -> None:
     venv_bin = str(ROOT / ".venv/bin")
-    uv_path = shutil.which("uv") or shutil.which("uv", path=f"{venv_bin}:/home/lupin/.local/bin:/home/lupin/.cargo/bin:/usr/local/bin")
+    home_dir = Path.home()
+    uv_path = shutil.which("uv") or shutil.which("uv", path=f"{venv_bin}:{home_dir}/.local/bin:{home_dir}/.cargo/bin:/usr/local/bin")
     if not uv_path:
         pytest.fail("'uv' executable not found in PATH; missing security scanner is an infrastructure failure")
     # Copy pyproject.toml and uv.lock to a temporary directory
@@ -230,7 +232,8 @@ def test_vulnerable_fixtures_rejected_negative(tmp_path: Path) -> None:
     req_file.write_text("urllib3==1.26.15\n", encoding="utf-8")
 
     venv_bin = str(ROOT / ".venv/bin")
-    uv_path = shutil.which("uv") or shutil.which("uv", path=f"{venv_bin}:/home/lupin/.local/bin:/home/lupin/.cargo/bin:/usr/local/bin")
+    home_dir = Path.home()
+    uv_path = shutil.which("uv") or shutil.which("uv", path=f"{venv_bin}:{home_dir}/.local/bin:{home_dir}/.cargo/bin:/usr/local/bin")
     pip_audit_path = shutil.which("pip-audit") or shutil.which("pip-audit", path=venv_bin)
     if uv_path:
         cmd = [uv_path, "run", "--with", "pip-audit", "pip-audit", "-r", str(req_file)]
@@ -407,3 +410,21 @@ def test_missing_policy_file_raises_error(tmp_path: Path) -> None:
             sbom_mod.load_license_policy()
     finally:
         sbom_mod.POLICY_PATH = orig_policy_path
+
+
+def test_check_notices_cli() -> None:
+    res = subprocess.run(
+        [sys.executable, str(ROOT / "scripts/security/generate_sbom.py"), "--check-notices"],
+        cwd=ROOT,
+        capture_output=True,
+        text=True,
+    )
+    assert res.returncode == 0, f"--check-notices failed with output:\n{res.stderr}"
+
+
+def test_deploy_script_digest_fail_closed() -> None:
+    script_path = ROOT / "scripts/deploy_cloud_run_waji.sh"
+    assert script_path.exists()
+    content = script_path.read_text(encoding="utf-8")
+    assert "exit 1" in content
+    assert "Failed to resolve valid sha256 image digest" in content

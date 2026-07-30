@@ -1,10 +1,10 @@
 {
   "bomFormat": "CycloneDX",
   "specVersion": "1.5",
-  "serialNumber": "urn:uuid:sha256-30b1499ae7a7d598ec361b9063215a37",
+  "serialNumber": "urn:uuid:sha256-ad8908c0f1056f7c0ff9574ab3f6a2fb",
   "version": 1,
   "metadata": {
-    "timestamp": "2026-07-30T18:44:17.928532+00:00",
+    "timestamp": "2026-07-30T19:00:40.372996+00:00",
     "component": {
       "name": "oday-plus",
       "version": "0.1.0",
@@ -13,15 +13,15 @@
     "properties": [
       {
         "name": "git-sha",
-        "value": "552e1e0d713e93e0c61d3054a25809231b40220b"
+        "value": "5fe0fdd6b61721847580bb996e1dd91d5de55b9d"
       },
       {
         "name": "sbom-hash",
-        "value": "30b1499ae7a7d598ec361b9063215a375ef8f5bf38295bc41134a041957d84f7"
+        "value": "ad8908c0f1056f7c0ff9574ab3f6a2fb2e16f9de695dca7b4ba9dab4e95f7a13"
       },
       {
         "name": "sbom-content-digest",
-        "value": "sha256:30b1499ae7a7d598ec361b9063215a375ef8f5bf38295bc41134a041957d84f7"
+        "value": "sha256:ad8908c0f1056f7c0ff9574ab3f6a2fb2e16f9de695dca7b4ba9dab4e95f7a13"
       },
       {
         "name": "image-digest",

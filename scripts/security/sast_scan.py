@@ -14,7 +14,8 @@ ROOT = Path(__file__).resolve().parents[2]
 def main() -> int:
     print("Starting Python SAST scan...")
     venv_bin = str(ROOT / ".venv/bin")
-    search_path = f"{venv_bin}:/home/lupin/.local/bin:/home/lupin/.cargo/bin:/usr/local/bin"
+    home_dir = Path.home()
+    search_path = f"{venv_bin}:{home_dir}/.local/bin:{home_dir}/.cargo/bin:/usr/local/bin"
     uv_path = shutil.which("uv") or shutil.which("uv", path=search_path)
     bandit_path = shutil.which("bandit") or shutil.which("bandit", path=search_path)
 

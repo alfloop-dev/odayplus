@@ -92,46 +92,33 @@ def is_valid_license_value(lic: str | None) -> bool:
     return True
 
 
-def resolve_python_license(package_name: str) -> str:
-    """Resolve Python package license using metadata (active env or .venv dist-info) or fallback dict."""
-    # 1. Try importlib.metadata
-    meta = None
-    try:
-        meta = importlib.metadata.metadata(package_name)
-    except Exception:
-        pass
-
-    if meta is not None:
-        lic = meta.get("License") or meta.get("License-Expression")
-        if is_valid_license_value(lic):
-            norm = normalize_spdx_license(lic)
-            if norm != "UNKNOWN":
-                return norm
-            return lic.strip()
-
-        classifiers = meta.get_all("Classifier") or []
-        for c in classifiers:
-            if "License" in c:
-                parts = c.split("::")
-                lic_name = parts[-1].strip()
-                if lic_name and lic_name != "OSI Approved":
-                    norm = normalize_spdx_license(lic_name)
-                    if norm != "UNKNOWN":
-                        return norm
-
-    # 2. Inspect .venv site-packages directly if importlib.metadata didn't yield a concise license
+def resolve_python_license(package_name: str, expected_version: str | None = None) -> str:
+    """Resolve Python package license from .venv dist-info matching lockfile version or fallback dict."""
     venv_dir = ROOT / ".venv"
     if venv_dir.exists():
         norm_name = package_name.lower().replace("-", "_").replace(".", "_")
-        dist_pattern = f"{norm_name}-*.dist-info/METADATA"
-        alt_pattern = f"{package_name.lower().replace('_', '-')}-*.dist-info/METADATA"
+        alt_name = package_name.lower().replace("_", "-")
         for site_pkg in venv_dir.glob("lib/python*/site-packages"):
-            candidates = list(site_pkg.glob(dist_pattern)) + list(site_pkg.glob(alt_pattern))
-            if candidates:
-                meta_path = candidates[0]
+            candidates = []
+            if expected_version:
+                version_glob = expected_version.replace("-", "_")
+                candidates.extend(list(site_pkg.glob(f"{norm_name}-{version_glob}.dist-info/METADATA")))
+                candidates.extend(list(site_pkg.glob(f"{alt_name}-{version_glob}.dist-info/METADATA")))
+            else:
+                dist_pattern = f"{norm_name}-*.dist-info/METADATA"
+                alt_pattern = f"{alt_name}-*.dist-info/METADATA"
+                candidates.extend(list(site_pkg.glob(dist_pattern)))
+                candidates.extend(list(site_pkg.glob(alt_pattern)))
+
+            for meta_path in candidates:
                 try:
                     content = meta_path.read_text(encoding="utf-8")
                     msg = email.message_from_string(content)
+                    if expected_version:
+                        dist_version = msg.get("Version")
+                        if dist_version and dist_version != expected_version:
+                            continue
+
                     lic = msg.get("License") or msg.get("License-Expression")
                     if is_valid_license_value(lic):
                         norm = normalize_spdx_license(lic)
@@ -151,11 +138,11 @@ def resolve_python_license(package_name: str) -> str:
                 except Exception:
                     pass
 
-    # 3. Secondary fallback: check PYPI_LICENSE_FALLBACKS
+    # Secondary fallback: check PYPI_LICENSE_FALLBACKS
     if package_name in PYPI_LICENSE_FALLBACKS:
         return PYPI_LICENSE_FALLBACKS[package_name]
 
-    # 4. Fail closed / unclassifiable
+    # Fail closed / unclassifiable
     return "UNKNOWN"
 
 
@@ -253,10 +240,35 @@ def evaluate_license_string(lic_str: str | None, allowed: set[str], denied: set[
     return all(t in allowed for t in tokens)
 
 
+VALID_SPDX_IDS = {
+    "0BSD",
+    "Apache-2.0",
+    "BSD-2-Clause",
+    "BSD-3-Clause",
+    "BlueOak-1.0.0",
+    "CC-BY-4.0",
+    "CC0-1.0",
+    "ISC",
+    "LGPL-2.1-or-later",
+    "LGPL-3.0-only",
+    "LGPL-3.0-or-later",
+    "MIT",
+    "MIT-0",
+    "MPL-2.0",
+    "PostgreSQL",
+    "PSF-2.0",
+    "Python-2.0",
+    "TCL",
+    "Unlicense",
+    "Zlib",
+    "ZPL-2.1",
+}
+
+
 def make_license_entry(spdx_lic: str) -> list[dict]:
     if not spdx_lic or spdx_lic == "UNKNOWN":
         return [{"license": {"name": "UNKNOWN"}}]
-    if re.match(r"^[A-Za-z0-9\.\-]+$", spdx_lic):
+    if spdx_lic in VALID_SPDX_IDS:
         return [{"license": {"id": spdx_lic}}]
     return [{"license": {"name": spdx_lic}}]
 
@@ -381,7 +393,7 @@ def generate_sbom(image_digest: str | None = None, release_digest: str | None = 
                 version = pkg.get("version")
                 if name and version:
                     purl = f"pkg:pypi/{name}@{version}"
-                    raw_lic = resolve_python_license(name)
+                    raw_lic = resolve_python_license(name, expected_version=version)
                     spdx_lic = normalize_spdx_license(raw_lic)
 
                     hashes = []
@@ -503,8 +515,6 @@ def check_license_policy(sbom: dict, require_digests: bool = False) -> tuple[boo
         for lic_entry in licenses:
             lic_obj = lic_entry.get("license", {})
             lic_str = lic_obj.get("name") or lic_obj.get("id") or "UNKNOWN"
-            if lic_obj.get("id") == "MIT" and lic_obj.get("name") and lic_obj.get("name") != "MIT":
-                lic_str = lic_obj.get("name")
 
             if not evaluate_license_string(lic_str, allowed, denied):
                 if lic_str in denied:
@@ -544,6 +554,17 @@ def generate_third_party_notices(sbom: dict) -> str:
         lines.append("")
 
     return "\n".join(lines)
+
+
+def check_third_party_notices(sbom: dict) -> tuple[bool, str | None]:
+    """Verify that committed THIRD_PARTY_NOTICES matches current lockfiles and generated notices."""
+    if not NOTICES_PATH.exists():
+        return False, f"THIRD_PARTY_NOTICES file missing at {NOTICES_PATH}"
+    expected = generate_third_party_notices(sbom).strip()
+    actual = NOTICES_PATH.read_text(encoding="utf-8").strip()
+    if actual != expected:
+        return False, "THIRD_PARTY_NOTICES is stale or out of sync with active lockfiles. Run python3 scripts/security/generate_sbom.py --update-notices to update."
+    return True, None
 
 
 def readback_sbom(sbom_path: Path) -> int:
@@ -613,6 +634,10 @@ def verify_sbom(output_path: Path, image_digest: str | None = None, release_dige
     if not is_passed:
         diff_reasons.extend(violations)
 
+    notices_ok, notices_err = check_third_party_notices(current_sbom)
+    if not notices_ok and notices_err:
+        diff_reasons.append(notices_err)
+
     if not diff_reasons:
         print(f"✅ SBOM verification PASSED: {output_path.relative_to(ROOT)} matches active lockfiles and policy.")
         return 0
@@ -634,6 +659,7 @@ def main() -> int:
     parser.add_argument("--require-digests", action="store_true", help="Require valid sha256:<64-hex> image and release digests in policy check")
     parser.add_argument("--verify", action="store_true", help="Verify committed sbom.json matches active lockfiles")
     parser.add_argument("--readback", action="store_true", help="Read back and display metadata from existing sbom.json")
+    parser.add_argument("--check-notices", action="store_true", help="Check THIRD_PARTY_NOTICES is up to date fail closed")
     parser.add_argument("--update-notices", action="store_true", help="Generate/update THIRD_PARTY_NOTICES file")
 
     args = parser.parse_args()
@@ -662,6 +688,12 @@ def main() -> int:
                 print(f"  - {v}", file=sys.stderr)
             if args.check_policy:
                 return 1
+
+    if args.check_notices:
+        notices_ok, notices_err = check_third_party_notices(sbom)
+        if not notices_ok:
+            print(f"\n❌ THIRD_PARTY_NOTICES Gate FAILED: {notices_err}", file=sys.stderr)
+            return 1
 
     # Write SBOM
     args.output.parent.mkdir(parents=True, exist_ok=True)
