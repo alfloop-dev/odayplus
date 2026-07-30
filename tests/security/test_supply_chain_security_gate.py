@@ -473,7 +473,7 @@ def test_sbom_readback_digest_assertion(tmp_path: Path) -> None:
 
 def test_dependency_graph_tampering_alters_sbom_digest(tmp_path: Path) -> None:
     sys.path.insert(0, str(ROOT))
-    from scripts.security.generate_sbom import generate_sbom
+    from scripts.security.generate_sbom import compute_sbom_digest, generate_sbom
 
     sbom_a = generate_sbom()
     digest_a = next(p["value"] for p in sbom_a["metadata"]["properties"] if p["name"] == "sbom-content-digest")
@@ -483,13 +483,61 @@ def test_dependency_graph_tampering_alters_sbom_digest(tmp_path: Path) -> None:
     if sbom_b.get("dependencies"):
         sbom_b["dependencies"].append({"ref": "pkg:generic/tampered@1.0.0", "dependsOn": []})
 
-    from scripts.security.generate_sbom import generate_sbom as current_generate_sbom
-    # Verify that changing dependencies changes sbom-content-digest
-    comp_json = json.dumps(sbom_b["components"], sort_keys=True)
-    dep_json = json.dumps(sbom_b["dependencies"], sort_keys=True)
-    import hashlib
-    content_hash = hashlib.sha256(f"{comp_json}:{dep_json}".encode()).hexdigest()
-    digest_b = f"sha256:{hashlib.sha256(f'{content_hash}:UNBOUND:UNBOUND'.encode()).hexdigest()}"
+    # Invoke production verifier helper to compute tampered digest
+    _, _, digest_b = compute_sbom_digest(sbom_b["components"], sbom_b["dependencies"])
 
     assert digest_a != digest_b, "Graph tampering must alter sbom-content-digest"
 
+
+def test_vulnerability_audit_script_passes() -> None:
+    res = subprocess.run(
+        [sys.executable, str(ROOT / "scripts/security/vulnerability_scan.py")],
+        cwd=ROOT,
+        capture_output=True,
+        text=True,
+    )
+    assert res.returncode == 0, f"vulnerability_scan.py failed with output:\n{res.stderr}\n{res.stdout}"
+
+
+def test_ai_approver_rejection_negative(tmp_path: Path) -> None:
+    sys.path.insert(0, str(ROOT))
+    import scripts.security.generate_sbom as sbom_mod
+
+    # Create a temporary exemptions file with an AI agent approver
+    bad_exemptions = tmp_path / "license_exemptions.json"
+    bad_exemptions.write_text(
+        json.dumps({
+            "exemptions": [
+                {
+                    "package_name": "some-unapproved-package",
+                    "purl": "pkg:npm/some-unapproved-package@1.0.0",
+                    "reason": "AI approved test",
+                    "approved_by": "Antigravity5"
+                }
+            ]
+        }),
+        encoding="utf-8",
+    )
+
+    orig_path = sbom_mod.EXEMPTIONS_PATH
+    try:
+        sbom_mod.EXEMPTIONS_PATH = bad_exemptions
+        _, _, _, _, _, ex_violations = sbom_mod.load_license_policy()
+        assert len(ex_violations) > 0
+        assert any("AI agent names cannot serve as legal approvers" in v for v in ex_violations)
+    finally:
+        sbom_mod.EXEMPTIONS_PATH = orig_path
+
+
+def test_verify_sbom_rejects_tampered_graph(tmp_path: Path) -> None:
+    sys.path.insert(0, str(ROOT))
+    from scripts.security.generate_sbom import generate_sbom, verify_sbom
+
+    tampered_sbom_path = tmp_path / "tampered_sbom.json"
+    sbom = generate_sbom()
+    # Tamper dependency graph
+    sbom["dependencies"].append({"ref": "pkg:generic/tampered-node@1.0.0", "dependsOn": []})
+    tampered_sbom_path.write_text(json.dumps(sbom), encoding="utf-8")
+
+    code = verify_sbom(tampered_sbom_path)
+    assert code == 1, "verify_sbom must reject a tampered dependency graph"

@@ -34,11 +34,11 @@ Every release candidate and build must produce a CycloneDX 1.5 compliant JSON So
 - **LGPL Decision**:
   - Weak copyleft licenses `LGPL-2.1` and `LGPL-3.0` variants (`LGPL-2.1-or-later`, `LGPL-3.0`, `LGPL-3.0-only`, `LGPL-3.0-or-later`) are explicitly allowed outright, while strong copyleft (`GPL-3.0`, `AGPL-3.0`) remains denied pending legal review.
 - **Review Required / Unclassified**:
-  - Requires named exemption entry in `docs/security/license_exemptions.json` specifying package name, purl, reason, and approving reviewer.
+  - Requires named exemption entry in `docs/security/license_exemptions.json` specifying package name, purl, reason, and approving authority. AI agent names cannot serve as legal approvers; approving authorities must be designated human/ops or legal entities (e.g., `Human/Ops`).
 
 ### Fail-Closed Enforcement:
 The release gate script `scripts/security/generate_sbom.py --check-policy` automatically parses all cataloged dependencies and verifies them against `docs/security/license_policy.json` and `docs/security/license_exemptions.json`.
-If any unapproved or denied license is encountered without an explicit exemption, the gate **fails closed** (exit code 1) and aborts CI/release.
+If any unapproved or denied license is encountered without an explicit human-approved exemption, the gate **fails closed** (exit code 1) and aborts CI/release.
 
 ## 4. Attestation Readback & Verification
 
@@ -53,8 +53,8 @@ python3 scripts/security/generate_sbom.py --verify
 
 ## 5. Vulnerability Audit Gates
 
-Both production and development dependencies are audited continuously:
-- **Node Audit**: `npm audit --omit=dev --audit-level=high`
-- **Python Audit**: `pip-audit --local`
+Both production and development dependencies are audited continuously across both runtime ecosystems:
+- **Node Full & Prod Audit**: `npm audit --audit-level=high` (full/dev) and `npm audit --omit=dev --audit-level=high` (prod).
+- **Python Audit**: `uv run --with pip-audit pip-audit --local` (or `python3 scripts/security/vulnerability_scan.py`).
 
-Any `HIGH` or `CRITICAL` vulnerability finding must either be remediated immediately by package version upgrade or documented with a named vulnerability exemption receipt prior to code promotion.
+Any `HIGH` or `CRITICAL` vulnerability finding must either be remediated immediately by package version upgrade or documented with an authoritative, non-expired risk receipt in `docs/security/vulnerability_exemptions.json` approved by `Human/Ops` or legal authority before code promotion. AI names cannot serve as risk exemption approvers.

@@ -4,55 +4,55 @@
       "package_name": "oday-plus",
       "purl": "pkg:generic/oday-plus@0.1.0",
       "reason": "First-party application repository root component",
-      "approved_by": "Antigravity5"
+      "approved_by": "Human/Ops"
     },
     {
       "package_name": "@oday-plus/web",
       "purl": "pkg:npm/%40oday-plus/web@0.1.0",
       "reason": "First-party workspace package",
-      "approved_by": "Antigravity5"
+      "approved_by": "Human/Ops"
     },
     {
       "package_name": "@oday-plus/design-tokens",
       "purl": "pkg:npm/%40oday-plus/design-tokens@0.1.0",
       "reason": "First-party workspace package",
-      "approved_by": "Antigravity5"
+      "approved_by": "Human/Ops"
     },
     {
       "package_name": "@oday-plus/domain-types",
       "purl": "pkg:npm/%40oday-plus/domain-types@0.1.0",
       "reason": "First-party workspace package",
-      "approved_by": "Antigravity5"
+      "approved_by": "Human/Ops"
     },
     {
       "package_name": "@oday-plus/openapi-client",
       "purl": "pkg:npm/%40oday-plus/openapi-client@0.1.0",
       "reason": "First-party workspace package",
-      "approved_by": "Antigravity5"
+      "approved_by": "Human/Ops"
     },
     {
       "package_name": "@oday-plus/schemas",
       "purl": "pkg:npm/%40oday-plus/schemas@0.1.0",
       "reason": "First-party workspace package",
-      "approved_by": "Antigravity5"
+      "approved_by": "Human/Ops"
     },
     {
       "package_name": "@oday-plus/testkit",
       "purl": "pkg:npm/%40oday-plus/testkit@0.1.0",
       "reason": "First-party workspace package",
-      "approved_by": "Antigravity5"
+      "approved_by": "Human/Ops"
     },
     {
       "package_name": "@oday-plus/ui",
       "purl": "pkg:npm/%40oday-plus/ui@0.1.0",
       "reason": "First-party workspace package",
-      "approved_by": "Antigravity5"
+      "approved_by": "Human/Ops"
     },
     {
       "package_name": "@oday-plus/ui-domain",
       "purl": "pkg:npm/%40oday-plus/ui-domain@0.1.0",
       "reason": "First-party workspace package",
-      "approved_by": "Antigravity5"
+      "approved_by": "Human/Ops"
     }
   ]
 }

@@ -272,15 +272,15 @@ if [[ -z "${REAL_RELEASE_DIGEST}" || ! "${REAL_RELEASE_DIGEST}" =~ ^sha256:[a-fA
   exit 1
 fi
 
+mkdir -p .odp_data/deployment
 run_locked_python scripts/security/generate_sbom.py \
+  --output .odp_data/deployment/sbom.json \
   --image-digest "${REAL_IMAGE_DIGEST}" \
   --release-digest "${REAL_RELEASE_DIGEST}" \
   --check-policy \
   --require-digests \
   --check-notices
 
-mkdir -p .odp_data/deployment
-cp docs/evidence/completion/ODP-PGAP-SUPPLY-001/sbom.json .odp_data/deployment/sbom.json
 run_locked_python scripts/security/generate_sbom.py --readback --output .odp_data/deployment/sbom.json \
   --expected-image-digest "${REAL_IMAGE_DIGEST}" \
   --expected-release-digest "${REAL_RELEASE_DIGEST}"

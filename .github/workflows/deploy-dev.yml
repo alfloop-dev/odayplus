@@ -115,7 +115,7 @@ jobs:
         run: uv sync --frozen
 
       - name: Generate SBOM and Check Policy
-        run: uv run --frozen python3 scripts/security/generate_sbom.py --check-policy --check-notices
+        run: uv run --frozen python3 scripts/security/generate_sbom.py --output .odp_data/deployment/sbom.json --check-policy --check-notices
 
       - name: Validate WIF authentication and live runtime preflight
         run: |

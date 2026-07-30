@@ -23,14 +23,24 @@ EXEMPTIONS_PATH = ROOT / "docs/security/license_exemptions.json"
 NOTICES_PATH = ROOT / "THIRD_PARTY_NOTICES"
 
 SHA256_DIGEST_REGEX = re.compile(r"^sha256:[a-fA-F0-9]{64}$")
+AI_AGENT_PATTERN = re.compile(r"^(Antigravity|Claude|Codex|Gemini|Copilot|GPT|LLM)\d*$", re.IGNORECASE)
+
+
+def safe_rel_path(path: Path) -> Path | str:
+    """Safely return relative path to ROOT, or absolute path if outside ROOT."""
+    try:
+        return path.relative_to(ROOT)
+    except ValueError:
+        return path
+
 
 # Known license fallbacks for PyPI packages where metadata may omit SPDX identifier
 PYPI_LICENSE_FALLBACKS = {
     "about-time": "MIT",
     "absl-py": "Apache-2.0",
     "adagio": "Apache-2.0",
-    "aiohappyeyeballs": "Apache-2.0",
-    "aiohttp": "Apache-2.0",
+    "aiohappyeyeballs": "PSF-2.0",
+    "aiohttp": "Apache-2.0 AND MIT",
     "aiosignal": "Apache-2.0",
     "alembic": "MIT",
     "alive-progress": "MIT",
@@ -49,6 +59,250 @@ PYPI_LICENSE_FALLBACKS = {
     "skops": "MIT",
     "waitress": "ZPL-2.1",
     "win-precise-time": "MIT",
+}
+
+# Complete, deterministic locked license registry for clean environments without .venv
+PYPI_LOCKED_LICENSES = {
+    "about-time": "MIT",
+    "absl-py": "Apache-2.0",
+    "adagio": "Apache-2.0",
+    "aiohappyeyeballs": "PSF-2.0",
+    "aiohttp": "Apache-2.0 AND MIT",
+    "aiosignal": "Apache-2.0",
+    "alembic": "MIT",
+    "alive-progress": "MIT",
+    "altair": "BSD-3-Clause",
+    "annotated-doc": "MIT",
+    "annotated-types": "MIT",
+    "antlr4-python3-runtime": "BSD-3-Clause",
+    "anyio": "MIT",
+    "appdirs": "MIT",
+    "attrs": "MIT",
+    "autograd": "MIT",
+    "autograd-gamma": "MIT",
+    "blinker": "MIT",
+    "cachetools": "MIT",
+    "catboost": "Apache-2.0",
+    "certifi": "MPL-2.0",
+    "cffi": "MIT-0",
+    "charset-normalizer": "MIT",
+    "clarabel": "Apache-2.0",
+    "click": "BSD-3-Clause",
+    "cloudpickle": "BSD-3-Clause",
+    "cma": "BSD-3-Clause",
+    "colorama": "BSD-3-Clause",
+    "coloredlogs": "MIT",
+    "colorlog": "MIT",
+    "contourpy": "BSD-3-Clause",
+    "coreforecast": "Apache-2.0",
+    "cryptography": "Apache-2.0 OR BSD-3-Clause",
+    "cvxpy": "Apache-2.0",
+    "cycler": "BSD-3-Clause",
+    "dagster": "Apache-2.0",
+    "dagster-pipes": "Apache-2.0",
+    "dagster-shared": "Apache-2.0",
+    "databricks-sdk": "Apache-2.0",
+    "defusedxml": "PSF-2.0",
+    "deprecated": "MIT",
+    "deprecation": "Apache-2.0",
+    "distro": "Apache-2.0",
+    "dlt": "Apache-2.0",
+    "docker": "Apache-2.0",
+    "docstring-parser": "MIT",
+    "duckdb": "MIT",
+    "dynaconf": "MIT",
+    "evidently": "Apache-2.0",
+    "faker": "MIT",
+    "fastapi": "MIT",
+    "fasteners": "Apache-2.0",
+    "filelock": "MIT",
+    "flask": "BSD-3-Clause",
+    "flask-cors": "MIT",
+    "fonttools": "MIT",
+    "formulaic": "MIT",
+    "frozenlist": "Apache-2.0",
+    "fsspec": "BSD-3-Clause",
+    "fugue": "Apache-2.0",
+    "gitdb": "BSD-3-Clause",
+    "gitpython": "BSD-3-Clause",
+    "giturlparse": "Apache-2.0",
+    "google-api-core": "Apache-2.0",
+    "google-auth": "Apache-2.0",
+    "google-cloud-core": "Apache-2.0",
+    "google-cloud-storage": "Apache-2.0",
+    "google-crc32c": "Apache-2.0",
+    "google-resumable-media": "Apache-2.0",
+    "googleapis-common-protos": "Apache-2.0",
+    "graphemeu": "MIT",
+    "graphene": "MIT",
+    "graphql-core": "MIT",
+    "graphql-relay": "MIT",
+    "graphviz": "MIT",
+    "great-expectations": "Apache-2.0",
+    "greenlet": "MIT AND PSF-2.0",
+    "grpcio": "Apache-2.0",
+    "grpcio-health-checking": "Apache-2.0",
+    "gunicorn": "MIT",
+    "h11": "MIT",
+    "h3": "Apache-2.0",
+    "highspy": "MIT",
+    "httpcore": "BSD-3-Clause",
+    "httptools": "MIT",
+    "httpx": "BSD-3-Clause",
+    "huey": "MIT",
+    "humanfriendly": "MIT",
+    "humanize": "MIT",
+    "idna": "BSD-3-Clause",
+    "immutabledict": "MIT",
+    "importlib-metadata": "Apache-2.0",
+    "iniconfig": "MIT",
+    "interface-meta": "MIT",
+    "iterative-telemetry": "Apache-2.0",
+    "itsdangerous": "BSD-3-Clause",
+    "jinja2": "BSD-3-Clause",
+    "joblib": "BSD-3-Clause",
+    "jsonpath-ng": "Apache-2.0",
+    "jsonschema": "MIT",
+    "jsonschema-path": "Apache-2.0",
+    "jsonschema-specifications": "MIT",
+    "kiwisolver": "BSD-3-Clause",
+    "lazy-object-proxy": "BSD-2-Clause",
+    "lifelines": "MIT",
+    "lightgbm": "MIT",
+    "litestar": "MIT",
+    "litestar-htmx": "MIT",
+    "mako": "MIT",
+    "markdown-it-py": "MIT",
+    "markupsafe": "BSD-3-Clause",
+    "marshmallow": "MIT",
+    "matplotlib": "PSF-2.0",
+    "mdurl": "MIT",
+    "mistune": "BSD-3-Clause",
+    "mlflow": "Apache-2.0",
+    "mlflow-skinny": "Apache-2.0",
+    "mlflow-tracing": "Apache-2.0",
+    "mlforecast": "Apache-2.0",
+    "moocore": "LGPL-2.1-or-later",
+    "msgspec": "BSD-3-Clause",
+    "multidict": "Apache-2.0",
+    "multipart": "MIT",
+    "mypy-extensions": "MIT",
+    "narwhals": "MIT",
+    "nltk": "Apache-2.0",
+    "numpy": "BSD-3-Clause AND 0BSD AND MIT AND Zlib AND CC0-1.0",
+    "odayplus": "MIT",
+    "openapi-schema-validator": "BSD-3-Clause",
+    "openapi-spec-validator": "Apache-2.0",
+    "opentelemetry-api": "Apache-2.0",
+    "opentelemetry-proto": "Apache-2.0",
+    "opentelemetry-sdk": "Apache-2.0",
+    "opentelemetry-semantic-conventions": "Apache-2.0",
+    "optuna": "MIT",
+    "orjson": "MPL-2.0 AND (Apache-2.0 OR MIT)",
+    "ortools": "Apache-2.0",
+    "osqp": "Apache-2.0",
+    "packaging": "Apache-2.0 OR BSD-2-Clause",
+    "pandas": "BSD-3-Clause",
+    "pathable": "Apache-2.0",
+    "pathlib-abc": "PSF-2.0",
+    "pathvalidate": "MIT",
+    "patsy": "BSD-2-Clause",
+    "pendulum": "MIT",
+    "pgserver": "MIT",
+    "pillow": "MIT",
+    "platformdirs": "MIT",
+    "plotly": "MIT",
+    "pluggy": "MIT",
+    "polyfactory": "MIT",
+    "prettytable": "BSD-3-Clause",
+    "propcache": "Apache-2.0",
+    "proto-plus": "Apache-2.0",
+    "protobuf": "BSD-3-Clause",
+    "psutil": "BSD-3-Clause",
+    "psycopg": "LGPL-3.0-only",
+    "psycopg-binary": "LGPL-3.0-only",
+    "psycopg-pool": "LGPL-3.0-only",
+    "psycopg2-binary": "LGPL-3.0-or-later",
+    "pyarrow": "Apache-2.0",
+    "pyasn1": "BSD-2-Clause",
+    "pyasn1-modules": "BSD-3-Clause",
+    "pycparser": "BSD-3-Clause",
+    "pydantic": "MIT",
+    "pydantic-core": "MIT",
+    "pydantic-settings": "MIT",
+    "pygments": "BSD-2-Clause",
+    "pymoo": "Apache-2.0",
+    "pyomo": "BSD-3-Clause",
+    "pyparsing": "MIT",
+    "pyreadline3": "BSD-3-Clause",
+    "pytest": "MIT",
+    "python-dateutil": "Apache-2.0 OR BSD-3-Clause",
+    "python-dotenv": "BSD-3-Clause",
+    "pytz": "MIT",
+    "pywin32": "PSF-2.0",
+    "pyyaml": "MIT",
+    "qdldl": "Apache-2.0",
+    "referencing": "MIT",
+    "regex": "Apache-2.0 AND CNRI-Python",
+    "requests": "Apache-2.0",
+    "requirements-parser": "Apache-2.0",
+    "rfc3339-validator": "MIT",
+    "rich": "MIT",
+    "rich-argparse": "MIT",
+    "rich-click": "MIT",
+    "rpds-py": "MIT",
+    "ruamel-yaml": "MIT",
+    "ruff": "MIT",
+    "scikit-learn": "BSD-3-Clause",
+    "scipy": "BSD-3-Clause",
+    "scs": "MIT",
+    "semver": "BSD-3-Clause",
+    "setuptools": "MIT",
+    "shellingham": "ISC",
+    "simplejson": "MIT OR AFL-2.1",
+    "six": "MIT",
+    "skops": "MIT",
+    "smmap": "BSD-3-Clause",
+    "sniffio": "MIT OR Apache-2.0",
+    "sparsediffpy": "Apache-2.0",
+    "sqlalchemy": "MIT",
+    "sqlglot": "MIT",
+    "sqlparse": "BSD-3-Clause",
+    "starlette": "BSD-3-Clause",
+    "statsforecast": "Apache-2.0",
+    "statsmodels": "BSD-3-Clause",
+    "structlog": "MIT OR Apache-2.0",
+    "tabulate": "MIT",
+    "tenacity": "Apache-2.0",
+    "threadpoolctl": "BSD-3-Clause",
+    "tomli": "MIT",
+    "tomlkit": "MIT",
+    "toposort": "Apache-2.0",
+    "tqdm": "MPL-2.0 AND MIT",
+    "triad": "Apache-2.0",
+    "typer": "MIT",
+    "typing-extensions": "PSF-2.0",
+    "typing-inspect": "MIT",
+    "typing-inspection": "MIT",
+    "tzdata": "Apache-2.0",
+    "tzlocal": "MIT",
+    "ujson": "BSD-3-Clause AND TCL",
+    "universal-pathlib": "MIT",
+    "urllib3": "MIT",
+    "utilsforecast": "Apache-2.0",
+    "uuid6": "MIT",
+    "uvicorn": "BSD-3-Clause",
+    "uvloop": "MIT",
+    "waitress": "ZPL-2.1",
+    "watchdog": "Apache-2.0",
+    "watchfiles": "MIT",
+    "wcwidth": "MIT",
+    "websockets": "BSD-3-Clause",
+    "werkzeug": "BSD-3-Clause",
+    "win-precise-time": "MIT",
+    "wrapt": "BSD-2-Clause",
+    "yarl": "Apache-2.0",
+    "zipp": "MIT",
 }
 
 
@@ -92,7 +346,15 @@ def is_valid_license_value(lic: str | None) -> bool:
 
 
 def resolve_python_license(package_name: str, expected_version: str | None = None) -> str:
-    """Resolve Python package license from .venv dist-info matching lockfile version or fallback dict."""
+    """Resolve Python package license using locked registry, dist-info metadata, or fallbacks."""
+    # 1. Primary check: locked license registry (reproducible anywhere without .venv)
+    norm_key = package_name.lower().replace("_", "-")
+    if norm_key in PYPI_LOCKED_LICENSES:
+        return PYPI_LOCKED_LICENSES[norm_key]
+    if package_name in PYPI_LOCKED_LICENSES:
+        return PYPI_LOCKED_LICENSES[package_name]
+
+    # 2. Secondary check: .venv dist-info if present
     venv_dir = ROOT / ".venv"
     if venv_dir.exists():
         norm_name = package_name.lower().replace("-", "_").replace(".", "_")
@@ -104,10 +366,8 @@ def resolve_python_license(package_name: str, expected_version: str | None = Non
                 candidates.extend(list(site_pkg.glob(f"{norm_name}-{version_glob}.dist-info/METADATA")))
                 candidates.extend(list(site_pkg.glob(f"{alt_name}-{version_glob}.dist-info/METADATA")))
             else:
-                dist_pattern = f"{norm_name}-*.dist-info/METADATA"
-                alt_pattern = f"{alt_name}-*.dist-info/METADATA"
-                candidates.extend(list(site_pkg.glob(dist_pattern)))
-                candidates.extend(list(site_pkg.glob(alt_pattern)))
+                candidates.extend(list(site_pkg.glob(f"{norm_name}-*.dist-info/METADATA")))
+                candidates.extend(list(site_pkg.glob(f"{alt_name}-*.dist-info/METADATA")))
 
             for meta_path in candidates:
                 try:
@@ -137,7 +397,7 @@ def resolve_python_license(package_name: str, expected_version: str | None = Non
                 except Exception:
                     pass
 
-    # Secondary fallback: check PYPI_LICENSE_FALLBACKS
+    # 3. Fallback dict check
     if package_name in PYPI_LICENSE_FALLBACKS:
         return PYPI_LICENSE_FALLBACKS[package_name]
 
@@ -185,7 +445,7 @@ def normalize_spdx_license(raw_license: str | None) -> str:
     return mapping.get(lic, lic)
 
 
-def load_license_policy() -> tuple[set[str], set[str], set[str], set[str], set[str]]:
+def load_license_policy() -> tuple[set[str], set[str], set[str], set[str], set[str], list[str]]:
     if not POLICY_PATH.exists():
         raise FileNotFoundError(f"License policy file missing at {POLICY_PATH}")
 
@@ -199,10 +459,18 @@ def load_license_policy() -> tuple[set[str], set[str], set[str], set[str], set[s
 
     exempt_purls = set()
     exempt_names = set()
+    ex_violations = []
     if EXEMPTIONS_PATH.exists():
         try:
             ex_data = json.loads(EXEMPTIONS_PATH.read_text(encoding="utf-8"))
             for entry in ex_data.get("exemptions", []):
+                approver = entry.get("approved_by", "")
+                pkg_name = entry.get("package_name", "unknown")
+                if not approver or AI_AGENT_PATTERN.match(approver.strip()):
+                    ex_violations.append(
+                        f"License exemption for '{pkg_name}' has invalid approver '{approver}'. "
+                        "AI agent names cannot serve as legal approvers; must be Human/Ops or Legal/Ops."
+                    )
                 if "purl" in entry:
                     exempt_purls.add(entry["purl"])
                 if "package_name" in entry:
@@ -210,7 +478,7 @@ def load_license_policy() -> tuple[set[str], set[str], set[str], set[str], set[s
         except Exception as e:
             raise ValueError(f"Failed to parse license exemptions file {EXEMPTIONS_PATH}: {e}") from e
 
-    return allowed, denied, review_req, exempt_purls, exempt_names
+    return allowed, denied, review_req, exempt_purls, exempt_names, ex_violations
 
 
 def evaluate_license_string(lic_str: str | None, allowed: set[str], denied: set[str]) -> bool:
@@ -281,6 +549,22 @@ def make_license_entry(spdx_lic: str) -> list[dict]:
     return [{"license": {"name": spdx_lic}}]
 
 
+def compute_sbom_digest(
+    components: list[dict],
+    dependencies: list[dict],
+    image_digest: str = "UNBOUND",
+    release_digest: str = "UNBOUND",
+) -> tuple[str, str, str]:
+    """Compute content_hash, sbom_hash, and sbom_content_digest deterministically."""
+    comp_json = json.dumps(components, sort_keys=True)
+    dep_json = json.dumps(dependencies, sort_keys=True)
+    content_hash = hashlib.sha256(f"{comp_json}:{dep_json}".encode()).hexdigest()
+    digest_input = f"{content_hash}:{image_digest}:{release_digest}"
+    sbom_hash = hashlib.sha256(digest_input.encode()).hexdigest()
+    sbom_digest = f"sha256:{sbom_hash}"
+    return content_hash, sbom_hash, sbom_digest
+
+
 def generate_sbom(image_digest: str | None = None, release_digest: str | None = None) -> dict:
     components = []
     dependencies = []
@@ -344,7 +628,9 @@ def generate_sbom(image_digest: str | None = None, release_digest: str | None = 
                 elif integrity.startswith("sha256-"):
                     hashes.append({"alg": "SHA-256", "content": integrity.replace("sha256-", "")})
                 else:
-                    hashes.append({"alg": "SHA-256", "content": hashlib.sha256(f"{pkg_name}@{version}".encode()).hexdigest()})
+                    sub_deps_keys = sorted(list((pkg_info.get("dependencies") or {}).keys()))
+                    content_payload = f"npm:{pkg_name}:{version}:{','.join(sub_deps_keys)}"
+                    hashes.append({"alg": "SHA-256", "content": hashlib.sha256(content_payload.encode()).hexdigest()})
 
                 component_obj = {
                     "name": pkg_name,
@@ -406,10 +692,18 @@ def generate_sbom(image_digest: str | None = None, release_digest: str | None = 
 
                     hashes = []
                     sdist_hash = (pkg.get("sdist") or {}).get("hash", "")
-                    if sdist_hash.startswith("sha256:"):
-                        hashes.append({"alg": "SHA-256", "content": sdist_hash.replace("sha256:", "")})
+                    wheels = pkg.get("wheels") or []
+                    wheel_hash = wheels[0].get("hash", "") if wheels else ""
+
+                    target_hash = sdist_hash or wheel_hash
+                    if target_hash.startswith("sha256:"):
+                        hashes.append({"alg": "SHA-256", "content": target_hash.replace("sha256:", "")})
+                    elif target_hash.startswith("sha512:"):
+                        hashes.append({"alg": "SHA-512", "content": target_hash.replace("sha512:", "")})
                     else:
-                        hashes.append({"alg": "SHA-256", "content": hashlib.sha256(f"{name}@{version}".encode()).hexdigest()})
+                        dep_names = sorted([d.get("name", "") for d in pkg.get("dependencies", [])])
+                        content_payload = f"pypi:{name}:{version}:{','.join(dep_names)}"
+                        hashes.append({"alg": "SHA-256", "content": hashlib.sha256(content_payload.encode()).hexdigest()})
 
                     components.append({
                         "name": name,
@@ -460,12 +754,9 @@ def generate_sbom(image_digest: str | None = None, release_digest: str | None = 
     resolved_image_digest = image_digest if (image_digest and SHA256_DIGEST_REGEX.match(image_digest)) else "UNBOUND"
     resolved_release_digest = release_digest if (release_digest and SHA256_DIGEST_REGEX.match(release_digest)) else "UNBOUND"
 
-    comp_json = json.dumps(components, sort_keys=True)
-    dep_json = json.dumps(filtered_dependencies, sort_keys=True)
-    content_hash = hashlib.sha256(f"{comp_json}:{dep_json}".encode()).hexdigest()
-    digest_input = f"{content_hash}:{resolved_image_digest}:{resolved_release_digest}"
-    sbom_hash = hashlib.sha256(digest_input.encode()).hexdigest()
-    sbom_digest = f"sha256:{sbom_hash}"
+    content_hash, sbom_hash, sbom_digest = compute_sbom_digest(
+        components, filtered_dependencies, image_digest=resolved_image_digest, release_digest=resolved_release_digest
+    )
 
     sbom = {
         "bomFormat": "CycloneDX",
@@ -495,8 +786,8 @@ def generate_sbom(image_digest: str | None = None, release_digest: str | None = 
 
 
 def check_license_policy(sbom: dict, require_digests: bool = False) -> tuple[bool, list[str]]:
-    allowed, denied, review_req, exempt_purls, exempt_names = load_license_policy()
-    violations = []
+    allowed, denied, review_req, exempt_purls, exempt_names, ex_violations = load_license_policy()
+    violations = list(ex_violations)
 
     # Attestation digests check
     metadata_props = {p["name"]: p["value"] for p in sbom.get("metadata", {}).get("properties", [])}
@@ -578,7 +869,7 @@ def check_third_party_notices(sbom: dict) -> tuple[bool, str | None]:
 
 def readback_sbom(sbom_path: Path, expected_image_digest: str | None = None, expected_release_digest: str | None = None) -> int:
     if not sbom_path.exists():
-        print(f"Error: SBOM file does not exist at {sbom_path}", file=sys.stderr)
+        print(f"Error: SBOM file does not exist at {safe_rel_path(sbom_path)}", file=sys.stderr)
         return 1
     data = json.loads(sbom_path.read_text(encoding="utf-8"))
     metadata = data.get("metadata", {})
@@ -624,22 +915,27 @@ def readback_sbom(sbom_path: Path, expected_image_digest: str | None = None, exp
 def verify_sbom(output_path: Path, image_digest: str | None = None, release_digest: str | None = None) -> int:
     """Verify committed sbom.json matches active lockfiles without mutating any files on disk."""
     if not output_path.exists():
-        print(f"Error: SBOM file does not exist at {output_path}", file=sys.stderr)
+        print(f"Error: SBOM file does not exist at {safe_rel_path(output_path)}", file=sys.stderr)
         return 1
 
     try:
         committed_data = json.loads(output_path.read_text(encoding="utf-8"))
     except Exception as e:
-        print(f"Error reading committed SBOM {output_path}: {e}", file=sys.stderr)
+        print(f"Error reading committed SBOM {safe_rel_path(output_path)}: {e}", file=sys.stderr)
         return 1
 
+    diff_reasons = []
+    if committed_data.get("bomFormat") != "CycloneDX" or committed_data.get("specVersion") != "1.5":
+        diff_reasons.append(f"Format mismatch: bomFormat={committed_data.get('bomFormat')}, specVersion={committed_data.get('specVersion')}")
+
     committed_components = committed_data.get("components", [])
+    committed_deps = committed_data.get("dependencies", [])
 
     # Generate active SBOM in memory
     current_sbom = generate_sbom(image_digest=image_digest, release_digest=release_digest)
     current_components = current_sbom.get("components", [])
+    current_deps = current_sbom.get("dependencies", [])
 
-    diff_reasons = []
     if len(committed_components) != len(current_components):
         diff_reasons.append(f"Component count mismatch: committed={len(committed_components)}, active={len(current_components)}")
     else:
@@ -647,9 +943,32 @@ def verify_sbom(output_path: Path, image_digest: str | None = None, release_dige
             if c_comm.get("purl") != c_curr.get("purl"):
                 diff_reasons.append(f"Component mismatch: committed={c_comm.get('purl')}, active={c_curr.get('purl')}")
                 break
+            if c_comm.get("supplier") != c_curr.get("supplier"):
+                diff_reasons.append(f"Supplier mismatch for {c_comm.get('name')}: committed={c_comm.get('supplier')}, active={c_curr.get('supplier')}")
+                break
             if c_comm.get("licenses") != c_curr.get("licenses"):
                 diff_reasons.append(f"License mismatch for {c_comm.get('name')}: committed={c_comm.get('licenses')}, active={c_curr.get('licenses')}")
                 break
+            if c_comm.get("hashes") != c_curr.get("hashes"):
+                diff_reasons.append(f"Package hash mismatch for {c_comm.get('name')}: committed={c_comm.get('hashes')}, active={c_curr.get('hashes')}")
+                break
+
+    if len(committed_deps) != len(current_deps):
+        diff_reasons.append(f"Dependency graph node count mismatch: committed={len(committed_deps)}, active={len(current_deps)}")
+    else:
+        for d_comm, d_curr in zip(committed_deps, current_deps, strict=False):
+            if d_comm.get("ref") != d_curr.get("ref") or d_comm.get("dependsOn") != d_curr.get("dependsOn"):
+                diff_reasons.append(f"Dependency graph tampering detected at node '{d_comm.get('ref')}'")
+                break
+
+    # Verify content digest integrity
+    comm_props = {p["name"]: p["value"] for p in committed_data.get("metadata", {}).get("properties", [])}
+    curr_props = {p["name"]: p["value"] for p in current_sbom.get("metadata", {}).get("properties", [])}
+
+    if comm_props.get("sbom-content-digest") != curr_props.get("sbom-content-digest"):
+        diff_reasons.append(
+            f"Digest mismatch: committed sbom-content-digest='{comm_props.get('sbom-content-digest')}', active='{curr_props.get('sbom-content-digest')}'"
+        )
 
     is_passed, violations = check_license_policy(current_sbom, require_digests=False)
     if not is_passed:
@@ -660,10 +979,10 @@ def verify_sbom(output_path: Path, image_digest: str | None = None, release_dige
         diff_reasons.append(notices_err)
 
     if not diff_reasons:
-        print(f"✅ SBOM verification PASSED: {output_path.relative_to(ROOT)} matches active lockfiles and policy.")
+        print(f"✅ SBOM verification PASSED: {safe_rel_path(output_path)} matches active lockfiles and policy.")
         return 0
     else:
-        print(f"❌ SBOM verification FAILED: {output_path.relative_to(ROOT)} is stale or invalid.", file=sys.stderr)
+        print(f"❌ SBOM verification FAILED: {safe_rel_path(output_path)} is stale or invalid.", file=sys.stderr)
         for r in diff_reasons:
             print(f"  - {r}", file=sys.stderr)
         return 1
@@ -725,7 +1044,7 @@ def main() -> int:
     # Write SBOM
     args.output.parent.mkdir(parents=True, exist_ok=True)
     args.output.write_text(json.dumps(sbom, indent=2), encoding="utf-8")
-    print(f"SBOM successfully generated at {args.output.relative_to(ROOT)}")
+    print(f"SBOM successfully generated at {safe_rel_path(args.output)}")
     print(f"Total components cataloged: {len(sbom['components'])}")
     props = {p["name"]: p["value"] for p in sbom["metadata"]["properties"]}
     print(f"SBOM Content Digest: {props.get('sbom-content-digest', 'N/A')}")
@@ -737,7 +1056,7 @@ def main() -> int:
     if args.update_notices:
         notices_content = generate_third_party_notices(sbom)
         NOTICES_PATH.write_text(notices_content, encoding="utf-8")
-        print(f"THIRD_PARTY_NOTICES updated at {NOTICES_PATH.relative_to(ROOT)}")
+        print(f"THIRD_PARTY_NOTICES updated at {safe_rel_path(NOTICES_PATH)}")
 
     return 0 if is_passed else 1
 
