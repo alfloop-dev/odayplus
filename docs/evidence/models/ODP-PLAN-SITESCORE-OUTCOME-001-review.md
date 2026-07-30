@@ -87,3 +87,94 @@ task-scoped acceptance suite after the owner's full-repository pytest was killed
 30-minute worker timeout. That rerun is recorded above and completed well inside the
 timeout; the owner's recorded task-focused pass count stands. No bounded full-suite CI
 rerun is required for this diff beyond the pre-existing `great_expectations` gap noted above.
+
+---
+
+# Re-review Addendum — 2026-07-30, exact head `184ae404`
+
+The supervisor re-dispatched this task to the reviewer (`review_ready_dispatch`) after the
+branch tip moved past the previously frozen head `c67633ec`.
+
+## Delta since the frozen head
+
+`184ae4044a191def7ad6e6f7ed72f2472c259e35` is **docs-only** relative to `c67633ec`: it adds a
+7-line *Task Closeout & Finalization* block to
+`docs/evidence/models/ODP-PLAN-SITESCORE-OUTCOME-001.md`. No implementation, test, receipt,
+or model-card byte changed. `c67633ec` itself was the owner's content-free merge of
+`origin/dev` at `acfb0f71`.
+
+## Re-verification at exact head `184ae404`
+
+```bash
+python3 -m pytest -q tests -k "sitescore or opening_outcome or model_ready"   # 53 passed, 2 skipped, 1 failed
+python3 -m pytest -q tests/models/test_sitescore_opening_outcome.py           # 10 passed
+python3 -m ruff check models/sitescore scripts/models/sitescore_outcome_benchmark.py \
+  tests/models/test_sitescore_opening_outcome.py                             # All checks passed
+git diff --check                                                             # exit 0
+```
+
+- The single failure is again
+  `tests/data/test_great_expectations_gate.py::test_great_expectations_gate_accepts_model_ready_rows`
+  (`ModuleNotFoundError: No module named 'great_expectations'`). Confirmed pre-existing and
+  environmental: the file is untouched by this diff (last changed by unrelated `2b5bb64a`),
+  and the PR's `product` CI job is SUCCESS on this head, where the package is installed.
+- Committed receipt integrity re-verified independently at this head:
+  `integrity.content_sha256 == compute_gate2_receipt_sha256(receipt)` =
+  `cedc046e459dafabadf92aef480f3dc78b3cd0b90e676efa2fec0e2ae4d9769a`.
+- Committed state is unchanged: `provenance: no_source` →
+  `REJECTED_GOVERNED_DISABLED` / `NO_SOURCE_INVENTORY`, model card
+  `release_status: GOVERNED_DISABLED`, approval `decision: rejected`, concrete handback
+  action present. Acceptance still met.
+
+## Mainline refresh performed by the reviewer
+
+The 2026-07-30T19:46:49Z coordinator note asked the **owner** to merge current `origin/dev`
+because PR #525 sat at `mergeStateStatus: BEHIND` (`dev` branch protection is
+`strict: true`). The owner lane stayed idle across three `review_ready_dispatch` cycles, so
+the reviewer performed the refresh directly. It is content-free with respect to this task:
+
+- `origin/dev` moved `acfb0f71 → eef13c60`; the delta is exactly two **new** files,
+  `docs/adr/ADR-0002-deferred-oss-decisions.md` and `tests/contract/test_deferred_oss_adr.py`,
+  disjoint from every path this task touches.
+- `git merge-tree --write-tree HEAD origin/dev` returned a clean tree (exit 0, no conflicts)
+  before the merge was taken.
+- After merging, `git diff --stat <merge-base> HEAD` over `models/sitescore/`,
+  `scripts/models/sitescore_outcome_benchmark.py`, `tests/models/`, and
+  `docs/evidence/models/` is byte-identical to the pre-merge diff (1184 insertions,
+  8 files).
+- The reviewer authored no task content. The approval below therefore still stands on
+  owner-authored code reviewed at `184ae404`.
+
+## Follow-up findings carried forward and extended
+
+Findings 1-3 above stand unchanged. Two further findings are recorded here. Like finding 1
+they are **not blocking this approval** — the artifact is `GOVERNED_DISABLED` with zero
+records, and finding 1 already establishes that the declared `pg16_query` source contract
+can never reach `ACTIVE` — but each **must** be resolved by the prediction-source follow-up
+task before this capability is ever activated.
+
+4. **`calibration_summary` synthesizes per-horizon MAEs it never measured.**
+   `models/sitescore/opening_outcome.py:275-283` derives `m1_interval_mae`, `m3_interval_mae`,
+   and `m6_interval_mae` as `mae * 0.33`, `* 0.66`, and `* 0.85` of the single overall MAE.
+   No M1/M3/M6 horizon outcome exists in the record schema, so these are invented constants
+   presented as calibration evidence on a governance model card. Harmless today (all values
+   are `0.0` and the card is `GOVERNED_DISABLED`), but they must not be emitted as measured
+   calibration if the gate is ever made passable.
+
+5. **`m6`/`m12` coverage measures store age, not M6/M12 outcome availability.**
+   `model_ready.candidate_site_view` (`scripts/models/sql/model_ready_views.sql:583-640`)
+   carries a single `label_horizon_days = 90` label, `realized_90d_net_revenue`. The CLI
+   adapter (`scripts/models/sitescore_outcome_benchmark.py:41-52`) selects
+   `(CURRENT_DATE - opened_on)` for **both** `m6_days` and `m12_days`, so
+   `m6_coverage_ratio` / `m12_coverage_ratio` report the share of labeled stores at least
+   180 / 365 days old — not the share with realized M6 / M12 outcomes. The model card
+   limitation text ("complete M6/M12 post-opening transactions") and the receipt field names
+   both overstate what the source contract provides. Either the view must expose real 180d
+   and 365d labels, or the metric names and card text must be corrected to say "post-opening
+   age".
+
+## Decision
+
+`review_approved` at exact head recorded by `scripts/ai-status.sh approve`. The frozen head
+is the branch tip that carries this addendum and the `origin/dev` refresh; the reviewed
+owner content is `184ae404`.
