@@ -38,7 +38,7 @@ release_claim: no-go-until-final-gate-audit
 | A | `ODP-PLAN-GATE-REGISTRY-001` | P0-001 | Claude | Antigravity2 | — |
 | A | `ODP-PLAN-CANONICAL-SHELL-LIVE-001` | P0-003 | Antigravity | Codex2 | — |
 | A | `ODP-PLAN-SOLVER-RUNTIME-COMPAT-001` | P0-007 | Antigravity2 | Codex2 | — |
-| A | `ODP-PLAN-OSS-LICENSE-GATE-001` | P1-007 | Antigravity5 | Claude | — |
+| A | `ODP-PLAN-OSS-LICENSE-GATE-001` | P1-007 | Antigravity5 | Claude | `ODP-PLAN-OSS-LEGAL-POLICY-001` |
 | A | `ODP-PLAN-OBSERVABILITY-LIVE-001` | P1-008 | Antigravity6 | Codex2 | — |
 | A | `ODP-PLAN-DEFERRED-OSS-ADR-001` | P2 | Antigravity7 | Claude | — |
 | B | `ODP-PLAN-ACCEPTANCE-REAL-EXEC-001` | P0-002 | Codex2 | Claude | `ODP-PLAN-GATE-REGISTRY-001` |
@@ -51,6 +51,7 @@ release_claim: no-go-until-final-gate-audit
 | C | `ODP-PLAN-HEATZONE-LABEL-BACKFILL-001` | P1-001 data gate | Human/Ops | Codex2 | `ODP-PLAN-HEATZONE-OUTCOME-001` |
 | C | `ODP-PLAN-SITESCORE-OUTCOME-BACKFILL-001` | P1-002 data gate | Human/Ops | Claude | `ODP-PLAN-SITESCORE-OUTCOME-001` |
 | C | `ODP-PLAN-AVM-OUTCOME-BACKFILL-001` | P1-003 data gate | Human/Ops | Codex2 | `ODP-PLAN-AVM-OUTCOME-001` |
+| C | `ODP-PLAN-OSS-LEGAL-POLICY-001` | P1-007 legal gate | Human/Ops | Claude | — |
 | C | `ODP-PLAN-FORECAST-RELEASE-EVIDENCE-001` | P0-004 | Claude3 | Codex2 | existing Forecast inventory/backfill/model-registry tasks |
 | C | `ODP-PLAN-FORECAST-BUSINESS-001` | P1-004 | Antigravity3 | Claude | `ODP-PLAN-FORECAST-RELEASE-EVIDENCE-001` |
 | C | `ODP-PLAN-PRICE-ADLIFT-PILOT-001` | P1-005 | Antigravity6 | Claude | `ODP-PLAN-OBSERVABILITY-LIVE-001` |
@@ -215,7 +216,19 @@ release_claim: no-go-until-final-gate-audit
   scope、license policy、NOTICE/THIRD_PARTY_NOTICES、attestation/readback。
 - Acceptance:
   allow/deny/review policy fail closed；SBOM 綁 image/release digest；
-  prod 與 dev toolchain 都掃描，13 個 high dev findings 有修復或具名豁免。
+  prod 與 dev toolchain 都掃描，13 個 high dev findings 有修復或具名豁免；
+  license policy 與 exemptions 只接受 `ODP-PLAN-OSS-LEGAL-POLICY-001`
+  的權威 receipt，不接受 AI 自行核准。
+
+### ODP-PLAN-OSS-LEGAL-POLICY-001
+
+- Class: `human_gate`; owner: `Human/Ops`.
+- Scope: 由具名 Legal/Security/Risk owner 核准 OSS license
+  allow/deny/review policy、LGPL 等條款處置、例外格式與有效期限。
+- Acceptance:
+  policy version、核准人、角色、日期、決策理由、適用 release 與
+  expiry/review date 可回讀；AI agent 不得成為 legal approver；缺 receipt
+  時 OSS release gate 必須 fail closed。
 
 ### ODP-PLAN-OBSERVABILITY-LIVE-001
 

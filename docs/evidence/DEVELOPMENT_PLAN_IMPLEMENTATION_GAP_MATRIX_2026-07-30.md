@@ -386,6 +386,10 @@ endpoint 會誤報。修復需包含：
    - signature/provenance readback；
    - release artifact retention；
    - policy failure條件。
+5. OSS license allow/deny/review policy 與例外屬法務／風險決策；AI owner
+   或 reviewer 不得自行把 LGPL 等條款核准為 production allowlist，也
+   不得以 AI 名義簽署 exemption。缺 Human/Ops/Legal 具名政策 owner、
+   決策版本與核准 receipt 時必須 fail closed。
 
 OSS governance 因此判定為 `PARTIAL`，不是 production-complete。
 
@@ -432,7 +436,7 @@ Package 10 明確要求只保留：
 | GAP-P1-004 | ForecastOps business validation | baseline superiority、segment、alert precision/recall/lead time |
 | GAP-P1-005 | Price/AdLift pilot | 0 hard violation、pre-trend通過、incremental GM與rollback |
 | GAP-P1-006 | NetPlan管理驗收 | hard constraints 100%、優於baseline、alternative/infeasibility可解釋 |
-| GAP-P1-007 | OSS license gate | license-aware SBOM、policy、notice、release attestation |
+| GAP-P1-007 | OSS license gate | license-aware SBOM、policy、notice、release attestation，以及 Human/Ops/Legal 具名政策核准 |
 | GAP-P1-008 | Observability production wiring | exporter、dashboard、alert routing、owner與watch window |
 
 ### P2：工程與文件品質
