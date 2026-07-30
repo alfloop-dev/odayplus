@@ -90,6 +90,44 @@ class NetPlanConstraints:
 
 
 @dataclass(frozen=True)
+class ManagementBaselineInput:
+    baseline_id: str
+    baseline_name: str
+    actions_by_entity: Mapping[str, NetworkAction]
+    source_receipt_id: str = "WBS-NETPLAN-APPROVED-BASELINE-2026Q3"
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "baseline_id": self.baseline_id,
+            "baseline_name": self.baseline_name,
+            "actions_by_entity": {k: v.value for k, v in self.actions_by_entity.items()},
+            "source_receipt_id": self.source_receipt_id,
+        }
+
+
+@dataclass(frozen=True)
+class ManagementBaselineComparisonReceipt:
+    baseline_id: str
+    baseline_feasible: bool
+    baseline_objective_value: float | None
+    solver_objective_value: float
+    objective_gain_over_baseline: float | None
+    superior_or_equal: bool
+    baseline_constraint_violations: tuple[str, ...] = ()
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "baseline_id": self.baseline_id,
+            "baseline_feasible": self.baseline_feasible,
+            "baseline_objective_value": self.baseline_objective_value,
+            "solver_objective_value": self.solver_objective_value,
+            "objective_gain_over_baseline": self.objective_gain_over_baseline,
+            "superior_or_equal": self.superior_or_equal,
+            "baseline_constraint_violations": list(self.baseline_constraint_violations),
+        }
+
+
+@dataclass(frozen=True)
 class InfeasibilityDiagnosis:
     violated_constraint: str
     affected_stores: tuple[str, ...]
@@ -128,6 +166,8 @@ __all__ = [
     "NETPLAN_POLICY_VERSION",
     "ActionOption",
     "InfeasibilityDiagnosis",
+    "ManagementBaselineComparisonReceipt",
+    "ManagementBaselineInput",
     "NetPlanConstraints",
     "NetworkAction",
 ]

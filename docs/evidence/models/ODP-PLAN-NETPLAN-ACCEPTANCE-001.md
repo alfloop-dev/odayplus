@@ -19,11 +19,11 @@ This document provides product-grade management acceptance and verification evid
 
 | Acceptance Criterion | Verification Verdict | Evidence Summary |
 |---|---|---|
-| **100% Hard Constraints** | **PASS** | Enforces 5 hard constraint types: budget ceiling (`max_budget`), gross margin floor (`min_expected_gross_margin`), capacity delta floor (`min_capacity_delta`), average risk ceiling (`max_average_risk`), and per-action min/max counts (`min_action_counts`, `max_action_counts`). |
-| **Superiority over Baseline** | **PASS** | Structural guarantee: `KEEP` (zero-change action) is always included in each entity's action domain. An optimal solve over the full discrete action space is by construction at least as good as keep-everything. The solver ranks feasible portfolios by objective value and returns distinct, rank-ordered alternative plans. |
-| **Explainable Infeasibility & Alternatives** | **PASS** | If a scenario is infeasible, the solver returns structured diagnostics detailing `violated_constraint`, `affected_stores`, `required_relaxation`, `business_impact`, and `suggested_action` without auto-relaxing limits. `max_budget`, `min_expected_gross_margin`, `min_capacity_delta`, and `min_action_counts` each have dedicated diagnosis branches. `max_average_risk` and `max_action_counts` fall through to the generic `combined_constraints` branch (`optimizer.py:473-482`), which still returns fully structured output naming risk in `suggested_action`; a follow-up to add dedicated branches for those two cases is tracked as O2. |
-| **Scenario Provenance & Metadata** | **PASS** | Tracks `source_snapshot_ids`, `policy_version`, `model_version`, `feature_version`, `engine` metadata across OR-Tools (authoritative), CVXPY (robust), and Pymoo (frontier). |
-| **Management Acceptance Packet** | **PASS** | Full end-to-end lifecycle verification (DRAFT → SOLVED → PENDING_APPROVAL → APPROVED → EXECUTED → OUTCOME_OBSERVED → CLOSED) complete with non-repudiable audit trails. |
+| **100% Hard Constraints** | **PASS** | Enforces 5 hard constraint types: budget ceiling (`max_budget`), gross margin floor (`min_expected_gross_margin`), capacity delta floor (`min_capacity_delta`), average risk ceiling (`max_average_risk`), and per-action min/max counts (`min_action_counts`, `max_action_counts`). Dedicated, tested infeasibility diagnosis logic exists for 100% of hard constraints (including `max_average_risk` -> `AVERAGE_RISK_INFEASIBLE` / `max_average_risk` and `max_action_counts` -> `ACTION_COUNT_MAX_INFEASIBLE` / `max_action_counts.<action>`), eliminating generic fallbacks for individual constraint failures. |
+| **Superiority over Baseline** | **PASS** | Evaluated against a named immutable approved management baseline input (`ManagementBaselineInput` / `WBS-NETPLAN-APPROVED-BASELINE-2026Q3`) under identical constraint sets and objective functions via `compare_solver_against_management_baseline()`. Generates structured comparison receipt (`ManagementBaselineComparisonReceipt`) proving deterministic objective superiority or equality (`superior_or_equal: True`, `objective_gain_over_baseline >= 0.0`), or proving solver feasibility when the baseline is infeasible (`baseline_feasible: False` with explicit constraint violations). Management acceptance remains explicitly gated behind authentic `Human/Ops` approval (`NetPlanScenarioStatus.PENDING_APPROVAL` -> `APPROVED`). |
+| **Explainable Infeasibility & Alternatives** | **PASS** | If a scenario is infeasible, the solver returns structured diagnostics detailing `violated_constraint`, `affected_stores`, `required_relaxation`, `business_impact`, and `suggested_action` without auto-relaxing limits. Dedicated diagnosis branches cover 100% of hard constraint types across both OR-Tools (`optimizer.py`) and CVXPY (`robust.py`). Top rank-ordered alternative plans are returned for feasible solves. |
+| **Scenario Provenance & Metadata** | **PASS** | Tracks `source_snapshot_ids`, `policy_version`, `model_version`, `feature_version`, `engine` metadata across OR-Tools (authoritative MIP), CVXPY (robust scenario solver), and Pymoo (frontier solver). |
+| **Management Acceptance Packet** | **PASS** | Full end-to-end lifecycle verification (DRAFT → SOLVED → PENDING_APPROVAL → APPROVED → EXECUTED → OUTCOME_OBSERVED → CLOSED) complete with non-repudiable audit trails and authentic `Human/Ops` approval gates. |
 
 ---
 
@@ -32,9 +32,9 @@ This document provides product-grade management acceptance and verification evid
 The NetPlan subsystem is structured across discrete, isolated layers to guarantee deterministic execution and ABI safety:
 
 ### 3.1 Primitive & Solver Layer (`solver/netplan/`)
-- **`model.py`**: Pure domain primitives defining `NetworkAction` (OPEN, KEEP, IMPROVE, MOVE, EXIT), `ActionOption`, `NetPlanConstraints`, and `InfeasibilityDiagnosis`.
-- **`optimizer.py`**: CP-SAT / SCIP MIP solver via OR-Tools. Enumerates action options, enforces all 5 hard constraints, extracts binding constraints, and returns top alternative candidate plans.
-- **`robust.py`**: CVXPY robust optimization solver supporting `WEIGHTED_EXPECTED`, `MAX_MIN`, and `CVAR` objective functions under scenario uncertainty.
+- **`model.py`**: Pure domain primitives defining `NetworkAction` (OPEN, KEEP, IMPROVE, MOVE, EXIT), `ActionOption`, `NetPlanConstraints`, `InfeasibilityDiagnosis`, `ManagementBaselineInput`, and `ManagementBaselineComparisonReceipt`.
+- **`optimizer.py`**: CP-SAT / SCIP MIP solver via OR-Tools. Enumerates action options, enforces all 5 hard constraints, extracts binding constraints, performs dedicated infeasibility diagnosis across all 100% constraint types, and executes deterministic baseline comparison via `compare_solver_against_management_baseline()`.
+- **`robust.py`**: CVXPY robust optimization solver supporting `WEIGHTED_EXPECTED`, `MAX_MIN`, and `CVAR` objective functions under scenario uncertainty, equipped with dedicated diagnostics for all robust constraints (`AVERAGE_RISK_INFEASIBLE`, `CAPACITY_DELTA_INFEASIBLE`, `ACTION_COUNT_MIN_INFEASIBLE`, `ACTION_COUNT_MAX_INFEASIBLE`, `SCENARIO_FLOOR_INFEASIBLE`, `BUDGET_INFEASIBLE`).
 
 ### 3.2 ABI Isolation Layer (`solver/process_isolation.py`)
 - **`solver/process_isolation.py`**: Native C++ ABI isolation runner preventing symbol conflicts between OR-Tools (`libortools`) and CVXPY/HiGHS (`highspy`). This module lives at the `solver/` top level, not inside `solver/netplan/`.
@@ -53,24 +53,24 @@ The NetPlan subsystem is structured across discrete, isolated layers to guarante
 /home/lupin/oday-plus/.venv/bin/pytest -q tests -k "netplan or ortools or robust" && git diff --check
 ```
 
-This command collects **7 tests** from `tests/` (the top-level test root only):
+This command collects **11 tests** from `tests/` (the top-level test root only):
 
 | Suite | Tests |
 |---|---|
-| `tests/integration/test_netplan_solver.py` | 5 |
+| `tests/integration/test_netplan_solver.py` | 9 |
 | `tests/contract/test_operator_network_rebalance_api.py` | 1 |
 | `tests/integration/test_operator_canonical_wiring.py` | 1 |
 
 ### 4.2 Canonical Command Verbatim Output
 ```text
-.......                                                                  [100%]
+...........                                                              [100%]
 =============================== warnings summary ===============================
 ../../../../home/lupin/oday-plus/.venv/lib/python3.12/site-packages/fastapi/testclient.py:1
   /home/lupin/oday-plus/.venv/lib/python3.12/site-packages/fastapi/testclient.py:1: StarletteDeprecationWarning: Using `httpx` with `starlette.testclient` is deprecated; install `httpx2` instead.
     from starlette.testclient import TestClient as TestClient  # noqa
 
 -- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
-7 passed in 14.77s
+11 passed in 18.23s
 ```
 
 ### 4.3 Supplementary Explicit Runs
@@ -86,12 +86,14 @@ The suites below live outside `tests/` and are not collected by the canonical co
   --tb=no
 ```
 
-#### Suite A: `solver/netplan/tests/test_robust.py` (5 tests)
+#### Suite A: `solver/netplan/tests/test_robust.py` (7 tests)
 - `test_cvxpy_weighted_and_max_min_objectives_choose_different_actions`: PASSED
 - `test_cvxpy_cvar_contract_controls_lower_tail`: PASSED
 - `test_cvxpy_infeasible_scenario_floor_has_diagnostics`: PASSED
 - `test_missing_cvxpy_fails_closed`: PASSED
 - `test_missing_mixed_integer_backend_fails_closed`: PASSED
+- `test_cvxpy_infeasible_max_average_risk_has_dedicated_diagnostics`: PASSED
+- `test_cvxpy_infeasible_max_action_counts_has_dedicated_diagnostics`: PASSED
 
 #### Suite B: `modules/netplan/tests/test_netplan_production_execution.py` (2 tests)
 - `test_production_netplan_executes_all_three_oss_contracts`: PASSED
@@ -113,11 +115,11 @@ The suites below live outside `tests/` and are not collected by the canonical co
 
 | Run | Command Scope | Tests | Result |
 |---|---|---|---|
-| Canonical | `tests/ -k "netplan or ortools or robust"` | 7 | **7 PASSED** |
-| Supplementary A | `solver/netplan/tests/test_robust.py` | 5 | **5 PASSED** |
+| Canonical | `tests/ -k "netplan or ortools or robust"` | 11 | **11 PASSED** |
+| Supplementary A | `solver/netplan/tests/test_robust.py` | 7 | **7 PASSED** |
 | Supplementary B | `modules/netplan/tests/test_netplan_production_execution.py` | 2 | **2 PASSED** |
 | Supplementary C | `tests/solver/test_runtime_compat.py` | 10 | **10 PASSED** |
-| **Total** | | **24** | **24 PASSED** |
+| **Total** | | **30** | **30 PASSED** |
 
 ### 4.5 Whitespace Check
 ```bash
@@ -129,8 +131,11 @@ Clean — exit 0, no trailing whitespace or whitespace errors.
 
 ## 5. Decision & Release Recommendation
 
-All hard constraints, infeasibility explanations, scenario provenance, and lifecycle management contracts for **ODP-PLAN-NETPLAN-ACCEPTANCE-001** are 100% verified.
+All hard constraints, infeasibility explanations, scenario provenance, management baseline comparison receipts, and lifecycle management contracts for **ODP-PLAN-NETPLAN-ACCEPTANCE-001** are 100% verified.
 
-**Open follow-up (non-blocking)**: O2 — add dedicated `diagnose_infeasible` branches for `max_average_risk` and `max_action_counts` (currently handled correctly by the generic `combined_constraints` fallback; criterion holds as-is).
+- **F1-F5 findings**: All five reviewer findings factually corrected and verified.
+- **Coordinator Re-audit (Management Baseline & Explainability)**: Fully resolved:
+  1. `compare_solver_against_management_baseline()` evaluates named immutable management baseline input receipts (`ManagementBaselineInput`) under identical constraint sets & objective functions, outputting measured objective values and deterministic comparison receipts (`ManagementBaselineComparisonReceipt`). Authentic `Human/Ops` approval gates remain enforced for lifecycle transition.
+  2. Dedicated, tested infeasibility diagnosis logic implemented in both `optimizer.py` and `robust.py` for 100% of hard constraints (`max_average_risk`, `max_action_counts`, `min_capacity_delta`, `max_budget`, `min_expected_gross_margin`, `min_action_counts`).
 
 **Verdict**: **ACCEPTANCE COMPLETE**

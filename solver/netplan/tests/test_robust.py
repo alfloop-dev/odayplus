@@ -136,3 +136,48 @@ def test_missing_mixed_integer_backend_fails_closed(monkeypatch) -> None:
     assert result.solver_status == "SOLVER_UNAVAILABLE"
     assert result.selected_actions == ()
     assert result.diagnostics[0].code == "MIP_SOLVER_UNAVAILABLE"
+
+
+def test_cvxpy_infeasible_max_average_risk_has_dedicated_diagnostics() -> None:
+    result = solve_robust_network_plan(
+        options_by_entity=_options(),
+        scenarios=_scenarios(),
+        constraints=RobustNetPlanConstraints(
+            max_budget=50,
+            max_average_risk=0.01,
+        ),
+    )
+
+    assert result.solver_status == "INFEASIBLE"
+    assert result.selected_actions == ()
+    codes = [d.code for d in result.diagnostics]
+    assert "AVERAGE_RISK_INFEASIBLE" in codes
+
+
+def test_cvxpy_infeasible_max_action_counts_has_dedicated_diagnostics() -> None:
+    # Build options where store-a only has KEEP action
+    only_keep_options = {
+        "store-a": (
+            ScenarioActionOption(
+                "safe",
+                "store-a",
+                NetworkAction.KEEP,
+                {"DOWNSIDE": 80, "BASE": 80, "UPSIDE": 80},
+                0,
+                0.05,
+            ),
+        )
+    }
+    result = solve_robust_network_plan(
+        options_by_entity=only_keep_options,
+        scenarios=_scenarios(),
+        constraints=RobustNetPlanConstraints(
+            max_budget=50,
+            max_action_counts={NetworkAction.KEEP: 0},
+        ),
+    )
+
+    assert result.solver_status == "INFEASIBLE"
+    assert result.selected_actions == ()
+    codes = [d.code for d in result.diagnostics]
+    assert "ACTION_COUNT_MAX_INFEASIBLE" in codes

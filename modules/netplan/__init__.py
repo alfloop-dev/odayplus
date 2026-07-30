@@ -37,7 +37,14 @@ from modules.netplan.workers import (
     NetPlanSolverWorker,
     run_netplan_solver_batch,
 )
-from solver.netplan import ActionOption, NetPlanConstraints, NetworkAction
+from solver.netplan import (
+    ActionOption,
+    ManagementBaselineComparisonReceipt,
+    ManagementBaselineInput,
+    NetPlanConstraints,
+    NetworkAction,
+    compare_solver_against_management_baseline,
+)
 
 __all__ = [
     "NETPLAN_FEATURE_VERSION",
@@ -51,6 +58,8 @@ __all__ = [
     "ExistingStoreInput",
     "InMemoryNetPlanRepository",
     "InvalidNetPlanTransitionError",
+    "ManagementBaselineComparisonReceipt",
+    "ManagementBaselineInput",
     "NetPlanApprovalError",
     "NetPlanBatchResult",
     "NetPlanConstraints",
@@ -69,5 +78,6 @@ __all__ = [
     "StatusTransition",
     "build_outcome_record",
     "build_scenario_options",
+    "compare_solver_against_management_baseline",
     "run_netplan_solver_batch",
 ]

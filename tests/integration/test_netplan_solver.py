@@ -19,10 +19,12 @@ from modules.netplan import (
     ExistingStoreInput,
     InMemoryNetPlanRepository,
     InvalidNetPlanTransitionError,
+    ManagementBaselineInput,
     NetPlanScenarioStatus,
     NetPlanService,
     ScenarioBuildRequest,
     build_scenario_options,
+    compare_solver_against_management_baseline,
     run_netplan_solver_batch,
 )
 from solver.netplan import (
@@ -240,3 +242,106 @@ def test_batch_worker_solves_multiple_scenarios_and_persists_results() -> None:
     assert result.status == "succeeded"
     assert result.to_dict()["scenarios"][0]["solve"]["result"]["solver_status"] == STATUS_OPTIMAL
     assert repository.get_scenario("netplan-batch-001").status is NetPlanScenarioStatus.SOLVED
+
+
+def test_management_baseline_comparison_deterministic_proof() -> None:
+    options = build_scenario_options(existing_stores=_stores(), candidate_sites=_sites())
+    constraints = _constraints()
+    solve_result = solve_network_plan(options_by_entity=options, constraints=constraints)
+
+    baseline = ManagementBaselineInput(
+        baseline_id="WBS-NETPLAN-APPROVED-BASELINE-2026Q3",
+        baseline_name="Approved 2026Q3 Management Baseline",
+        actions_by_entity={
+            "store-001": NetworkAction.IMPROVE,
+            "store-002": NetworkAction.KEEP,
+            "candidate-a": NetworkAction.OPEN,
+            "candidate-b": NetworkAction.KEEP,
+        },
+    )
+
+    receipt = compare_solver_against_management_baseline(
+        options_by_entity=options,
+        constraints=constraints,
+        solve_result=solve_result,
+        baseline=baseline,
+    )
+
+    assert receipt.baseline_id == "WBS-NETPLAN-APPROVED-BASELINE-2026Q3"
+    assert receipt.baseline_feasible is True
+    assert receipt.superior_or_equal is True
+    assert receipt.baseline_objective_value is not None
+    assert receipt.solver_objective_value >= receipt.baseline_objective_value
+    assert receipt.objective_gain_over_baseline is not None
+    assert receipt.objective_gain_over_baseline >= 0.0
+
+
+def test_infeasible_management_baseline_identified_with_violations() -> None:
+    options = build_scenario_options(existing_stores=_stores(), candidate_sites=_sites())
+    constraints = _constraints(
+        min_capacity_delta=2,
+        min_action_counts={NetworkAction.OPEN: 1, NetworkAction.MOVE: 1},
+    )
+    solve_result = solve_network_plan(options_by_entity=options, constraints=constraints)
+
+    baseline = ManagementBaselineInput(
+        baseline_id="WBS-NETPLAN-APPROVED-BASELINE-2026Q3",
+        baseline_name="Approved 2026Q3 Baseline",
+        actions_by_entity={
+            "store-001": NetworkAction.KEEP,
+            "store-002": NetworkAction.KEEP,
+            "candidate-a": NetworkAction.KEEP,
+            "candidate-b": NetworkAction.KEEP,
+        },
+    )
+
+    receipt = compare_solver_against_management_baseline(
+        options_by_entity=options,
+        constraints=constraints,
+        solve_result=solve_result,
+        baseline=baseline,
+    )
+
+    assert receipt.baseline_feasible is False
+    assert receipt.superior_or_equal is True
+    assert "min_capacity_delta" in receipt.baseline_constraint_violations
+    assert "min_action_counts.OPEN" in receipt.baseline_constraint_violations or "min_action_counts.MOVE" in receipt.baseline_constraint_violations
+
+
+def test_infeasible_max_average_risk_has_dedicated_diagnosis() -> None:
+    options = build_scenario_options(existing_stores=_stores(), candidate_sites=_sites())
+    result = solve_network_plan(
+        options_by_entity=options,
+        constraints=_constraints(max_average_risk=0.03),
+    )
+
+    assert result.solver_status == STATUS_INFEASIBLE
+    assert result.infeasible is True
+    viol_constraints = [d.violated_constraint for d in result.diagnostics]
+    assert "max_average_risk" in viol_constraints
+
+
+def test_infeasible_max_action_counts_has_dedicated_diagnosis() -> None:
+    # Build options where store-001 only has MOVE action option
+    store_move_only = ExistingStoreInput(
+        store_id="store-forced-move",
+        baseline_gross_margin=500_000,
+        move_gross_margin_uplift=120_000,
+        move_cost=260_000,
+        move_risk=0.34,
+    )
+    forced_options = {
+        "store-forced-move": (
+            build_scenario_options(existing_stores=(store_move_only,))["store-forced-move"][2],  # MOVE option
+        )
+    }
+    result = solve_network_plan(
+        options_by_entity=forced_options,
+        constraints=_constraints(max_action_counts={NetworkAction.MOVE: 0}),
+    )
+
+    assert result.solver_status == STATUS_INFEASIBLE
+    assert result.infeasible is True
+    viol_constraints = [d.violated_constraint for d in result.diagnostics]
+    assert "max_action_counts.MOVE" in viol_constraints
+

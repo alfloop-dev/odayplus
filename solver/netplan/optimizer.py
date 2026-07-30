@@ -17,6 +17,8 @@ from typing import Any
 from solver.netplan.model import (
     ActionOption,
     InfeasibilityDiagnosis,
+    ManagementBaselineComparisonReceipt,
+    ManagementBaselineInput,
     NetPlanConstraints,
     NetworkAction,
 )
@@ -458,6 +460,18 @@ def diagnose_infeasible(
             )
         )
 
+    min_risk = _min_metric(options_by_entity, lambda option: option.risk_score)
+    if constraints.max_average_risk is not None and min_risk > constraints.max_average_risk:
+        diagnostics.append(
+            InfeasibilityDiagnosis(
+                violated_constraint="max_average_risk",
+                affected_stores=tuple(sorted(options_by_entity)),
+                required_relaxation=f"raise risk ceiling by at least {round(min_risk - constraints.max_average_risk, 4)}",
+                business_impact="every complete action portfolio exceeds the average risk threshold",
+                suggested_action="increase max_average_risk or add lower-risk action options",
+            )
+        )
+
     for action, minimum in constraints.min_action_counts.items():
         available = sum(1 for options in options_by_entity.values() if any(o.action is action for o in options))
         if available < minimum:
@@ -468,6 +482,19 @@ def diagnose_infeasible(
                     required_relaxation=f"lower required {action.value} count by {minimum - available}",
                     business_impact=f"not enough entities can take {action.value}",
                     suggested_action="add eligible entities or relax the action-count policy",
+                )
+            )
+
+    for action, maximum in constraints.max_action_counts.items():
+        forced = sum(1 for options in options_by_entity.values() if options and all(o.action is action for o in options))
+        if forced > maximum:
+            diagnostics.append(
+                InfeasibilityDiagnosis(
+                    violated_constraint=f"max_action_counts.{action.value}",
+                    affected_stores=tuple(sorted(options_by_entity)),
+                    required_relaxation=f"increase allowed {action.value} count by {forced - maximum}",
+                    business_impact=f"more entities are constrained to {action.value} than the maximum allowed",
+                    suggested_action=f"allow alternative actions for constrained entities or raise max {action.value} count",
                 )
             )
 
@@ -567,11 +594,102 @@ def _binding_constraints(
     return tuple(bindings)
 
 
+def compare_solver_against_management_baseline(
+    *,
+    options_by_entity: dict[str, tuple[ActionOption, ...]],
+    constraints: NetPlanConstraints,
+    solve_result: NetworkPlanSolveResult,
+    baseline: ManagementBaselineInput,
+    risk_penalty: float = 100_000.0,
+) -> ManagementBaselineComparisonReceipt:
+    baseline_options: list[ActionOption] = []
+    missing_entities: list[str] = []
+    for entity_id in sorted(options_by_entity):
+        target_action = baseline.actions_by_entity.get(entity_id)
+        if target_action is None:
+            missing_entities.append(entity_id)
+            continue
+        matched = next((opt for opt in options_by_entity[entity_id] if opt.action is target_action), None)
+        if matched is None:
+            missing_entities.append(entity_id)
+        else:
+            baseline_options.append(matched)
+
+    if missing_entities or len(baseline_options) != len(options_by_entity):
+        return ManagementBaselineComparisonReceipt(
+            baseline_id=baseline.baseline_id,
+            baseline_feasible=False,
+            baseline_objective_value=None,
+            solver_objective_value=solve_result.objective_value,
+            objective_gain_over_baseline=None,
+            superior_or_equal=solve_result.solver_status in {STATUS_OPTIMAL, STATUS_FEASIBLE},
+            baseline_constraint_violations=("incomplete_action_domain",),
+        )
+
+    baseline_candidate = _candidate_from_selected(baseline_options, constraints, risk_penalty)
+    is_feasible = _is_feasible(baseline_candidate, constraints)
+
+    if not is_feasible:
+        violations: list[str] = []
+        if baseline_candidate.budget_usage > constraints.max_budget + 1e-9:
+            violations.append("max_budget")
+        if (
+            constraints.min_expected_gross_margin is not None
+            and baseline_candidate.expected_gross_margin < constraints.min_expected_gross_margin - 1e-9
+        ):
+            violations.append("min_expected_gross_margin")
+        if (
+            constraints.min_capacity_delta is not None
+            and baseline_candidate.capacity_delta < constraints.min_capacity_delta
+        ):
+            violations.append("min_capacity_delta")
+        if (
+            constraints.max_average_risk is not None
+            and baseline_candidate.average_risk > constraints.max_average_risk + 1e-9
+        ):
+            violations.append("max_average_risk")
+        for action, minimum in constraints.min_action_counts.items():
+            if baseline_candidate.action_counts.get(action, 0) < minimum:
+                violations.append(f"min_action_counts.{action.value}")
+        for action, maximum in constraints.max_action_counts.items():
+            if baseline_candidate.action_counts.get(action, 0) > maximum:
+                violations.append(f"max_action_counts.{action.value}")
+
+        return ManagementBaselineComparisonReceipt(
+            baseline_id=baseline.baseline_id,
+            baseline_feasible=False,
+            baseline_objective_value=baseline_candidate.objective_value,
+            solver_objective_value=solve_result.objective_value,
+            objective_gain_over_baseline=None,
+            superior_or_equal=True,
+            baseline_constraint_violations=tuple(violations),
+        )
+
+    gain = round(solve_result.objective_value - baseline_candidate.objective_value, 4)
+    superior_or_equal = solve_result.objective_value >= baseline_candidate.objective_value - 1e-6
+    return ManagementBaselineComparisonReceipt(
+        baseline_id=baseline.baseline_id,
+        baseline_feasible=True,
+        baseline_objective_value=baseline_candidate.objective_value,
+        solver_objective_value=solve_result.objective_value,
+        objective_gain_over_baseline=gain,
+        superior_or_equal=superior_or_equal,
+        baseline_constraint_violations=(),
+    )
+
+
 def _max_metric(options_by_entity: dict[str, tuple[ActionOption, ...]], metric: Any) -> float:
     grouped: defaultdict[str, list[float]] = defaultdict(list)
     for entity, options in options_by_entity.items():
         grouped[entity].extend(float(metric(option)) for option in options)
     return round(sum(max(values) for values in grouped.values() if values), 4)
+
+
+def _min_metric(options_by_entity: dict[str, tuple[ActionOption, ...]], metric: Any) -> float:
+    grouped: defaultdict[str, list[float]] = defaultdict(list)
+    for entity, options in options_by_entity.items():
+        grouped[entity].extend(float(metric(option)) for option in options)
+    return round(sum(min(values) for values in grouped.values() if values) / len(grouped) if grouped else 0.0, 4)
 
 
 def _min_budget_with_required_action_counts(
@@ -627,6 +745,7 @@ __all__ = [
     "NetworkPlanCandidate",
     "NetworkPlanSolveResult",
     "build_feasible_candidates",
+    "compare_solver_against_management_baseline",
     "diagnose_infeasible",
     "solve_network_plan",
 ]
