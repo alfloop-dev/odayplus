@@ -63,9 +63,8 @@ review_trigger: "Review when production data scale, sub-10ms online feature late
 - **決策**: `defer`（延後） / `replace`（替換）
 - **需求映射**: 時間序列結構性斷層/變性點檢測 (Change-point Detection) 與營收趨勢突變識別 (`ODP-HLR-INT-004`，ForecastOps)。
 - **可驗證替代能力**:
-  - `modules/learninghub/infrastructure/evidently_monitor.py` 提供 Evidently AI 分佈偏移與特徵飄移檢測。
-  - `modules/forecastops/infrastructure/forecast_engines.py` 之 StatsForecast / MLForecast 與滾動統計窗格（Rolling variance & z-score trend shift detection）。
-- **替代限制**: 離線複雜變化點分割演算法 (Pelt / Dynp with custom cost functions) 未作為獨立 Python 服務執行；改以分佈漂移與統計窗格作為門檻告警。
+  - `modules/learninghub/infrastructure/evidently_monitor.py` (Line 42, 56, 72) 提供 Evidently AI 分佈偏移與特徵漂移門檻告警 (drift-share thresholding)，搭配 `modules/forecastops/infrastructure/forecast_engines.py` 之 StatsForecast / MLForecast。
+- **替代限制**: 離線複雜變化點分割演算法 (Pelt / Dynp with custom cost functions) 未作為獨立 Python 服務執行；改以 Evidently 分佈漂移告警與 StatsForecast / MLForecast 窗格模型作為替代。
 - **元件 Owner**: ForecastOps ML Engineering
 - **重新評估觸發條件 (Revisit Trigger)**: 當歷史多年度營收/客流斷點分析需要無監督 Pelts/Dynp 動態規劃分段演算法且既有 Evidently/StatsForecast 窗格統計無法滿足精度需求時。
 
@@ -73,7 +72,7 @@ review_trigger: "Review when production data scale, sub-10ms online feature late
 - **決策**: `replace`（替換）
 - **需求映射**: 營運儀表板、獨立分析圖表、門市網路展店與展店績效視覺化 (`ODP-HLR-GOV-001`, `ODP-HLR-GOV-002`)。
 - **可驗證替代能力**:
-  - 前端 OpsBoard：基於 Next.js / React 構建 Package 10 規範之 Operations/Store/NetPlan 專屬 Console，整合 ECharts / Recharts 圖表模組。
+  - 前端 OpsBoard：基於 Next.js / React 構建 Package 10 規範之 Operations/Store/NetPlan 專屬 Console，整合 `@deck.gl/*` (9.3.5)、`maplibre-gl` (5.24.0) 與 `h3-js` (4.4.0) 視覺化模組。
   - 後端 API：FastAPI 端點處理結構化聚合、RBAC/ABAC 權限控管與審計日誌。
 - **替代限制**: OpsBoard 不提供非技術人員自由拖拉式的任意 SQL 自訂 BI Dashboard 編輯器；所有圖表由前導 API 端點與固定 Design System 呈現。
 - **元件 Owner**: Frontend & OpsBoard Product Team
@@ -84,7 +83,7 @@ review_trigger: "Review when production data scale, sub-10ms online feature late
 - **需求映射**: 長時間非同步工作流編排、Job 狀態追蹤、失敗重試、 Quarantine 與 DLQ 審計 (`ODP-HLR-GOV-005`, `ODP-HLR-GOV-006`)。
 - **可驗證替代能力**:
   - Pipeline 訓練編排：使用 **Dagster** (`pipelines/orchestration/dagster_training.py`)。
-  - 持久化 Job 佇列：使用 PostgreSQL 事務安全 Job 佇列 (`shared/infrastructure/persistence/job_queue.py`) 搭配 **Cloud Run Jobs** 執行器，具備 Fail-closed、Exponential backoff、Quarantine 與可追溯 correlation ID。
+  - 持久化 Job 佇列：使用 PostgreSQL 事務安全 Job 佇列 (`shared/infrastructure/persistence/job_queue.py`，具備 lease/fence tokens, attempts counter, correlation_id 與 JobStatus 狀態變遷)，搭配 Worker 重試邏輯 (`apps/worker/assisted_listing_intake/worker.py:220,262`) 之 Exponential backoff 重試機制，以及 Domain / Data Platform (`modules/listing/domain/intake_states.py`, `apps/data_platform/`) 之 Quarantine 隔離機制。
 - **替代限制**: 未採用 Temporal 之 Event-Sourcing 引擎；跨數天之 Wait-for-signal 休眠狀態改由 PostgreSQL 狀態機維護。
 - **元件 Owner**: Platform Infrastructure & Worker Ops
 - **重新評估觸發條件 (Revisit Trigger)**: 當業務流程發展為跨數個微服務、耗時數天且包含多重人工異步 Signal 回應之分散式 Saga 交易編排時。
@@ -143,9 +142,9 @@ review_trigger: "Review when production data scale, sub-10ms online feature late
 | 元件名稱 | 決策狀態 | 映射需求編號 | 替代/現行實作能力 | 元件 Owner | 未安裝/Deferred 治理規則 | 重新評估觸發條件 (Revisit Trigger) |
 |---|---|---|---|---|---|---|
 | **GeoPandas** | `replace` / `defer` | `ODP-HLR-INT-001` | PostGIS SQL (planned surface) + H3-py | Data Platform | In-memory Heavy Join 下推 SQL | 需要大型向量圖層 Python 批次幾何運算 |
-| **ruptures** | `replace` / `defer` | `ODP-HLR-INT-004` | Evidently AI + StatsForecast 窗格統計 | ForecastOps ML | 不宣稱為 Pelt/Dynp 離線分割 | 歷史多年度斷點無監督動態規劃需求 |
-| **Superset** | `replace` | `ODP-HLR-GOV-001/002` | Next.js OpsBoard + FastAPI RBAC APIs | Frontend Team | 不開放任意 SQL 拖拉 UI | 業務分析師需要開放式 SQL 自訂 BI 視圖 |
-| **Temporal** | `replace` | `ODP-HLR-GOV-005/006` | Dagster + Postgres Job Queue (`job_queue.py`) | Infra & Ops | 長任務休眠由 DB 狀態機管理 | 跨服務多日人工 Signal 異步 Saga 需求 |
+| **ruptures** | `replace` / `defer` | `ODP-HLR-INT-004` | Evidently AI (`evidently_monitor.py:42,56,72` drift-share thresholding) + StatsForecast / MLForecast | ForecastOps ML | 不宣稱為 Pelt/Dynp 離線分割 | 歷史多年度斷點無監督動態規劃需求 |
+| **Superset** | `replace` | `ODP-HLR-GOV-001/002` | Next.js (`@deck.gl/core`, `maplibre-gl`, `h3-js`) OpsBoard + FastAPI RBAC APIs | Frontend Team | 不開放任意 SQL 拖拉 UI | 業務分析師需要開放式 SQL 自訂 BI 視圖 |
+| **Temporal** | `replace` | `ODP-HLR-GOV-005/006` | Dagster + Postgres Job Queue (`job_queue.py`) + Worker backoff (`worker.py:220,262`) + Intake quarantine (`intake_states.py`) | Infra & Ops | 長任務休眠由 DB 狀態機管理 | 跨服務多日人工 Signal 異步 Saga 需求 |
 | **OPA** | `replace` | `ODP-HLR-GOV-009/010` | FastAPI Auth Middleware + DB RLS | Security Arch | 規則由 Python / Schema 控管 | 政策需由非開發者 Hot-reload 編輯 |
 | **pgvector** | `replace` / `defer` | `ODP-HLR-INT-007` | `modules/listing/` 多訊號去重 (`IntakeStage.MATCHING`, `ListingDedupKey`, `has_duplicate`) + PostGIS | Data Platform | HNSW 索引未於 Cloud SQL 啟用 | 向量比對 >100K 筆且轉型 LLM Embedding |
 | **Feast** | `defer` | `ODP-HLR-INT-004` | BigQuery `model_ready` PIT 視圖 (`_temporal_split`, `label_maturity_column`) + MLflow | Model Governance | 標示為 `governedDisabled` | 線上推論 SLA 需 Sub-10ms KV 快取 |
