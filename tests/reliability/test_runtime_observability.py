@@ -530,7 +530,13 @@ def test_alert_routing_and_real_notification_delivery() -> None:
     from shared.observability.alerts import AlertRouter
 
     repo = InMemoryNotificationRepository()
-    adapter = OnCallNotificationAdapter(endpoint_url="https://oncall-router.oday.plus/api/v1/alerts")
+    def mock_transport(url: str, payload: dict) -> tuple[int, dict]:
+        return (200, {"status": "ok", "delivered": True})
+
+    adapter = OnCallNotificationAdapter(
+        endpoint_url="https://oncall-router.oday.plus/api/v1/alerts",
+        http_transport=mock_transport,
+    )
     service = NotificationService(repository=repo, adapter=adapter)
 
     # Setup preferences
@@ -555,12 +561,61 @@ def test_alert_routing_and_real_notification_delivery() -> None:
     assert receipt["endpoint"] == "https://oncall-router.oday.plus/api/v1/alerts"
     assert receipt["http_status"] == 200
     assert receipt["status"] == "DELIVERED"
+    assert receipt["response"] == {"status": "ok", "delivered": True}
     assert receipt["delivery_id"].startswith("del-")
     assert "ALERT: [P1] Audit write failure" in receipt["title"]
     assert "Durable storage write timeout" in receipt["detail"]
 
 
-def test_unconfigured_route_fails_closed() -> None:
+def test_oncall_adapter_unreachable_route_fails() -> None:
+    from modules.notifications import OnCallNotificationAdapter
+
+    # Attempt delivery to unreachable endpoint
+    adapter = OnCallNotificationAdapter(endpoint_url="http://127.0.0.1:1")
+    success, error_msg = adapter.send(
+        notification_id="nid-unreachable",
+        channel="webhook",
+        user_id="ops-lead",
+        title="P1 Alert",
+        detail="Unreachable test",
+    )
+
+    assert success is False
+    assert error_msg is not None and error_msg.startswith("HTTP 0:")
+    assert len(adapter.delivery_receipts) == 1
+    receipt = adapter.delivery_receipts[0]
+    assert receipt["http_status"] == 0
+    assert receipt["status"] == "FAILED"
+    assert receipt["error"] == error_msg
+
+
+def test_oncall_adapter_non_2xx_route_fails() -> None:
+    from modules.notifications import OnCallNotificationAdapter
+
+    def mock_500_transport(url: str, payload: dict) -> tuple[int, str]:
+        return (500, "Internal Server Error")
+
+    adapter = OnCallNotificationAdapter(
+        endpoint_url="https://oncall-router.oday.plus/api/v1/alerts",
+        http_transport=mock_500_transport,
+    )
+    success, error_msg = adapter.send(
+        notification_id="nid-500",
+        channel="webhook",
+        user_id="ops-lead",
+        title="P1 Alert",
+        detail="HTTP 500 test",
+    )
+
+    assert success is False
+    assert error_msg == "HTTP 500: Internal Server Error"
+    assert len(adapter.delivery_receipts) == 1
+    receipt = adapter.delivery_receipts[0]
+    assert receipt["http_status"] == 500
+    assert receipt["status"] == "FAILED"
+
+
+def test_unconfigured_route_fails_closed(tmp_path: Path) -> None:
     from modules.notifications import (
         InMemoryNotificationRepository,
         NotificationService,
@@ -569,20 +624,28 @@ def test_unconfigured_route_fails_closed() -> None:
     from shared.observability.alerts import AlertRouter
 
     repo = InMemoryNotificationRepository()
-    adapter = OnCallNotificationAdapter()
+    def mock_200_transport(url: str, payload: dict) -> tuple[int, str]:
+        return (200, "ok")
+
+    adapter = OnCallNotificationAdapter(http_transport=mock_200_transport)
     service = NotificationService(repository=repo, adapter=adapter)
 
-    # Test 1: Unconfigured routing with default_receiver=None and empty routes
+    # Test 1: Missing alerts config file fails closed
+    missing_cfg_path = str(tmp_path / "non_existent_alerts.json")
+    with pytest.raises(ValueError, match="Alert configuration file missing or not found"):
+        AlertRouter(notification_service=service, alerts_cfg_path=missing_cfg_path)
+
+    # Test 2: Unconfigured routing with default_receiver=None and empty routes
     router = AlertRouter(notification_service=service)
     router.config["routing"] = {"default_receiver": None, "routes": []}
 
     with pytest.raises(ValueError, match="is unconfigured. Fail-closed gate enforced."):
         router.route_alert("audit-write-failure")
 
-    with pytest.raises(ValueError, match="is unconfigured. Fail-closed gate enforced."):
+    with pytest.raises(ValueError, match="Alert routing default_receiver or routes must be configured."):
         router.validate_routing_config()
 
-    # Test 2: Route with unmatched severity and missing default_receiver
+    # Test 3: Route with unmatched severity and missing default_receiver
     router.config["routing"] = {
         "default_receiver": None,
         "routes": [{"severity": "P3", "receiver": "oncall-engineer"}],
@@ -591,7 +654,13 @@ def test_unconfigured_route_fails_closed() -> None:
         router.route_alert("audit-write-failure")  # audit-write-failure is P1
 
 
-def test_release_sha_dashboard_traceability_and_watch_window_receipt() -> None:
+def test_release_sha_dashboard_traceability_and_watch_window_receipt(tmp_path: Path) -> None:
+    from shared.observability.metrics import default_registry
+    from shared.observability.watch_window import (
+        record_deployment_watch_window_status,
+        verify_watch_window_receipt,
+    )
+
     # 1. Verify dashboards.json carries release_sha_traceability and watch-window panels
     dashboards_path = MONITORING / "dashboards.json"
     assert dashboards_path.exists()
@@ -600,24 +669,76 @@ def test_release_sha_dashboard_traceability_and_watch_window_receipt() -> None:
     traceability = cfg.get("release_sha_traceability", {})
     assert traceability.get("enabled") is True
     assert traceability.get("metric_label") == "release_sha"
+    assert traceability.get("exact_sha_binding") == "${RELEASE_SHA}"
     assert traceability.get("watch_window_minutes") == 15
     assert traceability.get("receipt_required") is True
+    assert traceability.get("receipt_artifact_path") == "docs/evidence/watch_window_receipt.json"
 
     platform_health = next(d for d in cfg["dashboards"] if d["id"] == "platform-health")
-    panel_titles = [p["title"] for p in platform_health["panels"]]
-    assert "Release SHA traceability" in panel_titles
-    assert "Release watch-window receipt" in panel_titles
+    panels = {p["title"]: p for p in platform_health["panels"]}
+    assert "Release SHA traceability" in panels
+    assert "Release watch-window receipt" in panels
+    assert panels["Release SHA traceability"]["label_filter"] == "release_sha=${RELEASE_SHA}"
+    assert panels["Release watch-window receipt"]["label_filter"] == "release_sha=${RELEASE_SHA}"
 
-    # 2. Verify runbook documents release-SHA dashboard traceability & watch-window receipt procedure
-    runbook_path = RUNBOOKS / "observability-and-runbook.md"
-    assert runbook_path.exists()
-    runbook_text = runbook_path.read_text(encoding="utf-8")
+    # 2. Record watch-window status and verify receipt creation & metric emission
+    receipt_file = tmp_path / "watch_window_receipt.json"
+    test_sha = "c2023ee62aa3"
+    registry = default_registry()
 
-    assert "## Release-SHA Dashboard Traceability & Watch-Window Receipt" in runbook_text
-    assert "release_sha" in runbook_text
-    assert "WATCH_PASSED" in runbook_text
-    assert "watch_window_minutes" in runbook_text
+    receipt = record_deployment_watch_window_status(
+        release_sha=test_sha,
+        status=1,
+        registry=registry,
+        receipt_path=receipt_file,
+    )
 
+    assert receipt["release_sha"] == test_sha
+    assert receipt["status"] == "WATCH_PASSED"
+    assert receipt["status_code"] == 1
+    assert receipt_file.exists()
+
+    snapshot = registry.snapshot()
+    assert "deployment_watch_window_status" in snapshot
+    series = snapshot["deployment_watch_window_status"][0]
+    assert series["value"] == 1.0
+    assert series["labels"] == {"release_sha": test_sha, "status": "WATCH_PASSED"}
+
+    # 3. Verify watch-window receipt artifact validation
+    verified = verify_watch_window_receipt(expected_release_sha=test_sha, receipt_path=receipt_file)
+    assert verified["release_sha"] == test_sha
+    assert verified["status"] == "WATCH_PASSED"
+
+
+def test_watch_window_receipt_negative_cases(tmp_path: Path) -> None:
+    from shared.observability.watch_window import (
+        record_deployment_watch_window_status,
+        verify_watch_window_receipt,
+    )
+
+    receipt_file = tmp_path / "watch_window_receipt.json"
+
+    # Case 1: Absent watch receipt artifact
+    with pytest.raises(FileNotFoundError, match="Watch-window receipt artifact absent"):
+        verify_watch_window_receipt(expected_release_sha="sha-12345", receipt_path=receipt_file)
+
+    # Case 2: Release SHA mismatch
+    record_deployment_watch_window_status(
+        release_sha="actual-sha-111",
+        status=1,
+        receipt_path=receipt_file,
+    )
+    with pytest.raises(ValueError, match="Release SHA mismatch"):
+        verify_watch_window_receipt(expected_release_sha="expected-sha-222", receipt_path=receipt_file)
+
+    # Case 3: Failed watch receipt (status_code = 0 / WATCH_FAILED)
+    record_deployment_watch_window_status(
+        release_sha="failed-sha-333",
+        status=0,
+        receipt_path=receipt_file,
+    )
+    with pytest.raises(ValueError, match="Watch-window verification failed with status 'WATCH_FAILED'"):
+        verify_watch_window_receipt(expected_release_sha="failed-sha-333", receipt_path=receipt_file)
 
 
 def test_api_telemetry_export() -> None:

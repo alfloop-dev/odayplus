@@ -52,6 +52,10 @@ from shared.observability.tracing import (
     TraceContext,
     Tracer,
 )
+from shared.observability.watch_window import (
+    record_deployment_watch_window_status,
+    verify_watch_window_receipt,
+)
 
 __all__ = [
     "AlertRouter",
@@ -90,4 +94,6 @@ __all__ = [
     "build_audit_event",
     "build_evidence_bundle",
     "check_audit_completeness",
+    "record_deployment_watch_window_status",
+    "verify_watch_window_receipt",
 ]
