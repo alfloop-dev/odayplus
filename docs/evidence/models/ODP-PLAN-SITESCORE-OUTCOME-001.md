@@ -1,11 +1,11 @@
 # Gate 2 Receipt: SiteScore Opening Outcome Calibration Benchmark (ODP-PLAN-SITESCORE-OUTCOME-001)
 
 - **Task ID**: `ODP-PLAN-SITESCORE-OUTCOME-001`
-- **Observed At**: `2026-07-30T21:57:21.333934Z`
+- **Observed At**: `2026-07-30T22:23:37.245438Z`
 - **Gate Status**: `REJECTED_GOVERNED_DISABLED`
 - **Data Provenance**: `no_source`
 - **Is Governed Disabled**: `True`
-- **Integrity Content SHA256**: `b1f90bc97eee2a01002c0ab789eb01c3ee9b20a6d394fa80ebc12e81af0be8f4`
+- **Integrity Content SHA256**: `d758040976aab5abf778cc6363c43c9ddac51cd0c52b4573a7cbc8da12ee3947`
 
 ## Benchmark Inventory & Coverage Summary
 
@@ -23,6 +23,10 @@
 
 - **Handback Required**: `True`
 - **Reason Code**: `NO_SOURCE_INVENTORY`
+- **Backfill Owner**: `Human/Ops`
+- **Backfill Task ID**: `ODP-SITESCORE-AUTHORITATIVE-OUTCOME-BACKFILL-001`
+- **Backfill Query**: `SELECT entity_id, store_id, target_format_code, opened_on, is_training_eligible, realized_90d_net_revenue, (CURRENT_DATE - opened_on)::integer AS m6_days, (CURRENT_DATE - opened_on)::integer AS m12_days FROM model_ready.candidate_site_view;`
+- **Backfill Receipt Required**: `True`
 - **Audit Reasons**:
   - No database connection or candidate site records were provided
 - **Handback Action**: Provide a valid PostgreSQL database URL (ODAY_DATABASE_URL / --db-url) or candidate site records.

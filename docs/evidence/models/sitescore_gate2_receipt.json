@@ -13,6 +13,10 @@
     "eligible_count": 0,
     "handback_payload": {
       "activation_threshold": 200,
+      "backfill_owner": "Human/Ops",
+      "backfill_query": "SELECT entity_id, store_id, target_format_code, opened_on, is_training_eligible, realized_90d_net_revenue, (CURRENT_DATE - opened_on)::integer AS m6_days, (CURRENT_DATE - opened_on)::integer AS m12_days FROM model_ready.candidate_site_view;",
+      "backfill_receipt_required": true,
+      "backfill_task_id": "ODP-SITESCORE-AUTHORITATIVE-OUTCOME-BACKFILL-001",
       "eligible_count": 0,
       "governed_disabled": true,
       "handback_action": "Provide a valid PostgreSQL database URL (ODAY_DATABASE_URL / --db-url) or candidate site records.",
@@ -53,6 +57,10 @@
   "gate_status": "REJECTED_GOVERNED_DISABLED",
   "handback": {
     "activation_threshold": 200,
+    "backfill_owner": "Human/Ops",
+    "backfill_query": "SELECT entity_id, store_id, target_format_code, opened_on, is_training_eligible, realized_90d_net_revenue, (CURRENT_DATE - opened_on)::integer AS m6_days, (CURRENT_DATE - opened_on)::integer AS m12_days FROM model_ready.candidate_site_view;",
+    "backfill_receipt_required": true,
+    "backfill_task_id": "ODP-SITESCORE-AUTHORITATIVE-OUTCOME-BACKFILL-001",
     "eligible_count": 0,
     "governed_disabled": true,
     "handback_action": "Provide a valid PostgreSQL database URL (ODAY_DATABASE_URL / --db-url) or candidate site records.",
@@ -73,13 +81,13 @@
     ]
   },
   "integrity": {
-    "content_sha256": "b1f90bc97eee2a01002c0ab789eb01c3ee9b20a6d394fa80ebc12e81af0be8f4"
+    "content_sha256": "d758040976aab5abf778cc6363c43c9ddac51cd0c52b4573a7cbc8da12ee3947"
   },
   "inventory_version": "candidate-site-view-v2",
   "is_governed_disabled": true,
   "kind": "sitescore-opening-outcome-gate2-receipt",
   "model_name": "sitescore_propensity",
-  "observed_at": "2026-07-30T21:57:21.333934Z",
+  "observed_at": "2026-07-30T22:23:37.245438Z",
   "provenance": "no_source",
   "schema_version": 1,
   "service": "sitescore",

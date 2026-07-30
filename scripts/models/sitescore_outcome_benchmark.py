@@ -137,6 +137,15 @@ def write_evidence_markdown(
         f"- **Reason Code**: `{handback.get('reason_code', '')}`",
     ])
 
+    if handback.get("backfill_owner"):
+        lines.append(f"- **Backfill Owner**: `{handback['backfill_owner']}`")
+    if handback.get("backfill_task_id"):
+        lines.append(f"- **Backfill Task ID**: `{handback['backfill_task_id']}`")
+    if handback.get("backfill_query"):
+        lines.append(f"- **Backfill Query**: `{handback['backfill_query']}`")
+    if "backfill_receipt_required" in handback:
+        lines.append(f"- **Backfill Receipt Required**: `{handback['backfill_receipt_required']}`")
+
     if handback.get("reasons"):
         lines.append("- **Audit Reasons**:")
         for r in handback["reasons"]:

@@ -191,6 +191,10 @@ class SiteScoreOpeningOutcomeBenchmarkResult:
             "p80_coverage": self.p80_coverage,
             "reasons": reasons,
             "handback_action": handback_action,
+            "backfill_owner": "Human/Ops",
+            "backfill_task_id": "ODP-SITESCORE-AUTHORITATIVE-OUTCOME-BACKFILL-001",
+            "backfill_query": "SELECT entity_id, store_id, target_format_code, opened_on, is_training_eligible, realized_90d_net_revenue, (CURRENT_DATE - opened_on)::integer AS m6_days, (CURRENT_DATE - opened_on)::integer AS m12_days FROM model_ready.candidate_site_view;",
+            "backfill_receipt_required": True,
         }
 
     def to_dict(self) -> dict[str, Any]:
@@ -265,14 +269,28 @@ def evaluate_sitescore_opening_outcome_benchmark(
                 artifact_lineage_id = str(lin)
                 break
 
+    def _is_valid_realized_outcome(val: Any) -> bool:
+        """Check if a realized outcome value is non-null and valid.
+
+        Negative-value policy:
+        Legitimate zero net revenue outcomes (val == 0.0 or val >= 0.0) are valid mature labels.
+        Negative values (val < 0.0) represent corrupted or unverified net revenue data
+        (e.g., net refund adjustments without sales) and are excluded from mature label evaluation.
+        """
+        if val is None:
+            return False
+        try:
+            return float(val) >= 0.0
+        except (ValueError, TypeError):
+            return False
+
     observed_count = len(records)
     eligible_count = sum(1 for r in records if r.get("is_training_eligible") or r.get("eligible"))
 
     mature_records = [
         r for r in records
         if (r.get("is_training_eligible") or r.get("eligible"))
-        and r.get("realized_90d_net_revenue") is not None
-        and float(r.get("realized_90d_net_revenue", 0)) > 0
+        and _is_valid_realized_outcome(r.get("realized_90d_net_revenue"))
     ]
     mature_label_count = len(mature_records)
 
@@ -312,7 +330,7 @@ def evaluate_sitescore_opening_outcome_benchmark(
             m6_val = r.get("realized_180d_net_revenue")
         if m6_val is None:
             m6_val = r.get("realized_m6_revenue")
-        if m6_val is None or float(m6_val) <= 0:
+        if not _is_valid_realized_outcome(m6_val):
             return False
 
         days = get_days_elapsed(r, "m6_days")
@@ -329,7 +347,7 @@ def evaluate_sitescore_opening_outcome_benchmark(
             m12_val = r.get("realized_365d_net_revenue")
         if m12_val is None:
             m12_val = r.get("realized_m12_revenue")
-        if m12_val is None or float(m12_val) <= 0:
+        if not _is_valid_realized_outcome(m12_val):
             return False
 
         days = get_days_elapsed(r, "m12_days")

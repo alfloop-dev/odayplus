@@ -297,3 +297,65 @@ def test_sitescore_opening_outcome_no_source_fails_closed():
     assert result.reason_code == "NO_SOURCE_INVENTORY"
     assert result.status == "GOVERNED_DISABLED"
     assert not result.is_gate2_passed
+
+
+def test_sitescore_opening_outcome_legitimate_zero_outcomes_counted_as_mature_labels():
+    # Fix B1 regression test: 220 eligible records with legitimate zero outcomes (0.0) are counted as mature labels and M6/M12 covered
+    records = _generate_candidate_records(
+        220,
+        revenue=0.0,  # Legitimate zero revenue outcome
+        include_m6_m12_realized=False,
+        include_bounds=True,
+        dataset_snapshot_id="snapshot_sitescore_v2",
+        model_version="candidate-site-view-v2",
+        artifact_lineage_id="art_sitescore_sha256",
+    )
+    for r in records:
+        r["realized_m6_net_revenue"] = 0.0
+        r["realized_m12_net_revenue"] = 0.0
+
+    result = evaluate_sitescore_opening_outcome_benchmark(records, provenance="authenticated_governed_records")
+
+    assert result.observed_count == 220
+    assert result.eligible_count == 220
+    assert result.mature_label_count == 220  # Legitimate zero outcomes must count as mature labels!
+    assert result.m6_coverage_ratio == 1.0  # Legitimate zero M6 outcomes covered
+    assert result.m12_coverage_ratio == 1.0  # Legitimate zero M12 outcomes covered
+
+
+def test_sitescore_opening_outcome_negative_values_excluded_by_policy():
+    # Negative-value policy regression test: Negative revenue outcomes (-50.0) are excluded from mature label evaluation
+    records = _generate_candidate_records(
+        10,
+        revenue=-50.0,
+        include_m6_m12_realized=False,
+        dataset_snapshot_id="snapshot_sitescore_v2",
+    )
+    result = evaluate_sitescore_opening_outcome_benchmark(records, provenance="authenticated_governed_records")
+
+    assert result.observed_count == 10
+    assert result.eligible_count == 10
+    assert result.mature_label_count == 0  # Negative outcomes excluded per policy
+
+
+def test_sitescore_opening_outcome_handback_contains_backfill_metadata(tmp_path):
+    # Fix B2 regression test: Gate 2 handback payload and markdown evidence expose machine-readable backfill owner, task ID, query, and receipt requirement
+    result = run_benchmark_from_inventory(db_url=None, records=None)
+    handback = result.handback_payload
+
+    assert handback["handback_required"] is True
+    assert handback["backfill_owner"] == "Human/Ops"
+    assert handback["backfill_task_id"] == "ODP-SITESCORE-AUTHORITATIVE-OUTCOME-BACKFILL-001"
+    assert "model_ready.candidate_site_view" in handback["backfill_query"]
+    assert handback["backfill_receipt_required"] is True
+
+    receipt = build_sitescore_gate2_receipt(result)
+    output_evidence = tmp_path / "evidence_b2.md"
+    write_evidence_markdown(receipt, output_evidence)
+
+    content = output_evidence.read_text(encoding="utf-8")
+    assert "- **Backfill Owner**: `Human/Ops`" in content
+    assert "- **Backfill Task ID**: `ODP-SITESCORE-AUTHORITATIVE-OUTCOME-BACKFILL-001`" in content
+    assert "- **Backfill Query**:" in content
+    assert "- **Backfill Receipt Required**: `True`" in content
+
