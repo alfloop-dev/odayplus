@@ -14,6 +14,7 @@ from __future__ import annotations
 import json
 from datetime import UTC, datetime
 from pathlib import Path
+from typing import Any
 
 import pytest
 
@@ -939,29 +940,53 @@ def test_production_metrics_exporter_and_dashboard_provisioning() -> None:
     test_sha = "b28a6b6d335293ecb51a72dff3700838e196129c"
     monitoring_route = "https://monitoring.googleapis.com/v3"
 
-    def mock_success_transport(url: str, payload: dict) -> tuple[int, dict]:
-        if "timeSeries" in url and not url.endswith(":query"):
+    def mock_success_transport(
+        method: str,
+        url: str | None = None,
+        params: dict | None = None,
+        payload: dict | None = None,
+        headers: dict | None = None,
+    ) -> tuple[int, dict]:
+        if method.startswith("http://") or method.startswith("https://"):
+            url_str = method
+            p_dict = url if isinstance(url, dict) else payload or {}
+            pr_dict = params or {}
+        else:
+            url_str = url or ""
+            p_dict = payload or {}
+            pr_dict = params or {}
+
+        g_proj = p_dict.get("gcp_project") or pr_dict.get("gcp_project") or "alfaloop-data-project"
+        r_sha = p_dict.get("release_sha") or pr_dict.get("release_sha") or test_sha
+
+        if "timeSeries" in url_str and not url_str.endswith(":query"):
             return 200, {
                 "export_receipt_id": f"gcp-cm-export-{test_sha[:12]}",
                 "readback_status": "SUCCESS",
-                "gcp_project": payload.get("gcp_project"),
-                "release_sha": payload.get("release_sha"),
+                "gcp_project": g_proj,
+                "release_sha": r_sha,
+                "timeSeries": [
+                    {
+                        "metric": {"type": "custom.googleapis.com/api_request_count", "labels": {"release_sha": r_sha}},
+                        "resource": {"type": "global", "labels": {"project_id": g_proj}},
+                    }
+                ],
             }
-        elif "dashboards" in url:
+        elif "dashboards" in url_str:
             return 200, {
-                "name": f"projects/{payload.get('gcp_project', 'alfaloop-data-project')}/dashboards/platform-health",
+                "name": f"projects/{g_proj}/dashboards/platform-health",
                 "receipt_id": f"gcp-dash-{test_sha[:12]}",
                 "readback_status": "PROVISIONED",
-                "gcp_project": payload.get("gcp_project"),
-                "release_sha": payload.get("release_sha"),
+                "gcp_project": g_proj,
+                "release_sha": r_sha,
             }
-        elif "monitoring/query" in url or "timeSeries:query" in url:
+        elif "monitoring/query" in url_str or "timeSeries:query" in url_str:
             return 200, {
                 "query_execution_id": f"gcp-query-exec-{test_sha[:12]}-100",
                 "query_status": "SUCCESS",
-                "gcp_project": payload.get("gcp_project"),
-                "release_sha": payload.get("release_sha"),
-                "observed_window_minutes": payload.get("watch_window_minutes", 15),
+                "gcp_project": g_proj,
+                "release_sha": r_sha,
+                "observed_window_minutes": p_dict.get("watch_window_minutes", 15),
             }
         return 200, {"status": "ok"}
 
@@ -1137,3 +1162,125 @@ def test_api_telemetry_export() -> None:
 
     snapshot = telemetry.metrics.snapshot()
     assert "api_latency_ms" in snapshot
+
+
+def test_adc_token_resolution_and_env_bearer_rejection(monkeypatch: pytest.MonkeyPatch) -> None:
+    from shared.observability.metrics import get_gcp_adc_token
+
+    monkeypatch.setenv("GCP_AUTH_TOKEN", "fake-self-attested-bearer-token-123")
+    monkeypatch.setenv("GOOGLE_AUTH_TOKEN", "fake-bearer-456")
+    token = get_gcp_adc_token()
+    assert token != "fake-self-attested-bearer-token-123"
+    assert token != "fake-bearer-456"
+
+
+def test_exporter_and_dashboard_http_method_contract_and_body_structures() -> None:
+    from shared.observability import (
+        ProductionMetricsExporter,
+        default_registry,
+        render_dashboard_provisioning,
+    )
+
+    registry = default_registry()
+    registry.increment("api_request_count", labels={"service": "api", "route": "/jobs", "status": "200"})
+    test_sha = "b28a6b6d335293ecb51a72dff3700838e196129c"
+    gcp_proj = "alfaloop-data-project"
+    monitoring_route = "https://monitoring.googleapis.com/v3"
+
+    calls: list[dict[str, Any]] = []
+
+    def mock_contract_transport(
+        method: str,
+        url: str,
+        params: dict[str, Any] | None = None,
+        payload: dict[str, Any] | None = None,
+        headers: dict[str, str] | None = None,
+    ) -> tuple[int, dict]:
+        calls.append({"method": method, "url": url, "params": params, "payload": payload})
+        if "timeSeries" in url:
+            if method == "POST":
+                return 200, {"export_receipt_id": f"gcp-cm-export-{test_sha[:12]}", "readback_status": "SUCCESS"}
+            elif method == "GET":
+                return 200, {
+                    "timeSeries": [
+                        {
+                            "metric": {"type": "custom.googleapis.com/api_request_count", "labels": {"release_sha": test_sha}},
+                            "resource": {"type": "global", "labels": {"project_id": gcp_proj}},
+                        }
+                    ],
+                    "export_receipt_id": f"gcp-cm-export-{test_sha[:12]}",
+                    "readback_status": "SUCCESS",
+                }
+        elif "dashboards" in url:
+            if method == "POST":
+                return 200, {"name": f"projects/{gcp_proj}/dashboards/platform-health", "receipt_id": f"gcp-dash-{test_sha[:12]}"}
+            elif method == "GET":
+                return 200, {
+                    "name": f"projects/{gcp_proj}/dashboards/platform-health",
+                    "receipt_id": f"gcp-dash-{test_sha[:12]}",
+                    "readback_status": "PROVISIONED",
+                    "gcp_project": gcp_proj,
+                    "release_sha": test_sha,
+                }
+        return 200, {"status": "ok"}
+
+    exporter = ProductionMetricsExporter(
+        release_sha=test_sha,
+        registry=registry,
+        gcp_project=gcp_proj,
+        provider_route=monitoring_route,
+        http_transport=mock_contract_transport,
+    )
+    exported = exporter.export_metrics()
+
+    assert exported["release_sha"] == test_sha
+    assert len(calls) == 2
+    assert calls[0]["method"] == "POST"
+    assert calls[0]["url"] == f"{monitoring_route}/projects/{gcp_proj}/timeSeries"
+    assert "timeSeries" in calls[0]["payload"]
+    assert "gcp_project" not in calls[0]["payload"]  # Native Google API body only!
+    assert calls[1]["method"] == "GET"
+    assert calls[1]["params"] == {"filter": f'metric.labels.release_sha="{test_sha}"'}
+
+    calls.clear()
+    provisioned = render_dashboard_provisioning(
+        release_sha=test_sha,
+        gcp_project=gcp_proj,
+        provider_route=monitoring_route,
+        http_transport=mock_contract_transport,
+    )
+
+    assert provisioned["provisioning_readback"]["readback_status"] == "PROVISIONED"
+    assert len(calls) >= 2
+    assert calls[0]["method"] == "POST"
+    assert "dashboards" not in calls[0]["payload"]  # Single Dashboard body, not wrapper array!
+    assert calls[-1]["method"] == "GET"
+    assert f"projects/{gcp_proj}/dashboards/platform-health" in calls[-1]["url"]
+
+
+def test_exporter_fails_on_post_only_transport() -> None:
+    from shared.observability import ProductionMetricsExporter, default_registry
+
+    registry = default_registry()
+    test_sha = "b28a6b6d335293ecb51a72dff3700838e196129c"
+
+    def post_only_transport(
+        method: str,
+        url: str,
+        params: dict[str, Any] | None = None,
+        payload: dict[str, Any] | None = None,
+        headers: dict[str, str] | None = None,
+    ) -> tuple[int, dict]:
+        if method == "POST":
+            return 200, {"status": "ok"}
+        raise RuntimeError("POST-only transport does not support GET readback!")
+
+    exporter = ProductionMetricsExporter(
+        release_sha=test_sha,
+        registry=registry,
+        gcp_project="alfaloop-data-project",
+        provider_route="https://monitoring.googleapis.com/v3",
+        http_transport=post_only_transport,
+    )
+    with pytest.raises(RuntimeError, match="POST-only transport does not support GET readback"):
+        exporter.export_metrics()

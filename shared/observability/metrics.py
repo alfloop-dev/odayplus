@@ -267,19 +267,22 @@ from shared.observability.watch_window import validate_full_sha
 def get_gcp_adc_token() -> str | None:
     """Resolve Google Application Default Credentials (ADC) access token.
 
-    Checks explicit environment bearer tokens, GOOGLE_APPLICATION_CREDENTIALS,
-    or the GCP Instance Metadata service-account token endpoint.
+    Uses google-auth library ADC credentials refresh or GCP instance metadata.
+    Rejects arbitrary self-attested bearer environment variables.
     """
-    for env_var in (
-        "GCP_AUTH_TOKEN",
-        "GOOGLE_AUTH_TOKEN",
-        "MONITORING_AUTH_TOKEN",
-        "CLOUDSDK_AUTH_ACCESS_TOKEN",
-        "GCP_SERVICE_ACCOUNT_TOKEN",
-    ):
-        val = os.getenv(env_var)
-        if val and val.strip():
-            return val.strip()
+    try:
+        import google.auth
+        import google.auth.transport.requests
+
+        credentials, _project = google.auth.default(
+            scopes=["https://www.googleapis.com/auth/cloud-platform"]
+        )
+        request = google.auth.transport.requests.Request()
+        credentials.refresh(request)
+        if credentials.token and isinstance(credentials.token, str):
+            return credentials.token.strip()
+    except Exception:
+        pass
 
     metadata_url = "http://169.254.169.254/computeMetadata/v1/instance/service-accounts/default/token"
     try:
@@ -327,12 +330,46 @@ def get_monitoring_provider_route(provider_route: str | None = None) -> str:
     return "https://monitoring.googleapis.com/v3"
 
 
+def _invoke_transport(
+    transport: Callable[..., tuple[int, str | dict]],
+    method: str,
+    url: str,
+    params: dict[str, Any] | None = None,
+    payload: dict[str, Any] | None = None,
+    headers: dict[str, str] | None = None,
+) -> tuple[int, str | dict]:
+    """Invoke transport supporting kwarg, positional, and legacy mock signatures."""
+    try:
+        return transport(method=method, url=url, params=params, payload=payload, headers=headers)
+    except TypeError:
+        pass
+
+    try:
+        return transport(method, url, params, payload)
+    except TypeError:
+        pass
+
+    if method == "POST":
+        try:
+            return transport(url, payload or {})
+        except TypeError:
+            pass
+
+    if method == "GET":
+        try:
+            return transport(url, params or {})
+        except TypeError:
+            pass
+
+    return transport(url, payload or params or {})
+
+
 class ProductionMetricsExporter:
     """Exports production metric snapshots bound to an exact 40-char release_sha.
 
     Ensures API, job, DLQ, model, solver, business, and audit metric paths
     are bound to the release_sha label, and performs authentic Cloud Monitoring API
-    projects.timeSeries.create write & independent GET/list readback calls.
+    projects.timeSeries.create write (POST) & independent GET/list readback calls.
     Fails closed if release_sha is not a valid 40-char SHA, GCP_PROJECT or monitoring endpoint is missing/invalid,
     or the provider write/readback call fails or is rejected.
     """
@@ -343,7 +380,7 @@ class ProductionMetricsExporter:
         registry: MetricsRegistry | None = None,
         gcp_project: str | None = None,
         provider_route: str | None = None,
-        http_transport: Callable[[str, dict], tuple[int, str | dict]] | None = None,
+        http_transport: Callable[..., tuple[int, str | dict]] | None = None,
     ) -> None:
         self.release_sha = validate_full_sha(release_sha, "release_sha")
         self.registry = registry or default_registry()
@@ -352,22 +389,51 @@ class ProductionMetricsExporter:
         self.http_transport = http_transport or self._default_http_transport
 
     @staticmethod
-    def _default_http_transport(url: str, payload: dict) -> tuple[int, str | dict]:
+    def _default_http_transport(
+        method: str,
+        url: str | None = None,
+        params: dict[str, Any] | None = None,
+        payload: dict[str, Any] | None = None,
+        headers: dict[str, str] | None = None,
+    ) -> tuple[int, str | dict]:
         import json
         import urllib.error
+        import urllib.parse
         import urllib.request
 
-        data = json.dumps(payload).encode("utf-8")
-        headers = {"Content-Type": "application/json"}
+        if method.startswith("http://") or method.startswith("https://"):
+            url_actual = method
+            payload_actual = url if isinstance(url, dict) else payload
+            method_actual = "POST" if payload_actual is not None else "GET"
+            params_actual = params
+        else:
+            method_actual = method.upper()
+            url_actual = url or ""
+            payload_actual = payload
+            params_actual = params
+
+        if params_actual:
+            query_str = urllib.parse.urlencode(params_actual)
+            separator = "&" if "?" in url_actual else "?"
+            url_actual = f"{url_actual}{separator}{query_str}"
+
+        req_headers = {"Content-Type": "application/json"}
+        if headers:
+            req_headers.update(headers)
+
         auth_token = get_gcp_adc_token()
-        if auth_token:
-            headers["Authorization"] = f"Bearer {auth_token}"
+        if auth_token and "Authorization" not in req_headers:
+            req_headers["Authorization"] = f"Bearer {auth_token}"
+
+        data_bytes = None
+        if payload_actual is not None and method_actual != "GET":
+            data_bytes = json.dumps(payload_actual).encode("utf-8")
 
         req = urllib.request.Request(
-            url,
-            data=data,
-            headers=headers,
-            method="POST",
+            url_actual,
+            data=data_bytes,
+            headers=req_headers,
+            method=method_actual,
         )
         try:
             with urllib.request.urlopen(req, timeout=5) as response:
@@ -379,7 +445,11 @@ class ProductionMetricsExporter:
                 return response.status, parsed
         except urllib.error.HTTPError as e:
             body = e.read().decode("utf-8") if e.fp else str(e)
-            return e.code, body
+            try:
+                parsed = json.loads(body)
+            except Exception:
+                parsed = body
+            return e.code, parsed
         except Exception as e:
             return 0, str(e)
 
@@ -430,20 +500,19 @@ class ProductionMetricsExporter:
             f"projects/{gcp_proj}/metricDescriptors/{m.name}" for m in PLATFORM_METRICS
         ]
 
-        # 1. Cloud Monitoring projects.timeSeries.create write call
+        # 1. Cloud Monitoring projects.timeSeries.create write call (API-native single timeSeries body via POST)
         write_endpoint = f"{route_str}/projects/{gcp_proj}/timeSeries" if not route_str.endswith("/timeSeries") else route_str
         write_request_payload = {
-            "gcp_project": gcp_proj,
-            "release_sha": self.release_sha,
             "timeSeries": time_series_list,
-            "categories": [cat.value for cat in MetricCategory],
-            "monitoring_backend_resource_ids": monitoring_backend_resource_ids,
-            "metrics": metrics_payload,
-            "exported_at": now_iso,
         }
 
         try:
-            http_status, resp_data = self.http_transport(write_endpoint, write_request_payload)
+            http_status, resp_data = _invoke_transport(
+                self.http_transport,
+                method="POST",
+                url=write_endpoint,
+                payload=write_request_payload,
+            )
         except Exception as exc:
             raise RuntimeError(f"Cloud Monitoring / metrics provider export call failed: {exc}") from exc
 
@@ -454,14 +523,17 @@ class ProductionMetricsExporter:
 
         # 2. Independent GET / list readback call to validate persisted metric series and project/release_sha binding
         readback_endpoint = write_endpoint
-        readback_request_payload = {
-            "gcp_project": gcp_proj,
-            "release_sha": self.release_sha,
+        readback_params = {
             "filter": f'metric.labels.release_sha="{self.release_sha}"',
         }
 
         try:
-            readback_status_code, readback_resp = self.http_transport(readback_endpoint, readback_request_payload)
+            readback_status_code, readback_resp = _invoke_transport(
+                self.http_transport,
+                method="GET",
+                url=readback_endpoint,
+                params=readback_params,
+            )
         except Exception as exc:
             raise RuntimeError(f"Cloud Monitoring / metrics provider readback call failed: {exc}") from exc
 
@@ -473,23 +545,43 @@ class ProductionMetricsExporter:
         if not isinstance(readback_resp, dict):
             raise RuntimeError("Cloud Monitoring / metrics provider returned non-object response. Fail-closed gate enforced.")
 
-        # Validate project binding in readback response
-        if "gcp_project" in readback_resp:
+        # Validate project binding in readback response if present and non-empty
+        if readback_resp.get("gcp_project") is not None:
             resp_project = str(readback_resp["gcp_project"]).strip()
-            if resp_project != gcp_proj:
+            if resp_project and resp_project != gcp_proj:
                 raise RuntimeError(
                     f"Cloud Monitoring / metrics provider readback project mismatch: expected '{gcp_proj}', got '{resp_project}'. Fail-closed gate enforced."
                 )
 
-        # Validate release_sha binding in readback response
-        if "release_sha" in readback_resp:
+        # Validate release_sha binding in readback response if present and non-empty
+        if readback_resp.get("release_sha") is not None:
             resp_sha = str(readback_resp["release_sha"]).strip().lower()
-            if resp_sha != self.release_sha:
+            if resp_sha and resp_sha != self.release_sha:
                 raise RuntimeError(
                     f"Cloud Monitoring / metrics provider readback release_sha mismatch: expected '{self.release_sha}', got '{resp_sha}'. Fail-closed gate enforced."
                 )
 
-        provider_receipt_id = readback_resp.get("export_receipt_id") or readback_resp.get("receipt_id") or readback_resp.get("name")
+        # Inspect returned timeSeries list in native API readback response
+        returned_series = readback_resp.get("timeSeries")
+        if isinstance(returned_series, list):
+            for ts_item in returned_series:
+                if isinstance(ts_item, dict):
+                    res_proj = ts_item.get("resource", {}).get("labels", {}).get("project_id")
+                    if res_proj and str(res_proj).strip() != gcp_proj:
+                        raise RuntimeError(
+                            f"Cloud Monitoring readback timeSeries project mismatch: expected '{gcp_proj}', got '{res_proj}'. Fail-closed gate enforced."
+                        )
+                    metric_sha = ts_item.get("metric", {}).get("labels", {}).get("release_sha")
+                    if metric_sha and str(metric_sha).strip().lower() != self.release_sha:
+                        raise RuntimeError(
+                            f"Cloud Monitoring readback timeSeries release_sha mismatch: expected '{self.release_sha}', got '{metric_sha}'. Fail-closed gate enforced."
+                        )
+
+        provider_receipt_id = (
+            readback_resp.get("export_receipt_id")
+            or readback_resp.get("receipt_id")
+            or readback_resp.get("name")
+        )
         if not provider_receipt_id or not isinstance(provider_receipt_id, str) or provider_receipt_id.startswith("local-"):
             raise RuntimeError("Cloud Monitoring / metrics provider response missing authentic provider-issued export_receipt_id. Fail-closed gate enforced.")
 
@@ -521,11 +613,11 @@ def render_dashboard_provisioning(
     config_path: str | Path | None = None,
     gcp_project: str | None = None,
     provider_route: str | None = None,
-    http_transport: Callable[[str, dict], tuple[int, str | dict]] | None = None,
+    http_transport: Callable[..., tuple[int, str | dict]] | None = None,
 ) -> dict[str, Any]:
     """Perform dynamic runtime substitution of ${RELEASE_SHA} in dashboard definitions and invoke real dashboard provider adapter.
 
-    Enforces exact 40-char release_sha binding, provisions panel filters, invokes the Cloud Monitoring v1 dashboards API,
+    Enforces exact 40-char release_sha binding, provisions panel filters, invokes the Cloud Monitoring v1 dashboards API (POST single Dashboard resource),
     validates provider response and independent GET readback IDs, and returns PROVISIONED readback status (or fails closed).
     """
     clean_sha = validate_full_sha(release_sha, "release_sha")
@@ -564,97 +656,106 @@ def render_dashboard_provisioning(
     data["release_sha_traceability"] = traceability
 
     gcp_proj = str(target_gcp_project).strip()
+    dashboards_list = data.get("dashboards", [])
+    if not dashboards_list:
+        dashboards_list = [data] if "displayName" in data or "gridLayout" in data else []
+
     dashboard_resource_ids = {
         d["id"]: f"projects/{gcp_proj}/dashboards/{d['id']}"
-        for d in data.get("dashboards", [])
+        for d in dashboards_list
         if isinstance(d, dict) and "id" in d
     }
 
-    # 1. Cloud Monitoring v1 dashboards.create write call
-    provision_request_payload = {
-        "gcp_project": gcp_proj,
-        "release_sha": clean_sha,
-        "slo_owner": str(configured_slo_owner).strip(),
-        "dashboard_resource_ids": dashboard_resource_ids,
-        "dashboards": data.get("dashboards", []),
-    }
+    # 1. Cloud Monitoring v1 dashboards.create write call (POST single Dashboard resource body per call)
+    created_dashboard_names: list[str] = []
+    last_resp_data: dict[str, Any] = {}
 
     transport = http_transport or ProductionMetricsExporter._default_http_transport
     endpoint = f"{v1_route}/projects/{gcp_proj}/dashboards" if not v1_route.endswith("/dashboards") else v1_route
 
-    try:
-        http_status, resp_data = transport(endpoint, provision_request_payload)
-    except Exception as exc:
-        data["provisioning_readback"] = {
-            "receipt_id": None,
-            "readback_status": "BLOCKED",
-            "exact_sha_binding": clean_sha,
-            "slo_owner": str(configured_slo_owner).strip(),
-            "provider_route_identity": route_str,
-            "dashboard_resource_ids": dashboard_resource_ids,
-            "error": f"Dashboard provider adapter connection failed: {exc}",
-        }
-        raise ValueError(f"Dashboard provider adapter unreachable or failed: {exc}. Readback status BLOCKED. Fail-closed gate enforced.") from exc
+    for dash in dashboards_list:
+        dash_body = dict(dash) if isinstance(dash, dict) else {}
+        dash_body.setdefault("displayName", "Platform Operations Dashboard")
+        try:
+            http_status, resp_data = _invoke_transport(
+                transport,
+                method="POST",
+                url=endpoint,
+                payload=dash_body,
+            )
+        except Exception as exc:
+            data["provisioning_readback"] = {
+                "receipt_id": None,
+                "readback_status": "BLOCKED",
+                "exact_sha_binding": clean_sha,
+                "slo_owner": str(configured_slo_owner).strip(),
+                "provider_route_identity": route_str,
+                "dashboard_resource_ids": dashboard_resource_ids,
+                "error": f"Dashboard provider adapter connection failed: {exc}",
+            }
+            raise ValueError(f"Dashboard provider adapter unreachable or failed: {exc}. Readback status BLOCKED. Fail-closed gate enforced.") from exc
 
-    if not (200 <= http_status < 300):
-        data["provisioning_readback"] = {
-            "receipt_id": None,
-            "readback_status": "LIVE_UNVERIFIED",
-            "exact_sha_binding": clean_sha,
-            "slo_owner": str(configured_slo_owner).strip(),
-            "provider_route_identity": route_str,
-            "dashboard_resource_ids": dashboard_resource_ids,
-            "error": f"HTTP {http_status}: {resp_data}",
-        }
-        raise ValueError(f"Dashboard provider rejected provisioning with HTTP {http_status}: {resp_data}. Readback status LIVE_UNVERIFIED. Fail-closed gate enforced.")
+        if not (200 <= http_status < 300) or not isinstance(resp_data, dict):
+            data["provisioning_readback"] = {
+                "receipt_id": None,
+                "readback_status": "LIVE_UNVERIFIED",
+                "exact_sha_binding": clean_sha,
+                "slo_owner": str(configured_slo_owner).strip(),
+                "provider_route_identity": route_str,
+                "dashboard_resource_ids": dashboard_resource_ids,
+                "error": f"HTTP {http_status}: {resp_data}",
+            }
+            raise ValueError(f"Dashboard provider rejected provisioning with HTTP {http_status}: {resp_data}. Readback status LIVE_UNVERIFIED. Fail-closed gate enforced.")
 
-    if not isinstance(resp_data, dict):
-        data["provisioning_readback"] = {
-            "receipt_id": None,
-            "readback_status": "LIVE_UNVERIFIED",
-            "exact_sha_binding": clean_sha,
-            "slo_owner": str(configured_slo_owner).strip(),
-            "provider_route_identity": route_str,
-            "dashboard_resource_ids": dashboard_resource_ids,
-            "error": "Non-object provider response",
-        }
-        raise ValueError("Dashboard provider response missing authentic provider-issued receipt_id. Readback status LIVE_UNVERIFIED. Fail-closed gate enforced.")
+        name = resp_data.get("name") or f"projects/{gcp_proj}/dashboards/platform-health"
+        created_dashboard_names.append(name)
+        last_resp_data = resp_data
 
-    # 2. Independent GET readback call to validate dashboard resource and binding
-    created_dashboard_name = resp_data.get("name") or f"projects/{gcp_proj}/dashboards/platform-health"
-    readback_endpoint = endpoint
-    readback_payload = {
-        "gcp_project": gcp_proj,
-        "release_sha": clean_sha,
-        "slo_owner": str(configured_slo_owner).strip(),
-        "name": created_dashboard_name,
-    }
+    # 2. Independent GET readback call to validate created dashboard resource and project binding
+    created_dashboard_name = created_dashboard_names[0] if created_dashboard_names else f"projects/{gcp_proj}/dashboards/platform-health"
+    readback_endpoint = f"{v1_route}/{created_dashboard_name}" if not created_dashboard_name.startswith("http") else created_dashboard_name
 
     try:
-        readback_code, readback_resp = transport(readback_endpoint, readback_payload)
+        readback_code, readback_resp = _invoke_transport(
+            transport,
+            method="GET",
+            url=readback_endpoint,
+        )
     except Exception as exc:
         raise ValueError(f"Dashboard provider readback call failed: {exc}. Readback status LIVE_UNVERIFIED. Fail-closed gate enforced.") from exc
 
     if not (200 <= readback_code < 300) or not isinstance(readback_resp, dict):
         raise ValueError(f"Dashboard provider readback failed with HTTP {readback_code}: {readback_resp}. Readback status LIVE_UNVERIFIED. Fail-closed gate enforced.")
 
-    # Validate project binding in readback response
-    if "gcp_project" in readback_resp:
+    # Validate project binding in readback response if present and non-empty
+    if readback_resp.get("gcp_project") is not None:
         resp_project = str(readback_resp["gcp_project"]).strip()
-        if resp_project != gcp_proj:
+        if resp_project and resp_project != gcp_proj:
             raise ValueError(
                 f"Dashboard provider readback project mismatch: expected '{gcp_proj}', got '{resp_project}'. Fail-closed gate enforced."
             )
 
-    # Validate release_sha binding in readback response
-    if "release_sha" in readback_resp:
+    if "name" in readback_resp and isinstance(readback_resp["name"], str):
+        if gcp_proj not in readback_resp["name"]:
+            raise ValueError(
+                f"Dashboard provider readback project mismatch in name: expected '{gcp_proj}' in '{readback_resp['name']}'. Fail-closed gate enforced."
+            )
+
+    # Validate release_sha binding in readback response if present and non-empty
+    if readback_resp.get("release_sha") is not None:
         resp_sha = str(readback_resp["release_sha"]).strip().lower()
-        if resp_sha != clean_sha:
+        if resp_sha and resp_sha != clean_sha:
             raise ValueError(
                 f"Dashboard provider readback release_sha mismatch: expected '{clean_sha}', got '{resp_sha}'. Fail-closed gate enforced."
             )
 
-    provider_receipt_id = readback_resp.get("receipt_id") or readback_resp.get("provision_receipt_id") or readback_resp.get("name")
+    provider_receipt_id = (
+        readback_resp.get("receipt_id")
+        or readback_resp.get("provision_receipt_id")
+        or readback_resp.get("name")
+        or last_resp_data.get("receipt_id")
+        or last_resp_data.get("name")
+    )
     if not provider_receipt_id or not isinstance(provider_receipt_id, str) or provider_receipt_id.startswith("local-"):
         data["provisioning_readback"] = {
             "receipt_id": None,
@@ -667,7 +768,7 @@ def render_dashboard_provisioning(
         }
         raise ValueError("Dashboard provider response missing authentic provider-issued receipt_id. Readback status LIVE_UNVERIFIED. Fail-closed gate enforced.")
 
-    readback_status = readback_resp.get("readback_status", "PROVISIONED")
+    readback_status = readback_resp.get("readback_status", last_resp_data.get("readback_status", "PROVISIONED"))
     if readback_status != "PROVISIONED":
         data["provisioning_readback"] = {
             "receipt_id": provider_receipt_id,

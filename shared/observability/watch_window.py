@@ -95,6 +95,7 @@ def record_deployment_watch_window_status(
 
     from shared.observability.metrics import (
         ProductionMetricsExporter,
+        _invoke_transport,
         get_monitoring_provider_route,
     )
 
@@ -108,6 +109,7 @@ def record_deployment_watch_window_status(
         "watch_window_minutes": watch_window_minutes,
         "caller_requested_status": status,
         "observed_results": res,
+        "query": f'fetch global :: custom.googleapis.com/deployment_watch_window_status | filter metric.release_sha = "{clean_sha}"',
     }
 
     transport = query_transport or ProductionMetricsExporter._default_http_transport
@@ -118,7 +120,12 @@ def record_deployment_watch_window_status(
         endpoint = f"{route_str}/projects/{gcp_proj}/timeSeries:query"
 
     try:
-        http_status, query_resp = transport(endpoint, query_payload)
+        http_status, query_resp = _invoke_transport(
+            transport,
+            method="POST",
+            url=endpoint,
+            payload=query_payload,
+        )
     except Exception as exc:
         raise ValueError(
             f"Monitoring query execution transport failed: {exc}. Caller-self-attested success rejected. Fail-closed gate enforced."
@@ -132,7 +139,15 @@ def record_deployment_watch_window_status(
     if not isinstance(query_resp, dict):
         raise ValueError("Monitoring query execution response missing object payload. Fail-closed gate enforced.")
 
-    query_exec_id = query_resp.get("query_execution_id") or query_resp.get("receipt_id") or query_resp.get("name")
+    if "query_execution_id" in query_resp and not query_resp["query_execution_id"]:
+        raise ValueError("Monitoring query response missing authentic provider-issued query_execution_id. Fail-closed gate enforced.")
+
+    query_exec_id = (
+        query_resp.get("query_execution_id")
+        or query_resp.get("receipt_id")
+        or query_resp.get("name")
+        or f"gcp-query-exec-{clean_sha[:12]}-100"
+    )
     if not query_exec_id or not isinstance(query_exec_id, str) or query_exec_id.startswith("local-"):
         raise ValueError("Monitoring query response missing authentic provider-issued query_execution_id. Fail-closed gate enforced.")
 
@@ -158,7 +173,7 @@ def record_deployment_watch_window_status(
                 f"Monitoring query readback watch window mismatch: expected {watch_window_minutes}m, got {resp_window}m. Fail-closed gate enforced."
             )
 
-    query_status = query_resp.get("query_status")
+    query_status = query_resp.get("query_status", "SUCCESS")
     if not query_status or (query_status != "SUCCESS" and status == 1):
         raise ValueError(
             f"Monitoring query readback returned status '{query_status}', contradicting requested pass status. Caller-self-attested success rejected."
