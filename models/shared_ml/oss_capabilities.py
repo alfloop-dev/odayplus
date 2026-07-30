@@ -2,6 +2,10 @@
 
 from __future__ import annotations
 
+import json
+import os
+import subprocess
+import sys
 from dataclasses import dataclass
 from enum import StrEnum
 from importlib import util
@@ -64,16 +68,81 @@ class OssCapabilityStatus:
         }
 
 
+def probe_package_in_isolation(package_name: str) -> tuple[bool, str | None]:
+    """Execute a real import and optional minimal solve probe in an isolated subprocess.
+
+    This prevents C++ ABI symbol collisions (e.g. between OR-Tools and CVXPY/HiGHS)
+    from polluting the host process state during capability inspection.
+    """
+    code = f"""
+import json, sys
+from importlib import import_module
+from importlib.metadata import version, PackageNotFoundError
+
+res = {{"available": False, "version": None}}
+try:
+    mod = import_module("{package_name}")
+    try:
+        ver = version("{package_name}".replace("_", "-"))
+    except PackageNotFoundError:
+        ver = "installed"
+    res["version"] = ver
+
+    if "{package_name}" == "ortools":
+        from ortools.linear_solver import pywraplp
+        s = pywraplp.Solver.CreateSolver("GLOP")
+        if not s:
+            raise RuntimeError("GLOP solver unavailable")
+        x = s.NumVar(0, 10, "x")
+        s.Maximize(x)
+        st = s.Solve()
+        if st != pywraplp.Solver.OPTIMAL or abs(x.solution_value() - 10.0) > 1e-4:
+            raise RuntimeError("ortools minimal solve failed")
+    elif "{package_name}" == "cvxpy":
+        import cvxpy as cp
+        y = cp.Variable()
+        prob = cp.Problem(cp.Maximize(y), [y <= 10])
+        val = prob.solve()
+        if val is None or abs(val - 10.0) > 1e-4:
+            raise RuntimeError("cvxpy minimal solve failed")
+
+    res["available"] = True
+except Exception as e:
+    res["error"] = str(e)
+
+print(json.dumps(res))
+"""
+    env = os.environ.copy()
+    env["PYTHONPATH"] = os.pathsep.join(sys.path)
+
+    try:
+        proc = subprocess.run(
+            [sys.executable, "-c", code],
+            capture_output=True,
+            text=True,
+            timeout=10,
+            env=env,
+        )
+        if proc.returncode == 0:
+            data = json.loads(proc.stdout.strip())
+            if data.get("available"):
+                return True, data.get("version") or "installed"
+    except Exception:
+        pass
+    return False, None
+
+
 def inspect_oss_capability(capability: OssCapability) -> OssCapabilityStatus:
     packages: dict[str, str | None] = {}
     for package in CAPABILITY_PACKAGES[capability]:
         if util.find_spec(package) is None:
             packages[package] = None
             continue
-        try:
-            packages[package] = version(package.replace("_", "-"))
-        except PackageNotFoundError:
-            packages[package] = "installed"
+        available, pkg_ver = probe_package_in_isolation(package)
+        if available:
+            packages[package] = pkg_ver
+        else:
+            packages[package] = None
     return OssCapabilityStatus(
         capability=capability,
         available=all(package_version is not None for package_version in packages.values()),
