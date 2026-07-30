@@ -12,7 +12,7 @@
   },
   "contract_version": "heatzone-training-view-v2",
   "eligible_labels": 0,
-  "evaluated_at": "2026-07-30T17:42:49.017783Z",
+  "evaluated_at": "2026-07-30T21:58:23.733780Z",
   "governance_invariants": [
     "At least 200 eligible mature real labels required in model_ready.heatzone_training_view",
     "Model ranking must outperform population density ranking baseline (NDCG > baseline)",
@@ -23,7 +23,7 @@
   ],
   "governed_disabled": true,
   "integrity": {
-    "content_sha256": "35b86f43f4831adb78c7049c30129de9574e47bd8fc2b9b59e83cc2e040fb922"
+    "content_sha256": "cd9f0c298d0a9ec155c9978e2260027e922f1e4253c6658ba378a0c501d4b749"
   },
   "inventory_observed_at": "2026-07-25T15:20:00Z",
   "inventory_sha256": "3f1c8ec4baa1e2f06f5c4e93e82a6258315012b46aacfd3f3e578221aa8b5f44",

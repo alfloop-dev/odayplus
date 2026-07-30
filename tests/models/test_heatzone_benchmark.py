@@ -36,6 +36,15 @@ def _mock_inventory_receipt() -> dict:
     }
 
 
+def _mock_valid_evidence() -> dict:
+    return {
+        "dataset_snapshot_hash": "a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2",
+        "model_artifact_hash": "b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3",
+        "evaluation_split": "heatzone_test_28d_outcome_v1",
+        "governed_baseline_hash": "c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4",
+    }
+
+
 def test_heatzone_benchmark_evaluation_fails_closed_when_labels_insufficient() -> None:
     result = evaluate_heatzone_benchmark(
         observed_labels=50,
@@ -49,12 +58,29 @@ def test_heatzone_benchmark_evaluation_fails_closed_when_labels_insufficient() -
     assert "below the activation threshold" in result["benchmark_results"]["reason"]
 
 
-def test_heatzone_benchmark_evaluation_passes_when_sufficient_labels_and_metrics_met() -> None:
+def test_heatzone_benchmark_evaluation_fails_closed_when_evidence_unresolved() -> None:
     result = evaluate_heatzone_benchmark(
         observed_labels=250,
         eligible_labels=250,
         population_ranking_ndcg=0.75,
         top_k_survey_rate=0.60,
+        benchmark_evidence=None,
+    )
+    assert result["verdict"] == "FAIL_CLOSED"
+    assert result["governed_disabled"] is True
+    assert result["unavailable_reason"] == "BENCHMARK_EVIDENCE_NOT_RESOLVED"
+    assert result["benchmark_results"]["evaluated"] is False
+    assert "immutable measured benchmark evidence" in result["benchmark_results"]["reason"]
+
+
+def test_heatzone_benchmark_evaluation_passes_when_sufficient_labels_evidence_and_metrics_met() -> None:
+    evidence = _mock_valid_evidence()
+    result = evaluate_heatzone_benchmark(
+        observed_labels=250,
+        eligible_labels=250,
+        population_ranking_ndcg=0.75,
+        top_k_survey_rate=0.60,
+        benchmark_evidence=evidence,
     )
     assert result["verdict"] == "PASSED"
     assert result["governed_disabled"] is False
@@ -62,14 +88,17 @@ def test_heatzone_benchmark_evaluation_passes_when_sufficient_labels_and_metrics
     assert result["benchmark_results"]["evaluated"] is True
     assert result["benchmark_results"]["population_ranking_outperformed"] is True
     assert result["benchmark_results"]["top_k_survey_rate_improved"] is True
+    assert result["benchmark_evidence"] == evidence
 
 
 def test_heatzone_benchmark_evaluation_fails_closed_when_metrics_below_baseline() -> None:
+    evidence = _mock_valid_evidence()
     result = evaluate_heatzone_benchmark(
         observed_labels=250,
         eligible_labels=250,
         population_ranking_ndcg=0.40,  # Below 0.50
         top_k_survey_rate=0.20,        # Below 0.30
+        benchmark_evidence=evidence,
     )
     assert result["verdict"] == "FAIL_CLOSED"
     assert result["governed_disabled"] is True
@@ -88,6 +117,20 @@ def test_heatzone_benchmark_evaluation_rejects_negative_or_impossible_counts() -
 
     with pytest.raises(ValueError, match="cannot exceed observed_labels"):
         evaluate_heatzone_benchmark(observed_labels=50, eligible_labels=100)
+
+
+def test_evaluate_heatzone_benchmark_rejects_non_finite_and_out_of_domain_metrics() -> None:
+    with pytest.raises(ValueError, match="in range"):
+        evaluate_heatzone_benchmark(observed_labels=250, eligible_labels=250, population_ranking_ndcg=999.0)
+
+    with pytest.raises(ValueError, match="in range"):
+        evaluate_heatzone_benchmark(observed_labels=250, eligible_labels=250, top_k_survey_rate=-0.1)
+
+    with pytest.raises(ValueError, match="finite number"):
+        evaluate_heatzone_benchmark(observed_labels=250, eligible_labels=250, population_ranking_ndcg=float("nan"))
+
+    with pytest.raises(ValueError, match="finite number"):
+        evaluate_heatzone_benchmark(observed_labels=250, eligible_labels=250, top_k_survey_rate=float("inf"))
 
 
 def test_generate_gate1_receipt_creates_valid_structure_and_sha256() -> None:
@@ -113,6 +156,19 @@ def test_generate_gate1_receipt_creates_valid_structure_and_sha256() -> None:
 
     # Validate against inventory receipt
     validate_gate1_receipt(receipt, inv)
+
+
+def test_validate_gate1_receipt_fails_closed_on_inventory_loader_failure(monkeypatch) -> None:
+    inv = _mock_inventory_receipt()
+    receipt = generate_gate1_receipt(inv)
+
+    def _mock_failing_loader():
+        raise OSError("canonical inventory receipt unreadable")
+
+    monkeypatch.setattr("scripts.models.heatzone_benchmark.load_model_ready_receipt", _mock_failing_loader)
+
+    with pytest.raises(ValueError, match="Gate 1 receipt lineage validation failed closed"):
+        validate_gate1_receipt(receipt, inventory_receipt=None)
 
 
 def test_gate1_receipt_validate_catches_tampered_integrity_hash() -> None:
@@ -142,6 +198,36 @@ def test_gate1_receipt_validate_rejects_forged_passed_receipt() -> None:
 
     # validate_gate1_receipt against actual inventory MUST fail due to count mismatch vs inventory!
     with pytest.raises(ValueError, match="Receipt observed_labels 999 does not match inventory 0"):
+        validate_gate1_receipt(receipt, inv)
+
+
+def test_gate1_receipt_validate_rejects_passed_without_benchmark_evidence() -> None:
+    inv = _mock_inventory_receipt()
+    inv["capabilities"]["heatzone"]["observed_count"] = 250
+    inv["capabilities"]["heatzone"]["eligible_count"] = 250
+
+    now = datetime(2026, 7, 30, 12, 0, 0, tzinfo=UTC)
+    receipt = generate_gate1_receipt(
+        inv,
+        evaluated_at=now,
+        observed_labels=250,
+        eligible_labels=250,
+        population_ranking_ndcg=0.80,
+        top_k_survey_rate=0.60,
+    )
+    # Without benchmark_evidence, verdict is FAIL_CLOSED
+    assert receipt["verdict"] == "FAIL_CLOSED"
+    assert receipt["unavailable_reason"] == "BENCHMARK_EVIDENCE_NOT_RESOLVED"
+
+    # Forcing verdict to PASSED without evidence must fail validation
+    receipt["verdict"] = "PASSED"
+    receipt["governed_disabled"] = False
+    receipt["unavailable_reason"] = None
+    receipt["benchmark_results"]["evaluated"] = True
+    receipt["benchmark_results"]["population_ranking_outperformed"] = True
+    receipt["benchmark_results"]["top_k_survey_rate_improved"] = True
+    receipt["integrity"]["content_sha256"] = compute_benchmark_receipt_sha256(receipt)
+    with pytest.raises(ValueError, match="Verdict PASSED requires valid immutable benchmark_evidence"):
         validate_gate1_receipt(receipt, inv)
 
 

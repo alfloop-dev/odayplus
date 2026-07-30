@@ -14,6 +14,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import math
 import sys
 from collections.abc import Sequence
 from datetime import UTC, datetime
@@ -46,6 +47,36 @@ def compute_benchmark_receipt_sha256(payload: dict[str, Any]) -> str:
     return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
 
 
+def _validate_metric_value(name: str, value: float | None) -> None:
+    """Ensure metric values are finite numbers in [0.0, 1.0]."""
+    if value is None:
+        return
+    if not isinstance(value, (int, float)) or isinstance(value, bool):
+        raise ValueError(f"{name} must be a number in [0.0, 1.0], got {value!r}")
+    val_float = float(value)
+    if math.isnan(val_float) or math.isinf(val_float):
+        raise ValueError(f"{name} must be a finite number, got {value!r}")
+    if not (0.0 <= val_float <= 1.0):
+        raise ValueError(f"{name} must be in range [0.0, 1.0], got {value!r}")
+
+
+def _validate_benchmark_evidence(evidence: dict[str, Any] | None) -> bool:
+    """Validate presence and completeness of immutable benchmark evidence dict."""
+    if not isinstance(evidence, dict) or not evidence:
+        return False
+    required_fields = (
+        "dataset_snapshot_hash",
+        "model_artifact_hash",
+        "evaluation_split",
+        "governed_baseline_hash",
+    )
+    for field in required_fields:
+        val = evidence.get(field)
+        if not isinstance(val, str) or not val.strip():
+            return False
+    return True
+
+
 def evaluate_heatzone_benchmark(
     observed_labels: int,
     eligible_labels: int,
@@ -54,6 +85,7 @@ def evaluate_heatzone_benchmark(
     top_k_survey_rate: float | None = None,
     baseline_population_ndcg: float = 0.50,
     baseline_survey_rate: float = 0.30,
+    benchmark_evidence: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Evaluate HeatZone label inventory and benchmark performance criteria."""
     if (
@@ -72,6 +104,11 @@ def evaluate_heatzone_benchmark(
         raise ValueError(
             f"eligible_labels ({eligible_labels}) cannot exceed observed_labels ({observed_labels})"
         )
+
+    _validate_metric_value("population_ranking_ndcg", population_ranking_ndcg)
+    _validate_metric_value("top_k_survey_rate", top_k_survey_rate)
+    _validate_metric_value("baseline_population_ndcg", baseline_population_ndcg)
+    _validate_metric_value("baseline_survey_rate", baseline_survey_rate)
 
     contract = PRODUCTION_MODEL_CONTRACTS.get("heatzone")
     contract_reason = contract.unavailable_reason if contract else "DATA_CONTRACT_NOT_MATURE"
@@ -99,6 +136,7 @@ def evaluate_heatzone_benchmark(
         }
     else:
         # Evaluate benchmark when sufficient real labels exist
+        evidence_valid = _validate_benchmark_evidence(benchmark_evidence)
         ndcg_pass = (
             population_ranking_ndcg is not None
             and population_ranking_ndcg > baseline_population_ndcg
@@ -108,14 +146,44 @@ def evaluate_heatzone_benchmark(
             and top_k_survey_rate > baseline_survey_rate
         )
 
-        if ndcg_pass and survey_pass:
+        if not evidence_valid:
+            verdict = "FAIL_CLOSED"
+            governed_disabled = True
+            unavailable_reason = "BENCHMARK_EVIDENCE_NOT_RESOLVED"
+            reason = (
+                f"Eligible labels ({eligible_labels}) >= {MINIMUM_REQUIRED_LABELS}, "
+                "but immutable measured benchmark evidence (dataset snapshot, model artifact, "
+                "evaluation split, baseline hash) is unresolved or missing."
+            )
+            benchmark_results = {
+                "evaluated": False,
+                "reason": reason,
+                "population_ranking_outperformed": False,
+                "top_k_survey_rate_improved": False,
+                "observed_ndcg": population_ranking_ndcg,
+                "baseline_ndcg": baseline_population_ndcg,
+                "observed_survey_rate": top_k_survey_rate,
+                "baseline_survey_rate": baseline_survey_rate,
+            }
+        elif ndcg_pass and survey_pass:
             verdict = "PASSED"
             governed_disabled = False
             unavailable_reason = None
             reason = (
                 f"Eligible labels ({eligible_labels}) >= {MINIMUM_REQUIRED_LABELS}. "
-                "Outperforms population ranking baseline and improves Top-K site survey rate."
+                "Outperforms population ranking baseline and improves Top-K site survey rate "
+                "with immutable benchmark evidence."
             )
+            benchmark_results = {
+                "evaluated": True,
+                "reason": reason,
+                "population_ranking_outperformed": ndcg_pass,
+                "top_k_survey_rate_improved": survey_pass,
+                "observed_ndcg": population_ranking_ndcg,
+                "baseline_ndcg": baseline_population_ndcg,
+                "observed_survey_rate": top_k_survey_rate,
+                "baseline_survey_rate": baseline_survey_rate,
+            }
         else:
             verdict = "FAIL_CLOSED"
             governed_disabled = True
@@ -124,19 +192,18 @@ def evaluate_heatzone_benchmark(
                 "HeatZone label count met minimum, but model benchmark failed: "
                 f"NDCG pass={ndcg_pass}, Top-K survey rate pass={survey_pass}."
             )
+            benchmark_results = {
+                "evaluated": True,
+                "reason": reason,
+                "population_ranking_outperformed": ndcg_pass,
+                "top_k_survey_rate_improved": survey_pass,
+                "observed_ndcg": population_ranking_ndcg,
+                "baseline_ndcg": baseline_population_ndcg,
+                "observed_survey_rate": top_k_survey_rate,
+                "baseline_survey_rate": baseline_survey_rate,
+            }
 
-        benchmark_results = {
-            "evaluated": True,
-            "reason": reason,
-            "population_ranking_outperformed": ndcg_pass,
-            "top_k_survey_rate_improved": survey_pass,
-            "observed_ndcg": population_ranking_ndcg,
-            "baseline_ndcg": baseline_population_ndcg,
-            "observed_survey_rate": top_k_survey_rate,
-            "baseline_survey_rate": baseline_survey_rate,
-        }
-
-    return {
+    res: dict[str, Any] = {
         "verdict": verdict,
         "observed_labels": observed_labels,
         "eligible_labels": eligible_labels,
@@ -145,6 +212,9 @@ def evaluate_heatzone_benchmark(
         "unavailable_reason": unavailable_reason,
         "benchmark_results": benchmark_results,
     }
+    if benchmark_evidence is not None:
+        res["benchmark_evidence"] = benchmark_evidence
+    return res
 
 
 def generate_gate1_receipt(
@@ -155,6 +225,7 @@ def generate_gate1_receipt(
     eligible_labels: int | None = None,
     population_ranking_ndcg: float | None = None,
     top_k_survey_rate: float | None = None,
+    benchmark_evidence: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Build canonical Gate 1 benchmark receipt structure bound to inventory lineage."""
     if inventory_receipt is None:
@@ -200,6 +271,7 @@ def generate_gate1_receipt(
         eligible_labels=elg_cnt,
         population_ranking_ndcg=population_ranking_ndcg,
         top_k_survey_rate=top_k_survey_rate,
+        benchmark_evidence=benchmark_evidence,
     )
 
     receipt: dict[str, Any] = {
@@ -229,6 +301,8 @@ def generate_gate1_receipt(
             "Gate 1 receipt must bind immutably to the PG16 model-ready inventory receipt lineage",
         ],
     }
+    if "benchmark_evidence" in eval_res:
+        receipt["benchmark_evidence"] = eval_res["benchmark_evidence"]
 
     receipt["integrity"] = {
         "content_sha256": compute_benchmark_receipt_sha256(receipt)
@@ -314,6 +388,12 @@ def validate_gate1_receipt(
     if not isinstance(benchmark_results, dict):
         raise ValueError("Gate 1 receipt benchmark_results must be a dictionary")
 
+    # Reject non-finite / out-of-domain metric values
+    obs_ndcg = benchmark_results.get("observed_ndcg")
+    obs_survey = benchmark_results.get("observed_survey_rate")
+    _validate_metric_value("benchmark_results.observed_ndcg", obs_ndcg)
+    _validate_metric_value("benchmark_results.observed_survey_rate", obs_survey)
+
     if eligible_labels < MINIMUM_REQUIRED_LABELS:
         if verdict != "FAIL_CLOSED":
             raise ValueError(
@@ -340,6 +420,13 @@ def validate_gate1_receipt(
             raise ValueError("Verdict PASSED requires population_ranking_outperformed=True")
         if benchmark_results.get("top_k_survey_rate_improved") is not True:
             raise ValueError("Verdict PASSED requires top_k_survey_rate_improved=True")
+
+        benchmark_evidence = receipt.get("benchmark_evidence")
+        if not _validate_benchmark_evidence(benchmark_evidence):
+            raise ValueError(
+                "Verdict PASSED requires valid immutable benchmark_evidence containing "
+                "dataset_snapshot_hash, model_artifact_hash, evaluation_split, and governed_baseline_hash"
+            )
     elif verdict == "FAIL_CLOSED":
         if governed_disabled is not True:
             raise ValueError("Verdict FAIL_CLOSED requires governed_disabled=True")
@@ -348,48 +435,52 @@ def validate_gate1_receipt(
     else:
         raise ValueError(f"Invalid receipt verdict={verdict!r}")
 
-    # 6. Lineage cross-validation against canonical inventory receipt
+    # 6. Lineage cross-validation against canonical inventory receipt (FAIL CLOSED IF UNLOADABLE)
     if inventory_receipt is None:
         try:
             inventory_receipt = load_model_ready_receipt()
-        except Exception:
-            inventory_receipt = None
+        except Exception as exc:
+            raise ValueError(
+                f"Gate 1 receipt lineage validation failed closed: canonical model-ready inventory receipt could not be loaded ({exc})"
+            ) from exc
 
-    if inventory_receipt is not None:
-        if receipt["inventory_version"] != inventory_receipt.get("inventory_version"):
-            raise ValueError(
-                f"Receipt inventory_version {receipt['inventory_version']!r} does not match "
-                f"inventory receipt {inventory_receipt.get('inventory_version')!r}"
-            )
-        if receipt["inventory_observed_at"] != inventory_receipt.get("observed_at"):
-            raise ValueError(
-                f"Receipt inventory_observed_at {receipt['inventory_observed_at']!r} does not match "
-                f"inventory receipt {inventory_receipt.get('observed_at')!r}"
-            )
-        inv_sha = inventory_receipt.get("integrity", {}).get("content_sha256")
-        if receipt["inventory_sha256"] != inv_sha:
-            raise ValueError(
-                f"Receipt inventory_sha256 {receipt['inventory_sha256']!r} does not match "
-                f"inventory receipt SHA {inv_sha!r}"
-            )
+    if not isinstance(inventory_receipt, dict):
+        raise ValueError("Canonical inventory_receipt must be a JSON dictionary")
 
-        heatzone_cap = inventory_receipt.get("capabilities", {}).get("heatzone", {})
-        if receipt["relation"] != heatzone_cap.get("relation"):
-            raise ValueError(
-                f"Receipt relation {receipt['relation']!r} does not match inventory {heatzone_cap.get('relation')!r}"
-            )
-        if receipt["contract_version"] != heatzone_cap.get("view_version"):
-            raise ValueError(
-                f"Receipt contract_version {receipt['contract_version']!r} does not match inventory {heatzone_cap.get('view_version')!r}"
-            )
-        if receipt["observed_labels"] != heatzone_cap.get("observed_count"):
-            raise ValueError(
-                f"Receipt observed_labels {receipt['observed_labels']!r} does not match inventory {heatzone_cap.get('observed_count')!r}"
-            )
-        if receipt["eligible_labels"] != heatzone_cap.get("eligible_count"):
-            raise ValueError(
-                f"Receipt eligible_labels {receipt['eligible_labels']!r} does not match inventory {heatzone_cap.get('eligible_count')!r}"
-            )
+    if receipt["inventory_version"] != inventory_receipt.get("inventory_version"):
+        raise ValueError(
+            f"Receipt inventory_version {receipt['inventory_version']!r} does not match "
+            f"inventory receipt {inventory_receipt.get('inventory_version')!r}"
+        )
+    if receipt["inventory_observed_at"] != inventory_receipt.get("observed_at"):
+        raise ValueError(
+            f"Receipt inventory_observed_at {receipt['inventory_observed_at']!r} does not match "
+            f"inventory receipt {inventory_receipt.get('observed_at')!r}"
+        )
+    inv_sha = inventory_receipt.get("integrity", {}).get("content_sha256")
+    if receipt["inventory_sha256"] != inv_sha:
+        raise ValueError(
+            f"Receipt inventory_sha256 {receipt['inventory_sha256']!r} does not match "
+            f"inventory receipt SHA {inv_sha!r}"
+        )
+
+    heatzone_cap = inventory_receipt.get("capabilities", {}).get("heatzone", {})
+    if receipt["relation"] != heatzone_cap.get("relation"):
+        raise ValueError(
+            f"Receipt relation {receipt['relation']!r} does not match inventory {heatzone_cap.get('relation')!r}"
+        )
+    if receipt["contract_version"] != heatzone_cap.get("view_version"):
+        raise ValueError(
+            f"Receipt contract_version {receipt['contract_version']!r} does not match inventory {heatzone_cap.get('view_version')!r}"
+        )
+    if receipt["observed_labels"] != heatzone_cap.get("observed_count"):
+        raise ValueError(
+            f"Receipt observed_labels {receipt['observed_labels']!r} does not match inventory {heatzone_cap.get('observed_count')!r}"
+        )
+    if receipt["eligible_labels"] != heatzone_cap.get("eligible_count"):
+        raise ValueError(
+            f"Receipt eligible_labels {receipt['eligible_labels']!r} does not match inventory {heatzone_cap.get('eligible_count')!r}"
+        )
 
 
 def generate_benchmark_report_md(receipt: dict[str, Any]) -> str:
