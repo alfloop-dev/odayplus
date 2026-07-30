@@ -77,10 +77,22 @@ def run_in_process_isolation[T](
             )
             stdout, stderr = proc.communicate(input=payload, timeout=timeout)
         except subprocess.TimeoutExpired as err:
+            if "proc" in locals():
+                try:
+                    proc.kill()
+                    proc.wait()
+                except OSError:
+                    pass
             raise ProcessIsolationError(
                 f"Solver process isolation timed out after {timeout} seconds"
             ) from err
         except Exception as err:
+            if "proc" in locals():
+                try:
+                    proc.kill()
+                    proc.wait()
+                except OSError:
+                    pass
             raise ProcessIsolationError(
                 f"Failed to spawn or communicate with isolated solver process: {err}"
             ) from err
@@ -119,3 +131,12 @@ def run_in_process_isolation[T](
                 os.remove(result_path)
             except OSError:
                 pass
+
+
+def _sleeping_worker_record_pid(pid_file: str) -> None:
+    import time
+
+    with open(pid_file, "w") as f:
+        f.write(str(os.getpid()))
+        f.flush()
+    time.sleep(10)

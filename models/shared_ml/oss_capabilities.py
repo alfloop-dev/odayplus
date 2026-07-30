@@ -74,7 +74,7 @@ def probe_package_in_isolation(package_name: str) -> tuple[bool, str | None]:
     from polluting the host process state during capability inspection.
     """
     code = f"""
-import json, sys
+import json, os, sys
 from importlib import import_module
 from importlib.metadata import version, PackageNotFoundError
 
@@ -101,8 +101,10 @@ try:
         import cvxpy as cp
         y = cp.Variable()
         prob = cp.Problem(cp.Maximize(y), [y <= 10])
-        solver_name = "HIGHS" if "HIGHS" in cp.installed_solvers() else None
-        val = prob.solve(solver=solver_name) if solver_name else prob.solve()
+        installed = cp.installed_solvers()
+        if "HIGHS" not in installed or os.environ.get("_TEST_MISSING_HIGHS"):
+            raise RuntimeError("HIGHS solver unavailable in cvxpy")
+        val = prob.solve(solver="HIGHS")
         if val is None or abs(val - 10.0) > 1e-4:
             raise RuntimeError("cvxpy minimal solve failed")
 

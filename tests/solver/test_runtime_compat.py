@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from functools import partial
+from pathlib import Path
 
 import pytest
 from fastapi.testclient import TestClient
@@ -22,7 +23,10 @@ from solver.netplan.robust import (
     ScenarioActionOption,
     solve_robust_network_plan,
 )
-from solver.process_isolation import run_in_process_isolation
+from solver.process_isolation import (
+    _sleeping_worker_record_pid,
+    run_in_process_isolation,
+)
 from tests.integration._authz import auth_headers
 
 
@@ -215,3 +219,32 @@ def test_learninghub_exposes_installed_oss_engine_versions_ready() -> None:
     assert payload["status"] == "ready"
     assert payload["unavailable_count"] == 0
     assert payload["count"] >= 11
+
+
+def test_probe_package_in_isolation_reports_unavailable_when_highs_missing(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # Regression B1: missing or broken HIGHS must report cvxpy unavailable instead of falling back to default solver
+    monkeypatch.setenv("_TEST_MISSING_HIGHS", "1")
+    available, version = probe_package_in_isolation("cvxpy")
+    assert available is False
+    assert version is None
+
+
+def test_process_isolation_timeout_reaps_child_process(tmp_path: Path) -> None:
+    # Regression B2: TimeoutExpired must terminate/kill child process and wait so no live process remains
+    import os
+
+    from solver.process_isolation import ProcessIsolationError
+
+    pid_file = str(tmp_path / "child.pid")
+    with pytest.raises(ProcessIsolationError, match="timed out"):
+        run_in_process_isolation(_sleeping_worker_record_pid, pid_file, timeout=0.2)
+
+    assert os.path.exists(pid_file)
+    with open(pid_file) as f:
+        child_pid = int(f.read().strip())
+
+    # Prove child process was killed and reaped; os.kill(child_pid, 0) raises OSError
+    with pytest.raises(OSError):
+        os.kill(child_pid, 0)
