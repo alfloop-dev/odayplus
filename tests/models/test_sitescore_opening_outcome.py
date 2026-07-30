@@ -106,7 +106,7 @@ def test_sitescore_opening_outcome_90d_only_old_stores_fails_coverage():
     assert not result.is_coverage_passed
     assert not result.is_gate2_passed
     assert result.status == "GOVERNED_DISABLED"
-    assert result.reason_code == "M6_M12_COVERAGE_INSUFFICIENT"
+    assert result.reason_code == "MISSING_GOVERNED_LINEAGE"
 
 
 def test_sitescore_opening_outcome_missing_interval_bounds_fails_closed():
@@ -126,7 +126,7 @@ def test_sitescore_opening_outcome_missing_interval_bounds_fails_closed():
     assert not result.is_interval_bounds_passed
     assert not result.is_gate2_passed
     assert result.status == "GOVERNED_DISABLED"
-    assert result.reason_code == "INTERVAL_BOUNDS_MISSING"
+    assert result.reason_code == "MISSING_GOVERNED_LINEAGE"
 
 
 def test_sitescore_opening_outcome_missing_governed_lineage_fails_closed():
@@ -147,28 +147,27 @@ def test_sitescore_opening_outcome_missing_governed_lineage_fails_closed():
     assert result.reason_code == "MISSING_GOVERNED_LINEAGE"
 
 
-def test_sitescore_opening_outcome_authentic_governed_records_passes_gate2():
-    # Positive case: Authentic governed records with complete lineage, M6/M12 outcomes, predictions, and interval bounds pass Gate 2
+def test_sitescore_opening_outcome_arbitrary_authenticated_governed_records_fails_closed_without_authoritative_resolver():
+    # Regression: Arbitrary caller-created records with authenticated_governed_records provenance and caller strings fail closed as GOVERNED_DISABLED
+    # until ODP-PLAN-SITESCORE-PREDICTION-SOURCE-001 provides an authoritative prediction-source resolver.
     records = _generate_candidate_records(
         220,
         include_m6_m12_realized=True,
         include_bounds=True,
-        dataset_snapshot_id="snapshot_sitescore_opening_outcome_v2",
-        model_version="candidate-site-view-v2",
-        artifact_lineage_id="art_sitescore_sha256",
+        dataset_snapshot_id="arbitrary-caller-snapshot",
+        model_version="arbitrary-caller-model",
+        artifact_lineage_id="arbitrary-caller-artifact",
     )
     result = evaluate_sitescore_opening_outcome_benchmark(records, provenance="authenticated_governed_records")
 
     assert result.mature_label_count == 220
-    assert result.is_lineage_governed
-    assert result.is_labels_sufficient
-    assert result.is_coverage_passed
-    assert result.is_interval_bounds_passed
-    assert result.is_mae_passed
-    assert result.is_gate2_passed
-    assert result.status == "ACTIVE"
-    assert result.reason_code == "GATE2_CRITERIA_MET"
-    assert result.handback_payload["handback_required"] is False
+    assert not result.is_lineage_governed
+    assert not result.is_gate2_passed
+    assert result.status == "GOVERNED_DISABLED"
+    assert result.reason_code == "MISSING_GOVERNED_LINEAGE"
+    assert result.handback_payload["handback_required"] is True
+    assert result.handback_payload["governed_disabled"] is True
+    assert "ODP-PLAN-SITESCORE-PREDICTION-SOURCE-001" in result.handback_payload["reasons"][0]
 
 
 def test_sitescore_opening_outcome_insufficient_labels_fails_closed():
@@ -187,14 +186,13 @@ def test_sitescore_opening_outcome_insufficient_labels_fails_closed():
     assert not result.is_labels_sufficient
     assert not result.is_gate2_passed
     assert result.status == "GOVERNED_DISABLED"
-    assert result.reason_code == "MATURE_LABELS_BELOW_THRESHOLD"
+    assert result.reason_code == "MISSING_GOVERNED_LINEAGE"
 
     handback = result.handback_payload
     assert handback["handback_required"] is True
     assert handback["governed_disabled"] is True
     assert handback["missing_labels_delta"] == 150
     assert handback["activation_threshold"] == 200
-    assert "Mature label count (50) is below threshold (200)" in handback["reasons"][0]
 
 
 def test_sitescore_opening_outcome_no_predictions_fails_closed():
@@ -217,7 +215,7 @@ def test_sitescore_opening_outcome_no_predictions_fails_closed():
     assert not result.is_prediction_coverage_passed
     assert not result.is_gate2_passed
     assert result.status == "GOVERNED_DISABLED"
-    assert result.reason_code == "PREDICTION_EVIDENCE_MISSING"
+    assert result.reason_code == "MISSING_GOVERNED_LINEAGE"
 
 
 def test_sitescore_gate2_receipt_structure_and_integrity():
@@ -251,9 +249,9 @@ def test_sitescore_model_card_generation():
 
     assert isinstance(model_card, ModelCard)
     assert model_card.model_name == "sitescore_propensity"
-    assert model_card.release_status == "DEV"
+    assert model_card.release_status == "GOVERNED_DISABLED"
     assert model_card.is_complete
-    assert model_card.is_approved
+    assert not model_card.is_approved
 
     dict_card = model_card.to_dict()
     assert dict_card["metrics_summary"]["mature_label_count"] == 220.0

@@ -42,12 +42,9 @@ class SiteScoreOpeningOutcomeBenchmarkResult:
 
     @property
     def is_lineage_governed(self) -> bool:
-        return bool(
-            self.dataset_snapshot_id
-            and self.model_version
-            and self.artifact_lineage_id
-            and self.provenance in ("pg16_query", "authenticated_governed_records")
-        )
+        # Until ODP-PLAN-SITESCORE-PREDICTION-SOURCE-001 provides an authoritative prediction-source resolver,
+        # caller-supplied lineage strings and pg16_query records are unverified self-attestations and must remain GOVERNED_DISABLED.
+        return False
 
     @property
     def is_labels_sufficient(self) -> bool:
@@ -139,9 +136,9 @@ class SiteScoreOpeningOutcomeBenchmarkResult:
             handback_action = "Provide authenticated governed PostgreSQL inventory records with immutable dataset snapshot and model lineage."
         elif not self.is_lineage_governed:
             reasons.append(
-                f"Missing governed dataset snapshot or model/artifact lineage (snapshot={self.dataset_snapshot_id}, model_version={self.model_version}, artifact_lineage_id={self.artifact_lineage_id})"
+                f"Missing governed dataset snapshot or model/artifact lineage (snapshot={self.dataset_snapshot_id}, model_version={self.model_version}, artifact_lineage_id={self.artifact_lineage_id}; requires authoritative prediction-source resolver ODP-PLAN-SITESCORE-PREDICTION-SOURCE-001)"
             )
-            handback_action = "Provide complete governed dataset snapshot ID/hash and model/artifact lineage."
+            handback_action = "Provide complete governed dataset snapshot ID/hash and model/artifact lineage resolved via authoritative prediction source (ODP-PLAN-SITESCORE-PREDICTION-SOURCE-001)."
         else:
             if not self.is_labels_sufficient:
                 reasons.append(
