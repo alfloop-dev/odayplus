@@ -86,6 +86,7 @@ def test_heatzone_benchmark_evaluation_passes_when_sufficient_labels_evidence_an
         top_k_survey_rate=0.60,
         benchmark_evidence=evidence,
         authoritative_evidence_path=auth_file,
+        allow_custom_authority_path=True,
     )
     assert result["verdict"] == "PASSED"
     assert result["governed_disabled"] is False
@@ -109,6 +110,7 @@ def test_heatzone_benchmark_evaluation_fails_closed_when_metrics_below_baseline(
         top_k_survey_rate=0.20,        # Below 0.30
         benchmark_evidence=evidence,
         authoritative_evidence_path=auth_file,
+        allow_custom_authority_path=True,
     )
     assert result["verdict"] == "FAIL_CLOSED"
     assert result["governed_disabled"] is True
@@ -116,6 +118,26 @@ def test_heatzone_benchmark_evaluation_fails_closed_when_metrics_below_baseline(
     assert result["benchmark_results"]["evaluated"] is True
     assert result["benchmark_results"]["population_ranking_outperformed"] is False
     assert result["benchmark_results"]["top_k_survey_rate_improved"] is False
+
+
+def test_evaluate_heatzone_benchmark_rejects_lowered_baselines() -> None:
+    with pytest.raises(ValueError, match="cannot be below canonical baseline"):
+        evaluate_heatzone_benchmark(
+            observed_labels=250,
+            eligible_labels=250,
+            population_ranking_ndcg=0.75,
+            top_k_survey_rate=0.60,
+            baseline_population_ndcg=0.01,
+        )
+
+    with pytest.raises(ValueError, match="cannot be below canonical baseline"):
+        evaluate_heatzone_benchmark(
+            observed_labels=250,
+            eligible_labels=250,
+            population_ranking_ndcg=0.75,
+            top_k_survey_rate=0.60,
+            baseline_survey_rate=0.01,
+        )
 
 
 def test_heatzone_benchmark_evaluation_rejects_negative_or_impossible_counts() -> None:
@@ -229,6 +251,7 @@ def test_gate1_receipt_validate_rejects_forged_passed_with_ndcg_below_baseline(t
         top_k_survey_rate=0.60,
         benchmark_evidence=evidence,
         authoritative_evidence_path=auth_file,
+        allow_custom_authority_path=True,
     )
     # Force self-consistent PASSED claims with bad ndcg
     receipt["verdict"] = "PASSED"
@@ -240,7 +263,7 @@ def test_gate1_receipt_validate_rejects_forged_passed_with_ndcg_below_baseline(t
     receipt["integrity"]["content_sha256"] = compute_benchmark_receipt_sha256(receipt)
 
     with pytest.raises(ValueError, match="Verdict PASSED requires observed_ndcg"):
-        validate_gate1_receipt(receipt, inv, authoritative_evidence_path=auth_file)
+        validate_gate1_receipt(receipt, inv, authoritative_evidence_path=auth_file, allow_custom_authority_path=True)
 
 
 def test_gate1_receipt_validate_rejects_forged_passed_with_survey_rate_below_baseline(tmp_path) -> None:
@@ -261,6 +284,7 @@ def test_gate1_receipt_validate_rejects_forged_passed_with_survey_rate_below_bas
         top_k_survey_rate=0.20,  # Below 0.30 baseline
         benchmark_evidence=evidence,
         authoritative_evidence_path=auth_file,
+        allow_custom_authority_path=True,
     )
     receipt["verdict"] = "PASSED"
     receipt["governed_disabled"] = False
@@ -271,7 +295,66 @@ def test_gate1_receipt_validate_rejects_forged_passed_with_survey_rate_below_bas
     receipt["integrity"]["content_sha256"] = compute_benchmark_receipt_sha256(receipt)
 
     with pytest.raises(ValueError, match="Verdict PASSED requires observed_survey_rate"):
-        validate_gate1_receipt(receipt, inv, authoritative_evidence_path=auth_file)
+        validate_gate1_receipt(receipt, inv, authoritative_evidence_path=auth_file, allow_custom_authority_path=True)
+
+
+def test_gate1_receipt_validate_rejects_metric_and_baseline_drift(tmp_path) -> None:
+    import json
+    evidence = _mock_valid_evidence()
+    auth_file = tmp_path / "AUTHORITATIVE_EVIDENCE.json"
+    auth_file.write_text(json.dumps(evidence), encoding="utf-8")
+
+    inv = _mock_inventory_receipt()
+    inv["capabilities"]["heatzone"]["observed_count"] = 250
+    inv["capabilities"]["heatzone"]["eligible_count"] = 250
+
+    # Receipt observed_ndcg (0.85) drifts from authoritative evidence (0.75)
+    receipt = generate_gate1_receipt(
+        inv,
+        observed_labels=250,
+        eligible_labels=250,
+        population_ranking_ndcg=0.85,
+        top_k_survey_rate=0.60,
+        benchmark_evidence=evidence,
+        authoritative_evidence_path=auth_file,
+        allow_custom_authority_path=True,
+    )
+    receipt["verdict"] = "PASSED"
+    receipt["governed_disabled"] = False
+    receipt["unavailable_reason"] = None
+    receipt["benchmark_results"]["evaluated"] = True
+    receipt["benchmark_results"]["population_ranking_outperformed"] = True
+    receipt["benchmark_results"]["top_k_survey_rate_improved"] = True
+    receipt["integrity"]["content_sha256"] = compute_benchmark_receipt_sha256(receipt)
+
+    with pytest.raises(ValueError, match="exact measured/baseline metrics bound to registered authoritative evidence"):
+        validate_gate1_receipt(receipt, inv, authoritative_evidence_path=auth_file, allow_custom_authority_path=True)
+
+
+def test_gate1_receipt_validate_rejects_arbitrary_authority_path_in_production(tmp_path) -> None:
+    import json
+    evidence = _mock_valid_evidence()
+    auth_file = tmp_path / "AUTHORITATIVE_EVIDENCE.json"
+    auth_file.write_text(json.dumps(evidence), encoding="utf-8")
+
+    inv = _mock_inventory_receipt()
+    inv["capabilities"]["heatzone"]["observed_count"] = 250
+    inv["capabilities"]["heatzone"]["eligible_count"] = 250
+
+    receipt = generate_gate1_receipt(
+        inv,
+        observed_labels=250,
+        eligible_labels=250,
+        population_ranking_ndcg=0.75,
+        top_k_survey_rate=0.60,
+        benchmark_evidence=evidence,
+        authoritative_evidence_path=auth_file,
+        allow_custom_authority_path=True,
+    )
+
+    # Calling validate_gate1_receipt with custom authority path without allow_custom_authority_path=True must raise ValueError
+    with pytest.raises(ValueError, match="Arbitrary authoritative_evidence_path"):
+        validate_gate1_receipt(receipt, inv, authoritative_evidence_path=auth_file, allow_custom_authority_path=False)
 
 
 def test_gate1_receipt_validate_rejects_forged_passed_with_invalid_hash_format(tmp_path) -> None:
@@ -381,6 +464,7 @@ def test_report_md_and_handback_json_verdict_aware_when_passed_and_fail_closed(t
         top_k_survey_rate=0.60,
         benchmark_evidence=evidence,
         authoritative_evidence_path=auth_file,
+        allow_custom_authority_path=True,
     )
     assert passed_receipt["verdict"] == "PASSED"
 

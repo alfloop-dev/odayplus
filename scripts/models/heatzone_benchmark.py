@@ -39,6 +39,8 @@ AUTHORITATIVE_EVIDENCE_PATH = (
 )
 
 MINIMUM_REQUIRED_LABELS = 200
+CANONICAL_BASELINE_NDCG = 0.50
+CANONICAL_BASELINE_SURVEY_RATE = 0.30
 HEX_64_PATTERN = re.compile(r"^[0-9a-fA-F]{64}$")
 
 
@@ -69,12 +71,18 @@ def resolve_heatzone_benchmark_evidence(
     evidence: dict[str, Any] | None,
     *,
     authoritative_path: Path | None = None,
+    allow_custom_path: bool = False,
+    observed_ndcg: float | None = None,
+    observed_survey_rate: float | None = None,
+    baseline_ndcg: float | None = None,
+    baseline_survey_rate: float | None = None,
 ) -> bool:
     """Resolve and hash-check benchmark evidence against authoritative immutable evidence.
 
     Returns True if evidence is structurally valid (all 64-hex SHA-256 hashes and non-empty evaluation split)
-    AND matches the registered authoritative benchmark evidence artifact on disk.
-    If no registered authoritative evidence artifact exists or the evidence does not match, returns False.
+    AND matches the registered authoritative benchmark evidence artifact on disk, including exact measured
+    and baseline metrics.
+    If no registered authoritative evidence artifact exists or evidence/metrics do not match, returns False.
     """
     if not isinstance(evidence, dict) or not evidence:
         return False
@@ -93,7 +101,17 @@ def resolve_heatzone_benchmark_evidence(
     if not isinstance(split, str) or not split.strip():
         return False
 
-    auth_path = authoritative_path or AUTHORITATIVE_EVIDENCE_PATH
+    if authoritative_path is not None:
+        if not allow_custom_path:
+            try:
+                if authoritative_path.resolve() != AUTHORITATIVE_EVIDENCE_PATH.resolve():
+                    return False
+            except Exception:
+                return False
+        auth_path = authoritative_path
+    else:
+        auth_path = AUTHORITATIVE_EVIDENCE_PATH
+
     if not auth_path.exists():
         return False
 
@@ -101,6 +119,7 @@ def resolve_heatzone_benchmark_evidence(
         content = json.loads(auth_path.read_text(encoding="utf-8"))
         if not isinstance(content, dict):
             return False
+
         for field in (
             "dataset_snapshot_hash",
             "model_artifact_hash",
@@ -109,6 +128,36 @@ def resolve_heatzone_benchmark_evidence(
         ):
             if evidence.get(field) != content.get(field):
                 return False
+
+        auth_ndcg = content.get("population_ranking_ndcg")
+        auth_survey = content.get("top_k_survey_rate")
+        auth_base_ndcg = content.get("baseline_population_ndcg")
+        auth_base_survey = content.get("baseline_survey_rate")
+
+        _validate_metric_value("authoritative population_ranking_ndcg", auth_ndcg)
+        _validate_metric_value("authoritative top_k_survey_rate", auth_survey)
+        _validate_metric_value("authoritative baseline_population_ndcg", auth_base_ndcg)
+        _validate_metric_value("authoritative baseline_survey_rate", auth_base_survey)
+
+        if auth_base_ndcg is None or auth_base_ndcg < CANONICAL_BASELINE_NDCG:
+            return False
+        if auth_base_survey is None or auth_base_survey < CANONICAL_BASELINE_SURVEY_RATE:
+            return False
+
+        if auth_ndcg is None or auth_ndcg <= auth_base_ndcg:
+            return False
+        if auth_survey is None or auth_survey <= auth_base_survey:
+            return False
+
+        if observed_ndcg is not None and observed_ndcg != auth_ndcg:
+            return False
+        if observed_survey_rate is not None and observed_survey_rate != auth_survey:
+            return False
+        if baseline_ndcg is not None and baseline_ndcg != auth_base_ndcg:
+            return False
+        if baseline_survey_rate is not None and baseline_survey_rate != auth_base_survey:
+            return False
+
         return True
     except Exception:
         return False
@@ -118,9 +167,22 @@ def _validate_benchmark_evidence(
     evidence: dict[str, Any] | None,
     *,
     authoritative_path: Path | None = None,
+    allow_custom_path: bool = False,
+    observed_ndcg: float | None = None,
+    observed_survey_rate: float | None = None,
+    baseline_ndcg: float | None = None,
+    baseline_survey_rate: float | None = None,
 ) -> bool:
-    """Validate presence, 64-hex format, and authoritative resolution of benchmark evidence."""
-    return resolve_heatzone_benchmark_evidence(evidence, authoritative_path=authoritative_path)
+    """Validate presence, 64-hex format, authoritative resolution, and metric binding of benchmark evidence."""
+    return resolve_heatzone_benchmark_evidence(
+        evidence,
+        authoritative_path=authoritative_path,
+        allow_custom_path=allow_custom_path,
+        observed_ndcg=observed_ndcg,
+        observed_survey_rate=observed_survey_rate,
+        baseline_ndcg=baseline_ndcg,
+        baseline_survey_rate=baseline_survey_rate,
+    )
 
 
 def evaluate_heatzone_benchmark(
@@ -129,10 +191,11 @@ def evaluate_heatzone_benchmark(
     *,
     population_ranking_ndcg: float | None = None,
     top_k_survey_rate: float | None = None,
-    baseline_population_ndcg: float = 0.50,
-    baseline_survey_rate: float = 0.30,
+    baseline_population_ndcg: float = CANONICAL_BASELINE_NDCG,
+    baseline_survey_rate: float = CANONICAL_BASELINE_SURVEY_RATE,
     benchmark_evidence: dict[str, Any] | None = None,
     authoritative_evidence_path: Path | None = None,
+    allow_custom_authority_path: bool = False,
 ) -> dict[str, Any]:
     """Evaluate HeatZone label inventory and benchmark performance criteria."""
     if (
@@ -156,6 +219,15 @@ def evaluate_heatzone_benchmark(
     _validate_metric_value("top_k_survey_rate", top_k_survey_rate)
     _validate_metric_value("baseline_population_ndcg", baseline_population_ndcg)
     _validate_metric_value("baseline_survey_rate", baseline_survey_rate)
+
+    if baseline_population_ndcg < CANONICAL_BASELINE_NDCG:
+        raise ValueError(
+            f"baseline_population_ndcg ({baseline_population_ndcg}) cannot be below canonical baseline ({CANONICAL_BASELINE_NDCG})"
+        )
+    if baseline_survey_rate < CANONICAL_BASELINE_SURVEY_RATE:
+        raise ValueError(
+            f"baseline_survey_rate ({baseline_survey_rate}) cannot be below canonical baseline ({CANONICAL_BASELINE_SURVEY_RATE})"
+        )
 
     contract = PRODUCTION_MODEL_CONTRACTS.get("heatzone")
     contract_reason = contract.unavailable_reason if contract else "DATA_CONTRACT_NOT_MATURE"
@@ -184,7 +256,13 @@ def evaluate_heatzone_benchmark(
     else:
         # Evaluate benchmark when sufficient real labels exist
         evidence_valid = _validate_benchmark_evidence(
-            benchmark_evidence, authoritative_path=authoritative_evidence_path
+            benchmark_evidence,
+            authoritative_path=authoritative_evidence_path,
+            allow_custom_path=allow_custom_authority_path,
+            observed_ndcg=population_ranking_ndcg,
+            observed_survey_rate=top_k_survey_rate,
+            baseline_ndcg=baseline_population_ndcg,
+            baseline_survey_rate=baseline_survey_rate,
         )
         ndcg_pass = (
             population_ranking_ndcg is not None
@@ -202,7 +280,7 @@ def evaluate_heatzone_benchmark(
             reason = (
                 f"Eligible labels ({eligible_labels}) >= {MINIMUM_REQUIRED_LABELS}, "
                 "but immutable measured benchmark evidence (64-hex snapshot/model/baseline hashes, "
-                "evaluation split) is unresolved against authoritative evidence."
+                "evaluation split, exact measured/baseline metrics) is unresolved against authoritative evidence."
             )
             benchmark_results = {
                 "evaluated": False,
@@ -274,8 +352,11 @@ def generate_gate1_receipt(
     eligible_labels: int | None = None,
     population_ranking_ndcg: float | None = None,
     top_k_survey_rate: float | None = None,
+    baseline_population_ndcg: float = CANONICAL_BASELINE_NDCG,
+    baseline_survey_rate: float = CANONICAL_BASELINE_SURVEY_RATE,
     benchmark_evidence: dict[str, Any] | None = None,
     authoritative_evidence_path: Path | None = None,
+    allow_custom_authority_path: bool = False,
 ) -> dict[str, Any]:
     """Build canonical Gate 1 benchmark receipt structure bound to inventory lineage."""
     if inventory_receipt is None:
@@ -321,8 +402,11 @@ def generate_gate1_receipt(
         eligible_labels=elg_cnt,
         population_ranking_ndcg=population_ranking_ndcg,
         top_k_survey_rate=top_k_survey_rate,
+        baseline_population_ndcg=baseline_population_ndcg,
+        baseline_survey_rate=baseline_survey_rate,
         benchmark_evidence=benchmark_evidence,
         authoritative_evidence_path=authoritative_evidence_path,
+        allow_custom_authority_path=allow_custom_authority_path,
     )
 
     receipt: dict[str, Any] = {
@@ -366,6 +450,7 @@ def validate_gate1_receipt(
     inventory_receipt: dict[str, Any] | None = None,
     *,
     authoritative_evidence_path: Path | None = None,
+    allow_custom_authority_path: bool = False,
 ) -> None:
     """Fail-closed validation of Gate 1 receipt schema, integrity, governance, and lineage."""
     if not isinstance(receipt, dict):
@@ -451,6 +536,27 @@ def validate_gate1_receipt(
     _validate_metric_value("benchmark_results.observed_survey_rate", obs_survey)
     _validate_metric_value("benchmark_results.baseline_survey_rate", base_survey)
 
+    if base_ndcg is not None and base_ndcg < CANONICAL_BASELINE_NDCG:
+        raise ValueError(
+            f"Gate 1 receipt baseline_ndcg ({base_ndcg}) cannot be below canonical baseline {CANONICAL_BASELINE_NDCG}"
+        )
+    if base_survey is not None and base_survey < CANONICAL_BASELINE_SURVEY_RATE:
+        raise ValueError(
+            f"Gate 1 receipt baseline_survey_rate ({base_survey}) cannot be below canonical baseline {CANONICAL_BASELINE_SURVEY_RATE}"
+        )
+
+    if authoritative_evidence_path is not None and not allow_custom_authority_path:
+        try:
+            if authoritative_evidence_path.resolve() != AUTHORITATIVE_EVIDENCE_PATH.resolve():
+                raise ValueError(
+                    f"Arbitrary authoritative_evidence_path ({authoritative_evidence_path}) is forbidden in production receipt validation; "
+                    f"must match {AUTHORITATIVE_EVIDENCE_PATH}"
+                )
+        except ValueError:
+            raise
+        except Exception as exc:
+            raise ValueError(f"Invalid authoritative_evidence_path ({authoritative_evidence_path}): {exc}") from exc
+
     if eligible_labels < MINIMUM_REQUIRED_LABELS:
         if verdict != "FAIL_CLOSED":
             raise ValueError(
@@ -479,13 +585,13 @@ def validate_gate1_receipt(
         if obs_survey is None or base_survey is None:
             raise ValueError("Verdict PASSED requires non-null observed_survey_rate and baseline_survey_rate")
 
-        if not (obs_ndcg > base_ndcg):
+        if not (obs_ndcg > base_ndcg and obs_ndcg > CANONICAL_BASELINE_NDCG):
             raise ValueError(
-                f"Verdict PASSED requires observed_ndcg ({obs_ndcg}) > baseline_ndcg ({base_ndcg})"
+                f"Verdict PASSED requires observed_ndcg ({obs_ndcg}) > baseline_ndcg ({base_ndcg}) and >= {CANONICAL_BASELINE_NDCG}"
             )
-        if not (obs_survey > base_survey):
+        if not (obs_survey > base_survey and obs_survey > CANONICAL_BASELINE_SURVEY_RATE):
             raise ValueError(
-                f"Verdict PASSED requires observed_survey_rate ({obs_survey}) > baseline_survey_rate ({base_survey})"
+                f"Verdict PASSED requires observed_survey_rate ({obs_survey}) > baseline_survey_rate ({base_survey}) and >= {CANONICAL_BASELINE_SURVEY_RATE}"
             )
 
         if benchmark_results.get("population_ranking_outperformed") is not True:
@@ -495,12 +601,18 @@ def validate_gate1_receipt(
 
         benchmark_evidence = receipt.get("benchmark_evidence")
         if not _validate_benchmark_evidence(
-            benchmark_evidence, authoritative_path=authoritative_evidence_path
+            benchmark_evidence,
+            authoritative_path=authoritative_evidence_path,
+            allow_custom_path=allow_custom_authority_path,
+            observed_ndcg=obs_ndcg,
+            observed_survey_rate=obs_survey,
+            baseline_ndcg=base_ndcg,
+            baseline_survey_rate=base_survey,
         ):
             raise ValueError(
                 "Verdict PASSED requires valid immutable benchmark_evidence containing valid 64-hex "
-                "dataset_snapshot_hash, model_artifact_hash, evaluation_split, and governed_baseline_hash "
-                "resolved against registered authoritative evidence"
+                "dataset_snapshot_hash, model_artifact_hash, evaluation_split, governed_baseline_hash, "
+                "and exact measured/baseline metrics bound to registered authoritative evidence"
             )
     elif verdict == "FAIL_CLOSED":
         if governed_disabled is not True:
@@ -509,6 +621,7 @@ def validate_gate1_receipt(
             raise ValueError("Verdict FAIL_CLOSED requires a non-empty unavailable_reason")
     else:
         raise ValueError(f"Invalid receipt verdict={verdict!r}")
+
 
     # 6. Lineage cross-validation against canonical inventory receipt (FAIL CLOSED IF UNLOADABLE)
     if inventory_receipt is None:
