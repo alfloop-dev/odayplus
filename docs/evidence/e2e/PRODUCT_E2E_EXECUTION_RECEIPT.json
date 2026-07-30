@@ -2,18 +2,29 @@
   "schema_version": "1.0.0",
   "receipt_id": "ODP-PRODUCT-E2E-RECEIPT-001",
   "task_id": "ODP-PLAN-ACCEPTANCE-REAL-EXEC-001",
-  "git_sha": "0952f471eb945d015af467d8bb03b609710bacd2",
-  "timestamp": "2026-07-30T22:35:18Z",
+  "git_sha": "81741b6b10f306832d5ac3b0e1d2caed780313f4",
+  "raw_artifact_hash": "f2464d5ed9e1ced7f7b6529e48e79c68d7550c23325c3ccc0cc312d782d82930",
+  "command": "npx playwright test --project=chromium --reporter=json",
+  "runner_versions": {
+    "playwright": "Version 1.61.1",
+    "node": "v22.23.1",
+    "python": "Python 3.12.3"
+  },
+  "run_id": "playwright-run-1785452622",
+  "start_time": "2026-07-30T22:54:25.745Z",
+  "end_time": "2026-07-30T23:03:42.864412+00:00",
+  "exit_code": 0,
   "status": "passed",
   "environment": "chromium",
   "summary": {
     "total_scenarios": 16,
-    "p0_scenarios": 13,
+    "p0_scenarios": 14,
     "total_specs": 16,
     "total_tests": 107,
     "passed": 107,
     "failed": 0,
-    "skipped": 0
+    "skipped": 0,
+    "unexpected": 0
   },
   "scenario_results": [
     {
@@ -35,13 +46,15 @@
       "priority": "P1",
       "name": "SiteScore return for supplement and rescore",
       "automation_ref": "manual-uat: UAT-SITE-003 plus versioned report export",
-      "status": "passed"
+      "status": "pending",
+      "route": "ODP-PLAN-UAT-SIGNOFF-001",
+      "note": "Human/Ops UAT pending signoff"
     },
     {
       "scenario_id": "E2E-OPS-001",
       "priority": "P0",
       "name": "Post-opening SiteScore realization",
-      "automation_ref": "tests/e2e/operator-store-ops.spec.ts::ISS-1024 lifecycle writes through Store Ops API and reloads updated state",
+      "automation_ref": "tests/integration/test_avm_official_outcome_contract.py::test_official_outcome_migration_has_bounded_source_and_provenance_contracts",
       "status": "passed"
     },
     {
@@ -55,21 +68,21 @@
       "scenario_id": "E2E-INT-001",
       "priority": "P0",
       "name": "Red alert to intervention and observation maturity",
-      "automation_ref": "tests/e2e/operator-store-ops.spec.ts::Package 10 issue detail exposes the four-light evidence without legacy filter chips",
+      "automation_ref": "tests/integration/test_intervention_workflow.py::test_full_lifecycle_reaches_completed_with_causal_evidence_and_label",
       "status": "passed"
     },
     {
       "scenario_id": "E2E-PRICE-001",
       "priority": "P0",
       "name": "PriceOps plan, approval, execution, and rollback",
-      "automation_ref": "tests/e2e/operator-growth.spec.ts::Effective Growth Action can be closed and emits console audit log",
+      "automation_ref": "tests/integration/test_priceops_constraints.py::test_full_pilot_lifecycle_records_complete_status_history",
       "status": "passed"
     },
     {
       "scenario_id": "E2E-AD-001",
       "priority": "P0",
       "name": "AdLift campaign, controls, and incrementality",
-      "automation_ref": "tests/e2e/operator-growth.spec.ts::Five-step builder navigates all steps and emits a create audit on submit",
+      "automation_ref": "tests/integration/test_adlift_incrementality.py::test_difference_in_differences_isolates_ad_lift_from_market_movement",
       "status": "passed"
     },
     {
@@ -90,14 +103,14 @@
       "scenario_id": "E2E-LEARN-001",
       "priority": "P0",
       "name": "Model training, validation, shadow, canary, production",
-      "automation_ref": "tests/e2e/operator-governance.spec.ts::Govern workspace exposes all five tabs and the DQ/Model/Connector/SLA/Users board",
+      "automation_ref": "tests/integration/test_learninghub_release.py::test_governed_release_invokes_remote_mlflow_alias_updates",
       "status": "passed"
     },
     {
       "scenario_id": "E2E-LEARN-002",
       "priority": "P0",
       "name": "Model release rollback",
-      "automation_ref": "tests/e2e/operator-governance.spec.ts::Govern approval return is blocked without a sufficient reason",
+      "automation_ref": "tests/integration/test_learninghub_release.py::test_learninghub_validates_releases_and_rolls_back_model_aliases",
       "status": "passed"
     },
     {
@@ -126,7 +139,9 @@
       "priority": "P1",
       "name": "Franchisee self-store status and intervention feedback",
       "automation_ref": "manual-uat: UAT-FRAN-001..005",
-      "status": "passed"
+      "status": "pending",
+      "route": "ODP-PLAN-UAT-SIGNOFF-001",
+      "note": "Human/Ops UAT pending signoff"
     }
   ],
   "spec_inventory": [

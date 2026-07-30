@@ -46,6 +46,7 @@ set +e
 ODP_API_BASE_URL="http://127.0.0.1:${API_PORT}" \
 OPSBOARD_PORT="$WEB_PORT" \
 ODP_PLAYWRIGHT_REUSE_EXISTING=1 \
+PLAYWRIGHT_JSON_OUTPUT_NAME="docs/evidence/e2e/raw_playwright_results.json" \
 npx playwright test \
   tests/e2e/e2e-network-find-areas-api-binding.spec.ts \
   tests/e2e/e2e-operator-console.spec.ts \
@@ -65,9 +66,12 @@ npx playwright test \
   tests/e2e/shell-resource-binding.spec.ts \
   --workers=1 \
   --retries=0 \
-  --project=chromium
+  --project=chromium \
+  --reporter=json
 test_status=$?
 set -e
+
+python3 scripts/e2e/generate_product_e2e_receipt.py
 
 "${COMPOSE[@]}" ps >"${DIAGNOSTICS_DIR}/compose-ps.txt"
 "${COMPOSE[@]}" logs --no-color --tail=200 >"${DIAGNOSTICS_DIR}/compose-tail.log"

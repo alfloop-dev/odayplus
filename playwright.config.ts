@@ -47,7 +47,7 @@ export default defineConfig({
   ],
   webServer: [
     {
-      command: `uv run python -m uvicorn apps.api.oday_api.main:app --host 127.0.0.1 --port ${API_PORT}`,
+      command: `.venv/bin/python -m uvicorn apps.api.oday_api.main:app --host 127.0.0.1 --port ${API_PORT}`,
       url: `${API_BASE_URL}/platform/health`,
       timeout: 120_000,
       reuseExistingServer: REUSE_EXISTING_SERVER,
