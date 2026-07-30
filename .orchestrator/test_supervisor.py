@@ -6220,7 +6220,7 @@ class PollWorkersRecoveryTests(unittest.TestCase):
         status = {
             "tasks": [
                 {"id": "FB-003", "status": "todo", "owner": "Copilot", "reviewer": "Codex", "depends_on": []},
-                {"id": "EX-001", "status": "review_approved", "owner": "Copilot", "reviewer": "Claude", "depends_on": []},
+                {"id": "EX-001", "status": "review_approved", "approved_head": "1111111122222222333333334444444455555555", "owner": "Copilot", "reviewer": "Claude", "depends_on": []},
             ]
         }
 
@@ -6233,6 +6233,8 @@ class PollWorkersRecoveryTests(unittest.TestCase):
             mock.patch.object(supervisor, "terminate_worker_pid") as terminate_worker_pid,
             mock.patch.object(supervisor, "detect_worker_failure", return_value=None),
             mock.patch.object(supervisor, "write_activity_log") as write_activity_log,
+            mock.patch("ai_status.resolve_task_sha", return_value="1111111122222222333333334444444455555555"),
+            mock.patch("ai_status.task_pr_ci_status", return_value=("OPEN", "success")),
         ):
             changed = supervisor.poll_workers(config, state)
 
@@ -8977,6 +8979,61 @@ class ReviewHeadFreezeTests(unittest.TestCase):
             ai_status.main(["ai_status.py", "re-review", "FREEZE-TEST-008", "Alias re-review check"])
             self.assertEqual(task["status"], "review")
             self.assertNotIn("approved_head", task)
+
+    def test_higher_priority_ready_task_exists_refuses_undispatchable_finalize_task(self) -> None:
+        """B24: higher_priority_ready_task_exists must fail closed on undispatchable finalize tasks.
+
+        A review_approved task with missing approved_head, head mismatch, or pending CI
+        cannot be dispatched by dispatch_ready_tasks. It MUST NOT cause
+        higher_priority_ready_task_exists to return True and terminate running workers.
+        """
+        approved_head = "1111111122222222333333334444444455555555"
+        config = self._build_freeze_test_config()
+        config["ready_dispatcher"]["max_tasks_per_agent_by_agent"]["Antigravity4"] = 1
+        config["ready_dispatcher"]["max_concurrent_per_quota_group"]["antigravity4"] = 1
+
+        worker = {
+            "run_id": "run-001",
+            "task_id": "INPROG-001",
+            "agent_id": "antigravity4",
+            "status": "running",
+            "request_snapshot": {"reason": supervisor.REASON_OWNED_IN_PROGRESS},
+        }
+
+        task_map = {
+            "INPROG-001": {
+                "id": "INPROG-001",
+                "owner": "Antigravity4",
+                "reviewer": "Claude",
+                "status": "in_progress",
+            },
+            "FINAL-001": {
+                "id": "FINAL-001",
+                "owner": "Antigravity4",
+                "reviewer": "Claude",
+                "status": "review_approved",
+            },
+        }
+
+        # No approved_head -> must return False (does not preempt)
+        self.assertFalse(supervisor.higher_priority_ready_task_exists(config, worker, task_map))
+
+        # Head mismatch -> must return False
+        task_map["FINAL-001"]["approved_head"] = approved_head
+        with unittest.mock.patch("ai_status.resolve_task_sha", return_value="9999999922222222333333334444444455555555"), \
+             unittest.mock.patch("ai_status.task_pr_ci_status", return_value=("OPEN", "success")):
+            self.assertFalse(supervisor.higher_priority_ready_task_exists(config, worker, task_map))
+
+        # CI pending -> must return False
+        with unittest.mock.patch("ai_status.resolve_task_sha", return_value=approved_head), \
+             unittest.mock.patch("ai_status.task_pr_ci_status", return_value=("OPEN", "pending")):
+            self.assertFalse(supervisor.higher_priority_ready_task_exists(config, worker, task_map))
+
+        # Positive control: matching head + green CI -> returns True (preempts)
+        with unittest.mock.patch("ai_status.resolve_task_sha", return_value=approved_head), \
+             unittest.mock.patch("ai_status.task_pr_ci_status", return_value=("OPEN", "success")), \
+             unittest.mock.patch("supervisor.agent_dispatch_capacity", return_value=1):
+            self.assertTrue(supervisor.higher_priority_ready_task_exists(config, worker, task_map))
 
     def test_supervisor_suppresses_finalize_dispatch_on_pending_ci(self) -> None:
         config = self._build_freeze_test_config()

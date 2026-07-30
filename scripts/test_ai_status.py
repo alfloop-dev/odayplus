@@ -184,6 +184,44 @@ class ReviewApprovedWorkflowTests(unittest.TestCase):
         self.assertEqual(pending[0]["from"], "Claude")
         self.assertEqual(pending[0]["to"], "Codex")
 
+    def test_restore_approved_refuses_when_reviewer_reopened(self) -> None:
+        """B23: restore_approved must refuse when the downgrade was a reviewer rejection."""
+        self.state["tasks"][0]["status"] = "review"
+        with mock.patch.dict(os.environ, {"AI_NAME": "Claude"}, clear=False), \
+             mock.patch.object(ai_status, "resolve_task_sha", return_value="1111111122222222333333334444444455555555"):
+            ai_status.command_approve(self.state, ["REG-002", "Approve first"])
+
+        task = ai_status.get_task(self.state, "REG-002")
+        self.assertEqual(task["status"], "review_approved")
+        self.assertEqual(task["last_approved_head"], "1111111122222222333333334444444455555555")
+
+        with mock.patch.dict(os.environ, {"AI_NAME": "Claude"}, clear=False):
+            ai_status.command_reopen(self.state, ["REG-002", "Please address changes"])
+
+        self.assertEqual(task["status"], "in_progress")
+        self.assertEqual(task["last_approved_head"], "1111111122222222333333334444444455555555")
+
+        task["review_notes_zh"] = ["prior note"]
+        with mock.patch.dict(os.environ, {"AI_NAME": "Codex"}, clear=False), \
+             mock.patch.object(ai_status, "resolve_task_sha", return_value="1111111122222222333333334444444455555555"):
+            with self.assertRaises(SystemExit) as cm:
+                ai_status.command_restore_approved(self.state, ["REG-002", "Attempt restore"])
+            self.assertIn("reopened by the reviewer", str(cm.exception))
+
+    def test_restore_approved_head_emits_status_check(self) -> None:
+        """N3: restore_approved_head must trigger status check emission."""
+        state_before = {
+            "tasks": [{"id": "REG-002", "status": "review_approved", "owner": "Codex", "reviewer": "Claude"}]
+        }
+        state_after = {
+            "tasks": [{"id": "REG-002", "status": "review_approved", "approved_head": "1111111122222222333333334444444455555555", "owner": "Codex", "reviewer": "Claude"}]
+        }
+        with mock.patch.object(ai_status, "emit_task_review_status_check") as mock_emit:
+            ai_status.emit_status_checks_for_changed_tasks(
+                state_before, state_after, "restore_approved_head", ["REG-002", "1111111122222222333333334444444455555555", "restore"]
+            )
+            mock_emit.assert_called_once()
+
     def test_normalize_handoffs_adds_finalize_handoff_for_approved_task(self) -> None:
         self.state["tasks"][0]["status"] = "review_approved"
         self.state["handoffs"] = []

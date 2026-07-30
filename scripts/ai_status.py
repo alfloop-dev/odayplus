@@ -4203,6 +4203,7 @@ def command_reopen(state: dict[str, Any], args: list[str]) -> None:
     task["next"] = message
     task.pop("waiting_for", None)
     task.pop("approved_head", None)
+    task["last_reopened_by"] = actor
     mark_blockers_resolved(state, task_id)
     mark_handoffs_done(state, task_id)
     if actor == reviewer and owner and owner != reviewer:
@@ -4562,6 +4563,21 @@ def command_restore_approved(state: dict[str, Any], args: list[str]) -> None:
             f"unreviewed commit. Run `re_review {task_id} <reason>` so the reviewer re-stamps "
             "the head. No restore was recorded."
         )
+    reviewer = canonical_agent_name(task.get("reviewer"))
+    last_reopened_by = canonical_agent_name(task.get("last_reopened_by"))
+    pending_handoffs = state.get("handoffs", [])
+    has_pending_reviewer_handoff = any(
+        str(h.get("task_id") or "").upper() == str(task_id).upper()
+        and h.get("status") == "pending"
+        and canonical_agent_name(h.get("from")) == reviewer
+        for h in pending_handoffs
+    )
+    if has_pending_reviewer_handoff or (last_reopened_by and last_reopened_by == reviewer):
+        raise SystemExit(
+            f"Cannot restore {task_id}: the task was reopened by the reviewer ({reviewer}). "
+            "Reviewer rejections cannot be restored by the owner; run `re_review` so the "
+            "reviewer can re-examine the work. No restore was recorded."
+        )
     try:
         current_sha = resolve_task_sha(task_id)
     except Exception as exc:
@@ -4587,6 +4603,7 @@ def command_restore_approved(state: dict[str, Any], args: list[str]) -> None:
     task["status"] = "review_approved"
     task["last_update"] = timestamp
     task["next"] = message
+    task.pop("last_reopened_by", None)
     task["approved_head"] = last_approved_head
     append_log(
         {
@@ -4862,6 +4879,7 @@ def command_approve(state: dict[str, Any], args: list[str]) -> None:
     task["last_update"] = timestamp
     task["next"] = message
     task.pop("waiting_for", None)
+    task.pop("last_reopened_by", None)
     task["approved_head"] = approved_sha
     # B21: `approved_head` is the *live* freeze and every return-to-review pops it.
     # `last_approved_head` is the durable record of the last commit a reviewer
@@ -5228,7 +5246,25 @@ def emit_status_checks_for_changed_tasks(state_before: dict[str, Any], state_aft
     before_statuses = {t["id"]: t for t in state_before.get("tasks", []) if "id" in t}
     after_tasks = {t["id"]: t for t in state_after.get("tasks", []) if "id" in t}
 
-    target_task_id = args[0] if (args and command in {"approve", "reopen", "handoff", "progress", "start", "re_review", "re-review"}) else None
+    target_task_id = (
+        args[0]
+        if (
+            args
+            and command
+            in {
+                "approve",
+                "reopen",
+                "handoff",
+                "progress",
+                "start",
+                "re_review",
+                "re-review",
+                "restore_approved",
+                "restore_approved_head",
+            }
+        )
+        else None
+    )
 
     for task_id, after_task in after_tasks.items():
         before_task = before_statuses.get(task_id)

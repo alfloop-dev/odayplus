@@ -8701,7 +8701,6 @@ def higher_priority_ready_task_exists(
     settings = ready_dispatch_settings(config)
     active_statuses = {str(value) for value in settings.get("active_worker_statuses", [])}
     review_statuses = normalized_status_set(settings.get("review_statuses"), ["review"])
-    finalize_statuses = normalized_status_set(settings.get("finalize_statuses"), ["review_approved"])
     dependency_done_statuses = normalized_status_set(settings.get("dependency_done_statuses"), ["done"])
     schema = config.get("schema", {})
     owner_field = schema.get("assignee_field", "owner")
@@ -8729,20 +8728,14 @@ def higher_priority_ready_task_exists(
             ):
                 continue
             candidate_priority = 0
-        elif task_status in finalize_statuses and task.get(owner_field) == agent_name:
-            candidate_priority = 1
-        elif (
-            task_status == "in_progress"
-            and task.get(owner_field) == agent_name
-            and dependencies_satisfied(task, task_map, dependency_done_statuses)
-        ):
-            candidate_priority = 2
-        elif (
-            task_status == "todo"
-            and task.get(owner_field) == agent_name
-            and dependencies_satisfied(task, task_map, dependency_done_statuses)
-        ):
-            candidate_priority = 3
+        else:
+            candidate_priority = dispatch_priority_for_task(
+                config,
+                task,
+                agent_name,
+                task_map=task_map,
+                dependencies_done_statuses=dependency_done_statuses,
+            )
 
         if candidate_priority is not None and candidate_priority < current_priority:
             if (
