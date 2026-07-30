@@ -1,0 +1,81 @@
+{
+  "benchmark_summary": {
+    "activation_threshold": 200,
+    "calibration_summary": {
+      "m12_interval_mae": 0.0,
+      "m1_interval_mae": 0.0,
+      "m3_interval_mae": 0.0,
+      "m6_interval_mae": 0.0,
+      "mean_realized_revenue": 1.0,
+      "p80_coverage_ratio": 0.0
+    },
+    "eligible_count": 0,
+    "handback_payload": {
+      "activation_threshold": 200,
+      "eligible_count": 0,
+      "governed_disabled": true,
+      "handback_action": "Provide >= 200 mature opening outcome labels with complete M6 (180d) and M12 (365d) post-opening transaction history.",
+      "handback_required": true,
+      "m12_coverage_ratio": 0.0,
+      "m6_coverage_ratio": 0.0,
+      "mature_label_count": 0,
+      "missing_labels_delta": 200,
+      "normalized_mae": 0.0,
+      "observed_count": 0,
+      "p80_coverage": 0.0,
+      "reason_code": "MATURE_LABELS_BELOW_THRESHOLD",
+      "reasons": [
+        "Mature label count (0) is below threshold (200)",
+        "M6 horizon coverage (0.0%) is below threshold (70.0%)",
+        "M12 horizon coverage (0.0%) is below threshold (70.0%)",
+        "P80 coverage (0.0%) is below threshold (70.0%)"
+      ]
+    },
+    "is_gate2_passed": false,
+    "m12_coverage_ratio": 0.0,
+    "m6_coverage_ratio": 0.0,
+    "mature_label_count": 0,
+    "max_mae_threshold": 0.25,
+    "min_coverage_threshold": 0.7,
+    "normalized_mae": 0.0,
+    "observed_count": 0,
+    "p80_coverage": 0.0,
+    "reason_code": "MATURE_LABELS_BELOW_THRESHOLD",
+    "segment_metrics": [],
+    "status": "GOVERNED_DISABLED"
+  },
+  "gate": "GATE_2",
+  "gate_status": "REJECTED_GOVERNED_DISABLED",
+  "handback": {
+    "activation_threshold": 200,
+    "eligible_count": 0,
+    "governed_disabled": true,
+    "handback_action": "Provide >= 200 mature opening outcome labels with complete M6 (180d) and M12 (365d) post-opening transaction history.",
+    "handback_required": true,
+    "m12_coverage_ratio": 0.0,
+    "m6_coverage_ratio": 0.0,
+    "mature_label_count": 0,
+    "missing_labels_delta": 200,
+    "normalized_mae": 0.0,
+    "observed_count": 0,
+    "p80_coverage": 0.0,
+    "reason_code": "MATURE_LABELS_BELOW_THRESHOLD",
+    "reasons": [
+      "Mature label count (0) is below threshold (200)",
+      "M6 horizon coverage (0.0%) is below threshold (70.0%)",
+      "M12 horizon coverage (0.0%) is below threshold (70.0%)",
+      "P80 coverage (0.0%) is below threshold (70.0%)"
+    ]
+  },
+  "integrity": {
+    "content_sha256": "dc4dafe85f03a76fee9e11b41d92505b23ed5d01494c1a6518444ab1205a7de6"
+  },
+  "inventory_version": "candidate-site-view-v2",
+  "is_governed_disabled": true,
+  "kind": "sitescore-opening-outcome-gate2-receipt",
+  "model_name": "sitescore_propensity",
+  "observed_at": "2026-07-30T17:02:04.211760Z",
+  "schema_version": 1,
+  "service": "sitescore",
+  "source_contract": "model_ready.candidate_site_view@candidate-site-view-v2"
+}
