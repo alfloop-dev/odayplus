@@ -98,8 +98,11 @@ jobs:
       - name: Run Python SAST Scan
         run: python3 scripts/security/sast_scan.py
 
-      - name: Generate SBOM
-        run: python3 scripts/security/generate_sbom.py
+      - name: Install locked project dependencies
+        run: uv sync --frozen
+
+      - name: Generate SBOM and Check Policy
+        run: uv run --frozen python3 scripts/security/generate_sbom.py --image-digest "sha256:${ODAY_RELEASE_SHA}" --release-digest "sha256:${ODAY_RELEASE_SHA}" --check-policy --update-notices
 
       - name: Validate release authority, WIF, and live runtime
         run: |

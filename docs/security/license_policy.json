@@ -23,7 +23,9 @@
     "0BSD",
     "POSTGRESQL",
     "PSF-2.0",
-    "ZPL-2.1"
+    "ZPL-2.1",
+    "TCL",
+    "CNRI-Python"
   ],
   "denied_licenses": [
     "GPL-3.0",

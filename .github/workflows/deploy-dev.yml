@@ -111,14 +111,11 @@ jobs:
       - name: Run Python SAST Scan
         run: python3 scripts/security/sast_scan.py
 
-      - name: Generate SBOM
-        run: python3 scripts/security/generate_sbom.py
-
-      # The preflight's repository capability checks import the real provider
-      # registry (httpx and friends), so the locked project environment must
-      # exist before it runs. `--frozen` keeps the resolution pinned to uv.lock.
       - name: Install locked project dependencies
         run: uv sync --frozen
+
+      - name: Generate SBOM and Check Policy
+        run: uv run --frozen python3 scripts/security/generate_sbom.py --image-digest "sha256:${ODAY_RELEASE_SHA}" --release-digest "sha256:${ODAY_RELEASE_SHA}" --check-policy --update-notices
 
       - name: Validate WIF authentication and live runtime preflight
         run: |

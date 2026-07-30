@@ -13,9 +13,14 @@ ROOT = Path(__file__).resolve().parents[2]
 
 def main() -> int:
     print("Starting Python SAST scan...")
-    if shutil.which("uv"):
+    venv_bin = str(ROOT / ".venv/bin")
+    search_path = f"{venv_bin}:/home/lupin/.local/bin:/home/lupin/.cargo/bin:/usr/local/bin"
+    uv_path = shutil.which("uv") or shutil.which("uv", path=search_path)
+    bandit_path = shutil.which("bandit") or shutil.which("bandit", path=search_path)
+
+    if uv_path:
         cmd = [
-            "uv",
+            uv_path,
             "run",
             "--with",
             "bandit",
@@ -31,9 +36,9 @@ def main() -> int:
             "--skip",
             "B301,B310,B324,B104",
         ]
-    elif shutil.which("bandit"):
+    elif bandit_path:
         cmd = [
-            "bandit",
+            bandit_path,
             "-r",
             "modules",
             "apps",
@@ -46,8 +51,8 @@ def main() -> int:
             "B301,B310,B324,B104",
         ]
     else:
-        print("Warning: Neither 'uv' nor 'bandit' executable found in PATH. SAST scan skipped.")
-        return 0
+        print("Error: Neither 'uv' nor 'bandit' executable found in PATH. SAST scan failed.", file=sys.stderr)
+        return 1
 
     result = subprocess.run(cmd, cwd=ROOT, capture_output=True, text=True)
     print(result.stdout)

@@ -1,7 +1,6 @@
 # THIRD PARTY NOTICES
 
 This file contains notice and license information for open-source and third-party software components included in Oday Plus.
-Generated on: 2026-07-30 17:07:26 UTC
 Total cataloged components: 787
 
 ---
@@ -11,10 +10,10 @@ Total cataloged components: 787
 - **PURL**: `pkg:generic/oday-plus@0.1.0`
 - **License**: MIT
 
-## apps/web (v0.1.0)
+## @oday-plus/web (v0.1.0)
 - **Supplier**: npm
-- **PURL**: `pkg:npm/apps/web@0.1.0`
-- **License**: MIT
+- **PURL**: `pkg:npm/%40oday-plus/web@0.1.0`
+- **License**: UNKNOWN
 
 ## apps/web/@types/node (v20.14.10)
 - **Supplier**: npm
@@ -244,7 +243,7 @@ Total cataloged components: 787
 ## @img/sharp-wasm32 (v0.35.3)
 - **Supplier**: npm
 - **PURL**: `pkg:npm/%40img/sharp-wasm32@0.35.3`
-- **License**: MIT
+- **License**: Apache-2.0 AND LGPL-3.0-or-later AND MIT
 
 ## @img/sharp-webcontainers-wasm32 (v0.35.3)
 - **Supplier**: npm
@@ -254,17 +253,17 @@ Total cataloged components: 787
 ## @img/sharp-win32-arm64 (v0.35.3)
 - **Supplier**: npm
 - **PURL**: `pkg:npm/%40img/sharp-win32-arm64@0.35.3`
-- **License**: MIT
+- **License**: Apache-2.0 AND LGPL-3.0-or-later
 
 ## @img/sharp-win32-ia32 (v0.35.3)
 - **Supplier**: npm
 - **PURL**: `pkg:npm/%40img/sharp-win32-ia32@0.35.3`
-- **License**: MIT
+- **License**: Apache-2.0 AND LGPL-3.0-or-later
 
 ## @img/sharp-win32-x64 (v0.35.3)
 - **Supplier**: npm
 - **PURL**: `pkg:npm/%40img/sharp-win32-x64@0.35.3`
-- **License**: MIT
+- **License**: Apache-2.0 AND LGPL-3.0-or-later
 
 ## @jridgewell/sourcemap-codec (v1.5.5)
 - **Supplier**: npm
@@ -369,7 +368,7 @@ Total cataloged components: 787
 ## @maplibre/mlt (v1.1.12)
 - **Supplier**: npm
 - **PURL**: `pkg:npm/%40maplibre/mlt@1.1.12`
-- **License**: MIT
+- **License**: (MIT OR Apache-2.0)
 
 ## @maplibre/vt-pbf (v4.3.2)
 - **Supplier**: npm
@@ -2589,7 +2588,7 @@ Total cataloged components: 787
 ## type-fest (v0.20.2)
 - **Supplier**: npm
 - **PURL**: `pkg:npm/type-fest@0.20.2`
-- **License**: MIT
+- **License**: (MIT OR CC0-1.0)
 
 ## typed-array-buffer (v1.0.3)
 - **Supplier**: npm
@@ -2706,40 +2705,40 @@ Total cataloged components: 787
 - **PURL**: `pkg:npm/yocto-queue@0.1.0`
 - **License**: MIT
 
-## packages/design-tokens (v0.1.0)
+## @oday-plus/design-tokens (v0.1.0)
 - **Supplier**: npm
-- **PURL**: `pkg:npm/packages/design-tokens@0.1.0`
-- **License**: MIT
+- **PURL**: `pkg:npm/%40oday-plus/design-tokens@0.1.0`
+- **License**: UNKNOWN
 
-## packages/domain-types (v0.1.0)
+## @oday-plus/domain-types (v0.1.0)
 - **Supplier**: npm
-- **PURL**: `pkg:npm/packages/domain-types@0.1.0`
-- **License**: MIT
+- **PURL**: `pkg:npm/%40oday-plus/domain-types@0.1.0`
+- **License**: UNKNOWN
 
-## packages/openapi-client (v0.1.0)
+## @oday-plus/openapi-client (v0.1.0)
 - **Supplier**: npm
-- **PURL**: `pkg:npm/packages/openapi-client@0.1.0`
-- **License**: MIT
+- **PURL**: `pkg:npm/%40oday-plus/openapi-client@0.1.0`
+- **License**: UNKNOWN
 
-## packages/schemas (v0.1.0)
+## @oday-plus/schemas (v0.1.0)
 - **Supplier**: npm
-- **PURL**: `pkg:npm/packages/schemas@0.1.0`
-- **License**: MIT
+- **PURL**: `pkg:npm/%40oday-plus/schemas@0.1.0`
+- **License**: UNKNOWN
 
-## packages/testkit (v0.1.0)
+## @oday-plus/testkit (v0.1.0)
 - **Supplier**: npm
-- **PURL**: `pkg:npm/packages/testkit@0.1.0`
-- **License**: MIT
+- **PURL**: `pkg:npm/%40oday-plus/testkit@0.1.0`
+- **License**: UNKNOWN
 
-## packages/ui (v0.1.0)
+## @oday-plus/ui (v0.1.0)
 - **Supplier**: npm
-- **PURL**: `pkg:npm/packages/ui@0.1.0`
-- **License**: MIT
+- **PURL**: `pkg:npm/%40oday-plus/ui@0.1.0`
+- **License**: UNKNOWN
 
-## packages/ui-domain (v0.1.0)
+## @oday-plus/ui-domain (v0.1.0)
 - **Supplier**: npm
-- **PURL**: `pkg:npm/packages/ui-domain@0.1.0`
-- **License**: MIT
+- **PURL**: `pkg:npm/%40oday-plus/ui-domain@0.1.0`
+- **License**: UNKNOWN
 
 ## about-time (v4.2.1)
 - **Supplier**: pypi
@@ -2759,12 +2758,12 @@ Total cataloged components: 787
 ## aiohappyeyeballs (v2.7.1)
 - **Supplier**: pypi
 - **PURL**: `pkg:pypi/aiohappyeyeballs@2.7.1`
-- **License**: Apache-2.0
+- **License**: PSF-2.0
 
 ## aiohttp (v3.14.3)
 - **Supplier**: pypi
 - **PURL**: `pkg:pypi/aiohttp@3.14.3`
-- **License**: Apache-2.0
+- **License**: Apache-2.0 AND MIT
 
 ## aiosignal (v1.4.0)
 - **Supplier**: pypi
@@ -2839,7 +2838,7 @@ Total cataloged components: 787
 ## catboost (v1.2.10)
 - **Supplier**: pypi
 - **PURL**: `pkg:pypi/catboost@1.2.10`
-- **License**: MIT
+- **License**: Apache-2.0
 
 ## certifi (v2026.6.17)
 - **Supplier**: pypi
@@ -2904,7 +2903,7 @@ Total cataloged components: 787
 ## cryptography (v48.0.1)
 - **Supplier**: pypi
 - **PURL**: `pkg:pypi/cryptography@48.0.1`
-- **License**: MIT
+- **License**: Apache-2.0 OR BSD-3-Clause
 
 ## cvxpy (v1.9.2)
 - **Supplier**: pypi
@@ -2949,12 +2948,12 @@ Total cataloged components: 787
 ## deprecation (v2.1.0)
 - **Supplier**: pypi
 - **PURL**: `pkg:pypi/deprecation@2.1.0`
-- **License**: MIT
+- **License**: Apache-2.0
 
 ## distro (v1.9.0)
 - **Supplier**: pypi
 - **PURL**: `pkg:pypi/distro@1.9.0`
-- **License**: MIT
+- **License**: Apache-2.0
 
 ## dlt (v1.29.1)
 - **Supplier**: pypi
@@ -3054,7 +3053,7 @@ Total cataloged components: 787
 ## giturlparse (v0.15.0)
 - **Supplier**: pypi
 - **PURL**: `pkg:pypi/giturlparse@0.15.0`
-- **License**: MIT
+- **License**: Apache-2.0
 
 ## google-api-core (v2.33.0)
 - **Supplier**: pypi
@@ -3124,7 +3123,7 @@ Total cataloged components: 787
 ## greenlet (v3.5.3)
 - **Supplier**: pypi
 - **PURL**: `pkg:pypi/greenlet@3.5.3`
-- **License**: MIT
+- **License**: MIT AND PSF-2.0
 
 ## grpcio (v1.83.0)
 - **Supplier**: pypi
@@ -3334,7 +3333,7 @@ Total cataloged components: 787
 ## mlforecast (v1.1.0)
 - **Supplier**: pypi
 - **PURL**: `pkg:pypi/mlforecast@1.1.0`
-- **License**: MIT
+- **License**: Apache-2.0
 
 ## moocore (v0.3.2)
 - **Supplier**: pypi
@@ -3369,12 +3368,12 @@ Total cataloged components: 787
 ## nltk (v3.10.0)
 - **Supplier**: pypi
 - **PURL**: `pkg:pypi/nltk@3.10.0`
-- **License**: MIT
+- **License**: Apache-2.0
 
 ## numpy (v2.5.1)
 - **Supplier**: pypi
 - **PURL**: `pkg:pypi/numpy@2.5.1`
-- **License**: MIT
+- **License**: BSD-3-Clause AND 0BSD AND MIT AND Zlib AND CC0-1.0
 
 ## odayplus (v0.1.0)
 - **Supplier**: pypi
@@ -3419,7 +3418,7 @@ Total cataloged components: 787
 ## orjson (v3.11.9)
 - **Supplier**: pypi
 - **PURL**: `pkg:pypi/orjson@3.11.9`
-- **License**: MIT
+- **License**: MPL-2.0 AND (Apache-2.0 OR MIT)
 
 ## ortools (v9.15.6755)
 - **Supplier**: pypi
@@ -3434,7 +3433,7 @@ Total cataloged components: 787
 ## packaging (v26.2)
 - **Supplier**: pypi
 - **PURL**: `pkg:pypi/packaging@26.2`
-- **License**: MIT
+- **License**: Apache-2.0 OR BSD-2-Clause
 
 ## pandas (v2.3.3)
 - **Supplier**: pypi
@@ -3459,7 +3458,7 @@ Total cataloged components: 787
 ## patsy (v1.0.2)
 - **Supplier**: pypi
 - **PURL**: `pkg:pypi/patsy@1.0.2`
-- **License**: MIT
+- **License**: BSD-2-Clause
 
 ## pendulum (v3.2.0)
 - **Supplier**: pypi
@@ -3514,7 +3513,7 @@ Total cataloged components: 787
 ## protobuf (v6.33.6)
 - **Supplier**: pypi
 - **PURL**: `pkg:pypi/protobuf@6.33.6`
-- **License**: MIT
+- **License**: BSD-3-Clause
 
 ## psutil (v7.2.2)
 - **Supplier**: pypi
@@ -3524,22 +3523,22 @@ Total cataloged components: 787
 ## psycopg (v3.3.4)
 - **Supplier**: pypi
 - **PURL**: `pkg:pypi/psycopg@3.3.4`
-- **License**: LGPL-3.0-or-later
+- **License**: LGPL-3.0-only
 
 ## psycopg-binary (v3.3.4)
 - **Supplier**: pypi
 - **PURL**: `pkg:pypi/psycopg-binary@3.3.4`
-- **License**: LGPL-3.0-or-later
+- **License**: LGPL-3.0-only
 
 ## psycopg-pool (v3.3.1)
 - **Supplier**: pypi
 - **PURL**: `pkg:pypi/psycopg-pool@3.3.1`
-- **License**: LGPL-3.0-or-later
+- **License**: LGPL-3.0-only
 
 ## psycopg2-binary (v2.9.12)
 - **Supplier**: pypi
 - **PURL**: `pkg:pypi/psycopg2-binary@2.9.12`
-- **License**: MIT
+- **License**: LGPL-3.0-or-later
 
 ## pyarrow (v24.0.0)
 - **Supplier**: pypi
@@ -3609,7 +3608,7 @@ Total cataloged components: 787
 ## python-dateutil (v2.9.0.post0)
 - **Supplier**: pypi
 - **PURL**: `pkg:pypi/python-dateutil@2.9.0.post0`
-- **License**: MIT
+- **License**: Apache-2.0 OR BSD-3-Clause
 
 ## python-dotenv (v1.2.2)
 - **Supplier**: pypi
@@ -3644,7 +3643,7 @@ Total cataloged components: 787
 ## regex (v2026.7.19)
 - **Supplier**: pypi
 - **PURL**: `pkg:pypi/regex@2026.7.19`
-- **License**: MIT
+- **License**: Apache-2.0 AND CNRI-Python
 
 ## requests (v2.34.2)
 - **Supplier**: pypi
@@ -3719,12 +3718,12 @@ Total cataloged components: 787
 ## shellingham (v1.5.4)
 - **Supplier**: pypi
 - **PURL**: `pkg:pypi/shellingham@1.5.4`
-- **License**: MIT
+- **License**: ISC
 
 ## simplejson (v4.1.1)
 - **Supplier**: pypi
 - **PURL**: `pkg:pypi/simplejson@4.1.1`
-- **License**: MIT
+- **License**: MIT OR AFL-2.1
 
 ## six (v1.17.0)
 - **Supplier**: pypi
@@ -3744,7 +3743,7 @@ Total cataloged components: 787
 ## sniffio (v1.3.1)
 - **Supplier**: pypi
 - **PURL**: `pkg:pypi/sniffio@1.3.1`
-- **License**: MIT
+- **License**: MIT OR Apache-2.0
 
 ## sparsediffpy (v0.3.0)
 - **Supplier**: pypi
@@ -3774,7 +3773,7 @@ Total cataloged components: 787
 ## statsforecast (v2.1.1)
 - **Supplier**: pypi
 - **PURL**: `pkg:pypi/statsforecast@2.1.1`
-- **License**: MIT
+- **License**: Apache-2.0
 
 ## statsmodels (v0.14.6)
 - **Supplier**: pypi
@@ -3784,7 +3783,7 @@ Total cataloged components: 787
 ## structlog (v26.1.0)
 - **Supplier**: pypi
 - **PURL**: `pkg:pypi/structlog@26.1.0`
-- **License**: MIT
+- **License**: MIT OR Apache-2.0
 
 ## tabulate (v0.10.0)
 - **Supplier**: pypi
@@ -3814,12 +3813,12 @@ Total cataloged components: 787
 ## toposort (v1.10)
 - **Supplier**: pypi
 - **PURL**: `pkg:pypi/toposort@1.10`
-- **License**: MIT
+- **License**: Apache-2.0
 
 ## tqdm (v4.69.0)
 - **Supplier**: pypi
 - **PURL**: `pkg:pypi/tqdm@4.69.0`
-- **License**: MIT
+- **License**: MPL-2.0 AND MIT
 
 ## triad (v1.0.2)
 - **Supplier**: pypi
@@ -3859,7 +3858,7 @@ Total cataloged components: 787
 ## ujson (v5.13.0)
 - **Supplier**: pypi
 - **PURL**: `pkg:pypi/ujson@5.13.0`
-- **License**: MIT
+- **License**: BSD-3-Clause AND TCL
 
 ## universal-pathlib (v0.3.10)
 - **Supplier**: pypi
@@ -3874,7 +3873,7 @@ Total cataloged components: 787
 ## utilsforecast (v0.2.16)
 - **Supplier**: pypi
 - **PURL**: `pkg:pypi/utilsforecast@0.2.16`
-- **License**: MIT
+- **License**: Apache-2.0
 
 ## uuid6 (v2025.0.1)
 - **Supplier**: pypi

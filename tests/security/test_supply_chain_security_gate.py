@@ -40,12 +40,15 @@ def test_npm_audit_passes() -> None:
 
 
 def test_pip_audit_passes() -> None:
-    if shutil.which("uv"):
-        cmd = ["uv", "run", "--with", "pip-audit", "pip-audit", "--local"]
-    elif shutil.which("pip-audit"):
-        cmd = ["pip-audit", "--local"]
+    venv_bin = str(ROOT / ".venv/bin")
+    uv_path = shutil.which("uv") or shutil.which("uv", path=f"{venv_bin}:/home/lupin/.local/bin:/home/lupin/.cargo/bin:/usr/local/bin")
+    pip_audit_path = shutil.which("pip-audit") or shutil.which("pip-audit", path=venv_bin)
+    if uv_path:
+        cmd = [uv_path, "run", "--with", "pip-audit", "pip-audit", "--local"]
+    elif pip_audit_path:
+        cmd = [pip_audit_path, "--local"]
     else:
-        pytest.skip("Neither 'uv' nor 'pip-audit' executable found in PATH")
+        pytest.fail("Neither 'uv' nor 'pip-audit' executable found in PATH; missing security scanner is an infrastructure failure")
     res = subprocess.run(
         cmd,
         cwd=ROOT,
@@ -178,8 +181,10 @@ def test_sign_images_script_executable() -> None:
 
 
 def test_stale_lockfiles_rejected_negative(tmp_path: Path) -> None:
-    if not shutil.which("uv"):
-        pytest.skip("'uv' executable not found in PATH")
+    venv_bin = str(ROOT / ".venv/bin")
+    uv_path = shutil.which("uv") or shutil.which("uv", path=f"{venv_bin}:/home/lupin/.local/bin:/home/lupin/.cargo/bin:/usr/local/bin")
+    if not uv_path:
+        pytest.fail("'uv' executable not found in PATH; missing security scanner is an infrastructure failure")
     # Copy pyproject.toml and uv.lock to a temporary directory
     shutil.copy(ROOT / "pyproject.toml", tmp_path / "pyproject.toml")
     shutil.copy(ROOT / "uv.lock", tmp_path / "uv.lock")
@@ -193,7 +198,7 @@ def test_stale_lockfiles_rejected_negative(tmp_path: Path) -> None:
     pyproject_path.write_text(modified_content, encoding="utf-8")
 
     # Run uv lock --check in the tmp directory; it should fail
-    res = subprocess.run(["uv", "lock", "--check"], cwd=tmp_path, capture_output=True, text=True)
+    res = subprocess.run([uv_path, "lock", "--check"], cwd=tmp_path, capture_output=True, text=True)
     assert res.returncode != 0, "uv lock --check should have failed for a stale lockfile"
 
 
@@ -225,12 +230,15 @@ def test_vulnerable_fixtures_rejected_negative(tmp_path: Path) -> None:
     req_file = tmp_path / "requirements-vulnerable.txt"
     req_file.write_text("urllib3==1.26.15\n", encoding="utf-8")
 
-    if shutil.which("uv"):
-        cmd = ["uv", "run", "--with", "pip-audit", "pip-audit", "-r", str(req_file)]
-    elif shutil.which("pip-audit"):
-        cmd = ["pip-audit", "-r", str(req_file)]
+    venv_bin = str(ROOT / ".venv/bin")
+    uv_path = shutil.which("uv") or shutil.which("uv", path=f"{venv_bin}:/home/lupin/.local/bin:/home/lupin/.cargo/bin:/usr/local/bin")
+    pip_audit_path = shutil.which("pip-audit") or shutil.which("pip-audit", path=venv_bin)
+    if uv_path:
+        cmd = [uv_path, "run", "--with", "pip-audit", "pip-audit", "-r", str(req_file)]
+    elif pip_audit_path:
+        cmd = [pip_audit_path, "-r", str(req_file)]
     else:
-        pytest.skip("Neither 'uv' nor 'pip-audit' executable found in PATH")
+        pytest.fail("Neither 'uv' nor 'pip-audit' executable found in PATH; missing security scanner is an infrastructure failure")
 
     # Run pip-audit on requirements-vulnerable.txt
     res = subprocess.run(
@@ -335,3 +343,68 @@ def test_leaked_test_secrets_rejected_negative() -> None:
     finally:
         shutil.rmtree(test_dir, ignore_errors=True)
         shutil.rmtree(non_test_dir, ignore_errors=True)
+
+
+def test_composite_and_unclassifiable_licenses_fail_closed() -> None:
+    sys.path.insert(0, str(ROOT))
+    from scripts.security.generate_sbom import check_license_policy, generate_sbom
+
+    sbom = generate_sbom(
+        image_digest="sha256:0000000000000000000000000000000000000000000000000000000000000000",
+        release_digest="sha256:0000000000000000000000000000000000000000000000000000000000000000",
+    )
+    test_cases = [
+        ("(AGPL-3.0)", False),
+        ("GPL-3.0 OR MIT", False),
+        ("GPL-2.0 WITH Classpath-exception-2.0", False),
+        ("SEE LICENSE IN LICENSE.md", False),
+        ("UNKNOWN", False),
+        ("MIT OR Apache-2.0", True),
+        ("Apache-2.0 AND LGPL-3.0-or-later", True),
+    ]
+
+    for lic_expr, expected_pass in test_cases:
+        test_sbom = json.loads(json.dumps(sbom))
+        test_sbom["components"].append({
+            "name": f"test-package-{hash(lic_expr)}",
+            "version": "1.0.0",
+            "purl": f"pkg:npm/test-package-{hash(lic_expr)}@1.0.0",
+            "licenses": [{"license": {"name": lic_expr}}]
+        })
+        is_passed, _ = check_license_policy(test_sbom, require_digests=True)
+        assert is_passed == expected_pass, f"License expression '{lic_expr}' expected pass={expected_pass}, got {is_passed}"
+
+
+def test_sbom_verify_cli_no_mutation() -> None:
+    res = subprocess.run(
+        [sys.executable, str(ROOT / "scripts/security/generate_sbom.py"), "--verify"],
+        cwd=ROOT,
+        capture_output=True,
+        text=True,
+    )
+    assert res.returncode == 0, f"--verify failed with output:\n{res.stderr}"
+    assert "SBOM verification PASSED" in res.stdout
+
+
+def test_unbound_digests_fail_closed() -> None:
+    sys.path.insert(0, str(ROOT))
+    from scripts.security.generate_sbom import check_license_policy, generate_sbom
+
+    sbom_unbound = generate_sbom()  # No image/release digest passed
+    is_passed, violations = check_license_policy(sbom_unbound, require_digests=True)
+    assert not is_passed, "check_license_policy with require_digests=True must fail closed when image/release digest is missing"
+    assert any("Image digest is missing" in v for v in violations)
+    assert any("Release digest is missing" in v for v in violations)
+
+
+def test_missing_policy_file_raises_error(tmp_path: Path) -> None:
+    sys.path.insert(0, str(ROOT))
+    import scripts.security.generate_sbom as sbom_mod
+
+    orig_policy_path = sbom_mod.POLICY_PATH
+    try:
+        sbom_mod.POLICY_PATH = tmp_path / "nonexistent_policy.json"
+        with pytest.raises(FileNotFoundError):
+            sbom_mod.load_license_policy()
+    finally:
+        sbom_mod.POLICY_PATH = orig_policy_path
