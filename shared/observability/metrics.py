@@ -266,12 +266,41 @@ from pathlib import Path
 from shared.observability.watch_window import validate_full_sha
 
 
+def get_monitoring_provider_route(provider_route: str | None = None) -> str:
+    """Resolve the Cloud Monitoring / metrics / dashboard / query provider route.
+
+    Rejects ONCALL_ENDPOINT_URL if passed or configured as the monitoring route,
+    enforcing strict alert-only separation for the on-call notification adapter.
+    """
+    oncall_url = (os.environ.get("ONCALL_ENDPOINT_URL") or "").strip()
+    candidate = (
+        provider_route
+        or os.environ.get("MONITORING_ENDPOINT_URL")
+        or os.environ.get("GCP_MONITORING_ENDPOINT_URL")
+    )
+    if candidate:
+        candidate_str = str(candidate).strip()
+        if oncall_url and candidate_str == oncall_url:
+            raise ValueError(
+                "ONCALL_ENDPOINT_URL is reserved strictly for alert notification delivery and cannot be used as a Cloud Monitoring / metrics provider endpoint. Fail-closed gate enforced."
+            )
+        if "/api/v1/alerts" in candidate_str or "oncall-router" in candidate_str:
+            raise ValueError(
+                "On-call alert route cannot be used as a Cloud Monitoring / metrics provider endpoint. Fail-closed gate enforced."
+            )
+        if not (candidate_str.startswith("http://") or candidate_str.startswith("https://")):
+            raise ValueError("Monitoring provider endpoint must be a valid HTTP/HTTPS URL. Fail-closed gate enforced.")
+        return candidate_str
+
+    return "https://monitoring.googleapis.com/v3"
+
+
 class ProductionMetricsExporter:
     """Exports production metric snapshots bound to an exact 40-char release_sha.
 
     Ensures API, job, DLQ, model, solver, business, and audit metric paths
     are bound to the release_sha label, and performs an authentic Cloud Monitoring API / provider write & readback call.
-    Fails closed if release_sha is not a valid 40-char SHA, GCP_PROJECT or ONCALL_ENDPOINT_URL is missing,
+    Fails closed if release_sha is not a valid 40-char SHA, GCP_PROJECT or monitoring endpoint is missing/invalid,
     or the provider write/readback call fails or is rejected.
     """
 
@@ -286,7 +315,7 @@ class ProductionMetricsExporter:
         self.release_sha = validate_full_sha(release_sha, "release_sha")
         self.registry = registry or default_registry()
         self.gcp_project = gcp_project or os.getenv("GCP_PROJECT") or os.getenv("GOOGLE_CLOUD_PROJECT")
-        self.provider_route = provider_route or os.getenv("ONCALL_ENDPOINT_URL")
+        self.provider_route = provider_route
         self.http_transport = http_transport or self._default_http_transport
 
     @staticmethod
@@ -296,10 +325,19 @@ class ProductionMetricsExporter:
         import urllib.request
 
         data = json.dumps(payload).encode("utf-8")
+        headers = {"Content-Type": "application/json"}
+        auth_token = (
+            os.getenv("GCP_AUTH_TOKEN")
+            or os.getenv("MONITORING_AUTH_TOKEN")
+            or os.getenv("GOOGLE_AUTH_TOKEN")
+        )
+        if auth_token and auth_token.strip():
+            headers["Authorization"] = f"Bearer {auth_token.strip()}"
+
         req = urllib.request.Request(
             url,
             data=data,
-            headers={"Content-Type": "application/json"},
+            headers=headers,
             method="POST",
         )
         try:
@@ -321,12 +359,7 @@ class ProductionMetricsExporter:
         if not self.gcp_project or not str(self.gcp_project).strip():
             raise ValueError("GCP_PROJECT environment variable is missing or unconfigured. Fail-closed gate enforced.")
 
-        if not self.provider_route or not str(self.provider_route).strip():
-            raise ValueError("ONCALL_ENDPOINT_URL is missing or unconfigured. Fail-closed gate enforced.")
-
-        route_str = str(self.provider_route).strip()
-        if not (route_str.startswith("http://") or route_str.startswith("https://")):
-            raise ValueError("ONCALL_ENDPOINT_URL must be a valid HTTP/HTTPS URL. Fail-closed gate enforced.")
+        route_str = get_monitoring_provider_route(self.provider_route)
 
         raw_snapshot = self.registry.snapshot()
         metrics_payload: dict[str, Any] = {}
@@ -365,13 +398,16 @@ class ProductionMetricsExporter:
                 f"Cloud Monitoring / metrics provider write rejected with HTTP {http_status}: {resp_data}. Fail-closed gate enforced."
             )
 
-        provider_receipt_id = None
-        readback_status = "SUCCESS"
-        if isinstance(resp_data, dict):
-            provider_receipt_id = resp_data.get("export_receipt_id") or resp_data.get("receipt_id")
-            readback_status = resp_data.get("readback_status", "SUCCESS")
-        if not provider_receipt_id:
-            provider_receipt_id = f"export-rec-{self.release_sha[:12]}"
+        if not isinstance(resp_data, dict):
+            raise RuntimeError("Cloud Monitoring / metrics provider returned non-object response. Fail-closed gate enforced.")
+
+        provider_receipt_id = resp_data.get("export_receipt_id") or resp_data.get("receipt_id") or resp_data.get("name")
+        if not provider_receipt_id or not isinstance(provider_receipt_id, str) or provider_receipt_id.startswith("local-"):
+            raise RuntimeError("Cloud Monitoring / metrics provider response missing authentic provider-issued export_receipt_id. Fail-closed gate enforced.")
+
+        readback_status = resp_data.get("readback_status", "SUCCESS")
+        if readback_status != "SUCCESS":
+            raise RuntimeError(f"Cloud Monitoring / metrics provider readback status '{readback_status}'. Fail-closed gate enforced.")
 
         return {
             "release_sha": self.release_sha,
@@ -410,13 +446,7 @@ def render_dashboard_provisioning(
     if not target_gcp_project or not str(target_gcp_project).strip():
         raise ValueError("GCP_PROJECT environment variable is missing or unconfigured. Fail-closed gate enforced.")
 
-    target_provider_route = provider_route or os.getenv("ONCALL_ENDPOINT_URL")
-    if not target_provider_route or not str(target_provider_route).strip():
-        raise ValueError("ONCALL_ENDPOINT_URL is missing or unconfigured. Fail-closed gate enforced.")
-
-    route_str = str(target_provider_route).strip()
-    if not (route_str.startswith("http://") or route_str.startswith("https://")):
-        raise ValueError("ONCALL_ENDPOINT_URL must be a valid HTTP/HTTPS URL. Fail-closed gate enforced.")
+    route_str = get_monitoring_provider_route(provider_route)
 
     if config_path is None:
         base_dir = Path(__file__).resolve().parents[2]
@@ -488,11 +518,43 @@ def render_dashboard_provisioning(
         }
         raise ValueError(f"Dashboard provider rejected provisioning with HTTP {http_status}: {resp_data}. Readback status LIVE_UNVERIFIED. Fail-closed gate enforced.")
 
-    provider_receipt_id = None
-    if isinstance(resp_data, dict):
-        provider_receipt_id = resp_data.get("receipt_id") or resp_data.get("provision_receipt_id")
-    if not provider_receipt_id:
-        provider_receipt_id = f"dash-rec-{clean_sha[:12]}"
+    if not isinstance(resp_data, dict):
+        data["provisioning_readback"] = {
+            "receipt_id": None,
+            "readback_status": "LIVE_UNVERIFIED",
+            "exact_sha_binding": clean_sha,
+            "slo_owner": str(configured_slo_owner).strip(),
+            "provider_route_identity": route_str,
+            "dashboard_resource_ids": dashboard_resource_ids,
+            "error": "Non-object provider response",
+        }
+        raise ValueError("Dashboard provider response missing authentic provider-issued receipt_id. Readback status LIVE_UNVERIFIED. Fail-closed gate enforced.")
+
+    provider_receipt_id = resp_data.get("receipt_id") or resp_data.get("provision_receipt_id") or resp_data.get("name")
+    if not provider_receipt_id or not isinstance(provider_receipt_id, str) or provider_receipt_id.startswith("local-"):
+        data["provisioning_readback"] = {
+            "receipt_id": None,
+            "readback_status": "LIVE_UNVERIFIED",
+            "exact_sha_binding": clean_sha,
+            "slo_owner": str(configured_slo_owner).strip(),
+            "provider_route_identity": route_str,
+            "dashboard_resource_ids": dashboard_resource_ids,
+            "error": "Missing authentic provider-issued receipt_id",
+        }
+        raise ValueError("Dashboard provider response missing authentic provider-issued receipt_id. Readback status LIVE_UNVERIFIED. Fail-closed gate enforced.")
+
+    readback_status = resp_data.get("readback_status", "PROVISIONED")
+    if readback_status != "PROVISIONED":
+        data["provisioning_readback"] = {
+            "receipt_id": provider_receipt_id,
+            "readback_status": "LIVE_UNVERIFIED",
+            "exact_sha_binding": clean_sha,
+            "slo_owner": str(configured_slo_owner).strip(),
+            "provider_route_identity": route_str,
+            "dashboard_resource_ids": dashboard_resource_ids,
+            "error": f"Provider readback status '{readback_status}'",
+        }
+        raise ValueError(f"Dashboard provider readback status '{readback_status}'. Readback status LIVE_UNVERIFIED. Fail-closed gate enforced.")
 
     data["provisioning_readback"] = {
         "receipt_id": provider_receipt_id,

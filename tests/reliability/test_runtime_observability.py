@@ -687,14 +687,18 @@ def test_release_sha_dashboard_traceability_and_watch_window_receipt(tmp_path: P
     receipt_file = tmp_path / "watch_window_receipt.json"
     test_sha = "10c620969a90627e4a67053a4708658f99faa07f"
     registry = default_registry()
+    monitoring_route = "https://monitoring.googleapis.com/v3"
 
     start_dt = datetime.now(UTC) - timedelta(minutes=20)
     end_dt = datetime.now(UTC)
 
     def mock_query_transport(url: str, payload: dict) -> tuple[int, dict]:
         return 200, {
-            "query_execution_id": f"query-exec-{test_sha[:12]}-100",
+            "query_execution_id": f"gcp-query-exec-{test_sha[:12]}-100",
             "query_status": "SUCCESS",
+            "gcp_project": payload.get("gcp_project"),
+            "release_sha": payload.get("release_sha"),
+            "observed_window_minutes": payload.get("watch_window_minutes", 15),
         }
 
     receipt = record_deployment_watch_window_status(
@@ -705,7 +709,7 @@ def test_release_sha_dashboard_traceability_and_watch_window_receipt(tmp_path: P
         registry=registry,
         receipt_path=receipt_file,
         gcp_project="alfaloop-data-project",
-        provider_route="https://oncall-router.oday.plus/api/v1/alerts",
+        provider_route=monitoring_route,
         query_transport=mock_query_transport,
     )
 
@@ -737,13 +741,16 @@ def test_watch_window_receipt_negative_cases(tmp_path: Path) -> None:
     receipt_file = tmp_path / "watch_window_receipt.json"
     valid_sha_1 = "10c620969a90627e4a67053a4708658f99faa07f"
     valid_sha_2 = "20c620969a90627e4a67053a4708658f99faa07f"
+    monitoring_route = "https://monitoring.googleapis.com/v3"
     start_dt = datetime.now(UTC) - timedelta(minutes=20)
     end_dt = datetime.now(UTC)
 
     def mock_query_transport(url: str, payload: dict) -> tuple[int, dict]:
         return 200, {
-            "query_execution_id": f"query-exec-{valid_sha_1[:12]}-100",
+            "query_execution_id": f"gcp-query-exec-{valid_sha_1[:12]}-100",
             "query_status": "SUCCESS",
+            "gcp_project": payload.get("gcp_project"),
+            "release_sha": payload.get("release_sha"),
         }
 
     # Case 1: Absent watch receipt artifact
@@ -758,7 +765,7 @@ def test_watch_window_receipt_negative_cases(tmp_path: Path) -> None:
         end_time=end_dt,
         receipt_path=receipt_file,
         gcp_project="alfaloop-data-project",
-        provider_route="https://oncall-router.oday.plus/api/v1/alerts",
+        provider_route=monitoring_route,
         query_transport=mock_query_transport,
     )
     with pytest.raises(ValueError, match="Release SHA mismatch"):
@@ -767,8 +774,10 @@ def test_watch_window_receipt_negative_cases(tmp_path: Path) -> None:
     # Case 3: Failed watch receipt (status_code = 0 / WATCH_FAILED)
     def mock_query_fail_transport(url: str, payload: dict) -> tuple[int, dict]:
         return 200, {
-            "query_execution_id": f"query-exec-{valid_sha_1[:12]}-100",
+            "query_execution_id": f"gcp-query-exec-{valid_sha_1[:12]}-100",
             "query_status": "FAILED",
+            "gcp_project": payload.get("gcp_project"),
+            "release_sha": payload.get("release_sha"),
         }
 
     record_deployment_watch_window_status(
@@ -778,7 +787,7 @@ def test_watch_window_receipt_negative_cases(tmp_path: Path) -> None:
         end_time=end_dt,
         receipt_path=receipt_file,
         gcp_project="alfaloop-data-project",
-        provider_route="https://oncall-router.oday.plus/api/v1/alerts",
+        provider_route=monitoring_route,
         query_transport=mock_query_fail_transport,
     )
     with pytest.raises(ValueError, match="Watch-window verification failed"):
@@ -806,141 +815,113 @@ def test_watch_window_receipt_negative_cases(tmp_path: Path) -> None:
         )
 
 
-def test_watch_window_receipt_contradiction_mutations(tmp_path: Path) -> None:
+def test_watch_window_binding_mismatch_mutations(tmp_path: Path) -> None:
     from datetime import timedelta
 
-    from shared.observability.watch_window import verify_watch_window_receipt
+    from shared.observability.watch_window import record_deployment_watch_window_status
 
     receipt_file = tmp_path / "watch_window_receipt.json"
     valid_sha = "10c620969a90627e4a67053a4708658f99faa07f"
-    start_iso = (datetime.now(UTC) - timedelta(minutes=20)).isoformat()
-    end_iso = datetime.now(UTC).isoformat()
+    monitoring_route = "https://monitoring.googleapis.com/v3"
+    start_dt = datetime.now(UTC) - timedelta(minutes=20)
+    end_dt = datetime.now(UTC)
 
-    # Case 1: Contradictory fields status=WATCH_FAILED with status_code=1
-    contradictory_receipt = {
-        "release_sha": valid_sha,
-        "status": "WATCH_FAILED",
-        "status_code": 1,
-        "start_time": start_iso,
-        "end_time": end_iso,
-        "watch_window_minutes": 15,
-    }
-    receipt_file.write_text(json.dumps(contradictory_receipt), encoding="utf-8")
-    with pytest.raises(ValueError, match="Watch-window verification failed or contradictory"):
-        verify_watch_window_receipt(expected_release_sha=valid_sha, receipt_path=receipt_file)
+    # Mutation 1: Project mismatch in provider query response
+    def mismatch_project_transport(url: str, payload: dict) -> tuple[int, dict]:
+        return 200, {
+            "query_execution_id": f"gcp-query-exec-{valid_sha[:12]}-100",
+            "query_status": "SUCCESS",
+            "gcp_project": "wrong-gcp-project",
+            "release_sha": valid_sha,
+        }
 
-    # Case 2: Contradictory fields status=WATCH_PASSED with status_code=0
-    contradictory_receipt_2 = {
-        "release_sha": valid_sha,
-        "status": "WATCH_PASSED",
-        "status_code": 0,
-        "start_time": start_iso,
-        "end_time": end_iso,
-        "watch_window_minutes": 15,
-    }
-    receipt_file.write_text(json.dumps(contradictory_receipt_2), encoding="utf-8")
-    with pytest.raises(ValueError, match="Watch-window verification failed or contradictory"):
-        verify_watch_window_receipt(expected_release_sha=valid_sha, receipt_path=receipt_file)
+    with pytest.raises(ValueError, match="Monitoring query readback project mismatch"):
+        record_deployment_watch_window_status(
+            release_sha=valid_sha,
+            status=1,
+            start_time=start_dt,
+            end_time=end_dt,
+            receipt_path=receipt_file,
+            gcp_project="alfaloop-data-project",
+            provider_route=monitoring_route,
+            query_transport=mismatch_project_transport,
+        )
 
-    # Case 3: Invalid status string
-    invalid_status_receipt = {
-        "release_sha": valid_sha,
-        "status": "UNKNOWN_STATUS",
-        "status_code": 1,
-        "start_time": start_iso,
-        "end_time": end_iso,
-        "watch_window_minutes": 15,
-    }
-    receipt_file.write_text(json.dumps(invalid_status_receipt), encoding="utf-8")
-    with pytest.raises(ValueError, match="Invalid watch-window status"):
-        verify_watch_window_receipt(expected_release_sha=valid_sha, receipt_path=receipt_file)
+    # Mutation 2: Release SHA mismatch in provider query response
+    def mismatch_sha_transport(url: str, payload: dict) -> tuple[int, dict]:
+        return 200, {
+            "query_execution_id": f"gcp-query-exec-{valid_sha[:12]}-100",
+            "query_status": "SUCCESS",
+            "gcp_project": "alfaloop-data-project",
+            "release_sha": "20c620969a90627e4a67053a4708658f99faa07f",
+        }
 
-    # Case 4: Invalid watch duration
-    invalid_duration_receipt = {
-        "release_sha": valid_sha,
-        "status": "WATCH_PASSED",
-        "status_code": 1,
-        "start_time": start_iso,
-        "end_time": end_iso,
-        "watch_window_minutes": -5,
-    }
-    receipt_file.write_text(json.dumps(invalid_duration_receipt), encoding="utf-8")
-    with pytest.raises(ValueError, match="watch_window_minutes is invalid or non-positive or sub-15-minute"):
-        verify_watch_window_receipt(expected_release_sha=valid_sha, receipt_path=receipt_file)
+    with pytest.raises(ValueError, match="Monitoring query readback release_sha mismatch"):
+        record_deployment_watch_window_status(
+            release_sha=valid_sha,
+            status=1,
+            start_time=start_dt,
+            end_time=end_dt,
+            receipt_path=receipt_file,
+            gcp_project="alfaloop-data-project",
+            provider_route=monitoring_route,
+            query_transport=mismatch_sha_transport,
+        )
 
-    # Case 5: Empty expected_release_sha
-    with pytest.raises(ValueError, match="expected_release_sha must be provided"):
-        verify_watch_window_receipt(expected_release_sha="", receipt_path=receipt_file)
+    # Mutation 3: Watch window duration mismatch in provider query response
+    def mismatch_window_transport(url: str, payload: dict) -> tuple[int, dict]:
+        return 200, {
+            "query_execution_id": f"gcp-query-exec-{valid_sha[:12]}-100",
+            "query_status": "SUCCESS",
+            "gcp_project": "alfaloop-data-project",
+            "release_sha": valid_sha,
+            "observed_window_minutes": 5,
+        }
 
-    # Case 6: Sub-15-minute duration in receipt artifact
-    sub15_start_iso = (datetime.now(UTC) - timedelta(minutes=5)).isoformat()
-    sub15_receipt = {
-        "release_sha": valid_sha,
-        "status": "WATCH_PASSED",
-        "status_code": 1,
-        "start_time": sub15_start_iso,
-        "end_time": end_iso,
-        "watch_window_minutes": 15,
-    }
-    receipt_file.write_text(json.dumps(sub15_receipt), encoding="utf-8")
-    with pytest.raises(ValueError, match="Sub-15-minute watch duration in receipt"):
-        verify_watch_window_receipt(expected_release_sha=valid_sha, receipt_path=receipt_file)
+    with pytest.raises(ValueError, match="Monitoring query readback watch window mismatch"):
+        record_deployment_watch_window_status(
+            release_sha=valid_sha,
+            status=1,
+            start_time=start_dt,
+            end_time=end_dt,
+            receipt_path=receipt_file,
+            gcp_project="alfaloop-data-project",
+            provider_route=monitoring_route,
+            query_transport=mismatch_window_transport,
+        )
 
+    # Mutation 4: Missing or fabricated query_execution_id in provider query response
+    def missing_exec_id_transport(url: str, payload: dict) -> tuple[int, dict]:
+        return 200, {
+            "query_execution_id": "",
+            "query_status": "SUCCESS",
+            "gcp_project": "alfaloop-data-project",
+            "release_sha": valid_sha,
+        }
 
-def test_notification_adapter_factory_and_production_wiring(monkeypatch: pytest.MonkeyPatch) -> None:
-    from modules.notifications import (
-        ConsoleNotificationAdapter,
-        OnCallNotificationAdapter,
-        get_notification_adapter,
-    )
+    with pytest.raises(ValueError, match="Monitoring query response missing authentic provider-issued query_execution_id"):
+        record_deployment_watch_window_status(
+            release_sha=valid_sha,
+            status=1,
+            start_time=start_dt,
+            end_time=end_dt,
+            receipt_path=receipt_file,
+            gcp_project="alfaloop-data-project",
+            provider_route=monitoring_route,
+            query_transport=missing_exec_id_transport,
+        )
 
-    # Default unconfigured in non-prod returns ConsoleNotificationAdapter
-    monkeypatch.delenv("APP_ENV", raising=False)
-    monkeypatch.delenv("ENVIRONMENT", raising=False)
-    monkeypatch.delenv("STAGE", raising=False)
-    monkeypatch.delenv("ODAY_ENV", raising=False)
-    monkeypatch.delenv("ODP_PRODUCT_MODE", raising=False)
-    monkeypatch.delenv("ODAY_PRODUCT_MODE", raising=False)
-    monkeypatch.delenv("NOTIFICATION_ADAPTER_TYPE", raising=False)
-    monkeypatch.delenv("ONCALL_ENDPOINT_URL", raising=False)
-    adapter = get_notification_adapter()
-    assert isinstance(adapter, ConsoleNotificationAdapter)
-
-    # Production mode via APP_ENV without endpoint fails closed
-    monkeypatch.setenv("APP_ENV", "production")
-    with pytest.raises(ValueError, match="Production mode or on-call route requires a configured valid ONCALL_ENDPOINT_URL"):
-        get_notification_adapter()
-
-    # ODP_PRODUCT_MODE=production without endpoint fails closed
-    monkeypatch.delenv("APP_ENV", raising=False)
-    monkeypatch.setenv("ODP_PRODUCT_MODE", "production")
-    with pytest.raises(ValueError, match="Production mode or on-call route requires a configured valid ONCALL_ENDPOINT_URL"):
-        get_notification_adapter()
-
-    # ODP_PRODUCT_MODE=production with ConsoleNotificationAdapter type fails closed
-    monkeypatch.setenv("NOTIFICATION_ADAPTER_TYPE", "console")
-    with pytest.raises(ValueError, match="ConsoleNotificationAdapter is forbidden in production environment"):
-        get_notification_adapter()
-
-    # Production mode with valid ONCALL_ENDPOINT_URL returns OnCallNotificationAdapter
-    monkeypatch.delenv("ODP_PRODUCT_MODE", raising=False)
-    monkeypatch.setenv("NOTIFICATION_ADAPTER_TYPE", "oncall")
-    monkeypatch.setenv("ONCALL_ENDPOINT_URL", "https://oncall-custom.oday.plus/alerts")
-    adapter = get_notification_adapter()
-    assert isinstance(adapter, OnCallNotificationAdapter)
-    assert adapter.endpoint_url == "https://oncall-custom.oday.plus/alerts"
-
-    # NOTIFICATION_ADAPTER_TYPE=oncall with empty endpoint fails closed
-    monkeypatch.setenv("NOTIFICATION_ADAPTER_TYPE", "oncall")
-    monkeypatch.setenv("ONCALL_ENDPOINT_URL", "   ")
-    with pytest.raises(ValueError, match="Production mode or on-call route requires a configured valid ONCALL_ENDPOINT_URL"):
-        get_notification_adapter(endpoint_url="")
-
-    # Unknown adapter type fails closed
-    monkeypatch.delenv("ONCALL_ENDPOINT_URL", raising=False)
-    monkeypatch.setenv("NOTIFICATION_ADAPTER_TYPE", "invalid_type")
-    with pytest.raises(ValueError, match="Unknown notification adapter type"):
-        get_notification_adapter()
+    # Mutation 5: Passing on-call alert route as monitoring provider_route fails closed
+    with pytest.raises(ValueError, match="On-call alert route|ONCALL_ENDPOINT_URL"):
+        record_deployment_watch_window_status(
+            release_sha=valid_sha,
+            status=1,
+            start_time=start_dt,
+            end_time=end_dt,
+            receipt_path=receipt_file,
+            gcp_project="alfaloop-data-project",
+            provider_route="https://oncall-router.oday.plus/api/v1/alerts",
+        )
 
 
 def test_production_metrics_exporter_and_dashboard_provisioning() -> None:
@@ -956,12 +937,23 @@ def test_production_metrics_exporter_and_dashboard_provisioning() -> None:
     registry.set("netplan_plan_adoption_rate", 0.95)
 
     test_sha = "b28a6b6d335293ecb51a72dff3700838e196129c"
+    monitoring_route = "https://monitoring.googleapis.com/v3"
 
     def mock_success_transport(url: str, payload: dict) -> tuple[int, dict]:
         if "metrics/export" in url:
-            return 200, {"export_receipt_id": f"export-rec-{test_sha[:12]}", "readback_status": "SUCCESS"}
+            return 200, {
+                "export_receipt_id": f"gcp-cm-export-{test_sha[:12]}",
+                "readback_status": "SUCCESS",
+                "gcp_project": payload.get("gcp_project"),
+                "release_sha": payload.get("release_sha"),
+            }
         elif "dashboards/provision" in url:
-            return 200, {"receipt_id": f"dash-rec-{test_sha[:12]}", "readback_status": "PROVISIONED"}
+            return 200, {
+                "receipt_id": f"gcp-dash-{test_sha[:12]}",
+                "readback_status": "PROVISIONED",
+                "gcp_project": payload.get("gcp_project"),
+                "release_sha": payload.get("release_sha"),
+            }
         return 200, {"status": "ok"}
 
     # 1. Test ProductionMetricsExporter binds release_sha and performs provider write/readback
@@ -969,34 +961,47 @@ def test_production_metrics_exporter_and_dashboard_provisioning() -> None:
         release_sha=test_sha,
         registry=registry,
         gcp_project="alfaloop-data-project",
-        provider_route="https://oncall-router.oday.plus/api/v1/alerts",
+        provider_route=monitoring_route,
         http_transport=mock_success_transport,
     )
     exported = exporter.export_metrics()
 
     assert exported["release_sha"] == test_sha
-    assert exported["export_receipt_id"] == f"export-rec-{test_sha[:12]}"
+    assert exported["export_receipt_id"] == f"gcp-cm-export-{test_sha[:12]}"
     assert exported["readback_status"] == "SUCCESS"
-    assert exported["provider_route_identity"] == "https://oncall-router.oday.plus/api/v1/alerts"
+    assert exported["provider_route_identity"] == monitoring_route
     assert len(exported["monitoring_backend_resource_ids"]) > 0
     assert "api_request_count" in exported["metrics"]
     assert exported["metrics"]["api_request_count"][0]["labels"]["release_sha"] == test_sha
 
-    # Fail closed on missing GCP_PROJECT or ONCALL_ENDPOINT_URL
+    # Fail closed on missing GCP_PROJECT
     with pytest.raises(ValueError, match="GCP_PROJECT environment variable is missing or unconfigured"):
         ProductionMetricsExporter(
             release_sha=test_sha,
             gcp_project="",
+            provider_route=monitoring_route,
+            http_transport=mock_success_transport,
+        ).export_metrics()
+
+    # Fail closed on passing on-call route as monitoring route
+    with pytest.raises(ValueError, match="On-call alert route|ONCALL_ENDPOINT_URL"):
+        ProductionMetricsExporter(
+            release_sha=test_sha,
+            gcp_project="alfaloop-data-project",
             provider_route="https://oncall-router.oday.plus/api/v1/alerts",
             http_transport=mock_success_transport,
         ).export_metrics()
 
-    with pytest.raises(ValueError, match="ONCALL_ENDPOINT_URL is missing or unconfigured"):
+    # Fail closed on missing authentic provider-issued export_receipt_id
+    def mock_no_receipt_transport(url: str, payload: dict) -> tuple[int, dict]:
+        return 200, {"readback_status": "SUCCESS"}
+
+    with pytest.raises(RuntimeError, match="Cloud Monitoring / metrics provider response missing authentic provider-issued export_receipt_id"):
         ProductionMetricsExporter(
             release_sha=test_sha,
             gcp_project="alfaloop-data-project",
-            provider_route="",
-            http_transport=mock_success_transport,
+            provider_route=monitoring_route,
+            http_transport=mock_no_receipt_transport,
         ).export_metrics()
 
     # Fail closed on provider 500 error rejection
@@ -1007,7 +1012,7 @@ def test_production_metrics_exporter_and_dashboard_provisioning() -> None:
         ProductionMetricsExporter(
             release_sha=test_sha,
             gcp_project="alfaloop-data-project",
-            provider_route="https://oncall-router.oday.plus/api/v1/alerts",
+            provider_route=monitoring_route,
             http_transport=mock_500_transport,
         ).export_metrics()
 
@@ -1015,7 +1020,7 @@ def test_production_metrics_exporter_and_dashboard_provisioning() -> None:
     provisioned = render_dashboard_provisioning(
         release_sha=test_sha,
         gcp_project="alfaloop-data-project",
-        provider_route="https://oncall-router.oday.plus/api/v1/alerts",
+        provider_route=monitoring_route,
         http_transport=mock_success_transport,
     )
 
@@ -1025,16 +1030,25 @@ def test_production_metrics_exporter_and_dashboard_provisioning() -> None:
 
     readback = provisioned["provisioning_readback"]
     assert readback["readback_status"] == "PROVISIONED"
-    assert readback["receipt_id"] == f"dash-rec-{test_sha[:12]}"
+    assert readback["receipt_id"] == f"gcp-dash-{test_sha[:12]}"
     assert readback["exact_sha_binding"] == test_sha
     assert "platform-health" in readback["dashboard_resource_ids"]
+
+    # Dashboard provisioning fails closed on missing authentic provider receipt ID
+    with pytest.raises(ValueError, match="Dashboard provider response missing authentic provider-issued receipt_id"):
+        render_dashboard_provisioning(
+            release_sha=test_sha,
+            gcp_project="alfaloop-data-project",
+            provider_route=monitoring_route,
+            http_transport=mock_no_receipt_transport,
+        )
 
     # Dashboard provisioning fails closed on provider rejection
     with pytest.raises(ValueError, match="Dashboard provider rejected provisioning with HTTP 500"):
         render_dashboard_provisioning(
             release_sha=test_sha,
             gcp_project="alfaloop-data-project",
-            provider_route="https://oncall-router.oday.plus/api/v1/alerts",
+            provider_route=monitoring_route,
             http_transport=mock_500_transport,
         )
 

@@ -93,13 +93,9 @@ def record_deployment_watch_window_status(
     if not target_gcp_project or not str(target_gcp_project).strip():
         raise ValueError("GCP_PROJECT environment variable is missing or unconfigured. Fail-closed gate enforced.")
 
-    target_provider_route = provider_route or os.getenv("ONCALL_ENDPOINT_URL")
-    if not target_provider_route or not str(target_provider_route).strip():
-        raise ValueError("ONCALL_ENDPOINT_URL is missing or unconfigured. Fail-closed gate enforced.")
+    from shared.observability.metrics import ProductionMetricsExporter, get_monitoring_provider_route
 
-    route_str = str(target_provider_route).strip()
-    if not (route_str.startswith("http://") or route_str.startswith("https://")):
-        raise ValueError("ONCALL_ENDPOINT_URL must be a valid HTTP/HTTPS URL. Fail-closed gate enforced.")
+    route_str = get_monitoring_provider_route(provider_route)
 
     query_payload = {
         "gcp_project": str(target_gcp_project).strip(),
@@ -110,8 +106,6 @@ def record_deployment_watch_window_status(
         "caller_requested_status": status,
         "observed_results": res,
     }
-
-    from shared.observability.metrics import ProductionMetricsExporter
 
     transport = query_transport or ProductionMetricsExporter._default_http_transport
     endpoint = f"{route_str}/monitoring/query" if not route_str.endswith("/monitoring/query") else route_str
@@ -128,20 +122,40 @@ def record_deployment_watch_window_status(
             f"Monitoring query execution failed with HTTP {http_status}: {query_resp}. Caller-self-attested success rejected. Fail-closed gate enforced."
         )
 
-    query_exec_id = None
-    query_status = "SUCCESS" if status == 1 else "FAILED"
-    if isinstance(query_resp, dict):
-        query_exec_id = query_resp.get("query_execution_id")
-        if "query_status" in query_resp:
-            query_status = query_resp["query_status"]
+    if not isinstance(query_resp, dict):
+        raise ValueError("Monitoring query execution response missing object payload. Fail-closed gate enforced.")
 
+    query_exec_id = query_resp.get("query_execution_id") or query_resp.get("receipt_id") or query_resp.get("name")
+    if not query_exec_id or not isinstance(query_exec_id, str) or query_exec_id.startswith("local-"):
+        raise ValueError("Monitoring query response missing authentic provider-issued query_execution_id. Fail-closed gate enforced.")
+
+    # Validate binding consistency between request and query execution response
+    if "gcp_project" in query_resp:
+        resp_project = str(query_resp["gcp_project"]).strip()
+        if resp_project != str(target_gcp_project).strip():
+            raise ValueError(
+                f"Monitoring query readback project mismatch: expected '{target_gcp_project}', got '{resp_project}'. Fail-closed gate enforced."
+            )
+
+    if "release_sha" in query_resp:
+        resp_sha = str(query_resp["release_sha"]).strip().lower()
+        if resp_sha != clean_sha:
+            raise ValueError(
+                f"Monitoring query readback release_sha mismatch: expected '{clean_sha}', got '{resp_sha}'. Fail-closed gate enforced."
+            )
+
+    if "observed_window_minutes" in query_resp or "watch_window_minutes" in query_resp:
+        resp_window = int(query_resp.get("observed_window_minutes") or query_resp.get("watch_window_minutes"))
+        if resp_window < 15 or resp_window != watch_window_minutes:
+            raise ValueError(
+                f"Monitoring query readback watch window mismatch: expected {watch_window_minutes}m, got {resp_window}m. Fail-closed gate enforced."
+            )
+
+    query_status = query_resp.get("query_status", "SUCCESS" if status == 1 else "FAILED")
     if query_status != "SUCCESS" and status == 1:
         raise ValueError(
             f"Monitoring query readback returned status '{query_status}', contradicting requested pass status. Caller-self-attested success rejected."
         )
-
-    if not query_exec_id:
-        query_exec_id = f"query-exec-{clean_sha[:12]}-{int(end_dt.timestamp())}"
 
     monitoring_query_execution = {
         "query_execution_id": query_exec_id,
@@ -233,8 +247,12 @@ def verify_watch_window_receipt(
         )
 
     query_exec = receipt.get("monitoring_query_execution")
-    if not query_exec or not isinstance(query_exec, dict) or not query_exec.get("query_execution_id"):
+    if not query_exec or not isinstance(query_exec, dict):
         raise ValueError("Watch-window receipt missing valid monitoring_query_execution readback. Fail-closed gate enforced.")
+
+    query_exec_id = query_exec.get("query_execution_id")
+    if not query_exec_id or not isinstance(query_exec_id, str) or query_exec_id.startswith("local-"):
+        raise ValueError("Watch-window receipt missing authentic provider-issued query_execution_id. Fail-closed gate enforced.")
 
     observed_results = receipt.get("observed_results", {})
     if isinstance(observed_results, dict):

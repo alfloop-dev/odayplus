@@ -389,21 +389,38 @@ def observability_runtime_checks(root: Path = ROOT) -> list[CheckResult]:
 
         test_sha = "10c620969a90627e4a67053a4708658f99faa07f"
         registry = default_registry()
+        monitoring_route = "https://monitoring.googleapis.com/v3"
 
         def mock_provider_transport(url: str, payload: dict) -> tuple[int, dict]:
             if "metrics/export" in url:
-                return 200, {"export_receipt_id": f"export-rec-{test_sha[:12]}", "readback_status": "SUCCESS"}
+                return 200, {
+                    "export_receipt_id": f"gcp-cm-export-{test_sha[:12]}",
+                    "readback_status": "SUCCESS",
+                    "gcp_project": payload.get("gcp_project"),
+                    "release_sha": payload.get("release_sha"),
+                }
             elif "dashboards/provision" in url:
-                return 200, {"receipt_id": f"dash-rec-{test_sha[:12]}", "readback_status": "PROVISIONED"}
+                return 200, {
+                    "receipt_id": f"gcp-dash-{test_sha[:12]}",
+                    "readback_status": "PROVISIONED",
+                    "gcp_project": payload.get("gcp_project"),
+                    "release_sha": payload.get("release_sha"),
+                }
             elif "monitoring/query" in url:
-                return 200, {"query_execution_id": f"query-exec-{test_sha[:12]}-100", "query_status": "SUCCESS"}
+                return 200, {
+                    "query_execution_id": f"gcp-query-exec-{test_sha[:12]}-100",
+                    "query_status": "SUCCESS",
+                    "gcp_project": payload.get("gcp_project"),
+                    "release_sha": payload.get("release_sha"),
+                    "observed_window_minutes": payload.get("watch_window_minutes", 15),
+                }
             return 200, {"status": "ok"}
 
         exporter = ProductionMetricsExporter(
             release_sha=test_sha,
             registry=registry,
             gcp_project="alfaloop-data-project",
-            provider_route="https://oncall-router.oday.plus/api/v1/alerts",
+            provider_route=monitoring_route,
             http_transport=mock_provider_transport,
         )
         exported = exporter.export_metrics()
@@ -412,7 +429,7 @@ def observability_runtime_checks(root: Path = ROOT) -> list[CheckResult]:
             "latency", "error", "traffic", "job", "queue", "data", "model", "business", "audit"
         }
         sha_bound = exported.get("release_sha") == test_sha
-        has_export_receipt = bool(exported.get("export_receipt_id"))
+        has_export_receipt = exported.get("export_receipt_id") == f"gcp-cm-export-{test_sha[:12]}"
         has_backend_ids = bool(exported.get("monitoring_backend_resource_ids"))
         readback_success = exported.get("readback_status") == "SUCCESS"
         exporter_ok = has_categories and sha_bound and has_export_receipt and has_backend_ids and readback_success
@@ -432,7 +449,7 @@ def observability_runtime_checks(root: Path = ROOT) -> list[CheckResult]:
         provisioned = render_dashboard_provisioning(
             release_sha=test_sha,
             gcp_project="alfaloop-data-project",
-            provider_route="https://oncall-router.oday.plus/api/v1/alerts",
+            provider_route=monitoring_route,
             http_transport=mock_provider_transport,
         )
         exact_binding = provisioned.get("release_sha_traceability", {}).get("exact_sha_binding") == test_sha
@@ -441,8 +458,8 @@ def observability_runtime_checks(root: Path = ROOT) -> list[CheckResult]:
         readback_ok = (
             readback.get("readback_status") == "PROVISIONED"
             and bool(readback.get("dashboard_resource_ids"))
-            and bool(readback.get("provider_route_identity"))
-            and readback.get("receipt_id") == f"dash-rec-{test_sha[:12]}"
+            and readback.get("provider_route_identity") == monitoring_route
+            and readback.get("receipt_id") == f"gcp-dash-{test_sha[:12]}"
         )
         dashboard_ok = exact_binding and has_slo_owner and readback_ok
 
@@ -464,12 +481,26 @@ def observability_runtime_checks(root: Path = ROOT) -> list[CheckResult]:
             unconfigured_exporter = ProductionMetricsExporter(
                 release_sha=test_sha,
                 gcp_project="",
-                provider_route="",
+                provider_route=monitoring_route,
                 http_transport=mock_provider_transport,
             )
             unconfigured_exporter.export_metrics()
         except ValueError:
             fail_closed_unconfigured = True
+
+        # Fail-closed gate verification: exporter fails closed when passing on-call alert route
+        fail_closed_oncall_route = False
+        try:
+            oncall_exporter = ProductionMetricsExporter(
+                release_sha=test_sha,
+                gcp_project="alfaloop-data-project",
+                provider_route="https://oncall-router.oday.plus/api/v1/alerts",
+                http_transport=mock_provider_transport,
+            )
+            oncall_exporter.export_metrics()
+        except ValueError as e:
+            if "ONCALL_ENDPOINT_URL" in str(e) or "alert route" in str(e):
+                fail_closed_oncall_route = True
 
         # Fail-closed gate verification: exporter fails closed when provider rejects/500
         def rejecting_transport(url: str, payload: dict) -> tuple[int, dict]:
@@ -480,12 +511,14 @@ def observability_runtime_checks(root: Path = ROOT) -> list[CheckResult]:
             rejected_exporter = ProductionMetricsExporter(
                 release_sha=test_sha,
                 gcp_project="alfaloop-data-project",
-                provider_route="https://oncall-router.oday.plus/api/v1/alerts",
+                provider_route=monitoring_route,
                 http_transport=rejecting_transport,
             )
             rejected_exporter.export_metrics()
         except RuntimeError:
             fail_closed_rejection = True
+
+        fail_closed_ok = fail_closed_unconfigured and fail_closed_oncall_route and fail_closed_rejection
 
         # Verify watch window recording with monitoring query execution transport
         from datetime import UTC, datetime, timedelta
