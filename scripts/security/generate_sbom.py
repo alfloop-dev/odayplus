@@ -4,6 +4,8 @@
 from __future__ import annotations
 
 import argparse
+import email
+import email.message
 import hashlib
 import importlib.metadata
 import json
@@ -20,6 +22,8 @@ DEFAULT_OUTPUT_PATH = DEFAULT_OUTPUT_DIR / "sbom.json"
 POLICY_PATH = ROOT / "docs/security/license_policy.json"
 EXEMPTIONS_PATH = ROOT / "docs/security/license_exemptions.json"
 NOTICES_PATH = ROOT / "THIRD_PARTY_NOTICES"
+
+SHA256_DIGEST_REGEX = re.compile(r"^sha256:[a-fA-F0-9]{64}$")
 
 # Known license fallbacks for PyPI packages where metadata may omit SPDX identifier
 PYPI_LICENSE_FALLBACKS = {
@@ -38,6 +42,7 @@ PYPI_LICENSE_FALLBACKS = {
     "graphemeu": "MIT",
     "huey": "MIT",
     "odayplus": "MIT",
+    "pathlib-abc": "PSF-2.0",
     "pgserver": "MIT",
     "pyreadline3": "BSD-3-Clause",
     "pywin32": "PSF-2.0",
@@ -56,6 +61,37 @@ def get_git_sha() -> str:
         return "unknown"
 
 
+def is_valid_license_value(lic: str | None) -> bool:
+    """Check if a license string is a concise identifier rather than multi-line legal prose."""
+    if not lic:
+        return False
+    val = lic.strip()
+    if not val or len(val) >= 80:
+        return False
+    if "\n" in val or "\r" in val:
+        return False
+    if val.startswith("http://") or val.startswith("https://"):
+        return False
+    if val.upper() == "UNKNOWN":
+        return False
+    prose_keywords = (
+        "copyright",
+        "license agreement",
+        "permission is hereby granted",
+        "redistribution and use",
+        "all rights reserved",
+        "see license",
+        "this license",
+        "software foundation",
+        "author",
+        "developers",
+    )
+    val_lower = val.lower()
+    if any(kw in val_lower for kw in prose_keywords):
+        return False
+    return True
+
+
 def resolve_python_license(package_name: str) -> str:
     """Resolve Python package license using metadata (active env or .venv dist-info) or fallback dict."""
     # 1. Try importlib.metadata
@@ -65,51 +101,55 @@ def resolve_python_license(package_name: str) -> str:
     except Exception:
         pass
 
-    # 2. Fallback: inspect .venv site-packages directly if importlib.metadata didn't find it
-    if meta is None or not (meta.get("License") or meta.get("License-Expression") or meta.get_all("Classifier")):
-        venv_dir = ROOT / ".venv"
-        if venv_dir.exists():
-            norm_name = package_name.lower().replace("-", "_").replace(".", "_")
-            dist_pattern = f"{norm_name}-*.dist-info/METADATA"
-            alt_pattern = f"{package_name.lower().replace('_', '-')}-*.dist-info/METADATA"
-            for site_pkg in venv_dir.glob("lib/python*/site-packages"):
-                candidates = list(site_pkg.glob(dist_pattern)) + list(site_pkg.glob(alt_pattern))
-                if candidates:
-                    meta_path = candidates[0]
-                    try:
-                        content = meta_path.read_text(encoding="utf-8")
-                        license_val = None
-                        classifiers = []
-                        for line in content.splitlines():
-                            if line.startswith("License:"):
-                                license_val = line.split(":", 1)[1].strip()
-                            elif line.startswith("License-Expression:"):
-                                license_val = line.split(":", 1)[1].strip()
-                            elif line.startswith("Classifier:"):
-                                c = line.split(":", 1)[1].strip()
-                                if "License" in c:
-                                    classifiers.append(c)
-                        if license_val and len(license_val) < 80 and not license_val.startswith("http") and license_val.upper() != "UNKNOWN":
-                            return license_val
-                        for c in classifiers:
-                            parts = c.split("::")
-                            lic_name = parts[-1].strip()
-                            if lic_name and lic_name != "OSI Approved":
-                                return lic_name
-                    except Exception:
-                        pass
-
     if meta is not None:
         lic = meta.get("License") or meta.get("License-Expression")
-        if lic and len(lic.strip()) < 80 and not lic.startswith("http") and lic.strip().upper() != "UNKNOWN":
+        if is_valid_license_value(lic):
+            norm = normalize_spdx_license(lic)
+            if norm != "UNKNOWN":
+                return norm
             return lic.strip()
+
         classifiers = meta.get_all("Classifier") or []
         for c in classifiers:
             if "License" in c:
                 parts = c.split("::")
                 lic_name = parts[-1].strip()
                 if lic_name and lic_name != "OSI Approved":
-                    return lic_name
+                    norm = normalize_spdx_license(lic_name)
+                    if norm != "UNKNOWN":
+                        return norm
+
+    # 2. Inspect .venv site-packages directly if importlib.metadata didn't yield a concise license
+    venv_dir = ROOT / ".venv"
+    if venv_dir.exists():
+        norm_name = package_name.lower().replace("-", "_").replace(".", "_")
+        dist_pattern = f"{norm_name}-*.dist-info/METADATA"
+        alt_pattern = f"{package_name.lower().replace('_', '-')}-*.dist-info/METADATA"
+        for site_pkg in venv_dir.glob("lib/python*/site-packages"):
+            candidates = list(site_pkg.glob(dist_pattern)) + list(site_pkg.glob(alt_pattern))
+            if candidates:
+                meta_path = candidates[0]
+                try:
+                    content = meta_path.read_text(encoding="utf-8")
+                    msg = email.message_from_string(content)
+                    lic = msg.get("License") or msg.get("License-Expression")
+                    if is_valid_license_value(lic):
+                        norm = normalize_spdx_license(lic)
+                        if norm != "UNKNOWN":
+                            return norm
+                        return lic.strip()
+
+                    classifiers = msg.get_all("Classifier") or []
+                    for c in classifiers:
+                        if "License" in c:
+                            parts = c.split("::")
+                            lic_name = parts[-1].strip()
+                            if lic_name and lic_name != "OSI Approved":
+                                norm = normalize_spdx_license(lic_name)
+                                if norm != "UNKNOWN":
+                                    return norm
+                except Exception:
+                    pass
 
     # 3. Secondary fallback: check PYPI_LICENSE_FALLBACKS
     if package_name in PYPI_LICENSE_FALLBACKS:
@@ -385,19 +425,26 @@ def generate_sbom(image_digest: str | None = None, release_digest: str | None = 
             "dependsOn": dep_purls
         })
 
-    # Add Root dependency graph node
-    dependencies.insert(0, {
-        "ref": root_purl,
-        "dependsOn": root_deps
-    })
+    # Filter dependencies to avoid dangling bom-ref references
+    valid_bom_refs = {c["bom-ref"] for c in components}
+    valid_bom_refs.add(root_purl)
+
+    filtered_dependencies = []
+    for dep in dependencies:
+        ref = dep.get("ref")
+        if ref in valid_bom_refs:
+            deps_on = [d for d in dep.get("dependsOn", []) if d in valid_bom_refs]
+            filtered_dependencies.append({"ref": ref, "dependsOn": deps_on})
 
     git_sha = get_git_sha()
-    sbom_content = json.dumps(components, sort_keys=True)
-    sbom_hash = hashlib.sha256(sbom_content.encode()).hexdigest()
-    sbom_digest = f"sha256:{hashlib.sha256(f'{git_sha}:{sbom_hash}'.encode()).hexdigest()}"
+    resolved_image_digest = image_digest if (image_digest and SHA256_DIGEST_REGEX.match(image_digest)) else "UNBOUND"
+    resolved_release_digest = release_digest if (release_digest and SHA256_DIGEST_REGEX.match(release_digest)) else "UNBOUND"
 
-    resolved_image_digest = image_digest or "UNBOUND"
-    resolved_release_digest = release_digest or "UNBOUND"
+    comp_json = json.dumps(components, sort_keys=True)
+    comp_hash = hashlib.sha256(comp_json.encode("utf-8")).hexdigest()
+    digest_input = f"{git_sha}:{comp_hash}:{resolved_image_digest}:{resolved_release_digest}"
+    sbom_hash = hashlib.sha256(digest_input.encode("utf-8")).hexdigest()
+    sbom_digest = f"sha256:{sbom_hash}"
 
     sbom = {
         "bomFormat": "CycloneDX",
@@ -421,7 +468,7 @@ def generate_sbom(image_digest: str | None = None, release_digest: str | None = 
             ]
         },
         "components": components,
-        "dependencies": dependencies,
+        "dependencies": filtered_dependencies,
     }
     return sbom
 
@@ -436,10 +483,10 @@ def check_license_policy(sbom: dict, require_digests: bool = False) -> tuple[boo
     rel_dig = metadata_props.get("release-digest", "")
 
     if require_digests:
-        if not img_dig or img_dig == "UNBOUND" or not img_dig.startswith("sha256:"):
-            violations.append(f"Image digest is missing or unbound: '{img_dig}'")
-        if not rel_dig or rel_dig == "UNBOUND" or not rel_dig.startswith("sha256:"):
-            violations.append(f"Release digest is missing or unbound: '{rel_dig}'")
+        if not img_dig or img_dig == "UNBOUND" or not SHA256_DIGEST_REGEX.match(img_dig):
+            violations.append(f"Image digest is missing, unbound, or invalid format (expected sha256:<64-hex>): '{img_dig}'")
+        if not rel_dig or rel_dig == "UNBOUND" or not SHA256_DIGEST_REGEX.match(rel_dig):
+            violations.append(f"Release digest is missing, unbound, or invalid format (expected sha256:<64-hex>): '{rel_dig}'")
 
     for comp in sbom.get("components", []):
         name = comp.get("name", "")
@@ -462,6 +509,8 @@ def check_license_policy(sbom: dict, require_digests: bool = False) -> tuple[boo
             if not evaluate_license_string(lic_str, allowed, denied):
                 if lic_str in denied:
                     violations.append(f"Denied license '{lic_str}' found in package '{name}' ({purl})")
+                elif lic_str in review_req:
+                    violations.append(f"License '{lic_str}' requiring security review found in package '{name}' ({purl})")
                 else:
                     violations.append(f"Unapproved license '{lic_str}' found in package '{name}' ({purl})")
 
@@ -582,6 +631,7 @@ def main() -> int:
     parser.add_argument("--release-digest", type=str, help="Release attestation digest to bind to SBOM metadata")
     parser.add_argument("--output", type=Path, default=DEFAULT_OUTPUT_PATH, help="Output path for sbom.json")
     parser.add_argument("--check-policy", action="store_true", help="Run license allow/deny policy gate fail closed")
+    parser.add_argument("--require-digests", action="store_true", help="Require valid sha256:<64-hex> image and release digests in policy check")
     parser.add_argument("--verify", action="store_true", help="Verify committed sbom.json matches active lockfiles")
     parser.add_argument("--readback", action="store_true", help="Read back and display metadata from existing sbom.json")
     parser.add_argument("--update-notices", action="store_true", help="Generate/update THIRD_PARTY_NOTICES file")
@@ -598,7 +648,8 @@ def main() -> int:
     sbom = generate_sbom(image_digest=args.image_digest, release_digest=args.release_digest)
 
     # Check License Policy
-    is_passed, violations = check_license_policy(sbom, require_digests=args.check_policy)
+    require_digs = args.require_digests or (args.check_policy and args.image_digest is not None)
+    is_passed, violations = check_license_policy(sbom, require_digests=require_digs)
     policy_status = "PASSED" if is_passed else "FAILED"
     for p in sbom["metadata"]["properties"]:
         if p["name"] == "policy-status":
@@ -622,8 +673,8 @@ def main() -> int:
     print(f"Release Digest: {sbom['metadata']['properties'][4]['value']}")
     print(f"License Policy Status: {policy_status}")
 
-    # Write THIRD_PARTY_NOTICES if requested or when generating new SBOM
-    if args.update_notices or not args.verify:
+    # Write THIRD_PARTY_NOTICES only when --update-notices flag is provided
+    if args.update_notices:
         notices_content = generate_third_party_notices(sbom)
         NOTICES_PATH.write_text(notices_content, encoding="utf-8")
         print(f"THIRD_PARTY_NOTICES updated at {NOTICES_PATH.relative_to(ROOT)}")

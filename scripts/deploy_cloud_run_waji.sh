@@ -257,6 +257,18 @@ build_publish_sign "API" "${API_IMAGE}" "infra/docker/api.Dockerfile"
 build_publish_sign "worker" "${WORKER_IMAGE}" "infra/docker/worker.Dockerfile"
 build_publish_sign "scheduler" "${SCHEDULER_IMAGE}" "infra/docker/scheduler.Dockerfile"
 
+echo "Re-binding SBOM with real pushed image and release digests..."
+REAL_IMAGE_DIGEST="$(gcloud artifacts docker images describe "${API_IMAGE}" --format='value(image_summary.digest)' 2>/dev/null || docker inspect --format='{{index .RepoDigests 0}}' "${API_IMAGE}" 2>/dev/null | grep -o 'sha256:[a-fA-F0-9]\{64\}' || true)"
+if [[ -n "${REAL_IMAGE_DIGEST}" && "${REAL_IMAGE_DIGEST}" =~ ^sha256:[a-fA-F0-9]{64}$ ]]; then
+  REAL_RELEASE_DIGEST="sha256:$(echo -n "${REAL_IMAGE_DIGEST}:${ODAY_RELEASE_SHA}" | sha256sum | cut -d' ' -f1)"
+  run_locked_python scripts/security/generate_sbom.py \
+    --image-digest "${REAL_IMAGE_DIGEST}" \
+    --release-digest "${REAL_RELEASE_DIGEST}" \
+    --check-policy \
+    --require-digests \
+    --update-notices
+fi
+
 API_SECRET_BINDINGS="ODAY_DATABASE_URL=${ODAY_DATABASE_URL_SECRET}"
 API_SECRET_BINDINGS+=",ODP_AUTH_PRINCIPAL_MAP=${ODP_AUTH_PRINCIPAL_MAP_SECRET}"
 IFS=',' read -ra SELECTED_PROVIDER_IDS <<<"${ODP_PRODUCTION_PROVIDER_IDS}"
