@@ -556,6 +556,26 @@ def test_alert_routing_and_real_notification_delivery() -> None:
     assert "Durable storage write timeout" in msg["detail"]
 
 
+def test_unconfigured_route_fails_closed() -> None:
+    from modules.notifications import (
+        ConsoleNotificationAdapter,
+        InMemoryNotificationRepository,
+        NotificationService,
+    )
+    from shared.observability.alerts import AlertRouter
+
+    repo = InMemoryNotificationRepository()
+    adapter = ConsoleNotificationAdapter()
+    service = NotificationService(repository=repo, adapter=adapter)
+
+    router = AlertRouter(notification_service=service)
+    # Simulate unconfigured routing where default_receiver is empty/None
+    router.config["routing"] = {"default_receiver": None, "routes": []}
+
+    with pytest.raises(ValueError, match="is unconfigured. Fail-closed gate enforced."):
+        router.route_alert("audit-write-failure")
+
+
 def test_api_telemetry_export() -> None:
     from fastapi.testclient import TestClient
 

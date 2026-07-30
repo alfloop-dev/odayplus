@@ -56,6 +56,11 @@ class AlertRouter:
                 receiver = route.get("receiver", default_receiver)
                 break
 
+        if not receiver:
+            raise ValueError(
+                f"On-call route for alert '{alert_id}' (severity '{severity}') is unconfigured. Fail-closed gate enforced."
+            )
+
         return {
             "alert_id": alert_id,
             "name": alert.get("name"),
