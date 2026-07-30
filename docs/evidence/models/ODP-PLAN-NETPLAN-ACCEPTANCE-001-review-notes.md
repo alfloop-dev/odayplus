@@ -1,0 +1,125 @@
+# Review Notes: ODP-PLAN-NETPLAN-ACCEPTANCE-001
+
+- **Reviewer**: Claude
+- **Owner**: Antigravity2
+- **Reviewed commit**: `8da5e2b8` (`ODP-PLAN-NETPLAN-ACCEPTANCE-001: complete NetPlan hard constraint and management acceptance`)
+- **Reviewed artifact**: `docs/evidence/models/ODP-PLAN-NETPLAN-ACCEPTANCE-001.md`
+- **Verdict**: **CHANGES REQUESTED** — implementation and tests pass; the acceptance
+  packet's evidence and architecture sections contain factual errors that make it
+  non-auditable as a management artifact.
+
+---
+
+## 1. What the reviewer independently verified
+
+Re-ran from a clean worktree on `task/ODP-PLAN-NETPLAN-ACCEPTANCE-001`:
+
+```bash
+/home/lupin/oday-plus/.venv/bin/pytest -q tests -k "netplan or ortools or robust"
+# 7 collected, 7 passed
+
+/home/lupin/oday-plus/.venv/bin/pytest -q \
+  solver/netplan/tests/test_robust.py \
+  modules/netplan/tests/test_netplan_production_execution.py \
+  tests/integration/test_netplan_solver.py \
+  tests/solver/test_runtime_compat.py
+# 22 collected, 22 passed (5 + 2 + 5 + 10)
+
+git diff --check
+# clean, exit 0
+```
+
+Substance confirmed against source:
+
+- All five hard-constraint families are declared in `solver/netplan/model.py:60-66`
+  and enforced in `solver/netplan/optimizer.py:238-291` (MIP path) and re-checked
+  in `_is_feasible` at `solver/netplan/optimizer.py:516-541`.
+- `InfeasibilityDiagnosis` (`solver/netplan/model.py:93-107`) carries all five
+  fields the packet claims, and `diagnose_infeasible`
+  (`solver/netplan/optimizer.py:386-483`) returns structured diagnostics without
+  relaxing any limit.
+- Provenance fields (`source_snapshot_ids`, `policy_version`, `model_version`,
+  `feature_version`) exist in `solver/netplan/model.py` and
+  `modules/netplan/domain/planning.py`.
+
+**The delivered NetPlan behaviour is accepted.** The findings below are all in
+the packet document.
+
+---
+
+## 2. Blocking findings (packet document)
+
+### F1 — §4.2 verification output is internally contradictory and does not match a real run
+
+The pasted block shows a 7-dot progress line (`.......`) but reports
+`12 passed in 14.77s`, while §4.3 enumerates 14 named tests. No run produces
+12. The command in §4.1 collects **7** tests and reports **7 passed**.
+
+Replace §4.2 with verbatim output from an actual run, and make the progress
+line, the summary count, and the §4.3 enumeration agree.
+
+### F2 — §4.3 attributes test files to a command that does not collect them
+
+`pytest -q tests -k "netplan or ortools or robust"` only collects under `tests/`.
+It therefore does **not** run:
+
+- `solver/netplan/tests/test_robust.py` (5 tests)
+- `modules/netplan/tests/test_netplan_production_execution.py` (2 tests)
+
+Both suites do pass, but only when invoked explicitly. Conversely, §4.3 omits
+two tests the canonical command *does* collect:
+
+- `tests/contract/test_operator_network_rebalance_api.py` (1)
+- `tests/integration/test_operator_canonical_wiring.py` (1)
+
+Either widen §4.1 to a command that actually covers the enumerated suites, or
+split §4.3 into "canonical command (7)" and "supplementary explicit runs (15)".
+
+### F3 — §4.3 item 4 undercounts `tests/solver/test_runtime_compat.py`
+
+Two tests are listed; the file contains **10**. Either list all 10 or state that
+the two named cases are the task-relevant subset.
+
+### F4 — §3.1 cites a non-existent path
+
+The packet places `process_isolation.py` under `solver/netplan/`. The actual
+module is `solver/process_isolation.py`. `solver/netplan/` contains only
+`__init__.py`, `model.py`, `optimizer.py`, and `tests/`.
+
+### F5 — §3.2 cites a non-existent module
+
+There is no `modules/netplan/application/service.py`. `modules/netplan/application/`
+contains `planning.py` and `production.py` only. Scenario lifecycle status
+transitions and audit records live in `modules/netplan/application/planning.py`
+and `modules/netplan/domain/planning.py`. Re-point the claim.
+
+---
+
+## 3. Non-blocking observations
+
+### O1 — "Superiority over Baseline" is asserted, not measured
+
+§2 marks this **PASS** with a description of solver mechanics rather than a
+numeric comparison. There is no test asserting `solved.objective_value >
+approved_baseline`. Recommend either citing concrete objective values from a
+named scenario, or restating the criterion as a structural guarantee (KEEP is
+always in the action domain, so an optimal solve is by construction no worse
+than the keep-everything baseline).
+
+### O2 — Two constraint families have no dedicated infeasibility branch
+
+`diagnose_infeasible` has explicit branches for `max_budget`,
+`min_expected_gross_margin`, `min_capacity_delta`, and `min_action_counts`.
+`max_average_risk` and `max_action_counts` have none and fall through to the
+generic `combined_constraints` diagnosis at `solver/netplan/optimizer.py:473-482`.
+That fallback is still structured and names risk in its `suggested_action`, so
+the acceptance criterion holds — but it is less specific than §2 implies. Either
+qualify §2 or open a follow-up to add the two branches.
+
+---
+
+## 4. Requested action
+
+Owner corrects F1–F5 in `docs/evidence/models/ODP-PLAN-NETPLAN-ACCEPTANCE-001.md`
+and addresses O1–O2 either inline or as a noted follow-up, then hands the task
+back for re-review. No source change is required.
