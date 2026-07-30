@@ -220,9 +220,9 @@ def evaluate_sitescore_opening_outcome_benchmark(
     def get_days_elapsed(r: dict[str, Any], key: str, req_days: int) -> bool:
         if r.get(f"m{req_days // 30}_covered", False):
             return True
-        val = r.get(key, 0)
-        if isinstance(val, (int, float)) and val >= req_days:
-            return True
+        val = r.get(key)
+        if val is not None and isinstance(val, (int, float)):
+            return val >= req_days
         opened_on = r.get("opened_on")
         if opened_on:
             try:
