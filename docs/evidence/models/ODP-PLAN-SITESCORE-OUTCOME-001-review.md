@@ -178,3 +178,79 @@ task before this capability is ever activated.
 `review_approved` at exact head recorded by `scripts/ai-status.sh approve`. The frozen head
 is the branch tip that carries this addendum and the `origin/dev` refresh; the reviewed
 owner content is `184ae404`.
+
+---
+
+# Codex6 Re-review Addendum — 2026-07-30, exact owner head `e3266736`
+
+The supervisor dispatched this task to the assigned reviewer after the owner reported B1/B2
+remediation at pushed head `e32667364395065a46c4d56427971ecdc3c189a5`.
+
+## Verification at the exact owner head
+
+```bash
+PYTHONPATH=. .venv/bin/pytest -q tests/models/test_sitescore_opening_outcome.py
+PYTHONPATH=. .venv/bin/pytest -q tests -k "sitescore or opening_outcome or model_ready"
+.venv/bin/ruff check models/sitescore scripts/models/sitescore_outcome_benchmark.py \
+  tests/models/test_sitescore_opening_outcome.py
+git diff --check
+```
+
+- Task-scoped tests: **15 passed**.
+- Focused selector: **57 passed, 1 skipped**.
+- Ruff and `git diff --check`: clean.
+- Committed receipt integrity independently recomputed and matched
+  `d758040976aab5abf778cc6363c43c9ddac51cd0c52b4573a7cbc8da12ee3947`.
+
+The checks are green, but the following semantic findings still block approval.
+
+## Blocking findings
+
+### B1 — Legitimate-zero support makes normalized MAE fail open
+
+`models/sitescore/opening_outcome.py:395-397` sets `normalized_mae` to `0.0` whenever
+`mean_y <= 0`, even when prediction errors are non-zero. With 220 eligible records whose
+legitimate realized 90-day, M6, and M12 outcomes are all `0.0`, predictions of `1,000,000`,
+and intervals `[0, 1,100,000]`, the evaluator reports:
+
+- `measured_90d_mae = 1,000,000`
+- `normalized_mae = 0.0`
+- all label, M6/M12, prediction, interval-bound, P80, and MAE threshold flags passing
+
+Only the temporary hard-coded `is_lineage_governed = False` prevents activation. Once
+`ODP-PLAN-SITESCORE-PREDICTION-SOURCE-001` supplies the resolver this benchmark is designed
+to compose with, the zero-outcome cohort can falsely satisfy the calibration gate despite
+arbitrarily bad predictions. Define and test a fail-closed zero-denominator policy (for
+example, zero only when both denominator and MAE are zero; otherwise infinity/failure), and
+assert the resulting MAE decision, not only mature-label and horizon counts.
+
+### B2 — The new backfill metadata is not an actionable Gate 2 backfill
+
+`models/sitescore/opening_outcome.py:194-197` adds the requested keys, but their values cannot
+close the handback:
+
+1. `backfill_task_id` names
+   `ODP-SITESCORE-AUTHORITATIVE-OUTCOME-BACKFILL-001`, which is absent from the task registry
+   and all repo task definitions. It therefore has no governed owner/lifecycle or receipt
+   destination.
+2. `backfill_query` only selects `realized_90d_net_revenue` and derives store age twice as
+   `m6_days`/`m12_days`. It selects no realized M6/M12 outcomes, governed prediction,
+   `p10`/`p90`, dataset snapshot, model version, or artifact lineage. This is the same
+   insufficient source shape identified in the prior review, not SQL that can produce the
+   acceptance-required M6/M12 coverage/calibration receipt.
+3. The regression test only checks that the task ID is a string and the query mentions
+   `model_ready.candidate_site_view`; it does not validate task registration or required
+   output columns.
+
+Register a real handback task (or reference an existing governed task), point the receipt
+requirement at that task, and provide SQL/query-contract fields that can actually populate
+the required M6/M12 outcomes plus prediction/interval/lineage evidence. If schema work is
+intentionally owned by another task, the handback must explicitly route to that registered
+task and describe the receipt it must return rather than presenting the current 90-day
+inventory `SELECT` as a backfill.
+
+## Decision
+
+**Changes requested.** Exact owner head `e3266736` is not approved. The task is reopened to
+Antigravity4 for B1 and B2 remediation; no owner implementation content was changed by this
+review.
