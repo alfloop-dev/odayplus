@@ -81,6 +81,7 @@ def test_deferred_oss_adr_claimed_locked_packages_resolve() -> None:
     # Extract claimed locked packages list from Section 'Verification and Traceability'
     # Format: (`statsmodels`, `lifelines`, ...)
     import re
+
     match = re.search(r"現行整合之替代套件 \((.*?)\)", content)
     assert match is not None, "Could not find locked packages list in ADR-0002"
 
@@ -93,3 +94,41 @@ def test_deferred_oss_adr_claimed_locked_packages_resolve() -> None:
             pkg in pyproject_content or norm_pkg in pyproject_content
         ), f"Claimed locked package '{pkg}' in ADR-0002 is not present in pyproject.toml"
 
+    # Scan Decision Summary Matrix 替代/現行實作能力 column for package claims
+    alias_map = {
+        "h3-py": "h3",
+        "or-tools": "ortools",
+        "statsforecast": "statsforecast",
+        "mlforecast": "mlforecast",
+        "evidently": "evidently",
+        "fastapi": "fastapi",
+        "dagster": "dagster",
+        "mlflow": "mlflow",
+        "statsmodels": "statsmodels",
+        "cvxpy": "cvxpy",
+        "pymoo": "pymoo",
+        "shapely": "shapely",
+        "geopandas": "geopandas",
+        "ruptures": "ruptures",
+        "feast": "feast",
+        "doubleml": "doubleml",
+        "econml": "econml",
+        "pyomo": "pyomo",
+    }
+
+    matrix_lines = [line for line in content.splitlines() if line.startswith("| **")]
+    for line in matrix_lines:
+        columns = [col.strip() for col in line.split("|")]
+        if len(columns) > 4:
+            capability_cell = columns[4]
+            tokens = re.split(r"[\s\+\,`\(\)]+", capability_cell)
+            for token in tokens:
+                token_clean = token.strip().lower()
+                if not token_clean:
+                    continue
+                pkg_name = alias_map.get(token_clean)
+                if pkg_name:
+                    norm_pkg = pkg_name.replace("_", "-")
+                    assert (
+                        pkg_name in pyproject_content or norm_pkg in pyproject_content
+                    ), f"Matrix claimed package '{token}' (resolves to '{pkg_name}') is not present in pyproject.toml"

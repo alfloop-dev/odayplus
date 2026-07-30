@@ -142,7 +142,7 @@ review_trigger: "Review when production data scale, sub-10ms online feature late
 
 | 元件名稱 | 決策狀態 | 映射需求編號 | 替代/現行實作能力 | 元件 Owner | 未安裝/Deferred 治理規則 | 重新評估觸發條件 (Revisit Trigger) |
 |---|---|---|---|---|---|---|
-| **GeoPandas** | `replace` / `defer` | `ODP-HLR-INT-001` | PostGIS SQL + Shapely + H3-py | Data Platform | In-memory Heavy Join 下推 SQL | 需要大型向量圖層 Python 批次幾何運算 |
+| **GeoPandas** | `replace` / `defer` | `ODP-HLR-INT-001` | PostGIS SQL + H3-py | Data Platform | In-memory Heavy Join 下推 SQL | 需要大型向量圖層 Python 批次幾何運算 |
 | **ruptures** | `replace` / `defer` | `ODP-HLR-INT-004` | Evidently AI + StatsForecast 窗格統計 | ForecastOps ML | 不宣稱為 Pelt/Dynp 離線分割 | 歷史多年度斷點無監督動態規劃需求 |
 | **Superset** | `replace` | `ODP-HLR-GOV-001/002` | Next.js OpsBoard + FastAPI RBAC APIs | Frontend Team | 不開放任意 SQL 拖拉 UI | 業務分析師需要開放式 SQL 自訂 BI 視圖 |
 | **Temporal** | `replace` | `ODP-HLR-GOV-005/006` | Dagster + Postgres Job Queue (`job_queue.py`) | Infra & Ops | 長任務休眠由 DB 狀態機管理 | 跨服務多日人工 Signal 異步 Saga 需求 |
