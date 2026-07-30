@@ -501,14 +501,28 @@ def test_dependency_graph_tampering_alters_sbom_digest(tmp_path: Path) -> None:
     assert digest_a != digest_b, "Graph tampering must alter sbom-content-digest"
 
 
-def test_vulnerability_audit_script_passes() -> None:
+def test_vulnerability_audit_script_prod_passes() -> None:
+    """Production vulnerability audit gate must PASS when production dependencies are clean."""
     res = subprocess.run(
-        [sys.executable, str(ROOT / "scripts/security/vulnerability_scan.py")],
+        [sys.executable, str(ROOT / "scripts/security/vulnerability_scan.py"), "--scope", "prod"],
         cwd=ROOT,
         capture_output=True,
         text=True,
     )
-    assert res.returncode == 0, f"vulnerability_scan.py failed with output:\n{res.stderr}\n{res.stdout}"
+    assert res.returncode == 0, f"vulnerability_scan.py --scope prod failed with output:\n{res.stderr}\n{res.stdout}"
+
+
+def test_vulnerability_audit_script_full_fails_closed_without_active_exemption() -> None:
+    """C3 — full/dev vulnerability audit gate must FAIL CLOSED when dev findings exist and exemption status is review_required."""
+    res = subprocess.run(
+        [sys.executable, str(ROOT / "scripts/security/vulnerability_scan.py"), "--scope", "full"],
+        cwd=ROOT,
+        capture_output=True,
+        text=True,
+    )
+    assert res.returncode != 0, "Full vulnerability scan must fail closed when no active exemption exists"
+    assert "Vulnerability Audit Gate FAILED" in res.stdout or "Vulnerability Audit Gate FAILED" in res.stderr
+
 
 
 def test_ai_approver_rejection_negative(tmp_path: Path) -> None:
@@ -524,7 +538,12 @@ def test_ai_approver_rejection_negative(tmp_path: Path) -> None:
                     "package_name": "some-unapproved-package",
                     "purl": "pkg:npm/some-unapproved-package@1.0.0",
                     "reason": "AI approved test",
-                    "approved_by": "Antigravity5"
+                    "approved_by": "Antigravity5",
+                    "approval_reference": "TEST-REF-001",
+                    "status": "active",
+                    "issued_at": "2026-01-01T00:00:00Z",
+                    "expires_at": "2099-12-31T23:59:59Z",
+                    "scope": "all"
                 }
             ]
         }),
@@ -555,15 +574,15 @@ def test_verify_sbom_rejects_tampered_graph(tmp_path: Path) -> None:
     assert code == 1, "verify_sbom must reject a tampered dependency graph"
 
 
-# ─── Round-3 negative tests (C1/C4, C2, C3/R2, R1, R3) ─────────────────────
+# ─── Round-3/Round-4/Round-5 negative tests (C1/C4/C5, C2, C3/R2, R1, R3) ───
 
 
 def test_arbitrary_approver_strings_rejected_negative(tmp_path: Path) -> None:
-    """C1/C4 — generic, arbitrary, and AI-adjacent approver strings must be rejected.
+    """C1/C4 — generic, arbitrary, bare role, and AI-adjacent approver strings must be rejected.
 
-    The pure-negative regex previously accepted 'asdf', 'TBD', 'x', '.',
-    'ClaudeCode', and 'Antigravity Team'.  The positive approver validator must
-    reject all of them.
+    Bare role strings like 'Human/Ops', 'Legal/Ops', 'Security/Ops', 'TBD/Ops',
+    'unknown/ops', 'N/A (ops)', and 'pending-legal' must be rejected because they
+    do not identify a named accountable role-holder.
     """
     sys.path.insert(0, str(ROOT))
     from scripts.security.generate_sbom import _is_valid_approver
@@ -579,20 +598,29 @@ def test_arbitrary_approver_strings_rejected_negative(tmp_path: Path) -> None:
         "GPT-4 approver",
         "Gemini",
         "Codex5",
+        "Human/Ops",
+        "Legal/Ops",
+        "Security/Ops",
+        "TBD/Ops",
+        "unknown/ops",
+        "N/A (ops)",
+        "pending-legal",
+        "Ops",
+        "Legal",
+        "Security",
     ]
     for approver in bad_approvers:
         assert not _is_valid_approver(approver), (
             f"Approver '{approver}' should be rejected but was accepted"
         )
 
-    # Legitimate role-based approvers must still pass
+    # Legitimate named role-holder approvers must pass
     good_approvers = [
-        "Human/Ops",
-        "Legal/Ops",
-        "Security/Ops",
-        "J.Smith/Legal",
-        "Security Officer",
-        "Compliance Manager",
+        "Jane Doe (Legal Counsel)",
+        "Jane Doe, Legal",
+        "Alice Smith, Security Director",
+        "John Doe, Operations Officer",
+        "TEST-ONLY Jane Doe, Legal Counsel",
     ]
     for approver in good_approvers:
         assert _is_valid_approver(approver), (
@@ -600,24 +628,75 @@ def test_arbitrary_approver_strings_rejected_negative(tmp_path: Path) -> None:
         )
 
 
+def test_first_party_purl_delimiter_anchoring_and_spoof_negative() -> None:
+    """C5 — first-party purl recognition must be delimiter-anchored to prevent spoofing."""
+    sys.path.insert(0, str(ROOT))
+    from scripts.security.generate_sbom import is_first_party_purl
+
+    # Valid first-party PURLs
+    assert is_first_party_purl("pkg:generic/oday-plus@0.1.0")
+    assert is_first_party_purl("pkg:npm/%40oday-plus/web@0.1.0")
+    assert is_first_party_purl("pkg:npm/%40oday-plus/design-tokens@0.1.0")
+
+    # Spoofed PURLs attempting to match via unanchored prefix
+    assert not is_first_party_purl("pkg:generic/oday-plus-evil@1.0")
+    assert not is_first_party_purl("pkg:npm/%40oday-plus-evil/x@1.0")
+    assert not is_first_party_purl("pkg:generic/oday-plus_attacker@2.0")
+
+
+def test_inactive_and_review_required_exemptions_ignored_negative(tmp_path: Path) -> None:
+    """C4 — exemption entries with status != 'active' must be ignored and fail closed."""
+    sys.path.insert(0, str(ROOT))
+    import scripts.security.vulnerability_scan as vscan
+
+    inactive_exemptions = tmp_path / "inactive_exemptions.json"
+    inactive_exemptions.write_text(
+        json.dumps({
+            "exemptions": [
+                {
+                    "package_name": "brace-expansion",
+                    "vulnerability_id": "GHSA-mh99-v99m-4gvg",
+                    "scope": "dev",
+                    "reason": "Review required test",
+                    "approved_by": "TEST-ONLY Jane Doe (Legal Counsel)",
+                    "approval_reference": "TEST-REF-001",
+                    "status": "review_required",
+                    "issued_at": "2026-01-01T00:00:00Z",
+                    "expires_at": "2099-12-31T23:59:59Z",
+                }
+            ]
+        }),
+        encoding="utf-8",
+    )
+
+    orig_path = vscan.EXEMPTIONS_PATH
+    try:
+        vscan.EXEMPTIONS_PATH = inactive_exemptions
+        active_ex, violations = vscan.load_vulnerability_exemptions()
+        assert len(violations) == 0
+        assert len(active_ex) == 0, "Non-active exemption entries must be ignored for finding suppression"
+    finally:
+        vscan.EXEMPTIONS_PATH = orig_path
+
+
 def test_missing_required_exemption_field_rejected_negative(tmp_path: Path) -> None:
     """C4 — a vulnerability exemption with a missing required field must be flagged.
 
-    Required fields per the schema: package_name, vulnerability_id, approved_by,
-    issued_at, expires_at, scope, reason.
+    Required fields per the schema: package_name, vulnerability_id, status, approved_by,
+    approval_reference, issued_at, expires_at, scope, reason.
     """
     sys.path.insert(0, str(ROOT))
     import scripts.security.vulnerability_scan as vscan
 
-    # Exemption missing 'issued_at', 'vulnerability_id', and 'scope'
+    # Exemption missing 'issued_at', 'vulnerability_id', 'status', and 'approval_reference'
     incomplete_exemptions = tmp_path / "incomplete_exemptions.json"
     incomplete_exemptions.write_text(
         json.dumps({
             "exemptions": [
                 {
                     "package_name": "some-package",
-                    # missing: vulnerability_id, issued_at, scope
-                    "approved_by": "Human/Ops",
+                    # missing: vulnerability_id, status, approval_reference, issued_at, scope
+                    "approved_by": "TEST-ONLY Jane Doe (Legal Counsel)",
                     "expires_at": "2099-12-31T23:59:59Z",
                     "reason": "Testing missing fields",
                 }
@@ -684,7 +763,9 @@ def test_dev_scoped_exemption_does_not_suppress_prod_audit_negative(tmp_path: Pa
             "vulnerability_id": "GHSA-mh99-v99m-4gvg",
             "scope": "dev",
             "reason": "Dev-only",
-            "approved_by": "Human/Ops",
+            "approved_by": "TEST-ONLY Jane Doe (Legal Counsel)",
+            "approval_reference": "TEST-REF-001",
+            "status": "active",
             "issued_at": "2026-01-01T00:00:00Z",
             "expires_at": "2099-12-31T23:59:59Z",
         }
@@ -718,7 +799,9 @@ def test_non_matching_advisory_id_not_exempted_negative() -> None:
             "vulnerability_id": "GHSA-mh99-v99m-4gvg",
             "scope": "dev",
             "reason": "Only this specific advisory",
-            "approved_by": "Human/Ops",
+            "approved_by": "TEST-ONLY Jane Doe (Legal Counsel)",
+            "approval_reference": "TEST-REF-001",
+            "status": "active",
             "issued_at": "2026-01-01T00:00:00Z",
             "expires_at": "2099-12-31T23:59:59Z",
         }

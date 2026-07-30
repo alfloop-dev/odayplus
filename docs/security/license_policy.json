@@ -1,6 +1,12 @@
 {
   "policy_name": "ODP-OSS-License-Gate-Policy-v1",
   "version": "1.0.0",
+  "first_party_purl_prefixes": [
+    "pkg:generic/oday-plus@",
+    "pkg:generic/oday-plus?",
+    "pkg:generic/oday-plus/",
+    "pkg:npm/%40oday-plus/"
+  ],
   "allowed_licenses": [
     "MIT",
     "MIT-0",

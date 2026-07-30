@@ -26,29 +26,69 @@ SHA256_DIGEST_REGEX = re.compile(r"^sha256:[a-fA-F0-9]{64}$")
 # Kept for backward-compat import; prefer _is_valid_approver() for new checks.
 AI_AGENT_PATTERN = re.compile(r"^(Antigravity|Claude|Codex|Gemini|Copilot|GPT|LLM)\d*$", re.IGNORECASE)
 
-# Positive allowlist of recognised human/legal authority tokens.  A value must
-# contain at least one token (case-insensitive) to be treated as a named approver.
-_APPROVED_ROLE_TOKENS = re.compile(
-    r"(human|legal|security|ops|compliance|officer|director|manager|engineer|counsel)",
-    re.IGNORECASE,
-)
+_ROLE_TOKENS = {
+    "human", "legal", "security", "ops", "compliance", "officer", "director",
+    "manager", "engineer", "counsel", "vp", "head", "lead", "auditor", "attorney"
+}
+_PLACEHOLDER_WORDS = {
+    "tbd", "unknown", "na", "n/a", "pending", "none", "null", "placeholder", "generic", "n", "a", "x"
+}
 
 
 def _is_valid_approver(approver: str) -> bool:
-    """Return True only when the approver string names a human/legal authority.
+    """Return True only when the approver identifies a named human/legal authority (name + role).
 
     Rejects:
     - Empty / whitespace-only strings
-    - Any string containing an AI agent root word (Antigravity, Claude, GPT…)
-    - Strings with no recognised authority token
+    - Strings containing AI agent root words (Antigravity, Claude, Codex, Gemini, Copilot, GPT, LLM)
+    - Bare role tokens (Human/Ops, Legal/Ops, Security/Ops, Ops, Legal, pending-legal, etc.)
+    - Placeholder strings (TBD, unknown, N/A, pending, etc.)
+    - Strings missing a personal name component or missing a role component
     """
     if not approver or not approver.strip():
         return False
     val = approver.strip()
-    # Block any string that embeds an AI agent root word
     if re.search(r"(Antigravity|Claude|Codex|Gemini|Copilot|GPT|LLM)", val, re.IGNORECASE):
         return False
-    return bool(_APPROVED_ROLE_TOKENS.search(val))
+
+    val_normalized = re.sub(r"n/a", "na", val, flags=re.IGNORECASE)
+    words = re.findall(r"[A-Za-z0-9_]+", val_normalized)
+    if not words:
+        return False
+
+    non_role_name_words = [
+        w for w in words
+        if w.lower() not in _ROLE_TOKENS
+        and w.lower() not in _PLACEHOLDER_WORDS
+        and w.lower() not in {"and", "or", "of", "the", "for", "in"}
+        and len(w) >= 2
+    ]
+    role_words = [w for w in words if w.lower() in _ROLE_TOKENS]
+
+    # Must contain at least one personal name word AND at least one role token
+    return bool(non_role_name_words and role_words)
+
+
+def is_first_party_purl(purl: str, prefixes: list[str] | tuple[str, ...] | None = None) -> bool:
+    """Return True if purl matches a first-party prefix with delimiter anchoring."""
+    if not purl:
+        return False
+    if prefixes is None:
+        prefixes = [
+            "pkg:generic/oday-plus@",
+            "pkg:generic/oday-plus?",
+            "pkg:generic/oday-plus/",
+            "pkg:npm/%40oday-plus/",
+        ]
+    for pfx in prefixes:
+        if pfx.endswith(("@", "?", "/", "#")):
+            if purl.startswith(pfx):
+                return True
+        else:
+            if purl == pfx or any(purl.startswith(pfx + d) for d in ("@", "?", "/", "#")):
+                return True
+    return False
+
 
 
 def safe_rel_path(path: Path) -> Path | str:
@@ -470,6 +510,17 @@ def normalize_spdx_license(raw_license: str | None) -> str:
     return mapping.get(lic, lic)
 
 
+REQUIRED_LICENSE_EXEMPTION_FIELDS = {
+    "status",
+    "issued_at",
+    "expires_at",
+    "approved_by",
+    "approval_reference",
+    "scope",
+    "reason",
+}
+
+
 def load_license_policy() -> tuple[set[str], set[str], set[str], set[str], set[str], list[str]]:
     if not POLICY_PATH.exists():
         raise FileNotFoundError(f"License policy file missing at {POLICY_PATH}")
@@ -490,17 +541,48 @@ def load_license_policy() -> tuple[set[str], set[str], set[str], set[str], set[s
             ex_data = json.loads(EXEMPTIONS_PATH.read_text(encoding="utf-8"))
             for entry in ex_data.get("exemptions", []):
                 approver = entry.get("approved_by", "")
+                app_ref = entry.get("approval_reference", "")
                 pkg_name = entry.get("package_name", "unknown")
+                status = entry.get("status", "")
+
+                missing = REQUIRED_LICENSE_EXEMPTION_FIELDS - set(entry.keys())
+                if "package_name" not in entry and "purl" not in entry:
+                    missing.add("package_name")
+                if missing:
+                    ex_violations.append(
+                        f"License exemption for '{pkg_name}' is missing required fields: {sorted(missing)}"
+                    )
+
                 if not _is_valid_approver(approver):
                     ex_violations.append(
                         f"License exemption for '{pkg_name}' has invalid approver '{approver}'. "
-                        "Approver must be a named human/legal role (e.g. 'Human/Ops', 'Legal/Ops'); "
-                        "AI agent names and placeholder strings cannot serve as legal approvers."
+                        "Approver must be a named human/legal authority (e.g. 'Jane Doe (Legal Counsel)'); "
+                        "AI agent names, bare role tokens, and placeholder strings cannot serve as legal approvers."
                     )
-                if "purl" in entry:
-                    exempt_purls.add(entry["purl"])
-                if "package_name" in entry:
-                    exempt_names.add(entry["package_name"])
+
+                if not app_ref or not str(app_ref).strip():
+                    ex_violations.append(
+                        f"License exemption for '{pkg_name}' is missing valid approval_reference."
+                    )
+
+                expires_at = entry.get("expires_at")
+                if expires_at:
+                    try:
+                        exp_dt = datetime.fromisoformat(expires_at.replace("Z", "+00:00"))
+                        if exp_dt < datetime.now(UTC):
+                            ex_violations.append(
+                                f"License exemption for '{pkg_name}' expired at {expires_at}."
+                            )
+                    except ValueError:
+                        ex_violations.append(
+                            f"License exemption for '{pkg_name}' has invalid expires_at date: '{expires_at}'."
+                        )
+
+                if status == "active":
+                    if "purl" in entry:
+                        exempt_purls.add(entry["purl"])
+                    if "package_name" in entry:
+                        exempt_names.add(entry["package_name"])
         except Exception as e:
             raise ValueError(f"Failed to parse license exemptions file {EXEMPTIONS_PATH}: {e}") from e
 
@@ -825,24 +907,30 @@ def check_license_policy(sbom: dict, require_digests: bool = False) -> tuple[boo
         if not rel_dig or rel_dig == "UNBOUND" or not SHA256_DIGEST_REGEX.match(rel_dig):
             violations.append(f"Release digest is missing, unbound, or invalid format (expected sha256:<64-hex>): '{rel_dig}'")
 
-    # N2: First-party scope guard.  A purl-based exemption is only honoured when
-    # it is also constrained to a first-party package prefix, preventing a
-    # third-party package from registering an exemption purl that happens to
-    # match a deny-listed entry.
-    _FIRST_PARTY_PURL_PREFIXES = ("pkg:generic/oday-plus", "pkg:npm/%40oday-plus/")
+    policy_data = {}
+    if POLICY_PATH.exists():
+        try:
+            policy_data = json.loads(POLICY_PATH.read_text(encoding="utf-8"))
+        except Exception:
+            pass
+
+    first_party_prefixes = policy_data.get("first_party_purl_prefixes") or [
+        "pkg:generic/oday-plus@",
+        "pkg:generic/oday-plus?",
+        "pkg:generic/oday-plus/",
+        "pkg:npm/%40oday-plus/",
+    ]
 
     for comp in sbom.get("components", []):
         name = comp.get("name", "")
         purl = comp.get("purl", "")
 
-        purl_exempted = (
-            purl in exempt_purls
-            and any(purl.startswith(pfx) for pfx in _FIRST_PARTY_PURL_PREFIXES)
-        )
-        name_exempted = (
-            name in exempt_names
-            and any(purl.startswith(pfx) for pfx in _FIRST_PARTY_PURL_PREFIXES)
-        )
+        # First-party packages are recognized directly via policy rule
+        if is_first_party_purl(purl, first_party_prefixes):
+            continue
+
+        purl_exempted = purl in exempt_purls
+        name_exempted = name in exempt_names
         if purl_exempted or name_exempted:
             continue
 
