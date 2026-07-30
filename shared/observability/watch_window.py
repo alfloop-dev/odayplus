@@ -93,7 +93,10 @@ def record_deployment_watch_window_status(
     if not target_gcp_project or not str(target_gcp_project).strip():
         raise ValueError("GCP_PROJECT environment variable is missing or unconfigured. Fail-closed gate enforced.")
 
-    from shared.observability.metrics import ProductionMetricsExporter, get_monitoring_provider_route
+    from shared.observability.metrics import (
+        ProductionMetricsExporter,
+        get_monitoring_provider_route,
+    )
 
     route_str = get_monitoring_provider_route(provider_route)
 
@@ -108,7 +111,11 @@ def record_deployment_watch_window_status(
     }
 
     transport = query_transport or ProductionMetricsExporter._default_http_transport
-    endpoint = f"{route_str}/monitoring/query" if not route_str.endswith("/monitoring/query") else route_str
+    gcp_proj = str(target_gcp_project).strip()
+    if route_str.endswith("/monitoring/query") or route_str.endswith("/timeSeries:query"):
+        endpoint = route_str
+    else:
+        endpoint = f"{route_str}/projects/{gcp_proj}/timeSeries:query"
 
     try:
         http_status, query_resp = transport(endpoint, query_payload)
@@ -132,9 +139,9 @@ def record_deployment_watch_window_status(
     # Validate binding consistency between request and query execution response
     if "gcp_project" in query_resp:
         resp_project = str(query_resp["gcp_project"]).strip()
-        if resp_project != str(target_gcp_project).strip():
+        if resp_project != gcp_proj:
             raise ValueError(
-                f"Monitoring query readback project mismatch: expected '{target_gcp_project}', got '{resp_project}'. Fail-closed gate enforced."
+                f"Monitoring query readback project mismatch: expected '{gcp_proj}', got '{resp_project}'. Fail-closed gate enforced."
             )
 
     if "release_sha" in query_resp:
@@ -151,8 +158,8 @@ def record_deployment_watch_window_status(
                 f"Monitoring query readback watch window mismatch: expected {watch_window_minutes}m, got {resp_window}m. Fail-closed gate enforced."
             )
 
-    query_status = query_resp.get("query_status", "SUCCESS" if status == 1 else "FAILED")
-    if query_status != "SUCCESS" and status == 1:
+    query_status = query_resp.get("query_status")
+    if not query_status or (query_status != "SUCCESS" and status == 1):
         raise ValueError(
             f"Monitoring query readback returned status '{query_status}', contradicting requested pass status. Caller-self-attested success rejected."
         )

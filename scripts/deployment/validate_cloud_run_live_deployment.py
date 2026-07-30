@@ -392,21 +392,22 @@ def observability_runtime_checks(root: Path = ROOT) -> list[CheckResult]:
         monitoring_route = "https://monitoring.googleapis.com/v3"
 
         def mock_provider_transport(url: str, payload: dict) -> tuple[int, dict]:
-            if "metrics/export" in url:
+            if "timeSeries" in url and not url.endswith(":query"):
                 return 200, {
                     "export_receipt_id": f"gcp-cm-export-{test_sha[:12]}",
                     "readback_status": "SUCCESS",
                     "gcp_project": payload.get("gcp_project"),
                     "release_sha": payload.get("release_sha"),
                 }
-            elif "dashboards/provision" in url:
+            elif "dashboards" in url:
                 return 200, {
+                    "name": f"projects/{payload.get('gcp_project', 'alfaloop-data-project')}/dashboards/platform-health",
                     "receipt_id": f"gcp-dash-{test_sha[:12]}",
                     "readback_status": "PROVISIONED",
                     "gcp_project": payload.get("gcp_project"),
                     "release_sha": payload.get("release_sha"),
                 }
-            elif "monitoring/query" in url:
+            elif "monitoring/query" in url or "timeSeries:query" in url:
                 return 200, {
                     "query_execution_id": f"gcp-query-exec-{test_sha[:12]}-100",
                     "query_status": "SUCCESS",
@@ -518,8 +519,6 @@ def observability_runtime_checks(root: Path = ROOT) -> list[CheckResult]:
         except RuntimeError:
             fail_closed_rejection = True
 
-        fail_closed_ok = fail_closed_unconfigured and fail_closed_oncall_route and fail_closed_rejection
-
         # Verify watch window recording with monitoring query execution transport
         from datetime import UTC, datetime, timedelta
         start_time = datetime.now(UTC) - timedelta(minutes=20)
@@ -530,7 +529,7 @@ def observability_runtime_checks(root: Path = ROOT) -> list[CheckResult]:
             start_time=start_time,
             end_time=end_time,
             gcp_project="alfaloop-data-project",
-            provider_route="https://oncall-router.oday.plus/api/v1/alerts",
+            provider_route=monitoring_route,
             query_transport=mock_provider_transport,
         )
         watch_window_ok = watch_receipt.get("status") == "WATCH_PASSED"
@@ -544,6 +543,7 @@ def observability_runtime_checks(root: Path = ROOT) -> list[CheckResult]:
 
         fail_closed_ok = (
             fail_closed_unconfigured
+            and fail_closed_oncall_route
             and fail_closed_rejection
             and watch_window_ok
             and notification_fail_closed

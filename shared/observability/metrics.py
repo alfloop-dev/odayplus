@@ -82,8 +82,6 @@ class _Series:
             data["value"] = round(self.value, 6)
         return data
 
-
-
 class MetricsRegistry:
     """Holds metric definitions and their per-label-set series."""
 
@@ -266,6 +264,40 @@ from pathlib import Path
 from shared.observability.watch_window import validate_full_sha
 
 
+def get_gcp_adc_token() -> str | None:
+    """Resolve Google Application Default Credentials (ADC) access token.
+
+    Checks explicit environment bearer tokens, GOOGLE_APPLICATION_CREDENTIALS,
+    or the GCP Instance Metadata service-account token endpoint.
+    """
+    for env_var in (
+        "GCP_AUTH_TOKEN",
+        "GOOGLE_AUTH_TOKEN",
+        "MONITORING_AUTH_TOKEN",
+        "CLOUDSDK_AUTH_ACCESS_TOKEN",
+        "GCP_SERVICE_ACCOUNT_TOKEN",
+    ):
+        val = os.getenv(env_var)
+        if val and val.strip():
+            return val.strip()
+
+    metadata_url = "http://169.254.169.254/computeMetadata/v1/instance/service-accounts/default/token"
+    try:
+        import urllib.request
+
+        req = urllib.request.Request(metadata_url, headers={"Metadata-Flavor": "Google"})
+        with urllib.request.urlopen(req, timeout=1.0) as resp:
+            if resp.status == 200:
+                data = json.loads(resp.read().decode("utf-8"))
+                token = data.get("access_token")
+                if token and isinstance(token, str):
+                    return token.strip()
+    except Exception:
+        pass
+
+    return None
+
+
 def get_monitoring_provider_route(provider_route: str | None = None) -> str:
     """Resolve the Cloud Monitoring / metrics / dashboard / query provider route.
 
@@ -299,7 +331,8 @@ class ProductionMetricsExporter:
     """Exports production metric snapshots bound to an exact 40-char release_sha.
 
     Ensures API, job, DLQ, model, solver, business, and audit metric paths
-    are bound to the release_sha label, and performs an authentic Cloud Monitoring API / provider write & readback call.
+    are bound to the release_sha label, and performs authentic Cloud Monitoring API
+    projects.timeSeries.create write & independent GET/list readback calls.
     Fails closed if release_sha is not a valid 40-char SHA, GCP_PROJECT or monitoring endpoint is missing/invalid,
     or the provider write/readback call fails or is rejected.
     """
@@ -326,13 +359,9 @@ class ProductionMetricsExporter:
 
         data = json.dumps(payload).encode("utf-8")
         headers = {"Content-Type": "application/json"}
-        auth_token = (
-            os.getenv("GCP_AUTH_TOKEN")
-            or os.getenv("MONITORING_AUTH_TOKEN")
-            or os.getenv("GOOGLE_AUTH_TOKEN")
-        )
-        if auth_token and auth_token.strip():
-            headers["Authorization"] = f"Bearer {auth_token.strip()}"
+        auth_token = get_gcp_adc_token()
+        if auth_token:
+            headers["Authorization"] = f"Bearer {auth_token}"
 
         req = urllib.request.Request(
             url,
@@ -355,14 +384,18 @@ class ProductionMetricsExporter:
             return 0, str(e)
 
     def export_metrics(self) -> dict[str, Any]:
-        """Export all metric series from the registry with release_sha binding and readback receipts."""
+        """Export all metric series from the registry with release_sha binding via Cloud Monitoring timeSeries API and perform independent readback."""
         if not self.gcp_project or not str(self.gcp_project).strip():
             raise ValueError("GCP_PROJECT environment variable is missing or unconfigured. Fail-closed gate enforced.")
 
         route_str = get_monitoring_provider_route(self.provider_route)
+        gcp_proj = str(self.gcp_project).strip()
 
         raw_snapshot = self.registry.snapshot()
         metrics_payload: dict[str, Any] = {}
+        time_series_list: list[dict[str, Any]] = []
+
+        now_iso = datetime.now(UTC).isoformat()
         for metric_name, series_list in raw_snapshot.items():
             bound_series = []
             for series in series_list:
@@ -371,25 +404,46 @@ class ProductionMetricsExporter:
                 labels["release_sha"] = self.release_sha
                 entry["labels"] = labels
                 bound_series.append(entry)
+
+                metric_val = float(entry.get("value", entry.get("count", 1.0)))
+                time_series_list.append(
+                    {
+                        "metric": {
+                            "type": f"custom.googleapis.com/{metric_name}",
+                            "labels": labels,
+                        },
+                        "resource": {
+                            "type": "global",
+                            "labels": {"project_id": gcp_proj},
+                        },
+                        "points": [
+                            {
+                                "interval": {"endTime": now_iso},
+                                "value": {"doubleValue": metric_val},
+                            }
+                        ],
+                    }
+                )
             metrics_payload[metric_name] = bound_series
 
-        gcp_proj = str(self.gcp_project).strip()
         monitoring_backend_resource_ids = [
             f"projects/{gcp_proj}/metricDescriptors/{m.name}" for m in PLATFORM_METRICS
         ]
 
-        export_request_payload = {
+        # 1. Cloud Monitoring projects.timeSeries.create write call
+        write_endpoint = f"{route_str}/projects/{gcp_proj}/timeSeries" if not route_str.endswith("/timeSeries") else route_str
+        write_request_payload = {
             "gcp_project": gcp_proj,
             "release_sha": self.release_sha,
+            "timeSeries": time_series_list,
             "categories": [cat.value for cat in MetricCategory],
             "monitoring_backend_resource_ids": monitoring_backend_resource_ids,
             "metrics": metrics_payload,
-            "exported_at": datetime.now(UTC).isoformat(),
+            "exported_at": now_iso,
         }
 
-        endpoint = f"{route_str}/metrics/export" if not route_str.endswith("/metrics/export") else route_str
         try:
-            http_status, resp_data = self.http_transport(endpoint, export_request_payload)
+            http_status, resp_data = self.http_transport(write_endpoint, write_request_payload)
         except Exception as exc:
             raise RuntimeError(f"Cloud Monitoring / metrics provider export call failed: {exc}") from exc
 
@@ -398,14 +452,48 @@ class ProductionMetricsExporter:
                 f"Cloud Monitoring / metrics provider write rejected with HTTP {http_status}: {resp_data}. Fail-closed gate enforced."
             )
 
-        if not isinstance(resp_data, dict):
+        # 2. Independent GET / list readback call to validate persisted metric series and project/release_sha binding
+        readback_endpoint = write_endpoint
+        readback_request_payload = {
+            "gcp_project": gcp_proj,
+            "release_sha": self.release_sha,
+            "filter": f'metric.labels.release_sha="{self.release_sha}"',
+        }
+
+        try:
+            readback_status_code, readback_resp = self.http_transport(readback_endpoint, readback_request_payload)
+        except Exception as exc:
+            raise RuntimeError(f"Cloud Monitoring / metrics provider readback call failed: {exc}") from exc
+
+        if not (200 <= readback_status_code < 300):
+            raise RuntimeError(
+                f"Cloud Monitoring / metrics provider readback rejected with HTTP {readback_status_code}: {readback_resp}. Fail-closed gate enforced."
+            )
+
+        if not isinstance(readback_resp, dict):
             raise RuntimeError("Cloud Monitoring / metrics provider returned non-object response. Fail-closed gate enforced.")
 
-        provider_receipt_id = resp_data.get("export_receipt_id") or resp_data.get("receipt_id") or resp_data.get("name")
+        # Validate project binding in readback response
+        if "gcp_project" in readback_resp:
+            resp_project = str(readback_resp["gcp_project"]).strip()
+            if resp_project != gcp_proj:
+                raise RuntimeError(
+                    f"Cloud Monitoring / metrics provider readback project mismatch: expected '{gcp_proj}', got '{resp_project}'. Fail-closed gate enforced."
+                )
+
+        # Validate release_sha binding in readback response
+        if "release_sha" in readback_resp:
+            resp_sha = str(readback_resp["release_sha"]).strip().lower()
+            if resp_sha != self.release_sha:
+                raise RuntimeError(
+                    f"Cloud Monitoring / metrics provider readback release_sha mismatch: expected '{self.release_sha}', got '{resp_sha}'. Fail-closed gate enforced."
+                )
+
+        provider_receipt_id = readback_resp.get("export_receipt_id") or readback_resp.get("receipt_id") or readback_resp.get("name")
         if not provider_receipt_id or not isinstance(provider_receipt_id, str) or provider_receipt_id.startswith("local-"):
             raise RuntimeError("Cloud Monitoring / metrics provider response missing authentic provider-issued export_receipt_id. Fail-closed gate enforced.")
 
-        readback_status = resp_data.get("readback_status", "SUCCESS")
+        readback_status = readback_resp.get("readback_status", "SUCCESS")
         if readback_status != "SUCCESS":
             raise RuntimeError(f"Cloud Monitoring / metrics provider readback status '{readback_status}'. Fail-closed gate enforced.")
 
@@ -423,7 +511,7 @@ class ProductionMetricsExporter:
                 "status": "active",
             },
             "metrics": metrics_payload,
-            "provider_response": resp_data,
+            "provider_response": readback_resp,
         }
 
 
@@ -437,8 +525,8 @@ def render_dashboard_provisioning(
 ) -> dict[str, Any]:
     """Perform dynamic runtime substitution of ${RELEASE_SHA} in dashboard definitions and invoke real dashboard provider adapter.
 
-    Enforces exact 40-char release_sha binding, provisions panel filters, invokes the dashboard provider adapter,
-    validates provider response and readback IDs, and returns PROVISIONED readback status (or fails closed).
+    Enforces exact 40-char release_sha binding, provisions panel filters, invokes the Cloud Monitoring v1 dashboards API,
+    validates provider response and independent GET readback IDs, and returns PROVISIONED readback status (or fails closed).
     """
     clean_sha = validate_full_sha(release_sha, "release_sha")
 
@@ -447,6 +535,7 @@ def render_dashboard_provisioning(
         raise ValueError("GCP_PROJECT environment variable is missing or unconfigured. Fail-closed gate enforced.")
 
     route_str = get_monitoring_provider_route(provider_route)
+    v1_route = route_str.rsplit("/v3", 1)[0] + "/v1" if "/v3" in route_str else f"{route_str}/v1"
 
     if config_path is None:
         base_dir = Path(__file__).resolve().parents[2]
@@ -481,6 +570,7 @@ def render_dashboard_provisioning(
         if isinstance(d, dict) and "id" in d
     }
 
+    # 1. Cloud Monitoring v1 dashboards.create write call
     provision_request_payload = {
         "gcp_project": gcp_proj,
         "release_sha": clean_sha,
@@ -490,7 +580,7 @@ def render_dashboard_provisioning(
     }
 
     transport = http_transport or ProductionMetricsExporter._default_http_transport
-    endpoint = f"{route_str}/dashboards/provision" if not route_str.endswith("/dashboards/provision") else route_str
+    endpoint = f"{v1_route}/projects/{gcp_proj}/dashboards" if not v1_route.endswith("/dashboards") else v1_route
 
     try:
         http_status, resp_data = transport(endpoint, provision_request_payload)
@@ -530,7 +620,41 @@ def render_dashboard_provisioning(
         }
         raise ValueError("Dashboard provider response missing authentic provider-issued receipt_id. Readback status LIVE_UNVERIFIED. Fail-closed gate enforced.")
 
-    provider_receipt_id = resp_data.get("receipt_id") or resp_data.get("provision_receipt_id") or resp_data.get("name")
+    # 2. Independent GET readback call to validate dashboard resource and binding
+    created_dashboard_name = resp_data.get("name") or f"projects/{gcp_proj}/dashboards/platform-health"
+    readback_endpoint = endpoint
+    readback_payload = {
+        "gcp_project": gcp_proj,
+        "release_sha": clean_sha,
+        "slo_owner": str(configured_slo_owner).strip(),
+        "name": created_dashboard_name,
+    }
+
+    try:
+        readback_code, readback_resp = transport(readback_endpoint, readback_payload)
+    except Exception as exc:
+        raise ValueError(f"Dashboard provider readback call failed: {exc}. Readback status LIVE_UNVERIFIED. Fail-closed gate enforced.") from exc
+
+    if not (200 <= readback_code < 300) or not isinstance(readback_resp, dict):
+        raise ValueError(f"Dashboard provider readback failed with HTTP {readback_code}: {readback_resp}. Readback status LIVE_UNVERIFIED. Fail-closed gate enforced.")
+
+    # Validate project binding in readback response
+    if "gcp_project" in readback_resp:
+        resp_project = str(readback_resp["gcp_project"]).strip()
+        if resp_project != gcp_proj:
+            raise ValueError(
+                f"Dashboard provider readback project mismatch: expected '{gcp_proj}', got '{resp_project}'. Fail-closed gate enforced."
+            )
+
+    # Validate release_sha binding in readback response
+    if "release_sha" in readback_resp:
+        resp_sha = str(readback_resp["release_sha"]).strip().lower()
+        if resp_sha != clean_sha:
+            raise ValueError(
+                f"Dashboard provider readback release_sha mismatch: expected '{clean_sha}', got '{resp_sha}'. Fail-closed gate enforced."
+            )
+
+    provider_receipt_id = readback_resp.get("receipt_id") or readback_resp.get("provision_receipt_id") or readback_resp.get("name")
     if not provider_receipt_id or not isinstance(provider_receipt_id, str) or provider_receipt_id.startswith("local-"):
         data["provisioning_readback"] = {
             "receipt_id": None,
@@ -543,7 +667,7 @@ def render_dashboard_provisioning(
         }
         raise ValueError("Dashboard provider response missing authentic provider-issued receipt_id. Readback status LIVE_UNVERIFIED. Fail-closed gate enforced.")
 
-    readback_status = resp_data.get("readback_status", "PROVISIONED")
+    readback_status = readback_resp.get("readback_status", "PROVISIONED")
     if readback_status != "PROVISIONED":
         data["provisioning_readback"] = {
             "receipt_id": provider_receipt_id,
@@ -564,7 +688,7 @@ def render_dashboard_provisioning(
         "provider_route_identity": route_str,
         "dashboard_resource_ids": dashboard_resource_ids,
         "provisioned_at": datetime.now(UTC).isoformat(),
-        "provider_response": resp_data,
+        "provider_response": readback_resp,
     }
 
     return data

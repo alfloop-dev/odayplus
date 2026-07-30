@@ -940,19 +940,28 @@ def test_production_metrics_exporter_and_dashboard_provisioning() -> None:
     monitoring_route = "https://monitoring.googleapis.com/v3"
 
     def mock_success_transport(url: str, payload: dict) -> tuple[int, dict]:
-        if "metrics/export" in url:
+        if "timeSeries" in url and not url.endswith(":query"):
             return 200, {
                 "export_receipt_id": f"gcp-cm-export-{test_sha[:12]}",
                 "readback_status": "SUCCESS",
                 "gcp_project": payload.get("gcp_project"),
                 "release_sha": payload.get("release_sha"),
             }
-        elif "dashboards/provision" in url:
+        elif "dashboards" in url:
             return 200, {
+                "name": f"projects/{payload.get('gcp_project', 'alfaloop-data-project')}/dashboards/platform-health",
                 "receipt_id": f"gcp-dash-{test_sha[:12]}",
                 "readback_status": "PROVISIONED",
                 "gcp_project": payload.get("gcp_project"),
                 "release_sha": payload.get("release_sha"),
+            }
+        elif "monitoring/query" in url or "timeSeries:query" in url:
+            return 200, {
+                "query_execution_id": f"gcp-query-exec-{test_sha[:12]}-100",
+                "query_status": "SUCCESS",
+                "gcp_project": payload.get("gcp_project"),
+                "release_sha": payload.get("release_sha"),
+                "observed_window_minutes": payload.get("watch_window_minutes", 15),
             }
         return 200, {"status": "ok"}
 

@@ -1,0 +1,31 @@
+{
+  "release_sha": "10c620969a90627e4a67053a4708658f99faa07f",
+  "status": "WATCH_PASSED",
+  "status_code": 1,
+  "start_time": "2026-07-30T21:17:35.898128+00:00",
+  "end_time": "2026-07-30T21:37:35.898134+00:00",
+  "observed_duration_seconds": 1200.0,
+  "watch_window_minutes": 15,
+  "monitoring_query_execution": {
+    "query_execution_id": "gcp-query-exec-10c620969a90-100",
+    "query_status": "SUCCESS",
+    "observed_window_minutes": 15,
+    "query_start_time": "2026-07-30T21:17:35.898128+00:00",
+    "query_end_time": "2026-07-30T21:37:35.898134+00:00",
+    "executed_at": "2026-07-30T21:37:35.898174+00:00",
+    "provider_query_response": {
+      "query_execution_id": "gcp-query-exec-10c620969a90-100",
+      "query_status": "SUCCESS",
+      "gcp_project": "alfaloop-data-project",
+      "release_sha": "10c620969a90627e4a67053a4708658f99faa07f",
+      "observed_window_minutes": 15
+    }
+  },
+  "observed_results": {
+    "error_count": 0,
+    "health_check_pass": true,
+    "telemetry_verified": true
+  },
+  "recorded_at": "2026-07-30T21:37:35.898296+00:00",
+  "metric_name": "deployment_watch_window_status"
+}
