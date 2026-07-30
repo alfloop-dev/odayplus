@@ -264,9 +264,10 @@ release_claim: no-go-until-final-gate-audit
   deployed SHA、evidence、owner、reviewer 與判定。
 - Acceptance:
   所有 P0/P1 task（包含 SiteScore prediction source）、三個 Human Data
-  Gate 與 `ODP-PLAN-OSS-LEGAL-POLICY-001` done；所有 production proof
-  可回讀且 exact-SHA；Human/Ops 正式核准；否則維持 NO-GO 並列出唯一
-  剩餘 blockers。
+  Gate、`ODP-PLAN-OSS-LEGAL-POLICY-001` 與
+  `ODP-PLAN-GAP-ARCHIVE-001` done；所有 production proof 可回讀且
+  exact-SHA；Human/Ops 正式核准；否則維持 NO-GO 並列出唯一剩餘
+  blockers。
 
 ## 4. 共通 verification
 
