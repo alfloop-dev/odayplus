@@ -1,4 +1,13 @@
+import inspect
+import re
 from pathlib import Path
+
+from models.shared_ml.production_contracts import PRODUCTION_MODEL_CONTRACTS
+from modules.listing.application.pipeline import ListingRepository
+from modules.listing.domain.intake_states import IntakeStage
+from modules.listing.domain.models import ListingDedupKey
+from scripts.models.contracts import ModelSpec
+from scripts.models.release import _temporal_split
 
 ROOT = Path(__file__).resolve().parents[2]
 ADR_DIR = ROOT / "docs" / "adr"
@@ -63,8 +72,12 @@ def test_deferred_oss_adr_cited_paths_exist() -> None:
         "modules/listing/",
         "modules/listing/application/pipeline.py",
         "modules/listing/domain/models.py",
+        "modules/listing/domain/intake_states.py",
         "modules/learninghub/infrastructure/mlflow_adapter.py",
         "modules/adlift/domain/incrementality.py",
+        "scripts/models/release.py",
+        "scripts/models/contracts.py",
+        "models/shared_ml/production_contracts.py",
     ]
 
     for path_str in cited_paths:
@@ -80,8 +93,6 @@ def test_deferred_oss_adr_claimed_locked_packages_resolve() -> None:
 
     # Extract claimed locked packages list from Section 'Verification and Traceability'
     # Format: (`statsmodels`, `lifelines`, ...)
-    import re
-
     match = re.search(r"現行整合之替代套件 \((.*?)\)", content)
     assert match is not None, "Could not find locked packages list in ADR-0002"
 
@@ -132,3 +143,48 @@ def test_deferred_oss_adr_claimed_locked_packages_resolve() -> None:
                     assert (
                         pkg_name in pyproject_content or norm_pkg in pyproject_content
                     ), f"Matrix claimed package '{token}' (resolves to '{pkg_name}') is not present in pyproject.toml"
+
+
+def test_deferred_oss_adr_cited_symbols_and_signatures_resolve() -> None:
+    content = ADR_FILE.read_text(encoding="utf-8")
+
+    # 1. Check IntakeStage.MATCHING attribution
+    assert IntakeStage.MATCHING == "MATCHING"
+    assert "IntakeStage.MATCHING" in content
+    assert "modules/listing/domain/intake_states.py" in content
+
+    # 2. Check ListingDedupKey
+    assert hasattr(ListingDedupKey, "__annotations__")
+    assert "ListingDedupKey" in content
+    assert "modules/listing/domain/models.py" in content
+
+    # 3. Check has_duplicate method
+    assert hasattr(ListingRepository, "has_duplicate")
+    assert "has_duplicate" in content
+
+    # 4. Check _temporal_split signature and absence of fabricated purge_label_overlap
+    sig = inspect.signature(_temporal_split)
+    assert "rows" in sig.parameters
+    assert "holdout_fraction" in sig.parameters
+    assert "purge_label_overlap" not in sig.parameters
+    assert "purge_label_overlap" not in content
+
+    # 5. Check PIT label maturity column
+    assert hasattr(ModelSpec, "label_maturity_column")
+    assert "label_maturity_column" in content
+    assert "scripts/models/contracts.py" in content
+
+    # 6. Check DATA_CONTRACT_NOT_MATURE reason code and absence of un-implemented CAPABILITY_DEFERRED
+    found_reason = any(
+        c.unavailable_reason == "DATA_CONTRACT_NOT_MATURE"
+        for c in PRODUCTION_MODEL_CONTRACTS.values()
+        if c.unavailable_reason
+    )
+    assert found_reason, "DATA_CONTRACT_NOT_MATURE must exist in PRODUCTION_MODEL_CONTRACTS"
+    assert "DATA_CONTRACT_NOT_MATURE" in content
+    assert "CAPABILITY_DEFERRED" not in content
+
+    # 7. Check GeoPandas ST_* PostGIS functions marked as planned SQL surface
+    for func in ["ST_Contains", "ST_Buffer", "ST_Distance", "ST_DWithin"]:
+        assert func in content
+    assert "planned SQL surface" in content

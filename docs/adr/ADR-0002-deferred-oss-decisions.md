@@ -42,7 +42,7 @@ review_trigger: "Review when production data scale, sub-10ms online feature late
 ## 核心原則與通用評估標準
 
 1. **真實可執行性 (Executable Reality)**：所有在生產或 CI 宣稱 active 之能力，必須在 `pyproject.toml` / `uv.lock` 中鎖定版本，且有單元/整合測試可執行驗證。未安裝套件標示為 `governedDisabled` 或 `deferred`。
-2. **零假 Ready 與零虛構備援 (No Fake Readiness / No Silent Fallback)**：當功能標示為 `defer` 時，系統呼叫未安裝元件不得靜默回傳假資料，必須明確 fail-closed 或回傳結構化停用原因代碼（`DATA_CONTRACT_NOT_MATURE` 或 `CAPABILITY_DEFERRED`）。
+2. **零假 Ready 與零虛構備援 (No Fake Readiness / No Silent Fallback)**：當功能標示為 `defer` 時，系統呼叫未安裝元件不得靜默回傳假資料，必須明確 fail-closed 或回傳結構化停用原因代碼（`DATA_CONTRACT_NOT_MATURE`，見 `models/shared_ml/production_contracts.py:195`）。
 3. **可稽核替代能力 (Auditable Replacement Capability)**：每項替代方案必須指明對應之 Python 模組、PostgreSQL schema/PostGIS 擴充或內建 API/UI 服務。
 
 ---
@@ -53,7 +53,7 @@ review_trigger: "Review when production data scale, sub-10ms online feature late
 - **決策**: `replace`（替換） / `defer`（延後記憶體 GeoDataFrame 全量載入）
 - **需求映射**: 門市空間點位分析、環域 (Buffer) 計算、H3 網格與空間距離查詢 (`ODP-HLR-INT-001`，AVM / SiteScore / NetPlan)。
 - **可驗證替代能力**:
-  - 資料庫端：使用 PostgreSQL **PostGIS** 擴充套件（`ST_Contains`, `ST_Buffer`, `ST_Distance`, `ST_DWithin`）處理關聯與空間 indexing。
+  - 資料庫端：PostGIS 擴充套件與 `GEOMETRY(Point, 4326)` 空間欄位已於 DB migration 中建立（`infra/db/migrations/000001_baseline_canonical_schema.sql`, `000002_data_domain_canonical_entities.sql`）；`ST_Contains`, `ST_Buffer`, `ST_Distance`, `ST_DWithin` 為規劃中之 PostGIS SQL 查詢介面 (planned SQL surface)。
   - Python 輕量計算端：使用 `h3` (4.5.0) 進行 H3 空間編碼與網格 indexing。
 - **替代限制**: 不在 Python API / Worker 記憶體中載入大型 GeoDataFrame 進行 In-memory Spatial Join，避免記憶體爆破；重型空間計算下推至 PostGIS 或 BigQuery GIS。
 - **元件 Owner**: Data & Spatial Platform Engineering
@@ -104,7 +104,7 @@ review_trigger: "Review when production data scale, sub-10ms online feature late
 - **決策**: `defer`（延後） / `replace`（替換）
 - **需求映射**: 候選點位相似度檢索、物件重複去重比對、向量特徵搜尋 (`ODP-HLR-INT-007`)。
 - **可驗證替代能力**:
-  - `modules/listing/` 去重流程與規則引擎（`ListingDedupKey`, `has_duplicate`, `IntakeStage.MATCHING` 於 `modules/listing/application/pipeline.py` 與 `modules/listing/domain/models.py`）。
+  - `modules/listing/` 去重流程與規則引擎（`IntakeStage.MATCHING` 於 `modules/listing/domain/intake_states.py:17`，`ListingDedupKey` 於 `modules/listing/domain/models.py`，`has_duplicate` 於 `modules/listing/application/pipeline.py` 與 `modules/listing/infrastructure/repositories.py`）。
   - PostgreSQL 多欄位索引、PostGIS 空間距離與相似度權重計算。
 - **替代限制**: PostgreSQL 未啟用 HNSW / IVFFlat 向量索引擴充套件；Similarity Search 採用特徵工程與幾何/屬性精確匹配。
 - **元件 Owner**: Data Platform & AI Engineering
@@ -114,7 +114,7 @@ review_trigger: "Review when production data scale, sub-10ms online feature late
 - **決策**: `defer`（延後）
 - **需求映射**: Online/Offline Feature Store、 point-in-time (PIT) 特徵時空旅行、即時推論特徵提供 (`ODP-HLR-INT-004`)。
 - **可驗證替代能力**:
-  - 離線與訓練特徵：BigQuery `model_ready` 視圖（如 `forecast_training_view`）與 PostgreSQL `model_ready` 物化表，具備 `label_maturity_time` 與 PIT 時間分割 (`_temporal_split(purge_label_overlap=True)`)。
+  - 離線與訓練特徵：BigQuery `model_ready` 視圖（如 `forecast_training_view`）與 PostgreSQL `model_ready` 物化表，具備 Point-in-Time (PIT) 時序分割 `_temporal_split(rows, *, holdout_fraction)`（於 `scripts/models/release.py:983`）與成熟度檢查 `spec.label_maturity_column`（於 `scripts/models/contracts.py`，`label_maturity_time` vs `loaded.as_of_time` 檢查於 `scripts/models/release.py:780`）。
   - 模型履歷與快照：**MLflow** (`modules/learninghub/infrastructure/mlflow_adapter.py`) 記錄 Dataset Artifact 及 Commit SHA。
 - **替代限制**: 未部署以 Redis/DynamoDB 為底層之 Feast 即時線上 Feature Store 服務；線上推論讀取經治理之 Cloud SQL / BigQuery 視圖。
 - **元件 Owner**: Model Governance & Data Engineering
@@ -142,13 +142,13 @@ review_trigger: "Review when production data scale, sub-10ms online feature late
 
 | 元件名稱 | 決策狀態 | 映射需求編號 | 替代/現行實作能力 | 元件 Owner | 未安裝/Deferred 治理規則 | 重新評估觸發條件 (Revisit Trigger) |
 |---|---|---|---|---|---|---|
-| **GeoPandas** | `replace` / `defer` | `ODP-HLR-INT-001` | PostGIS SQL + H3-py | Data Platform | In-memory Heavy Join 下推 SQL | 需要大型向量圖層 Python 批次幾何運算 |
+| **GeoPandas** | `replace` / `defer` | `ODP-HLR-INT-001` | PostGIS SQL (planned surface) + H3-py | Data Platform | In-memory Heavy Join 下推 SQL | 需要大型向量圖層 Python 批次幾何運算 |
 | **ruptures** | `replace` / `defer` | `ODP-HLR-INT-004` | Evidently AI + StatsForecast 窗格統計 | ForecastOps ML | 不宣稱為 Pelt/Dynp 離線分割 | 歷史多年度斷點無監督動態規劃需求 |
 | **Superset** | `replace` | `ODP-HLR-GOV-001/002` | Next.js OpsBoard + FastAPI RBAC APIs | Frontend Team | 不開放任意 SQL 拖拉 UI | 業務分析師需要開放式 SQL 自訂 BI 視圖 |
 | **Temporal** | `replace` | `ODP-HLR-GOV-005/006` | Dagster + Postgres Job Queue (`job_queue.py`) | Infra & Ops | 長任務休眠由 DB 狀態機管理 | 跨服務多日人工 Signal 異步 Saga 需求 |
 | **OPA** | `replace` | `ODP-HLR-GOV-009/010` | FastAPI Auth Middleware + DB RLS | Security Arch | 規則由 Python / Schema 控管 | 政策需由非開發者 Hot-reload 編輯 |
-| **pgvector** | `replace` / `defer` | `ODP-HLR-INT-007` | `modules/listing/` 多訊號去重 (`ListingDedupKey`, `has_duplicate`) + PostGIS | Data Platform | HNSW 索引未於 Cloud SQL 啟用 | 向量比對 >100K 筆且轉型 LLM Embedding |
-| **Feast** | `defer` | `ODP-HLR-INT-004` | BigQuery `model_ready` PIT 視圖 + MLflow | Model Governance | 標示為 `governedDisabled` | 線上推論 SLA 需 Sub-10ms KV 快取 |
+| **pgvector** | `replace` / `defer` | `ODP-HLR-INT-007` | `modules/listing/` 多訊號去重 (`IntakeStage.MATCHING`, `ListingDedupKey`, `has_duplicate`) + PostGIS | Data Platform | HNSW 索引未於 Cloud SQL 啟用 | 向量比對 >100K 筆且轉型 LLM Embedding |
+| **Feast** | `defer` | `ODP-HLR-INT-004` | BigQuery `model_ready` PIT 視圖 (`_temporal_split`, `label_maturity_column`) + MLflow | Model Governance | 標示為 `governedDisabled` | 線上推論 SLA 需 Sub-10ms KV 快取 |
 | **DoubleML / EconML** | `defer` | `ODP-HLR-INT-004` | `statsmodels` WLS DiD | ML Engineering | 標示為 `governedDisabled` | 高維干擾變數非線性 HTE 估算 |
 | **TFT / LSTM** | `defer` | `ODP-HLR-INT-004` | `StatsForecast` + `MLForecast` (GBDT) | ML Engineering | 標示為 `governedDisabled` | GPU 算力與深層時序 Backtest 效益確立 |
 | **Pyomo** | `defer` | `ODP-HLR-INT-001` | OR-Tools CP-SAT + CVXPY + pymoo | Solver Team | 登記為可選能力，非預設解算器 | 需要符號代數建模與特定求解器綁定 |
