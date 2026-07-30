@@ -54,7 +54,7 @@ review_trigger: "Review when production data scale, sub-10ms online feature late
 - **需求映射**: 門市空間點位分析、環域 (Buffer) 計算、H3 網格與空間距離查詢 (`ODP-HLR-INT-001`，AVM / SiteScore / NetPlan)。
 - **可驗證替代能力**:
   - 資料庫端：使用 PostgreSQL **PostGIS** 擴充套件（`ST_Contains`, `ST_Buffer`, `ST_Distance`, `ST_DWithin`）處理關聯與空間 indexing。
-  - Python 輕量計算端：使用原生 `shapely` 進行幾何運算、`h3` 進行 H3 空間編碼、`pyproj` 進行座標轉換。
+  - Python 輕量計算端：使用 `h3` (4.5.0) 進行 H3 空間編碼與網格 indexing。
 - **替代限制**: 不在 Python API / Worker 記憶體中載入大型 GeoDataFrame 進行 In-memory Spatial Join，避免記憶體爆破；重型空間計算下推至 PostGIS 或 BigQuery GIS。
 - **元件 Owner**: Data & Spatial Platform Engineering
 - **重新評估觸發條件 (Revisit Trigger)**: 當資深 GIS 分析師需要於 Python Jupyter / Batch Pipeline 中直接對百萬級向量圖層進行 complex geometry batch operations 且 PostGIS SQL 難以表達時。
@@ -104,7 +104,7 @@ review_trigger: "Review when production data scale, sub-10ms online feature late
 - **決策**: `defer`（延後） / `replace`（替換）
 - **需求映射**: 候選點位相似度檢索、物件重複去重比對、向量特徵搜尋 (`ODP-HLR-INT-007`)。
 - **可驗證替代能力**:
-  - `modules/intake/domain/matching.py` 多訊號極致去重規則引擎（精確比對、文字正規化、H3 區域空間聚焦）。
+  - `modules/listing/` 去重流程與規則引擎（`ListingDedupKey`, `has_duplicate`, `IntakeStage.MATCHING` 於 `modules/listing/application/pipeline.py` 與 `modules/listing/domain/models.py`）。
   - PostgreSQL 多欄位索引、PostGIS 空間距離與相似度權重計算。
 - **替代限制**: PostgreSQL 未啟用 HNSW / IVFFlat 向量索引擴充套件；Similarity Search 採用特徵工程與幾何/屬性精確匹配。
 - **元件 Owner**: Data Platform & AI Engineering
@@ -147,7 +147,7 @@ review_trigger: "Review when production data scale, sub-10ms online feature late
 | **Superset** | `replace` | `ODP-HLR-GOV-001/002` | Next.js OpsBoard + FastAPI RBAC APIs | Frontend Team | 不開放任意 SQL 拖拉 UI | 業務分析師需要開放式 SQL 自訂 BI 視圖 |
 | **Temporal** | `replace` | `ODP-HLR-GOV-005/006` | Dagster + Postgres Job Queue (`job_queue.py`) | Infra & Ops | 長任務休眠由 DB 狀態機管理 | 跨服務多日人工 Signal 異步 Saga 需求 |
 | **OPA** | `replace` | `ODP-HLR-GOV-009/010` | FastAPI Auth Middleware + DB RLS | Security Arch | 規則由 Python / Schema 控管 | 政策需由非開發者 Hot-reload 編輯 |
-| **pgvector** | `replace` / `defer` | `ODP-HLR-INT-007` | `matching.py` 多訊號去重 + PostGIS | Data Platform | HNSW 索引未於 Cloud SQL 啟用 | 向量比對 >100K 筆且轉型 LLM Embedding |
+| **pgvector** | `replace` / `defer` | `ODP-HLR-INT-007` | `modules/listing/` 多訊號去重 (`ListingDedupKey`, `has_duplicate`) + PostGIS | Data Platform | HNSW 索引未於 Cloud SQL 啟用 | 向量比對 >100K 筆且轉型 LLM Embedding |
 | **Feast** | `defer` | `ODP-HLR-INT-004` | BigQuery `model_ready` PIT 視圖 + MLflow | Model Governance | 標示為 `governedDisabled` | 線上推論 SLA 需 Sub-10ms KV 快取 |
 | **DoubleML / EconML** | `defer` | `ODP-HLR-INT-004` | `statsmodels` WLS DiD | ML Engineering | 標示為 `governedDisabled` | 高維干擾變數非線性 HTE 估算 |
 | **TFT / LSTM** | `defer` | `ODP-HLR-INT-004` | `StatsForecast` + `MLForecast` (GBDT) | ML Engineering | 標示為 `governedDisabled` | GPU 算力與深層時序 Backtest 效益確立 |
@@ -157,7 +157,7 @@ review_trigger: "Review when production data scale, sub-10ms online feature late
 
 ## 驗證與可追溯性 (Verification and Traceability)
 
-1. **套件鎖定驗證**: 現行整合之替代套件 (`statsmodels`, `lifelines`, `pymoo`, `ortools`, `cvxpy`, `statsforecast`, `mlflow`, `evidently`, `dagster`, `great_expectations`, `shapely`, `h3`) 皆在 `pyproject.toml` 鎖定版本。
+1. **套件鎖定驗證**: 現行整合之替代套件 (`statsmodels`, `lifelines`, `pymoo`, `ortools`, `cvxpy`, `statsforecast`, `mlflow`, `evidently`, `dagster`, `great_expectations`, `h3`, `pyomo`) 皆在 `pyproject.toml` 鎖定版本。
 2. **能力測試 API**: `GET /api/v1/learninghub/oss-capabilities` 動態回報目前可載入之 OSS 能力，對未安裝套件正確暴露停用狀態。
 3. **自動化驗證指令**:
    ```bash

@@ -44,3 +44,52 @@ def test_deferred_oss_adr_contains_explicit_decisions_and_triggers() -> None:
 
     # Verify uninstalled package rule compliance statement
     assert "未安裝" in content or "governedDisabled" in content
+
+
+def test_deferred_oss_adr_cited_paths_exist() -> None:
+    content = ADR_FILE.read_text(encoding="utf-8")
+
+    cited_paths = [
+        "docs/adr/ADR-0001-platform-foundation.md",
+        "docs/evidence/ODP_OSS_AI_INTEGRATION_EVIDENCE.md",
+        "docs/evidence/PLATFORM_COMPLETENESS_INVENTORY_2026-07-25.md",
+        "docs/evidence/PRODUCTION_MODEL_RISK_ACCEPTANCE_2026-07-25.md",
+        "docs/architecture/ODAY_PLUS_EXECUTION_BASELINE.md",
+        "modules/learninghub/infrastructure/evidently_monitor.py",
+        "modules/forecastops/infrastructure/forecast_engines.py",
+        "pipelines/orchestration/dagster_training.py",
+        "shared/infrastructure/persistence/job_queue.py",
+        "shared/auth/",
+        "modules/listing/",
+        "modules/listing/application/pipeline.py",
+        "modules/listing/domain/models.py",
+        "modules/learninghub/infrastructure/mlflow_adapter.py",
+        "modules/adlift/domain/incrementality.py",
+    ]
+
+    for path_str in cited_paths:
+        assert (ROOT / path_str).exists(), f"Cited path '{path_str}' in ADR-0002 does not exist in repo"
+
+    # Assert non-existent legacy intake path is NOT present
+    assert "modules/intake" not in content, "ADR-0002 cites non-existent 'modules/intake' path"
+
+
+def test_deferred_oss_adr_claimed_locked_packages_resolve() -> None:
+    pyproject_content = (ROOT / "pyproject.toml").read_text(encoding="utf-8").lower()
+    content = ADR_FILE.read_text(encoding="utf-8")
+
+    # Extract claimed locked packages list from Section 'Verification and Traceability'
+    # Format: (`statsmodels`, `lifelines`, ...)
+    import re
+    match = re.search(r"現行整合之替代套件 \((.*?)\)", content)
+    assert match is not None, "Could not find locked packages list in ADR-0002"
+
+    packages = [pkg.strip(" `") for pkg in match.group(1).split(",")]
+
+    for pkg in packages:
+        # Check normalization (e.g. great_expectations vs great-expectations)
+        norm_pkg = pkg.replace("_", "-")
+        assert (
+            pkg in pyproject_content or norm_pkg in pyproject_content
+        ), f"Claimed locked package '{pkg}' in ADR-0002 is not present in pyproject.toml"
+
