@@ -42,6 +42,7 @@ release_claim: no-go-until-final-gate-audit
 | B | `ODP-PLAN-ACCEPTANCE-REAL-EXEC-001` | P0-002 | Codex2 | Claude | `ODP-PLAN-GATE-REGISTRY-001` |
 | B | `ODP-PLAN-HEATZONE-OUTCOME-001` | P1-001 | Antigravity3 | Codex2 | — |
 | B | `ODP-PLAN-SITESCORE-OUTCOME-001` | P1-002 | Antigravity4 | Claude | — |
+| B | `ODP-PLAN-SITESCORE-PREDICTION-SOURCE-001` | P1-002 | Antigravity4 | Claude | `ODP-PLAN-SITESCORE-OUTCOME-001` |
 | B | `ODP-PLAN-AVM-OUTCOME-001` | P1-003 | Antigravity5 | Codex2 | `ODP-PLAN-OSS-LICENSE-GATE-001` |
 | B | `ODP-PLAN-NETPLAN-ACCEPTANCE-001` | P1-006 | Antigravity2 | Claude | `ODP-PLAN-SOLVER-RUNTIME-COMPAT-001` |
 | B | `ODP-PLAN-ENGINEERING-HARDENING-001` | P2 | Antigravity7 | Codex2 | `ODP-PLAN-DEFERRED-OSS-ADR-001` |
@@ -136,6 +137,19 @@ release_claim: no-go-until-final-gate-audit
 - Acceptance:
   `>=200` 成熟 labels 且 M6/M12 與 coverage threshold 通過，否則
   governed-disabled 並產生具體 backfill owner/SQL/receipt。
+
+### ODP-PLAN-SITESCORE-PREDICTION-SOURCE-001
+
+- Scope: 將 SiteScore PG16/live inventory query 綁定可稽核的 prediction
+  source、model version 與 dataset lineage；修正 outcome 已存在但 query
+  未選 prediction 欄位、因此永遠無法進入 `ACTIVE` 的缺口。
+- Writable: `models/**`, `scripts/models/**`, `docs/evidence/models/**`,
+  focused tests.
+- Acceptance:
+  query 能以明確 model/version lineage 取得 prediction 並與 M6/M12 outcome
+  正確 join；missing/unmatched prediction 必須 fail closed，禁止 `y_pred =
+  y_true` 或其他自我填補；mutation tests 證明只有真實 prediction evidence
+  才能使 Gate 2 進入 `ACTIVE`。
 
 ### ODP-PLAN-AVM-OUTCOME-001
 
@@ -232,9 +246,9 @@ release_claim: no-go-until-final-gate-audit
 - Scope: 重新執行原始 Stage 0–7／Gate 0–6 RTM，對每項填入 merged SHA、
   deployed SHA、evidence、owner、reviewer 與判定。
 - Acceptance:
-  所有 P0/P1 task 與三個 Human Data Gate done；所有 production proof
-  可回讀且 exact-SHA；Human/Ops 正式核准；否則維持 NO-GO 並列出
-  唯一剩餘 blockers。
+  所有 P0/P1 task（包含 SiteScore prediction source）與三個 Human Data
+  Gate done；所有 production proof 可回讀且 exact-SHA；Human/Ops 正式
+  核准；否則維持 NO-GO 並列出唯一剩餘 blockers。
 
 ## 4. 共通 verification
 

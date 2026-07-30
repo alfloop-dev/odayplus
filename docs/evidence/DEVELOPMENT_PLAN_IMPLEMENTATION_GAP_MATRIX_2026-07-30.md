@@ -99,7 +99,7 @@ Notebook」。真正尚未完成的是：
 |---|---|---|---|---|
 | 0 | 共同語意、資料、MLflow、Decision Log、OpsBoard、環境與監控 | 大部分存在 | 無完整 staging/live 驗收 | `PARTIAL` |
 | 1 | HeatZone + Listing MVP | API、worker、地圖、intake、provider、H3 均存在 | 無正式模型與業務 Top-K 成效 | `BLOCKED_DATA` |
-| 2 | SiteScore 預測閉環 | API、report、decision、promotion、PIT contract 存在 | 0 eligible labels，模型停用 | `BLOCKED_DATA` |
+| 2 | SiteScore 預測閉環 | API、report、decision、promotion、PIT contract 存在 | 0 eligible labels；PG16 outcome query 未選 governed prediction 欄位，模型即使取得 outcome 仍無法進入 ACTIVE | `BLOCKED_DATA_AND_WIRING` |
 | 3 | ForecastOps 成長軌跡與四燈 | 真實 StatsForecast/MLForecast/LightGBM runtime 存在 | 1,303 rows；live alias／商業指標未證明 | `LIVE_UNVERIFIED` |
 | 4 | Learning Hub + OpsBoard 治理 | MLflow、GX、Evidently、Dagster、release/rollback code 存在 | 正式 model cards、canary、rollback drill、UAT 未齊 | `PARTIAL` |
 | 5 | Intervention + PriceOps + AdLift | state flow、solver、statsmodels DiD 均存在 | 無 live pilot／incremental GM business proof | `PARTIAL` |
@@ -405,7 +405,7 @@ Package 10 明確要求只保留：
 | ID | 工作 | 完成條件 |
 |---|---|---|
 | GAP-P1-001 | HeatZone label與benchmark | >=200 labels；優於人口排序；Top-K現勘率改善 |
-| GAP-P1-002 | SiteScore outcome閉環 | >=200 labels；M6/M12與coverage達標 |
+| GAP-P1-002 | SiteScore outcome／prediction閉環 | governed prediction source 綁 model/version lineage；>=200 labels；M6/M12與coverage達標；禁止 `y_pred=y_true` fallback |
 | GAP-P1-003 | AVM outcome閉環 | >=120成熟成交outcomes；coverage與價值帶校準 |
 | GAP-P1-004 | ForecastOps business validation | baseline superiority、segment、alert precision/recall/lead time |
 | GAP-P1-005 | Price/AdLift pilot | 0 hard violation、pre-trend通過、incremental GM與rollback |
