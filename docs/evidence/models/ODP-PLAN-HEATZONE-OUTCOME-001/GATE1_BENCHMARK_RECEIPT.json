@@ -1,0 +1,35 @@
+{
+  "auto_seeded": false,
+  "benchmark_results": {
+    "baseline_ndcg": 0.5,
+    "baseline_survey_rate": 0.3,
+    "evaluated": false,
+    "observed_ndcg": null,
+    "observed_survey_rate": null,
+    "population_ranking_outperformed": false,
+    "reason": "Eligible HeatZone label count (0) is below the activation threshold (200). Capability remains governed-disabled with fail-closed status.",
+    "top_k_survey_rate_improved": false
+  },
+  "contract_version": "heatzone-training-view-v2",
+  "eligible_labels": 0,
+  "evaluated_at": "2026-07-30T17:03:59.372998Z",
+  "governance_invariants": [
+    "At least 200 eligible mature real labels required in model_ready.heatzone_training_view",
+    "Model ranking must outperform population density ranking baseline (NDCG > baseline)",
+    "Model ranking must improve Top-K field site survey efficiency rate",
+    "No synthetic, mock, auto-seeded, or simulated labels allowed",
+    "Fail-closed governed-disabled binding enforced when inventory or benchmark criteria fail"
+  ],
+  "governed_disabled": true,
+  "integrity": {
+    "content_sha256": "54194c3715f0b1ce51b8d9e9eedf969f14679fc3247a01027d90dfe864899f56"
+  },
+  "kind": "heatzone-gate1-benchmark-receipt",
+  "minimum_required_labels": 200,
+  "observed_labels": 0,
+  "relation": "model_ready.heatzone_training_view",
+  "schema_version": 1,
+  "task_id": "ODP-PLAN-HEATZONE-OUTCOME-001",
+  "unavailable_reason": "DATA_CONTRACT_NOT_MATURE",
+  "verdict": "FAIL_CLOSED"
+}
