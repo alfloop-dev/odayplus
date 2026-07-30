@@ -42,6 +42,10 @@ def _mock_valid_evidence() -> dict:
         "model_artifact_hash": "b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3",
         "evaluation_split": "heatzone_test_28d_outcome_v1",
         "governed_baseline_hash": "c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4",
+        "population_ranking_ndcg": 0.75,
+        "top_k_survey_rate": 0.60,
+        "baseline_population_ndcg": 0.50,
+        "baseline_survey_rate": 0.30,
     }
 
 
@@ -99,6 +103,8 @@ def test_heatzone_benchmark_evaluation_passes_when_sufficient_labels_evidence_an
 
 def test_heatzone_benchmark_evaluation_fails_closed_when_metrics_below_baseline(tmp_path) -> None:
     evidence = _mock_valid_evidence()
+    evidence["population_ranking_ndcg"] = 0.40
+    evidence["top_k_survey_rate"] = 0.20
     auth_file = tmp_path / "AUTHORITATIVE_EVIDENCE.json"
     import json
     auth_file.write_text(json.dumps(evidence), encoding="utf-8")

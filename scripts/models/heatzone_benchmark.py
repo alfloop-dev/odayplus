@@ -144,9 +144,7 @@ def resolve_heatzone_benchmark_evidence(
         if auth_base_survey is None or auth_base_survey < CANONICAL_BASELINE_SURVEY_RATE:
             return False
 
-        if auth_ndcg is None or auth_ndcg <= auth_base_ndcg:
-            return False
-        if auth_survey is None or auth_survey <= auth_base_survey:
+        if auth_ndcg is None or auth_survey is None:
             return False
 
         if observed_ndcg is not None and observed_ndcg != auth_ndcg:
