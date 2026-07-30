@@ -655,6 +655,8 @@ def test_unconfigured_route_fails_closed(tmp_path: Path) -> None:
 
 
 def test_release_sha_dashboard_traceability_and_watch_window_receipt(tmp_path: Path) -> None:
+    from datetime import timedelta
+
     from shared.observability.metrics import default_registry
     from shared.observability.watch_window import (
         record_deployment_watch_window_status,
@@ -683,12 +685,17 @@ def test_release_sha_dashboard_traceability_and_watch_window_receipt(tmp_path: P
 
     # 2. Record watch-window status and verify receipt creation & metric emission
     receipt_file = tmp_path / "watch_window_receipt.json"
-    test_sha = "c2023ee62aa3"
+    test_sha = "10c620969a90627e4a67053a4708658f99faa07f"
     registry = default_registry()
+
+    start_dt = datetime.now(UTC) - timedelta(minutes=20)
+    end_dt = datetime.now(UTC)
 
     receipt = record_deployment_watch_window_status(
         release_sha=test_sha,
         status=1,
+        start_time=start_dt,
+        end_time=end_dt,
         registry=registry,
         receipt_path=receipt_file,
     )
@@ -711,88 +718,146 @@ def test_release_sha_dashboard_traceability_and_watch_window_receipt(tmp_path: P
 
 
 def test_watch_window_receipt_negative_cases(tmp_path: Path) -> None:
+    from datetime import timedelta
+
     from shared.observability.watch_window import (
         record_deployment_watch_window_status,
         verify_watch_window_receipt,
     )
 
     receipt_file = tmp_path / "watch_window_receipt.json"
+    valid_sha_1 = "10c620969a90627e4a67053a4708658f99faa07f"
+    valid_sha_2 = "20c620969a90627e4a67053a4708658f99faa07f"
+    start_dt = datetime.now(UTC) - timedelta(minutes=20)
+    end_dt = datetime.now(UTC)
 
     # Case 1: Absent watch receipt artifact
     with pytest.raises(FileNotFoundError, match="Watch-window receipt artifact absent"):
-        verify_watch_window_receipt(expected_release_sha="sha-12345", receipt_path=receipt_file)
+        verify_watch_window_receipt(expected_release_sha=valid_sha_1, receipt_path=receipt_file)
 
     # Case 2: Release SHA mismatch
     record_deployment_watch_window_status(
-        release_sha="actual-sha-111",
+        release_sha=valid_sha_1,
         status=1,
+        start_time=start_dt,
+        end_time=end_dt,
         receipt_path=receipt_file,
     )
     with pytest.raises(ValueError, match="Release SHA mismatch"):
-        verify_watch_window_receipt(expected_release_sha="expected-sha-222", receipt_path=receipt_file)
+        verify_watch_window_receipt(expected_release_sha=valid_sha_2, receipt_path=receipt_file)
 
     # Case 3: Failed watch receipt (status_code = 0 / WATCH_FAILED)
     record_deployment_watch_window_status(
-        release_sha="failed-sha-333",
+        release_sha=valid_sha_1,
         status=0,
+        start_time=start_dt,
+        end_time=end_dt,
         receipt_path=receipt_file,
     )
     with pytest.raises(ValueError, match="Watch-window verification failed"):
-        verify_watch_window_receipt(expected_release_sha="failed-sha-333", receipt_path=receipt_file)
+        verify_watch_window_receipt(expected_release_sha=valid_sha_1, receipt_path=receipt_file)
+
+    # Case 4: Short/forged SHA rejected during recording
+    with pytest.raises(ValueError, match="exact full 40-character hexadecimal string"):
+        record_deployment_watch_window_status(
+            release_sha="short-sha-123",
+            status=1,
+            start_time=start_dt,
+            end_time=end_dt,
+            receipt_path=receipt_file,
+        )
+
+    # Case 5: Sub-15-minute receipt rejected during recording
+    short_start = datetime.now(UTC) - timedelta(minutes=5)
+    with pytest.raises(ValueError, match="less than the required 15-minute minimum"):
+        record_deployment_watch_window_status(
+            release_sha=valid_sha_1,
+            status=1,
+            start_time=short_start,
+            end_time=end_dt,
+            receipt_path=receipt_file,
+        )
 
 
 def test_watch_window_receipt_contradiction_mutations(tmp_path: Path) -> None:
+    from datetime import timedelta
+
     from shared.observability.watch_window import verify_watch_window_receipt
 
     receipt_file = tmp_path / "watch_window_receipt.json"
+    valid_sha = "10c620969a90627e4a67053a4708658f99faa07f"
+    start_iso = (datetime.now(UTC) - timedelta(minutes=20)).isoformat()
+    end_iso = datetime.now(UTC).isoformat()
 
     # Case 1: Contradictory fields status=WATCH_FAILED with status_code=1
     contradictory_receipt = {
-        "release_sha": "sha-mut-001",
+        "release_sha": valid_sha,
         "status": "WATCH_FAILED",
         "status_code": 1,
+        "start_time": start_iso,
+        "end_time": end_iso,
         "watch_window_minutes": 15,
     }
     receipt_file.write_text(json.dumps(contradictory_receipt), encoding="utf-8")
     with pytest.raises(ValueError, match="Watch-window verification failed or contradictory"):
-        verify_watch_window_receipt(expected_release_sha="sha-mut-001", receipt_path=receipt_file)
+        verify_watch_window_receipt(expected_release_sha=valid_sha, receipt_path=receipt_file)
 
     # Case 2: Contradictory fields status=WATCH_PASSED with status_code=0
     contradictory_receipt_2 = {
-        "release_sha": "sha-mut-001",
+        "release_sha": valid_sha,
         "status": "WATCH_PASSED",
         "status_code": 0,
+        "start_time": start_iso,
+        "end_time": end_iso,
         "watch_window_minutes": 15,
     }
     receipt_file.write_text(json.dumps(contradictory_receipt_2), encoding="utf-8")
     with pytest.raises(ValueError, match="Watch-window verification failed or contradictory"):
-        verify_watch_window_receipt(expected_release_sha="sha-mut-001", receipt_path=receipt_file)
+        verify_watch_window_receipt(expected_release_sha=valid_sha, receipt_path=receipt_file)
 
     # Case 3: Invalid status string
     invalid_status_receipt = {
-        "release_sha": "sha-mut-001",
+        "release_sha": valid_sha,
         "status": "UNKNOWN_STATUS",
         "status_code": 1,
+        "start_time": start_iso,
+        "end_time": end_iso,
         "watch_window_minutes": 15,
     }
     receipt_file.write_text(json.dumps(invalid_status_receipt), encoding="utf-8")
     with pytest.raises(ValueError, match="Invalid watch-window status"):
-        verify_watch_window_receipt(expected_release_sha="sha-mut-001", receipt_path=receipt_file)
+        verify_watch_window_receipt(expected_release_sha=valid_sha, receipt_path=receipt_file)
 
     # Case 4: Invalid watch duration
     invalid_duration_receipt = {
-        "release_sha": "sha-mut-001",
+        "release_sha": valid_sha,
         "status": "WATCH_PASSED",
         "status_code": 1,
+        "start_time": start_iso,
+        "end_time": end_iso,
         "watch_window_minutes": -5,
     }
     receipt_file.write_text(json.dumps(invalid_duration_receipt), encoding="utf-8")
-    with pytest.raises(ValueError, match="watch_window_minutes is invalid or non-positive"):
-        verify_watch_window_receipt(expected_release_sha="sha-mut-001", receipt_path=receipt_file)
+    with pytest.raises(ValueError, match="watch_window_minutes is invalid or non-positive or sub-15-minute"):
+        verify_watch_window_receipt(expected_release_sha=valid_sha, receipt_path=receipt_file)
 
     # Case 5: Empty expected_release_sha
     with pytest.raises(ValueError, match="expected_release_sha must be provided"):
         verify_watch_window_receipt(expected_release_sha="", receipt_path=receipt_file)
+
+    # Case 6: Sub-15-minute duration in receipt artifact
+    sub15_start_iso = (datetime.now(UTC) - timedelta(minutes=5)).isoformat()
+    sub15_receipt = {
+        "release_sha": valid_sha,
+        "status": "WATCH_PASSED",
+        "status_code": 1,
+        "start_time": sub15_start_iso,
+        "end_time": end_iso,
+        "watch_window_minutes": 15,
+    }
+    receipt_file.write_text(json.dumps(sub15_receipt), encoding="utf-8")
+    with pytest.raises(ValueError, match="Sub-15-minute watch duration in receipt"):
+        verify_watch_window_receipt(expected_release_sha=valid_sha, receipt_path=receipt_file)
 
 
 def test_notification_adapter_factory_and_production_wiring(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -802,13 +867,29 @@ def test_notification_adapter_factory_and_production_wiring(monkeypatch: pytest.
         get_notification_adapter,
     )
 
-    # Default unconfigured returns ConsoleNotificationAdapter
+    # Default unconfigured in non-prod returns ConsoleNotificationAdapter
+    monkeypatch.delenv("APP_ENV", raising=False)
+    monkeypatch.delenv("ENVIRONMENT", raising=False)
+    monkeypatch.delenv("STAGE", raising=False)
+    monkeypatch.delenv("ODAY_ENV", raising=False)
     monkeypatch.delenv("NOTIFICATION_ADAPTER_TYPE", raising=False)
     monkeypatch.delenv("ONCALL_ENDPOINT_URL", raising=False)
     adapter = get_notification_adapter()
     assert isinstance(adapter, ConsoleNotificationAdapter)
 
-    # ONCALL_ENDPOINT_URL set returns OnCallNotificationAdapter
+    # Production mode without endpoint fails closed
+    monkeypatch.setenv("APP_ENV", "production")
+    with pytest.raises(ValueError, match="Production mode or on-call route requires a configured valid ONCALL_ENDPOINT_URL"):
+        get_notification_adapter()
+
+    # Production mode with ConsoleNotificationAdapter type fails closed
+    monkeypatch.setenv("NOTIFICATION_ADAPTER_TYPE", "console")
+    with pytest.raises(ValueError, match="ConsoleNotificationAdapter is forbidden in production environment"):
+        get_notification_adapter()
+
+    # Production mode with valid ONCALL_ENDPOINT_URL returns OnCallNotificationAdapter
+    monkeypatch.delenv("APP_ENV", raising=False)
+    monkeypatch.setenv("NOTIFICATION_ADAPTER_TYPE", "oncall")
     monkeypatch.setenv("ONCALL_ENDPOINT_URL", "https://oncall-custom.oday.plus/alerts")
     adapter = get_notification_adapter()
     assert isinstance(adapter, OnCallNotificationAdapter)
@@ -817,7 +898,7 @@ def test_notification_adapter_factory_and_production_wiring(monkeypatch: pytest.
     # NOTIFICATION_ADAPTER_TYPE=oncall with empty endpoint fails closed
     monkeypatch.setenv("NOTIFICATION_ADAPTER_TYPE", "oncall")
     monkeypatch.setenv("ONCALL_ENDPOINT_URL", "   ")
-    with pytest.raises(ValueError, match="On-call route endpoint URL missing or empty"):
+    with pytest.raises(ValueError, match="Production mode or on-call route requires a configured valid ONCALL_ENDPOINT_URL"):
         get_notification_adapter(endpoint_url="")
 
     # Unknown adapter type fails closed
@@ -825,6 +906,7 @@ def test_notification_adapter_factory_and_production_wiring(monkeypatch: pytest.
     monkeypatch.setenv("NOTIFICATION_ADAPTER_TYPE", "invalid_type")
     with pytest.raises(ValueError, match="Unknown notification adapter type"):
         get_notification_adapter()
+
 
 
 def test_production_metrics_exporter_and_dashboard_provisioning() -> None:

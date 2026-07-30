@@ -156,24 +156,30 @@ def get_notification_adapter(
 ) -> ConsoleNotificationAdapter | OnCallNotificationAdapter:
     """Factory to instantiate configured notification adapter based on env / config.
 
-    If NOTIFICATION_ADAPTER_TYPE is set to 'oncall' or ONCALL_ENDPOINT_URL is set:
+    If in production mode (APP_ENV/ENVIRONMENT/STAGE/ODAY_ENV in prod/production/live/staging),
+    or NOTIFICATION_ADAPTER_TYPE is 'oncall', or ONCALL_ENDPOINT_URL / endpoint_url is set:
       Instantiates OnCallNotificationAdapter with fail-closed configuration validation.
-    If NOTIFICATION_ADAPTER_TYPE is explicitly 'oncall' but endpoint URL is missing/empty/whitespace,
-      raises ValueError to fail closed.
+      Missing, empty, or non-HTTP endpoint URL raises ValueError to fail closed.
+      ConsoleNotificationAdapter is strictly forbidden in production environments.
     Otherwise:
       Defaults to ConsoleNotificationAdapter.
     """
     adapter_type = os.getenv("NOTIFICATION_ADAPTER_TYPE", "").strip().lower()
     raw_env_endpoint = os.getenv("ONCALL_ENDPOINT_URL")
+    env = os.getenv("APP_ENV", os.getenv("ENVIRONMENT", os.getenv("STAGE", os.getenv("ODAY_ENV", "")))).strip().lower()
+    is_prod = env in {"prod", "production", "live", "staging"}
+    require_oncall = is_prod or adapter_type == "oncall" or raw_env_endpoint is not None or endpoint_url is not None or os.getenv("REQUIRE_ONCALL_ROUTE", "").strip().lower() in {"1", "true"}
 
-    if adapter_type == "oncall" or raw_env_endpoint is not None or endpoint_url is not None:
+    if require_oncall:
+        if is_prod and adapter_type == "console":
+            raise ValueError("ConsoleNotificationAdapter is forbidden in production environment. Fail-closed gate enforced.")
+
         target_url = (raw_env_endpoint if raw_env_endpoint is not None else endpoint_url) or ""
         target_url_str = target_url.strip()
 
-        if adapter_type == "oncall" or raw_env_endpoint is not None or endpoint_url is not None:
-            if not target_url_str:
-                raise ValueError("On-call route endpoint URL missing or empty. Fail-closed gate enforced.")
-            return OnCallNotificationAdapter(endpoint_url=target_url_str, http_transport=http_transport)
+        if not target_url_str or not (target_url_str.startswith("http://") or target_url_str.startswith("https://")):
+            raise ValueError("Production mode or on-call route requires a configured valid ONCALL_ENDPOINT_URL. Fail-closed gate enforced.")
+        return OnCallNotificationAdapter(endpoint_url=target_url_str, http_transport=http_transport)
 
     if adapter_type and adapter_type not in {"console", "oncall"}:
         raise ValueError(f"Unknown notification adapter type '{adapter_type}'. Fail-closed gate enforced.")

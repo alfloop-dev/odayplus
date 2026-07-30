@@ -371,7 +371,69 @@ def repository_capability_checks(
     ]
     checks.extend(operator_runtime_checks(root))
     checks.extend(provider_adapter_checks(root, production_provider_ids=production_provider_ids))
+    checks.extend(observability_runtime_checks(root))
     return checks
+
+
+def observability_runtime_checks(root: Path = ROOT) -> list[CheckResult]:
+    """Verify live-wired observability components (exporter, dashboards, watch window)."""
+    checks = []
+    try:
+        from shared.observability import (
+            ProductionMetricsExporter,
+            default_registry,
+            render_dashboard_provisioning,
+        )
+
+        test_sha = "10c620969a90627e4a67053a4708658f99faa07f"
+        registry = default_registry()
+        exporter = ProductionMetricsExporter(release_sha=test_sha, registry=registry)
+        exported = exporter.export_metrics()
+
+        has_categories = set(exported.get("categories", [])) >= {
+            "latency", "error", "traffic", "job", "queue", "data", "model", "business", "audit"
+        }
+        sha_bound = exported.get("release_sha") == test_sha
+        exporter_ok = has_categories and sha_bound
+
+        checks.append(
+            CheckResult(
+                ok=exporter_ok,
+                name="observability:production_metrics_exporter",
+                detail=(
+                    "ProductionMetricsExporter binds release_sha across API/job/DLQ/model/solver/business/audit metrics"
+                    if exporter_ok
+                    else "invalid: ProductionMetricsExporter failed to export bound metrics across categories"
+                ),
+            )
+        )
+
+        provisioned = render_dashboard_provisioning(release_sha=test_sha)
+        exact_binding = provisioned.get("release_sha_traceability", {}).get("exact_sha_binding") == test_sha
+        has_slo_owner = bool(provisioned.get("release_sha_traceability", {}).get("slo_owner"))
+        dashboard_ok = exact_binding and has_slo_owner
+
+        checks.append(
+            CheckResult(
+                ok=dashboard_ok,
+                name="observability:dashboard_provisioning",
+                detail=(
+                    "render_dashboard_provisioning provisions exact release_sha binding and validates SLO owner"
+                    if dashboard_ok
+                    else "invalid: dashboard provisioning failed to bind release_sha or validate SLO owner"
+                ),
+            )
+        )
+    except Exception as exc:
+        checks.append(
+            CheckResult(
+                ok=False,
+                name="observability:live_wiring",
+                detail=f"observability runtime checks failed: {type(exc).__name__}: {exc}",
+            )
+        )
+    return checks
+
 
 
 class _ReachableProbeEngine:

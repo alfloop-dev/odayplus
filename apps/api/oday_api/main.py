@@ -488,6 +488,9 @@ else:
                     "/openapi.json",
                     "/platform/health",
                     "/platform/version",
+                    "/platform/observability",
+                    "/platform/metrics/export",
+                    "/platform/dashboards/provisioned",
                     "/readiness",
                     "/docs",
                     "/docs/oauth2-redirect",
@@ -624,6 +627,23 @@ else:
         @api.get("/platform/version", tags=["platform"])
         def platform_version(request: Request) -> dict[str, str]:
             return release_version_payload(correlation_id=request.state.correlation_id)
+
+        @api.get("/platform/observability", tags=["platform"])
+        @api.get("/platform/metrics/export", tags=["platform"])
+        def platform_metrics_export(request: Request) -> dict[str, Any]:
+            from shared.observability import ProductionMetricsExporter, default_registry
+
+            sha = release_sha_from_environment()
+            exporter = ProductionMetricsExporter(release_sha=sha, registry=default_registry())
+            return exporter.export_metrics()
+
+        @api.get("/platform/dashboards/provisioned", tags=["platform"])
+        def platform_dashboards_provisioned(request: Request) -> dict[str, Any]:
+            from shared.observability import render_dashboard_provisioning
+
+            sha = release_sha_from_environment()
+            return render_dashboard_provisioning(release_sha=sha)
+
 
         # Jobs and audit-event reads are product operations, so they are
         # versioned like every domain router rather than declared inline on the
