@@ -391,30 +391,51 @@ def observability_runtime_checks(root: Path = ROOT) -> list[CheckResult]:
         registry = default_registry()
         monitoring_route = "https://monitoring.googleapis.com/v3"
 
-        def mock_provider_transport(url: str, payload: dict) -> tuple[int, dict]:
-            if "timeSeries" in url and not url.endswith(":query"):
-                return 200, {
-                    "export_receipt_id": f"gcp-cm-export-{test_sha[:12]}",
-                    "readback_status": "SUCCESS",
-                    "gcp_project": payload.get("gcp_project"),
-                    "release_sha": payload.get("release_sha"),
-                }
+        def mock_provider_transport(
+            method: str,
+            url: str,
+            params: dict | None = None,
+            payload: dict | None = None,
+        ) -> tuple[int, dict]:
+            p_dict = payload or {}
+            pr_dict = params or {}
+            g_proj = p_dict.get("gcp_project") or pr_dict.get("gcp_project") or "alfaloop-data-project"
+            r_sha = p_dict.get("release_sha") or pr_dict.get("release_sha") or test_sha
+
+            if "timeSeries" in url:
+                if method == "POST":
+                    return 200, {}
+                elif method == "GET":
+                    return 200, {
+                        "gcp_project": g_proj,
+                        "release_sha": r_sha,
+                        "timeSeries": [
+                            {
+                                "metric": {
+                                    "type": "custom.googleapis.com/deployment_watch_window_status",
+                                    "labels": {"release_sha": r_sha},
+                                },
+                                "resource": {"type": "global", "labels": {"project_id": g_proj}},
+                                "points": [
+                                    {
+                                        "interval": {"endTime": "2026-07-30T00:00:00Z"},
+                                        "value": {"doubleValue": 1.0},
+                                    }
+                                ],
+                            }
+                        ],
+                    }
             elif "dashboards" in url:
-                return 200, {
-                    "name": f"projects/{payload.get('gcp_project', 'alfaloop-data-project')}/dashboards/platform-health",
-                    "receipt_id": f"gcp-dash-{test_sha[:12]}",
-                    "readback_status": "PROVISIONED",
-                    "gcp_project": payload.get("gcp_project"),
-                    "release_sha": payload.get("release_sha"),
-                }
-            elif "monitoring/query" in url or "timeSeries:query" in url:
-                return 200, {
-                    "query_execution_id": f"gcp-query-exec-{test_sha[:12]}-100",
-                    "query_status": "SUCCESS",
-                    "gcp_project": payload.get("gcp_project"),
-                    "release_sha": payload.get("release_sha"),
-                    "observed_window_minutes": payload.get("watch_window_minutes", 15),
-                }
+                if method == "POST":
+                    return 200, {"name": f"projects/{g_proj}/dashboards/platform-health"}
+                elif method == "GET":
+                    return 200, {
+                        "name": f"projects/{g_proj}/dashboards/platform-health",
+                        "receipt_id": f"gcp-dash-{test_sha[:12]}",
+                        "readback_status": "PROVISIONED",
+                        "gcp_project": g_proj,
+                        "release_sha": r_sha,
+                    }
             return 200, {"status": "ok"}
 
         exporter = ProductionMetricsExporter(
@@ -430,7 +451,7 @@ def observability_runtime_checks(root: Path = ROOT) -> list[CheckResult]:
             "latency", "error", "traffic", "job", "queue", "data", "model", "business", "audit"
         }
         sha_bound = exported.get("release_sha") == test_sha
-        has_export_receipt = exported.get("export_receipt_id") == f"gcp-cm-export-{test_sha[:12]}"
+        has_export_receipt = bool(exported.get("export_receipt_id")) and str(exported["export_receipt_id"]).startswith("gcp-cm-readback-")
         has_backend_ids = bool(exported.get("monitoring_backend_resource_ids"))
         readback_success = exported.get("readback_status") == "SUCCESS"
         exporter_ok = has_categories and sha_bound and has_export_receipt and has_backend_ids and readback_success

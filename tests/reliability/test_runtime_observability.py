@@ -693,13 +693,34 @@ def test_release_sha_dashboard_traceability_and_watch_window_receipt(tmp_path: P
     start_dt = datetime.now(UTC) - timedelta(minutes=20)
     end_dt = datetime.now(UTC)
 
-    def mock_query_transport(url: str, payload: dict) -> tuple[int, dict]:
+    def mock_query_transport(
+        method: str,
+        url: str,
+        params: dict | None = None,
+        payload: dict | None = None,
+    ) -> tuple[int, dict]:
+        p_dict = payload or {}
+        pr_dict = params or {}
+        g_proj = p_dict.get("gcp_project") or pr_dict.get("gcp_project") or "alfaloop-data-project"
+        r_sha = p_dict.get("release_sha") or pr_dict.get("release_sha") or test_sha
         return 200, {
-            "query_execution_id": f"gcp-query-exec-{test_sha[:12]}-100",
-            "query_status": "SUCCESS",
-            "gcp_project": payload.get("gcp_project"),
-            "release_sha": payload.get("release_sha"),
-            "observed_window_minutes": payload.get("watch_window_minutes", 15),
+            "gcp_project": g_proj,
+            "release_sha": r_sha,
+            "timeSeries": [
+                {
+                    "metric": {
+                        "type": "custom.googleapis.com/deployment_watch_window_status",
+                        "labels": {"release_sha": r_sha},
+                    },
+                    "resource": {"type": "global", "labels": {"project_id": g_proj}},
+                    "points": [
+                        {
+                            "interval": {"endTime": end_dt.isoformat()},
+                            "value": {"doubleValue": 1.0},
+                        }
+                    ],
+                }
+            ],
         }
 
     receipt = record_deployment_watch_window_status(
@@ -746,12 +767,25 @@ def test_watch_window_receipt_negative_cases(tmp_path: Path) -> None:
     start_dt = datetime.now(UTC) - timedelta(minutes=20)
     end_dt = datetime.now(UTC)
 
-    def mock_query_transport(url: str, payload: dict) -> tuple[int, dict]:
+    def mock_query_transport(
+        method: str,
+        url: str,
+        params: dict | None = None,
+        payload: dict | None = None,
+    ) -> tuple[int, dict]:
         return 200, {
-            "query_execution_id": f"gcp-query-exec-{valid_sha_1[:12]}-100",
-            "query_status": "SUCCESS",
-            "gcp_project": payload.get("gcp_project"),
-            "release_sha": payload.get("release_sha"),
+            "gcp_project": "alfaloop-data-project",
+            "release_sha": valid_sha_1,
+            "timeSeries": [
+                {
+                    "metric": {
+                        "type": "custom.googleapis.com/deployment_watch_window_status",
+                        "labels": {"release_sha": valid_sha_1},
+                    },
+                    "resource": {"type": "global", "labels": {"project_id": "alfaloop-data-project"}},
+                    "points": [{"value": {"doubleValue": 1.0}}],
+                }
+            ],
         }
 
     # Case 1: Absent watch receipt artifact
@@ -773,12 +807,25 @@ def test_watch_window_receipt_negative_cases(tmp_path: Path) -> None:
         verify_watch_window_receipt(expected_release_sha=valid_sha_2, receipt_path=receipt_file)
 
     # Case 3: Failed watch receipt (status_code = 0 / WATCH_FAILED)
-    def mock_query_fail_transport(url: str, payload: dict) -> tuple[int, dict]:
+    def mock_query_fail_transport(
+        method: str,
+        url: str,
+        params: dict | None = None,
+        payload: dict | None = None,
+    ) -> tuple[int, dict]:
         return 200, {
-            "query_execution_id": f"gcp-query-exec-{valid_sha_1[:12]}-100",
-            "query_status": "FAILED",
-            "gcp_project": payload.get("gcp_project"),
-            "release_sha": payload.get("release_sha"),
+            "gcp_project": "alfaloop-data-project",
+            "release_sha": valid_sha_1,
+            "timeSeries": [
+                {
+                    "metric": {
+                        "type": "custom.googleapis.com/deployment_watch_window_status",
+                        "labels": {"release_sha": valid_sha_1},
+                    },
+                    "resource": {"type": "global", "labels": {"project_id": "alfaloop-data-project"}},
+                    "points": [{"value": {"doubleValue": 0.0}}],
+                }
+            ],
         }
 
     record_deployment_watch_window_status(
@@ -828,12 +875,20 @@ def test_watch_window_binding_mismatch_mutations(tmp_path: Path) -> None:
     end_dt = datetime.now(UTC)
 
     # Mutation 1: Project mismatch in provider query response
-    def mismatch_project_transport(url: str, payload: dict) -> tuple[int, dict]:
+    def mismatch_project_transport(
+        method: str,
+        url: str,
+        params: dict | None = None,
+        payload: dict | None = None,
+    ) -> tuple[int, dict]:
         return 200, {
-            "query_execution_id": f"gcp-query-exec-{valid_sha[:12]}-100",
-            "query_status": "SUCCESS",
-            "gcp_project": "wrong-gcp-project",
-            "release_sha": valid_sha,
+            "timeSeries": [
+                {
+                    "metric": {"labels": {"release_sha": valid_sha}},
+                    "resource": {"labels": {"project_id": "wrong-gcp-project"}},
+                    "points": [{"value": {"doubleValue": 1.0}}],
+                }
+            ]
         }
 
     with pytest.raises(ValueError, match="Monitoring query readback project mismatch"):
@@ -849,12 +904,20 @@ def test_watch_window_binding_mismatch_mutations(tmp_path: Path) -> None:
         )
 
     # Mutation 2: Release SHA mismatch in provider query response
-    def mismatch_sha_transport(url: str, payload: dict) -> tuple[int, dict]:
+    def mismatch_sha_transport(
+        method: str,
+        url: str,
+        params: dict | None = None,
+        payload: dict | None = None,
+    ) -> tuple[int, dict]:
         return 200, {
-            "query_execution_id": f"gcp-query-exec-{valid_sha[:12]}-100",
-            "query_status": "SUCCESS",
-            "gcp_project": "alfaloop-data-project",
-            "release_sha": "20c620969a90627e4a67053a4708658f99faa07f",
+            "timeSeries": [
+                {
+                    "metric": {"labels": {"release_sha": "20c620969a90627e4a67053a4708658f99faa07f"}},
+                    "resource": {"labels": {"project_id": "alfaloop-data-project"}},
+                    "points": [{"value": {"doubleValue": 1.0}}],
+                }
+            ]
         }
 
     with pytest.raises(ValueError, match="Monitoring query readback release_sha mismatch"):
@@ -869,17 +932,16 @@ def test_watch_window_binding_mismatch_mutations(tmp_path: Path) -> None:
             query_transport=mismatch_sha_transport,
         )
 
-    # Mutation 3: Watch window duration mismatch in provider query response
-    def mismatch_window_transport(url: str, payload: dict) -> tuple[int, dict]:
-        return 200, {
-            "query_execution_id": f"gcp-query-exec-{valid_sha[:12]}-100",
-            "query_status": "SUCCESS",
-            "gcp_project": "alfaloop-data-project",
-            "release_sha": valid_sha,
-            "observed_window_minutes": 5,
-        }
+    # Mutation 3: Empty timeSeries list in provider query response (Exploit B mitigation check)
+    def empty_data_transport(
+        method: str,
+        url: str,
+        params: dict | None = None,
+        payload: dict | None = None,
+    ) -> tuple[int, dict]:
+        return 200, {"timeSeries": []}
 
-    with pytest.raises(ValueError, match="Monitoring query readback watch window mismatch"):
+    with pytest.raises(ValueError, match="returned zero timeSeries data"):
         record_deployment_watch_window_status(
             release_sha=valid_sha,
             status=1,
@@ -888,19 +950,27 @@ def test_watch_window_binding_mismatch_mutations(tmp_path: Path) -> None:
             receipt_path=receipt_file,
             gcp_project="alfaloop-data-project",
             provider_route=monitoring_route,
-            query_transport=mismatch_window_transport,
+            query_transport=empty_data_transport,
         )
 
-    # Mutation 4: Missing or fabricated query_execution_id in provider query response
-    def missing_exec_id_transport(url: str, payload: dict) -> tuple[int, dict]:
+    # Mutation 4: Metric value indicates failure (0.0) when requested status is 1
+    def failed_value_transport(
+        method: str,
+        url: str,
+        params: dict | None = None,
+        payload: dict | None = None,
+    ) -> tuple[int, dict]:
         return 200, {
-            "query_execution_id": "",
-            "query_status": "SUCCESS",
-            "gcp_project": "alfaloop-data-project",
-            "release_sha": valid_sha,
+            "timeSeries": [
+                {
+                    "metric": {"labels": {"release_sha": valid_sha}},
+                    "resource": {"labels": {"project_id": "alfaloop-data-project"}},
+                    "points": [{"value": {"doubleValue": 0.0}}],
+                }
+            ]
         }
 
-    with pytest.raises(ValueError, match="Monitoring query response missing authentic provider-issued query_execution_id"):
+    with pytest.raises(ValueError, match="metric value indicates failure"):
         record_deployment_watch_window_status(
             release_sha=valid_sha,
             status=1,
@@ -909,7 +979,7 @@ def test_watch_window_binding_mismatch_mutations(tmp_path: Path) -> None:
             receipt_path=receipt_file,
             gcp_project="alfaloop-data-project",
             provider_route=monitoring_route,
-            query_transport=missing_exec_id_transport,
+            query_transport=failed_value_transport,
         )
 
     # Mutation 5: Passing on-call alert route as monitoring provider_route fails closed
@@ -947,47 +1017,36 @@ def test_production_metrics_exporter_and_dashboard_provisioning() -> None:
         payload: dict | None = None,
         headers: dict | None = None,
     ) -> tuple[int, dict]:
-        if method.startswith("http://") or method.startswith("https://"):
-            url_str = method
-            p_dict = url if isinstance(url, dict) else payload or {}
-            pr_dict = params or {}
-        else:
-            url_str = url or ""
-            p_dict = payload or {}
-            pr_dict = params or {}
-
+        p_dict = payload or {}
+        pr_dict = params or {}
         g_proj = p_dict.get("gcp_project") or pr_dict.get("gcp_project") or "alfaloop-data-project"
         r_sha = p_dict.get("release_sha") or pr_dict.get("release_sha") or test_sha
 
-        if "timeSeries" in url_str and not url_str.endswith(":query"):
-            return 200, {
-                "export_receipt_id": f"gcp-cm-export-{test_sha[:12]}",
-                "readback_status": "SUCCESS",
-                "gcp_project": g_proj,
-                "release_sha": r_sha,
-                "timeSeries": [
-                    {
-                        "metric": {"type": "custom.googleapis.com/api_request_count", "labels": {"release_sha": r_sha}},
-                        "resource": {"type": "global", "labels": {"project_id": g_proj}},
-                    }
-                ],
-            }
-        elif "dashboards" in url_str:
-            return 200, {
-                "name": f"projects/{g_proj}/dashboards/platform-health",
-                "receipt_id": f"gcp-dash-{test_sha[:12]}",
-                "readback_status": "PROVISIONED",
-                "gcp_project": g_proj,
-                "release_sha": r_sha,
-            }
-        elif "monitoring/query" in url_str or "timeSeries:query" in url_str:
-            return 200, {
-                "query_execution_id": f"gcp-query-exec-{test_sha[:12]}-100",
-                "query_status": "SUCCESS",
-                "gcp_project": g_proj,
-                "release_sha": r_sha,
-                "observed_window_minutes": p_dict.get("watch_window_minutes", 15),
-            }
+        if "timeSeries" in (url or ""):
+            if method == "POST":
+                return 200, {}
+            elif method == "GET":
+                return 200, {
+                    "gcp_project": g_proj,
+                    "release_sha": r_sha,
+                    "timeSeries": [
+                        {
+                            "metric": {"type": "custom.googleapis.com/api_request_count", "labels": {"release_sha": r_sha}},
+                            "resource": {"type": "global", "labels": {"project_id": g_proj}},
+                        }
+                    ],
+                }
+        elif "dashboards" in (url or ""):
+            if method == "POST":
+                return 200, {"name": f"projects/{g_proj}/dashboards/platform-health"}
+            elif method == "GET":
+                return 200, {
+                    "name": f"projects/{g_proj}/dashboards/platform-health",
+                    "receipt_id": f"gcp-dash-{test_sha[:12]}",
+                    "readback_status": "PROVISIONED",
+                    "gcp_project": g_proj,
+                    "release_sha": r_sha,
+                }
         return 200, {"status": "ok"}
 
     # 1. Test ProductionMetricsExporter binds release_sha and performs provider write/readback
@@ -1001,7 +1060,7 @@ def test_production_metrics_exporter_and_dashboard_provisioning() -> None:
     exported = exporter.export_metrics()
 
     assert exported["release_sha"] == test_sha
-    assert exported["export_receipt_id"] == f"gcp-cm-export-{test_sha[:12]}"
+    assert str(exported["export_receipt_id"]).startswith("gcp-cm-readback-")
     assert exported["readback_status"] == "SUCCESS"
     assert exported["provider_route_identity"] == monitoring_route
     assert len(exported["monitoring_backend_resource_ids"]) > 0
@@ -1026,20 +1085,54 @@ def test_production_metrics_exporter_and_dashboard_provisioning() -> None:
             http_transport=mock_success_transport,
         ).export_metrics()
 
-    # Fail closed on missing authentic provider-issued export_receipt_id
-    def mock_no_receipt_transport(url: str, payload: dict) -> tuple[int, dict]:
-        return 200, {"readback_status": "SUCCESS"}
+    # Exploit A mutation test: GET returns 200 {"name": "anything-attacker-controlled"} without timeSeries
+    def mock_attacker_name_transport(
+        method: str,
+        url: str | None = None,
+        params: dict | None = None,
+        payload: dict | None = None,
+        headers: dict | None = None,
+    ) -> tuple[int, dict]:
+        if method == "POST":
+            return 200, {}
+        return 200, {"name": "anything-attacker-controlled"}
 
-    with pytest.raises(RuntimeError, match="Cloud Monitoring / metrics provider response missing authentic provider-issued export_receipt_id"):
+    with pytest.raises(RuntimeError, match="returned zero timeSeries"):
         ProductionMetricsExporter(
             release_sha=test_sha,
             gcp_project="alfaloop-data-project",
             provider_route=monitoring_route,
-            http_transport=mock_no_receipt_transport,
+            http_transport=mock_attacker_name_transport,
+        ).export_metrics()
+
+    # Exploit A mutation test: GET returns 200 {"timeSeries": []}
+    def mock_empty_series_transport(
+        method: str,
+        url: str | None = None,
+        params: dict | None = None,
+        payload: dict | None = None,
+        headers: dict | None = None,
+    ) -> tuple[int, dict]:
+        if method == "POST":
+            return 200, {}
+        return 200, {"timeSeries": []}
+
+    with pytest.raises(RuntimeError, match="returned zero timeSeries"):
+        ProductionMetricsExporter(
+            release_sha=test_sha,
+            gcp_project="alfaloop-data-project",
+            provider_route=monitoring_route,
+            http_transport=mock_empty_series_transport,
         ).export_metrics()
 
     # Fail closed on provider 500 error rejection
-    def mock_500_transport(url: str, payload: dict) -> tuple[int, dict]:
+    def mock_500_transport(
+        method: str,
+        url: str | None = None,
+        params: dict | None = None,
+        payload: dict | None = None,
+        headers: dict | None = None,
+    ) -> tuple[int, dict]:
         return 500, {"error": "backend database failure"}
 
     with pytest.raises(RuntimeError, match="Cloud Monitoring / metrics provider write rejected with HTTP 500"):
@@ -1069,6 +1162,17 @@ def test_production_metrics_exporter_and_dashboard_provisioning() -> None:
     assert "platform-health" in readback["dashboard_resource_ids"]
 
     # Dashboard provisioning fails closed on missing authentic provider receipt ID
+    def mock_no_receipt_transport(
+        method: str,
+        url: str | None = None,
+        params: dict | None = None,
+        payload: dict | None = None,
+        headers: dict | None = None,
+    ) -> tuple[int, dict]:
+        if method == "POST":
+            return 200, {}
+        return 200, {"readback_status": "SUCCESS"}
+
     with pytest.raises(ValueError, match="Dashboard provider response missing authentic provider-issued receipt_id"):
         render_dashboard_provisioning(
             release_sha=test_sha,
