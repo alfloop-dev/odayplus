@@ -16,11 +16,18 @@ def test_addendum_preserves_rtm_coverage_and_expands_governance_ledger() -> None
 
     rtm_ids = re.findall(r"^\| (PLAN-S[0-7]-(?:\d{3}|GATE)) \|", matrix, flags=re.MULTILINE)
     governance_rows = re.findall(r"^\| [A-E] \| `([^`]+)` \|", ledger, flags=re.MULTILINE)
+    governance_assignments = re.findall(
+        r"^\| [A-E] \| `[^`]+` \| [^|]+ \| ([^|]+) \| ([^|]+) \|",
+        ledger,
+        flags=re.MULTILINE,
+    )
 
     assert len(rtm_ids) == 84
     assert len(set(rtm_ids)) == 84
     assert len(governance_rows) == 26
     assert len(set(governance_rows)) == 26
+    assert len(governance_assignments) == 26
+    assert all(owner.strip() != reviewer.strip() for owner, reviewer in governance_assignments)
 
 
 def test_netplan_technical_and_human_approval_gates_are_separate() -> None:
