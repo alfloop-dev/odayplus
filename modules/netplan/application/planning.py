@@ -24,6 +24,7 @@ from modules.netplan.domain.planning import (
     ScenarioSolveRecord,
     build_outcome_record,
     build_scenario_options,
+    is_authentic_human_ops_actor,
 )
 from modules.netplan.infrastructure.repositories import InMemoryNetPlanRepository
 from solver.netplan import STATUS_INFEASIBLE, NetPlanConstraints, solve_network_plan
@@ -175,9 +176,13 @@ class NetPlanService:
     ) -> ApprovalRecord:
         if not reason:
             raise NetPlanApprovalError("netplan decisions require a reason")
+        normalized = decision.lower()
+        if normalized == "approved" and not is_authentic_human_ops_actor(actor_id):
+            raise NetPlanApprovalError(
+                f"actor '{actor_id}' is not authorized for authentic Human/Ops approval"
+            )
         scenario = self._require_scenario(scenario_id)
         now = decided_at or datetime.now(UTC)
-        normalized = decision.lower()
         approval = self.repository.save_approval(
             ApprovalRecord(
                 approval_id=f"netplan-approval-{uuid4()}",

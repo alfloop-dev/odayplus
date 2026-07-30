@@ -17,6 +17,7 @@ from modules.netplan.domain import (
     NETPLAN_FEATURE_VERSION,
     NETPLAN_MODEL_VERSION,
     NETPLAN_SOLVER_VERSION,
+    AUTHORIZED_HUMAN_OPS_ACTORS,
     VALID_TRANSITIONS,
     ApprovalRecord,
     CandidateSiteInput,
@@ -30,6 +31,7 @@ from modules.netplan.domain import (
     StatusTransition,
     build_outcome_record,
     build_scenario_options,
+    is_authentic_human_ops_actor,
 )
 from modules.netplan.infrastructure import InMemoryNetPlanRepository
 from modules.netplan.workers import (
@@ -50,6 +52,7 @@ __all__ = [
     "NETPLAN_FEATURE_VERSION",
     "NETPLAN_MODEL_VERSION",
     "NETPLAN_SOLVER_VERSION",
+    "AUTHORIZED_HUMAN_OPS_ACTORS",
     "VALID_TRANSITIONS",
     "ActionOption",
     "ApprovalRecord",
@@ -79,5 +82,6 @@ __all__ = [
     "build_outcome_record",
     "build_scenario_options",
     "compare_solver_against_management_baseline",
+    "is_authentic_human_ops_actor",
     "run_netplan_solver_batch",
 ]

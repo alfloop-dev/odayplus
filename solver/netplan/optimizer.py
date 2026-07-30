@@ -9,6 +9,8 @@ alternative plans, and structured infeasibility diagnostics.
 
 from __future__ import annotations
 
+import hashlib
+import json
 from collections import Counter, defaultdict
 from dataclasses import dataclass
 from itertools import product
@@ -594,6 +596,32 @@ def _binding_constraints(
     return tuple(bindings)
 
 
+def _compute_solver_problem_hash(
+    options_by_entity: dict[str, tuple[ActionOption, ...]],
+    constraints: NetPlanConstraints,
+    risk_penalty: float,
+) -> str:
+    payload = {
+        "entities": sorted(options_by_entity.keys()),
+        "options": {
+            k: [opt.to_dict() for opt in options]
+            for k, options in sorted(options_by_entity.items())
+        },
+        "constraints": constraints.to_dict(),
+        "risk_penalty": float(risk_penalty),
+    }
+    return hashlib.sha256(json.dumps(payload, sort_keys=True).encode("utf-8")).hexdigest()
+
+
+def _compute_solver_result_hash(solve_result: NetworkPlanSolveResult) -> str:
+    payload = {
+        "status": solve_result.solver_status,
+        "objective_value": solve_result.objective_value,
+        "selected_actions": [opt.to_dict() for opt in solve_result.selected_actions],
+    }
+    return hashlib.sha256(json.dumps(payload, sort_keys=True).encode("utf-8")).hexdigest()
+
+
 def compare_solver_against_management_baseline(
     *,
     options_by_entity: dict[str, tuple[ActionOption, ...]],
@@ -602,30 +630,94 @@ def compare_solver_against_management_baseline(
     baseline: ManagementBaselineInput,
     risk_penalty: float = 100_000.0,
 ) -> ManagementBaselineComparisonReceipt:
-    baseline_options: list[ActionOption] = []
-    missing_entities: list[str] = []
-    for entity_id in sorted(options_by_entity):
-        target_action = baseline.actions_by_entity.get(entity_id)
-        if target_action is None:
-            missing_entities.append(entity_id)
-            continue
-        matched = next((opt for opt in options_by_entity[entity_id] if opt.action is target_action), None)
-        if matched is None:
-            missing_entities.append(entity_id)
-        else:
-            baseline_options.append(matched)
+    baseline_canonical_hash = baseline.compute_canonical_hash(constraints=constraints, risk_penalty=risk_penalty)
+    solver_problem_hash = _compute_solver_problem_hash(options_by_entity, constraints, risk_penalty)
+    solver_result_hash = _compute_solver_result_hash(solve_result)
 
-    if missing_entities or len(baseline_options) != len(options_by_entity):
+    # 1. Authentic approval gate check
+    if not baseline.validate_authentic_approval():
         return ManagementBaselineComparisonReceipt(
             baseline_id=baseline.baseline_id,
             baseline_feasible=False,
             baseline_objective_value=None,
             solver_objective_value=solve_result.objective_value,
             objective_gain_over_baseline=None,
-            superior_or_equal=solve_result.solver_status in {STATUS_OPTIMAL, STATUS_FEASIBLE},
-            baseline_constraint_violations=("incomplete_action_domain",),
+            superior_or_equal=False,
+            baseline_canonical_hash=baseline_canonical_hash,
+            solver_problem_hash=solver_problem_hash,
+            solver_result_hash=solver_result_hash,
+            baseline_constraint_violations=("unverified_human_ops_approval",),
         )
 
+    # 2. Solve result binding check
+    if solve_result.solver_status in {STATUS_OPTIMAL, STATUS_FEASIBLE}:
+        solve_entities = {opt.entity_id for opt in solve_result.selected_actions}
+        if solve_entities != set(options_by_entity.keys()):
+            return ManagementBaselineComparisonReceipt(
+                baseline_id=baseline.baseline_id,
+                baseline_feasible=False,
+                baseline_objective_value=None,
+                solver_objective_value=solve_result.objective_value,
+                objective_gain_over_baseline=None,
+                superior_or_equal=False,
+                baseline_canonical_hash=baseline_canonical_hash,
+                solver_problem_hash=solver_problem_hash,
+                solver_result_hash=solver_result_hash,
+                baseline_constraint_violations=("unbound_solve_result_domain",),
+            )
+
+    # 3. Exact entity set equality check
+    baseline_entities = set(baseline.actions_by_entity.keys())
+    problem_entities = set(options_by_entity.keys())
+
+    if baseline_entities != problem_entities:
+        violations: list[str] = []
+        if not baseline_entities.issuperset(problem_entities):
+            violations.append("incomplete_action_domain")
+        if not baseline_entities.issubset(problem_entities):
+            violations.append("extra_baseline_entities")
+        if not violations:
+            violations.append("domain_mismatch")
+
+        return ManagementBaselineComparisonReceipt(
+            baseline_id=baseline.baseline_id,
+            baseline_feasible=False,
+            baseline_objective_value=None,
+            solver_objective_value=solve_result.objective_value,
+            objective_gain_over_baseline=None,
+            superior_or_equal=False,
+            baseline_canonical_hash=baseline_canonical_hash,
+            solver_problem_hash=solver_problem_hash,
+            solver_result_hash=solver_result_hash,
+            baseline_constraint_violations=tuple(violations),
+        )
+
+    # 4. Match actions for each entity
+    baseline_options: list[ActionOption] = []
+    missing_matches: list[str] = []
+    for entity_id in sorted(options_by_entity):
+        target_action = baseline.actions_by_entity[entity_id]
+        matched = next((opt for opt in options_by_entity[entity_id] if opt.action is target_action), None)
+        if matched is None:
+            missing_matches.append(entity_id)
+        else:
+            baseline_options.append(matched)
+
+    if missing_matches or len(baseline_options) != len(options_by_entity):
+        return ManagementBaselineComparisonReceipt(
+            baseline_id=baseline.baseline_id,
+            baseline_feasible=False,
+            baseline_objective_value=None,
+            solver_objective_value=solve_result.objective_value,
+            objective_gain_over_baseline=None,
+            superior_or_equal=False,
+            baseline_canonical_hash=baseline_canonical_hash,
+            solver_problem_hash=solver_problem_hash,
+            solver_result_hash=solver_result_hash,
+            baseline_constraint_violations=("missing_action_option_for_entity",),
+        )
+
+    # 5. Evaluate baseline feasibility and candidate metrics
     baseline_candidate = _candidate_from_selected(baseline_options, constraints, risk_penalty)
     is_feasible = _is_feasible(baseline_candidate, constraints)
 
@@ -661,12 +753,17 @@ def compare_solver_against_management_baseline(
             baseline_objective_value=baseline_candidate.objective_value,
             solver_objective_value=solve_result.objective_value,
             objective_gain_over_baseline=None,
-            superior_or_equal=True,
+            superior_or_equal=False,
+            baseline_canonical_hash=baseline_canonical_hash,
+            solver_problem_hash=solver_problem_hash,
+            solver_result_hash=solver_result_hash,
             baseline_constraint_violations=tuple(violations),
         )
 
     gain = round(solve_result.objective_value - baseline_candidate.objective_value, 4)
-    superior_or_equal = solve_result.objective_value >= baseline_candidate.objective_value - 1e-6
+    superior_or_equal = solve_result.solver_status in {STATUS_OPTIMAL, STATUS_FEASIBLE} and (
+        solve_result.objective_value >= baseline_candidate.objective_value - 1e-6
+    )
     return ManagementBaselineComparisonReceipt(
         baseline_id=baseline.baseline_id,
         baseline_feasible=True,
@@ -674,6 +771,9 @@ def compare_solver_against_management_baseline(
         solver_objective_value=solve_result.objective_value,
         objective_gain_over_baseline=gain,
         superior_or_equal=superior_or_equal,
+        baseline_canonical_hash=baseline_canonical_hash,
+        solver_problem_hash=solver_problem_hash,
+        solver_result_hash=solver_result_hash,
         baseline_constraint_violations=(),
     )
 

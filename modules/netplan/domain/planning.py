@@ -246,6 +246,24 @@ class ScenarioSolveRecord:
         }
 
 
+AUTHORIZED_HUMAN_OPS_ACTORS: frozenset[str] = frozenset({
+    "Human/Ops",
+    "human/ops",
+    "Human/Ops:strategy-director",
+    "Human/Ops:network-planner",
+    "Human/Ops:ops-manager",
+})
+
+
+def is_authentic_human_ops_actor(actor_id: str) -> bool:
+    if not actor_id:
+        return False
+    normalized = actor_id.strip()
+    if normalized.startswith("Human/Ops") or normalized.startswith("human/ops"):
+        return True
+    return normalized in AUTHORIZED_HUMAN_OPS_ACTORS
+
+
 @dataclass(frozen=True)
 class ApprovalRecord:
     approval_id: str
@@ -260,6 +278,10 @@ class ApprovalRecord:
     def is_approved(self) -> bool:
         return self.decision == "approved"
 
+    @property
+    def authentic_approval_verified(self) -> bool:
+        return self.is_approved and is_authentic_human_ops_actor(self.actor_id)
+
     def to_dict(self) -> dict[str, Any]:
         return {
             "approval_id": self.approval_id,
@@ -269,6 +291,7 @@ class ApprovalRecord:
             "reason": self.reason,
             "decided_at": self.decided_at.isoformat(),
             "policy_version": self.policy_version,
+            "authentic_approval_verified": self.authentic_approval_verified,
         }
 
 

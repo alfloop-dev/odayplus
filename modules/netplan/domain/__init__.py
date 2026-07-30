@@ -4,6 +4,7 @@ from modules.netplan.domain.planning import (
     NETPLAN_FEATURE_VERSION,
     NETPLAN_MODEL_VERSION,
     NETPLAN_SOLVER_VERSION,
+    AUTHORIZED_HUMAN_OPS_ACTORS,
     VALID_TRANSITIONS,
     ApprovalRecord,
     CandidateSiteInput,
@@ -17,12 +18,14 @@ from modules.netplan.domain.planning import (
     StatusTransition,
     build_outcome_record,
     build_scenario_options,
+    is_authentic_human_ops_actor,
 )
 
 __all__ = [
     "NETPLAN_FEATURE_VERSION",
     "NETPLAN_MODEL_VERSION",
     "NETPLAN_SOLVER_VERSION",
+    "AUTHORIZED_HUMAN_OPS_ACTORS",
     "VALID_TRANSITIONS",
     "ApprovalRecord",
     "CandidateSiteInput",
@@ -36,4 +39,5 @@ __all__ = [
     "StatusTransition",
     "build_outcome_record",
     "build_scenario_options",
+    "is_authentic_human_ops_actor",
 ]

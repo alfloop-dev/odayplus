@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import hashlib
+import json
 from collections.abc import Mapping
 from dataclasses import dataclass, field
 from enum import StrEnum
@@ -94,7 +96,50 @@ class ManagementBaselineInput:
     baseline_id: str
     baseline_name: str
     actions_by_entity: Mapping[str, NetworkAction]
-    source_receipt_id: str = "WBS-NETPLAN-APPROVED-BASELINE-2026Q3"
+    source_receipt_id: str
+    source_snapshot_ids: tuple[str, ...] = ()
+    approver_id: str = "UNVERIFIED"
+    approval_status: str = "UNVERIFIED"
+    approval_reference_id: str = ""
+    issued_at: str = ""
+    expires_at: str | None = None
+
+    def compute_canonical_hash(
+        self,
+        constraints: NetPlanConstraints | None = None,
+        risk_penalty: float = 100_000.0,
+    ) -> str:
+        payload = {
+            "baseline_id": self.baseline_id,
+            "baseline_name": self.baseline_name,
+            "actions_by_entity": {k: v.value for k, v in sorted(self.actions_by_entity.items())},
+            "source_receipt_id": self.source_receipt_id,
+            "source_snapshot_ids": sorted(self.source_snapshot_ids),
+            "approver_id": self.approver_id,
+            "approval_status": self.approval_status,
+            "approval_reference_id": self.approval_reference_id,
+            "issued_at": self.issued_at,
+            "expires_at": self.expires_at,
+            "risk_penalty": float(risk_penalty),
+        }
+        if constraints is not None:
+            payload["constraints"] = constraints.to_dict()
+        raw = json.dumps(payload, sort_keys=True)
+        return hashlib.sha256(raw.encode("utf-8")).hexdigest()
+
+    def validate_authentic_approval(self) -> bool:
+        if self.approval_status != "APPROVED":
+            return False
+        normalized_approver = self.approver_id.strip()
+        if not (
+            normalized_approver.startswith("Human/Ops")
+            or normalized_approver.startswith("human/ops")
+            or normalized_approver in {"Human/Ops", "human/ops"}
+        ):
+            return False
+        if not self.source_receipt_id or self.source_receipt_id == "UNVERIFIED":
+            return False
+        return True
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -102,6 +147,13 @@ class ManagementBaselineInput:
             "baseline_name": self.baseline_name,
             "actions_by_entity": {k: v.value for k, v in self.actions_by_entity.items()},
             "source_receipt_id": self.source_receipt_id,
+            "source_snapshot_ids": list(self.source_snapshot_ids),
+            "approver_id": self.approver_id,
+            "approval_status": self.approval_status,
+            "approval_reference_id": self.approval_reference_id,
+            "issued_at": self.issued_at,
+            "expires_at": self.expires_at,
+            "authentic_approval_verified": self.validate_authentic_approval(),
         }
 
 
@@ -113,6 +165,9 @@ class ManagementBaselineComparisonReceipt:
     solver_objective_value: float
     objective_gain_over_baseline: float | None
     superior_or_equal: bool
+    baseline_canonical_hash: str = ""
+    solver_problem_hash: str = ""
+    solver_result_hash: str = ""
     baseline_constraint_violations: tuple[str, ...] = ()
 
     def to_dict(self) -> dict[str, Any]:
@@ -123,6 +178,9 @@ class ManagementBaselineComparisonReceipt:
             "solver_objective_value": self.solver_objective_value,
             "objective_gain_over_baseline": self.objective_gain_over_baseline,
             "superior_or_equal": self.superior_or_equal,
+            "baseline_canonical_hash": self.baseline_canonical_hash,
+            "solver_problem_hash": self.solver_problem_hash,
+            "solver_result_hash": self.solver_result_hash,
             "baseline_constraint_violations": list(self.baseline_constraint_violations),
         }
 

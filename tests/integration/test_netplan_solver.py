@@ -168,11 +168,12 @@ def test_service_lifecycle_tracks_approval_execution_and_outcome() -> None:
     service.submit_for_approval(scenario.scenario_id, actor="network-planner", occurred_at=MOMENT)
     approval = service.decide(
         scenario.scenario_id,
-        actor_id="strategy-director",
+        actor_id="Human/Ops:strategy-director",
         reason="budget and risk within quarterly policy",
         decided_at=MOMENT,
     )
     assert approval.is_approved is True
+    assert approval.authentic_approval_verified is True
     assert approval.policy_version == NETPLAN_POLICY_VERSION
 
     execution = service.execute(scenario.scenario_id, executed_by="ops-runner", executed_at=MOMENT)
@@ -258,6 +259,12 @@ def test_management_baseline_comparison_deterministic_proof() -> None:
             "candidate-a": NetworkAction.OPEN,
             "candidate-b": NetworkAction.KEEP,
         },
+        source_receipt_id="WBS-NETPLAN-APPROVED-BASELINE-2026Q3-RCPT",
+        source_snapshot_ids=("network-store-001", "network-store-002", "sitescore-candidate-a", "sitescore-candidate-b"),
+        approver_id="Human/Ops:strategy-director",
+        approval_status="APPROVED",
+        approval_reference_id="APR-2026Q3-NETPLAN-001",
+        issued_at="2026-07-01T00:00:00Z",
     )
 
     receipt = compare_solver_against_management_baseline(
@@ -274,6 +281,10 @@ def test_management_baseline_comparison_deterministic_proof() -> None:
     assert receipt.solver_objective_value >= receipt.baseline_objective_value
     assert receipt.objective_gain_over_baseline is not None
     assert receipt.objective_gain_over_baseline >= 0.0
+    assert receipt.baseline_canonical_hash != ""
+    assert receipt.solver_problem_hash != ""
+    assert receipt.solver_result_hash != ""
+    assert receipt.baseline_canonical_hash == baseline.compute_canonical_hash(constraints=constraints)
 
 
 def test_infeasible_management_baseline_identified_with_violations() -> None:
@@ -293,6 +304,11 @@ def test_infeasible_management_baseline_identified_with_violations() -> None:
             "candidate-a": NetworkAction.KEEP,
             "candidate-b": NetworkAction.KEEP,
         },
+        source_receipt_id="WBS-NETPLAN-APPROVED-BASELINE-2026Q3-RCPT",
+        approver_id="Human/Ops:strategy-director",
+        approval_status="APPROVED",
+        approval_reference_id="APR-2026Q3-NETPLAN-002",
+        issued_at="2026-07-01T00:00:00Z",
     )
 
     receipt = compare_solver_against_management_baseline(
@@ -303,9 +319,130 @@ def test_infeasible_management_baseline_identified_with_violations() -> None:
     )
 
     assert receipt.baseline_feasible is False
-    assert receipt.superior_or_equal is True
+    assert receipt.superior_or_equal is False
     assert "min_capacity_delta" in receipt.baseline_constraint_violations
     assert "min_action_counts.OPEN" in receipt.baseline_constraint_violations or "min_action_counts.MOVE" in receipt.baseline_constraint_violations
+
+
+def test_unverified_baseline_approval_rejected_in_comparison() -> None:
+    options = build_scenario_options(existing_stores=_stores(), candidate_sites=_sites())
+    constraints = _constraints()
+    solve_result = solve_network_plan(options_by_entity=options, constraints=constraints)
+
+    baseline = ManagementBaselineInput(
+        baseline_id="WBS-NETPLAN-UNVERIFIED-BASELINE",
+        baseline_name="Unapproved Baseline Draft",
+        actions_by_entity={
+            "store-001": NetworkAction.KEEP,
+            "store-002": NetworkAction.KEEP,
+            "candidate-a": NetworkAction.OPEN,
+            "candidate-b": NetworkAction.KEEP,
+        },
+        source_receipt_id="UNVERIFIED",
+        approver_id="strategy-director",  # missing Human/Ops prefix
+        approval_status="UNVERIFIED",
+    )
+
+    receipt = compare_solver_against_management_baseline(
+        options_by_entity=options,
+        constraints=constraints,
+        solve_result=solve_result,
+        baseline=baseline,
+    )
+
+    assert receipt.baseline_feasible is False
+    assert receipt.superior_or_equal is False
+    assert "unverified_human_ops_approval" in receipt.baseline_constraint_violations
+
+
+def test_baseline_extra_entities_domain_mismatch_fails_comparison() -> None:
+    options = build_scenario_options(existing_stores=_stores(), candidate_sites=_sites())
+    constraints = _constraints()
+    solve_result = solve_network_plan(options_by_entity=options, constraints=constraints)
+
+    baseline = ManagementBaselineInput(
+        baseline_id="WBS-NETPLAN-EXTRA-ENTITIES",
+        baseline_name="Baseline with Extra Entity",
+        actions_by_entity={
+            "store-001": NetworkAction.KEEP,
+            "store-002": NetworkAction.KEEP,
+            "candidate-a": NetworkAction.OPEN,
+            "candidate-b": NetworkAction.KEEP,
+            "extra-store-999": NetworkAction.OPEN,
+        },
+        source_receipt_id="WBS-NETPLAN-EXTRA-RCPT",
+        approver_id="Human/Ops:strategy-director",
+        approval_status="APPROVED",
+    )
+
+    receipt = compare_solver_against_management_baseline(
+        options_by_entity=options,
+        constraints=constraints,
+        solve_result=solve_result,
+        baseline=baseline,
+    )
+
+    assert receipt.baseline_feasible is False
+    assert receipt.superior_or_equal is False
+    assert "extra_baseline_entities" in receipt.baseline_constraint_violations
+
+
+def test_unbound_solve_result_fails_comparison() -> None:
+    options = build_scenario_options(existing_stores=_stores(), candidate_sites=_sites())
+    other_options = build_scenario_options(existing_stores=_stores()[:1])
+    other_constraints = NetPlanConstraints(max_budget=500_000)
+    other_solve_result = solve_network_plan(options_by_entity=other_options, constraints=other_constraints)
+    assert other_solve_result.solver_status == STATUS_OPTIMAL
+
+    baseline = ManagementBaselineInput(
+        baseline_id="WBS-NETPLAN-VALID",
+        baseline_name="Valid Baseline",
+        actions_by_entity={
+            "store-001": NetworkAction.KEEP,
+            "store-002": NetworkAction.KEEP,
+            "candidate-a": NetworkAction.OPEN,
+            "candidate-b": NetworkAction.KEEP,
+        },
+        source_receipt_id="WBS-RCPT-001",
+        approver_id="Human/Ops:ops-manager",
+        approval_status="APPROVED",
+    )
+
+    receipt = compare_solver_against_management_baseline(
+        options_by_entity=options,
+        constraints=_constraints(),
+        solve_result=other_solve_result,
+        baseline=baseline,
+    )
+
+    assert receipt.baseline_feasible is False
+    assert receipt.superior_or_equal is False
+    assert "unbound_solve_result_domain" in receipt.baseline_constraint_violations
+
+
+def test_unauthorized_actor_decide_raises_approval_error() -> None:
+    service = NetPlanService()
+    scenario = service.create_scenario(
+        tenant_id="tenant-1",
+        scenario_name="test approval auth",
+        planning_horizon="2026Q3",
+        existing_stores=_stores(),
+        candidate_sites=_sites(),
+        constraints=_constraints(),
+        correlation_id="corr-auth",
+    )
+    service.solve(scenario.scenario_id)
+    service.submit_for_approval(scenario.scenario_id)
+
+    from modules.netplan import NetPlanApprovalError
+
+    with pytest.raises(NetPlanApprovalError) as exc_info:
+        service.decide(
+            scenario.scenario_id,
+            actor_id="unauthorized-strategy-director",
+            reason="trying unverified approval",
+        )
+    assert "is not authorized for authentic Human/Ops approval" in str(exc_info.value)
 
 
 def test_infeasible_max_average_risk_has_dedicated_diagnosis() -> None:
@@ -322,7 +459,6 @@ def test_infeasible_max_average_risk_has_dedicated_diagnosis() -> None:
 
 
 def test_infeasible_max_action_counts_has_dedicated_diagnosis() -> None:
-    # Build options where store-001 only has MOVE action option
     store_move_only = ExistingStoreInput(
         store_id="store-forced-move",
         baseline_gross_margin=500_000,
@@ -344,4 +480,5 @@ def test_infeasible_max_action_counts_has_dedicated_diagnosis() -> None:
     assert result.infeasible is True
     viol_constraints = [d.violated_constraint for d in result.diagnostics]
     assert "max_action_counts.MOVE" in viol_constraints
+
 
