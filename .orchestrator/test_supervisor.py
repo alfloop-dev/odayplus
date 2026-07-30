@@ -5,18 +5,40 @@ import contextlib
 import json
 import os
 import subprocess
+import sys
 import tempfile
 import unittest
-from datetime import UTC
+from datetime import UTC, datetime
 from pathlib import Path
+from typing import Any
 from unittest import mock
 
+THIS_DIR = Path(__file__).resolve().parent
+ROOT_DIR = THIS_DIR.parent
+SCRIPTS_DIR = ROOT_DIR / "scripts"
+if str(SCRIPTS_DIR) not in sys.path:
+    sys.path.insert(0, str(SCRIPTS_DIR))
+
+import ai_status
 import supervisor
+
+
+def load_test_config() -> dict[str, Any]:
+    config_file = Path(__file__).with_name("config.json")
+    if not config_file.exists():
+        try:
+            from ai_status import STATUS_ROOT
+            config_file = STATUS_ROOT / ".orchestrator" / "config.json"
+        except Exception:
+            pass
+    if not config_file.exists():
+        config_file = Path(__file__).with_name("config.example.json")
+    return json.loads(config_file.read_text(encoding="utf-8"))
 
 
 class RuntimeConfigTests(unittest.TestCase):
     def test_codex_pair_shares_one_account_quota_group(self) -> None:
-        config = json.loads(Path(__file__).with_name("config.json").read_text(encoding="utf-8"))
+        config = load_test_config()
 
         ready_dispatcher = config["ready_dispatcher"]
         quota_caps = ready_dispatcher["max_concurrent_per_quota_group"]
@@ -32,7 +54,7 @@ class RuntimeConfigTests(unittest.TestCase):
         self.assertEqual(supervisor.agent_dispatch_capacity(config, "codex2"), 4)
 
     def test_claude_concurrency_is_explicitly_capped(self) -> None:
-        config = json.loads(Path(__file__).with_name("config.json").read_text(encoding="utf-8"))
+        config = load_test_config()
 
         ready_dispatcher = config["ready_dispatcher"]
 
@@ -41,7 +63,7 @@ class RuntimeConfigTests(unittest.TestCase):
         self.assertEqual(supervisor.agent_dispatch_capacity(config, "claude"), 3)
 
     def test_claude2_shares_claude_account_quota_group(self) -> None:
-        config = json.loads(Path(__file__).with_name("config.json").read_text(encoding="utf-8"))
+        config = load_test_config()
 
         ready_dispatcher = config["ready_dispatcher"]
         quota_caps = ready_dispatcher["max_concurrent_per_quota_group"]
@@ -1769,6 +1791,7 @@ class ProcessQueueDispatchGuardTests(unittest.TestCase):
             "reviewer": "Claude",
             "depends_on": ["REG-001"],
             "last_update": "2026-04-06T15:00:00Z",
+            "approved_head": "1111111122222222333333334444444455555555",
         }
         dependency = {
             "id": "REG-001",
@@ -1785,6 +1808,8 @@ class ProcessQueueDispatchGuardTests(unittest.TestCase):
             mock.patch.object(supervisor, "load_status", return_value=status),
             mock.patch.object(supervisor, "load_event_queue", return_value=[]),
             mock.patch.object(supervisor, "queue_delivery_event", return_value=True) as queue_delivery_event,
+            mock.patch("ai_status.resolve_task_sha", return_value="1111111122222222333333334444444455555555"),
+            mock.patch("ai_status.task_pr_ci_status", return_value=("OPEN", "success")),
         ):
             changed = supervisor.dispatch_ready_tasks(self.config, state)
 
@@ -1811,6 +1836,7 @@ class ProcessQueueDispatchGuardTests(unittest.TestCase):
             "reviewer": "Claude",
             "depends_on": ["REG-001"],
             "last_update": "2026-04-06T14:00:00Z",
+            "approved_head": "1111111122222222333333334444444455555555",
         }
         state = {"queue": {"events": {}}, "workers": {}}
         status = {"tasks": [dependency, current_task]}
@@ -1819,6 +1845,8 @@ class ProcessQueueDispatchGuardTests(unittest.TestCase):
             mock.patch.object(supervisor, "load_status", return_value=status),
             mock.patch.object(supervisor, "load_event_queue", return_value=[]),
             mock.patch.object(supervisor, "queue_delivery_event", return_value=True) as queue_delivery_event,
+            mock.patch("ai_status.resolve_task_sha", return_value="1111111122222222333333334444444455555555"),
+            mock.patch("ai_status.task_pr_ci_status", return_value=("OPEN", "success")),
         ):
             changed = supervisor.dispatch_ready_tasks(self.config, state)
 
@@ -5128,7 +5156,13 @@ class ChairReviewDispatchTests(unittest.TestCase):
         status = {
             "tasks": [
                 {"id": "T-REVIEW", "status": "review", "owner": "Codex", "reviewer": "Codex2"},
-                {"id": "T-FINALIZE", "status": "review_approved", "owner": "Codex2", "reviewer": "Codex"},
+                {
+                    "id": "T-FINALIZE",
+                    "status": "review_approved",
+                    "owner": "Codex2",
+                    "reviewer": "Codex",
+                    "approved_head": "1111111122222222333333334444444455555555",
+                },
             ]
         }
 
@@ -5136,6 +5170,8 @@ class ChairReviewDispatchTests(unittest.TestCase):
             mock.patch.object(supervisor, "load_status", return_value=status),
             mock.patch.object(supervisor, "load_event_queue", return_value=[]),
             mock.patch.object(supervisor, "queue_delivery_event") as queue_delivery_event,
+            mock.patch("ai_status.resolve_task_sha", return_value="1111111122222222333333334444444455555555"),
+            mock.patch("ai_status.task_pr_ci_status", return_value=("OPEN", "success")),
         ):
             changed = supervisor.dispatch_ready_tasks(self.config, state)
 
@@ -6184,7 +6220,7 @@ class PollWorkersRecoveryTests(unittest.TestCase):
         status = {
             "tasks": [
                 {"id": "FB-003", "status": "todo", "owner": "Copilot", "reviewer": "Codex", "depends_on": []},
-                {"id": "EX-001", "status": "review_approved", "owner": "Copilot", "reviewer": "Claude", "depends_on": []},
+                {"id": "EX-001", "status": "review_approved", "approved_head": "1111111122222222333333334444444455555555", "owner": "Copilot", "reviewer": "Claude", "depends_on": []},
             ]
         }
 
@@ -6197,6 +6233,8 @@ class PollWorkersRecoveryTests(unittest.TestCase):
             mock.patch.object(supervisor, "terminate_worker_pid") as terminate_worker_pid,
             mock.patch.object(supervisor, "detect_worker_failure", return_value=None),
             mock.patch.object(supervisor, "write_activity_log") as write_activity_log,
+            mock.patch("ai_status.resolve_task_sha", return_value="1111111122222222333333334444444455555555"),
+            mock.patch("ai_status.task_pr_ci_status", return_value=("OPEN", "success")),
         ):
             changed = supervisor.poll_workers(config, state)
 
@@ -8427,6 +8465,1210 @@ class RunSupervisorShellGuardTests(unittest.TestCase):
         proc = self._run(["--verbose"], '#!/bin/sh\nexit 11\n')
         self.assertEqual(proc.returncode, 11, proc.stderr)
 
+
+
+class ReviewHeadFreezeTests(unittest.TestCase):
+    def _build_freeze_test_config(self) -> dict[str, Any]:
+        config = load_test_config()
+        ready_disp = config.setdefault("ready_dispatcher", {})
+        ready_disp["enabled"] = True
+        ready_disp["review_statuses"] = ["review"]
+        ready_disp["finalize_statuses"] = ["review_approved"]
+        ready_disp["owned_statuses"] = ["in_progress", "todo"]
+        ready_disp["active_worker_statuses"] = ["running", "waiting_approval"]
+        max_by_agent = ready_disp.setdefault("max_tasks_per_agent_by_agent", {})
+        max_by_agent["Antigravity4"] = 10
+        max_by_agent["antigravity4"] = 10
+        quota_groups = ready_disp.setdefault("max_concurrent_per_quota_group", {})
+        quota_groups["antigravity4"] = 10
+        quota_groups["antigravity"] = 10
+        agents = config.setdefault("agents", {})
+        agents["antigravity4"] = {
+            "display_name": "Antigravity4",
+            "provider": "antigravity",
+            "adapter": "antigravity",
+        }
+        return config
+
+    def test_approve_saves_approved_head_and_rejects_same_owner_reviewer(self) -> None:
+        state = {
+            "tasks": [
+                {
+                    "id": "FREEZE-TEST-001",
+                    "owner": "Antigravity4",
+                    "reviewer": "Claude",
+                    "status": "review",
+                },
+                {
+                    "id": "FREEZE-TEST-002",
+                    "owner": "Claude",
+                    "reviewer": "Claude",
+                    "status": "review",
+                },
+            ]
+        }
+        with unittest.mock.patch("ai_status.current_actor_validated", return_value="Claude"):
+            with unittest.mock.patch("ai_status.resolve_task_sha", return_value="1111111122222222333333334444444455555555"):
+                with unittest.mock.patch("ai_status.sync_all"):
+                    with self.assertRaises(SystemExit) as cm:
+                        ai_status.command_approve(state, ["FREEZE-TEST-002", "Approve self"])
+                    self.assertIn("must be separate identities", str(cm.exception))
+
+                    ai_status.command_approve(state, ["FREEZE-TEST-001", "Approve valid"])
+                    task = ai_status.get_task(state, "FREEZE-TEST-001")
+                    self.assertEqual(task["status"], "review_approved")
+                    self.assertEqual(task["approved_head"], "1111111122222222333333334444444455555555")
+
+    def test_command_done_rejects_mutated_head(self) -> None:
+        state = {
+            "tasks": [
+                {
+                    "id": "FREEZE-TEST-003",
+                    "owner": "Antigravity4",
+                    "reviewer": "Claude",
+                    "status": "review_approved",
+                    "approved_head": "1111111122222222333333334444444455555555",
+                }
+            ]
+        }
+        with unittest.mock.patch("ai_status.current_actor_validated", return_value="Antigravity4"):
+            with unittest.mock.patch("ai_status.resolve_task_sha", return_value="9999999922222222333333334444444455555555"):
+                with self.assertRaises(SystemExit) as cm:
+                    ai_status.command_done(state, ["FREEZE-TEST-003", "Finalize done"])
+                self.assertIn("differs from reviewer-approved head", str(cm.exception))
+
+    def test_command_done_fails_closed_when_sha_unresolved_or_raises(self) -> None:
+        state = {
+            "tasks": [
+                {
+                    "id": "FREEZE-TEST-003B",
+                    "owner": "Antigravity4",
+                    "reviewer": "Claude",
+                    "status": "review_approved",
+                    "approved_head": "1111111122222222333333334444444455555555",
+                }
+            ]
+        }
+        with unittest.mock.patch("ai_status.current_actor_validated", return_value="Antigravity4"):
+            with unittest.mock.patch("ai_status.resolve_task_sha", return_value=None):
+                with self.assertRaises(SystemExit) as cm:
+                    ai_status.command_done(state, ["FREEZE-TEST-003B", "Finalize done"])
+                self.assertIn("differs from reviewer-approved head", str(cm.exception))
+
+            with unittest.mock.patch("ai_status.resolve_task_sha", side_effect=RuntimeError("git error")):
+                with self.assertRaises(SystemExit) as cm:
+                    ai_status.command_done(state, ["FREEZE-TEST-003B", "Finalize done"])
+                self.assertIn("unable to resolve current branch HEAD", str(cm.exception))
+
+    def test_supervisor_reverts_mutated_approved_head_to_review_on_disk(self) -> None:
+        import tempfile
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmppath = Path(tmpdir)
+            status_file = tmppath / "ai-status.json"
+            initial_status = {
+                "tasks": [
+                    {
+                        "id": "FREEZE-TEST-004",
+                        "owner": "Antigravity4",
+                        "reviewer": "Claude",
+                        "status": "review_approved",
+                        "approved_head": "1111111122222222333333334444444455555555",
+                    }
+                ]
+            }
+            status_file.write_text(json.dumps(initial_status), encoding="utf-8")
+
+            config = self._build_freeze_test_config()
+            config["paths"]["status_file"] = str(status_file)
+            state = {
+                "seen_event_keys": {},
+                "ready_dispatcher": {"weighted_cursor": 0},
+                "status": initial_status,
+            }
+
+            ai_status.clear_ai_status_caches()
+            with unittest.mock.patch("supervisor.scan_live_worker_pids_by_agent", return_value={}), \
+                 unittest.mock.patch("supervisor.outstanding_delivery_indexes", return_value=(set(), set(), set())), \
+                 unittest.mock.patch("ai_status.resolve_task_sha", return_value="8888888822222222333333334444444455555555"), \
+                 unittest.mock.patch("supervisor.agent_auto_dispatch_block_reason", return_value=None), \
+                 unittest.mock.patch("supervisor.sync_status_pipeline", return_value=True), \
+                 unittest.mock.patch("supervisor.write_activity_log"):
+                supervisor.dispatch_ready_tasks(
+                    config,
+                    state,
+                    agent_ids_override=["antigravity4"],
+                )
+                disk_status = json.loads(status_file.read_text(encoding="utf-8"))
+                disk_task = disk_status["tasks"][0]
+                self.assertEqual(disk_task["status"], "review")
+                self.assertIn("re-review required", disk_task["next"])
+                self.assertNotIn("approved_head", disk_task)
+
+    def test_task_pr_ci_status_handles_checkrun_completed_failure(self) -> None:
+        ai_status.clear_ai_status_caches()
+        fake_payload = {
+            "state": "OPEN",
+            "statusCheckRollup": [
+                {
+                    "__typename": "CheckRun",
+                    "name": "build",
+                    "status": "COMPLETED",
+                    "conclusion": "FAILURE",
+                }
+            ],
+        }
+        with unittest.mock.patch("ai_status.run_gh_json_command", return_value=fake_payload):
+            pr_state, ci_status = ai_status.task_pr_ci_status("TEST-CI-001")
+            self.assertEqual(pr_state, "OPEN")
+            self.assertEqual(ci_status, "failure")
+
+    def test_dispatch_priority_for_task_and_agent_primary_work(self) -> None:
+        config = self._build_freeze_test_config()
+        task_mutated = {
+            "id": "FREEZE-TEST-007",
+            "owner": "Antigravity4",
+            "reviewer": "Claude",
+            "status": "review_approved",
+            "approved_head": "1111111122222222333333334444444455555555",
+        }
+        status_data = {"tasks": [task_mutated]}
+        task_map = {"FREEZE-TEST-007": task_mutated}
+
+        ai_status.clear_ai_status_caches()
+        with unittest.mock.patch("ai_status.resolve_task_sha", return_value="9999999922222222333333334444444455555555"):
+            prio = supervisor.dispatch_priority_for_task(config, task_mutated, "Antigravity4", task_map=task_map)
+            self.assertIsNone(prio)
+            has_work = supervisor.agent_has_dispatchable_primary_work(config, status_data, "Antigravity4", task_map)
+            self.assertFalse(has_work)
+
+    def test_dispatch_priority_fails_closed_on_unresolved_head_or_unknown_ci(self) -> None:
+        config = self._build_freeze_test_config()
+        task = {
+            "id": "FREEZE-TEST-007B",
+            "owner": "Antigravity4",
+            "reviewer": "Claude",
+            "status": "review_approved",
+            "approved_head": "1111111122222222333333334444444455555555",
+        }
+        task_map = {"FREEZE-TEST-007B": task}
+
+        ai_status.clear_ai_status_caches()
+        # Positive control: matching head + green CI MUST yield the finalize priority.
+        # Without this, a config/schema regression would make every negative
+        # sub-case below pass vacuously (the B13 failure mode).
+        with unittest.mock.patch("ai_status.resolve_task_sha", return_value="1111111122222222333333334444444455555555"), \
+             unittest.mock.patch("ai_status.task_pr_ci_status", return_value=("OPEN", "success")):
+            self.assertEqual(
+                supervisor.dispatch_priority_for_task(config, task, "Antigravity4", task_map=task_map),
+                1,
+            )
+
+        # Head sub-cases pin CI to a *passing* probe so the head gate is the only
+        # thing that can produce None. Leaving task_pr_ci_status unpatched here
+        # lets control fall through to the CI gate, where the real (unmocked)
+        # probe shells out to `gh`, returns ("unknown"), and produces the None
+        # the assertion is checking -- which is how B14/B17/B18 stayed vacuous.
+        with unittest.mock.patch("ai_status.resolve_task_sha", return_value=None), \
+             unittest.mock.patch("ai_status.task_pr_ci_status", return_value=("OPEN", "success")):
+            self.assertIsNone(supervisor.dispatch_priority_for_task(config, task, "Antigravity4", task_map=task_map))
+
+        with unittest.mock.patch("ai_status.resolve_task_sha", side_effect=RuntimeError("git error")), \
+             unittest.mock.patch("ai_status.task_pr_ci_status", return_value=("OPEN", "success")):
+            self.assertIsNone(supervisor.dispatch_priority_for_task(config, task, "Antigravity4", task_map=task_map))
+
+        # Head drifted off the approved head, CI green: still must not dispatch.
+        with unittest.mock.patch("ai_status.resolve_task_sha", return_value="9999999922222222333333334444444455555555"), \
+             unittest.mock.patch("ai_status.task_pr_ci_status", return_value=("OPEN", "success")):
+            self.assertIsNone(supervisor.dispatch_priority_for_task(config, task, "Antigravity4", task_map=task_map))
+
+        with unittest.mock.patch("ai_status.resolve_task_sha", return_value="1111111122222222333333334444444455555555"), \
+             unittest.mock.patch("ai_status.task_pr_ci_status", return_value=("OPEN", "unknown")):
+            self.assertIsNone(supervisor.dispatch_priority_for_task(config, task, "Antigravity4", task_map=task_map))
+
+        with unittest.mock.patch("ai_status.resolve_task_sha", return_value="1111111122222222333333334444444455555555"), \
+             unittest.mock.patch("ai_status.task_pr_ci_status", side_effect=RuntimeError("gh error")):
+            self.assertIsNone(supervisor.dispatch_priority_for_task(config, task, "Antigravity4", task_map=task_map))
+
+    def test_approve_fails_closed_when_approved_head_cannot_be_resolved(self) -> None:
+        """B20: approving without freezing a head silently disables the freeze.
+
+        command_done and both supervisor dispatch gates are guarded by
+        `if approved_head:`. Recording no head therefore does not fail closed --
+        it opts the task out of the integrity check entirely. Approval must
+        abort instead, leaving the task in `review`.
+        """
+        def _fresh_state() -> dict[str, Any]:
+            return {
+                "tasks": [
+                    {
+                        "id": "FREEZE-TEST-020A",
+                        "owner": "Antigravity4",
+                        "reviewer": "Claude",
+                        "status": "review",
+                    }
+                ]
+            }
+
+        # Positive control: a resolvable head still approves and freezes.
+        state = _fresh_state()
+        with unittest.mock.patch("ai_status.current_actor_validated", return_value="Claude"), \
+             unittest.mock.patch("ai_status.resolve_task_sha", return_value="1111111122222222333333334444444455555555"), \
+             unittest.mock.patch("ai_status.append_log"), \
+             unittest.mock.patch("ai_status.sync_all"):
+            ai_status.command_approve(state, ["FREEZE-TEST-020A", "Approve valid"])
+        task = ai_status.get_task(state, "FREEZE-TEST-020A")
+        self.assertEqual(task["status"], "review_approved")
+        self.assertEqual(task["approved_head"], "1111111122222222333333334444444455555555")
+
+        # Unresolvable head -> abort, and leave no half-applied approval behind.
+        state = _fresh_state()
+        with unittest.mock.patch("ai_status.current_actor_validated", return_value="Claude"), \
+             unittest.mock.patch("ai_status.resolve_task_sha", return_value=None), \
+             unittest.mock.patch("ai_status.sync_all"):
+            with self.assertRaises(SystemExit) as cm:
+                ai_status.command_approve(state, ["FREEZE-TEST-020A", "Approve valid"])
+        self.assertIn("could not be resolved", str(cm.exception))
+        task = ai_status.get_task(state, "FREEZE-TEST-020A")
+        self.assertEqual(task["status"], "review")
+        self.assertNotIn("approved_head", task)
+
+        # A raising probe must fail closed too, not escape as a traceback.
+        state = _fresh_state()
+        with unittest.mock.patch("ai_status.current_actor_validated", return_value="Claude"), \
+             unittest.mock.patch("ai_status.resolve_task_sha", side_effect=RuntimeError("gh down")), \
+             unittest.mock.patch("ai_status.sync_all"):
+            with self.assertRaises(SystemExit) as cm:
+                ai_status.command_approve(state, ["FREEZE-TEST-020A", "Approve valid"])
+        self.assertIn("Integrity gate failed closed", str(cm.exception))
+        task = ai_status.get_task(state, "FREEZE-TEST-020A")
+        self.assertEqual(task["status"], "review")
+        self.assertNotIn("approved_head", task)
+
+    def test_approve_refuses_to_overwrite_uncleared_approved_head(self) -> None:
+        """B20: approved_head is immutable for the lifetime of one approval.
+
+        Every transition back to `review` pops approved_head, so a task in
+        `review` still carrying one is inconsistent state. Silently overwriting
+        it would re-freeze on a head the reviewer never signed off.
+        """
+        old_head = "1111111122222222333333334444444455555555"
+        new_head = "9999999922222222333333334444444455555555"
+        state = {
+            "tasks": [
+                {
+                    "id": "FREEZE-TEST-020B",
+                    "owner": "Antigravity4",
+                    "reviewer": "Claude",
+                    "status": "review",
+                    "approved_head": old_head,
+                }
+            ]
+        }
+        with unittest.mock.patch("ai_status.current_actor_validated", return_value="Claude"), \
+             unittest.mock.patch("ai_status.resolve_task_sha", return_value=new_head), \
+             unittest.mock.patch("ai_status.sync_all"):
+            with self.assertRaises(SystemExit) as cm:
+                ai_status.command_approve(state, ["FREEZE-TEST-020B", "Approve drifted"])
+        self.assertIn("uncleared approved head", str(cm.exception))
+        task = ai_status.get_task(state, "FREEZE-TEST-020B")
+        self.assertEqual(task["status"], "review")
+        self.assertEqual(task["approved_head"], old_head)
+
+        # Positive control: re-approving at the *same* head is not a conflict,
+        # so the guard cannot be satisfied by rejecting every stale-head task.
+        with unittest.mock.patch("ai_status.current_actor_validated", return_value="Claude"), \
+             unittest.mock.patch("ai_status.resolve_task_sha", return_value=old_head), \
+             unittest.mock.patch("ai_status.append_log"), \
+             unittest.mock.patch("ai_status.sync_all"):
+            ai_status.command_approve(state, ["FREEZE-TEST-020B", "Approve same head"])
+        task = ai_status.get_task(state, "FREEZE-TEST-020B")
+        self.assertEqual(task["status"], "review_approved")
+        self.assertEqual(task["approved_head"], old_head)
+
+    def _run_finalize_dispatch_capturing_signals(
+        self,
+        config: dict[str, Any],
+        task: dict[str, Any],
+        *,
+        head: Any,
+        ci: Any,
+    ) -> tuple[bool, list[dict[str, Any]], unittest.mock.MagicMock]:
+        """Drive dispatch_ready_tasks once and collect the operator signals."""
+        state = {
+            "seen_event_keys": {},
+            "ready_dispatcher": {"weighted_cursor": 0},
+            "status": {"tasks": [task]},
+        }
+        status = {"tasks": [task]}
+        logged: list[dict[str, Any]] = []
+
+        ai_status.clear_ai_status_caches()
+        head_patch = (
+            unittest.mock.patch("ai_status.resolve_task_sha", side_effect=head)
+            if isinstance(head, Exception)
+            else unittest.mock.patch("ai_status.resolve_task_sha", return_value=head)
+        )
+        with head_patch, \
+             unittest.mock.patch("supervisor.scan_live_worker_pids_by_agent", return_value={}), \
+             unittest.mock.patch("supervisor.outstanding_delivery_indexes", return_value=(set(), set(), set())), \
+             unittest.mock.patch("supervisor.agent_dispatch_loads", return_value={}), \
+             unittest.mock.patch("supervisor.load_status", return_value=status), \
+             unittest.mock.patch("ai_status.task_pr_ci_status", return_value=("OPEN", ci)), \
+             unittest.mock.patch("supervisor.agent_auto_dispatch_block_reason", return_value=None), \
+             unittest.mock.patch("supervisor.sync_status_pipeline"), \
+             unittest.mock.patch("supervisor.write_json"), \
+             unittest.mock.patch("supervisor.write_activity_log", side_effect=lambda _c, e: logged.append(e)), \
+             unittest.mock.patch("supervisor.queue_delivery_event", return_value=True) as mock_queue:
+            dispatched = supervisor.dispatch_ready_tasks(
+                config,
+                state,
+                agent_ids_override=["antigravity4"],
+            )
+        return dispatched, logged, mock_queue
+
+    def test_supervisor_emits_operator_signal_for_silent_finalize_suppression(self) -> None:
+        """B20: suppressing finalize dispatch must not be silent.
+
+        The unresolved-head path and the catch-all unresolved-CI path both used
+        a bare `continue`, unlike the pending/failure branches, so a task could
+        sit in review_approved indefinitely with no `next` and no activity-log
+        entry explaining why nothing was happening.
+        """
+        approved = "1111111122222222333333334444444455555555"
+        config = self._build_freeze_test_config()
+
+        def _task() -> dict[str, Any]:
+            return {
+                "id": "FREEZE-TEST-020C",
+                "owner": "Antigravity4",
+                "reviewer": "Claude",
+                "status": "review_approved",
+                "approved_head": approved,
+            }
+
+        # Positive control: head matches and CI is green -> dispatch, no signal.
+        task = _task()
+        dispatched, logged, mock_queue = self._run_finalize_dispatch_capturing_signals(
+            config, task, head=approved, ci="success"
+        )
+        self.assertTrue(dispatched)
+        mock_queue.assert_called_once()
+        self.assertEqual([], [e["type"] for e in logged])
+
+        # Head unresolvable: suppressed, task stays review_approved, signal emitted.
+        task = _task()
+        dispatched, logged, mock_queue = self._run_finalize_dispatch_capturing_signals(
+            config, task, head=None, ci="success"
+        )
+        self.assertFalse(dispatched)
+        mock_queue.assert_not_called()
+        self.assertEqual(task["status"], "review_approved")
+        self.assertIn("approved_head_unresolved", [e["type"] for e in logged])
+        self.assertIn("Cannot verify branch HEAD", task["next"])
+
+        # Head resolution raising is the same suppression path.
+        task = _task()
+        dispatched, logged, _ = self._run_finalize_dispatch_capturing_signals(
+            config, task, head=RuntimeError("git down"), ci="success"
+        )
+        self.assertFalse(dispatched)
+        self.assertIn("approved_head_unresolved", [e["type"] for e in logged])
+
+        # CI probe inconclusive: suppressed with its own distinct signal.
+        task = _task()
+        dispatched, logged, mock_queue = self._run_finalize_dispatch_capturing_signals(
+            config, task, head=approved, ci="unknown"
+        )
+        self.assertFalse(dispatched)
+        mock_queue.assert_not_called()
+        self.assertEqual(task["status"], "review_approved")
+        self.assertIn("ci_status_unresolved", [e["type"] for e in logged])
+        self.assertIn("is unresolved (unknown)", task["next"])
+
+        # Signals are emitted once, not re-logged every supervisor cycle.
+        dispatched, logged, _ = self._run_finalize_dispatch_capturing_signals(
+            config, task, head=approved, ci="unknown"
+        )
+        self.assertFalse(dispatched)
+        self.assertEqual([], [e["type"] for e in logged])
+
+    def test_ci_pending_escalates_to_operator_after_timeout(self) -> None:
+        """AC3 escalation half: covered by nothing until this test.
+
+        Mutating the whole `if ci_status == "pending":` branch to `if False:`
+        left the suite green, because the later catch-all still suppressed
+        dispatch. Only the ci_pending_since_ts bookkeeping and the 30-minute
+        escalation notice were lost -- and nothing asserted on either.
+        """
+        approved = "1111111122222222333333334444444455555555"
+        config = self._build_freeze_test_config()
+
+        def _task(**extra: Any) -> dict[str, Any]:
+            task = {
+                "id": "FREEZE-TEST-020D",
+                "owner": "Antigravity4",
+                "reviewer": "Claude",
+                "status": "review_approved",
+                "approved_head": approved,
+            }
+            task.update(extra)
+            return task
+
+        # First pending cycle: start the clock, do not escalate yet.
+        task = _task()
+        dispatched, logged, _ = self._run_finalize_dispatch_capturing_signals(
+            config, task, head=approved, ci="pending"
+        )
+        self.assertFalse(dispatched)
+        self.assertIn("ci_pending_since_ts", task)
+        self.assertNotIn("ci_pending_timeout", [e["type"] for e in logged])
+
+        # Still inside the 30-minute window: still no escalation.
+        task = _task(ci_pending_since_ts=datetime.now(UTC).timestamp() - 60)
+        _, logged, _ = self._run_finalize_dispatch_capturing_signals(
+            config, task, head=approved, ci="pending"
+        )
+        self.assertNotIn("ci_pending_timeout", [e["type"] for e in logged])
+
+        # Past 1800s: escalate to the operator exactly once.
+        task = _task(ci_pending_since_ts=datetime.now(UTC).timestamp() - 2000)
+        _, logged, _ = self._run_finalize_dispatch_capturing_signals(
+            config, task, head=approved, ci="pending"
+        )
+        self.assertIn("ci_pending_timeout", [e["type"] for e in logged])
+        self.assertIn("pending for over 30 minutes", task["next"])
+
+        _, logged, _ = self._run_finalize_dispatch_capturing_signals(
+            config, task, head=approved, ci="pending"
+        )
+        self.assertEqual([], [e["type"] for e in logged])
+
+        # Recovery: a green probe clears the pending bookkeeping and dispatches.
+        dispatched, _, mock_queue = self._run_finalize_dispatch_capturing_signals(
+            config, task, head=approved, ci="success"
+        )
+        self.assertTrue(dispatched)
+        mock_queue.assert_called_once()
+        self.assertNotIn("ci_pending_since_ts", task)
+
+    def test_explicit_re_review_command(self) -> None:
+        state = {
+            "tasks": [
+                {
+                    "id": "FREEZE-TEST-008",
+                    "owner": "Antigravity4",
+                    "reviewer": "Claude",
+                    "status": "review_approved",
+                    "approved_head": "1111111122222222333333334444444455555555",
+                }
+            ]
+        }
+        with unittest.mock.patch("ai_status.current_actor_validated", return_value="Antigravity4"), \
+             unittest.mock.patch("ai_status.load_state", return_value=state), \
+             unittest.mock.patch("ai_status.save_state"), \
+             unittest.mock.patch("ai_status.sync_all"), \
+             unittest.mock.patch("ai_status.emit_status_checks_for_changed_tasks"):
+            ai_status.main(["ai_status.py", "re_review", "FREEZE-TEST-008", "Updated branch with strict merge"])
+            task = ai_status.get_task(state, "FREEZE-TEST-008")
+            self.assertEqual(task["status"], "review")
+            self.assertNotIn("approved_head", task)
+            self.assertEqual(task["next"], "Updated branch with strict merge")
+
+            task["status"] = "review_approved"
+            task["approved_head"] = "1111111122222222333333334444444455555555"
+            ai_status.main(["ai_status.py", "re-review", "FREEZE-TEST-008", "Alias re-review check"])
+            self.assertEqual(task["status"], "review")
+            self.assertNotIn("approved_head", task)
+
+    def test_higher_priority_ready_task_exists_refuses_undispatchable_finalize_task(self) -> None:
+        """B24: higher_priority_ready_task_exists must fail closed on undispatchable finalize tasks.
+
+        A review_approved task with missing approved_head, head mismatch, or pending CI
+        cannot be dispatched by dispatch_ready_tasks. It MUST NOT cause
+        higher_priority_ready_task_exists to return True and terminate running workers.
+        """
+        approved_head = "1111111122222222333333334444444455555555"
+        config = self._build_freeze_test_config()
+        config["ready_dispatcher"]["max_tasks_per_agent_by_agent"]["Antigravity4"] = 1
+        config["ready_dispatcher"]["max_concurrent_per_quota_group"]["antigravity4"] = 1
+
+        worker = {
+            "run_id": "run-001",
+            "task_id": "INPROG-001",
+            "agent_id": "antigravity4",
+            "status": "running",
+            "request_snapshot": {"reason": supervisor.REASON_OWNED_IN_PROGRESS},
+        }
+
+        task_map = {
+            "INPROG-001": {
+                "id": "INPROG-001",
+                "owner": "Antigravity4",
+                "reviewer": "Claude",
+                "status": "in_progress",
+            },
+            "FINAL-001": {
+                "id": "FINAL-001",
+                "owner": "Antigravity4",
+                "reviewer": "Claude",
+                "status": "review_approved",
+            },
+        }
+
+        # No approved_head -> must return False (does not preempt)
+        self.assertFalse(supervisor.higher_priority_ready_task_exists(config, worker, task_map))
+
+        # Head mismatch -> must return False
+        task_map["FINAL-001"]["approved_head"] = approved_head
+        with unittest.mock.patch("ai_status.resolve_task_sha", return_value="9999999922222222333333334444444455555555"), \
+             unittest.mock.patch("ai_status.task_pr_ci_status", return_value=("OPEN", "success")):
+            self.assertFalse(supervisor.higher_priority_ready_task_exists(config, worker, task_map))
+
+        # CI pending -> must return False
+        with unittest.mock.patch("ai_status.resolve_task_sha", return_value=approved_head), \
+             unittest.mock.patch("ai_status.task_pr_ci_status", return_value=("OPEN", "pending")):
+            self.assertFalse(supervisor.higher_priority_ready_task_exists(config, worker, task_map))
+
+        # Positive control: matching head + green CI -> returns True (preempts)
+        with unittest.mock.patch("ai_status.resolve_task_sha", return_value=approved_head), \
+             unittest.mock.patch("ai_status.task_pr_ci_status", return_value=("OPEN", "success")), \
+             unittest.mock.patch("supervisor.agent_dispatch_capacity", return_value=1):
+            self.assertTrue(supervisor.higher_priority_ready_task_exists(config, worker, task_map))
+
+    def test_supervisor_suppresses_finalize_dispatch_on_pending_ci(self) -> None:
+        config = self._build_freeze_test_config()
+        task = {
+            "id": "FREEZE-TEST-005",
+            "owner": "Antigravity4",
+            "reviewer": "Claude",
+            "status": "review_approved",
+            "approved_head": "1111111122222222333333334444444455555555",
+        }
+        state = {
+            "seen_event_keys": {},
+            "ready_dispatcher": {"weighted_cursor": 0},
+            "status": {"tasks": [task]},
+        }
+        status = {"tasks": [task]}
+
+        ai_status.clear_ai_status_caches()
+        # Positive Control: ci_status = "success" MUST dispatch
+        with unittest.mock.patch("supervisor.scan_live_worker_pids_by_agent", return_value={}), \
+             unittest.mock.patch("supervisor.outstanding_delivery_indexes", return_value=(set(), set(), set())), \
+             unittest.mock.patch("supervisor.agent_dispatch_loads", return_value={}), \
+             unittest.mock.patch("supervisor.load_status", return_value=status), \
+             unittest.mock.patch("ai_status.resolve_task_sha", return_value="1111111122222222333333334444444455555555"), \
+             unittest.mock.patch("ai_status.task_pr_ci_status", return_value=("OPEN", "success")), \
+             unittest.mock.patch("supervisor.agent_auto_dispatch_block_reason", return_value=None), \
+             unittest.mock.patch("supervisor.queue_delivery_event", return_value=True) as mock_queue:
+            dispatched = supervisor.dispatch_ready_tasks(
+                config,
+                state,
+                agent_ids_override=["antigravity4"],
+            )
+            self.assertTrue(dispatched)
+            mock_queue.assert_called_once()
+
+        # Test suppression: ci_status = "pending" MUST NOT dispatch
+        with unittest.mock.patch("supervisor.scan_live_worker_pids_by_agent", return_value={}), \
+             unittest.mock.patch("supervisor.outstanding_delivery_indexes", return_value=(set(), set(), set())), \
+             unittest.mock.patch("supervisor.agent_dispatch_loads", return_value={}), \
+             unittest.mock.patch("supervisor.load_status", return_value=status), \
+             unittest.mock.patch("ai_status.resolve_task_sha", return_value="1111111122222222333333334444444455555555"), \
+             unittest.mock.patch("ai_status.task_pr_ci_status", return_value=("OPEN", "pending")), \
+             unittest.mock.patch("supervisor.agent_auto_dispatch_block_reason", return_value=None), \
+             unittest.mock.patch("supervisor.queue_delivery_event", return_value=True) as mock_queue:
+            dispatched = supervisor.dispatch_ready_tasks(
+                config,
+                state,
+                agent_ids_override=["antigravity4"],
+            )
+            self.assertFalse(dispatched)
+            mock_queue.assert_not_called()
+            self.assertEqual(task["status"], "review_approved")
+
+    def test_supervisor_suppresses_finalize_dispatch_on_unresolved_head_or_unknown_ci(self) -> None:
+        config = self._build_freeze_test_config()
+        task = {
+            "id": "FREEZE-TEST-005B",
+            "owner": "Antigravity4",
+            "reviewer": "Claude",
+            "status": "review_approved",
+            "approved_head": "1111111122222222333333334444444455555555",
+        }
+        state = {
+            "seen_event_keys": {},
+            "ready_dispatcher": {"weighted_cursor": 0},
+            "status": {"tasks": [task]},
+        }
+        status = {"tasks": [task]}
+        APPROVED = "1111111122222222333333334444444455555555"
+
+        ai_status.clear_ai_status_caches()
+
+        # Sub-case 1: resolve_task_sha returns None — head cannot be resolved, must suppress.
+        # Positive control: matching head + ci=success MUST dispatch.
+        with unittest.mock.patch("supervisor.scan_live_worker_pids_by_agent", return_value={}), \
+             unittest.mock.patch("supervisor.outstanding_delivery_indexes", return_value=(set(), set(), set())), \
+             unittest.mock.patch("supervisor.agent_dispatch_loads", return_value={}), \
+             unittest.mock.patch("supervisor.load_status", return_value=status), \
+             unittest.mock.patch("ai_status.resolve_task_sha", return_value=APPROVED), \
+             unittest.mock.patch("ai_status.task_pr_ci_status", return_value=("OPEN", "success")), \
+             unittest.mock.patch("supervisor.agent_auto_dispatch_block_reason", return_value=None), \
+             unittest.mock.patch("supervisor.queue_delivery_event", return_value=True) as mock_queue:
+            dispatched = supervisor.dispatch_ready_tasks(
+                config,
+                state,
+                agent_ids_override=["antigravity4"],
+            )
+            self.assertTrue(dispatched)
+            mock_queue.assert_called_once()
+
+        # Negative: resolve_task_sha returns None — must NOT dispatch.
+        state["seen_event_keys"] = {}
+        task["status"] = "review_approved"
+        with unittest.mock.patch("supervisor.scan_live_worker_pids_by_agent", return_value={}), \
+             unittest.mock.patch("supervisor.outstanding_delivery_indexes", return_value=(set(), set(), set())), \
+             unittest.mock.patch("supervisor.agent_dispatch_loads", return_value={}), \
+             unittest.mock.patch("supervisor.load_status", return_value=status), \
+             unittest.mock.patch("ai_status.resolve_task_sha", return_value=None), \
+             unittest.mock.patch("ai_status.task_pr_ci_status", return_value=("OPEN", "success")), \
+             unittest.mock.patch("supervisor.agent_auto_dispatch_block_reason", return_value=None), \
+             unittest.mock.patch("supervisor.write_activity_log"), \
+             unittest.mock.patch("supervisor.write_json"), \
+             unittest.mock.patch("supervisor.queue_delivery_event", return_value=True) as mock_queue:
+            dispatched = supervisor.dispatch_ready_tasks(
+                config,
+                state,
+                agent_ids_override=["antigravity4"],
+            )
+            self.assertFalse(dispatched)
+            mock_queue.assert_not_called()
+            self.assertEqual(task["status"], "review_approved")
+
+        # Sub-case 2: ci_status = "unknown" — must suppress.
+        # Positive control: matching head + ci=success MUST dispatch.
+        state["seen_event_keys"] = {}
+        task["status"] = "review_approved"
+        with unittest.mock.patch("supervisor.scan_live_worker_pids_by_agent", return_value={}), \
+             unittest.mock.patch("supervisor.outstanding_delivery_indexes", return_value=(set(), set(), set())), \
+             unittest.mock.patch("supervisor.agent_dispatch_loads", return_value={}), \
+             unittest.mock.patch("supervisor.load_status", return_value=status), \
+             unittest.mock.patch("ai_status.resolve_task_sha", return_value=APPROVED), \
+             unittest.mock.patch("ai_status.task_pr_ci_status", return_value=("OPEN", "success")), \
+             unittest.mock.patch("supervisor.agent_auto_dispatch_block_reason", return_value=None), \
+             unittest.mock.patch("supervisor.queue_delivery_event", return_value=True) as mock_queue:
+            dispatched = supervisor.dispatch_ready_tasks(
+                config,
+                state,
+                agent_ids_override=["antigravity4"],
+            )
+            self.assertTrue(dispatched)
+            mock_queue.assert_called_once()
+
+        # Negative: ci_status = "unknown" — must NOT dispatch.
+        state["seen_event_keys"] = {}
+        task["status"] = "review_approved"
+        with unittest.mock.patch("supervisor.scan_live_worker_pids_by_agent", return_value={}), \
+             unittest.mock.patch("supervisor.outstanding_delivery_indexes", return_value=(set(), set(), set())), \
+             unittest.mock.patch("supervisor.agent_dispatch_loads", return_value={}), \
+             unittest.mock.patch("supervisor.load_status", return_value=status), \
+             unittest.mock.patch("ai_status.resolve_task_sha", return_value=APPROVED), \
+             unittest.mock.patch("ai_status.task_pr_ci_status", return_value=("OPEN", "unknown")), \
+             unittest.mock.patch("supervisor.agent_auto_dispatch_block_reason", return_value=None), \
+             unittest.mock.patch("supervisor.write_activity_log"), \
+             unittest.mock.patch("supervisor.write_json"), \
+             unittest.mock.patch("supervisor.queue_delivery_event", return_value=True) as mock_queue:
+            dispatched = supervisor.dispatch_ready_tasks(
+                config,
+                state,
+                agent_ids_override=["antigravity4"],
+            )
+            self.assertFalse(dispatched)
+            mock_queue.assert_not_called()
+            self.assertEqual(task["status"], "review_approved")
+
+        # Sub-case 3: task_pr_ci_status raises — must suppress (fail closed on error).
+        # Positive control: matching head + ci=success MUST dispatch.
+        state["seen_event_keys"] = {}
+        task["status"] = "review_approved"
+        with unittest.mock.patch("supervisor.scan_live_worker_pids_by_agent", return_value={}), \
+             unittest.mock.patch("supervisor.outstanding_delivery_indexes", return_value=(set(), set(), set())), \
+             unittest.mock.patch("supervisor.agent_dispatch_loads", return_value={}), \
+             unittest.mock.patch("supervisor.load_status", return_value=status), \
+             unittest.mock.patch("ai_status.resolve_task_sha", return_value=APPROVED), \
+             unittest.mock.patch("ai_status.task_pr_ci_status", return_value=("OPEN", "success")), \
+             unittest.mock.patch("supervisor.agent_auto_dispatch_block_reason", return_value=None), \
+             unittest.mock.patch("supervisor.queue_delivery_event", return_value=True) as mock_queue:
+            dispatched = supervisor.dispatch_ready_tasks(
+                config,
+                state,
+                agent_ids_override=["antigravity4"],
+            )
+            self.assertTrue(dispatched)
+            mock_queue.assert_called_once()
+
+        # Negative: task_pr_ci_status raises RuntimeError — must NOT dispatch.
+        state["seen_event_keys"] = {}
+        task["status"] = "review_approved"
+        with unittest.mock.patch("supervisor.scan_live_worker_pids_by_agent", return_value={}), \
+             unittest.mock.patch("supervisor.outstanding_delivery_indexes", return_value=(set(), set(), set())), \
+             unittest.mock.patch("supervisor.agent_dispatch_loads", return_value={}), \
+             unittest.mock.patch("supervisor.load_status", return_value=status), \
+             unittest.mock.patch("ai_status.resolve_task_sha", return_value=APPROVED), \
+             unittest.mock.patch("ai_status.task_pr_ci_status", side_effect=RuntimeError("gh error")), \
+             unittest.mock.patch("supervisor.agent_auto_dispatch_block_reason", return_value=None), \
+             unittest.mock.patch("supervisor.write_activity_log"), \
+             unittest.mock.patch("supervisor.write_json"), \
+             unittest.mock.patch("supervisor.queue_delivery_event", return_value=True) as mock_queue:
+            dispatched = supervisor.dispatch_ready_tasks(
+                config,
+                state,
+                agent_ids_override=["antigravity4"],
+            )
+            self.assertFalse(dispatched)
+            mock_queue.assert_not_called()
+            self.assertEqual(task["status"], "review_approved")
+
+    def test_task_review_gate_status_check_pending_on_head_mismatch(self) -> None:
+        task = {
+            "id": "FREEZE-TEST-006",
+            "reviewer": "Claude",
+            "approved_head": "1111111122222222333333334444444455555555",
+        }
+        ai_status.clear_ai_status_caches()
+        with unittest.mock.patch("ai_status.resolve_task_sha", return_value="7777777722222222333333334444444455555555"):
+            with unittest.mock.patch("ai_status.get_repository_slug_safe", return_value="alfloop-dev/odayplus"):
+                with unittest.mock.patch("subprocess.run") as mock_run:
+                    mock_run.return_value.returncode = 0
+                    ai_status.emit_task_review_status_check(task, "review_approved")
+                    mock_run.assert_called_once()
+                    cmd = mock_run.call_args[0][0]
+                    self.assertIn("state=pending", cmd)
+                    self.assertIn("re-review required", "".join(cmd))
+
+    # ------------------------------------------------------------------
+    # B22 -- `review_approved` with the approved_head key *absent*.
+    #
+    # Round 8 rejected the freeze because every consumer was written as
+    # `if approved_head:`, so the missing-key shape opted a task out of the
+    # control entirely. Mutation testing could not find it: a mutant only dies
+    # inside a path some test reaches, and all 32 approved_head references in
+    # the suite *set* the key. These tests construct the shape directly.
+    # ------------------------------------------------------------------
+
+    MISSING_HEAD_APPROVED = "3333333322222222333333334444444455555555"
+
+    def _missing_head_task(self, task_id: str) -> dict[str, Any]:
+        """The live ODP-DEPLOY-STAGING-JOB-RECEIPT-UPLOAD-001 shape, verbatim:
+        review_approved, owned, and simply carrying no `approved_head` key."""
+        return {
+            "id": task_id,
+            "owner": "Antigravity4",
+            "reviewer": "Claude",
+            "status": "review_approved",
+        }
+
+    def test_dispatch_priority_fails_closed_when_approved_head_is_absent(self) -> None:
+        config = self._build_freeze_test_config()
+        task = self._missing_head_task("FREEZE-TEST-022A")
+        task_map = {task["id"]: task}
+        ai_status.clear_ai_status_caches()
+
+        # The gate must not consult the head/CI probes at all -- there is
+        # nothing to compare against -- so both are pinned green. If the
+        # suppression came from the CI probe instead, this would pass vacuously.
+        with unittest.mock.patch("ai_status.resolve_task_sha", return_value=self.MISSING_HEAD_APPROVED), \
+             unittest.mock.patch("ai_status.task_pr_ci_status", return_value=("OPEN", "success")):
+            self.assertIsNone(
+                supervisor.dispatch_priority_for_task(config, task, "Antigravity4", task_map=task_map)
+            )
+
+            # Control: the identical task with the key present and matching is
+            # dispatched, so the assertion above is the gate firing, not a
+            # broken fixture.
+            control = dict(task, approved_head=self.MISSING_HEAD_APPROVED)
+            self.assertEqual(
+                supervisor.dispatch_priority_for_task(
+                    config, control, "Antigravity4", task_map={control["id"]: control}
+                ),
+                1,
+            )
+
+    def test_dispatch_ready_suppresses_and_signals_when_approved_head_is_absent(self) -> None:
+        config = self._build_freeze_test_config()
+        task = self._missing_head_task("FREEZE-TEST-022B")
+
+        dispatched, logged, mock_queue = self._run_finalize_dispatch_capturing_signals(
+            config, task, head=self.MISSING_HEAD_APPROVED, ci="success"
+        )
+        self.assertFalse(dispatched)
+        mock_queue.assert_not_called()
+        self.assertEqual(task["status"], "review_approved")
+        self.assertIn("approved_head_missing", [e["type"] for e in logged])
+        self.assertIn("no reviewer-approved head", task["next"])
+        self.assertIn("restore_approved_head", task["next"])
+
+        # Emitted once, not every supervisor cycle.
+        dispatched, logged, _ = self._run_finalize_dispatch_capturing_signals(
+            config, task, head=self.MISSING_HEAD_APPROVED, ci="success"
+        )
+        self.assertFalse(dispatched)
+        self.assertEqual([], [e["type"] for e in logged])
+
+        # Control: the same task with the head recorded does dispatch.
+        control = self._missing_head_task("FREEZE-TEST-022B")
+        control["approved_head"] = self.MISSING_HEAD_APPROVED
+        dispatched, _, mock_queue = self._run_finalize_dispatch_capturing_signals(
+            config, control, head=self.MISSING_HEAD_APPROVED, ci="success"
+        )
+        self.assertTrue(dispatched)
+        mock_queue.assert_called_once()
+
+    def test_command_done_rejects_absent_head_before_delivery_metadata(self) -> None:
+        """The freeze gate must reject, not merely be followed by gates that do.
+
+        Round 8's reproduction reached the commit-convention and require_merged_pr
+        messages, which proved the freeze had never fired. Those gates check
+        merge hygiene, not "is this the commit a reviewer read", so this asserts
+        collect_done_delivery_metadata is never entered.
+        """
+        state = {"tasks": [self._missing_head_task("FREEZE-TEST-022C")]}
+        with unittest.mock.patch("ai_status.current_actor_validated", return_value="Antigravity4"), \
+             unittest.mock.patch("ai_status.resolve_task_sha", return_value=self.MISSING_HEAD_APPROVED), \
+             unittest.mock.patch("ai_status.collect_done_delivery_metadata") as collect, \
+             unittest.mock.patch("ai_status.append_log"):
+            with self.assertRaises(SystemExit) as cm:
+                ai_status.command_done(state, ["FREEZE-TEST-022C", "Finalize"])
+        self.assertIn("no reviewer-approved head", str(cm.exception))
+        collect.assert_not_called()
+        self.assertEqual(ai_status.get_task(state, "FREEZE-TEST-022C")["status"], "review_approved")
+
+    def test_task_review_gate_pending_when_approved_head_is_absent(self) -> None:
+        task = {"id": "FREEZE-TEST-022D", "reviewer": "Claude"}
+        ai_status.clear_ai_status_caches()
+        with unittest.mock.patch("ai_status.resolve_task_sha", return_value=self.MISSING_HEAD_APPROVED), \
+             unittest.mock.patch("ai_status.get_repository_slug_safe", return_value="alfloop-dev/odayplus"), \
+             unittest.mock.patch("subprocess.run") as mock_run:
+            mock_run.return_value.returncode = 0
+            ai_status.emit_task_review_status_check(task, "review_approved")
+            cmd = mock_run.call_args[0][0]
+            self.assertIn("state=pending", cmd)
+            self.assertIn("no reviewer-approved head is recorded", "".join(cmd))
+
+    def test_staging_shape_closes_only_after_explicit_head_restoration(self) -> None:
+        """End-to-end on the exact live shape: head e0147acb, merge 4b329493.
+
+        Also pins B22-3: the freeze anchors on the immutable PR head, and the
+        merge commit GitHub created is recorded as separate delivery evidence
+        rather than being accepted as the reviewed commit.
+        """
+        head = "e0147acb22222222333333334444444455555555"
+        merge = "4b32949322222222333333334444444455555555"
+        task_id = "ODP-DEPLOY-STAGING-JOB-RECEIPT-UPLOAD-001"
+        state = {"tasks": [self._missing_head_task(task_id)]}
+        task = ai_status.get_task(state, task_id)
+        config = self._build_freeze_test_config()
+        ai_status.clear_ai_status_caches()
+
+        resolve = unittest.mock.patch("ai_status.resolve_task_sha", return_value=head)
+        pr_info = unittest.mock.patch(
+            "ai_status.task_pr_head_and_merge_commit", return_value=(head, merge)
+        )
+
+        # 1. Nothing dispatches and nothing finalizes while the head is missing.
+        with resolve, pr_info, unittest.mock.patch("ai_status.append_log"):
+            self.assertIsNone(
+                supervisor.dispatch_priority_for_task(config, task, "Antigravity4", task_map={task_id: task})
+            )
+            with unittest.mock.patch("ai_status.current_actor_validated", return_value="Antigravity4"), \
+                 unittest.mock.patch("ai_status.collect_done_delivery_metadata") as collect:
+                with self.assertRaises(SystemExit):
+                    ai_status.command_done(state, [task_id, "Finalize"])
+                collect.assert_not_called()
+
+            # 2. The owner cannot attest their own head.
+            with unittest.mock.patch("ai_status.current_actor_validated", return_value="Antigravity4"):
+                with self.assertRaises(SystemExit) as cm:
+                    ai_status.command_restore_approved_head(state, [task_id, head, "self-attest"])
+                self.assertIn("Only the reviewer", str(cm.exception))
+            self.assertNotIn("approved_head", task)
+
+            # 3. The reviewer cannot attest the merge commit, an abbreviation,
+            #    or any sha other than the immutable PR head.
+            with unittest.mock.patch("ai_status.current_actor_validated", return_value="Claude"):
+                with self.assertRaises(SystemExit) as cm:
+                    ai_status.command_restore_approved_head(state, [task_id, merge, "merge commit"])
+                self.assertIn("merge commit", str(cm.exception))
+
+                with self.assertRaises(SystemExit) as cm:
+                    ai_status.command_restore_approved_head(state, [task_id, head[:8], "abbrev"])
+                self.assertIn("40-character commit sha", str(cm.exception))
+
+                with self.assertRaises(SystemExit) as cm:
+                    ai_status.command_restore_approved_head(
+                        state, [task_id, "9999999922222222333333334444444455555555", "other head"]
+                    )
+                self.assertIn("does not match the task branch head", str(cm.exception))
+                self.assertNotIn("approved_head", task)
+
+                # 4. Attesting the exact reviewed head restores the freeze.
+                ai_status.command_restore_approved_head(state, [task_id, head, "attest reviewed head"])
+            self.assertEqual(task["approved_head"], head)
+
+            # 5. Only now does the task dispatch and finalize, and the merge
+            #    commit is recorded as a distinct fact from the approved head.
+            with unittest.mock.patch("ai_status.task_pr_ci_status", return_value=("OPEN", "success")):
+                self.assertEqual(
+                    supervisor.dispatch_priority_for_task(config, task, "Antigravity4", task_map={task_id: task}),
+                    1,
+                )
+            with unittest.mock.patch("ai_status.current_actor_validated", return_value="Antigravity4"), \
+                 unittest.mock.patch("ai_status.collect_done_delivery_metadata", return_value={}), \
+                 unittest.mock.patch("ai_status.archive_terminal_task_from_state"):
+                ai_status.command_done(state, [task_id, "Finalize"])
+
+        self.assertEqual(task["status"], "done")
+        self.assertEqual(task["delivery"]["approved_head"], head)
+        self.assertEqual(task["delivery"]["verified_head"], head)
+        self.assertEqual(task["delivery"]["pr_merge_commit"], merge)
+        self.assertNotEqual(task["delivery"]["pr_merge_commit"], task["delivery"]["approved_head"])
+
+    def test_done_refuses_when_resolved_head_is_the_merge_commit(self) -> None:
+        """If a task branch resolves to the merge commit, the frozen head must
+        not be satisfiable by it -- the merge commit was never reviewed."""
+        merge = "4b32949322222222333333334444444455555555"
+        state = {
+            "tasks": [
+                {
+                    "id": "FREEZE-TEST-022E",
+                    "owner": "Antigravity4",
+                    "reviewer": "Claude",
+                    "status": "review_approved",
+                    "approved_head": merge,
+                }
+            ]
+        }
+        ai_status.clear_ai_status_caches()
+        with unittest.mock.patch("ai_status.current_actor_validated", return_value="Antigravity4"), \
+             unittest.mock.patch("ai_status.resolve_task_sha", return_value=merge), \
+             unittest.mock.patch(
+                 "ai_status.task_pr_head_and_merge_commit",
+                 return_value=("e0147acb22222222333333334444444455555555", merge),
+             ), \
+             unittest.mock.patch("ai_status.collect_done_delivery_metadata") as collect, \
+             unittest.mock.patch("ai_status.append_log"):
+            with self.assertRaises(SystemExit) as cm:
+                ai_status.command_done(state, ["FREEZE-TEST-022E", "Finalize"])
+        self.assertIn("PR merge commit, not the reviewed branch head", str(cm.exception))
+        collect.assert_not_called()
+
+    # ------------------------------------------------------------------
+    # B21 -- `restore_approved` is the second producer of `review_approved`.
+    # ------------------------------------------------------------------
+
+    def _restore_state(self, **task_extra: Any) -> dict[str, Any]:
+        task = {
+            "id": "FREEZE-TEST-021",
+            "owner": "Antigravity4",
+            "reviewer": "Claude",
+            "status": "in_progress",
+            "review_notes_zh": "已審核通過",
+        }
+        task.update(task_extra)
+        return {"tasks": [task]}
+
+    def test_restore_approved_refuses_without_a_durable_approved_head(self) -> None:
+        """The round-8 reproduction: approve -> reopen -> restore -> done at an
+        unreviewed head. `reopen` pops approved_head but keeps review_notes_zh,
+        which is exactly restore_approved's precondition."""
+        approved = "1111111122222222333333334444444455555555"
+        state = {
+            "tasks": [
+                {
+                    "id": "FREEZE-TEST-021A",
+                    "owner": "Antigravity4",
+                    "reviewer": "Claude",
+                    "status": "review",
+                    "review_notes_zh": "已審核通過",
+                }
+            ]
+        }
+        task = ai_status.get_task(state, "FREEZE-TEST-021A")
+        ai_status.clear_ai_status_caches()
+        with unittest.mock.patch("ai_status.append_log"), unittest.mock.patch("ai_status.sync_all"):
+            with unittest.mock.patch("ai_status.current_actor_validated", return_value="Claude"), \
+                 unittest.mock.patch("ai_status.resolve_task_sha", return_value=approved):
+                ai_status.command_approve(state, ["FREEZE-TEST-021A", "Approved"])
+            self.assertEqual(task["last_approved_head"], approved)
+
+            with unittest.mock.patch("ai_status.current_actor_validated", return_value="Antigravity4"):
+                ai_status.command_reopen(state, ["FREEZE-TEST-021A", "More work"])
+                self.assertNotIn("approved_head", task)
+                # B21's precondition: the durable record survives the reopen,
+                # so restore can re-freeze it rather than producing no freeze.
+                self.assertEqual(task["last_approved_head"], approved)
+
+                # Owner pushes an unreviewed commit, then tries to restore.
+                drifted = "bbbbbbbb22222222333333334444444455555555"
+                with unittest.mock.patch("ai_status.resolve_task_sha", return_value=drifted):
+                    with self.assertRaises(SystemExit) as cm:
+                        ai_status.command_restore_approved(state, ["FREEZE-TEST-021A", "Restore"])
+                self.assertIn("moved to bbbbbbbb", str(cm.exception))
+                self.assertEqual(task["status"], "in_progress")
+
+            # A task that never had a durable head cannot be restored at all.
+            legacy = self._restore_state(id="FREEZE-TEST-021B")
+            with unittest.mock.patch("ai_status.current_actor_validated", return_value="Antigravity4"), \
+                 unittest.mock.patch("ai_status.resolve_task_sha", return_value=approved):
+                with self.assertRaises(SystemExit) as cm:
+                    ai_status.command_restore_approved(legacy, ["FREEZE-TEST-021B", "Restore"])
+            self.assertIn("no durable reviewer-approved head", str(cm.exception))
+            self.assertEqual(ai_status.get_task(legacy, "FREEZE-TEST-021B")["status"], "in_progress")
+
+    def test_restore_approved_refreezes_the_reviewed_head_when_branch_unmoved(self) -> None:
+        """Positive control for the two refusals above: a genuinely spurious
+        downgrade still recovers, and it recovers *with* the freeze intact."""
+        approved = "1111111122222222333333334444444455555555"
+        state = self._restore_state(id="FREEZE-TEST-021C", last_approved_head=approved)
+        task = ai_status.get_task(state, "FREEZE-TEST-021C")
+        ai_status.clear_ai_status_caches()
+        with unittest.mock.patch("ai_status.current_actor_validated", return_value="Antigravity4"), \
+             unittest.mock.patch("ai_status.resolve_task_sha", return_value=approved), \
+             unittest.mock.patch("ai_status.append_log"):
+            ai_status.command_restore_approved(state, ["FREEZE-TEST-021C", "Spurious downgrade"])
+        self.assertEqual(task["status"], "review_approved")
+        self.assertEqual(task["approved_head"], approved)
+
+        # And the restored task is frozen: a later push is still refused.
+        with unittest.mock.patch("ai_status.current_actor_validated", return_value="Antigravity4"), \
+             unittest.mock.patch("ai_status.resolve_task_sha", return_value="bbbbbbbb22222222333333334444444455555555"), \
+             unittest.mock.patch("ai_status.collect_done_delivery_metadata") as collect, \
+             unittest.mock.patch("ai_status.append_log"):
+            with self.assertRaises(SystemExit) as cm:
+                ai_status.command_done(state, ["FREEZE-TEST-021C", "Finalize"])
+        self.assertIn("differs from reviewer-approved head", str(cm.exception))
+        collect.assert_not_called()
+
+    def test_restore_approved_fails_closed_when_head_unresolvable(self) -> None:
+        approved = "1111111122222222333333334444444455555555"
+        for head, expected in (
+            (None, "branch HEAD could not be resolved"),
+            (RuntimeError("git down"), "unable to resolve the current branch HEAD"),
+        ):
+            with self.subTest(head=str(head)):
+                state = self._restore_state(id="FREEZE-TEST-021D", last_approved_head=approved)
+                ai_status.clear_ai_status_caches()
+                patch = (
+                    unittest.mock.patch("ai_status.resolve_task_sha", side_effect=head)
+                    if isinstance(head, Exception)
+                    else unittest.mock.patch("ai_status.resolve_task_sha", return_value=head)
+                )
+                with unittest.mock.patch("ai_status.current_actor_validated", return_value="Antigravity4"), \
+                     patch, unittest.mock.patch("ai_status.append_log"):
+                    with self.assertRaises(SystemExit) as cm:
+                        ai_status.command_restore_approved(state, ["FREEZE-TEST-021D", "Restore"])
+                self.assertIn(expected, str(cm.exception))
+                self.assertEqual(
+                    ai_status.get_task(state, "FREEZE-TEST-021D")["status"], "in_progress"
+                )
+
+    def test_restore_approved_head_requires_the_missing_head_shape(self) -> None:
+        """It repairs the B22 shape only; it is not a second approve path."""
+        head = "1111111122222222333333334444444455555555"
+        ai_status.clear_ai_status_caches()
+        with unittest.mock.patch("ai_status.current_actor_validated", return_value="Claude"), \
+             unittest.mock.patch("ai_status.resolve_task_sha", return_value=head), \
+             unittest.mock.patch("ai_status.task_pr_head_and_merge_commit", return_value=(head, None)), \
+             unittest.mock.patch("ai_status.append_log"):
+            in_progress = self._restore_state(id="FREEZE-TEST-022F")
+            with self.assertRaises(SystemExit) as cm:
+                ai_status.command_restore_approved_head(in_progress, ["FREEZE-TEST-022F", head, "attest"])
+            self.assertIn("only valid when status is review_approved", str(cm.exception))
+
+            already = {"tasks": [self._missing_head_task("FREEZE-TEST-022G")]}
+            ai_status.get_task(already, "FREEZE-TEST-022G")["approved_head"] = head
+            with self.assertRaises(SystemExit) as cm:
+                ai_status.command_restore_approved_head(already, ["FREEZE-TEST-022G", head, "attest"])
+            self.assertIn("already carries one", str(cm.exception))
+
+            same_identity = {"tasks": [self._missing_head_task("FREEZE-TEST-022H")]}
+            ai_status.get_task(same_identity, "FREEZE-TEST-022H")["owner"] = "Claude"
+            with self.assertRaises(SystemExit) as cm:
+                ai_status.command_restore_approved_head(same_identity, ["FREEZE-TEST-022H", head, "attest"])
+            self.assertIn("must be separate identities", str(cm.exception))
+
+    # ------------------------------------------------------------------
+    # Round-8 non-blocking findings N1/N2, now covered.
+    # ------------------------------------------------------------------
+
+    def test_return_to_review_transitions_clear_and_preserve_the_right_heads(self) -> None:
+        """N2: `reopen`/`handoff` popping approved_head is load-bearing.
+
+        After B20-b a leftover approved_head makes `command_approve` refuse
+        outright, so dropping either pop would wedge the whole
+        reject -> rework -> re-approve cycle with the suite still green. The
+        durable `last_approved_head` must survive all three, or B21's fix
+        loses its input.
+        """
+        approved = "1111111122222222333333334444444455555555"
+
+        def _state() -> dict[str, Any]:
+            return {
+                "tasks": [
+                    {
+                        "id": "FREEZE-TEST-023",
+                        "owner": "Antigravity4",
+                        "reviewer": "Claude",
+                        "status": "review_approved",
+                        "approved_head": approved,
+                        "last_approved_head": approved,
+                    }
+                ],
+                "handoffs": [],
+            }
+
+        cases = (
+            ("reopen", ai_status.command_reopen, ["FREEZE-TEST-023", "rework"], "Antigravity4"),
+            ("handoff", ai_status.command_handoff, ["FREEZE-TEST-023", "Claude", "review"], "Antigravity4"),
+            ("re_review", ai_status.command_re_review, ["FREEZE-TEST-023", "re-review"], "Antigravity4"),
+        )
+        for label, command, args, actor in cases:
+            with self.subTest(command=label):
+                state = _state()
+                with unittest.mock.patch("ai_status.current_actor_validated", return_value=actor), \
+                     unittest.mock.patch("ai_status.resolve_actor_reference", side_effect=lambda v, **_: v), \
+                     unittest.mock.patch("ai_status.append_log"):
+                    command(state, args)
+                task = ai_status.get_task(state, "FREEZE-TEST-023")
+                self.assertNotIn("approved_head", task)
+                self.assertEqual(task["last_approved_head"], approved)
+
+    def test_ci_failure_branch_signals_and_clears_the_pending_timer(self) -> None:
+        """N1: deleting the whole `ci_status == "failure"` branch kept the suite
+        green because the catch-all still suppressed dispatch. Its distinguishing
+        side effects -- the `ci_failed` signal and popping ci_pending_since_ts so
+        a stale timer cannot fire the 30-minute escalation -- had no coverage."""
+        approved = "1111111122222222333333334444444455555555"
+        config = self._build_freeze_test_config()
+        task = {
+            "id": "FREEZE-TEST-024",
+            "owner": "Antigravity4",
+            "reviewer": "Claude",
+            "status": "review_approved",
+            "approved_head": approved,
+            "ci_pending_since_ts": datetime.now(UTC).timestamp() - 4000,
+        }
+
+        dispatched, logged, mock_queue = self._run_finalize_dispatch_capturing_signals(
+            config, task, head=approved, ci="failure"
+        )
+        self.assertFalse(dispatched)
+        mock_queue.assert_not_called()
+        self.assertIn("ci_failed", [e["type"] for e in logged])
+        self.assertNotIn("ci_pending_timeout", [e["type"] for e in logged])
+        self.assertNotIn("ci_pending_since_ts", task)
+        self.assertIn("failed; resolve failing checks", task["next"])
 
 
 if __name__ == "__main__":
