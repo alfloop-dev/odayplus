@@ -1202,6 +1202,142 @@ def _request_without_redirect(
         return exc.code, exc.headers.get("location")
 
 
+def _effective_port(parsed: urllib.parse.ParseResult) -> int | None:
+    try:
+        if parsed.port is not None:
+            return parsed.port
+    except ValueError:
+        return None
+    scheme = parsed.scheme.lower()
+    if scheme == "https":
+        return 443
+    if scheme == "http":
+        return 80
+    return None
+
+
+def _is_safe_protected_redirect(
+    web_url: str,
+    web_status: int,
+    location: str | None,
+    *,
+    protected_path: str = "/operator",
+    target_path: str = "/login",
+) -> bool:
+    if web_status not in {302, 303, 307, 308} or not isinstance(location, str) or not location.strip():
+        return False
+
+    try:
+        raw_location = location.strip()
+        request_url = f"{web_url.rstrip('/')}{protected_path}"
+        base_parsed = urllib.parse.urlparse(request_url)
+        resolved_url = urllib.parse.urljoin(request_url, raw_location)
+        target_parsed = urllib.parse.urlparse(resolved_url)
+
+        # Reject userinfo / credentials in target URL
+        if target_parsed.username or target_parsed.password or "@" in target_parsed.netloc:
+            return False
+
+        # Reject fragments in target URL
+        if target_parsed.fragment:
+            return False
+
+        # Scheme must match base scheme (reject scheme downgrade, e.g. https -> http)
+        base_scheme = base_parsed.scheme.lower()
+        target_scheme = target_parsed.scheme.lower()
+        if not base_scheme or base_scheme != target_scheme:
+            return False
+
+        # Hostname must match normalized base hostname
+        base_host = (base_parsed.hostname or "").lower()
+        target_host = (target_parsed.hostname or "").lower()
+        if not base_host or base_host != target_host:
+            return False
+
+        # Effective port must match (including default vs nondefault port mismatches)
+        base_port = _effective_port(base_parsed)
+        target_port = _effective_port(target_parsed)
+        if base_port is None or target_port is None or base_port != target_port:
+            return False
+
+        # Path must match expected target_path (e.g. /login)
+        if target_parsed.path != target_path:
+            return False
+
+        # returnTo parameter (parse_qs already URL-decodes values once; avoid double-decoding)
+        query_params = urllib.parse.parse_qs(target_parsed.query, keep_blank_values=True)
+        return_to_list = query_params.get("returnTo")
+        if not return_to_list or len(return_to_list) != 1:
+            return False
+
+        if return_to_list[0] != protected_path:
+            return False
+
+        return True
+    except ValueError:
+        return False
+
+
+def _is_plain_relative_path(value: str) -> bool:
+    """True when a decoded parameter value is a bare same-origin path."""
+
+    return (
+        value.startswith("/")
+        and not value.startswith("//")
+        and "://" not in value
+        and all(ch.isprintable() for ch in value)
+    )
+
+
+def _redact_location(location: str | None) -> str:
+    """Render a Location header for reports without echoing secret material.
+
+    Redirect targets can carry credentials in userinfo or session/bearer values
+    in query parameters, so the raw header must never reach a report that
+    advertises ``secret_values_redacted``. The structure the protected-redirect
+    contract is judged on (scheme, host, effective port, path, parameter names)
+    is preserved; every parameter value is masked except ``returnTo``, which is
+    kept only when it decodes to a bare same-origin path.
+    """
+
+    if not isinstance(location, str) or not location.strip():
+        return "<missing>"
+
+    raw = location.strip()
+    try:
+        parsed = urllib.parse.urlsplit(raw)
+        scheme = f"{parsed.scheme.lower()}:" if parsed.scheme else ""
+
+        netloc = ""
+        if parsed.netloc:
+            host = (parsed.hostname or "<invalid-host>").lower()
+            try:
+                port = f":{parsed.port}" if parsed.port is not None else ""
+            except ValueError:
+                port = ":<invalid-port>"
+            userinfo = "<redacted>@" if "@" in parsed.netloc else ""
+            netloc = f"//{userinfo}{host}{port}"
+
+        query = ""
+        if parsed.query:
+            pairs = urllib.parse.parse_qsl(parsed.query, keep_blank_values=True)
+            if not pairs:
+                query = "?<redacted>"
+            else:
+                rendered = []
+                for key, value in pairs:
+                    if key == "returnTo" and _is_plain_relative_path(value):
+                        rendered.append(f"{key}={urllib.parse.quote(value, safe='')}")
+                    else:
+                        rendered.append(f"{key}=<redacted>")
+                query = "?" + "&".join(rendered)
+
+        fragment = "#<redacted>" if parsed.fragment else ""
+        return f"{scheme}{netloc}{parsed.path}{query}{fragment}"
+    except ValueError:
+        return "<unparsable>"
+
+
 def _json_request(
     url: str,
     *,
@@ -1638,18 +1774,21 @@ def smoke_checks(
             headers=base_headers,
             timeout=timeout,
         )
-        expected_login_prefix = f"{web_url.rstrip('/')}/login?"
-        auth_redirect = (
-            web_status in {302, 303, 307, 308}
-            and isinstance(location, str)
-            and location.startswith(expected_login_prefix)
-            and "returnTo=" in location
-        )
+        auth_redirect = _is_safe_protected_redirect(web_url, web_status, location)
+        redacted_location = _redact_location(location)
+        report["web_operator_redirect"] = {
+            "status": web_status,
+            "location_redacted": redacted_location,
+            "protected_redirect": auth_redirect,
+        }
         checks.append(
             CheckResult(
                 ok=auth_redirect,
                 name="smoke:web:/operator",
-                detail=f"status={web_status} protected_redirect={str(auth_redirect).lower()}",
+                detail=(
+                    f"status={web_status} protected_redirect={str(auth_redirect).lower()} "
+                    f"location={redacted_location}"
+                ),
             )
         )
     except (OSError, TimeoutError, urllib.error.URLError) as exc:
