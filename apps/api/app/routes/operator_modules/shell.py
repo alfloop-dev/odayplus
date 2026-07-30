@@ -146,7 +146,7 @@ def create_shell_sub_router(
         [Request, Principal, Action, str | None], str
     ],
     shell_service: ShellService | None = None,
-    shell_service_resolver: Callable[[Request], ShellService] | None = None,
+    shell_service_resolver: Callable[[Request, str | None], ShellService] | None = None,
     include_legacy_reads: bool = True,
 ) -> APIRouter:
     """Return the shell sub-router (console reads + product-shell surface)."""
@@ -157,8 +157,16 @@ def create_shell_sub_router(
     legacy_router = APIRouter()
     shell = shell_service or ShellService(state_service)
 
-    def shell_for(request: Request) -> ShellService:
-        return shell_service_resolver(request) if shell_service_resolver is not None else shell
+    def shell_for(
+        request: Request,
+        *,
+        effective_store_id: str | None = None,
+    ) -> ShellService:
+        return (
+            shell_service_resolver(request, effective_store_id)
+            if shell_service_resolver is not None
+            else shell
+        )
 
     # ------------------------------------------------------------------
     # Legacy Operator Console reads (unchanged contract)
@@ -571,7 +579,10 @@ def create_shell_sub_router(
             Action.VIEW,
             store_id,
         )
-        return shell_for(request).get_franchisee_view(
+        return shell_for(
+            request,
+            effective_store_id=effective_store_id,
+        ).get_franchisee_view(
             subject_id=principal.subject_id,
             store_id=effective_store_id,
             correlation_id=getattr(request.state, "correlation_id", None) or x_correlation_id,
@@ -595,7 +606,10 @@ def create_shell_sub_router(
                 Action.CREATE,
                 body.storeId,
             )
-            return shell_for(request).franchisee_acknowledge(
+            return shell_for(
+                request,
+                effective_store_id=effective_store_id,
+            ).franchisee_acknowledge(
                 notification_id=body.notificationId,
                 subject_id=principal.subject_id,
                 store_id=effective_store_id,
@@ -623,7 +637,10 @@ def create_shell_sub_router(
                 Action.CREATE,
                 body.storeId,
             )
-            return shell_for(request).franchisee_report(
+            return shell_for(
+                request,
+                effective_store_id=effective_store_id,
+            ).franchisee_report(
                 category=body.category,
                 message=body.message,
                 subject_id=principal.subject_id,

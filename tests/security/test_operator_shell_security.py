@@ -147,7 +147,19 @@ def test_operator_cannot_write_on_a_franchisees_behalf() -> None:
     """Operations holds franchisee_portal VIEW for support, never CREATE."""
     client = _client()
 
-    assert client.get("/api/v1/operator/shell/franchisee", headers=OPS_HEADERS).status_code == 200
+    selected = client.get(
+        "/api/v1/operator/shell/franchisee",
+        headers=OPS_HEADERS,
+        params={"storeId": "STORE-001"},
+    )
+    missing_selection = client.get(
+        "/api/v1/operator/shell/franchisee",
+        headers=OPS_HEADERS,
+    )
+    assert selected.status_code == status.HTTP_200_OK
+    assert selected.json()["store"]["id"] == "STORE-001"
+    assert missing_selection.status_code == status.HTTP_422_UNPROCESSABLE_CONTENT
+    assert "__missing_store_scope__" not in missing_selection.text
     assert (
         client.post(
             "/api/v1/operator/shell/franchisee/acknowledgement",

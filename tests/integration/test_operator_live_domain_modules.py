@@ -176,6 +176,17 @@ class _StaticLiveRepository:
         }
 
 
+class _ScopeCapturingLiveRepository(_StaticLiveRepository):
+    """Record the exact live repository scope selected by the HTTP route."""
+
+    def __init__(self) -> None:
+        self.load_scopes: list[dict[str, Any]] = []
+
+    def load_state(self, *, tenant_id: str, **scope: Any) -> dict[str, Any]:
+        self.load_scopes.append({"tenant_id": tenant_id, **scope})
+        return super().load_state(tenant_id=tenant_id, **scope)
+
+
 def _live_app(
     database_path: Path,
     *,
@@ -567,6 +578,35 @@ def test_live_franchisee_routes_enforce_verified_store_scope_and_audit_denials(
         assert missing_scope_denials[0].metadata["policy_id"] == (
             "franchisee_isolation"
         )
+    finally:
+        bundle.engine.close()
+
+
+def test_live_franchisee_selected_store_narrows_multi_store_repository_scope(
+    tmp_path: Path,
+) -> None:
+    live_repository = _ScopeCapturingLiveRepository()
+    app, bundle = _live_app(
+        tmp_path / "operator-live-franchisee-selection.sqlite3",
+        live_repository=live_repository,
+    )
+    try:
+        with TestClient(app) as client:
+            response = client.get(
+                f"{BASE}/shell/franchisee",
+                headers=_franchisee_headers(
+                    "tenant-franchisee-selection",
+                    store_ids="STORE-001,STORE-002",
+                ),
+                params={"storeId": "STORE-001"},
+            )
+
+        assert response.status_code == 200
+        assert response.json()["meta"]["scope"]["storeId"] == "STORE-001"
+        assert live_repository.load_scopes
+        assert {
+            tuple(scope["store_ids"]) for scope in live_repository.load_scopes
+        } == {("STORE-001",)}
     finally:
         bundle.engine.close()
 

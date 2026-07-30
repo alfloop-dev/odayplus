@@ -260,6 +260,7 @@ def create_operator_router(
         )
         # The sentinel deliberately fails franchisee ABAC when no verified
         # store grant exists, instead of reviving the old STORE-001 default.
+        missing_store_scope = requested is None and not scoped_stores
         effective_store = requested or (
             scoped_stores[0] if scoped_stores else "__missing_store_scope__"
         )
@@ -286,6 +287,11 @@ def create_operator_router(
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
                 detail=decision.reason,
+            )
+        if missing_store_scope:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+                detail="storeId is required when the principal has no scoped store",
             )
         return effective_store
 
@@ -424,7 +430,10 @@ def create_operator_router(
 
                 return invoke
 
-        def live_shell_service_for_request(request: Request) -> ShellService:
+        def live_shell_service_for_request(
+            request: Request,
+            effective_store_id: str | None = None,
+        ) -> ShellService:
             context = _live_operator_request_context(request)
             tenant_id = str(context["tenant_id"] or "").strip()
             if svc.live_repository is None:
@@ -452,7 +461,11 @@ def create_operator_router(
                 tenant_id=tenant_id,
                 brand_ids=cast(tuple[str, ...], context["brand_ids"]),
                 region_ids=cast(tuple[str, ...], context["region_ids"]),
-                store_ids=cast(tuple[str, ...], context["store_ids"]),
+                store_ids=(
+                    (effective_store_id,)
+                    if effective_store_id is not None
+                    else cast(tuple[str, ...], context["store_ids"])
+                ),
             )
             shell = ShellService(
                 scoped_state,
