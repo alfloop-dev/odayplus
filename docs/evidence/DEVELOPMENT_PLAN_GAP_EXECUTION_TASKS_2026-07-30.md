@@ -38,7 +38,7 @@ release_claim: no-go-until-final-gate-audit
 | A | `ODP-PLAN-GATE-REGISTRY-001` | P0-001 | Claude | Antigravity2 | — |
 | A | `ODP-PLAN-CANONICAL-SHELL-LIVE-001` | P0-003 | Antigravity | Codex2 | — |
 | A | `ODP-PLAN-SOLVER-RUNTIME-COMPAT-001` | P0-007 | Antigravity2 | Codex2 | — |
-| A | `ODP-PLAN-OSS-LICENSE-GATE-001` | P1-007 | Antigravity5 | Claude | `ODP-PLAN-OSS-LEGAL-POLICY-001` |
+| A | `ODP-PLAN-OSS-LICENSE-GATE-001` | P1-007 | Antigravity5 | Claude | — |
 | A | `ODP-PLAN-OBSERVABILITY-LIVE-001` | P1-008 | Antigravity6 | Codex2 | — |
 | A | `ODP-PLAN-DEFERRED-OSS-ADR-001` | P2 | Antigravity7 | Claude | — |
 | B | `ODP-PLAN-ACCEPTANCE-REAL-EXEC-001` | P0-002 | Codex2 | Claude | `ODP-PLAN-GATE-REGISTRY-001` |
@@ -217,8 +217,10 @@ release_claim: no-go-until-final-gate-audit
 - Acceptance:
   allow/deny/review policy fail closed；SBOM 綁 image/release digest；
   prod 與 dev toolchain 都掃描，13 個 high dev findings 有修復或具名豁免；
-  license policy 與 exemptions 只接受 `ODP-PLAN-OSS-LEGAL-POLICY-001`
-  的權威 receipt，不接受 AI 自行核准。
+  未取得 `ODP-PLAN-OSS-LEGAL-POLICY-001` 權威 receipt 前，所有需要法務
+  判斷的 license／exemption 必須維持 `review_required` 並 fail closed，
+  不接受 AI 自行核准。技術 task 可先完成 fail-closed 能力，不阻塞其他
+  工程 task；production final gate 仍直接依賴 legal gate。
 
 ### ODP-PLAN-OSS-LEGAL-POLICY-001
 
@@ -261,9 +263,10 @@ release_claim: no-go-until-final-gate-audit
 - Scope: 重新執行原始 Stage 0–7／Gate 0–6 RTM，對每項填入 merged SHA、
   deployed SHA、evidence、owner、reviewer 與判定。
 - Acceptance:
-  所有 P0/P1 task（包含 SiteScore prediction source）與三個 Human Data
-  Gate done；所有 production proof 可回讀且 exact-SHA；Human/Ops 正式
-  核准；否則維持 NO-GO 並列出唯一剩餘 blockers。
+  所有 P0/P1 task（包含 SiteScore prediction source）、三個 Human Data
+  Gate 與 `ODP-PLAN-OSS-LEGAL-POLICY-001` done；所有 production proof
+  可回讀且 exact-SHA；Human/Ops 正式核准；否則維持 NO-GO 並列出唯一
+  剩餘 blockers。
 
 ## 4. 共通 verification
 
