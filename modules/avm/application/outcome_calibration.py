@@ -82,17 +82,20 @@ def generate_gate1_benchmark_receipt(
                 "Fail-closed: Gate 1 receipt generation received invalid activation_receipt attestation"
             )
 
-        # Independently reverify query source receipt
-        if not query_source_receipt.verify_query_receipt(
-            expected_snapshot_hash=dataset_snapshot_hash,
-            expected_snapshot_id=dataset_snapshot_id,
-            expected_observed=report.observed_labeled_count,
-            expected_eligible=report.eligible_mature_count,
-            expected_aligned=report.aligned_count,
-            expected_population_sha256=query_source_receipt.population_keys_sha256,
+        # Independently reverify query source receipt against canonical report population digest
+        if (
+            query_source_receipt.population_keys_sha256 != report.population_keys_sha256
+            or not query_source_receipt.verify_query_receipt(
+                expected_snapshot_hash=dataset_snapshot_hash,
+                expected_snapshot_id=dataset_snapshot_id,
+                expected_observed=report.observed_labeled_count,
+                expected_eligible=report.eligible_mature_count,
+                expected_aligned=report.aligned_count,
+                expected_population_sha256=report.population_keys_sha256,
+            )
         ):
             raise AVMOutcomeValidationError(
-                "Fail-closed: Gate 1 receipt generation received invalid query_source_receipt"
+                "Fail-closed: Gate 1 receipt generation received invalid or population-mismatched query_source_receipt"
             )
 
         # Independently reverify audit receipt
