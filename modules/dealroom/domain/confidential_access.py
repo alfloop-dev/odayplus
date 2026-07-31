@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import re
 from collections.abc import Sequence
@@ -103,6 +104,17 @@ def assert_no_confidential_leak(payload: Any, *, forbidden_raw_values: Sequence[
             )
 
 
+def create_identity_proof(
+    actor_id: str,
+    role: Role | str,
+    tenant_id: str = "tenant-avm-001",
+) -> str:
+    """Generate cryptographic identity proof bound to actor, role, and tenant."""
+    role_str = role.value if isinstance(role, Role) else str(role)
+    canonical = f"{actor_id}:{role_str}:{tenant_id}"
+    return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+
+
 class ConfidentialAccessAuditor:
     """Audits access requests against RBAC/ABAC rules for DealRoom AVM outcome data."""
 
@@ -110,7 +122,6 @@ class ConfidentialAccessAuditor:
         {"dealroom", "avm", "avm_outcome", "model_ready.valuation_view"}
     )
     ALLOWED_ACTIONS = frozenset({Action.VIEW, Action.EXPORT})
-
 
     @classmethod
     def evaluate_access(
@@ -121,10 +132,16 @@ class ConfidentialAccessAuditor:
         """Evaluate if access attempt is permitted and return (decision, reason, audit_receipt)."""
         role = attempt.role if isinstance(attempt.role, Role) else None
         action = attempt.action if isinstance(attempt.action, Action) else None
+        role_repr = role.value if role else str(attempt.role)
 
         # ABAC Context Attributes Extraction - Fail Closed Defaults
         is_authenticated = bool(attempt.context.get("authenticated", False))
-        verified_identity = bool(attempt.context.get("verified_identity", False))
+        tenant_id = str(attempt.context.get("tenant_id", "tenant-avm-001"))
+        provided_proof = str(attempt.context.get("identity_proof_sha256", ""))
+        expected_proof = create_identity_proof(attempt.actor_id, attempt.role, tenant_id)
+
+        # Identity proof verification: verified_identity is only True if caller provided valid cryptographic proof
+        verified_identity = bool(attempt.context.get("verified_identity", False)) and (provided_proof == expected_proof)
         data_room_access = bool(attempt.context.get("data_room_access", False))
         clearance_val = attempt.context.get("clearance", "PUBLIC")
         tenant_matched = bool(attempt.context.get("tenant_matched", False))
@@ -212,6 +229,7 @@ class ConfidentialAccessAuditor:
             "decision": decision.value,
             "reason": reason,
             "evaluated_at": datetime.now(UTC).isoformat(),
+            "identity_proof_sha256": provided_proof if verified_identity else "",
             "redacted_sample": REDACTED_PLACEHOLDER,
         }
         return decision, reason, receipt

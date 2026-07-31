@@ -3,7 +3,7 @@
   "schema_version": 1,
   "task_id": "ODP-PLAN-AVM-OUTCOME-001",
   "model_version": "dealroom-avm-baseline-v1",
-  "evaluated_at": "2026-07-31T12:50:32.915229+00:00",
+  "evaluated_at": "2026-07-31T14:42:15.726154+00:00",
   "verdict": "FAIL_CLOSED",
   "governed_disabled": true,
   "authentic_data_activated": false,
@@ -20,6 +20,14 @@
     "dataset_snapshot_hash": "86d4b28ff48929469cc683ca9b2ce209c0831c266a6124b68c6ee701fe56ed96",
     "model_artifact_hash": "a2a47bcb23d13b714cda38544c1f1ba5d8b9fc2df0e770a1b20379f6c5197cfd",
     "authority_partition": "official_real_estate"
+  },
+  "access_audit": {
+    "audit_receipt_sha256": "ce5e47591b8011b1ff9a5c62661eac78845111a35ee6747d7b5069c2c58e2194",
+    "total_access_attempts": 4,
+    "permitted_count": 1,
+    "denied_count": 3,
+    "zero_leak_verified": true,
+    "access_control_verdict": "PASS"
   },
   "metrics": {
     "aligned_count": 0,
@@ -57,7 +65,7 @@
     }
   },
   "integrity": {
-    "content_sha256": "40cbfd6cab2cdb1385b9e748b12a3c2273b85537d2abf0230f404bcbfc1ebf07",
+    "content_sha256": "b796d3aa20cc0b185a00749e876f4211d9bd20ff31c8c59ce21615ff967023bc",
     "signature_scheme": "sha256-json-canonical"
   }
 }
