@@ -2,16 +2,16 @@
   "schema_version": "2.0.0",
   "receipt_id": "ODP-PRODUCT-E2E-RECEIPT-002",
   "task_id": "ODP-PLAN-ACCEPTANCE-REAL-EXEC-001",
-  "run_id": "product-e2e-2026-07-31T15:03:49.233144Z",
-  "generated_at": "2026-07-31T15:03:49.233170Z",
+  "run_id": "product-e2e-2026-07-31T16:43:40.170457Z",
+  "generated_at": "2026-07-31T16:43:40.170484Z",
   "tested_source": {
-    "commit_sha": "b5effe0f177acf6c2a7a77fc37048b7d7fdc700b",
-    "tree_sha": "8df5a1516af19a63ffd51834485e8c2c22e99eac"
+    "commit_sha": "ac075a54882f335fe0ec76c6c863431925b526ba",
+    "tree_sha": "506b7d5e01e923401eb9526289e1c24c8e40a2be"
   },
   "evidence_proof_at_generation": {
-    "tested_source_sha": "b5effe0f177acf6c2a7a77fc37048b7d7fdc700b",
-    "tested_tree_sha": "8df5a1516af19a63ffd51834485e8c2c22e99eac",
-    "evidence_head_sha": "b5effe0f177acf6c2a7a77fc37048b7d7fdc700b",
+    "tested_source_sha": "ac075a54882f335fe0ec76c6c863431925b526ba",
+    "tested_tree_sha": "506b7d5e01e923401eb9526289e1c24c8e40a2be",
+    "evidence_head_sha": "ac075a54882f335fe0ec76c6c863431925b526ba",
     "relation": "exact_source_head",
     "intervening_touched_paths": [],
     "working_tree_paths": [
@@ -29,8 +29,8 @@
     {
       "runner": "playwright",
       "path": "docs/evidence/e2e/raw_playwright_results.json",
-      "sha256": "3d008b2a6e2ad99a5bb11974af875b69b6cddc783c561f9dc422360bd3b82cee",
-      "normalized_artifact_sha256": "ee291faec9c06bf58409d2c565333f754badfe5112310fc408ebfacbc91c6608",
+      "sha256": "e4843751d8ea1c247c9a10113d6f6a038d9be032b31add3d3c7f6a7c9fce767c",
+      "normalized_artifact_sha256": "c8eb679b9db9af341f9ab5908addce5dd0ce3ada73702c0486626aaf3cf97017",
       "command": "npx playwright test tests/e2e/e2e-network-find-areas-api-binding.spec.ts tests/e2e/e2e-operator-console.spec.ts tests/e2e/operator-assisted-listing-intake-a11y.spec.ts tests/e2e/operator-assisted-listing-intake-mobile.spec.ts tests/e2e/operator-assisted-listing-intake.spec.ts tests/e2e/operator-governance.spec.ts tests/e2e/operator-growth.spec.ts tests/e2e/operator-network-assisted-intake.spec.ts tests/e2e/operator-network-listings.spec.ts tests/e2e/operator-network-rebalance.spec.ts tests/e2e/operator-network-review.spec.ts tests/e2e/operator-network-scoring.spec.ts tests/e2e/operator-shell-today.spec.ts tests/e2e/operator-store-ops.spec.ts tests/e2e/product-e2e-env.spec.ts tests/e2e/shell-resource-binding.spec.ts --workers=1 --retries=0 --project=chromium --reporter=json",
       "version": "Version 1.61.1",
       "started_at": "2026-07-31T14:51:29Z",
@@ -45,8 +45,8 @@
     {
       "runner": "pytest",
       "path": "docs/evidence/e2e/raw_pytest_results.json",
-      "sha256": "860728c85dce55a647b9d92f09f879682c929657120e346633ba78467bc2dc2c",
-      "normalized_artifact_sha256": "c5c080dcb50289824dd667298463faee94d8ab5e1025e3887e299b155af6980a",
+      "sha256": "6b2ecfb307ab10cf5cfc97ed3e65e30479d60216de8b39b0da56fe3d826707e8",
+      "normalized_artifact_sha256": "60053370e6d411db20c5876ce38570cb8083f9d9a4f77bb33bb020ba79fca92c",
       "command": "/tmp/pantheon-worker-worktrees/oday-plus-supervisor-live/odp-plan-supervisor-failure-loop-001/.venv/bin/python3 -m pytest -q tests/integration/test_avm_official_outcome_contract.py::test_official_outcome_migration_has_bounded_source_and_provenance_contracts tests/integration/test_intervention_workflow.py::test_full_lifecycle_reaches_completed_with_causal_evidence_and_label tests/integration/test_priceops_constraints.py::test_full_pilot_lifecycle_records_complete_status_history tests/integration/test_adlift_incrementality.py::test_difference_in_differences_isolates_ad_lift_from_market_movement tests/integration/test_learninghub_release.py::test_governed_release_invokes_remote_mlflow_alias_updates tests/integration/test_learninghub_release.py::test_learninghub_validates_releases_and_rolls_back_model_aliases tests/integration/test_learninghub_release.py::test_learninghub_blocks_release_without_passed_validation_or_model_card tests/data/test_pit_snapshot.py::test_point_in_time_validation_rejects_future_feature_snapshot tests/security/test_rbac_abac.py::test_rbac_denies_action_outside_role tests/security/test_rbac_abac.py::test_tenant_isolation_blocks_other_tenant",
       "version": "pytest 9.1.1; python 3.12.3",
       "started_at": "2026-07-31T15:03:19.834776Z",
@@ -119,7 +119,7 @@
             ]
           },
           "artifact_path": "docs/evidence/e2e/raw_playwright_results.json",
-          "artifact_sha256": "3d008b2a6e2ad99a5bb11974af875b69b6cddc783c561f9dc422360bd3b82cee"
+          "artifact_sha256": "e4843751d8ea1c247c9a10113d6f6a038d9be032b31add3d3c7f6a7c9fce767c"
         }
       ]
     },
@@ -150,7 +150,7 @@
             ]
           },
           "artifact_path": "docs/evidence/e2e/raw_playwright_results.json",
-          "artifact_sha256": "3d008b2a6e2ad99a5bb11974af875b69b6cddc783c561f9dc422360bd3b82cee"
+          "artifact_sha256": "e4843751d8ea1c247c9a10113d6f6a038d9be032b31add3d3c7f6a7c9fce767c"
         }
       ]
     },
@@ -202,7 +202,7 @@
             ]
           },
           "artifact_path": "docs/evidence/e2e/raw_pytest_results.json",
-          "artifact_sha256": "860728c85dce55a647b9d92f09f879682c929657120e346633ba78467bc2dc2c"
+          "artifact_sha256": "6b2ecfb307ab10cf5cfc97ed3e65e30479d60216de8b39b0da56fe3d826707e8"
         }
       ]
     },
@@ -233,7 +233,7 @@
             ]
           },
           "artifact_path": "docs/evidence/e2e/raw_playwright_results.json",
-          "artifact_sha256": "3d008b2a6e2ad99a5bb11974af875b69b6cddc783c561f9dc422360bd3b82cee"
+          "artifact_sha256": "e4843751d8ea1c247c9a10113d6f6a038d9be032b31add3d3c7f6a7c9fce767c"
         }
       ]
     },
@@ -275,7 +275,7 @@
             ]
           },
           "artifact_path": "docs/evidence/e2e/raw_pytest_results.json",
-          "artifact_sha256": "860728c85dce55a647b9d92f09f879682c929657120e346633ba78467bc2dc2c"
+          "artifact_sha256": "6b2ecfb307ab10cf5cfc97ed3e65e30479d60216de8b39b0da56fe3d826707e8"
         }
       ]
     },
@@ -317,7 +317,7 @@
             ]
           },
           "artifact_path": "docs/evidence/e2e/raw_pytest_results.json",
-          "artifact_sha256": "860728c85dce55a647b9d92f09f879682c929657120e346633ba78467bc2dc2c"
+          "artifact_sha256": "6b2ecfb307ab10cf5cfc97ed3e65e30479d60216de8b39b0da56fe3d826707e8"
         }
       ]
     },
@@ -359,7 +359,7 @@
             ]
           },
           "artifact_path": "docs/evidence/e2e/raw_pytest_results.json",
-          "artifact_sha256": "860728c85dce55a647b9d92f09f879682c929657120e346633ba78467bc2dc2c"
+          "artifact_sha256": "6b2ecfb307ab10cf5cfc97ed3e65e30479d60216de8b39b0da56fe3d826707e8"
         }
       ]
     },
@@ -390,7 +390,7 @@
             ]
           },
           "artifact_path": "docs/evidence/e2e/raw_playwright_results.json",
-          "artifact_sha256": "3d008b2a6e2ad99a5bb11974af875b69b6cddc783c561f9dc422360bd3b82cee"
+          "artifact_sha256": "e4843751d8ea1c247c9a10113d6f6a038d9be032b31add3d3c7f6a7c9fce767c"
         }
       ]
     },
@@ -421,7 +421,7 @@
             ]
           },
           "artifact_path": "docs/evidence/e2e/raw_playwright_results.json",
-          "artifact_sha256": "3d008b2a6e2ad99a5bb11974af875b69b6cddc783c561f9dc422360bd3b82cee"
+          "artifact_sha256": "e4843751d8ea1c247c9a10113d6f6a038d9be032b31add3d3c7f6a7c9fce767c"
         }
       ]
     },
@@ -463,7 +463,7 @@
             ]
           },
           "artifact_path": "docs/evidence/e2e/raw_pytest_results.json",
-          "artifact_sha256": "860728c85dce55a647b9d92f09f879682c929657120e346633ba78467bc2dc2c"
+          "artifact_sha256": "6b2ecfb307ab10cf5cfc97ed3e65e30479d60216de8b39b0da56fe3d826707e8"
         }
       ]
     },
@@ -505,7 +505,7 @@
             ]
           },
           "artifact_path": "docs/evidence/e2e/raw_pytest_results.json",
-          "artifact_sha256": "860728c85dce55a647b9d92f09f879682c929657120e346633ba78467bc2dc2c"
+          "artifact_sha256": "6b2ecfb307ab10cf5cfc97ed3e65e30479d60216de8b39b0da56fe3d826707e8"
         }
       ]
     },
@@ -548,7 +548,7 @@
             ]
           },
           "artifact_path": "docs/evidence/e2e/raw_pytest_results.json",
-          "artifact_sha256": "860728c85dce55a647b9d92f09f879682c929657120e346633ba78467bc2dc2c"
+          "artifact_sha256": "6b2ecfb307ab10cf5cfc97ed3e65e30479d60216de8b39b0da56fe3d826707e8"
         },
         {
           "runner": "pytest",
@@ -579,7 +579,7 @@
             ]
           },
           "artifact_path": "docs/evidence/e2e/raw_pytest_results.json",
-          "artifact_sha256": "860728c85dce55a647b9d92f09f879682c929657120e346633ba78467bc2dc2c"
+          "artifact_sha256": "6b2ecfb307ab10cf5cfc97ed3e65e30479d60216de8b39b0da56fe3d826707e8"
         }
       ]
     },
@@ -610,7 +610,7 @@
             ]
           },
           "artifact_path": "docs/evidence/e2e/raw_playwright_results.json",
-          "artifact_sha256": "3d008b2a6e2ad99a5bb11974af875b69b6cddc783c561f9dc422360bd3b82cee"
+          "artifact_sha256": "e4843751d8ea1c247c9a10113d6f6a038d9be032b31add3d3c7f6a7c9fce767c"
         }
       ]
     },
@@ -653,7 +653,7 @@
             ]
           },
           "artifact_path": "docs/evidence/e2e/raw_pytest_results.json",
-          "artifact_sha256": "860728c85dce55a647b9d92f09f879682c929657120e346633ba78467bc2dc2c"
+          "artifact_sha256": "6b2ecfb307ab10cf5cfc97ed3e65e30479d60216de8b39b0da56fe3d826707e8"
         },
         {
           "runner": "pytest",
@@ -684,7 +684,7 @@
             ]
           },
           "artifact_path": "docs/evidence/e2e/raw_pytest_results.json",
-          "artifact_sha256": "860728c85dce55a647b9d92f09f879682c929657120e346633ba78467bc2dc2c"
+          "artifact_sha256": "6b2ecfb307ab10cf5cfc97ed3e65e30479d60216de8b39b0da56fe3d826707e8"
         }
       ]
     },
@@ -702,5 +702,5 @@
   "validation_errors": [],
   "exit_code": 0,
   "status": "passed",
-  "normalized_receipt_sha256": "b8afed4ffe57851c443f3d1236f3da8c5529484419beb249c1ad6270f4225724"
+  "normalized_receipt_sha256": "cbce9782a84b1af86947e7e8668bc4d2201f90ffeec4c6c8d92d7429fb1c6599"
 }
