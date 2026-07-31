@@ -1,0 +1,11 @@
+test_b23_probe_restore_approved_refuses_reopened_or_moved_head (__main__.LiveFreezeProbes.test_b23_probe_restore_approved_refuses_reopened_or_moved_head)
+B23 Probe: restore_approved refuses when reviewer reopened work. ... ok
+test_b24_probe_higher_priority_ready_task_skips_missing_approved_head (__main__.LiveFreezeProbes.test_b24_probe_higher_priority_ready_task_skips_missing_approved_head)
+B24 Probe: higher_priority_ready_task_exists skips tasks without approved_head. ... ok
+test_n3_probe_restore_approved_head_check_emission (__main__.LiveFreezeProbes.test_n3_probe_restore_approved_head_check_emission)
+N3 Probe: restore_approved_head repairs missing-head shape and fails closed on sha mismatch. ... ok
+
+----------------------------------------------------------------------
+Ran 3 tests in 0.153s
+
+OK
