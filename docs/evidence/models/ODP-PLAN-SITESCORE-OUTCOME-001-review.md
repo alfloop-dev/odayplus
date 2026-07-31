@@ -254,3 +254,89 @@ inventory `SELECT` as a backfill.
 **Changes requested.** Exact owner head `e3266736` is not approved. The task is reopened to
 Antigravity4 for B1 and B2 remediation; no owner implementation content was changed by this
 review.
+
+---
+
+# Codex6 Re-review Addendum — 2026-07-31, exact owner head `ea8de587`
+
+The supervisor re-dispatched this task to the assigned reviewer after the owner reported
+the split outcome-backfill and prediction-source handback contracts at
+`ea8de587d0168c24da11162b2937e0e09d759b63`.
+
+## Verification at the exact owner head
+
+```bash
+PYTHONPATH=. .venv/bin/pytest -q tests/models/test_sitescore_opening_outcome.py
+.venv/bin/ruff check models/sitescore scripts/models/sitescore_outcome_benchmark.py \
+  tests/models/test_sitescore_opening_outcome.py
+git diff --check
+```
+
+- Task-scoped tests: **17 passed**.
+- Ruff and `git diff --check`: clean.
+- The prior zero-denominator blocker is fixed: non-zero MAE over a true-zero cohort now
+  fails closed.
+
+The automated checks are green, but the following evidence-integrity findings block
+approval.
+
+## Blocking findings
+
+### B1 — PostgreSQL `NULL` outcomes are converted into legitimate zero labels
+
+`scripts/models/sitescore_outcome_benchmark.py:57-67` converts a database
+`realized_90d_net_revenue IS NULL` value to `0.0`. The evaluator correctly treats `None` as
+missing and `0.0` as a legitimate observed zero
+(`models/sitescore/opening_outcome.py:304-327`), so the adapter destroys the distinction at
+the source boundary. An eligible row with a missing outcome is consequently added to
+`mature_label_count` and the zero-denominator calibration path instead of being excluded.
+With enough such rows, the receipt can overstate the number of mature labels even though no
+outcome was observed.
+
+Preserve `None` in the adapter, and add an adapter-level regression test proving that a
+database `NULL` remains missing while a database numeric zero remains a mature legitimate
+zero.
+
+### B2 — The governed-disabled model card invents unavailable governance facts
+
+`build_sitescore_opening_outcome_model_card`
+(`models/sitescore/opening_outcome.py:498-552`) fills fields even when the benchmark has
+`provenance=no_source` and no authoritative metadata:
+
+- `dataset_snapshot_id` becomes `snapshot_sitescore_opening_outcome_v2`;
+- model version, validation run ID, feature/label IDs, training and validation periods,
+  algorithm, baseline, and explainability method are asserted from constants;
+- `privacy_review` and `security_review` are asserted as `PASSED`; and
+- a current-time approval record names `sitescore-platform-team` / `platform_lead`, despite
+  no approval receipt or approving actor.
+
+The committed `sitescore_model_card.json` therefore looks governed even though its release
+status is `GOVERNED_DISABLED`. Fail closed at the evidence layer too: when no authoritative
+source exists, emit explicit unavailable/unverified values (and no fabricated approval
+identity/timestamp). Tests must assert these governed-disabled semantics. If the canonical
+`ModelCard` type cannot represent them, extend the representation or emit a task-specific
+receipt shape rather than supplying facts solely to satisfy `ModelCard.is_complete`.
+
+### B3 — The advertised executable M6/M12 backfill query contains no M6/M12 outcomes
+
+The handback calls its SQL an `executable_baseline_query`, but
+`models/sitescore/opening_outcome.py:180-229` and the CLI query
+(`scripts/models/sitescore_outcome_benchmark.py:40-52`) select only the 90-day outcome and
+alias the identical store-age expression as both `m6_days` and `m12_days`.
+`model_ready.candidate_site_view` exposes `label_horizon_days = 90` and
+`realized_90d_net_revenue`, not realized 180/365-day labels. Age is a maturity
+precondition; it is not evidence that either outcome was observed.
+
+The evaluator's explicit-outcome checks are now appropriately fail-closed, but the
+handback query and receipt still claim to be executable evidence for required fields they
+do not return. Remove the misleading aliases/claim or point the contract to an actual
+authoritative query/view that returns `realized_180d_net_revenue` and
+`realized_365d_net_revenue`. Add a regression assertion that age alone never satisfies M6
+or M12 outcome coverage.
+
+## Decision
+
+**Changes requested.** Exact owner head `ea8de587` is not approved. B1 can inflate the
+acceptance label count, while B2 and B3 make the governed-disabled receipt claim facts its
+sources do not establish. The task is returned to Antigravity4; no owner implementation
+content was changed by this review.
