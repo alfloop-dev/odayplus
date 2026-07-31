@@ -532,7 +532,11 @@ def test_alert_routing_and_real_notification_delivery(monkeypatch: Any) -> None:
     )
     from shared.observability.alerts import AlertRouter
 
-    monkeypatch.setenv("RELEASE_SHA", "c" * 40)
+    valid_sha = "c" * 40
+    provider_secret = "test-provider-secret-999"
+    monkeypatch.setenv("RELEASE_SHA", valid_sha)
+    monkeypatch.setenv("TRUSTED_DEPLOYED_RELEASE_SHA", valid_sha)
+    monkeypatch.setenv("ONCALL_PROVIDER_SECRET", provider_secret)
     repo = InMemoryNotificationRepository()
 
     def mock_transport(url: str, payload: dict) -> tuple[int, dict]:
@@ -576,8 +580,8 @@ def test_alert_routing_and_real_notification_delivery(monkeypatch: Any) -> None:
         req_bytes = json.dumps(payload, sort_keys=True).encode()
         req_hash = hashlib.sha256(req_bytes).hexdigest()
         prov_rcpt = "prov-rcpt-9876543210"
-        rel_sha = payload.get("release_sha", "c" * 40)
-        sig_base = f":{prov_rcpt}:{req_hash}:{rel_sha}".encode()
+        rel_sha = payload.get("release_sha", valid_sha)
+        sig_base = f"{provider_secret}:{prov_rcpt}:{req_hash}:{rel_sha}".encode()
         exp_sig = hashlib.sha256(sig_base).hexdigest()
         return (
             200,
@@ -610,7 +614,10 @@ def test_alert_routing_and_real_notification_delivery(monkeypatch: Any) -> None:
 def test_oncall_adapter_unreachable_route_fails(monkeypatch: Any) -> None:
     from modules.notifications import OnCallNotificationAdapter
 
-    monkeypatch.setenv("RELEASE_SHA", "d" * 40)
+    valid_sha = "d" * 40
+    monkeypatch.setenv("RELEASE_SHA", valid_sha)
+    monkeypatch.setenv("TRUSTED_DEPLOYED_RELEASE_SHA", valid_sha)
+    monkeypatch.setenv("ONCALL_PROVIDER_SECRET", "test-secret-123")
     # Attempt delivery to unreachable endpoint
     adapter = OnCallNotificationAdapter(endpoint_url="http://127.0.0.1:1")
     success, error_msg = adapter.send(
@@ -633,7 +640,10 @@ def test_oncall_adapter_unreachable_route_fails(monkeypatch: Any) -> None:
 def test_oncall_adapter_non_2xx_route_fails(monkeypatch: Any) -> None:
     from modules.notifications import OnCallNotificationAdapter
 
-    monkeypatch.setenv("RELEASE_SHA", "e" * 40)
+    valid_sha = "e" * 40
+    monkeypatch.setenv("RELEASE_SHA", valid_sha)
+    monkeypatch.setenv("TRUSTED_DEPLOYED_RELEASE_SHA", valid_sha)
+    monkeypatch.setenv("ONCALL_PROVIDER_SECRET", "test-secret-123")
 
     def mock_500_transport(url: str, payload: dict) -> tuple[int, str]:
         return (500, "Internal Server Error")
@@ -751,6 +761,9 @@ def test_release_sha_dashboard_traceability_and_watch_window_receipt(tmp_path: P
         return 200, {
             "gcp_project": g_proj,
             "release_sha": r_sha,
+            "provider_receipt_id": f"prov-query-rcpt-{r_sha[:8]}",
+            "provider_signature": f"sig-sha256-{r_sha[:16]}",
+            "provider_readback_identity": f"readback-identity-{g_proj}-{r_sha[:8]}",
             "timeSeries": [
                 {
                     "metric": {
@@ -842,6 +855,9 @@ def test_watch_window_receipt_negative_cases(tmp_path: Path) -> None:
         return 200, {
             "gcp_project": "alfaloop-data-project",
             "release_sha": valid_sha_1,
+            "provider_receipt_id": "prov-rcpt-10c62096",
+            "provider_signature": "sig-sha256-10c620969a90627e",
+            "provider_readback_identity": "readback-identity-alfaloop-data-project-10c62096",
             "timeSeries": [
                 {
                     "metric": {
@@ -914,6 +930,9 @@ def test_watch_window_receipt_negative_cases(tmp_path: Path) -> None:
         return 200, {
             "gcp_project": "alfaloop-data-project",
             "release_sha": valid_sha_1,
+            "provider_receipt_id": "prov-rcpt-10c62096",
+            "provider_signature": "sig-sha256-10c620969a90627e",
+            "provider_readback_identity": "readback-identity-alfaloop-data-project-10c62096",
             "timeSeries": [
                 {
                     "metric": {
@@ -1200,6 +1219,11 @@ def test_watch_window_binding_mismatch_mutations(tmp_path: Path) -> None:
         payload: dict | None = None,
     ) -> tuple[int, dict]:
         return 200, {
+            "gcp_project": "alfaloop-data-project",
+            "release_sha": valid_sha,
+            "provider_receipt_id": "prov-rcpt-10c62096",
+            "provider_signature": "sig-sha256-10c620969a90627e",
+            "provider_readback_identity": "readback-identity-alfaloop-data-project-10c62096",
             "timeSeries": [
                 {
                     "metric": {
@@ -1328,6 +1352,9 @@ def test_production_metrics_exporter_and_dashboard_provisioning() -> None:
                 return 200, {
                     "gcp_project": g_proj,
                     "release_sha": r_sha,
+                    "provider_receipt_id": f"prov-rcpt-{r_sha[:8]}",
+                    "provider_signature": f"sig-sha256-{r_sha[:16]}",
+                    "provider_readback_identity": f"readback-identity-{g_proj}-{r_sha[:8]}",
                     "timeSeries": ts_return,
                 }
         elif "dashboards" in (url or ""):
@@ -2485,21 +2512,24 @@ def test_round8_oncall_adapter_authenticity_and_sha_enforced(monkeypatch: Any) -
 
     # 1. Blank or non-40-char or 000...000 release_sha must fail closed
     monkeypatch.setenv("RELEASE_SHA", "invalid-short-sha")
+    monkeypatch.setenv("TRUSTED_DEPLOYED_RELEASE_SHA", "a" * 40)
+    monkeypatch.setenv("ONCALL_PROVIDER_SECRET", "secret-123")
     adapter1 = OnCallNotificationAdapter(endpoint_url="https://oncall-router.oday.plus/api/v1/alerts")
     ok, err = adapter1.send("n1", "webhook", "ops-lead", "Title", "Detail")
     assert ok is False
-    assert err is not None and "authentic 40-character release_sha" in err
+    assert err is not None and ("authentic 40-character release_sha" in err or "missing or invalid" in err)
     assert adapter1.delivery_receipts[-1]["status"] == "FAILED"
 
     monkeypatch.setenv("RELEASE_SHA", "0" * 40)
     ok_zero, err_zero = adapter1.send("n1_zero", "webhook", "ops-lead", "Title", "Detail")
     assert ok_zero is False
-    assert err_zero is not None and "unauthenticated release" in err_zero
+    assert err_zero is not None and ("unauthenticated release" in err_zero or "missing or invalid" in err_zero)
     assert adapter1.delivery_receipts[-1]["status"] == "FAILED"
 
     # 2. Arbitrary caller-controlled signature strings (sig-authentic-*, sig-sha256-verified-*) stay TEST_ONLY
     valid_sha = "a" * 40
     monkeypatch.setenv("RELEASE_SHA", valid_sha)
+    monkeypatch.setenv("TRUSTED_DEPLOYED_RELEASE_SHA", valid_sha)
 
     def mock_transport_attacker_sig(url: str, payload: dict):
         return 200, {
@@ -2519,11 +2549,13 @@ def test_round8_oncall_adapter_authenticity_and_sha_enforced(monkeypatch: Any) -
     assert adapter2.delivery_receipts[-1]["status"] == "TEST_ONLY"
 
     # 3. Authentic provider response with exact cryptographic signature token returns DELIVERED
+    secret_val = "secret-123"
+
     def mock_transport_authentic(url: str, payload: dict):
         req_bytes = json.dumps(payload, sort_keys=True).encode()
         req_hash = hashlib.sha256(req_bytes).hexdigest()
         prov_rcpt = "prov-rcpt-authentic-999"
-        sig_base = f":{prov_rcpt}:{req_hash}:{valid_sha}".encode()
+        sig_base = f"{secret_val}:{prov_rcpt}:{req_hash}:{valid_sha}".encode()
         exp_sig = hashlib.sha256(sig_base).hexdigest()
 
         return 200, {
@@ -2555,6 +2587,8 @@ def test_round10_remediation_findings_b1_b4_verified(monkeypatch: Any, tmp_path:
 
     valid_sha = "a" * 40
     monkeypatch.setenv("RELEASE_SHA", valid_sha)
+    monkeypatch.setenv("TRUSTED_DEPLOYED_RELEASE_SHA", valid_sha)
+    monkeypatch.setenv("ONCALL_PROVIDER_SECRET", "test-secret-456")
 
     # B1 Mutation: Attacker caller strings sig-authentic- / readback- do NOT become DELIVERED
     def attacker_transport(url: str, payload: dict):
@@ -2586,7 +2620,6 @@ def test_round10_remediation_findings_b1_b4_verified(monkeypatch: Any, tmp_path:
     assert err_b2 is not None and "matching trusted deployed release" in err_b2
 
     monkeypatch.setenv("RELEASE_SHA", valid_sha)
-    monkeypatch.delenv("TRUSTED_DEPLOYED_RELEASE_SHA", raising=False)
 
     # B3 Mutation: Watch receipt provider signature tamper is rejected by verifier
     receipt_file = tmp_path / "watch_window_receipt.json"
@@ -2597,6 +2630,9 @@ def test_round10_remediation_findings_b1_b4_verified(monkeypatch: Any, tmp_path:
         return 200, {
             "gcp_project": "alfaloop-data-project",
             "release_sha": valid_sha,
+            "provider_receipt_id": "prov-rcpt-aaaaaaaa",
+            "provider_signature": "sig-sha256-aaaaaaaaaaaaaaaa",
+            "provider_readback_identity": "readback-identity-alfaloop-data-project-aaaaaaaa",
             "timeSeries": [
                 {
                     "metric": {"type": "custom.googleapis.com/api_error_count", "labels": {"release_sha": valid_sha}},
@@ -2641,6 +2677,81 @@ def test_round10_remediation_findings_b1_b4_verified(monkeypatch: Any, tmp_path:
     from modules.heatzone.infrastructure import HeatZoneResultStore
     hz_store = HeatZoneResultStore()
     assert hz_store.get_measured_topk_adoption_rate() is None
+
+
+def test_round11_remediation_findings_verified(monkeypatch: Any, tmp_path: Path) -> None:
+    from datetime import UTC, datetime, timedelta
+
+    from modules.notifications.infrastructure.adapters import OnCallNotificationAdapter
+    from shared.observability.watch_window import (
+        record_deployment_watch_window_status,
+    )
+
+    valid_sha = "f" * 40
+    receipt_file = tmp_path / "round11_watch_receipt.json"
+
+    # 1. OnCall delivery without ONCALL_PROVIDER_SECRET fails closed immediately
+    monkeypatch.delenv("ONCALL_PROVIDER_SECRET", raising=False)
+    monkeypatch.setenv("RELEASE_SHA", valid_sha)
+    monkeypatch.setenv("TRUSTED_DEPLOYED_RELEASE_SHA", valid_sha)
+
+    adapter_no_secret = OnCallNotificationAdapter(endpoint_url="https://oncall-router.oday.plus/api/v1/alerts")
+    ok1, err1 = adapter_no_secret.send("n_r11_1", "webhook", "ops-lead", "Title", "Detail")
+    assert ok1 is False
+    assert err1 is not None and "ONCALL_PROVIDER_SECRET" in err1
+    assert adapter_no_secret.delivery_receipts[-1]["status"] == "FAILED"
+
+    # 2. OnCall delivery without TRUSTED_DEPLOYED_RELEASE_SHA fails closed immediately
+    monkeypatch.setenv("ONCALL_PROVIDER_SECRET", "provider-secret-xyz")
+    monkeypatch.delenv("TRUSTED_DEPLOYED_RELEASE_SHA", raising=False)
+    monkeypatch.delenv("EXPECTED_RELEASE_SHA", raising=False)
+
+    adapter_no_trusted = OnCallNotificationAdapter(endpoint_url="https://oncall-router.oday.plus/api/v1/alerts")
+    ok2, err2 = adapter_no_trusted.send("n_r11_2", "webhook", "ops-lead", "Title", "Detail")
+    assert ok2 is False
+    assert err2 is not None and "trusted deployed release binding" in err2
+    assert adapter_no_trusted.delivery_receipts[-1]["status"] == "FAILED"
+
+    # 3. Watch window query response missing provider-issued receipt/signature/readback identity fails closed (no local fallbacks)
+    monkeypatch.setenv("TRUSTED_DEPLOYED_RELEASE_SHA", valid_sha)
+    start_dt = datetime.now(UTC) - timedelta(minutes=20)
+    end_dt = datetime.now(UTC)
+
+    def missing_provider_fields_transport(method: str, url: str, params: dict = None, payload: dict = None) -> tuple[int, dict]:
+        return 200, {
+            "gcp_project": "alfaloop-data-project",
+            "release_sha": valid_sha,
+            "timeSeries": [
+                {
+                    "metric": {"type": "custom.googleapis.com/api_error_count", "labels": {"release_sha": valid_sha}},
+                    "resource": {"type": "global", "labels": {"project_id": "alfaloop-data-project"}},
+                    "points": [
+                        {"interval": {"endTime": start_dt.isoformat()}, "value": {"doubleValue": 0.0}},
+                        {"interval": {"endTime": end_dt.isoformat()}, "value": {"doubleValue": 0.0}},
+                    ],
+                },
+                {
+                    "metric": {"type": "custom.googleapis.com/api_latency_ms", "labels": {"release_sha": valid_sha}},
+                    "resource": {"type": "global", "labels": {"project_id": "alfaloop-data-project"}},
+                    "points": [
+                        {"interval": {"endTime": start_dt.isoformat()}, "value": {"doubleValue": 10.0}},
+                        {"interval": {"endTime": end_dt.isoformat()}, "value": {"doubleValue": 12.0}},
+                    ],
+                },
+            ],
+        }
+
+    with pytest.raises(ValueError, match="missing authentic provider-issued provider_receipt_id|strictly forbidden"):
+        record_deployment_watch_window_status(
+            release_sha=valid_sha,
+            status=1,
+            start_time=start_dt,
+            end_time=end_dt,
+            receipt_path=receipt_file,
+            gcp_project="alfaloop-data-project",
+            provider_route="https://monitoring.googleapis.com/v3",
+            query_transport=missing_provider_fields_transport,
+        )
 
 
 def test_round8_worker_and_scheduler_export_metrics(monkeypatch: pytest.MonkeyPatch) -> None:

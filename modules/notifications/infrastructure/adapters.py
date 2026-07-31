@@ -138,16 +138,18 @@ class OnCallNotificationAdapter:
         delivery_id = f"del-{uuid.uuid4().hex[:12]}"
         now = datetime.now(UTC)
         raw_sha = (os.getenv("RELEASE_SHA") or os.getenv("GITHUB_SHA") or os.getenv("COMMIT_SHA") or os.getenv("ODAY_RELEASE_SHA") or "").strip().lower()
-        if not raw_sha or raw_sha == "0" * 40 or len(raw_sha) != 40 or not re.match(r"^[0-9a-f]{40}$", raw_sha):
-            release_sha = raw_sha if (raw_sha and len(raw_sha) == 40 and re.match(r"^[0-9a-f]{40}$", raw_sha)) else "unauthenticated"
-            error_msg = f"On-call notification delivery requires an authentic 40-character release_sha (missing, blank, or unauthenticated release '{raw_sha}'). Fail-closed gate enforced."
+
+        # B1/B2: Mandatory provider secret and trusted deployed release SHA bindings
+        provider_secret = (os.getenv("ONCALL_PROVIDER_SECRET") or "").strip()
+        if not provider_secret:
+            error_msg = "On-call notification delivery requires a non-empty ONCALL_PROVIDER_SECRET provider trust root. Fail-closed gate enforced."
             receipt = {
                 "delivery_id": delivery_id,
                 "notification_id": notification_id,
                 "oncall_route": user_id,
                 "channel": channel,
                 "endpoint": self._redact_text(self.endpoint_url),
-                "release_sha": release_sha,
+                "release_sha": raw_sha if raw_sha else "unauthenticated",
                 "request_hash": "",
                 "response_hash": "",
                 "provider_receipt_id": None,
@@ -162,36 +164,81 @@ class OnCallNotificationAdapter:
             self.delivery_receipts.append(receipt)
             return False, error_msg
 
-        # B2: Release authenticity check against trusted deployed release identity if configured
         trusted_sha = (
             self.trusted_release_sha
             or os.getenv("TRUSTED_DEPLOYED_RELEASE_SHA")
             or os.getenv("EXPECTED_RELEASE_SHA")
-        )
-        if trusted_sha:
-            clean_trusted = trusted_sha.strip().lower()
-            if raw_sha != clean_trusted:
-                error_msg = f"On-call notification delivery requires release SHA matching trusted deployed release '{clean_trusted}' (got '{raw_sha}'). Fail-closed gate enforced."
-                receipt = {
-                    "delivery_id": delivery_id,
-                    "notification_id": notification_id,
-                    "oncall_route": user_id,
-                    "channel": channel,
-                    "endpoint": self._redact_text(self.endpoint_url),
-                    "release_sha": raw_sha,
-                    "request_hash": "",
-                    "response_hash": "",
-                    "provider_receipt_id": None,
-                    "title": self._redact_text(title),
-                    "detail": self._redact_text(detail),
-                    "http_status": 0,
-                    "status": "FAILED",
-                    "delivered_at": now.isoformat(),
-                    "response": None,
-                    "error": error_msg,
-                }
-                self.delivery_receipts.append(receipt)
-                return False, error_msg
+            or ""
+        ).strip().lower()
+
+        if not trusted_sha or len(trusted_sha) != 40 or not re.match(r"^[0-9a-f]{40}$", trusted_sha):
+            error_msg = f"On-call notification delivery requires a valid 40-character trusted deployed release binding (TRUSTED_DEPLOYED_RELEASE_SHA / EXPECTED_RELEASE_SHA missing or invalid, got '{trusted_sha}'). Fail-closed gate enforced."
+            receipt = {
+                "delivery_id": delivery_id,
+                "notification_id": notification_id,
+                "oncall_route": user_id,
+                "channel": channel,
+                "endpoint": self._redact_text(self.endpoint_url),
+                "release_sha": raw_sha if raw_sha else "unauthenticated",
+                "request_hash": "",
+                "response_hash": "",
+                "provider_receipt_id": None,
+                "title": self._redact_text(title),
+                "detail": self._redact_text(detail),
+                "http_status": 0,
+                "status": "FAILED",
+                "delivered_at": now.isoformat(),
+                "response": None,
+                "error": error_msg,
+            }
+            self.delivery_receipts.append(receipt)
+            return False, error_msg
+
+        if not raw_sha or raw_sha == "0" * 40 or len(raw_sha) != 40 or not re.match(r"^[0-9a-f]{40}$", raw_sha):
+            error_msg = f"On-call notification delivery requires an authentic 40-character release_sha (missing, blank, or unauthenticated release '{raw_sha}'). Fail-closed gate enforced."
+            receipt = {
+                "delivery_id": delivery_id,
+                "notification_id": notification_id,
+                "oncall_route": user_id,
+                "channel": channel,
+                "endpoint": self._redact_text(self.endpoint_url),
+                "release_sha": raw_sha if raw_sha else "unauthenticated",
+                "request_hash": "",
+                "response_hash": "",
+                "provider_receipt_id": None,
+                "title": self._redact_text(title),
+                "detail": self._redact_text(detail),
+                "http_status": 0,
+                "status": "FAILED",
+                "delivered_at": now.isoformat(),
+                "response": None,
+                "error": error_msg,
+            }
+            self.delivery_receipts.append(receipt)
+            return False, error_msg
+
+        if raw_sha != trusted_sha:
+            error_msg = f"On-call notification delivery requires release SHA matching trusted deployed release '{trusted_sha}' (got '{raw_sha}'). Fail-closed gate enforced."
+            receipt = {
+                "delivery_id": delivery_id,
+                "notification_id": notification_id,
+                "oncall_route": user_id,
+                "channel": channel,
+                "endpoint": self._redact_text(self.endpoint_url),
+                "release_sha": raw_sha,
+                "request_hash": "",
+                "response_hash": "",
+                "provider_receipt_id": None,
+                "title": self._redact_text(title),
+                "detail": self._redact_text(detail),
+                "http_status": 0,
+                "status": "FAILED",
+                "delivered_at": now.isoformat(),
+                "response": None,
+                "error": error_msg,
+            }
+            self.delivery_receipts.append(receipt)
+            return False, error_msg
 
         release_sha = raw_sha
 

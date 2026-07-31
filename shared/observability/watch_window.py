@@ -466,9 +466,29 @@ def record_deployment_watch_window_status(
     canonical_receipt_json = json.dumps(canonical_receipt_data, sort_keys=True)
     canonical_receipt_hash = hashlib.sha256(canonical_receipt_json.encode("utf-8")).hexdigest()
 
-    provider_receipt_id = f"prov-query-rcpt-{hashlib.sha256((clean_sha + gcp_proj).encode()).hexdigest()[:16]}"
-    provider_signature = f"sig-sha256-{proof['provider_proof_hash'][:16]}"
-    provider_readback_identity = f"readback-identity-{gcp_proj}-{clean_sha[:8]}"
+    provider_receipt_id = (
+        query_resp.get("provider_receipt_id")
+        or query_resp.get("receipt_id")
+    )
+    provider_signature = query_resp.get("provider_signature")
+    provider_readback_identity = (
+        query_resp.get("provider_readback_identity")
+        or query_resp.get("readback_identity")
+        or query_resp.get("readback_hash")
+    )
+
+    if not provider_receipt_id or not isinstance(provider_receipt_id, str) or not provider_receipt_id.strip():
+        raise ValueError(
+            "Monitoring query readback response missing authentic provider-issued provider_receipt_id. Local provider-proof fallbacks are strictly forbidden. Fail-closed gate enforced."
+        )
+    if not provider_signature or not isinstance(provider_signature, str) or not provider_signature.strip():
+        raise ValueError(
+            "Monitoring query readback response missing authentic provider-issued provider_signature. Local provider-proof fallbacks are strictly forbidden. Fail-closed gate enforced."
+        )
+    if not provider_readback_identity or not isinstance(provider_readback_identity, str) or not provider_readback_identity.strip():
+        raise ValueError(
+            "Monitoring query readback response missing authentic provider-issued provider_readback_identity. Local provider-proof fallbacks are strictly forbidden. Fail-closed gate enforced."
+        )
 
     monitoring_query_execution = {
         "readback_status": "WATCH_PASSED" if status == 1 else "WATCH_FAILED",
@@ -620,17 +640,26 @@ def verify_watch_window_receipt(
     expected_prov_rcpt = (
         provider_resp.get("provider_receipt_id")
         or provider_resp.get("receipt_id")
-        or f"prov-query-rcpt-{hashlib.sha256((clean_expected + str(gcp_proj).strip()).encode()).hexdigest()[:16]}"
     )
-    expected_prov_sig = (
-        provider_resp.get("provider_signature")
-        or f"sig-sha256-{proof['provider_proof_hash'][:16]}"
-    )
+    expected_prov_sig = provider_resp.get("provider_signature")
     expected_prov_rb = (
         provider_resp.get("provider_readback_identity")
         or provider_resp.get("readback_identity")
-        or f"readback-identity-{str(gcp_proj).strip()}-{clean_expected[:8]}"
+        or provider_resp.get("readback_hash")
     )
+
+    if not expected_prov_rcpt or not isinstance(expected_prov_rcpt, str) or not expected_prov_rcpt.strip():
+        raise ValueError(
+            "Stored provider_query_response missing provider-issued provider_receipt_id. Local provider-proof fallbacks are strictly forbidden. Fail-closed gate enforced."
+        )
+    if not expected_prov_sig or not isinstance(expected_prov_sig, str) or not expected_prov_sig.strip():
+        raise ValueError(
+            "Stored provider_query_response missing provider-issued provider_signature. Local provider-proof fallbacks are strictly forbidden. Fail-closed gate enforced."
+        )
+    if not expected_prov_rb or not isinstance(expected_prov_rb, str) or not expected_prov_rb.strip():
+        raise ValueError(
+            "Stored provider_query_response missing provider-issued provider_readback_identity. Local provider-proof fallbacks are strictly forbidden. Fail-closed gate enforced."
+        )
 
     if prov_rcpt != expected_prov_rcpt:
         raise ValueError(
