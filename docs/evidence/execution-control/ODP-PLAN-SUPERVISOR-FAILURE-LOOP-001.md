@@ -341,3 +341,75 @@ This closes the owner-side R14–R15 remediation together. Exact-head independen
 re-review, PR/CI, merge, worker drain, and safe live Supervisor rollout remain
 separate required gates. No live Supervisor restart or deployment was
 performed.
+
+---
+
+## 8. Coordinator completion addendum — R16
+
+After the R14–R15 handoff, live execution exposed a dispatch-authority drift on
+`ODP-PLAN-ACCEPTANCE-REAL-EXEC-001`. The live Supervisor authorized and
+dispatched the legacy owner `Codex`, and the wake prompt required
+`AI_NAME=Codex`. After the task merged current `origin/dev`, however, its
+tracked config plus the status-root local overlay declared only
+`Codex3`–`Codex9`, `CodexCoordinator`, and non-worker actors. The exact official
+handoff command therefore failed before mutation:
+
+```text
+Unknown AI_NAME: 'Codex' is not a registered agent.
+registered: Codex3, Codex4, Codex5, Codex6, Codex7, Codex8, Codex9,
+            CodexCoordinator, Human/Ops, Orchestrator
+```
+
+The worker recovered by using the documented `AI_STATUS_EXTRA_AGENTS=Codex`
+escape hatch, but requiring a worker to infer that repair violates the
+Supervisor contract: the authorized dispatch target, prompt identity, runtime
+identity, and official status authority must be identical by construction.
+
+### R16: dispatch-bound actor authority
+
+`build_request()` now materializes `target_display_name` for both slotted and
+ordinary dispatches. `delivery_runtime_env()` carries that already-authorized
+display name into every adapter through the common runtime environment as both
+`AI_NAME` and `AI_STATUS_EXTRA_AGENTS`. Existing explicitly supplied extra
+actors are preserved and deduplicated.
+
+This is not an ambient actor bypass. The value originates from the live
+Supervisor's merged fleet config and selected dispatch event; it merely
+preserves that authority across a task branch whose tracked config revision may
+differ from the live checkout. All adapters already consume the common runtime
+environment, so Codex, Claude, Antigravity, Gemini, Qwen, and Copilot paths share
+the same invariant.
+
+The regression covers an ordinary non-slotted alias and an isolated worker
+runtime with a pre-existing extra-actor list. It proves exact `AI_NAME`,
+deduplicated actor authority, logical identity, configured display name,
+workspace root, and status root.
+
+### R16 verification receipts
+
+```text
+AI_NAME=Codex6 PYTHONPATH=.orchestrator \
+  python3 -m unittest test_supervisor test_model_rotation \
+    test_adapter_fallback_policy
+Ran 278 tests in 0.757s
+OK
+
+AI_NAME=Codex6 python3 -m unittest scripts.test_ai_status
+Ran 101 tests in 0.337s
+OK
+
+python3 .orchestrator/doctor.py
+exit 0
+
+uv run ruff check .orchestrator/common.py .orchestrator/supervisor.py \
+  .orchestrator/test_adapter_fallback_policy.py \
+  .orchestrator/test_supervisor.py
+All checks passed
+
+git diff --check
+clean
+```
+
+This closes the owner-side R16 remediation. Exact-head independent re-review,
+PR/CI, merge, worker drain, and safe live Supervisor rollout remain separate
+required gates. No live Supervisor restart or deployment was performed.
