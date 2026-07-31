@@ -106,6 +106,12 @@ def assert_no_confidential_leak(payload: Any, *, forbidden_raw_values: Sequence[
 class ConfidentialAccessAuditor:
     """Audits access requests against RBAC/ABAC rules for DealRoom AVM outcome data."""
 
+    ALLOWED_RESOURCES = frozenset(
+        {"dealroom", "avm", "avm_outcome", "model_ready.valuation_view"}
+    )
+    ALLOWED_ACTIONS = frozenset({Action.VIEW, Action.EXPORT})
+
+
     @classmethod
     def evaluate_access(
         cls,
@@ -116,7 +122,7 @@ class ConfidentialAccessAuditor:
         role = attempt.role if isinstance(attempt.role, Role) else None
         action = attempt.action if isinstance(attempt.action, Action) else None
 
-        # Check explicit RBAC permission if standard Role and Action are provided
+        # Exact RBAC check
         rbac_permitted = False
         if role is not None and action is not None:
             principal = Principal(
@@ -126,24 +132,44 @@ class ConfidentialAccessAuditor:
             )
             rbac_permitted = rbac_allows(principal, attempt.resource, action)
 
-        # High confidentiality deal outcome data requires FINANCE_LEGAL or SYSTEM_ADMIN
+        # ABAC resource & action scope check
+        resource_in_scope = (
+            attempt.resource in cls.ALLOWED_RESOURCES
+            or attempt.resource.startswith("dealroom/")
+            or attempt.resource.startswith("avm/")
+        )
+        action_in_scope = action in cls.ALLOWED_ACTIONS if action is not None else False
+
+        role_disallowed = role in CONFIDENTIAL_AVM_DISALLOWED_ROLES
+        role_authorized = role in (Role.FINANCE_LEGAL, Role.PLATFORM_ADMIN)
+
+
+        role_repr = role.value if role else str(attempt.role)
+
         if confidentiality == ConfidentialLevel.HIGH:
-            if role in CONFIDENTIAL_AVM_DISALLOWED_ROLES:
-                reason = f"Role {role.value!r} is explicitly forbidden from high-confidentiality AVM outcome data"
+            if role_disallowed:
+                reason = f"Role {role_repr!r} is explicitly forbidden from high-confidentiality AVM outcome data"
                 decision = ConfidentialAccessDecision.DENY
-            elif rbac_permitted or role in (Role.FINANCE_LEGAL, Role.PLATFORM_ADMIN):
+            elif not resource_in_scope:
+                reason = f"Resource {attempt.resource!r} is outside AVM dealroom audit scope"
+                decision = ConfidentialAccessDecision.DENY
+            elif not action_in_scope:
+                reason = f"Action {attempt.action!r} is not authorized for confidential AVM dealroom data"
+                decision = ConfidentialAccessDecision.DENY
+            elif rbac_permitted and role_authorized:
                 reason = f"Access granted to confidential resource {attempt.resource!r} for role {attempt.role!r}"
                 decision = ConfidentialAccessDecision.PERMIT
             else:
                 reason = f"Access denied to resource {attempt.resource!r} for role {attempt.role!r}"
                 decision = ConfidentialAccessDecision.DENY
         else:
-            if rbac_permitted or role in (Role.FINANCE_LEGAL, Role.PLATFORM_ADMIN, Role.OPERATIONS_MANAGER):
+            if resource_in_scope and action_in_scope and rbac_permitted:
                 reason = f"Access granted for role {attempt.role!r}"
                 decision = ConfidentialAccessDecision.PERMIT
             else:
                 reason = f"Access denied for role {attempt.role!r}"
                 decision = ConfidentialAccessDecision.DENY
+
 
         receipt = {
             "actor_id": attempt.actor_id,

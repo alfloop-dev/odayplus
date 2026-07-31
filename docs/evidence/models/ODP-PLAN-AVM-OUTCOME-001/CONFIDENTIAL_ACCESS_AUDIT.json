@@ -1,9 +1,9 @@
 {
   "kind": "avm-confidential-access-audit-receipt",
-  "audited_at": "2026-07-31T12:12:58.010827+00:00",
+  "audited_at": "2026-07-31T12:38:00.566827+00:00",
   "total_access_attempts": 4,
-  "permitted_count": 2,
-  "denied_count": 2,
+  "permitted_count": 1,
+  "denied_count": 3,
   "audit_events": [
     {
       "actor_id": "usr-fin-001",
@@ -13,7 +13,7 @@
       "confidentiality_level": "HIGH",
       "decision": "PERMIT",
       "reason": "Access granted to confidential resource 'dealroom' for role <Role.FINANCE_LEGAL: 'finance_legal'>",
-      "evaluated_at": "2026-07-31T12:12:58.010909+00:00",
+      "evaluated_at": "2026-07-31T12:38:00.566880+00:00",
       "redacted_sample": "[REDACTED_CONFIDENTIAL_VALUE]"
     },
     {
@@ -24,7 +24,7 @@
       "confidentiality_level": "HIGH",
       "decision": "DENY",
       "reason": "Role 'regional_supervisor' is explicitly forbidden from high-confidentiality AVM outcome data",
-      "evaluated_at": "2026-07-31T12:12:58.010972+00:00",
+      "evaluated_at": "2026-07-31T12:38:00.566922+00:00",
       "redacted_sample": "[REDACTED_CONFIDENTIAL_VALUE]"
     },
     {
@@ -33,9 +33,9 @@
       "resource": "dealroom",
       "action": "export",
       "confidentiality_level": "HIGH",
-      "decision": "PERMIT",
-      "reason": "Access granted to confidential resource 'dealroom' for role <Role.PLATFORM_ADMIN: 'platform_admin'>",
-      "evaluated_at": "2026-07-31T12:12:58.011015+00:00",
+      "decision": "DENY",
+      "reason": "Access denied to resource 'dealroom' for role <Role.PLATFORM_ADMIN: 'platform_admin'>",
+      "evaluated_at": "2026-07-31T12:38:00.566950+00:00",
       "redacted_sample": "[REDACTED_CONFIDENTIAL_VALUE]"
     },
     {
@@ -46,7 +46,7 @@
       "confidentiality_level": "HIGH",
       "decision": "DENY",
       "reason": "Role 'franchisee' is explicitly forbidden from high-confidentiality AVM outcome data",
-      "evaluated_at": "2026-07-31T12:12:58.011043+00:00",
+      "evaluated_at": "2026-07-31T12:38:00.566971+00:00",
       "redacted_sample": "[REDACTED_CONFIDENTIAL_VALUE]"
     }
   ],
@@ -54,5 +54,5 @@
     "confidential_raw_values_masked": true,
     "zero_leak_verified": true
   },
-  "sha256": "2032cf3e5cf51af7d51feeedbc60f43202de0b503f7e2c364ccd6c7890d0ebc2"
+  "sha256": "f3b7e83e444ed254acfa5ba55fe21a090489ee3ae323e362778427b0e91c2be0"
 }

@@ -1,12 +1,12 @@
 # AVM Outcome Inventory Benchmark & Gate 1 Receipt
 
 - **Task ID**: `ODP-PLAN-AVM-OUTCOME-001`
-- **Evaluation Date**: `2026-07-31T12:12:58.010784+00:00`
+- **Evaluation Date**: `2026-07-31T12:38:00.566821+00:00`
 - **Verdict**: **❌ FAIL CLOSED**
 - **Model Version**: `dealroom-avm-baseline-v1`
-- **Dataset Snapshot ID**: `pg16-avm-outcome-snapshot-2026-07-31-v1`
-- **Dataset Snapshot SHA256**: `a1b2c3d4e5f60718293a4b5c6d7e8f901234567890abcdef1234567890abcdef`
-- **Model Artifact SHA256**: `b2c3d4e5f60718293a4b5c6d7e8f901234567890abcdef1234567890abcdef01`
+- **Dataset Snapshot ID**: `empty-snapshot-unpopulated`
+- **Dataset Snapshot SHA256**: `86d4b28ff48929469cc683ca9b2ce209c0831c266a6124b68c6ee701fe56ed96`
+- **Model Artifact SHA256**: `a2a47bcb23d13b714cda38544c1f1ba5d8b9fc2df0e770a1b20379f6c5197cfd`
 - **Relation**: `model_ready.valuation_view`
 - **Auto Seeded Rows**: `0` (Forbidden)
 - **Governed Disabled**: `True` (`DATA_CONTRACT_NOT_MATURE`)
@@ -45,10 +45,10 @@
 ## 3. Confidential Access Audit & RBAC Summary
 
 - **Audit Event Count**: `4`
-- **Permitted Accesses**: `2` (Roles: `FINANCE_LEGAL`, `SYSTEM_ADMIN`)
-- **Denied Accesses**: `2` (Roles: `REGIONAL_SUPERVISOR`, `FRANCHISEE`, `MARKETING_MANAGER`)
+- **Permitted Accesses**: `1` (Roles: `FINANCE_LEGAL`, `SYSTEM_ADMIN`)
+- **Denied Accesses**: `3` (Roles: `REGIONAL_SUPERVISOR`, `FRANCHISEE`, `MARKETING_MANAGER`)
 - **Zero Confidential Leak Verified**: `True`
-- **Audit Receipt SHA256**: `2032cf3e5cf51af7d51feeedbc60f43202de0b503f7e2c364ccd6c7890d0ebc2`
+- **Audit Receipt SHA256**: `f3b7e83e444ed254acfa5ba55fe21a090489ee3ae323e362778427b0e91c2be0`
 
 ---
 

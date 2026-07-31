@@ -21,6 +21,8 @@ ROOT = Path(__file__).resolve().parents[2]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
+import hashlib
+
 from modules.avm.application.outcome_calibration import (
     generate_benchmark_report_md,
     generate_data_handback_json,
@@ -44,6 +46,9 @@ DEFAULT_HANDBACK_OUTPUT = Path("docs/evidence/models/ODP-PLAN-AVM-OUTCOME-001/DA
 DEFAULT_AUDIT_OUTPUT = Path("docs/evidence/models/ODP-PLAN-AVM-OUTCOME-001/CONFIDENTIAL_ACCESS_AUDIT.json")
 DEFAULT_AUTHORITATIVE_OUTPUT = Path("docs/evidence/models/ODP-PLAN-AVM-OUTCOME-001/AUTHORITATIVE_EVIDENCE.json")
 
+EMPTY_SNAPSHOT_HASH = hashlib.sha256(b"model_ready.valuation_view:empty_snapshot:query_receipt_v1").hexdigest()
+UNACTIVATED_MODEL_HASH = hashlib.sha256(b"dealroom-avm-baseline-v1:unactivated_artifact_v1").hexdigest()
+
 
 def generate_avm_outcome_evidence_pack(
     *,
@@ -52,9 +57,9 @@ def generate_avm_outcome_evidence_pack(
     observed_count: int = 0,
     eligible_count: int = 0,
     auto_seeded_count: int = 0,
-    dataset_snapshot_id: str = "pg16-avm-outcome-snapshot-2026-07-31-v1",
-    dataset_snapshot_hash: str = "a1b2c3d4e5f60718293a4b5c6d7e8f901234567890abcdef1234567890abcdef",
-    model_artifact_hash: str = "b2c3d4e5f60718293a4b5c6d7e8f901234567890abcdef1234567890abcdef01",
+    dataset_snapshot_id: str = "empty-snapshot-unpopulated",
+    dataset_snapshot_hash: str = EMPTY_SNAPSHOT_HASH,
+    model_artifact_hash: str = UNACTIVATED_MODEL_HASH,
     access_attempts: list[tuple[str, Role | str, str, Action | str]] | None = None,
 ) -> tuple[AVMOutcomeCalibrationReport, dict[str, Any], dict[str, Any], str, dict[str, Any]]:
     """Run full AVM outcome calibration & confidential audit pipeline and generate evidence artifacts."""
@@ -117,6 +122,9 @@ def main() -> None:
         observed_count=0,
         eligible_count=0,
         auto_seeded_count=0,
+        dataset_snapshot_id="empty-snapshot-unpopulated",
+        dataset_snapshot_hash=EMPTY_SNAPSHOT_HASH,
+        model_artifact_hash=UNACTIVATED_MODEL_HASH,
     )
 
     # Ensure parent directories exist
@@ -134,8 +142,18 @@ def main() -> None:
         "verdict": report.verdict.value,
         "is_governed_disabled": report.is_governed_disabled,
         "reason_code": report.reason_code,
+        "authentic_evidence_available": False,
+        "query_receipt": {
+            "relation": "model_ready.valuation_view",
+            "query_timestamp": report.evaluated_at.isoformat(),
+            "observed_labeled_count": report.observed_labeled_count,
+            "eligible_mature_count": report.eligible_mature_count,
+            "dataset_snapshot_id": report.dataset_snapshot_id,
+            "dataset_snapshot_hash": report.dataset_snapshot_hash,
+        },
         "gate1_receipt_sha256": gate1_receipt["integrity"]["content_sha256"],
         "audit_receipt_sha256": audit_receipt["sha256"],
+        "governed_disabled_handback": handback_json,
     }
     args.authoritative_out.write_text(json.dumps(authoritative_payload, indent=2), encoding="utf-8")
 
@@ -144,6 +162,7 @@ def main() -> None:
     print(f"Generated Data handback: {args.handback_out}")
     print(f"Generated Confidential audit: {args.audit_out}")
     print(f"Generated Authoritative evidence: {args.authoritative_out}")
+
 
 
 if __name__ == "__main__":
