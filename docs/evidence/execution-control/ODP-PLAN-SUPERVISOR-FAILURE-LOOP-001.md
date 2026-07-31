@@ -486,3 +486,60 @@ restarted while OSS and Observability workers were active. Exact-head
 independent review, PR/CI, merge, worker drain, and a controlled Supervisor
 rollout remain required before the control fix can affect live dispatch. No
 production deployment was performed.
+
+---
+
+## 10. Coordinator completion addendum — R18
+
+The official one-shot `--claim-agent Antigravity7` path exposed the expected
+live consequence of the still-unrolled control branch: PID `61005` started for
+`ODP-PLAN-OBSERVABILITY-LIVE-001`, but the old singleton loop later saved a
+snapshot loaded before the claim and erased the worker record. The OS process
+remained live and the existing process-level duplicate guard prevented an
+immediate second Antigravity7 worker.
+
+The task branch already contains the prior R1/R9/R10 fix that performs a locked
+read/merge/write transaction and preserves concurrent worker and queue records;
+the live checkout does not yet contain it. R18 extends the same transaction
+contract to the new fairness state.
+
+### R18: versioned cursor merge
+
+Every singleton-loop cursor advance now records
+`ready_dispatcher.weighted_cursor_updated_at`. Runtime migration preserves and
+normalizes the timestamp. Concurrent state merge selects the most recently
+updated cursor; an auxiliary claim snapshot with no cursor update (or an older
+timestamp) cannot roll scheduling fairness backward while its new worker and
+queue records are still merged.
+
+The negative regression combines a newer disk cursor with a stale claim
+snapshot containing a newly launched Antigravity7 worker. The merge must retain
+both the newer cursor and the worker. Existing real two-process, terminal-state,
+queue-transition, duplicate-dispatch, and task-scoped isolation tests continue
+to pass.
+
+### R18 verification receipts
+
+```text
+AI_NAME=Codex6 PYTHONPATH=.orchestrator \
+  python3 -m unittest test_supervisor test_model_rotation \
+    test_adapter_fallback_policy test_runtime_state
+Ran 288 tests in 3.979s
+OK
+
+AI_NAME=Codex6 python3 -m unittest scripts.test_ai_status
+Ran 101 tests in 1.914s
+OK
+
+uv run ruff check .orchestrator/runtime_state.py \
+  .orchestrator/supervisor.py .orchestrator/test_runtime_state.py \
+  .orchestrator/test_supervisor.py
+All checks passed
+
+git diff --check
+clean
+```
+
+This closes the owner-side R17–R18 control batch. No live restart, PR, merge,
+or deployment was performed. Exact-head independent review and CI remain
+mandatory before the existing live process may be replaced.

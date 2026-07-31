@@ -104,11 +104,16 @@ class LoadRuntimeStateTests(unittest.TestCase):
         (self.root / "event-queue.jsonl").write_text("", encoding="utf-8")
         state = runtime_state.default_state()
         state["ready_dispatcher"]["weighted_cursor"] = 73
+        state["ready_dispatcher"]["weighted_cursor_updated_at"] = "2026-07-31T12:00:00Z"
 
         runtime_state.save_runtime_state(self.config, state)
         reloaded = runtime_state.load_runtime_state(self.config)
 
         self.assertEqual(reloaded["ready_dispatcher"]["weighted_cursor"], 73)
+        self.assertEqual(
+            reloaded["ready_dispatcher"]["weighted_cursor_updated_at"],
+            "2026-07-31T12:00:00Z",
+        )
 
     def test_ready_dispatch_weighted_cursor_migration_fails_safe(self) -> None:
         malformed_values = (
@@ -122,3 +127,28 @@ class LoadRuntimeStateTests(unittest.TestCase):
             with self.subTest(malformed=malformed):
                 migrated = runtime_state.migrate_state({"ready_dispatcher": malformed})
                 self.assertEqual(migrated["ready_dispatcher"]["weighted_cursor"], 0)
+
+    def test_concurrent_auxiliary_save_cannot_roll_back_weighted_cursor(self) -> None:
+        disk_state = runtime_state.default_state()
+        disk_state["ready_dispatcher"] = {
+            "weighted_cursor": 17,
+            "weighted_cursor_updated_at": "2026-07-31T12:00:00Z",
+        }
+        stale_claim_state = runtime_state.default_state()
+        stale_claim_state["ready_dispatcher"] = {
+            "weighted_cursor": 3,
+            "weighted_cursor_updated_at": "2026-07-31T11:59:00Z",
+        }
+        stale_claim_state["workers"]["antigravity7-live"] = {
+            "run_id": "antigravity7-live",
+            "status": "running",
+        }
+
+        merged = runtime_state.merge_runtime_states(disk_state, stale_claim_state)
+
+        self.assertEqual(merged["ready_dispatcher"]["weighted_cursor"], 17)
+        self.assertEqual(
+            merged["ready_dispatcher"]["weighted_cursor_updated_at"],
+            "2026-07-31T12:00:00Z",
+        )
+        self.assertIn("antigravity7-live", merged["workers"])

@@ -9557,6 +9557,7 @@ def dispatch_ready_tasks(
 
     if agent_sequence and considered_agents and not agent_ids_override:
         dispatch_state["weighted_cursor"] = (dispatch_cursor + considered_agents) % len(agent_sequence)
+        dispatch_state["weighted_cursor_updated_at"] = utc_now()
     return changed
 
 

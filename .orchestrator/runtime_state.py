@@ -34,6 +34,7 @@ def default_state() -> dict[str, Any]:
         # consume the per-tick budget forever and starve later reviewers.
         "ready_dispatcher": {
             "weighted_cursor": 0,
+            "weighted_cursor_updated_at": None,
         },
         "queue": {
             "events": {},
@@ -128,6 +129,10 @@ def migrate_state(raw: dict[str, Any] | None) -> dict[str, Any]:
         )
     except (TypeError, ValueError):
         ready_dispatcher["weighted_cursor"] = 0
+    cursor_updated_at = ready_dispatcher.get("weighted_cursor_updated_at")
+    ready_dispatcher["weighted_cursor_updated_at"] = (
+        cursor_updated_at if isinstance(cursor_updated_at, str) and cursor_updated_at else None
+    )
     state.setdefault("queue", {})
     state["queue"].setdefault("events", {})
     state.setdefault("workers", {})
@@ -392,6 +397,23 @@ def merge_runtime_states(disk_state: dict[str, Any], in_mem_state: dict[str, Any
     if not isinstance(disk_state, dict):
         return in_mem_state
     merged = deepcopy(in_mem_state)
+
+    # `--claim-agent` intentionally does not advance the global weighted
+    # cursor, but it can save a snapshot loaded before the singleton loop
+    # advanced it. Preserve whichever writer actually updated the cursor most
+    # recently. Legacy/equal snapshots prefer disk so an auxiliary writer can
+    # never roll scheduling fairness backward.
+    disk_dispatcher = disk_state.get("ready_dispatcher")
+    mem_dispatcher = merged.get("ready_dispatcher")
+    if isinstance(disk_dispatcher, dict):
+        disk_cursor_at = str(disk_dispatcher.get("weighted_cursor_updated_at") or "")
+        mem_cursor_at = (
+            str(mem_dispatcher.get("weighted_cursor_updated_at") or "")
+            if isinstance(mem_dispatcher, dict)
+            else ""
+        )
+        if not mem_cursor_at or disk_cursor_at >= mem_cursor_at:
+            merged["ready_dispatcher"] = deepcopy(disk_dispatcher)
 
     disk_workers = disk_state.get("workers", {})
     if isinstance(disk_workers, dict):
