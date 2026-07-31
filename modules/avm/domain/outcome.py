@@ -310,6 +310,7 @@ class AVMOutcomeCalibrationReport:
     dataset_snapshot_id: str
     dataset_snapshot_hash: str
     model_artifact_hash: str
+    population_keys_sha256: str = ""
     authentic_data_activated: bool = False
     evaluated_at: datetime = field(default_factory=lambda: datetime.now(UTC))
 
@@ -334,6 +335,7 @@ class AVMOutcomeCalibrationReport:
             "dataset_snapshot_id": self.dataset_snapshot_id,
             "dataset_snapshot_hash": self.dataset_snapshot_hash,
             "model_artifact_hash": self.model_artifact_hash,
+            "population_keys_sha256": self.population_keys_sha256,
             "authentic_data_activated": self.authentic_data_activated,
             "evaluated_at": self.evaluated_at.isoformat(),
         }
@@ -559,15 +561,15 @@ def compute_avm_outcome_calibration(
     )
 
     aligned_count = len(aligned_pairs)
+    expected_pop_sha = (
+        hashlib.sha256(",".join(sorted(p.transaction_id for p in aligned_pairs)).encode("utf-8")).hexdigest()
+        if aligned_pairs
+        else ""
+    )
 
     # B19 & B25 & M2: Query source receipt verification bound to exact snapshot population
     query_receipt_verified = False
     if query_source_receipt is not None:
-        expected_pop_sha = (
-            hashlib.sha256(",".join(sorted(p.transaction_id for p in aligned_pairs)).encode("utf-8")).hexdigest()
-            if aligned_pairs
-            else ""
-        )
         query_receipt_verified = query_source_receipt.verify_query_receipt(
             expected_snapshot_hash=dataset_snapshot_hash,
             expected_snapshot_id=dataset_snapshot_id,
@@ -616,6 +618,7 @@ def compute_avm_outcome_calibration(
             dataset_snapshot_id=dataset_snapshot_id,
             dataset_snapshot_hash=dataset_snapshot_hash,
             model_artifact_hash=model_artifact_hash,
+            population_keys_sha256=expected_pop_sha,
             authentic_data_activated=authentic_data_activated,
         )
 
@@ -754,5 +757,6 @@ def compute_avm_outcome_calibration(
         dataset_snapshot_id=dataset_snapshot_id,
         dataset_snapshot_hash=dataset_snapshot_hash,
         model_artifact_hash=model_artifact_hash,
+        population_keys_sha256=expected_pop_sha,
         authentic_data_activated=authentic_data_activated,
     )

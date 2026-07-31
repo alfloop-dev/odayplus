@@ -132,10 +132,43 @@ def verify_audit_receipt(
     if permitted_count < 0 or denied_count < 0 or (permitted_count + denied_count != total_attempts):
         return False
 
-    # B24: Recompute event decisions/counts from audit_events
-    recomputed_permitted = sum(1 for e in events if isinstance(e, dict) and e.get("decision") == "PERMIT")
-    recomputed_denied = sum(1 for e in events if isinstance(e, dict) and e.get("decision") == "DENY")
-    if permitted_count != recomputed_permitted or denied_count != recomputed_denied:
+    # B24 & B27: Recompute event decisions/counts and reverify identity proof & access authority for all audit events
+    from modules.dealroom.domain.confidential_access import (
+        CANONICAL_HUMAN_OPS_ACTIVATION_KEY,
+        create_identity_proof,
+    )
+
+    valid_permitted = 0
+    valid_denied = 0
+
+    for e in events:
+        if not isinstance(e, dict):
+            return False
+        dec = e.get("decision")
+        if dec == "PERMIT":
+            actor_id = str(e.get("actor_id", ""))
+            role_str = str(e.get("role", ""))
+            tenant_id = str(e.get("tenant_id", "tenant-avm-001"))
+            proof = str(e.get("identity_proof_sha256", ""))
+            if not actor_id or not role_str or not proof:
+                return False
+            if role_str not in ("FINANCE_LEGAL", "PLATFORM_ADMIN", "finance_legal", "platform_admin"):
+                return False
+            try:
+                expected_proof = create_identity_proof(
+                    actor_id, role_str, tenant_id, authority_key=CANONICAL_HUMAN_OPS_ACTIVATION_KEY
+                )
+            except Exception:
+                return False
+            if proof != expected_proof:
+                return False
+            valid_permitted += 1
+        elif dec == "DENY":
+            valid_denied += 1
+        else:
+            return False
+
+    if permitted_count != valid_permitted or denied_count != valid_denied:
         return False
 
     # B24: Require authorized access evidence (must have >= 1 permitted access by an authorized role)

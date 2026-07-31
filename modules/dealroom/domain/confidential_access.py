@@ -104,7 +104,7 @@ def assert_no_confidential_leak(payload: Any, *, forbidden_raw_values: Sequence[
                 if k in forbidden_keys:
                     if v != REDACTED_PLACEHOLDER and v != "[NONE]":
                         raise ConfidentialLeakError(
-                            f"Raw confidential field {k!r} with value {v!r} leaked in payload"
+                            f"Confidential price field pattern {k!r} with value {v!r} leaked in payload"
                         )
                 _check_obj(v)
         elif isinstance(obj, list):
@@ -263,6 +263,7 @@ class ConfidentialAccessAuditor:
             "confidentiality_level": confidentiality.value,
             "decision": decision.value,
             "reason": reason,
+            "tenant_id": tenant_id,
             "evaluated_at": datetime.now(UTC).isoformat(),
             "identity_proof_sha256": provided_proof if verified_identity else "",
             "redacted_sample": REDACTED_PLACEHOLDER,

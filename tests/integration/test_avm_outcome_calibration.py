@@ -946,3 +946,80 @@ def test_m4_gate1_receipt_generator_rejects_omitted_or_forged_receipts_for_pass_
             activation_receipt=activation_rcpt,
             query_source_receipt=query_rcpt,
         )
+
+
+def test_b27_forged_audit_event_with_invalid_identity_proof_fails_closed() -> None:
+    """B27: Audit receipt containing forged identity_proof_sha256 on PERMIT event must fail verification and calibration."""
+    import hashlib
+    import json
+
+    audit_rcpt = _make_valid_audit_receipt()
+    # Attacker mutates identity_proof_sha256 to forged value
+    audit_rcpt["audit_events"][0]["identity_proof_sha256"] = "attacker-forged-identity-proof"
+    body = {k: v for k, v in audit_rcpt.items() if k != "sha256"}
+    audit_rcpt["sha256"] = hashlib.sha256(json.dumps(body, sort_keys=True, separators=(",", ":")).encode("utf-8")).hexdigest()
+
+    assert verify_audit_receipt(audit_rcpt, expected_snapshot_hash=VALID_DATASET_HASH) is False
+
+    aligned = _make_balanced_aligned_pairs(120)
+    activation_rcpt = create_avm_activation_receipt(VALID_DATASET_HASH, VALID_MODEL_HASH)
+    query_rcpt = _make_valid_query_receipt()
+
+    report = compute_avm_outcome_calibration(
+        aligned,
+        observed_count=120,
+        eligible_count=120,
+        dataset_snapshot_id="snapshot-002",
+        dataset_snapshot_hash=VALID_DATASET_HASH,
+        model_artifact_hash=VALID_MODEL_HASH,
+        activation_receipt=activation_rcpt,
+        audit_receipt=audit_rcpt,
+        query_source_receipt=query_rcpt,
+    )
+
+    assert report.is_governed_disabled is True
+    assert report.verdict == AVMVerdict.FAIL_CLOSED
+    assert report.reason_code == "ACCESS_AUDIT_NOT_VERIFIED"
+
+
+def test_b28_gate1_generator_rejects_query_receipt_with_mismatched_population_keys() -> None:
+    """B28: Gate 1 receipt generator must reject a replacement query receipt with population keys differing from canonical report."""
+    aligned = _make_balanced_aligned_pairs(120)
+    activation_rcpt = create_avm_activation_receipt(VALID_DATASET_HASH, VALID_MODEL_HASH)
+    audit_rcpt = _make_valid_audit_receipt()
+    query_rcpt = _make_valid_query_receipt()
+
+    pass_report = compute_avm_outcome_calibration(
+        aligned,
+        observed_count=120,
+        eligible_count=120,
+        dataset_snapshot_id="snapshot-002",
+        dataset_snapshot_hash=VALID_DATASET_HASH,
+        model_artifact_hash=VALID_MODEL_HASH,
+        activation_receipt=activation_rcpt,
+        audit_receipt=audit_rcpt,
+        query_source_receipt=query_rcpt,
+    )
+    assert pass_report.verdict == AVMVerdict.PASS
+    assert pass_report.population_keys_sha256 != ""
+
+    # Replacement query receipt signed over 120 attacker keys (population hash differs from canonical)
+    attacker_keys = [f"attacker-tx-key-{i}" for i in range(120)]
+    attacker_query_rcpt = create_avm_query_source_receipt(
+        dataset_snapshot_id="snapshot-002",
+        dataset_snapshot_hash=VALID_DATASET_HASH,
+        observed_labeled_count=120,
+        eligible_mature_count=120,
+        population_keys=attacker_keys,
+    )
+
+    with pytest.raises(AVMOutcomeValidationError, match="population-mismatched"):
+        generate_gate1_benchmark_receipt(
+            pass_report,
+            dataset_snapshot_id="snapshot-002",
+            dataset_snapshot_hash=VALID_DATASET_HASH,
+            model_artifact_hash=VALID_MODEL_HASH,
+            audit_receipt=audit_rcpt,
+            activation_receipt=activation_rcpt,
+            query_source_receipt=attacker_query_rcpt,
+        )
