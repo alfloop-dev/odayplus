@@ -897,6 +897,12 @@ def load_state() -> dict[str, Any]:
     if not STATUS_FILE.exists() or STATUS_FILE.read_text(encoding="utf-8").strip() == "":
         return default_state()
     state = json.loads(STATUS_FILE.read_text(encoding="utf-8"))
+    state.setdefault("agents", [])
+    state.setdefault("handoffs", [])
+    state.setdefault("blockers", [])
+    state.setdefault("sprint", "2026-04-09-canonical-adoption-platform-plan")
+    state.setdefault("project", "pantheon")
+    state.setdefault("objective", "Pantheon execution")
     sync_canonical_document_metadata(state)
     normalize_state_agents(state)
     return state
