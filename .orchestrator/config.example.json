@@ -408,6 +408,41 @@
       "wake_template": ".orchestrator/templates/wakeup.txt",
       "file_inbox_path": ".llm-inbox/antigravity2.md"
     },
+    "antigravity3": {
+      "display_name": "Antigravity3",
+      "provider": "antigravity",
+      "adapter": "antigravity",
+      "wake_template": ".orchestrator/templates/wakeup.txt",
+      "file_inbox_path": ".llm-inbox/antigravity3.md"
+    },
+    "antigravity4": {
+      "display_name": "Antigravity4",
+      "provider": "antigravity",
+      "adapter": "antigravity",
+      "wake_template": ".orchestrator/templates/wakeup.txt",
+      "file_inbox_path": ".llm-inbox/antigravity4.md"
+    },
+    "antigravity5": {
+      "display_name": "Antigravity5",
+      "provider": "antigravity",
+      "adapter": "antigravity",
+      "wake_template": ".orchestrator/templates/wakeup.txt",
+      "file_inbox_path": ".llm-inbox/antigravity5.md"
+    },
+    "antigravity6": {
+      "display_name": "Antigravity6",
+      "provider": "antigravity",
+      "adapter": "antigravity",
+      "wake_template": ".orchestrator/templates/wakeup.txt",
+      "file_inbox_path": ".llm-inbox/antigravity6.md"
+    },
+    "antigravity7": {
+      "display_name": "Antigravity7",
+      "provider": "antigravity",
+      "adapter": "antigravity",
+      "wake_template": ".orchestrator/templates/wakeup.txt",
+      "file_inbox_path": ".llm-inbox/antigravity7.md"
+    },
     "codex": {
       "display_name": "Codex",
       "provider": "codex",
