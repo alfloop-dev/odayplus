@@ -235,6 +235,11 @@ class FixedManagementApprovalReceiptVerifier:
         principal_id: str,
         principal_role: str,
     ) -> None:
+        fixed_identity = (source_system, principal_id, principal_role)
+        if any(not value.strip() or value.strip().upper() == "ANY" for value in fixed_identity):
+            raise ValueError(
+                "approval source system, principal, and role must be fixed non-wildcard values"
+            )
         self._receipts = dict(receipts)
         self._source_system = source_system
         self._principal_id = principal_id
@@ -289,6 +294,8 @@ class FixedManagementApprovalReceiptVerifier:
             violations.append("approval_issued_in_future")
         elif expires_at is not None and expires_at <= evaluation_time:
             violations.append("approval_expired")
+        if issued_at is not None and expires_at is not None and expires_at <= issued_at:
+            violations.append("approval_time_window_invalid")
 
         exact_matches = {
             "approval_scenario_mismatch": receipt.scenario_id == expectation.scenario_id,

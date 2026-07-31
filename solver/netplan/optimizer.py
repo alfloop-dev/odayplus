@@ -661,6 +661,20 @@ def _verify_solve_result(
             violations.append("infeasible_result_has_selected_actions")
         if not _near(solve_result.objective_value, 0.0):
             violations.append("solve_objective_mismatch")
+        if any(
+            (
+                not _near(solve_result.expected_gross_margin, 0.0),
+                not _near(solve_result.budget_usage, 0.0),
+                not _near(solve_result.average_risk, 0.0),
+                solve_result.capacity_delta != 0,
+                bool(solve_result.action_counts),
+                bool(solve_result.binding_constraints),
+                bool(solve_result.alternatives),
+            )
+        ):
+            violations.append("infeasible_result_metrics_mismatch")
+        if solve_result.solver_version != SOLVER_VERSION:
+            violations.append("solver_version_mismatch")
         expected_diagnostics = {
             diagnosis.violated_constraint
             for diagnosis in diagnose_infeasible(options_by_entity, constraints)

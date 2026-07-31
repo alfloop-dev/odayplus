@@ -1,160 +1,149 @@
-# Task Completion & Management Acceptance Packet: ODP-PLAN-NETPLAN-ACCEPTANCE-001
+# NetPlan Technical Acceptance Packet: ODP-PLAN-NETPLAN-ACCEPTANCE-001
 
-This document provides product-grade management acceptance and verification evidence for task **ODP-PLAN-NETPLAN-ACCEPTANCE-001**: *完成 NetPlan hard constraint 與管理驗收*.
+## 1. Scope and current gate
 
-## 1. Task Metadata
+- Task owner: `Codex2`
+- Reviewer: `Codex`
+- Phase: `P1 Optimization Readiness`
+- Dependency complete: `ODP-PLAN-SOLVER-RUNTIME-COMPAT-001`
+- Human gate: `ODP-PLAN-NETPLAN-BASELINE-APPROVAL-001` remains pending
+- Technical verdict: **PASS — ready for independent review**
+- Business UAT verdict: **BUSINESS_UAT_UNVERIFIED**
+- Governance/activation verdict: **GOVERNED_DISABLED**
 
-- **Task ID**: `ODP-PLAN-NETPLAN-ACCEPTANCE-001`
-- **Title**: 完成 NetPlan hard constraint 與管理驗收
-- **Owner**: `Antigravity2`
-- **Reviewer**: `Claude`
-- **Phase**: P1 Optimization Readiness
-- **Program ID**: `ODP-PLAN-GAP-CLOSEOUT-2026-07-30`
-- **Gap ID**: `GAP-P1-006`
-- **Primary Dependencies**: `ODP-PLAN-SOLVER-RUNTIME-COMPAT-001` (done)
+This task delivers fail-closed mechanics only. It does not create, simulate, or
+claim the separate Human/Ops management approval. No checked-in receipt is
+authoritative. Test receipts exercise the verifier contract and do not satisfy
+the business gate.
 
----
+## 2. Acceptance results
 
-## 2. Executive Summary & Acceptance Criteria Verification
-
-| Acceptance Criterion | Verification Verdict | Evidence Summary |
+| Criterion | Technical result | Evidence |
 |---|---|---|
-| **100% Hard Constraints** | **PASS** | Enforces 5 hard constraint types: budget ceiling (`max_budget`), gross margin floor (`min_expected_gross_margin`), capacity delta floor (`min_capacity_delta`), average risk ceiling (`max_average_risk`), and per-action min/max counts (`min_action_counts`, `max_action_counts`). Dedicated, tested infeasibility diagnosis logic exists for 100% of hard constraints (including `max_average_risk` -> `max_average_risk` and `max_action_counts` -> `max_action_counts.<action>`), eliminating generic fallbacks for individual constraint failures. |
-| **Superiority over Baseline** | **PASS** | Evaluated against a named immutable approved management baseline input (`ManagementBaselineInput`) carrying canonical SHA256 hashing over exact actions, entity domain, source snapshot IDs, constraints, and risk penalty. Authenticated via `Human/Ops` approval checks (`validate_authentic_approval()`). Enforces exact set equality, solve-result binding, and strict non-superiority (`superior_or_equal=False`) whenever the baseline is invalid, unverified, domain-mismatched, or infeasible. Generates structured comparison receipt (`ManagementBaselineComparisonReceipt`). |
-| **Explainable Infeasibility & Alternatives** | **PASS** | If a scenario is infeasible, the solver returns structured diagnostics detailing `violated_constraint`, `affected_stores`, `required_relaxation`, `business_impact`, and `suggested_action` without auto-relaxing limits. Dedicated diagnosis branches cover 100% of hard constraint types across both OR-Tools (`optimizer.py`) and CVXPY (`robust.py`). Top rank-ordered alternative plans are returned for feasible solves. |
-| **Scenario Provenance & Metadata** | **PASS** | Tracks `source_snapshot_ids`, `policy_version`, `model_version`, `feature_version`, `engine` metadata across OR-Tools (authoritative MIP), CVXPY (robust scenario solver), and Pymoo (frontier solver). |
-| **Management Acceptance Packet** | **PASS** | Full end-to-end lifecycle verification (DRAFT → SOLVED → PENDING_APPROVAL → APPROVED → EXECUTED → OUTCOME_OBSERVED → CLOSED) complete with non-repudiable audit trails and authentic `Human/Ops` approval gates (`is_authentic_human_ops_actor()`). |
+| Hard constraints | PASS | Budget, expected gross margin, capacity delta, average risk, and min/max action counts are enforced and independently rechecked. Dedicated infeasibility diagnosis covers each family. |
+| Selected option and result integrity | PASS | Comparison rejects options not present in `options_by_entity`, duplicate/missing entities, infeasible selections, forged status/objective/metrics/counts/bindings, solver-version drift, malformed alternatives, and false optimality. |
+| Immutable binding | PASS | Scenario, source snapshots, baseline content, actions/domain, solver problem, full solver result, approval receipt, and comparison output each have deterministic SHA-256 bindings. |
+| Authoritative approval | TECHNICAL PASS / HUMAN PENDING | A fixed verifier resolves an immutable receipt by exact ID and binds one source system, named principal, exact role, active decision, approval reference, strict UTC issue/expiry, scenario, baseline, scope, release, policy, actions/domain, source snapshots, baseline hash, solver problem hash, and receipt integrity hash. |
+| Actor-string trust | PASS | No `startswith("Human/Ops")` or actor allow-list grants approval. Lifecycle approval requires successful authoritative receipt readback; `actor_id` is only an audit identity and must equal the verified principal. |
+| Superiority claim | FAIL-CLOSED UNTIL HUMAN GATE | Missing/unresolved/mismatched approval, invalid baseline, infeasible baseline, forged solve result, or non-superior result always emits `superior_or_equal=false`, `BUSINESS_UAT_UNVERIFIED`, and `GOVERNED_DISABLED`. |
+| Alternatives and infeasibility | PASS | Feasible alternatives are independently matched to the exact problem options and metrics. Infeasible results must match independently recomputed status, zero-result fields, and diagnosis constraint set. |
 
----
+## 3. Trust boundary
 
-## 3. NetPlan Solver & Application Architecture
+`ManagementBaselineInput` is caller data. It contains baseline content and an
+approval receipt lookup ID, but it contains no trusted approver, decision,
+approval reference, or timing assertion.
 
-The NetPlan subsystem is structured across discrete, isolated layers to guarantee deterministic execution and ABI safety:
+`FixedManagementApprovalReceiptVerifier` is injected at the application
+composition boundary. It rejects blank and wildcard authority configuration,
+rejects receipt IDs `ANY` and `UNVERIFIED`, and resolves only its fixed receipt
+readback map. Validation compares recomputed caller baseline/problem hashes
+against the immutable expected hashes in the resolved receipt. It never
+validates caller data by hashing that same caller data as its own authority.
 
-### 3.1 Primitive & Solver Layer (`solver/netplan/`)
-- **`model.py`**: Pure domain primitives defining `NetworkAction` (OPEN, KEEP, IMPROVE, MOVE, EXIT), `ActionOption`, `NetPlanConstraints`, `InfeasibilityDiagnosis`, `ManagementBaselineInput` (with canonical SHA256 hashing and authentic `Human/Ops` validation), and `ManagementBaselineComparisonReceipt` (with canonical, problem, and result hashes).
-- **`optimizer.py`**: CP-SAT / SCIP MIP solver via OR-Tools. Enumerates action options, enforces all 5 hard constraints, extracts binding constraints, performs dedicated infeasibility diagnosis across all 100% constraint types, and executes deterministic fail-closed baseline comparison via `compare_solver_against_management_baseline()`.
-- **`robust.py`**: CVXPY robust optimization solver supporting `WEIGHTED_EXPECTED`, `MAX_MIN`, and `CVAR` objective functions under scenario uncertainty, equipped with dedicated diagnostics for all robust constraints (`AVERAGE_RISK_INFEASIBLE`, `CAPACITY_DELTA_INFEASIBLE`, `ACTION_COUNT_MIN_INFEASIBLE`, `ACTION_COUNT_MAX_INFEASIBLE`, `SCENARIO_FLOOR_INFEASIBLE`, `BUDGET_INFEASIBLE`).
+`NetPlanService.decide()` cannot enter `APPROVED` without this verifier and a
+receipt matching the exact solved scenario and selected actions. `ApprovalRecord`
+derives verification state from the resolved receipt and its integrity hash,
+not from an actor prefix.
 
-### 3.2 ABI Isolation Layer (`solver/process_isolation.py`)
-- **`solver/process_isolation.py`**: Native C++ ABI isolation runner preventing symbol conflicts between OR-Tools (`libortools`) and CVXPY/HiGHS (`highspy`). This module lives at the `solver/` top level, not inside `solver/netplan/`.
+Production must leave the verifier unconfigured until
+`ODP-PLAN-NETPLAN-BASELINE-APPROVAL-001` supplies a real approval-system
+readback and the composition root binds it to the expected source, principal,
+and role.
 
-### 3.3 Production Application Module (`modules/netplan/`)
-- **`application/planning.py` & `production.py`**: Coordinates multi-engine solves across OR-Tools (authoritative MIP), CVXPY (robust scenario analysis), and Pymoo (multi-objective Pareto frontier).
-- **`application/planning.py`**: Governs scenario lifecycle status transitions, ensuring infeasible plans cannot proceed to approval, enforcing authentic `Human/Ops` authorization in `decide()`, and logging actor/reason audit records at every transition. Lifecycle enforcement is also present in `modules/netplan/domain/planning.py`.
-- **`infrastructure/`**: In-memory and SQL persistence adapters for scenarios, solves, approvals, executions, and realized outcome tracking.
+## 4. Independent recomputation
 
----
+`compare_solver_against_management_baseline()` performs these checks before a
+superiority claim:
 
-## 4. Test Verification & Verification Command Results
+1. Recompute the exact solver problem hash from all options, constraints,
+   policy version, and risk penalty.
+2. Resolve and verify the immutable management approval receipt.
+3. Enumerate the feasible candidate set independently of the submitted result.
+4. Match every selected `ActionOption` by full value to the exact entity option
+   domain.
+5. Recompute feasibility, objective, gross margin, budget, average risk,
+   capacity, action counts, binding constraints, alternatives, and optimality.
+6. Recompute baseline feasibility/objective from the exact approved actions.
+7. Emit an immutable comparison receipt. Any mismatch fails closed before
+   superiority or governance enablement.
 
-### 4.1 Canonical Verification Command
-```bash
-/home/lupin/oday-plus/.venv/bin/pytest -q tests -k "netplan or ortools or robust" && git diff --check
+The solver result hash covers the full serialized result, including status,
+selected actions, all metrics, alternatives, infeasibility state, diagnostics,
+and solver version.
+
+## 5. Default no-authority evidence
+
+The deterministic acceptance scenario, evaluated with no authoritative
+verifier configured, produced:
+
+```json
+{
+  "actions_domain_hash": "93b876165302ddc9218fd928de585ca64553c663b1b83f833a20399141c729f3",
+  "approval_receipt_hash": "",
+  "approval_verified": false,
+  "baseline_canonical_hash": "c05eb43b7db3058ab0473936f9553ccf2b94b0eda464693910c9a31221fd824b",
+  "baseline_constraint_violations": [
+    "authoritative_approval_verifier_missing"
+  ],
+  "business_uat_status": "BUSINESS_UAT_UNVERIFIED",
+  "comparison_output_hash": "bbb49bede9e5a280874719e53577cc87d69ecdfe32a9d6fde9443ccfc2633070",
+  "governance_status": "GOVERNED_DISABLED",
+  "scenario_hash": "5d5a8e46c542d01e3473129b14e642b4fadf8da2f885b7379b17172b0d350d00",
+  "solver_problem_hash": "51822ae2261338de87911dd191367c57446103e91b006bffc4e738c3d2aaabb5",
+  "solver_result_hash": "a9e5460598c9628deee6276fb8bd0edd1cdfca1a734f555b4c456d93ff6d7121",
+  "source_snapshot_hash": "0d890996db54db068331f8a969a8329e3ffaa892782e19002687ea0603f8ac54",
+  "superior_or_equal": false
+}
 ```
 
-This command collects **13 tests** from `tests/` (the top-level test root only):
+These are technical fixture hashes, not management approval evidence. The empty
+approval receipt hash is intentional and proves the current no-authority state.
 
-| Suite | Tests |
-|---|---|
-| `tests/integration/test_netplan_solver.py` | 11 |
-| `tests/contract/test_operator_network_rebalance_api.py` | 1 |
-| `tests/integration/test_operator_canonical_wiring.py` | 1 |
+## 6. Mutation coverage
 
-### 4.2 Canonical Command Verbatim Output
-```text
-.............                                                            [100%]
-=============================== warnings summary ===============================
-.venv/lib/python3.12/site-packages/fastapi/testclient.py:1
-  /tmp/pantheon-worker-worktrees/oday-plus-supervisor-live/odp-plan-netplan-acceptance-001/.venv/lib/python3.12/site-packages/fastapi/testclient.py:1: StarletteDeprecationWarning: Using `httpx` with `starlette.testclient` is deprecated; install `httpx2` instead.
-    from starlette.testclient import TestClient as TestClient  # noqa
+The integration suite rejects:
 
--- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
-13 passed in 19.42s
-```
+- actor-prefix spoofing and approval without an injected verifier;
+- arbitrary, missing, `ANY`, and `UNVERIFIED` receipt IDs;
+- wildcard authority source/principal/role configuration;
+- wrong source system, principal, role, decision, scenario, baseline, policy,
+  scope, release, actions/domain, source snapshots, baseline hash, problem hash,
+  or receipt integrity hash;
+- blank approval reference or issue time;
+- non-UTC, future-issued, expired, or invalid receipt time windows;
+- entity-ID-only solve substitutions;
+- forged selected option values, objective, status, feasibility flag, action
+  counts, result metrics, alternatives, and optimality claims.
 
-### 4.3 Supplementary Explicit Runs
+## 7. Verification
 
-The suites below live outside `tests/` or cover additional contracts. They were run explicitly and all passed:
+Executed on task branch head derived from anchor `a8f6ed12`:
 
-**Supplementary command:**
 ```bash
-/home/lupin/oday-plus/.venv/bin/pytest -q \
-  tests/integration/test_netplan_solver.py \
-  solver/netplan/tests/test_robust.py \
-  modules/netplan/tests/test_netplan_production_execution.py \
-  tests/solver/test_runtime_compat.py \
-  --tb=no
-```
+uv run pytest -q tests/integration/test_netplan_solver.py --tb=short
+# 44 parameterized cases passed
 
-#### Suite A: `tests/integration/test_netplan_solver.py` (14 tests)
-- `test_scenario_builder_and_solver_return_optimal_plan_with_alternatives`: PASSED
-- `test_infeasible_scenario_reports_structured_diagnosis_without_relaxing`: PASSED
-- `test_service_lifecycle_tracks_approval_execution_and_outcome`: PASSED
-- `test_infeasible_scenario_cannot_skip_to_approval`: PASSED
-- `test_batch_worker_solves_multiple_scenarios_and_persists_results`: PASSED
-- `test_management_baseline_comparison_deterministic_proof`: PASSED
-- `test_infeasible_management_baseline_identified_with_violations`: PASSED
-- `test_unverified_baseline_approval_rejected_in_comparison`: PASSED
-- `test_baseline_extra_entities_domain_mismatch_fails_comparison`: PASSED
-- `test_unbound_solve_result_fails_comparison`: PASSED
-- `test_unauthorized_actor_decide_raises_approval_error`: PASSED
-- `test_infeasible_max_average_risk_has_dedicated_diagnosis`: PASSED
-- `test_infeasible_max_action_counts_has_dedicated_diagnosis`: PASSED
+uv run pytest -q tests -k "netplan or ortools or robust" --tb=short
+# 46 tests passed; exit 0
 
-#### Suite B: `solver/netplan/tests/test_robust.py` (7 tests)
-- `test_cvxpy_weighted_and_max_min_objectives_choose_different_actions`: PASSED
-- `test_cvxpy_cvar_contract_controls_lower_tail`: PASSED
-- `test_cvxpy_infeasible_scenario_floor_has_diagnostics`: PASSED
-- `test_missing_cvxpy_fails_closed`: PASSED
-- `test_missing_mixed_integer_backend_fails_closed`: PASSED
-- `test_cvxpy_infeasible_max_average_risk_has_dedicated_diagnostics`: PASSED
-- `test_cvxpy_infeasible_max_action_counts_has_dedicated_diagnostics`: PASSED
+uv run pytest -q tests -k "netplan or management_baseline or solver" --tb=short
+# 58 tests passed; exit 0
 
-#### Suite C: `modules/netplan/tests/test_netplan_production_execution.py` (2 tests)
-- `test_production_netplan_executes_all_three_oss_contracts`: PASSED
-- `test_production_netplan_runtime_failure_leaves_scenario_draft`: PASSED
+uv run ruff check tests modules apps shared models solver pipelines infra
+# All checks passed
 
-#### Suite D: `tests/solver/test_runtime_compat.py` (10 tests — full list)
-- `test_process_isolation_runner_executes_solvers_without_abi_conflict`: PASSED
-- `test_both_same_process_orders_reproduce_abi_conflict_and_isolation_fixes_both`: PASSED
-- `test_inspect_oss_capability_executes_real_import_and_minimal_solve`: PASSED
-- `test_probe_package_in_isolation_explicit_highs_solve`: PASSED
-- `test_process_isolation_raises_error_on_process_crash`: PASSED
-- `test_process_isolation_large_payload_stdin_transport`: PASSED
-- `test_process_isolation_stdout_flushed_logs_do_not_corrupt_result`: PASSED
-- `test_learninghub_exposes_installed_oss_engine_versions_ready`: PASSED
-- `test_probe_package_in_isolation_reports_unavailable_when_highs_missing`: PASSED
-- `test_process_isolation_timeout_reaps_child_process`: PASSED
-
-### 4.4 Combined Verification Summary
-
-| Run | Command Scope | Tests | Result |
-|---|---|---|---|
-| Canonical | `tests/ -k "netplan or ortools or robust"` | 13 | **13 PASSED** |
-| Supplementary A | `tests/integration/test_netplan_solver.py` | 14 | **14 PASSED** |
-| Supplementary B | `solver/netplan/tests/test_robust.py` | 7 | **7 PASSED** |
-| Supplementary C | `modules/netplan/tests/test_netplan_production_execution.py` | 2 | **2 PASSED** |
-| Supplementary D | `tests/solver/test_runtime_compat.py` | 10 | **10 PASSED** |
-| **Total Unique** | | **33** | **33 PASSED** |
-
-### 4.5 Whitespace Check
-```bash
 git diff --check
+# clean
 ```
-Clean — exit 0, no trailing whitespace or whitespace errors.
 
----
+The exact counts are pass counts for the stated commands; no suites outside the
+stated roots are attributed to them.
 
-## 5. Decision & Release Recommendation
+## 8. Handoff
 
-All hard constraints, infeasibility explanations, scenario provenance, fail-closed management baseline comparison receipts, authentic `Human/Ops` approval checks, and lifecycle management contracts for **ODP-PLAN-NETPLAN-ACCEPTANCE-001** are 100% verified.
-
-- **Coordinator Re-audit (Management Baseline & Explainability)**: Fully resolved:
-  1. `compare_solver_against_management_baseline()` evaluates named immutable management baseline input receipts (`ManagementBaselineInput`) carrying SHA256 canonical hashing over actions, domain, source snapshots, constraints, and risk penalty. Requires authentic `Human/Ops` approval (`validate_authentic_approval()`), exact entity domain set equality, and solve-result binding.
-  2. Strict non-superiority (`superior_or_equal=False`) enforced whenever baseline is infeasible, unverified, domain-mismatched, or invalid.
-  3. Authentic `Human/Ops` authorization enforced in `decide()` (`is_authentic_human_ops_actor()`).
-  4. Comprehensive negative tests added for unverified approval, domain mismatch, unbound solve result, unauthorized decide actor, and baseline infeasibility.
-  5. Dedicated, tested infeasibility diagnosis logic implemented in both `optimizer.py` and `robust.py` for 100% of hard constraints (`max_average_risk`, `max_action_counts`, `min_capacity_delta`, `max_budget`, `min_expected_gross_margin`, `min_action_counts`).
-
-**Verdict**: **ACCEPTANCE COMPLETE**
+Technical implementation may be reviewed and merged while the human gate is
+pending. Merge does not authorize NetPlan activation or a management
+superiority claim. Activation requires a separate, real authoritative receipt
+from `ODP-PLAN-NETPLAN-BASELINE-APPROVAL-001`, followed by exact readback and
+hash verification through this contract.

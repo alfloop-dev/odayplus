@@ -588,6 +588,19 @@ def test_arbitrary_receipt_ids_fail_closed(
     assert receipt.governance_status == GOVERNED_DISABLED
 
 
+@pytest.mark.parametrize("field", ["source_system", "principal_id", "principal_role"])
+def test_authority_configuration_rejects_wildcards(field: str) -> None:
+    values = {
+        "source_system": APPROVAL_SOURCE,
+        "principal_id": APPROVAL_PRINCIPAL,
+        "principal_role": APPROVAL_ROLE,
+    }
+    values[field] = "ANY"
+
+    with pytest.raises(ValueError, match="fixed non-wildcard"):
+        FixedManagementApprovalReceiptVerifier(receipts={}, **values)
+
+
 @pytest.mark.parametrize(
     ("changes", "expected_violation"),
     [
@@ -600,6 +613,7 @@ def test_arbitrary_receipt_ids_fail_closed(
         ({"issued_at": "2026-06-01T00:00:00+08:00"}, "approval_issued_at_invalid"),
         ({"issued_at": "2026-07-01T00:00:00Z"}, "approval_issued_in_future"),
         ({"expires_at": "2026-06-28T08:59:59Z"}, "approval_expired"),
+        ({"expires_at": "2026-05-01T00:00:00Z"}, "approval_time_window_invalid"),
         ({"expires_at": "2026-08-01T00:00:00+00:00"}, "approval_expires_at_invalid"),
         ({"scope": "tenant:other"}, "approval_scope_mismatch"),
         ({"release_id": "2026Q4"}, "approval_release_mismatch"),
@@ -638,6 +652,36 @@ def test_authoritative_receipt_mutations_fail_closed(
     assert receipt.superior_or_equal is False
     assert expected_violation in receipt.baseline_constraint_violations
     assert receipt.business_uat_status == BUSINESS_UAT_UNVERIFIED
+    assert receipt.governance_status == GOVERNED_DISABLED
+
+
+def test_caller_baseline_mutation_cannot_redefine_expected_hashes() -> None:
+    options = build_scenario_options(existing_stores=_stores(), candidate_sites=_sites())
+    constraints = _constraints()
+    solve_result = solve_network_plan(options_by_entity=options, constraints=constraints)
+    approved_baseline = _management_baseline()
+    authority_receipt = _approval_receipt(approved_baseline, options, constraints)
+    caller_mutation = replace(
+        approved_baseline,
+        actions_by_entity={
+            **approved_baseline.actions_by_entity,
+            "store-001": NetworkAction.EXIT,
+        },
+    )
+
+    receipt = _compare(
+        options=options,
+        constraints=constraints,
+        solve_result=solve_result,
+        baseline=caller_mutation,
+        receipt=authority_receipt,
+    )
+
+    assert receipt.superior_or_equal is False
+    assert {
+        "approval_actions_domain_mismatch",
+        "approval_baseline_hash_mismatch",
+    } <= set(receipt.baseline_constraint_violations)
     assert receipt.governance_status == GOVERNED_DISABLED
 
 

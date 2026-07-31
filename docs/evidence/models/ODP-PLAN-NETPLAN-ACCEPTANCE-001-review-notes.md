@@ -123,3 +123,21 @@ qualify §2 or open a follow-up to add the two branches.
 Owner corrects F1–F5 in `docs/evidence/models/ODP-PLAN-NETPLAN-ACCEPTANCE-001.md`
 and addresses O1–O2 either inline or as a noted follow-up, then hands the task
 back for re-review. No source change is required.
+
+---
+
+## 5. 2026-07-31 reopen addendum
+
+This file preserves the earlier review of commit `8da5e2b8`. It is not the
+current acceptance decision.
+
+The task was subsequently reopened with owner `Codex2` and reviewer `Codex`
+after a deeper trust-boundary review found that actor-prefix checks, self-hashed
+caller approval data, and entity-ID-only result matching were not sufficient.
+The current remediation is anchored at `a8f6ed12` and is documented in
+`ODP-PLAN-NETPLAN-ACCEPTANCE-001.md`.
+
+The current handoff is technical only. Authentic management baseline approval
+remains exclusively owned by `ODP-PLAN-NETPLAN-BASELINE-APPROVAL-001`; until
+that receipt exists and passes authoritative readback, the release state is
+`BUSINESS_UAT_UNVERIFIED / GOVERNED_DISABLED`.
