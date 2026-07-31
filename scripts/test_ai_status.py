@@ -3084,6 +3084,57 @@ class StatusCheckEmissionTests(unittest.TestCase):
                 ai_status.clear_ai_status_caches()
                 self.assertIsNone(ai_status.resolve_task_sha(task_id))
 
+    def test_resolve_task_sha_bypasses_warm_cache_on_remote_change_removal_or_failure(self) -> None:
+        task_id = "ODP-CACHE-TEST-001"
+        sha_initial = "a" * 40
+        sha_updated = "b" * 40
+
+        # Step 1: Initial call returns sha_initial and populates cache
+        mock_res1 = mock.Mock(returncode=0, stdout=f"{sha_initial}\trefs/heads/task/{task_id}\n")
+        with mock.patch("subprocess.run", return_value=mock_res1):
+            first_sha = ai_status.resolve_task_sha(task_id)
+            self.assertEqual(first_sha, sha_initial)
+
+        # Step 2: Remote branch is updated (force-push to sha_updated). Must return sha_updated, NOT cached sha_initial.
+        mock_res2 = mock.Mock(returncode=0, stdout=f"{sha_updated}\trefs/heads/task/{task_id}\n")
+        with mock.patch("subprocess.run", return_value=mock_res2):
+            second_sha = ai_status.resolve_task_sha(task_id)
+            self.assertEqual(second_sha, sha_updated)
+
+        # Step 3: Remote branch is removed/deleted. Must fail closed (return None), NOT cached sha_updated.
+        mock_res3 = mock.Mock(returncode=0, stdout="")
+        with mock.patch("subprocess.run", return_value=mock_res3):
+            third_sha = ai_status.resolve_task_sha(task_id)
+            self.assertIsNone(third_sha)
+
+        # Step 4: Remote origin command fails (network/git error). Must fail closed (return None), NOT cached sha_updated.
+        mock_res4 = mock.Mock(returncode=1, stdout="")
+        with mock.patch("subprocess.run", return_value=mock_res4):
+            fourth_sha = ai_status.resolve_task_sha(task_id)
+            self.assertIsNone(fourth_sha)
+
+    def test_resolve_task_sha_accepts_exact_40_and_64_hex_lengths(self) -> None:
+        task_id = "ODP-HEX-001"
+        sha_40 = "a" * 40
+        sha_64 = "f" * 64
+
+        mock_40 = mock.Mock(returncode=0, stdout=f"{sha_40}\trefs/heads/task/{task_id}\n")
+        with mock.patch("subprocess.run", return_value=mock_40):
+            ai_status.clear_ai_status_caches()
+            self.assertEqual(ai_status.resolve_task_sha(task_id), sha_40)
+
+        mock_64 = mock.Mock(returncode=0, stdout=f"{sha_64}\trefs/heads/task/{task_id}\n")
+        with mock.patch("subprocess.run", return_value=mock_64):
+            ai_status.clear_ai_status_caches()
+            self.assertEqual(ai_status.resolve_task_sha(task_id), sha_64)
+
+        for invalid_len in (39, 41, 63, 65):
+            bad_sha = "c" * invalid_len
+            mock_bad = mock.Mock(returncode=0, stdout=f"{bad_sha}\trefs/heads/task/{task_id}\n")
+            with self.subTest(invalid_len=invalid_len), mock.patch("subprocess.run", return_value=mock_bad):
+                ai_status.clear_ai_status_caches()
+                self.assertIsNone(ai_status.resolve_task_sha(task_id))
+
     def test_emit_task_review_status_check_approved(self) -> None:
         task = {"id": "ODP-001", "reviewer": "Codex", "approved_head": "sha123"}
         mock_run = mock.Mock()

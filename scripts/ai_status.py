@@ -5095,11 +5095,6 @@ def command_wave(state: dict[str, Any], args: list[str]) -> None:
 
 def resolve_task_sha(task_id: str, max_age_seconds: float = 5.0) -> str | None:
     now = time.time()
-    if task_id in _TASK_SHA_CACHE:
-        ts, val = _TASK_SHA_CACHE[task_id]
-        if now - ts < max_age_seconds:
-            return val
-
     branch_names = [f"task/{task_id}", f"task-{task_id}"]
 
     remote_refs = [f"refs/heads/{branch_name}" for branch_name in branch_names]
