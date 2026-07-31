@@ -5100,7 +5100,58 @@ def resolve_task_sha(task_id: str, max_age_seconds: float = 5.0) -> str | None:
         if now - ts < max_age_seconds:
             return val
 
-    # 1. Fallback/Primary: gh pr view for task/TASK-ID (checks remote PR head SHA)
+    # 1. Primary: Try git rev-parse for current HEAD if current branch matches task_id
+    current_branch_result = subprocess.run(
+        ["git", "branch", "--show-current"],
+        capture_output=True,
+        text=True,
+        check=False,
+        cwd=ROOT,
+    )
+    if current_branch_result.returncode == 0:
+        current_branch = current_branch_result.stdout.strip()
+        if current_branch and task_id.lower() in current_branch.lower():
+            result = subprocess.run(
+                ["git", "rev-parse", "HEAD"],
+                capture_output=True,
+                text=True,
+                check=False,
+                cwd=ROOT,
+            )
+            if result.returncode == 0 and result.stdout.strip():
+                sha = result.stdout.strip()
+                _TASK_SHA_CACHE[task_id] = (now, sha)
+                return sha
+
+    # 2. Try git rev-parse for local task branches
+    for branch_name in [f"task/{task_id}", f"task-{task_id}"]:
+        result = subprocess.run(
+            ["git", "rev-parse", "--verify", branch_name],
+            capture_output=True,
+            text=True,
+            check=False,
+            cwd=ROOT,
+        )
+        if result.returncode == 0 and result.stdout.strip():
+            sha = result.stdout.strip()
+            _TASK_SHA_CACHE[task_id] = (now, sha)
+            return sha
+
+    # 3. Try git rev-parse for remote tracking branches
+    for branch_name in [f"origin/task/{task_id}", f"origin/task-{task_id}"]:
+        result = subprocess.run(
+            ["git", "rev-parse", "--verify", branch_name],
+            capture_output=True,
+            text=True,
+            check=False,
+            cwd=ROOT,
+        )
+        if result.returncode == 0 and result.stdout.strip():
+            sha = result.stdout.strip()
+            _TASK_SHA_CACHE[task_id] = (now, sha)
+            return sha
+
+    # 4. Fallback: gh pr view for task/TASK-ID (checks remote PR head SHA)
     for branch_name in [f"task/{task_id}", f"task-{task_id}"]:
         result = subprocess.run(
             [get_gh_executable(), "pr", "view", branch_name, "--json", "headRefOid"],
@@ -5118,57 +5169,6 @@ def resolve_task_sha(task_id: str, max_age_seconds: float = 5.0) -> str | None:
                     return sha
             except Exception:
                 pass
-
-    # 2. Try git rev-parse for local branches
-    for branch_name in [f"task/{task_id}", f"task-{task_id}"]:
-        result = subprocess.run(
-            ["git", "rev-parse", "--verify", branch_name],
-            capture_output=True,
-            text=True,
-            check=False,
-            cwd=ROOT,
-        )
-        if result.returncode == 0 and result.stdout.strip():
-            sha = result.stdout.strip()
-            _TASK_SHA_CACHE[task_id] = (now, sha)
-            return sha
-
-    # 3. Try git rev-parse for current HEAD if current branch matches task_id
-    current_branch_result = subprocess.run(
-        ["git", "branch", "--show-current"],
-        capture_output=True,
-        text=True,
-        check=False,
-        cwd=ROOT,
-    )
-    if current_branch_result.returncode == 0:
-        current_branch = current_branch_result.stdout.strip()
-        if task_id.lower() in current_branch.lower():
-            result = subprocess.run(
-                ["git", "rev-parse", "HEAD"],
-                capture_output=True,
-                text=True,
-                check=False,
-                cwd=ROOT,
-            )
-            if result.returncode == 0 and result.stdout.strip():
-                sha = result.stdout.strip()
-                _TASK_SHA_CACHE[task_id] = (now, sha)
-                return sha
-
-    # 4. Try git rev-parse for remote branches
-    for branch_name in [f"origin/task/{task_id}", f"origin/task-{task_id}"]:
-        result = subprocess.run(
-            ["git", "rev-parse", "--verify", branch_name],
-            capture_output=True,
-            text=True,
-            check=False,
-            cwd=ROOT,
-        )
-        if result.returncode == 0 and result.stdout.strip():
-            sha = result.stdout.strip()
-            _TASK_SHA_CACHE[task_id] = (now, sha)
-            return sha
 
     _TASK_SHA_CACHE[task_id] = (now, None)
     return None

@@ -365,6 +365,13 @@ class DetectWorkerFailureTests(unittest.TestCase):
 
         self.assertIsNone(supervisor.detect_worker_failure(worker))
 
+    def test_auto_reassigned_log_summary_quoted_auth_ignored(self) -> None:
+        """Verify auto-reassigned notes quoting auth or permission errors are not misclassified as live worker failures."""
+        worker = self._worker_for_log(
+            "next: Auto-reassigned ownership from Gemini2 after repeated Gemini2 auth: not authenticated\n"
+        )
+        self.assertIsNone(supervisor.detect_worker_failure(worker))
+
     def test_classifies_gemini_capacity_failure(self) -> None:
         config = {"worker_retry": {"transient_error_patterns": ["429", "resource_exhausted", "rate limit"]}}
         worker = {"provider": "gemini"}
@@ -10918,6 +10925,28 @@ class SupervisorFailureLoopCoverageTests(unittest.TestCase):
                     "no longer eligible" in message or "task state changed" in message,
                     message,
                 )
+
+    def test_resolve_task_sha_precedence_over_merged_pr(self) -> None:
+        """Verify active task branch / current HEAD takes precedence over stale merged PRs."""
+        task_id = "TEST-BRANCH-PRECEDENCE-001"
+        ai_status.clear_ai_status_caches()
+
+        def fake_run(cmd, **kwargs):
+            cmd_str = " ".join(cmd)
+            if "branch --show-current" in cmd_str:
+                return unittest.mock.Mock(returncode=0, stdout=f"task/{task_id}\n")
+            if "rev-parse HEAD" in cmd_str:
+                return unittest.mock.Mock(returncode=0, stdout="2222222222222222222222222222222222222222\n")
+            if "pr view" in cmd_str:
+                return unittest.mock.Mock(
+                    returncode=0,
+                    stdout=json.dumps({"headRefOid": "1111111111111111111111111111111111111111"}),
+                )
+            return unittest.mock.Mock(returncode=1, stdout="")
+
+        with unittest.mock.patch("subprocess.run", side_effect=fake_run):
+            resolved = ai_status.resolve_task_sha(task_id)
+            self.assertEqual(resolved, "2222222222222222222222222222222222222222")
 
 
 if __name__ == "__main__":
