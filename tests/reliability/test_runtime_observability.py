@@ -3485,3 +3485,81 @@ def test_round16_remediation_findings_b1_b2_b3_negative_mutations_and_positive_v
     finally:
         verifier_server.shutdown()
         verifier_server.server_close()
+
+    # 8. Round 21 Negative Mutation Verification (Finding B1): Full same-process composition replacement.
+    # Replacing canonical verifier URL, pinned verifier key, class default provider transport, and urllib opener
+    # in-process MUST NEVER evaluate to DELIVERED.
+    attacker_key = ed25519.Ed25519PrivateKey.generate()
+    attacker_public_pem = attacker_key.public_key().public_bytes(
+        encoding=serialization.Encoding.PEM,
+        format=serialization.PublicFormat.SubjectPublicKeyInfo,
+    ).decode("utf-8")
+
+    def caller_provider_transport_r21(_url: str, _payload: dict) -> tuple[int, dict]:
+        return 200, {"provider_receipt_id": "caller-provider-receipt-r21"}
+
+    class CallerVerifierResponseR21:
+        status = 200
+
+        def __init__(self, url: str, body: bytes) -> None:
+            self._url = url
+            self._body = body
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return False
+
+        def geturl(self) -> str:
+            return self._url
+
+        def read(self) -> bytes:
+            return self._body
+
+    class CallerVerifierOpenerR21:
+        def open(self, request, timeout=5):
+            request_payload = json.loads(request.data.decode("utf-8"))
+            response_timestamp = datetime.now(UTC).isoformat()
+            response_status = "VERIFIED"
+            signature_payload = (
+                "verifier_resp:"
+                f"{request_payload['delivery_id']}:"
+                f"{request_payload['provider_receipt_id']}:"
+                f"{request_payload['request_hash']}:"
+                f"{request_payload['release_sha']}:"
+                f"{request_payload['nonce']}:"
+                f"{response_timestamp}:"
+                f"{response_status}"
+            ).encode()
+            response_payload = {
+                "delivery_id": request_payload["delivery_id"],
+                "provider_receipt_id": request_payload["provider_receipt_id"],
+                "request_hash": request_payload["request_hash"],
+                "release_sha": request_payload["release_sha"],
+                "nonce": request_payload["nonce"],
+                "timestamp": response_timestamp,
+                "verifier_status": response_status,
+                "verifier_signature": base64.b64encode(
+                    attacker_key.sign(signature_payload)
+                ).decode("utf-8"),
+            }
+            return CallerVerifierResponseR21(
+                request.full_url,
+                json.dumps(response_payload).encode("utf-8"),
+            )
+
+    attacker_verifier_url = "https://caller-verifier.evil.example/verify"
+    monkeypatch.setattr("modules.notifications.infrastructure.adapters.CANONICAL_PINNED_EXTERNAL_VERIFIER_URL", attacker_verifier_url)
+    monkeypatch.setattr("modules.notifications.infrastructure.adapters.PINNED_EXTERNAL_VERIFIER_PUBLIC_KEY_PEM", attacker_public_pem)
+    monkeypatch.setattr(OnCallNotificationAdapter, "_default_http_transport", staticmethod(caller_provider_transport_r21))
+    import urllib.request
+    monkeypatch.setattr(urllib.request, "build_opener", lambda *_args, **_kwargs: CallerVerifierOpenerR21())
+    monkeypatch.setenv("REQUIRE_EXTERNAL_VERIFICATION", "true")
+
+    adapter_r21 = OnCallNotificationAdapter()
+    ok_r21, err_r21 = adapter_r21.send("n_r21_mut", "webhook", "ops-lead", "Round 21", "Full composition replacement")
+    assert ok_r21 is True
+    receipt_r21 = adapter_r21.delivery_receipts[-1]
+    assert receipt_r21["status"] == "PENDING_VERIFICATION"
+    assert receipt_r21["status"] != "DELIVERED"

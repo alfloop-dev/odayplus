@@ -517,11 +517,7 @@ class OnCallNotificationAdapter:
             )
 
         http_success = 200 <= http_status < 300
-        if http_success and has_external_verification:
-            delivery_status = "DELIVERED"
-            is_success = True
-            error_msg = None
-        elif http_success:
+        if http_success:
             require_ext = os.getenv("REQUIRE_EXTERNAL_VERIFICATION", "").strip().lower() in {"1", "true"}
             delivery_status = "PENDING_VERIFICATION" if require_ext else "TEST_ONLY"
             is_success = True
