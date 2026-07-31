@@ -95,9 +95,8 @@ ALLOWLISTED_VAULT_PATHS = {
 }
 
 
-def _validate_and_load_authority_key_internal(
+def validate_and_load_authority_key(
     key_file_path: Path | str | None,
-    is_test_seam: bool = False,
 ) -> tuple[str | None, str | None]:
     """Validate key file path, ownership, mode, symlink status, and vault provenance.
 
@@ -124,24 +123,20 @@ def _validate_and_load_authority_key_internal(
     # 2. Repository-local secret prohibition check for production
     try:
         resolved.relative_to(ROOT)
-        if not is_test_seam:
-            return (
-                None,
-                f"Authority key file '{key_file_path}' (resolved: '{resolved}') is located inside repository root '{ROOT}'. "
-                "Repository-local authority secrets are strictly forbidden in production.",
-            )
+        return (
+            None,
+            f"Authority key file '{key_file_path}' (resolved: '{resolved}') is located inside repository root '{ROOT}'. "
+            "Repository-local authority secrets are strictly forbidden in production.",
+        )
     except ValueError:
         pass
 
     # 3. Vault path allowlist check (fail closed on arbitrary env/caller paths in production)
     is_allowlisted = False
-    if is_test_seam:
-        is_allowlisted = True
-    else:
-        for vp in ALLOWLISTED_VAULT_PATHS:
-            if resolved == vp or vp in resolved.parents:
-                is_allowlisted = True
-                break
+    for vp in ALLOWLISTED_VAULT_PATHS:
+        if resolved == vp or vp in resolved.parents:
+            is_allowlisted = True
+            break
 
     if not is_allowlisted:
         return (
@@ -181,17 +176,6 @@ def _validate_and_load_authority_key_internal(
         return None, f"Authority key file '{resolved}' contains empty or insufficient key length (min 16 chars)."
 
     return raw_key, None
-
-
-def validate_and_load_authority_key(
-    key_file_path: Path | str | None,
-) -> tuple[str | None, str | None]:
-    """Validate key file path, ownership, mode, symlink status, and vault provenance.
-
-    Returns:
-        (key_string, error_message)
-    """
-    return _validate_and_load_authority_key_internal(key_file_path, is_test_seam=False)
 
 
 class AuthoritativeReceiptVerifier:
@@ -280,11 +264,23 @@ class AuthoritativeReceiptVerifier:
         return validate_and_load_authority_key(key_path)
 
     def _check_manifest_path_provenance(self, manifest_path: Path) -> tuple[bool, str | None]:
+        resolved = manifest_path.resolve()
         try:
-            manifest_path.resolve().relative_to(ROOT)
+            resolved.relative_to(ROOT)
             return False, f"Authority manifest file '{manifest_path}' is inside repository root (repository-local secrets forbidden in production)."
         except ValueError:
-            return True, None
+            pass
+
+        is_allowlisted = False
+        for vp in ALLOWLISTED_VAULT_PATHS:
+            if resolved == vp or vp in resolved.parents:
+                is_allowlisted = True
+                break
+
+        if not is_allowlisted:
+            return False, f"Authority manifest file '{manifest_path}' is not located in an allowlisted vault directory."
+
+        return True, None
 
     def _load_and_verify_manifest(self, manifest_path: Path) -> tuple[bool, dict[str, str] | None, str | None]:
         if manifest_path.is_symlink():
@@ -317,20 +313,6 @@ class AuthoritativeReceiptVerifier:
             return False, None, "Manifest expected_digests is not an object schema."
 
         return True, exp_digs, None
-
-
-class TestAuthoritativeReceiptVerifier(AuthoritativeReceiptVerifier):
-    """Test-only verifier subclass for unit tests using temporary key/manifest files.
-
-    This subclass overrides key loading and manifest path checks to allow temporary vault directories
-    during test execution. It MUST NOT be used in production code.
-    """
-
-    def _load_authority_key(self, key_path: Path | str) -> tuple[str | None, str | None]:
-        return _validate_and_load_authority_key_internal(key_path, is_test_seam=True)
-
-    def _check_manifest_path_provenance(self, manifest_path: Path) -> tuple[bool, str | None]:
-        return True, None
 
     def verify(self, ref_str: str, receipt_data: dict, entry: dict) -> tuple[bool, str | None]:
         if not self.authority_key:

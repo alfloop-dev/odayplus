@@ -1355,6 +1355,29 @@ def test_round8_b3_fake_person_and_unresolved_active_receipts_rejected(tmp_path:
         finally:
             sbom_mod.EXEMPTIONS_PATH = orig_path
 
+sys.path.insert(0, str(ROOT))
+from scripts.security.exemption_validator import AuthoritativeReceiptVerifier
+
+
+class TestAuthoritativeReceiptVerifier(AuthoritativeReceiptVerifier):
+    """Test-only verifier subclass defined exclusively inside test code for unit test fixtures."""
+
+    __test__ = False
+
+    def _load_authority_key(self, key_path: Path | str) -> tuple[str | None, str | None]:
+        kf = Path(key_path)
+        if kf.is_symlink():
+            return None, "Symlink forbidden"
+        if not kf.exists() or not kf.is_file():
+            return None, "Key file missing or not regular file"
+        raw_key = kf.read_text(encoding="utf-8").strip()
+        if not raw_key or len(raw_key) < 16:
+            return None, "Key file empty or insufficient length"
+        return raw_key, None
+
+    def _check_manifest_path_provenance(self, manifest_path: Path) -> tuple[bool, str | None]:
+        return True, None
+
 
 def make_test_verifier(
     tmp_path: Path,
@@ -1364,9 +1387,6 @@ def make_test_verifier(
 ) -> Any:
     import hashlib
     import hmac
-
-    sys.path.insert(0, str(ROOT))
-    from scripts.security.exemption_validator import TestAuthoritativeReceiptVerifier
 
     vault_dir = tmp_path / "test_vault"
     vault_dir.mkdir(parents=True, exist_ok=True)
@@ -2043,8 +2063,6 @@ def test_round11_b2_unbound_policy_version_and_digest_mismatches_rejected(tmp_pa
     """B2 — policy_version ATTACKER-VERSION, missing expected_digests, and caller-controlled digests must be rejected."""
     sys.path.insert(0, str(ROOT))
     from scripts.security.exemption_validator import (
-        AuthoritativeReceiptVerifier,
-        TestAuthoritativeReceiptVerifier,
         compute_canonical_receipt_hash,
         compute_file_sha256,
         compute_policy_hash,
@@ -2155,19 +2173,17 @@ def test_round11_b4_release_attestation_unbound_fail_closed() -> None:
 def test_round13_b1_key_path_symlink_and_unrestrictive_mode_rejected(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """B1 — Key file path must be in allowlisted vault, not a symlink, and have restrictive 0o600 permissions."""
     sys.path.insert(0, str(ROOT))
-    from scripts.security.exemption_validator import (
-        _validate_and_load_authority_key_internal,
-        validate_and_load_authority_key,
-    )
+    import scripts.security.exemption_validator as ev_mod
+    from scripts.security.exemption_validator import validate_and_load_authority_key
 
     # 1. Arbitrary caller-selected tmp_path outside vault allowlist -> REJECTED in production mode
     arbitrary_key = tmp_path / "arbitrary_caller.key"
     arbitrary_key.write_text("a" * 32, encoding="utf-8")
     raw_key, err = validate_and_load_authority_key(arbitrary_key)
     assert raw_key is None
-    assert "not located in an allowlisted vault directory" in err or "inside repository root" in err
+    assert "not located in an allowlisted vault directory" in (err or "") or "inside repository root" in (err or "")
 
-    # 2. Symlink key file inside test vault -> REJECTED
+    # 2. Symlink key file -> REJECTED
     vault_dir = tmp_path / "test_vault"
     vault_dir.mkdir(parents=True, exist_ok=True)
 
@@ -2180,18 +2196,19 @@ def test_round13_b1_key_path_symlink_and_unrestrictive_mode_rejected(tmp_path: P
         symlink_key.unlink()
     symlink_key.symlink_to(real_key)
 
-    raw_key, err = _validate_and_load_authority_key_internal(symlink_key, is_test_seam=True)
+    raw_key, err = validate_and_load_authority_key(symlink_key)
     assert raw_key is None
-    assert "is a symlink" in err
+    assert "is a symlink" in (err or "")
 
-    # 3. Unrestrictive permissions 0o644 inside test vault -> REJECTED
+    # 3. Unrestrictive permissions 0o644 -> REJECTED even when inside allowlisted vault
     bad_mode_key = vault_dir / f"bad_mode_{tmp_path.name}.key"
     bad_mode_key.write_text("c" * 32, encoding="utf-8")
     bad_mode_key.chmod(0o644)
 
-    raw_key, err = _validate_and_load_authority_key_internal(bad_mode_key, is_test_seam=True)
+    monkeypatch.setattr(ev_mod, "ALLOWLISTED_VAULT_PATHS", {vault_dir.resolve()})
+    raw_key, err = validate_and_load_authority_key(bad_mode_key)
     assert raw_key is None
-    assert "unrestrictive permissions" in err
+    assert "unrestrictive permissions" in (err or "")
 
     # Clean up test keys
     symlink_key.unlink(missing_ok=True)
@@ -2202,7 +2219,6 @@ def test_round13_b1_key_path_symlink_and_unrestrictive_mode_rejected(tmp_path: P
 def test_round13_b2_unauthenticated_free_expected_digests_dict_rejected(tmp_path: Path) -> None:
     """B2 — Free caller-supplied expected digests without a matching authenticated authority manifest are rejected."""
     sys.path.insert(0, str(ROOT))
-    from scripts.security.exemption_validator import TestAuthoritativeReceiptVerifier
 
     vault_dir = tmp_path / "test_vault"
     vault_dir.mkdir(parents=True, exist_ok=True)
@@ -2413,3 +2429,147 @@ def test_round15_b1_no_public_production_constructor_arg_trusts_repo_local_key_o
     finally:
         test_key_file.unlink(missing_ok=True)
         manifest_file.unlink(missing_ok=True)
+
+
+def test_round16_b1_no_production_module_symbol_bypasses_provenance(tmp_path: Path) -> None:
+    """Round 16 — Production module scripts.security.exemption_validator exports zero test seams or subclasses, and no symbol in exemption_validator can trust a repository-local key or manifest."""
+    sys.path.insert(0, str(ROOT))
+    import hashlib
+    import hmac
+    import inspect
+
+    import scripts.security.exemption_validator as ev_mod
+
+    # 1. Assert TestAuthoritativeReceiptVerifier is not present in exemption_validator module
+    assert not hasattr(ev_mod, "TestAuthoritativeReceiptVerifier"), (
+        "scripts.security.exemption_validator MUST NOT export TestAuthoritativeReceiptVerifier"
+    )
+
+    # 2. Assert no internal bypass helper with is_test_seam or allow_test_vault exists
+    assert not hasattr(ev_mod, "_validate_and_load_authority_key_internal"), (
+        "scripts.security.exemption_validator MUST NOT export _validate_and_load_authority_key_internal"
+    )
+
+    # 3. Assert no function or class in exemption_validator has any test-seam parameter
+    for attr_name in dir(ev_mod):
+        attr = getattr(ev_mod, attr_name)
+        if inspect.isfunction(attr) or inspect.isclass(attr):
+            try:
+                sig = inspect.signature(attr)
+                for param in sig.parameters:
+                    assert param not in {"is_test_seam", "allow_test_vault", "is_test", "test_mode", "bypass"}, (
+                        f"Symbol '{attr_name}' in exemption_validator contains test seam parameter '{param}'"
+                    )
+            except (ValueError, TypeError):
+                pass
+
+    # 4. Perform mutation attempt importing ONLY symbols from scripts.security.exemption_validator
+    repo_local_dir = ROOT / "docs/security"
+    test_key_file = repo_local_dir / f"repo_local_test_key_r16_{tmp_path.name}.key"
+    test_key = "a" * 32
+    test_key_file.write_text(test_key, encoding="utf-8")
+    test_key_file.chmod(0o600)
+
+    digs = {
+        "source_digest": "a" * 40,
+        "release_digest": "b" * 64,
+        "sbom_digest": "c" * 64,
+        "evidence_report_digest": "d" * 64,
+        "python_lock_digest": "e" * 64,
+        "npm_lock_digest": "f" * 64,
+    }
+    manifest_payload = {
+        "manifest_version": "1.0.0",
+        "policy_name": "ODP-PLAN-OSS-LEGAL-POLICY-001",
+        "policy_version": "1.0.0",
+        "source_system": "ODP-PLAN-OSS-LEGAL-POLICY-001",
+        "expected_digests": digs,
+    }
+    canon_json = json.dumps(manifest_payload, sort_keys=True, separators=(",", ":"))
+    canon_hash = hashlib.sha256(canon_json.encode("utf-8")).hexdigest()
+    sig = hmac.new(test_key.encode("utf-8"), canon_hash.encode("utf-8"), hashlib.sha256).hexdigest()
+
+    manifest = dict(manifest_payload)
+    manifest["canonical_manifest_hash"] = canon_hash
+    manifest["signature"] = sig
+
+    manifest_file = repo_local_dir / f"repo_local_manifest_r16_{tmp_path.name}.json"
+    manifest_file.write_text(json.dumps(manifest), encoding="utf-8")
+    manifest_file.chmod(0o600)
+
+    try:
+        # Every production class/function must reject repository-local key and manifest
+        verifier = ev_mod.AuthoritativeReceiptVerifier(
+            authority_key_file=test_key_file,
+            authority_manifest_path=manifest_file,
+        )
+        assert verifier.authority_key is None
+        assert "located inside repository root" in (verifier.key_error or "")
+        assert verifier.has_complete_expected_digests is False
+
+        raw_key, err = ev_mod.validate_and_load_authority_key(test_key_file)
+        assert raw_key is None
+        assert "located inside repository root" in (err or "")
+
+        # Attempting to resolve an active entry using production AuthoritativeReceiptVerifier fails
+        receipt_dir = repo_local_dir / "receipts"
+        receipt_dir.mkdir(exist_ok=True)
+        r_file = receipt_dir / f"POLICY-R16-TEST-{tmp_path.name}.json"
+        r_payload = {
+            "approval_ref": f"POLICY-R16-TEST-{tmp_path.name}",
+            "principal_id": "p1",
+            "principal_role": "Legal Counsel",
+            "approved_by": "Jane Doe (Legal Counsel)",
+            "source_system": "ODP-PLAN-OSS-LEGAL-POLICY-001",
+            "policy_decision": "approved",
+            "policy_name": "ODP-PLAN-OSS-LEGAL-POLICY-001",
+            "policy_version": "1.0.0",
+            "policy_hash": ev_mod.compute_policy_hash(),
+            "scope": "prod",
+            "issued_at": "2026-07-01T00:00:00Z",
+            "reviewed_at": "2026-07-01T00:00:00Z",
+            "expires_at": "2026-12-31T23:59:59Z",
+            "package_name": "psycopg",
+            "package_purl": "pkg:pypi/psycopg@3.3.4",
+            "source_digest": digs["source_digest"],
+            "release_digest": digs["release_digest"],
+            "sbom_digest": digs["sbom_digest"],
+            "python_lock_digest": digs["python_lock_digest"],
+            "npm_lock_digest": digs["npm_lock_digest"],
+            "evidence_report_digest": digs["evidence_report_digest"],
+        }
+        r_hash = ev_mod.compute_canonical_receipt_hash(r_payload)
+        r_sig = ev_mod.compute_receipt_signature(r_hash, test_key)
+        r_payload["canonical_receipt_hash"] = r_hash
+        r_payload["signature"] = r_sig
+        r_file.write_text(json.dumps(r_payload), encoding="utf-8")
+
+        entry = {
+            "package_name": "psycopg",
+            "purl": "pkg:pypi/psycopg@3.3.4",
+            "approved_by": "Jane Doe (Legal Counsel)",
+            "approval_reference": f"POLICY-R16-TEST-{tmp_path.name}",
+            "issued_at": "2026-07-01T00:00:00Z",
+            "expires_at": "2026-12-31T23:59:59Z",
+            "reason": "Production r16 mutation test",
+            "status": "active",
+            "scope": "prod",
+        }
+
+        res_ok, res_err = ev_mod.resolve_approval_reference(
+            f"POLICY-R16-TEST-{tmp_path.name}",
+            entry,
+            base_dir=repo_local_dir,
+            verifier_fn=verifier,
+        )
+        assert not res_ok
+        assert (
+            "cannot self-establish authority" in (res_err or "")
+            or "No authority key file path" in (res_err or "")
+            or "located inside repository root" in (res_err or "")
+        )
+    finally:
+        test_key_file.unlink(missing_ok=True)
+        manifest_file.unlink(missing_ok=True)
+        if "r_file" in locals() and r_file.exists():
+            r_file.unlink(missing_ok=True)
