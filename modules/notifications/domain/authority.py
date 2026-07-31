@@ -153,20 +153,70 @@ class FileDeliveryAuthorityStore(IDeliveryAuthorityStore):
         with self._file_lock():
             if not self.store_path.exists():
                 self.store_path.parent.mkdir(parents=True, exist_ok=True)
-                self._write_store_data_atomic({"records": {}, "consumed": []})
+                self._write_store_data_atomic({"version": 1, "records": {}, "consumed": []})
 
     def _read_store_data(self) -> dict[str, Any]:
-        """Reads store data. If file exists but is corrupt or invalid, raises ValueError to fail closed."""
+        """Reads store data. If file exists but is corrupt or invalid schema, raises ValueError to fail closed."""
         if not self.store_path.exists():
-            return {"records": {}, "consumed": []}
+            return {"version": 1, "records": {}, "consumed": []}
         try:
             with open(self.store_path, encoding="utf-8") as f:
                 data = json.load(f)
-            if not isinstance(data, dict):
-                raise ValueError("Store data must be a JSON object")
+            self._validate_store_schema(data)
             return data
         except Exception as err:
             raise ValueError(f"Authority store data is corrupt or unreadable: {err}") from err
+
+    @staticmethod
+    def _validate_store_schema(data: Any) -> None:
+        """Strictly validates durable store schema. Raises ValueError on any structural or type violation."""
+        if not isinstance(data, dict):
+            raise ValueError("Store data must be a JSON object")
+
+        allowed_keys = {"version", "records", "consumed"}
+        extra_keys = set(data.keys()) - allowed_keys
+        if extra_keys:
+            raise ValueError(
+                f"Store data contains unrecognized top-level key(s): {sorted(list(extra_keys))}"
+            )
+
+        if "version" in data:
+            v = data["version"]
+            if not isinstance(v, (int, float)) or v != 1:
+                raise ValueError(f"Unsupported or invalid store schema version: {v}")
+
+        records = data.get("records")
+        if not isinstance(records, dict):
+            raise ValueError("Store data 'records' must be a dict")
+
+        for del_id, raw_rec in records.items():
+            if not isinstance(del_id, str) or not del_id.strip():
+                raise ValueError(f"Invalid delivery_id key in records: {del_id!r}")
+            if not isinstance(raw_rec, dict):
+                raise ValueError(f"Record for delivery ID '{del_id}' must be a dict")
+            try:
+                rec_obj = DeliveryAuthorityRecord.from_dict(raw_rec)
+            except Exception as err:
+                raise ValueError(
+                    f"Invalid record object for delivery ID '{del_id}': {err}"
+                ) from err
+
+            if rec_obj.delivery_id != del_id.strip():
+                raise ValueError(
+                    f"Record delivery ID mismatch: key '{del_id}' != record delivery_id '{rec_obj.delivery_id}'"
+                )
+
+        consumed = data.get("consumed")
+        if not isinstance(consumed, list):
+            raise ValueError("Store data 'consumed' must be a list")
+
+        seen_consumed: set[str] = set()
+        for item in consumed:
+            if not isinstance(item, str) or not item.strip():
+                raise ValueError(f"Invalid entry in consumed list: {item!r}")
+            if item in seen_consumed:
+                raise ValueError(f"Duplicate delivery ID in consumed list: {item!r}")
+            seen_consumed.add(item)
 
     def _write_store_data_atomic(self, data: dict[str, Any]) -> None:
         """Atomic write to store file using collision-free temp file, flush, fsync, replace, and parent dir fsync."""
@@ -187,14 +237,11 @@ class FileDeliveryAuthorityStore(IDeliveryAuthorityStore):
 
             os.replace(tmp_path, self.store_path)
 
+            dir_fd = os.open(parent_dir, os.O_RDONLY)
             try:
-                dir_fd = os.open(parent_dir, os.O_RDONLY)
-                try:
-                    os.fsync(dir_fd)
-                finally:
-                    os.close(dir_fd)
-            except OSError:
-                pass
+                os.fsync(dir_fd)
+            finally:
+                os.close(dir_fd)
         except Exception:
             if tmp_path.exists():
                 try:
@@ -209,7 +256,7 @@ class FileDeliveryAuthorityStore(IDeliveryAuthorityStore):
                 data = self._read_store_data()
             except Exception:
                 return None
-            raw_record = data.get("records", {}).get(delivery_id)
+            raw_record = data["records"].get(delivery_id)
             if not raw_record:
                 return None
             try:
@@ -221,8 +268,6 @@ class FileDeliveryAuthorityStore(IDeliveryAuthorityStore):
         """Out-of-process ingestion helper for writing external authority records."""
         with self._file_lock():
             data = self._read_store_data()
-            if "records" not in data:
-                data["records"] = {}
             data["records"][record.delivery_id] = record.to_dict()
             self._write_store_data_atomic(data)
 
@@ -241,7 +286,7 @@ class FileDeliveryAuthorityStore(IDeliveryAuthorityStore):
                     f"Authority store read failed (fail-closed): {err}",
                 )
 
-            consumed = set(data.get("consumed", []))
+            consumed = set(data["consumed"])
 
             if delivery_id in consumed:
                 return (
@@ -250,7 +295,7 @@ class FileDeliveryAuthorityStore(IDeliveryAuthorityStore):
                     f"Authority record for delivery ID '{delivery_id}' has already been consumed (replay attempt rejected)",
                 )
 
-            raw_record = data.get("records", {}).get(delivery_id)
+            raw_record = data["records"].get(delivery_id)
             if not raw_record:
                 return (
                     False,
@@ -271,7 +316,14 @@ class FileDeliveryAuthorityStore(IDeliveryAuthorityStore):
             if is_del and status == "DELIVERED":
                 consumed.add(delivery_id)
                 data["consumed"] = sorted(list(consumed))
-                self._write_store_data_atomic(data)
+                try:
+                    self._write_store_data_atomic(data)
+                except Exception as write_err:
+                    return (
+                        False,
+                        "PENDING_VERIFICATION",
+                        f"Durable store write or fsync failed (fail-closed): {write_err}",
+                    )
 
             return is_del, status, err
 
@@ -356,24 +408,72 @@ class DeliveryAuthorityReadback:
         expected_oncall_route: str,
     ) -> tuple[bool, str, str | None]:
         # Validate mandatory input strings
-        if not expected_delivery_id or not isinstance(expected_delivery_id, str) or not expected_delivery_id.strip():
-            return False, "PENDING_VERIFICATION", "Missing or invalid mandatory expected_delivery_id"
-        if not expected_provider_receipt_id or not isinstance(expected_provider_receipt_id, str) or not expected_provider_receipt_id.strip():
-            return False, "PENDING_VERIFICATION", "Missing or invalid mandatory expected_provider_receipt_id"
-        if not expected_request_hash or not isinstance(expected_request_hash, str) or not expected_request_hash.strip():
-            return False, "PENDING_VERIFICATION", "Missing or invalid mandatory expected_request_hash"
-        if not expected_release_sha or not isinstance(expected_release_sha, str) or not expected_release_sha.strip():
-            return False, "PENDING_VERIFICATION", "Missing or invalid mandatory expected_release_sha"
-        if not expected_oncall_route or not isinstance(expected_oncall_route, str) or not expected_oncall_route.strip():
-            return False, "PENDING_VERIFICATION", "Missing or invalid mandatory expected_oncall_route"
+        if (
+            not expected_delivery_id
+            or not isinstance(expected_delivery_id, str)
+            or not expected_delivery_id.strip()
+        ):
+            return (
+                False,
+                "PENDING_VERIFICATION",
+                "Missing or invalid mandatory expected_delivery_id",
+            )
+        if (
+            not expected_provider_receipt_id
+            or not isinstance(expected_provider_receipt_id, str)
+            or not expected_provider_receipt_id.strip()
+        ):
+            return (
+                False,
+                "PENDING_VERIFICATION",
+                "Missing or invalid mandatory expected_provider_receipt_id",
+            )
+        if (
+            not expected_request_hash
+            or not isinstance(expected_request_hash, str)
+            or not expected_request_hash.strip()
+        ):
+            return (
+                False,
+                "PENDING_VERIFICATION",
+                "Missing or invalid mandatory expected_request_hash",
+            )
+        if (
+            not expected_release_sha
+            or not isinstance(expected_release_sha, str)
+            or not expected_release_sha.strip()
+        ):
+            return (
+                False,
+                "PENDING_VERIFICATION",
+                "Missing or invalid mandatory expected_release_sha",
+            )
+        if (
+            not expected_oncall_route
+            or not isinstance(expected_oncall_route, str)
+            or not expected_oncall_route.strip()
+        ):
+            return (
+                False,
+                "PENDING_VERIFICATION",
+                "Missing or invalid mandatory expected_oncall_route",
+            )
 
         exp_req_hash = expected_request_hash.strip().lower()
         if not re.fullmatch(r"^[0-9a-fA-F]{64}$", exp_req_hash) or exp_req_hash == "0" * 64:
-            return False, "PENDING_VERIFICATION", "Invalid expected_request_hash: must be exactly 64 hexadecimal characters"
+            return (
+                False,
+                "PENDING_VERIFICATION",
+                "Invalid expected_request_hash: must be exactly 64 hexadecimal characters",
+            )
 
         exp_sha = expected_release_sha.strip().lower()
         if not re.fullmatch(r"^[0-9a-fA-F]{40}$", exp_sha) or exp_sha == "0" * 40:
-            return False, "PENDING_VERIFICATION", "Invalid expected_release_sha: must be exactly 40 hexadecimal characters"
+            return (
+                False,
+                "PENDING_VERIFICATION",
+                "Invalid expected_release_sha: must be exactly 40 hexadecimal characters",
+            )
 
         try:
             if isinstance(record, dict):
@@ -456,9 +556,7 @@ class DeliveryAuthorityReadback:
             from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
 
             sig_bytes = base64.b64decode(rec.issuer_signature)
-            pub_key = serialization.load_pem_public_key(
-                self.authority_public_key_pem.encode()
-            )
+            pub_key = serialization.load_pem_public_key(self.authority_public_key_pem.encode())
             if not isinstance(pub_key, Ed25519PublicKey):
                 return False, "PENDING_VERIFICATION", "Invalid authority public key type"
 
