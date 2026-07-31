@@ -70,12 +70,16 @@ def _make_valid_query_receipt(
     snapshot_hash: str = VALID_DATASET_HASH,
     observed: int = 120,
     eligible: int = 120,
+    population_keys: list[str] | tuple[str, ...] | None = None,
 ) -> AVMQuerySourceReceipt:
+    if population_keys is None and observed == 120:
+        population_keys = [f"tx-low-{i}" for i in range(40)] + [f"tx-mid-{i}" for i in range(40)] + [f"tx-high-{i}" for i in range(40)]
     return create_avm_query_source_receipt(
         dataset_snapshot_id=snapshot_id,
         dataset_snapshot_hash=snapshot_hash,
         observed_labeled_count=observed,
         eligible_mature_count=eligible,
+        population_keys=population_keys,
     )
 
 
@@ -359,7 +363,7 @@ def test_mutation_dataclass_replaced_pass_with_eligible_zero_fails_closed() -> N
     )
     forged_report = dataclasses.replace(report, verdict=AVMVerdict.PASS, is_governed_disabled=False)
 
-    with pytest.raises(AVMOutcomeValidationError, match="Receipt boundary detected"):
+    with pytest.raises(AVMOutcomeValidationError, match="requires non-null activation_receipt|Receipt boundary detected"):
         generate_gate1_benchmark_receipt(
             forged_report,
             dataset_snapshot_id="snapshot-001",
@@ -793,15 +797,152 @@ def test_b26_gate1_receipt_boundary_revalidates_value_bands_and_rejects_empty_me
             dataset_snapshot_hash=VALID_DATASET_HASH,
             model_artifact_hash=VALID_MODEL_HASH,
             audit_receipt=audit_rcpt,
+            activation_receipt=activation_rcpt,
+            query_source_receipt=query_rcpt,
         )
 
     # Unverified audit receipt must fail receipt generation even on PASS report
     fake_audit = {"sha256": "a" * 64, "total_access_attempts": 1, "permitted_count": 0, "denied_count": 1}
-    with pytest.raises(AVMOutcomeValidationError, match="forged or invalid PASS"):
+    with pytest.raises(AVMOutcomeValidationError, match="invalid or confidential-leaking audit_receipt|forged or invalid PASS"):
         generate_gate1_benchmark_receipt(
             pass_report,
             dataset_snapshot_id="snapshot-002",
             dataset_snapshot_hash=VALID_DATASET_HASH,
             model_artifact_hash=VALID_MODEL_HASH,
             audit_receipt=fake_audit,
+            activation_receipt=activation_rcpt,
+            query_source_receipt=query_rcpt,
+        )
+
+
+def test_m2_query_receipt_population_key_mismatch_fails_closed() -> None:
+    """M2: Query receipt over attacker population keys differing from aligned tx IDs must fail-close calibration."""
+    aligned = _make_balanced_aligned_pairs(120)
+    activation_rcpt = create_avm_activation_receipt(VALID_DATASET_HASH, VALID_MODEL_HASH)
+    audit_rcpt = _make_valid_audit_receipt()
+
+    # Query receipt signed over 120 attacker-controlled population keys
+    attacker_keys = [f"attacker-tx-key-{i}" for i in range(120)]
+    attacker_query_rcpt = create_avm_query_source_receipt(
+        dataset_snapshot_id="snapshot-002",
+        dataset_snapshot_hash=VALID_DATASET_HASH,
+        observed_labeled_count=120,
+        eligible_mature_count=120,
+        population_keys=attacker_keys,
+    )
+
+    report = compute_avm_outcome_calibration(
+        aligned,
+        observed_count=120,
+        eligible_count=120,
+        dataset_snapshot_id="snapshot-002",
+        dataset_snapshot_hash=VALID_DATASET_HASH,
+        model_artifact_hash=VALID_MODEL_HASH,
+        activation_receipt=activation_rcpt,
+        audit_receipt=audit_rcpt,
+        query_source_receipt=attacker_query_rcpt,
+    )
+
+    assert report.is_governed_disabled is True
+    assert report.verdict == AVMVerdict.FAIL_CLOSED
+    assert report.reason_code == "QUERY_SOURCE_RECEIPT_NOT_VERIFIED"
+
+
+def test_m3_audit_receipt_self_hashed_confidential_leak_fails_verification() -> None:
+    """M3: Self-hashed audit containing raw confidential realized_price must fail verification and calibration."""
+    import hashlib
+    import json
+
+    audit_rcpt = _make_valid_audit_receipt()
+
+    # Attacker inserts raw confidential price into audit events and recomputes self-hash
+    audit_rcpt["audit_events"][0]["realized_price"] = 15800000
+    body = {k: v for k, v in audit_rcpt.items() if k != "sha256"}
+    audit_rcpt["sha256"] = hashlib.sha256(json.dumps(body, sort_keys=True, separators=(",", ":")).encode("utf-8")).hexdigest()
+
+    assert verify_audit_receipt(audit_rcpt, expected_snapshot_hash=VALID_DATASET_HASH) is False
+
+    aligned = _make_balanced_aligned_pairs(120)
+    activation_rcpt = create_avm_activation_receipt(VALID_DATASET_HASH, VALID_MODEL_HASH)
+    query_rcpt = _make_valid_query_receipt()
+
+    report = compute_avm_outcome_calibration(
+        aligned,
+        observed_count=120,
+        eligible_count=120,
+        dataset_snapshot_id="snapshot-002",
+        dataset_snapshot_hash=VALID_DATASET_HASH,
+        model_artifact_hash=VALID_MODEL_HASH,
+        activation_receipt=activation_rcpt,
+        audit_receipt=audit_rcpt,
+        query_source_receipt=query_rcpt,
+    )
+
+    assert report.is_governed_disabled is True
+    assert report.verdict == AVMVerdict.FAIL_CLOSED
+    assert report.reason_code == "ACCESS_AUDIT_NOT_VERIFIED"
+
+
+def test_m4_gate1_receipt_generator_rejects_omitted_or_forged_receipts_for_pass_verdict() -> None:
+    """M4: Gate 1 generator must require non-null activation, query, and audit receipts for PASS verdict."""
+    import hashlib
+    import json
+
+    aligned = _make_balanced_aligned_pairs(120)
+    activation_rcpt = create_avm_activation_receipt(VALID_DATASET_HASH, VALID_MODEL_HASH)
+    audit_rcpt = _make_valid_audit_receipt()
+    query_rcpt = _make_valid_query_receipt()
+
+    pass_report = compute_avm_outcome_calibration(
+        aligned,
+        observed_count=120,
+        eligible_count=120,
+        dataset_snapshot_id="snapshot-002",
+        dataset_snapshot_hash=VALID_DATASET_HASH,
+        model_artifact_hash=VALID_MODEL_HASH,
+        activation_receipt=activation_rcpt,
+        audit_receipt=audit_rcpt,
+        query_source_receipt=query_rcpt,
+    )
+    assert pass_report.verdict == AVMVerdict.PASS
+
+    # 1. Missing activation receipt
+    with pytest.raises(AVMOutcomeValidationError, match="requires non-null activation_receipt"):
+        generate_gate1_benchmark_receipt(
+            pass_report,
+            dataset_snapshot_id="snapshot-002",
+            dataset_snapshot_hash=VALID_DATASET_HASH,
+            model_artifact_hash=VALID_MODEL_HASH,
+            audit_receipt=audit_rcpt,
+            query_source_receipt=query_rcpt,
+            activation_receipt=None,
+        )
+
+    # 2. Missing query source receipt
+    with pytest.raises(AVMOutcomeValidationError, match="requires non-null query_source_receipt"):
+        generate_gate1_benchmark_receipt(
+            pass_report,
+            dataset_snapshot_id="snapshot-002",
+            dataset_snapshot_hash=VALID_DATASET_HASH,
+            model_artifact_hash=VALID_MODEL_HASH,
+            audit_receipt=audit_rcpt,
+            activation_receipt=activation_rcpt,
+            query_source_receipt=None,
+        )
+
+    # 3. Forged audit receipt with raw confidential values
+    forged_audit = _make_valid_audit_receipt()
+    forged_audit["audit_events"][0]["realized_price"] = 15800000
+    forged_body = {k: v for k, v in forged_audit.items() if k != "sha256"}
+    forged_audit["sha256"] = hashlib.sha256(json.dumps(forged_body, sort_keys=True, separators=(",", ":")).encode("utf-8")).hexdigest()
+
+    with pytest.raises(AVMOutcomeValidationError, match="invalid or confidential-leaking audit_receipt"):
+        generate_gate1_benchmark_receipt(
+            pass_report,
+            dataset_snapshot_id="snapshot-002",
+            dataset_snapshot_hash=VALID_DATASET_HASH,
+            model_artifact_hash=VALID_MODEL_HASH,
+            audit_receipt=forged_audit,
+            activation_receipt=activation_rcpt,
+            query_source_receipt=query_rcpt,
         )

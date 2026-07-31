@@ -100,6 +100,12 @@ def verify_audit_receipt(
     if not isinstance(audit_receipt, dict):
         return False
 
+    # M3 Fix: Enforce structural confidential leak validation before accepting audit receipt body
+    try:
+        assert_no_confidential_leak(audit_receipt)
+    except Exception:
+        return False
+
     sha256_digest = audit_receipt.get("sha256", "")
     if not isinstance(sha256_digest, str) or not len(sha256_digest) == 64:
         return False

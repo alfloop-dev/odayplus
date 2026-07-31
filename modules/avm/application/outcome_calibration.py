@@ -57,8 +57,50 @@ def generate_gate1_benchmark_receipt(
         expected_snapshot_hash=dataset_snapshot_hash,
     )
 
-    # B26: Revalidate verdict, disabled-state, audit, and value-band invariants at receipt boundary
+    # B26 & M4: Revalidate verdict, disabled-state, audit, activation, query source, and value-band invariants at receipt boundary
     if report.verdict == AVMVerdict.PASS:
+        # M4 Fix: Require non-null activation_receipt, query_source_receipt, and audit_receipt for PASS verdict
+        if activation_receipt is None:
+            raise AVMOutcomeValidationError(
+                "Fail-closed: Gate 1 receipt generation for PASS verdict requires non-null activation_receipt"
+            )
+        if query_source_receipt is None:
+            raise AVMOutcomeValidationError(
+                "Fail-closed: Gate 1 receipt generation for PASS verdict requires non-null query_source_receipt"
+            )
+        if audit_receipt is None:
+            raise AVMOutcomeValidationError(
+                "Fail-closed: Gate 1 receipt generation for PASS verdict requires non-null audit_receipt"
+            )
+
+        # Independently reverify activation receipt attestation
+        if not activation_receipt.verify_attestation(
+            expected_dataset_snapshot_hash=dataset_snapshot_hash,
+            expected_model_artifact_hash=model_artifact_hash,
+        ):
+            raise AVMOutcomeValidationError(
+                "Fail-closed: Gate 1 receipt generation received invalid activation_receipt attestation"
+            )
+
+        # Independently reverify query source receipt
+        if not query_source_receipt.verify_query_receipt(
+            expected_snapshot_hash=dataset_snapshot_hash,
+            expected_snapshot_id=dataset_snapshot_id,
+            expected_observed=report.observed_labeled_count,
+            expected_eligible=report.eligible_mature_count,
+            expected_aligned=report.aligned_count,
+            expected_population_sha256=query_source_receipt.population_keys_sha256,
+        ):
+            raise AVMOutcomeValidationError(
+                "Fail-closed: Gate 1 receipt generation received invalid query_source_receipt"
+            )
+
+        # Independently reverify audit receipt
+        if not audit_verified:
+            raise AVMOutcomeValidationError(
+                "Fail-closed: Gate 1 receipt generation received invalid or confidential-leaking audit_receipt"
+            )
+
         # Revalidate canonical value band metrics completeness and per-band thresholds
         required_bands = {"band_low_lt10m", "band_mid_10m_to_30m", "band_high_gt30m"}
         if not isinstance(report.value_band_metrics, dict) or set(report.value_band_metrics.keys()) != required_bands:

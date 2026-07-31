@@ -3,7 +3,7 @@
   "task_id": "ODP-PLAN-AVM-OUTCOME-001",
   "model_version": "dealroom-avm-baseline-v1",
   "dataset_snapshot_hash": "86d4b28ff48929469cc683ca9b2ce209c0831c266a6124b68c6ee701fe56ed96",
-  "audited_at": "2026-07-31T14:58:09.753940+00:00",
+  "audited_at": "2026-07-31T15:35:51.165419+00:00",
   "total_access_attempts": 4,
   "permitted_count": 1,
   "denied_count": 3,
@@ -16,7 +16,7 @@
       "confidentiality_level": "HIGH",
       "decision": "PERMIT",
       "reason": "Access granted to confidential resource 'dealroom' for role <Role.FINANCE_LEGAL: 'finance_legal'>",
-      "evaluated_at": "2026-07-31T14:58:09.754033+00:00",
+      "evaluated_at": "2026-07-31T15:35:51.165522+00:00",
       "identity_proof_sha256": "4d7b8cdd1201bc4ea1fd9974c0096ca74dea80e8af12dd83273704d7e8fb606e",
       "redacted_sample": "[REDACTED_CONFIDENTIAL_VALUE]"
     },
@@ -28,7 +28,7 @@
       "confidentiality_level": "HIGH",
       "decision": "DENY",
       "reason": "Role 'regional_supervisor' is explicitly forbidden from high-confidentiality AVM outcome data",
-      "evaluated_at": "2026-07-31T14:58:09.754098+00:00",
+      "evaluated_at": "2026-07-31T15:35:51.165595+00:00",
       "identity_proof_sha256": "fbd511cde740e1fa035d64a2bd7b8837b6bceb7a3d7889778f8b84d6fa330529",
       "redacted_sample": "[REDACTED_CONFIDENTIAL_VALUE]"
     },
@@ -40,7 +40,7 @@
       "confidentiality_level": "HIGH",
       "decision": "DENY",
       "reason": "Access denied to resource 'dealroom' for role <Role.PLATFORM_ADMIN: 'platform_admin'>",
-      "evaluated_at": "2026-07-31T14:58:09.754152+00:00",
+      "evaluated_at": "2026-07-31T15:35:51.165652+00:00",
       "identity_proof_sha256": "a799c424a1918947551ac45b8e548aa68164bed4bbd7aeb81f9fe7800846cbff",
       "redacted_sample": "[REDACTED_CONFIDENTIAL_VALUE]"
     },
@@ -52,7 +52,7 @@
       "confidentiality_level": "HIGH",
       "decision": "DENY",
       "reason": "Role 'franchisee' is explicitly forbidden from high-confidentiality AVM outcome data",
-      "evaluated_at": "2026-07-31T14:58:09.754195+00:00",
+      "evaluated_at": "2026-07-31T15:35:51.165711+00:00",
       "identity_proof_sha256": "2d4eec98c666451e178cd2ca5c840bc64c11ffc69d3bca74c8f442dd31498087",
       "redacted_sample": "[REDACTED_CONFIDENTIAL_VALUE]"
     }
@@ -61,5 +61,5 @@
     "confidential_raw_values_masked": true,
     "zero_leak_verified": true
   },
-  "sha256": "0c56ef54df6dacba71087af50353804c8782e09e6f96026eb07f232851fdad73"
+  "sha256": "c529251339186ea2dc093da3a4cf544d2d9dad8dc88a22fd58e1853ffba40a91"
 }

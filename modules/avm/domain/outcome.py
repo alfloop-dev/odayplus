@@ -123,8 +123,12 @@ class AVMQuerySourceReceipt:
             return False
         if expected_aligned > 0 and self.observed_labeled_count != expected_aligned:
             return False
-        if expected_population_sha256 and self.population_keys_sha256 != expected_population_sha256:
+        # M2 Fix: population_keys_sha256 must be valid non-empty 64-char hex sha256 and match expected_population_sha256
+        if not self.population_keys_sha256 or not SHA256_REGEX.match(self.population_keys_sha256):
             return False
+        if expected_aligned > 0 or expected_population_sha256:
+            if not expected_population_sha256 or self.population_keys_sha256 != expected_population_sha256:
+                return False
         if self.observed_labeled_count < ACTIVATION_THRESHOLD or self.eligible_mature_count < ACTIVATION_THRESHOLD:
             return False
         if not self.receipt_sha256 or not SHA256_REGEX.match(self.receipt_sha256):
@@ -556,15 +560,21 @@ def compute_avm_outcome_calibration(
 
     aligned_count = len(aligned_pairs)
 
-    # B19 & B25: Query source receipt verification bound to exact snapshot population
+    # B19 & B25 & M2: Query source receipt verification bound to exact snapshot population
     query_receipt_verified = False
     if query_source_receipt is not None:
+        expected_pop_sha = (
+            hashlib.sha256(",".join(sorted(p.transaction_id for p in aligned_pairs)).encode("utf-8")).hexdigest()
+            if aligned_pairs
+            else ""
+        )
         query_receipt_verified = query_source_receipt.verify_query_receipt(
             expected_snapshot_hash=dataset_snapshot_hash,
             expected_snapshot_id=dataset_snapshot_id,
             expected_observed=observed_count,
             expected_eligible=eligible_count,
             expected_aligned=aligned_count,
+            expected_population_sha256=expected_pop_sha,
         )
 
     # B1 & B25: Reconcile exact counts fail-closed
