@@ -60,6 +60,27 @@ EXPECTED_HUMAN_GATES = {
     "ODP-PLAN-UAT-SIGNOFF-001",
 }
 
+EXPECTED_HUMAN_OWNERS = {
+    "ODP-PLAN-AVM-OUTCOME-BACKFILL-001",
+    "ODP-PLAN-HEATZONE-LABEL-BACKFILL-001",
+    "ODP-PLAN-NETPLAN-BASELINE-APPROVAL-001",
+    "ODP-PLAN-OSS-LEGAL-POLICY-001",
+    "ODP-PLAN-SITESCORE-OUTCOME-BACKFILL-001",
+}
+
+EXPECTED_HUMAN_REVIEWERS = {
+    "ODP-PLAN-FINAL-GATE-AUDIT-001",
+    "ODP-PLAN-UAT-SIGNOFF-001",
+}
+
+REQUIRED_ACCEPTANCE_PREFIXES = (
+    "Deliverable:",
+    "Fail-closed:",
+    "Evidence set:",
+    "Handoff gate:",
+    "Batch rule:",
+)
+
 REQUIRED_PACKET_LIST_FIELDS = (
     "gap_ids",
     "batch_deliverables",
@@ -234,6 +255,10 @@ def _validate_task_contract(
         errors.append(f"{label}: owner and reviewer must be non-empty strings")
     elif owner == reviewer:
         errors.append(f"{label}: owner must not equal reviewer")
+    if task_id in EXPECTED_HUMAN_OWNERS and owner != "Human/Ops":
+        errors.append(f"{label}: human gate owner must be Human/Ops")
+    if task_id in EXPECTED_HUMAN_REVIEWERS and reviewer != "Human/Ops":
+        errors.append(f"{label}: human approval reviewer must be Human/Ops")
     if task.get("task_class") != packet.get("class"):
         errors.append(
             f"{label}: task_class {task.get('task_class')!r} "
@@ -246,6 +271,19 @@ def _validate_task_contract(
         or not all(isinstance(item, str) and item.strip() for item in acceptance)
     ):
         errors.append(f"{label}: acceptance must contain at least five non-empty granular criteria")
+    else:
+        normalized_acceptance = [item.strip() for item in acceptance]
+        if len(normalized_acceptance) != len(set(normalized_acceptance)):
+            errors.append(f"{label}: acceptance criteria must be unique, not repeated generic text")
+        missing_prefixes = [
+            prefix
+            for prefix in REQUIRED_ACCEPTANCE_PREFIXES
+            if not any(item.startswith(prefix) for item in normalized_acceptance)
+        ]
+        if missing_prefixes:
+            errors.append(
+                f"{label}: acceptance is not granular; missing criterion classes {missing_prefixes}"
+            )
     packet_source = "docs/evidence/DEVELOPMENT_PLAN_OPEN_TASK_EXECUTION_PACK_2026-07-31.json"
     source_docs = task.get("source_docs")
     if not isinstance(source_docs, list) or packet_source not in source_docs:
@@ -365,6 +403,35 @@ def _validate_replacement_chain(
     return errors
 
 
+def validate_archived_packet_state(
+    *,
+    packet: dict[str, Any],
+    active_tasks: dict[str, dict[str, Any]],
+    archive_root: Path,
+) -> tuple[dict[str, Any] | None, list[str]]:
+    """Validate one packet's official archive snapshot and any replacement chain."""
+
+    task_id = packet["task_id"]
+    archive_path = _archive_snapshot_path(archive_root, task_id)
+    if not archive_path.is_file():
+        return None, [f"{task_id}: absent from active and archive state"]
+
+    archived_task, errors = _load_archive_snapshot(archive_path, task_id)
+    if archived_task is None:
+        return None, errors
+    errors.extend(_validate_task_contract(archived_task, packet, label=f"{task_id}: archive"))
+    if (archived_task.get("terminal_outcome") or "completed") == "superseded":
+        errors.extend(
+            _validate_replacement_chain(
+                packet=packet,
+                first_task=archived_task,
+                active_tasks=active_tasks,
+                archive_root=archive_root,
+            )
+        )
+    return archived_task, errors
+
+
 def _validate_live_status(
     task_packets: list[dict[str, Any]],
     live_status_path: Path,
@@ -401,20 +468,14 @@ def _validate_live_status(
             errors.extend(_validate_task_contract(active_task, packet, label=f"{task_id}: active"))
             continue
 
-        archived_task, archive_errors = _load_archive_snapshot(archive_path, task_id)
+        archived_task, archive_errors = validate_archived_packet_state(
+            packet=packet,
+            active_tasks=tasks,
+            archive_root=archive_root,
+        )
         errors.extend(archive_errors)
         if archived_task is None:
             continue
-        errors.extend(_validate_task_contract(archived_task, packet, label=f"{task_id}: archive"))
-        if (archived_task.get("terminal_outcome") or "completed") == "superseded":
-            errors.extend(
-                _validate_replacement_chain(
-                    packet=packet,
-                    first_task=archived_task,
-                    active_tasks=tasks,
-                    archive_root=archive_root,
-                )
-            )
 
     return errors
 

@@ -14,6 +14,17 @@ import subprocess
 from pathlib import Path
 from typing import Any
 
+try:
+    from scripts.ops.validate_plan_execution_pack import (
+        _archive_snapshot_path,
+        validate_archived_packet_state,
+    )
+except ModuleNotFoundError:  # Direct script execution puts scripts/ops on sys.path.
+    from validate_plan_execution_pack import (
+        _archive_snapshot_path,
+        validate_archived_packet_state,
+    )
+
 ROOT = Path(__file__).resolve().parents[2]
 DEFAULT_PACKET = ROOT / "docs/evidence/DEVELOPMENT_PLAN_OPEN_TASK_EXECUTION_PACK_2026-07-31.json"
 PACKET_MD = "docs/evidence/DEVELOPMENT_PLAN_OPEN_TASK_EXECUTION_PACK_2026-07-31.md"
@@ -106,7 +117,32 @@ def sync(packet_path: Path, status_root: Path, actor: str, dry_run: bool) -> Non
         task_id = packet["task_id"]
         task = tasks.get(task_id)
         if task is None:
-            raise ValueError(f"live task missing: {task_id}")
+            archived_task, archive_errors = validate_archived_packet_state(
+                packet=packet,
+                active_tasks=tasks,
+                archive_root=status_root / "ai-task-archive",
+            )
+            if archive_errors:
+                raise ValueError(
+                    f"official archive invalid for {task_id}: {'; '.join(archive_errors)}"
+                )
+            if archived_task is None:
+                raise ValueError(f"live task missing: {task_id}")
+            if dry_run:
+                print(
+                    json.dumps(
+                        {
+                            "task_id": task_id,
+                            "state": "official_archive_validated",
+                            "action": "skip",
+                        },
+                        ensure_ascii=False,
+                    )
+                )
+            continue
+        archive_path = _archive_snapshot_path(status_root / "ai-task-archive", task_id)
+        if archive_path.is_file():
+            raise ValueError(f"task exists in both active and official archive state: {task_id}")
         owner = task.get("owner")
         reviewer = task.get("reviewer")
         if not owner or not reviewer or owner == reviewer:
