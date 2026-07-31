@@ -27,7 +27,9 @@ jobs:
           node-version: "20"
 
       - name: Install dependencies
-        run: uv sync
+        run: |
+          uv sync
+          npm ci
 
       - name: Prepare local config
         run: make bootstrap
