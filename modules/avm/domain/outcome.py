@@ -17,6 +17,7 @@ CANONICAL_AVM_MODEL_VERSION = "dealroom-avm-baseline-v1"
 ALLOWED_AUTHORITY_PARTITIONS = frozenset(
     {"official_real_estate", "authoritative_real_estate_transaction"}
 )
+CANONICAL_HUMAN_OPS_ACTIVATION_KEY = "human-ops-avm-outcome-activation-key-v1"
 SHA256_REGEX = re.compile(r"^[0-9a-f]{64}$")
 
 
@@ -35,7 +36,12 @@ class AVMActivationAuthorityReceipt:
         if self.approval_status != "APPROVED":
             raise AVMOutcomeValidationError(f"Activation authority status not APPROVED: {self.approval_status!r}")
 
-    def verify_attestation(self, expected_dataset_snapshot_hash: str, expected_model_artifact_hash: str) -> bool:
+    def verify_attestation(
+        self,
+        expected_dataset_snapshot_hash: str,
+        expected_model_artifact_hash: str,
+        authority_key: str = CANONICAL_HUMAN_OPS_ACTIVATION_KEY,
+    ) -> bool:
         if self.authority_id not in ("Human/Ops", "human-ops-label-authority"):
             return False
         if self.approval_status != "APPROVED":
@@ -44,11 +50,12 @@ class AVMActivationAuthorityReceipt:
             return False
         if self.model_artifact_hash != expected_model_artifact_hash:
             return False
-        if self.signature_digest:
-            canonical = f"{self.authority_id}:{self.approval_status}:{self.dataset_snapshot_hash}:{self.model_artifact_hash}"
-            expected_sig = hashlib.sha256(canonical.encode("utf-8")).hexdigest()
-            if self.signature_digest != expected_sig:
-                return False
+        if not self.signature_digest or not SHA256_REGEX.match(self.signature_digest):
+            return False
+        canonical = f"{self.authority_id}:{self.approval_status}:{self.dataset_snapshot_hash}:{self.model_artifact_hash}:{authority_key}"
+        expected_sig = hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+        if self.signature_digest != expected_sig:
+            return False
         return True
 
 
@@ -57,8 +64,11 @@ def create_avm_activation_receipt(
     model_artifact_hash: str,
     authority_id: str = "Human/Ops",
     approval_status: str = "APPROVED",
+    authority_key: str = CANONICAL_HUMAN_OPS_ACTIVATION_KEY,
 ) -> AVMActivationAuthorityReceipt:
-    canonical = f"{authority_id}:{approval_status}:{dataset_snapshot_hash}:{model_artifact_hash}"
+    if authority_key != CANONICAL_HUMAN_OPS_ACTIVATION_KEY:
+        raise AVMOutcomeValidationError("Fail-closed: Invalid authority key for activation receipt creation")
+    canonical = f"{authority_id}:{approval_status}:{dataset_snapshot_hash}:{model_artifact_hash}:{authority_key}"
     sig = hashlib.sha256(canonical.encode("utf-8")).hexdigest()
     return AVMActivationAuthorityReceipt(
         authority_id=authority_id,
@@ -79,12 +89,38 @@ class AVMQuerySourceReceipt:
     eligible_mature_count: int
     receipt_sha256: str = ""
 
-    def verify_query_receipt(self, expected_snapshot_hash: str) -> bool:
+    def verify_query_receipt(
+        self,
+        expected_snapshot_hash: str,
+        expected_snapshot_id: str = "",
+        expected_observed: int = 0,
+        expected_eligible: int = 0,
+        max_age_seconds: int = 86400,
+    ) -> bool:
         if self.relation != "model_ready.valuation_view":
             return False
         if self.dataset_snapshot_hash != expected_snapshot_hash:
             return False
         if not SHA256_REGEX.match(self.dataset_snapshot_hash):
+            return False
+        if expected_snapshot_id and self.dataset_snapshot_id != expected_snapshot_id:
+            return False
+        if expected_observed > 0 and self.observed_labeled_count != expected_observed:
+            return False
+        if expected_eligible > 0 and self.eligible_mature_count != expected_eligible:
+            return False
+        if self.observed_labeled_count < ACTIVATION_THRESHOLD or self.eligible_mature_count < ACTIVATION_THRESHOLD:
+            return False
+        if not self.receipt_sha256 or not SHA256_REGEX.match(self.receipt_sha256):
+            return False
+        ts_utc = self.query_timestamp.astimezone(UTC) if self.query_timestamp.tzinfo else self.query_timestamp.replace(tzinfo=UTC)
+        now_utc = datetime.now(UTC)
+        age = (now_utc - ts_utc).total_seconds()
+        if age < -60 or age > max_age_seconds:
+            return False
+        canonical = f"model_ready.valuation_view:{self.dataset_snapshot_id}:{self.dataset_snapshot_hash}:{self.observed_labeled_count}:{self.eligible_mature_count}:{self.query_timestamp.isoformat()}"
+        expected_sig = hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+        if self.receipt_sha256 != expected_sig:
             return False
         return True
 
@@ -392,6 +428,20 @@ def align_outcomes_and_predictions(
                 f"is not strictly before transaction date {outcome.transaction_date.isoformat()} for store {outcome.store_id!r}"
             )
 
+        # B20: Positive finite economic value validations
+        if not math.isfinite(outcome.realized_price) or outcome.realized_price <= 0:
+            raise AVMOutcomeValidationError(
+                f"Fail-closed: Non-positive or non-finite realized_price {outcome.realized_price} for transaction {outcome.transaction_id!r}"
+            )
+        if (
+            not (math.isfinite(pred.p10) and math.isfinite(pred.p50) and math.isfinite(pred.p90))
+            or pred.p10 <= 0 or pred.p50 <= 0 or pred.p90 <= 0
+        ):
+            raise AVMOutcomeValidationError(
+                f"Fail-closed: Non-positive or non-finite prediction quantiles for store {pred.store_id!r} "
+                f"(p10={pred.p10}, p50={pred.p50}, p90={pred.p90})"
+            )
+
         if not (pred.p10 <= pred.p50 <= pred.p90):
             raise AVMOutcomeValidationError(
                 f"Prediction interval bounds invalid for store {pred.store_id!r}: "
@@ -410,8 +460,8 @@ def align_outcomes_and_predictions(
         is_covered_p50_p90 = pred.p50 <= outcome.realized_price <= pred.p90
 
         abs_err = abs(outcome.realized_price - pred.p50)
-        mape_val = abs_err / outcome.realized_price if outcome.realized_price > 0 else 0.0
-        calib_ratio = outcome.realized_price / pred.p50 if pred.p50 > 0 else 1.0
+        mape_val = abs_err / outcome.realized_price
+        calib_ratio = outcome.realized_price / pred.p50
         band = assign_value_band(outcome.realized_price)
 
         aligned_pairs.append(
@@ -448,8 +498,11 @@ def compute_avm_outcome_calibration(
     model_artifact_hash: str = "",
     activation_receipt: AVMActivationAuthorityReceipt | None = None,
     audit_receipt: dict[str, Any] | None = None,
+    query_source_receipt: AVMQuerySourceReceipt | None = None,
 ) -> AVMOutcomeCalibrationReport:
     """Compute coverage, calibration, and value-band metrics with fail-closed assertions."""
+    from modules.dealroom.application.outcome_audit import verify_audit_receipt
+
     # Fail-closed validations
     if auto_seeded_count > 0:
         raise AVMOutcomeValidationError("Fail-closed: Auto-seeded or synthetic rows present")
@@ -461,7 +514,7 @@ def compute_avm_outcome_calibration(
     if not model_artifact_hash or not SHA256_REGEX.match(model_artifact_hash):
         raise AVMOutcomeValidationError("Fail-closed: Unbound or invalid model_artifact_hash")
 
-    # B12: Activation authority receipt verification (require Human/Ops attestation, not a bare bool)
+    # B12 & B17: Activation authority receipt verification (require Human/Ops attestation with valid signature key)
     authentic_data_activated = False
     if activation_receipt is not None:
         authentic_data_activated = activation_receipt.verify_attestation(
@@ -469,14 +522,21 @@ def compute_avm_outcome_calibration(
             expected_model_artifact_hash=model_artifact_hash,
         )
 
-    # B14: Confidential access audit verification
-    access_audit_verified = False
-    if audit_receipt is not None:
-        total_attempts = audit_receipt.get("total_access_attempts", 0)
-        zero_leak = audit_receipt.get("confidentiality_enforcement", {}).get("zero_leak_verified", False)
-        sha256_digest = audit_receipt.get("sha256", "")
-        if total_attempts > 0 and zero_leak is True and len(sha256_digest) == 64:
-            access_audit_verified = True
+    # B14 & B18: Confidential access audit verification with full body integrity, count reconciliation, and snapshot lineage
+    access_audit_verified = verify_audit_receipt(
+        audit_receipt,
+        expected_snapshot_hash=dataset_snapshot_hash,
+    )
+
+    # B19: Query source receipt verification
+    query_receipt_verified = False
+    if query_source_receipt is not None:
+        query_receipt_verified = query_source_receipt.verify_query_receipt(
+            expected_snapshot_hash=dataset_snapshot_hash,
+            expected_snapshot_id=dataset_snapshot_id,
+            expected_observed=observed_count,
+            expected_eligible=eligible_count,
+        )
 
     aligned_count = len(aligned_pairs)
 
@@ -545,7 +605,7 @@ def compute_avm_outcome_calibration(
         if math.isnan(val) or math.isinf(val):
             raise AVMOutcomeValidationError(f"Fail-closed: Non-finite metric calculated for {name}")
 
-    # Value band breakdown
+    # Value band breakdown and per-band calibration policy (B21)
     band_groups: dict[str, list[AlignedOutcomePredictionPair]] = {
         "band_low_lt10m": [],
         "band_mid_10m_to_30m": [],
@@ -555,11 +615,16 @@ def compute_avm_outcome_calibration(
         band_groups.setdefault(pair.value_band, []).append(pair)
 
     value_band_metrics: dict[str, ValueBandMetrics] = {}
-    for band_name, items in band_groups.items():
-        if not items:
+    value_band_calibration_met = True
+    MIN_BAND_POPULATION = 15
+
+    for band_name in ("band_low_lt10m", "band_mid_10m_to_30m", "band_high_gt30m"):
+        items = band_groups.get(band_name, [])
+        if not items or len(items) < MIN_BAND_POPULATION:
+            value_band_calibration_met = False
             value_band_metrics[band_name] = ValueBandMetrics(
                 band_name=band_name,
-                aligned_count=0,
+                aligned_count=len(items),
                 p10_p90_coverage_rate=0.0,
                 calibration_ratio=0.0,
                 mape=0.0,
@@ -579,6 +644,9 @@ def compute_avm_outcome_calibration(
                     f"Fail-closed: Non-finite metric for band {band_name} ({bval_name})"
                 )
 
+        if bcov < 0.75 or not (0.90 <= bmed <= 1.10) or bmape > 0.20:
+            value_band_calibration_met = False
+
         value_band_metrics[band_name] = ValueBandMetrics(
             band_name=band_name,
             aligned_count=bn,
@@ -588,7 +656,7 @@ def compute_avm_outcome_calibration(
             mae=round(bmae, 2),
         )
 
-    # B1, B8, B12, B14: Evaluate full activation, calibration targets, access audit, and authentic activation gate
+    # B1, B8, B12, B14, B17-B21: Evaluate full activation, calibration targets, access audit, query source, and value band gates
     count_sufficient = (
         observed_count >= ACTIVATION_THRESHOLD
         and eligible_count >= ACTIVATION_THRESHOLD
@@ -607,6 +675,14 @@ def compute_avm_outcome_calibration(
     elif not calibration_targets_met:
         is_governed_disabled = True
         reason_code = "CALIBRATION_TARGET_NOT_MET"
+        verdict = AVMVerdict.FAIL_CLOSED
+    elif not value_band_calibration_met:
+        is_governed_disabled = True
+        reason_code = "VALUE_BAND_CALIBRATION_NOT_MET"
+        verdict = AVMVerdict.FAIL_CLOSED
+    elif not query_receipt_verified:
+        is_governed_disabled = True
+        reason_code = "QUERY_SOURCE_RECEIPT_NOT_VERIFIED"
         verdict = AVMVerdict.FAIL_CLOSED
     elif not access_audit_verified:
         is_governed_disabled = True

@@ -1,6 +1,9 @@
 {
   "kind": "avm-confidential-access-audit-receipt",
-  "audited_at": "2026-07-31T12:50:32.915236+00:00",
+  "task_id": "ODP-PLAN-AVM-OUTCOME-001",
+  "model_version": "dealroom-avm-baseline-v1",
+  "dataset_snapshot_hash": "86d4b28ff48929469cc683ca9b2ce209c0831c266a6124b68c6ee701fe56ed96",
+  "audited_at": "2026-07-31T14:42:15.724892+00:00",
   "total_access_attempts": 4,
   "permitted_count": 1,
   "denied_count": 3,
@@ -13,7 +16,8 @@
       "confidentiality_level": "HIGH",
       "decision": "PERMIT",
       "reason": "Access granted to confidential resource 'dealroom' for role <Role.FINANCE_LEGAL: 'finance_legal'>",
-      "evaluated_at": "2026-07-31T12:50:32.915314+00:00",
+      "evaluated_at": "2026-07-31T14:42:15.724983+00:00",
+      "identity_proof_sha256": "6cd6809a2d7eb2194ec375b85c1e377ffff89347b3c04ae217ddecc294af3125",
       "redacted_sample": "[REDACTED_CONFIDENTIAL_VALUE]"
     },
     {
@@ -24,7 +28,8 @@
       "confidentiality_level": "HIGH",
       "decision": "DENY",
       "reason": "Role 'regional_supervisor' is explicitly forbidden from high-confidentiality AVM outcome data",
-      "evaluated_at": "2026-07-31T12:50:32.915362+00:00",
+      "evaluated_at": "2026-07-31T14:42:15.725043+00:00",
+      "identity_proof_sha256": "fc615b85ab8466bfa676e1958191ebf5b6500f4546f2f021de33e646d507e26d",
       "redacted_sample": "[REDACTED_CONFIDENTIAL_VALUE]"
     },
     {
@@ -35,7 +40,8 @@
       "confidentiality_level": "HIGH",
       "decision": "DENY",
       "reason": "Access denied to resource 'dealroom' for role <Role.PLATFORM_ADMIN: 'platform_admin'>",
-      "evaluated_at": "2026-07-31T12:50:32.915393+00:00",
+      "evaluated_at": "2026-07-31T14:42:15.725091+00:00",
+      "identity_proof_sha256": "24221a7ff3bdf27c909704d66243a847c8a0bf76e33d3485723dbeaf1b356940",
       "redacted_sample": "[REDACTED_CONFIDENTIAL_VALUE]"
     },
     {
@@ -46,7 +52,8 @@
       "confidentiality_level": "HIGH",
       "decision": "DENY",
       "reason": "Role 'franchisee' is explicitly forbidden from high-confidentiality AVM outcome data",
-      "evaluated_at": "2026-07-31T12:50:32.915416+00:00",
+      "evaluated_at": "2026-07-31T14:42:15.725130+00:00",
+      "identity_proof_sha256": "8d43ceaf203465b924ccecb1c56c214324ad4620b3c430099c8956b2ab5591ac",
       "redacted_sample": "[REDACTED_CONFIDENTIAL_VALUE]"
     }
   ],
@@ -54,5 +61,5 @@
     "confidential_raw_values_masked": true,
     "zero_leak_verified": true
   },
-  "sha256": "9af2ef05e4b3bd5a7a271b609cd8d8dea9e49a232dffdb8d17f92ed3ce4f92df"
+  "sha256": "ce5e47591b8011b1ff9a5c62661eac78845111a35ee6747d7b5069c2c58e2194"
 }

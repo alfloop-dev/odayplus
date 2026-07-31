@@ -198,6 +198,13 @@ def generate_benchmark_report_md(
             f"| `{band_name}` | `{bm.aligned_count}` | `{bm.p10_p90_coverage_rate:.4f}` | `{bm.calibration_ratio:.4f}` | `{bm.mape:.4f}` | `${bm.mae:,.2f}` |"
         )
 
+    zero_leak_verified = (
+        isinstance(audit_receipt, dict)
+        and audit_receipt.get("confidentiality_enforcement", {}).get("zero_leak_verified") is True
+        and audit_receipt.get("total_access_attempts", 0) > 0
+    )
+    zero_leak_str = "True" if zero_leak_verified else "False / Unverified"
+
     lines.extend(
         [
             "",
@@ -208,7 +215,7 @@ def generate_benchmark_report_md(
             f"- **Audit Event Count**: `{audit_receipt.get('total_access_attempts', 0)}`",
             f"- **Permitted Accesses**: `{audit_receipt.get('permitted_count', 0)}` (Roles: {permitted_roles_str})",
             f"- **Denied Accesses**: `{audit_receipt.get('denied_count', 0)}` (Roles: {denied_roles_str})",
-            "- **Zero Confidential Leak Verified**: `True`",
+            f"- **Zero Confidential Leak Verified**: `{zero_leak_str}`",
             f"- **Audit Receipt SHA256**: `{audit_receipt.get('sha256', '')}`",
             "",
             "---",
