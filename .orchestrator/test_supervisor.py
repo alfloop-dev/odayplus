@@ -24,9 +24,11 @@ if str(SCRIPTS_DIR) not in sys.path:
 # ai_status binds its output paths at import time, so isolation must happen
 # before importing it.
 _ORIGINAL_STATUS_ROOT = os.environ.get("PANTHEON_STATUS_ROOT")
+_ORIGINAL_ORCH_STATUS_ROOT = os.environ.get("ORCH_STATUS_ROOT")
 _TEST_STATUS_ROOT_HANDLE = tempfile.TemporaryDirectory(prefix="pantheon-supervisor-tests-")
 _TEST_STATUS_ROOT = Path(_TEST_STATUS_ROOT_HANDLE.name).resolve()
 os.environ["PANTHEON_STATUS_ROOT"] = str(_TEST_STATUS_ROOT)
+os.environ["ORCH_STATUS_ROOT"] = str(_TEST_STATUS_ROOT)
 
 import ai_status
 import runtime_state
@@ -38,6 +40,10 @@ def tearDownModule() -> None:
         os.environ.pop("PANTHEON_STATUS_ROOT", None)
     else:
         os.environ["PANTHEON_STATUS_ROOT"] = _ORIGINAL_STATUS_ROOT
+    if _ORIGINAL_ORCH_STATUS_ROOT is None:
+        os.environ.pop("ORCH_STATUS_ROOT", None)
+    else:
+        os.environ["ORCH_STATUS_ROOT"] = _ORIGINAL_ORCH_STATUS_ROOT
     _TEST_STATUS_ROOT_HANDLE.cleanup()
 
 

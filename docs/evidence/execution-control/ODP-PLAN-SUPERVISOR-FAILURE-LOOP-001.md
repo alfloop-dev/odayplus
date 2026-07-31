@@ -660,6 +660,9 @@ remains available for compatibility outside orchestrated workers.
 Regression coverage constructs divergent canonical and shadow roots and proves
 that both `ai_status` and `task_archive` resolve the canonical value. Adapter
 coverage proves the authoritative root is present in the spawned environment.
+Both orchestrator and ai-status test-module lifecycles also bind and restore
+`ORCH_STATUS_ROOT`, so running the suite from an orchestrated worker cannot
+redirect fixtures back into live coordination state.
 
 ### R20 verification receipts
 

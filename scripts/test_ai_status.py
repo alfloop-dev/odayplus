@@ -21,8 +21,10 @@ _TEST_STATUS_ROOT = Path(_TEST_STATUS_ROOT_HANDLE.name).resolve()
 # temporary status root already.  Only set the environment for a first import;
 # setUpModule below rebinds the shared module for this module's actual lifetime.
 _IMPORT_STATUS_ROOT = os.environ.get("PANTHEON_STATUS_ROOT")
+_IMPORT_ORCH_STATUS_ROOT = os.environ.get("ORCH_STATUS_ROOT")
 if "ai_status" not in sys.modules:
     os.environ["PANTHEON_STATUS_ROOT"] = str(_TEST_STATUS_ROOT)
+    os.environ["ORCH_STATUS_ROOT"] = str(_TEST_STATUS_ROOT)
 try:
     import ai_status
     import task_archive
@@ -31,6 +33,10 @@ finally:
         os.environ.pop("PANTHEON_STATUS_ROOT", None)
     else:
         os.environ["PANTHEON_STATUS_ROOT"] = _IMPORT_STATUS_ROOT
+    if _IMPORT_ORCH_STATUS_ROOT is None:
+        os.environ.pop("ORCH_STATUS_ROOT", None)
+    else:
+        os.environ["ORCH_STATUS_ROOT"] = _IMPORT_ORCH_STATUS_ROOT
 
 
 _AI_STATUS_ROOT_ATTRIBUTES = (
@@ -53,14 +59,17 @@ _TASK_ARCHIVE_ROOT_ATTRIBUTES = (
     "ARCHIVE_INDEX_FILE",
 )
 _RUNTIME_STATUS_ROOT: str | None = None
+_RUNTIME_ORCH_STATUS_ROOT: str | None = None
 _ORIGINAL_AI_STATUS_PATHS: dict[str, Path] = {}
 _ORIGINAL_TASK_ARCHIVE_PATHS: dict[str, Path] = {}
 
 
 def setUpModule() -> None:
-    global _RUNTIME_STATUS_ROOT, _ORIGINAL_AI_STATUS_PATHS, _ORIGINAL_TASK_ARCHIVE_PATHS
+    global _RUNTIME_STATUS_ROOT, _RUNTIME_ORCH_STATUS_ROOT
+    global _ORIGINAL_AI_STATUS_PATHS, _ORIGINAL_TASK_ARCHIVE_PATHS
 
     _RUNTIME_STATUS_ROOT = os.environ.get("PANTHEON_STATUS_ROOT")
+    _RUNTIME_ORCH_STATUS_ROOT = os.environ.get("ORCH_STATUS_ROOT")
     _ORIGINAL_AI_STATUS_PATHS = {
         name: getattr(ai_status, name) for name in _AI_STATUS_ROOT_ATTRIBUTES
     }
@@ -69,6 +78,7 @@ def setUpModule() -> None:
     }
 
     os.environ["PANTHEON_STATUS_ROOT"] = str(_TEST_STATUS_ROOT)
+    os.environ["ORCH_STATUS_ROOT"] = str(_TEST_STATUS_ROOT)
     ai_status.STATUS_ROOT = _TEST_STATUS_ROOT
     ai_status.STATUS_FILE = _TEST_STATUS_ROOT / "ai-status.json"
     ai_status.LOG_FILE = _TEST_STATUS_ROOT / "ai-activity-log.jsonl"
@@ -96,6 +106,10 @@ def tearDownModule() -> None:
         os.environ.pop("PANTHEON_STATUS_ROOT", None)
     else:
         os.environ["PANTHEON_STATUS_ROOT"] = _RUNTIME_STATUS_ROOT
+    if _RUNTIME_ORCH_STATUS_ROOT is None:
+        os.environ.pop("ORCH_STATUS_ROOT", None)
+    else:
+        os.environ["ORCH_STATUS_ROOT"] = _RUNTIME_ORCH_STATUS_ROOT
     _TEST_STATUS_ROOT_HANDLE.cleanup()
 
 
