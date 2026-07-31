@@ -704,3 +704,113 @@ and a boolean threshold malformed value accepted by the verifier. B3 still prese
 produce the evidence set named by the same receipt. Re-audit the full acceptance batch
 before the next handoff; do not refresh the PR or enable deployment after a partial fix.
 No owner implementation content was changed by this review.
+
+---
+
+# Codex6 Re-review Addendum — 2026-07-31, exact owner head `89ebef81`
+
+The supervisor re-dispatched this task to the assigned reviewer after the owner reported
+B1-B3 remediation at exact pushed head
+`89ebef81b42af45c6baa44ff7712751821921a90`. The local and remote task branches both
+pointed at that SHA, and the worktree contained no uncommitted owner implementation diff.
+
+## Verification at the exact owner head
+
+```bash
+PYTHONPATH=. .venv/bin/pytest -q tests/models -k "sitescore or opening_outcome"
+PYTHONPATH=. .venv/bin/pytest -q tests -k "sitescore or opening_outcome or model_ready"
+.venv/bin/ruff check scripts/models models tests/models
+git diff --check
+```
+
+- Task-scoped selector: **33 passed**.
+- Full focused selector: **77 passed**.
+- Ruff and `git diff --check`: clean.
+- The previous direct examples are fixed in the narrow direction: an under-age record
+  cannot use `m6_covered` / `m12_covered` to become mature, the top-level 90-day query is
+  labeled discovery-only, and the five newly tested invalid-enum/type mutations are
+  rejected.
+
+The task brief requires the whole fail-closed batch to be re-audited after reopen. The
+following independently reproduced findings still block approval.
+
+## Blocking findings
+
+### B1 — Malformed and self-consistently forged receipts still validate
+
+`verify_sitescore_gate2_receipt` checks that ratios and normalized MAE are finite, but it
+does not require coverage ratios to be in `[0, 1]` or normalized MAE to be non-negative.
+It compares only a selected list of numeric fields between the two handback copies, does
+not re-derive the reason code from provenance and metrics, and does not strictly validate
+the top-level gate status / governed-disabled boolean.
+
+Starting from the committed no-source receipt, each mutation below recomputed the public
+content SHA before verification. Every one returned
+`Gate2ReceiptVerificationResult(is_valid=True, reason_code="RECEIPT_VALIDATED")`:
+
+| Mutation | Result |
+| --- | --- |
+| Set all three `m6_coverage_ratio` copies to `2.0` | `RECEIPT_VALIDATED` |
+| Set all three `normalized_mae` copies to `-1.0` | `RECEIPT_VALIDATED` |
+| Change only `benchmark_summary.handback_payload.reason_code` to `GATE2_CRITERIA_MET` | `RECEIPT_VALIDATED` |
+| Change both handback copies' `governed_disabled` to `false` while top-level remains `true` | `RECEIPT_VALIDATED` |
+| Change top-level `gate_status` to `BOGUS` | `RECEIPT_VALIDATED` |
+| Change top-level `is_governed_disabled` from boolean `true` to string `"yes"` | `RECEIPT_VALIDATED` |
+| Change every reason-code copy from `NO_SOURCE_INVENTORY` to allowed enum `GATE2_CRITERIA_MET` | `RECEIPT_VALIDATED` |
+
+This is still the acceptance-prohibited malformed-metric / self-consistent forged-receipt
+surface. Range-check all ratios and metrics, strictly type and exactly derive gate status
+and disabled flags, cross-check the complete duplicated handback governance surface, and
+derive the only valid reason code from provenance plus re-evaluated criteria. Recomputing
+an unkeyed checksum must not make these contradictions valid.
+
+### B2 — Unobserved outcome source and caller lineage are still presented as evidence
+
+The prior review required unavailable authoritative source/query evidence to remain
+explicitly unverified until Human/Ops returns a readable receipt. The current no-source
+artifact instead emits:
+
+- `source_identity = authoritative_opening_outcome_m6_m12_store_ledger`; and
+- `query_id = sitescore_authoritative_m6_m12_outcome_query_v1`,
+
+while the same contract says its dataset hash, lineage, and freshness are `UNVERIFIED`.
+Those constants may describe a **required future contract**, but their current field names
+present them as observed source evidence.
+
+More importantly, `evaluate_sitescore_opening_outcome_benchmark` still accepts
+`provenance="authenticated_governed_records"` and extracts arbitrary snapshot / lineage
+strings from the same caller records. `handback_payload` then promotes those strings and
+the caller timestamp into `dataset_snapshot_hash`, `lineage_id`, and
+`freshness_timestamp` without verifying the registered Human/Ops receipt. The permanent
+lineage lock correctly prevents `ACTIVE`, but it does not prevent the governed-disabled
+receipt from claiming invented source evidence.
+
+Separate required-contract identifiers from observed evidence. Until a verified backfill
+receipt is resolved, observed source identity, query ID, snapshot hash, lineage, owner,
+and source freshness must all remain unverified; a caller-selected provenance label and
+record strings are not an authoritative receipt.
+
+### B3 — Required metric populations and artifact hashes are not emitted
+
+The evaluator computes `m6_mature`, `m12_mature`, `interval_bounds_count`, and
+`in_p80_count` locally, then discards them. The benchmark and Gate 2 receipt expose only
+the ratios and the common mature-label denominator. They therefore cannot provide the
+acceptance-required numerator/denominator populations for M6, M12, interval-bound, and P80
+coverage or support exact count reconciliation by the Human/Ops reviewer.
+
+The committed Gate 2 receipt has a content checksum, but the committed model card has no
+integrity hash and the receipt does not bind a model-card hash. The handback is only
+transitively included as duplicated receipt content. This does not yet provide the
+task brief's auditable Gate 2 receipt / model-card / handback artifact-hash set.
+
+Expose exact population counts alongside each metric, cross-check them in the verifier,
+and bind the generated model card and handback artifacts to immutable hashes or explicit
+receipt references.
+
+## Decision
+
+**Changes requested.** Exact owner head `89ebef81` is not approved. B1 directly
+reproduces malformed and self-consistently forged receipts that pass verification; B2
+still promotes unverified caller/source strings into evidence; and B3 leaves the required
+metric population and artifact-integrity evidence incomplete. Re-audit the full acceptance
+batch before the next handoff. No owner implementation content was changed by this review.
