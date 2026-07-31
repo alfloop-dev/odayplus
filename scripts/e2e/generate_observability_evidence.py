@@ -46,9 +46,9 @@ def main():
             prov_rcpt = f"prov-rcpt-{payload.get('delivery_id', '123')}"
             req_bytes = json.dumps(payload, sort_keys=True).encode("utf-8")
             req_hash = hashlib.sha256(req_bytes).hexdigest()
-            sig_base = f"{prov_sec}:{prov_rcpt}:{req_hash}:{rel_sha}".encode("utf-8")
+            sig_base = f"{prov_sec}:{prov_rcpt}:{req_hash}:{rel_sha}".encode()
             sig_token = f"sig-sha256-{hashlib.sha256(sig_base).hexdigest()}"
-            rb_base = f"readback:{req_hash}".encode("utf-8")
+            rb_base = f"readback:{req_hash}".encode()
             rb_token = hashlib.sha256(rb_base).hexdigest()
 
             response_payload = {

@@ -497,25 +497,6 @@ class OnCallNotificationAdapter:
                 or parsed_resp_dict.get("receipt_id")
             )
 
-        ext_verifier_url = (
-            os.getenv("EXTERNAL_ONCALL_VERIFIER_URL")
-            or os.getenv("ONCALL_EXTERNAL_VERIFIER_URL")
-            or CANONICAL_PINNED_EXTERNAL_VERIFIER_URL
-        ).strip()
-
-        has_external_verification = False
-        if provider_receipt_id:
-            has_external_verification = _verify_external_oncall_delivery(
-                verifier_url=ext_verifier_url,
-                delivery_id=delivery_id,
-                provider_receipt_id=str(provider_receipt_id),
-                request_hash=request_hash,
-                release_sha=release_sha,
-                provider_secret=provider_secret,
-                raw_http_transport=self._raw_http_transport,
-                current_http_transport=self.http_transport,
-            )
-
         http_success = 200 <= http_status < 300
         if http_success:
             require_ext = os.getenv("REQUIRE_EXTERNAL_VERIFICATION", "").strip().lower() in {"1", "true"}
