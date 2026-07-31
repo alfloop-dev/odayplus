@@ -1288,6 +1288,44 @@ def test_infeasible_max_average_risk_has_dedicated_diagnosis() -> None:
     assert "max_average_risk" in viol_constraints
 
 
+@pytest.mark.parametrize(
+    ("option", "constraints", "expected_constraint"),
+    (
+        (
+            ActionOption("store-precision", NetworkAction.KEEP, 10, 10.00004, 0.1),
+            NetPlanConstraints(max_budget=10),
+            "max_budget",
+        ),
+        (
+            ActionOption("store-precision", NetworkAction.KEEP, 9.99996, 0, 0.1),
+            NetPlanConstraints(max_budget=10, min_expected_gross_margin=10),
+            "min_expected_gross_margin",
+        ),
+        (
+            ActionOption("store-precision", NetworkAction.KEEP, 10, 0, 0.10004),
+            NetPlanConstraints(max_budget=10, max_average_risk=0.1),
+            "max_average_risk",
+        ),
+    ),
+)
+def test_sub_four_decimal_hard_constraint_violation_has_dedicated_diagnosis(
+    option: ActionOption,
+    constraints: NetPlanConstraints,
+    expected_constraint: str,
+) -> None:
+    result = solve_network_plan(
+        options_by_entity={option.entity_id: (option,)},
+        constraints=constraints,
+        isolate_process=False,
+    )
+
+    assert result.solver_status == STATUS_INFEASIBLE
+    assert result.infeasible is True
+    assert [item.violated_constraint for item in result.diagnostics] == [
+        expected_constraint
+    ]
+
+
 def test_infeasible_max_action_counts_has_dedicated_diagnosis() -> None:
     store_move_only = ExistingStoreInput(
         store_id="store-forced-move",

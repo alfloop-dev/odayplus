@@ -632,7 +632,7 @@ def _diagnose_infeasible(
             )
 
     if constraints.max_average_risk is not None:
-        minimum_risk = round(
+        minimum_risk = (
             sum(
                 min(
                     option.risk_score
@@ -642,8 +642,7 @@ def _diagnose_infeasible(
                 for options in options_by_entity.values()
                 if any(option.admissible for option in options)
             )
-            / len(options_by_entity),
-            4,
+            / len(options_by_entity)
         ) if options_by_entity else 0.0
         if minimum_risk > constraints.max_average_risk:
             diagnostics.append(
@@ -651,7 +650,7 @@ def _diagnose_infeasible(
                     code="AVERAGE_RISK_INFEASIBLE",
                     constraint="max_average_risk",
                     message=(
-                        f"Lowest achievable average risk {minimum_risk} exceeds "
+                        f"Lowest achievable average risk {minimum_risk:.8g} exceeds "
                         f"risk ceiling {constraints.max_average_risk}."
                     ),
                 )

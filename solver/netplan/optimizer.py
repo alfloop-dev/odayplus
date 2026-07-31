@@ -440,7 +440,7 @@ def diagnose_infeasible(
         for options in options_by_entity.values()
         if options
     ]
-    min_budget = round(sum(option.budget_cost for option in cheapest_by_entity), 4)
+    min_budget = sum(option.budget_cost for option in cheapest_by_entity)
     min_required_budget = _min_budget_with_required_action_counts(options_by_entity, constraints)
     budget_floor = min_required_budget if min_required_budget is not None else min_budget
     if budget_floor > constraints.max_budget:
@@ -1064,14 +1064,14 @@ def _max_metric(options_by_entity: dict[str, tuple[ActionOption, ...]], metric: 
     grouped: defaultdict[str, list[float]] = defaultdict(list)
     for entity, options in options_by_entity.items():
         grouped[entity].extend(float(metric(option)) for option in options)
-    return round(sum(max(values) for values in grouped.values() if values), 4)
+    return sum(max(values) for values in grouped.values() if values)
 
 
 def _min_metric(options_by_entity: dict[str, tuple[ActionOption, ...]], metric: Any) -> float:
     grouped: defaultdict[str, list[float]] = defaultdict(list)
     for entity, options in options_by_entity.items():
         grouped[entity].extend(float(metric(option)) for option in options)
-    return round(sum(min(values) for values in grouped.values() if values) / len(grouped) if grouped else 0.0, 4)
+    return sum(min(values) for values in grouped.values() if values) / len(grouped) if grouped else 0.0
 
 
 def _min_budget_with_required_action_counts(
@@ -1085,7 +1085,7 @@ def _min_budget_with_required_action_counts(
     for selected in product(*(options_by_entity[entity] for entity in entities)):
         counts = Counter(option.action for option in selected)
         if all(counts.get(action, 0) >= minimum for action, minimum in constraints.min_action_counts.items()):
-            budget = round(sum(option.budget_cost for option in selected), 4)
+            budget = sum(option.budget_cost for option in selected)
             best = budget if best is None else min(best, budget)
     return best
 
