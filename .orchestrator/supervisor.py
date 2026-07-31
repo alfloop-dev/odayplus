@@ -24,6 +24,10 @@ from zoneinfo import ZoneInfo
 THIS_DIR = Path(__file__).resolve().parent
 if str(THIS_DIR) not in sys.path:
     sys.path.insert(0, str(THIS_DIR))
+SCRIPTS_DIR = THIS_DIR.parent / "scripts"
+if str(SCRIPTS_DIR) not in sys.path:
+    sys.path.insert(0, str(SCRIPTS_DIR))
+
 
 import model_rotation
 from adapters import build_adapter
@@ -7788,26 +7792,23 @@ def agent_has_dispatchable_primary_work(
     task_map: dict[str, dict[str, Any]],
 ) -> bool:
     settings = ready_dispatch_settings(config)
-    review_statuses = {str(value).lower() for value in settings.get("review_statuses", ["review"])}
-    finalize_statuses = {str(value).lower() for value in settings.get("finalize_statuses", ["review_approved"])}
     dependency_done_statuses = {str(value).lower() for value in settings.get("dependency_done_statuses", ["done"])}
     for task in status.get("tasks", []) or []:
         if task_is_sidecar(task):
             continue
         if not agent_can_take_task(config, agent_name, task):
             continue
-        task_status = str(task.get("status") or "").lower()
-        if task_status in review_statuses and task.get("reviewer") == agent_name:
-            return True
-        if task_status in finalize_statuses and task.get("owner") == agent_name:
-            return True
-        if task.get("owner") != agent_name:
-            continue
-        if task_status == "in_progress" and dependencies_satisfied(task, task_map, dependency_done_statuses):
-            return True
-        if task_status == "todo" and dependencies_satisfied(task, task_map, dependency_done_statuses):
+        prio = dispatch_priority_for_task(
+            config,
+            task,
+            agent_name,
+            task_map=task_map,
+            dependencies_done_statuses=dependency_done_statuses,
+        )
+        if prio is not None:
             return True
     return False
+
 
 
 def count_open_sidecars_for_agent(status: dict[str, Any], agent_name: str) -> int:
@@ -8509,6 +8510,7 @@ def dispatch_priority_for_task(
     task: dict[str, Any],
     agent_name: str,
     *,
+    task_map: dict[str, dict[str, Any]] | None = None,
     dependencies_done_statuses: set[str] | None = None,
 ) -> int | None:
     settings = ready_dispatch_settings(config)
@@ -8522,23 +8524,46 @@ def dispatch_priority_for_task(
     owner_field = schema.get("assignee_field", "owner")
     reviewer_field = schema.get("reviewer_field", "reviewer")
     task_status = str(task.get("status") or "").lower()
+    tmap = task_map if task_map is not None else {str(task.get("id") or ""): task}
+
     if task_status in review_statuses and task.get(reviewer_field) == agent_name:
         return 0
     if task_status in finalize_statuses and task.get(owner_field) == agent_name:
+        approved_head = task.get("approved_head")
+        # B22: a missing approved_head is not "no freeze configured", it is a task
+        # whose reviewed commit is unknown. Fail closed like every other branch of
+        # this gate; the reviewer clears it with `restore_approved_head`.
+        if not approved_head:
+            return None
+        try:
+            from ai_status import resolve_task_sha
+            curr_head = resolve_task_sha(str(task.get("id") or ""))
+            if not curr_head or curr_head != approved_head:
+                return None
+        except Exception:
+            return None
+        try:
+            from ai_status import task_pr_ci_status
+            _pr_st, ci_status = task_pr_ci_status(str(task.get("id") or ""))
+            if ci_status not in {"success", "none"}:
+                return None
+        except Exception:
+            return None
         return 1
     if (
         task_status == "in_progress"
         and task.get(owner_field) == agent_name
-        and dependencies_satisfied(task, {str(task.get("id") or ""): task}, dependency_done_statuses)
+        and dependencies_satisfied(task, tmap, dependency_done_statuses)
     ):
         return 2
     if (
         task_status == "todo"
         and task.get(owner_field) == agent_name
-        and dependencies_satisfied(task, {str(task.get("id") or ""): task}, dependency_done_statuses)
+        and dependencies_satisfied(task, tmap, dependency_done_statuses)
     ):
         return 3
     return None
+
 
 
 def agent_dispatch_loads(
@@ -8676,7 +8701,6 @@ def higher_priority_ready_task_exists(
     settings = ready_dispatch_settings(config)
     active_statuses = {str(value) for value in settings.get("active_worker_statuses", [])}
     review_statuses = normalized_status_set(settings.get("review_statuses"), ["review"])
-    finalize_statuses = normalized_status_set(settings.get("finalize_statuses"), ["review_approved"])
     dependency_done_statuses = normalized_status_set(settings.get("dependency_done_statuses"), ["done"])
     schema = config.get("schema", {})
     owner_field = schema.get("assignee_field", "owner")
@@ -8704,20 +8728,14 @@ def higher_priority_ready_task_exists(
             ):
                 continue
             candidate_priority = 0
-        elif task_status in finalize_statuses and task.get(owner_field) == agent_name:
-            candidate_priority = 1
-        elif (
-            task_status == "in_progress"
-            and task.get(owner_field) == agent_name
-            and dependencies_satisfied(task, task_map, dependency_done_statuses)
-        ):
-            candidate_priority = 2
-        elif (
-            task_status == "todo"
-            and task.get(owner_field) == agent_name
-            and dependencies_satisfied(task, task_map, dependency_done_statuses)
-        ):
-            candidate_priority = 3
+        else:
+            candidate_priority = dispatch_priority_for_task(
+                config,
+                task,
+                agent_name,
+                task_map=task_map,
+                dependencies_done_statuses=dependency_done_statuses,
+            )
 
         if candidate_priority is not None and candidate_priority < current_priority:
             if (
@@ -9055,6 +9073,158 @@ def dispatch_ready_tasks(
                 reason = "review_ready_dispatch"
                 priority = 0
             elif task_status in finalize_statuses and task_owner == target_agent:
+                approved_head = task.get("approved_head")
+                current_head = None
+                try:
+                    from ai_status import resolve_task_sha
+                    current_head = resolve_task_sha(task_id)
+                except Exception as err:
+                    console_log(f"Failed to resolve sha for {task_id}: {err}", quiet=SUPERVISOR_LOG_QUIET)
+                # B22: a task in a finalize status with no approved_head has no
+                # verifiable reviewed commit, so finalize dispatch fails closed
+                # here too. Pre-freeze tasks do land in this shape, but backward
+                # compatibility has to be an explicit audited migration
+                # (`ai_status.py restore_approved_head`, reviewer-only), not an
+                # automatic bypass of the control this gate exists to apply.
+                # Say so once so the operator sees why the task is parked.
+                if not approved_head:
+                    msg = (
+                        f"Task {task_id} is {task_status} with no reviewer-approved head; "
+                        "finalize dispatch suppressed. The reviewer must attest the reviewed "
+                        f"commit (`restore_approved_head {task_id} <sha> <reason>`) or send it "
+                        "back for re-review."
+                    )
+                    if task.get("next") != msg:
+                        task["next"] = msg
+                        status_path = config_path(config, "status_file")
+                        write_json(status_path, status)
+                        write_activity_log(
+                            config,
+                            {
+                                "type": "approved_head_missing",
+                                "task_id": task_id,
+                                "message": msg,
+                            },
+                        )
+                    continue
+
+                if not current_head or current_head != approved_head:
+                    if current_head and current_head != approved_head:
+                        task["status"] = "review"
+                        task["last_update"] = utc_now()
+                        task["next"] = (
+                            f"Branch HEAD ({current_head[:8]}) mutated after reviewer approval "
+                            f"({approved_head[:8]}); re-review required."
+                        )
+                        task.pop("approved_head", None)
+                        status_path = config_path(config, "status_file")
+                        write_json(status_path, status)
+                        sync_status_pipeline(config)
+                        write_activity_log(
+                            config,
+                            {
+                                "type": "re-review_required",
+                                "task_id": task_id,
+                                "message": task["next"],
+                            },
+                        )
+                        changed = True
+                    else:
+                        # B20: head unresolvable. Suppressing finalize here
+                        # is correct, but doing it silently leaves the task
+                        # parked in review_approved with no explanation for
+                        # the operator. Emit once, not every cycle.
+                        msg = (
+                            f"Cannot verify branch HEAD for task {task_id} against the "
+                            f"reviewer-approved head ({approved_head[:8]}); finalize dispatch "
+                            "suppressed until it resolves."
+                        )
+                        if task.get("next") != msg:
+                            task["next"] = msg
+                            status_path = config_path(config, "status_file")
+                            write_json(status_path, status)
+                            write_activity_log(
+                                config,
+                                {
+                                    "type": "approved_head_unresolved",
+                                    "task_id": task_id,
+                                    "message": msg,
+                                },
+                            )
+                    continue
+
+                ci_status = "unknown"
+                try:
+                    from ai_status import task_pr_ci_status
+                    _pr_st, ci_status = task_pr_ci_status(task_id)
+                except Exception as err:
+                    console_log(f"Failed to check CI status for {task_id}: {err}", quiet=SUPERVISOR_LOG_QUIET)
+
+                if ci_status == "pending":
+                    now_ts = datetime.now(UTC).timestamp()
+                    start_ts = task.get("ci_pending_since_ts")
+                    if not start_ts:
+                        task["ci_pending_since_ts"] = now_ts
+                        task["ci_pending_since"] = utc_now()
+                        status_path = config_path(config, "status_file")
+                        write_json(status_path, status)
+                    elif now_ts - float(start_ts) > 1800:
+                        msg = f"CI status for task {task_id} has been pending for over 30 minutes; operator intervention required."
+                        if task.get("next") != msg:
+                            task["next"] = msg
+                            status_path = config_path(config, "status_file")
+                            write_json(status_path, status)
+                            write_activity_log(
+                                config,
+                                {
+                                    "type": "ci_pending_timeout",
+                                    "task_id": task_id,
+                                    "message": msg,
+                                },
+                            )
+                    continue
+                elif ci_status == "failure":
+                    task.pop("ci_pending_since_ts", None)
+                    msg = f"CI checks for task {task_id} failed; resolve failing checks before finalization."
+                    if task.get("next") != msg:
+                        task["next"] = msg
+                        status_path = config_path(config, "status_file")
+                        write_json(status_path, status)
+                        write_activity_log(
+                            config,
+                            {
+                                "type": "ci_failed",
+                                "task_id": task_id,
+                                "message": msg,
+                            },
+                        )
+                    continue
+                elif ci_status not in {"success", "none"}:
+                    # B20: catch-all for probe states that are neither pending,
+                    # failure, nor green (e.g. "unknown" when `gh` is
+                    # unreachable). Fail closed, but say so once.
+                    msg = (
+                        f"CI status for task {task_id} is unresolved ({ci_status}); "
+                        "finalize dispatch suppressed until it is conclusive."
+                    )
+                    if task.get("next") != msg:
+                        task["next"] = msg
+                        status_path = config_path(config, "status_file")
+                        write_json(status_path, status)
+                        write_activity_log(
+                            config,
+                            {
+                                "type": "ci_status_unresolved",
+                                "task_id": task_id,
+                                "message": msg,
+                            },
+                        )
+                    continue
+                else:
+                    if task.pop("ci_pending_since_ts", None) is not None:
+                        status_path = config_path(config, "status_file")
+                        write_json(status_path, status)
+
                 reason = "owned_finalize_dispatch"
                 priority = 1
             elif task_status == "in_progress" and task_owner == target_agent and dependencies_satisfied(task, task_map, dependency_done_statuses):

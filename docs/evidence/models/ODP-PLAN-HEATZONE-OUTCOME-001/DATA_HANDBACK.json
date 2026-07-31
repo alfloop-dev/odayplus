@@ -1,0 +1,45 @@
+{
+  "benchmark_requirements": {
+    "minimum_eligible_labels": 200,
+    "population_ranking_outperformance": "NDCG > baseline_population_ndcg (0.50)",
+    "synthetic_labels_allowed": false,
+    "top_k_survey_rate_improvement": "survey_rate > baseline_survey_rate (0.30)"
+  },
+  "created_at": "2026-07-30T22:11:34.175983Z",
+  "current_inventory": {
+    "eligible_count": 0,
+    "observed_count": 0,
+    "required_minimum": 200,
+    "shortfall": 200
+  },
+  "handback_type": "LABEL_INVENTORY_INSUFFICIENT",
+  "inventory_lineage": {
+    "contract_version": "heatzone-training-view-v2",
+    "inventory_observed_at": "2026-07-25T15:20:00Z",
+    "inventory_sha256": "3f1c8ec4baa1e2f06f5c4e93e82a6258315012b46aacfd3f3e578221aa8b5f44",
+    "inventory_version": "pg16-production-model-inventory-2026-07-25-v1",
+    "relation": "model_ready.heatzone_training_view"
+  },
+  "model_name": "heatzone_priority",
+  "next_actions": [
+    "Ingest real POS transaction history and store opening date authority into PG16 data plane",
+    "Run scripts/models/install_views.py to refresh model_ready.heatzone_training_view",
+    "Execute python3 scripts/models/heatzone_benchmark.py generate to re-evaluate Gate 1 receipt"
+  ],
+  "required_schema_fields": [
+    "tenant_id",
+    "store_id",
+    "opened_on",
+    "h3_index",
+    "h3_resolution",
+    "origin_date",
+    "realized_28d_cell_net_revenue",
+    "label_maturity_time",
+    "authority_type",
+    "provenance"
+  ],
+  "service": "heatzone",
+  "status": "GOVERNED_DISABLED",
+  "task_id": "ODP-PLAN-HEATZONE-OUTCOME-001",
+  "unavailable_reason": "DATA_CONTRACT_NOT_MATURE"
+}

@@ -109,6 +109,7 @@ def test_missing_cvxpy_fails_closed(monkeypatch) -> None:
         options_by_entity=_options(),
         scenarios=_scenarios(),
         constraints=RobustNetPlanConstraints(max_budget=50),
+        isolate_process=False,
     )
 
     assert result.solver_status == "SOLVER_UNAVAILABLE"
@@ -129,6 +130,7 @@ def test_missing_mixed_integer_backend_fails_closed(monkeypatch) -> None:
         options_by_entity=_options(),
         scenarios=_scenarios(),
         constraints=RobustNetPlanConstraints(max_budget=50),
+        isolate_process=False,
     )
 
     assert result.solver_status == "SOLVER_UNAVAILABLE"
