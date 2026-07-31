@@ -124,9 +124,46 @@ Keep the no-restart boundary in force. After R1–R3 pass on one pushed head,
 record the drain decision and perform rollout verification only at the task's
 safe post-drain gate.
 
+### R5 — P0: status-check failure is not transactional with worker dispatch
+
+A second live receipt arrived during this review:
+
+- task: `ODP-PLAN-ACCEPTANCE-REAL-EXEC-001`
+- event: `evt-20260731T080347Z-fda15eea`
+- worker run: `codex-20260731T080348Z-61f2c0b5`
+- local task head: `f1078e8b3b62bd5690a55e731ba3b4fdb301f632`
+- remote task head at review time:
+  `6a003b4a2e650307265c7e81688c2f80ef041041`
+
+The Supervisor reset the task worktree after backing up its dirt to
+`.orchestrator/worktree-dirt-backups/odp-plan-acceptance-real-exec-001-lease_blocked.patch`,
+started the worker, and then attempted `ai-status start`. GitHub rejected the
+status check with HTTP 422 because the local head did not exist remotely.
+`ai_status.py` rolled authoritative task state back to `todo`, while activity
+and runner state already said the worker had started.
+
+The worker later called progress and moved the task to `in_progress`, but this
+does not close the control failure. At the targeted review snapshot the runner
+PID `3988419` was alive with a fresh heartbeat and `PPID=1`, while
+`state.json` contained no matching worker record. The backup patch existed and
+was `4,825,511` bytes; it must not be deleted.
+
+Add failure injection for status-check HTTP 422 and prove one transactional
+outcome:
+
+1. resolve and push a remote-verifiable task head before worker launch/status
+   emission; or
+2. durably commit task mutation, runner/activity state, and a retryable status
+   check outbox without rolling task truth behind a live run.
+
+The exact-head tests must show no `todo + live runner` split, no orphan,
+no duplicate redispatch, no loss of the dirty-worktree backup, and eventual
+reconciliation after the remote commit becomes visible.
+
 ## Required next handoff
 
-Return one exact pushed head that closes R1–R4 as a batch. Include the full
+Return one exact pushed head that closes R1–R5 as a batch. Include the full
 configured owner/reviewer and negative matrices, the deterministic concurrent
-claim/main-loop test, before/after worker and task state, and the safe post-drain
-rollout record. Do not restart the live Supervisor for a partial fix.
+claim/main-loop and HTTP-422 failure-injection tests, before/after worker and
+task state, and the safe post-drain rollout record. Do not restart the live
+Supervisor for a partial fix.
