@@ -133,6 +133,47 @@ def test_execution_control_pack_rejects_incomplete_contract(tmp_path: Path) -> N
     assert any("must_reject must be a non-empty string list" in error for error in errors)
 
 
+def test_execution_control_pack_rejects_packet_gap_scope_drift(tmp_path: Path) -> None:
+    validator = _load_validator()
+    packet = json.loads(validator.DEFAULT_PACKET.read_text(encoding="utf-8"))
+    target = packet["task_packets"][0]
+    target["gap_ids"] = ["WRONG-SCOPE"]
+    bad_packet = tmp_path / "packet.json"
+    bad_packet.write_text(json.dumps(packet), encoding="utf-8")
+
+    errors = validator.validate_packet(
+        packet_path=bad_packet,
+        markdown_path=validator.DEFAULT_MARKDOWN,
+    )
+
+    assert any("gap_ids must equal authoritative scope" in error for error in errors)
+
+
+def test_execution_control_pack_recomputes_source_matrix_and_ledger(tmp_path: Path) -> None:
+    validator = _load_validator()
+    matrix = validator.DEFAULT_MATRIX.read_text(encoding="utf-8")
+    ledger = validator.DEFAULT_LEDGER.read_text(encoding="utf-8")
+    bad_matrix = tmp_path / "matrix.md"
+    bad_ledger = tmp_path / "ledger.md"
+    bad_matrix.write_text(
+        matrix.replace("| PLAN-S0-001 |", "| REMOVED-S0-001 |", 1),
+        encoding="utf-8",
+    )
+    bad_ledger.write_text(
+        ledger.replace("| A | `ODP-PLAN-GAP-ARCHIVE-001` |", "| A | `WRONG-TASK` |", 1),
+        encoding="utf-8",
+    )
+
+    errors = validator.validate_packet(
+        matrix_path=bad_matrix,
+        ledger_path=bad_ledger,
+    )
+
+    assert any("source RTM matrix must contain 84 unique rows" in error for error in errors)
+    assert any("source RTM matrix stage distribution drifted" in error for error in errors)
+    assert any("source execution ledger must contain the exact 26" in error for error in errors)
+
+
 def test_sync_metadata_expands_granular_acceptance_and_preserves_task_fields() -> None:
     import json
 

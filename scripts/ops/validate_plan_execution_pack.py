@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 from pathlib import Path
 from typing import Any
 from urllib.parse import quote
@@ -17,6 +18,8 @@ from urllib.parse import quote
 ROOT = Path(__file__).resolve().parents[2]
 DEFAULT_PACKET = ROOT / "docs/evidence/DEVELOPMENT_PLAN_OPEN_TASK_EXECUTION_PACK_2026-07-31.json"
 DEFAULT_MARKDOWN = ROOT / "docs/evidence/DEVELOPMENT_PLAN_OPEN_TASK_EXECUTION_PACK_2026-07-31.md"
+DEFAULT_MATRIX = ROOT / "docs/evidence/DEVELOPMENT_PLAN_IMPLEMENTATION_GAP_MATRIX_2026-07-30.md"
+DEFAULT_LEDGER = ROOT / "docs/evidence/DEVELOPMENT_PLAN_GAP_EXECUTION_TASKS_2026-07-30.md"
 
 EXPECTED_COMPLETED = {
     "ODP-PLAN-CANONICAL-SHELL-LIVE-001",
@@ -73,6 +76,28 @@ EXPECTED_HUMAN_REVIEWERS = {
     "ODP-PLAN-UAT-SIGNOFF-001",
 }
 
+EXPECTED_GAP_IDS = {
+    "ODP-PLAN-ACCEPTANCE-REAL-EXEC-001": {"GAP-P0-002"},
+    "ODP-PLAN-AVM-OUTCOME-001": {"GAP-P1-003"},
+    "ODP-PLAN-AVM-OUTCOME-BACKFILL-001": {"GAP-P1-003-DATA"},
+    "ODP-PLAN-ENGINEERING-HARDENING-001": {"GAP-P2-ENGINEERING"},
+    "ODP-PLAN-FINAL-GATE-AUDIT-001": {"FINAL-GATE"},
+    "ODP-PLAN-FORECAST-BUSINESS-001": {"GAP-P1-004"},
+    "ODP-PLAN-FORECAST-RELEASE-EVIDENCE-001": {"GAP-P0-004"},
+    "ODP-PLAN-HEATZONE-LABEL-BACKFILL-001": {"GAP-P1-001-DATA"},
+    "ODP-PLAN-LIVE-STAGING-PROOF-001": {"GAP-P0-006"},
+    "ODP-PLAN-NETPLAN-ACCEPTANCE-001": {"GAP-P1-006"},
+    "ODP-PLAN-NETPLAN-BASELINE-APPROVAL-001": {"GAP-P1-006-BUSINESS"},
+    "ODP-PLAN-OBSERVABILITY-LIVE-001": {"GAP-P1-008"},
+    "ODP-PLAN-OSS-LEGAL-POLICY-001": {"GAP-P1-007-LEGAL"},
+    "ODP-PLAN-OSS-LICENSE-GATE-001": {"GAP-P1-007"},
+    "ODP-PLAN-PRICE-ADLIFT-PILOT-001": {"GAP-P1-005"},
+    "ODP-PLAN-SITESCORE-OUTCOME-001": {"GAP-P1-002"},
+    "ODP-PLAN-SITESCORE-OUTCOME-BACKFILL-001": {"GAP-P1-002-DATA"},
+    "ODP-PLAN-SITESCORE-PREDICTION-SOURCE-001": {"GAP-P1-002"},
+    "ODP-PLAN-UAT-SIGNOFF-001": {"GAP-P0-005"},
+}
+
 REQUIRED_ACCEPTANCE_PREFIXES = (
     "Deliverable:",
     "Fail-closed:",
@@ -111,6 +136,8 @@ def validate_packet(
     markdown_path: Path = DEFAULT_MARKDOWN,
     live_status_path: Path | None = None,
     live_archive_root: Path | None = None,
+    matrix_path: Path = DEFAULT_MATRIX,
+    ledger_path: Path = DEFAULT_LEDGER,
 ) -> list[str]:
     errors: list[str] = []
 
@@ -118,6 +145,10 @@ def validate_packet(
         return [f"execution packet missing: {packet_path}"]
     if not markdown_path.is_file():
         return [f"execution packet markdown missing: {markdown_path}"]
+    if not matrix_path.is_file():
+        return [f"source RTM matrix missing: {matrix_path}"]
+    if not ledger_path.is_file():
+        return [f"source execution ledger missing: {ledger_path}"]
 
     try:
         packet = _load_object(packet_path)
@@ -130,6 +161,43 @@ def validate_packet(
         errors.append("unexpected packet_id")
     if packet.get("program_id") != "ODP-PLAN-GAP-CLOSEOUT-2026-07-30":
         errors.append("unexpected program_id")
+
+    matrix = matrix_path.read_text(encoding="utf-8")
+    rtm_matches = re.findall(
+        r"^\| (PLAN-S([0-7])-(?:\d{3}|GATE)) \|",
+        matrix,
+        flags=re.MULTILINE,
+    )
+    rtm_ids = [item[0] for item in rtm_matches]
+    stage_distribution = [
+        sum(stage == str(index) for _, stage in rtm_matches) for index in range(8)
+    ]
+    if len(rtm_ids) != 84 or len(set(rtm_ids)) != 84:
+        errors.append(
+            f"source RTM matrix must contain 84 unique rows; "
+            f"got rows={len(rtm_ids)} unique={len(set(rtm_ids))}"
+        )
+    if stage_distribution != [12, 12, 10, 9, 11, 12, 11, 7]:
+        errors.append(f"source RTM matrix stage distribution drifted: {stage_distribution}")
+
+    ledger = ledger_path.read_text(encoding="utf-8")
+    ledger_task_ids = re.findall(
+        r"^\| [A-E] \| `([^`]+)` \|",
+        ledger,
+        flags=re.MULTILINE,
+    )
+    expected_ledger_ids = EXPECTED_COMPLETED | EXPECTED_UNRESOLVED
+    if len(ledger_task_ids) != 26 or set(ledger_task_ids) != expected_ledger_ids:
+        errors.append(
+            f"source execution ledger must contain the exact 26 governance tasks; "
+            f"rows={len(ledger_task_ids)} missing={sorted(expected_ledger_ids - set(ledger_task_ids))} "
+            f"extra={sorted(set(ledger_task_ids) - expected_ledger_ids)}"
+        )
+    missing_contracts = sorted(
+        task_id for task_id in expected_ledger_ids if ledger.count(f"### {task_id}") != 1
+    )
+    if missing_contracts:
+        errors.append(f"source execution ledger task contracts must be unique: {missing_contracts}")
 
     coverage = packet.get("coverage")
     if not isinstance(coverage, dict):
@@ -153,6 +221,8 @@ def validate_packet(
         completed = completed if isinstance(completed, list) else []
     if len(completed) != len(set(completed)):
         errors.append("completed_task_ids contains duplicates")
+    if set(EXPECTED_GAP_IDS) != EXPECTED_UNRESOLVED:
+        errors.append("authoritative gap mapping must cover the exact 19 unresolved tasks")
 
     global_contract = packet.get("global_execution_contract")
     if not isinstance(global_contract, dict):
@@ -196,6 +266,17 @@ def validate_packet(
         expected_class = "human_gate" if task_id in EXPECTED_HUMAN_GATES else "implementation"
         if task_class != expected_class:
             errors.append(f"{task_id}: class must be {expected_class}")
+        gap_ids = item.get("gap_ids")
+        expected_gap_ids = EXPECTED_GAP_IDS.get(task_id)
+        if (
+            not isinstance(gap_ids, list)
+            or len(gap_ids) != len(set(gap_ids))
+            or set(gap_ids) != expected_gap_ids
+        ):
+            errors.append(
+                f"{task_id}: gap_ids must equal authoritative scope "
+                f"{sorted(expected_gap_ids or [])}, got {gap_ids!r}"
+            )
         for field in REQUIRED_PACKET_LIST_FIELDS:
             value = item.get(field)
             if (
@@ -486,9 +567,18 @@ def main() -> int:
     parser.add_argument("--markdown", type=Path, default=DEFAULT_MARKDOWN)
     parser.add_argument("--status", type=Path)
     parser.add_argument("--archive-root", type=Path)
+    parser.add_argument("--matrix", type=Path, default=DEFAULT_MATRIX)
+    parser.add_argument("--ledger", type=Path, default=DEFAULT_LEDGER)
     args = parser.parse_args()
 
-    errors = validate_packet(args.packet, args.markdown, args.status, args.archive_root)
+    errors = validate_packet(
+        args.packet,
+        args.markdown,
+        args.status,
+        args.archive_root,
+        args.matrix,
+        args.ledger,
+    )
     if errors:
         for error in errors:
             print(f"ERROR: {error}")
