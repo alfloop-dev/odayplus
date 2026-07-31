@@ -1,0 +1,705 @@
+{
+  "schema_version": "2.0.0",
+  "receipt_id": "ODP-PRODUCT-E2E-RECEIPT-002",
+  "task_id": "ODP-PLAN-ACCEPTANCE-REAL-EXEC-001",
+  "run_id": "product-e2e-2026-07-31T14:06:04.291075Z",
+  "generated_at": "2026-07-31T14:06:04.291103Z",
+  "tested_source": {
+    "commit_sha": "3addcc618c744ba5e592c45791f5ee4a58546aa2",
+    "tree_sha": "e5d65bf9a55b3213c3f70a9b3ca81484edb10ad0"
+  },
+  "evidence_proof_at_generation": {
+    "tested_source_sha": "3addcc618c744ba5e592c45791f5ee4a58546aa2",
+    "tested_tree_sha": "e5d65bf9a55b3213c3f70a9b3ca81484edb10ad0",
+    "evidence_head_sha": "3addcc618c744ba5e592c45791f5ee4a58546aa2",
+    "relation": "exact_source_head",
+    "intervening_touched_paths": [],
+    "working_tree_paths": [
+      "docs/evidence/e2e/raw_playwright_results.json",
+      "docs/evidence/e2e/raw_pytest_results.json"
+    ],
+    "allowlist": [
+      "docs/evidence/e2e/PRODUCT_E2E_EXECUTION_RECEIPT.json",
+      "docs/evidence/e2e/raw_playwright_results.json",
+      "docs/evidence/e2e/raw_pytest_results.json"
+    ]
+  },
+  "artifacts": [
+    {
+      "runner": "playwright",
+      "path": "docs/evidence/e2e/raw_playwright_results.json",
+      "sha256": "ab077c061c3ea28491c43f78eb2de189a0dd25090e9cea3f232227b0f839bc65",
+      "normalized_artifact_sha256": "bf269aeb82fb794a14700cf9cc4b8fae4ef40d42d683bac8061be1d33f3603d7",
+      "command": "npx playwright test tests/e2e/e2e-network-find-areas-api-binding.spec.ts tests/e2e/e2e-operator-console.spec.ts tests/e2e/operator-assisted-listing-intake-a11y.spec.ts tests/e2e/operator-assisted-listing-intake-mobile.spec.ts tests/e2e/operator-assisted-listing-intake.spec.ts tests/e2e/operator-governance.spec.ts tests/e2e/operator-growth.spec.ts tests/e2e/operator-network-assisted-intake.spec.ts tests/e2e/operator-network-listings.spec.ts tests/e2e/operator-network-rebalance.spec.ts tests/e2e/operator-network-review.spec.ts tests/e2e/operator-network-scoring.spec.ts tests/e2e/operator-shell-today.spec.ts tests/e2e/operator-store-ops.spec.ts tests/e2e/product-e2e-env.spec.ts tests/e2e/shell-resource-binding.spec.ts --workers=1 --retries=0 --project=chromium --reporter=json",
+      "version": "Version 1.61.1",
+      "started_at": "2026-07-31T13:55:58Z",
+      "ended_at": "2026-07-31T14:05:36Z",
+      "exit_code": 0,
+      "environment": {
+        "project": "chromium",
+        "workers": "1",
+        "retries": "0"
+      }
+    },
+    {
+      "runner": "pytest",
+      "path": "docs/evidence/e2e/raw_pytest_results.json",
+      "sha256": "c9b4fc853a6f833738d939ac47bfef7f878923c49b5473d56fb7f5e1f35bfe39",
+      "normalized_artifact_sha256": "67bfab1683b966fe0a9d9f6e55501fed86d2765be882a0946a96a4a3af47e517",
+      "command": "/tmp/pantheon-worker-worktrees/oday-plus-supervisor-live/odp-plan-acceptance-real-exec-001/.venv/bin/python3 -m pytest -q tests/integration/test_avm_official_outcome_contract.py::test_official_outcome_migration_has_bounded_source_and_provenance_contracts tests/integration/test_intervention_workflow.py::test_full_lifecycle_reaches_completed_with_causal_evidence_and_label tests/integration/test_priceops_constraints.py::test_full_pilot_lifecycle_records_complete_status_history tests/integration/test_adlift_incrementality.py::test_difference_in_differences_isolates_ad_lift_from_market_movement tests/integration/test_learninghub_release.py::test_governed_release_invokes_remote_mlflow_alias_updates tests/integration/test_learninghub_release.py::test_learninghub_validates_releases_and_rolls_back_model_aliases tests/integration/test_learninghub_release.py::test_learninghub_blocks_release_without_passed_validation_or_model_card tests/data/test_pit_snapshot.py::test_point_in_time_validation_rejects_future_feature_snapshot tests/security/test_rbac_abac.py::test_rbac_denies_action_outside_role tests/security/test_rbac_abac.py::test_tenant_isolation_blocks_other_tenant",
+      "version": "pytest 9.1.1; python 3.12.3",
+      "started_at": "2026-07-31T14:05:36.686400Z",
+      "ended_at": "2026-07-31T14:06:02.123730Z",
+      "exit_code": 0,
+      "environment": {
+        "platform": "linux",
+        "python_executable": "/tmp/pantheon-worker-worktrees/oday-plus-supervisor-live/odp-plan-acceptance-real-exec-001/.venv/bin/python3",
+        "node_id_count": "10"
+      }
+    }
+  ],
+  "runner_counts": {
+    "playwright": {
+      "total_specs": 16,
+      "total_tests": 107,
+      "passed": 107,
+      "failed": 0,
+      "skipped": 0,
+      "timed_out": 0,
+      "interrupted": 0,
+      "flaky": 0,
+      "malformed": 0
+    },
+    "pytest": {
+      "total_specs": 0,
+      "total_tests": 10,
+      "passed": 10,
+      "failed": 0,
+      "skipped": 0,
+      "timed_out": 0,
+      "interrupted": 0,
+      "flaky": 0,
+      "malformed": 0
+    }
+  },
+  "aggregate_counts": {
+    "total_tests": 117,
+    "passed": 117,
+    "non_passing": 0,
+    "total_scenarios": 16,
+    "automated_scenarios": 14,
+    "manual_pending_scenarios": 2
+  },
+  "scenario_results": [
+    {
+      "scenario_id": "E2E-EXP-001",
+      "priority": "P0",
+      "name": "HeatZone to SiteScore opening decision",
+      "automation_refs": [
+        "tests/e2e/operator-network-scoring.spec.ts::SiteScore Lab renders GO/WAIT/REJECT scorecards with conditions and reasons"
+      ],
+      "status": "passed",
+      "bindings": [
+        {
+          "runner": "playwright",
+          "test_id": "tests/e2e/operator-network-scoring.spec.ts::SiteScore Lab renders GO/WAIT/REJECT scorecards with conditions and reasons",
+          "raw_result": {
+            "test_id": "tests/e2e/operator-network-scoring.spec.ts::SiteScore Lab renders GO/WAIT/REJECT scorecards with conditions and reasons",
+            "status": "passed",
+            "project": "chromium",
+            "expected_status": "passed",
+            "attempts": [
+              {
+                "status": "passed",
+                "duration_ms": 5962,
+                "retry": 0,
+                "started_at": "2026-07-31T14:05:17.724Z"
+              }
+            ]
+          },
+          "artifact_path": "docs/evidence/e2e/raw_playwright_results.json",
+          "artifact_sha256": "ab077c061c3ea28491c43f78eb2de189a0dd25090e9cea3f232227b0f839bc65"
+        }
+      ]
+    },
+    {
+      "scenario_id": "E2E-EXP-002",
+      "priority": "P0",
+      "name": "Listing import, geocode, dedup, and candidate creation",
+      "automation_refs": [
+        "tests/e2e/operator-network-listings.spec.ts::HZ-01 to L-2024 to CS-1001 completes through UI and API"
+      ],
+      "status": "passed",
+      "bindings": [
+        {
+          "runner": "playwright",
+          "test_id": "tests/e2e/operator-network-listings.spec.ts::HZ-01 to L-2024 to CS-1001 completes through UI and API",
+          "raw_result": {
+            "test_id": "tests/e2e/operator-network-listings.spec.ts::HZ-01 to L-2024 to CS-1001 completes through UI and API",
+            "status": "passed",
+            "project": "chromium",
+            "expected_status": "passed",
+            "attempts": [
+              {
+                "status": "passed",
+                "duration_ms": 7146,
+                "retry": 0,
+                "started_at": "2026-07-31T14:03:43.955Z"
+              }
+            ]
+          },
+          "artifact_path": "docs/evidence/e2e/raw_playwright_results.json",
+          "artifact_sha256": "ab077c061c3ea28491c43f78eb2de189a0dd25090e9cea3f232227b0f839bc65"
+        }
+      ]
+    },
+    {
+      "scenario_id": "E2E-EXP-003",
+      "priority": "P1",
+      "name": "SiteScore return for supplement and rescore",
+      "automation_refs": [
+        "manual-uat:UAT-SITE-003"
+      ],
+      "status": "pending",
+      "route": "ODP-PLAN-UAT-SIGNOFF-001"
+    },
+    {
+      "scenario_id": "E2E-OPS-001",
+      "priority": "P0",
+      "name": "Post-opening SiteScore realization",
+      "automation_refs": [
+        "tests/integration/test_avm_official_outcome_contract.py::test_official_outcome_migration_has_bounded_source_and_provenance_contracts"
+      ],
+      "status": "passed",
+      "bindings": [
+        {
+          "runner": "pytest",
+          "test_id": "tests/integration/test_avm_official_outcome_contract.py::test_official_outcome_migration_has_bounded_source_and_provenance_contracts",
+          "raw_result": {
+            "test_id": "tests/integration/test_avm_official_outcome_contract.py::test_official_outcome_migration_has_bounded_source_and_provenance_contracts",
+            "status": "passed",
+            "duration_ms": 60.617,
+            "phases": [
+              {
+                "phase": "setup",
+                "outcome": "passed",
+                "duration_seconds": 0.058564732025843114,
+                "longrepr": null
+              },
+              {
+                "phase": "call",
+                "outcome": "passed",
+                "duration_seconds": 0.001654638967011124,
+                "longrepr": null
+              },
+              {
+                "phase": "teardown",
+                "outcome": "passed",
+                "duration_seconds": 0.00039811996975913644,
+                "longrepr": null
+              }
+            ]
+          },
+          "artifact_path": "docs/evidence/e2e/raw_pytest_results.json",
+          "artifact_sha256": "c9b4fc853a6f833738d939ac47bfef7f878923c49b5473d56fb7f5e1f35bfe39"
+        }
+      ]
+    },
+    {
+      "scenario_id": "E2E-OPS-002",
+      "priority": "P0",
+      "name": "ForecastOps four-light alert to root cause",
+      "automation_refs": [
+        "tests/e2e/operator-store-ops.spec.ts::Package 10 issue detail exposes the four-light evidence without legacy filter chips"
+      ],
+      "status": "passed",
+      "bindings": [
+        {
+          "runner": "playwright",
+          "test_id": "tests/e2e/operator-store-ops.spec.ts::Package 10 issue detail exposes the four-light evidence without legacy filter chips",
+          "raw_result": {
+            "test_id": "tests/e2e/operator-store-ops.spec.ts::Package 10 issue detail exposes the four-light evidence without legacy filter chips",
+            "status": "passed",
+            "project": "chromium",
+            "expected_status": "passed",
+            "attempts": [
+              {
+                "status": "passed",
+                "duration_ms": 801,
+                "retry": 0,
+                "started_at": "2026-07-31T14:05:32.265Z"
+              }
+            ]
+          },
+          "artifact_path": "docs/evidence/e2e/raw_playwright_results.json",
+          "artifact_sha256": "ab077c061c3ea28491c43f78eb2de189a0dd25090e9cea3f232227b0f839bc65"
+        }
+      ]
+    },
+    {
+      "scenario_id": "E2E-INT-001",
+      "priority": "P0",
+      "name": "Red alert to intervention and observation maturity",
+      "automation_refs": [
+        "tests/integration/test_intervention_workflow.py::test_full_lifecycle_reaches_completed_with_causal_evidence_and_label"
+      ],
+      "status": "passed",
+      "bindings": [
+        {
+          "runner": "pytest",
+          "test_id": "tests/integration/test_intervention_workflow.py::test_full_lifecycle_reaches_completed_with_causal_evidence_and_label",
+          "raw_result": {
+            "test_id": "tests/integration/test_intervention_workflow.py::test_full_lifecycle_reaches_completed_with_causal_evidence_and_label",
+            "status": "passed",
+            "duration_ms": 2.489,
+            "phases": [
+              {
+                "phase": "setup",
+                "outcome": "passed",
+                "duration_seconds": 0.000680426019243896,
+                "longrepr": null
+              },
+              {
+                "phase": "call",
+                "outcome": "passed",
+                "duration_seconds": 0.0014868979924358428,
+                "longrepr": null
+              },
+              {
+                "phase": "teardown",
+                "outcome": "passed",
+                "duration_seconds": 0.0003215629840269685,
+                "longrepr": null
+              }
+            ]
+          },
+          "artifact_path": "docs/evidence/e2e/raw_pytest_results.json",
+          "artifact_sha256": "c9b4fc853a6f833738d939ac47bfef7f878923c49b5473d56fb7f5e1f35bfe39"
+        }
+      ]
+    },
+    {
+      "scenario_id": "E2E-PRICE-001",
+      "priority": "P0",
+      "name": "PriceOps plan, approval, execution, and rollback",
+      "automation_refs": [
+        "tests/integration/test_priceops_constraints.py::test_full_pilot_lifecycle_records_complete_status_history"
+      ],
+      "status": "passed",
+      "bindings": [
+        {
+          "runner": "pytest",
+          "test_id": "tests/integration/test_priceops_constraints.py::test_full_pilot_lifecycle_records_complete_status_history",
+          "raw_result": {
+            "test_id": "tests/integration/test_priceops_constraints.py::test_full_pilot_lifecycle_records_complete_status_history",
+            "status": "passed",
+            "duration_ms": 2.02,
+            "phases": [
+              {
+                "phase": "setup",
+                "outcome": "passed",
+                "duration_seconds": 0.0006186490063555539,
+                "longrepr": null
+              },
+              {
+                "phase": "call",
+                "outcome": "passed",
+                "duration_seconds": 0.0011136019602417946,
+                "longrepr": null
+              },
+              {
+                "phase": "teardown",
+                "outcome": "passed",
+                "duration_seconds": 0.00028731999918818474,
+                "longrepr": null
+              }
+            ]
+          },
+          "artifact_path": "docs/evidence/e2e/raw_pytest_results.json",
+          "artifact_sha256": "c9b4fc853a6f833738d939ac47bfef7f878923c49b5473d56fb7f5e1f35bfe39"
+        }
+      ]
+    },
+    {
+      "scenario_id": "E2E-AD-001",
+      "priority": "P0",
+      "name": "AdLift campaign, controls, and incrementality",
+      "automation_refs": [
+        "tests/integration/test_adlift_incrementality.py::test_difference_in_differences_isolates_ad_lift_from_market_movement"
+      ],
+      "status": "passed",
+      "bindings": [
+        {
+          "runner": "pytest",
+          "test_id": "tests/integration/test_adlift_incrementality.py::test_difference_in_differences_isolates_ad_lift_from_market_movement",
+          "raw_result": {
+            "test_id": "tests/integration/test_adlift_incrementality.py::test_difference_in_differences_isolates_ad_lift_from_market_movement",
+            "status": "passed",
+            "duration_ms": 2349.615,
+            "phases": [
+              {
+                "phase": "setup",
+                "outcome": "passed",
+                "duration_seconds": 0.0006157569587230682,
+                "longrepr": null
+              },
+              {
+                "phase": "call",
+                "outcome": "passed",
+                "duration_seconds": 2.3485764309880324,
+                "longrepr": null
+              },
+              {
+                "phase": "teardown",
+                "outcome": "passed",
+                "duration_seconds": 0.0004226809833198786,
+                "longrepr": null
+              }
+            ]
+          },
+          "artifact_path": "docs/evidence/e2e/raw_pytest_results.json",
+          "artifact_sha256": "c9b4fc853a6f833738d939ac47bfef7f878923c49b5473d56fb7f5e1f35bfe39"
+        }
+      ]
+    },
+    {
+      "scenario_id": "E2E-AVM-001",
+      "priority": "P0",
+      "name": "Long-term red store to AVM valuation and Data Room",
+      "automation_refs": [
+        "tests/e2e/operator-network-rebalance.spec.ts::AVM + NetPlan workflow persists selected scenario and creates Govern approval without execution"
+      ],
+      "status": "passed",
+      "bindings": [
+        {
+          "runner": "playwright",
+          "test_id": "tests/e2e/operator-network-rebalance.spec.ts::AVM + NetPlan workflow persists selected scenario and creates Govern approval without execution",
+          "raw_result": {
+            "test_id": "tests/e2e/operator-network-rebalance.spec.ts::AVM + NetPlan workflow persists selected scenario and creates Govern approval without execution",
+            "status": "passed",
+            "project": "chromium",
+            "expected_status": "passed",
+            "attempts": [
+              {
+                "status": "passed",
+                "duration_ms": 7283,
+                "retry": 0,
+                "started_at": "2026-07-31T14:04:45.594Z"
+              }
+            ]
+          },
+          "artifact_path": "docs/evidence/e2e/raw_playwright_results.json",
+          "artifact_sha256": "ab077c061c3ea28491c43f78eb2de189a0dd25090e9cea3f232227b0f839bc65"
+        }
+      ]
+    },
+    {
+      "scenario_id": "E2E-NET-001",
+      "priority": "P0",
+      "name": "NetPlan scenario, solver alternatives, and approval",
+      "automation_refs": [
+        "tests/e2e/operator-network-rebalance.spec.ts::AVM + NetPlan workflow persists selected scenario and creates Govern approval without execution"
+      ],
+      "status": "passed",
+      "bindings": [
+        {
+          "runner": "playwright",
+          "test_id": "tests/e2e/operator-network-rebalance.spec.ts::AVM + NetPlan workflow persists selected scenario and creates Govern approval without execution",
+          "raw_result": {
+            "test_id": "tests/e2e/operator-network-rebalance.spec.ts::AVM + NetPlan workflow persists selected scenario and creates Govern approval without execution",
+            "status": "passed",
+            "project": "chromium",
+            "expected_status": "passed",
+            "attempts": [
+              {
+                "status": "passed",
+                "duration_ms": 7283,
+                "retry": 0,
+                "started_at": "2026-07-31T14:04:45.594Z"
+              }
+            ]
+          },
+          "artifact_path": "docs/evidence/e2e/raw_playwright_results.json",
+          "artifact_sha256": "ab077c061c3ea28491c43f78eb2de189a0dd25090e9cea3f232227b0f839bc65"
+        }
+      ]
+    },
+    {
+      "scenario_id": "E2E-LEARN-001",
+      "priority": "P0",
+      "name": "Model training, validation, shadow, canary, production",
+      "automation_refs": [
+        "tests/integration/test_learninghub_release.py::test_governed_release_invokes_remote_mlflow_alias_updates"
+      ],
+      "status": "passed",
+      "bindings": [
+        {
+          "runner": "pytest",
+          "test_id": "tests/integration/test_learninghub_release.py::test_governed_release_invokes_remote_mlflow_alias_updates",
+          "raw_result": {
+            "test_id": "tests/integration/test_learninghub_release.py::test_governed_release_invokes_remote_mlflow_alias_updates",
+            "status": "passed",
+            "duration_ms": 3768.117,
+            "phases": [
+              {
+                "phase": "setup",
+                "outcome": "passed",
+                "duration_seconds": 0.0007225739536806941,
+                "longrepr": null
+              },
+              {
+                "phase": "call",
+                "outcome": "passed",
+                "duration_seconds": 3.7667736200382933,
+                "longrepr": null
+              },
+              {
+                "phase": "teardown",
+                "outcome": "passed",
+                "duration_seconds": 0.0006206060061231256,
+                "longrepr": null
+              }
+            ]
+          },
+          "artifact_path": "docs/evidence/e2e/raw_pytest_results.json",
+          "artifact_sha256": "c9b4fc853a6f833738d939ac47bfef7f878923c49b5473d56fb7f5e1f35bfe39"
+        }
+      ]
+    },
+    {
+      "scenario_id": "E2E-LEARN-002",
+      "priority": "P0",
+      "name": "Model release rollback",
+      "automation_refs": [
+        "tests/integration/test_learninghub_release.py::test_learninghub_validates_releases_and_rolls_back_model_aliases"
+      ],
+      "status": "passed",
+      "bindings": [
+        {
+          "runner": "pytest",
+          "test_id": "tests/integration/test_learninghub_release.py::test_learninghub_validates_releases_and_rolls_back_model_aliases",
+          "raw_result": {
+            "test_id": "tests/integration/test_learninghub_release.py::test_learninghub_validates_releases_and_rolls_back_model_aliases",
+            "status": "passed",
+            "duration_ms": 6107.588,
+            "phases": [
+              {
+                "phase": "setup",
+                "outcome": "passed",
+                "duration_seconds": 0.0010873699793592095,
+                "longrepr": null
+              },
+              {
+                "phase": "call",
+                "outcome": "passed",
+                "duration_seconds": 6.105982545996085,
+                "longrepr": null
+              },
+              {
+                "phase": "teardown",
+                "outcome": "passed",
+                "duration_seconds": 0.0005184049950912595,
+                "longrepr": null
+              }
+            ]
+          },
+          "artifact_path": "docs/evidence/e2e/raw_pytest_results.json",
+          "artifact_sha256": "c9b4fc853a6f833738d939ac47bfef7f878923c49b5473d56fb7f5e1f35bfe39"
+        }
+      ]
+    },
+    {
+      "scenario_id": "E2E-DATA-001",
+      "priority": "P0",
+      "name": "Data quality failure blocks model scoring",
+      "automation_refs": [
+        "tests/integration/test_learninghub_release.py::test_learninghub_blocks_release_without_passed_validation_or_model_card",
+        "tests/data/test_pit_snapshot.py::test_point_in_time_validation_rejects_future_feature_snapshot"
+      ],
+      "status": "passed",
+      "bindings": [
+        {
+          "runner": "pytest",
+          "test_id": "tests/integration/test_learninghub_release.py::test_learninghub_blocks_release_without_passed_validation_or_model_card",
+          "raw_result": {
+            "test_id": "tests/integration/test_learninghub_release.py::test_learninghub_blocks_release_without_passed_validation_or_model_card",
+            "status": "passed",
+            "duration_ms": 2536.467,
+            "phases": [
+              {
+                "phase": "setup",
+                "outcome": "passed",
+                "duration_seconds": 0.000650267000310123,
+                "longrepr": null
+              },
+              {
+                "phase": "call",
+                "outcome": "passed",
+                "duration_seconds": 2.5352088199579157,
+                "longrepr": null
+              },
+              {
+                "phase": "teardown",
+                "outcome": "passed",
+                "duration_seconds": 0.0006082460167817771,
+                "longrepr": null
+              }
+            ]
+          },
+          "artifact_path": "docs/evidence/e2e/raw_pytest_results.json",
+          "artifact_sha256": "c9b4fc853a6f833738d939ac47bfef7f878923c49b5473d56fb7f5e1f35bfe39"
+        },
+        {
+          "runner": "pytest",
+          "test_id": "tests/data/test_pit_snapshot.py::test_point_in_time_validation_rejects_future_feature_snapshot",
+          "raw_result": {
+            "test_id": "tests/data/test_pit_snapshot.py::test_point_in_time_validation_rejects_future_feature_snapshot",
+            "status": "passed",
+            "duration_ms": 1.649,
+            "phases": [
+              {
+                "phase": "setup",
+                "outcome": "passed",
+                "duration_seconds": 0.0008425340056419373,
+                "longrepr": null
+              },
+              {
+                "phase": "call",
+                "outcome": "passed",
+                "duration_seconds": 0.0003439210122451186,
+                "longrepr": null
+              },
+              {
+                "phase": "teardown",
+                "outcome": "passed",
+                "duration_seconds": 0.0004626780282706022,
+                "longrepr": null
+              }
+            ]
+          },
+          "artifact_path": "docs/evidence/e2e/raw_pytest_results.json",
+          "artifact_sha256": "c9b4fc853a6f833738d939ac47bfef7f878923c49b5473d56fb7f5e1f35bfe39"
+        }
+      ]
+    },
+    {
+      "scenario_id": "E2E-AUDIT-001",
+      "priority": "P0",
+      "name": "Decision audit evidence export",
+      "automation_refs": [
+        "tests/e2e/operator-governance.spec.ts::Evidence Package export produces a record and an audit event"
+      ],
+      "status": "passed",
+      "bindings": [
+        {
+          "runner": "playwright",
+          "test_id": "tests/e2e/operator-governance.spec.ts::Evidence Package export produces a record and an audit event",
+          "raw_result": {
+            "test_id": "tests/e2e/operator-governance.spec.ts::Evidence Package export produces a record and an audit event",
+            "status": "passed",
+            "project": "chromium",
+            "expected_status": "passed",
+            "attempts": [
+              {
+                "status": "passed",
+                "duration_ms": 800,
+                "retry": 0,
+                "started_at": "2026-07-31T13:59:20.731Z"
+              }
+            ]
+          },
+          "artifact_path": "docs/evidence/e2e/raw_playwright_results.json",
+          "artifact_sha256": "ab077c061c3ea28491c43f78eb2de189a0dd25090e9cea3f232227b0f839bc65"
+        }
+      ]
+    },
+    {
+      "scenario_id": "E2E-SEC-001",
+      "priority": "P0",
+      "name": "Role permissions and data isolation",
+      "automation_refs": [
+        "tests/security/test_rbac_abac.py::test_rbac_denies_action_outside_role",
+        "tests/security/test_rbac_abac.py::test_tenant_isolation_blocks_other_tenant"
+      ],
+      "status": "passed",
+      "bindings": [
+        {
+          "runner": "pytest",
+          "test_id": "tests/security/test_rbac_abac.py::test_rbac_denies_action_outside_role",
+          "raw_result": {
+            "test_id": "tests/security/test_rbac_abac.py::test_rbac_denies_action_outside_role",
+            "status": "passed",
+            "duration_ms": 1.525,
+            "phases": [
+              {
+                "phase": "setup",
+                "outcome": "passed",
+                "duration_seconds": 0.0006200799834914505,
+                "longrepr": null
+              },
+              {
+                "phase": "call",
+                "outcome": "passed",
+                "duration_seconds": 0.000491612998303026,
+                "longrepr": null
+              },
+              {
+                "phase": "teardown",
+                "outcome": "passed",
+                "duration_seconds": 0.00041371898259967566,
+                "longrepr": null
+              }
+            ]
+          },
+          "artifact_path": "docs/evidence/e2e/raw_pytest_results.json",
+          "artifact_sha256": "c9b4fc853a6f833738d939ac47bfef7f878923c49b5473d56fb7f5e1f35bfe39"
+        },
+        {
+          "runner": "pytest",
+          "test_id": "tests/security/test_rbac_abac.py::test_tenant_isolation_blocks_other_tenant",
+          "raw_result": {
+            "test_id": "tests/security/test_rbac_abac.py::test_tenant_isolation_blocks_other_tenant",
+            "status": "passed",
+            "duration_ms": 1.519,
+            "phases": [
+              {
+                "phase": "setup",
+                "outcome": "passed",
+                "duration_seconds": 0.0005958949914202094,
+                "longrepr": null
+              },
+              {
+                "phase": "call",
+                "outcome": "passed",
+                "duration_seconds": 0.0005447239964269102,
+                "longrepr": null
+              },
+              {
+                "phase": "teardown",
+                "outcome": "passed",
+                "duration_seconds": 0.00037865096237510443,
+                "longrepr": null
+              }
+            ]
+          },
+          "artifact_path": "docs/evidence/e2e/raw_pytest_results.json",
+          "artifact_sha256": "c9b4fc853a6f833738d939ac47bfef7f878923c49b5473d56fb7f5e1f35bfe39"
+        }
+      ]
+    },
+    {
+      "scenario_id": "E2E-FRAN-001",
+      "priority": "P1",
+      "name": "Franchisee self-store status and intervention feedback",
+      "automation_refs": [
+        "manual-uat:UAT-FRAN-001..005"
+      ],
+      "status": "pending",
+      "route": "ODP-PLAN-UAT-SIGNOFF-001"
+    }
+  ],
+  "validation_errors": [],
+  "exit_code": 0,
+  "status": "passed",
+  "normalized_receipt_sha256": "736d47075d8de2e1c38a38acc0af4c2464f1373dc99ba3710847adc5e497cebe"
+}
