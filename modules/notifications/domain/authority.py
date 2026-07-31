@@ -1,12 +1,15 @@
 from __future__ import annotations
 
 import base64
+import fcntl
 import json
 import os
 import re
+import tempfile
 import threading
 from abc import ABC, abstractmethod
 from collections.abc import Callable
+from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
@@ -126,34 +129,86 @@ class IDeliveryAuthorityStore(ABC):
 
 
 class FileDeliveryAuthorityStore(IDeliveryAuthorityStore):
-    """Durable, restart-safe, thread-safe authority store backed by file storage."""
+    """Durable, restart-safe, cross-process and thread-safe authority store backed by file storage."""
 
     def __init__(self, store_path: str | Path) -> None:
         self.store_path = Path(store_path).resolve()
-        self._lock = threading.Lock()
+        self.lock_path = self.store_path.with_suffix(".lock")
+        self._thread_lock = threading.Lock()
         self._ensure_store_exists()
 
+    @contextmanager
+    def _file_lock(self):
+        """OS-visible file lock using fcntl.flock on lock_path combined with in-process thread lock."""
+        self.lock_path.parent.mkdir(parents=True, exist_ok=True)
+        with self._thread_lock:
+            with open(self.lock_path, "a", encoding="utf-8") as lock_file:
+                fcntl.flock(lock_file.fileno(), fcntl.LOCK_EX)
+                try:
+                    yield
+                finally:
+                    fcntl.flock(lock_file.fileno(), fcntl.LOCK_UN)
+
     def _ensure_store_exists(self) -> None:
-        if not self.store_path.exists():
-            self.store_path.parent.mkdir(parents=True, exist_ok=True)
-            self._write_store_data({"records": {}, "consumed": []})
+        with self._file_lock():
+            if not self.store_path.exists():
+                self.store_path.parent.mkdir(parents=True, exist_ok=True)
+                self._write_store_data_atomic({"records": {}, "consumed": []})
 
     def _read_store_data(self) -> dict[str, Any]:
+        """Reads store data. If file exists but is corrupt or invalid, raises ValueError to fail closed."""
+        if not self.store_path.exists():
+            return {"records": {}, "consumed": []}
         try:
             with open(self.store_path, encoding="utf-8") as f:
-                return json.load(f)
-        except Exception:
-            return {"records": {}, "consumed": []}
+                data = json.load(f)
+            if not isinstance(data, dict):
+                raise ValueError("Store data must be a JSON object")
+            return data
+        except Exception as err:
+            raise ValueError(f"Authority store data is corrupt or unreadable: {err}") from err
 
-    def _write_store_data(self, data: dict[str, Any]) -> None:
-        tmp_path = self.store_path.with_suffix(".tmp")
-        with open(tmp_path, "w", encoding="utf-8") as f:
-            json.dump(data, f, indent=2)
-        tmp_path.replace(self.store_path)
+    def _write_store_data_atomic(self, data: dict[str, Any]) -> None:
+        """Atomic write to store file using collision-free temp file, flush, fsync, replace, and parent dir fsync."""
+        parent_dir = self.store_path.parent
+        parent_dir.mkdir(parents=True, exist_ok=True)
+
+        tmp_fd, tmp_path_str = tempfile.mkstemp(
+            dir=parent_dir,
+            prefix=f"{self.store_path.name}.",
+            suffix=".tmp",
+        )
+        tmp_path = Path(tmp_path_str)
+        try:
+            with os.fdopen(tmp_fd, "w", encoding="utf-8") as f:
+                json.dump(data, f, indent=2)
+                f.flush()
+                os.fsync(f.fileno())
+
+            os.replace(tmp_path, self.store_path)
+
+            try:
+                dir_fd = os.open(parent_dir, os.O_RDONLY)
+                try:
+                    os.fsync(dir_fd)
+                finally:
+                    os.close(dir_fd)
+            except OSError:
+                pass
+        except Exception:
+            if tmp_path.exists():
+                try:
+                    tmp_path.unlink()
+                except OSError:
+                    pass
+            raise
 
     def get_authority_record(self, delivery_id: str) -> DeliveryAuthorityRecord | None:
-        with self._lock:
-            data = self._read_store_data()
+        with self._file_lock():
+            try:
+                data = self._read_store_data()
+            except Exception:
+                return None
             raw_record = data.get("records", {}).get(delivery_id)
             if not raw_record:
                 return None
@@ -164,20 +219,28 @@ class FileDeliveryAuthorityStore(IDeliveryAuthorityStore):
 
     def store_authority_record_out_of_process(self, record: DeliveryAuthorityRecord) -> None:
         """Out-of-process ingestion helper for writing external authority records."""
-        with self._lock:
+        with self._file_lock():
             data = self._read_store_data()
             if "records" not in data:
                 data["records"] = {}
             data["records"][record.delivery_id] = record.to_dict()
-            self._write_store_data(data)
+            self._write_store_data_atomic(data)
 
     def atomic_consume_if_valid(
         self,
         delivery_id: str,
         validator_fn: Callable[[DeliveryAuthorityRecord], tuple[bool, str, str | None]],
     ) -> tuple[bool, str, str | None]:
-        with self._lock:
-            data = self._read_store_data()
+        with self._file_lock():
+            try:
+                data = self._read_store_data()
+            except Exception as err:
+                return (
+                    False,
+                    "PENDING_VERIFICATION",
+                    f"Authority store read failed (fail-closed): {err}",
+                )
+
             consumed = set(data.get("consumed", []))
 
             if delivery_id in consumed:
@@ -208,7 +271,7 @@ class FileDeliveryAuthorityStore(IDeliveryAuthorityStore):
             if is_del and status == "DELIVERED":
                 consumed.add(delivery_id)
                 data["consumed"] = sorted(list(consumed))
-                self._write_store_data(data)
+                self._write_store_data_atomic(data)
 
             return is_del, status, err
 

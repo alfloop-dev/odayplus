@@ -11,6 +11,8 @@ Maps to the task acceptance criteria and ODP-SD-11 §12 / ODP-SD-10 §12:
 
 from __future__ import annotations
 
+import base64
+import concurrent.futures
 import hashlib
 import json
 from datetime import UTC, datetime
@@ -3282,7 +3284,6 @@ def test_round14_remediation_findings_b1_loopback_socket_mutation_verified(monke
 
 
 def test_round16_remediation_findings_b1_b2_b3_negative_mutations_and_positive_verification(monkeypatch: Any, tmp_path: Path) -> None:
-    import base64
     import hashlib
     import json
 
@@ -3568,7 +3569,6 @@ def test_round16_remediation_findings_b1_b2_b3_negative_mutations_and_positive_v
 
 
 def test_delivery_authority_readback_boundary_verification(tmp_path: Any) -> None:
-    import base64
     import concurrent.futures
     from datetime import timedelta
 
@@ -3998,3 +3998,169 @@ def test_local_evidence_and_loopback_rejects_real_delivery_claim(monkeypatch: An
         assert receipt["status"] != "DELIVERED"
     finally:
         server.shutdown()
+
+
+def _mp_store_worker(store_file_path: str, delivery_id: str) -> tuple[bool, str, str | None]:
+    """Top-level worker for multi-process authority store concurrency test."""
+    from modules.notifications.domain.authority import FileDeliveryAuthorityStore
+
+    store = FileDeliveryAuthorityStore(store_file_path)
+
+    def _validator(record):
+        return True, "DELIVERED", None
+
+    return store.atomic_consume_if_valid(delivery_id, _validator)
+
+
+def test_file_authority_store_two_instances_concurrency(tmp_path):
+    """B26 Remediation Test: Two independent FileDeliveryAuthorityStore instances
+    consuming one record concurrently return exactly one DELIVERED, deterministic replay
+    rejection, valid JSON, no exception, and persistent replay state on reload.
+    """
+
+    from cryptography.hazmat.primitives.asymmetric import ed25519
+
+    from modules.notifications.domain.authority import (
+        CANONICAL_AUTHORITY_ISSUER_IDENTITY,
+        DeliveryAuthorityRecord,
+        FileDeliveryAuthorityStore,
+    )
+
+    auth_priv_key = ed25519.Ed25519PrivateKey.generate()
+    delivery_id = "del-test-two-inst-1"
+    prov_receipt_id = "prov-rcpt-two-inst-1"
+    req_hash = "b" * 64
+    rel_sha = "e" * 40
+    oncall_route = "ops-lead"
+    ts_str = datetime.now(UTC).isoformat()
+    issuer_id = CANONICAL_AUTHORITY_ISSUER_IDENTITY
+
+    sig_payload = (
+        f"authority_record:{delivery_id}:{prov_receipt_id}:{req_hash}:{rel_sha}:{oncall_route}:{ts_str}:{issuer_id}"
+    ).encode()
+    sig_b64 = base64.b64encode(auth_priv_key.sign(sig_payload)).decode("utf-8")
+
+    rec = DeliveryAuthorityRecord(
+        delivery_id=delivery_id,
+        provider_receipt_id=prov_receipt_id,
+        request_hash=req_hash,
+        release_sha=rel_sha,
+        oncall_route=oncall_route,
+        timestamp=ts_str,
+        issuer_identity=issuer_id,
+        issuer_signature=sig_b64,
+    )
+
+    store_file = tmp_path / "authority_two_inst.json"
+
+    # Create two independent store instances pointing to the same file path
+    store1 = FileDeliveryAuthorityStore(store_file)
+    store2 = FileDeliveryAuthorityStore(store_file)
+    store1.store_authority_record_out_of_process(rec)
+
+    def _val(r):
+        return True, "DELIVERED", None
+
+    def _consume_1():
+        return store1.atomic_consume_if_valid(delivery_id, _val)
+
+    def _consume_2():
+        return store2.atomic_consume_if_valid(delivery_id, _val)
+
+    with concurrent.futures.ThreadPoolExecutor(max_workers=2) as executor:
+        f1 = executor.submit(_consume_1)
+        f2 = executor.submit(_consume_2)
+        r1 = f1.result()
+        r2 = f2.result()
+
+    results = [r1, r2]
+    delivered_count = sum(1 for is_del, st, _ in results if is_del and st == "DELIVERED")
+    rejected_count = sum(1 for is_del, st, _ in results if not is_del and st == "PENDING_VERIFICATION")
+    assert delivered_count == 1
+    assert rejected_count == 1
+
+    # Verify JSON valid in store file
+    with open(store_file, encoding="utf-8") as f:
+        data = json.load(f)
+    assert delivery_id in data.get("consumed", [])
+
+    # Persistence verification from fresh 3rd store instance
+    store3 = FileDeliveryAuthorityStore(store_file)
+    is_del, st, err = store3.atomic_consume_if_valid(delivery_id, _val)
+    assert is_del is False
+    assert st == "PENDING_VERIFICATION"
+    assert "already been consumed" in str(err)
+
+
+def test_file_authority_store_multiprocess_concurrency(tmp_path):
+    """B26 Remediation Test: Multi-process race across independent store instances
+    guarantees exactly one DELIVERED and zero unhandled exceptions.
+    """
+
+    from cryptography.hazmat.primitives.asymmetric import ed25519
+
+    from modules.notifications.domain.authority import (
+        CANONICAL_AUTHORITY_ISSUER_IDENTITY,
+        DeliveryAuthorityRecord,
+        FileDeliveryAuthorityStore,
+    )
+
+    auth_priv_key = ed25519.Ed25519PrivateKey.generate()
+    delivery_id = "del-test-mp-1"
+    prov_receipt_id = "prov-rcpt-mp-1"
+    req_hash = "c" * 64
+    rel_sha = "f" * 40
+    oncall_route = "ops-lead"
+    ts_str = datetime.now(UTC).isoformat()
+    issuer_id = CANONICAL_AUTHORITY_ISSUER_IDENTITY
+
+    sig_payload = (
+        f"authority_record:{delivery_id}:{prov_receipt_id}:{req_hash}:{rel_sha}:{oncall_route}:{ts_str}:{issuer_id}"
+    ).encode()
+    sig_b64 = base64.b64encode(auth_priv_key.sign(sig_payload)).decode("utf-8")
+
+    rec = DeliveryAuthorityRecord(
+        delivery_id=delivery_id,
+        provider_receipt_id=prov_receipt_id,
+        request_hash=req_hash,
+        release_sha=rel_sha,
+        oncall_route=oncall_route,
+        timestamp=ts_str,
+        issuer_identity=issuer_id,
+        issuer_signature=sig_b64,
+    )
+
+    store_file = tmp_path / "authority_mp.json"
+    setup_store = FileDeliveryAuthorityStore(store_file)
+    setup_store.store_authority_record_out_of_process(rec)
+
+    with concurrent.futures.ProcessPoolExecutor(max_workers=4) as executor:
+        futures = [executor.submit(_mp_store_worker, str(store_file), delivery_id) for _ in range(4)]
+        results = [f.result() for f in futures]
+
+    delivered_count = sum(1 for is_del, st, _ in results if is_del and st == "DELIVERED")
+    rejected_count = sum(1 for is_del, st, _ in results if not is_del and st == "PENDING_VERIFICATION")
+    assert delivered_count == 1
+    assert rejected_count == 3
+
+
+def test_file_authority_store_corrupt_file_handling(tmp_path):
+    """B26 Remediation Test: Corrupt or unreadable store file produces explicit
+    fail-closed error without silently replacing or overwriting store contents.
+    """
+    from modules.notifications.domain.authority import FileDeliveryAuthorityStore
+
+    store_file = tmp_path / "authority_corrupt.json"
+    store_file.write_text("{this is corrupt json text...", encoding="utf-8")
+
+    store = FileDeliveryAuthorityStore(store_file)
+
+    def _val(r):
+        return True, "DELIVERED", None
+
+    is_del, st, err = store.atomic_consume_if_valid("del-corrupt-1", _val)
+    assert is_del is False
+    assert st == "PENDING_VERIFICATION"
+    assert "Authority store read failed" in str(err)
+    # Prove corrupt store file was NOT overwritten with an empty store dict
+    assert store_file.read_text(encoding="utf-8") == "{this is corrupt json text..."
