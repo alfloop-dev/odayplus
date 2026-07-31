@@ -344,6 +344,7 @@ class SiteScoreOpeningOutcomeBenchmarkResult:
             "handback_payload": self.handback_payload,
             "calibration_summary": self.calibration_summary,
             "segment_metrics": list(self.segment_metrics),
+            "observed_at": self.observed_at,
         }
         if self.db_error:
             res["db_error"] = self.db_error
@@ -413,6 +414,8 @@ def evaluate_sitescore_opening_outcome_benchmark(
     elif isinstance(observed_at, datetime):
         observed_at_iso = observed_at.isoformat().replace("+00:00", "Z")
         ref_date = observed_at.date()
+    else:
+        observed_at_iso = datetime.now(UTC).isoformat().replace("+00:00", "Z")
 
     def get_days_elapsed(r: dict[str, Any], key: str) -> int | None:
         val = r.get(key)
@@ -527,7 +530,7 @@ def evaluate_sitescore_opening_outcome_benchmark(
         mae = 0.0
         normalized_mae = 0.0
 
-    overall_mean_y = (sum(float(r.get("realized_90d_net_revenue", 0)) for r in mature_records) / mature_label_count) if mature_label_count > 0 else 1.0
+    overall_mean_y = (sum(float(r.get("realized_90d_net_revenue", 0)) for r in mature_records) / mature_label_count) if mature_label_count > 0 else 0.0
 
     p80_coverage = (in_p80_count / mature_label_count) if mature_label_count > 0 else 0.0
     interval_bounds_coverage_ratio = (interval_bounds_count / mature_label_count) if mature_label_count > 0 else 0.0
@@ -968,7 +971,7 @@ def verify_sitescore_gate2_receipt(
                 if k not in psc:
                     errors.append(f"Missing required field in prediction_source_contract: {k!r}")
 
-        # B3: Closed allow-list check for benchmark_summary
+        # B1 & B3: Closed allow-list check for benchmark_summary
         REQUIRED_BENCHMARK_SUMMARY_KEYS = {
             "provenance", "dataset_snapshot_id", "model_version", "artifact_lineage_id",
             "observed_count", "eligible_count", "mature_label_count", "m6_mature_count",
@@ -978,9 +981,9 @@ def verify_sitescore_gate2_receipt(
             "normalized_mae", "p80_coverage", "activation_threshold",
             "min_coverage_threshold", "max_mae_threshold", "is_gate2_passed",
             "status", "reason_code", "handback_payload", "calibration_summary",
-            "segment_metrics",
+            "segment_metrics", "observed_at",
         }
-        ALLOWED_BENCHMARK_SUMMARY_KEYS = REQUIRED_BENCHMARK_SUMMARY_KEYS | {"db_error", "observed_at"}
+        ALLOWED_BENCHMARK_SUMMARY_KEYS = REQUIRED_BENCHMARK_SUMMARY_KEYS | {"db_error"}
         for k in summary.keys():
             if k not in ALLOWED_BENCHMARK_SUMMARY_KEYS:
                 errors.append(f"Forbidden or unknown metric field in benchmark_summary: {k!r}")
@@ -1012,7 +1015,7 @@ def verify_sitescore_gate2_receipt(
             if mc_model_name != "sitescore_propensity":
                 errors.append(f"model_card.model_name ({mc_model_name!r}) drifts from governed model identity ('sitescore_propensity')")
 
-        # B2: Check pinned inventory_version, source_contract, and timestamp freshness/reconciliation
+        # B1 & B2: Check pinned inventory_version, source_contract, and timestamp freshness/reconciliation
         rec_inv_ver = receipt.get("inventory_version")
         if rec_inv_ver != CANONICAL_INVENTORY_VERSION:
             errors.append(f"Forbidden or unauthenticated inventory_version: {rec_inv_ver!r} (expected {CANONICAL_INVENTORY_VERSION!r})")
@@ -1039,25 +1042,25 @@ def verify_sitescore_gate2_receipt(
             except Exception:
                 errors.append(f"Invalid observed_at timestamp format: {rec_obs_at!r}")
 
+        # B1: Validate benchmark_summary.observed_at requirement, freshness, and reconciliation
         sum_obs_at = summary.get("observed_at")
-        if sum_obs_at is not None:
-            if not isinstance(sum_obs_at, str):
-                errors.append(f"benchmark_summary.observed_at must be a string (got {type(sum_obs_at).__name__}: {sum_obs_at!r})")
-            else:
-                try:
-                    sum_dt = datetime.fromisoformat(sum_obs_at.replace("Z", "+00:00"))
-                    if sum_dt.tzinfo is None:
-                        errors.append(f"benchmark_summary.observed_at timestamp must be timezone-aware (got {sum_obs_at!r})")
-                    elif sum_dt > now_utc + timedelta(seconds=300):
-                        errors.append(f"benchmark_summary.observed_at timestamp is in the future: {sum_obs_at!r}")
-                    elif sum_dt < now_utc - timedelta(days=MAX_EVIDENCE_AGE_DAYS):
-                        errors.append(f"benchmark_summary.observed_at timestamp is older than maximum evidence age ({MAX_EVIDENCE_AGE_DAYS} days): {sum_obs_at!r}")
-                except Exception:
-                    errors.append(f"Invalid benchmark_summary.observed_at timestamp format: {sum_obs_at!r}")
+        if not isinstance(sum_obs_at, str):
+            errors.append(f"benchmark_summary.observed_at must be a string (got {type(sum_obs_at).__name__}: {sum_obs_at!r})")
+        else:
+            try:
+                sum_dt = datetime.fromisoformat(sum_obs_at.replace("Z", "+00:00"))
+                if sum_dt.tzinfo is None:
+                    errors.append(f"benchmark_summary.observed_at timestamp must be timezone-aware (got {sum_obs_at!r})")
+                elif sum_dt > now_utc + timedelta(seconds=300):
+                    errors.append(f"benchmark_summary.observed_at timestamp is in the future: {sum_obs_at!r}")
+                elif sum_dt < now_utc - timedelta(days=MAX_EVIDENCE_AGE_DAYS):
+                    errors.append(f"benchmark_summary.observed_at timestamp is older than maximum evidence age ({MAX_EVIDENCE_AGE_DAYS} days): {sum_obs_at!r}")
+            except Exception:
+                errors.append(f"Invalid benchmark_summary.observed_at timestamp format: {sum_obs_at!r}")
 
-                if obs_dt is not None and sum_dt is not None:
-                    if abs((obs_dt - sum_dt).total_seconds()) > 300:
-                        errors.append(f"benchmark_summary.observed_at ({sum_obs_at}) drifts from top-level observed_at ({rec_obs_at})")
+            if obs_dt is not None:
+                if sum_obs_at != rec_obs_at:
+                    errors.append(f"benchmark_summary.observed_at ({sum_obs_at!r}) drifts from top-level observed_at ({rec_obs_at!r})")
 
         if mc_dict is not None:
             mc_created_str = mc_dict.get("created_at")
@@ -1483,10 +1486,20 @@ def verify_sitescore_gate2_receipt(
                 if k in FORBIDDEN_CALIBRATION_KEYS:
                     errors.append(f"Forbidden or unsupported synthetic horizon calibration field in {location_name}: {k!r}")
                 if k == "measured_90d_mae":
-                    if v is not None:
-                        _check_strict_float(v, f"{location_name}.{k}")
-                    if match_cnt == 0 and v is not None:
-                        errors.append(f"{location_name}.measured_90d_mae must be None when matched_prediction_count is 0 (got {v})")
+                    if match_cnt == 0:
+                        if v is not None:
+                            errors.append(f"{location_name}.measured_90d_mae must be None when matched_prediction_count is 0 (got {v})")
+                    else:
+                        flt = _check_strict_float(v, f"{location_name}.{k}")
+                        if flt is not None:
+                            if flt < 0.0:
+                                errors.append(f"{location_name}.measured_90d_mae cannot be negative (got {flt})")
+                            if sum_matched_mean_y is not None and sum_matched_mean_y > 0 and norm_mae is not None:
+                                expected_mae = norm_mae * sum_matched_mean_y
+                                if abs(flt - expected_mae) > max(0.05, 0.02 * expected_mae):
+                                    errors.append(f"{location_name}.measured_90d_mae ({flt}) drifts from expected MAE ({round(expected_mae, 2)}) derived from normalized_mae and matched_mean_y")
+                            elif sum_matched_mean_y == 0.0 and flt != 0.0:
+                                errors.append(f"{location_name}.measured_90d_mae ({flt}) must be 0.0 when matched_mean_y is 0.0")
                 elif k == "matched_prediction_count":
                     cal_cnt = _check_strict_int(v, f"{location_name}.{k}")
                     if cal_cnt is not None and match_cnt is not None and cal_cnt != match_cnt:
@@ -1514,7 +1527,15 @@ def verify_sitescore_gate2_receipt(
                     if flt is not None and sum_matched_mean_y is not None and flt != round(sum_matched_mean_y, 2):
                         errors.append(f"{location_name}.matched_mean_realized_revenue ({flt}) drifts from summary.matched_mean_y ({round(sum_matched_mean_y, 2)})")
                 elif k == "mean_realized_revenue":
-                    _check_strict_float(v, f"{location_name}.{k}")
+                    flt = _check_strict_float(v, f"{location_name}.{k}")
+                    if flt is not None:
+                        if flt < 0.0:
+                            errors.append(f"{location_name}.mean_realized_revenue cannot be negative (got {flt})")
+                        if mat == 0 and flt != 0.0:
+                            errors.append(f"{location_name}.mean_realized_revenue must be 0.0 when mature_label_count is 0 (got {flt})")
+                        elif mat is not None and mat > 0 and match_cnt == mat and sum_matched_mean_y is not None:
+                            if flt != round(sum_matched_mean_y, 2):
+                                errors.append(f"{location_name}.mean_realized_revenue ({flt}) drifts from matched_mean_realized_revenue ({round(sum_matched_mean_y, 2)}) when all mature records are matched")
 
         _check_calibration_summary(summary.get("calibration_summary"), "summary.calibration_summary")
         if handback.get("calibration_summary") is not None:
@@ -1531,20 +1552,22 @@ def verify_sitescore_gate2_receipt(
             if not isinstance(seg_list, (list, tuple)):
                 errors.append(f"{location_name} must be a sequence (got {type(seg_list).__name__}: {seg_list!r})")
                 return
-            tot_seg_cnt = 0
+
+            partitions: dict[str, list[dict[str, Any]]] = {}
             for idx, seg in enumerate(seg_list):
                 if not isinstance(seg, dict):
                     errors.append(f"{location_name}[{idx}] must be a dictionary (got {type(seg).__name__}: {seg!r})")
                     continue
                 if set(seg.keys()) != REQUIRED_SEGMENT_KEYS:
                     errors.append(f"{location_name}[{idx}] keys must match required set (got {set(seg.keys())!r})")
-                if not isinstance(seg.get("segment_name"), str) or not seg.get("segment_name"):
+                seg_name = seg.get("segment_name")
+                if not isinstance(seg_name, str) or not seg_name:
                     errors.append(f"{location_name}[{idx}].segment_name must be a non-empty string")
+                    seg_name = "UNKNOWN"
                 if not isinstance(seg.get("segment_value"), str) or not seg.get("segment_value"):
                     errors.append(f"{location_name}[{idx}].segment_value must be a non-empty string")
                 seg_cnt = _check_strict_int(seg.get("record_count"), f"{location_name}[{idx}].record_count")
                 if seg_cnt is not None:
-                    tot_seg_cnt += seg_cnt
                     if mat is not None and seg_cnt > mat:
                         errors.append(f"{location_name}[{idx}].record_count ({seg_cnt}) exceeds mature_label_count ({mat})")
                     if mat == 0 and seg_cnt > 0:
@@ -1566,8 +1589,46 @@ def verify_sitescore_gate2_receipt(
                         if flt is not None and not (0.0 <= flt <= 1.0):
                             errors.append(f"{location_name}[{idx}].metrics.{mk} must be in range [0.0, 1.0] (got {flt})")
 
-            if mat is not None and tot_seg_cnt > mat:
-                errors.append(f"{location_name} total segment record_count ({tot_seg_cnt}) exceeds mature_label_count ({mat})")
+                partitions.setdefault(seg_name, []).append(seg)
+
+            for seg_name, segs in partitions.items():
+                seen_vals = set()
+                tot_seg_cnt = 0
+                for seg in segs:
+                    v_str = str(seg.get("segment_value"))
+                    if v_str in seen_vals:
+                        errors.append(f"Duplicate segment_value {v_str!r} in {location_name} for partition {seg_name!r}")
+                    seen_vals.add(v_str)
+                    tot_seg_cnt += int(seg.get("record_count", 0))
+
+                if mat is not None:
+                    if tot_seg_cnt != mat:
+                        errors.append(f"{location_name} partition {seg_name!r} total segment record_count ({tot_seg_cnt}) does not match mature_label_count ({mat})")
+
+                if mat is not None and mat > 0:
+                    w_m6 = sum(int(s.get("record_count", 0)) * float(s.get("metrics", {}).get("m6_coverage", 0.0)) for s in segs) / mat
+                    if m6_cov is not None and abs(round(w_m6, 4) - m6_cov) > 0.001:
+                        errors.append(f"{location_name} partition {seg_name!r} weighted m6_coverage ({round(w_m6, 4)}) drifts from summary.m6_coverage_ratio ({m6_cov})")
+
+                    w_m12 = sum(int(s.get("record_count", 0)) * float(s.get("metrics", {}).get("m12_coverage", 0.0)) for s in segs) / mat
+                    if m12_cov is not None and abs(round(w_m12, 4) - m12_cov) > 0.001:
+                        errors.append(f"{location_name} partition {seg_name!r} weighted m12_coverage ({round(w_m12, 4)}) drifts from summary.m12_coverage_ratio ({m12_cov})")
+
+                    w_pred = sum(int(s.get("record_count", 0)) * float(s.get("metrics", {}).get("prediction_coverage", 0.0)) for s in segs) / mat
+                    if pred_cov is not None and abs(round(w_pred, 4) - pred_cov) > 0.001:
+                        errors.append(f"{location_name} partition {seg_name!r} weighted prediction_coverage ({round(w_pred, 4)}) drifts from summary.prediction_coverage_ratio ({pred_cov})")
+
+                    seg_matched_counts = [round(int(s.get("record_count", 0)) * float(s.get("metrics", {}).get("prediction_coverage", 0.0))) for s in segs]
+                    tot_matched = sum(seg_matched_counts)
+                    if tot_matched > 0:
+                        w_mae = sum(c * float(s.get("metrics", {}).get("mae", 0.0)) for c, s in zip(seg_matched_counts, segs, strict=True)) / tot_matched
+                        exp_main_mae = (norm_mae * sum_matched_mean_y) if (norm_mae is not None and sum_matched_mean_y is not None) else 0.0
+                        if abs(round(w_mae, 2) - round(exp_main_mae, 2)) > 0.05:
+                            errors.append(f"{location_name} partition {seg_name!r} weighted segment MAE ({round(w_mae, 2)}) drifts from main MAE ({round(exp_main_mae, 2)})")
+                    else:
+                        for s in segs:
+                            if s.get("metrics", {}).get("mae") != 0.0:
+                                errors.append(f"{location_name} partition {seg_name!r} segment MAE must be 0.0 when prediction_coverage is 0")
 
         _validate_segment_metrics(summary.get("segment_metrics"), "summary.segment_metrics")
         if handback.get("segment_metrics") is not None:

@@ -1674,3 +1674,170 @@ def test_sitescore_gate2_receipt_verifier_re_review_89bc4bd9_probes_b1_b2_b3():
     res7 = verify_sitescore_gate2_receipt(rebound7, model_card_artifact=mc7)
     assert res7.is_valid is False
     assert any("exceeds mature_label_count" in e or "> 0 when mature_label_count is 0" in e for e in res7.errors)
+
+
+def test_sitescore_gate2_receipt_verifier_re_review_58be4d4e_probes_b1_b2_b3():
+    # Negative regression test for Codex6 Re-review (58be4d4e head) B1, B2, B3 findings:
+    # B1: benchmark_summary.observed_at missing / optional or drifting
+    # B2: calibration mean_realized_revenue=999999 or measured_90d_mae=999999
+    # B3: segment total incomplete / smaller than mature_label_count, arbitrary segment MAE/coverage, duplicate segment values
+    from models.sitescore.opening_outcome import compute_handback_sha256, compute_model_card_sha256
+
+    result = run_benchmark_from_inventory(db_url=None, records=None)
+    model_card = build_sitescore_opening_outcome_model_card(result)
+    receipt = build_sitescore_gate2_receipt(result, model_card=model_card)
+    mc_dict = model_card.to_dict()
+
+    def _rebind_hashes(r_obj: dict, mc_obj: dict) -> dict:
+        hb_h = compute_handback_sha256(r_obj["handback"])
+        mc_h = compute_model_card_sha256(mc_obj)
+        r_obj["artifact_hashes"]["handback_hash"] = hb_h
+        r_obj["artifact_hashes"]["model_card_hash"] = mc_h
+        r_obj["integrity"]["handback_hash"] = hb_h
+        r_obj["integrity"]["model_card_hash"] = mc_h
+        r_obj["integrity"]["content_sha256"] = compute_gate2_receipt_sha256(r_obj)
+        return r_obj
+
+    # 1. B1 Probe: Missing benchmark_summary.observed_at
+    r_b1_1 = json.loads(json.dumps(receipt))
+    mc_b1_1 = json.loads(json.dumps(mc_dict))
+    del r_b1_1["benchmark_summary"]["observed_at"]
+    rebound_b1_1 = _rebind_hashes(r_b1_1, mc_b1_1)
+    res_b1_1 = verify_sitescore_gate2_receipt(rebound_b1_1, model_card_artifact=mc_b1_1)
+    assert res_b1_1.is_valid is False
+    assert any("Missing required field in benchmark_summary: 'observed_at'" in e for e in res_b1_1.errors)
+
+    # 2. B1 Probe: Drifting benchmark_summary.observed_at from receipt.observed_at
+    r_b1_2 = json.loads(json.dumps(receipt))
+    mc_b1_2 = json.loads(json.dumps(mc_dict))
+    r_b1_2["benchmark_summary"]["observed_at"] = "2026-07-31T00:00:00Z"
+    r_b1_2["observed_at"] = "2026-07-31T12:00:00Z"
+    rebound_b1_2 = _rebind_hashes(r_b1_2, mc_b1_2)
+    res_b1_2 = verify_sitescore_gate2_receipt(rebound_b1_2, model_card_artifact=mc_b1_2)
+    assert res_b1_2.is_valid is False
+    assert any("drifts from top-level observed_at" in e for e in res_b1_2.errors)
+
+    # 3. B2 Probe: mean_realized_revenue set to 999999.0 when mature_label_count is 0
+    r_b2_1 = json.loads(json.dumps(receipt))
+    mc_b2_1 = json.loads(json.dumps(mc_dict))
+    r_b2_1["benchmark_summary"]["calibration_summary"]["mean_realized_revenue"] = 999999.0
+    if "calibration_summary" in r_b2_1["handback"]:
+        r_b2_1["handback"]["calibration_summary"]["mean_realized_revenue"] = 999999.0
+    if "calibration_summary" in r_b2_1["benchmark_summary"]["handback_payload"]:
+        r_b2_1["benchmark_summary"]["handback_payload"]["calibration_summary"]["mean_realized_revenue"] = 999999.0
+    mc_b2_1["calibration_summary"]["mean_realized_revenue"] = 999999.0
+    rebound_b2_1 = _rebind_hashes(r_b2_1, mc_b2_1)
+    res_b2_1 = verify_sitescore_gate2_receipt(rebound_b2_1, model_card_artifact=mc_b2_1)
+    assert res_b2_1.is_valid is False
+    assert any("mean_realized_revenue must be 0.0 when mature_label_count is 0" in e for e in res_b2_1.errors)
+
+    # 4. B2 Probe: On a 2-record benchmark, measured_90d_mae modified to 999999.0 while leaving normalized_mae and matched_mean_y unchanged
+    rec_sample = [
+        {
+            "entity_id": "site-1",
+            "store_id": "101",
+            "target_format_code": "STANDARD",
+            "opened_on": "2024-01-01",
+            "is_training_eligible": True,
+            "realized_90d_net_revenue": 100.0,
+            "realized_180d_net_revenue": 200.0,
+            "realized_365d_net_revenue": 400.0,
+            "store_age_days": 400,
+            "predicted_revenue": 110.0,
+            "p10": 80.0,
+            "p90": 120.0,
+        },
+        {
+            "entity_id": "site-2",
+            "store_id": "102",
+            "target_format_code": "STANDARD",
+            "opened_on": "2024-01-01",
+            "is_training_eligible": True,
+            "realized_90d_net_revenue": 200.0,
+            "realized_180d_net_revenue": 400.0,
+            "realized_365d_net_revenue": 800.0,
+            "store_age_days": 400,
+            "predicted_revenue": 190.0,
+            "p10": 160.0,
+            "p90": 240.0,
+        },
+    ]
+    res_2rec = evaluate_sitescore_opening_outcome_benchmark(rec_sample, provenance="provided_records")
+    mc_2rec = build_sitescore_opening_outcome_model_card(res_2rec)
+    r_2rec = build_sitescore_gate2_receipt(res_2rec, model_card=mc_2rec)
+    mc_2rec_dict = mc_2rec.to_dict()
+
+    r_b2_2 = json.loads(json.dumps(r_2rec))
+    mc_b2_2 = json.loads(json.dumps(mc_2rec_dict))
+    r_b2_2["benchmark_summary"]["calibration_summary"]["measured_90d_mae"] = 999999.0
+    if "calibration_summary" in r_b2_2["handback"]:
+        r_b2_2["handback"]["calibration_summary"]["measured_90d_mae"] = 999999.0
+    if "calibration_summary" in r_b2_2["benchmark_summary"]["handback_payload"]:
+        r_b2_2["benchmark_summary"]["handback_payload"]["calibration_summary"]["measured_90d_mae"] = 999999.0
+    mc_b2_2["calibration_summary"]["measured_90d_mae"] = 999999.0
+    rebound_b2_2 = _rebind_hashes(r_b2_2, mc_b2_2)
+    res_b2_2 = verify_sitescore_gate2_receipt(rebound_b2_2, model_card_artifact=mc_b2_2)
+    assert res_b2_2.is_valid is False
+    assert any("drifts from expected MAE" in e for e in res_b2_2.errors)
+
+    # 5. B3 Probe: Dropping one segment record on a 2-record benchmark (total_seg_cnt != mature_label_count)
+    r_b3_1 = json.loads(json.dumps(r_2rec))
+    mc_b3_1 = json.loads(json.dumps(mc_2rec_dict))
+    seg_dropped = [{
+        "segment_name": "target_format_code",
+        "segment_value": "STANDARD",
+        "record_count": 1,
+        "metrics": {"mae": 10.0, "m6_coverage": 1.0, "m12_coverage": 1.0, "prediction_coverage": 1.0}
+    }]
+    r_b3_1["benchmark_summary"]["segment_metrics"] = seg_dropped
+    r_b3_1["handback"]["segment_metrics"] = seg_dropped
+    r_b3_1["benchmark_summary"]["handback_payload"]["segment_metrics"] = seg_dropped
+    mc_b3_1["segment_metrics"] = seg_dropped
+    rebound_b3_1 = _rebind_hashes(r_b3_1, mc_b3_1)
+    res_b3_1 = verify_sitescore_gate2_receipt(rebound_b3_1, model_card_artifact=mc_b3_1)
+    assert res_b3_1.is_valid is False
+    assert any("does not match mature_label_count" in e for e in res_b3_1.errors)
+
+    # 6. B3 Probe: Replacing segment MAE and coverage with arbitrary values
+    r_b3_2 = json.loads(json.dumps(r_2rec))
+    mc_b3_2 = json.loads(json.dumps(mc_2rec_dict))
+    seg_arbitrary = [{
+        "segment_name": "target_format_code",
+        "segment_value": "STANDARD",
+        "record_count": 2,
+        "metrics": {"mae": 999.0, "m6_coverage": 0.5, "m12_coverage": 0.5, "prediction_coverage": 0.5}
+    }]
+    r_b3_2["benchmark_summary"]["segment_metrics"] = seg_arbitrary
+    r_b3_2["handback"]["segment_metrics"] = seg_arbitrary
+    r_b3_2["benchmark_summary"]["handback_payload"]["segment_metrics"] = seg_arbitrary
+    mc_b3_2["segment_metrics"] = seg_arbitrary
+    rebound_b3_2 = _rebind_hashes(r_b3_2, mc_b3_2)
+    res_b3_2 = verify_sitescore_gate2_receipt(rebound_b3_2, model_card_artifact=mc_b3_2)
+    assert res_b3_2.is_valid is False
+    assert any("drifts from" in e for e in res_b3_2.errors)
+
+    # 7. B3 Probe: Duplicate segment_value in same partition
+    r_b3_3 = json.loads(json.dumps(r_2rec))
+    mc_b3_3 = json.loads(json.dumps(mc_2rec_dict))
+    seg_dupes = [
+        {
+            "segment_name": "target_format_code",
+            "segment_value": "STANDARD",
+            "record_count": 1,
+            "metrics": {"mae": 10.0, "m6_coverage": 1.0, "m12_coverage": 1.0, "prediction_coverage": 1.0}
+        },
+        {
+            "segment_name": "target_format_code",
+            "segment_value": "STANDARD",
+            "record_count": 1,
+            "metrics": {"mae": 10.0, "m6_coverage": 1.0, "m12_coverage": 1.0, "prediction_coverage": 1.0}
+        },
+    ]
+    r_b3_3["benchmark_summary"]["segment_metrics"] = seg_dupes
+    r_b3_3["handback"]["segment_metrics"] = seg_dupes
+    r_b3_3["benchmark_summary"]["handback_payload"]["segment_metrics"] = seg_dupes
+    mc_b3_3["segment_metrics"] = seg_dupes
+    rebound_b3_3 = _rebind_hashes(r_b3_3, mc_b3_3)
+    res_b3_3 = verify_sitescore_gate2_receipt(rebound_b3_3, model_card_artifact=mc_b3_3)
+    assert res_b3_3.is_valid is False
+    assert any("Duplicate segment_value" in e for e in res_b3_3.errors)

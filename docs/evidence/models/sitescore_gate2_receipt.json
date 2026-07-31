@@ -1,7 +1,7 @@
 {
   "artifact_hashes": {
     "handback_hash": "c01a3e922e80453981fdbeaaa8c55b73c1df82a9101372a9199ba4c16ef16e1a",
-    "model_card_hash": "40547deaa7a6c8490d6a25d462d9aff29dbb4e35045ac500190e04f69e7c99ae"
+    "model_card_hash": "73439c1e393caa7e9a3220f2b4d458312088785eab3f964b89c4a6dfe719f323"
   },
   "benchmark_summary": {
     "activation_threshold": 200,
@@ -10,7 +10,7 @@
       "interval_bounds_coverage_ratio": 0.0,
       "matched_mean_realized_revenue": 0.0,
       "matched_prediction_count": 0,
-      "mean_realized_revenue": 1.0,
+      "mean_realized_revenue": 0.0,
       "measured_90d_mae": null,
       "p80_coverage_ratio": 0.0,
       "prediction_coverage_ratio": 0.0
@@ -128,6 +128,7 @@
     "min_coverage_threshold": 0.7,
     "model_version": null,
     "normalized_mae": 0.0,
+    "observed_at": "2026-07-31T14:42:40.316134Z",
     "observed_count": 0,
     "p80_coverage": 0.0,
     "prediction_coverage_ratio": 0.0,
@@ -235,15 +236,15 @@
     ]
   },
   "integrity": {
-    "content_sha256": "ade708b1ab4aa2abee0d16bf44ccbea3eab6639a41d3c793c42da0cd5959eac7",
+    "content_sha256": "363cfee48b5ced1283adfdde4f469ee9e2f118a07cada848393088ea4e146ec5",
     "handback_hash": "c01a3e922e80453981fdbeaaa8c55b73c1df82a9101372a9199ba4c16ef16e1a",
-    "model_card_hash": "40547deaa7a6c8490d6a25d462d9aff29dbb4e35045ac500190e04f69e7c99ae"
+    "model_card_hash": "73439c1e393caa7e9a3220f2b4d458312088785eab3f964b89c4a6dfe719f323"
   },
   "inventory_version": "candidate-site-view-v2",
   "is_governed_disabled": true,
   "kind": "sitescore-opening-outcome-gate2-receipt",
   "model_name": "sitescore_propensity",
-  "observed_at": "2026-07-31T14:10:17.263229Z",
+  "observed_at": "2026-07-31T14:42:40.316134Z",
   "provenance": "no_source",
   "schema_version": 1,
   "service": "sitescore",
