@@ -125,7 +125,7 @@ PY
 | 3 | ForecastOps 成長軌跡與四燈 | 真實 StatsForecast/MLForecast/LightGBM runtime 存在 | 1,303 rows；live alias／商業指標未證明 | `LIVE_UNVERIFIED` |
 | 4 | Learning Hub + OpsBoard 治理 | MLflow、GX、Evidently、Dagster、release/rollback code 存在 | 正式 model cards、canary、rollback drill、UAT 未齊 | `PARTIAL` |
 | 5 | Intervention + PriceOps + AdLift | state flow、solver、statsmodels DiD 均存在 | 無 live pilot／incremental GM business proof | `PARTIAL` |
-| 6 | AVM + NetPlan | 估值、lifelines、OR-Tools、CVXPY、infeasibility 均存在 | AVM 0 labels；無管理層 acceptance/outcome | `BLOCKED_DATA` |
+| 6 | AVM + NetPlan | 估值、lifelines、OR-Tools、CVXPY、infeasibility 均存在 | AVM 0 labels；無具名管理層 baseline approval receipt／acceptance／outcome | `BLOCKED_DATA` |
 | 7 | 高階因果、Bandit、Deep、Robust | Robust/Optuna/pymoo 已整合；其他多數未啟用 | 前置 Gate 未成立 | `DEFERRED` |
 
 ## 5. Stage 0：共同語意與平台基礎
@@ -235,10 +235,10 @@ PY
 | PLAN-S6-005 | Liquidity Survival | lifelines CoxPH adapter | `IMPLEMENTED` | production artifact/data activation未驗證 |
 | PLAN-S6-006 | Data Room | backend/domain能力與歷史UI證據 | `PARTIAL` | canonical完整finance/legal旅程與E2E不足 |
 | PLAN-S6-007 | Deterministic CP-SAT NetPlan | OR-Tools solver | `PARTIAL` | 隔離測試通過，但與CVXPY/highspy同process有load-order ABI衝突 |
-| PLAN-S6-008 | OPEN/KEEP/IMPROVE/MOVE/EXIT + constraints | NetPlan model/solver | `IMPLEMENTED` | 管理層UAT未完成 |
+| PLAN-S6-008 | OPEN/KEEP/IMPROVE/MOVE/EXIT + constraints | NetPlan model/solver | `IMPLEMENTED` | 管理層UAT未完成；無具名、可驗證且綁 exact baseline/problem hash 的 approval receipt |
 | PLAN-S6-009 | Scenario、Alternative、Binding、Infeasibility | OR-Tools/CVXPY diagnostics | `IMPLEMENTED` | browser detail與production solver report不足 |
 | PLAN-S6-010 | 90/180/365 day outcome | outcome contracts | `PARTIAL` | 無成熟 production outcomes |
-| PLAN-S6-GATE | AVM coverage、價值帶分離、硬限制100%、優於baseline、outcome回收 | AVM資料未成熟、管理驗收缺失 | `BLOCKED_DATA` | Gate 6 未通過 |
+| PLAN-S6-GATE | AVM coverage、價值帶分離、硬限制100%、優於baseline、outcome回收 | AVM資料未成熟、管理驗收與 authoritative baseline approval receipt 缺失 | `BLOCKED_DATA` | Gate 6 未通過；AI fixture／角色字串不得代替核准 |
 
 ## 12. Stage 7：高階因果、Bandit、Deep、Robust
 
@@ -435,7 +435,7 @@ Package 10 明確要求只保留：
 | GAP-P1-003 | AVM outcome閉環 | >=120成熟成交outcomes；coverage與價值帶校準 |
 | GAP-P1-004 | ForecastOps business validation | baseline superiority、segment、alert precision/recall/lead time |
 | GAP-P1-005 | Price/AdLift pilot | 0 hard violation、pre-trend通過、incremental GM與rollback |
-| GAP-P1-006 | NetPlan管理驗收 | hard constraints 100%、優於baseline、alternative/infeasibility可解釋 |
+| GAP-P1-006 | NetPlan管理驗收 | technical comparison fail closed；hard constraints 100%、alternative/infeasibility可解釋；另由 `ODP-PLAN-NETPLAN-BASELINE-APPROVAL-001` 提供具名 Human/Ops receipt 後，才可宣稱優於核准 baseline |
 | GAP-P1-007 | OSS license gate | license-aware SBOM、policy、notice、release attestation，以及 Human/Ops/Legal 具名政策核准 |
 | GAP-P1-008 | Observability production wiring | exporter、dashboard、alert routing、owner與watch window |
 
