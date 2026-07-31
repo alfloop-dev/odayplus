@@ -7,6 +7,7 @@ import shutil
 import subprocess
 import sys
 from pathlib import Path
+from typing import Any
 
 import pytest
 
@@ -1355,11 +1356,35 @@ def test_round8_b3_fake_person_and_unresolved_active_receipts_rejected(tmp_path:
             sbom_mod.EXEMPTIONS_PATH = orig_path
 
 
+def make_test_verifier(
+    tmp_path: Path,
+    key: str = "secret-test-authority-key-12345",
+    trusted_source_systems: set[str] | None = None,
+    expected_digests: dict[str, str] | None = None,
+) -> Any:
+    sys.path.insert(0, str(ROOT))
+    from scripts.security.exemption_validator import AuthoritativeReceiptVerifier
+
+    key_file = tmp_path / "legal_authority.key"
+    key_file.write_text(key, encoding="utf-8")
+    if expected_digests is None:
+        expected_digests = {
+            "source_digest": "a" * 40,
+            "release_digest": "b" * 64,
+            "sbom_digest": "c" * 64,
+            "evidence_report_digest": "d" * 64,
+        }
+    return AuthoritativeReceiptVerifier(
+        authority_key_file=key_file,
+        trusted_source_systems=trusted_source_systems or {"legal_vault", "ODP-PLAN-OSS-LEGAL-POLICY-001"},
+        expected_digests=expected_digests,
+    )
+
+
 def test_round8_b1_authoritative_receipt_contract(tmp_path: Path) -> None:
     """B1 — active exemptions must resolve to an authoritative signed receipt under ODP-PLAN-OSS-LEGAL-POLICY-001 with matching field bindings."""
     sys.path.insert(0, str(ROOT))
     from scripts.security.exemption_validator import (
-        AuthoritativeReceiptVerifier,
         compute_canonical_receipt_hash,
         compute_file_sha256,
         compute_policy_hash,
@@ -1403,7 +1428,7 @@ def test_round8_b1_authoritative_receipt_contract(tmp_path: Path) -> None:
 
     # 3. Matching receipt with AuthoritativeReceiptVerifier passes resolution
     key = "secret-test-authority-key-12345"
-    verifier = AuthoritativeReceiptVerifier(authority_key=key, trusted_source_systems={"legal_vault", "ODP-PLAN-OSS-LEGAL-POLICY-001"})
+    verifier = make_test_verifier(tmp_path, key=key)
 
     uv_lock_hash = compute_file_sha256(ROOT / "uv.lock")
     pkg_lock_hash = compute_file_sha256(ROOT / "package-lock.json")
@@ -1542,7 +1567,6 @@ def test_round9_b1_missing_or_mismatched_receipt_fields_rejected(tmp_path: Path)
     """2. Missing or mismatched principal/source/policy/scope/release/evidence/integrity fields are rejected."""
     sys.path.insert(0, str(ROOT))
     from scripts.security.exemption_validator import (
-        AuthoritativeReceiptVerifier,
         compute_canonical_receipt_hash,
         compute_file_sha256,
         compute_policy_hash,
@@ -1551,7 +1575,7 @@ def test_round9_b1_missing_or_mismatched_receipt_fields_rejected(tmp_path: Path)
     )
 
     key = "secret-test-key-999"
-    verifier = AuthoritativeReceiptVerifier(authority_key=key, trusted_source_systems={"legal_vault"})
+    verifier = make_test_verifier(tmp_path, key=key, trusted_source_systems={"legal_vault"})
 
     entry = {
         "package_name": "psycopg",
@@ -1642,7 +1666,6 @@ def test_round9_b1_authoritative_verifier_mismatch_rejected(tmp_path: Path) -> N
     """3. An authoritative verifier/readback mismatch is rejected even when local JSON is internally consistent."""
     sys.path.insert(0, str(ROOT))
     from scripts.security.exemption_validator import (
-        AuthoritativeReceiptVerifier,
         compute_canonical_receipt_hash,
         compute_file_sha256,
         compute_policy_hash,
@@ -1698,7 +1721,7 @@ def test_round9_b1_authoritative_verifier_mismatch_rejected(tmp_path: Path) -> N
     valid_local_json["signature"] = compute_receipt_signature(valid_local_json["canonical_receipt_hash"], "wrong-key")
     (receipts_dir / "POLICY-LGPL-001.json").write_text(json.dumps(valid_local_json), encoding="utf-8")
 
-    failing_verifier = AuthoritativeReceiptVerifier(authority_key="correct-key", trusted_source_systems={"legal_vault"})
+    failing_verifier = make_test_verifier(tmp_path, key="correct-key-12345678", trusted_source_systems={"legal_vault"})
 
     res_ok, res_err = resolve_approval_reference("POLICY-LGPL-001", entry, base_dir=tmp_path, verifier_fn=failing_verifier)
     assert not res_ok
@@ -1748,8 +1771,8 @@ def test_round10_b1_caller_controlled_callback_cannot_approve_lookalike(tmp_path
     assert not res_ok
     assert "cannot self-establish authority without a configured AuthoritativeReceiptVerifier" in res_err
 
-    # 2. Unconfigured AuthoritativeReceiptVerifier (no authority key) is REJECTED
-    unconfig_verifier = AuthoritativeReceiptVerifier(authority_key=None)
+    # 2. Unconfigured AuthoritativeReceiptVerifier (no authority key file) is REJECTED
+    unconfig_verifier = AuthoritativeReceiptVerifier(authority_key_file=None)
     res_ok, res_err = resolve_approval_reference("POLICY-LGPL-001", entry, base_dir=tmp_path, verifier_fn=unconfig_verifier)
     assert not res_ok
     assert "cannot self-establish authority" in res_err
@@ -1759,7 +1782,6 @@ def test_round10_b2_receipt_field_bindings_and_tamper_mutations(tmp_path: Path) 
     """B2 — bind receipt to policy hash, lock hashes, timestamps, purl, vulnerability_id, and verify recomputed digest."""
     sys.path.insert(0, str(ROOT))
     from scripts.security.exemption_validator import (
-        AuthoritativeReceiptVerifier,
         compute_canonical_receipt_hash,
         compute_file_sha256,
         compute_policy_hash,
@@ -1768,7 +1790,7 @@ def test_round10_b2_receipt_field_bindings_and_tamper_mutations(tmp_path: Path) 
     )
 
     key = "authority-secret-key-456"
-    verifier = AuthoritativeReceiptVerifier(authority_key=key, trusted_source_systems={"legal_vault"})
+    verifier = make_test_verifier(tmp_path, key=key, trusted_source_systems={"legal_vault"})
 
     entry = {
         "package_name": "psycopg",
@@ -1912,22 +1934,21 @@ def test_round10_b4_sbom_integrity_and_tamper_mutations(tmp_path: Path) -> None:
 
 
 def test_round11_b1_caller_created_authority_and_substring_source_rejected(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    """B1 — caller-created authority keys without environment trust root and substring source_system values must be rejected."""
+    """B1 — caller-writable environment variables and string parameters without key file are rejected, and substring source_system values are rejected."""
     sys.path.insert(0, str(ROOT))
     from scripts.security.exemption_validator import (
         AuthoritativeReceiptVerifier,
         compute_canonical_receipt_hash,
+        compute_file_sha256,
+        compute_policy_hash,
         compute_receipt_signature,
         resolve_approval_reference,
     )
 
-    # 1. Ensure no environment trust root key is set
-    monkeypatch.delenv("OSS_LEGAL_AUTHORITY_KEY", raising=False)
-    monkeypatch.delenv("AUTHORITATIVE_RECEIPT_SECRET", raising=False)
-
-    # Caller tries to instantiate verifier with arbitrary authority_key
-    caller_verifier = AuthoritativeReceiptVerifier(authority_key="caller-chosen-secret-123", trusted_source_systems={"legal_vault"})
-    assert caller_verifier.authority_key is None, "Caller-created authority key must be rejected when environment trust root is absent"
+    # 1. Caller attempts to pass in-memory key or set env var without key file -> REJECTED
+    monkeypatch.setenv("OSS_LEGAL_AUTHORITY_KEY", "caller-env-secret-123")
+    caller_verifier = AuthoritativeReceiptVerifier(authority_key_file=None, trusted_source_systems={"legal_vault"})
+    assert caller_verifier.authority_key is None, "Caller-writable env var or in-memory key without key file must be rejected"
 
     entry = {
         "package_name": "psycopg",
@@ -1941,14 +1962,17 @@ def test_round11_b1_caller_created_authority_and_substring_source_rejected(tmp_p
         "scope": "prod",
     }
 
-    # 2. Substring source_system ("evil-legal_vault-copy") must be rejected even if environment trust root is configured
-    test_key = "trusted-env-secret-456"
-    monkeypatch.setenv("OSS_LEGAL_AUTHORITY_KEY", test_key)
-    valid_verifier = AuthoritativeReceiptVerifier(authority_key=test_key, trusted_source_systems={"legal_vault"})
+    # 2. Substring source_system ("evil-legal_vault-copy") must be rejected even with valid key file
+    test_key = "trusted-authority-secret-key-456789"
+    valid_verifier = make_test_verifier(tmp_path, key=test_key, trusted_source_systems={"legal_vault"})
     assert valid_verifier.authority_key == test_key
 
     receipts_dir = tmp_path / "receipts"
     receipts_dir.mkdir(parents=True, exist_ok=True)
+
+    uv_lock_hash = compute_file_sha256(ROOT / "uv.lock")
+    pkg_lock_hash = compute_file_sha256(ROOT / "package-lock.json")
+    pol_hash = compute_policy_hash()
 
     substring_receipt = {
         "approval_ref": "POLICY-LGPL-001",
@@ -1961,7 +1985,7 @@ def test_round11_b1_caller_created_authority_and_substring_source_rejected(tmp_p
         "policy_decision": "approved",
         "policy_name": "ODP-PLAN-OSS-LEGAL-POLICY-001",
         "policy_version": "1.0.0",
-        "policy_hash": "a" * 64,
+        "policy_hash": pol_hash,
         "package_name": "psycopg",
         "package_purl": "pkg:pypi/psycopg@3.3.4",
         "scope": "prod",
@@ -1971,9 +1995,9 @@ def test_round11_b1_caller_created_authority_and_substring_source_rejected(tmp_p
         "source_digest": "a" * 40,
         "release_digest": "b" * 64,
         "sbom_digest": "c" * 64,
-        "python_lock_digest": "d" * 64,
-        "npm_lock_digest": "e" * 64,
-        "evidence_report_digest": "f" * 64,
+        "python_lock_digest": uv_lock_hash,
+        "npm_lock_digest": pkg_lock_hash,
+        "evidence_report_digest": "d" * 64,
     }
     substring_receipt["canonical_receipt_hash"] = compute_canonical_receipt_hash(substring_receipt)
     substring_receipt["signature"] = compute_receipt_signature(substring_receipt["canonical_receipt_hash"], test_key)
@@ -1985,8 +2009,8 @@ def test_round11_b1_caller_created_authority_and_substring_source_rejected(tmp_p
     assert "source_system 'evil-legal_vault-copy' is not in trusted source systems" in res_err
 
 
-def test_round11_b2_unbound_policy_version_and_digest_mismatches_rejected(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    """B2 — policy_version ATTACKER-VERSION, caller-controlled digests, and purl mismatches must be rejected."""
+def test_round11_b2_unbound_policy_version_and_digest_mismatches_rejected(tmp_path: Path) -> None:
+    """B2 — policy_version ATTACKER-VERSION, missing expected_digests, and caller-controlled digests must be rejected."""
     sys.path.insert(0, str(ROOT))
     from scripts.security.exemption_validator import (
         AuthoritativeReceiptVerifier,
@@ -1997,9 +2021,14 @@ def test_round11_b2_unbound_policy_version_and_digest_mismatches_rejected(tmp_pa
         resolve_approval_reference,
     )
 
-    test_key = "test-authority-secret-789"
-    monkeypatch.setenv("OSS_LEGAL_AUTHORITY_KEY", test_key)
-    verifier = AuthoritativeReceiptVerifier(authority_key=test_key, trusted_source_systems={"legal_vault"})
+    test_key = "test-authority-secret-789012"
+    verifier = make_test_verifier(tmp_path, key=test_key, trusted_source_systems={"legal_vault"})
+
+    # 1. Unbound/incomplete expected_digests in verifier fails verification
+    key_file = tmp_path / "test_unbound.key"
+    key_file.write_text(test_key, encoding="utf-8")
+    unbound_verifier = AuthoritativeReceiptVerifier(authority_key_file=key_file, expected_digests={})
+    assert not unbound_verifier.has_complete_expected_digests
 
     entry = {
         "package_name": "psycopg",
@@ -2046,7 +2075,16 @@ def test_round11_b2_unbound_policy_version_and_digest_mismatches_rejected(tmp_pa
         "evidence_report_digest": "d" * 64,
     }
 
-    # 1. ATTACKER-VERSION policy_version rejected
+    # Verify unbound verifier fails
+    base_receipt["canonical_receipt_hash"] = compute_canonical_receipt_hash(base_receipt)
+    base_receipt["signature"] = compute_receipt_signature(base_receipt["canonical_receipt_hash"], test_key)
+    (receipts_dir / "POLICY-LGPL-001.json").write_text(json.dumps(base_receipt), encoding="utf-8")
+
+    res_ok, res_err = resolve_approval_reference("POLICY-LGPL-001", entry, base_dir=tmp_path, verifier_fn=unbound_verifier)
+    assert not res_ok
+    assert "does not match mandatory expected digest" in res_err
+
+    # 2. ATTACKER-VERSION policy_version rejected
     attacker_ver_rec = dict(base_receipt, policy_version="ATTACKER-VERSION")
     attacker_ver_rec["canonical_receipt_hash"] = compute_canonical_receipt_hash(attacker_ver_rec)
     attacker_ver_rec["signature"] = compute_receipt_signature(attacker_ver_rec["canonical_receipt_hash"], test_key)
@@ -2056,7 +2094,7 @@ def test_round11_b2_unbound_policy_version_and_digest_mismatches_rejected(tmp_pa
     assert not res_ok
     assert "policy_version 'ATTACKER-VERSION' does not match" in res_err
 
-    # 2. caller-controlled release_digest rejected
+    # 3. caller-controlled release_digest rejected
     caller_dig_rec = dict(base_receipt, release_digest="caller-controlled")
     caller_dig_rec["canonical_receipt_hash"] = compute_canonical_receipt_hash(caller_dig_rec)
     caller_dig_rec["signature"] = compute_receipt_signature(caller_dig_rec["canonical_receipt_hash"], test_key)

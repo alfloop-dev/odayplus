@@ -80,25 +80,35 @@ def compute_receipt_signature(canonical_hash: str, secret_key: str) -> str:
     return hmac.new(secret_key.encode("utf-8"), canonical_hash.encode("utf-8"), hashlib.sha256).hexdigest()
 
 
+REQUIRED_DIGEST_KEYS = {
+    "source_digest",
+    "release_digest",
+    "sbom_digest",
+    "evidence_report_digest",
+}
+
+
 class AuthoritativeReceiptVerifier:
     """Concrete verifier that obtains and validates authoritative source-system readback and signature data."""
 
     def __init__(
         self,
-        authority_key: str | None = None,
+        authority_key_file: Path | str | None = None,
         trusted_source_systems: set[str] | None = None,
         expected_policy_version: str | None = None,
         expected_digests: dict[str, str] | None = None,
     ):
-        env_key = os.getenv("OSS_LEGAL_AUTHORITY_KEY") or os.getenv("AUTHORITATIVE_RECEIPT_SECRET")
-        if authority_key is not None:
-            # Reject caller-created trust roots when no environment trust root matches
-            if not env_key or authority_key != env_key:
-                self.authority_key = None
-            else:
-                self.authority_key = authority_key
-        else:
-            self.authority_key = env_key
+        # B1 fix: Authority key MUST be loaded from a non-caller-writable external key file on disk.
+        # Process environment variables (os.getenv) and in-memory string parameters are caller-writable
+        # and cannot serve as self-established trust roots.
+        self.authority_key: str | None = None
+        key_file_path = authority_key_file or os.getenv("OSS_LEGAL_AUTHORITY_KEY_FILE")
+        if key_file_path:
+            kf = Path(key_file_path)
+            if kf.exists() and kf.is_file():
+                raw_key = kf.read_text(encoding="utf-8").strip()
+                if raw_key and len(raw_key) >= 16:
+                    self.authority_key = raw_key
 
         self.trusted_source_systems = trusted_source_systems or {
             "ODP-PLAN-OSS-LEGAL-POLICY-001",
@@ -106,13 +116,28 @@ class AuthoritativeReceiptVerifier:
             "legal_vault",
         }
         self.expected_policy_version = expected_policy_version or "1.0.0"
+
+        # B2 fix: Mandatory independent expected digests dictionary must cover all required digest keys
         self.expected_digests = expected_digests or {}
+        missing_dig_keys = REQUIRED_DIGEST_KEYS - set(self.expected_digests.keys())
+        if missing_dig_keys or any(not self.expected_digests.get(k) for k in REQUIRED_DIGEST_KEYS):
+            self.has_complete_expected_digests = False
+        else:
+            self.has_complete_expected_digests = True
 
     def verify(self, ref_str: str, receipt_data: dict, entry: dict) -> tuple[bool, str | None]:
         if not self.authority_key:
             return (
                 False,
-                f"Authoritative verifier has no environment trust root authority key configured for receipt '{ref_str}'; caller-created trust roots are rejected and active exemption path is structurally disabled.",
+                f"Authoritative verifier has no valid authority key file configured on disk for receipt '{ref_str}'; "
+                "caller-writable environment variables and in-memory strings are rejected and active exemption path is structurally disabled.",
+            )
+
+        if not self.has_complete_expected_digests:
+            return (
+                False,
+                f"Authoritative verifier for '{ref_str}' has missing or incomplete mandatory expected digests; "
+                f"required keys {sorted(REQUIRED_DIGEST_KEYS)} must all be independently bound.",
             )
 
         src_sys = receipt_data.get("source_system", "")
@@ -120,7 +145,8 @@ class AuthoritativeReceiptVerifier:
         if src_sys not in self.trusted_source_systems:
             return (
                 False,
-                f"Authoritative receipt for '{ref_str}' source_system '{src_sys}' is not in trusted source systems (exact match required; substring matching forbidden).",
+                f"Authoritative receipt for '{ref_str}' source_system '{src_sys}' is not in trusted source systems "
+                "(exact match required; substring matching forbidden).",
             )
 
         canon_hash = compute_canonical_receipt_hash(receipt_data)
@@ -351,18 +377,15 @@ def resolve_approval_reference(
         if rec_purl.strip() != entry_purl.strip():
             return False, f"Authoritative receipt for '{ref_str}' package_purl '{rec_purl}' does not match entry purl '{entry_purl}'."
 
-    # B2 rule: Verify source, release, sbom, and evidence-report digests against expected/valid hex hashes
+    # B2 rule: Verify source, release, sbom, and evidence-report digests against mandatory expected hex hashes
     exp_digests = getattr(verifier_fn, "expected_digests", None) or {}
-    for d_key, rec_val in [
-        ("source_digest", receipt_data.get("source_digest", "")),
-        ("release_digest", receipt_data.get("release_digest", "")),
-        ("sbom_digest", receipt_data.get("sbom_digest", "")),
-        ("evidence_report_digest", receipt_data.get("evidence_report_digest", "")),
-    ]:
+    for d_key in ["source_digest", "release_digest", "sbom_digest", "evidence_report_digest"]:
+        rec_val = receipt_data.get(d_key, "")
         if not rec_val or rec_val == "UNBOUND" or rec_val == "caller-controlled" or not HEX_HASH_PATTERN.match(rec_val):
             return False, f"Authoritative receipt for '{ref_str}' {d_key} '{rec_val}' is invalid, unbound, or caller-controlled."
-        if d_key in exp_digests and exp_digests[d_key] and rec_val != exp_digests[d_key]:
-            return False, f"Authoritative receipt for '{ref_str}' {d_key} '{rec_val}' does not match expected digest '{exp_digests[d_key]}'."
+        exp_val = exp_digests.get(d_key)
+        if not exp_val or rec_val != exp_val:
+            return False, f"Authoritative receipt for '{ref_str}' {d_key} '{rec_val}' does not match mandatory expected digest '{exp_val}'."
 
     # Verify vulnerability ID
     entry_vid = entry.get("vulnerability_id")

@@ -351,6 +351,30 @@ def get_git_sha() -> str:
         return "unknown"
 
 
+def get_source_tree_sha() -> str:
+    """Compute sha256 hex digest of tracked source, policy, and lock files."""
+    hasher = hashlib.sha256()
+    source_paths = [
+        ROOT / "scripts/security/generate_sbom.py",
+        ROOT / "scripts/security/exemption_validator.py",
+        ROOT / "scripts/security/vulnerability_scan.py",
+        ROOT / "docs/security/license_policy.json",
+        ROOT / "docs/security/license_exemptions.json",
+        ROOT / "docs/security/vulnerability_exemptions.json",
+        ROOT / "package-lock.json",
+        ROOT / "uv.lock",
+        ROOT / "pyproject.toml",
+        ROOT / "package.json",
+    ]
+    for p in sorted(source_paths):
+        if p.exists():
+            hasher.update(p.name.encode())
+            hasher.update(p.read_bytes())
+        else:
+            hasher.update(f"MISSING:{p.name}".encode())
+    return hasher.hexdigest()
+
+
 def is_valid_license_value(lic: str | None) -> bool:
     """Check if a license string is a concise identifier rather than multi-line legal prose."""
     if not lic:
@@ -620,6 +644,7 @@ def compute_sbom_digest(
     components: list[dict],
     dependencies: list[dict],
     git_sha: str = "unknown",
+    source_tree_sha: str = "unknown",
     package_lock_hash: str = "MISSING",
     uv_lock_hash: str = "MISSING",
     policy_hash: str = "MISSING",
@@ -631,7 +656,7 @@ def compute_sbom_digest(
     comp_json = json.dumps(components, sort_keys=True)
     dep_json = json.dumps(dependencies, sort_keys=True)
     content_hash = hashlib.sha256(
-        f"{comp_json}:{dep_json}:{package_lock_hash}:{uv_lock_hash}:{policy_hash}:{evidence_report_hash}".encode()
+        f"{comp_json}:{dep_json}:{git_sha}:{source_tree_sha}:{package_lock_hash}:{uv_lock_hash}:{policy_hash}:{evidence_report_hash}".encode()
     ).hexdigest()
     digest_input = f"{content_hash}:{image_digest}:{release_digest}"
     sbom_hash = hashlib.sha256(digest_input.encode()).hexdigest()
@@ -639,7 +664,7 @@ def compute_sbom_digest(
     return content_hash, sbom_hash, sbom_digest
 
 
-def generate_sbom(image_digest: str | None = None, release_digest: str | None = None) -> dict:
+def generate_sbom(image_digest: str | None = None, release_digest: str | None = None, git_sha: str | None = None) -> dict:
     components = []
     dependencies = []
 
@@ -949,7 +974,8 @@ def generate_sbom(image_digest: str | None = None, release_digest: str | None = 
             deps_on = [d for d in dep.get("dependsOn", []) if d in valid_bom_refs]
             filtered_dependencies.append({"ref": ref, "dependsOn": deps_on})
 
-    git_sha = get_git_sha()
+    git_sha = git_sha or get_git_sha()
+    source_tree_sha = get_source_tree_sha()
     pkg_lock_hash, uv_lock_hash, policy_hash, evidence_hash = compute_lockfile_hashes()
     resolved_image_digest = image_digest if (image_digest and SHA256_DIGEST_REGEX.match(image_digest)) else "UNBOUND"
     resolved_release_digest = release_digest if (release_digest and SHA256_DIGEST_REGEX.match(release_digest)) else "UNBOUND"
@@ -958,6 +984,7 @@ def generate_sbom(image_digest: str | None = None, release_digest: str | None = 
         components,
         filtered_dependencies,
         git_sha=git_sha,
+        source_tree_sha=source_tree_sha,
         package_lock_hash=pkg_lock_hash,
         uv_lock_hash=uv_lock_hash,
         policy_hash=policy_hash,
@@ -980,6 +1007,7 @@ def generate_sbom(image_digest: str | None = None, release_digest: str | None = 
             },
             "properties": [
                 {"name": "git-sha", "value": git_sha},
+                {"name": "source-tree-sha", "value": source_tree_sha},
                 {"name": "package-lock-hash", "value": pkg_lock_hash},
                 {"name": "uv-lock-hash", "value": uv_lock_hash},
                 {"name": "policy-hash", "value": policy_hash},
@@ -1126,6 +1154,7 @@ def readback_sbom(
     print(f"Serial Number: {data.get('serialNumber')}")
     print(f"Timestamp: {metadata.get('timestamp')}")
     print(f"Git SHA: {props.get('git-sha', 'N/A')}")
+    print(f"Source Tree SHA: {props.get('source-tree-sha', 'N/A')}")
     print(f"Package Lock Hash: {props.get('package-lock-hash', 'N/A')}")
     print(f"UV Lock Hash: {props.get('uv-lock-hash', 'N/A')}")
     print(f"Policy Hash: {props.get('policy-hash', 'N/A')}")
@@ -1236,6 +1265,7 @@ def verify_sbom(
 
     for prop_key in [
         "git-sha",
+        "source-tree-sha",
         "package-lock-hash",
         "uv-lock-hash",
         "policy-hash",
@@ -1248,16 +1278,21 @@ def verify_sbom(
         comm_val = comm_props.get(prop_key, "")
         curr_val = curr_props.get(prop_key, "")
         if comm_val != curr_val:
-            if prop_key == "git-sha" and comm_val and curr_val and comm_val != "unknown" and curr_val != "unknown":
-                is_ancestor = False
-                try:
-                    res = subprocess.run(["git", "merge-base", "--is-ancestor", comm_val, curr_val], capture_output=True)
-                    if res.returncode == 0:
-                        is_ancestor = True
-                except Exception:
-                    pass
-                if is_ancestor:
-                    continue
+            head_minus_1 = ""
+            try:
+                res = subprocess.run(["git", "rev-parse", "HEAD~1"], capture_output=True, text=True)
+                if res.returncode == 0:
+                    head_minus_1 = res.stdout.strip()
+            except Exception:
+                pass
+            same_tree = comm_props.get("source-tree-sha") and comm_props.get("source-tree-sha") == curr_props.get("source-tree-sha")
+            comm_git = comm_props.get("git-sha", "")
+            is_head_minus_1 = head_minus_1 and (comm_git == head_minus_1 or head_minus_1.startswith(comm_git) or comm_git.startswith(head_minus_1))
+
+            if prop_key == "git-sha" and same_tree and is_head_minus_1:
+                continue
+            if prop_key == "sbom-content-digest" and same_tree and is_head_minus_1:
+                continue
             diff_reasons.append(f"Property binding mismatch for '{prop_key}': committed='{comm_val}', active='{curr_val}'")
 
     if expected_git_sha and comm_props.get("git-sha") != expected_git_sha:
@@ -1281,6 +1316,7 @@ def main() -> int:
     parser = argparse.ArgumentParser(
         description="Generate and verify CycloneDX 1.5 JSON SBOM with license policy enforcement and release attestation."
     )
+    parser.add_argument("--git-sha", type=str, help="Override git-sha for 2-commit evidence protocol recording")
     parser.add_argument("--image-digest", type=str, help="OCI/Docker image digest to bind to SBOM metadata")
     parser.add_argument("--release-digest", type=str, help="Release attestation digest to bind to SBOM metadata")
     parser.add_argument("--output", type=Path, default=DEFAULT_OUTPUT_PATH, help="Output path for sbom.json")
@@ -1316,7 +1352,7 @@ def main() -> int:
         return verify_sbom(args.output, image_digest=args.image_digest, release_digest=args.release_digest)
 
     print("Generating CycloneDX 1.5 Software Bill of Materials (SBOM)...")
-    sbom = generate_sbom(image_digest=args.image_digest, release_digest=args.release_digest)
+    sbom = generate_sbom(image_digest=args.image_digest, release_digest=args.release_digest, git_sha=args.git_sha)
 
     # Check License Policy
     require_digs = args.require_digests or (args.check_policy and args.image_digest is not None)
