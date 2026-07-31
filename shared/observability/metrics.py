@@ -47,6 +47,8 @@ class MetricDefinition:
     description: str
     labels: tuple[str, ...] = ()
     unit: str = ""
+    min_value: float | None = None
+    max_value: float | None = None
 
 
 def _label_key(labels: Mapping[str, str] | None) -> tuple[tuple[str, str], ...]:
@@ -65,6 +67,8 @@ class _Series:
 
     def snapshot(self) -> dict[str, Any]:
         data: dict[str, Any] = {"type": self.definition.type.value}
+        if self.definition.unit:
+            data["unit"] = self.definition.unit
         if self.definition.type is MetricType.HISTOGRAM:
             sorted_buckets = sorted(self.buckets)
             p95_idx = int(len(sorted_buckets) * 0.95)
@@ -133,6 +137,10 @@ class MetricsRegistry:
         definition = self.definition(name)
         if definition.type is not MetricType.GAUGE:
             raise TypeError(f"{name!r} is not a gauge")
+        if definition.min_value is not None and value < definition.min_value:
+            raise ValueError(f"Gauge metric {name!r} value {value} is below minimum allowed {definition.min_value}. Fail-closed gate enforced.")
+        if definition.max_value is not None and value > definition.max_value:
+            raise ValueError(f"Gauge metric {name!r} value {value} exceeds maximum allowed {definition.max_value}. Fail-closed gate enforced.")
         if definition.category in (MetricCategory.LATENCY, MetricCategory.JOB, MetricCategory.QUEUE, MetricCategory.DATA, MetricCategory.AUDIT, MetricCategory.ERROR, MetricCategory.TRAFFIC):
             if value < 0.0 and definition.name not in ("drift_score", "adlift_incremental_gm"):
                 raise ValueError(f"Gauge metric {name!r} domain requires non-negative value (got {value}). Fail-closed gate enforced.")
@@ -225,58 +233,60 @@ Cat = MetricCategory
 PLATFORM_METRICS: tuple[MetricDefinition, ...] = (
     # §5.1 Technical
     MetricDefinition(
-        "api_request_count", C, Cat.TRAFFIC, "API request volume", ("service", "route", "status")
+        "api_request_count", C, Cat.TRAFFIC, "API request volume", ("service", "route", "status"), min_value=0.0
     ),
     MetricDefinition(
-        "api_error_count", C, Cat.ERROR, "API 4xx/5xx responses", ("service", "route", "status")
+        "api_error_count", C, Cat.ERROR, "API 4xx/5xx responses", ("service", "route", "status"), min_value=0.0
     ),
     MetricDefinition(
-        "api_latency_ms", H, Cat.LATENCY, "API latency P50/P95/P99", ("service", "route"), "ms"
+        "api_latency_ms", H, Cat.LATENCY, "API latency P50/P95/P99", ("service", "route"), "ms", min_value=0.0
     ),
     MetricDefinition(
-        "db_query_latency_ms", H, Cat.LATENCY, "DB query latency", ("query_group",), "ms"
+        "db_query_latency_ms", H, Cat.LATENCY, "DB query latency", ("query_group",), "ms", min_value=0.0
     ),
     MetricDefinition(
-        "job_duration_seconds", H, Cat.JOB, "Batch job duration", ("job_type", "status"), "s"
+        "job_duration_seconds", H, Cat.JOB, "Batch job duration", ("job_type", "status"), "s", min_value=0.0
     ),
     MetricDefinition(
-        "job_failure_count", C, Cat.JOB, "Batch job failures", ("job_type", "error_class")
+        "job_failure_count", C, Cat.JOB, "Batch job failures", ("job_type", "error_class"), min_value=0.0
     ),
     MetricDefinition(
-        "event_consumer_lag", G, Cat.QUEUE, "Event backlog", ("topic", "subscription")
+        "event_consumer_lag", G, Cat.QUEUE, "Event backlog", ("topic", "subscription"), min_value=0.0
     ),
-    MetricDefinition("dlq_message_count", G, Cat.QUEUE, "Dead-letter queue depth", ("topic",)),
+    MetricDefinition("dlq_message_count", G, Cat.QUEUE, "Dead-letter queue depth", ("topic",), min_value=0.0),
     MetricDefinition(
-        "external_connector_failure_count", C, Cat.ERROR, "External source failures", ("source",)
+        "external_connector_failure_count", C, Cat.ERROR, "External source failures", ("source",), min_value=0.0
     ),
     # §5.2 Data / Model
     MetricDefinition(
-        "data_freshness_hours", G, Cat.DATA, "Data freshness", ("source", "view"), "h"
+        "data_freshness_hours", G, Cat.DATA, "Data freshness", ("source", "view"), "h", min_value=0.0
     ),
-    MetricDefinition("data_quality_score", G, Cat.DATA, "Data quality score", ("dataset", "run")),
-    MetricDefinition("feature_null_rate", G, Cat.DATA, "Feature null rate", ("feature", "view")),
-    MetricDefinition("prediction_count", C, Cat.MODEL, "Prediction volume", ("model", "module")),
+    MetricDefinition("data_quality_score", G, Cat.DATA, "Data quality score", ("dataset", "run"), min_value=0.0, max_value=1.0),
+    MetricDefinition("feature_null_rate", G, Cat.DATA, "Feature null rate", ("feature", "view"), min_value=0.0, max_value=1.0),
+    MetricDefinition("prediction_count", C, Cat.MODEL, "Prediction volume", ("model", "module"), min_value=0.0),
     MetricDefinition(
-        "model_error_metric", G, Cat.MODEL, "MAE/MAPE/RMSE", ("model", "horizon", "segment")
+        "model_error_metric", G, Cat.MODEL, "MAE/MAPE/RMSE", ("model", "horizon", "segment"), min_value=0.0
     ),
     MetricDefinition(
-        "prediction_interval_coverage", G, Cat.MODEL, "P80/P90 coverage", ("model", "horizon")
+        "prediction_interval_coverage", G, Cat.MODEL, "P80/P90 coverage", ("model", "horizon"), min_value=0.0, max_value=1.0
     ),
-    MetricDefinition("drift_score", G, Cat.MODEL, "Feature/model drift", ("feature", "model")),
+    MetricDefinition("drift_score", G, Cat.MODEL, "Feature/model drift", ("feature", "model"), min_value=0.0),
     MetricDefinition(
-        "model_alias_change_count", C, Cat.MODEL, "Release/rollback count", ("model",)
+        "model_alias_change_count", C, Cat.MODEL, "Release/rollback count", ("model",), min_value=0.0
     ),
     # §5.3 Business KPIs
     MetricDefinition(
-        "heatzone_topk_adoption_rate", G, Cat.BUSINESS, "HeatZone Top-K survey adoption"
+        "heatzone_topk_adoption_rate", G, Cat.BUSINESS, "HeatZone Top-K survey adoption", min_value=0.0, max_value=1.0
     ),
-    MetricDefinition("listing_dedup_accuracy", G, Cat.BUSINESS, "Listing dedup accuracy"),
+    MetricDefinition("listing_dedup_accuracy", G, Cat.BUSINESS, "Listing dedup accuracy", min_value=0.0, max_value=1.0),
     MetricDefinition(
         "sitescore_realization_rate",
         G,
         Cat.BUSINESS,
         "SiteScore M3/M6/M12 realization",
         ("horizon",),
+        min_value=0.0,
+        max_value=1.0,
     ),
     MetricDefinition(
         "forecast_alert_precision",
@@ -284,6 +294,8 @@ PLATFORM_METRICS: tuple[MetricDefinition, ...] = (
         Cat.BUSINESS,
         "Forecast alert precision/recall/lead time",
         ("metric",),
+        min_value=0.0,
+        max_value=1.0,
     ),
     MetricDefinition(
         "intervention_recovery_rate",
@@ -291,19 +303,21 @@ PLATFORM_METRICS: tuple[MetricDefinition, ...] = (
         Cat.BUSINESS,
         "Intervention 14/28-day recovery",
         ("window",),
+        min_value=0.0,
+        max_value=1.0,
     ),
     MetricDefinition(
-        "price_hard_constraint_violation_count", C, Cat.BUSINESS, "Price hard-constraint violations"
+        "price_hard_constraint_violation_count", C, Cat.BUSINESS, "Price hard-constraint violations", min_value=0.0
     ),
     MetricDefinition(
         "adlift_incremental_gm", G, Cat.BUSINESS, "AdLift incremental GM / iROMI", ("metric",)
     ),
-    MetricDefinition("avm_interval_coverage", G, Cat.BUSINESS, "AVM interval coverage"),
+    MetricDefinition("avm_interval_coverage", G, Cat.BUSINESS, "AVM interval coverage", min_value=0.0, max_value=1.0),
     MetricDefinition(
-        "netplan_plan_adoption_rate", G, Cat.BUSINESS, "NetPlan plan adoption/outcome"
+        "netplan_plan_adoption_rate", G, Cat.BUSINESS, "NetPlan plan adoption/outcome", min_value=0.0, max_value=1.0
     ),
     MetricDefinition(
-        "model_adoption_rate", G, Cat.BUSINESS, "Model adoption / override rate", ("kind",)
+        "model_adoption_rate", G, Cat.BUSINESS, "Model adoption / override rate", ("kind",), min_value=0.0, max_value=1.0
     ),
     # §7 / §10 Audit trail and evidence export
     MetricDefinition(
@@ -312,6 +326,7 @@ PLATFORM_METRICS: tuple[MetricDefinition, ...] = (
         Cat.AUDIT,
         "Audit events durably recorded",
         ("event_type", "action", "result"),
+        min_value=0.0,
     ),
     MetricDefinition(
         "audit_event_write_failure_count",
@@ -319,6 +334,7 @@ PLATFORM_METRICS: tuple[MetricDefinition, ...] = (
         Cat.ERROR,
         "Audit event write failures",
         ("event_type", "action", "error_class"),
+        min_value=0.0,
     ),
     MetricDefinition(
         "audit_event_pipeline_lag_seconds",
@@ -327,12 +343,13 @@ PLATFORM_METRICS: tuple[MetricDefinition, ...] = (
         "Audit pipeline write lag",
         ("sink", "event_type"),
         "s",
+        min_value=0.0,
     ),
     MetricDefinition(
-        "audit_event_replay_count", C, Cat.AUDIT, "Audit dead-letter replay attempts", ("result",)
+        "audit_event_replay_count", C, Cat.AUDIT, "Audit dead-letter replay attempts", ("result",), min_value=0.0
     ),
     MetricDefinition(
-        "audit_evidence_export_count", C, Cat.AUDIT, "Audit evidence exports", ("scope", "result")
+        "audit_evidence_export_count", C, Cat.AUDIT, "Audit evidence exports", ("scope", "result"), min_value=0.0
     ),
     MetricDefinition(
         "audit_completeness_gap_count",
@@ -340,6 +357,7 @@ PLATFORM_METRICS: tuple[MetricDefinition, ...] = (
         Cat.AUDIT,
         "Missing required audit timeline events",
         ("rule", "resource", "missing_event_type"),
+        min_value=0.0,
     ),
     MetricDefinition(
         "deployment_watch_window_status",
@@ -347,6 +365,8 @@ PLATFORM_METRICS: tuple[MetricDefinition, ...] = (
         Cat.JOB,
         "Deployment watch window status (1=WATCH_PASSED, 0=WATCH_FAILED)",
         ("release_sha", "status"),
+        min_value=0.0,
+        max_value=1.0,
     ),
 )
 
@@ -662,6 +682,10 @@ class ProductionMetricsExporter:
                     raise ValueError(f"Export metric '{metric_name}' contains non-finite value '{metric_val}'. Fail-closed gate enforced.")
                 m_def = self.registry._definitions.get(metric_name)
                 if m_def:
+                    if m_def.min_value is not None and metric_val < m_def.min_value:
+                        raise ValueError(f"Export metric '{metric_name}' value {metric_val} is below minimum allowed {m_def.min_value}. Fail-closed gate enforced.")
+                    if m_def.max_value is not None and metric_val > m_def.max_value:
+                        raise ValueError(f"Export metric '{metric_name}' value {metric_val} exceeds maximum allowed {m_def.max_value}. Fail-closed gate enforced.")
                     if m_def.type is MetricType.COUNTER and metric_val < 0:
                         raise ValueError(f"Export counter metric '{metric_name}' has negative value '{metric_val}'. Fail-closed gate enforced.")
                     if m_def.category in (MetricCategory.LATENCY, MetricCategory.JOB, MetricCategory.QUEUE, MetricCategory.DATA, MetricCategory.AUDIT, MetricCategory.ERROR, MetricCategory.TRAFFIC):
@@ -875,6 +899,14 @@ class ProductionMetricsExporter:
                 m_name = metric_type.rsplit("/", 1)[-1]
                 m_def = self.registry._definitions.get(m_name)
                 if m_def:
+                    if m_def.min_value is not None and val_float < m_def.min_value:
+                        raise RuntimeError(
+                            f"Cloud Monitoring readback metric '{m_name}' value {val_float} is below minimum allowed {m_def.min_value}. Fail-closed gate enforced."
+                        )
+                    if m_def.max_value is not None and val_float > m_def.max_value:
+                        raise RuntimeError(
+                            f"Cloud Monitoring readback metric '{m_name}' value {val_float} exceeds maximum allowed {m_def.max_value}. Fail-closed gate enforced."
+                        )
                     if m_def.type is MetricType.COUNTER and val_float < 0:
                         raise RuntimeError(
                             f"Cloud Monitoring readback counter metric '{m_name}' has negative value '{val_float}'. Fail-closed gate enforced."

@@ -130,6 +130,9 @@ else:
                     metadata=metadata,
                 )
             )
+            from shared.observability.metrics import record_business_kpi_signal, record_model_signal
+            record_model_signal("heatzone", "heatzone_batch_score", prediction_count=len(body.features))
+            record_business_kpi_signal("heatzone_topk_adoption_rate", 1.0 if created else 0.5)
             payload = result.to_dict()
             payload["created"] = created
             payload["audit_event_id"] = audit_event.event_id

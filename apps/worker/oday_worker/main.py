@@ -13,7 +13,7 @@ from shared.infrastructure.persistence.factory import PersistenceBundle, build_p
 from shared.infrastructure.persistence.job_queue import JobFenceRejectedError
 from shared.jobs.queue import JobRecord, JobStatus, NonRetryableJobError
 from shared.jobs.registry import JobRegistry
-from shared.observability import SpanKind, Telemetry, TraceContext
+from shared.observability import ProductionMetricsExporter, SpanKind, Telemetry, TraceContext
 
 logger = logging.getLogger("oday-worker")
 
@@ -264,20 +264,34 @@ class ODayWorker:
     def loop(self, stop_event: Any = None) -> None:
         while stop_event is None or not stop_event.is_set():
             executed = self.run_once()
+            if executed:
+                try:
+                    self.export_metrics()
+                except Exception as exc:
+                    self.telemetry.logger.error(
+                        f"Worker lifecycle export_metrics failed: {exc}",
+                        correlation_id="unknown",
+                        resource="worker/metrics",
+                        error_code=type(exc).__name__,
+                    )
             if not executed:
                 time.sleep(1.0)
 
     def export_metrics(self) -> dict[str, Any] | None:
         """Export worker metrics snapshot via ProductionMetricsExporter if exact 40-char release SHA is present in environment."""
-        import os
-        from shared.observability import ProductionMetricsExporter
         sha = (os.getenv("RELEASE_SHA") or os.getenv("GITHUB_SHA") or "").strip().lower()
         if sha and len(sha) == 40 and sha != "local":
             try:
                 exporter = ProductionMetricsExporter(release_sha=sha, registry=self.telemetry.metrics)
                 return exporter.export_metrics()
             except Exception as exc:
-                self.telemetry.logger.warn(f"Worker metrics export skipped or failed: {exc}")
+                self.telemetry.logger.error(
+                    f"Worker metrics export failed: {exc}",
+                    correlation_id="unknown",
+                    resource="worker/metrics",
+                    error_code=type(exc).__name__,
+                )
+                raise
         return None
 
 

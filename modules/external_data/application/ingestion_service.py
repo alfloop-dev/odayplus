@@ -158,6 +158,16 @@ class ExternalIngestionService:
             api_idempotency_key=api_idempotency_key,
         )
         saved = self.store.save(record)
+        from shared.observability.metrics import record_data_signal
+        freshness_h = (saved.freshness.freshness_age_seconds / 3600.0) if (saved.freshness and getattr(saved.freshness, "freshness_age_seconds", None) is not None) else 0.0
+        q_score = (saved.accepted_count / saved.total_count) if saved.total_count > 0 else 1.0
+        record_data_signal(
+            source=saved.provider_id,
+            view="ingestion_run",
+            freshness_hours=max(0.0, float(freshness_h)),
+            quality_score=min(1.0, max(0.0, float(q_score))),
+            feature_null_rate=0.0,
+        )
         audit = self._record_audit(saved, created=True, actor=actor, correlation_id=run.correlation_id)
         return IngestionOutcome(record=saved, created=True, audit_event_id=audit.event_id)
 

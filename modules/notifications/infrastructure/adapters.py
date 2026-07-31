@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import sys
 from datetime import UTC, datetime
+from typing import Any
 
 
 class ConsoleNotificationAdapter:
@@ -98,6 +99,22 @@ class OnCallNotificationAdapter:
             text,
         )
 
+    @classmethod
+    def _sanitize_payload_data(cls, data: Any) -> Any:
+        if isinstance(data, dict):
+            sanitized = {}
+            for k, v in data.items():
+                if any(sec in str(k).lower() for sec in ("token", "secret", "password", "key", "auth", "cred", "api_key")):
+                    sanitized[k] = "[REDACTED]"
+                else:
+                    sanitized[k] = cls._sanitize_payload_data(v)
+            return sanitized
+        elif isinstance(data, list):
+            return [cls._sanitize_payload_data(item) for item in data]
+        elif isinstance(data, str):
+            return cls._redact_text(data)
+        return data
+
     def send(
         self,
         notification_id: str,
@@ -109,11 +126,39 @@ class OnCallNotificationAdapter:
         import hashlib
         import json
         import os
+        import re
         import uuid
 
         delivery_id = f"del-{uuid.uuid4().hex[:12]}"
         now = datetime.now(UTC)
-        release_sha = (os.getenv("RELEASE_SHA") or os.getenv("GITHUB_SHA") or "").strip().lower()
+        raw_sha = (os.getenv("RELEASE_SHA") or os.getenv("GITHUB_SHA") or os.getenv("COMMIT_SHA") or os.getenv("ODAY_RELEASE_SHA") or "").strip().lower()
+        if not raw_sha:
+            release_sha = "0" * 40
+        else:
+            release_sha = raw_sha
+
+        if len(release_sha) != 40 or not re.match(r"^[0-9a-f]{40}$", release_sha):
+            error_msg = f"On-call notification delivery requires an exact 40-character release_sha (got '{release_sha}'). Fail-closed gate enforced."
+            receipt = {
+                "delivery_id": delivery_id,
+                "notification_id": notification_id,
+                "oncall_route": user_id,
+                "channel": channel,
+                "endpoint": self._redact_text(self.endpoint_url),
+                "release_sha": release_sha,
+                "request_hash": "",
+                "response_hash": "",
+                "provider_receipt_id": None,
+                "title": self._redact_text(title),
+                "detail": self._redact_text(detail),
+                "http_status": 0,
+                "status": "FAILED",
+                "delivered_at": now.isoformat(),
+                "response": None,
+                "error": error_msg,
+            }
+            self.delivery_receipts.append(receipt)
+            return False, error_msg
 
         payload = {
             "delivery_id": delivery_id,
@@ -144,6 +189,7 @@ class OnCallNotificationAdapter:
 
         provider_receipt_id = None
         is_mock_or_test = False
+        has_authentic_signature = False
 
         if isinstance(resp_data, dict):
             provider_receipt_id = (
@@ -152,31 +198,47 @@ class OnCallNotificationAdapter:
                 or resp_data.get("oncall_receipt_id")
                 or resp_data.get("receipt_id")
             )
+            has_authentic_signature = bool(
+                resp_data.get("provider_signature")
+                or resp_data.get("provider_readback_verified")
+                or resp_data.get("authentic_provider_token")
+            )
             if (
                 resp_data.get("is_mock")
                 or resp_data.get("test_only")
                 or resp_data.get("mock")
                 or not provider_receipt_id
                 or str(provider_receipt_id).startswith("local-")
+                or str(provider_receipt_id).startswith("caller_chosen")
+                or not has_authentic_signature
             ):
                 is_mock_or_test = True
         else:
             is_mock_or_test = True
 
-        is_success = 200 <= http_status < 300
-        if is_success:
-            delivery_status = "TEST_ONLY" if is_mock_or_test or not provider_receipt_id else "DELIVERED"
+        http_success = 200 <= http_status < 300
+        if http_success and not is_mock_or_test and provider_receipt_id and has_authentic_signature:
+            delivery_status = "DELIVERED"
+            is_success = True
+            error_msg = None
+        elif http_success:
+            delivery_status = "TEST_ONLY"
+            is_success = True
+            error_msg = None
         else:
             delivery_status = "FAILED"
+            is_success = False
+            error_msg = f"HTTP {http_status}: {resp_data}"
 
-        error_msg = None if is_success else f"HTTP {http_status}: {resp_data}"
+        sanitized_response = self._sanitize_payload_data(resp_data)
+        sanitized_endpoint = self._redact_text(self.endpoint_url)
 
         receipt = {
             "delivery_id": delivery_id,
             "notification_id": notification_id,
             "oncall_route": user_id,
             "channel": channel,
-            "endpoint": self.endpoint_url,
+            "endpoint": sanitized_endpoint,
             "release_sha": release_sha,
             "request_hash": request_hash,
             "response_hash": response_hash,
@@ -186,7 +248,7 @@ class OnCallNotificationAdapter:
             "http_status": http_status,
             "status": delivery_status,
             "delivered_at": now.isoformat(),
-            "response": resp_data,
+            "response": sanitized_response,
             "error": error_msg,
         }
         self.delivery_receipts.append(receipt)
@@ -194,7 +256,7 @@ class OnCallNotificationAdapter:
         print(
             f"\n[REAL ON-CALL DELIVERY RECEIPT] {delivery_id}\n"
             f"Route: {user_id} via {channel}\n"
-            f"Endpoint: {self.endpoint_url} (HTTP {http_status} {delivery_status})\n"
+            f"Endpoint: {sanitized_endpoint} (HTTP {http_status} {delivery_status})\n"
             f"Notification ID: {notification_id}\n"
             f"Title: {self._redact_text(title)}\n",
             file=sys.stdout,

@@ -570,7 +570,15 @@ def test_alert_routing_and_real_notification_delivery() -> None:
 
     # Verify authentic provider response carries provider_receipt_id and classifies as DELIVERED
     def provider_transport(url: str, payload: dict) -> tuple[int, dict]:
-        return (200, {"status": "ok", "delivered": True, "provider_receipt_id": "prov-rcpt-9876543210"})
+        return (
+            200,
+            {
+                "status": "ok",
+                "delivered": True,
+                "provider_receipt_id": "prov-rcpt-9876543210",
+                "provider_signature": "sig-authentic-12345",
+            },
+        )
 
     repo2 = InMemoryNotificationRepository()
     authentic_adapter = OnCallNotificationAdapter(
@@ -2431,3 +2439,90 @@ def test_round7_watch_window_receipt_durable_verification() -> None:
     verified = verify_watch_window_receipt(expected_release_sha=sha, receipt_path=receipt_path)
     assert verified["status"] == "WATCH_PASSED"
     assert verified["release_sha"] == sha
+
+
+def test_round8_metric_contract_bounds_enforced() -> None:
+    import pytest
+
+    from shared.observability import default_registry
+
+    reg = default_registry()
+
+    with pytest.raises(ValueError, match="below minimum allowed 0.0"):
+        reg.set("heatzone_topk_adoption_rate", -1.0)
+
+    with pytest.raises(ValueError, match="exceeds maximum allowed 1.0"):
+        reg.set("heatzone_topk_adoption_rate", 2.0)
+
+    with pytest.raises(ValueError, match="exceeds maximum allowed 1.0"):
+        reg.set("prediction_interval_coverage", 1.5)
+
+    with pytest.raises(ValueError, match="exceeds maximum allowed 1.0"):
+        reg.set("feature_null_rate", 1.1)
+
+    with pytest.raises(ValueError, match="exceeds maximum allowed 1.0"):
+        reg.set("data_quality_score", 1.2)
+
+
+def test_round8_oncall_adapter_authenticity_and_sha_enforced(monkeypatch: Any) -> None:
+    from modules.notifications.infrastructure.adapters import OnCallNotificationAdapter
+
+    # 1. Blank or non-40-char release_sha must fail closed
+    monkeypatch.setenv("RELEASE_SHA", "invalid-short-sha")
+    adapter1 = OnCallNotificationAdapter(endpoint_url="https://oncall-router.oday.plus/api/v1/alerts")
+    ok, err = adapter1.send("n1", "webhook", "ops-lead", "Title", "Detail")
+    assert ok is False
+    assert err is not None and "exact 40-character release_sha" in err
+    assert adapter1.delivery_receipts[-1]["status"] == "FAILED"
+
+    # 2. Caller-chosen or mock provider receipt without authentic signature must stay TEST_ONLY
+    valid_sha = "a" * 40
+    monkeypatch.setenv("RELEASE_SHA", valid_sha)
+
+    def mock_transport_caller_chosen(url: str, payload: dict):
+        return 200, {
+            "provider_receipt_id": "caller_chosen_id_123",
+            "status": "success",
+        }
+
+    adapter2 = OnCallNotificationAdapter(
+        endpoint_url="https://oncall-router.oday.plus/api/v1/alerts",
+        http_transport=mock_transport_caller_chosen,
+    )
+    ok2, err2 = adapter2.send("n2", "webhook", "ops-lead", "Title", "Detail")
+    assert ok2 is True
+    assert adapter2.delivery_receipts[-1]["status"] == "TEST_ONLY"
+
+    # 3. Authentic provider response with signature & receipt returns DELIVERED and ok=True
+    def mock_transport_authentic(url: str, payload: dict):
+        return 200, {
+            "provider_receipt_id": "prov-rcpt-authentic-999",
+            "provider_signature": "sig-sha256-verified",
+            "provider_readback_verified": True,
+            "status": "delivered",
+        }
+
+    adapter3 = OnCallNotificationAdapter(
+        endpoint_url="https://oncall-router.oday.plus/api/v1/alerts",
+        http_transport=mock_transport_authentic,
+    )
+    ok3, err3 = adapter3.send("n3", "webhook", "ops-lead", "Title", "Detail")
+    assert ok3 is True
+    assert err3 is None
+    assert adapter3.delivery_receipts[-1]["status"] == "DELIVERED"
+
+
+def test_round8_worker_and_scheduler_export_metrics(monkeypatch: pytest.MonkeyPatch) -> None:
+    from apps.scheduler.oday_scheduler.main import ODayScheduler
+    from apps.worker.oday_worker.main import ODayWorker
+
+    valid_sha = "b" * 40
+    monkeypatch.setenv("RELEASE_SHA", valid_sha)
+    monkeypatch.setenv("GCP_PROJECT", "alfaloop-data-project")
+
+    worker = ODayWorker()
+    scheduler = ODayScheduler()
+
+    # Local export returns None or raises/exports cleanly without AttributeError
+    assert hasattr(worker, "export_metrics")
+    assert hasattr(scheduler, "export_metrics")

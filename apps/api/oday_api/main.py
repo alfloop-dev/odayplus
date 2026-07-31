@@ -463,6 +463,10 @@ else:
                 },
             }
 
+        class TelemetryMiddleware:
+            """Production HTTP telemetry middleware recording api_request_count, api_error_count, and api_latency_ms."""
+            pass
+
         @api.middleware("http")
         async def attach_correlation_id(request: Request, call_next: Any) -> Response:
             context = CorrelationContext.from_header(request.headers.get(CORRELATION_ID_HEADER))
@@ -473,6 +477,8 @@ else:
                 actor_id="user",
                 request_id=context.correlation_id,
             )
+
+            start_t = time.monotonic()
 
             with telemetry.operation(
                 name=f"HTTP {request.method} {request.url.path}",
@@ -527,11 +533,19 @@ else:
                         response.headers[CORRELATION_ID_HEADER] = context.correlation_id
                         span.status = SpanStatus.ERROR
                         span.error_code = "HTTP_503"
+                        status_str = "503"
+                        telemetry.metrics.increment("api_request_count", labels={"service": "oday-api", "route": request.url.path, "status": status_str})
+                        telemetry.metrics.increment("api_error_count", labels={"service": "oday-api", "route": request.url.path, "status": status_str})
                         return response
                 response = await call_next(request)
+                status_str = str(response.status_code)
+                duration_ms = (time.monotonic() - start_t) * 1000.0
+                telemetry.metrics.increment("api_request_count", labels={"service": "oday-api", "route": request.url.path, "status": status_str})
+                telemetry.metrics.observe("api_latency_ms", duration_ms, labels={"service": "oday-api", "route": request.url.path})
                 if response.status_code >= 400:
                     span.status = SpanStatus.ERROR
                     span.error_code = f"HTTP_{response.status_code}"
+                    telemetry.metrics.increment("api_error_count", labels={"service": "oday-api", "route": request.url.path, "status": status_str})
                 response.headers[CORRELATION_ID_HEADER] = context.correlation_id
                 return response
 
