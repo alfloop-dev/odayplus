@@ -4640,7 +4640,7 @@ def command_restore_approved(state: dict[str, Any], args: list[str]) -> None:
             "reviewer can re-examine the work. No restore was recorded."
         )
     try:
-        current_sha = resolve_task_sha(task_id)
+        current_sha = resolve_task_sha(task_id, force_refresh=True)
     except Exception as exc:
         raise SystemExit(
             f"Cannot restore {task_id}: unable to resolve the current branch HEAD ({exc}). "
@@ -4724,7 +4724,7 @@ def command_restore_approved_head(state: dict[str, Any], args: list[str]) -> Non
             "40-character commit sha. Name the exact reviewed commit, not an abbreviation."
         )
     try:
-        current_sha = resolve_task_sha(task_id)
+        current_sha = resolve_task_sha(task_id, force_refresh=True)
     except Exception as exc:
         raise SystemExit(
             f"Cannot restore the approved head for {task_id}: unable to resolve the branch HEAD "
@@ -4793,7 +4793,7 @@ def command_done(state: dict[str, Any], args: list[str]) -> None:
         )
     current_sha = None
     try:
-        current_sha = resolve_task_sha(task_id)
+        current_sha = resolve_task_sha(task_id, force_refresh=True)
     except Exception as exc:
         raise SystemExit(
             f"Cannot finalize task {task_id}: unable to resolve current branch HEAD ({exc}). "
@@ -4908,7 +4908,7 @@ def command_approve(state: dict[str, Any], args: list[str]) -> None:
     # any mutation, so an unresolvable head aborts the approval outright rather
     # than leaving the task review_approved-but-unfrozen.
     try:
-        approved_sha = resolve_task_sha(task_id)
+        approved_sha = resolve_task_sha(task_id, force_refresh=True)
     except Exception as exc:
         raise SystemExit(
             f"Cannot approve task {task_id}: unable to resolve the branch HEAD to freeze ({exc}). "
@@ -5093,8 +5093,19 @@ def command_wave(state: dict[str, Any], args: list[str]) -> None:
         raise SystemExit(f"Unknown wave subcommand: {subcommand!r}. Use: open <wave-id>, close, freeze")
 
 
-def resolve_task_sha(task_id: str, max_age_seconds: float = 5.0) -> str | None:
+def resolve_task_sha(
+    task_id: str,
+    max_age_seconds: float = 5.0,
+    force_refresh: bool = False,
+    fresh: bool = False,
+) -> str | None:
     now = time.time()
+    if not (force_refresh or fresh) and max_age_seconds > 0:
+        if task_id in _TASK_SHA_CACHE:
+            ts, cached_sha = _TASK_SHA_CACHE[task_id]
+            if now - ts < max_age_seconds:
+                return cached_sha
+
     branch_names = [f"task/{task_id}", f"task-{task_id}"]
 
     remote_refs = [f"refs/heads/{branch_name}" for branch_name in branch_names]

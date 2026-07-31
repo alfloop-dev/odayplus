@@ -8852,7 +8852,7 @@ def dispatch_priority_for_task(
             return None
         try:
             from ai_status import resolve_task_sha
-            curr_head = resolve_task_sha(str(task.get("id") or ""))
+            curr_head = resolve_task_sha(str(task.get("id") or ""), force_refresh=True)
             if not curr_head or curr_head != approved_head:
                 return None
         except Exception:
@@ -9412,7 +9412,7 @@ def dispatch_ready_tasks(
                 current_head = None
                 try:
                     from ai_status import resolve_task_sha
-                    current_head = resolve_task_sha(task_id)
+                    current_head = resolve_task_sha(task_id, force_refresh=True)
                 except Exception as err:
                     console_log(f"Failed to resolve sha for {task_id}: {err}", quiet=SUPERVISOR_LOG_QUIET)
                 # B22: a task in a finalize status with no approved_head has no

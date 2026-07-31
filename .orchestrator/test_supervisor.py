@@ -8788,6 +8788,20 @@ class RunSupervisorShellGuardTests(unittest.TestCase):
 
 
 class ReviewHeadFreezeTests(unittest.TestCase):
+    def setUp(self) -> None:
+        self.test_dir = tempfile.TemporaryDirectory()
+        self.tmp_path = Path(self.test_dir.name)
+        ai_status.STATUS_FILE = self.tmp_path / "ai-status.json"
+        ai_status.LOG_FILE = self.tmp_path / "ai-activity-log.jsonl"
+        ai_status.CURRENT_WORK_FILE = self.tmp_path / "current-work.md"
+        ai_status.STATUS_FILE.write_text("{}", encoding="utf-8")
+        ai_status.LOG_FILE.write_text("", encoding="utf-8")
+        ai_status.clear_ai_status_caches()
+
+    def tearDown(self) -> None:
+        ai_status.clear_ai_status_caches()
+        self.test_dir.cleanup()
+
     def _build_freeze_test_config(self) -> dict[str, Any]:
         config = load_test_config()
         ready_disp = config.setdefault("ready_dispatcher", {})
@@ -9561,6 +9575,22 @@ class ReviewHeadFreezeTests(unittest.TestCase):
             self.assertFalse(dispatched)
             mock_queue.assert_not_called()
             self.assertEqual(task["status"], "review_approved")
+
+    def test_supervisor_finalize_dispatch_forces_fresh_sha_resolution(self) -> None:
+        """Verify supervisor evaluate_dispatch and finalize dispatch gate pass force_refresh=True to resolve_task_sha."""
+        config = self._build_freeze_test_config()
+        task = {
+            "id": "FREEZE-TEST-FRESH-001",
+            "owner": "Antigravity4",
+            "reviewer": "Claude",
+            "status": "review_approved",
+            "approved_head": "1111111122222222333333334444444455555555",
+        }
+        with unittest.mock.patch("ai_status.resolve_task_sha", return_value="1111111122222222333333334444444455555555") as mock_resolve, \
+             unittest.mock.patch("ai_status.task_pr_ci_status", return_value=("OPEN", "success")):
+            prio = supervisor.dispatch_priority_for_task(config, task, "Antigravity4")
+            self.assertIsNotNone(prio)
+            mock_resolve.assert_called_with("FREEZE-TEST-FRESH-001", force_refresh=True)
 
     def test_task_review_gate_status_check_pending_on_head_mismatch(self) -> None:
         task = {
