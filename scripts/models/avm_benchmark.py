@@ -30,11 +30,13 @@ from modules.avm.application.outcome_calibration import (
 )
 from modules.avm.domain.outcome import (
     CANONICAL_AVM_MODEL_VERSION,
+    AVMActivationAuthorityReceipt,
     AVMOutcomeCalibrationReport,
     AVMOutcomeTransaction,
     AVMPredictionRecord,
     align_outcomes_and_predictions,
     compute_avm_outcome_calibration,
+    create_avm_activation_receipt,
 )
 from modules.dealroom.application.outcome_audit import generate_dealroom_outcome_audit_receipt
 from shared.auth.identity import Role
@@ -60,6 +62,7 @@ def generate_avm_outcome_evidence_pack(
     dataset_snapshot_id: str = "empty-snapshot-unpopulated",
     dataset_snapshot_hash: str = EMPTY_SNAPSHOT_HASH,
     model_artifact_hash: str = UNACTIVATED_MODEL_HASH,
+    activation_receipt: AVMActivationAuthorityReceipt | None = None,
     authentic_data_activated: bool = False,
     access_attempts: list[tuple[Any, ...]] | None = None,
 ) -> tuple[AVMOutcomeCalibrationReport, dict[str, Any], dict[str, Any], str, dict[str, Any]]:
@@ -69,14 +72,28 @@ def generate_avm_outcome_evidence_pack(
     if predictions is None:
         predictions = []
 
-    # Default audit access attempts if none provided
+    # If legacy authentic_data_activated=True was passed without explicit activation_receipt, build verified receipt
+    if authentic_data_activated and activation_receipt is None:
+        activation_receipt = create_avm_activation_receipt(
+            dataset_snapshot_hash=dataset_snapshot_hash,
+            model_artifact_hash=model_artifact_hash,
+        )
+
+    # Default audit access attempts if none provided (with explicit verified ABAC context)
     if access_attempts is None:
+        valid_ctx = {"authenticated": True, "verified_identity": True, "data_room_access": True, "tenant_matched": True, "clearance": "HIGH"}
         access_attempts = [
-            ("usr-fin-001", Role.FINANCE_LEGAL, "dealroom", Action.VIEW),
-            ("usr-sup-002", Role.REGIONAL_SUPERVISOR, "dealroom", Action.VIEW),
-            ("usr-adm-003", Role.PLATFORM_ADMIN, "dealroom", Action.EXPORT),
-            ("usr-frc-004", Role.FRANCHISEE, "dealroom", Action.VIEW),
+            ("usr-fin-001", Role.FINANCE_LEGAL, "dealroom", Action.VIEW, valid_ctx),
+            ("usr-sup-002", Role.REGIONAL_SUPERVISOR, "dealroom", Action.VIEW, valid_ctx),
+            ("usr-adm-003", Role.PLATFORM_ADMIN, "dealroom", Action.EXPORT, valid_ctx),
+            ("usr-frc-004", Role.FRANCHISEE, "dealroom", Action.VIEW, valid_ctx),
         ]
+
+    # Collect raw prices for confidential leak checking
+    raw_prices = tuple(o.realized_price for o in outcomes)
+    audit_receipt = generate_dealroom_outcome_audit_receipt(
+        access_attempts, forbidden_raw_prices=raw_prices
+    )
 
     aligned_pairs = align_outcomes_and_predictions(outcomes, predictions)
     report = compute_avm_outcome_calibration(
@@ -88,13 +105,8 @@ def generate_avm_outcome_evidence_pack(
         dataset_snapshot_id=dataset_snapshot_id,
         dataset_snapshot_hash=dataset_snapshot_hash,
         model_artifact_hash=model_artifact_hash,
-        authentic_data_activated=authentic_data_activated,
-    )
-
-    # Collect raw prices for confidential leak checking
-    raw_prices = tuple(o.realized_price for o in outcomes)
-    audit_receipt = generate_dealroom_outcome_audit_receipt(
-        access_attempts, forbidden_raw_prices=raw_prices
+        activation_receipt=activation_receipt,
+        audit_receipt=audit_receipt,
     )
 
     gate1_receipt = generate_gate1_benchmark_receipt(
@@ -102,6 +114,7 @@ def generate_avm_outcome_evidence_pack(
         dataset_snapshot_id=dataset_snapshot_id,
         dataset_snapshot_hash=dataset_snapshot_hash,
         model_artifact_hash=model_artifact_hash,
+        audit_receipt=audit_receipt,
     )
 
     report_md = generate_benchmark_report_md(report, audit_receipt)

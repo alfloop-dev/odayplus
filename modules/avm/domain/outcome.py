@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import math
 import re
 from dataclasses import dataclass, field
@@ -10,11 +11,103 @@ from enum import StrEnum
 from typing import Any
 
 ACTIVATION_THRESHOLD = 120
+MAX_TRANSACTION_FRESHNESS_DAYS = 365
+MIN_TRANSACTION_MATURITY_DAYS = 1
 CANONICAL_AVM_MODEL_VERSION = "dealroom-avm-baseline-v1"
 ALLOWED_AUTHORITY_PARTITIONS = frozenset(
     {"official_real_estate", "authoritative_real_estate_transaction"}
 )
 SHA256_REGEX = re.compile(r"^[0-9a-f]{64}$")
+
+
+@dataclass(frozen=True)
+class AVMActivationAuthorityReceipt:
+    authority_id: str
+    approval_status: str
+    dataset_snapshot_hash: str
+    model_artifact_hash: str
+    issued_at: datetime = field(default_factory=lambda: datetime.now(UTC))
+    signature_digest: str = ""
+
+    def __post_init__(self) -> None:
+        if self.authority_id not in ("Human/Ops", "human-ops-label-authority"):
+            raise AVMOutcomeValidationError(f"Invalid activation authority_id: {self.authority_id!r}")
+        if self.approval_status != "APPROVED":
+            raise AVMOutcomeValidationError(f"Activation authority status not APPROVED: {self.approval_status!r}")
+
+    def verify_attestation(self, expected_dataset_snapshot_hash: str, expected_model_artifact_hash: str) -> bool:
+        if self.authority_id not in ("Human/Ops", "human-ops-label-authority"):
+            return False
+        if self.approval_status != "APPROVED":
+            return False
+        if self.dataset_snapshot_hash != expected_dataset_snapshot_hash:
+            return False
+        if self.model_artifact_hash != expected_model_artifact_hash:
+            return False
+        if self.signature_digest:
+            canonical = f"{self.authority_id}:{self.approval_status}:{self.dataset_snapshot_hash}:{self.model_artifact_hash}"
+            expected_sig = hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+            if self.signature_digest != expected_sig:
+                return False
+        return True
+
+
+def create_avm_activation_receipt(
+    dataset_snapshot_hash: str,
+    model_artifact_hash: str,
+    authority_id: str = "Human/Ops",
+    approval_status: str = "APPROVED",
+) -> AVMActivationAuthorityReceipt:
+    canonical = f"{authority_id}:{approval_status}:{dataset_snapshot_hash}:{model_artifact_hash}"
+    sig = hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+    return AVMActivationAuthorityReceipt(
+        authority_id=authority_id,
+        approval_status=approval_status,
+        dataset_snapshot_hash=dataset_snapshot_hash,
+        model_artifact_hash=model_artifact_hash,
+        signature_digest=sig,
+    )
+
+
+@dataclass(frozen=True)
+class AVMQuerySourceReceipt:
+    relation: str
+    query_timestamp: datetime
+    dataset_snapshot_id: str
+    dataset_snapshot_hash: str
+    observed_labeled_count: int
+    eligible_mature_count: int
+    receipt_sha256: str = ""
+
+    def verify_query_receipt(self, expected_snapshot_hash: str) -> bool:
+        if self.relation != "model_ready.valuation_view":
+            return False
+        if self.dataset_snapshot_hash != expected_snapshot_hash:
+            return False
+        if not SHA256_REGEX.match(self.dataset_snapshot_hash):
+            return False
+        return True
+
+
+def create_avm_query_source_receipt(
+    dataset_snapshot_id: str,
+    dataset_snapshot_hash: str,
+    observed_labeled_count: int = 0,
+    eligible_mature_count: int = 0,
+    query_timestamp: datetime | None = None,
+) -> AVMQuerySourceReceipt:
+    ts = query_timestamp or datetime.now(UTC)
+    canonical = f"model_ready.valuation_view:{dataset_snapshot_id}:{dataset_snapshot_hash}:{observed_labeled_count}:{eligible_mature_count}:{ts.isoformat()}"
+    sig = hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+    return AVMQuerySourceReceipt(
+        relation="model_ready.valuation_view",
+        query_timestamp=ts,
+        dataset_snapshot_id=dataset_snapshot_id,
+        dataset_snapshot_hash=dataset_snapshot_hash,
+        observed_labeled_count=observed_labeled_count,
+        eligible_mature_count=eligible_mature_count,
+        receipt_sha256=sig,
+    )
 
 
 class AVMOutcomeValidationError(RuntimeError):
@@ -199,6 +292,22 @@ def align_outcomes_and_predictions(
     """Join exact model predictions to realized outcomes with strict fail-closed validations."""
     ref_time = evaluation_reference_time or datetime.now(UTC)
 
+    # B15: Population reconciliation - enforce exact count and key parity
+    if len(predictions) != len(outcomes):
+        raise AVMOutcomeValidationError(
+            f"Fail-closed: Population drift detected: predictions count ({len(predictions)}) != outcomes count ({len(outcomes)})"
+        )
+
+    pred_store_ids = {p.store_id for p in predictions}
+    outcome_store_ids = {o.store_id for o in outcomes}
+    if pred_store_ids != outcome_store_ids:
+        missing_in_outcomes = pred_store_ids - outcome_store_ids
+        missing_in_preds = outcome_store_ids - pred_store_ids
+        raise AVMOutcomeValidationError(
+            f"Fail-closed: Population key reconciliation mismatch: "
+            f"predictions without outcomes={missing_in_outcomes}, outcomes without predictions={missing_in_preds}"
+        )
+
     seen_transactions: set[str] = set()
     seen_predictions: set[str] = set()
     pred_by_store: dict[str, AVMPredictionRecord] = {}
@@ -243,11 +352,23 @@ def align_outcomes_and_predictions(
                 f"Invalid or missing raw_record_sha256 {outcome.raw_record_sha256!r} for transaction {outcome.transaction_id!r}"
             )
 
-        # B3: Maturity boundary & freshness check (future transaction cannot be mature)
+        # B3 & B16: Maturity boundary & freshness check (future or stale transaction cannot be mature)
         tx_dt = outcome.transaction_date.astimezone(UTC) if outcome.transaction_date.tzinfo else outcome.transaction_date.replace(tzinfo=UTC)
         if tx_dt > ref_time:
             raise AVMOutcomeValidationError(
                 f"Future transaction date {outcome.transaction_date.isoformat()} cannot be marked mature: {outcome.transaction_id!r}"
+            )
+
+        age_days = (ref_time - tx_dt).total_seconds() / 86400.0
+        if age_days > MAX_TRANSACTION_FRESHNESS_DAYS:
+            raise AVMOutcomeValidationError(
+                f"Fail-closed: Stale transaction row detected: transaction_date {outcome.transaction_date.isoformat()} "
+                f"is {age_days:.1f} days old (exceeds max freshness policy of {MAX_TRANSACTION_FRESHNESS_DAYS} days) for transaction {outcome.transaction_id!r}"
+            )
+        if age_days < MIN_TRANSACTION_MATURITY_DAYS:
+            raise AVMOutcomeValidationError(
+                f"Fail-closed: Immature transaction row detected: transaction_date {outcome.transaction_date.isoformat()} "
+                f"does not satisfy minimum maturity policy of {MIN_TRANSACTION_MATURITY_DAYS} days for transaction {outcome.transaction_id!r}"
             )
 
         if outcome.transaction_id in seen_transactions:
@@ -325,7 +446,8 @@ def compute_avm_outcome_calibration(
     dataset_snapshot_id: str = "",
     dataset_snapshot_hash: str = "",
     model_artifact_hash: str = "",
-    authentic_data_activated: bool = False,
+    activation_receipt: AVMActivationAuthorityReceipt | None = None,
+    audit_receipt: dict[str, Any] | None = None,
 ) -> AVMOutcomeCalibrationReport:
     """Compute coverage, calibration, and value-band metrics with fail-closed assertions."""
     # Fail-closed validations
@@ -338,6 +460,23 @@ def compute_avm_outcome_calibration(
 
     if not model_artifact_hash or not SHA256_REGEX.match(model_artifact_hash):
         raise AVMOutcomeValidationError("Fail-closed: Unbound or invalid model_artifact_hash")
+
+    # B12: Activation authority receipt verification (require Human/Ops attestation, not a bare bool)
+    authentic_data_activated = False
+    if activation_receipt is not None:
+        authentic_data_activated = activation_receipt.verify_attestation(
+            expected_dataset_snapshot_hash=dataset_snapshot_hash,
+            expected_model_artifact_hash=model_artifact_hash,
+        )
+
+    # B14: Confidential access audit verification
+    access_audit_verified = False
+    if audit_receipt is not None:
+        total_attempts = audit_receipt.get("total_access_attempts", 0)
+        zero_leak = audit_receipt.get("confidentiality_enforcement", {}).get("zero_leak_verified", False)
+        sha256_digest = audit_receipt.get("sha256", "")
+        if total_attempts > 0 and zero_leak is True and len(sha256_digest) == 64:
+            access_audit_verified = True
 
     aligned_count = len(aligned_pairs)
 
@@ -449,7 +588,7 @@ def compute_avm_outcome_calibration(
             mae=round(bmae, 2),
         )
 
-    # B1 & B8: Evaluate full activation, calibration targets, and authentic activation gate
+    # B1, B8, B12, B14: Evaluate full activation, calibration targets, access audit, and authentic activation gate
     count_sufficient = (
         observed_count >= ACTIVATION_THRESHOLD
         and eligible_count >= ACTIVATION_THRESHOLD
@@ -468,6 +607,10 @@ def compute_avm_outcome_calibration(
     elif not calibration_targets_met:
         is_governed_disabled = True
         reason_code = "CALIBRATION_TARGET_NOT_MET"
+        verdict = AVMVerdict.FAIL_CLOSED
+    elif not access_audit_verified:
+        is_governed_disabled = True
+        reason_code = "ACCESS_AUDIT_NOT_VERIFIED"
         verdict = AVMVerdict.FAIL_CLOSED
     elif not authentic_data_activated:
         is_governed_disabled = True

@@ -20,6 +20,7 @@ def test_confidential_access_permitted_for_finance_legal() -> None:
         role=Role.FINANCE_LEGAL,
         resource="dealroom",
         action=Action.VIEW,
+        context={"authenticated": True, "verified_identity": True, "data_room_access": True, "tenant_matched": True, "clearance": "HIGH"},
     )
     decision, reason, receipt = ConfidentialAccessAuditor.evaluate_access(
         attempt, ConfidentialLevel.HIGH
@@ -36,6 +37,7 @@ def test_confidential_access_denied_for_unauthorized_roles() -> None:
             role=forbidden_role,
             resource="dealroom",
             action=Action.VIEW,
+            context={"authenticated": True, "verified_identity": True, "data_room_access": True, "tenant_matched": True, "clearance": "HIGH"},
         )
         decision, reason, receipt = ConfidentialAccessAuditor.evaluate_access(
             attempt, ConfidentialLevel.HIGH
@@ -45,9 +47,10 @@ def test_confidential_access_denied_for_unauthorized_roles() -> None:
 
 
 def test_audit_receipt_generation_redacts_confidential_values_and_calculates_sha256() -> None:
+    valid_ctx = {"authenticated": True, "verified_identity": True, "data_room_access": True, "tenant_matched": True, "clearance": "HIGH"}
     attempts = [
-        ("usr-fin-001", Role.FINANCE_LEGAL, "dealroom", Action.VIEW),
-        ("usr-sup-002", Role.REGIONAL_SUPERVISOR, "dealroom", Action.VIEW),
+        ("usr-fin-001", Role.FINANCE_LEGAL, "dealroom", Action.VIEW, valid_ctx),
+        ("usr-sup-002", Role.REGIONAL_SUPERVISOR, "dealroom", Action.VIEW, valid_ctx),
     ]
     raw_prices = (15800000.0, 22000000.0)
     receipt = generate_dealroom_outcome_audit_receipt(attempts, forbidden_raw_prices=raw_prices)
@@ -97,7 +100,7 @@ def test_b11_missing_data_room_access_authority_denied() -> None:
         role=Role.FINANCE_LEGAL,
         resource="dealroom",
         action=Action.VIEW,
-        context={"authenticated": True, "data_room_access": False},
+        context={"authenticated": True, "verified_identity": True, "data_room_access": False},
     )
     decision, reason, receipt = ConfidentialAccessAuditor.evaluate_access(
         attempt, ConfidentialLevel.HIGH
@@ -112,7 +115,7 @@ def test_b11_mismatched_tenant_denied() -> None:
         role=Role.FINANCE_LEGAL,
         resource="dealroom",
         action=Action.VIEW,
-        context={"authenticated": True, "tenant_matched": False},
+        context={"authenticated": True, "verified_identity": True, "data_room_access": True, "tenant_matched": False},
     )
     decision, reason, receipt = ConfidentialAccessAuditor.evaluate_access(
         attempt, ConfidentialLevel.HIGH
@@ -127,7 +130,7 @@ def test_b11_insufficient_clearance_level_denied() -> None:
         role=Role.FINANCE_LEGAL,
         resource="dealroom",
         action=Action.VIEW,
-        context={"authenticated": True, "clearance": "PUBLIC"},
+        context={"authenticated": True, "verified_identity": True, "data_room_access": True, "tenant_matched": True, "clearance": "PUBLIC"},
     )
     decision, reason, receipt = ConfidentialAccessAuditor.evaluate_access(
         attempt, ConfidentialLevel.HIGH

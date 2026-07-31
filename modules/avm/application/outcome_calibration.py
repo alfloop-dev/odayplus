@@ -30,6 +30,7 @@ def generate_gate1_benchmark_receipt(
     dataset_snapshot_id: str,
     dataset_snapshot_hash: str,
     model_artifact_hash: str,
+    audit_receipt: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Generate canonical GATE1_BENCHMARK_RECEIPT.json for AVM outcome calibration."""
     # B5: Receipt lineage binding check
@@ -44,12 +45,21 @@ def generate_gate1_benchmark_receipt(
             f"got ({dataset_snapshot_id!r}, {dataset_snapshot_hash!r}, {model_artifact_hash!r})"
         )
 
-    # B10: Revalidate verdict & disabled-state invariants at receipt boundary
+    # B14: Access audit validation at receipt boundary
+    audit_verified = (
+        audit_receipt is not None
+        and audit_receipt.get("total_access_attempts", 0) > 0
+        and audit_receipt.get("confidentiality_enforcement", {}).get("zero_leak_verified") is True
+        and len(str(audit_receipt.get("sha256", ""))) == 64
+    )
+
+    # B10 & B14: Revalidate verdict, disabled-state, and audit invariants at receipt boundary
     if report.verdict == AVMVerdict.PASS:
         if (
             report.is_governed_disabled
             or report.reason_code != "MATURE_LABEL_CONTRACT_READY"
             or not report.authentic_data_activated
+            or not audit_verified
             or report.observed_labeled_count < ACTIVATION_THRESHOLD
             or report.eligible_mature_count < ACTIVATION_THRESHOLD
             or report.aligned_count < ACTIVATION_THRESHOLD
@@ -94,6 +104,14 @@ def generate_gate1_benchmark_receipt(
             "dataset_snapshot_hash": dataset_snapshot_hash,
             "model_artifact_hash": model_artifact_hash,
             "authority_partition": "official_real_estate",
+        },
+        "access_audit": {
+            "audit_receipt_sha256": audit_receipt.get("sha256", "") if audit_receipt else "",
+            "total_access_attempts": audit_receipt.get("total_access_attempts", 0) if audit_receipt else 0,
+            "permitted_count": audit_receipt.get("permitted_count", 0) if audit_receipt else 0,
+            "denied_count": audit_receipt.get("denied_count", 0) if audit_receipt else 0,
+            "zero_leak_verified": audit_receipt.get("confidentiality_enforcement", {}).get("zero_leak_verified", False) if audit_receipt else False,
+            "access_control_verdict": "PASS" if audit_verified else "FAIL_CLOSED",
         },
         "metrics": {
             "aligned_count": report.aligned_count,
