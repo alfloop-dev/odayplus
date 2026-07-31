@@ -568,6 +568,10 @@ def evaluate_sitescore_opening_outcome_benchmark(
         eligible_count=eligible_count,
         mature_label_count=mature_label_count,
         matched_prediction_count=matched_prediction_count,
+        m6_mature_count=m6_mature,
+        m12_mature_count=m12_mature,
+        interval_bounds_count=interval_bounds_count,
+        in_p80_count=in_p80_count,
         matched_mean_y=matched_mean_y,
         m6_coverage_ratio=m6_coverage_ratio,
         m12_coverage_ratio=m12_coverage_ratio,
@@ -604,6 +608,7 @@ def build_sitescore_opening_outcome_model_card(
     privacy_review: str | None = None,
     security_review: str | None = None,
     approvals: Sequence[ModelCardApproval] | None = None,
+    created_at: datetime | str | None = None,
 ) -> ModelCard:
     """Build a canonical ModelCard carrying SiteScore opening outcome benchmark calibration results."""
     is_governed_active = benchmark.is_gate2_passed and benchmark.is_lineage_governed
@@ -632,6 +637,24 @@ def build_sitescore_opening_outcome_model_card(
     resolved_approvals: tuple[ModelCardApproval, ...] = ()
 
     norm_mae = float(benchmark.normalized_mae) if math.isfinite(benchmark.normalized_mae) else 999.0
+
+    if created_at is None:
+        if benchmark.observed_at:
+            try:
+                card_created_at = datetime.fromisoformat(benchmark.observed_at.replace("Z", "+00:00"))
+            except Exception:
+                card_created_at = datetime.now(UTC)
+        else:
+            card_created_at = datetime.now(UTC)
+    elif isinstance(created_at, str):
+        try:
+            card_created_at = datetime.fromisoformat(created_at.replace("Z", "+00:00"))
+        except Exception:
+            card_created_at = datetime.now(UTC)
+    elif isinstance(created_at, datetime):
+        card_created_at = created_at
+    else:
+        card_created_at = datetime.now(UTC)
 
     return ModelCard(
         model_name="sitescore_propensity",
@@ -676,6 +699,7 @@ def build_sitescore_opening_outcome_model_card(
             "M6 or M12 window coverage ratio drops below 70%",
         ],
         approvals=resolved_approvals,
+        created_at=card_created_at,
     )
 
 
@@ -717,14 +741,19 @@ def build_sitescore_gate2_receipt(
     *,
     inventory_version: str = "candidate-site-view-v2",
     observed_at: str | None = None,
+    model_card: ModelCard | dict[str, Any] | None = None,
     model_card_hash: str | None = None,
 ) -> dict[str, Any]:
     """Build Gate 2 audit receipt payload with integrity envelope and artifact hash bindings."""
     ts = observed_at or benchmark.observed_at or datetime.now(UTC).isoformat().replace("+00:00", "Z")
     handback_hash = compute_handback_sha256(benchmark.handback_payload)
     if model_card_hash is None:
-        mc = build_sitescore_opening_outcome_model_card(benchmark, version=inventory_version)
-        model_card_hash = compute_model_card_sha256(mc.to_dict())
+        if model_card is not None:
+            mc_dict = model_card.to_dict() if hasattr(model_card, "to_dict") else model_card
+            model_card_hash = compute_model_card_sha256(mc_dict)
+        else:
+            mc = build_sitescore_opening_outcome_model_card(benchmark, version=inventory_version, created_at=ts)
+            model_card_hash = compute_model_card_sha256(mc.to_dict())
 
     payload: dict[str, Any] = {
         "schema_version": GATE2_RECEIPT_SCHEMA_VERSION,
@@ -762,8 +791,14 @@ class Gate2ReceiptVerificationResult:
     errors: Sequence[str] = field(default_factory=tuple)
 
 
-def verify_sitescore_gate2_receipt(receipt: dict[str, Any]) -> Gate2ReceiptVerificationResult:
+def verify_sitescore_gate2_receipt(
+    receipt: dict[str, Any],
+    *,
+    model_card_artifact: dict[str, Any] | ModelCard | None = None,
+) -> Gate2ReceiptVerificationResult:
     """Fail-closed verifier for Gate 2 receipt content, duplicate drift, and integrity (Fix for B1-B3)."""
+    import re
+    HEX64_PATTERN = r"^[0-9a-f]{64}$"
     errors: list[str] = []
 
     if not isinstance(receipt, dict):
@@ -878,23 +913,42 @@ def verify_sitescore_gate2_receipt(receipt: dict[str, Any]) -> Gate2ReceiptVerif
         _scan_finiteness(summary, "benchmark_summary")
         _scan_finiteness(handback, "handback")
 
-        if obs is not None and elg is not None and mat is not None and match_cnt is not None:
-            if obs < 0 or elg < 0 or mat < 0 or match_cnt < 0:
-                errors.append("Counts cannot be negative")
-            if elg > obs:
-                errors.append(f"Eligible count ({elg}) cannot exceed observed count ({obs})")
-            if mat > elg:
-                errors.append(f"Mature label count ({mat}) cannot exceed eligible count ({elg})")
-            if match_cnt > mat:
-                errors.append(f"Matched prediction count ({match_cnt}) cannot exceed mature label count ({mat})")
+        # Non-negative checks for all 8 count fields
+        if obs is not None and obs < 0:
+            errors.append("benchmark_summary.observed_count cannot be negative")
+        if elg is not None and elg < 0:
+            errors.append("benchmark_summary.eligible_count cannot be negative")
+        if mat is not None and mat < 0:
+            errors.append("benchmark_summary.mature_label_count cannot be negative")
+        if match_cnt is not None and match_cnt < 0:
+            errors.append("benchmark_summary.matched_prediction_count cannot be negative")
+        if m6_mat is not None and m6_mat < 0:
+            errors.append("benchmark_summary.m6_mature_count cannot be negative")
+        if m12_mat is not None and m12_mat < 0:
+            errors.append("benchmark_summary.m12_mature_count cannot be negative")
+        if bounds_cnt is not None and bounds_cnt < 0:
+            errors.append("benchmark_summary.interval_bounds_count cannot be negative")
+        if p80_cnt is not None and p80_cnt < 0:
+            errors.append("benchmark_summary.in_p80_count cannot be negative")
 
-        if m6_mat is not None and mat is not None and m6_mat > mat:
+        # Natural subset hierarchy checks
+        if obs is not None and elg is not None and elg > obs:
+            errors.append(f"Eligible count ({elg}) cannot exceed observed count ({obs})")
+        if elg is not None and mat is not None and mat > elg:
+            errors.append(f"Mature label count ({mat}) cannot exceed eligible count ({elg})")
+        if mat is not None and match_cnt is not None and match_cnt > mat:
+            errors.append(f"Matched prediction count ({match_cnt}) cannot exceed mature label count ({mat})")
+        if mat is not None and m6_mat is not None and m6_mat > mat:
             errors.append(f"M6 mature count ({m6_mat}) cannot exceed mature label count ({mat})")
-        if m12_mat is not None and mat is not None and m12_mat > mat:
+        if mat is not None and m12_mat is not None and m12_mat > mat:
             errors.append(f"M12 mature count ({m12_mat}) cannot exceed mature label count ({mat})")
-        if bounds_cnt is not None and mat is not None and bounds_cnt > mat:
+        if match_cnt is not None and bounds_cnt is not None and bounds_cnt > match_cnt:
+            errors.append(f"Interval bounds count ({bounds_cnt}) cannot exceed matched prediction count ({match_cnt})")
+        if mat is not None and bounds_cnt is not None and bounds_cnt > mat:
             errors.append(f"Interval bounds count ({bounds_cnt}) cannot exceed mature label count ({mat})")
-        if p80_cnt is not None and mat is not None and p80_cnt > mat:
+        if bounds_cnt is not None and p80_cnt is not None and p80_cnt > bounds_cnt:
+            errors.append(f"In P80 count ({p80_cnt}) cannot exceed interval bounds count ({bounds_cnt})")
+        if mat is not None and p80_cnt is not None and p80_cnt > mat:
             errors.append(f"In P80 count ({p80_cnt}) cannot exceed mature label count ({mat})")
 
         # Re-derive ratios from numerators and denominator
@@ -983,11 +1037,50 @@ def verify_sitescore_gate2_receipt(receipt: dict[str, Any]) -> Gate2ReceiptVerif
             if bc.get("m12_mature_count") != m12_mat:
                 errors.append(f"outcome_backfill_contract.m12_mature_count ({bc.get('m12_mature_count')}) drifts from summary.m12_mature_count ({m12_mat})")
 
-        # Check handback hash in integrity envelope
-        expected_hb_hash = compute_handback_sha256(handback)
-        declared_hb_hash = integrity.get("handback_hash") if isinstance(integrity, dict) else None
-        if declared_hb_hash and declared_hb_hash != expected_hb_hash:
-            errors.append(f"Handback hash mismatch: declared {declared_hb_hash}, recomputed {expected_hb_hash}")
+        # Check artifact_hashes dictionary & hashes
+        art_hashes = receipt.get("artifact_hashes")
+        if not isinstance(art_hashes, dict):
+            errors.append("Missing or invalid artifact_hashes dictionary")
+        else:
+            hb_hash = art_hashes.get("handback_hash")
+            mc_hash = art_hashes.get("model_card_hash")
+            if not isinstance(hb_hash, str) or not re.fullmatch(HEX64_PATTERN, hb_hash):
+                errors.append(f"Invalid artifact_hashes.handback_hash format: {hb_hash!r}")
+            if not isinstance(mc_hash, str) or not re.fullmatch(HEX64_PATTERN, mc_hash):
+                errors.append(f"Invalid artifact_hashes.model_card_hash format: {mc_hash!r}")
+
+            expected_hb_hash = compute_handback_sha256(handback)
+            if hb_hash != expected_hb_hash:
+                errors.append(f"Artifact handback hash mismatch: declared {hb_hash}, recomputed {expected_hb_hash}")
+
+        # Check integrity envelope & cross-check with artifact_hashes
+        if not isinstance(integrity, dict):
+            errors.append("Missing or invalid integrity dictionary")
+        else:
+            int_hb_hash = integrity.get("handback_hash")
+            int_mc_hash = integrity.get("model_card_hash")
+
+            if not isinstance(int_hb_hash, str) or not re.fullmatch(HEX64_PATTERN, int_hb_hash):
+                errors.append(f"Invalid integrity.handback_hash format: {int_hb_hash!r}")
+            if not isinstance(int_mc_hash, str) or not re.fullmatch(HEX64_PATTERN, int_mc_hash):
+                errors.append(f"Invalid integrity.model_card_hash format: {int_mc_hash!r}")
+
+            if isinstance(art_hashes, dict):
+                if int_hb_hash != art_hashes.get("handback_hash"):
+                    errors.append(f"Integrity handback_hash drift: integrity {int_hb_hash}, artifact_hashes {art_hashes.get('handback_hash')}")
+                if int_mc_hash != art_hashes.get("model_card_hash"):
+                    errors.append(f"Integrity model_card_hash drift: integrity {int_mc_hash}, artifact_hashes {art_hashes.get('model_card_hash')}")
+
+        # Check model_card_artifact if passed to verifier
+        if model_card_artifact is not None:
+            mc_dict = model_card_artifact.to_dict() if hasattr(model_card_artifact, "to_dict") else model_card_artifact
+            if not isinstance(mc_dict, dict):
+                errors.append("model_card_artifact must be a dictionary or ModelCard instance")
+            else:
+                recomputed_mc_hash = compute_model_card_sha256(mc_dict)
+                declared_mc_hash = art_hashes.get("model_card_hash") if isinstance(art_hashes, dict) else None
+                if declared_mc_hash != recomputed_mc_hash:
+                    errors.append(f"Model card artifact hash mismatch: declared {declared_mc_hash}, recomputed {recomputed_mc_hash}")
 
         # Provenance, reason_code, status, and threshold validation & cross-checks
         ALLOWED_PROVENANCES = {"no_source", "unreachable_db", "provided_records", "pg16_query", "authenticated_governed_records"}
@@ -1049,8 +1142,8 @@ def verify_sitescore_gate2_receipt(receipt: dict[str, Any]) -> Gate2ReceiptVerif
         min_cov_thresh_val = min_cov_thresh if min_cov_thresh is not None else MIN_COVERAGE_THRESHOLD
         max_mae_thresh_val = max_mae_thresh if max_mae_thresh is not None else MAX_MAE_THRESHOLD
 
-        # Re-derive expected reason code from provenance & metrics
-        lineage_governed = False
+        # Re-derive reason code from provenance & metrics
+        lineage_governed = False # Stub: Assumed controlled externally
 
         labels_sufficient = (mat is not None and mat >= act_thresh_val)
         pred_cov_passed = (pred_cov is not None and pred_cov >= min_cov_thresh_val)
@@ -1125,7 +1218,7 @@ def verify_sitescore_gate2_receipt(receipt: dict[str, Any]) -> Gate2ReceiptVerif
         errors.append(f"Unhandled exception during receipt verification: {exc}")
 
     if errors:
-        reason = "INTEGRITY_HASH_MISMATCH" if any("Integrity hash mismatch" in e for e in errors) else "FORGED_ACTIVE_OR_MALFORMED_RECEIPT"
+        reason = "INTEGRITY_HASH_MISMATCH" if any("Integrity hash mismatch:" in e for e in errors) else "FORGED_ACTIVE_OR_MALFORMED_RECEIPT"
         return Gate2ReceiptVerificationResult(False, reason, tuple(errors))
 
     return Gate2ReceiptVerificationResult(True, "RECEIPT_VALIDATED", ())

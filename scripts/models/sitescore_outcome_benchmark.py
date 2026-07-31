@@ -213,13 +213,19 @@ def main(argv: Sequence[str] | None = None) -> int:
     db_url = args.db_url or os.getenv("ODAY_DATABASE_URL") or os.getenv("ODP_DATABASE_URL")
     benchmark_result = run_benchmark_from_inventory(db_url=db_url)
 
-    receipt = build_sitescore_gate2_receipt(
-        benchmark_result,
-        inventory_version=args.inventory_version,
-    )
     model_card = build_sitescore_opening_outcome_model_card(
         benchmark_result,
         version=args.inventory_version,
+    )
+    model_card_dict = model_card.to_dict()
+    from models.sitescore.opening_outcome import compute_model_card_sha256
+    model_card_hash = compute_model_card_sha256(model_card_dict)
+
+    receipt = build_sitescore_gate2_receipt(
+        benchmark_result,
+        inventory_version=args.inventory_version,
+        model_card=model_card,
+        model_card_hash=model_card_hash,
     )
 
     args.output_receipt.parent.mkdir(parents=True, exist_ok=True)

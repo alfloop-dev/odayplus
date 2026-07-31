@@ -974,3 +974,143 @@ def test_sitescore_gate2_receipt_artifact_hashes_binding_b3():
 
     verif = verify_sitescore_gate2_receipt(receipt)
     assert verif.is_valid is True
+
+
+def test_sitescore_opening_outcome_non_empty_population_counts_populated_and_verifies_b1():
+    # B1 Re-review test: Non-empty records populate m6_mature_count, m12_mature_count, interval_bounds_count, in_p80_count
+    records = _generate_candidate_records(
+        10,
+        include_m6_m12_realized=True,
+        include_bounds=True,
+        dataset_snapshot_id="snapshot_sitescore_v2",
+        model_version="candidate-site-view-v2",
+        artifact_lineage_id="art_sitescore_sha256",
+    )
+    result = evaluate_sitescore_opening_outcome_benchmark(records, provenance="authenticated_governed_records")
+
+    assert result.observed_count == 10
+    assert result.eligible_count == 10
+    assert result.mature_label_count == 10
+    assert result.matched_prediction_count == 10
+    assert result.m6_mature_count == 10
+    assert result.m12_mature_count == 10
+    assert result.interval_bounds_count == 10
+    assert result.in_p80_count == 10
+
+    receipt = build_sitescore_gate2_receipt(result)
+    assert receipt["benchmark_summary"]["m6_mature_count"] == 10
+    assert receipt["benchmark_summary"]["m12_mature_count"] == 10
+    assert receipt["benchmark_summary"]["interval_bounds_count"] == 10
+    assert receipt["benchmark_summary"]["in_p80_count"] == 10
+
+    verif = verify_sitescore_gate2_receipt(receipt)
+    assert verif.is_valid is True
+    assert verif.reason_code == "RECEIPT_VALIDATED"
+
+
+def test_sitescore_verifier_rejects_negative_counts_and_invalid_hierarchy_b1():
+    # B1 Re-review test: Verifier fails closed on negative counts and invalid subset hierarchy
+    from models.sitescore.opening_outcome import compute_handback_sha256
+
+    records = _generate_candidate_records(
+        10,
+        include_m6_m12_realized=True,
+        include_bounds=True,
+    )
+    result = evaluate_sitescore_opening_outcome_benchmark(records, provenance="authenticated_governed_records")
+    receipt = build_sitescore_gate2_receipt(result)
+
+    # 1. Negative count test: set m6_mature_count = -1
+    m1 = json.loads(json.dumps(receipt))
+    m1["benchmark_summary"]["m6_mature_count"] = -1
+    m1["handback"]["m6_mature_count"] = -1
+    m1["benchmark_summary"]["handback_payload"]["m6_mature_count"] = -1
+    m1["handback"]["outcome_backfill_contract"]["m6_mature_count"] = -1
+    hb_hash_1 = compute_handback_sha256(m1["handback"])
+    m1["artifact_hashes"]["handback_hash"] = hb_hash_1
+    m1["integrity"]["handback_hash"] = hb_hash_1
+    m1["integrity"]["content_sha256"] = compute_gate2_receipt_sha256(m1)
+
+    res1 = verify_sitescore_gate2_receipt(m1)
+    assert res1.is_valid is False
+    assert any("cannot be negative" in e for e in res1.errors)
+
+    # 2. Subset hierarchy test: interval_bounds_count (15) > matched_prediction_count (10)
+    m2 = json.loads(json.dumps(receipt))
+    m2["benchmark_summary"]["interval_bounds_count"] = 15
+    m2["handback"]["interval_bounds_count"] = 15
+    m2["benchmark_summary"]["handback_payload"]["interval_bounds_count"] = 15
+    m2["handback"]["outcome_backfill_contract"]["interval_bounds_count"] = 15
+    hb_hash_2 = compute_handback_sha256(m2["handback"])
+    m2["artifact_hashes"]["handback_hash"] = hb_hash_2
+    m2["integrity"]["handback_hash"] = hb_hash_2
+    m2["integrity"]["content_sha256"] = compute_gate2_receipt_sha256(m2)
+
+    res2 = verify_sitescore_gate2_receipt(m2)
+    assert res2.is_valid is False
+    assert any("Interval bounds count" in e for e in res2.errors)
+
+    # 3. Subset hierarchy test: in_p80_count (15) > interval_bounds_count (10)
+    m3 = json.loads(json.dumps(receipt))
+    m3["benchmark_summary"]["in_p80_count"] = 15
+    m3["handback"]["in_p80_count"] = 15
+    m3["benchmark_summary"]["handback_payload"]["in_p80_count"] = 15
+    m3["handback"]["outcome_backfill_contract"]["in_p80_count"] = 15
+    hb_hash_3 = compute_handback_sha256(m3["handback"])
+    m3["artifact_hashes"]["handback_hash"] = hb_hash_3
+    m3["integrity"]["handback_hash"] = hb_hash_3
+    m3["integrity"]["content_sha256"] = compute_gate2_receipt_sha256(m3)
+
+    res3 = verify_sitescore_gate2_receipt(m3)
+    assert res3.is_valid is False
+    assert any("In P80 count" in e for e in res3.errors)
+
+
+def test_sitescore_verifier_rejects_artifact_hashes_drift_and_model_card_mismatch_b2():
+    # B2 Re-review test: Verifier fails closed on artifact_hashes drift and model card mismatch
+
+    result = run_benchmark_from_inventory(db_url=None, records=None)
+    model_card = build_sitescore_opening_outcome_model_card(result)
+    receipt = build_sitescore_gate2_receipt(result, model_card=model_card)
+
+    # 1. artifact_hashes.model_card_hash drift from integrity.model_card_hash
+    m1 = json.loads(json.dumps(receipt))
+    m1["artifact_hashes"]["model_card_hash"] = "a" * 64
+    m1["integrity"]["content_sha256"] = compute_gate2_receipt_sha256(m1)
+
+    res1 = verify_sitescore_gate2_receipt(m1)
+    assert res1.is_valid is False
+    assert any("Integrity model_card_hash drift" in e for e in res1.errors)
+
+    # 2. Model card artifact mismatch
+    mc_dict = model_card.to_dict()
+    modified_mc_dict = json.loads(json.dumps(mc_dict))
+    modified_mc_dict["model_name"] = "tampered_model_name"
+
+    res2 = verify_sitescore_gate2_receipt(receipt, model_card_artifact=modified_mc_dict)
+    assert res2.is_valid is False
+    assert any("Model card artifact hash mismatch" in e for e in res2.errors)
+
+
+def test_sitescore_committed_evidence_files_round_trip_verification_b2():
+    # B2 Re-review test: Committed evidence files in docs/evidence/models/ are consistent and verify clean
+    from pathlib import Path
+
+    from models.sitescore.opening_outcome import compute_model_card_sha256
+
+    evidence_dir = Path(__file__).resolve().parents[2] / "docs" / "evidence" / "models"
+    receipt_path = evidence_dir / "sitescore_gate2_receipt.json"
+    card_path = evidence_dir / "sitescore_model_card.json"
+
+    with receipt_path.open(encoding="utf-8") as f:
+        receipt = json.load(f)
+    with card_path.open(encoding="utf-8") as f:
+        model_card = json.load(f)
+
+    mc_hash = compute_model_card_sha256(model_card)
+    assert receipt["artifact_hashes"]["model_card_hash"] == mc_hash
+    assert receipt["integrity"]["model_card_hash"] == mc_hash
+
+    verif = verify_sitescore_gate2_receipt(receipt, model_card_artifact=model_card)
+    assert verif.is_valid is True
+    assert verif.reason_code == "RECEIPT_VALIDATED"
