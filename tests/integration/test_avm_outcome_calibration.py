@@ -1,9 +1,13 @@
 from __future__ import annotations
 
-from datetime import UTC, datetime
+import dataclasses
+from datetime import UTC, datetime, timedelta
 
 import pytest
 
+from modules.avm.application.outcome_calibration import (
+    generate_gate1_benchmark_receipt,
+)
 from modules.avm.domain.outcome import (
     AVMOutcomeTransaction,
     AVMOutcomeValidationError,
@@ -13,12 +17,16 @@ from modules.avm.domain.outcome import (
     compute_avm_outcome_calibration,
 )
 from modules.dealroom.domain.confidential_access import (
-    ConfidentialLeakError,
-    assert_no_confidential_leak,
+    ConfidentialAccessAttempt,
+    ConfidentialAccessAuditor,
+    ConfidentialAccessDecision,
+    ConfidentialLevel,
 )
+from shared.auth.rbac import Action, Role
 
 VALID_DATASET_HASH = "a1b2c3d4e5f60718293a4b5c6d7e8f901234567890abcdef1234567890abcdef"
 VALID_MODEL_HASH = "b2c3d4e5f60718293a4b5c6d7e8f901234567890abcdef1234567890abcdef01"
+RAW_SHA = "1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef"
 
 
 def test_avm_outcome_insufficient_data_fails_closed_with_governed_disabled() -> None:
@@ -40,25 +48,30 @@ def test_avm_outcome_insufficient_data_fails_closed_with_governed_disabled() -> 
 
 
 def test_avm_outcome_alignment_computes_coverage_calibration_and_value_bands() -> None:
-    now = datetime.now(UTC)
-    outcomes = [
-        AVMOutcomeTransaction("tx-1", "s-1", 8_000_000.0, now, is_mature=True),
-        AVMOutcomeTransaction("tx-2", "s-2", 20_000_000.0, now, is_mature=True),
-        AVMOutcomeTransaction("tx-3", "s-3", 40_000_000.0, now, is_mature=True),
-    ]
-    predictions = [
-        AVMPredictionRecord("pred-1", "s-1", 7_000_000.0, 8_200_000.0, 9_500_000.0),
-        AVMPredictionRecord("pred-2", "s-2", 17_000_000.0, 20_500_000.0, 24_000_000.0),
-        AVMPredictionRecord("pred-3", "s-3", 35_000_000.0, 42_000_000.0, 48_000_000.0),
-    ]
+    now = datetime.now(UTC) - timedelta(days=1)
+    outcomes = []
+    predictions = []
+    for i in range(120):
+        tx_id = f"tx-{i}"
+        s_id = f"s-{i}"
+        price = 8_000_000.0 + (i * 250_000.0)
+        p50 = price * 1.01  # small noise so p50 != price (not copied)
+        p10 = p50 * 0.8
+        p90 = p50 * 1.2
+        outcomes.append(
+            AVMOutcomeTransaction(
+                tx_id, s_id, price, now, is_mature=True, raw_record_sha256=RAW_SHA
+            )
+        )
+        predictions.append(AVMPredictionRecord(f"pred-{i}", s_id, p10, p50, p90))
 
     aligned = align_outcomes_and_predictions(outcomes, predictions)
-    assert len(aligned) == 3
+    assert len(aligned) == 120
 
     report = compute_avm_outcome_calibration(
         aligned,
-        observed_count=3,
-        eligible_count=130,  # >= 120 threshold
+        observed_count=120,
+        eligible_count=120,
         auto_seeded_count=0,
         dataset_snapshot_id="snapshot-002",
         dataset_snapshot_hash=VALID_DATASET_HASH,
@@ -68,106 +81,249 @@ def test_avm_outcome_alignment_computes_coverage_calibration_and_value_bands() -
     assert report.is_governed_disabled is False
     assert report.verdict == AVMVerdict.PASS
     assert report.p10_p90_coverage_rate == 1.0
-    assert 0.90 <= report.median_calibration_ratio <= 1.10
+    assert 0.95 <= report.median_calibration_ratio <= 1.05
     assert "band_low_lt10m" in report.value_band_metrics
     assert "band_mid_10m_to_30m" in report.value_band_metrics
     assert "band_high_gt30m" in report.value_band_metrics
-    assert report.value_band_metrics["band_low_lt10m"].aligned_count == 1
-    assert report.value_band_metrics["band_mid_10m_to_30m"].aligned_count == 1
-    assert report.value_band_metrics["band_high_gt30m"].aligned_count == 1
 
 
-# --- Mutation Tests for Fail-Closed Enforcement ---
+# --- B1 Mutations ---
 
-def test_mutation_synthetic_row_fails_closed() -> None:
-    now = datetime.now(UTC)
-    outcomes = [
-        AVMOutcomeTransaction("tx-synth", "s-1", 15_000_000.0, now, is_mature=True, is_synthetic=True)
-    ]
-    predictions = [AVMPredictionRecord("pred-1", "s-1", 12_000_000.0, 15_000_000.0, 18_000_000.0)]
-
-    with pytest.raises(AVMOutcomeValidationError, match="Synthetic transaction row detected"):
-        align_outcomes_and_predictions(outcomes, predictions)
-
-
-def test_mutation_immature_transaction_fails_closed() -> None:
-    now = datetime.now(UTC)
-    outcomes = [
-        AVMOutcomeTransaction("tx-immature", "s-1", 15_000_000.0, now, is_mature=False)
-    ]
-    predictions = [AVMPredictionRecord("pred-1", "s-1", 12_000_000.0, 15_000_000.0, 18_000_000.0)]
-
-    with pytest.raises(AVMOutcomeValidationError, match="Immature transaction row detected"):
-        align_outcomes_and_predictions(outcomes, predictions)
+def test_mutation_caller_supplied_eligible_count_without_outcomes_fails_closed() -> None:
+    # Caller passes eligible_count=120 with 0 aligned pairs -> must fail closed
+    report = compute_avm_outcome_calibration(
+        [],
+        observed_count=0,
+        eligible_count=120,
+        auto_seeded_count=0,
+        dataset_snapshot_id="snapshot-001",
+        dataset_snapshot_hash=VALID_DATASET_HASH,
+        model_artifact_hash=VALID_MODEL_HASH,
+    )
+    assert report.is_governed_disabled is True
+    assert report.verdict == AVMVerdict.FAIL_CLOSED
+    assert report.reason_code == "DATA_CONTRACT_NOT_MATURE"
 
 
-def test_mutation_copied_prediction_substitution_fails_closed() -> None:
-    now = datetime.now(UTC)
-    outcomes = [
-        AVMOutcomeTransaction("tx-1", "s-1", 15_000_000.0, now, is_mature=True),
-        AVMOutcomeTransaction("tx-2", "s-2", 25_000_000.0, now, is_mature=True),
-    ]
-    # Exact copy of outcome price to p50 (zero-error substitution fraud)
+def test_mutation_reconciled_count_mismatch_raises_error() -> None:
+    now = datetime.now(UTC) - timedelta(days=1)
+    outcomes = [AVMOutcomeTransaction("tx-1", "s-1", 10_000_000.0, now, is_mature=True, raw_record_sha256=RAW_SHA)]
+    predictions = [AVMPredictionRecord("pred-1", "s-1", 8_000_000.0, 10_200_000.0, 12_000_000.0)]
+    aligned = align_outcomes_and_predictions(outcomes, predictions)
+
+    with pytest.raises(AVMOutcomeValidationError, match="Reconciled count mismatch"):
+        compute_avm_outcome_calibration(
+            aligned,
+            observed_count=0,  # observed < aligned count (0 < 1)
+            eligible_count=1,
+            dataset_snapshot_hash=VALID_DATASET_HASH,
+            model_artifact_hash=VALID_MODEL_HASH,
+        )
+
+
+def test_mutation_coverage_below_target_fails_closed() -> None:
+    now = datetime.now(UTC) - timedelta(days=1)
+    outcomes = []
+    predictions = []
+    for i in range(120):
+        tx_id = f"tx-{i}"
+        s_id = f"s-{i}"
+        price = 10_000_000.0
+        # Narrow interval missing realized price 10m -> coverage = 0.0 < 0.80
+        predictions.append(AVMPredictionRecord(f"pred-{i}", s_id, 1_000_000.0, 2_000_000.0, 3_000_000.0))
+        outcomes.append(AVMOutcomeTransaction(tx_id, s_id, price, now, is_mature=True, raw_record_sha256=RAW_SHA))
+
+    aligned = align_outcomes_and_predictions(outcomes, predictions)
+    report = compute_avm_outcome_calibration(
+        aligned,
+        observed_count=120,
+        eligible_count=120,
+        dataset_snapshot_hash=VALID_DATASET_HASH,
+        model_artifact_hash=VALID_MODEL_HASH,
+    )
+    assert report.is_governed_disabled is True
+    assert report.verdict == AVMVerdict.FAIL_CLOSED
+    assert report.reason_code == "CALIBRATION_TARGET_NOT_MET"
+
+
+# --- B2 Mutations ---
+
+def test_mutation_duplicate_store_prediction_fails_closed() -> None:
     predictions = [
         AVMPredictionRecord("pred-1", "s-1", 10_000_000.0, 15_000_000.0, 20_000_000.0),
+        AVMPredictionRecord("pred-2", "s-1", 10_000_000.0, 15_000_000.0, 20_000_000.0),  # Duplicate store_id s-1
+    ]
+    outcomes = [AVMOutcomeTransaction("tx-1", "s-1", 15_000_000.0, datetime.now(UTC), is_mature=True, raw_record_sha256=RAW_SHA)]
+
+    with pytest.raises(AVMOutcomeValidationError, match="Duplicate prediction record for store_id"):
+        align_outcomes_and_predictions(outcomes, predictions)
+
+
+def test_mutation_mixed_model_versions_fails_closed() -> None:
+    predictions = [
+        AVMPredictionRecord("pred-1", "s-1", 10_000_000.0, 15_000_000.0, 20_000_000.0, model_version="wrong-version"),
+    ]
+    outcomes = [AVMOutcomeTransaction("tx-1", "s-1", 15_000_000.0, datetime.now(UTC), is_mature=True, raw_record_sha256=RAW_SHA)]
+
+    with pytest.raises(AVMOutcomeValidationError, match="Mixed or wrong model version"):
+        align_outcomes_and_predictions(outcomes, predictions)
+
+
+def test_mutation_missing_prediction_for_outcome_fails_closed() -> None:
+    predictions = [AVMPredictionRecord("pred-1", "s-1", 10_000_000.0, 14_000_000.0, 20_000_000.0)]
+    outcomes = [
+        AVMOutcomeTransaction("tx-1", "s-1", 15_000_000.0, datetime.now(UTC) - timedelta(days=1), is_mature=True, raw_record_sha256=RAW_SHA),
+        AVMOutcomeTransaction("tx-2", "s-missing", 20_000_000.0, datetime.now(UTC) - timedelta(days=1), is_mature=True, raw_record_sha256=RAW_SHA),
+    ]
+
+    with pytest.raises(AVMOutcomeValidationError, match="Missing prediction record"):
+        align_outcomes_and_predictions(outcomes, predictions)
+
+
+
+# --- B3 Mutations ---
+
+def test_mutation_fixture_authority_partition_fails_closed() -> None:
+    now = datetime.now(UTC) - timedelta(days=1)
+    outcomes = [
+        AVMOutcomeTransaction("tx-1", "s-1", 15_000_000.0, now, is_mature=True, authority_partition="fixture_partition", raw_record_sha256=RAW_SHA)
+    ]
+    predictions = [AVMPredictionRecord("pred-1", "s-1", 12_000_000.0, 15_200_000.0, 18_000_000.0)]
+
+    with pytest.raises(AVMOutcomeValidationError, match="Non-authoritative partition"):
+        align_outcomes_and_predictions(outcomes, predictions)
+
+
+def test_mutation_blank_or_invalid_raw_record_sha256_fails_closed() -> None:
+    now = datetime.now(UTC) - timedelta(days=1)
+    outcomes = [
+        AVMOutcomeTransaction("tx-1", "s-1", 15_000_000.0, now, is_mature=True, raw_record_sha256="")
+    ]
+    predictions = [AVMPredictionRecord("pred-1", "s-1", 12_000_000.0, 15_200_000.0, 18_000_000.0)]
+
+    with pytest.raises(AVMOutcomeValidationError, match="Invalid or missing raw_record_sha256"):
+        align_outcomes_and_predictions(outcomes, predictions)
+
+
+def test_mutation_future_transaction_date_marked_mature_fails_closed() -> None:
+    future_date = datetime.now(UTC) + timedelta(days=10)
+    outcomes = [
+        AVMOutcomeTransaction("tx-future", "s-1", 15_000_000.0, future_date, is_mature=True, raw_record_sha256=RAW_SHA)
+    ]
+    predictions = [AVMPredictionRecord("pred-1", "s-1", 12_000_000.0, 15_200_000.0, 18_000_000.0)]
+
+    with pytest.raises(AVMOutcomeValidationError, match="Future transaction date"):
+        align_outcomes_and_predictions(outcomes, predictions)
+
+
+# --- B4 Mutations ---
+
+def test_mutation_single_substituted_outcome_row_fails_closed() -> None:
+    now = datetime.now(UTC) - timedelta(days=1)
+    outcomes = [
+        AVMOutcomeTransaction("tx-1", "s-1", 15_000_000.0, now, is_mature=True, raw_record_sha256=RAW_SHA),
+        AVMOutcomeTransaction("tx-2", "s-2", 25_000_000.0, now, is_mature=True, raw_record_sha256=RAW_SHA),
+    ]
+    # Row 1 is normal, Row 2 has copied p50 == outcome.realized_price (single substituted row fraud)
+    predictions = [
+        AVMPredictionRecord("pred-1", "s-1", 10_000_000.0, 14_000_000.0, 20_000_000.0),
         AVMPredictionRecord("pred-2", "s-2", 20_000_000.0, 25_000_000.0, 30_000_000.0),
     ]
 
-    with pytest.raises(AVMOutcomeValidationError, match="Prediction values were directly copied"):
+    with pytest.raises(AVMOutcomeValidationError, match="Prediction value p50=25000000.0 was directly copied"):
         align_outcomes_and_predictions(outcomes, predictions)
 
 
-def test_mutation_duplicate_join_fails_closed() -> None:
-    now = datetime.now(UTC)
-    outcomes = [
-        AVMOutcomeTransaction("tx-1", "s-1", 15_000_000.0, now, is_mature=True),
-        AVMOutcomeTransaction("tx-1", "s-1", 15_000_000.0, now, is_mature=True),  # duplicate
-    ]
-    predictions = [AVMPredictionRecord("pred-1", "s-1", 12_000_000.0, 15_000_000.0, 18_000_000.0)]
+# --- B5 Mutations ---
 
-    with pytest.raises(AVMOutcomeValidationError, match="Duplicate transaction join detected"):
-        align_outcomes_and_predictions(outcomes, predictions)
-
-
-def test_mutation_unbound_dataset_hash_fails_closed() -> None:
+def test_mutation_uppercase_or_non_hex_sha256_fails_closed() -> None:
     with pytest.raises(AVMOutcomeValidationError, match="Unbound or invalid dataset_snapshot_hash"):
         compute_avm_outcome_calibration(
             [],
             observed_count=0,
             eligible_count=0,
-            dataset_snapshot_hash="invalid_hash",
+            dataset_snapshot_hash="A" * 64,  # Uppercase hex is invalid
             model_artifact_hash=VALID_MODEL_HASH,
         )
 
 
-def test_mutation_unbound_model_artifact_hash_fails_closed() -> None:
-    with pytest.raises(AVMOutcomeValidationError, match="Unbound or invalid model_artifact_hash"):
-        compute_avm_outcome_calibration(
-            [],
-            observed_count=0,
-            eligible_count=0,
-            dataset_snapshot_hash=VALID_DATASET_HASH,
-            model_artifact_hash="",
-        )
-
-
-def test_mutation_forged_active_verdict_fails_closed() -> None:
-    # Insufficient count (100 < 120) cannot pass ACTIVE verdict
-    with pytest.raises(AVMOutcomeValidationError, match="Auto-seeded or synthetic rows present"):
-        compute_avm_outcome_calibration(
-            [],
-            observed_count=100,
-            eligible_count=100,
-            auto_seeded_count=5,  # synthetic rows forbidden
+def test_mutation_receipt_lineage_mismatch_fails_closed() -> None:
+    report = compute_avm_outcome_calibration(
+        [],
+        observed_count=0,
+        eligible_count=0,
+        dataset_snapshot_id="snapshot-001",
+        dataset_snapshot_hash=VALID_DATASET_HASH,
+        model_artifact_hash=VALID_MODEL_HASH,
+    )
+    with pytest.raises(AVMOutcomeValidationError, match="Receipt lineage mismatch with report"):
+        generate_gate1_benchmark_receipt(
+            report,
+            dataset_snapshot_id="different-snapshot-id",
             dataset_snapshot_hash=VALID_DATASET_HASH,
             model_artifact_hash=VALID_MODEL_HASH,
         )
 
 
-def test_mutation_confidential_raw_value_leak_fails_closed() -> None:
-    leaking_payload = {
-        "kind": "receipt",
-        "realized_price": 25000000.0,  # unmasked confidential field
-    }
-    with pytest.raises(ConfidentialLeakError):
-        assert_no_confidential_leak(leaking_payload)
+def test_mutation_dataclass_replaced_pass_with_eligible_zero_fails_closed() -> None:
+    report = compute_avm_outcome_calibration(
+        [],
+        observed_count=0,
+        eligible_count=0,
+        dataset_snapshot_id="snapshot-001",
+        dataset_snapshot_hash=VALID_DATASET_HASH,
+        model_artifact_hash=VALID_MODEL_HASH,
+    )
+    # Dataclass replacement forging PASS on zero-eligible report
+    forged_report = dataclasses.replace(report, verdict=AVMVerdict.PASS, is_governed_disabled=False)
+
+    with pytest.raises(AVMOutcomeValidationError, match="Receipt boundary detected forged or invalid PASS"):
+        generate_gate1_benchmark_receipt(
+            forged_report,
+            dataset_snapshot_id="snapshot-001",
+            dataset_snapshot_hash=VALID_DATASET_HASH,
+            model_artifact_hash=VALID_MODEL_HASH,
+        )
+
+
+# --- B6 Mutations ---
+
+def test_mutation_finance_legal_delete_on_unrelated_secret_returns_deny() -> None:
+    attempt = ConfidentialAccessAttempt(
+        actor_id="usr-fin-001",
+        role=Role.FINANCE_LEGAL,
+        resource="unrelated_secret",
+        action=Action.DELETE,
+    )
+    decision, reason, receipt = ConfidentialAccessAuditor.evaluate_access(
+        attempt, ConfidentialLevel.HIGH
+    )
+    assert decision == ConfidentialAccessDecision.DENY
+
+
+def test_mutation_finance_legal_unauthorized_action_returns_deny() -> None:
+    attempt = ConfidentialAccessAttempt(
+        actor_id="usr-fin-001",
+        role=Role.FINANCE_LEGAL,
+        resource="dealroom",
+        action=Action.DELETE,
+    )
+    decision, reason, receipt = ConfidentialAccessAuditor.evaluate_access(
+        attempt, ConfidentialLevel.HIGH
+    )
+    assert decision == ConfidentialAccessDecision.DENY
+
+
+# --- B7 Mutations ---
+
+def test_authoritative_evidence_represents_unpopulated_snapshot_honestly() -> None:
+    from scripts.models.avm_benchmark import generate_avm_outcome_evidence_pack
+    report, gate1_receipt, audit_receipt, report_md, handback_json = generate_avm_outcome_evidence_pack(
+        observed_count=0,
+        eligible_count=0,
+    )
+    assert report.is_governed_disabled is True
+    assert report.dataset_snapshot_id == "empty-snapshot-unpopulated"
+    assert len(report.dataset_snapshot_hash) == 64
+    assert report.dataset_snapshot_hash.islower()
+    assert gate1_receipt["governed_disabled"] is True

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import math
+import re
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from enum import StrEnum
@@ -10,6 +11,10 @@ from typing import Any
 
 ACTIVATION_THRESHOLD = 120
 CANONICAL_AVM_MODEL_VERSION = "dealroom-avm-baseline-v1"
+ALLOWED_AUTHORITY_PARTITIONS = frozenset(
+    {"official_real_estate", "authoritative_real_estate_transaction"}
+)
+SHA256_REGEX = re.compile(r"^[0-9a-f]{64}$")
 
 
 class AVMOutcomeValidationError(RuntimeError):
@@ -185,8 +190,13 @@ def assign_value_band(price: float) -> str:
 def align_outcomes_and_predictions(
     outcomes: list[AVMOutcomeTransaction],
     predictions: list[AVMPredictionRecord],
+    *,
+    expected_model_version: str = CANONICAL_AVM_MODEL_VERSION,
+    evaluation_reference_time: datetime | None = None,
 ) -> list[AlignedOutcomePredictionPair]:
     """Join exact model predictions to realized outcomes with strict fail-closed validations."""
+    ref_time = evaluation_reference_time or datetime.now(UTC)
+
     seen_transactions: set[str] = set()
     seen_predictions: set[str] = set()
     pred_by_store: dict[str, AVMPredictionRecord] = {}
@@ -195,10 +205,19 @@ def align_outcomes_and_predictions(
         if pred.prediction_id in seen_predictions:
             raise AVMOutcomeValidationError(f"Duplicate prediction record {pred.prediction_id!r}")
         seen_predictions.add(pred.prediction_id)
+
+        if pred.model_version != expected_model_version:
+            raise AVMOutcomeValidationError(
+                f"Mixed or wrong model version {pred.model_version!r} in prediction {pred.prediction_id!r} (expected {expected_model_version!r})"
+            )
+
+        if pred.store_id in pred_by_store:
+            raise AVMOutcomeValidationError(
+                f"Duplicate prediction record for store_id {pred.store_id!r}"
+            )
         pred_by_store[pred.store_id] = pred
 
     aligned_pairs: list[AlignedOutcomePredictionPair] = []
-    zero_error_count = 0
 
     for outcome in outcomes:
         if outcome.is_synthetic:
@@ -209,15 +228,38 @@ def align_outcomes_and_predictions(
             raise AVMOutcomeValidationError(
                 f"Immature transaction row detected: {outcome.transaction_id!r}"
             )
+
+        # B3: Authority partition validation
+        if outcome.authority_partition not in ALLOWED_AUTHORITY_PARTITIONS:
+            raise AVMOutcomeValidationError(
+                f"Non-authoritative partition {outcome.authority_partition!r} for transaction {outcome.transaction_id!r}"
+            )
+
+        # B3: Raw record SHA-256 validation
+        if not SHA256_REGEX.match(outcome.raw_record_sha256):
+            raise AVMOutcomeValidationError(
+                f"Invalid or missing raw_record_sha256 {outcome.raw_record_sha256!r} for transaction {outcome.transaction_id!r}"
+            )
+
+        # B3: Maturity boundary & freshness check (future transaction cannot be mature)
+        tx_dt = outcome.transaction_date.astimezone(UTC) if outcome.transaction_date.tzinfo else outcome.transaction_date.replace(tzinfo=UTC)
+        if tx_dt > ref_time:
+            raise AVMOutcomeValidationError(
+                f"Future transaction date {outcome.transaction_date.isoformat()} cannot be marked mature: {outcome.transaction_id!r}"
+            )
+
         if outcome.transaction_id in seen_transactions:
             raise AVMOutcomeValidationError(
                 f"Duplicate transaction join detected: {outcome.transaction_id!r}"
             )
         seen_transactions.add(outcome.transaction_id)
 
+        # B2: Missing prediction rejection (do not silently drop)
         pred = pred_by_store.get(outcome.store_id)
         if pred is None:
-            continue
+            raise AVMOutcomeValidationError(
+                f"Missing prediction record for transaction {outcome.transaction_id!r} / store {outcome.store_id!r}"
+            )
 
         if not (pred.p10 <= pred.p50 <= pred.p90):
             raise AVMOutcomeValidationError(
@@ -225,10 +267,12 @@ def align_outcomes_and_predictions(
                 f"p10={pred.p10}, p50={pred.p50}, p90={pred.p90}"
             )
 
-        # Check for prediction copied from outcome (zero-error substitution fraud)
+        # B4: Fail closed if ANY single prediction was copied from outcome (zero-error substitution fraud)
         diff = abs(outcome.realized_price - pred.p50)
         if diff < 1e-6:
-            zero_error_count += 1
+            raise AVMOutcomeValidationError(
+                f"Fail-closed: Prediction value p50={pred.p50} was directly copied from outcome realized_price={outcome.realized_price} for transaction {outcome.transaction_id!r}"
+            )
 
         is_covered_p10_p90 = pred.p10 <= outcome.realized_price <= pred.p90
         is_covered_p10_p50 = pred.p10 <= outcome.realized_price <= pred.p50
@@ -258,12 +302,6 @@ def align_outcomes_and_predictions(
             )
         )
 
-    # Fail closed if prediction was copied from outcome across all aligned rows
-    if aligned_pairs and zero_error_count == len(aligned_pairs):
-        raise AVMOutcomeValidationError(
-            "Fail-closed: Prediction values were directly copied from realized outcomes"
-        )
-
     return aligned_pairs
 
 
@@ -283,40 +321,43 @@ def compute_avm_outcome_calibration(
     if auto_seeded_count > 0:
         raise AVMOutcomeValidationError("Fail-closed: Auto-seeded or synthetic rows present")
 
-    if not dataset_snapshot_hash or len(dataset_snapshot_hash) != 64:
+    # B5: Lowercase SHA-256 validation
+    if not dataset_snapshot_hash or not SHA256_REGEX.match(dataset_snapshot_hash):
         raise AVMOutcomeValidationError("Fail-closed: Unbound or invalid dataset_snapshot_hash")
 
-    if not model_artifact_hash or len(model_artifact_hash) != 64:
+    if not model_artifact_hash or not SHA256_REGEX.match(model_artifact_hash):
         raise AVMOutcomeValidationError("Fail-closed: Unbound or invalid model_artifact_hash")
 
-    # Determine activation maturity
-    is_governed_disabled = eligible_count < ACTIVATION_THRESHOLD
-    reason_code = (
-        "DATA_CONTRACT_NOT_MATURE" if is_governed_disabled else "MATURE_LABEL_CONTRACT_READY"
-    )
-    verdict = AVMVerdict.FAIL_CLOSED if is_governed_disabled else AVMVerdict.PASS
+    aligned_count = len(aligned_pairs)
+
+    # B1: Derive/reconcile counts fail-closed
+    if observed_count < aligned_count or eligible_count < aligned_count or eligible_count > (observed_count if observed_count > 0 else eligible_count):
+        raise AVMOutcomeValidationError(
+            f"Fail-closed: Reconciled count mismatch (observed={observed_count}, eligible={eligible_count}, aligned={aligned_count})"
+        )
+
+    empty_value_bands = {
+        band: ValueBandMetrics(
+            band_name=band,
+            aligned_count=0,
+            p10_p90_coverage_rate=0.0,
+            calibration_ratio=0.0,
+            mape=0.0,
+            mae=0.0,
+        )
+        for band in ("band_low_lt10m", "band_mid_10m_to_30m", "band_high_gt30m")
+    }
 
     if not aligned_pairs:
-        empty_value_bands = {
-            band: ValueBandMetrics(
-                band_name=band,
-                aligned_count=0,
-                p10_p90_coverage_rate=0.0,
-                calibration_ratio=0.0,
-                mape=0.0,
-                mae=0.0,
-            )
-            for band in ("band_low_lt10m", "band_mid_10m_to_30m", "band_high_gt30m")
-        }
         return AVMOutcomeCalibrationReport(
             model_version=model_version,
             observed_labeled_count=observed_count,
             eligible_mature_count=eligible_count,
             auto_seeded_count=auto_seeded_count,
             activation_threshold=ACTIVATION_THRESHOLD,
-            is_governed_disabled=is_governed_disabled,
-            reason_code=reason_code,
-            verdict=verdict,
+            is_governed_disabled=True,
+            reason_code="DATA_CONTRACT_NOT_MATURE",
+            verdict=AVMVerdict.FAIL_CLOSED,
             aligned_count=0,
             p10_p90_coverage_rate=0.0,
             p10_p50_coverage_rate=0.0,
@@ -396,11 +437,30 @@ def compute_avm_outcome_calibration(
             mae=round(bmae, 2),
         )
 
-    # Fail closed if someone attempts to forge an ACTIVE verdict when eligible_count < 120
-    if eligible_count < ACTIVATION_THRESHOLD and verdict == AVMVerdict.PASS:
-        raise AVMOutcomeValidationError(
-            "Fail-closed: Forged ACTIVE verdict when eligible outcome count < 120"
-        )
+    # B1: Evaluate full activation & calibration targets
+    count_sufficient = (
+        observed_count >= ACTIVATION_THRESHOLD
+        and eligible_count >= ACTIVATION_THRESHOLD
+        and n >= ACTIVATION_THRESHOLD
+    )
+    calibration_targets_met = (
+        cov_p10_p90 >= 0.80
+        and (0.95 <= med_ratio <= 1.05)
+        and mape <= 0.15
+    )
+
+    if not count_sufficient:
+        is_governed_disabled = True
+        reason_code = "DATA_CONTRACT_NOT_MATURE"
+        verdict = AVMVerdict.FAIL_CLOSED
+    elif not calibration_targets_met:
+        is_governed_disabled = True
+        reason_code = "CALIBRATION_TARGET_NOT_MET"
+        verdict = AVMVerdict.FAIL_CLOSED
+    else:
+        is_governed_disabled = False
+        reason_code = "MATURE_LABEL_CONTRACT_READY"
+        verdict = AVMVerdict.PASS
 
     return AVMOutcomeCalibrationReport(
         model_version=model_version,

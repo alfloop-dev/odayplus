@@ -9,6 +9,7 @@ from typing import Any
 from modules.avm.domain.outcome import (
     ACTIVATION_THRESHOLD,
     AVMOutcomeCalibrationReport,
+    AVMOutcomeValidationError,
     AVMVerdict,
 )
 
@@ -31,6 +32,35 @@ def generate_gate1_benchmark_receipt(
     model_artifact_hash: str,
 ) -> dict[str, Any]:
     """Generate canonical GATE1_BENCHMARK_RECEIPT.json for AVM outcome calibration."""
+    # B5: Receipt lineage binding check
+    if (
+        dataset_snapshot_id != report.dataset_snapshot_id
+        or dataset_snapshot_hash != report.dataset_snapshot_hash
+        or model_artifact_hash != report.model_artifact_hash
+    ):
+        raise AVMOutcomeValidationError(
+            f"Receipt lineage mismatch with report: "
+            f"expected ({report.dataset_snapshot_id!r}, {report.dataset_snapshot_hash!r}, {report.model_artifact_hash!r}), "
+            f"got ({dataset_snapshot_id!r}, {dataset_snapshot_hash!r}, {model_artifact_hash!r})"
+        )
+
+    # B5: Revalidate verdict invariants at receipt boundary
+    if report.verdict == AVMVerdict.PASS:
+        if (
+            report.is_governed_disabled
+            or report.reason_code != "MATURE_LABEL_CONTRACT_READY"
+            or report.observed_labeled_count < ACTIVATION_THRESHOLD
+            or report.eligible_mature_count < ACTIVATION_THRESHOLD
+            or report.aligned_count < ACTIVATION_THRESHOLD
+            or report.auto_seeded_count > 0
+            or report.p10_p90_coverage_rate < 0.80
+            or not (0.95 <= report.median_calibration_ratio <= 1.05)
+            or report.mape > 0.15
+        ):
+            raise AVMOutcomeValidationError(
+                "Fail-closed: Receipt boundary detected forged or invalid PASS verdict invariants"
+            )
+
     payload = {
         "kind": "avm-gate1-benchmark-receipt",
         "schema_version": 1,
@@ -73,6 +103,7 @@ def generate_gate1_benchmark_receipt(
         "signature_scheme": "sha256-json-canonical",
     }
     return payload
+
 
 
 def generate_benchmark_report_md(
