@@ -67,14 +67,11 @@ class HeatZoneResultStore:
     def get_measured_topk_adoption_rate(self) -> float | None:
         """Calculate measured top-K survey adoption rate from stored survey outcome records.
 
-        Returns float in [0.0, 1.0] if measured survey adoption lineage exists, or None if unmeasured.
+        Returns float in [0.0, 1.0] if authoritative measured survey adoption lineage exists, or None if unmeasured/NO-GO.
         """
-        if self._latest is None:
-            return None
-        adopted = getattr(self._latest, "adopted_topk_count", None)
-        total = getattr(self._latest, "total_topk_count", None)
-        if isinstance(adopted, (int, float)) and isinstance(total, (int, float)) and total > 0:
-            return max(0.0, min(1.0, float(adopted) / float(total)))
+        survey_repo = getattr(self, "_survey_outcome_repository", None)
+        if survey_repo is not None and hasattr(survey_repo, "get_measured_topk_adoption_rate"):
+            return survey_repo.get_measured_topk_adoption_rate()
         return None
 
 

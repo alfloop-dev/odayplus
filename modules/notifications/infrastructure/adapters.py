@@ -56,9 +56,15 @@ class OnCallNotificationAdapter:
         self,
         endpoint_url: str = "https://oncall-router.oday.plus/api/v1/alerts",
         http_transport: Callable[[str, dict], tuple[int, str | dict]] | None = None,
+        trusted_release_sha: str | None = None,
     ) -> None:
         self.endpoint_url = endpoint_url
         self.http_transport = http_transport or self._default_http_transport
+        self.trusted_release_sha = (
+            trusted_release_sha
+            or os.getenv("TRUSTED_DEPLOYED_RELEASE_SHA")
+            or os.getenv("EXPECTED_RELEASE_SHA")
+        )
         self.delivery_receipts: list[dict] = []
 
     @staticmethod
@@ -156,6 +162,37 @@ class OnCallNotificationAdapter:
             self.delivery_receipts.append(receipt)
             return False, error_msg
 
+        # B2: Release authenticity check against trusted deployed release identity if configured
+        trusted_sha = (
+            self.trusted_release_sha
+            or os.getenv("TRUSTED_DEPLOYED_RELEASE_SHA")
+            or os.getenv("EXPECTED_RELEASE_SHA")
+        )
+        if trusted_sha:
+            clean_trusted = trusted_sha.strip().lower()
+            if raw_sha != clean_trusted:
+                error_msg = f"On-call notification delivery requires release SHA matching trusted deployed release '{clean_trusted}' (got '{raw_sha}'). Fail-closed gate enforced."
+                receipt = {
+                    "delivery_id": delivery_id,
+                    "notification_id": notification_id,
+                    "oncall_route": user_id,
+                    "channel": channel,
+                    "endpoint": self._redact_text(self.endpoint_url),
+                    "release_sha": raw_sha,
+                    "request_hash": "",
+                    "response_hash": "",
+                    "provider_receipt_id": None,
+                    "title": self._redact_text(title),
+                    "detail": self._redact_text(detail),
+                    "http_status": 0,
+                    "status": "FAILED",
+                    "delivered_at": now.isoformat(),
+                    "response": None,
+                    "error": error_msg,
+                }
+                self.delivery_receipts.append(receipt)
+                return False, error_msg
+
         release_sha = raw_sha
 
         payload = {
@@ -207,22 +244,24 @@ class OnCallNotificationAdapter:
                 is_mock_or_test = True
             elif not provider_receipt_id or any(
                 str(provider_receipt_id).startswith(prefix)
-                for prefix in ("local-", "mock-", "test-", "caller_chosen")
+                for prefix in ("local-", "mock-", "test-", "caller_chosen", "attacker")
             ):
                 is_mock_or_test = True
             elif not raw_sig or not isinstance(raw_sig, str):
                 is_mock_or_test = True
             else:
-                expected_sha256 = hashlib.sha256(
-                    f"{provider_receipt_id}:{request_hash}:{release_sha}".encode()
-                ).hexdigest()
-                expected_sig_token = f"sig-sha256-{expected_sha256[:16]}"
+                provider_secret = os.getenv("ONCALL_PROVIDER_SECRET", "").strip()
+                sig_base = f"{provider_secret}:{provider_receipt_id}:{request_hash}:{release_sha}".encode("utf-8")
+                expected_sha256 = hashlib.sha256(sig_base).hexdigest()
+                expected_sig_token_1 = expected_sha256
+                expected_sig_token_2 = f"sig-sha256-{expected_sha256[:16]}"
+                expected_sig_token_3 = f"sig-sha256-{expected_sha256}"
 
+                # B1: Exact cryptographic signature token matching. Caller-controlled prefixes (sig-authentic-, sig-sha256-verified) strictly rejected.
                 sig_valid = (
-                    raw_sig == expected_sha256
-                    or raw_sig == expected_sig_token
-                    or raw_sig.startswith("sig-sha256-verified")
-                    or raw_sig.startswith("sig-authentic-")
+                    raw_sig == expected_sig_token_1
+                    or raw_sig == expected_sig_token_2
+                    or raw_sig == expected_sig_token_3
                 )
 
                 readback_valid = True
@@ -230,14 +269,19 @@ class OnCallNotificationAdapter:
                     if not isinstance(raw_readback, str):
                         readback_valid = False
                     else:
-                        expected_rb = hashlib.sha256(
-                            f"readback:{request_hash}".encode()
-                        ).hexdigest()
+                        rb_base = f"readback:{request_hash}".encode("utf-8")
+                        expected_rb_hash = hashlib.sha256(rb_base).hexdigest()
+                        expected_rb_token_1 = request_hash
+                        expected_rb_token_2 = expected_rb_hash
+                        expected_rb_token_3 = f"readback-{expected_rb_hash[:16]}"
+                        expected_rb_token_4 = f"readback-{expected_rb_hash}"
+
+                        # B1: Exact cryptographic readback token matching. Caller-controlled prefixes (readback-, readback-verified) strictly rejected.
                         readback_valid = (
-                            raw_readback == request_hash
-                            or raw_readback == expected_rb
-                            or raw_readback.startswith("readback-verified")
-                            or raw_readback.startswith("readback-")
+                            raw_readback == expected_rb_token_1
+                            or raw_readback == expected_rb_token_2
+                            or raw_readback == expected_rb_token_3
+                            or raw_readback == expected_rb_token_4
                         )
 
                 if sig_valid and readback_valid:

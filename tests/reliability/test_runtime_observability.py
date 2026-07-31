@@ -2469,6 +2469,9 @@ def test_round8_metric_contract_bounds_enforced() -> None:
 
 
 def test_round8_oncall_adapter_authenticity_and_sha_enforced(monkeypatch: Any) -> None:
+    import hashlib
+    import json
+
     from modules.notifications.infrastructure.adapters import OnCallNotificationAdapter
 
     # 1. Blank or non-40-char or 000...000 release_sha must fail closed
@@ -2485,31 +2488,39 @@ def test_round8_oncall_adapter_authenticity_and_sha_enforced(monkeypatch: Any) -
     assert err_zero is not None and "unauthenticated release" in err_zero
     assert adapter1.delivery_receipts[-1]["status"] == "FAILED"
 
-    # 2. Caller-chosen, mock, or boolean provider_signature/readback must stay TEST_ONLY
+    # 2. Arbitrary caller-controlled signature strings (sig-authentic-*, sig-sha256-verified-*) stay TEST_ONLY
     valid_sha = "a" * 40
     monkeypatch.setenv("RELEASE_SHA", valid_sha)
 
-    def mock_transport_caller_chosen(url: str, payload: dict):
+    def mock_transport_attacker_sig(url: str, payload: dict):
         return 200, {
-            "provider_receipt_id": "caller_chosen_id_123",
-            "provider_signature": True,  # caller-controlled boolean rejected
+            "provider_receipt_id": "prov-rcpt-authentic-999",
+            "provider_signature": "sig-authentic-attacker-controlled",
+            "provider_readback": "readback-attacker-controlled",
             "status": "success",
         }
 
     adapter2 = OnCallNotificationAdapter(
         endpoint_url="https://oncall-router.oday.plus/api/v1/alerts",
-        http_transport=mock_transport_caller_chosen,
+        http_transport=mock_transport_attacker_sig,
     )
     ok2, err2 = adapter2.send("n2", "webhook", "ops-lead", "Title", "Detail")
     assert ok2 is True
+    # B1: Caller-controlled string prefixes stay TEST_ONLY and do NOT become DELIVERED
     assert adapter2.delivery_receipts[-1]["status"] == "TEST_ONLY"
 
-    # 3. Authentic provider response with non-boolean string signature & readback returns DELIVERED
+    # 3. Authentic provider response with exact cryptographic signature token returns DELIVERED
     def mock_transport_authentic(url: str, payload: dict):
+        req_bytes = json.dumps(payload, sort_keys=True).encode()
+        req_hash = hashlib.sha256(req_bytes).hexdigest()
+        prov_rcpt = "prov-rcpt-authentic-999"
+        sig_base = f":{prov_rcpt}:{req_hash}:{valid_sha}".encode()
+        exp_sig = hashlib.sha256(sig_base).hexdigest()
+
         return 200, {
-            "provider_receipt_id": "prov-rcpt-authentic-999",
-            "provider_signature": "sig-sha256-verified-123456",
-            "provider_readback": "readback-verified-654321",
+            "provider_receipt_id": prov_rcpt,
+            "provider_signature": f"sig-sha256-{exp_sig[:16]}",
+            "provider_readback": req_hash,
             "status": "delivered",
         }
 
@@ -2523,17 +2534,101 @@ def test_round8_oncall_adapter_authenticity_and_sha_enforced(monkeypatch: Any) -
     assert adapter3.delivery_receipts[-1]["status"] == "DELIVERED"
 
 
-def test_round9_remediation_findings_b1_b4_verified(monkeypatch: Any) -> None:
+def test_round10_remediation_findings_b1_b4_verified(monkeypatch: Any, tmp_path: Path) -> None:
+    import json
+    from datetime import timedelta
+
     from modules.notifications.infrastructure.adapters import OnCallNotificationAdapter
+    from shared.observability.watch_window import (
+        record_deployment_watch_window_status,
+        verify_watch_window_receipt,
+    )
 
-    # B1 & B2: Injected responses with boolean provider_signature or 000...000 release SHA fail closed / stay TEST_ONLY
-    monkeypatch.setenv("RELEASE_SHA", "0" * 40)
-    adapter = OnCallNotificationAdapter(endpoint_url="https://oncall-router.oday.plus/api/v1/alerts")
-    ok, err = adapter.send("n_b1", "webhook", "ops-lead", "Title", "Detail")
-    assert ok is False
-    assert adapter.delivery_receipts[-1]["status"] == "FAILED"
+    valid_sha = "a" * 40
+    monkeypatch.setenv("RELEASE_SHA", valid_sha)
 
-    # B4: HeatZone unmeasured adoption returns None instead of fake 1.0/0.5
+    # B1 Mutation: Attacker caller strings sig-authentic- / readback- do NOT become DELIVERED
+    def attacker_transport(url: str, payload: dict):
+        return 200, {
+            "provider_receipt_id": "attacker-selected-receipt",
+            "provider_signature": "sig-authentic-attacker-controlled",
+            "provider_readback": "readback-attacker-controlled",
+            "status": "success",
+        }
+
+    adapter_b1 = OnCallNotificationAdapter(
+        endpoint_url="https://oncall-router.oday.plus/api/v1/alerts",
+        http_transport=attacker_transport,
+    )
+    ok_b1, err_b1 = adapter_b1.send("n_b1", "webhook", "ops-lead", "P1 Alert", "Detail")
+    assert ok_b1 is True
+    assert adapter_b1.delivery_receipts[-1]["status"] == "TEST_ONLY"
+
+    # B2 Mutation: Untrusted release SHA (11111...) fails closed when TRUSTED_DEPLOYED_RELEASE_SHA is configured
+    monkeypatch.setenv("RELEASE_SHA", "1" * 40)
+    monkeypatch.setenv("TRUSTED_DEPLOYED_RELEASE_SHA", valid_sha)
+    adapter_b2 = OnCallNotificationAdapter(
+        endpoint_url="https://oncall-router.oday.plus/api/v1/alerts",
+        http_transport=attacker_transport,
+    )
+    ok_b2, err_b2 = adapter_b2.send("n_b2", "webhook", "ops-lead", "P1 Alert", "Detail")
+    assert ok_b2 is False
+    assert adapter_b2.delivery_receipts[-1]["status"] == "FAILED"
+    assert err_b2 is not None and "matching trusted deployed release" in err_b2
+
+    monkeypatch.setenv("RELEASE_SHA", valid_sha)
+    monkeypatch.delenv("TRUSTED_DEPLOYED_RELEASE_SHA", raising=False)
+
+    # B3 Mutation: Watch receipt provider signature tamper is rejected by verifier
+    receipt_file = tmp_path / "watch_window_receipt.json"
+    start_dt = datetime.now(UTC) - timedelta(minutes=20)
+    end_dt = datetime.now(UTC)
+
+    def valid_watch_transport(method: str, url: str, params: dict = None, payload: dict = None) -> tuple[int, dict]:
+        return 200, {
+            "gcp_project": "alfaloop-data-project",
+            "release_sha": valid_sha,
+            "timeSeries": [
+                {
+                    "metric": {"type": "custom.googleapis.com/api_error_count", "labels": {"release_sha": valid_sha}},
+                    "resource": {"type": "global", "labels": {"project_id": "alfaloop-data-project"}},
+                    "points": [
+                        {"interval": {"endTime": start_dt.isoformat()}, "value": {"doubleValue": 0.0}},
+                        {"interval": {"endTime": end_dt.isoformat()}, "value": {"doubleValue": 0.0}},
+                    ],
+                },
+                {
+                    "metric": {"type": "custom.googleapis.com/api_latency_ms", "labels": {"release_sha": valid_sha}},
+                    "resource": {"type": "global", "labels": {"project_id": "alfaloop-data-project"}},
+                    "points": [
+                        {"interval": {"endTime": start_dt.isoformat()}, "value": {"doubleValue": 10.0}},
+                        {"interval": {"endTime": end_dt.isoformat()}, "value": {"doubleValue": 12.0}},
+                    ],
+                },
+            ],
+        }
+
+    record_deployment_watch_window_status(
+        release_sha=valid_sha,
+        status=1,
+        start_time=start_dt,
+        end_time=end_dt,
+        receipt_path=receipt_file,
+        gcp_project="alfaloop-data-project",
+        provider_route="https://monitoring.googleapis.com/v3",
+        query_transport=valid_watch_transport,
+    )
+    assert verify_watch_window_receipt(expected_release_sha=valid_sha, receipt_path=receipt_file)["status"] == "WATCH_PASSED"
+
+    # Tamper provider signature in stored receipt
+    raw_rcpt = json.loads(receipt_file.read_text(encoding="utf-8"))
+    raw_rcpt["monitoring_query_execution"]["provider_signature"] = "tampered-provider-sig-123"
+    receipt_file.write_text(json.dumps(raw_rcpt, indent=2), encoding="utf-8")
+
+    with pytest.raises(ValueError, match="Provider signature mismatch|integrity check failed"):
+        verify_watch_window_receipt(expected_release_sha=valid_sha, receipt_path=receipt_file)
+
+    # B4 Mutation: HeatZone unmeasured adoption returns None (NO-GO)
     from modules.heatzone.infrastructure import HeatZoneResultStore
     hz_store = HeatZoneResultStore()
     assert hz_store.get_measured_topk_adoption_rate() is None

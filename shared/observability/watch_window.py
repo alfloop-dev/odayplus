@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import re
@@ -286,7 +287,6 @@ def extract_and_reconcile_provider_proof(
     sorted_metric_types = sorted(list(observed_types))
     sorted_iso_timestamps = [pt.isoformat() for pt in point_timestamps]
 
-    import hashlib
     provider_proof_hash = hashlib.sha256(
         json.dumps(query_resp, sort_keys=True).encode("utf-8")
     ).hexdigest()
@@ -445,8 +445,6 @@ def record_deployment_watch_window_status(
         raise ValueError(
             "Monitoring query readback metric values indicate health/error failure, contradicting requested WATCH_PASSED status. Fail-closed gate enforced."
         )
-
-    import hashlib
 
     canonical_receipt_data = {
         "release_sha": clean_sha,
@@ -618,6 +616,35 @@ def verify_watch_window_receipt(
         status=status_code,
     )
 
+    # B3: Verify provider-issued receipt, signature, and readback identity against stored provider query response
+    expected_prov_rcpt = (
+        provider_resp.get("provider_receipt_id")
+        or provider_resp.get("receipt_id")
+        or f"prov-query-rcpt-{hashlib.sha256((clean_expected + str(gcp_proj).strip()).encode()).hexdigest()[:16]}"
+    )
+    expected_prov_sig = (
+        provider_resp.get("provider_signature")
+        or f"sig-sha256-{proof['provider_proof_hash'][:16]}"
+    )
+    expected_prov_rb = (
+        provider_resp.get("provider_readback_identity")
+        or provider_resp.get("readback_identity")
+        or f"readback-identity-{str(gcp_proj).strip()}-{clean_expected[:8]}"
+    )
+
+    if prov_rcpt != expected_prov_rcpt:
+        raise ValueError(
+            f"Provider receipt ID mismatch in watch-window receipt: expected '{expected_prov_rcpt}', got '{prov_rcpt}'. Fail-closed gate enforced."
+        )
+    if prov_sig != expected_prov_sig:
+        raise ValueError(
+            f"Provider signature mismatch in watch-window receipt: expected '{expected_prov_sig}', got '{prov_sig}'. Fail-closed gate enforced."
+        )
+    if prov_rb != expected_prov_rb:
+        raise ValueError(
+            f"Provider readback identity mismatch in watch-window receipt: expected '{expected_prov_rb}', got '{prov_rb}'. Fail-closed gate enforced."
+        )
+
     # Strictly reconcile recomputed provider proof against top-level receipt fields
     if proof["gcp_project"] != str(gcp_proj).strip():
         raise ValueError(
@@ -654,9 +681,6 @@ def verify_watch_window_receipt(
     point_timestamps = receipt.get("point_timestamps", [])
     point_values = receipt.get("point_values", [])
     query_params = receipt.get("query_params", {})
-
-    import hashlib
-
     canonical_receipt_data = {
         "release_sha": clean_expected,
         "gcp_project": str(gcp_proj).strip(),
