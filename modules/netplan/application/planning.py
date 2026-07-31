@@ -190,6 +190,7 @@ class NetPlanService:
         scenario = self._require_scenario(scenario_id)
         now = decided_at or datetime.now(UTC)
         authority_receipt = None
+        authority_verification = None
         verification_violations: tuple[str, ...] = ()
         if normalized == "approved":
             if self.approval_verifier is None:
@@ -241,8 +242,14 @@ class NetPlanService:
                     solver_problem_hash=problem_hash,
                 ),
             )
-            if not verification.verified or verification.receipt is None:
-                detail = ",".join(verification.violations)
+            if (
+                verification.receipt is None
+                or not verification.authority_attests_receipt(verification.receipt)
+            ):
+                detail = ",".join(
+                    verification.violations
+                    or ("authority_verification_attestation_missing",)
+                )
                 raise NetPlanApprovalError(
                     f"authoritative management approval readback failed: {detail}"
                 )
@@ -251,6 +258,7 @@ class NetPlanService:
                     "audit actor does not match the verified approval principal"
                 )
             authority_receipt = verification.receipt
+            authority_verification = verification
             verification_violations = verification.violations
         approval = self.repository.save_approval(
             ApprovalRecord(
@@ -262,6 +270,7 @@ class NetPlanService:
                 decided_at=now,
                 policy_version=scenario.constraints.policy_version,
                 authority_receipt=authority_receipt,
+                authority_verification=authority_verification,
                 verification_violations=verification_violations,
             )
         )

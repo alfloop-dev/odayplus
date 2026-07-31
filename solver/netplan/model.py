@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import hashlib
+import hmac
 import json
+import secrets
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
@@ -209,10 +211,81 @@ class ManagementApprovalExpectation:
 
 
 @dataclass(frozen=True)
+class _AuthorityVerificationAttestation:
+    """Opaque proof that the configured verifier performed authority readback."""
+
+    attestation_id: str
+    receipt_hash: str
+    expectation_hash: str
+    authority_identity_hash: str
+    verified_at: str
+    seal: str
+
+
+_AUTHORITY_ATTESTATION_KEY = secrets.token_bytes(32)
+
+
+@dataclass(frozen=True)
 class ManagementApprovalVerification:
     verified: bool
     receipt: ManagementApprovalReceipt | None
     violations: tuple[str, ...]
+    _authority_attestation: _AuthorityVerificationAttestation | None = field(
+        default=None,
+        init=False,
+        repr=False,
+        compare=False,
+    )
+
+    @classmethod
+    def _authority_verified(
+        cls,
+        *,
+        receipt: ManagementApprovalReceipt,
+        expectation: ManagementApprovalExpectation,
+        source_system: str,
+        principal_id: str,
+        principal_role: str,
+        verified_at: datetime,
+    ) -> ManagementApprovalVerification:
+        verification = cls(verified=True, receipt=receipt, violations=())
+        attestation = _issue_authority_attestation(
+            receipt=receipt,
+            expectation=expectation,
+            source_system=source_system,
+            principal_id=principal_id,
+            principal_role=principal_role,
+            verified_at=verified_at,
+        )
+        object.__setattr__(verification, "_authority_attestation", attestation)
+        return verification
+
+    @property
+    def authority_attestation_id(self) -> str | None:
+        attestation = self._authority_attestation
+        return attestation.attestation_id if attestation is not None else None
+
+    @property
+    def authority_binding_hash(self) -> str | None:
+        attestation = self._authority_attestation
+        if attestation is None:
+            return None
+        return canonical_sha256(_attestation_public_payload(attestation))
+
+    @property
+    def authority_verified_at(self) -> str | None:
+        attestation = self._authority_attestation
+        return attestation.verified_at if attestation is not None else None
+
+    def authority_attests_receipt(self, receipt: ManagementApprovalReceipt) -> bool:
+        attestation = self._authority_attestation
+        return (
+            self.verified
+            and self.receipt == receipt
+            and not self.violations
+            and attestation is not None
+            and _authority_attestation_is_valid(attestation, receipt)
+        )
 
 
 class ManagementApprovalReceiptVerifier(Protocol):
@@ -323,10 +396,19 @@ class FixedManagementApprovalReceiptVerifier:
             ),
         }
         violations.extend(reason for reason, matches in exact_matches.items() if not matches)
-        return ManagementApprovalVerification(
-            verified=not violations,
+        if violations:
+            return ManagementApprovalVerification(
+                verified=False,
+                receipt=receipt,
+                violations=tuple(violations),
+            )
+        return ManagementApprovalVerification._authority_verified(
             receipt=receipt,
-            violations=tuple(violations),
+            expectation=expectation,
+            source_system=self._source_system,
+            principal_id=self._principal_id,
+            principal_role=self._principal_role,
+            verified_at=evaluation_time,
         )
 
 
@@ -412,6 +494,88 @@ def _action_count_mapping(data: Mapping[str, Any]) -> dict[NetworkAction, int]:
 def canonical_sha256(payload: Mapping[str, Any]) -> str:
     raw = json.dumps(payload, sort_keys=True, separators=(",", ":"), allow_nan=False)
     return hashlib.sha256(raw.encode("utf-8")).hexdigest()
+
+
+def _expectation_hash(expectation: ManagementApprovalExpectation) -> str:
+    return canonical_sha256(
+        {
+            "receipt_id": expectation.receipt_id,
+            "scenario_id": expectation.scenario_id,
+            "baseline_id": expectation.baseline_id,
+            "baseline_name": expectation.baseline_name,
+            "scope": expectation.scope,
+            "release_id": expectation.release_id,
+            "policy_version": expectation.policy_version,
+            "actions_by_entity": {
+                entity_id: action.value
+                for entity_id, action in sorted(expectation.actions_by_entity.items())
+            },
+            "source_snapshot_ids": sorted(expectation.source_snapshot_ids),
+            "baseline_content_hash": expectation.baseline_content_hash,
+            "solver_problem_hash": expectation.solver_problem_hash,
+        }
+    )
+
+
+def _attestation_public_payload(
+    attestation: _AuthorityVerificationAttestation,
+) -> dict[str, str]:
+    return {
+        "attestation_id": attestation.attestation_id,
+        "receipt_hash": attestation.receipt_hash,
+        "expectation_hash": attestation.expectation_hash,
+        "authority_identity_hash": attestation.authority_identity_hash,
+        "verified_at": attestation.verified_at,
+    }
+
+
+def _issue_authority_attestation(
+    *,
+    receipt: ManagementApprovalReceipt,
+    expectation: ManagementApprovalExpectation,
+    source_system: str,
+    principal_id: str,
+    principal_role: str,
+    verified_at: datetime,
+) -> _AuthorityVerificationAttestation:
+    unsigned = _AuthorityVerificationAttestation(
+        attestation_id=f"netplan-authority-attestation-{secrets.token_hex(16)}",
+        receipt_hash=receipt.receipt_hash,
+        expectation_hash=_expectation_hash(expectation),
+        authority_identity_hash=canonical_sha256(
+            {
+                "source_system": source_system,
+                "principal_id": principal_id,
+                "principal_role": principal_role,
+            }
+        ),
+        verified_at=verified_at.astimezone(UTC).isoformat(),
+        seal="",
+    )
+    payload = canonical_sha256(_attestation_public_payload(unsigned)).encode()
+    seal = hmac.new(_AUTHORITY_ATTESTATION_KEY, payload, hashlib.sha256).hexdigest()
+    return _AuthorityVerificationAttestation(
+        **{**_attestation_public_payload(unsigned), "seal": seal}
+    )
+
+
+def _authority_attestation_is_valid(
+    attestation: _AuthorityVerificationAttestation,
+    receipt: ManagementApprovalReceipt,
+) -> bool:
+    if (
+        not attestation.attestation_id
+        or attestation.receipt_hash != receipt.receipt_hash
+        or receipt.receipt_hash != receipt.compute_receipt_hash()
+    ):
+        return False
+    payload = canonical_sha256(_attestation_public_payload(attestation)).encode()
+    expected_seal = hmac.new(
+        _AUTHORITY_ATTESTATION_KEY,
+        payload,
+        hashlib.sha256,
+    ).hexdigest()
+    return hmac.compare_digest(attestation.seal, expected_seal)
 
 
 def strict_utc_datetime(value: str) -> datetime | None:

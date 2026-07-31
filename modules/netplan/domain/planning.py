@@ -17,6 +17,7 @@ from solver.netplan import (
     SOLVER_VERSION,
     ActionOption,
     ManagementApprovalReceipt,
+    ManagementApprovalVerification,
     NetPlanConstraints,
     NetworkAction,
     NetworkPlanSolveResult,
@@ -261,6 +262,7 @@ class ApprovalRecord:
     decided_at: datetime
     policy_version: str
     authority_receipt: ManagementApprovalReceipt | None = None
+    authority_verification: ManagementApprovalVerification | None = None
     verification_violations: tuple[str, ...] = ()
 
     @property
@@ -272,9 +274,14 @@ class ApprovalRecord:
         return (
             self.is_approved
             and self.authority_receipt is not None
+            and self.authority_verification is not None
             and not self.verification_violations
-            and self.authority_receipt.receipt_hash
-            == self.authority_receipt.compute_receipt_hash()
+            and self.scenario_id == self.authority_receipt.scenario_id
+            and self.actor_id == self.authority_receipt.principal_id
+            and self.policy_version == self.authority_receipt.policy_version
+            and self.authority_verification.authority_attests_receipt(
+                self.authority_receipt
+            )
         )
 
     def to_dict(self) -> dict[str, Any]:
@@ -305,6 +312,21 @@ class ApprovalRecord:
             ),
             "approval_receipt_hash": (
                 self.authority_receipt.receipt_hash if self.authority_receipt else None
+            ),
+            "authority_attestation_id": (
+                self.authority_verification.authority_attestation_id
+                if self.authority_verification
+                else None
+            ),
+            "authority_binding_hash": (
+                self.authority_verification.authority_binding_hash
+                if self.authority_verification
+                else None
+            ),
+            "authority_verified_at": (
+                self.authority_verification.authority_verified_at
+                if self.authority_verification
+                else None
             ),
             "verification_violations": list(self.verification_violations),
             "authentic_approval_verified": self.authentic_approval_verified,

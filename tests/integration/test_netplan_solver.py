@@ -14,16 +14,23 @@ from dataclasses import replace
 from datetime import UTC, datetime
 
 import pytest
+from fastapi.testclient import TestClient
 
+from apps.api.oday_api.main import create_app
 from modules.netplan import (
     BUSINESS_UAT_UNVERIFIED,
+    BUSINESS_UAT_VERIFIED,
     GOVERNED_DISABLED,
+    GOVERNED_ENABLED,
+    ApprovalRecord,
     CandidateSiteInput,
     ExistingStoreInput,
     FixedManagementApprovalReceiptVerifier,
     InMemoryNetPlanRepository,
     InvalidNetPlanTransitionError,
+    ManagementApprovalExpectation,
     ManagementApprovalReceipt,
+    ManagementApprovalVerification,
     ManagementBaselineInput,
     NetPlanApprovalError,
     NetPlanScenarioStatus,
@@ -34,6 +41,7 @@ from modules.netplan import (
     compute_solver_problem_hash,
     run_netplan_solver_batch,
 )
+from shared.auth import Role
 from solver.netplan import (
     NETPLAN_POLICY_VERSION,
     STATUS_FEASIBLE,
@@ -45,6 +53,7 @@ from solver.netplan import (
     NetworkPlanSolveResult,
     solve_network_plan,
 )
+from tests.integration._authz import auth_headers
 
 MOMENT = datetime(2026, 6, 28, 9, 0, tzinfo=UTC)
 APPROVAL_SOURCE = "management-approval-system"
@@ -318,6 +327,12 @@ def test_service_lifecycle_tracks_approval_execution_and_outcome() -> None:
     assert approval.is_approved is True
     assert approval.authentic_approval_verified is True
     assert approval.policy_version == NETPLAN_POLICY_VERSION
+    approval_payload = approval.to_dict()
+    assert approval_payload["authority_attestation_id"]
+    assert approval_payload["authority_binding_hash"]
+    assert approval_payload["authority_verified_at"]
+    assert approval_payload["business_uat_status"] == BUSINESS_UAT_VERIFIED
+    assert approval_payload["governance_status"] == GOVERNED_ENABLED
 
     execution = service.execute(scenario.scenario_id, executed_by="ops-runner", executed_at=MOMENT)
     assert len(execution.actions) == len(solve.result.selected_actions)
@@ -604,6 +619,169 @@ def test_actor_string_cannot_approve_without_authoritative_readback() -> None:
             approval_receipt_id="ANY",
         )
     assert "verifier is not configured" in str(exc_info.value)
+
+
+def test_self_consistent_caller_receipt_cannot_self_attest_public_approval() -> None:
+    options = build_scenario_options(existing_stores=_stores(), candidate_sites=_sites())
+    constraints = _constraints()
+    baseline = _management_baseline()
+    caller_receipt = replace(
+        _approval_receipt(baseline, options, constraints),
+        source_system="caller-source",
+        principal_id="caller-principal",
+        principal_role="caller-role",
+        receipt_hash="",
+    )
+    caller_receipt = replace(
+        caller_receipt,
+        receipt_hash=caller_receipt.compute_receipt_hash(),
+    )
+    caller_verification = ManagementApprovalVerification(
+        verified=True,
+        receipt=caller_receipt,
+        violations=(),
+    )
+    approval = ApprovalRecord(
+        approval_id="caller-approval",
+        scenario_id=baseline.scenario_id,
+        actor_id=caller_receipt.principal_id,
+        decision="approved",
+        reason="caller asserts its own authority",
+        decided_at=MOMENT,
+        policy_version=constraints.policy_version,
+        authority_receipt=caller_receipt,
+        authority_verification=caller_verification,
+        verification_violations=(),
+    )
+
+    assert caller_receipt.receipt_hash == caller_receipt.compute_receipt_hash()
+    assert approval.authentic_approval_verified is False
+    assert approval.to_dict()["business_uat_status"] == BUSINESS_UAT_UNVERIFIED
+    assert approval.to_dict()["governance_status"] == GOVERNED_DISABLED
+
+
+def test_repository_and_api_serialize_forged_public_approval_as_disabled() -> None:
+    options = build_scenario_options(existing_stores=_stores(), candidate_sites=_sites())
+    constraints = _constraints()
+    baseline = _management_baseline(
+        baseline_id="netplan-forged-public-001",
+        baseline_name="forged public approval boundary",
+        scenario_id="netplan-forged-public-001",
+    )
+    caller_receipt = replace(
+        _approval_receipt(baseline, options, constraints),
+        source_system="caller-source",
+        principal_id="caller-principal",
+        principal_role="caller-role",
+        receipt_hash="",
+    )
+    caller_receipt = replace(
+        caller_receipt,
+        receipt_hash=caller_receipt.compute_receipt_hash(),
+    )
+    repository = InMemoryNetPlanRepository()
+    service = NetPlanService(repository=repository)
+    scenario = service.create_scenario(
+        tenant_id="tenant-1",
+        scenario_name=baseline.baseline_name,
+        planning_horizon="2026Q3",
+        existing_stores=_stores(),
+        candidate_sites=_sites(),
+        constraints=constraints,
+        scenario_id=baseline.scenario_id,
+        correlation_id="corr-forged-public",
+        created_at=MOMENT,
+    )
+    repository.save_approval(
+        ApprovalRecord(
+            approval_id="caller-repository-approval",
+            scenario_id=scenario.scenario_id,
+            actor_id=caller_receipt.principal_id,
+            decision="approved",
+            reason="direct repository mutation",
+            decided_at=MOMENT,
+            policy_version=constraints.policy_version,
+            authority_receipt=caller_receipt,
+            verification_violations=(),
+        )
+    )
+
+    persisted = repository.list_approvals(scenario.scenario_id)[0].to_dict()
+    assert persisted["authentic_approval_verified"] is False
+    assert persisted["business_uat_status"] == BUSINESS_UAT_UNVERIFIED
+    assert persisted["governance_status"] == GOVERNED_DISABLED
+
+    client = TestClient(
+        create_app(netplan_repository=repository),
+        headers=auth_headers(Role.EXECUTIVE),
+    )
+    detail = client.get(f"/api/v1/netplan/scenarios/{scenario.scenario_id}")
+    assert detail.status_code == 200
+    public_approval = detail.json()["approvals"][0]
+    assert public_approval["authentic_approval_verified"] is False
+    assert public_approval["business_uat_status"] == BUSINESS_UAT_UNVERIFIED
+    assert public_approval["governance_status"] == GOVERNED_DISABLED
+
+    mutation = client.post(
+        f"/api/v1/netplan/scenarios/{scenario.scenario_id}/decide",
+        json={
+            "actor_id": "caller-principal",
+            "reason": "caller tries to inject an approval receipt",
+            "decision": "approved",
+            "approval_receipt_id": caller_receipt.receipt_id,
+            "source_system": caller_receipt.source_system,
+            "principal_role": caller_receipt.principal_role,
+            "receipt_hash": caller_receipt.receipt_hash,
+        },
+    )
+    assert mutation.status_code == 422
+    assert len(repository.list_approvals(scenario.scenario_id)) == 1
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("scenario_id", "caller-scenario"),
+        ("actor_id", "caller-principal"),
+        ("policy_version", "caller-policy"),
+    ],
+)
+def test_authority_attestation_cannot_be_replayed_across_approval_record_fields(
+    field: str,
+    value: str,
+) -> None:
+    options = build_scenario_options(existing_stores=_stores(), candidate_sites=_sites())
+    constraints = _constraints()
+    baseline = _management_baseline()
+    authority_receipt = _approval_receipt(baseline, options, constraints)
+    expectation = ManagementApprovalExpectation(
+        receipt_id=baseline.approval_receipt_id,
+        scenario_id=baseline.scenario_id,
+        baseline_id=baseline.baseline_id,
+        baseline_name=baseline.baseline_name,
+        scope=baseline.scope,
+        release_id=baseline.release_id,
+        policy_version=constraints.policy_version,
+        actions_by_entity=baseline.actions_by_entity,
+        source_snapshot_ids=baseline.source_snapshot_ids,
+        baseline_content_hash=baseline.compute_canonical_hash(constraints=constraints),
+        solver_problem_hash=compute_solver_problem_hash(options, constraints, 100_000.0),
+    )
+    verification = _approval_verifier(authority_receipt).verify(expectation)
+    approval = ApprovalRecord(
+        approval_id="authority-replay",
+        scenario_id=authority_receipt.scenario_id,
+        actor_id=authority_receipt.principal_id,
+        decision="approved",
+        reason="valid authority verification before record mutation",
+        decided_at=MOMENT,
+        policy_version=authority_receipt.policy_version,
+        authority_receipt=authority_receipt,
+        authority_verification=verification,
+    )
+
+    assert approval.authentic_approval_verified is True
+    assert replace(approval, **{field: value}).authentic_approval_verified is False
 
 
 @pytest.mark.parametrize(

@@ -126,6 +126,7 @@ else:
         avm_repository: Any = None,
         forecastops_repository: Any = None,
         netplan_repository: Any = None,
+        netplan_approval_verifier: Any = None,
         learninghub_repository: Any = None,
         artifact_store: Any = None,
         priceops_repository: Any = None,
@@ -1038,6 +1039,7 @@ else:
                 repository=netplan_repo,
                 audit_log=audit_log,
                 production_executor=netplan_production_executor,
+                approval_verifier=netplan_approval_verifier,
                 runtime_mode=domain_runtime_mode,
             ),
         )

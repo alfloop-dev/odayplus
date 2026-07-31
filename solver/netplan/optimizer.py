@@ -925,14 +925,18 @@ def compare_solver_against_management_baseline(
         ),
     )
     approval_receipt_hash = verification.receipt.receipt_hash if verification.receipt else ""
-    if not verification.verified:
+    if (
+        verification.receipt is None
+        or not verification.authority_attests_receipt(verification.receipt)
+    ):
         return receipt(
             baseline_feasible=False,
             baseline_objective_value=None,
             solver_objective_value=solve_result.objective_value,
             objective_gain_over_baseline=None,
             superior_or_equal=False,
-            violations=verification.violations,
+            violations=verification.violations
+            or ("authority_verification_attestation_missing",),
             approval_receipt_hash=approval_receipt_hash,
         )
 
