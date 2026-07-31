@@ -483,7 +483,8 @@ def test_sitescore_opening_outcome_handback_contains_backfill_metadata(tmp_path)
     outcome_contract = handback["outcome_backfill_contract"]
     assert outcome_contract["owner"] == "Human/Ops"
     assert outcome_contract["task_id"] == "ODP-PLAN-SITESCORE-OUTCOME-BACKFILL-001"
-    assert outcome_contract["required_fields"] == ["realized_180d_net_revenue", "realized_365d_net_revenue"]
+    assert "realized_180d_net_revenue" in outcome_contract["required_fields"]
+    assert "realized_365d_net_revenue" in outcome_contract["required_fields"]
 
     pred_contract = handback["prediction_source_contract"]
     assert pred_contract["task_id"] == "ODP-PLAN-SITESCORE-PREDICTION-SOURCE-001"
@@ -666,15 +667,134 @@ def test_sitescore_handback_payload_contains_complete_human_ops_contract_b5():
 
     assert contract["owner"] == "Human/Ops"
     assert contract["task_id"] == "ODP-PLAN-SITESCORE-OUTCOME-BACKFILL-001"
-    assert contract["source_identity"] == "model_ready.candidate_site_view"
-    assert contract["query_id"] == "sitescore_opening_outcome_inventory_query_v1"
+    assert contract["discovery_source_identity"] == "model_ready.candidate_site_view"
+    assert contract["source_identity"] == "authoritative_opening_outcome_m6_m12_store_ledger"
+    assert contract["query_id"] == "sitescore_authoritative_m6_m12_outcome_query_v1"
     assert contract["dataset_snapshot_hash"] == "UNVERIFIED"
     assert contract["lineage_id"] == "UNVERIFIED"
-    assert contract["freshness_timestamp"] is not None
+    assert contract["freshness_timestamp"] == "UNVERIFIED"
     assert "is_training_eligible" in contract["eligibility_definition"]
     assert "realized_90d_net_revenue" in contract["maturity_definition"]
+    assert "realized_180d_net_revenue" in contract["m6_maturity_definition"]
+    assert "realized_365d_net_revenue" in contract["m12_maturity_definition"]
     assert contract["observed_count"] == 0
     assert contract["eligible_count"] == 0
     assert contract["mature_count"] == 0
     assert contract["matched_prediction_count"] == 0
-    assert contract["required_fields"] == ["realized_180d_net_revenue", "realized_365d_net_revenue"]
+    assert "realized_180d_net_revenue" in contract["required_fields"]
+    assert "realized_365d_net_revenue" in contract["required_fields"]
+
+
+def test_sitescore_gate2_receipt_verifier_rejects_self_consistent_count_and_ratio_drift_b1():
+    # B1 regression test (Codex6 Addendum): Verifier fails closed on duplicated count/ratio drift and malformed typed metrics
+    from models.sitescore.opening_outcome import verify_sitescore_gate2_receipt
+
+    result = run_benchmark_from_inventory(db_url=None, records=None)
+    receipt = build_sitescore_gate2_receipt(result)
+
+    # 1. handback.observed_count drift
+    drift_1 = json.loads(json.dumps(receipt))
+    drift_1["handback"]["observed_count"] = 999
+    drift_1["integrity"]["content_sha256"] = compute_gate2_receipt_sha256(drift_1)
+    res_1 = verify_sitescore_gate2_receipt(drift_1)
+    assert res_1.is_valid is False
+    assert res_1.reason_code == "FORGED_ACTIVE_OR_MALFORMED_RECEIPT"
+    assert any("handback.observed_count" in e for e in res_1.errors)
+
+    # 2. benchmark_summary.handback_payload.mature_label_count drift
+    drift_2 = json.loads(json.dumps(receipt))
+    drift_2["benchmark_summary"]["handback_payload"]["mature_label_count"] = 999
+    drift_2["integrity"]["content_sha256"] = compute_gate2_receipt_sha256(drift_2)
+    res_2 = verify_sitescore_gate2_receipt(drift_2)
+    assert res_2.is_valid is False
+    assert res_2.reason_code == "FORGED_ACTIVE_OR_MALFORMED_RECEIPT"
+    assert any("handback_payload.mature_label_count" in e for e in res_2.errors)
+
+    # 3. handback.prediction_coverage_ratio drift
+    drift_3 = json.loads(json.dumps(receipt))
+    drift_3["handback"]["prediction_coverage_ratio"] = 1.0
+    drift_3["integrity"]["content_sha256"] = compute_gate2_receipt_sha256(drift_3)
+    res_3 = verify_sitescore_gate2_receipt(drift_3)
+    assert res_3.is_valid is False
+    assert res_3.reason_code == "FORGED_ACTIVE_OR_MALFORMED_RECEIPT"
+    assert any("handback.prediction_coverage_ratio" in e for e in res_3.errors)
+
+    # 4. Malformed typed metrics: string "not-a-number" must NOT cause TypeError exception
+    malformed_1 = json.loads(json.dumps(receipt))
+    malformed_1["benchmark_summary"]["normalized_mae"] = "not-a-number"
+    malformed_1["integrity"]["content_sha256"] = compute_gate2_receipt_sha256(malformed_1)
+    res_m1 = verify_sitescore_gate2_receipt(malformed_1)
+    assert res_m1.is_valid is False
+    assert res_m1.reason_code == "FORGED_ACTIVE_OR_MALFORMED_RECEIPT"
+
+    # 5. Malformed typed count: boolean True in observed_count must be rejected as invalid integer
+    malformed_2 = json.loads(json.dumps(receipt))
+    malformed_2["benchmark_summary"]["observed_count"] = True
+    malformed_2["integrity"]["content_sha256"] = compute_gate2_receipt_sha256(malformed_2)
+    res_m2 = verify_sitescore_gate2_receipt(malformed_2)
+    assert res_m2.is_valid is False
+    assert res_m2.reason_code == "FORGED_ACTIVE_OR_MALFORMED_RECEIPT"
+
+
+def test_sitescore_model_card_prevents_caller_invented_facts_on_governed_active_path_b2():
+    # B2 regression test (Codex6 Addendum): Even on active/governed paths, caller-invented facts and approvals are isolated and forced to UNVERIFIED/UNAVAILABLE
+    from unittest.mock import PropertyMock, patch
+
+    from models.shared_ml.model_card import ModelCardApproval
+
+    records = _generate_candidate_records(
+        220,
+        include_m6_m12_realized=True,
+        include_bounds=True,
+        dataset_snapshot_id="snapshot_sitescore_v2",
+        model_version="candidate-site-view-v2",
+        artifact_lineage_id="art_sitescore_sha256",
+    )
+    result = evaluate_sitescore_opening_outcome_benchmark(records, provenance="authenticated_governed_records")
+
+    fake_approval = ModelCardApproval(
+        approver="attacker",
+        role="platform_lead",
+        approved_at="2026-07-31T00:00:00Z",
+        decision="approved",
+    )
+
+    # Patch is_lineage_governed to True to simulate active path mutation
+    with patch.object(type(result), "is_lineage_governed", new_callable=PropertyMock, return_value=True):
+        assert result.is_gate2_passed is True
+        model_card = build_sitescore_opening_outcome_model_card(
+            result,
+            validation_run_id="invented-run",
+            privacy_review="PASSED",
+            security_review="PASSED",
+            approvals=[fake_approval],
+            algorithm="invented_algorithm",
+            baseline="invented_baseline",
+        )
+
+        assert model_card.release_status == "DEV"
+        assert model_card.privacy_review == "UNVERIFIED"
+        assert model_card.security_review == "UNVERIFIED"
+        assert len(model_card.approvals) == 0
+        assert model_card.algorithm == "UNAVAILABLE"
+        assert model_card.baseline == "UNAVAILABLE"
+        assert not model_card.is_approved
+        assert not model_card.is_complete
+
+
+def test_sitescore_handback_payload_authoritative_m6_m12_contract_b3():
+    # B3 regression test (Codex6 Addendum): Human/Ops contract specifies authoritative M6/M12 ledger, freshness isolation, and exact required fields
+    result = run_benchmark_from_inventory(db_url=None, records=None)
+    contract = result.handback_payload["outcome_backfill_contract"]
+
+    assert contract["discovery_source_identity"] == "model_ready.candidate_site_view"
+    assert contract["source_identity"] == "authoritative_opening_outcome_m6_m12_store_ledger"
+    assert contract["query_id"] == "sitescore_authoritative_m6_m12_outcome_query_v1"
+    assert contract["freshness_timestamp"] == "UNVERIFIED"
+    assert contract["dataset_snapshot_hash"] == "UNVERIFIED"
+    assert contract["lineage_id"] == "UNVERIFIED"
+    assert "authoritative_source_identity" in contract["required_fields"]
+    assert "query_id" in contract["required_fields"]
+    assert "source_freshness_timestamp" in contract["required_fields"]
+    assert "m6_maturity_definition" in contract["required_fields"]
+    assert "m12_maturity_definition" in contract["required_fields"]

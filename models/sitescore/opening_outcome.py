@@ -234,18 +234,38 @@ class SiteScoreOpeningOutcomeBenchmarkResult:
                 "owner": "Human/Ops",
                 "task_id": "ODP-PLAN-SITESCORE-OUTCOME-BACKFILL-001",
                 "scope": "Provide authoritative M6 (180d) and M12 (365d) post-opening net revenue labels for historical opened candidate sites.",
-                "source_identity": "model_ready.candidate_site_view",
-                "query_id": "sitescore_opening_outcome_inventory_query_v1",
-                "dataset_snapshot_hash": self.dataset_snapshot_id or "UNVERIFIED",
-                "lineage_id": self.artifact_lineage_id or "UNVERIFIED",
-                "freshness_timestamp": observed_at_str,
+                "discovery_source_identity": "model_ready.candidate_site_view",
+                "discovery_query_id": "sitescore_opening_outcome_discovery_query_v1",
+                "source_identity": "authoritative_opening_outcome_m6_m12_store_ledger",
+                "query_id": "sitescore_authoritative_m6_m12_outcome_query_v1",
+                "dataset_snapshot_hash": self.dataset_snapshot_id if (self.provenance == "authenticated_governed_records" and self.dataset_snapshot_id) else "UNVERIFIED",
+                "lineage_id": self.artifact_lineage_id if (self.provenance == "authenticated_governed_records" and self.artifact_lineage_id) else "UNVERIFIED",
+                "freshness_timestamp": observed_at_str if (self.provenance == "authenticated_governed_records" and self.observed_at) else "UNVERIFIED",
                 "eligibility_definition": "is_training_eligible IS True or eligible IS True",
                 "maturity_definition": "realized_90d_net_revenue IS NOT NULL AND realized_90d_net_revenue >= 0",
+                "m6_maturity_definition": "store_age_days >= 180 AND realized_180d_net_revenue IS NOT NULL AND realized_180d_net_revenue >= 0",
+                "m12_maturity_definition": "store_age_days >= 365 AND realized_365d_net_revenue IS NOT NULL AND realized_365d_net_revenue >= 0",
                 "observed_count": self.observed_count,
                 "eligible_count": self.eligible_count,
                 "mature_count": self.mature_label_count,
                 "matched_prediction_count": self.matched_prediction_count,
-                "required_fields": ["realized_180d_net_revenue", "realized_365d_net_revenue"],
+                "required_fields": [
+                    "authoritative_source_identity",
+                    "query_id",
+                    "dataset_snapshot_hash",
+                    "artifact_lineage_id",
+                    "evidence_owner",
+                    "source_freshness_timestamp",
+                    "m6_maturity_definition",
+                    "m12_maturity_definition",
+                    "realized_180d_net_revenue",
+                    "realized_365d_net_revenue",
+                    "observed_count",
+                    "eligible_count",
+                    "m6_mature_count",
+                    "m12_mature_count",
+                    "matched_prediction_count",
+                ],
                 "baseline_inventory_query": executable_query,
                 "note": "Store age (store_age_days) is a maturity precondition; it is not M6/M12 outcome evidence. ODP-PLAN-SITESCORE-OUTCOME-BACKFILL-001 must supply realized_180d_net_revenue and realized_365d_net_revenue.",
                 "receipt_required": True,
@@ -560,35 +580,28 @@ def build_sitescore_opening_outcome_model_card(
     """Build a canonical ModelCard carrying SiteScore opening outcome benchmark calibration results."""
     is_governed_active = benchmark.is_gate2_passed and benchmark.is_lineage_governed
 
-    # B4 fix: Unless benchmark is governance-passed with authentic lineage, reject caller-invented facts and force UNVERIFIED/UNAVAILABLE
+    # B2 fix: Reject unverified free caller arguments (approvals, privacy/security reviews, periods, algorithm, baseline, etc.)
+    # regardless of is_governed_active status. Sourced facts must come exclusively from verified benchmark attributes or fail closed.
     if not is_governed_active:
         dataset_snapshot_id = "UNAVAILABLE"
         model_version = "UNVERIFIED"
         resolved_val_id = "UNVERIFIED"
-        resolved_feature_set_id = "UNVERIFIED"
-        resolved_label_set_id = "UNVERIFIED"
-        resolved_training_period = "UNAVAILABLE"
-        resolved_validation_period = "UNAVAILABLE"
-        resolved_algorithm = "UNAVAILABLE"
-        resolved_baseline = "UNAVAILABLE"
-        resolved_explainability_method = "UNAVAILABLE"
-        resolved_privacy_review = "UNVERIFIED"
-        resolved_security_review = "UNVERIFIED"
-        resolved_approvals: tuple[ModelCardApproval, ...] = ()
     else:
-        dataset_snapshot_id = benchmark.dataset_snapshot_id or "UNAVAILABLE"
-        model_version = benchmark.model_version or version
-        resolved_val_id = validation_run_id or benchmark.artifact_lineage_id or "UNVERIFIED"
-        resolved_feature_set_id = feature_set_id or "UNVERIFIED"
-        resolved_label_set_id = label_set_id or "UNVERIFIED"
-        resolved_training_period = training_period or "UNAVAILABLE"
-        resolved_validation_period = validation_period or "UNAVAILABLE"
-        resolved_algorithm = algorithm or "UNAVAILABLE"
-        resolved_baseline = baseline or "UNAVAILABLE"
-        resolved_explainability_method = explainability_method or "UNAVAILABLE"
-        resolved_privacy_review = privacy_review or "UNVERIFIED"
-        resolved_security_review = security_review or "UNVERIFIED"
-        resolved_approvals = tuple(approvals) if approvals is not None else ()
+        dataset_snapshot_id = benchmark.dataset_snapshot_id if benchmark.dataset_snapshot_id else "UNAVAILABLE"
+        model_version = benchmark.model_version if benchmark.model_version else version
+        resolved_val_id = benchmark.artifact_lineage_id if benchmark.artifact_lineage_id else "UNVERIFIED"
+
+    # Governance facts and approvals are ALWAYS forced to UNVERIFIED / UNAVAILABLE / () unless populated by an authoritative receipt
+    resolved_feature_set_id = "UNVERIFIED"
+    resolved_label_set_id = "UNVERIFIED"
+    resolved_training_period = "UNAVAILABLE"
+    resolved_validation_period = "UNAVAILABLE"
+    resolved_algorithm = "UNAVAILABLE"
+    resolved_baseline = "UNAVAILABLE"
+    resolved_explainability_method = "UNAVAILABLE"
+    resolved_privacy_review = "UNVERIFIED"
+    resolved_security_review = "UNVERIFIED"
+    resolved_approvals: tuple[ModelCardApproval, ...] = ()
 
     norm_mae = float(benchmark.normalized_mae) if math.isfinite(benchmark.normalized_mae) else 999.0
 
@@ -688,101 +701,192 @@ class Gate2ReceiptVerificationResult:
 
 
 def verify_sitescore_gate2_receipt(receipt: dict[str, Any]) -> Gate2ReceiptVerificationResult:
-    """Fail-closed verifier for Gate 2 receipt content and integrity (Fix for B3)."""
+    """Fail-closed verifier for Gate 2 receipt content, duplicate drift, and integrity (Fix for B1)."""
     errors: list[str] = []
 
     if not isinstance(receipt, dict):
         return Gate2ReceiptVerificationResult(False, "INVALID_RECEIPT_TYPE", ("Receipt must be a JSON dictionary",))
 
-    # 1. Integrity hash envelope check
-    integrity = receipt.get("integrity")
-    if not isinstance(integrity, dict) or not integrity.get("content_sha256"):
-        errors.append("Missing integrity.content_sha256 envelope")
-    else:
-        try:
-            expected_sha = compute_gate2_receipt_sha256(receipt)
-            if integrity["content_sha256"] != expected_sha:
-                errors.append(f"Integrity hash mismatch: declared {integrity['content_sha256']}, recomputed {expected_sha}")
-        except Exception as exc:
-            errors.append(f"Integrity hash computation failed: {exc}")
+    try:
+        # 1. Integrity hash envelope check
+        integrity = receipt.get("integrity")
+        if not isinstance(integrity, dict) or not integrity.get("content_sha256"):
+            errors.append("Missing integrity.content_sha256 envelope")
+        else:
+            try:
+                expected_sha = compute_gate2_receipt_sha256(receipt)
+                if integrity["content_sha256"] != expected_sha:
+                    errors.append(f"Integrity hash mismatch: declared {integrity['content_sha256']}, recomputed {expected_sha}")
+            except Exception as exc:
+                errors.append(f"Integrity hash computation failed: {exc}")
 
-    # 2. Schema version and kind validation
-    if receipt.get("schema_version") != GATE2_RECEIPT_SCHEMA_VERSION:
-        errors.append(f"Invalid schema_version: expected {GATE2_RECEIPT_SCHEMA_VERSION}, got {receipt.get('schema_version')}")
-    if receipt.get("kind") != GATE2_RECEIPT_KIND:
-        errors.append(f"Invalid receipt kind: expected {GATE2_RECEIPT_KIND}, got {receipt.get('kind')}")
+        # 2. Schema version and kind validation
+        if receipt.get("schema_version") != GATE2_RECEIPT_SCHEMA_VERSION:
+            errors.append(f"Invalid schema_version: expected {GATE2_RECEIPT_SCHEMA_VERSION}, got {receipt.get('schema_version')}")
+        if receipt.get("kind") != GATE2_RECEIPT_KIND:
+            errors.append(f"Invalid receipt kind: expected {GATE2_RECEIPT_KIND}, got {receipt.get('kind')}")
 
-    summary = receipt.get("benchmark_summary", {})
-    handback = receipt.get("handback", {})
+        summary = receipt.get("benchmark_summary")
+        handback = receipt.get("handback")
 
-    if not isinstance(summary, dict):
-        errors.append("benchmark_summary must be a dictionary")
-        return Gate2ReceiptVerificationResult(False, "MALFORMED_RECEIPT_SUMMARY", tuple(errors))
+        if not isinstance(summary, dict):
+            errors.append("benchmark_summary must be a dictionary")
+            return Gate2ReceiptVerificationResult(False, "MALFORMED_RECEIPT_SUMMARY", tuple(errors))
+        if not isinstance(handback, dict):
+            errors.append("handback must be a dictionary")
+            return Gate2ReceiptVerificationResult(False, "MALFORMED_RECEIPT_HANDBACK", tuple(errors))
 
-    # 3. Numeric finiteness validation across all receipt fields
-    def _check_finite_dict(d: dict[str, Any], path: str) -> None:
-        for k, v in d.items():
-            if isinstance(v, float):
-                if not math.isfinite(v):
-                    errors.append(f"Non-finite float value in {path}.{k}: {v}")
-            elif isinstance(v, dict):
-                _check_finite_dict(v, f"{path}.{k}")
+        handback_in_summary = summary.get("handback_payload")
+        if not isinstance(handback_in_summary, dict):
+            errors.append("benchmark_summary.handback_payload must be a dictionary")
+            return Gate2ReceiptVerificationResult(False, "MALFORMED_RECEIPT_SUMMARY", tuple(errors))
 
-    _check_finite_dict(summary, "benchmark_summary")
-    _check_finite_dict(handback, "handback")
+        # Helper type assertions that reject booleans and non-numeric types
+        def _check_strict_int(val: Any, name: str) -> int | None:
+            if isinstance(val, bool) or not isinstance(val, int):
+                errors.append(f"Field {name} must be an integer (got {type(val).__name__}: {val!r})")
+                return None
+            return val
 
-    # 4. Count and ratio cross-field validation
-    obs = summary.get("observed_count", 0)
-    elg = summary.get("eligible_count", 0)
-    mat = summary.get("mature_label_count", 0)
-    match_cnt = summary.get("matched_prediction_count", 0)
+        def _check_strict_float(val: Any, name: str) -> float | None:
+            if isinstance(val, bool) or not isinstance(val, (int, float)):
+                errors.append(f"Field {name} must be a real number (got {type(val).__name__}: {val!r})")
+                return None
+            f = float(val)
+            if not math.isfinite(f):
+                errors.append(f"Field {name} must be finite (got {f})")
+                return None
+            return f
 
-    if not (isinstance(obs, int) and isinstance(elg, int) and isinstance(mat, int) and isinstance(match_cnt, int)):
-        errors.append("Counts in benchmark_summary must be integers")
-    else:
-        if obs < 0 or elg < 0 or mat < 0 or match_cnt < 0:
-            errors.append("Counts cannot be negative")
-        if elg > obs:
-            errors.append(f"Eligible count ({elg}) cannot exceed observed count ({obs})")
-        if mat > elg:
-            errors.append(f"Mature label count ({mat}) cannot exceed eligible count ({elg})")
-        if match_cnt > mat:
-            errors.append(f"Matched prediction count ({match_cnt}) cannot exceed mature label count ({mat})")
+        # Validate numeric types in summary
+        obs = _check_strict_int(summary.get("observed_count"), "benchmark_summary.observed_count")
+        elg = _check_strict_int(summary.get("eligible_count"), "benchmark_summary.eligible_count")
+        mat = _check_strict_int(summary.get("mature_label_count"), "benchmark_summary.mature_label_count")
+        match_cnt = _check_strict_int(summary.get("matched_prediction_count"), "benchmark_summary.matched_prediction_count")
 
-    # 5. Verdict re-derivation (fail closed on forged ACTIVE / PASSED or count drift)
-    gate_status = receipt.get("gate_status")
-    is_gov_disabled = receipt.get("is_governed_disabled")
-    benchmark_status = summary.get("status")
-    is_gate2_passed = summary.get("is_gate2_passed")
+        m6_cov = _check_strict_float(summary.get("m6_coverage_ratio"), "benchmark_summary.m6_coverage_ratio")
+        m12_cov = _check_strict_float(summary.get("m12_coverage_ratio"), "benchmark_summary.m12_coverage_ratio")
+        pred_cov = _check_strict_float(summary.get("prediction_coverage_ratio"), "benchmark_summary.prediction_coverage_ratio")
+        bounds_cov = _check_strict_float(summary.get("interval_bounds_coverage_ratio"), "benchmark_summary.interval_bounds_coverage_ratio")
+        p80_cov = _check_strict_float(summary.get("p80_coverage"), "benchmark_summary.p80_coverage")
+        norm_mae = _check_strict_float(summary.get("normalized_mae"), "benchmark_summary.normalized_mae")
 
-    # Currently lineage governance is unverified until ODP-PLAN-SITESCORE-PREDICTION-SOURCE-001
-    lineage_governed = False
-    labels_sufficient = mat >= summary.get("activation_threshold", ACTIVATION_THRESHOLD)
-    pred_cov = summary.get("prediction_coverage_ratio", 0.0) >= summary.get("min_coverage_threshold", MIN_COVERAGE_THRESHOLD)
-    m6_cov = summary.get("m6_coverage_ratio", 0.0) >= summary.get("min_coverage_threshold", MIN_COVERAGE_THRESHOLD)
-    m12_cov = summary.get("m12_coverage_ratio", 0.0) >= summary.get("min_coverage_threshold", MIN_COVERAGE_THRESHOLD)
-    bounds_cov = summary.get("interval_bounds_coverage_ratio", 0.0) >= summary.get("min_coverage_threshold", MIN_COVERAGE_THRESHOLD)
-    p80_cov = summary.get("p80_coverage", 0.0) >= summary.get("min_coverage_threshold", MIN_COVERAGE_THRESHOLD)
-    norm_mae = summary.get("normalized_mae", 999.0)
-    mae_passed = math.isfinite(norm_mae) and norm_mae <= summary.get("max_mae_threshold", MAX_MAE_THRESHOLD)
+        # Finiteness scan across all dictionary fields
+        def _scan_finiteness(d: Any, path: str) -> None:
+            if isinstance(d, dict):
+                for k, v in d.items():
+                    _scan_finiteness(v, f"{path}.{k}")
+            elif isinstance(d, list):
+                for idx, elem in enumerate(d):
+                    _scan_finiteness(elem, f"{path}[{idx}]")
+            elif isinstance(d, float):
+                if not math.isfinite(d):
+                    errors.append(f"Non-finite float value at {path}: {d}")
 
-    expected_gate2_passed = (
-        lineage_governed
-        and labels_sufficient
-        and pred_cov
-        and m6_cov
-        and m12_cov
-        and bounds_cov
-        and p80_cov
-        and mae_passed
-    )
+        _scan_finiteness(summary, "benchmark_summary")
+        _scan_finiteness(handback, "handback")
 
-    if expected_gate2_passed != is_gate2_passed:
-        errors.append(f"is_gate2_passed mismatch: declared {is_gate2_passed}, re-derived {expected_gate2_passed}")
+        if obs is not None and elg is not None and mat is not None and match_cnt is not None:
+            if obs < 0 or elg < 0 or mat < 0 or match_cnt < 0:
+                errors.append("Counts cannot be negative")
+            if elg > obs:
+                errors.append(f"Eligible count ({elg}) cannot exceed observed count ({obs})")
+            if mat > elg:
+                errors.append(f"Mature label count ({mat}) cannot exceed eligible count ({elg})")
+            if match_cnt > mat:
+                errors.append(f"Matched prediction count ({match_cnt}) cannot exceed mature label count ({mat})")
 
-    if not expected_gate2_passed:
-        if gate_status == "PASSED" or is_gov_disabled is False or benchmark_status == "ACTIVE":
-            errors.append("Forged ACTIVE or PASSED verdict detected on unverified/failing receipt")
+        # Cross-validation of duplicated fields in top-level handback and benchmark_summary.handback_payload
+        hb_obs = _check_strict_int(handback.get("observed_count"), "handback.observed_count")
+        hb_elg = _check_strict_int(handback.get("eligible_count"), "handback.eligible_count")
+        hb_mat = _check_strict_int(handback.get("mature_label_count"), "handback.mature_label_count")
+        hb_match = _check_strict_int(handback.get("matched_prediction_count"), "handback.matched_prediction_count")
+
+        hb_m6 = _check_strict_float(handback.get("m6_coverage_ratio"), "handback.m6_coverage_ratio")
+        hb_m12 = _check_strict_float(handback.get("m12_coverage_ratio"), "handback.m12_coverage_ratio")
+        hb_pred = _check_strict_float(handback.get("prediction_coverage_ratio"), "handback.prediction_coverage_ratio")
+        hb_bounds = _check_strict_float(handback.get("interval_bounds_coverage_ratio"), "handback.interval_bounds_coverage_ratio")
+        hb_p80 = _check_strict_float(handback.get("p80_coverage"), "handback.p80_coverage")
+        hb_mae = _check_strict_float(handback.get("normalized_mae"), "handback.normalized_mae")
+
+        if hb_obs != obs:
+            errors.append(f"handback.observed_count ({hb_obs}) drifts from summary.observed_count ({obs})")
+        if hb_elg != elg:
+            errors.append(f"handback.eligible_count ({hb_elg}) drifts from summary.eligible_count ({elg})")
+        if hb_mat != mat:
+            errors.append(f"handback.mature_label_count ({hb_mat}) drifts from summary.mature_label_count ({mat})")
+        if hb_match != match_cnt:
+            errors.append(f"handback.matched_prediction_count ({hb_match}) drifts from summary.matched_prediction_count ({match_cnt})")
+
+        if hb_m6 != m6_cov:
+            errors.append(f"handback.m6_coverage_ratio ({hb_m6}) drifts from summary.m6_coverage_ratio ({m6_cov})")
+        if hb_m12 != m12_cov:
+            errors.append(f"handback.m12_coverage_ratio ({hb_m12}) drifts from summary.m12_coverage_ratio ({m12_cov})")
+        if hb_pred != pred_cov:
+            errors.append(f"handback.prediction_coverage_ratio ({hb_pred}) drifts from summary.prediction_coverage_ratio ({pred_cov})")
+        if hb_bounds != bounds_cov:
+            errors.append(f"handback.interval_bounds_coverage_ratio ({hb_bounds}) drifts from summary.interval_bounds_coverage_ratio ({bounds_cov})")
+        if hb_p80 != p80_cov:
+            errors.append(f"handback.p80_coverage ({hb_p80}) drifts from summary.p80_coverage ({p80_cov})")
+        if hb_mae != norm_mae:
+            errors.append(f"handback.normalized_mae ({hb_mae}) drifts from summary.normalized_mae ({norm_mae})")
+
+        # Also check handback_in_summary equality with handback
+        for k in ["observed_count", "eligible_count", "mature_label_count", "matched_prediction_count", "m6_coverage_ratio", "m12_coverage_ratio", "prediction_coverage_ratio", "interval_bounds_coverage_ratio", "p80_coverage", "normalized_mae"]:
+            if handback.get(k) != handback_in_summary.get(k):
+                errors.append(f"benchmark_summary.handback_payload.{k} ({handback_in_summary.get(k)}) drifts from handback.{k} ({handback.get(k)})")
+
+        # Check duplicate counts in outcome_backfill_contract
+        bc = handback.get("outcome_backfill_contract")
+        if isinstance(bc, dict):
+            if bc.get("observed_count") != obs:
+                errors.append(f"outcome_backfill_contract.observed_count ({bc.get('observed_count')}) drifts from summary.observed_count ({obs})")
+            if bc.get("eligible_count") != elg:
+                errors.append(f"outcome_backfill_contract.eligible_count ({bc.get('eligible_count')}) drifts from summary.eligible_count ({elg})")
+            if bc.get("mature_count") != mat:
+                errors.append(f"outcome_backfill_contract.mature_count ({bc.get('mature_count')}) drifts from summary.mature_label_count ({mat})")
+            if bc.get("matched_prediction_count") != match_cnt:
+                errors.append(f"outcome_backfill_contract.matched_prediction_count ({bc.get('matched_prediction_count')}) drifts from summary.matched_prediction_count ({match_cnt})")
+
+        # 5. Verdict re-derivation (fail closed on forged ACTIVE / PASSED or count drift)
+        gate_status = receipt.get("gate_status")
+        is_gov_disabled = receipt.get("is_governed_disabled")
+        benchmark_status = summary.get("status")
+        is_gate2_passed = summary.get("is_gate2_passed")
+
+        lineage_governed = False
+        min_cov_thresh = summary.get("min_coverage_threshold", MIN_COVERAGE_THRESHOLD)
+        max_mae_thresh = summary.get("max_mae_threshold", MAX_MAE_THRESHOLD)
+        act_thresh = summary.get("activation_threshold", ACTIVATION_THRESHOLD)
+
+        labels_sufficient = (mat is not None and mat >= act_thresh)
+        pred_cov_passed = (pred_cov is not None and pred_cov >= min_cov_thresh)
+        m6_cov_passed = (m6_cov is not None and m6_cov >= min_cov_thresh)
+        m12_cov_passed = (m12_cov is not None and m12_cov >= min_cov_thresh)
+        bounds_cov_passed = (bounds_cov is not None and bounds_cov >= min_cov_thresh)
+        p80_cov_passed = (p80_cov is not None and p80_cov >= min_cov_thresh)
+        mae_passed = (norm_mae is not None and norm_mae <= max_mae_thresh)
+
+        expected_gate2_passed = (
+            lineage_governed
+            and labels_sufficient
+            and pred_cov_passed
+            and m6_cov_passed
+            and m12_cov_passed
+            and bounds_cov_passed
+            and p80_cov_passed
+            and mae_passed
+        )
+
+        if expected_gate2_passed != is_gate2_passed:
+            errors.append(f"is_gate2_passed mismatch: declared {is_gate2_passed}, re-derived {expected_gate2_passed}")
+
+        if not expected_gate2_passed:
+            if gate_status == "PASSED" or is_gov_disabled is False or benchmark_status == "ACTIVE":
+                errors.append("Forged ACTIVE or PASSED verdict detected on unverified/failing receipt")
+
+    except Exception as exc:
+        errors.append(f"Unhandled exception during receipt verification: {exc}")
 
     if errors:
         reason = "INTEGRITY_HASH_MISMATCH" if any("Integrity hash mismatch" in e for e in errors) else "FORGED_ACTIVE_OR_MALFORMED_RECEIPT"
