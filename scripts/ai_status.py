@@ -2277,11 +2277,11 @@ def write_current_work(state: dict[str, Any], logs: list[dict[str, Any]]) -> Non
             depends = ", ".join(f"`{item}`" for item in task.get("depends_on", [])) or "-"
             lines.append(
                 "| `{id}` | {phase} | {title} | {owner} | {status} | {depends} | {summary} |".format(
-                    id=cell(task["id"]),
-                    phase=cell(task["phase"]),
+                    id=cell(task.get("id", "-")),
+                    phase=cell(task.get("phase", "-")),
                     title=cell(display_task_title(task)),
-                    owner=cell(task["owner"]),
-                    status=cell(task["status"]),
+                    owner=cell(task.get("owner", "-")),
+                    status=cell(task.get("status", "-")),
                     depends=cell(depends),
                     summary=cell(task.get("summary_zh") or "-"),
                 )
@@ -2300,8 +2300,8 @@ def write_current_work(state: dict[str, Any], logs: list[dict[str, Any]]) -> Non
     primary_tasks = [task for task in active_tasks if task_delivery_layer(task) == "primary"]
     external_tasks = [task for task in active_tasks if task_delivery_layer(task) == "external"]
     current_sprint_lines = [
-        f"- Sprint: `{state['sprint']}`",
-        "- Canonical files: " + ", ".join(f"`{item}`" for item in state["canonical_files"]),
+        f"- Sprint: `{state.get('sprint', 'ODP-P0-Execution')}`",
+        "- Canonical files: " + ", ".join(f"`{item}`" for item in state.get("canonical_files", [])),
         "- Canonical tiers: " + (", ".join(tier_labels) if tier_labels else "-"),
     ]
     planning_reference = planning_reference_files(planning_state)
@@ -2319,11 +2319,11 @@ def write_current_work(state: dict[str, Any], logs: list[dict[str, Any]]) -> Non
         "Do not treat this file as the machine-readable source of truth.",
         f"Absolute times below use {DISPLAY_TIMEZONE_LABEL}.",
         "",
-        f"Last updated: {format_display_timestamp(state['updated_at'])}",
+        f"Last updated: {format_display_timestamp(state.get('updated_at'))}",
         "",
         "## Objective",
         "",
-        localize_embedded_timestamps(state["objective"]),
+        localize_embedded_timestamps(state.get("objective", "Pantheon Platform Control")),
         "",
         "## Current Sprint",
         "",
@@ -2412,13 +2412,13 @@ def write_current_work(state: dict[str, Any], logs: list[dict[str, Any]]) -> Non
         depends = ", ".join(f"`{item}`" for item in task.get("depends_on", [])) or "-"
         lines.append(
             "| `{id}` | {phase} | {title} | {summary} | {owner} | {reviewer} | {status} | {depends} | {last_update} | {next} |".format(
-                id=cell(task["id"]),
-                phase=cell(task["phase"]),
+                id=cell(task.get("id", "-")),
+                phase=cell(task.get("phase", "-")),
                 title=cell(display_task_title(task)),
                 summary=cell(task.get("summary_zh") or "-"),
-                owner=cell(task["owner"]),
-                reviewer=cell(task["reviewer"]),
-                status=cell(task["status"]),
+                owner=cell(task.get("owner", "-")),
+                reviewer=cell(task.get("reviewer", "-")),
+                status=cell(task.get("status", "-")),
                 depends=cell(depends),
                 last_update=cell(format_display_timestamp(task.get("last_update"))),
                 next=cell(localize_embedded_timestamps(task.get("next") or "-")),
