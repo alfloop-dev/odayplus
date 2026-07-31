@@ -74,6 +74,9 @@ ALLOWLISTED_INDEPENDENT_WATCH_METRICS = (
 )
 
 
+import math
+
+
 def extract_and_reconcile_provider_proof(
     query_resp: dict[str, Any],
     expected_gcp_proj: str,
@@ -86,7 +89,8 @@ def extract_and_reconcile_provider_proof(
 
     Recomputes metric types, point counts, timestamps, values, error counts, health checks,
     and window coverage from the stored provider response.
-    Enforces signal completeness (error/failure + latency/health signals) and thresholds.
+    Enforces signal completeness (error/failure + latency/health signals), per-signal/category coverage,
+    and finite non-negative metric domains.
     """
     if not isinstance(query_resp, dict):
         raise ValueError("Provider query response missing object payload. Fail-closed gate enforced.")
@@ -101,6 +105,13 @@ def extract_and_reconcile_provider_proof(
     point_values: list[float] = []
     observed_errors = 0
     health_passed = True
+
+    timestamps_by_metric_type: dict[str, list[datetime]] = {}
+    timestamps_by_category: dict[str, list[datetime]] = {
+        "error_failure": [],
+        "latency_health": [],
+        "other": [],
+    }
 
     for ts_item in returned_series:
         if not isinstance(ts_item, dict):
@@ -140,6 +151,15 @@ def extract_and_reconcile_provider_proof(
                 f"Provider query response timeSeries for '{metric_type}' contains empty points array. Fail-closed gate enforced."
             )
 
+        if metric_type not in timestamps_by_metric_type:
+            timestamps_by_metric_type[metric_type] = []
+
+        cat = (
+            "error_failure"
+            if metric_type in ERROR_FAILURE_WATCH_METRICS
+            else ("latency_health" if metric_type in LATENCY_HEALTH_WATCH_METRICS else "other")
+        )
+
         for pt in points:
             if not isinstance(pt, dict):
                 raise ValueError("Provider query response contains invalid point item. Fail-closed gate enforced.")
@@ -164,6 +184,8 @@ def extract_and_reconcile_provider_proof(
                 )
 
             point_timestamps.append(pt_dt)
+            timestamps_by_metric_type[metric_type].append(pt_dt)
+            timestamps_by_category[cat].append(pt_dt)
 
             val_dict = pt.get("value", {})
             val = (
@@ -182,6 +204,16 @@ def extract_and_reconcile_provider_proof(
                     f"Provider query response point in '{metric_type}' has non-numeric value '{val}': {exc}. Fail-closed gate enforced."
                 ) from exc
 
+            if not math.isfinite(val_float):
+                raise ValueError(
+                    f"Provider query response point in '{metric_type}' has non-finite value '{val}'. Finite non-negative domain required. Fail-closed gate enforced."
+                )
+
+            if val_float < 0:
+                raise ValueError(
+                    f"Provider query response point in '{metric_type}' has negative value '{val_float}'. Finite non-negative domain required. Fail-closed gate enforced."
+                )
+
             point_values.append(val_float)
 
             if metric_type in ERROR_FAILURE_WATCH_METRICS:
@@ -194,8 +226,6 @@ def extract_and_reconcile_provider_proof(
                         health_passed = False
                 elif val_float > 5000.0:  # Latency P95/max threshold 5000ms
                     health_passed = False
-            elif status == 1 and val_float < 0:
-                health_passed = False
 
             verified_points_count += 1
 
@@ -211,15 +241,21 @@ def extract_and_reconcile_provider_proof(
             f"Provider query response requires multiple timestamped points across watch window (got {len(point_timestamps)} points). Single point cannot prove watch window. Fail-closed gate enforced."
         )
 
+    observed_seconds = (end_dt - start_dt).total_seconds()
     min_pt_ts = min(point_timestamps)
     max_pt_ts = max(point_timestamps)
     point_coverage_seconds = (max_pt_ts - min_pt_ts).total_seconds()
 
-    observed_seconds = (end_dt - start_dt).total_seconds()
-    if observed_seconds >= 900 and point_coverage_seconds < 840:
-        raise ValueError(
-            f"Provider query response point timestamps span only {point_coverage_seconds:.1f}s, failing to cover the required 15-minute ({observed_seconds:.1f}s) watch window. Fail-closed gate enforced."
-        )
+    for m_type, m_ts_list in timestamps_by_metric_type.items():
+        if len(m_ts_list) < 2:
+            raise ValueError(
+                f"Provider query response timeSeries for metric '{m_type}' requires multiple timestamped points across watch window (got {len(m_ts_list)} points). Single point cannot prove watch window. Fail-closed gate enforced."
+            )
+        m_cov_sec = (max(m_ts_list) - min(m_ts_list)).total_seconds()
+        if observed_seconds >= 900 and m_cov_sec < 840:
+            raise ValueError(
+                f"Provider query response metric '{m_type}' timestamps span only {m_cov_sec:.1f}s, failing to cover the required 15-minute ({observed_seconds:.1f}s) watch window. Coverage cannot be pooled across different series. Fail-closed gate enforced."
+            )
 
     if status == 1:
         has_error_signal = bool(observed_types & ERROR_FAILURE_WATCH_METRICS)
@@ -234,6 +270,18 @@ def extract_and_reconcile_provider_proof(
             raise ValueError(
                 f"Watch window status WATCH_PASSED requires an explicit independent error/failure signal AND latency/health signal (missing {missing_desc}; got observed metric types: {sorted(list(observed_types))}). Request volume alone or incomplete watch signal set rejected. Fail-closed gate enforced."
             )
+
+        for cat_name in ("error_failure", "latency_health"):
+            cat_ts_list = timestamps_by_category[cat_name]
+            if len(cat_ts_list) < 2:
+                raise ValueError(
+                    f"Watch window status WATCH_PASSED requires signal category '{cat_name}' to have multiple timestamped points across watch window (got {len(cat_ts_list)} points). Fail-closed gate enforced."
+                )
+            cat_cov_sec = (max(cat_ts_list) - min(cat_ts_list)).total_seconds()
+            if observed_seconds >= 900 and cat_cov_sec < 840:
+                raise ValueError(
+                    f"Provider query response signal category '{cat_name}' timestamps span only {cat_cov_sec:.1f}s, failing to cover the required 15-minute ({observed_seconds:.1f}s) watch window. Coverage cannot be pooled across different series/categories. Fail-closed gate enforced."
+                )
 
     sorted_metric_types = sorted(list(observed_types))
     sorted_iso_timestamps = [pt.isoformat() for pt in point_timestamps]

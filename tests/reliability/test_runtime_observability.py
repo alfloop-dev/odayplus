@@ -2049,3 +2049,252 @@ def test_round5_reproduced_gaps_mutation_coverage(tmp_path: Path) -> None:
         verify_watch_window_receipt(expected_release_sha=test_sha, receipt_path=receipt_file)
 
 
+def test_round6_reproduced_gaps_mutation_coverage(tmp_path: Path) -> None:
+    from datetime import timedelta
+
+    from shared.observability.watch_window import record_deployment_watch_window_status
+
+    test_sha = "b28a6b6d335293ecb51a72dff3700838e196129c"
+    receipt_file = tmp_path / "round6_gap_receipt.json"
+    start_dt = datetime.now(UTC) - timedelta(minutes=20)
+    end_dt = datetime.now(UTC)
+
+    # Round 6 Gap 1: Pooled category coverage (Error at start, Latency at end) MUST BE REJECTED
+    def pooled_category_transport(
+        method: str, url: str, params: dict = None, payload: dict = None
+    ) -> tuple[int, dict]:
+        return 200, {
+            "gcp_project": "alfaloop-data-project",
+            "release_sha": test_sha,
+            "timeSeries": [
+                {
+                    "metric": {
+                        "type": "custom.googleapis.com/api_error_count",
+                        "labels": {"release_sha": test_sha},
+                    },
+                    "resource": {"type": "global", "labels": {"project_id": "alfaloop-data-project"}},
+                    "points": [
+                        {
+                            "interval": {"endTime": start_dt.isoformat()},
+                            "value": {"doubleValue": 0.0},
+                        },
+                    ],
+                },
+                {
+                    "metric": {
+                        "type": "custom.googleapis.com/api_latency_ms",
+                        "labels": {"release_sha": test_sha},
+                    },
+                    "resource": {"type": "global", "labels": {"project_id": "alfaloop-data-project"}},
+                    "points": [
+                        {
+                            "interval": {"endTime": end_dt.isoformat()},
+                            "value": {"doubleValue": 12.5},
+                        },
+                    ],
+                },
+            ],
+        }
+
+    with pytest.raises(
+        ValueError,
+        match="requires multiple timestamped points across watch window",
+    ):
+        record_deployment_watch_window_status(
+            release_sha=test_sha,
+            status=1,
+            start_time=start_dt,
+            end_time=end_dt,
+            receipt_path=receipt_file,
+            gcp_project="alfaloop-data-project",
+            provider_route="https://monitoring.googleapis.com/v3",
+            query_transport=pooled_category_transport,
+        )
+
+    # Round 6 Gap 1b: Category 1 points only at start_dt (span 0s), Category 2 points only at end_dt (span 0s)
+    def pooled_category_sub_window_transport(
+        method: str, url: str, params: dict = None, payload: dict = None
+    ) -> tuple[int, dict]:
+        return 200, {
+            "gcp_project": "alfaloop-data-project",
+            "release_sha": test_sha,
+            "timeSeries": [
+                {
+                    "metric": {
+                        "type": "custom.googleapis.com/api_error_count",
+                        "labels": {"release_sha": test_sha},
+                    },
+                    "resource": {"type": "global", "labels": {"project_id": "alfaloop-data-project"}},
+                    "points": [
+                        {"interval": {"endTime": start_dt.isoformat()}, "value": {"doubleValue": 0.0}},
+                        {"interval": {"endTime": start_dt.isoformat()}, "value": {"doubleValue": 0.0}},
+                    ],
+                },
+                {
+                    "metric": {
+                        "type": "custom.googleapis.com/api_latency_ms",
+                        "labels": {"release_sha": test_sha},
+                    },
+                    "resource": {"type": "global", "labels": {"project_id": "alfaloop-data-project"}},
+                    "points": [
+                        {"interval": {"endTime": end_dt.isoformat()}, "value": {"doubleValue": 12.5}},
+                        {"interval": {"endTime": end_dt.isoformat()}, "value": {"doubleValue": 12.5}},
+                    ],
+                },
+            ],
+        }
+
+    with pytest.raises(
+        ValueError,
+        match="Coverage cannot be pooled across different series",
+    ):
+        record_deployment_watch_window_status(
+            release_sha=test_sha,
+            status=1,
+            start_time=start_dt,
+            end_time=end_dt,
+            receipt_path=receipt_file,
+            gcp_project="alfaloop-data-project",
+            provider_route="https://monitoring.googleapis.com/v3",
+            query_transport=pooled_category_sub_window_transport,
+        )
+
+    # Round 6 Gap 2: Negative error count MUST BE REJECTED
+    def negative_error_transport(
+        method: str, url: str, params: dict = None, payload: dict = None
+    ) -> tuple[int, dict]:
+        return 200, {
+            "gcp_project": "alfaloop-data-project",
+            "release_sha": test_sha,
+            "timeSeries": [
+                {
+                    "metric": {
+                        "type": "custom.googleapis.com/api_error_count",
+                        "labels": {"release_sha": test_sha},
+                    },
+                    "resource": {"type": "global", "labels": {"project_id": "alfaloop-data-project"}},
+                    "points": [
+                        {"interval": {"endTime": start_dt.isoformat()}, "value": {"doubleValue": -5.0}},
+                        {"interval": {"endTime": end_dt.isoformat()}, "value": {"doubleValue": 0.0}},
+                    ],
+                },
+                {
+                    "metric": {
+                        "type": "custom.googleapis.com/api_latency_ms",
+                        "labels": {"release_sha": test_sha},
+                    },
+                    "resource": {"type": "global", "labels": {"project_id": "alfaloop-data-project"}},
+                    "points": [
+                        {"interval": {"endTime": start_dt.isoformat()}, "value": {"doubleValue": 10.0}},
+                        {"interval": {"endTime": end_dt.isoformat()}, "value": {"doubleValue": 10.0}},
+                    ],
+                },
+            ],
+        }
+
+    with pytest.raises(
+        ValueError, match="has negative value '-5.0'. Finite non-negative domain required"
+    ):
+        record_deployment_watch_window_status(
+            release_sha=test_sha,
+            status=1,
+            start_time=start_dt,
+            end_time=end_dt,
+            receipt_path=receipt_file,
+            gcp_project="alfaloop-data-project",
+            provider_route="https://monitoring.googleapis.com/v3",
+            query_transport=negative_error_transport,
+        )
+
+    # Round 6 Gap 3: Negative latency MUST BE REJECTED
+    def negative_latency_transport(
+        method: str, url: str, params: dict = None, payload: dict = None
+    ) -> tuple[int, dict]:
+        return 200, {
+            "gcp_project": "alfaloop-data-project",
+            "release_sha": test_sha,
+            "timeSeries": [
+                {
+                    "metric": {
+                        "type": "custom.googleapis.com/api_error_count",
+                        "labels": {"release_sha": test_sha},
+                    },
+                    "resource": {"type": "global", "labels": {"project_id": "alfaloop-data-project"}},
+                    "points": [
+                        {"interval": {"endTime": start_dt.isoformat()}, "value": {"doubleValue": 0.0}},
+                        {"interval": {"endTime": end_dt.isoformat()}, "value": {"doubleValue": 0.0}},
+                    ],
+                },
+                {
+                    "metric": {
+                        "type": "custom.googleapis.com/api_latency_ms",
+                        "labels": {"release_sha": test_sha},
+                    },
+                    "resource": {"type": "global", "labels": {"project_id": "alfaloop-data-project"}},
+                    "points": [
+                        {"interval": {"endTime": start_dt.isoformat()}, "value": {"doubleValue": -100.0}},
+                        {"interval": {"endTime": end_dt.isoformat()}, "value": {"doubleValue": 10.0}},
+                    ],
+                },
+            ],
+        }
+
+    with pytest.raises(
+        ValueError, match="has negative value '-100.0'. Finite non-negative domain required"
+    ):
+        record_deployment_watch_window_status(
+            release_sha=test_sha,
+            status=1,
+            start_time=start_dt,
+            end_time=end_dt,
+            receipt_path=receipt_file,
+            gcp_project="alfaloop-data-project",
+            provider_route="https://monitoring.googleapis.com/v3",
+            query_transport=negative_latency_transport,
+        )
+
+    # Round 6 Gap 4: Non-finite (NaN) metric value MUST BE REJECTED
+    def nan_metric_transport(
+        method: str, url: str, params: dict = None, payload: dict = None
+    ) -> tuple[int, dict]:
+        return 200, {
+            "gcp_project": "alfaloop-data-project",
+            "release_sha": test_sha,
+            "timeSeries": [
+                {
+                    "metric": {
+                        "type": "custom.googleapis.com/api_error_count",
+                        "labels": {"release_sha": test_sha},
+                    },
+                    "resource": {"type": "global", "labels": {"project_id": "alfaloop-data-project"}},
+                    "points": [
+                        {"interval": {"endTime": start_dt.isoformat()}, "value": {"doubleValue": 0.0}},
+                        {"interval": {"endTime": end_dt.isoformat()}, "value": {"doubleValue": 0.0}},
+                    ],
+                },
+                {
+                    "metric": {
+                        "type": "custom.googleapis.com/api_latency_ms",
+                        "labels": {"release_sha": test_sha},
+                    },
+                    "resource": {"type": "global", "labels": {"project_id": "alfaloop-data-project"}},
+                    "points": [
+                        {"interval": {"endTime": start_dt.isoformat()}, "value": {"doubleValue": float("nan")}},
+                        {"interval": {"endTime": end_dt.isoformat()}, "value": {"doubleValue": 10.0}},
+                    ],
+                },
+            ],
+        }
+
+    with pytest.raises(ValueError, match="has non-finite value|non-numeric value"):
+        record_deployment_watch_window_status(
+            release_sha=test_sha,
+            status=1,
+            start_time=start_dt,
+            end_time=end_dt,
+            receipt_path=receipt_file,
+            gcp_project="alfaloop-data-project",
+            provider_route="https://monitoring.googleapis.com/v3",
+            query_transport=nan_metric_transport,
+        )
+
