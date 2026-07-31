@@ -484,3 +484,118 @@ governance artifacts, and B5 leaves the registered Human/Ops handback unable to 
 required authoritative evidence set. Re-audit B1-B5 together before the next handoff; do
 not open/refresh the PR or enable deployment after a partial fix. No owner implementation
 content was changed by this review.
+
+---
+
+# Codex6 Re-review Addendum — 2026-07-31, exact owner head `7af24d2f`
+
+The supervisor re-dispatched this task to the assigned reviewer after the owner reported
+B1-B5 remediation at exact pushed head
+`7af24d2fa2d6229eb001c2836226a3406e38b802`. The local and remote task branches both
+pointed at that SHA.
+
+## Verification at the exact owner head
+
+```bash
+PYTHONPATH=. .venv/bin/pytest -q tests/models -k "sitescore or opening_outcome"
+PYTHONPATH=. .venv/bin/pytest -q tests -k "sitescore or opening_outcome or model_ready"
+.venv/bin/ruff check scripts/models models tests/models
+git diff --check
+```
+
+- Task-scoped selector: **27 passed**.
+- Full focused selector: **71 passed** (warnings only).
+- Ruff and `git diff --check`: clean.
+- The committed receipt digest independently recomputes to
+  `6e9aa113522bc491c0f2294e8952b904d3c8cbad01f82dee0edf1f229659bf7f`,
+  and the unmodified receipt returns `RECEIPT_VALIDATED`.
+- The previous non-finite-input and matched-population examples are fixed: non-finite
+  outcomes/predictions/bounds no longer enter the evidence populations, and normalized
+  MAE uses the same 154-record matched population as its scale denominator.
+
+The green regressions still do not cover the complete batch required by the task brief.
+The following findings block approval.
+
+## Blocking findings
+
+### B1 — Self-consistent count and ratio drift still verifies successfully
+
+`verify_sitescore_gate2_receipt` validates only the four counts inside
+`benchmark_summary` against one another. It does not compare those values with their
+duplicates in top-level `handback` or
+`benchmark_summary.handback_payload`, and it does not compare duplicated ratios.
+
+Independent mutations starting from the genuine no-source receipt changed one field,
+recomputed the public content hash, and produced these results:
+
+| Mutation | Verifier result |
+| --- | --- |
+| `handback.observed_count: 0 -> 999` | `RECEIPT_VALIDATED` |
+| `benchmark_summary.handback_payload.mature_label_count: 0 -> 999` | `RECEIPT_VALIDATED` |
+| `handback.prediction_coverage_ratio: 0.0 -> 1.0` | `RECEIPT_VALIDATED` |
+
+This is the acceptance-prohibited count/hash-drift shape. Re-derive or cross-check every
+duplicated count, ratio, provenance, reason, governed-disabled flag, and status that the
+receipt exposes; recomputing an unkeyed checksum must not make contradictory content
+valid.
+
+The verifier also does not fail closed on malformed typed values. Replacing
+`benchmark_summary.normalized_mae` with `"not-a-number"` and recomputing the hash raises
+`TypeError: must be real number, not str` at `math.isfinite` rather than returning an
+invalid verification result. Validate required schema and types before arithmetic or
+comparison, including booleans-as-counts, missing mappings, thresholds, ratios, and
+metrics.
+
+### B2 — The future governed-active model-card path still trusts free caller facts
+
+The remediation discards caller governance facts only while
+`benchmark.is_gate2_passed` / `is_lineage_governed` is false. The `else` path at
+`models/sitescore/opening_outcome.py:578-591` still copies validation run, feature/label
+IDs, periods, algorithm, baseline, explainability, review statuses, and approvals directly
+from public caller arguments.
+
+An independent composition mutation representing the prediction-source resolver making
+the lineage property true supplied invented values and an attacker approval. The builder
+returned `release_status=DEV`, `is_complete=True`, `is_approved=True`, preserved
+`validation_run_id=invented-run`, and serialized `approver=attacker`.
+
+This leaves the exact activation boundary named in the prior B4 finding unsafe. Bind the
+future active path to a verified immutable governance/prediction-source receipt, or keep
+the builder governed-disabled; do not make a lineage boolean the switch that starts
+trusting unrelated free arguments.
+
+### B3 — The Human/Ops contract still does not describe authoritative M6/M12 evidence
+
+The registered `ODP-PLAN-SITESCORE-OUTCOME-BACKFILL-001` acceptance requires authoritative
+M6/M12 outcomes plus readable dataset hash, lineage, owner, and freshness. The emitted
+contract does not encode that return receipt:
+
+- `source_identity` and `query_id` identify the existing 90-day
+  `model_ready.candidate_site_view` discovery query, which has no M6/M12 outcomes.
+- `maturity_definition` defines only a non-null 90-day outcome, not true M6/M12 maturity.
+- `required_fields` still lists only the two outcome values; it does not require the
+  authoritative query/source identity, immutable snapshot hash, lineage, evidence owner,
+  observation/source-freshness timestamps, M6/M12 definitions, or
+  observed/eligible/M6-mature/M12-mature/matched counts in the returned receipt.
+- `freshness_timestamp` is generated from the benchmark/receipt clock even for
+  `provenance=no_source`. The committed receipt therefore presents a current timestamp as
+  freshness while both source lineage and dataset hash are `UNVERIFIED`; it is not source
+  freshness evidence.
+- `dataset_snapshot_hash` is populated from the generic
+  `benchmark.dataset_snapshot_id`, and `lineage_id` from prediction/model
+  `artifact_lineage_id`, without proving either belongs to the authoritative outcome
+  dataset.
+
+Keep the existing query explicitly discovery-only. Define a separate required backfill
+receipt schema (or verified receipt reference) for the authoritative M6/M12 source, and
+leave unavailable evidence explicitly unverified rather than stamping generation time as
+freshness.
+
+## Decision
+
+**Changes requested.** Exact owner head `7af24d2f` is not approved. B1 directly reproduces
+the task brief's self-consistent count/hash-drift failure and malformed receipt handling is
+not fail-closed. B2 preserves the caller-invented governance path at the exact future
+activation boundary, while B3 still cannot receive the registered Human/Ops authoritative
+M6/M12 evidence set. Re-audit the entire acceptance batch before the next handoff. No owner
+implementation content was changed by this review.
