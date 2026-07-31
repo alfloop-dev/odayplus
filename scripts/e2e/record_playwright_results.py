@@ -5,7 +5,12 @@ from __future__ import annotations
 
 import argparse
 import json
+import sys
 from pathlib import Path
+
+ROOT = Path(__file__).resolve().parents[2]
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
 
 from scripts.e2e.product_e2e_receipt import (
     RAW_PLAYWRIGHT_PATH,
@@ -15,8 +20,6 @@ from scripts.e2e.product_e2e_receipt import (
     seal_normalized,
     sha256_bytes,
 )
-
-ROOT = Path(__file__).resolve().parents[2]
 
 
 def build_artifact(

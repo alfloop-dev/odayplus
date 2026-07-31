@@ -459,7 +459,7 @@ const requiredOperatorReadPaths = new Set([
 ]);
 
 const operatorWorkflowWritePathPattern =
-  /^\/api\/v1\/operator\/(?:issues\/[^/]+\/(?:triage|assign|actions|field-report|outcome|escalate)|approvals\/[^/]+\/decision|evidence\/[^/]+\/purpose)$/;
+  /^\/api\/v1\/operator\/(?:store-ops\/issues\/[^/]+\/(?:triage|assign|actions|field-report|outcome|escalate|camera-purpose)|approvals\/[^/]+\/decision|evidence\/[^/]+\/purpose)$/;
 
 async function tryClick(locator: Locator) {
   if ((await locator.count()) === 0) return;

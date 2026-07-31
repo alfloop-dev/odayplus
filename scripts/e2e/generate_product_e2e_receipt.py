@@ -4,8 +4,13 @@
 from __future__ import annotations
 
 import json
+import sys
 from pathlib import Path
 from typing import Any
+
+ROOT = Path(__file__).resolve().parents[2]
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
 
 from scripts.e2e.product_e2e_receipt import (
     E2E_SCENARIOS,
@@ -21,8 +26,6 @@ from scripts.e2e.product_e2e_receipt import (
     validate_raw_artifact,
     verify_evidence_relationship,
 )
-
-ROOT = Path(__file__).resolve().parents[2]
 
 
 def generate_receipt(root: Path = ROOT) -> dict[str, Any]:
