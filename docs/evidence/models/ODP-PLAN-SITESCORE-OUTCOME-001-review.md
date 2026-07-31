@@ -814,3 +814,84 @@ reproduces malformed and self-consistently forged receipts that pass verificatio
 still promotes unverified caller/source strings into evidence; and B3 leaves the required
 metric population and artifact-integrity evidence incomplete. Re-audit the full acceptance
 batch before the next handoff. No owner implementation content was changed by this review.
+
+---
+
+# Codex6 Re-review Addendum — 2026-07-31, exact owner head `1da05d06`
+
+The supervisor re-dispatched this task to the assigned reviewer after the owner reported
+B1-B3 remediation at exact pushed head
+`1da05d06af328a510ec7acb592c04f10fd30b50f`. The local and remote task branches both
+pointed at that SHA, and the worktree contained no uncommitted owner implementation diff.
+
+## Verification at the exact owner head
+
+```bash
+PYTHONPATH=. .venv/bin/pytest -q tests/models -k "sitescore or opening_outcome"
+PYTHONPATH=. .venv/bin/pytest -q tests -k "sitescore or opening_outcome or model_ready"
+.venv/bin/ruff check scripts/models models tests/models
+git diff --check
+```
+
+- Task-scoped selector: **35 passed**.
+- Full focused selector: **passed**.
+- Ruff and `git diff --check`: clean.
+- The seven receipt mutations recorded at `89ebef81` are now rejected, and the no-source
+  handback correctly leaves unobserved outcome source/query/hash/lineage/freshness fields
+  unverified.
+
+The focused tests are green, but independent population and artifact mutations reproduce
+the following blocking evidence-integrity failures.
+
+## Blocking findings
+
+### B1 — Computed metric populations are discarded, and malformed counts can verify
+
+The evaluator computes `m6_mature`, `m12_mature`, `interval_bounds_count`, and
+`in_p80_count` at `models/sitescore/opening_outcome.py:474-509`, but its result constructor
+at lines 566-589 does not pass any of those four values. The new dataclass fields therefore
+retain their default zero values even for a fully observed record.
+
+An independent one-record mutation with valid 90-day/M6/M12 outcomes, 400 days of maturity,
+a matching prediction, and a valid covering P10/P90 interval returned all five coverage
+ratios as `1.0`, while emitting all four new numerator counts as `0`. The resulting receipt
+is rejected by the new ratio re-derivation logic, so the builder and verifier disagree for
+every non-empty evidence set this remediation was intended to support.
+
+The verifier also checks the new counts only for exceeding the common denominator; it does
+not reject negative `m6_mature_count`, `m12_mature_count`, `interval_bounds_count`, or
+`in_p80_count`. Starting from the no-source receipt, setting all copies of those four counts
+to `-1`, recomputing the handback hash and public content checksum, returned
+`RECEIPT_VALIDATED`. Require non-negative counts and their natural subset relationships
+(`in_p80 <= interval_bounds <= matched_prediction <= mature`), pass the actual computed
+values into the result, and add a non-empty round-trip test asserting that a freshly built
+receipt verifies.
+
+### B2 — The committed model-card hash is stale, and artifact-hash drift validates
+
+The committed model card's independently recomputed `compute_model_card_sha256` value is
+`f5fee8cf05819deaa0b251acad9258c64bba8c56585ef80cec5023af6d1e5005`, while the committed
+receipt declares
+`331ff54a087ee1c00eabb00aa54f585d7f4c3f23e08917dad0bb2a83a6d35bcf`.
+The mismatch is structural: the CLI builds a model card internally while constructing the
+receipt, then builds a second model card for the file; `ModelCard.to_dict()` includes a
+fresh `created_at`, so the two independently instantiated artifacts cannot have the same
+hash.
+
+`verify_sitescore_gate2_receipt` does not validate `artifact_hashes` at all, does not require
+the duplicated integrity hash fields, and has no model-card artifact input to compare with
+the declared hash. Changing both `artifact_hashes.handback_hash` and
+`artifact_hashes.model_card_hash` to arbitrary 64-character values, leaving the integrity
+copies unchanged, recomputing the public content checksum, returned `RECEIPT_VALIDATED`.
+Removing the integrity artifact-hash copies also validated. Build the model card once and
+bind that exact serialized artifact, require/cross-check both hash copies and strict digest
+shape, and verify the receipt against the actual model-card artifact. Add a committed-file
+round-trip test so stale generated evidence cannot pass CI.
+
+## Decision
+
+**Changes requested.** Exact owner head `1da05d06` is not approved. B1 makes every non-empty
+receipt internally inconsistent and still permits self-consistent negative population
+counts; B2 proves the committed model-card binding is already false and the verifier accepts
+artifact-hash drift. Re-audit the complete acceptance batch after remediation. No owner
+implementation content was changed by this review.
