@@ -1620,3 +1620,93 @@ backfill handoff. These directly violate the population-alignment, malformed-rec
 self-consistent-forgery, and concrete Human/Ops handoff acceptance clauses. Re-audit every
 criterion after remediation and return one new exact pushed head. No owner implementation
 content was changed by this review.
+
+---
+
+# Codex6 Re-review Addendum — 2026-07-31, exact owner head `97043588`
+
+The supervisor re-dispatched the task after the owner reported remediation of the `e94db743`
+B1-B4 findings. The local task branch and
+`origin/task/ODP-PLAN-SITESCORE-OUTCOME-001` both resolved to exact pushed commit
+`97043588c5c254ba3bbbd71318b4f7bb69326378`. The worktree contained no tracked
+uncommitted implementation changes; its only untracked files were the orchestrator-seeded task
+context and state files.
+
+## Verification at the exact owner head
+
+```bash
+pytest -q tests -k "sitescore or opening_outcome or model_ready"
+pytest -q tests -k "sitescore or opening_outcome or model_ready" \
+  --ignore=tests/data/test_great_expectations_gate.py
+pytest -q tests/models -k "sitescore or opening_outcome"
+ruff check scripts/models models tests/models
+git diff --check
+PYTHONPATH=. python3 <independent in-memory mutation probe>
+```
+
+- Task-scoped selector: **53 passed**.
+- The exact broad selector reached the known environment-only
+  `tests/data/test_great_expectations_gate.py` failure because `great_expectations` is not
+  installed; that file is outside this task diff. The same selector excluding that one known
+  environment gate completed cleanly.
+- Ruff and the whitespace check are clean.
+- The freshly generated partial-prediction-population receipt/model-card pair verifies before
+  mutation, and the owner's direct B1-B4 regressions pass.
+- Each independent mutation below updated all affected duplicates, recomputed the handback and
+  model-card SHA256 values in both declared locations, and recomputed the receipt content SHA256.
+  All three nevertheless returned `is_valid=True`, `reason_code="RECEIPT_VALIDATED"`, and no
+  errors.
+
+## Blocking findings
+
+### B1 — The new revenue sum only makes the forged aggregate internally consistent
+
+For two mature records with realized revenues 100 and 300, but only the first carrying a
+prediction, the producer correctly emits `realized_revenue_sum=400` and
+`mean_realized_revenue=200`. Replacing the sum with `200000` and the mean with `100000` in the
+summary, both handback copies, calibration summary, and model card validates after rebinding all
+hashes.
+
+The new checks at `models/sitescore/opening_outcome.py:1123-1145` prove only
+`mean_realized_revenue == realized_revenue_sum / mature_label_count`; the newly introduced sum
+is itself an unsigned, self-attested scalar. For a partially matched population it has no
+independent binding to source evidence or even the matched outcome aggregate. Persist and verify
+an authoritative mature-population digest/aggregate receipt (or require the raw population plus
+dataset snapshot binding) before accepting these aggregate facts. Adding a second forgeable
+number does not satisfy the population-alignment or self-consistent-forged-receipt criteria.
+
+### B2 — Negative segment populations satisfy the partition reconciliation
+
+On the same two-record benchmark, replacing the canonical `target_format_code` partition with
+three unique segments whose `record_count` values are `2`, `2`, and `-2` validates. Their total
+still equals `mature_label_count=2`, and choosing the same in-range coverage and MAE values keeps
+the weighted checks aligned.
+
+`_validate_segment_metrics` type-checks each count and rejects only counts greater than the main
+population (`models/sitescore/opening_outcome.py:1627-1632`); it never rejects a negative segment
+count. Require `record_count >= 0` before totals or weighted arithmetic, and add mixed
+positive/negative partition regressions. A negative numerator is malformed population evidence
+even when the final sum is self-consistent.
+
+### B3 — The concrete handback remains semantically replaceable
+
+Starting from the valid governed-disabled receipt, replacing both handback copies' reasons with
+`"All evidence is authoritative and Gate 2 passed"` and the action with text instructing Human/Ops
+to close both named dependency tasks because no work is required validates after hash rebinding.
+
+The new checks at `models/sitescore/opening_outcome.py:1391-1406` require only non-empty strings
+and the presence of both task-ID substrings. They do not bind reasons/actions to the re-derived
+`reason_code`, provenance, missing evidence, or required work. Use typed action objects and
+reason codes whose required fields are deterministically derived, or pin the governed-disabled
+action semantics for each provenance/reason state. Merely mentioning both IDs does not preserve
+the required concrete Human/Ops backfill handoff.
+
+## Decision
+
+**Changes requested.** Exact owner head `97043588` is not approved. B1-B4's literal examples are
+fixed and focused checks are otherwise green, but the complete batch still accepts a forged
+mature-population revenue aggregate, negative segment populations, and a handback whose meaning
+contradicts the governed-disabled verdict. These directly violate the population-alignment,
+malformed-receipt, self-consistent-forgery, and concrete Human/Ops handoff acceptance clauses.
+Re-audit every criterion after remediation and return one new exact pushed head. No owner
+implementation content was changed by this review.
