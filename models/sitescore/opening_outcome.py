@@ -804,6 +804,16 @@ def verify_sitescore_gate2_receipt(
     if not isinstance(receipt, dict):
         return Gate2ReceiptVerificationResult(False, "INVALID_RECEIPT_TYPE", ("Receipt must be a JSON dictionary",))
 
+    # B1 requirement: model_card_artifact is MANDATORY for receipt verification!
+    if model_card_artifact is None:
+        errors.append("Missing required model_card_artifact for receipt verification; model card artifact must be provided and substantiated")
+        mc_dict: dict[str, Any] | None = None
+    else:
+        mc_dict = model_card_artifact.to_dict() if hasattr(model_card_artifact, "to_dict") else model_card_artifact
+        if not isinstance(mc_dict, dict):
+            errors.append("model_card_artifact must be a dictionary or ModelCard instance")
+            mc_dict = None
+
     try:
         # 1. Integrity hash envelope check
         integrity = receipt.get("integrity")
@@ -883,6 +893,42 @@ def verify_sitescore_gate2_receipt(
         bounds_cov = _check_strict_float(summary.get("interval_bounds_coverage_ratio"), "benchmark_summary.interval_bounds_coverage_ratio")
         p80_cov = _check_strict_float(summary.get("p80_coverage"), "benchmark_summary.p80_coverage")
         norm_mae = _check_strict_float(summary.get("normalized_mae"), "benchmark_summary.normalized_mae")
+
+        # B1: Check model card digest and governed-disabled semantics if model_card_artifact is present
+        art_hashes = receipt.get("artifact_hashes")
+        if mc_dict is not None and isinstance(art_hashes, dict):
+            recomputed_mc_hash = compute_model_card_sha256(mc_dict)
+            declared_mc_hash = art_hashes.get("model_card_hash")
+            if declared_mc_hash != recomputed_mc_hash:
+                errors.append(f"Model card artifact hash mismatch: declared {declared_mc_hash}, recomputed {recomputed_mc_hash}")
+
+        # Check model card governed-disabled semantics
+        is_rec_disabled = (rec_gov_disabled is True) or (rec_gate_status != "PASSED")
+        if mc_dict is not None and is_rec_disabled:
+            mc_rel = mc_dict.get("release_status")
+            if mc_rel != "GOVERNED_DISABLED":
+                errors.append(f"Governed-disabled receipt requires model_card_artifact release_status to be 'GOVERNED_DISABLED' (got {mc_rel!r})")
+            if mc_dict.get("privacy_review") != "UNVERIFIED":
+                errors.append(f"Governed-disabled model card privacy_review must be 'UNVERIFIED' (got {mc_dict.get('privacy_review')!r})")
+            if mc_dict.get("security_review") != "UNVERIFIED":
+                errors.append(f"Governed-disabled model card security_review must be 'UNVERIFIED' (got {mc_dict.get('security_review')!r})")
+            mc_apps = mc_dict.get("approvals")
+            if mc_apps and len(mc_apps) > 0:
+                errors.append(f"Governed-disabled model card cannot contain approval records (got {len(mc_apps)} approvals)")
+            if mc_dict.get("feature_set_id") != "UNVERIFIED":
+                errors.append(f"Governed-disabled model card feature_set_id must be 'UNVERIFIED' (got {mc_dict.get('feature_set_id')!r})")
+            if mc_dict.get("label_set_id") != "UNVERIFIED":
+                errors.append(f"Governed-disabled model card label_set_id must be 'UNVERIFIED' (got {mc_dict.get('label_set_id')!r})")
+            if mc_dict.get("training_period") != "UNAVAILABLE":
+                errors.append(f"Governed-disabled model card training_period must be 'UNAVAILABLE' (got {mc_dict.get('training_period')!r})")
+            if mc_dict.get("validation_period") != "UNAVAILABLE":
+                errors.append(f"Governed-disabled model card validation_period must be 'UNAVAILABLE' (got {mc_dict.get('validation_period')!r})")
+            if mc_dict.get("algorithm") != "UNAVAILABLE":
+                errors.append(f"Governed-disabled model card algorithm must be 'UNAVAILABLE' (got {mc_dict.get('algorithm')!r})")
+            if mc_dict.get("baseline") != "UNAVAILABLE":
+                errors.append(f"Governed-disabled model card baseline must be 'UNAVAILABLE' (got {mc_dict.get('baseline')!r})")
+            if mc_dict.get("explainability_method") != "UNAVAILABLE":
+                errors.append(f"Governed-disabled model card explainability_method must be 'UNAVAILABLE' (got {mc_dict.get('explainability_method')!r})")
 
         # Range checks for ratios and MAE
         for r_val, r_name in [
@@ -1021,9 +1067,41 @@ def verify_sitescore_gate2_receipt(
             if handback.get(k) != handback_in_summary.get(k):
                 errors.append(f"benchmark_summary.handback_payload.{k} ({handback_in_summary.get(k)}) drifts from handback.{k} ({handback.get(k)})")
 
-        # Check duplicate counts in outcome_backfill_contract
+        # B2: Required Human/Ops and prediction handoff contract checks
+        hb_action = handback.get("handback_action")
+        if not isinstance(hb_action, str) or not hb_action.strip():
+            errors.append("handback.handback_action must be a non-empty string")
+
+        hb_backfill_task = handback.get("backfill_task_id")
+        if hb_backfill_task != "ODP-PLAN-SITESCORE-OUTCOME-BACKFILL-001":
+            errors.append(f"handback.backfill_task_id must be 'ODP-PLAN-SITESCORE-OUTCOME-BACKFILL-001' (got {hb_backfill_task!r})")
+
+        hb_pred_task = handback.get("prediction_source_task_id")
+        if hb_pred_task != "ODP-PLAN-SITESCORE-PREDICTION-SOURCE-001":
+            errors.append(f"handback.prediction_source_task_id must be 'ODP-PLAN-SITESCORE-PREDICTION-SOURCE-001' (got {hb_pred_task!r})")
+
+        # Check duplicate counts and fields in outcome_backfill_contract
         bc = handback.get("outcome_backfill_contract")
-        if isinstance(bc, dict):
+        if not isinstance(bc, dict):
+            errors.append("handback.outcome_backfill_contract must be a dictionary")
+        else:
+            if bc.get("task_id") != "ODP-PLAN-SITESCORE-OUTCOME-BACKFILL-001":
+                errors.append(f"outcome_backfill_contract.task_id must be 'ODP-PLAN-SITESCORE-OUTCOME-BACKFILL-001' (got {bc.get('task_id')!r})")
+            if bc.get("owner") != "Human/Ops":
+                errors.append(f"outcome_backfill_contract.owner must be 'Human/Ops' (got {bc.get('owner')!r})")
+
+            req_bc_fields = {
+                "authoritative_source_identity", "query_id", "dataset_snapshot_hash",
+                "artifact_lineage_id", "evidence_owner", "source_freshness_timestamp",
+                "m6_maturity_definition", "m12_maturity_definition", "realized_180d_net_revenue",
+                "realized_365d_net_revenue", "observed_count", "eligible_count",
+                "m6_mature_count", "m12_mature_count", "matched_prediction_count",
+                "interval_bounds_count", "in_p80_count"
+            }
+            bc_req = bc.get("required_fields")
+            if not isinstance(bc_req, (list, tuple)) or not req_bc_fields.issubset(set(bc_req if isinstance(bc_req, (list, tuple)) else [])):
+                errors.append(f"outcome_backfill_contract.required_fields must contain all required fields (missing: {req_bc_fields - set(bc_req if isinstance(bc_req, (list, tuple)) else [])})")
+
             if bc.get("observed_count") != obs:
                 errors.append(f"outcome_backfill_contract.observed_count ({bc.get('observed_count')}) drifts from summary.observed_count ({obs})")
             if bc.get("eligible_count") != elg:
@@ -1036,6 +1114,55 @@ def verify_sitescore_gate2_receipt(
                 errors.append(f"outcome_backfill_contract.m6_mature_count ({bc.get('m6_mature_count')}) drifts from summary.m6_mature_count ({m6_mat})")
             if bc.get("m12_mature_count") != m12_mat:
                 errors.append(f"outcome_backfill_contract.m12_mature_count ({bc.get('m12_mature_count')}) drifts from summary.m12_mature_count ({m12_mat})")
+            if bc.get("interval_bounds_count") != bounds_cnt:
+                errors.append(f"outcome_backfill_contract.interval_bounds_count ({bc.get('interval_bounds_count')}) drifts from summary.interval_bounds_count ({bounds_cnt})")
+            if bc.get("in_p80_count") != p80_cnt:
+                errors.append(f"outcome_backfill_contract.in_p80_count ({bc.get('in_p80_count')}) drifts from summary.in_p80_count ({p80_cnt})")
+
+        # Check prediction_source_contract
+        psc = handback.get("prediction_source_contract")
+        if not isinstance(psc, dict):
+            errors.append("handback.prediction_source_contract must be a dictionary")
+        else:
+            if psc.get("task_id") != "ODP-PLAN-SITESCORE-PREDICTION-SOURCE-001":
+                errors.append(f"prediction_source_contract.task_id must be 'ODP-PLAN-SITESCORE-PREDICTION-SOURCE-001' (got {psc.get('task_id')!r})")
+            if psc.get("owner") != "SiteScore Platform Team":
+                errors.append(f"prediction_source_contract.owner must be 'SiteScore Platform Team' (got {psc.get('owner')!r})")
+            req_psc_fields = {"predicted_revenue", "p10", "p90", "dataset_snapshot_id", "model_version", "artifact_lineage_id"}
+            psc_req = psc.get("required_fields")
+            if not isinstance(psc_req, (list, tuple)) or not req_psc_fields.issubset(set(psc_req if isinstance(psc_req, (list, tuple)) else [])):
+                errors.append(f"prediction_source_contract.required_fields must contain all required fields (missing: {req_psc_fields - set(psc_req if isinstance(psc_req, (list, tuple)) else [])})")
+
+        # B3: Reject unsupported synthetic horizon calibration fields
+        ALLOWED_CALIBRATION_KEYS = {
+            "measured_90d_mae",
+            "matched_prediction_count",
+            "matched_mean_realized_revenue",
+            "prediction_coverage_ratio",
+            "interval_bounds_coverage_ratio",
+            "p80_coverage_ratio",
+            "mean_realized_revenue",
+        }
+        FORBIDDEN_CALIBRATION_KEYS = {
+            "m1_interval_mae",
+            "m3_interval_mae",
+            "m6_interval_mae",
+            "m1_mae",
+            "m3_mae",
+            "m6_mae",
+        }
+
+        def _check_calibration_summary(cal_dict: Any, location_name: str) -> None:
+            if isinstance(cal_dict, dict):
+                for k in cal_dict.keys():
+                    if k in FORBIDDEN_CALIBRATION_KEYS or k not in ALLOWED_CALIBRATION_KEYS:
+                        errors.append(f"Forbidden or unsupported synthetic horizon calibration field in {location_name}: {k!r}")
+
+        _check_calibration_summary(summary.get("calibration_summary"), "summary.calibration_summary")
+        _check_calibration_summary(handback.get("calibration_summary"), "handback.calibration_summary")
+        _check_calibration_summary(handback_in_summary.get("calibration_summary"), "handback_payload.calibration_summary")
+        if mc_dict is not None:
+            _check_calibration_summary(mc_dict.get("calibration_summary"), "model_card.calibration_summary")
 
         # Check artifact_hashes dictionary & hashes
         art_hashes = receipt.get("artifact_hashes")

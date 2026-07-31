@@ -594,10 +594,11 @@ def test_sitescore_gate2_receipt_verifier_rejects_forged_active_and_drift_b3():
     from models.sitescore.opening_outcome import verify_sitescore_gate2_receipt
 
     result = run_benchmark_from_inventory(db_url=None, records=None)
-    receipt = build_sitescore_gate2_receipt(result)
+    model_card = build_sitescore_opening_outcome_model_card(result)
+    receipt = build_sitescore_gate2_receipt(result, model_card=model_card)
 
     # Genuine failing receipt verifies as valid (reasons explain it is GOVERNED_DISABLED)
-    verif = verify_sitescore_gate2_receipt(receipt)
+    verif = verify_sitescore_gate2_receipt(receipt, model_card_artifact=model_card)
     assert verif.is_valid is True
     assert verif.reason_code == "RECEIPT_VALIDATED"
 
@@ -607,7 +608,7 @@ def test_sitescore_gate2_receipt_verifier_rejects_forged_active_and_drift_b3():
     from models.sitescore.opening_outcome import compute_gate2_receipt_sha256
     forged_receipt_1["integrity"]["content_sha256"] = compute_gate2_receipt_sha256(forged_receipt_1)
 
-    verif_forged_1 = verify_sitescore_gate2_receipt(forged_receipt_1)
+    verif_forged_1 = verify_sitescore_gate2_receipt(forged_receipt_1, model_card_artifact=model_card)
     assert verif_forged_1.is_valid is False
     assert verif_forged_1.reason_code == "FORGED_ACTIVE_OR_MALFORMED_RECEIPT"
     assert any("Forged ACTIVE or PASSED verdict" in e for e in verif_forged_1.errors)
@@ -617,7 +618,7 @@ def test_sitescore_gate2_receipt_verifier_rejects_forged_active_and_drift_b3():
     forged_receipt_2["is_governed_disabled"] = False
     forged_receipt_2["integrity"]["content_sha256"] = compute_gate2_receipt_sha256(forged_receipt_2)
 
-    verif_forged_2 = verify_sitescore_gate2_receipt(forged_receipt_2)
+    verif_forged_2 = verify_sitescore_gate2_receipt(forged_receipt_2, model_card_artifact=model_card)
     assert verif_forged_2.is_valid is False
     assert verif_forged_2.reason_code == "FORGED_ACTIVE_OR_MALFORMED_RECEIPT"
 
@@ -625,7 +626,7 @@ def test_sitescore_gate2_receipt_verifier_rejects_forged_active_and_drift_b3():
     corrupted_receipt = json.loads(json.dumps(receipt))
     corrupted_receipt["inventory_version"] = "corrupted-version"
 
-    verif_corrupt = verify_sitescore_gate2_receipt(corrupted_receipt)
+    verif_corrupt = verify_sitescore_gate2_receipt(corrupted_receipt, model_card_artifact=model_card)
     assert verif_corrupt.is_valid is False
     assert verif_corrupt.reason_code == "INTEGRITY_HASH_MISMATCH"
 
@@ -693,13 +694,14 @@ def test_sitescore_gate2_receipt_verifier_rejects_self_consistent_count_and_rati
     from models.sitescore.opening_outcome import verify_sitescore_gate2_receipt
 
     result = run_benchmark_from_inventory(db_url=None, records=None)
-    receipt = build_sitescore_gate2_receipt(result)
+    model_card = build_sitescore_opening_outcome_model_card(result)
+    receipt = build_sitescore_gate2_receipt(result, model_card=model_card)
 
     # 1. handback.observed_count drift
     drift_1 = json.loads(json.dumps(receipt))
     drift_1["handback"]["observed_count"] = 999
     drift_1["integrity"]["content_sha256"] = compute_gate2_receipt_sha256(drift_1)
-    res_1 = verify_sitescore_gate2_receipt(drift_1)
+    res_1 = verify_sitescore_gate2_receipt(drift_1, model_card_artifact=model_card)
     assert res_1.is_valid is False
     assert res_1.reason_code == "FORGED_ACTIVE_OR_MALFORMED_RECEIPT"
     assert any("handback.observed_count" in e for e in res_1.errors)
@@ -708,7 +710,7 @@ def test_sitescore_gate2_receipt_verifier_rejects_self_consistent_count_and_rati
     drift_2 = json.loads(json.dumps(receipt))
     drift_2["benchmark_summary"]["handback_payload"]["mature_label_count"] = 999
     drift_2["integrity"]["content_sha256"] = compute_gate2_receipt_sha256(drift_2)
-    res_2 = verify_sitescore_gate2_receipt(drift_2)
+    res_2 = verify_sitescore_gate2_receipt(drift_2, model_card_artifact=model_card)
     assert res_2.is_valid is False
     assert res_2.reason_code == "FORGED_ACTIVE_OR_MALFORMED_RECEIPT"
     assert any("handback_payload.mature_label_count" in e for e in res_2.errors)
@@ -717,7 +719,7 @@ def test_sitescore_gate2_receipt_verifier_rejects_self_consistent_count_and_rati
     drift_3 = json.loads(json.dumps(receipt))
     drift_3["handback"]["prediction_coverage_ratio"] = 1.0
     drift_3["integrity"]["content_sha256"] = compute_gate2_receipt_sha256(drift_3)
-    res_3 = verify_sitescore_gate2_receipt(drift_3)
+    res_3 = verify_sitescore_gate2_receipt(drift_3, model_card_artifact=model_card)
     assert res_3.is_valid is False
     assert res_3.reason_code == "FORGED_ACTIVE_OR_MALFORMED_RECEIPT"
     assert any("handback.prediction_coverage_ratio" in e for e in res_3.errors)
@@ -726,7 +728,7 @@ def test_sitescore_gate2_receipt_verifier_rejects_self_consistent_count_and_rati
     malformed_1 = json.loads(json.dumps(receipt))
     malformed_1["benchmark_summary"]["normalized_mae"] = "not-a-number"
     malformed_1["integrity"]["content_sha256"] = compute_gate2_receipt_sha256(malformed_1)
-    res_m1 = verify_sitescore_gate2_receipt(malformed_1)
+    res_m1 = verify_sitescore_gate2_receipt(malformed_1, model_card_artifact=model_card)
     assert res_m1.is_valid is False
     assert res_m1.reason_code == "FORGED_ACTIVE_OR_MALFORMED_RECEIPT"
 
@@ -734,7 +736,7 @@ def test_sitescore_gate2_receipt_verifier_rejects_self_consistent_count_and_rati
     malformed_2 = json.loads(json.dumps(receipt))
     malformed_2["benchmark_summary"]["observed_count"] = True
     malformed_2["integrity"]["content_sha256"] = compute_gate2_receipt_sha256(malformed_2)
-    res_m2 = verify_sitescore_gate2_receipt(malformed_2)
+    res_m2 = verify_sitescore_gate2_receipt(malformed_2, model_card_artifact=model_card)
     assert res_m2.is_valid is False
     assert res_m2.reason_code == "FORGED_ACTIVE_OR_MALFORMED_RECEIPT"
 
@@ -834,13 +836,14 @@ def test_sitescore_gate2_verifier_rejects_governance_drift_and_boolean_threshold
     from models.sitescore.opening_outcome import verify_sitescore_gate2_receipt
 
     result = run_benchmark_from_inventory(db_url=None, records=None)
-    receipt = build_sitescore_gate2_receipt(result)
+    model_card = build_sitescore_opening_outcome_model_card(result)
+    receipt = build_sitescore_gate2_receipt(result, model_card=model_card)
 
     # 1. Top-level provenance drift: no_source -> pg16_query
     m1 = json.loads(json.dumps(receipt))
     m1["provenance"] = "pg16_query"
     m1["integrity"]["content_sha256"] = compute_gate2_receipt_sha256(m1)
-    res_m1 = verify_sitescore_gate2_receipt(m1)
+    res_m1 = verify_sitescore_gate2_receipt(m1, model_card_artifact=model_card)
     assert res_m1.is_valid is False
     assert any("top-level provenance" in e for e in res_m1.errors)
 
@@ -848,7 +851,7 @@ def test_sitescore_gate2_verifier_rejects_governance_drift_and_boolean_threshold
     m2 = json.loads(json.dumps(receipt))
     m2["benchmark_summary"]["reason_code"] = "OTHER"
     m2["integrity"]["content_sha256"] = compute_gate2_receipt_sha256(m2)
-    res_m2 = verify_sitescore_gate2_receipt(m2)
+    res_m2 = verify_sitescore_gate2_receipt(m2, model_card_artifact=model_card)
     assert res_m2.is_valid is False
     assert any("reason_code" in e for e in res_m2.errors)
 
@@ -856,7 +859,7 @@ def test_sitescore_gate2_verifier_rejects_governance_drift_and_boolean_threshold
     m3 = json.loads(json.dumps(receipt))
     m3["handback"]["reason_code"] = "OTHER"
     m3["integrity"]["content_sha256"] = compute_gate2_receipt_sha256(m3)
-    res_m3 = verify_sitescore_gate2_receipt(m3)
+    res_m3 = verify_sitescore_gate2_receipt(m3, model_card_artifact=model_card)
     assert res_m3.is_valid is False
     assert any("reason_code" in e for e in res_m3.errors)
 
@@ -864,7 +867,7 @@ def test_sitescore_gate2_verifier_rejects_governance_drift_and_boolean_threshold
     m4 = json.loads(json.dumps(receipt))
     m4["benchmark_summary"]["status"] = "OTHER"
     m4["integrity"]["content_sha256"] = compute_gate2_receipt_sha256(m4)
-    res_m4 = verify_sitescore_gate2_receipt(m4)
+    res_m4 = verify_sitescore_gate2_receipt(m4, model_card_artifact=model_card)
     assert res_m4.is_valid is False
     assert any("summary.status" in e for e in res_m4.errors)
 
@@ -872,7 +875,7 @@ def test_sitescore_gate2_verifier_rejects_governance_drift_and_boolean_threshold
     m5 = json.loads(json.dumps(receipt))
     m5["benchmark_summary"]["activation_threshold"] = True
     m5["integrity"]["content_sha256"] = compute_gate2_receipt_sha256(m5)
-    res_m5 = verify_sitescore_gate2_receipt(m5)
+    res_m5 = verify_sitescore_gate2_receipt(m5, model_card_artifact=model_card)
     assert res_m5.is_valid is False
     assert any("activation_threshold must be an integer" in e for e in res_m5.errors)
 
@@ -902,7 +905,8 @@ def test_sitescore_verifier_rejects_all_7_re_review_b1_mutations():
     from models.sitescore.opening_outcome import verify_sitescore_gate2_receipt
 
     result = run_benchmark_from_inventory(db_url=None, records=None)
-    receipt = build_sitescore_gate2_receipt(result)
+    model_card = build_sitescore_opening_outcome_model_card(result)
+    receipt = build_sitescore_gate2_receipt(result, model_card=model_card)
 
     # Mutation 1: Set all three m6_coverage_ratio copies to 2.0
     m1 = json.loads(json.dumps(receipt))
@@ -910,7 +914,7 @@ def test_sitescore_verifier_rejects_all_7_re_review_b1_mutations():
     m1["handback"]["m6_coverage_ratio"] = 2.0
     m1["benchmark_summary"]["handback_payload"]["m6_coverage_ratio"] = 2.0
     m1["integrity"]["content_sha256"] = compute_gate2_receipt_sha256(m1)
-    res1 = verify_sitescore_gate2_receipt(m1)
+    res1 = verify_sitescore_gate2_receipt(m1, model_card_artifact=model_card)
     assert res1.is_valid is False
 
     # Mutation 2: Set all three normalized_mae copies to -1.0
@@ -919,14 +923,14 @@ def test_sitescore_verifier_rejects_all_7_re_review_b1_mutations():
     m2["handback"]["normalized_mae"] = -1.0
     m2["benchmark_summary"]["handback_payload"]["normalized_mae"] = -1.0
     m2["integrity"]["content_sha256"] = compute_gate2_receipt_sha256(m2)
-    res2 = verify_sitescore_gate2_receipt(m2)
+    res2 = verify_sitescore_gate2_receipt(m2, model_card_artifact=model_card)
     assert res2.is_valid is False
 
     # Mutation 3: Change only benchmark_summary.handback_payload.reason_code to GATE2_CRITERIA_MET
     m3 = json.loads(json.dumps(receipt))
     m3["benchmark_summary"]["handback_payload"]["reason_code"] = "GATE2_CRITERIA_MET"
     m3["integrity"]["content_sha256"] = compute_gate2_receipt_sha256(m3)
-    res3 = verify_sitescore_gate2_receipt(m3)
+    res3 = verify_sitescore_gate2_receipt(m3, model_card_artifact=model_card)
     assert res3.is_valid is False
 
     # Mutation 4: Change both handback copies' governed_disabled to false while top-level remains true
@@ -934,21 +938,21 @@ def test_sitescore_verifier_rejects_all_7_re_review_b1_mutations():
     m4["handback"]["governed_disabled"] = False
     m4["benchmark_summary"]["handback_payload"]["governed_disabled"] = False
     m4["integrity"]["content_sha256"] = compute_gate2_receipt_sha256(m4)
-    res4 = verify_sitescore_gate2_receipt(m4)
+    res4 = verify_sitescore_gate2_receipt(m4, model_card_artifact=model_card)
     assert res4.is_valid is False
 
     # Mutation 5: Change top-level gate_status to BOGUS
     m5 = json.loads(json.dumps(receipt))
     m5["gate_status"] = "BOGUS"
     m5["integrity"]["content_sha256"] = compute_gate2_receipt_sha256(m5)
-    res5 = verify_sitescore_gate2_receipt(m5)
+    res5 = verify_sitescore_gate2_receipt(m5, model_card_artifact=model_card)
     assert res5.is_valid is False
 
     # Mutation 6: Change top-level is_governed_disabled from boolean true to string "yes"
     m6 = json.loads(json.dumps(receipt))
     m6["is_governed_disabled"] = "yes"
     m6["integrity"]["content_sha256"] = compute_gate2_receipt_sha256(m6)
-    res6 = verify_sitescore_gate2_receipt(m6)
+    res6 = verify_sitescore_gate2_receipt(m6, model_card_artifact=model_card)
     assert res6.is_valid is False
 
     # Mutation 7: Change every reason-code copy from NO_SOURCE_INVENTORY to allowed enum GATE2_CRITERIA_MET
@@ -957,14 +961,15 @@ def test_sitescore_verifier_rejects_all_7_re_review_b1_mutations():
     m7["handback"]["reason_code"] = "GATE2_CRITERIA_MET"
     m7["benchmark_summary"]["handback_payload"]["reason_code"] = "GATE2_CRITERIA_MET"
     m7["integrity"]["content_sha256"] = compute_gate2_receipt_sha256(m7)
-    res7 = verify_sitescore_gate2_receipt(m7)
+    res7 = verify_sitescore_gate2_receipt(m7, model_card_artifact=model_card)
     assert res7.is_valid is False
 
 
 def test_sitescore_gate2_receipt_artifact_hashes_binding_b3():
     # B3 Re-review test: Receipt binds handback_hash and model_card_hash in integrity envelope and artifact_hashes
     result = run_benchmark_from_inventory(db_url=None, records=None)
-    receipt = build_sitescore_gate2_receipt(result)
+    model_card = build_sitescore_opening_outcome_model_card(result)
+    receipt = build_sitescore_gate2_receipt(result, model_card=model_card)
 
     assert "artifact_hashes" in receipt
     assert "handback_hash" in receipt["artifact_hashes"]
@@ -972,7 +977,7 @@ def test_sitescore_gate2_receipt_artifact_hashes_binding_b3():
     assert receipt["integrity"]["handback_hash"] == receipt["artifact_hashes"]["handback_hash"]
     assert receipt["integrity"]["model_card_hash"] == receipt["artifact_hashes"]["model_card_hash"]
 
-    verif = verify_sitescore_gate2_receipt(receipt)
+    verif = verify_sitescore_gate2_receipt(receipt, model_card_artifact=model_card)
     assert verif.is_valid is True
 
 
@@ -997,13 +1002,14 @@ def test_sitescore_opening_outcome_non_empty_population_counts_populated_and_ver
     assert result.interval_bounds_count == 10
     assert result.in_p80_count == 10
 
-    receipt = build_sitescore_gate2_receipt(result)
+    model_card = build_sitescore_opening_outcome_model_card(result)
+    receipt = build_sitescore_gate2_receipt(result, model_card=model_card)
     assert receipt["benchmark_summary"]["m6_mature_count"] == 10
     assert receipt["benchmark_summary"]["m12_mature_count"] == 10
     assert receipt["benchmark_summary"]["interval_bounds_count"] == 10
     assert receipt["benchmark_summary"]["in_p80_count"] == 10
 
-    verif = verify_sitescore_gate2_receipt(receipt)
+    verif = verify_sitescore_gate2_receipt(receipt, model_card_artifact=model_card)
     assert verif.is_valid is True
     assert verif.reason_code == "RECEIPT_VALIDATED"
 
@@ -1018,7 +1024,8 @@ def test_sitescore_verifier_rejects_negative_counts_and_invalid_hierarchy_b1():
         include_bounds=True,
     )
     result = evaluate_sitescore_opening_outcome_benchmark(records, provenance="authenticated_governed_records")
-    receipt = build_sitescore_gate2_receipt(result)
+    model_card = build_sitescore_opening_outcome_model_card(result)
+    receipt = build_sitescore_gate2_receipt(result, model_card=model_card)
 
     # 1. Negative count test: set m6_mature_count = -1
     m1 = json.loads(json.dumps(receipt))
@@ -1031,7 +1038,7 @@ def test_sitescore_verifier_rejects_negative_counts_and_invalid_hierarchy_b1():
     m1["integrity"]["handback_hash"] = hb_hash_1
     m1["integrity"]["content_sha256"] = compute_gate2_receipt_sha256(m1)
 
-    res1 = verify_sitescore_gate2_receipt(m1)
+    res1 = verify_sitescore_gate2_receipt(m1, model_card_artifact=model_card)
     assert res1.is_valid is False
     assert any("cannot be negative" in e for e in res1.errors)
 
@@ -1046,7 +1053,7 @@ def test_sitescore_verifier_rejects_negative_counts_and_invalid_hierarchy_b1():
     m2["integrity"]["handback_hash"] = hb_hash_2
     m2["integrity"]["content_sha256"] = compute_gate2_receipt_sha256(m2)
 
-    res2 = verify_sitescore_gate2_receipt(m2)
+    res2 = verify_sitescore_gate2_receipt(m2, model_card_artifact=model_card)
     assert res2.is_valid is False
     assert any("Interval bounds count" in e for e in res2.errors)
 
@@ -1061,7 +1068,7 @@ def test_sitescore_verifier_rejects_negative_counts_and_invalid_hierarchy_b1():
     m3["integrity"]["handback_hash"] = hb_hash_3
     m3["integrity"]["content_sha256"] = compute_gate2_receipt_sha256(m3)
 
-    res3 = verify_sitescore_gate2_receipt(m3)
+    res3 = verify_sitescore_gate2_receipt(m3, model_card_artifact=model_card)
     assert res3.is_valid is False
     assert any("In P80 count" in e for e in res3.errors)
 
@@ -1078,7 +1085,7 @@ def test_sitescore_verifier_rejects_artifact_hashes_drift_and_model_card_mismatc
     m1["artifact_hashes"]["model_card_hash"] = "a" * 64
     m1["integrity"]["content_sha256"] = compute_gate2_receipt_sha256(m1)
 
-    res1 = verify_sitescore_gate2_receipt(m1)
+    res1 = verify_sitescore_gate2_receipt(m1, model_card_artifact=model_card)
     assert res1.is_valid is False
     assert any("Integrity model_card_hash drift" in e for e in res1.errors)
 
@@ -1114,3 +1121,102 @@ def test_sitescore_committed_evidence_files_round_trip_verification_b2():
     verif = verify_sitescore_gate2_receipt(receipt, model_card_artifact=model_card)
     assert verif.is_valid is True
     assert verif.reason_code == "RECEIPT_VALIDATED"
+
+
+def test_sitescore_verifier_mandates_model_card_and_rejects_forged_governed_disabled_semantics_b1():
+    # B1 Re-review test: verify_sitescore_gate2_receipt fails closed when model_card_artifact is missing or carries forged governed-disabled semantics
+
+    result = run_benchmark_from_inventory(db_url=None, records=None)
+    model_card = build_sitescore_opening_outcome_model_card(result)
+    receipt = build_sitescore_gate2_receipt(result, model_card=model_card)
+
+    # 1. Missing model_card_artifact fails closed
+    res_none = verify_sitescore_gate2_receipt(receipt, model_card_artifact=None)
+    assert res_none.is_valid is False
+    assert any("Missing required model_card_artifact" in e for e in res_none.errors)
+
+    # 2. Forged release_status="ACTIVE" on governed-disabled card fails closed
+    mc_dict_1 = json.loads(json.dumps(model_card.to_dict()))
+    mc_dict_1["release_status"] = "ACTIVE"
+    res_forged_1 = verify_sitescore_gate2_receipt(receipt, model_card_artifact=mc_dict_1)
+    assert res_forged_1.is_valid is False
+    assert any("Governed-disabled receipt requires model_card_artifact release_status to be 'GOVERNED_DISABLED'" in e for e in res_forged_1.errors)
+
+    # 3. Forged privacy_review="PASSED" fails closed
+    mc_dict_2 = json.loads(json.dumps(model_card.to_dict()))
+    mc_dict_2["privacy_review"] = "PASSED"
+    res_forged_2 = verify_sitescore_gate2_receipt(receipt, model_card_artifact=mc_dict_2)
+    assert res_forged_2.is_valid is False
+    assert any("privacy_review must be 'UNVERIFIED'" in e for e in res_forged_2.errors)
+
+    # 4. Forged approval record fails closed
+    mc_dict_3 = json.loads(json.dumps(model_card.to_dict()))
+    mc_dict_3["approvals"] = [{
+        "approver": "attacker",
+        "role": "platform_lead",
+        "approved_at": "2026-07-31T00:00:00Z",
+        "decision": "approved",
+    }]
+    res_forged_3 = verify_sitescore_gate2_receipt(receipt, model_card_artifact=mc_dict_3)
+    assert res_forged_3.is_valid is False
+    assert any("Governed-disabled model card cannot contain approval records" in e for e in res_forged_3.errors)
+
+
+def test_sitescore_verifier_mandates_handoff_contracts_and_reconciles_counts_b2():
+    # B2 Re-review test: verify_sitescore_gate2_receipt fails closed if contracts/actions are missing or counts drift
+    result = run_benchmark_from_inventory(db_url=None, records=None)
+    model_card = build_sitescore_opening_outcome_model_card(result)
+    receipt = build_sitescore_gate2_receipt(result, model_card=model_card)
+
+    # 1. Missing outcome_backfill_contract
+    m1 = json.loads(json.dumps(receipt))
+    del m1["handback"]["outcome_backfill_contract"]
+    m1["integrity"]["content_sha256"] = compute_gate2_receipt_sha256(m1)
+    res_1 = verify_sitescore_gate2_receipt(m1, model_card_artifact=model_card)
+    assert res_1.is_valid is False
+    assert any("outcome_backfill_contract must be a dictionary" in e for e in res_1.errors)
+
+    # 2. Missing prediction_source_contract
+    m2 = json.loads(json.dumps(receipt))
+    del m2["handback"]["prediction_source_contract"]
+    m2["integrity"]["content_sha256"] = compute_gate2_receipt_sha256(m2)
+    res_2 = verify_sitescore_gate2_receipt(m2, model_card_artifact=model_card)
+    assert res_2.is_valid is False
+    assert any("prediction_source_contract must be a dictionary" in e for e in res_2.errors)
+
+    # 3. Missing handback_action
+    m3 = json.loads(json.dumps(receipt))
+    m3["handback"]["handback_action"] = ""
+    m3["integrity"]["content_sha256"] = compute_gate2_receipt_sha256(m3)
+    res_3 = verify_sitescore_gate2_receipt(m3, model_card_artifact=model_card)
+    assert res_3.is_valid is False
+    assert any("handback.handback_action must be a non-empty string" in e for e in res_3.errors)
+
+    # 4. Count drift in outcome_backfill_contract.interval_bounds_count
+    m4 = json.loads(json.dumps(receipt))
+    m4["handback"]["outcome_backfill_contract"]["interval_bounds_count"] = 999
+    m4["integrity"]["content_sha256"] = compute_gate2_receipt_sha256(m4)
+    res_4 = verify_sitescore_gate2_receipt(m4, model_card_artifact=model_card)
+    assert res_4.is_valid is False
+    assert any("outcome_backfill_contract.interval_bounds_count" in e for e in res_4.errors)
+
+
+def test_sitescore_verifier_rejects_synthetic_horizon_calibration_fields_b3():
+    # B3 Re-review test: verify_sitescore_gate2_receipt fails closed when synthetic horizon calibration fields are injected
+    result = run_benchmark_from_inventory(db_url=None, records=None)
+    model_card = build_sitescore_opening_outcome_model_card(result)
+    receipt = build_sitescore_gate2_receipt(result, model_card=model_card)
+
+    m1 = json.loads(json.dumps(receipt))
+    m1["benchmark_summary"]["calibration_summary"]["m1_interval_mae"] = 10.0
+    m1["integrity"]["content_sha256"] = compute_gate2_receipt_sha256(m1)
+    res_1 = verify_sitescore_gate2_receipt(m1, model_card_artifact=model_card)
+    assert res_1.is_valid is False
+    assert any("Forbidden or unsupported synthetic horizon calibration field" in e for e in res_1.errors)
+
+    m2 = json.loads(json.dumps(receipt))
+    m2["benchmark_summary"]["calibration_summary"]["m6_interval_mae"] = 5.0
+    m2["integrity"]["content_sha256"] = compute_gate2_receipt_sha256(m2)
+    res_2 = verify_sitescore_gate2_receipt(m2, model_card_artifact=model_card)
+    assert res_2.is_valid is False
+    assert any("Forbidden or unsupported synthetic horizon calibration field" in e for e in res_2.errors)
