@@ -11,7 +11,6 @@ from __future__ import annotations
 
 from collections import Counter, defaultdict
 from dataclasses import dataclass, replace
-from datetime import UTC, datetime
 from itertools import product
 from typing import Any
 
@@ -125,12 +124,12 @@ def _candidate_from_selected(
     constraints: NetPlanConstraints,
     risk_penalty: float,
 ) -> NetworkPlanCandidate:
-    expected_gm = round(sum(option.expected_gross_margin for option in selected), 4)
-    budget = round(sum(option.budget_cost for option in selected), 4)
-    average_risk = round(sum(option.risk_score for option in selected) / len(selected), 4) if selected else 0.0
+    expected_gm = sum(option.expected_gross_margin for option in selected)
+    budget = sum(option.budget_cost for option in selected)
+    average_risk = sum(option.risk_score for option in selected) / len(selected) if selected else 0.0
     capacity = sum(option.capacity_delta for option in selected)
     counts = Counter(option.action for option in selected)
-    objective = round(expected_gm - risk_penalty * average_risk, 4)
+    objective = expected_gm - risk_penalty * average_risk
     return NetworkPlanCandidate(
         actions=tuple(selected),
         objective_value=objective,
@@ -159,6 +158,7 @@ def _solve_network_plan_impl(
 ) -> NetworkPlanSolveResult:
     if alternative_limit < 0:
         raise ValueError("alternative_limit must be non-negative")
+    _validate_option_domain(options_by_entity)
 
     # Handle empty/missing inputs
     if not options_by_entity or any(not options for options in options_by_entity.values()):
@@ -324,20 +324,10 @@ def _solve_network_plan_impl(
             diagnostics=tuple(diagnose_infeasible(options_by_entity, constraints)),
         )
 
-    def get_selected_actions():
-        selected = []
-        for entity_id, options in options_by_entity.items():
-            for j, option in enumerate(options):
-                if x[entity_id][j].solution_value() > 0.5:
-                    selected.append(option)
-        return selected
-
-    selected = sorted(get_selected_actions(), key=lambda o: o.entity_id)
-    best_candidate = _candidate_from_selected(selected, constraints, risk_penalty)
-
-    # Independently enumerate and rank alternatives. This makes their count,
-    # order, and full content deterministic instead of relying on backend tie
-    # breaking after repeated no-good constraints.
+    # The backend solve proves runtime compatibility, while the independently
+    # enumerated set is authoritative for exact hard constraints, optimality,
+    # and deterministic alternative content. Backend numeric tolerances must
+    # never admit a raw constraint violation into the public result.
     ranked_candidates = _rank_feasible_candidates(
         build_feasible_candidates(
             options_by_entity=options_by_entity,
@@ -345,15 +335,29 @@ def _solve_network_plan_impl(
             risk_penalty=risk_penalty,
         )
     )
+    if not ranked_candidates:
+        return NetworkPlanSolveResult(
+            solver_status=STATUS_INFEASIBLE,
+            objective_value=0.0,
+            selected_actions=(),
+            expected_gross_margin=0.0,
+            budget_usage=0.0,
+            average_risk=0.0,
+            capacity_delta=0,
+            action_counts={},
+            binding_constraints=(),
+            infeasible=True,
+            diagnostics=tuple(diagnose_infeasible(options_by_entity, constraints)),
+        )
+    best_candidate = ranked_candidates[0]
     alternatives = [
         candidate
         for candidate in ranked_candidates
         if candidate.action_signature != best_candidate.action_signature
     ][:alternative_limit]
 
-    solver_status = STATUS_OPTIMAL if status == _pywraplp().Solver.OPTIMAL else STATUS_FEASIBLE
     return NetworkPlanSolveResult(
-        solver_status=solver_status,
+        solver_status=STATUS_OPTIMAL,
         objective_value=best_candidate.objective_value,
         selected_actions=best_candidate.actions,
         expected_gross_margin=best_candidate.expected_gross_margin,
@@ -372,6 +376,7 @@ def build_feasible_candidates(
     constraints: NetPlanConstraints,
     risk_penalty: float,
 ) -> list[NetworkPlanCandidate]:
+    _validate_option_domain(options_by_entity)
     if not options_by_entity or any(not options for options in options_by_entity.values()):
         return []
 
@@ -530,12 +535,12 @@ def _candidate(
     constraints: NetPlanConstraints,
     risk_penalty: float,
 ) -> NetworkPlanCandidate:
-    expected_gm = round(sum(option.expected_gross_margin for option in selected), 4)
-    budget = round(sum(option.budget_cost for option in selected), 4)
-    average_risk = round(sum(option.risk_score for option in selected) / len(selected), 4)
+    expected_gm = sum(option.expected_gross_margin for option in selected)
+    budget = sum(option.budget_cost for option in selected)
+    average_risk = sum(option.risk_score for option in selected) / len(selected)
     capacity = sum(option.capacity_delta for option in selected)
     counts = Counter(option.action for option in selected)
-    objective = round(expected_gm - risk_penalty * average_risk, 4)
+    objective = expected_gm - risk_penalty * average_risk
     return NetworkPlanCandidate(
         actions=selected,
         objective_value=objective,
@@ -556,11 +561,11 @@ def _candidate(
 
 
 def _is_feasible(candidate: NetworkPlanCandidate, constraints: NetPlanConstraints) -> bool:
-    if candidate.budget_usage > constraints.max_budget + 1e-9:
+    if candidate.budget_usage > constraints.max_budget:
         return False
     if (
         constraints.min_expected_gross_margin is not None
-        and candidate.expected_gross_margin < constraints.min_expected_gross_margin - 1e-9
+        and candidate.expected_gross_margin < constraints.min_expected_gross_margin
     ):
         return False
     if (
@@ -570,7 +575,7 @@ def _is_feasible(candidate: NetworkPlanCandidate, constraints: NetPlanConstraint
         return False
     if (
         constraints.max_average_risk is not None
-        and candidate.average_risk > constraints.max_average_risk + 1e-9
+        and candidate.average_risk > constraints.max_average_risk
     ):
         return False
     for action, minimum in constraints.min_action_counts.items():
@@ -617,6 +622,7 @@ def compute_solver_problem_hash(
 ) -> str:
     if alternative_limit < 0:
         raise ValueError("alternative_limit must be non-negative")
+    _validate_option_domain(options_by_entity)
     payload = {
         "entities": sorted(options_by_entity.keys()),
         "options": {
@@ -630,6 +636,25 @@ def compute_solver_problem_hash(
     return canonical_sha256(payload)
 
 
+def _validate_option_domain(
+    options_by_entity: dict[str, tuple[ActionOption, ...]],
+) -> None:
+    """Reject action-only identities that cannot bind one authoritative option."""
+    for entity_id, options in options_by_entity.items():
+        seen_actions: set[NetworkAction] = set()
+        for option in options:
+            if option.entity_id != entity_id:
+                raise ValueError(
+                    f"option entity_id {option.entity_id!r} does not match domain {entity_id!r}"
+                )
+            if option.action in seen_actions:
+                raise ValueError(
+                    "duplicate (entity_id, action) option identity: "
+                    f"({entity_id!r}, {option.action.value!r})"
+                )
+            seen_actions.add(option.action)
+
+
 def _compute_solver_result_hash(solve_result: NetworkPlanSolveResult) -> str:
     return canonical_sha256(solve_result.to_dict())
 
@@ -640,10 +665,10 @@ def _candidate_fields_match(
 ) -> bool:
     return (
         actual.actions == expected.actions
-        and _near(actual.objective_value, expected.objective_value)
-        and _near(actual.expected_gross_margin, expected.expected_gross_margin)
-        and _near(actual.budget_usage, expected.budget_usage)
-        and _near(actual.average_risk, expected.average_risk)
+        and actual.objective_value == expected.objective_value
+        and actual.expected_gross_margin == expected.expected_gross_margin
+        and actual.budget_usage == expected.budget_usage
+        and actual.average_risk == expected.average_risk
         and actual.capacity_delta == expected.capacity_delta
         and actual.action_counts == expected.action_counts
         and actual.binding_constraints == expected.binding_constraints
@@ -672,13 +697,13 @@ def _verify_solve_result(
             violations.append("solve_feasibility_flag_mismatch")
         if solve_result.selected_actions:
             violations.append("infeasible_result_has_selected_actions")
-        if not _near(solve_result.objective_value, 0.0):
+        if solve_result.objective_value != 0.0:
             violations.append("solve_objective_mismatch")
         if any(
             (
-                not _near(solve_result.expected_gross_margin, 0.0),
-                not _near(solve_result.budget_usage, 0.0),
-                not _near(solve_result.average_risk, 0.0),
+                solve_result.expected_gross_margin != 0.0,
+                solve_result.budget_usage != 0.0,
+                solve_result.average_risk != 0.0,
                 solve_result.capacity_delta != 0,
                 bool(solve_result.action_counts),
                 bool(solve_result.binding_constraints),
@@ -727,13 +752,13 @@ def _verify_solve_result(
     )
     if not _is_feasible(recomputed, constraints):
         violations.append("selected_actions_infeasible")
-    if not _near(solve_result.objective_value, recomputed.objective_value):
+    if solve_result.objective_value != recomputed.objective_value:
         violations.append("solve_objective_mismatch")
-    if not _near(solve_result.expected_gross_margin, recomputed.expected_gross_margin):
+    if solve_result.expected_gross_margin != recomputed.expected_gross_margin:
         violations.append("solve_expected_gross_margin_mismatch")
-    if not _near(solve_result.budget_usage, recomputed.budget_usage):
+    if solve_result.budget_usage != recomputed.budget_usage:
         violations.append("solve_budget_usage_mismatch")
-    if not _near(solve_result.average_risk, recomputed.average_risk):
+    if solve_result.average_risk != recomputed.average_risk:
         violations.append("solve_average_risk_mismatch")
     if solve_result.capacity_delta != recomputed.capacity_delta:
         violations.append("solve_capacity_delta_mismatch")
@@ -744,7 +769,7 @@ def _verify_solve_result(
 
     ranked_candidates = _rank_feasible_candidates(feasible_candidates)
     best_objective = ranked_candidates[0].objective_value
-    if not _near(recomputed.objective_value, best_objective):
+    if recomputed.objective_value != best_objective:
         violations.append("optimality_claim_mismatch")
 
     expected_alternatives = tuple(
@@ -800,7 +825,6 @@ def compare_solver_against_management_baseline(
     risk_penalty: float = 100_000.0,
     alternative_limit: int = DEFAULT_ALTERNATIVE_LIMIT,
     approval_verifier: ManagementApprovalReceiptVerifier | None = None,
-    evaluated_at: datetime | None = None,
 ) -> ManagementBaselineComparisonReceipt:
     baseline_canonical_hash = baseline.compute_canonical_hash(constraints=constraints, risk_penalty=risk_penalty)
     solver_problem_hash = compute_solver_problem_hash(
@@ -899,7 +923,6 @@ def compare_solver_against_management_baseline(
             baseline_content_hash=baseline_canonical_hash,
             solver_problem_hash=solver_problem_hash,
         ),
-        evaluated_at=evaluated_at or datetime.now(UTC),
     )
     approval_receipt_hash = verification.receipt.receipt_hash if verification.receipt else ""
     if not verification.verified:
@@ -982,11 +1005,11 @@ def compare_solver_against_management_baseline(
 
     if not is_feasible:
         violations: list[str] = []
-        if baseline_candidate.budget_usage > constraints.max_budget + 1e-9:
+        if baseline_candidate.budget_usage > constraints.max_budget:
             violations.append("max_budget")
         if (
             constraints.min_expected_gross_margin is not None
-            and baseline_candidate.expected_gross_margin < constraints.min_expected_gross_margin - 1e-9
+            and baseline_candidate.expected_gross_margin < constraints.min_expected_gross_margin
         ):
             violations.append("min_expected_gross_margin")
         if (
@@ -996,7 +1019,7 @@ def compare_solver_against_management_baseline(
             violations.append("min_capacity_delta")
         if (
             constraints.max_average_risk is not None
-            and baseline_candidate.average_risk > constraints.max_average_risk + 1e-9
+            and baseline_candidate.average_risk > constraints.max_average_risk
         ):
             violations.append("max_average_risk")
         for action, minimum in constraints.min_action_counts.items():
@@ -1017,9 +1040,9 @@ def compare_solver_against_management_baseline(
             approval_receipt_hash=approval_receipt_hash,
         )
 
-    gain = round(recomputed_solve.objective_value - baseline_candidate.objective_value, 4)
-    superior_or_equal = solve_result.solver_status in {STATUS_OPTIMAL, STATUS_FEASIBLE} and (
-        recomputed_solve.objective_value >= baseline_candidate.objective_value - 1e-6
+    gain = recomputed_solve.objective_value - baseline_candidate.objective_value
+    superior_or_equal = solve_result.solver_status == STATUS_OPTIMAL and (
+        recomputed_solve.objective_value >= baseline_candidate.objective_value
     )
     return receipt(
         baseline_feasible=True,

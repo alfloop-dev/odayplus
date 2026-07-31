@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import json
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from enum import StrEnum
@@ -219,8 +219,6 @@ class ManagementApprovalReceiptVerifier(Protocol):
     def verify(
         self,
         expectation: ManagementApprovalExpectation,
-        *,
-        evaluated_at: datetime,
     ) -> ManagementApprovalVerification: ...
 
 
@@ -234,6 +232,7 @@ class FixedManagementApprovalReceiptVerifier:
         source_system: str,
         principal_id: str,
         principal_role: str,
+        clock: Callable[[], datetime] | None = None,
     ) -> None:
         fixed_identity = (source_system, principal_id, principal_role)
         if any(not value.strip() or value.strip().upper() == "ANY" for value in fixed_identity):
@@ -244,12 +243,11 @@ class FixedManagementApprovalReceiptVerifier:
         self._source_system = source_system
         self._principal_id = principal_id
         self._principal_role = principal_role
+        self._clock = clock or (lambda: datetime.now(UTC))
 
     def verify(
         self,
         expectation: ManagementApprovalExpectation,
-        *,
-        evaluated_at: datetime,
     ) -> ManagementApprovalVerification:
         violations: list[str] = []
         receipt_id = expectation.receipt_id.strip()
@@ -283,7 +281,8 @@ class FixedManagementApprovalReceiptVerifier:
 
         issued_at = strict_utc_datetime(receipt.issued_at)
         expires_at = strict_utc_datetime(receipt.expires_at)
-        evaluation_time = evaluated_at.astimezone(UTC) if evaluated_at.tzinfo else None
+        authority_time = self._clock()
+        evaluation_time = authority_time.astimezone(UTC) if authority_time.tzinfo else None
         if issued_at is None:
             violations.append("approval_issued_at_invalid")
         if expires_at is None:

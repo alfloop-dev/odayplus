@@ -240,7 +240,6 @@ class NetPlanService:
                     ),
                     solver_problem_hash=problem_hash,
                 ),
-                evaluated_at=now,
             )
             if not verification.verified or verification.receipt is None:
                 detail = ",".join(verification.violations)

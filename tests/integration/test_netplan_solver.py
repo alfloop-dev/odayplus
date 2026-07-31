@@ -25,6 +25,7 @@ from modules.netplan import (
     InvalidNetPlanTransitionError,
     ManagementApprovalReceipt,
     ManagementBaselineInput,
+    NetPlanApprovalError,
     NetPlanScenarioStatus,
     NetPlanService,
     ScenarioBuildRequest,
@@ -38,6 +39,7 @@ from solver.netplan import (
     STATUS_FEASIBLE,
     STATUS_INFEASIBLE,
     STATUS_OPTIMAL,
+    ActionOption,
     NetPlanConstraints,
     NetworkAction,
     NetworkPlanSolveResult,
@@ -184,12 +186,14 @@ def _approval_verifier(
     source_system: str = APPROVAL_SOURCE,
     principal_id: str = APPROVAL_PRINCIPAL,
     principal_role: str = APPROVAL_ROLE,
+    clock: datetime = MOMENT,
 ) -> FixedManagementApprovalReceiptVerifier:
     return FixedManagementApprovalReceiptVerifier(
         receipts={receipt.receipt_id: receipt},
         source_system=source_system,
         principal_id=principal_id,
         principal_role=principal_role,
+        clock=lambda: clock,
     )
 
 
@@ -211,7 +215,6 @@ def _compare(
             if receipt is not None
             else None
         ),
-        evaluated_at=MOMENT,
     )
 
 
@@ -339,6 +342,60 @@ def test_service_lifecycle_tracks_approval_execution_and_outcome() -> None:
         NetPlanScenarioStatus.CLOSED,
     ]
     assert all(transition.actor and transition.reason for transition in closed.status_history)
+
+
+def test_backdated_decision_cannot_revive_an_expired_authority_receipt() -> None:
+    options = build_scenario_options(existing_stores=_stores(), candidate_sites=_sites())
+    constraints = _constraints()
+    solved = solve_network_plan(options_by_entity=options, constraints=constraints)
+    baseline = _management_baseline(
+        actions_by_entity={action.entity_id: action.action for action in solved.selected_actions},
+        baseline_id="netplan-expiry-001",
+        baseline_name="expiry authority clock",
+        scenario_id="netplan-expiry-001",
+        source_snapshot_ids=tuple(
+            sorted(
+                {
+                    snapshot_id
+                    for action in solved.selected_actions
+                    for snapshot_id in action.source_snapshot_ids
+                }
+            )
+        ),
+    )
+    expired_receipt = _approval_receipt(
+        baseline,
+        options,
+        constraints,
+        expires_at="2026-06-20T00:00:00Z",
+    )
+    service = NetPlanService(approval_verifier=_approval_verifier(expired_receipt))
+    scenario = service.create_scenario(
+        tenant_id="tenant-1",
+        scenario_name=baseline.baseline_name,
+        planning_horizon="2026Q3",
+        existing_stores=_stores(),
+        candidate_sites=_sites(),
+        constraints=constraints,
+        scenario_id=baseline.scenario_id,
+        correlation_id="corr-authority-clock",
+        created_at=MOMENT,
+    )
+    service.solve(scenario.scenario_id, solved_at=MOMENT)
+    service.submit_for_approval(scenario.scenario_id, occurred_at=MOMENT)
+
+    with pytest.raises(NetPlanApprovalError, match="approval_expired"):
+        service.decide(
+            scenario.scenario_id,
+            actor_id=APPROVAL_PRINCIPAL,
+            reason="caller attempts to backdate evaluation",
+            approval_receipt_id=expired_receipt.receipt_id,
+            decided_at=datetime(2026, 6, 10, tzinfo=UTC),
+        )
+
+    persisted = service.repository.get_scenario(scenario.scenario_id)
+    assert persisted is not None
+    assert persisted.status is NetPlanScenarioStatus.PENDING_APPROVAL
 
 
 def test_infeasible_scenario_cannot_skip_to_approval() -> None:
@@ -573,6 +630,7 @@ def test_arbitrary_receipt_ids_fail_closed(
             source_system=APPROVAL_SOURCE,
             principal_id=APPROVAL_PRINCIPAL,
             principal_role=APPROVAL_ROLE,
+            clock=lambda: MOMENT,
         )
 
     receipt = compare_solver_against_management_baseline(
@@ -581,7 +639,6 @@ def test_arbitrary_receipt_ids_fail_closed(
         solve_result=solve_result,
         baseline=baseline,
         approval_verifier=verifier,
-        evaluated_at=MOMENT,
     )
 
     assert receipt.superior_or_equal is False
@@ -737,6 +794,117 @@ def test_forged_solve_result_mutations_fail_closed(
     assert receipt.governance_status == GOVERNED_DISABLED
 
 
+@pytest.mark.parametrize(
+    ("budget_cost", "risk_score"),
+    [
+        (100.00004, 0.22),
+        (100.0, 0.22004),
+    ],
+)
+def test_raw_hard_constraint_overflow_never_reaches_governed_enablement(
+    budget_cost: float,
+    risk_score: float,
+) -> None:
+    options = {
+        "store-raw-boundary": (
+            ActionOption(
+                entity_id="store-raw-boundary",
+                action=NetworkAction.KEEP,
+                expected_gross_margin=100.0,
+                budget_cost=budget_cost,
+                risk_score=risk_score,
+            ),
+        )
+    }
+    constraints = NetPlanConstraints(max_budget=100.0, max_average_risk=0.22)
+    solve_result = solve_network_plan(options_by_entity=options, constraints=constraints)
+    baseline = _management_baseline(
+        actions_by_entity={"store-raw-boundary": NetworkAction.KEEP},
+        source_snapshot_ids=(),
+    )
+    authority_receipt = _approval_receipt(baseline, options, constraints)
+
+    receipt = _compare(
+        options=options,
+        constraints=constraints,
+        solve_result=solve_result,
+        baseline=baseline,
+        receipt=authority_receipt,
+    )
+
+    assert solve_result.solver_status == STATUS_INFEASIBLE
+    assert solve_result.selected_actions == ()
+    assert receipt.business_uat_status == BUSINESS_UAT_UNVERIFIED
+    assert receipt.governance_status == GOVERNED_DISABLED
+
+
+@pytest.mark.parametrize("target", ["primary", "alternative"])
+def test_sub_tolerance_scalar_forgery_fails_exact_recomputation(target: str) -> None:
+    options = build_scenario_options(existing_stores=_stores(), candidate_sites=_sites())
+    constraints = _constraints()
+    solve_result = solve_network_plan(options_by_entity=options, constraints=constraints)
+    baseline = _management_baseline()
+    authority_receipt = _approval_receipt(baseline, options, constraints)
+
+    if target == "primary":
+        forged = replace(
+            solve_result,
+            objective_value=solve_result.objective_value + 5e-7,
+        )
+        expected_violation = "solve_objective_mismatch"
+    else:
+        forged_alternative = replace(
+            solve_result.alternatives[0],
+            objective_value=solve_result.alternatives[0].objective_value + 5e-7,
+        )
+        forged = replace(
+            solve_result,
+            alternatives=(forged_alternative, *solve_result.alternatives[1:]),
+        )
+        expected_violation = "alternative_metrics_mismatch"
+
+    receipt = _compare(
+        options=options,
+        constraints=constraints,
+        solve_result=forged,
+        baseline=baseline,
+        receipt=authority_receipt,
+    )
+
+    assert expected_violation in receipt.baseline_constraint_violations
+    assert receipt.business_uat_status == BUSINESS_UAT_UNVERIFIED
+    assert receipt.governance_status == GOVERNED_DISABLED
+
+
+@pytest.mark.parametrize("public_path", ["solve", "problem_hash"])
+def test_duplicate_entity_action_option_identity_is_rejected(public_path: str) -> None:
+    options = {
+        "store-duplicate": (
+            ActionOption(
+                entity_id="store-duplicate",
+                action=NetworkAction.KEEP,
+                expected_gross_margin=10.0,
+                budget_cost=0.0,
+                risk_score=0.0,
+            ),
+            ActionOption(
+                entity_id="store-duplicate",
+                action=NetworkAction.KEEP,
+                expected_gross_margin=100.0,
+                budget_cost=0.0,
+                risk_score=0.0,
+            ),
+        )
+    }
+    constraints = NetPlanConstraints(max_budget=100.0)
+
+    with pytest.raises(ValueError, match=r"duplicate \(entity_id, action\)"):
+        if public_path == "solve":
+            solve_network_plan(options_by_entity=options, constraints=constraints)
+        else:
+            compute_solver_problem_hash(options, constraints, 100_000.0)
+
+
 def test_second_best_feasible_result_cannot_forge_solver_status_or_omit_alternatives() -> None:
     options = build_scenario_options(existing_stores=_stores(), candidate_sites=_sites())
     constraints = _constraints()
@@ -824,7 +992,6 @@ def test_authoritative_problem_hash_prevents_lowering_the_alternative_limit() ->
         baseline=baseline,
         alternative_limit=0,
         approval_verifier=_approval_verifier(authority_receipt),
-        evaluated_at=MOMENT,
     )
 
     assert "approval_solver_problem_hash_mismatch" in receipt.baseline_constraint_violations
