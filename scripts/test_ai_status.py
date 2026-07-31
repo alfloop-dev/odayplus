@@ -3009,37 +3009,244 @@ class StatusCheckEmissionTests(unittest.TestCase):
                  mock.patch.object(ai_status, "repository_slug", return_value="foo/bar"):
                 self.assertEqual(ai_status.get_repository_slug_safe(), "foo/bar")
 
-    def test_resolve_task_sha_gh_pr_view(self) -> None:
-        mock_result = mock.Mock()
-        mock_result.returncode = 0
-        mock_result.stdout = '{"headRefOid": "abc12345"}'
+    def test_resolve_task_sha_rejects_branch_absent_old_pr_and_local_head(self) -> None:
+        mock_result = mock.Mock(returncode=0, stdout="")
 
         with mock.patch("subprocess.run", return_value=mock_result) as mock_run, \
              mock.patch.object(ai_status, "get_gh_executable", return_value="gh"):
             sha = ai_status.resolve_task_sha("ODP-001")
-            self.assertEqual(sha, "abc12345")
-            mock_run.assert_any_call(
-                ["gh", "pr", "view", "task/ODP-001", "--json", "headRefOid"],
+            self.assertIsNone(sha)
+            mock_run.assert_called_once_with(
+                [
+                    "git",
+                    "ls-remote",
+                    "--heads",
+                    "origin",
+                    "refs/heads/task/ODP-001",
+                    "refs/heads/task-ODP-001",
+                ],
                 capture_output=True,
                 text=True,
                 check=False,
                 cwd=ai_status.ROOT,
             )
 
-    def test_resolve_task_sha_git_rev_parse(self) -> None:
-        def side_effect(cmd, **kwargs):
-            res = mock.Mock()
-            if "gh" in cmd:
-                res.returncode = 1
-                res.stdout = ""
-            elif "rev-parse" in cmd:
-                res.returncode = 0
-                res.stdout = "xyz789\n"
-            return res
+    def test_resolve_task_sha_prefers_pushed_remote_over_local_and_merged_pr(self) -> None:
+        task_id = "ODP-REMOTE-001"
+        remote_sha = "2" * 40
+        local_sha = "3" * 40
+        merged_pr_sha = "1" * 40
 
-        with mock.patch("subprocess.run", side_effect=side_effect):
-            sha = ai_status.resolve_task_sha("ODP-001")
-            self.assertEqual(sha, "xyz789")
+        def side_effect(cmd, **kwargs):
+            result = mock.Mock(returncode=1, stdout="")
+            if cmd[:4] == ["git", "ls-remote", "--heads", "origin"]:
+                result.returncode = 0
+                result.stdout = f"{remote_sha}\trefs/heads/task/{task_id}\n"
+            elif cmd == ["git", "branch", "--show-current"]:
+                result.returncode = 0
+                result.stdout = f"task/{task_id}\n"
+            elif cmd == ["git", "rev-parse", "HEAD"]:
+                result.returncode = 0
+                result.stdout = f"{local_sha}\n"
+            elif "pr" in cmd and "view" in cmd:
+                result.returncode = 0
+                result.stdout = json.dumps({"headRefOid": merged_pr_sha})
+            return result
+
+        with mock.patch("subprocess.run", side_effect=side_effect) as mock_run:
+            sha = ai_status.resolve_task_sha(task_id)
+
+        self.assertEqual(sha, remote_sha)
+        self.assertEqual(mock_run.call_count, 1)
+
+    def test_resolve_task_sha_rejects_remote_failure_without_cached_fallback(self) -> None:
+        with mock.patch(
+            "subprocess.run",
+            return_value=mock.Mock(returncode=1, stdout="stale-cached-ref"),
+        ) as mock_run:
+            self.assertIsNone(ai_status.resolve_task_sha("ODP-001"))
+        mock_run.assert_called_once()
+
+    def test_resolve_task_sha_rejects_ambiguous_or_malformed_remote_refs(self) -> None:
+        task_id = "ODP-001"
+        cases = (
+            "not-a-sha\trefs/heads/task/ODP-001\n",
+            (
+                f"{'1' * 40}\trefs/heads/task/{task_id}\n"
+                f"{'2' * 40}\trefs/heads/task-{task_id}\n"
+            ),
+        )
+        for stdout in cases:
+            with self.subTest(stdout=stdout), mock.patch(
+                "subprocess.run",
+                return_value=mock.Mock(returncode=0, stdout=stdout),
+            ):
+                ai_status.clear_ai_status_caches()
+                self.assertIsNone(ai_status.resolve_task_sha(task_id))
+
+    def test_resolve_task_sha_uses_bounded_warm_cache_for_ordinary_lookups(self) -> None:
+        task_id = "ODP-WARM-CACHE-001"
+        sha_initial = "a" * 40
+
+        mock_res = mock.Mock(returncode=0, stdout=f"{sha_initial}\trefs/heads/task/{task_id}\n")
+        with mock.patch.dict(os.environ, {"GITHUB_REPOSITORY": "alfloop-dev/odayplus"}, clear=False), \
+             mock.patch("subprocess.run", return_value=mock_res) as mock_run:
+            ai_status.clear_ai_status_caches()
+            # First ordinary call populates cache
+            first_sha = ai_status.resolve_task_sha(task_id)
+            self.assertEqual(first_sha, sha_initial)
+            self.assertEqual(mock_run.call_count, 1)
+
+            # Second ordinary call reuses warm cache without hitting origin
+            second_sha = ai_status.resolve_task_sha(task_id)
+            self.assertEqual(second_sha, sha_initial)
+            self.assertEqual(mock_run.call_count, 1)
+
+            # Non-governance payload call also reuses warm cache
+            payload = ai_status.task_review_status_payload({"id": task_id}, "review_approved")
+            self.assertIsNotNone(payload)
+            self.assertEqual(payload["sha"], sha_initial)
+            self.assertEqual(mock_run.call_count, 1)
+
+            # Force refresh query bypasses warm cache
+            refreshed_sha = ai_status.resolve_task_sha(task_id, force_refresh=True)
+            self.assertEqual(refreshed_sha, sha_initial)
+            self.assertEqual(mock_run.call_count, 2)
+
+    def test_resolve_task_sha_bypasses_warm_cache_on_remote_change_removal_or_failure(self) -> None:
+        task_id = "ODP-CACHE-TEST-001"
+        sha_initial = "a" * 40
+        sha_updated = "b" * 40
+
+        # Step 1: Initial call returns sha_initial and populates cache
+        mock_res1 = mock.Mock(returncode=0, stdout=f"{sha_initial}\trefs/heads/task/{task_id}\n")
+        with mock.patch("subprocess.run", return_value=mock_res1):
+            ai_status.clear_ai_status_caches()
+            first_sha = ai_status.resolve_task_sha(task_id)
+            self.assertEqual(first_sha, sha_initial)
+
+        # Step 2: Remote branch is updated (force-push to sha_updated). force_refresh=True returns sha_updated, NOT cached sha_initial.
+        mock_res2 = mock.Mock(returncode=0, stdout=f"{sha_updated}\trefs/heads/task/{task_id}\n")
+        with mock.patch("subprocess.run", return_value=mock_res2):
+            second_sha = ai_status.resolve_task_sha(task_id, force_refresh=True)
+            self.assertEqual(second_sha, sha_updated)
+
+        # Step 3: Remote branch is removed/deleted. fresh=True fails closed (returns None), NOT cached sha_updated.
+        mock_res3 = mock.Mock(returncode=0, stdout="")
+        with mock.patch("subprocess.run", return_value=mock_res3):
+            third_sha = ai_status.resolve_task_sha(task_id, fresh=True)
+            self.assertIsNone(third_sha)
+
+        # Step 4: Remote origin command fails. force_refresh=True fails closed (returns None), NOT cached sha_updated.
+        mock_res4 = mock.Mock(returncode=1, stdout="")
+        with mock.patch("subprocess.run", return_value=mock_res4):
+            fourth_sha = ai_status.resolve_task_sha(task_id, force_refresh=True)
+            self.assertIsNone(fourth_sha)
+
+    def test_governance_transitions_force_fresh_query_and_reject_warmed_stale_sha(self) -> None:
+        task_id = "ODP-GOV-TEST-001"
+        stale_sha = "1" * 40
+        remote_sha = "2" * 40
+
+        # 1. Warm cache with stale_sha
+        mock_warm = mock.Mock(returncode=0, stdout=f"{stale_sha}\trefs/heads/task/{task_id}\n")
+        with mock.patch("subprocess.run", return_value=mock_warm):
+            ai_status.clear_ai_status_caches()
+            self.assertEqual(ai_status.resolve_task_sha(task_id), stale_sha)
+
+        # 2. Test command_approve when origin changes to remote_sha
+        state_approve = {
+            "tasks": [{"id": task_id, "status": "review", "owner": "Codex", "reviewer": "Claude"}]
+        }
+        mock_changed = mock.Mock(returncode=0, stdout=f"{remote_sha}\trefs/heads/task/{task_id}\n")
+        with mock.patch.dict(os.environ, {"AI_NAME": "Claude"}, clear=False), \
+             mock.patch("subprocess.run", return_value=mock_changed):
+            ai_status.command_approve(state_approve, [task_id, "Approved new head"])
+            task = ai_status.get_task(state_approve, task_id)
+            self.assertEqual(task["approved_head"], remote_sha)
+            self.assertNotEqual(task["approved_head"], stale_sha)
+
+        # 3. Test command_done when origin returns remote error
+        state_done = {
+            "tasks": [{"id": task_id, "status": "review_approved", "approved_head": stale_sha, "owner": "Codex", "reviewer": "Claude"}]
+        }
+        with mock.patch("subprocess.run", return_value=mock_warm):
+            ai_status.clear_ai_status_caches()
+            self.assertEqual(ai_status.resolve_task_sha(task_id), stale_sha)
+
+        mock_err = mock.Mock(returncode=1, stdout="")
+        with mock.patch.dict(os.environ, {"AI_NAME": "Codex"}, clear=False), \
+             mock.patch("subprocess.run", return_value=mock_err):
+            with self.assertRaises(SystemExit) as cm:
+                ai_status.command_done(state_done, [task_id, "Done attempt"])
+            self.assertIn("differs from reviewer-approved head", str(cm.exception))
+
+        # 4. Test command_restore_approved when origin is removed
+        state_restore = {
+            "tasks": [{"id": task_id, "status": "in_progress", "last_approved_head": stale_sha, "review_notes_zh": ["note"], "owner": "Codex", "reviewer": "Claude"}],
+            "handoffs": [],
+            "blockers": []
+        }
+        with mock.patch("subprocess.run", return_value=mock_warm):
+            ai_status.clear_ai_status_caches()
+            self.assertEqual(ai_status.resolve_task_sha(task_id), stale_sha)
+
+        mock_removed = mock.Mock(returncode=0, stdout="")
+        with mock.patch.dict(os.environ, {"AI_NAME": "Codex"}, clear=False), \
+             mock.patch("subprocess.run", return_value=mock_removed):
+            with self.assertRaises(SystemExit) as cm:
+                ai_status.command_restore_approved(state_restore, [task_id, "Restore attempt"])
+            self.assertIn("branch HEAD could not be resolved", str(cm.exception))
+
+        # 5. Test command_restore_approved_head when origin changes
+        state_rah = {
+            "tasks": [{"id": task_id, "status": "review_approved", "owner": "Codex", "reviewer": "Claude"}]
+        }
+        with mock.patch("subprocess.run", return_value=mock_warm):
+            ai_status.clear_ai_status_caches()
+            self.assertEqual(ai_status.resolve_task_sha(task_id), stale_sha)
+
+        with mock.patch.dict(os.environ, {"AI_NAME": "Claude"}, clear=False), \
+             mock.patch("subprocess.run", return_value=mock_changed):
+            with self.assertRaises(SystemExit) as cm:
+                ai_status.command_restore_approved_head(state_rah, [task_id, stale_sha, "Restore head attempt"])
+            self.assertIn("does not match the task branch head", str(cm.exception))
+
+    def test_resolve_task_sha_accepts_exact_40_and_64_hex_lengths(self) -> None:
+        task_id = "ODP-HEX-001"
+        sha_40 = "a" * 40
+        sha_64 = "f" * 64
+
+        mock_40 = mock.Mock(returncode=0, stdout=f"{sha_40}\trefs/heads/task/{task_id}\n")
+        with mock.patch("subprocess.run", return_value=mock_40) as m_run:
+            ai_status.clear_ai_status_caches()
+            res = ai_status.resolve_task_sha(task_id)
+            self.assertEqual(res, sha_40)
+            self.assertTrue(m_run.called)
+
+        mock_64 = mock.Mock(returncode=0, stdout=f"{sha_64}\trefs/heads/task/{task_id}\n")
+        with mock.patch("subprocess.run", return_value=mock_64) as m_run:
+            ai_status.clear_ai_status_caches()
+            res = ai_status.resolve_task_sha(task_id)
+            self.assertEqual(res, sha_64)
+            self.assertTrue(m_run.called)
+
+        for invalid_len in (39, 41, 63, 65):
+            bad_sha = "c" * invalid_len
+            mock_bad = mock.Mock(returncode=0, stdout=f"{bad_sha}\trefs/heads/task/{task_id}\n")
+            with self.subTest(invalid_len=invalid_len), mock.patch("subprocess.run", return_value=mock_bad) as m_run:
+                ai_status.clear_ai_status_caches()
+                res = ai_status.resolve_task_sha(task_id)
+                self.assertIsNone(res)
+                self.assertTrue(m_run.called)
+
+        for nonhex_sha in ("g" * 40, "z" * 64, "G" * 40, "X" * 64, "123456789012345678901234567890123456789g"):
+            mock_nonhex = mock.Mock(returncode=0, stdout=f"{nonhex_sha}\trefs/heads/task/{task_id}\n")
+            with self.subTest(nonhex_sha=nonhex_sha), mock.patch("subprocess.run", return_value=mock_nonhex) as m_run:
+                ai_status.clear_ai_status_caches()
+                res = ai_status.resolve_task_sha(task_id)
+                self.assertIsNone(res)
+                self.assertTrue(m_run.called)
 
     def test_emit_task_review_status_check_approved(self) -> None:
         task = {"id": "ODP-001", "reviewer": "Codex", "approved_head": "sha123"}
