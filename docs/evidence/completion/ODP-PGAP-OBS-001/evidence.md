@@ -52,12 +52,12 @@ A simulated browser action sends a request to the API with correlation ID `corr-
 - **Body**:
 ```json
 {
-  "job_id": "db146e52-80e6-4655-b370-3aecbe7e6e57",
+  "job_id": "b691aafc-7e0d-4955-9789-ee20cc3ab72f",
   "status": "queued",
   "correlation_id": "corr-obs-test-sha-current-12345",
   "idempotency_key": "idemp-key-1",
   "job": {
-    "job_id": "db146e52-80e6-4655-b370-3aecbe7e6e57",
+    "job_id": "b691aafc-7e0d-4955-9789-ee20cc3ab72f",
     "job_type": "external-fetch",
     "status": "queued",
     "correlation_id": "corr-obs-test-sha-current-12345",
@@ -65,7 +65,7 @@ A simulated browser action sends a request to the API with correlation ID `corr-
     "payload": {
       "provider_id": "listing.partner_feed"
     },
-    "created_at": "2026-07-31T15:26:42.642281+00:00",
+    "created_at": "2026-07-31T15:56:07.505220+00:00",
     "attempts": 0,
     "leased_until": null,
     "max_retries": 3,
@@ -77,7 +77,7 @@ A simulated browser action sends a request to the API with correlation ID `corr-
     "error_message": null
   },
   "created": true,
-  "audit_event_id": "68a5ae0f-f9dc-47e1-9cb9-4ec6d6b9ac04"
+  "audit_event_id": "90ace0cf-87f2-42bf-b6e2-2f3db57ccbde"
 }
 ```
 
@@ -88,7 +88,7 @@ The background worker claimed and executed the job. Both the API HTTP span and t
 ```json
 [
   {
-    "span_id": "6cb0c5af4e514d0f",
+    "span_id": "4728578384894e6e",
     "parent_id": null,
     "name": "HTTP POST /jobs",
     "kind": "api",
@@ -96,7 +96,7 @@ The background worker claimed and executed the job. Both the API HTTP span and t
     "actor_id": "user",
     "status": "ok",
     "error_code": null,
-    "duration_ms": 107.592993,
+    "duration_ms": 49.57735,
     "attributes": {
       "correlation_id": "corr-obs-test-sha-current-12345",
       "request_id": "corr-obs-test-sha-current-12345",
@@ -104,7 +104,7 @@ The background worker claimed and executed the job. Both the API HTTP span and t
     }
   },
   {
-    "span_id": "c7aa0018b5da4f8c",
+    "span_id": "e85eb74ed76c4ade",
     "parent_id": null,
     "name": "worker-external-fetch",
     "kind": "worker",
@@ -112,10 +112,10 @@ The background worker claimed and executed the job. Both the API HTTP span and t
     "actor_id": "worker",
     "status": "ok",
     "error_code": null,
-    "duration_ms": 11.159928,
+    "duration_ms": 5.140926,
     "attributes": {
       "correlation_id": "corr-obs-test-sha-current-12345",
-      "job_id": "db146e52-80e6-4655-b370-3aecbe7e6e57",
+      "job_id": "b691aafc-7e0d-4955-9789-ee20cc3ab72f",
       "actor_id": "worker"
     }
   }
@@ -141,11 +141,11 @@ A P1 alert (`audit-write-failure`) was routed to `ops-lead` (per `alerts.json` c
 #### Local Test Delivery Receipt Output (Captured directly from OnCallNotificationAdapter)
 ```json
 {
-  "delivery_id": "del-6b4e2d6f402c",
-  "notification_id": "68b9261b-f20a-4a6e-b138-8130593c14cd",
+  "delivery_id": "del-539c10e51278",
+  "notification_id": "ff32f562-ec70-47c5-8225-cfa5860d2177",
   "oncall_route": "ops-lead",
   "channel": "webhook",
-  "endpoint": "http://127.0.0.1:34933/api/v1/alerts",
+  "endpoint": "http://127.0.0.1:36091/api/v1/alerts",
   "release_sha": "unauthenticated",
   "request_hash": "",
   "response_hash": "",
@@ -154,7 +154,7 @@ A P1 alert (`audit-write-failure`) was routed to `ops-lead` (per `alerts.json` c
   "detail": "Alert ID: audit-write-failure\nCondition: any audit_event_write_failure_count for high-risk action or export in production\nRunbook: docs/runbooks/observability-and-runbook.md#audit-write-failure\nDetails: Durable storage write timeout on DB query",
   "http_status": 0,
   "status": "FAILED",
-  "delivered_at": "2026-07-31T15:26:42.668515+00:00",
+  "delivered_at": "2026-07-31T15:56:07.518339+00:00",
   "response": null,
   "error": "On-call notification delivery requires a non-empty ONCALL_PROVIDER_SECRET provider trust root. Fail-closed gate enforced."
 }

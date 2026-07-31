@@ -3571,6 +3571,7 @@ def test_delivery_authority_readback_boundary_verification() -> None:
     import base64
     from datetime import timedelta
 
+    import pytest
     from cryptography.hazmat.primitives import serialization
     from cryptography.hazmat.primitives.asymmetric import ed25519
 
@@ -3578,8 +3579,14 @@ def test_delivery_authority_readback_boundary_verification() -> None:
         CANONICAL_AUTHORITY_ISSUER_IDENTITY,
         DeliveryAuthorityReadback,
         DeliveryAuthorityRecord,
+        InMemoryDeliveryAuthorityStore,
     )
 
+    # 1. B1 Remediation Test: Standard constructor rejects caller-supplied trust roots
+    with pytest.raises(TypeError, match="does not accept caller-supplied"):
+        DeliveryAuthorityReadback(authority_public_key_pem="some-pem", allowed_issuer_identity="custom-issuer")
+
+    # Generate isolated test key for test-only readback instance
     auth_priv_key = ed25519.Ed25519PrivateKey.generate()
     auth_pub_key = auth_priv_key.public_key()
     pub_pem = auth_pub_key.public_bytes(
@@ -3611,26 +3618,143 @@ def test_delivery_authority_readback_boundary_verification() -> None:
         issuer_signature=sig_b64,
     )
 
-    readback = DeliveryAuthorityReadback(
+    store = InMemoryDeliveryAuthorityStore()
+    store.store_authority_record(record)
+
+    readback = DeliveryAuthorityReadback._create_for_testing(
         authority_public_key_pem=pub_pem,
         allowed_issuer_identity=issuer_id,
+        authority_store=store,
     )
 
-    # 1. Positive verification
-    is_del, status, err = readback.verify_authority_record(record, expected_release_sha=rel_sha, expected_delivery_id=delivery_id)
+    # 2. Positive durable readback by delivery_id with full mandatory bindings
+    is_del, status, err = readback.read_by_delivery_id(
+        expected_delivery_id=delivery_id,
+        expected_provider_receipt_id=prov_receipt_id,
+        expected_request_hash=req_hash,
+        expected_release_sha=rel_sha,
+        expected_oncall_route=oncall_route,
+    )
     assert is_del is True
     assert status == "DELIVERED"
     assert err is None
 
-    # 2. Negative: Invalid payload type / dict
-    is_del, status, err = readback.verify_authority_record("not-a-record", expected_release_sha=rel_sha)
+    # 3. B3 Replay Protection: Second attempt to read/consume same record is rejected
+    is_del, status, err = readback.read_by_delivery_id(
+        expected_delivery_id=delivery_id,
+        expected_provider_receipt_id=prov_receipt_id,
+        expected_request_hash=req_hash,
+        expected_release_sha=rel_sha,
+        expected_oncall_route=oncall_route,
+    )
     assert is_del is False
     assert status == "PENDING_VERIFICATION"
-    assert "Invalid authority record type" in str(err)
+    assert "already been consumed" in str(err)
 
-    # 3. Negative: Unauthorized issuer identity
+    # 4. B3 Missing Durable Readback: Requesting un-stored delivery ID fails closed
+    is_del, status, err = readback.read_by_delivery_id(
+        expected_delivery_id="del-missing-999",
+        expected_provider_receipt_id=prov_receipt_id,
+        expected_request_hash=req_hash,
+        expected_release_sha=rel_sha,
+        expected_oncall_route=oncall_route,
+    )
+    assert is_del is False
+    assert status == "PENDING_VERIFICATION"
+    assert "No durable authority record found" in str(err)
+
+    # 5. B2 Mandatory Expected Binding Violations & Negative Mutations
+    del_2 = "del-test-auth-200"
+    sig_payload_2 = (
+        f"authority_record:{del_2}:{prov_receipt_id}:{req_hash}:{rel_sha}:{oncall_route}:{ts_str}:{issuer_id}"
+    ).encode()
+    rec_2 = DeliveryAuthorityRecord(
+        delivery_id=del_2,
+        provider_receipt_id=prov_receipt_id,
+        request_hash=req_hash,
+        release_sha=rel_sha,
+        oncall_route=oncall_route,
+        timestamp=ts_str,
+        issuer_identity=issuer_id,
+        issuer_signature=base64.b64encode(auth_priv_key.sign(sig_payload_2)).decode("utf-8"),
+    )
+    store.store_authority_record(rec_2)
+
+    # (a) Omitted / blank expected delivery ID
+    is_del, status, err = readback.verify_authority_record(
+        rec_2,
+        expected_delivery_id="",
+        expected_provider_receipt_id=prov_receipt_id,
+        expected_request_hash=req_hash,
+        expected_release_sha=rel_sha,
+        expected_oncall_route=oncall_route,
+    )
+    assert is_del is False
+    assert "Missing or invalid mandatory expected_delivery_id" in str(err)
+
+    # (b) Mismatched delivery ID
+    is_del, status, err = readback.verify_authority_record(
+        rec_2,
+        expected_delivery_id="del-mismatch-888",
+        expected_provider_receipt_id=prov_receipt_id,
+        expected_request_hash=req_hash,
+        expected_release_sha=rel_sha,
+        expected_oncall_route=oncall_route,
+    )
+    assert is_del is False
+    assert "Delivery ID mismatch" in str(err)
+
+    # (c) Mismatched / attacker provider receipt ID
+    is_del, status, err = readback.verify_authority_record(
+        rec_2,
+        expected_delivery_id=del_2,
+        expected_provider_receipt_id="receipt-wrong",
+        expected_request_hash=req_hash,
+        expected_release_sha=rel_sha,
+        expected_oncall_route=oncall_route,
+    )
+    assert is_del is False
+    assert "Provider receipt ID mismatch" in str(err)
+
+    # (d) Mismatched / invalid request hash
+    is_del, status, err = readback.verify_authority_record(
+        rec_2,
+        expected_delivery_id=del_2,
+        expected_provider_receipt_id=prov_receipt_id,
+        expected_request_hash="0" * 64,
+        expected_release_sha=rel_sha,
+        expected_oncall_route=oncall_route,
+    )
+    assert is_del is False
+    assert "Request hash mismatch or invalid" in str(err)
+
+    # (e) Mismatched on-call route
+    is_del, status, err = readback.verify_authority_record(
+        rec_2,
+        expected_delivery_id=del_2,
+        expected_provider_receipt_id=prov_receipt_id,
+        expected_request_hash=req_hash,
+        expected_release_sha=rel_sha,
+        expected_oncall_route="attacker-route",
+    )
+    assert is_del is False
+    assert "On-call route mismatch" in str(err)
+
+    # (f) Mismatched release SHA
+    is_del, status, err = readback.verify_authority_record(
+        rec_2,
+        expected_delivery_id=del_2,
+        expected_provider_receipt_id=prov_receipt_id,
+        expected_request_hash=req_hash,
+        expected_release_sha="e" * 40,
+        expected_oncall_route=oncall_route,
+    )
+    assert is_del is False
+    assert "Release SHA mismatch" in str(err)
+
+    # (g) Unauthorized issuer identity
     bad_issuer_rec = DeliveryAuthorityRecord(
-        delivery_id=delivery_id,
+        delivery_id=del_2,
         provider_receipt_id=prov_receipt_id,
         request_hash=req_hash,
         release_sha=rel_sha,
@@ -3639,31 +3763,25 @@ def test_delivery_authority_readback_boundary_verification() -> None:
         issuer_identity="urn:unauthorized:issuer",
         issuer_signature=sig_b64,
     )
-    is_del, status, err = readback.verify_authority_record(bad_issuer_rec, expected_release_sha=rel_sha)
+    is_del, status, err = readback.verify_authority_record(
+        bad_issuer_rec,
+        expected_delivery_id=del_2,
+        expected_provider_receipt_id=prov_receipt_id,
+        expected_request_hash=req_hash,
+        expected_release_sha=rel_sha,
+        expected_oncall_route=oncall_route,
+    )
     assert is_del is False
-    assert status == "PENDING_VERIFICATION"
     assert "Unauthorized issuer identity" in str(err)
 
-    # 4. Negative: Delivery ID mismatch
-    is_del, status, err = readback.verify_authority_record(record, expected_release_sha=rel_sha, expected_delivery_id="del-wrong-999")
-    assert is_del is False
-    assert status == "PENDING_VERIFICATION"
-    assert "Delivery ID mismatch" in str(err)
-
-    # 5. Negative: Release SHA mismatch
-    is_del, status, err = readback.verify_authority_record(record, expected_release_sha="e" * 40)
-    assert is_del is False
-    assert status == "PENDING_VERIFICATION"
-    assert "Release SHA mismatch" in str(err)
-
-    # 6. Negative: Stale timestamp (> 300s)
+    # (h) Stale timestamp (> 300s)
     stale_ts = (datetime.now(UTC) - timedelta(seconds=400)).isoformat()
     stale_sig_payload = (
-        f"authority_record:{delivery_id}:{prov_receipt_id}:{req_hash}:{rel_sha}:{oncall_route}:{stale_ts}:{issuer_id}"
+        f"authority_record:{del_2}:{prov_receipt_id}:{req_hash}:{rel_sha}:{oncall_route}:{stale_ts}:{issuer_id}"
     ).encode()
     stale_sig_b64 = base64.b64encode(auth_priv_key.sign(stale_sig_payload)).decode("utf-8")
     stale_rec = DeliveryAuthorityRecord(
-        delivery_id=delivery_id,
+        delivery_id=del_2,
         provider_receipt_id=prov_receipt_id,
         request_hash=req_hash,
         release_sha=rel_sha,
@@ -3672,14 +3790,20 @@ def test_delivery_authority_readback_boundary_verification() -> None:
         issuer_identity=issuer_id,
         issuer_signature=stale_sig_b64,
     )
-    is_del, status, err = readback.verify_authority_record(stale_rec, expected_release_sha=rel_sha)
+    is_del, status, err = readback.verify_authority_record(
+        stale_rec,
+        expected_delivery_id=del_2,
+        expected_provider_receipt_id=prov_receipt_id,
+        expected_request_hash=req_hash,
+        expected_release_sha=rel_sha,
+        expected_oncall_route=oncall_route,
+    )
     assert is_del is False
-    assert status == "PENDING_VERIFICATION"
     assert "freshness window" in str(err)
 
-    # 7. Negative: Forged signature
+    # (i) Forged signature
     forged_rec = DeliveryAuthorityRecord(
-        delivery_id=delivery_id,
+        delivery_id=del_2,
         provider_receipt_id=prov_receipt_id,
         request_hash=req_hash,
         release_sha=rel_sha,
@@ -3688,10 +3812,17 @@ def test_delivery_authority_readback_boundary_verification() -> None:
         issuer_identity=issuer_id,
         issuer_signature=base64.b64encode(b"forged-signature-bytes-32-len-x").decode("utf-8"),
     )
-    is_del, status, err = readback.verify_authority_record(forged_rec, expected_release_sha=rel_sha)
+    is_del, status, err = readback.verify_authority_record(
+        forged_rec,
+        expected_delivery_id=del_2,
+        expected_provider_receipt_id=prov_receipt_id,
+        expected_request_hash=req_hash,
+        expected_release_sha=rel_sha,
+        expected_oncall_route=oncall_route,
+    )
     assert is_del is False
-    assert status == "PENDING_VERIFICATION"
     assert "signature verification failed" in str(err).lower()
+
 
 
 def test_application_adapter_never_issues_delivered_status(monkeypatch: Any) -> None:

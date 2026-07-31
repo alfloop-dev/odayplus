@@ -6,6 +6,8 @@ from modules.notifications.application import (
 from modules.notifications.domain import (
     DeliveryAuthorityReadback,
     DeliveryAuthorityRecord,
+    IDeliveryAuthorityStore,
+    InMemoryDeliveryAuthorityStore,
     NotificationReceipt,
     UserPreference,
 )
@@ -22,6 +24,8 @@ __all__ = [
     "NotificationReceipt",
     "DeliveryAuthorityRecord",
     "DeliveryAuthorityReadback",
+    "IDeliveryAuthorityStore",
+    "InMemoryDeliveryAuthorityStore",
     "InMemoryNotificationRepository",
     "DurableNotificationRepository",
     "ConsoleNotificationAdapter",
