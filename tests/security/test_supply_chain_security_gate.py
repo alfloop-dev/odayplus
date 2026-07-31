@@ -361,12 +361,25 @@ def test_leaked_test_secrets_rejected_negative() -> None:
 
 def test_composite_and_unclassifiable_licenses_fail_closed() -> None:
     sys.path.insert(0, str(ROOT))
-    from scripts.security.generate_sbom import check_license_policy, generate_sbom
+    from scripts.security.generate_sbom import check_license_policy
 
-    sbom = generate_sbom(
-        image_digest="sha256:0000000000000000000000000000000000000000000000000000000000000000",
-        release_digest="sha256:0000000000000000000000000000000000000000000000000000000000000000",
-    )
+    clean_sbom = {
+        "metadata": {
+            "properties": [
+                {"name": "image-digest", "value": "sha256:0000000000000000000000000000000000000000000000000000000000000000"},
+                {"name": "release-digest", "value": "sha256:0000000000000000000000000000000000000000000000000000000000000000"},
+            ]
+        },
+        "components": [
+            {
+                "name": "oday-plus",
+                "version": "0.1.0",
+                "type": "application",
+                "purl": "pkg:generic/oday-plus@0.1.0",
+                "licenses": [{"license": {"id": "MIT"}}],
+            }
+        ],
+    }
     test_cases = [
         ("(AGPL-3.0)", False),
         ("GPL-3.0 OR MIT", False),
@@ -379,7 +392,7 @@ def test_composite_and_unclassifiable_licenses_fail_closed() -> None:
     ]
 
     for lic_expr, expected_pass in test_cases:
-        test_sbom = json.loads(json.dumps(sbom))
+        test_sbom = json.loads(json.dumps(clean_sbom))
         test_sbom["components"].append({
             "name": f"test-package-{hash(lic_expr)}",
             "version": "1.0.0",
@@ -1334,3 +1347,96 @@ def test_round8_b3_fake_person_and_unresolved_active_receipts_rejected(tmp_path:
             assert any("Denied license 'GPL-3.0'" in v for v in policy_violations)
         finally:
             sbom_mod.EXEMPTIONS_PATH = orig_path
+
+
+def test_round8_b1_authoritative_receipt_contract(tmp_path: Path) -> None:
+    """B1 — active exemptions must resolve to an authoritative signed receipt under ODP-PLAN-OSS-LEGAL-POLICY-001 with matching field bindings."""
+    sys.path.insert(0, str(ROOT))
+    from scripts.security.exemption_validator import (
+        resolve_approval_reference,
+        validate_exemption_entry,
+    )
+
+    entry = {
+        "package_name": "psycopg",
+        "purl": "pkg:pypi/psycopg@3.3.4",
+        "approved_by": "Jane Doe (Legal Counsel)",
+        "approval_reference": "POLICY-LGPL-001",
+        "issued_at": "2026-07-01T00:00:00Z",
+        "expires_at": "2026-12-31T23:59:59Z",
+        "reason": "Authoritative legal review waiver",
+        "status": "active",
+        "scope": "prod",
+    }
+
+    # 1. Unresolvable reference fails validation
+    is_valid, violations = validate_exemption_entry(entry, "license", base_dir=tmp_path)
+    assert not is_valid
+    assert any("could not be resolved to an authentic legal policy receipt" in v for v in violations)
+
+    # 2. Resolved receipt with mismatched package fails
+    receipts_dir = tmp_path / "receipts"
+    receipts_dir.mkdir(parents=True, exist_ok=True)
+    mismatched_receipt = {
+        "status": "active",
+        "approved_by": "Jane Doe (Legal Counsel)",
+        "approval_reference": "POLICY-LGPL-001",
+        "package_name": "other-package",
+        "scope": "prod",
+    }
+    (receipts_dir / "POLICY-LGPL-001.json").write_text(json.dumps(mismatched_receipt), encoding="utf-8")
+
+    res_ok, res_err = resolve_approval_reference("POLICY-LGPL-001", entry, base_dir=tmp_path)
+    assert not res_ok
+    assert "does not match entry package" in res_err
+
+    # 3. Matching receipt passes resolution
+    matching_receipt = {
+        "status": "active",
+        "approved_by": "Jane Doe (Legal Counsel)",
+        "approval_reference": "POLICY-LGPL-001",
+        "package_name": "psycopg",
+        "purl": "pkg:pypi/psycopg@3.3.4",
+        "scope": "prod",
+    }
+    (receipts_dir / "POLICY-LGPL-001.json").write_text(json.dumps(matching_receipt), encoding="utf-8")
+
+    res_ok, res_err = resolve_approval_reference("POLICY-LGPL-001", entry, base_dir=tmp_path)
+    assert res_ok
+    assert res_err is None
+
+
+def test_round8_b2_unapproved_lgpl_policy_fails_closed() -> None:
+    """B2 — unapproved LGPL policy remains in review_required_licenses and fails check_license_policy until ODP-PLAN-OSS-LEGAL-POLICY-001 is completed."""
+    sys.path.insert(0, str(ROOT))
+    from scripts.security.generate_sbom import check_license_policy, generate_sbom
+
+    sbom = generate_sbom()
+    # Ensure LGPL component triggers failure when no active exemption exists
+    lgpl_sbom = json.loads(json.dumps(sbom))
+    lgpl_sbom["components"].append({
+        "name": "psycopg",
+        "version": "3.3.4",
+        "purl": "pkg:pypi/psycopg@3.3.4",
+        "licenses": [{"license": {"id": "LGPL-3.0-only"}}]
+    })
+
+    is_passed, violations = check_license_policy(lgpl_sbom, scope="prod")
+    assert not is_passed, "Unapproved LGPL policy must fail closed"
+    assert any("requiring security review" in v and "LGPL-3.0-only" in v for v in violations)
+
+
+def test_round8_b3_clean_worktree_audit_reproducibility() -> None:
+    """B3 — scanner results must validate against frozen lockfiles and fail closed on empty or malformed reports."""
+    import unittest.mock
+    sys.path.insert(0, str(ROOT))
+    from scripts.security.vulnerability_scan import run_python_audit
+
+    # Empty dependency list schema must fail closed
+    fake_res = unittest.mock.MagicMock()
+    fake_res.stdout = json.dumps([])
+    fake_res.returncode = 0
+    with unittest.mock.patch("subprocess.run", return_value=fake_res):
+        ok, violations = run_python_audit("all", exemptions=[])
+    assert not ok
+    assert any("empty dependency list schema" in v for v in violations)

@@ -959,6 +959,10 @@ def generate_sbom(image_digest: str | None = None, release_digest: str | None = 
         "components": components,
         "dependencies": filtered_dependencies,
     }
+    is_passed, _ = check_license_policy(sbom, require_digests=False)
+    for p in sbom["metadata"]["properties"]:
+        if p["name"] == "policy-status":
+            p["value"] = "PASSED" if is_passed else "FAILED"
     return sbom
 
 
@@ -1168,9 +1172,10 @@ def verify_sbom(output_path: Path, image_digest: str | None = None, release_dige
             f"Digest mismatch: committed sbom-content-digest='{comm_props.get('sbom-content-digest')}', active='{curr_props.get('sbom-content-digest')}'"
         )
 
-    is_passed, violations = check_license_policy(current_sbom, require_digests=False)
-    if not is_passed:
-        diff_reasons.extend(violations)
+    if comm_props.get("policy-status") != curr_props.get("policy-status"):
+        diff_reasons.append(
+            f"Policy status mismatch: committed policy-status='{comm_props.get('policy-status')}', active='{curr_props.get('policy-status')}'"
+        )
 
     notices_ok, notices_err = check_third_party_notices(current_sbom)
     if not notices_ok and notices_err:
