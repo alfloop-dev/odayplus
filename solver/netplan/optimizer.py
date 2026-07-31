@@ -615,6 +615,8 @@ def compute_solver_problem_hash(
     risk_penalty: float,
     alternative_limit: int = DEFAULT_ALTERNATIVE_LIMIT,
 ) -> str:
+    if alternative_limit < 0:
+        raise ValueError("alternative_limit must be non-negative")
     payload = {
         "entities": sorted(options_by_entity.keys()),
         "options": {

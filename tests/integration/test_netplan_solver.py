@@ -809,6 +809,37 @@ def test_alternative_set_mutations_fail_closed(mutation: str) -> None:
     assert receipt.governance_status == GOVERNED_DISABLED
 
 
+def test_authoritative_problem_hash_prevents_lowering_the_alternative_limit() -> None:
+    options = build_scenario_options(existing_stores=_stores(), candidate_sites=_sites())
+    constraints = _constraints()
+    solve_result = solve_network_plan(options_by_entity=options, constraints=constraints)
+    baseline = _management_baseline()
+    authority_receipt = _approval_receipt(baseline, options, constraints)
+    forged = replace(solve_result, alternatives=())
+
+    receipt = compare_solver_against_management_baseline(
+        options_by_entity=options,
+        constraints=constraints,
+        solve_result=forged,
+        baseline=baseline,
+        alternative_limit=0,
+        approval_verifier=_approval_verifier(authority_receipt),
+        evaluated_at=MOMENT,
+    )
+
+    assert "approval_solver_problem_hash_mismatch" in receipt.baseline_constraint_violations
+    assert receipt.business_uat_status == BUSINESS_UAT_UNVERIFIED
+    assert receipt.governance_status == GOVERNED_DISABLED
+
+
+def test_negative_alternative_limit_is_rejected() -> None:
+    options = build_scenario_options(existing_stores=_stores(), candidate_sites=_sites())
+    constraints = _constraints()
+
+    with pytest.raises(ValueError, match="alternative_limit must be non-negative"):
+        compute_solver_problem_hash(options, constraints, 100_000.0, -1)
+
+
 @pytest.mark.parametrize("mutation", ["content", "multiplicity"])
 def test_infeasibility_diagnosis_mutations_fail_closed(mutation: str) -> None:
     options = build_scenario_options(existing_stores=_stores(), candidate_sites=_sites())

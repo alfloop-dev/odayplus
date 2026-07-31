@@ -141,3 +141,29 @@ The current handoff is technical only. Authentic management baseline approval
 remains exclusively owned by `ODP-PLAN-NETPLAN-BASELINE-APPROVAL-001`; until
 that receipt exists and passes authoritative readback, the release state is
 `BUSINESS_UAT_UNVERIFIED / GOVERNED_DISABLED`.
+
+## 6. 2026-07-31 result-recomputation addendum
+
+Reviewer `Codex` reopened pushed head `d161e028` after independently reproducing
+three additional fail-open result mutations:
+
+1. an independently feasible second-best plan could claim `FEASIBLE` and enable
+   governance against the approved baseline;
+2. an authentic optimal result could omit or substitute alternatives;
+3. an infeasible result could preserve only each constraint name while forging
+   the other diagnosis fields or diagnosis multiplicity.
+
+Owner `Codex2` remediated all three at anchor `ba63962a` and the immediately
+following task diff. Acceptance now independently enumerates the full feasible
+set, requires the derived `OPTIMAL` status/value, binds the alternative limit
+into the authoritative problem hash, compares the exact ranked alternative
+count/order/content, and compares complete ordered diagnosis records including
+multiplicity. Public-path mutation tests cover every reproduced case and keep
+all rejected results at `BUSINESS_UAT_UNVERIFIED / GOVERNED_DISABLED`.
+
+Batch re-audit verification after the anchor: 51 NetPlan integration cases,
+53 `netplan or ortools or robust` selected tests, 65
+`netplan or management_baseline or solver` selected tests, and 70 explicit
+NetPlan/robust/production/runtime cases passed; focused Ruff and `git diff
+--check` were clean. This addendum is a re-review handoff, not reviewer
+approval and not Human/Ops baseline approval.

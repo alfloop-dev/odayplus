@@ -21,12 +21,12 @@ the business gate.
 | Criterion | Technical result | Evidence |
 |---|---|---|
 | Hard constraints | PASS | Budget, expected gross margin, capacity delta, average risk, and min/max action counts are enforced and independently rechecked. Dedicated infeasibility diagnosis covers each family. |
-| Selected option and result integrity | PASS | Comparison rejects options not present in `options_by_entity`, duplicate/missing entities, infeasible selections, forged status/objective/metrics/counts/bindings, solver-version drift, malformed alternatives, and false optimality. |
+| Selected option and result integrity | PASS | Comparison rejects options not present in `options_by_entity`, duplicate/missing entities, infeasible selections, forged status/objective/metrics/counts/bindings, solver-version drift, non-optimal feasible substitutions, malformed alternatives, and false optimality. |
 | Immutable binding | PASS | Scenario, source snapshots, baseline content, actions/domain, solver problem, full solver result, approval receipt, and comparison output each have deterministic SHA-256 bindings. |
 | Authoritative approval | TECHNICAL PASS / HUMAN PENDING | A fixed verifier resolves an immutable receipt by exact ID and binds one source system, named principal, exact role, active decision, approval reference, strict UTC issue/expiry, scenario, baseline, scope, release, policy, actions/domain, source snapshots, baseline hash, solver problem hash, and receipt integrity hash. |
 | Actor-string trust | PASS | No `startswith("Human/Ops")` or actor allow-list grants approval. Lifecycle approval requires successful authoritative receipt readback; `actor_id` is only an audit identity and must equal the verified principal. |
 | Superiority claim | FAIL-CLOSED UNTIL HUMAN GATE | Missing/unresolved/mismatched approval, invalid baseline, infeasible baseline, forged solve result, or non-superior result always emits `superior_or_equal=false`, `BUSINESS_UAT_UNVERIFIED`, and `GOVERNED_DISABLED`. |
-| Alternatives and infeasibility | PASS | Feasible alternatives are independently matched to the exact problem options and metrics. Infeasible results must match independently recomputed status, zero-result fields, and diagnosis constraint set. |
+| Alternatives and infeasibility | PASS | The authority-bound alternative limit drives an independently ranked expected set; count, order, actions, and every metric must match. Infeasible results must match independently recomputed status, zero-result fields, and the complete ordered diagnosis records including multiplicity and content. |
 
 ## 3. Trust boundary
 
@@ -57,15 +57,20 @@ and role.
 superiority claim:
 
 1. Recompute the exact solver problem hash from all options, constraints,
-   policy version, and risk penalty.
+   policy version, risk penalty, and the independently checked alternative
+   limit.
 2. Resolve and verify the immutable management approval receipt.
 3. Enumerate the feasible candidate set independently of the submitted result.
 4. Match every selected `ActionOption` by full value to the exact entity option
    domain.
 5. Recompute feasibility, objective, gross margin, budget, average risk,
-   capacity, action counts, binding constraints, alternatives, and optimality.
-6. Recompute baseline feasibility/objective from the exact approved actions.
-7. Emit an immutable comparison receipt. Any mismatch fails closed before
+   capacity, action counts, binding constraints, optimal status/value, and the
+   exact alternative count/order/content.
+6. For an infeasible result, recompute and compare the complete ordered
+   diagnosis tuple: constraint, affected stores, required relaxation, business
+   impact, suggested action, and multiplicity.
+7. Recompute baseline feasibility/objective from the exact approved actions.
+8. Emit an immutable comparison receipt. Any mismatch fails closed before
    superiority or governance enablement.
 
 The solver result hash covers the full serialized result, including status,
@@ -87,10 +92,10 @@ verifier configured, produced:
     "authoritative_approval_verifier_missing"
   ],
   "business_uat_status": "BUSINESS_UAT_UNVERIFIED",
-  "comparison_output_hash": "bbb49bede9e5a280874719e53577cc87d69ecdfe32a9d6fde9443ccfc2633070",
+  "comparison_output_hash": "6b9054c69dd01bc04168effd55c65b338bfca43d20f5d415bb5cc4ee7274a5b0",
   "governance_status": "GOVERNED_DISABLED",
   "scenario_hash": "5d5a8e46c542d01e3473129b14e642b4fadf8da2f885b7379b17172b0d350d00",
-  "solver_problem_hash": "51822ae2261338de87911dd191367c57446103e91b006bffc4e738c3d2aaabb5",
+  "solver_problem_hash": "4e6fac6f04ddec9e565050db82973a119a44d736bf3e658c0fefb9a76de7e4a1",
   "solver_result_hash": "a9e5460598c9628deee6276fb8bd0edd1cdfca1a734f555b4c456d93ff6d7121",
   "source_snapshot_hash": "0d890996db54db068331f8a969a8329e3ffaa892782e19002687ea0603f8ac54",
   "superior_or_equal": false
@@ -114,23 +119,36 @@ The integration suite rejects:
 - non-UTC, future-issued, expired, or invalid receipt time windows;
 - entity-ID-only solve substitutions;
 - forged selected option values, objective, status, feasibility flag, action
-  counts, result metrics, alternatives, and optimality claims.
+  counts, result metrics, and optimality claims;
+- independently feasible second-best substitutions labelled `FEASIBLE`;
+- alternative omission, reordering, substitution, and post-approval limit
+  reduction;
+- infeasibility diagnosis field forgery and multiplicity changes.
 
 ## 7. Verification
 
-Executed on task branch head derived from anchor `a8f6ed12`:
+Executed on task branch after result-recomputation anchor `ba63962a`:
 
 ```bash
 uv run pytest -q tests/integration/test_netplan_solver.py --tb=short
-# 44 parameterized cases passed
+# 51 parameterized cases passed
 
 uv run pytest -q tests -k "netplan or ortools or robust" --tb=short
-# 46 tests passed; exit 0
+# 53 tests passed; exit 0
 
 uv run pytest -q tests -k "netplan or management_baseline or solver" --tb=short
-# 58 tests passed; exit 0
+# 65 tests passed; exit 0
 
-uv run ruff check tests modules apps shared models solver pipelines infra
+uv run pytest -q \
+  tests/integration/test_netplan_solver.py \
+  solver/netplan/tests/test_robust.py \
+  modules/netplan/tests/test_netplan_production_execution.py \
+  tests/solver/test_runtime_compat.py --tb=short
+# 70 tests passed; exit 0
+
+uv run ruff check \
+  solver/netplan modules/netplan \
+  tests/integration/test_netplan_solver.py tests/solver/test_runtime_compat.py
 # All checks passed
 
 git diff --check
