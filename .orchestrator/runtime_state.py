@@ -501,6 +501,22 @@ def save_runtime_state(config: dict[str, Any], state: dict[str, Any]) -> None:
             merged = merge_runtime_states(disk_state, state)
         else:
             merged = state
+
+        # The append-only event queue is the authority for which queue event
+        # ids still exist.  ``merge_runtime_states`` must preserve records
+        # created by a concurrent writer, but its union semantics cannot tell a
+        # concurrent addition from an event deliberately pruned from the
+        # canonical queue.  Re-filter after the locked merge so a stale disk
+        # snapshot cannot resurrect a deleted ``started`` lease forever.  A
+        # concurrently appended event remains present because it is read from
+        # the canonical queue at the latest point in the transaction.
+        try:
+            queued_events = load_jsonl(config_path(config, "event_queue"))
+        except KeyError:
+            queued_events = None
+        if queued_events is not None:
+            _rebuild_queue_records(merged, queued_events)
+
         persisted = migrate_state(merged)
         write_json(path, persisted)
 
