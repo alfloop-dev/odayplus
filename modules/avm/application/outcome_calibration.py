@@ -35,6 +35,7 @@ def generate_gate1_benchmark_receipt(
     audit_receipt: dict[str, Any] | None = None,
     activation_receipt: AVMActivationAuthorityReceipt | None = None,
     query_source_receipt: AVMQuerySourceReceipt | None = None,
+    authority_key: str | None = None,
 ) -> dict[str, Any]:
     """Generate canonical GATE1_BENCHMARK_RECEIPT.json for AVM outcome calibration."""
     from modules.dealroom.application.outcome_audit import verify_audit_receipt
@@ -55,6 +56,7 @@ def generate_gate1_benchmark_receipt(
     audit_verified = verify_audit_receipt(
         audit_receipt,
         expected_snapshot_hash=dataset_snapshot_hash,
+        authority_key=authority_key,
     )
 
     # B26 & M4: Revalidate verdict, disabled-state, audit, activation, query source, and value-band invariants at receipt boundary
@@ -77,6 +79,7 @@ def generate_gate1_benchmark_receipt(
         if not activation_receipt.verify_attestation(
             expected_dataset_snapshot_hash=dataset_snapshot_hash,
             expected_model_artifact_hash=model_artifact_hash,
+            authority_key=authority_key,
         ):
             raise AVMOutcomeValidationError(
                 "Fail-closed: Gate 1 receipt generation received invalid activation_receipt attestation"
@@ -92,6 +95,7 @@ def generate_gate1_benchmark_receipt(
                 expected_eligible=report.eligible_mature_count,
                 expected_aligned=report.aligned_count,
                 expected_population_sha256=report.population_keys_sha256,
+                authority_key=authority_key,
             )
         ):
             raise AVMOutcomeValidationError(

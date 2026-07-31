@@ -1,6 +1,6 @@
 {
   "task_id": "ODP-PLAN-AVM-OUTCOME-001",
-  "generated_at": "2026-07-31T15:35:51.167387+00:00",
+  "generated_at": "2026-07-31T17:10:24.354570+00:00",
   "model_version": "dealroom-avm-baseline-v1",
   "verdict": "FAIL_CLOSED",
   "is_governed_disabled": true,
@@ -8,18 +8,18 @@
   "authentic_evidence_available": false,
   "query_receipt": {
     "relation": "model_ready.valuation_view",
-    "query_timestamp": "2026-07-31T15:35:51.167387+00:00",
+    "query_timestamp": "2026-07-31T17:10:24.354570+00:00",
     "observed_labeled_count": 0,
     "eligible_mature_count": 0,
     "dataset_snapshot_id": "empty-snapshot-unpopulated",
     "dataset_snapshot_hash": "86d4b28ff48929469cc683ca9b2ce209c0831c266a6124b68c6ee701fe56ed96"
   },
-  "gate1_receipt_sha256": "a71ad7e037a5479c93949dc1b73742597d05bbfe9777db6b957cb4bd7b113468",
-  "audit_receipt_sha256": "c529251339186ea2dc093da3a4cf544d2d9dad8dc88a22fd58e1853ffba40a91",
+  "gate1_receipt_sha256": "e2a006d7c53390660ced483feef3795a369a3d18af63c7bd2e32b2750979215d",
+  "audit_receipt_sha256": "dc5c4b756da864a04940c26b74380fff6ed3dabe5997cd9d93906f518ba78e54",
   "governed_disabled_handback": {
     "kind": "avm-data-handback-requirements",
     "task_id": "ODP-PLAN-AVM-OUTCOME-001",
-    "generated_at": "2026-07-31T15:35:51.167387+00:00",
+    "generated_at": "2026-07-31T17:10:24.354570+00:00",
     "current_status": {
       "observed_labeled_count": 0,
       "eligible_mature_count": 0,

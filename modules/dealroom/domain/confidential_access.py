@@ -129,20 +129,24 @@ def assert_no_confidential_leak(payload: Any, *, forbidden_raw_values: Sequence[
             )
 
 
-from modules.avm.domain.outcome import CANONICAL_HUMAN_OPS_ACTIVATION_KEY
+from modules.avm.domain.outcome import get_production_authority_verifier_key
 
 
 def create_identity_proof(
     actor_id: str,
     role: Role | str,
     tenant_id: str = "tenant-avm-001",
-    authority_key: str = CANONICAL_HUMAN_OPS_ACTIVATION_KEY,
+    *,
+    authority_key: str,
+    purpose: str = "avm_confidential_access",
+    event_id: str | None = None,
 ) -> str:
-    """Generate cryptographic identity proof bound to actor, role, tenant, and authority key."""
-    if not authority_key or authority_key != CANONICAL_HUMAN_OPS_ACTIVATION_KEY:
-        raise ValueError("Fail-closed: Invalid authority key for identity proof creation")
+    """Generate cryptographic identity proof bound to actor, role, tenant, purpose, and authority key."""
+    if not authority_key:
+        raise ValueError("Fail-closed: Invalid or missing authority key for identity proof creation")
     role_str = role.value if isinstance(role, Role) else str(role)
-    canonical = f"{actor_id}:{role_str}:{tenant_id}:{authority_key}"
+    evt = event_id or "default-identity-event"
+    canonical = f"{actor_id}:{role_str}:{tenant_id}:{purpose}:{evt}:{authority_key}"
     return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
 
 
@@ -159,9 +163,10 @@ class ConfidentialAccessAuditor:
         cls,
         attempt: ConfidentialAccessAttempt,
         confidentiality: ConfidentialLevel = ConfidentialLevel.HIGH,
-        authority_key: str = CANONICAL_HUMAN_OPS_ACTIVATION_KEY,
+        authority_key: str | None = None,
     ) -> tuple[ConfidentialAccessDecision, str, dict[str, Any]]:
         """Evaluate if access attempt is permitted and return (decision, reason, audit_receipt)."""
+        key = authority_key or get_production_authority_verifier_key()
         role = attempt.role if isinstance(attempt.role, Role) else None
         action = attempt.action if isinstance(attempt.action, Action) else None
         role_repr = role.value if role else str(attempt.role)
@@ -171,7 +176,7 @@ class ConfidentialAccessAuditor:
         tenant_id = str(attempt.context.get("tenant_id", "tenant-avm-001"))
         provided_proof = str(attempt.context.get("identity_proof_sha256", ""))
         try:
-            expected_proof = create_identity_proof(attempt.actor_id, attempt.role, tenant_id, authority_key=authority_key)
+            expected_proof = create_identity_proof(attempt.actor_id, attempt.role, tenant_id, authority_key=key, event_id=attempt.context.get("event_id")) if key else ""
         except Exception:
             expected_proof = ""
 
