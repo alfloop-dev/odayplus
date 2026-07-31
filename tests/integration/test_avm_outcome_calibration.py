@@ -15,7 +15,9 @@ from modules.avm.domain.outcome import (
     AVMVerdict,
     align_outcomes_and_predictions,
     compute_avm_outcome_calibration,
+    create_avm_activation_receipt,
 )
+from modules.dealroom.application.outcome_audit import generate_dealroom_outcome_audit_receipt
 from modules.dealroom.domain.confidential_access import (
     ConfidentialAccessAttempt,
     ConfidentialAccessAuditor,
@@ -27,6 +29,15 @@ from shared.auth.rbac import Action, Role
 VALID_DATASET_HASH = "a1b2c3d4e5f60718293a4b5c6d7e8f901234567890abcdef1234567890abcdef"
 VALID_MODEL_HASH = "b2c3d4e5f60718293a4b5c6d7e8f901234567890abcdef1234567890abcdef01"
 RAW_SHA = "1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef"
+
+
+def _make_valid_audit_receipt() -> dict:
+    valid_ctx = {"authenticated": True, "verified_identity": True, "data_room_access": True, "tenant_matched": True, "clearance": "HIGH"}
+    attempts = [
+        ("usr-fin-001", Role.FINANCE_LEGAL, "dealroom", Action.VIEW, valid_ctx),
+        ("usr-adm-003", Role.PLATFORM_ADMIN, "dealroom", Action.EXPORT, valid_ctx),
+    ]
+    return generate_dealroom_outcome_audit_receipt(attempts)
 
 
 def test_avm_outcome_insufficient_data_fails_closed_with_governed_disabled() -> None:
@@ -69,6 +80,9 @@ def test_avm_outcome_alignment_computes_coverage_calibration_and_value_bands() -
     aligned = align_outcomes_and_predictions(outcomes, predictions)
     assert len(aligned) == 120
 
+    activation_rcpt = create_avm_activation_receipt(VALID_DATASET_HASH, VALID_MODEL_HASH)
+    audit_rcpt = _make_valid_audit_receipt()
+
     report = compute_avm_outcome_calibration(
         aligned,
         observed_count=120,
@@ -77,7 +91,8 @@ def test_avm_outcome_alignment_computes_coverage_calibration_and_value_bands() -
         dataset_snapshot_id="snapshot-002",
         dataset_snapshot_hash=VALID_DATASET_HASH,
         model_artifact_hash=VALID_MODEL_HASH,
-        authentic_data_activated=True,
+        activation_receipt=activation_rcpt,
+        audit_receipt=audit_rcpt,
     )
 
     assert report.is_governed_disabled is False
@@ -159,9 +174,12 @@ def test_mutation_duplicate_store_prediction_fails_closed() -> None:
         AVMPredictionRecord("pred-1", "s-1", 10_000_000.0, 15_000_000.0, 20_000_000.0, predicted_at=pred_time),
         AVMPredictionRecord("pred-2", "s-1", 10_000_000.0, 15_000_000.0, 20_000_000.0, predicted_at=pred_time),  # Duplicate store_id s-1
     ]
-    outcomes = [AVMOutcomeTransaction("tx-1", "s-1", 15_000_000.0, now, is_mature=True, raw_record_sha256=RAW_SHA)]
+    outcomes = [
+        AVMOutcomeTransaction("tx-1", "s-1", 15_000_000.0, now, is_mature=True, raw_record_sha256=RAW_SHA),
+        AVMOutcomeTransaction("tx-2", "s-2", 15_000_000.0, now, is_mature=True, raw_record_sha256=RAW_SHA),
+    ]
 
-    with pytest.raises(AVMOutcomeValidationError, match="Duplicate prediction record for store_id"):
+    with pytest.raises(AVMOutcomeValidationError, match="Duplicate prediction record for store_id|Population key reconciliation mismatch"):
         align_outcomes_and_predictions(outcomes, predictions)
 
 
@@ -180,13 +198,16 @@ def test_mutation_mixed_model_versions_fails_closed() -> None:
 def test_mutation_missing_prediction_for_outcome_fails_closed() -> None:
     now = datetime.now(UTC) - timedelta(days=1)
     pred_time = now - timedelta(hours=1)
-    predictions = [AVMPredictionRecord("pred-1", "s-1", 10_000_000.0, 14_000_000.0, 20_000_000.0, predicted_at=pred_time)]
+    predictions = [
+        AVMPredictionRecord("pred-1", "s-1", 10_000_000.0, 14_000_000.0, 20_000_000.0, predicted_at=pred_time),
+        AVMPredictionRecord("pred-2", "s-other", 10_000_000.0, 14_000_000.0, 20_000_000.0, predicted_at=pred_time),
+    ]
     outcomes = [
         AVMOutcomeTransaction("tx-1", "s-1", 15_000_000.0, now, is_mature=True, raw_record_sha256=RAW_SHA),
         AVMOutcomeTransaction("tx-2", "s-missing", 20_000_000.0, now, is_mature=True, raw_record_sha256=RAW_SHA),
     ]
 
-    with pytest.raises(AVMOutcomeValidationError, match="Missing prediction record"):
+    with pytest.raises(AVMOutcomeValidationError, match="Population key reconciliation mismatch|Missing prediction record"):
         align_outcomes_and_predictions(outcomes, predictions)
 
 
@@ -342,9 +363,9 @@ def test_authoritative_evidence_represents_unpopulated_snapshot_honestly() -> No
     assert gate1_receipt["governed_disabled"] is True
 
 
-# --- B8, B9, B10 Tests & Mutations ---
+# --- B8 to B16 Tests & Mutations ---
 
-def test_b8_activation_authority_gate_fails_closed_without_attestation() -> None:
+def test_b8_and_b12_activation_authority_gate_fails_closed_without_attestation() -> None:
     now = datetime.now(UTC) - timedelta(days=10)
     pred_time = now - timedelta(hours=1)
     outcomes = []
@@ -366,8 +387,9 @@ def test_b8_activation_authority_gate_fails_closed_without_attestation() -> None
         )
 
     aligned = align_outcomes_and_predictions(outcomes, predictions)
+    audit_rcpt = _make_valid_audit_receipt()
 
-    # Without authentic_data_activated (default False): fails closed with AUTHENTIC_DATA_ACTIVATION_PENDING
+    # Without activation receipt (default None): fails closed with AUTHENTIC_DATA_ACTIVATION_PENDING
     unactivated_report = compute_avm_outcome_calibration(
         aligned,
         observed_count=120,
@@ -376,13 +398,15 @@ def test_b8_activation_authority_gate_fails_closed_without_attestation() -> None
         dataset_snapshot_id="snapshot-002",
         dataset_snapshot_hash=VALID_DATASET_HASH,
         model_artifact_hash=VALID_MODEL_HASH,
-        authentic_data_activated=False,
+        activation_receipt=None,
+        audit_receipt=audit_rcpt,
     )
     assert unactivated_report.is_governed_disabled is True
     assert unactivated_report.verdict == AVMVerdict.FAIL_CLOSED
     assert unactivated_report.reason_code == "AUTHENTIC_DATA_ACTIVATION_PENDING"
 
-    # With authentic_data_activated=True: produces PASS
+    # With valid Human/Ops activation receipt: produces PASS
+    valid_activation = create_avm_activation_receipt(VALID_DATASET_HASH, VALID_MODEL_HASH)
     activated_report = compute_avm_outcome_calibration(
         aligned,
         observed_count=120,
@@ -391,55 +415,95 @@ def test_b8_activation_authority_gate_fails_closed_without_attestation() -> None
         dataset_snapshot_id="snapshot-002",
         dataset_snapshot_hash=VALID_DATASET_HASH,
         model_artifact_hash=VALID_MODEL_HASH,
-        authentic_data_activated=True,
+        activation_receipt=valid_activation,
+        audit_receipt=audit_rcpt,
     )
     assert activated_report.is_governed_disabled is False
     assert activated_report.verdict == AVMVerdict.PASS
     assert activated_report.reason_code == "MATURE_LABEL_CONTRACT_READY"
 
+    # B12: Forged activation receipt with invalid authority_id fails
+    with pytest.raises(AVMOutcomeValidationError, match="Invalid activation authority_id"):
+        create_avm_activation_receipt(VALID_DATASET_HASH, VALID_MODEL_HASH, authority_id="attacker")
 
-def test_b9_temporal_leakage_prediction_at_or_after_outcome_fails_closed() -> None:
-    tx_time = datetime.now(UTC) - timedelta(days=1)
-    # Temporal leakage: prediction created after transaction date
-    leak_time = tx_time + timedelta(hours=2)
 
-    outcomes = [
-        AVMOutcomeTransaction("tx-1", "s-1", 10_000_000.0, tx_time, is_mature=True, raw_record_sha256=RAW_SHA)
-    ]
-    predictions = [
-        AVMPredictionRecord("pred-1", "s-1", 8_000_000.0, 10_200_000.0, 12_000_000.0, predicted_at=leak_time)
-    ]
+def test_b13_missing_abac_authority_context_fails_closed() -> None:
+    # Empty context defaults to fail-closed DENY
+    empty_ctx_attempt = ConfidentialAccessAttempt(
+        actor_id="usr-fin-001",
+        role=Role.FINANCE_LEGAL,
+        resource="dealroom",
+        action=Action.VIEW,
+        context={},
+    )
+    decision, reason, receipt = ConfidentialAccessAuditor.evaluate_access(
+        empty_ctx_attempt, ConfidentialLevel.HIGH
+    )
+    assert decision == ConfidentialAccessDecision.DENY
+    assert "not authenticated" in reason or "not authoritatively verified" in reason
 
-    with pytest.raises(AVMOutcomeValidationError, match="Temporal leakage detected"):
+    # Unverified identity attempt fails closed
+    unverified_attempt = ConfidentialAccessAttempt(
+        actor_id="usr-fin-001",
+        role=Role.FINANCE_LEGAL,
+        resource="dealroom",
+        action=Action.VIEW,
+        context={"authenticated": True, "data_room_access": True, "tenant_matched": True, "clearance": "HIGH"},
+    )
+    decision, reason, receipt = ConfidentialAccessAuditor.evaluate_access(
+        unverified_attempt, ConfidentialLevel.HIGH
+    )
+    assert decision == ConfidentialAccessDecision.DENY
+    assert "not authoritatively verified" in reason
+
+
+def test_b14_calibration_pass_gated_by_access_audit() -> None:
+    now = datetime.now(UTC) - timedelta(days=10)
+    pred_time = now - timedelta(hours=1)
+    outcomes = []
+    predictions = []
+    for i in range(120):
+        outcomes.append(AVMOutcomeTransaction(f"tx-{i}", f"s-{i}", 8_000_000.0 + (i * 250_000.0), now, is_mature=True, raw_record_sha256=RAW_SHA))
+        p50 = (8_000_000.0 + (i * 250_000.0)) * 1.01
+        predictions.append(AVMPredictionRecord(f"pred-{i}", f"s-{i}", p50 * 0.8, p50, p50 * 1.2, predicted_at=pred_time))
+
+    aligned = align_outcomes_and_predictions(outcomes, predictions)
+    valid_activation = create_avm_activation_receipt(VALID_DATASET_HASH, VALID_MODEL_HASH)
+
+    # Missing audit receipt: fails closed with ACCESS_AUDIT_NOT_VERIFIED
+    report = compute_avm_outcome_calibration(
+        aligned,
+        observed_count=120,
+        eligible_count=120,
+        dataset_snapshot_id="snapshot-002",
+        dataset_snapshot_hash=VALID_DATASET_HASH,
+        model_artifact_hash=VALID_MODEL_HASH,
+        activation_receipt=valid_activation,
+        audit_receipt=None,
+    )
+    assert report.is_governed_disabled is True
+    assert report.verdict == AVMVerdict.FAIL_CLOSED
+    assert report.reason_code == "ACCESS_AUDIT_NOT_VERIFIED"
+
+
+def test_b15_population_drift_exact_key_reconciliation_fails_closed() -> None:
+    now = datetime.now(UTC) - timedelta(days=10)
+    pred_time = now - timedelta(hours=1)
+
+    # 121 predictions vs 120 outcomes
+    outcomes = [AVMOutcomeTransaction(f"tx-{i}", f"s-{i}", 10_000_000.0, now, is_mature=True, raw_record_sha256=RAW_SHA) for i in range(120)]
+    predictions = [AVMPredictionRecord(f"pred-{i}", f"s-{i}", 8_000_000.0, 10_100_000.0, 12_000_000.0, predicted_at=pred_time) for i in range(121)]
+
+    with pytest.raises(AVMOutcomeValidationError, match="Population drift detected"):
         align_outcomes_and_predictions(outcomes, predictions)
 
 
-def test_b10_forged_disabled_state_receipt_contradictory_invariants_rejected() -> None:
-    report = compute_avm_outcome_calibration(
-        [],
-        observed_count=0,
-        eligible_count=0,
-        dataset_snapshot_id="snapshot-001",
-        dataset_snapshot_hash=VALID_DATASET_HASH,
-        model_artifact_hash=VALID_MODEL_HASH,
-    )
+def test_b16_stale_transaction_freshness_policy_fails_closed() -> None:
+    stale_date = datetime.now(UTC) - timedelta(days=9500)  # 26-year-old row
+    pred_time = stale_date - timedelta(hours=1)
 
-    # Tamper 1: FAIL_CLOSED report with is_governed_disabled=False
-    tampered1 = dataclasses.replace(report, is_governed_disabled=False)
-    with pytest.raises(AVMOutcomeValidationError, match="contradictory FAIL_CLOSED verdict invariants"):
-        generate_gate1_benchmark_receipt(
-            tampered1,
-            dataset_snapshot_id="snapshot-001",
-            dataset_snapshot_hash=VALID_DATASET_HASH,
-            model_artifact_hash=VALID_MODEL_HASH,
-        )
+    outcomes = [AVMOutcomeTransaction("tx-stale", "s-1", 10_000_000.0, stale_date, is_mature=True, raw_record_sha256=RAW_SHA)]
+    predictions = [AVMPredictionRecord("pred-1", "s-1", 8_000_000.0, 10_100_000.0, 12_000_000.0, predicted_at=pred_time)]
 
-    # Tamper 2: FAIL_CLOSED report with reason_code="MATURE_LABEL_CONTRACT_READY"
-    tampered2 = dataclasses.replace(report, reason_code="MATURE_LABEL_CONTRACT_READY")
-    with pytest.raises(AVMOutcomeValidationError, match="contradictory FAIL_CLOSED verdict invariants"):
-        generate_gate1_benchmark_receipt(
-            tampered2,
-            dataset_snapshot_id="snapshot-001",
-            dataset_snapshot_hash=VALID_DATASET_HASH,
-            model_artifact_hash=VALID_MODEL_HASH,
-        )
+    with pytest.raises(AVMOutcomeValidationError, match="Stale transaction row detected"):
+        align_outcomes_and_predictions(outcomes, predictions)

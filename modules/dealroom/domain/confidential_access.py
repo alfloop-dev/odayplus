@@ -122,11 +122,12 @@ class ConfidentialAccessAuditor:
         role = attempt.role if isinstance(attempt.role, Role) else None
         action = attempt.action if isinstance(attempt.action, Action) else None
 
-        # ABAC Context Attributes Extraction
-        is_authenticated = bool(attempt.context.get("authenticated", True))
-        data_room_access = bool(attempt.context.get("data_room_access", True))
-        clearance_val = attempt.context.get("clearance", confidentiality.value if is_authenticated else "PUBLIC")
-        tenant_matched = bool(attempt.context.get("tenant_matched", True))
+        # ABAC Context Attributes Extraction - Fail Closed Defaults
+        is_authenticated = bool(attempt.context.get("authenticated", False))
+        verified_identity = bool(attempt.context.get("verified_identity", False))
+        data_room_access = bool(attempt.context.get("data_room_access", False))
+        clearance_val = attempt.context.get("clearance", "PUBLIC")
+        tenant_matched = bool(attempt.context.get("tenant_matched", False))
 
         # Clearance hierarchy ranking
         clearance_levels = {
@@ -142,7 +143,7 @@ class ConfidentialAccessAuditor:
 
         # Exact RBAC check using canonical Principal
         rbac_permitted = False
-        if role is not None and action is not None and is_authenticated:
+        if role is not None and action is not None and is_authenticated and verified_identity:
             principal = Principal(
                 subject_id=attempt.actor_id,
                 roles=frozenset({role}),
@@ -165,6 +166,9 @@ class ConfidentialAccessAuditor:
 
         if not is_authenticated:
             reason = f"Principal {attempt.actor_id!r} is not authenticated"
+            decision = ConfidentialAccessDecision.DENY
+        elif not verified_identity:
+            reason = f"Principal {attempt.actor_id!r} identity and role authority are not authoritatively verified"
             decision = ConfidentialAccessDecision.DENY
         elif not data_room_access:
             reason = f"Principal {attempt.actor_id!r} lacks required data_room_access authority"
