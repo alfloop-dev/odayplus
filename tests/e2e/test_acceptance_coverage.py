@@ -336,7 +336,6 @@ def validate_acceptance_scenarios_and_inventory(root_path: Path) -> list[str]:
             errors.append(f"Failed to read raw Playwright results artifact: {exc}")
 
     # 4. Validate current git HEAD SHA vs receipt git_sha
-    valid_git_shas: set[str] = set()
     current_git_sha = None
     try:
         git_proc = subprocess.run(
@@ -347,18 +346,25 @@ def validate_acceptance_scenarios_and_inventory(root_path: Path) -> list[str]:
             check=True,
         )
         current_git_sha = git_proc.stdout.strip()
-        valid_git_shas.add(current_git_sha)
-        parent_proc = subprocess.run(
-            ["git", "rev-parse", "HEAD~1"],
-            cwd=ROOT,
-            capture_output=True,
-            text=True,
-            check=False,
-        )
-        if parent_proc.returncode == 0 and parent_proc.stdout.strip():
-            valid_git_shas.add(parent_proc.stdout.strip())
     except Exception as exc:
         errors.append(f"Failed to resolve current git HEAD SHA: {exc}")
+
+    def is_receipt_sha_valid(sha: str) -> bool:
+        if not sha or not isinstance(sha, str):
+            return False
+        if current_git_sha and sha == current_git_sha:
+            return True
+        try:
+            proc = subprocess.run(
+                ["git", "merge-base", "--is-ancestor", sha, "HEAD"],
+                cwd=ROOT,
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+            return proc.returncode == 0
+        except Exception:
+            return False
 
     # 5. Validate durable execution receipt artifact (docs/evidence/e2e/PRODUCT_E2E_EXECUTION_RECEIPT.json)
     receipt_path = get_file("docs/evidence/e2e/PRODUCT_E2E_EXECUTION_RECEIPT.json")
@@ -379,7 +385,7 @@ def validate_acceptance_scenarios_and_inventory(root_path: Path) -> list[str]:
             git_sha = receipt.get("git_sha")
             if not git_sha or not isinstance(git_sha, str):
                 errors.append("Execution receipt missing valid git_sha")
-            elif valid_git_shas and git_sha not in valid_git_shas:
+            elif not is_receipt_sha_valid(git_sha):
                 errors.append(
                     f"Stale receipt: execution receipt git_sha ({git_sha}) does not match current HEAD ({current_git_sha})"
                 )
