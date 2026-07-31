@@ -1528,3 +1528,95 @@ still accepts missing summary freshness, invented calibration aggregates, incomp
 populations, and invented segment metrics. These are direct violations of the evidence-set,
 population-alignment, and self-consistent-forged-receipt criteria. Re-audit the entire acceptance
 batch after remediation. No owner implementation content was changed by this review.
+
+---
+
+# Codex6 Re-review Addendum — 2026-07-31, exact owner head `e94db743`
+
+The supervisor re-dispatched the task after the owner reported remediation of the `58be4d4e`
+B1-B3 findings. The local task branch and
+`origin/task/ODP-PLAN-SITESCORE-OUTCOME-001` both resolved to exact pushed commit
+`e94db74377e5eadb977ea96bb0727fd48ae7627e`. The worktree contained no tracked
+uncommitted implementation changes; its only untracked files were the orchestrator-seeded task
+context and state files.
+
+## Verification at the exact owner head
+
+```bash
+PYTHONPATH=. .venv/bin/pytest -q tests/models -k "sitescore or opening_outcome"
+PYTHONPATH=. .venv/bin/pytest -q tests -k "sitescore or opening_outcome or model_ready"
+.venv/bin/ruff check scripts/models models tests/models
+git diff --check
+git diff --check 58be4d4e..e94db743
+PYTHONPATH=. .venv/bin/python <independent in-memory mutation probe>
+```
+
+- Task-scoped selector: **52 passed**.
+- Full focused selector: **96 passed**.
+- Ruff and both whitespace checks: clean.
+- The freshly generated two-record receipt/model-card pair verifies before mutation.
+- The owner's seven direct regressions for the previous B1-B3 examples pass.
+- Each mutation below updated every affected duplicate, recomputed the handback and model-card
+  digests, and recomputed the receipt content digest. All four nevertheless returned
+  `is_valid=True`, `reason_code="RECEIPT_VALIDATED"`, and no errors.
+
+## Blocking findings
+
+### B1 — Overall realized-revenue mean is still unbound for a partially matched population
+
+For two mature records with realized revenues 100 and 300, but only the first carrying a
+prediction, the producer correctly reports `mature_label_count=2`,
+`matched_prediction_count=1`, `matched_mean_y=100`, and overall
+`mean_realized_revenue=200`. Replacing `mean_realized_revenue` in the summary and model card
+with `999999.0` validates after hash rebinding.
+
+The new check at `models/sitescore/opening_outcome.py:1534-1538` reconciles the overall mean
+only when `matched_prediction_count == mature_label_count`. It therefore leaves precisely the
+partial prediction-coverage population unbound. Persist an authoritative mature-population
+aggregate (for example realized-revenue sum plus count) and reconcile the mean for every
+non-empty mature population, including partial and zero prediction coverage.
+
+### B2 — An empty segment set bypasses complete-partition reconciliation
+
+On the same two-record benchmark, replacing both summary and model-card `segment_metrics` with
+an empty list validates. `_validate_segment_metrics` at
+`models/sitescore/opening_outcome.py:1594-1631` enforces totals only for partitions that are
+present; an empty collection creates no partition and therefore never proves coverage of the
+two-record mature population.
+
+Require the canonical `target_format_code` partition whenever `mature_label_count > 0`, require
+that partition to be non-empty, and then apply the existing total and weighted-metric checks.
+An empty segment set is valid only for an empty mature population.
+
+### B3 — The Gate verdict boolean accepts integer substitution
+
+Replacing `benchmark_summary.is_gate2_passed=false` with integer `0` validates. The verifier
+compares the value with Python equality at `models/sitescore/opening_outcome.py:1831-1833`,
+where `False == 0`, but never applies its strict boolean helper to this field. This violates the
+malformed-receipt fail-closed criterion. Require an actual boolean before comparing the
+re-derived verdict; add both integer-zero and integer-one regressions.
+
+### B4 — The concrete Human/Ops handback can be erased while remaining valid
+
+Starting from the valid governed-disabled receipt, replacing both handback copies with
+`missing_labels_delta=0`, `reasons=[]`, and `handback_action="x"` validates after hash
+rebinding. The verifier checks only that the action is a non-empty string
+(`models/sitescore/opening_outcome.py:1349-1352`) and never derives the missing-label delta,
+requires non-empty actionable reasons, or binds the action to the required outcome-backfill and
+prediction-source tasks.
+
+Re-derive `missing_labels_delta = max(0, ACTIVATION_THRESHOLD - mature_label_count)`, require a
+non-empty typed reasons list for governed-disabled receipts, and structurally require the action
+to identify both governed dependency task IDs (or replace prose with typed action fields). The
+required concrete Human/Ops handoff must not be removable by recomputing public self-hashes.
+
+## Decision
+
+**Changes requested.** Exact owner head `e94db743` is not approved. The prior missing timestamp,
+literal aggregate, and non-empty-partition mutation examples have been addressed and all focused
+checks are green, but the complete batch still accepts an invented partial-population mean, an
+empty segment partition over mature records, a malformed integer Gate verdict, and an erased
+backfill handoff. These directly violate the population-alignment, malformed-receipt,
+self-consistent-forgery, and concrete Human/Ops handoff acceptance clauses. Re-audit every
+criterion after remediation and return one new exact pushed head. No owner implementation
+content was changed by this review.
