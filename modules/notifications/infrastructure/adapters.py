@@ -270,7 +270,20 @@ class OnCallNotificationAdapter:
         response_hash = hashlib.sha256(resp_bytes).hexdigest()
 
         provider_receipt_id = None
-        is_mock_or_test = False
+        is_injected_transport = (
+            self.http_transport != self._default_http_transport
+            and not getattr(self.http_transport, "is_production", False)
+            and not getattr(self.http_transport, "is_production_transport", False)
+        )
+
+        sec_provenance = (os.getenv("ONCALL_SECRET_PROVENANCE") or os.getenv("DEPLOYMENT_SECRET_PROVENANCE") or "").strip().lower()
+        has_authentic_sec_provenance = sec_provenance in {"gcp_secret_manager", "secret_manager", "deployment_secret_store", "production_vault"}
+
+        rel_provenance = (os.getenv("DEPLOYMENT_RELEASE_PROVENANCE") or "").strip().lower()
+        has_authentic_rel_provenance = rel_provenance in {"cloud_run_metadata", "deployment_manifest", "production_release_readback"}
+
+        # B1: Injected transports, ambient caller secrets without deployment secret provenance, or caller release SHAs cannot claim DELIVERED
+        is_mock_or_test = is_injected_transport or not has_authentic_sec_provenance or not has_authentic_rel_provenance
         has_authentic_signature = False
 
         if isinstance(resp_data, dict):
@@ -291,14 +304,14 @@ class OnCallNotificationAdapter:
                 is_mock_or_test = True
             elif not provider_receipt_id or any(
                 str(provider_receipt_id).startswith(prefix)
-                for prefix in ("local-", "mock-", "test-", "caller_chosen", "attacker")
+                for prefix in ("local-", "mock-", "test-", "caller_chosen", "attacker", "prov-caller-forged")
             ):
                 is_mock_or_test = True
             elif not raw_sig or not isinstance(raw_sig, str):
                 is_mock_or_test = True
             else:
                 provider_secret = os.getenv("ONCALL_PROVIDER_SECRET", "").strip()
-                sig_base = f"{provider_secret}:{provider_receipt_id}:{request_hash}:{release_sha}".encode("utf-8")
+                sig_base = f"{provider_secret}:{provider_receipt_id}:{request_hash}:{release_sha}".encode()
                 expected_sha256 = hashlib.sha256(sig_base).hexdigest()
                 expected_sig_token_1 = expected_sha256
                 expected_sig_token_2 = f"sig-sha256-{expected_sha256[:16]}"
@@ -316,7 +329,7 @@ class OnCallNotificationAdapter:
                     if not isinstance(raw_readback, str):
                         readback_valid = False
                     else:
-                        rb_base = f"readback:{request_hash}".encode("utf-8")
+                        rb_base = f"readback:{request_hash}".encode()
                         expected_rb_hash = hashlib.sha256(rb_base).hexdigest()
                         expected_rb_token_1 = request_hash
                         expected_rb_token_2 = expected_rb_hash

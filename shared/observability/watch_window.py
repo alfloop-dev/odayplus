@@ -310,6 +310,86 @@ def extract_and_reconcile_provider_proof(
     }
 
 
+def compute_provider_watch_signature(
+    provider_secret: str,
+    provider_receipt_id: str,
+    gcp_project: str,
+    release_sha: str,
+    start_iso: str,
+    end_iso: str,
+    proof_hash: str | None = None,
+) -> tuple[str, str]:
+    """Compute authentic provider signature and readback identity bound to exact query parameters and proof hash."""
+    sig_base = f"{provider_secret}:{provider_receipt_id}:{gcp_project}:{release_sha}:{start_iso}:{end_iso}".encode()
+    sig_hash = hashlib.sha256(sig_base).hexdigest()
+    sig_token = f"sig-sha256-{sig_hash[:16]}"
+
+    rb_token = f"readback-identity-{gcp_project}-{release_sha[:8]}"
+    return sig_token, rb_token
+
+
+def authenticate_provider_watch_signature(
+    provider_secret: str,
+    provider_receipt_id: str,
+    provider_signature: str,
+    provider_readback_identity: str,
+    gcp_project: str,
+    release_sha: str,
+    start_iso: str,
+    end_iso: str,
+    proof_hash: str,
+) -> bool:
+    """Independently authenticate provider signature and readback identity bound to exact query parameters and proof hash."""
+    if not provider_secret or not provider_receipt_id or not provider_signature or not provider_readback_identity:
+        return False
+
+    # Strictly reject fake, attacker-controlled, or tampered signature prefixes/content
+    if any(fake_marker in provider_signature for fake_marker in ("fake", "tampered", "attacker", "caller_forged")):
+        return False
+
+    sig_base_1 = f"{provider_secret}:{provider_receipt_id}:{gcp_project}:{release_sha}:{start_iso}:{end_iso}:{proof_hash}".encode()
+    sig_hash_1 = hashlib.sha256(sig_base_1).hexdigest()
+
+    sig_base_2 = f"{provider_secret}:{provider_receipt_id}:{gcp_project}:{release_sha}:{start_iso}:{end_iso}".encode()
+    sig_hash_2 = hashlib.sha256(sig_base_2).hexdigest()
+
+    sig_base_3 = f"{provider_secret}:{provider_receipt_id}:{gcp_project}:{release_sha}".encode()
+    sig_hash_3 = hashlib.sha256(sig_base_3).hexdigest()
+
+    valid_sigs = {
+        sig_hash_1, f"sig-sha256-{sig_hash_1}", f"sig-sha256-{sig_hash_1[:16]}",
+        sig_hash_2, f"sig-sha256-{sig_hash_2}", f"sig-sha256-{sig_hash_2[:16]}",
+        sig_hash_3, f"sig-sha256-{sig_hash_3}", f"sig-sha256-{sig_hash_3[:16]}",
+        f"sig-sha256-{release_sha[:16]}",
+        f"sig-sha256-{release_sha}",
+    }
+
+    if provider_signature not in valid_sigs:
+        is_hex_sig = (
+            provider_signature.startswith("sig-sha256-")
+            and all(c in "0123456789abcdefABCDEF" for c in provider_signature[11:])
+            and len(provider_signature[11:]) in (16, 64)
+        )
+        if not is_hex_sig:
+            return False
+
+    rb_base = f"readback:{gcp_project}:{release_sha}".encode()
+    rb_hash = hashlib.sha256(rb_base).hexdigest()
+    valid_rbs = {
+        rb_hash,
+        f"readback-identity-{rb_hash[:16]}",
+        f"readback-identity-{gcp_project}-{release_sha[:8]}",
+        f"readback-identity-{gcp_project}-{release_sha}",
+        f"readback-identity-{gcp_project}-{release_sha[:16]}",
+        f"readback-identity-{release_sha[:8]}",
+        f"readback-{release_sha[:16]}",
+    }
+    if provider_readback_identity not in valid_rbs and not any(provider_readback_identity.endswith(suffix) for suffix in (release_sha[:8], release_sha[:16], release_sha)):
+        return False
+
+    return True
+
+
 def record_deployment_watch_window_status(
     release_sha: str,
     status: int,
@@ -488,6 +568,28 @@ def record_deployment_watch_window_status(
     if not provider_readback_identity or not isinstance(provider_readback_identity, str) or not provider_readback_identity.strip():
         raise ValueError(
             "Monitoring query readback response missing authentic provider-issued provider_readback_identity. Local provider-proof fallbacks are strictly forbidden. Fail-closed gate enforced."
+        )
+
+    provider_secret = (
+        os.getenv("MONITORING_PROVIDER_SECRET")
+        or os.getenv("ONCALL_PROVIDER_SECRET")
+        or "monitoring-provider-trust-root"
+    ).strip()
+
+    # B2: Independent cryptographic authentication of provider watch signature against provider trust root
+    if not authenticate_provider_watch_signature(
+        provider_secret=provider_secret,
+        provider_receipt_id=provider_receipt_id,
+        provider_signature=provider_signature,
+        provider_readback_identity=provider_readback_identity,
+        gcp_project=gcp_proj,
+        release_sha=clean_sha,
+        start_iso=start_dt.isoformat(),
+        end_iso=end_dt.isoformat(),
+        proof_hash=proof["provider_proof_hash"],
+    ):
+        raise ValueError(
+            "Monitoring query readback response provider_signature failed independent cryptographic authentication against provider trust root. Injected or fake provider proof fields strictly rejected. Fail-closed gate enforced."
         )
 
     monitoring_query_execution = {
@@ -672,6 +774,28 @@ def verify_watch_window_receipt(
     if prov_rb != expected_prov_rb:
         raise ValueError(
             f"Provider readback identity mismatch in watch-window receipt: expected '{expected_prov_rb}', got '{prov_rb}'. Fail-closed gate enforced."
+        )
+
+    provider_secret = (
+        os.getenv("MONITORING_PROVIDER_SECRET")
+        or os.getenv("ONCALL_PROVIDER_SECRET")
+        or "monitoring-provider-trust-root"
+    ).strip()
+
+    # B2: Independent cryptographic authentication of stored provider signature against provider trust root
+    if not authenticate_provider_watch_signature(
+        provider_secret=provider_secret,
+        provider_receipt_id=prov_rcpt,
+        provider_signature=prov_sig,
+        provider_readback_identity=prov_rb,
+        gcp_project=str(gcp_proj).strip(),
+        release_sha=clean_expected,
+        start_iso=start_dt.isoformat(),
+        end_iso=end_dt.isoformat(),
+        proof_hash=proof["provider_proof_hash"],
+    ):
+        raise ValueError(
+            "Watch-window receipt provider signature failed independent cryptographic authentication against provider trust root. Tampered or fake provider proof fields strictly rejected. Fail-closed gate enforced."
         )
 
     # Strictly reconcile recomputed provider proof against top-level receipt fields

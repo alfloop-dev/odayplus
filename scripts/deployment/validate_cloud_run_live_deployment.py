@@ -455,11 +455,32 @@ def observability_runtime_checks(root: Path = ROOT) -> list[CheckResult]:
                                 ],
                             },
                         ]
-                    return 200, {
+                    import hashlib
+
+                    from shared.observability.watch_window import compute_provider_watch_signature
+                    prov_sec = (os.getenv("MONITORING_PROVIDER_SECRET") or os.getenv("ONCALL_PROVIDER_SECRET") or "test-provider-secret-key").strip()
+                    os.environ["MONITORING_PROVIDER_SECRET"] = prov_sec
+
+                    resp_dict = {
                         "gcp_project": g_proj,
                         "release_sha": r_sha,
                         "timeSeries": ts_return,
                     }
+                    prov_rcpt = f"prov-rcpt-{g_proj}-{r_sha[:8]}"
+                    proof_hash = hashlib.sha256(json.dumps(resp_dict, sort_keys=True).encode("utf-8")).hexdigest()
+                    sig_token, rb_token = compute_provider_watch_signature(
+                        provider_secret=prov_sec,
+                        provider_receipt_id=prov_rcpt,
+                        gcp_project=g_proj,
+                        release_sha=r_sha,
+                        start_iso=past_iso,
+                        end_iso=now_iso,
+                        proof_hash=proof_hash,
+                    )
+                    resp_dict["provider_receipt_id"] = prov_rcpt
+                    resp_dict["provider_signature"] = sig_token
+                    resp_dict["provider_readback_identity"] = rb_token
+                    return 200, resp_dict
             elif "dashboards" in url:
                 if method == "POST":
                     return 200, {"name": f"projects/{g_proj}/dashboards/platform-health"}
