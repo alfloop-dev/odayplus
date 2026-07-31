@@ -95,9 +95,17 @@ def verify_audit_receipt(
     audit_receipt: dict[str, Any] | None,
     *,
     expected_snapshot_hash: str = "",
+    authority_key: str | None = None,
 ) -> bool:
     """Recompute body integrity, check count reconciliation, and verify zero leak & lineage binding."""
     if not isinstance(audit_receipt, dict):
+        return False
+
+    from modules.avm.domain.outcome import get_production_authority_verifier_key
+    from modules.dealroom.domain.confidential_access import create_identity_proof
+
+    key = authority_key or get_production_authority_verifier_key()
+    if not key:
         return False
 
     # M3 Fix: Enforce structural confidential leak validation before accepting audit receipt body
@@ -132,12 +140,6 @@ def verify_audit_receipt(
     if permitted_count < 0 or denied_count < 0 or (permitted_count + denied_count != total_attempts):
         return False
 
-    # B24 & B27: Recompute event decisions/counts and reverify identity proof & access authority for all audit events
-    from modules.dealroom.domain.confidential_access import (
-        CANONICAL_HUMAN_OPS_ACTIVATION_KEY,
-        create_identity_proof,
-    )
-
     valid_permitted = 0
     valid_denied = 0
 
@@ -156,7 +158,7 @@ def verify_audit_receipt(
                 return False
             try:
                 expected_proof = create_identity_proof(
-                    actor_id, role_str, tenant_id, authority_key=CANONICAL_HUMAN_OPS_ACTIVATION_KEY
+                    actor_id, role_str, tenant_id, authority_key=key, event_id=e.get("event_id")
                 )
             except Exception:
                 return False
@@ -190,6 +192,7 @@ def verify_audit_receipt(
 def generate_dealroom_outcome_audit_receipt(
     attempts: list[tuple[Any, ...]],
     *,
+    authority_key: str | None = None,
     forbidden_raw_prices: tuple[float | str, ...] = (),
     dataset_snapshot_hash: str = "",
     model_version: str = "dealroom-avm-baseline-v1",

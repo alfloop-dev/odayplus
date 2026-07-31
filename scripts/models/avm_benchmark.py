@@ -54,6 +54,9 @@ EMPTY_SNAPSHOT_HASH = hashlib.sha256(b"model_ready.valuation_view:empty_snapshot
 UNACTIVATED_MODEL_HASH = hashlib.sha256(b"dealroom-avm-baseline-v1:unactivated_artifact_v1").hexdigest()
 
 
+from modules.avm.domain.outcome import get_production_authority_verifier_key
+
+
 def generate_avm_outcome_evidence_pack(
     *,
     outcomes: list[AVMOutcomeTransaction] | None = None,
@@ -67,6 +70,7 @@ def generate_avm_outcome_evidence_pack(
     activation_receipt: AVMActivationAuthorityReceipt | None = None,
     query_source_receipt: AVMQuerySourceReceipt | None = None,
     access_attempts: list[tuple[Any, ...]] | None = None,
+    authority_key: str | None = None,
 ) -> tuple[AVMOutcomeCalibrationReport, dict[str, Any], dict[str, Any], str, dict[str, Any]]:
     """Run full AVM outcome calibration & confidential audit pipeline and generate evidence artifacts."""
     if outcomes is None:
@@ -74,11 +78,14 @@ def generate_avm_outcome_evidence_pack(
     if predictions is None:
         predictions = []
 
-    # Default query source receipt if not provided
-    if query_source_receipt is None:
+    key = authority_key or get_production_authority_verifier_key()
+
+    # Default query source receipt if not provided and authority key is configured
+    if query_source_receipt is None and key:
         query_source_receipt = create_avm_query_source_receipt(
             dataset_snapshot_id=dataset_snapshot_id,
             dataset_snapshot_hash=dataset_snapshot_hash,
+            authority_key=key,
             observed_labeled_count=observed_count,
             eligible_mature_count=eligible_count,
             population_keys=[o.transaction_id for o in outcomes] if outcomes else None,
@@ -88,8 +95,8 @@ def generate_avm_outcome_evidence_pack(
     if access_attempts is None:
         ctx_fin = {
             "authenticated": True,
-            "verified_identity": True,
-            "identity_proof_sha256": create_identity_proof("usr-fin-001", Role.FINANCE_LEGAL),
+            "verified_identity": bool(key),
+            "identity_proof_sha256": create_identity_proof("usr-fin-001", Role.FINANCE_LEGAL, authority_key=key) if key else "",
             "tenant_id": "tenant-avm-001",
             "data_room_access": True,
             "tenant_matched": True,
@@ -97,8 +104,8 @@ def generate_avm_outcome_evidence_pack(
         }
         ctx_sup = {
             "authenticated": True,
-            "verified_identity": True,
-            "identity_proof_sha256": create_identity_proof("usr-sup-002", Role.REGIONAL_SUPERVISOR),
+            "verified_identity": bool(key),
+            "identity_proof_sha256": create_identity_proof("usr-sup-002", Role.REGIONAL_SUPERVISOR, authority_key=key) if key else "",
             "tenant_id": "tenant-avm-001",
             "data_room_access": True,
             "tenant_matched": True,
@@ -106,8 +113,8 @@ def generate_avm_outcome_evidence_pack(
         }
         ctx_adm = {
             "authenticated": True,
-            "verified_identity": True,
-            "identity_proof_sha256": create_identity_proof("usr-adm-003", Role.PLATFORM_ADMIN),
+            "verified_identity": bool(key),
+            "identity_proof_sha256": create_identity_proof("usr-adm-003", Role.PLATFORM_ADMIN, authority_key=key) if key else "",
             "tenant_id": "tenant-avm-001",
             "data_room_access": True,
             "tenant_matched": True,
@@ -115,8 +122,8 @@ def generate_avm_outcome_evidence_pack(
         }
         ctx_frc = {
             "authenticated": True,
-            "verified_identity": True,
-            "identity_proof_sha256": create_identity_proof("usr-frc-004", Role.FRANCHISEE),
+            "verified_identity": bool(key),
+            "identity_proof_sha256": create_identity_proof("usr-frc-004", Role.FRANCHISEE, authority_key=key) if key else "",
             "tenant_id": "tenant-avm-001",
             "data_room_access": True,
             "tenant_matched": True,
@@ -133,6 +140,7 @@ def generate_avm_outcome_evidence_pack(
     raw_prices = tuple(o.realized_price for o in outcomes)
     audit_receipt = generate_dealroom_outcome_audit_receipt(
         access_attempts,
+        authority_key=key,
         forbidden_raw_prices=raw_prices,
         dataset_snapshot_hash=dataset_snapshot_hash,
     )
@@ -160,6 +168,7 @@ def generate_avm_outcome_evidence_pack(
         audit_receipt=audit_receipt,
         activation_receipt=activation_receipt,
         query_source_receipt=query_source_receipt,
+        authority_key=key,
     )
 
     report_md = generate_benchmark_report_md(report, audit_receipt)

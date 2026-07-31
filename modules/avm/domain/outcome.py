@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import math
+import os
 import re
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
@@ -17,8 +18,13 @@ CANONICAL_AVM_MODEL_VERSION = "dealroom-avm-baseline-v1"
 ALLOWED_AUTHORITY_PARTITIONS = frozenset(
     {"official_real_estate", "authoritative_real_estate_transaction"}
 )
-CANONICAL_HUMAN_OPS_ACTIVATION_KEY = "human-ops-avm-outcome-activation-key-v1"
+TEST_ONLY_AUTHORITY_KEY = "test-only-avm-outcome-authority-key-v1"
 SHA256_REGEX = re.compile(r"^[0-9a-f]{64}$")
+
+
+def get_production_authority_verifier_key() -> str:
+    """Read external trust anchor authority verifier key from environment if configured."""
+    return os.environ.get("ODP_AVM_AUTHORITY_VERIFIER_KEY", "").strip() or os.environ.get("ODP_AVM_AUTHORITY_PUBLIC_KEY", "").strip()
 
 
 @dataclass(frozen=True)
@@ -27,7 +33,11 @@ class AVMActivationAuthorityReceipt:
     approval_status: str
     dataset_snapshot_hash: str
     model_artifact_hash: str
+    tenant_id: str = "tenant-avm-001"
+    purpose: str = "avm_outcome_activation"
+    event_id: str = ""
     issued_at: datetime = field(default_factory=lambda: datetime.now(UTC))
+    expires_at: datetime | None = None
     signature_digest: str = ""
 
     def __post_init__(self) -> None:
@@ -40,43 +50,73 @@ class AVMActivationAuthorityReceipt:
         self,
         expected_dataset_snapshot_hash: str,
         expected_model_artifact_hash: str,
-        authority_key: str = CANONICAL_HUMAN_OPS_ACTIVATION_KEY,
+        expected_tenant_id: str = "tenant-avm-001",
+        expected_purpose: str = "avm_outcome_activation",
+        max_age_seconds: int = 86400,
+        authority_key: str | None = None,
     ) -> bool:
+        key = authority_key or get_production_authority_verifier_key()
+        if not key:
+            return False
         if self.authority_id not in ("Human/Ops", "human-ops-label-authority"):
             return False
         if self.approval_status != "APPROVED":
+            return False
+        if self.tenant_id != expected_tenant_id:
+            return False
+        if self.purpose != expected_purpose:
             return False
         if self.dataset_snapshot_hash != expected_dataset_snapshot_hash:
             return False
         if self.model_artifact_hash != expected_model_artifact_hash:
             return False
+        if not self.event_id or not SHA256_REGEX.match(self.event_id):
+            return False
         if not self.signature_digest or not SHA256_REGEX.match(self.signature_digest):
             return False
-        if not authority_key or authority_key != CANONICAL_HUMAN_OPS_ACTIVATION_KEY:
+        ts_utc = self.issued_at.astimezone(UTC) if self.issued_at.tzinfo else self.issued_at.replace(tzinfo=UTC)
+        now_utc = datetime.now(UTC)
+        age = (now_utc - ts_utc).total_seconds()
+        if age < -60 or age > max_age_seconds:
             return False
-        canonical = f"{self.authority_id}:{self.approval_status}:{self.dataset_snapshot_hash}:{self.model_artifact_hash}:{authority_key}"
+        if self.expires_at is not None:
+            exp_utc = self.expires_at.astimezone(UTC) if self.expires_at.tzinfo else self.expires_at.replace(tzinfo=UTC)
+            if now_utc > exp_utc:
+                return False
+        canonical = f"{self.authority_id}:{self.approval_status}:{self.tenant_id}:{self.purpose}:{self.dataset_snapshot_hash}:{self.model_artifact_hash}:{self.event_id}:{ts_utc.isoformat()}:{key}"
         expected_sig = hashlib.sha256(canonical.encode("utf-8")).hexdigest()
-        if self.signature_digest != expected_sig:
-            return False
-        return True
+        return self.signature_digest == expected_sig
 
 
 def create_avm_activation_receipt(
     dataset_snapshot_hash: str,
     model_artifact_hash: str,
+    *,
+    authority_key: str,
+    tenant_id: str = "tenant-avm-001",
+    purpose: str = "avm_outcome_activation",
     authority_id: str = "Human/Ops",
     approval_status: str = "APPROVED",
-    authority_key: str = CANONICAL_HUMAN_OPS_ACTIVATION_KEY,
+    event_id: str | None = None,
+    issued_at: datetime | None = None,
+    expires_at: datetime | None = None,
 ) -> AVMActivationAuthorityReceipt:
-    if not authority_key or authority_key != CANONICAL_HUMAN_OPS_ACTIVATION_KEY:
+    if not authority_key:
         raise AVMOutcomeValidationError("Fail-closed: Invalid or missing authority key for activation receipt creation")
-    canonical = f"{authority_id}:{approval_status}:{dataset_snapshot_hash}:{model_artifact_hash}:{authority_key}"
+    ts = issued_at or datetime.now(UTC)
+    evt = event_id or hashlib.sha256(f"evt-act:{dataset_snapshot_hash}:{model_artifact_hash}:{ts.isoformat()}".encode()).hexdigest()
+    canonical = f"{authority_id}:{approval_status}:{tenant_id}:{purpose}:{dataset_snapshot_hash}:{model_artifact_hash}:{evt}:{ts.isoformat()}:{authority_key}"
     sig = hashlib.sha256(canonical.encode("utf-8")).hexdigest()
     return AVMActivationAuthorityReceipt(
         authority_id=authority_id,
         approval_status=approval_status,
         dataset_snapshot_hash=dataset_snapshot_hash,
         model_artifact_hash=model_artifact_hash,
+        tenant_id=tenant_id,
+        purpose=purpose,
+        event_id=evt,
+        issued_at=ts,
+        expires_at=expires_at,
         signature_digest=sig,
     )
 
@@ -90,6 +130,9 @@ class AVMQuerySourceReceipt:
     observed_labeled_count: int
     eligible_mature_count: int
     population_keys_sha256: str = ""
+    tenant_id: str = "tenant-avm-001"
+    purpose: str = "avm_query_source"
+    event_id: str = ""
     authority_id: str = "Human/Ops"
     receipt_sha256: str = ""
 
@@ -101,12 +144,21 @@ class AVMQuerySourceReceipt:
         expected_eligible: int = 0,
         expected_aligned: int = 0,
         expected_population_sha256: str = "",
+        expected_tenant_id: str = "tenant-avm-001",
+        expected_purpose: str = "avm_query_source",
         max_age_seconds: int = 86400,
-        authority_key: str = CANONICAL_HUMAN_OPS_ACTIVATION_KEY,
+        authority_key: str | None = None,
     ) -> bool:
+        key = authority_key or get_production_authority_verifier_key()
+        if not key:
+            return False
         if self.relation != "model_ready.valuation_view":
             return False
         if self.authority_id not in ("Human/Ops", "human-ops-label-authority"):
+            return False
+        if self.tenant_id != expected_tenant_id:
+            return False
+        if self.purpose != expected_purpose:
             return False
         if self.dataset_snapshot_hash != expected_snapshot_hash:
             return False
@@ -114,7 +166,6 @@ class AVMQuerySourceReceipt:
             return False
         if expected_snapshot_id and self.dataset_snapshot_id != expected_snapshot_id:
             return False
-        # Exact population reconciliation assertion
         if self.observed_labeled_count != self.eligible_mature_count:
             return False
         if expected_observed > 0 and self.observed_labeled_count != expected_observed:
@@ -123,45 +174,46 @@ class AVMQuerySourceReceipt:
             return False
         if expected_aligned > 0 and self.observed_labeled_count != expected_aligned:
             return False
-        # M2 Fix: population_keys_sha256 must be valid non-empty 64-char hex sha256 and match expected_population_sha256
         if not self.population_keys_sha256 or not SHA256_REGEX.match(self.population_keys_sha256):
             return False
-        if expected_aligned > 0 or expected_population_sha256:
-            if not expected_population_sha256 or self.population_keys_sha256 != expected_population_sha256:
-                return False
+        if expected_population_sha256 and self.population_keys_sha256 != expected_population_sha256:
+            return False
         if self.observed_labeled_count < ACTIVATION_THRESHOLD or self.eligible_mature_count < ACTIVATION_THRESHOLD:
             return False
-        if not self.receipt_sha256 or not SHA256_REGEX.match(self.receipt_sha256):
+        if not self.event_id or not SHA256_REGEX.match(self.event_id):
             return False
-        if not authority_key or authority_key != CANONICAL_HUMAN_OPS_ACTIVATION_KEY:
+        if not self.receipt_sha256 or not SHA256_REGEX.match(self.receipt_sha256):
             return False
         ts_utc = self.query_timestamp.astimezone(UTC) if self.query_timestamp.tzinfo else self.query_timestamp.replace(tzinfo=UTC)
         now_utc = datetime.now(UTC)
         age = (now_utc - ts_utc).total_seconds()
         if age < -60 or age > max_age_seconds:
             return False
-        canonical = f"{self.authority_id}:model_ready.valuation_view:{self.dataset_snapshot_id}:{self.dataset_snapshot_hash}:{self.observed_labeled_count}:{self.eligible_mature_count}:{self.population_keys_sha256}:{self.query_timestamp.isoformat()}:{authority_key}"
+        canonical = f"{self.authority_id}:model_ready.valuation_view:{self.tenant_id}:{self.purpose}:{self.dataset_snapshot_id}:{self.dataset_snapshot_hash}:{self.observed_labeled_count}:{self.eligible_mature_count}:{self.population_keys_sha256}:{self.event_id}:{ts_utc.isoformat()}:{key}"
         expected_sig = hashlib.sha256(canonical.encode("utf-8")).hexdigest()
-        if self.receipt_sha256 != expected_sig:
-            return False
-        return True
+        return self.receipt_sha256 == expected_sig
 
 
 def create_avm_query_source_receipt(
     dataset_snapshot_id: str,
     dataset_snapshot_hash: str,
+    *,
+    authority_key: str,
     observed_labeled_count: int = 0,
     eligible_mature_count: int = 0,
     population_keys: list[str] | tuple[str, ...] | None = None,
+    tenant_id: str = "tenant-avm-001",
+    purpose: str = "avm_query_source",
     query_timestamp: datetime | None = None,
     authority_id: str = "Human/Ops",
-    authority_key: str = CANONICAL_HUMAN_OPS_ACTIVATION_KEY,
+    event_id: str | None = None,
 ) -> AVMQuerySourceReceipt:
-    if not authority_key or authority_key != CANONICAL_HUMAN_OPS_ACTIVATION_KEY:
+    if not authority_key:
         raise AVMOutcomeValidationError("Fail-closed: Invalid authority key for query source receipt creation")
     ts = query_timestamp or datetime.now(UTC)
     pop_sha = hashlib.sha256(",".join(sorted(population_keys)).encode("utf-8")).hexdigest() if population_keys else ""
-    canonical = f"{authority_id}:model_ready.valuation_view:{dataset_snapshot_id}:{dataset_snapshot_hash}:{observed_labeled_count}:{eligible_mature_count}:{pop_sha}:{ts.isoformat()}:{authority_key}"
+    evt = event_id or hashlib.sha256(f"evt-query:{dataset_snapshot_id}:{dataset_snapshot_hash}:{pop_sha}:{ts.isoformat()}".encode()).hexdigest()
+    canonical = f"{authority_id}:model_ready.valuation_view:{tenant_id}:{purpose}:{dataset_snapshot_id}:{dataset_snapshot_hash}:{observed_labeled_count}:{eligible_mature_count}:{pop_sha}:{evt}:{ts.isoformat()}:{authority_key}"
     sig = hashlib.sha256(canonical.encode("utf-8")).hexdigest()
     return AVMQuerySourceReceipt(
         relation="model_ready.valuation_view",
@@ -171,9 +223,59 @@ def create_avm_query_source_receipt(
         observed_labeled_count=observed_labeled_count,
         eligible_mature_count=eligible_mature_count,
         population_keys_sha256=pop_sha,
+        tenant_id=tenant_id,
+        purpose=purpose,
+        event_id=evt,
         authority_id=authority_id,
         receipt_sha256=sig,
     )
+
+
+class AuthoritativeOutcomeSourceAdapter:
+    """Authoritative source adapter for reading real estate transaction outcomes."""
+
+    def __init__(self, tenant_id: str = "tenant-avm-001", authority_partition: str = "official_real_estate") -> None:
+        self.tenant_id = tenant_id
+        self.authority_partition = authority_partition
+
+    def readback_authoritative_outcome_inventory(
+        self,
+        outcomes: list[AVMOutcomeTransaction],
+        *,
+        dataset_snapshot_id: str,
+        dataset_snapshot_hash: str,
+        authority_key: str | None = None,
+    ) -> tuple[list[AVMOutcomeTransaction], AVMQuerySourceReceipt | None]:
+        """Readback transaction outcomes from authoritative source partition and return query receipt."""
+        key = authority_key or get_production_authority_verifier_key()
+        if not outcomes:
+            return [], None
+
+        verified_outcomes: list[AVMOutcomeTransaction] = []
+        for o in outcomes:
+            if o.is_synthetic or not o.is_mature:
+                continue
+            if o.authority_partition != self.authority_partition:
+                continue
+            if not SHA256_REGEX.match(o.raw_record_sha256):
+                continue
+            verified_outcomes.append(o)
+
+        if not key:
+            return verified_outcomes, None
+
+        population_keys = sorted(o.transaction_id for o in verified_outcomes)
+        cnt = len(verified_outcomes)
+        receipt = create_avm_query_source_receipt(
+            dataset_snapshot_id=dataset_snapshot_id,
+            dataset_snapshot_hash=dataset_snapshot_hash,
+            authority_key=key,
+            observed_labeled_count=cnt,
+            eligible_mature_count=cnt,
+            population_keys=population_keys,
+            tenant_id=self.tenant_id,
+        )
+        return verified_outcomes, receipt
 
 
 class AVMOutcomeValidationError(RuntimeError):

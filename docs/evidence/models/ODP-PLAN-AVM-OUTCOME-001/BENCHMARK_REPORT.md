@@ -1,7 +1,7 @@
 # AVM Outcome Inventory Benchmark & Gate 1 Receipt
 
 - **Task ID**: `ODP-PLAN-AVM-OUTCOME-001`
-- **Evaluation Date**: `2026-07-31T15:35:51.167387+00:00`
+- **Evaluation Date**: `2026-07-31T17:10:24.354570+00:00`
 - **Verdict**: **❌ FAIL CLOSED**
 - **Model Version**: `dealroom-avm-baseline-v1`
 - **Dataset Snapshot ID**: `empty-snapshot-unpopulated`
@@ -45,10 +45,10 @@
 ## 3. Confidential Access Audit & RBAC Summary
 
 - **Audit Event Count**: `4`
-- **Permitted Accesses**: `1` (Roles: `FINANCE_LEGAL`)
-- **Denied Accesses**: `3` (Roles: `FRANCHISEE`, `PLATFORM_ADMIN`, `REGIONAL_SUPERVISOR`)
+- **Permitted Accesses**: `0` (Roles: `NONE`)
+- **Denied Accesses**: `4` (Roles: `FINANCE_LEGAL`, `FRANCHISEE`, `PLATFORM_ADMIN`, `REGIONAL_SUPERVISOR`)
 - **Zero Confidential Leak Verified**: `True`
-- **Audit Receipt SHA256**: `c529251339186ea2dc093da3a4cf544d2d9dad8dc88a22fd58e1853ffba40a91`
+- **Audit Receipt SHA256**: `dc5c4b756da864a04940c26b74380fff6ed3dabe5997cd9d93906f518ba78e54`
 
 ---
 
