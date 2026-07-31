@@ -50,7 +50,10 @@ class ProviderPermissionsTest(unittest.TestCase):
                     "gemini": {},
                     "codex": {
                         "delivery_mode": "codex",
-                        "codex": {"codex_home": str(codex_home)},
+                        "codex": {
+                            "cli": "/opt/pantheon/bin/codex",
+                            "codex_home": str(codex_home),
+                        },
                     },
                     "copilot": {},
                 },
@@ -98,7 +101,11 @@ class ProviderPermissionsTest(unittest.TestCase):
                 mock.patch.object(
                     provider_permissions,
                     "command_exists",
-                    side_effect=lambda cmd: "/usr/bin/codex" if cmd == "codex" else None,
+                    side_effect=(
+                        lambda cmd: "/opt/pantheon/bin/codex"
+                        if cmd == "/opt/pantheon/bin/codex"
+                        else None
+                    ),
                 ),
                 mock.patch.object(provider_permissions, "claude_auth_ready", return_value=False),
             ):
@@ -109,6 +116,9 @@ class ProviderPermissionsTest(unittest.TestCase):
         self.assertEqual(codex_report["verified"], "blocked")
         self.assertIn("unsupported service_tier", codex_report["config_error"])
         self.assertEqual(codex_report["config_checks"]["service_tier"], "priority")
+        self.assertTrue(codex_report["local_cli_worker_supported"])
+        self.assertTrue(codex_report["supports_auto_approve"])
+        self.assertEqual(codex_report["paths"]["binary"], "/opt/pantheon/bin/codex")
 
     def test_verified_claude_hooks_use_absolute_broker_path(self) -> None:
         expected = str(Path(ROOT) / ".orchestrator" / "permission_broker.py")
