@@ -1,4 +1,4 @@
-import { expect, test, type Locator } from "@playwright/test";
+import { expect, test } from "@playwright/test";
 import {
   acquireOperatorBackendLock,
   releaseOperatorBackendLock,
@@ -390,13 +390,28 @@ test("ODP-OC-PROD-014 productization gate rejects iframe-only or non-API-backed 
   await page.waitForLoadState("domcontentloaded");
   await page.waitForTimeout(1_000);
 
-  await tryClick(page.getByRole("button", { name: /Store Ops|門市營運/ }));
-  await tryClick(
-    page.getByRole("button", { name: /完成 Triage|Triage|triage/i }),
-  );
-  await page.waitForTimeout(500);
-  await tryClick(page.getByRole("button", { name: /Submit Triage/i }));
-  await page.waitForTimeout(500);
+  await page.getByRole("button", { name: /Store Ops|門市營運/ }).click();
+  await expect(
+    page.locator('[data-screen-label="Store Ops 門市營運"]'),
+  ).toBeVisible();
+  await page
+    .getByRole("button", { exact: true, name: "完成 Triage" })
+    .last()
+    .click();
+  await expect(
+    page.locator('[data-screen-label="Dialog Triage"]'),
+  ).toBeVisible();
+  await page
+    .getByRole("button", { exact: true, name: "Submit Triage" })
+    .click();
+  await expect
+    .poll(() =>
+      operatorApiRequests.some(
+        ({ method, pathname }) =>
+          method === "POST" && operatorWorkflowWritePathPattern.test(pathname),
+      ),
+    )
+    .toBe(true);
 
   const failures: string[] = [];
   const designFrameCount = await page
@@ -459,9 +474,4 @@ const requiredOperatorReadPaths = new Set([
 ]);
 
 const operatorWorkflowWritePathPattern =
-  /^\/api\/v1\/operator\/(?:issues\/[^/]+\/(?:triage|assign|actions|field-report|outcome|escalate)|approvals\/[^/]+\/decision|evidence\/[^/]+\/purpose)$/;
-
-async function tryClick(locator: Locator) {
-  if ((await locator.count()) === 0) return;
-  await locator.first().click();
-}
+  /^\/api\/v1\/operator\/(?:store-ops\/issues\/[^/]+\/(?:triage|assign|actions|field-report|outcome|escalate|camera-purpose)|approvals\/[^/]+\/decision|evidence\/[^/]+\/purpose)$/;
