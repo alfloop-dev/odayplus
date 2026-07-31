@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import argparse
 import atexit
+import copy
 import fcntl
 import fnmatch
 import importlib
@@ -7810,113 +7811,165 @@ def release_completed_worker_for_claim(
     agent_name: str,
     task_id: str | None,
 ) -> bool:
+    if not task_id or not isinstance(task_id, str):
+        return False
+    settings = worker_self_claim_settings(config)
+    allowed_statuses = {str(value).lower() for value in settings.get("release_task_statuses", [])}
+    allowed_statuses.update({"in_progress", "review", "review_approved", "done", "blocked", "assigned"})
+    if not allowed_statuses:
+        return False
+    status = load_status(config)
+    task = task_index_from_status(config, status).get(task_id)
+    if not task or str(task.get("status") or "").lower() not in allowed_statuses:
+        return False
+
+    normalized_agent = normalize_agent_id(agent_name)
+    display_agent = display_name_for(config, normalized_agent)
+    active_statuses = {str(value) for value in ready_dispatch_settings(config).get("active_worker_statuses", [])}
+
+    workers_dict = state.get("workers", {})
+    if not isinstance(workers_dict, dict):
+        return False
+
+    matching_entries = []
+    for worker_key, worker in workers_dict.items():
+        if not isinstance(worker, dict):
+            continue
+        if worker.get("task_id") != task_id:
+            continue
+        worker_agent = str(worker.get("logical_agent_id") or worker.get("agent_id") or "").strip()
+        norm_w_agent = normalize_agent_id(worker_agent)
+        if norm_w_agent != normalized_agent and display_name_for(config, norm_w_agent) != display_agent:
+            continue
+        if worker.get("status") not in active_statuses:
+            continue
+        matching_entries.append((worker_key, worker))
+
+    if len(matching_entries) != 1:
+        return False
+
+    worker_key, worker = matching_entries[0]
+    if not isinstance(worker_key, str) or not worker_key.strip():
+        return False
+    worker_key_str = worker_key.strip()
+
+    worker_pid = worker.get("pid")
+    if worker_pid is not None:
+        if type(worker_pid) is not int or worker_pid <= 0:
+            return False
+
+    worker_child_pid = worker.get("child_pid")
+    if worker_child_pid is not None:
+        if type(worker_child_pid) is not int or worker_child_pid <= 0:
+            return False
+
+    if (worker_pid is not None and pid_is_alive(worker_pid)) or (worker_child_pid is not None and pid_is_alive(worker_child_pid)):
+        return False
+
+    metadata = worker.get("metadata") if isinstance(worker.get("metadata"), dict) else {}
+    status_path_val = worker.get("runner_status_path") or worker.get("status_path") or metadata.get("runner_status_path") or metadata.get("status_path")
+    if not status_path_val or not isinstance(status_path_val, (str, Path)):
+        return False
+
+    receipt = _load_runtime_marker(status_path_val)
+    if not receipt or not isinstance(receipt, dict):
+        return False
+
+    receipt_status = receipt.get("status") or receipt.get("runner_status")
+    if not isinstance(receipt_status, str) or receipt_status.strip().lower() not in {"completed", "success", "succeeded"}:
+        return False
+
+    raw_exit = receipt.get("exit_code")
+    if type(raw_exit) is not int or raw_exit != 0:
+        return False
+
+    if receipt.get("signal") is not None or receipt.get("runner_signal") is not None:
+        return False
+
+    receipt_run_id_val = receipt.get("run_id")
+    receipt_w_run_id_val = receipt.get("worker_run_id")
+
+    if receipt_run_id_val is not None and not isinstance(receipt_run_id_val, str):
+        return False
+    if receipt_w_run_id_val is not None and not isinstance(receipt_w_run_id_val, str):
+        return False
+
+    raw_receipt_run_id = receipt_run_id_val if receipt_run_id_val is not None else receipt_w_run_id_val
+    if not isinstance(raw_receipt_run_id, str):
+        return False
+    receipt_run_id = raw_receipt_run_id.strip()
+    if not receipt_run_id:
+        return False
+
+    if receipt_run_id_val is not None and receipt_w_run_id_val is not None:
+        if receipt_run_id_val.strip() != receipt_w_run_id_val.strip():
+            return False
+
+    raw_worker_run_id = worker.get("run_id")
+    if raw_worker_run_id is not None and not isinstance(raw_worker_run_id, str):
+        return False
+    if isinstance(raw_worker_run_id, str) and raw_worker_run_id.strip():
+        if raw_worker_run_id.strip() != receipt_run_id:
+            return False
+
+    if receipt_run_id != worker_key_str:
+        return False
+
+    receipt_pid = receipt.get("pid")
+    if receipt_pid is not None:
+        if type(receipt_pid) is not int or receipt_pid <= 0:
+            return False
+
+    receipt_child_pid = receipt.get("child_pid")
+    if receipt_child_pid is not None:
+        if type(receipt_child_pid) is not int or receipt_child_pid <= 0:
+            return False
+
+    if worker_pid is not None:
+        if receipt_pid is None or receipt_pid != worker_pid:
+            return False
+
+    if worker_child_pid is not None:
+        if receipt_child_pid is None or receipt_child_pid != worker_child_pid:
+            return False
+
+    if (receipt_pid is not None and pid_is_alive(receipt_pid)) or (receipt_child_pid is not None and pid_is_alive(receipt_child_pid)):
+        return False
+
+    old_worker = copy.deepcopy(worker)
+    queue_event_id = worker.get("queue_event_id")
+    has_queue_event = False
+    old_queue_event = None
+    queue_events_dict = None
+
+    if queue_event_id and isinstance(state.get("queue"), dict):
+        events = state["queue"].get("events")
+        if isinstance(events, dict):
+            queue_events_dict = events
+            if queue_event_id in events and isinstance(events[queue_event_id], dict):
+                has_queue_event = True
+                old_queue_event = copy.deepcopy(events[queue_event_id])
+
+    now = utc_now()
+    worker["status"] = "completed"
+    worker["completed_at"] = now
+    worker["last_event_at"] = now
+    worker["last_error"] = None
+
+    def _rollback() -> None:
+        worker.clear()
+        worker.update(old_worker)
+        if queue_events_dict is not None and queue_event_id:
+            if has_queue_event and old_queue_event is not None:
+                if queue_event_id in queue_events_dict and isinstance(queue_events_dict[queue_event_id], dict):
+                    queue_events_dict[queue_event_id].clear()
+                    queue_events_dict[queue_event_id].update(old_queue_event)
+                else:
+                    queue_events_dict[queue_event_id] = copy.deepcopy(old_queue_event)
+            else:
+                queue_events_dict.pop(queue_event_id, None)
+
     try:
-        if not task_id or not isinstance(task_id, str):
-            return False
-        settings = worker_self_claim_settings(config)
-        allowed_statuses = {str(value).lower() for value in settings.get("release_task_statuses", [])}
-        allowed_statuses.update({"in_progress", "review", "review_approved", "done", "blocked", "assigned"})
-        if not allowed_statuses:
-            return False
-        status = load_status(config)
-        task = task_index_from_status(config, status).get(task_id)
-        if not task or str(task.get("status") or "").lower() not in allowed_statuses:
-            return False
-
-        normalized_agent = normalize_agent_id(agent_name)
-        display_agent = display_name_for(config, normalized_agent)
-        active_statuses = {str(value) for value in ready_dispatch_settings(config).get("active_worker_statuses", [])}
-
-        workers_dict = state.get("workers", {})
-        if not isinstance(workers_dict, dict):
-            return False
-
-        matching_entries = []
-        for worker_key, worker in workers_dict.items():
-            if not isinstance(worker, dict):
-                continue
-            if worker.get("task_id") != task_id:
-                continue
-            worker_agent = str(worker.get("logical_agent_id") or worker.get("agent_id") or "").strip()
-            norm_w_agent = normalize_agent_id(worker_agent)
-            if norm_w_agent != normalized_agent and display_name_for(config, norm_w_agent) != display_agent:
-                continue
-            if worker.get("status") not in active_statuses:
-                continue
-            matching_entries.append((worker_key, worker))
-
-        if len(matching_entries) != 1:
-            return False
-
-        worker_key, worker = matching_entries[0]
-
-        worker_pid = worker.get("pid")
-        if worker_pid is not None:
-            if type(worker_pid) is not int or worker_pid <= 0:
-                return False
-
-        worker_child_pid = worker.get("child_pid")
-        if worker_child_pid is not None:
-            if type(worker_child_pid) is not int or worker_child_pid <= 0:
-                return False
-
-        if (worker_pid is not None and pid_is_alive(worker_pid)) or (worker_child_pid is not None and pid_is_alive(worker_child_pid)):
-            return False
-
-        metadata = worker.get("metadata") if isinstance(worker.get("metadata"), dict) else {}
-        status_path_val = worker.get("runner_status_path") or worker.get("status_path") or metadata.get("runner_status_path") or metadata.get("status_path")
-        if not status_path_val or not isinstance(status_path_val, (str, Path)):
-            return False
-
-        receipt = _load_runtime_marker(status_path_val)
-        if not receipt or not isinstance(receipt, dict):
-            return False
-
-        receipt_status = receipt.get("status") or receipt.get("runner_status")
-        if not isinstance(receipt_status, str) or receipt_status.strip().lower() not in {"completed", "success", "succeeded"}:
-            return False
-
-        raw_exit = receipt.get("exit_code")
-        if type(raw_exit) is not int or raw_exit != 0:
-            return False
-
-        receipt_signal = receipt.get("signal") or receipt.get("runner_signal")
-        if receipt_signal:
-            return False
-
-        worker_run_id = str(worker.get("run_id") or worker_key or "").strip()
-        receipt_run_id = str(receipt.get("run_id") or receipt.get("worker_run_id") or "").strip()
-        if not receipt_run_id or not worker_run_id or receipt_run_id != worker_run_id:
-            return False
-        if worker_key and receipt_run_id != str(worker_key).strip():
-            return False
-
-        receipt_pid = receipt.get("pid")
-        if receipt_pid is not None:
-            if type(receipt_pid) is not int or receipt_pid <= 0:
-                return False
-
-        receipt_child_pid = receipt.get("child_pid")
-        if receipt_child_pid is not None:
-            if type(receipt_child_pid) is not int or receipt_child_pid <= 0:
-                return False
-
-        if worker_pid is not None:
-            if receipt_pid is None or receipt_pid != worker_pid:
-                return False
-
-        if worker_child_pid is not None:
-            if receipt_child_pid is None or receipt_child_pid != worker_child_pid:
-                return False
-
-        if (receipt_pid is not None and pid_is_alive(receipt_pid)) or (receipt_child_pid is not None and pid_is_alive(receipt_child_pid)):
-            return False
-
-        now = utc_now()
-        worker["status"] = "completed"
-        worker["completed_at"] = now
-        worker["last_event_at"] = now
-        worker["last_error"] = None
         finalize_queue_event_record(config, state, worker, "completed")
         write_activity_log(
             config,
@@ -7928,9 +7981,11 @@ def release_completed_worker_for_claim(
                 "queue_event_id": worker.get("queue_event_id"),
             },
         )
-        return True
     except Exception:
+        _rollback()
         return False
+
+    return True
 
 
 

@@ -11484,6 +11484,10 @@ class ReleaseCompletedWorkerShapeCorrectionTests(unittest.TestCase):
             {"status": "completed", "exit_code": 1, "run_id": run_id, "pid": 1234},      # non-zero exit_code
             {"status": "failed", "exit_code": 0, "run_id": run_id, "pid": 1234},         # non-completed status
             {"status": "completed", "exit_code": 0, "signal": "SIGKILL", "run_id": run_id, "pid": 1234},  # signal set
+            {"status": "completed", "exit_code": 0, "signal": False, "run_id": run_id, "pid": 1234},     # signal=False
+            {"status": "completed", "exit_code": 0, "runner_signal": False, "run_id": run_id, "pid": 1234}, # runner_signal=False
+            {"status": "completed", "exit_code": 0, "run_id": 1234, "pid": 1234},        # numeric run_id
+            {"status": "completed", "exit_code": 0, "worker_run_id": 1234, "pid": 1234}, # numeric worker_run_id
             {"status": "completed", "exit_code": 0, "run_id": "wrong-run-id", "pid": 1234},  # run_id mismatch
         ]
 
@@ -11495,6 +11499,89 @@ class ReleaseCompletedWorkerShapeCorrectionTests(unittest.TestCase):
                     self.config, state, agent_name="Codex6", task_id=task_id
                 )
                 self.assertFalse(res)
+
+    def test_release_completed_worker_atomic_rollback_on_queue_mutation_exception(self) -> None:
+        """Verify worker and queue event record are restored byte-equivalent if finalize_queue_event_record mutates queue then raises."""
+        import copy
+        task_id = "ODP-ATOMIC-ROLLBACK-001"
+        run_id = "run-atomic-1"
+        status = {"tasks": [{"id": task_id, "status": "in_progress", "owner": "Antigravity6", "reviewer": "Codex6"}]}
+        state = {
+            "workers": {
+                run_id: {
+                    "run_id": run_id,
+                    "agent_id": "codex6",
+                    "task_id": task_id,
+                    "status": "running",
+                    "pid": 1234,
+                    "runner_status_path": "/tmp/fake_status.json",
+                    "queue_event_id": "evt-atomic-1",
+                }
+            },
+            "queue": {
+                "events": {
+                    "evt-atomic-1": {"id": "evt-atomic-1", "status": "claimed", "run_id": run_id}
+                }
+            },
+        }
+        original_worker = copy.deepcopy(state["workers"][run_id])
+        original_queue_event = copy.deepcopy(state["queue"]["events"]["evt-atomic-1"])
+        receipt = {"status": "completed", "exit_code": 0, "run_id": run_id, "pid": 1234}
+
+        def _mutating_finalize(config, st, w, status, error=None):
+            st["queue"]["events"]["evt-atomic-1"]["status"] = "mutated_before_crash"
+            raise RuntimeError("queue disk write error")
+
+        with mock.patch.object(supervisor, "load_status", return_value=status), \
+             mock.patch.object(supervisor, "_load_runtime_marker", return_value=receipt), \
+             mock.patch.object(supervisor, "pid_is_alive", return_value=False), \
+             mock.patch.object(supervisor, "finalize_queue_event_record", side_effect=_mutating_finalize):
+            res = supervisor.release_completed_worker_for_claim(
+                self.config, state, agent_name="Codex6", task_id=task_id
+            )
+            self.assertFalse(res)
+            # Verify atomic rollback of both worker and queue event record
+            self.assertEqual(state["workers"][run_id], original_worker)
+            self.assertEqual(state["queue"]["events"]["evt-atomic-1"], original_queue_event)
+
+    def test_release_completed_worker_activity_log_exception_rollback(self) -> None:
+        """Verify release_completed_worker_for_claim rolls back both worker and queue and returns False if write_activity_log raises."""
+        import copy
+        task_id = "ODP-LOG-EXCEPT-001"
+        run_id = "run-log-except-1"
+        status = {"tasks": [{"id": task_id, "status": "in_progress", "owner": "Antigravity6", "reviewer": "Codex6"}]}
+        state = {
+            "workers": {
+                run_id: {
+                    "run_id": run_id,
+                    "agent_id": "codex6",
+                    "task_id": task_id,
+                    "status": "running",
+                    "pid": 1234,
+                    "runner_status_path": "/tmp/fake_status.json",
+                    "queue_event_id": "evt-log-except-1",
+                }
+            },
+            "queue": {
+                "events": {
+                    "evt-log-except-1": {"id": "evt-log-except-1", "status": "claimed", "run_id": run_id}
+                }
+            },
+        }
+        original_worker = copy.deepcopy(state["workers"][run_id])
+        original_queue_event = copy.deepcopy(state["queue"]["events"]["evt-log-except-1"])
+        receipt = {"status": "completed", "exit_code": 0, "run_id": run_id, "pid": 1234}
+        with mock.patch.object(supervisor, "load_status", return_value=status), \
+             mock.patch.object(supervisor, "_load_runtime_marker", return_value=receipt), \
+             mock.patch.object(supervisor, "pid_is_alive", return_value=False), \
+             mock.patch.object(supervisor, "write_activity_log", side_effect=OSError("log lock failed")):
+            res = supervisor.release_completed_worker_for_claim(
+                self.config, state, agent_name="Codex6", task_id=task_id
+            )
+            self.assertFalse(res)
+            # Verify atomic rollback of both worker and queue event record
+            self.assertEqual(state["workers"][run_id], original_worker)
+            self.assertEqual(state["queue"]["events"]["evt-log-except-1"], original_queue_event)
 
     def test_release_completed_worker_pid_schema_validation_unmocked_real_pid_is_alive(self) -> None:
         """Verify release_completed_worker_for_claim executes safely with real unmocked pid_is_alive on invalid PIDs."""
