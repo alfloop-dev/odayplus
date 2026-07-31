@@ -52,6 +52,8 @@ class AVMActivationAuthorityReceipt:
             return False
         if not self.signature_digest or not SHA256_REGEX.match(self.signature_digest):
             return False
+        if not authority_key or authority_key != CANONICAL_HUMAN_OPS_ACTIVATION_KEY:
+            return False
         canonical = f"{self.authority_id}:{self.approval_status}:{self.dataset_snapshot_hash}:{self.model_artifact_hash}:{authority_key}"
         expected_sig = hashlib.sha256(canonical.encode("utf-8")).hexdigest()
         if self.signature_digest != expected_sig:
@@ -66,8 +68,8 @@ def create_avm_activation_receipt(
     approval_status: str = "APPROVED",
     authority_key: str = CANONICAL_HUMAN_OPS_ACTIVATION_KEY,
 ) -> AVMActivationAuthorityReceipt:
-    if authority_key != CANONICAL_HUMAN_OPS_ACTIVATION_KEY:
-        raise AVMOutcomeValidationError("Fail-closed: Invalid authority key for activation receipt creation")
+    if not authority_key or authority_key != CANONICAL_HUMAN_OPS_ACTIVATION_KEY:
+        raise AVMOutcomeValidationError("Fail-closed: Invalid or missing authority key for activation receipt creation")
     canonical = f"{authority_id}:{approval_status}:{dataset_snapshot_hash}:{model_artifact_hash}:{authority_key}"
     sig = hashlib.sha256(canonical.encode("utf-8")).hexdigest()
     return AVMActivationAuthorityReceipt(
@@ -87,6 +89,8 @@ class AVMQuerySourceReceipt:
     dataset_snapshot_hash: str
     observed_labeled_count: int
     eligible_mature_count: int
+    population_keys_sha256: str = ""
+    authority_id: str = "Human/Ops"
     receipt_sha256: str = ""
 
     def verify_query_receipt(
@@ -95,9 +99,14 @@ class AVMQuerySourceReceipt:
         expected_snapshot_id: str = "",
         expected_observed: int = 0,
         expected_eligible: int = 0,
+        expected_aligned: int = 0,
+        expected_population_sha256: str = "",
         max_age_seconds: int = 86400,
+        authority_key: str = CANONICAL_HUMAN_OPS_ACTIVATION_KEY,
     ) -> bool:
         if self.relation != "model_ready.valuation_view":
+            return False
+        if self.authority_id not in ("Human/Ops", "human-ops-label-authority"):
             return False
         if self.dataset_snapshot_hash != expected_snapshot_hash:
             return False
@@ -105,20 +114,29 @@ class AVMQuerySourceReceipt:
             return False
         if expected_snapshot_id and self.dataset_snapshot_id != expected_snapshot_id:
             return False
+        # Exact population reconciliation assertion
+        if self.observed_labeled_count != self.eligible_mature_count:
+            return False
         if expected_observed > 0 and self.observed_labeled_count != expected_observed:
             return False
         if expected_eligible > 0 and self.eligible_mature_count != expected_eligible:
             return False
+        if expected_aligned > 0 and self.observed_labeled_count != expected_aligned:
+            return False
+        if expected_population_sha256 and self.population_keys_sha256 != expected_population_sha256:
+            return False
         if self.observed_labeled_count < ACTIVATION_THRESHOLD or self.eligible_mature_count < ACTIVATION_THRESHOLD:
             return False
         if not self.receipt_sha256 or not SHA256_REGEX.match(self.receipt_sha256):
+            return False
+        if not authority_key or authority_key != CANONICAL_HUMAN_OPS_ACTIVATION_KEY:
             return False
         ts_utc = self.query_timestamp.astimezone(UTC) if self.query_timestamp.tzinfo else self.query_timestamp.replace(tzinfo=UTC)
         now_utc = datetime.now(UTC)
         age = (now_utc - ts_utc).total_seconds()
         if age < -60 or age > max_age_seconds:
             return False
-        canonical = f"model_ready.valuation_view:{self.dataset_snapshot_id}:{self.dataset_snapshot_hash}:{self.observed_labeled_count}:{self.eligible_mature_count}:{self.query_timestamp.isoformat()}"
+        canonical = f"{self.authority_id}:model_ready.valuation_view:{self.dataset_snapshot_id}:{self.dataset_snapshot_hash}:{self.observed_labeled_count}:{self.eligible_mature_count}:{self.population_keys_sha256}:{self.query_timestamp.isoformat()}:{authority_key}"
         expected_sig = hashlib.sha256(canonical.encode("utf-8")).hexdigest()
         if self.receipt_sha256 != expected_sig:
             return False
@@ -130,10 +148,16 @@ def create_avm_query_source_receipt(
     dataset_snapshot_hash: str,
     observed_labeled_count: int = 0,
     eligible_mature_count: int = 0,
+    population_keys: list[str] | tuple[str, ...] | None = None,
     query_timestamp: datetime | None = None,
+    authority_id: str = "Human/Ops",
+    authority_key: str = CANONICAL_HUMAN_OPS_ACTIVATION_KEY,
 ) -> AVMQuerySourceReceipt:
+    if not authority_key or authority_key != CANONICAL_HUMAN_OPS_ACTIVATION_KEY:
+        raise AVMOutcomeValidationError("Fail-closed: Invalid authority key for query source receipt creation")
     ts = query_timestamp or datetime.now(UTC)
-    canonical = f"model_ready.valuation_view:{dataset_snapshot_id}:{dataset_snapshot_hash}:{observed_labeled_count}:{eligible_mature_count}:{ts.isoformat()}"
+    pop_sha = hashlib.sha256(",".join(sorted(population_keys)).encode("utf-8")).hexdigest() if population_keys else ""
+    canonical = f"{authority_id}:model_ready.valuation_view:{dataset_snapshot_id}:{dataset_snapshot_hash}:{observed_labeled_count}:{eligible_mature_count}:{pop_sha}:{ts.isoformat()}:{authority_key}"
     sig = hashlib.sha256(canonical.encode("utf-8")).hexdigest()
     return AVMQuerySourceReceipt(
         relation="model_ready.valuation_view",
@@ -142,6 +166,8 @@ def create_avm_query_source_receipt(
         dataset_snapshot_hash=dataset_snapshot_hash,
         observed_labeled_count=observed_labeled_count,
         eligible_mature_count=eligible_mature_count,
+        population_keys_sha256=pop_sha,
+        authority_id=authority_id,
         receipt_sha256=sig,
     )
 
@@ -528,7 +554,9 @@ def compute_avm_outcome_calibration(
         expected_snapshot_hash=dataset_snapshot_hash,
     )
 
-    # B19: Query source receipt verification
+    aligned_count = len(aligned_pairs)
+
+    # B19 & B25: Query source receipt verification bound to exact snapshot population
     query_receipt_verified = False
     if query_source_receipt is not None:
         query_receipt_verified = query_source_receipt.verify_query_receipt(
@@ -536,12 +564,11 @@ def compute_avm_outcome_calibration(
             expected_snapshot_id=dataset_snapshot_id,
             expected_observed=observed_count,
             expected_eligible=eligible_count,
+            expected_aligned=aligned_count,
         )
 
-    aligned_count = len(aligned_pairs)
-
-    # B1: Derive/reconcile counts fail-closed
-    if observed_count < aligned_count or eligible_count < aligned_count or eligible_count > (observed_count if observed_count > 0 else eligible_count):
+    # B1 & B25: Reconcile exact counts fail-closed
+    if observed_count < aligned_count or eligible_count < aligned_count or (aligned_count > 0 and (observed_count != aligned_count or eligible_count != aligned_count)):
         raise AVMOutcomeValidationError(
             f"Fail-closed: Reconciled count mismatch (observed={observed_count}, eligible={eligible_count}, aligned={aligned_count})"
         )

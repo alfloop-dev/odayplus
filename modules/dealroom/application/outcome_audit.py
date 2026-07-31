@@ -126,6 +126,16 @@ def verify_audit_receipt(
     if permitted_count < 0 or denied_count < 0 or (permitted_count + denied_count != total_attempts):
         return False
 
+    # B24: Recompute event decisions/counts from audit_events
+    recomputed_permitted = sum(1 for e in events if isinstance(e, dict) and e.get("decision") == "PERMIT")
+    recomputed_denied = sum(1 for e in events if isinstance(e, dict) and e.get("decision") == "DENY")
+    if permitted_count != recomputed_permitted or denied_count != recomputed_denied:
+        return False
+
+    # B24: Require authorized access evidence (must have >= 1 permitted access by an authorized role)
+    if permitted_count < 1:
+        return False
+
     zero_leak = audit_receipt.get("confidentiality_enforcement", {}).get("zero_leak_verified", False)
     if zero_leak is not True:
         return False
