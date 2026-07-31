@@ -1,0 +1,33 @@
+Controlled Restart Transcript for Task ODP-ORCH-REVIEW-HEAD-FREEZE-LIVE-ROLLOUT-001
+Timestamp: 2026-07-31T14:27:07Z
+
+Preflight Supervisor Unit State (BEFORE restart):
+  Id                     : pantheon-supervisor.service
+  LoadState              : loaded
+  ActiveState            : active
+  SubState               : running
+  MainPID                : 199392
+  ExecMainStartTimestamp : Fri 2026-07-31 13:38:29 UTC
+  NRestarts              : 0
+
+Controlled Restart Command:
+  systemctl --user restart pantheon-supervisor.service
+
+Post-Restart Supervisor Unit State (AFTER restart):
+  Id                     : pantheon-supervisor.service
+  LoadState              : loaded
+  ActiveState            : active
+  SubState               : running
+  MainPID                : 262802  (NEW live MainPID)
+  ExecMainStartTimestamp : Fri 2026-07-31 14:27:07 UTC  (FRESH start timestamp)
+  NRestarts              : 0  (Unchanged manual restart count)
+
+Live Process Verification:
+  cmdline : python3 /home/lupin/oday-plus-supervisor-live/.orchestrator/supervisor.py --verbose
+  cwd     : /home/lupin/oday-plus-supervisor-live
+
+Live Heartbeat Verification:
+  ai-status.json updated_at : 2026-07-31T14:27:13Z (FRESH heartbeat)
+
+Configuration Verification:
+  ready_dispatcher.disabled_agents : ["Claude", "Claude2", "Claude3"] (Verified active in live config.json)

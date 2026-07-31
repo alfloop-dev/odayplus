@@ -414,13 +414,14 @@ class DeliveryMetadataValidationTests(unittest.TestCase):
                 return "origin/task/REG-002"
             if args == ["rev-list", "--left-right", "--count", "origin/task/REG-002...HEAD"]:
                 return "0 0"
-            if args == ["fetch", "origin", "dev"]:
+            if args[:2] == ["fetch", "origin"]:
                 return ""
-            if args == ["rev-parse", "--verify", "origin/dev"]:
+            if args[:2] == ["rev-parse", "--verify"]:
                 return "devsha"
             raise AssertionError(f"unexpected git command: {args}")
 
         with (
+            mock.patch.object(ai_status, "delivery_merge_target_branch", return_value="dev"),
             mock.patch.object(ai_status, "run_git_command", side_effect=fake_run_git_command),
             mock.patch.object(ai_status, "git_command_succeeds", return_value=False),
             mock.patch.object(
@@ -474,13 +475,14 @@ class DeliveryMetadataValidationTests(unittest.TestCase):
                 return "origin/task/REG-002"
             if args == ["rev-list", "--left-right", "--count", "origin/task/REG-002...HEAD"]:
                 return "0 0"
-            if args == ["fetch", "origin", "dev"]:
+            if args[:2] == ["fetch", "origin"]:
                 return ""
-            if args == ["rev-parse", "--verify", "origin/dev"]:
+            if args[:2] == ["rev-parse", "--verify"]:
                 return "devsha"
             raise AssertionError(f"unexpected git command: {args}")
 
         with (
+            mock.patch.object(ai_status, "delivery_merge_target_branch", return_value="dev"),
             mock.patch.object(ai_status, "run_git_command", side_effect=fake_run_git_command),
             mock.patch.object(ai_status, "git_command_succeeds", return_value=True),
         ):
