@@ -13,18 +13,89 @@ from unittest import mock
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-_ORIGINAL_STATUS_ROOT = os.environ.get("PANTHEON_STATUS_ROOT")
 _TEST_STATUS_ROOT_HANDLE = tempfile.TemporaryDirectory(prefix="pantheon-ai-status-tests-")
-os.environ["PANTHEON_STATUS_ROOT"] = _TEST_STATUS_ROOT_HANDLE.name
+_TEST_STATUS_ROOT = Path(_TEST_STATUS_ROOT_HANDLE.name).resolve()
 
-import ai_status
+# Pytest imports every test module before it runs any module-level teardown.
+# test_supervisor may therefore have imported ai_status against its own
+# temporary status root already.  Only set the environment for a first import;
+# setUpModule below rebinds the shared module for this module's actual lifetime.
+_IMPORT_STATUS_ROOT = os.environ.get("PANTHEON_STATUS_ROOT")
+if "ai_status" not in sys.modules:
+    os.environ["PANTHEON_STATUS_ROOT"] = str(_TEST_STATUS_ROOT)
+try:
+    import ai_status
+    import task_archive
+finally:
+    if _IMPORT_STATUS_ROOT is None:
+        os.environ.pop("PANTHEON_STATUS_ROOT", None)
+    else:
+        os.environ["PANTHEON_STATUS_ROOT"] = _IMPORT_STATUS_ROOT
+
+
+_AI_STATUS_ROOT_ATTRIBUTES = (
+    "STATUS_ROOT",
+    "STATUS_FILE",
+    "LOG_FILE",
+    "CURRENT_WORK_FILE",
+    "DOCS_SITE_DIR",
+    "STATUS_ROOT_CONFIG_LOCAL_FILE",
+    "PLANNING_STATE_FILE",
+    "ORCHESTRATOR_STATE_FILE",
+    "APPROVAL_QUEUE_FILE",
+    "DASHBOARD_BUNDLE_FILE",
+    "ARCHIVE_TASKS_DIR",
+)
+_TASK_ARCHIVE_ROOT_ATTRIBUTES = (
+    "STATUS_ROOT",
+    "ARCHIVE_DIR",
+    "ARCHIVE_TASKS_DIR",
+    "ARCHIVE_INDEX_FILE",
+)
+_RUNTIME_STATUS_ROOT: str | None = None
+_ORIGINAL_AI_STATUS_PATHS: dict[str, Path] = {}
+_ORIGINAL_TASK_ARCHIVE_PATHS: dict[str, Path] = {}
+
+
+def setUpModule() -> None:
+    global _RUNTIME_STATUS_ROOT, _ORIGINAL_AI_STATUS_PATHS, _ORIGINAL_TASK_ARCHIVE_PATHS
+
+    _RUNTIME_STATUS_ROOT = os.environ.get("PANTHEON_STATUS_ROOT")
+    _ORIGINAL_AI_STATUS_PATHS = {
+        name: getattr(ai_status, name) for name in _AI_STATUS_ROOT_ATTRIBUTES
+    }
+    _ORIGINAL_TASK_ARCHIVE_PATHS = {
+        name: getattr(task_archive, name) for name in _TASK_ARCHIVE_ROOT_ATTRIBUTES
+    }
+
+    os.environ["PANTHEON_STATUS_ROOT"] = str(_TEST_STATUS_ROOT)
+    ai_status.STATUS_ROOT = _TEST_STATUS_ROOT
+    ai_status.STATUS_FILE = _TEST_STATUS_ROOT / "ai-status.json"
+    ai_status.LOG_FILE = _TEST_STATUS_ROOT / "ai-activity-log.jsonl"
+    ai_status.CURRENT_WORK_FILE = _TEST_STATUS_ROOT / "current-work.md"
+    ai_status.DOCS_SITE_DIR = _TEST_STATUS_ROOT / "docs-site"
+    ai_status.STATUS_ROOT_CONFIG_LOCAL_FILE = _TEST_STATUS_ROOT / ".orchestrator" / "config.local.json"
+    ai_status.PLANNING_STATE_FILE = _TEST_STATUS_ROOT / ".orchestrator" / "planning-state.json"
+    ai_status.ORCHESTRATOR_STATE_FILE = _TEST_STATUS_ROOT / ".orchestrator" / "state.json"
+    ai_status.APPROVAL_QUEUE_FILE = _TEST_STATUS_ROOT / ".orchestrator" / "approval-queue.json"
+    ai_status.DASHBOARD_BUNDLE_FILE = _TEST_STATUS_ROOT / "dashboard-bundle.json"
+
+    task_archive.STATUS_ROOT = _TEST_STATUS_ROOT
+    task_archive.ARCHIVE_DIR = _TEST_STATUS_ROOT / "ai-task-archive"
+    task_archive.ARCHIVE_TASKS_DIR = task_archive.ARCHIVE_DIR / "tasks"
+    task_archive.ARCHIVE_INDEX_FILE = task_archive.ARCHIVE_DIR / "index.json"
+    ai_status.ARCHIVE_TASKS_DIR = task_archive.ARCHIVE_TASKS_DIR
 
 
 def tearDownModule() -> None:
-    if _ORIGINAL_STATUS_ROOT is None:
+    for name, value in _ORIGINAL_AI_STATUS_PATHS.items():
+        setattr(ai_status, name, value)
+    for name, value in _ORIGINAL_TASK_ARCHIVE_PATHS.items():
+        setattr(task_archive, name, value)
+    if _RUNTIME_STATUS_ROOT is None:
         os.environ.pop("PANTHEON_STATUS_ROOT", None)
     else:
-        os.environ["PANTHEON_STATUS_ROOT"] = _ORIGINAL_STATUS_ROOT
+        os.environ["PANTHEON_STATUS_ROOT"] = _RUNTIME_STATUS_ROOT
     _TEST_STATUS_ROOT_HANDLE.cleanup()
 
 
