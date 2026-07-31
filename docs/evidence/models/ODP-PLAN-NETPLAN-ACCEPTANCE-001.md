@@ -145,7 +145,8 @@ The integration suite rejects:
 - blank approval reference or issue time;
 - non-UTC, future-issued, expired, or invalid receipt time windows;
 - caller-backdated decision timestamps attempting to revive an expired receipt;
-- raw budget/risk excess hidden by four-decimal rounding;
+- raw budget/GM/risk excess hidden by four-decimal extrema rounding in
+  primary and robust infeasibility diagnosis;
 - duplicate full options sharing one `(entity, action)` identity;
 - entity-ID-only solve substitutions;
 - forged selected option values, exact and sub-tolerance scalar values,
@@ -158,24 +159,24 @@ The integration suite rejects:
 
 ## 7. Verification
 
-Executed on task branch after verifier-boundary anchor `ee1cbc73`:
+Executed on task branch after raw-extrema anchor `b980f0e7`:
 
 ```bash
 uv run pytest -q tests/integration/test_netplan_solver.py --tb=short
-# 64 parameterized cases passed
+# 67 parameterized cases passed
 
 uv run pytest -q tests -k "netplan or ortools or robust" --tb=short
-# 66 tests passed; exit 0
+# 72 tests passed; exit 0
 
 uv run pytest -q tests -k "netplan or management_baseline or solver" --tb=short
-# 78 tests passed; exit 0
+# 84 tests passed; exit 0
 
 uv run pytest -q \
   tests/integration/test_netplan_solver.py \
   solver/netplan/tests/test_robust.py \
   modules/netplan/tests/test_netplan_production_execution.py \
   tests/solver/test_runtime_compat.py --tb=short
-# 83 tests passed; exit 0
+# 89 tests passed; exit 0
 
 uv run pytest -q tests/contract/test_openapi_artifact_and_client.py --tb=short
 # 17 tests passed; exit 0

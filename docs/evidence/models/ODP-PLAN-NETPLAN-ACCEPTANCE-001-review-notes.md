@@ -258,3 +258,31 @@ This addendum requests exact-head technical re-review only. Human/Ops approval
 remains pending under `ODP-PLAN-NETPLAN-BASELINE-APPROVAL-001`; neither the
 fixtures nor this technical attestation authorize activation, so the release
 gate remains `BUSINESS_UAT_UNVERIFIED / GOVERNED_DISABLED`.
+
+## 10. 2026-07-31 raw-extrema diagnosis addendum
+
+Reviewer `Codex` reopened pushed head `ceb96fac` with B8 after reproducing
+sub-four-decimal hard-limit violations whose solver status was correctly
+infeasible but whose diagnosis had rounded authoritative extrema before
+comparison. Budget `10.00004 > 10`, gross margin `9.99996 < 10`, and average
+risk `0.10004 > 0.1` could therefore fall through to a generic combined-
+constraints explanation.
+
+Owner `Codex2` remediated B8 at raw-extrema anchor `b980f0e7`. Primary budget,
+gross-margin, risk, and required-action budget-floor diagnosis now compare raw
+aggregates. Robust budget and scenario-value diagnosis retain raw comparisons,
+and robust average-risk diagnosis now does the same; rounding is limited to
+rendered diagnostic values. Parameterized mutations cover budget, GM/scenario
+value, and risk on both the primary and robust paths and require the dedicated
+constraint diagnosis rather than the combined fallback.
+
+The complete reopened batch passed 67 NetPlan integration cases, 72
+`netplan or ortools or robust` selected tests, 84
+`netplan or management_baseline or solver` selected tests, 89 explicit
+NetPlan/robust/production/runtime cases, and all 17 OpenAPI artifact/client
+contract cases. Focused Ruff, both OpenAPI/client drift checks, and both diff
+checks (`git diff --check` and `git diff origin/dev...HEAD --check`) were clean.
+
+This is an exact-head technical re-review request, not reviewer approval or a
+Human/Ops receipt. Activation remains `BUSINESS_UAT_UNVERIFIED /
+GOVERNED_DISABLED` pending `ODP-PLAN-NETPLAN-BASELINE-APPROVAL-001`.
