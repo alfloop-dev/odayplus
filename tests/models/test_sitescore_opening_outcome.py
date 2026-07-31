@@ -250,12 +250,85 @@ def test_sitescore_model_card_generation():
     assert isinstance(model_card, ModelCard)
     assert model_card.model_name == "sitescore_propensity"
     assert model_card.release_status == "GOVERNED_DISABLED"
-    assert model_card.is_complete
+    assert not model_card.is_complete
     assert not model_card.is_approved
+    assert model_card.privacy_review == "UNVERIFIED"
+    assert model_card.security_review == "UNVERIFIED"
+    assert len(model_card.approvals) == 0
 
     dict_card = model_card.to_dict()
     assert dict_card["metrics_summary"]["mature_label_count"] == 220.0
     assert dict_card["metrics_summary"]["m6_coverage_ratio"] == 1.0
+
+
+def test_sitescore_opening_outcome_null_vs_zero_outcomes():
+    # B1 regression test: PostgreSQL NULL realized_90d_net_revenue remains None and is excluded, while numeric 0.0 remains a mature label
+    null_record = {
+        "entity_id": "tenant-001:store-null",
+        "store_id": "store-null",
+        "target_format_code": "CONVENIENCE_STANDARD",
+        "opened_on": "2025-01-01",
+        "is_training_eligible": True,
+        "realized_90d_net_revenue": None,
+    }
+    zero_record = {
+        "entity_id": "tenant-001:store-zero",
+        "store_id": "store-zero",
+        "target_format_code": "CONVENIENCE_STANDARD",
+        "opened_on": "2025-01-01",
+        "is_training_eligible": True,
+        "realized_90d_net_revenue": 0.0,
+    }
+    result_null = evaluate_sitescore_opening_outcome_benchmark([null_record], provenance="pg16_query")
+    assert result_null.mature_label_count == 0
+
+    result_zero = evaluate_sitescore_opening_outcome_benchmark([zero_record], provenance="pg16_query")
+    assert result_zero.mature_label_count == 1
+
+
+def test_sitescore_model_card_governed_disabled_unverified_semantics():
+    # B2 regression test: Governed-disabled model card emits UNAVAILABLE/UNVERIFIED governance facts and omits invented approval records
+    result = run_benchmark_from_inventory(db_url=None, records=None)
+    model_card = build_sitescore_opening_outcome_model_card(result)
+
+    assert model_card.release_status == "GOVERNED_DISABLED"
+    assert model_card.dataset_snapshot_id == "UNAVAILABLE"
+    assert model_card.model_version == "UNVERIFIED"
+    assert model_card.validation_run_id == "UNVERIFIED"
+    assert model_card.feature_set_id == "UNVERIFIED"
+    assert model_card.label_set_id == "UNVERIFIED"
+    assert model_card.training_period == "UNAVAILABLE"
+    assert model_card.validation_period == "UNAVAILABLE"
+    assert model_card.algorithm == "UNAVAILABLE"
+    assert model_card.baseline == "UNAVAILABLE"
+    assert model_card.explainability_method == "UNAVAILABLE"
+    assert model_card.privacy_review == "UNVERIFIED"
+    assert model_card.security_review == "UNVERIFIED"
+    assert len(model_card.approvals) == 0
+    assert not model_card.is_complete
+    assert not model_card.is_approved
+
+
+def test_sitescore_opening_outcome_age_alone_never_satisfies_coverage():
+    # B3 regression test: Store age alone (even store_age_days = 500) NEVER satisfies M6 or M12 outcome coverage when explicit outcome fields are missing
+    records = _generate_candidate_records(
+        220,
+        m6_days=500,
+        m12_days=500,
+        include_m6_m12_realized=False,
+        include_bounds=True,
+    )
+    for r in records:
+        r["store_age_days"] = 500
+
+    result = evaluate_sitescore_opening_outcome_benchmark(records, provenance="authenticated_governed_records")
+
+    assert result.mature_label_count == 220
+    assert result.m6_coverage_ratio == 0.0
+    assert result.m12_coverage_ratio == 0.0
+    assert not result.is_coverage_passed
+    assert not result.is_gate2_passed
+    assert result.reason_code == "MISSING_GOVERNED_LINEAGE"
 
 
 def test_cli_inventory_runner_and_evidence_doc(tmp_path):

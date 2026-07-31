@@ -179,8 +179,8 @@ class SiteScoreOpeningOutcomeBenchmarkResult:
 
         executable_query = (
             "SELECT entity_id, store_id, target_format_code, opened_on, is_training_eligible, "
-            "realized_90d_net_revenue, (CURRENT_DATE - opened_on)::integer AS m6_days, "
-            "(CURRENT_DATE - opened_on)::integer AS m12_days FROM model_ready.candidate_site_view;"
+            "realized_90d_net_revenue, (CURRENT_DATE - opened_on)::integer AS store_age_days "
+            "FROM model_ready.candidate_site_view;"
         )
         return {
             "handback_required": True,
@@ -205,7 +205,8 @@ class SiteScoreOpeningOutcomeBenchmarkResult:
                 "task_id": "ODP-PLAN-SITESCORE-OUTCOME-BACKFILL-001",
                 "scope": "Provide authoritative M6 (180d) and M12 (365d) post-opening net revenue labels for historical opened candidate sites.",
                 "required_fields": ["realized_180d_net_revenue", "realized_365d_net_revenue"],
-                "executable_baseline_query": executable_query,
+                "baseline_inventory_query": executable_query,
+                "note": "Store age (store_age_days) is a maturity precondition; it is not M6/M12 outcome evidence. ODP-PLAN-SITESCORE-OUTCOME-BACKFILL-001 must supply realized_180d_net_revenue and realized_365d_net_revenue.",
                 "receipt_required": True,
             },
             "prediction_source_contract": {
@@ -337,6 +338,9 @@ def evaluate_sitescore_opening_outcome_benchmark(
 
     def get_days_elapsed(r: dict[str, Any], key: str) -> int | None:
         val = r.get(key)
+        if val is not None and isinstance(val, (int, float)):
+            return int(val)
+        val = r.get("store_age_days")
         if val is not None and isinstance(val, (int, float)):
             return int(val)
         opened_on = r.get("opened_on")
@@ -501,21 +505,53 @@ def build_sitescore_opening_outcome_model_card(
     version: str = "candidate-site-view-v2",
 ) -> ModelCard:
     """Build a canonical ModelCard carrying SiteScore opening outcome benchmark calibration results."""
+    is_passed = benchmark.is_gate2_passed
+
+    dataset_snapshot_id = benchmark.dataset_snapshot_id if is_passed else (benchmark.dataset_snapshot_id or "UNAVAILABLE")
+    model_version = (benchmark.model_version or version) if is_passed else (benchmark.model_version or "UNVERIFIED")
+    validation_run_id = (
+        f"val_sitescore_{int(datetime.now(UTC).timestamp())}"
+        if is_passed
+        else (benchmark.artifact_lineage_id or "UNVERIFIED")
+    )
+
+    feature_set_id = "fs_sitescore_opened_store_pit_v2" if is_passed else "UNVERIFIED"
+    label_set_id = "ls_sitescore_realized_90d_revenue_v1" if is_passed else "UNVERIFIED"
+    training_period = "2025-01-01 to 2026-07-01" if is_passed else "UNAVAILABLE"
+    validation_period = "2026-07-01 to 2026-07-30" if is_passed else "UNAVAILABLE"
+    algorithm = "catboost_regressor" if is_passed else "UNAVAILABLE"
+    baseline = "cell_prior_90d_mean" if is_passed else "UNAVAILABLE"
+    explainability_method = "shap_values" if is_passed else "UNAVAILABLE"
+    privacy_review = "PASSED" if is_passed else "UNVERIFIED"
+    security_review = "PASSED" if is_passed else "UNVERIFIED"
+
+    approvals = (
+        [
+            ModelCardApproval(
+                approver="sitescore-platform-team",
+                role="platform_lead",
+                decision="approved",
+            )
+        ]
+        if is_passed
+        else []
+    )
+
     return ModelCard(
         model_name="sitescore_propensity",
-        model_version=benchmark.model_version or version,
+        model_version=model_version,
         owner="sitescore-platform-team",
         risk_level=ModelRiskLevel.R4,
         intended_use="Human-reviewed candidate site opening revenue & propensity prioritization",
         not_intended_use="Automatic site lease execution, store opening without human approval",
-        dataset_snapshot_id=benchmark.dataset_snapshot_id or "snapshot_sitescore_opening_outcome_v2",
-        validation_run_id=f"val_sitescore_{int(datetime.now(UTC).timestamp())}",
-        feature_set_id="fs_sitescore_opened_store_pit_v2",
-        label_set_id="ls_sitescore_realized_90d_revenue_v1",
-        training_period="2025-01-01 to 2026-07-01",
-        validation_period="2026-07-01 to 2026-07-30",
-        algorithm="catboost_regressor",
-        baseline="cell_prior_90d_mean",
+        dataset_snapshot_id=dataset_snapshot_id,
+        validation_run_id=validation_run_id,
+        feature_set_id=feature_set_id,
+        label_set_id=label_set_id,
+        training_period=training_period,
+        validation_period=validation_period,
+        algorithm=algorithm,
+        baseline=baseline,
         metrics_summary={
             "mature_label_count": float(benchmark.mature_label_count),
             "m6_coverage_ratio": float(benchmark.m6_coverage_ratio),
@@ -527,7 +563,7 @@ def build_sitescore_opening_outcome_model_card(
         },
         segment_metrics=benchmark.segment_metrics,
         calibration_summary=benchmark.calibration_summary,
-        explainability_method="shap_values",
+        explainability_method=explainability_method,
         limitations=[
             "Requires at least 200 mature opening outcome labels with complete M6/M12 post-opening transactions.",
             "Governed-disabled when label count, M6/M12 window coverage, or interval bound coverage thresholds fail.",
@@ -535,20 +571,14 @@ def build_sitescore_opening_outcome_model_card(
         known_biases=[
             "Historical opening outcomes reflect store format expansion patterns.",
         ],
-        privacy_review="PASSED",
-        security_review="PASSED",
-        release_status="DEV" if benchmark.is_gate2_passed else "GOVERNED_DISABLED",
+        privacy_review=privacy_review,
+        security_review=security_review,
+        release_status="DEV" if is_passed else "GOVERNED_DISABLED",
         rollback_conditions=[
             "Normalized MAE > 0.25 on 30-day rolling window",
             "M6 or M12 window coverage ratio drops below 70%",
         ],
-        approvals=[
-            ModelCardApproval(
-                approver="sitescore-platform-team",
-                role="platform_lead",
-                decision="approved" if benchmark.is_gate2_passed else "rejected",
-            )
-        ],
+        approvals=approvals,
     )
 
 

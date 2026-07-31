@@ -1,14 +1,7 @@
 {
-  "algorithm": "catboost_regressor",
-  "approvals": [
-    {
-      "approved_at": "2026-07-30T22:54:53.293690+00:00",
-      "approver": "sitescore-platform-team",
-      "decision": "rejected",
-      "role": "platform_lead"
-    }
-  ],
-  "baseline": "cell_prior_90d_mean",
+  "algorithm": "UNAVAILABLE",
+  "approvals": [],
+  "baseline": "UNAVAILABLE",
   "calibration_summary": {
     "interval_bounds_coverage_ratio": 0.0,
     "mean_realized_revenue": 1.0,
@@ -16,15 +9,15 @@
     "p80_coverage_ratio": 0.0,
     "prediction_coverage_ratio": 0.0
   },
-  "created_at": "2026-07-30T22:54:53.293712+00:00",
-  "dataset_snapshot_id": "snapshot_sitescore_opening_outcome_v2",
-  "explainability_method": "shap_values",
-  "feature_set_id": "fs_sitescore_opened_store_pit_v2",
+  "created_at": "2026-07-31T00:13:17.646368+00:00",
+  "dataset_snapshot_id": "UNAVAILABLE",
+  "explainability_method": "UNAVAILABLE",
+  "feature_set_id": "UNVERIFIED",
   "intended_use": "Human-reviewed candidate site opening revenue & propensity prioritization",
   "known_biases": [
     "Historical opening outcomes reflect store format expansion patterns."
   ],
-  "label_set_id": "ls_sitescore_realized_90d_revenue_v1",
+  "label_set_id": "UNVERIFIED",
   "limitations": [
     "Requires at least 200 mature opening outcome labels with complete M6/M12 post-opening transactions.",
     "Governed-disabled when label count, M6/M12 window coverage, or interval bound coverage thresholds fail."
@@ -39,19 +32,19 @@
     "prediction_coverage_ratio": 0.0
   },
   "model_name": "sitescore_propensity",
-  "model_version": "candidate-site-view-v2",
+  "model_version": "UNVERIFIED",
   "not_intended_use": "Automatic site lease execution, store opening without human approval",
   "owner": "sitescore-platform-team",
-  "privacy_review": "PASSED",
+  "privacy_review": "UNVERIFIED",
   "release_status": "GOVERNED_DISABLED",
   "risk_level": "R4",
   "rollback_conditions": [
     "Normalized MAE > 0.25 on 30-day rolling window",
     "M6 or M12 window coverage ratio drops below 70%"
   ],
-  "security_review": "PASSED",
+  "security_review": "UNVERIFIED",
   "segment_metrics": [],
-  "training_period": "2025-01-01 to 2026-07-01",
-  "validation_period": "2026-07-01 to 2026-07-30",
-  "validation_run_id": "val_sitescore_1785452093"
+  "training_period": "UNAVAILABLE",
+  "validation_period": "UNAVAILABLE",
+  "validation_run_id": "UNVERIFIED"
 }

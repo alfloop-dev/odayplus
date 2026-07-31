@@ -46,8 +46,7 @@ def run_benchmark_from_inventory(
                         opened_on,
                         is_training_eligible,
                         realized_90d_net_revenue,
-                        (CURRENT_DATE - opened_on)::integer AS m6_days,
-                        (CURRENT_DATE - opened_on)::integer AS m12_days
+                        (CURRENT_DATE - opened_on)::integer AS store_age_days
                     FROM model_ready.candidate_site_view
                     """
                 )
@@ -60,9 +59,8 @@ def run_benchmark_from_inventory(
                         "target_format_code": row[2],
                         "opened_on": str(row[3]) if row[3] else None,
                         "is_training_eligible": bool(row[4]),
-                        "realized_90d_net_revenue": float(row[5]) if row[5] is not None else 0.0,
-                        "m6_days": int(row[6]) if row[6] is not None else 0,
-                        "m12_days": int(row[7]) if row[7] is not None else 0,
+                        "realized_90d_net_revenue": float(row[5]) if row[5] is not None else None,
+                        "store_age_days": int(row[6]) if row[6] is not None else 0,
                     })
                 return evaluate_sitescore_opening_outcome_benchmark(fetched, provenance="pg16_query")
         except Exception as exc:

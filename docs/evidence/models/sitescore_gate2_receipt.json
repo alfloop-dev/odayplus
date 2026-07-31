@@ -14,7 +14,7 @@
     "handback_payload": {
       "activation_threshold": 200,
       "backfill_owner": "Human/Ops",
-      "backfill_query": "SELECT entity_id, store_id, target_format_code, opened_on, is_training_eligible, realized_90d_net_revenue, (CURRENT_DATE - opened_on)::integer AS m6_days, (CURRENT_DATE - opened_on)::integer AS m12_days FROM model_ready.candidate_site_view;",
+      "backfill_query": "SELECT entity_id, store_id, target_format_code, opened_on, is_training_eligible, realized_90d_net_revenue, (CURRENT_DATE - opened_on)::integer AS store_age_days FROM model_ready.candidate_site_view;",
       "backfill_receipt_required": true,
       "backfill_task_id": "ODP-PLAN-SITESCORE-OUTCOME-BACKFILL-001",
       "eligible_count": 0,
@@ -29,7 +29,8 @@
       "normalized_mae": 0.0,
       "observed_count": 0,
       "outcome_backfill_contract": {
-        "executable_baseline_query": "SELECT entity_id, store_id, target_format_code, opened_on, is_training_eligible, realized_90d_net_revenue, (CURRENT_DATE - opened_on)::integer AS m6_days, (CURRENT_DATE - opened_on)::integer AS m12_days FROM model_ready.candidate_site_view;",
+        "baseline_inventory_query": "SELECT entity_id, store_id, target_format_code, opened_on, is_training_eligible, realized_90d_net_revenue, (CURRENT_DATE - opened_on)::integer AS store_age_days FROM model_ready.candidate_site_view;",
+        "note": "Store age (store_age_days) is a maturity precondition; it is not M6/M12 outcome evidence. ODP-PLAN-SITESCORE-OUTCOME-BACKFILL-001 must supply realized_180d_net_revenue and realized_365d_net_revenue.",
         "owner": "Human/Ops",
         "receipt_required": true,
         "required_fields": [
@@ -84,7 +85,7 @@
   "handback": {
     "activation_threshold": 200,
     "backfill_owner": "Human/Ops",
-    "backfill_query": "SELECT entity_id, store_id, target_format_code, opened_on, is_training_eligible, realized_90d_net_revenue, (CURRENT_DATE - opened_on)::integer AS m6_days, (CURRENT_DATE - opened_on)::integer AS m12_days FROM model_ready.candidate_site_view;",
+    "backfill_query": "SELECT entity_id, store_id, target_format_code, opened_on, is_training_eligible, realized_90d_net_revenue, (CURRENT_DATE - opened_on)::integer AS store_age_days FROM model_ready.candidate_site_view;",
     "backfill_receipt_required": true,
     "backfill_task_id": "ODP-PLAN-SITESCORE-OUTCOME-BACKFILL-001",
     "eligible_count": 0,
@@ -99,7 +100,8 @@
     "normalized_mae": 0.0,
     "observed_count": 0,
     "outcome_backfill_contract": {
-      "executable_baseline_query": "SELECT entity_id, store_id, target_format_code, opened_on, is_training_eligible, realized_90d_net_revenue, (CURRENT_DATE - opened_on)::integer AS m6_days, (CURRENT_DATE - opened_on)::integer AS m12_days FROM model_ready.candidate_site_view;",
+      "baseline_inventory_query": "SELECT entity_id, store_id, target_format_code, opened_on, is_training_eligible, realized_90d_net_revenue, (CURRENT_DATE - opened_on)::integer AS store_age_days FROM model_ready.candidate_site_view;",
+      "note": "Store age (store_age_days) is a maturity precondition; it is not M6/M12 outcome evidence. ODP-PLAN-SITESCORE-OUTCOME-BACKFILL-001 must supply realized_180d_net_revenue and realized_365d_net_revenue.",
       "owner": "Human/Ops",
       "receipt_required": true,
       "required_fields": [
@@ -133,13 +135,13 @@
     ]
   },
   "integrity": {
-    "content_sha256": "c15ad8da15ea4f6438c60eb624a1fceb0c6b99f2a77a7ab2536d853dc7970a48"
+    "content_sha256": "2d08cf501ea44e1cae6098c92a91c8f6989a59a6c3f173b0afa1db42c7333111"
   },
   "inventory_version": "candidate-site-view-v2",
   "is_governed_disabled": true,
   "kind": "sitescore-opening-outcome-gate2-receipt",
   "model_name": "sitescore_propensity",
-  "observed_at": "2026-07-30T22:54:53.293368Z",
+  "observed_at": "2026-07-31T00:13:17.646142Z",
   "provenance": "no_source",
   "schema_version": 1,
   "service": "sitescore",

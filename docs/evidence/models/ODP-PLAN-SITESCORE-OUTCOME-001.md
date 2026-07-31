@@ -1,11 +1,11 @@
 # Gate 2 Receipt: SiteScore Opening Outcome Calibration Benchmark (ODP-PLAN-SITESCORE-OUTCOME-001)
 
 - **Task ID**: `ODP-PLAN-SITESCORE-OUTCOME-001`
-- **Observed At**: `2026-07-30T22:54:53.293368Z`
+- **Observed At**: `2026-07-31T00:13:17.646142Z`
 - **Gate Status**: `REJECTED_GOVERNED_DISABLED`
 - **Data Provenance**: `no_source`
 - **Is Governed Disabled**: `True`
-- **Integrity Content SHA256**: `c15ad8da15ea4f6438c60eb624a1fceb0c6b99f2a77a7ab2536d853dc7970a48`
+- **Integrity Content SHA256**: `2d08cf501ea44e1cae6098c92a91c8f6989a59a6c3f173b0afa1db42c7333111`
 
 ## Benchmark Inventory & Coverage Summary
 
@@ -26,7 +26,7 @@
 - **Backfill Owner**: `Human/Ops`
 - **Backfill Task ID**: `ODP-PLAN-SITESCORE-OUTCOME-BACKFILL-001`
 - **Prediction Source Task ID**: `ODP-PLAN-SITESCORE-PREDICTION-SOURCE-001`
-- **Backfill Query**: `SELECT entity_id, store_id, target_format_code, opened_on, is_training_eligible, realized_90d_net_revenue, (CURRENT_DATE - opened_on)::integer AS m6_days, (CURRENT_DATE - opened_on)::integer AS m12_days FROM model_ready.candidate_site_view;`
+- **Backfill Query**: `SELECT entity_id, store_id, target_format_code, opened_on, is_training_eligible, realized_90d_net_revenue, (CURRENT_DATE - opened_on)::integer AS store_age_days FROM model_ready.candidate_site_view;`
 - **Backfill Receipt Required**: `True`
 - **Audit Reasons**:
   - No database connection or candidate site records were provided
