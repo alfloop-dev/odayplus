@@ -270,9 +270,32 @@ class OnCallNotificationAdapter:
         response_hash = hashlib.sha256(resp_bytes).hexdigest()
 
         provider_receipt_id = None
-        # B1: Injected transports are permanently test-only and cannot emit DELIVERED regardless of caller attributes or ambient env labels.
+        # B1: Injected transports, loopback sockets, non-HTTPS endpoints, or unallowlisted origins are strictly test-only and cannot emit DELIVERED regardless of caller attributes or ambient env labels.
+        import urllib.parse
+
+        parsed_url = urllib.parse.urlparse(self.endpoint_url)
+        hostname = (parsed_url.hostname or "").lower()
+        scheme = (parsed_url.scheme or "").lower()
+
+        is_loopback = hostname in ("127.0.0.1", "localhost", "::1", "0.0.0.0") or hostname.startswith("127.")
+        is_https = scheme == "https"
+
+        prod_authority = (
+            os.getenv("ONCALL_PRODUCTION_ENDPOINT_AUTHORITY")
+            or os.getenv("ONCALL_AUTHORITATIVE_ENDPOINT")
+            or "https://oncall-router.oday.plus/api/v1/alerts"
+        ).strip()
+        prod_auth_parsed = urllib.parse.urlparse(prod_authority)
+        allowed_host = (prod_auth_parsed.hostname or "oncall-router.oday.plus").lower()
+
+        is_allowlisted_endpoint = (
+            is_https
+            and not is_loopback
+            and (hostname == allowed_host or hostname.endswith(".oday.plus"))
+        )
+
         is_injected_transport = self.http_transport != self._default_http_transport
-        is_mock_or_test = is_injected_transport
+        is_mock_or_test = is_injected_transport or is_loopback or not is_https or not is_allowlisted_endpoint
         has_authentic_signature = False
 
         if isinstance(resp_data, dict):

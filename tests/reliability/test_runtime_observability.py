@@ -629,7 +629,8 @@ def test_alert_routing_and_real_notification_delivery(monkeypatch: Any) -> None:
     assert len(authentic_adapter.delivery_receipts) == 1
     receipt2 = authentic_adapter.delivery_receipts[0]
     assert receipt2["notification_id"] == nid2
-    assert receipt2["status"] == "DELIVERED"
+    # B1: Loopback HTTP sockets are test-only and yield TEST_ONLY, never DELIVERED
+    assert receipt2["status"] == "TEST_ONLY"
     assert receipt2["provider_receipt_id"] == "prov-rcpt-9876543210"
 
 
@@ -2754,7 +2755,8 @@ def test_round8_oncall_adapter_authenticity_and_sha_enforced(monkeypatch: Any) -
     ok4, err4 = adapter4.send("n4", "webhook", "ops-lead", "Title", "Detail")
     assert ok4 is True
     assert err4 is None
-    assert adapter4.delivery_receipts[-1]["status"] == "DELIVERED"
+    # B1: Loopback HTTP sockets are test-only and yield TEST_ONLY, never DELIVERED
+    assert adapter4.delivery_receipts[-1]["status"] == "TEST_ONLY"
 
 
 def test_round10_remediation_findings_b1_b4_verified(monkeypatch: Any, tmp_path: Path) -> None:
@@ -3051,7 +3053,8 @@ def test_round13_remediation_findings_b1_b2_verified(monkeypatch: Any, tmp_path:
     )
     ok_prod, err_prod = adapter_prod.send("n_prod_r13", "webhook", "ops-lead", "Title", "Detail")
     assert ok_prod is True
-    assert adapter_prod.delivery_receipts[-1]["status"] == "DELIVERED"
+    # B1: Loopback HTTP sockets are test-only and yield TEST_ONLY, never DELIVERED
+    assert adapter_prod.delivery_receipts[-1]["status"] == "TEST_ONLY"
 
     # 3. B2 Negative Mutation 1: Arbitrary valid hex signature ("sig-sha256-" + "e"*16) is rejected
     start_dt = datetime.now(UTC) - timedelta(minutes=20)
@@ -3210,3 +3213,69 @@ def test_round8_worker_and_scheduler_export_metrics(monkeypatch: pytest.MonkeyPa
     # Local export returns None or raises/exports cleanly without AttributeError
     assert hasattr(worker, "export_metrics")
     assert hasattr(scheduler, "export_metrics")
+
+
+def test_round14_remediation_findings_b1_loopback_socket_mutation_verified(monkeypatch: Any) -> None:
+    import hashlib
+    import json
+    import threading
+    from datetime import UTC, datetime
+    from http.server import BaseHTTPRequestHandler, HTTPServer
+
+    from modules.notifications.infrastructure.adapters import OnCallNotificationAdapter
+
+    valid_sha = "e" * 40
+    provider_sec = "r14-secret-proof-2000"
+    monkeypatch.setenv("RELEASE_SHA", valid_sha)
+    monkeypatch.setenv("TRUSTED_DEPLOYED_RELEASE_SHA", valid_sha)
+    monkeypatch.setenv("ONCALL_PROVIDER_SECRET", provider_sec)
+
+    # 1. Round 14 B1 Negative Mutation: Caller-owned loopback server using default_http_transport + caller-selected ONCALL_PROVIDER_SECRET and RELEASE_SHA produces TEST_ONLY, NEVER DELIVERED
+    class CallerOwnedLoopbackHandler(BaseHTTPRequestHandler):
+        def do_POST(self):
+            content_length = int(self.headers.get("Content-Length", 0))
+            body = self.rfile.read(content_length)
+            payload = json.loads(body.decode("utf-8")) if body else {}
+
+            prov_rcpt = "prov-receipt-caller-owned-123"
+            req_bytes = json.dumps(payload, sort_keys=True).encode()
+            req_hash = hashlib.sha256(req_bytes).hexdigest()
+            sig_base = f"{provider_sec}:{prov_rcpt}:{req_hash}:{valid_sha}".encode()
+            sig_token = f"sig-sha256-{hashlib.sha256(sig_base).hexdigest()}"
+            rb_base = f"readback:{req_hash}".encode()
+            rb_token = hashlib.sha256(rb_base).hexdigest()
+
+            response_payload = {
+                "status": "delivered",
+                "route": payload.get("user_id", "ops-lead"),
+                "delivery_id": payload.get("delivery_id"),
+                "provider_receipt_id": prov_rcpt,
+                "provider_signature": sig_token,
+                "provider_readback": rb_token,
+                "received_at": datetime.now(UTC).isoformat(),
+            }
+            response_bytes = json.dumps(response_payload).encode("utf-8")
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(response_bytes)))
+            self.end_headers()
+            self.wfile.write(response_bytes)
+
+        def log_message(self, format, *args):
+            pass
+
+    server = HTTPServer(("127.0.0.1", 0), CallerOwnedLoopbackHandler)
+    server_port = server.server_port
+    server_thread = threading.Thread(target=server.serve_forever, daemon=True)
+    server_thread.start()
+
+    adapter_loopback = OnCallNotificationAdapter(
+        endpoint_url=f"http://127.0.0.1:{server_port}/attacker",
+        http_transport=None,  # Uses default_http_transport
+    )
+    ok_lb, err_lb = adapter_loopback.send("n_r14_lb", "webhook", "ops-lead", "Title", "Detail")
+    assert ok_lb is True
+    # MUST be TEST_ONLY, NEVER DELIVERED
+    receipt = adapter_loopback.delivery_receipts[-1]
+    assert receipt["status"] == "TEST_ONLY"
+    assert receipt["status"] != "DELIVERED"
