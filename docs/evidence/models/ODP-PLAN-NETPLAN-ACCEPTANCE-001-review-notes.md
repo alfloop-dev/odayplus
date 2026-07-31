@@ -220,3 +220,41 @@ technical re-review request; no test fixture or attestation is authentic
 Human/Ops approval, and activation remains
 `BUSINESS_UAT_UNVERIFIED / GOVERNED_DISABLED` pending
 `ODP-PLAN-NETPLAN-BASELINE-APPROVAL-001`.
+
+## 9. 2026-07-31 fixed-verifier boundary and OpenAPI addendum
+
+Reviewer `Codex` reopened pushed head `849e218a` with B6 and B7. B6 reproduced
+that the exported `ManagementApprovalVerification` result class still exposed
+`_authority_verified()`: a caller could invoke it directly with caller-owned
+receipt, expectation, identity, and time values and obtain a valid sealed
+attestation without `FixedManagementApprovalReceiptVerifier.verify()` or
+authority readback. B7 found that the checked-in OpenAPI artifact predated the
+new `NetPlanDecisionPayload` contract.
+
+Owner `Codex2` remediated both findings at anchor `ee1cbc73`. The exported
+verification result no longer has an attestation-issuance entrypoint. Issuance
+exists only after the fixed verifier resolves the exact receipt and validates
+the complete receipt ID, decision/reference, strict UTC lifetime, fixed source
+system/principal/role identity, scenario, baseline, scope, release, policy,
+actions/domain, source snapshots, baseline hash, problem hash, and receipt
+integrity boundary. Attestation consumption independently rebuilds and checks
+the full expectation and authority-identity hashes plus the issue/evaluation/
+expiry interval before accepting the seal. The exact direct-class-call
+mutation now raises `AttributeError`; a caller-created `verified=True` result
+still serializes `authentic_approval_verified=false`,
+`BUSINESS_UAT_UNVERIFIED`, and `GOVERNED_DISABLED`.
+
+The live OpenAPI schema was regenerated into
+`packages/openapi-client/openapi.json`, including the forbidden-extra-fields
+boundary and `approval_receipt_id`; the derived TypeScript client was
+regenerated from that artifact. The complete reopened batch passed 64 NetPlan
+integration cases, 66 `netplan or ortools or robust` selected tests, 78
+`netplan or management_baseline or solver` selected tests, 83 explicit
+NetPlan/robust/production/runtime cases, and all 17 OpenAPI artifact/client
+contract cases. Focused Ruff, both artifact/client drift checks, `git diff
+--check`, and `git diff origin/dev...HEAD --check` were clean.
+
+This addendum requests exact-head technical re-review only. Human/Ops approval
+remains pending under `ODP-PLAN-NETPLAN-BASELINE-APPROVAL-001`; neither the
+fixtures nor this technical attestation authorize activation, so the release
+gate remains `BUSINESS_UAT_UNVERIFIED / GOVERNED_DISABLED`.

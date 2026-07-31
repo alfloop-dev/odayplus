@@ -131,6 +131,8 @@ The integration suite rejects:
   source/principal/role values and a self-consistent receipt hash;
 - caller-created bare `verified=True` verification objects without a sealed
   authority attestation;
+- direct invocation of the exported verification result class cannot issue a
+  sealed attestation or enable governed output;
 - direct repository persistence and API serialization of those forged records;
 - API attempts to inject source-system, principal-role, or receipt-hash fields;
 - replay of a valid attestation onto a different scenario, actor principal, or
@@ -156,29 +158,38 @@ The integration suite rejects:
 
 ## 7. Verification
 
-Executed on task branch after authority-attestation anchor `c50bf18d`:
+Executed on task branch after verifier-boundary anchor `ee1cbc73`:
 
 ```bash
 uv run pytest -q tests/integration/test_netplan_solver.py --tb=short
-# 63 parameterized cases passed
+# 64 parameterized cases passed
 
 uv run pytest -q tests -k "netplan or ortools or robust" --tb=short
-# 65 tests passed; exit 0
+# 66 tests passed; exit 0
 
 uv run pytest -q tests -k "netplan or management_baseline or solver" --tb=short
-# 77 tests passed; exit 0
+# 78 tests passed; exit 0
 
 uv run pytest -q \
   tests/integration/test_netplan_solver.py \
   solver/netplan/tests/test_robust.py \
   modules/netplan/tests/test_netplan_production_execution.py \
   tests/solver/test_runtime_compat.py --tb=short
-# 82 tests passed; exit 0
+# 83 tests passed; exit 0
+
+uv run pytest -q tests/contract/test_openapi_artifact_and_client.py --tb=short
+# 17 tests passed; exit 0
+
+uv run python scripts/openapi/export_openapi.py --check
+# OpenAPI artifact matches the live schema
+
+uv run python scripts/openapi/generate_client.py --check
+# generated TypeScript client matches the artifact
 
 uv run ruff check \
   solver/netplan modules/netplan apps/api/app/routes/netplan.py \
   apps/api/oday_api/main.py \
-  tests/integration/test_netplan_solver.py tests/solver/test_runtime_compat.py
+  tests/integration/test_netplan_solver.py
 # All checks passed
 
 git diff --check
