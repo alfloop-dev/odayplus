@@ -24,6 +24,7 @@ DIAGNOSTICS_DIR="${ODP_E2E_DIAGNOSTICS_DIR:-.odp_data/e2e-diagnostics}"
 COMPOSE=(docker compose -p "$PROJECT" -f infra/docker/docker-compose.e2e.yml)
 PLAYWRIGHT_PAYLOAD="$(mktemp "${TMPDIR:-/tmp}/odp-playwright-payload.XXXXXX.json")"
 PLAYWRIGHT_ARTIFACT="docs/evidence/e2e/raw_playwright_results.json"
+PYTHON_COMMAND=(uv run --frozen python)
 
 cleanup() {
   rm -f "$PLAYWRIGHT_PAYLOAD"
@@ -123,10 +124,10 @@ python3 scripts/e2e/record_playwright_results.py \
   --retries 0
 playwright_record_status=$?
 
-python3 scripts/e2e/run_python_e2e_tests.py
+"${PYTHON_COMMAND[@]}" scripts/e2e/run_python_e2e_tests.py
 pytest_status=$?
 
-python3 scripts/e2e/generate_product_e2e_receipt.py
+"${PYTHON_COMMAND[@]}" scripts/e2e/generate_product_e2e_receipt.py
 receipt_status=$?
 
 "${COMPOSE[@]}" ps >"${DIAGNOSTICS_DIR}/compose-ps.txt"
