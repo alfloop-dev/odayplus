@@ -267,6 +267,19 @@ class ODayWorker:
             if not executed:
                 time.sleep(1.0)
 
+    def export_metrics(self) -> dict[str, Any] | None:
+        """Export worker metrics snapshot via ProductionMetricsExporter if exact 40-char release SHA is present in environment."""
+        import os
+        from shared.observability import ProductionMetricsExporter
+        sha = (os.getenv("RELEASE_SHA") or os.getenv("GITHUB_SHA") or "").strip().lower()
+        if sha and len(sha) == 40 and sha != "local":
+            try:
+                exporter = ProductionMetricsExporter(release_sha=sha, registry=self.telemetry.metrics)
+                return exporter.export_metrics()
+            except Exception as exc:
+                self.telemetry.logger.warn(f"Worker metrics export skipped or failed: {exc}")
+        return None
+
 
 def _default_worker_id() -> str:
     configured = os.getenv("ODP_WORKER_ID", "").strip()

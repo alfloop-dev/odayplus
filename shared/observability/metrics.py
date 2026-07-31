@@ -12,6 +12,7 @@ later without changing instrumentation call sites.
 
 from __future__ import annotations
 
+import math
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
 from enum import StrEnum
@@ -117,21 +118,36 @@ class MetricsRegistry:
     def increment(
         self, name: str, *, labels: Mapping[str, str] | None = None, amount: float = 1.0
     ) -> None:
+        if not math.isfinite(amount):
+            raise ValueError(f"Metric increment amount must be a finite number (got {amount}). Fail-closed gate enforced.")
+        if amount <= 0.0:
+            raise ValueError(f"Counter increment amount must be strictly positive (got {amount}). Fail-closed gate enforced.")
         series = self._resolve(name, labels)
         if series.definition.type is not MetricType.COUNTER:
             raise TypeError(f"{name!r} is not a counter")
         series.value += amount
 
     def set(self, name: str, value: float, *, labels: Mapping[str, str] | None = None) -> None:
-        series = self._resolve(name, labels)
-        if series.definition.type is not MetricType.GAUGE:
+        if not math.isfinite(value):
+            raise ValueError(f"Metric gauge value must be a finite number (got {value}). Fail-closed gate enforced.")
+        definition = self.definition(name)
+        if definition.type is not MetricType.GAUGE:
             raise TypeError(f"{name!r} is not a gauge")
+        if definition.category in (MetricCategory.LATENCY, MetricCategory.JOB, MetricCategory.QUEUE, MetricCategory.DATA, MetricCategory.AUDIT, MetricCategory.ERROR, MetricCategory.TRAFFIC):
+            if value < 0.0 and definition.name not in ("drift_score", "adlift_incremental_gm"):
+                raise ValueError(f"Gauge metric {name!r} domain requires non-negative value (got {value}). Fail-closed gate enforced.")
+        series = self._resolve(name, labels)
         series.value = value
 
     def observe(self, name: str, value: float, *, labels: Mapping[str, str] | None = None) -> None:
-        series = self._resolve(name, labels)
-        if series.definition.type is not MetricType.HISTOGRAM:
+        if not math.isfinite(value):
+            raise ValueError(f"Metric histogram observation value must be a finite number (got {value}). Fail-closed gate enforced.")
+        definition = self.definition(name)
+        if definition.type is not MetricType.HISTOGRAM:
             raise TypeError(f"{name!r} is not a histogram")
+        if value < 0.0:
+            raise ValueError(f"Histogram metric {name!r} observation must be non-negative (got {value}). Fail-closed gate enforced.")
+        series = self._resolve(name, labels)
         series.count += 1
         series.sum += value
         series.buckets.append(value)
@@ -346,6 +362,73 @@ def default_registry() -> MetricsRegistry:
         for definition in PLATFORM_METRICS:
             _cached_registry.register(definition)
     return _cached_registry
+
+
+def record_data_signal(
+    source: str,
+    view: str,
+    *,
+    freshness_hours: float | None = None,
+    quality_score: float | None = None,
+    feature_null_rate: float | None = None,
+    feature_name: str = "general",
+    dataset_name: str = "default",
+    run_id: str = "latest",
+    registry: MetricsRegistry | None = None,
+) -> None:
+    """Record data freshness, quality, and feature null rate metrics."""
+    reg = registry or default_registry()
+    if freshness_hours is not None:
+        reg.set("data_freshness_hours", float(freshness_hours), labels={"source": source, "view": view})
+    if quality_score is not None:
+        reg.set("data_quality_score", float(quality_score), labels={"dataset": dataset_name, "run": run_id})
+    if feature_null_rate is not None:
+        reg.set("feature_null_rate", float(feature_null_rate), labels={"feature": feature_name, "view": view})
+
+
+def record_model_signal(
+    model: str,
+    module: str,
+    *,
+    prediction_count: int = 0,
+    model_error: float | None = None,
+    interval_coverage: float | None = None,
+    drift_score: float | None = None,
+    alias_changes: int = 0,
+    horizon: str = "7d",
+    segment: str = "all",
+    feature: str = "general",
+    registry: MetricsRegistry | None = None,
+) -> None:
+    """Record model predictions, error metrics, coverage, drift, and alias changes."""
+    reg = registry or default_registry()
+    if prediction_count > 0:
+        reg.increment("prediction_count", amount=float(prediction_count), labels={"model": model, "module": module})
+    if model_error is not None:
+        reg.set("model_error_metric", float(model_error), labels={"model": model, "horizon": horizon, "segment": segment})
+    if interval_coverage is not None:
+        reg.set("prediction_interval_coverage", float(interval_coverage), labels={"model": model, "horizon": horizon})
+    if drift_score is not None:
+        reg.set("drift_score", float(drift_score), labels={"feature": feature, "model": model})
+    if alias_changes > 0:
+        reg.increment("model_alias_change_count", amount=float(alias_changes), labels={"model": model})
+
+
+def record_business_kpi_signal(
+    kpi_name: str,
+    value: float,
+    *,
+    labels: Mapping[str, str] | None = None,
+    registry: MetricsRegistry | None = None,
+) -> None:
+    """Record business KPI signals (HeatZone, SiteScore, NetPlan, AVM, AdLift, etc.)."""
+    reg = registry or default_registry()
+    m_def = reg._definitions.get(kpi_name)
+    if m_def and m_def.type is MetricType.COUNTER:
+        if value > 0:
+            reg.increment(kpi_name, amount=float(value), labels=labels)
+    else:
+        reg.set(kpi_name, float(value), labels=labels)
 
 
 import json
@@ -575,6 +658,15 @@ class ProductionMetricsExporter:
                 posted_series_keys.add((m_type, label_key))
 
                 metric_val = float(entry.get("value", entry.get("count", 1.0)))
+                if not math.isfinite(metric_val):
+                    raise ValueError(f"Export metric '{metric_name}' contains non-finite value '{metric_val}'. Fail-closed gate enforced.")
+                m_def = self.registry._definitions.get(metric_name)
+                if m_def:
+                    if m_def.type is MetricType.COUNTER and metric_val < 0:
+                        raise ValueError(f"Export counter metric '{metric_name}' has negative value '{metric_val}'. Fail-closed gate enforced.")
+                    if m_def.category in (MetricCategory.LATENCY, MetricCategory.JOB, MetricCategory.QUEUE, MetricCategory.DATA, MetricCategory.AUDIT, MetricCategory.ERROR, MetricCategory.TRAFFIC):
+                        if metric_val < 0.0 and m_def.name not in ("drift_score", "adlift_incremental_gm"):
+                            raise ValueError(f"Export metric '{metric_name}' domain requires non-negative value (got {metric_val}). Fail-closed gate enforced.")
                 time_series_list.append(
                     {
                         "metric": {
@@ -769,11 +861,29 @@ class ProductionMetricsExporter:
                         f"Cloud Monitoring readback point in '{metric_type}' missing numerical value. Fail-closed gate enforced."
                     )
                 try:
-                    _ = float(val)
+                    val_float = float(val)
                 except (ValueError, TypeError) as exc:
                     raise RuntimeError(
                         f"Cloud Monitoring readback point in '{metric_type}' has non-numeric value '{val}': {exc}. Fail-closed gate enforced."
                     ) from exc
+
+                if not math.isfinite(val_float):
+                    raise RuntimeError(
+                        f"Cloud Monitoring readback point in '{metric_type}' has non-finite value '{val_float}'. Fail-closed gate enforced."
+                    )
+
+                m_name = metric_type.rsplit("/", 1)[-1]
+                m_def = self.registry._definitions.get(m_name)
+                if m_def:
+                    if m_def.type is MetricType.COUNTER and val_float < 0:
+                        raise RuntimeError(
+                            f"Cloud Monitoring readback counter metric '{m_name}' has negative value '{val_float}'. Fail-closed gate enforced."
+                        )
+                    if m_def.category in (MetricCategory.LATENCY, MetricCategory.JOB, MetricCategory.QUEUE, MetricCategory.DATA, MetricCategory.AUDIT, MetricCategory.ERROR, MetricCategory.TRAFFIC):
+                        if val_float < 0.0 and m_def.name not in ("drift_score", "adlift_incremental_gm"):
+                            raise RuntimeError(
+                                f"Cloud Monitoring readback metric '{m_name}' domain requires non-negative value (got {val_float}). Fail-closed gate enforced."
+                            )
 
                 verified_points_count += 1
 
@@ -800,8 +910,31 @@ class ProductionMetricsExporter:
 
         import hashlib
 
-        digest_payload = f"{gcp_proj}:{self.release_sha}:{len(returned_series)}:{verified_points_count}:{','.join(sorted(observed_types))}"
-        integrity_digest = hashlib.sha256(digest_payload.encode("utf-8")).hexdigest()
+        series_points_payload = []
+        for ts_item in returned_series:
+            m_dict = ts_item.get("metric", {}) if isinstance(ts_item, dict) else {}
+            m_type_str = str(m_dict.get("type", ""))
+            m_labels = dict(m_dict.get("labels", {}))
+            pts_list = ts_item.get("points", []) if isinstance(ts_item, dict) else []
+            for pt in pts_list:
+                pt_interval = pt.get("interval", {}) if isinstance(pt, dict) else {}
+                end_t = str(pt_interval.get("endTime") or pt_interval.get("startTime") or "")
+                val_d = pt.get("value", {}) if isinstance(pt, dict) else {}
+                val_num = val_d.get("doubleValue", val_d.get("int64Value", val_d.get("value"))) if isinstance(val_d, dict) else pt.get("value")
+                series_points_payload.append(f"{m_type_str}:{tuple(sorted((str(k), str(v)) for k, v in m_labels.items()))}:{end_t}:{val_num}")
+
+        canonical_export_data = {
+            "gcp_project": gcp_proj,
+            "release_sha": self.release_sha,
+            "provider_route": route_str,
+            "monitoring_backend_resource_ids": monitoring_backend_resource_ids,
+            "posted_series_keys": sorted([f"{m}:{lbl_key}" for m, lbl_key in posted_series_keys]),
+            "observed_types": sorted(list(observed_types)),
+            "verified_points_count": verified_points_count,
+            "series_points": sorted(series_points_payload),
+            "provider_response_hash": hashlib.sha256(json.dumps(readback_resp, sort_keys=True).encode("utf-8")).hexdigest(),
+        }
+        integrity_digest = hashlib.sha256(json.dumps(canonical_export_data, sort_keys=True).encode("utf-8")).hexdigest()
         export_receipt_id = f"gcp-cm-readback-{self.release_sha[:12]}-{integrity_digest[:16]}"
 
         return {

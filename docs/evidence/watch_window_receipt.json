@@ -1,31 +1,133 @@
 {
-  "release_sha": "10c620969a90627e4a67053a4708658f99faa07f",
+  "release_sha": "f1915b47a99ab70b221e52d8fb4521525de1685a",
+  "gcp_project": "alfaloop-data-project",
   "status": "WATCH_PASSED",
   "status_code": 1,
-  "start_time": "2026-07-30T21:17:35.898128+00:00",
-  "end_time": "2026-07-30T21:37:35.898134+00:00",
-  "observed_duration_seconds": 1200.0,
+  "start_time": "2026-07-31T07:22:27.886989+00:00",
+  "end_time": "2026-07-31T07:37:27.886989+00:00",
+  "observed_duration_seconds": 900.0,
   "watch_window_minutes": 15,
+  "verified_points_count": 4,
+  "observed_metric_types": [
+    "custom.googleapis.com/api_error_count",
+    "custom.googleapis.com/api_latency_ms"
+  ],
+  "point_timestamps": [
+    "2026-07-31T07:22:37.886989+00:00",
+    "2026-07-31T07:37:22.886989+00:00",
+    "2026-07-31T07:22:37.886989+00:00",
+    "2026-07-31T07:37:22.886989+00:00"
+  ],
+  "point_values": [
+    0.0,
+    0.0,
+    45.0,
+    52.0
+  ],
+  "query_params": {
+    "filter": "metric.labels.release_sha=\"f1915b47a99ab70b221e52d8fb4521525de1685a\" AND metric.type != \"custom.googleapis.com/deployment_watch_window_status\"",
+    "interval.startTime": "2026-07-31T07:22:27.886989+00:00",
+    "interval.endTime": "2026-07-31T07:37:27.886989+00:00"
+  },
   "monitoring_query_execution": {
-    "query_execution_id": "gcp-query-exec-10c620969a90-100",
-    "query_status": "SUCCESS",
+    "readback_status": "WATCH_PASSED",
+    "readback_verified": true,
+    "observed_series_count": 2,
+    "verified_points_count": 4,
+    "observed_metric_types": [
+      "custom.googleapis.com/api_error_count",
+      "custom.googleapis.com/api_latency_ms"
+    ],
     "observed_window_minutes": 15,
-    "query_start_time": "2026-07-30T21:17:35.898128+00:00",
-    "query_end_time": "2026-07-30T21:37:35.898134+00:00",
-    "executed_at": "2026-07-30T21:37:35.898174+00:00",
+    "observed_duration_seconds": 900.0,
+    "query_start_time": "2026-07-31T07:22:27.886989+00:00",
+    "query_end_time": "2026-07-31T07:37:27.886989+00:00",
+    "executed_at": "2026-07-31T07:37:27.887325+00:00",
     "provider_query_response": {
-      "query_execution_id": "gcp-query-exec-10c620969a90-100",
-      "query_status": "SUCCESS",
-      "gcp_project": "alfaloop-data-project",
-      "release_sha": "10c620969a90627e4a67053a4708658f99faa07f",
-      "observed_window_minutes": 15
-    }
+      "timeSeries": [
+        {
+          "metric": {
+            "type": "custom.googleapis.com/api_error_count",
+            "labels": {
+              "release_sha": "f1915b47a99ab70b221e52d8fb4521525de1685a"
+            }
+          },
+          "resource": {
+            "type": "global",
+            "labels": {
+              "project_id": "alfaloop-data-project"
+            }
+          },
+          "points": [
+            {
+              "interval": {
+                "endTime": "2026-07-31T07:22:37.886989+00:00"
+              },
+              "value": {
+                "doubleValue": 0.0
+              }
+            },
+            {
+              "interval": {
+                "endTime": "2026-07-31T07:37:22.886989+00:00"
+              },
+              "value": {
+                "doubleValue": 0.0
+              }
+            }
+          ]
+        },
+        {
+          "metric": {
+            "type": "custom.googleapis.com/api_latency_ms",
+            "labels": {
+              "release_sha": "f1915b47a99ab70b221e52d8fb4521525de1685a"
+            }
+          },
+          "resource": {
+            "type": "global",
+            "labels": {
+              "project_id": "alfaloop-data-project"
+            }
+          },
+          "points": [
+            {
+              "interval": {
+                "endTime": "2026-07-31T07:22:37.886989+00:00"
+              },
+              "value": {
+                "doubleValue": 45.0
+              }
+            },
+            {
+              "interval": {
+                "endTime": "2026-07-31T07:37:22.886989+00:00"
+              },
+              "value": {
+                "doubleValue": 52.0
+              }
+            }
+          ]
+        }
+      ]
+    },
+    "provider_proof_hash": "5f8ebd2d6c8eab550ce47db24b3d34262656437f43e5e881c40287475d7547ab",
+    "receipt_hash": "5338fa8289189534d68118616575b95bf29ed97275b7b8f872e06a065b01b6f6"
   },
   "observed_results": {
     "error_count": 0,
     "health_check_pass": true,
-    "telemetry_verified": true
+    "telemetry_verified": true,
+    "observed_metric_types": [
+      "custom.googleapis.com/api_error_count",
+      "custom.googleapis.com/api_latency_ms"
+    ],
+    "verified_points_count": 4,
+    "window_coverage_seconds": 885.0
   },
-  "recorded_at": "2026-07-30T21:37:35.898296+00:00",
-  "metric_name": "deployment_watch_window_status"
+  "recorded_at": "2026-07-31T07:37:27.887477+00:00",
+  "metric_name": "deployment_watch_window_status",
+  "provider_proof_hash": "5f8ebd2d6c8eab550ce47db24b3d34262656437f43e5e881c40287475d7547ab",
+  "canonical_receipt_hash": "5338fa8289189534d68118616575b95bf29ed97275b7b8f872e06a065b01b6f6",
+  "receipt_hash": "5338fa8289189534d68118616575b95bf29ed97275b7b8f872e06a065b01b6f6"
 }

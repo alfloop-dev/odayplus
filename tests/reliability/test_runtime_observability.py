@@ -555,18 +555,38 @@ def test_alert_routing_and_real_notification_delivery() -> None:
     routed = router.route_alert("audit-write-failure")
     assert routed["receiver"] == "ops-lead"
 
-    # Verify real delivery receipt to on-call endpoint
+    # Verify mock delivery classifies as TEST_ONLY
     assert len(adapter.delivery_receipts) == 1
     receipt = adapter.delivery_receipts[0]
     assert receipt["notification_id"] == nid
     assert receipt["oncall_route"] == "ops-lead"
     assert receipt["endpoint"] == "https://oncall-router.oday.plus/api/v1/alerts"
     assert receipt["http_status"] == 200
-    assert receipt["status"] == "DELIVERED"
+    assert receipt["status"] == "TEST_ONLY"
     assert receipt["response"] == {"status": "ok", "delivered": True}
     assert receipt["delivery_id"].startswith("del-")
     assert "ALERT: [P1] Audit write failure" in receipt["title"]
     assert "Durable storage write timeout" in receipt["detail"]
+
+    # Verify authentic provider response carries provider_receipt_id and classifies as DELIVERED
+    def provider_transport(url: str, payload: dict) -> tuple[int, dict]:
+        return (200, {"status": "ok", "delivered": True, "provider_receipt_id": "prov-rcpt-9876543210"})
+
+    repo2 = InMemoryNotificationRepository()
+    authentic_adapter = OnCallNotificationAdapter(
+        endpoint_url="https://oncall-router.oday.plus/api/v1/alerts",
+        http_transport=provider_transport,
+    )
+    authentic_service = NotificationService(repository=repo2, adapter=authentic_adapter)
+    authentic_service.set_preferences("ops-lead", ["webhook"])
+    authentic_router = AlertRouter(notification_service=authentic_service)
+    nid2 = authentic_router.trigger_alert("audit-write-failure", "Durable storage write timeout on DB query")
+
+    assert len(authentic_adapter.delivery_receipts) == 1
+    receipt2 = authentic_adapter.delivery_receipts[0]
+    assert receipt2["notification_id"] == nid2
+    assert receipt2["status"] == "DELIVERED"
+    assert receipt2["provider_receipt_id"] == "prov-rcpt-9876543210"
 
 
 def test_oncall_adapter_unreachable_route_fails() -> None:
@@ -2298,3 +2318,116 @@ def test_round6_reproduced_gaps_mutation_coverage(tmp_path: Path) -> None:
             query_transport=nan_metric_transport,
         )
 
+
+def test_round7_production_metric_recorders_all_categories() -> None:
+    from shared.observability.metrics import (
+        ProductionMetricsExporter,
+        default_registry,
+        record_business_kpi_signal,
+        record_data_signal,
+        record_model_signal,
+    )
+
+    reg = default_registry()
+    reg.clear()
+
+    record_data_signal("pg16", "forecast_view", freshness_hours=1.5, quality_score=0.98, feature_null_rate=0.01)
+    record_model_signal("forecast_ops", "learninghub", prediction_count=100, model_error=12.5, interval_coverage=0.95, drift_score=0.02)
+    record_business_kpi_signal("heatzone_topk_adoption_rate", 0.92)
+    record_business_kpi_signal("price_hard_constraint_violation_count", 0.0)
+
+    snap = reg.snapshot()
+    assert "data_freshness_hours" in snap
+    assert "prediction_count" in snap
+    assert "heatzone_topk_adoption_rate" in snap
+
+    test_sha = "a" * 40
+
+    def mock_transport(method: str, url: str, params: dict = None, payload: dict = None, headers: dict = None) -> tuple[int, dict]:
+        now_iso = datetime.now(UTC).isoformat()
+        if method == "POST":
+            return 200, {"status": "ok"}
+        return 200, {
+            "gcp_project": "alfaloop-data-project",
+            "release_sha": test_sha,
+            "timeSeries": [
+                {
+                    "metric": {"type": f"custom.googleapis.com/{name}", "labels": {**dict(items[0].get("labels", {})), "release_sha": test_sha}},
+                    "resource": {"type": "global", "labels": {"project_id": "alfaloop-data-project"}},
+                    "points": [{"interval": {"endTime": now_iso}, "value": {"doubleValue": 1.0}}],
+                }
+                for name, items in snap.items()
+            ],
+        }
+
+    exporter = ProductionMetricsExporter(
+        release_sha=test_sha,
+        registry=reg,
+        gcp_project="alfaloop-data-project",
+        http_transport=mock_transport,
+    )
+    receipt = exporter.export_metrics()
+    assert receipt["readback_status"] == "SUCCESS"
+    assert receipt["export_receipt_id"].startswith("gcp-cm-readback-")
+
+
+def test_round7_export_receipt_canonical_integrity_and_value_mutation() -> None:
+    from shared.observability.metrics import MetricsRegistry, ProductionMetricsExporter
+
+    test_sha = "b" * 40
+
+    def make_exporter_with_val(val: float) -> ProductionMetricsExporter:
+        reg = MetricsRegistry()
+
+        from shared.observability.metrics import MetricCategory, MetricDefinition, MetricType
+        reg.register(MetricDefinition("adlift_incremental_gm", MetricType.GAUGE, MetricCategory.BUSINESS, "AdLift GM"))
+        reg.set("adlift_incremental_gm", val)
+
+        def mock_tp(method: str, url: str, params: dict = None, payload: dict = None, headers: dict = None) -> tuple[int, dict]:
+            now_iso = datetime.now(UTC).isoformat()
+            if method == "POST":
+                return 200, {"status": "ok"}
+            return 200, {
+                "gcp_project": "alfaloop-data-project",
+                "release_sha": test_sha,
+                "timeSeries": [
+                    {
+                        "metric": {"type": "custom.googleapis.com/adlift_incremental_gm", "labels": {"release_sha": test_sha}},
+                        "resource": {"type": "global", "labels": {"project_id": "alfaloop-data-project"}},
+                        "points": [{"interval": {"endTime": now_iso}, "value": {"doubleValue": val}}],
+                    }
+                ],
+            }
+
+        return ProductionMetricsExporter(
+            release_sha=test_sha,
+            registry=reg,
+            gcp_project="alfaloop-data-project",
+            http_transport=mock_tp,
+        )
+
+    exp1 = make_exporter_with_val(5.0)
+    receipt1 = exp1.export_metrics()
+
+    exp2 = make_exporter_with_val(-5.0)
+    receipt2 = exp2.export_metrics()
+
+    # Value mutation MUST produce different receipt IDs (digest collision prevented)
+    assert receipt1["export_receipt_id"] != receipt2["export_receipt_id"]
+
+
+def test_round7_watch_window_receipt_durable_verification() -> None:
+    import json
+    from pathlib import Path
+
+    from shared.observability.watch_window import verify_watch_window_receipt
+
+    receipt_path = Path(__file__).resolve().parents[2] / "docs" / "evidence" / "watch_window_receipt.json"
+    assert receipt_path.exists()
+
+    receipt_data = json.loads(receipt_path.read_text(encoding="utf-8"))
+    sha = receipt_data["release_sha"]
+
+    verified = verify_watch_window_receipt(expected_release_sha=sha, receipt_path=receipt_path)
+    assert verified["status"] == "WATCH_PASSED"
+    assert verified["release_sha"] == sha
