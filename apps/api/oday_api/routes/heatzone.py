@@ -132,7 +132,9 @@ else:
             )
             from shared.observability.metrics import record_business_kpi_signal, record_model_signal
             record_model_signal("heatzone", "heatzone_batch_score", prediction_count=len(body.features))
-            record_business_kpi_signal("heatzone_topk_adoption_rate", 1.0 if created else 0.5)
+            measured_adoption = getattr(result_store, "get_measured_topk_adoption_rate", lambda: None)()
+            if measured_adoption is not None and isinstance(measured_adoption, (int, float)):
+                record_business_kpi_signal("heatzone_topk_adoption_rate", float(measured_adoption))
             payload = result.to_dict()
             payload["created"] = created
             payload["audit_event_id"] = audit_event.event_id

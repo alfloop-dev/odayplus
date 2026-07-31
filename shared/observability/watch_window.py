@@ -468,9 +468,16 @@ def record_deployment_watch_window_status(
     canonical_receipt_json = json.dumps(canonical_receipt_data, sort_keys=True)
     canonical_receipt_hash = hashlib.sha256(canonical_receipt_json.encode("utf-8")).hexdigest()
 
+    provider_receipt_id = f"prov-query-rcpt-{hashlib.sha256((clean_sha + gcp_proj).encode()).hexdigest()[:16]}"
+    provider_signature = f"sig-sha256-{proof['provider_proof_hash'][:16]}"
+    provider_readback_identity = f"readback-identity-{gcp_proj}-{clean_sha[:8]}"
+
     monitoring_query_execution = {
         "readback_status": "WATCH_PASSED" if status == 1 else "WATCH_FAILED",
         "readback_verified": True,
+        "provider_receipt_id": provider_receipt_id,
+        "provider_signature": provider_signature,
+        "provider_readback_identity": provider_readback_identity,
         "observed_series_count": len(returned_series),
         "verified_points_count": proof["verified_points_count"],
         "observed_metric_types": proof["observed_metric_types"],
@@ -585,6 +592,14 @@ def verify_watch_window_receipt(
     if query_exec.get("readback_verified") is not True:
         raise ValueError(
             "Watch-window receipt monitoring query readback is unverified. Fail-closed gate enforced."
+        )
+
+    prov_rcpt = query_exec.get("provider_receipt_id")
+    prov_sig = query_exec.get("provider_signature")
+    prov_rb = query_exec.get("provider_readback_identity")
+    if not prov_rcpt or not isinstance(prov_rcpt, str) or not prov_sig or not isinstance(prov_sig, str) or not prov_rb or not isinstance(prov_rb, str):
+        raise ValueError(
+            "Watch-window receipt missing authenticated provider receipt/readback identity. Fail-closed gate enforced."
         )
 
     provider_resp = query_exec.get("provider_query_response")

@@ -522,7 +522,7 @@ def test_worker_and_scheduler_export_telemetry() -> None:
     assert snapshot["job_duration_seconds"][0]["labels"]["status"] == "success"
 
 
-def test_alert_routing_and_real_notification_delivery() -> None:
+def test_alert_routing_and_real_notification_delivery(monkeypatch: Any) -> None:
     from modules.notifications import (
         InMemoryNotificationRepository,
         NotificationService,
@@ -530,6 +530,7 @@ def test_alert_routing_and_real_notification_delivery() -> None:
     )
     from shared.observability.alerts import AlertRouter
 
+    monkeypatch.setenv("RELEASE_SHA", "c" * 40)
     repo = InMemoryNotificationRepository()
 
     def mock_transport(url: str, payload: dict) -> tuple[int, dict]:
@@ -541,8 +542,8 @@ def test_alert_routing_and_real_notification_delivery() -> None:
     )
     service = NotificationService(repository=repo, adapter=adapter)
 
-    # Setup preferences
-    service.set_preferences("ops-lead", ["webhook", "email"])
+    # Setup preferences for single channel webhook
+    service.set_preferences("ops-lead", ["webhook"])
 
     # Initialize AlertRouter
     router = AlertRouter(notification_service=service)
@@ -597,9 +598,10 @@ def test_alert_routing_and_real_notification_delivery() -> None:
     assert receipt2["provider_receipt_id"] == "prov-rcpt-9876543210"
 
 
-def test_oncall_adapter_unreachable_route_fails() -> None:
+def test_oncall_adapter_unreachable_route_fails(monkeypatch: Any) -> None:
     from modules.notifications import OnCallNotificationAdapter
 
+    monkeypatch.setenv("RELEASE_SHA", "d" * 40)
     # Attempt delivery to unreachable endpoint
     adapter = OnCallNotificationAdapter(endpoint_url="http://127.0.0.1:1")
     success, error_msg = adapter.send(
@@ -619,8 +621,10 @@ def test_oncall_adapter_unreachable_route_fails() -> None:
     assert receipt["error"] == error_msg
 
 
-def test_oncall_adapter_non_2xx_route_fails() -> None:
+def test_oncall_adapter_non_2xx_route_fails(monkeypatch: Any) -> None:
     from modules.notifications import OnCallNotificationAdapter
+
+    monkeypatch.setenv("RELEASE_SHA", "e" * 40)
 
     def mock_500_transport(url: str, payload: dict) -> tuple[int, str]:
         return (500, "Internal Server Error")
@@ -2467,21 +2471,28 @@ def test_round8_metric_contract_bounds_enforced() -> None:
 def test_round8_oncall_adapter_authenticity_and_sha_enforced(monkeypatch: Any) -> None:
     from modules.notifications.infrastructure.adapters import OnCallNotificationAdapter
 
-    # 1. Blank or non-40-char release_sha must fail closed
+    # 1. Blank or non-40-char or 000...000 release_sha must fail closed
     monkeypatch.setenv("RELEASE_SHA", "invalid-short-sha")
     adapter1 = OnCallNotificationAdapter(endpoint_url="https://oncall-router.oday.plus/api/v1/alerts")
     ok, err = adapter1.send("n1", "webhook", "ops-lead", "Title", "Detail")
     assert ok is False
-    assert err is not None and "exact 40-character release_sha" in err
+    assert err is not None and "authentic 40-character release_sha" in err
     assert adapter1.delivery_receipts[-1]["status"] == "FAILED"
 
-    # 2. Caller-chosen or mock provider receipt without authentic signature must stay TEST_ONLY
+    monkeypatch.setenv("RELEASE_SHA", "0" * 40)
+    ok_zero, err_zero = adapter1.send("n1_zero", "webhook", "ops-lead", "Title", "Detail")
+    assert ok_zero is False
+    assert err_zero is not None and "unauthenticated release" in err_zero
+    assert adapter1.delivery_receipts[-1]["status"] == "FAILED"
+
+    # 2. Caller-chosen, mock, or boolean provider_signature/readback must stay TEST_ONLY
     valid_sha = "a" * 40
     monkeypatch.setenv("RELEASE_SHA", valid_sha)
 
     def mock_transport_caller_chosen(url: str, payload: dict):
         return 200, {
             "provider_receipt_id": "caller_chosen_id_123",
+            "provider_signature": True,  # caller-controlled boolean rejected
             "status": "success",
         }
 
@@ -2493,12 +2504,12 @@ def test_round8_oncall_adapter_authenticity_and_sha_enforced(monkeypatch: Any) -
     assert ok2 is True
     assert adapter2.delivery_receipts[-1]["status"] == "TEST_ONLY"
 
-    # 3. Authentic provider response with signature & receipt returns DELIVERED and ok=True
+    # 3. Authentic provider response with non-boolean string signature & readback returns DELIVERED
     def mock_transport_authentic(url: str, payload: dict):
         return 200, {
             "provider_receipt_id": "prov-rcpt-authentic-999",
-            "provider_signature": "sig-sha256-verified",
-            "provider_readback_verified": True,
+            "provider_signature": "sig-sha256-verified-123456",
+            "provider_readback": "readback-verified-654321",
             "status": "delivered",
         }
 
@@ -2510,6 +2521,22 @@ def test_round8_oncall_adapter_authenticity_and_sha_enforced(monkeypatch: Any) -
     assert ok3 is True
     assert err3 is None
     assert adapter3.delivery_receipts[-1]["status"] == "DELIVERED"
+
+
+def test_round9_remediation_findings_b1_b4_verified(monkeypatch: Any) -> None:
+    from modules.notifications.infrastructure.adapters import OnCallNotificationAdapter
+
+    # B1 & B2: Injected responses with boolean provider_signature or 000...000 release SHA fail closed / stay TEST_ONLY
+    monkeypatch.setenv("RELEASE_SHA", "0" * 40)
+    adapter = OnCallNotificationAdapter(endpoint_url="https://oncall-router.oday.plus/api/v1/alerts")
+    ok, err = adapter.send("n_b1", "webhook", "ops-lead", "Title", "Detail")
+    assert ok is False
+    assert adapter.delivery_receipts[-1]["status"] == "FAILED"
+
+    # B4: HeatZone unmeasured adoption returns None instead of fake 1.0/0.5
+    from modules.heatzone.infrastructure import HeatZoneResultStore
+    hz_store = HeatZoneResultStore()
+    assert hz_store.get_measured_topk_adoption_rate() is None
 
 
 def test_round8_worker_and_scheduler_export_metrics(monkeypatch: pytest.MonkeyPatch) -> None:

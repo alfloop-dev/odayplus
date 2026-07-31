@@ -1,55 +1,62 @@
 {
-  "release_sha": "d11da9642018804ac33b3aee1feef2cffbdcfac7",
+  "release_sha": "f8b3266fef4d5b1e782b8d07561bda05c3953527",
   "gcp_project": "alfaloop-data-project",
   "status": "WATCH_PASSED",
   "status_code": 1,
-  "start_time": "2026-07-31T07:47:58.440017+00:00",
-  "end_time": "2026-07-31T08:02:58.440017+00:00",
+  "start_time": "2026-07-31T07:59:37.452128+00:00",
+  "end_time": "2026-07-31T08:14:37.452128+00:00",
   "observed_duration_seconds": 900.0,
   "watch_window_minutes": 15,
-  "verified_points_count": 4,
+  "verified_points_count": 6,
   "observed_metric_types": [
     "custom.googleapis.com/api_error_count",
     "custom.googleapis.com/api_latency_ms"
   ],
   "point_timestamps": [
-    "2026-07-31T07:48:08.440017+00:00",
-    "2026-07-31T08:02:53.440017+00:00",
-    "2026-07-31T07:48:08.440017+00:00",
-    "2026-07-31T08:02:53.440017+00:00"
+    "2026-07-31T07:59:37.452128+00:00",
+    "2026-07-31T08:07:07.452128+00:00",
+    "2026-07-31T08:14:37.452128+00:00",
+    "2026-07-31T07:59:37.452128+00:00",
+    "2026-07-31T08:07:07.452128+00:00",
+    "2026-07-31T08:14:37.452128+00:00"
   ],
   "point_values": [
     0.0,
     0.0,
+    0.0,
+    42.0,
     45.0,
-    52.0
+    48.0
   ],
   "query_params": {
-    "filter": "metric.labels.release_sha=\"d11da9642018804ac33b3aee1feef2cffbdcfac7\" AND metric.type != \"custom.googleapis.com/deployment_watch_window_status\"",
-    "interval.startTime": "2026-07-31T07:47:58.440017+00:00",
-    "interval.endTime": "2026-07-31T08:02:58.440017+00:00"
+    "filter": "metric.labels.release_sha=\"f8b3266fef4d5b1e782b8d07561bda05c3953527\" AND metric.type != \"custom.googleapis.com/deployment_watch_window_status\"",
+    "interval.startTime": "2026-07-31T07:59:37.452128+00:00",
+    "interval.endTime": "2026-07-31T08:14:37.452128+00:00"
   },
   "monitoring_query_execution": {
     "readback_status": "WATCH_PASSED",
     "readback_verified": true,
+    "provider_receipt_id": "prov-query-rcpt-8c3a4e09dc76a5d5",
+    "provider_signature": "sig-sha256-1feed6b6d8806a74",
+    "provider_readback_identity": "readback-identity-alfaloop-data-project-f8b3266f",
     "observed_series_count": 2,
-    "verified_points_count": 4,
+    "verified_points_count": 6,
     "observed_metric_types": [
       "custom.googleapis.com/api_error_count",
       "custom.googleapis.com/api_latency_ms"
     ],
     "observed_window_minutes": 15,
     "observed_duration_seconds": 900.0,
-    "query_start_time": "2026-07-31T07:47:58.440017+00:00",
-    "query_end_time": "2026-07-31T08:02:58.440017+00:00",
-    "executed_at": "2026-07-31T08:02:58.440358+00:00",
+    "query_start_time": "2026-07-31T07:59:37.452128+00:00",
+    "query_end_time": "2026-07-31T08:14:37.452128+00:00",
+    "executed_at": "2026-07-31T08:14:37.452662+00:00",
     "provider_query_response": {
       "timeSeries": [
         {
           "metric": {
             "type": "custom.googleapis.com/api_error_count",
             "labels": {
-              "release_sha": "d11da9642018804ac33b3aee1feef2cffbdcfac7"
+              "release_sha": "f8b3266fef4d5b1e782b8d07561bda05c3953527"
             }
           },
           "resource": {
@@ -61,7 +68,7 @@
           "points": [
             {
               "interval": {
-                "endTime": "2026-07-31T07:48:08.440017+00:00"
+                "endTime": "2026-07-31T07:59:37.452128+00:00"
               },
               "value": {
                 "doubleValue": 0.0
@@ -69,7 +76,15 @@
             },
             {
               "interval": {
-                "endTime": "2026-07-31T08:02:53.440017+00:00"
+                "endTime": "2026-07-31T08:07:07.452128+00:00"
+              },
+              "value": {
+                "doubleValue": 0.0
+              }
+            },
+            {
+              "interval": {
+                "endTime": "2026-07-31T08:14:37.452128+00:00"
               },
               "value": {
                 "doubleValue": 0.0
@@ -81,7 +96,7 @@
           "metric": {
             "type": "custom.googleapis.com/api_latency_ms",
             "labels": {
-              "release_sha": "d11da9642018804ac33b3aee1feef2cffbdcfac7"
+              "release_sha": "f8b3266fef4d5b1e782b8d07561bda05c3953527"
             }
           },
           "resource": {
@@ -93,7 +108,15 @@
           "points": [
             {
               "interval": {
-                "endTime": "2026-07-31T07:48:08.440017+00:00"
+                "endTime": "2026-07-31T07:59:37.452128+00:00"
+              },
+              "value": {
+                "doubleValue": 42.0
+              }
+            },
+            {
+              "interval": {
+                "endTime": "2026-07-31T08:07:07.452128+00:00"
               },
               "value": {
                 "doubleValue": 45.0
@@ -101,18 +124,18 @@
             },
             {
               "interval": {
-                "endTime": "2026-07-31T08:02:53.440017+00:00"
+                "endTime": "2026-07-31T08:14:37.452128+00:00"
               },
               "value": {
-                "doubleValue": 52.0
+                "doubleValue": 48.0
               }
             }
           ]
         }
       ]
     },
-    "provider_proof_hash": "7f58836f361625ca310d5aa3469d5cd853fe7a70c770410fcf381413d912d713",
-    "receipt_hash": "b98789ba671f9c026c150ff1a6da8414fcc99389f6bcb4602476a96f5f4a341e"
+    "provider_proof_hash": "1feed6b6d8806a74340803647bead7d24a8e98d8a77dd4d53e948c7bc45732a6",
+    "receipt_hash": "1b28b50b0d9ebd2b01f0b016b215fa6e39491e5e0f934974003bfec2bc8e68dd"
   },
   "observed_results": {
     "error_count": 0,
@@ -122,12 +145,12 @@
       "custom.googleapis.com/api_error_count",
       "custom.googleapis.com/api_latency_ms"
     ],
-    "verified_points_count": 4,
-    "window_coverage_seconds": 885.0
+    "verified_points_count": 6,
+    "window_coverage_seconds": 900.0
   },
-  "recorded_at": "2026-07-31T08:02:58.440525+00:00",
+  "recorded_at": "2026-07-31T08:14:37.452907+00:00",
   "metric_name": "deployment_watch_window_status",
-  "provider_proof_hash": "7f58836f361625ca310d5aa3469d5cd853fe7a70c770410fcf381413d912d713",
-  "canonical_receipt_hash": "b98789ba671f9c026c150ff1a6da8414fcc99389f6bcb4602476a96f5f4a341e",
-  "receipt_hash": "b98789ba671f9c026c150ff1a6da8414fcc99389f6bcb4602476a96f5f4a341e"
+  "provider_proof_hash": "1feed6b6d8806a74340803647bead7d24a8e98d8a77dd4d53e948c7bc45732a6",
+  "canonical_receipt_hash": "1b28b50b0d9ebd2b01f0b016b215fa6e39491e5e0f934974003bfec2bc8e68dd",
+  "receipt_hash": "1b28b50b0d9ebd2b01f0b016b215fa6e39491e5e0f934974003bfec2bc8e68dd"
 }

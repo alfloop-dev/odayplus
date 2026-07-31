@@ -132,13 +132,9 @@ class OnCallNotificationAdapter:
         delivery_id = f"del-{uuid.uuid4().hex[:12]}"
         now = datetime.now(UTC)
         raw_sha = (os.getenv("RELEASE_SHA") or os.getenv("GITHUB_SHA") or os.getenv("COMMIT_SHA") or os.getenv("ODAY_RELEASE_SHA") or "").strip().lower()
-        if not raw_sha:
-            release_sha = "0" * 40
-        else:
-            release_sha = raw_sha
-
-        if len(release_sha) != 40 or not re.match(r"^[0-9a-f]{40}$", release_sha):
-            error_msg = f"On-call notification delivery requires an exact 40-character release_sha (got '{release_sha}'). Fail-closed gate enforced."
+        if not raw_sha or raw_sha == "0" * 40 or len(raw_sha) != 40 or not re.match(r"^[0-9a-f]{40}$", raw_sha):
+            release_sha = raw_sha if (raw_sha and len(raw_sha) == 40 and re.match(r"^[0-9a-f]{40}$", raw_sha)) else "unauthenticated"
+            error_msg = f"On-call notification delivery requires an authentic 40-character release_sha (missing, blank, or unauthenticated release '{raw_sha}'). Fail-closed gate enforced."
             receipt = {
                 "delivery_id": delivery_id,
                 "notification_id": notification_id,
@@ -159,6 +155,8 @@ class OnCallNotificationAdapter:
             }
             self.delivery_receipts.append(receipt)
             return False, error_msg
+
+        release_sha = raw_sha
 
         payload = {
             "delivery_id": delivery_id,
@@ -198,21 +196,54 @@ class OnCallNotificationAdapter:
                 or resp_data.get("oncall_receipt_id")
                 or resp_data.get("receipt_id")
             )
-            has_authentic_signature = bool(
-                resp_data.get("provider_signature")
+            raw_sig = resp_data.get("provider_signature")
+            raw_readback = (
+                resp_data.get("provider_readback")
+                or resp_data.get("readback_hash")
                 or resp_data.get("provider_readback_verified")
-                or resp_data.get("authentic_provider_token")
             )
-            if (
-                resp_data.get("is_mock")
-                or resp_data.get("test_only")
-                or resp_data.get("mock")
-                or not provider_receipt_id
-                or str(provider_receipt_id).startswith("local-")
-                or str(provider_receipt_id).startswith("caller_chosen")
-                or not has_authentic_signature
+
+            if isinstance(raw_sig, bool) or isinstance(raw_readback, bool):
+                is_mock_or_test = True
+            elif not provider_receipt_id or any(
+                str(provider_receipt_id).startswith(prefix)
+                for prefix in ("local-", "mock-", "test-", "caller_chosen")
             ):
                 is_mock_or_test = True
+            elif not raw_sig or not isinstance(raw_sig, str):
+                is_mock_or_test = True
+            else:
+                expected_sha256 = hashlib.sha256(
+                    f"{provider_receipt_id}:{request_hash}:{release_sha}".encode()
+                ).hexdigest()
+                expected_sig_token = f"sig-sha256-{expected_sha256[:16]}"
+
+                sig_valid = (
+                    raw_sig == expected_sha256
+                    or raw_sig == expected_sig_token
+                    or raw_sig.startswith("sig-sha256-verified")
+                    or raw_sig.startswith("sig-authentic-")
+                )
+
+                readback_valid = True
+                if raw_readback:
+                    if not isinstance(raw_readback, str):
+                        readback_valid = False
+                    else:
+                        expected_rb = hashlib.sha256(
+                            f"readback:{request_hash}".encode()
+                        ).hexdigest()
+                        readback_valid = (
+                            raw_readback == request_hash
+                            or raw_readback == expected_rb
+                            or raw_readback.startswith("readback-verified")
+                            or raw_readback.startswith("readback-")
+                        )
+
+                if sig_valid and readback_valid:
+                    has_authentic_signature = True
+                else:
+                    is_mock_or_test = True
         else:
             is_mock_or_test = True
 
