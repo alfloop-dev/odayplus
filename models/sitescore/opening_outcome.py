@@ -503,39 +503,24 @@ def build_sitescore_opening_outcome_model_card(
     benchmark: SiteScoreOpeningOutcomeBenchmarkResult,
     *,
     version: str = "candidate-site-view-v2",
+    validation_run_id: str | None = None,
+    feature_set_id: str | None = None,
+    label_set_id: str | None = None,
+    training_period: str | None = None,
+    validation_period: str | None = None,
+    algorithm: str | None = None,
+    baseline: str | None = None,
+    explainability_method: str | None = None,
+    privacy_review: str | None = None,
+    security_review: str | None = None,
+    approvals: Sequence[ModelCardApproval] | None = None,
 ) -> ModelCard:
     """Build a canonical ModelCard carrying SiteScore opening outcome benchmark calibration results."""
     is_passed = benchmark.is_gate2_passed
 
-    dataset_snapshot_id = benchmark.dataset_snapshot_id if is_passed else (benchmark.dataset_snapshot_id or "UNAVAILABLE")
-    model_version = (benchmark.model_version or version) if is_passed else (benchmark.model_version or "UNVERIFIED")
-    validation_run_id = (
-        f"val_sitescore_{int(datetime.now(UTC).timestamp())}"
-        if is_passed
-        else (benchmark.artifact_lineage_id or "UNVERIFIED")
-    )
-
-    feature_set_id = "fs_sitescore_opened_store_pit_v2" if is_passed else "UNVERIFIED"
-    label_set_id = "ls_sitescore_realized_90d_revenue_v1" if is_passed else "UNVERIFIED"
-    training_period = "2025-01-01 to 2026-07-01" if is_passed else "UNAVAILABLE"
-    validation_period = "2026-07-01 to 2026-07-30" if is_passed else "UNAVAILABLE"
-    algorithm = "catboost_regressor" if is_passed else "UNAVAILABLE"
-    baseline = "cell_prior_90d_mean" if is_passed else "UNAVAILABLE"
-    explainability_method = "shap_values" if is_passed else "UNAVAILABLE"
-    privacy_review = "PASSED" if is_passed else "UNVERIFIED"
-    security_review = "PASSED" if is_passed else "UNVERIFIED"
-
-    approvals = (
-        [
-            ModelCardApproval(
-                approver="sitescore-platform-team",
-                role="platform_lead",
-                decision="approved",
-            )
-        ]
-        if is_passed
-        else []
-    )
+    dataset_snapshot_id = benchmark.dataset_snapshot_id or "UNAVAILABLE"
+    model_version = benchmark.model_version or (version if version != "candidate-site-view-v2" else "UNVERIFIED")
+    resolved_val_id = validation_run_id or benchmark.artifact_lineage_id or "UNVERIFIED"
 
     return ModelCard(
         model_name="sitescore_propensity",
@@ -545,13 +530,13 @@ def build_sitescore_opening_outcome_model_card(
         intended_use="Human-reviewed candidate site opening revenue & propensity prioritization",
         not_intended_use="Automatic site lease execution, store opening without human approval",
         dataset_snapshot_id=dataset_snapshot_id,
-        validation_run_id=validation_run_id,
-        feature_set_id=feature_set_id,
-        label_set_id=label_set_id,
-        training_period=training_period,
-        validation_period=validation_period,
-        algorithm=algorithm,
-        baseline=baseline,
+        validation_run_id=resolved_val_id,
+        feature_set_id=feature_set_id or "UNVERIFIED",
+        label_set_id=label_set_id or "UNVERIFIED",
+        training_period=training_period or "UNAVAILABLE",
+        validation_period=validation_period or "UNAVAILABLE",
+        algorithm=algorithm or "UNAVAILABLE",
+        baseline=baseline or "UNAVAILABLE",
         metrics_summary={
             "mature_label_count": float(benchmark.mature_label_count),
             "m6_coverage_ratio": float(benchmark.m6_coverage_ratio),
@@ -563,7 +548,7 @@ def build_sitescore_opening_outcome_model_card(
         },
         segment_metrics=benchmark.segment_metrics,
         calibration_summary=benchmark.calibration_summary,
-        explainability_method=explainability_method,
+        explainability_method=explainability_method or "UNAVAILABLE",
         limitations=[
             "Requires at least 200 mature opening outcome labels with complete M6/M12 post-opening transactions.",
             "Governed-disabled when label count, M6/M12 window coverage, or interval bound coverage thresholds fail.",
@@ -571,14 +556,14 @@ def build_sitescore_opening_outcome_model_card(
         known_biases=[
             "Historical opening outcomes reflect store format expansion patterns.",
         ],
-        privacy_review=privacy_review,
-        security_review=security_review,
+        privacy_review=privacy_review or "UNVERIFIED",
+        security_review=security_review or "UNVERIFIED",
         release_status="DEV" if is_passed else "GOVERNED_DISABLED",
         rollback_conditions=[
             "Normalized MAE > 0.25 on 30-day rolling window",
             "M6 or M12 window coverage ratio drops below 70%",
         ],
-        approvals=approvals,
+        approvals=tuple(approvals) if approvals is not None else (),
     )
 
 
