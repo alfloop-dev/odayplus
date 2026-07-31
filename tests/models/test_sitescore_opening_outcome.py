@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import math
+from typing import Any
 
 from models.shared_ml.model_card import ModelCard
 from models.sitescore.opening_outcome import (
@@ -1220,3 +1221,125 @@ def test_sitescore_verifier_rejects_synthetic_horizon_calibration_fields_b3():
     res_2 = verify_sitescore_gate2_receipt(m2, model_card_artifact=model_card)
     assert res_2.is_valid is False
     assert any("Forbidden or unsupported synthetic horizon calibration field" in e for e in res_2.errors)
+
+
+def _rebind_receipt_hashes(receipt: dict[str, Any], mc_dict: dict[str, Any]) -> dict[str, Any]:
+    from models.sitescore.opening_outcome import (
+        compute_gate2_receipt_sha256,
+        compute_handback_sha256,
+        compute_model_card_sha256,
+    )
+    r = json.loads(json.dumps(receipt))
+    hb_hash = compute_handback_sha256(r["handback"])
+    mc_hash = compute_model_card_sha256(mc_dict)
+    r["artifact_hashes"] = {
+        "handback_hash": hb_hash,
+        "model_card_hash": mc_hash,
+    }
+    r["integrity"] = {
+        "content_sha256": "",
+        "handback_hash": hb_hash,
+        "model_card_hash": mc_hash,
+    }
+    r["integrity"]["content_sha256"] = compute_gate2_receipt_sha256(r)
+    return r
+
+
+def test_sitescore_verifier_rejects_rebound_model_card_governance_and_metrics_drift_b1():
+    # Codex6 B1 re-review test: hash-bound model card cannot invent validation_run_id or drift metrics/calibration
+    result = run_benchmark_from_inventory(db_url=None, records=None)
+    model_card = build_sitescore_opening_outcome_model_card(result)
+    receipt = build_sitescore_gate2_receipt(result, model_card=model_card)
+
+    # 1. Invented validation_run_id with rebound hashes
+    mc1 = json.loads(json.dumps(model_card.to_dict()))
+    mc1["validation_run_id"] = "invented-run"
+    r1 = _rebind_receipt_hashes(receipt, mc1)
+    res1 = verify_sitescore_gate2_receipt(r1, model_card_artifact=mc1)
+    assert res1.is_valid is False
+    assert any("validation_run_id must be 'UNVERIFIED'" in e for e in res1.errors)
+
+    # 2. Drifting mature_label_count and normalized_mae in model_card.metrics_summary
+    mc2 = json.loads(json.dumps(model_card.to_dict()))
+    mc2["metrics_summary"]["mature_label_count"] = 999.0
+    mc2["metrics_summary"]["normalized_mae"] = 0.123
+    r2 = _rebind_receipt_hashes(receipt, mc2)
+    res2 = verify_sitescore_gate2_receipt(r2, model_card_artifact=mc2)
+    assert res2.is_valid is False
+    assert any("drifts from summary" in e for e in res2.errors)
+
+    # 3. Drifting calibration_summary in model_card
+    mc3 = json.loads(json.dumps(model_card.to_dict()))
+    mc3["calibration_summary"] = {"measured_90d_mae": 777.0}
+    r3 = _rebind_receipt_hashes(receipt, mc3)
+    res3 = verify_sitescore_gate2_receipt(r3, model_card_artifact=mc3)
+    assert res3.is_valid is False
+    assert any("model_card.calibration_summary drifts from summary.calibration_summary" in e for e in res3.errors)
+
+
+def test_sitescore_verifier_rejects_rebound_no_handback_required_and_payload_drift_b2():
+    # Codex6 B2 re-review test: self-consistent false booleans and payload drift are rejected
+    result = run_benchmark_from_inventory(db_url=None, records=None)
+    model_card = build_sitescore_opening_outcome_model_card(result)
+    receipt = build_sitescore_gate2_receipt(result, model_card=model_card)
+
+    # 1. Self-consistent mutation setting all receipt-required booleans to False in both handback copies
+    mc_dict = model_card.to_dict()
+    r1 = json.loads(json.dumps(receipt))
+    for hb_copy in [r1["handback"], r1["benchmark_summary"]["handback_payload"]]:
+        hb_copy["handback_required"] = False
+        hb_copy["backfill_receipt_required"] = False
+        hb_copy["outcome_backfill_contract"]["receipt_required"] = False
+        hb_copy["prediction_source_contract"]["receipt_required"] = False
+    r1_rebound = _rebind_receipt_hashes(r1, mc_dict)
+    res1 = verify_sitescore_gate2_receipt(r1_rebound, model_card_artifact=mc_dict)
+    assert res1.is_valid is False
+    assert any("handback.handback_required to be True" in e for e in res1.errors)
+
+    # 2. Deleting contracts only from benchmark_summary.handback_payload
+    r2 = json.loads(json.dumps(receipt))
+    del r2["benchmark_summary"]["handback_payload"]["outcome_backfill_contract"]
+    del r2["benchmark_summary"]["handback_payload"]["prediction_source_contract"]
+    r2_rebound = _rebind_receipt_hashes(r2, mc_dict)
+    res2 = verify_sitescore_gate2_receipt(r2_rebound, model_card_artifact=mc_dict)
+    assert res2.is_valid is False
+    assert any("benchmark_summary.handback_payload drifts from handback" in e for e in res2.errors)
+
+    # 3. Changing handback_action only in benchmark_summary.handback_payload
+    r3 = json.loads(json.dumps(receipt))
+    r3["benchmark_summary"]["handback_payload"]["handback_action"] = "forged action"
+    r3_rebound = _rebind_receipt_hashes(r3, mc_dict)
+    res3 = verify_sitescore_gate2_receipt(r3_rebound, model_card_artifact=mc_dict)
+    assert res3.is_valid is False
+    assert any("benchmark_summary.handback_payload drifts from handback" in e for e in res3.errors)
+
+
+def test_sitescore_verifier_rejects_rebound_synthetic_segment_metrics_b3():
+    # Codex6 B3 re-review test: synthetic horizon metric in segment_metrics is rejected across all surfaces
+    recs = [
+        {
+            "entity_id": f"e_{i}",
+            "store_id": f"s_{i}",
+            "target_format_code": "CONVENIENCE",
+            "opened_on": "2024-01-01",
+            "is_training_eligible": True,
+            "realized_90d_net_revenue": 100000.0,
+            "store_age_days": 200,
+            "predicted_revenue": 105000.0,
+            "p10": 80000.0,
+            "p90": 120000.0,
+        }
+        for i in range(10)
+    ]
+    res_bench = evaluate_sitescore_opening_outcome_benchmark(recs, provenance="authenticated_governed_records")
+    mc = build_sitescore_opening_outcome_model_card(res_bench)
+    rec = build_sitescore_gate2_receipt(res_bench, model_card=mc)
+    mc_dict = mc.to_dict()
+
+    r1 = json.loads(json.dumps(rec))
+    r1["benchmark_summary"]["segment_metrics"][0]["metrics"]["m6_interval_mae"] = 1234.5
+    r1["handback"]["segment_metrics"] = r1["benchmark_summary"]["segment_metrics"]
+    r1_rebound = _rebind_receipt_hashes(r1, mc_dict)
+    res1 = verify_sitescore_gate2_receipt(r1_rebound, model_card_artifact=mc_dict)
+    assert res1.is_valid is False
+    assert any("Forbidden or unsupported synthetic horizon calibration field" in e or "Forbidden or unsupported metric field" in e for e in res1.errors)

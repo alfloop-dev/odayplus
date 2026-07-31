@@ -908,6 +908,12 @@ def verify_sitescore_gate2_receipt(
             mc_rel = mc_dict.get("release_status")
             if mc_rel != "GOVERNED_DISABLED":
                 errors.append(f"Governed-disabled receipt requires model_card_artifact release_status to be 'GOVERNED_DISABLED' (got {mc_rel!r})")
+            if mc_dict.get("validation_run_id") != "UNVERIFIED":
+                errors.append(f"Governed-disabled model card validation_run_id must be 'UNVERIFIED' (got {mc_dict.get('validation_run_id')!r})")
+            if mc_dict.get("dataset_snapshot_id") != "UNAVAILABLE":
+                errors.append(f"Governed-disabled model card dataset_snapshot_id must be 'UNAVAILABLE' (got {mc_dict.get('dataset_snapshot_id')!r})")
+            if mc_dict.get("model_version") != "UNVERIFIED":
+                errors.append(f"Governed-disabled model card model_version must be 'UNVERIFIED' (got {mc_dict.get('model_version')!r})")
             if mc_dict.get("privacy_review") != "UNVERIFIED":
                 errors.append(f"Governed-disabled model card privacy_review must be 'UNVERIFIED' (got {mc_dict.get('privacy_review')!r})")
             if mc_dict.get("security_review") != "UNVERIFIED":
@@ -929,6 +935,22 @@ def verify_sitescore_gate2_receipt(
                 errors.append(f"Governed-disabled model card baseline must be 'UNAVAILABLE' (got {mc_dict.get('baseline')!r})")
             if mc_dict.get("explainability_method") != "UNAVAILABLE":
                 errors.append(f"Governed-disabled model card explainability_method must be 'UNAVAILABLE' (got {mc_dict.get('explainability_method')!r})")
+
+        # B1: Reconcile model card metrics, calibration, and segment metrics against benchmark summary
+        if mc_dict is not None:
+            mc_metrics = mc_dict.get("metrics_summary")
+            if not isinstance(mc_metrics, dict):
+                errors.append("model_card.metrics_summary must be a dictionary")
+            else:
+                for k in ["mature_label_count", "matched_prediction_count", "m6_coverage_ratio", "m12_coverage_ratio", "prediction_coverage_ratio", "interval_bounds_coverage_ratio", "normalized_mae", "p80_coverage"]:
+                    if k in mc_metrics and k in summary:
+                        if float(mc_metrics[k]) != float(summary[k]):
+                            errors.append(f"model_card.metrics_summary.{k} ({mc_metrics[k]}) drifts from summary.{k} ({summary[k]})")
+
+            if mc_dict.get("calibration_summary") != summary.get("calibration_summary"):
+                errors.append("model_card.calibration_summary drifts from summary.calibration_summary")
+            if mc_dict.get("segment_metrics") != summary.get("segment_metrics"):
+                errors.append("model_card.segment_metrics drifts from summary.segment_metrics")
 
         # Range checks for ratios and MAE
         for r_val, r_name in [
@@ -1062,10 +1084,21 @@ def verify_sitescore_gate2_receipt(
         if hb_mae != norm_mae:
             errors.append(f"handback.normalized_mae ({hb_mae}) drifts from summary.normalized_mae ({norm_mae})")
 
-        # Check handback_in_summary equality with handback
-        for k in ["observed_count", "eligible_count", "mature_label_count", "matched_prediction_count", "m6_mature_count", "m12_mature_count", "interval_bounds_count", "in_p80_count", "m6_coverage_ratio", "m12_coverage_ratio", "prediction_coverage_ratio", "interval_bounds_coverage_ratio", "p80_coverage", "normalized_mae", "governed_disabled", "reason_code"]:
-            if handback.get(k) != handback_in_summary.get(k):
-                errors.append(f"benchmark_summary.handback_payload.{k} ({handback_in_summary.get(k)}) drifts from handback.{k} ({handback.get(k)})")
+        # B2: Complete deep equality check between top-level handback and benchmark_summary.handback_payload
+        if handback != handback_in_summary:
+            errors.append("benchmark_summary.handback_payload drifts from handback")
+            for k in sorted(set(handback.keys()) | set(handback_in_summary.keys())):
+                if handback.get(k) != handback_in_summary.get(k):
+                    errors.append(f"benchmark_summary.handback_payload.{k} ({handback_in_summary.get(k)}) drifts from handback.{k} ({handback.get(k)})")
+
+        # B2: Validate strict True for all handback/receipt-required booleans in governed-disabled state
+        if is_rec_disabled:
+            if handback.get("handback_required") is not True:
+                errors.append(f"Governed-disabled receipt requires handback.handback_required to be True (got {handback.get('handback_required')!r})")
+            if handback.get("governed_disabled") is not True:
+                errors.append(f"Governed-disabled receipt requires handback.governed_disabled to be True (got {handback.get('governed_disabled')!r})")
+            if handback.get("backfill_receipt_required") is not True:
+                errors.append(f"Governed-disabled receipt requires handback.backfill_receipt_required to be True (got {handback.get('backfill_receipt_required')!r})")
 
         # B2: Required Human/Ops and prediction handoff contract checks
         hb_action = handback.get("handback_action")
@@ -1085,6 +1118,8 @@ def verify_sitescore_gate2_receipt(
         if not isinstance(bc, dict):
             errors.append("handback.outcome_backfill_contract must be a dictionary")
         else:
+            if is_rec_disabled and bc.get("receipt_required") is not True:
+                errors.append(f"Governed-disabled receipt requires outcome_backfill_contract.receipt_required to be True (got {bc.get('receipt_required')!r})")
             if bc.get("task_id") != "ODP-PLAN-SITESCORE-OUTCOME-BACKFILL-001":
                 errors.append(f"outcome_backfill_contract.task_id must be 'ODP-PLAN-SITESCORE-OUTCOME-BACKFILL-001' (got {bc.get('task_id')!r})")
             if bc.get("owner") != "Human/Ops":
@@ -1124,6 +1159,8 @@ def verify_sitescore_gate2_receipt(
         if not isinstance(psc, dict):
             errors.append("handback.prediction_source_contract must be a dictionary")
         else:
+            if is_rec_disabled and psc.get("receipt_required") is not True:
+                errors.append(f"Governed-disabled receipt requires prediction_source_contract.receipt_required to be True (got {psc.get('receipt_required')!r})")
             if psc.get("task_id") != "ODP-PLAN-SITESCORE-PREDICTION-SOURCE-001":
                 errors.append(f"prediction_source_contract.task_id must be 'ODP-PLAN-SITESCORE-PREDICTION-SOURCE-001' (got {psc.get('task_id')!r})")
             if psc.get("owner") != "SiteScore Platform Team":
@@ -1133,7 +1170,26 @@ def verify_sitescore_gate2_receipt(
             if not isinstance(psc_req, (list, tuple)) or not req_psc_fields.issubset(set(psc_req if isinstance(psc_req, (list, tuple)) else [])):
                 errors.append(f"prediction_source_contract.required_fields must contain all required fields (missing: {req_psc_fields - set(psc_req if isinstance(psc_req, (list, tuple)) else [])})")
 
-        # B3: Reject unsupported synthetic horizon calibration fields
+        # B3: Universal scan for forbidden synthetic horizon calibration fields across all structures
+        FORBIDDEN_HORIZON_KEYS = {
+            "m1_interval_mae", "m3_interval_mae", "m6_interval_mae", "m12_interval_mae",
+            "m1_mae", "m3_mae", "m6_mae", "m12_mae"
+        }
+        def _scan_forbidden_horizon_keys(obj: Any, path: str) -> None:
+            if isinstance(obj, dict):
+                for k, v in obj.items():
+                    if k in FORBIDDEN_HORIZON_KEYS or (isinstance(k, str) and re.search(r"^m\d+_(?:interval_)?mae$", k)):
+                        errors.append(f"Forbidden or unsupported synthetic horizon calibration field at {path}.{k}: {k!r}")
+                    _scan_forbidden_horizon_keys(v, f"{path}.{k}")
+            elif isinstance(obj, (list, tuple)):
+                for idx, item in enumerate(obj):
+                    _scan_forbidden_horizon_keys(item, f"{path}[{idx}]")
+
+        _scan_forbidden_horizon_keys(receipt, "receipt")
+        if mc_dict is not None:
+            _scan_forbidden_horizon_keys(mc_dict, "model_card")
+
+        FORBIDDEN_CALIBRATION_KEYS = FORBIDDEN_HORIZON_KEYS
         ALLOWED_CALIBRATION_KEYS = {
             "measured_90d_mae",
             "matched_prediction_count",
@@ -1143,15 +1199,6 @@ def verify_sitescore_gate2_receipt(
             "p80_coverage_ratio",
             "mean_realized_revenue",
         }
-        FORBIDDEN_CALIBRATION_KEYS = {
-            "m1_interval_mae",
-            "m3_interval_mae",
-            "m6_interval_mae",
-            "m1_mae",
-            "m3_mae",
-            "m6_mae",
-        }
-
         def _check_calibration_summary(cal_dict: Any, location_name: str) -> None:
             if isinstance(cal_dict, dict):
                 for k in cal_dict.keys():
@@ -1163,6 +1210,23 @@ def verify_sitescore_gate2_receipt(
         _check_calibration_summary(handback_in_summary.get("calibration_summary"), "handback_payload.calibration_summary")
         if mc_dict is not None:
             _check_calibration_summary(mc_dict.get("calibration_summary"), "model_card.calibration_summary")
+
+        ALLOWED_SEGMENT_METRIC_KEYS = {"mae", "m6_coverage", "m12_coverage", "prediction_coverage"}
+        def _validate_segment_metrics(seg_list: Any, location_name: str) -> None:
+            if isinstance(seg_list, (list, tuple)):
+                for idx, seg in enumerate(seg_list):
+                    if isinstance(seg, dict):
+                        metrics = seg.get("metrics")
+                        if isinstance(metrics, dict):
+                            for k in metrics.keys():
+                                if k not in ALLOWED_SEGMENT_METRIC_KEYS:
+                                    errors.append(f"Forbidden or unsupported metric field in {location_name}[{idx}].metrics: {k!r}")
+
+        _validate_segment_metrics(summary.get("segment_metrics"), "summary.segment_metrics")
+        _validate_segment_metrics(handback.get("segment_metrics"), "handback.segment_metrics")
+        _validate_segment_metrics(handback_in_summary.get("segment_metrics"), "handback_payload.segment_metrics")
+        if mc_dict is not None:
+            _validate_segment_metrics(mc_dict.get("segment_metrics"), "model_card.segment_metrics")
 
         # Check artifact_hashes dictionary & hashes
         art_hashes = receipt.get("artifact_hashes")

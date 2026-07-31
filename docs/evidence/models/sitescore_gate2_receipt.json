@@ -1,7 +1,7 @@
 {
   "artifact_hashes": {
     "handback_hash": "c01a3e922e80453981fdbeaaa8c55b73c1df82a9101372a9199ba4c16ef16e1a",
-    "model_card_hash": "48762c90c2efb62b041921dc4661d074ef3f05293302f4fc4c61aae9b847c2c8"
+    "model_card_hash": "874ee51404f1e644270ac24f9578ff995cd6aed1e600f3b4cee8f167a7f98ee0"
   },
   "benchmark_summary": {
     "activation_threshold": 200,
@@ -235,15 +235,15 @@
     ]
   },
   "integrity": {
-    "content_sha256": "e73d0f21877765732db7da8fe255fa9a4f8e501568c5708764d8f6cf5f262f46",
+    "content_sha256": "b7d474c34f38de6b1aa53899344a1fca1f3ceed613acbf8ae406e39cbfe10a62",
     "handback_hash": "c01a3e922e80453981fdbeaaa8c55b73c1df82a9101372a9199ba4c16ef16e1a",
-    "model_card_hash": "48762c90c2efb62b041921dc4661d074ef3f05293302f4fc4c61aae9b847c2c8"
+    "model_card_hash": "874ee51404f1e644270ac24f9578ff995cd6aed1e600f3b4cee8f167a7f98ee0"
   },
   "inventory_version": "candidate-site-view-v2",
   "is_governed_disabled": true,
   "kind": "sitescore-opening-outcome-gate2-receipt",
   "model_name": "sitescore_propensity",
-  "observed_at": "2026-07-31T10:45:31.339763Z",
+  "observed_at": "2026-07-31T12:08:05.944330Z",
   "provenance": "no_source",
   "schema_version": 1,
   "service": "sitescore",
