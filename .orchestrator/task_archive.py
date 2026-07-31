@@ -14,7 +14,11 @@ ROOT = Path(__file__).resolve().parents[1]
 
 
 def status_root() -> Path:
-    raw = str(os.environ.get("PANTHEON_STATUS_ROOT") or "").strip()
+    raw = str(
+        os.environ.get("ORCH_STATUS_ROOT")
+        or os.environ.get("PANTHEON_STATUS_ROOT")
+        or ""
+    ).strip()
     if not raw:
         return ROOT
     return Path(os.path.expanduser(raw)).resolve()
