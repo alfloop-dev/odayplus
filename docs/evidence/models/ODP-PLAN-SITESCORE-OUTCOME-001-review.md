@@ -895,3 +895,94 @@ receipt internally inconsistent and still permits self-consistent negative popul
 counts; B2 proves the committed model-card binding is already false and the verifier accepts
 artifact-hash drift. Re-audit the complete acceptance batch after remediation. No owner
 implementation content was changed by this review.
+
+---
+
+# Codex6 Re-review Addendum — 2026-07-31, exact owner head `edc8a060`
+
+The supervisor re-dispatched this task to the assigned reviewer after the owner reported
+B1-B2 remediation at exact pushed head
+`edc8a060a9da8bacafe917f140b26a7d3130bb47`. The local and remote task branches both
+pointed at that SHA, and the worktree contained no uncommitted owner implementation diff.
+
+## Verification at the exact owner head
+
+```bash
+pytest -q tests -k "sitescore or opening_outcome or model_ready"
+pytest tests -k "(sitescore or opening_outcome or model_ready) and not great_expectations_gate" -o addopts='' -q
+pytest -q tests/models -k "sitescore or opening_outcome"
+ruff check scripts/models models tests/models
+git diff --check
+```
+
+- The task-scoped selector passed: **39 passed**.
+- The focused selector excluding the known missing optional dependency passed: **80 passed,
+  3 skipped**. The unfiltered command had one failure in
+  `tests/data/test_great_expectations_gate.py` because `great_expectations` is not installed;
+  this file is outside the task diff and is the same environment-only failure recorded in
+  the prior review.
+- Ruff and both worktree/task-diff whitespace checks were clean.
+- The previous B1 population bug is fixed: non-empty records now retain all four new
+  numerator counts, negative counts and invalid subset hierarchies are rejected, and a
+  freshly built non-empty receipt verifies.
+- The committed model-card digest independently recomputes to the value declared in both
+  receipt hash locations, and the committed receipt verifies when the committed card is
+  explicitly supplied.
+
+The narrow fixes are correct, but the complete fail-closed batch still exposes the
+following independently reproduced blockers. Each mutation below recomputed every public
+handback/model-card/content digest needed to make the forged bundle internally consistent;
+the verifier nevertheless returned `RECEIPT_VALIDATED` with no errors.
+
+## Blocking findings
+
+### B1 — Model-card verification remains optional and checks bytes, not governed semantics
+
+`verify_sitescore_gate2_receipt` accepts `model_card_artifact=None`. Starting from the
+committed receipt, replacing both model-card hash copies with the same arbitrary 64-hex
+value and recomputing `integrity.content_sha256` validated successfully. The receipt
+therefore does not fail closed when the artifact needed to substantiate its declared hash
+is absent.
+
+Supplying an artifact closes only that narrow byte-binding gap. An independent mutation
+changed the committed model card to carry invented feature and label set IDs, training and
+validation periods, algorithm, baseline, passed privacy/security reviews, an attacker
+approval, and `release_status=ACTIVE`. After binding that exact forged artifact into both
+hash locations and recomputing the receipt hash, verification still returned
+`RECEIPT_VALIDATED`. This directly reproduces the task brief's prohibited invented
+governance fields and forged ACTIVE artifact. Require the model-card artifact for receipt
+verification and validate its governed-disabled schema/semantics against the receipt, not
+only its digest.
+
+### B2 — The required Human/Ops handoff can be removed or population-forged
+
+The verifier treats `outcome_backfill_contract` as optional and does not validate
+`prediction_source_contract`, `handback_action`, or the registered task IDs. Removing both
+contracts, the action, and both task IDs from both handback copies, then rebinding the
+handback and receipt hashes, validated successfully. The resulting receipt has no concrete
+Human/Ops or prediction-source handoff even though that handoff is an explicit deliverable.
+
+The partial contract reconciliation also omits `interval_bounds_count` and `in_p80_count`.
+Changing those two counts in both outcome-contract copies to `999` and `-1`, respectively,
+while leaving the authoritative benchmark counts at zero, also validated after hash
+rebinding. Require both contracts and their exact required fields, and reconcile every
+population count carried into the handoff.
+
+### B3 — Synthetic horizon calibration fields can be reintroduced into a valid receipt
+
+The builder correctly removed the prior fixed-multiplier horizon MAEs, but the verifier
+only scans `calibration_summary` for finite floats. Adding self-consistent
+`m1_interval_mae`, `m3_interval_mae`, and `m6_interval_mae` values to the benchmark summary
+and recomputing the content digest returned `RECEIPT_VALIDATED`. This is the exact
+synthetic/fixed-multiplier metric class the task brief requires to fail closed. Enforce an
+explicit calibration schema (or explicitly reject unsupported horizon metric keys) and
+cross-check the same schema in the bound model card.
+
+## Decision
+
+**Changes requested.** Exact owner head `edc8a060` is not approved. The count emission and
+committed-file hash fixes are correct, but B1 still permits a missing or semantically forged
+model card, B2 permits the required handoff and its population evidence to disappear or
+drift, and B3 accepts the prohibited synthetic horizon metrics. Re-audit these findings
+together with the complete acceptance batch before the next handoff. No owner implementation
+content was changed by this review.
