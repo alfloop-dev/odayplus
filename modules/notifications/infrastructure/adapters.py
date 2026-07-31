@@ -55,6 +55,44 @@ PINNED_PLATFORM_DEPLOYMENT_PUBLIC_KEY_PEM = (
     "MCowBQYDK2VwAyEA+w5m8zJ31H/4vG74o3G7yT92k6e71X67Y7X183921Z4=\n"
     "-----END PUBLIC KEY-----\n"
 )
+CANONICAL_PINNED_EXTERNAL_VERIFIER_URL = (
+    "https://oncall-verifier.oday.plus/api/v1/verify_delivery"
+)
+PINNED_EXTERNAL_VERIFIER_PUBLIC_KEY_PEM = (
+    "-----BEGIN PUBLIC KEY-----\n"
+    "MCowBQYDK2VwAyEA9Z3K8vN31H/4vG74o3G7yT92k6e71X67Y7X183921Z0=\n"
+    "-----END PUBLIC KEY-----\n"
+)
+
+
+def _is_valid_external_verifier_url(url_str: str) -> bool:
+    if not url_str or not isinstance(url_str, str):
+        return False
+    try:
+        import urllib.parse
+        parsed = urllib.parse.urlparse(url_str.strip())
+        if parsed.scheme != "https":
+            return False
+        if parsed.username or parsed.password or parsed.query or parsed.fragment:
+            return False
+        hostname = (parsed.hostname or "").lower()
+        if not hostname:
+            return False
+        if hostname in {"localhost", "127.0.0.1", "::1", "0.0.0.0"} or hostname.endswith(".local"):
+            return False
+        import ipaddress
+        try:
+            ip = ipaddress.ip_address(hostname)
+            if ip.is_loopback or ip.is_private or ip.is_link_local or ip.is_unspecified or ip.is_multicast:
+                return False
+        except ValueError:
+            pass
+        canonical_parsed = urllib.parse.urlparse(CANONICAL_PINNED_EXTERNAL_VERIFIER_URL)
+        if parsed.netloc != canonical_parsed.netloc or parsed.path != canonical_parsed.path:
+            return False
+        return True
+    except Exception:
+        return False
 
 
 def _verify_external_oncall_delivery(
@@ -63,33 +101,131 @@ def _verify_external_oncall_delivery(
     provider_receipt_id: str,
     request_hash: str,
     release_sha: str,
+    provider_secret: str,
+    raw_http_transport: Any = None,
+    current_http_transport: Any = None,
 ) -> bool:
     """Queries an external protected verifier authority out-of-process.
 
     Production DELIVERED status requires confirmation by an external verifier authority
     whose trust roots and transport are outside ordinary in-process caller control.
     """
+    import base64
+    import hashlib
+    import hmac
     import json
+    import urllib.error
     import urllib.request
+    import uuid
+
+    if raw_http_transport is not None:
+        return False
+    if current_http_transport is not None and current_http_transport != OnCallNotificationAdapter._default_http_transport:
+        return False
+
+    if not _is_valid_external_verifier_url(verifier_url):
+        return False
+
+    if not provider_receipt_id or not provider_secret:
+        return False
+
+    class NoRedirectionHandler(urllib.request.HTTPRedirectHandler):
+        def http_error_301(self, req, fp, code, msg, headers):
+            raise urllib.error.HTTPError(req.full_url, code, "Redirects forbidden", headers, fp)
+
+        def http_error_302(self, req, fp, code, msg, headers):
+            raise urllib.error.HTTPError(req.full_url, code, "Redirects forbidden", headers, fp)
+
+        def http_error_303(self, req, fp, code, msg, headers):
+            raise urllib.error.HTTPError(req.full_url, code, "Redirects forbidden", headers, fp)
+
+        def http_error_307(self, req, fp, code, msg, headers):
+            raise urllib.error.HTTPError(req.full_url, code, "Redirects forbidden", headers, fp)
+
+        def http_error_308(self, req, fp, code, msg, headers):
+            raise urllib.error.HTTPError(req.full_url, code, "Redirects forbidden", headers, fp)
 
     try:
+        nonce = uuid.uuid4().hex
+        v_timestamp = datetime.now(UTC).isoformat()
+
+        req_sig_base = (
+            f"verifier_req:{delivery_id}:{provider_receipt_id}:{request_hash}:{release_sha}:{nonce}:{v_timestamp}".encode()
+        )
+        request_signature = hmac.new(
+            provider_secret.encode(), req_sig_base, hashlib.sha256
+        ).hexdigest()
+
         payload = {
             "delivery_id": delivery_id,
             "provider_receipt_id": provider_receipt_id,
             "request_hash": request_hash,
             "release_sha": release_sha,
+            "nonce": nonce,
+            "timestamp": v_timestamp,
+            "request_signature": request_signature,
         }
+
         req = urllib.request.Request(
             verifier_url,
             data=json.dumps(payload).encode("utf-8"),
             headers={"Content-Type": "application/json"},
             method="POST",
         )
-        with urllib.request.urlopen(req, timeout=5) as response:
-            if response.status == 200:
-                body = response.read().decode("utf-8")
-                data = json.loads(body)
-                return bool(data.get("verified") or data.get("delivered"))
+        opener = urllib.request.build_opener(NoRedirectionHandler())
+        with opener.open(req, timeout=5) as response:
+            if response.geturl() != verifier_url or response.status != 200:
+                return False
+            body = response.read().decode("utf-8")
+            data = json.loads(body)
+            if not isinstance(data, dict):
+                return False
+
+            if data.get("delivery_id") != delivery_id:
+                return False
+            if data.get("provider_receipt_id") != provider_receipt_id:
+                return False
+            if data.get("request_hash") != request_hash:
+                return False
+            if data.get("release_sha") != release_sha:
+                return False
+            if data.get("nonce") != nonce:
+                return False
+
+            resp_status = str(data.get("verifier_status") or data.get("status") or "")
+            if resp_status not in {"VERIFIED", "DELIVERED"}:
+                return False
+
+            resp_ts_str = data.get("timestamp")
+            if not resp_ts_str:
+                return False
+            try:
+                resp_dt = datetime.fromisoformat(resp_ts_str)
+                now_dt = datetime.now(UTC)
+                diff_sec = (now_dt - resp_dt).total_seconds()
+                if diff_sec < -10 or diff_sec > 300:
+                    return False
+            except Exception:
+                return False
+
+            v_sig_b64 = data.get("verifier_signature")
+            if not v_sig_b64:
+                return False
+
+            sig_bytes = base64.b64decode(v_sig_b64)
+            sig_payload = f"verifier_resp:{delivery_id}:{provider_receipt_id}:{request_hash}:{release_sha}:{nonce}:{resp_ts_str}:{resp_status}".encode()
+
+            from cryptography.hazmat.primitives import serialization
+            from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
+
+            pub_key = serialization.load_pem_public_key(
+                PINNED_EXTERNAL_VERIFIER_PUBLIC_KEY_PEM.encode()
+            )
+            if not isinstance(pub_key, Ed25519PublicKey):
+                return False
+
+            pub_key.verify(sig_bytes, sig_payload)
+            return True
     except Exception:
         pass
     return False
@@ -364,17 +500,20 @@ class OnCallNotificationAdapter:
         ext_verifier_url = (
             os.getenv("EXTERNAL_ONCALL_VERIFIER_URL")
             or os.getenv("ONCALL_EXTERNAL_VERIFIER_URL")
-            or ""
+            or CANONICAL_PINNED_EXTERNAL_VERIFIER_URL
         ).strip()
 
         has_external_verification = False
-        if ext_verifier_url and provider_receipt_id:
+        if provider_receipt_id:
             has_external_verification = _verify_external_oncall_delivery(
                 verifier_url=ext_verifier_url,
                 delivery_id=delivery_id,
                 provider_receipt_id=str(provider_receipt_id),
                 request_hash=request_hash,
                 release_sha=release_sha,
+                provider_secret=provider_secret,
+                raw_http_transport=self._raw_http_transport,
+                current_http_transport=self.http_transport,
             )
 
         http_success = 200 <= http_status < 300

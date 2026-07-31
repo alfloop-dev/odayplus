@@ -3439,3 +3439,49 @@ def test_round16_remediation_findings_b1_b2_b3_negative_mutations_and_positive_v
     receipt_r19 = adapter_r19_mutated.delivery_receipts[-1]
     assert receipt_r19["status"] == "TEST_ONLY"
     assert receipt_r19["status"] != "DELIVERED"
+
+    # 7. Round 20 Negative Mutation Verification (Finding B1): Caller-selected verifier URL and unauthenticated verifier response.
+    # A caller-selected loopback verifier URL, unauthenticated boolean response, injected provider transport,
+    # redirect, field mismatch, or stale timestamp MUST NEVER evaluate to DELIVERED.
+    import threading
+    from http.server import BaseHTTPRequestHandler, HTTPServer
+
+    class CallerVerifierHandler(BaseHTTPRequestHandler):
+        def do_POST(self):
+            content_length = int(self.headers.get("Content-Length", 0))
+            if content_length:
+                self.rfile.read(content_length)
+            body = json.dumps({"verified": True}).encode("utf-8")
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+
+        def log_message(self, format, *args):
+            pass
+
+    verifier_server = HTTPServer(("127.0.0.1", 0), CallerVerifierHandler)
+    v_port = verifier_server.server_port
+    v_thread = threading.Thread(target=verifier_server.serve_forever, daemon=True)
+    v_thread.start()
+
+    try:
+        monkeypatch.setenv("EXTERNAL_ONCALL_VERIFIER_URL", f"http://127.0.0.1:{v_port}/caller-verifier")
+        monkeypatch.setenv("REQUIRE_EXTERNAL_VERIFICATION", "true")
+
+        def caller_provider_transport(_url, _payload):
+            return 200, {"provider_receipt_id": "caller-provider-receipt-r20"}
+
+        adapter_r20 = OnCallNotificationAdapter(
+            endpoint_url="https://oncall-router.oday.plus/api/v1/alerts",
+            http_transport=caller_provider_transport,
+        )
+        ok_r20, err_r20 = adapter_r20.send("n_r20_mut", "webhook", "ops-lead", "Round 20", "Caller-selected verifier")
+        assert ok_r20 is True
+        receipt_r20 = adapter_r20.delivery_receipts[-1]
+        assert receipt_r20["status"] == "PENDING_VERIFICATION"
+        assert receipt_r20["status"] != "DELIVERED"
+    finally:
+        verifier_server.shutdown()
+        verifier_server.server_close()
