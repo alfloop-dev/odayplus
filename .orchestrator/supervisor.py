@@ -2047,7 +2047,22 @@ def start_worker_for_request(
     return True, worker_run_id, result.as_dict()
 
 
-def process_queue(config: dict[str, Any], state: dict[str, Any], provider_report: dict[str, Any]) -> bool:
+def process_queue(
+    config: dict[str, Any],
+    state: dict[str, Any],
+    provider_report: dict[str, Any],
+    *,
+    agent_ids_override: list[str] | None = None,
+    agent_override: str | None = None,
+) -> bool:
+    allowed_agent_ids: set[str] | None = None
+    if agent_ids_override is not None or agent_override is not None:
+        allowed_agent_ids = set()
+        if agent_ids_override:
+            allowed_agent_ids.update(normalize_agent_id(a) for a in agent_ids_override if a)
+        if agent_override:
+            allowed_agent_ids.add(normalize_agent_id(agent_override))
+
     changed = False
     task_map = task_index_from_status(config, load_status(config))
     active_statuses = {str(value) for value in ready_dispatch_settings(config).get("active_worker_statuses", [])}
@@ -2055,6 +2070,18 @@ def process_queue(config: dict[str, Any], state: dict[str, Any], provider_report
         event_id = event.get("event_id")
         if not event_id:
             continue
+        if allowed_agent_ids is not None:
+            target_agent = str(event.get("target_agent") or event.get("agent_id") or "").strip()
+            if not target_agent:
+                try:
+                    req = build_request(config, event)
+                    target_agent = str(getattr(req, "agent_id", "") or "").strip()
+                except Exception:
+                    pass
+            target_agent_id = normalize_agent_id(target_agent)
+            if target_agent_id and target_agent_id not in allowed_agent_ids:
+                continue
+
         existing_record = state.get("queue", {}).get("events", {}).get(event_id, {})
         related_workers = [
             worker for worker in state.get("workers", {}).values() if worker.get("queue_event_id") == event_id
@@ -7773,7 +7800,10 @@ def helper_claim_settings(config: dict[str, Any]) -> dict[str, Any]:
 def worker_self_claim_settings(config: dict[str, Any]) -> dict[str, Any]:
     settings = dict(ready_dispatch_settings(config).get("worker_self_claim", {}) or {})
     settings.setdefault("enabled", False)
-    settings.setdefault("release_task_statuses", ["review", "review_approved", "done", "blocked"])
+    settings.setdefault(
+        "release_task_statuses",
+        ["in_progress", "review", "review_approved", "done", "blocked", "assigned"],
+    )
     return settings
 
 
@@ -7788,6 +7818,7 @@ def release_completed_worker_for_claim(
         return False
     settings = worker_self_claim_settings(config)
     allowed_statuses = {str(value).lower() for value in settings.get("release_task_statuses", [])}
+    allowed_statuses.update({"in_progress", "review", "review_approved", "done", "blocked", "assigned"})
     if not allowed_statuses:
         return False
     status = load_status(config)
@@ -7807,6 +7838,11 @@ def release_completed_worker_for_claim(
         if display_name_for(config, normalize_agent_id(worker_agent)) != display_agent:
             continue
         if worker.get("status") not in active_statuses:
+            continue
+        pid = worker.get("pid")
+        if pid and pid_is_alive(pid):
+            continue
+        if not worker_runner_succeeded(worker):
             continue
         worker["status"] = "completed"
         worker["completed_at"] = now
@@ -10277,7 +10313,15 @@ def claim_next_task_for_agent(
             agent_ids_override=[agent_id],
             max_dispatches_override=1,
         ) or changed
-        changed = process_queue(config, state, provider_report) or changed
+        changed = (
+            process_queue(
+                config,
+                state,
+                provider_report,
+                agent_ids_override=[agent_id],
+            )
+            or changed
+        )
     supervisor_state = state.setdefault("supervisor", {})
     occupancy = compute_mode_occupancy(config, state)
     supervisor_state["mode_occupancy"] = occupancy
