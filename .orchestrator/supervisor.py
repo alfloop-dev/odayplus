@@ -7844,15 +7844,14 @@ def release_completed_worker_for_claim(
         norm_w_agent = normalize_agent_id(worker_agent)
         if norm_w_agent != normalized_agent and display_name_for(config, norm_w_agent) != display_agent:
             continue
+        if worker.get("status") not in active_statuses:
+            continue
         matching_entries.append((worker_key, worker))
 
     if len(matching_entries) != 1:
         return False
 
     worker_key, worker = matching_entries[0]
-
-    if worker.get("status") not in active_statuses:
-        return False
 
     worker_pid = worker.get("pid")
     worker_child_pid = worker.get("child_pid")
@@ -7892,15 +7891,18 @@ def release_completed_worker_for_claim(
     if worker_key and receipt_run_id != str(worker_key).strip():
         return False
 
+    if worker_pid not in (None, ""):
+        receipt_pid = receipt.get("pid")
+        if receipt_pid in (None, "") or str(receipt_pid) != str(worker_pid):
+            return False
+
+    if worker_child_pid not in (None, ""):
+        receipt_child_pid = receipt.get("child_pid")
+        if receipt_child_pid in (None, "") or str(receipt_child_pid) != str(worker_child_pid):
+            return False
+
     receipt_pid = receipt.get("pid")
     receipt_child_pid = receipt.get("child_pid")
-
-    if receipt_pid is not None and worker_pid is not None:
-        if str(receipt_pid) != str(worker_pid):
-            return False
-    if receipt_child_pid is not None and worker_child_pid is not None:
-        if str(receipt_child_pid) != str(worker_child_pid):
-            return False
 
     if (receipt_pid and pid_is_alive(receipt_pid)) or (receipt_child_pid and pid_is_alive(receipt_child_pid)):
         return False

@@ -11272,6 +11272,134 @@ class ReleaseCompletedWorkerForClaimTests(unittest.TestCase):
             self.assertFalse(supervisor.release_completed_worker_for_claim(self.config, state_multi, agent_name="Codex6", task_id=task_id))
 
 
+class ReleaseCompletedWorkerShapeCorrectionTests(unittest.TestCase):
+    def setUp(self) -> None:
+        self.config = load_test_config()
+
+    def test_release_completed_worker_4_history_1_active_success(self) -> None:
+        task_id = "ODP-4HIST-1ACT-SUCCESS"
+        status = {"tasks": [{"id": task_id, "status": "in_progress", "owner": "Antigravity6", "reviewer": "Codex6"}]}
+        run_active = "run-active-5"
+        state = {
+            "workers": {
+                "run-hist-1": {"run_id": "run-hist-1", "agent_id": "codex6", "task_id": task_id, "status": "completed"},
+                "run-hist-2": {"run_id": "run-hist-2", "agent_id": "codex6", "task_id": task_id, "status": "failed"},
+                "run-hist-3": {"run_id": "run-hist-3", "agent_id": "codex6", "task_id": task_id, "status": "killed"},
+                "run-hist-4": {"run_id": "run-hist-4", "agent_id": "codex6", "task_id": task_id, "status": "abandoned"},
+                run_active: {
+                    "run_id": run_active,
+                    "agent_id": "codex6",
+                    "task_id": task_id,
+                    "status": "running",
+                    "pid": 999999,
+                    "runner_status_path": "/tmp/fake_status_active.json",
+                    "queue_event_id": "evt-active-5",
+                },
+            },
+            "queue": {
+                "events": {
+                    "evt-active-5": {"id": "evt-active-5", "status": "claimed", "run_id": run_active}
+                }
+            },
+        }
+        receipt = {"status": "completed", "exit_code": 0, "run_id": run_active, "pid": 999999}
+        with mock.patch.object(supervisor, "load_status", return_value=status), \
+             mock.patch.object(supervisor, "_load_runtime_marker", return_value=receipt), \
+             mock.patch.object(supervisor, "pid_is_alive", return_value=False), \
+             mock.patch.object(supervisor, "write_activity_log"):
+            changed = supervisor.release_completed_worker_for_claim(
+                self.config, state, agent_name="Codex6", task_id=task_id
+            )
+        self.assertTrue(changed)
+        self.assertEqual(state["workers"][run_active]["status"], "completed")
+        self.assertEqual(state["queue"]["events"]["evt-active-5"]["status"], "completed")
+        self.assertEqual(state["workers"]["run-hist-1"]["status"], "completed")
+        self.assertEqual(state["workers"]["run-hist-2"]["status"], "failed")
+
+    def test_release_completed_worker_two_active_rejection(self) -> None:
+        task_id = "ODP-TWO-ACTIVE-REJECT"
+        status = {"tasks": [{"id": task_id, "status": "in_progress", "owner": "Antigravity6", "reviewer": "Codex6"}]}
+        state = {
+            "workers": {
+                "run-active-1": {
+                    "run_id": "run-active-1",
+                    "agent_id": "codex6",
+                    "task_id": task_id,
+                    "status": "running",
+                    "pid": 999991,
+                    "runner_status_path": "/tmp/fake_status1.json",
+                },
+                "run-active-2": {
+                    "run_id": "run-active-2",
+                    "agent_id": "codex6",
+                    "task_id": task_id,
+                    "status": "running",
+                    "pid": 999992,
+                    "runner_status_path": "/tmp/fake_status2.json",
+                },
+            }
+        }
+        receipt = {"status": "completed", "exit_code": 0, "run_id": "run-active-1", "pid": 999991}
+        with mock.patch.object(supervisor, "load_status", return_value=status), \
+             mock.patch.object(supervisor, "_load_runtime_marker", return_value=receipt), \
+             mock.patch.object(supervisor, "pid_is_alive", return_value=False):
+            changed = supervisor.release_completed_worker_for_claim(
+                self.config, state, agent_name="Codex6", task_id=task_id
+            )
+        self.assertFalse(changed)
+
+    def test_release_completed_worker_missing_receipt_pid_rejection(self) -> None:
+        task_id = "ODP-MISSING-RECEIPT-PID"
+        status = {"tasks": [{"id": task_id, "status": "in_progress", "owner": "Antigravity6", "reviewer": "Codex6"}]}
+        run_id = "run-active-pid"
+        state = {
+            "workers": {
+                run_id: {
+                    "run_id": run_id,
+                    "agent_id": "codex6",
+                    "task_id": task_id,
+                    "status": "running",
+                    "pid": 999999,
+                    "runner_status_path": "/tmp/fake_status.json",
+                }
+            }
+        }
+        receipt = {"status": "completed", "exit_code": 0, "run_id": run_id}
+        with mock.patch.object(supervisor, "load_status", return_value=status), \
+             mock.patch.object(supervisor, "_load_runtime_marker", return_value=receipt), \
+             mock.patch.object(supervisor, "pid_is_alive", return_value=False):
+            changed = supervisor.release_completed_worker_for_claim(
+                self.config, state, agent_name="Codex6", task_id=task_id
+            )
+        self.assertFalse(changed)
+
+    def test_release_completed_worker_missing_receipt_child_pid_rejection(self) -> None:
+        task_id = "ODP-MISSING-RECEIPT-CHILD-PID"
+        status = {"tasks": [{"id": task_id, "status": "in_progress", "owner": "Antigravity6", "reviewer": "Codex6"}]}
+        run_id = "run-active-child-pid"
+        state = {
+            "workers": {
+                run_id: {
+                    "run_id": run_id,
+                    "agent_id": "codex6",
+                    "task_id": task_id,
+                    "status": "running",
+                    "pid": 999999,
+                    "child_pid": 888888,
+                    "runner_status_path": "/tmp/fake_status.json",
+                }
+            }
+        }
+        receipt = {"status": "completed", "exit_code": 0, "run_id": run_id, "pid": 999999}
+        with mock.patch.object(supervisor, "load_status", return_value=status), \
+             mock.patch.object(supervisor, "_load_runtime_marker", return_value=receipt), \
+             mock.patch.object(supervisor, "pid_is_alive", return_value=False):
+            changed = supervisor.release_completed_worker_for_claim(
+                self.config, state, agent_name="Codex6", task_id=task_id
+            )
+        self.assertFalse(changed)
+
+
 class ProcessQueueAgentOverrideTests(unittest.TestCase):
     def setUp(self) -> None:
         self.config = load_test_config()
