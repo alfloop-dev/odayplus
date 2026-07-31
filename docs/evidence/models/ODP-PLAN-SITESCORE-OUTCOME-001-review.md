@@ -599,3 +599,108 @@ not fail-closed. B2 preserves the caller-invented governance path at the exact f
 activation boundary, while B3 still cannot receive the registered Human/Ops authoritative
 M6/M12 evidence set. Re-audit the entire acceptance batch before the next handoff. No owner
 implementation content was changed by this review.
+
+---
+
+# Codex6 Re-review Addendum — 2026-07-31, exact owner head `10d20d34`
+
+The supervisor re-dispatched this task to the assigned reviewer after the owner reported
+B1-B3 remediation at exact pushed head
+`10d20d343f57da470680a2a1a38d67b5d727ce60`. The local and remote task branches both
+pointed at that SHA, and the worktree contained no uncommitted owner implementation diff.
+
+## Verification at the exact owner head
+
+```bash
+PYTHONPATH=. .venv/bin/pytest -q tests/models -k "sitescore or opening_outcome"
+PYTHONPATH=. .venv/bin/pytest -q tests -k "sitescore or opening_outcome or model_ready"
+.venv/bin/ruff check scripts/models models tests/models
+git diff --check
+```
+
+- Task-scoped selector: **30 passed**.
+- Full focused selector: **passed** (warnings only).
+- Ruff and `git diff --check`: clean.
+- The committed receipt digest independently recomputes to
+  `72f8a57c47fe0279e5d355180a3b384e61ca9f7d5964c3895886ecd3b6739dce`,
+  and the unmodified receipt returns `RECEIPT_VALIDATED`.
+- The previous concrete model-card mutation is fixed: free caller governance facts,
+  review statuses, and approvals are discarded even when the benchmark's lineage property
+  is independently made true.
+- The previous three count/ratio mutations and malformed summary metric examples are
+  rejected.
+
+The automated checks remain green, but the task brief requires the complete fail-closed
+mutation batch. The following independently reproduced findings still block approval.
+
+## Blocking findings
+
+### B1 — Explicit coverage flags bypass true M6/M12 maturity
+
+`has_explicit_m6_outcome` and `has_explicit_m12_outcome`
+(`models/sitescore/opening_outcome.py:412-444`) first test the elapsed days but then accept
+`m6_covered is True` or `m12_covered is True` even when the numeric elapsed days are below
+180/365. The flags therefore override contradictory authoritative maturity evidence.
+
+An independent 200-row mutation used valid 90-day/M6/M12 numeric outcomes, predictions,
+and intervals, but set both `m6_days` and `m12_days` to `1` while setting both coverage
+flags to true. The evaluator reported:
+
+- `m6_coverage_ratio == 1.0`;
+- `m12_coverage_ratio == 1.0`; and
+- every non-lineage Gate 2 criterion passing.
+
+The same bypass works when no opened date or elapsed-day evidence is present. The permanent
+lineage lock prevents `ACTIVE` today, but the prediction-source dependency is intended to
+compose at this exact boundary. A boolean self-attestation must not turn one-day-old or
+unknown-age outcomes into true M6/M12 maturity. Require authoritative elapsed/as-of
+evidence meeting 180/365 days, reject contradictory flags, and add regressions for both
+under-age and missing-age rows.
+
+### B2 — Provenance, reason, status, and threshold drift still validate
+
+The latest verifier cross-checks the prior count and ratio examples, but does not
+cross-check all duplicated governance fields or validate threshold types. Starting from
+the genuine no-source receipt, each of the following one-field mutations was followed by
+a recomputation of the public content SHA:
+
+| Mutation | Verifier result |
+| --- | --- |
+| top-level `provenance: no_source -> pg16_query` | `RECEIPT_VALIDATED` |
+| `benchmark_summary.reason_code: NO_SOURCE_INVENTORY -> OTHER` | `RECEIPT_VALIDATED` |
+| top-level `handback.reason_code: NO_SOURCE_INVENTORY -> OTHER` | `RECEIPT_VALIDATED` |
+| `benchmark_summary.status: GOVERNED_DISABLED -> OTHER` | `RECEIPT_VALIDATED` |
+| `benchmark_summary.activation_threshold: 200 -> true` | `RECEIPT_VALIDATED` |
+
+This leaves the previous B1 requirement only partially remediated. Cross-check receipt,
+summary, embedded handback, and top-level handback provenance/reason/governed-disabled/
+status fields; require exact allowed values; and strictly type/range-check activation,
+coverage, and MAE thresholds before comparisons. A checksum recomputation must not make
+contradictory or malformed governance content valid.
+
+### B3 — The discovery-only 90-day query is still advertised as the backfill action
+
+The nested outcome contract is substantially more complete and now states that the
+registered Human/Ops task must return true M6/M12 fields. However, the same 90-day
+`candidate_site_view` discovery query remains duplicated as top-level `backfill_query`
+(`models/sitescore/opening_outcome.py:287-291`), and the generated evidence document labels
+it **Backfill Query**. For `no_source`, the primary `handback_action` still directs the
+operator only to provide a database URL or candidate records. Neither action supplies the
+true M6/M12 outcomes, governed predictions/intervals, or authoritative lineage required to
+close Gate 2.
+
+This does not satisfy the prior direction to keep the existing query explicitly
+discovery-only. Rename/remove the misleading top-level alias, make the primary handback
+action route to both registered outcome-backfill and prediction-source receipts, and leave
+the unobserved authoritative source/query identity explicitly unverified until Human/Ops
+provides a readable receipt.
+
+## Decision
+
+**Changes requested.** Exact owner head `10d20d34` is not approved. B1 directly reproduces
+the task brief's prohibited fake-maturity path. B2 leaves self-consistent governance drift
+and a boolean threshold malformed value accepted by the verifier. B3 still presents the
+90-day discovery inventory as the operator's backfill query/action even though it cannot
+produce the evidence set named by the same receipt. Re-audit the full acceptance batch
+before the next handoff; do not refresh the PR or enable deployment after a partial fix.
+No owner implementation content was changed by this review.
