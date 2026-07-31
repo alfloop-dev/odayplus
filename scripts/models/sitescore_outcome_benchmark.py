@@ -151,8 +151,8 @@ def write_evidence_markdown(
         lines.append(f"- **Backfill Task ID**: `{handback['backfill_task_id']}`")
     if handback.get("prediction_source_task_id"):
         lines.append(f"- **Prediction Source Task ID**: `{handback['prediction_source_task_id']}`")
-    if handback.get("backfill_query"):
-        lines.append(f"- **Backfill Query**: `{handback['backfill_query']}`")
+    if handback.get("discovery_inventory_query"):
+        lines.append(f"- **Discovery Inventory Query**: `{handback['discovery_inventory_query']}`")
     if "backfill_receipt_required" in handback:
         lines.append(f"- **Backfill Receipt Required**: `{handback['backfill_receipt_required']}`")
 

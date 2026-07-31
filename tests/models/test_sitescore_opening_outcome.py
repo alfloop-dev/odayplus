@@ -492,7 +492,7 @@ def test_sitescore_opening_outcome_handback_contains_backfill_metadata(tmp_path)
         assert col in pred_contract["required_fields"]
 
     # Verify executable query contract matches current candidate_site_view schema
-    query = handback["backfill_query"]
+    query = handback["discovery_inventory_query"]
     assert "model_ready.candidate_site_view" in query
     for baseline_col in [
         "entity_id",
@@ -514,7 +514,7 @@ def test_sitescore_opening_outcome_handback_contains_backfill_metadata(tmp_path)
     assert "- **Backfill Owner**: `Human/Ops`" in content
     assert "- **Backfill Task ID**: `ODP-PLAN-SITESCORE-OUTCOME-BACKFILL-001`" in content
     assert "- **Prediction Source Task ID**: `ODP-PLAN-SITESCORE-PREDICTION-SOURCE-001`" in content
-    assert "- **Backfill Query**:" in content
+    assert "- **Discovery Inventory Query**:" in content
     assert "- **Backfill Receipt Required**: `True`" in content
 
 
@@ -798,3 +798,106 @@ def test_sitescore_handback_payload_authoritative_m6_m12_contract_b3():
     assert "source_freshness_timestamp" in contract["required_fields"]
     assert "m6_maturity_definition" in contract["required_fields"]
     assert "m12_maturity_definition" in contract["required_fields"]
+
+    # When observed authenticated_governed_records are present with dataset snapshot
+    records = _generate_candidate_records(
+        10,
+        dataset_snapshot_id="snap_123",
+        artifact_lineage_id="lin_123",
+    )
+    result_obs = evaluate_sitescore_opening_outcome_benchmark(records, provenance="authenticated_governed_records")
+    contract_obs = result_obs.handback_payload["outcome_backfill_contract"]
+    assert contract_obs["source_identity"] == "authoritative_opening_outcome_m6_m12_store_ledger"
+    assert contract_obs["query_id"] == "sitescore_authoritative_m6_m12_outcome_query_v1"
+    assert contract_obs["dataset_snapshot_hash"] == "snap_123"
+    assert contract_obs["lineage_id"] == "lin_123"
+
+
+def test_sitescore_opening_outcome_coverage_flags_cannot_bypass_true_maturity_b1():
+    # B1 Addendum test: boolean m6_covered/m12_covered flags CANNOT turn under-age (days=1) or missing-age rows into mature outcomes
+    records = _generate_candidate_records(
+        200,
+        include_m6_m12_realized=True,
+        include_bounds=True,
+        dataset_snapshot_id="snapshot_v1",
+        model_version="v1",
+        artifact_lineage_id="lin_v1",
+    )
+    for r in records:
+        r["m6_days"] = 1
+        r["m12_days"] = 1
+        r["m6_covered"] = True
+        r["m12_covered"] = True
+
+    result = evaluate_sitescore_opening_outcome_benchmark(records, provenance="authenticated_governed_records")
+
+    assert result.m6_coverage_ratio == 0.0
+    assert result.m12_coverage_ratio == 0.0
+    assert not result.is_coverage_passed
+    assert not result.is_gate2_passed
+
+
+def test_sitescore_gate2_verifier_rejects_governance_drift_and_boolean_threshold_b2():
+    # B2 Addendum test: Verifier fails closed on top-level provenance drift, invalid reason_code, invalid status, and boolean activation_threshold
+    from models.sitescore.opening_outcome import verify_sitescore_gate2_receipt
+
+    result = run_benchmark_from_inventory(db_url=None, records=None)
+    receipt = build_sitescore_gate2_receipt(result)
+
+    # 1. Top-level provenance drift: no_source -> pg16_query
+    m1 = json.loads(json.dumps(receipt))
+    m1["provenance"] = "pg16_query"
+    m1["integrity"]["content_sha256"] = compute_gate2_receipt_sha256(m1)
+    res_m1 = verify_sitescore_gate2_receipt(m1)
+    assert res_m1.is_valid is False
+    assert any("top-level provenance" in e for e in res_m1.errors)
+
+    # 2. benchmark_summary.reason_code: NO_SOURCE_INVENTORY -> OTHER
+    m2 = json.loads(json.dumps(receipt))
+    m2["benchmark_summary"]["reason_code"] = "OTHER"
+    m2["integrity"]["content_sha256"] = compute_gate2_receipt_sha256(m2)
+    res_m2 = verify_sitescore_gate2_receipt(m2)
+    assert res_m2.is_valid is False
+    assert any("reason_code" in e for e in res_m2.errors)
+
+    # 3. top-level handback.reason_code: NO_SOURCE_INVENTORY -> OTHER
+    m3 = json.loads(json.dumps(receipt))
+    m3["handback"]["reason_code"] = "OTHER"
+    m3["integrity"]["content_sha256"] = compute_gate2_receipt_sha256(m3)
+    res_m3 = verify_sitescore_gate2_receipt(m3)
+    assert res_m3.is_valid is False
+    assert any("reason_code" in e for e in res_m3.errors)
+
+    # 4. benchmark_summary.status: GOVERNED_DISABLED -> OTHER
+    m4 = json.loads(json.dumps(receipt))
+    m4["benchmark_summary"]["status"] = "OTHER"
+    m4["integrity"]["content_sha256"] = compute_gate2_receipt_sha256(m4)
+    res_m4 = verify_sitescore_gate2_receipt(m4)
+    assert res_m4.is_valid is False
+    assert any("summary.status" in e for e in res_m4.errors)
+
+    # 5. benchmark_summary.activation_threshold: 200 -> True
+    m5 = json.loads(json.dumps(receipt))
+    m5["benchmark_summary"]["activation_threshold"] = True
+    m5["integrity"]["content_sha256"] = compute_gate2_receipt_sha256(m5)
+    res_m5 = verify_sitescore_gate2_receipt(m5)
+    assert res_m5.is_valid is False
+    assert any("activation_threshold must be an integer" in e for e in res_m5.errors)
+
+
+def test_sitescore_handback_payload_discovery_query_and_unverified_source_b3():
+    # B3 Addendum test: Discovery query is explicitly labeled discovery_inventory_query, handback_action routes to both backfill & prediction-source receipts, and unobserved dataset snapshot is UNVERIFIED
+    result = run_benchmark_from_inventory(db_url=None, records=None)
+    hb = result.handback_payload
+
+    assert "discovery_inventory_query" in hb
+    assert "backfill_query" not in hb
+    assert "ODP-PLAN-SITESCORE-OUTCOME-BACKFILL-001" in hb["handback_action"]
+    assert "ODP-PLAN-SITESCORE-PREDICTION-SOURCE-001" in hb["handback_action"]
+
+    contract = hb["outcome_backfill_contract"]
+    assert contract["source_identity"] == "authoritative_opening_outcome_m6_m12_store_ledger"
+    assert contract["query_id"] == "sitescore_authoritative_m6_m12_outcome_query_v1"
+    assert contract["dataset_snapshot_hash"] == "UNVERIFIED"
+    assert contract["lineage_id"] == "UNVERIFIED"
+    assert contract["freshness_timestamp"] == "UNVERIFIED"

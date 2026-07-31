@@ -154,13 +154,13 @@ class SiteScoreOpeningOutcomeBenchmarkResult:
         if self.provenance == "unreachable_db":
             err_msg = f": {self.db_error}" if self.db_error else ""
             reasons.append(f"PostgreSQL model-ready inventory database query failed{err_msg}")
-            handback_action = "Restore PostgreSQL database connection and verify model_ready.candidate_site_view table accessibility."
+            handback_action = "Restore PostgreSQL database connection and provide authoritative outcome backfill (ODP-PLAN-SITESCORE-OUTCOME-BACKFILL-001) and prediction-source (ODP-PLAN-SITESCORE-PREDICTION-SOURCE-001) receipts."
         elif self.provenance == "no_source":
             reasons.append("No database connection or candidate site records were provided")
-            handback_action = "Provide a valid PostgreSQL database URL (ODAY_DATABASE_URL / --db-url) or candidate site records."
+            handback_action = "Provide authoritative outcome backfill receipt (ODP-PLAN-SITESCORE-OUTCOME-BACKFILL-001) and prediction-source receipt (ODP-PLAN-SITESCORE-PREDICTION-SOURCE-001) with true M6/M12 realized net revenue, interval bounds, and lineage."
         elif self.provenance == "provided_records":
             reasons.append("Provided records are unauthenticated / non-governed activation input")
-            handback_action = "Provide authenticated governed PostgreSQL inventory records with immutable dataset snapshot and model lineage."
+            handback_action = "Provide authenticated governed PostgreSQL inventory records with outcome backfill receipt (ODP-PLAN-SITESCORE-OUTCOME-BACKFILL-001) and prediction-source receipt (ODP-PLAN-SITESCORE-PREDICTION-SOURCE-001)."
         elif not self.is_lineage_governed:
             reasons.append(
                 f"Missing governed dataset snapshot or model/artifact lineage (snapshot={self.dataset_snapshot_id}, model_version={self.model_version}, artifact_lineage_id={self.artifact_lineage_id}; requires authoritative prediction-source resolver ODP-PLAN-SITESCORE-PREDICTION-SOURCE-001)"
@@ -169,7 +169,7 @@ class SiteScoreOpeningOutcomeBenchmarkResult:
                 reasons.append(
                     f"Normalized MAE ({self.normalized_mae:.3f}) exceeds maximum threshold ({self.max_mae_threshold:.3f})"
                 )
-            handback_action = "Provide complete governed dataset snapshot ID/hash and model/artifact lineage resolved via authoritative prediction source (ODP-PLAN-SITESCORE-PREDICTION-SOURCE-001)."
+            handback_action = "Provide complete governed dataset snapshot ID/hash and model/artifact lineage resolved via outcome backfill receipt (ODP-PLAN-SITESCORE-OUTCOME-BACKFILL-001) and prediction-source receipt (ODP-PLAN-SITESCORE-PREDICTION-SOURCE-001)."
         else:
             if not self.is_labels_sufficient:
                 reasons.append(
@@ -201,7 +201,8 @@ class SiteScoreOpeningOutcomeBenchmarkResult:
                 )
             handback_action = (
                 f"Provide >= {self.activation_threshold} mature opening outcome labels with complete "
-                f"M6 (180d) and M12 (365d) post-opening transaction history, actual p10/p90 interval bounds, and model predictions."
+                f"M6 (180d) and M12 (365d) post-opening transaction history, actual p10/p90 interval bounds, and model predictions "
+                f"via outcome backfill (ODP-PLAN-SITESCORE-OUTCOME-BACKFILL-001) and prediction-source (ODP-PLAN-SITESCORE-PREDICTION-SOURCE-001) receipts."
             )
 
         executable_query = (
@@ -266,8 +267,8 @@ class SiteScoreOpeningOutcomeBenchmarkResult:
                     "m12_mature_count",
                     "matched_prediction_count",
                 ],
-                "baseline_inventory_query": executable_query,
-                "note": "Store age (store_age_days) is a maturity precondition; it is not M6/M12 outcome evidence. ODP-PLAN-SITESCORE-OUTCOME-BACKFILL-001 must supply realized_180d_net_revenue and realized_365d_net_revenue.",
+                "discovery_inventory_query": executable_query,
+                "note": "Store age (store_age_days) and 90-day discovery inventory are preconditions/discovery only; they are not M6/M12 outcome evidence. ODP-PLAN-SITESCORE-OUTCOME-BACKFILL-001 must supply realized_180d_net_revenue and realized_365d_net_revenue.",
                 "receipt_required": True,
             },
             "prediction_source_contract": {
@@ -287,7 +288,7 @@ class SiteScoreOpeningOutcomeBenchmarkResult:
             "backfill_owner": "Human/Ops",
             "backfill_task_id": "ODP-PLAN-SITESCORE-OUTCOME-BACKFILL-001",
             "prediction_source_task_id": "ODP-PLAN-SITESCORE-PREDICTION-SOURCE-001",
-            "backfill_query": executable_query,
+            "discovery_inventory_query": executable_query,
             "backfill_receipt_required": True,
         }
 
@@ -421,10 +422,13 @@ def evaluate_sitescore_opening_outcome_benchmark(
         if not _is_valid_realized_outcome(m6_val):
             return False
 
+        if r.get("m6_covered") is False:
+            return False
+
         days = get_days_elapsed(r, "m6_days")
-        if days is not None and days >= 180:
-            return True
-        return r.get("m6_covered", False) is True
+        if days is None or days < 180:
+            return False
+        return True
 
     def has_explicit_m12_outcome(r: dict[str, Any]) -> bool:
         # Must have explicit realized M12 outcome data AND store age >= 365 days
@@ -438,10 +442,13 @@ def evaluate_sitescore_opening_outcome_benchmark(
         if not _is_valid_realized_outcome(m12_val):
             return False
 
+        if r.get("m12_covered") is False:
+            return False
+
         days = get_days_elapsed(r, "m12_days")
-        if days is not None and days >= 365:
-            return True
-        return r.get("m12_covered", False) is True
+        if days is None or days < 365:
+            return False
+        return True
 
     m6_mature = sum(1 for r in mature_records if has_explicit_m6_outcome(r))
     m12_mature = sum(1 for r in mature_records if has_explicit_m12_outcome(r))
@@ -848,24 +855,80 @@ def verify_sitescore_gate2_receipt(receipt: dict[str, Any]) -> Gate2ReceiptVerif
             if bc.get("matched_prediction_count") != match_cnt:
                 errors.append(f"outcome_backfill_contract.matched_prediction_count ({bc.get('matched_prediction_count')}) drifts from summary.matched_prediction_count ({match_cnt})")
 
+        # B2: Provenance, reason_code, status, and threshold validation & cross-checks
+        ALLOWED_PROVENANCES = {"no_source", "unreachable_db", "provided_records", "pg16_query", "authenticated_governed_records"}
+        rec_prov = receipt.get("provenance")
+        sum_prov = summary.get("provenance")
+        hb_prov = handback.get("provenance")
+        if rec_prov not in ALLOWED_PROVENANCES:
+            errors.append(f"Invalid top-level provenance: {rec_prov!r}")
+        if sum_prov not in ALLOWED_PROVENANCES:
+            errors.append(f"Invalid summary provenance: {sum_prov!r}")
+        if rec_prov != sum_prov:
+            errors.append(f"top-level provenance ({rec_prov}) drifts from summary.provenance ({sum_prov})")
+        if hb_prov is not None and hb_prov != rec_prov:
+            errors.append(f"handback.provenance ({hb_prov}) drifts from top-level provenance ({rec_prov})")
+
+        ALLOWED_REASON_CODES = {
+            "DB_INVENTORY_UNREACHABLE",
+            "NO_SOURCE_INVENTORY",
+            "UNAUTHENTICATED_PROVENANCE",
+            "MISSING_GOVERNED_LINEAGE",
+            "MATURE_LABELS_BELOW_THRESHOLD",
+            "PREDICTION_EVIDENCE_MISSING",
+            "M6_M12_COVERAGE_INSUFFICIENT",
+            "INTERVAL_BOUNDS_MISSING",
+            "NORMALIZED_MAE_EXCEEDED",
+            "GATE2_CRITERIA_MET",
+            "GOVERNED_DISABLED",
+        }
+        sum_reason = summary.get("reason_code")
+        hb_reason = handback.get("reason_code")
+        if sum_reason not in ALLOWED_REASON_CODES:
+            errors.append(f"Invalid summary.reason_code: {sum_reason!r}")
+        if hb_reason not in ALLOWED_REASON_CODES:
+            errors.append(f"Invalid handback.reason_code: {hb_reason!r}")
+        if sum_reason != hb_reason:
+            errors.append(f"handback.reason_code ({hb_reason}) drifts from summary.reason_code ({sum_reason})")
+
+        ALLOWED_STATUSES = {"ACTIVE", "GOVERNED_DISABLED"}
+        sum_status = summary.get("status")
+        if sum_status not in ALLOWED_STATUSES:
+            errors.append(f"Invalid summary.status: {sum_status!r}")
+
+        act_thresh = _check_strict_int(summary.get("activation_threshold"), "benchmark_summary.activation_threshold")
+        if act_thresh is not None and act_thresh <= 0:
+            errors.append(f"benchmark_summary.activation_threshold must be positive (got {act_thresh})")
+        hb_act_thresh = _check_strict_int(handback.get("activation_threshold"), "handback.activation_threshold")
+        if hb_act_thresh is not None and act_thresh is not None and hb_act_thresh != act_thresh:
+            errors.append(f"handback.activation_threshold ({hb_act_thresh}) drifts from summary.activation_threshold ({act_thresh})")
+
+        min_cov_thresh = _check_strict_float(summary.get("min_coverage_threshold"), "benchmark_summary.min_coverage_threshold")
+        if min_cov_thresh is not None and not (0.0 <= min_cov_thresh <= 1.0):
+            errors.append(f"benchmark_summary.min_coverage_threshold must be in [0.0, 1.0] (got {min_cov_thresh})")
+
+        max_mae_thresh = _check_strict_float(summary.get("max_mae_threshold"), "benchmark_summary.max_mae_threshold")
+        if max_mae_thresh is not None and max_mae_thresh <= 0.0:
+            errors.append(f"benchmark_summary.max_mae_threshold must be positive (got {max_mae_thresh})")
+
+        act_thresh_val = act_thresh if act_thresh is not None else ACTIVATION_THRESHOLD
+        min_cov_thresh_val = min_cov_thresh if min_cov_thresh is not None else MIN_COVERAGE_THRESHOLD
+        max_mae_thresh_val = max_mae_thresh if max_mae_thresh is not None else MAX_MAE_THRESHOLD
+
         # 5. Verdict re-derivation (fail closed on forged ACTIVE / PASSED or count drift)
         gate_status = receipt.get("gate_status")
         is_gov_disabled = receipt.get("is_governed_disabled")
-        benchmark_status = summary.get("status")
         is_gate2_passed = summary.get("is_gate2_passed")
 
         lineage_governed = False
-        min_cov_thresh = summary.get("min_coverage_threshold", MIN_COVERAGE_THRESHOLD)
-        max_mae_thresh = summary.get("max_mae_threshold", MAX_MAE_THRESHOLD)
-        act_thresh = summary.get("activation_threshold", ACTIVATION_THRESHOLD)
 
-        labels_sufficient = (mat is not None and mat >= act_thresh)
-        pred_cov_passed = (pred_cov is not None and pred_cov >= min_cov_thresh)
-        m6_cov_passed = (m6_cov is not None and m6_cov >= min_cov_thresh)
-        m12_cov_passed = (m12_cov is not None and m12_cov >= min_cov_thresh)
-        bounds_cov_passed = (bounds_cov is not None and bounds_cov >= min_cov_thresh)
-        p80_cov_passed = (p80_cov is not None and p80_cov >= min_cov_thresh)
-        mae_passed = (norm_mae is not None and norm_mae <= max_mae_thresh)
+        labels_sufficient = (mat is not None and mat >= act_thresh_val)
+        pred_cov_passed = (pred_cov is not None and pred_cov >= min_cov_thresh_val)
+        m6_cov_passed = (m6_cov is not None and m6_cov >= min_cov_thresh_val)
+        m12_cov_passed = (m12_cov is not None and m12_cov >= min_cov_thresh_val)
+        bounds_cov_passed = (bounds_cov is not None and bounds_cov >= min_cov_thresh_val)
+        p80_cov_passed = (p80_cov is not None and p80_cov >= min_cov_thresh_val)
+        mae_passed = (norm_mae is not None and norm_mae <= max_mae_thresh_val)
 
         expected_gate2_passed = (
             lineage_governed
@@ -882,7 +945,7 @@ def verify_sitescore_gate2_receipt(receipt: dict[str, Any]) -> Gate2ReceiptVerif
             errors.append(f"is_gate2_passed mismatch: declared {is_gate2_passed}, re-derived {expected_gate2_passed}")
 
         if not expected_gate2_passed:
-            if gate_status == "PASSED" or is_gov_disabled is False or benchmark_status == "ACTIVE":
+            if gate_status == "PASSED" or is_gov_disabled is False or sum_status == "ACTIVE":
                 errors.append("Forged ACTIVE or PASSED verdict detected on unverified/failing receipt")
 
     except Exception as exc:
