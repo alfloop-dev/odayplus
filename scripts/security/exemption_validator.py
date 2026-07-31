@@ -95,9 +95,9 @@ ALLOWLISTED_VAULT_PATHS = {
 }
 
 
-def validate_and_load_authority_key(
+def _validate_and_load_authority_key_internal(
     key_file_path: Path | str | None,
-    allow_test_vault: bool = False,
+    is_test_seam: bool = False,
 ) -> tuple[str | None, str | None]:
     """Validate key file path, ownership, mode, symlink status, and vault provenance.
 
@@ -124,7 +124,7 @@ def validate_and_load_authority_key(
     # 2. Repository-local secret prohibition check for production
     try:
         resolved.relative_to(ROOT)
-        if not allow_test_vault:
+        if not is_test_seam:
             return (
                 None,
                 f"Authority key file '{key_file_path}' (resolved: '{resolved}') is located inside repository root '{ROOT}'. "
@@ -135,7 +135,7 @@ def validate_and_load_authority_key(
 
     # 3. Vault path allowlist check (fail closed on arbitrary env/caller paths in production)
     is_allowlisted = False
-    if allow_test_vault:
+    if is_test_seam:
         is_allowlisted = True
     else:
         for vp in ALLOWLISTED_VAULT_PATHS:
@@ -183,8 +183,22 @@ def validate_and_load_authority_key(
     return raw_key, None
 
 
+def validate_and_load_authority_key(
+    key_file_path: Path | str | None,
+) -> tuple[str | None, str | None]:
+    """Validate key file path, ownership, mode, symlink status, and vault provenance.
+
+    Returns:
+        (key_string, error_message)
+    """
+    return _validate_and_load_authority_key_internal(key_file_path, is_test_seam=False)
+
+
 class AuthoritativeReceiptVerifier:
-    """Concrete verifier that obtains and validates authoritative source-system readback and signature data."""
+    """Concrete verifier that obtains and validates authoritative source-system readback and signature data.
+
+    In production mode, key and manifest files MUST be located in fixed external vault paths outside the repository root.
+    """
 
     def __init__(
         self,
@@ -193,13 +207,11 @@ class AuthoritativeReceiptVerifier:
         trusted_source_systems: set[str] | None = None,
         expected_policy_version: str | None = None,
         expected_digests: dict[str, str] | None = None,
-        allow_test_vault: bool = False,
     ):
         self.authority_key: str | None = None
         self.key_error: str | None = None
-        self.allow_test_vault = allow_test_vault
 
-        # B1 fix: Resolve authority key from external allowlisted vault path only.
+        # Resolve authority key from external allowlisted vault path only.
         target_key_path = authority_key_file or os.getenv("OSS_LEGAL_AUTHORITY_KEY_FILE")
         if not target_key_path:
             for external_default in [
@@ -212,9 +224,7 @@ class AuthoritativeReceiptVerifier:
                     break
 
         if target_key_path:
-            self.authority_key, self.key_error = validate_and_load_authority_key(
-                target_key_path, allow_test_vault=allow_test_vault
-            )
+            self.authority_key, self.key_error = self._load_authority_key(target_key_path)
         else:
             self.key_error = "No authority key file path configured or found in external allowlisted vault."
 
@@ -225,7 +235,7 @@ class AuthoritativeReceiptVerifier:
         }
         self.expected_policy_version = expected_policy_version or "1.0.0"
 
-        # B2 fix: Mandatory independent expected digests MUST be obtained from an authenticated, signed authority manifest.
+        # Mandatory independent expected digests MUST be obtained from an authenticated, signed authority manifest.
         self.expected_digests: dict[str, str] = {}
         self.manifest_error: str | None = None
         self.has_complete_expected_digests = False
@@ -266,15 +276,24 @@ class AuthoritativeReceiptVerifier:
             if missing_dig_keys or any(not self.expected_digests.get(k) for k in REQUIRED_DIGEST_KEYS):
                 self.has_complete_expected_digests = False
 
+    def _load_authority_key(self, key_path: Path | str) -> tuple[str | None, str | None]:
+        return validate_and_load_authority_key(key_path)
+
+    def _check_manifest_path_provenance(self, manifest_path: Path) -> tuple[bool, str | None]:
+        try:
+            manifest_path.resolve().relative_to(ROOT)
+            return False, f"Authority manifest file '{manifest_path}' is inside repository root (repository-local secrets forbidden in production)."
+        except ValueError:
+            return True, None
+
     def _load_and_verify_manifest(self, manifest_path: Path) -> tuple[bool, dict[str, str] | None, str | None]:
         if manifest_path.is_symlink():
             return False, None, f"Authority manifest file '{manifest_path}' is a symlink (symlinks forbidden)."
-        if not self.allow_test_vault:
-            try:
-                manifest_path.resolve().relative_to(ROOT)
-                return False, None, f"Authority manifest file '{manifest_path}' is inside repository root (repository-local secrets forbidden in production)."
-            except ValueError:
-                pass
+
+        path_ok, path_err = self._check_manifest_path_provenance(manifest_path)
+        if not path_ok:
+            return False, None, path_err
+
         try:
             m_data = json.loads(manifest_path.read_text(encoding="utf-8"))
         except Exception as e:
@@ -298,6 +317,20 @@ class AuthoritativeReceiptVerifier:
             return False, None, "Manifest expected_digests is not an object schema."
 
         return True, exp_digs, None
+
+
+class TestAuthoritativeReceiptVerifier(AuthoritativeReceiptVerifier):
+    """Test-only verifier subclass for unit tests using temporary key/manifest files.
+
+    This subclass overrides key loading and manifest path checks to allow temporary vault directories
+    during test execution. It MUST NOT be used in production code.
+    """
+
+    def _load_authority_key(self, key_path: Path | str) -> tuple[str | None, str | None]:
+        return _validate_and_load_authority_key_internal(key_path, is_test_seam=True)
+
+    def _check_manifest_path_provenance(self, manifest_path: Path) -> tuple[bool, str | None]:
+        return True, None
 
     def verify(self, ref_str: str, receipt_data: dict, entry: dict) -> tuple[bool, str | None]:
         if not self.authority_key:

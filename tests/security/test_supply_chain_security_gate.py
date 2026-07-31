@@ -1366,7 +1366,7 @@ def make_test_verifier(
     import hmac
 
     sys.path.insert(0, str(ROOT))
-    from scripts.security.exemption_validator import AuthoritativeReceiptVerifier
+    from scripts.security.exemption_validator import TestAuthoritativeReceiptVerifier
 
     vault_dir = tmp_path / "test_vault"
     vault_dir.mkdir(parents=True, exist_ok=True)
@@ -1403,12 +1403,11 @@ def make_test_verifier(
     manifest_file.write_text(json.dumps(manifest), encoding="utf-8")
     manifest_file.chmod(0o600)
 
-    return AuthoritativeReceiptVerifier(
+    return TestAuthoritativeReceiptVerifier(
         authority_key_file=key_file,
         authority_manifest_path=manifest_file,
         trusted_source_systems=trusted_source_systems or {"legal_vault", "ODP-PLAN-OSS-LEGAL-POLICY-001"},
         expected_digests=expected_digests,
-        allow_test_vault=True,
     )
 
 
@@ -2045,6 +2044,7 @@ def test_round11_b2_unbound_policy_version_and_digest_mismatches_rejected(tmp_pa
     sys.path.insert(0, str(ROOT))
     from scripts.security.exemption_validator import (
         AuthoritativeReceiptVerifier,
+        TestAuthoritativeReceiptVerifier,
         compute_canonical_receipt_hash,
         compute_file_sha256,
         compute_policy_hash,
@@ -2059,7 +2059,7 @@ def test_round11_b2_unbound_policy_version_and_digest_mismatches_rejected(tmp_pa
     key_file = tmp_path / "test_unbound.key"
     key_file.write_text(test_key, encoding="utf-8")
     key_file.chmod(0o600)
-    unbound_verifier = AuthoritativeReceiptVerifier(authority_key_file=key_file, expected_digests={}, allow_test_vault=True)
+    unbound_verifier = TestAuthoritativeReceiptVerifier(authority_key_file=key_file, expected_digests={})
     assert not unbound_verifier.has_complete_expected_digests
 
     entry = {
@@ -2155,12 +2155,15 @@ def test_round11_b4_release_attestation_unbound_fail_closed() -> None:
 def test_round13_b1_key_path_symlink_and_unrestrictive_mode_rejected(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """B1 — Key file path must be in allowlisted vault, not a symlink, and have restrictive 0o600 permissions."""
     sys.path.insert(0, str(ROOT))
-    from scripts.security.exemption_validator import validate_and_load_authority_key
+    from scripts.security.exemption_validator import (
+        _validate_and_load_authority_key_internal,
+        validate_and_load_authority_key,
+    )
 
     # 1. Arbitrary caller-selected tmp_path outside vault allowlist -> REJECTED in production mode
     arbitrary_key = tmp_path / "arbitrary_caller.key"
     arbitrary_key.write_text("a" * 32, encoding="utf-8")
-    raw_key, err = validate_and_load_authority_key(arbitrary_key, allow_test_vault=False)
+    raw_key, err = validate_and_load_authority_key(arbitrary_key)
     assert raw_key is None
     assert "not located in an allowlisted vault directory" in err or "inside repository root" in err
 
@@ -2177,7 +2180,7 @@ def test_round13_b1_key_path_symlink_and_unrestrictive_mode_rejected(tmp_path: P
         symlink_key.unlink()
     symlink_key.symlink_to(real_key)
 
-    raw_key, err = validate_and_load_authority_key(symlink_key, allow_test_vault=True)
+    raw_key, err = _validate_and_load_authority_key_internal(symlink_key, is_test_seam=True)
     assert raw_key is None
     assert "is a symlink" in err
 
@@ -2186,7 +2189,7 @@ def test_round13_b1_key_path_symlink_and_unrestrictive_mode_rejected(tmp_path: P
     bad_mode_key.write_text("c" * 32, encoding="utf-8")
     bad_mode_key.chmod(0o644)
 
-    raw_key, err = validate_and_load_authority_key(bad_mode_key, allow_test_vault=True)
+    raw_key, err = _validate_and_load_authority_key_internal(bad_mode_key, is_test_seam=True)
     assert raw_key is None
     assert "unrestrictive permissions" in err
 
@@ -2199,7 +2202,7 @@ def test_round13_b1_key_path_symlink_and_unrestrictive_mode_rejected(tmp_path: P
 def test_round13_b2_unauthenticated_free_expected_digests_dict_rejected(tmp_path: Path) -> None:
     """B2 — Free caller-supplied expected digests without a matching authenticated authority manifest are rejected."""
     sys.path.insert(0, str(ROOT))
-    from scripts.security.exemption_validator import AuthoritativeReceiptVerifier
+    from scripts.security.exemption_validator import TestAuthoritativeReceiptVerifier
 
     vault_dir = tmp_path / "test_vault"
     vault_dir.mkdir(parents=True, exist_ok=True)
@@ -2212,11 +2215,10 @@ def test_round13_b2_unauthenticated_free_expected_digests_dict_rejected(tmp_path
     bogus_manifest.write_text(json.dumps({"manifest_version": "1.0.0"}), encoding="utf-8")
     bogus_manifest.chmod(0o600)
 
-    verifier = AuthoritativeReceiptVerifier(
+    verifier = TestAuthoritativeReceiptVerifier(
         authority_key_file=key_file,
         authority_manifest_path=bogus_manifest,
         expected_digests={"source_digest": "1" * 64},
-        allow_test_vault=True,
     )
 
     assert not verifier.has_complete_expected_digests
@@ -2275,7 +2277,7 @@ def test_round14_b1_b2_clean_checkout_production_default_verifier_fails_closed(t
     monkeypatch.delenv("OSS_LEGAL_AUTHORITY_KEY_FILE", raising=False)
     monkeypatch.delenv("OSS_LEGAL_AUTHORITY_MANIFEST_PATH", raising=False)
 
-    verifier = AuthoritativeReceiptVerifier(allow_test_vault=False)
+    verifier = AuthoritativeReceiptVerifier()
 
     assert verifier.authority_key is None
     assert verifier.has_complete_expected_digests is False
@@ -2316,11 +2318,11 @@ def test_round14_b1_repo_local_key_file_rejected_in_production(tmp_path: Path) -
     local_key.chmod(0o600)
 
     try:
-        raw_key, err = validate_and_load_authority_key(local_key, allow_test_vault=False)
+        raw_key, err = validate_and_load_authority_key(local_key)
         assert raw_key is None
         assert "located inside repository root" in (err or "")
 
-        verifier = AuthoritativeReceiptVerifier(authority_key_file=local_key, allow_test_vault=False)
+        verifier = AuthoritativeReceiptVerifier(authority_key_file=local_key)
         assert verifier.authority_key is None
         assert "located inside repository root" in (verifier.key_error or "")
     finally:
@@ -2332,3 +2334,82 @@ def test_round14_b2_external_vault_authority_success(tmp_path: Path) -> None:
     verifier = make_test_verifier(tmp_path, key="external-authority-secret-999888")
     assert verifier.authority_key == "external-authority-secret-999888"
     assert verifier.has_complete_expected_digests is True
+
+
+# ─── Round-15 negative test (B1) ───
+
+
+def test_round15_b1_no_public_production_constructor_arg_trusts_repo_local_key_or_manifest(tmp_path: Path) -> None:
+    """Round 15 — Public AuthoritativeReceiptVerifier and validate_and_load_authority_key signatures must not accept allow_test_vault, and production verifier strictly rejects repo-local keys/manifests."""
+    sys.path.insert(0, str(ROOT))
+    import hashlib
+    import hmac
+    import inspect
+
+    from scripts.security.exemption_validator import (
+        AuthoritativeReceiptVerifier,
+        validate_and_load_authority_key,
+    )
+
+    # 1. Inspect function/constructor signatures to verify allow_test_vault is not a public parameter
+    val_sig = inspect.signature(validate_and_load_authority_key)
+    assert "allow_test_vault" not in val_sig.parameters, "validate_and_load_authority_key must not expose allow_test_vault"
+
+    ver_sig = inspect.signature(AuthoritativeReceiptVerifier.__init__)
+    assert "allow_test_vault" not in ver_sig.parameters, "AuthoritativeReceiptVerifier.__init__ must not expose allow_test_vault"
+
+    # 2. Attempting to pass allow_test_vault=True to production constructor raises TypeError
+    with pytest.raises(TypeError, match="unexpected keyword argument 'allow_test_vault'"):
+        AuthoritativeReceiptVerifier(allow_test_vault=True)  # type: ignore[call-arg]
+
+    # 3. Create a validly permissions-restricted key and signed manifest inside repository root (under ROOT/docs/security)
+    repo_local_dir = ROOT / "docs/security"
+    test_key_file = repo_local_dir / f"repo_local_test_key_{tmp_path.name}.key"
+    test_key_file.write_text("a" * 32, encoding="utf-8")
+    test_key_file.chmod(0o600)
+
+    test_key = "a" * 32
+    digs = {
+        "source_digest": "a" * 40,
+        "release_digest": "b" * 64,
+        "sbom_digest": "c" * 64,
+        "evidence_report_digest": "d" * 64,
+        "python_lock_digest": "e" * 64,
+        "npm_lock_digest": "f" * 64,
+    }
+    manifest_payload = {
+        "manifest_version": "1.0.0",
+        "policy_name": "ODP-PLAN-OSS-LEGAL-POLICY-001",
+        "policy_version": "1.0.0",
+        "source_system": "ODP-PLAN-OSS-LEGAL-POLICY-001",
+        "expected_digests": digs,
+    }
+    canon_json = json.dumps(manifest_payload, sort_keys=True, separators=(",", ":"))
+    canon_hash = hashlib.sha256(canon_json.encode("utf-8")).hexdigest()
+    sig = hmac.new(test_key.encode("utf-8"), canon_hash.encode("utf-8"), hashlib.sha256).hexdigest()
+
+    manifest = dict(manifest_payload)
+    manifest["canonical_manifest_hash"] = canon_hash
+    manifest["signature"] = sig
+
+    manifest_file = repo_local_dir / f"repo_local_manifest_{tmp_path.name}.json"
+    manifest_file.write_text(json.dumps(manifest), encoding="utf-8")
+    manifest_file.chmod(0o600)
+
+    try:
+        # Production verifier rejects repository-local key and manifest
+        verifier = AuthoritativeReceiptVerifier(
+            authority_key_file=test_key_file,
+            authority_manifest_path=manifest_file,
+        )
+        assert verifier.authority_key is None
+        assert "located inside repository root" in (verifier.key_error or "")
+        assert verifier.has_complete_expected_digests is False
+
+        # validate_and_load_authority_key rejects repository-local key
+        raw_key, err = validate_and_load_authority_key(test_key_file)
+        assert raw_key is None
+        assert "located inside repository root" in (err or "")
+    finally:
+        test_key_file.unlink(missing_ok=True)
+        manifest_file.unlink(missing_ok=True)
