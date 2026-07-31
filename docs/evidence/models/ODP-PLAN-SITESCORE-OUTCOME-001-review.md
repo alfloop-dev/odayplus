@@ -1079,3 +1079,91 @@ green, but B1 still accepts an invented validation run and contradictory bound m
 evidence, B2 permits a self-consistent no-handback/no-receipt-required contract, and B3 permits
 synthetic horizon metrics through an unchecked metric surface. Re-audit the full acceptance
 batch after remediation. No owner implementation content was changed by this review.
+
+---
+
+# Codex6 Re-review Addendum — 2026-07-31, exact owner head `8e7ad006`
+
+The supervisor re-dispatched this task after the owner reported B1-B3 remediation at exact
+pushed head `8e7ad00669476eefb34864475dc170980df8786b`. The local and remote task
+branches both pointed at that SHA. The worktree contained no uncommitted owner implementation
+diff; its only untracked entries were the orchestrator-seeded task context/state files.
+
+## Verification at the exact owner head
+
+```bash
+PYTHONPATH=. .venv/bin/pytest -q tests/models -k "sitescore or opening_outcome"
+PYTHONPATH=. .venv/bin/pytest -q tests -k "sitescore or opening_outcome or model_ready"
+.venv/bin/ruff check scripts/models models tests/models
+git diff --check
+git diff --check 38bb9cd7..8e7ad006
+```
+
+- Task-scoped selector: **45 passed**.
+- Full focused selector: **89 passed**; collection independently reported 89 selected and
+  2,235 deselected tests.
+- Ruff and both whitespace checks: clean.
+- The previous direct examples are fixed in the narrow direction: selected governed-disabled
+  model-card fields are constrained; complete duplicated handbacks and their required booleans
+  are checked; and the previously named synthetic horizon keys are rejected across nested
+  structures.
+- The committed receipt and committed model card verify together at the exact reviewed head.
+
+The task brief requires the complete fail-closed batch to be re-audited after every reopen.
+Each mutation below started from the committed receipt/model card, rebound the exact model-card
+and handback SHA256 values in both declared locations, recomputed the receipt content hash, and
+then supplied the rebound card to `verify_sitescore_gate2_receipt`. Every case returned
+`is_valid=True`, `reason_code="RECEIPT_VALIDATED"`, and no errors.
+
+## Blocking findings
+
+### B1 — Required model-card calibration and metric evidence can be removed
+
+The verifier checks model-card metric values only when a listed key exists, and its calibration
+and segment schema helpers silently accept missing/non-dictionary values. An independent bundle
+emptied `model_card.metrics_summary`, removed `calibration_summary` and `segment_metrics` from
+both the model card and benchmark summary, rebound all hashes, and validated successfully.
+
+The resulting hash-bound model card and receipt contain no calibration or segment evidence while
+claiming to be a validated Gate 2 receipt. Require the complete model-card metric key set, require
+typed calibration and segment structures with their mandatory fields, and enforce the receipt and
+model-card schemas before comparing their values.
+
+### B2 — Outcome authority, lineage, and freshness can still be invented
+
+Three independent self-consistent mutations validated after hash rebinding:
+
+- changing both handback copies' `outcome_backfill_contract` placeholders from `UNVERIFIED` to an
+  invented source identity, query ID, 64-hex dataset hash, lineage, future freshness timestamp,
+  and attacker evidence owner;
+- inserting an invented dataset snapshot ID, model version, and artifact lineage ID into the
+  benchmark summary while retaining the governed-disabled model card; and
+- replacing the top-level `source_contract` and `inventory_version` with invented authority and
+  setting `observed_at` to `not-a-timestamp`.
+
+These fields are part of the acceptance evidence set, but the verifier currently validates only
+the names in `required_fields`; it does not constrain the current no-source placeholders or bind
+the receipt's source identity and freshness semantics. Require no-source/governed-disabled
+artifacts to retain unavailable/unverified authority fields, validate source/query/snapshot/
+lineage/freshness values and timestamps, and reconcile them across receipt, summary, model card,
+and handback contracts.
+
+### B3 — The receipt metric schema remains open to renamed synthetic horizon metrics
+
+Adding a finite `m6_interval_mae_v2` directly to `benchmark_summary`, then recomputing the content
+hash, validated successfully. The universal scan rejects only a finite list and the exact regex
+`^m\d+_(?:interval_)?mae$`; the surrounding benchmark-summary schema accepts arbitrary unknown
+metric fields. The same prohibited horizon metric therefore becomes valid through a trivial
+rename.
+
+Enforce a closed allow-list for every metric-bearing receipt/model-card object (including the
+benchmark summary itself), rather than relying on a blacklist of known spellings. Add negative
+tests for unknown horizon/calibration fields after all artifact hashes are rebound.
+
+## Decision
+
+**Changes requested.** Exact owner head `8e7ad006` is not approved. The focused suites are green,
+but B1 permits removal of the required calibration/model evidence, B2 permits invented
+source/lineage/freshness evidence, and B3 still admits the explicitly prohibited synthetic
+horizon metric class through an open receipt schema. Re-audit the complete acceptance batch after
+remediation. No owner implementation content was changed by this review.
