@@ -50,6 +50,7 @@ SOLVER_VERSION = "netplan-ortools-mip-v1"
 STATUS_OPTIMAL = "optimal"
 STATUS_FEASIBLE = "feasible"
 STATUS_INFEASIBLE = "infeasible"
+DEFAULT_ALTERNATIVE_LIMIT = 3
 
 
 @dataclass(frozen=True)
@@ -156,6 +157,9 @@ def _solve_network_plan_impl(
     risk_penalty: float = 100_000.0,
     alternative_limit: int = 3,
 ) -> NetworkPlanSolveResult:
+    if alternative_limit < 0:
+        raise ValueError("alternative_limit must be non-negative")
+
     # Handle empty/missing inputs
     if not options_by_entity or any(not options for options in options_by_entity.values()):
         return NetworkPlanSolveResult(
@@ -195,25 +199,15 @@ def _solve_network_plan_impl(
                 infeasible=True,
                 diagnostics=tuple(diagnose_infeasible(options_by_entity, constraints)),
             )
-        ordered = sorted(
-            candidates,
-            key=lambda item: (
-                item.objective_value,
-                item.expected_gross_margin,
-                -item.budget_usage,
-                -item.average_risk,
-            ),
-            reverse=True,
-        )
+        ordered = _rank_feasible_candidates(candidates)
         best = ordered[0]
         alternatives = tuple(
             candidate
             for candidate in ordered[1:]
             if candidate.action_signature != best.action_signature
         )[:alternative_limit]
-        status = STATUS_OPTIMAL if best.objective_value >= ordered[-1].objective_value else STATUS_FEASIBLE
         return NetworkPlanSolveResult(
-            solver_status=status,
+            solver_status=STATUS_OPTIMAL,
             objective_value=best.objective_value,
             selected_actions=best.actions,
             expected_gross_margin=best.expected_gross_margin,
@@ -341,24 +335,21 @@ def _solve_network_plan_impl(
     selected = sorted(get_selected_actions(), key=lambda o: o.entity_id)
     best_candidate = _candidate_from_selected(selected, constraints, risk_penalty)
 
-    # Find alternatives
-    alternatives = []
-    for _ in range(alternative_limit):
-        current_selected_vars = []
-        for entity_id, options in options_by_entity.items():
-            for j, _option in enumerate(options):
-                if x[entity_id][j].solution_value() > 0.5:
-                    current_selected_vars.append(x[entity_id][j])
-        
-        solver.Add(sum(current_selected_vars) <= N - 1)
-        alt_status = solver.Solve()
-        if alt_status in (_pywraplp().Solver.OPTIMAL, _pywraplp().Solver.FEASIBLE):
-            alt_selected = sorted(get_selected_actions(), key=lambda o: o.entity_id)
-            alt_candidate = _candidate_from_selected(alt_selected, constraints, risk_penalty)
-            if alt_candidate.action_signature not in [best_candidate.action_signature] + [a.action_signature for a in alternatives]:
-                alternatives.append(alt_candidate)
-        else:
-            break
+    # Independently enumerate and rank alternatives. This makes their count,
+    # order, and full content deterministic instead of relying on backend tie
+    # breaking after repeated no-good constraints.
+    ranked_candidates = _rank_feasible_candidates(
+        build_feasible_candidates(
+            options_by_entity=options_by_entity,
+            constraints=constraints,
+            risk_penalty=risk_penalty,
+        )
+    )
+    alternatives = [
+        candidate
+        for candidate in ranked_candidates
+        if candidate.action_signature != best_candidate.action_signature
+    ][:alternative_limit]
 
     solver_status = STATUS_OPTIMAL if status == _pywraplp().Solver.OPTIMAL else STATUS_FEASIBLE
     return NetworkPlanSolveResult(
@@ -391,6 +382,22 @@ def build_feasible_candidates(
         if _is_feasible(candidate, constraints):
             candidates.append(candidate)
     return candidates
+
+
+def _rank_feasible_candidates(
+    candidates: list[NetworkPlanCandidate],
+) -> list[NetworkPlanCandidate]:
+    """Return one deterministic ordering for independently enumerated plans."""
+    return sorted(
+        candidates,
+        key=lambda item: (
+            -item.objective_value,
+            -item.expected_gross_margin,
+            item.budget_usage,
+            item.average_risk,
+            item.action_signature,
+        ),
+    )
 
 
 def diagnose_infeasible(
@@ -606,6 +613,7 @@ def compute_solver_problem_hash(
     options_by_entity: dict[str, tuple[ActionOption, ...]],
     constraints: NetPlanConstraints,
     risk_penalty: float,
+    alternative_limit: int = DEFAULT_ALTERNATIVE_LIMIT,
 ) -> str:
     payload = {
         "entities": sorted(options_by_entity.keys()),
@@ -615,6 +623,7 @@ def compute_solver_problem_hash(
         },
         "constraints": constraints.to_dict(),
         "risk_penalty": float(risk_penalty),
+        "alternative_limit": alternative_limit,
     }
     return canonical_sha256(payload)
 
@@ -628,7 +637,8 @@ def _candidate_fields_match(
     expected: NetworkPlanCandidate,
 ) -> bool:
     return (
-        _near(actual.objective_value, expected.objective_value)
+        actual.actions == expected.actions
+        and _near(actual.objective_value, expected.objective_value)
         and _near(actual.expected_gross_margin, expected.expected_gross_margin)
         and _near(actual.budget_usage, expected.budget_usage)
         and _near(actual.average_risk, expected.average_risk)
@@ -644,6 +654,7 @@ def _verify_solve_result(
     constraints: NetPlanConstraints,
     solve_result: NetworkPlanSolveResult,
     risk_penalty: float,
+    alternative_limit: int,
 ) -> tuple[tuple[str, ...], NetworkPlanCandidate | None]:
     violations: list[str] = []
     feasible_candidates = build_feasible_candidates(
@@ -675,18 +686,12 @@ def _verify_solve_result(
             violations.append("infeasible_result_metrics_mismatch")
         if solve_result.solver_version != SOLVER_VERSION:
             violations.append("solver_version_mismatch")
-        expected_diagnostics = {
-            diagnosis.violated_constraint
-            for diagnosis in diagnose_infeasible(options_by_entity, constraints)
-        }
-        actual_diagnostics = {
-            diagnosis.violated_constraint for diagnosis in solve_result.diagnostics
-        }
-        if actual_diagnostics != expected_diagnostics:
+        expected_diagnostics = tuple(diagnose_infeasible(options_by_entity, constraints))
+        if solve_result.diagnostics != expected_diagnostics:
             violations.append("infeasibility_diagnosis_mismatch")
         return tuple(violations), None
 
-    if solve_result.solver_status not in {STATUS_OPTIMAL, STATUS_FEASIBLE}:
+    if solve_result.solver_status != STATUS_OPTIMAL:
         violations.append("solve_status_mismatch")
     if solve_result.infeasible:
         violations.append("solve_feasibility_flag_mismatch")
@@ -696,17 +701,21 @@ def _verify_solve_result(
         violations.append("solver_version_mismatch")
 
     selected_by_entity: dict[str, ActionOption] = {}
+    selection_integrity_failed = False
     for selected in solve_result.selected_actions:
         if selected.entity_id in selected_by_entity:
             violations.append("duplicate_selected_entity")
+            selection_integrity_failed = True
             continue
         selected_by_entity[selected.entity_id] = selected
         if selected not in options_by_entity.get(selected.entity_id, ()):
             violations.append("selected_option_not_in_problem")
+            selection_integrity_failed = True
 
     if set(selected_by_entity) != set(options_by_entity):
         violations.append("unbound_solve_result_domain")
-    if violations:
+        selection_integrity_failed = True
+    if selection_integrity_failed:
         return tuple(dict.fromkeys(violations)), None
 
     recomputed = _candidate_from_selected(
@@ -731,15 +740,21 @@ def _verify_solve_result(
     if solve_result.binding_constraints != recomputed.binding_constraints:
         violations.append("solve_binding_constraints_mismatch")
 
-    best_objective = max(candidate.objective_value for candidate in feasible_candidates)
-    if solve_result.solver_status == STATUS_OPTIMAL and not _near(
-        recomputed.objective_value,
-        best_objective,
-    ):
+    ranked_candidates = _rank_feasible_candidates(feasible_candidates)
+    best_objective = ranked_candidates[0].objective_value
+    if not _near(recomputed.objective_value, best_objective):
         violations.append("optimality_claim_mismatch")
 
+    expected_alternatives = tuple(
+        candidate
+        for candidate in ranked_candidates
+        if candidate.action_signature != recomputed.action_signature
+    )[:alternative_limit]
+    if len(solve_result.alternatives) != len(expected_alternatives):
+        violations.append("alternative_count_mismatch")
+
     seen_signatures = {recomputed.action_signature}
-    for alternative in solve_result.alternatives:
+    for position, alternative in enumerate(solve_result.alternatives):
         alternative_selected = list(alternative.actions)
         alternative_entities = {action.entity_id for action in alternative_selected}
         if len(alternative_selected) != len(options_by_entity) or alternative_entities != set(
@@ -765,6 +780,11 @@ def _verify_solve_result(
         if alternative.action_signature in seen_signatures:
             violations.append("duplicate_alternative")
         seen_signatures.add(alternative.action_signature)
+        if position >= len(expected_alternatives) or not _candidate_fields_match(
+            alternative,
+            expected_alternatives[position],
+        ):
+            violations.append("alternative_content_mismatch")
 
     return tuple(dict.fromkeys(violations)), recomputed
 
@@ -776,11 +796,17 @@ def compare_solver_against_management_baseline(
     solve_result: NetworkPlanSolveResult,
     baseline: ManagementBaselineInput,
     risk_penalty: float = 100_000.0,
+    alternative_limit: int = DEFAULT_ALTERNATIVE_LIMIT,
     approval_verifier: ManagementApprovalReceiptVerifier | None = None,
     evaluated_at: datetime | None = None,
 ) -> ManagementBaselineComparisonReceipt:
     baseline_canonical_hash = baseline.compute_canonical_hash(constraints=constraints, risk_penalty=risk_penalty)
-    solver_problem_hash = compute_solver_problem_hash(options_by_entity, constraints, risk_penalty)
+    solver_problem_hash = compute_solver_problem_hash(
+        options_by_entity,
+        constraints,
+        risk_penalty,
+        alternative_limit,
+    )
     solver_result_hash = _compute_solver_result_hash(solve_result)
     scenario_hash = canonical_sha256(
         {
@@ -890,6 +916,7 @@ def compare_solver_against_management_baseline(
         constraints=constraints,
         solve_result=solve_result,
         risk_penalty=risk_penalty,
+        alternative_limit=alternative_limit,
     )
     if solve_violations or recomputed_solve is None:
         return receipt(
@@ -1043,7 +1070,7 @@ def solve_network_plan(
     options_by_entity: dict[str, tuple[ActionOption, ...]],
     constraints: NetPlanConstraints,
     risk_penalty: float = 100_000.0,
-    alternative_limit: int = 3,
+    alternative_limit: int = DEFAULT_ALTERNATIVE_LIMIT,
     isolate_process: bool = True,
 ) -> NetworkPlanSolveResult:
     """Public solver entrypoint with process isolation contract."""
@@ -1064,6 +1091,7 @@ def solve_network_plan(
 
 
 __all__ = [
+    "DEFAULT_ALTERNATIVE_LIMIT",
     "SOLVER_VERSION",
     "STATUS_FEASIBLE",
     "STATUS_INFEASIBLE",

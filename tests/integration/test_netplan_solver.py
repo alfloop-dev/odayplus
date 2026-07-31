@@ -35,6 +35,7 @@ from modules.netplan import (
 )
 from solver.netplan import (
     NETPLAN_POLICY_VERSION,
+    STATUS_FEASIBLE,
     STATUS_INFEASIBLE,
     STATUS_OPTIMAL,
     NetPlanConstraints,
@@ -733,6 +734,114 @@ def test_forged_solve_result_mutations_fail_closed(
 
     assert receipt.superior_or_equal is False
     assert expected_violation in receipt.baseline_constraint_violations
+    assert receipt.governance_status == GOVERNED_DISABLED
+
+
+def test_second_best_feasible_result_cannot_forge_solver_status_or_omit_alternatives() -> None:
+    options = build_scenario_options(existing_stores=_stores(), candidate_sites=_sites())
+    constraints = _constraints()
+    solve_result = solve_network_plan(options_by_entity=options, constraints=constraints)
+    baseline = _management_baseline()
+    authority_receipt = _approval_receipt(baseline, options, constraints)
+    second_best = solve_result.alternatives[0]
+    forged = replace(
+        solve_result,
+        solver_status=STATUS_FEASIBLE,
+        objective_value=second_best.objective_value,
+        selected_actions=second_best.actions,
+        expected_gross_margin=second_best.expected_gross_margin,
+        budget_usage=second_best.budget_usage,
+        average_risk=second_best.average_risk,
+        capacity_delta=second_best.capacity_delta,
+        action_counts=second_best.action_counts,
+        binding_constraints=second_best.binding_constraints,
+        alternatives=(),
+    )
+
+    receipt = _compare(
+        options=options,
+        constraints=constraints,
+        solve_result=forged,
+        baseline=baseline,
+        receipt=authority_receipt,
+    )
+
+    assert {
+        "solve_status_mismatch",
+        "optimality_claim_mismatch",
+        "alternative_count_mismatch",
+    } <= set(receipt.baseline_constraint_violations)
+    assert receipt.business_uat_status == BUSINESS_UAT_UNVERIFIED
+    assert receipt.governance_status == GOVERNED_DISABLED
+
+
+@pytest.mark.parametrize("mutation", ["omission", "substitution"])
+def test_alternative_set_mutations_fail_closed(mutation: str) -> None:
+    options = build_scenario_options(existing_stores=_stores(), candidate_sites=_sites())
+    constraints = _constraints()
+    solve_result = solve_network_plan(options_by_entity=options, constraints=constraints)
+    baseline = _management_baseline()
+    authority_receipt = _approval_receipt(baseline, options, constraints)
+    assert len(solve_result.alternatives) >= 2
+
+    if mutation == "omission":
+        forged_alternatives = ()
+        expected_violation = "alternative_count_mismatch"
+    else:
+        forged_alternatives = (
+            solve_result.alternatives[1],
+            solve_result.alternatives[0],
+            *solve_result.alternatives[2:],
+        )
+        expected_violation = "alternative_content_mismatch"
+    forged = replace(solve_result, alternatives=forged_alternatives)
+
+    receipt = _compare(
+        options=options,
+        constraints=constraints,
+        solve_result=forged,
+        baseline=baseline,
+        receipt=authority_receipt,
+    )
+
+    assert expected_violation in receipt.baseline_constraint_violations
+    assert receipt.business_uat_status == BUSINESS_UAT_UNVERIFIED
+    assert receipt.governance_status == GOVERNED_DISABLED
+
+
+@pytest.mark.parametrize("mutation", ["content", "multiplicity"])
+def test_infeasibility_diagnosis_mutations_fail_closed(mutation: str) -> None:
+    options = build_scenario_options(existing_stores=_stores(), candidate_sites=_sites())
+    constraints = _constraints(max_budget=100_000, min_expected_gross_margin=2_000_000)
+    solve_result = solve_network_plan(options_by_entity=options, constraints=constraints)
+    baseline = _management_baseline()
+    authority_receipt = _approval_receipt(baseline, options, constraints)
+    assert solve_result.infeasible is True
+    assert solve_result.diagnostics
+
+    if mutation == "content":
+        forged_first = replace(
+            solve_result.diagnostics[0],
+            affected_stores=("forged-store",),
+            required_relaxation="forged relaxation",
+            business_impact="forged impact",
+            suggested_action="forged action",
+        )
+        forged_diagnostics = (forged_first, *solve_result.diagnostics[1:])
+    else:
+        forged_diagnostics = (*solve_result.diagnostics, solve_result.diagnostics[-1])
+    forged = replace(solve_result, diagnostics=forged_diagnostics)
+
+    receipt = _compare(
+        options=options,
+        constraints=constraints,
+        solve_result=forged,
+        baseline=baseline,
+        receipt=authority_receipt,
+    )
+
+    assert "infeasibility_diagnosis_mismatch" in receipt.baseline_constraint_violations
+    assert receipt.business_uat_status == BUSINESS_UAT_UNVERIFIED
     assert receipt.governance_status == GOVERNED_DISABLED
 
 
