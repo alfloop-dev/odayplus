@@ -33,6 +33,12 @@ machine_readable: docs/evidence/DEVELOPMENT_PLAN_OPEN_TASK_EXECUTION_PACK_2026-0
 - human gate：7
 - release：`NO-GO`
 
+以上數字是 control pack 建立時的 scope freeze，不是要求完成後仍留在 active
+board。後續 validator 必須從兩個 canonical lifecycle source 中恰好解析到每個
+packet：尚未終結者位於 `ai-status.json`，已完成或 superseded 者位於官方
+`ai-task-archive/tasks/<task-id>.json`。歸檔不是「消失」，但 active/archive
+重複、損壞 snapshot、終態不一致或沒有合法 replacement chain 都必須 fail closed。
+
 已完成 task：
 
 1. `ODP-PLAN-GAP-ARCHIVE-001`
@@ -83,7 +89,22 @@ AI 代簽或只修單一 reviewer 範例，就不得 handoff。
 5. Exact PR head 的 required CI 全綠後才合併 `dev`。
 6. 合併後由 owner 登錄 merge SHA、readback、artifact，再標記 `done`。
 
-### 3.4 Deployment 邊界
+### 3.4 Lifecycle 與 archive 驗證
+
+1. 每個原始 19-task packet 必須存在於 active board 或官方 archive，且只能存在
+   於其中一處；active task 不得帶 `done`。
+2. Archive snapshot 必須綁相同 task id、`terminal_status=done`、合法
+   `terminal_outcome`，並保留 owner/reviewer、task class、acceptance、artifact、
+   verification、gap ids 與 control-pack source。
+3. `completed` 是合法終態；`superseded` 必須指向非自身、存在於 canonical state、
+   保存相同 packet/gap scope 的 replacement。Replacement chain 不得遺失、分叉
+   成 active/archive 雙份或形成 cycle。
+4. Validator 必須同時有 completed-archive 正向案例，以及 missing、duplicate、
+   malformed snapshot、missing replacement、scope drift、replacement cycle 負向案例。
+5. 每次 packet closeout／archive 後重跑 live validation；不得以「建立時 19 個都
+   active」的假設產生假警報或掩蓋真正遺失。
+
+### 3.5 Deployment 邊界
 
 - 一般 implementation task 只允許本機／CI／必要的 read-only provider
   verification，不得因 focused tests 通過就部署 production。

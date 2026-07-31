@@ -12,6 +12,7 @@ import argparse
 import json
 from pathlib import Path
 from typing import Any
+from urllib.parse import quote
 
 ROOT = Path(__file__).resolve().parents[2]
 DEFAULT_PACKET = ROOT / "docs/evidence/DEVELOPMENT_PLAN_OPEN_TASK_EXECUTION_PACK_2026-07-31.json"
@@ -88,6 +89,7 @@ def validate_packet(
     packet_path: Path = DEFAULT_PACKET,
     markdown_path: Path = DEFAULT_MARKDOWN,
     live_status_path: Path | None = None,
+    live_archive_root: Path | None = None,
 ) -> list[str]:
     errors: list[str] = []
 
@@ -206,52 +208,192 @@ def validate_packet(
         errors.append("markdown must preserve the NO-GO release claim")
 
     if live_status_path is not None:
-        errors.extend(_validate_live_status(task_packets, live_status_path))
+        archive_root = live_archive_root or live_status_path.parent / "ai-task-archive"
+        errors.extend(_validate_live_status(task_packets, live_status_path, archive_root))
 
     return errors
 
 
-def _validate_live_status(task_packets: list[dict[str, Any]], live_status_path: Path) -> list[str]:
+def _validate_task_contract(
+    task: dict[str, Any],
+    packet: dict[str, Any],
+    *,
+    label: str,
+) -> list[str]:
+    errors: list[str] = []
+    task_id = packet["task_id"]
+
+    if task.get("owner") == task.get("reviewer"):
+        errors.append(f"{label}: owner must not equal reviewer")
+    if task.get("task_class") != packet.get("class"):
+        errors.append(
+            f"{label}: task_class {task.get('task_class')!r} "
+            f"does not match packet {packet.get('class')!r}"
+        )
+    acceptance = task.get("acceptance")
+    if not isinstance(acceptance, list) or len(acceptance) < 5:
+        errors.append(f"{label}: acceptance must contain at least five granular criteria")
+    packet_source = "docs/evidence/DEVELOPMENT_PLAN_OPEN_TASK_EXECUTION_PACK_2026-07-31.json"
+    source_docs = task.get("source_docs")
+    if not isinstance(source_docs, list) or packet_source not in source_docs:
+        errors.append(f"{label}: source_docs must reference the control-pack JSON")
+    artifacts = task.get("artifacts")
+    if not isinstance(artifacts, list) or not artifacts:
+        errors.append(f"{label}: artifacts must be non-empty")
+    verification = task.get("verification")
+    if not isinstance(verification, list) or not verification:
+        errors.append(f"{label}: verification must be non-empty")
+    if task.get("execution_packet_id") != "ODP-PLAN-EXECUTION-CONTROL-PACK-001":
+        errors.append(f"{label}: execution_packet_id must reference the control pack")
+    gap_ids = task.get("gap_ids")
+    if not isinstance(gap_ids, list) or not set(packet.get("gap_ids") or []).issubset(gap_ids):
+        errors.append(f"{label}: gap_ids must preserve the packet scope for {task_id}")
+
+    return errors
+
+
+def _archive_snapshot_path(archive_root: Path, task_id: str) -> Path:
+    return archive_root / "tasks" / f"{quote(task_id, safe='-_.')}.json"
+
+
+def _load_archive_snapshot(path: Path, task_id: str) -> tuple[dict[str, Any] | None, list[str]]:
+    try:
+        snapshot = _load_object(path)
+    except (OSError, ValueError, json.JSONDecodeError) as exc:
+        return None, [f"{task_id}: archived snapshot is unreadable: {exc}"]
+
+    errors: list[str] = []
+    if snapshot.get("task_id") != task_id:
+        errors.append(f"{task_id}: archived snapshot task_id mismatch: {snapshot.get('task_id')!r}")
+    if snapshot.get("terminal_status") != "done":
+        errors.append(f"{task_id}: archived snapshot terminal_status must be 'done'")
+    if snapshot.get("terminal_outcome") not in {"completed", "superseded"}:
+        errors.append(
+            f"{task_id}: archived snapshot terminal_outcome must be completed or superseded"
+        )
+    task = snapshot.get("task")
+    if not isinstance(task, dict):
+        errors.append(f"{task_id}: archived snapshot task must be an object")
+        return None, errors
+    if task.get("id") != task_id:
+        errors.append(f"{task_id}: archived task id mismatch: {task.get('id')!r}")
+    if task.get("status") != "done":
+        errors.append(f"{task_id}: archived task status must be 'done'")
+    task_outcome = task.get("terminal_outcome") or "completed"
+    if task_outcome != snapshot.get("terminal_outcome"):
+        errors.append(f"{task_id}: archived task and snapshot terminal outcomes disagree")
+    return task, errors
+
+
+def _validate_replacement_chain(
+    *,
+    packet: dict[str, Any],
+    first_task: dict[str, Any],
+    active_tasks: dict[str, dict[str, Any]],
+    archive_root: Path,
+) -> list[str]:
+    errors: list[str] = []
+    original_id = packet["task_id"]
+    current = first_task
+    seen = {original_id}
+
+    while (current.get("terminal_outcome") or "completed") == "superseded":
+        replacement_id = str(current.get("superseded_by") or "").strip()
+        if not replacement_id:
+            errors.append(f"{original_id}: superseded packet has no replacement task")
+            break
+        if replacement_id in seen:
+            errors.append(
+                f"{original_id}: superseded replacement chain contains a cycle at {replacement_id}"
+            )
+            break
+        seen.add(replacement_id)
+
+        replacement_active = active_tasks.get(replacement_id)
+        replacement_path = _archive_snapshot_path(archive_root, replacement_id)
+        replacement_archived = replacement_path.is_file()
+        if replacement_active is not None and replacement_archived:
+            errors.append(
+                f"{original_id}: replacement {replacement_id} exists in both active and archive state"
+            )
+            break
+        if replacement_active is None and not replacement_archived:
+            errors.append(
+                f"{original_id}: superseded replacement {replacement_id} is absent from canonical state"
+            )
+            break
+
+        if replacement_active is not None:
+            if replacement_active.get("status") == "done":
+                errors.append(f"{original_id}: active replacement {replacement_id} cannot be done")
+            current = replacement_active
+        else:
+            current, archive_errors = _load_archive_snapshot(replacement_path, replacement_id)
+            errors.extend(f"{original_id}: replacement chain: {error}" for error in archive_errors)
+            if current is None:
+                break
+
+        errors.extend(
+            _validate_task_contract(
+                current,
+                packet,
+                label=f"{original_id}: replacement {replacement_id}",
+            )
+        )
+
+    return errors
+
+
+def _validate_live_status(
+    task_packets: list[dict[str, Any]],
+    live_status_path: Path,
+    archive_root: Path,
+) -> list[str]:
     errors: list[str] = []
     try:
         status = _load_object(live_status_path)
     except (OSError, ValueError, json.JSONDecodeError) as exc:
         return [f"live status is unreadable: {exc}"]
 
-    tasks = {
-        task.get("id"): task
-        for task in status.get("tasks", [])
-        if isinstance(task, dict) and isinstance(task.get("id"), str)
-    }
-    packet_source = "docs/evidence/DEVELOPMENT_PLAN_OPEN_TASK_EXECUTION_PACK_2026-07-31.json"
+    task_rows = [task for task in status.get("tasks", []) if isinstance(task, dict)]
+    task_ids = [task.get("id") for task in task_rows if isinstance(task.get("id"), str)]
+    if len(task_ids) != len(set(task_ids)):
+        errors.append("live task state contains duplicate task ids")
+    tasks = {task["id"]: task for task in task_rows if isinstance(task.get("id"), str)}
 
     for packet in task_packets:
         task_id = packet["task_id"]
-        task = tasks.get(task_id)
-        if task is None:
-            errors.append(f"{task_id}: absent from live task state")
+        active_task = tasks.get(task_id)
+        archive_path = _archive_snapshot_path(archive_root, task_id)
+        archived = archive_path.is_file()
+
+        if active_task is not None and archived:
+            errors.append(f"{task_id}: exists in both active and archive state")
             continue
-        if task.get("owner") == task.get("reviewer"):
-            errors.append(f"{task_id}: owner must not equal reviewer")
-        if task.get("task_class") != packet.get("class"):
-            errors.append(
-                f"{task_id}: live task_class {task.get('task_class')!r} "
-                f"does not match packet {packet.get('class')!r}"
+        if active_task is None and not archived:
+            errors.append(f"{task_id}: absent from active and archive state")
+            continue
+
+        if active_task is not None:
+            if active_task.get("status") == "done":
+                errors.append(f"{task_id}: active task cannot have terminal status done")
+            errors.extend(_validate_task_contract(active_task, packet, label=f"{task_id}: active"))
+            continue
+
+        archived_task, archive_errors = _load_archive_snapshot(archive_path, task_id)
+        errors.extend(archive_errors)
+        if archived_task is None:
+            continue
+        errors.extend(_validate_task_contract(archived_task, packet, label=f"{task_id}: archive"))
+        if (archived_task.get("terminal_outcome") or "completed") == "superseded":
+            errors.extend(
+                _validate_replacement_chain(
+                    packet=packet,
+                    first_task=archived_task,
+                    active_tasks=tasks,
+                    archive_root=archive_root,
+                )
             )
-        acceptance = task.get("acceptance")
-        if not isinstance(acceptance, list) or len(acceptance) < 5:
-            errors.append(
-                f"{task_id}: live acceptance must contain at least five granular criteria"
-            )
-        source_docs = task.get("source_docs")
-        if not isinstance(source_docs, list) or packet_source not in source_docs:
-            errors.append(f"{task_id}: live source_docs must reference the control-pack JSON")
-        artifacts = task.get("artifacts")
-        if not isinstance(artifacts, list) or not artifacts:
-            errors.append(f"{task_id}: live artifacts must be non-empty")
-        verification = task.get("verification")
-        if not isinstance(verification, list) or not verification:
-            errors.append(f"{task_id}: live verification must be non-empty")
 
     return errors
 
@@ -261,9 +403,10 @@ def main() -> int:
     parser.add_argument("--packet", type=Path, default=DEFAULT_PACKET)
     parser.add_argument("--markdown", type=Path, default=DEFAULT_MARKDOWN)
     parser.add_argument("--status", type=Path)
+    parser.add_argument("--archive-root", type=Path)
     args = parser.parse_args()
 
-    errors = validate_packet(args.packet, args.markdown, args.status)
+    errors = validate_packet(args.packet, args.markdown, args.status, args.archive_root)
     if errors:
         for error in errors:
             print(f"ERROR: {error}")

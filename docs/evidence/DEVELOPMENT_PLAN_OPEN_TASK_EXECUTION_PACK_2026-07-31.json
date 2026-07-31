@@ -50,7 +50,9 @@
     "pr_merge_closeout": [
       "Open or refresh one task-scoped PR only after the complete local batch is handoff-ready.",
       "Required CI must pass on the exact PR head before merge to dev.",
-      "Only the owner closes the task after merge SHA and required artifacts are archived and read back."
+      "Only the owner closes the task after merge SHA and required artifacts are archived and read back.",
+      "After closeout, every original packet must resolve from exactly one canonical lifecycle source: active ai-status state or an official terminal archive snapshot.",
+      "A superseded packet is valid only when its non-cyclic replacement chain exists in canonical state and preserves the original execution-packet and gap scope."
     ],
     "deployment": [
       "No task may deploy production merely because its focused tests pass.",
