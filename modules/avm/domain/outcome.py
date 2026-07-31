@@ -151,6 +151,7 @@ class AVMOutcomeCalibrationReport:
     dataset_snapshot_id: str
     dataset_snapshot_hash: str
     model_artifact_hash: str
+    authentic_data_activated: bool = False
     evaluated_at: datetime = field(default_factory=lambda: datetime.now(UTC))
 
     def to_dict(self) -> dict[str, Any]:
@@ -174,6 +175,7 @@ class AVMOutcomeCalibrationReport:
             "dataset_snapshot_id": self.dataset_snapshot_id,
             "dataset_snapshot_hash": self.dataset_snapshot_hash,
             "model_artifact_hash": self.model_artifact_hash,
+            "authentic_data_activated": self.authentic_data_activated,
             "evaluated_at": self.evaluated_at.isoformat(),
         }
 
@@ -261,6 +263,14 @@ def align_outcomes_and_predictions(
                 f"Missing prediction record for transaction {outcome.transaction_id!r} / store {outcome.store_id!r}"
             )
 
+        # B9: Temporal leakage check - prediction must be strictly before transaction date
+        pred_dt = pred.predicted_at.astimezone(UTC) if pred.predicted_at.tzinfo else pred.predicted_at.replace(tzinfo=UTC)
+        if pred_dt >= tx_dt:
+            raise AVMOutcomeValidationError(
+                f"Temporal leakage detected: prediction timestamp {pred.predicted_at.isoformat()} "
+                f"is not strictly before transaction date {outcome.transaction_date.isoformat()} for store {outcome.store_id!r}"
+            )
+
         if not (pred.p10 <= pred.p50 <= pred.p90):
             raise AVMOutcomeValidationError(
                 f"Prediction interval bounds invalid for store {pred.store_id!r}: "
@@ -315,6 +325,7 @@ def compute_avm_outcome_calibration(
     dataset_snapshot_id: str = "",
     dataset_snapshot_hash: str = "",
     model_artifact_hash: str = "",
+    authentic_data_activated: bool = False,
 ) -> AVMOutcomeCalibrationReport:
     """Compute coverage, calibration, and value-band metrics with fail-closed assertions."""
     # Fail-closed validations
@@ -369,6 +380,7 @@ def compute_avm_outcome_calibration(
             dataset_snapshot_id=dataset_snapshot_id,
             dataset_snapshot_hash=dataset_snapshot_hash,
             model_artifact_hash=model_artifact_hash,
+            authentic_data_activated=authentic_data_activated,
         )
 
     n = len(aligned_pairs)
@@ -437,7 +449,7 @@ def compute_avm_outcome_calibration(
             mae=round(bmae, 2),
         )
 
-    # B1: Evaluate full activation & calibration targets
+    # B1 & B8: Evaluate full activation, calibration targets, and authentic activation gate
     count_sufficient = (
         observed_count >= ACTIVATION_THRESHOLD
         and eligible_count >= ACTIVATION_THRESHOLD
@@ -456,6 +468,10 @@ def compute_avm_outcome_calibration(
     elif not calibration_targets_met:
         is_governed_disabled = True
         reason_code = "CALIBRATION_TARGET_NOT_MET"
+        verdict = AVMVerdict.FAIL_CLOSED
+    elif not authentic_data_activated:
+        is_governed_disabled = True
+        reason_code = "AUTHENTIC_DATA_ACTIVATION_PENDING"
         verdict = AVMVerdict.FAIL_CLOSED
     else:
         is_governed_disabled = False
@@ -482,4 +498,5 @@ def compute_avm_outcome_calibration(
         dataset_snapshot_id=dataset_snapshot_id,
         dataset_snapshot_hash=dataset_snapshot_hash,
         model_artifact_hash=model_artifact_hash,
+        authentic_data_activated=authentic_data_activated,
     )

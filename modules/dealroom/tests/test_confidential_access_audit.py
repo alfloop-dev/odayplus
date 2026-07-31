@@ -72,3 +72,65 @@ def test_assert_no_confidential_leak_raises_on_raw_price_leak() -> None:
     leaking_text = {"note": "raw price was 15800000.0"}
     with pytest.raises(ConfidentialLeakError, match="Confidential raw value"):
         assert_no_confidential_leak(leaking_text, forbidden_raw_values=(15800000.0,))
+
+
+# --- B11 ABAC Context Mutation Tests ---
+
+def test_b11_unauthenticated_principal_denied() -> None:
+    attempt = ConfidentialAccessAttempt(
+        actor_id="usr-fin-001",
+        role=Role.FINANCE_LEGAL,
+        resource="dealroom",
+        action=Action.VIEW,
+        context={"authenticated": False},
+    )
+    decision, reason, receipt = ConfidentialAccessAuditor.evaluate_access(
+        attempt, ConfidentialLevel.HIGH
+    )
+    assert decision == ConfidentialAccessDecision.DENY
+    assert "not authenticated" in reason
+
+
+def test_b11_missing_data_room_access_authority_denied() -> None:
+    attempt = ConfidentialAccessAttempt(
+        actor_id="usr-fin-001",
+        role=Role.FINANCE_LEGAL,
+        resource="dealroom",
+        action=Action.VIEW,
+        context={"authenticated": True, "data_room_access": False},
+    )
+    decision, reason, receipt = ConfidentialAccessAuditor.evaluate_access(
+        attempt, ConfidentialLevel.HIGH
+    )
+    assert decision == ConfidentialAccessDecision.DENY
+    assert "data_room_access" in reason
+
+
+def test_b11_mismatched_tenant_denied() -> None:
+    attempt = ConfidentialAccessAttempt(
+        actor_id="usr-fin-001",
+        role=Role.FINANCE_LEGAL,
+        resource="dealroom",
+        action=Action.VIEW,
+        context={"authenticated": True, "tenant_matched": False},
+    )
+    decision, reason, receipt = ConfidentialAccessAuditor.evaluate_access(
+        attempt, ConfidentialLevel.HIGH
+    )
+    assert decision == ConfidentialAccessDecision.DENY
+    assert "Tenant authority mismatch" in reason
+
+
+def test_b11_insufficient_clearance_level_denied() -> None:
+    attempt = ConfidentialAccessAttempt(
+        actor_id="usr-fin-001",
+        role=Role.FINANCE_LEGAL,
+        resource="dealroom",
+        action=Action.VIEW,
+        context={"authenticated": True, "clearance": "PUBLIC"},
+    )
+    decision, reason, receipt = ConfidentialAccessAuditor.evaluate_access(
+        attempt, ConfidentialLevel.HIGH
+    )
+    assert decision == ConfidentialAccessDecision.DENY
+    assert "Insufficient clearance level" in reason

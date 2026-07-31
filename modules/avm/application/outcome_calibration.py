@@ -44,11 +44,12 @@ def generate_gate1_benchmark_receipt(
             f"got ({dataset_snapshot_id!r}, {dataset_snapshot_hash!r}, {model_artifact_hash!r})"
         )
 
-    # B5: Revalidate verdict invariants at receipt boundary
+    # B10: Revalidate verdict & disabled-state invariants at receipt boundary
     if report.verdict == AVMVerdict.PASS:
         if (
             report.is_governed_disabled
             or report.reason_code != "MATURE_LABEL_CONTRACT_READY"
+            or not report.authentic_data_activated
             or report.observed_labeled_count < ACTIVATION_THRESHOLD
             or report.eligible_mature_count < ACTIVATION_THRESHOLD
             or report.aligned_count < ACTIVATION_THRESHOLD
@@ -60,6 +61,16 @@ def generate_gate1_benchmark_receipt(
             raise AVMOutcomeValidationError(
                 "Fail-closed: Receipt boundary detected forged or invalid PASS verdict invariants"
             )
+    elif report.verdict == AVMVerdict.FAIL_CLOSED:
+        if not report.is_governed_disabled or report.reason_code == "MATURE_LABEL_CONTRACT_READY":
+            raise AVMOutcomeValidationError(
+                "Fail-closed: Receipt boundary detected contradictory FAIL_CLOSED verdict invariants "
+                f"(is_governed_disabled={report.is_governed_disabled}, reason_code={report.reason_code!r})"
+            )
+    else:
+        raise AVMOutcomeValidationError(
+            f"Fail-closed: Receipt boundary received unknown verdict {report.verdict!r}"
+        )
 
     payload = {
         "kind": "avm-gate1-benchmark-receipt",
@@ -69,6 +80,7 @@ def generate_gate1_benchmark_receipt(
         "evaluated_at": report.evaluated_at.isoformat(),
         "verdict": report.verdict.value,
         "governed_disabled": report.is_governed_disabled,
+        "authentic_data_activated": report.authentic_data_activated,
         "reason_code": report.reason_code,
         "inventory": {
             "observed_labeled_count": report.observed_labeled_count,
@@ -105,13 +117,23 @@ def generate_gate1_benchmark_receipt(
     return payload
 
 
-
 def generate_benchmark_report_md(
     report: AVMOutcomeCalibrationReport,
     audit_receipt: dict[str, Any],
 ) -> str:
     """Generate canonical BENCHMARK_REPORT.md for AVM outcome calibration."""
     verdict_emoji = "✅ PASS" if report.verdict == AVMVerdict.PASS else "❌ FAIL CLOSED"
+
+    permitted_roles = sorted(
+        {e.get("role", "").upper() for e in audit_receipt.get("audit_events", []) if e.get("decision") == "PERMIT"}
+    )
+    denied_roles = sorted(
+        {e.get("role", "").upper() for e in audit_receipt.get("audit_events", []) if e.get("decision") == "DENY"}
+    )
+
+    permitted_roles_str = ", ".join(f"`{r}`" for r in permitted_roles) if permitted_roles else "`NONE`"
+    denied_roles_str = ", ".join(f"`{r}`" for r in denied_roles) if denied_roles else "`NONE`"
+
     lines = [
         "# AVM Outcome Inventory Benchmark & Gate 1 Receipt",
         "",
@@ -143,9 +165,9 @@ def generate_benchmark_report_md(
         "| Calibration Metric | Aligned Value | Baseline Target | Status |",
         "|---|---:|---:|---|",
         f"| Aligned Population Count | `{report.aligned_count}` | - | Aligned |",
-        f"| Interval Coverage (P10..P90) | `{report.p10_p90_coverage_rate:.4f}` | `0.8000` | {'Pass' if report.p10_p90_coverage_rate >= 0.70 else 'Skipped / Insufficient'} |",
+        f"| Interval Coverage (P10..P90) | `{report.p10_p90_coverage_rate:.4f}` | `0.8000` | {'Pass' if report.p10_p90_coverage_rate >= 0.80 else 'Skipped / Insufficient'} |",
         f"| Mean Absolute Percentage Error (MAPE) | `{report.mape:.4f}` | `<= 0.1500` | {'Pass' if report.mape <= 0.15 and report.aligned_count > 0 else 'Skipped / Insufficient'} |",
-        f"| Median Calibration Ratio (Realized / P50) | `{report.median_calibration_ratio:.4f}` | `0.95 .. 1.05` | {'Pass' if 0.90 <= report.median_calibration_ratio <= 1.10 and report.aligned_count > 0 else 'Skipped / Insufficient'} |",
+        f"| Median Calibration Ratio (Realized / P50) | `{report.median_calibration_ratio:.4f}` | `0.95 .. 1.05` | {'Pass' if 0.95 <= report.median_calibration_ratio <= 1.05 and report.aligned_count > 0 else 'Skipped / Insufficient'} |",
         "",
         "### Value Band Separation Breakdown",
         "",
@@ -166,8 +188,8 @@ def generate_benchmark_report_md(
             "## 3. Confidential Access Audit & RBAC Summary",
             "",
             f"- **Audit Event Count**: `{audit_receipt.get('total_access_attempts', 0)}`",
-            f"- **Permitted Accesses**: `{audit_receipt.get('permitted_count', 0)}` (Roles: `FINANCE_LEGAL`, `SYSTEM_ADMIN`)",
-            f"- **Denied Accesses**: `{audit_receipt.get('denied_count', 0)}` (Roles: `REGIONAL_SUPERVISOR`, `FRANCHISEE`, `MARKETING_MANAGER`)",
+            f"- **Permitted Accesses**: `{audit_receipt.get('permitted_count', 0)}` (Roles: {permitted_roles_str})",
+            f"- **Denied Accesses**: `{audit_receipt.get('denied_count', 0)}` (Roles: {denied_roles_str})",
             "- **Zero Confidential Leak Verified**: `True`",
             f"- **Audit Receipt SHA256**: `{audit_receipt.get('sha256', '')}`",
             "",

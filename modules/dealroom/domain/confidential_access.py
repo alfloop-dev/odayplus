@@ -122,13 +122,31 @@ class ConfidentialAccessAuditor:
         role = attempt.role if isinstance(attempt.role, Role) else None
         action = attempt.action if isinstance(attempt.action, Action) else None
 
-        # Exact RBAC check
+        # ABAC Context Attributes Extraction
+        is_authenticated = bool(attempt.context.get("authenticated", True))
+        data_room_access = bool(attempt.context.get("data_room_access", True))
+        clearance_val = attempt.context.get("clearance", confidentiality.value if is_authenticated else "PUBLIC")
+        tenant_matched = bool(attempt.context.get("tenant_matched", True))
+
+        # Clearance hierarchy ranking
+        clearance_levels = {
+            "PUBLIC": 0,
+            ConfidentialLevel.PUBLIC.value: 0,
+            ConfidentialLevel.LOW.value: 1,
+            ConfidentialLevel.MEDIUM.value: 2,
+            ConfidentialLevel.HIGH.value: 3,
+        }
+
+        user_clearance = clearance_levels.get(str(clearance_val).upper(), 0)
+        required_clearance = clearance_levels.get(confidentiality.value, 3)
+
+        # Exact RBAC check using canonical Principal
         rbac_permitted = False
-        if role is not None and action is not None:
+        if role is not None and action is not None and is_authenticated:
             principal = Principal(
                 subject_id=attempt.actor_id,
                 roles=frozenset({role}),
-                authenticated=True,
+                authenticated=is_authenticated,
             )
             rbac_permitted = rbac_allows(principal, attempt.resource, action)
 
@@ -143,10 +161,21 @@ class ConfidentialAccessAuditor:
         role_disallowed = role in CONFIDENTIAL_AVM_DISALLOWED_ROLES
         role_authorized = role in (Role.FINANCE_LEGAL, Role.PLATFORM_ADMIN)
 
-
         role_repr = role.value if role else str(attempt.role)
 
-        if confidentiality == ConfidentialLevel.HIGH:
+        if not is_authenticated:
+            reason = f"Principal {attempt.actor_id!r} is not authenticated"
+            decision = ConfidentialAccessDecision.DENY
+        elif not data_room_access:
+            reason = f"Principal {attempt.actor_id!r} lacks required data_room_access authority"
+            decision = ConfidentialAccessDecision.DENY
+        elif not tenant_matched:
+            reason = f"Tenant authority mismatch for principal {attempt.actor_id!r}"
+            decision = ConfidentialAccessDecision.DENY
+        elif user_clearance < required_clearance:
+            reason = f"Insufficient clearance level {clearance_val!r} for confidentiality {confidentiality.value!r}"
+            decision = ConfidentialAccessDecision.DENY
+        elif confidentiality == ConfidentialLevel.HIGH:
             if role_disallowed:
                 reason = f"Role {role_repr!r} is explicitly forbidden from high-confidentiality AVM outcome data"
                 decision = ConfidentialAccessDecision.DENY
@@ -169,7 +198,6 @@ class ConfidentialAccessAuditor:
             else:
                 reason = f"Access denied for role {attempt.role!r}"
                 decision = ConfidentialAccessDecision.DENY
-
 
         receipt = {
             "actor_id": attempt.actor_id,

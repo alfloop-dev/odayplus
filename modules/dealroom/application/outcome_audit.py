@@ -32,6 +32,7 @@ class AVMOutcomeAccessAuditPack:
         action: Action | str,
         confidentiality: ConfidentialLevel = ConfidentialLevel.HIGH,
         *,
+        context: dict[str, Any] | None = None,
         raw_values_for_redaction: tuple[float | str, ...] = (),
     ) -> ConfidentialAccessDecision:
         attempt = ConfidentialAccessAttempt(
@@ -39,6 +40,7 @@ class AVMOutcomeAccessAuditPack:
             role=role,
             resource=resource,
             action=action,
+            context=context or {},
         )
         decision, reason, receipt = ConfidentialAccessAuditor.evaluate_access(
             attempt, confidentiality
@@ -81,17 +83,20 @@ class AVMOutcomeAccessAuditPack:
 
 
 def generate_dealroom_outcome_audit_receipt(
-    attempts: list[tuple[str, Role | str, str, Action | str]],
+    attempts: list[tuple[Any, ...]],
     *,
     forbidden_raw_prices: tuple[float | str, ...] = (),
 ) -> dict[str, Any]:
     pack = AVMOutcomeAccessAuditPack()
-    for actor_id, role, resource, action in attempts:
+    for item in attempts:
+        actor_id, role, resource, action = item[0], item[1], item[2], item[3]
+        ctx = item[4] if len(item) > 4 and isinstance(item[4], dict) else {}
         pack.record_access_attempt(
             actor_id=actor_id,
             role=role,
             resource=resource,
             action=action,
+            context=ctx,
             raw_values_for_redaction=forbidden_raw_prices,
         )
     return pack.build_audit_receipt()
