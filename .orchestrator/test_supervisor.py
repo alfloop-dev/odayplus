@@ -9671,5 +9671,126 @@ class ReviewHeadFreezeTests(unittest.TestCase):
         self.assertIn("failed; resolve failing checks", task["next"])
 
 
+class SupervisorFailureLoopCoverageTests(unittest.TestCase):
+    def setUp(self) -> None:
+        self.config = {
+            "worker_reassignment": {
+                "enabled": True,
+                "after_attempts": 2,
+                "reassign_on_terminal_failure": True,
+                "eligible_statuses": ["todo", "in_progress", "review", "review_approved"],
+            },
+            "agents": {
+                "antigravity": {"display_name": "Antigravity", "provider": "antigravity"},
+                "antigravity2": {"display_name": "Antigravity2", "provider": "antigravity2"},
+                "antigravity3": {"display_name": "Antigravity3", "provider": "antigravity3"},
+                "antigravity4": {"display_name": "Antigravity4", "provider": "antigravity4"},
+                "antigravity5": {"display_name": "Antigravity5", "provider": "antigravity5"},
+                "antigravity6": {"display_name": "Antigravity6", "provider": "antigravity6"},
+                "antigravity7": {"display_name": "Antigravity7", "provider": "antigravity7"},
+                "codex": {"display_name": "Codex", "provider": "codex"},
+                "codex2": {"display_name": "Codex2", "provider": "codex2"},
+                "codex6": {"display_name": "Codex6", "provider": "codex6"},
+                "claude": {"display_name": "Claude", "provider": "claude"},
+                "claude2": {"display_name": "Claude2", "provider": "claude2"},
+            },
+        }
+
+    def test_every_enabled_auto_dispatch_agent_has_fallback_coverage(self) -> None:
+        """Verify Antigravity3-7, Codex6, Claude, and all configured agents have non-empty viable fallbacks."""
+        agents_to_test = ["Antigravity3", "Antigravity4", "Antigravity5", "Antigravity6", "Antigravity7", "Codex6", "Claude"]
+        for failing_agent in agents_to_test:
+            worker = {
+                "task_id": "TEST-LOOP-001",
+                "agent_id": failing_agent.lower(),
+                "retry_count": 2,
+                "run_id": f"{failing_agent.lower()}-run-1",
+            }
+            status = {
+                "tasks": [
+                    {
+                        "id": "TEST-LOOP-001",
+                        "status": "in_progress",
+                        "owner": failing_agent,
+                        "reviewer": "Codex",
+                    }
+                ]
+            }
+            with mock.patch.object(supervisor, "load_status", return_value=status), \
+                 mock.patch.object(supervisor, "persist_task_reassignment", return_value=True), \
+                 mock.patch.object(supervisor, "write_activity_log"):
+                reassigned_to = supervisor.maybe_reassign_task_after_worker_failure(
+                    self.config,
+                    worker,
+                    "provider failure: connection reset",
+                )
+            self.assertIsNotNone(reassigned_to, f"Agent {failing_agent} should be reassigned to a fallback worker")
+            self.assertNotEqual(reassigned_to, failing_agent)
+            self.assertNotEqual(reassigned_to, "Codex")
+
+    def test_unmapped_agent_falls_back_to_dynamic_known_agents(self) -> None:
+        """An agent not explicitly in owner_fallbacks still resolves a viable fallback from known agents."""
+        worker = {
+            "task_id": "TEST-LOOP-002",
+            "agent_id": "antigravity99",
+            "retry_count": 2,
+            "run_id": "antigravity99-run-1",
+        }
+        status = {
+            "tasks": [
+                {
+                    "id": "TEST-LOOP-002",
+                    "status": "in_progress",
+                    "owner": "Antigravity99",
+                    "reviewer": "Claude",
+                }
+            ]
+        }
+        config_with_custom = dict(self.config)
+        config_with_custom["agents"] = dict(self.config["agents"])
+        config_with_custom["agents"]["antigravity99"] = {"display_name": "Antigravity99", "provider": "antigravity99"}
+
+        with mock.patch.object(supervisor, "load_status", return_value=status), \
+             mock.patch.object(supervisor, "persist_task_reassignment", return_value=True), \
+             mock.patch.object(supervisor, "write_activity_log"):
+            reassigned_to = supervisor.maybe_reassign_task_after_worker_failure(
+                config_with_custom,
+                worker,
+                "provider timeout",
+            )
+        self.assertIsNotNone(reassigned_to)
+        self.assertNotIn(reassigned_to, {"Antigravity99", "Claude"})
+
+    def test_reassign_skips_human_gate_and_non_dispatchable_tasks(self) -> None:
+        """Fail-closed: Human/Ops gates, sidecars, and non-dispatchable tasks must NEVER be auto-reassigned."""
+        test_tasks = [
+            {"id": "GATE-001", "status": "in_progress", "owner": "Antigravity4", "reviewer": "Claude", "task_class": "human_gate"},
+            {"id": "GATE-002", "status": "in_progress", "owner": "Human/Ops", "reviewer": "Claude"},
+            {"id": "GATE-003", "status": "in_progress", "owner": "Antigravity4", "reviewer": "Human/Ops"},
+            {"id": "GATE-004", "status": "in_progress", "owner": "Antigravity4", "reviewer": "Claude", "non_dispatchable": True},
+        ]
+        for task in test_tasks:
+            worker = {"task_id": task["id"], "agent_id": "antigravity4", "retry_count": 2, "run_id": "run-1"}
+            status = {"tasks": [task]}
+            with mock.patch.object(supervisor, "load_status", return_value=status):
+                reassigned_to = supervisor.maybe_reassign_task_after_worker_failure(
+                    self.config, worker, "terminal error", terminal=True
+                )
+            self.assertIsNone(reassigned_to, f"Task {task['id']} should not be reassigned")
+
+    def test_status_check_emission_422_warning_and_outbox_safety(self) -> None:
+        """Status check emission handling for HTTP 422 suppresses exception and logs warning."""
+        task = {"id": "TEST-422-001", "reviewer": "Codex6"}
+        with mock.patch("ai_status.resolve_task_sha", return_value="1111222233334444555566667777888899990000"), \
+             mock.patch("ai_status.get_repository_slug_safe", return_value="alfloop-dev/odayplus"), \
+             mock.patch("subprocess.run") as mock_run:
+            mock_run.return_value.returncode = 1
+            mock_run.return_value.stderr = "HTTP 422: No commit found for SHA"
+            # Must not raise an exception
+            ai_status.emit_task_review_status_check(task, "review")
+            mock_run.assert_called_once()
+
+
 if __name__ == "__main__":
     unittest.main()
+

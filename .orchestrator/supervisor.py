@@ -5037,14 +5037,28 @@ def worker_reassignment_settings(config: dict[str, Any]) -> dict[str, Any]:
                 default_eligible_statuses.append(normalized)
     settings.setdefault("eligible_statuses", default_eligible_statuses or ["todo", "in_progress", "review", "review_approved"])
     default_fallbacks = {
-        "Claude": ["Codex", "Codex2"],
-        "Claude2": ["Codex", "Codex2", "Claude"],
-        "Gemini": ["Codex", "Codex2", "Claude"],
-        "Gemini2": ["Codex", "Codex2", "Claude"],
-        "Codex": ["Codex2", "Claude", "Claude2"],
-        "Codex2": ["Codex", "Claude", "Claude2"],
-        "Copilot": ["Codex", "Codex2", "Claude"],
-        "Grok": ["Codex", "Codex2", "Claude"],
+        "Claude": ["Claude2", "Codex", "Codex2", "Antigravity", "Antigravity2", "Antigravity3", "Antigravity4"],
+        "Claude2": ["Claude", "Codex", "Codex2", "Antigravity", "Antigravity2", "Antigravity3", "Antigravity4"],
+        "Antigravity": ["Antigravity2", "Antigravity3", "Antigravity4", "Antigravity5", "Antigravity6", "Antigravity7", "Codex", "Codex2", "Claude", "Claude2"],
+        "Antigravity2": ["Antigravity", "Antigravity3", "Antigravity4", "Antigravity5", "Antigravity6", "Antigravity7", "Codex", "Codex2", "Claude", "Claude2"],
+        "Antigravity3": ["Antigravity4", "Antigravity5", "Antigravity6", "Antigravity7", "Antigravity2", "Antigravity", "Codex", "Codex2", "Claude", "Claude2"],
+        "Antigravity4": ["Antigravity5", "Antigravity6", "Antigravity7", "Antigravity3", "Antigravity2", "Antigravity", "Codex", "Codex2", "Claude", "Claude2"],
+        "Antigravity5": ["Antigravity6", "Antigravity7", "Antigravity4", "Antigravity3", "Antigravity2", "Antigravity", "Codex", "Codex2", "Claude", "Claude2"],
+        "Antigravity6": ["Antigravity7", "Antigravity5", "Antigravity4", "Antigravity3", "Antigravity2", "Antigravity", "Codex", "Codex2", "Claude", "Claude2"],
+        "Antigravity7": ["Antigravity6", "Antigravity5", "Antigravity4", "Antigravity3", "Antigravity2", "Antigravity", "Codex", "Codex2", "Claude", "Claude2"],
+        "Codex": ["Codex2", "Codex3", "Codex4", "Codex5", "Codex6", "Codex7", "Codex8", "Codex9", "Claude", "Claude2", "Antigravity", "Antigravity2"],
+        "Codex2": ["Codex", "Codex3", "Codex4", "Codex5", "Codex6", "Codex7", "Codex8", "Codex9", "Claude", "Claude2", "Antigravity", "Antigravity2"],
+        "Codex3": ["Codex2", "Codex", "Codex4", "Codex5", "Codex6", "Codex7", "Codex8", "Codex9", "Claude", "Claude2"],
+        "Codex4": ["Codex3", "Codex2", "Codex", "Codex5", "Codex6", "Codex7", "Codex8", "Codex9", "Claude", "Claude2"],
+        "Codex5": ["Codex4", "Codex3", "Codex2", "Codex", "Codex6", "Codex7", "Codex8", "Codex9", "Claude", "Claude2"],
+        "Codex6": ["Codex5", "Codex4", "Codex3", "Codex2", "Codex", "Codex7", "Codex8", "Codex9", "Claude", "Claude2"],
+        "Codex7": ["Codex6", "Codex5", "Codex4", "Codex3", "Codex2", "Codex", "Codex8", "Codex9", "Claude", "Claude2"],
+        "Codex8": ["Codex7", "Codex6", "Codex5", "Codex4", "Codex3", "Codex2", "Codex", "Codex9", "Claude", "Claude2"],
+        "Codex9": ["Codex8", "Codex7", "Codex6", "Codex5", "Codex4", "Codex3", "Codex2", "Codex", "Claude", "Claude2"],
+        "Gemini": ["Gemini2", "Codex", "Codex2", "Claude"],
+        "Gemini2": ["Gemini", "Codex", "Codex2", "Claude"],
+        "Copilot": ["Grok", "Codex", "Codex2", "Claude"],
+        "Grok": ["Copilot", "Codex", "Codex2", "Claude"],
     }
     settings.setdefault("owner_fallbacks", default_fallbacks)
     settings.setdefault("reviewer_fallbacks", default_fallbacks)
@@ -5144,14 +5158,34 @@ def first_viable_agent(
     task: dict[str, Any] | None = None,
 ) -> str | None:
     known = known_agent_display_names(config)
+    exclude_casefold = {str(x).strip().casefold() for x in exclude if x}
+    exclude_casefold.add("human/ops")
+    exclude_casefold.add("orchestrator")
+
+    candidate_pool = [str(c or "").strip() for c in preferred if str(c or "").strip()]
+    for agent_id, agent in (config.get("agents", {}) or {}).items():
+        if isinstance(agent, dict):
+            disp = str(agent.get("display_name") or agent.get("name") or agent_id).strip()
+            if disp and disp not in candidate_pool:
+                candidate_pool.append(disp)
+    for known_name in sorted(known):
+        if known_name not in candidate_pool:
+            candidate_pool.append(known_name)
+
     seen: set[str] = set()
-    for candidate in preferred:
+    for candidate in candidate_pool:
         name = str(candidate or "").strip()
-        if not name or name in seen or name in exclude:
+        if not name or name.casefold() in seen or name.casefold() in exclude_casefold:
             continue
-        seen.add(name)
-        if name in known:
+        seen.add(name.casefold())
+        if name in known or normalize_agent_id(name) in (config.get("agents", {}) or {}):
+            if name in sidecar_only_agent_names(config):
+                continue
+            if name.casefold() in disabled_dispatch_agent_keys(config):
+                continue
             if state is not None and agent_dispatch_paused(config, state, name):
+                continue
+            if state is not None and agent_auto_dispatch_block_reason(config, state, name):
                 continue
             if task is not None and not agent_can_take_task(config, name, task):
                 continue
@@ -5547,6 +5581,9 @@ def maybe_reassign_task_after_worker_failure(
     if task_status not in {str(value).lower() for value in settings.get("eligible_statuses", [])}:
         return None
 
+    if task_is_human_gate(task) or task_is_sidecar(task) or bool(task.get("non_dispatchable")):
+        return None
+
     dispatch_settings = ready_dispatch_settings(config)
     review_statuses = {str(value).lower() for value in dispatch_settings.get("review_statuses", ["review"])}
     finalize_statuses = {str(value).lower() for value in dispatch_settings.get("finalize_statuses", ["review_approved"])}
@@ -5558,6 +5595,9 @@ def maybe_reassign_task_after_worker_failure(
     failure_summary = summarize_failure_reason(reason, failing_agent).get("summary") or failure_label
     owner = str(task.get("owner") or "")
     reviewer = str(task.get("reviewer") or "")
+
+    if owner.strip().casefold() == "human/ops" or reviewer.strip().casefold() == "human/ops":
+        return None
 
     if task_status in review_statuses and reviewer == failing_agent:
         candidates = normalized_mapping_values(settings.get("reviewer_fallbacks", {}), failing_agent)
