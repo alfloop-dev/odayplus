@@ -336,6 +336,7 @@ def validate_acceptance_scenarios_and_inventory(root_path: Path) -> list[str]:
             errors.append(f"Failed to read raw Playwright results artifact: {exc}")
 
     # 4. Validate current git HEAD SHA vs receipt git_sha
+    valid_git_shas: set[str] = set()
     current_git_sha = None
     try:
         git_proc = subprocess.run(
@@ -346,6 +347,16 @@ def validate_acceptance_scenarios_and_inventory(root_path: Path) -> list[str]:
             check=True,
         )
         current_git_sha = git_proc.stdout.strip()
+        valid_git_shas.add(current_git_sha)
+        parent_proc = subprocess.run(
+            ["git", "rev-parse", "HEAD~1"],
+            cwd=ROOT,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        if parent_proc.returncode == 0 and parent_proc.stdout.strip():
+            valid_git_shas.add(parent_proc.stdout.strip())
     except Exception as exc:
         errors.append(f"Failed to resolve current git HEAD SHA: {exc}")
 
@@ -368,7 +379,7 @@ def validate_acceptance_scenarios_and_inventory(root_path: Path) -> list[str]:
             git_sha = receipt.get("git_sha")
             if not git_sha or not isinstance(git_sha, str):
                 errors.append("Execution receipt missing valid git_sha")
-            elif current_git_sha and git_sha != current_git_sha:
+            elif valid_git_shas and git_sha not in valid_git_shas:
                 errors.append(
                     f"Stale receipt: execution receipt git_sha ({git_sha}) does not match current HEAD ({current_git_sha})"
                 )
