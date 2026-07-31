@@ -1257,3 +1257,90 @@ but B1 still accepts absent or untyped calibration/segment evidence, B2 still ac
 inventory authority and future freshness, and B3 still accepts renamed synthetic metrics across
 multiple open metric-bearing objects. Re-audit the complete acceptance batch after remediation.
 No owner implementation content was changed by this review.
+
+---
+
+# Codex6 Re-review Addendum — 2026-07-31, exact owner head `f3584866`
+
+The supervisor re-dispatched this task after the owner reported B1-B3 remediation at exact
+pushed head `f35848661d6afa02e14388171076241504d8407a`. After fetching origin, the local task
+branch and `origin/task/ODP-PLAN-SITESCORE-OUTCOME-001` both pointed at that SHA. The worktree
+contained no uncommitted owner implementation diff; its only untracked entries were the
+orchestrator-seeded task context/state files.
+
+## Verification at the exact owner head
+
+```bash
+PYTHONPATH=. .venv/bin/pytest -q tests/models -k "sitescore or opening_outcome"
+PYTHONPATH=. .venv/bin/pytest -q tests -k "sitescore or opening_outcome or model_ready"
+.venv/bin/ruff check scripts/models models tests/models
+git diff --check
+git diff --check c2136d4c..f3584866
+```
+
+- Task-scoped selector: **49 passed**.
+- Full focused selector: **93 passed**; collection independently reported 93 selected and
+  2,235 deselected tests.
+- Ruff and both whitespace checks: clean.
+- The committed receipt and committed model card verify together at the exact reviewed head.
+- All eight mutations named in the previous `c2136d4c` review now fail closed in the owner
+  regression test. The calibration and segment dictionaries have exact typed schemas, and the
+  top-level discovery source/version is pinned.
+
+The task brief requires the complete fail-closed batch to be re-audited after every reopen.
+Each self-consistent mutation below started from the committed receipt/model card and rebound
+the applicable model-card, handback, and receipt hashes unless the mutated integrity field was
+excluded from the receipt digest. Every case returned `is_valid=True`,
+`reason_code="RECEIPT_VALIDATED"`, and no errors.
+
+## Blocking findings
+
+### B1 — Required receipt/contract fields and model-card scalar types are still optional
+
+The new allow-lists reject unknown keys at selected object levels, but they do not enforce the
+exact required key set. Three independent mutations removed top-level `gate`, `model_name`, or
+`service`; each receipt validated after recomputing its public content digest. A fourth mutation
+removed `prediction_source_contract.scope` from both handback copies and rebound the handback
+and receipt hashes; it also validated. The resulting artifact no longer completely identifies
+the gate, model/service, or concrete prediction-source handoff while claiming validated Gate 2
+evidence.
+
+Scalar typing is incomplete too. Replacing every value in
+`model_card.metrics_summary` with its numeric string representation, rebinding the model-card
+hashes, and recomputing the receipt digest validated. The verifier calls `float(...)` for these
+fields rather than applying the strict numeric validator used for the benchmark summary. Require
+exact required key sets for the receipt, model card, handback, and both contracts, and strict
+JSON scalar types rather than coercible strings.
+
+### B2 — Timestamp reconciliation is present, but stale evidence still validates
+
+The verifier rejects timestamps more than five minutes in the future and reconciles receipt
+`observed_at` with model-card `created_at`, but it never enforces a maximum evidence age. Setting
+both timestamps to `2000-01-01T00:00:00Z`, rebinding the model-card/content hashes, and verifying
+in 2026 returned `RECEIPT_VALIDATED`.
+
+This means a receipt can remain freshness-valid indefinitely, contrary to the requested stale
+evidence rejection and the task's freshness evidence requirement. Define and enforce an explicit
+maximum age (or an authoritative freshness policy/reference) in addition to timezone awareness,
+future rejection, and cross-artifact reconciliation.
+
+### B3 — The claimed recursive closed schema stops before integrity/hash envelopes
+
+Adding `m6_interval_mae_v2: 12.34` inside `artifact_hashes`, then recomputing the content digest,
+validated. More critically, adding the same renamed synthetic metric under `integrity` validated
+without recomputing any digest because `compute_gate2_receipt_sha256` excludes the entire
+integrity object and the verifier checks only three selected integrity keys.
+
+Thus the top-level receipt allow-list is not a recursively closed receipt schema: nested
+`artifact_hashes` and `integrity` dictionaries accept arbitrary fields, including the prohibited
+renamed synthetic-horizon metric class. Enforce exact nested schemas for every receipt object,
+including hash/integrity envelopes, and reject unknown keys even where fields are intentionally
+excluded from a checksum calculation.
+
+## Decision
+
+**Changes requested.** Exact owner head `f3584866` is not approved. The focused suites and the
+previous eight probes are green, but B1 permits incomplete/untyped governance artifacts, B2
+permits arbitrarily stale evidence, and B3 leaves nested receipt envelopes open to renamed
+synthetic metrics. Re-audit the complete acceptance batch after remediation. No owner
+implementation content was changed by this review.
