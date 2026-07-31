@@ -1,9 +1,6 @@
-"""CLI runner for SiteScore opening outcome M6/M12 inventory coverage calibration benchmark & Gate 2 receipt."""
-
-from __future__ import annotations
-
 import argparse
 import json
+import math
 import os
 import sys
 from collections.abc import Sequence
@@ -53,14 +50,24 @@ def run_benchmark_from_inventory(
                 rows = cur.fetchall()
                 fetched = []
                 for row in rows:
+                    rev_raw = row[5]
+                    if rev_raw is not None:
+                        try:
+                            rev_val = float(rev_raw)
+                            realized_90d = rev_val if math.isfinite(rev_val) else None
+                        except (ValueError, TypeError):
+                            realized_90d = None
+                    else:
+                        realized_90d = None
+
                     fetched.append({
                         "entity_id": row[0],
                         "store_id": str(row[1]),
                         "target_format_code": row[2],
                         "opened_on": str(row[3]) if row[3] else None,
                         "is_training_eligible": bool(row[4]),
-                        "realized_90d_net_revenue": float(row[5]) if row[5] is not None else None,
-                        "store_age_days": int(row[6]) if row[6] is not None else 0,
+                        "realized_90d_net_revenue": realized_90d,
+                        "store_age_days": int(row[6]) if row[6] is not None and math.isfinite(float(row[6])) else 0,
                     })
                 return evaluate_sitescore_opening_outcome_benchmark(fetched, provenance="pg16_query")
         except Exception as exc:
@@ -94,11 +101,13 @@ def write_evidence_markdown(
     m12_cov_status = 'PASS' if summary.get('m12_coverage_ratio', 0.0) >= 0.70 else 'FAIL'
     p80_cov_status = 'PASS' if summary.get('p80_coverage', 0.0) >= 0.70 else 'FAIL'
 
+    norm_mae = summary.get('normalized_mae', 999.0)
     mae_pass = summary.get('is_gate2_passed', False) or (
         summary.get('mature_label_count', 0) >= 200
         and summary.get('prediction_coverage_ratio', 0.0) >= 0.70
         and summary.get('interval_bounds_coverage_ratio', 0.0) >= 0.70
-        and summary.get('normalized_mae', 0.0) <= summary.get('max_mae_threshold', 0.25)
+        and math.isfinite(norm_mae)
+        and norm_mae <= summary.get('max_mae_threshold', 0.25)
     )
     mae_status = 'PASS' if mae_pass else 'FAIL (GOVERNED_DISABLED)'
 
@@ -122,12 +131,13 @@ def write_evidence_markdown(
         "| Metric | Observed | Threshold / Required | Status |",
         "| --- | --- | --- | --- |",
         f"| Mature Labels | {summary.get('mature_label_count', 0)} | >= {summary.get('activation_threshold', 200)} | {labels_status} |",
+        f"| Matched Predictions | {summary.get('matched_prediction_count', 0)} | N/A | INFO |",
         f"| Prediction Coverage | {summary.get('prediction_coverage_ratio', 0.0):.1%} | >= {summary.get('min_coverage_threshold', 0.70):.1%} | {pred_cov_status} |",
         f"| Interval Bounds Coverage | {summary.get('interval_bounds_coverage_ratio', 0.0):.1%} | >= {summary.get('min_coverage_threshold', 0.70):.1%} | {bounds_cov_status} |",
         f"| M6 Horizon Coverage | {summary.get('m6_coverage_ratio', 0.0):.1%} | >= {summary.get('min_coverage_threshold', 0.70):.1%} | {m6_cov_status} |",
         f"| M12 Horizon Coverage | {summary.get('m12_coverage_ratio', 0.0):.1%} | >= {summary.get('min_coverage_threshold', 0.70):.1%} | {m12_cov_status} |",
         f"| P80 Coverage Ratio | {summary.get('p80_coverage', 0.0):.1%} | >= {summary.get('min_coverage_threshold', 0.70):.1%} | {p80_cov_status} |",
-        f"| Normalized MAE | {summary.get('normalized_mae', 0.0):.3f} | <= {summary.get('max_mae_threshold', 0.25):.3f} | {mae_status} |",
+        f"| Normalized MAE | {norm_mae:.3f} | <= {summary.get('max_mae_threshold', 0.25):.3f} | {mae_status} |",
         "",
         "## Handback & Governance Receipt",
         "",
@@ -214,13 +224,13 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     args.output_receipt.parent.mkdir(parents=True, exist_ok=True)
     args.output_receipt.write_text(
-        json.dumps(receipt, indent=2, sort_keys=True) + "\n",
+        json.dumps(receipt, indent=2, sort_keys=True, allow_nan=False) + "\n",
         encoding="utf-8",
     )
 
     args.output_model_card.parent.mkdir(parents=True, exist_ok=True)
     args.output_model_card.write_text(
-        json.dumps(model_card.to_dict(), indent=2, sort_keys=True) + "\n",
+        json.dumps(model_card.to_dict(), indent=2, sort_keys=True, allow_nan=False) + "\n",
         encoding="utf-8",
     )
 

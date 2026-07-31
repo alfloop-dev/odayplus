@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import math
 from collections.abc import Sequence
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
@@ -18,6 +19,29 @@ GATE2_RECEIPT_SCHEMA_VERSION = 1
 GATE2_RECEIPT_KIND = "sitescore-opening-outcome-gate2-receipt"
 
 
+def _is_finite_float(val: Any) -> bool:
+    """Check if value is a finite float (not None, bool, NaN, inf, or -inf)."""
+    if val is None or isinstance(val, bool):
+        return False
+    try:
+        f = float(val)
+        return math.isfinite(f)
+    except (ValueError, TypeError):
+        return False
+
+
+def _is_valid_realized_outcome(val: Any) -> bool:
+    """Check if a realized outcome value is finite and >= 0.0.
+
+    Negative-value policy:
+    Legitimate zero net revenue outcomes (val == 0.0 or val >= 0.0) are valid mature labels.
+    Negative or non-finite values represent corrupted/unverified net revenue data and are excluded.
+    """
+    if not _is_finite_float(val):
+        return False
+    return float(val) >= 0.0
+
+
 @dataclass(frozen=True)
 class SiteScoreOpeningOutcomeBenchmarkResult:
     observed_count: int
@@ -29,6 +53,8 @@ class SiteScoreOpeningOutcomeBenchmarkResult:
     p80_coverage: float
     prediction_coverage_ratio: float = 0.0
     interval_bounds_coverage_ratio: float = 0.0
+    matched_prediction_count: int = 0
+    matched_mean_y: float = 0.0
     dataset_snapshot_id: str | None = None
     model_version: str | None = None
     artifact_lineage_id: str | None = None
@@ -39,6 +65,7 @@ class SiteScoreOpeningOutcomeBenchmarkResult:
     max_mae_threshold: float = MAX_MAE_THRESHOLD
     segment_metrics: Sequence[dict[str, Any]] = field(default_factory=tuple)
     calibration_summary: dict[str, Any] = field(default_factory=dict)
+    observed_at: str | None = None
 
     @property
     def is_lineage_governed(self) -> bool:
@@ -52,24 +79,24 @@ class SiteScoreOpeningOutcomeBenchmarkResult:
 
     @property
     def is_prediction_coverage_passed(self) -> bool:
-        return self.prediction_coverage_ratio >= self.min_coverage_threshold
+        return _is_finite_float(self.prediction_coverage_ratio) and self.prediction_coverage_ratio >= self.min_coverage_threshold
 
     @property
     def is_coverage_passed(self) -> bool:
         return (
-            self.m6_coverage_ratio >= self.min_coverage_threshold
-            and self.m12_coverage_ratio >= self.min_coverage_threshold
-            and self.p80_coverage >= self.min_coverage_threshold
+            _is_finite_float(self.m6_coverage_ratio) and self.m6_coverage_ratio >= self.min_coverage_threshold
+            and _is_finite_float(self.m12_coverage_ratio) and self.m12_coverage_ratio >= self.min_coverage_threshold
+            and _is_finite_float(self.p80_coverage) and self.p80_coverage >= self.min_coverage_threshold
             and self.is_prediction_coverage_passed
         )
 
     @property
     def is_interval_bounds_passed(self) -> bool:
-        return self.interval_bounds_coverage_ratio >= self.min_coverage_threshold
+        return _is_finite_float(self.interval_bounds_coverage_ratio) and self.interval_bounds_coverage_ratio >= self.min_coverage_threshold
 
     @property
     def is_mae_passed(self) -> bool:
-        return self.normalized_mae <= self.max_mae_threshold
+        return _is_finite_float(self.normalized_mae) and self.normalized_mae <= self.max_mae_threshold
 
     @property
     def is_gate2_passed(self) -> bool:
@@ -138,7 +165,7 @@ class SiteScoreOpeningOutcomeBenchmarkResult:
             reasons.append(
                 f"Missing governed dataset snapshot or model/artifact lineage (snapshot={self.dataset_snapshot_id}, model_version={self.model_version}, artifact_lineage_id={self.artifact_lineage_id}; requires authoritative prediction-source resolver ODP-PLAN-SITESCORE-PREDICTION-SOURCE-001)"
             )
-            if self.normalized_mae > self.max_mae_threshold:
+            if not math.isfinite(self.normalized_mae) or self.normalized_mae > self.max_mae_threshold:
                 reasons.append(
                     f"Normalized MAE ({self.normalized_mae:.3f}) exceeds maximum threshold ({self.max_mae_threshold:.3f})"
                 )
@@ -168,7 +195,7 @@ class SiteScoreOpeningOutcomeBenchmarkResult:
                 reasons.append(
                     f"P80 coverage ({self.p80_coverage:.1%}) is below threshold ({self.min_coverage_threshold:.1%})"
                 )
-            if self.normalized_mae > self.max_mae_threshold:
+            if not math.isfinite(self.normalized_mae) or self.normalized_mae > self.max_mae_threshold:
                 reasons.append(
                     f"Normalized MAE ({self.normalized_mae:.3f}) exceeds maximum threshold ({self.max_mae_threshold:.3f})"
                 )
@@ -182,6 +209,7 @@ class SiteScoreOpeningOutcomeBenchmarkResult:
             "realized_90d_net_revenue, (CURRENT_DATE - opened_on)::integer AS store_age_days "
             "FROM model_ready.candidate_site_view;"
         )
+        observed_at_str = self.observed_at or datetime.now(UTC).isoformat().replace("+00:00", "Z")
         return {
             "handback_required": True,
             "reason_code": self.reason_code,
@@ -190,13 +218,15 @@ class SiteScoreOpeningOutcomeBenchmarkResult:
             "observed_count": self.observed_count,
             "eligible_count": self.eligible_count,
             "mature_label_count": self.mature_label_count,
+            "matched_prediction_count": self.matched_prediction_count,
+            "matched_mean_y": round(self.matched_mean_y, 2),
             "activation_threshold": self.activation_threshold,
             "missing_labels_delta": missing_labels,
             "m6_coverage_ratio": self.m6_coverage_ratio,
             "m12_coverage_ratio": self.m12_coverage_ratio,
             "prediction_coverage_ratio": self.prediction_coverage_ratio,
             "interval_bounds_coverage_ratio": self.interval_bounds_coverage_ratio,
-            "normalized_mae": self.normalized_mae,
+            "normalized_mae": self.normalized_mae if math.isfinite(self.normalized_mae) else 999.0,
             "p80_coverage": self.p80_coverage,
             "reasons": reasons,
             "handback_action": handback_action,
@@ -204,6 +234,17 @@ class SiteScoreOpeningOutcomeBenchmarkResult:
                 "owner": "Human/Ops",
                 "task_id": "ODP-PLAN-SITESCORE-OUTCOME-BACKFILL-001",
                 "scope": "Provide authoritative M6 (180d) and M12 (365d) post-opening net revenue labels for historical opened candidate sites.",
+                "source_identity": "model_ready.candidate_site_view",
+                "query_id": "sitescore_opening_outcome_inventory_query_v1",
+                "dataset_snapshot_hash": self.dataset_snapshot_id or "UNVERIFIED",
+                "lineage_id": self.artifact_lineage_id or "UNVERIFIED",
+                "freshness_timestamp": observed_at_str,
+                "eligibility_definition": "is_training_eligible IS True or eligible IS True",
+                "maturity_definition": "realized_90d_net_revenue IS NOT NULL AND realized_90d_net_revenue >= 0",
+                "observed_count": self.observed_count,
+                "eligible_count": self.eligible_count,
+                "mature_count": self.mature_label_count,
+                "matched_prediction_count": self.matched_prediction_count,
                 "required_fields": ["realized_180d_net_revenue", "realized_365d_net_revenue"],
                 "baseline_inventory_query": executable_query,
                 "note": "Store age (store_age_days) is a maturity precondition; it is not M6/M12 outcome evidence. ODP-PLAN-SITESCORE-OUTCOME-BACKFILL-001 must supply realized_180d_net_revenue and realized_365d_net_revenue.",
@@ -231,6 +272,7 @@ class SiteScoreOpeningOutcomeBenchmarkResult:
         }
 
     def to_dict(self) -> dict[str, Any]:
+        norm_mae = round(self.normalized_mae, 4) if math.isfinite(self.normalized_mae) else 999.0
         res = {
             "provenance": self.provenance,
             "dataset_snapshot_id": self.dataset_snapshot_id,
@@ -239,11 +281,13 @@ class SiteScoreOpeningOutcomeBenchmarkResult:
             "observed_count": self.observed_count,
             "eligible_count": self.eligible_count,
             "mature_label_count": self.mature_label_count,
+            "matched_prediction_count": self.matched_prediction_count,
+            "matched_mean_y": round(self.matched_mean_y, 2),
             "prediction_coverage_ratio": round(self.prediction_coverage_ratio, 4),
             "interval_bounds_coverage_ratio": round(self.interval_bounds_coverage_ratio, 4),
             "m6_coverage_ratio": round(self.m6_coverage_ratio, 4),
             "m12_coverage_ratio": round(self.m12_coverage_ratio, 4),
-            "normalized_mae": round(self.normalized_mae, 4),
+            "normalized_mae": norm_mae,
             "p80_coverage": round(self.p80_coverage, 4),
             "activation_threshold": self.activation_threshold,
             "min_coverage_threshold": self.min_coverage_threshold,
@@ -302,21 +346,6 @@ def evaluate_sitescore_opening_outcome_benchmark(
                 artifact_lineage_id = str(lin)
                 break
 
-    def _is_valid_realized_outcome(val: Any) -> bool:
-        """Check if a realized outcome value is non-null and valid.
-
-        Negative-value policy:
-        Legitimate zero net revenue outcomes (val == 0.0 or val >= 0.0) are valid mature labels.
-        Negative values (val < 0.0) represent corrupted or unverified net revenue data
-        (e.g., net refund adjustments without sales) and are excluded from mature label evaluation.
-        """
-        if val is None:
-            return False
-        try:
-            return float(val) >= 0.0
-        except (ValueError, TypeError):
-            return False
-
     observed_count = len(records)
     eligible_count = sum(1 for r in records if r.get("is_training_eligible") or r.get("eligible"))
 
@@ -328,20 +357,23 @@ def evaluate_sitescore_opening_outcome_benchmark(
     mature_label_count = len(mature_records)
 
     ref_date = datetime.now(UTC).date()
+    observed_at_iso: str | None = None
     if isinstance(observed_at, str):
+        observed_at_iso = observed_at
         try:
             ref_date = datetime.fromisoformat(observed_at.replace("Z", "+00:00")).date()
         except Exception:
             pass
     elif isinstance(observed_at, datetime):
+        observed_at_iso = observed_at.isoformat().replace("+00:00", "Z")
         ref_date = observed_at.date()
 
     def get_days_elapsed(r: dict[str, Any], key: str) -> int | None:
         val = r.get(key)
-        if val is not None and isinstance(val, (int, float)):
+        if val is not None and isinstance(val, (int, float)) and _is_finite_float(val):
             return int(val)
         val = r.get("store_age_days")
-        if val is not None and isinstance(val, (int, float)):
+        if val is not None and isinstance(val, (int, float)) and _is_finite_float(val):
             return int(val)
         opened_on = r.get("opened_on")
         if opened_on:
@@ -397,11 +429,12 @@ def evaluate_sitescore_opening_outcome_benchmark(
     m6_coverage_ratio = (m6_mature / mature_label_count) if mature_label_count > 0 else 0.0
     m12_coverage_ratio = (m12_mature / mature_label_count) if mature_label_count > 0 else 0.0
 
-    predicted_records = [
-        r for r in mature_records if r.get("predicted_revenue") is not None
+    # B2 fix: Matched population contains records that have BOTH valid finite outcome AND valid finite prediction
+    matched_records = [
+        r for r in mature_records if _is_finite_float(r.get("predicted_revenue"))
     ]
-    prediction_count = len(predicted_records)
-    prediction_coverage_ratio = (prediction_count / mature_label_count) if mature_label_count > 0 else 0.0
+    matched_prediction_count = len(matched_records)
+    prediction_coverage_ratio = (matched_prediction_count / mature_label_count) if mature_label_count > 0 else 0.0
 
     errors = []
     in_p80_count = 0
@@ -409,46 +442,52 @@ def evaluate_sitescore_opening_outcome_benchmark(
 
     for r in mature_records:
         pred_val = r.get("predicted_revenue")
-        if pred_val is None:
-            continue
-        try:
-            y_true = float(r.get("realized_90d_net_revenue", 0))
-            y_pred = float(pred_val)
-            errors.append(abs(y_true - y_pred))
-
-            p10_raw = r.get("p10")
-            p90_raw = r.get("p90")
-            if p10_raw is not None and p90_raw is not None:
-                p10 = float(p10_raw)
-                p90 = float(p90_raw)
-                if p10 <= p90:
-                    interval_bounds_count += 1
-                    if p10 <= y_true <= p90:
-                        in_p80_count += 1
-        except (ValueError, TypeError):
+        if not _is_finite_float(pred_val):
             continue
 
-    mean_y = (sum(float(r.get("realized_90d_net_revenue", 0)) for r in mature_records) / mature_label_count) if mature_label_count > 0 else 1.0
-    if errors:
-        mae = sum(errors) / len(errors)
-        if mean_y > 0:
-            normalized_mae = mae / mean_y
+        y_true = float(r.get("realized_90d_net_revenue", 0))
+        y_pred = float(pred_val)
+        errors.append(abs(y_true - y_pred))
+
+        p10_raw = r.get("p10")
+        p90_raw = r.get("p90")
+        # B1 fix: Verify both interval bounds are finite floats
+        if _is_finite_float(p10_raw) and _is_finite_float(p90_raw):
+            p10 = float(p10_raw)
+            p90 = float(p90_raw)
+            if p10 <= p90:
+                interval_bounds_count += 1
+                if p10 <= y_true <= p90:
+                    in_p80_count += 1
+
+    # B2 fix: Compute mean_y and MAE over the exact same matched population!
+    if matched_prediction_count > 0:
+        matched_mean_y = sum(float(r.get("realized_90d_net_revenue", 0)) for r in matched_records) / matched_prediction_count
+        mae = sum(errors) / matched_prediction_count
+        if matched_mean_y > 0.0:
+            normalized_mae = mae / matched_mean_y
         elif mae == 0.0:
             normalized_mae = 0.0
         else:
-            normalized_mae = 999.0
+            normalized_mae = 999.0  # Fail-closed zero-denominator with non-zero MAE
     else:
+        matched_mean_y = 0.0
         mae = 0.0
         normalized_mae = 0.0
+
+    overall_mean_y = (sum(float(r.get("realized_90d_net_revenue", 0)) for r in mature_records) / mature_label_count) if mature_label_count > 0 else 1.0
+
     p80_coverage = (in_p80_count / mature_label_count) if mature_label_count > 0 else 0.0
     interval_bounds_coverage_ratio = (interval_bounds_count / mature_label_count) if mature_label_count > 0 else 0.0
 
     calibration_summary = {
         "measured_90d_mae": round(mae, 2) if errors else None,
+        "matched_prediction_count": matched_prediction_count,
+        "matched_mean_realized_revenue": round(matched_mean_y, 2),
         "prediction_coverage_ratio": round(prediction_coverage_ratio, 4),
         "interval_bounds_coverage_ratio": round(interval_bounds_coverage_ratio, 4),
         "p80_coverage_ratio": round(p80_coverage, 4),
-        "mean_realized_revenue": round(mean_y, 2),
+        "mean_realized_revenue": round(overall_mean_y, 2),
     }
 
     segments: dict[str, list[dict[str, Any]]] = {}
@@ -459,7 +498,7 @@ def evaluate_sitescore_opening_outcome_benchmark(
     segment_metrics = []
     for fmt, seg_records in sorted(segments.items()):
         seg_count = len(seg_records)
-        seg_pred_records = [r for r in seg_records if r.get("predicted_revenue") is not None]
+        seg_pred_records = [r for r in seg_records if _is_finite_float(r.get("predicted_revenue"))]
         if seg_pred_records:
             seg_mae = sum(abs(float(r.get("realized_90d_net_revenue", 0)) - float(r["predicted_revenue"])) for r in seg_pred_records) / len(seg_pred_records)
         else:
@@ -480,6 +519,8 @@ def evaluate_sitescore_opening_outcome_benchmark(
         observed_count=observed_count,
         eligible_count=eligible_count,
         mature_label_count=mature_label_count,
+        matched_prediction_count=matched_prediction_count,
+        matched_mean_y=matched_mean_y,
         m6_coverage_ratio=m6_coverage_ratio,
         m12_coverage_ratio=m12_coverage_ratio,
         normalized_mae=normalized_mae,
@@ -496,6 +537,7 @@ def evaluate_sitescore_opening_outcome_benchmark(
         max_mae_threshold=max_mae,
         segment_metrics=tuple(segment_metrics),
         calibration_summary=calibration_summary,
+        observed_at=observed_at_iso,
     )
 
 
@@ -516,11 +558,39 @@ def build_sitescore_opening_outcome_model_card(
     approvals: Sequence[ModelCardApproval] | None = None,
 ) -> ModelCard:
     """Build a canonical ModelCard carrying SiteScore opening outcome benchmark calibration results."""
-    is_passed = benchmark.is_gate2_passed
+    is_governed_active = benchmark.is_gate2_passed and benchmark.is_lineage_governed
 
-    dataset_snapshot_id = benchmark.dataset_snapshot_id or "UNAVAILABLE"
-    model_version = benchmark.model_version or (version if version != "candidate-site-view-v2" else "UNVERIFIED")
-    resolved_val_id = validation_run_id or benchmark.artifact_lineage_id or "UNVERIFIED"
+    # B4 fix: Unless benchmark is governance-passed with authentic lineage, reject caller-invented facts and force UNVERIFIED/UNAVAILABLE
+    if not is_governed_active:
+        dataset_snapshot_id = "UNAVAILABLE"
+        model_version = "UNVERIFIED"
+        resolved_val_id = "UNVERIFIED"
+        resolved_feature_set_id = "UNVERIFIED"
+        resolved_label_set_id = "UNVERIFIED"
+        resolved_training_period = "UNAVAILABLE"
+        resolved_validation_period = "UNAVAILABLE"
+        resolved_algorithm = "UNAVAILABLE"
+        resolved_baseline = "UNAVAILABLE"
+        resolved_explainability_method = "UNAVAILABLE"
+        resolved_privacy_review = "UNVERIFIED"
+        resolved_security_review = "UNVERIFIED"
+        resolved_approvals: tuple[ModelCardApproval, ...] = ()
+    else:
+        dataset_snapshot_id = benchmark.dataset_snapshot_id or "UNAVAILABLE"
+        model_version = benchmark.model_version or version
+        resolved_val_id = validation_run_id or benchmark.artifact_lineage_id or "UNVERIFIED"
+        resolved_feature_set_id = feature_set_id or "UNVERIFIED"
+        resolved_label_set_id = label_set_id or "UNVERIFIED"
+        resolved_training_period = training_period or "UNAVAILABLE"
+        resolved_validation_period = validation_period or "UNAVAILABLE"
+        resolved_algorithm = algorithm or "UNAVAILABLE"
+        resolved_baseline = baseline or "UNAVAILABLE"
+        resolved_explainability_method = explainability_method or "UNAVAILABLE"
+        resolved_privacy_review = privacy_review or "UNVERIFIED"
+        resolved_security_review = security_review or "UNVERIFIED"
+        resolved_approvals = tuple(approvals) if approvals is not None else ()
+
+    norm_mae = float(benchmark.normalized_mae) if math.isfinite(benchmark.normalized_mae) else 999.0
 
     return ModelCard(
         model_name="sitescore_propensity",
@@ -531,24 +601,25 @@ def build_sitescore_opening_outcome_model_card(
         not_intended_use="Automatic site lease execution, store opening without human approval",
         dataset_snapshot_id=dataset_snapshot_id,
         validation_run_id=resolved_val_id,
-        feature_set_id=feature_set_id or "UNVERIFIED",
-        label_set_id=label_set_id or "UNVERIFIED",
-        training_period=training_period or "UNAVAILABLE",
-        validation_period=validation_period or "UNAVAILABLE",
-        algorithm=algorithm or "UNAVAILABLE",
-        baseline=baseline or "UNAVAILABLE",
+        feature_set_id=resolved_feature_set_id,
+        label_set_id=resolved_label_set_id,
+        training_period=resolved_training_period,
+        validation_period=resolved_validation_period,
+        algorithm=resolved_algorithm,
+        baseline=resolved_baseline,
         metrics_summary={
             "mature_label_count": float(benchmark.mature_label_count),
+            "matched_prediction_count": float(benchmark.matched_prediction_count),
             "m6_coverage_ratio": float(benchmark.m6_coverage_ratio),
             "m12_coverage_ratio": float(benchmark.m12_coverage_ratio),
             "prediction_coverage_ratio": float(benchmark.prediction_coverage_ratio),
             "interval_bounds_coverage_ratio": float(benchmark.interval_bounds_coverage_ratio),
-            "normalized_mae": float(benchmark.normalized_mae),
+            "normalized_mae": norm_mae,
             "p80_coverage": float(benchmark.p80_coverage),
         },
         segment_metrics=benchmark.segment_metrics,
         calibration_summary=benchmark.calibration_summary,
-        explainability_method=explainability_method or "UNAVAILABLE",
+        explainability_method=resolved_explainability_method,
         limitations=[
             "Requires at least 200 mature opening outcome labels with complete M6/M12 post-opening transactions.",
             "Governed-disabled when label count, M6/M12 window coverage, or interval bound coverage thresholds fail.",
@@ -556,14 +627,14 @@ def build_sitescore_opening_outcome_model_card(
         known_biases=[
             "Historical opening outcomes reflect store format expansion patterns.",
         ],
-        privacy_review=privacy_review or "UNVERIFIED",
-        security_review=security_review or "UNVERIFIED",
-        release_status="DEV" if is_passed else "GOVERNED_DISABLED",
+        privacy_review=resolved_privacy_review,
+        security_review=resolved_security_review,
+        release_status="DEV" if is_governed_active else "GOVERNED_DISABLED",
         rollback_conditions=[
             "Normalized MAE > 0.25 on 30-day rolling window",
             "M6 or M12 window coverage ratio drops below 70%",
         ],
-        approvals=tuple(approvals) if approvals is not None else (),
+        approvals=resolved_approvals,
     )
 
 
@@ -573,6 +644,7 @@ def compute_gate2_receipt_sha256(payload: dict[str, Any]) -> str:
         {k: v for k, v in payload.items() if k != "integrity"},
         sort_keys=True,
         separators=(",", ":"),
+        allow_nan=False,
     )
     return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
 
@@ -584,7 +656,7 @@ def build_sitescore_gate2_receipt(
     observed_at: str | None = None,
 ) -> dict[str, Any]:
     """Build Gate 2 audit receipt payload with integrity envelope."""
-    ts = observed_at or datetime.now(UTC).isoformat().replace("+00:00", "Z")
+    ts = observed_at or benchmark.observed_at or datetime.now(UTC).isoformat().replace("+00:00", "Z")
     payload: dict[str, Any] = {
         "schema_version": GATE2_RECEIPT_SCHEMA_VERSION,
         "kind": GATE2_RECEIPT_KIND,
@@ -608,6 +680,117 @@ def build_sitescore_gate2_receipt(
     return payload
 
 
+@dataclass(frozen=True)
+class Gate2ReceiptVerificationResult:
+    is_valid: bool
+    reason_code: str
+    errors: Sequence[str] = field(default_factory=tuple)
+
+
+def verify_sitescore_gate2_receipt(receipt: dict[str, Any]) -> Gate2ReceiptVerificationResult:
+    """Fail-closed verifier for Gate 2 receipt content and integrity (Fix for B3)."""
+    errors: list[str] = []
+
+    if not isinstance(receipt, dict):
+        return Gate2ReceiptVerificationResult(False, "INVALID_RECEIPT_TYPE", ("Receipt must be a JSON dictionary",))
+
+    # 1. Integrity hash envelope check
+    integrity = receipt.get("integrity")
+    if not isinstance(integrity, dict) or not integrity.get("content_sha256"):
+        errors.append("Missing integrity.content_sha256 envelope")
+    else:
+        try:
+            expected_sha = compute_gate2_receipt_sha256(receipt)
+            if integrity["content_sha256"] != expected_sha:
+                errors.append(f"Integrity hash mismatch: declared {integrity['content_sha256']}, recomputed {expected_sha}")
+        except Exception as exc:
+            errors.append(f"Integrity hash computation failed: {exc}")
+
+    # 2. Schema version and kind validation
+    if receipt.get("schema_version") != GATE2_RECEIPT_SCHEMA_VERSION:
+        errors.append(f"Invalid schema_version: expected {GATE2_RECEIPT_SCHEMA_VERSION}, got {receipt.get('schema_version')}")
+    if receipt.get("kind") != GATE2_RECEIPT_KIND:
+        errors.append(f"Invalid receipt kind: expected {GATE2_RECEIPT_KIND}, got {receipt.get('kind')}")
+
+    summary = receipt.get("benchmark_summary", {})
+    handback = receipt.get("handback", {})
+
+    if not isinstance(summary, dict):
+        errors.append("benchmark_summary must be a dictionary")
+        return Gate2ReceiptVerificationResult(False, "MALFORMED_RECEIPT_SUMMARY", tuple(errors))
+
+    # 3. Numeric finiteness validation across all receipt fields
+    def _check_finite_dict(d: dict[str, Any], path: str) -> None:
+        for k, v in d.items():
+            if isinstance(v, float):
+                if not math.isfinite(v):
+                    errors.append(f"Non-finite float value in {path}.{k}: {v}")
+            elif isinstance(v, dict):
+                _check_finite_dict(v, f"{path}.{k}")
+
+    _check_finite_dict(summary, "benchmark_summary")
+    _check_finite_dict(handback, "handback")
+
+    # 4. Count and ratio cross-field validation
+    obs = summary.get("observed_count", 0)
+    elg = summary.get("eligible_count", 0)
+    mat = summary.get("mature_label_count", 0)
+    match_cnt = summary.get("matched_prediction_count", 0)
+
+    if not (isinstance(obs, int) and isinstance(elg, int) and isinstance(mat, int) and isinstance(match_cnt, int)):
+        errors.append("Counts in benchmark_summary must be integers")
+    else:
+        if obs < 0 or elg < 0 or mat < 0 or match_cnt < 0:
+            errors.append("Counts cannot be negative")
+        if elg > obs:
+            errors.append(f"Eligible count ({elg}) cannot exceed observed count ({obs})")
+        if mat > elg:
+            errors.append(f"Mature label count ({mat}) cannot exceed eligible count ({elg})")
+        if match_cnt > mat:
+            errors.append(f"Matched prediction count ({match_cnt}) cannot exceed mature label count ({mat})")
+
+    # 5. Verdict re-derivation (fail closed on forged ACTIVE / PASSED or count drift)
+    gate_status = receipt.get("gate_status")
+    is_gov_disabled = receipt.get("is_governed_disabled")
+    benchmark_status = summary.get("status")
+    is_gate2_passed = summary.get("is_gate2_passed")
+
+    # Currently lineage governance is unverified until ODP-PLAN-SITESCORE-PREDICTION-SOURCE-001
+    lineage_governed = False
+    labels_sufficient = mat >= summary.get("activation_threshold", ACTIVATION_THRESHOLD)
+    pred_cov = summary.get("prediction_coverage_ratio", 0.0) >= summary.get("min_coverage_threshold", MIN_COVERAGE_THRESHOLD)
+    m6_cov = summary.get("m6_coverage_ratio", 0.0) >= summary.get("min_coverage_threshold", MIN_COVERAGE_THRESHOLD)
+    m12_cov = summary.get("m12_coverage_ratio", 0.0) >= summary.get("min_coverage_threshold", MIN_COVERAGE_THRESHOLD)
+    bounds_cov = summary.get("interval_bounds_coverage_ratio", 0.0) >= summary.get("min_coverage_threshold", MIN_COVERAGE_THRESHOLD)
+    p80_cov = summary.get("p80_coverage", 0.0) >= summary.get("min_coverage_threshold", MIN_COVERAGE_THRESHOLD)
+    norm_mae = summary.get("normalized_mae", 999.0)
+    mae_passed = math.isfinite(norm_mae) and norm_mae <= summary.get("max_mae_threshold", MAX_MAE_THRESHOLD)
+
+    expected_gate2_passed = (
+        lineage_governed
+        and labels_sufficient
+        and pred_cov
+        and m6_cov
+        and m12_cov
+        and bounds_cov
+        and p80_cov
+        and mae_passed
+    )
+
+    if expected_gate2_passed != is_gate2_passed:
+        errors.append(f"is_gate2_passed mismatch: declared {is_gate2_passed}, re-derived {expected_gate2_passed}")
+
+    if not expected_gate2_passed:
+        if gate_status == "PASSED" or is_gov_disabled is False or benchmark_status == "ACTIVE":
+            errors.append("Forged ACTIVE or PASSED verdict detected on unverified/failing receipt")
+
+    if errors:
+        reason = "INTEGRITY_HASH_MISMATCH" if any("Integrity hash mismatch" in e for e in errors) else "FORGED_ACTIVE_OR_MALFORMED_RECEIPT"
+        return Gate2ReceiptVerificationResult(False, reason, tuple(errors))
+
+    return Gate2ReceiptVerificationResult(True, "RECEIPT_VALIDATED", ())
+
+
 __all__ = [
     "ACTIVATION_THRESHOLD",
     "MIN_COVERAGE_THRESHOLD",
@@ -615,8 +798,10 @@ __all__ = [
     "GATE2_RECEIPT_SCHEMA_VERSION",
     "GATE2_RECEIPT_KIND",
     "SiteScoreOpeningOutcomeBenchmarkResult",
+    "Gate2ReceiptVerificationResult",
     "evaluate_sitescore_opening_outcome_benchmark",
     "build_sitescore_opening_outcome_model_card",
     "build_sitescore_gate2_receipt",
+    "verify_sitescore_gate2_receipt",
     "compute_gate2_receipt_sha256",
 ]

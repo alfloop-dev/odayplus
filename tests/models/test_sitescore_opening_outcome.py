@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+import json
+import math
+
 from models.shared_ml.model_card import ModelCard
 from models.sitescore.opening_outcome import (
     GATE2_RECEIPT_KIND,
@@ -24,7 +27,7 @@ def _generate_candidate_records(
     m6_days: int = 180,
     m12_days: int = 365,
     revenue: float = 500_000.0,
-    pred_revenue: float = 500_000.0,
+    pred_revenue: float | None = 500_000.0,
     target_format: str = "CONVENIENCE_STANDARD",
     include_m6_m12_realized: bool = False,
     include_bounds: bool = True,
@@ -48,7 +51,7 @@ def _generate_candidate_records(
         if include_m6_m12_realized:
             r["realized_m6_net_revenue"] = revenue * 2.0
             r["realized_m12_net_revenue"] = revenue * 4.0
-        if include_bounds:
+        if include_bounds and pred_revenue is not None:
             r["p10"] = pred_revenue * 0.85
             r["p90"] = pred_revenue * 1.15
         if dataset_snapshot_id:
@@ -512,3 +515,166 @@ def test_sitescore_opening_outcome_handback_contains_backfill_metadata(tmp_path)
     assert "- **Prediction Source Task ID**: `ODP-PLAN-SITESCORE-PREDICTION-SOURCE-001`" in content
     assert "- **Backfill Query**:" in content
     assert "- **Backfill Receipt Required**: `True`" in content
+
+
+def test_sitescore_opening_outcome_non_finite_inputs_rejected_b1():
+    # B1 regression test: Non-finite outcomes, predictions, and interval bounds are rejected before calculation
+    records = _generate_candidate_records(
+        220,
+        include_m6_m12_realized=True,
+        include_bounds=True,
+        dataset_snapshot_id="snapshot_sitescore_v2",
+        model_version="candidate-site-view-v2",
+        artifact_lineage_id="art_sitescore_sha256",
+    )
+    # Inject NaN / Inf / -Inf into records
+    records[0]["predicted_revenue"] = float("nan")
+    records[1]["p10"] = float("-inf")
+    records[1]["p90"] = float("inf")
+    records[2]["realized_90d_net_revenue"] = float("inf")
+
+    result = evaluate_sitescore_opening_outcome_benchmark(records, provenance="authenticated_governed_records")
+
+    # Record 2 with realized_90d_net_revenue = inf must be excluded from mature_label_count
+    assert result.mature_label_count == 219
+    # Record 0 with predicted_revenue = nan must be excluded from matched_prediction_count
+    assert result.matched_prediction_count == 218
+    # All ratios and metrics must be finite numbers
+    assert math.isfinite(result.normalized_mae)
+    assert math.isfinite(result.prediction_coverage_ratio)
+    assert math.isfinite(result.interval_bounds_coverage_ratio)
+
+    receipt = build_sitescore_gate2_receipt(result)
+
+    # Verify JSON serialization strictness with allow_nan=False
+    import json
+    json_str = json.dumps(receipt, allow_nan=False)
+    assert "NaN" not in json_str
+    assert "Infinity" not in json_str
+
+
+def test_sitescore_opening_outcome_matched_population_alignment_b2():
+    # B2 regression test: MAE and mean_y denominator are computed over the exact same matched population
+    # 154 matched records (70%) with realized = 100, predicted = 200 (error = 100)
+    matched = _generate_candidate_records(
+        154,
+        revenue=100.0,
+        pred_revenue=200.0,
+        include_m6_m12_realized=True,
+        include_bounds=True,
+    )
+    # 66 unmatched records with realized = 1,000,000 and predicted = None
+    unmatched = _generate_candidate_records(
+        66,
+        revenue=1_000_000.0,
+        pred_revenue=None,
+        include_m6_m12_realized=True,
+        include_bounds=True,
+    )
+    for r in unmatched:
+        r["predicted_revenue"] = None
+
+    records = matched + unmatched
+    result = evaluate_sitescore_opening_outcome_benchmark(records, provenance="authenticated_governed_records")
+
+    assert result.mature_label_count == 220
+    assert result.matched_prediction_count == 154
+    assert result.prediction_coverage_ratio == 0.70
+    assert result.matched_mean_y == 100.0
+    # Matched MAE = 100.0, matched mean_y = 100.0 => normalized_mae = 1.0 (fails threshold <= 0.25!)
+    assert result.normalized_mae == 1.0
+    assert not result.is_mae_passed
+    assert not result.is_gate2_passed
+
+
+def test_sitescore_gate2_receipt_verifier_rejects_forged_active_and_drift_b3():
+    # B3 regression test: verify_sitescore_gate2_receipt rejects forged ACTIVE verdicts and count/hash drift
+    from models.sitescore.opening_outcome import verify_sitescore_gate2_receipt
+
+    result = run_benchmark_from_inventory(db_url=None, records=None)
+    receipt = build_sitescore_gate2_receipt(result)
+
+    # Genuine failing receipt verifies as valid (reasons explain it is GOVERNED_DISABLED)
+    verif = verify_sitescore_gate2_receipt(receipt)
+    assert verif.is_valid is True
+    assert verif.reason_code == "RECEIPT_VALIDATED"
+
+    # Forgery attempt 1: Mutate gate_status to PASSED and recompute integrity hash
+    forged_receipt_1 = json.loads(json.dumps(receipt))
+    forged_receipt_1["gate_status"] = "PASSED"
+    from models.sitescore.opening_outcome import compute_gate2_receipt_sha256
+    forged_receipt_1["integrity"]["content_sha256"] = compute_gate2_receipt_sha256(forged_receipt_1)
+
+    verif_forged_1 = verify_sitescore_gate2_receipt(forged_receipt_1)
+    assert verif_forged_1.is_valid is False
+    assert verif_forged_1.reason_code == "FORGED_ACTIVE_OR_MALFORMED_RECEIPT"
+    assert any("Forged ACTIVE or PASSED verdict" in e for e in verif_forged_1.errors)
+
+    # Forgery attempt 2: Mutate is_governed_disabled to False and recompute hash
+    forged_receipt_2 = json.loads(json.dumps(receipt))
+    forged_receipt_2["is_governed_disabled"] = False
+    forged_receipt_2["integrity"]["content_sha256"] = compute_gate2_receipt_sha256(forged_receipt_2)
+
+    verif_forged_2 = verify_sitescore_gate2_receipt(forged_receipt_2)
+    assert verif_forged_2.is_valid is False
+    assert verif_forged_2.reason_code == "FORGED_ACTIVE_OR_MALFORMED_RECEIPT"
+
+    # Corruption test: Hash mismatch without recomputing integrity hash
+    corrupted_receipt = json.loads(json.dumps(receipt))
+    corrupted_receipt["inventory_version"] = "corrupted-version"
+
+    verif_corrupt = verify_sitescore_gate2_receipt(corrupted_receipt)
+    assert verif_corrupt.is_valid is False
+    assert verif_corrupt.reason_code == "INTEGRITY_HASH_MISMATCH"
+
+
+def test_sitescore_model_card_prevents_caller_invented_governance_facts_b4():
+    # B4 regression test: Model card ignores caller-supplied governance facts when benchmark is unverified/governed-disabled
+    from models.shared_ml.model_card import ModelCardApproval
+
+    result = run_benchmark_from_inventory(db_url=None, records=None)
+    fake_approval = ModelCardApproval(
+        approver="attacker",
+        role="platform_lead",
+        approved_at="2026-07-31T00:00:00Z",
+        decision="approved",
+    )
+
+    model_card = build_sitescore_opening_outcome_model_card(
+        result,
+        privacy_review="PASSED",
+        security_review="PASSED",
+        approvals=[fake_approval],
+        algorithm="invented_algorithm",
+        baseline="invented_baseline",
+    )
+
+    assert model_card.release_status == "GOVERNED_DISABLED"
+    assert model_card.privacy_review == "UNVERIFIED"
+    assert model_card.security_review == "UNVERIFIED"
+    assert len(model_card.approvals) == 0
+    assert model_card.algorithm == "UNAVAILABLE"
+    assert model_card.baseline == "UNAVAILABLE"
+    assert not model_card.is_approved
+    assert not model_card.is_complete
+
+
+def test_sitescore_handback_payload_contains_complete_human_ops_contract_b5():
+    # B5 regression test: Handback contract exposes complete Human/Ops backfill contract metadata
+    result = run_benchmark_from_inventory(db_url=None, records=None)
+    contract = result.handback_payload["outcome_backfill_contract"]
+
+    assert contract["owner"] == "Human/Ops"
+    assert contract["task_id"] == "ODP-PLAN-SITESCORE-OUTCOME-BACKFILL-001"
+    assert contract["source_identity"] == "model_ready.candidate_site_view"
+    assert contract["query_id"] == "sitescore_opening_outcome_inventory_query_v1"
+    assert contract["dataset_snapshot_hash"] == "UNVERIFIED"
+    assert contract["lineage_id"] == "UNVERIFIED"
+    assert contract["freshness_timestamp"] is not None
+    assert "is_training_eligible" in contract["eligibility_definition"]
+    assert "realized_90d_net_revenue" in contract["maturity_definition"]
+    assert contract["observed_count"] == 0
+    assert contract["eligible_count"] == 0
+    assert contract["mature_count"] == 0
+    assert contract["matched_prediction_count"] == 0
+    assert contract["required_fields"] == ["realized_180d_net_revenue", "realized_365d_net_revenue"]

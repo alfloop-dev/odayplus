@@ -4,12 +4,14 @@
   "baseline": "UNAVAILABLE",
   "calibration_summary": {
     "interval_bounds_coverage_ratio": 0.0,
+    "matched_mean_realized_revenue": 0.0,
+    "matched_prediction_count": 0,
     "mean_realized_revenue": 1.0,
     "measured_90d_mae": null,
     "p80_coverage_ratio": 0.0,
     "prediction_coverage_ratio": 0.0
   },
-  "created_at": "2026-07-31T07:39:42.959251+00:00",
+  "created_at": "2026-07-31T07:58:12.507899+00:00",
   "dataset_snapshot_id": "UNAVAILABLE",
   "explainability_method": "UNAVAILABLE",
   "feature_set_id": "UNVERIFIED",
@@ -26,6 +28,7 @@
     "interval_bounds_coverage_ratio": 0.0,
     "m12_coverage_ratio": 0.0,
     "m6_coverage_ratio": 0.0,
+    "matched_prediction_count": 0.0,
     "mature_label_count": 0.0,
     "normalized_mae": 0.0,
     "p80_coverage": 0.0,
