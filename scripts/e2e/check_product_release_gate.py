@@ -23,6 +23,10 @@ REQUIRED_FILES = {
     "ops price ad evidence": "docs/evidence/e2e/OPS_INTERVENTION_PRICE_AD_E2E_EVIDENCE.md",
     "avm netplan learning audit evidence": "docs/evidence/e2e/AVM_NETPLAN_LEARNING_AUDIT_E2E_EVIDENCE.md",
     "raw playwright results": "docs/evidence/e2e/raw_playwright_results.json",
+    "raw pytest results": "docs/evidence/e2e/raw_pytest_results.json",
+    "playwright result recorder": "scripts/e2e/record_playwright_results.py",
+    "python acceptance runner": "scripts/e2e/run_python_e2e_tests.py",
+    "e2e receipt validation library": "scripts/e2e/product_e2e_receipt.py",
     "e2e receipt generator": "scripts/e2e/generate_product_e2e_receipt.py",
     "product e2e execution receipt": "docs/evidence/e2e/PRODUCT_E2E_EXECUTION_RECEIPT.json",
     "readiness report": "docs/evidence/PRODUCT_E2E_READINESS_REPORT.md",
@@ -216,6 +220,18 @@ def main() -> int:
     for spec in REQUIRED_RUNNER_SPECS:
         if spec not in runner_text:
             errors.append(f"product runner does not include {spec}")
+    for required_runner_token in (
+        "record_playwright_results.py",
+        "run_python_e2e_tests.py",
+        "generate_product_e2e_receipt.py",
+        'playwright_record_status=$?',
+        'pytest_status=$?',
+        'receipt_status=$?',
+    ):
+        if required_runner_token not in runner_text:
+            errors.append(
+                f"product runner does not propagate required stage: {required_runner_token}"
+            )
 
     readiness = ROOT / "docs/evidence/PRODUCT_E2E_READINESS_REPORT.md"
     readiness_text = readiness.read_text(encoding="utf-8") if readiness.exists() else ""

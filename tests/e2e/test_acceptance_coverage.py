@@ -1,590 +1,494 @@
-"""Formal E2E acceptance coverage registry for ODP-R7-003.
-
-The Playwright specs in this directory exercise the UI surfaces. This registry
-keeps the QA-03 acceptance IDs explicit so release reviewers can see which
-business closure, data fixture, role, and audit evidence each scenario owns.
-"""
+"""Executable acceptance registry and real-result receipt validation."""
 
 from __future__ import annotations
 
-import hashlib
 import json
+import os
 import re
 import subprocess
-from dataclasses import dataclass
 from pathlib import Path
+from typing import Any
+
+import pytest
+
+from scripts.e2e.product_e2e_receipt import (
+    CANONICAL_SPEC_INVENTORY,
+    DELETED_SPEC_REFERENCES,
+    E2E_SCENARIOS,
+    EVIDENCE_COMMIT_ALLOWLIST,
+    EXPECTED_CANONICAL_SPEC_COUNT,
+    EXPECTED_PLAYWRIGHT_TEST_COUNT,
+    RAW_PLAYWRIGHT_PATH,
+    RAW_PYTEST_PATH,
+    RECEIPT_PATH,
+    SCHEMA_VERSION,
+    bind_scenarios,
+    canonical_json_bytes,
+    parse_playwright_payload,
+    seal_normalized,
+    sha256_bytes,
+    source_identity,
+    validate_raw_artifact,
+    validate_receipt_packet,
+    verify_evidence_relationship,
+)
+from scripts.e2e.run_python_e2e_tests import run_python_tests
 
 ROOT = Path(__file__).resolve().parents[2]
 
 
-@dataclass(frozen=True)
-class E2EScenario:
-    scenario_id: str
-    priority: str
-    name: str
-    owner_role: str
-    deterministic_dataset: str
-    automation_ref: str
-    route_or_surface: str
-    audit_evidence: tuple[str, ...]
-    closes_loop: bool
-
-
-E2E_SCENARIOS: tuple[E2EScenario, ...] = (
-    E2EScenario(
-        "E2E-EXP-001",
-        "P0",
-        "HeatZone to SiteScore opening decision",
-        "expansion_user + site_reviewer",
-        "golden_sitescore_dataset:v1",
-        "tests/e2e/operator-network-scoring.spec.ts::SiteScore Lab renders GO/WAIT/REJECT scorecards with conditions and reasons",
-        "/w/expansion/sitescore/ssr-7001",
-        ("decision_id", "model_version", "feature_snapshot_time", "correlation_id"),
-        True,
-    ),
-    E2EScenario(
-        "E2E-EXP-002",
-        "P0",
-        "Listing import, geocode, dedup, and candidate creation",
-        "expansion_user",
-        "golden_listing_dataset:v1",
-        "tests/e2e/operator-network-listings.spec.ts::HZ-01 to L-2024 to CS-1001 completes through UI and API",
-        "/w/expansion/listings?selected=lst-9003&drawer=listing",
-        ("field lineage", "hard_rule", "correlation_id"),
-        True,
-    ),
-    E2EScenario(
-        "E2E-EXP-003",
-        "P1",
-        "SiteScore return for supplement and rescore",
-        "site_reviewer",
-        "golden_sitescore_dataset:v1",
-        "manual-uat: UAT-SITE-003 plus versioned report export",
-        "docs/uat/UAT_ACCEPTANCE_PLAN.md#sitescore-review",
-        ("report_version", "return_reason", "decision_log"),
-        True,
-    ),
-    E2EScenario(
-        "E2E-OPS-001",
-        "P0",
-        "Post-opening SiteScore realization",
-        "ops_manager",
-        "golden_forecastops_dataset:v1",
-        "tests/integration/test_avm_official_outcome_contract.py::test_official_outcome_migration_has_bounded_source_and_provenance_contracts",
-        "/w/operations/forecast/store-001",
-        ("prediction_run_id", "outcome_status", "label_registry"),
-        True,
-    ),
-    E2EScenario(
-        "E2E-OPS-002",
-        "P0",
-        "ForecastOps four-light alert to root cause",
-        "ops_manager",
-        "golden_forecastops_dataset:v1",
-        "tests/e2e/operator-store-ops.spec.ts::Package 10 issue detail exposes the four-light evidence without legacy filter chips",
-        "/w/operations/forecast?selected=store-002",
-        ("forecast_run_id", "four-light-policy-v1", "correlation_id"),
-        True,
-    ),
-    E2EScenario(
-        "E2E-INT-001",
-        "P0",
-        "Red alert to intervention and observation maturity",
-        "field_supervisor",
-        "golden_intervention_dataset:v1",
-        "tests/integration/test_intervention_workflow.py::test_full_lifecycle_reaches_completed_with_causal_evidence_and_label",
-        "/interventions?selected=int-3002&drawer=case",
-        ("decision_id", "conflict_check", "observation_window"),
-        True,
-    ),
-    E2EScenario(
-        "E2E-PRICE-001",
-        "P0",
-        "PriceOps plan, approval, execution, and rollback",
-        "pricing_user",
-        "golden_priceops_dataset:v1",
-        "tests/integration/test_priceops_constraints.py::test_full_pilot_lifecycle_records_complete_status_history",
-        "/pricing?selected=price-5102&drawer=plan",
-        ("hard_constraint", "rollback_plan", "decision_id"),
-        True,
-    ),
-    E2EScenario(
-        "E2E-AD-001",
-        "P0",
-        "AdLift campaign, controls, and incrementality",
-        "marketing_user",
-        "golden_adlift_dataset:v1",
-        "tests/integration/test_adlift_incrementality.py::test_difference_in_differences_isolates_ad_lift_from_market_movement",
-        "/adlift?selected=adlift-8801&drawer=report",
-        ("control_match", "pre_trend", "contamination"),
-        True,
-    ),
-    E2EScenario(
-        "E2E-AVM-001",
-        "P0",
-        "Long-term red store to AVM valuation and Data Room",
-        "finance_user + legal_user",
-        "golden_avm_dataset:v1",
-        "tests/e2e/operator-network-rebalance.spec.ts::AVM + NetPlan workflow persists selected scenario and creates Govern approval without execution",
-        "/w/dealroom/cases/vc-5101",
-        ("decision_id", "finance_approval", "avm.dataroom_exported.v1"),
-        True,
-    ),
-    E2EScenario(
-        "E2E-NET-001",
-        "P0",
-        "NetPlan scenario, solver alternatives, and approval",
-        "executive_user",
-        "golden_netplan_dataset:v1",
-        "tests/e2e/operator-network-rebalance.spec.ts::AVM + NetPlan workflow persists selected scenario and creates Govern approval without execution",
-        "/w/network/scenarios/np-6201",
-        ("solver_status", "binding_constraints", "approval_id"),
-        True,
-    ),
-    E2EScenario(
-        "E2E-LEARN-001",
-        "P0",
-        "Model training, validation, shadow, canary, production",
-        "mlops_user",
-        "golden_learninghub_dataset:v1",
-        "tests/integration/test_learninghub_release.py::test_governed_release_invokes_remote_mlflow_alias_updates",
-        "/w/ai/models/sitescore-propensity/2.4.0",
-        ("model_card", "release_approval", "rollback_target"),
-        True,
-    ),
-    E2EScenario(
-        "E2E-LEARN-002",
-        "P0",
-        "Model release rollback",
-        "mlops_user",
-        "golden_learninghub_dataset:v1",
-        "tests/integration/test_learninghub_release.py::test_learninghub_validates_releases_and_rolls_back_model_aliases",
-        "/w/ai/models/sitescore-propensity/2.4.0",
-        ("rollback_reason", "previous_champion", "audit_event_id"),
-        True,
-    ),
-    E2EScenario(
-        "E2E-DATA-001",
-        "P0",
-        "Data quality failure blocks model scoring",
-        "data_scientist",
-        "data_quality_fixtures:v1",
-        "tests/integration/test_learninghub_release.py + tests/data/test_pit_snapshot.py",
-        "Data Quality Center / Learning Hub release gates",
-        ("data_quality_status", "blocked_model_list", "failure_history"),
-        True,
-    ),
-    E2EScenario(
-        "E2E-AUDIT-001",
-        "P0",
-        "Decision audit evidence export",
-        "audit_user",
-        "audit_snapshot:v1",
-        "tests/e2e/operator-governance.spec.ts::Evidence Package export produces a record and an audit event",
-        "/w/audit/decisions/decision-netplan-404",
-        ("decision_id", "approval_chain", "bundle_checksum"),
-        True,
-    ),
-    E2EScenario(
-        "E2E-SEC-001",
-        "P0",
-        "Role permissions and data isolation",
-        "security_owner",
-        "uat_accounts:v1",
-        "tests/security/test_rbac_abac.py",
-        "AuthorizationEngine",
-        ("403_audit", "scope.store", "rbac"),
-        True,
-    ),
-    E2EScenario(
-        "E2E-FRAN-001",
-        "P1",
-        "Franchisee self-store status and intervention feedback",
-        "franchisee_user",
-        "uat_accounts:v1",
-        "manual-uat: UAT-FRAN-001..005",
-        "docs/uat/UAT_ACCEPTANCE_PLAN.md#franchisee",
-        ("store_scope", "masked_model_details", "supervisor_notification"),
-        True,
-    ),
-)
-
-DELETED_SPEC_REFERENCES = (
-    "e2e-exp.spec.ts",
-    "e2e-ops.spec.ts",
-    "e2e-intervention-price-ad.spec.ts",
-    "e2e-avm-netplan.spec.ts",
-    "e2e-learning-audit.spec.ts",
-)
-
-EXPECTED_CANONICAL_SPEC_COUNT = 16
-EXPECTED_TEST_INVENTORY_COUNT = 107
-
-FORBIDDEN_SEMANTIC_MAPPINGS = {
-    "E2E-PRICE-001": "operator-growth.spec.ts",
-    "E2E-AD-001": "operator-growth.spec.ts",
-    "E2E-LEARN-001": "operator-governance.spec.ts",
-    "E2E-LEARN-002": "operator-governance.spec.ts",
-    "E2E-OPS-001": "operator-store-ops.spec.ts",
-    "E2E-INT-001": "operator-store-ops.spec.ts",
-}
-
-
 def validate_acceptance_scenarios_and_inventory(root_path: Path) -> list[str]:
-    """Executable validator for scenario coverage, canonical specs, title resolution, raw Playwright artifacts, exact HEAD SHA, and execution receipts."""
+    """Validate registry, canonical inventory, collection count, and real packet."""
     errors: list[str] = []
+    scenario_ids = [scenario.scenario_id for scenario in E2E_SCENARIOS]
+    if len(scenario_ids) != len(set(scenario_ids)):
+        errors.append("acceptance registry contains duplicate scenario ids")
 
-    def get_file(rel_str: str) -> Path | None:
-        p = root_path / rel_str
-        if p.exists():
-            return p
-        return None
-
-    # 1. Validate scenario automation refs resolve to existing files, existing titles, do not use deleted specs, and do not use false semantic mappings
     for scenario in E2E_SCENARIOS:
-        ref = scenario.automation_ref
-        for deleted_spec in DELETED_SPEC_REFERENCES:
-            if deleted_spec in ref:
+        for ref in scenario.automation_refs:
+            if any(deleted in ref for deleted in DELETED_SPEC_REFERENCES):
                 errors.append(
-                    f"{scenario.scenario_id} cites deleted spec reference: {ref}"
+                    f"{scenario.scenario_id} cites a deleted spec reference: {ref}"
+                )
+            if scenario.is_manual:
+                continue
+            if ref.count("::") != 1:
+                errors.append(
+                    f"{scenario.scenario_id} must use one exact normalized test id: {ref}"
+                )
+                continue
+            file_name, exact_title = ref.split("::", 1)
+            target = root_path / file_name
+            if not target.is_file():
+                errors.append(
+                    f"{scenario.scenario_id} exact test file is missing: {file_name}"
+                )
+            elif exact_title not in target.read_text(encoding="utf-8"):
+                errors.append(
+                    f"{scenario.scenario_id} exact test title is missing: {ref}"
                 )
 
-        if scenario.scenario_id in FORBIDDEN_SEMANTIC_MAPPINGS:
-            forbidden_file = FORBIDDEN_SEMANTIC_MAPPINGS[scenario.scenario_id]
-            if forbidden_file in ref:
-                errors.append(
-                    f"Semantic mapping failure: {scenario.scenario_id} cannot be mapped to generic UI test '{ref}'. "
-                    f"Must map to exact domain capability test."
-                )
-
-        if ref.startswith("manual-uat:"):
-            route = scenario.route_or_surface
-            doc_path_str = route.split("#")[0] if "#" in route else route
-            if doc_path_str.startswith("docs/") and not get_file(doc_path_str):
-                errors.append(f"{scenario.scenario_id} manual UAT doc missing: {doc_path_str}")
-        else:
-            refs = [r.strip() for r in ref.split("+")]
-            for single_ref in refs:
-                parts = single_ref.split("::")
-                file_part = parts[0].strip()
-                title_part = parts[1].strip() if len(parts) > 1 else None
-
-                target_file = get_file(file_part)
-                if file_part.startswith("tests/") and not target_file:
-                    errors.append(
-                        f"{scenario.scenario_id} automation ref file missing: {file_part}"
-                    )
-                elif title_part and target_file:
-                    content = target_file.read_text(encoding="utf-8")
-                    if title_part not in content:
-                        errors.append(
-                            f"{scenario.scenario_id} automation ref title '{title_part}' not found in {file_part}"
-                        )
-
-    # 2. Validate canonical spec files inventory (16 files) and test count (107 tests) via Playwright --list
-    e2e_dir = root_path / "tests/e2e"
-    if e2e_dir.exists():
-        spec_files = sorted([p for p in e2e_dir.glob("*.spec.ts") if p.is_file()])
-        if len(spec_files) != EXPECTED_CANONICAL_SPEC_COUNT:
-            errors.append(
-                f"Expected {EXPECTED_CANONICAL_SPEC_COUNT} Playwright spec files in tests/e2e, "
-                f"found {len(spec_files)}"
-            )
-
-    try:
-        proc = subprocess.run(
-            ["npx", "playwright", "test", "--list", "--project=chromium"],
-            cwd=root_path if (root_path / "playwright.config.ts").exists() else ROOT,
-            capture_output=True,
-            text=True,
-            check=False,
+    actual_inventory = tuple(
+        sorted(
+            str(path.relative_to(root_path)).replace(os.sep, "/")
+            for path in (root_path / "tests/e2e").glob("*.spec.ts")
+            if path.is_file()
         )
-        if proc.returncode != 0:
-            errors.append(
-                f"Playwright --list failed with exit code {proc.returncode}: {proc.stderr.strip()}"
-            )
-        else:
-            match = re.search(r"Total:\s*(\d+)\s*tests\s*in\s*(\d+)\s*files", proc.stdout)
-            if match:
-                pw_tests, pw_files = int(match.group(1)), int(match.group(2))
-                if pw_files != EXPECTED_CANONICAL_SPEC_COUNT:
-                    errors.append(
-                        f"Playwright --list reported {pw_files} spec files, expected {EXPECTED_CANONICAL_SPEC_COUNT}"
-                    )
-                if pw_tests != EXPECTED_TEST_INVENTORY_COUNT:
-                    errors.append(
-                        f"Playwright --list reported {pw_tests} total tests, expected {EXPECTED_TEST_INVENTORY_COUNT}"
-                    )
-            else:
-                errors.append("Playwright --list output could not be parsed")
-    except Exception as exc:
-        errors.append(f"Failed to run Playwright --list: {exc}")
-
-    # 3. Validate raw Playwright machine-readable artifact (docs/evidence/e2e/raw_playwright_results.json)
-    raw_path = get_file("docs/evidence/e2e/raw_playwright_results.json")
-    raw_hash = None
-    if not raw_path:
-        errors.append("Raw Playwright results artifact missing: docs/evidence/e2e/raw_playwright_results.json")
-    else:
-        try:
-            raw_bytes = raw_path.read_bytes()
-            if len(raw_bytes) == 0:
-                errors.append("Raw Playwright results artifact is empty (0 bytes)")
-            else:
-                raw_hash = hashlib.sha256(raw_bytes).hexdigest()
-        except Exception as exc:
-            errors.append(f"Failed to read raw Playwright results artifact: {exc}")
-
-    # 4. Validate current git HEAD SHA vs receipt git_sha
-    current_git_sha = None
-    try:
-        git_proc = subprocess.run(
-            ["git", "rev-parse", "HEAD"],
-            cwd=ROOT,
-            capture_output=True,
-            text=True,
-            check=True,
+    )
+    if actual_inventory != tuple(sorted(CANONICAL_SPEC_INVENTORY)):
+        errors.append(
+            "canonical Playwright spec inventory differs from the explicit 16-file registry"
         )
-        current_git_sha = git_proc.stdout.strip()
-    except Exception as exc:
-        errors.append(f"Failed to resolve current git HEAD SHA: {exc}")
 
-    def is_receipt_sha_valid(sha: str) -> bool:
-        if not sha or not isinstance(sha, str):
-            return False
-        if current_git_sha and sha == current_git_sha:
-            return True
-        try:
-            proc = subprocess.run(
-                ["git", "merge-base", "--is-ancestor", sha, "HEAD"],
-                cwd=ROOT,
-                capture_output=True,
-                text=True,
-                check=False,
-            )
-            return proc.returncode == 0
-        except Exception:
-            return False
-
-    # 5. Validate durable execution receipt artifact (docs/evidence/e2e/PRODUCT_E2E_EXECUTION_RECEIPT.json)
-    receipt_path = get_file("docs/evidence/e2e/PRODUCT_E2E_EXECUTION_RECEIPT.json")
-    if not receipt_path:
-        errors.append("Execution receipt artifact missing: docs/evidence/e2e/PRODUCT_E2E_EXECUTION_RECEIPT.json")
+    proc = subprocess.run(
+        ["npx", "playwright", "test", "--list", "--project=chromium"],
+        cwd=root_path,
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    if proc.returncode != 0:
+        errors.append(f"Playwright --list exited {proc.returncode}: {proc.stderr.strip()}")
     else:
-        try:
-            receipt = json.loads(receipt_path.read_text(encoding="utf-8"))
+        match = re.search(
+            r"Total:\s*(\d+)\s*tests\s*in\s*(\d+)\s*files", proc.stdout
+        )
+        if not match:
+            errors.append("Playwright --list output has no parseable total")
+        elif (
+            int(match.group(1)) != EXPECTED_PLAYWRIGHT_TEST_COUNT
+            or int(match.group(2)) != EXPECTED_CANONICAL_SPEC_COUNT
+        ):
+            errors.append(
+                "Playwright inventory must be exactly "
+                f"{EXPECTED_PLAYWRIGHT_TEST_COUNT} tests in "
+                f"{EXPECTED_CANONICAL_SPEC_COUNT} files"
+            )
 
-            receipt_raw_hash = receipt.get("raw_artifact_hash")
-            if not receipt_raw_hash:
-                errors.append("Execution receipt missing raw_artifact_hash")
-            elif raw_hash and receipt_raw_hash != raw_hash:
-                errors.append(
-                    f"Execution receipt raw_artifact_hash ({receipt_raw_hash}) does not match actual raw artifact hash ({raw_hash})"
-                )
-
-            git_sha = receipt.get("git_sha")
-            if not git_sha or not isinstance(git_sha, str):
-                errors.append("Execution receipt missing valid git_sha")
-            elif not is_receipt_sha_valid(git_sha):
-                errors.append(
-                    f"Stale receipt: execution receipt git_sha ({git_sha}) does not match current HEAD ({current_git_sha})"
-                )
-
-            for req_field in ("command", "runner_versions", "run_id", "start_time", "end_time", "exit_code", "environment"):
-                if req_field not in receipt:
-                    errors.append(f"Execution receipt missing mandatory metadata field: {req_field}")
-
-            if receipt.get("exit_code") != 0:
-                errors.append(f"Execution receipt exit_code is non-zero: {receipt.get('exit_code')}")
-
-            if receipt.get("status") != "passed":
-                errors.append(f"Execution receipt status is not passed: {receipt.get('status')}")
-
-            summary = receipt.get("summary", {})
-            if summary.get("total_specs") != EXPECTED_CANONICAL_SPEC_COUNT:
-                errors.append(
-                    f"Execution receipt total_specs ({summary.get('total_specs')}) != {EXPECTED_CANONICAL_SPEC_COUNT}"
-                )
-            if summary.get("total_tests") != EXPECTED_TEST_INVENTORY_COUNT:
-                errors.append(
-                    f"Execution receipt total_tests ({summary.get('total_tests')}) != {EXPECTED_TEST_INVENTORY_COUNT}"
-                )
-            if summary.get("passed") != EXPECTED_TEST_INVENTORY_COUNT or summary.get("failed", 0) > 0 or summary.get("skipped", 0) > 0:
-                errors.append("Execution receipt contains failed, skipped, or incomplete test executions")
-
-            scenario_results = {r.get("scenario_id"): r for r in receipt.get("scenario_results", [])}
-            for scenario in E2E_SCENARIOS:
-                if scenario.scenario_id not in scenario_results:
-                    errors.append(f"Execution receipt missing result for scenario: {scenario.scenario_id}")
-                    continue
-
-                result = scenario_results[scenario.scenario_id]
-                res_status = result.get("status")
-
-                if scenario.automation_ref.startswith("manual-uat:"):
-                    if res_status == "passed":
-                        errors.append(
-                            f"Execution receipt invalid: manual UAT scenario {scenario.scenario_id} marked as passed! "
-                            f"Must remain pending and route to ODP-PLAN-UAT-SIGNOFF-001."
-                        )
-                else:
-                    if scenario.priority == "P0" and res_status != "passed":
-                        errors.append(
-                            f"Execution receipt scenario {scenario.scenario_id} status is {res_status}"
-                        )
-        except Exception as exc:
-            errors.append(f"Execution receipt unparsable or invalid: {exc}")
-
+    errors.extend(validate_receipt_packet(root_path))
     return errors
 
 
-def test_all_qa03_scenarios_are_registered_once() -> None:
-    expected = {
-        "E2E-EXP-001",
-        "E2E-EXP-002",
-        "E2E-EXP-003",
-        "E2E-OPS-001",
-        "E2E-OPS-002",
-        "E2E-INT-001",
-        "E2E-PRICE-001",
-        "E2E-AD-001",
-        "E2E-AVM-001",
-        "E2E-NET-001",
-        "E2E-LEARN-001",
-        "E2E-LEARN-002",
-        "E2E-DATA-001",
-        "E2E-AUDIT-001",
-        "E2E-SEC-001",
-        "E2E-FRAN-001",
+def _counts(results: list[dict[str, Any]], runner: str) -> dict[str, int]:
+    counts = {
+        "total_specs": (
+            len({item["test_id"].split("::", 1)[0] for item in results})
+            if runner == "playwright"
+            else 0
+        ),
+        "total_tests": len(results),
+        "passed": 0,
+        "failed": 0,
+        "skipped": 0,
+        "timed_out": 0,
+        "interrupted": 0,
+        "flaky": 0,
+        "malformed": 0,
     }
-    actual = {scenario.scenario_id for scenario in E2E_SCENARIOS}
-    assert actual == expected
-    assert len(actual) == len(E2E_SCENARIOS)
+    fields = {
+        "passed": "passed",
+        "failed": "failed",
+        "skipped": "skipped",
+        "timedOut": "timed_out",
+        "interrupted": "interrupted",
+        "flaky": "flaky",
+        "malformed": "malformed",
+    }
+    for result in results:
+        counts[fields[result["status"]]] += 1
+    return counts
 
 
-def test_p0_scenarios_have_automation_data_and_audit_evidence() -> None:
+def _artifact(
+    runner: str,
+    results: list[dict[str, Any]],
+    *,
+    source: dict[str, str] | None = None,
+    exit_code: int = 0,
+    integrity_errors: list[str] | None = None,
+) -> dict[str, Any]:
+    payload = {"raw": runner}
+    artifact: dict[str, Any] = {
+        "schema_version": SCHEMA_VERSION,
+        "runner": runner,
+        "source": source or source_identity(ROOT),
+        "run": {
+            "command": f"run {runner}",
+            "version": "test-version",
+            "started_at": "2026-07-31T00:00:00Z",
+            "ended_at": "2026-07-31T00:01:00Z",
+            "exit_code": exit_code,
+            "environment": {"name": "mutation"},
+        },
+        "payload": payload,
+        "payload_sha256": sha256_bytes(canonical_json_bytes(payload)),
+        "counts": _counts(results, runner),
+        "results": results,
+        "integrity_errors": integrity_errors or [],
+    }
+    return seal_normalized(artifact, "normalized_artifact_sha256")
+
+
+def _write_packet_artifact(root: Path, runner: str, artifact: dict[str, Any]) -> str:
+    relative = RAW_PLAYWRIGHT_PATH if runner == "playwright" else RAW_PYTEST_PATH
+    path = root / relative
+    path.parent.mkdir(parents=True, exist_ok=True)
+    raw = json.dumps(artifact, indent=2).encode()
+    path.write_bytes(raw)
+    return sha256_bytes(raw)
+
+
+def _init_repo(path: Path) -> None:
+    subprocess.run(["git", "init", "-q"], cwd=path, check=True)
+    subprocess.run(
+        ["git", "config", "user.email", "acceptance@example.invalid"],
+        cwd=path,
+        check=True,
+    )
+    subprocess.run(
+        ["git", "config", "user.name", "Acceptance Test"],
+        cwd=path,
+        check=True,
+    )
+
+
+def _commit(path: Path, relative: str, content: str, message: str) -> None:
+    target = path / relative
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_text(content, encoding="utf-8")
+    subprocess.run(["git", "add", relative], cwd=path, check=True)
+    subprocess.run(["git", "commit", "-qm", message], cwd=path, check=True)
+
+
+def test_all_qa03_scenarios_are_registered_once_with_exact_refs() -> None:
+    ids = [scenario.scenario_id for scenario in E2E_SCENARIOS]
+    assert len(ids) == 16
+    assert len(ids) == len(set(ids))
     for scenario in E2E_SCENARIOS:
-        if scenario.priority != "P0":
-            continue
-        assert not scenario.automation_ref.startswith("manual-uat:"), scenario.scenario_id
-        assert scenario.deterministic_dataset
-        assert scenario.owner_role
-        assert scenario.closes_loop
-        assert len(scenario.audit_evidence) >= 3
-
-
-def test_acceptance_registry_links_release_review_surfaces() -> None:
-    surfaces = {scenario.route_or_surface for scenario in E2E_SCENARIOS}
-    assert "/w/audit/decisions/decision-netplan-404" in surfaces
-    assert "AuthorizationEngine" in surfaces
-    assert any("Data Quality Center" in surface for surface in surfaces)
+        if scenario.priority == "P0":
+            assert not scenario.is_manual
+        for ref in scenario.automation_refs:
+            assert not any(deleted in ref for deleted in DELETED_SPEC_REFERENCES)
+            if not scenario.is_manual:
+                assert ref.count("::") == 1
+                assert ref.startswith("tests/")
 
 
 def test_no_deleted_specs_referenced_and_inventory_consistent() -> None:
-    errors = validate_acceptance_scenarios_and_inventory(ROOT)
-    assert errors == [], f"Acceptance scenario validation errors: {errors}"
+    assert validate_acceptance_scenarios_and_inventory(ROOT) == []
 
 
-# --- Negative Mutation Unit Tests ---
-
-
-def test_validator_rejects_stale_git_sha(tmp_path: Path) -> None:
-    raw_file = tmp_path / "docs/evidence/e2e/raw_playwright_results.json"
-    raw_file.parent.mkdir(parents=True, exist_ok=True)
-    raw_file.write_text('{"test": 1}', encoding="utf-8")
-    actual_hash = hashlib.sha256(b'{"test": 1}').hexdigest()
-
-    receipt = {
-        "git_sha": "stale_sha_1234567890",
-        "raw_artifact_hash": actual_hash,
-        "status": "passed",
-        "command": "npx playwright test",
-        "runner_versions": {},
-        "run_id": "r1",
-        "start_time": "2026-01-01T00:00:00Z",
-        "end_time": "2026-01-01T00:01:00Z",
-        "exit_code": 0,
-        "environment": "chromium",
-        "summary": {"total_specs": 16, "total_tests": 107, "passed": 107, "failed": 0, "skipped": 0},
-        "scenario_results": [],
-    }
-    receipt_file = tmp_path / "docs/evidence/e2e/PRODUCT_E2E_EXECUTION_RECEIPT.json"
-    receipt_file.write_text(json.dumps(receipt), encoding="utf-8")
-
-    errors = validate_acceptance_scenarios_and_inventory(tmp_path)
-    assert any("Stale receipt" in err for err in errors)
-
-
-def test_validator_rejects_missing_raw_artifact(tmp_path: Path) -> None:
-    fake_dir = tmp_path / "empty_dir"
-    fake_dir.mkdir(parents=True, exist_ok=True)
-    receipt_file = fake_dir / "docs/evidence/e2e/PRODUCT_E2E_EXECUTION_RECEIPT.json"
-    receipt_file.parent.mkdir(parents=True, exist_ok=True)
-    receipt_file.write_text("{}", encoding="utf-8")
-
-    errors = validate_acceptance_scenarios_and_inventory(fake_dir)
-    assert any("Raw Playwright results artifact missing" in err for err in errors)
-
-
-def test_validator_rejects_raw_artifact_hash_mismatch(tmp_path: Path) -> None:
-    raw_file = tmp_path / "docs/evidence/e2e/raw_playwright_results.json"
-    raw_file.parent.mkdir(parents=True, exist_ok=True)
-    raw_file.write_text('{"test": 1}', encoding="utf-8")
-
-    git_sha = subprocess.run(["git", "rev-parse", "HEAD"], capture_output=True, text=True).stdout.strip()
-
-    receipt = {
-        "git_sha": git_sha,
-        "raw_artifact_hash": "wrong_hash_value",
-        "status": "passed",
-        "command": "npx playwright test",
-        "runner_versions": {},
-        "run_id": "r1",
-        "start_time": "2026-01-01T00:00:00Z",
-        "end_time": "2026-01-01T00:01:00Z",
-        "exit_code": 0,
-        "environment": "chromium",
-        "summary": {"total_specs": 16, "total_tests": 107, "passed": 107, "failed": 0, "skipped": 0},
-        "scenario_results": [],
-    }
-    receipt_file = tmp_path / "docs/evidence/e2e/PRODUCT_E2E_EXECUTION_RECEIPT.json"
-    receipt_file.write_text(json.dumps(receipt), encoding="utf-8")
-
-    errors = validate_acceptance_scenarios_and_inventory(tmp_path)
-    assert any("does not match actual raw artifact hash" in err for err in errors)
-
-
-def test_validator_rejects_manual_uat_marked_passed(tmp_path: Path) -> None:
-    raw_file = tmp_path / "docs/evidence/e2e/raw_playwright_results.json"
-    raw_file.parent.mkdir(parents=True, exist_ok=True)
-    raw_file.write_text('{"test": 1}', encoding="utf-8")
-    actual_hash = hashlib.sha256(b'{"test": 1}').hexdigest()
-
-    git_sha = subprocess.run(["git", "rev-parse", "HEAD"], capture_output=True, text=True).stdout.strip()
-
-    receipt = {
-        "git_sha": git_sha,
-        "raw_artifact_hash": actual_hash,
-        "status": "passed",
-        "command": "npx playwright test",
-        "runner_versions": {},
-        "run_id": "r1",
-        "start_time": "2026-01-01T00:00:00Z",
-        "end_time": "2026-01-01T00:01:00Z",
-        "exit_code": 0,
-        "environment": "chromium",
-        "summary": {"total_specs": 16, "total_tests": 107, "passed": 107, "failed": 0, "skipped": 0},
-        "scenario_results": [
-            {"scenario_id": "E2E-EXP-003", "status": "passed"},
+@pytest.mark.parametrize(
+    "status,exit_code",
+    [
+        ("failed", 1),
+        ("skipped", 0),
+        ("timedOut", 1),
+        ("interrupted", 1),
+        ("flaky", 0),
+        ("malformed", 0),
+    ],
+)
+def test_raw_runner_rejects_every_non_passing_terminal_status(
+    status: str, exit_code: int
+) -> None:
+    artifact = _artifact(
+        "playwright",
+        [
+            {
+                "test_id": "tests/e2e/example.spec.ts::exact title",
+                "status": status,
+            }
         ],
+        exit_code=exit_code,
+    )
+    errors = validate_raw_artifact(artifact, "playwright")
+    assert any("non-passing" in error for error in errors)
+
+
+def test_raw_runner_rejects_zero_tests_and_contradictory_counts() -> None:
+    artifact = _artifact("playwright", [])
+    artifact["counts"]["passed"] = 107
+    seal_normalized(artifact, "normalized_artifact_sha256")
+    errors = validate_raw_artifact(artifact, "playwright")
+    assert any("counts contradict" in error for error in errors)
+    assert any("zero tests" in error for error in errors)
+
+
+def test_playwright_payload_counts_unique_spec_files_and_exact_results() -> None:
+    payload = {
+        "suites": [
+            {
+                "file": "example.spec.ts",
+                "specs": [
+                    {
+                        "file": "example.spec.ts",
+                        "title": "first exact title",
+                        "tests": [
+                            {
+                                "status": "expected",
+                                "expectedStatus": "passed",
+                                "projectName": "chromium",
+                                "results": [
+                                    {
+                                        "status": "passed",
+                                        "duration": 1,
+                                        "retry": 0,
+                                    }
+                                ],
+                            }
+                        ],
+                    },
+                    {
+                        "file": "example.spec.ts",
+                        "title": "second exact title",
+                        "tests": [
+                            {
+                                "status": "expected",
+                                "expectedStatus": "passed",
+                                "projectName": "chromium",
+                                "results": [
+                                    {
+                                        "status": "passed",
+                                        "duration": 1,
+                                        "retry": 0,
+                                    }
+                                ],
+                            }
+                        ],
+                    },
+                ],
+                "suites": [],
+            }
+        ],
+        "stats": {"expected": 2, "skipped": 0, "unexpected": 0, "flaky": 0},
     }
-    receipt_file = tmp_path / "docs/evidence/e2e/PRODUCT_E2E_EXECUTION_RECEIPT.json"
-    receipt_file.write_text(json.dumps(receipt), encoding="utf-8")
+    results, counts, errors = parse_playwright_payload(payload)
+    assert errors == []
+    assert counts["total_specs"] == 1
+    assert counts["total_tests"] == 2
+    assert results[0]["test_id"] == "tests/e2e/example.spec.ts::first exact title"
 
-    errors = validate_acceptance_scenarios_and_inventory(tmp_path)
-    assert any("manual UAT scenario E2E-EXP-003 marked as passed" in err for err in errors)
+
+def test_playwright_payload_rejects_zero_suite_and_malformed_stats() -> None:
+    _results, _counts, errors = parse_playwright_payload(
+        {"suites": [], "stats": {"expected": "107"}}
+    )
+    assert any("zero suites" in error for error in errors)
+
+    payload = {
+        "suites": [
+            {
+                "file": "example.spec.ts",
+                "specs": [
+                    {
+                        "title": "exact title",
+                        "tests": [
+                            {
+                                "status": "expected",
+                                "expectedStatus": "passed",
+                                "projectName": "chromium",
+                                "results": [{"status": "passed", "retry": 0}],
+                            }
+                        ],
+                    }
+                ],
+                "suites": [],
+            }
+        ],
+        "stats": {"expected": 107, "skipped": -1, "unexpected": 0, "flaky": 0},
+    }
+    _results, _counts, errors = parse_playwright_payload(payload)
+    assert any("contradicts parsed count" in error for error in errors)
+    assert any("must be a non-negative integer" in error for error in errors)
 
 
-def test_validator_rejects_false_semantic_mapping() -> None:
-    for scenario_id, forbidden in FORBIDDEN_SEMANTIC_MAPPINGS.items():
-        assert forbidden in ("operator-growth.spec.ts", "operator-governance.spec.ts", "operator-store-ops.spec.ts")
+def test_raw_runner_rejects_duplicate_exact_id_and_tampered_hashes() -> None:
+    result = {
+        "test_id": "tests/e2e/example.spec.ts::exact title",
+        "status": "passed",
+    }
+    artifact = _artifact("playwright", [result, result.copy()])
+    artifact["payload"]["tampered"] = True
+    errors = validate_raw_artifact(artifact, "playwright")
+    assert any("normalized artifact hash mismatch" in error for error in errors)
+    assert any("payload hash mismatch" in error for error in errors)
+    assert any("duplicate normalized test ids" in error for error in errors)
+
+
+def test_scenario_binding_requires_exact_id_not_substring() -> None:
+    playwright = _artifact(
+        "playwright",
+        [
+            {
+                "test_id": (
+                    "tests/e2e/operator-network-scoring.spec.ts::"
+                    "SiteScore Lab renders GO/WAIT/REJECT scorecards with conditions and reasons EXTRA"
+                ),
+                "status": "passed",
+            }
+        ],
+    )
+    pytest_artifact = _artifact("pytest", [])
+    _results, errors = bind_scenarios(
+        {"playwright": playwright, "pytest": pytest_artifact},
+        {"playwright": "a" * 64, "pytest": "b" * 64},
+    )
+    assert any(
+        "E2E-EXP-001 missing exact playwright result" in error for error in errors
+    )
+
+
+def test_receipt_rejects_missing_or_duplicate_scenario_results(tmp_path: Path) -> None:
+    playwright = _artifact(
+        "playwright",
+        [
+            {
+                "test_id": "tests/e2e/example.spec.ts::exact title",
+                "status": "passed",
+            }
+        ],
+    )
+    pytest_artifact = _artifact(
+        "pytest",
+        [
+            {
+                "test_id": "tests/security/example.py::test_exact",
+                "status": "passed",
+            }
+        ],
+    )
+    pw_hash = _write_packet_artifact(tmp_path, "playwright", playwright)
+    py_hash = _write_packet_artifact(tmp_path, "pytest", pytest_artifact)
+    receipt: dict[str, Any] = {
+        "schema_version": SCHEMA_VERSION,
+        "tested_source": source_identity(ROOT),
+        "artifacts": [
+            {"runner": "playwright", "sha256": pw_hash},
+            {"runner": "pytest", "sha256": py_hash},
+        ],
+        "runner_counts": {
+            "playwright": playwright["counts"],
+            "pytest": pytest_artifact["counts"],
+        },
+        "scenario_results": [
+            {"scenario_id": "E2E-EXP-001"},
+            {"scenario_id": "E2E-EXP-001"},
+        ],
+        "validation_errors": [],
+        "exit_code": 0,
+        "status": "passed",
+    }
+    seal_normalized(receipt, "normalized_receipt_sha256")
+    receipt_path = tmp_path / RECEIPT_PATH
+    receipt_path.write_text(json.dumps(receipt), encoding="utf-8")
+    errors = validate_receipt_packet(tmp_path)
+    assert any("missing or duplicate scenario results" in error for error in errors)
+
+
+def test_evidence_only_child_is_allowed_but_source_change_is_rejected(
+    tmp_path: Path,
+) -> None:
+    _init_repo(tmp_path)
+    _commit(tmp_path, "source.py", "v1\n", "source")
+    source = source_identity(tmp_path)
+    _commit(
+        tmp_path,
+        RAW_PLAYWRIGHT_PATH,
+        "{}\n",
+        "evidence-only child",
+    )
+    proof, errors = verify_evidence_relationship(
+        tmp_path, source, allow_worktree_evidence=False
+    )
+    assert errors == []
+    assert proof["relation"] == "evidence_only_descendant"
+
+    _commit(tmp_path, "source.py", "v2\n", "source changed after test")
+    _proof, errors = verify_evidence_relationship(
+        tmp_path, source, allow_worktree_evidence=False
+    )
+    assert any("non-evidence paths" in error for error in errors)
+
+
+def test_intervening_source_change_is_rejected_even_if_reverted(tmp_path: Path) -> None:
+    _init_repo(tmp_path)
+    _commit(tmp_path, "source.py", "v1\n", "source")
+    source = source_identity(tmp_path)
+    _commit(tmp_path, "source.py", "v2\n", "intervening source change")
+    _commit(tmp_path, "source.py", "v1\n", "revert source")
+    _proof, errors = verify_evidence_relationship(
+        tmp_path, source, allow_worktree_evidence=False
+    )
+    assert any("non-evidence paths" in error for error in errors)
+
+
+def test_stale_or_mismatched_source_tree_is_rejected(tmp_path: Path) -> None:
+    _init_repo(tmp_path)
+    _commit(tmp_path, "source.py", "v1\n", "source")
+    source = source_identity(tmp_path)
+    source["tree_sha"] = "0" * 40
+    _proof, errors = verify_evidence_relationship(
+        tmp_path, source, allow_worktree_evidence=False
+    )
+    assert any("tested tree mismatch" in error for error in errors)
+
+
+def test_python_runner_propagates_pytest_failure(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    monkeypatch.setattr(pytest, "main", lambda *args, **kwargs: 1)
+    status = run_python_tests(output_path=tmp_path / "raw_pytest_results.json")
+    assert status != 0
+    artifact = json.loads(
+        (tmp_path / "raw_pytest_results.json").read_text(encoding="utf-8")
+    )
+    assert artifact["run"]["exit_code"] == 1
+
+
+def test_evidence_allowlist_is_explicit_and_narrow() -> None:
+    assert EVIDENCE_COMMIT_ALLOWLIST == {
+        RAW_PLAYWRIGHT_PATH,
+        RAW_PYTEST_PATH,
+        RECEIPT_PATH,
+    }
