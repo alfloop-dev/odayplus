@@ -1344,3 +1344,99 @@ previous eight probes are green, but B1 permits incomplete/untyped governance ar
 permits arbitrarily stale evidence, and B3 leaves nested receipt envelopes open to renamed
 synthetic metrics. Re-audit the complete acceptance batch after remediation. No owner
 implementation content was changed by this review.
+
+---
+
+# Codex6 Re-review Addendum — 2026-07-31, exact owner head `89bc4bd9`
+
+The supervisor re-dispatched this task after the owner reported B1-B3 remediation at exact
+pushed head `89bc4bd9fe20b999e6235c539a89566ab3126239`. After fetching origin, the local task
+branch and `origin/task/ODP-PLAN-SITESCORE-OUTCOME-001` both pointed at that SHA. The worktree
+contained no uncommitted owner implementation diff; its only untracked entries were the
+orchestrator-seeded task context/state files.
+
+## Verification at the exact owner head
+
+```bash
+PYTHONPATH=. .venv/bin/pytest -q tests/models -k "sitescore or opening_outcome"
+PYTHONPATH=. .venv/bin/pytest -q tests -k "sitescore or opening_outcome or model_ready"
+.venv/bin/ruff check scripts/models models tests/models
+git diff --check
+git diff --check f3584866..89bc4bd9
+```
+
+- Task-scoped selector: **50 passed**; collection independently reported 50 selected and
+  40 deselected tests.
+- Full focused selector: **94 passed**; collection independently reported 94 selected and
+  2,235 deselected tests.
+- Ruff and both whitespace checks: clean.
+- The committed receipt and committed model card verify together at the exact reviewed head.
+- The six direct mutations named in the previous `f3584866` review now fail closed in the
+  owner regression test. Required key sets, a 30-day top-level/model-card evidence age, and
+  closed hash/integrity envelopes are present.
+
+The task brief requires the complete fail-closed batch to be re-audited after every reopen.
+Each independent mutation below started from the committed receipt/model card, rebound the
+model-card and handback SHA256 values in both declared locations, and recomputed the receipt
+content hash. All seven probes returned `is_valid=True`,
+`reason_code="RECEIPT_VALIDATED"`, and no errors.
+
+## Blocking findings
+
+### B1 — Required identity and gate-threshold values remain self-attested
+
+The new required key sets enforce presence but not the authoritative values of several required
+fields. One self-consistent mutation changed the receipt `gate` to `GATE_99`, changed its
+`model_name` and `service` to invented values, changed the bound model card's `model_name` to the
+same invented value, rebound every hash, and validated successfully. The verifier does not pin
+these values or reconcile receipt and model-card identity.
+
+A second mutation replaced `activation_threshold=200`, `min_coverage_threshold=0.70`, and
+`max_mae_threshold=0.25` with `1`, `0.0`, and `999.0`, updated the duplicated handback activation
+threshold, rebound all hashes, and also validated. The verifier re-derives its verdict from the
+attacker-supplied threshold values instead of the governed constants. The current hard-coded
+lineage stub still prevents ACTIVE today, but the artifact now misstates the Gate 2 contract and
+would lower the activation boundary as soon as the prediction-source dependency composes.
+
+Pin or authoritatively resolve `gate`, model/service identity, and all three Gate 2 thresholds;
+cross-check the model-card identity and handback threshold/delta against those governed values.
+
+### B2 — Summary freshness and M6/M12 maturity definitions remain forgeable
+
+Changing only `benchmark_summary.observed_at` to `2000-01-01T00:00:00Z` validated after receipt
+hash recomputation. The 30-day policy checks the top-level timestamp and model-card `created_at`,
+but the benchmark summary's own freshness field is optional, unvalidated, and unreconciled.
+
+Separately, changing both bound handback copies' `outcome_backfill_contract` definitions to
+"store_age_days >= 180/365; no realized outcome required" also validated. This directly permits
+the prohibited store-age-as-M6/M12 relabeling at the receipt boundary even though the evaluator
+itself requires explicit realized outcomes. Require a typed, fresh summary timestamp equal to
+the top-level observation time, and pin or structurally validate the authoritative eligibility
+and true realized M6/M12 maturity definitions in the backfill contract.
+
+### B3 — Population evidence is typed locally but not reconciled globally
+
+Three self-consistent population mutations validated:
+
+- replacing `benchmark_summary.matched_mean_y` and both handback copies with the string
+  `"invented"`;
+- replacing the summary/model-card calibration copies with finite values claiming 999 matched
+  predictions, 100% coverage, and invented revenue/MAE values while the authoritative main
+  counts remain zero; and
+- adding a summary/model-card segment claiming 999 records and 100% coverage while observed,
+  eligible, and mature counts remain zero.
+
+The verifier checks the calibration and segment object schemas and duplicate equality, but does
+not reconcile their counts, ratios, means, MAE population, or segment totals to the main benchmark
+population. It also never type-checks or cross-checks `matched_mean_y`. Require strict finite
+typing for that scalar; bind calibration counts/ratios/mean to the same matched and mature
+populations; and reconcile non-empty segment totals and weighted metrics with the summary.
+
+## Decision
+
+**Changes requested.** Exact owner head `89bc4bd9` is not approved. The focused suites and the
+previous six probes are green, but B1 still permits invented gate identity and thresholds, B2
+permits stale summary evidence and prohibited store-age maturity definitions, and B3 permits
+self-consistent population drift across scalar, calibration, and segment evidence. Re-audit the
+complete acceptance batch after remediation. No owner implementation content was changed by
+this review.
