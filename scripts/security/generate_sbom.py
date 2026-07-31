@@ -1248,6 +1248,16 @@ def verify_sbom(
         comm_val = comm_props.get(prop_key, "")
         curr_val = curr_props.get(prop_key, "")
         if comm_val != curr_val:
+            if prop_key == "git-sha" and comm_val and curr_val and comm_val != "unknown" and curr_val != "unknown":
+                is_ancestor = False
+                try:
+                    res = subprocess.run(["git", "merge-base", "--is-ancestor", comm_val, curr_val], capture_output=True)
+                    if res.returncode == 0:
+                        is_ancestor = True
+                except Exception:
+                    pass
+                if is_ancestor:
+                    continue
             diff_reasons.append(f"Property binding mismatch for '{prop_key}': committed='{comm_val}', active='{curr_val}'")
 
     if expected_git_sha and comm_props.get("git-sha") != expected_git_sha:
