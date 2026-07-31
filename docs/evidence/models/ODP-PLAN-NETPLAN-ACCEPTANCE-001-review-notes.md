@@ -167,3 +167,26 @@ Batch re-audit verification after the anchor: 51 NetPlan integration cases,
 NetPlan/robust/production/runtime cases passed; focused Ruff and `git diff
 --check` were clean. This addendum is a re-review handoff, not reviewer
 approval and not Human/Ops baseline approval.
+
+## 7. 2026-07-31 exact-boundary addendum
+
+Reviewer `Codex` reopened pushed head `eb425885` after reproducing four further
+fail-open boundaries: raw aggregates rounded before constraint checks,
+sub-tolerance scalar forgery, ambiguous duplicate `(entity, action)` options,
+and receipt expiry evaluated with a caller-backdated timestamp.
+
+Owner `Codex2` remediated the complete batch at anchor `c4eeb512`. Candidate
+feasibility now uses raw aggregates with strict hard limits; primary and
+alternative scalar content must equal independent recomputation exactly;
+solver and problem-hash entrypoints reject duplicate `(entity, action)` option
+domains; and the fixed approval verifier uses its composition-owned clock.
+Public-path mutations prove raw budget and risk excess, `5e-7` primary and
+alternative objective drift, duplicate action identities, and a backdated
+`NetPlanService.decide()` cannot enable governance.
+
+Batch re-audit after the anchor passed 58 NetPlan integration cases, 60
+`netplan or ortools or robust` selected tests, 72
+`netplan or management_baseline or solver` selected tests, and 77 explicit
+NetPlan/robust/production/runtime cases. Focused Ruff and `git diff --check`
+were clean. Human/Ops remains `BUSINESS_UAT_UNVERIFIED / GOVERNED_DISABLED`;
+this addendum requests re-review and does not record reviewer approval.

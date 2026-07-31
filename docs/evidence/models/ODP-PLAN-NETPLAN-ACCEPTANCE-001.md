@@ -20,8 +20,8 @@ the business gate.
 
 | Criterion | Technical result | Evidence |
 |---|---|---|
-| Hard constraints | PASS | Budget, expected gross margin, capacity delta, average risk, and min/max action counts are enforced and independently rechecked. Dedicated infeasibility diagnosis covers each family. |
-| Selected option and result integrity | PASS | Comparison rejects options not present in `options_by_entity`, duplicate/missing entities, infeasible selections, forged status/objective/metrics/counts/bindings, solver-version drift, non-optimal feasible substitutions, malformed alternatives, and false optimality. |
+| Hard constraints | PASS | Budget, expected gross margin, capacity delta, average risk, and min/max action counts are enforced against unrounded authoritative aggregates and independently rechecked. Dedicated infeasibility diagnosis covers each family. |
+| Selected option and result integrity | PASS | Comparison rejects options not present in `options_by_entity`, duplicate/missing entities, ambiguous duplicate `(entity, action)` options, infeasible selections, any exact scalar drift, forged status/objective/metrics/counts/bindings, solver-version drift, non-optimal feasible substitutions, malformed alternatives, and false optimality. |
 | Immutable binding | PASS | Scenario, source snapshots, baseline content, actions/domain, solver problem, full solver result, approval receipt, and comparison output each have deterministic SHA-256 bindings. |
 | Authoritative approval | TECHNICAL PASS / HUMAN PENDING | A fixed verifier resolves an immutable receipt by exact ID and binds one source system, named principal, exact role, active decision, approval reference, strict UTC issue/expiry, scenario, baseline, scope, release, policy, actions/domain, source snapshots, baseline hash, solver problem hash, and receipt integrity hash. |
 | Actor-string trust | PASS | No `startswith("Human/Ops")` or actor allow-list grants approval. Lifecycle approval requires successful authoritative receipt readback; `actor_id` is only an audit identity and must equal the verified principal. |
@@ -40,6 +40,9 @@ rejects receipt IDs `ANY` and `UNVERIFIED`, and resolves only its fixed receipt
 readback map. Validation compares recomputed caller baseline/problem hashes
 against the immutable expected hashes in the resolved receipt. It never
 validates caller data by hashing that same caller data as its own authority.
+The verifier also owns its evaluation clock. Caller-controlled comparison data
+and lifecycle `decided_at` audit timestamps cannot backdate receipt expiry; a
+deterministic test clock is injected only when the verifier is composed.
 
 `NetPlanService.decide()` cannot enter `APPROVED` without this verifier and a
 receipt matching the exact solved scenario and selected actions. `ApprovalRecord`
@@ -62,10 +65,11 @@ superiority claim:
 2. Resolve and verify the immutable management approval receipt.
 3. Enumerate the feasible candidate set independently of the submitted result.
 4. Match every selected `ActionOption` by full value to the exact entity option
-   domain.
-5. Recompute feasibility, objective, gross margin, budget, average risk,
-   capacity, action counts, binding constraints, optimal status/value, and the
-   exact alternative count/order/content.
+   domain after rejecting any domain with duplicate `(entity, action)` identity.
+5. Recompute feasibility from raw, unrounded aggregates and require exact scalar
+   equality for objective, gross margin, budget, and average risk, plus exact
+   capacity, action counts, binding constraints, optimal status/value, and
+   alternative count/order/content.
 6. For an infeasible result, recompute and compare the complete ordered
    diagnosis tuple: constraint, affected stores, required relaxation, business
    impact, suggested action, and multiplicity.
@@ -117,9 +121,13 @@ The integration suite rejects:
   or receipt integrity hash;
 - blank approval reference or issue time;
 - non-UTC, future-issued, expired, or invalid receipt time windows;
+- caller-backdated decision timestamps attempting to revive an expired receipt;
+- raw budget/risk excess hidden by four-decimal rounding;
+- duplicate full options sharing one `(entity, action)` identity;
 - entity-ID-only solve substitutions;
-- forged selected option values, objective, status, feasibility flag, action
-  counts, result metrics, and optimality claims;
+- forged selected option values, exact and sub-tolerance scalar values,
+  objective, status, feasibility flag, action counts, result metrics, and
+  optimality claims;
 - independently feasible second-best substitutions labelled `FEASIBLE`;
 - alternative omission, reordering, substitution, and post-approval limit
   reduction;
@@ -127,24 +135,24 @@ The integration suite rejects:
 
 ## 7. Verification
 
-Executed on task branch after result-recomputation anchor `ba63962a`:
+Executed on task branch after exact-acceptance anchor `c4eeb512`:
 
 ```bash
 uv run pytest -q tests/integration/test_netplan_solver.py --tb=short
-# 51 parameterized cases passed
+# 58 parameterized cases passed
 
 uv run pytest -q tests -k "netplan or ortools or robust" --tb=short
-# 53 tests passed; exit 0
+# 60 tests passed; exit 0
 
 uv run pytest -q tests -k "netplan or management_baseline or solver" --tb=short
-# 65 tests passed; exit 0
+# 72 tests passed; exit 0
 
 uv run pytest -q \
   tests/integration/test_netplan_solver.py \
   solver/netplan/tests/test_robust.py \
   modules/netplan/tests/test_netplan_production_execution.py \
   tests/solver/test_runtime_compat.py --tb=short
-# 70 tests passed; exit 0
+# 77 tests passed; exit 0
 
 uv run ruff check \
   solver/netplan modules/netplan \
