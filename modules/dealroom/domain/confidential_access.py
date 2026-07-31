@@ -89,12 +89,37 @@ def assert_no_confidential_leak(payload: Any, *, forbidden_raw_values: Sequence[
                 f"Confidential raw value {raw_str!r} leaked in receipt payload"
             )
 
+    # Structural key inspection for unmasked confidential financial fields
+    forbidden_keys = {
+        "realized_price",
+        "realized_transaction_price",
+        "raw_transaction_price",
+        "unmasked_price",
+        "transaction_price",
+    }
+
+    def _check_obj(obj: Any) -> None:
+        if isinstance(obj, dict):
+            for k, v in obj.items():
+                if k in forbidden_keys:
+                    if v != REDACTED_PLACEHOLDER and v != "[NONE]":
+                        raise ConfidentialLeakError(
+                            f"Raw confidential field {k!r} with value {v!r} leaked in payload"
+                        )
+                _check_obj(v)
+        elif isinstance(obj, list):
+            for item in obj:
+                _check_obj(item)
+
+    if isinstance(payload, (dict, list)):
+        _check_obj(payload)
+
     # Regex scan for unmasked high-value currency figures matching raw confidential prices
     patterns = [
-        r'"realized_price"\s*:\s*\d+',
-        r'"realized_transaction_price"\s*:\s*\d+',
-        r'"raw_transaction_price"\s*:\s*\d+',
-        r'"unmasked_price"\s*:\s*\d+',
+        r'"realized_price"\s*:\s*[0-9]+(?:\.[0-9]+)?',
+        r'"realized_transaction_price"\s*:\s*[0-9]+(?:\.[0-9]+)?',
+        r'"raw_transaction_price"\s*:\s*[0-9]+(?:\.[0-9]+)?',
+        r'"unmasked_price"\s*:\s*[0-9]+(?:\.[0-9]+)?',
     ]
     for pattern in patterns:
         match = re.search(pattern, serialized, re.IGNORECASE)
