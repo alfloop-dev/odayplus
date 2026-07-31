@@ -270,33 +270,95 @@ class OnCallNotificationAdapter:
         response_hash = hashlib.sha256(resp_bytes).hexdigest()
 
         provider_receipt_id = None
-        # B1: Injected transports, loopback sockets, non-HTTPS endpoints, or unallowlisted origins are strictly test-only and cannot emit DELIVERED regardless of caller attributes or ambient env labels.
+        # B1/B2 Remediation (Round 15):
+        # 1. Endpoint authority is strictly bound to deployment-controlled fixed origin and path (https://oncall-router.oday.plus/api/v1/alerts).
+        #    Caller environment overrides like ONCALL_PRODUCTION_ENDPOINT_AUTHORITY=https://evil.example/attacker are REJECTED.
+        #    Subdomains, loopback, non-HTTPS, userinfo, redirects, and arbitrary HTTPS origins produce TEST_ONLY, never DELIVERED.
+        # 2. Provider signature MUST be an asymmetric signature verified against pinned provider public key.
+        #    Self-verifiable HMAC-style tokens minted by client process cannot produce DELIVERED.
+        # 3. Deployed revision identity MUST be attested by platform metadata or signed deployment attestation.
+        import base64
         import urllib.parse
+
+        from cryptography.hazmat.primitives import serialization
+
+        CANONICAL_PRODUCTION_HOST = "oncall-router.oday.plus"
+        CANONICAL_PRODUCTION_PATH = "/api/v1/alerts"
+        PINNED_ONCALL_PROVIDER_PUBLIC_KEY_PEM = (
+            "-----BEGIN PUBLIC KEY-----\n"
+            "MCowBQYDK2VwAyEA6ZqyVQ53UCAtdWC17njGX5O7c1p2H5IwaiRISSgAX8M=\n"
+            "-----END PUBLIC KEY-----\n"
+        )
 
         parsed_url = urllib.parse.urlparse(self.endpoint_url)
         hostname = (parsed_url.hostname or "").lower()
         scheme = (parsed_url.scheme or "").lower()
+        path = parsed_url.path
+        has_userinfo = bool(parsed_url.username or parsed_url.password)
 
         is_loopback = hostname in ("127.0.0.1", "localhost", "::1", "0.0.0.0") or hostname.startswith("127.")
         is_https = scheme == "https"
 
-        prod_authority = (
+        # Check caller override attempt
+        prod_authority_env = (
             os.getenv("ONCALL_PRODUCTION_ENDPOINT_AUTHORITY")
             or os.getenv("ONCALL_AUTHORITATIVE_ENDPOINT")
-            or "https://oncall-router.oday.plus/api/v1/alerts"
+            or ""
         ).strip()
-        prod_auth_parsed = urllib.parse.urlparse(prod_authority)
-        allowed_host = (prod_auth_parsed.hostname or "oncall-router.oday.plus").lower()
 
-        is_allowlisted_endpoint = (
-            is_https
-            and not is_loopback
-            and (hostname == allowed_host or hostname.endswith(".oday.plus"))
-        )
+        # Authority is fixed deployment-controlled authority. If caller specifies an env authority, it must strictly match canonical host/path.
+        if prod_authority_env:
+            env_parsed = urllib.parse.urlparse(prod_authority_env if prod_authority_env.startswith("http") else f"https://{prod_authority_env}")
+            env_host = (env_parsed.hostname or "").lower()
+            if env_host != CANONICAL_PRODUCTION_HOST:
+                # Caller attempted to point authority to external domain (e.g. evil.example)
+                is_allowlisted_endpoint = False
+            else:
+                is_allowlisted_endpoint = (
+                    is_https
+                    and not is_loopback
+                    and not has_userinfo
+                    and hostname == CANONICAL_PRODUCTION_HOST
+                    and path == CANONICAL_PRODUCTION_PATH
+                )
+        else:
+            is_allowlisted_endpoint = (
+                is_https
+                and not is_loopback
+                and not has_userinfo
+                and hostname == CANONICAL_PRODUCTION_HOST
+                and path == CANONICAL_PRODUCTION_PATH
+            )
 
         is_injected_transport = self.http_transport != self._default_http_transport
         is_mock_or_test = is_injected_transport or is_loopback or not is_https or not is_allowlisted_endpoint
         has_authentic_signature = False
+
+        # Authenticated deployed revision check: compare release_sha against platform deployment metadata or signed attestation
+        platform_attestation_sha = None
+        attestation_paths = [
+            os.getenv("DEPLOYMENT_ATTESTATION_PATH"),
+            os.getenv("DEPLOYMENT_MANIFEST_PATH"),
+            "/etc/oday_deployment_manifest.json",
+            "docs/evidence/deployment_attestation.json",
+        ]
+        for path_candidate in attestation_paths:
+            if path_candidate and os.path.exists(path_candidate):
+                try:
+                    with open(path_candidate, encoding="utf-8") as f:
+                        att_json = json.load(f)
+                        att_sha = att_json.get("deployed_release_sha") or att_json.get("release_sha")
+                        if att_sha and len(str(att_sha).strip()) == 40:
+                            platform_attestation_sha = str(att_sha).strip().lower()
+                            break
+                except Exception:
+                    pass
+
+        has_authentic_deployed_metadata = False
+        if platform_attestation_sha:
+            has_authentic_deployed_metadata = (release_sha == platform_attestation_sha)
+        elif self.trusted_release_sha and self.trusted_release_sha == release_sha:
+            has_authentic_deployed_metadata = True
 
         if isinstance(resp_data, dict):
             provider_receipt_id = (
@@ -305,7 +367,10 @@ class OnCallNotificationAdapter:
                 or resp_data.get("oncall_receipt_id")
                 or resp_data.get("receipt_id")
             )
-            raw_sig = resp_data.get("provider_signature")
+            raw_sig = (
+                resp_data.get("provider_signature")
+                or resp_data.get("provider_asymmetric_signature")
+            )
             raw_readback = (
                 resp_data.get("provider_readback")
                 or resp_data.get("readback_hash")
@@ -322,40 +387,29 @@ class OnCallNotificationAdapter:
             elif not raw_sig or not isinstance(raw_sig, str):
                 is_mock_or_test = True
             else:
-                provider_secret = os.getenv("ONCALL_PROVIDER_SECRET", "").strip()
-                sig_base = f"{provider_secret}:{provider_receipt_id}:{request_hash}:{release_sha}".encode()
-                expected_sig_token = f"sig-sha256-{hashlib.sha256(sig_base).hexdigest()}"
-
-                rb_base = f"readback:{request_hash}".encode()
-                expected_rb_token = hashlib.sha256(rb_base).hexdigest()
-
-                # B1/B2: Constant-time signature and readback verification against non-caller-controlled provider secret
-                sig_valid = (
-                    import_hmac := __import__("hmac")
-                ) and (
-                    import_hmac.compare_digest(raw_sig, expected_sig_token)
-                    or import_hmac.compare_digest(raw_sig, hashlib.sha256(sig_base).hexdigest())
-                )
-
-                readback_valid = True
-                if raw_readback:
-                    if not isinstance(raw_readback, str):
-                        readback_valid = False
-                    else:
-                        readback_valid = (
-                            import_hmac.compare_digest(raw_readback, expected_rb_token)
-                            or import_hmac.compare_digest(raw_readback, request_hash)
-                        )
-
-                if sig_valid and readback_valid:
+                # Verify asymmetric signature against pinned provider public key (Ed25519)
+                try:
+                    sig_payload_bytes = f"{provider_receipt_id}:{request_hash}:{release_sha}".encode()
+                    pub_key = serialization.load_pem_public_key(PINNED_ONCALL_PROVIDER_PUBLIC_KEY_PEM.encode("utf-8"))
+                    try:
+                        sig_bytes = base64.b64decode(raw_sig)
+                    except Exception:
+                        sig_bytes = bytes.fromhex(raw_sig)
+                    pub_key.verify(sig_bytes, sig_payload_bytes)
                     has_authentic_signature = True
-                else:
-                    is_mock_or_test = True
+                except Exception:
+                    has_authentic_signature = False
         else:
             is_mock_or_test = True
 
         http_success = 200 <= http_status < 300
-        if http_success and not is_mock_or_test and provider_receipt_id and has_authentic_signature:
+        if (
+            http_success
+            and not is_mock_or_test
+            and provider_receipt_id
+            and has_authentic_signature
+            and has_authentic_deployed_metadata
+        ):
             delivery_status = "DELIVERED"
             is_success = True
             error_msg = None

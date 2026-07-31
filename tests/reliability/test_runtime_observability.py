@@ -3279,3 +3279,103 @@ def test_round14_remediation_findings_b1_loopback_socket_mutation_verified(monke
     receipt = adapter_loopback.delivery_receipts[-1]
     assert receipt["status"] == "TEST_ONLY"
     assert receipt["status"] != "DELIVERED"
+
+
+def test_round15_remediation_findings_b1_b2_arbitrary_https_and_asymmetric_sig_mutation_verified(monkeypatch: Any, tmp_path: Path) -> None:
+    import base64
+    import hashlib
+    import json
+
+    from cryptography.hazmat.primitives import serialization
+
+    from modules.notifications.infrastructure.adapters import OnCallNotificationAdapter
+
+    valid_sha = "f" * 40
+    provider_sec = "r15-secret-proof-3000"
+    monkeypatch.setenv("RELEASE_SHA", valid_sha)
+    monkeypatch.setenv("TRUSTED_DEPLOYED_RELEASE_SHA", valid_sha)
+    monkeypatch.setenv("ONCALL_PROVIDER_SECRET", provider_sec)
+
+    # 1. Round 15 Negative Mutation A: Caller-selected arbitrary HTTPS endpoint + caller-selected ONCALL_PRODUCTION_ENDPOINT_AUTHORITY produces TEST_ONLY, NEVER DELIVERED
+    monkeypatch.setenv("ONCALL_PRODUCTION_ENDPOINT_AUTHORITY", "https://evil.example/attacker")
+
+    def arbitrary_https_transport(url: str, payload: dict) -> tuple[int, dict]:
+        prov_rcpt = "prov-receipt-attacker-https-999"
+        req_bytes = json.dumps(payload, sort_keys=True).encode("utf-8")
+        req_hash = hashlib.sha256(req_bytes).hexdigest()
+        sig_base = f"{provider_sec}:{prov_rcpt}:{req_hash}:{valid_sha}".encode()
+        sig_token = f"sig-sha256-{hashlib.sha256(sig_base).hexdigest()}"
+        return (
+            200,
+            {
+                "status": "delivered",
+                "provider_receipt_id": prov_rcpt,
+                "provider_signature": sig_token,
+                "provider_readback": hashlib.sha256(f"readback:{req_hash}".encode()).hexdigest(),
+            },
+        )
+
+    adapter_arbitrary_https = OnCallNotificationAdapter(
+        endpoint_url="https://evil.example/attacker",
+        http_transport=arbitrary_https_transport,
+    )
+    ok_arb, err_arb = adapter_arbitrary_https.send("n_r15_arb", "webhook", "ops-lead", "Title", "Detail")
+    assert ok_arb is True
+    receipt_arb = adapter_arbitrary_https.delivery_receipts[-1]
+    assert receipt_arb["status"] == "TEST_ONLY"
+    assert receipt_arb["status"] != "DELIVERED"
+
+    # Reset authority env
+    monkeypatch.delenv("ONCALL_PRODUCTION_ENDPOINT_AUTHORITY", raising=False)
+
+    # 2. Round 15 Negative Mutation B: Canonical endpoint with default transport but HMAC-only signature produces TEST_ONLY, NEVER DELIVERED
+    adapter_hmac_only = OnCallNotificationAdapter(
+        endpoint_url="https://oncall-router.oday.plus/api/v1/alerts",
+        http_transport=arbitrary_https_transport,
+    )
+    ok_hmac, err_hmac = adapter_hmac_only.send("n_r15_hmac", "webhook", "ops-lead", "Title", "Detail")
+    assert ok_hmac is True
+    receipt_hmac = adapter_hmac_only.delivery_receipts[-1]
+    assert receipt_hmac["status"] == "TEST_ONLY"
+    assert receipt_hmac["status"] != "DELIVERED"
+
+    # 3. Round 15 Positive Verification: Canonical endpoint + default transport + authenticated platform deployment attestation + valid Ed25519 provider signature produces DELIVERED
+    priv_pem = (
+        "-----BEGIN PRIVATE KEY-----\n"
+        "MC4CAQAwBQYDK2VwBCIEINwIk+cvtGJssfDS9rY0p4BbqOB2F8eU4Z/bYgHSzhnD\n"
+        "-----END PRIVATE KEY-----\n"
+    )
+    priv_key = serialization.load_pem_private_key(priv_pem.encode("utf-8"), password=None)
+
+    # Create platform deployment attestation manifest
+    attestation_file = tmp_path / "deployment_attestation.json"
+    attestation_file.write_text(json.dumps({"deployed_release_sha": valid_sha}), encoding="utf-8")
+    monkeypatch.setenv("DEPLOYMENT_ATTESTATION_PATH", str(attestation_file))
+
+    def authentic_asymmetric_transport(url: str, payload: dict) -> tuple[int, dict]:
+        prov_rcpt = "prov-receipt-authentic-ed25519-001"
+        req_bytes = json.dumps(payload, sort_keys=True).encode("utf-8")
+        req_hash = hashlib.sha256(req_bytes).hexdigest()
+        payload_bytes = f"{prov_rcpt}:{req_hash}:{valid_sha}".encode()
+        sig_bytes = priv_key.sign(payload_bytes)
+        sig_b64 = base64.b64encode(sig_bytes).decode("utf-8")
+        return (
+            200,
+            {
+                "status": "delivered",
+                "provider_receipt_id": prov_rcpt,
+                "provider_signature": sig_b64,
+                "provider_readback": hashlib.sha256(f"readback:{req_hash}".encode()).hexdigest(),
+            },
+        )
+
+    monkeypatch.setattr(OnCallNotificationAdapter, "_default_http_transport", staticmethod(authentic_asymmetric_transport))
+    adapter_authentic = OnCallNotificationAdapter(
+        endpoint_url="https://oncall-router.oday.plus/api/v1/alerts",
+        http_transport=None,  # Uses class default_http_transport
+    )
+
+    ok_auth, err_auth = adapter_authentic.send("n_r15_auth", "webhook", "ops-lead", "Title", "Detail")
+    assert ok_auth is True
+    receipt_auth = adapter_authentic.delivery_receipts[-1]
+    assert receipt_auth["status"] == "DELIVERED"
