@@ -3009,17 +3009,22 @@ class StatusCheckEmissionTests(unittest.TestCase):
                  mock.patch.object(ai_status, "repository_slug", return_value="foo/bar"):
                 self.assertEqual(ai_status.get_repository_slug_safe(), "foo/bar")
 
-    def test_resolve_task_sha_gh_pr_view(self) -> None:
-        mock_result = mock.Mock()
-        mock_result.returncode = 0
-        mock_result.stdout = '{"headRefOid": "abc12345"}'
+    def test_resolve_task_sha_rejects_branch_absent_old_pr_and_local_head(self) -> None:
+        mock_result = mock.Mock(returncode=0, stdout="")
 
         with mock.patch("subprocess.run", return_value=mock_result) as mock_run, \
              mock.patch.object(ai_status, "get_gh_executable", return_value="gh"):
             sha = ai_status.resolve_task_sha("ODP-001")
-            self.assertEqual(sha, "abc12345")
-            mock_run.assert_any_call(
-                ["gh", "pr", "view", "task/ODP-001", "--json", "headRefOid"],
+            self.assertIsNone(sha)
+            mock_run.assert_called_once_with(
+                [
+                    "git",
+                    "ls-remote",
+                    "--heads",
+                    "origin",
+                    "refs/heads/task/ODP-001",
+                    "refs/heads/task-ODP-001",
+                ],
                 capture_output=True,
                 text=True,
                 check=False,
@@ -3035,9 +3040,8 @@ class StatusCheckEmissionTests(unittest.TestCase):
         def side_effect(cmd, **kwargs):
             result = mock.Mock(returncode=1, stdout="")
             if cmd[:4] == ["git", "ls-remote", "--heads", "origin"]:
-                if cmd[-1] == f"refs/heads/task/{task_id}":
-                    result.returncode = 0
-                    result.stdout = f"{remote_sha}\t{cmd[-1]}\n"
+                result.returncode = 0
+                result.stdout = f"{remote_sha}\trefs/heads/task/{task_id}\n"
             elif cmd == ["git", "branch", "--show-current"]:
                 result.returncode = 0
                 result.stdout = f"task/{task_id}\n"
@@ -3055,20 +3059,30 @@ class StatusCheckEmissionTests(unittest.TestCase):
         self.assertEqual(sha, remote_sha)
         self.assertEqual(mock_run.call_count, 1)
 
-    def test_resolve_task_sha_git_rev_parse(self) -> None:
-        def side_effect(cmd, **kwargs):
-            res = mock.Mock()
-            if "gh" in cmd:
-                res.returncode = 1
-                res.stdout = ""
-            elif "rev-parse" in cmd:
-                res.returncode = 0
-                res.stdout = "xyz789\n"
-            return res
+    def test_resolve_task_sha_rejects_remote_failure_without_cached_fallback(self) -> None:
+        with mock.patch(
+            "subprocess.run",
+            return_value=mock.Mock(returncode=1, stdout="stale-cached-ref"),
+        ) as mock_run:
+            self.assertIsNone(ai_status.resolve_task_sha("ODP-001"))
+        mock_run.assert_called_once()
 
-        with mock.patch("subprocess.run", side_effect=side_effect):
-            sha = ai_status.resolve_task_sha("ODP-001")
-            self.assertEqual(sha, "xyz789")
+    def test_resolve_task_sha_rejects_ambiguous_or_malformed_remote_refs(self) -> None:
+        task_id = "ODP-001"
+        cases = (
+            "not-a-sha\trefs/heads/task/ODP-001\n",
+            (
+                f"{'1' * 40}\trefs/heads/task/{task_id}\n"
+                f"{'2' * 40}\trefs/heads/task-{task_id}\n"
+            ),
+        )
+        for stdout in cases:
+            with self.subTest(stdout=stdout), mock.patch(
+                "subprocess.run",
+                return_value=mock.Mock(returncode=0, stdout=stdout),
+            ):
+                ai_status.clear_ai_status_caches()
+                self.assertIsNone(ai_status.resolve_task_sha(task_id))
 
     def test_emit_task_review_status_check_approved(self) -> None:
         task = {"id": "ODP-001", "reviewer": "Codex", "approved_head": "sha123"}
