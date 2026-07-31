@@ -523,6 +523,8 @@ def test_worker_and_scheduler_export_telemetry() -> None:
 
 
 def test_alert_routing_and_real_notification_delivery(monkeypatch: Any) -> None:
+    import hashlib
+
     from modules.notifications import (
         InMemoryNotificationRepository,
         NotificationService,
@@ -571,13 +573,20 @@ def test_alert_routing_and_real_notification_delivery(monkeypatch: Any) -> None:
 
     # Verify authentic provider response carries provider_receipt_id and classifies as DELIVERED
     def provider_transport(url: str, payload: dict) -> tuple[int, dict]:
+        req_bytes = json.dumps(payload, sort_keys=True).encode()
+        req_hash = hashlib.sha256(req_bytes).hexdigest()
+        prov_rcpt = "prov-rcpt-9876543210"
+        rel_sha = payload.get("release_sha", "c" * 40)
+        sig_base = f":{prov_rcpt}:{req_hash}:{rel_sha}".encode()
+        exp_sig = hashlib.sha256(sig_base).hexdigest()
         return (
             200,
             {
                 "status": "ok",
                 "delivered": True,
-                "provider_receipt_id": "prov-rcpt-9876543210",
-                "provider_signature": "sig-authentic-12345",
+                "provider_receipt_id": prov_rcpt,
+                "provider_signature": f"sig-sha256-{exp_sig[:16]}",
+                "provider_readback": req_hash,
             },
         )
 
@@ -2077,7 +2086,7 @@ def test_round5_reproduced_gaps_mutation_coverage(tmp_path: Path) -> None:
     raw["monitoring_query_execution"]["provider_query_response"]["timeSeries"][1]["points"][1]["value"]["doubleValue"] = 9999.0
     receipt_file.write_text(json.dumps(raw), encoding="utf-8")
 
-    with pytest.raises(ValueError, match="Stored provider proof point_values mismatch|point_values mismatch"):
+    with pytest.raises(ValueError, match="Provider signature mismatch|Stored provider proof point_values mismatch|point_values mismatch"):
         verify_watch_window_receipt(expected_release_sha=test_sha, receipt_path=receipt_file)
 
 
