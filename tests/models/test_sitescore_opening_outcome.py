@@ -1967,4 +1967,131 @@ def test_sitescore_gate2_receipt_verifier_re_review_e94db743_probes_b1_b2_b3_b4(
     rebound_b4c = _rebind_hashes(r_b4c, mc_b4c)
     res_b4c = verify_sitescore_gate2_receipt(rebound_b4c, model_card_artifact=mc_b4c)
     assert res_b4c.is_valid is False
-    assert any("handback_action must identify both governed task IDs" in e for e in res_b4c.errors)
+    assert any("drifts from expected re-derived action" in e or "handback_action must identify both governed task IDs" in e for e in res_b4c.errors)
+
+
+def test_sitescore_gate2_receipt_verifier_re_review_97043588_probes_b1_b2_b3():
+    # Negative regression test for Codex6 Re-review (97043588 head) B1, B2, B3 findings
+    from models.sitescore.opening_outcome import (
+        compute_handback_sha256,
+        compute_model_card_sha256,
+    )
+
+    result = run_benchmark_from_inventory(db_url=None, records=None)
+    model_card = build_sitescore_opening_outcome_model_card(result)
+    receipt = build_sitescore_gate2_receipt(result, model_card=model_card)
+    mc_dict = model_card.to_dict()
+
+    def _rebind_hashes(r_obj: dict, mc_obj: dict) -> dict:
+        hb_h = compute_handback_sha256(r_obj["handback"])
+        mc_h = compute_model_card_sha256(mc_obj)
+        r_obj["artifact_hashes"]["handback_hash"] = hb_h
+        r_obj["artifact_hashes"]["model_card_hash"] = mc_h
+        r_obj["integrity"]["handback_hash"] = hb_h
+        r_obj["integrity"]["model_card_hash"] = mc_h
+        r_obj["integrity"]["content_sha256"] = compute_gate2_receipt_sha256(r_obj)
+        return r_obj
+
+    # 1. B1 Probe: Partially matched population revenue sum forging attempt
+    rec_partial = [
+        {
+            "entity_id": "site-1",
+            "store_id": "101",
+            "target_format_code": "STANDARD",
+            "opened_on": "2024-01-01",
+            "is_training_eligible": True,
+            "realized_90d_net_revenue": 100.0,
+            "realized_180d_net_revenue": 200.0,
+            "realized_365d_net_revenue": 400.0,
+            "store_age_days": 400,
+            "predicted_revenue": 110.0,
+            "p10": 80.0,
+            "p90": 120.0,
+        },
+        {
+            "entity_id": "site-2",
+            "store_id": "102",
+            "target_format_code": "STANDARD",
+            "opened_on": "2024-01-01",
+            "is_training_eligible": True,
+            "realized_90d_net_revenue": 300.0,
+            "realized_180d_net_revenue": 600.0,
+            "realized_365d_net_revenue": 1200.0,
+            "store_age_days": 400,
+            "predicted_revenue": None,
+        },
+    ]
+    res_partial = evaluate_sitescore_opening_outcome_benchmark(rec_partial, provenance="provided_records")
+    assert res_partial.mature_label_count == 2
+    assert res_partial.matched_prediction_count == 1
+    assert res_partial.realized_revenue_sum == 400.0
+    assert res_partial.matched_mean_y == 100.0
+    assert res_partial.unmatched_mean_y == 300.0
+
+    mc_part = build_sitescore_opening_outcome_model_card(res_partial)
+    r_part = build_sitescore_gate2_receipt(res_partial, model_card=mc_part)
+    mc_part_dict = mc_part.to_dict()
+
+    r_b1 = json.loads(json.dumps(r_part))
+    mc_b1 = json.loads(json.dumps(mc_part_dict))
+    r_b1["benchmark_summary"]["realized_revenue_sum"] = 200000.0
+    r_b1["benchmark_summary"]["mean_realized_revenue"] = 100000.0
+    r_b1["handback"]["realized_revenue_sum"] = 200000.0
+    r_b1["handback"]["mean_realized_revenue"] = 100000.0
+    r_b1["benchmark_summary"]["handback_payload"]["realized_revenue_sum"] = 200000.0
+    r_b1["benchmark_summary"]["handback_payload"]["mean_realized_revenue"] = 100000.0
+    r_b1["benchmark_summary"]["calibration_summary"]["mean_realized_revenue"] = 100000.0
+    if "calibration_summary" in r_b1["handback"]:
+        r_b1["handback"]["calibration_summary"]["mean_realized_revenue"] = 100000.0
+    if "calibration_summary" in r_b1["benchmark_summary"]["handback_payload"]:
+        r_b1["benchmark_summary"]["handback_payload"]["calibration_summary"]["mean_realized_revenue"] = 100000.0
+    mc_b1["calibration_summary"]["mean_realized_revenue"] = 100000.0
+
+    rebound_b1 = _rebind_hashes(r_b1, mc_b1)
+    res_b1 = verify_sitescore_gate2_receipt(rebound_b1, model_card_artifact=mc_b1)
+    assert res_b1.is_valid is False
+    assert any("drifts from expected sum" in e for e in res_b1.errors)
+
+    # 2. B2 Probe: Negative segment population record_count (-2) in mixed partition [2, 2, -2]
+    r_b2 = json.loads(json.dumps(r_part))
+    mc_b2 = json.loads(json.dumps(mc_part_dict))
+    bogus_seg_b2 = [
+        {
+            "segment_name": "target_format_code",
+            "segment_value": "STANDARD_A",
+            "record_count": 2,
+            "metrics": {"mae": 10.0, "m6_coverage": 1.0, "m12_coverage": 1.0, "prediction_coverage": 0.5},
+        },
+        {
+            "segment_name": "target_format_code",
+            "segment_value": "STANDARD_B",
+            "record_count": 2,
+            "metrics": {"mae": 10.0, "m6_coverage": 1.0, "m12_coverage": 1.0, "prediction_coverage": 0.5},
+        },
+        {
+            "segment_name": "target_format_code",
+            "segment_value": "STANDARD_C",
+            "record_count": -2,
+            "metrics": {"mae": 10.0, "m6_coverage": 1.0, "m12_coverage": 1.0, "prediction_coverage": 0.5},
+        },
+    ]
+    r_b2["benchmark_summary"]["segment_metrics"] = bogus_seg_b2
+    r_b2["handback"]["segment_metrics"] = bogus_seg_b2
+    r_b2["benchmark_summary"]["handback_payload"]["segment_metrics"] = bogus_seg_b2
+    mc_b2["segment_metrics"] = bogus_seg_b2
+    rebound_b2 = _rebind_hashes(r_b2, mc_b2)
+    res_b2 = verify_sitescore_gate2_receipt(rebound_b2, model_card_artifact=mc_b2)
+    assert res_b2.is_valid is False
+    assert any("must be positive (> 0)" in e for e in res_b2.errors)
+
+    # 3. B3 Probe: Tampering with handback reasons and handback_action text to pretend Gate 2 passed
+    r_b3 = json.loads(json.dumps(receipt))
+    mc_b3 = json.loads(json.dumps(mc_dict))
+    r_b3["handback"]["reasons"] = ["All evidence is authoritative and Gate 2 passed"]
+    r_b3["benchmark_summary"]["handback_payload"]["reasons"] = ["All evidence is authoritative and Gate 2 passed"]
+    r_b3["handback"]["handback_action"] = "Close ODP-PLAN-SITESCORE-OUTCOME-BACKFILL-001 and ODP-PLAN-SITESCORE-PREDICTION-SOURCE-001 because no work is required"
+    r_b3["benchmark_summary"]["handback_payload"]["handback_action"] = "Close ODP-PLAN-SITESCORE-OUTCOME-BACKFILL-001 and ODP-PLAN-SITESCORE-PREDICTION-SOURCE-001 because no work is required"
+    rebound_b3 = _rebind_hashes(r_b3, mc_b3)
+    res_b3 = verify_sitescore_gate2_receipt(rebound_b3, model_card_artifact=mc_b3)
+    assert res_b3.is_valid is False
+    assert any("contains contradictory active status text" in e for e in res_b3.errors)

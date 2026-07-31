@@ -1,7 +1,7 @@
 {
   "artifact_hashes": {
-    "handback_hash": "d281cdfffeadbffec91d17fbc8b74ef9d5ab4444f8dd5a1f47b4fee9185e9533",
-    "model_card_hash": "99394c1c9d116660467159935122e3b77cc1d56040602f4ef5b013f0a5cc8b7c"
+    "handback_hash": "62ef735a4ae7f0f877f5a064f46c8cd793e2aca9bb809b098d104773fdf1ce11",
+    "model_card_hash": "25c553e32bda7ffbb676c42fbefa7616d3e7e0d5a2da6d80b7930ab9847cf85f"
   },
   "benchmark_summary": {
     "activation_threshold": 200,
@@ -13,7 +13,8 @@
       "mean_realized_revenue": 0.0,
       "measured_90d_mae": null,
       "p80_coverage_ratio": 0.0,
-      "prediction_coverage_ratio": 0.0
+      "prediction_coverage_ratio": 0.0,
+      "unmatched_mean_realized_revenue": 0.0
     },
     "dataset_snapshot_id": null,
     "eligible_count": 0,
@@ -113,7 +114,8 @@
       "reason_code": "NO_SOURCE_INVENTORY",
       "reasons": [
         "No database connection or candidate site records were provided"
-      ]
+      ],
+      "unmatched_mean_y": 0.0
     },
     "in_p80_count": 0,
     "interval_bounds_count": 0,
@@ -131,7 +133,7 @@
     "min_coverage_threshold": 0.7,
     "model_version": null,
     "normalized_mae": 0.0,
-    "observed_at": "2026-07-31T16:12:33.143827Z",
+    "observed_at": "2026-07-31T16:38:43.676150Z",
     "observed_count": 0,
     "p80_coverage": 0.0,
     "prediction_coverage_ratio": 0.0,
@@ -139,7 +141,8 @@
     "realized_revenue_sum": 0,
     "reason_code": "NO_SOURCE_INVENTORY",
     "segment_metrics": [],
-    "status": "GOVERNED_DISABLED"
+    "status": "GOVERNED_DISABLED",
+    "unmatched_mean_y": 0.0
   },
   "gate": "GATE_2",
   "gate_status": "REJECTED_GOVERNED_DISABLED",
@@ -239,18 +242,19 @@
     "reason_code": "NO_SOURCE_INVENTORY",
     "reasons": [
       "No database connection or candidate site records were provided"
-    ]
+    ],
+    "unmatched_mean_y": 0.0
   },
   "integrity": {
-    "content_sha256": "85b76e05f2d6e2555f7b217ac41d13f2cfb676b8333437323f937705c7a549a3",
-    "handback_hash": "d281cdfffeadbffec91d17fbc8b74ef9d5ab4444f8dd5a1f47b4fee9185e9533",
-    "model_card_hash": "99394c1c9d116660467159935122e3b77cc1d56040602f4ef5b013f0a5cc8b7c"
+    "content_sha256": "0666f4849c4e54532542568de08d9926374458e8aafd989c7345264984de4f2c",
+    "handback_hash": "62ef735a4ae7f0f877f5a064f46c8cd793e2aca9bb809b098d104773fdf1ce11",
+    "model_card_hash": "25c553e32bda7ffbb676c42fbefa7616d3e7e0d5a2da6d80b7930ab9847cf85f"
   },
   "inventory_version": "candidate-site-view-v2",
   "is_governed_disabled": true,
   "kind": "sitescore-opening-outcome-gate2-receipt",
   "model_name": "sitescore_propensity",
-  "observed_at": "2026-07-31T16:12:33.143827Z",
+  "observed_at": "2026-07-31T16:38:43.676150Z",
   "provenance": "no_source",
   "schema_version": 1,
   "service": "sitescore",

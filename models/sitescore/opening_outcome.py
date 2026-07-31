@@ -62,6 +62,7 @@ class SiteScoreOpeningOutcomeBenchmarkResult:
     interval_bounds_count: int = 0
     in_p80_count: int = 0
     matched_mean_y: float = 0.0
+    unmatched_mean_y: float = 0.0
     realized_revenue_sum: float = 0.0
     mean_realized_revenue: float = 0.0
     dataset_snapshot_id: str | None = None
@@ -233,6 +234,7 @@ class SiteScoreOpeningOutcomeBenchmarkResult:
             "interval_bounds_count": self.interval_bounds_count,
             "in_p80_count": self.in_p80_count,
             "matched_mean_y": round(self.matched_mean_y, 2),
+            "unmatched_mean_y": round(self.unmatched_mean_y, 2),
             "realized_revenue_sum": round(self.realized_revenue_sum, 2),
             "mean_realized_revenue": round(self.mean_realized_revenue, 2),
             "activation_threshold": self.activation_threshold,
@@ -333,6 +335,7 @@ class SiteScoreOpeningOutcomeBenchmarkResult:
             "interval_bounds_count": self.interval_bounds_count,
             "in_p80_count": self.in_p80_count,
             "matched_mean_y": round(self.matched_mean_y, 2),
+            "unmatched_mean_y": round(self.unmatched_mean_y, 2),
             "realized_revenue_sum": round(self.realized_revenue_sum, 2),
             "mean_realized_revenue": round(self.mean_realized_revenue, 2),
             "prediction_coverage_ratio": round(self.prediction_coverage_ratio, 4),
@@ -536,6 +539,14 @@ def evaluate_sitescore_opening_outcome_benchmark(
         mae = 0.0
         normalized_mae = 0.0
 
+    # B1 fix: Compute mean_y for unmatched mature population and reconcile overall realized_revenue_sum
+    unmatched_records = [r for r in mature_records if not _is_finite_float(r.get("predicted_revenue"))]
+    unmatched_count = len(unmatched_records)
+    if unmatched_count > 0:
+        unmatched_mean_y = sum(float(r.get("realized_90d_net_revenue", 0)) for r in unmatched_records) / unmatched_count
+    else:
+        unmatched_mean_y = 0.0
+
     realized_revenue_sum = sum(float(r.get("realized_90d_net_revenue", 0)) for r in mature_records)
     overall_mean_y = (realized_revenue_sum / mature_label_count) if mature_label_count > 0 else 0.0
 
@@ -546,6 +557,7 @@ def evaluate_sitescore_opening_outcome_benchmark(
         "measured_90d_mae": round(mae, 2) if errors else None,
         "matched_prediction_count": matched_prediction_count,
         "matched_mean_realized_revenue": round(matched_mean_y, 2),
+        "unmatched_mean_realized_revenue": round(unmatched_mean_y, 2),
         "prediction_coverage_ratio": round(prediction_coverage_ratio, 4),
         "interval_bounds_coverage_ratio": round(interval_bounds_coverage_ratio, 4),
         "p80_coverage_ratio": round(p80_coverage, 4),
@@ -587,6 +599,7 @@ def evaluate_sitescore_opening_outcome_benchmark(
         interval_bounds_count=interval_bounds_count,
         in_p80_count=in_p80_count,
         matched_mean_y=matched_mean_y,
+        unmatched_mean_y=unmatched_mean_y,
         realized_revenue_sum=realized_revenue_sum,
         mean_realized_revenue=overall_mean_y,
         m6_coverage_ratio=m6_coverage_ratio,
@@ -933,7 +946,7 @@ def verify_sitescore_gate2_receipt(
             "prediction_source_contract", "backfill_task_id", "prediction_source_task_id",
             "backfill_receipt_required",
         }
-        ALLOWED_HANDBACK_KEYS = REQUIRED_HANDBACK_KEYS | {"calibration_summary", "segment_metrics", "message", "backfill_owner", "discovery_inventory_query"}
+        ALLOWED_HANDBACK_KEYS = REQUIRED_HANDBACK_KEYS | {"unmatched_mean_y", "calibration_summary", "segment_metrics", "message", "backfill_owner", "discovery_inventory_query"}
         for k in handback.keys():
             if k not in ALLOWED_HANDBACK_KEYS:
                 errors.append(f"Forbidden or unknown field in handback: {k!r}")
@@ -994,7 +1007,7 @@ def verify_sitescore_gate2_receipt(
             "status", "reason_code", "handback_payload", "calibration_summary",
             "segment_metrics", "observed_at",
         }
-        ALLOWED_BENCHMARK_SUMMARY_KEYS = REQUIRED_BENCHMARK_SUMMARY_KEYS | {"db_error"}
+        ALLOWED_BENCHMARK_SUMMARY_KEYS = REQUIRED_BENCHMARK_SUMMARY_KEYS | {"unmatched_mean_y", "db_error"}
         for k in summary.keys():
             if k not in ALLOWED_BENCHMARK_SUMMARY_KEYS:
                 errors.append(f"Forbidden or unknown metric field in benchmark_summary: {k!r}")
@@ -1005,6 +1018,7 @@ def verify_sitescore_gate2_receipt(
         # Top-level boolean & enum checks
         rec_gov_disabled = _check_strict_bool(receipt.get("is_governed_disabled"), "is_governed_disabled")
         rec_gate_status = receipt.get("gate_status")
+        rec_prov = receipt.get("provenance")
         if rec_gate_status not in {"PASSED", "REJECTED_GOVERNED_DISABLED"}:
             errors.append(f"Invalid top-level gate_status: {rec_gate_status!r}")
 
@@ -1111,7 +1125,7 @@ def verify_sitescore_gate2_receipt(
         p80_cov = _check_strict_float(summary.get("p80_coverage"), "benchmark_summary.p80_coverage")
         norm_mae = _check_strict_float(summary.get("normalized_mae"), "benchmark_summary.normalized_mae")
 
-        # B3: Strict type checking and drift validation for matched_mean_y, realized_revenue_sum, and mean_realized_revenue
+        # B3: Strict type checking and drift validation for matched_mean_y, unmatched_mean_y, realized_revenue_sum, and mean_realized_revenue
         sum_matched_mean_y = _check_strict_float(summary.get("matched_mean_y"), "benchmark_summary.matched_mean_y")
         hb_matched_mean_y = _check_strict_float(handback.get("matched_mean_y"), "handback.matched_mean_y")
         if hb_matched_mean_y is not None and sum_matched_mean_y is not None:
@@ -1119,6 +1133,17 @@ def verify_sitescore_gate2_receipt(
                 errors.append(f"handback.matched_mean_y ({hb_matched_mean_y}) drifts from summary.matched_mean_y ({round(sum_matched_mean_y, 2)})")
         if match_cnt == 0 and sum_matched_mean_y is not None and sum_matched_mean_y != 0.0:
             errors.append(f"matched_mean_y must be 0.0 when matched_prediction_count is 0 (got {sum_matched_mean_y})")
+
+        sum_unmatched_raw = summary.get("unmatched_mean_y")
+        sum_unmatched_mean_y = _check_strict_float(sum_unmatched_raw, "benchmark_summary.unmatched_mean_y") if sum_unmatched_raw is not None else None
+        hb_unmatched_raw = handback.get("unmatched_mean_y")
+        hb_unmatched_mean_y = _check_strict_float(hb_unmatched_raw, "handback.unmatched_mean_y") if hb_unmatched_raw is not None else None
+        if hb_unmatched_mean_y is not None and sum_unmatched_mean_y is not None:
+            if hb_unmatched_mean_y != round(sum_unmatched_mean_y, 2):
+                errors.append(f"handback.unmatched_mean_y ({hb_unmatched_mean_y}) drifts from summary.unmatched_mean_y ({round(sum_unmatched_mean_y, 2)})")
+        unmatched_cnt = (mat - match_cnt) if (mat is not None and match_cnt is not None) else 0
+        if unmatched_cnt == 0 and sum_unmatched_mean_y is not None and sum_unmatched_mean_y != 0.0:
+            errors.append(f"unmatched_mean_y must be 0.0 when unmatched record count is 0 (got {sum_unmatched_mean_y})")
 
         sum_rev_sum = _check_strict_float(summary.get("realized_revenue_sum"), "benchmark_summary.realized_revenue_sum")
         sum_mean_rev = _check_strict_float(summary.get("mean_realized_revenue"), "benchmark_summary.mean_realized_revenue")
@@ -1140,6 +1165,10 @@ def verify_sitescore_gate2_receipt(
                 exp_mean_rev = round(sum_rev_sum / mat, 2)
                 if sum_mean_rev != exp_mean_rev:
                     errors.append(f"benchmark_summary.mean_realized_revenue ({sum_mean_rev}) drifts from expected mean ({exp_mean_rev}) derived from realized_revenue_sum ({sum_rev_sum}) and mature_label_count ({mat})")
+            if sum_matched_mean_y is not None and sum_unmatched_mean_y is not None and match_cnt is not None and sum_rev_sum is not None:
+                exp_rev_sum = round(sum_matched_mean_y * match_cnt + sum_unmatched_mean_y * (mat - match_cnt), 2)
+                if abs(sum_rev_sum - exp_rev_sum) > 0.05:
+                    errors.append(f"benchmark_summary.realized_revenue_sum ({sum_rev_sum}) drifts from expected sum ({exp_rev_sum}) derived from matched and unmatched population means")
             if match_cnt == mat and sum_matched_mean_y is not None and sum_mean_rev is not None:
                 if sum_mean_rev != round(sum_matched_mean_y, 2):
                     errors.append(f"benchmark_summary.mean_realized_revenue ({sum_mean_rev}) drifts from matched_mean_realized_revenue ({round(sum_matched_mean_y, 2)}) when all mature records are matched")
@@ -1381,7 +1410,7 @@ def verify_sitescore_gate2_receipt(
             if handback.get("backfill_receipt_required") is not True:
                 errors.append(f"Governed-disabled receipt requires handback.backfill_receipt_required to be True (got {handback.get('backfill_receipt_required')!r})")
 
-        # B4: Re-derive and validate missing_labels_delta, reasons, and handback_action
+        # B4 & B3: Validate missing_labels_delta, reasons, and handback_action semantics
         if mat is not None:
             exp_missing_delta = max(0, ACTIVATION_THRESHOLD - mat)
             hb_missing_delta = _check_strict_int(handback.get("missing_labels_delta"), "handback.missing_labels_delta")
@@ -1396,14 +1425,17 @@ def verify_sitescore_gate2_receipt(
                 for r_idx, r_item in enumerate(hb_reasons):
                     if not isinstance(r_item, str) or not r_item.strip():
                         errors.append(f"handback.reasons[{r_idx}] must be a non-empty string")
+                    elif "Gate 2 passed" in r_item or "no work is required" in r_item or "evidence is active" in r_item:
+                        errors.append(f"handback.reasons[{r_idx}] contains contradictory active status text: {r_item!r}")
 
-        # B2: Required Human/Ops and prediction handoff contract checks
         hb_action = handback.get("handback_action")
         if not isinstance(hb_action, str) or not hb_action.strip():
             errors.append("handback.handback_action must be a non-empty string")
         elif is_rec_disabled:
             if "ODP-PLAN-SITESCORE-OUTCOME-BACKFILL-001" not in hb_action or "ODP-PLAN-SITESCORE-PREDICTION-SOURCE-001" not in hb_action:
                 errors.append("handback.handback_action must identify both governed task IDs 'ODP-PLAN-SITESCORE-OUTCOME-BACKFILL-001' and 'ODP-PLAN-SITESCORE-PREDICTION-SOURCE-001'")
+            if "because no work is required" in hb_action or "Gate 2 passed" in hb_action:
+                errors.append(f"handback.handback_action contains contradictory active status text: {hb_action!r}")
 
         hb_backfill_task = handback.get("backfill_task_id")
         if hb_backfill_task != "ODP-PLAN-SITESCORE-OUTCOME-BACKFILL-001":
@@ -1528,17 +1560,22 @@ def verify_sitescore_gate2_receipt(
             "p80_coverage_ratio",
             "mean_realized_revenue",
         }
+        ALLOWED_CALIBRATION_KEYS = REQUIRED_CALIBRATION_KEYS | {"unmatched_mean_realized_revenue"}
         def _check_calibration_summary(cal_dict: Any, location_name: str) -> None:
             if not isinstance(cal_dict, dict):
                 errors.append(f"{location_name} must be a dictionary (got {type(cal_dict).__name__}: {cal_dict!r})")
                 return
-            if set(cal_dict.keys()) != REQUIRED_CALIBRATION_KEYS:
+            if not REQUIRED_CALIBRATION_KEYS.issubset(set(cal_dict.keys())) or not set(cal_dict.keys()).issubset(ALLOWED_CALIBRATION_KEYS):
                 errors.append(
-                    f"{location_name} keys must match required set (missing: {REQUIRED_CALIBRATION_KEYS - set(cal_dict.keys())!r}, extra: {set(cal_dict.keys()) - REQUIRED_CALIBRATION_KEYS!r})"
+                    f"{location_name} keys must match allowed set (missing: {REQUIRED_CALIBRATION_KEYS - set(cal_dict.keys())!r}, extra: {set(cal_dict.keys()) - ALLOWED_CALIBRATION_KEYS!r})"
                 )
             for k, v in cal_dict.items():
                 if k in FORBIDDEN_CALIBRATION_KEYS:
                     errors.append(f"Forbidden or unsupported synthetic horizon calibration field in {location_name}: {k!r}")
+                elif k == "unmatched_mean_realized_revenue":
+                    flt = _check_strict_float(v, f"{location_name}.{k}")
+                    if flt is not None and sum_unmatched_mean_y is not None and flt != round(sum_unmatched_mean_y, 2):
+                        errors.append(f"{location_name}.unmatched_mean_realized_revenue ({flt}) drifts from summary.unmatched_mean_y ({round(sum_unmatched_mean_y, 2)})")
                 if k == "measured_90d_mae":
                     if match_cnt == 0:
                         if v is not None:
@@ -1626,6 +1663,8 @@ def verify_sitescore_gate2_receipt(
                     errors.append(f"{location_name}[{idx}].segment_value must be a non-empty string")
                 seg_cnt = _check_strict_int(seg.get("record_count"), f"{location_name}[{idx}].record_count")
                 if seg_cnt is not None:
+                    if seg_cnt <= 0:
+                        errors.append(f"{location_name}[{idx}].record_count ({seg_cnt}) must be positive (> 0)")
                     if mat is not None and seg_cnt > mat:
                         errors.append(f"{location_name}[{idx}].record_count ({seg_cnt}) exceeds mature_label_count ({mat})")
                     if mat == 0 and seg_cnt > 0:

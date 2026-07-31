@@ -9,9 +9,10 @@
     "mean_realized_revenue": 0.0,
     "measured_90d_mae": null,
     "p80_coverage_ratio": 0.0,
-    "prediction_coverage_ratio": 0.0
+    "prediction_coverage_ratio": 0.0,
+    "unmatched_mean_realized_revenue": 0.0
   },
-  "created_at": "2026-07-31T16:12:33.143827+00:00",
+  "created_at": "2026-07-31T16:38:43.676150+00:00",
   "dataset_snapshot_id": "UNAVAILABLE",
   "explainability_method": "UNAVAILABLE",
   "feature_set_id": "UNVERIFIED",
