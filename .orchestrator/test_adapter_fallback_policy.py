@@ -16,9 +16,34 @@ from adapters.claude_cli import ClaudeCLIAdapter
 from adapters.codex import CodexAdapter
 from adapters.copilot_local import CopilotLocalAdapter
 from adapters.gemini import GeminiAdapter
+from common import delivery_runtime_env
 
 
 class AdapterFallbackPolicyTests(unittest.TestCase):
+    def test_delivery_runtime_env_registers_authorized_actor_and_preserves_existing_extras(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            workspace = root / "task-worktree"
+            status_root = root / "supervisor-root"
+            with mock.patch.dict(
+                os.environ,
+                {"AI_STATUS_EXTRA_AGENTS": "FleetAuditor,Codex"},
+                clear=False,
+            ):
+                env = delivery_runtime_env(
+                    {"paths": {"status_file": str(status_root / "ai-status.json")}},
+                    {
+                        "workspace_path": str(workspace),
+                        "status_root": str(status_root),
+                        "target_display_name": "Codex",
+                    },
+                )
+
+        self.assertEqual(env["AI_NAME"], "Codex")
+        self.assertEqual(env["AI_STATUS_EXTRA_AGENTS"], "FleetAuditor,Codex")
+        self.assertEqual(env["PANTHEON_WORKTREE_ROOT"], str(workspace))
+        self.assertEqual(env["PANTHEON_STATUS_ROOT"], str(status_root))
+
     def test_codex_alias_sets_agent_identity_env(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             root = Path(tmpdir)

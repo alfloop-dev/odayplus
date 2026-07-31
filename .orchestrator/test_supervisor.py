@@ -1302,6 +1302,8 @@ class ProcessQueueDispatchGuardTests(unittest.TestCase):
         self.assertEqual(request.agent_id, "grok")
         self.assertEqual(request.provider, "copilot")
         self.assertEqual(request.metadata["model_preference"], "grok-code-fast-1")
+        self.assertEqual(request.metadata["logical_agent_id"], "grok")
+        self.assertEqual(request.metadata["target_display_name"], "Copilot (legacy alias)")
 
     def test_build_request_can_target_codex_worker_slot_with_logical_identity(self) -> None:
         config = {

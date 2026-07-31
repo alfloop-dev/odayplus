@@ -1086,10 +1086,11 @@ def build_request(
     logical_agent_id = normalize_agent_id(str(logical_agent.get("id") or event.get("target_agent") or ""))
     if logical_agent_id and "logical_agent_id" not in metadata:
         metadata["logical_agent_id"] = logical_agent_id
+    if "target_display_name" not in metadata:
+        metadata["target_display_name"] = event.get("target_display_name") or display_name_for(config, logical_agent_id)
     if agent_id_override:
         metadata["dispatch_slot_id"] = agent["id"]
         metadata["dispatch_slot"] = agent.get("slot_id") or agent["id"]
-        metadata["target_display_name"] = event.get("target_display_name") or display_name_for(config, logical_agent_id)
     context_files = event.get("context_files")
     if context_files is None:
         context_files = execution_context_files(config, event.get("task_id"))
