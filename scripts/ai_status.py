@@ -5100,7 +5100,53 @@ def resolve_task_sha(task_id: str, max_age_seconds: float = 5.0) -> str | None:
         if now - ts < max_age_seconds:
             return val
 
-    # 1. Primary: Try git rev-parse for current HEAD if current branch matches task_id
+    branch_names = [f"task/{task_id}", f"task-{task_id}"]
+
+    # 1. Query origin directly so an unpushed local commit or a stale local
+    # tracking ref can never become the review/freeze SHA.
+    for branch_name in branch_names:
+        remote_ref = f"refs/heads/{branch_name}"
+        result = subprocess.run(
+            ["git", "ls-remote", "--heads", "origin", remote_ref],
+            capture_output=True,
+            text=True,
+            check=False,
+            cwd=ROOT,
+        )
+        if result.returncode != 0:
+            continue
+        for line in result.stdout.splitlines():
+            fields = line.split()
+            if (
+                len(fields) == 2
+                and fields[1] == remote_ref
+                and re.fullmatch(r"[0-9a-fA-F]{40,64}", fields[0])
+            ):
+                sha = fields[0]
+                _TASK_SHA_CACHE[task_id] = (now, sha)
+                return sha
+
+    # 2. A merged task PR remains authoritative after GitHub deletes its branch.
+    for branch_name in branch_names:
+        result = subprocess.run(
+            [get_gh_executable(), "pr", "view", branch_name, "--json", "headRefOid"],
+            capture_output=True,
+            text=True,
+            check=False,
+            cwd=ROOT,
+        )
+        if result.returncode == 0:
+            try:
+                data = json.loads(result.stdout)
+                sha = data.get("headRefOid")
+                if isinstance(sha, str) and sha.strip():
+                    _TASK_SHA_CACHE[task_id] = (now, sha.strip())
+                    return sha.strip()
+            except (AttributeError, json.JSONDecodeError, TypeError):
+                pass
+
+    # 3. Last-resort local resolution keeps offline/non-GitHub workflows
+    # observable, but it cannot override either remote authority above.
     current_branch_result = subprocess.run(
         ["git", "branch", "--show-current"],
         capture_output=True,
@@ -5123,8 +5169,8 @@ def resolve_task_sha(task_id: str, max_age_seconds: float = 5.0) -> str | None:
                 _TASK_SHA_CACHE[task_id] = (now, sha)
                 return sha
 
-    # 2. Try git rev-parse for local task branches
-    for branch_name in [f"task/{task_id}", f"task-{task_id}"]:
+    # 4. Try git rev-parse for local task branches.
+    for branch_name in branch_names:
         result = subprocess.run(
             ["git", "rev-parse", "--verify", branch_name],
             capture_output=True,
@@ -5137,8 +5183,8 @@ def resolve_task_sha(task_id: str, max_age_seconds: float = 5.0) -> str | None:
             _TASK_SHA_CACHE[task_id] = (now, sha)
             return sha
 
-    # 3. Try git rev-parse for remote tracking branches
-    for branch_name in [f"origin/task/{task_id}", f"origin/task-{task_id}"]:
+    # 5. Try cached remote-tracking branches when the direct remote is offline.
+    for branch_name in [f"origin/{branch_name}" for branch_name in branch_names]:
         result = subprocess.run(
             ["git", "rev-parse", "--verify", branch_name],
             capture_output=True,
@@ -5150,25 +5196,6 @@ def resolve_task_sha(task_id: str, max_age_seconds: float = 5.0) -> str | None:
             sha = result.stdout.strip()
             _TASK_SHA_CACHE[task_id] = (now, sha)
             return sha
-
-    # 4. Fallback: gh pr view for task/TASK-ID (checks remote PR head SHA)
-    for branch_name in [f"task/{task_id}", f"task-{task_id}"]:
-        result = subprocess.run(
-            [get_gh_executable(), "pr", "view", branch_name, "--json", "headRefOid"],
-            capture_output=True,
-            text=True,
-            check=False,
-            cwd=ROOT,
-        )
-        if result.returncode == 0:
-            try:
-                data = json.loads(result.stdout)
-                sha = data.get("headRefOid")
-                if sha:
-                    _TASK_SHA_CACHE[task_id] = (now, sha)
-                    return sha
-            except Exception:
-                pass
 
     _TASK_SHA_CACHE[task_id] = (now, None)
     return None

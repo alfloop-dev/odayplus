@@ -151,6 +151,10 @@ WORKER_FAILURE_FALSE_POSITIVE_PATTERNS = (
     re.compile(r"^error:\s+[A-Za-z_][A-Za-z0-9_<>{}\[\], :|?]+?\|\s*null$", re.IGNORECASE),
     re.compile(r"^[+-]?\s*console\.error\(", re.IGNORECASE),
     re.compile(r"^[+-]\s*[A-Za-z_][A-Za-z0-9_.]*\s*=\s*", re.IGNORECASE),
+    re.compile(
+        r"^[A-Za-z_][A-Za-z0-9_.]*\s*=\s*(?:[rubf]{0,4})(?:'''|\"\"\"|'|\")",
+        re.IGNORECASE,
+    ),
     re.compile(r"^-\s+\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z\s+·\s+", re.IGNORECASE),
     re.compile(r"\bauto-reassigned\b.*\bafter repeated\b", re.IGNORECASE),
 )
@@ -6458,6 +6462,16 @@ def poll_workers(config: dict[str, Any], state: dict[str, Any], provider_report:
     }
     workers = state.setdefault("workers", {})
     for run_id, worker in list(workers.items()):
+        # These records already have a durable terminal disposition. Re-reading
+        # their old marker/log after a later re-review or reviewer reopen must
+        # never count the same run again or reassign the current lifecycle.
+        if str(worker.get("status") or "").lower() in {
+            "completed",
+            "failed",
+            "superseded",
+            "reassigned",
+        }:
+            continue
         previous_last_event_at = worker.get("last_event_at")
         if worker.get("queue_event_id") and worker.get("queue_event_id") not in valid_queue_event_ids:
             if worker.get("status") in {"running", "waiting_approval", "retry_backoff", "manual_pending", "stalled"} and not pid_is_alive(worker.get("pid")):

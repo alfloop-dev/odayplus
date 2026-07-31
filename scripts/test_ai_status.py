@@ -3026,6 +3026,35 @@ class StatusCheckEmissionTests(unittest.TestCase):
                 cwd=ai_status.ROOT,
             )
 
+    def test_resolve_task_sha_prefers_pushed_remote_over_local_and_merged_pr(self) -> None:
+        task_id = "ODP-REMOTE-001"
+        remote_sha = "2" * 40
+        local_sha = "3" * 40
+        merged_pr_sha = "1" * 40
+
+        def side_effect(cmd, **kwargs):
+            result = mock.Mock(returncode=1, stdout="")
+            if cmd[:4] == ["git", "ls-remote", "--heads", "origin"]:
+                if cmd[-1] == f"refs/heads/task/{task_id}":
+                    result.returncode = 0
+                    result.stdout = f"{remote_sha}\t{cmd[-1]}\n"
+            elif cmd == ["git", "branch", "--show-current"]:
+                result.returncode = 0
+                result.stdout = f"task/{task_id}\n"
+            elif cmd == ["git", "rev-parse", "HEAD"]:
+                result.returncode = 0
+                result.stdout = f"{local_sha}\n"
+            elif "pr" in cmd and "view" in cmd:
+                result.returncode = 0
+                result.stdout = json.dumps({"headRefOid": merged_pr_sha})
+            return result
+
+        with mock.patch("subprocess.run", side_effect=side_effect) as mock_run:
+            sha = ai_status.resolve_task_sha(task_id)
+
+        self.assertEqual(sha, remote_sha)
+        self.assertEqual(mock_run.call_count, 1)
+
     def test_resolve_task_sha_git_rev_parse(self) -> None:
         def side_effect(cmd, **kwargs):
             res = mock.Mock()

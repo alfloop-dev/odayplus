@@ -372,6 +372,13 @@ class DetectWorkerFailureTests(unittest.TestCase):
         )
         self.assertIsNone(supervisor.detect_worker_failure(worker))
 
+    def test_python_source_assignment_quoted_auth_ignored(self) -> None:
+        worker = self._worker_for_log(
+            'reason = f"Principal {attempt.actor_id!r} is not authenticated"\n'
+        )
+
+        self.assertIsNone(supervisor.detect_worker_failure(worker))
+
     def test_classifies_gemini_capacity_failure(self) -> None:
         config = {"worker_retry": {"transient_error_patterns": ["429", "resource_exhausted", "rate limit"]}}
         worker = {"provider": "gemini"}
@@ -10115,6 +10122,37 @@ class SuccessfulWorkerPostconditionTests(unittest.TestCase):
         self.assertEqual(worker["status"], "completed")
         self.assertEqual(worker["progress_outcome"], "review_decided")
 
+    def test_poll_never_recounts_historical_terminal_run_after_reopen(self) -> None:
+        task = self._task(status="review", next_step="Fresh exact-head review required")
+        for historical_status in ("completed", "failed", "superseded", "reassigned"):
+            with self.subTest(historical_status=historical_status):
+                worker = self._worker(
+                    self._task(status="review", next_step="Old review"),
+                    reason="review_ready_dispatch",
+                    agent_id="codex6",
+                )
+                worker.update(
+                    {
+                        "status": historical_status,
+                        "runner_status": "failed",
+                        "exit_code": -15,
+                        "runner_signal": 15,
+                    }
+                )
+                state = {
+                    "queue": {"events": {worker["queue_event_id"]: {"status": "completed"}}},
+                    "workers": {worker["run_id"]: worker},
+                    "provider_guardrails": {"task_failure_streaks": {}},
+                }
+                with mock.patch.object(
+                    supervisor,
+                    "maybe_reassign_task_after_worker_failure",
+                    side_effect=AssertionError("historical run must not be re-counted"),
+                ):
+                    self.assertFalse(self._poll(state, task, current_head="b" * 40))
+                self.assertEqual(worker["status"], historical_status)
+                self.assertEqual(state["provider_guardrails"]["task_failure_streaks"], {})
+
     def test_boot_reconciliation_applies_same_no_progress_threshold(self) -> None:
         task = self._task()
         worker = self._worker(task)
@@ -10927,26 +10965,32 @@ class SupervisorFailureLoopCoverageTests(unittest.TestCase):
                 )
 
     def test_resolve_task_sha_precedence_over_merged_pr(self) -> None:
-        """Verify active task branch / current HEAD takes precedence over stale merged PRs."""
+        """Verify pushed task branch beats both stale PR and unpushed local HEAD."""
         task_id = "TEST-BRANCH-PRECEDENCE-001"
         ai_status.clear_ai_status_caches()
 
         def fake_run(cmd, **kwargs):
             cmd_str = " ".join(cmd)
+            if "ls-remote --heads origin" in cmd_str:
+                remote_ref = f"refs/heads/task/{task_id}"
+                return unittest.mock.Mock(
+                    returncode=0,
+                    stdout=f"{'2' * 40}\t{remote_ref}\n",
+                )
             if "branch --show-current" in cmd_str:
                 return unittest.mock.Mock(returncode=0, stdout=f"task/{task_id}\n")
             if "rev-parse HEAD" in cmd_str:
-                return unittest.mock.Mock(returncode=0, stdout="2222222222222222222222222222222222222222\n")
+                return unittest.mock.Mock(returncode=0, stdout=f"{'3' * 40}\n")
             if "pr view" in cmd_str:
                 return unittest.mock.Mock(
                     returncode=0,
-                    stdout=json.dumps({"headRefOid": "1111111111111111111111111111111111111111"}),
+                    stdout=json.dumps({"headRefOid": "1" * 40}),
                 )
             return unittest.mock.Mock(returncode=1, stdout="")
 
         with unittest.mock.patch("subprocess.run", side_effect=fake_run):
             resolved = ai_status.resolve_task_sha(task_id)
-            self.assertEqual(resolved, "2222222222222222222222222222222222222222")
+            self.assertEqual(resolved, "2" * 40)
 
 
 if __name__ == "__main__":
