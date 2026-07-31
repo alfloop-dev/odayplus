@@ -16,7 +16,7 @@ Following the withdrawal of Round 21 approval due to missing execution receipts 
 
 The implementation accurately resolves:
 1. **Typed receipt signal handling**: Rejects non-`None` values (`False`, `0`, `[]`, `{}`, `'SIGTERM'`) for both `signal` and `runner_signal`.
-2. **Strict `run_id` / `worker_run_id` schema**: Rejects invalid types (`123`, `True`, `False`, `['run-1']`, `{}`, `''`).
+2. **Strict run-id schema**: The empirical matrix below covers `run_id` values (`123`, `True`, `False`, `['run-1']`, `{}`, `''`). The 42-test feature suite separately covers a numeric `worker_run_id`; code inspection confirms both receipt fields use the same string-type guard.
 3. **Atomic worker and queue state rollback**: Guarantees byte-for-byte state preservation if an exception occurs during release or activity log emission.
 4. **Active worker candidate filtering**: Correctly accepts 1 active worker alongside terminal history, and rejects execution when 2+ active workers are present.
 5. **Targetless/unrelated queue override rejection**: Rejects invalid or unassigned queue agent overrides.
@@ -65,7 +65,7 @@ python3 .orchestrator/doctor.py
 ```
 Output:
 ```text
-All checks passed!
+Exit code 0; the command printed the workspace/provider diagnostic report.
 ```
 
 ### D. Ruff Lint & Git Diff Checks
@@ -96,11 +96,14 @@ OK
 
 ## 3. Mutation Matrix Execution Results
 
-A dedicated drill script (`scratch/drill_mutations.py`) was executed to test edge cases against the `release_completed_worker_for_claim` runtime:
+A session-scoped drill script was executed to test edge cases against the
+`release_completed_worker_for_claim` runtime. It was intentionally kept outside
+the repository and is preserved by the Antigravity transcript rather than
+presented as a tracked repository artifact:
 
 Command:
 ```bash
-python3 scratch/drill_mutations.py
+python3 /home/lupin/.gemini-ag7/.gemini/antigravity-cli/brain/cbc53ec7-325b-4791-91e9-881999292fa8/scratch/drill_mutations.py
 ```
 
 Captured Output:
@@ -143,6 +146,6 @@ Captured Output:
 - **Exact Head Equality**: Local `HEAD` matches `origin/task/ODP-PLAN-SUPERVISOR-FAILURE-LOOP-001`.
 - **Lints & Style**: Clean (`ruff`, `git diff --check`).
 - **Test Matrix**: All 42 specific tests, 295 orchestrator tests, and 108 status tests passed cleanly.
-- **Mutation Safety**: All 18 mutation cases verified with empirical evidence.
+- **Mutation Safety**: All 19 reported cases verified with empirical evidence (10 signal/runner-signal, 6 run-id, 2 active-worker-cardinality, and 1 rollback-equivalence result). The feature suite supplies the additional queue-override, SHA-governance, PID, `worker_run_id`, and finalize-mutates-then-raises coverage.
 
 Verdict: **APPROVED** for exact head `4340e9d1e72794eaf58b3ae4d2a8d3425ae083ec`.
