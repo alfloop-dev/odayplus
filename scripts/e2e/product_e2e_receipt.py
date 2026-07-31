@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import math
 import re
 import subprocess
 from dataclasses import dataclass
@@ -524,6 +525,171 @@ def _counts_from_results(results: list[dict[str, Any]]) -> dict[str, int]:
     return counts
 
 
+def _pytest_result_for_node(
+    nodeid: str, phase_reports: Any
+) -> tuple[dict[str, Any], list[str]]:
+    errors: list[str] = []
+    if not isinstance(phase_reports, list) or not phase_reports:
+        return (
+            {
+                "test_id": nodeid,
+                "status": "malformed",
+                "duration_ms": 0.0,
+                "phases": phase_reports if isinstance(phase_reports, list) else [],
+            },
+            [f"{nodeid}: missing or malformed phase reports"],
+        )
+
+    phases: list[str] = []
+    outcomes: list[str] = []
+    duration_seconds = 0.0
+    malformed = False
+    phase_order = {"setup": 0, "call": 1, "teardown": 2}
+    for index, report in enumerate(phase_reports):
+        if not isinstance(report, dict):
+            errors.append(f"{nodeid}: phase report {index} must be an object")
+            malformed = True
+            continue
+        phase = report.get("phase")
+        outcome = report.get("outcome")
+        duration = report.get("duration_seconds")
+        if phase not in phase_order:
+            errors.append(f"{nodeid}: phase report {index} has invalid phase {phase!r}")
+            malformed = True
+        else:
+            phases.append(str(phase))
+        if outcome not in {"passed", "failed", "skipped"}:
+            errors.append(f"{nodeid}: phase report {index} has invalid outcome {outcome!r}")
+            malformed = True
+        else:
+            outcomes.append(str(outcome))
+        if (
+            not isinstance(duration, (int, float))
+            or isinstance(duration, bool)
+            or not math.isfinite(float(duration))
+            or float(duration) < 0
+        ):
+            errors.append(f"{nodeid}: phase report {index} has invalid duration_seconds")
+            malformed = True
+        else:
+            duration_seconds += float(duration)
+
+    if len(phases) != len(set(phases)):
+        errors.append(f"{nodeid}: contains duplicate pytest phases")
+        malformed = True
+    if phases != sorted(phases, key=phase_order.__getitem__):
+        errors.append(f"{nodeid}: pytest phases are out of order")
+        malformed = True
+
+    if malformed:
+        status = "malformed"
+    elif "failed" in outcomes:
+        status = "failed"
+    elif "skipped" in outcomes:
+        status = "skipped"
+    elif phases == ["setup", "call", "teardown"] and outcomes == [
+        "passed",
+        "passed",
+        "passed",
+    ]:
+        status = "passed"
+    else:
+        status = "malformed"
+        errors.append(f"{nodeid}: passing pytest result requires setup/call/teardown")
+
+    return (
+        {
+            "test_id": nodeid,
+            "status": status,
+            "duration_ms": round(duration_seconds * 1000, 3),
+            "phases": phase_reports,
+        },
+        errors,
+    )
+
+
+def parse_pytest_payload(
+    payload: Any,
+    *,
+    expected_source: Any = None,
+) -> tuple[list[dict[str, Any]], dict[str, int], list[str]]:
+    """Recompute the complete pytest artifact projection from its raw payload."""
+    errors: list[str] = []
+    if not isinstance(payload, dict):
+        return [], _empty_counts(), ["Pytest payload must be an object"]
+
+    canonical_ids = list(PYTEST_NODE_IDS)
+    canonical_id_set = set(canonical_ids)
+    requested_ids = payload.get("requested_node_ids")
+    if not isinstance(requested_ids, list) or any(
+        not isinstance(nodeid, str) for nodeid in requested_ids
+    ):
+        errors.append("Pytest requested_node_ids must be a list of strings")
+        requested_ids = []
+    else:
+        if len(requested_ids) != len(set(requested_ids)):
+            errors.append("Pytest requested_node_ids contains duplicates")
+        if requested_ids != canonical_ids:
+            errors.append("Pytest requested_node_ids do not exactly match canonical node ids")
+        missing_requested = sorted(canonical_id_set - set(requested_ids))
+        unexpected_requested = sorted(set(requested_ids) - canonical_id_set)
+        if missing_requested:
+            errors.append("missing requested test ids: " + ", ".join(missing_requested))
+        if unexpected_requested:
+            errors.append("unexpected requested test ids: " + ", ".join(unexpected_requested))
+
+    phase_reports = payload.get("phase_reports")
+    if not isinstance(phase_reports, dict) or any(
+        not isinstance(nodeid, str) for nodeid in phase_reports
+    ):
+        errors.append("Pytest phase_reports must be an object keyed by test id")
+        phase_reports = {}
+    collected_ids = set(phase_reports)
+    unexpected_ids = sorted(collected_ids - canonical_id_set)
+    missing_ids = sorted(canonical_id_set - collected_ids)
+    if unexpected_ids:
+        errors.append("unexpected collected test ids: " + ", ".join(unexpected_ids))
+    if missing_ids:
+        errors.append("missing exact test ids: " + ", ".join(missing_ids))
+
+    collection_errors = payload.get("collection_errors")
+    if not isinstance(collection_errors, list) or any(
+        not isinstance(item, str) for item in collection_errors
+    ):
+        errors.append("Pytest collection_errors must be a list of strings")
+    else:
+        errors.extend(collection_errors)
+
+    runner_start_source = payload.get("runner_start_source")
+    if not isinstance(runner_start_source, dict):
+        errors.append("Pytest payload missing runner_start_source")
+    else:
+        observed_commit = runner_start_source.get("commit_sha")
+        observed_tree = runner_start_source.get("tree_sha")
+        if not SHA_RE.fullmatch(str(observed_commit or "")):
+            errors.append("Pytest runner_start_source commit_sha is invalid")
+        if not SHA_RE.fullmatch(str(observed_tree or "")):
+            errors.append("Pytest runner_start_source tree_sha is invalid")
+        if isinstance(expected_source, dict):
+            if observed_commit != expected_source.get("commit_sha"):
+                errors.append(
+                    "runner-start source SHA does not match declared tested source"
+                )
+            if observed_tree != expected_source.get("tree_sha"):
+                errors.append(
+                    "runner-start tree SHA does not match declared tested tree"
+                )
+
+    results: list[dict[str, Any]] = []
+    for nodeid in canonical_ids:
+        result, result_errors = _pytest_result_for_node(
+            nodeid, phase_reports.get(nodeid, [])
+        )
+        results.append(result)
+        errors.extend(result_errors)
+    return results, _counts_from_results(results), errors
+
+
 def _strict_utc_timestamp(value: Any) -> datetime | None:
     if not isinstance(value, str) or not UTC_TIMESTAMP_RE.fullmatch(value):
         return None
@@ -621,6 +787,17 @@ def validate_raw_artifact(
         integrity_errors = ["malformed integrity_errors"]
     if expected_runner == "playwright":
         payload_results, payload_counts, payload_errors = parse_playwright_payload(payload)
+        if results != payload_results:
+            errors.append(f"{label} results do not exactly match parsed payload")
+        if counts != payload_counts:
+            errors.append(f"{label} counts do not exactly match parsed payload")
+        if integrity_errors != payload_errors:
+            errors.append(f"{label} integrity_errors do not exactly match parsed payload")
+    elif expected_runner == "pytest":
+        payload_results, payload_counts, payload_errors = parse_pytest_payload(
+            payload,
+            expected_source=source,
+        )
         if results != payload_results:
             errors.append(f"{label} results do not exactly match parsed payload")
         if counts != payload_counts:

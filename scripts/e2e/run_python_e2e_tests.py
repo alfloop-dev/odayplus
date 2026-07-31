@@ -22,6 +22,7 @@ from scripts.e2e.product_e2e_receipt import (
     SCHEMA_VERSION,
     canonical_json_bytes,
     iso_now,
+    parse_pytest_payload,
     seal_normalized,
     sha256_bytes,
     source_identity,
@@ -50,54 +51,6 @@ class ExactResultPlugin:
             self.collection_errors.append(str(report.longrepr))
 
 
-def _result_for_node(
-    nodeid: str, phase_reports: list[dict[str, Any]]
-) -> dict[str, Any]:
-    outcomes = {str(report.get("outcome")) for report in phase_reports}
-    call_reports = [
-        report for report in phase_reports if report.get("phase") == "call"
-    ]
-    if "failed" in outcomes:
-        status = "failed"
-    elif "skipped" in outcomes:
-        status = "skipped"
-    elif len(call_reports) == 1 and call_reports[0].get("outcome") == "passed":
-        status = "passed"
-    else:
-        status = "malformed"
-    return {
-        "test_id": nodeid,
-        "status": status,
-        "duration_ms": round(
-            sum(float(report.get("duration_seconds") or 0) for report in phase_reports)
-            * 1000,
-            3,
-        ),
-        "phases": phase_reports,
-    }
-
-
-def _counts(results: list[dict[str, Any]]) -> dict[str, int]:
-    counts = {
-        "total_specs": 0,
-        "total_tests": len(results),
-        "passed": 0,
-        "failed": 0,
-        "skipped": 0,
-        "timed_out": 0,
-        "interrupted": 0,
-        "flaky": 0,
-        "malformed": 0,
-    }
-    for result in results:
-        status = str(result.get("status"))
-        if status in {"passed", "failed", "skipped", "malformed"}:
-            counts[status] += 1
-        else:
-            counts["malformed"] += 1
-    return counts
-
-
 def run_python_tests(
     *,
     output_path: Path = ROOT / RAW_PYTEST_PATH,
@@ -117,40 +70,24 @@ def run_python_tests(
     pytest_exit = int(pytest.main(["-q", *PYTEST_NODE_IDS], plugins=[plugin]))
     ended_at = iso_now()
 
-    integrity_errors = list(plugin.collection_errors)
-    if source_sha != current_source["commit_sha"]:
-        integrity_errors.append(
-            "runner-start source SHA does not match current committed HEAD"
-        )
-    if tree_sha != current_source["tree_sha"]:
-        integrity_errors.append(
-            "runner-start tree SHA does not match current committed tree"
-        )
-    unexpected_ids = sorted(set(plugin.reports) - set(PYTEST_NODE_IDS))
-    missing_ids = sorted(set(PYTEST_NODE_IDS) - set(plugin.reports))
-    if unexpected_ids:
-        integrity_errors.append(
-            "unexpected collected test ids: " + ", ".join(unexpected_ids)
-        )
-    if missing_ids:
-        integrity_errors.append("missing exact test ids: " + ", ".join(missing_ids))
-
-    results = [
-        _result_for_node(nodeid, plugin.reports.get(nodeid, []))
-        for nodeid in PYTEST_NODE_IDS
-    ]
     payload = {
         "requested_node_ids": list(PYTEST_NODE_IDS),
         "phase_reports": plugin.reports,
         "collection_errors": plugin.collection_errors,
+        "runner_start_source": current_source,
     }
+    declared_source = {
+        "commit_sha": source_sha,
+        "tree_sha": tree_sha,
+    }
+    results, counts, integrity_errors = parse_pytest_payload(
+        payload,
+        expected_source=declared_source,
+    )
     artifact: dict[str, Any] = {
         "schema_version": SCHEMA_VERSION,
         "runner": "pytest",
-        "source": {
-            "commit_sha": source_sha,
-            "tree_sha": tree_sha,
-        },
+        "source": declared_source,
         "run": {
             "command": command,
             "version": f"pytest {pytest.__version__}; python {sys.version.split()[0]}",
@@ -165,7 +102,7 @@ def run_python_tests(
         },
         "payload": payload,
         "payload_sha256": sha256_bytes(canonical_json_bytes(payload)),
-        "counts": _counts(results),
+        "counts": counts,
         "results": results,
         "integrity_errors": integrity_errors,
     }

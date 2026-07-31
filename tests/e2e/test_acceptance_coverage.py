@@ -19,6 +19,7 @@ from scripts.e2e.product_e2e_receipt import (
     EVIDENCE_COMMIT_ALLOWLIST,
     EXPECTED_CANONICAL_SPEC_COUNT,
     EXPECTED_PLAYWRIGHT_TEST_COUNT,
+    PYTEST_NODE_IDS,
     RAW_PLAYWRIGHT_PATH,
     RAW_PYTEST_PATH,
     RECEIPT_PATH,
@@ -26,6 +27,7 @@ from scripts.e2e.product_e2e_receipt import (
     bind_scenarios,
     canonical_json_bytes,
     parse_playwright_payload,
+    parse_pytest_payload,
     seal_normalized,
     sha256_bytes,
     source_identity,
@@ -376,6 +378,70 @@ def test_raw_playwright_reparses_self_consistently_resealed_payload() -> None:
     assert not any("hash mismatch" in error for error in errors)
     assert any("results do not exactly match parsed payload" in error for error in errors)
     assert any("counts do not exactly match parsed payload" in error for error in errors)
+
+
+def test_raw_pytest_rejects_resealed_phase_outcome_contradiction() -> None:
+    artifact = json.loads((ROOT / RAW_PYTEST_PATH).read_text(encoding="utf-8"))
+    nodeid = PYTEST_NODE_IDS[0]
+    call_report = next(
+        report
+        for report in artifact["payload"]["phase_reports"][nodeid]
+        if report["phase"] == "call"
+    )
+    call_report["outcome"] = "failed"
+    artifact["payload_sha256"] = sha256_bytes(
+        canonical_json_bytes(artifact["payload"])
+    )
+    seal_normalized(artifact, "normalized_artifact_sha256")
+
+    errors = validate_raw_artifact(artifact, "pytest")
+    assert not any("hash mismatch" in error for error in errors)
+    assert any("results do not exactly match parsed payload" in error for error in errors)
+    assert any("counts do not exactly match parsed payload" in error for error in errors)
+
+
+def test_raw_pytest_rejects_resealed_collection_error_contradiction() -> None:
+    artifact = json.loads((ROOT / RAW_PYTEST_PATH).read_text(encoding="utf-8"))
+    artifact["payload"]["collection_errors"].append("forged collection failure")
+    artifact["payload_sha256"] = sha256_bytes(
+        canonical_json_bytes(artifact["payload"])
+    )
+    seal_normalized(artifact, "normalized_artifact_sha256")
+
+    errors = validate_raw_artifact(artifact, "pytest")
+    assert not any("hash mismatch" in error for error in errors)
+    assert any(
+        "integrity_errors do not exactly match parsed payload" in error
+        for error in errors
+    )
+
+
+def test_raw_pytest_rejects_resealed_requested_and_collected_id_drift() -> None:
+    artifact = json.loads((ROOT / RAW_PYTEST_PATH).read_text(encoding="utf-8"))
+    removed = artifact["payload"]["requested_node_ids"].pop()
+    phases = artifact["payload"]["phase_reports"].pop(removed)
+    artifact["payload"]["requested_node_ids"].append("tests/security/forged.py::test_forged")
+    artifact["payload"]["phase_reports"]["tests/security/forged.py::test_forged"] = phases
+    artifact["payload_sha256"] = sha256_bytes(
+        canonical_json_bytes(artifact["payload"])
+    )
+    seal_normalized(artifact, "normalized_artifact_sha256")
+
+    _results, _counts, payload_errors = parse_pytest_payload(
+        artifact["payload"],
+        expected_source=artifact["source"],
+    )
+    errors = validate_raw_artifact(artifact, "pytest")
+    assert any(
+        "requested_node_ids do not exactly match" in error
+        for error in payload_errors
+    )
+    assert any("missing exact test ids" in error for error in payload_errors)
+    assert any("unexpected collected test ids" in error for error in payload_errors)
+    assert any(
+        "integrity_errors do not exactly match parsed payload" in error
+        for error in errors
+    )
 
 
 @pytest.mark.parametrize(
