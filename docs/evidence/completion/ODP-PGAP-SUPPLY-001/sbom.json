@@ -1,10 +1,10 @@
 {
   "bomFormat": "CycloneDX",
   "specVersion": "1.5",
-  "serialNumber": "urn:uuid:sha256-e150970fda0f3be3e79b06ae960bb58a",
+  "serialNumber": "urn:uuid:sha256-a1ea8f686ca13b3689730a5f1efb9737",
   "version": 1,
   "metadata": {
-    "timestamp": "2026-07-31T06:58:44.713946+00:00",
+    "timestamp": "2026-07-31T07:31:43.883248+00:00",
     "component": {
       "name": "oday-plus",
       "version": "0.1.0",
@@ -13,15 +13,31 @@
     "properties": [
       {
         "name": "git-sha",
-        "value": "823532bdce30121d7c5a1f96718d60f5770ccb92"
+        "value": "58ca536c4a9d3017734d69477f51a3c82543a22b"
+      },
+      {
+        "name": "package-lock-hash",
+        "value": "648a3fe49d4e703b36eb451fc7ab62e0d3ec0299b941f9222de45a7f193a1866"
+      },
+      {
+        "name": "uv-lock-hash",
+        "value": "15e3d6d34ecf5eb38c1161686aa6815bc56e855570f617aae11c310f5dd6b3eb"
+      },
+      {
+        "name": "policy-hash",
+        "value": "e077c82d3dda5b7df1c6f08491029097adfe6b2ece52747b4460ee6b2d116414"
+      },
+      {
+        "name": "evidence-report-hash",
+        "value": "6c7f29e216d05d4a0b29587bf36ed759d24be27b31eab8a19405bfd7519c179f"
       },
       {
         "name": "sbom-hash",
-        "value": "e150970fda0f3be3e79b06ae960bb58ad9af20be95dcf7aa1e4d18dce94365af"
+        "value": "a1ea8f686ca13b3689730a5f1efb97375f40d7385a7d14e3dbd48c7f1338b570"
       },
       {
         "name": "sbom-content-digest",
-        "value": "sha256:e150970fda0f3be3e79b06ae960bb58ad9af20be95dcf7aa1e4d18dce94365af"
+        "value": "sha256:a1ea8f686ca13b3689730a5f1efb97375f40d7385a7d14e3dbd48c7f1338b570"
       },
       {
         "name": "image-digest",

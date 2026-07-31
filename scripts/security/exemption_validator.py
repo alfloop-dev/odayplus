@@ -1,10 +1,12 @@
 """Shared exemption schema and receipt validation for OSS license and vulnerability gates."""
 
+import hashlib
+import hmac
 import json
 import re
-from collections.abc import Callable
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
+from typing import Any
 
 ROOT = Path(__file__).resolve().parents[2]
 
@@ -46,6 +48,73 @@ TRIVIAL_REASON_VALUES = {
     "x", "1", "123", "tbd", "n/a", "none", "null", "undefined", "todo", "test", "a", "b", "c", "foo", "bar", "temp", "tmp"
 }
 
+HEX_HASH_PATTERN = re.compile(r"^[a-fA-F0-9]{32,128}$")
+
+
+def compute_file_sha256(file_path: Path) -> str:
+    """Compute sha256 hex digest of a file if it exists, or 'MISSING'."""
+    if not file_path.exists():
+        return "MISSING"
+    return hashlib.sha256(file_path.read_bytes()).hexdigest()
+
+
+def compute_policy_hash(policy_path: Path | None = None) -> str:
+    """Compute sha256 hex digest of license_policy.json."""
+    path = policy_path or (ROOT / "docs/security/license_policy.json")
+    return compute_file_sha256(path)
+
+
+def compute_canonical_receipt_hash(receipt_data: dict) -> str:
+    """Compute sha256 hex digest of canonical receipt payload excluding canonical_receipt_hash and signature."""
+    payload = {
+        k: v for k, v in receipt_data.items()
+        if k not in {"canonical_receipt_hash", "signature"}
+    }
+    canonical_json = json.dumps(payload, sort_keys=True, separators=(",", ":"))
+    return hashlib.sha256(canonical_json.encode("utf-8")).hexdigest()
+
+
+def compute_receipt_signature(canonical_hash: str, secret_key: str) -> str:
+    """Compute HMAC-SHA256 signature of canonical_receipt_hash using secret_key."""
+    return hmac.new(secret_key.encode("utf-8"), canonical_hash.encode("utf-8"), hashlib.sha256).hexdigest()
+
+
+class AuthoritativeReceiptVerifier:
+    """Concrete verifier that obtains and validates authoritative source-system readback and signature data."""
+
+    def __init__(self, authority_key: str | None = None, trusted_source_systems: set[str] | None = None):
+        self.authority_key = authority_key
+        self.trusted_source_systems = trusted_source_systems or {
+            "ODP-PLAN-OSS-LEGAL-POLICY-001",
+            "https://governance.pantheon.internal/policy",
+        }
+
+    def verify(self, ref_str: str, receipt_data: dict, entry: dict) -> tuple[bool, str | None]:
+        if not self.authority_key:
+            return (
+                False,
+                f"Authoritative verifier has no authority key configured for receipt '{ref_str}'; active exemption path is structurally disabled.",
+            )
+
+        src_sys = receipt_data.get("source_system", "")
+        if not any(ts in src_sys for ts in self.trusted_source_systems):
+            return (
+                False,
+                f"Authoritative receipt for '{ref_str}' source_system '{src_sys}' is not in trusted source systems.",
+            )
+
+        canon_hash = compute_canonical_receipt_hash(receipt_data)
+        expected_sig = compute_receipt_signature(canon_hash, self.authority_key)
+        actual_sig = receipt_data.get("signature", "")
+
+        if not actual_sig or not hmac.compare_digest(actual_sig, expected_sig):
+            return (
+                False,
+                f"Signature verification failed for receipt '{ref_str}': signature mismatch against configured authority key.",
+            )
+
+        return True, None
+
 
 def is_valid_approver(approver: str) -> bool:
     """Validate that the approver is a named human/legal authority and not a bare role, AI agent, or placeholder token."""
@@ -58,7 +127,6 @@ def is_valid_approver(approver: str) -> bool:
     if app_lower in REJECTED_APPROVER_EXACT:
         return False
 
-    # Check for AI agent tokens or bare role tokens
     for pattern in [
         r"\bhuman/ops\b", r"\blegal/ops\b", r"\bsecurity/ops\b", r"\btbd/ops\b",
         r"\bclaude\b", r"\bgpt\b", r"\bgemini\b", r"\bantigravity\b", r"\bcodex\b", r"\bcopilot\b",
@@ -67,7 +135,6 @@ def is_valid_approver(approver: str) -> bool:
         if re.search(pattern, app_lower):
             return False
 
-    # Require named person (at least 2 name words) + role container/delimiter e.g. "Jane Doe (Legal Counsel)", "Jane Doe, Legal Counsel", "Alice Smith <Security Lead>"
     role_pattern = r"^([A-Za-z0-9\.\-']+(?:\s+[A-Za-z0-9\.\-']+)+)\s*[\(\<\,\-\[]\s*([A-Za-z0-9\s/_\-\.\,\&]{3,})[\)\>\-\]]?$"
     match = re.match(role_pattern, app_str)
     if not match:
@@ -81,7 +148,6 @@ def is_valid_approver(approver: str) -> bool:
         if bad in name_part:
             return False
 
-    # Role part validation: must contain a recognized legal/security/compliance role
     is_rec_role = any(r in role_part for r in RECOGNIZED_ROLES)
     if not is_rec_role:
         return False
@@ -98,21 +164,17 @@ def is_valid_approval_reference(ref: str) -> bool:
         return False
     if ref_str.lower() in TRIVIAL_REF_VALUES:
         return False
-    # Enforce reference format e.g. ODP-PLAN-OSS-LEGAL-POLICY-001, SEC-1234, PR-123, ISSUE-456, LEGAL-2026-001, ADR-001
     ref_pattern = r"^(PR-?\d+|ISSUE-?\d+|SEC-\d+|LEGAL-\d+|ADR-\d+|POLICY-[A-Z0-9_-]+|[A-Z0-9]+-[A-Z0-9_-]+)$"
     if not re.match(ref_pattern, ref_str, re.IGNORECASE):
         return False
     return True
 
 
-HEX_HASH_PATTERN = re.compile(r"^[a-fA-F0-9]{32,128}$")
-
-
 def resolve_approval_reference(
     ref: str,
     entry: dict,
     base_dir: Path | None = None,
-    verifier_fn: Callable[[str, dict, dict], tuple[bool, str | None] | bool] | None = None,
+    verifier_fn: Any | None = None,
 ) -> tuple[bool, str | None]:
     """Resolve an approval_reference to an authoritative legal receipt record under ODP-PLAN-OSS-LEGAL-POLICY-001.
 
@@ -166,110 +228,176 @@ def resolve_approval_reference(
     if not isinstance(receipt_data, dict):
         return False, f"Authoritative receipt for '{ref_str}' in {receipt_source} is not an object schema."
 
-    # B1 rule: A repository-local lookalike file CANNOT self-establish authority without an authoritative external verifier / signed readback
-    if verifier_fn is None:
+    # B1 rule: A repository-local lookalike file CANNOT self-establish authority without a configured AuthoritativeReceiptVerifier with authority_key
+    if verifier_fn is None or not isinstance(verifier_fn, AuthoritativeReceiptVerifier) or not verifier_fn.authority_key:
         return (
             False,
-            f"Repository-local receipt '{ref_str}' cannot self-establish authority without an authoritative external verifier or signed readback source under ODP-PLAN-OSS-LEGAL-POLICY-001.",
+            f"Repository-local receipt '{ref_str}' cannot self-establish authority without a configured AuthoritativeReceiptVerifier instance and authority key under ODP-PLAN-OSS-LEGAL-POLICY-001.",
         )
 
-    # Validate required authoritative receipt fields
+    # B2 rule: Validate complete required authoritative receipt field set
     req_fields = {
+        "approval_ref",
         "principal_id",
         "principal_role",
+        "approved_by",
         "source_system",
         "policy_decision",
         "policy_name",
         "policy_version",
         "policy_hash",
+        "scope",
         "issued_at",
-        "expires_at",
         "reviewed_at",
+        "expires_at",
+        "source_digest",
+        "release_digest",
+        "sbom_digest",
+        "python_lock_digest",
+        "npm_lock_digest",
+        "evidence_report_digest",
         "canonical_receipt_hash",
         "signature",
-        "approved_by",
     }
+    # package_name or purl required
+    if not receipt_data.get("package_name") and not receipt_data.get("package_purl") and not receipt_data.get("purl"):
+        req_fields.add("package_name")
+
+    # vulnerability_id required if entry is vulnerability exemption
+    if entry.get("vulnerability_id"):
+        req_fields.add("vulnerability_id")
+
     missing = [f for f in req_fields if not receipt_data.get(f) or not isinstance(receipt_data.get(f), str)]
     if missing:
         return False, f"Authoritative receipt for '{ref_str}' is missing required fields: {sorted(missing)}"
+
+    # Match approval reference
+    rec_ref = receipt_data.get("approval_ref")
+    entry_ref = entry.get("approval_reference")
+    if rec_ref != ref_str or rec_ref != entry_ref:
+        return False, f"Authoritative receipt for '{ref_str}' approval_ref '{rec_ref}' does not match entry approval_reference '{entry_ref}'."
 
     # Verify principal role authorization
     rec_role = receipt_data.get("principal_role", "").lower().strip()
     if not any(r in rec_role for r in RECOGNIZED_ROLES):
         return False, f"Authoritative receipt for '{ref_str}' contains unauthorized principal_role '{receipt_data.get('principal_role')}'."
 
-    # Verify status / policy decision
+    # Verify policy decision & status
     p_decision = receipt_data.get("policy_decision")
     if p_decision not in {"approved", "active", "waived_with_conditions"}:
-        return False, f"Authoritative receipt for '{ref_str}' policy_decision '{p_decision}' is not approved (must be 'approved', 'active', or 'waived_with_conditions')."
+        return False, f"Authoritative receipt for '{ref_str}' policy_decision '{p_decision}' is not approved."
 
-    rec_status = receipt_data.get("status", "approved")
-    if rec_status not in {"approved", "active"}:
-        return False, f"Authoritative receipt for '{ref_str}' status '{rec_status}' must be 'approved' or 'active'."
+    p_name = receipt_data.get("policy_name")
+    if p_name != "ODP-PLAN-OSS-LEGAL-POLICY-001":
+        return False, f"Authoritative receipt for '{ref_str}' policy_name '{p_name}' does not match 'ODP-PLAN-OSS-LEGAL-POLICY-001'."
 
-    # Verify field bindings: approved_by
+    # Check policy content hash
+    expected_pol_hash = compute_policy_hash()
+    rec_pol_hash = receipt_data.get("policy_hash", "")
+    if not HEX_HASH_PATTERN.match(rec_pol_hash):
+        return False, f"Authoritative receipt for '{ref_str}' policy_hash '{rec_pol_hash}' is not a valid hex digest format."
+    if expected_pol_hash and rec_pol_hash != expected_pol_hash:
+        return False, f"Authoritative receipt for '{ref_str}' policy_hash '{rec_pol_hash}' does not match current policy hash '{expected_pol_hash}'."
+
+    # Verify approver
     rec_approver = receipt_data.get("approved_by")
     entry_approver = entry.get("approved_by")
-    if not rec_approver or rec_approver != entry_approver:
+    if rec_approver != entry_approver:
         return False, f"Authoritative receipt for '{ref_str}' approved_by '{rec_approver}' does not match entry approved_by '{entry_approver}'."
 
     if not is_valid_approver(rec_approver):
         return False, f"Authoritative receipt for '{ref_str}' contains invalid approver '{rec_approver}'."
 
-    # Verify package_name / purl / vulnerability_id if present in receipt
-    entry_pkg = entry.get("package_name") or entry.get("purl")
-    rec_pkg = receipt_data.get("package_name") or receipt_data.get("purl")
+    # Verify package name / purl
+    entry_pkg = entry.get("package_name")
+    rec_pkg = receipt_data.get("package_name")
     if rec_pkg and entry_pkg and rec_pkg != entry_pkg:
-        return False, f"Authoritative receipt for '{ref_str}' package '{rec_pkg}' does not match entry package '{entry_pkg}'."
+        return False, f"Authoritative receipt for '{ref_str}' package_name '{rec_pkg}' does not match entry package_name '{entry_pkg}'."
 
+    entry_purl = entry.get("purl")
+    rec_purl = receipt_data.get("package_purl") or receipt_data.get("purl")
+    if rec_purl and entry_purl and rec_purl != entry_purl:
+        return False, f"Authoritative receipt for '{ref_str}' package_purl '{rec_purl}' does not match entry purl '{entry_purl}'."
+
+    # Verify vulnerability ID
     entry_vid = entry.get("vulnerability_id")
     rec_vid = receipt_data.get("vulnerability_id")
-    if rec_vid and entry_vid and rec_vid != entry_vid:
-        return False, f"Authoritative receipt for '{ref_str}' vulnerability_id '{rec_vid}' does not match entry vulnerability_id '{entry_vid}'."
+    if entry_vid or rec_vid:
+        if rec_vid != entry_vid:
+            return False, f"Authoritative receipt for '{ref_str}' vulnerability_id '{rec_vid}' does not match entry vulnerability_id '{entry_vid}'."
 
-    # Verify scope if present in receipt
+    # Verify scope
     entry_scope = entry.get("scope")
     rec_scope = receipt_data.get("scope")
-    if rec_scope and entry_scope and rec_scope != entry_scope:
+    if rec_scope != entry_scope:
         return False, f"Authoritative receipt for '{ref_str}' scope '{rec_scope}' does not match entry scope '{entry_scope}'."
 
-    # Verify timestamp formats, ordering, and expiration
+    # Verify lockfile digests
+    uv_lock_path = ROOT / "uv.lock"
+    pkg_lock_path = ROOT / "package-lock.json"
+    if uv_lock_path.exists():
+        expected_uv_hash = compute_file_sha256(uv_lock_path)
+        rec_uv_hash = receipt_data.get("python_lock_digest", "")
+        if rec_uv_hash != expected_uv_hash:
+            return False, f"Authoritative receipt for '{ref_str}' python_lock_digest '{rec_uv_hash}' does not match uv.lock hash '{expected_uv_hash}'."
+
+    if pkg_lock_path.exists():
+        expected_npm_hash = compute_file_sha256(pkg_lock_path)
+        rec_npm_hash = receipt_data.get("npm_lock_digest", "")
+        if rec_npm_hash != expected_npm_hash:
+            return False, f"Authoritative receipt for '{ref_str}' npm_lock_digest '{rec_npm_hash}' does not match package-lock.json hash '{expected_npm_hash}'."
+
+    # Verify timestamps, ordering, and UTC format
     issued_at = receipt_data.get("issued_at", "")
     expires_at = receipt_data.get("expires_at", "")
     reviewed_at = receipt_data.get("reviewed_at", "")
+    entry_issued = entry.get("issued_at", "")
+    entry_expires = entry.get("expires_at", "")
+
+    if issued_at != entry_issued:
+        return False, f"Authoritative receipt for '{ref_str}' issued_at '{issued_at}' does not match entry issued_at '{entry_issued}'."
+    if expires_at != entry_expires:
+        return False, f"Authoritative receipt for '{ref_str}' expires_at '{expires_at}' does not match entry expires_at '{entry_expires}'."
+
     for ts_name, ts_val in [("issued_at", issued_at), ("expires_at", expires_at), ("reviewed_at", reviewed_at)]:
         if not (ts_val.endswith("Z") or ts_val.endswith("+00:00") or ts_val.endswith("+0000")):
             return False, f"Authoritative receipt for '{ref_str}' {ts_name} timestamp '{ts_val}' must be ISO UTC."
 
     try:
         issued_dt = datetime.fromisoformat(issued_at.replace("Z", "+00:00"))
+        reviewed_dt = datetime.fromisoformat(reviewed_at.replace("Z", "+00:00"))
         expires_dt = datetime.fromisoformat(expires_at.replace("Z", "+00:00"))
-        if expires_dt <= issued_dt:
-            return False, f"Authoritative receipt for '{ref_str}' expires_at ({expires_at}) must be after issued_at ({issued_at})."
-        if expires_dt < datetime.now(UTC):
+        now_utc = datetime.now(UTC)
+
+        if not (issued_dt <= reviewed_dt <= expires_dt):
+            return (
+                False,
+                f"Authoritative receipt for '{ref_str}' timestamp ordering violation: expected issued_at ({issued_at}) <= reviewed_at ({reviewed_at}) <= expires_at ({expires_at}).",
+            )
+
+        if expires_dt <= now_utc:
             return False, f"Authoritative receipt for '{ref_str}' expired at {expires_at}."
+
+        if issued_dt > now_utc + timedelta(minutes=5):
+            return False, f"Authoritative receipt for '{ref_str}' has future issued_at timestamp {issued_at}."
     except (ValueError, TypeError) as e:
-        return False, f"Authoritative receipt for '{ref_str}' has invalid timestamp format: {e}"
+        return False, f"Authoritative receipt for '{ref_str}' has invalid ISO UTC timestamp format: {e}"
 
-    # Verify hash integrity formats
-    pol_hash = receipt_data.get("policy_hash", "")
-    rec_hash = receipt_data.get("canonical_receipt_hash", "")
-    if not HEX_HASH_PATTERN.match(pol_hash):
-        return False, f"Authoritative receipt for '{ref_str}' policy_hash '{pol_hash}' is not a valid hex digest format."
-    if not HEX_HASH_PATTERN.match(rec_hash):
-        return False, f"Authoritative receipt for '{ref_str}' canonical_receipt_hash '{rec_hash}' is not a valid hex digest format."
+    # Verify canonical receipt hash recomputation
+    recomputed_canon_hash = compute_canonical_receipt_hash(receipt_data)
+    rec_canon_hash = receipt_data.get("canonical_receipt_hash", "")
+    if not HEX_HASH_PATTERN.match(rec_canon_hash):
+        return False, f"Authoritative receipt for '{ref_str}' canonical_receipt_hash '{rec_canon_hash}' is not a valid hex digest format."
+    if rec_canon_hash != recomputed_canon_hash:
+        return (
+            False,
+            f"Authoritative receipt for '{ref_str}' canonical_receipt_hash '{rec_canon_hash}' does not match recomputed hash '{recomputed_canon_hash}'.",
+        )
 
-    # Invoke authoritative external verifier / readback callback
-    try:
-        ver_res = verifier_fn(ref_str, receipt_data, entry)
-        if isinstance(ver_res, tuple):
-            ver_ok, ver_err = ver_res
-            if not ver_ok:
-                return False, f"Authoritative verifier rejected receipt for '{ref_str}': {ver_err or 'verification failed'}"
-        elif not ver_res:
-            return False, f"Authoritative verifier rejected receipt for '{ref_str}': readback verification failed"
-    except Exception as e:
-        return False, f"Authoritative verifier raised error for '{ref_str}': {e}"
+    # Invoke concrete AuthoritativeReceiptVerifier
+    ver_ok, ver_err = verifier_fn.verify(ref_str, receipt_data, entry)
+    if not ver_ok:
+        return False, f"Authoritative verifier rejected receipt for '{ref_str}': {ver_err or 'verification failed'}"
 
     return True, None
 
@@ -283,10 +411,8 @@ def is_valid_reason(reason: str) -> bool:
         return False
     if r_str.lower() in TRIVIAL_REASON_VALUES:
         return False
-    # Reject single-character repetitions like "aaaaaaaaaa"
     if len(set(r_str.lower())) < 4:
         return False
-    # Must contain at least 2 distinct words of length >= 3
     words = [w for w in re.findall(r"[a-zA-Z0-9]+", r_str) if len(w) >= 3]
     if len(set(words)) < 2:
         return False
@@ -297,18 +423,13 @@ def validate_exemption_entry(
     entry: dict,
     exemption_type: str = "license",
     base_dir: Path | None = None,
-    verifier_fn: Callable[[str, dict, dict], tuple[bool, str | None] | bool] | None = None,
+    verifier_fn: Any | None = None,
 ) -> tuple[bool, list[str]]:
-    """Validate a single exemption entry against the complete positive schema.
-
-    Returns:
-        (is_valid, list_of_violations)
-    """
+    """Validate a single exemption entry against the complete positive schema."""
     violations = []
     pkg_name = entry.get("package_name") or entry.get("purl") or "unknown"
     label = f"{exemption_type.capitalize()} exemption for '{pkg_name}'"
 
-    # Required keys check
     if exemption_type == "license":
         req_keys = {"status", "approved_by", "approval_reference", "issued_at", "expires_at", "scope", "reason"}
         missing = req_keys - set(entry.keys())
@@ -321,22 +442,18 @@ def validate_exemption_entry(
     if missing:
         violations.append(f"{label} is missing required fields: {sorted(missing)}")
 
-    # Status validation
     status = entry.get("status")
     if not status or status not in VALID_STATUSES:
         violations.append(f"{label} has invalid status '{status}'. Must be one of: {sorted(VALID_STATUSES)}")
 
-    # Scope validation
     scope = entry.get("scope")
     if not scope or scope not in VALID_SCOPES:
         violations.append(f"{label} has invalid scope '{scope}'. Must be one of: {sorted(VALID_SCOPES)}")
 
-    # Reason validation
     reason = entry.get("reason")
     if not is_valid_reason(reason):
         violations.append(f"{label} has invalid reason '{reason}'. Reason must be a non-trivial explanation (min 10 chars).")
 
-    # Approver validation
     approver = entry.get("approved_by", "")
     if not is_valid_approver(approver):
         violations.append(
@@ -345,12 +462,10 @@ def validate_exemption_entry(
             "AI agent names, bare role tokens, and placeholder strings cannot serve as legal approvers."
         )
 
-    # Approval reference validation
     app_ref = entry.get("approval_reference", "")
     if not is_valid_approval_reference(app_ref):
         violations.append(f"{label} is missing valid approval_reference.")
 
-    # Issued at timestamp validation: must be ISO UTC ending with 'Z' or '+00:00'
     issued_at = entry.get("issued_at")
     issued_dt = None
     if not issued_at or not isinstance(issued_at, str):
@@ -365,13 +480,12 @@ def validate_exemption_entry(
         except (ValueError, TypeError):
             violations.append(f"{label} has invalid issued_at timestamp: '{issued_at}'.")
 
-    # Expires at timestamp & temporal ordering validation: must be ISO UTC ending with 'Z' or '+00:00'
     expires_at = entry.get("expires_at")
     expires_dt = None
     if not expires_at or not isinstance(expires_at, str):
         violations.append(f"{label} is missing valid expires_at timestamp.")
     else:
-        if not (expires_at.endswith("Z") or expires_at.endswith("+00:00") or expires_at.endswith("+0000")):
+        if not (expires_at.endswith("Z") or expires_at.endswith("+00:00") or expires_at.endswith("+00:00")):
             violations.append(f"{label} expires_at timestamp '{expires_at}' must be ISO UTC (ending in 'Z' or '+00:00').")
         try:
             expires_dt = datetime.fromisoformat(expires_at.replace("Z", "+00:00"))
@@ -380,12 +494,10 @@ def validate_exemption_entry(
         except (ValueError, TypeError):
             violations.append(f"{label} has invalid expires_at date: '{expires_at}'.")
 
-    # Temporal ordering: expires_at must be after issued_at
     if issued_dt and expires_dt:
         if expires_dt <= issued_dt:
             violations.append(f"{label} has invalid timestamp ordering: expires_at ({expires_at}) must be after issued_at ({issued_at}).")
 
-    # Active exemption binding check: status 'active' requires resolvable authentic receipt owned by ODP-PLAN-OSS-LEGAL-POLICY-001
     if status == "active":
         res_ok, res_err = resolve_approval_reference(app_ref, entry, base_dir=base_dir, verifier_fn=verifier_fn)
         if not res_ok:

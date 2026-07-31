@@ -601,16 +601,38 @@ def make_license_entry(spdx_lic: str) -> list[dict]:
     return [{"license": {"name": spdx_lic}}]
 
 
+def compute_lockfile_hashes() -> tuple[str, str, str, str]:
+    """Compute sha256 hashes of package-lock.json, uv.lock, license_policy.json, and vulnerability_exemptions.json."""
+    pkg_lock = ROOT / "package-lock.json"
+    uv_lock = ROOT / "uv.lock"
+    policy_file = ROOT / "docs/security/license_policy.json"
+    evidence_file = ROOT / "docs/security/vulnerability_exemptions.json"
+
+    pkg_hash = hashlib.sha256(pkg_lock.read_bytes()).hexdigest() if pkg_lock.exists() else "MISSING"
+    uv_hash = hashlib.sha256(uv_lock.read_bytes()).hexdigest() if uv_lock.exists() else "MISSING"
+    pol_hash = hashlib.sha256(policy_file.read_bytes()).hexdigest() if policy_file.exists() else "MISSING"
+    ev_hash = hashlib.sha256(evidence_file.read_bytes()).hexdigest() if evidence_file.exists() else "MISSING"
+
+    return pkg_hash, uv_hash, pol_hash, ev_hash
+
+
 def compute_sbom_digest(
     components: list[dict],
     dependencies: list[dict],
+    git_sha: str = "unknown",
+    package_lock_hash: str = "MISSING",
+    uv_lock_hash: str = "MISSING",
+    policy_hash: str = "MISSING",
+    evidence_report_hash: str = "MISSING",
     image_digest: str = "UNBOUND",
     release_digest: str = "UNBOUND",
 ) -> tuple[str, str, str]:
     """Compute content_hash, sbom_hash, and sbom_content_digest deterministically."""
     comp_json = json.dumps(components, sort_keys=True)
     dep_json = json.dumps(dependencies, sort_keys=True)
-    content_hash = hashlib.sha256(f"{comp_json}:{dep_json}".encode()).hexdigest()
+    content_hash = hashlib.sha256(
+        f"{comp_json}:{dep_json}:{git_sha}:{package_lock_hash}:{uv_lock_hash}:{policy_hash}:{evidence_report_hash}".encode()
+    ).hexdigest()
     digest_input = f"{content_hash}:{image_digest}:{release_digest}"
     sbom_hash = hashlib.sha256(digest_input.encode()).hexdigest()
     sbom_digest = f"sha256:{sbom_hash}"
@@ -928,11 +950,20 @@ def generate_sbom(image_digest: str | None = None, release_digest: str | None = 
             filtered_dependencies.append({"ref": ref, "dependsOn": deps_on})
 
     git_sha = get_git_sha()
+    pkg_lock_hash, uv_lock_hash, policy_hash, evidence_hash = compute_lockfile_hashes()
     resolved_image_digest = image_digest if (image_digest and SHA256_DIGEST_REGEX.match(image_digest)) else "UNBOUND"
     resolved_release_digest = release_digest if (release_digest and SHA256_DIGEST_REGEX.match(release_digest)) else "UNBOUND"
 
     content_hash, sbom_hash, sbom_digest = compute_sbom_digest(
-        components, filtered_dependencies, image_digest=resolved_image_digest, release_digest=resolved_release_digest
+        components,
+        filtered_dependencies,
+        git_sha=git_sha,
+        package_lock_hash=pkg_lock_hash,
+        uv_lock_hash=uv_lock_hash,
+        policy_hash=policy_hash,
+        evidence_report_hash=evidence_hash,
+        image_digest=resolved_image_digest,
+        release_digest=resolved_release_digest,
     )
 
     sbom = {
@@ -949,11 +980,15 @@ def generate_sbom(image_digest: str | None = None, release_digest: str | None = 
             },
             "properties": [
                 {"name": "git-sha", "value": git_sha},
+                {"name": "package-lock-hash", "value": pkg_lock_hash},
+                {"name": "uv-lock-hash", "value": uv_lock_hash},
+                {"name": "policy-hash", "value": policy_hash},
+                {"name": "evidence-report-hash", "value": evidence_hash},
                 {"name": "sbom-hash", "value": sbom_hash},
                 {"name": "sbom-content-digest", "value": sbom_digest},
                 {"name": "image-digest", "value": resolved_image_digest},
                 {"name": "release-digest", "value": resolved_release_digest},
-                {"name": "policy-status", "value": "PASSED"}
+                {"name": "policy-status", "value": "PASSED"},
             ]
         },
         "components": components,
@@ -1069,7 +1104,16 @@ def check_third_party_notices(sbom: dict) -> tuple[bool, str | None]:
     return True, None
 
 
-def readback_sbom(sbom_path: Path, expected_image_digest: str | None = None, expected_release_digest: str | None = None) -> int:
+def readback_sbom(
+    sbom_path: Path,
+    expected_image_digest: str | None = None,
+    expected_release_digest: str | None = None,
+    expected_git_sha: str | None = None,
+    expected_package_lock_hash: str | None = None,
+    expected_uv_lock_hash: str | None = None,
+    expected_policy_hash: str | None = None,
+    expected_evidence_report_hash: str | None = None,
+) -> int:
     if not sbom_path.exists():
         print(f"Error: SBOM file does not exist at {safe_rel_path(sbom_path)}", file=sys.stderr)
         return 1
@@ -1082,6 +1126,10 @@ def readback_sbom(sbom_path: Path, expected_image_digest: str | None = None, exp
     print(f"Serial Number: {data.get('serialNumber')}")
     print(f"Timestamp: {metadata.get('timestamp')}")
     print(f"Git SHA: {props.get('git-sha', 'N/A')}")
+    print(f"Package Lock Hash: {props.get('package-lock-hash', 'N/A')}")
+    print(f"UV Lock Hash: {props.get('uv-lock-hash', 'N/A')}")
+    print(f"Policy Hash: {props.get('policy-hash', 'N/A')}")
+    print(f"Evidence Report Hash: {props.get('evidence-report-hash', 'N/A')}")
     print(f"SBOM Content Digest: {props.get('sbom-content-digest', 'N/A')}")
     print(f"Image Digest: {props.get('image-digest', 'N/A')}")
     print(f"Release Digest: {props.get('release-digest', 'N/A')}")
@@ -1099,22 +1147,36 @@ def readback_sbom(sbom_path: Path, expected_image_digest: str | None = None, exp
     for lic, count in sorted(license_counts.items(), key=lambda x: x[1], reverse=True):
         print(f"  - {lic}: {count}")
 
-    if expected_image_digest:
-        actual_img = props.get("image-digest", "")
-        if actual_img != expected_image_digest:
-            print(f"❌ Readback Image Digest mismatch: actual='{actual_img}', expected='{expected_image_digest}'", file=sys.stderr)
-            return 1
+    mismatches = []
+    checks = [
+        ("git-sha", expected_git_sha),
+        ("package-lock-hash", expected_package_lock_hash),
+        ("uv-lock-hash", expected_uv_lock_hash),
+        ("policy-hash", expected_policy_hash),
+        ("evidence-report-hash", expected_evidence_report_hash),
+        ("image-digest", expected_image_digest),
+        ("release-digest", expected_release_digest),
+    ]
+    for prop_key, expected in checks:
+        if expected:
+            actual = props.get(prop_key, "")
+            if actual != expected:
+                mismatches.append(f"Readback {prop_key} mismatch: actual='{actual}', expected='{expected}'")
 
-    if expected_release_digest:
-        actual_rel = props.get("release-digest", "")
-        if actual_rel != expected_release_digest:
-            print(f"❌ Readback Release Digest mismatch: actual='{actual_rel}', expected='{expected_release_digest}'", file=sys.stderr)
-            return 1
+    if mismatches:
+        for m in mismatches:
+            print(f"❌ {m}", file=sys.stderr)
+        return 1
 
     return 0
 
 
-def verify_sbom(output_path: Path, image_digest: str | None = None, release_digest: str | None = None) -> int:
+def verify_sbom(
+    output_path: Path,
+    image_digest: str | None = None,
+    release_digest: str | None = None,
+    expected_git_sha: str | None = None,
+) -> int:
     """Verify committed sbom.json matches active lockfiles without mutating any files on disk."""
     if not output_path.exists():
         print(f"Error: SBOM file does not exist at {safe_rel_path(output_path)}", file=sys.stderr)
@@ -1163,19 +1225,28 @@ def verify_sbom(output_path: Path, image_digest: str | None = None, release_dige
                 diff_reasons.append(f"Dependency graph tampering detected at node '{d_comm.get('ref')}'")
                 break
 
-    # Verify content digest integrity
+    # Verify content digest integrity and exact bound properties
     comm_props = {p["name"]: p["value"] for p in committed_data.get("metadata", {}).get("properties", [])}
     curr_props = {p["name"]: p["value"] for p in current_sbom.get("metadata", {}).get("properties", [])}
 
-    if comm_props.get("sbom-content-digest") != curr_props.get("sbom-content-digest"):
-        diff_reasons.append(
-            f"Digest mismatch: committed sbom-content-digest='{comm_props.get('sbom-content-digest')}', active='{curr_props.get('sbom-content-digest')}'"
-        )
+    for prop_key in [
+        "git-sha",
+        "package-lock-hash",
+        "uv-lock-hash",
+        "policy-hash",
+        "evidence-report-hash",
+        "sbom-content-digest",
+        "image-digest",
+        "release-digest",
+        "policy-status",
+    ]:
+        comm_val = comm_props.get(prop_key, "")
+        curr_val = curr_props.get(prop_key, "")
+        if comm_val != curr_val:
+            diff_reasons.append(f"Property binding mismatch for '{prop_key}': committed='{comm_val}', active='{curr_val}'")
 
-    if comm_props.get("policy-status") != curr_props.get("policy-status"):
-        diff_reasons.append(
-            f"Policy status mismatch: committed policy-status='{comm_props.get('policy-status')}', active='{curr_props.get('policy-status')}'"
-        )
+    if expected_git_sha and comm_props.get("git-sha") != expected_git_sha:
+        diff_reasons.append(f"Expected git-sha mismatch: committed='{comm_props.get('git-sha')}', expected='{expected_git_sha}'")
 
     notices_ok, notices_err = check_third_party_notices(current_sbom)
     if not notices_ok and notices_err:
@@ -1204,6 +1275,11 @@ def main() -> int:
     parser.add_argument("--readback", action="store_true", help="Read back and display metadata from existing sbom.json")
     parser.add_argument("--expected-image-digest", type=str, help="Expected image digest during readback verification gate")
     parser.add_argument("--expected-release-digest", type=str, help="Expected release digest during readback verification gate")
+    parser.add_argument("--expected-git-sha", type=str, help="Expected git SHA during readback verification gate")
+    parser.add_argument("--expected-package-lock-hash", type=str, help="Expected package-lock.json hash during readback verification gate")
+    parser.add_argument("--expected-uv-lock-hash", type=str, help="Expected uv.lock hash during readback verification gate")
+    parser.add_argument("--expected-policy-hash", type=str, help="Expected license_policy.json hash during readback verification gate")
+    parser.add_argument("--expected-evidence-report-hash", type=str, help="Expected vulnerability_exemptions.json hash during readback verification gate")
     parser.add_argument("--check-notices", action="store_true", help="Check THIRD_PARTY_NOTICES is up to date fail closed")
     parser.add_argument("--update-notices", action="store_true", help="Generate/update THIRD_PARTY_NOTICES file")
 
@@ -1214,6 +1290,11 @@ def main() -> int:
             args.output,
             expected_image_digest=args.expected_image_digest,
             expected_release_digest=args.expected_release_digest,
+            expected_git_sha=args.expected_git_sha,
+            expected_package_lock_hash=args.expected_package_lock_hash,
+            expected_uv_lock_hash=args.expected_uv_lock_hash,
+            expected_policy_hash=args.expected_policy_hash,
+            expected_evidence_report_hash=args.expected_evidence_report_hash,
         )
 
     if args.verify:
