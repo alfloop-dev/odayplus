@@ -351,27 +351,42 @@ def get_git_sha() -> str:
         return "unknown"
 
 
+NARROW_EVIDENCE_PREFIXES = (
+    "docs/evidence/",
+    "docs/security/receipts/",
+    "docs/security/legal_policy_receipts.json",
+    "THIRD_PARTY_NOTICES",
+)
+
+
 def get_source_tree_sha() -> str:
-    """Compute sha256 hex digest of tracked source, policy, and lock files."""
+    """Compute sha256 hex digest of all repository tracked source, script, workflow, policy, and lock files (excluding narrow evidence paths)."""
     hasher = hashlib.sha256()
-    source_paths = [
-        ROOT / "scripts/security/generate_sbom.py",
-        ROOT / "scripts/security/exemption_validator.py",
-        ROOT / "scripts/security/vulnerability_scan.py",
-        ROOT / "docs/security/license_policy.json",
-        ROOT / "docs/security/license_exemptions.json",
-        ROOT / "docs/security/vulnerability_exemptions.json",
-        ROOT / "package-lock.json",
-        ROOT / "uv.lock",
-        ROOT / "pyproject.toml",
-        ROOT / "package.json",
-    ]
-    for p in sorted(source_paths):
+
+    tracked_files = []
+    try:
+        res = subprocess.run(["git", "ls-files"], cwd=ROOT, capture_output=True, text=True)
+        if res.returncode == 0 and res.stdout:
+            tracked_files = [p.strip() for p in res.stdout.splitlines() if p.strip()]
+    except Exception:
+        pass
+
+    if not tracked_files:
+        ignored_dirs = {".git", "node_modules", ".venv", "__pycache__", "build", "dist"}
+        for p in ROOT.rglob("*"):
+            if p.is_file() and not any(part in ignored_dirs for part in p.parts):
+                tracked_files.append(str(p.relative_to(ROOT)))
+
+    for rpath in sorted(tracked_files):
+        if any(rpath.startswith(prefix) for prefix in NARROW_EVIDENCE_PREFIXES):
+            continue
+        p = ROOT / rpath
         if p.exists():
-            hasher.update(p.name.encode())
+            hasher.update(rpath.encode())
             hasher.update(p.read_bytes())
         else:
-            hasher.update(f"MISSING:{p.name}".encode())
+            hasher.update(f"MISSING:{rpath}".encode())
+
     return hasher.hexdigest()
 
 
@@ -1263,6 +1278,43 @@ def verify_sbom(
     comm_props = {p["name"]: p["value"] for p in committed_data.get("metadata", {}).get("properties", [])}
     curr_props = {p["name"]: p["value"] for p in current_sbom.get("metadata", {}).get("properties", [])}
 
+    comm_git = comm_props.get("git-sha", "")
+    curr_git = curr_props.get("git-sha", "")
+
+    # B3 fix: Exact evidence-only descendant verification protocol between comm_git and active HEAD (curr_git)
+    is_valid_evidence_descendant = False
+    if comm_git and curr_git and comm_git != curr_git:
+        try:
+            anc_res = subprocess.run(["git", "merge-base", "--is-ancestor", comm_git, "HEAD"], cwd=ROOT, capture_output=True)
+            if anc_res.returncode == 0:
+                rev_res = subprocess.run(["git", "rev-list", f"{comm_git}..HEAD"], cwd=ROOT, capture_output=True, text=True)
+                if rev_res.returncode == 0:
+                    commit_list = [c.strip() for c in rev_res.stdout.splitlines() if c.strip()]
+                    non_evidence_found = False
+                    for commit_sha in commit_list:
+                        diff_res = subprocess.run(
+                            ["git", "diff-tree", "--no-commit-id", "--name-only", "-r", commit_sha],
+                            cwd=ROOT,
+                            capture_output=True,
+                            text=True,
+                        )
+                        if diff_res.returncode == 0:
+                            changed_files = [f.strip() for f in diff_res.stdout.splitlines() if f.strip()]
+                            for cf in changed_files:
+                                if not any(cf.startswith(prefix) for prefix in NARROW_EVIDENCE_PREFIXES):
+                                    non_evidence_found = True
+                                    diff_reasons.append(
+                                        f"Intervening commit '{commit_sha[:8]}' modified non-evidence source file '{cf}'; "
+                                        "evidence-only exception rejected even if change was later reverted."
+                                    )
+                                    break
+                        if non_evidence_found:
+                            break
+                    if not non_evidence_found:
+                        is_valid_evidence_descendant = True
+        except Exception:
+            pass
+
     for prop_key in [
         "git-sha",
         "source-tree-sha",
@@ -1278,20 +1330,9 @@ def verify_sbom(
         comm_val = comm_props.get(prop_key, "")
         curr_val = curr_props.get(prop_key, "")
         if comm_val != curr_val:
-            head_minus_1 = ""
-            try:
-                res = subprocess.run(["git", "rev-parse", "HEAD~1"], capture_output=True, text=True)
-                if res.returncode == 0:
-                    head_minus_1 = res.stdout.strip()
-            except Exception:
-                pass
             same_tree = comm_props.get("source-tree-sha") and comm_props.get("source-tree-sha") == curr_props.get("source-tree-sha")
-            comm_git = comm_props.get("git-sha", "")
-            is_head_minus_1 = head_minus_1 and (comm_git == head_minus_1 or head_minus_1.startswith(comm_git) or comm_git.startswith(head_minus_1))
 
-            if prop_key == "git-sha" and same_tree and is_head_minus_1:
-                continue
-            if prop_key == "sbom-content-digest" and same_tree and is_head_minus_1:
+            if (prop_key == "git-sha" or prop_key == "sbom-content-digest") and same_tree and is_valid_evidence_descendant:
                 continue
             diff_reasons.append(f"Property binding mismatch for '{prop_key}': committed='{comm_val}', active='{curr_val}'")
 

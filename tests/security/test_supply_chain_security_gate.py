@@ -1358,24 +1358,54 @@ def test_round8_b3_fake_person_and_unresolved_active_receipts_rejected(tmp_path:
 
 def make_test_verifier(
     tmp_path: Path,
-    key: str = "secret-test-authority-key-12345",
+    key: str = "secret-test-authority-key-123456",
     trusted_source_systems: set[str] | None = None,
     expected_digests: dict[str, str] | None = None,
 ) -> Any:
+    import hashlib
+    import hmac
+
     sys.path.insert(0, str(ROOT))
     from scripts.security.exemption_validator import AuthoritativeReceiptVerifier
 
-    key_file = tmp_path / "legal_authority.key"
+    vault_dir = ROOT / "docs/security/vault"
+    vault_dir.mkdir(parents=True, exist_ok=True)
+
+    key_file = vault_dir / f"test_key_{tmp_path.name}.key"
     key_file.write_text(key, encoding="utf-8")
-    if expected_digests is None:
-        expected_digests = {
-            "source_digest": "a" * 40,
-            "release_digest": "b" * 64,
-            "sbom_digest": "c" * 64,
-            "evidence_report_digest": "d" * 64,
-        }
+    key_file.chmod(0o600)
+
+    digs = expected_digests or {
+        "source_digest": "a" * 64,
+        "release_digest": "b" * 64,
+        "sbom_digest": "c" * 64,
+        "evidence_report_digest": "d" * 64,
+        "python_lock_digest": "e" * 64,
+        "npm_lock_digest": "f" * 64,
+    }
+
+    manifest_payload = {
+        "manifest_version": "1.0.0",
+        "policy_name": "ODP-PLAN-OSS-LEGAL-POLICY-001",
+        "policy_version": "1.0.0",
+        "source_system": "ODP-PLAN-OSS-LEGAL-POLICY-001",
+        "expected_digests": digs,
+    }
+    canon_json = json.dumps(manifest_payload, sort_keys=True, separators=(",", ":"))
+    canon_hash = hashlib.sha256(canon_json.encode("utf-8")).hexdigest()
+    sig = hmac.new(key.encode("utf-8"), canon_hash.encode("utf-8"), hashlib.sha256).hexdigest()
+
+    manifest = dict(manifest_payload)
+    manifest["canonical_manifest_hash"] = canon_hash
+    manifest["signature"] = sig
+
+    manifest_file = vault_dir / f"test_manifest_{tmp_path.name}.json"
+    manifest_file.write_text(json.dumps(manifest), encoding="utf-8")
+    manifest_file.chmod(0o600)
+
     return AuthoritativeReceiptVerifier(
         authority_key_file=key_file,
+        authority_manifest_path=manifest_file,
         trusted_source_systems=trusted_source_systems or {"legal_vault", "ODP-PLAN-OSS-LEGAL-POLICY-001"},
         expected_digests=expected_digests,
     )
@@ -2115,3 +2145,114 @@ def test_round11_b4_release_attestation_unbound_fail_closed() -> None:
     assert not is_passed, "Release gate must fail closed when image/release digests are UNBOUND"
     assert any("Image digest is missing, unbound" in v for v in violations)
     assert any("Release digest is missing, unbound" in v for v in violations)
+
+
+# ─── Round-13 negative tests (B1, B2, B3) ───
+
+
+def test_round13_b1_key_path_symlink_and_unrestrictive_mode_rejected(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """B1 — Key file path must be in allowlisted vault, not a symlink, and have restrictive 0o600 permissions."""
+    sys.path.insert(0, str(ROOT))
+    from scripts.security.exemption_validator import validate_and_load_authority_key
+
+    # 1. Arbitrary caller-selected tmp_path outside vault allowlist -> REJECTED
+    arbitrary_key = tmp_path / "arbitrary_caller.key"
+    arbitrary_key.write_text("a" * 32, encoding="utf-8")
+    raw_key, err = validate_and_load_authority_key(arbitrary_key)
+    assert raw_key is None
+    assert "not located in an allowlisted vault directory" in err
+
+    # 2. Symlink key file inside vault -> REJECTED
+    vault_dir = ROOT / "docs/security/vault"
+    vault_dir.mkdir(parents=True, exist_ok=True)
+
+    real_key = vault_dir / f"real_key_{tmp_path.name}.key"
+    real_key.write_text("b" * 32, encoding="utf-8")
+    real_key.chmod(0o600)
+
+    symlink_key = vault_dir / f"symlink_key_{tmp_path.name}.key"
+    if symlink_key.exists() or symlink_key.is_symlink():
+        symlink_key.unlink()
+    symlink_key.symlink_to(real_key)
+
+    raw_key, err = validate_and_load_authority_key(symlink_key)
+    assert raw_key is None
+    assert "is a symlink" in err
+
+    # 3. Unrestrictive permissions 0o644 inside vault -> REJECTED
+    bad_mode_key = vault_dir / f"bad_mode_{tmp_path.name}.key"
+    bad_mode_key.write_text("c" * 32, encoding="utf-8")
+    bad_mode_key.chmod(0o644)
+
+    raw_key, err = validate_and_load_authority_key(bad_mode_key)
+    assert raw_key is None
+    assert "unrestrictive permissions" in err
+
+    # Clean up test keys
+    symlink_key.unlink(missing_ok=True)
+    real_key.unlink(missing_ok=True)
+    bad_mode_key.unlink(missing_ok=True)
+
+
+def test_round13_b2_unauthenticated_free_expected_digests_dict_rejected(tmp_path: Path) -> None:
+    """B2 — Free caller-supplied expected digests without a matching authenticated authority manifest are rejected."""
+    sys.path.insert(0, str(ROOT))
+    from scripts.security.exemption_validator import AuthoritativeReceiptVerifier
+
+    vault_dir = ROOT / "docs/security/vault"
+    vault_dir.mkdir(parents=True, exist_ok=True)
+
+    key_file = vault_dir / f"test_key_{tmp_path.name}.key"
+    key_file.write_text("d" * 32, encoding="utf-8")
+    key_file.chmod(0o600)
+
+    bogus_manifest = vault_dir / f"bogus_manifest_{tmp_path.name}.json"
+    bogus_manifest.write_text(json.dumps({"manifest_version": "1.0.0"}), encoding="utf-8")
+    bogus_manifest.chmod(0o600)
+
+    verifier = AuthoritativeReceiptVerifier(
+        authority_key_file=key_file,
+        authority_manifest_path=bogus_manifest,
+        expected_digests={"source_digest": "1" * 64},
+    )
+
+    assert not verifier.has_complete_expected_digests
+    assert "Failed to authenticate authority manifest" in (verifier.manifest_error or "")
+
+    key_file.unlink(missing_ok=True)
+    bogus_manifest.unlink(missing_ok=True)
+
+
+def test_round13_b3_uncovered_source_intervening_commit_reverted_change_rejected(tmp_path: Path) -> None:
+    """B3 — verify_sbom fails closed when any commit in the range between committed git-sha and active HEAD touches non-evidence files."""
+    sys.path.insert(0, str(ROOT))
+    from scripts.security.generate_sbom import verify_sbom
+
+    sbom_data = {
+        "bomFormat": "CycloneDX",
+        "specVersion": "1.5",
+        "serialNumber": "urn:uuid:test-12345",
+        "version": 1,
+        "metadata": {
+            "properties": [
+                {"name": "git-sha", "value": "0" * 40},
+                {"name": "source-tree-sha", "value": "1" * 64},
+                {"name": "package-lock-hash", "value": "2" * 64},
+                {"name": "uv-lock-hash", "value": "3" * 64},
+                {"name": "policy-hash", "value": "4" * 64},
+                {"name": "evidence-report-hash", "value": "5" * 64},
+                {"name": "sbom-content-digest", "value": "6" * 64},
+                {"name": "image-digest", "value": "UNBOUND"},
+                {"name": "release-digest", "value": "UNBOUND"},
+                {"name": "policy-status", "value": "PASSED"},
+            ]
+        },
+        "components": [],
+        "dependencies": [],
+    }
+
+    dummy_sbom_file = tmp_path / "dummy_sbom.json"
+    dummy_sbom_file.write_text(json.dumps(sbom_data), encoding="utf-8")
+
+    res = verify_sbom(dummy_sbom_file)
+    assert res == 1

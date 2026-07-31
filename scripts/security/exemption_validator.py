@@ -87,6 +87,82 @@ REQUIRED_DIGEST_KEYS = {
     "evidence_report_digest",
 }
 
+ALLOWLISTED_VAULT_PATHS = {
+    (ROOT / "docs/security/vault").resolve(),
+    Path("/etc/pantheon/security").resolve(),
+    Path("/var/lib/pantheon/vault").resolve(),
+}
+
+
+def validate_and_load_authority_key(key_file_path: Path | str | None) -> tuple[str | None, str | None]:
+    """Validate key file path, ownership, mode, symlink status, and vault provenance.
+
+    Returns:
+        (key_string, error_message)
+    """
+    if not key_file_path:
+        return None, "No authority key file path provided."
+
+    kf = Path(key_file_path)
+
+    # 1. Symlink check (fail closed on symlinks)
+    if kf.is_symlink():
+        return None, f"Authority key file '{key_file_path}' is a symlink (symlink key files forbidden)."
+
+    if not kf.exists():
+        return None, f"Authority key file '{key_file_path}' does not exist on disk."
+
+    if not kf.is_file():
+        return None, f"Authority key file '{key_file_path}' is not a regular file."
+
+    resolved = kf.resolve()
+
+    # 2. Vault path allowlist check (fail closed on arbitrary env/caller paths)
+    is_allowlisted = False
+    for vp in ALLOWLISTED_VAULT_PATHS:
+        if resolved == vp or vp in resolved.parents:
+            is_allowlisted = True
+            break
+
+    if not is_allowlisted:
+        return (
+            None,
+            f"Authority key file '{key_file_path}' (resolved: '{resolved}') is not located in an allowlisted vault directory. "
+            "Arbitrary caller-selected key files and temporary paths are rejected.",
+        )
+
+    # 3. Restrictive mode permissions check (must be 0o600 or 0o400; no group or world access)
+    st = resolved.stat()
+    mode_bits = st.st_mode & 0o077
+    if mode_bits != 0:
+        return (
+            None,
+            f"Authority key file '{resolved}' has unrestrictive permissions 0o{st.st_mode & 0o777:o}. "
+            "Key file must have restrictive permissions 0o600 or 0o400 with no group or world access.",
+        )
+
+    # 4. Owner check (must be current process UID or root UID 0)
+    current_uid = os.getuid()
+    if st.st_uid != current_uid and st.st_uid != 0:
+        return (
+            None,
+            f"Authority key file '{resolved}' uid {st.st_uid} does not match process uid {current_uid} or root.",
+        )
+
+    # 5. Parent directory permissions check (must not be world-writable)
+    parent_st = resolved.parent.stat()
+    if (parent_st.st_mode & 0o002) != 0:
+        return (
+            None,
+            f"Parent directory '{resolved.parent}' of authority key file is world-writable.",
+        )
+
+    raw_key = resolved.read_text(encoding="utf-8").strip()
+    if not raw_key or len(raw_key) < 16:
+        return None, f"Authority key file '{resolved}' contains empty or insufficient key length (min 16 chars)."
+
+    return raw_key, None
+
 
 class AuthoritativeReceiptVerifier:
     """Concrete verifier that obtains and validates authoritative source-system readback and signature data."""
@@ -94,21 +170,25 @@ class AuthoritativeReceiptVerifier:
     def __init__(
         self,
         authority_key_file: Path | str | None = None,
+        authority_manifest_path: Path | str | None = None,
         trusted_source_systems: set[str] | None = None,
         expected_policy_version: str | None = None,
         expected_digests: dict[str, str] | None = None,
     ):
-        # B1 fix: Authority key MUST be loaded from a non-caller-writable external key file on disk.
-        # Process environment variables (os.getenv) and in-memory string parameters are caller-writable
-        # and cannot serve as self-established trust roots.
         self.authority_key: str | None = None
-        key_file_path = authority_key_file or os.getenv("OSS_LEGAL_AUTHORITY_KEY_FILE")
-        if key_file_path:
-            kf = Path(key_file_path)
-            if kf.exists() and kf.is_file():
-                raw_key = kf.read_text(encoding="utf-8").strip()
-                if raw_key and len(raw_key) >= 16:
-                    self.authority_key = raw_key
+        self.key_error: str | None = None
+
+        # B1 fix: Resolve authority key from allowlisted vault path only.
+        target_key_path = authority_key_file or os.getenv("OSS_LEGAL_AUTHORITY_KEY_FILE")
+        if not target_key_path:
+            default_key = ROOT / "docs/security/vault/legal_authority.key"
+            if default_key.exists():
+                target_key_path = default_key
+
+        if target_key_path:
+            self.authority_key, self.key_error = validate_and_load_authority_key(target_key_path)
+        else:
+            self.key_error = "No authority key file path configured or found in allowlisted vault."
 
         self.trusted_source_systems = trusted_source_systems or {
             "ODP-PLAN-OSS-LEGAL-POLICY-001",
@@ -117,31 +197,81 @@ class AuthoritativeReceiptVerifier:
         }
         self.expected_policy_version = expected_policy_version or "1.0.0"
 
-        # B2 fix: Mandatory independent expected digests dictionary must cover all required digest keys
-        self.expected_digests = expected_digests or {}
-        missing_dig_keys = REQUIRED_DIGEST_KEYS - set(self.expected_digests.keys())
-        if missing_dig_keys or any(not self.expected_digests.get(k) for k in REQUIRED_DIGEST_KEYS):
-            self.has_complete_expected_digests = False
+        # B2 fix: Mandatory independent expected digests MUST be obtained from an authenticated, signed authority manifest.
+        self.expected_digests: dict[str, str] = {}
+        self.manifest_error: str | None = None
+        self.has_complete_expected_digests = False
+
+        if self.authority_key:
+            target_manifest_path = authority_manifest_path or (ROOT / "docs/security/vault/authority_manifest.json")
+            if not target_manifest_path or not Path(target_manifest_path).exists():
+                target_manifest_path = ROOT / "docs/security/authority_manifest.json"
+
+            if Path(target_manifest_path).exists():
+                m_ok, m_digests, m_err = self._load_and_verify_manifest(Path(target_manifest_path))
+                if m_ok and m_digests:
+                    if expected_digests:
+                        for k, v in expected_digests.items():
+                            if m_digests.get(k) != v:
+                                self.manifest_error = f"Caller-supplied expected digest '{k}' does not match signed authority manifest."
+                                m_ok = False
+                                break
+                    if m_ok:
+                        self.expected_digests = m_digests
+                        self.has_complete_expected_digests = True
+                else:
+                    self.manifest_error = f"Failed to authenticate authority manifest: {m_err}"
+            else:
+                self.manifest_error = f"Authority manifest file missing at {target_manifest_path}"
         else:
-            self.has_complete_expected_digests = True
+            self.manifest_error = self.key_error or "No valid authority key to verify authority manifest."
+
+        if self.has_complete_expected_digests:
+            missing_dig_keys = REQUIRED_DIGEST_KEYS - set(self.expected_digests.keys())
+            if missing_dig_keys or any(not self.expected_digests.get(k) for k in REQUIRED_DIGEST_KEYS):
+                self.has_complete_expected_digests = False
+
+    def _load_and_verify_manifest(self, manifest_path: Path) -> tuple[bool, dict[str, str] | None, str | None]:
+        if manifest_path.is_symlink():
+            return False, None, f"Authority manifest file '{manifest_path}' is a symlink (symlinks forbidden)."
+        try:
+            m_data = json.loads(manifest_path.read_text(encoding="utf-8"))
+        except Exception as e:
+            return False, None, f"Failed to parse manifest JSON: {e}"
+
+        payload = {k: v for k, v in m_data.items() if k not in {"canonical_manifest_hash", "signature"}}
+        canon_json = json.dumps(payload, sort_keys=True, separators=(",", ":"))
+        computed_hash = hashlib.sha256(canon_json.encode("utf-8")).hexdigest()
+        actual_hash = m_data.get("canonical_manifest_hash", "")
+        actual_sig = m_data.get("signature", "")
+
+        if computed_hash != actual_hash:
+            return False, None, f"Manifest hash mismatch: computed='{computed_hash}', actual='{actual_hash}'"
+
+        expected_sig = compute_receipt_signature(computed_hash, self.authority_key)
+        if not actual_sig or not hmac.compare_digest(actual_sig, expected_sig):
+            return False, None, "Manifest signature mismatch against authority key."
+
+        exp_digs = m_data.get("expected_digests", {})
+        if not isinstance(exp_digs, dict):
+            return False, None, "Manifest expected_digests is not an object schema."
+
+        return True, exp_digs, None
 
     def verify(self, ref_str: str, receipt_data: dict, entry: dict) -> tuple[bool, str | None]:
         if not self.authority_key:
             return (
                 False,
-                f"Authoritative verifier has no valid authority key file configured on disk for receipt '{ref_str}'; "
-                "caller-writable environment variables and in-memory strings are rejected and active exemption path is structurally disabled.",
+                f"Authoritative verifier has no valid authority key configured from allowlisted vault for receipt '{ref_str}': {self.key_error}",
             )
 
         if not self.has_complete_expected_digests:
             return (
                 False,
-                f"Authoritative verifier for '{ref_str}' has missing or incomplete mandatory expected digests; "
-                f"required keys {sorted(REQUIRED_DIGEST_KEYS)} must all be independently bound.",
+                f"Authoritative verifier for '{ref_str}' has missing or unauthenticated expected digests: {self.manifest_error or 'incomplete digests'}",
             )
 
         src_sys = receipt_data.get("source_system", "")
-        # B1 fix: Exact equality membership check, NOT substring matching
         if src_sys not in self.trusted_source_systems:
             return (
                 False,

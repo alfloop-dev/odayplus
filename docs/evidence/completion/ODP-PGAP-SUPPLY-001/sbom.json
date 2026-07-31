@@ -1,10 +1,10 @@
 {
   "bomFormat": "CycloneDX",
   "specVersion": "1.5",
-  "serialNumber": "urn:uuid:sha256-0b10e8cd5d0f5290206fc0ad56776e98",
+  "serialNumber": "urn:uuid:sha256-a680137dc88efe36481fc49ce55864b1",
   "version": 1,
   "metadata": {
-    "timestamp": "2026-07-31T08:32:03.283440+00:00",
+    "timestamp": "2026-07-31T08:45:54.744329+00:00",
     "component": {
       "name": "oday-plus",
       "version": "0.1.0",
@@ -13,11 +13,11 @@
     "properties": [
       {
         "name": "git-sha",
-        "value": "c48a3b3eb385f204f9bb721a208e1203a093e8eb"
+        "value": "b2b7bb6305a53f0b9d2625c5b90ccf59622c7675"
       },
       {
         "name": "source-tree-sha",
-        "value": "37259e394ff91a4e1233e82d155aa30688762a8d1ea6550dffeb6eb243048479"
+        "value": "c8814e7ab3211b1eabf765ee42cd54f149fdab37226904b1b6bd40455394231d"
       },
       {
         "name": "package-lock-hash",
@@ -37,11 +37,11 @@
       },
       {
         "name": "sbom-hash",
-        "value": "0b10e8cd5d0f5290206fc0ad56776e980e7dd0374d14e744d2a199d83d12ad75"
+        "value": "a680137dc88efe36481fc49ce55864b1377ff3eca85a7cb2136e28ae030adf4d"
       },
       {
         "name": "sbom-content-digest",
-        "value": "sha256:0b10e8cd5d0f5290206fc0ad56776e980e7dd0374d14e744d2a199d83d12ad75"
+        "value": "sha256:a680137dc88efe36481fc49ce55864b1377ff3eca85a7cb2136e28ae030adf4d"
       },
       {
         "name": "image-digest",

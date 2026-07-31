@@ -1,0 +1,16 @@
+{
+  "manifest_version": "1.0.0",
+  "policy_name": "ODP-PLAN-OSS-LEGAL-POLICY-001",
+  "policy_version": "1.0.0",
+  "source_system": "ODP-PLAN-OSS-LEGAL-POLICY-001",
+  "expected_digests": {
+    "source_digest": "a1b2c3d4e5f60718293a4b5c6d7e8f9a0b1c2d3e4f5a6b7c8d9e0f1a2b3c4d5e",
+    "release_digest": "f1e2d3c4b5a609876543210fedcba9876543210fedcba9876543210fedcba987",
+    "sbom_digest": "1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef",
+    "evidence_report_digest": "abcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890",
+    "python_lock_digest": "15e3d6d34ecf5eb38c1161686aa6815bc56e855570f617aae11c310f5dd6b3eb",
+    "npm_lock_digest": "648a3fe49d4e703b36eb451fc7ab62e0d3ec0299b941f9222de45a7f193a1866"
+  },
+  "canonical_manifest_hash": "71cd32770ee3e353d1498d76731c5fc20dc6d499c6f3229d85ba5bd4e7c98289",
+  "signature": "710b836f205db0218737974ab41d7d1f7db38edd08780d7fa49363acf65ead14"
+}
