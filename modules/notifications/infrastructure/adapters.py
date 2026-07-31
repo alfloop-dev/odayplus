@@ -45,16 +45,65 @@ class ConsoleNotificationAdapter:
 
 from collections.abc import Callable
 
-PINNED_ONCALL_PROVIDER_PUBLIC_KEY_PEM = (
+_CANONICAL_PINNED_ONCALL_PROVIDER_PUBLIC_KEY_PEM = (
     "-----BEGIN PUBLIC KEY-----\n"
     "MCowBQYDK2VwAyEA6ZqyVQ53UCAtdWC17njGX5O7c1p2H5IwaiRISSgAX8M=\n"
     "-----END PUBLIC KEY-----\n"
 )
-PINNED_PLATFORM_DEPLOYMENT_PUBLIC_KEY_PEM = (
+_CANONICAL_PINNED_PLATFORM_DEPLOYMENT_PUBLIC_KEY_PEM = (
     "-----BEGIN PUBLIC KEY-----\n"
     "MCowBQYDK2VwAyEA+w5m8zJ31H/4vG74o3G7yT92k6e71X67Y7X183921Z4=\n"
     "-----END PUBLIC KEY-----\n"
 )
+
+PINNED_ONCALL_PROVIDER_PUBLIC_KEY_PEM = _CANONICAL_PINNED_ONCALL_PROVIDER_PUBLIC_KEY_PEM
+PINNED_PLATFORM_DEPLOYMENT_PUBLIC_KEY_PEM = _CANONICAL_PINNED_PLATFORM_DEPLOYMENT_PUBLIC_KEY_PEM
+
+
+def _CANONICAL_REAL_HTTP_TRANSPORT(url: str, payload: dict) -> tuple[int, str | dict]:
+    import json
+    import urllib.error
+    import urllib.request
+
+    class NoRedirectionHandler(urllib.request.HTTPRedirectHandler):
+        def http_error_301(self, req, fp, code, msg, headers):
+            raise urllib.error.HTTPError(req.full_url, code, "Redirects forbidden", headers, fp)
+
+        def http_error_302(self, req, fp, code, msg, headers):
+            raise urllib.error.HTTPError(req.full_url, code, "Redirects forbidden", headers, fp)
+
+        def http_error_303(self, req, fp, code, msg, headers):
+            raise urllib.error.HTTPError(req.full_url, code, "Redirects forbidden", headers, fp)
+
+        def http_error_307(self, req, fp, code, msg, headers):
+            raise urllib.error.HTTPError(req.full_url, code, "Redirects forbidden", headers, fp)
+
+        def http_error_308(self, req, fp, code, msg, headers):
+            raise urllib.error.HTTPError(req.full_url, code, "Redirects forbidden", headers, fp)
+
+    data = json.dumps(payload).encode("utf-8")
+    req = urllib.request.Request(
+        url,
+        data=data,
+        headers={"Content-Type": "application/json"},
+        method="POST",
+    )
+    opener = urllib.request.build_opener(NoRedirectionHandler())
+    try:
+        with opener.open(req, timeout=5) as response:
+            if response.geturl() != url:
+                return 302, "Redirect detected and forbidden"
+            body = response.read().decode("utf-8")
+            try:
+                parsed = json.loads(body)
+            except Exception:
+                parsed = body
+            return response.status, parsed
+    except urllib.error.HTTPError as e:
+        body = e.read().decode("utf-8") if e.fp else str(e)
+        return e.code, body
+    except Exception as e:
+        return 0, str(e)
 
 
 class OnCallNotificationAdapter:
@@ -62,6 +111,8 @@ class OnCallNotificationAdapter:
 
     and records durable, verifiable delivery receipts derived from actual HTTP responses.
     """
+
+    _default_http_transport = staticmethod(_CANONICAL_REAL_HTTP_TRANSPORT)
 
     def __init__(
         self,
@@ -72,6 +123,7 @@ class OnCallNotificationAdapter:
         platform_public_key_pem: str | None = None,
     ) -> None:
         self.endpoint_url = endpoint_url
+        self._raw_http_transport = http_transport
         self.http_transport = http_transport or self._default_http_transport
         self.trusted_release_sha = (
             trusted_release_sha
@@ -353,14 +405,27 @@ class OnCallNotificationAdapter:
                 and no_query_or_fragment
             )
 
-        is_injected_transport = self.http_transport != self._default_http_transport
+        current_class_default = getattr(OnCallNotificationAdapter, "_default_http_transport", None)
+        if isinstance(current_class_default, staticmethod):
+            current_class_default = current_class_default.__func__
+
+        is_injected_transport = (
+            self._raw_http_transport is not None
+            or self.http_transport != _CANONICAL_REAL_HTTP_TRANSPORT
+            or current_class_default != _CANONICAL_REAL_HTTP_TRANSPORT
+        )
         has_injected_keys = (
             self.provider_public_key_pem is not None
             or self.platform_public_key_pem is not None
         )
+        is_keys_mutated_or_overridden = (
+            has_injected_keys
+            or (self.provider_public_key_pem or PINNED_ONCALL_PROVIDER_PUBLIC_KEY_PEM) != _CANONICAL_PINNED_ONCALL_PROVIDER_PUBLIC_KEY_PEM
+            or (self.platform_public_key_pem or PINNED_PLATFORM_DEPLOYMENT_PUBLIC_KEY_PEM) != _CANONICAL_PINNED_PLATFORM_DEPLOYMENT_PUBLIC_KEY_PEM
+        )
         is_mock_or_test = (
             is_injected_transport
-            or has_injected_keys
+            or is_keys_mutated_or_overridden
             or is_loopback
             or not is_https
             or not is_allowlisted_endpoint

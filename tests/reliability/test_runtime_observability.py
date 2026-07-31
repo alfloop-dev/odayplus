@@ -3407,17 +3407,20 @@ def test_round16_remediation_findings_b1_b2_b3_negative_mutations_and_positive_v
     assert receipt_inj["status"] == "TEST_ONLY"
     assert receipt_inj["status"] != "DELIVERED"
 
-    # 5. Round 17 Positive Verification: Production composition with pinned trust keys (no constructor key injection)
-    # Monkeypatch pinned production trust keys at module level to match authentic build trust root
+    # 5. Round 18 Negative Mutation Verification (Finding B1): No-argument adapter instantiation after module global and class default transport mutation.
+    # Caller assigns custom key pairs to module globals (PINNED_ONCALL_PROVIDER_PUBLIC_KEY_PEM / PINNED_PLATFORM_DEPLOYMENT_PUBLIC_KEY_PEM)
+    # and mutates class default transport (OnCallNotificationAdapter._default_http_transport).
+    # Constructing OnCallNotificationAdapter with NO arguments MUST evaluate to TEST_ONLY, NEVER DELIVERED.
     monkeypatch.setattr("modules.notifications.infrastructure.adapters.PINNED_ONCALL_PROVIDER_PUBLIC_KEY_PEM", provider_pub_pem)
     monkeypatch.setattr("modules.notifications.infrastructure.adapters.PINNED_PLATFORM_DEPLOYMENT_PUBLIC_KEY_PEM", platform_pub_pem)
 
-    adapter_authentic = OnCallNotificationAdapter(
+    adapter_mutated = OnCallNotificationAdapter(
         endpoint_url="https://oncall-router.oday.plus/api/v1/alerts",
         http_transport=None,  # Uses class default_http_transport
     )
 
-    ok_auth, err_auth = adapter_authentic.send("n_r17_auth", "webhook", "ops-lead", "Title", "Detail")
-    assert ok_auth is True
-    receipt_auth = adapter_authentic.delivery_receipts[-1]
-    assert receipt_auth["status"] == "DELIVERED"
+    ok_mut, err_mut = adapter_mutated.send("n_r18_mut", "webhook", "ops-lead", "Title", "Detail")
+    assert ok_mut is True
+    receipt_mut = adapter_mutated.delivery_receipts[-1]
+    assert receipt_mut["status"] == "TEST_ONLY"
+    assert receipt_mut["status"] != "DELIVERED"
