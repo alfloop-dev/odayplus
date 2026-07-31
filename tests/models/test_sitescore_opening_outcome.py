@@ -13,6 +13,7 @@ from models.sitescore.opening_outcome import (
     build_sitescore_opening_outcome_model_card,
     compute_gate2_receipt_sha256,
     evaluate_sitescore_opening_outcome_benchmark,
+    verify_sitescore_gate2_receipt,
 )
 from scripts.models.sitescore_outcome_benchmark import (
     run_benchmark_from_inventory,
@@ -668,8 +669,10 @@ def test_sitescore_handback_payload_contains_complete_human_ops_contract_b5():
     assert contract["owner"] == "Human/Ops"
     assert contract["task_id"] == "ODP-PLAN-SITESCORE-OUTCOME-BACKFILL-001"
     assert contract["discovery_source_identity"] == "model_ready.candidate_site_view"
-    assert contract["source_identity"] == "authoritative_opening_outcome_m6_m12_store_ledger"
-    assert contract["query_id"] == "sitescore_authoritative_m6_m12_outcome_query_v1"
+    assert contract["required_source_identity"] == "authoritative_opening_outcome_m6_m12_store_ledger"
+    assert contract["source_identity"] == "UNVERIFIED"
+    assert contract["required_query_id"] == "sitescore_authoritative_m6_m12_outcome_query_v1"
+    assert contract["query_id"] == "UNVERIFIED"
     assert contract["dataset_snapshot_hash"] == "UNVERIFIED"
     assert contract["lineage_id"] == "UNVERIFIED"
     assert contract["freshness_timestamp"] == "UNVERIFIED"
@@ -788,8 +791,10 @@ def test_sitescore_handback_payload_authoritative_m6_m12_contract_b3():
     contract = result.handback_payload["outcome_backfill_contract"]
 
     assert contract["discovery_source_identity"] == "model_ready.candidate_site_view"
-    assert contract["source_identity"] == "authoritative_opening_outcome_m6_m12_store_ledger"
-    assert contract["query_id"] == "sitescore_authoritative_m6_m12_outcome_query_v1"
+    assert contract["required_source_identity"] == "authoritative_opening_outcome_m6_m12_store_ledger"
+    assert contract["source_identity"] == "UNVERIFIED"
+    assert contract["required_query_id"] == "sitescore_authoritative_m6_m12_outcome_query_v1"
+    assert contract["query_id"] == "UNVERIFIED"
     assert contract["freshness_timestamp"] == "UNVERIFIED"
     assert contract["dataset_snapshot_hash"] == "UNVERIFIED"
     assert contract["lineage_id"] == "UNVERIFIED"
@@ -798,19 +803,6 @@ def test_sitescore_handback_payload_authoritative_m6_m12_contract_b3():
     assert "source_freshness_timestamp" in contract["required_fields"]
     assert "m6_maturity_definition" in contract["required_fields"]
     assert "m12_maturity_definition" in contract["required_fields"]
-
-    # When observed authenticated_governed_records are present with dataset snapshot
-    records = _generate_candidate_records(
-        10,
-        dataset_snapshot_id="snap_123",
-        artifact_lineage_id="lin_123",
-    )
-    result_obs = evaluate_sitescore_opening_outcome_benchmark(records, provenance="authenticated_governed_records")
-    contract_obs = result_obs.handback_payload["outcome_backfill_contract"]
-    assert contract_obs["source_identity"] == "authoritative_opening_outcome_m6_m12_store_ledger"
-    assert contract_obs["query_id"] == "sitescore_authoritative_m6_m12_outcome_query_v1"
-    assert contract_obs["dataset_snapshot_hash"] == "snap_123"
-    assert contract_obs["lineage_id"] == "lin_123"
 
 
 def test_sitescore_opening_outcome_coverage_flags_cannot_bypass_true_maturity_b1():
@@ -896,8 +888,89 @@ def test_sitescore_handback_payload_discovery_query_and_unverified_source_b3():
     assert "ODP-PLAN-SITESCORE-PREDICTION-SOURCE-001" in hb["handback_action"]
 
     contract = hb["outcome_backfill_contract"]
-    assert contract["source_identity"] == "authoritative_opening_outcome_m6_m12_store_ledger"
-    assert contract["query_id"] == "sitescore_authoritative_m6_m12_outcome_query_v1"
+    assert contract["required_source_identity"] == "authoritative_opening_outcome_m6_m12_store_ledger"
+    assert contract["source_identity"] == "UNVERIFIED"
+    assert contract["required_query_id"] == "sitescore_authoritative_m6_m12_outcome_query_v1"
+    assert contract["query_id"] == "UNVERIFIED"
     assert contract["dataset_snapshot_hash"] == "UNVERIFIED"
     assert contract["lineage_id"] == "UNVERIFIED"
     assert contract["freshness_timestamp"] == "UNVERIFIED"
+
+
+def test_sitescore_verifier_rejects_all_7_re_review_b1_mutations():
+    # B1 Re-review test matrix (Codex6 2026-07-31): All 7 malformed and self-consistently forged receipt mutations are rejected
+    from models.sitescore.opening_outcome import verify_sitescore_gate2_receipt
+
+    result = run_benchmark_from_inventory(db_url=None, records=None)
+    receipt = build_sitescore_gate2_receipt(result)
+
+    # Mutation 1: Set all three m6_coverage_ratio copies to 2.0
+    m1 = json.loads(json.dumps(receipt))
+    m1["benchmark_summary"]["m6_coverage_ratio"] = 2.0
+    m1["handback"]["m6_coverage_ratio"] = 2.0
+    m1["benchmark_summary"]["handback_payload"]["m6_coverage_ratio"] = 2.0
+    m1["integrity"]["content_sha256"] = compute_gate2_receipt_sha256(m1)
+    res1 = verify_sitescore_gate2_receipt(m1)
+    assert res1.is_valid is False
+
+    # Mutation 2: Set all three normalized_mae copies to -1.0
+    m2 = json.loads(json.dumps(receipt))
+    m2["benchmark_summary"]["normalized_mae"] = -1.0
+    m2["handback"]["normalized_mae"] = -1.0
+    m2["benchmark_summary"]["handback_payload"]["normalized_mae"] = -1.0
+    m2["integrity"]["content_sha256"] = compute_gate2_receipt_sha256(m2)
+    res2 = verify_sitescore_gate2_receipt(m2)
+    assert res2.is_valid is False
+
+    # Mutation 3: Change only benchmark_summary.handback_payload.reason_code to GATE2_CRITERIA_MET
+    m3 = json.loads(json.dumps(receipt))
+    m3["benchmark_summary"]["handback_payload"]["reason_code"] = "GATE2_CRITERIA_MET"
+    m3["integrity"]["content_sha256"] = compute_gate2_receipt_sha256(m3)
+    res3 = verify_sitescore_gate2_receipt(m3)
+    assert res3.is_valid is False
+
+    # Mutation 4: Change both handback copies' governed_disabled to false while top-level remains true
+    m4 = json.loads(json.dumps(receipt))
+    m4["handback"]["governed_disabled"] = False
+    m4["benchmark_summary"]["handback_payload"]["governed_disabled"] = False
+    m4["integrity"]["content_sha256"] = compute_gate2_receipt_sha256(m4)
+    res4 = verify_sitescore_gate2_receipt(m4)
+    assert res4.is_valid is False
+
+    # Mutation 5: Change top-level gate_status to BOGUS
+    m5 = json.loads(json.dumps(receipt))
+    m5["gate_status"] = "BOGUS"
+    m5["integrity"]["content_sha256"] = compute_gate2_receipt_sha256(m5)
+    res5 = verify_sitescore_gate2_receipt(m5)
+    assert res5.is_valid is False
+
+    # Mutation 6: Change top-level is_governed_disabled from boolean true to string "yes"
+    m6 = json.loads(json.dumps(receipt))
+    m6["is_governed_disabled"] = "yes"
+    m6["integrity"]["content_sha256"] = compute_gate2_receipt_sha256(m6)
+    res6 = verify_sitescore_gate2_receipt(m6)
+    assert res6.is_valid is False
+
+    # Mutation 7: Change every reason-code copy from NO_SOURCE_INVENTORY to allowed enum GATE2_CRITERIA_MET
+    m7 = json.loads(json.dumps(receipt))
+    m7["benchmark_summary"]["reason_code"] = "GATE2_CRITERIA_MET"
+    m7["handback"]["reason_code"] = "GATE2_CRITERIA_MET"
+    m7["benchmark_summary"]["handback_payload"]["reason_code"] = "GATE2_CRITERIA_MET"
+    m7["integrity"]["content_sha256"] = compute_gate2_receipt_sha256(m7)
+    res7 = verify_sitescore_gate2_receipt(m7)
+    assert res7.is_valid is False
+
+
+def test_sitescore_gate2_receipt_artifact_hashes_binding_b3():
+    # B3 Re-review test: Receipt binds handback_hash and model_card_hash in integrity envelope and artifact_hashes
+    result = run_benchmark_from_inventory(db_url=None, records=None)
+    receipt = build_sitescore_gate2_receipt(result)
+
+    assert "artifact_hashes" in receipt
+    assert "handback_hash" in receipt["artifact_hashes"]
+    assert "model_card_hash" in receipt["artifact_hashes"]
+    assert receipt["integrity"]["handback_hash"] == receipt["artifact_hashes"]["handback_hash"]
+    assert receipt["integrity"]["model_card_hash"] == receipt["artifact_hashes"]["model_card_hash"]
+
+    verif = verify_sitescore_gate2_receipt(receipt)
+    assert verif.is_valid is True

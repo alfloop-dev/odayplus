@@ -54,6 +54,10 @@ class SiteScoreOpeningOutcomeBenchmarkResult:
     prediction_coverage_ratio: float = 0.0
     interval_bounds_coverage_ratio: float = 0.0
     matched_prediction_count: int = 0
+    m6_mature_count: int = 0
+    m12_mature_count: int = 0
+    interval_bounds_count: int = 0
+    in_p80_count: int = 0
     matched_mean_y: float = 0.0
     dataset_snapshot_id: str | None = None
     model_version: str | None = None
@@ -210,7 +214,6 @@ class SiteScoreOpeningOutcomeBenchmarkResult:
             "realized_90d_net_revenue, (CURRENT_DATE - opened_on)::integer AS store_age_days "
             "FROM model_ready.candidate_site_view;"
         )
-        observed_at_str = self.observed_at or datetime.now(UTC).isoformat().replace("+00:00", "Z")
         return {
             "handback_required": True,
             "reason_code": self.reason_code,
@@ -220,6 +223,10 @@ class SiteScoreOpeningOutcomeBenchmarkResult:
             "eligible_count": self.eligible_count,
             "mature_label_count": self.mature_label_count,
             "matched_prediction_count": self.matched_prediction_count,
+            "m6_mature_count": self.m6_mature_count,
+            "m12_mature_count": self.m12_mature_count,
+            "interval_bounds_count": self.interval_bounds_count,
+            "in_p80_count": self.in_p80_count,
             "matched_mean_y": round(self.matched_mean_y, 2),
             "activation_threshold": self.activation_threshold,
             "missing_labels_delta": missing_labels,
@@ -237,11 +244,15 @@ class SiteScoreOpeningOutcomeBenchmarkResult:
                 "scope": "Provide authoritative M6 (180d) and M12 (365d) post-opening net revenue labels for historical opened candidate sites.",
                 "discovery_source_identity": "model_ready.candidate_site_view",
                 "discovery_query_id": "sitescore_opening_outcome_discovery_query_v1",
-                "source_identity": "authoritative_opening_outcome_m6_m12_store_ledger",
-                "query_id": "sitescore_authoritative_m6_m12_outcome_query_v1",
-                "dataset_snapshot_hash": self.dataset_snapshot_id if (self.provenance == "authenticated_governed_records" and self.dataset_snapshot_id) else "UNVERIFIED",
-                "lineage_id": self.artifact_lineage_id if (self.provenance == "authenticated_governed_records" and self.artifact_lineage_id) else "UNVERIFIED",
-                "freshness_timestamp": observed_at_str if (self.provenance == "authenticated_governed_records" and self.observed_at) else "UNVERIFIED",
+                "required_source_identity": "authoritative_opening_outcome_m6_m12_store_ledger",
+                "required_query_id": "sitescore_authoritative_m6_m12_outcome_query_v1",
+                "required_evidence_owner": "Human/Ops",
+                "source_identity": "UNVERIFIED",
+                "query_id": "UNVERIFIED",
+                "dataset_snapshot_hash": "UNVERIFIED",
+                "lineage_id": "UNVERIFIED",
+                "freshness_timestamp": "UNVERIFIED",
+                "evidence_owner": "UNVERIFIED",
                 "eligibility_definition": "is_training_eligible IS True or eligible IS True",
                 "maturity_definition": "realized_90d_net_revenue IS NOT NULL AND realized_90d_net_revenue >= 0",
                 "m6_maturity_definition": "store_age_days >= 180 AND realized_180d_net_revenue IS NOT NULL AND realized_180d_net_revenue >= 0",
@@ -249,7 +260,11 @@ class SiteScoreOpeningOutcomeBenchmarkResult:
                 "observed_count": self.observed_count,
                 "eligible_count": self.eligible_count,
                 "mature_count": self.mature_label_count,
+                "m6_mature_count": self.m6_mature_count,
+                "m12_mature_count": self.m12_mature_count,
                 "matched_prediction_count": self.matched_prediction_count,
+                "interval_bounds_count": self.interval_bounds_count,
+                "in_p80_count": self.in_p80_count,
                 "required_fields": [
                     "authoritative_source_identity",
                     "query_id",
@@ -266,6 +281,8 @@ class SiteScoreOpeningOutcomeBenchmarkResult:
                     "m6_mature_count",
                     "m12_mature_count",
                     "matched_prediction_count",
+                    "interval_bounds_count",
+                    "in_p80_count",
                 ],
                 "discovery_inventory_query": executable_query,
                 "note": "Store age (store_age_days) and 90-day discovery inventory are preconditions/discovery only; they are not M6/M12 outcome evidence. ODP-PLAN-SITESCORE-OUTCOME-BACKFILL-001 must supply realized_180d_net_revenue and realized_365d_net_revenue.",
@@ -302,7 +319,11 @@ class SiteScoreOpeningOutcomeBenchmarkResult:
             "observed_count": self.observed_count,
             "eligible_count": self.eligible_count,
             "mature_label_count": self.mature_label_count,
+            "m6_mature_count": self.m6_mature_count,
+            "m12_mature_count": self.m12_mature_count,
             "matched_prediction_count": self.matched_prediction_count,
+            "interval_bounds_count": self.interval_bounds_count,
+            "in_p80_count": self.in_p80_count,
             "matched_mean_y": round(self.matched_mean_y, 2),
             "prediction_coverage_ratio": round(self.prediction_coverage_ratio, 4),
             "interval_bounds_coverage_ratio": round(self.interval_bounds_coverage_ratio, 4),
@@ -658,6 +679,28 @@ def build_sitescore_opening_outcome_model_card(
     )
 
 
+def compute_handback_sha256(payload: dict[str, Any]) -> str:
+    """Compute deterministic SHA256 digest of handback payload."""
+    canonical = json.dumps(
+        payload,
+        sort_keys=True,
+        separators=(",", ":"),
+        allow_nan=False,
+    )
+    return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+
+
+def compute_model_card_sha256(card_dict: dict[str, Any]) -> str:
+    """Compute deterministic SHA256 digest of model card dict excluding integrity envelope."""
+    canonical = json.dumps(
+        {k: v for k, v in card_dict.items() if k != "integrity"},
+        sort_keys=True,
+        separators=(",", ":"),
+        allow_nan=False,
+    )
+    return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+
+
 def compute_gate2_receipt_sha256(payload: dict[str, Any]) -> str:
     """Compute deterministic SHA256 digest of Gate 2 receipt body excluding integrity hash."""
     canonical = json.dumps(
@@ -674,9 +717,15 @@ def build_sitescore_gate2_receipt(
     *,
     inventory_version: str = "candidate-site-view-v2",
     observed_at: str | None = None,
+    model_card_hash: str | None = None,
 ) -> dict[str, Any]:
-    """Build Gate 2 audit receipt payload with integrity envelope."""
+    """Build Gate 2 audit receipt payload with integrity envelope and artifact hash bindings."""
     ts = observed_at or benchmark.observed_at or datetime.now(UTC).isoformat().replace("+00:00", "Z")
+    handback_hash = compute_handback_sha256(benchmark.handback_payload)
+    if model_card_hash is None:
+        mc = build_sitescore_opening_outcome_model_card(benchmark, version=inventory_version)
+        model_card_hash = compute_model_card_sha256(mc.to_dict())
+
     payload: dict[str, Any] = {
         "schema_version": GATE2_RECEIPT_SCHEMA_VERSION,
         "kind": GATE2_RECEIPT_KIND,
@@ -691,11 +740,17 @@ def build_sitescore_gate2_receipt(
         "is_governed_disabled": not benchmark.is_gate2_passed,
         "benchmark_summary": benchmark.to_dict(),
         "handback": benchmark.handback_payload,
+        "artifact_hashes": {
+            "handback_hash": handback_hash,
+            "model_card_hash": model_card_hash,
+        },
     }
     if benchmark.db_error:
         payload["db_error"] = benchmark.db_error
     payload["integrity"] = {
-        "content_sha256": compute_gate2_receipt_sha256(payload)
+        "content_sha256": compute_gate2_receipt_sha256(payload),
+        "handback_hash": handback_hash,
+        "model_card_hash": model_card_hash,
     }
     return payload
 
@@ -708,7 +763,7 @@ class Gate2ReceiptVerificationResult:
 
 
 def verify_sitescore_gate2_receipt(receipt: dict[str, Any]) -> Gate2ReceiptVerificationResult:
-    """Fail-closed verifier for Gate 2 receipt content, duplicate drift, and integrity (Fix for B1)."""
+    """Fail-closed verifier for Gate 2 receipt content, duplicate drift, and integrity (Fix for B1-B3)."""
     errors: list[str] = []
 
     if not isinstance(receipt, dict):
@@ -765,11 +820,27 @@ def verify_sitescore_gate2_receipt(receipt: dict[str, Any]) -> Gate2ReceiptVerif
                 return None
             return f
 
+        def _check_strict_bool(val: Any, name: str) -> bool | None:
+            if not isinstance(val, bool):
+                errors.append(f"Field {name} must be a boolean (got {type(val).__name__}: {val!r})")
+                return None
+            return val
+
+        # Top-level boolean & enum checks
+        rec_gov_disabled = _check_strict_bool(receipt.get("is_governed_disabled"), "is_governed_disabled")
+        rec_gate_status = receipt.get("gate_status")
+        if rec_gate_status not in {"PASSED", "REJECTED_GOVERNED_DISABLED"}:
+            errors.append(f"Invalid top-level gate_status: {rec_gate_status!r}")
+
         # Validate numeric types in summary
         obs = _check_strict_int(summary.get("observed_count"), "benchmark_summary.observed_count")
         elg = _check_strict_int(summary.get("eligible_count"), "benchmark_summary.eligible_count")
         mat = _check_strict_int(summary.get("mature_label_count"), "benchmark_summary.mature_label_count")
         match_cnt = _check_strict_int(summary.get("matched_prediction_count"), "benchmark_summary.matched_prediction_count")
+        m6_mat = _check_strict_int(summary.get("m6_mature_count"), "benchmark_summary.m6_mature_count")
+        m12_mat = _check_strict_int(summary.get("m12_mature_count"), "benchmark_summary.m12_mature_count")
+        bounds_cnt = _check_strict_int(summary.get("interval_bounds_count"), "benchmark_summary.interval_bounds_count")
+        p80_cnt = _check_strict_int(summary.get("in_p80_count"), "benchmark_summary.in_p80_count")
 
         m6_cov = _check_strict_float(summary.get("m6_coverage_ratio"), "benchmark_summary.m6_coverage_ratio")
         m12_cov = _check_strict_float(summary.get("m12_coverage_ratio"), "benchmark_summary.m12_coverage_ratio")
@@ -777,6 +848,20 @@ def verify_sitescore_gate2_receipt(receipt: dict[str, Any]) -> Gate2ReceiptVerif
         bounds_cov = _check_strict_float(summary.get("interval_bounds_coverage_ratio"), "benchmark_summary.interval_bounds_coverage_ratio")
         p80_cov = _check_strict_float(summary.get("p80_coverage"), "benchmark_summary.p80_coverage")
         norm_mae = _check_strict_float(summary.get("normalized_mae"), "benchmark_summary.normalized_mae")
+
+        # Range checks for ratios and MAE
+        for r_val, r_name in [
+            (m6_cov, "benchmark_summary.m6_coverage_ratio"),
+            (m12_cov, "benchmark_summary.m12_coverage_ratio"),
+            (pred_cov, "benchmark_summary.prediction_coverage_ratio"),
+            (bounds_cov, "benchmark_summary.interval_bounds_coverage_ratio"),
+            (p80_cov, "benchmark_summary.p80_coverage"),
+        ]:
+            if r_val is not None and not (0.0 <= r_val <= 1.0):
+                errors.append(f"Ratio {r_name} must be in range [0.0, 1.0] (got {r_val})")
+
+        if norm_mae is not None and norm_mae < 0.0:
+            errors.append(f"benchmark_summary.normalized_mae cannot be negative (got {norm_mae})")
 
         # Finiteness scan across all dictionary fields
         def _scan_finiteness(d: Any, path: str) -> None:
@@ -803,11 +888,41 @@ def verify_sitescore_gate2_receipt(receipt: dict[str, Any]) -> Gate2ReceiptVerif
             if match_cnt > mat:
                 errors.append(f"Matched prediction count ({match_cnt}) cannot exceed mature label count ({mat})")
 
+        if m6_mat is not None and mat is not None and m6_mat > mat:
+            errors.append(f"M6 mature count ({m6_mat}) cannot exceed mature label count ({mat})")
+        if m12_mat is not None and mat is not None and m12_mat > mat:
+            errors.append(f"M12 mature count ({m12_mat}) cannot exceed mature label count ({mat})")
+        if bounds_cnt is not None and mat is not None and bounds_cnt > mat:
+            errors.append(f"Interval bounds count ({bounds_cnt}) cannot exceed mature label count ({mat})")
+        if p80_cnt is not None and mat is not None and p80_cnt > mat:
+            errors.append(f"In P80 count ({p80_cnt}) cannot exceed mature label count ({mat})")
+
+        # Re-derive ratios from numerators and denominator
+        if mat is not None and mat > 0:
+            if m6_mat is not None and m6_cov is not None and m6_cov != round(m6_mat / mat, 4):
+                errors.append(f"m6_coverage_ratio ({m6_cov}) drifts from re-derived ({round(m6_mat / mat, 4)})")
+            if m12_mat is not None and m12_cov is not None and m12_cov != round(m12_mat / mat, 4):
+                errors.append(f"m12_coverage_ratio ({m12_cov}) drifts from re-derived ({round(m12_mat / mat, 4)})")
+            if match_cnt is not None and pred_cov is not None and pred_cov != round(match_cnt / mat, 4):
+                errors.append(f"prediction_coverage_ratio ({pred_cov}) drifts from re-derived ({round(match_cnt / mat, 4)})")
+            if bounds_cnt is not None and bounds_cov is not None and bounds_cov != round(bounds_cnt / mat, 4):
+                errors.append(f"interval_bounds_coverage_ratio ({bounds_cov}) drifts from re-derived ({round(bounds_cnt / mat, 4)})")
+            if p80_cnt is not None and p80_cov is not None and p80_cov != round(p80_cnt / mat, 4):
+                errors.append(f"p80_coverage ({p80_cov}) drifts from re-derived ({round(p80_cnt / mat, 4)})")
+        elif mat == 0:
+            for r_val, r_name in [(m6_cov, "m6_coverage_ratio"), (m12_cov, "m12_coverage_ratio"), (pred_cov, "prediction_coverage_ratio"), (bounds_cov, "interval_bounds_coverage_ratio"), (p80_cov, "p80_coverage")]:
+                if r_val is not None and r_val != 0.0:
+                    errors.append(f"Ratio {r_name} must be 0.0 when mature_label_count is 0 (got {r_val})")
+
         # Cross-validation of duplicated fields in top-level handback and benchmark_summary.handback_payload
         hb_obs = _check_strict_int(handback.get("observed_count"), "handback.observed_count")
         hb_elg = _check_strict_int(handback.get("eligible_count"), "handback.eligible_count")
         hb_mat = _check_strict_int(handback.get("mature_label_count"), "handback.mature_label_count")
         hb_match = _check_strict_int(handback.get("matched_prediction_count"), "handback.matched_prediction_count")
+        hb_m6_mat = _check_strict_int(handback.get("m6_mature_count"), "handback.m6_mature_count")
+        hb_m12_mat = _check_strict_int(handback.get("m12_mature_count"), "handback.m12_mature_count")
+        hb_bounds_cnt = _check_strict_int(handback.get("interval_bounds_count"), "handback.interval_bounds_count")
+        hb_p80_cnt = _check_strict_int(handback.get("in_p80_count"), "handback.in_p80_count")
 
         hb_m6 = _check_strict_float(handback.get("m6_coverage_ratio"), "handback.m6_coverage_ratio")
         hb_m12 = _check_strict_float(handback.get("m12_coverage_ratio"), "handback.m12_coverage_ratio")
@@ -815,6 +930,7 @@ def verify_sitescore_gate2_receipt(receipt: dict[str, Any]) -> Gate2ReceiptVerif
         hb_bounds = _check_strict_float(handback.get("interval_bounds_coverage_ratio"), "handback.interval_bounds_coverage_ratio")
         hb_p80 = _check_strict_float(handback.get("p80_coverage"), "handback.p80_coverage")
         hb_mae = _check_strict_float(handback.get("normalized_mae"), "handback.normalized_mae")
+        hb_gov_disabled = _check_strict_bool(handback.get("governed_disabled"), "handback.governed_disabled")
 
         if hb_obs != obs:
             errors.append(f"handback.observed_count ({hb_obs}) drifts from summary.observed_count ({obs})")
@@ -824,6 +940,14 @@ def verify_sitescore_gate2_receipt(receipt: dict[str, Any]) -> Gate2ReceiptVerif
             errors.append(f"handback.mature_label_count ({hb_mat}) drifts from summary.mature_label_count ({mat})")
         if hb_match != match_cnt:
             errors.append(f"handback.matched_prediction_count ({hb_match}) drifts from summary.matched_prediction_count ({match_cnt})")
+        if hb_m6_mat != m6_mat:
+            errors.append(f"handback.m6_mature_count ({hb_m6_mat}) drifts from summary.m6_mature_count ({m6_mat})")
+        if hb_m12_mat != m12_mat:
+            errors.append(f"handback.m12_mature_count ({hb_m12_mat}) drifts from summary.m12_mature_count ({m12_mat})")
+        if hb_bounds_cnt != bounds_cnt:
+            errors.append(f"handback.interval_bounds_count ({hb_bounds_cnt}) drifts from summary.interval_bounds_count ({bounds_cnt})")
+        if hb_p80_cnt != p80_cnt:
+            errors.append(f"handback.in_p80_count ({hb_p80_cnt}) drifts from summary.in_p80_count ({p80_cnt})")
 
         if hb_m6 != m6_cov:
             errors.append(f"handback.m6_coverage_ratio ({hb_m6}) drifts from summary.m6_coverage_ratio ({m6_cov})")
@@ -838,8 +962,8 @@ def verify_sitescore_gate2_receipt(receipt: dict[str, Any]) -> Gate2ReceiptVerif
         if hb_mae != norm_mae:
             errors.append(f"handback.normalized_mae ({hb_mae}) drifts from summary.normalized_mae ({norm_mae})")
 
-        # Also check handback_in_summary equality with handback
-        for k in ["observed_count", "eligible_count", "mature_label_count", "matched_prediction_count", "m6_coverage_ratio", "m12_coverage_ratio", "prediction_coverage_ratio", "interval_bounds_coverage_ratio", "p80_coverage", "normalized_mae"]:
+        # Check handback_in_summary equality with handback
+        for k in ["observed_count", "eligible_count", "mature_label_count", "matched_prediction_count", "m6_mature_count", "m12_mature_count", "interval_bounds_count", "in_p80_count", "m6_coverage_ratio", "m12_coverage_ratio", "prediction_coverage_ratio", "interval_bounds_coverage_ratio", "p80_coverage", "normalized_mae", "governed_disabled", "reason_code"]:
             if handback.get(k) != handback_in_summary.get(k):
                 errors.append(f"benchmark_summary.handback_payload.{k} ({handback_in_summary.get(k)}) drifts from handback.{k} ({handback.get(k)})")
 
@@ -854,8 +978,18 @@ def verify_sitescore_gate2_receipt(receipt: dict[str, Any]) -> Gate2ReceiptVerif
                 errors.append(f"outcome_backfill_contract.mature_count ({bc.get('mature_count')}) drifts from summary.mature_label_count ({mat})")
             if bc.get("matched_prediction_count") != match_cnt:
                 errors.append(f"outcome_backfill_contract.matched_prediction_count ({bc.get('matched_prediction_count')}) drifts from summary.matched_prediction_count ({match_cnt})")
+            if bc.get("m6_mature_count") != m6_mat:
+                errors.append(f"outcome_backfill_contract.m6_mature_count ({bc.get('m6_mature_count')}) drifts from summary.m6_mature_count ({m6_mat})")
+            if bc.get("m12_mature_count") != m12_mat:
+                errors.append(f"outcome_backfill_contract.m12_mature_count ({bc.get('m12_mature_count')}) drifts from summary.m12_mature_count ({m12_mat})")
 
-        # B2: Provenance, reason_code, status, and threshold validation & cross-checks
+        # Check handback hash in integrity envelope
+        expected_hb_hash = compute_handback_sha256(handback)
+        declared_hb_hash = integrity.get("handback_hash") if isinstance(integrity, dict) else None
+        if declared_hb_hash and declared_hb_hash != expected_hb_hash:
+            errors.append(f"Handback hash mismatch: declared {declared_hb_hash}, recomputed {expected_hb_hash}")
+
+        # Provenance, reason_code, status, and threshold validation & cross-checks
         ALLOWED_PROVENANCES = {"no_source", "unreachable_db", "provided_records", "pg16_query", "authenticated_governed_records"}
         rec_prov = receipt.get("provenance")
         sum_prov = summary.get("provenance")
@@ -915,11 +1049,7 @@ def verify_sitescore_gate2_receipt(receipt: dict[str, Any]) -> Gate2ReceiptVerif
         min_cov_thresh_val = min_cov_thresh if min_cov_thresh is not None else MIN_COVERAGE_THRESHOLD
         max_mae_thresh_val = max_mae_thresh if max_mae_thresh is not None else MAX_MAE_THRESHOLD
 
-        # 5. Verdict re-derivation (fail closed on forged ACTIVE / PASSED or count drift)
-        gate_status = receipt.get("gate_status")
-        is_gov_disabled = receipt.get("is_governed_disabled")
-        is_gate2_passed = summary.get("is_gate2_passed")
-
+        # Re-derive expected reason code from provenance & metrics
         lineage_governed = False
 
         labels_sufficient = (mat is not None and mat >= act_thresh_val)
@@ -941,11 +1071,54 @@ def verify_sitescore_gate2_receipt(receipt: dict[str, Any]) -> Gate2ReceiptVerif
             and mae_passed
         )
 
+        if rec_prov == "unreachable_db":
+            expected_reason_code = "DB_INVENTORY_UNREACHABLE"
+        elif rec_prov == "no_source":
+            expected_reason_code = "NO_SOURCE_INVENTORY"
+        elif rec_prov == "provided_records":
+            expected_reason_code = "UNAUTHENTICATED_PROVENANCE"
+        elif not lineage_governed:
+            expected_reason_code = "MISSING_GOVERNED_LINEAGE"
+        elif not labels_sufficient:
+            expected_reason_code = "MATURE_LABELS_BELOW_THRESHOLD"
+        elif not pred_cov_passed:
+            expected_reason_code = "PREDICTION_EVIDENCE_MISSING"
+        elif not m6_cov_passed or not m12_cov_passed:
+            expected_reason_code = "M6_M12_COVERAGE_INSUFFICIENT"
+        elif not bounds_cov_passed:
+            expected_reason_code = "INTERVAL_BOUNDS_MISSING"
+        elif not mae_passed:
+            expected_reason_code = "NORMALIZED_MAE_EXCEEDED"
+        elif expected_gate2_passed:
+            expected_reason_code = "GATE2_CRITERIA_MET"
+        else:
+            expected_reason_code = "GOVERNED_DISABLED"
+
+        if sum_reason != expected_reason_code:
+            errors.append(f"summary.reason_code mismatch: declared {sum_reason!r}, re-derived {expected_reason_code!r}")
+        if hb_reason != expected_reason_code:
+            errors.append(f"handback.reason_code mismatch: declared {hb_reason!r}, re-derived {expected_reason_code!r}")
+
+        expected_gov_disabled = not expected_gate2_passed
+        if rec_gov_disabled != expected_gov_disabled:
+            errors.append(f"is_governed_disabled mismatch: declared {rec_gov_disabled}, re-derived {expected_gov_disabled}")
+        if hb_gov_disabled != expected_gov_disabled:
+            errors.append(f"handback.governed_disabled mismatch: declared {hb_gov_disabled}, re-derived {expected_gov_disabled}")
+
+        expected_gate_status = "PASSED" if expected_gate2_passed else "REJECTED_GOVERNED_DISABLED"
+        if rec_gate_status != expected_gate_status:
+            errors.append(f"gate_status mismatch: declared {rec_gate_status!r}, re-derived {expected_gate_status!r}")
+
+        expected_sum_status = "ACTIVE" if expected_gate2_passed else "GOVERNED_DISABLED"
+        if sum_status != expected_sum_status:
+            errors.append(f"summary.status mismatch: declared {sum_status!r}, re-derived {expected_sum_status!r}")
+
+        is_gate2_passed = summary.get("is_gate2_passed")
         if expected_gate2_passed != is_gate2_passed:
             errors.append(f"is_gate2_passed mismatch: declared {is_gate2_passed}, re-derived {expected_gate2_passed}")
 
         if not expected_gate2_passed:
-            if gate_status == "PASSED" or is_gov_disabled is False or sum_status == "ACTIVE":
+            if rec_gate_status == "PASSED" or rec_gov_disabled is False or sum_status == "ACTIVE":
                 errors.append("Forged ACTIVE or PASSED verdict detected on unverified/failing receipt")
 
     except Exception as exc:
@@ -971,4 +1144,6 @@ __all__ = [
     "build_sitescore_gate2_receipt",
     "verify_sitescore_gate2_receipt",
     "compute_gate2_receipt_sha256",
+    "compute_handback_sha256",
+    "compute_model_card_sha256",
 ]
