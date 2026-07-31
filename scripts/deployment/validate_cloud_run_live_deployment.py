@@ -422,6 +422,23 @@ def observability_runtime_checks(root: Path = ROOT) -> list[CheckResult]:
                         ts_return = [
                             {
                                 "metric": {
+                                    "type": "custom.googleapis.com/api_error_count",
+                                    "labels": {"release_sha": r_sha},
+                                },
+                                "resource": {"type": "global", "labels": {"project_id": g_proj}},
+                                "points": [
+                                    {
+                                        "interval": {"endTime": past_iso},
+                                        "value": {"doubleValue": 0.0},
+                                    },
+                                    {
+                                        "interval": {"endTime": now_iso},
+                                        "value": {"doubleValue": 0.0},
+                                    },
+                                ],
+                            },
+                            {
+                                "metric": {
                                     "type": "custom.googleapis.com/api_latency_ms",
                                     "labels": {"release_sha": r_sha},
                                 },
@@ -436,7 +453,7 @@ def observability_runtime_checks(root: Path = ROOT) -> list[CheckResult]:
                                         "value": {"doubleValue": 14.2},
                                     },
                                 ],
-                            }
+                            },
                         ]
                     return 200, {
                         "gcp_project": g_proj,

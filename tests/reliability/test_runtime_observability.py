@@ -713,6 +713,23 @@ def test_release_sha_dashboard_traceability_and_watch_window_receipt(tmp_path: P
             "timeSeries": [
                 {
                     "metric": {
+                        "type": "custom.googleapis.com/api_error_count",
+                        "labels": {"release_sha": r_sha},
+                    },
+                    "resource": {"type": "global", "labels": {"project_id": g_proj}},
+                    "points": [
+                        {
+                            "interval": {"endTime": start_dt.isoformat()},
+                            "value": {"doubleValue": 0.0},
+                        },
+                        {
+                            "interval": {"endTime": end_dt.isoformat()},
+                            "value": {"doubleValue": 0.0},
+                        },
+                    ],
+                },
+                {
+                    "metric": {
                         "type": "custom.googleapis.com/api_latency_ms",
                         "labels": {"release_sha": r_sha},
                     },
@@ -727,7 +744,7 @@ def test_release_sha_dashboard_traceability_and_watch_window_receipt(tmp_path: P
                             "value": {"doubleValue": 14.2},
                         },
                     ],
-                }
+                },
             ],
         }
 
@@ -787,6 +804,26 @@ def test_watch_window_receipt_negative_cases(tmp_path: Path) -> None:
             "timeSeries": [
                 {
                     "metric": {
+                        "type": "custom.googleapis.com/api_error_count",
+                        "labels": {"release_sha": valid_sha_1},
+                    },
+                    "resource": {
+                        "type": "global",
+                        "labels": {"project_id": "alfaloop-data-project"},
+                    },
+                    "points": [
+                        {
+                            "interval": {"endTime": start_dt.isoformat()},
+                            "value": {"doubleValue": 0.0},
+                        },
+                        {
+                            "interval": {"endTime": end_dt.isoformat()},
+                            "value": {"doubleValue": 0.0},
+                        },
+                    ],
+                },
+                {
+                    "metric": {
                         "type": "custom.googleapis.com/api_latency_ms",
                         "labels": {"release_sha": valid_sha_1},
                     },
@@ -804,7 +841,7 @@ def test_watch_window_receipt_negative_cases(tmp_path: Path) -> None:
                             "value": {"doubleValue": 14.2},
                         },
                     ],
-                }
+                },
             ],
         }
 
@@ -848,9 +885,13 @@ def test_watch_window_receipt_negative_cases(tmp_path: Path) -> None:
                     },
                     "points": [
                         {
+                            "interval": {"endTime": start_dt.isoformat()},
+                            "value": {"doubleValue": 0.0},
+                        },
+                        {
                             "interval": {"endTime": end_dt.isoformat()},
                             "value": {"doubleValue": 5.0},
-                        }
+                        },
                     ],
                 }
             ],
@@ -927,7 +968,7 @@ def test_watch_window_binding_mismatch_mutations(tmp_path: Path) -> None:
             ]
         }
 
-    with pytest.raises(ValueError, match="Monitoring query readback project mismatch"):
+    with pytest.raises(ValueError, match="project mismatch"):
         record_deployment_watch_window_status(
             release_sha=valid_sha,
             status=1,
@@ -964,7 +1005,7 @@ def test_watch_window_binding_mismatch_mutations(tmp_path: Path) -> None:
             ]
         }
 
-    with pytest.raises(ValueError, match="Monitoring query readback release_sha mismatch"):
+    with pytest.raises(ValueError, match="release_sha mismatch"):
         record_deployment_watch_window_status(
             release_sha=valid_sha,
             status=1,
@@ -1013,9 +1054,21 @@ def test_watch_window_binding_mismatch_mutations(tmp_path: Path) -> None:
                     },
                     "resource": {"labels": {"project_id": "alfaloop-data-project"}},
                     "points": [
-                        {"interval": {"endTime": end_dt.isoformat()}, "value": {"doubleValue": 3.0}}
+                        {"interval": {"endTime": start_dt.isoformat()}, "value": {"doubleValue": 0.0}},
+                        {"interval": {"endTime": end_dt.isoformat()}, "value": {"doubleValue": 3.0}},
                     ],
-                }
+                },
+                {
+                    "metric": {
+                        "type": "custom.googleapis.com/api_latency_ms",
+                        "labels": {"release_sha": valid_sha},
+                    },
+                    "resource": {"labels": {"project_id": "alfaloop-data-project"}},
+                    "points": [
+                        {"interval": {"endTime": start_dt.isoformat()}, "value": {"doubleValue": 10.0}},
+                        {"interval": {"endTime": end_dt.isoformat()}, "value": {"doubleValue": 10.0}},
+                    ],
+                },
             ]
         }
 
@@ -1109,17 +1162,38 @@ def test_watch_window_binding_mismatch_mutations(tmp_path: Path) -> None:
             "timeSeries": [
                 {
                     "metric": {
+                        "type": "custom.googleapis.com/api_error_count",
+                        "labels": {"release_sha": valid_sha},
+                    },
+                    "resource": {"labels": {"project_id": "alfaloop-data-project"}},
+                    "points": [
+                        {
+                            "interval": {"endTime": start_dt.isoformat()},
+                            "value": {"doubleValue": 0.0},
+                        },
+                        {
+                            "interval": {"endTime": end_dt.isoformat()},
+                            "value": {"doubleValue": 0.0},
+                        },
+                    ],
+                },
+                {
+                    "metric": {
                         "type": "custom.googleapis.com/api_latency_ms",
                         "labels": {"release_sha": valid_sha},
                     },
                     "resource": {"labels": {"project_id": "alfaloop-data-project"}},
                     "points": [
                         {
+                            "interval": {"endTime": start_dt.isoformat()},
+                            "value": {"doubleValue": 10.0},
+                        },
+                        {
                             "interval": {"endTime": end_dt.isoformat()},
                             "value": {"doubleValue": 10.0},
-                        }
+                        },
                     ],
-                }
+                },
             ]
         }
 
@@ -1141,7 +1215,7 @@ def test_watch_window_binding_mismatch_mutations(tmp_path: Path) -> None:
 
     from shared.observability.watch_window import verify_watch_window_receipt
 
-    with pytest.raises(ValueError, match="canonical SHA-256 digest mismatch"):
+    with pytest.raises(ValueError, match="Tampered receipt rejected|integrity check failed"):
         verify_watch_window_receipt(expected_release_sha=valid_sha, receipt_path=receipt_file)
 
     # Mutation 8: Passing on-call alert route as monitoring provider_route fails closed
@@ -1174,6 +1248,8 @@ def test_production_metrics_exporter_and_dashboard_provisioning() -> None:
     test_sha = "b28a6b6d335293ecb51a72dff3700838e196129c"
     monitoring_route = "https://monitoring.googleapis.com/v3"
 
+    mock_posted_series: list[dict] = []
+
     def mock_success_transport(
         method: str,
         url: str | None = None,
@@ -1188,26 +1264,30 @@ def test_production_metrics_exporter_and_dashboard_provisioning() -> None:
 
         if "timeSeries" in (url or ""):
             if method == "POST":
+                if isinstance(p_dict, dict) and "timeSeries" in p_dict:
+                    mock_posted_series.clear()
+                    mock_posted_series.extend(p_dict["timeSeries"])
                 return 200, {}
             elif method == "GET":
+                ts_return = mock_posted_series if mock_posted_series else [
+                    {
+                        "metric": {
+                            "type": "custom.googleapis.com/api_request_count",
+                            "labels": {"release_sha": r_sha, "service": "api", "route": "/jobs", "status": "200"},
+                        },
+                        "resource": {"type": "global", "labels": {"project_id": g_proj}},
+                        "points": [
+                            {
+                                "interval": {"endTime": datetime.now(UTC).isoformat()},
+                                "value": {"doubleValue": 1.0},
+                            }
+                        ],
+                    }
+                ]
                 return 200, {
                     "gcp_project": g_proj,
                     "release_sha": r_sha,
-                    "timeSeries": [
-                        {
-                            "metric": {
-                                "type": "custom.googleapis.com/api_request_count",
-                                "labels": {"release_sha": r_sha},
-                            },
-                            "resource": {"type": "global", "labels": {"project_id": g_proj}},
-                            "points": [
-                                {
-                                    "interval": {"endTime": datetime.now(UTC).isoformat()},
-                                    "value": {"doubleValue": 1.0},
-                                }
-                            ],
-                        }
-                    ],
+                    "timeSeries": ts_return,
                 }
         elif "dashboards" in (url or ""):
             if method == "POST":
@@ -1496,7 +1576,7 @@ def test_exporter_and_dashboard_http_method_contract_and_body_structures() -> No
                         {
                             "metric": {
                                 "type": "custom.googleapis.com/api_request_count",
-                                "labels": {"release_sha": test_sha},
+                                "labels": {"release_sha": test_sha, "service": "api", "route": "/jobs", "status": "200"},
                             },
                             "resource": {"type": "global", "labels": {"project_id": gcp_proj}},
                             "points": [
@@ -1773,6 +1853,23 @@ def test_verify_watch_window_receipt_rejects_tampered_proof_or_circular_metric(t
             "timeSeries": [
                 {
                     "metric": {
+                        "type": "custom.googleapis.com/api_error_count",
+                        "labels": {"release_sha": test_sha},
+                    },
+                    "resource": {"type": "global", "labels": {"project_id": "alfaloop-data-project"}},
+                    "points": [
+                        {
+                            "interval": {"endTime": start_dt.isoformat()},
+                            "value": {"doubleValue": 0.0},
+                        },
+                        {
+                            "interval": {"endTime": end_dt.isoformat()},
+                            "value": {"doubleValue": 0.0},
+                        },
+                    ],
+                },
+                {
+                    "metric": {
                         "type": "custom.googleapis.com/api_latency_ms",
                         "labels": {"release_sha": test_sha},
                     },
@@ -1787,7 +1884,7 @@ def test_verify_watch_window_receipt_rejects_tampered_proof_or_circular_metric(t
                             "value": {"doubleValue": 14.2},
                         },
                     ],
-                }
+                },
             ],
         }
 
@@ -1811,6 +1908,144 @@ def test_verify_watch_window_receipt_rejects_tampered_proof_or_circular_metric(t
     raw_data["monitoring_query_execution"]["provider_query_response"]["timeSeries"][0]["points"][0]["value"]["doubleValue"] = 0
     receipt_file.write_text(json.dumps(raw_data), encoding="utf-8")
 
-    with pytest.raises(ValueError, match="Circular deployment_watch_window_status metric|integrity check failed"):
+    with pytest.raises(ValueError, match="circular deployment_watch_window_status metric|integrity check failed"):
         verify_watch_window_receipt(expected_release_sha=test_sha, receipt_path=receipt_file)
+
+
+def test_round5_reproduced_gaps_mutation_coverage(tmp_path: Path) -> None:
+    from datetime import timedelta
+
+    from shared.observability.watch_window import (
+        record_deployment_watch_window_status,
+        verify_watch_window_receipt,
+    )
+
+    test_sha = "b28a6b6d335293ecb51a72dff3700838e196129c"
+    receipt_file = tmp_path / "round5_gap_receipt.json"
+    start_dt = datetime.now(UTC) - timedelta(minutes=20)
+    end_dt = datetime.now(UTC)
+
+    # Round 5 Gap 1: REQUEST_COUNT_ONLY_PASS MUST BE REJECTED when status=1
+    def request_count_only_transport(method: str, url: str, params: dict = None, payload: dict = None) -> tuple[int, dict]:
+        return 200, {
+            "gcp_project": "alfaloop-data-project",
+            "release_sha": test_sha,
+            "timeSeries": [
+                {
+                    "metric": {
+                        "type": "custom.googleapis.com/api_request_count",
+                        "labels": {"release_sha": test_sha},
+                    },
+                    "resource": {"type": "global", "labels": {"project_id": "alfaloop-data-project"}},
+                    "points": [
+                        {
+                            "interval": {"endTime": start_dt.isoformat()},
+                            "value": {"doubleValue": 10.0},
+                        },
+                        {
+                            "interval": {"endTime": end_dt.isoformat()},
+                            "value": {"doubleValue": 15.0},
+                        },
+                    ],
+                }
+            ],
+        }
+
+    with pytest.raises(ValueError, match="requires an explicit independent error/failure signal AND latency/health signal"):
+        record_deployment_watch_window_status(
+            release_sha=test_sha,
+            status=1,
+            start_time=start_dt,
+            end_time=end_dt,
+            receipt_path=receipt_file,
+            gcp_project="alfaloop-data-project",
+            provider_route="https://monitoring.googleapis.com/v3",
+            query_transport=request_count_only_transport,
+        )
+
+    # Round 5 Gap 2: TAMPERED_PROVIDER_PROOF_VERIFY_PASS MUST BE REJECTED by verifier
+    def valid_full_transport(method: str, url: str, params: dict = None, payload: dict = None) -> tuple[int, dict]:
+        return 200, {
+            "gcp_project": "alfaloop-data-project",
+            "release_sha": test_sha,
+            "timeSeries": [
+                {
+                    "metric": {
+                        "type": "custom.googleapis.com/api_error_count",
+                        "labels": {"release_sha": test_sha},
+                    },
+                    "resource": {"type": "global", "labels": {"project_id": "alfaloop-data-project"}},
+                    "points": [
+                        {
+                            "interval": {"endTime": start_dt.isoformat()},
+                            "value": {"doubleValue": 0.0},
+                        },
+                        {
+                            "interval": {"endTime": end_dt.isoformat()},
+                            "value": {"doubleValue": 0.0},
+                        },
+                    ],
+                },
+                {
+                    "metric": {
+                        "type": "custom.googleapis.com/api_latency_ms",
+                        "labels": {"release_sha": test_sha},
+                    },
+                    "resource": {"type": "global", "labels": {"project_id": "alfaloop-data-project"}},
+                    "points": [
+                        {
+                            "interval": {"endTime": start_dt.isoformat()},
+                            "value": {"doubleValue": 12.5},
+                        },
+                        {
+                            "interval": {"endTime": end_dt.isoformat()},
+                            "value": {"doubleValue": 14.2},
+                        },
+                    ],
+                },
+            ],
+        }
+
+    record_deployment_watch_window_status(
+        release_sha=test_sha,
+        status=1,
+        start_time=start_dt,
+        end_time=end_dt,
+        receipt_path=receipt_file,
+        gcp_project="alfaloop-data-project",
+        provider_route="https://monitoring.googleapis.com/v3",
+        query_transport=valid_full_transport,
+    )
+
+    # Baseline receipt passes
+    assert verify_watch_window_receipt(expected_release_sha=test_sha, receipt_path=receipt_file)["status"] == "WATCH_PASSED"
+
+    # Tamper 2a: Change provider project_id inside provider_query_response
+    raw = json.loads(receipt_file.read_text(encoding="utf-8"))
+    raw["monitoring_query_execution"]["provider_query_response"]["timeSeries"][0]["resource"]["labels"]["project_id"] = "wrong-project"
+    receipt_file.write_text(json.dumps(raw), encoding="utf-8")
+
+    with pytest.raises(ValueError, match="Stored provider proof project mismatch|project mismatch"):
+        verify_watch_window_receipt(expected_release_sha=test_sha, receipt_path=receipt_file)
+
+    # Reset receipt
+    record_deployment_watch_window_status(
+        release_sha=test_sha,
+        status=1,
+        start_time=start_dt,
+        end_time=end_dt,
+        receipt_path=receipt_file,
+        gcp_project="alfaloop-data-project",
+        provider_route="https://monitoring.googleapis.com/v3",
+        query_transport=valid_full_transport,
+    )
+
+    # Tamper 2b: Change provider point value inside provider_query_response
+    raw = json.loads(receipt_file.read_text(encoding="utf-8"))
+    raw["monitoring_query_execution"]["provider_query_response"]["timeSeries"][1]["points"][1]["value"]["doubleValue"] = 9999.0
+    receipt_file.write_text(json.dumps(raw), encoding="utf-8")
+
+    with pytest.raises(ValueError, match="Stored provider proof point_values mismatch|point_values mismatch"):
+        verify_watch_window_receipt(expected_release_sha=test_sha, receipt_path=receipt_file)
+
 
