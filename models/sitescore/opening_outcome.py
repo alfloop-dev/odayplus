@@ -994,6 +994,24 @@ def verify_sitescore_gate2_receipt(
         if rec_gate_status not in {"PASSED", "REJECTED_GOVERNED_DISABLED"}:
             errors.append(f"Invalid top-level gate_status: {rec_gate_status!r}")
 
+        # B1: Check pinned identity (gate, model_name, service)
+        rec_gate = receipt.get("gate")
+        if rec_gate != "GATE_2":
+            errors.append(f"Forbidden or unauthenticated gate: {rec_gate!r} (expected 'GATE_2')")
+
+        rec_model_name = receipt.get("model_name")
+        if rec_model_name != "sitescore_propensity":
+            errors.append(f"Forbidden or unauthenticated model_name: {rec_model_name!r} (expected 'sitescore_propensity')")
+
+        rec_service = receipt.get("service")
+        if rec_service != "sitescore":
+            errors.append(f"Forbidden or unauthenticated service: {rec_service!r} (expected 'sitescore')")
+
+        if mc_dict is not None:
+            mc_model_name = mc_dict.get("model_name")
+            if mc_model_name != "sitescore_propensity":
+                errors.append(f"model_card.model_name ({mc_model_name!r}) drifts from governed model identity ('sitescore_propensity')")
+
         # B2: Check pinned inventory_version, source_contract, and timestamp freshness/reconciliation
         rec_inv_ver = receipt.get("inventory_version")
         if rec_inv_ver != CANONICAL_INVENTORY_VERSION:
@@ -1020,6 +1038,26 @@ def verify_sitescore_gate2_receipt(
                     errors.append(f"observed_at timestamp is older than maximum evidence age ({MAX_EVIDENCE_AGE_DAYS} days): {rec_obs_at!r}")
             except Exception:
                 errors.append(f"Invalid observed_at timestamp format: {rec_obs_at!r}")
+
+        sum_obs_at = summary.get("observed_at")
+        if sum_obs_at is not None:
+            if not isinstance(sum_obs_at, str):
+                errors.append(f"benchmark_summary.observed_at must be a string (got {type(sum_obs_at).__name__}: {sum_obs_at!r})")
+            else:
+                try:
+                    sum_dt = datetime.fromisoformat(sum_obs_at.replace("Z", "+00:00"))
+                    if sum_dt.tzinfo is None:
+                        errors.append(f"benchmark_summary.observed_at timestamp must be timezone-aware (got {sum_obs_at!r})")
+                    elif sum_dt > now_utc + timedelta(seconds=300):
+                        errors.append(f"benchmark_summary.observed_at timestamp is in the future: {sum_obs_at!r}")
+                    elif sum_dt < now_utc - timedelta(days=MAX_EVIDENCE_AGE_DAYS):
+                        errors.append(f"benchmark_summary.observed_at timestamp is older than maximum evidence age ({MAX_EVIDENCE_AGE_DAYS} days): {sum_obs_at!r}")
+                except Exception:
+                    errors.append(f"Invalid benchmark_summary.observed_at timestamp format: {sum_obs_at!r}")
+
+                if obs_dt is not None and sum_dt is not None:
+                    if abs((obs_dt - sum_dt).total_seconds()) > 300:
+                        errors.append(f"benchmark_summary.observed_at ({sum_obs_at}) drifts from top-level observed_at ({rec_obs_at})")
 
         if mc_dict is not None:
             mc_created_str = mc_dict.get("created_at")
@@ -1058,6 +1096,15 @@ def verify_sitescore_gate2_receipt(
         bounds_cov = _check_strict_float(summary.get("interval_bounds_coverage_ratio"), "benchmark_summary.interval_bounds_coverage_ratio")
         p80_cov = _check_strict_float(summary.get("p80_coverage"), "benchmark_summary.p80_coverage")
         norm_mae = _check_strict_float(summary.get("normalized_mae"), "benchmark_summary.normalized_mae")
+
+        # B3: Strict type checking and drift validation for matched_mean_y
+        sum_matched_mean_y = _check_strict_float(summary.get("matched_mean_y"), "benchmark_summary.matched_mean_y")
+        hb_matched_mean_y = _check_strict_float(handback.get("matched_mean_y"), "handback.matched_mean_y")
+        if hb_matched_mean_y is not None and sum_matched_mean_y is not None:
+            if hb_matched_mean_y != round(sum_matched_mean_y, 2):
+                errors.append(f"handback.matched_mean_y ({hb_matched_mean_y}) drifts from summary.matched_mean_y ({round(sum_matched_mean_y, 2)})")
+        if match_cnt == 0 and sum_matched_mean_y is not None and sum_matched_mean_y != 0.0:
+            errors.append(f"matched_mean_y must be 0.0 when matched_prediction_count is 0 (got {sum_matched_mean_y})")
 
         # B1: Check model card digest and governed-disabled semantics if model_card_artifact is present
         art_hashes = receipt.get("artifact_hashes")
@@ -1335,6 +1382,21 @@ def verify_sitescore_gate2_receipt(
             if bc.get("owner") != "Human/Ops":
                 errors.append(f"outcome_backfill_contract.owner must be 'Human/Ops' (got {bc.get('owner')!r})")
 
+            # B2: Pin and validate authoritative outcome backfill contract definitions
+            EXPECTED_ELIGIBILITY_DEF = "is_training_eligible IS True or eligible IS True"
+            EXPECTED_MATURITY_DEF = "realized_90d_net_revenue IS NOT NULL AND realized_90d_net_revenue >= 0"
+            EXPECTED_M6_MATURITY_DEF = "store_age_days >= 180 AND realized_180d_net_revenue IS NOT NULL AND realized_180d_net_revenue >= 0"
+            EXPECTED_M12_MATURITY_DEF = "store_age_days >= 365 AND realized_365d_net_revenue IS NOT NULL AND realized_365d_net_revenue >= 0"
+
+            if bc.get("eligibility_definition") != EXPECTED_ELIGIBILITY_DEF:
+                errors.append(f"outcome_backfill_contract.eligibility_definition mismatch: got {bc.get('eligibility_definition')!r}, expected {EXPECTED_ELIGIBILITY_DEF!r}")
+            if bc.get("maturity_definition") != EXPECTED_MATURITY_DEF:
+                errors.append(f"outcome_backfill_contract.maturity_definition mismatch: got {bc.get('maturity_definition')!r}, expected {EXPECTED_MATURITY_DEF!r}")
+            if bc.get("m6_maturity_definition") != EXPECTED_M6_MATURITY_DEF:
+                errors.append(f"outcome_backfill_contract.m6_maturity_definition mismatch: got {bc.get('m6_maturity_definition')!r}, expected {EXPECTED_M6_MATURITY_DEF!r}")
+            if bc.get("m12_maturity_definition") != EXPECTED_M12_MATURITY_DEF:
+                errors.append(f"outcome_backfill_contract.m12_maturity_definition mismatch: got {bc.get('m12_maturity_definition')!r}, expected {EXPECTED_M12_MATURITY_DEF!r}")
+
             req_bc_fields = {
                 "authoritative_source_identity", "query_id", "dataset_snapshot_hash",
                 "artifact_lineage_id", "evidence_owner", "source_freshness_timestamp",
@@ -1423,13 +1485,35 @@ def verify_sitescore_gate2_receipt(
                 if k == "measured_90d_mae":
                     if v is not None:
                         _check_strict_float(v, f"{location_name}.{k}")
+                    if match_cnt == 0 and v is not None:
+                        errors.append(f"{location_name}.measured_90d_mae must be None when matched_prediction_count is 0 (got {v})")
                 elif k == "matched_prediction_count":
-                    _check_strict_int(v, f"{location_name}.{k}")
-                elif k in {"prediction_coverage_ratio", "interval_bounds_coverage_ratio", "p80_coverage_ratio"}:
+                    cal_cnt = _check_strict_int(v, f"{location_name}.{k}")
+                    if cal_cnt is not None and match_cnt is not None and cal_cnt != match_cnt:
+                        errors.append(f"{location_name}.matched_prediction_count ({cal_cnt}) drifts from summary.matched_prediction_count ({match_cnt})")
+                elif k == "prediction_coverage_ratio":
                     flt = _check_strict_float(v, f"{location_name}.{k}")
                     if flt is not None and not (0.0 <= flt <= 1.0):
                         errors.append(f"{location_name}.{k} ratio must be in range [0.0, 1.0] (got {flt})")
-                elif k in {"matched_mean_realized_revenue", "mean_realized_revenue"}:
+                    if flt is not None and pred_cov is not None and flt != pred_cov:
+                        errors.append(f"{location_name}.prediction_coverage_ratio ({flt}) drifts from summary.prediction_coverage_ratio ({pred_cov})")
+                elif k == "interval_bounds_coverage_ratio":
+                    flt = _check_strict_float(v, f"{location_name}.{k}")
+                    if flt is not None and not (0.0 <= flt <= 1.0):
+                        errors.append(f"{location_name}.{k} ratio must be in range [0.0, 1.0] (got {flt})")
+                    if flt is not None and bounds_cov is not None and flt != bounds_cov:
+                        errors.append(f"{location_name}.interval_bounds_coverage_ratio ({flt}) drifts from summary.interval_bounds_coverage_ratio ({bounds_cov})")
+                elif k == "p80_coverage_ratio":
+                    flt = _check_strict_float(v, f"{location_name}.{k}")
+                    if flt is not None and not (0.0 <= flt <= 1.0):
+                        errors.append(f"{location_name}.{k} ratio must be in range [0.0, 1.0] (got {flt})")
+                    if flt is not None and p80_cov is not None and flt != p80_cov:
+                        errors.append(f"{location_name}.p80_coverage_ratio ({flt}) drifts from summary.p80_coverage ({p80_cov})")
+                elif k == "matched_mean_realized_revenue":
+                    flt = _check_strict_float(v, f"{location_name}.{k}")
+                    if flt is not None and sum_matched_mean_y is not None and flt != round(sum_matched_mean_y, 2):
+                        errors.append(f"{location_name}.matched_mean_realized_revenue ({flt}) drifts from summary.matched_mean_y ({round(sum_matched_mean_y, 2)})")
+                elif k == "mean_realized_revenue":
                     _check_strict_float(v, f"{location_name}.{k}")
 
         _check_calibration_summary(summary.get("calibration_summary"), "summary.calibration_summary")
@@ -1447,6 +1531,7 @@ def verify_sitescore_gate2_receipt(
             if not isinstance(seg_list, (list, tuple)):
                 errors.append(f"{location_name} must be a sequence (got {type(seg_list).__name__}: {seg_list!r})")
                 return
+            tot_seg_cnt = 0
             for idx, seg in enumerate(seg_list):
                 if not isinstance(seg, dict):
                     errors.append(f"{location_name}[{idx}] must be a dictionary (got {type(seg).__name__}: {seg!r})")
@@ -1457,7 +1542,13 @@ def verify_sitescore_gate2_receipt(
                     errors.append(f"{location_name}[{idx}].segment_name must be a non-empty string")
                 if not isinstance(seg.get("segment_value"), str) or not seg.get("segment_value"):
                     errors.append(f"{location_name}[{idx}].segment_value must be a non-empty string")
-                _check_strict_int(seg.get("record_count"), f"{location_name}[{idx}].record_count")
+                seg_cnt = _check_strict_int(seg.get("record_count"), f"{location_name}[{idx}].record_count")
+                if seg_cnt is not None:
+                    tot_seg_cnt += seg_cnt
+                    if mat is not None and seg_cnt > mat:
+                        errors.append(f"{location_name}[{idx}].record_count ({seg_cnt}) exceeds mature_label_count ({mat})")
+                    if mat == 0 and seg_cnt > 0:
+                        errors.append(f"{location_name}[{idx}].record_count ({seg_cnt}) > 0 when mature_label_count is 0")
 
                 metrics = seg.get("metrics")
                 if not isinstance(metrics, dict):
@@ -1474,6 +1565,9 @@ def verify_sitescore_gate2_receipt(
                         flt = _check_strict_float(mv, f"{location_name}[{idx}].metrics.{mk}")
                         if flt is not None and not (0.0 <= flt <= 1.0):
                             errors.append(f"{location_name}[{idx}].metrics.{mk} must be in range [0.0, 1.0] (got {flt})")
+
+            if mat is not None and tot_seg_cnt > mat:
+                errors.append(f"{location_name} total segment record_count ({tot_seg_cnt}) exceeds mature_label_count ({mat})")
 
         _validate_segment_metrics(summary.get("segment_metrics"), "summary.segment_metrics")
         if handback.get("segment_metrics") is not None:
@@ -1590,23 +1684,24 @@ def verify_sitescore_gate2_receipt(
             errors.append(f"Invalid summary.status: {sum_status!r}")
 
         act_thresh = _check_strict_int(summary.get("activation_threshold"), "benchmark_summary.activation_threshold")
-        if act_thresh is not None and act_thresh <= 0:
-            errors.append(f"benchmark_summary.activation_threshold must be positive (got {act_thresh})")
+        if act_thresh is not None and act_thresh != ACTIVATION_THRESHOLD:
+            errors.append(f"benchmark_summary.activation_threshold ({act_thresh}) drifts from governed constant ({ACTIVATION_THRESHOLD})")
+
         hb_act_thresh = _check_strict_int(handback.get("activation_threshold"), "handback.activation_threshold")
-        if hb_act_thresh is not None and act_thresh is not None and hb_act_thresh != act_thresh:
-            errors.append(f"handback.activation_threshold ({hb_act_thresh}) drifts from summary.activation_threshold ({act_thresh})")
+        if hb_act_thresh is not None and hb_act_thresh != ACTIVATION_THRESHOLD:
+            errors.append(f"handback.activation_threshold ({hb_act_thresh}) drifts from governed constant ({ACTIVATION_THRESHOLD})")
 
         min_cov_thresh = _check_strict_float(summary.get("min_coverage_threshold"), "benchmark_summary.min_coverage_threshold")
-        if min_cov_thresh is not None and not (0.0 <= min_cov_thresh <= 1.0):
-            errors.append(f"benchmark_summary.min_coverage_threshold must be in [0.0, 1.0] (got {min_cov_thresh})")
+        if min_cov_thresh is not None and min_cov_thresh != MIN_COVERAGE_THRESHOLD:
+            errors.append(f"benchmark_summary.min_coverage_threshold ({min_cov_thresh}) drifts from governed constant ({MIN_COVERAGE_THRESHOLD})")
 
         max_mae_thresh = _check_strict_float(summary.get("max_mae_threshold"), "benchmark_summary.max_mae_threshold")
-        if max_mae_thresh is not None and max_mae_thresh <= 0.0:
-            errors.append(f"benchmark_summary.max_mae_threshold must be positive (got {max_mae_thresh})")
+        if max_mae_thresh is not None and max_mae_thresh != MAX_MAE_THRESHOLD:
+            errors.append(f"benchmark_summary.max_mae_threshold ({max_mae_thresh}) drifts from governed constant ({MAX_MAE_THRESHOLD})")
 
-        act_thresh_val = act_thresh if act_thresh is not None else ACTIVATION_THRESHOLD
-        min_cov_thresh_val = min_cov_thresh if min_cov_thresh is not None else MIN_COVERAGE_THRESHOLD
-        max_mae_thresh_val = max_mae_thresh if max_mae_thresh is not None else MAX_MAE_THRESHOLD
+        act_thresh_val = ACTIVATION_THRESHOLD
+        min_cov_thresh_val = MIN_COVERAGE_THRESHOLD
+        max_mae_thresh_val = MAX_MAE_THRESHOLD
 
         # Re-derive reason code from provenance & metrics
         lineage_governed = False # Stub: Assumed controlled externally

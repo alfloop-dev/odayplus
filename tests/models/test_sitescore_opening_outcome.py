@@ -1569,3 +1569,108 @@ def test_sitescore_gate2_receipt_verifier_re_review_f3584866_probes_b1_b2_b3():
     res_b3_6 = verify_sitescore_gate2_receipt(rebound_b3_6, model_card_artifact=mc_b3_6)
     assert res_b3_6.is_valid is False
     assert any("Forbidden or unknown field in integrity: 'm6_interval_mae_v2'" in e for e in res_b3_6.errors)
+
+
+def test_sitescore_gate2_receipt_verifier_re_review_89bc4bd9_probes_b1_b2_b3():
+    # Negative regression test for Codex6 Re-review (89bc4bd9 head) B1, B2, B3 findings
+    result = run_benchmark_from_inventory(db_url=None, records=None)
+    model_card = build_sitescore_opening_outcome_model_card(result)
+    receipt = build_sitescore_gate2_receipt(result, model_card=model_card)
+    mc_dict = model_card.to_dict()
+
+    from models.sitescore.opening_outcome import compute_handback_sha256, compute_model_card_sha256
+
+    def _rebind_hashes(r_obj: dict, mc_obj: dict) -> dict:
+        hb_h = compute_handback_sha256(r_obj["handback"])
+        mc_h = compute_model_card_sha256(mc_obj)
+        r_obj["artifact_hashes"]["handback_hash"] = hb_h
+        r_obj["artifact_hashes"]["model_card_hash"] = mc_h
+        r_obj["integrity"]["handback_hash"] = hb_h
+        r_obj["integrity"]["model_card_hash"] = mc_h
+        r_obj["integrity"]["content_sha256"] = compute_gate2_receipt_sha256(r_obj)
+        return r_obj
+
+    # 1. B1 Probe: Invented gate identity and model identity
+    r1 = json.loads(json.dumps(receipt))
+    mc1 = json.loads(json.dumps(mc_dict))
+    r1["gate"] = "GATE_99"
+    r1["model_name"] = "invented_model"
+    r1["service"] = "invented_service"
+    mc1["model_name"] = "invented_model"
+    rebound1 = _rebind_hashes(r1, mc1)
+    res1 = verify_sitescore_gate2_receipt(rebound1, model_card_artifact=mc1)
+    assert res1.is_valid is False
+    assert any("Forbidden or unauthenticated gate" in e or "model_name" in e for e in res1.errors)
+
+    # 2. B1 Probe: Altered governed thresholds
+    r2 = json.loads(json.dumps(receipt))
+    mc2 = json.loads(json.dumps(mc_dict))
+    r2["benchmark_summary"]["activation_threshold"] = 1
+    r2["benchmark_summary"]["min_coverage_threshold"] = 0.0
+    r2["benchmark_summary"]["max_mae_threshold"] = 999.0
+    r2["handback"]["activation_threshold"] = 1
+    r2["benchmark_summary"]["handback_payload"]["activation_threshold"] = 1
+    rebound2 = _rebind_hashes(r2, mc2)
+    res2 = verify_sitescore_gate2_receipt(rebound2, model_card_artifact=mc2)
+    assert res2.is_valid is False
+    assert any("drifts from governed constant" in e for e in res2.errors)
+
+    # 3. B2 Probe: Stale/drifting benchmark_summary.observed_at
+    r3 = json.loads(json.dumps(receipt))
+    mc3 = json.loads(json.dumps(mc_dict))
+    r3["benchmark_summary"]["observed_at"] = "2000-01-01T00:00:00Z"
+    rebound3 = _rebind_hashes(r3, mc3)
+    res3 = verify_sitescore_gate2_receipt(rebound3, model_card_artifact=mc3)
+    assert res3.is_valid is False
+    assert any("benchmark_summary.observed_at" in e for e in res3.errors)
+
+    # 4. B2 Probe: Store-age-only M6/M12 maturity definition in outcome_backfill_contract
+    r4 = json.loads(json.dumps(receipt))
+    mc4 = json.loads(json.dumps(mc_dict))
+    r4["handback"]["outcome_backfill_contract"]["m6_maturity_definition"] = "store_age_days >= 180; no realized outcome required"
+    r4["handback"]["outcome_backfill_contract"]["m12_maturity_definition"] = "store_age_days >= 365; no realized outcome required"
+    r4["benchmark_summary"]["handback_payload"]["outcome_backfill_contract"]["m6_maturity_definition"] = "store_age_days >= 180; no realized outcome required"
+    r4["benchmark_summary"]["handback_payload"]["outcome_backfill_contract"]["m12_maturity_definition"] = "store_age_days >= 365; no realized outcome required"
+    rebound4 = _rebind_hashes(r4, mc4)
+    res4 = verify_sitescore_gate2_receipt(rebound4, model_card_artifact=mc4)
+    assert res4.is_valid is False
+    assert any("mismatch" in e for e in res4.errors)
+
+    # 5. B3 Probe: Non-float string matched_mean_y
+    r5 = json.loads(json.dumps(receipt))
+    mc5 = json.loads(json.dumps(mc_dict))
+    r5["benchmark_summary"]["matched_mean_y"] = "invented"
+    r5["handback"]["matched_mean_y"] = "invented"
+    r5["benchmark_summary"]["handback_payload"]["matched_mean_y"] = "invented"
+    rebound5 = _rebind_hashes(r5, mc5)
+    res5 = verify_sitescore_gate2_receipt(rebound5, model_card_artifact=mc5)
+    assert res5.is_valid is False
+    assert any("must be a real number" in e for e in res5.errors)
+
+    # 6. B3 Probe: Calibration summary matched prediction count drift when main mature_label_count is 0
+    r6 = json.loads(json.dumps(receipt))
+    mc6 = json.loads(json.dumps(mc_dict))
+    r6["benchmark_summary"]["calibration_summary"]["matched_prediction_count"] = 999
+    mc6["calibration_summary"]["matched_prediction_count"] = 999
+    rebound6 = _rebind_hashes(r6, mc6)
+    res6 = verify_sitescore_gate2_receipt(rebound6, model_card_artifact=mc6)
+    assert res6.is_valid is False
+    assert any("drifts from summary.matched_prediction_count" in e for e in res6.errors)
+
+    # 7. B3 Probe: Segment metric record count exceeds main mature_label_count
+    r7 = json.loads(json.dumps(receipt))
+    mc7 = json.loads(json.dumps(mc_dict))
+    bogus_seg = [{
+        "segment_name": "target_format_code",
+        "segment_value": "CONVENIENCE_STANDARD",
+        "record_count": 999,
+        "metrics": {"mae": 0.0, "m6_coverage": 0.0, "m12_coverage": 0.0, "prediction_coverage": 0.0}
+    }]
+    r7["benchmark_summary"]["segment_metrics"] = bogus_seg
+    r7["handback"]["segment_metrics"] = bogus_seg
+    r7["benchmark_summary"]["handback_payload"]["segment_metrics"] = bogus_seg
+    mc7["segment_metrics"] = bogus_seg
+    rebound7 = _rebind_hashes(r7, mc7)
+    res7 = verify_sitescore_gate2_receipt(rebound7, model_card_artifact=mc7)
+    assert res7.is_valid is False
+    assert any("exceeds mature_label_count" in e or "> 0 when mature_label_count is 0" in e for e in res7.errors)
