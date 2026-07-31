@@ -88,13 +88,17 @@ REQUIRED_DIGEST_KEYS = {
 }
 
 ALLOWLISTED_VAULT_PATHS = {
-    (ROOT / "docs/security/vault").resolve(),
     Path("/etc/pantheon/security").resolve(),
     Path("/var/lib/pantheon/vault").resolve(),
+    Path("/etc/security/vault").resolve(),
+    Path("/var/run/secrets/pantheon/vault").resolve(),
 }
 
 
-def validate_and_load_authority_key(key_file_path: Path | str | None) -> tuple[str | None, str | None]:
+def validate_and_load_authority_key(
+    key_file_path: Path | str | None,
+    allow_test_vault: bool = False,
+) -> tuple[str | None, str | None]:
     """Validate key file path, ownership, mode, symlink status, and vault provenance.
 
     Returns:
@@ -117,21 +121,36 @@ def validate_and_load_authority_key(key_file_path: Path | str | None) -> tuple[s
 
     resolved = kf.resolve()
 
-    # 2. Vault path allowlist check (fail closed on arbitrary env/caller paths)
+    # 2. Repository-local secret prohibition check for production
+    try:
+        resolved.relative_to(ROOT)
+        if not allow_test_vault:
+            return (
+                None,
+                f"Authority key file '{key_file_path}' (resolved: '{resolved}') is located inside repository root '{ROOT}'. "
+                "Repository-local authority secrets are strictly forbidden in production.",
+            )
+    except ValueError:
+        pass
+
+    # 3. Vault path allowlist check (fail closed on arbitrary env/caller paths in production)
     is_allowlisted = False
-    for vp in ALLOWLISTED_VAULT_PATHS:
-        if resolved == vp or vp in resolved.parents:
-            is_allowlisted = True
-            break
+    if allow_test_vault:
+        is_allowlisted = True
+    else:
+        for vp in ALLOWLISTED_VAULT_PATHS:
+            if resolved == vp or vp in resolved.parents:
+                is_allowlisted = True
+                break
 
     if not is_allowlisted:
         return (
             None,
             f"Authority key file '{key_file_path}' (resolved: '{resolved}') is not located in an allowlisted vault directory. "
-            "Arbitrary caller-selected key files and temporary paths are rejected.",
+            "Arbitrary caller-selected key files and temporary paths are rejected in production.",
         )
 
-    # 3. Restrictive mode permissions check (must be 0o600 or 0o400; no group or world access)
+    # 4. Restrictive mode permissions check (must be 0o600 or 0o400; no group or world access)
     st = resolved.stat()
     mode_bits = st.st_mode & 0o077
     if mode_bits != 0:
@@ -141,7 +160,7 @@ def validate_and_load_authority_key(key_file_path: Path | str | None) -> tuple[s
             "Key file must have restrictive permissions 0o600 or 0o400 with no group or world access.",
         )
 
-    # 4. Owner check (must be current process UID or root UID 0)
+    # 5. Owner check (must be current process UID or root UID 0)
     current_uid = os.getuid()
     if st.st_uid != current_uid and st.st_uid != 0:
         return (
@@ -149,7 +168,7 @@ def validate_and_load_authority_key(key_file_path: Path | str | None) -> tuple[s
             f"Authority key file '{resolved}' uid {st.st_uid} does not match process uid {current_uid} or root.",
         )
 
-    # 5. Parent directory permissions check (must not be world-writable)
+    # 6. Parent directory permissions check (must not be world-writable)
     parent_st = resolved.parent.stat()
     if (parent_st.st_mode & 0o002) != 0:
         return (
@@ -174,21 +193,30 @@ class AuthoritativeReceiptVerifier:
         trusted_source_systems: set[str] | None = None,
         expected_policy_version: str | None = None,
         expected_digests: dict[str, str] | None = None,
+        allow_test_vault: bool = False,
     ):
         self.authority_key: str | None = None
         self.key_error: str | None = None
+        self.allow_test_vault = allow_test_vault
 
-        # B1 fix: Resolve authority key from allowlisted vault path only.
+        # B1 fix: Resolve authority key from external allowlisted vault path only.
         target_key_path = authority_key_file or os.getenv("OSS_LEGAL_AUTHORITY_KEY_FILE")
         if not target_key_path:
-            default_key = ROOT / "docs/security/vault/legal_authority.key"
-            if default_key.exists():
-                target_key_path = default_key
+            for external_default in [
+                Path("/etc/pantheon/security/legal_authority.key"),
+                Path("/var/lib/pantheon/vault/legal_authority.key"),
+                Path("/etc/security/vault/legal_authority.key"),
+            ]:
+                if external_default.exists():
+                    target_key_path = external_default
+                    break
 
         if target_key_path:
-            self.authority_key, self.key_error = validate_and_load_authority_key(target_key_path)
+            self.authority_key, self.key_error = validate_and_load_authority_key(
+                target_key_path, allow_test_vault=allow_test_vault
+            )
         else:
-            self.key_error = "No authority key file path configured or found in allowlisted vault."
+            self.key_error = "No authority key file path configured or found in external allowlisted vault."
 
         self.trusted_source_systems = trusted_source_systems or {
             "ODP-PLAN-OSS-LEGAL-POLICY-001",
@@ -203,11 +231,18 @@ class AuthoritativeReceiptVerifier:
         self.has_complete_expected_digests = False
 
         if self.authority_key:
-            target_manifest_path = authority_manifest_path or (ROOT / "docs/security/vault/authority_manifest.json")
-            if not target_manifest_path or not Path(target_manifest_path).exists():
-                target_manifest_path = ROOT / "docs/security/authority_manifest.json"
+            target_manifest_path = authority_manifest_path or os.getenv("OSS_LEGAL_AUTHORITY_MANIFEST_PATH")
+            if not target_manifest_path:
+                for external_manifest in [
+                    Path("/etc/pantheon/security/authority_manifest.json"),
+                    Path("/var/lib/pantheon/vault/authority_manifest.json"),
+                    Path("/etc/security/vault/authority_manifest.json"),
+                ]:
+                    if external_manifest.exists():
+                        target_manifest_path = external_manifest
+                        break
 
-            if Path(target_manifest_path).exists():
+            if target_manifest_path and Path(target_manifest_path).exists():
                 m_ok, m_digests, m_err = self._load_and_verify_manifest(Path(target_manifest_path))
                 if m_ok and m_digests:
                     if expected_digests:
@@ -222,7 +257,7 @@ class AuthoritativeReceiptVerifier:
                 else:
                     self.manifest_error = f"Failed to authenticate authority manifest: {m_err}"
             else:
-                self.manifest_error = f"Authority manifest file missing at {target_manifest_path}"
+                self.manifest_error = f"Authority manifest file missing at {target_manifest_path or 'unconfigured external vault path'}"
         else:
             self.manifest_error = self.key_error or "No valid authority key to verify authority manifest."
 
@@ -234,6 +269,12 @@ class AuthoritativeReceiptVerifier:
     def _load_and_verify_manifest(self, manifest_path: Path) -> tuple[bool, dict[str, str] | None, str | None]:
         if manifest_path.is_symlink():
             return False, None, f"Authority manifest file '{manifest_path}' is a symlink (symlinks forbidden)."
+        if not self.allow_test_vault:
+            try:
+                manifest_path.resolve().relative_to(ROOT)
+                return False, None, f"Authority manifest file '{manifest_path}' is inside repository root (repository-local secrets forbidden in production)."
+            except ValueError:
+                pass
         try:
             m_data = json.loads(manifest_path.read_text(encoding="utf-8"))
         except Exception as e:

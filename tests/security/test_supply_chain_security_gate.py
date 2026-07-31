@@ -1368,7 +1368,7 @@ def make_test_verifier(
     sys.path.insert(0, str(ROOT))
     from scripts.security.exemption_validator import AuthoritativeReceiptVerifier
 
-    vault_dir = ROOT / "docs/security/vault"
+    vault_dir = tmp_path / "test_vault"
     vault_dir.mkdir(parents=True, exist_ok=True)
 
     key_file = vault_dir / f"test_key_{tmp_path.name}.key"
@@ -1376,7 +1376,7 @@ def make_test_verifier(
     key_file.chmod(0o600)
 
     digs = expected_digests or {
-        "source_digest": "a" * 64,
+        "source_digest": "a" * 40,
         "release_digest": "b" * 64,
         "sbom_digest": "c" * 64,
         "evidence_report_digest": "d" * 64,
@@ -1408,6 +1408,7 @@ def make_test_verifier(
         authority_manifest_path=manifest_file,
         trusted_source_systems=trusted_source_systems or {"legal_vault", "ODP-PLAN-OSS-LEGAL-POLICY-001"},
         expected_digests=expected_digests,
+        allow_test_vault=True,
     )
 
 
@@ -2057,7 +2058,8 @@ def test_round11_b2_unbound_policy_version_and_digest_mismatches_rejected(tmp_pa
     # 1. Unbound/incomplete expected_digests in verifier fails verification
     key_file = tmp_path / "test_unbound.key"
     key_file.write_text(test_key, encoding="utf-8")
-    unbound_verifier = AuthoritativeReceiptVerifier(authority_key_file=key_file, expected_digests={})
+    key_file.chmod(0o600)
+    unbound_verifier = AuthoritativeReceiptVerifier(authority_key_file=key_file, expected_digests={}, allow_test_vault=True)
     assert not unbound_verifier.has_complete_expected_digests
 
     entry = {
@@ -2155,15 +2157,15 @@ def test_round13_b1_key_path_symlink_and_unrestrictive_mode_rejected(tmp_path: P
     sys.path.insert(0, str(ROOT))
     from scripts.security.exemption_validator import validate_and_load_authority_key
 
-    # 1. Arbitrary caller-selected tmp_path outside vault allowlist -> REJECTED
+    # 1. Arbitrary caller-selected tmp_path outside vault allowlist -> REJECTED in production mode
     arbitrary_key = tmp_path / "arbitrary_caller.key"
     arbitrary_key.write_text("a" * 32, encoding="utf-8")
-    raw_key, err = validate_and_load_authority_key(arbitrary_key)
+    raw_key, err = validate_and_load_authority_key(arbitrary_key, allow_test_vault=False)
     assert raw_key is None
-    assert "not located in an allowlisted vault directory" in err
+    assert "not located in an allowlisted vault directory" in err or "inside repository root" in err
 
-    # 2. Symlink key file inside vault -> REJECTED
-    vault_dir = ROOT / "docs/security/vault"
+    # 2. Symlink key file inside test vault -> REJECTED
+    vault_dir = tmp_path / "test_vault"
     vault_dir.mkdir(parents=True, exist_ok=True)
 
     real_key = vault_dir / f"real_key_{tmp_path.name}.key"
@@ -2175,16 +2177,16 @@ def test_round13_b1_key_path_symlink_and_unrestrictive_mode_rejected(tmp_path: P
         symlink_key.unlink()
     symlink_key.symlink_to(real_key)
 
-    raw_key, err = validate_and_load_authority_key(symlink_key)
+    raw_key, err = validate_and_load_authority_key(symlink_key, allow_test_vault=True)
     assert raw_key is None
     assert "is a symlink" in err
 
-    # 3. Unrestrictive permissions 0o644 inside vault -> REJECTED
+    # 3. Unrestrictive permissions 0o644 inside test vault -> REJECTED
     bad_mode_key = vault_dir / f"bad_mode_{tmp_path.name}.key"
     bad_mode_key.write_text("c" * 32, encoding="utf-8")
     bad_mode_key.chmod(0o644)
 
-    raw_key, err = validate_and_load_authority_key(bad_mode_key)
+    raw_key, err = validate_and_load_authority_key(bad_mode_key, allow_test_vault=True)
     assert raw_key is None
     assert "unrestrictive permissions" in err
 
@@ -2199,7 +2201,7 @@ def test_round13_b2_unauthenticated_free_expected_digests_dict_rejected(tmp_path
     sys.path.insert(0, str(ROOT))
     from scripts.security.exemption_validator import AuthoritativeReceiptVerifier
 
-    vault_dir = ROOT / "docs/security/vault"
+    vault_dir = tmp_path / "test_vault"
     vault_dir.mkdir(parents=True, exist_ok=True)
 
     key_file = vault_dir / f"test_key_{tmp_path.name}.key"
@@ -2214,6 +2216,7 @@ def test_round13_b2_unauthenticated_free_expected_digests_dict_rejected(tmp_path
         authority_key_file=key_file,
         authority_manifest_path=bogus_manifest,
         expected_digests={"source_digest": "1" * 64},
+        allow_test_vault=True,
     )
 
     assert not verifier.has_complete_expected_digests
@@ -2256,3 +2259,76 @@ def test_round13_b3_uncovered_source_intervening_commit_reverted_change_rejected
 
     res = verify_sbom(dummy_sbom_file)
     assert res == 1
+
+
+# ─── Round-14 negative & positive tests (B1, B2, B3) ───
+
+
+def test_round14_b1_b2_clean_checkout_production_default_verifier_fails_closed(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """B1/B2 — Clean checkout default AuthoritativeReceiptVerifier in production has no authority key and fails closed on receipt resolution."""
+    sys.path.insert(0, str(ROOT))
+    from scripts.security.exemption_validator import (
+        AuthoritativeReceiptVerifier,
+        resolve_approval_reference,
+    )
+
+    monkeypatch.delenv("OSS_LEGAL_AUTHORITY_KEY_FILE", raising=False)
+    monkeypatch.delenv("OSS_LEGAL_AUTHORITY_MANIFEST_PATH", raising=False)
+
+    verifier = AuthoritativeReceiptVerifier(allow_test_vault=False)
+
+    assert verifier.authority_key is None
+    assert verifier.has_complete_expected_digests is False
+    assert "No authority key file path" in (verifier.key_error or "")
+
+    receipts_dir = tmp_path / "receipts"
+    receipts_dir.mkdir(parents=True, exist_ok=True)
+    (receipts_dir / "POLICY-LGPL-001.json").write_text(json.dumps({"approval_ref": "POLICY-LGPL-001"}), encoding="utf-8")
+
+    dummy_entry = {
+        "package_name": "psycopg",
+        "purl": "pkg:pypi/psycopg@3.3.4",
+        "approved_by": "Jane Doe (Legal Counsel)",
+        "approval_reference": "POLICY-LGPL-001",
+        "issued_at": "2026-07-01T00:00:00Z",
+        "expires_at": "2026-12-31T23:59:59Z",
+        "reason": "Production clean checkout test",
+        "status": "active",
+        "scope": "prod",
+    }
+
+    ok, err = resolve_approval_reference("POLICY-LGPL-001", dummy_entry, base_dir=tmp_path, verifier_fn=verifier)
+    assert not ok
+    assert "cannot self-establish authority without a configured AuthoritativeReceiptVerifier" in (err or "")
+
+
+def test_round14_b1_repo_local_key_file_rejected_in_production(tmp_path: Path) -> None:
+    """B1 — Production constructor strictly rejects authority key files located inside repository root."""
+    sys.path.insert(0, str(ROOT))
+    from scripts.security.exemption_validator import (
+        AuthoritativeReceiptVerifier,
+        validate_and_load_authority_key,
+    )
+
+    local_dir = ROOT / "docs/security"
+    local_key = local_dir / f"repo_local_secret_{tmp_path.name}.key"
+    local_key.write_text("e" * 32, encoding="utf-8")
+    local_key.chmod(0o600)
+
+    try:
+        raw_key, err = validate_and_load_authority_key(local_key, allow_test_vault=False)
+        assert raw_key is None
+        assert "located inside repository root" in (err or "")
+
+        verifier = AuthoritativeReceiptVerifier(authority_key_file=local_key, allow_test_vault=False)
+        assert verifier.authority_key is None
+        assert "located inside repository root" in (verifier.key_error or "")
+    finally:
+        local_key.unlink(missing_ok=True)
+
+
+def test_round14_b2_external_vault_authority_success(tmp_path: Path) -> None:
+    """B2 — External authority key and authenticated manifest succeed when provisioned with restrictive mode outside repo."""
+    verifier = make_test_verifier(tmp_path, key="external-authority-secret-999888")
+    assert verifier.authority_key == "external-authority-secret-999888"
+    assert verifier.has_complete_expected_digests is True
