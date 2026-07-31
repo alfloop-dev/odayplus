@@ -45,6 +45,17 @@ class ConsoleNotificationAdapter:
 
 from collections.abc import Callable
 
+PINNED_ONCALL_PROVIDER_PUBLIC_KEY_PEM = (
+    "-----BEGIN PUBLIC KEY-----\n"
+    "MCowBQYDK2VwAyEA6ZqyVQ53UCAtdWC17njGX5O7c1p2H5IwaiRISSgAX8M=\n"
+    "-----END PUBLIC KEY-----\n"
+)
+PINNED_PLATFORM_DEPLOYMENT_PUBLIC_KEY_PEM = (
+    "-----BEGIN PUBLIC KEY-----\n"
+    "MCowBQYDK2VwAyEA+w5m8zJ31H/4vG74o3G7yT92k6e71X67Y7X183921Z4=\n"
+    "-----END PUBLIC KEY-----\n"
+)
+
 
 class OnCallNotificationAdapter:
     """A real on-call notification adapter that dispatches alerts to dedicated on-call endpoints
@@ -308,17 +319,6 @@ class OnCallNotificationAdapter:
         CANONICAL_PRODUCTION_PATH = "/api/v1/alerts"
         CANONICAL_PRODUCTION_PORT = 443
 
-        PINNED_ONCALL_PROVIDER_PUBLIC_KEY_PEM = (
-            "-----BEGIN PUBLIC KEY-----\n"
-            "MCowBQYDK2VwAyEA6ZqyVQ53UCAtdWC17njGX5O7c1p2H5IwaiRISSgAX8M=\n"
-            "-----END PUBLIC KEY-----\n"
-        )
-        PINNED_PLATFORM_DEPLOYMENT_PUBLIC_KEY_PEM = (
-            "-----BEGIN PUBLIC KEY-----\n"
-            "MCowBQYDK2VwAyEA+w5m8zJ31H/4vG74o3G7yT92k6e71X67Y7X183921Z4=\n"
-            "-----END PUBLIC KEY-----\n"
-        )
-
         parsed_url = urllib.parse.urlparse(self.endpoint_url)
         hostname = (parsed_url.hostname or "").lower()
         scheme = (parsed_url.scheme or "").lower()
@@ -354,7 +354,17 @@ class OnCallNotificationAdapter:
             )
 
         is_injected_transport = self.http_transport != self._default_http_transport
-        is_mock_or_test = is_injected_transport or is_loopback or not is_https or not is_allowlisted_endpoint
+        has_injected_keys = (
+            self.provider_public_key_pem is not None
+            or self.platform_public_key_pem is not None
+        )
+        is_mock_or_test = (
+            is_injected_transport
+            or has_injected_keys
+            or is_loopback
+            or not is_https
+            or not is_allowlisted_endpoint
+        )
         has_authentic_signature = False
 
         # Authenticated deployed revision check: platform deployment manifest signed by platform key

@@ -3359,7 +3359,10 @@ def test_round16_remediation_findings_b1_b2_b3_negative_mutations_and_positive_v
     # Reset caller authority env
     monkeypatch.delenv("ONCALL_PRODUCTION_ENDPOINT_AUTHORITY", raising=False)
 
-    # 4. Round 16 Positive Verification: Canonical endpoint + signed platform deployment attestation + authentic provider asymmetric signature produces DELIVERED
+    # 4. Round 17 Negative Mutation (Finding B1): Two-key caller-injection mutation.
+    # Caller generates ephemeral Ed25519 keypairs, passes both public keys to constructor,
+    # signs platform attestation with caller platform key, and signs provider receipt with caller provider key
+    # using canonical endpoint and default transport. Must evaluate to TEST_ONLY, NEVER DELIVERED.
     plat_sig_bytes = platform_key.sign(f"platform_attestation:{valid_sha}".encode())
     plat_sig_b64 = base64.b64encode(plat_sig_bytes).decode("utf-8")
 
@@ -3391,14 +3394,30 @@ def test_round16_remediation_findings_b1_b2_b3_negative_mutations_and_positive_v
         )
 
     monkeypatch.setattr(OnCallNotificationAdapter, "_default_http_transport", staticmethod(authentic_asymmetric_transport))
-    adapter_authentic = OnCallNotificationAdapter(
+
+    adapter_caller_keys_injected = OnCallNotificationAdapter(
         endpoint_url="https://oncall-router.oday.plus/api/v1/alerts",
         http_transport=None,  # Uses class default_http_transport
         provider_public_key_pem=provider_pub_pem,
         platform_public_key_pem=platform_pub_pem,
     )
+    ok_inj, err_inj = adapter_caller_keys_injected.send("n_r17_inj", "webhook", "ops-lead", "Title", "Detail")
+    assert ok_inj is True
+    receipt_inj = adapter_caller_keys_injected.delivery_receipts[-1]
+    assert receipt_inj["status"] == "TEST_ONLY"
+    assert receipt_inj["status"] != "DELIVERED"
 
-    ok_auth, err_auth = adapter_authentic.send("n_r16_auth", "webhook", "ops-lead", "Title", "Detail")
+    # 5. Round 17 Positive Verification: Production composition with pinned trust keys (no constructor key injection)
+    # Monkeypatch pinned production trust keys at module level to match authentic build trust root
+    monkeypatch.setattr("modules.notifications.infrastructure.adapters.PINNED_ONCALL_PROVIDER_PUBLIC_KEY_PEM", provider_pub_pem)
+    monkeypatch.setattr("modules.notifications.infrastructure.adapters.PINNED_PLATFORM_DEPLOYMENT_PUBLIC_KEY_PEM", platform_pub_pem)
+
+    adapter_authentic = OnCallNotificationAdapter(
+        endpoint_url="https://oncall-router.oday.plus/api/v1/alerts",
+        http_transport=None,  # Uses class default_http_transport
+    )
+
+    ok_auth, err_auth = adapter_authentic.send("n_r17_auth", "webhook", "ops-lead", "Title", "Detail")
     assert ok_auth is True
     receipt_auth = adapter_authentic.delivery_receipts[-1]
     assert receipt_auth["status"] == "DELIVERED"
