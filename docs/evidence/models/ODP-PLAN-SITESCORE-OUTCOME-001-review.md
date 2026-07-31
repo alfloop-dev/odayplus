@@ -1440,3 +1440,91 @@ permits stale summary evidence and prohibited store-age maturity definitions, an
 self-consistent population drift across scalar, calibration, and segment evidence. Re-audit the
 complete acceptance batch after remediation. No owner implementation content was changed by
 this review.
+
+---
+
+# Codex6 Re-review Addendum — 2026-07-31, exact owner head `58be4d4e`
+
+The supervisor re-dispatched this task after the owner reported B1-B3 remediation at exact
+pushed head `58be4d4e8dc26f38d8197164a417806e9b6a867e`. The local task branch and
+`origin/task/ODP-PLAN-SITESCORE-OUTCOME-001` both pointed at that SHA. The only untracked
+worktree entries were the orchestrator-seeded task context/state files; there was no
+uncommitted owner implementation diff.
+
+## Verification at the exact owner head
+
+```bash
+PYTHONPATH=. .venv/bin/pytest -q tests/models -k "sitescore or opening_outcome"
+PYTHONPATH=. .venv/bin/pytest -q tests -k "sitescore or opening_outcome or model_ready"
+.venv/bin/ruff check scripts/models models tests/models
+git diff --check
+git diff --check 66f3e7ef..58be4d4e
+PYTHONPATH=. .venv/bin/python /tmp/odp_sitescore_58be4d4e_mutations.py
+```
+
+- Task-scoped selector: **51 passed**.
+- Full focused selector: **95 passed**.
+- Ruff and both whitespace checks: clean.
+- The committed receipt/model-card pair and a separately built two-record benchmark pair both
+  verify at the exact reviewed head.
+- The owner's seven direct B1-B3 regression probes pass. Pinned gate/model/service identity,
+  governed threshold constants, and the literal M6/M12 realized-outcome definitions reject the
+  mutations named in the previous review.
+
+The task brief requires the complete fail-closed batch after every reopen. Each mutation below
+rebound the handback and model-card digests in both declared locations and recomputed the receipt
+content digest. Every listed mutation returned `is_valid=True`,
+`reason_code="RECEIPT_VALIDATED"`, and no errors.
+
+## Blocking findings
+
+### B1 — `benchmark_summary.observed_at` is still optional and absent
+
+The verifier's required summary key set omits `observed_at` and checks it only when non-null
+(`models/sitescore/opening_outcome.py:972-1059`). The producer's `to_dict()` also omits the
+field. Consequently, the committed receipt itself has no summary observation time, and an
+explicit missing-summary-timestamp mutation validates after hash rebinding. The new age and
+drift checks therefore do not establish freshness for the benchmark summary they are meant to
+protect.
+
+Make `benchmark_summary.observed_at` required, emit it from the benchmark summary, require a
+timezone-aware timestamp within the governed age window, and reconcile it to the top-level
+receipt timestamp (prefer exact equality unless the contract explicitly authorizes skew).
+
+### B2 — Calibration means and MAE remain self-attested
+
+`mean_realized_revenue` receives only a finite-float type check; it is not bound to
+`mature_label_count` or any authoritative aggregate. The committed no-source artifact already
+reports `mean_realized_revenue=1.0` while `mature_label_count=0`. Changing both calibration
+copies to `999999.0` validates. On a separately generated two-record benchmark, changing both
+`measured_90d_mae` copies to `999999.0` while leaving `matched_mean_y`, `normalized_mae`, counts,
+and coverage unchanged also validates.
+
+Require zero/null semantics for empty populations and mathematically reconcile the calibration
+mean and measured MAE with the same matched/mature population and the authoritative summary
+aggregates. Typed-but-unbound finite values do not satisfy the population-aligned calibration
+or self-consistent-forgery acceptance clauses.
+
+### B3 — Segment reconciliation is an upper bound, not population alignment
+
+The new segment check rejects only individual or total `record_count` values greater than the
+main mature count (`models/sitescore/opening_outcome.py:1530-1570`). For the single
+`target_format_code` partition emitted by this implementation, dropping one of two segment
+records and rebinding all four segment copies validates even though the segment total is now
+smaller than `mature_label_count`. Separately replacing every segment's finite MAE and M6/M12/
+prediction coverage values with arbitrary in-range values also validates; no weighted aggregate
+is reconciled to the main counts, MAE, or coverage ratios.
+
+Require the complete single-dimension partition total to equal the authoritative mature
+population, reject duplicate/omitted segment values, and reconcile weighted segment coverage
+and MAE with the corresponding main-population evidence. If multiple dimensions are introduced
+later, validate each named partition independently rather than summing unrelated dimensions.
+
+## Decision
+
+**Changes requested.** Exact owner head `58be4d4e` is not approved. The focused suites are green
+and the literal B1-B3 examples from the previous round now fail closed, but the complete batch
+still accepts missing summary freshness, invented calibration aggregates, incomplete segment
+populations, and invented segment metrics. These are direct violations of the evidence-set,
+population-alignment, and self-consistent-forged-receipt criteria. Re-audit the entire acceptance
+batch after remediation. No owner implementation content was changed by this review.
