@@ -2079,7 +2079,7 @@ def process_queue(
                 except Exception:
                     pass
             target_agent_id = normalize_agent_id(target_agent)
-            if target_agent_id and target_agent_id not in allowed_agent_ids:
+            if not target_agent_id or target_agent_id not in allowed_agent_ids:
                 continue
 
         existing_record = state.get("queue", {}).get("events", {}).get(event_id, {})
@@ -7829,38 +7829,99 @@ def release_completed_worker_for_claim(
     normalized_agent = normalize_agent_id(agent_name)
     display_agent = display_name_for(config, normalized_agent)
     active_statuses = {str(value) for value in ready_dispatch_settings(config).get("active_worker_statuses", [])}
-    now = utc_now()
-    changed = False
-    for worker in state.get("workers", {}).values():
-        worker_agent = str(worker.get("logical_agent_id") or worker.get("agent_id") or "").strip()
+
+    workers_dict = state.get("workers", {})
+    if not isinstance(workers_dict, dict):
+        return False
+
+    matching_entries = []
+    for worker_key, worker in workers_dict.items():
+        if not isinstance(worker, dict):
+            continue
         if worker.get("task_id") != task_id:
             continue
-        if display_name_for(config, normalize_agent_id(worker_agent)) != display_agent:
+        worker_agent = str(worker.get("logical_agent_id") or worker.get("agent_id") or "").strip()
+        norm_w_agent = normalize_agent_id(worker_agent)
+        if norm_w_agent != normalized_agent and display_name_for(config, norm_w_agent) != display_agent:
             continue
-        if worker.get("status") not in active_statuses:
-            continue
-        pid = worker.get("pid")
-        if pid and pid_is_alive(pid):
-            continue
-        if not worker_runner_succeeded(worker):
-            continue
-        worker["status"] = "completed"
-        worker["completed_at"] = now
-        worker["last_event_at"] = now
-        worker["last_error"] = None
-        finalize_queue_event_record(config, state, worker, "completed")
-        changed = True
-        write_activity_log(
-            config,
-            {
-                "type": "worker_self_claim_released",
-                "task_id": task_id,
-                "message": f"{display_agent} released completed worker slot before self-claim.",
-                "worker_run_id": worker.get("run_id"),
-                "queue_event_id": worker.get("queue_event_id"),
-            },
-        )
-    return changed
+        matching_entries.append((worker_key, worker))
+
+    if len(matching_entries) != 1:
+        return False
+
+    worker_key, worker = matching_entries[0]
+
+    if worker.get("status") not in active_statuses:
+        return False
+
+    worker_pid = worker.get("pid")
+    worker_child_pid = worker.get("child_pid")
+    if (worker_pid and pid_is_alive(worker_pid)) or (worker_child_pid and pid_is_alive(worker_child_pid)):
+        return False
+
+    metadata = worker.get("metadata") if isinstance(worker.get("metadata"), dict) else {}
+    status_path_val = worker.get("runner_status_path") or worker.get("status_path") or metadata.get("runner_status_path") or metadata.get("status_path")
+    if not status_path_val:
+        return False
+
+    receipt = _load_runtime_marker(status_path_val)
+    if not receipt or not isinstance(receipt, dict):
+        return False
+
+    receipt_status = str(receipt.get("status") or receipt.get("runner_status") or "").strip().lower()
+    if receipt_status not in {"completed", "success", "succeeded"}:
+        return False
+
+    raw_exit = receipt.get("exit_code")
+    if raw_exit is None:
+        return False
+    try:
+        if int(raw_exit) != 0:
+            return False
+    except (TypeError, ValueError):
+        return False
+
+    receipt_signal = receipt.get("signal") or receipt.get("runner_signal")
+    if receipt_signal:
+        return False
+
+    worker_run_id = str(worker.get("run_id") or worker_key or "").strip()
+    receipt_run_id = str(receipt.get("run_id") or receipt.get("worker_run_id") or "").strip()
+    if not receipt_run_id or not worker_run_id or receipt_run_id != worker_run_id:
+        return False
+    if worker_key and receipt_run_id != str(worker_key).strip():
+        return False
+
+    receipt_pid = receipt.get("pid")
+    receipt_child_pid = receipt.get("child_pid")
+
+    if receipt_pid is not None and worker_pid is not None:
+        if str(receipt_pid) != str(worker_pid):
+            return False
+    if receipt_child_pid is not None and worker_child_pid is not None:
+        if str(receipt_child_pid) != str(worker_child_pid):
+            return False
+
+    if (receipt_pid and pid_is_alive(receipt_pid)) or (receipt_child_pid and pid_is_alive(receipt_child_pid)):
+        return False
+
+    now = utc_now()
+    worker["status"] = "completed"
+    worker["completed_at"] = now
+    worker["last_event_at"] = now
+    worker["last_error"] = None
+    finalize_queue_event_record(config, state, worker, "completed")
+    write_activity_log(
+        config,
+        {
+            "type": "worker_self_claim_released",
+            "task_id": task_id,
+            "message": f"{display_agent} released completed worker slot before self-claim.",
+            "worker_run_id": worker.get("run_id"),
+            "queue_event_id": worker.get("queue_event_id"),
+        },
+    )
+    return True
 
 
 def underutilization_settings(config: dict[str, Any]) -> dict[str, Any]:

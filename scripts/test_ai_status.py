@@ -3218,21 +3218,35 @@ class StatusCheckEmissionTests(unittest.TestCase):
         sha_64 = "f" * 64
 
         mock_40 = mock.Mock(returncode=0, stdout=f"{sha_40}\trefs/heads/task/{task_id}\n")
-        with mock.patch("subprocess.run", return_value=mock_40):
+        with mock.patch("subprocess.run", return_value=mock_40) as m_run:
             ai_status.clear_ai_status_caches()
-            self.assertEqual(ai_status.resolve_task_sha(task_id), sha_40)
+            res = ai_status.resolve_task_sha(task_id)
+            self.assertEqual(res, sha_40)
+            self.assertTrue(m_run.called)
 
         mock_64 = mock.Mock(returncode=0, stdout=f"{sha_64}\trefs/heads/task/{task_id}\n")
-        with mock.patch("subprocess.run", return_value=mock_64):
+        with mock.patch("subprocess.run", return_value=mock_64) as m_run:
             ai_status.clear_ai_status_caches()
-            self.assertEqual(ai_status.resolve_task_sha(task_id), sha_64)
+            res = ai_status.resolve_task_sha(task_id)
+            self.assertEqual(res, sha_64)
+            self.assertTrue(m_run.called)
 
         for invalid_len in (39, 41, 63, 65):
             bad_sha = "c" * invalid_len
             mock_bad = mock.Mock(returncode=0, stdout=f"{bad_sha}\trefs/heads/task/{task_id}\n")
-            with self.subTest(invalid_len=invalid_len), mock.patch("subprocess.run", return_value=mock_bad):
+            with self.subTest(invalid_len=invalid_len), mock.patch("subprocess.run", return_value=mock_bad) as m_run:
                 ai_status.clear_ai_status_caches()
-                self.assertIsNone(ai_status.resolve_task_sha(task_id))
+                res = ai_status.resolve_task_sha(task_id)
+                self.assertIsNone(res)
+                self.assertTrue(m_run.called)
+
+        for nonhex_sha in ("g" * 40, "z" * 64, "G" * 40, "X" * 64, "123456789012345678901234567890123456789g"):
+            mock_nonhex = mock.Mock(returncode=0, stdout=f"{nonhex_sha}\trefs/heads/task/{task_id}\n")
+            with self.subTest(nonhex_sha=nonhex_sha), mock.patch("subprocess.run", return_value=mock_nonhex) as m_run:
+                ai_status.clear_ai_status_caches()
+                res = ai_status.resolve_task_sha(task_id)
+                self.assertIsNone(res)
+                self.assertTrue(m_run.called)
 
     def test_emit_task_review_status_check_approved(self) -> None:
         task = {"id": "ODP-001", "reviewer": "Codex", "approved_head": "sha123"}
