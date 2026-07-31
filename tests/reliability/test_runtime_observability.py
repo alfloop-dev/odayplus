@@ -3407,12 +3407,14 @@ def test_round16_remediation_findings_b1_b2_b3_negative_mutations_and_positive_v
     assert receipt_inj["status"] == "TEST_ONLY"
     assert receipt_inj["status"] != "DELIVERED"
 
+    import modules.notifications.infrastructure.adapters as adapters_mod
+
     # 5. Round 18 Negative Mutation Verification (Finding B1): No-argument adapter instantiation after module global and class default transport mutation.
     # Caller assigns custom key pairs to module globals (PINNED_ONCALL_PROVIDER_PUBLIC_KEY_PEM / PINNED_PLATFORM_DEPLOYMENT_PUBLIC_KEY_PEM)
     # and mutates class default transport (OnCallNotificationAdapter._default_http_transport).
     # Constructing OnCallNotificationAdapter with NO arguments MUST evaluate to TEST_ONLY, NEVER DELIVERED.
-    monkeypatch.setattr("modules.notifications.infrastructure.adapters.PINNED_ONCALL_PROVIDER_PUBLIC_KEY_PEM", provider_pub_pem)
-    monkeypatch.setattr("modules.notifications.infrastructure.adapters.PINNED_PLATFORM_DEPLOYMENT_PUBLIC_KEY_PEM", platform_pub_pem)
+    monkeypatch.setattr(adapters_mod, "PINNED_ONCALL_PROVIDER_PUBLIC_KEY_PEM", provider_pub_pem, raising=False)
+    monkeypatch.setattr(adapters_mod, "PINNED_PLATFORM_DEPLOYMENT_PUBLIC_KEY_PEM", platform_pub_pem, raising=False)
 
     adapter_mutated = OnCallNotificationAdapter(
         endpoint_url="https://oncall-router.oday.plus/api/v1/alerts",
@@ -3429,8 +3431,8 @@ def test_round16_remediation_findings_b1_b2_b3_negative_mutations_and_positive_v
     # Mutating both public key aliases (PINNED_ONCALL_PROVIDER_PUBLIC_KEY_PEM / PINNED_PLATFORM_DEPLOYMENT_PUBLIC_KEY_PEM)
     # and class default transport (OnCallNotificationAdapter._default_http_transport).
     # Constructing OnCallNotificationAdapter with NO arguments MUST evaluate to TEST_ONLY, NEVER DELIVERED.
-    monkeypatch.setattr("modules.notifications.infrastructure.adapters.PINNED_ONCALL_PROVIDER_PUBLIC_KEY_PEM", provider_pub_pem)
-    monkeypatch.setattr("modules.notifications.infrastructure.adapters.PINNED_PLATFORM_DEPLOYMENT_PUBLIC_KEY_PEM", platform_pub_pem)
+    monkeypatch.setattr(adapters_mod, "PINNED_ONCALL_PROVIDER_PUBLIC_KEY_PEM", provider_pub_pem, raising=False)
+    monkeypatch.setattr(adapters_mod, "PINNED_PLATFORM_DEPLOYMENT_PUBLIC_KEY_PEM", platform_pub_pem, raising=False)
     monkeypatch.setattr(OnCallNotificationAdapter, "_default_http_transport", staticmethod(authentic_asymmetric_transport))
 
     adapter_r19_mutated = OnCallNotificationAdapter()
@@ -3550,8 +3552,8 @@ def test_round16_remediation_findings_b1_b2_b3_negative_mutations_and_positive_v
             )
 
     attacker_verifier_url = "https://caller-verifier.evil.example/verify"
-    monkeypatch.setattr("modules.notifications.infrastructure.adapters.CANONICAL_PINNED_EXTERNAL_VERIFIER_URL", attacker_verifier_url)
-    monkeypatch.setattr("modules.notifications.infrastructure.adapters.PINNED_EXTERNAL_VERIFIER_PUBLIC_KEY_PEM", attacker_public_pem)
+    monkeypatch.setattr(adapters_mod, "CANONICAL_PINNED_EXTERNAL_VERIFIER_URL", attacker_verifier_url, raising=False)
+    monkeypatch.setattr(adapters_mod, "PINNED_EXTERNAL_VERIFIER_PUBLIC_KEY_PEM", attacker_public_pem, raising=False)
     monkeypatch.setattr(OnCallNotificationAdapter, "_default_http_transport", staticmethod(caller_provider_transport_r21))
     import urllib.request
     monkeypatch.setattr(urllib.request, "build_opener", lambda *_args, **_kwargs: CallerVerifierOpenerR21())
@@ -3563,3 +3565,212 @@ def test_round16_remediation_findings_b1_b2_b3_negative_mutations_and_positive_v
     receipt_r21 = adapter_r21.delivery_receipts[-1]
     assert receipt_r21["status"] == "PENDING_VERIFICATION"
     assert receipt_r21["status"] != "DELIVERED"
+
+
+def test_delivery_authority_readback_boundary_verification() -> None:
+    import base64
+    from datetime import timedelta
+
+    from cryptography.hazmat.primitives import serialization
+    from cryptography.hazmat.primitives.asymmetric import ed25519
+
+    from modules.notifications.domain.authority import (
+        CANONICAL_AUTHORITY_ISSUER_IDENTITY,
+        DeliveryAuthorityReadback,
+        DeliveryAuthorityRecord,
+    )
+
+    auth_priv_key = ed25519.Ed25519PrivateKey.generate()
+    auth_pub_key = auth_priv_key.public_key()
+    pub_pem = auth_pub_key.public_bytes(
+        encoding=serialization.Encoding.PEM,
+        format=serialization.PublicFormat.SubjectPublicKeyInfo,
+    ).decode("utf-8")
+
+    delivery_id = "del-test-auth-100"
+    prov_receipt_id = "prov-rcpt-auth-100"
+    req_hash = "a" * 64
+    rel_sha = "f" * 40
+    oncall_route = "ops-lead"
+    ts_str = datetime.now(UTC).isoformat()
+    issuer_id = CANONICAL_AUTHORITY_ISSUER_IDENTITY
+
+    sig_payload = (
+        f"authority_record:{delivery_id}:{prov_receipt_id}:{req_hash}:{rel_sha}:{oncall_route}:{ts_str}:{issuer_id}"
+    ).encode()
+    sig_b64 = base64.b64encode(auth_priv_key.sign(sig_payload)).decode("utf-8")
+
+    record = DeliveryAuthorityRecord(
+        delivery_id=delivery_id,
+        provider_receipt_id=prov_receipt_id,
+        request_hash=req_hash,
+        release_sha=rel_sha,
+        oncall_route=oncall_route,
+        timestamp=ts_str,
+        issuer_identity=issuer_id,
+        issuer_signature=sig_b64,
+    )
+
+    readback = DeliveryAuthorityReadback(
+        authority_public_key_pem=pub_pem,
+        allowed_issuer_identity=issuer_id,
+    )
+
+    # 1. Positive verification
+    is_del, status, err = readback.verify_authority_record(record, expected_release_sha=rel_sha, expected_delivery_id=delivery_id)
+    assert is_del is True
+    assert status == "DELIVERED"
+    assert err is None
+
+    # 2. Negative: Invalid payload type / dict
+    is_del, status, err = readback.verify_authority_record("not-a-record", expected_release_sha=rel_sha)
+    assert is_del is False
+    assert status == "PENDING_VERIFICATION"
+    assert "Invalid authority record type" in str(err)
+
+    # 3. Negative: Unauthorized issuer identity
+    bad_issuer_rec = DeliveryAuthorityRecord(
+        delivery_id=delivery_id,
+        provider_receipt_id=prov_receipt_id,
+        request_hash=req_hash,
+        release_sha=rel_sha,
+        oncall_route=oncall_route,
+        timestamp=ts_str,
+        issuer_identity="urn:unauthorized:issuer",
+        issuer_signature=sig_b64,
+    )
+    is_del, status, err = readback.verify_authority_record(bad_issuer_rec, expected_release_sha=rel_sha)
+    assert is_del is False
+    assert status == "PENDING_VERIFICATION"
+    assert "Unauthorized issuer identity" in str(err)
+
+    # 4. Negative: Delivery ID mismatch
+    is_del, status, err = readback.verify_authority_record(record, expected_release_sha=rel_sha, expected_delivery_id="del-wrong-999")
+    assert is_del is False
+    assert status == "PENDING_VERIFICATION"
+    assert "Delivery ID mismatch" in str(err)
+
+    # 5. Negative: Release SHA mismatch
+    is_del, status, err = readback.verify_authority_record(record, expected_release_sha="e" * 40)
+    assert is_del is False
+    assert status == "PENDING_VERIFICATION"
+    assert "Release SHA mismatch" in str(err)
+
+    # 6. Negative: Stale timestamp (> 300s)
+    stale_ts = (datetime.now(UTC) - timedelta(seconds=400)).isoformat()
+    stale_sig_payload = (
+        f"authority_record:{delivery_id}:{prov_receipt_id}:{req_hash}:{rel_sha}:{oncall_route}:{stale_ts}:{issuer_id}"
+    ).encode()
+    stale_sig_b64 = base64.b64encode(auth_priv_key.sign(stale_sig_payload)).decode("utf-8")
+    stale_rec = DeliveryAuthorityRecord(
+        delivery_id=delivery_id,
+        provider_receipt_id=prov_receipt_id,
+        request_hash=req_hash,
+        release_sha=rel_sha,
+        oncall_route=oncall_route,
+        timestamp=stale_ts,
+        issuer_identity=issuer_id,
+        issuer_signature=stale_sig_b64,
+    )
+    is_del, status, err = readback.verify_authority_record(stale_rec, expected_release_sha=rel_sha)
+    assert is_del is False
+    assert status == "PENDING_VERIFICATION"
+    assert "freshness window" in str(err)
+
+    # 7. Negative: Forged signature
+    forged_rec = DeliveryAuthorityRecord(
+        delivery_id=delivery_id,
+        provider_receipt_id=prov_receipt_id,
+        request_hash=req_hash,
+        release_sha=rel_sha,
+        oncall_route=oncall_route,
+        timestamp=ts_str,
+        issuer_identity=issuer_id,
+        issuer_signature=base64.b64encode(b"forged-signature-bytes-32-len-x").decode("utf-8"),
+    )
+    is_del, status, err = readback.verify_authority_record(forged_rec, expected_release_sha=rel_sha)
+    assert is_del is False
+    assert status == "PENDING_VERIFICATION"
+    assert "signature verification failed" in str(err).lower()
+
+
+def test_application_adapter_never_issues_delivered_status(monkeypatch: Any) -> None:
+    from modules.notifications import OnCallNotificationAdapter
+
+    rel_sha = "a" * 40
+    monkeypatch.setenv("RELEASE_SHA", rel_sha)
+    monkeypatch.setenv("TRUSTED_DEPLOYED_RELEASE_SHA", rel_sha)
+    monkeypatch.setenv("ONCALL_PROVIDER_SECRET", "test-secret-456")
+
+    # Mock HTTP transport returning 200 with arbitrary delivered payloads
+    def mock_200_transport(url: str, payload: dict) -> tuple[int, dict]:
+        return (200, {"status": "delivered", "provider_receipt_id": "rcpt-1", "delivered": True})
+
+    # Test under default transport mode
+    adapter_default = OnCallNotificationAdapter(
+        endpoint_url="https://oncall-router.oday.plus/api/v1/alerts",
+        http_transport=mock_200_transport,
+    )
+    ok_def, err_def = adapter_default.send("nid-app-1", "webhook", "ops-lead", "Test Title", "Test Detail")
+    assert ok_def is True
+    receipt_def = adapter_default.delivery_receipts[-1]
+    assert receipt_def["status"] == "TEST_ONLY"
+    assert receipt_def["status"] != "DELIVERED"
+
+    # Test under external verification enabled mode
+    monkeypatch.setenv("REQUIRE_EXTERNAL_VERIFICATION", "true")
+    adapter_req = OnCallNotificationAdapter(
+        endpoint_url="https://oncall-router.oday.plus/api/v1/alerts",
+        http_transport=mock_200_transport,
+    )
+    ok_req, err_req = adapter_req.send("nid-app-2", "webhook", "ops-lead", "Test Title", "Test Detail")
+    assert ok_req is True
+    receipt_req = adapter_req.delivery_receipts[-1]
+    assert receipt_req["status"] == "PENDING_VERIFICATION"
+    assert receipt_req["status"] != "DELIVERED"
+
+
+def test_local_evidence_and_loopback_rejects_real_delivery_claim(monkeypatch: Any) -> None:
+    import threading
+    from http.server import BaseHTTPRequestHandler, HTTPServer
+
+    from modules.notifications import OnCallNotificationAdapter
+
+    rel_sha = "b" * 40
+    monkeypatch.setenv("RELEASE_SHA", rel_sha)
+    monkeypatch.setenv("TRUSTED_DEPLOYED_RELEASE_SHA", rel_sha)
+    monkeypatch.setenv("ONCALL_PROVIDER_SECRET", "test-secret-789")
+
+    class LoopbackHandler(BaseHTTPRequestHandler):
+        def do_POST(self):
+            content_length = int(self.headers.get("Content-Length", 0))
+            body = self.rfile.read(content_length)
+            payload = json.loads(body.decode("utf-8")) if body else {}
+            resp = {"status": "delivered", "delivered": True, "route": payload.get("user_id")}
+            resp_bytes = json.dumps(resp).encode("utf-8")
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(resp_bytes)))
+            self.end_headers()
+            self.wfile.write(resp_bytes)
+
+        def log_message(self, format, *args):
+            pass
+
+    server = HTTPServer(("127.0.0.1", 0), LoopbackHandler)
+    server_port = server.server_port
+    server_thread = threading.Thread(target=server.serve_forever, daemon=True)
+    server_thread.start()
+
+    try:
+        adapter = OnCallNotificationAdapter(
+            endpoint_url=f"http://127.0.0.1:{server_port}/api/v1/alerts",
+            http_transport=None,
+        )
+        ok, err = adapter.send("nid-lb-1", "webhook", "ops-lead", "Loopback Alert", "Test Detail")
+        assert ok is True
+        receipt = adapter.delivery_receipts[-1]
+        assert receipt["status"] in {"TEST_ONLY", "PENDING_VERIFICATION"}
+        assert receipt["status"] != "DELIVERED"
+    finally:
+        server.shutdown()

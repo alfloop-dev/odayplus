@@ -36,28 +36,17 @@ def main():
 
     class OnCallHTTPHandler(BaseHTTPRequestHandler):
         def do_POST(self):
-            import hashlib
             content_length = int(self.headers.get("Content-Length", 0))
             body = self.rfile.read(content_length)
             payload = json.loads(body.decode("utf-8")) if body else {}
 
-            prov_sec = os.getenv("ONCALL_PROVIDER_SECRET", "").strip()
-            rel_sha = payload.get("release_sha", "")
             prov_rcpt = f"prov-rcpt-{payload.get('delivery_id', '123')}"
-            req_bytes = json.dumps(payload, sort_keys=True).encode("utf-8")
-            req_hash = hashlib.sha256(req_bytes).hexdigest()
-            sig_base = f"{prov_sec}:{prov_rcpt}:{req_hash}:{rel_sha}".encode()
-            sig_token = f"sig-sha256-{hashlib.sha256(sig_base).hexdigest()}"
-            rb_base = f"readback:{req_hash}".encode()
-            rb_token = hashlib.sha256(rb_base).hexdigest()
 
             response_payload = {
-                "status": "delivered",
+                "status": "LOCAL_TEST_ONLY",
                 "route": payload.get("user_id", "ops-lead"),
                 "delivery_id": payload.get("delivery_id"),
                 "provider_receipt_id": prov_rcpt,
-                "provider_signature": sig_token,
-                "provider_readback": rb_token,
                 "received_at": datetime.now(UTC).isoformat(),
             }
             response_bytes = json.dumps(response_payload).encode("utf-8")
@@ -118,7 +107,7 @@ def main():
     worker.run_once()
 
     # 5. AlertRouter routes and triggers an alert
-    print("\n--- Step 3: Triggering Alert and Real Notification Delivery ---")
+    print("\n--- Step 3: Triggering Alert and Local Test Notification Delivery ---")
     alert_router = AlertRouter(notification_service=notification_service)
 
     # We will trigger "audit-write-failure" (P1 alert)
@@ -127,6 +116,11 @@ def main():
     server.shutdown()
 
     real_receipt = adapter.delivery_receipts[0] if adapter.delivery_receipts else {}
+    receipt_status = real_receipt.get("status", "")
+    if receipt_status == "DELIVERED":
+        raise RuntimeError("Local loopback simulation cannot emit DELIVERED status.")
+    if receipt_status not in {"FAILED", "TEST_ONLY", "PENDING_VERIFICATION"}:
+        raise RuntimeError(f"Unexpected local receipt status '{receipt_status}'")
 
     # 6. Gather all traces and logs
     print("\n--- Step 4: Exporting Trace Spans ---")
@@ -149,7 +143,7 @@ Key implementation components:
    - **Retry & Receipts**: Automatically retries failed sends and logs individual delivery status in `notification_receipts`.
    - **Escalation**: Escalates high-priority notifications to secondary channels if primary channel fails.
    - **Storage Adapters**: Supported by both `InMemoryNotificationRepository` and SQLite `DurableNotificationRepository`.
-   - **Real Delivery**: Verified with `OnCallNotificationAdapter` producing HTTP 200 delivery receipts over real loopback network socket and `AlertRouter` fail-closed routing.
+   - **Local Delivery Simulation**: Verified with `OnCallNotificationAdapter` producing HTTP 200 TEST_ONLY receipts over local loopback network socket and `AlertRouter` fail-closed routing.
 2. **Process and Dependency Health checks**:
    - **Liveness (`/healthz`)**: Verifies process health.
    - **Readiness (`/readiness`)**: Verifies database connection.
@@ -195,20 +189,21 @@ The background worker claimed and executed the job. Both the API HTTP span and t
 {json.dumps(spans, indent=2)}
 ```
 
-### 2. Real Alert Delivery & Tested Routing
-A P1 alert (`audit-write-failure`) was routed to `ops-lead` (per `alerts.json` configuration) and successfully delivered via `OnCallNotificationAdapter` with real HTTP response-derived receipt.
+### 2. Local Test Delivery & Alert Routing Simulation
+A P1 alert (`audit-write-failure`) was routed to `ops-lead` (per `alerts.json` configuration) and processed via `OnCallNotificationAdapter` producing a local HTTP response-derived receipt (status: {receipt_status}).
 
 #### Routed Alert Configuration
 ```json
 {json.dumps(alert_router.route_alert("audit-write-failure"), indent=2)}
 ```
 
-#### Real Delivery On-Call Receipt Output (Captured directly from OnCallNotificationAdapter)
+#### Local Test Delivery Receipt Output (Captured directly from OnCallNotificationAdapter)
 ```json
 {json.dumps(real_receipt, indent=2)}
 ```
 
 ---
+
 
 ## Verification Evidence
 
