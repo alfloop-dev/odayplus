@@ -23,7 +23,7 @@ the business gate.
 | Hard constraints | PASS | Budget, expected gross margin, capacity delta, average risk, and min/max action counts are enforced against unrounded authoritative aggregates and independently rechecked. Dedicated infeasibility diagnosis covers each family. |
 | Selected option and result integrity | PASS | Comparison rejects options not present in `options_by_entity`, duplicate/missing entities, ambiguous duplicate `(entity, action)` options, infeasible selections, any exact scalar drift, forged status/objective/metrics/counts/bindings, solver-version drift, non-optimal feasible substitutions, malformed alternatives, and false optimality. |
 | Immutable binding | PASS | Scenario, source snapshots, baseline content, actions/domain, solver problem, full solver result, approval receipt, and comparison output each have deterministic SHA-256 bindings. |
-| Authoritative approval | TECHNICAL PASS / HUMAN PENDING | A fixed verifier resolves an immutable receipt by exact ID and binds one source system, named principal, exact role, active decision, approval reference, strict UTC issue/expiry, scenario, baseline, scope, release, policy, actions/domain, source snapshots, baseline hash, solver problem hash, and receipt integrity hash. |
+| Authoritative approval | TECHNICAL PASS / HUMAN PENDING | A fixed verifier resolves an immutable receipt by exact ID, binds one source system, named principal, exact role, active decision, approval reference, strict UTC issue/expiry, scenario, baseline, scope, release, policy, actions/domain, source snapshots, baseline hash, and solver problem hash, then issues an opaque authority-readback attestation. Receipt self-hash consistency alone never enables governance. |
 | Actor-string trust | PASS | No `startswith("Human/Ops")` or actor allow-list grants approval. Lifecycle approval requires successful authoritative receipt readback; `actor_id` is only an audit identity and must equal the verified principal. |
 | Superiority claim | FAIL-CLOSED UNTIL HUMAN GATE | Missing/unresolved/mismatched approval, invalid baseline, infeasible baseline, forged solve result, or non-superior result always emits `superior_or_equal=false`, `BUSINESS_UAT_UNVERIFIED`, and `GOVERNED_DISABLED`. |
 | Alternatives and infeasibility | PASS | The authority-bound alternative limit drives an independently ranked expected set; count, order, actions, and every metric must match. Infeasible results must match independently recomputed status, zero-result fields, and the complete ordered diagnosis records including multiplicity and content. |
@@ -45,9 +45,22 @@ and lifecycle `decided_at` audit timestamps cannot backdate receipt expiry; a
 deterministic test clock is injected only when the verifier is composed.
 
 `NetPlanService.decide()` cannot enter `APPROVED` without this verifier and a
-receipt matching the exact solved scenario and selected actions. `ApprovalRecord`
-derives verification state from the resolved receipt and its integrity hash,
-not from an actor prefix.
+receipt matching the exact solved scenario and selected actions. On successful
+readback the verifier issues an opaque, sealed attestation bound to the exact
+receipt, expected baseline/problem content, fixed authority identity, and
+authority-owned evaluation time. `ApprovalRecord` persists that verification
+object and validates its seal plus the record's scenario, actor principal, and
+policy bindings before emitting verified/enabled state.
+
+A public caller can construct a receipt whose `receipt_hash` matches that same
+caller-controlled content, and can even construct
+`ManagementApprovalVerification(verified=True, ...)`; neither object carries a
+verifier-issued attestation, so `ApprovalRecord`, repository readback, and API
+serialization all remain `BUSINESS_UAT_UNVERIFIED / GOVERNED_DISABLED`. The API
+decision schema accepts only an authority receipt lookup ID and forbids caller
+source-system, principal-role, or receipt-hash fields. The optional verifier
+composition remains unconfigured in production until the separate Human/Ops
+baseline-approval task supplies the real fixed authority readback.
 
 Production must leave the verifier unconfigured until
 `ODP-PLAN-NETPLAN-BASELINE-APPROVAL-001` supplies a real approval-system
@@ -114,6 +127,14 @@ approval receipt hash is intentional and proves the current no-authority state.
 The integration suite rejects:
 
 - actor-prefix spoofing and approval without an injected verifier;
+- directly constructed `ApprovalRecord` objects carrying arbitrary caller
+  source/principal/role values and a self-consistent receipt hash;
+- caller-created bare `verified=True` verification objects without a sealed
+  authority attestation;
+- direct repository persistence and API serialization of those forged records;
+- API attempts to inject source-system, principal-role, or receipt-hash fields;
+- replay of a valid attestation onto a different scenario, actor principal, or
+  policy version;
 - arbitrary, missing, `ANY`, and `UNVERIFIED` receipt IDs;
 - wildcard authority source/principal/role configuration;
 - wrong source system, principal, role, decision, scenario, baseline, policy,
@@ -135,31 +156,35 @@ The integration suite rejects:
 
 ## 7. Verification
 
-Executed on task branch after exact-acceptance anchor `c4eeb512`:
+Executed on task branch after authority-attestation anchor `c50bf18d`:
 
 ```bash
 uv run pytest -q tests/integration/test_netplan_solver.py --tb=short
-# 58 parameterized cases passed
+# 63 parameterized cases passed
 
 uv run pytest -q tests -k "netplan or ortools or robust" --tb=short
-# 60 tests passed; exit 0
+# 65 tests passed; exit 0
 
 uv run pytest -q tests -k "netplan or management_baseline or solver" --tb=short
-# 72 tests passed; exit 0
+# 77 tests passed; exit 0
 
 uv run pytest -q \
   tests/integration/test_netplan_solver.py \
   solver/netplan/tests/test_robust.py \
   modules/netplan/tests/test_netplan_production_execution.py \
   tests/solver/test_runtime_compat.py --tb=short
-# 77 tests passed; exit 0
+# 82 tests passed; exit 0
 
 uv run ruff check \
-  solver/netplan modules/netplan \
+  solver/netplan modules/netplan apps/api/app/routes/netplan.py \
+  apps/api/oday_api/main.py \
   tests/integration/test_netplan_solver.py tests/solver/test_runtime_compat.py
 # All checks passed
 
 git diff --check
+# clean
+
+git diff origin/dev...HEAD --check
 # clean
 ```
 

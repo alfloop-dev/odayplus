@@ -190,3 +190,33 @@ Batch re-audit after the anchor passed 58 NetPlan integration cases, 60
 NetPlan/robust/production/runtime cases. Focused Ruff and `git diff --check`
 were clean. Human/Ops remains `BUSINESS_UAT_UNVERIFIED / GOVERNED_DISABLED`;
 this addendum requests re-review and does not record reviewer approval.
+
+## 8. 2026-07-31 authority-attestation addendum
+
+Reviewer `Codex` reopened pushed head `82234633` after reproducing a public
+governance-serialization bypass: a caller could directly construct an
+`ApprovalRecord` with arbitrary source/principal/role fields, recompute a hash
+over that same caller-controlled receipt, leave `verification_violations=()`,
+and receive `authentic_approval_verified=true`, `BUSINESS_UAT_VERIFIED`, and
+`GOVERNED_ENABLED` without fixed-authority readback.
+
+Owner `Codex2` remediated B5 at authority-attestation anchor `c50bf18d`.
+Successful `FixedManagementApprovalReceiptVerifier` readback now issues an
+opaque sealed attestation bound to the receipt, full expectation, fixed
+authority identity, and verifier clock. Public `ApprovalRecord` construction,
+bare caller-created `verified=True` objects, direct repository persistence, and
+API serialization cannot synthesize this attestation from receipt content.
+Record-level scenario/principal/policy replay and API attempts to inject
+source-system, principal-role, or receipt-hash fields also fail closed. The
+existing lifecycle-valid fixed receipt still serializes verified/enabled and
+includes its attestation ID, binding hash, and verification time.
+
+The complete batch was re-audited rather than only the reproduced mutation:
+63 NetPlan integration cases, 65 `netplan or ortools or robust` selected tests,
+77 `netplan or management_baseline or solver` selected tests, and 82 explicit
+NetPlan/robust/production/runtime cases passed. Focused Ruff, `git diff
+--check`, and `git diff origin/dev...HEAD --check` were clean. This remains a
+technical re-review request; no test fixture or attestation is authentic
+Human/Ops approval, and activation remains
+`BUSINESS_UAT_UNVERIFIED / GOVERNED_DISABLED` pending
+`ODP-PLAN-NETPLAN-BASELINE-APPROVAL-001`.
