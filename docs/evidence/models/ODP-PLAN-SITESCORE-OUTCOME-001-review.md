@@ -1167,3 +1167,93 @@ but B1 permits removal of the required calibration/model evidence, B2 permits in
 source/lineage/freshness evidence, and B3 still admits the explicitly prohibited synthetic
 horizon metric class through an open receipt schema. Re-audit the complete acceptance batch after
 remediation. No owner implementation content was changed by this review.
+
+---
+
+# Codex6 Re-review Addendum — 2026-07-31, exact owner head `c2136d4c`
+
+The supervisor re-dispatched this task after the owner reported B1-B3 remediation at exact
+pushed head `c2136d4c27e82e7fb1a7451a0993ccaf96199962`. The local and remote task
+branches both pointed at that SHA. The worktree contained no uncommitted owner implementation
+diff; its only untracked entries were the orchestrator-seeded task context/state files.
+
+## Verification at the exact owner head
+
+```bash
+PYTHONPATH=. .venv/bin/pytest -q tests/models -k "sitescore or opening_outcome"
+PYTHONPATH=. .venv/bin/pytest -q tests -k "sitescore or opening_outcome or model_ready"
+.venv/bin/ruff check scripts/models models tests/models
+git diff --check
+git diff --check 378230c9..c2136d4c
+```
+
+- Task-scoped selector: **48 passed**.
+- Full focused selector: **92 passed**.
+- Ruff and both whitespace checks: clean.
+- The committed receipt and committed model card verify together at the exact reviewed head.
+- The previous direct examples are fixed only in the narrow direction: required model-card
+  metric-summary keys are checked, selected governed-disabled lineage placeholders are checked,
+  and `benchmark_summary` itself now has an allow-list.
+
+The task brief requires the complete fail-closed batch to be re-audited after every reopen.
+Each mutation below started from the committed receipt/model card, rebound the exact model-card
+and handback SHA256 values in both declared locations, recomputed the receipt content hash, and
+then supplied the rebound card to `verify_sitescore_gate2_receipt`. All eight probes returned
+`is_valid=True`, `reason_code="RECEIPT_VALIDATED"`, and no errors.
+
+## Blocking findings
+
+### B1 — Calibration and segment schemas remain optional or untyped
+
+Three independent self-consistent mutations validated:
+
+- replacing both `benchmark_summary.calibration_summary` and
+  `model_card.calibration_summary` with empty dictionaries;
+- replacing every allowed calibration value in both copies with the string `"invented"`; and
+- replacing both segment arrays with `[ {"metrics": "invented"} ]`, omitting segment identity,
+  record counts, and all required measured metric fields.
+
+The new checks require only that the model-card calibration is a dictionary and segment metrics
+is a sequence, then compare it to the equally attacker-controlled receipt copy. The calibration
+allow-list checks names but not the complete required key set or value types; the segment helper
+silently accepts non-dictionary entries and non-dictionary `metrics`. Require exact key sets,
+strict finite/nullable value contracts, the complete segment object schema, and count/population
+reconciliation before accepting the bound model card.
+
+### B2 — Inventory authority and freshness remain self-attested
+
+A mutation changed `inventory_version` to `invented-authority-v99`, changed `source_contract` to
+the correspondingly derived `model_ready.candidate_site_view@invented-authority-v99`, and moved
+top-level `observed_at` to `2099-12-31T23:59:59Z`. After hash rebinding it validated.
+
+The verifier derives the expected source string from the same untrusted inventory version and
+only checks whether `observed_at` parses. It does not pin the current discovery contract/version,
+require a timezone-aware timestamp, reject future/stale evidence, or reconcile the timestamp
+with `model_card.created_at` and any source/backfill freshness evidence. Pin or authoritatively
+resolve the source/version and enforce explicit freshness/reconciliation semantics.
+
+### B3 — Metric-bearing handback, contract, receipt, and model-card schemas remain open
+
+Five independent renamed-metric mutations validated after rebinding:
+
+- adding `m6_interval_mae_v2` to both complete handback copies;
+- adding it inside both `outcome_backfill_contract` copies;
+- adding it at the model-card top level;
+- adding it at the receipt top level; and
+- the malformed segment mutation in B1, whose unchecked `metrics` value can carry an arbitrary
+  non-dictionary metric payload.
+
+The `benchmark_summary` allow-list fixes only the previous exact location. The universal scan is
+still a blacklist plus an exact-name regex, while handback/contracts and the receipt/model-card
+envelopes have no closed schemas. Enforce exact allow-lists recursively for every metric-bearing
+object, including both handback copies and nested contracts, and validate all nested object types
+and required keys. Regression tests must rebind every artifact/content hash so they exercise the
+self-consistent forgery boundary.
+
+## Decision
+
+**Changes requested.** Exact owner head `c2136d4c` is not approved. The focused suites are green,
+but B1 still accepts absent or untyped calibration/segment evidence, B2 still accepts invented
+inventory authority and future freshness, and B3 still accepts renamed synthetic metrics across
+multiple open metric-bearing objects. Re-audit the complete acceptance batch after remediation.
+No owner implementation content was changed by this review.
