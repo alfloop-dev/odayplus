@@ -20,10 +20,6 @@
     "CC-BY-4.0",
     "BlueOak-1.0.0",
     "Unlicense",
-    "LGPL-3.0-or-later",
-    "LGPL-3.0-only",
-    "LGPL-3.0",
-    "LGPL-2.1-or-later",
     "Zlib",
     "0BSD",
     "PostgreSQL",
@@ -45,6 +41,11 @@
   ],
   "review_required_licenses": [
     "UNKNOWN",
-    "PROPRIETARY"
+    "PROPRIETARY",
+    "LGPL-3.0-or-later",
+    "LGPL-3.0-only",
+    "LGPL-3.0",
+    "LGPL-2.1-or-later",
+    "LGPL-2.1"
   ]
 }

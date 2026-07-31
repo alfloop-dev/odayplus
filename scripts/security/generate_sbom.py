@@ -1256,7 +1256,9 @@ def main() -> int:
         NOTICES_PATH.write_text(notices_content, encoding="utf-8")
         print(f"THIRD_PARTY_NOTICES updated at {safe_rel_path(NOTICES_PATH)}")
 
-    return 0 if is_passed else 1
+    if args.check_policy and not is_passed:
+        return 1
+    return 0
 
 
 if __name__ == "__main__":

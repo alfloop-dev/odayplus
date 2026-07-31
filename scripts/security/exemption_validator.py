@@ -298,22 +298,10 @@ def validate_exemption_entry(
 
     # Active exemption binding check: status 'active' requires resolvable authentic receipt owned by ODP-PLAN-OSS-LEGAL-POLICY-001
     if status == "active":
-        # Check for registered authentic receipt in docs/security/receipts/ or active legal policy binding
-        target_dir = base_dir if base_dir else (ROOT / "docs/security")
-        receipts_dir = target_dir / "receipts"
-        resolved = False
-        if receipts_dir.exists():
-            receipt_file = receipts_dir / f"{app_ref}.json"
-            if receipt_file.exists():
-                try:
-                    rdata = json.loads(receipt_file.read_text(encoding="utf-8"))
-                    if rdata.get("status") == "active" and rdata.get("approval_reference") == app_ref:
-                        resolved = True
-                except Exception:
-                    pass
-        if not resolved:
+        res_ok, res_err = resolve_approval_reference(app_ref, entry, base_dir=base_dir)
+        if not res_ok:
             violations.append(
-                f"{label} has status 'active' but reference '{app_ref}' could not be resolved to an authentic legal policy receipt under ODP-PLAN-OSS-LEGAL-POLICY-001."
+                f"{label} has status 'active' but reference '{app_ref}' could not be resolved to an authentic legal policy receipt under ODP-PLAN-OSS-LEGAL-POLICY-001: {res_err}"
             )
 
     is_valid = len(violations) == 0
