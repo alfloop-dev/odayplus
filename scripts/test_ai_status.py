@@ -627,6 +627,7 @@ class ArchiveWorkflowTests(unittest.TestCase):
 
     def test_archive_migrate_moves_terminal_tasks_out_of_active_state(self) -> None:
         with (
+            mock.patch.dict(os.environ, {"AI_NAME": "Codex"}, clear=False),
             mock.patch.object(ai_status, "archive_task_snapshot", return_value={"task_id": "REG-100"}) as archive_task_snapshot,
             mock.patch.object(ai_status, "rebuild_archive_index") as rebuild_archive_index,
         ):

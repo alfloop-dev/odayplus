@@ -25,7 +25,8 @@ if str(SCRIPTS_DIR) not in sys.path:
 # before importing it.
 _ORIGINAL_STATUS_ROOT = os.environ.get("PANTHEON_STATUS_ROOT")
 _TEST_STATUS_ROOT_HANDLE = tempfile.TemporaryDirectory(prefix="pantheon-supervisor-tests-")
-os.environ["PANTHEON_STATUS_ROOT"] = _TEST_STATUS_ROOT_HANDLE.name
+_TEST_STATUS_ROOT = Path(_TEST_STATUS_ROOT_HANDLE.name).resolve()
+os.environ["PANTHEON_STATUS_ROOT"] = str(_TEST_STATUS_ROOT)
 
 import ai_status
 import supervisor
@@ -49,10 +50,46 @@ def load_test_config() -> dict[str, Any]:
             pass
     if not config_file.exists():
         config_file = Path(__file__).with_name("config.example.json")
-    return json.loads(config_file.read_text(encoding="utf-8"))
+    config = json.loads(config_file.read_text(encoding="utf-8"))
+
+    # A test config must never retain repository-relative coordination paths:
+    # common.config_path() resolves them against the checked-out code root, not
+    # PANTHEON_STATUS_ROOT. Rewrite the complete coordination path table to the
+    # module-scoped temporary root before any Supervisor helper can persist.
+    isolated_paths: dict[str, str] = {}
+    for key, value in (config.get("paths") or {}).items():
+        raw_path = Path(str(value))
+        relative_path = Path(raw_path.name) if raw_path.is_absolute() else raw_path
+        isolated_paths[key] = str((_TEST_STATUS_ROOT / relative_path).resolve())
+    config["paths"] = isolated_paths
+
+    watchdog = config.setdefault("watchdog", {})
+    watchdog["state_file"] = str((_TEST_STATUS_ROOT / ".orchestrator/watchdog-state.json").resolve())
+    watchdog["metrics_file"] = str(
+        (_TEST_STATUS_ROOT / ".orchestrator/metrics/supervisor-watchdog.jsonl").resolve()
+    )
+    config.setdefault("worker_worktrees", {})["root"] = str(
+        (_TEST_STATUS_ROOT / "worker-worktrees").resolve()
+    )
+    config.setdefault("permission_broker", {})["allowed_workspace_roots"] = [
+        str((_TEST_STATUS_ROOT / "workspace").resolve())
+    ]
+    return config
 
 
 class RuntimeConfigTests(unittest.TestCase):
+    def test_test_config_coordination_paths_are_temporary_and_absolute(self) -> None:
+        config = load_test_config()
+
+        for key, value in config["paths"].items():
+            with self.subTest(path=key):
+                path = Path(value)
+                self.assertTrue(path.is_absolute())
+                self.assertTrue(path.is_relative_to(_TEST_STATUS_ROOT))
+        self.assertTrue(Path(config["watchdog"]["state_file"]).is_relative_to(_TEST_STATUS_ROOT))
+        self.assertTrue(Path(config["watchdog"]["metrics_file"]).is_relative_to(_TEST_STATUS_ROOT))
+        self.assertTrue(Path(config["worker_worktrees"]["root"]).is_relative_to(_TEST_STATUS_ROOT))
+
     def test_codex_pair_shares_one_account_quota_group(self) -> None:
         config = load_test_config()
 
@@ -9056,6 +9093,12 @@ class ReviewHeadFreezeTests(unittest.TestCase):
 
     def test_supervisor_suppresses_finalize_dispatch_on_pending_ci(self) -> None:
         config = self._build_freeze_test_config()
+        task_worktree_status_path = ROOT_DIR / "ai-status.json"
+        task_worktree_status_before = (
+            task_worktree_status_path.read_bytes()
+            if task_worktree_status_path.exists()
+            else None
+        )
         task = {
             "id": "FREEZE-TEST-005",
             "owner": "Antigravity4",
@@ -9105,6 +9148,12 @@ class ReviewHeadFreezeTests(unittest.TestCase):
             self.assertFalse(dispatched)
             mock_queue.assert_not_called()
             self.assertEqual(task["status"], "review_approved")
+        task_worktree_status_after = (
+            task_worktree_status_path.read_bytes()
+            if task_worktree_status_path.exists()
+            else None
+        )
+        self.assertEqual(task_worktree_status_before, task_worktree_status_after)
 
     def test_supervisor_suppresses_finalize_dispatch_on_unresolved_head_or_unknown_ci(self) -> None:
         config = self._build_freeze_test_config()

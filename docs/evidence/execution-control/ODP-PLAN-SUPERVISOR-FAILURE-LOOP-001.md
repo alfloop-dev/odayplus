@@ -268,3 +268,76 @@ This closes the owner-side R9–R13 remediation only. Exact-head independent
 review, PR/CI, merge, worker drain, and safe live Supervisor rollout remain
 separate required gates. No live Supervisor restart or deployment was
 performed.
+
+---
+
+## 7. Coordinator completion addendum — R14–R15
+
+Round-3 independent review at owner head
+`3d290fd430124c46e0e39da61dc1dc7d30a7a92e` found two remaining test-boundary
+gaps. The findings are preserved in
+`ODP-PLAN-SUPERVISOR-FAILURE-LOOP-001-review-codex6-round3.md`; the task was
+formally reopened before this batch remediation.
+
+### R14: complete test-config path isolation
+
+`load_test_config()` no longer returns repository-relative coordination paths.
+Every entry in the test config `paths` table is rewritten to an absolute path
+below the module-scoped temporary status root before any Supervisor helper can
+persist. Watchdog state/metrics, worker-worktree root, and permission-broker
+workspace roots are isolated there as well.
+
+The pending-CI freeze regression now snapshots the task worktree's
+`ai-status.json` bytes around the real `dispatch_ready_tasks()` persistence
+path and requires exact equality. A separate config regression proves every
+coordination path is absolute and inside the temporary root.
+
+The Round-3-corrupted task-context status file was deliberately not restored by
+hand. The full verification used its existing digest as a sentinel and proved
+that neither full suite changed it or the task-context activity log:
+
+```text
+status before/after:
+a8390bd74bbebab824a10c819eaa3dc28872e52cc0e36e7d50f9f388d3f16ba1
+
+activity before/after:
+bf7052d41dfe6207b8f7c834e6bbb9a1b0cbb48ca2f37a8c415fc0e023d06382
+```
+
+The pre-existing `ODP-CONC-*` path-set digest was also unchanged, and no
+`pantheon-supervisor-tests-*` temporary root remained after either suite.
+
+### R15: worker-identity-independent ai-status tests
+
+`ArchiveWorkflowTests.test_archive_migrate_moves_terminal_tasks_out_of_active_state`
+now supplies the registered fixture actor `Codex` explicitly. It no longer
+inherits the dispatched reviewer's `AI_NAME`.
+
+Both complete suites were rerun without clearing the real worker identity:
+
+```text
+AI_NAME=Codex6 PYTHONPATH=.orchestrator \
+  python3 -m unittest test_supervisor test_model_rotation
+Ran 268 tests in 0.867s
+OK
+
+AI_NAME=Codex6 python3 -m unittest scripts.test_ai_status
+Ran 101 tests in 0.372s
+OK
+
+AI_NAME=Codex6 python3 .orchestrator/doctor.py
+exit 0
+
+python3 -m ruff check .orchestrator/common.py .orchestrator/runtime_state.py \
+  .orchestrator/supervisor.py .orchestrator/test_supervisor.py \
+  scripts/ai_status.py scripts/test_ai_status.py
+All checks passed
+
+git diff --check
+clean
+```
+
+This closes the owner-side R14–R15 remediation together. Exact-head independent
+re-review, PR/CI, merge, worker drain, and safe live Supervisor rollout remain
+separate required gates. No live Supervisor restart or deployment was
+performed.
