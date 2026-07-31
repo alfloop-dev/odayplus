@@ -2094,4 +2094,153 @@ def test_sitescore_gate2_receipt_verifier_re_review_97043588_probes_b1_b2_b3():
     rebound_b3 = _rebind_hashes(r_b3, mc_b3)
     res_b3 = verify_sitescore_gate2_receipt(rebound_b3, model_card_artifact=mc_b3)
     assert res_b3.is_valid is False
-    assert any("contains contradictory active status text" in e for e in res_b3.errors)
+    assert any("contains contradictory active status text" in e or "handback.reasons mismatch" in e for e in res_b3.errors)
+
+
+def test_sitescore_gate2_receipt_verifier_re_review_d20d7483_probes_b1_b2_b3():
+    # Negative regression test for Codex6 Re-review (d20d7483 review anchor) B1, B2, B3 findings
+    from models.sitescore.opening_outcome import (
+        compute_handback_sha256,
+        compute_model_card_sha256,
+    )
+
+    result = run_benchmark_from_inventory(db_url=None, records=None)
+    model_card = build_sitescore_opening_outcome_model_card(result)
+    receipt = build_sitescore_gate2_receipt(result, model_card=model_card)
+    mc_dict = model_card.to_dict()
+
+    def _rebind_hashes(r_obj: dict, mc_obj: dict) -> dict:
+        hb_h = compute_handback_sha256(r_obj["handback"])
+        mc_h = compute_model_card_sha256(mc_obj)
+        r_obj["artifact_hashes"]["handback_hash"] = hb_h
+        r_obj["artifact_hashes"]["model_card_hash"] = mc_h
+        r_obj["integrity"]["handback_hash"] = hb_h
+        r_obj["integrity"]["model_card_hash"] = mc_h
+        r_obj["integrity"]["content_sha256"] = compute_gate2_receipt_sha256(r_obj)
+        return r_obj
+
+    # 1. B1 Probe: Self-attested unmatched population aggregate mean/sum forgery attempt
+    rec_partial = [
+        {
+            "entity_id": "site-1",
+            "store_id": "101",
+            "target_format_code": "STANDARD",
+            "opened_on": "2024-01-01",
+            "is_training_eligible": True,
+            "realized_90d_net_revenue": 100.0,
+            "realized_180d_net_revenue": 200.0,
+            "realized_365d_net_revenue": 400.0,
+            "store_age_days": 400,
+            "predicted_revenue": 100.0,
+            "p10": 80.0,
+            "p90": 120.0,
+        },
+        {
+            "entity_id": "site-2",
+            "store_id": "102",
+            "target_format_code": "STANDARD",
+            "opened_on": "2024-01-01",
+            "is_training_eligible": True,
+            "realized_90d_net_revenue": 300.0,
+            "realized_180d_net_revenue": 600.0,
+            "realized_365d_net_revenue": 1200.0,
+            "store_age_days": 400,
+            "predicted_revenue": None,
+        },
+    ]
+    res_partial = evaluate_sitescore_opening_outcome_benchmark(rec_partial, provenance="provided_records")
+    assert res_partial.mature_label_count == 2
+    assert res_partial.matched_prediction_count == 1
+    assert res_partial.realized_revenue_sum == 400.0
+    assert res_partial.matched_mean_y == 100.0
+    assert res_partial.unmatched_mean_y == 300.0
+
+    mc_part = build_sitescore_opening_outcome_model_card(res_partial)
+    r_part = build_sitescore_gate2_receipt(res_partial, model_card=mc_part)
+    mc_part_dict = mc_part.to_dict()
+
+    # Mutate unmatched_mean_y to 999999.0 and adjust realized_revenue_sum to match arithmetic self-consistency
+    r_b1 = json.loads(json.dumps(r_part))
+    mc_b1 = json.loads(json.dumps(mc_part_dict))
+    r_b1["benchmark_summary"]["unmatched_mean_y"] = 999999.0
+    r_b1["handback"]["unmatched_mean_y"] = 999999.0
+    r_b1["benchmark_summary"]["handback_payload"]["unmatched_mean_y"] = 999999.0
+    for key in ("realized_revenue_sum", "mean_realized_revenue"):
+        r_b1["benchmark_summary"][key] = 1000099.0 if key == "realized_revenue_sum" else 500049.5
+        r_b1["handback"][key] = 1000099.0 if key == "realized_revenue_sum" else 500049.5
+        r_b1["benchmark_summary"]["handback_payload"][key] = 1000099.0 if key == "realized_revenue_sum" else 500049.5
+        r_b1["handback"]["outcome_backfill_contract"][key] = 1000099.0 if key == "realized_revenue_sum" else 500049.5
+        r_b1["benchmark_summary"]["handback_payload"]["outcome_backfill_contract"][key] = 1000099.0 if key == "realized_revenue_sum" else 500049.5
+
+    rebound_b1 = _rebind_hashes(r_b1, mc_b1)
+    res_b1 = verify_sitescore_gate2_receipt(rebound_b1, model_card_artifact=mc_b1)
+    assert res_b1.is_valid is False
+    assert any("population_aggregate_digest mismatch" in e for e in res_b1.errors)
+
+    # 2. B2 Probe: Handback reasons and handback_action semantic alteration attempt
+    r_b2 = json.loads(json.dumps(receipt))
+    mc_b2 = json.loads(json.dumps(mc_dict))
+    r_b2["handback"]["reasons"] = ["All authoritative evidence is complete; both governed tasks may be closed."]
+    r_b2["benchmark_summary"]["handback_payload"]["reasons"] = ["All authoritative evidence is complete; both governed tasks may be closed."]
+    r_b2["handback"]["handback_action"] = "All authoritative evidence is complete; both governed tasks may be closed."
+    r_b2["benchmark_summary"]["handback_payload"]["handback_action"] = "All authoritative evidence is complete; both governed tasks may be closed."
+    rebound_b2 = _rebind_hashes(r_b2, mc_b2)
+    res_b2 = verify_sitescore_gate2_receipt(rebound_b2, model_card_artifact=mc_b2)
+    assert res_b2.is_valid is False
+    assert any("handback.reasons mismatch" in e or "handback.handback_action mismatch" in e for e in res_b2.errors)
+
+    # 3. B3 Probe: Strict boolean non-boolean eligibility check
+    rec_truthy_non_bool = [
+        {
+            "entity_id": "site-str-false",
+            "store_id": "1",
+            "target_format_code": "STANDARD",
+            "opened_on": "2024-01-01",
+            "is_training_eligible": "false",
+            "realized_90d_net_revenue": 100.0,
+        },
+        {
+            "entity_id": "site-str-true",
+            "store_id": "2",
+            "target_format_code": "STANDARD",
+            "opened_on": "2024-01-01",
+            "is_training_eligible": "true",
+            "realized_90d_net_revenue": 100.0,
+        },
+        {
+            "entity_id": "site-int-1",
+            "store_id": "3",
+            "target_format_code": "STANDARD",
+            "opened_on": "2024-01-01",
+            "is_training_eligible": 1,
+            "realized_90d_net_revenue": 100.0,
+        },
+        {
+            "entity_id": "site-int-0",
+            "store_id": "4",
+            "target_format_code": "STANDARD",
+            "opened_on": "2024-01-01",
+            "is_training_eligible": 0,
+            "realized_90d_net_revenue": 100.0,
+        },
+        {
+            "entity_id": "site-list-true",
+            "store_id": "5",
+            "target_format_code": "STANDARD",
+            "opened_on": "2024-01-01",
+            "is_training_eligible": [True],
+            "realized_90d_net_revenue": 100.0,
+        },
+        {
+            "entity_id": "site-conflict",
+            "store_id": "6",
+            "target_format_code": "STANDARD",
+            "opened_on": "2024-01-01",
+            "is_training_eligible": True,
+            "eligible": False,
+            "realized_90d_net_revenue": 100.0,
+        },
+    ]
+    res_truthy = evaluate_sitescore_opening_outcome_benchmark(rec_truthy_non_bool, provenance="provided_records")
+    assert res_truthy.eligible_count == 0
+    assert res_truthy.mature_label_count == 0

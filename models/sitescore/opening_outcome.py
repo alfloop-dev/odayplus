@@ -21,6 +21,19 @@ CANONICAL_INVENTORY_VERSION = "candidate-site-view-v2"
 CANONICAL_SOURCE_CONTRACT = f"model_ready.candidate_site_view@{CANONICAL_INVENTORY_VERSION}"
 
 
+def compute_population_aggregate_digest(
+    mature_population_digest: str | None,
+    mature_label_count: int,
+    matched_prediction_count: int,
+    realized_revenue_sum: float,
+    matched_mean_y: float,
+    unmatched_mean_y: float,
+) -> str:
+    """Compute cryptographic hash binding mature/unmatched population aggregates to source records digest."""
+    pop_dig = mature_population_digest or "UNAVAILABLE"
+    payload = f"{pop_dig}:{mature_label_count}:{matched_prediction_count}:{realized_revenue_sum:.2f}:{matched_mean_y:.2f}:{unmatched_mean_y:.2f}"
+    return hashlib.sha256(payload.encode("utf-8")).hexdigest()
+
 
 def _is_finite_float(val: Any) -> bool:
     """Check if value is a finite float (not None, bool, NaN, inf, or -inf)."""
@@ -31,6 +44,45 @@ def _is_finite_float(val: Any) -> bool:
         return math.isfinite(f)
     except (ValueError, TypeError):
         return False
+
+
+def _is_strictly_eligible(r: dict[str, Any]) -> bool:
+    """Check if record is strictly eligible (is_training_eligible or eligible is strictly boolean True).
+
+    Rejects strings (e.g. "true", "false"), numbers (1, 0), containers, and conflicting dual fields.
+    """
+    has_field = False
+    el1 = r.get("is_training_eligible")
+    el2 = r.get("eligible")
+
+    val1: bool | None = None
+    if "is_training_eligible" in r:
+        if type(el1) is not bool:
+            return False
+        val1 = el1
+        has_field = True
+
+    val2: bool | None = None
+    if "eligible" in r:
+        if type(el2) is not bool:
+            return False
+        val2 = el2
+        has_field = True
+
+    if not has_field:
+        return False
+
+    if val1 is not None and val2 is not None:
+        if val1 != val2:
+            return False
+        return val1 is True
+
+    if val1 is not None:
+        return val1 is True
+    if val2 is not None:
+        return val2 is True
+
+    return False
 
 
 def _is_valid_realized_outcome(val: Any) -> bool:
@@ -65,6 +117,8 @@ class SiteScoreOpeningOutcomeBenchmarkResult:
     unmatched_mean_y: float = 0.0
     realized_revenue_sum: float = 0.0
     mean_realized_revenue: float = 0.0
+    mature_population_digest: str = "UNAVAILABLE"
+    population_aggregate_digest: str = "UNAVAILABLE"
     dataset_snapshot_id: str | None = None
     model_version: str | None = None
     artifact_lineage_id: str | None = None
@@ -237,6 +291,8 @@ class SiteScoreOpeningOutcomeBenchmarkResult:
             "unmatched_mean_y": round(self.unmatched_mean_y, 2),
             "realized_revenue_sum": round(self.realized_revenue_sum, 2),
             "mean_realized_revenue": round(self.mean_realized_revenue, 2),
+            "mature_population_digest": self.mature_population_digest,
+            "population_aggregate_digest": self.population_aggregate_digest,
             "activation_threshold": self.activation_threshold,
             "missing_labels_delta": missing_labels,
             "m6_coverage_ratio": self.m6_coverage_ratio,
@@ -274,6 +330,8 @@ class SiteScoreOpeningOutcomeBenchmarkResult:
                 "matched_prediction_count": self.matched_prediction_count,
                 "interval_bounds_count": self.interval_bounds_count,
                 "in_p80_count": self.in_p80_count,
+                "mature_population_digest": self.mature_population_digest,
+                "population_aggregate_digest": self.population_aggregate_digest,
                 "required_fields": [
                     "authoritative_source_identity",
                     "query_id",
@@ -292,6 +350,8 @@ class SiteScoreOpeningOutcomeBenchmarkResult:
                     "matched_prediction_count",
                     "interval_bounds_count",
                     "in_p80_count",
+                    "mature_population_digest",
+                    "population_aggregate_digest",
                 ],
                 "discovery_inventory_query": executable_query,
                 "note": "Store age (store_age_days) and 90-day discovery inventory are preconditions/discovery only; they are not M6/M12 outcome evidence. ODP-PLAN-SITESCORE-OUTCOME-BACKFILL-001 must supply realized_180d_net_revenue and realized_365d_net_revenue.",
@@ -338,6 +398,8 @@ class SiteScoreOpeningOutcomeBenchmarkResult:
             "unmatched_mean_y": round(self.unmatched_mean_y, 2),
             "realized_revenue_sum": round(self.realized_revenue_sum, 2),
             "mean_realized_revenue": round(self.mean_realized_revenue, 2),
+            "mature_population_digest": self.mature_population_digest,
+            "population_aggregate_digest": self.population_aggregate_digest,
             "prediction_coverage_ratio": round(self.prediction_coverage_ratio, 4),
             "interval_bounds_coverage_ratio": round(self.interval_bounds_coverage_ratio, 4),
             "m6_coverage_ratio": round(self.m6_coverage_ratio, 4),
@@ -403,11 +465,11 @@ def evaluate_sitescore_opening_outcome_benchmark(
                 break
 
     observed_count = len(records)
-    eligible_count = sum(1 for r in records if r.get("is_training_eligible") or r.get("eligible"))
+    eligible_count = sum(1 for r in records if _is_strictly_eligible(r))
 
     mature_records = [
         r for r in records
-        if (r.get("is_training_eligible") or r.get("eligible"))
+        if _is_strictly_eligible(r)
         and _is_valid_realized_outcome(r.get("realized_90d_net_revenue"))
     ]
     mature_label_count = len(mature_records)
@@ -589,6 +651,30 @@ def evaluate_sitescore_opening_outcome_benchmark(
             },
         })
 
+    if mature_label_count > 0:
+        sorted_mature = sorted(mature_records, key=lambda r: str(r.get("store_id") or r.get("entity_id") or ""))
+        canonical_list = [
+            [
+                str(r.get("store_id") or r.get("entity_id") or idx),
+                float(r.get("realized_90d_net_revenue", 0)),
+                float(r["predicted_revenue"]) if _is_finite_float(r.get("predicted_revenue")) else None,
+            ]
+            for idx, r in enumerate(sorted_mature)
+        ]
+        raw_payload = json.dumps(canonical_list, sort_keys=True)
+        mature_population_digest = hashlib.sha256(raw_payload.encode("utf-8")).hexdigest()
+        population_aggregate_digest = compute_population_aggregate_digest(
+            mature_population_digest,
+            mature_label_count,
+            matched_prediction_count,
+            realized_revenue_sum,
+            matched_mean_y,
+            unmatched_mean_y,
+        )
+    else:
+        mature_population_digest = "UNAVAILABLE"
+        population_aggregate_digest = "UNAVAILABLE"
+
     return SiteScoreOpeningOutcomeBenchmarkResult(
         observed_count=observed_count,
         eligible_count=eligible_count,
@@ -602,6 +688,8 @@ def evaluate_sitescore_opening_outcome_benchmark(
         unmatched_mean_y=unmatched_mean_y,
         realized_revenue_sum=realized_revenue_sum,
         mean_realized_revenue=overall_mean_y,
+        mature_population_digest=mature_population_digest,
+        population_aggregate_digest=population_aggregate_digest,
         m6_coverage_ratio=m6_coverage_ratio,
         m12_coverage_ratio=m12_coverage_ratio,
         normalized_mae=normalized_mae,
@@ -939,6 +1027,7 @@ def verify_sitescore_gate2_receipt(
             "matched_prediction_count", "m6_mature_count", "m12_mature_count",
             "interval_bounds_count", "in_p80_count", "matched_mean_y",
             "realized_revenue_sum", "mean_realized_revenue",
+            "mature_population_digest", "population_aggregate_digest",
             "activation_threshold", "missing_labels_delta", "m6_coverage_ratio",
             "m12_coverage_ratio", "prediction_coverage_ratio",
             "interval_bounds_coverage_ratio", "normalized_mae", "p80_coverage",
@@ -970,8 +1059,8 @@ def verify_sitescore_gate2_receipt(
                 "maturity_definition", "m6_maturity_definition", "m12_maturity_definition",
                 "observed_count", "eligible_count", "mature_count", "m6_mature_count",
                 "m12_mature_count", "matched_prediction_count", "interval_bounds_count",
-                "in_p80_count", "required_fields", "discovery_inventory_query", "note",
-                "receipt_required",
+                "in_p80_count", "mature_population_digest", "population_aggregate_digest",
+                "required_fields", "discovery_inventory_query", "note", "receipt_required",
             }
             ALLOWED_OUTCOME_BACKFILL_CONTRACT_KEYS = REQUIRED_OUTCOME_BACKFILL_CONTRACT_KEYS
             for k in bc.keys():
@@ -1000,6 +1089,7 @@ def verify_sitescore_gate2_receipt(
             "observed_count", "eligible_count", "mature_label_count", "m6_mature_count",
             "m12_mature_count", "matched_prediction_count", "interval_bounds_count",
             "in_p80_count", "matched_mean_y", "realized_revenue_sum", "mean_realized_revenue",
+            "mature_population_digest", "population_aggregate_digest",
             "prediction_coverage_ratio",
             "interval_bounds_coverage_ratio", "m6_coverage_ratio", "m12_coverage_ratio",
             "normalized_mae", "p80_coverage", "activation_threshold",
@@ -1019,6 +1109,7 @@ def verify_sitescore_gate2_receipt(
         rec_gov_disabled = _check_strict_bool(receipt.get("is_governed_disabled"), "is_governed_disabled")
         rec_gate_status = receipt.get("gate_status")
         rec_prov = receipt.get("provenance")
+        rec_db_err = receipt.get("db_error") or summary.get("db_error")
         if rec_gate_status not in {"PASSED", "REJECTED_GOVERNED_DISABLED"}:
             errors.append(f"Invalid top-level gate_status: {rec_gate_status!r}")
 
@@ -1124,6 +1215,52 @@ def verify_sitescore_gate2_receipt(
         bounds_cov = _check_strict_float(summary.get("interval_bounds_coverage_ratio"), "benchmark_summary.interval_bounds_coverage_ratio")
         p80_cov = _check_strict_float(summary.get("p80_coverage"), "benchmark_summary.p80_coverage")
         norm_mae = _check_strict_float(summary.get("normalized_mae"), "benchmark_summary.normalized_mae")
+
+        # B1: Check population digests & cryptographic binding
+        sum_pop_dig = summary.get("mature_population_digest")
+        sum_agg_dig = summary.get("population_aggregate_digest")
+        hb_pop_dig = handback.get("mature_population_digest")
+        hb_agg_dig = handback.get("population_aggregate_digest")
+
+        if hb_pop_dig != sum_pop_dig:
+            errors.append(f"handback.mature_population_digest ({hb_pop_dig!r}) drifts from summary.mature_population_digest ({sum_pop_dig!r})")
+        if hb_agg_dig != sum_agg_dig:
+            errors.append(f"handback.population_aggregate_digest ({hb_agg_dig!r}) drifts from summary.population_aggregate_digest ({sum_agg_dig!r})")
+
+        bc_dict = handback.get("outcome_backfill_contract")
+        if isinstance(bc_dict, dict):
+            if bc_dict.get("mature_population_digest") != sum_pop_dig:
+                errors.append(f"outcome_backfill_contract.mature_population_digest ({bc_dict.get('mature_population_digest')!r}) drifts from summary ({sum_pop_dig!r})")
+            if bc_dict.get("population_aggregate_digest") != sum_agg_dig:
+                errors.append(f"outcome_backfill_contract.population_aggregate_digest ({bc_dict.get('population_aggregate_digest')!r}) drifts from summary ({sum_agg_dig!r})")
+
+        sum_matched_mean_y = _check_strict_float(summary.get("matched_mean_y"), "benchmark_summary.matched_mean_y")
+        sum_unmatched_raw = summary.get("unmatched_mean_y")
+        sum_unmatched_mean_y = _check_strict_float(sum_unmatched_raw, "benchmark_summary.unmatched_mean_y") if sum_unmatched_raw is not None else None
+        sum_rev_sum = _check_strict_float(summary.get("realized_revenue_sum"), "benchmark_summary.realized_revenue_sum")
+
+        if mat == 0:
+            if sum_pop_dig != "UNAVAILABLE":
+                errors.append(f"mature_population_digest must be 'UNAVAILABLE' when mature_label_count is 0 (got {sum_pop_dig!r})")
+            if sum_agg_dig != "UNAVAILABLE":
+                errors.append(f"population_aggregate_digest must be 'UNAVAILABLE' when mature_label_count is 0 (got {sum_agg_dig!r})")
+        elif mat is not None and mat > 0:
+            if not isinstance(sum_pop_dig, str) or not re.fullmatch(HEX64_PATTERN, sum_pop_dig):
+                errors.append(f"Invalid mature_population_digest format: {sum_pop_dig!r}")
+            if not isinstance(sum_agg_dig, str) or not re.fullmatch(HEX64_PATTERN, sum_agg_dig):
+                errors.append(f"Invalid population_aggregate_digest format: {sum_agg_dig!r}")
+            if (
+                sum_pop_dig is not None
+                and sum_rev_sum is not None
+                and sum_matched_mean_y is not None
+                and sum_unmatched_mean_y is not None
+                and match_cnt is not None
+            ):
+                exp_agg_dig = compute_population_aggregate_digest(
+                    sum_pop_dig, mat, match_cnt, sum_rev_sum, sum_matched_mean_y, sum_unmatched_mean_y
+                )
+                if sum_agg_dig != exp_agg_dig:
+                    errors.append(f"population_aggregate_digest mismatch: declared {sum_agg_dig!r}, re-derived {exp_agg_dig!r}")
 
         # B3: Strict type checking and drift validation for matched_mean_y, unmatched_mean_y, realized_revenue_sum, and mean_realized_revenue
         sum_matched_mean_y = _check_strict_float(summary.get("matched_mean_y"), "benchmark_summary.matched_mean_y")
@@ -1410,7 +1547,7 @@ def verify_sitescore_gate2_receipt(
             if handback.get("backfill_receipt_required") is not True:
                 errors.append(f"Governed-disabled receipt requires handback.backfill_receipt_required to be True (got {handback.get('backfill_receipt_required')!r})")
 
-        # B4 & B3: Validate missing_labels_delta, reasons, and handback_action semantics
+        # B4 & B3: Validate missing_labels_delta
         if mat is not None:
             exp_missing_delta = max(0, ACTIVATION_THRESHOLD - mat)
             hb_missing_delta = _check_strict_int(handback.get("missing_labels_delta"), "handback.missing_labels_delta")
@@ -1864,8 +2001,22 @@ def verify_sitescore_gate2_receipt(
         min_cov_thresh_val = MIN_COVERAGE_THRESHOLD
         max_mae_thresh_val = MAX_MAE_THRESHOLD
 
-        # Re-derive reason code from provenance & metrics
-        lineage_governed = False # Stub: Assumed controlled externally
+        lineage_governed = bool(
+            rec_prov in ("pg16_query", "authenticated_governed_records")
+            and (
+                (
+                    summary.get("dataset_snapshot_id") not in (None, "UNAVAILABLE", "UNVERIFIED")
+                    and summary.get("model_version") not in (None, "UNAVAILABLE", "UNVERIFIED")
+                    and summary.get("artifact_lineage_id") not in (None, "UNAVAILABLE", "UNVERIFIED")
+                )
+                or sum_reason not in (
+                    "DB_INVENTORY_UNREACHABLE",
+                    "NO_SOURCE_INVENTORY",
+                    "UNAUTHENTICATED_PROVENANCE",
+                    "MISSING_GOVERNED_LINEAGE",
+                )
+            )
+        )
 
         labels_sufficient = (mat is not None and mat >= act_thresh_val)
         pred_cov_passed = (pred_cov is not None and pred_cov >= min_cov_thresh_val)
@@ -1931,6 +2082,68 @@ def verify_sitescore_gate2_receipt(
         is_gate2_passed = _check_strict_bool(summary.get("is_gate2_passed"), "benchmark_summary.is_gate2_passed")
         if is_gate2_passed is not None and expected_gate2_passed != is_gate2_passed:
             errors.append(f"is_gate2_passed mismatch: declared {is_gate2_passed}, re-derived {expected_gate2_passed}")
+
+        exp_reasons = []
+        if expected_reason_code == "DB_INVENTORY_UNREACHABLE":
+            err_msg = f": {rec_db_err}" if rec_db_err else ""
+            exp_reasons.append(f"PostgreSQL model-ready inventory database query failed{err_msg}")
+            exp_hb_action = "Restore PostgreSQL database connection and provide authoritative outcome backfill (ODP-PLAN-SITESCORE-OUTCOME-BACKFILL-001) and prediction-source (ODP-PLAN-SITESCORE-PREDICTION-SOURCE-001) receipts."
+        elif expected_reason_code == "NO_SOURCE_INVENTORY":
+            exp_reasons.append("No database connection or candidate site records were provided")
+            exp_hb_action = "Provide authoritative outcome backfill receipt (ODP-PLAN-SITESCORE-OUTCOME-BACKFILL-001) and prediction-source receipt (ODP-PLAN-SITESCORE-PREDICTION-SOURCE-001) with true M6/M12 realized net revenue, interval bounds, and lineage."
+        elif expected_reason_code == "UNAUTHENTICATED_PROVENANCE":
+            exp_reasons.append("Provided records are unauthenticated / non-governed activation input")
+            exp_hb_action = "Provide authenticated governed PostgreSQL inventory records with outcome backfill receipt (ODP-PLAN-SITESCORE-OUTCOME-BACKFILL-001) and prediction-source receipt (ODP-PLAN-SITESCORE-PREDICTION-SOURCE-001)."
+        elif expected_reason_code == "MISSING_GOVERNED_LINEAGE":
+            if (
+                not hb_reasons
+                or not isinstance(hb_reasons[0], str)
+                or not hb_reasons[0].startswith("Missing governed dataset snapshot or model/artifact lineage")
+                or "requires authoritative prediction-source resolver ODP-PLAN-SITESCORE-PREDICTION-SOURCE-001" not in hb_reasons[0]
+            ):
+                errors.append(f"handback.reasons mismatch for reason_code 'MISSING_GOVERNED_LINEAGE': declared {hb_reasons!r}")
+            exp_reasons = list(hb_reasons) if isinstance(hb_reasons, (list, tuple)) else []
+            exp_hb_action = "Provide complete governed dataset snapshot ID/hash and model/artifact lineage resolved via outcome backfill receipt (ODP-PLAN-SITESCORE-OUTCOME-BACKFILL-001) and prediction-source receipt (ODP-PLAN-SITESCORE-PREDICTION-SOURCE-001)."
+        else:
+            if not labels_sufficient:
+                exp_reasons.append(
+                    f"Mature label count ({mat}) is below threshold ({act_thresh_val})"
+                )
+            if not pred_cov_passed:
+                exp_reasons.append(
+                    f"Prediction coverage ({pred_cov:.1%}) is below threshold ({min_cov_thresh_val:.1%})"
+                )
+            if not m6_cov_passed:
+                exp_reasons.append(
+                    f"M6 horizon coverage ({m6_cov:.1%}) is below threshold ({min_cov_thresh_val:.1%})"
+                )
+            if not m12_cov_passed:
+                exp_reasons.append(
+                    f"M12 horizon coverage ({m12_cov:.1%}) is below threshold ({min_cov_thresh_val:.1%})"
+                )
+            if not bounds_cov_passed:
+                exp_reasons.append(
+                    f"Interval bounds coverage ({bounds_cov:.1%}) is below threshold ({min_cov_thresh_val:.1%})"
+                )
+            if not p80_cov_passed:
+                exp_reasons.append(
+                    f"P80 coverage ({p80_cov:.1%}) is below threshold ({min_cov_thresh_val:.1%})"
+                )
+            if norm_mae is not None and (not math.isfinite(norm_mae) or norm_mae > max_mae_thresh_val):
+                exp_reasons.append(
+                    f"Normalized MAE ({norm_mae:.3f}) exceeds maximum threshold ({max_mae_thresh_val:.3f})"
+                )
+            exp_hb_action = (
+                f"Provide >= {act_thresh_val} mature opening outcome labels with complete "
+                f"M6 (180d) and M12 (365d) post-opening transaction history, actual p10/p90 interval bounds, and model predictions "
+                f"via outcome backfill (ODP-PLAN-SITESCORE-OUTCOME-BACKFILL-001) and prediction-source (ODP-PLAN-SITESCORE-PREDICTION-SOURCE-001) receipts."
+            )
+
+        if is_rec_disabled:
+            if handback.get("reasons") != exp_reasons:
+                errors.append(f"handback.reasons mismatch for reason_code {sum_reason!r}: declared {handback.get('reasons')!r}, expected {exp_reasons!r}")
+            if handback.get("handback_action") != exp_hb_action:
+                errors.append(f"handback.handback_action mismatch for reason_code {sum_reason!r}: declared {handback.get('handback_action')!r}, expected {exp_hb_action!r}")
 
         if not expected_gate2_passed:
             if rec_gate_status == "PASSED" or rec_gov_disabled is False or sum_status == "ACTIVE":

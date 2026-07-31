@@ -1,7 +1,7 @@
 {
   "artifact_hashes": {
-    "handback_hash": "62ef735a4ae7f0f877f5a064f46c8cd793e2aca9bb809b098d104773fdf1ce11",
-    "model_card_hash": "25c553e32bda7ffbb676c42fbefa7616d3e7e0d5a2da6d80b7930ab9847cf85f"
+    "handback_hash": "293ff10be98395684400ff9d810891d658eb450c7761f0955c89bec5bd96dd21",
+    "model_card_hash": "3a533eb1377ab752c6adb6bf320493c0199b380924013832944d88595dea03e4"
   },
   "benchmark_summary": {
     "activation_threshold": 200,
@@ -38,6 +38,7 @@
       "matched_mean_y": 0.0,
       "matched_prediction_count": 0,
       "mature_label_count": 0,
+      "mature_population_digest": "UNAVAILABLE",
       "mean_realized_revenue": 0.0,
       "missing_labels_delta": 200,
       "normalized_mae": 0.0,
@@ -60,10 +61,12 @@
         "m6_maturity_definition": "store_age_days >= 180 AND realized_180d_net_revenue IS NOT NULL AND realized_180d_net_revenue >= 0",
         "matched_prediction_count": 0,
         "mature_count": 0,
+        "mature_population_digest": "UNAVAILABLE",
         "maturity_definition": "realized_90d_net_revenue IS NOT NULL AND realized_90d_net_revenue >= 0",
         "note": "Store age (store_age_days) and 90-day discovery inventory are preconditions/discovery only; they are not M6/M12 outcome evidence. ODP-PLAN-SITESCORE-OUTCOME-BACKFILL-001 must supply realized_180d_net_revenue and realized_365d_net_revenue.",
         "observed_count": 0,
         "owner": "Human/Ops",
+        "population_aggregate_digest": "UNAVAILABLE",
         "query_id": "UNVERIFIED",
         "receipt_required": true,
         "required_evidence_owner": "Human/Ops",
@@ -84,7 +87,9 @@
           "m12_mature_count",
           "matched_prediction_count",
           "interval_bounds_count",
-          "in_p80_count"
+          "in_p80_count",
+          "mature_population_digest",
+          "population_aggregate_digest"
         ],
         "required_query_id": "sitescore_authoritative_m6_m12_outcome_query_v1",
         "required_source_identity": "authoritative_opening_outcome_m6_m12_store_ledger",
@@ -93,6 +98,7 @@
         "task_id": "ODP-PLAN-SITESCORE-OUTCOME-BACKFILL-001"
       },
       "p80_coverage": 0.0,
+      "population_aggregate_digest": "UNAVAILABLE",
       "prediction_coverage_ratio": 0.0,
       "prediction_source_contract": {
         "owner": "SiteScore Platform Team",
@@ -128,14 +134,16 @@
     "matched_mean_y": 0.0,
     "matched_prediction_count": 0,
     "mature_label_count": 0,
+    "mature_population_digest": "UNAVAILABLE",
     "max_mae_threshold": 0.25,
     "mean_realized_revenue": 0.0,
     "min_coverage_threshold": 0.7,
     "model_version": null,
     "normalized_mae": 0.0,
-    "observed_at": "2026-07-31T16:38:43.676150Z",
+    "observed_at": "2026-07-31T18:55:09.223561Z",
     "observed_count": 0,
     "p80_coverage": 0.0,
+    "population_aggregate_digest": "UNAVAILABLE",
     "prediction_coverage_ratio": 0.0,
     "provenance": "no_source",
     "realized_revenue_sum": 0,
@@ -166,6 +174,7 @@
     "matched_mean_y": 0.0,
     "matched_prediction_count": 0,
     "mature_label_count": 0,
+    "mature_population_digest": "UNAVAILABLE",
     "mean_realized_revenue": 0.0,
     "missing_labels_delta": 200,
     "normalized_mae": 0.0,
@@ -188,10 +197,12 @@
       "m6_maturity_definition": "store_age_days >= 180 AND realized_180d_net_revenue IS NOT NULL AND realized_180d_net_revenue >= 0",
       "matched_prediction_count": 0,
       "mature_count": 0,
+      "mature_population_digest": "UNAVAILABLE",
       "maturity_definition": "realized_90d_net_revenue IS NOT NULL AND realized_90d_net_revenue >= 0",
       "note": "Store age (store_age_days) and 90-day discovery inventory are preconditions/discovery only; they are not M6/M12 outcome evidence. ODP-PLAN-SITESCORE-OUTCOME-BACKFILL-001 must supply realized_180d_net_revenue and realized_365d_net_revenue.",
       "observed_count": 0,
       "owner": "Human/Ops",
+      "population_aggregate_digest": "UNAVAILABLE",
       "query_id": "UNVERIFIED",
       "receipt_required": true,
       "required_evidence_owner": "Human/Ops",
@@ -212,7 +223,9 @@
         "m12_mature_count",
         "matched_prediction_count",
         "interval_bounds_count",
-        "in_p80_count"
+        "in_p80_count",
+        "mature_population_digest",
+        "population_aggregate_digest"
       ],
       "required_query_id": "sitescore_authoritative_m6_m12_outcome_query_v1",
       "required_source_identity": "authoritative_opening_outcome_m6_m12_store_ledger",
@@ -221,6 +234,7 @@
       "task_id": "ODP-PLAN-SITESCORE-OUTCOME-BACKFILL-001"
     },
     "p80_coverage": 0.0,
+    "population_aggregate_digest": "UNAVAILABLE",
     "prediction_coverage_ratio": 0.0,
     "prediction_source_contract": {
       "owner": "SiteScore Platform Team",
@@ -246,15 +260,15 @@
     "unmatched_mean_y": 0.0
   },
   "integrity": {
-    "content_sha256": "0666f4849c4e54532542568de08d9926374458e8aafd989c7345264984de4f2c",
-    "handback_hash": "62ef735a4ae7f0f877f5a064f46c8cd793e2aca9bb809b098d104773fdf1ce11",
-    "model_card_hash": "25c553e32bda7ffbb676c42fbefa7616d3e7e0d5a2da6d80b7930ab9847cf85f"
+    "content_sha256": "b60bb6b950030209751080b692655995770fe0ec27eec2a433b2c8b603b426a7",
+    "handback_hash": "293ff10be98395684400ff9d810891d658eb450c7761f0955c89bec5bd96dd21",
+    "model_card_hash": "3a533eb1377ab752c6adb6bf320493c0199b380924013832944d88595dea03e4"
   },
   "inventory_version": "candidate-site-view-v2",
   "is_governed_disabled": true,
   "kind": "sitescore-opening-outcome-gate2-receipt",
   "model_name": "sitescore_propensity",
-  "observed_at": "2026-07-31T16:38:43.676150Z",
+  "observed_at": "2026-07-31T18:55:09.223561Z",
   "provenance": "no_source",
   "schema_version": 1,
   "service": "sitescore",
