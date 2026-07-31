@@ -5117,7 +5117,10 @@ def resolve_task_sha(task_id: str, max_age_seconds: float = 5.0) -> str | None:
             if (
                 len(fields) == 2
                 and fields[1] in remote_refs
-                and re.fullmatch(r"[0-9a-fA-F]{40,64}", fields[0])
+                and (
+                    re.fullmatch(r"[0-9a-fA-F]{40}", fields[0])
+                    or re.fullmatch(r"[0-9a-fA-F]{64}", fields[0])
+                )
             ):
                 matches.append(fields[0])
     # Fail closed unless origin returns exactly one valid canonical task ref.

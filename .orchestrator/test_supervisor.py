@@ -10992,6 +10992,38 @@ class SupervisorFailureLoopCoverageTests(unittest.TestCase):
             resolved = ai_status.resolve_task_sha(task_id)
             self.assertEqual(resolved, "2" * 40)
 
+    def test_resolve_task_sha_exact_length_validation(self) -> None:
+        """Verify resolve_task_sha accepts exactly 40 or 64 hex chars and rejects 41, 63, or non-hex."""
+        task_id = "TEST-SHA-LENGTH-VAL-001"
+
+        sha_candidates = [
+            ("a" * 40, True),   # 40 hex (SHA-1) -> valid
+            ("f" * 64, True),   # 64 hex (SHA-256) -> valid
+            ("b" * 41, False),  # 41 hex -> invalid
+            ("c" * 63, False),  # 63 hex -> invalid
+            ("g" * 40, False),  # 40 non-hex -> invalid
+        ]
+
+        for sha, is_valid in sha_candidates:
+            ai_status.clear_ai_status_caches()
+
+            def fake_ls_remote(cmd, current_sha=sha, **kwargs):
+                cmd_str = " ".join(cmd)
+                if "ls-remote --heads origin" in cmd_str:
+                    remote_ref = f"refs/heads/task/{task_id}"
+                    return unittest.mock.Mock(
+                        returncode=0,
+                        stdout=f"{current_sha}\t{remote_ref}\n",
+                    )
+                return unittest.mock.Mock(returncode=1, stdout="")
+
+            with unittest.mock.patch("subprocess.run", side_effect=fake_ls_remote):
+                resolved = ai_status.resolve_task_sha(task_id)
+                if is_valid:
+                    self.assertEqual(resolved, sha, f"Expected {sha} to be accepted")
+                else:
+                    self.assertIsNone(resolved, f"Expected {sha} (len={len(sha)}) to be rejected")
+
 
 if __name__ == "__main__":
     unittest.main()
