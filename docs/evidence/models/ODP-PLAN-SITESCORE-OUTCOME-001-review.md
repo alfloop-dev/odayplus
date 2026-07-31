@@ -986,3 +986,96 @@ model card, B2 permits the required handoff and its population evidence to disap
 drift, and B3 accepts the prohibited synthetic horizon metrics. Re-audit these findings
 together with the complete acceptance batch before the next handoff. No owner implementation
 content was changed by this review.
+
+---
+
+# Codex6 Re-review Addendum — 2026-07-31, exact owner head `b24af329`
+
+The supervisor re-dispatched this task after the owner reported B1-B3 remediation at exact
+pushed head `b24af32900d7bced8714ea4808f017d93e43732c`. The local and remote task
+branches both pointed at that SHA. The worktree contained no uncommitted owner implementation
+diff; its only untracked entries were the orchestrator-seeded task context/state files.
+
+## Verification at the exact owner head
+
+```bash
+PYTHONPATH=. .venv/bin/pytest -q tests/models -k "sitescore or opening_outcome"
+PYTHONPATH=. .venv/bin/pytest -q tests -k "sitescore or opening_outcome or model_ready"
+.venv/bin/ruff check scripts/models models tests/models
+git diff --check
+git diff --check 02e42083..b24af329
+```
+
+- Task-scoped selector: **42 passed**.
+- Full focused selector: **86 passed**.
+- Ruff and both whitespace checks: clean.
+- The previous direct examples are fixed in the narrow direction: the model card is now
+  mandatory, selected governed-disabled fields are checked, top-level handoff contracts and
+  counts are checked, and forbidden horizon keys inside `calibration_summary` are rejected.
+
+The task brief requires the complete fail-closed batch to be re-audited after every reopen.
+Each mutation below started from the committed receipt/model card, recomputed the applicable
+model-card or handback digest in both declared locations, recomputed the receipt content hash,
+and then called `verify_sitescore_gate2_receipt` with the mutated card. Every case returned
+`is_valid=True`, `reason_code="RECEIPT_VALIDATED"`, and no errors.
+
+## Blocking findings
+
+### B1 — A hash-bound model card can still invent governance and drift from the receipt
+
+The new governed-disabled checks omit `validation_run_id`, `dataset_snapshot_id`, and
+`model_version`, and the verifier does not reconcile `metrics_summary` or
+`calibration_summary` values against the benchmark receipt. The following independently
+reproduced bundles all validated after their hashes were rebound:
+
+| Mutation | Result |
+| --- | --- |
+| Change `model_card.validation_run_id` from `UNVERIFIED` to `invented-run` | `RECEIPT_VALIDATED` |
+| Change `model_card.metrics_summary.mature_label_count` to `999.0` and `normalized_mae` to `0.123` while the receipt remains at zero | `RECEIPT_VALIDATED` |
+| Change only `model_card.calibration_summary.measured_90d_mae` to `777.0` while the receipt remains unavailable | `RECEIPT_VALIDATED` |
+
+This directly leaves open the acceptance-prohibited invented validation run and permits the
+bound model card to contradict the receipt populations and calibration evidence. Validate the
+complete governed-disabled model-card schema, require the unavailable/unverified placeholders
+for every unsourced governance field, and reconcile its metrics and calibration values with the
+authoritative receipt before accepting its digest.
+
+### B2 — The handoff can self-consistently say that no receipt or handback is required
+
+The verifier requires the top-level contracts to exist, but it does not validate the boolean
+handoff obligations or reconcile the complete duplicated handback object. A self-consistent
+mutation set all of the following fields to `false` in both handback copies and then rebound the
+handback/content hashes:
+
+- `handback_required`;
+- `backfill_receipt_required`;
+- `outcome_backfill_contract.receipt_required`; and
+- `prediction_source_contract.receipt_required`.
+
+That bundle validated. Independently, deleting both contracts only from
+`benchmark_summary.handback_payload`, or changing only that copy's `handback_action`, also
+validated. A governed-disabled no-source receipt can therefore contradict the concrete
+Human/Ops/prediction-source handoff obligation while remaining verifier-valid. Require the
+handoff/receipt-required booleans to be strict `true` for this rejected state and compare the
+complete canonical handback copies (including actions, contracts, task IDs, and obligations),
+not only selected scalar metrics.
+
+### B3 — Synthetic horizon metrics still validate outside one checked dictionary
+
+The new allow-list is applied only to dictionaries named `calibration_summary`. Adding a
+finite synthetic `m6_interval_mae` under
+`benchmark_summary.segment_metrics[0].metrics`, recomputing the content hash, and retaining the
+bound committed model card returned `RECEIPT_VALIDATED`. The model-card calibration drift in B1
+also proves that the two allowed calibration schemas are not value-bound to one another.
+
+Reject unsupported synthetic/fixed-multiplier horizon metric keys across every metric-bearing
+receipt and model-card surface, validate the complete segment/calibration schema, and reconcile
+the bound model-card values with the receipt.
+
+## Decision
+
+**Changes requested.** Exact owner head `b24af329` is not approved. The focused suites are
+green, but B1 still accepts an invented validation run and contradictory bound model-card
+evidence, B2 permits a self-consistent no-handback/no-receipt-required contract, and B3 permits
+synthetic horizon metrics through an unchecked metric surface. Re-audit the full acceptance
+batch after remediation. No owner implementation content was changed by this review.
