@@ -1416,3 +1416,88 @@ def test_sitescore_verifier_rejects_renamed_synthetic_horizon_metrics_b3():
     res1 = verify_sitescore_gate2_receipt(r1_rebound, model_card_artifact=mc_dict)
     assert res1.is_valid is False
     assert any("Forbidden or unknown metric field in benchmark_summary" in e for e in res1.errors)
+
+
+def test_sitescore_verifier_rejects_codex6_c2136d4c_probes_b1_b2_b3():
+    """Explicitly verify that all 8 Codex6 c2136d4c re-review mutation probes fail closed after hash rebinding."""
+    result = run_benchmark_from_inventory(db_url=None, records=None)
+    model_card = build_sitescore_opening_outcome_model_card(result)
+    receipt = build_sitescore_gate2_receipt(result, model_card=model_card)
+    mc_dict = model_card.to_dict()
+
+    # B1 Probe 1: empty calibration_summary dictionaries
+    r_b1_1 = json.loads(json.dumps(receipt))
+    mc_b1_1 = json.loads(json.dumps(mc_dict))
+    r_b1_1["benchmark_summary"]["calibration_summary"] = {}
+    mc_b1_1["calibration_summary"] = {}
+    if "calibration_summary" in r_b1_1["handback"]:
+        r_b1_1["handback"]["calibration_summary"] = {}
+    if "calibration_summary" in r_b1_1["benchmark_summary"]["handback_payload"]:
+        r_b1_1["benchmark_summary"]["handback_payload"]["calibration_summary"] = {}
+    rebound_b1_1 = _rebind_receipt_hashes(r_b1_1, mc_b1_1)
+    res_b1_1 = verify_sitescore_gate2_receipt(rebound_b1_1, model_card_artifact=mc_b1_1)
+    assert res_b1_1.is_valid is False
+
+    # B1 Probe 2: every allowed calibration value replaced with string "invented"
+    r_b1_2 = json.loads(json.dumps(receipt))
+    mc_b1_2 = json.loads(json.dumps(mc_dict))
+    for k in r_b1_2["benchmark_summary"]["calibration_summary"].keys():
+        r_b1_2["benchmark_summary"]["calibration_summary"][k] = "invented"
+        mc_b1_2["calibration_summary"][k] = "invented"
+    rebound_b1_2 = _rebind_receipt_hashes(r_b1_2, mc_b1_2)
+    res_b1_2 = verify_sitescore_gate2_receipt(rebound_b1_2, model_card_artifact=mc_b1_2)
+    assert res_b1_2.is_valid is False
+
+    # B1 Probe 3: segment arrays replaced with [{"metrics": "invented"}]
+    r_b1_3 = json.loads(json.dumps(receipt))
+    mc_b1_3 = json.loads(json.dumps(mc_dict))
+    r_b1_3["benchmark_summary"]["segment_metrics"] = [{"metrics": "invented"}]
+    mc_b1_3["segment_metrics"] = [{"metrics": "invented"}]
+    rebound_b1_3 = _rebind_receipt_hashes(r_b1_3, mc_b1_3)
+    res_b1_3 = verify_sitescore_gate2_receipt(rebound_b1_3, model_card_artifact=mc_b1_3)
+    assert res_b1_3.is_valid is False
+
+    # B2 Probe 4: inventory_version="invented-authority-v99", source_contract="model_ready.candidate_site_view@invented-authority-v99", observed_at="2099-12-31T23:59:59Z"
+    r_b2_4 = json.loads(json.dumps(receipt))
+    mc_b2_4 = json.loads(json.dumps(mc_dict))
+    r_b2_4["inventory_version"] = "invented-authority-v99"
+    r_b2_4["source_contract"] = "model_ready.candidate_site_view@invented-authority-v99"
+    r_b2_4["observed_at"] = "2099-12-31T23:59:59Z"
+    mc_b2_4["created_at"] = "2099-12-31T23:59:59Z"
+    rebound_b2_4 = _rebind_receipt_hashes(r_b2_4, mc_b2_4)
+    res_b2_4 = verify_sitescore_gate2_receipt(rebound_b2_4, model_card_artifact=mc_b2_4)
+    assert res_b2_4.is_valid is False
+
+    # B3 Probe 5: m6_interval_mae_v2 added to both complete handback copies
+    r_b3_5 = json.loads(json.dumps(receipt))
+    mc_b3_5 = json.loads(json.dumps(mc_dict))
+    r_b3_5["handback"]["m6_interval_mae_v2"] = 12.34
+    r_b3_5["benchmark_summary"]["handback_payload"]["m6_interval_mae_v2"] = 12.34
+    rebound_b3_5 = _rebind_receipt_hashes(r_b3_5, mc_b3_5)
+    res_b3_5 = verify_sitescore_gate2_receipt(rebound_b3_5, model_card_artifact=mc_b3_5)
+    assert res_b3_5.is_valid is False
+
+    # B3 Probe 6: m6_interval_mae_v2 added inside both outcome_backfill_contract copies
+    r_b3_6 = json.loads(json.dumps(receipt))
+    mc_b3_6 = json.loads(json.dumps(mc_dict))
+    r_b3_6["handback"]["outcome_backfill_contract"]["m6_interval_mae_v2"] = 12.34
+    r_b3_6["benchmark_summary"]["handback_payload"]["outcome_backfill_contract"]["m6_interval_mae_v2"] = 12.34
+    rebound_b3_6 = _rebind_receipt_hashes(r_b3_6, mc_b3_6)
+    res_b3_6 = verify_sitescore_gate2_receipt(rebound_b3_6, model_card_artifact=mc_b3_6)
+    assert res_b3_6.is_valid is False
+
+    # B3 Probe 7: m6_interval_mae_v2 added at model-card top level
+    r_b3_7 = json.loads(json.dumps(receipt))
+    mc_b3_7 = json.loads(json.dumps(mc_dict))
+    mc_b3_7["m6_interval_mae_v2"] = 12.34
+    rebound_b3_7 = _rebind_receipt_hashes(r_b3_7, mc_b3_7)
+    res_b3_7 = verify_sitescore_gate2_receipt(rebound_b3_7, model_card_artifact=mc_b3_7)
+    assert res_b3_7.is_valid is False
+
+    # B3 Probe 8: m6_interval_mae_v2 added at receipt top level
+    r_b3_8 = json.loads(json.dumps(receipt))
+    mc_b3_8 = json.loads(json.dumps(mc_dict))
+    r_b3_8["m6_interval_mae_v2"] = 12.34
+    rebound_b3_8 = _rebind_receipt_hashes(r_b3_8, mc_b3_8)
+    res_b3_8 = verify_sitescore_gate2_receipt(rebound_b3_8, model_card_artifact=mc_b3_8)
+    assert res_b3_8.is_valid is False

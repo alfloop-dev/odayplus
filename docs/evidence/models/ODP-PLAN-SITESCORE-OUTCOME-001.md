@@ -1,11 +1,11 @@
 # Gate 2 Receipt: SiteScore Opening Outcome Calibration Benchmark (ODP-PLAN-SITESCORE-OUTCOME-001)
 
 - **Task ID**: `ODP-PLAN-SITESCORE-OUTCOME-001`
-- **Observed At**: `2026-07-31T12:29:38.325461Z`
+- **Observed At**: `2026-07-31T12:54:07.074381Z`
 - **Gate Status**: `REJECTED_GOVERNED_DISABLED`
 - **Data Provenance**: `no_source`
 - **Is Governed Disabled**: `True`
-- **Integrity Content SHA256**: `c91572fa6bcfd7cb7fc801a770a18c32af35eddf57bfe78cb83cfab8a77cf3f2`
+- **Integrity Content SHA256**: `484d09cba998467ff375020339fd60de9683d52cf6e2e4fd44ee4c2f363878f6`
 
 ## Benchmark Inventory & Coverage Summary
 

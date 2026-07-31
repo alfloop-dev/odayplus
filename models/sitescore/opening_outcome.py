@@ -7,7 +7,7 @@ import json
 import math
 from collections.abc import Sequence
 from dataclasses import dataclass, field
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from models.shared_ml.model_card import ModelCard, ModelCardApproval, ModelRiskLevel
@@ -17,6 +17,9 @@ MIN_COVERAGE_THRESHOLD = 0.70
 MAX_MAE_THRESHOLD = 0.25
 GATE2_RECEIPT_SCHEMA_VERSION = 1
 GATE2_RECEIPT_KIND = "sitescore-opening-outcome-gate2-receipt"
+CANONICAL_INVENTORY_VERSION = "candidate-site-view-v2"
+CANONICAL_SOURCE_CONTRACT = f"model_ready.candidate_site_view@{CANONICAL_INVENTORY_VERSION}"
+
 
 
 def _is_finite_float(val: Any) -> bool:
@@ -872,6 +875,77 @@ def verify_sitescore_gate2_receipt(
                 return None
             return val
 
+        # Closed key set checks for all dictionaries to reject arbitrary or renamed synthetic metric fields (B3)
+        ALLOWED_RECEIPT_KEYS = {
+            "schema_version", "kind", "inventory_version", "observed_at",
+            "model_name", "service", "provenance", "source_contract",
+            "gate", "gate_status", "is_governed_disabled", "benchmark_summary",
+            "handback", "artifact_hashes", "integrity", "db_error",
+        }
+        for k in receipt.keys():
+            if k not in ALLOWED_RECEIPT_KEYS:
+                errors.append(f"Forbidden or unknown field in top-level receipt: {k!r}")
+
+        if mc_dict is not None:
+            ALLOWED_MODEL_CARD_KEYS = {
+                "model_name", "model_version", "owner", "risk_level", "intended_use",
+                "not_intended_use", "dataset_snapshot_id", "validation_run_id",
+                "feature_set_id", "label_set_id", "training_period", "validation_period",
+                "algorithm", "baseline", "metrics_summary", "segment_metrics",
+                "calibration_summary", "explainability_method", "limitations",
+                "known_biases", "privacy_review", "security_review", "release_status",
+                "rollback_conditions", "approvals", "created_at",
+            }
+            for k in mc_dict.keys():
+                if k not in ALLOWED_MODEL_CARD_KEYS:
+                    errors.append(f"Forbidden or unknown field in top-level model_card: {k!r}")
+
+        ALLOWED_HANDBACK_KEYS = {
+            "handback_required", "reason_code", "governed_disabled", "provenance",
+            "observed_count", "eligible_count", "mature_label_count",
+            "matched_prediction_count", "m6_mature_count", "m12_mature_count",
+            "interval_bounds_count", "in_p80_count", "matched_mean_y",
+            "activation_threshold", "missing_labels_delta", "m6_coverage_ratio",
+            "m12_coverage_ratio", "prediction_coverage_ratio",
+            "interval_bounds_coverage_ratio", "normalized_mae", "p80_coverage",
+            "reasons", "handback_action", "outcome_backfill_contract",
+            "prediction_source_contract", "backfill_task_id", "prediction_source_task_id",
+            "backfill_receipt_required", "calibration_summary", "segment_metrics", "message",
+            "backfill_owner", "discovery_inventory_query",
+        }
+        for k in handback.keys():
+            if k not in ALLOWED_HANDBACK_KEYS:
+                errors.append(f"Forbidden or unknown field in handback: {k!r}")
+        for k in handback_in_summary.keys():
+            if k not in ALLOWED_HANDBACK_KEYS:
+                errors.append(f"Forbidden or unknown field in benchmark_summary.handback_payload: {k!r}")
+
+        bc = handback.get("outcome_backfill_contract")
+        if isinstance(bc, dict):
+            ALLOWED_OUTCOME_BACKFILL_CONTRACT_KEYS = {
+                "owner", "task_id", "scope", "discovery_source_identity", "discovery_query_id",
+                "required_source_identity", "required_query_id", "required_evidence_owner",
+                "source_identity", "query_id", "dataset_snapshot_hash", "lineage_id",
+                "freshness_timestamp", "evidence_owner", "eligibility_definition",
+                "maturity_definition", "m6_maturity_definition", "m12_maturity_definition",
+                "observed_count", "eligible_count", "mature_count", "m6_mature_count",
+                "m12_mature_count", "matched_prediction_count", "interval_bounds_count",
+                "in_p80_count", "required_fields", "discovery_inventory_query", "note",
+                "receipt_required",
+            }
+            for k in bc.keys():
+                if k not in ALLOWED_OUTCOME_BACKFILL_CONTRACT_KEYS:
+                    errors.append(f"Forbidden or unknown field in outcome_backfill_contract: {k!r}")
+
+        psc = handback.get("prediction_source_contract")
+        if isinstance(psc, dict):
+            ALLOWED_PREDICTION_SOURCE_CONTRACT_KEYS = {
+                "owner", "task_id", "scope", "required_fields", "receipt_required",
+            }
+            for k in psc.keys():
+                if k not in ALLOWED_PREDICTION_SOURCE_CONTRACT_KEYS:
+                    errors.append(f"Forbidden or unknown field in prediction_source_contract: {k!r}")
+
         # B3: Closed allow-list check for benchmark_summary
         ALLOWED_BENCHMARK_SUMMARY_KEYS = {
             "provenance", "dataset_snapshot_id", "model_version", "artifact_lineage_id",
@@ -882,7 +956,7 @@ def verify_sitescore_gate2_receipt(
             "normalized_mae", "p80_coverage", "activation_threshold",
             "min_coverage_threshold", "max_mae_threshold", "is_gate2_passed",
             "status", "reason_code", "handback_payload", "calibration_summary",
-            "segment_metrics", "db_error", "observed_at"
+            "segment_metrics", "db_error", "observed_at",
         }
         for k in summary.keys():
             if k not in ALLOWED_BENCHMARK_SUMMARY_KEYS:
@@ -894,23 +968,48 @@ def verify_sitescore_gate2_receipt(
         if rec_gate_status not in {"PASSED", "REJECTED_GOVERNED_DISABLED"}:
             errors.append(f"Invalid top-level gate_status: {rec_gate_status!r}")
 
-        # B2: Check top-level observed_at, inventory_version, and source_contract
+        # B2: Check pinned inventory_version, source_contract, and timestamp freshness/reconciliation
+        rec_inv_ver = receipt.get("inventory_version")
+        if rec_inv_ver != CANONICAL_INVENTORY_VERSION:
+            errors.append(f"Forbidden or unauthenticated inventory_version: {rec_inv_ver!r} (expected {CANONICAL_INVENTORY_VERSION!r})")
+
+        rec_src_contract = receipt.get("source_contract")
+        if rec_src_contract != CANONICAL_SOURCE_CONTRACT:
+            errors.append(f"source_contract mismatch: declared {rec_src_contract!r}, expected {CANONICAL_SOURCE_CONTRACT!r}")
+
+        now_utc = datetime.now(UTC)
         rec_obs_at = receipt.get("observed_at")
+        obs_dt: datetime | None = None
         if not isinstance(rec_obs_at, str):
             errors.append(f"Top-level observed_at must be a string (got {type(rec_obs_at).__name__}: {rec_obs_at!r})")
         else:
             try:
-                datetime.fromisoformat(rec_obs_at.replace("Z", "+00:00"))
+                obs_dt = datetime.fromisoformat(rec_obs_at.replace("Z", "+00:00"))
+                if obs_dt.tzinfo is None:
+                    errors.append(f"observed_at timestamp must be timezone-aware (got {rec_obs_at!r})")
+                elif obs_dt > now_utc + timedelta(seconds=300):
+                    errors.append(f"observed_at timestamp is in the future: {rec_obs_at!r}")
             except Exception:
                 errors.append(f"Invalid observed_at timestamp format: {rec_obs_at!r}")
 
-        rec_inv_ver = receipt.get("inventory_version")
-        if not isinstance(rec_inv_ver, str) or not rec_inv_ver.strip():
-            errors.append(f"Invalid inventory_version: {rec_inv_ver!r}")
-        rec_src_contract = receipt.get("source_contract")
-        expected_src_contract = f"model_ready.candidate_site_view@{rec_inv_ver}"
-        if rec_src_contract != expected_src_contract:
-            errors.append(f"source_contract mismatch: declared {rec_src_contract!r}, expected {expected_src_contract!r}")
+        if mc_dict is not None:
+            mc_created_str = mc_dict.get("created_at")
+            mc_dt: datetime | None = None
+            if not isinstance(mc_created_str, str):
+                errors.append(f"model_card.created_at must be a string (got {type(mc_created_str).__name__}: {mc_created_str!r})")
+            else:
+                try:
+                    mc_dt = datetime.fromisoformat(mc_created_str.replace("Z", "+00:00"))
+                    if mc_dt.tzinfo is None:
+                        errors.append(f"model_card.created_at timestamp must be timezone-aware (got {mc_created_str!r})")
+                    elif mc_dt > now_utc + timedelta(seconds=300):
+                        errors.append(f"model_card.created_at timestamp is in the future: {mc_created_str!r}")
+                except Exception:
+                    errors.append(f"Invalid model_card.created_at timestamp format: {mc_created_str!r}")
+
+            if obs_dt is not None and mc_dt is not None:
+                if abs((obs_dt - mc_dt).total_seconds()) > 300:
+                    errors.append(f"observed_at ({rec_obs_at}) drifts from model_card.created_at ({mc_created_str})")
 
         # Validate numeric types in summary
         obs = _check_strict_int(summary.get("observed_count"), "benchmark_summary.observed_count")
@@ -1268,7 +1367,7 @@ def verify_sitescore_gate2_receipt(
             _scan_forbidden_horizon_keys(mc_dict, "model_card")
 
         FORBIDDEN_CALIBRATION_KEYS = FORBIDDEN_HORIZON_KEYS
-        ALLOWED_CALIBRATION_KEYS = {
+        REQUIRED_CALIBRATION_KEYS = {
             "measured_90d_mae",
             "matched_prediction_count",
             "matched_mean_realized_revenue",
@@ -1278,31 +1377,76 @@ def verify_sitescore_gate2_receipt(
             "mean_realized_revenue",
         }
         def _check_calibration_summary(cal_dict: Any, location_name: str) -> None:
-            if isinstance(cal_dict, dict):
-                for k in cal_dict.keys():
-                    if k in FORBIDDEN_CALIBRATION_KEYS or k not in ALLOWED_CALIBRATION_KEYS:
-                        errors.append(f"Forbidden or unsupported synthetic horizon calibration field in {location_name}: {k!r}")
+            if not isinstance(cal_dict, dict):
+                errors.append(f"{location_name} must be a dictionary (got {type(cal_dict).__name__}: {cal_dict!r})")
+                return
+            if set(cal_dict.keys()) != REQUIRED_CALIBRATION_KEYS:
+                errors.append(
+                    f"{location_name} keys must match required set (missing: {REQUIRED_CALIBRATION_KEYS - set(cal_dict.keys())!r}, extra: {set(cal_dict.keys()) - REQUIRED_CALIBRATION_KEYS!r})"
+                )
+            for k, v in cal_dict.items():
+                if k in FORBIDDEN_CALIBRATION_KEYS:
+                    errors.append(f"Forbidden or unsupported synthetic horizon calibration field in {location_name}: {k!r}")
+                if k == "measured_90d_mae":
+                    if v is not None:
+                        _check_strict_float(v, f"{location_name}.{k}")
+                elif k == "matched_prediction_count":
+                    _check_strict_int(v, f"{location_name}.{k}")
+                elif k in {"prediction_coverage_ratio", "interval_bounds_coverage_ratio", "p80_coverage_ratio"}:
+                    flt = _check_strict_float(v, f"{location_name}.{k}")
+                    if flt is not None and not (0.0 <= flt <= 1.0):
+                        errors.append(f"{location_name}.{k} ratio must be in range [0.0, 1.0] (got {flt})")
+                elif k in {"matched_mean_realized_revenue", "mean_realized_revenue"}:
+                    _check_strict_float(v, f"{location_name}.{k}")
 
         _check_calibration_summary(summary.get("calibration_summary"), "summary.calibration_summary")
-        _check_calibration_summary(handback.get("calibration_summary"), "handback.calibration_summary")
-        _check_calibration_summary(handback_in_summary.get("calibration_summary"), "handback_payload.calibration_summary")
+        if handback.get("calibration_summary") is not None:
+            _check_calibration_summary(handback.get("calibration_summary"), "handback.calibration_summary")
+        if handback_in_summary.get("calibration_summary") is not None:
+            _check_calibration_summary(handback_in_summary.get("calibration_summary"), "handback_payload.calibration_summary")
         if mc_dict is not None:
             _check_calibration_summary(mc_dict.get("calibration_summary"), "model_card.calibration_summary")
 
-        ALLOWED_SEGMENT_METRIC_KEYS = {"mae", "m6_coverage", "m12_coverage", "prediction_coverage"}
+        REQUIRED_SEGMENT_KEYS = {"segment_name", "segment_value", "record_count", "metrics"}
+        REQUIRED_SEGMENT_METRIC_KEYS = {"mae", "m6_coverage", "m12_coverage", "prediction_coverage"}
+
         def _validate_segment_metrics(seg_list: Any, location_name: str) -> None:
-            if isinstance(seg_list, (list, tuple)):
-                for idx, seg in enumerate(seg_list):
-                    if isinstance(seg, dict):
-                        metrics = seg.get("metrics")
-                        if isinstance(metrics, dict):
-                            for k in metrics.keys():
-                                if k not in ALLOWED_SEGMENT_METRIC_KEYS:
-                                    errors.append(f"Forbidden or unsupported metric field in {location_name}[{idx}].metrics: {k!r}")
+            if not isinstance(seg_list, (list, tuple)):
+                errors.append(f"{location_name} must be a sequence (got {type(seg_list).__name__}: {seg_list!r})")
+                return
+            for idx, seg in enumerate(seg_list):
+                if not isinstance(seg, dict):
+                    errors.append(f"{location_name}[{idx}] must be a dictionary (got {type(seg).__name__}: {seg!r})")
+                    continue
+                if set(seg.keys()) != REQUIRED_SEGMENT_KEYS:
+                    errors.append(f"{location_name}[{idx}] keys must match required set (got {set(seg.keys())!r})")
+                if not isinstance(seg.get("segment_name"), str) or not seg.get("segment_name"):
+                    errors.append(f"{location_name}[{idx}].segment_name must be a non-empty string")
+                if not isinstance(seg.get("segment_value"), str) or not seg.get("segment_value"):
+                    errors.append(f"{location_name}[{idx}].segment_value must be a non-empty string")
+                _check_strict_int(seg.get("record_count"), f"{location_name}[{idx}].record_count")
+
+                metrics = seg.get("metrics")
+                if not isinstance(metrics, dict):
+                    errors.append(f"{location_name}[{idx}].metrics must be a dictionary (got {type(metrics).__name__}: {metrics!r})")
+                    continue
+                if set(metrics.keys()) != REQUIRED_SEGMENT_METRIC_KEYS:
+                    errors.append(f"{location_name}[{idx}].metrics keys must match required set (got {set(metrics.keys())!r})")
+                for mk, mv in metrics.items():
+                    if mk == "mae":
+                        flt = _check_strict_float(mv, f"{location_name}[{idx}].metrics.{mk}")
+                        if flt is not None and flt < 0.0:
+                            errors.append(f"{location_name}[{idx}].metrics.{mk} cannot be negative (got {flt})")
+                    elif mk in {"m6_coverage", "m12_coverage", "prediction_coverage"}:
+                        flt = _check_strict_float(mv, f"{location_name}[{idx}].metrics.{mk}")
+                        if flt is not None and not (0.0 <= flt <= 1.0):
+                            errors.append(f"{location_name}[{idx}].metrics.{mk} must be in range [0.0, 1.0] (got {flt})")
 
         _validate_segment_metrics(summary.get("segment_metrics"), "summary.segment_metrics")
-        _validate_segment_metrics(handback.get("segment_metrics"), "handback.segment_metrics")
-        _validate_segment_metrics(handback_in_summary.get("segment_metrics"), "handback_payload.segment_metrics")
+        if handback.get("segment_metrics") is not None:
+            _validate_segment_metrics(handback.get("segment_metrics"), "handback.segment_metrics")
+        if handback_in_summary.get("segment_metrics") is not None:
+            _validate_segment_metrics(handback_in_summary.get("segment_metrics"), "handback_payload.segment_metrics")
         if mc_dict is not None:
             _validate_segment_metrics(mc_dict.get("segment_metrics"), "model_card.segment_metrics")
 
