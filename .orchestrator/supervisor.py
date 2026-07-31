@@ -3684,7 +3684,6 @@ def chair_review_blocked_owner_rescue_details(config: dict[str, Any], state: dic
         return []
     max_items = max(1, int(settings.get("max_blocked_owner_rescues_in_prompt", 6)))
     details: list[dict[str, Any]] = []
-    owner_fallbacks = worker_reassignment_settings(config).get("owner_fallbacks", {})
     for task in status.get("tasks", []) or []:
         if not isinstance(task, dict) or not chair_blocked_owner_rescue_allowed(task):
             continue
@@ -4635,6 +4634,8 @@ def agent_dispatch_paused(config: dict[str, Any], state: dict[str, Any], agent_i
     if not agent_id:
         return False
     if agent_dispatch_disabled(config, agent_id):
+        return True
+    if current_provider_dispatch_pause(state, agent_id, config) is not None:
         return True
     agent = agent_config_for(config, agent_id)
     provider_id = str(agent.get("provider") or agent.get("id") or agent_id)
@@ -8981,6 +8982,10 @@ def stale_dispatch_skip_message(config: dict[str, Any], event: dict[str, Any], t
 
 
 def ready_dispatch_signature(task: dict[str, Any], reason: str, task_map: dict[str, dict[str, Any]]) -> str:
+    # `last_update` is deliberately excluded. Notes, status-check retries, and
+    # generated-view synchronization may update that timestamp after a wake is
+    # queued without changing who may execute the task. Role/status/dependency
+    # changes below remain part of the key and still invalidate stale wakes.
     return json.dumps(
         {
             "task_id": task.get("id"),
@@ -8988,7 +8993,6 @@ def ready_dispatch_signature(task: dict[str, Any], reason: str, task_map: dict[s
             "reason": reason,
             "owner": task.get("owner"),
             "reviewer": task.get("reviewer"),
-            "last_update": task.get("last_update"),
             "depends_on": list(task.get("depends_on", []) or []),
             "dependency_signature": task_dependency_signature(task, task_map),
         },

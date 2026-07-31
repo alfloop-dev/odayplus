@@ -976,7 +976,12 @@ def load_json_file(path: Path, default: Any) -> Any:
 
 
 def load_config() -> dict[str, Any]:
-    payload = load_json_file(CONFIG_FILE, {})
+    config_source = CONFIG_FILE
+    if not config_source.exists():
+        example = ORCHESTRATOR_DIR / "config.example.json"
+        if example.exists():
+            config_source = example
+    payload = load_json_file(config_source, {})
     if not isinstance(payload, dict):
         return {}
     paths = payload.setdefault("paths", {})
@@ -1574,7 +1579,7 @@ def pull_request_status_for_branch(repository_root: Path, branch: str) -> dict[s
             "view",
             branch,
             "--json",
-            "number,state,mergeStateStatus,mergedAt,mergeCommit,autoMergeRequest,url",
+            "number,state,mergeStateStatus,mergedAt,mergeCommit,autoMergeRequest,url,headRefOid,baseRefName",
         ],
         cwd=repository_root,
     )
@@ -1720,6 +1725,43 @@ def enforce_delivery_merged_gate(
     if merged:
         return
     pr_status = pull_request_status_for_branch(repository_root, branch)
+    head_sha = run_git_command(["rev-parse", "HEAD"], cwd=repository_root)
+    if pr_status:
+        pr_state = str(pr_status.get("state") or "").upper()
+        pr_head = str(pr_status.get("headRefOid") or "").strip()
+        pr_base = str(pr_status.get("baseRefName") or "").strip()
+        merged_at = str(pr_status.get("mergedAt") or "").strip()
+        merge_commit_raw = pr_status.get("mergeCommit")
+        merge_commit = (
+            str(merge_commit_raw.get("oid") or "").strip()
+            if isinstance(merge_commit_raw, dict)
+            else str(merge_commit_raw or "").strip()
+        )
+        merge_commit_on_target = bool(
+            merge_commit
+            and git_command_succeeds(
+                ["merge-base", "--is-ancestor", merge_commit, target_ref],
+                cwd=repository_root,
+            )
+        )
+        if (
+            pr_state == "MERGED"
+            and pr_head == head_sha
+            and pr_base == target_branch
+            and merged_at
+            and merge_commit
+            and merge_commit_on_target
+        ):
+            delivery["merge_verified_via_pr"] = True
+            delivery["pull_request"] = {
+                "number": pr_status.get("number"),
+                "url": pr_status.get("url"),
+                "head_sha": pr_head,
+                "base_branch": pr_base,
+                "merged_at": merged_at,
+                "merge_commit": merge_commit,
+            }
+            return
     status_text = format_pull_request_status(pr_status)
     detail = f";{status_text}" if status_text else ""
     raise SystemExit(

@@ -110,3 +110,56 @@ git diff --check
    systemctl status pantheon-supervisor
    python3 scripts/supervisor_runtime_health.py
    ```
+
+---
+
+## 5. Coordinator completion addendum — R6–R8
+
+### R6: configured `dev` target and squash-merge closeout
+
+`scripts/ai_status.py` now falls back to tracked
+`.orchestrator/config.example.json` when a task worktree has no gitignored local
+config. Ordinary merge ancestry remains accepted. A squash/rebase merge requires
+GitHub `MERGED`, the immutable PR `headRefOid` equal to exact task HEAD,
+`baseRefName` equal to configured `dev`, non-empty merge time and commit, and
+that merge commit be an ancestor of fetched `origin/dev`. Open PRs, wrong heads,
+wrong bases, and forged/off-target merge commits remain NO-GO.
+
+### R7: test-root isolation
+
+Supervisor and `ai_status` test modules set a temporary
+`PANTHEON_STATUS_ROOT` before importing `ai_status`, then restore the caller
+environment. This exposed and removed hidden reliance on live config and live
+PID scans. The focused run emitted no new `FREEZE-TEST-*` events to the live
+activity log; the last pre-fix fixture event remains at
+`2026-07-31T08:12:37Z`. Concurrent legitimate watchdog and task-handoff events
+can change the whole-file hash while live Supervisor runs, so absence of fixture
+events plus isolated paths is the authoritative assertion.
+
+The pre-existing polluted audit log is retained and is not rewritten or deleted.
+Generated task-worktree dashboard files are excluded from the task commit.
+
+### R8: stable eligible wake keys
+
+Pure `last_update` changes no longer alter dispatch authority keys. Notes,
+status-check retries, and generated-view synchronization cannot make an otherwise
+eligible queued wake reject itself. Status, owner, reviewer, dependencies,
+dependency states, task id, and dispatch reason remain bound into the key, so
+real authority or eligibility changes still invalidate an event.
+
+### Focused verification
+
+```text
+pytest -q .orchestrator/test_supervisor.py::SupervisorFailureLoopCoverageTests \
+  scripts/test_ai_status.py::DeliveryMetadataValidationTests
+................... [100%]
+
+ruff check .orchestrator/runtime_state.py .orchestrator/supervisor.py \
+  .orchestrator/test_supervisor.py scripts/ai_status.py scripts/test_ai_status.py
+All checks passed!
+
+git diff --check
+clean
+```
+
+No live Supervisor restart or deployment was performed.

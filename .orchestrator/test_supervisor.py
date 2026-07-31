@@ -20,8 +20,23 @@ SCRIPTS_DIR = ROOT_DIR / "scripts"
 if str(SCRIPTS_DIR) not in sys.path:
     sys.path.insert(0, str(SCRIPTS_DIR))
 
+# Never let orchestration tests inherit a worker's live coordination root.
+# ai_status binds its output paths at import time, so isolation must happen
+# before importing it.
+_ORIGINAL_STATUS_ROOT = os.environ.get("PANTHEON_STATUS_ROOT")
+_TEST_STATUS_ROOT_HANDLE = tempfile.TemporaryDirectory(prefix="pantheon-supervisor-tests-")
+os.environ["PANTHEON_STATUS_ROOT"] = _TEST_STATUS_ROOT_HANDLE.name
+
 import ai_status
 import supervisor
+
+
+def tearDownModule() -> None:
+    if _ORIGINAL_STATUS_ROOT is None:
+        os.environ.pop("PANTHEON_STATUS_ROOT", None)
+    else:
+        os.environ["PANTHEON_STATUS_ROOT"] = _ORIGINAL_STATUS_ROOT
+    _TEST_STATUS_ROOT_HANDLE.cleanup()
 
 
 def load_test_config() -> dict[str, Any]:
@@ -9748,7 +9763,7 @@ class SupervisorFailureLoopCoverageTests(unittest.TestCase):
         with (
             mock.patch.object(supervisor, "load_status", return_value=status),
             mock.patch.object(supervisor, "persist_task_reassignment", return_value=True) as persist,
-            mock.patch.object(supervisor, "write_activity_log") as write_log,
+            mock.patch.object(supervisor, "write_activity_log"),
         ):
             reassigned_to = supervisor.maybe_reassign_task_after_worker_failure(
                 self.config,
@@ -9930,6 +9945,8 @@ class SupervisorFailureLoopCoverageTests(unittest.TestCase):
             )
 
         self.assertNotIn(reassigned, ["Antigravity3", "Antigravity5", "Antigravity4", "Codex6"])
+        if reassigned is None:
+            persist.assert_not_called()
 
     def test_concurrent_claim_main_loop_state_preservation(self) -> None:
         """R1: Prove concurrent claim/main-loop state save preserves live worker, reconciles event, and avoids double-dispatch."""
@@ -9953,7 +9970,10 @@ class SupervisorFailureLoopCoverageTests(unittest.TestCase):
             }
 
             initial_state = supervisor.load_runtime_state(cfg)
-            with mock.patch.object(supervisor, "load_status", return_value=status_todo):
+            with (
+                mock.patch.object(supervisor, "load_status", return_value=status_todo),
+                mock.patch.object(supervisor, "scan_live_worker_pids_by_agent", return_value={}),
+            ):
                 supervisor.dispatch_ready_tasks(cfg, initial_state, {})
             supervisor.save_runtime_state(cfg, initial_state)
 
@@ -10001,7 +10021,10 @@ class SupervisorFailureLoopCoverageTests(unittest.TestCase):
             self.assertNotEqual(evt_rec.get("skip_reason"), "stale_dispatch_event")
             self.assertEqual(evt_rec.get("run_id"), "antigravity4-conc-run-1")
 
-            with mock.patch.object(supervisor, "load_status", return_value=status_in_prog):
+            with (
+                mock.patch.object(supervisor, "load_status", return_value=status_in_prog),
+                mock.patch.object(supervisor, "scan_live_worker_pids_by_agent", return_value={}),
+            ):
                 dispatched = supervisor.dispatch_ready_tasks(cfg, saved_disk, {})
                 self.assertFalse(dispatched)
 
@@ -10085,17 +10108,6 @@ class SupervisorFailureLoopCoverageTests(unittest.TestCase):
             backup_file = backup_dir / "odp-plan-acceptance-real-exec-001-lease_blocked.patch"
             backup_file.write_text("patch content", encoding="utf-8")
 
-            status = {
-                "tasks": [
-                    {
-                        "id": "ODP-422-TEST-001",
-                        "status": "todo",
-                        "owner": "Antigravity4",
-                        "reviewer": "Codex6",
-                    }
-                ]
-            }
-
             event = {
                 "task_id": "ODP-422-TEST-001",
                 "target_agent": "antigravity4",
@@ -10108,10 +10120,62 @@ class SupervisorFailureLoopCoverageTests(unittest.TestCase):
             mock_subproc_result.stderr = "HTTP 422 Unprocessable Entity: No commit found for SHA f1078e8b"
 
             with mock.patch("subprocess.run", return_value=mock_subproc_result):
-                synced = supervisor.sync_dispatched_task_status(self.config, event)
+                _synced = supervisor.sync_dispatched_task_status(self.config, event)
 
             self.assertTrue(backup_file.exists())
             self.assertEqual(backup_file.read_text(encoding="utf-8"), "patch content")
+
+    def test_last_update_only_change_does_not_stale_eligible_wake(self) -> None:
+        """R8: operational notes must not invalidate an otherwise eligible wake."""
+        task = {
+            "id": "ODP-WAKE-STABLE-001",
+            "status": "in_progress",
+            "owner": "Antigravity7",
+            "reviewer": "CodexCoordinator",
+            "last_update": "2026-07-31T08:28:23Z",
+            "depends_on": [],
+        }
+        task_map = {task["id"]: task}
+        event = supervisor.build_dispatch_event(
+            task,
+            "Antigravity7",
+            supervisor.REASON_OWNED_IN_PROGRESS,
+            task_map,
+        )
+        event["event_key"] = event["key"]
+        event["target_display_name"] = "Antigravity7"
+
+        task["last_update"] = "2026-07-31T08:29:00Z"
+        task["next"] = "Coordinator note added after wake queueing"
+
+        self.assertIsNone(
+            supervisor.stale_dispatch_skip_message(self.config, event, task_map)
+        )
+
+    def test_assignment_or_status_change_still_stales_wake(self) -> None:
+        """R8 negative matrix: a real authority/status change still invalidates."""
+        task = {
+            "id": "ODP-WAKE-STABLE-002",
+            "status": "in_progress",
+            "owner": "Antigravity7",
+            "reviewer": "CodexCoordinator",
+            "depends_on": [],
+        }
+        task_map = {task["id"]: task}
+        event = supervisor.build_dispatch_event(
+            task,
+            "Antigravity7",
+            supervisor.REASON_OWNED_IN_PROGRESS,
+            task_map,
+        )
+        event["event_key"] = event["key"]
+        event["target_display_name"] = "Antigravity7"
+
+        task["owner"] = "Antigravity4"
+        self.assertIn(
+            "no longer eligible",
+            supervisor.stale_dispatch_skip_message(self.config, event, task_map) or "",
+        )
 
 
 if __name__ == "__main__":

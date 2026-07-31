@@ -13,7 +13,19 @@ from unittest import mock
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
+_ORIGINAL_STATUS_ROOT = os.environ.get("PANTHEON_STATUS_ROOT")
+_TEST_STATUS_ROOT_HANDLE = tempfile.TemporaryDirectory(prefix="pantheon-ai-status-tests-")
+os.environ["PANTHEON_STATUS_ROOT"] = _TEST_STATUS_ROOT_HANDLE.name
+
 import ai_status
+
+
+def tearDownModule() -> None:
+    if _ORIGINAL_STATUS_ROOT is None:
+        os.environ.pop("PANTHEON_STATUS_ROOT", None)
+    else:
+        os.environ["PANTHEON_STATUS_ROOT"] = _ORIGINAL_STATUS_ROOT
+    _TEST_STATUS_ROOT_HANDLE.cleanup()
 
 
 class StatusRootRoutingTests(unittest.TestCase):
@@ -490,6 +502,67 @@ class DeliveryMetadataValidationTests(unittest.TestCase):
         self.assertEqual(delivery["merge_target_ref"], "origin/dev")
         self.assertEqual(delivery["merge_target_sha"], "devsha")
         self.assertTrue(delivery["head_merged_to_target"])
+
+    def test_collect_done_delivery_metadata_allows_verified_dev_squash_merge(self) -> None:
+        task = {
+            "id": "REG-002",
+            "owner": "Codex",
+            "reviewer": "Claude",
+            "status": "review_approved",
+            "artifacts": [],
+        }
+
+        def fake_run_git_command(args: list[str], **kwargs: object) -> str:
+            responses = {
+                ("rev-parse", "--abbrev-ref", "HEAD"): "task/REG-002",
+                ("rev-parse", "HEAD"): "sourcehead",
+                ("show", "-s", "--format=%s", "HEAD"): "REG-002 finalize",
+                ("show", "-s", "--format=%b", "HEAD"): "LLM-Agent: Codex\nTask-ID: REG-002\nReviewer: Claude\n",
+                ("show", "-s", "--format=%an", "HEAD"): "Codex",
+                ("show", "-s", "--format=%ae", "HEAD"): "codex@example.com",
+                ("status", "--porcelain"): "",
+                ("remote",): "origin",
+                ("rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{upstream}"): "origin/task/REG-002",
+                ("rev-list", "--left-right", "--count", "origin/task/REG-002...HEAD"): "0 0",
+                ("fetch", "origin", "dev"): "",
+                ("rev-parse", "--verify", "origin/dev"): "devtip",
+            }
+            key = tuple(args)
+            if key not in responses:
+                raise AssertionError(f"unexpected git command: {args}")
+            return responses[key]
+
+        def fake_git_succeeds(args: list[str], **kwargs: object) -> bool:
+            if args == ["merge-base", "--is-ancestor", "HEAD", "origin/dev"]:
+                return False
+            if args == ["merge-base", "--is-ancestor", "squashmerge", "origin/dev"]:
+                return True
+            raise AssertionError(f"unexpected git check: {args}")
+
+        with (
+            mock.patch.object(ai_status, "run_git_command", side_effect=fake_run_git_command),
+            mock.patch.object(ai_status, "git_command_succeeds", side_effect=fake_git_succeeds),
+            mock.patch.object(
+                ai_status,
+                "pull_request_status_for_branch",
+                return_value={
+                    "number": 533,
+                    "state": "MERGED",
+                    "headRefOid": "sourcehead",
+                    "baseRefName": "dev",
+                    "mergedAt": "2026-07-31T08:08:36Z",
+                    "mergeCommit": {"oid": "squashmerge"},
+                    "url": "https://github.com/example/repo/pull/533",
+                },
+            ),
+        ):
+            delivery = ai_status.collect_done_delivery_metadata(task, "Codex")
+
+        self.assertFalse(delivery["head_merged_to_target"])
+        self.assertTrue(delivery["merge_verified_via_pr"])
+        self.assertEqual(delivery["pull_request"]["head_sha"], "sourcehead")
+        self.assertEqual(delivery["pull_request"]["base_branch"], "dev")
+        self.assertEqual(delivery["pull_request"]["merge_commit"], "squashmerge")
 
 
 class ArchiveWorkflowTests(unittest.TestCase):
