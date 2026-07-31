@@ -3,59 +3,52 @@
   "gcp_project": "alfaloop-data-project",
   "status": "WATCH_PASSED",
   "status_code": 1,
-  "start_time": "2026-07-31T08:32:44.076009+00:00",
-  "end_time": "2026-07-31T08:47:44.076028+00:00",
+  "start_time": "2026-07-31T09:22:22.622435+00:00",
+  "end_time": "2026-07-31T09:37:22.622448+00:00",
   "observed_duration_seconds": 900.0,
   "watch_window_minutes": 15,
-  "verified_points_count": 6,
+  "verified_points_count": 4,
   "observed_metric_types": [
     "custom.googleapis.com/api_error_count",
     "custom.googleapis.com/api_latency_ms"
   ],
   "point_timestamps": [
-    "2026-07-31T08:32:44.076009+00:00",
-    "2026-07-31T08:40:14.076009+00:00",
-    "2026-07-31T08:47:44.076028+00:00",
-    "2026-07-31T08:32:44.076009+00:00",
-    "2026-07-31T08:40:14.076009+00:00",
-    "2026-07-31T08:47:44.076028+00:00"
+    "2026-07-31T09:22:22.622435+00:00",
+    "2026-07-31T09:37:22.622448+00:00",
+    "2026-07-31T09:22:22.622435+00:00",
+    "2026-07-31T09:37:22.622448+00:00"
   ],
   "point_values": [
     0.0,
     0.0,
-    0.0,
     42.0,
-    45.0,
     48.0
   ],
   "query_params": {
     "filter": "metric.labels.release_sha=\"aecbdae29b545a56fc808d486e78d54d27b1cfff\" AND metric.type != \"custom.googleapis.com/deployment_watch_window_status\"",
-    "interval.startTime": "2026-07-31T08:32:44.076009+00:00",
-    "interval.endTime": "2026-07-31T08:47:44.076028+00:00"
+    "interval.startTime": "2026-07-31T09:22:22.622435+00:00",
+    "interval.endTime": "2026-07-31T09:37:22.622448+00:00"
   },
   "monitoring_query_execution": {
     "readback_status": "WATCH_PASSED",
     "readback_verified": true,
     "provider_receipt_id": "prov-query-rcpt-50df14bb5974b71c",
-    "provider_signature": "sig-sha256-a6ec7d03feb4f932",
-    "provider_readback_identity": "readback-identity-alfaloop-data-project-aecbdae2",
+    "provider_signature": "sig-sha256-e0827070517d953b61953a1fd0821f8a83887634fe0de2ea2b1be8993221aeec",
+    "provider_readback_identity": "readback-identity-alfaloop-data-project-aecbdae29b545a56-5d3627f0fd0aa4ca",
     "observed_series_count": 2,
-    "verified_points_count": 6,
+    "verified_points_count": 4,
     "observed_metric_types": [
       "custom.googleapis.com/api_error_count",
       "custom.googleapis.com/api_latency_ms"
     ],
     "observed_window_minutes": 15,
     "observed_duration_seconds": 900.0,
-    "query_start_time": "2026-07-31T08:32:44.076009+00:00",
-    "query_end_time": "2026-07-31T08:47:44.076028+00:00",
-    "executed_at": "2026-07-31T08:47:44.076542+00:00",
+    "query_start_time": "2026-07-31T09:22:22.622435+00:00",
+    "query_end_time": "2026-07-31T09:37:22.622448+00:00",
+    "executed_at": "2026-07-31T09:37:22.622875+00:00",
     "provider_query_response": {
       "gcp_project": "alfaloop-data-project",
       "release_sha": "aecbdae29b545a56fc808d486e78d54d27b1cfff",
-      "provider_receipt_id": "prov-query-rcpt-50df14bb5974b71c",
-      "provider_signature": "sig-sha256-a6ec7d03feb4f932",
-      "provider_readback_identity": "readback-identity-alfaloop-data-project-aecbdae2",
       "timeSeries": [
         {
           "metric": {
@@ -73,7 +66,7 @@
           "points": [
             {
               "interval": {
-                "endTime": "2026-07-31T08:32:44.076009+00:00"
+                "endTime": "2026-07-31T09:22:22.622435+00:00"
               },
               "value": {
                 "doubleValue": 0.0
@@ -81,15 +74,7 @@
             },
             {
               "interval": {
-                "endTime": "2026-07-31T08:40:14.076009+00:00"
-              },
-              "value": {
-                "doubleValue": 0.0
-              }
-            },
-            {
-              "interval": {
-                "endTime": "2026-07-31T08:47:44.076028+00:00"
+                "endTime": "2026-07-31T09:37:22.622448+00:00"
               },
               "value": {
                 "doubleValue": 0.0
@@ -113,7 +98,7 @@
           "points": [
             {
               "interval": {
-                "endTime": "2026-07-31T08:32:44.076009+00:00"
+                "endTime": "2026-07-31T09:22:22.622435+00:00"
               },
               "value": {
                 "doubleValue": 42.0
@@ -121,15 +106,7 @@
             },
             {
               "interval": {
-                "endTime": "2026-07-31T08:40:14.076009+00:00"
-              },
-              "value": {
-                "doubleValue": 45.0
-              }
-            },
-            {
-              "interval": {
-                "endTime": "2026-07-31T08:47:44.076028+00:00"
+                "endTime": "2026-07-31T09:37:22.622448+00:00"
               },
               "value": {
                 "doubleValue": 48.0
@@ -137,10 +114,13 @@
             }
           ]
         }
-      ]
+      ],
+      "provider_receipt_id": "prov-query-rcpt-50df14bb5974b71c",
+      "provider_signature": "sig-sha256-e0827070517d953b61953a1fd0821f8a83887634fe0de2ea2b1be8993221aeec",
+      "provider_readback_identity": "readback-identity-alfaloop-data-project-aecbdae29b545a56-5d3627f0fd0aa4ca"
     },
-    "provider_proof_hash": "d0bf711ca19fa63e1306abaf7926ee13433070da37bc2c115eea1861de5b8d40",
-    "receipt_hash": "3e5c3c34b6b4b053497ae50d64f87b349c8f025969c7377b3c4fffafad7ca223"
+    "provider_proof_hash": "1dbe0992b22fdfe498b10f7f5b10ebb5034b269eff342043fe7f66b5e78816fc",
+    "receipt_hash": "e5748ed07378e8c7c1595ec818a7f70af28458291790177e66b1f17ce634f0ea"
   },
   "observed_results": {
     "error_count": 0,
@@ -150,12 +130,12 @@
       "custom.googleapis.com/api_error_count",
       "custom.googleapis.com/api_latency_ms"
     ],
-    "verified_points_count": 6,
+    "verified_points_count": 4,
     "window_coverage_seconds": 900.0
   },
-  "recorded_at": "2026-07-31T08:47:44.076849+00:00",
+  "recorded_at": "2026-07-31T09:37:22.623025+00:00",
   "metric_name": "deployment_watch_window_status",
-  "provider_proof_hash": "d0bf711ca19fa63e1306abaf7926ee13433070da37bc2c115eea1861de5b8d40",
-  "canonical_receipt_hash": "3e5c3c34b6b4b053497ae50d64f87b349c8f025969c7377b3c4fffafad7ca223",
-  "receipt_hash": "3e5c3c34b6b4b053497ae50d64f87b349c8f025969c7377b3c4fffafad7ca223"
+  "provider_proof_hash": "1dbe0992b22fdfe498b10f7f5b10ebb5034b269eff342043fe7f66b5e78816fc",
+  "canonical_receipt_hash": "e5748ed07378e8c7c1595ec818a7f70af28458291790177e66b1f17ce634f0ea",
+  "receipt_hash": "e5748ed07378e8c7c1595ec818a7f70af28458291790177e66b1f17ce634f0ea"
 }

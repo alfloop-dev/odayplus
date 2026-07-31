@@ -52,12 +52,12 @@ A simulated browser action sends a request to the API with correlation ID `corr-
 - **Body**:
 ```json
 {
-  "job_id": "39b67c71-2eb1-458c-a886-5b93f80ec325",
+  "job_id": "ecfe6c5c-f00f-4699-bfbe-3b1f41e2c833",
   "status": "queued",
   "correlation_id": "corr-obs-test-sha-current-12345",
   "idempotency_key": "idemp-key-1",
   "job": {
-    "job_id": "39b67c71-2eb1-458c-a886-5b93f80ec325",
+    "job_id": "ecfe6c5c-f00f-4699-bfbe-3b1f41e2c833",
     "job_type": "external-fetch",
     "status": "queued",
     "correlation_id": "corr-obs-test-sha-current-12345",
@@ -65,7 +65,7 @@ A simulated browser action sends a request to the API with correlation ID `corr-
     "payload": {
       "provider_id": "listing.partner_feed"
     },
-    "created_at": "2026-07-30T19:50:00.616137+00:00",
+    "created_at": "2026-07-31T09:30:19.128756+00:00",
     "attempts": 0,
     "leased_until": null,
     "max_retries": 3,
@@ -77,7 +77,7 @@ A simulated browser action sends a request to the API with correlation ID `corr-
     "error_message": null
   },
   "created": true,
-  "audit_event_id": "ad94c7d7-7c2f-41ae-8430-11db7575e580"
+  "audit_event_id": "f3d67120-e457-4706-8cf3-06c9255d53c9"
 }
 ```
 
@@ -88,7 +88,7 @@ The background worker claimed and executed the job. Both the API HTTP span and t
 ```json
 [
   {
-    "span_id": "2f451f4acd364156",
+    "span_id": "826cffe3f9e64e59",
     "parent_id": null,
     "name": "HTTP POST /jobs",
     "kind": "api",
@@ -96,7 +96,7 @@ The background worker claimed and executed the job. Both the API HTTP span and t
     "actor_id": "user",
     "status": "ok",
     "error_code": null,
-    "duration_ms": 32.512756,
+    "duration_ms": 31.680203,
     "attributes": {
       "correlation_id": "corr-obs-test-sha-current-12345",
       "request_id": "corr-obs-test-sha-current-12345",
@@ -104,7 +104,7 @@ The background worker claimed and executed the job. Both the API HTTP span and t
     }
   },
   {
-    "span_id": "1a9879bf1d564cf2",
+    "span_id": "066514c1ef2c4269",
     "parent_id": null,
     "name": "worker-external-fetch",
     "kind": "worker",
@@ -112,10 +112,10 @@ The background worker claimed and executed the job. Both the API HTTP span and t
     "actor_id": "worker",
     "status": "ok",
     "error_code": null,
-    "duration_ms": 6.046453,
+    "duration_ms": 4.103029,
     "attributes": {
       "correlation_id": "corr-obs-test-sha-current-12345",
-      "job_id": "39b67c71-2eb1-458c-a886-5b93f80ec325",
+      "job_id": "ecfe6c5c-f00f-4699-bfbe-3b1f41e2c833",
       "actor_id": "worker"
     }
   }
@@ -141,23 +141,22 @@ A P1 alert (`audit-write-failure`) was routed to `ops-lead` (per `alerts.json` c
 #### Real Delivery On-Call Receipt Output (Captured directly from OnCallNotificationAdapter)
 ```json
 {
-  "delivery_id": "del-d70b05b7474f",
-  "notification_id": "ac3c1829-4548-4567-9dee-0a2a90321a9f",
+  "delivery_id": "del-cf37dfaa07b4",
+  "notification_id": "9dde1be5-398a-497b-996d-bbc5352edf6c",
   "oncall_route": "ops-lead",
   "channel": "webhook",
-  "endpoint": "http://127.0.0.1:40019/api/v1/alerts",
+  "endpoint": "http://127.0.0.1:33843/api/v1/alerts",
+  "release_sha": "unauthenticated",
+  "request_hash": "",
+  "response_hash": "",
+  "provider_receipt_id": null,
   "title": "ALERT: [P1] Audit write failure",
   "detail": "Alert ID: audit-write-failure\nCondition: any audit_event_write_failure_count for high-risk action or export in production\nRunbook: docs/runbooks/observability-and-runbook.md#audit-write-failure\nDetails: Durable storage write timeout on DB query",
-  "http_status": 200,
-  "status": "DELIVERED",
-  "delivered_at": "2026-07-30T19:50:00.630022+00:00",
-  "response": {
-    "status": "delivered",
-    "route": "ops-lead",
-    "delivery_id": "del-d70b05b7474f",
-    "received_at": "2026-07-30T19:50:00.672648+00:00"
-  },
-  "error": null
+  "http_status": 0,
+  "status": "FAILED",
+  "delivered_at": "2026-07-31T09:30:19.139732+00:00",
+  "response": null,
+  "error": "On-call notification delivery requires a non-empty ONCALL_PROVIDER_SECRET provider trust root. Fail-closed gate enforced."
 }
 ```
 

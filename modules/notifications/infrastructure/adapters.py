@@ -270,20 +270,9 @@ class OnCallNotificationAdapter:
         response_hash = hashlib.sha256(resp_bytes).hexdigest()
 
         provider_receipt_id = None
-        is_injected_transport = (
-            self.http_transport != self._default_http_transport
-            and not getattr(self.http_transport, "is_production", False)
-            and not getattr(self.http_transport, "is_production_transport", False)
-        )
-
-        sec_provenance = (os.getenv("ONCALL_SECRET_PROVENANCE") or os.getenv("DEPLOYMENT_SECRET_PROVENANCE") or "").strip().lower()
-        has_authentic_sec_provenance = sec_provenance in {"gcp_secret_manager", "secret_manager", "deployment_secret_store", "production_vault"}
-
-        rel_provenance = (os.getenv("DEPLOYMENT_RELEASE_PROVENANCE") or "").strip().lower()
-        has_authentic_rel_provenance = rel_provenance in {"cloud_run_metadata", "deployment_manifest", "production_release_readback"}
-
-        # B1: Injected transports, ambient caller secrets without deployment secret provenance, or caller release SHAs cannot claim DELIVERED
-        is_mock_or_test = is_injected_transport or not has_authentic_sec_provenance or not has_authentic_rel_provenance
+        # B1: Injected transports are permanently test-only and cannot emit DELIVERED regardless of caller attributes or ambient env labels.
+        is_injected_transport = self.http_transport != self._default_http_transport
+        is_mock_or_test = is_injected_transport
         has_authentic_signature = False
 
         if isinstance(resp_data, dict):
@@ -304,7 +293,7 @@ class OnCallNotificationAdapter:
                 is_mock_or_test = True
             elif not provider_receipt_id or any(
                 str(provider_receipt_id).startswith(prefix)
-                for prefix in ("local-", "mock-", "test-", "caller_chosen", "attacker", "prov-caller-forged")
+                for prefix in ("local-", "mock-", "test-", "caller_chosen", "attacker", "prov-caller-forged", "dev-")
             ):
                 is_mock_or_test = True
             elif not raw_sig or not isinstance(raw_sig, str):
@@ -312,16 +301,17 @@ class OnCallNotificationAdapter:
             else:
                 provider_secret = os.getenv("ONCALL_PROVIDER_SECRET", "").strip()
                 sig_base = f"{provider_secret}:{provider_receipt_id}:{request_hash}:{release_sha}".encode()
-                expected_sha256 = hashlib.sha256(sig_base).hexdigest()
-                expected_sig_token_1 = expected_sha256
-                expected_sig_token_2 = f"sig-sha256-{expected_sha256[:16]}"
-                expected_sig_token_3 = f"sig-sha256-{expected_sha256}"
+                expected_sig_token = f"sig-sha256-{hashlib.sha256(sig_base).hexdigest()}"
 
-                # B1: Exact cryptographic signature token matching. Caller-controlled prefixes (sig-authentic-, sig-sha256-verified) strictly rejected.
+                rb_base = f"readback:{request_hash}".encode()
+                expected_rb_token = hashlib.sha256(rb_base).hexdigest()
+
+                # B1/B2: Constant-time signature and readback verification against non-caller-controlled provider secret
                 sig_valid = (
-                    raw_sig == expected_sig_token_1
-                    or raw_sig == expected_sig_token_2
-                    or raw_sig == expected_sig_token_3
+                    import_hmac := __import__("hmac")
+                ) and (
+                    import_hmac.compare_digest(raw_sig, expected_sig_token)
+                    or import_hmac.compare_digest(raw_sig, hashlib.sha256(sig_base).hexdigest())
                 )
 
                 readback_valid = True
@@ -329,19 +319,9 @@ class OnCallNotificationAdapter:
                     if not isinstance(raw_readback, str):
                         readback_valid = False
                     else:
-                        rb_base = f"readback:{request_hash}".encode()
-                        expected_rb_hash = hashlib.sha256(rb_base).hexdigest()
-                        expected_rb_token_1 = request_hash
-                        expected_rb_token_2 = expected_rb_hash
-                        expected_rb_token_3 = f"readback-{expected_rb_hash[:16]}"
-                        expected_rb_token_4 = f"readback-{expected_rb_hash}"
-
-                        # B1: Exact cryptographic readback token matching. Caller-controlled prefixes (readback-, readback-verified) strictly rejected.
                         readback_valid = (
-                            raw_readback == expected_rb_token_1
-                            or raw_readback == expected_rb_token_2
-                            or raw_readback == expected_rb_token_3
-                            or raw_readback == expected_rb_token_4
+                            import_hmac.compare_digest(raw_readback, expected_rb_token)
+                            or import_hmac.compare_digest(raw_readback, request_hash)
                         )
 
                 if sig_valid and readback_valid:

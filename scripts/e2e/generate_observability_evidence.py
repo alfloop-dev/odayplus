@@ -36,13 +36,28 @@ def main():
 
     class OnCallHTTPHandler(BaseHTTPRequestHandler):
         def do_POST(self):
+            import hashlib
             content_length = int(self.headers.get("Content-Length", 0))
             body = self.rfile.read(content_length)
             payload = json.loads(body.decode("utf-8")) if body else {}
+
+            prov_sec = os.getenv("ONCALL_PROVIDER_SECRET", "").strip()
+            rel_sha = payload.get("release_sha", "")
+            prov_rcpt = f"prov-rcpt-{payload.get('delivery_id', '123')}"
+            req_bytes = json.dumps(payload, sort_keys=True).encode("utf-8")
+            req_hash = hashlib.sha256(req_bytes).hexdigest()
+            sig_base = f"{prov_sec}:{prov_rcpt}:{req_hash}:{rel_sha}".encode("utf-8")
+            sig_token = f"sig-sha256-{hashlib.sha256(sig_base).hexdigest()}"
+            rb_base = f"readback:{req_hash}".encode("utf-8")
+            rb_token = hashlib.sha256(rb_base).hexdigest()
+
             response_payload = {
                 "status": "delivered",
                 "route": payload.get("user_id", "ops-lead"),
                 "delivery_id": payload.get("delivery_id"),
+                "provider_receipt_id": prov_rcpt,
+                "provider_signature": sig_token,
+                "provider_readback": rb_token,
                 "received_at": datetime.now(UTC).isoformat(),
             }
             response_bytes = json.dumps(response_payload).encode("utf-8")

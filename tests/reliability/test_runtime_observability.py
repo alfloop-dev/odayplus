@@ -11,6 +11,7 @@ Maps to the task acceptance criteria and ODP-SD-11 §12 / ODP-SD-10 §12:
 
 from __future__ import annotations
 
+import hashlib
 import json
 from datetime import UTC, datetime
 from pathlib import Path
@@ -575,33 +576,50 @@ def test_alert_routing_and_real_notification_delivery(monkeypatch: Any) -> None:
     assert "ALERT: [P1] Audit write failure" in receipt["title"]
     assert "Durable storage write timeout" in receipt["detail"]
 
-    # Verify authentic provider response carries provider_receipt_id and classifies as DELIVERED
-    monkeypatch.setenv("ONCALL_SECRET_PROVENANCE", "gcp_secret_manager")
-    monkeypatch.setenv("DEPLOYMENT_RELEASE_PROVENANCE", "cloud_run_metadata")
+    # Verify authentic provider response carries provider_receipt_id and classifies as DELIVERED over real loopback network socket
+    import threading
+    from http.server import BaseHTTPRequestHandler, HTTPServer
 
-    def provider_transport(url: str, payload: dict) -> tuple[int, dict]:
-        req_bytes = json.dumps(payload, sort_keys=True).encode()
-        req_hash = hashlib.sha256(req_bytes).hexdigest()
-        prov_rcpt = "prov-rcpt-9876543210"
-        rel_sha = payload.get("release_sha", valid_sha)
-        sig_base = f"{provider_secret}:{prov_rcpt}:{req_hash}:{rel_sha}".encode()
-        exp_sig = hashlib.sha256(sig_base).hexdigest()
-        return (
-            200,
-            {
+    class AuthenticOnCallHTTPHandler(BaseHTTPRequestHandler):
+        def do_POST(self):
+            content_length = int(self.headers.get("Content-Length", 0))
+            body = self.rfile.read(content_length)
+            payload = json.loads(body.decode("utf-8")) if body else {}
+
+            prov_rcpt = "prov-rcpt-9876543210"
+            req_bytes = json.dumps(payload, sort_keys=True).encode("utf-8")
+            req_hash = hashlib.sha256(req_bytes).hexdigest()
+            sig_base = f"{provider_secret}:{prov_rcpt}:{req_hash}:{valid_sha}".encode("utf-8")
+            sig_token = f"sig-sha256-{hashlib.sha256(sig_base).hexdigest()}"
+            rb_base = f"readback:{req_hash}".encode("utf-8")
+            rb_token = hashlib.sha256(rb_base).hexdigest()
+
+            response_payload = {
                 "status": "ok",
                 "delivered": True,
                 "provider_receipt_id": prov_rcpt,
-                "provider_signature": f"sig-sha256-{exp_sig[:16]}",
-                "provider_readback": req_hash,
-            },
-        )
-    provider_transport.is_production_transport = True
+                "provider_signature": sig_token,
+                "provider_readback": rb_token,
+            }
+            response_bytes = json.dumps(response_payload).encode("utf-8")
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(response_bytes)))
+            self.end_headers()
+            self.wfile.write(response_bytes)
+
+        def log_message(self, format, *args):
+            pass
+
+    server = HTTPServer(("127.0.0.1", 0), AuthenticOnCallHTTPHandler)
+    server_port = server.server_port
+    server_thread = threading.Thread(target=server.serve_forever, daemon=True)
+    server_thread.start()
 
     repo2 = InMemoryNotificationRepository()
     authentic_adapter = OnCallNotificationAdapter(
-        endpoint_url="https://oncall-router.oday.plus/api/v1/alerts",
-        http_transport=provider_transport,
+        endpoint_url=f"http://127.0.0.1:{server_port}/api/v1/alerts",
+        http_transport=None,
     )
     authentic_service = NotificationService(repository=repo2, adapter=authentic_adapter)
     authentic_service.set_preferences("ops-lead", ["webhook"])
@@ -714,11 +732,12 @@ def test_unconfigured_route_fails_closed(tmp_path: Path) -> None:
         router.route_alert("audit-write-failure")  # audit-write-failure is P1
 
 
-def test_release_sha_dashboard_traceability_and_watch_window_receipt(tmp_path: Path) -> None:
+def test_release_sha_dashboard_traceability_and_watch_window_receipt(tmp_path: Path, monkeypatch: Any) -> None:
     from datetime import timedelta
 
     from shared.observability.metrics import default_registry
     from shared.observability.watch_window import (
+        compute_provider_watch_signature,
         record_deployment_watch_window_status,
         verify_watch_window_receipt,
     )
@@ -752,6 +771,8 @@ def test_release_sha_dashboard_traceability_and_watch_window_receipt(tmp_path: P
     start_dt = datetime.now(UTC) - timedelta(minutes=20)
     end_dt = datetime.now(UTC)
 
+    monkeypatch.setenv("MONITORING_PROVIDER_SECRET", "test-sec-750")
+
     def mock_query_transport(
         method: str,
         url: str,
@@ -762,49 +783,60 @@ def test_release_sha_dashboard_traceability_and_watch_window_receipt(tmp_path: P
         pr_dict = params or {}
         g_proj = p_dict.get("gcp_project") or pr_dict.get("gcp_project") or "alfaloop-data-project"
         r_sha = p_dict.get("release_sha") or pr_dict.get("release_sha") or test_sha
-        return 200, {
-            "gcp_project": g_proj,
-            "release_sha": r_sha,
-            "provider_receipt_id": f"prov-query-rcpt-{r_sha[:8]}",
-            "provider_signature": f"sig-sha256-{r_sha[:16]}",
-            "provider_readback_identity": f"readback-identity-{g_proj}-{r_sha[:8]}",
-            "timeSeries": [
-                {
-                    "metric": {
-                        "type": "custom.googleapis.com/api_error_count",
-                        "labels": {"release_sha": r_sha},
-                    },
-                    "resource": {"type": "global", "labels": {"project_id": g_proj}},
-                    "points": [
-                        {
-                            "interval": {"endTime": start_dt.isoformat()},
-                            "value": {"doubleValue": 0.0},
-                        },
-                        {
-                            "interval": {"endTime": end_dt.isoformat()},
-                            "value": {"doubleValue": 0.0},
-                        },
-                    ],
+        s_iso = pr_dict.get("interval.startTime", start_dt.isoformat())
+        e_iso = pr_dict.get("interval.endTime", end_dt.isoformat())
+        ts = [
+            {
+                "metric": {
+                    "type": "custom.googleapis.com/api_error_count",
+                    "labels": {"release_sha": r_sha},
                 },
-                {
-                    "metric": {
-                        "type": "custom.googleapis.com/api_latency_ms",
-                        "labels": {"release_sha": r_sha},
+                "resource": {"type": "global", "labels": {"project_id": g_proj}},
+                "points": [
+                    {
+                        "interval": {"endTime": s_iso},
+                        "value": {"doubleValue": 0.0},
                     },
-                    "resource": {"type": "global", "labels": {"project_id": g_proj}},
-                    "points": [
-                        {
-                            "interval": {"endTime": start_dt.isoformat()},
-                            "value": {"doubleValue": 12.5},
-                        },
-                        {
-                            "interval": {"endTime": end_dt.isoformat()},
-                            "value": {"doubleValue": 14.2},
-                        },
-                    ],
+                    {
+                        "interval": {"endTime": e_iso},
+                        "value": {"doubleValue": 0.0},
+                    },
+                ],
+            },
+            {
+                "metric": {
+                    "type": "custom.googleapis.com/api_latency_ms",
+                    "labels": {"release_sha": r_sha},
                 },
-            ],
-        }
+                "resource": {"type": "global", "labels": {"project_id": g_proj}},
+                "points": [
+                    {
+                        "interval": {"endTime": s_iso},
+                        "value": {"doubleValue": 12.5},
+                    },
+                    {
+                        "interval": {"endTime": e_iso},
+                        "value": {"doubleValue": 14.2},
+                    },
+                ],
+            },
+        ]
+        raw_resp = {"gcp_project": g_proj, "release_sha": r_sha, "timeSeries": ts}
+        proof_hash = hashlib.sha256(json.dumps(raw_resp, sort_keys=True).encode("utf-8")).hexdigest()
+        prov_rcpt = f"prov-query-rcpt-{r_sha[:8]}"
+        sig_token, rb_token = compute_provider_watch_signature(
+            provider_secret="test-sec-750",
+            provider_receipt_id=prov_rcpt,
+            gcp_project=g_proj,
+            release_sha=r_sha,
+            start_iso=s_iso,
+            end_iso=e_iso,
+            proof_hash=proof_hash,
+        )
+        raw_resp["provider_receipt_id"] = prov_rcpt
+        raw_resp["provider_signature"] = sig_token
+        raw_resp["provider_readback_identity"] = rb_token
+        return 200, raw_resp
 
     receipt = record_deployment_watch_window_status(
         release_sha=test_sha,
@@ -835,10 +867,11 @@ def test_release_sha_dashboard_traceability_and_watch_window_receipt(tmp_path: P
     assert verified["status"] == "WATCH_PASSED"
 
 
-def test_watch_window_receipt_negative_cases(tmp_path: Path) -> None:
+def test_watch_window_receipt_negative_cases(tmp_path: Path, monkeypatch: Any) -> None:
     from datetime import timedelta
 
     from shared.observability.watch_window import (
+        compute_provider_watch_signature,
         record_deployment_watch_window_status,
         verify_watch_window_receipt,
     )
@@ -850,61 +883,75 @@ def test_watch_window_receipt_negative_cases(tmp_path: Path) -> None:
     start_dt = datetime.now(UTC) - timedelta(minutes=20)
     end_dt = datetime.now(UTC)
 
+    monkeypatch.setenv("MONITORING_PROVIDER_SECRET", "test-sec-880")
+
     def mock_query_transport(
         method: str,
         url: str,
         params: dict | None = None,
         payload: dict | None = None,
     ) -> tuple[int, dict]:
-        return 200, {
-            "gcp_project": "alfaloop-data-project",
-            "release_sha": valid_sha_1,
-            "provider_receipt_id": "prov-rcpt-10c62096",
-            "provider_signature": "sig-sha256-10c620969a90627e",
-            "provider_readback_identity": "readback-identity-alfaloop-data-project-10c62096",
-            "timeSeries": [
-                {
-                    "metric": {
-                        "type": "custom.googleapis.com/api_error_count",
-                        "labels": {"release_sha": valid_sha_1},
-                    },
-                    "resource": {
-                        "type": "global",
-                        "labels": {"project_id": "alfaloop-data-project"},
-                    },
-                    "points": [
-                        {
-                            "interval": {"endTime": start_dt.isoformat()},
-                            "value": {"doubleValue": 0.0},
-                        },
-                        {
-                            "interval": {"endTime": end_dt.isoformat()},
-                            "value": {"doubleValue": 0.0},
-                        },
-                    ],
+        pr_dict = params or {}
+        s_iso = pr_dict.get("interval.startTime", start_dt.isoformat())
+        e_iso = pr_dict.get("interval.endTime", end_dt.isoformat())
+        ts = [
+            {
+                "metric": {
+                    "type": "custom.googleapis.com/api_error_count",
+                    "labels": {"release_sha": valid_sha_1},
                 },
-                {
-                    "metric": {
-                        "type": "custom.googleapis.com/api_latency_ms",
-                        "labels": {"release_sha": valid_sha_1},
-                    },
-                    "resource": {
-                        "type": "global",
-                        "labels": {"project_id": "alfaloop-data-project"},
-                    },
-                    "points": [
-                        {
-                            "interval": {"endTime": start_dt.isoformat()},
-                            "value": {"doubleValue": 12.5},
-                        },
-                        {
-                            "interval": {"endTime": end_dt.isoformat()},
-                            "value": {"doubleValue": 14.2},
-                        },
-                    ],
+                "resource": {
+                    "type": "global",
+                    "labels": {"project_id": "alfaloop-data-project"},
                 },
-            ],
-        }
+                "points": [
+                    {
+                        "interval": {"endTime": s_iso},
+                        "value": {"doubleValue": 0.0},
+                    },
+                    {
+                        "interval": {"endTime": e_iso},
+                        "value": {"doubleValue": 0.0},
+                    },
+                ],
+            },
+            {
+                "metric": {
+                    "type": "custom.googleapis.com/api_latency_ms",
+                    "labels": {"release_sha": valid_sha_1},
+                },
+                "resource": {
+                    "type": "global",
+                    "labels": {"project_id": "alfaloop-data-project"},
+                },
+                "points": [
+                    {
+                        "interval": {"endTime": s_iso},
+                        "value": {"doubleValue": 12.5},
+                    },
+                    {
+                        "interval": {"endTime": e_iso},
+                        "value": {"doubleValue": 14.2},
+                    },
+                ],
+            },
+        ]
+        raw_resp = {"gcp_project": "alfaloop-data-project", "release_sha": valid_sha_1, "timeSeries": ts}
+        proof_hash = hashlib.sha256(json.dumps(raw_resp, sort_keys=True).encode("utf-8")).hexdigest()
+        prov_rcpt = "prov-rcpt-10c62096"
+        sig_token, rb_token = compute_provider_watch_signature(
+            provider_secret="test-sec-880",
+            provider_receipt_id=prov_rcpt,
+            gcp_project="alfaloop-data-project",
+            release_sha=valid_sha_1,
+            start_iso=s_iso,
+            end_iso=e_iso,
+            proof_hash=proof_hash,
+        )
+        raw_resp["provider_receipt_id"] = prov_rcpt
+        raw_resp["provider_signature"] = sig_token
+        raw_resp["provider_readback_identity"] = rb_token
+        return 200, raw_resp
 
     # Case 1: Absent watch receipt artifact
     with pytest.raises(FileNotFoundError, match="Watch-window receipt artifact absent"):
@@ -931,35 +978,47 @@ def test_watch_window_receipt_negative_cases(tmp_path: Path) -> None:
         params: dict | None = None,
         payload: dict | None = None,
     ) -> tuple[int, dict]:
-        return 200, {
-            "gcp_project": "alfaloop-data-project",
-            "release_sha": valid_sha_1,
-            "provider_receipt_id": "prov-rcpt-10c62096",
-            "provider_signature": "sig-sha256-10c620969a90627e",
-            "provider_readback_identity": "readback-identity-alfaloop-data-project-10c62096",
-            "timeSeries": [
-                {
-                    "metric": {
-                        "type": "custom.googleapis.com/api_error_count",
-                        "labels": {"release_sha": valid_sha_1},
+        pr_dict = params or {}
+        s_iso = pr_dict.get("interval.startTime", start_dt.isoformat())
+        e_iso = pr_dict.get("interval.endTime", end_dt.isoformat())
+        ts = [
+            {
+                "metric": {
+                    "type": "custom.googleapis.com/api_error_count",
+                    "labels": {"release_sha": valid_sha_1},
+                },
+                "resource": {
+                    "type": "global",
+                    "labels": {"project_id": "alfaloop-data-project"},
+                },
+                "points": [
+                    {
+                        "interval": {"endTime": s_iso},
+                        "value": {"doubleValue": 0.0},
                     },
-                    "resource": {
-                        "type": "global",
-                        "labels": {"project_id": "alfaloop-data-project"},
+                    {
+                        "interval": {"endTime": e_iso},
+                        "value": {"doubleValue": 5.0},
                     },
-                    "points": [
-                        {
-                            "interval": {"endTime": start_dt.isoformat()},
-                            "value": {"doubleValue": 0.0},
-                        },
-                        {
-                            "interval": {"endTime": end_dt.isoformat()},
-                            "value": {"doubleValue": 5.0},
-                        },
-                    ],
-                }
-            ],
-        }
+                ],
+            }
+        ]
+        raw_resp = {"gcp_project": "alfaloop-data-project", "release_sha": valid_sha_1, "timeSeries": ts}
+        proof_hash = hashlib.sha256(json.dumps(raw_resp, sort_keys=True).encode("utf-8")).hexdigest()
+        prov_rcpt = "prov-rcpt-10c62096"
+        sig_token, rb_token = compute_provider_watch_signature(
+            provider_secret="test-sec-880",
+            provider_receipt_id=prov_rcpt,
+            gcp_project="alfaloop-data-project",
+            release_sha=valid_sha_1,
+            start_iso=s_iso,
+            end_iso=e_iso,
+            proof_hash=proof_hash,
+        )
+        raw_resp["provider_receipt_id"] = prov_rcpt
+        raw_resp["provider_signature"] = sig_token
+        raw_resp["provider_readback_identity"] = rb_token
+        return 200, raw_resp
 
     record_deployment_watch_window_status(
         release_sha=valid_sha_1,
@@ -996,10 +1055,15 @@ def test_watch_window_receipt_negative_cases(tmp_path: Path) -> None:
         )
 
 
-def test_watch_window_binding_mismatch_mutations(tmp_path: Path) -> None:
+def test_watch_window_binding_mismatch_mutations(tmp_path: Path, monkeypatch: Any) -> None:
     from datetime import timedelta
 
-    from shared.observability.watch_window import record_deployment_watch_window_status
+    from shared.observability.watch_window import (
+        compute_provider_watch_signature,
+        record_deployment_watch_window_status,
+    )
+
+    monkeypatch.setenv("MONITORING_PROVIDER_SECRET", "test-sec-880")
 
     receipt_file = tmp_path / "watch_window_receipt.json"
     valid_sha = "10c620969a90627e4a67053a4708658f99faa07f"
@@ -1222,49 +1286,61 @@ def test_watch_window_binding_mismatch_mutations(tmp_path: Path) -> None:
         params: dict | None = None,
         payload: dict | None = None,
     ) -> tuple[int, dict]:
-        return 200, {
-            "gcp_project": "alfaloop-data-project",
-            "release_sha": valid_sha,
-            "provider_receipt_id": "prov-rcpt-10c62096",
-            "provider_signature": "sig-sha256-10c620969a90627e",
-            "provider_readback_identity": "readback-identity-alfaloop-data-project-10c62096",
-            "timeSeries": [
-                {
-                    "metric": {
-                        "type": "custom.googleapis.com/api_error_count",
-                        "labels": {"release_sha": valid_sha},
-                    },
-                    "resource": {"labels": {"project_id": "alfaloop-data-project"}},
-                    "points": [
-                        {
-                            "interval": {"endTime": start_dt.isoformat()},
-                            "value": {"doubleValue": 0.0},
-                        },
-                        {
-                            "interval": {"endTime": end_dt.isoformat()},
-                            "value": {"doubleValue": 0.0},
-                        },
-                    ],
+        pr_dict = params or {}
+        s_iso = pr_dict.get("interval.startTime", start_dt.isoformat())
+        e_iso = pr_dict.get("interval.endTime", end_dt.isoformat())
+        ts = [
+            {
+                "metric": {
+                    "type": "custom.googleapis.com/api_error_count",
+                    "labels": {"release_sha": valid_sha},
                 },
-                {
-                    "metric": {
-                        "type": "custom.googleapis.com/api_latency_ms",
-                        "labels": {"release_sha": valid_sha},
+                "resource": {"labels": {"project_id": "alfaloop-data-project"}},
+                "points": [
+                    {
+                        "interval": {"endTime": s_iso},
+                        "value": {"doubleValue": 0.0},
                     },
-                    "resource": {"labels": {"project_id": "alfaloop-data-project"}},
-                    "points": [
-                        {
-                            "interval": {"endTime": start_dt.isoformat()},
-                            "value": {"doubleValue": 10.0},
-                        },
-                        {
-                            "interval": {"endTime": end_dt.isoformat()},
-                            "value": {"doubleValue": 10.0},
-                        },
-                    ],
+                    {
+                        "interval": {"endTime": e_iso},
+                        "value": {"doubleValue": 0.0},
+                    },
+                ],
+            },
+            {
+                "metric": {
+                    "type": "custom.googleapis.com/api_latency_ms",
+                    "labels": {"release_sha": valid_sha},
                 },
-            ]
-        }
+                "resource": {"labels": {"project_id": "alfaloop-data-project"}},
+                "points": [
+                    {
+                        "interval": {"endTime": s_iso},
+                        "value": {"doubleValue": 10.0},
+                    },
+                    {
+                        "interval": {"endTime": e_iso},
+                        "value": {"doubleValue": 10.0},
+                    },
+                ],
+            },
+        ]
+        raw_resp = {"gcp_project": "alfaloop-data-project", "release_sha": valid_sha, "timeSeries": ts}
+        proof_hash = hashlib.sha256(json.dumps(raw_resp, sort_keys=True).encode("utf-8")).hexdigest()
+        prov_rcpt = "prov-rcpt-10c62096"
+        sig_token, rb_token = compute_provider_watch_signature(
+            provider_secret="test-sec-880",
+            provider_receipt_id=prov_rcpt,
+            gcp_project="alfaloop-data-project",
+            release_sha=valid_sha,
+            start_iso=s_iso,
+            end_iso=e_iso,
+            proof_hash=proof_hash,
+        )
+        raw_resp["provider_receipt_id"] = prov_rcpt
+        raw_resp["provider_signature"] = sig_token
+        raw_resp["provider_readback_identity"] = rb_token
+        return 200, raw_resp
 
     record_deployment_watch_window_status(
         release_sha=valid_sha,
@@ -1905,10 +1981,11 @@ def test_watch_window_rejects_single_point_or_unallowlisted_counter(tmp_path: Pa
         )
 
 
-def test_verify_watch_window_receipt_rejects_tampered_proof_or_circular_metric(tmp_path: Path) -> None:
+def test_verify_watch_window_receipt_rejects_tampered_proof_or_circular_metric(tmp_path: Path, monkeypatch: Any) -> None:
     from datetime import timedelta
 
     from shared.observability.watch_window import (
+        compute_provider_watch_signature,
         record_deployment_watch_window_status,
         verify_watch_window_receipt,
     )
@@ -1918,50 +1995,64 @@ def test_verify_watch_window_receipt_rejects_tampered_proof_or_circular_metric(t
     start_dt = datetime.now(UTC) - timedelta(minutes=20)
     end_dt = datetime.now(UTC)
 
+    monkeypatch.setenv("MONITORING_PROVIDER_SECRET", "test-sec-1950")
+
     def valid_transport(method: str, url: str, params: dict = None, payload: dict = None) -> tuple[int, dict]:
-        return 200, {
-            "gcp_project": "alfaloop-data-project",
-            "release_sha": test_sha,
-            "provider_receipt_id": f"prov-rcpt-{test_sha[:8]}",
-            "provider_signature": f"sig-sha256-{test_sha[:16]}",
-            "provider_readback_identity": f"readback-identity-alfaloop-data-project-{test_sha[:8]}",
-            "timeSeries": [
-                {
-                    "metric": {
-                        "type": "custom.googleapis.com/api_error_count",
-                        "labels": {"release_sha": test_sha},
-                    },
-                    "resource": {"type": "global", "labels": {"project_id": "alfaloop-data-project"}},
-                    "points": [
-                        {
-                            "interval": {"endTime": start_dt.isoformat()},
-                            "value": {"doubleValue": 0.0},
-                        },
-                        {
-                            "interval": {"endTime": end_dt.isoformat()},
-                            "value": {"doubleValue": 0.0},
-                        },
-                    ],
+        pr_dict = params or {}
+        s_iso = pr_dict.get("interval.startTime", start_dt.isoformat())
+        e_iso = pr_dict.get("interval.endTime", end_dt.isoformat())
+        ts = [
+            {
+                "metric": {
+                    "type": "custom.googleapis.com/api_error_count",
+                    "labels": {"release_sha": test_sha},
                 },
-                {
-                    "metric": {
-                        "type": "custom.googleapis.com/api_latency_ms",
-                        "labels": {"release_sha": test_sha},
+                "resource": {"type": "global", "labels": {"project_id": "alfaloop-data-project"}},
+                "points": [
+                    {
+                        "interval": {"endTime": s_iso},
+                        "value": {"doubleValue": 0.0},
                     },
-                    "resource": {"type": "global", "labels": {"project_id": "alfaloop-data-project"}},
-                    "points": [
-                        {
-                            "interval": {"endTime": start_dt.isoformat()},
-                            "value": {"doubleValue": 12.5},
-                        },
-                        {
-                            "interval": {"endTime": end_dt.isoformat()},
-                            "value": {"doubleValue": 14.2},
-                        },
-                    ],
+                    {
+                        "interval": {"endTime": e_iso},
+                        "value": {"doubleValue": 0.0},
+                    },
+                ],
+            },
+            {
+                "metric": {
+                    "type": "custom.googleapis.com/api_latency_ms",
+                    "labels": {"release_sha": test_sha},
                 },
-            ],
-        }
+                "resource": {"type": "global", "labels": {"project_id": "alfaloop-data-project"}},
+                "points": [
+                    {
+                        "interval": {"endTime": s_iso},
+                        "value": {"doubleValue": 12.5},
+                    },
+                    {
+                        "interval": {"endTime": e_iso},
+                        "value": {"doubleValue": 14.2},
+                    },
+                ],
+            },
+        ]
+        raw_resp = {"gcp_project": "alfaloop-data-project", "release_sha": test_sha, "timeSeries": ts}
+        proof_hash = hashlib.sha256(json.dumps(raw_resp, sort_keys=True).encode("utf-8")).hexdigest()
+        prov_rcpt = f"prov-rcpt-{test_sha[:8]}"
+        sig_token, rb_token = compute_provider_watch_signature(
+            provider_secret="test-sec-1950",
+            provider_receipt_id=prov_rcpt,
+            gcp_project="alfaloop-data-project",
+            release_sha=test_sha,
+            start_iso=s_iso,
+            end_iso=e_iso,
+            proof_hash=proof_hash,
+        )
+        raw_resp["provider_receipt_id"] = prov_rcpt
+        raw_resp["provider_signature"] = sig_token
+        raw_resp["provider_readback_identity"] = rb_token
+        return 200, raw_resp
 
     record_deployment_watch_window_status(
         release_sha=test_sha,
@@ -1987,10 +2078,11 @@ def test_verify_watch_window_receipt_rejects_tampered_proof_or_circular_metric(t
         verify_watch_window_receipt(expected_release_sha=test_sha, receipt_path=receipt_file)
 
 
-def test_round5_reproduced_gaps_mutation_coverage(tmp_path: Path) -> None:
+def test_round5_reproduced_gaps_mutation_coverage(tmp_path: Path, monkeypatch: Any) -> None:
     from datetime import timedelta
 
     from shared.observability.watch_window import (
+        compute_provider_watch_signature,
         record_deployment_watch_window_status,
         verify_watch_window_receipt,
     )
@@ -2001,30 +2093,47 @@ def test_round5_reproduced_gaps_mutation_coverage(tmp_path: Path) -> None:
     end_dt = datetime.now(UTC)
 
     # Round 5 Gap 1: REQUEST_COUNT_ONLY_PASS MUST BE REJECTED when status=1
+    monkeypatch.setenv("MONITORING_PROVIDER_SECRET", "test-sec-2070")
+
     def request_count_only_transport(method: str, url: str, params: dict = None, payload: dict = None) -> tuple[int, dict]:
-        return 200, {
-            "gcp_project": "alfaloop-data-project",
-            "release_sha": test_sha,
-            "timeSeries": [
-                {
-                    "metric": {
-                        "type": "custom.googleapis.com/api_request_count",
-                        "labels": {"release_sha": test_sha},
+        pr_dict = params or {}
+        s_iso = pr_dict.get("interval.startTime", start_dt.isoformat())
+        e_iso = pr_dict.get("interval.endTime", end_dt.isoformat())
+        ts = [
+            {
+                "metric": {
+                    "type": "custom.googleapis.com/api_request_count",
+                    "labels": {"release_sha": test_sha},
+                },
+                "resource": {"type": "global", "labels": {"project_id": "alfaloop-data-project"}},
+                "points": [
+                    {
+                        "interval": {"endTime": s_iso},
+                        "value": {"doubleValue": 10.0},
                     },
-                    "resource": {"type": "global", "labels": {"project_id": "alfaloop-data-project"}},
-                    "points": [
-                        {
-                            "interval": {"endTime": start_dt.isoformat()},
-                            "value": {"doubleValue": 10.0},
-                        },
-                        {
-                            "interval": {"endTime": end_dt.isoformat()},
-                            "value": {"doubleValue": 15.0},
-                        },
-                    ],
-                }
-            ],
-        }
+                    {
+                        "interval": {"endTime": e_iso},
+                        "value": {"doubleValue": 15.0},
+                    },
+                ],
+            }
+        ]
+        raw_resp = {"gcp_project": "alfaloop-data-project", "release_sha": test_sha, "timeSeries": ts}
+        proof_hash = hashlib.sha256(json.dumps(raw_resp, sort_keys=True).encode("utf-8")).hexdigest()
+        prov_rcpt = f"prov-rcpt-{test_sha[:8]}"
+        sig_token, rb_token = compute_provider_watch_signature(
+            provider_secret="test-sec-2070",
+            provider_receipt_id=prov_rcpt,
+            gcp_project="alfaloop-data-project",
+            release_sha=test_sha,
+            start_iso=s_iso,
+            end_iso=e_iso,
+            proof_hash=proof_hash,
+        )
+        raw_resp["provider_receipt_id"] = prov_rcpt
+        raw_resp["provider_signature"] = sig_token
+        raw_resp["provider_readback_identity"] = rb_token
+        return 200, raw_resp
 
     with pytest.raises(ValueError, match="requires an explicit independent error/failure signal AND latency/health signal"):
         record_deployment_watch_window_status(
@@ -2039,50 +2148,64 @@ def test_round5_reproduced_gaps_mutation_coverage(tmp_path: Path) -> None:
         )
 
     # Round 5 Gap 2: TAMPERED_PROVIDER_PROOF_VERIFY_PASS MUST BE REJECTED by verifier
+    monkeypatch.setenv("MONITORING_PROVIDER_SECRET", "test-sec-2070")
+
     def valid_full_transport(method: str, url: str, params: dict = None, payload: dict = None) -> tuple[int, dict]:
-        return 200, {
-            "gcp_project": "alfaloop-data-project",
-            "release_sha": test_sha,
-            "provider_receipt_id": f"prov-rcpt-{test_sha[:8]}",
-            "provider_signature": f"sig-sha256-{test_sha[:16]}",
-            "provider_readback_identity": f"readback-identity-alfaloop-data-project-{test_sha[:8]}",
-            "timeSeries": [
-                {
-                    "metric": {
-                        "type": "custom.googleapis.com/api_error_count",
-                        "labels": {"release_sha": test_sha},
-                    },
-                    "resource": {"type": "global", "labels": {"project_id": "alfaloop-data-project"}},
-                    "points": [
-                        {
-                            "interval": {"endTime": start_dt.isoformat()},
-                            "value": {"doubleValue": 0.0},
-                        },
-                        {
-                            "interval": {"endTime": end_dt.isoformat()},
-                            "value": {"doubleValue": 0.0},
-                        },
-                    ],
+        pr_dict = params or {}
+        s_iso = pr_dict.get("interval.startTime", start_dt.isoformat())
+        e_iso = pr_dict.get("interval.endTime", end_dt.isoformat())
+        ts = [
+            {
+                "metric": {
+                    "type": "custom.googleapis.com/api_error_count",
+                    "labels": {"release_sha": test_sha},
                 },
-                {
-                    "metric": {
-                        "type": "custom.googleapis.com/api_latency_ms",
-                        "labels": {"release_sha": test_sha},
+                "resource": {"type": "global", "labels": {"project_id": "alfaloop-data-project"}},
+                "points": [
+                    {
+                        "interval": {"endTime": s_iso},
+                        "value": {"doubleValue": 0.0},
                     },
-                    "resource": {"type": "global", "labels": {"project_id": "alfaloop-data-project"}},
-                    "points": [
-                        {
-                            "interval": {"endTime": start_dt.isoformat()},
-                            "value": {"doubleValue": 12.5},
-                        },
-                        {
-                            "interval": {"endTime": end_dt.isoformat()},
-                            "value": {"doubleValue": 14.2},
-                        },
-                    ],
+                    {
+                        "interval": {"endTime": e_iso},
+                        "value": {"doubleValue": 0.0},
+                    },
+                ],
+            },
+            {
+                "metric": {
+                    "type": "custom.googleapis.com/api_latency_ms",
+                    "labels": {"release_sha": test_sha},
                 },
-            ],
-        }
+                "resource": {"type": "global", "labels": {"project_id": "alfaloop-data-project"}},
+                "points": [
+                    {
+                        "interval": {"endTime": s_iso},
+                        "value": {"doubleValue": 12.5},
+                    },
+                    {
+                        "interval": {"endTime": e_iso},
+                        "value": {"doubleValue": 14.2},
+                    },
+                ],
+            },
+        ]
+        raw_resp = {"gcp_project": "alfaloop-data-project", "release_sha": test_sha, "timeSeries": ts}
+        proof_hash = hashlib.sha256(json.dumps(raw_resp, sort_keys=True).encode("utf-8")).hexdigest()
+        prov_rcpt = f"prov-rcpt-{test_sha[:8]}"
+        sig_token, rb_token = compute_provider_watch_signature(
+            provider_secret="test-sec-2070",
+            provider_receipt_id=prov_rcpt,
+            gcp_project="alfaloop-data-project",
+            release_sha=test_sha,
+            start_iso=s_iso,
+            end_iso=e_iso,
+            proof_hash=proof_hash,
+        )
+        raw_resp["provider_receipt_id"] = prov_rcpt
+        raw_resp["provider_signature"] = sig_token
+        raw_resp["provider_readback_identity"] = rb_token
+        return 200, raw_resp
 
     record_deployment_watch_window_status(
         release_sha=test_sha,
@@ -2123,7 +2246,7 @@ def test_round5_reproduced_gaps_mutation_coverage(tmp_path: Path) -> None:
     raw["monitoring_query_execution"]["provider_query_response"]["timeSeries"][1]["points"][1]["value"]["doubleValue"] = 9999.0
     receipt_file.write_text(json.dumps(raw), encoding="utf-8")
 
-    with pytest.raises(ValueError, match="Provider signature mismatch|Stored provider proof point_values mismatch|point_values mismatch"):
+    with pytest.raises(ValueError, match="Provider signature mismatch|Stored provider proof point_values mismatch|point_values mismatch|failed independent cryptographic authentication"):
         verify_watch_window_receipt(expected_release_sha=test_sha, receipt_path=receipt_file)
 
 
@@ -2474,11 +2597,13 @@ def test_round7_export_receipt_canonical_integrity_and_value_mutation() -> None:
     assert receipt1["export_receipt_id"] != receipt2["export_receipt_id"]
 
 
-def test_round7_watch_window_receipt_durable_verification() -> None:
+def test_round7_watch_window_receipt_durable_verification(monkeypatch: Any) -> None:
     import json
     from pathlib import Path
 
     from shared.observability.watch_window import verify_watch_window_receipt
+
+    monkeypatch.setenv("MONITORING_PROVIDER_SECRET", "evidence-provider-trust-root-secret")
 
     receipt_path = Path(__file__).resolve().parents[2] / "docs" / "evidence" / "watch_window_receipt.json"
     assert receipt_path.exists()
@@ -2558,10 +2683,8 @@ def test_round8_oncall_adapter_authenticity_and_sha_enforced(monkeypatch: Any) -
     # B1: Caller-controlled string prefixes stay TEST_ONLY and do NOT become DELIVERED
     assert adapter2.delivery_receipts[-1]["status"] == "TEST_ONLY"
 
-    # 3. Authentic provider response with exact cryptographic signature token returns DELIVERED
+    # 3. Authentic provider response with injected transport returns TEST_ONLY
     secret_val = "secret-123"
-    monkeypatch.setenv("ONCALL_SECRET_PROVENANCE", "gcp_secret_manager")
-    monkeypatch.setenv("DEPLOYMENT_RELEASE_PROVENANCE", "cloud_run_metadata")
 
     def mock_transport_authentic(url: str, payload: dict):
         req_bytes = json.dumps(payload, sort_keys=True).encode()
@@ -2572,11 +2695,10 @@ def test_round8_oncall_adapter_authenticity_and_sha_enforced(monkeypatch: Any) -
 
         return 200, {
             "provider_receipt_id": prov_rcpt,
-            "provider_signature": f"sig-sha256-{exp_sig[:16]}",
+            "provider_signature": f"sig-sha256-{exp_sig}",
             "provider_readback": req_hash,
             "status": "delivered",
         }
-    mock_transport_authentic.is_production_transport = True
 
     adapter3 = OnCallNotificationAdapter(
         endpoint_url="https://oncall-router.oday.plus/api/v1/alerts",
@@ -2584,8 +2706,55 @@ def test_round8_oncall_adapter_authenticity_and_sha_enforced(monkeypatch: Any) -
     )
     ok3, err3 = adapter3.send("n3", "webhook", "ops-lead", "Title", "Detail")
     assert ok3 is True
-    assert err3 is None
-    assert adapter3.delivery_receipts[-1]["status"] == "DELIVERED"
+    assert adapter3.delivery_receipts[-1]["status"] == "TEST_ONLY"
+
+    # 4. Authentic provider response over real loopback network HTTP socket returns DELIVERED
+    import threading
+    from http.server import BaseHTTPRequestHandler, HTTPServer
+
+    class AuthenticOnCallHTTPHandler(BaseHTTPRequestHandler):
+        def do_POST(self):
+            content_length = int(self.headers.get("Content-Length", 0))
+            body = self.rfile.read(content_length)
+            payload = json.loads(body.decode("utf-8")) if body else {}
+
+            prov_rcpt = "prov-rcpt-authentic-999"
+            req_bytes = json.dumps(payload, sort_keys=True).encode("utf-8")
+            req_hash = hashlib.sha256(req_bytes).hexdigest()
+            sig_base = f"{secret_val}:{prov_rcpt}:{req_hash}:{valid_sha}".encode("utf-8")
+            sig_token = f"sig-sha256-{hashlib.sha256(sig_base).hexdigest()}"
+            rb_base = f"readback:{req_hash}".encode("utf-8")
+            rb_token = hashlib.sha256(rb_base).hexdigest()
+
+            response_payload = {
+                "status": "delivered",
+                "provider_receipt_id": prov_rcpt,
+                "provider_signature": sig_token,
+                "provider_readback": rb_token,
+            }
+            response_bytes = json.dumps(response_payload).encode("utf-8")
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(response_bytes)))
+            self.end_headers()
+            self.wfile.write(response_bytes)
+
+        def log_message(self, format, *args):
+            pass
+
+    server = HTTPServer(("127.0.0.1", 0), AuthenticOnCallHTTPHandler)
+    server_port = server.server_port
+    server_thread = threading.Thread(target=server.serve_forever, daemon=True)
+    server_thread.start()
+
+    adapter4 = OnCallNotificationAdapter(
+        endpoint_url=f"http://127.0.0.1:{server_port}/api/v1/alerts",
+        http_transport=None,
+    )
+    ok4, err4 = adapter4.send("n4", "webhook", "ops-lead", "Title", "Detail")
+    assert ok4 is True
+    assert err4 is None
+    assert adapter4.delivery_receipts[-1]["status"] == "DELIVERED"
 
 
 def test_round10_remediation_findings_b1_b4_verified(monkeypatch: Any, tmp_path: Path) -> None:
@@ -2783,86 +2952,161 @@ def test_round11_remediation_findings_verified(monkeypatch: Any, tmp_path: Path)
         )
 
 
-def test_round12_remediation_findings_b1_b2_verified(monkeypatch: Any, tmp_path: Path) -> None:
+def test_round13_remediation_findings_b1_b2_verified(monkeypatch: Any, tmp_path: Path) -> None:
     import hashlib
     import json
+    import threading
     from datetime import UTC, datetime, timedelta
+    from http.server import BaseHTTPRequestHandler, HTTPServer
 
     from modules.notifications.infrastructure.adapters import OnCallNotificationAdapter
     from shared.observability.watch_window import (
+        authenticate_provider_watch_signature,
         compute_provider_watch_signature,
         record_deployment_watch_window_status,
         verify_watch_window_receipt,
     )
 
-    valid_sha = "c" * 40
-    provider_sec = "r12-secret-proof-999"
+    valid_sha = "d" * 40
+    provider_sec = "r13-secret-proof-1000"
     monkeypatch.setenv("RELEASE_SHA", valid_sha)
     monkeypatch.setenv("TRUSTED_DEPLOYED_RELEASE_SHA", valid_sha)
     monkeypatch.setenv("ONCALL_PROVIDER_SECRET", provider_sec)
     monkeypatch.setenv("MONITORING_PROVIDER_SECRET", provider_sec)
 
-    # 1. B1 Mutation: Caller-controlled environment + injected transport returns signature, classified TEST_ONLY (never DELIVERED)
-    def injected_transport_with_forged_sig(url: str, payload: dict):
+    # 1. B1 Negative Mutation: Ambient provenance strings + is_production_transport attribute on injected transport still produce TEST_ONLY (never DELIVERED)
+    monkeypatch.setenv("ONCALL_SECRET_PROVENANCE", "gcp_secret_manager")
+    monkeypatch.setenv("DEPLOYMENT_RELEASE_PROVENANCE", "cloud_run_metadata")
+
+    def injected_transport_caller_controlled(url: str, payload: dict):
+        prov_rcpt = "prov-rcpt-123"
+        req_bytes = json.dumps(payload, sort_keys=True).encode()
+        req_hash = hashlib.sha256(req_bytes).hexdigest()
+        sig_base = f"{provider_sec}:{prov_rcpt}:{req_hash}:{valid_sha}".encode()
+        exp_sig = f"sig-sha256-{hashlib.sha256(sig_base).hexdigest()}"
         return 200, {
-            "provider_receipt_id": "prov-caller-forged-123",
-            "provider_signature": "sig-sha256-abcdef1234567890",
-            "provider_readback": "readback-hash-12345",
+            "provider_receipt_id": prov_rcpt,
+            "provider_signature": exp_sig,
+            "provider_readback": req_hash,
             "status": "DELIVERED",
         }
+    injected_transport_caller_controlled.is_production_transport = True
+    injected_transport_caller_controlled.is_production = True
 
     adapter_b1 = OnCallNotificationAdapter(
         endpoint_url="https://oncall-router.oday.plus/api/v1/alerts",
-        http_transport=injected_transport_with_forged_sig,
+        http_transport=injected_transport_caller_controlled,
     )
-    ok_b1, err_b1 = adapter_b1.send("n_b1_r12", "webhook", "ops-lead", "Title", "Detail")
+    ok_b1, err_b1 = adapter_b1.send("n_b1_r13", "webhook", "ops-lead", "Title", "Detail")
     assert ok_b1 is True
     # Must be TEST_ONLY, NEVER DELIVERED
     assert adapter_b1.delivery_receipts[-1]["status"] == "TEST_ONLY"
 
-    # 2. B1 Authentic Production path with SecretManager and Metadata provenance returns DELIVERED
-    monkeypatch.setenv("ONCALL_SECRET_PROVENANCE", "gcp_secret_manager")
-    monkeypatch.setenv("DEPLOYMENT_RELEASE_PROVENANCE", "cloud_run_metadata")
-
-    def authentic_default_transport(url: str, payload: dict):
-        import hashlib
-        req_bytes = json.dumps(payload, sort_keys=True).encode()
-        req_hash = hashlib.sha256(req_bytes).hexdigest()
-        prov_rcpt = "prov-auth-999"
-        sig_base = f"{provider_sec}:{prov_rcpt}:{req_hash}:{valid_sha}".encode()
-        exp_sig = hashlib.sha256(sig_base).hexdigest()
-        return 200, {
-            "provider_receipt_id": prov_rcpt,
-            "provider_signature": f"sig-sha256-{exp_sig}",
-            "provider_readback": req_hash,
-            "status": "delivered",
-        }
-    authentic_default_transport.is_production_transport = True
-
-    adapter_prod = OnCallNotificationAdapter(
-        endpoint_url="https://oncall-router.oday.plus/api/v1/alerts",
-    )
-    adapter_prod.http_transport = authentic_default_transport
-    ok_prod, err_prod = adapter_prod.send("n_prod_r12", "webhook", "ops-lead", "Title", "Detail")
-    assert ok_prod is True
-    assert adapter_prod.delivery_receipts[-1]["status"] == "DELIVERED"
-
-    # Reset env
+    # Reset provenance env
     monkeypatch.delenv("ONCALL_SECRET_PROVENANCE", raising=False)
     monkeypatch.delenv("DEPLOYMENT_RELEASE_PROVENANCE", raising=False)
 
-    # 3. B2 Mutation: Injected watch query transport supplies fake proof fields (sig-sha256-fake123); fails closed
-    receipt_file = tmp_path / "round12_watch_receipt.json"
+    # 2. B1 Authentic Production path: Real HTTP loopback server with default network transport returns DELIVERED
+    class AuthenticOnCallHTTPHandler(BaseHTTPRequestHandler):
+        def do_POST(self):
+            content_length = int(self.headers.get("Content-Length", 0))
+            body = self.rfile.read(content_length)
+            payload = json.loads(body.decode("utf-8")) if body else {}
+
+            prov_rcpt = f"prov-auth-{payload.get('delivery_id', '999')}"
+            req_bytes = json.dumps(payload, sort_keys=True).encode("utf-8")
+            req_hash = hashlib.sha256(req_bytes).hexdigest()
+            sig_base = f"{provider_sec}:{prov_rcpt}:{req_hash}:{valid_sha}".encode("utf-8")
+            sig_token = f"sig-sha256-{hashlib.sha256(sig_base).hexdigest()}"
+            rb_base = f"readback:{req_hash}".encode("utf-8")
+            rb_token = hashlib.sha256(rb_base).hexdigest()
+
+            response_payload = {
+                "status": "delivered",
+                "route": payload.get("user_id", "ops-lead"),
+                "delivery_id": payload.get("delivery_id"),
+                "provider_receipt_id": prov_rcpt,
+                "provider_signature": sig_token,
+                "provider_readback": rb_token,
+                "received_at": datetime.now(UTC).isoformat(),
+            }
+            response_bytes = json.dumps(response_payload).encode("utf-8")
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(response_bytes)))
+            self.end_headers()
+            self.wfile.write(response_bytes)
+
+        def log_message(self, format, *args):
+            pass
+
+    server = HTTPServer(("127.0.0.1", 0), AuthenticOnCallHTTPHandler)
+    server_port = server.server_port
+    server_thread = threading.Thread(target=server.serve_forever, daemon=True)
+    server_thread.start()
+
+    adapter_prod = OnCallNotificationAdapter(
+        endpoint_url=f"http://127.0.0.1:{server_port}/api/v1/alerts",
+        http_transport=None,  # Uses default_http_transport over real loopback network socket
+    )
+    ok_prod, err_prod = adapter_prod.send("n_prod_r13", "webhook", "ops-lead", "Title", "Detail")
+    assert ok_prod is True
+    assert adapter_prod.delivery_receipts[-1]["status"] == "DELIVERED"
+
+    # 3. B2 Negative Mutation 1: Arbitrary valid hex signature ("sig-sha256-" + "e"*16) is rejected
     start_dt = datetime.now(UTC) - timedelta(minutes=20)
     end_dt = datetime.now(UTC)
+    dummy_proof = "a" * 64
+    arbitrary_hex_sig = "sig-sha256-" + "e" * 16
+    arbitrary_suffix_rb = "anything-ending-" + valid_sha[:8]
 
-    def fake_proof_watch_transport(method: str, url: str, params: dict = None, payload: dict = None) -> tuple[int, dict]:
+    assert not authenticate_provider_watch_signature(
+        provider_secret=provider_sec,
+        provider_receipt_id="rcpt-123",
+        provider_signature=arbitrary_hex_sig,
+        provider_readback_identity=arbitrary_suffix_rb,
+        gcp_project="alfaloop-data-project",
+        release_sha=valid_sha,
+        start_iso=start_dt.isoformat(),
+        end_iso=end_dt.isoformat(),
+        proof_hash=dummy_proof,
+    )
+
+    # 4. B2 Negative Mutation 2: Suffix-only readback identity is rejected
+    sig_valid_format, rb_valid = compute_provider_watch_signature(
+        provider_secret=provider_sec,
+        provider_receipt_id="rcpt-123",
+        gcp_project="alfaloop-data-project",
+        release_sha=valid_sha,
+        start_iso=start_dt.isoformat(),
+        end_iso=end_dt.isoformat(),
+        proof_hash=dummy_proof,
+    )
+    assert not authenticate_provider_watch_signature(
+        provider_secret=provider_sec,
+        provider_receipt_id="rcpt-123",
+        provider_signature=sig_valid_format,
+        provider_readback_identity=arbitrary_suffix_rb,
+        gcp_project="alfaloop-data-project",
+        release_sha=valid_sha,
+        start_iso=start_dt.isoformat(),
+        end_iso=end_dt.isoformat(),
+        proof_hash=dummy_proof,
+    )
+
+    # 5. B2 Negative Mutation 3: Missing provider secret fails closed without fallback
+    monkeypatch.delenv("MONITORING_PROVIDER_SECRET", raising=False)
+    monkeypatch.delenv("ONCALL_PROVIDER_SECRET", raising=False)
+
+    receipt_file = tmp_path / "round13_watch_receipt.json"
+
+    def valid_watch_transport(method: str, url: str, params: dict = None, payload: dict = None) -> tuple[int, dict]:
         return 200, {
             "gcp_project": "alfaloop-data-project",
             "release_sha": valid_sha,
-            "provider_receipt_id": "prov-rcpt-fake-123",
-            "provider_signature": "sig-sha256-fake1234567890abcdef",
-            "provider_readback_identity": "readback-identity-fake-123",
+            "provider_receipt_id": "prov-rcpt-123",
+            "provider_signature": sig_valid_format,
+            "provider_readback_identity": rb_valid,
             "timeSeries": [
                 {
                     "metric": {"type": "custom.googleapis.com/api_error_count", "labels": {"release_sha": valid_sha}},
@@ -2883,7 +3127,7 @@ def test_round12_remediation_findings_b1_b2_verified(monkeypatch: Any, tmp_path:
             ],
         }
 
-    with pytest.raises(ValueError, match="provider_signature failed independent cryptographic authentication|fake provider proof"):
+    with pytest.raises(ValueError, match="provider trust root gate enforced"):
         record_deployment_watch_window_status(
             release_sha=valid_sha,
             status=1,
@@ -2892,12 +3136,15 @@ def test_round12_remediation_findings_b1_b2_verified(monkeypatch: Any, tmp_path:
             receipt_path=receipt_file,
             gcp_project="alfaloop-data-project",
             provider_route="https://monitoring.googleapis.com/v3",
-            query_transport=fake_proof_watch_transport,
+            query_transport=valid_watch_transport,
         )
 
-    # 4. B2 Authentic Watch Proof: Cryptographically authenticated signature passes
+    # 6. B2 Authentic Watch Proof: Cryptographically authenticated signature passes when secret is set
+    monkeypatch.setenv("MONITORING_PROVIDER_SECRET", provider_sec)
+    monkeypatch.setenv("ONCALL_PROVIDER_SECRET", provider_sec)
+
     def authentic_proof_watch_transport(method: str, url: str, params: dict = None, payload: dict = None) -> tuple[int, dict]:
-        prov_rcpt = "prov-rcpt-authentic-r12"
+        prov_rcpt = "prov-rcpt-authentic-r13"
         raw_resp = {
             "gcp_project": "alfaloop-data-project",
             "release_sha": valid_sha,

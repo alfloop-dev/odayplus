@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hashlib
+import hmac
 import json
 import os
 import re
@@ -287,8 +288,21 @@ def extract_and_reconcile_provider_proof(
     sorted_metric_types = sorted(list(observed_types))
     sorted_iso_timestamps = [pt.isoformat() for pt in point_timestamps]
 
+    query_resp_clean = {
+        k: v
+        for k, v in query_resp.items()
+        if k
+        not in (
+            "provider_receipt_id",
+            "receipt_id",
+            "provider_signature",
+            "provider_readback_identity",
+            "readback_identity",
+            "readback_hash",
+        )
+    }
     provider_proof_hash = hashlib.sha256(
-        json.dumps(query_resp, sort_keys=True).encode("utf-8")
+        json.dumps(query_resp_clean, sort_keys=True).encode("utf-8")
     ).hexdigest()
 
     return {
@@ -317,14 +331,23 @@ def compute_provider_watch_signature(
     release_sha: str,
     start_iso: str,
     end_iso: str,
-    proof_hash: str | None = None,
+    proof_hash: str,
 ) -> tuple[str, str]:
     """Compute authentic provider signature and readback identity bound to exact query parameters and proof hash."""
-    sig_base = f"{provider_secret}:{provider_receipt_id}:{gcp_project}:{release_sha}:{start_iso}:{end_iso}".encode()
-    sig_hash = hashlib.sha256(sig_base).hexdigest()
-    sig_token = f"sig-sha256-{sig_hash[:16]}"
+    if not provider_secret or not str(provider_secret).strip():
+        raise ValueError("provider_secret must be a non-empty string for provider watch signature computation. Fail-closed gate enforced.")
+    if not proof_hash or not str(proof_hash).strip():
+        raise ValueError("proof_hash must be a non-empty string for provider watch signature computation. Fail-closed gate enforced.")
+    clean_sha = validate_full_sha(release_sha, "release_sha")
 
-    rb_token = f"readback-identity-{gcp_project}-{release_sha[:8]}"
+    rb_base = f"readback:{gcp_project}:{clean_sha}:{proof_hash}".encode("utf-8")
+    rb_hash = hashlib.sha256(rb_base).hexdigest()
+    rb_token = f"readback-identity-{gcp_project}-{clean_sha[:16]}-{rb_hash[:16]}"
+
+    sig_base = f"{provider_secret}:{provider_receipt_id}:{gcp_project}:{clean_sha}:{start_iso}:{end_iso}:{proof_hash}:{rb_token}".encode("utf-8")
+    sig_hash = hashlib.sha256(sig_base).hexdigest()
+    sig_token = f"sig-sha256-{sig_hash}"
+
     return sig_token, rb_token
 
 
@@ -340,54 +363,44 @@ def authenticate_provider_watch_signature(
     proof_hash: str,
 ) -> bool:
     """Independently authenticate provider signature and readback identity bound to exact query parameters and proof hash."""
-    if not provider_secret or not provider_receipt_id or not provider_signature or not provider_readback_identity:
+    if not provider_secret or not str(provider_secret).strip():
+        return False
+    if not provider_receipt_id or not str(provider_receipt_id).strip():
+        return False
+    if not provider_signature or not str(provider_signature).strip():
+        return False
+    if not provider_readback_identity or not str(provider_readback_identity).strip():
+        return False
+    if not proof_hash or not str(proof_hash).strip():
         return False
 
-    # Strictly reject fake, attacker-controlled, or tampered signature prefixes/content
-    if any(fake_marker in provider_signature for fake_marker in ("fake", "tampered", "attacker", "caller_forged")):
+    try:
+        clean_sha = validate_full_sha(release_sha, "release_sha")
+    except Exception:
         return False
 
-    sig_base_1 = f"{provider_secret}:{provider_receipt_id}:{gcp_project}:{release_sha}:{start_iso}:{end_iso}:{proof_hash}".encode()
-    sig_hash_1 = hashlib.sha256(sig_base_1).hexdigest()
+    # Strictly reject fake, attacker-controlled, or tampered signature markers
+    if any(fake_marker in provider_signature.lower() for fake_marker in ("fake", "tampered", "attacker", "caller_forged")):
+        return False
 
-    sig_base_2 = f"{provider_secret}:{provider_receipt_id}:{gcp_project}:{release_sha}:{start_iso}:{end_iso}".encode()
-    sig_hash_2 = hashlib.sha256(sig_base_2).hexdigest()
-
-    sig_base_3 = f"{provider_secret}:{provider_receipt_id}:{gcp_project}:{release_sha}".encode()
-    sig_hash_3 = hashlib.sha256(sig_base_3).hexdigest()
-
-    valid_sigs = {
-        sig_hash_1, f"sig-sha256-{sig_hash_1}", f"sig-sha256-{sig_hash_1[:16]}",
-        sig_hash_2, f"sig-sha256-{sig_hash_2}", f"sig-sha256-{sig_hash_2[:16]}",
-        sig_hash_3, f"sig-sha256-{sig_hash_3}", f"sig-sha256-{sig_hash_3[:16]}",
-        f"sig-sha256-{release_sha[:16]}",
-        f"sig-sha256-{release_sha}",
-    }
-
-    if provider_signature not in valid_sigs:
-        is_hex_sig = (
-            provider_signature.startswith("sig-sha256-")
-            and all(c in "0123456789abcdefABCDEF" for c in provider_signature[11:])
-            and len(provider_signature[11:]) in (16, 64)
+    try:
+        expected_sig_token, expected_rb_token = compute_provider_watch_signature(
+            provider_secret=provider_secret,
+            provider_receipt_id=provider_receipt_id,
+            gcp_project=gcp_project,
+            release_sha=clean_sha,
+            start_iso=start_iso,
+            end_iso=end_iso,
+            proof_hash=proof_hash,
         )
-        if not is_hex_sig:
-            return False
-
-    rb_base = f"readback:{gcp_project}:{release_sha}".encode()
-    rb_hash = hashlib.sha256(rb_base).hexdigest()
-    valid_rbs = {
-        rb_hash,
-        f"readback-identity-{rb_hash[:16]}",
-        f"readback-identity-{gcp_project}-{release_sha[:8]}",
-        f"readback-identity-{gcp_project}-{release_sha}",
-        f"readback-identity-{gcp_project}-{release_sha[:16]}",
-        f"readback-identity-{release_sha[:8]}",
-        f"readback-{release_sha[:16]}",
-    }
-    if provider_readback_identity not in valid_rbs and not any(provider_readback_identity.endswith(suffix) for suffix in (release_sha[:8], release_sha[:16], release_sha)):
+    except Exception:
         return False
 
-    return True
+    # B2: Constant-time comparison against exact scheme only; reject valid hex or suffix-only fallbacks
+    sig_matches = hmac.compare_digest(provider_signature, expected_sig_token)
+    rb_matches = hmac.compare_digest(provider_readback_identity, expected_rb_token)
+
+    return sig_matches and rb_matches
 
 
 def record_deployment_watch_window_status(
@@ -573,8 +586,12 @@ def record_deployment_watch_window_status(
     provider_secret = (
         os.getenv("MONITORING_PROVIDER_SECRET")
         or os.getenv("ONCALL_PROVIDER_SECRET")
-        or "monitoring-provider-trust-root"
+        or ""
     ).strip()
+    if not provider_secret:
+        raise ValueError(
+            "MONITORING_PROVIDER_SECRET / ONCALL_PROVIDER_SECRET environment variable is missing or empty. Fail-closed provider trust root gate enforced."
+        )
 
     # B2: Independent cryptographic authentication of provider watch signature against provider trust root
     if not authenticate_provider_watch_signature(
@@ -779,8 +796,12 @@ def verify_watch_window_receipt(
     provider_secret = (
         os.getenv("MONITORING_PROVIDER_SECRET")
         or os.getenv("ONCALL_PROVIDER_SECRET")
-        or "monitoring-provider-trust-root"
+        or ""
     ).strip()
+    if not provider_secret:
+        raise ValueError(
+            "MONITORING_PROVIDER_SECRET / ONCALL_PROVIDER_SECRET environment variable is missing or empty. Fail-closed provider trust root gate enforced."
+        )
 
     # B2: Independent cryptographic authentication of stored provider signature against provider trust root
     if not authenticate_provider_watch_signature(
