@@ -340,3 +340,147 @@ or M12 outcome coverage.
 acceptance label count, while B2 and B3 make the governed-disabled receipt claim facts its
 sources do not establish. The task is returned to Antigravity4; no owner implementation
 content was changed by this review.
+
+---
+
+# Codex6 Re-review Addendum — 2026-07-31, exact owner head `69e245b7`
+
+The supervisor re-dispatched this task to the assigned reviewer after the owner reported
+model-card evidence-integrity remediation at exact pushed head
+`69e245b74b06e74469a5c20e13cd5dca88bd3a7f`. The remote task branch points at that SHA.
+Contrary to the handoff wording, remote `dev` remained at `9e5c9f29670844ac4ecdec407c84255e0a33bce3`
+at review time; the task head had not yet merged to `dev`.
+
+## Verification at the exact owner head
+
+```bash
+PYTHONPATH=. .venv/bin/pytest -q tests/models -k "sitescore or opening_outcome"
+PYTHONPATH=. .venv/bin/pytest -q tests -k "sitescore or opening_outcome or model_ready"
+PYTHONPATH=. .venv/bin/ruff check scripts/models models tests/models
+git diff --check
+```
+
+- Task-scoped selector: **22 passed**.
+- Full focused selector: completed successfully (exit 0).
+- Ruff and `git diff --check`: clean.
+- The committed receipt digest independently recomputes to its declared
+  `integrity.content_sha256`.
+- The previous B1-B3 examples are fixed in the narrow direction: the PostgreSQL adapter
+  preserves a null 90-day outcome, age alone no longer counts as M6/M12 outcome evidence,
+  and the default no-source model card no longer contains fabricated approvals or
+  `PASSED` review fields.
+
+The green regression suite does not cover the complete batch of fail-closed mutations
+required by the task brief. The following findings still block approval.
+
+## Blocking findings
+
+### B1 — Non-finite predictions, outcomes, and interval bounds are accepted as evidence
+
+`_is_valid_realized_outcome` at `models/sitescore/opening_outcome.py:305-318` checks only
+`float(value) >= 0`; positive infinity therefore counts as a valid realized 90-day, M6, or
+M12 outcome. Prediction coverage at lines 400-404 counts every non-null value without
+checking numeric finiteness. Interval validation at lines 419-427 accepts `p10=-inf` and
+`p90=inf` because the only bound check is `p10 <= p90`.
+
+Independent mutations reproduced both unsafe shapes:
+
+- 220 otherwise valid rows with `p10=-inf`, `p90=inf` reported
+  `interval_bounds_coverage_ratio=1.0`, `p80_coverage=1.0`, and every non-lineage gate
+  passing.
+- 220 rows with `predicted_revenue=NaN` reported prediction and interval coverage as
+  `1.0`, produced `normalized_mae=NaN`, and serialized a literal `NaN`; strict
+  `json.dumps(..., allow_nan=False)` rejected the receipt as non-JSON.
+- Replacing explicit M6/M12 outcomes with positive infinity still reported both horizon
+  coverage ratios as `1.0`.
+
+The current hard-coded lineage lock prevents an ACTIVE result today, but the benchmark is
+explicitly intended to compose with the prediction-source resolver. That resolver must not
+turn these malformed inputs into activation-grade evidence. Require finite realized
+outcomes, predictions, interval bounds, metrics, and thresholds; reject non-finite values
+before any population count; and serialize receipts with strict JSON semantics. Add
+mutations for NaN and both infinities.
+
+### B2 — Normalized MAE mixes populations and can pass a badly calibrated matched cohort
+
+At lines 400-404 the prediction population is the subset with non-null predictions, and
+at lines 431-439 MAE is averaged over that subset. Its normalization denominator,
+however, is mean realized revenue across **all** mature records. This is the population
+mismatch prohibited by the task acceptance.
+
+A 220-row mutation with exactly 154 matched predictions (70%), each having realized
+revenue 100 and absolute error 100, plus 66 unmatched outcomes of 1,000,000, produced:
+
+- prediction coverage, interval coverage, and P80 coverage all exactly `0.70`;
+- reported normalized MAE `0.0003332555736994701`, which passes the `0.25` threshold;
+- matched-population normalized MAE `1.0`, which must fail.
+
+Every non-lineage gate therefore passed even though the population-aligned calibration
+gate fails. Compute both MAE and its scale denominator over the exact same finite matched
+population, and expose the numerator/denominator population counts in the benchmark and
+receipt. Add a regression that fails if unmatched high-value outcomes dilute matched-pair
+NMAE.
+
+### B3 — The receipt digest does not reject forged ACTIVE or count-drift receipts
+
+`compute_gate2_receipt_sha256` at lines 570-577 is an unkeyed digest over caller-controlled
+content. No receipt verification function validates the schema, re-derives the gate
+verdict, checks duplicate benchmark/handback counts, requires authoritative issuance, or
+rejects ACTIVE while the prediction-source dependency is unresolved.
+
+Starting with the committed no-source shape, changing top-level `gate_status` to `PASSED`,
+`is_governed_disabled` to false, and nested benchmark status to `ACTIVE`, then recomputing
+the public digest, yields a receipt whose declared digest matches
+`compute_gate2_receipt_sha256`. The same operation can make duplicated summary/handback
+counts drift while remaining self-consistent. This is exactly the task brief's
+“self-consistent forged receipt” and count/hash-drift mutation.
+
+Provide a fail-closed receipt verifier that validates strict finite/schema semantics,
+cross-field and duplicate-count consistency, re-derives the verdict from authoritative
+evidence, and rejects ACTIVE until the separately resolved prediction/outcome lineage is
+authenticated. A content checksum may remain useful for accidental corruption, but it is
+not evidence authenticity.
+
+### B4 — Caller arguments can still fabricate a complete and approved model card
+
+The latest remediation removed fabricated defaults, but replaced them with public caller
+parameters at `models/sitescore/opening_outcome.py:502-567`. A no-source,
+governed-disabled benchmark supplied with invented version/run/feature/label/period/
+algorithm/baseline/explainability strings, `privacy_review="PASSED"`,
+`security_review="PASSED"`, and an invented `ModelCardApproval` produces:
+
+- `release_status == "GOVERNED_DISABLED"`;
+- `is_complete is True`;
+- `is_approved is True`;
+- the invented facts and actor serialized as ordinary governance evidence.
+
+Thus the default artifact is improved, but the builder still accepts the exact invented
+governance fields forbidden by acceptance. While authoritative evidence is unresolved,
+ignore or reject those governance assertions and emit unavailable/unverified values with
+no approvals. When the prediction-source task supplies evidence, bind these fields to a
+separately verified immutable receipt rather than free caller parameters.
+
+### B5 — The Human/Ops outcome handback omits required lineage and freshness evidence
+
+The registered Human/Ops task requires M6/M12 outcomes plus dataset hash, lineage, owner,
+and freshness. The emitted `outcome_backfill_contract.required_fields` at lines 203-211
+contains only `realized_180d_net_revenue` and `realized_365d_net_revenue`; its baseline
+query returns only the current 90-day candidate view. The Gate 2 receipt consequently has
+no outcome dataset snapshot hash, authoritative query/source identity, freshness field,
+or outcome lineage/owner receipt binding.
+
+Keep the baseline query clearly labeled as discovery-only, and make the machine-readable
+backfill receipt contract require the authoritative M6/M12 query/source identity, immutable
+snapshot hash, lineage, owner, observation/freshness timestamps, eligibility/maturity
+definitions, and observed/eligible/mature counts. Without those fields the advertised
+handback cannot produce the evidence set required to close this task safely.
+
+## Decision
+
+**Changes requested.** Exact owner head `69e245b7` is not approved. B1 and B2 make malformed
+or population-misaligned evidence pass every technical gate that will remain once the
+prediction-source resolver unlocks lineage. B3 and B4 permit self-consistent forged
+governance artifacts, and B5 leaves the registered Human/Ops handback unable to return the
+required authoritative evidence set. Re-audit B1-B5 together before the next handoff; do
+not open/refresh the PR or enable deployment after a partial fix. No owner implementation
+content was changed by this review.
