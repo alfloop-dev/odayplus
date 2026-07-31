@@ -1501,3 +1501,71 @@ def test_sitescore_verifier_rejects_codex6_c2136d4c_probes_b1_b2_b3():
     rebound_b3_8 = _rebind_receipt_hashes(r_b3_8, mc_b3_8)
     res_b3_8 = verify_sitescore_gate2_receipt(rebound_b3_8, model_card_artifact=mc_b3_8)
     assert res_b3_8.is_valid is False
+
+
+def test_sitescore_gate2_receipt_verifier_re_review_f3584866_probes_b1_b2_b3():
+    # Negative regression test for Codex6 Re-review (f3584866 head) B1, B2, B3 findings
+    result = run_benchmark_from_inventory(db_url=None, records=None)
+    model_card = build_sitescore_opening_outcome_model_card(result)
+    receipt = build_sitescore_gate2_receipt(result, model_card=model_card)
+    mc_dict = model_card.to_dict()
+
+    # B1 Probe 1: Remove top-level 'gate', 'model_name', or 'service' from receipt
+    for missing_key in ["gate", "model_name", "service"]:
+        r_b1_1 = json.loads(json.dumps(receipt))
+        mc_b1_1 = json.loads(json.dumps(mc_dict))
+        del r_b1_1[missing_key]
+        rebound_b1_1 = _rebind_receipt_hashes(r_b1_1, mc_b1_1)
+        res_b1_1 = verify_sitescore_gate2_receipt(rebound_b1_1, model_card_artifact=mc_b1_1)
+        assert res_b1_1.is_valid is False
+        assert any(f"Missing required field in top-level receipt: '{missing_key}'" in e for e in res_b1_1.errors)
+
+    # B1 Probe 2: Remove prediction_source_contract.scope from handback
+    r_b1_2 = json.loads(json.dumps(receipt))
+    mc_b1_2 = json.loads(json.dumps(mc_dict))
+    del r_b1_2["handback"]["prediction_source_contract"]["scope"]
+    del r_b1_2["benchmark_summary"]["handback_payload"]["prediction_source_contract"]["scope"]
+    rebound_b1_2 = _rebind_receipt_hashes(r_b1_2, mc_b1_2)
+    res_b1_2 = verify_sitescore_gate2_receipt(rebound_b1_2, model_card_artifact=mc_b1_2)
+    assert res_b1_2.is_valid is False
+    assert any("Missing required field in prediction_source_contract: 'scope'" in e for e in res_b1_2.errors)
+
+    # B1 Probe 3: Scalar typing - replace values in model_card.metrics_summary with numeric strings
+    r_b1_3 = json.loads(json.dumps(receipt))
+    mc_b1_3 = json.loads(json.dumps(mc_dict))
+    for k in mc_b1_3["metrics_summary"]:
+        mc_b1_3["metrics_summary"][k] = str(mc_b1_3["metrics_summary"][k])
+    rebound_b1_3 = _rebind_receipt_hashes(r_b1_3, mc_b1_3)
+    res_b1_3 = verify_sitescore_gate2_receipt(rebound_b1_3, model_card_artifact=mc_b1_3)
+    assert res_b1_3.is_valid is False
+    assert any("must be a real number (got str" in e for e in res_b1_3.errors)
+
+    # B2 Probe 4: Stale evidence timestamp (2000-01-01T00:00:00Z) exceeds max evidence age (30 days)
+    r_b2_4 = json.loads(json.dumps(receipt))
+    mc_b2_4 = json.loads(json.dumps(mc_dict))
+    r_b2_4["observed_at"] = "2000-01-01T00:00:00Z"
+    r_b2_4["benchmark_summary"]["observed_at"] = "2000-01-01T00:00:00Z"
+    mc_b2_4["created_at"] = "2000-01-01T00:00:00Z"
+    rebound_b2_4 = _rebind_receipt_hashes(r_b2_4, mc_b2_4)
+    res_b2_4 = verify_sitescore_gate2_receipt(rebound_b2_4, model_card_artifact=mc_b2_4)
+    assert res_b2_4.is_valid is False
+    assert any("is older than maximum evidence age" in e for e in res_b2_4.errors)
+
+    # B3 Probe 5: Add m6_interval_mae_v2 inside artifact_hashes envelope
+    r_b3_5 = json.loads(json.dumps(receipt))
+    mc_b3_5 = json.loads(json.dumps(mc_dict))
+    rebound_b3_5 = _rebind_receipt_hashes(r_b3_5, mc_b3_5)
+    rebound_b3_5["artifact_hashes"]["m6_interval_mae_v2"] = 12.34
+    rebound_b3_5["integrity"]["content_sha256"] = compute_gate2_receipt_sha256(rebound_b3_5)
+    res_b3_5 = verify_sitescore_gate2_receipt(rebound_b3_5, model_card_artifact=mc_b3_5)
+    assert res_b3_5.is_valid is False
+    assert any("Forbidden or unknown field in artifact_hashes: 'm6_interval_mae_v2'" in e for e in res_b3_5.errors)
+
+    # B3 Probe 6: Add m6_interval_mae_v2 inside integrity envelope
+    r_b3_6 = json.loads(json.dumps(receipt))
+    mc_b3_6 = json.loads(json.dumps(mc_dict))
+    rebound_b3_6 = _rebind_receipt_hashes(r_b3_6, mc_b3_6)
+    rebound_b3_6["integrity"]["m6_interval_mae_v2"] = 12.34
+    res_b3_6 = verify_sitescore_gate2_receipt(rebound_b3_6, model_card_artifact=mc_b3_6)
+    assert res_b3_6.is_valid is False
+    assert any("Forbidden or unknown field in integrity: 'm6_interval_mae_v2'" in e for e in res_b3_6.errors)

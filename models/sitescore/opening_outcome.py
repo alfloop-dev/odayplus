@@ -876,18 +876,22 @@ def verify_sitescore_gate2_receipt(
             return val
 
         # Closed key set checks for all dictionaries to reject arbitrary or renamed synthetic metric fields (B3)
-        ALLOWED_RECEIPT_KEYS = {
+        REQUIRED_RECEIPT_KEYS = {
             "schema_version", "kind", "inventory_version", "observed_at",
             "model_name", "service", "provenance", "source_contract",
             "gate", "gate_status", "is_governed_disabled", "benchmark_summary",
-            "handback", "artifact_hashes", "integrity", "db_error",
+            "handback", "artifact_hashes", "integrity",
         }
+        ALLOWED_RECEIPT_KEYS = REQUIRED_RECEIPT_KEYS | {"db_error"}
         for k in receipt.keys():
             if k not in ALLOWED_RECEIPT_KEYS:
                 errors.append(f"Forbidden or unknown field in top-level receipt: {k!r}")
+        for k in REQUIRED_RECEIPT_KEYS:
+            if k not in receipt:
+                errors.append(f"Missing required field in top-level receipt: {k!r}")
 
         if mc_dict is not None:
-            ALLOWED_MODEL_CARD_KEYS = {
+            REQUIRED_MODEL_CARD_KEYS = {
                 "model_name", "model_version", "owner", "risk_level", "intended_use",
                 "not_intended_use", "dataset_snapshot_id", "validation_run_id",
                 "feature_set_id", "label_set_id", "training_period", "validation_period",
@@ -896,11 +900,15 @@ def verify_sitescore_gate2_receipt(
                 "known_biases", "privacy_review", "security_review", "release_status",
                 "rollback_conditions", "approvals", "created_at",
             }
+            ALLOWED_MODEL_CARD_KEYS = REQUIRED_MODEL_CARD_KEYS
             for k in mc_dict.keys():
                 if k not in ALLOWED_MODEL_CARD_KEYS:
                     errors.append(f"Forbidden or unknown field in top-level model_card: {k!r}")
+            for k in REQUIRED_MODEL_CARD_KEYS:
+                if k not in mc_dict:
+                    errors.append(f"Missing required field in top-level model_card: {k!r}")
 
-        ALLOWED_HANDBACK_KEYS = {
+        REQUIRED_HANDBACK_KEYS = {
             "handback_required", "reason_code", "governed_disabled", "provenance",
             "observed_count", "eligible_count", "mature_label_count",
             "matched_prediction_count", "m6_mature_count", "m12_mature_count",
@@ -910,19 +918,25 @@ def verify_sitescore_gate2_receipt(
             "interval_bounds_coverage_ratio", "normalized_mae", "p80_coverage",
             "reasons", "handback_action", "outcome_backfill_contract",
             "prediction_source_contract", "backfill_task_id", "prediction_source_task_id",
-            "backfill_receipt_required", "calibration_summary", "segment_metrics", "message",
-            "backfill_owner", "discovery_inventory_query",
+            "backfill_receipt_required",
         }
+        ALLOWED_HANDBACK_KEYS = REQUIRED_HANDBACK_KEYS | {"calibration_summary", "segment_metrics", "message", "backfill_owner", "discovery_inventory_query"}
         for k in handback.keys():
             if k not in ALLOWED_HANDBACK_KEYS:
                 errors.append(f"Forbidden or unknown field in handback: {k!r}")
+        for k in REQUIRED_HANDBACK_KEYS:
+            if k not in handback:
+                errors.append(f"Missing required field in handback: {k!r}")
         for k in handback_in_summary.keys():
             if k not in ALLOWED_HANDBACK_KEYS:
                 errors.append(f"Forbidden or unknown field in benchmark_summary.handback_payload: {k!r}")
+        for k in REQUIRED_HANDBACK_KEYS:
+            if k not in handback_in_summary:
+                errors.append(f"Missing required field in benchmark_summary.handback_payload: {k!r}")
 
         bc = handback.get("outcome_backfill_contract")
         if isinstance(bc, dict):
-            ALLOWED_OUTCOME_BACKFILL_CONTRACT_KEYS = {
+            REQUIRED_OUTCOME_BACKFILL_CONTRACT_KEYS = {
                 "owner", "task_id", "scope", "discovery_source_identity", "discovery_query_id",
                 "required_source_identity", "required_query_id", "required_evidence_owner",
                 "source_identity", "query_id", "dataset_snapshot_hash", "lineage_id",
@@ -933,21 +947,29 @@ def verify_sitescore_gate2_receipt(
                 "in_p80_count", "required_fields", "discovery_inventory_query", "note",
                 "receipt_required",
             }
+            ALLOWED_OUTCOME_BACKFILL_CONTRACT_KEYS = REQUIRED_OUTCOME_BACKFILL_CONTRACT_KEYS
             for k in bc.keys():
                 if k not in ALLOWED_OUTCOME_BACKFILL_CONTRACT_KEYS:
                     errors.append(f"Forbidden or unknown field in outcome_backfill_contract: {k!r}")
+            for k in REQUIRED_OUTCOME_BACKFILL_CONTRACT_KEYS:
+                if k not in bc:
+                    errors.append(f"Missing required field in outcome_backfill_contract: {k!r}")
 
         psc = handback.get("prediction_source_contract")
         if isinstance(psc, dict):
-            ALLOWED_PREDICTION_SOURCE_CONTRACT_KEYS = {
+            REQUIRED_PREDICTION_SOURCE_CONTRACT_KEYS = {
                 "owner", "task_id", "scope", "required_fields", "receipt_required",
             }
+            ALLOWED_PREDICTION_SOURCE_CONTRACT_KEYS = REQUIRED_PREDICTION_SOURCE_CONTRACT_KEYS
             for k in psc.keys():
                 if k not in ALLOWED_PREDICTION_SOURCE_CONTRACT_KEYS:
                     errors.append(f"Forbidden or unknown field in prediction_source_contract: {k!r}")
+            for k in REQUIRED_PREDICTION_SOURCE_CONTRACT_KEYS:
+                if k not in psc:
+                    errors.append(f"Missing required field in prediction_source_contract: {k!r}")
 
         # B3: Closed allow-list check for benchmark_summary
-        ALLOWED_BENCHMARK_SUMMARY_KEYS = {
+        REQUIRED_BENCHMARK_SUMMARY_KEYS = {
             "provenance", "dataset_snapshot_id", "model_version", "artifact_lineage_id",
             "observed_count", "eligible_count", "mature_label_count", "m6_mature_count",
             "m12_mature_count", "matched_prediction_count", "interval_bounds_count",
@@ -956,11 +978,15 @@ def verify_sitescore_gate2_receipt(
             "normalized_mae", "p80_coverage", "activation_threshold",
             "min_coverage_threshold", "max_mae_threshold", "is_gate2_passed",
             "status", "reason_code", "handback_payload", "calibration_summary",
-            "segment_metrics", "db_error", "observed_at",
+            "segment_metrics",
         }
+        ALLOWED_BENCHMARK_SUMMARY_KEYS = REQUIRED_BENCHMARK_SUMMARY_KEYS | {"db_error", "observed_at"}
         for k in summary.keys():
             if k not in ALLOWED_BENCHMARK_SUMMARY_KEYS:
                 errors.append(f"Forbidden or unknown metric field in benchmark_summary: {k!r}")
+        for k in REQUIRED_BENCHMARK_SUMMARY_KEYS:
+            if k not in summary:
+                errors.append(f"Missing required field in benchmark_summary: {k!r}")
 
         # Top-level boolean & enum checks
         rec_gov_disabled = _check_strict_bool(receipt.get("is_governed_disabled"), "is_governed_disabled")
@@ -977,6 +1003,7 @@ def verify_sitescore_gate2_receipt(
         if rec_src_contract != CANONICAL_SOURCE_CONTRACT:
             errors.append(f"source_contract mismatch: declared {rec_src_contract!r}, expected {CANONICAL_SOURCE_CONTRACT!r}")
 
+        MAX_EVIDENCE_AGE_DAYS = 30
         now_utc = datetime.now(UTC)
         rec_obs_at = receipt.get("observed_at")
         obs_dt: datetime | None = None
@@ -989,6 +1016,8 @@ def verify_sitescore_gate2_receipt(
                     errors.append(f"observed_at timestamp must be timezone-aware (got {rec_obs_at!r})")
                 elif obs_dt > now_utc + timedelta(seconds=300):
                     errors.append(f"observed_at timestamp is in the future: {rec_obs_at!r}")
+                elif obs_dt < now_utc - timedelta(days=MAX_EVIDENCE_AGE_DAYS):
+                    errors.append(f"observed_at timestamp is older than maximum evidence age ({MAX_EVIDENCE_AGE_DAYS} days): {rec_obs_at!r}")
             except Exception:
                 errors.append(f"Invalid observed_at timestamp format: {rec_obs_at!r}")
 
@@ -1004,6 +1033,8 @@ def verify_sitescore_gate2_receipt(
                         errors.append(f"model_card.created_at timestamp must be timezone-aware (got {mc_created_str!r})")
                     elif mc_dt > now_utc + timedelta(seconds=300):
                         errors.append(f"model_card.created_at timestamp is in the future: {mc_created_str!r}")
+                    elif mc_dt < now_utc - timedelta(days=MAX_EVIDENCE_AGE_DAYS):
+                        errors.append(f"model_card.created_at timestamp is older than maximum evidence age ({MAX_EVIDENCE_AGE_DAYS} days): {mc_created_str!r}")
                 except Exception:
                     errors.append(f"Invalid model_card.created_at timestamp format: {mc_created_str!r}")
 
@@ -1099,8 +1130,10 @@ def verify_sitescore_gate2_receipt(
                     if k not in mc_metrics:
                         errors.append(f"model_card.metrics_summary missing required metric key: {k!r}")
                     elif k in summary:
-                        if float(mc_metrics[k]) != float(summary[k]):
-                            errors.append(f"model_card.metrics_summary.{k} ({mc_metrics[k]}) drifts from summary.{k} ({summary[k]})")
+                        mc_val = _check_strict_float(mc_metrics[k], f"model_card.metrics_summary.{k}")
+                        sum_val = _check_strict_float(summary[k], f"benchmark_summary.{k}")
+                        if mc_val is not None and sum_val is not None and mc_val != sum_val:
+                            errors.append(f"model_card.metrics_summary.{k} ({mc_val}) drifts from summary.{k} ({sum_val})")
 
             mc_cal = mc_dict.get("calibration_summary")
             if not isinstance(mc_cal, dict):
@@ -1451,10 +1484,20 @@ def verify_sitescore_gate2_receipt(
             _validate_segment_metrics(mc_dict.get("segment_metrics"), "model_card.segment_metrics")
 
         # Check artifact_hashes dictionary & hashes
+        ALLOWED_ARTIFACT_HASHES_KEYS = {"handback_hash", "model_card_hash"}
+        REQUIRED_ARTIFACT_HASHES_KEYS = ALLOWED_ARTIFACT_HASHES_KEYS
+
         art_hashes = receipt.get("artifact_hashes")
         if not isinstance(art_hashes, dict):
             errors.append("Missing or invalid artifact_hashes dictionary")
         else:
+            for k in art_hashes.keys():
+                if k not in ALLOWED_ARTIFACT_HASHES_KEYS:
+                    errors.append(f"Forbidden or unknown field in artifact_hashes: {k!r}")
+            for k in REQUIRED_ARTIFACT_HASHES_KEYS:
+                if k not in art_hashes:
+                    errors.append(f"Missing required field in artifact_hashes: {k!r}")
+
             hb_hash = art_hashes.get("handback_hash")
             mc_hash = art_hashes.get("model_card_hash")
             if not isinstance(hb_hash, str) or not re.fullmatch(HEX64_PATTERN, hb_hash):
@@ -1467,9 +1510,19 @@ def verify_sitescore_gate2_receipt(
                 errors.append(f"Artifact handback hash mismatch: declared {hb_hash}, recomputed {expected_hb_hash}")
 
         # Check integrity envelope & cross-check with artifact_hashes
+        ALLOWED_INTEGRITY_KEYS = {"content_sha256", "handback_hash", "model_card_hash"}
+        REQUIRED_INTEGRITY_KEYS = ALLOWED_INTEGRITY_KEYS
+
         if not isinstance(integrity, dict):
             errors.append("Missing or invalid integrity dictionary")
         else:
+            for k in integrity.keys():
+                if k not in ALLOWED_INTEGRITY_KEYS:
+                    errors.append(f"Forbidden or unknown field in integrity: {k!r}")
+            for k in REQUIRED_INTEGRITY_KEYS:
+                if k not in integrity:
+                    errors.append(f"Missing required field in integrity: {k!r}")
+
             int_hb_hash = integrity.get("handback_hash")
             int_mc_hash = integrity.get("model_card_hash")
 
