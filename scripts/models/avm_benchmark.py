@@ -81,6 +81,7 @@ def generate_avm_outcome_evidence_pack(
             dataset_snapshot_hash=dataset_snapshot_hash,
             observed_labeled_count=observed_count,
             eligible_mature_count=eligible_count,
+            population_keys=[o.transaction_id for o in outcomes] if outcomes else None,
         )
 
     # Default audit access attempts if none provided (with explicit cryptographic identity proof)
@@ -157,6 +158,8 @@ def generate_avm_outcome_evidence_pack(
         dataset_snapshot_hash=dataset_snapshot_hash,
         model_artifact_hash=model_artifact_hash,
         audit_receipt=audit_receipt,
+        activation_receipt=activation_receipt,
+        query_source_receipt=query_source_receipt,
     )
 
     report_md = generate_benchmark_report_md(report, audit_receipt)

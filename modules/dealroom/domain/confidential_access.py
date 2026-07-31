@@ -104,14 +104,20 @@ def assert_no_confidential_leak(payload: Any, *, forbidden_raw_values: Sequence[
             )
 
 
+from modules.avm.domain.outcome import CANONICAL_HUMAN_OPS_ACTIVATION_KEY
+
+
 def create_identity_proof(
     actor_id: str,
     role: Role | str,
     tenant_id: str = "tenant-avm-001",
+    authority_key: str = CANONICAL_HUMAN_OPS_ACTIVATION_KEY,
 ) -> str:
-    """Generate cryptographic identity proof bound to actor, role, and tenant."""
+    """Generate cryptographic identity proof bound to actor, role, tenant, and authority key."""
+    if not authority_key or authority_key != CANONICAL_HUMAN_OPS_ACTIVATION_KEY:
+        raise ValueError("Fail-closed: Invalid authority key for identity proof creation")
     role_str = role.value if isinstance(role, Role) else str(role)
-    canonical = f"{actor_id}:{role_str}:{tenant_id}"
+    canonical = f"{actor_id}:{role_str}:{tenant_id}:{authority_key}"
     return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
 
 
@@ -128,6 +134,7 @@ class ConfidentialAccessAuditor:
         cls,
         attempt: ConfidentialAccessAttempt,
         confidentiality: ConfidentialLevel = ConfidentialLevel.HIGH,
+        authority_key: str = CANONICAL_HUMAN_OPS_ACTIVATION_KEY,
     ) -> tuple[ConfidentialAccessDecision, str, dict[str, Any]]:
         """Evaluate if access attempt is permitted and return (decision, reason, audit_receipt)."""
         role = attempt.role if isinstance(attempt.role, Role) else None
@@ -138,10 +145,13 @@ class ConfidentialAccessAuditor:
         is_authenticated = bool(attempt.context.get("authenticated", False))
         tenant_id = str(attempt.context.get("tenant_id", "tenant-avm-001"))
         provided_proof = str(attempt.context.get("identity_proof_sha256", ""))
-        expected_proof = create_identity_proof(attempt.actor_id, attempt.role, tenant_id)
+        try:
+            expected_proof = create_identity_proof(attempt.actor_id, attempt.role, tenant_id, authority_key=authority_key)
+        except Exception:
+            expected_proof = ""
 
-        # Identity proof verification: verified_identity is only True if caller provided valid cryptographic proof
-        verified_identity = bool(attempt.context.get("verified_identity", False)) and (provided_proof == expected_proof)
+        # Identity proof verification: verified_identity is only True if caller provided valid cryptographic proof signed by authority_key
+        verified_identity = bool(attempt.context.get("verified_identity", False)) and bool(provided_proof) and (provided_proof == expected_proof)
         data_room_access = bool(attempt.context.get("data_room_access", False))
         clearance_val = attempt.context.get("clearance", "PUBLIC")
         tenant_matched = bool(attempt.context.get("tenant_matched", False))

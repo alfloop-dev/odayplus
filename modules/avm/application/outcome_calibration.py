@@ -8,8 +8,10 @@ from typing import Any
 
 from modules.avm.domain.outcome import (
     ACTIVATION_THRESHOLD,
+    AVMActivationAuthorityReceipt,
     AVMOutcomeCalibrationReport,
     AVMOutcomeValidationError,
+    AVMQuerySourceReceipt,
     AVMVerdict,
 )
 
@@ -31,8 +33,12 @@ def generate_gate1_benchmark_receipt(
     dataset_snapshot_hash: str,
     model_artifact_hash: str,
     audit_receipt: dict[str, Any] | None = None,
+    activation_receipt: AVMActivationAuthorityReceipt | None = None,
+    query_source_receipt: AVMQuerySourceReceipt | None = None,
 ) -> dict[str, Any]:
     """Generate canonical GATE1_BENCHMARK_RECEIPT.json for AVM outcome calibration."""
+    from modules.dealroom.application.outcome_audit import verify_audit_receipt
+
     # B5: Receipt lineage binding check
     if (
         dataset_snapshot_id != report.dataset_snapshot_id
@@ -45,16 +51,31 @@ def generate_gate1_benchmark_receipt(
             f"got ({dataset_snapshot_id!r}, {dataset_snapshot_hash!r}, {model_artifact_hash!r})"
         )
 
-    # B14: Access audit validation at receipt boundary
-    audit_verified = (
-        audit_receipt is not None
-        and audit_receipt.get("total_access_attempts", 0) > 0
-        and audit_receipt.get("confidentiality_enforcement", {}).get("zero_leak_verified") is True
-        and len(str(audit_receipt.get("sha256", ""))) == 64
+    # B14 & B26: Access audit validation using verify_audit_receipt at receipt boundary
+    audit_verified = verify_audit_receipt(
+        audit_receipt,
+        expected_snapshot_hash=dataset_snapshot_hash,
     )
 
-    # B10 & B14: Revalidate verdict, disabled-state, and audit invariants at receipt boundary
+    # B26: Revalidate verdict, disabled-state, audit, and value-band invariants at receipt boundary
     if report.verdict == AVMVerdict.PASS:
+        # Revalidate canonical value band metrics completeness and per-band thresholds
+        required_bands = {"band_low_lt10m", "band_mid_10m_to_30m", "band_high_gt30m"}
+        if not isinstance(report.value_band_metrics, dict) or set(report.value_band_metrics.keys()) != required_bands:
+            raise AVMOutcomeValidationError(
+                "Fail-closed: Receipt boundary detected missing or incomplete value band metrics"
+            )
+        for band_name, bm in report.value_band_metrics.items():
+            if (
+                bm.aligned_count < 15
+                or bm.p10_p90_coverage_rate < 0.75
+                or not (0.90 <= bm.calibration_ratio <= 1.10)
+                or bm.mape > 0.20
+            ):
+                raise AVMOutcomeValidationError(
+                    f"Fail-closed: Receipt boundary detected invalid metrics for value band {band_name!r}"
+                )
+
         if (
             report.is_governed_disabled
             or report.reason_code != "MATURE_LABEL_CONTRACT_READY"
@@ -63,6 +84,8 @@ def generate_gate1_benchmark_receipt(
             or report.observed_labeled_count < ACTIVATION_THRESHOLD
             or report.eligible_mature_count < ACTIVATION_THRESHOLD
             or report.aligned_count < ACTIVATION_THRESHOLD
+            or report.observed_labeled_count != report.eligible_mature_count
+            or report.eligible_mature_count != report.aligned_count
             or report.auto_seeded_count > 0
             or report.p10_p90_coverage_rate < 0.80
             or not (0.95 <= report.median_calibration_ratio <= 1.05)

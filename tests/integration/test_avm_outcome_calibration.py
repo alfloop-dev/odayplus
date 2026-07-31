@@ -359,7 +359,7 @@ def test_mutation_dataclass_replaced_pass_with_eligible_zero_fails_closed() -> N
     )
     forged_report = dataclasses.replace(report, verdict=AVMVerdict.PASS, is_governed_disabled=False)
 
-    with pytest.raises(AVMOutcomeValidationError, match="Receipt boundary detected forged or invalid PASS"):
+    with pytest.raises(AVMOutcomeValidationError, match="Receipt boundary detected"):
         generate_gate1_benchmark_receipt(
             forged_report,
             dataset_snapshot_id="snapshot-001",
@@ -544,7 +544,7 @@ def test_b17_mutation_activation_receipt_empty_signature_fails_verification() ->
 
 
 def test_b17_mutation_activation_receipt_unkeyed_or_invalid_key_raises_error() -> None:
-    with pytest.raises(AVMOutcomeValidationError, match="Invalid authority key"):
+    with pytest.raises(AVMOutcomeValidationError, match="Invalid or missing authority key"):
         create_avm_activation_receipt(
             VALID_DATASET_HASH,
             VALID_MODEL_HASH,
@@ -693,3 +693,115 @@ def test_b22_mutation_benchmark_report_md_does_not_hardcode_true_on_unverified_a
     empty_audit = {}
     report_md = generate_benchmark_report_md(report, empty_audit)
     assert "- **Zero Confidential Leak Verified**: `False / Unverified`" in report_md
+
+
+# --- B23 to B26 Remediation Tests ---
+
+def test_b23_activation_authority_verifier_key_enforced() -> None:
+    with pytest.raises(AVMOutcomeValidationError, match="Invalid or missing authority key"):
+        create_avm_activation_receipt(VALID_DATASET_HASH, VALID_MODEL_HASH, authority_key="unauthorized-key")
+
+    rcpt = create_avm_activation_receipt(VALID_DATASET_HASH, VALID_MODEL_HASH)
+    assert rcpt.verify_attestation(VALID_DATASET_HASH, VALID_MODEL_HASH, authority_key="unauthorized-key") is False
+
+
+def test_b24_audit_with_zero_permitted_count_fails_verification() -> None:
+    ctx_deny = {
+        "authenticated": False,
+        "verified_identity": False,
+        "tenant_id": "tenant-avm-001",
+        "data_room_access": False,
+        "tenant_matched": False,
+        "clearance": "PUBLIC",
+    }
+    attempts = [("usr-unauth-001", Role.FRANCHISEE, "dealroom", Action.VIEW, ctx_deny)]
+    audit_rcpt = generate_dealroom_outcome_audit_receipt(attempts, dataset_snapshot_hash=VALID_DATASET_HASH)
+    assert audit_rcpt["permitted_count"] == 0
+    assert audit_rcpt["denied_count"] == 1
+    assert verify_audit_receipt(audit_rcpt, expected_snapshot_hash=VALID_DATASET_HASH) is False
+
+    aligned = _make_balanced_aligned_pairs()
+    activation_rcpt = create_avm_activation_receipt(VALID_DATASET_HASH, VALID_MODEL_HASH)
+    query_rcpt = _make_valid_query_receipt()
+
+    report = compute_avm_outcome_calibration(
+        aligned,
+        observed_count=120,
+        eligible_count=120,
+        dataset_snapshot_id="snapshot-002",
+        dataset_snapshot_hash=VALID_DATASET_HASH,
+        model_artifact_hash=VALID_MODEL_HASH,
+        activation_receipt=activation_rcpt,
+        audit_receipt=audit_rcpt,
+        query_source_receipt=query_rcpt,
+    )
+    assert report.is_governed_disabled is True
+    assert report.verdict == AVMVerdict.FAIL_CLOSED
+    assert report.reason_code == "ACCESS_AUDIT_NOT_VERIFIED"
+
+
+def test_b25_query_receipt_population_mismatch_fails_reconciliation() -> None:
+    aligned = _make_balanced_aligned_pairs(120)
+    query_rcpt_121 = create_avm_query_source_receipt(
+        dataset_snapshot_id="snapshot-002",
+        dataset_snapshot_hash=VALID_DATASET_HASH,
+        observed_labeled_count=121,
+        eligible_mature_count=121,
+    )
+    activation_rcpt = create_avm_activation_receipt(VALID_DATASET_HASH, VALID_MODEL_HASH)
+    audit_rcpt = _make_valid_audit_receipt()
+
+    with pytest.raises(AVMOutcomeValidationError, match="Reconciled count mismatch"):
+        compute_avm_outcome_calibration(
+            aligned,
+            observed_count=121,
+            eligible_count=121,
+            dataset_snapshot_id="snapshot-002",
+            dataset_snapshot_hash=VALID_DATASET_HASH,
+            model_artifact_hash=VALID_MODEL_HASH,
+            activation_receipt=activation_rcpt,
+            audit_receipt=audit_rcpt,
+            query_source_receipt=query_rcpt_121,
+        )
+
+
+def test_b26_gate1_receipt_boundary_revalidates_value_bands_and_rejects_empty_metrics() -> None:
+    aligned = _make_balanced_aligned_pairs()
+    activation_rcpt = create_avm_activation_receipt(VALID_DATASET_HASH, VALID_MODEL_HASH)
+    audit_rcpt = _make_valid_audit_receipt()
+    query_rcpt = _make_valid_query_receipt()
+
+    pass_report = compute_avm_outcome_calibration(
+        aligned,
+        observed_count=120,
+        eligible_count=120,
+        dataset_snapshot_id="snapshot-002",
+        dataset_snapshot_hash=VALID_DATASET_HASH,
+        model_artifact_hash=VALID_MODEL_HASH,
+        activation_receipt=activation_rcpt,
+        audit_receipt=audit_rcpt,
+        query_source_receipt=query_rcpt,
+    )
+    assert pass_report.verdict == AVMVerdict.PASS
+
+    # Forged report with empty value band metrics must fail receipt generation
+    forged_report = dataclasses.replace(pass_report, value_band_metrics={})
+    with pytest.raises(AVMOutcomeValidationError, match="missing or incomplete value band metrics"):
+        generate_gate1_benchmark_receipt(
+            forged_report,
+            dataset_snapshot_id="snapshot-002",
+            dataset_snapshot_hash=VALID_DATASET_HASH,
+            model_artifact_hash=VALID_MODEL_HASH,
+            audit_receipt=audit_rcpt,
+        )
+
+    # Unverified audit receipt must fail receipt generation even on PASS report
+    fake_audit = {"sha256": "a" * 64, "total_access_attempts": 1, "permitted_count": 0, "denied_count": 1}
+    with pytest.raises(AVMOutcomeValidationError, match="forged or invalid PASS"):
+        generate_gate1_benchmark_receipt(
+            pass_report,
+            dataset_snapshot_id="snapshot-002",
+            dataset_snapshot_hash=VALID_DATASET_HASH,
+            model_artifact_hash=VALID_MODEL_HASH,
+            audit_receipt=fake_audit,
+        )
