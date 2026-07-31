@@ -1918,6 +1918,9 @@ def test_verify_watch_window_receipt_rejects_tampered_proof_or_circular_metric(t
         return 200, {
             "gcp_project": "alfaloop-data-project",
             "release_sha": test_sha,
+            "provider_receipt_id": f"prov-rcpt-{test_sha[:8]}",
+            "provider_signature": f"sig-sha256-{test_sha[:16]}",
+            "provider_readback_identity": f"readback-identity-alfaloop-data-project-{test_sha[:8]}",
             "timeSeries": [
                 {
                     "metric": {
@@ -2036,6 +2039,9 @@ def test_round5_reproduced_gaps_mutation_coverage(tmp_path: Path) -> None:
         return 200, {
             "gcp_project": "alfaloop-data-project",
             "release_sha": test_sha,
+            "provider_receipt_id": f"prov-rcpt-{test_sha[:8]}",
+            "provider_signature": f"sig-sha256-{test_sha[:16]}",
+            "provider_readback_identity": f"readback-identity-alfaloop-data-project-{test_sha[:8]}",
             "timeSeries": [
                 {
                     "metric": {

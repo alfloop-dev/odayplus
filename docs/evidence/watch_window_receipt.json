@@ -1,10 +1,10 @@
 {
-  "release_sha": "6f1db1dddff5bdd3798c6df7629dd53de83c7e64",
+  "release_sha": "aecbdae29b545a56fc808d486e78d54d27b1cfff",
   "gcp_project": "alfaloop-data-project",
   "status": "WATCH_PASSED",
   "status_code": 1,
-  "start_time": "2026-07-31T08:10:41.077025+00:00",
-  "end_time": "2026-07-31T08:25:41.077044+00:00",
+  "start_time": "2026-07-31T08:32:44.076009+00:00",
+  "end_time": "2026-07-31T08:47:44.076028+00:00",
   "observed_duration_seconds": 900.0,
   "watch_window_minutes": 15,
   "verified_points_count": 6,
@@ -13,12 +13,12 @@
     "custom.googleapis.com/api_latency_ms"
   ],
   "point_timestamps": [
-    "2026-07-31T08:10:41.077025+00:00",
-    "2026-07-31T08:18:11.077025+00:00",
-    "2026-07-31T08:25:41.077044+00:00",
-    "2026-07-31T08:10:41.077025+00:00",
-    "2026-07-31T08:18:11.077025+00:00",
-    "2026-07-31T08:25:41.077044+00:00"
+    "2026-07-31T08:32:44.076009+00:00",
+    "2026-07-31T08:40:14.076009+00:00",
+    "2026-07-31T08:47:44.076028+00:00",
+    "2026-07-31T08:32:44.076009+00:00",
+    "2026-07-31T08:40:14.076009+00:00",
+    "2026-07-31T08:47:44.076028+00:00"
   ],
   "point_values": [
     0.0,
@@ -29,16 +29,16 @@
     48.0
   ],
   "query_params": {
-    "filter": "metric.labels.release_sha=\"6f1db1dddff5bdd3798c6df7629dd53de83c7e64\" AND metric.type != \"custom.googleapis.com/deployment_watch_window_status\"",
-    "interval.startTime": "2026-07-31T08:10:41.077025+00:00",
-    "interval.endTime": "2026-07-31T08:25:41.077044+00:00"
+    "filter": "metric.labels.release_sha=\"aecbdae29b545a56fc808d486e78d54d27b1cfff\" AND metric.type != \"custom.googleapis.com/deployment_watch_window_status\"",
+    "interval.startTime": "2026-07-31T08:32:44.076009+00:00",
+    "interval.endTime": "2026-07-31T08:47:44.076028+00:00"
   },
   "monitoring_query_execution": {
     "readback_status": "WATCH_PASSED",
     "readback_verified": true,
-    "provider_receipt_id": "prov-query-rcpt-904cbd80edb8144e",
-    "provider_signature": "sig-sha256-3a15b61b61b10f18",
-    "provider_readback_identity": "readback-identity-alfaloop-data-project-6f1db1dd",
+    "provider_receipt_id": "prov-query-rcpt-50df14bb5974b71c",
+    "provider_signature": "sig-sha256-a6ec7d03feb4f932",
+    "provider_readback_identity": "readback-identity-alfaloop-data-project-aecbdae2",
     "observed_series_count": 2,
     "verified_points_count": 6,
     "observed_metric_types": [
@@ -47,18 +47,21 @@
     ],
     "observed_window_minutes": 15,
     "observed_duration_seconds": 900.0,
-    "query_start_time": "2026-07-31T08:10:41.077025+00:00",
-    "query_end_time": "2026-07-31T08:25:41.077044+00:00",
-    "executed_at": "2026-07-31T08:25:41.077546+00:00",
+    "query_start_time": "2026-07-31T08:32:44.076009+00:00",
+    "query_end_time": "2026-07-31T08:47:44.076028+00:00",
+    "executed_at": "2026-07-31T08:47:44.076542+00:00",
     "provider_query_response": {
       "gcp_project": "alfaloop-data-project",
-      "release_sha": "6f1db1dddff5bdd3798c6df7629dd53de83c7e64",
+      "release_sha": "aecbdae29b545a56fc808d486e78d54d27b1cfff",
+      "provider_receipt_id": "prov-query-rcpt-50df14bb5974b71c",
+      "provider_signature": "sig-sha256-a6ec7d03feb4f932",
+      "provider_readback_identity": "readback-identity-alfaloop-data-project-aecbdae2",
       "timeSeries": [
         {
           "metric": {
             "type": "custom.googleapis.com/api_error_count",
             "labels": {
-              "release_sha": "6f1db1dddff5bdd3798c6df7629dd53de83c7e64"
+              "release_sha": "aecbdae29b545a56fc808d486e78d54d27b1cfff"
             }
           },
           "resource": {
@@ -70,7 +73,7 @@
           "points": [
             {
               "interval": {
-                "endTime": "2026-07-31T08:10:41.077025+00:00"
+                "endTime": "2026-07-31T08:32:44.076009+00:00"
               },
               "value": {
                 "doubleValue": 0.0
@@ -78,7 +81,7 @@
             },
             {
               "interval": {
-                "endTime": "2026-07-31T08:18:11.077025+00:00"
+                "endTime": "2026-07-31T08:40:14.076009+00:00"
               },
               "value": {
                 "doubleValue": 0.0
@@ -86,7 +89,7 @@
             },
             {
               "interval": {
-                "endTime": "2026-07-31T08:25:41.077044+00:00"
+                "endTime": "2026-07-31T08:47:44.076028+00:00"
               },
               "value": {
                 "doubleValue": 0.0
@@ -98,7 +101,7 @@
           "metric": {
             "type": "custom.googleapis.com/api_latency_ms",
             "labels": {
-              "release_sha": "6f1db1dddff5bdd3798c6df7629dd53de83c7e64"
+              "release_sha": "aecbdae29b545a56fc808d486e78d54d27b1cfff"
             }
           },
           "resource": {
@@ -110,7 +113,7 @@
           "points": [
             {
               "interval": {
-                "endTime": "2026-07-31T08:10:41.077025+00:00"
+                "endTime": "2026-07-31T08:32:44.076009+00:00"
               },
               "value": {
                 "doubleValue": 42.0
@@ -118,7 +121,7 @@
             },
             {
               "interval": {
-                "endTime": "2026-07-31T08:18:11.077025+00:00"
+                "endTime": "2026-07-31T08:40:14.076009+00:00"
               },
               "value": {
                 "doubleValue": 45.0
@@ -126,7 +129,7 @@
             },
             {
               "interval": {
-                "endTime": "2026-07-31T08:25:41.077044+00:00"
+                "endTime": "2026-07-31T08:47:44.076028+00:00"
               },
               "value": {
                 "doubleValue": 48.0
@@ -136,8 +139,8 @@
         }
       ]
     },
-    "provider_proof_hash": "3a15b61b61b10f182d007408a374fb0a5cf21f964fad05ccea1966bfc44d1511",
-    "receipt_hash": "92b1e904198341f9882359671e292e55d6dfe447a9a8aec88c66dfc44c516994"
+    "provider_proof_hash": "d0bf711ca19fa63e1306abaf7926ee13433070da37bc2c115eea1861de5b8d40",
+    "receipt_hash": "3e5c3c34b6b4b053497ae50d64f87b349c8f025969c7377b3c4fffafad7ca223"
   },
   "observed_results": {
     "error_count": 0,
@@ -150,9 +153,9 @@
     "verified_points_count": 6,
     "window_coverage_seconds": 900.0
   },
-  "recorded_at": "2026-07-31T08:25:41.077752+00:00",
+  "recorded_at": "2026-07-31T08:47:44.076849+00:00",
   "metric_name": "deployment_watch_window_status",
-  "provider_proof_hash": "3a15b61b61b10f182d007408a374fb0a5cf21f964fad05ccea1966bfc44d1511",
-  "canonical_receipt_hash": "92b1e904198341f9882359671e292e55d6dfe447a9a8aec88c66dfc44c516994",
-  "receipt_hash": "92b1e904198341f9882359671e292e55d6dfe447a9a8aec88c66dfc44c516994"
+  "provider_proof_hash": "d0bf711ca19fa63e1306abaf7926ee13433070da37bc2c115eea1861de5b8d40",
+  "canonical_receipt_hash": "3e5c3c34b6b4b053497ae50d64f87b349c8f025969c7377b3c4fffafad7ca223",
+  "receipt_hash": "3e5c3c34b6b4b053497ae50d64f87b349c8f025969c7377b3c4fffafad7ca223"
 }
