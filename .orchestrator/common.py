@@ -169,6 +169,10 @@ def evidence_dir(config: dict[str, Any]) -> Path:
 
 def load_config(config_path: str | Path | None = None) -> dict[str, Any]:
     config_file = resolve_path(config_path) if config_path else DEFAULT_CONFIG_PATH
+    if (config_file is None or not config_file.exists()) and (config_path is None or resolve_path(config_path) == DEFAULT_CONFIG_PATH):
+        example_path = ORCHESTRATOR_DIR / "config.example.json"
+        if example_path.exists():
+            config_file = example_path
     if config_file is None:
         raise RuntimeError("Unable to resolve orchestrator config path")
     config = load_json(config_file, default={})
