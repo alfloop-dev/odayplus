@@ -99,3 +99,26 @@ class LoadRuntimeStateTests(unittest.TestCase):
         self.assertEqual(state["watchdog"]["safe_mode_until"], "2026-05-18T14:30:00Z")
         self.assertEqual(state["watchdog"]["safe_mode_reason"], "stale_heartbeat")
         self.assertIn("last_safe_mode_observed_until", state["watchdog"])
+
+    def test_ready_dispatch_weighted_cursor_survives_save_and_reload(self) -> None:
+        (self.root / "event-queue.jsonl").write_text("", encoding="utf-8")
+        state = runtime_state.default_state()
+        state["ready_dispatcher"]["weighted_cursor"] = 73
+
+        runtime_state.save_runtime_state(self.config, state)
+        reloaded = runtime_state.load_runtime_state(self.config)
+
+        self.assertEqual(reloaded["ready_dispatcher"]["weighted_cursor"], 73)
+
+    def test_ready_dispatch_weighted_cursor_migration_fails_safe(self) -> None:
+        malformed_values = (
+            None,
+            [],
+            "front",
+            {"weighted_cursor": "invalid"},
+            {"weighted_cursor": -9},
+        )
+        for malformed in malformed_values:
+            with self.subTest(malformed=malformed):
+                migrated = runtime_state.migrate_state({"ready_dispatcher": malformed})
+                self.assertEqual(migrated["ready_dispatcher"]["weighted_cursor"], 0)

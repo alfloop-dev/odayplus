@@ -29,6 +29,12 @@ def default_state() -> dict[str, Any]:
         "recent_terminal_tasks": [],
         "pending_handoff_keys": [],
         "seen_event_keys": {},
+        # The weighted ready-dispatch cursor is durable scheduling state. If it
+        # is dropped between loops, agents near the front of the sequence can
+        # consume the per-tick budget forever and starve later reviewers.
+        "ready_dispatcher": {
+            "weighted_cursor": 0,
+        },
         "queue": {
             "events": {},
         },
@@ -112,6 +118,16 @@ def migrate_state(raw: dict[str, Any] | None) -> dict[str, Any]:
     state["recent_terminal_tasks"] = recent_terminal_tasks if isinstance(recent_terminal_tasks, list) else []
     state.setdefault("pending_handoff_keys", [])
     state.setdefault("seen_event_keys", {})
+    ready_dispatcher = state.get("ready_dispatcher")
+    if not isinstance(ready_dispatcher, dict):
+        ready_dispatcher = {}
+        state["ready_dispatcher"] = ready_dispatcher
+    try:
+        ready_dispatcher["weighted_cursor"] = max(
+            0, int(ready_dispatcher.get("weighted_cursor", 0))
+        )
+    except (TypeError, ValueError):
+        ready_dispatcher["weighted_cursor"] = 0
     state.setdefault("queue", {})
     state["queue"].setdefault("events", {})
     state.setdefault("workers", {})

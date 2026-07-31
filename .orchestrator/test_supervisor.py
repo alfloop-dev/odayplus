@@ -29,6 +29,7 @@ _TEST_STATUS_ROOT = Path(_TEST_STATUS_ROOT_HANDLE.name).resolve()
 os.environ["PANTHEON_STATUS_ROOT"] = str(_TEST_STATUS_ROOT)
 
 import ai_status
+import runtime_state
 import supervisor
 
 
@@ -958,6 +959,63 @@ class ProcessQueueDispatchGuardTests(unittest.TestCase):
         create_worktree.assert_called_once_with(repo_root.resolve(), expected_path, "task/OPS-WORKTREE-001", "origin/dev")
         self.assertEqual(write_activity_log.call_args.args[1]["type"], "worker_worktree_allocated")
 
+    def test_review_dispatch_uses_task_branch_not_mainline_worktree(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo_root = Path(tmpdir) / "pantheon"
+            repo_root.mkdir()
+            worktree_root = Path(tmpdir) / "workers"
+            config = {
+                **self.config,
+                "paths": {"status_file": str(repo_root / "ai-status.json")},
+                "branch_workflow": {"task_branch_prefix": "task/", "dev_branch": "dev"},
+                "worker_worktrees": {
+                    "enabled": True,
+                    "root": str(worktree_root),
+                    "base_ref": "origin/dev",
+                    "reuse_existing": True,
+                },
+            }
+            state: dict[str, object] = {}
+            request = supervisor.DeliveryRequest(
+                agent_id="codex",
+                provider="codex",
+                delivery_mode="codex",
+                message="review exact task head",
+                task_id="ODP-PLAN-REVIEW-001",
+                reason="review_ready_dispatch",
+            )
+
+            with (
+                mock.patch.object(supervisor, "_existing_worktree_for_branch", return_value=None),
+                mock.patch.object(supervisor, "_branch_checked_out_in_root", return_value=False),
+                mock.patch.object(
+                    supervisor,
+                    "_create_worker_worktree",
+                    return_value=(True, None),
+                ) as create_worktree,
+                mock.patch.object(supervisor, "write_activity_log"),
+            ):
+                ok, message = supervisor.prepare_worker_workspace(
+                    config,
+                    state,
+                    request,
+                    queue_event_id="evt-review",
+                    target_agent="Codex",
+                )
+
+        expected_path = worktree_root / "pantheon" / "odp-plan-review-001"
+        self.assertTrue(ok)
+        self.assertIsNone(message)
+        self.assertEqual(request.metadata["workspace_branch"], "task/ODP-PLAN-REVIEW-001")
+        self.assertNotEqual(request.metadata["workspace_branch"], "dev")
+        self.assertNotEqual(request.metadata["workspace_branch"], "main")
+        create_worktree.assert_called_once_with(
+            repo_root.resolve(),
+            expected_path,
+            "task/ODP-PLAN-REVIEW-001",
+            "origin/dev",
+        )
+
     def test_prepare_worker_workspace_allocates_chair_review_worktree_metadata(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             repo_root = Path(tmpdir) / "pantheon"
@@ -1837,6 +1895,173 @@ class ProcessQueueDispatchGuardTests(unittest.TestCase):
                 "copilot": 1,
             },
         )
+
+    def test_persisted_weighted_cursor_prevents_review_starvation(self) -> None:
+        config = {
+            "schema": {
+                "tasks_path": "tasks",
+                "task_id_field": "id",
+                "assignee_field": "owner",
+                "reviewer_field": "reviewer",
+            },
+            "ready_dispatcher": {
+                "enabled": True,
+                "review_statuses": ["review"],
+                "owned_statuses": ["in_progress", "todo"],
+                "active_worker_statuses": ["running"],
+                "max_dispatches_per_tick": 1,
+                "target_workload": {"Antigravity": 1, "Codex": 1},
+                "helper_claim": {"enabled": False},
+            },
+            "agents": {
+                "antigravity": {
+                    "id": "antigravity",
+                    "display_name": "Antigravity",
+                    "provider": "antigravity",
+                },
+                "codex": {
+                    "id": "codex",
+                    "display_name": "Codex",
+                    "provider": "codex",
+                },
+            },
+            "providers": {},
+        }
+        status = {
+            "tasks": [
+                {
+                    "id": "OWNER-FIRST",
+                    "status": "todo",
+                    "owner": "Antigravity",
+                    "reviewer": "Codex",
+                    "depends_on": [],
+                },
+                {
+                    "id": "REVIEW-LATER",
+                    "status": "review",
+                    "owner": "Antigravity",
+                    "reviewer": "Codex",
+                    "depends_on": [],
+                },
+            ]
+        }
+        state = runtime_state.default_state()
+        first_round: list[dict[str, Any]] = []
+        second_round: list[dict[str, Any]] = []
+
+        common_patches = (
+            mock.patch.object(supervisor, "load_status", return_value=status),
+            mock.patch.object(supervisor, "load_event_queue", return_value=[]),
+            mock.patch.object(
+                supervisor,
+                "outstanding_delivery_indexes",
+                return_value=(set(), set(), set()),
+            ),
+            mock.patch.object(supervisor, "scan_live_worker_pids_by_agent", return_value={}),
+            mock.patch.object(supervisor, "agent_auto_dispatch_block_reason", return_value=None),
+            mock.patch.object(supervisor, "normalize_mainline_task_assignment", return_value=False),
+        )
+        with contextlib.ExitStack() as stack:
+            for patcher in common_patches:
+                stack.enter_context(patcher)
+            stack.enter_context(
+                mock.patch.object(
+                    supervisor,
+                    "queue_delivery_event",
+                    side_effect=lambda _config, event: first_round.append(event) or True,
+                )
+            )
+            self.assertTrue(supervisor.dispatch_ready_tasks(config, state, provider_report={}))
+
+        self.assertEqual(first_round[0]["task_id"], "OWNER-FIRST")
+        self.assertEqual(state["ready_dispatcher"]["weighted_cursor"], 1)
+
+        # Simulate the end-of-loop save/reload boundary that previously erased
+        # the cursor and restarted every round from Antigravity.
+        state = runtime_state.migrate_state(deepcopy(state))
+        with contextlib.ExitStack() as stack:
+            for patcher in (
+                mock.patch.object(supervisor, "load_status", return_value=status),
+                mock.patch.object(supervisor, "load_event_queue", return_value=[]),
+                mock.patch.object(
+                    supervisor,
+                    "outstanding_delivery_indexes",
+                    return_value=(set(), set(), set()),
+                ),
+                mock.patch.object(supervisor, "scan_live_worker_pids_by_agent", return_value={}),
+                mock.patch.object(supervisor, "agent_auto_dispatch_block_reason", return_value=None),
+                mock.patch.object(supervisor, "normalize_mainline_task_assignment", return_value=False),
+                mock.patch.object(
+                    supervisor,
+                    "queue_delivery_event",
+                    side_effect=lambda _config, event: second_round.append(event) or True,
+                ),
+            ):
+                stack.enter_context(patcher)
+            self.assertTrue(supervisor.dispatch_ready_tasks(config, state, provider_report={}))
+
+        self.assertEqual(second_round[0]["task_id"], "REVIEW-LATER")
+        self.assertEqual(second_round[0]["target_agent"], "Codex")
+        self.assertEqual(second_round[0]["reason"], "review_ready_dispatch")
+
+    def test_dispatcher_fails_closed_on_owner_self_review(self) -> None:
+        config = {
+            "schema": {
+                "tasks_path": "tasks",
+                "task_id_field": "id",
+                "assignee_field": "owner",
+                "reviewer_field": "reviewer",
+            },
+            "ready_dispatcher": {
+                "enabled": True,
+                "review_statuses": ["review"],
+                "active_worker_statuses": ["running"],
+                "helper_claim": {"enabled": False},
+            },
+            "agents": {
+                "codex": {
+                    "id": "codex",
+                    "display_name": "Codex",
+                    "provider": "codex",
+                }
+            },
+            "providers": {},
+        }
+        status = {
+            "tasks": [
+                {
+                    "id": "INVALID-SELF-REVIEW",
+                    "status": "review",
+                    "owner": "Codex",
+                    "reviewer": "Codex",
+                    "depends_on": [],
+                }
+            ]
+        }
+        state = runtime_state.default_state()
+
+        with (
+            mock.patch.object(supervisor, "load_status", return_value=status),
+            mock.patch.object(supervisor, "load_event_queue", return_value=[]),
+            mock.patch.object(
+                supervisor,
+                "outstanding_delivery_indexes",
+                return_value=(set(), set(), set()),
+            ),
+            mock.patch.object(supervisor, "scan_live_worker_pids_by_agent", return_value={}),
+            mock.patch.object(supervisor, "agent_auto_dispatch_block_reason", return_value=None),
+            mock.patch.object(supervisor, "normalize_mainline_task_assignment", return_value=False),
+            mock.patch.object(supervisor, "queue_delivery_event") as queue_delivery_event,
+        ):
+            changed = supervisor.dispatch_ready_tasks(
+                config,
+                state,
+                provider_report={},
+                agent_ids_override=["codex"],
+            )
+
+        self.assertFalse(changed)
+        queue_delivery_event.assert_not_called()
 
     def test_dispatcher_queues_owner_finalize_after_review_approved(self) -> None:
         current_task = {

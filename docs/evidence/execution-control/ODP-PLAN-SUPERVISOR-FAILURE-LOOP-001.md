@@ -413,3 +413,76 @@ clean
 This closes the owner-side R16 remediation. Exact-head independent re-review,
 PR/CI, merge, worker drain, and safe live Supervisor rollout remain separate
 required gates. No live Supervisor restart or deployment was performed.
+
+---
+
+## 9. Coordinator completion addendum — R17
+
+After the R16 handoff, three valid independent reviews remained ready but were
+not automatically dispatched:
+
+- `ODP-PLAN-NETPLAN-ACCEPTANCE-001` → `Codex`
+- `ODP-PLAN-ACCEPTANCE-REAL-EXEC-001` → `Codex2`
+- `ODP-PLAN-SITESCORE-OUTCOME-001` → `Codex6`
+
+Read-only live diagnostics proved that all three reviewers were enabled, below
+their agent capacity, outside provider/failure-loop/chair-triage blocks, and
+eligible for `review_ready_dispatch`. The live state nevertheless had no
+`ready_dispatcher` object after repeated successful Supervisor loops.
+
+The exact fault was state migration, not GitHub PR eligibility. The dispatcher
+advanced `state["ready_dispatcher"]["weighted_cursor"]`, but
+`runtime_state.migrate_state()` discarded that unknown top-level key on every
+save. Every loop therefore restarted the weighted sequence at index zero.
+Early Auto Worker candidates could repeatedly consume the per-tick dispatch
+budget before the later Codex reviewer entries were considered. Concurrent
+`github_review_pr_skipped` events about `dev` versus `main` were orthogonal and
+were not used as a false fix target.
+
+### R17: durable fair review dispatch
+
+`ready_dispatcher.weighted_cursor` is now part of the versioned runtime-state
+default and migration contract. Save/reload and process restart preserve valid
+cursors; malformed, negative, or non-object legacy values fail safely to zero.
+The existing cursor modulo logic remains authoritative when fleet weights
+change.
+
+The regression reproduces the live starvation shape with a one-dispatch tick:
+an Auto Worker consumes round one, the runtime state crosses an actual migration
+boundary, and round two must resume at `Codex` and emit
+`review_ready_dispatch`. A branch isolation regression proves that a review
+worker is allocated on `task/<TASK-ID>`, never `dev` or `main`. A defense-in-depth
+negative case also rejects an externally corrupted owner-self-review assignment
+before any queue event is emitted. Existing active/pending task-pair guards
+continue to prevent duplicate workers.
+
+### R17 verification receipts
+
+```text
+AI_NAME=Codex6 PYTHONPATH=.orchestrator \
+  python3 -m unittest test_supervisor test_model_rotation \
+    test_adapter_fallback_policy test_runtime_state
+Ran 287 tests in 0.895s
+OK
+
+AI_NAME=Codex6 python3 -m unittest scripts.test_ai_status
+Ran 101 tests in 0.417s
+OK
+
+AI_NAME=Codex6 python3 .orchestrator/doctor.py
+exit 0
+
+uv run ruff check .orchestrator/runtime_state.py \
+  .orchestrator/supervisor.py .orchestrator/test_runtime_state.py \
+  .orchestrator/test_supervisor.py
+All checks passed
+
+git diff --check
+clean
+```
+
+This closes the owner-side R17 remediation. The live PID was deliberately not
+restarted while OSS and Observability workers were active. Exact-head
+independent review, PR/CI, merge, worker drain, and a controlled Supervisor
+rollout remain required before the control fix can affect live dispatch. No
+production deployment was performed.

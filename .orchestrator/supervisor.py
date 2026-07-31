@@ -9202,6 +9202,14 @@ def dispatch_ready_tasks(
             reason = None
             priority = None
             if task_status in review_statuses and task_reviewer == target_agent:
+                # The status CLI rejects identical owner/reviewer assignments,
+                # but dispatch must still fail closed if a stale or externally
+                # edited snapshot reaches the Supervisor. Never spend a worker
+                # slot on an approval that would be an owner self-review.
+                if normalize_agent_id(str(task_owner or "")) == normalize_agent_id(
+                    str(task_reviewer or "")
+                ):
+                    continue
                 reason = "review_ready_dispatch"
                 priority = 0
             elif task_status in finalize_statuses and task_owner == target_agent:
