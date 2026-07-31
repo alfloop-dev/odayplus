@@ -1,0 +1,507 @@
+{
+  "schema_version": "2.0.0",
+  "runner": "pytest",
+  "source": {
+    "commit_sha": "b5effe0f177acf6c2a7a77fc37048b7d7fdc700b",
+    "tree_sha": "8df5a1516af19a63ffd51834485e8c2c22e99eac"
+  },
+  "run": {
+    "command": "/tmp/pantheon-worker-worktrees/oday-plus-supervisor-live/odp-plan-supervisor-failure-loop-001/.venv/bin/python3 -m pytest -q tests/integration/test_avm_official_outcome_contract.py::test_official_outcome_migration_has_bounded_source_and_provenance_contracts tests/integration/test_intervention_workflow.py::test_full_lifecycle_reaches_completed_with_causal_evidence_and_label tests/integration/test_priceops_constraints.py::test_full_pilot_lifecycle_records_complete_status_history tests/integration/test_adlift_incrementality.py::test_difference_in_differences_isolates_ad_lift_from_market_movement tests/integration/test_learninghub_release.py::test_governed_release_invokes_remote_mlflow_alias_updates tests/integration/test_learninghub_release.py::test_learninghub_validates_releases_and_rolls_back_model_aliases tests/integration/test_learninghub_release.py::test_learninghub_blocks_release_without_passed_validation_or_model_card tests/data/test_pit_snapshot.py::test_point_in_time_validation_rejects_future_feature_snapshot tests/security/test_rbac_abac.py::test_rbac_denies_action_outside_role tests/security/test_rbac_abac.py::test_tenant_isolation_blocks_other_tenant",
+    "version": "pytest 9.1.1; python 3.12.3",
+    "started_at": "2026-07-31T15:03:19.834776Z",
+    "ended_at": "2026-07-31T15:03:47.310394Z",
+    "exit_code": 0,
+    "environment": {
+      "platform": "linux",
+      "python_executable": "/tmp/pantheon-worker-worktrees/oday-plus-supervisor-live/odp-plan-supervisor-failure-loop-001/.venv/bin/python3",
+      "node_id_count": "10"
+    }
+  },
+  "payload": {
+    "requested_node_ids": [
+      "tests/integration/test_avm_official_outcome_contract.py::test_official_outcome_migration_has_bounded_source_and_provenance_contracts",
+      "tests/integration/test_intervention_workflow.py::test_full_lifecycle_reaches_completed_with_causal_evidence_and_label",
+      "tests/integration/test_priceops_constraints.py::test_full_pilot_lifecycle_records_complete_status_history",
+      "tests/integration/test_adlift_incrementality.py::test_difference_in_differences_isolates_ad_lift_from_market_movement",
+      "tests/integration/test_learninghub_release.py::test_governed_release_invokes_remote_mlflow_alias_updates",
+      "tests/integration/test_learninghub_release.py::test_learninghub_validates_releases_and_rolls_back_model_aliases",
+      "tests/integration/test_learninghub_release.py::test_learninghub_blocks_release_without_passed_validation_or_model_card",
+      "tests/data/test_pit_snapshot.py::test_point_in_time_validation_rejects_future_feature_snapshot",
+      "tests/security/test_rbac_abac.py::test_rbac_denies_action_outside_role",
+      "tests/security/test_rbac_abac.py::test_tenant_isolation_blocks_other_tenant"
+    ],
+    "phase_reports": {
+      "tests/integration/test_avm_official_outcome_contract.py::test_official_outcome_migration_has_bounded_source_and_provenance_contracts": [
+        {
+          "phase": "setup",
+          "outcome": "passed",
+          "duration_seconds": 0.046486167004331946,
+          "longrepr": null
+        },
+        {
+          "phase": "call",
+          "outcome": "passed",
+          "duration_seconds": 0.0020775969605892897,
+          "longrepr": null
+        },
+        {
+          "phase": "teardown",
+          "outcome": "passed",
+          "duration_seconds": 0.000423571967985481,
+          "longrepr": null
+        }
+      ],
+      "tests/integration/test_intervention_workflow.py::test_full_lifecycle_reaches_completed_with_causal_evidence_and_label": [
+        {
+          "phase": "setup",
+          "outcome": "passed",
+          "duration_seconds": 0.0006557170418091118,
+          "longrepr": null
+        },
+        {
+          "phase": "call",
+          "outcome": "passed",
+          "duration_seconds": 0.0018560780445113778,
+          "longrepr": null
+        },
+        {
+          "phase": "teardown",
+          "outcome": "passed",
+          "duration_seconds": 0.0005001109675504267,
+          "longrepr": null
+        }
+      ],
+      "tests/integration/test_priceops_constraints.py::test_full_pilot_lifecycle_records_complete_status_history": [
+        {
+          "phase": "setup",
+          "outcome": "passed",
+          "duration_seconds": 0.000639170000795275,
+          "longrepr": null
+        },
+        {
+          "phase": "call",
+          "outcome": "passed",
+          "duration_seconds": 0.0013370129745453596,
+          "longrepr": null
+        },
+        {
+          "phase": "teardown",
+          "outcome": "passed",
+          "duration_seconds": 0.00038777198642492294,
+          "longrepr": null
+        }
+      ],
+      "tests/integration/test_adlift_incrementality.py::test_difference_in_differences_isolates_ad_lift_from_market_movement": [
+        {
+          "phase": "setup",
+          "outcome": "passed",
+          "duration_seconds": 0.0006503189797513187,
+          "longrepr": null
+        },
+        {
+          "phase": "call",
+          "outcome": "passed",
+          "duration_seconds": 2.6166118159890175,
+          "longrepr": null
+        },
+        {
+          "phase": "teardown",
+          "outcome": "passed",
+          "duration_seconds": 0.0007628989988006651,
+          "longrepr": null
+        }
+      ],
+      "tests/integration/test_learninghub_release.py::test_governed_release_invokes_remote_mlflow_alias_updates": [
+        {
+          "phase": "setup",
+          "outcome": "passed",
+          "duration_seconds": 0.0011708940146490932,
+          "longrepr": null
+        },
+        {
+          "phase": "call",
+          "outcome": "passed",
+          "duration_seconds": 3.9718122250051238,
+          "longrepr": null
+        },
+        {
+          "phase": "teardown",
+          "outcome": "passed",
+          "duration_seconds": 0.0006372070056386292,
+          "longrepr": null
+        }
+      ],
+      "tests/integration/test_learninghub_release.py::test_learninghub_validates_releases_and_rolls_back_model_aliases": [
+        {
+          "phase": "setup",
+          "outcome": "passed",
+          "duration_seconds": 0.0011646620114333928,
+          "longrepr": null
+        },
+        {
+          "phase": "call",
+          "outcome": "passed",
+          "duration_seconds": 6.5794430379755795,
+          "longrepr": null
+        },
+        {
+          "phase": "teardown",
+          "outcome": "passed",
+          "duration_seconds": 0.0004265930037945509,
+          "longrepr": null
+        }
+      ],
+      "tests/integration/test_learninghub_release.py::test_learninghub_blocks_release_without_passed_validation_or_model_card": [
+        {
+          "phase": "setup",
+          "outcome": "passed",
+          "duration_seconds": 0.0007057259790599346,
+          "longrepr": null
+        },
+        {
+          "phase": "call",
+          "outcome": "passed",
+          "duration_seconds": 2.386486725008581,
+          "longrepr": null
+        },
+        {
+          "phase": "teardown",
+          "outcome": "passed",
+          "duration_seconds": 0.000578076986130327,
+          "longrepr": null
+        }
+      ],
+      "tests/data/test_pit_snapshot.py::test_point_in_time_validation_rejects_future_feature_snapshot": [
+        {
+          "phase": "setup",
+          "outcome": "passed",
+          "duration_seconds": 0.000759635993745178,
+          "longrepr": null
+        },
+        {
+          "phase": "call",
+          "outcome": "passed",
+          "duration_seconds": 0.0003895389963872731,
+          "longrepr": null
+        },
+        {
+          "phase": "teardown",
+          "outcome": "passed",
+          "duration_seconds": 0.0003548160311765969,
+          "longrepr": null
+        }
+      ],
+      "tests/security/test_rbac_abac.py::test_rbac_denies_action_outside_role": [
+        {
+          "phase": "setup",
+          "outcome": "passed",
+          "duration_seconds": 0.0006078110309317708,
+          "longrepr": null
+        },
+        {
+          "phase": "call",
+          "outcome": "passed",
+          "duration_seconds": 0.0002833660109899938,
+          "longrepr": null
+        },
+        {
+          "phase": "teardown",
+          "outcome": "passed",
+          "duration_seconds": 0.00038370100082829595,
+          "longrepr": null
+        }
+      ],
+      "tests/security/test_rbac_abac.py::test_tenant_isolation_blocks_other_tenant": [
+        {
+          "phase": "setup",
+          "outcome": "passed",
+          "duration_seconds": 0.0005947320023551583,
+          "longrepr": null
+        },
+        {
+          "phase": "call",
+          "outcome": "passed",
+          "duration_seconds": 0.0006110590184107423,
+          "longrepr": null
+        },
+        {
+          "phase": "teardown",
+          "outcome": "passed",
+          "duration_seconds": 0.00028814596589654684,
+          "longrepr": null
+        }
+      ]
+    },
+    "collection_errors": [],
+    "runner_start_source": {
+      "commit_sha": "b5effe0f177acf6c2a7a77fc37048b7d7fdc700b",
+      "tree_sha": "8df5a1516af19a63ffd51834485e8c2c22e99eac"
+    }
+  },
+  "payload_sha256": "5112218596accfdcd37db94cd6a17235d38860607ec0cfa601e00b76bf438103",
+  "counts": {
+    "total_specs": 0,
+    "total_tests": 10,
+    "passed": 10,
+    "failed": 0,
+    "skipped": 0,
+    "timed_out": 0,
+    "interrupted": 0,
+    "flaky": 0,
+    "malformed": 0
+  },
+  "results": [
+    {
+      "test_id": "tests/integration/test_avm_official_outcome_contract.py::test_official_outcome_migration_has_bounded_source_and_provenance_contracts",
+      "status": "passed",
+      "duration_ms": 48.987,
+      "phases": [
+        {
+          "phase": "setup",
+          "outcome": "passed",
+          "duration_seconds": 0.046486167004331946,
+          "longrepr": null
+        },
+        {
+          "phase": "call",
+          "outcome": "passed",
+          "duration_seconds": 0.0020775969605892897,
+          "longrepr": null
+        },
+        {
+          "phase": "teardown",
+          "outcome": "passed",
+          "duration_seconds": 0.000423571967985481,
+          "longrepr": null
+        }
+      ]
+    },
+    {
+      "test_id": "tests/integration/test_intervention_workflow.py::test_full_lifecycle_reaches_completed_with_causal_evidence_and_label",
+      "status": "passed",
+      "duration_ms": 3.012,
+      "phases": [
+        {
+          "phase": "setup",
+          "outcome": "passed",
+          "duration_seconds": 0.0006557170418091118,
+          "longrepr": null
+        },
+        {
+          "phase": "call",
+          "outcome": "passed",
+          "duration_seconds": 0.0018560780445113778,
+          "longrepr": null
+        },
+        {
+          "phase": "teardown",
+          "outcome": "passed",
+          "duration_seconds": 0.0005001109675504267,
+          "longrepr": null
+        }
+      ]
+    },
+    {
+      "test_id": "tests/integration/test_priceops_constraints.py::test_full_pilot_lifecycle_records_complete_status_history",
+      "status": "passed",
+      "duration_ms": 2.364,
+      "phases": [
+        {
+          "phase": "setup",
+          "outcome": "passed",
+          "duration_seconds": 0.000639170000795275,
+          "longrepr": null
+        },
+        {
+          "phase": "call",
+          "outcome": "passed",
+          "duration_seconds": 0.0013370129745453596,
+          "longrepr": null
+        },
+        {
+          "phase": "teardown",
+          "outcome": "passed",
+          "duration_seconds": 0.00038777198642492294,
+          "longrepr": null
+        }
+      ]
+    },
+    {
+      "test_id": "tests/integration/test_adlift_incrementality.py::test_difference_in_differences_isolates_ad_lift_from_market_movement",
+      "status": "passed",
+      "duration_ms": 2618.025,
+      "phases": [
+        {
+          "phase": "setup",
+          "outcome": "passed",
+          "duration_seconds": 0.0006503189797513187,
+          "longrepr": null
+        },
+        {
+          "phase": "call",
+          "outcome": "passed",
+          "duration_seconds": 2.6166118159890175,
+          "longrepr": null
+        },
+        {
+          "phase": "teardown",
+          "outcome": "passed",
+          "duration_seconds": 0.0007628989988006651,
+          "longrepr": null
+        }
+      ]
+    },
+    {
+      "test_id": "tests/integration/test_learninghub_release.py::test_governed_release_invokes_remote_mlflow_alias_updates",
+      "status": "passed",
+      "duration_ms": 3973.62,
+      "phases": [
+        {
+          "phase": "setup",
+          "outcome": "passed",
+          "duration_seconds": 0.0011708940146490932,
+          "longrepr": null
+        },
+        {
+          "phase": "call",
+          "outcome": "passed",
+          "duration_seconds": 3.9718122250051238,
+          "longrepr": null
+        },
+        {
+          "phase": "teardown",
+          "outcome": "passed",
+          "duration_seconds": 0.0006372070056386292,
+          "longrepr": null
+        }
+      ]
+    },
+    {
+      "test_id": "tests/integration/test_learninghub_release.py::test_learninghub_validates_releases_and_rolls_back_model_aliases",
+      "status": "passed",
+      "duration_ms": 6581.034,
+      "phases": [
+        {
+          "phase": "setup",
+          "outcome": "passed",
+          "duration_seconds": 0.0011646620114333928,
+          "longrepr": null
+        },
+        {
+          "phase": "call",
+          "outcome": "passed",
+          "duration_seconds": 6.5794430379755795,
+          "longrepr": null
+        },
+        {
+          "phase": "teardown",
+          "outcome": "passed",
+          "duration_seconds": 0.0004265930037945509,
+          "longrepr": null
+        }
+      ]
+    },
+    {
+      "test_id": "tests/integration/test_learninghub_release.py::test_learninghub_blocks_release_without_passed_validation_or_model_card",
+      "status": "passed",
+      "duration_ms": 2387.771,
+      "phases": [
+        {
+          "phase": "setup",
+          "outcome": "passed",
+          "duration_seconds": 0.0007057259790599346,
+          "longrepr": null
+        },
+        {
+          "phase": "call",
+          "outcome": "passed",
+          "duration_seconds": 2.386486725008581,
+          "longrepr": null
+        },
+        {
+          "phase": "teardown",
+          "outcome": "passed",
+          "duration_seconds": 0.000578076986130327,
+          "longrepr": null
+        }
+      ]
+    },
+    {
+      "test_id": "tests/data/test_pit_snapshot.py::test_point_in_time_validation_rejects_future_feature_snapshot",
+      "status": "passed",
+      "duration_ms": 1.504,
+      "phases": [
+        {
+          "phase": "setup",
+          "outcome": "passed",
+          "duration_seconds": 0.000759635993745178,
+          "longrepr": null
+        },
+        {
+          "phase": "call",
+          "outcome": "passed",
+          "duration_seconds": 0.0003895389963872731,
+          "longrepr": null
+        },
+        {
+          "phase": "teardown",
+          "outcome": "passed",
+          "duration_seconds": 0.0003548160311765969,
+          "longrepr": null
+        }
+      ]
+    },
+    {
+      "test_id": "tests/security/test_rbac_abac.py::test_rbac_denies_action_outside_role",
+      "status": "passed",
+      "duration_ms": 1.275,
+      "phases": [
+        {
+          "phase": "setup",
+          "outcome": "passed",
+          "duration_seconds": 0.0006078110309317708,
+          "longrepr": null
+        },
+        {
+          "phase": "call",
+          "outcome": "passed",
+          "duration_seconds": 0.0002833660109899938,
+          "longrepr": null
+        },
+        {
+          "phase": "teardown",
+          "outcome": "passed",
+          "duration_seconds": 0.00038370100082829595,
+          "longrepr": null
+        }
+      ]
+    },
+    {
+      "test_id": "tests/security/test_rbac_abac.py::test_tenant_isolation_blocks_other_tenant",
+      "status": "passed",
+      "duration_ms": 1.494,
+      "phases": [
+        {
+          "phase": "setup",
+          "outcome": "passed",
+          "duration_seconds": 0.0005947320023551583,
+          "longrepr": null
+        },
+        {
+          "phase": "call",
+          "outcome": "passed",
+          "duration_seconds": 0.0006110590184107423,
+          "longrepr": null
+        },
+        {
+          "phase": "teardown",
+          "outcome": "passed",
+          "duration_seconds": 0.00028814596589654684,
+          "longrepr": null
+        }
+      ]
+    }
+  ],
+  "integrity_errors": [],
+  "normalized_artifact_sha256": "c5c080dcb50289824dd667298463faee94d8ab5e1025e3887e299b155af6980a"
+}

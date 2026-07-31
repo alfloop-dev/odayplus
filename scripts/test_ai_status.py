@@ -13,10 +13,120 @@ from unittest import mock
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-import ai_status
+_TEST_STATUS_ROOT_HANDLE = tempfile.TemporaryDirectory(prefix="pantheon-ai-status-tests-")
+_TEST_STATUS_ROOT = Path(_TEST_STATUS_ROOT_HANDLE.name).resolve()
+
+# Pytest imports every test module before it runs any module-level teardown.
+# test_supervisor may therefore have imported ai_status against its own
+# temporary status root already.  Only set the environment for a first import;
+# setUpModule below rebinds the shared module for this module's actual lifetime.
+_IMPORT_STATUS_ROOT = os.environ.get("PANTHEON_STATUS_ROOT")
+_IMPORT_ORCH_STATUS_ROOT = os.environ.get("ORCH_STATUS_ROOT")
+if "ai_status" not in sys.modules:
+    os.environ["PANTHEON_STATUS_ROOT"] = str(_TEST_STATUS_ROOT)
+    os.environ["ORCH_STATUS_ROOT"] = str(_TEST_STATUS_ROOT)
+try:
+    import ai_status
+    import task_archive
+finally:
+    if _IMPORT_STATUS_ROOT is None:
+        os.environ.pop("PANTHEON_STATUS_ROOT", None)
+    else:
+        os.environ["PANTHEON_STATUS_ROOT"] = _IMPORT_STATUS_ROOT
+    if _IMPORT_ORCH_STATUS_ROOT is None:
+        os.environ.pop("ORCH_STATUS_ROOT", None)
+    else:
+        os.environ["ORCH_STATUS_ROOT"] = _IMPORT_ORCH_STATUS_ROOT
+
+
+_AI_STATUS_ROOT_ATTRIBUTES = (
+    "STATUS_ROOT",
+    "STATUS_FILE",
+    "LOG_FILE",
+    "CURRENT_WORK_FILE",
+    "DOCS_SITE_DIR",
+    "STATUS_ROOT_CONFIG_LOCAL_FILE",
+    "PLANNING_STATE_FILE",
+    "ORCHESTRATOR_STATE_FILE",
+    "APPROVAL_QUEUE_FILE",
+    "DASHBOARD_BUNDLE_FILE",
+    "ARCHIVE_TASKS_DIR",
+)
+_TASK_ARCHIVE_ROOT_ATTRIBUTES = (
+    "STATUS_ROOT",
+    "ARCHIVE_DIR",
+    "ARCHIVE_TASKS_DIR",
+    "ARCHIVE_INDEX_FILE",
+)
+_RUNTIME_STATUS_ROOT: str | None = None
+_RUNTIME_ORCH_STATUS_ROOT: str | None = None
+_ORIGINAL_AI_STATUS_PATHS: dict[str, Path] = {}
+_ORIGINAL_TASK_ARCHIVE_PATHS: dict[str, Path] = {}
+
+
+def setUpModule() -> None:
+    global _RUNTIME_STATUS_ROOT, _RUNTIME_ORCH_STATUS_ROOT
+    global _ORIGINAL_AI_STATUS_PATHS, _ORIGINAL_TASK_ARCHIVE_PATHS
+
+    _RUNTIME_STATUS_ROOT = os.environ.get("PANTHEON_STATUS_ROOT")
+    _RUNTIME_ORCH_STATUS_ROOT = os.environ.get("ORCH_STATUS_ROOT")
+    _ORIGINAL_AI_STATUS_PATHS = {
+        name: getattr(ai_status, name) for name in _AI_STATUS_ROOT_ATTRIBUTES
+    }
+    _ORIGINAL_TASK_ARCHIVE_PATHS = {
+        name: getattr(task_archive, name) for name in _TASK_ARCHIVE_ROOT_ATTRIBUTES
+    }
+
+    os.environ["PANTHEON_STATUS_ROOT"] = str(_TEST_STATUS_ROOT)
+    os.environ["ORCH_STATUS_ROOT"] = str(_TEST_STATUS_ROOT)
+    ai_status.STATUS_ROOT = _TEST_STATUS_ROOT
+    ai_status.STATUS_FILE = _TEST_STATUS_ROOT / "ai-status.json"
+    ai_status.LOG_FILE = _TEST_STATUS_ROOT / "ai-activity-log.jsonl"
+    ai_status.CURRENT_WORK_FILE = _TEST_STATUS_ROOT / "current-work.md"
+    ai_status.DOCS_SITE_DIR = _TEST_STATUS_ROOT / "docs-site"
+    ai_status.STATUS_ROOT_CONFIG_LOCAL_FILE = _TEST_STATUS_ROOT / ".orchestrator" / "config.local.json"
+    ai_status.PLANNING_STATE_FILE = _TEST_STATUS_ROOT / ".orchestrator" / "planning-state.json"
+    ai_status.ORCHESTRATOR_STATE_FILE = _TEST_STATUS_ROOT / ".orchestrator" / "state.json"
+    ai_status.APPROVAL_QUEUE_FILE = _TEST_STATUS_ROOT / ".orchestrator" / "approval-queue.json"
+    ai_status.DASHBOARD_BUNDLE_FILE = _TEST_STATUS_ROOT / "dashboard-bundle.json"
+
+    task_archive.STATUS_ROOT = _TEST_STATUS_ROOT
+    task_archive.ARCHIVE_DIR = _TEST_STATUS_ROOT / "ai-task-archive"
+    task_archive.ARCHIVE_TASKS_DIR = task_archive.ARCHIVE_DIR / "tasks"
+    task_archive.ARCHIVE_INDEX_FILE = task_archive.ARCHIVE_DIR / "index.json"
+    ai_status.ARCHIVE_TASKS_DIR = task_archive.ARCHIVE_TASKS_DIR
+
+
+def tearDownModule() -> None:
+    for name, value in _ORIGINAL_AI_STATUS_PATHS.items():
+        setattr(ai_status, name, value)
+    for name, value in _ORIGINAL_TASK_ARCHIVE_PATHS.items():
+        setattr(task_archive, name, value)
+    if _RUNTIME_STATUS_ROOT is None:
+        os.environ.pop("PANTHEON_STATUS_ROOT", None)
+    else:
+        os.environ["PANTHEON_STATUS_ROOT"] = _RUNTIME_STATUS_ROOT
+    if _RUNTIME_ORCH_STATUS_ROOT is None:
+        os.environ.pop("ORCH_STATUS_ROOT", None)
+    else:
+        os.environ["ORCH_STATUS_ROOT"] = _RUNTIME_ORCH_STATUS_ROOT
+    _TEST_STATUS_ROOT_HANDLE.cleanup()
 
 
 class StatusRootRoutingTests(unittest.TestCase):
+    def test_orchestrator_status_root_wins_over_worker_shadow_override(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="ai-status-canonical-root-") as temp_dir:
+            root = Path(temp_dir)
+            canonical = root / "supervisor-live"
+            shadow = root / "task-worktree"
+            env = {
+                "ORCH_STATUS_ROOT": str(canonical),
+                "PANTHEON_STATUS_ROOT": str(shadow),
+            }
+            with mock.patch.dict(os.environ, env, clear=True):
+                self.assertEqual(ai_status.resolve_status_root(), canonical.resolve())
+                self.assertEqual(task_archive.status_root(), canonical.resolve())
+
     def test_load_local_coordination_payload_tolerates_missing_yaml(self) -> None:
         with tempfile.TemporaryDirectory(prefix="ai-status-no-yaml-") as temp_dir:
             root = Path(temp_dir)
@@ -491,6 +601,67 @@ class DeliveryMetadataValidationTests(unittest.TestCase):
         self.assertEqual(delivery["merge_target_sha"], "devsha")
         self.assertTrue(delivery["head_merged_to_target"])
 
+    def test_collect_done_delivery_metadata_allows_verified_dev_squash_merge(self) -> None:
+        task = {
+            "id": "REG-002",
+            "owner": "Codex",
+            "reviewer": "Claude",
+            "status": "review_approved",
+            "artifacts": [],
+        }
+
+        def fake_run_git_command(args: list[str], **kwargs: object) -> str:
+            responses = {
+                ("rev-parse", "--abbrev-ref", "HEAD"): "task/REG-002",
+                ("rev-parse", "HEAD"): "sourcehead",
+                ("show", "-s", "--format=%s", "HEAD"): "REG-002 finalize",
+                ("show", "-s", "--format=%b", "HEAD"): "LLM-Agent: Codex\nTask-ID: REG-002\nReviewer: Claude\n",
+                ("show", "-s", "--format=%an", "HEAD"): "Codex",
+                ("show", "-s", "--format=%ae", "HEAD"): "codex@example.com",
+                ("status", "--porcelain"): "",
+                ("remote",): "origin",
+                ("rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{upstream}"): "origin/task/REG-002",
+                ("rev-list", "--left-right", "--count", "origin/task/REG-002...HEAD"): "0 0",
+                ("fetch", "origin", "dev"): "",
+                ("rev-parse", "--verify", "origin/dev"): "devtip",
+            }
+            key = tuple(args)
+            if key not in responses:
+                raise AssertionError(f"unexpected git command: {args}")
+            return responses[key]
+
+        def fake_git_succeeds(args: list[str], **kwargs: object) -> bool:
+            if args == ["merge-base", "--is-ancestor", "HEAD", "origin/dev"]:
+                return False
+            if args == ["merge-base", "--is-ancestor", "squashmerge", "origin/dev"]:
+                return True
+            raise AssertionError(f"unexpected git check: {args}")
+
+        with (
+            mock.patch.object(ai_status, "run_git_command", side_effect=fake_run_git_command),
+            mock.patch.object(ai_status, "git_command_succeeds", side_effect=fake_git_succeeds),
+            mock.patch.object(
+                ai_status,
+                "pull_request_status_for_branch",
+                return_value={
+                    "number": 533,
+                    "state": "MERGED",
+                    "headRefOid": "sourcehead",
+                    "baseRefName": "dev",
+                    "mergedAt": "2026-07-31T08:08:36Z",
+                    "mergeCommit": {"oid": "squashmerge"},
+                    "url": "https://github.com/example/repo/pull/533",
+                },
+            ),
+        ):
+            delivery = ai_status.collect_done_delivery_metadata(task, "Codex")
+
+        self.assertFalse(delivery["head_merged_to_target"])
+        self.assertTrue(delivery["merge_verified_via_pr"])
+        self.assertEqual(delivery["pull_request"]["head_sha"], "sourcehead")
+        self.assertEqual(delivery["pull_request"]["base_branch"], "dev")
+        self.assertEqual(delivery["pull_request"]["merge_commit"], "squashmerge")
+
 
 class ArchiveWorkflowTests(unittest.TestCase):
     def setUp(self) -> None:
@@ -554,6 +725,7 @@ class ArchiveWorkflowTests(unittest.TestCase):
 
     def test_archive_migrate_moves_terminal_tasks_out_of_active_state(self) -> None:
         with (
+            mock.patch.dict(os.environ, {"AI_NAME": "Codex"}, clear=False),
             mock.patch.object(ai_status, "archive_task_snapshot", return_value={"task_id": "REG-100"}) as archive_task_snapshot,
             mock.patch.object(ai_status, "rebuild_archive_index") as rebuild_archive_index,
         ):

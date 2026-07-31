@@ -24,11 +24,30 @@ except ModuleNotFoundError:  # pragma: no cover - exercised only in lean supervi
 YAML_ERROR_TYPES = (yaml.YAMLError,) if yaml is not None else ()
 
 ROOT = Path(__file__).resolve().parents[1]
-STATUS_ROOT = (
-    Path(os.path.expanduser(os.environ["PANTHEON_STATUS_ROOT"])).resolve()
-    if os.environ.get("PANTHEON_STATUS_ROOT")
-    else ROOT
-)
+
+
+def resolve_status_root(
+    env: dict[str, str] | os._Environ[str] | None = None,
+    *,
+    default_root: Path = ROOT,
+) -> Path:
+    """Resolve the canonical coordination root for status mutations.
+
+    ``ORCH_STATUS_ROOT`` is written by the Supervisor from the dispatch
+    receipt and deliberately wins over the legacy worker-facing
+    ``PANTHEON_STATUS_ROOT``.  This prevents an otherwise valid worker from
+    making GitHub's review row green while materializing the matching task
+    transition only in a worktree-local shadow.
+    """
+
+    source = os.environ if env is None else env
+    raw = str(source.get("ORCH_STATUS_ROOT") or source.get("PANTHEON_STATUS_ROOT") or "").strip()
+    if not raw:
+        return default_root
+    return Path(os.path.expanduser(raw)).resolve()
+
+
+STATUS_ROOT = resolve_status_root()
 ORCHESTRATOR_DIR = ROOT / ".orchestrator"
 if str(ORCHESTRATOR_DIR) not in sys.path:
     sys.path.insert(0, str(ORCHESTRATOR_DIR))
@@ -976,7 +995,12 @@ def load_json_file(path: Path, default: Any) -> Any:
 
 
 def load_config() -> dict[str, Any]:
-    payload = load_json_file(CONFIG_FILE, {})
+    config_source = CONFIG_FILE
+    if not config_source.exists():
+        example = ORCHESTRATOR_DIR / "config.example.json"
+        if example.exists():
+            config_source = example
+    payload = load_json_file(config_source, {})
     if not isinstance(payload, dict):
         return {}
     paths = payload.setdefault("paths", {})
@@ -1574,7 +1598,7 @@ def pull_request_status_for_branch(repository_root: Path, branch: str) -> dict[s
             "view",
             branch,
             "--json",
-            "number,state,mergeStateStatus,mergedAt,mergeCommit,autoMergeRequest,url",
+            "number,state,mergeStateStatus,mergedAt,mergeCommit,autoMergeRequest,url,headRefOid,baseRefName",
         ],
         cwd=repository_root,
     )
@@ -1720,6 +1744,43 @@ def enforce_delivery_merged_gate(
     if merged:
         return
     pr_status = pull_request_status_for_branch(repository_root, branch)
+    head_sha = run_git_command(["rev-parse", "HEAD"], cwd=repository_root)
+    if pr_status:
+        pr_state = str(pr_status.get("state") or "").upper()
+        pr_head = str(pr_status.get("headRefOid") or "").strip()
+        pr_base = str(pr_status.get("baseRefName") or "").strip()
+        merged_at = str(pr_status.get("mergedAt") or "").strip()
+        merge_commit_raw = pr_status.get("mergeCommit")
+        merge_commit = (
+            str(merge_commit_raw.get("oid") or "").strip()
+            if isinstance(merge_commit_raw, dict)
+            else str(merge_commit_raw or "").strip()
+        )
+        merge_commit_on_target = bool(
+            merge_commit
+            and git_command_succeeds(
+                ["merge-base", "--is-ancestor", merge_commit, target_ref],
+                cwd=repository_root,
+            )
+        )
+        if (
+            pr_state == "MERGED"
+            and pr_head == head_sha
+            and pr_base == target_branch
+            and merged_at
+            and merge_commit
+            and merge_commit_on_target
+        ):
+            delivery["merge_verified_via_pr"] = True
+            delivery["pull_request"] = {
+                "number": pr_status.get("number"),
+                "url": pr_status.get("url"),
+                "head_sha": pr_head,
+                "base_branch": pr_base,
+                "merged_at": merged_at,
+                "merge_commit": merge_commit,
+            }
+            return
     status_text = format_pull_request_status(pr_status)
     detail = f";{status_text}" if status_text else ""
     raise SystemExit(
@@ -5177,11 +5238,11 @@ def get_repository_slug_safe() -> str:
     return "alfloop-dev/odayplus"
 
 
-def emit_task_review_status_check(task: dict[str, Any], state_status: str) -> None:
+def task_review_status_payload(task: dict[str, Any], state_status: str) -> dict[str, str] | None:
     task_id = str(task.get("id") or "")
     sha = resolve_task_sha(task_id)
     if not sha:
-        return
+        return None
 
     repo_slug = get_repository_slug_safe()
     context = "task-review-gate"
@@ -5209,37 +5270,142 @@ def emit_task_review_status_check(task: dict[str, Any], state_status: str) -> No
         state = "failure"
         description = f"Review rejected or reopened. Task status is {state_status}"
 
+    return {
+        "repo_slug": repo_slug,
+        "sha": sha,
+        "state": state,
+        "context": context,
+        "description": description,
+    }
+
+
+def post_task_review_status_payload(payload: dict[str, str]) -> tuple[bool, str]:
     cmd = [
         get_gh_executable(), "api",
         "-X", "POST",
-        f"repos/{repo_slug}/statuses/{sha}",
-        "-F", f"state={state}",
-        "-F", f"context={context}",
-        "-F", f"description={description}"
+        f"repos/{payload['repo_slug']}/statuses/{payload['sha']}",
+        "-F", f"state={payload['state']}",
+        "-F", f"context={payload['context']}",
+        "-F", f"description={payload['description']}",
     ]
 
     try:
         result = subprocess.run(cmd, capture_output=True, text=True, check=False, cwd=ROOT)
         if result.returncode == 0:
-            print(f"Successfully emitted status check '{context}'={state} to GitHub API.", file=sys.stdout)
-        else:
-            err_msg = f"Failed to emit status check (code {result.returncode}): {result.stderr.strip()}"
-            print(err_msg, file=sys.stderr)
-            if (
-                "gh auth login" in result.stderr
-                or "authentication token" in result.stderr
-                or "No commit found for SHA" in result.stderr
-                or "422" in result.stderr
-                or os.environ.get("ALLOW_EMISSION_FAILURE") == "1"
-            ):
-                print("Warning: Skipping status check emission due to unauthenticated or unpushed environment.", file=sys.stderr)
-                return
-            print("Warning: Skipping status check emission due to emission error.", file=sys.stderr)
-            return
+            return True, ""
+        return (
+            False,
+            f"Failed to emit status check (code {result.returncode}): "
+            f"{result.stderr.strip() or result.stdout.strip()}",
+        )
     except Exception as exc:
-        err_msg = f"Error during status emission: {exc}"
-        print(err_msg, file=sys.stderr)
+        return False, f"Error during status emission: {exc}"
+
+
+def enqueue_status_check_outbox(
+    task: dict[str, Any],
+    payload: dict[str, str],
+    error: str,
+) -> None:
+    """Durably retain one exact failed payload without duplicate queue growth."""
+    outbox = task.setdefault("status_check_outbox", [])
+    existing = next(
+        (
+            item
+            for item in outbox
+            if isinstance(item, dict)
+            and all(
+                str(item.get(key) or "") == str(payload.get(key) or "")
+                for key in ("repo_slug", "sha", "state", "context", "description")
+            )
+        ),
+        None,
+    )
+    now = iso_now()
+    if existing is not None:
+        existing["last_error"] = error
+        existing["last_attempt_at"] = now
+        existing["attempt_count"] = int(existing.get("attempt_count", 0) or 0) + 1
         return
+    outbox.append(
+        {
+            **payload,
+            "created_at": now,
+            "last_attempt_at": now,
+            "attempt_count": 1,
+            "last_error": error,
+        }
+    )
+
+
+def reconcile_status_check_outbox(state: dict[str, Any]) -> tuple[int, int]:
+    """Retry exact failed status payloads and remove only confirmed deliveries."""
+    delivered = 0
+    retained = 0
+    for task in state.get("tasks", []):
+        pending = task.get("status_check_outbox")
+        if not isinstance(pending, list) or not pending:
+            continue
+        remaining: list[dict[str, Any]] = []
+        for item in pending:
+            if not isinstance(item, dict):
+                continue
+            payload = {
+                key: str(item.get(key) or "")
+                for key in ("repo_slug", "sha", "state", "context", "description")
+            }
+            if not all(payload.values()):
+                item["last_error"] = "Malformed status-check outbox payload"
+                remaining.append(item)
+                retained += 1
+                continue
+            ok, error = post_task_review_status_payload(payload)
+            if ok:
+                delivered += 1
+                task.setdefault("status_check_delivery_history", []).append(
+                    {
+                        **payload,
+                        "created_at": item.get("created_at"),
+                        "attempt_count": int(item.get("attempt_count", 0) or 0) + 1,
+                        "delivered_at": iso_now(),
+                    }
+                )
+                print(
+                    f"Reconciled status check '{payload['context']}'="
+                    f"{payload['state']} for {payload['sha'][:8]}.",
+                    file=sys.stdout,
+                )
+                continue
+            item["last_error"] = error
+            item["last_attempt_at"] = iso_now()
+            item["attempt_count"] = int(item.get("attempt_count", 0) or 0) + 1
+            remaining.append(item)
+            retained += 1
+        if remaining:
+            task["status_check_outbox"] = remaining
+        else:
+            task.pop("status_check_outbox", None)
+    return delivered, retained
+
+
+def emit_task_review_status_check(task: dict[str, Any], state_status: str) -> None:
+    payload = task_review_status_payload(task, state_status)
+    if payload is None:
+        return
+    ok, error = post_task_review_status_payload(payload)
+    if ok:
+        print(
+            f"Successfully emitted status check '{payload['context']}'="
+            f"{payload['state']} to GitHub API.",
+            file=sys.stdout,
+        )
+        return
+    print(error, file=sys.stderr)
+    enqueue_status_check_outbox(task, payload, error)
+    print(
+        "Warning: Status check emission failed; exact payload recorded for reconciliation.",
+        file=sys.stderr,
+    )
 
 
 def emit_status_checks_for_changed_tasks(state_before: dict[str, Any], state_after: dict[str, Any], command: str, args: list[str]) -> None:
@@ -5328,13 +5494,13 @@ def main(argv: list[str]) -> int:
 
     state_before = deepcopy(state)
     commands[command](state, args)
+    sync_all(state)
     try:
-        sync_all(state)
-        # Emit status checks for any modified task status
+        reconcile_status_check_outbox(state)
         emit_status_checks_for_changed_tasks(state_before, state, command, args)
-    except Exception:
-        save_state(state_before)
-        raise
+        sync_all(state)
+    except Exception as exc:
+        print(f"Warning: Failed to emit status checks: {exc}", file=sys.stderr)
     return 0
 
 

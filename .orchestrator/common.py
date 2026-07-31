@@ -172,6 +172,10 @@ def load_config(config_path: str | Path | None = None) -> dict[str, Any]:
     if config_file is None:
         raise RuntimeError("Unable to resolve orchestrator config path")
     config = load_json(config_file, default={})
+    if not config and (config_path is None or resolve_path(config_path) == DEFAULT_CONFIG_PATH):
+        example_file = ORCHESTRATOR_DIR / "config.example.json"
+        if example_file.exists():
+            config = load_json(example_file, default={})
     if LOCAL_CONFIG_PATH.exists():
         config = deep_merge(config, load_json(LOCAL_CONFIG_PATH, default={}))
     return config
@@ -280,11 +284,34 @@ def delivery_status_root(config: dict[str, Any], metadata: dict[str, Any] | None
 def delivery_runtime_env(config: dict[str, Any], metadata: dict[str, Any] | None = None) -> dict[str, str]:
     workspace_root = delivery_workspace_root(config, metadata)
     status_root = delivery_status_root(config, metadata)
-    return {
+    result = {
         "PANTHEON_WORKTREE_ROOT": str(workspace_root),
         "PANTHEON_STATUS_ROOT": str(status_root),
+        # Keep the Supervisor-selected coordination root separate from the
+        # worker-facing compatibility variable.  A worker may reasonably
+        # override PANTHEON_STATUS_ROOT while inspecting a task worktree; the
+        # official status/archive commands must still materialize mutations in
+        # the fleet root recorded by the dispatch receipt.
+        "ORCH_STATUS_ROOT": str(status_root),
         "ORCH_WORKSPACE_PATH": str(workspace_root),
     }
+    actor_name = str((metadata or {}).get("target_display_name") or "").strip()
+    if actor_name:
+        # The live Supervisor has already authorized this dispatch target from
+        # its merged fleet config. A task branch can carry a newer tracked
+        # config which no longer declares a legacy lane, while its status-root
+        # overlay only declares current physical slots. Carry the authorized
+        # target into the worker so prompt identity, AI_NAME and official
+        # ai-status actor authority cannot drift across branch revisions.
+        existing = [
+            item.strip()
+            for item in str(os.environ.get("AI_STATUS_EXTRA_AGENTS") or "").split(",")
+            if item.strip()
+        ]
+        extras = list(dict.fromkeys([*existing, actor_name]))
+        result["AI_NAME"] = actor_name
+        result["AI_STATUS_EXTRA_AGENTS"] = ",".join(extras)
+    return result
 
 
 def github_cli_config_dir(env: Mapping[str, str] | None = None) -> Path:
