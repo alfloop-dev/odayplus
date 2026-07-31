@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 from __future__ import annotations
 
+import os
 from copy import deepcopy
 from typing import Any
 
@@ -285,8 +286,75 @@ def load_runtime_state(config: dict[str, Any]) -> dict[str, Any]:
     return state
 
 
+def merge_runtime_states(disk_state: dict[str, Any], in_mem_state: dict[str, Any]) -> dict[str, Any]:
+    if not isinstance(disk_state, dict):
+        return in_mem_state
+    merged = deepcopy(in_mem_state)
+
+    disk_workers = disk_state.get("workers", {})
+    if isinstance(disk_workers, dict):
+        in_mem_workers = merged.setdefault("workers", {})
+        active_statuses = {"running", "started", "manual_pending", "waiting_approval", "suspended_approval", "retry_backoff", "stalled"}
+        for run_id, disk_worker in disk_workers.items():
+            if not isinstance(disk_worker, dict):
+                continue
+            if run_id not in in_mem_workers:
+                status = str(disk_worker.get("status") or "").lower()
+                pid = disk_worker.get("pid")
+                is_alive = False
+                if pid:
+                    try:
+                        is_alive = os.kill(int(pid), 0) is None
+                    except (OSError, ValueError, TypeError):
+                        is_alive = False
+                if is_alive or status in active_statuses:
+                    in_mem_workers[run_id] = deepcopy(disk_worker)
+            else:
+                mem_w = in_mem_workers[run_id]
+                if str(disk_worker.get("status") or "").lower() in active_statuses and str(mem_w.get("status") or "").lower() not in active_statuses:
+                    mem_w["status"] = disk_worker.get("status")
+                if disk_worker.get("last_heartbeat_at"):
+                    mem_w["last_heartbeat_at"] = disk_worker.get("last_heartbeat_at")
+
+    disk_events = (disk_state.get("queue") or {}).get("events")
+    if isinstance(disk_events, dict):
+        mem_queue = merged.setdefault("queue", {})
+        mem_events = mem_queue.setdefault("events", {})
+        for evt_id, disk_evt in disk_events.items():
+            if not isinstance(disk_evt, dict):
+                continue
+            if evt_id not in mem_events:
+                status = str(disk_evt.get("status") or "").lower()
+                if status in {"queued", "started", "manual_pending", "retry_backoff"} or any(
+                    w.get("queue_event_id") == evt_id for w in merged.get("workers", {}).values()
+                ):
+                    mem_events[evt_id] = deepcopy(disk_evt)
+            else:
+                mem_evt = mem_events[evt_id]
+                disk_status = str(disk_evt.get("status") or "").lower()
+                mem_status = str(mem_evt.get("status") or "").lower()
+                if disk_status in {"started", "manual_pending"} and mem_status == "queued":
+                    mem_evt["status"] = disk_evt.get("status")
+                    if disk_evt.get("run_id"):
+                        mem_evt["run_id"] = disk_evt.get("run_id")
+
+    if "workers" in merged:
+        in_mem_state["workers"] = merged["workers"]
+    if "queue" in merged:
+        in_mem_state["queue"] = merged["queue"]
+
+    return merged
+
+
 def save_runtime_state(config: dict[str, Any], state: dict[str, Any]) -> None:
-    write_json(config_path(config, "state_file"), migrate_state(state))
+    path = config_path(config, "state_file")
+    disk_state = load_json(path, default={})
+    if disk_state and isinstance(disk_state, dict):
+        merged = merge_runtime_states(disk_state, state)
+        write_json(path, migrate_state(merged))
+    else:
+        write_json(path, migrate_state(state))
+
 
 
 def load_event_queue(config: dict[str, Any]) -> list[dict[str, Any]]:

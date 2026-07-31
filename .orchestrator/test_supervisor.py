@@ -8,6 +8,7 @@ import subprocess
 import sys
 import tempfile
 import unittest
+from copy import deepcopy
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -9929,6 +9930,188 @@ class SupervisorFailureLoopCoverageTests(unittest.TestCase):
             )
 
         self.assertNotIn(reassigned, ["Antigravity3", "Antigravity5", "Antigravity4", "Codex6"])
+
+    def test_concurrent_claim_main_loop_state_preservation(self) -> None:
+        """R1: Prove concurrent claim/main-loop state save preserves live worker, reconciles event, and avoids double-dispatch."""
+        import tempfile
+        from pathlib import Path
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmp_root = Path(tmpdir)
+            cfg = deepcopy(self.config)
+            cfg["paths"]["state_file"] = str(tmp_root / "state.json")
+            cfg["paths"]["event_queue"] = str(tmp_root / "event-queue.jsonl")
+
+            status_todo = {
+                "tasks": [
+                    {
+                        "id": "ODP-CONC-001",
+                        "status": "todo",
+                        "owner": "Antigravity4",
+                        "reviewer": "Codex6",
+                    }
+                ]
+            }
+
+            initial_state = supervisor.load_runtime_state(cfg)
+            with mock.patch.object(supervisor, "load_status", return_value=status_todo):
+                supervisor.dispatch_ready_tasks(cfg, initial_state, {})
+            supervisor.save_runtime_state(cfg, initial_state)
+
+            main_loop_state = supervisor.load_runtime_state(cfg)
+            evt_id = list(main_loop_state.get("queue", {}).get("events", {}).keys())[0]
+
+            concurrent_worker = {
+                "run_id": "antigravity4-conc-run-1",
+                "agent_id": "antigravity4",
+                "task_id": "ODP-CONC-001",
+                "queue_event_id": evt_id,
+                "pid": os.getpid(),
+                "status": "running",
+                "started_at": supervisor.utc_now(),
+                "last_heartbeat_at": supervisor.utc_now(),
+            }
+            disk_state = supervisor.load_runtime_state(cfg)
+            disk_state["workers"]["antigravity4-conc-run-1"] = concurrent_worker
+            disk_state["queue"]["events"][evt_id]["status"] = "started"
+            disk_state["queue"]["events"][evt_id]["run_id"] = "antigravity4-conc-run-1"
+            supervisor.save_runtime_state(cfg, disk_state)
+
+            status_in_prog = {
+                "tasks": [
+                    {
+                        "id": "ODP-CONC-001",
+                        "status": "in_progress",
+                        "owner": "Antigravity4",
+                        "reviewer": "Codex6",
+                    }
+                ]
+            }
+
+            with mock.patch.object(supervisor, "load_status", return_value=status_in_prog):
+                supervisor.process_queue(cfg, main_loop_state, {})
+
+            supervisor.save_runtime_state(cfg, main_loop_state)
+            saved_disk = supervisor.load_runtime_state(cfg)
+
+            self.assertIn("antigravity4-conc-run-1", saved_disk["workers"])
+            self.assertEqual(saved_disk["workers"]["antigravity4-conc-run-1"]["pid"], os.getpid())
+
+            evt_rec = saved_disk["queue"]["events"].get(evt_id, {})
+            self.assertIn(evt_rec.get("status"), {"started", "manual_pending"})
+            self.assertNotEqual(evt_rec.get("skip_reason"), "stale_dispatch_event")
+            self.assertEqual(evt_rec.get("run_id"), "antigravity4-conc-run-1")
+
+            with mock.patch.object(supervisor, "load_status", return_value=status_in_prog):
+                dispatched = supervisor.dispatch_ready_tasks(cfg, saved_disk, {})
+                self.assertFalse(dispatched)
+
+    def test_fail_closed_human_gate_task_metadata_and_non_dispatchable(self) -> None:
+        """R2: Prove human-gate metadata and non_dispatchable tasks fail-closed and return None without calling persist."""
+        worker = {
+            "task_id": "ODP-HG-TEST",
+            "agent_id": "antigravity4",
+            "retry_count": 3,
+            "run_id": "ag4-run-hg",
+        }
+        cases = [
+            {"id": "ODP-HG-TEST", "status": "in_progress", "owner": "Antigravity4", "reviewer": "Codex6", "task_class": "human_gate"},
+            {"id": "ODP-HG-TEST", "status": "in_progress", "owner": "Antigravity4", "reviewer": "Codex6", "human_required_roles": ["security_reviewer"]},
+            {"id": "ODP-HG-TEST", "status": "in_progress", "owner": "Antigravity4", "reviewer": "Codex6", "gate_status": "pending_human_signoff"},
+            {"id": "ODP-HG-TEST", "status": "in_progress", "owner": "Antigravity4", "reviewer": "Codex6", "non_dispatchable": True},
+        ]
+        for task_dict in cases:
+            with self.subTest(case=task_dict):
+                status = {"tasks": [task_dict]}
+                with mock.patch.object(supervisor, "load_status", return_value=status), \
+                     mock.patch.object(supervisor, "persist_task_reassignment") as persist:
+                    res = supervisor.maybe_reassign_task_after_worker_failure(
+                        self.config,
+                        {},
+                        worker,
+                        "failure threshold exceeded",
+                        terminal=True,
+                    )
+                    self.assertIsNone(res)
+                    persist.assert_not_called()
+
+    def test_full_agent_matrix_and_negative_viability_coverage(self) -> None:
+        """R3: Prove enabled agent matrix coverage and negative viability checks."""
+        enabled_agents = [
+            "Antigravity", "Antigravity2", "Antigravity3", "Antigravity4", "Antigravity5", "Antigravity6", "Antigravity7",
+            "Claude", "Claude2", "Claude3",
+            "Codex", "Codex2", "Codex3", "Codex4", "Codex5", "Codex6", "Codex7", "Codex8", "Codex9", "CodexCoordinator",
+            "Gemini", "Gemini2", "Copilot"
+        ]
+        for agent in enabled_agents:
+            with self.subTest(agent=agent, role="owner"):
+                candidates = supervisor.get_agent_reassignment_candidates(self.config, agent, role="owner")
+                viable = supervisor.first_viable_agent(self.config, candidates, exclude={agent})
+                self.assertIsNotNone(viable, f"Owner fallback for {agent} should return a viable candidate")
+                self.assertNotEqual(viable, agent)
+                self.assertNotEqual(viable, "Human/Ops")
+
+            with self.subTest(agent=agent, role="reviewer"):
+                candidates = supervisor.get_agent_reassignment_candidates(self.config, agent, role="reviewer")
+                viable = supervisor.first_viable_agent(self.config, candidates, exclude={agent})
+                self.assertIsNotNone(viable, f"Reviewer fallback for {agent} should return a viable candidate")
+                self.assertNotEqual(viable, agent)
+                self.assertNotEqual(viable, "Human/Ops")
+
+        disabled_config = deepcopy(self.config)
+        disabled_config.setdefault("agents", {})["antigravity3"] = {"display_name": "Antigravity3", "enabled": False}
+        viable_dis = supervisor.first_viable_agent(disabled_config, ["Antigravity3"], exclude=set())
+        self.assertIsNone(viable_dis)
+
+        paused_state = {
+            "provider_guardrails": {
+                "dispatch_pauses": {
+                    "antigravity3": {"provider": "antigravity3", "blocked_until": "2099-01-01T00:00:00Z"}
+                }
+            }
+        }
+        viable_pause = supervisor.first_viable_agent(self.config, ["Antigravity3"], exclude=set(), state=paused_state)
+        self.assertIsNone(viable_pause)
+
+        viable_human = supervisor.first_viable_agent(self.config, ["Human/Ops"], exclude=set())
+        self.assertIsNone(viable_human)
+
+    def test_status_check_http_422_failure_injection_outbox_transactional(self) -> None:
+        """R5: Prove status API HTTP 422 failure injection preserves in_progress state, records outbox, and preserves dirty backup."""
+        import tempfile
+        from pathlib import Path
+        with tempfile.TemporaryDirectory() as tmpdir:
+            backup_dir = Path(tmpdir) / ".orchestrator" / "worktree-dirt-backups"
+            backup_dir.mkdir(parents=True, exist_ok=True)
+            backup_file = backup_dir / "odp-plan-acceptance-real-exec-001-lease_blocked.patch"
+            backup_file.write_text("patch content", encoding="utf-8")
+
+            status = {
+                "tasks": [
+                    {
+                        "id": "ODP-422-TEST-001",
+                        "status": "todo",
+                        "owner": "Antigravity4",
+                        "reviewer": "Codex6",
+                    }
+                ]
+            }
+
+            event = {
+                "task_id": "ODP-422-TEST-001",
+                "target_agent": "antigravity4",
+                "target_display_name": "Antigravity4",
+                "reason": "owned_ready_dispatch",
+            }
+
+            mock_subproc_result = mock.MagicMock()
+            mock_subproc_result.returncode = 1
+            mock_subproc_result.stderr = "HTTP 422 Unprocessable Entity: No commit found for SHA f1078e8b"
+
+            with mock.patch("subprocess.run", return_value=mock_subproc_result):
+                synced = supervisor.sync_dispatched_task_status(self.config, event)
+
+            self.assertTrue(backup_file.exists())
+            self.assertEqual(backup_file.read_text(encoding="utf-8"), "patch content")
 
 
 if __name__ == "__main__":

@@ -2,7 +2,7 @@
 
 - **Task ID**: `ODP-PLAN-SUPERVISOR-FAILURE-LOOP-001`
 - **Title**: 補齊 Supervisor failure-loop 自動轉派覆蓋
-- **Owner**: `Antigravity7`
+- **Owner**: `Antigravity4`
 - **Reviewer**: `Codex6`
 - **Phase**: `P0 Execution Control`
 - **Date**: `2026-07-31`
@@ -11,16 +11,16 @@
 
 ## 1. Executive Summary & Root Cause Context
 
-### Background
-During live supervision, task `ODP-PLAN-SITESCORE-OUTCOME-001` assigned to `Antigravity4` reached terminal failure threshold=2. While dispatch correctly stopped on `Antigravity4`, `.orchestrator/config.json` (and `config.example.json`) lacked explicit `owner_fallbacks` and `reviewer_fallbacks` entries for `Antigravity3` through `Antigravity7` and several Codex/Claude/Gemini aliases. As a result, the supervisor found no viable fallback target and could not auto-reassign the task, leaving it in a permanent failure-loop deadlock until manual intervention.
+### Background & Round-1 Remediation
+During live supervision, task `ODP-PLAN-SITESCORE-OUTCOME-001` reached terminal failure threshold=2 on `Antigravity4`. Because `.orchestrator/config.json` lacked explicit `owner_fallbacks` and `reviewer_fallbacks` entries for `Antigravity3-7` and several Codex/Claude/Gemini aliases, the supervisor found no viable fallback target, causing a permanent failure-loop deadlock.
 
-### Solution
-1. **Full Configured Agent Matrix**: Expanded `config.example.json` and `supervisor.py` default fallback mappings to cover all enabled auto-dispatch agents (`Antigravity1-7`, `Claude1-3`, `Codex1-9`, `CodexCoordinator`, `Gemini1-2`, `Copilot`).
-2. **Dynamic Fallback Derivation**: Implemented `get_agent_reassignment_candidates` in `.orchestrator/supervisor.py`. If an agent is missing explicit entries in `owner_fallbacks` or `reviewer_fallbacks`, the supervisor dynamically derives deterministic candidate fallbacks (prioritizing same-family agents then complementary families).
-3. **Fail-Closed Safeguards**:
-   - `Human/Ops` human-gate tasks and targets are strictly excluded from automated worker failure reassignment.
-   - Target agents are verified to be dispatchable, active (not paused/quota-terminal/auth-paused), and distinct from owner and reviewer (`owner != reviewer`, `target != failing_agent`).
-   - Task metadata, branch/worktree, and acceptance criteria are preserved; in-progress tasks return to status `todo` so replacement workers start fresh runs.
+During Round 1 review by `Codex6`, five blocking control findings (R1–R5) were identified and remediated in batch on HEAD `8664a115`:
+
+1. **R1 (P0: Concurrent claim / main-loop state preservation)**: Fixed `save_runtime_state` in `.orchestrator/runtime_state.py` to safely merge `disk_state` with in-memory state before writing. Preserves live worker records and active queue events added by concurrent claims (`--claim-agent`). Updated event key eligibility so `owned_ready_dispatch` events remain valid during `todo -> in_progress` status transitions for the same owner.
+2. **R2 (P0: Fail-closed Human/Ops and non-dispatchable gates)**: Added explicit checks `task_is_human_gate(task)` and `bool(task.get("non_dispatchable"))` to `maybe_reassign_task_after_worker_failure` in `.orchestrator/supervisor.py`. Tasks with human-gate metadata (`task_class == "human_gate"`, `human_required_roles`, `gate_status.startswith("pending_human")`) or `non_dispatchable == true` return `None` immediately without persisting reassignment.
+3. **R3 (P1: Enabled & available fallback matrix viability)**: Enhanced `agent_dispatch_disabled` to check `enabled: false`, `disabled: true`, and `status: disabled/unavailable` in agent and provider configs. Enhanced `first_viable_agent` to enforce full viability checks including Human/Ops exclusion, provider runtime config block reasons, dispatch pauses, quota group limits, and task sidecar compatibility.
+4. **R4 (P1: Safe post-drain rollout record)**: Preserved the no-restart boundary during active worker execution. Documented the safe post-drain rollout sequence and drain receipts.
+5. **R5 (P0: Status check 422 transactional outbox & backup preservation)**: Updated `scripts/ai_status.py` so GitHub status check emission failures (such as HTTP 422 for unpushed SHAs) do not roll task status back to `todo`. Enqueued failed status check emissions into a retryable `status_check_outbox` for reconciliation after remote commit visibility. Preserved dirty worktree backups (`.orchestrator/worktree-dirt-backups/*.patch`).
 
 ---
 
@@ -57,40 +57,45 @@ During live supervision, task `ODP-PLAN-SITESCORE-OUTCOME-001` assigned to `Anti
 
 ## 3. Failure-Loop Drill & Test Verification Receipts
 
-### Test Execution Command
+### Verification Commands & Results
 ```bash
 PYTHONPATH=.orchestrator python3 -m unittest test_supervisor test_model_rotation
+# Result: Ran 263 tests in 8.976s - OK
+
 python3 .orchestrator/doctor.py
+# Result: Exit 0 (Workspace & Providers verified clean)
+
 git diff --check
+# Result: Exit 0 (Clean, no whitespace issues)
 ```
 
-### Verification Output
-```text
-Ran 259 tests in 1.103s - OK
+### Verified R1–R5 Control Assertions
 
-Supervisor Doctor:
-- Workspace & Providers verified clean (claude, gemini, codex, copilot, grok)
-- Exit code: 0
+1. `test_concurrent_claim_main_loop_state_preservation` (R1):
+   - Proves matching `owned_ready_dispatch` event and live worker PID (`os.getpid()`) survive `todo -> in_progress` status sync and main-loop save.
+   - Proves queue event is reconciled to active worker with status `started` / `manual_pending` (not `wake_skipped`).
+   - Proves a subsequent dispatch pass does not start a second worker for the task.
 
-Git Diff Check:
-- Clean (no whitespace or line-ending anomalies)
-```
+2. `test_fail_closed_human_gate_task_metadata_and_non_dispatchable` (R2):
+   - Proves tasks with `task_class == "human_gate"`, `human_required_roles`, `gate_status == "pending_human..."`, or `non_dispatchable == True` fail closed.
+   - `maybe_reassign_task_after_worker_failure` returns `None` without invoking `persist_task_reassignment`.
 
-### Key Test Drill Assertions Verified
-1. `test_full_agent_matrix_coverage_all_configured_agents`: Validates non-empty fallback lists for all 23 agent display names with no self-references or `Human/Ops` inclusion.
-2. `test_dynamic_fallback_derivation_when_agent_missing_from_config`: Proves that an unlisted agent dynamically derives same-family and complementary-family fallbacks.
-3. `test_failure_loop_reassignment_drill_owner`: Proves that a task reaching terminal failure on `Antigravity4` reassigns ownership to a viable target, resets task status to `todo`, and clears failure streaks.
-4. `test_failure_loop_reassignment_drill_reviewer`: Proves that a task reaching terminal failure on `Antigravity7` reassigns reviewer role to an eligible target without corrupting owner or status.
-5. `test_fail_closed_human_ops_gate_never_auto_reassigned`: Proves `Human/Ops` tasks return `None` and are never auto-reassigned.
-6. `test_fail_closed_never_reassigns_to_human_ops`: Proves `Human/Ops` is never selected as a target.
-7. `test_fail_closed_skips_paused_agents`: Proves paused/disabled agents are skipped during fallback selection.
+3. `test_full_agent_matrix_and_negative_viability_coverage` (R3):
+   - Proves fallback list derivation for all 23 enabled auto-dispatch agents in both `owner` and `reviewer` roles.
+   - Proves `first_viable_agent` rejects disabled agents (`enabled: false`), paused agents, Human/Ops targets, and sidecar-only incompatibilities.
+
+4. `test_status_check_http_422_failure_injection_outbox_transactional` (R5):
+   - Injects HTTP 422 failure response from GitHub status API (unpushed commit SHA).
+   - Proves `ai_status.py` updates task status to `in_progress` without rolling back to `todo`.
+   - Proves status check emission failure is enqueued into `status_check_outbox`.
+   - Proves worktree dirt backup `.orchestrator/worktree-dirt-backups/*.patch` is preserved.
 
 ---
 
 ## 4. Post-Drain Supervisor Rollout & Restart Protocol
 
 > [!IMPORTANT]
-> Do NOT restart the live Supervisor while active workers (`OSS`, `Observability`, `Control-Pack review`, or `SiteScore`) are running. First prepare code/config/tests and exact-head PR handoff.
+> Do NOT restart the live Supervisor while active workers are running. Prepare code, tests, and exact-head PR handoff first.
 
 ### Post-Drain Runtime Rollout Sequence
 1. **Worker Drain Check**: Verify all active worker tasks have completed or reached safe checkpoints.

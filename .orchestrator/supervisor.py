@@ -2064,7 +2064,11 @@ def process_queue(config: dict[str, Any], state: dict[str, Any], provider_report
             (
                 worker
                 for worker in state.get("workers", {}).values()
-                if worker.get("queue_event_id") == event_id and worker.get("status") in active_statuses
+                if (
+                    worker.get("queue_event_id") == event_id
+                    or (bool(event.get("task_id")) and worker.get("task_id") == event.get("task_id"))
+                )
+                and worker.get("status") in active_statuses
             ),
             None,
         )
@@ -5191,10 +5195,17 @@ def agent_dispatch_disabled(config: dict[str, Any], agent_name: str | None) -> b
     agent_id = normalize_agent_id(name)
     if agent_id and agent_id.casefold() in keys:
         return True
-    agent = (config.get("agents", {}) or {}).get(agent_id)
+    agents_cfg = config.get("agents", {}) or {}
+    agent = agents_cfg.get(agent_id) or agents_cfg.get(name)
     if isinstance(agent, dict):
+        if agent.get("enabled") is False or agent.get("disabled") is True or str(agent.get("status") or "").lower() in {"disabled", "unavailable"}:
+            return True
         display = str(agent.get("display_name") or agent.get("name") or agent_id).strip()
         provider = str(agent.get("provider") or "").strip()
+        if provider:
+            prov_cfg = (config.get("providers", {}) or {}).get(provider) or (config.get("providers", {}) or {}).get(normalize_agent_id(provider))
+            if isinstance(prov_cfg, dict) and (prov_cfg.get("enabled") is False or prov_cfg.get("disabled") is True):
+                return True
         return bool(
             (display and display.casefold() in keys)
             or (provider and provider.casefold() in keys)
@@ -5221,6 +5232,7 @@ def first_viable_agent(
     *,
     state: dict[str, Any] | None = None,
     task: dict[str, Any] | None = None,
+    provider_report: dict[str, Any] | None = None,
 ) -> str | None:
     known = known_agent_display_names(config)
     seen: set[str] = set()
@@ -5229,13 +5241,27 @@ def first_viable_agent(
         if not name or name in seen or name in exclude:
             continue
         seen.add(name)
+        if is_human_gate_agent(name):
+            continue
         if name in known:
-            if state is not None and agent_dispatch_paused(config, state, name):
+            if agent_dispatch_disabled(config, name):
                 continue
+            normalized = normalize_agent_id(name)
+            agent_cfg = (config.get("agents", {}) or {}).get(normalized) or (config.get("agents", {}) or {}).get(name)
+            provider_key = str((agent_cfg or {}).get("provider") or normalized or name)
+            if provider_runtime_config_block_reason(config, provider_key):
+                continue
+            if state is not None:
+                if agent_dispatch_paused(config, state, name):
+                    continue
+                block_reason = agent_auto_dispatch_block_reason(config, state, name, provider_report=provider_report)
+                if block_reason:
+                    continue
             if task is not None and not agent_can_take_task(config, name, task):
                 continue
             return name
     return None
+
 
 
 def agent_auto_dispatch_block_reason(
@@ -5620,6 +5646,8 @@ def maybe_reassign_task_after_worker_failure(
     status = load_status(config)
     task = next((item for item in status.get("tasks", []) if item.get("id") == task_id), None)
     if task is None:
+        return None
+    if task_is_human_gate(task) or bool(task.get("non_dispatchable")):
         return None
 
     task_status = str(task.get("status") or "").lower()
@@ -8588,7 +8616,7 @@ def current_dispatch_event_key(config: dict[str, Any], event: dict[str, Any], ta
     elif reason == REASON_OWNED_IN_PROGRESS:
         eligible = task_status == "in_progress" and task.get(owner_field) == target_agent and dependencies_satisfied(task, task_map, dependency_done_statuses)
     elif reason == REASON_OWNED_READY:
-        eligible = task_status == "todo" and task.get(owner_field) == target_agent and dependencies_satisfied(task, task_map, dependency_done_statuses)
+        eligible = task_status in {"todo", "in_progress"} and task.get(owner_field) == target_agent and dependencies_satisfied(task, task_map, dependency_done_statuses)
 
     if not eligible:
         return None
@@ -8933,11 +8961,20 @@ def stale_dispatch_skip_message(config: dict[str, Any], event: dict[str, Any], t
 
     expected_key = current_dispatch_event_key(config, event, task_map)
     task_id = str(event.get("task_id") or "unknown task")
+    task = task_map.get(task_id) or {}
+    owner = str(task.get("owner") or "")
+    target = str(event.get("target_display_name") or display_name_for(config, str(event.get("target_agent") or "")))
+    task_status = str(task.get("status") or "").lower()
+
     if expected_key is None:
+        if reason == REASON_OWNED_READY and task_status == "in_progress" and owner == target:
+            return None
         return f"Skipped stale queued wake event for {task_id}: task is no longer eligible for {reason}."
 
     queued_key = str(event.get("event_key") or "")
     if queued_key and queued_key != expected_key:
+        if reason == REASON_OWNED_READY and task_status == "in_progress" and owner == target:
+            return None
         return f"Skipped stale queued wake event for {task_id}: task state changed after the wake-up was queued."
 
     return None

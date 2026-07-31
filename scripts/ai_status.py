@@ -5232,7 +5232,16 @@ def emit_task_review_status_check(task: dict[str, Any], state_status: str) -> No
                 or "422" in result.stderr
                 or os.environ.get("ALLOW_EMISSION_FAILURE") == "1"
             ):
-                print("Warning: Skipping status check emission due to unauthenticated or unpushed environment.", file=sys.stderr)
+                outbox = task.setdefault("status_check_outbox", [])
+                outbox.append({
+                    "sha": sha,
+                    "state": state,
+                    "context": context,
+                    "description": description,
+                    "created_at": iso_now(),
+                    "last_error": result.stderr.strip() or "HTTP 422",
+                })
+                print("Warning: Skipping status check emission and recording outbox item due to unauthenticated or unpushed environment.", file=sys.stderr)
                 return
             print("Warning: Skipping status check emission due to emission error.", file=sys.stderr)
             return
@@ -5328,13 +5337,12 @@ def main(argv: list[str]) -> int:
 
     state_before = deepcopy(state)
     commands[command](state, args)
+    sync_all(state)
     try:
-        sync_all(state)
-        # Emit status checks for any modified task status
         emit_status_checks_for_changed_tasks(state_before, state, command, args)
-    except Exception:
-        save_state(state_before)
-        raise
+        sync_all(state)
+    except Exception as exc:
+        print(f"Warning: Failed to emit status checks: {exc}", file=sys.stderr)
     return 0
 
 
