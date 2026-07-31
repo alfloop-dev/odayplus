@@ -7,6 +7,7 @@ Does NOT mutate live status or dashboard artifacts.
 
 from __future__ import annotations
 
+import copy
 import json
 import os
 import shutil
@@ -106,8 +107,9 @@ class LiveFreezeProbes(unittest.TestCase):
         self.assertFalse(result, "Unapproved task missing approved_head must not trigger preemption")
 
     def test_n3_probe_restore_approved_head_check_emission(self):
-        """N3 Probe: restore_approved_head repairs missing-head shape and fails closed on sha mismatch."""
-        state = ai_status.load_state()
+        """N3 Probe: restore_approved_head repairs missing-head shape, asserts task-review-gate emission, and fails closed on sha mismatch."""
+        state_before = ai_status.load_state()
+        state = copy.deepcopy(state_before)
         task = {
             "id": "PROBE-TASK-N3",
             "owner": "Antigravity2",
@@ -121,13 +123,34 @@ class LiveFreezeProbes(unittest.TestCase):
 
         with mock.patch.object(ai_status, "resolve_task_sha", return_value="aaaa1111bbbb2222cccc3333dddd4444eeee5555"), \
              mock.patch.object(ai_status, "task_pr_head_and_merge_commit", return_value=("aaaa1111bbbb2222cccc3333dddd4444eeee5555", None)), \
-             mock.patch.dict(os.environ, {"AI_NAME": "Antigravity5", "AI_STATUS_EXTRA_AGENTS": "Antigravity5"}):
+             mock.patch.dict(os.environ, {"AI_NAME": "Antigravity5", "AI_STATUS_EXTRA_AGENTS": "Antigravity5"}), \
+             mock.patch("subprocess.run") as mock_run:
+            mock_run.return_value = mock.Mock(returncode=0, stdout="", stderr="")
+
             ai_status.command_restore_approved_head(state, ["PROBE-TASK-N3", "aaaa1111bbbb2222cccc3333dddd4444eeee5555", "Restoring head"])
 
             updated = [t for t in state["tasks"] if t["id"] == "PROBE-TASK-N3"][0]
             self.assertEqual(updated["status"], "review_approved")
             self.assertEqual(updated["approved_head"], "aaaa1111bbbb2222cccc3333dddd4444eeee5555")
             self.assertEqual(updated["last_approved_head"], "aaaa1111bbbb2222cccc3333dddd4444eeee5555")
+
+            # N3 status check emission assertion: emit_status_checks_for_changed_tasks must emit task-review-gate=success
+            ai_status.emit_status_checks_for_changed_tasks(state_before, state, "restore_approved_head", ["PROBE-TASK-N3", "aaaa1111bbbb2222cccc3333dddd4444eeee5555", "Restoring head"])
+            self.assertTrue(mock_run.called, "emit_status_checks_for_changed_tasks must call subprocess.run to post GitHub status check")
+            cmd_args = mock_run.call_args[0][0]
+            self.assertIn("context=task-review-gate", cmd_args)
+            self.assertIn("state=success", cmd_args)
+            self.assertIn("statuses/aaaa1111bbbb2222cccc3333dddd4444eeee5555", cmd_args[4])
+
+            # Pending/Failure gate assertion: when task status is not review_approved or done, gate emits failure
+            mock_run.reset_mock()
+            in_progress_task = dict(updated)
+            in_progress_task["status"] = "in_progress"
+            ai_status.emit_task_review_status_check(in_progress_task, "in_progress")
+            self.assertTrue(mock_run.called)
+            cmd_args_pending = mock_run.call_args[0][0]
+            self.assertIn("context=task-review-gate", cmd_args_pending)
+            self.assertIn("state=failure", cmd_args_pending)
 
             # Mismatch probe: must fail closed when requested sha != current branch head
             with self.assertRaises(SystemExit) as cm:

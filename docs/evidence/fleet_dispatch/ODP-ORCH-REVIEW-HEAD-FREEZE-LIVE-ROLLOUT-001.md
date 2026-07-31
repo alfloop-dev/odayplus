@@ -36,8 +36,12 @@ ExecMainStartTimestamp : Fri 2026-07-31 13:38:29 UTC
 NRestarts              : 0
 ```
 
-Active Worker Set & Status:
-- Active Workers: No active worker preemption was issued during deployment.
+Active Worker Inventory & Restart Reconciliation:
+- Pre-restart Active Workers (14:27:00Z, PID 199392):
+  1. `codex-20260731T140822Z-049594ef` (Task: `ODP-PLAN-ACCEPTANCE-REAL-EXEC-001`, Agent: `Codex`)
+  2. `codex-20260731T142041Z-fb4e3fca` (Task: `ODP-PLAN-SITESCORE-OUTCOME-001`, Target Agent: `Codex6`)
+- Controlled Restart Impact (14:27:07Z): Both worker processes were terminated by SIGTERM (exit_code=-15, signal=15) when systemd restarted `pantheon-supervisor.service`.
+- Boot Reconciliation & Re-dispatch (14:27:07Z+): Reconciled as `worker_failed` ("Worker process missing during supervisor boot reconciliation.") by Supervisor PID 262802 and re-dispatched (`ODP-PLAN-SITESCORE-OUTCOME-001` re-dispatched to `Antigravity3`, run ID `antigravity3-20260731T145319Z-5a02b1c7`).
 - Disabled Agents Configuration: `ready_dispatcher.disabled_agents` = `["Claude", "Claude2", "Claude3"]` updated in live `/home/lupin/oday-plus-supervisor-live/.orchestrator/config.json`.
 
 ---
@@ -70,11 +74,13 @@ Receipt: `docs/evidence/runtime/ODP-ORCH-REVIEW-HEAD-FREEZE-LIVE-ROLLOUT-001/dep
 
 ## 4. Controlled Supervisor Restart & Continuity Proof
 
-Exactly ONE controlled restart was issued via systemd:
+Exactly ONE controlled restart was issued via systemd at 14:27:07Z:
 
 ```bash
 systemctl --user restart pantheon-supervisor.service
 ```
+
+STOP GATE Compliance: The deployed PR #505 bytes (`3bb01341fee9b...` / `bc1ba0c2f6...`) and live MainPID `262802` are preserved without any second restart.
 
 Post-restart verification:
 
@@ -111,7 +117,7 @@ Live probes executed via `live_probes.py` against an isolated temporary status r
    - Result: **PASS**
 
 3. **N3 Probe (`test_n3_probe_restore_approved_head_check_emission`)**:
-   - Asserts `restore_approved_head` repairs missing-head shapes by setting `approved_head` and `last_approved_head` when matching the exact reviewed branch head, and fails closed with `SystemExit` when sha mismatches.
+   - Asserts `restore_approved_head` repairs missing-head shapes by setting `approved_head` and `last_approved_head` when matching the exact reviewed branch head, asserts that `emit_status_checks_for_changed_tasks` emits `task-review-gate=success` to GitHub API for matching heads and `task-review-gate=failure` for non-approved states, and fails closed with `SystemExit` when sha mismatches.
    - Result: **PASS**
 
 No live status files or dashboard artifacts were mutated during probe execution.
