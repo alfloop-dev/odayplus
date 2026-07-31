@@ -184,6 +184,14 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+
+      - name: Set up Python
+        run: uv python install 3.12
+
       - name: Set up Node
         uses: actions/setup-node@v4
         with:
@@ -191,6 +199,7 @@ jobs:
 
       - name: Install product E2E dependencies
         run: |
+          uv sync --frozen
           npm ci
           npx playwright install --with-deps chromium
 

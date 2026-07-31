@@ -243,7 +243,7 @@ def main() -> int:
     try:
         if str(ROOT) not in sys.path:
             sys.path.insert(0, str(ROOT))
-        from tests.e2e.test_acceptance_coverage import (
+        from scripts.e2e.product_e2e_receipt import (
             validate_acceptance_scenarios_and_inventory,
         )
         scenario_errors = validate_acceptance_scenarios_and_inventory(ROOT)

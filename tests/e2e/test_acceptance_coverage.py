@@ -4,8 +4,6 @@ from __future__ import annotations
 
 import copy
 import json
-import os
-import re
 import subprocess
 from pathlib import Path
 from typing import Any
@@ -13,12 +11,9 @@ from typing import Any
 import pytest
 
 from scripts.e2e.product_e2e_receipt import (
-    CANONICAL_SPEC_INVENTORY,
     DELETED_SPEC_REFERENCES,
     E2E_SCENARIOS,
     EVIDENCE_COMMIT_ALLOWLIST,
-    EXPECTED_CANONICAL_SPEC_COUNT,
-    EXPECTED_PLAYWRIGHT_TEST_COUNT,
     PYTEST_NODE_IDS,
     RAW_PLAYWRIGHT_PATH,
     RAW_PYTEST_PATH,
@@ -31,6 +26,7 @@ from scripts.e2e.product_e2e_receipt import (
     seal_normalized,
     sha256_bytes,
     source_identity,
+    validate_acceptance_scenarios_and_inventory,
     validate_raw_artifact,
     validate_receipt_packet,
     verify_evidence_relationship,
@@ -38,70 +34,6 @@ from scripts.e2e.product_e2e_receipt import (
 from scripts.e2e.run_python_e2e_tests import run_python_tests
 
 ROOT = Path(__file__).resolve().parents[2]
-
-
-def validate_acceptance_scenarios_and_inventory(root_path: Path) -> list[str]:
-    """Validate registry, canonical inventory, collection count, and real packet."""
-    errors: list[str] = []
-    scenario_ids = [scenario.scenario_id for scenario in E2E_SCENARIOS]
-    if len(scenario_ids) != len(set(scenario_ids)):
-        errors.append("acceptance registry contains duplicate scenario ids")
-
-    for scenario in E2E_SCENARIOS:
-        for ref in scenario.automation_refs:
-            if any(deleted in ref for deleted in DELETED_SPEC_REFERENCES):
-                errors.append(f"{scenario.scenario_id} cites a deleted spec reference: {ref}")
-            if scenario.is_manual:
-                continue
-            if ref.count("::") != 1:
-                errors.append(
-                    f"{scenario.scenario_id} must use one exact normalized test id: {ref}"
-                )
-                continue
-            file_name, exact_title = ref.split("::", 1)
-            target = root_path / file_name
-            if not target.is_file():
-                errors.append(f"{scenario.scenario_id} exact test file is missing: {file_name}")
-            elif exact_title not in target.read_text(encoding="utf-8"):
-                errors.append(f"{scenario.scenario_id} exact test title is missing: {ref}")
-
-    actual_inventory = tuple(
-        sorted(
-            str(path.relative_to(root_path)).replace(os.sep, "/")
-            for path in (root_path / "tests/e2e").glob("*.spec.ts")
-            if path.is_file()
-        )
-    )
-    if actual_inventory != tuple(sorted(CANONICAL_SPEC_INVENTORY)):
-        errors.append(
-            "canonical Playwright spec inventory differs from the explicit 16-file registry"
-        )
-
-    proc = subprocess.run(
-        ["npx", "playwright", "test", "--list", "--project=chromium"],
-        cwd=root_path,
-        check=False,
-        capture_output=True,
-        text=True,
-    )
-    if proc.returncode != 0:
-        errors.append(f"Playwright --list exited {proc.returncode}: {proc.stderr.strip()}")
-    else:
-        match = re.search(r"Total:\s*(\d+)\s*tests\s*in\s*(\d+)\s*files", proc.stdout)
-        if not match:
-            errors.append("Playwright --list output has no parseable total")
-        elif (
-            int(match.group(1)) != EXPECTED_PLAYWRIGHT_TEST_COUNT
-            or int(match.group(2)) != EXPECTED_CANONICAL_SPEC_COUNT
-        ):
-            errors.append(
-                "Playwright inventory must be exactly "
-                f"{EXPECTED_PLAYWRIGHT_TEST_COUNT} tests in "
-                f"{EXPECTED_CANONICAL_SPEC_COUNT} files"
-            )
-
-    errors.extend(validate_receipt_packet(root_path))
-    return errors
 
 
 def _counts(results: list[dict[str, Any]], runner: str) -> dict[str, int]:

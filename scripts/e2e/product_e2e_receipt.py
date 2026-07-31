@@ -6,6 +6,7 @@ from __future__ import annotations
 import hashlib
 import json
 import math
+import os
 import re
 import subprocess
 from dataclasses import dataclass
@@ -1240,4 +1241,68 @@ def validate_receipt_packet(
             errors.append("receipt runner_counts do not match raw artifacts")
         if receipt.get("aggregate_counts") != expected_aggregate_counts(artifacts):
             errors.append("receipt aggregate_counts do not match raw artifacts")
+    return errors
+
+
+def validate_acceptance_scenarios_and_inventory(root: Path) -> list[str]:
+    """Validate the executable registry, canonical inventory, and real packet."""
+    errors: list[str] = []
+    scenario_ids = [scenario.scenario_id for scenario in E2E_SCENARIOS]
+    if len(scenario_ids) != len(set(scenario_ids)):
+        errors.append("acceptance registry contains duplicate scenario ids")
+
+    for scenario in E2E_SCENARIOS:
+        for ref in scenario.automation_refs:
+            if any(deleted in ref for deleted in DELETED_SPEC_REFERENCES):
+                errors.append(f"{scenario.scenario_id} cites a deleted spec reference: {ref}")
+            if scenario.is_manual:
+                continue
+            if ref.count("::") != 1:
+                errors.append(
+                    f"{scenario.scenario_id} must use one exact normalized test id: {ref}"
+                )
+                continue
+            file_name, exact_title = ref.split("::", 1)
+            target = root / file_name
+            if not target.is_file():
+                errors.append(f"{scenario.scenario_id} exact test file is missing: {file_name}")
+            elif exact_title not in target.read_text(encoding="utf-8"):
+                errors.append(f"{scenario.scenario_id} exact test title is missing: {ref}")
+
+    actual_inventory = tuple(
+        sorted(
+            str(path.relative_to(root)).replace(os.sep, "/")
+            for path in (root / "tests/e2e").glob("*.spec.ts")
+            if path.is_file()
+        )
+    )
+    if actual_inventory != tuple(sorted(CANONICAL_SPEC_INVENTORY)):
+        errors.append(
+            "canonical Playwright spec inventory differs from the explicit 16-file registry"
+        )
+
+    proc = subprocess.run(
+        ["npx", "playwright", "test", "--list", "--project=chromium"],
+        cwd=root,
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    if proc.returncode != 0:
+        errors.append(f"Playwright --list exited {proc.returncode}: {proc.stderr.strip()}")
+    else:
+        match = re.search(r"Total:\s*(\d+)\s*tests\s*in\s*(\d+)\s*files", proc.stdout)
+        if not match:
+            errors.append("Playwright --list output has no parseable total")
+        elif (
+            int(match.group(1)) != EXPECTED_PLAYWRIGHT_TEST_COUNT
+            or int(match.group(2)) != EXPECTED_CANONICAL_SPEC_COUNT
+        ):
+            errors.append(
+                "Playwright inventory must be exactly "
+                f"{EXPECTED_PLAYWRIGHT_TEST_COUNT} tests in "
+                f"{EXPECTED_CANONICAL_SPEC_COUNT} files"
+            )
+
+    errors.extend(validate_receipt_packet(root))
     return errors
