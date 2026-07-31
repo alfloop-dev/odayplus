@@ -3424,3 +3424,18 @@ def test_round16_remediation_findings_b1_b2_b3_negative_mutations_and_positive_v
     receipt_mut = adapter_mutated.delivery_receipts[-1]
     assert receipt_mut["status"] == "TEST_ONLY"
     assert receipt_mut["status"] != "DELIVERED"
+
+    # 6. Round 19 Negative Mutation Verification (Finding B1): Dual alias & class default transport mutation.
+    # Mutating both public key aliases (PINNED_ONCALL_PROVIDER_PUBLIC_KEY_PEM / PINNED_PLATFORM_DEPLOYMENT_PUBLIC_KEY_PEM)
+    # and class default transport (OnCallNotificationAdapter._default_http_transport).
+    # Constructing OnCallNotificationAdapter with NO arguments MUST evaluate to TEST_ONLY, NEVER DELIVERED.
+    monkeypatch.setattr("modules.notifications.infrastructure.adapters.PINNED_ONCALL_PROVIDER_PUBLIC_KEY_PEM", provider_pub_pem)
+    monkeypatch.setattr("modules.notifications.infrastructure.adapters.PINNED_PLATFORM_DEPLOYMENT_PUBLIC_KEY_PEM", platform_pub_pem)
+    monkeypatch.setattr(OnCallNotificationAdapter, "_default_http_transport", staticmethod(authentic_asymmetric_transport))
+
+    adapter_r19_mutated = OnCallNotificationAdapter()
+    ok_r19, err_r19 = adapter_r19_mutated.send("n_r19_mut", "webhook", "ops-lead", "Title", "Detail")
+    assert ok_r19 is True
+    receipt_r19 = adapter_r19_mutated.delivery_receipts[-1]
+    assert receipt_r19["status"] == "TEST_ONLY"
+    assert receipt_r19["status"] != "DELIVERED"
