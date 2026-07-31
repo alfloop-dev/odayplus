@@ -6679,7 +6679,7 @@ class PollWorkersRecoveryTests(unittest.TestCase):
         self.assertTrue(changed)
         worker = state["workers"]["run-1"]
         self.assertEqual(worker["status"], "failed")
-        self.assertEqual(worker["last_error"], "Worker exited before the task reached a terminal status.")
+        self.assertEqual(worker["last_error"], supervisor.NO_PROGRESS_WORKER_EXIT_REASON)
         self.assertEqual(state["queue"]["events"]["evt-1"]["status"], "failed")
         self.assertEqual(write_activity_log.call_args.args[1]["type"], "worker_failed")
 
@@ -9987,6 +9987,150 @@ class ReviewHeadFreezeTests(unittest.TestCase):
         self.assertNotIn("ci_pending_timeout", [e["type"] for e in logged])
         self.assertNotIn("ci_pending_since_ts", task)
         self.assertIn("failed; resolve failing checks", task["next"])
+
+
+class SuccessfulWorkerPostconditionTests(unittest.TestCase):
+    def setUp(self) -> None:
+        self.config = load_test_config()
+        self.config.setdefault("provider_guardrails", {})["generic_exit_reassign_after"] = 2
+
+    @staticmethod
+    def _task(*, status: str = "in_progress", next_step: str = "Implement packet") -> dict[str, Any]:
+        return {
+            "id": "ODP-POSTCONDITION-001",
+            "status": status,
+            "owner": "Antigravity4",
+            "reviewer": "Codex6",
+            "next": next_step,
+            "depends_on": [],
+        }
+
+    @staticmethod
+    def _worker(
+        task: dict[str, Any],
+        *,
+        run_id: str = "antigravity4-postcondition-1",
+        reason: str = "owned_in_progress_dispatch",
+        agent_id: str = "antigravity4",
+        dispatch_head: str = "a" * 40,
+    ) -> dict[str, Any]:
+        dispatch_task = {
+            "id": task["id"],
+            "status": task["status"],
+            "owner": task["owner"],
+            "reviewer": task["reviewer"],
+            "next": task["next"],
+            "head": dispatch_head,
+        }
+        return {
+            "run_id": run_id,
+            "task_id": task["id"],
+            "provider": agent_id,
+            "agent_id": agent_id,
+            "status": "running",
+            "queue_event_id": f"evt-{run_id}",
+            "pid": 999999,
+            "runner_status": "completed",
+            "exit_code": 0,
+            "last_event_at": "2026-07-31T15:00:00Z",
+            "request_snapshot": {
+                "reason": reason,
+                "metadata": {
+                    "logical_agent_id": agent_id,
+                    "task": dispatch_task,
+                },
+            },
+        }
+
+    def _poll(self, state: dict[str, Any], task: dict[str, Any], *, current_head: str) -> bool:
+        with (
+            mock.patch.object(supervisor, "load_approval_state", return_value={"pending": [], "history": []}),
+            mock.patch.object(supervisor, "load_status", return_value={"tasks": [task]}),
+            mock.patch.object(supervisor, "load_provider_report", return_value={}),
+            mock.patch.object(supervisor, "retry_due_workers", return_value=False),
+            mock.patch.object(supervisor, "pid_is_alive", return_value=False),
+            mock.patch.object(supervisor, "resolve_task_progress_head", return_value=current_head),
+            mock.patch.object(supervisor, "detect_worker_failure", side_effect=AssertionError("zero-exit worker must use postcondition path")),
+            mock.patch.object(supervisor, "write_activity_log"),
+        ):
+            return supervisor.poll_workers(self.config, state)
+
+    def test_poll_accepts_new_head_as_incremental_progress_and_clears_failure_streak(self) -> None:
+        task = self._task()
+        worker = self._worker(task)
+        streak_key = f"{task['id']}:antigravity4"
+        state = {
+            "queue": {"events": {worker["queue_event_id"]: {"status": "started"}}},
+            "workers": {worker["run_id"]: worker},
+            "provider_guardrails": {"task_failure_streaks": {streak_key: {"count": 1}}},
+        }
+        self.assertTrue(self._poll(state, task, current_head="b" * 40))
+        self.assertEqual(worker["status"], "completed")
+        self.assertEqual(worker["progress_outcome"], "incremental_progress")
+        self.assertEqual(state["queue"]["events"][worker["queue_event_id"]]["status"], "completed")
+        self.assertNotIn(streak_key, state["provider_guardrails"]["task_failure_streaks"])
+
+    def test_poll_reassigns_after_repeated_zero_exit_without_progress(self) -> None:
+        task = self._task()
+        worker = self._worker(task)
+        streak_key = f"{task['id']}:antigravity4"
+        state = {
+            "queue": {"events": {worker["queue_event_id"]: {"status": "started"}}},
+            "workers": {worker["run_id"]: worker},
+            "provider_guardrails": {"task_failure_streaks": {streak_key: {"count": 1}}},
+        }
+        with mock.patch.object(supervisor, "maybe_reassign_task_after_worker_failure", return_value="Antigravity5") as reassign:
+            self.assertTrue(self._poll(state, task, current_head="a" * 40))
+        self.assertEqual(worker["status"], "reassigned")
+        self.assertEqual(worker["reassigned_to"], "Antigravity5")
+        self.assertEqual(state["provider_guardrails"]["task_failure_streaks"][streak_key]["count"], 2)
+        reassign.assert_called_once()
+
+    def test_owner_ready_note_without_handoff_is_no_progress_even_with_new_head(self) -> None:
+        task = self._task(next_step="Implementation complete; ready for independent review")
+        worker = self._worker(self._task())
+        outcome = supervisor.successful_worker_exit_outcome(
+            worker,
+            task,
+            terminal_statuses={"done", "review_approved"},
+        )
+        self.assertEqual(outcome, "no_progress")
+
+    def test_poll_accepts_reviewer_reopen_as_durable_review_decision(self) -> None:
+        dispatch_task = self._task(status="review", next_step="Independent review required")
+        worker = self._worker(dispatch_task, reason="review_ready_dispatch", agent_id="codex6")
+        current_task = self._task(status="in_progress", next_step="Fix review finding B1")
+        state = {
+            "queue": {"events": {worker["queue_event_id"]: {"status": "started"}}},
+            "workers": {worker["run_id"]: worker},
+        }
+        self.assertTrue(self._poll(state, current_task, current_head="a" * 40))
+        self.assertEqual(worker["status"], "completed")
+        self.assertEqual(worker["progress_outcome"], "review_decided")
+
+    def test_boot_reconciliation_applies_same_no_progress_threshold(self) -> None:
+        task = self._task()
+        worker = self._worker(task)
+        streak_key = f"{task['id']}:antigravity4"
+        state = {
+            "queue": {"events": {worker["queue_event_id"]: {"status": "started"}}},
+            "workers": {worker["run_id"]: worker},
+            "provider_guardrails": {"task_failure_streaks": {streak_key: {"count": 1}}},
+        }
+        with (
+            mock.patch.object(supervisor, "load_status", return_value={"tasks": [task]}),
+            mock.patch.object(supervisor, "load_event_queue", return_value=[]),
+            mock.patch.object(supervisor, "pid_is_alive", return_value=False),
+            mock.patch.object(supervisor, "resolve_task_progress_head", return_value="a" * 40),
+            mock.patch.object(supervisor, "write_activity_log"),
+            mock.patch.object(supervisor, "maybe_reassign_task_after_worker_failure", return_value="Antigravity5") as reassign,
+        ):
+            changed = supervisor.reconcile_runtime_on_boot(self.config, state)
+        self.assertTrue(changed)
+        self.assertEqual(worker["status"], "reassigned")
+        self.assertEqual(worker["reassigned_to"], "Antigravity5")
+        self.assertEqual(state["provider_guardrails"]["task_failure_streaks"][streak_key]["count"], 2)
+        reassign.assert_called_once()
 
 
 class SupervisorFailureLoopCoverageTests(unittest.TestCase):
