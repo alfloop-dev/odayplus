@@ -660,6 +660,60 @@ def test_self_consistent_caller_receipt_cannot_self_attest_public_approval() -> 
     assert approval.to_dict()["governance_status"] == GOVERNED_DISABLED
 
 
+def test_exported_verification_cannot_issue_authority_attestation() -> None:
+    """Reproduce the reviewer mutation against the exported result class."""
+
+    options = build_scenario_options(existing_stores=_stores(), candidate_sites=_sites())
+    constraints = _constraints()
+    baseline = _management_baseline()
+    caller_receipt = _approval_receipt(baseline, options, constraints)
+    expectation = ManagementApprovalExpectation(
+        receipt_id=caller_receipt.receipt_id,
+        scenario_id=caller_receipt.scenario_id,
+        baseline_id=caller_receipt.baseline_id,
+        baseline_name=caller_receipt.baseline_name,
+        scope=caller_receipt.scope,
+        release_id=caller_receipt.release_id,
+        policy_version=caller_receipt.policy_version,
+        actions_by_entity=caller_receipt.actions_by_entity,
+        source_snapshot_ids=caller_receipt.source_snapshot_ids,
+        baseline_content_hash=caller_receipt.baseline_content_hash,
+        solver_problem_hash=caller_receipt.solver_problem_hash,
+    )
+
+    with pytest.raises(AttributeError):
+        ManagementApprovalVerification._authority_verified(  # type: ignore[attr-defined]
+            receipt=caller_receipt,
+            expectation=expectation,
+            source_system=caller_receipt.source_system,
+            principal_id=caller_receipt.principal_id,
+            principal_role=caller_receipt.principal_role,
+            verified_at=MOMENT,
+        )
+
+    caller_verification = ManagementApprovalVerification(
+        verified=True,
+        receipt=caller_receipt,
+        violations=(),
+    )
+    approval = ApprovalRecord(
+        approval_id="caller-public-issuance",
+        scenario_id=caller_receipt.scenario_id,
+        actor_id=caller_receipt.principal_id,
+        decision="approved",
+        reason="caller invokes exported verification class",
+        decided_at=MOMENT,
+        policy_version=caller_receipt.policy_version,
+        authority_receipt=caller_receipt,
+        authority_verification=caller_verification,
+    )
+    payload = approval.to_dict()
+    assert caller_verification.authority_attests_receipt(caller_receipt) is False
+    assert payload["authentic_approval_verified"] is False
+    assert payload["business_uat_status"] == BUSINESS_UAT_UNVERIFIED
+    assert payload["governance_status"] == GOVERNED_DISABLED
+
+
 def test_repository_and_api_serialize_forged_public_approval_as_disabled() -> None:
     options = build_scenario_options(existing_stores=_stores(), candidate_sites=_sites())
     constraints = _constraints()
