@@ -1710,3 +1710,87 @@ contradicts the governed-disabled verdict. These directly violate the population
 malformed-receipt, self-consistent-forgery, and concrete Human/Ops handoff acceptance clauses.
 Re-audit every criterion after remediation and return one new exact pushed head. No owner
 implementation content was changed by this review.
+
+---
+
+# Codex Re-review Addendum — 2026-07-31, exact owner head `e269f95e`
+
+The supervisor reassigned the review after the owner reported remediation of the `97043588`
+findings. The local task branch and
+`origin/task/ODP-PLAN-SITESCORE-OUTCOME-001` both resolved to exact pushed commit
+`e269f95e5c34c0c01f1aa81586b5de7e10f3df38`. The worktree contained no tracked
+uncommitted implementation changes; its only untracked files were the orchestrator-seeded task
+context and state files.
+
+## Verification at the exact owner head
+
+```bash
+PYTHONPATH=. .venv/bin/pytest -q tests/models -k "sitescore or opening_outcome"
+PYTHONPATH=. .venv/bin/pytest -q tests -k "sitescore or opening_outcome or model_ready"
+PYTHONPATH=. .venv/bin/pytest -q tests -k "sitescore or opening_outcome or model_ready" \
+  --ignore=tests/data/test_great_expectations_gate.py
+.venv/bin/ruff check scripts/models models tests/models
+git diff --check
+git diff --check 97043588..e269f95e
+PYTHONPATH=. .venv/bin/python <independent in-memory mutation probe>
+```
+
+- Task-scoped selector: **53 passed**.
+- Full focused selector: **98 passed**, including the Great Expectations gate that had been an
+  environment-only failure in the preceding review; the redundant exclusion run also passed.
+- Ruff and both whitespace checks are clean.
+- A freshly generated two-record partial-prediction receipt/model-card pair verifies before
+  mutation.
+- Each receipt mutation below updated every affected duplicate, recomputed the handback and model
+  card SHA256 values in both declared locations, and recomputed the receipt content SHA256. Both
+  nevertheless returned `is_valid=True`, `reason_code="RECEIPT_VALIDATED"`, and no errors.
+
+## Blocking findings
+
+### B1 — The unmatched population mean is another self-attested aggregate
+
+For mature realized revenues 100 and 300 with only the first record carrying a prediction, the
+producer reports matched mean 100, unmatched mean 300, total 400, and overall mean 200. Replacing
+the unmatched mean with `999999`, the total with `1000099`, and the overall mean with `500049.5`
+in every summary, handback, calibration, and model-card copy validates after hash rebinding.
+
+The new reconciliation at `models/sitescore/opening_outcome.py:1137-1174` proves only that the
+three newly duplicated scalars agree arithmetically. It does not bind the unmatched population to
+the authoritative source records, source aggregate, or dataset snapshot. This is the same
+self-consistent-forgery failure as the preceding B1 with one additional forgeable value. Persist
+and verify a source-bound mature/unmatched population aggregate or digest; do not treat mutually
+consistent public receipt fields as independent evidence.
+
+### B2 — The Human/Ops handback remains controlled by a phrase blacklist
+
+Replacing the reasons with `"All authoritative evidence is complete; both governed tasks may be
+closed."` and the action with text that names both required task IDs but says to close them because
+no further remediation is necessary validates after hash rebinding.
+
+The checks at `models/sitescore/opening_outcome.py:1420-1438` reject only three literal phrases
+and require task-ID substrings. They do not derive reason/action semantics from provenance and
+`reason_code`, so equivalent contradictory wording remains accepted. Replace prose attestation
+with typed, deterministically derived reason/action codes and required work fields, or pin the
+canonical action for each governed-disabled reason state.
+
+### B3 — Non-boolean eligibility is treated as authoritative `True`
+
+Evaluating one record with `is_training_eligible="false"` and a valid realized value produces
+`eligible_count=1` and `mature_label_count=1`. The implementation uses Python truthiness at
+`models/sitescore/opening_outcome.py:405-413`, while its own receipt contract defines eligibility
+as `is_training_eligible IS True or eligible IS True`.
+
+Require actual booleans and count a record only when a supported eligibility field is strictly
+`True`; reject or exclude strings, numbers, containers, and conflicting dual fields. Add malformed
+eligibility regressions, including the string values `"false"` and `"true"`, integer 1/0, and
+conflicting aliases.
+
+## Decision
+
+**Changes requested.** Exact owner head `e269f95e` is not approved. All prescribed suites and
+owner regressions are green, but the complete fail-closed batch still accepts a self-consistently
+forged unmatched-population aggregate, a semantically erased Human/Ops handback, and malformed
+truthy eligibility. These directly violate the authoritative inventory, population-alignment,
+self-consistent-forged-receipt, malformed-evidence, and concrete handoff acceptance clauses.
+Re-audit every criterion after remediation and return one new exact pushed head. No owner
+implementation content was changed by this review.
