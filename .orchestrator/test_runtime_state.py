@@ -253,6 +253,68 @@ class LoadRuntimeStateTests(unittest.TestCase):
         self.assertIn("antigravity7-live", reloaded["workers"])
         self.assertIn("evt-live", reloaded["queue"]["events"])
 
+    def test_save_does_not_resurrect_queue_record_pruned_from_canonical_queue(self) -> None:
+        (self.root / "event-queue.jsonl").write_text(
+            json.dumps({"event_id": "evt-live", "task_id": "TASK-LIVE"}) + "\n",
+            encoding="utf-8",
+        )
+        disk_state = runtime_state.default_state()
+        disk_state["queue"]["events"] = {
+            "evt-live": {"status": "queued", "attempt_count": 0},
+            "evt-pruned": {
+                "status": "started",
+                "attempt_count": 1,
+                "lease_owner": "run-pruned",
+            },
+        }
+        self._write_json(self.root / "state.json", disk_state)
+
+        stale_writer = runtime_state.default_state()
+        stale_writer["queue"]["events"]["evt-live"] = {
+            "status": "queued",
+            "attempt_count": 0,
+        }
+        runtime_state.save_runtime_state(self.config, stale_writer)
+
+        persisted = json.loads((self.root / "state.json").read_text(encoding="utf-8"))
+        self.assertEqual(set(persisted["queue"]["events"]), {"evt-live"})
+        self.assertNotIn("evt-pruned", stale_writer["queue"]["events"])
+
+    def test_save_preserves_concurrently_added_canonical_queue_record(self) -> None:
+        (self.root / "event-queue.jsonl").write_text(
+            "".join(
+                [
+                    json.dumps({"event_id": "evt-original", "task_id": "TASK-ORIGINAL"}) + "\n",
+                    json.dumps({"event_id": "evt-concurrent", "task_id": "TASK-CONCURRENT"}) + "\n",
+                ]
+            ),
+            encoding="utf-8",
+        )
+        disk_state = runtime_state.default_state()
+        disk_state["queue"]["events"]["evt-concurrent"] = {
+            "status": "started",
+            "attempt_count": 1,
+            "lease_owner": "run-concurrent",
+        }
+        self._write_json(self.root / "state.json", disk_state)
+
+        stale_writer = runtime_state.default_state()
+        stale_writer["queue"]["events"]["evt-original"] = {
+            "status": "queued",
+            "attempt_count": 0,
+        }
+        runtime_state.save_runtime_state(self.config, stale_writer)
+
+        persisted = json.loads((self.root / "state.json").read_text(encoding="utf-8"))
+        self.assertEqual(
+            set(persisted["queue"]["events"]),
+            {"evt-original", "evt-concurrent"},
+        )
+        self.assertEqual(
+            persisted["queue"]["events"]["evt-concurrent"]["status"],
+            "started",
+        )
+
     def test_equal_cursor_revision_prefers_durable_disk_snapshot(self) -> None:
         disk_state = runtime_state.default_state()
         disk_state["ready_dispatcher"] = {

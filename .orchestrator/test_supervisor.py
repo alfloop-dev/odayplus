@@ -10607,6 +10607,16 @@ class SupervisorFailureLoopCoverageTests(unittest.TestCase):
 
                 run_id = f"run-{terminal_status}"
                 event_id = f"event-{terminal_status}"
+                Path(cfg["paths"]["event_queue"]).write_text(
+                    json.dumps(
+                        {
+                            "event_id": event_id,
+                            "task_id": "ODP-TERMINAL-001",
+                        }
+                    )
+                    + "\n",
+                    encoding="utf-8",
+                )
                 disk_state = supervisor.load_runtime_state(cfg)
                 disk_state["workers"][run_id] = {
                     "run_id": run_id,
