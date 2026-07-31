@@ -60,7 +60,8 @@ def generate_avm_outcome_evidence_pack(
     dataset_snapshot_id: str = "empty-snapshot-unpopulated",
     dataset_snapshot_hash: str = EMPTY_SNAPSHOT_HASH,
     model_artifact_hash: str = UNACTIVATED_MODEL_HASH,
-    access_attempts: list[tuple[str, Role | str, str, Action | str]] | None = None,
+    authentic_data_activated: bool = False,
+    access_attempts: list[tuple[Any, ...]] | None = None,
 ) -> tuple[AVMOutcomeCalibrationReport, dict[str, Any], dict[str, Any], str, dict[str, Any]]:
     """Run full AVM outcome calibration & confidential audit pipeline and generate evidence artifacts."""
     if outcomes is None:
@@ -87,6 +88,7 @@ def generate_avm_outcome_evidence_pack(
         dataset_snapshot_id=dataset_snapshot_id,
         dataset_snapshot_hash=dataset_snapshot_hash,
         model_artifact_hash=model_artifact_hash,
+        authentic_data_activated=authentic_data_activated,
     )
 
     # Collect raw prices for confidential leak checking

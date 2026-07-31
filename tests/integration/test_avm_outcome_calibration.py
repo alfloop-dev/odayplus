@@ -49,6 +49,7 @@ def test_avm_outcome_insufficient_data_fails_closed_with_governed_disabled() -> 
 
 def test_avm_outcome_alignment_computes_coverage_calibration_and_value_bands() -> None:
     now = datetime.now(UTC) - timedelta(days=1)
+    pred_time = now - timedelta(hours=1)
     outcomes = []
     predictions = []
     for i in range(120):
@@ -63,7 +64,7 @@ def test_avm_outcome_alignment_computes_coverage_calibration_and_value_bands() -
                 tx_id, s_id, price, now, is_mature=True, raw_record_sha256=RAW_SHA
             )
         )
-        predictions.append(AVMPredictionRecord(f"pred-{i}", s_id, p10, p50, p90))
+        predictions.append(AVMPredictionRecord(f"pred-{i}", s_id, p10, p50, p90, predicted_at=pred_time))
 
     aligned = align_outcomes_and_predictions(outcomes, predictions)
     assert len(aligned) == 120
@@ -76,6 +77,7 @@ def test_avm_outcome_alignment_computes_coverage_calibration_and_value_bands() -
         dataset_snapshot_id="snapshot-002",
         dataset_snapshot_hash=VALID_DATASET_HASH,
         model_artifact_hash=VALID_MODEL_HASH,
+        authentic_data_activated=True,
     )
 
     assert report.is_governed_disabled is False
@@ -107,8 +109,9 @@ def test_mutation_caller_supplied_eligible_count_without_outcomes_fails_closed()
 
 def test_mutation_reconciled_count_mismatch_raises_error() -> None:
     now = datetime.now(UTC) - timedelta(days=1)
+    pred_time = now - timedelta(hours=1)
     outcomes = [AVMOutcomeTransaction("tx-1", "s-1", 10_000_000.0, now, is_mature=True, raw_record_sha256=RAW_SHA)]
-    predictions = [AVMPredictionRecord("pred-1", "s-1", 8_000_000.0, 10_200_000.0, 12_000_000.0)]
+    predictions = [AVMPredictionRecord("pred-1", "s-1", 8_000_000.0, 10_200_000.0, 12_000_000.0, predicted_at=pred_time)]
     aligned = align_outcomes_and_predictions(outcomes, predictions)
 
     with pytest.raises(AVMOutcomeValidationError, match="Reconciled count mismatch"):
@@ -123,6 +126,7 @@ def test_mutation_reconciled_count_mismatch_raises_error() -> None:
 
 def test_mutation_coverage_below_target_fails_closed() -> None:
     now = datetime.now(UTC) - timedelta(days=1)
+    pred_time = now - timedelta(hours=1)
     outcomes = []
     predictions = []
     for i in range(120):
@@ -130,7 +134,7 @@ def test_mutation_coverage_below_target_fails_closed() -> None:
         s_id = f"s-{i}"
         price = 10_000_000.0
         # Narrow interval missing realized price 10m -> coverage = 0.0 < 0.80
-        predictions.append(AVMPredictionRecord(f"pred-{i}", s_id, 1_000_000.0, 2_000_000.0, 3_000_000.0))
+        predictions.append(AVMPredictionRecord(f"pred-{i}", s_id, 1_000_000.0, 2_000_000.0, 3_000_000.0, predicted_at=pred_time))
         outcomes.append(AVMOutcomeTransaction(tx_id, s_id, price, now, is_mature=True, raw_record_sha256=RAW_SHA))
 
     aligned = align_outcomes_and_predictions(outcomes, predictions)
@@ -149,46 +153,52 @@ def test_mutation_coverage_below_target_fails_closed() -> None:
 # --- B2 Mutations ---
 
 def test_mutation_duplicate_store_prediction_fails_closed() -> None:
+    now = datetime.now(UTC) - timedelta(days=1)
+    pred_time = now - timedelta(hours=1)
     predictions = [
-        AVMPredictionRecord("pred-1", "s-1", 10_000_000.0, 15_000_000.0, 20_000_000.0),
-        AVMPredictionRecord("pred-2", "s-1", 10_000_000.0, 15_000_000.0, 20_000_000.0),  # Duplicate store_id s-1
+        AVMPredictionRecord("pred-1", "s-1", 10_000_000.0, 15_000_000.0, 20_000_000.0, predicted_at=pred_time),
+        AVMPredictionRecord("pred-2", "s-1", 10_000_000.0, 15_000_000.0, 20_000_000.0, predicted_at=pred_time),  # Duplicate store_id s-1
     ]
-    outcomes = [AVMOutcomeTransaction("tx-1", "s-1", 15_000_000.0, datetime.now(UTC), is_mature=True, raw_record_sha256=RAW_SHA)]
+    outcomes = [AVMOutcomeTransaction("tx-1", "s-1", 15_000_000.0, now, is_mature=True, raw_record_sha256=RAW_SHA)]
 
     with pytest.raises(AVMOutcomeValidationError, match="Duplicate prediction record for store_id"):
         align_outcomes_and_predictions(outcomes, predictions)
 
 
 def test_mutation_mixed_model_versions_fails_closed() -> None:
+    now = datetime.now(UTC) - timedelta(days=1)
+    pred_time = now - timedelta(hours=1)
     predictions = [
-        AVMPredictionRecord("pred-1", "s-1", 10_000_000.0, 15_000_000.0, 20_000_000.0, model_version="wrong-version"),
+        AVMPredictionRecord("pred-1", "s-1", 10_000_000.0, 15_000_000.0, 20_000_000.0, model_version="wrong-version", predicted_at=pred_time),
     ]
-    outcomes = [AVMOutcomeTransaction("tx-1", "s-1", 15_000_000.0, datetime.now(UTC), is_mature=True, raw_record_sha256=RAW_SHA)]
+    outcomes = [AVMOutcomeTransaction("tx-1", "s-1", 15_000_000.0, now, is_mature=True, raw_record_sha256=RAW_SHA)]
 
     with pytest.raises(AVMOutcomeValidationError, match="Mixed or wrong model version"):
         align_outcomes_and_predictions(outcomes, predictions)
 
 
 def test_mutation_missing_prediction_for_outcome_fails_closed() -> None:
-    predictions = [AVMPredictionRecord("pred-1", "s-1", 10_000_000.0, 14_000_000.0, 20_000_000.0)]
+    now = datetime.now(UTC) - timedelta(days=1)
+    pred_time = now - timedelta(hours=1)
+    predictions = [AVMPredictionRecord("pred-1", "s-1", 10_000_000.0, 14_000_000.0, 20_000_000.0, predicted_at=pred_time)]
     outcomes = [
-        AVMOutcomeTransaction("tx-1", "s-1", 15_000_000.0, datetime.now(UTC) - timedelta(days=1), is_mature=True, raw_record_sha256=RAW_SHA),
-        AVMOutcomeTransaction("tx-2", "s-missing", 20_000_000.0, datetime.now(UTC) - timedelta(days=1), is_mature=True, raw_record_sha256=RAW_SHA),
+        AVMOutcomeTransaction("tx-1", "s-1", 15_000_000.0, now, is_mature=True, raw_record_sha256=RAW_SHA),
+        AVMOutcomeTransaction("tx-2", "s-missing", 20_000_000.0, now, is_mature=True, raw_record_sha256=RAW_SHA),
     ]
 
     with pytest.raises(AVMOutcomeValidationError, match="Missing prediction record"):
         align_outcomes_and_predictions(outcomes, predictions)
 
 
-
 # --- B3 Mutations ---
 
 def test_mutation_fixture_authority_partition_fails_closed() -> None:
     now = datetime.now(UTC) - timedelta(days=1)
+    pred_time = now - timedelta(hours=1)
     outcomes = [
         AVMOutcomeTransaction("tx-1", "s-1", 15_000_000.0, now, is_mature=True, authority_partition="fixture_partition", raw_record_sha256=RAW_SHA)
     ]
-    predictions = [AVMPredictionRecord("pred-1", "s-1", 12_000_000.0, 15_200_000.0, 18_000_000.0)]
+    predictions = [AVMPredictionRecord("pred-1", "s-1", 12_000_000.0, 15_200_000.0, 18_000_000.0, predicted_at=pred_time)]
 
     with pytest.raises(AVMOutcomeValidationError, match="Non-authoritative partition"):
         align_outcomes_and_predictions(outcomes, predictions)
@@ -196,10 +206,11 @@ def test_mutation_fixture_authority_partition_fails_closed() -> None:
 
 def test_mutation_blank_or_invalid_raw_record_sha256_fails_closed() -> None:
     now = datetime.now(UTC) - timedelta(days=1)
+    pred_time = now - timedelta(hours=1)
     outcomes = [
         AVMOutcomeTransaction("tx-1", "s-1", 15_000_000.0, now, is_mature=True, raw_record_sha256="")
     ]
-    predictions = [AVMPredictionRecord("pred-1", "s-1", 12_000_000.0, 15_200_000.0, 18_000_000.0)]
+    predictions = [AVMPredictionRecord("pred-1", "s-1", 12_000_000.0, 15_200_000.0, 18_000_000.0, predicted_at=pred_time)]
 
     with pytest.raises(AVMOutcomeValidationError, match="Invalid or missing raw_record_sha256"):
         align_outcomes_and_predictions(outcomes, predictions)
@@ -207,10 +218,11 @@ def test_mutation_blank_or_invalid_raw_record_sha256_fails_closed() -> None:
 
 def test_mutation_future_transaction_date_marked_mature_fails_closed() -> None:
     future_date = datetime.now(UTC) + timedelta(days=10)
+    pred_time = datetime.now(UTC) - timedelta(days=1)
     outcomes = [
         AVMOutcomeTransaction("tx-future", "s-1", 15_000_000.0, future_date, is_mature=True, raw_record_sha256=RAW_SHA)
     ]
-    predictions = [AVMPredictionRecord("pred-1", "s-1", 12_000_000.0, 15_200_000.0, 18_000_000.0)]
+    predictions = [AVMPredictionRecord("pred-1", "s-1", 12_000_000.0, 15_200_000.0, 18_000_000.0, predicted_at=pred_time)]
 
     with pytest.raises(AVMOutcomeValidationError, match="Future transaction date"):
         align_outcomes_and_predictions(outcomes, predictions)
@@ -220,14 +232,15 @@ def test_mutation_future_transaction_date_marked_mature_fails_closed() -> None:
 
 def test_mutation_single_substituted_outcome_row_fails_closed() -> None:
     now = datetime.now(UTC) - timedelta(days=1)
+    pred_time = now - timedelta(hours=1)
     outcomes = [
         AVMOutcomeTransaction("tx-1", "s-1", 15_000_000.0, now, is_mature=True, raw_record_sha256=RAW_SHA),
         AVMOutcomeTransaction("tx-2", "s-2", 25_000_000.0, now, is_mature=True, raw_record_sha256=RAW_SHA),
     ]
     # Row 1 is normal, Row 2 has copied p50 == outcome.realized_price (single substituted row fraud)
     predictions = [
-        AVMPredictionRecord("pred-1", "s-1", 10_000_000.0, 14_000_000.0, 20_000_000.0),
-        AVMPredictionRecord("pred-2", "s-2", 20_000_000.0, 25_000_000.0, 30_000_000.0),
+        AVMPredictionRecord("pred-1", "s-1", 10_000_000.0, 14_000_000.0, 20_000_000.0, predicted_at=pred_time),
+        AVMPredictionRecord("pred-2", "s-2", 20_000_000.0, 25_000_000.0, 30_000_000.0, predicted_at=pred_time),
     ]
 
     with pytest.raises(AVMOutcomeValidationError, match="Prediction value p50=25000000.0 was directly copied"):
@@ -327,3 +340,106 @@ def test_authoritative_evidence_represents_unpopulated_snapshot_honestly() -> No
     assert len(report.dataset_snapshot_hash) == 64
     assert report.dataset_snapshot_hash.islower()
     assert gate1_receipt["governed_disabled"] is True
+
+
+# --- B8, B9, B10 Tests & Mutations ---
+
+def test_b8_activation_authority_gate_fails_closed_without_attestation() -> None:
+    now = datetime.now(UTC) - timedelta(days=10)
+    pred_time = now - timedelta(hours=1)
+    outcomes = []
+    predictions = []
+    for i in range(120):
+        tx_id = f"tx-{i}"
+        s_id = f"s-{i}"
+        price = 8_000_000.0 + (i * 250_000.0)
+        p50 = price * 1.01
+        p10 = p50 * 0.8
+        p90 = p50 * 1.2
+        outcomes.append(
+            AVMOutcomeTransaction(
+                tx_id, s_id, price, now, is_mature=True, raw_record_sha256=RAW_SHA
+            )
+        )
+        predictions.append(
+            AVMPredictionRecord(f"pred-{i}", s_id, p10, p50, p90, predicted_at=pred_time)
+        )
+
+    aligned = align_outcomes_and_predictions(outcomes, predictions)
+
+    # Without authentic_data_activated (default False): fails closed with AUTHENTIC_DATA_ACTIVATION_PENDING
+    unactivated_report = compute_avm_outcome_calibration(
+        aligned,
+        observed_count=120,
+        eligible_count=120,
+        auto_seeded_count=0,
+        dataset_snapshot_id="snapshot-002",
+        dataset_snapshot_hash=VALID_DATASET_HASH,
+        model_artifact_hash=VALID_MODEL_HASH,
+        authentic_data_activated=False,
+    )
+    assert unactivated_report.is_governed_disabled is True
+    assert unactivated_report.verdict == AVMVerdict.FAIL_CLOSED
+    assert unactivated_report.reason_code == "AUTHENTIC_DATA_ACTIVATION_PENDING"
+
+    # With authentic_data_activated=True: produces PASS
+    activated_report = compute_avm_outcome_calibration(
+        aligned,
+        observed_count=120,
+        eligible_count=120,
+        auto_seeded_count=0,
+        dataset_snapshot_id="snapshot-002",
+        dataset_snapshot_hash=VALID_DATASET_HASH,
+        model_artifact_hash=VALID_MODEL_HASH,
+        authentic_data_activated=True,
+    )
+    assert activated_report.is_governed_disabled is False
+    assert activated_report.verdict == AVMVerdict.PASS
+    assert activated_report.reason_code == "MATURE_LABEL_CONTRACT_READY"
+
+
+def test_b9_temporal_leakage_prediction_at_or_after_outcome_fails_closed() -> None:
+    tx_time = datetime.now(UTC) - timedelta(days=1)
+    # Temporal leakage: prediction created after transaction date
+    leak_time = tx_time + timedelta(hours=2)
+
+    outcomes = [
+        AVMOutcomeTransaction("tx-1", "s-1", 10_000_000.0, tx_time, is_mature=True, raw_record_sha256=RAW_SHA)
+    ]
+    predictions = [
+        AVMPredictionRecord("pred-1", "s-1", 8_000_000.0, 10_200_000.0, 12_000_000.0, predicted_at=leak_time)
+    ]
+
+    with pytest.raises(AVMOutcomeValidationError, match="Temporal leakage detected"):
+        align_outcomes_and_predictions(outcomes, predictions)
+
+
+def test_b10_forged_disabled_state_receipt_contradictory_invariants_rejected() -> None:
+    report = compute_avm_outcome_calibration(
+        [],
+        observed_count=0,
+        eligible_count=0,
+        dataset_snapshot_id="snapshot-001",
+        dataset_snapshot_hash=VALID_DATASET_HASH,
+        model_artifact_hash=VALID_MODEL_HASH,
+    )
+
+    # Tamper 1: FAIL_CLOSED report with is_governed_disabled=False
+    tampered1 = dataclasses.replace(report, is_governed_disabled=False)
+    with pytest.raises(AVMOutcomeValidationError, match="contradictory FAIL_CLOSED verdict invariants"):
+        generate_gate1_benchmark_receipt(
+            tampered1,
+            dataset_snapshot_id="snapshot-001",
+            dataset_snapshot_hash=VALID_DATASET_HASH,
+            model_artifact_hash=VALID_MODEL_HASH,
+        )
+
+    # Tamper 2: FAIL_CLOSED report with reason_code="MATURE_LABEL_CONTRACT_READY"
+    tampered2 = dataclasses.replace(report, reason_code="MATURE_LABEL_CONTRACT_READY")
+    with pytest.raises(AVMOutcomeValidationError, match="contradictory FAIL_CLOSED verdict invariants"):
+        generate_gate1_benchmark_receipt(
+            tampered2,
+            dataset_snapshot_id="snapshot-001",
+            dataset_snapshot_hash=VALID_DATASET_HASH,
+            model_artifact_hash=VALID_MODEL_HASH,
+        )
