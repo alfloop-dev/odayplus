@@ -2,7 +2,7 @@
 
 - **Task ID**: `ODP-PLAN-SUPERVISOR-FAILURE-LOOP-001`
 - **Title**: 補齊 Supervisor failure-loop 自動轉派覆蓋
-- **Owner**: `Antigravity4`
+- **Owner**: `CodexCoordinator`
 - **Reviewer**: `Codex6`
 - **Phase**: `P0 Execution Control`
 - **Date**: `2026-07-31`
@@ -60,12 +60,20 @@ During Round 1 review by `Codex6`, five blocking control findings (R1–R5) were
 ### Verification Commands & Results
 ```bash
 PYTHONPATH=.orchestrator python3 -m unittest test_supervisor test_model_rotation
-# Result: Ran 263 tests in 8.976s - OK
+# Result: Ran 267 tests in 1.565s - OK
+
+python3 -m unittest scripts.test_ai_status
+# Result: Ran 101 tests in 0.632s - OK
 
 python3 .orchestrator/doctor.py
 # Result: Exit 0 (Workspace & Providers verified clean)
 
-git diff --check
+python3 -m ruff check .orchestrator/common.py .orchestrator/runtime_state.py \
+  .orchestrator/supervisor.py .orchestrator/test_supervisor.py \
+  scripts/ai_status.py scripts/test_ai_status.py
+# Result: All checks passed
+
+git diff --check "$(git merge-base origin/dev HEAD)"..HEAD
 # Result: Exit 0 (Clean, no whitespace issues)
 ```
 
@@ -163,3 +171,100 @@ clean
 ```
 
 No live Supervisor restart or deployment was performed.
+
+---
+
+## 6. Coordinator completion addendum — R9–R13
+
+Round-2 independent review at owner anchor `ab842fb590f1a981b1cc3d020117e3676fb92c8c`
+found five additional control gaps. The findings are preserved in
+`ODP-PLAN-SUPERVISOR-FAILURE-LOOP-001-review-codex6-round2.md`; the task was
+formally reopened before this batch remediation.
+
+### R9: monotonic terminal worker and queue state
+
+Runtime-state reconciliation now treats terminal worker states as monotonic.
+A stale in-memory `running` record cannot resurrect a worker already persisted
+as `completed` or `failed`, and a terminal in-memory transition wins over an
+older active disk record. Queue records use the same terminal-preserving rule
+and retain the higher-ranked durable transition.
+
+The regression tests cross the real persistence boundary for
+`running -> completed` and `running -> failed`, then prove a stale writer cannot
+move either worker or queue event back into an active state.
+
+### R10: locked read-merge-write transactions
+
+`save_runtime_state` now acquires an advisory lock on the state-specific
+`.lock` file around the complete read, merge, and atomic-write transaction.
+It preserves worker and event records that exist only on disk, including
+terminal records, rather than preserving only records that still look active.
+
+The concurrency regression uses two forked child processes that load the same
+snapshot, synchronize at a barrier, and then save distinct worker records.
+Both records must remain in the final persisted state; this verifies the actual
+cross-process transaction boundary rather than a sequential mock.
+
+### R11: hermetic concurrent-claim test boundary
+
+The concurrent-claim regression redirects status, runtime, worker, watchdog,
+workspace, and activity-log paths into a temporary root and patches the process
+launch boundary. It exercises the real locked save path and proves no duplicate
+worker is started, while leaving the live Supervisor activity log and worker
+registry untouched by test fixtures.
+
+During the full verification run the live activity log received one legitimate
+`watchdog_probe` from live Supervisor PID `3100560`; no `ODP-CONC-*` worker,
+event, or process was created by the test.
+
+### R12: authority-only dispatch eligibility keys
+
+Eligible wake keys exclude observational timestamps such as `last_update` but
+remain bound to dispatch authority and eligibility: task id, status, owner,
+reviewer, dependency list, dependency states, and dispatch reason.
+
+The negative matrix independently mutates owner, reviewer, status,
+dependencies, and dependency state and proves each mutation invalidates a
+persisted wake. A pure `last_update` change remains the sole positive case.
+
+### R13: reconciled transactional status-check outbox
+
+GitHub status delivery now uses one exact payload for the immediate attempt and
+durable outbox record. Any failed post is deduplicated into
+`status_check_outbox` with repository, SHA, context, state, description,
+attempt count, and last error. Each authoritative CLI run reconciles pending
+records: successful delivery removes the item and appends a delivery-history
+receipt; repeated failure remains durable for a later retry.
+
+The isolated end-to-end CLI regression injects HTTP 422 on formal reopen,
+proves the task remains `in_progress` and the exact payload is durable, then
+runs a second authoritative sync that succeeds and clears the outbox. Runtime
+state, backup patches, and the live activity log are not mutated.
+
+### Round-2 verification receipts
+
+```text
+PYTHONPATH=.orchestrator python3 -m unittest test_supervisor test_model_rotation
+Ran 267 tests in 1.565s
+OK
+
+python3 -m unittest scripts.test_ai_status
+Ran 101 tests in 0.632s
+OK
+
+python3 .orchestrator/doctor.py
+exit 0
+
+python3 -m ruff check .orchestrator/common.py .orchestrator/runtime_state.py \
+  .orchestrator/supervisor.py .orchestrator/test_supervisor.py \
+  scripts/ai_status.py scripts/test_ai_status.py
+All checks passed
+
+git diff --check "$(git merge-base origin/dev HEAD)"..HEAD
+clean
+```
+
+This closes the owner-side R9–R13 remediation only. Exact-head independent
+review, PR/CI, merge, worker drain, and safe live Supervisor rollout remain
+separate required gates. No live Supervisor restart or deployment was
+performed.

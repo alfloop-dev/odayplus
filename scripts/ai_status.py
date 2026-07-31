@@ -5219,11 +5219,11 @@ def get_repository_slug_safe() -> str:
     return "alfloop-dev/odayplus"
 
 
-def emit_task_review_status_check(task: dict[str, Any], state_status: str) -> None:
+def task_review_status_payload(task: dict[str, Any], state_status: str) -> dict[str, str] | None:
     task_id = str(task.get("id") or "")
     sha = resolve_task_sha(task_id)
     if not sha:
-        return
+        return None
 
     repo_slug = get_repository_slug_safe()
     context = "task-review-gate"
@@ -5251,46 +5251,142 @@ def emit_task_review_status_check(task: dict[str, Any], state_status: str) -> No
         state = "failure"
         description = f"Review rejected or reopened. Task status is {state_status}"
 
+    return {
+        "repo_slug": repo_slug,
+        "sha": sha,
+        "state": state,
+        "context": context,
+        "description": description,
+    }
+
+
+def post_task_review_status_payload(payload: dict[str, str]) -> tuple[bool, str]:
     cmd = [
         get_gh_executable(), "api",
         "-X", "POST",
-        f"repos/{repo_slug}/statuses/{sha}",
-        "-F", f"state={state}",
-        "-F", f"context={context}",
-        "-F", f"description={description}"
+        f"repos/{payload['repo_slug']}/statuses/{payload['sha']}",
+        "-F", f"state={payload['state']}",
+        "-F", f"context={payload['context']}",
+        "-F", f"description={payload['description']}",
     ]
 
     try:
         result = subprocess.run(cmd, capture_output=True, text=True, check=False, cwd=ROOT)
         if result.returncode == 0:
-            print(f"Successfully emitted status check '{context}'={state} to GitHub API.", file=sys.stdout)
-        else:
-            err_msg = f"Failed to emit status check (code {result.returncode}): {result.stderr.strip()}"
-            print(err_msg, file=sys.stderr)
-            if (
-                "gh auth login" in result.stderr
-                or "authentication token" in result.stderr
-                or "No commit found for SHA" in result.stderr
-                or "422" in result.stderr
-                or os.environ.get("ALLOW_EMISSION_FAILURE") == "1"
-            ):
-                outbox = task.setdefault("status_check_outbox", [])
-                outbox.append({
-                    "sha": sha,
-                    "state": state,
-                    "context": context,
-                    "description": description,
-                    "created_at": iso_now(),
-                    "last_error": result.stderr.strip() or "HTTP 422",
-                })
-                print("Warning: Skipping status check emission and recording outbox item due to unauthenticated or unpushed environment.", file=sys.stderr)
-                return
-            print("Warning: Skipping status check emission due to emission error.", file=sys.stderr)
-            return
+            return True, ""
+        return (
+            False,
+            f"Failed to emit status check (code {result.returncode}): "
+            f"{result.stderr.strip() or result.stdout.strip()}",
+        )
     except Exception as exc:
-        err_msg = f"Error during status emission: {exc}"
-        print(err_msg, file=sys.stderr)
+        return False, f"Error during status emission: {exc}"
+
+
+def enqueue_status_check_outbox(
+    task: dict[str, Any],
+    payload: dict[str, str],
+    error: str,
+) -> None:
+    """Durably retain one exact failed payload without duplicate queue growth."""
+    outbox = task.setdefault("status_check_outbox", [])
+    existing = next(
+        (
+            item
+            for item in outbox
+            if isinstance(item, dict)
+            and all(
+                str(item.get(key) or "") == str(payload.get(key) or "")
+                for key in ("repo_slug", "sha", "state", "context", "description")
+            )
+        ),
+        None,
+    )
+    now = iso_now()
+    if existing is not None:
+        existing["last_error"] = error
+        existing["last_attempt_at"] = now
+        existing["attempt_count"] = int(existing.get("attempt_count", 0) or 0) + 1
         return
+    outbox.append(
+        {
+            **payload,
+            "created_at": now,
+            "last_attempt_at": now,
+            "attempt_count": 1,
+            "last_error": error,
+        }
+    )
+
+
+def reconcile_status_check_outbox(state: dict[str, Any]) -> tuple[int, int]:
+    """Retry exact failed status payloads and remove only confirmed deliveries."""
+    delivered = 0
+    retained = 0
+    for task in state.get("tasks", []):
+        pending = task.get("status_check_outbox")
+        if not isinstance(pending, list) or not pending:
+            continue
+        remaining: list[dict[str, Any]] = []
+        for item in pending:
+            if not isinstance(item, dict):
+                continue
+            payload = {
+                key: str(item.get(key) or "")
+                for key in ("repo_slug", "sha", "state", "context", "description")
+            }
+            if not all(payload.values()):
+                item["last_error"] = "Malformed status-check outbox payload"
+                remaining.append(item)
+                retained += 1
+                continue
+            ok, error = post_task_review_status_payload(payload)
+            if ok:
+                delivered += 1
+                task.setdefault("status_check_delivery_history", []).append(
+                    {
+                        **payload,
+                        "created_at": item.get("created_at"),
+                        "attempt_count": int(item.get("attempt_count", 0) or 0) + 1,
+                        "delivered_at": iso_now(),
+                    }
+                )
+                print(
+                    f"Reconciled status check '{payload['context']}'="
+                    f"{payload['state']} for {payload['sha'][:8]}.",
+                    file=sys.stdout,
+                )
+                continue
+            item["last_error"] = error
+            item["last_attempt_at"] = iso_now()
+            item["attempt_count"] = int(item.get("attempt_count", 0) or 0) + 1
+            remaining.append(item)
+            retained += 1
+        if remaining:
+            task["status_check_outbox"] = remaining
+        else:
+            task.pop("status_check_outbox", None)
+    return delivered, retained
+
+
+def emit_task_review_status_check(task: dict[str, Any], state_status: str) -> None:
+    payload = task_review_status_payload(task, state_status)
+    if payload is None:
+        return
+    ok, error = post_task_review_status_payload(payload)
+    if ok:
+        print(
+            f"Successfully emitted status check '{payload['context']}'="
+            f"{payload['state']} to GitHub API.",
+            file=sys.stdout,
+        )
+        return
+    print(error, file=sys.stderr)
+    enqueue_status_check_outbox(task, payload, error)
+    print(
+        "Warning: Status check emission failed; exact payload recorded for reconciliation.",
+        file=sys.stderr,
+    )
 
 
 def emit_status_checks_for_changed_tasks(state_before: dict[str, Any], state_after: dict[str, Any], command: str, args: list[str]) -> None:
@@ -5381,6 +5477,7 @@ def main(argv: list[str]) -> int:
     commands[command](state, args)
     sync_all(state)
     try:
+        reconcile_status_check_outbox(state)
         emit_status_checks_for_changed_tasks(state_before, state, command, args)
         sync_all(state)
     except Exception as exc:

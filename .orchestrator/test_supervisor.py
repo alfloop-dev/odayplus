@@ -2735,7 +2735,7 @@ class ProcessQueueDispatchGuardTests(unittest.TestCase):
         self.assertEqual(queued_event["target_agent"], "Claude")
         self.assertEqual(queued_event["reason"], "owned_in_progress_dispatch")
 
-    def test_dispatcher_helper_claim_uses_persisted_reassignment_timestamp_for_event_key(self) -> None:
+    def test_dispatcher_helper_claim_uses_persisted_authority_for_event_key(self) -> None:
         config = {
             "schema": {
                 "tasks_path": "tasks",
@@ -2813,7 +2813,10 @@ class ProcessQueueDispatchGuardTests(unittest.TestCase):
 
         self.assertTrue(changed)
         queued_event = queue_delivery_event.call_args.args[1]
-        self.assertIn('"last_update": "2026-05-09T10:00:00Z"', queued_event["key"])
+        self.assertNotIn("2026-05-09T09:00:00Z", queued_event["key"])
+        self.assertNotIn("2026-05-09T10:00:00Z", queued_event["key"])
+        self.assertIn('"owner": "Claude"', queued_event["key"])
+        self.assertIn('"reviewer": "Qwen"', queued_event["key"])
         self.assertEqual(queued_event["target_agent"], "Claude")
         self.assertEqual(queued_event["reason"], "owned_in_progress_dispatch")
 
@@ -9955,8 +9958,32 @@ class SupervisorFailureLoopCoverageTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmpdir:
             tmp_root = Path(tmpdir)
             cfg = deepcopy(self.config)
-            cfg["paths"]["state_file"] = str(tmp_root / "state.json")
-            cfg["paths"]["event_queue"] = str(tmp_root / "event-queue.jsonl")
+            live_activity_path = ROOT_DIR / "ai-activity-log.jsonl"
+            live_activity_before = (
+                live_activity_path.read_bytes()
+                if live_activity_path.exists()
+                else None
+            )
+            isolated_paths = {
+                "status_file": tmp_root / "ai-status.json",
+                "activity_log": tmp_root / "ai-activity-log.jsonl",
+                "current_work": tmp_root / "current-work.md",
+                "dashboard": tmp_root / "docs-site" / "index.html",
+                "state_file": tmp_root / ".orchestrator" / "state.json",
+                "event_queue": tmp_root / ".orchestrator" / "event-queue.jsonl",
+                "approval_queue": tmp_root / ".orchestrator" / "approval-queue.json",
+                "sidecar_catalog": tmp_root / ".orchestrator" / "sidecar_catalog.json",
+                "github_bus_state": tmp_root / ".orchestrator" / "github-bus-state.json",
+                "github_webhook_events": tmp_root / ".orchestrator" / "github-webhook-events.jsonl",
+                "github_relay_state": tmp_root / ".orchestrator" / "github-relay-state.json",
+                "provider_capabilities": tmp_root / ".orchestrator" / "provider_capabilities.json",
+                "claude_mcp_config": tmp_root / ".orchestrator" / "claude-approval-broker.mcp.json",
+            }
+            cfg["paths"] = {key: str(value) for key, value in isolated_paths.items()}
+            cfg.setdefault("worker_worktrees", {})["root"] = str(tmp_root / "worker-worktrees")
+            cfg.setdefault("permission_broker", {})["allowed_workspace_roots"] = [str(tmp_root)]
+            cfg.setdefault("watchdog", {})["state_file"] = str(tmp_root / ".orchestrator" / "watchdog-state.json")
+            cfg.setdefault("watchdog", {})["metrics_file"] = str(tmp_root / ".orchestrator" / "watchdog-metrics.jsonl")
 
             status_todo = {
                 "tasks": [
@@ -9995,6 +10022,11 @@ class SupervisorFailureLoopCoverageTests(unittest.TestCase):
             disk_state["queue"]["events"][evt_id]["status"] = "started"
             disk_state["queue"]["events"][evt_id]["run_id"] = "antigravity4-conc-run-1"
             supervisor.save_runtime_state(cfg, disk_state)
+            # The main loop crosses the real locked save boundary before it may
+            # process its stale queue snapshot. The concurrent run and started
+            # event must be merged into its live view.
+            supervisor.save_runtime_state(cfg, main_loop_state)
+            main_loop_state = supervisor.load_runtime_state(cfg)
 
             status_in_prog = {
                 "tasks": [
@@ -10007,8 +10039,16 @@ class SupervisorFailureLoopCoverageTests(unittest.TestCase):
                 ]
             }
 
-            with mock.patch.object(supervisor, "load_status", return_value=status_in_prog):
+            with (
+                mock.patch.object(supervisor, "load_status", return_value=status_in_prog),
+                mock.patch.object(supervisor, "prepare_worker_workspace", return_value=(True, "isolated")),
+                mock.patch.object(supervisor, "check_worker_tree_clean", return_value=(True, "isolated")),
+                mock.patch.object(supervisor, "start_worker_for_request") as start_worker,
+                mock.patch.object(supervisor, "sync_dispatched_task_status", return_value=True),
+                mock.patch.object(supervisor, "write_activity_log"),
+            ):
                 supervisor.process_queue(cfg, main_loop_state, {})
+            start_worker.assert_not_called()
 
             supervisor.save_runtime_state(cfg, main_loop_state)
             saved_disk = supervisor.load_runtime_state(cfg)
@@ -10027,6 +10067,109 @@ class SupervisorFailureLoopCoverageTests(unittest.TestCase):
             ):
                 dispatched = supervisor.dispatch_ready_tasks(cfg, saved_disk, {})
                 self.assertFalse(dispatched)
+
+            self.assertTrue(Path(cfg["paths"]["state_file"]).is_relative_to(tmp_root))
+            self.assertTrue(Path(cfg["paths"]["event_queue"]).is_relative_to(tmp_root))
+            self.assertTrue(Path(cfg["worker_worktrees"]["root"]).is_relative_to(tmp_root))
+            live_activity_after = (
+                live_activity_path.read_bytes()
+                if live_activity_path.exists()
+                else None
+            )
+            self.assertEqual(live_activity_after, live_activity_before)
+
+    def test_runtime_state_save_preserves_terminal_worker_and_queue_transitions(self) -> None:
+        """R9: A stale active disk snapshot cannot revive a terminal run or queue record."""
+        for terminal_status in ("completed", "failed"):
+            with self.subTest(terminal_status=terminal_status), tempfile.TemporaryDirectory() as tmpdir:
+                state_path = Path(tmpdir) / "state.json"
+                cfg = deepcopy(self.config)
+                cfg["paths"]["state_file"] = str(state_path)
+                cfg["paths"]["event_queue"] = str(Path(tmpdir) / "event-queue.jsonl")
+
+                run_id = f"run-{terminal_status}"
+                event_id = f"event-{terminal_status}"
+                disk_state = supervisor.load_runtime_state(cfg)
+                disk_state["workers"][run_id] = {
+                    "run_id": run_id,
+                    "task_id": "ODP-TERMINAL-001",
+                    "queue_event_id": event_id,
+                    "pid": os.getpid(),
+                    "status": "running",
+                    "last_heartbeat_at": "2026-07-31T08:00:00Z",
+                }
+                disk_state["queue"]["events"][event_id] = {
+                    "status": "started",
+                    "run_id": run_id,
+                }
+                supervisor.save_runtime_state(cfg, disk_state)
+
+                terminal_state = deepcopy(disk_state)
+                terminal_state["workers"][run_id]["status"] = terminal_status
+                terminal_state["workers"][run_id]["finished_at"] = "2026-07-31T08:01:00Z"
+                terminal_state["queue"]["events"][event_id]["status"] = terminal_status
+                terminal_state["queue"]["events"][event_id]["processed_at"] = "2026-07-31T08:01:00Z"
+                supervisor.save_runtime_state(cfg, terminal_state)
+
+                persisted = json.loads(state_path.read_text(encoding="utf-8"))
+                self.assertEqual(persisted["workers"][run_id]["status"], terminal_status)
+                self.assertEqual(persisted["queue"]["events"][event_id]["status"], terminal_status)
+
+    def test_runtime_state_save_serializes_two_real_writers(self) -> None:
+        """R10: Two processes that loaded the same snapshot both survive the locked transaction."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmp_root = Path(tmpdir)
+            state_path = tmp_root / "state.json"
+            cfg = deepcopy(self.config)
+            cfg["paths"]["state_file"] = str(state_path)
+            cfg["paths"]["event_queue"] = str(tmp_root / "event-queue.jsonl")
+            supervisor.save_runtime_state(cfg, supervisor.load_runtime_state(cfg))
+
+            ready_read, ready_write = os.pipe()
+            start_read, start_write = os.pipe()
+            child_pids: list[int] = []
+            for index in (1, 2):
+                pid = os.fork()
+                if pid == 0:
+                    os.close(ready_read)
+                    os.close(start_write)
+                    try:
+                        child_state = supervisor.load_runtime_state(cfg)
+                        run_id = f"run-{index}"
+                        child_state.setdefault("workers", {})[run_id] = {
+                            "run_id": run_id,
+                            "task_id": f"ODP-CONCURRENT-{index}",
+                            "pid": os.getpid(),
+                            "status": "running",
+                            "last_heartbeat_at": "2026-07-31T08:00:00Z",
+                        }
+                        os.write(ready_write, b"1")
+                        os.read(start_read, 1)
+                        supervisor.save_runtime_state(cfg, child_state)
+                    except BaseException:
+                        os._exit(1)
+                    os._exit(0)
+                child_pids.append(pid)
+
+            os.close(ready_write)
+            os.close(start_read)
+            try:
+                ready = b""
+                while len(ready) < 2:
+                    ready += os.read(ready_read, 2 - len(ready))
+                self.assertEqual(ready, b"11")
+                os.write(start_write, b"12")
+                exit_codes = []
+                for pid in child_pids:
+                    _, wait_status = os.waitpid(pid, 0)
+                    exit_codes.append(os.waitstatus_to_exitcode(wait_status))
+            finally:
+                os.close(ready_read)
+                os.close(start_write)
+
+            self.assertEqual(exit_codes, [0, 0])
+            persisted = json.loads(state_path.read_text(encoding="utf-8"))
+            self.assertEqual(sorted(persisted["workers"]), ["run-1", "run-2"])
 
     def test_fail_closed_human_gate_task_metadata_and_non_dispatchable(self) -> None:
         """R2: Prove human-gate metadata and non_dispatchable tasks fail-closed and return None without calling persist."""
@@ -10099,31 +10242,160 @@ class SupervisorFailureLoopCoverageTests(unittest.TestCase):
         self.assertIsNone(viable_human)
 
     def test_status_check_http_422_failure_injection_outbox_transactional(self) -> None:
-        """R5: Prove status API HTTP 422 failure injection preserves in_progress state, records outbox, and preserves dirty backup."""
-        import tempfile
-        from pathlib import Path
+        """R13: Real isolated main retries the exact 422 payload without rolling back state."""
         with tempfile.TemporaryDirectory() as tmpdir:
-            backup_dir = Path(tmpdir) / ".orchestrator" / "worktree-dirt-backups"
+            tmp_root = Path(tmpdir)
+            status_file = tmp_root / "ai-status.json"
+            activity_file = tmp_root / "ai-activity-log.jsonl"
+            runtime_file = tmp_root / ".orchestrator" / "state.json"
+            runtime_file.parent.mkdir(parents=True, exist_ok=True)
+            backup_dir = tmp_root / ".orchestrator" / "worktree-dirt-backups"
             backup_dir.mkdir(parents=True, exist_ok=True)
             backup_file = backup_dir / "odp-plan-acceptance-real-exec-001-lease_blocked.patch"
             backup_file.write_text("patch content", encoding="utf-8")
-
-            event = {
-                "task_id": "ODP-422-TEST-001",
-                "target_agent": "antigravity4",
-                "target_display_name": "Antigravity4",
-                "reason": "owned_ready_dispatch",
+            runtime_payload = {
+                "workers": {
+                    "run-422": {
+                        "run_id": "run-422",
+                        "task_id": "ODP-422-TEST-001",
+                        "status": "running",
+                        "queue_event_id": "event-422",
+                    }
+                },
+                "queue": {
+                    "events": {
+                        "event-422": {
+                            "status": "started",
+                            "run_id": "run-422",
+                        }
+                    }
+                },
             }
+            runtime_file.write_text(
+                json.dumps(runtime_payload, indent=2) + "\n",
+                encoding="utf-8",
+            )
+            runtime_before = runtime_file.read_bytes()
+            state = {
+                "agents": [
+                    {
+                        "name": "CodexCoordinator",
+                        "capability_lane": [],
+                        "status": "idle",
+                        "current_task_ids": [],
+                        "branch": "",
+                        "next": "",
+                        "last_update": None,
+                    },
+                    {
+                        "name": "Codex2",
+                        "capability_lane": [],
+                        "status": "idle",
+                        "current_task_ids": [],
+                        "branch": "",
+                        "next": "",
+                        "last_update": None,
+                    },
+                ],
+                "tasks": [
+                    {
+                        "id": "ODP-422-TEST-001",
+                        "title": "Outbox transaction",
+                        "phase": "execution-control",
+                        "owner": "CodexCoordinator",
+                        "reviewer": "Codex2",
+                        "status": "review",
+                        "depends_on": [],
+                        "artifacts": [],
+                        "acceptance": [],
+                        "next": "Awaiting review",
+                        "last_update": "2026-07-31T08:00:00Z",
+                    }
+                ],
+                "handoffs": [
+                    {
+                        "task_id": "ODP-422-TEST-001",
+                        "from": "CodexCoordinator",
+                        "to": "Codex2",
+                        "message": "Review exact head",
+                        "status": "pending",
+                        "created_at": "2026-07-31T08:00:00Z",
+                    }
+                ],
+                "blockers": [],
+                "workload": {},
+                "workload_summary": {},
+            }
+            status_file.write_text(json.dumps(state, indent=2) + "\n", encoding="utf-8")
+            sha = "f1078e8b" + ("0" * 32)
+            observed_status_at_post: list[str] = []
+            post_results = [
+                mock.MagicMock(
+                    returncode=1,
+                    stderr=f"HTTP 422 Unprocessable Entity: No commit found for SHA {sha}",
+                    stdout="",
+                ),
+                mock.MagicMock(returncode=0, stderr="", stdout="created"),
+            ]
 
-            mock_subproc_result = mock.MagicMock()
-            mock_subproc_result.returncode = 1
-            mock_subproc_result.stderr = "HTTP 422 Unprocessable Entity: No commit found for SHA f1078e8b"
+            def fake_post(*_args: Any, **_kwargs: Any) -> Any:
+                persisted = json.loads(status_file.read_text(encoding="utf-8"))
+                observed_status_at_post.append(persisted["tasks"][0]["status"])
+                return post_results.pop(0)
 
-            with mock.patch("subprocess.run", return_value=mock_subproc_result):
-                _synced = supervisor.sync_dispatched_task_status(self.config, event)
+            live_activity = ROOT_DIR / "ai-activity-log.jsonl"
+            live_activity_before = live_activity.read_bytes() if live_activity.exists() else None
+            with (
+                mock.patch.dict(os.environ, {"AI_NAME": "Codex2"}, clear=False),
+                mock.patch.object(ai_status, "STATUS_ROOT", tmp_root),
+                mock.patch.object(ai_status, "STATUS_FILE", status_file),
+                mock.patch.object(ai_status, "LOG_FILE", activity_file),
+                mock.patch.object(ai_status, "CURRENT_WORK_FILE", tmp_root / "current-work.md"),
+                mock.patch.object(ai_status, "DOCS_SITE_DIR", tmp_root / "docs-site"),
+                mock.patch.object(ai_status, "ORCHESTRATOR_STATE_FILE", runtime_file),
+                mock.patch.object(ai_status, "DASHBOARD_BUNDLE_FILE", tmp_root / "dashboard-bundle.json"),
+                mock.patch.object(ai_status, "resolve_task_sha", return_value=sha),
+                mock.patch.object(ai_status, "get_repository_slug_safe", return_value="alfloop-dev/odayplus"),
+                mock.patch.object(ai_status, "sync_all", side_effect=lambda state_arg: ai_status.save_state(state_arg)),
+                mock.patch.object(ai_status.subprocess, "run", side_effect=fake_post),
+            ):
+                self.assertEqual(
+                    ai_status.main(
+                        [
+                            "ai_status.py",
+                            "reopen",
+                            "ODP-422-TEST-001",
+                            "Exact-head review rejected",
+                        ]
+                    ),
+                    0,
+                )
+                failed_state = json.loads(status_file.read_text(encoding="utf-8"))
+                failed_task = failed_state["tasks"][0]
+                self.assertEqual(failed_task["status"], "in_progress")
+                self.assertEqual(len(failed_task["status_check_outbox"]), 1)
+                failed_payload = failed_task["status_check_outbox"][0]
+                self.assertEqual(failed_payload["sha"], sha)
+                self.assertEqual(failed_payload["state"], "failure")
+                self.assertEqual(failed_payload["context"], "task-review-gate")
+                self.assertIn("Review rejected or reopened", failed_payload["description"])
+                self.assertIn("HTTP 422", failed_payload["last_error"])
 
+                self.assertEqual(ai_status.main(["ai_status.py", "sync"]), 0)
+
+            reconciled_state = json.loads(status_file.read_text(encoding="utf-8"))
+            reconciled_task = reconciled_state["tasks"][0]
+            self.assertNotIn("status_check_outbox", reconciled_task)
+            history = reconciled_task["status_check_delivery_history"]
+            self.assertEqual(len(history), 1)
+            self.assertEqual(history[0]["sha"], sha)
+            self.assertEqual(history[0]["state"], "failure")
+            self.assertEqual(observed_status_at_post, ["in_progress", "in_progress"])
+            self.assertEqual(runtime_file.read_bytes(), runtime_before)
             self.assertTrue(backup_file.exists())
             self.assertEqual(backup_file.read_text(encoding="utf-8"), "patch content")
+            live_activity_after = live_activity.read_bytes() if live_activity.exists() else None
+            self.assertEqual(live_activity_after, live_activity_before)
 
     def test_last_update_only_change_does_not_stale_eligible_wake(self) -> None:
         """R8: operational notes must not invalidate an otherwise eligible wake."""
@@ -10153,29 +10425,56 @@ class SupervisorFailureLoopCoverageTests(unittest.TestCase):
         )
 
     def test_assignment_or_status_change_still_stales_wake(self) -> None:
-        """R8 negative matrix: a real authority/status change still invalidates."""
-        task = {
+        """R8/R12 negative matrix: every authority or dependency change invalidates."""
+        base_task = {
             "id": "ODP-WAKE-STABLE-002",
             "status": "in_progress",
             "owner": "Antigravity7",
             "reviewer": "CodexCoordinator",
             "depends_on": [],
         }
-        task_map = {task["id"]: task}
-        event = supervisor.build_dispatch_event(
-            task,
-            "Antigravity7",
-            supervisor.REASON_OWNED_IN_PROGRESS,
-            task_map,
-        )
-        event["event_key"] = event["key"]
-        event["target_display_name"] = "Antigravity7"
+        dependency = {
+            "id": "ODP-WAKE-DEPENDENCY-001",
+            "status": "done",
+            "owner": "Codex",
+            "reviewer": "Codex2",
+            "depends_on": [],
+        }
+        mutations = {
+            "owner": lambda task, task_map: task.update(owner="Antigravity4"),
+            "reviewer": lambda task, task_map: task.update(reviewer="Codex6"),
+            "status": lambda task, task_map: task.update(status="review"),
+            "dependency_list": lambda task, task_map: task.update(depends_on=[dependency["id"]]),
+            "dependency_state": lambda task, task_map: task_map[dependency["id"]].update(status="in_progress"),
+        }
+        for name, mutate in mutations.items():
+            with self.subTest(mutation=name):
+                task = deepcopy(base_task)
+                if name == "dependency_state":
+                    task["depends_on"] = [dependency["id"]]
+                task_map = {
+                    task["id"]: task,
+                    dependency["id"]: deepcopy(dependency),
+                }
+                event = supervisor.build_dispatch_event(
+                    task,
+                    "Antigravity7",
+                    supervisor.REASON_OWNED_IN_PROGRESS,
+                    task_map,
+                )
+                event["event_key"] = event["key"]
+                event["target_display_name"] = "Antigravity7"
 
-        task["owner"] = "Antigravity4"
-        self.assertIn(
-            "no longer eligible",
-            supervisor.stale_dispatch_skip_message(self.config, event, task_map) or "",
-        )
+                mutate(task, task_map)
+                message = supervisor.stale_dispatch_skip_message(
+                    self.config,
+                    event,
+                    task_map,
+                ) or ""
+                self.assertTrue(
+                    "no longer eligible" in message or "task state changed" in message,
+                    message,
+                )
 
 
 if __name__ == "__main__":

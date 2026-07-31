@@ -1,8 +1,10 @@
 #!/usr/bin/env python3
 from __future__ import annotations
 
-import os
+import fcntl
+from contextlib import contextmanager
 from copy import deepcopy
+from pathlib import Path
 from typing import Any
 
 from common import (
@@ -286,6 +288,90 @@ def load_runtime_state(config: dict[str, Any]) -> dict[str, Any]:
     return state
 
 
+TERMINAL_WORKER_STATUSES = {
+    "completed",
+    "failed",
+    "superseded",
+    "reassigned",
+    "cancelled",
+    "done",
+}
+ACTIVE_WORKER_STATUSES = {
+    "running",
+    "started",
+    "manual_pending",
+    "waiting_approval",
+    "suspended_approval",
+    "retry_backoff",
+    "stalled",
+    "fallback",
+}
+TERMINAL_QUEUE_STATUSES = {"completed", "failed", "done", "cancelled"}
+QUEUE_STATUS_RANK = {
+    "queued": 0,
+    "pending": 0,
+    "retry_backoff": 1,
+    "started": 2,
+    "manual_pending": 2,
+    "waiting_approval": 2,
+    "suspended_approval": 2,
+    "completed": 3,
+    "failed": 3,
+    "done": 3,
+    "cancelled": 3,
+}
+
+
+def _merge_worker_record(disk_worker: dict[str, Any], mem_worker: dict[str, Any]) -> dict[str, Any]:
+    """Merge one immutable run record without ever reviving a terminal run."""
+    disk_status = str(disk_worker.get("status") or "").lower()
+    mem_status = str(mem_worker.get("status") or "").lower()
+
+    # A run id is never reused. Once either writer has observed a terminal
+    # transition, an older active snapshot cannot make that run active again.
+    if mem_status in TERMINAL_WORKER_STATUSES:
+        merged = deepcopy(disk_worker)
+        merged.update(deepcopy(mem_worker))
+        return merged
+    if disk_status in TERMINAL_WORKER_STATUSES:
+        merged = deepcopy(mem_worker)
+        merged.update(deepcopy(disk_worker))
+        return merged
+
+    merged = deepcopy(disk_worker)
+    merged.update(deepcopy(mem_worker))
+    disk_heartbeat = str(disk_worker.get("last_heartbeat_at") or "")
+    mem_heartbeat = str(mem_worker.get("last_heartbeat_at") or "")
+    if disk_heartbeat > mem_heartbeat:
+        merged["last_heartbeat_at"] = disk_worker.get("last_heartbeat_at")
+    if not mem_status and disk_status:
+        merged["status"] = disk_worker.get("status")
+    return merged
+
+
+def _merge_queue_record(disk_event: dict[str, Any], mem_event: dict[str, Any]) -> dict[str, Any]:
+    """Preserve the furthest durable queue transition across concurrent saves."""
+    disk_status = str(disk_event.get("status") or "").lower()
+    mem_status = str(mem_event.get("status") or "").lower()
+    disk_rank = QUEUE_STATUS_RANK.get(disk_status, 0)
+    mem_rank = QUEUE_STATUS_RANK.get(mem_status, 0)
+
+    if mem_status in TERMINAL_QUEUE_STATUSES:
+        merged = deepcopy(disk_event)
+        merged.update(deepcopy(mem_event))
+        return merged
+    if disk_status in TERMINAL_QUEUE_STATUSES:
+        merged = deepcopy(mem_event)
+        merged.update(deepcopy(disk_event))
+        return merged
+
+    merged = deepcopy(disk_event)
+    merged.update(deepcopy(mem_event))
+    if disk_rank > mem_rank:
+        merged.update(deepcopy(disk_event))
+    return merged
+
+
 def merge_runtime_states(disk_state: dict[str, Any], in_mem_state: dict[str, Any]) -> dict[str, Any]:
     if not isinstance(disk_state, dict):
         return in_mem_state
@@ -294,27 +380,19 @@ def merge_runtime_states(disk_state: dict[str, Any], in_mem_state: dict[str, Any
     disk_workers = disk_state.get("workers", {})
     if isinstance(disk_workers, dict):
         in_mem_workers = merged.setdefault("workers", {})
-        active_statuses = {"running", "started", "manual_pending", "waiting_approval", "suspended_approval", "retry_backoff", "stalled"}
         for run_id, disk_worker in disk_workers.items():
             if not isinstance(disk_worker, dict):
                 continue
             if run_id not in in_mem_workers:
-                status = str(disk_worker.get("status") or "").lower()
-                pid = disk_worker.get("pid")
-                is_alive = False
-                if pid:
-                    try:
-                        is_alive = os.kill(int(pid), 0) is None
-                    except (OSError, ValueError, TypeError):
-                        is_alive = False
-                if is_alive or status in active_statuses:
-                    in_mem_workers[run_id] = deepcopy(disk_worker)
+                # A concurrent writer may have created and even finalized the
+                # run after this writer loaded state. Preserve the whole record;
+                # normal pruning owns history retention.
+                in_mem_workers[run_id] = deepcopy(disk_worker)
             else:
-                mem_w = in_mem_workers[run_id]
-                if str(disk_worker.get("status") or "").lower() in active_statuses and str(mem_w.get("status") or "").lower() not in active_statuses:
-                    mem_w["status"] = disk_worker.get("status")
-                if disk_worker.get("last_heartbeat_at"):
-                    mem_w["last_heartbeat_at"] = disk_worker.get("last_heartbeat_at")
+                in_mem_workers[run_id] = _merge_worker_record(
+                    disk_worker,
+                    in_mem_workers[run_id],
+                )
 
     disk_events = (disk_state.get("queue") or {}).get("events")
     if isinstance(disk_events, dict):
@@ -324,19 +402,12 @@ def merge_runtime_states(disk_state: dict[str, Any], in_mem_state: dict[str, Any
             if not isinstance(disk_evt, dict):
                 continue
             if evt_id not in mem_events:
-                status = str(disk_evt.get("status") or "").lower()
-                if status in {"queued", "started", "manual_pending", "retry_backoff"} or any(
-                    w.get("queue_event_id") == evt_id for w in merged.get("workers", {}).values()
-                ):
-                    mem_events[evt_id] = deepcopy(disk_evt)
+                mem_events[evt_id] = deepcopy(disk_evt)
             else:
-                mem_evt = mem_events[evt_id]
-                disk_status = str(disk_evt.get("status") or "").lower()
-                mem_status = str(mem_evt.get("status") or "").lower()
-                if disk_status in {"started", "manual_pending"} and mem_status == "queued":
-                    mem_evt["status"] = disk_evt.get("status")
-                    if disk_evt.get("run_id"):
-                        mem_evt["run_id"] = disk_evt.get("run_id")
+                mem_events[evt_id] = _merge_queue_record(
+                    disk_evt,
+                    mem_events[evt_id],
+                )
 
     if "workers" in merged:
         in_mem_state["workers"] = merged["workers"]
@@ -346,14 +417,34 @@ def merge_runtime_states(disk_state: dict[str, Any], in_mem_state: dict[str, Any
     return merged
 
 
+@contextmanager
+def runtime_state_transaction_lock(state_path: Path):
+    """Serialize the complete state read/merge/write transaction across processes."""
+    lock_path = state_path.with_name(f"{state_path.name}.lock")
+    lock_path.parent.mkdir(parents=True, exist_ok=True)
+    with lock_path.open("a+", encoding="utf-8") as lock_handle:
+        fcntl.flock(lock_handle.fileno(), fcntl.LOCK_EX)
+        try:
+            yield
+        finally:
+            fcntl.flock(lock_handle.fileno(), fcntl.LOCK_UN)
+
+
 def save_runtime_state(config: dict[str, Any], state: dict[str, Any]) -> None:
     path = config_path(config, "state_file")
-    disk_state = load_json(path, default={})
-    if disk_state and isinstance(disk_state, dict):
-        merged = merge_runtime_states(disk_state, state)
-        write_json(path, migrate_state(merged))
-    else:
-        write_json(path, migrate_state(state))
+    with runtime_state_transaction_lock(path):
+        disk_state = load_json(path, default={})
+        if disk_state and isinstance(disk_state, dict):
+            merged = merge_runtime_states(disk_state, state)
+        else:
+            merged = state
+        persisted = migrate_state(merged)
+        write_json(path, persisted)
+
+    # Keep the caller's live view aligned with concurrent data incorporated
+    # under the transaction lock.
+    state.clear()
+    state.update(deepcopy(persisted))
 
 
 
