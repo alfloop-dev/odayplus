@@ -223,7 +223,16 @@ def _validate_task_contract(
     errors: list[str] = []
     task_id = packet["task_id"]
 
-    if task.get("owner") == task.get("reviewer"):
+    owner = task.get("owner")
+    reviewer = task.get("reviewer")
+    if (
+        not isinstance(owner, str)
+        or not owner.strip()
+        or not isinstance(reviewer, str)
+        or not reviewer.strip()
+    ):
+        errors.append(f"{label}: owner and reviewer must be non-empty strings")
+    elif owner == reviewer:
         errors.append(f"{label}: owner must not equal reviewer")
     if task.get("task_class") != packet.get("class"):
         errors.append(
@@ -231,18 +240,30 @@ def _validate_task_contract(
             f"does not match packet {packet.get('class')!r}"
         )
     acceptance = task.get("acceptance")
-    if not isinstance(acceptance, list) or len(acceptance) < 5:
-        errors.append(f"{label}: acceptance must contain at least five granular criteria")
+    if (
+        not isinstance(acceptance, list)
+        or len(acceptance) < 5
+        or not all(isinstance(item, str) and item.strip() for item in acceptance)
+    ):
+        errors.append(f"{label}: acceptance must contain at least five non-empty granular criteria")
     packet_source = "docs/evidence/DEVELOPMENT_PLAN_OPEN_TASK_EXECUTION_PACK_2026-07-31.json"
     source_docs = task.get("source_docs")
     if not isinstance(source_docs, list) or packet_source not in source_docs:
         errors.append(f"{label}: source_docs must reference the control-pack JSON")
     artifacts = task.get("artifacts")
-    if not isinstance(artifacts, list) or not artifacts:
-        errors.append(f"{label}: artifacts must be non-empty")
+    if (
+        not isinstance(artifacts, list)
+        or not artifacts
+        or not all(isinstance(item, str) and item.strip() for item in artifacts)
+    ):
+        errors.append(f"{label}: artifacts must be a non-empty string list")
     verification = task.get("verification")
-    if not isinstance(verification, list) or not verification:
-        errors.append(f"{label}: verification must be non-empty")
+    if (
+        not isinstance(verification, list)
+        or not verification
+        or not all(isinstance(item, str) and item.strip() for item in verification)
+    ):
+        errors.append(f"{label}: verification must be a non-empty string list")
     if task.get("execution_packet_id") != "ODP-PLAN-EXECUTION-CONTROL-PACK-001":
         errors.append(f"{label}: execution_packet_id must reference the control pack")
     gap_ids = task.get("gap_ids")

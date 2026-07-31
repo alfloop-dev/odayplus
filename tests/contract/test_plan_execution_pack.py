@@ -227,6 +227,36 @@ def test_live_validation_rejects_malformed_archive_identity(tmp_path: Path) -> N
     assert any("terminal_outcome must be completed or superseded" in error for error in errors)
 
 
+def test_live_validation_rejects_blank_archived_contract_fields(tmp_path: Path) -> None:
+    validator = _load_validator()
+    mutations = (
+        ("owner", None, "owner and reviewer must be non-empty strings"),
+        ("reviewer", None, "owner and reviewer must be non-empty strings"),
+        ("acceptance", ["", "", "", "", ""], "acceptance must contain at least five non-empty"),
+        ("artifacts", [""], "artifacts must be a non-empty string list"),
+        ("verification", [""], "verification must be a non-empty string list"),
+    )
+
+    for field, value, expected_error in mutations:
+        case_root = tmp_path / field
+        packet_data, status_path, archive_root = _write_live_fixture(case_root, validator)
+        target = packet_data["task_packets"][0]
+        target_id = target["task_id"]
+        status = json.loads(status_path.read_text(encoding="utf-8"))
+        archived_task = next(task for task in status["tasks"] if task["id"] == target_id)
+        archived_task[field] = value
+        status["tasks"] = [task for task in status["tasks"] if task["id"] != target_id]
+        status_path.write_text(json.dumps(status), encoding="utf-8")
+        _archive_task(archive_root, archived_task)
+
+        errors = validator.validate_packet(
+            live_status_path=status_path,
+            live_archive_root=archive_root,
+        )
+
+        assert any(expected_error in error for error in errors), (field, errors)
+
+
 def test_live_validation_rejects_superseded_packet_without_replacement(tmp_path: Path) -> None:
     validator = _load_validator()
     packet_data, status_path, archive_root = _write_live_fixture(tmp_path, validator)
@@ -267,6 +297,30 @@ def test_live_validation_accepts_scope_preserving_superseded_replacement(tmp_pat
         )
         == []
     )
+
+
+def test_live_validation_rejects_superseded_replacement_scope_drift(tmp_path: Path) -> None:
+    validator = _load_validator()
+    packet_data, status_path, archive_root = _write_live_fixture(tmp_path, validator)
+    target = packet_data["task_packets"][0]
+    target_id = target["task_id"]
+    replacement_id = f"{target_id}-SCOPE-DRIFT"
+    status = json.loads(status_path.read_text(encoding="utf-8"))
+    archived_task = next(task for task in status["tasks"] if task["id"] == target_id)
+    archived_task["superseded_by"] = replacement_id
+    status["tasks"] = [task for task in status["tasks"] if task["id"] != target_id]
+    replacement = _task_for_packet(target, task_id=replacement_id)
+    replacement["gap_ids"] = []
+    status["tasks"].append(replacement)
+    status_path.write_text(json.dumps(status), encoding="utf-8")
+    _archive_task(archive_root, archived_task, outcome="superseded")
+
+    errors = validator.validate_packet(
+        live_status_path=status_path,
+        live_archive_root=archive_root,
+    )
+
+    assert any("gap_ids must preserve the packet scope" in error for error in errors)
 
 
 def test_live_validation_rejects_superseded_replacement_cycle(tmp_path: Path) -> None:
