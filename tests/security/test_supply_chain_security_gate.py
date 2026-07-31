@@ -1374,7 +1374,7 @@ def test_round8_b1_authoritative_receipt_contract(tmp_path: Path) -> None:
     assert not is_valid
     assert any("could not be resolved to an authentic legal policy receipt" in v for v in violations)
 
-    # 2. Resolved receipt with mismatched package fails
+    # 2. Plain repo file without verifier fails resolution (fail closed)
     receipts_dir = tmp_path / "receipts"
     receipts_dir.mkdir(parents=True, exist_ok=True)
     mismatched_receipt = {
@@ -1388,20 +1388,35 @@ def test_round8_b1_authoritative_receipt_contract(tmp_path: Path) -> None:
 
     res_ok, res_err = resolve_approval_reference("POLICY-LGPL-001", entry, base_dir=tmp_path)
     assert not res_ok
-    assert "does not match entry package" in res_err
+    assert "cannot self-establish authority" in res_err
 
-    # 3. Matching receipt passes resolution
+    # 3. Matching receipt with verifier passes resolution
+    def dummy_verifier(ref, rec, ent):
+        return True, None
+
     matching_receipt = {
         "status": "active",
         "approved_by": "Jane Doe (Legal Counsel)",
         "approval_reference": "POLICY-LGPL-001",
+        "principal_id": "usr-jane-001",
+        "principal_role": "Legal Counsel",
+        "source_system": "legal_vault",
+        "policy_decision": "approved",
+        "policy_name": "ODP-PLAN-OSS-LEGAL-POLICY-001",
+        "policy_version": "1.0.0",
+        "policy_hash": "a" * 64,
         "package_name": "psycopg",
         "purl": "pkg:pypi/psycopg@3.3.4",
         "scope": "prod",
+        "issued_at": "2026-07-01T00:00:00Z",
+        "expires_at": "2026-12-31T23:59:59Z",
+        "reviewed_at": "2026-07-01T00:00:00Z",
+        "canonical_receipt_hash": "b" * 64,
+        "signature": "sig123",
     }
     (receipts_dir / "POLICY-LGPL-001.json").write_text(json.dumps(matching_receipt), encoding="utf-8")
 
-    res_ok, res_err = resolve_approval_reference("POLICY-LGPL-001", entry, base_dir=tmp_path)
+    res_ok, res_err = resolve_approval_reference("POLICY-LGPL-001", entry, base_dir=tmp_path, verifier_fn=dummy_verifier)
     assert res_ok
     assert res_err is None
 
@@ -1440,3 +1455,193 @@ def test_round8_b3_clean_worktree_audit_reproducibility() -> None:
         ok, violations = run_python_audit("all", exemptions=[])
     assert not ok
     assert any("empty dependency list schema" in v for v in violations)
+
+
+def test_round9_b1_repo_local_lookalike_rejected(tmp_path: Path) -> None:
+    """1. A fully populated repository-local lookalike receipt is rejected when no verifier is provided."""
+    sys.path.insert(0, str(ROOT))
+    from scripts.security.exemption_validator import (
+        resolve_approval_reference,
+        validate_exemption_entry,
+    )
+
+    entry = {
+        "package_name": "psycopg",
+        "purl": "pkg:pypi/psycopg@3.3.4",
+        "approved_by": "Jane Doe (Legal Counsel)",
+        "approval_reference": "POLICY-LGPL-001",
+        "issued_at": "2026-07-01T00:00:00Z",
+        "expires_at": "2026-12-31T23:59:59Z",
+        "reason": "Authoritative legal review waiver",
+        "status": "active",
+        "scope": "prod",
+    }
+
+    receipts_dir = tmp_path / "receipts"
+    receipts_dir.mkdir(parents=True, exist_ok=True)
+    full_repo_lookalike = {
+        "status": "active",
+        "approved_by": "Jane Doe (Legal Counsel)",
+        "approval_reference": "POLICY-LGPL-001",
+        "principal_id": "usr-jane-doe-001",
+        "principal_role": "Legal Counsel",
+        "source_system": "legal_vault",
+        "policy_decision": "approved",
+        "policy_name": "ODP-PLAN-OSS-LEGAL-POLICY-001",
+        "policy_version": "1.0.0",
+        "policy_hash": "a" * 64,
+        "package_name": "psycopg",
+        "purl": "pkg:pypi/psycopg@3.3.4",
+        "scope": "prod",
+        "issued_at": "2026-07-01T00:00:00Z",
+        "expires_at": "2026-12-31T23:59:59Z",
+        "reviewed_at": "2026-07-01T00:00:00Z",
+        "canonical_receipt_hash": "b" * 64,
+        "signature": "sig_valid_hex_123456",
+    }
+    (receipts_dir / "POLICY-LGPL-001.json").write_text(json.dumps(full_repo_lookalike), encoding="utf-8")
+
+    # Without an authoritative verifier passed, repository-local file must be REJECTED
+    res_ok, res_err = resolve_approval_reference("POLICY-LGPL-001", entry, base_dir=tmp_path)
+    assert not res_ok
+    assert "cannot self-establish authority" in res_err
+
+    is_valid, violations = validate_exemption_entry(entry, "license", base_dir=tmp_path)
+    assert not is_valid
+    assert any("cannot self-establish authority" in v for v in violations)
+
+
+def test_round9_b1_missing_or_mismatched_receipt_fields_rejected(tmp_path: Path) -> None:
+    """2. Missing or mismatched principal/source/policy/scope/release/evidence/integrity fields are rejected."""
+    sys.path.insert(0, str(ROOT))
+    from scripts.security.exemption_validator import resolve_approval_reference
+
+    entry = {
+        "package_name": "psycopg",
+        "purl": "pkg:pypi/psycopg@3.3.4",
+        "approved_by": "Jane Doe (Legal Counsel)",
+        "approval_reference": "POLICY-LGPL-001",
+        "issued_at": "2026-07-01T00:00:00Z",
+        "expires_at": "2026-12-31T23:59:59Z",
+        "reason": "Authoritative legal review waiver",
+        "status": "active",
+        "scope": "prod",
+    }
+
+    receipts_dir = tmp_path / "receipts"
+    receipts_dir.mkdir(parents=True, exist_ok=True)
+
+    def dummy_verifier(ref, rec, ent):
+        return True, None
+
+    # a) Missing principal_id
+    bad_receipt = {
+        "status": "active",
+        "approved_by": "Jane Doe (Legal Counsel)",
+        "approval_reference": "POLICY-LGPL-001",
+        # missing principal_id
+        "principal_role": "Legal Counsel",
+        "source_system": "legal_vault",
+        "policy_decision": "approved",
+        "policy_name": "ODP-PLAN-OSS-LEGAL-POLICY-001",
+        "policy_version": "1.0.0",
+        "policy_hash": "a" * 64,
+        "package_name": "psycopg",
+        "scope": "prod",
+        "issued_at": "2026-07-01T00:00:00Z",
+        "expires_at": "2026-12-31T23:59:59Z",
+        "reviewed_at": "2026-07-01T00:00:00Z",
+        "canonical_receipt_hash": "b" * 64,
+        "signature": "sig123",
+    }
+    (receipts_dir / "POLICY-LGPL-001.json").write_text(json.dumps(bad_receipt), encoding="utf-8")
+    res_ok, res_err = resolve_approval_reference("POLICY-LGPL-001", entry, base_dir=tmp_path, verifier_fn=dummy_verifier)
+    assert not res_ok
+    assert "missing required fields" in res_err
+
+    # b) Mismatched package_name
+    bad_receipt["principal_id"] = "usr-jane-doe-001"
+    bad_receipt["package_name"] = "other-pkg"
+    (receipts_dir / "POLICY-LGPL-001.json").write_text(json.dumps(bad_receipt), encoding="utf-8")
+    res_ok, res_err = resolve_approval_reference("POLICY-LGPL-001", entry, base_dir=tmp_path, verifier_fn=dummy_verifier)
+    assert not res_ok
+    assert "does not match entry package" in res_err
+
+    # c) Invalid timestamp ordering (expires_at before issued_at)
+    bad_receipt["package_name"] = "psycopg"
+    bad_receipt["issued_at"] = "2026-12-31T23:59:59Z"
+    bad_receipt["expires_at"] = "2026-07-01T00:00:00Z"
+    (receipts_dir / "POLICY-LGPL-001.json").write_text(json.dumps(bad_receipt), encoding="utf-8")
+    res_ok, res_err = resolve_approval_reference("POLICY-LGPL-001", entry, base_dir=tmp_path, verifier_fn=dummy_verifier)
+    assert not res_ok
+    assert "must be after issued_at" in res_err
+
+    # d) Invalid hash format (non-hex)
+    bad_receipt["issued_at"] = "2026-07-01T00:00:00Z"
+    bad_receipt["expires_at"] = "2026-12-31T23:59:59Z"
+    bad_receipt["policy_hash"] = "invalid_non_hex_hash!"
+    (receipts_dir / "POLICY-LGPL-001.json").write_text(json.dumps(bad_receipt), encoding="utf-8")
+    res_ok, res_err = resolve_approval_reference("POLICY-LGPL-001", entry, base_dir=tmp_path, verifier_fn=dummy_verifier)
+    assert not res_ok
+    assert "is not a valid hex digest format" in res_err
+
+
+def test_round9_b1_authoritative_verifier_mismatch_rejected(tmp_path: Path) -> None:
+    """3. An authoritative verifier/readback mismatch is rejected even when local JSON is internally consistent."""
+    sys.path.insert(0, str(ROOT))
+    from scripts.security.exemption_validator import resolve_approval_reference
+
+    entry = {
+        "package_name": "psycopg",
+        "purl": "pkg:pypi/psycopg@3.3.4",
+        "approved_by": "Jane Doe (Legal Counsel)",
+        "approval_reference": "POLICY-LGPL-001",
+        "issued_at": "2026-07-01T00:00:00Z",
+        "expires_at": "2026-12-31T23:59:59Z",
+        "reason": "Authoritative legal review waiver",
+        "status": "active",
+        "scope": "prod",
+    }
+
+    receipts_dir = tmp_path / "receipts"
+    receipts_dir.mkdir(parents=True, exist_ok=True)
+    valid_local_json = {
+        "status": "active",
+        "approved_by": "Jane Doe (Legal Counsel)",
+        "approval_reference": "POLICY-LGPL-001",
+        "principal_id": "usr-jane-doe-001",
+        "principal_role": "Legal Counsel",
+        "source_system": "legal_vault",
+        "policy_decision": "approved",
+        "policy_name": "ODP-PLAN-OSS-LEGAL-POLICY-001",
+        "policy_version": "1.0.0",
+        "policy_hash": "a" * 64,
+        "package_name": "psycopg",
+        "purl": "pkg:pypi/psycopg@3.3.4",
+        "scope": "prod",
+        "issued_at": "2026-07-01T00:00:00Z",
+        "expires_at": "2026-12-31T23:59:59Z",
+        "reviewed_at": "2026-07-01T00:00:00Z",
+        "canonical_receipt_hash": "b" * 64,
+        "signature": "sig123",
+    }
+    (receipts_dir / "POLICY-LGPL-001.json").write_text(json.dumps(valid_local_json), encoding="utf-8")
+
+    # Verifier reports readback/vault signature mismatch
+    def failing_verifier(ref, rec, ent):
+        return False, "Signature mismatch against external KMS root key"
+
+    res_ok, res_err = resolve_approval_reference("POLICY-LGPL-001", entry, base_dir=tmp_path, verifier_fn=failing_verifier)
+    assert not res_ok
+    assert "Authoritative verifier rejected receipt" in res_err
+    assert "Signature mismatch against external KMS root key" in res_err
+
+
+def test_round9_b2_frozen_inventory_clean_worktree_audit_reproducible() -> None:
+    """4. The real production audit succeeds reproducibly against a non-empty frozen dependency inventory in a clean checkout."""
+    sys.path.insert(0, str(ROOT))
+    from scripts.security.vulnerability_scan import run_python_audit
+
+    ok, findings = run_python_audit("prod", exemptions=[])
+    assert ok, f"Production Python audit must pass on locked inventory, findings: {findings}"
+    assert len(findings) == 0

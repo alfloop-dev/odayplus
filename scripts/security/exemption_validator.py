@@ -2,6 +2,7 @@
 
 import json
 import re
+from collections.abc import Callable
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
@@ -104,7 +105,15 @@ def is_valid_approval_reference(ref: str) -> bool:
     return True
 
 
-def resolve_approval_reference(ref: str, entry: dict, base_dir: Path | None = None) -> tuple[bool, str | None]:
+HEX_HASH_PATTERN = re.compile(r"^[a-fA-F0-9]{32,128}$")
+
+
+def resolve_approval_reference(
+    ref: str,
+    entry: dict,
+    base_dir: Path | None = None,
+    verifier_fn: Callable[[str, dict, dict], tuple[bool, str | None] | bool] | None = None,
+) -> tuple[bool, str | None]:
     """Resolve an approval_reference to an authoritative legal receipt record under ODP-PLAN-OSS-LEGAL-POLICY-001.
 
     Returns:
@@ -157,10 +166,46 @@ def resolve_approval_reference(ref: str, entry: dict, base_dir: Path | None = No
     if not isinstance(receipt_data, dict):
         return False, f"Authoritative receipt for '{ref_str}' in {receipt_source} is not an object schema."
 
-    # Verify status in receipt record
-    rec_status = receipt_data.get("status")
+    # B1 rule: A repository-local lookalike file CANNOT self-establish authority without an authoritative external verifier / signed readback
+    if verifier_fn is None:
+        return (
+            False,
+            f"Repository-local receipt '{ref_str}' cannot self-establish authority without an authoritative external verifier or signed readback source under ODP-PLAN-OSS-LEGAL-POLICY-001.",
+        )
+
+    # Validate required authoritative receipt fields
+    req_fields = {
+        "principal_id",
+        "principal_role",
+        "source_system",
+        "policy_decision",
+        "policy_name",
+        "policy_version",
+        "policy_hash",
+        "issued_at",
+        "expires_at",
+        "reviewed_at",
+        "canonical_receipt_hash",
+        "signature",
+        "approved_by",
+    }
+    missing = [f for f in req_fields if not receipt_data.get(f) or not isinstance(receipt_data.get(f), str)]
+    if missing:
+        return False, f"Authoritative receipt for '{ref_str}' is missing required fields: {sorted(missing)}"
+
+    # Verify principal role authorization
+    rec_role = receipt_data.get("principal_role", "").lower().strip()
+    if not any(r in rec_role for r in RECOGNIZED_ROLES):
+        return False, f"Authoritative receipt for '{ref_str}' contains unauthorized principal_role '{receipt_data.get('principal_role')}'."
+
+    # Verify status / policy decision
+    p_decision = receipt_data.get("policy_decision")
+    if p_decision not in {"approved", "active", "waived_with_conditions"}:
+        return False, f"Authoritative receipt for '{ref_str}' policy_decision '{p_decision}' is not approved (must be 'approved', 'active', or 'waived_with_conditions')."
+
+    rec_status = receipt_data.get("status", "approved")
     if rec_status not in {"approved", "active"}:
-        return False, f"Authoritative receipt for '{ref_str}' has status '{rec_status}' (must be 'approved' or 'active')."
+        return False, f"Authoritative receipt for '{ref_str}' status '{rec_status}' must be 'approved' or 'active'."
 
     # Verify field bindings: approved_by
     rec_approver = receipt_data.get("approved_by")
@@ -181,13 +226,54 @@ def resolve_approval_reference(ref: str, entry: dict, base_dir: Path | None = No
     rec_vid = receipt_data.get("vulnerability_id")
     if rec_vid and entry_vid and rec_vid != entry_vid:
         return False, f"Authoritative receipt for '{ref_str}' vulnerability_id '{rec_vid}' does not match entry vulnerability_id '{entry_vid}'."
+
     # Verify scope if present in receipt
     entry_scope = entry.get("scope")
     rec_scope = receipt_data.get("scope")
     if rec_scope and entry_scope and rec_scope != entry_scope:
         return False, f"Authoritative receipt for '{ref_str}' scope '{rec_scope}' does not match entry scope '{entry_scope}'."
 
+    # Verify timestamp formats, ordering, and expiration
+    issued_at = receipt_data.get("issued_at", "")
+    expires_at = receipt_data.get("expires_at", "")
+    reviewed_at = receipt_data.get("reviewed_at", "")
+    for ts_name, ts_val in [("issued_at", issued_at), ("expires_at", expires_at), ("reviewed_at", reviewed_at)]:
+        if not (ts_val.endswith("Z") or ts_val.endswith("+00:00") or ts_val.endswith("+0000")):
+            return False, f"Authoritative receipt for '{ref_str}' {ts_name} timestamp '{ts_val}' must be ISO UTC."
+
+    try:
+        issued_dt = datetime.fromisoformat(issued_at.replace("Z", "+00:00"))
+        expires_dt = datetime.fromisoformat(expires_at.replace("Z", "+00:00"))
+        if expires_dt <= issued_dt:
+            return False, f"Authoritative receipt for '{ref_str}' expires_at ({expires_at}) must be after issued_at ({issued_at})."
+        if expires_dt < datetime.now(UTC):
+            return False, f"Authoritative receipt for '{ref_str}' expired at {expires_at}."
+    except (ValueError, TypeError) as e:
+        return False, f"Authoritative receipt for '{ref_str}' has invalid timestamp format: {e}"
+
+    # Verify hash integrity formats
+    pol_hash = receipt_data.get("policy_hash", "")
+    rec_hash = receipt_data.get("canonical_receipt_hash", "")
+    if not HEX_HASH_PATTERN.match(pol_hash):
+        return False, f"Authoritative receipt for '{ref_str}' policy_hash '{pol_hash}' is not a valid hex digest format."
+    if not HEX_HASH_PATTERN.match(rec_hash):
+        return False, f"Authoritative receipt for '{ref_str}' canonical_receipt_hash '{rec_hash}' is not a valid hex digest format."
+
+    # Invoke authoritative external verifier / readback callback
+    try:
+        ver_res = verifier_fn(ref_str, receipt_data, entry)
+        if isinstance(ver_res, tuple):
+            ver_ok, ver_err = ver_res
+            if not ver_ok:
+                return False, f"Authoritative verifier rejected receipt for '{ref_str}': {ver_err or 'verification failed'}"
+        elif not ver_res:
+            return False, f"Authoritative verifier rejected receipt for '{ref_str}': readback verification failed"
+    except Exception as e:
+        return False, f"Authoritative verifier raised error for '{ref_str}': {e}"
+
     return True, None
+
+
 def is_valid_reason(reason: str) -> bool:
     """Validate that reason is a non-empty, non-trivial explanation of sufficient length."""
     if not reason or not isinstance(reason, str):
@@ -208,7 +294,10 @@ def is_valid_reason(reason: str) -> bool:
 
 
 def validate_exemption_entry(
-    entry: dict, exemption_type: str = "license", base_dir: Path | None = None
+    entry: dict,
+    exemption_type: str = "license",
+    base_dir: Path | None = None,
+    verifier_fn: Callable[[str, dict, dict], tuple[bool, str | None] | bool] | None = None,
 ) -> tuple[bool, list[str]]:
     """Validate a single exemption entry against the complete positive schema.
 
@@ -298,7 +387,7 @@ def validate_exemption_entry(
 
     # Active exemption binding check: status 'active' requires resolvable authentic receipt owned by ODP-PLAN-OSS-LEGAL-POLICY-001
     if status == "active":
-        res_ok, res_err = resolve_approval_reference(app_ref, entry, base_dir=base_dir)
+        res_ok, res_err = resolve_approval_reference(app_ref, entry, base_dir=base_dir, verifier_fn=verifier_fn)
         if not res_ok:
             violations.append(
                 f"{label} has status 'active' but reference '{app_ref}' could not be resolved to an authentic legal policy receipt under ODP-PLAN-OSS-LEGAL-POLICY-001: {res_err}"
