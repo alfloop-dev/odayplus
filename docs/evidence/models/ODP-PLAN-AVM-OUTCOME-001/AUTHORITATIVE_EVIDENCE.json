@@ -1,0 +1,10 @@
+{
+  "task_id": "ODP-PLAN-AVM-OUTCOME-001",
+  "generated_at": "2026-07-31T12:12:58.010784+00:00",
+  "model_version": "dealroom-avm-baseline-v1",
+  "verdict": "FAIL_CLOSED",
+  "is_governed_disabled": true,
+  "reason_code": "DATA_CONTRACT_NOT_MATURE",
+  "gate1_receipt_sha256": "23665183b714c85f3cfcca664b7770223267f3d6cb0635350afaa27192d5aed6",
+  "audit_receipt_sha256": "2032cf3e5cf51af7d51feeedbc60f43202de0b503f7e2c364ccd6c7890d0ebc2"
+}

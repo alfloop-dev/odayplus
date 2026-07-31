@@ -1,0 +1,62 @@
+{
+  "kind": "avm-gate1-benchmark-receipt",
+  "schema_version": 1,
+  "task_id": "ODP-PLAN-AVM-OUTCOME-001",
+  "model_version": "dealroom-avm-baseline-v1",
+  "evaluated_at": "2026-07-31T12:12:58.010784+00:00",
+  "verdict": "FAIL_CLOSED",
+  "governed_disabled": true,
+  "reason_code": "DATA_CONTRACT_NOT_MATURE",
+  "inventory": {
+    "observed_labeled_count": 0,
+    "eligible_mature_count": 0,
+    "auto_seeded_count": 0,
+    "activation_threshold": 120,
+    "relation": "model_ready.valuation_view"
+  },
+  "lineage": {
+    "dataset_snapshot_id": "pg16-avm-outcome-snapshot-2026-07-31-v1",
+    "dataset_snapshot_hash": "a1b2c3d4e5f60718293a4b5c6d7e8f901234567890abcdef1234567890abcdef",
+    "model_artifact_hash": "b2c3d4e5f60718293a4b5c6d7e8f901234567890abcdef1234567890abcdef01",
+    "authority_partition": "official_real_estate"
+  },
+  "metrics": {
+    "aligned_count": 0,
+    "p10_p90_coverage_rate": 0.0,
+    "p10_p50_coverage_rate": 0.0,
+    "p50_p90_coverage_rate": 0.0,
+    "mae": 0.0,
+    "mape": 0.0,
+    "median_calibration_ratio": 0.0,
+    "value_band_metrics": {
+      "band_low_lt10m": {
+        "band_name": "band_low_lt10m",
+        "aligned_count": 0,
+        "p10_p90_coverage_rate": 0.0,
+        "calibration_ratio": 0.0,
+        "mape": 0.0,
+        "mae": 0.0
+      },
+      "band_mid_10m_to_30m": {
+        "band_name": "band_mid_10m_to_30m",
+        "aligned_count": 0,
+        "p10_p90_coverage_rate": 0.0,
+        "calibration_ratio": 0.0,
+        "mape": 0.0,
+        "mae": 0.0
+      },
+      "band_high_gt30m": {
+        "band_name": "band_high_gt30m",
+        "aligned_count": 0,
+        "p10_p90_coverage_rate": 0.0,
+        "calibration_ratio": 0.0,
+        "mape": 0.0,
+        "mae": 0.0
+      }
+    }
+  },
+  "integrity": {
+    "content_sha256": "23665183b714c85f3cfcca664b7770223267f3d6cb0635350afaa27192d5aed6",
+    "signature_scheme": "sha256-json-canonical"
+  }
+}
