@@ -4767,14 +4767,14 @@ def test_file_authority_store_b28_fsync_and_durability_failure_mutations(tmp_pat
     real_os_fsync = os.fsync
     fsync_count = 0
 
-    def mock_fsync_fail_on_second(fd):
+    def mock_fsync_fail_on_fourth(fd):
         nonlocal fsync_count
         fsync_count += 1
-        if fsync_count == 2:  # 1st is file fsync, 2nd is parent directory fsync
+        if fsync_count == 4:  # 1st: journal file, 2nd: journal dir, 3rd: store file, 4th: store dir
             raise OSError(5, "Injected parent directory fsync EIO error")
         return real_os_fsync(fd)
 
-    monkeypatch.setattr(os, "fsync", mock_fsync_fail_on_second)
+    monkeypatch.setattr(os, "fsync", mock_fsync_fail_on_fourth)
 
     is_del, st, err = store.atomic_consume_if_valid(delivery_id, _val)
     assert is_del is False
@@ -4827,3 +4827,180 @@ def test_file_authority_store_b28_fsync_and_durability_failure_mutations(tmp_pat
     assert is_del3 is False
     assert st3 == "PENDING_VERIFICATION"
     assert "Injected os.replace EBUSY error" in str(err3)
+
+
+def test_file_authority_store_b29_strict_schema_and_canonical_id_mutations(tmp_path):
+    """B29 Remediation Test: Proves strict schema enforcement rejects missing/boolean/float versions,
+    unknown record fields, non-canonical whitespace/unstripped IDs, and whitespace consumed queries.
+    """
+    from cryptography.hazmat.primitives.asymmetric import ed25519
+
+    from modules.notifications.domain.authority import (
+        CANONICAL_AUTHORITY_ISSUER_IDENTITY,
+        DeliveryAuthorityRecord,
+        FileDeliveryAuthorityStore,
+    )
+
+    auth_priv_key = ed25519.Ed25519PrivateKey.generate()
+    delivery_id = "del-b29-1"
+    prov_receipt_id = "prov-rcpt-b29-1"
+    req_hash = "a" * 64
+    rel_sha = "d" * 40
+    oncall_route = "ops-lead"
+    ts_str = datetime.now(UTC).isoformat()
+    issuer_id = CANONICAL_AUTHORITY_ISSUER_IDENTITY
+
+    sig_payload = (
+        f"authority_record:{delivery_id}:{prov_receipt_id}:{req_hash}:{rel_sha}:{oncall_route}:{ts_str}:{issuer_id}"
+    ).encode()
+    sig_b64 = base64.b64encode(auth_priv_key.sign(sig_payload)).decode("utf-8")
+
+    rec = DeliveryAuthorityRecord(
+        delivery_id=delivery_id,
+        provider_receipt_id=prov_receipt_id,
+        request_hash=req_hash,
+        release_sha=rel_sha,
+        oncall_route=oncall_route,
+        timestamp=ts_str,
+        issuer_identity=issuer_id,
+        issuer_signature=sig_b64,
+    )
+
+    def _val(r):
+        return True, "DELIVERED", None
+
+    # 1. Missing version in store json
+    f1 = tmp_path / "missing_version.json"
+    f1.write_text(json.dumps({"records": {}, "consumed": []}), encoding="utf-8")
+    s1 = FileDeliveryAuthorityStore(f1)
+    is_del, st, err = s1.atomic_consume_if_valid("d", _val)
+    assert is_del is False and st == "PENDING_VERIFICATION" and "Missing required top-level key 'version'" in str(err)
+
+    # 2. Boolean version True in store json (isinstance(True, int) is True, but type(True) is bool)
+    f2 = tmp_path / "bool_version.json"
+    f2.write_text(json.dumps({"version": True, "records": {}, "consumed": []}), encoding="utf-8")
+    s2 = FileDeliveryAuthorityStore(f2)
+    is_del, st, err = s2.atomic_consume_if_valid("d", _val)
+    assert is_del is False and st == "PENDING_VERIFICATION" and "Unsupported or invalid store schema version" in str(err)
+
+    # 3. Float version 1.0 in store json
+    f3 = tmp_path / "float_version.json"
+    f3.write_text(json.dumps({"version": 1.0, "records": {}, "consumed": []}), encoding="utf-8")
+    s3 = FileDeliveryAuthorityStore(f3)
+    is_del, st, err = s3.atomic_consume_if_valid("d", _val)
+    assert is_del is False and st == "PENDING_VERIFICATION" and "Unsupported or invalid store schema version" in str(err)
+
+    # 4. Unknown field in record object
+    raw_rec_extra = rec.to_dict()
+    raw_rec_extra["extra_unrecognized_field"] = "bad"
+    f4 = tmp_path / "extra_field_rec.json"
+    f4.write_text(json.dumps({"version": 1, "records": {delivery_id: raw_rec_extra}, "consumed": []}), encoding="utf-8")
+    s4 = FileDeliveryAuthorityStore(f4)
+    is_del, st, err = s4.atomic_consume_if_valid(delivery_id, _val)
+    assert is_del is False and st == "PENDING_VERIFICATION" and "unrecognized field(s)" in str(err)
+
+    # 5. Non-canonical whitespace delivery ID key in records
+    f5 = tmp_path / "whitespace_rec_key.json"
+    f5.write_text(json.dumps({"version": 1, "records": {f" {delivery_id} ": rec.to_dict()}, "consumed": []}), encoding="utf-8")
+    s5 = FileDeliveryAuthorityStore(f5)
+    is_del, st, err = s5.atomic_consume_if_valid(delivery_id, _val)
+    assert is_del is False and st == "PENDING_VERIFICATION" and "Invalid non-canonical delivery_id key" in str(err)
+
+    # 6. Non-canonical whitespace entry in consumed list
+    f6 = tmp_path / "whitespace_consumed_item.json"
+    f6.write_text(json.dumps({"version": 1, "records": {}, "consumed": [f" {delivery_id} "]}), encoding="utf-8")
+    s6 = FileDeliveryAuthorityStore(f6)
+    is_del, st, err = s6.atomic_consume_if_valid(delivery_id, _val)
+    assert is_del is False and st == "PENDING_VERIFICATION" and "Invalid non-canonical entry in consumed list" in str(err)
+
+    # 7. Non-canonical whitespace query delivery ID
+    f7 = tmp_path / "whitespace_query.json"
+    s7 = FileDeliveryAuthorityStore(f7)
+    s7.store_authority_record_out_of_process(rec)
+    is_del, st, err = s7.atomic_consume_if_valid(f" {delivery_id} ", _val)
+    assert is_del is False and st == "PENDING_VERIFICATION" and "Non-canonical delivery ID" in str(err)
+
+
+def test_file_authority_store_b30_crash_outcome_rollback_and_intent_journal_recovery_mutations(tmp_path, monkeypatch):
+    """B30 Remediation Test: Proves that when post-replace directory fsync fails and disk rollback occurs
+    (store file reverts to pre-transition bytes), opening a fresh store process reconciles the intent journal
+    and rejects replay instead of issuing a second DELIVERED result.
+    """
+    import os
+
+    from cryptography.hazmat.primitives.asymmetric import ed25519
+
+    from modules.notifications.domain.authority import (
+        CANONICAL_AUTHORITY_ISSUER_IDENTITY,
+        DeliveryAuthorityRecord,
+        FileDeliveryAuthorityStore,
+    )
+
+    auth_priv_key = ed25519.Ed25519PrivateKey.generate()
+    delivery_id = "del-b30-crash-recovery-1"
+    prov_receipt_id = "prov-rcpt-b30-1"
+    req_hash = "c" * 64
+    rel_sha = "f" * 40
+    oncall_route = "ops-lead"
+    ts_str = datetime.now(UTC).isoformat()
+    issuer_id = CANONICAL_AUTHORITY_ISSUER_IDENTITY
+
+    sig_payload = (
+        f"authority_record:{delivery_id}:{prov_receipt_id}:{req_hash}:{rel_sha}:{oncall_route}:{ts_str}:{issuer_id}"
+    ).encode()
+    sig_b64 = base64.b64encode(auth_priv_key.sign(sig_payload)).decode("utf-8")
+
+    rec = DeliveryAuthorityRecord(
+        delivery_id=delivery_id,
+        provider_receipt_id=prov_receipt_id,
+        request_hash=req_hash,
+        release_sha=rel_sha,
+        oncall_route=oncall_route,
+        timestamp=ts_str,
+        issuer_identity=issuer_id,
+        issuer_signature=sig_b64,
+    )
+
+    def _val(r):
+        return True, "DELIVERED", None
+
+    store_file = tmp_path / "authority_b30_crash.json"
+    store = FileDeliveryAuthorityStore(store_file)
+    store.store_authority_record_out_of_process(rec)
+
+    pre_transition_bytes = store_file.read_bytes()
+
+    real_os_fsync = os.fsync
+    fsync_call_count = 0
+
+    def mock_fsync_fail_on_store_dir(fd):
+        nonlocal fsync_call_count
+        fsync_call_count += 1
+        # 1st fsync: journal intent file, 2nd fsync: journal dir, 3rd fsync: store file, 4th fsync: store dir
+        if fsync_call_count == 4:
+            raise OSError(5, "Injected store directory fsync failure after replace")
+        return real_os_fsync(fd)
+
+    monkeypatch.setattr(os, "fsync", mock_fsync_fail_on_store_dir)
+
+    is_del, st, err = store.atomic_consume_if_valid(delivery_id, _val)
+    assert is_del is False
+    assert st == "PENDING_VERIFICATION"
+    assert "Durable store write or fsync failed" in str(err)
+    assert "store directory fsync failure" in str(err)
+
+    # Now model the crash outcome: restore pre-transition bytes to store_file (representing store directory entry rollback)
+    monkeypatch.setattr(os, "fsync", real_os_fsync)
+    store_file.write_bytes(pre_transition_bytes)
+
+    # Open a fresh store process / object on the rolled-back store file
+    fresh_store = FileDeliveryAuthorityStore(store_file)
+
+    # Query atomic_consume_if_valid on the fresh store instance
+    is_del_fresh, st_fresh, err_fresh = fresh_store.atomic_consume_if_valid(delivery_id, _val)
+
+    # CRITICAL B30 ASSERTION: Fresh store MUST reconcile the intent journal, recognize delivery_id was consumed,
+    # and REJECT replay. It MUST NOT return DELIVERED!
+    assert is_del_fresh is False
+    assert st_fresh == "PENDING_VERIFICATION"
+    assert "already been consumed" in str(err_fresh)

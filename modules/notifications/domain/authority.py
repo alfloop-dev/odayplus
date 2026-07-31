@@ -54,7 +54,7 @@ class DeliveryAuthorityRecord:
     def from_dict(cls, data: dict[str, Any]) -> DeliveryAuthorityRecord:
         if not isinstance(data, dict):
             raise ValueError("Authority record payload must be a dict")
-        required_fields = [
+        required_fields = {
             "delivery_id",
             "provider_receipt_id",
             "request_hash",
@@ -63,26 +63,58 @@ class DeliveryAuthorityRecord:
             "timestamp",
             "issuer_identity",
             "issuer_signature",
-        ]
+        }
+        actual_fields = set(data.keys())
+        if actual_fields != required_fields:
+            missing = required_fields - actual_fields
+            extra = actual_fields - required_fields
+            err_msg = []
+            if missing:
+                err_msg.append(f"missing field(s): {sorted(list(missing))}")
+            if extra:
+                err_msg.append(f"unrecognized field(s): {sorted(list(extra))}")
+            raise ValueError(f"Invalid authority record structure ({', '.join(err_msg)})")
+
         for field in required_fields:
-            val = data.get(field)
-            if not val or not isinstance(val, str) or not val.strip():
-                raise ValueError(f"Missing or invalid authority record field '{field}'")
+            val = data[field]
+            if type(val) is not str:
+                raise ValueError(f"Record field '{field}' must be a string (got {type(val).__name__})")
 
-        delivery_id = data["delivery_id"].strip()
-        provider_receipt_id = data["provider_receipt_id"].strip()
-        request_hash = data["request_hash"].strip().lower()
-        release_sha = data["release_sha"].strip().lower()
-        oncall_route = data["oncall_route"].strip()
-        timestamp = data["timestamp"].strip()
-        issuer_identity = data["issuer_identity"].strip()
-        issuer_signature = data["issuer_signature"].strip()
+        delivery_id = data["delivery_id"]
+        provider_receipt_id = data["provider_receipt_id"]
+        request_hash = data["request_hash"]
+        release_sha = data["release_sha"]
+        oncall_route = data["oncall_route"]
+        timestamp = data["timestamp"]
+        issuer_identity = data["issuer_identity"]
+        issuer_signature = data["issuer_signature"]
 
-        # Strict canonical format validation (Finding B4)
-        if not re.fullmatch(r"^[0-9a-fA-F]{64}$", request_hash) or request_hash == "0" * 64:
-            raise ValueError("Invalid request_hash: must be exactly 64 hexadecimal characters")
-        if not re.fullmatch(r"^[0-9a-fA-F]{40}$", release_sha) or release_sha == "0" * 40:
-            raise ValueError("Invalid release_sha: must be exactly 40 hexadecimal characters")
+        # Canonical format validation (Finding B29 & B4)
+        if delivery_id != delivery_id.strip() or not delivery_id:
+            raise ValueError("Invalid non-canonical delivery_id: must not have leading/trailing whitespace")
+        if provider_receipt_id != provider_receipt_id.strip() or not provider_receipt_id:
+            raise ValueError("Invalid non-canonical provider_receipt_id: must not have leading/trailing whitespace")
+        if oncall_route != oncall_route.strip() or not oncall_route:
+            raise ValueError("Invalid non-canonical oncall_route: must not have leading/trailing whitespace")
+        if timestamp != timestamp.strip() or not timestamp:
+            raise ValueError("Invalid non-canonical timestamp: must not have leading/trailing whitespace")
+        if issuer_identity != issuer_identity.strip() or not issuer_identity:
+            raise ValueError("Invalid non-canonical issuer_identity: must not have leading/trailing whitespace")
+        if issuer_signature != issuer_signature.strip() or not issuer_signature:
+            raise ValueError("Invalid non-canonical issuer_signature: must not have leading/trailing whitespace")
+
+        if (
+            request_hash != request_hash.strip().lower()
+            or not re.fullmatch(r"^[0-9a-f]{64}$", request_hash)
+            or request_hash == "0" * 64
+        ):
+            raise ValueError("Invalid request_hash: must be exactly 64 lowercase hexadecimal characters")
+        if (
+            release_sha != release_sha.strip().lower()
+            or not re.fullmatch(r"^[0-9a-f]{40}$", release_sha)
+            or release_sha == "0" * 40
+        ):
+            raise ValueError("Invalid release_sha: must be exactly 40 lowercase hexadecimal characters")
 
         try:
             ts_dt = datetime.fromisoformat(timestamp)
@@ -129,11 +161,14 @@ class IDeliveryAuthorityStore(ABC):
 
 
 class FileDeliveryAuthorityStore(IDeliveryAuthorityStore):
-    """Durable, restart-safe, cross-process and thread-safe authority store backed by file storage."""
+    """Durable, restart-safe, cross-process and thread-safe authority store backed by file storage
+    and write-ahead journal intent logging.
+    """
 
     def __init__(self, store_path: str | Path) -> None:
         self.store_path = Path(store_path).resolve()
         self.lock_path = self.store_path.with_suffix(".lock")
+        self.journal_dir = self.store_path.parent / f"{self.store_path.stem}_journal"
         self._thread_lock = threading.Lock()
         self._ensure_store_exists()
 
@@ -151,25 +186,103 @@ class FileDeliveryAuthorityStore(IDeliveryAuthorityStore):
 
     def _ensure_store_exists(self) -> None:
         with self._file_lock():
+            self.journal_dir.mkdir(parents=True, exist_ok=True)
             if not self.store_path.exists():
                 self.store_path.parent.mkdir(parents=True, exist_ok=True)
                 self._write_store_data_atomic({"version": 1, "records": {}, "consumed": []})
 
+    def _reconcile_journal_intents(self, data: dict[str, Any]) -> bool:
+        """Scans durable journal intent directory for committed consume intents and reconciles consumed state."""
+        if not self.journal_dir.exists():
+            return False
+
+        reconciled = False
+        consumed_set = set(data.get("consumed", []))
+
+        for intent_file in self.journal_dir.glob("*.intent"):
+            try:
+                with open(intent_file, encoding="utf-8") as f:
+                    intent_data = json.load(f)
+                if not isinstance(intent_data, dict):
+                    continue
+                v = intent_data.get("version")
+                if type(v) is not int or v != 1:
+                    continue
+                del_id = intent_data.get("delivery_id")
+                if type(del_id) is not str or del_id != del_id.strip() or not del_id:
+                    continue
+                st = intent_data.get("status")
+                if st == "CONSUMED" and del_id not in consumed_set:
+                    consumed_set.add(del_id)
+                    reconciled = True
+            except Exception:
+                continue
+
+        if reconciled:
+            data["consumed"] = sorted(list(consumed_set))
+        return reconciled
+
+    def _write_journal_intent(self, delivery_id: str) -> None:
+        """Writes intent record to journal directory with full file and directory fsync (B30)."""
+        self.journal_dir.mkdir(parents=True, exist_ok=True)
+        intent_path = self.journal_dir / f"{delivery_id}.intent"
+        intent_data = {
+            "version": 1,
+            "delivery_id": delivery_id,
+            "status": "CONSUMED",
+            "timestamp": datetime.now(UTC).isoformat(),
+        }
+
+        tmp_fd, tmp_path_str = tempfile.mkstemp(
+            dir=self.journal_dir,
+            prefix=f"{delivery_id}.",
+            suffix=".tmp",
+        )
+        tmp_path = Path(tmp_path_str)
+        try:
+            with os.fdopen(tmp_fd, "w", encoding="utf-8") as f:
+                json.dump(intent_data, f, indent=2)
+                f.flush()
+                os.fsync(f.fileno())
+
+            os.replace(tmp_path, intent_path)
+
+            dir_fd = os.open(self.journal_dir, os.O_RDONLY)
+            try:
+                os.fsync(dir_fd)
+            finally:
+                os.close(dir_fd)
+        except Exception:
+            if tmp_path.exists():
+                try:
+                    tmp_path.unlink()
+                except OSError:
+                    pass
+            raise
+
     def _read_store_data(self) -> dict[str, Any]:
         """Reads store data. If file exists but is corrupt or invalid schema, raises ValueError to fail closed."""
         if not self.store_path.exists():
-            return {"version": 1, "records": {}, "consumed": []}
-        try:
-            with open(self.store_path, encoding="utf-8") as f:
-                data = json.load(f)
-            self._validate_store_schema(data)
-            return data
-        except Exception as err:
-            raise ValueError(f"Authority store data is corrupt or unreadable: {err}") from err
+            data = {"version": 1, "records": {}, "consumed": []}
+        else:
+            try:
+                with open(self.store_path, encoding="utf-8") as f:
+                    data = json.load(f)
+                self._validate_store_schema(data)
+            except Exception as err:
+                raise ValueError(f"Authority store data is corrupt or unreadable: {err}") from err
+
+        if self._reconcile_journal_intents(data):
+            try:
+                self._write_store_data_atomic(data)
+            except Exception:
+                pass
+
+        return data
 
     @staticmethod
     def _validate_store_schema(data: Any) -> None:
-        """Strictly validates durable store schema. Raises ValueError on any structural or type violation."""
+        """Strictly validates durable store schema (B29). Raises ValueError on any structural or type violation."""
         if not isinstance(data, dict):
             raise ValueError("Store data must be a JSON object")
 
@@ -180,18 +293,20 @@ class FileDeliveryAuthorityStore(IDeliveryAuthorityStore):
                 f"Store data contains unrecognized top-level key(s): {sorted(list(extra_keys))}"
             )
 
-        if "version" in data:
-            v = data["version"]
-            if not isinstance(v, (int, float)) or v != 1:
-                raise ValueError(f"Unsupported or invalid store schema version: {v}")
+        if "version" not in data:
+            raise ValueError("Missing required top-level key 'version'")
+
+        v = data["version"]
+        if type(v) is not int or v != 1:
+            raise ValueError(f"Unsupported or invalid store schema version: {v!r}")
 
         records = data.get("records")
         if not isinstance(records, dict):
             raise ValueError("Store data 'records' must be a dict")
 
         for del_id, raw_rec in records.items():
-            if not isinstance(del_id, str) or not del_id.strip():
-                raise ValueError(f"Invalid delivery_id key in records: {del_id!r}")
+            if type(del_id) is not str or del_id != del_id.strip() or not del_id:
+                raise ValueError(f"Invalid non-canonical delivery_id key in records: {del_id!r}")
             if not isinstance(raw_rec, dict):
                 raise ValueError(f"Record for delivery ID '{del_id}' must be a dict")
             try:
@@ -201,7 +316,7 @@ class FileDeliveryAuthorityStore(IDeliveryAuthorityStore):
                     f"Invalid record object for delivery ID '{del_id}': {err}"
                 ) from err
 
-            if rec_obj.delivery_id != del_id.strip():
+            if rec_obj.delivery_id != del_id:
                 raise ValueError(
                     f"Record delivery ID mismatch: key '{del_id}' != record delivery_id '{rec_obj.delivery_id}'"
                 )
@@ -212,8 +327,8 @@ class FileDeliveryAuthorityStore(IDeliveryAuthorityStore):
 
         seen_consumed: set[str] = set()
         for item in consumed:
-            if not isinstance(item, str) or not item.strip():
-                raise ValueError(f"Invalid entry in consumed list: {item!r}")
+            if type(item) is not str or item != item.strip() or not item:
+                raise ValueError(f"Invalid non-canonical entry in consumed list: {item!r}")
             if item in seen_consumed:
                 raise ValueError(f"Duplicate delivery ID in consumed list: {item!r}")
             seen_consumed.add(item)
@@ -268,6 +383,8 @@ class FileDeliveryAuthorityStore(IDeliveryAuthorityStore):
         """Out-of-process ingestion helper for writing external authority records."""
         with self._file_lock():
             data = self._read_store_data()
+            if record.delivery_id != record.delivery_id.strip():
+                raise ValueError("Record delivery_id contains non-canonical whitespace")
             data["records"][record.delivery_id] = record.to_dict()
             self._write_store_data_atomic(data)
 
@@ -277,6 +394,13 @@ class FileDeliveryAuthorityStore(IDeliveryAuthorityStore):
         validator_fn: Callable[[DeliveryAuthorityRecord], tuple[bool, str, str | None]],
     ) -> tuple[bool, str, str | None]:
         with self._file_lock():
+            if type(delivery_id) is not str or delivery_id != delivery_id.strip() or not delivery_id:
+                return (
+                    False,
+                    "PENDING_VERIFICATION",
+                    f"Non-canonical delivery ID '{delivery_id!r}' rejected (fail-closed)",
+                )
+
             try:
                 data = self._read_store_data()
             except Exception as err:
@@ -314,6 +438,15 @@ class FileDeliveryAuthorityStore(IDeliveryAuthorityStore):
 
             is_del, status, err = validator_fn(record)
             if is_del and status == "DELIVERED":
+                try:
+                    self._write_journal_intent(delivery_id)
+                except Exception as journal_err:
+                    return (
+                        False,
+                        "PENDING_VERIFICATION",
+                        f"Durable intent log write or fsync failed (fail-closed): {journal_err}",
+                    )
+
                 consumed.add(delivery_id)
                 data["consumed"] = sorted(list(consumed))
                 try:
