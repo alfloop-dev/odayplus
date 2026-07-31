@@ -151,13 +151,27 @@ executed and killed in `mutation-transcript-round5.txt`, not unfinished work. Co
 **Review-gate consequence**: pushing the `dev` refresh moves the PR head off `b5800dc5`, so the
 `task-review-gate` commit status stamped on that SHA no longer applies. Per acceptance criterion 7
 ("independent Claude exact-head review and merged PR before done") the task is handed back to
-reviewer Claude for exact-head re-review on the refreshed head before `done`.
+reviewer Antigravity2 for exact-head re-review on the refreshed head before `done`.
+
+## Round 7 Refresh & Predicate Extraction (2026-07-31)
+
+Round 7 executed the dev-refresh merge, audited PR #514 vs PR #510, and extracted the named `is_valid_job_queue_health` predicate.
+
+| Check | Command | Result |
+|---|---|---|
+| Base refresh | `git merge origin/dev` (merging `abaf8129`) | Plain-merge of `origin/dev`; no rebase, no force-push |
+| Named predicate extraction | Extracted `is_valid_job_queue_health(job_queue: str)` in `scripts/deployment/validate_cloud_run_live_deployment.py` | Both deployment validator and regression test `test_real_app_platform_health_job_queue_contract` now share the identical predicate |
+| PR #514 Audit | Audited PR #514 (main-based canary PR) vs PR #510 | PR #510 confirmed as sole canonical dev-based queue-health delivery; PR #514 audited as conflicting main-based canary PR to be closed without merging |
+| Focused ops + reliability tests | `pytest tests/ops/test_cloud_run_live_deployment.py::test_real_app_platform_health_job_queue_contract tests/reliability/test_health_endpoints.py` | **7 passed** |
+| Ruff check | `ruff check apps/api/oday_api/main.py tests/ops/test_cloud_run_live_deployment.py scripts/deployment/validate_cloud_run_live_deployment.py tests/reliability/test_health_endpoints.py` | **All checks passed** |
 
 ## Acceptance Alignment
-- [x] Based on current `origin/dev` (merged `4b329493` in round 5) carrying only the authoritative queue-health fix
+- [x] Based on current `origin/dev` (merged `abaf8129` in round 7) carrying only the authoritative queue-health fix
 - [x] Added regression coverage invoking real application `/platform/health` composition (reverting `main.py` to the true `dev` baseline fails Case 1; reverting to the round-1 `is_durable` text fails Case 2 — both verified by mutation run)
 - [x] Proved durable PostgreSQL queue (`mode="postgresql"`) passes while SQLite durable (`mode="durable"`), in-memory, and bare healthy payloads all fail closed
+- [x] Extracted named `is_valid_job_queue_health` predicate so deployment validator and regression test cannot drift
+- [x] Audited PR #514 as conflicting main-based canary PR, preserving PR #510 as the sole canonical delivery
 - [x] Preserved model readiness, provider, secret, migration, worker scheduler, and rollback gates without weakening
 - [x] Does not claim production model bindings or candidate health are ready
-- [x] Ran focused ops tests, reliability tests, ruff check, ruff format, and git diff whitespace check
-- [x] EOF blank line removed; `ruff format --diff` reports all files already formatted
+- [x] Ran focused ops tests, reliability tests, ruff check, and git merge check
+

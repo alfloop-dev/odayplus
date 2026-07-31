@@ -4750,8 +4750,8 @@ def test_real_app_platform_health_job_queue_contract(tmp_path: Path) -> None:
     assert not validator._contains_forbidden_marker(pg_queue_text), (
         f"postgresql-mode queue must not contain forbidden markers; got: {pg_queue_text!r}"
     )
-    assert any(marker in pg_queue_text for marker in ("worker", "cloud", "durable")), (
-        f"postgresql-mode queue must contain a required marker; got: {pg_queue_text!r}"
+    assert validator.is_valid_job_queue_health(pg_queue_text), (
+        f"postgresql-mode queue must pass is_valid_job_queue_health; got: {pg_queue_text!r}"
     )
 
     # 2. mode="durable" (SQLite) bundle — must fail closed: "sqlite" is a forbidden marker.
@@ -4768,6 +4768,9 @@ def test_real_app_platform_health_job_queue_contract(tmp_path: Path) -> None:
     assert validator._contains_forbidden_marker(sqlite_queue_text), (
         f"sqlite-mode queue must fail closed via forbidden marker; got: {sqlite_queue_text!r}"
     )
+    assert not validator.is_valid_job_queue_health(sqlite_queue_text), (
+        f"sqlite-mode queue must fail is_valid_job_queue_health; got: {sqlite_queue_text!r}"
+    )
 
     # 3. mode="memory" (in-memory) bundle — fails closed: "in-memory" is a forbidden marker.
     mem_bundle = _memory_bundle()
@@ -4779,10 +4782,13 @@ def test_real_app_platform_health_job_queue_contract(tmp_path: Path) -> None:
     assert validator._contains_forbidden_marker(mem_queue_text), (
         f"in-memory queue must fail closed via forbidden marker; got: {mem_queue_text!r}"
     )
+    assert not validator.is_valid_job_queue_health(mem_queue_text), (
+        f"in-memory queue must fail is_valid_job_queue_health; got: {mem_queue_text!r}"
+    )
 
     # 4. Bare "healthy" payload — fails closed: no required marker.
     bare_payload = {"dependencies": {"job_queue": "healthy"}}
     bare_queue_text = validator._dependency_text(bare_payload, "job_queue")
-    assert not any(marker in bare_queue_text for marker in ("worker", "cloud", "durable")), (
-        f"bare 'healthy' must not contain any required marker; got: {bare_queue_text!r}"
+    assert not validator.is_valid_job_queue_health(bare_queue_text), (
+        f"bare 'healthy' must fail is_valid_job_queue_health; got: {bare_queue_text!r}"
     )
