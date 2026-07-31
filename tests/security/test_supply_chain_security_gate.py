@@ -1906,3 +1906,174 @@ def test_round10_b4_sbom_integrity_and_tamper_mutations(tmp_path: Path) -> None:
 
     v_res = verify_sbom(tampered_path)
     assert v_res == 1
+
+
+# ─── Round-11 negative tests (B1, B2, B3, B4) ───
+
+
+def test_round11_b1_caller_created_authority_and_substring_source_rejected(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """B1 — caller-created authority keys without environment trust root and substring source_system values must be rejected."""
+    sys.path.insert(0, str(ROOT))
+    from scripts.security.exemption_validator import (
+        AuthoritativeReceiptVerifier,
+        compute_canonical_receipt_hash,
+        compute_receipt_signature,
+        resolve_approval_reference,
+    )
+
+    # 1. Ensure no environment trust root key is set
+    monkeypatch.delenv("OSS_LEGAL_AUTHORITY_KEY", raising=False)
+    monkeypatch.delenv("AUTHORITATIVE_RECEIPT_SECRET", raising=False)
+
+    # Caller tries to instantiate verifier with arbitrary authority_key
+    caller_verifier = AuthoritativeReceiptVerifier(authority_key="caller-chosen-secret-123", trusted_source_systems={"legal_vault"})
+    assert caller_verifier.authority_key is None, "Caller-created authority key must be rejected when environment trust root is absent"
+
+    entry = {
+        "package_name": "psycopg",
+        "purl": "pkg:pypi/psycopg@3.3.4",
+        "approved_by": "Jane Doe (Legal Counsel)",
+        "approval_reference": "POLICY-LGPL-001",
+        "issued_at": "2026-07-01T00:00:00Z",
+        "expires_at": "2026-12-31T23:59:59Z",
+        "reason": "Authoritative legal review waiver",
+        "status": "active",
+        "scope": "prod",
+    }
+
+    # 2. Substring source_system ("evil-legal_vault-copy") must be rejected even if environment trust root is configured
+    test_key = "trusted-env-secret-456"
+    monkeypatch.setenv("OSS_LEGAL_AUTHORITY_KEY", test_key)
+    valid_verifier = AuthoritativeReceiptVerifier(authority_key=test_key, trusted_source_systems={"legal_vault"})
+    assert valid_verifier.authority_key == test_key
+
+    receipts_dir = tmp_path / "receipts"
+    receipts_dir.mkdir(parents=True, exist_ok=True)
+
+    substring_receipt = {
+        "approval_ref": "POLICY-LGPL-001",
+        "status": "active",
+        "approved_by": "Jane Doe (Legal Counsel)",
+        "approval_reference": "POLICY-LGPL-001",
+        "principal_id": "usr-jane-001",
+        "principal_role": "Legal Counsel",
+        "source_system": "evil-legal_vault-copy",
+        "policy_decision": "approved",
+        "policy_name": "ODP-PLAN-OSS-LEGAL-POLICY-001",
+        "policy_version": "1.0.0",
+        "policy_hash": "a" * 64,
+        "package_name": "psycopg",
+        "package_purl": "pkg:pypi/psycopg@3.3.4",
+        "scope": "prod",
+        "issued_at": "2026-07-01T00:00:00Z",
+        "expires_at": "2026-12-31T23:59:59Z",
+        "reviewed_at": "2026-07-01T00:00:00Z",
+        "source_digest": "a" * 40,
+        "release_digest": "b" * 64,
+        "sbom_digest": "c" * 64,
+        "python_lock_digest": "d" * 64,
+        "npm_lock_digest": "e" * 64,
+        "evidence_report_digest": "f" * 64,
+    }
+    substring_receipt["canonical_receipt_hash"] = compute_canonical_receipt_hash(substring_receipt)
+    substring_receipt["signature"] = compute_receipt_signature(substring_receipt["canonical_receipt_hash"], test_key)
+
+    (receipts_dir / "POLICY-LGPL-001.json").write_text(json.dumps(substring_receipt), encoding="utf-8")
+
+    res_ok, res_err = resolve_approval_reference("POLICY-LGPL-001", entry, base_dir=tmp_path, verifier_fn=valid_verifier)
+    assert not res_ok
+    assert "source_system 'evil-legal_vault-copy' is not in trusted source systems" in res_err
+
+
+def test_round11_b2_unbound_policy_version_and_digest_mismatches_rejected(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """B2 — policy_version ATTACKER-VERSION, caller-controlled digests, and purl mismatches must be rejected."""
+    sys.path.insert(0, str(ROOT))
+    from scripts.security.exemption_validator import (
+        AuthoritativeReceiptVerifier,
+        compute_canonical_receipt_hash,
+        compute_file_sha256,
+        compute_policy_hash,
+        compute_receipt_signature,
+        resolve_approval_reference,
+    )
+
+    test_key = "test-authority-secret-789"
+    monkeypatch.setenv("OSS_LEGAL_AUTHORITY_KEY", test_key)
+    verifier = AuthoritativeReceiptVerifier(authority_key=test_key, trusted_source_systems={"legal_vault"})
+
+    entry = {
+        "package_name": "psycopg",
+        "purl": "pkg:pypi/psycopg@3.3.4",
+        "approved_by": "Jane Doe (Legal Counsel)",
+        "approval_reference": "POLICY-LGPL-001",
+        "issued_at": "2026-07-01T00:00:00Z",
+        "expires_at": "2026-12-31T23:59:59Z",
+        "reason": "Authoritative legal review waiver",
+        "status": "active",
+        "scope": "prod",
+    }
+
+    receipts_dir = tmp_path / "receipts"
+    receipts_dir.mkdir(parents=True, exist_ok=True)
+
+    uv_lock_hash = compute_file_sha256(ROOT / "uv.lock")
+    pkg_lock_hash = compute_file_sha256(ROOT / "package-lock.json")
+    pol_hash = compute_policy_hash()
+
+    base_receipt = {
+        "approval_ref": "POLICY-LGPL-001",
+        "status": "active",
+        "approved_by": "Jane Doe (Legal Counsel)",
+        "approval_reference": "POLICY-LGPL-001",
+        "principal_id": "usr-jane-001",
+        "principal_role": "Legal Counsel",
+        "source_system": "legal_vault",
+        "policy_decision": "approved",
+        "policy_name": "ODP-PLAN-OSS-LEGAL-POLICY-001",
+        "policy_version": "1.0.0",
+        "policy_hash": pol_hash,
+        "package_name": "psycopg",
+        "package_purl": "pkg:pypi/psycopg@3.3.4",
+        "scope": "prod",
+        "issued_at": "2026-07-01T00:00:00Z",
+        "expires_at": "2026-12-31T23:59:59Z",
+        "reviewed_at": "2026-07-01T00:00:00Z",
+        "source_digest": "a" * 40,
+        "release_digest": "b" * 64,
+        "sbom_digest": "c" * 64,
+        "python_lock_digest": uv_lock_hash,
+        "npm_lock_digest": pkg_lock_hash,
+        "evidence_report_digest": "d" * 64,
+    }
+
+    # 1. ATTACKER-VERSION policy_version rejected
+    attacker_ver_rec = dict(base_receipt, policy_version="ATTACKER-VERSION")
+    attacker_ver_rec["canonical_receipt_hash"] = compute_canonical_receipt_hash(attacker_ver_rec)
+    attacker_ver_rec["signature"] = compute_receipt_signature(attacker_ver_rec["canonical_receipt_hash"], test_key)
+    (receipts_dir / "POLICY-LGPL-001.json").write_text(json.dumps(attacker_ver_rec), encoding="utf-8")
+
+    res_ok, res_err = resolve_approval_reference("POLICY-LGPL-001", entry, base_dir=tmp_path, verifier_fn=verifier)
+    assert not res_ok
+    assert "policy_version 'ATTACKER-VERSION' does not match" in res_err
+
+    # 2. caller-controlled release_digest rejected
+    caller_dig_rec = dict(base_receipt, release_digest="caller-controlled")
+    caller_dig_rec["canonical_receipt_hash"] = compute_canonical_receipt_hash(caller_dig_rec)
+    caller_dig_rec["signature"] = compute_receipt_signature(caller_dig_rec["canonical_receipt_hash"], test_key)
+    (receipts_dir / "POLICY-LGPL-001.json").write_text(json.dumps(caller_dig_rec), encoding="utf-8")
+
+    res_ok, res_err = resolve_approval_reference("POLICY-LGPL-001", entry, base_dir=tmp_path, verifier_fn=verifier)
+    assert not res_ok
+    assert "release_digest 'caller-controlled' is invalid, unbound, or caller-controlled" in res_err
+
+
+def test_round11_b4_release_attestation_unbound_fail_closed() -> None:
+    """B4 — release attestation with unbound digests fails policy check with require_digests=True."""
+    sys.path.insert(0, str(ROOT))
+    from scripts.security.generate_sbom import check_license_policy, generate_sbom
+
+    unbound_sbom = generate_sbom()  # image_digest and release_digest are UNBOUND
+    is_passed, violations = check_license_policy(unbound_sbom, require_digests=True)
+    assert not is_passed, "Release gate must fail closed when image/release digests are UNBOUND"
+    assert any("Image digest is missing, unbound" in v for v in violations)
+    assert any("Release digest is missing, unbound" in v for v in violations)

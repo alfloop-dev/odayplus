@@ -631,7 +631,7 @@ def compute_sbom_digest(
     comp_json = json.dumps(components, sort_keys=True)
     dep_json = json.dumps(dependencies, sort_keys=True)
     content_hash = hashlib.sha256(
-        f"{comp_json}:{dep_json}:{git_sha}:{package_lock_hash}:{uv_lock_hash}:{policy_hash}:{evidence_report_hash}".encode()
+        f"{comp_json}:{dep_json}:{package_lock_hash}:{uv_lock_hash}:{policy_hash}:{evidence_report_hash}".encode()
     ).hexdigest()
     digest_input = f"{content_hash}:{image_digest}:{release_digest}"
     sbom_hash = hashlib.sha256(digest_input.encode()).hexdigest()
@@ -1134,6 +1134,11 @@ def readback_sbom(
     print(f"Image Digest: {props.get('image-digest', 'N/A')}")
     print(f"Release Digest: {props.get('release-digest', 'N/A')}")
     print(f"Policy Status: {props.get('policy-status', 'N/A')}")
+    print(f"Technical Inventory Status: {props.get('policy-status', 'N/A')}")
+    img_d = props.get("image-digest", "")
+    rel_d = props.get("release-digest", "")
+    rel_att_status = "PASSED" if (img_d.startswith("sha256:") and rel_d.startswith("sha256:") and props.get("policy-status") == "PASSED") else "NO-GO (digests UNBOUND or policy FAILED)"
+    print(f"Release Attestation Status: {rel_att_status}")
     print(f"Total Components: {len(data.get('components', []))}")
     print(f"Total Dependency Nodes: {len(data.get('dependencies', []))}")
 
