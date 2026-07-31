@@ -311,11 +311,12 @@ class SiteScoreOpeningOutcomeBenchmarkResult:
 
     def to_dict(self) -> dict[str, Any]:
         norm_mae = round(self.normalized_mae, 4) if math.isfinite(self.normalized_mae) else 999.0
+        is_governed_active = self.is_gate2_passed and self.is_lineage_governed
         res = {
             "provenance": self.provenance,
-            "dataset_snapshot_id": self.dataset_snapshot_id,
-            "model_version": self.model_version,
-            "artifact_lineage_id": self.artifact_lineage_id,
+            "dataset_snapshot_id": self.dataset_snapshot_id if is_governed_active else None,
+            "model_version": self.model_version if is_governed_active else None,
+            "artifact_lineage_id": self.artifact_lineage_id if is_governed_active else None,
             "observed_count": self.observed_count,
             "eligible_count": self.eligible_count,
             "mature_label_count": self.mature_label_count,
@@ -871,11 +872,45 @@ def verify_sitescore_gate2_receipt(
                 return None
             return val
 
+        # B3: Closed allow-list check for benchmark_summary
+        ALLOWED_BENCHMARK_SUMMARY_KEYS = {
+            "provenance", "dataset_snapshot_id", "model_version", "artifact_lineage_id",
+            "observed_count", "eligible_count", "mature_label_count", "m6_mature_count",
+            "m12_mature_count", "matched_prediction_count", "interval_bounds_count",
+            "in_p80_count", "matched_mean_y", "prediction_coverage_ratio",
+            "interval_bounds_coverage_ratio", "m6_coverage_ratio", "m12_coverage_ratio",
+            "normalized_mae", "p80_coverage", "activation_threshold",
+            "min_coverage_threshold", "max_mae_threshold", "is_gate2_passed",
+            "status", "reason_code", "handback_payload", "calibration_summary",
+            "segment_metrics", "db_error", "observed_at"
+        }
+        for k in summary.keys():
+            if k not in ALLOWED_BENCHMARK_SUMMARY_KEYS:
+                errors.append(f"Forbidden or unknown metric field in benchmark_summary: {k!r}")
+
         # Top-level boolean & enum checks
         rec_gov_disabled = _check_strict_bool(receipt.get("is_governed_disabled"), "is_governed_disabled")
         rec_gate_status = receipt.get("gate_status")
         if rec_gate_status not in {"PASSED", "REJECTED_GOVERNED_DISABLED"}:
             errors.append(f"Invalid top-level gate_status: {rec_gate_status!r}")
+
+        # B2: Check top-level observed_at, inventory_version, and source_contract
+        rec_obs_at = receipt.get("observed_at")
+        if not isinstance(rec_obs_at, str):
+            errors.append(f"Top-level observed_at must be a string (got {type(rec_obs_at).__name__}: {rec_obs_at!r})")
+        else:
+            try:
+                datetime.fromisoformat(rec_obs_at.replace("Z", "+00:00"))
+            except Exception:
+                errors.append(f"Invalid observed_at timestamp format: {rec_obs_at!r}")
+
+        rec_inv_ver = receipt.get("inventory_version")
+        if not isinstance(rec_inv_ver, str) or not rec_inv_ver.strip():
+            errors.append(f"Invalid inventory_version: {rec_inv_ver!r}")
+        rec_src_contract = receipt.get("source_contract")
+        expected_src_contract = f"model_ready.candidate_site_view@{rec_inv_ver}"
+        if rec_src_contract != expected_src_contract:
+            errors.append(f"source_contract mismatch: declared {rec_src_contract!r}, expected {expected_src_contract!r}")
 
         # Validate numeric types in summary
         obs = _check_strict_int(summary.get("observed_count"), "benchmark_summary.observed_count")
@@ -904,6 +939,17 @@ def verify_sitescore_gate2_receipt(
 
         # Check model card governed-disabled semantics
         is_rec_disabled = (rec_gov_disabled is True) or (rec_gate_status != "PASSED")
+        if is_rec_disabled:
+            sum_snap = summary.get("dataset_snapshot_id")
+            if sum_snap not in (None, "UNAVAILABLE"):
+                errors.append(f"Governed-disabled receipt requires summary.dataset_snapshot_id to be None or 'UNAVAILABLE' (got {sum_snap!r})")
+            sum_ver = summary.get("model_version")
+            if sum_ver not in (None, "UNVERIFIED"):
+                errors.append(f"Governed-disabled receipt requires summary.model_version to be None or 'UNVERIFIED' (got {sum_ver!r})")
+            sum_lin = summary.get("artifact_lineage_id")
+            if sum_lin not in (None, "UNVERIFIED"):
+                errors.append(f"Governed-disabled receipt requires summary.artifact_lineage_id to be None or 'UNVERIFIED' (got {sum_lin!r})")
+
         if mc_dict is not None and is_rec_disabled:
             mc_rel = mc_dict.get("release_status")
             if mc_rel != "GOVERNED_DISABLED":
@@ -937,20 +983,38 @@ def verify_sitescore_gate2_receipt(
                 errors.append(f"Governed-disabled model card explainability_method must be 'UNAVAILABLE' (got {mc_dict.get('explainability_method')!r})")
 
         # B1: Reconcile model card metrics, calibration, and segment metrics against benchmark summary
+        REQUIRED_METRIC_KEYS = [
+            "mature_label_count", "matched_prediction_count", "m6_coverage_ratio",
+            "m12_coverage_ratio", "prediction_coverage_ratio", "interval_bounds_coverage_ratio",
+            "normalized_mae", "p80_coverage"
+        ]
         if mc_dict is not None:
             mc_metrics = mc_dict.get("metrics_summary")
             if not isinstance(mc_metrics, dict):
                 errors.append("model_card.metrics_summary must be a dictionary")
             else:
-                for k in ["mature_label_count", "matched_prediction_count", "m6_coverage_ratio", "m12_coverage_ratio", "prediction_coverage_ratio", "interval_bounds_coverage_ratio", "normalized_mae", "p80_coverage"]:
-                    if k in mc_metrics and k in summary:
+                for k in mc_metrics.keys():
+                    if k not in set(REQUIRED_METRIC_KEYS):
+                        errors.append(f"Forbidden or unknown metric field in model_card.metrics_summary: {k!r}")
+                for k in REQUIRED_METRIC_KEYS:
+                    if k not in mc_metrics:
+                        errors.append(f"model_card.metrics_summary missing required metric key: {k!r}")
+                    elif k in summary:
                         if float(mc_metrics[k]) != float(summary[k]):
                             errors.append(f"model_card.metrics_summary.{k} ({mc_metrics[k]}) drifts from summary.{k} ({summary[k]})")
 
-            if mc_dict.get("calibration_summary") != summary.get("calibration_summary"):
+            mc_cal = mc_dict.get("calibration_summary")
+            if not isinstance(mc_cal, dict):
+                errors.append("model_card.calibration_summary must be a dictionary")
+            elif mc_cal != summary.get("calibration_summary"):
                 errors.append("model_card.calibration_summary drifts from summary.calibration_summary")
-            if mc_dict.get("segment_metrics") != summary.get("segment_metrics"):
+
+            mc_seg = mc_dict.get("segment_metrics")
+            if not isinstance(mc_seg, (list, tuple)):
+                errors.append("model_card.segment_metrics must be a sequence")
+            elif mc_seg != summary.get("segment_metrics"):
                 errors.append("model_card.segment_metrics drifts from summary.segment_metrics")
+
 
         # Range checks for ratios and MAE
         for r_val, r_name in [
@@ -1118,8 +1182,22 @@ def verify_sitescore_gate2_receipt(
         if not isinstance(bc, dict):
             errors.append("handback.outcome_backfill_contract must be a dictionary")
         else:
-            if is_rec_disabled and bc.get("receipt_required") is not True:
-                errors.append(f"Governed-disabled receipt requires outcome_backfill_contract.receipt_required to be True (got {bc.get('receipt_required')!r})")
+            if is_rec_disabled:
+                if bc.get("receipt_required") is not True:
+                    errors.append(f"Governed-disabled receipt requires outcome_backfill_contract.receipt_required to be True (got {bc.get('receipt_required')!r})")
+                for placeholder_key, expected_placeholder in [
+                    ("source_identity", "UNVERIFIED"),
+                    ("query_id", "UNVERIFIED"),
+                    ("dataset_snapshot_hash", "UNVERIFIED"),
+                    ("lineage_id", "UNVERIFIED"),
+                    ("freshness_timestamp", "UNVERIFIED"),
+                    ("evidence_owner", "UNVERIFIED"),
+                    ("required_source_identity", "authoritative_opening_outcome_m6_m12_store_ledger"),
+                    ("required_query_id", "sitescore_authoritative_m6_m12_outcome_query_v1"),
+                ]:
+                    val = bc.get(placeholder_key)
+                    if val != expected_placeholder:
+                        errors.append(f"Governed-disabled outcome_backfill_contract.{placeholder_key} must be {expected_placeholder!r} (got {val!r})")
             if bc.get("task_id") != "ODP-PLAN-SITESCORE-OUTCOME-BACKFILL-001":
                 errors.append(f"outcome_backfill_contract.task_id must be 'ODP-PLAN-SITESCORE-OUTCOME-BACKFILL-001' (got {bc.get('task_id')!r})")
             if bc.get("owner") != "Human/Ops":

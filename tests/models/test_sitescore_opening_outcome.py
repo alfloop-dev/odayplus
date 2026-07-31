@@ -1343,3 +1343,76 @@ def test_sitescore_verifier_rejects_rebound_synthetic_segment_metrics_b3():
     res1 = verify_sitescore_gate2_receipt(r1_rebound, model_card_artifact=mc_dict)
     assert res1.is_valid is False
     assert any("Forbidden or unsupported synthetic horizon calibration field" in e or "Forbidden or unsupported metric field" in e for e in res1.errors)
+
+
+def test_sitescore_verifier_rejects_rebound_empty_model_card_metrics_and_missing_calibration_b1():
+    # Codex6 B1 8e7ad006 re-review test: emptying model_card.metrics_summary or removing calibration_summary/segment_metrics fails closed
+    result = run_benchmark_from_inventory(db_url=None, records=None)
+    model_card = build_sitescore_opening_outcome_model_card(result)
+    receipt = build_sitescore_gate2_receipt(result, model_card=model_card)
+
+    # 1. Empty model_card.metrics_summary
+    mc1 = json.loads(json.dumps(model_card.to_dict()))
+    mc1["metrics_summary"] = {}
+    r1 = _rebind_receipt_hashes(receipt, mc1)
+    res1 = verify_sitescore_gate2_receipt(r1, model_card_artifact=mc1)
+    assert res1.is_valid is False
+    assert any("model_card.metrics_summary missing required metric key" in e for e in res1.errors)
+
+    # 2. Removed calibration_summary from model_card
+    mc2 = json.loads(json.dumps(model_card.to_dict()))
+    del mc2["calibration_summary"]
+    r2 = _rebind_receipt_hashes(receipt, mc2)
+    res2 = verify_sitescore_gate2_receipt(r2, model_card_artifact=mc2)
+    assert res2.is_valid is False
+    assert any("model_card.calibration_summary must be a dictionary" in e for e in res2.errors)
+
+
+def test_sitescore_verifier_rejects_rebound_invented_outcome_authority_lineage_freshness_b2():
+    # Codex6 B2 8e7ad006 re-review test: invented outcome authority, lineage, freshness, or invalid timestamp fail closed
+    result = run_benchmark_from_inventory(db_url=None, records=None)
+    model_card = build_sitescore_opening_outcome_model_card(result)
+    receipt = build_sitescore_gate2_receipt(result, model_card=model_card)
+    mc_dict = model_card.to_dict()
+
+    # 1. Invented outcome_backfill_contract placeholders in both handback copies
+    r1 = json.loads(json.dumps(receipt))
+    for hb_copy in [r1["handback"], r1["benchmark_summary"]["handback_payload"]]:
+        hb_copy["outcome_backfill_contract"]["source_identity"] = "invented_source_identity"
+        hb_copy["outcome_backfill_contract"]["freshness_timestamp"] = "2028-01-01T00:00:00Z"
+        hb_copy["outcome_backfill_contract"]["evidence_owner"] = "attacker"
+    r1_rebound = _rebind_receipt_hashes(r1, mc_dict)
+    res1 = verify_sitescore_gate2_receipt(r1_rebound, model_card_artifact=mc_dict)
+    assert res1.is_valid is False
+    assert any("Governed-disabled outcome_backfill_contract" in e for e in res1.errors)
+
+    # 2. Invented dataset_snapshot_id in benchmark_summary while governed-disabled
+    r2 = json.loads(json.dumps(receipt))
+    r2["benchmark_summary"]["dataset_snapshot_id"] = "invented_snapshot_id"
+    r2_rebound = _rebind_receipt_hashes(r2, mc_dict)
+    res2 = verify_sitescore_gate2_receipt(r2_rebound, model_card_artifact=mc_dict)
+    assert res2.is_valid is False
+    assert any("Governed-disabled receipt requires summary.dataset_snapshot_id to be None or 'UNAVAILABLE'" in e for e in res2.errors)
+
+    # 3. Invalid top-level observed_at timestamp
+    r3 = json.loads(json.dumps(receipt))
+    r3["observed_at"] = "not-a-timestamp"
+    r3_rebound = _rebind_receipt_hashes(r3, mc_dict)
+    res3 = verify_sitescore_gate2_receipt(r3_rebound, model_card_artifact=mc_dict)
+    assert res3.is_valid is False
+    assert any("Invalid observed_at timestamp format" in e for e in res3.errors)
+
+
+def test_sitescore_verifier_rejects_renamed_synthetic_horizon_metrics_b3():
+    # Codex6 B3 8e7ad006 re-review test: renamed synthetic horizon metric m6_interval_mae_v2 in benchmark_summary is rejected
+    result = run_benchmark_from_inventory(db_url=None, records=None)
+    model_card = build_sitescore_opening_outcome_model_card(result)
+    receipt = build_sitescore_gate2_receipt(result, model_card=model_card)
+    mc_dict = model_card.to_dict()
+
+    r1 = json.loads(json.dumps(receipt))
+    r1["benchmark_summary"]["m6_interval_mae_v2"] = 12.34
+    r1_rebound = _rebind_receipt_hashes(r1, mc_dict)
+    res1 = verify_sitescore_gate2_receipt(r1_rebound, model_card_artifact=mc_dict)
+    assert res1.is_valid is False
+    assert any("Forbidden or unknown metric field in benchmark_summary" in e for e in res1.errors)

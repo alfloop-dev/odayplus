@@ -1,7 +1,7 @@
 {
   "artifact_hashes": {
     "handback_hash": "c01a3e922e80453981fdbeaaa8c55b73c1df82a9101372a9199ba4c16ef16e1a",
-    "model_card_hash": "874ee51404f1e644270ac24f9578ff995cd6aed1e600f3b4cee8f167a7f98ee0"
+    "model_card_hash": "9abcb2a79438b3565b1e5289e52b33a15f2cd6f0bdaca450052107342897ec14"
   },
   "benchmark_summary": {
     "activation_threshold": 200,
@@ -235,15 +235,15 @@
     ]
   },
   "integrity": {
-    "content_sha256": "b7d474c34f38de6b1aa53899344a1fca1f3ceed613acbf8ae406e39cbfe10a62",
+    "content_sha256": "c91572fa6bcfd7cb7fc801a770a18c32af35eddf57bfe78cb83cfab8a77cf3f2",
     "handback_hash": "c01a3e922e80453981fdbeaaa8c55b73c1df82a9101372a9199ba4c16ef16e1a",
-    "model_card_hash": "874ee51404f1e644270ac24f9578ff995cd6aed1e600f3b4cee8f167a7f98ee0"
+    "model_card_hash": "9abcb2a79438b3565b1e5289e52b33a15f2cd6f0bdaca450052107342897ec14"
   },
   "inventory_version": "candidate-site-view-v2",
   "is_governed_disabled": true,
   "kind": "sitescore-opening-outcome-gate2-receipt",
   "model_name": "sitescore_propensity",
-  "observed_at": "2026-07-31T12:08:05.944330Z",
+  "observed_at": "2026-07-31T12:29:38.325461Z",
   "provenance": "no_source",
   "schema_version": 1,
   "service": "sitescore",
