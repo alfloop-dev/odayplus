@@ -3567,8 +3567,9 @@ def test_round16_remediation_findings_b1_b2_b3_negative_mutations_and_positive_v
     assert receipt_r21["status"] != "DELIVERED"
 
 
-def test_delivery_authority_readback_boundary_verification() -> None:
+def test_delivery_authority_readback_boundary_verification(tmp_path: Any) -> None:
     import base64
+    import concurrent.futures
     from datetime import timedelta
 
     import pytest
@@ -3579,12 +3580,33 @@ def test_delivery_authority_readback_boundary_verification() -> None:
         CANONICAL_AUTHORITY_ISSUER_IDENTITY,
         DeliveryAuthorityReadback,
         DeliveryAuthorityRecord,
-        InMemoryDeliveryAuthorityStore,
+        FileDeliveryAuthorityStore,
+        verify_durable_delivery_authority,
     )
 
     # 1. B1 Remediation Test: Standard constructor rejects caller-supplied trust roots
     with pytest.raises(TypeError, match="does not accept caller-supplied"):
         DeliveryAuthorityReadback(authority_public_key_pem="some-pem", allowed_issuer_identity="custom-issuer")
+
+    # 2. B1 Remediation Test: Missing or unconfigured durable authority store fails closed
+    default_readback = DeliveryAuthorityReadback()
+    is_del_def, status_def, err_def = default_readback.read_by_delivery_id(
+        expected_delivery_id="del-unconfig-1",
+        expected_provider_receipt_id="rcpt-1",
+        expected_request_hash="a" * 64,
+        expected_release_sha="f" * 40,
+        expected_oncall_route="ops-lead",
+    )
+    assert is_del_def is False
+    assert status_def == "PENDING_VERIFICATION"
+    assert "Durable authority store is missing or unconfigured" in str(err_def)
+
+    # Test helper subclass strictly inside test suite for custom test key testing
+    class TestDeliveryAuthorityReadback(DeliveryAuthorityReadback):
+        def __init__(self, authority_public_key_pem: str, allowed_issuer_identity: str, authority_store: Any):
+            self.authority_public_key_pem = authority_public_key_pem
+            self.allowed_issuer_identity = allowed_issuer_identity
+            self.authority_store = authority_store
 
     # Generate isolated test key for test-only readback instance
     auth_priv_key = ed25519.Ed25519PrivateKey.generate()
@@ -3618,16 +3640,17 @@ def test_delivery_authority_readback_boundary_verification() -> None:
         issuer_signature=sig_b64,
     )
 
-    store = InMemoryDeliveryAuthorityStore()
-    store.store_authority_record(record)
+    store_file = tmp_path / "authority_store.json"
+    store = FileDeliveryAuthorityStore(store_file)
+    store.store_authority_record_out_of_process(record)
 
-    readback = DeliveryAuthorityReadback._create_for_testing(
+    readback = TestDeliveryAuthorityReadback(
         authority_public_key_pem=pub_pem,
         allowed_issuer_identity=issuer_id,
         authority_store=store,
     )
 
-    # 2. Positive durable readback by delivery_id with full mandatory bindings
+    # 3. Positive durable readback by delivery_id with full mandatory bindings
     is_del, status, err = readback.read_by_delivery_id(
         expected_delivery_id=delivery_id,
         expected_provider_receipt_id=prov_receipt_id,
@@ -3639,7 +3662,7 @@ def test_delivery_authority_readback_boundary_verification() -> None:
     assert status == "DELIVERED"
     assert err is None
 
-    # 3. B3 Replay Protection: Second attempt to read/consume same record is rejected
+    # 4. B3 Replay Protection: Second attempt to read/consume same record is rejected
     is_del, status, err = readback.read_by_delivery_id(
         expected_delivery_id=delivery_id,
         expected_provider_receipt_id=prov_receipt_id,
@@ -3651,19 +3674,60 @@ def test_delivery_authority_readback_boundary_verification() -> None:
     assert status == "PENDING_VERIFICATION"
     assert "already been consumed" in str(err)
 
-    # 4. B3 Missing Durable Readback: Requesting un-stored delivery ID fails closed
-    is_del, status, err = readback.read_by_delivery_id(
-        expected_delivery_id="del-missing-999",
+    # 5. B3 Restart-Safe Persistence: Reload store from file and verify replay is STILL rejected
+    reloaded_store = FileDeliveryAuthorityStore(store_file)
+    reloaded_readback = TestDeliveryAuthorityReadback(
+        authority_public_key_pem=pub_pem,
+        allowed_issuer_identity=issuer_id,
+        authority_store=reloaded_store,
+    )
+    is_del_re, status_re, err_re = reloaded_readback.read_by_delivery_id(
+        expected_delivery_id=delivery_id,
         expected_provider_receipt_id=prov_receipt_id,
         expected_request_hash=req_hash,
         expected_release_sha=rel_sha,
         expected_oncall_route=oncall_route,
     )
-    assert is_del is False
-    assert status == "PENDING_VERIFICATION"
-    assert "No durable authority record found" in str(err)
+    assert is_del_re is False
+    assert status_re == "PENDING_VERIFICATION"
+    assert "already been consumed" in str(err_re)
 
-    # 5. B2 Mandatory Expected Binding Violations & Negative Mutations
+    # 6. B3 Concurrent Reader Mutation: 10 parallel threads attempt atomic consume on same record
+    concat_del_id = "del-test-auth-concurrent-1"
+    sig_payload_conc = (
+        f"authority_record:{concat_del_id}:{prov_receipt_id}:{req_hash}:{rel_sha}:{oncall_route}:{ts_str}:{issuer_id}"
+    ).encode()
+    rec_conc = DeliveryAuthorityRecord(
+        delivery_id=concat_del_id,
+        provider_receipt_id=prov_receipt_id,
+        request_hash=req_hash,
+        release_sha=rel_sha,
+        oncall_route=oncall_route,
+        timestamp=ts_str,
+        issuer_identity=issuer_id,
+        issuer_signature=base64.b64encode(auth_priv_key.sign(sig_payload_conc)).decode("utf-8"),
+    )
+    store.store_authority_record_out_of_process(rec_conc)
+
+    def _attempt_read():
+        return readback.read_by_delivery_id(
+            expected_delivery_id=concat_del_id,
+            expected_provider_receipt_id=prov_receipt_id,
+            expected_request_hash=req_hash,
+            expected_release_sha=rel_sha,
+            expected_oncall_route=oncall_route,
+        )
+
+    with concurrent.futures.ThreadPoolExecutor(max_workers=10) as executor:
+        futures = [executor.submit(_attempt_read) for _ in range(10)]
+        results = [f.result() for f in futures]
+
+    delivered_count = sum(1 for is_del, st, _ in results if is_del and st == "DELIVERED")
+    rejected_count = sum(1 for is_del, st, _ in results if not is_del and st == "PENDING_VERIFICATION")
+    assert delivered_count == 1
+    assert rejected_count == 9
+
+    # 7. B4 Strict Canonical Format Validation Mutations
     del_2 = "del-test-auth-200"
     sig_payload_2 = (
         f"authority_record:{del_2}:{prov_receipt_id}:{req_hash}:{rel_sha}:{oncall_route}:{ts_str}:{issuer_id}"
@@ -3678,21 +3742,45 @@ def test_delivery_authority_readback_boundary_verification() -> None:
         issuer_identity=issuer_id,
         issuer_signature=base64.b64encode(auth_priv_key.sign(sig_payload_2)).decode("utf-8"),
     )
-    store.store_authority_record(rec_2)
+    store.store_authority_record_out_of_process(rec_2)
 
-    # (a) Omitted / blank expected delivery ID
+    # (a) Non-hex / wrong length request_hash
     is_del, status, err = readback.verify_authority_record(
         rec_2,
-        expected_delivery_id="",
+        expected_delivery_id=del_2,
         expected_provider_receipt_id=prov_receipt_id,
-        expected_request_hash=req_hash,
+        expected_request_hash="non-hex-hash-12345",
         expected_release_sha=rel_sha,
         expected_oncall_route=oncall_route,
     )
     assert is_del is False
-    assert "Missing or invalid mandatory expected_delivery_id" in str(err)
+    assert "must be exactly 64 hexadecimal characters" in str(err)
 
-    # (b) Mismatched delivery ID
+    # (b) Non-hex / wrong length release_sha
+    is_del, status, err = readback.verify_authority_record(
+        rec_2,
+        expected_delivery_id=del_2,
+        expected_provider_receipt_id=prov_receipt_id,
+        expected_request_hash=req_hash,
+        expected_release_sha="not-a-valid-sha",
+        expected_oncall_route=oncall_route,
+    )
+    assert is_del is False
+    assert "must be exactly 40 hexadecimal characters" in str(err)
+
+    # (c) All-zero request_hash
+    is_del, status, err = readback.verify_authority_record(
+        rec_2,
+        expected_delivery_id=del_2,
+        expected_provider_receipt_id=prov_receipt_id,
+        expected_request_hash="0" * 64,
+        expected_release_sha=rel_sha,
+        expected_oncall_route=oncall_route,
+    )
+    assert is_del is False
+    assert "Invalid expected_request_hash" in str(err)
+
+    # (d) Mismatched delivery ID
     is_del, status, err = readback.verify_authority_record(
         rec_2,
         expected_delivery_id="del-mismatch-888",
@@ -3704,7 +3792,7 @@ def test_delivery_authority_readback_boundary_verification() -> None:
     assert is_del is False
     assert "Delivery ID mismatch" in str(err)
 
-    # (c) Mismatched / attacker provider receipt ID
+    # (e) Mismatched provider receipt ID
     is_del, status, err = readback.verify_authority_record(
         rec_2,
         expected_delivery_id=del_2,
@@ -3716,19 +3804,7 @@ def test_delivery_authority_readback_boundary_verification() -> None:
     assert is_del is False
     assert "Provider receipt ID mismatch" in str(err)
 
-    # (d) Mismatched / invalid request hash
-    is_del, status, err = readback.verify_authority_record(
-        rec_2,
-        expected_delivery_id=del_2,
-        expected_provider_receipt_id=prov_receipt_id,
-        expected_request_hash="0" * 64,
-        expected_release_sha=rel_sha,
-        expected_oncall_route=oncall_route,
-    )
-    assert is_del is False
-    assert "Request hash mismatch or invalid" in str(err)
-
-    # (e) Mismatched on-call route
+    # (f) Mismatched on-call route
     is_del, status, err = readback.verify_authority_record(
         rec_2,
         expected_delivery_id=del_2,
@@ -3740,7 +3816,7 @@ def test_delivery_authority_readback_boundary_verification() -> None:
     assert is_del is False
     assert "On-call route mismatch" in str(err)
 
-    # (f) Mismatched release SHA
+    # (g) Mismatched release SHA
     is_del, status, err = readback.verify_authority_record(
         rec_2,
         expected_delivery_id=del_2,
@@ -3752,7 +3828,7 @@ def test_delivery_authority_readback_boundary_verification() -> None:
     assert is_del is False
     assert "Release SHA mismatch" in str(err)
 
-    # (g) Unauthorized issuer identity
+    # (h) Unauthorized issuer identity
     bad_issuer_rec = DeliveryAuthorityRecord(
         delivery_id=del_2,
         provider_receipt_id=prov_receipt_id,
@@ -3774,7 +3850,7 @@ def test_delivery_authority_readback_boundary_verification() -> None:
     assert is_del is False
     assert "Unauthorized issuer identity" in str(err)
 
-    # (h) Stale timestamp (> 300s)
+    # (i) Stale timestamp (> 300s)
     stale_ts = (datetime.now(UTC) - timedelta(seconds=400)).isoformat()
     stale_sig_payload = (
         f"authority_record:{del_2}:{prov_receipt_id}:{req_hash}:{rel_sha}:{oncall_route}:{stale_ts}:{issuer_id}"
@@ -3801,7 +3877,7 @@ def test_delivery_authority_readback_boundary_verification() -> None:
     assert is_del is False
     assert "freshness window" in str(err)
 
-    # (i) Forged signature
+    # (j) Forged signature
     forged_rec = DeliveryAuthorityRecord(
         delivery_id=del_2,
         provider_receipt_id=prov_receipt_id,
@@ -3822,6 +3898,23 @@ def test_delivery_authority_readback_boundary_verification() -> None:
     )
     assert is_del is False
     assert "signature verification failed" in str(err).lower()
+
+    # 8. Top-level helper test with ONCALL_AUTHORITY_STORE_PATH
+    import os
+    os.environ["ONCALL_AUTHORITY_STORE_PATH"] = str(store_file)
+    try:
+        is_del_h, st_h, err_h = verify_durable_delivery_authority(
+            expected_delivery_id=del_2,
+            expected_provider_receipt_id=prov_receipt_id,
+            expected_request_hash=req_hash,
+            expected_release_sha=rel_sha,
+            expected_oncall_route=oncall_route,
+        )
+        assert is_del_h is False  # Fails signature check because store_file record is signed with test key, not pinned production key
+        assert st_h == "PENDING_VERIFICATION"
+    finally:
+        os.environ.pop("ONCALL_AUTHORITY_STORE_PATH", None)
+
 
 
 

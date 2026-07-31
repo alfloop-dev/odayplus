@@ -1,8 +1,9 @@
 from modules.notifications.domain.authority import (
     DeliveryAuthorityReadback,
     DeliveryAuthorityRecord,
+    FileDeliveryAuthorityStore,
     IDeliveryAuthorityStore,
-    InMemoryDeliveryAuthorityStore,
+    verify_durable_delivery_authority,
 )
 from modules.notifications.domain.models import NotificationReceipt, UserPreference
 
@@ -12,5 +13,6 @@ __all__ = [
     "DeliveryAuthorityRecord",
     "DeliveryAuthorityReadback",
     "IDeliveryAuthorityStore",
-    "InMemoryDeliveryAuthorityStore",
+    "FileDeliveryAuthorityStore",
+    "verify_durable_delivery_authority",
 ]
