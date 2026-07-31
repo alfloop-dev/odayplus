@@ -11034,7 +11034,7 @@ class SupervisorFailureLoopCoverageTests(unittest.TestCase):
             ("g" * 40, False),  # 40 non-hex -> invalid
         ]
 
-        for sha, _is_valid in sha_candidates:
+        for sha, is_valid in sha_candidates:
             ai_status.clear_ai_status_caches()
 
             def fake_ls_remote(cmd, current_sha=sha, **kwargs):
@@ -11046,6 +11046,13 @@ class SupervisorFailureLoopCoverageTests(unittest.TestCase):
                         stdout=f"{current_sha}\t{remote_ref}\n",
                     )
                 return unittest.mock.Mock(returncode=1, stdout="")
+
+            with unittest.mock.patch("subprocess.run", side_effect=fake_ls_remote):
+                resolved = ai_status.resolve_task_sha(task_id, force_refresh=True)
+                if is_valid:
+                    self.assertEqual(resolved, sha)
+                else:
+                    self.assertIsNone(resolved)
 
 class ReleaseCompletedWorkerForClaimTests(unittest.TestCase):
     def setUp(self) -> None:
@@ -11399,6 +11406,125 @@ class ReleaseCompletedWorkerShapeCorrectionTests(unittest.TestCase):
             )
         self.assertFalse(changed)
 
+    def test_release_completed_worker_pid_schema_validation_mocked(self) -> None:
+        """Verify invalid PID values (bool, string, 0, negative, float) return False without calling pid_is_alive or raising."""
+        task_id = "ODP-PID-SCHEMA-001"
+        run_id = "run-schema-val-1"
+        status = {"tasks": [{"id": task_id, "status": "in_progress", "owner": "Antigravity6", "reviewer": "Codex6"}]}
+        receipt = {"status": "completed", "exit_code": 0, "run_id": run_id, "pid": 1234}
+
+        invalid_pids = [False, True, "1234", "invalid", 0, -1, -999, 12.34, [1234]]
+        for bad_pid in invalid_pids:
+            state = {
+                "workers": {
+                    run_id: {
+                        "run_id": run_id,
+                        "agent_id": "codex6",
+                        "task_id": task_id,
+                        "status": "running",
+                        "pid": bad_pid,
+                        "runner_status_path": "/tmp/fake_status.json",
+                    }
+                }
+            }
+            with mock.patch.object(supervisor, "load_status", return_value=status), \
+                 mock.patch.object(supervisor, "_load_runtime_marker", return_value=receipt), \
+                 mock.patch.object(supervisor, "pid_is_alive") as mock_pid_alive:
+                res = supervisor.release_completed_worker_for_claim(
+                    self.config, state, agent_name="Codex6", task_id=task_id
+                )
+                self.assertFalse(res)
+                mock_pid_alive.assert_not_called()
+
+        # Check invalid receipt pid
+        for bad_receipt_pid in invalid_pids:
+            state = {
+                "workers": {
+                    run_id: {
+                        "run_id": run_id,
+                        "agent_id": "codex6",
+                        "task_id": task_id,
+                        "status": "running",
+                        "pid": None,
+                        "runner_status_path": "/tmp/fake_status.json",
+                    }
+                }
+            }
+            bad_receipt = {"status": "completed", "exit_code": 0, "run_id": run_id, "pid": bad_receipt_pid}
+            with mock.patch.object(supervisor, "load_status", return_value=status), \
+                 mock.patch.object(supervisor, "_load_runtime_marker", return_value=bad_receipt), \
+                 mock.patch.object(supervisor, "pid_is_alive") as mock_pid_alive:
+                res = supervisor.release_completed_worker_for_claim(
+                    self.config, state, agent_name="Codex6", task_id=task_id
+                )
+                self.assertFalse(res)
+                mock_pid_alive.assert_not_called()
+
+    def test_release_completed_worker_terminal_receipt_fail_closed_mocked(self) -> None:
+        """Verify terminal receipt fields (exit_code=False, exit_code='0', signal, status, run_id) fail closed."""
+        task_id = "ODP-RECEIPT-FAILCLOSED-001"
+        run_id = "run-rcpt-fc-1"
+        status = {"tasks": [{"id": task_id, "status": "in_progress", "owner": "Antigravity6", "reviewer": "Codex6"}]}
+        state = {
+            "workers": {
+                run_id: {
+                    "run_id": run_id,
+                    "agent_id": "codex6",
+                    "task_id": task_id,
+                    "status": "running",
+                    "pid": 1234,
+                    "runner_status_path": "/tmp/fake_status.json",
+                }
+            }
+        }
+
+        invalid_receipts = [
+            {"status": "completed", "exit_code": False, "run_id": run_id, "pid": 1234},  # bool exit_code
+            {"status": "completed", "exit_code": "0", "run_id": run_id, "pid": 1234},    # string exit_code
+            {"status": "completed", "exit_code": 1, "run_id": run_id, "pid": 1234},      # non-zero exit_code
+            {"status": "failed", "exit_code": 0, "run_id": run_id, "pid": 1234},         # non-completed status
+            {"status": "completed", "exit_code": 0, "signal": "SIGKILL", "run_id": run_id, "pid": 1234},  # signal set
+            {"status": "completed", "exit_code": 0, "run_id": "wrong-run-id", "pid": 1234},  # run_id mismatch
+        ]
+
+        for bad_rcpt in invalid_receipts:
+            with mock.patch.object(supervisor, "load_status", return_value=status), \
+                 mock.patch.object(supervisor, "_load_runtime_marker", return_value=bad_rcpt), \
+                 mock.patch.object(supervisor, "pid_is_alive", return_value=False):
+                res = supervisor.release_completed_worker_for_claim(
+                    self.config, state, agent_name="Codex6", task_id=task_id
+                )
+                self.assertFalse(res)
+
+    def test_release_completed_worker_pid_schema_validation_unmocked_real_pid_is_alive(self) -> None:
+        """Verify release_completed_worker_for_claim executes safely with real unmocked pid_is_alive on invalid PIDs."""
+        task_id = "ODP-UNMOCKED-REAL-PID-001"
+        run_id = "run-unmocked-1"
+        status = {"tasks": [{"id": task_id, "status": "in_progress", "owner": "Antigravity6", "reviewer": "Codex6"}]}
+        receipt = {"status": "completed", "exit_code": 0, "run_id": run_id, "pid": 1234}
+
+        unmocked_cases = [False, 0, -100, "string_pid", 12.34]
+        for bad_pid in unmocked_cases:
+            state = {
+                "workers": {
+                    run_id: {
+                        "run_id": run_id,
+                        "agent_id": "codex6",
+                        "task_id": task_id,
+                        "status": "running",
+                        "pid": bad_pid,
+                        "runner_status_path": "/tmp/fake_status.json",
+                    }
+                }
+            }
+            with mock.patch.object(supervisor, "load_status", return_value=status), \
+                 mock.patch.object(supervisor, "_load_runtime_marker", return_value=receipt):
+                # Note: pid_is_alive is NOT mocked here!
+                res = supervisor.release_completed_worker_for_claim(
+                    self.config, state, agent_name="Codex6", task_id=task_id
+                )
+                self.assertFalse(res)
+
 
 class ProcessQueueAgentOverrideTests(unittest.TestCase):
     def setUp(self) -> None:
@@ -11481,6 +11607,41 @@ class ProcessQueueAgentOverrideTests(unittest.TestCase):
         self.assertEqual(state["queue"]["events"]["evt-malformed-target"]["status"], "pending")
         self.assertEqual(state["queue"]["events"]["evt-unknown-target"]["status"], "pending")
         start_worker.assert_called_once()
+
+    def test_process_queue_with_agent_override_skips_targetless_events_without_inference(self) -> None:
+        events = [
+            {
+                "event_id": "evt-targetless-complete",
+                "task_id": "TASK-TARGETLESS",
+                "key": "evt-targetless-complete",
+                "message": "targetless complete message",
+            },
+        ]
+        status = {
+            "tasks": [
+                {"id": "TASK-TARGETLESS", "status": "in_progress", "owner": "Codex6", "reviewer": "Claude"},
+            ]
+        }
+        state = {
+            "queue": {
+                "events": {
+                    "evt-targetless-complete": {"status": "pending"},
+                }
+            }
+        }
+        with mock.patch.object(supervisor, "load_event_queue", return_value=events), \
+             mock.patch.object(supervisor, "load_status", return_value=status), \
+             mock.patch.object(supervisor, "build_request") as mock_build_req:
+            changed = supervisor.process_queue(
+                self.config,
+                state,
+                provider_report={},
+                agent_ids_override=["codex6"],
+            )
+
+        self.assertFalse(changed)
+        self.assertEqual(state["queue"]["events"]["evt-targetless-complete"]["status"], "pending")
+        mock_build_req.assert_not_called()
 
 
 if __name__ == "__main__":
