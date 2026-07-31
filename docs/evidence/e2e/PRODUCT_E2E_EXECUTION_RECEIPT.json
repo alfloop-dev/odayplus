@@ -2,7 +2,7 @@
   "schema_version": "1.0.0",
   "receipt_id": "ODP-PRODUCT-E2E-RECEIPT-001",
   "task_id": "ODP-PLAN-ACCEPTANCE-REAL-EXEC-001",
-  "git_sha": "81741b6b10f306832d5ac3b0e1d2caed780313f4",
+  "git_sha": "2860a4ceaccd7709089591525d3b1acfb2c15ed5",
   "raw_artifact_hash": "f2464d5ed9e1ced7f7b6529e48e79c68d7550c23325c3ccc0cc312d782d82930",
   "command": "npx playwright test --project=chromium --reporter=json",
   "runner_versions": {
@@ -10,9 +10,9 @@
     "node": "v22.23.1",
     "python": "Python 3.12.3"
   },
-  "run_id": "playwright-run-1785452622",
+  "run_id": "playwright-run-1785456568",
   "start_time": "2026-07-30T22:54:25.745Z",
-  "end_time": "2026-07-30T23:03:42.864412+00:00",
+  "end_time": "2026-07-31T00:09:28.239999+00:00",
   "exit_code": 0,
   "status": "passed",
   "environment": "chromium",
