@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import copy
 import json
 import os
 import re
@@ -47,9 +48,7 @@ def validate_acceptance_scenarios_and_inventory(root_path: Path) -> list[str]:
     for scenario in E2E_SCENARIOS:
         for ref in scenario.automation_refs:
             if any(deleted in ref for deleted in DELETED_SPEC_REFERENCES):
-                errors.append(
-                    f"{scenario.scenario_id} cites a deleted spec reference: {ref}"
-                )
+                errors.append(f"{scenario.scenario_id} cites a deleted spec reference: {ref}")
             if scenario.is_manual:
                 continue
             if ref.count("::") != 1:
@@ -60,13 +59,9 @@ def validate_acceptance_scenarios_and_inventory(root_path: Path) -> list[str]:
             file_name, exact_title = ref.split("::", 1)
             target = root_path / file_name
             if not target.is_file():
-                errors.append(
-                    f"{scenario.scenario_id} exact test file is missing: {file_name}"
-                )
+                errors.append(f"{scenario.scenario_id} exact test file is missing: {file_name}")
             elif exact_title not in target.read_text(encoding="utf-8"):
-                errors.append(
-                    f"{scenario.scenario_id} exact test title is missing: {ref}"
-                )
+                errors.append(f"{scenario.scenario_id} exact test title is missing: {ref}")
 
     actual_inventory = tuple(
         sorted(
@@ -90,9 +85,7 @@ def validate_acceptance_scenarios_and_inventory(root_path: Path) -> list[str]:
     if proc.returncode != 0:
         errors.append(f"Playwright --list exited {proc.returncode}: {proc.stderr.strip()}")
     else:
-        match = re.search(
-            r"Total:\s*(\d+)\s*tests\s*in\s*(\d+)\s*files", proc.stdout
-        )
+        match = re.search(r"Total:\s*(\d+)\s*tests\s*in\s*(\d+)\s*files", proc.stdout)
         if not match:
             errors.append("Playwright --list output has no parseable total")
         elif (
@@ -200,6 +193,13 @@ def _commit(path: Path, relative: str, content: str, message: str) -> None:
     subprocess.run(["git", "commit", "-qm", message], cwd=path, check=True)
 
 
+def _clone_packet_repo(path: Path) -> None:
+    subprocess.run(
+        ["git", "clone", "-q", "--no-hardlinks", str(ROOT), str(path)],
+        check=True,
+    )
+
+
 def test_all_qa03_scenarios_are_registered_once_with_exact_refs() -> None:
     ids = [scenario.scenario_id for scenario in E2E_SCENARIOS]
     assert len(ids) == 16
@@ -229,9 +229,7 @@ def test_no_deleted_specs_referenced_and_inventory_consistent() -> None:
         ("malformed", 0),
     ],
 )
-def test_raw_runner_rejects_every_non_passing_terminal_status(
-    status: str, exit_code: int
-) -> None:
+def test_raw_runner_rejects_every_non_passing_terminal_status(status: str, exit_code: int) -> None:
     artifact = _artifact(
         "playwright",
         [
@@ -356,6 +354,57 @@ def test_raw_runner_rejects_duplicate_exact_id_and_tampered_hashes() -> None:
     assert any("duplicate normalized test ids" in error for error in errors)
 
 
+def test_raw_playwright_reparses_self_consistently_resealed_payload() -> None:
+    artifact = json.loads((ROOT / RAW_PLAYWRIGHT_PATH).read_text(encoding="utf-8"))
+    payload = artifact["payload"]
+
+    def fail_all_results(suite: dict[str, Any]) -> None:
+        for spec in suite.get("specs", []):
+            for test in spec.get("tests", []):
+                for attempt in test.get("results", []):
+                    attempt["status"] = "failed"
+        for child in suite.get("suites", []):
+            fail_all_results(child)
+
+    for suite in payload["suites"]:
+        fail_all_results(suite)
+    payload["stats"].update({"expected": 0, "skipped": 0, "unexpected": 107, "flaky": 0})
+    artifact["payload_sha256"] = sha256_bytes(canonical_json_bytes(payload))
+    seal_normalized(artifact, "normalized_artifact_sha256")
+
+    errors = validate_raw_artifact(artifact, "playwright")
+    assert not any("hash mismatch" in error for error in errors)
+    assert any("results do not exactly match parsed payload" in error for error in errors)
+    assert any("counts do not exactly match parsed payload" in error for error in errors)
+
+
+@pytest.mark.parametrize(
+    "started_at,ended_at,expected_error",
+    [
+        ("not-a-timestamp", "also-not-a-timestamp", "strict UTC timestamp"),
+        (
+            "2026-07-31T00:02:00Z",
+            "2026-07-31T00:01:00Z",
+            "precedes run.started_at",
+        ),
+        (
+            "2026-07-31T00:00:00+00:00",
+            "2026-07-31T00:01:00+00:00",
+            "strict UTC timestamp",
+        ),
+    ],
+)
+def test_raw_runner_rejects_non_utc_or_reversed_run_times(
+    started_at: str, ended_at: str, expected_error: str
+) -> None:
+    artifact = json.loads((ROOT / RAW_PYTEST_PATH).read_text(encoding="utf-8"))
+    artifact["run"]["started_at"] = started_at
+    artifact["run"]["ended_at"] = ended_at
+    seal_normalized(artifact, "normalized_artifact_sha256")
+    errors = validate_raw_artifact(artifact, "pytest")
+    assert any(expected_error in error for error in errors)
+
+
 def test_scenario_binding_requires_exact_id_not_substring() -> None:
     playwright = _artifact(
         "playwright",
@@ -374,9 +423,7 @@ def test_scenario_binding_requires_exact_id_not_substring() -> None:
         {"playwright": playwright, "pytest": pytest_artifact},
         {"playwright": "a" * 64, "pytest": "b" * 64},
     )
-    assert any(
-        "E2E-EXP-001 missing exact playwright result" in error for error in errors
-    )
+    assert any("E2E-EXP-001 missing exact playwright result" in error for error in errors)
 
 
 def test_receipt_rejects_missing_or_duplicate_scenario_results(tmp_path: Path) -> None:
@@ -426,6 +473,69 @@ def test_receipt_rejects_missing_or_duplicate_scenario_results(tmp_path: Path) -
     assert any("missing or duplicate scenario results" in error for error in errors)
 
 
+def test_receipt_recomputes_aggregate_counts_and_generation_proof(
+    tmp_path: Path,
+) -> None:
+    _clone_packet_repo(tmp_path)
+    receipt_path = tmp_path / RECEIPT_PATH
+    baseline = json.loads(receipt_path.read_text(encoding="utf-8"))
+
+    forged_counts = copy.deepcopy(baseline)
+    forged_counts["aggregate_counts"] = {
+        **forged_counts["aggregate_counts"],
+        "total_tests": 999,
+        "passed": 999,
+    }
+    seal_normalized(forged_counts, "normalized_receipt_sha256")
+    receipt_path.write_text(json.dumps(forged_counts), encoding="utf-8")
+    errors = validate_receipt_packet(tmp_path, allow_worktree_evidence=True)
+    assert any("aggregate_counts do not match" in error for error in errors)
+
+    forged_proof = copy.deepcopy(baseline)
+    forged_proof["evidence_proof_at_generation"]["relation"] = "forged"
+    forged_proof["evidence_proof_at_generation"]["allowlist"] = []
+    seal_normalized(forged_proof, "normalized_receipt_sha256")
+    receipt_path.write_text(json.dumps(forged_proof), encoding="utf-8")
+    errors = validate_receipt_packet(tmp_path, allow_worktree_evidence=True)
+    assert any("does not exactly match recomputed" in error for error in errors)
+
+    missing_raw_proof = copy.deepcopy(baseline)
+    missing_raw_proof["evidence_proof_at_generation"]["working_tree_paths"] = []
+    seal_normalized(missing_raw_proof, "normalized_receipt_sha256")
+    receipt_path.write_text(json.dumps(missing_raw_proof), encoding="utf-8")
+    errors = validate_receipt_packet(tmp_path, allow_worktree_evidence=True)
+    assert any("both generated raw artifact paths" in error for error in errors)
+
+
+def test_receipt_rejects_duplicate_extra_and_mispathed_reconciliations(
+    tmp_path: Path,
+) -> None:
+    _clone_packet_repo(tmp_path)
+    receipt_path = tmp_path / RECEIPT_PATH
+    baseline = json.loads(receipt_path.read_text(encoding="utf-8"))
+
+    duplicate = copy.deepcopy(baseline)
+    duplicate["artifacts"].append(copy.deepcopy(duplicate["artifacts"][0]))
+    seal_normalized(duplicate, "normalized_receipt_sha256")
+    receipt_path.write_text(json.dumps(duplicate), encoding="utf-8")
+    errors = validate_receipt_packet(tmp_path, allow_worktree_evidence=True)
+    assert any("each runner exactly once" in error for error in errors)
+
+    extra = copy.deepcopy(baseline)
+    extra["artifacts"].append({"runner": "extra", "path": "forged.json"})
+    seal_normalized(extra, "normalized_receipt_sha256")
+    receipt_path.write_text(json.dumps(extra), encoding="utf-8")
+    errors = validate_receipt_packet(tmp_path, allow_worktree_evidence=True)
+    assert any("each runner exactly once" in error for error in errors)
+
+    mispathed = copy.deepcopy(baseline)
+    mispathed["artifacts"][0]["path"] = RAW_PYTEST_PATH
+    seal_normalized(mispathed, "normalized_receipt_sha256")
+    receipt_path.write_text(json.dumps(mispathed), encoding="utf-8")
+    errors = validate_receipt_packet(tmp_path, allow_worktree_evidence=True)
+    assert any("playwright artifact path mismatch" in error for error in errors)
+
+
 def test_evidence_only_child_is_allowed_but_source_change_is_rejected(
     tmp_path: Path,
 ) -> None:
@@ -438,16 +548,12 @@ def test_evidence_only_child_is_allowed_but_source_change_is_rejected(
         "{}\n",
         "evidence-only child",
     )
-    proof, errors = verify_evidence_relationship(
-        tmp_path, source, allow_worktree_evidence=False
-    )
+    proof, errors = verify_evidence_relationship(tmp_path, source, allow_worktree_evidence=False)
     assert errors == []
     assert proof["relation"] == "evidence_only_descendant"
 
     _commit(tmp_path, "source.py", "v2\n", "source changed after test")
-    _proof, errors = verify_evidence_relationship(
-        tmp_path, source, allow_worktree_evidence=False
-    )
+    _proof, errors = verify_evidence_relationship(tmp_path, source, allow_worktree_evidence=False)
     assert any("non-evidence paths" in error for error in errors)
 
 
@@ -457,9 +563,7 @@ def test_intervening_source_change_is_rejected_even_if_reverted(tmp_path: Path) 
     source = source_identity(tmp_path)
     _commit(tmp_path, "source.py", "v2\n", "intervening source change")
     _commit(tmp_path, "source.py", "v1\n", "revert source")
-    _proof, errors = verify_evidence_relationship(
-        tmp_path, source, allow_worktree_evidence=False
-    )
+    _proof, errors = verify_evidence_relationship(tmp_path, source, allow_worktree_evidence=False)
     assert any("non-evidence paths" in error for error in errors)
 
 
@@ -468,9 +572,7 @@ def test_stale_or_mismatched_source_tree_is_rejected(tmp_path: Path) -> None:
     _commit(tmp_path, "source.py", "v1\n", "source")
     source = source_identity(tmp_path)
     source["tree_sha"] = "0" * 40
-    _proof, errors = verify_evidence_relationship(
-        tmp_path, source, allow_worktree_evidence=False
-    )
+    _proof, errors = verify_evidence_relationship(tmp_path, source, allow_worktree_evidence=False)
     assert any("tested tree mismatch" in error for error in errors)
 
 
@@ -480,9 +582,7 @@ def test_python_runner_propagates_pytest_failure(
     monkeypatch.setattr(pytest, "main", lambda *args, **kwargs: 1)
     status = run_python_tests(output_path=tmp_path / "raw_pytest_results.json")
     assert status != 0
-    artifact = json.loads(
-        (tmp_path / "raw_pytest_results.json").read_text(encoding="utf-8")
-    )
+    artifact = json.loads((tmp_path / "raw_pytest_results.json").read_text(encoding="utf-8"))
     assert artifact["run"]["exit_code"] == 1
 
 

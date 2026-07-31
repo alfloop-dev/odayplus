@@ -30,6 +30,7 @@ SHA_RE = re.compile(r"^[0-9a-f]{40}$")
 TERMINAL_STATUSES = frozenset(
     {"passed", "failed", "skipped", "timedOut", "interrupted", "flaky", "malformed"}
 )
+UTC_TIMESTAMP_RE = re.compile(r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?Z$")
 
 
 @dataclass(frozen=True)
@@ -46,9 +47,7 @@ class E2EScenario:
 
     @property
     def is_manual(self) -> bool:
-        return len(self.automation_refs) == 1 and self.automation_refs[0].startswith(
-            "manual-uat:"
-        )
+        return len(self.automation_refs) == 1 and self.automation_refs[0].startswith("manual-uat:")
 
 
 E2E_SCENARIOS: tuple[E2EScenario, ...] = (
@@ -302,9 +301,9 @@ def iso_now() -> str:
 
 
 def canonical_json_bytes(value: Any) -> bytes:
-    return json.dumps(
-        value, ensure_ascii=False, sort_keys=True, separators=(",", ":")
-    ).encode("utf-8")
+    return json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode(
+        "utf-8"
+    )
 
 
 def sha256_bytes(value: bytes) -> str:
@@ -473,10 +472,7 @@ def parse_playwright_payload(
             "expected": counts["passed"],
             "skipped": counts["skipped"],
             "unexpected": (
-                counts["failed"]
-                + counts["timed_out"]
-                + counts["interrupted"]
-                + counts["malformed"]
+                counts["failed"] + counts["timed_out"] + counts["interrupted"] + counts["malformed"]
             ),
             "flaky": counts["flaky"],
         }
@@ -528,6 +524,16 @@ def _counts_from_results(results: list[dict[str, Any]]) -> dict[str, int]:
     return counts
 
 
+def _strict_utc_timestamp(value: Any) -> datetime | None:
+    if not isinstance(value, str) or not UTC_TIMESTAMP_RE.fullmatch(value):
+        return None
+    try:
+        parsed = datetime.fromisoformat(value.removesuffix("Z") + "+00:00")
+    except ValueError:
+        return None
+    return parsed if parsed.tzinfo == UTC else None
+
+
 def validate_raw_artifact(
     artifact: Any,
     expected_runner: str,
@@ -563,8 +569,16 @@ def validate_raw_artifact(
     for field in ("command", "version", "started_at", "ended_at", "environment"):
         if not run.get(field):
             errors.append(f"{label} missing run.{field}")
+    started_at = _strict_utc_timestamp(run.get("started_at"))
+    ended_at = _strict_utc_timestamp(run.get("ended_at"))
+    if started_at is None:
+        errors.append(f"{label} run.started_at must be a strict UTC timestamp ending in Z")
+    if ended_at is None:
+        errors.append(f"{label} run.ended_at must be a strict UTC timestamp ending in Z")
+    if started_at is not None and ended_at is not None and ended_at < started_at:
+        errors.append(f"{label} run.ended_at precedes run.started_at")
     exit_code = run.get("exit_code")
-    if not isinstance(exit_code, int):
+    if not isinstance(exit_code, int) or isinstance(exit_code, bool):
         errors.append(f"{label} run.exit_code must be an integer")
 
     payload = artifact.get("payload")
@@ -590,9 +604,7 @@ def validate_raw_artifact(
         errors.append(f"{label} contains invalid normalized result")
 
     counts = artifact.get("counts")
-    parsed_counts = _counts_from_results(
-        [item for item in results if isinstance(item, dict)]
-    )
+    parsed_counts = _counts_from_results([item for item in results if isinstance(item, dict)])
     if expected_runner == "playwright":
         parsed_counts["total_specs"] = len(
             {
@@ -607,6 +619,14 @@ def validate_raw_artifact(
     if not isinstance(integrity_errors, list):
         errors.append(f"{label} integrity_errors must be a list")
         integrity_errors = ["malformed integrity_errors"]
+    if expected_runner == "playwright":
+        payload_results, payload_counts, payload_errors = parse_playwright_payload(payload)
+        if results != payload_results:
+            errors.append(f"{label} results do not exactly match parsed payload")
+        if counts != payload_counts:
+            errors.append(f"{label} counts do not exactly match parsed payload")
+        if integrity_errors != payload_errors:
+            errors.append(f"{label} integrity_errors do not exactly match parsed payload")
     if require_success:
         if exit_code != 0:
             errors.append(f"{label} runner exited {exit_code}")
@@ -632,9 +652,7 @@ def _status_paths(root: Path) -> list[str]:
         value = line[3:].strip()
         if " -> " in value:
             value = value.split(" -> ", 1)[1]
-        if value in WORKER_CONTEXT_PATHS or value.startswith(
-            ".orchestrator/task-briefs/"
-        ):
+        if value in WORKER_CONTEXT_PATHS or value.startswith(".orchestrator/task-briefs/"):
             continue
         if value:
             paths.append(value)
@@ -694,8 +712,7 @@ def verify_evidence_relationship(
         disallowed_worktree = sorted(set(worktree_paths) - EVIDENCE_COMMIT_ALLOWLIST)
         if disallowed_worktree:
             errors.append(
-                "working tree contains non-evidence changes: "
-                + ", ".join(disallowed_worktree)
+                "working tree contains non-evidence changes: " + ", ".join(disallowed_worktree)
             )
         elif not allow_worktree_evidence:
             errors.append("evidence validation requires a clean working tree")
@@ -711,6 +728,115 @@ def verify_evidence_relationship(
         },
         errors,
     )
+
+
+def validate_evidence_proof_at_generation(
+    root: Path,
+    source: dict[str, Any],
+    proof: Any,
+) -> list[str]:
+    """Recompute every durable part of the generation-time Git proof."""
+    label = "receipt evidence_proof_at_generation"
+    if not isinstance(proof, dict):
+        return [f"{label} must be an object"]
+
+    source_sha = str(source.get("commit_sha") or "")
+    source_tree = str(source.get("tree_sha") or "")
+    evidence_head_sha = str(proof.get("evidence_head_sha") or "")
+    working_tree_paths = proof.get("working_tree_paths")
+    errors: list[str] = []
+    if not SHA_RE.fullmatch(evidence_head_sha):
+        return [f"{label} evidence_head_sha is invalid"]
+    if not isinstance(working_tree_paths, list) or any(
+        not isinstance(path, str) or not path for path in working_tree_paths
+    ):
+        errors.append(f"{label} working_tree_paths must be a list of paths")
+        working_tree_paths = []
+    if working_tree_paths != sorted(set(working_tree_paths)):
+        errors.append(f"{label} working_tree_paths must be sorted and unique")
+    disallowed_worktree = sorted(set(working_tree_paths) - EVIDENCE_COMMIT_ALLOWLIST)
+    if disallowed_worktree:
+        errors.append(
+            f"{label} records non-evidence working tree paths: " + ", ".join(disallowed_worktree)
+        )
+    required_raw_paths = {RAW_PLAYWRIGHT_PATH, RAW_PYTEST_PATH}
+    if not required_raw_paths.issubset(working_tree_paths):
+        errors.append(f"{label} does not record both generated raw artifact paths")
+
+    try:
+        recorded_tree = git_value(root, "show", "-s", "--format=%T", source_sha)
+        git_value(root, "show", "-s", "--format=%H", evidence_head_sha)
+    except subprocess.CalledProcessError as exc:
+        return errors + [f"{label} commit cannot be resolved: {exc}"]
+    if recorded_tree != source_tree:
+        errors.append(f"{label} tested source tree does not match its commit")
+
+    relation = "exact_source_head"
+    touched_paths: list[str] = []
+    if evidence_head_sha != source_sha:
+        ancestor = subprocess.run(
+            ["git", "merge-base", "--is-ancestor", source_sha, evidence_head_sha],
+            cwd=root,
+            check=False,
+        )
+        if ancestor.returncode != 0:
+            errors.append(f"{label} tested source is not an ancestor of evidence head")
+        else:
+            relation = "evidence_only_descendant"
+            log_output = git_value(
+                root,
+                "log",
+                "--format=",
+                "--name-only",
+                f"{source_sha}..{evidence_head_sha}",
+            )
+            touched_paths = sorted(
+                {line.strip() for line in log_output.splitlines() if line.strip()}
+            )
+            disallowed = sorted(set(touched_paths) - EVIDENCE_COMMIT_ALLOWLIST)
+            if disallowed:
+                errors.append(
+                    f"{label} intervening commits touch non-evidence paths: "
+                    + ", ".join(disallowed)
+                )
+
+    expected = {
+        "tested_source_sha": source_sha,
+        "tested_tree_sha": source_tree,
+        "evidence_head_sha": evidence_head_sha,
+        "relation": relation,
+        "intervening_touched_paths": touched_paths,
+        "working_tree_paths": working_tree_paths,
+        "allowlist": sorted(EVIDENCE_COMMIT_ALLOWLIST),
+    }
+    if proof != expected:
+        errors.append(f"{label} does not exactly match recomputed Git relationship")
+    return errors
+
+
+def expected_aggregate_counts(
+    artifacts: dict[str, dict[str, Any]],
+) -> dict[str, int]:
+    runner_counts = [
+        artifact.get("counts")
+        for artifact in artifacts.values()
+        if isinstance(artifact.get("counts"), dict)
+    ]
+
+    def count_value(counts: dict[str, Any], field: str) -> int:
+        value = counts.get(field)
+        return value if isinstance(value, int) and not isinstance(value, bool) and value >= 0 else 0
+
+    total_tests = sum(count_value(counts, "total_tests") for counts in runner_counts)
+    passed = sum(count_value(counts, "passed") for counts in runner_counts)
+    return {
+        "total_tests": total_tests,
+        "passed": passed,
+        "non_passing": total_tests - passed,
+        "total_scenarios": len(E2E_SCENARIOS),
+        "automated_scenarios": sum(1 for scenario in E2E_SCENARIOS if not scenario.is_manual),
+        "manual_pending_scenarios": sum(1 for scenario in E2E_SCENARIOS if scenario.is_manual),
+    }
 
 
 def bind_scenarios(
@@ -756,9 +882,7 @@ def bind_scenarios(
             runner = "playwright" if ".spec.ts::" in test_id else "pytest"
             result = indexes.get(runner, {}).get(test_id)
             if result is None:
-                errors.append(
-                    f"{scenario.scenario_id} missing exact {runner} result for {test_id}"
-                )
+                errors.append(f"{scenario.scenario_id} missing exact {runner} result for {test_id}")
                 scenario_ok = False
                 continue
             if result.get("status") != "passed":
@@ -854,21 +978,43 @@ def validate_receipt_packet(
                 root, source, allow_worktree_evidence=allow_worktree_evidence
             )
             errors.extend(proof_errors)
+            errors.extend(
+                validate_evidence_proof_at_generation(
+                    root, source, receipt.get("evidence_proof_at_generation")
+                )
+            )
 
         receipt_artifacts = receipt.get("artifacts")
         if not isinstance(receipt_artifacts, list):
             errors.append("receipt artifacts must be a list")
         else:
+            expected_runners = set(paths)
+            artifact_runners = [
+                item.get("runner") for item in receipt_artifacts if isinstance(item, dict)
+            ]
+            if len(artifact_runners) != len(receipt_artifacts):
+                errors.append("receipt artifact reconciliation entries must be objects")
+            if (
+                len(artifact_runners) != len(expected_runners)
+                or len(artifact_runners) != len(set(artifact_runners))
+                or set(artifact_runners) != expected_runners
+            ):
+                errors.append(
+                    "receipt artifact reconciliations must contain each runner exactly once"
+                )
             receipt_index = {
-                item.get("runner"): item
+                item["runner"]: item
                 for item in receipt_artifacts
-                if isinstance(item, dict)
+                if isinstance(item, dict) and item.get("runner") in expected_runners
             }
             for runner, artifact in artifacts.items():
                 entry = receipt_index.get(runner)
                 if not isinstance(entry, dict):
                     errors.append(f"receipt missing {runner} artifact reconciliation")
                     continue
+                expected_path = RAW_PLAYWRIGHT_PATH if runner == "playwright" else RAW_PYTEST_PATH
+                if entry.get("path") != expected_path:
+                    errors.append(f"receipt {runner} artifact path mismatch")
                 if entry.get("sha256") != artifact_hashes[runner]:
                     errors.append(f"receipt {runner} artifact hash mismatch")
                 if entry.get("normalized_artifact_sha256") != artifact.get(
@@ -885,20 +1031,22 @@ def validate_receipt_packet(
                     "environment",
                 ):
                     if entry.get(field) != run.get(field):
-                        errors.append(
-                            f"receipt {runner} metadata mismatch for {field}"
-                        )
+                        errors.append(f"receipt {runner} metadata mismatch for {field}")
 
         expected_results, binding_errors = bind_scenarios(artifacts, artifact_hashes)
         errors.extend(binding_errors)
         actual_results = receipt.get("scenario_results")
         if actual_results != expected_results:
             errors.append("receipt scenario bindings do not exactly match raw results")
-        ids = [
-            item.get("scenario_id")
-            for item in actual_results
-            if isinstance(actual_results, list) and isinstance(item, dict)
-        ] if isinstance(actual_results, list) else []
+        ids = (
+            [
+                item.get("scenario_id")
+                for item in actual_results
+                if isinstance(actual_results, list) and isinstance(item, dict)
+            ]
+            if isinstance(actual_results, list)
+            else []
+        )
         if len(ids) != len(E2E_SCENARIOS) or len(ids) != len(set(ids)):
             errors.append("receipt has missing or duplicate scenario results")
 
@@ -913,4 +1061,6 @@ def validate_receipt_packet(
             runner: artifact.get("counts") for runner, artifact in artifacts.items()
         }:
             errors.append("receipt runner_counts do not match raw artifacts")
+        if receipt.get("aggregate_counts") != expected_aggregate_counts(artifacts):
+            errors.append("receipt aggregate_counts do not match raw artifacts")
     return errors

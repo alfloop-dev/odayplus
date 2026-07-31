@@ -13,12 +13,12 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from scripts.e2e.product_e2e_receipt import (
-    E2E_SCENARIOS,
     RAW_PLAYWRIGHT_PATH,
     RAW_PYTEST_PATH,
     RECEIPT_PATH,
     SCHEMA_VERSION,
     bind_scenarios,
+    expected_aggregate_counts,
     iso_now,
     read_json,
     seal_normalized,
@@ -63,19 +63,7 @@ def generate_receipt(root: Path = ROOT) -> dict[str, Any]:
 
     scenario_results, binding_errors = bind_scenarios(artifacts, artifact_hashes)
     validation_errors.extend(binding_errors)
-    runner_counts = {
-        runner: artifact.get("counts") for runner, artifact in artifacts.items()
-    }
-    aggregate_total = sum(
-        int(counts.get("total_tests", 0))
-        for counts in runner_counts.values()
-        if isinstance(counts, dict)
-    )
-    aggregate_passed = sum(
-        int(counts.get("passed", 0))
-        for counts in runner_counts.values()
-        if isinstance(counts, dict)
-    )
+    runner_counts = {runner: artifact.get("counts") for runner, artifact in artifacts.items()}
     receipt: dict[str, Any] = {
         "schema_version": SCHEMA_VERSION,
         "receipt_id": "ODP-PRODUCT-E2E-RECEIPT-002",
@@ -87,13 +75,9 @@ def generate_receipt(root: Path = ROOT) -> dict[str, Any]:
         "artifacts": [
             {
                 "runner": runner,
-                "path": (
-                    RAW_PLAYWRIGHT_PATH if runner == "playwright" else RAW_PYTEST_PATH
-                ),
+                "path": (RAW_PLAYWRIGHT_PATH if runner == "playwright" else RAW_PYTEST_PATH),
                 "sha256": artifact_hashes[runner],
-                "normalized_artifact_sha256": artifact.get(
-                    "normalized_artifact_sha256"
-                ),
+                "normalized_artifact_sha256": artifact.get("normalized_artifact_sha256"),
                 **{
                     field: artifact.get("run", {}).get(field)
                     for field in (
@@ -109,18 +93,7 @@ def generate_receipt(root: Path = ROOT) -> dict[str, Any]:
             for runner, artifact in artifacts.items()
         ],
         "runner_counts": runner_counts,
-        "aggregate_counts": {
-            "total_tests": aggregate_total,
-            "passed": aggregate_passed,
-            "non_passing": aggregate_total - aggregate_passed,
-            "total_scenarios": len(E2E_SCENARIOS),
-            "automated_scenarios": sum(
-                1 for scenario in E2E_SCENARIOS if not scenario.is_manual
-            ),
-            "manual_pending_scenarios": sum(
-                1 for scenario in E2E_SCENARIOS if scenario.is_manual
-            ),
-        },
+        "aggregate_counts": expected_aggregate_counts(artifacts),
         "scenario_results": scenario_results,
         "validation_errors": validation_errors,
         "exit_code": 0 if not validation_errors else 1,
