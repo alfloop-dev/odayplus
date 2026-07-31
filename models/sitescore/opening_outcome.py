@@ -62,6 +62,8 @@ class SiteScoreOpeningOutcomeBenchmarkResult:
     interval_bounds_count: int = 0
     in_p80_count: int = 0
     matched_mean_y: float = 0.0
+    realized_revenue_sum: float = 0.0
+    mean_realized_revenue: float = 0.0
     dataset_snapshot_id: str | None = None
     model_version: str | None = None
     artifact_lineage_id: str | None = None
@@ -231,6 +233,8 @@ class SiteScoreOpeningOutcomeBenchmarkResult:
             "interval_bounds_count": self.interval_bounds_count,
             "in_p80_count": self.in_p80_count,
             "matched_mean_y": round(self.matched_mean_y, 2),
+            "realized_revenue_sum": round(self.realized_revenue_sum, 2),
+            "mean_realized_revenue": round(self.mean_realized_revenue, 2),
             "activation_threshold": self.activation_threshold,
             "missing_labels_delta": missing_labels,
             "m6_coverage_ratio": self.m6_coverage_ratio,
@@ -329,6 +333,8 @@ class SiteScoreOpeningOutcomeBenchmarkResult:
             "interval_bounds_count": self.interval_bounds_count,
             "in_p80_count": self.in_p80_count,
             "matched_mean_y": round(self.matched_mean_y, 2),
+            "realized_revenue_sum": round(self.realized_revenue_sum, 2),
+            "mean_realized_revenue": round(self.mean_realized_revenue, 2),
             "prediction_coverage_ratio": round(self.prediction_coverage_ratio, 4),
             "interval_bounds_coverage_ratio": round(self.interval_bounds_coverage_ratio, 4),
             "m6_coverage_ratio": round(self.m6_coverage_ratio, 4),
@@ -530,7 +536,8 @@ def evaluate_sitescore_opening_outcome_benchmark(
         mae = 0.0
         normalized_mae = 0.0
 
-    overall_mean_y = (sum(float(r.get("realized_90d_net_revenue", 0)) for r in mature_records) / mature_label_count) if mature_label_count > 0 else 0.0
+    realized_revenue_sum = sum(float(r.get("realized_90d_net_revenue", 0)) for r in mature_records)
+    overall_mean_y = (realized_revenue_sum / mature_label_count) if mature_label_count > 0 else 0.0
 
     p80_coverage = (in_p80_count / mature_label_count) if mature_label_count > 0 else 0.0
     interval_bounds_coverage_ratio = (interval_bounds_count / mature_label_count) if mature_label_count > 0 else 0.0
@@ -580,6 +587,8 @@ def evaluate_sitescore_opening_outcome_benchmark(
         interval_bounds_count=interval_bounds_count,
         in_p80_count=in_p80_count,
         matched_mean_y=matched_mean_y,
+        realized_revenue_sum=realized_revenue_sum,
+        mean_realized_revenue=overall_mean_y,
         m6_coverage_ratio=m6_coverage_ratio,
         m12_coverage_ratio=m12_coverage_ratio,
         normalized_mae=normalized_mae,
@@ -916,6 +925,7 @@ def verify_sitescore_gate2_receipt(
             "observed_count", "eligible_count", "mature_label_count",
             "matched_prediction_count", "m6_mature_count", "m12_mature_count",
             "interval_bounds_count", "in_p80_count", "matched_mean_y",
+            "realized_revenue_sum", "mean_realized_revenue",
             "activation_threshold", "missing_labels_delta", "m6_coverage_ratio",
             "m12_coverage_ratio", "prediction_coverage_ratio",
             "interval_bounds_coverage_ratio", "normalized_mae", "p80_coverage",
@@ -976,7 +986,8 @@ def verify_sitescore_gate2_receipt(
             "provenance", "dataset_snapshot_id", "model_version", "artifact_lineage_id",
             "observed_count", "eligible_count", "mature_label_count", "m6_mature_count",
             "m12_mature_count", "matched_prediction_count", "interval_bounds_count",
-            "in_p80_count", "matched_mean_y", "prediction_coverage_ratio",
+            "in_p80_count", "matched_mean_y", "realized_revenue_sum", "mean_realized_revenue",
+            "prediction_coverage_ratio",
             "interval_bounds_coverage_ratio", "m6_coverage_ratio", "m12_coverage_ratio",
             "normalized_mae", "p80_coverage", "activation_threshold",
             "min_coverage_threshold", "max_mae_threshold", "is_gate2_passed",
@@ -1100,7 +1111,7 @@ def verify_sitescore_gate2_receipt(
         p80_cov = _check_strict_float(summary.get("p80_coverage"), "benchmark_summary.p80_coverage")
         norm_mae = _check_strict_float(summary.get("normalized_mae"), "benchmark_summary.normalized_mae")
 
-        # B3: Strict type checking and drift validation for matched_mean_y
+        # B3: Strict type checking and drift validation for matched_mean_y, realized_revenue_sum, and mean_realized_revenue
         sum_matched_mean_y = _check_strict_float(summary.get("matched_mean_y"), "benchmark_summary.matched_mean_y")
         hb_matched_mean_y = _check_strict_float(handback.get("matched_mean_y"), "handback.matched_mean_y")
         if hb_matched_mean_y is not None and sum_matched_mean_y is not None:
@@ -1108,6 +1119,30 @@ def verify_sitescore_gate2_receipt(
                 errors.append(f"handback.matched_mean_y ({hb_matched_mean_y}) drifts from summary.matched_mean_y ({round(sum_matched_mean_y, 2)})")
         if match_cnt == 0 and sum_matched_mean_y is not None and sum_matched_mean_y != 0.0:
             errors.append(f"matched_mean_y must be 0.0 when matched_prediction_count is 0 (got {sum_matched_mean_y})")
+
+        sum_rev_sum = _check_strict_float(summary.get("realized_revenue_sum"), "benchmark_summary.realized_revenue_sum")
+        sum_mean_rev = _check_strict_float(summary.get("mean_realized_revenue"), "benchmark_summary.mean_realized_revenue")
+        hb_rev_sum = _check_strict_float(handback.get("realized_revenue_sum"), "handback.realized_revenue_sum")
+        hb_mean_rev = _check_strict_float(handback.get("mean_realized_revenue"), "handback.mean_realized_revenue")
+
+        if hb_rev_sum is not None and sum_rev_sum is not None and hb_rev_sum != sum_rev_sum:
+            errors.append(f"handback.realized_revenue_sum ({hb_rev_sum}) drifts from summary.realized_revenue_sum ({sum_rev_sum})")
+        if hb_mean_rev is not None and sum_mean_rev is not None and hb_mean_rev != sum_mean_rev:
+            errors.append(f"handback.mean_realized_revenue ({hb_mean_rev}) drifts from summary.mean_realized_revenue ({sum_mean_rev})")
+
+        if mat == 0:
+            if sum_rev_sum is not None and sum_rev_sum != 0.0:
+                errors.append(f"benchmark_summary.realized_revenue_sum must be 0.0 when mature_label_count is 0 (got {sum_rev_sum})")
+            if sum_mean_rev is not None and sum_mean_rev != 0.0:
+                errors.append(f"benchmark_summary.mean_realized_revenue must be 0.0 when mature_label_count is 0 (got {sum_mean_rev})")
+        elif mat is not None and mat > 0:
+            if sum_rev_sum is not None and sum_mean_rev is not None:
+                exp_mean_rev = round(sum_rev_sum / mat, 2)
+                if sum_mean_rev != exp_mean_rev:
+                    errors.append(f"benchmark_summary.mean_realized_revenue ({sum_mean_rev}) drifts from expected mean ({exp_mean_rev}) derived from realized_revenue_sum ({sum_rev_sum}) and mature_label_count ({mat})")
+            if match_cnt == mat and sum_matched_mean_y is not None and sum_mean_rev is not None:
+                if sum_mean_rev != round(sum_matched_mean_y, 2):
+                    errors.append(f"benchmark_summary.mean_realized_revenue ({sum_mean_rev}) drifts from matched_mean_realized_revenue ({round(sum_matched_mean_y, 2)}) when all mature records are matched")
 
         # B1: Check model card digest and governed-disabled semantics if model_card_artifact is present
         art_hashes = receipt.get("artifact_hashes")
@@ -1346,10 +1381,29 @@ def verify_sitescore_gate2_receipt(
             if handback.get("backfill_receipt_required") is not True:
                 errors.append(f"Governed-disabled receipt requires handback.backfill_receipt_required to be True (got {handback.get('backfill_receipt_required')!r})")
 
+        # B4: Re-derive and validate missing_labels_delta, reasons, and handback_action
+        if mat is not None:
+            exp_missing_delta = max(0, ACTIVATION_THRESHOLD - mat)
+            hb_missing_delta = _check_strict_int(handback.get("missing_labels_delta"), "handback.missing_labels_delta")
+            if hb_missing_delta is not None and hb_missing_delta != exp_missing_delta:
+                errors.append(f"handback.missing_labels_delta ({hb_missing_delta}) drifts from re-derived ({exp_missing_delta})")
+
+        hb_reasons = handback.get("reasons")
+        if is_rec_disabled:
+            if not isinstance(hb_reasons, (list, tuple)) or len(hb_reasons) == 0:
+                errors.append("Governed-disabled receipt requires a non-empty handback.reasons list")
+            else:
+                for r_idx, r_item in enumerate(hb_reasons):
+                    if not isinstance(r_item, str) or not r_item.strip():
+                        errors.append(f"handback.reasons[{r_idx}] must be a non-empty string")
+
         # B2: Required Human/Ops and prediction handoff contract checks
         hb_action = handback.get("handback_action")
         if not isinstance(hb_action, str) or not hb_action.strip():
             errors.append("handback.handback_action must be a non-empty string")
+        elif is_rec_disabled:
+            if "ODP-PLAN-SITESCORE-OUTCOME-BACKFILL-001" not in hb_action or "ODP-PLAN-SITESCORE-PREDICTION-SOURCE-001" not in hb_action:
+                errors.append("handback.handback_action must identify both governed task IDs 'ODP-PLAN-SITESCORE-OUTCOME-BACKFILL-001' and 'ODP-PLAN-SITESCORE-PREDICTION-SOURCE-001'")
 
         hb_backfill_task = handback.get("backfill_task_id")
         if hb_backfill_task != "ODP-PLAN-SITESCORE-OUTCOME-BACKFILL-001":
@@ -1553,6 +1607,10 @@ def verify_sitescore_gate2_receipt(
                 errors.append(f"{location_name} must be a sequence (got {type(seg_list).__name__}: {seg_list!r})")
                 return
 
+            if mat is not None and mat > 0 and not seg_list:
+                errors.append(f"{location_name} cannot be empty when mature_label_count is {mat} (> 0)")
+                return
+
             partitions: dict[str, list[dict[str, Any]]] = {}
             for idx, seg in enumerate(seg_list):
                 if not isinstance(seg, dict):
@@ -1590,6 +1648,9 @@ def verify_sitescore_gate2_receipt(
                             errors.append(f"{location_name}[{idx}].metrics.{mk} must be in range [0.0, 1.0] (got {flt})")
 
                 partitions.setdefault(seg_name, []).append(seg)
+
+            if mat is not None and mat > 0 and "target_format_code" not in partitions:
+                errors.append(f"{location_name} must contain canonical partition 'target_format_code' when mature_label_count > 0")
 
             for seg_name, segs in partitions.items():
                 seen_vals = set()
@@ -1828,8 +1889,8 @@ def verify_sitescore_gate2_receipt(
         if sum_status != expected_sum_status:
             errors.append(f"summary.status mismatch: declared {sum_status!r}, re-derived {expected_sum_status!r}")
 
-        is_gate2_passed = summary.get("is_gate2_passed")
-        if expected_gate2_passed != is_gate2_passed:
+        is_gate2_passed = _check_strict_bool(summary.get("is_gate2_passed"), "benchmark_summary.is_gate2_passed")
+        if is_gate2_passed is not None and expected_gate2_passed != is_gate2_passed:
             errors.append(f"is_gate2_passed mismatch: declared {is_gate2_passed}, re-derived {expected_gate2_passed}")
 
         if not expected_gate2_passed:
