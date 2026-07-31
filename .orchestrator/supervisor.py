@@ -171,6 +171,9 @@ COMMAND_OUTPUT_EXIT_LINE_PATTERN = re.compile(r"^exited\s+\d+\s+in\s+\S+:", re.I
 LOCAL_TZ = ZoneInfo("Asia/Taipei")
 SUPERVISOR_LOG_QUIET = False
 GENERIC_WORKER_EXIT_REASON = "Worker exited before the task reached a terminal status."
+NO_PROGRESS_WORKER_EXIT_REASON = (
+    "Worker exited successfully without the required task lifecycle transition or meaningful progress."
+)
 PLANNING_STATE_FILE = THIS_DIR / "planning-state.json"
 PLANNING_PHASE_DIR = THIS_DIR.parent / "docs" / "02-architecture" / "consensus" / "phase1"
 _UNSET = object()
@@ -1911,6 +1914,12 @@ def start_worker_for_request(
     agent = agent_config_for(config, request.agent_id)
     adapter_name = delivery_mode_override or agent.get("adapter", "file_inbox")
     adapter = build_adapter(adapter_name, config=config, provider_capabilities=provider_report)
+    task_id = str(request.task_id or "").strip()
+    workspace_path = str(request.metadata.get("workspace_path") or "").strip() or None
+    dispatch_pre_sync_snapshot = capture_current_task_progress_snapshot(
+        config, task_id, workspace_path
+    )
+    dispatch_task_snapshot = capture_worker_dispatch_snapshot(config, request)
     result = adapter.deliver(request)
     if not result.ok:
         failure_worker = {
@@ -1990,6 +1999,10 @@ def start_worker_for_request(
         "notes": result.notes,
         "metadata": result_metadata,
         "request_snapshot": request_snapshot(request),
+        "dispatch_pre_sync_snapshot": dispatch_pre_sync_snapshot,
+        "dispatch_task_snapshot": dispatch_task_snapshot,
+        "dispatch_task_fingerprint": task_progress_fingerprint(dispatch_task_snapshot),
+        "dispatch_baseline_pending": True,
         "parent_run_id": parent_run_id,
         "retry_count": 0,
         "next_retry_at": None,
@@ -2333,6 +2346,13 @@ def process_queue(config: dict[str, Any], state: dict[str, Any], provider_report
         record["processed_at"] = _isoformat_utc(queue_started_at)
         record.pop("last_wait_reason", None)
         sync_dispatched_task_status(config, event)
+        worker = state.get("workers", {}).get(worker_run_id)
+        if isinstance(worker, dict):
+            refresh_worker_dispatch_snapshot(config, worker)
+            # The launch save intentionally happens before status sync. Persist
+            # the post-sync baseline too so boot reconciliation cannot mistake
+            # Supervisor's own start/progress note for worker progress.
+            save_runtime_state(config, state)
         changed = True
     return changed
 
@@ -4969,6 +4989,9 @@ def record_task_failure_streak(
             "last_reason": reason,
             "last_failure_at": utc_now(),
             "last_failure_kind": failure_kind or str(record.get("last_failure_kind") or ""),
+            "last_dispatch_fingerprint": worker.get("dispatch_task_fingerprint"),
+            "last_completion_fingerprint": worker.get("completion_task_fingerprint"),
+            "last_worker_run_id": worker.get("run_id"),
         }
     )
     bucket[key] = record
@@ -4999,6 +5022,229 @@ def clear_task_failure_streaks_for_task(state: dict[str, Any], task_id: str | No
     bucket = _task_failure_streak_bucket(state)
     for key in [item for item in bucket if item.startswith(f"{task_id}:")]:
         bucket.pop(key, None)
+
+
+TASK_LIFECYCLE_ACTIVITY_TYPES = {
+    "blocker",
+    "done",
+    "handoff",
+    "re_review",
+    "reopen",
+    "review_approved",
+}
+
+READY_WITHOUT_HANDOFF_PATTERNS = (
+    re.compile(r"\bready\s+(?:for|to)\s+(?:independent\s+)?(?:review|re-review)\b", re.IGNORECASE),
+    re.compile(r"\bawaiting\s+(?:independent\s+)?(?:review|re-review)\b", re.IGNORECASE),
+    re.compile(r"\bwaiting\s+for\s+(?:independent\s+)?(?:review|re-review)\b", re.IGNORECASE),
+    re.compile(r"\bpending\s+(?:independent\s+)?(?:review|re-review)\b", re.IGNORECASE),
+    re.compile(r"(?:等待|待)(?:獨立)?(?:審查|審核|複核|review)"),
+    re.compile(r"(?:已可|可以|準備)(?:送|進入)?(?:獨立)?(?:審查|審核|複核|review)"),
+)
+
+
+def resolve_task_progress_head(task_id: str | None, workspace_path: str | None = None) -> str | None:
+    """Resolve the exact worker worktree HEAD, with the task ref as a fallback."""
+    if workspace_path:
+        try:
+            proc = subprocess.run(
+                ["git", "-C", str(workspace_path), "rev-parse", "HEAD"],
+                text=True,
+                capture_output=True,
+                timeout=10,
+                check=False,
+            )
+        except (OSError, subprocess.TimeoutExpired):
+            proc = None
+        if proc is not None and proc.returncode == 0 and proc.stdout.strip():
+            return proc.stdout.strip()
+    normalized_task_id = str(task_id or "").strip()
+    if not normalized_task_id:
+        return None
+    try:
+        from ai_status import resolve_task_sha
+
+        head = resolve_task_sha(normalized_task_id)
+    except Exception:
+        return None
+    return str(head).strip() if head else None
+
+
+def task_lifecycle_activity_snapshot(config: dict[str, Any], task_id: str | None) -> dict[str, Any] | None:
+    """Return the newest durable lifecycle activity for a task."""
+    normalized_task_id = str(task_id or "").strip()
+    if not normalized_task_id:
+        return None
+    try:
+        from common import _recent_task_activity
+
+        entries = _recent_task_activity(config, normalized_task_id, limit=64)
+    except (KeyError, OSError, ValueError):
+        return None
+    for entry in reversed(entries):
+        activity_type = str(entry.get("type") or "").strip().lower()
+        if activity_type not in TASK_LIFECYCLE_ACTIVITY_TYPES:
+            continue
+        return {
+            "ts": str(entry.get("ts") or "").strip(),
+            "type": activity_type,
+            "agent": str(entry.get("agent") or "").strip(),
+        }
+    return None
+
+
+def task_progress_snapshot(
+    task: dict[str, Any] | None,
+    *,
+    head: str | None = None,
+    lifecycle_activity: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Return the durable state used to judge a worker's postcondition."""
+    task = task if isinstance(task, dict) else {}
+    snapshot = {
+        "id": str(task.get("id") or "").strip(),
+        "status": str(task.get("status") or "").strip().lower(),
+        "owner": normalize_agent_id(str(task.get("owner") or "")),
+        "reviewer": normalize_agent_id(str(task.get("reviewer") or "")),
+        "next": " ".join(str(task.get("next") or "").split()),
+        "waiting_for": " ".join(str(task.get("waiting_for") or "").split()),
+        "approved_head": str(task.get("approved_head") or "").strip() or None,
+        "head": str(head or task.get("head") or "").strip() or None,
+        "lifecycle_activity": lifecycle_activity,
+    }
+    return snapshot
+
+
+def task_progress_fingerprint(snapshot: dict[str, Any] | None) -> str:
+    return json.dumps(snapshot or {}, sort_keys=True, ensure_ascii=True)
+
+
+def capture_current_task_progress_snapshot(
+    config: dict[str, Any], task_id: str, workspace_path: str | None
+) -> dict[str, Any]:
+    task: dict[str, Any] = {}
+    if task_id:
+        try:
+            task = dict(task_index_from_status(config, load_status(config)).get(task_id, {}))
+        except KeyError:
+            task = {}
+    return task_progress_snapshot(
+        task,
+        head=resolve_task_progress_head(task_id, workspace_path),
+        lifecycle_activity=task_lifecycle_activity_snapshot(config, task_id),
+    )
+
+
+def capture_worker_dispatch_snapshot(
+    config: dict[str, Any], request: DeliveryRequest
+) -> dict[str, Any]:
+    """Capture the expected post-sync task baseline at worker launch."""
+    task_id = str(request.task_id or "").strip()
+    workspace_path = str(request.metadata.get("workspace_path") or "").strip() or None
+    snapshot = capture_current_task_progress_snapshot(config, task_id, workspace_path)
+    task = dict(snapshot)
+    reason = str(request.reason or "").strip()
+    if reason == REASON_OWNED_READY and str(task.get("status") or "").lower() == "todo":
+        task["status"] = "in_progress"
+        task["next"] = f"Supervisor auto-started {task_id} after successful dispatch."
+    elif reason == REASON_OWNED_IN_PROGRESS:
+        task["next"] = f"Supervisor re-dispatched {task_id}; task remains in progress."
+    elif reason == REASON_OWNED_FINALIZE:
+        task["next"] = f"Supervisor resumed {task_id} for finalize after successful dispatch."
+    return task
+
+
+def refresh_worker_dispatch_snapshot(config: dict[str, Any], worker: dict[str, Any]) -> None:
+    """Freeze the baseline after Supervisor's own dispatch status update."""
+    task_id = str(worker.get("task_id") or "").strip()
+    try:
+        task = task_index_from_status(config, load_status(config)).get(task_id, {})
+    except KeyError:
+        task = {}
+    workspace_path = str(worker.get("workspace_path") or "").strip() or None
+    snapshot = task_progress_snapshot(
+        task,
+        head=resolve_task_progress_head(task_id, workspace_path),
+        lifecycle_activity=task_lifecycle_activity_snapshot(config, task_id),
+    )
+    worker["dispatch_task_snapshot"] = snapshot
+    worker["dispatch_task_fingerprint"] = task_progress_fingerprint(snapshot)
+    worker["dispatch_baseline_pending"] = False
+
+
+def reconcile_pending_worker_dispatch_snapshot(
+    config: dict[str, Any], worker: dict[str, Any]
+) -> bool:
+    """Resolve the launch/status-sync crash window without losing later progress."""
+    if not worker.get("dispatch_baseline_pending"):
+        return False
+    task_id = str(worker.get("task_id") or "").strip()
+    workspace_path = str(worker.get("workspace_path") or "").strip() or None
+    current = capture_current_task_progress_snapshot(config, task_id, workspace_path)
+    pre_sync = worker.get("dispatch_pre_sync_snapshot")
+    if isinstance(pre_sync, dict) and task_progress_fingerprint(current) == task_progress_fingerprint(pre_sync):
+        # The supervisor died before its own status update; the actual launch
+        # state is the only honest baseline.
+        worker["dispatch_task_snapshot"] = current
+        worker["dispatch_task_fingerprint"] = task_progress_fingerprint(current)
+    # Otherwise retain the predicted post-sync baseline. Any worker progress
+    # that landed after the launch remains visible as a delta.
+    worker["dispatch_baseline_pending"] = False
+    return True
+
+
+def worker_is_review_dispatch(worker: dict[str, Any]) -> bool:
+    request = worker.get("request_snapshot")
+    reason = str(request.get("reason") or "") if isinstance(request, dict) else ""
+    return reason.strip().lower() in {REASON_REVIEW_READY, "status:review"}
+
+
+def task_claims_ready_without_handoff(task: dict[str, Any]) -> bool:
+    if str(task.get("status") or "").strip().lower() == "review":
+        return False
+    next_step = str(task.get("next") or "").strip()
+    return bool(next_step and any(pattern.search(next_step) for pattern in READY_WITHOUT_HANDOFF_PATTERNS))
+
+
+def successful_worker_exit_outcome(
+    config: dict[str, Any],
+    worker: dict[str, Any],
+    current_task: dict[str, Any] | None,
+    *,
+    terminal_statuses: set[str],
+) -> str:
+    """Classify a zero-exit worker by its durable task-board postcondition."""
+    task = current_task if isinstance(current_task, dict) else {}
+    status = str(task.get("status") or "").strip().lower()
+    workspace_path = str(worker.get("workspace_path") or "").strip() or None
+    current = task_progress_snapshot(
+        task,
+        head=resolve_task_progress_head(str(worker.get("task_id") or ""), workspace_path),
+        lifecycle_activity=task_lifecycle_activity_snapshot(config, str(worker.get("task_id") or "")),
+    )
+    worker["completion_task_snapshot"] = current
+    worker["completion_task_fingerprint"] = task_progress_fingerprint(current)
+    if worker_is_review_dispatch(worker):
+        if status in {"in_progress", "todo", "blocked"}:
+            return "review_decided"
+        if status in {"done", "review_approved"}:
+            return "lifecycle_complete"
+        return "no_progress"
+
+    if status in {str(value).lower() for value in terminal_statuses}:
+        return "lifecycle_complete"
+
+    if status == "review":
+        return "lifecycle_complete"
+    if task_claims_ready_without_handoff(task):
+        return "no_progress"
+
+    dispatched = worker.get("dispatch_task_snapshot")
+    if not isinstance(dispatched, dict) or not dispatched:
+        return "no_progress"
+    if task_progress_fingerprint(dispatched) != task_progress_fingerprint(current):
+        return "incremental_progress"
+    return "no_progress"
 
 
 def worker_retry_settings(config: dict[str, Any], provider: str | None) -> dict[str, Any]:
@@ -6381,6 +6627,8 @@ def poll_workers(config: dict[str, Any], state: dict[str, Any], provider_report:
         if marker_changed:
             poll_counts["marker_updates"] += 1
             changed = True
+        if reconcile_pending_worker_dispatch_snapshot(config, worker):
+            changed = True
         update_from_log(config, worker)
         try:
             adopted_approval = correlate_deferred_tool_approval(config, worker, approval_state)
@@ -6474,9 +6722,24 @@ def poll_workers(config: dict[str, Any], state: dict[str, Any], provider_report:
                 or changed
             )
             continue
+        assignment_matches = worker_matches_current_assignment(config, worker, task_map)
+        accepted_dead_worker_transition = False
+        if not assignment_matches and not alive and worker_runner_succeeded(worker):
+            accepted_dead_worker_transition = successful_worker_exit_outcome(
+                config,
+                worker,
+                task_map.get(str(worker.get("task_id") or ""), {}),
+                terminal_statuses={
+                    str(value).lower()
+                    for value in ready_dispatch_settings(config).get(
+                        "worker_terminal_statuses", ["done", "review_approved"]
+                    )
+                },
+            ) in {"lifecycle_complete", "review_decided"}
         if (
             worker.get("queue_event_id")
-            and not worker_matches_current_assignment(config, worker, task_map)
+            and not assignment_matches
+            and not accepted_dead_worker_transition
         ):
             if worker.get("status") == "superseded":
                 continue
@@ -6763,7 +7026,8 @@ def poll_workers(config: dict[str, Any], state: dict[str, Any], provider_report:
                     changed = True
             continue
 
-        failure_reason = None if worker_runner_succeeded(worker) else detect_worker_failure(worker)
+        runner_succeeded = worker_runner_succeeded(worker)
+        failure_reason = None if runner_succeeded else detect_worker_failure(worker)
         if failure_reason and worker.get("status") != "failed":
             failure = classify_worker_failure(config, worker, failure_reason)
             failure_summary = summarize_failure_reason(failure_reason, str(worker.get("provider") or worker.get("agent_id") or ""))
@@ -6946,12 +7210,47 @@ def poll_workers(config: dict[str, Any], state: dict[str, Any], provider_report:
                 str(value).lower()
                 for value in ready_dispatch_settings(config).get("worker_terminal_statuses", ["done", "review_approved"])
             }
-            if task_status in redispatch_statuses:
+            current_task = task_map.get(worker.get("task_id"), {})
+            success_outcome = (
+                successful_worker_exit_outcome(
+                    config,
+                    worker,
+                    current_task,
+                    terminal_statuses=terminal_statuses,
+                )
+                if runner_succeeded
+                else None
+            )
+            if success_outcome in {"lifecycle_complete", "review_decided", "incremental_progress"}:
+                worker["status"] = "completed"
+                worker["last_event_at"] = utc_now()
+                worker["progress_outcome"] = success_outcome
+                clear_task_failure_streak(state, worker=worker)
+                message = (
+                    "Background worker process exited after recording meaningful incremental progress; task remains dispatchable."
+                    if success_outcome == "incremental_progress"
+                    else "Background worker process exited after completing its required task lifecycle transition."
+                )
+                write_activity_log(
+                    config,
+                    {
+                        "type": "worker_progress_recorded" if success_outcome == "incremental_progress" else "worker_completed",
+                        "provider": worker.get("provider"),
+                        "task_id": worker.get("task_id"),
+                        "message": message,
+                        "worker_run_id": worker["run_id"],
+                        "pr_url": worker.get("pr_url"),
+                        "session_url": worker.get("session_url"),
+                        "progress_outcome": success_outcome,
+                    },
+                )
+                finalize_queue_event_record(config, state, worker, "completed")
+            elif runner_succeeded and task_status in redispatch_statuses:
                 failure_count = record_task_failure_streak(
                     state,
                     worker,
-                    GENERIC_WORKER_EXIT_REASON,
-                    failure_kind="generic_exit",
+                    NO_PROGRESS_WORKER_EXIT_REASON,
+                    failure_kind="no_progress",
                 )
                 generic_threshold = max(1, int(provider_guardrail_settings(config).get("generic_exit_reassign_after", 2)))
                 reassigned_to = None
@@ -6960,7 +7259,7 @@ def poll_workers(config: dict[str, Any], state: dict[str, Any], provider_report:
                         config,
                         state,
                         worker,
-                        GENERIC_WORKER_EXIT_REASON,
+                        NO_PROGRESS_WORKER_EXIT_REASON,
                         terminal=True,
                         force=True,
                         failure_count=failure_count,
@@ -6968,14 +7267,14 @@ def poll_workers(config: dict[str, Any], state: dict[str, Any], provider_report:
                 if reassigned_to:
                     worker["status"] = "reassigned"
                     worker["reassigned_to"] = reassigned_to
-                    worker["last_error"] = GENERIC_WORKER_EXIT_REASON
+                    worker["last_error"] = NO_PROGRESS_WORKER_EXIT_REASON
                     worker["last_event_at"] = utc_now()
                     finalize_queue_event_record(config, state, worker, "completed")
                     changed = True
                     continue
                 worker["status"] = "failed"
                 worker["last_event_at"] = utc_now()
-                worker["last_error"] = GENERIC_WORKER_EXIT_REASON
+                worker["last_error"] = NO_PROGRESS_WORKER_EXIT_REASON
                 write_activity_log(
                     config,
                     {
@@ -6986,6 +7285,9 @@ def poll_workers(config: dict[str, Any], state: dict[str, Any], provider_report:
                         "worker_run_id": worker["run_id"],
                         "pr_url": worker.get("pr_url"),
                         "session_url": worker.get("session_url"),
+                        "failure_kind": "no_progress",
+                        "dispatch_fingerprint": worker.get("dispatch_task_fingerprint"),
+                        "completion_fingerprint": worker.get("completion_task_fingerprint"),
                     },
                 )
                 finalize_queue_event_record(config, state, worker, "failed", worker["last_error"])
@@ -7321,6 +7623,8 @@ def reconcile_runtime_on_boot(config: dict[str, Any], state: dict[str, Any]) -> 
         if marker_changed:
             counts["marker_updates"] += 1
             changed = True
+        if reconcile_pending_worker_dispatch_snapshot(config, worker):
+            changed = True
         status_before_log_update = worker.get("status")
         if _provider_uses_claude_cli(config, worker.get("provider")):
             update_from_log(config, worker)
@@ -7397,9 +7701,25 @@ def reconcile_runtime_on_boot(config: dict[str, Any], state: dict[str, Any]) -> 
             str(value).lower()
             for value in ready_dispatch_settings(config).get("worker_terminal_statuses", ["done", "review_approved"])
         }
-        if runner_succeeded and task_status in terminal_statuses:
+        current_task = task_map.get(str(worker.get("task_id") or ""), {})
+        success_outcome = (
+            successful_worker_exit_outcome(
+                config,
+                worker,
+                current_task,
+                terminal_statuses=terminal_statuses,
+            )
+            if runner_succeeded
+            else None
+        )
+        if runner_succeeded and success_outcome in {
+            "lifecycle_complete",
+            "review_decided",
+            "incremental_progress",
+        }:
             worker["status"] = "completed"
             worker["last_event_at"] = worker.get("runner_finished_at") or utc_now()
+            worker["progress_outcome"] = success_outcome
             clear_task_failure_streak(state, worker=worker)
             finalize_queue_event_record(config, state, worker, "completed")
             write_activity_log(
@@ -7408,17 +7728,55 @@ def reconcile_runtime_on_boot(config: dict[str, Any], state: dict[str, Any]) -> 
                     "type": "worker_completed",
                     "provider": worker.get("provider"),
                     "task_id": worker.get("task_id"),
-                    "message": "Worker exited successfully during supervisor boot reconciliation.",
+                    "message": (
+                        "Worker recorded meaningful incremental progress before supervisor boot reconciliation; task remains dispatchable."
+                        if success_outcome == "incremental_progress"
+                        else "Worker completed its required task lifecycle transition before supervisor boot reconciliation."
+                    ),
                     "worker_run_id": run_id,
                     "pr_url": worker.get("pr_url"),
                     "session_url": worker.get("session_url"),
+                    "progress_outcome": success_outcome,
                 },
             )
             changed = True
             continue
 
         if runner_succeeded:
-            reason = GENERIC_WORKER_EXIT_REASON
+            reason = NO_PROGRESS_WORKER_EXIT_REASON
+            failure_count = record_task_failure_streak(
+                state,
+                worker,
+                reason,
+                failure_kind="no_progress",
+            )
+            generic_threshold = max(
+                1,
+                int(provider_guardrail_settings(config).get("generic_exit_reassign_after", 2)),
+            )
+            reassigned_to = None
+            if task_status in redispatch_statuses and failure_count >= generic_threshold:
+                reassigned_to = maybe_reassign_task_after_worker_failure(
+                    config,
+                    state,
+                    worker,
+                    reason,
+                    terminal=True,
+                    force=True,
+                    failure_count=failure_count,
+                )
+            if reassigned_to:
+                worker["status"] = "reassigned"
+                worker["reassigned_to"] = reassigned_to
+                worker["last_event_at"] = worker.get("runner_finished_at") or utc_now()
+                worker["last_error"] = reason
+                finalize_queue_event_record(config, state, worker, "completed")
+                if expired_lease:
+                    counts["expired_lease_workers_failed"] += 1
+                else:
+                    counts["missing_process_workers_failed"] += 1
+                changed = True
+                continue
 
         detected_reason = None if runner_succeeded else detect_worker_failure(worker)
         if detected_reason:
@@ -7498,6 +7856,15 @@ def reconcile_runtime_on_boot(config: dict[str, Any], state: dict[str, Any]) -> 
                 "task_id": worker.get("task_id"),
                 "message": reason,
                 "worker_run_id": run_id,
+                **(
+                    {
+                        "failure_kind": "no_progress",
+                        "dispatch_fingerprint": worker.get("dispatch_task_fingerprint"),
+                        "completion_fingerprint": worker.get("completion_task_fingerprint"),
+                    }
+                    if runner_succeeded
+                    else {}
+                ),
             },
         )
         changed = True

@@ -252,6 +252,26 @@ def render_wakeup_message(config: dict[str, Any], event: dict[str, Any], target_
             "- 完成後請交接給指定 reviewer，由 parent owner 決定是否吸收進主線。\n"
         )
     task_id = str(event.get("task_id") or "").strip()
+    reason = str(event.get("reason") or "wakeup").strip()
+    normalized_reason = reason.lower()
+    if normalized_reason in {"review_ready_dispatch", "status:review"}:
+        lifecycle_guardrails = (
+            "這次是 reviewer dispatch。程序退出前必須做出可稽核的 review 決定："
+            "通過則 approve，發現問題則 reopen／退回 in_progress。只新增 review note、"
+            "但讓 task 留在 review，會被 Supervisor 判定為 no-progress failure。"
+        )
+    elif normalized_reason in {
+        "owned_ready_dispatch",
+        "owned_in_progress_dispatch",
+        "owned_finalize_dispatch",
+    }:
+        lifecycle_guardrails = (
+            "這次是 owner dispatch。若工作已可送審，程序退出前必須用正式 handoff／re_review "
+            "把 task 轉成 review；只寫『ready/awaiting review』但不轉狀態，會被判定為 "
+            "no-progress failure。若只完成一段增量，至少要留下新的 task branch commit 或實質 next 狀態。"
+        )
+    else:
+        lifecycle_guardrails = ""
     branch_workflow = config.get("branch_workflow") if isinstance(config.get("branch_workflow"), dict) else {}
     base_branch = str(branch_workflow.get("dev_branch") or "dev")
     task_branch_prefix = str(branch_workflow.get("task_branch_prefix") or "task/")
@@ -267,9 +287,10 @@ def render_wakeup_message(config: dict[str, Any], event: dict[str, Any], target_
         "branch_name": branch_name,
         "branch_start_command": f"./scripts/git/task_start.sh \"{task_id}\"" if task_id else "./scripts/git/task_start.sh <TASK-ID>",
         "anchor_commit_subject": f"{task_id}: anchor <scope>" if task_id else "<TASK-ID>: anchor <scope>",
-        "reason": event.get("reason") or "wakeup",
+        "reason": reason,
         "target_files": "\n".join(f"- {path}" for path in target_files) if target_files else "- (none inferred)",
         "sidecar_guardrails": sidecar_guardrails.rstrip(),
+        "lifecycle_guardrails": lifecycle_guardrails,
         "target_agent_display_name": display_name_for(config, agent["id"]),
     }
     return render_template(template_path, variables).strip() + "\n"

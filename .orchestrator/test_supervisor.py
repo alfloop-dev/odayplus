@@ -9989,6 +9989,255 @@ class ReviewHeadFreezeTests(unittest.TestCase):
         self.assertIn("failed; resolve failing checks", task["next"])
 
 
+class SuccessfulWorkerPostconditionTests(unittest.TestCase):
+    def setUp(self) -> None:
+        self.config = load_test_config()
+        self.config.setdefault("provider_guardrails", {})["generic_exit_reassign_after"] = 2
+        self.config.setdefault("agents", {})["codex6"] = {
+            "id": "codex6",
+            "display_name": "Codex6",
+            "provider": "codex6",
+        }
+        self.lifecycle = {"ts": "2026-07-31T15:00:00Z", "type": "start", "agent": "Antigravity4"}
+
+    @staticmethod
+    def _task(*, status: str = "in_progress", next_step: str = "Implement packet") -> dict[str, Any]:
+        return {
+            "id": "ODP-POSTCONDITION-001",
+            "status": status,
+            "owner": "Antigravity4",
+            "reviewer": "Codex6",
+            "next": next_step,
+            "depends_on": [],
+        }
+
+    def _worker(
+        self,
+        task: dict[str, Any],
+        *,
+        run_id: str = "antigravity4-postcondition-1",
+        reason: str = "owned_in_progress_dispatch",
+        agent_id: str = "antigravity4",
+        dispatch_head: str = "a" * 40,
+    ) -> dict[str, Any]:
+        dispatch_snapshot = supervisor.task_progress_snapshot(
+            task,
+            head=dispatch_head,
+            lifecycle_activity=self.lifecycle,
+        )
+        return {
+            "run_id": run_id,
+            "task_id": task["id"],
+            "provider": agent_id,
+            "agent_id": agent_id,
+            "status": "running",
+            "queue_event_id": f"evt-{run_id}",
+            "pid": 999999,
+            "runner_status": "completed",
+            "exit_code": 0,
+            "last_event_at": "2026-07-31T15:00:00Z",
+            "request_snapshot": {
+                "reason": reason,
+                "metadata": {"logical_agent_id": agent_id},
+            },
+            "dispatch_task_snapshot": dispatch_snapshot,
+            "dispatch_task_fingerprint": supervisor.task_progress_fingerprint(dispatch_snapshot),
+        }
+
+    def _poll(
+        self,
+        state: dict[str, Any],
+        task: dict[str, Any],
+        *,
+        current_head: str,
+        lifecycle: dict[str, Any] | None = None,
+    ) -> bool:
+        with (
+            mock.patch.object(supervisor, "load_approval_state", return_value={"pending": [], "history": []}),
+            mock.patch.object(supervisor, "load_status", return_value={"tasks": [task]}),
+            mock.patch.object(supervisor, "load_provider_report", return_value={}),
+            mock.patch.object(supervisor, "retry_due_workers", return_value=False),
+            mock.patch.object(supervisor, "pid_is_alive", return_value=False),
+            mock.patch.object(supervisor, "resolve_task_progress_head", return_value=current_head),
+            mock.patch.object(
+                supervisor,
+                "task_lifecycle_activity_snapshot",
+                return_value=self.lifecycle if lifecycle is None else lifecycle,
+            ),
+            mock.patch.object(
+                supervisor,
+                "detect_worker_failure",
+                side_effect=AssertionError("zero-exit worker must use postcondition path"),
+            ),
+            mock.patch.object(supervisor, "write_activity_log"),
+        ):
+            return supervisor.poll_workers(self.config, state)
+
+    @staticmethod
+    def _state(worker: dict[str, Any], *, prior_count: int = 0) -> dict[str, Any]:
+        state: dict[str, Any] = {
+            "queue": {"events": {worker["queue_event_id"]: {"status": "started"}}},
+            "workers": {worker["run_id"]: worker},
+        }
+        if prior_count:
+            key = f"{worker['task_id']}:{worker['provider']}"
+            state["provider_guardrails"] = {
+                "task_failure_streaks": {
+                    key: {
+                        "count": prior_count,
+                        "task_id": worker["task_id"],
+                        "provider": worker["provider"],
+                    }
+                }
+            }
+        return state
+
+    def test_poll_accepts_new_head_as_legitimate_incremental_progress(self) -> None:
+        task = self._task()
+        worker = self._worker(task)
+        state = self._state(worker, prior_count=1)
+
+        self.assertTrue(self._poll(state, task, current_head="b" * 40))
+
+        self.assertEqual(worker["status"], "completed")
+        self.assertEqual(worker["progress_outcome"], "incremental_progress")
+        self.assertNotIn(
+            f"{task['id']}:antigravity4",
+            state["provider_guardrails"]["task_failure_streaks"],
+        )
+
+    def test_lifecycle_activity_is_part_of_the_durable_progress_fingerprint(self) -> None:
+        task = self._task()
+        worker = self._worker(task)
+        changed_lifecycle = {
+            "ts": "2026-07-31T15:05:00Z",
+            "type": "handoff",
+            "agent": "Antigravity4",
+        }
+        with (
+            mock.patch.object(supervisor, "resolve_task_progress_head", return_value="a" * 40),
+            mock.patch.object(
+                supervisor,
+                "task_lifecycle_activity_snapshot",
+                return_value=changed_lifecycle,
+            ),
+        ):
+            outcome = supervisor.successful_worker_exit_outcome(
+                self.config,
+                worker,
+                task,
+                terminal_statuses={"done", "review_approved"},
+            )
+        self.assertEqual(outcome, "incremental_progress")
+
+    def test_pending_launch_baseline_reconciles_pre_sync_state_after_restart(self) -> None:
+        task = self._task(status="todo", next_step="Implement packet")
+        worker = self._worker(task)
+        pre_sync = supervisor.task_progress_snapshot(
+            task,
+            head="a" * 40,
+            lifecycle_activity=self.lifecycle,
+        )
+        worker["dispatch_pre_sync_snapshot"] = pre_sync
+        worker["dispatch_task_snapshot"] = {
+            **pre_sync,
+            "status": "in_progress",
+            "next": f"Supervisor auto-started {task['id']} after successful dispatch.",
+        }
+        worker["dispatch_baseline_pending"] = True
+        with (
+            mock.patch.object(supervisor, "load_status", return_value={"tasks": [task]}),
+            mock.patch.object(supervisor, "resolve_task_progress_head", return_value="a" * 40),
+            mock.patch.object(supervisor, "task_lifecycle_activity_snapshot", return_value=self.lifecycle),
+        ):
+            changed = supervisor.reconcile_pending_worker_dispatch_snapshot(self.config, worker)
+
+        self.assertTrue(changed)
+        self.assertFalse(worker["dispatch_baseline_pending"])
+        self.assertEqual(worker["dispatch_task_snapshot"], pre_sync)
+
+    def test_repeated_same_fingerprint_reassigns_after_bounded_threshold(self) -> None:
+        task = self._task()
+        worker = self._worker(task)
+        state = self._state(worker, prior_count=1)
+
+        with mock.patch.object(
+            supervisor,
+            "maybe_reassign_task_after_worker_failure",
+            return_value="Antigravity5",
+        ) as reassign:
+            self.assertTrue(self._poll(state, task, current_head="a" * 40))
+
+        self.assertEqual(worker["status"], "reassigned")
+        self.assertEqual(worker["reassigned_to"], "Antigravity5")
+        streak = state["provider_guardrails"]["task_failure_streaks"][f"{task['id']}:antigravity4"]
+        self.assertEqual(streak["count"], 2)
+        self.assertEqual(streak["last_failure_kind"], "no_progress")
+        self.assertEqual(streak["last_dispatch_fingerprint"], worker["dispatch_task_fingerprint"])
+        self.assertEqual(streak["last_completion_fingerprint"], worker["completion_task_fingerprint"])
+        reassign.assert_called_once()
+
+    def test_owner_ready_note_without_handoff_is_no_progress_even_with_new_head(self) -> None:
+        dispatched_task = self._task()
+        current_task = self._task(next_step="Implementation complete; ready for independent review")
+        worker = self._worker(dispatched_task)
+        with (
+            mock.patch.object(supervisor, "resolve_task_progress_head", return_value="b" * 40),
+            mock.patch.object(supervisor, "task_lifecycle_activity_snapshot", return_value=self.lifecycle),
+        ):
+            outcome = supervisor.successful_worker_exit_outcome(
+                self.config,
+                worker,
+                current_task,
+                terminal_statuses={"done", "review_approved"},
+            )
+        self.assertEqual(outcome, "no_progress")
+
+    def test_reviewer_success_exit_without_decision_is_no_progress(self) -> None:
+        task = self._task(status="review", next_step="Independent review required")
+        worker = self._worker(task, reason="review_ready_dispatch", agent_id="codex6")
+        state = self._state(worker)
+
+        self.assertTrue(self._poll(state, task, current_head="a" * 40))
+
+        self.assertEqual(worker["status"], "failed")
+        self.assertEqual(worker["last_error"], supervisor.NO_PROGRESS_WORKER_EXIT_REASON)
+
+    def test_poll_accepts_reviewer_reopen_as_durable_review_decision(self) -> None:
+        dispatch_task = self._task(status="review", next_step="Independent review required")
+        worker = self._worker(dispatch_task, reason="review_ready_dispatch", agent_id="codex6")
+        current_task = self._task(status="in_progress", next_step="Fix review finding B1")
+        state = self._state(worker)
+
+        self.assertTrue(self._poll(state, current_task, current_head="a" * 40))
+        self.assertEqual(worker["status"], "completed")
+        self.assertEqual(worker["progress_outcome"], "review_decided")
+
+    def test_boot_reconciliation_applies_same_no_progress_threshold(self) -> None:
+        task = self._task()
+        worker = self._worker(task)
+        state = self._state(worker, prior_count=1)
+        with (
+            mock.patch.object(supervisor, "load_status", return_value={"tasks": [task]}),
+            mock.patch.object(supervisor, "load_event_queue", return_value=[]),
+            mock.patch.object(supervisor, "pid_is_alive", return_value=False),
+            mock.patch.object(supervisor, "resolve_task_progress_head", return_value="a" * 40),
+            mock.patch.object(supervisor, "task_lifecycle_activity_snapshot", return_value=self.lifecycle),
+            mock.patch.object(supervisor, "write_activity_log"),
+            mock.patch.object(
+                supervisor,
+                "maybe_reassign_task_after_worker_failure",
+                return_value="Antigravity5",
+            ) as reassign,
+        ):
+            changed = supervisor.reconcile_runtime_on_boot(self.config, state)
+
+        self.assertTrue(changed)
+        self.assertEqual(worker["status"], "reassigned")
+        self.assertEqual(worker["reassigned_to"], "Antigravity5")
+        reassign.assert_called_once()
+
+
 class SupervisorFailureLoopCoverageTests(unittest.TestCase):
     def setUp(self) -> None:
         self.config = load_test_config()

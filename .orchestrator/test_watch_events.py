@@ -8,6 +8,53 @@ import watch_events
 
 
 class WatcherBookkeepingTests(unittest.TestCase):
+    def test_owner_wakeup_requires_official_handoff_before_exit(self) -> None:
+        config = {
+            "agents": {
+                "antigravity4": {
+                    "id": "antigravity4",
+                    "display_name": "Antigravity4",
+                    "wake_template": ".orchestrator/templates/wakeup.txt",
+                }
+            },
+            "branch_workflow": {"dev_branch": "dev", "task_branch_prefix": "task/"},
+        }
+        event = {
+            "task_id": "ODP-POSTCONDITION-001",
+            "reason": "owned_in_progress_dispatch",
+            "context_files": ["ai-status.json"],
+            "task": {"artifacts": []},
+        }
+
+        message = watch_events.render_wakeup_message(config, event, "antigravity4")
+
+        self.assertIn("正式 handoff／re_review", message)
+        self.assertIn("no-progress failure", message)
+
+    def test_reviewer_wakeup_requires_durable_review_decision(self) -> None:
+        config = {
+            "agents": {
+                "codex6": {
+                    "id": "codex6",
+                    "display_name": "Codex6",
+                    "wake_template": ".orchestrator/templates/wakeup.txt",
+                }
+            },
+            "branch_workflow": {"dev_branch": "dev", "task_branch_prefix": "task/"},
+        }
+        event = {
+            "task_id": "ODP-POSTCONDITION-001",
+            "reason": "review_ready_dispatch",
+            "context_files": ["ai-status.json"],
+            "task": {"artifacts": []},
+        }
+
+        message = watch_events.render_wakeup_message(config, event, "codex6")
+
+        self.assertIn("reviewer dispatch", message)
+        self.assertIn("通過則 approve", message)
+        self.assertIn("no-progress failure", message)
+
     def test_run_scan_updates_snapshot_without_queueing_when_runtime_enqueue_disabled(self) -> None:
         config = {
             "schema": {
