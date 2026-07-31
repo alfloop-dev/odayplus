@@ -340,11 +340,11 @@ def compute_provider_watch_signature(
         raise ValueError("proof_hash must be a non-empty string for provider watch signature computation. Fail-closed gate enforced.")
     clean_sha = validate_full_sha(release_sha, "release_sha")
 
-    rb_base = f"readback:{gcp_project}:{clean_sha}:{proof_hash}".encode("utf-8")
+    rb_base = f"readback:{gcp_project}:{clean_sha}:{proof_hash}".encode()
     rb_hash = hashlib.sha256(rb_base).hexdigest()
     rb_token = f"readback-identity-{gcp_project}-{clean_sha[:16]}-{rb_hash[:16]}"
 
-    sig_base = f"{provider_secret}:{provider_receipt_id}:{gcp_project}:{clean_sha}:{start_iso}:{end_iso}:{proof_hash}:{rb_token}".encode("utf-8")
+    sig_base = f"{provider_secret}:{provider_receipt_id}:{gcp_project}:{clean_sha}:{start_iso}:{end_iso}:{proof_hash}:{rb_token}".encode()
     sig_hash = hashlib.sha256(sig_base).hexdigest()
     sig_token = f"sig-sha256-{sig_hash}"
 

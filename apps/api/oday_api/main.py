@@ -495,8 +495,11 @@ else:
                     "/platform/health",
                     "/platform/version",
                     "/platform/observability",
+                    "/api/v1/platform/observability",
                     "/platform/metrics/export",
+                    "/api/v1/platform/metrics/export",
                     "/platform/dashboards/provisioned",
+                    "/api/v1/platform/dashboards/provisioned",
                     "/readiness",
                     "/docs",
                     "/docs/oauth2-redirect",
@@ -642,8 +645,10 @@ else:
         def platform_version(request: Request) -> dict[str, str]:
             return release_version_payload(correlation_id=request.state.correlation_id)
 
-        @api.get("/platform/observability", tags=["platform"])
-        @api.get("/platform/metrics/export", tags=["platform"])
+        platform_observability_router = APIRouter()
+
+        @platform_observability_router.get("/platform/observability", tags=["platform"])
+        @platform_observability_router.get("/platform/metrics/export", tags=["platform"])
         def platform_metrics_export(request: Request) -> dict[str, Any]:
             from shared.observability import ProductionMetricsExporter, default_registry
 
@@ -664,7 +669,7 @@ else:
                     code="invalid_release_sha",
                 ) from exc
 
-        @api.get("/platform/dashboards/provisioned", tags=["platform"])
+        @platform_observability_router.get("/platform/dashboards/provisioned", tags=["platform"])
         def platform_dashboards_provisioned(request: Request) -> dict[str, Any]:
             from shared.observability import render_dashboard_provisioning
 
@@ -683,6 +688,9 @@ else:
                     f"Production dashboard provisioning failed-closed: {exc}",
                     code="invalid_release_sha",
                 ) from exc
+
+        mount_versioned(api, platform_observability_router)
+
 
 
 

@@ -589,9 +589,9 @@ def test_alert_routing_and_real_notification_delivery(monkeypatch: Any) -> None:
             prov_rcpt = "prov-rcpt-9876543210"
             req_bytes = json.dumps(payload, sort_keys=True).encode("utf-8")
             req_hash = hashlib.sha256(req_bytes).hexdigest()
-            sig_base = f"{provider_secret}:{prov_rcpt}:{req_hash}:{valid_sha}".encode("utf-8")
+            sig_base = f"{provider_secret}:{prov_rcpt}:{req_hash}:{valid_sha}".encode()
             sig_token = f"sig-sha256-{hashlib.sha256(sig_base).hexdigest()}"
-            rb_base = f"readback:{req_hash}".encode("utf-8")
+            rb_base = f"readback:{req_hash}".encode()
             rb_token = hashlib.sha256(rb_base).hexdigest()
 
             response_payload = {
@@ -2721,9 +2721,9 @@ def test_round8_oncall_adapter_authenticity_and_sha_enforced(monkeypatch: Any) -
             prov_rcpt = "prov-rcpt-authentic-999"
             req_bytes = json.dumps(payload, sort_keys=True).encode("utf-8")
             req_hash = hashlib.sha256(req_bytes).hexdigest()
-            sig_base = f"{secret_val}:{prov_rcpt}:{req_hash}:{valid_sha}".encode("utf-8")
+            sig_base = f"{secret_val}:{prov_rcpt}:{req_hash}:{valid_sha}".encode()
             sig_token = f"sig-sha256-{hashlib.sha256(sig_base).hexdigest()}"
-            rb_base = f"readback:{req_hash}".encode("utf-8")
+            rb_base = f"readback:{req_hash}".encode()
             rb_token = hashlib.sha256(rb_base).hexdigest()
 
             response_payload = {
@@ -3016,9 +3016,9 @@ def test_round13_remediation_findings_b1_b2_verified(monkeypatch: Any, tmp_path:
             prov_rcpt = f"prov-auth-{payload.get('delivery_id', '999')}"
             req_bytes = json.dumps(payload, sort_keys=True).encode("utf-8")
             req_hash = hashlib.sha256(req_bytes).hexdigest()
-            sig_base = f"{provider_sec}:{prov_rcpt}:{req_hash}:{valid_sha}".encode("utf-8")
+            sig_base = f"{provider_sec}:{prov_rcpt}:{req_hash}:{valid_sha}".encode()
             sig_token = f"sig-sha256-{hashlib.sha256(sig_base).hexdigest()}"
-            rb_base = f"readback:{req_hash}".encode("utf-8")
+            rb_base = f"readback:{req_hash}".encode()
             rb_token = hashlib.sha256(rb_base).hexdigest()
 
             response_payload = {
