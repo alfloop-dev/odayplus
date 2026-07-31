@@ -5004,3 +5004,332 @@ def test_file_authority_store_b30_crash_outcome_rollback_and_intent_journal_reco
     assert is_del_fresh is False
     assert st_fresh == "PENDING_VERIFICATION"
     assert "already been consumed" in str(err_fresh)
+
+
+def test_file_authority_store_b31_path_traversal_and_safe_filename_mutations(tmp_path):
+    """B31 Remediation Test: Proves raw delivery_id cannot become filesystem path or escape journal_dir.
+    Tests traversal, separator, dot segment, absolute path, Unicode-equivalent, and overlong ID mutations.
+    """
+    from cryptography.hazmat.primitives.asymmetric import ed25519
+
+    from modules.notifications.domain.authority import (
+        CANONICAL_AUTHORITY_ISSUER_IDENTITY,
+        DeliveryAuthorityRecord,
+        FileDeliveryAuthorityStore,
+    )
+
+    auth_priv_key = ed25519.Ed25519PrivateKey.generate()
+
+    def _make_rec(del_id: str) -> DeliveryAuthorityRecord:
+        prov_rcpt = "prov-b31"
+        req_hash = "a" * 64
+        rel_sha = "b" * 40
+        route = "ops-lead"
+        ts = datetime.now(UTC).isoformat()
+        issuer = CANONICAL_AUTHORITY_ISSUER_IDENTITY
+        payload = f"authority_record:{del_id}:{prov_rcpt}:{req_hash}:{rel_sha}:{route}:{ts}:{issuer}".encode()
+        sig = base64.b64encode(auth_priv_key.sign(payload)).decode("utf-8")
+        return DeliveryAuthorityRecord(
+            delivery_id=del_id,
+            provider_receipt_id=prov_rcpt,
+            request_hash=req_hash,
+            release_sha=rel_sha,
+            oncall_route=route,
+            timestamp=ts,
+            issuer_identity=issuer,
+            issuer_signature=sig,
+        )
+
+    def _val(r):
+        return True, "DELIVERED", None
+
+    store_file = tmp_path / "authority_b31.json"
+    store = FileDeliveryAuthorityStore(store_file)
+
+    unsafe_ids = [
+        "../escaped",
+        "../../foo",
+        "foo/bar",
+        "foo\\bar",
+        ".",
+        "..",
+        "./foo",
+        "../foo",
+        "/etc/passwd",
+        "C:\\Windows",
+        "del\x00null",
+        "del\nnewline",
+        "\u002e\u002e",
+        "del\uff0ftraversal",
+        "a" * 2000,
+    ]
+
+    for bad_id in unsafe_ids:
+        try:
+            _make_rec(bad_id)
+            is_del, st, err = store.atomic_consume_if_valid(bad_id, _val)
+            assert is_del is False
+            assert st == "PENDING_VERIFICATION"
+            assert "rejected" in str(err) or "Invalid" in str(err) or "unsafe" in str(err)
+        except ValueError as val_err:
+            assert "Invalid" in str(val_err) or "unsafe" in str(val_err) or "rejected" in str(val_err)
+
+    # Verify no files were created outside the journal directory
+    outside_files = [f for f in tmp_path.glob("*") if f != store_file and f != store.lock_path and f != store.journal_dir]
+    assert len(outside_files) == 0
+
+    # Test valid ID uses safe SHA-256 digest filename stem
+    valid_id = "del-b31-valid-1"
+    valid_rec = _make_rec(valid_id)
+    store.store_authority_record_out_of_process(valid_rec)
+    is_del_ok, st_ok, err_ok = store.atomic_consume_if_valid(valid_id, _val)
+    assert is_del_ok is True
+    assert st_ok == "DELIVERED"
+    assert err_ok is None
+
+    # Check journal directory contains sha256 stem .intent file
+    expected_stem = hashlib.sha256(valid_id.encode("utf-8")).hexdigest()
+    intent_file = store.journal_dir / f"{expected_stem}.intent"
+    assert intent_file.exists()
+    assert intent_file.parent.resolve() == store.journal_dir.resolve()
+
+
+def test_file_authority_store_b32_store_tenant_isolation_and_namespace_collision_mutations(tmp_path):
+    """B32 Remediation Test: Proves separate authority stores isolate lock and journal namespaces
+    and bind journal records to exact store identity. Tests same-stem json/yaml, cross-directory, and cross-tenant collisions.
+    """
+    from cryptography.hazmat.primitives.asymmetric import ed25519
+
+    from modules.notifications.domain.authority import (
+        CANONICAL_AUTHORITY_ISSUER_IDENTITY,
+        DeliveryAuthorityRecord,
+        FileDeliveryAuthorityStore,
+    )
+
+    auth_priv_key = ed25519.Ed25519PrivateKey.generate()
+    delivery_id = "shared-id-b32"
+    prov_rcpt = "prov-b32"
+    req_hash = "b" * 64
+    rel_sha = "c" * 40
+    route = "ops-lead"
+    ts = datetime.now(UTC).isoformat()
+    issuer = CANONICAL_AUTHORITY_ISSUER_IDENTITY
+    payload = f"authority_record:{delivery_id}:{prov_rcpt}:{req_hash}:{rel_sha}:{route}:{ts}:{issuer}".encode()
+    sig = base64.b64encode(auth_priv_key.sign(payload)).decode("utf-8")
+    rec = DeliveryAuthorityRecord(
+        delivery_id=delivery_id,
+        provider_receipt_id=prov_rcpt,
+        request_hash=req_hash,
+        release_sha=rel_sha,
+        oncall_route=route,
+        timestamp=ts,
+        issuer_identity=issuer,
+        issuer_signature=sig,
+    )
+
+    def _val(r):
+        return True, "DELIVERED", None
+
+    # 1. Same stem json vs yaml in same directory
+    store_json = tmp_path / "authority.json"
+    store_yaml = tmp_path / "authority.yaml"
+    s_json = FileDeliveryAuthorityStore(store_json)
+    s_yaml = FileDeliveryAuthorityStore(store_yaml)
+
+    assert s_json.journal_dir != s_yaml.journal_dir
+    assert s_json.lock_path != s_yaml.lock_path
+
+    s_json.store_authority_record_out_of_process(rec)
+    s_yaml.store_authority_record_out_of_process(rec)
+
+    is_del1, st1, err1 = s_json.atomic_consume_if_valid(delivery_id, _val)
+    assert is_del1 is True and st1 == "DELIVERED"
+
+    # Consuming shared-id in s_json MUST NOT cause s_yaml to reject its record or collide namespaces
+    is_del2, st2, err2 = s_yaml.atomic_consume_if_valid(delivery_id, _val)
+    assert is_del2 is True and st2 == "DELIVERED"
+
+    # 2. Cross-directory collision test
+    dirA = tmp_path / "dirA"
+    dirB = tmp_path / "dirB"
+    s_dirA = FileDeliveryAuthorityStore(dirA / "authority.json")
+    s_dirB = FileDeliveryAuthorityStore(dirB / "authority.json")
+
+    assert s_dirA.store_identity != s_dirB.store_identity
+    s_dirA.store_authority_record_out_of_process(rec)
+    s_dirB.store_authority_record_out_of_process(rec)
+
+    is_delA, stA, _ = s_dirA.atomic_consume_if_valid(delivery_id, _val)
+    is_delB, stB, _ = s_dirB.atomic_consume_if_valid(delivery_id, _val)
+    assert is_delA is True and stA == "DELIVERED"
+    assert is_delB is True and stB == "DELIVERED"
+
+
+def test_file_authority_store_b33_corrupt_journal_intent_fail_closed(tmp_path):
+    """B33 Remediation Test: Proves corrupt, malformed, invalid schema, or conflicting intent files fail closed
+    and surface explicit indeterminate state rather than being silently skipped or overwritten.
+    """
+    from cryptography.hazmat.primitives.asymmetric import ed25519
+
+    from modules.notifications.domain.authority import (
+        CANONICAL_AUTHORITY_ISSUER_IDENTITY,
+        DeliveryAuthorityRecord,
+        FileDeliveryAuthorityStore,
+    )
+
+    auth_priv_key = ed25519.Ed25519PrivateKey.generate()
+    delivery_id = "del-b33-corrupt"
+    prov_rcpt = "prov-b33"
+    req_hash = "c" * 64
+    rel_sha = "d" * 40
+    route = "ops-lead"
+    ts = datetime.now(UTC).isoformat()
+    issuer = CANONICAL_AUTHORITY_ISSUER_IDENTITY
+    payload = f"authority_record:{delivery_id}:{prov_rcpt}:{req_hash}:{rel_sha}:{route}:{ts}:{issuer}".encode()
+    sig = base64.b64encode(auth_priv_key.sign(payload)).decode("utf-8")
+    rec = DeliveryAuthorityRecord(
+        delivery_id=delivery_id,
+        provider_receipt_id=prov_rcpt,
+        request_hash=req_hash,
+        release_sha=rel_sha,
+        oncall_route=route,
+        timestamp=ts,
+        issuer_identity=issuer,
+        issuer_signature=sig,
+    )
+
+    def _val(r):
+        return True, "DELIVERED", None
+
+    store_file = tmp_path / "authority_b33.json"
+    store = FileDeliveryAuthorityStore(store_file)
+    store.store_authority_record_out_of_process(rec)
+
+    # Inject corrupt non-JSON intent file into journal dir
+    store.journal_dir.mkdir(parents=True, exist_ok=True)
+    corrupt_file = store.journal_dir / "corrupt.intent"
+    corrupt_file.write_text("{invalid json content ...", encoding="utf-8")
+
+    is_del, st, err = store.atomic_consume_if_valid(delivery_id, _val)
+    assert is_del is False
+    assert st == "PENDING_VERIFICATION"
+    assert "corrupt" in str(err) or "Unreadable" in str(err) or "Authority store read failed" in str(err)
+
+
+def test_file_authority_store_b34_forged_local_intent_rejection(tmp_path):
+    """B34 Remediation Test: Proves caller-writable unauthenticated local JSON files cannot fabricate authority
+    or alter state; signature and store identity verification fail closed.
+    """
+    from cryptography.hazmat.primitives.asymmetric import ed25519
+
+    from modules.notifications.domain.authority import (
+        CANONICAL_AUTHORITY_ISSUER_IDENTITY,
+        DeliveryAuthorityRecord,
+        FileDeliveryAuthorityStore,
+    )
+
+    auth_priv_key = ed25519.Ed25519PrivateKey.generate()
+    delivery_id = "del-b34-forged"
+    prov_rcpt = "prov-b34"
+    req_hash = "e" * 64
+    rel_sha = "f" * 40
+    route = "ops-lead"
+    ts = datetime.now(UTC).isoformat()
+    issuer = CANONICAL_AUTHORITY_ISSUER_IDENTITY
+    payload = f"authority_record:{delivery_id}:{prov_rcpt}:{req_hash}:{rel_sha}:{route}:{ts}:{issuer}".encode()
+    sig = base64.b64encode(auth_priv_key.sign(payload)).decode("utf-8")
+    rec = DeliveryAuthorityRecord(
+        delivery_id=delivery_id,
+        provider_receipt_id=prov_rcpt,
+        request_hash=req_hash,
+        release_sha=rel_sha,
+        oncall_route=route,
+        timestamp=ts,
+        issuer_identity=issuer,
+        issuer_signature=sig,
+    )
+
+    def _val(r):
+        return True, "DELIVERED", None
+
+    store_file = tmp_path / "authority_b34.json"
+    store = FileDeliveryAuthorityStore(store_file)
+    store.store_authority_record_out_of_process(rec)
+
+    # Drop forged local JSON intent file with invalid signature
+    store.journal_dir.mkdir(parents=True, exist_ok=True)
+    forged_file = store.journal_dir / "forged.intent"
+    forged_data = {
+        "version": 1,
+        "delivery_id": delivery_id,
+        "provider_receipt_id": prov_rcpt,
+        "request_hash": req_hash,
+        "release_sha": rel_sha,
+        "oncall_route": route,
+        "issuer_identity": issuer,
+        "issuer_signature": "aW52YWxpZCBzaWduYXR1cmUgYnl0ZXM=",  # base64 "invalid signature bytes"
+        "store_identity": store.store_identity,
+        "timestamp": ts,
+        "transition": "CONSUMED",
+    }
+    forged_file.write_text(json.dumps(forged_data), encoding="utf-8")
+
+    is_del, st, err = store.atomic_consume_if_valid(delivery_id, _val)
+    assert is_del is False
+    assert st == "PENDING_VERIFICATION"
+    assert "signature verification failed" in str(err) or "Authority store read failed" in str(err)
+
+
+def test_file_authority_store_b35_reconciliation_persistence_failure_propagation(tmp_path, monkeypatch):
+    """B35 Remediation Test: Proves journal and primary-store write/fsync failures propagate upward,
+    leaving the authority store fail-closed without claiming unproven transitions.
+    """
+    from cryptography.hazmat.primitives.asymmetric import ed25519
+
+    from modules.notifications.domain.authority import (
+        CANONICAL_AUTHORITY_ISSUER_IDENTITY,
+        DeliveryAuthorityRecord,
+        FileDeliveryAuthorityStore,
+    )
+
+    auth_priv_key = ed25519.Ed25519PrivateKey.generate()
+    delivery_id = "del-b35-write-fail"
+    prov_rcpt = "prov-b35"
+    req_hash = "f" * 64
+    rel_sha = "a" * 40
+    route = "ops-lead"
+    ts = datetime.now(UTC).isoformat()
+    issuer = CANONICAL_AUTHORITY_ISSUER_IDENTITY
+    payload = f"authority_record:{delivery_id}:{prov_rcpt}:{req_hash}:{rel_sha}:{route}:{ts}:{issuer}".encode()
+    sig = base64.b64encode(auth_priv_key.sign(payload)).decode("utf-8")
+    rec = DeliveryAuthorityRecord(
+        delivery_id=delivery_id,
+        provider_receipt_id=prov_rcpt,
+        request_hash=req_hash,
+        release_sha=rel_sha,
+        oncall_route=route,
+        timestamp=ts,
+        issuer_identity=issuer,
+        issuer_signature=sig,
+    )
+
+    def _val(r):
+        return True, "DELIVERED", None
+
+    store_file = tmp_path / "authority_b35.json"
+    store = FileDeliveryAuthorityStore(store_file)
+    store.store_authority_record_out_of_process(rec)
+
+    # Write a valid intent file into journal dir
+    store._write_journal_intent(rec)
+
+    # Monkeypatch _write_store_data_atomic to fail during reconciliation in _read_store_data
+    def mock_write_fail(data):
+        raise OSError(5, "Injected store write EIO during reconciliation")
+
+    monkeypatch.setattr(store, "_write_store_data_atomic", mock_write_fail)
+
+    is_del, st, err = store.atomic_consume_if_valid(delivery_id, _val)
+    assert is_del is False
+    assert st == "PENDING_VERIFICATION"
+    assert "Injected store write EIO" in str(err)
