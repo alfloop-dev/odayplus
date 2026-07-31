@@ -11034,7 +11034,7 @@ class SupervisorFailureLoopCoverageTests(unittest.TestCase):
             ("g" * 40, False),  # 40 non-hex -> invalid
         ]
 
-        for sha, _is_valid in sha_candidates:
+        for sha, is_valid in sha_candidates:
             ai_status.clear_ai_status_caches()
 
             def fake_ls_remote(cmd, current_sha=sha, **kwargs):
@@ -11046,6 +11046,13 @@ class SupervisorFailureLoopCoverageTests(unittest.TestCase):
                         stdout=f"{current_sha}\t{remote_ref}\n",
                     )
                 return unittest.mock.Mock(returncode=1, stdout="")
+
+            with unittest.mock.patch("subprocess.run", side_effect=fake_ls_remote):
+                resolved = ai_status.resolve_task_sha(task_id, force_refresh=True)
+                if is_valid:
+                    self.assertEqual(resolved, sha)
+                else:
+                    self.assertIsNone(resolved)
 
 class ReleaseCompletedWorkerForClaimTests(unittest.TestCase):
     def setUp(self) -> None:
@@ -11466,7 +11473,8 @@ class ProcessQueueAgentOverrideTests(unittest.TestCase):
              mock.patch.object(supervisor, "prepare_worker_workspace", return_value=(True, "ok")), \
              mock.patch.object(supervisor, "check_worker_tree_clean", return_value=(True, "ok")), \
              mock.patch.object(supervisor, "start_worker_for_request", return_value=(True, "run-codex6-1", {})) as start_worker, \
-             mock.patch.object(supervisor, "write_activity_log"):
+             mock.patch.object(supervisor, "write_activity_log"), \
+             mock.patch.object(supervisor, "build_request", wraps=supervisor.build_request) as build_req_mock:
             changed = supervisor.process_queue(
                 self.config,
                 state,
@@ -11481,6 +11489,8 @@ class ProcessQueueAgentOverrideTests(unittest.TestCase):
         self.assertEqual(state["queue"]["events"]["evt-malformed-target"]["status"], "pending")
         self.assertEqual(state["queue"]["events"]["evt-unknown-target"]["status"], "pending")
         start_worker.assert_called_once()
+        called_event_ids = [call.args[1]["event_id"] for call in build_req_mock.call_args_list]
+        self.assertEqual(called_event_ids, ["evt-codex6-1"])
 
 
 if __name__ == "__main__":

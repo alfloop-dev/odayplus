@@ -2073,11 +2073,7 @@ def process_queue(
         if allowed_agent_ids is not None:
             target_agent = str(event.get("target_agent") or event.get("agent_id") or "").strip()
             if not target_agent:
-                try:
-                    req = build_request(config, event)
-                    target_agent = str(getattr(req, "agent_id", "") or "").strip()
-                except Exception:
-                    pass
+                continue
             target_agent_id = normalize_agent_id(target_agent)
             if not target_agent_id or target_agent_id not in allowed_agent_ids:
                 continue
