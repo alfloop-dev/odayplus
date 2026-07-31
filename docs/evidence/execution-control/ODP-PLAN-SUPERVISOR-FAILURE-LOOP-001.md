@@ -617,3 +617,65 @@ bf7052d41dfe6207b8f7c834e6bbb9a1b0cbb48ca2f37a8c415fc0e023d06382
 
 No PR, merge, live Supervisor restart, or production deployment was performed.
 Exact-head independent re-review remains mandatory before those gates.
+
+---
+
+## 12. Coordinator completion addendum — R20 canonical status-root binding
+
+The Round-6 live review drill exposed a materialization failure after all
+implementation and CI checks were green. Dispatch run
+`codex-20260731T134930Z-c90822b9` correctly recorded:
+
+- workspace
+  `/tmp/pantheon-worker-worktrees/oday-plus-supervisor-live/odp-plan-supervisor-failure-loop-001`;
+- branch `task/ODP-PLAN-SUPERVISOR-FAILURE-LOOP-001` at pushed head
+  `556d71e791f323c0931494ad12f056bfb2a49c01`; and
+- status root `/home/lupin/oday-plus-supervisor-live`.
+
+The reviewer nevertheless invoked the official approval command with
+`PANTHEON_STATUS_ROOT` set to the task worktree. GitHub's
+`task-review-gate` became successful and the worktree-local shadow entered
+`review_approved`, while the canonical live task remained at the stale Round-5
+freeze `02d88546`. This is a real receipt-versus-materialization failure, not a
+synthetic mutation.
+
+The canonical state was repaired through the official fail-closed sequence:
+`re_review` cleared the stale Round-5 freeze, then the already-recorded Codex6
+Round-6 decision was replayed at the exact pushed head. The live activity log
+contains both events at `2026-07-31T14:00:03Z` and
+`2026-07-31T14:00:07Z`; the canonical task remained
+`review_approved / 556d71e791f323c0931494ad12f056bfb2a49c01` after a
+subsequent Supervisor tick.
+
+### R20: Supervisor-authoritative coordination root
+
+Every initial adapter dispatch now exports `ORCH_STATUS_ROOT` from the
+Supervisor-selected receipt metadata, alongside the legacy
+`PANTHEON_STATUS_ROOT`. Claude resume dispatches preserve the same binding.
+Official task-status and task-archive resolution gives `ORCH_STATUS_ROOT`
+precedence, so a worker-facing `PANTHEON_STATUS_ROOT` override cannot silently
+redirect canonical mutations to a worktree shadow. The existing variable
+remains available for compatibility outside orchestrated workers.
+
+Regression coverage constructs divergent canonical and shadow roots and proves
+that both `ai_status` and `task_archive` resolve the canonical value. Adapter
+coverage proves the authoritative root is present in the spawned environment.
+
+### R20 verification receipts
+
+```text
+AI_NAME=CodexCoordinator AI_STATUS_EXTRA_AGENTS=CodexCoordinator \
+  uv run pytest -m "not requires_live_env" .orchestrator scripts
+596 passed, 10 deselected, 2 warnings, 188 subtests passed
+
+uv run ruff check .orchestrator scripts
+All checks passed
+
+git diff --check
+clean
+```
+
+The complete suite left the canonical live `ai-status.json` and
+`ai-activity-log.jsonl` hashes unchanged. PR auto-merge was disabled and the
+task-review gate was reopened before this remediation. A fresh exact-head
+independent review is mandatory before merge, closeout, or deployment.

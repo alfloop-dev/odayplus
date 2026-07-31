@@ -100,6 +100,19 @@ def tearDownModule() -> None:
 
 
 class StatusRootRoutingTests(unittest.TestCase):
+    def test_orchestrator_status_root_wins_over_worker_shadow_override(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="ai-status-canonical-root-") as temp_dir:
+            root = Path(temp_dir)
+            canonical = root / "supervisor-live"
+            shadow = root / "task-worktree"
+            env = {
+                "ORCH_STATUS_ROOT": str(canonical),
+                "PANTHEON_STATUS_ROOT": str(shadow),
+            }
+            with mock.patch.dict(os.environ, env, clear=True):
+                self.assertEqual(ai_status.resolve_status_root(), canonical.resolve())
+                self.assertEqual(task_archive.status_root(), canonical.resolve())
+
     def test_load_local_coordination_payload_tolerates_missing_yaml(self) -> None:
         with tempfile.TemporaryDirectory(prefix="ai-status-no-yaml-") as temp_dir:
             root = Path(temp_dir)

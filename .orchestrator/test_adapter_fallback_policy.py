@@ -43,6 +43,7 @@ class AdapterFallbackPolicyTests(unittest.TestCase):
         self.assertEqual(env["AI_STATUS_EXTRA_AGENTS"], "FleetAuditor,Codex")
         self.assertEqual(env["PANTHEON_WORKTREE_ROOT"], str(workspace))
         self.assertEqual(env["PANTHEON_STATUS_ROOT"], str(status_root))
+        self.assertEqual(env["ORCH_STATUS_ROOT"], str(status_root))
 
     def test_codex_alias_sets_agent_identity_env(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -179,6 +180,7 @@ class AdapterFallbackPolicyTests(unittest.TestCase):
         env = spawn.call_args.kwargs["env"]
         self.assertEqual(env["PANTHEON_WORKTREE_ROOT"], str(workspace))
         self.assertEqual(env["PANTHEON_STATUS_ROOT"], str(status_root))
+        self.assertEqual(env["ORCH_STATUS_ROOT"], str(status_root))
         self.assertEqual(env["ORCH_WORKSPACE_PATH"], str(workspace))
 
     def test_claude_can_disable_inbox_fallback(self) -> None:

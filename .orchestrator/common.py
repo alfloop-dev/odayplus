@@ -287,6 +287,12 @@ def delivery_runtime_env(config: dict[str, Any], metadata: dict[str, Any] | None
     result = {
         "PANTHEON_WORKTREE_ROOT": str(workspace_root),
         "PANTHEON_STATUS_ROOT": str(status_root),
+        # Keep the Supervisor-selected coordination root separate from the
+        # worker-facing compatibility variable.  A worker may reasonably
+        # override PANTHEON_STATUS_ROOT while inspecting a task worktree; the
+        # official status/archive commands must still materialize mutations in
+        # the fleet root recorded by the dispatch receipt.
+        "ORCH_STATUS_ROOT": str(status_root),
         "ORCH_WORKSPACE_PATH": str(workspace_root),
     }
     actor_name = str((metadata or {}).get("target_display_name") or "").strip()

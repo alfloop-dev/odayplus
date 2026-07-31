@@ -24,11 +24,30 @@ except ModuleNotFoundError:  # pragma: no cover - exercised only in lean supervi
 YAML_ERROR_TYPES = (yaml.YAMLError,) if yaml is not None else ()
 
 ROOT = Path(__file__).resolve().parents[1]
-STATUS_ROOT = (
-    Path(os.path.expanduser(os.environ["PANTHEON_STATUS_ROOT"])).resolve()
-    if os.environ.get("PANTHEON_STATUS_ROOT")
-    else ROOT
-)
+
+
+def resolve_status_root(
+    env: dict[str, str] | os._Environ[str] | None = None,
+    *,
+    default_root: Path = ROOT,
+) -> Path:
+    """Resolve the canonical coordination root for status mutations.
+
+    ``ORCH_STATUS_ROOT`` is written by the Supervisor from the dispatch
+    receipt and deliberately wins over the legacy worker-facing
+    ``PANTHEON_STATUS_ROOT``.  This prevents an otherwise valid worker from
+    making GitHub's review row green while materializing the matching task
+    transition only in a worktree-local shadow.
+    """
+
+    source = os.environ if env is None else env
+    raw = str(source.get("ORCH_STATUS_ROOT") or source.get("PANTHEON_STATUS_ROOT") or "").strip()
+    if not raw:
+        return default_root
+    return Path(os.path.expanduser(raw)).resolve()
+
+
+STATUS_ROOT = resolve_status_root()
 ORCHESTRATOR_DIR = ROOT / ".orchestrator"
 if str(ORCHESTRATOR_DIR) not in sys.path:
     sys.path.insert(0, str(ORCHESTRATOR_DIR))

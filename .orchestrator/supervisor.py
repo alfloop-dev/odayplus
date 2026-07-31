@@ -6279,6 +6279,7 @@ def resume_claude_worker(
             "ORCH_SESSION_ID": str(session_id),
             "PANTHEON_WORKTREE_ROOT": str(workspace_root),
             "PANTHEON_STATUS_ROOT": str(status_root),
+            "ORCH_STATUS_ROOT": str(status_root),
             "ORCH_WORKSPACE_PATH": str(workspace_root),
         }
     )
