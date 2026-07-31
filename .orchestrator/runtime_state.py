@@ -4,6 +4,7 @@ from __future__ import annotations
 import fcntl
 from contextlib import contextmanager
 from copy import deepcopy
+from datetime import datetime
 from pathlib import Path
 from typing import Any
 
@@ -34,6 +35,7 @@ def default_state() -> dict[str, Any]:
         # consume the per-tick budget forever and starve later reviewers.
         "ready_dispatcher": {
             "weighted_cursor": 0,
+            "weighted_cursor_revision": 0,
             "weighted_cursor_updated_at": None,
         },
         "queue": {
@@ -109,6 +111,15 @@ def default_state() -> dict[str, Any]:
     }
 
 
+def _nonnegative_cursor_revision(value: Any) -> int:
+    if isinstance(value, bool):
+        return 0
+    try:
+        return max(0, int(value))
+    except (TypeError, ValueError):
+        return 0
+
+
 def migrate_state(raw: dict[str, Any] | None) -> dict[str, Any]:
     state = deepcopy(default_state())
     if not raw:
@@ -129,10 +140,18 @@ def migrate_state(raw: dict[str, Any] | None) -> dict[str, Any]:
         )
     except (TypeError, ValueError):
         ready_dispatcher["weighted_cursor"] = 0
-    cursor_updated_at = ready_dispatcher.get("weighted_cursor_updated_at")
-    ready_dispatcher["weighted_cursor_updated_at"] = (
-        cursor_updated_at if isinstance(cursor_updated_at, str) and cursor_updated_at else None
+    ready_dispatcher["weighted_cursor_revision"] = _nonnegative_cursor_revision(
+        ready_dispatcher.get("weighted_cursor_revision", 0)
     )
+    cursor_updated_at = ready_dispatcher.get("weighted_cursor_updated_at")
+    if isinstance(cursor_updated_at, str) and cursor_updated_at:
+        try:
+            datetime.fromisoformat(cursor_updated_at.replace("Z", "+00:00"))
+        except ValueError:
+            cursor_updated_at = None
+    else:
+        cursor_updated_at = None
+    ready_dispatcher["weighted_cursor_updated_at"] = cursor_updated_at
     state.setdefault("queue", {})
     state["queue"].setdefault("events", {})
     state.setdefault("workers", {})
@@ -400,19 +419,25 @@ def merge_runtime_states(disk_state: dict[str, Any], in_mem_state: dict[str, Any
 
     # `--claim-agent` intentionally does not advance the global weighted
     # cursor, but it can save a snapshot loaded before the singleton loop
-    # advanced it. Preserve whichever writer actually updated the cursor most
-    # recently. Legacy/equal snapshots prefer disk so an auxiliary writer can
-    # never roll scheduling fairness backward.
+    # advanced it. A monotonic revision, advanced atomically with the cursor by
+    # the singleton dispatch path, determines the winner without relying on a
+    # collision-prone or attacker-controlled wall clock. Equal/legacy revisions
+    # prefer disk so an auxiliary writer can never roll scheduling fairness
+    # backward. The timestamp remains informational only.
     disk_dispatcher = disk_state.get("ready_dispatcher")
     mem_dispatcher = merged.get("ready_dispatcher")
     if isinstance(disk_dispatcher, dict):
-        disk_cursor_at = str(disk_dispatcher.get("weighted_cursor_updated_at") or "")
-        mem_cursor_at = (
-            str(mem_dispatcher.get("weighted_cursor_updated_at") or "")
-            if isinstance(mem_dispatcher, dict)
-            else ""
+        disk_revision = _nonnegative_cursor_revision(
+            disk_dispatcher.get("weighted_cursor_revision", 0)
         )
-        if not mem_cursor_at or disk_cursor_at >= mem_cursor_at:
+        mem_revision = (
+            _nonnegative_cursor_revision(
+                mem_dispatcher.get("weighted_cursor_revision", 0)
+            )
+            if isinstance(mem_dispatcher, dict)
+            else 0
+        )
+        if not isinstance(mem_dispatcher, dict) or disk_revision >= mem_revision:
             merged["ready_dispatcher"] = deepcopy(disk_dispatcher)
 
     disk_workers = disk_state.get("workers", {})

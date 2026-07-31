@@ -543,3 +543,77 @@ clean
 This closes the owner-side R17–R18 control batch. No live restart, PR, merge,
 or deployment was performed. Exact-head independent review and CI remain
 mandatory before the existing live process may be replaced.
+
+---
+
+## 11. Coordinator completion addendum — R19
+
+Round-4 independent review correctly rejected the R18 timestamp ordering
+contract. `utc_now()` is second-resolution, so two legitimate singleton
+dispatch cycles in the same second received the same cursor timestamp. The
+equal-time merge rule then preferred disk and could roll back the newer
+in-memory cursor. Because migration accepted any non-empty timestamp string, a
+malformed or far-future auxiliary value could also dominate valid timestamps.
+
+### R19: monotonic cursor revision
+
+`ready_dispatcher.weighted_cursor_revision` is now durable versioned state.
+Only the singleton ready-dispatch path advances it, in the same state mutation
+as the cursor advance. One-shot `--claim-agent` paths carry the revision they
+loaded but do not increment it. Concurrent merge compares only the nonnegative
+monotonic revision; wall-clock timestamps are informational and cannot decide
+the winner. Equal or legacy revisions prefer the already-durable disk cursor,
+so a stale auxiliary writer cannot roll fairness backward.
+
+Migration normalizes missing, boolean, negative, and malformed revisions to
+zero and rejects malformed timestamp syntax. A future timestamp has no ordering
+authority, so it cannot pin the cursor. The regression matrix proves:
+
+- a higher in-memory revision wins even when both wall clocks are identical;
+- a stale auxiliary snapshot cannot replace a newer disk revision;
+- equal revisions prefer disk;
+- malformed revision plus a future timestamp cannot outrank a valid revision;
+- worker and queue records from the auxiliary save still compose with the
+  winning cursor through the real locked save/reload path; and
+- repeated same-second dispatch cycles rotate from the owner candidate to the
+  assigned reviewer while revisions advance from one to two.
+
+### R19 verification receipts
+
+```text
+AI_NAME=CodexCoordinator PYTHONPATH=.orchestrator \
+  python3 -m unittest test_supervisor test_model_rotation \
+    test_adapter_fallback_policy test_runtime_state
+Ran 292 tests in 1.709s
+OK
+
+AI_NAME=CodexCoordinator python3 -m unittest scripts.test_ai_status
+Ran 101 tests in 0.782s
+OK
+
+AI_NAME=CodexCoordinator python3 .orchestrator/doctor.py
+exit 0
+
+AI_NAME=CodexCoordinator python3 -m ruff check \
+  .orchestrator/common.py .orchestrator/runtime_state.py \
+  .orchestrator/supervisor.py .orchestrator/test_adapter_fallback_policy.py \
+  .orchestrator/test_runtime_state.py .orchestrator/test_supervisor.py \
+  scripts/ai_status.py scripts/test_ai_status.py
+All checks passed
+
+git diff --check
+clean
+```
+
+The seeded coordination hashes remain unchanged from independent review:
+
+```text
+ai-status.json
+68eb8216f8205b93bd51d0ff5163f3dadb2f20274bde8797ff5f28161950e66c
+
+ai-activity-log.jsonl
+bf7052d41dfe6207b8f7c834e6bbb9a1b0cbb48ca2f37a8c415fc0e023d06382
+```
+
+No PR, merge, live Supervisor restart, or production deployment was performed.
+Exact-head independent re-review remains mandatory before those gates.

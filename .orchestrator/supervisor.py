@@ -9557,6 +9557,14 @@ def dispatch_ready_tasks(
 
     if agent_sequence and considered_agents and not agent_ids_override:
         dispatch_state["weighted_cursor"] = (dispatch_cursor + considered_agents) % len(agent_sequence)
+        raw_cursor_revision = dispatch_state.get("weighted_cursor_revision", 0)
+        try:
+            if isinstance(raw_cursor_revision, bool):
+                raise ValueError
+            cursor_revision = int(raw_cursor_revision)
+        except (TypeError, ValueError):
+            cursor_revision = 0
+        dispatch_state["weighted_cursor_revision"] = max(0, cursor_revision) + 1
         dispatch_state["weighted_cursor_updated_at"] = utc_now()
     return changed
 

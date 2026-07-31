@@ -1960,6 +1960,11 @@ class ProcessQueueDispatchGuardTests(unittest.TestCase):
             mock.patch.object(supervisor, "scan_live_worker_pids_by_agent", return_value={}),
             mock.patch.object(supervisor, "agent_auto_dispatch_block_reason", return_value=None),
             mock.patch.object(supervisor, "normalize_mainline_task_assignment", return_value=False),
+            mock.patch.object(
+                supervisor,
+                "utc_now",
+                return_value="2026-07-31T12:00:00Z",
+            ),
         )
         with contextlib.ExitStack() as stack:
             for patcher in common_patches:
@@ -1975,6 +1980,7 @@ class ProcessQueueDispatchGuardTests(unittest.TestCase):
 
         self.assertEqual(first_round[0]["task_id"], "OWNER-FIRST")
         self.assertEqual(state["ready_dispatcher"]["weighted_cursor"], 1)
+        self.assertEqual(state["ready_dispatcher"]["weighted_cursor_revision"], 1)
 
         # Simulate the end-of-loop save/reload boundary that previously erased
         # the cursor and restarted every round from Antigravity.
@@ -1993,6 +1999,11 @@ class ProcessQueueDispatchGuardTests(unittest.TestCase):
                 mock.patch.object(supervisor, "normalize_mainline_task_assignment", return_value=False),
                 mock.patch.object(
                     supervisor,
+                    "utc_now",
+                    return_value="2026-07-31T12:00:00Z",
+                ),
+                mock.patch.object(
+                    supervisor,
                     "queue_delivery_event",
                     side_effect=lambda _config, event: second_round.append(event) or True,
                 ),
@@ -2003,6 +2014,12 @@ class ProcessQueueDispatchGuardTests(unittest.TestCase):
         self.assertEqual(second_round[0]["task_id"], "REVIEW-LATER")
         self.assertEqual(second_round[0]["target_agent"], "Codex")
         self.assertEqual(second_round[0]["reason"], "review_ready_dispatch")
+        self.assertEqual(state["ready_dispatcher"]["weighted_cursor"], 0)
+        self.assertEqual(state["ready_dispatcher"]["weighted_cursor_revision"], 2)
+        self.assertEqual(
+            state["ready_dispatcher"]["weighted_cursor_updated_at"],
+            "2026-07-31T12:00:00Z",
+        )
 
     def test_dispatcher_fails_closed_on_owner_self_review(self) -> None:
         config = {
