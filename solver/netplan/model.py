@@ -6,10 +6,15 @@ import hashlib
 import json
 from collections.abc import Mapping
 from dataclasses import dataclass, field
+from datetime import UTC, datetime
 from enum import StrEnum
-from typing import Any
+from typing import Any, Protocol
 
 NETPLAN_POLICY_VERSION = "netplan-network-policy-v1"
+BUSINESS_UAT_UNVERIFIED = "BUSINESS_UAT_UNVERIFIED"
+BUSINESS_UAT_VERIFIED = "BUSINESS_UAT_VERIFIED"
+GOVERNED_DISABLED = "GOVERNED_DISABLED"
+GOVERNED_ENABLED = "GOVERNED_ENABLED"
 
 
 class NetworkAction(StrEnum):
@@ -95,14 +100,12 @@ class NetPlanConstraints:
 class ManagementBaselineInput:
     baseline_id: str
     baseline_name: str
+    scenario_id: str
     actions_by_entity: Mapping[str, NetworkAction]
-    source_receipt_id: str
+    approval_receipt_id: str
     source_snapshot_ids: tuple[str, ...] = ()
-    approver_id: str = "UNVERIFIED"
-    approval_status: str = "UNVERIFIED"
-    approval_reference_id: str = ""
-    issued_at: str = ""
-    expires_at: str | None = None
+    scope: str = ""
+    release_id: str = ""
 
     def compute_canonical_hash(
         self,
@@ -112,49 +115,213 @@ class ManagementBaselineInput:
         payload = {
             "baseline_id": self.baseline_id,
             "baseline_name": self.baseline_name,
+            "scenario_id": self.scenario_id,
             "actions_by_entity": {k: v.value for k, v in sorted(self.actions_by_entity.items())},
-            "source_receipt_id": self.source_receipt_id,
             "source_snapshot_ids": sorted(self.source_snapshot_ids),
-            "approver_id": self.approver_id,
-            "approval_status": self.approval_status,
-            "approval_reference_id": self.approval_reference_id,
-            "issued_at": self.issued_at,
-            "expires_at": self.expires_at,
+            "scope": self.scope,
+            "release_id": self.release_id,
             "risk_penalty": float(risk_penalty),
         }
         if constraints is not None:
             payload["constraints"] = constraints.to_dict()
-        raw = json.dumps(payload, sort_keys=True)
-        return hashlib.sha256(raw.encode("utf-8")).hexdigest()
-
-    def validate_authentic_approval(self) -> bool:
-        if self.approval_status != "APPROVED":
-            return False
-        normalized_approver = self.approver_id.strip()
-        if not (
-            normalized_approver.startswith("Human/Ops")
-            or normalized_approver.startswith("human/ops")
-            or normalized_approver in {"Human/Ops", "human/ops"}
-        ):
-            return False
-        if not self.source_receipt_id or self.source_receipt_id == "UNVERIFIED":
-            return False
-        return True
+        return canonical_sha256(payload)
 
     def to_dict(self) -> dict[str, Any]:
         return {
             "baseline_id": self.baseline_id,
             "baseline_name": self.baseline_name,
+            "scenario_id": self.scenario_id,
             "actions_by_entity": {k: v.value for k, v in self.actions_by_entity.items()},
-            "source_receipt_id": self.source_receipt_id,
+            "approval_receipt_id": self.approval_receipt_id,
             "source_snapshot_ids": list(self.source_snapshot_ids),
-            "approver_id": self.approver_id,
-            "approval_status": self.approval_status,
-            "approval_reference_id": self.approval_reference_id,
-            "issued_at": self.issued_at,
-            "expires_at": self.expires_at,
-            "authentic_approval_verified": self.validate_authentic_approval(),
+            "scope": self.scope,
+            "release_id": self.release_id,
+            "business_uat_status": BUSINESS_UAT_UNVERIFIED,
+            "governance_status": GOVERNED_DISABLED,
         }
+
+
+@dataclass(frozen=True)
+class ManagementApprovalReceipt:
+    """Immutable readback from the configured management approval authority."""
+
+    receipt_id: str
+    source_system: str
+    principal_id: str
+    principal_role: str
+    decision: str
+    approval_reference_id: str
+    issued_at: str
+    expires_at: str
+    scenario_id: str
+    baseline_id: str
+    baseline_name: str
+    scope: str
+    release_id: str
+    policy_version: str
+    actions_by_entity: Mapping[str, NetworkAction]
+    source_snapshot_ids: tuple[str, ...]
+    baseline_content_hash: str
+    solver_problem_hash: str
+    receipt_hash: str
+
+    def compute_receipt_hash(self) -> str:
+        return canonical_sha256(
+            {
+                "receipt_id": self.receipt_id,
+                "source_system": self.source_system,
+                "principal_id": self.principal_id,
+                "principal_role": self.principal_role,
+                "decision": self.decision,
+                "approval_reference_id": self.approval_reference_id,
+                "issued_at": self.issued_at,
+                "expires_at": self.expires_at,
+                "scenario_id": self.scenario_id,
+                "baseline_id": self.baseline_id,
+                "baseline_name": self.baseline_name,
+                "scope": self.scope,
+                "release_id": self.release_id,
+                "policy_version": self.policy_version,
+                "actions_by_entity": {
+                    entity_id: action.value
+                    for entity_id, action in sorted(self.actions_by_entity.items())
+                },
+                "source_snapshot_ids": sorted(self.source_snapshot_ids),
+                "baseline_content_hash": self.baseline_content_hash,
+                "solver_problem_hash": self.solver_problem_hash,
+            }
+        )
+
+
+@dataclass(frozen=True)
+class ManagementApprovalExpectation:
+    receipt_id: str
+    scenario_id: str
+    baseline_id: str
+    baseline_name: str
+    scope: str
+    release_id: str
+    policy_version: str
+    actions_by_entity: Mapping[str, NetworkAction]
+    source_snapshot_ids: tuple[str, ...]
+    baseline_content_hash: str
+    solver_problem_hash: str
+
+
+@dataclass(frozen=True)
+class ManagementApprovalVerification:
+    verified: bool
+    receipt: ManagementApprovalReceipt | None
+    violations: tuple[str, ...]
+
+
+class ManagementApprovalReceiptVerifier(Protocol):
+    def verify(
+        self,
+        expectation: ManagementApprovalExpectation,
+        *,
+        evaluated_at: datetime,
+    ) -> ManagementApprovalVerification: ...
+
+
+class FixedManagementApprovalReceiptVerifier:
+    """Resolve only receipts read back from one configured authority and principal."""
+
+    def __init__(
+        self,
+        *,
+        receipts: Mapping[str, ManagementApprovalReceipt],
+        source_system: str,
+        principal_id: str,
+        principal_role: str,
+    ) -> None:
+        self._receipts = dict(receipts)
+        self._source_system = source_system
+        self._principal_id = principal_id
+        self._principal_role = principal_role
+
+    def verify(
+        self,
+        expectation: ManagementApprovalExpectation,
+        *,
+        evaluated_at: datetime,
+    ) -> ManagementApprovalVerification:
+        violations: list[str] = []
+        receipt_id = expectation.receipt_id.strip()
+        if not receipt_id or receipt_id.upper() in {"ANY", "UNVERIFIED"}:
+            return ManagementApprovalVerification(
+                verified=False,
+                receipt=None,
+                violations=("approval_receipt_id_invalid",),
+            )
+
+        receipt = self._receipts.get(receipt_id)
+        if receipt is None:
+            return ManagementApprovalVerification(
+                verified=False,
+                receipt=None,
+                violations=("authoritative_approval_unresolved",),
+            )
+
+        if receipt.receipt_id != receipt_id:
+            violations.append("approval_receipt_id_mismatch")
+        if receipt.source_system != self._source_system:
+            violations.append("approval_source_system_mismatch")
+        if receipt.principal_id != self._principal_id:
+            violations.append("approval_principal_mismatch")
+        if receipt.principal_role != self._principal_role:
+            violations.append("approval_principal_role_mismatch")
+        if receipt.decision != "APPROVED":
+            violations.append("approval_decision_not_active")
+        if not receipt.approval_reference_id.strip():
+            violations.append("approval_reference_missing")
+
+        issued_at = strict_utc_datetime(receipt.issued_at)
+        expires_at = strict_utc_datetime(receipt.expires_at)
+        evaluation_time = evaluated_at.astimezone(UTC) if evaluated_at.tzinfo else None
+        if issued_at is None:
+            violations.append("approval_issued_at_invalid")
+        if expires_at is None:
+            violations.append("approval_expires_at_invalid")
+        if evaluation_time is None:
+            violations.append("approval_evaluation_time_not_utc")
+        elif issued_at is not None and issued_at > evaluation_time:
+            violations.append("approval_issued_in_future")
+        elif expires_at is not None and expires_at <= evaluation_time:
+            violations.append("approval_expired")
+
+        exact_matches = {
+            "approval_scenario_mismatch": receipt.scenario_id == expectation.scenario_id,
+            "approval_baseline_id_mismatch": receipt.baseline_id == expectation.baseline_id,
+            "approval_baseline_name_mismatch": receipt.baseline_name == expectation.baseline_name,
+            "approval_scope_mismatch": receipt.scope == expectation.scope,
+            "approval_release_mismatch": receipt.release_id == expectation.release_id,
+            "approval_policy_version_mismatch": (
+                receipt.policy_version == expectation.policy_version
+            ),
+            "approval_actions_domain_mismatch": (
+                dict(receipt.actions_by_entity) == dict(expectation.actions_by_entity)
+            ),
+            "approval_source_snapshots_mismatch": (
+                tuple(sorted(receipt.source_snapshot_ids))
+                == tuple(sorted(expectation.source_snapshot_ids))
+            ),
+            "approval_baseline_hash_mismatch": (
+                receipt.baseline_content_hash == expectation.baseline_content_hash
+            ),
+            "approval_solver_problem_hash_mismatch": (
+                receipt.solver_problem_hash == expectation.solver_problem_hash
+            ),
+            "approval_receipt_integrity_mismatch": (
+                receipt.receipt_hash == receipt.compute_receipt_hash()
+            ),
+        }
+        violations.extend(reason for reason, matches in exact_matches.items() if not matches)
+        return ManagementApprovalVerification(
+            verified=not violations,
+            receipt=receipt,
+            violations=tuple(violations),
+        )
 
 
 @dataclass(frozen=True)
@@ -168,6 +335,14 @@ class ManagementBaselineComparisonReceipt:
     baseline_canonical_hash: str = ""
     solver_problem_hash: str = ""
     solver_result_hash: str = ""
+    scenario_hash: str = ""
+    source_snapshot_hash: str = ""
+    actions_domain_hash: str = ""
+    approval_receipt_hash: str = ""
+    comparison_output_hash: str = ""
+    business_uat_status: str = BUSINESS_UAT_UNVERIFIED
+    governance_status: str = GOVERNED_DISABLED
+    approval_verified: bool = False
     baseline_constraint_violations: tuple[str, ...] = ()
 
     def to_dict(self) -> dict[str, Any]:
@@ -181,6 +356,14 @@ class ManagementBaselineComparisonReceipt:
             "baseline_canonical_hash": self.baseline_canonical_hash,
             "solver_problem_hash": self.solver_problem_hash,
             "solver_result_hash": self.solver_result_hash,
+            "scenario_hash": self.scenario_hash,
+            "source_snapshot_hash": self.source_snapshot_hash,
+            "actions_domain_hash": self.actions_domain_hash,
+            "approval_receipt_hash": self.approval_receipt_hash,
+            "comparison_output_hash": self.comparison_output_hash,
+            "business_uat_status": self.business_uat_status,
+            "governance_status": self.governance_status,
+            "approval_verified": self.approval_verified,
             "baseline_constraint_violations": list(self.baseline_constraint_violations),
         }
 
@@ -220,12 +403,38 @@ def _action_count_mapping(data: Mapping[str, Any]) -> dict[NetworkAction, int]:
     return {NetworkAction(str(action).upper()): int(count) for action, count in data.items()}
 
 
+def canonical_sha256(payload: Mapping[str, Any]) -> str:
+    raw = json.dumps(payload, sort_keys=True, separators=(",", ":"), allow_nan=False)
+    return hashlib.sha256(raw.encode("utf-8")).hexdigest()
+
+
+def strict_utc_datetime(value: str) -> datetime | None:
+    if not value or not value.endswith("Z"):
+        return None
+    try:
+        parsed = datetime.fromisoformat(f"{value[:-1]}+00:00")
+    except ValueError:
+        return None
+    return parsed if parsed.tzinfo is UTC or parsed.utcoffset() == UTC.utcoffset(parsed) else None
+
+
 __all__ = [
+    "BUSINESS_UAT_UNVERIFIED",
+    "BUSINESS_UAT_VERIFIED",
+    "GOVERNED_DISABLED",
+    "GOVERNED_ENABLED",
     "NETPLAN_POLICY_VERSION",
     "ActionOption",
+    "FixedManagementApprovalReceiptVerifier",
     "InfeasibilityDiagnosis",
+    "ManagementApprovalExpectation",
+    "ManagementApprovalReceipt",
+    "ManagementApprovalReceiptVerifier",
+    "ManagementApprovalVerification",
     "ManagementBaselineComparisonReceipt",
     "ManagementBaselineInput",
     "NetPlanConstraints",
     "NetworkAction",
+    "canonical_sha256",
+    "strict_utc_datetime",
 ]

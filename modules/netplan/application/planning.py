@@ -24,10 +24,17 @@ from modules.netplan.domain.planning import (
     ScenarioSolveRecord,
     build_outcome_record,
     build_scenario_options,
-    is_authentic_human_ops_actor,
 )
 from modules.netplan.infrastructure.repositories import InMemoryNetPlanRepository
-from solver.netplan import STATUS_INFEASIBLE, NetPlanConstraints, solve_network_plan
+from solver.netplan import (
+    STATUS_INFEASIBLE,
+    ManagementApprovalExpectation,
+    ManagementApprovalReceiptVerifier,
+    ManagementBaselineInput,
+    NetPlanConstraints,
+    compute_solver_problem_hash,
+    solve_network_plan,
+)
 
 
 class NetPlanNotFoundError(LookupError):
@@ -56,6 +63,7 @@ class NetPlanService:
         *,
         repository: InMemoryNetPlanRepository | None = None,
         production_executor: NetPlanProductionExecutor | None = None,
+        approval_verifier: ManagementApprovalReceiptVerifier | None = None,
         runtime_mode: str | None = None,
     ) -> None:
         self.production_required = production_execution_required(runtime_mode)
@@ -72,6 +80,7 @@ class NetPlanService:
             )
         self.repository = repository or InMemoryNetPlanRepository()
         self.production_executor = production_executor
+        self.approval_verifier = approval_verifier
 
     def create_scenario(
         self,
@@ -172,17 +181,78 @@ class NetPlanService:
         actor_id: str,
         reason: str,
         decision: str = "approved",
+        approval_receipt_id: str = "",
         decided_at: datetime | None = None,
     ) -> ApprovalRecord:
         if not reason:
             raise NetPlanApprovalError("netplan decisions require a reason")
         normalized = decision.lower()
-        if normalized == "approved" and not is_authentic_human_ops_actor(actor_id):
-            raise NetPlanApprovalError(
-                f"actor '{actor_id}' is not authorized for authentic Human/Ops approval"
-            )
         scenario = self._require_scenario(scenario_id)
         now = decided_at or datetime.now(UTC)
+        authority_receipt = None
+        verification_violations: tuple[str, ...] = ()
+        if normalized == "approved":
+            if self.approval_verifier is None:
+                raise NetPlanApprovalError(
+                    "authoritative management approval verifier is not configured"
+                )
+            solve = self._require_solve(scenario_id)
+            actions_by_entity = {
+                action.entity_id: action.action for action in solve.result.selected_actions
+            }
+            source_snapshot_ids = tuple(
+                sorted(
+                    {
+                        snapshot_id
+                        for action in solve.result.selected_actions
+                        for snapshot_id in action.source_snapshot_ids
+                    }
+                )
+            )
+            baseline = ManagementBaselineInput(
+                baseline_id=scenario.scenario_id,
+                baseline_name=scenario.scenario_name,
+                scenario_id=scenario.scenario_id,
+                actions_by_entity=actions_by_entity,
+                approval_receipt_id=approval_receipt_id,
+                source_snapshot_ids=source_snapshot_ids,
+                scope=f"tenant:{scenario.tenant_id}",
+                release_id=scenario.planning_horizon,
+            )
+            problem_hash = compute_solver_problem_hash(
+                scenario.options_by_entity,
+                scenario.constraints,
+                100_000.0,
+            )
+            verification = self.approval_verifier.verify(
+                ManagementApprovalExpectation(
+                    receipt_id=approval_receipt_id,
+                    scenario_id=scenario.scenario_id,
+                    baseline_id=scenario.scenario_id,
+                    baseline_name=scenario.scenario_name,
+                    scope=baseline.scope,
+                    release_id=baseline.release_id,
+                    policy_version=scenario.constraints.policy_version,
+                    actions_by_entity=actions_by_entity,
+                    source_snapshot_ids=source_snapshot_ids,
+                    baseline_content_hash=baseline.compute_canonical_hash(
+                        constraints=scenario.constraints
+                    ),
+                    solver_problem_hash=problem_hash,
+                ),
+                evaluated_at=now,
+            )
+            if not verification.verified or verification.receipt is None:
+                detail = ",".join(verification.violations)
+                raise NetPlanApprovalError(
+                    f"authoritative management approval readback failed: {detail}"
+                )
+            if actor_id != verification.receipt.principal_id:
+                raise NetPlanApprovalError(
+                    "audit actor does not match the verified approval principal"
+                )
+            authority_receipt = verification.receipt
+            verification_violations = verification.violations
         approval = self.repository.save_approval(
             ApprovalRecord(
                 approval_id=f"netplan-approval-{uuid4()}",
@@ -192,6 +262,8 @@ class NetPlanService:
                 reason=reason,
                 decided_at=now,
                 policy_version=scenario.constraints.policy_version,
+                authority_receipt=authority_receipt,
+                verification_violations=verification_violations,
             )
         )
         target = (

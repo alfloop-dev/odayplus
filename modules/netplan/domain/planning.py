@@ -10,8 +10,13 @@ from typing import Any
 from uuid import uuid4
 
 from solver.netplan import (
+    BUSINESS_UAT_UNVERIFIED,
+    BUSINESS_UAT_VERIFIED,
+    GOVERNED_DISABLED,
+    GOVERNED_ENABLED,
     SOLVER_VERSION,
     ActionOption,
+    ManagementApprovalReceipt,
     NetPlanConstraints,
     NetworkAction,
     NetworkPlanSolveResult,
@@ -246,24 +251,6 @@ class ScenarioSolveRecord:
         }
 
 
-AUTHORIZED_HUMAN_OPS_ACTORS: frozenset[str] = frozenset({
-    "Human/Ops",
-    "human/ops",
-    "Human/Ops:strategy-director",
-    "Human/Ops:network-planner",
-    "Human/Ops:ops-manager",
-})
-
-
-def is_authentic_human_ops_actor(actor_id: str) -> bool:
-    if not actor_id:
-        return False
-    normalized = actor_id.strip()
-    if normalized.startswith("Human/Ops") or normalized.startswith("human/ops"):
-        return True
-    return normalized in AUTHORIZED_HUMAN_OPS_ACTORS
-
-
 @dataclass(frozen=True)
 class ApprovalRecord:
     approval_id: str
@@ -273,6 +260,8 @@ class ApprovalRecord:
     reason: str
     decided_at: datetime
     policy_version: str
+    authority_receipt: ManagementApprovalReceipt | None = None
+    verification_violations: tuple[str, ...] = ()
 
     @property
     def is_approved(self) -> bool:
@@ -280,7 +269,13 @@ class ApprovalRecord:
 
     @property
     def authentic_approval_verified(self) -> bool:
-        return self.is_approved and is_authentic_human_ops_actor(self.actor_id)
+        return (
+            self.is_approved
+            and self.authority_receipt is not None
+            and not self.verification_violations
+            and self.authority_receipt.receipt_hash
+            == self.authority_receipt.compute_receipt_hash()
+        )
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -291,7 +286,38 @@ class ApprovalRecord:
             "reason": self.reason,
             "decided_at": self.decided_at.isoformat(),
             "policy_version": self.policy_version,
+            "approval_receipt_id": (
+                self.authority_receipt.receipt_id if self.authority_receipt else None
+            ),
+            "approval_reference_id": (
+                self.authority_receipt.approval_reference_id
+                if self.authority_receipt
+                else None
+            ),
+            "approval_source_system": (
+                self.authority_receipt.source_system if self.authority_receipt else None
+            ),
+            "approval_principal_id": (
+                self.authority_receipt.principal_id if self.authority_receipt else None
+            ),
+            "approval_principal_role": (
+                self.authority_receipt.principal_role if self.authority_receipt else None
+            ),
+            "approval_receipt_hash": (
+                self.authority_receipt.receipt_hash if self.authority_receipt else None
+            ),
+            "verification_violations": list(self.verification_violations),
             "authentic_approval_verified": self.authentic_approval_verified,
+            "business_uat_status": (
+                BUSINESS_UAT_VERIFIED
+                if self.authentic_approval_verified
+                else BUSINESS_UAT_UNVERIFIED
+            ),
+            "governance_status": (
+                GOVERNED_ENABLED
+                if self.authentic_approval_verified
+                else GOVERNED_DISABLED
+            ),
         }
 
 

@@ -9,20 +9,26 @@ alternative plans, and structured infeasibility diagnostics.
 
 from __future__ import annotations
 
-import hashlib
-import json
 from collections import Counter, defaultdict
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
+from datetime import UTC, datetime
 from itertools import product
 from typing import Any
 
 from solver.netplan.model import (
+    BUSINESS_UAT_UNVERIFIED,
+    BUSINESS_UAT_VERIFIED,
+    GOVERNED_DISABLED,
+    GOVERNED_ENABLED,
     ActionOption,
     InfeasibilityDiagnosis,
+    ManagementApprovalExpectation,
+    ManagementApprovalReceiptVerifier,
     ManagementBaselineComparisonReceipt,
     ManagementBaselineInput,
     NetPlanConstraints,
     NetworkAction,
+    canonical_sha256,
 )
 from solver.process_isolation import run_in_process_isolation
 
@@ -596,7 +602,7 @@ def _binding_constraints(
     return tuple(bindings)
 
 
-def _compute_solver_problem_hash(
+def compute_solver_problem_hash(
     options_by_entity: dict[str, tuple[ActionOption, ...]],
     constraints: NetPlanConstraints,
     risk_penalty: float,
@@ -610,16 +616,143 @@ def _compute_solver_problem_hash(
         "constraints": constraints.to_dict(),
         "risk_penalty": float(risk_penalty),
     }
-    return hashlib.sha256(json.dumps(payload, sort_keys=True).encode("utf-8")).hexdigest()
+    return canonical_sha256(payload)
 
 
 def _compute_solver_result_hash(solve_result: NetworkPlanSolveResult) -> str:
-    payload = {
-        "status": solve_result.solver_status,
-        "objective_value": solve_result.objective_value,
-        "selected_actions": [opt.to_dict() for opt in solve_result.selected_actions],
-    }
-    return hashlib.sha256(json.dumps(payload, sort_keys=True).encode("utf-8")).hexdigest()
+    return canonical_sha256(solve_result.to_dict())
+
+
+def _candidate_fields_match(
+    actual: NetworkPlanCandidate,
+    expected: NetworkPlanCandidate,
+) -> bool:
+    return (
+        _near(actual.objective_value, expected.objective_value)
+        and _near(actual.expected_gross_margin, expected.expected_gross_margin)
+        and _near(actual.budget_usage, expected.budget_usage)
+        and _near(actual.average_risk, expected.average_risk)
+        and actual.capacity_delta == expected.capacity_delta
+        and actual.action_counts == expected.action_counts
+        and actual.binding_constraints == expected.binding_constraints
+    )
+
+
+def _verify_solve_result(
+    *,
+    options_by_entity: dict[str, tuple[ActionOption, ...]],
+    constraints: NetPlanConstraints,
+    solve_result: NetworkPlanSolveResult,
+    risk_penalty: float,
+) -> tuple[tuple[str, ...], NetworkPlanCandidate | None]:
+    violations: list[str] = []
+    feasible_candidates = build_feasible_candidates(
+        options_by_entity=options_by_entity,
+        constraints=constraints,
+        risk_penalty=risk_penalty,
+    )
+
+    if not feasible_candidates:
+        if solve_result.solver_status != STATUS_INFEASIBLE:
+            violations.append("solve_status_mismatch")
+        if not solve_result.infeasible:
+            violations.append("solve_feasibility_flag_mismatch")
+        if solve_result.selected_actions:
+            violations.append("infeasible_result_has_selected_actions")
+        if not _near(solve_result.objective_value, 0.0):
+            violations.append("solve_objective_mismatch")
+        expected_diagnostics = {
+            diagnosis.violated_constraint
+            for diagnosis in diagnose_infeasible(options_by_entity, constraints)
+        }
+        actual_diagnostics = {
+            diagnosis.violated_constraint for diagnosis in solve_result.diagnostics
+        }
+        if actual_diagnostics != expected_diagnostics:
+            violations.append("infeasibility_diagnosis_mismatch")
+        return tuple(violations), None
+
+    if solve_result.solver_status not in {STATUS_OPTIMAL, STATUS_FEASIBLE}:
+        violations.append("solve_status_mismatch")
+    if solve_result.infeasible:
+        violations.append("solve_feasibility_flag_mismatch")
+    if solve_result.diagnostics:
+        violations.append("feasible_result_has_diagnostics")
+    if solve_result.solver_version != SOLVER_VERSION:
+        violations.append("solver_version_mismatch")
+
+    selected_by_entity: dict[str, ActionOption] = {}
+    for selected in solve_result.selected_actions:
+        if selected.entity_id in selected_by_entity:
+            violations.append("duplicate_selected_entity")
+            continue
+        selected_by_entity[selected.entity_id] = selected
+        if selected not in options_by_entity.get(selected.entity_id, ()):
+            violations.append("selected_option_not_in_problem")
+
+    if set(selected_by_entity) != set(options_by_entity):
+        violations.append("unbound_solve_result_domain")
+    if violations:
+        return tuple(dict.fromkeys(violations)), None
+
+    recomputed = _candidate_from_selected(
+        [selected_by_entity[entity_id] for entity_id in sorted(selected_by_entity)],
+        constraints,
+        risk_penalty,
+    )
+    if not _is_feasible(recomputed, constraints):
+        violations.append("selected_actions_infeasible")
+    if not _near(solve_result.objective_value, recomputed.objective_value):
+        violations.append("solve_objective_mismatch")
+    if not _near(solve_result.expected_gross_margin, recomputed.expected_gross_margin):
+        violations.append("solve_expected_gross_margin_mismatch")
+    if not _near(solve_result.budget_usage, recomputed.budget_usage):
+        violations.append("solve_budget_usage_mismatch")
+    if not _near(solve_result.average_risk, recomputed.average_risk):
+        violations.append("solve_average_risk_mismatch")
+    if solve_result.capacity_delta != recomputed.capacity_delta:
+        violations.append("solve_capacity_delta_mismatch")
+    if solve_result.action_counts != recomputed.action_counts:
+        violations.append("solve_action_counts_mismatch")
+    if solve_result.binding_constraints != recomputed.binding_constraints:
+        violations.append("solve_binding_constraints_mismatch")
+
+    best_objective = max(candidate.objective_value for candidate in feasible_candidates)
+    if solve_result.solver_status == STATUS_OPTIMAL and not _near(
+        recomputed.objective_value,
+        best_objective,
+    ):
+        violations.append("optimality_claim_mismatch")
+
+    seen_signatures = {recomputed.action_signature}
+    for alternative in solve_result.alternatives:
+        alternative_selected = list(alternative.actions)
+        alternative_entities = {action.entity_id for action in alternative_selected}
+        if len(alternative_selected) != len(options_by_entity) or alternative_entities != set(
+            options_by_entity
+        ):
+            violations.append("alternative_domain_mismatch")
+            continue
+        if any(
+            action not in options_by_entity.get(action.entity_id, ())
+            for action in alternative_selected
+        ):
+            violations.append("alternative_option_not_in_problem")
+            continue
+        recomputed_alternative = _candidate_from_selected(
+            sorted(alternative_selected, key=lambda action: action.entity_id),
+            constraints,
+            risk_penalty,
+        )
+        if not _is_feasible(recomputed_alternative, constraints):
+            violations.append("alternative_infeasible")
+        if not _candidate_fields_match(alternative, recomputed_alternative):
+            violations.append("alternative_metrics_mismatch")
+        if alternative.action_signature in seen_signatures:
+            violations.append("duplicate_alternative")
+        seen_signatures.add(alternative.action_signature)
+
+    return tuple(dict.fromkeys(violations)), recomputed
 
 
 def compare_solver_against_management_baseline(
@@ -629,44 +762,133 @@ def compare_solver_against_management_baseline(
     solve_result: NetworkPlanSolveResult,
     baseline: ManagementBaselineInput,
     risk_penalty: float = 100_000.0,
+    approval_verifier: ManagementApprovalReceiptVerifier | None = None,
+    evaluated_at: datetime | None = None,
 ) -> ManagementBaselineComparisonReceipt:
     baseline_canonical_hash = baseline.compute_canonical_hash(constraints=constraints, risk_penalty=risk_penalty)
-    solver_problem_hash = _compute_solver_problem_hash(options_by_entity, constraints, risk_penalty)
+    solver_problem_hash = compute_solver_problem_hash(options_by_entity, constraints, risk_penalty)
     solver_result_hash = _compute_solver_result_hash(solve_result)
+    scenario_hash = canonical_sha256(
+        {
+            "scenario_id": baseline.scenario_id,
+            "scope": baseline.scope,
+            "release_id": baseline.release_id,
+            "policy_version": constraints.policy_version,
+        }
+    )
+    source_snapshot_hash = canonical_sha256(
+        {"source_snapshot_ids": sorted(baseline.source_snapshot_ids)}
+    )
+    actions_domain_hash = canonical_sha256(
+        {
+            "actions_by_entity": {
+                entity_id: action.value
+                for entity_id, action in sorted(baseline.actions_by_entity.items())
+            }
+        }
+    )
 
-    # 1. Authentic approval gate check
-    if not baseline.validate_authentic_approval():
-        return ManagementBaselineComparisonReceipt(
+    def receipt(
+        *,
+        baseline_feasible: bool,
+        baseline_objective_value: float | None,
+        solver_objective_value: float,
+        objective_gain_over_baseline: float | None,
+        superior_or_equal: bool,
+        violations: tuple[str, ...],
+        approval_verified: bool = False,
+        approval_receipt_hash: str = "",
+    ) -> ManagementBaselineComparisonReceipt:
+        comparison = ManagementBaselineComparisonReceipt(
             baseline_id=baseline.baseline_id,
+            baseline_feasible=baseline_feasible,
+            baseline_objective_value=baseline_objective_value,
+            solver_objective_value=solver_objective_value,
+            objective_gain_over_baseline=objective_gain_over_baseline,
+            superior_or_equal=superior_or_equal,
+            baseline_canonical_hash=baseline_canonical_hash,
+            solver_problem_hash=solver_problem_hash,
+            solver_result_hash=solver_result_hash,
+            scenario_hash=scenario_hash,
+            source_snapshot_hash=source_snapshot_hash,
+            actions_domain_hash=actions_domain_hash,
+            approval_receipt_hash=approval_receipt_hash,
+            business_uat_status=(
+                BUSINESS_UAT_VERIFIED
+                if approval_verified and not violations and superior_or_equal
+                else BUSINESS_UAT_UNVERIFIED
+            ),
+            governance_status=(
+                GOVERNED_ENABLED
+                if approval_verified and not violations and superior_or_equal
+                else GOVERNED_DISABLED
+            ),
+            approval_verified=approval_verified,
+            baseline_constraint_violations=violations,
+        )
+        hash_payload = comparison.to_dict()
+        hash_payload.pop("comparison_output_hash")
+        return replace(
+            comparison,
+            comparison_output_hash=canonical_sha256(hash_payload),
+        )
+
+    if approval_verifier is None:
+        return receipt(
             baseline_feasible=False,
             baseline_objective_value=None,
             solver_objective_value=solve_result.objective_value,
             objective_gain_over_baseline=None,
             superior_or_equal=False,
-            baseline_canonical_hash=baseline_canonical_hash,
-            solver_problem_hash=solver_problem_hash,
-            solver_result_hash=solver_result_hash,
-            baseline_constraint_violations=("unverified_human_ops_approval",),
+            violations=("authoritative_approval_verifier_missing",),
         )
 
-    # 2. Solve result binding check
-    if solve_result.solver_status in {STATUS_OPTIMAL, STATUS_FEASIBLE}:
-        solve_entities = {opt.entity_id for opt in solve_result.selected_actions}
-        if solve_entities != set(options_by_entity.keys()):
-            return ManagementBaselineComparisonReceipt(
-                baseline_id=baseline.baseline_id,
-                baseline_feasible=False,
-                baseline_objective_value=None,
-                solver_objective_value=solve_result.objective_value,
-                objective_gain_over_baseline=None,
-                superior_or_equal=False,
-                baseline_canonical_hash=baseline_canonical_hash,
-                solver_problem_hash=solver_problem_hash,
-                solver_result_hash=solver_result_hash,
-                baseline_constraint_violations=("unbound_solve_result_domain",),
-            )
+    verification = approval_verifier.verify(
+        ManagementApprovalExpectation(
+            receipt_id=baseline.approval_receipt_id,
+            scenario_id=baseline.scenario_id,
+            baseline_id=baseline.baseline_id,
+            baseline_name=baseline.baseline_name,
+            scope=baseline.scope,
+            release_id=baseline.release_id,
+            policy_version=constraints.policy_version,
+            actions_by_entity=baseline.actions_by_entity,
+            source_snapshot_ids=baseline.source_snapshot_ids,
+            baseline_content_hash=baseline_canonical_hash,
+            solver_problem_hash=solver_problem_hash,
+        ),
+        evaluated_at=evaluated_at or datetime.now(UTC),
+    )
+    approval_receipt_hash = verification.receipt.receipt_hash if verification.receipt else ""
+    if not verification.verified:
+        return receipt(
+            baseline_feasible=False,
+            baseline_objective_value=None,
+            solver_objective_value=solve_result.objective_value,
+            objective_gain_over_baseline=None,
+            superior_or_equal=False,
+            violations=verification.violations,
+            approval_receipt_hash=approval_receipt_hash,
+        )
 
-    # 3. Exact entity set equality check
+    solve_violations, recomputed_solve = _verify_solve_result(
+        options_by_entity=options_by_entity,
+        constraints=constraints,
+        solve_result=solve_result,
+        risk_penalty=risk_penalty,
+    )
+    if solve_violations or recomputed_solve is None:
+        return receipt(
+            baseline_feasible=False,
+            baseline_objective_value=None,
+            solver_objective_value=solve_result.objective_value,
+            objective_gain_over_baseline=None,
+            superior_or_equal=False,
+            violations=solve_violations or ("solve_result_not_feasible",),
+            approval_verified=True,
+            approval_receipt_hash=approval_receipt_hash,
+        )
+
     baseline_entities = set(baseline.actions_by_entity.keys())
     problem_entities = set(options_by_entity.keys())
 
@@ -679,20 +901,17 @@ def compare_solver_against_management_baseline(
         if not violations:
             violations.append("domain_mismatch")
 
-        return ManagementBaselineComparisonReceipt(
-            baseline_id=baseline.baseline_id,
+        return receipt(
             baseline_feasible=False,
             baseline_objective_value=None,
-            solver_objective_value=solve_result.objective_value,
+            solver_objective_value=recomputed_solve.objective_value,
             objective_gain_over_baseline=None,
             superior_or_equal=False,
-            baseline_canonical_hash=baseline_canonical_hash,
-            solver_problem_hash=solver_problem_hash,
-            solver_result_hash=solver_result_hash,
-            baseline_constraint_violations=tuple(violations),
+            violations=tuple(violations),
+            approval_verified=True,
+            approval_receipt_hash=approval_receipt_hash,
         )
 
-    # 4. Match actions for each entity
     baseline_options: list[ActionOption] = []
     missing_matches: list[str] = []
     for entity_id in sorted(options_by_entity):
@@ -704,20 +923,17 @@ def compare_solver_against_management_baseline(
             baseline_options.append(matched)
 
     if missing_matches or len(baseline_options) != len(options_by_entity):
-        return ManagementBaselineComparisonReceipt(
-            baseline_id=baseline.baseline_id,
+        return receipt(
             baseline_feasible=False,
             baseline_objective_value=None,
-            solver_objective_value=solve_result.objective_value,
+            solver_objective_value=recomputed_solve.objective_value,
             objective_gain_over_baseline=None,
             superior_or_equal=False,
-            baseline_canonical_hash=baseline_canonical_hash,
-            solver_problem_hash=solver_problem_hash,
-            solver_result_hash=solver_result_hash,
-            baseline_constraint_violations=("missing_action_option_for_entity",),
+            violations=("missing_action_option_for_entity",),
+            approval_verified=True,
+            approval_receipt_hash=approval_receipt_hash,
         )
 
-    # 5. Evaluate baseline feasibility and candidate metrics
     baseline_candidate = _candidate_from_selected(baseline_options, constraints, risk_penalty)
     is_feasible = _is_feasible(baseline_candidate, constraints)
 
@@ -747,34 +963,30 @@ def compare_solver_against_management_baseline(
             if baseline_candidate.action_counts.get(action, 0) > maximum:
                 violations.append(f"max_action_counts.{action.value}")
 
-        return ManagementBaselineComparisonReceipt(
-            baseline_id=baseline.baseline_id,
+        return receipt(
             baseline_feasible=False,
             baseline_objective_value=baseline_candidate.objective_value,
-            solver_objective_value=solve_result.objective_value,
+            solver_objective_value=recomputed_solve.objective_value,
             objective_gain_over_baseline=None,
             superior_or_equal=False,
-            baseline_canonical_hash=baseline_canonical_hash,
-            solver_problem_hash=solver_problem_hash,
-            solver_result_hash=solver_result_hash,
-            baseline_constraint_violations=tuple(violations),
+            violations=tuple(violations),
+            approval_verified=True,
+            approval_receipt_hash=approval_receipt_hash,
         )
 
-    gain = round(solve_result.objective_value - baseline_candidate.objective_value, 4)
+    gain = round(recomputed_solve.objective_value - baseline_candidate.objective_value, 4)
     superior_or_equal = solve_result.solver_status in {STATUS_OPTIMAL, STATUS_FEASIBLE} and (
-        solve_result.objective_value >= baseline_candidate.objective_value - 1e-6
+        recomputed_solve.objective_value >= baseline_candidate.objective_value - 1e-6
     )
-    return ManagementBaselineComparisonReceipt(
-        baseline_id=baseline.baseline_id,
+    return receipt(
         baseline_feasible=True,
         baseline_objective_value=baseline_candidate.objective_value,
-        solver_objective_value=solve_result.objective_value,
+        solver_objective_value=recomputed_solve.objective_value,
         objective_gain_over_baseline=gain,
         superior_or_equal=superior_or_equal,
-        baseline_canonical_hash=baseline_canonical_hash,
-        solver_problem_hash=solver_problem_hash,
-        solver_result_hash=solver_result_hash,
-        baseline_constraint_violations=(),
+        violations=() if superior_or_equal else ("solver_not_superior_to_baseline",),
+        approval_verified=True,
+        approval_receipt_hash=approval_receipt_hash,
     )
 
 
@@ -846,6 +1058,7 @@ __all__ = [
     "NetworkPlanSolveResult",
     "build_feasible_candidates",
     "compare_solver_against_management_baseline",
+    "compute_solver_problem_hash",
     "diagnose_infeasible",
     "solve_network_plan",
 ]
