@@ -5684,7 +5684,7 @@ class ChairReviewDispatchTests(unittest.TestCase):
 
         self.assertIn("Blocked Owner Rescue Candidates:", message)
         self.assertIn("task=T-PUSH", message)
-        self.assertIn('targets=["Codex", "Codex2"]', message)
+        self.assertIn('targets=["Codex", "Codex2", "Claude2"]', message)
 
     def test_persist_task_reassignment_can_clear_blocked_owner_handoff(self) -> None:
         status_path = self.root / "ai-status.json"
@@ -9669,6 +9669,266 @@ class ReviewHeadFreezeTests(unittest.TestCase):
         self.assertNotIn("ci_pending_timeout", [e["type"] for e in logged])
         self.assertNotIn("ci_pending_since_ts", task)
         self.assertIn("failed; resolve failing checks", task["next"])
+
+
+class SupervisorFailureLoopCoverageTests(unittest.TestCase):
+    def setUp(self) -> None:
+        self.config = load_test_config()
+
+    def test_full_agent_matrix_coverage_all_configured_agents(self) -> None:
+        all_agents = [
+            "Antigravity", "Antigravity2", "Antigravity3", "Antigravity4", "Antigravity5", "Antigravity6", "Antigravity7",
+            "Claude", "Claude2", "Claude3",
+            "Codex", "Codex2", "Codex3", "Codex4", "Codex5", "Codex6", "Codex7", "Codex8", "Codex9", "CodexCoordinator",
+            "Gemini", "Gemini2", "Copilot"
+        ]
+        for agent in all_agents:
+            with self.subTest(agent=agent, role="owner"):
+                fallbacks = supervisor.get_agent_reassignment_candidates(self.config, agent, role="owner")
+                self.assertTrue(len(fallbacks) > 0, f"Owner fallbacks for {agent} should not be empty")
+                self.assertNotIn(agent, fallbacks)
+                self.assertNotIn("Human/Ops", fallbacks)
+
+            with self.subTest(agent=agent, role="reviewer"):
+                fallbacks = supervisor.get_agent_reassignment_candidates(self.config, agent, role="reviewer")
+                self.assertTrue(len(fallbacks) > 0, f"Reviewer fallbacks for {agent} should not be empty")
+                self.assertNotIn(agent, fallbacks)
+                self.assertNotIn("Human/Ops", fallbacks)
+
+    def test_dynamic_fallback_derivation_when_agent_missing_from_config(self) -> None:
+        lean_config = {
+            "worker_reassignment": {
+                "enabled": True,
+                "after_attempts": 2,
+                "reassign_on_terminal_failure": True,
+                "owner_fallbacks": {},
+                "reviewer_fallbacks": {},
+            },
+            "agents": {
+                "antigravity4": {"display_name": "Antigravity4"},
+                "antigravity3": {"display_name": "Antigravity3"},
+                "codex6": {"display_name": "Codex6"},
+            },
+        }
+        fallbacks = supervisor.get_agent_reassignment_candidates(lean_config, "Antigravity4", role="owner")
+        self.assertIn("Antigravity3", fallbacks)
+        self.assertIn("Codex6", fallbacks)
+        self.assertNotIn("Antigravity4", fallbacks)
+
+    def test_failure_loop_reassignment_drill_owner(self) -> None:
+        worker = {
+            "task_id": "ODP-PLAN-SITESCORE-OUTCOME-001",
+            "agent_id": "antigravity4",
+            "retry_count": 2,
+            "run_id": "antigravity4-run-1",
+        }
+        status = {
+            "tasks": [
+                {
+                    "id": "ODP-PLAN-SITESCORE-OUTCOME-001",
+                    "status": "in_progress",
+                    "owner": "Antigravity4",
+                    "reviewer": "Codex6",
+                }
+            ]
+        }
+        state = {
+            "provider_guardrails": {
+                "task_failure_streaks": {
+                    "ODP-PLAN-SITESCORE-OUTCOME-001:antigravity4": {
+                        "task_id": "ODP-PLAN-SITESCORE-OUTCOME-001",
+                        "provider": "antigravity4",
+                        "count": 2,
+                    }
+                }
+            }
+        }
+
+        with (
+            mock.patch.object(supervisor, "load_status", return_value=status),
+            mock.patch.object(supervisor, "persist_task_reassignment", return_value=True) as persist,
+            mock.patch.object(supervisor, "write_activity_log") as write_log,
+        ):
+            reassigned_to = supervisor.maybe_reassign_task_after_worker_failure(
+                self.config,
+                state,
+                worker,
+                "Terminal model quota exhausted",
+                terminal=True,
+            )
+
+        self.assertIsNotNone(reassigned_to)
+        self.assertNotEqual(reassigned_to, "Antigravity4")
+        self.assertNotEqual(reassigned_to, "Codex6")
+        persist.assert_called_once()
+        kwargs = persist.call_args.kwargs
+        self.assertEqual(kwargs["task_id"], "ODP-PLAN-SITESCORE-OUTCOME-001")
+        self.assertEqual(kwargs["new_owner"], reassigned_to)
+        self.assertEqual(kwargs["new_status"], "todo")
+        self.assertNotIn("ODP-PLAN-SITESCORE-OUTCOME-001:antigravity4", state["provider_guardrails"]["task_failure_streaks"])
+
+    def test_failure_loop_reassignment_drill_reviewer(self) -> None:
+        worker = {
+            "task_id": "ODP-PLAN-SUPERVISOR-FAILURE-LOOP-001",
+            "agent_id": "antigravity7",
+            "retry_count": 2,
+            "run_id": "antigravity7-run-1",
+        }
+        status = {
+            "tasks": [
+                {
+                    "id": "ODP-PLAN-SUPERVISOR-FAILURE-LOOP-001",
+                    "status": "review",
+                    "owner": "Codex6",
+                    "reviewer": "Antigravity7",
+                }
+            ]
+        }
+        state = {
+            "provider_guardrails": {
+                "task_failure_streaks": {
+                    "ODP-PLAN-SUPERVISOR-FAILURE-LOOP-001:antigravity7": {
+                        "task_id": "ODP-PLAN-SUPERVISOR-FAILURE-LOOP-001",
+                        "provider": "antigravity7",
+                        "count": 2,
+                    }
+                }
+            }
+        }
+
+        with (
+            mock.patch.object(supervisor, "load_status", return_value=status),
+            mock.patch.object(supervisor, "persist_task_reassignment", return_value=True) as persist,
+            mock.patch.object(supervisor, "write_activity_log"),
+        ):
+            reassigned_to = supervisor.maybe_reassign_task_after_worker_failure(
+                self.config,
+                state,
+                worker,
+                "Quota limit reached",
+                terminal=True,
+            )
+
+        self.assertIsNotNone(reassigned_to)
+        self.assertNotEqual(reassigned_to, "Antigravity7")
+        self.assertNotEqual(reassigned_to, "Codex6")
+        self.assertEqual(persist.call_args.kwargs["new_reviewer"], reassigned_to)
+
+    def test_fail_closed_human_ops_gate_never_auto_reassigned(self) -> None:
+        worker = {
+            "task_id": "ODP-PLAN-OSS-LEGAL-POLICY-001",
+            "agent_id": "Human/Ops",
+            "retry_count": 5,
+            "run_id": "human-run-1",
+        }
+        status = {
+            "tasks": [
+                {
+                    "id": "ODP-PLAN-OSS-LEGAL-POLICY-001",
+                    "status": "in_progress",
+                    "owner": "Human/Ops",
+                    "reviewer": "CodexCoordinator",
+                }
+            ]
+        }
+        state = {}
+
+        with (
+            mock.patch.object(supervisor, "load_status", return_value=status),
+            mock.patch.object(supervisor, "persist_task_reassignment") as persist,
+        ):
+            reassigned_to = supervisor.maybe_reassign_task_after_worker_failure(
+                self.config,
+                state,
+                worker,
+                "Human gate pending",
+                terminal=True,
+            )
+
+        self.assertIsNone(reassigned_to)
+        persist.assert_not_called()
+
+    def test_fail_closed_never_reassigns_to_human_ops(self) -> None:
+        config_with_human = dict(self.config)
+        config_with_human["worker_reassignment"] = {
+            "enabled": True,
+            "after_attempts": 1,
+            "reassign_on_terminal_failure": True,
+            "owner_fallbacks": {
+                "Antigravity4": ["Human/Ops", "Codex6"],
+            },
+        }
+        worker = {
+            "task_id": "T-TEST",
+            "agent_id": "antigravity4",
+            "retry_count": 2,
+        }
+        status = {
+            "tasks": [
+                {
+                    "id": "T-TEST",
+                    "status": "in_progress",
+                    "owner": "Antigravity4",
+                    "reviewer": "Claude",
+                }
+            ]
+        }
+        with (
+            mock.patch.object(supervisor, "load_status", return_value=status),
+            mock.patch.object(supervisor, "persist_task_reassignment") as persist,
+            mock.patch.object(supervisor, "write_activity_log"),
+        ):
+            reassigned = supervisor.maybe_reassign_task_after_worker_failure(
+                config_with_human,
+                {},
+                worker,
+                "failure",
+                terminal=True,
+            )
+
+        self.assertNotEqual(reassigned, "Human/Ops")
+        if persist.called:
+            self.assertNotEqual(persist.call_args.kwargs["new_owner"], "Human/Ops")
+            self.assertNotEqual(persist.call_args.kwargs["new_reviewer"], "Human/Ops")
+
+    def test_fail_closed_skips_paused_agents(self) -> None:
+        state = {
+            "provider_guardrails": {
+                "dispatch_pauses": {
+                    "antigravity3": {"provider": "antigravity3", "blocked_until": "2099-01-01T00:00:00Z"},
+                    "antigravity5": {"provider": "antigravity5", "blocked_until": "2099-01-01T00:00:00Z"},
+                }
+            }
+        }
+        worker = {
+            "task_id": "T-PAUSE-TEST",
+            "agent_id": "antigravity4",
+            "retry_count": 2,
+        }
+        status = {
+            "tasks": [
+                {
+                    "id": "T-PAUSE-TEST",
+                    "status": "in_progress",
+                    "owner": "Antigravity4",
+                    "reviewer": "Codex6",
+                }
+            ]
+        }
+        with (
+            mock.patch.object(supervisor, "load_status", return_value=status),
+            mock.patch.object(supervisor, "persist_task_reassignment") as persist,
+            mock.patch.object(supervisor, "write_activity_log"),
+        ):
+            reassigned = supervisor.maybe_reassign_task_after_worker_failure(
+                self.config,
+                state,
+                worker,
+                "failure",
+                terminal=True,
+            )
+
+        self.assertNotIn(reassigned, ["Antigravity3", "Antigravity5", "Antigravity4", "Codex6"])
 
 
 if __name__ == "__main__":

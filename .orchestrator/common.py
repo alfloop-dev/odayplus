@@ -172,6 +172,10 @@ def load_config(config_path: str | Path | None = None) -> dict[str, Any]:
     if config_file is None:
         raise RuntimeError("Unable to resolve orchestrator config path")
     config = load_json(config_file, default={})
+    if not config and (config_path is None or resolve_path(config_path) == DEFAULT_CONFIG_PATH):
+        example_file = ORCHESTRATOR_DIR / "config.example.json"
+        if example_file.exists():
+            config = load_json(example_file, default={})
     if LOCAL_CONFIG_PATH.exists():
         config = deep_merge(config, load_json(LOCAL_CONFIG_PATH, default={}))
     return config

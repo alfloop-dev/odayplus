@@ -3619,11 +3619,11 @@ def chair_review_failure_loop_details(config: dict[str, Any], state: dict[str, A
         if task_status in review_statuses and reviewer == agent_name:
             role = "reviewer"
             exclude = {owner, reviewer}
-            candidates = normalized_mapping_values(worker_reassignment_settings(config).get("reviewer_fallbacks", {}), agent_name)
+            candidates = get_agent_reassignment_candidates(config, agent_name, role="reviewer", task=task)
         elif task_status in owned_statuses | finalize_statuses and owner == agent_name:
             role = "owner"
             exclude = {owner, reviewer}
-            candidates = normalized_mapping_values(worker_reassignment_settings(config).get("owner_fallbacks", {}), agent_name)
+            candidates = get_agent_reassignment_candidates(config, agent_name, role="owner", task=task)
         if not role:
             continue
         viable_candidates = [
@@ -3687,7 +3687,7 @@ def chair_review_blocked_owner_rescue_details(config: dict[str, Any], state: dic
         task_id = str(task.get("id") or "").strip()
         owner = str(task.get("owner") or "").strip()
         reviewer = str(task.get("reviewer") or "").strip()
-        candidates = normalized_mapping_values(owner_fallbacks, owner)
+        candidates = get_agent_reassignment_candidates(config, owner, role="owner", task=task)
         viable_candidates = [
             candidate
             for candidate in candidates
@@ -5037,18 +5037,97 @@ def worker_reassignment_settings(config: dict[str, Any]) -> dict[str, Any]:
                 default_eligible_statuses.append(normalized)
     settings.setdefault("eligible_statuses", default_eligible_statuses or ["todo", "in_progress", "review", "review_approved"])
     default_fallbacks = {
-        "Claude": ["Codex", "Codex2"],
-        "Claude2": ["Codex", "Codex2", "Claude"],
-        "Gemini": ["Codex", "Codex2", "Claude"],
-        "Gemini2": ["Codex", "Codex2", "Claude"],
-        "Codex": ["Codex2", "Claude", "Claude2"],
-        "Codex2": ["Codex", "Claude", "Claude2"],
-        "Copilot": ["Codex", "Codex2", "Claude"],
+        "Claude": ["Claude2", "Claude3", "Codex", "Codex2", "Codex6", "Antigravity", "Antigravity2", "Antigravity3"],
+        "Claude2": ["Claude", "Claude3", "Codex", "Codex2", "Codex6", "Antigravity", "Antigravity2", "Antigravity3"],
+        "Claude3": ["Claude2", "Claude", "Codex", "Codex2", "Codex6", "Antigravity", "Antigravity2", "Antigravity3"],
+        "Antigravity": ["Antigravity2", "Antigravity3", "Antigravity4", "Antigravity5", "Antigravity6", "Antigravity7", "Codex2", "Codex", "Codex6", "Claude2", "Claude"],
+        "Antigravity2": ["Antigravity", "Antigravity3", "Antigravity4", "Antigravity5", "Antigravity6", "Antigravity7", "Codex2", "Codex", "Codex6", "Claude2", "Claude"],
+        "Antigravity3": ["Antigravity4", "Antigravity5", "Antigravity6", "Antigravity7", "Antigravity2", "Antigravity", "Codex6", "Codex2", "Codex", "Claude2", "Claude"],
+        "Antigravity4": ["Antigravity3", "Antigravity5", "Antigravity6", "Antigravity7", "Antigravity2", "Antigravity", "Codex6", "Codex2", "Codex", "Claude2", "Claude"],
+        "Antigravity5": ["Antigravity6", "Antigravity7", "Antigravity4", "Antigravity3", "Antigravity2", "Antigravity", "Codex6", "Codex2", "Codex", "Claude2", "Claude"],
+        "Antigravity6": ["Antigravity5", "Antigravity7", "Antigravity4", "Antigravity3", "Antigravity2", "Antigravity", "Codex6", "Codex2", "Codex", "Claude2", "Claude"],
+        "Antigravity7": ["Antigravity6", "Antigravity5", "Antigravity4", "Antigravity3", "Antigravity2", "Antigravity", "Codex6", "Codex2", "Codex", "Claude2", "Claude"],
+        "Codex": ["Codex2", "Codex6", "Codex3", "Codex4", "Codex5", "Codex7", "Codex8", "Codex9", "Claude", "Claude2", "Antigravity", "Antigravity2"],
+        "Codex2": ["Codex", "Codex6", "Codex3", "Codex4", "Codex5", "Codex7", "Codex8", "Codex9", "Claude", "Claude2", "Antigravity", "Antigravity2"],
+        "Codex3": ["Codex2", "Codex6", "Codex", "Codex4", "Codex5", "Codex7", "Codex8", "Codex9", "Claude", "Claude2", "Antigravity"],
+        "Codex4": ["Codex2", "Codex6", "Codex", "Codex3", "Codex5", "Codex7", "Codex8", "Codex9", "Claude", "Claude2", "Antigravity"],
+        "Codex5": ["Codex6", "Codex2", "Codex", "Codex8", "Codex9", "Claude", "Claude2", "Antigravity3", "Antigravity4"],
+        "Codex6": ["Codex2", "Codex", "Codex8", "Codex9", "Claude2", "Claude", "Antigravity3", "Antigravity7"],
+        "Codex7": ["Codex6", "Codex2", "Codex", "Codex8", "Codex9", "Claude", "Claude2", "Antigravity"],
+        "Codex8": ["Codex9", "Codex6", "Codex2", "Codex", "Claude2", "Claude", "Antigravity3", "Antigravity7"],
+        "Codex9": ["Codex8", "Codex6", "Codex2", "Codex", "Claude2", "Claude", "Antigravity3", "Antigravity7"],
+        "CodexCoordinator": ["Codex6", "Codex2", "Codex", "Codex8", "Codex9", "Claude2", "Claude", "Antigravity7"],
+        "Gemini": ["Gemini2", "Codex", "Codex2", "Claude", "Claude2", "Antigravity", "Antigravity2"],
+        "Gemini2": ["Gemini", "Codex", "Codex2", "Claude", "Claude2", "Antigravity", "Antigravity2"],
+        "Copilot": ["Codex", "Codex2", "Claude", "Claude2", "Antigravity", "Antigravity2"],
         "Grok": ["Codex", "Codex2", "Claude"],
     }
     settings.setdefault("owner_fallbacks", default_fallbacks)
     settings.setdefault("reviewer_fallbacks", default_fallbacks)
     return settings
+
+
+def is_human_gate_agent(agent_name: str | None) -> bool:
+    name = str(agent_name or "").strip().casefold()
+    if not name:
+        return False
+    return name in {"human/ops", "human", "ops"} or name.startswith("human/")
+
+
+def get_agent_reassignment_candidates(
+    config: dict[str, Any],
+    failing_agent: str,
+    role: str = "owner",
+    task: dict[str, Any] | None = None,
+) -> list[str]:
+    mapping_key = "reviewer_fallbacks" if role == "reviewer" else "owner_fallbacks"
+    configured_mapping = worker_reassignment_settings(config).get(mapping_key, {})
+    explicit = normalized_mapping_values(configured_mapping, failing_agent)
+
+    candidates: list[str] = []
+    seen: set[str] = set()
+
+    for item in explicit:
+        name = str(item or "").strip()
+        if name and name not in seen and not is_human_gate_agent(name):
+            candidates.append(name)
+            seen.add(name)
+
+    if candidates:
+        return candidates
+
+    failing_norm = str(failing_agent or "").strip()
+    if failing_norm:
+        seen.add(failing_norm)
+
+    known_names = sorted(list(known_agent_display_names(config)))
+    default_pool = [
+        "Antigravity", "Antigravity2", "Antigravity3", "Antigravity4", "Antigravity5", "Antigravity6", "Antigravity7",
+        "Codex", "Codex2", "Codex3", "Codex4", "Codex5", "Codex6", "Codex7", "Codex8", "Codex9", "CodexCoordinator",
+        "Claude", "Claude2", "Claude3", "Gemini", "Gemini2", "Copilot"
+    ]
+    for agent_item in default_pool:
+        if agent_item not in known_names:
+            known_names.append(agent_item)
+
+    family_prefix = re.sub(r"\d+$", "", failing_norm, flags=re.IGNORECASE)
+    same_family: list[str] = []
+    other_family: list[str] = []
+
+    for name in known_names:
+        if name in seen or is_human_gate_agent(name):
+            continue
+        if family_prefix and name.casefold().startswith(family_prefix.casefold()):
+            same_family.append(name)
+        else:
+            other_family.append(name)
+
+    for name in same_family + other_family:
+        if name not in seen:
+            candidates.append(name)
+            seen.add(name)
+
+    return candidates
 
 
 def normalized_mapping_values(mapping: dict[str, Any], key: str) -> list[str]:
@@ -5553,6 +5632,9 @@ def maybe_reassign_task_after_worker_failure(
     owned_statuses = {str(value).lower() for value in dispatch_settings.get("owned_statuses", ["in_progress", "todo"])}
 
     failing_agent = display_name_for(config, str(worker.get("agent_id") or worker.get("provider") or ""))
+    if is_human_gate_agent(failing_agent):
+        return None
+
     failure = classify_worker_failure(config, worker, reason)
     failure_label = failure.get("label", "provider failure")
     failure_summary = summarize_failure_reason(reason, failing_agent).get("summary") or failure_label
@@ -5560,9 +5642,11 @@ def maybe_reassign_task_after_worker_failure(
     reviewer = str(task.get("reviewer") or "")
 
     if task_status in review_statuses and reviewer == failing_agent:
-        candidates = normalized_mapping_values(settings.get("reviewer_fallbacks", {}), failing_agent)
+        if is_human_gate_agent(reviewer):
+            return None
+        candidates = get_agent_reassignment_candidates(config, failing_agent, role="reviewer", task=task)
         new_reviewer = first_viable_agent(config, candidates, exclude={owner, reviewer}, state=state, task=task)
-        if not new_reviewer:
+        if not new_reviewer or is_human_gate_agent(new_reviewer):
             return None
         message = (
             f"Auto-reassigned review from {reviewer} to {new_reviewer} after repeated {failing_agent} {failure_label}: {failure_summary}"
@@ -5596,15 +5680,17 @@ def maybe_reassign_task_after_worker_failure(
         return new_reviewer
 
     if task_status in owned_statuses | finalize_statuses and owner == failing_agent:
-        candidates = normalized_mapping_values(settings.get("owner_fallbacks", {}), failing_agent)
+        if is_human_gate_agent(owner):
+            return None
+        candidates = get_agent_reassignment_candidates(config, failing_agent, role="owner", task=task)
         new_owner = first_viable_agent(config, candidates, exclude={owner, reviewer}, state=state, task=task)
-        if not new_owner:
+        if not new_owner or is_human_gate_agent(new_owner):
             return None
         reviewer_candidates = [reviewer]
-        reviewer_candidates.extend(normalized_mapping_values(settings.get("reviewer_fallbacks", {}), failing_agent))
-        reviewer_candidates.extend(normalized_mapping_values(settings.get("owner_fallbacks", {}), failing_agent))
+        reviewer_candidates.extend(get_agent_reassignment_candidates(config, failing_agent, role="reviewer", task=task))
+        reviewer_candidates.extend(get_agent_reassignment_candidates(config, failing_agent, role="owner", task=task))
         new_reviewer = first_viable_agent(config, reviewer_candidates, exclude={new_owner}, state=state, task=task)
-        if not new_reviewer:
+        if not new_reviewer or is_human_gate_agent(new_reviewer):
             return None
         requeue_for_fresh_dispatch = task_status in owned_statuses and task_status not in finalize_statuses
         message = (
@@ -7720,23 +7806,27 @@ def normalize_mainline_task_assignment(config: dict[str, Any], task: dict[str, A
     changed_fields: list[str] = []
 
     if owner and not owner_allowed:
-        owner_candidates = normalized_mapping_values(settings.get("owner_fallbacks", {}), owner)
+        if is_human_gate_agent(owner):
+            return False
+        owner_candidates = get_agent_reassignment_candidates(config, owner, role="owner", task=task)
         replacement_owner = first_viable_agent(config, owner_candidates, exclude={owner, reviewer}, task=task)
-        if not replacement_owner:
+        if not replacement_owner or is_human_gate_agent(replacement_owner):
             return False
         new_owner = replacement_owner
         changed_fields.append(f"owner {owner} -> {new_owner}")
 
     if not reviewer or not reviewer_allowed or reviewer == new_owner:
+        if reviewer and is_human_gate_agent(reviewer):
+            return False
         reviewer_candidates: list[str] = []
         if reviewer:
             reviewer_candidates.append(reviewer)
-            reviewer_candidates.extend(normalized_mapping_values(settings.get("reviewer_fallbacks", {}), reviewer))
+            reviewer_candidates.extend(get_agent_reassignment_candidates(config, reviewer, role="reviewer", task=task))
         if owner:
-            reviewer_candidates.extend(normalized_mapping_values(settings.get("reviewer_fallbacks", {}), owner))
-            reviewer_candidates.extend(normalized_mapping_values(settings.get("owner_fallbacks", {}), owner))
+            reviewer_candidates.extend(get_agent_reassignment_candidates(config, owner, role="reviewer", task=task))
+            reviewer_candidates.extend(get_agent_reassignment_candidates(config, owner, role="owner", task=task))
         replacement_reviewer = first_viable_agent(config, reviewer_candidates, exclude={new_owner}, task=task)
-        if not replacement_reviewer:
+        if not replacement_reviewer or is_human_gate_agent(replacement_reviewer):
             return False
         new_reviewer = replacement_reviewer
         if replacement_reviewer != reviewer:
@@ -8629,7 +8719,7 @@ def choose_helper_claim_agent(
         return False
     if not owner_name or owner_name == idle_agent_name:
         return False
-    fallbacks = normalized_mapping_values(worker_reassignment_settings(config).get("owner_fallbacks", {}), owner_name)
+    fallbacks = get_agent_reassignment_candidates(config, owner_name, role="owner", task=task)
     if not fallbacks:
         return False
     if owner_paused:
