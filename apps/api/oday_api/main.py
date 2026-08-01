@@ -400,6 +400,11 @@ else:
                 and provider_live_ready
                 and operator_repository_ready
             )
+            model_blocking_reasons = (
+                ["PRODUCTION_MODEL_BINDINGS_UNVERIFIED"]
+                if require_live_data and not production_model_bindings_ready
+                else []
+            )
             blocking_reasons: list[str] = []
             if require_live_data:
                 blocking_reasons.extend(
@@ -446,6 +451,7 @@ else:
                     "capabilities": production_model_capabilities,
                     "error": production_model_error,
                     "autoSeeded": (not require_live_data and production_model_bindings_ready),
+                    "blockingReasons": model_blocking_reasons,
                 },
                 "data": {
                     "mode": (

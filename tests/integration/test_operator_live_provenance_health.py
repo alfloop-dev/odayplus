@@ -264,6 +264,9 @@ def test_forecastops_absent_alias_fails_closed_without_synthetic_seed_or_fake_re
             "PRODUCTION_MODEL_REGISTRY_UNAVAILABLE",
         }
         assert models_section["productionBindingsReady"] is False
+        assert models_section["blockingReasons"] == [
+            "PRODUCTION_MODEL_BINDINGS_UNVERIFIED"
+        ]
         assert models_section["autoSeeded"] is False
 
         # Accessing model execution endpoint without authorization fails closed
