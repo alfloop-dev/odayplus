@@ -14,7 +14,7 @@ from typing import Annotated, Any, Literal
 from uuid import UUID, uuid4
 
 from modules.external_data.geo import GeoPipeline
-from modules.listing import InMemoryListingRepository, ListingPipeline
+from modules.listing import ListingPipeline
 from shared.audit import InMemoryAuditLog
 
 _CURSOR_SIGNING_KEY_ENV = "ODP_INTAKE_CURSOR_SIGNING_KEY"
@@ -3902,17 +3902,16 @@ else:
                 )
                 return type(target_repo)(TenantScopedDocumentStore(base_store, clean_tenant))
 
-        if bound_repository is not None and hasattr(bound_repository, "_store"):
+        if bound_repository is not None:
             return bound_repository
 
         repository = getattr(request.app.state, "listing_repository", None)
-        if repository is not None and hasattr(repository, "_store"):
-            return repository
+        if repository is None:
+            from modules.listing import InMemoryListingRepository
 
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Failed to resolve tenant-scoped listing repository",
-        )
+            repository = InMemoryListingRepository()
+            request.app.state.listing_repository = repository
+        return repository
 
 
     def _geo_pipeline(request: Request) -> GeoPipeline | None:
