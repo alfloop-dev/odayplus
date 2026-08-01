@@ -1053,3 +1053,39 @@ def test_live_governance_write_and_idempotency_survive_restart(
         assert replay.json()["idempotentReplay"] is True
     finally:
         reopened_bundle.engine.close()
+
+
+def test_tenant_scoped_document_store_never_queries_unpartitioned_collections() -> None:
+    called_collections: list[str] = []
+
+    class SpyStore:
+        def get(self, collection: str, doc_id: str) -> Any | None:
+            called_collections.append(collection)
+            return None
+
+        def list_all(self, collection: str) -> list[Any]:
+            called_collections.append(collection)
+            return []
+
+        def list_by_group(self, collection: str, group_key: str) -> list[Any]:
+            called_collections.append(collection)
+            return []
+
+        def latest_in_group(self, collection: str, group_key: str) -> Any | None:
+            called_collections.append(collection)
+            return None
+
+    spy = SpyStore()
+    scoped = TenantScopedDocumentStore(spy, "tenant-spy-probe")
+    base_coll = "listing.listings"
+
+    scoped.get(base_coll, "doc-1")
+    scoped.list_all(base_coll)
+    scoped.list_by_group(base_coll, "group-1")
+    scoped.latest_in_group(base_coll, "group-1")
+
+    assert called_collections
+    for coll in called_collections:
+        assert coll.startswith(f"{base_coll}.tenant.")
+        assert coll != base_coll
+
