@@ -137,6 +137,16 @@ the task was `in_progress`. After that repair merges, refresh this branch from
 `origin/dev`, rerun required PR checks, and re-enter exact-head review before
 closeout.
 
+Dependency refresh at 2026-08-01T23:57:22Z: PR `#562` remains open at the
+same exact head. Its `orchestrator`, `product`, `performance-gate`, and
+`product-e2e-gate` jobs are all successful, but its independent
+`task-review-gate` is still pending and the repair is not in `origin/dev`.
+PR `#556` therefore remains blocked; its latest run at sidecar head
+`4d3c2e0254815244d75660bfc10b7945483a7df2` still has a failed
+`product-e2e-gate`. This packet must not be re-submitted as green until PR
+`#562` is reviewed and merged, this branch is refreshed from that `dev`, and
+the sidecar checks pass on the resulting exact head.
+
 ## Operational follow-ups, not absorbed here
 
 The parent evidence flags two configuration drifts:
