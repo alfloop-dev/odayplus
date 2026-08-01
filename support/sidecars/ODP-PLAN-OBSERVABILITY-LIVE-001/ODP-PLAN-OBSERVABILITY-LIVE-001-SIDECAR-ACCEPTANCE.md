@@ -15,7 +15,7 @@
 
 ## 1. Executive Summary & Scope Boundary
 
-This document serves as the sidecar support packet and acceptance specification for parent task `ODP-PLAN-OBSERVABILITY-LIVE-001` ("接通 production observability 與 on-call route"). 
+This document serves as the sidecar support packet and acceptance specification for parent task `ODP-PLAN-OBSERVABILITY-LIVE-001` ("接通 production observability 與 on-call route").
 
 ### Scope Boundaries
 - **Support Only**: This packet is a support artifact. It does **not** mutate L1 canonical architecture documents, core runtime contracts, or production code implementations directly.
