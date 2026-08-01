@@ -1,0 +1,160 @@
+{
+  "schema_version": 1,
+  "kind": "heatzone-human-data-gate-validation-blocker",
+  "task_id": "ODP-PLAN-HEATZONE-LABEL-BACKFILL-001",
+  "evaluated_at": "2026-08-01T15:01:45Z",
+  "evaluated_repository_head": "eed83c0937f491211247ee3fdb0bdf8d932564fb",
+  "validator": "Codex3",
+  "validator_role": "AI validation only; not a data source authority or data owner",
+  "reviewer": "Human/Ops",
+  "verdict": "BLOCKED_FAIL_CLOSED",
+  "activation_state": "GOVERNED_DISABLED",
+  "unavailable_reason": "AUTHORITATIVE_MATURE_LABEL_DATASET_NOT_SUPPLIED",
+  "candidate_dataset_accepted": false,
+  "model_or_alias_activated": false,
+  "authority_boundary": {
+    "required_supplier": "Expansion Operations / POS Data Platform",
+    "human_supplied_source_receipt_present": false,
+    "authoritative_source_readback_present": false,
+    "authoritative_dataset_snapshot_present": false,
+    "ai_authored_source_receipt_forbidden": true,
+    "statement": "This artifact records validation failure only. It is not a source receipt, does not attest a production count, and must not be used to activate HeatZone."
+  },
+  "declared_source_contract": {
+    "relation": "model_ready.heatzone_training_view",
+    "contract_version": "heatzone-training-view-v2",
+    "contract_path": "scripts/models/sql/model_ready_views.sql",
+    "contract_sha256": "0bbcad43ed07f81ecd1a6f6a4e7e387efb3abb540b4d98c8d101a0bdd292dca8",
+    "minimum_eligible_mature_real_labels": 200,
+    "prior_horizon_days": 90,
+    "label_horizon_days": 28,
+    "label_field": "realized_28d_cell_net_revenue",
+    "stable_entity_key": "tenant_id:h3_index:origin_date",
+    "eligibility_field": "is_training_eligible"
+  },
+  "latest_resolvable_authoritative_evidence": {
+    "decision": "FAIL_CLOSED",
+    "observed_at": "2026-07-27T22:08:37Z",
+    "inventory_cutoff": "2026-07-25T15:20:00Z",
+    "eligible_mature_real_labels": 0,
+    "required_labels": 200,
+    "shortfall": 200,
+    "pg16_store_rows": 2442,
+    "approved_opened_on_rows": 0,
+    "canonical_pit_geography_rows": 1909,
+    "origin_rows": 0,
+    "persisted_label_dataset": false,
+    "readback_evidence": [
+      {
+        "path": "docs/evidence/runtime/ODP-HEATZONE-PIT-LABEL-AUTHORITY-001/reconciliation.json",
+        "sha256": "7b74e7262def7d5b2c3d4b25e6777e21ed9f37b8132091b1940b655e8041c885"
+      },
+      {
+        "path": "docs/evidence/runtime/ODP-STORE-OPENING-AUTHORITY-ACTIVATION-001/fail_closed_decision.json",
+        "sha256": "9dce37cf9d504ab76032e807f43ce66c188c8e30ce76be34f009b9b00e752671"
+      },
+      {
+        "path": "docs/evidence/runtime/ODP-PRODUCTION-GEOGRAPHY-BACKFILL-001/live-geography-backfill.md",
+        "sha256": "e2764c7e51ebae4690364da942606c1b997ba43c816ac2a38a6f9dd916c0245e"
+      },
+      {
+        "path": "docs/evidence/models/ODP-PLAN-HEATZONE-OUTCOME-001/DATA_HANDBACK.json",
+        "sha256": "841246ebfd71b355e19e0d01c1654a8afec4b3b3a3415c5d12c1cdcf79a4bc87"
+      },
+      {
+        "path": "docs/evidence/models/ODP-PLAN-HEATZONE-OUTCOME-001/GATE1_BENCHMARK_RECEIPT.json",
+        "sha256": "ac8e406d2105b307030bf0c92a976ff36bf55ceafe8acecdb7f5129695fa8fef"
+      }
+    ]
+  },
+  "acceptance_reconciliation": [
+    {
+      "criterion": "at least 200 authoritative eligible mature labels",
+      "status": "FAIL",
+      "observed": "latest authoritative count is 0; no replacement source-system readback supplied"
+    },
+    {
+      "criterion": "exact dataset snapshot hash",
+      "status": "FAIL",
+      "observed": "no candidate dataset snapshot or hash supplied"
+    },
+    {
+      "criterion": "source lineage and authoritative readback location",
+      "status": "FAIL",
+      "observed": "no new source-system locator, immutable snapshot id, or row-level lineage supplied"
+    },
+    {
+      "criterion": "named data owner",
+      "status": "FAIL",
+      "observed": "required owner is identified, but no owner-authored attestation or receipt was supplied"
+    },
+    {
+      "criterion": "freshness and cutoff",
+      "status": "FAIL",
+      "observed": "no candidate dataset cutoff or freshness result supplied; prior inventory cutoff is 2026-07-25T15:20:00Z"
+    },
+    {
+      "criterion": "eligibility query and reproducible count",
+      "status": "FAIL",
+      "observed": "the versioned eligibility contract exists, but no source-system execution result or count reconciliation was supplied"
+    },
+    {
+      "criterion": "synthetic, fixture, auto-seeded, duplicate, immature, ownerless, stale, and unverifiable rows rejected",
+      "status": "FAIL",
+      "observed": "no candidate inventory was supplied against which every rejection class can be re-audited"
+    }
+  ],
+  "required_human_ops_handback": {
+    "readback": {
+      "source_system": "authoritative system of record name and environment",
+      "location": "reviewer-accessible immutable relation, snapshot, or object locator",
+      "snapshot_id": "immutable dataset snapshot identifier",
+      "dataset_sha256": "SHA-256 of the canonical eligible dataset using a declared serialization and ordering",
+      "observed_at": "source-system readback timestamp",
+      "cutoff": "maximum source event time included",
+      "freshness_sla": "declared SLA and pass/fail result"
+    },
+    "ownership": {
+      "owner_name": "named Human/Ops data owner",
+      "owner_role": "authority for opening/POS/geography source data",
+      "attestation_location": "reviewer-readable owner-authored receipt"
+    },
+    "eligibility_replay": {
+      "query": "exact SQL or immutable query artifact selecting is_training_eligible rows",
+      "query_sha256": "hash of the exact executed query",
+      "eligible_count": "integer greater than or equal to 200",
+      "ordered_hash_query": "exact row ordering and serialization used for dataset_sha256",
+      "exclusion_counts": [
+        "synthetic_or_fixture",
+        "auto_seeded",
+        "duplicate_entity_key",
+        "immature_label",
+        "missing_owner",
+        "stale_source",
+        "missing_or_unresolvable_lineage"
+      ]
+    },
+    "required_row_contract": [
+      "tenant_id",
+      "store_id",
+      "opened_on",
+      "h3_index",
+      "h3_resolution",
+      "origin_date",
+      "realized_28d_cell_net_revenue",
+      "label_maturity_time",
+      "authority_type",
+      "provenance",
+      "source_snapshot_ids"
+    ]
+  },
+  "reviewer_replay": [
+    "Resolve every cited source artifact and verify its SHA-256 before using it as prior evidence.",
+    "Run the supplied eligibility query at the declared immutable snapshot/cutoff.",
+    "Reconcile raw, eligible, exclusion, duplicate, and mature counts; require eligible_count >= 200.",
+    "Recompute the ordered canonical dataset SHA-256 and compare it with the owner receipt.",
+    "Reject the full batch if any authority, lineage, maturity, freshness, ownership, deduplication, or reproducibility criterion fails.",
+    "Keep HeatZone governed-disabled unless the complete batch passes."
+  ],
+  "next_action": "Human/Ops must publish the complete authoritative handback packet. Codex3 then re-audits every criterion and may hand off only the fully reconciled batch for review."
+}
