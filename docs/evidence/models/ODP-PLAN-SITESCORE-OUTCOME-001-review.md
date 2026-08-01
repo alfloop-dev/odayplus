@@ -1881,3 +1881,83 @@ violations of the authoritative prediction dependency, evidence lineage, populat
 self-consistent-forged-receipt, and governed-disabled acceptance clauses. Re-audit the entire
 acceptance batch after remediation and return one new exact pushed head. No owner implementation
 content was changed by this review.
+
+---
+
+# Codex Re-review Addendum — 2026-08-01, exact owner head `ebe994b1`
+
+The supervisor re-dispatched the task after the owner reported remediation of the `b11aeace`
+findings. The local task branch and
+`origin/task/ODP-PLAN-SITESCORE-OUTCOME-001` both resolved to exact pushed commit
+`ebe994b15c75071571556d5eb68ecb05e559e542`. The worktree contained no tracked
+uncommitted implementation changes; its only untracked files were the orchestrator-seeded task
+context and state files.
+
+## Verification at the exact owner head
+
+```bash
+PYTHONPATH=. .venv/bin/pytest -q tests/models -k "sitescore or opening_outcome"
+PYTHONPATH=. .venv/bin/pytest -q tests -k "sitescore or opening_outcome or model_ready"
+.venv/bin/ruff check scripts/models models tests/models
+git diff --check
+git diff --check b11aeace..ebe994b1
+PYTHONPATH=. .venv/bin/python <independent in-memory mutation probes>
+```
+
+- Task-scoped selector: **57 passed**.
+- Full focused selector: **99 passed**.
+- Ruff and both whitespace checks are clean.
+- The owner's direct B1/B2 regressions pass. In particular, submitted reason/status fields no
+  longer establish governed lineage, and an absent-manifest non-empty population digest now fails
+  closed.
+- A freshly generated two-record partial-prediction receipt/model-card pair verifies when the
+  source records are supplied through `dataset_manifest`.
+- Two independent mutations retained that exact manifest, updated every affected public receipt,
+  handback, model-card, and segment/calibration copy, and recomputed the handback, model-card,
+  aggregate, and receipt hashes. Both nevertheless returned `is_valid=True`,
+  `reason_code="RECEIPT_VALIDATED"`, and no errors.
+
+## Blocking findings
+
+### B1 — Manifest population digest does not bind the receipt aggregates
+
+For authoritative manifest realized revenues 100 and 300 with only the first record carrying a
+prediction, the producer reports matched mean 100, unmatched mean 300, revenue sum 400, and overall
+mean 200. Keeping the manifest and its `mature_population_digest` unchanged, replacing the
+unmatched mean with `999999`, revenue sum with `1000099`, and overall mean with `500049.5`, then
+recomputing `population_aggregate_digest` and all artifact/content hashes validates.
+
+The manifest path at `models/sitescore/opening_outcome.py:1247-1269` derives only the population
+digest. The aggregate path at lines 1281-1292 then re-derives its expected value from the receipt's
+own submitted count/sum/means instead of computing those values from `dataset_manifest`. This is
+still a self-consistent forged receipt and population mismatch. Recompute and compare all
+population aggregates from the supplied authoritative records (or compare the receipt against a
+separately authenticated aggregate manifest); a digest that merely prefixes attacker-controlled
+scalars does not bind them to the source population. Add the fully rebound mutation above.
+
+### B2 — The manifest digest omits M6/M12 and interval evidence
+
+For a two-record manifest where both records contain valid mature M6/M12 outcomes and prediction
+intervals, changing `m6_mature_count` and `m6_coverage_ratio` from 2/100% to 0/0% in every receipt,
+handback, model-card, and segment copy validates after hash rebinding against the unchanged
+manifest.
+
+The canonical manifest list at `models/sitescore/opening_outcome.py:1257-1263` contains only
+identity, `realized_90d_net_revenue`, and `predicted_revenue`. It omits eligibility inputs,
+opened/maturity dates, realized M6/M12 values, interval bounds, and segment identity. The later
+checks at lines 1478-1509 prove only internal numerator/denominator consistency; they never derive
+the counts or coverage from the manifest. Thus the purported authoritative binding does not cover
+the task's primary M6/M12, interval, eligibility, or population-alignment evidence. Canonicalize
+the complete evidence-bearing row schema and independently evaluate/reconcile every claimed count,
+coverage, calibration, and segment metric from the manifest. Add fully rebound M6/M12 and interval
+mutations.
+
+## Decision
+
+**Changes requested.** Exact owner head `ebe994b1` is not approved. The missing-lineage forged
+ACTIVE path is fixed and all prescribed suites are green, but the new manifest interface still
+accepts fully hash-rebound fabricated aggregates and M6 coverage while presented with contradictory
+source records. These directly violate the authoritative inventory, population-aligned metrics,
+M6/M12 evidence, and self-consistent-forged-receipt acceptance clauses. Re-audit the complete batch
+after remediation and return one new exact pushed head. No owner implementation content was
+changed by this review.
