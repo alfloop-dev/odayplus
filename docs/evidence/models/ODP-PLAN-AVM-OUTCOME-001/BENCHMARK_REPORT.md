@@ -1,7 +1,7 @@
 # AVM Outcome Inventory Benchmark & Gate 1 Receipt
 
 - **Task ID**: `ODP-PLAN-AVM-OUTCOME-001`
-- **Evaluation Date**: `2026-07-31T17:10:24.354570+00:00`
+- **Evaluation Date**: `2026-08-01T14:58:08.741459+00:00`
 - **Verdict**: **❌ FAIL CLOSED**
 - **Model Version**: `dealroom-avm-baseline-v1`
 - **Dataset Snapshot ID**: `empty-snapshot-unpopulated`
@@ -48,7 +48,7 @@
 - **Permitted Accesses**: `0` (Roles: `NONE`)
 - **Denied Accesses**: `4` (Roles: `FINANCE_LEGAL`, `FRANCHISEE`, `PLATFORM_ADMIN`, `REGIONAL_SUPERVISOR`)
 - **Zero Confidential Leak Verified**: `True`
-- **Audit Receipt SHA256**: `dc5c4b756da864a04940c26b74380fff6ed3dabe5997cd9d93906f518ba78e54`
+- **Audit Receipt SHA256**: `4865bf8603563dda89b7e0a84a0beb4d4780823abe997e875c52dc8dc0cd5e73`
 
 ---
 

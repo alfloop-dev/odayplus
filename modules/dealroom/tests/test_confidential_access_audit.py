@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import pytest
 
+from modules.avm.domain.outcome import TEST_ONLY_AUTHORITY_KEY
 from modules.dealroom.application.outcome_audit import (
     generate_dealroom_outcome_audit_receipt,
     verify_audit_receipt,
@@ -18,11 +19,16 @@ from modules.dealroom.domain.confidential_access import (
 from shared.auth.rbac import Action, Role
 
 
-def _make_valid_context(actor_id: str, role: Role | str, tenant_id: str = "tenant-avm-001") -> dict:
+@pytest.fixture(autouse=True)
+def setup_test_authority_key(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("ODP_AVM_AUTHORITY_VERIFIER_KEY", TEST_ONLY_AUTHORITY_KEY)
+
+
+def _make_valid_context(actor_id: str, role: Role | str, tenant_id: str = "tenant-avm-001", authority_key: str = TEST_ONLY_AUTHORITY_KEY) -> dict:
     return {
         "authenticated": True,
         "verified_identity": True,
-        "identity_proof_sha256": create_identity_proof(actor_id, role, tenant_id),
+        "identity_proof_sha256": create_identity_proof(actor_id, role, tenant_id, authority_key=authority_key),
         "tenant_id": tenant_id,
         "data_room_access": True,
         "tenant_matched": True,
@@ -39,7 +45,7 @@ def test_confidential_access_permitted_for_finance_legal() -> None:
         context=_make_valid_context("usr-fin-001", Role.FINANCE_LEGAL),
     )
     decision, reason, receipt = ConfidentialAccessAuditor.evaluate_access(
-        attempt, ConfidentialLevel.HIGH
+        attempt, ConfidentialLevel.HIGH, authority_key=TEST_ONLY_AUTHORITY_KEY
     )
     assert decision == ConfidentialAccessDecision.PERMIT
     assert "usr-fin-001" in receipt["actor_id"]
@@ -56,7 +62,7 @@ def test_confidential_access_denied_for_unauthorized_roles() -> None:
             context=_make_valid_context("usr-supervisor-999", forbidden_role),
         )
         decision, reason, receipt = ConfidentialAccessAuditor.evaluate_access(
-            attempt, ConfidentialLevel.HIGH
+            attempt, ConfidentialLevel.HIGH, authority_key=TEST_ONLY_AUTHORITY_KEY
         )
         assert decision == ConfidentialAccessDecision.DENY
         assert "forbidden" in reason.lower() or "denied" in reason.lower()
@@ -68,13 +74,13 @@ def test_audit_receipt_generation_redacts_confidential_values_and_calculates_sha
         ("usr-sup-002", Role.REGIONAL_SUPERVISOR, "dealroom", Action.VIEW, _make_valid_context("usr-sup-002", Role.REGIONAL_SUPERVISOR)),
     ]
     raw_prices = (15800000.0, 22000000.0)
-    receipt = generate_dealroom_outcome_audit_receipt(attempts, forbidden_raw_prices=raw_prices, dataset_snapshot_hash="a" * 64)
+    receipt = generate_dealroom_outcome_audit_receipt(attempts, authority_key=TEST_ONLY_AUTHORITY_KEY, forbidden_raw_prices=raw_prices, dataset_snapshot_hash="a" * 64)
 
     assert receipt["kind"] == "avm-confidential-access-audit-receipt"
     assert receipt["permitted_count"] == 1
     assert receipt["denied_count"] == 1
     assert len(receipt["sha256"]) == 64
-    assert verify_audit_receipt(receipt, expected_snapshot_hash="a" * 64) is True
+    assert verify_audit_receipt(receipt, expected_snapshot_hash="a" * 64, authority_key=TEST_ONLY_AUTHORITY_KEY) is True
 
 
 def test_assert_no_confidential_leak_raises_on_raw_price_leak() -> None:

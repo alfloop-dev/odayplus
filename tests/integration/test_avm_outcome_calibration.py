@@ -11,6 +11,7 @@ from modules.avm.application.outcome_calibration import (
 )
 from modules.avm.domain.outcome import (
     TEST_ONLY_AUTHORITY_KEY,
+    TRUST_ANCHOR_VERIFIER,
     AuthoritativeOutcomeSourceAdapter,
     AVMActivationAuthorityReceipt,
     AVMOutcomeTransaction,
@@ -20,6 +21,7 @@ from modules.avm.domain.outcome import (
     AVMVerdict,
     align_outcomes_and_predictions,
     compute_avm_outcome_calibration,
+    create_authority_dataset_attestation,
     create_avm_activation_receipt,
     create_avm_query_source_receipt,
 )
@@ -43,6 +45,7 @@ RAW_SHA = "1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef"
 
 @pytest.fixture(autouse=True)
 def setup_test_authority_key(monkeypatch: pytest.MonkeyPatch) -> None:
+    TRUST_ANCHOR_VERIFIER.reset_replay_cache()
     monkeypatch.setenv("ODP_AVM_AUTHORITY_VERIFIER_KEY", TEST_ONLY_AUTHORITY_KEY)
 
 
@@ -1047,7 +1050,7 @@ def test_b30_embedded_key_and_public_minting_without_external_authority_key_fail
     with pytest.raises(AVMOutcomeValidationError, match="Invalid or missing authority key"):
         create_avm_activation_receipt(VALID_DATASET_HASH, VALID_MODEL_HASH, authority_key="")
 
-    with pytest.raises(AVMOutcomeValidationError, match="Invalid authority key"):
+    with pytest.raises(AVMOutcomeValidationError, match="Invalid or missing authority key"):
         create_avm_query_source_receipt("snapshot-001", VALID_DATASET_HASH, authority_key="")
 
     # Even if receipt objects are constructed manually by an attacker, verify_attestation fails closed without external key
@@ -1063,18 +1066,26 @@ def test_b30_embedded_key_and_public_minting_without_external_authority_key_fail
 
 
 def test_b31_authoritative_source_adapter_readback_and_population_binding() -> None:
-    """B31: Authoritative source adapter readback binds population and snapshot to official partition."""
+    """B31: Authoritative source adapter readback binds population and snapshot to official partition with signed attestation."""
     adapter = AuthoritativeOutcomeSourceAdapter(tenant_id="tenant-avm-001", authority_partition="official_real_estate")
     now = datetime.now(UTC) - timedelta(days=1)
     outcomes = [
         AVMOutcomeTransaction(f"tx-{i}", f"s-{i}", 10_000_000.0, now, is_mature=True, authority_partition="official_real_estate", raw_record_sha256=RAW_SHA)
         for i in range(120)
     ]
+    pop_keys = [o.transaction_id for o in outcomes]
+    attestation = create_authority_dataset_attestation(
+        dataset_snapshot_id="snapshot-002",
+        dataset_snapshot_hash=VALID_DATASET_HASH,
+        population_keys=pop_keys,
+        authority_key=TEST_ONLY_AUTHORITY_KEY,
+    )
     verified, query_rcpt = adapter.readback_authoritative_outcome_inventory(
         outcomes,
         dataset_snapshot_id="snapshot-002",
         dataset_snapshot_hash=VALID_DATASET_HASH,
         authority_key=TEST_ONLY_AUTHORITY_KEY,
+        source_attestation=attestation,
     )
     assert len(verified) == 120
     assert query_rcpt is not None
@@ -1178,3 +1189,78 @@ def test_expired_and_future_timestamp_receipts_fail_closed() -> None:
         VALID_DATASET_HASH, VALID_MODEL_HASH, authority_key=TEST_ONLY_AUTHORITY_KEY, issued_at=past_time, expires_at=exp_time
     )
     assert expired_rcpt.verify_attestation(VALID_DATASET_HASH, VALID_MODEL_HASH, authority_key=TEST_ONLY_AUTHORITY_KEY) is False
+
+
+# --- B33, B34, B35 Authority Boundary & Receipt Forgery Mutation Tests ---
+
+def test_b33_configured_public_verifier_key_cannot_be_used_as_signing_secret(monkeypatch: pytest.MonkeyPatch) -> None:
+    """B33: Public verifier key cannot be passed as signing secret to mint receipts."""
+    public_verifier = "attacker-known-public-verifier-key-v1"
+    monkeypatch.setenv("ODP_AVM_AUTHORITY_VERIFIER_KEY", public_verifier)
+
+    with pytest.raises(AVMOutcomeValidationError, match="Public verifier key cannot be used as shared signing secret"):
+        create_avm_activation_receipt(
+            VALID_DATASET_HASH, VALID_MODEL_HASH, authority_key=public_verifier
+        )
+
+    with pytest.raises(AVMOutcomeValidationError, match="Public verifier key cannot be used as shared signing secret"):
+        create_avm_query_source_receipt(
+            "snapshot-001", VALID_DATASET_HASH, authority_key=public_verifier
+        )
+
+    with pytest.raises(AVMOutcomeValidationError, match="Public verifier key cannot be used as shared signing secret"):
+        create_identity_proof(
+            "usr-attacker-001", Role.FINANCE_LEGAL, authority_key=public_verifier
+        )
+
+
+def test_b34_caller_rows_without_authority_source_attestation_fails_closed() -> None:
+    """B34: Caller-provided outcome rows in memory without signed source attestation fail to return query receipt."""
+    adapter = AuthoritativeOutcomeSourceAdapter(tenant_id="tenant-avm-001", authority_partition="official_real_estate")
+    now = datetime.now(UTC) - timedelta(days=1)
+    outcomes = [
+        AVMOutcomeTransaction(f"tx-{i}", f"s-{i}", 10_000_000.0, now, is_mature=True, authority_partition="official_real_estate", raw_record_sha256=RAW_SHA)
+        for i in range(120)
+    ]
+    verified, query_rcpt = adapter.readback_authoritative_outcome_inventory(
+        outcomes,
+        dataset_snapshot_id="snapshot-002",
+        dataset_snapshot_hash=VALID_DATASET_HASH,
+        authority_key=TEST_ONLY_AUTHORITY_KEY,
+        source_attestation=None,
+    )
+    assert len(verified) == 120
+    assert query_rcpt is None
+
+
+def test_b35_unknown_issuer_key_id_fails_verification() -> None:
+    """B35: Unknown or invalid issuer_key_id fails verification."""
+    act_rcpt = create_avm_activation_receipt(
+        VALID_DATASET_HASH, VALID_MODEL_HASH, authority_key=TEST_ONLY_AUTHORITY_KEY, issuer_key_id="unknown-issuer-key"
+    )
+    assert act_rcpt.verify_attestation(VALID_DATASET_HASH, VALID_MODEL_HASH, authority_key=TEST_ONLY_AUTHORITY_KEY) is False
+
+    query_rcpt = create_avm_query_source_receipt(
+        "snapshot-001", VALID_DATASET_HASH, authority_key=TEST_ONLY_AUTHORITY_KEY, issuer_key_id="unknown-issuer-key"
+    )
+    assert query_rcpt.verify_query_receipt(VALID_DATASET_HASH, authority_key=TEST_ONLY_AUTHORITY_KEY) is False
+
+
+def test_b35_replayed_receipt_event_id_fails_verification() -> None:
+    """B35: Replaying an event_id fails verification on second call."""
+    evt_id = "e" * 64
+    act_rcpt = create_avm_activation_receipt(
+        VALID_DATASET_HASH, VALID_MODEL_HASH, authority_key=TEST_ONLY_AUTHORITY_KEY, event_id=evt_id
+    )
+    assert act_rcpt.verify_attestation(VALID_DATASET_HASH, VALID_MODEL_HASH, authority_key=TEST_ONLY_AUTHORITY_KEY, verifier=TRUST_ANCHOR_VERIFIER) is True
+    # Replay attempt with same event_id
+    assert act_rcpt.verify_attestation(VALID_DATASET_HASH, VALID_MODEL_HASH, authority_key=TEST_ONLY_AUTHORITY_KEY, verifier=TRUST_ANCHOR_VERIFIER) is False
+
+
+def test_b35_expired_query_source_receipt_fails_verification() -> None:
+    """B35: Query source receipt with past expires_at fails verification."""
+    past_exp = datetime.now(UTC) - timedelta(hours=1)
+    query_rcpt = create_avm_query_source_receipt(
+        "snapshot-001", VALID_DATASET_HASH, authority_key=TEST_ONLY_AUTHORITY_KEY, expires_at=past_exp
+    )
+    assert query_rcpt.verify_query_receipt(VALID_DATASET_HASH, authority_key=TEST_ONLY_AUTHORITY_KEY) is False

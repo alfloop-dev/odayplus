@@ -3,7 +3,7 @@
   "schema_version": 1,
   "task_id": "ODP-PLAN-AVM-OUTCOME-001",
   "model_version": "dealroom-avm-baseline-v1",
-  "evaluated_at": "2026-07-31T17:10:24.354570+00:00",
+  "evaluated_at": "2026-08-01T14:58:08.741459+00:00",
   "verdict": "FAIL_CLOSED",
   "governed_disabled": true,
   "authentic_data_activated": false,
@@ -22,7 +22,7 @@
     "authority_partition": "official_real_estate"
   },
   "access_audit": {
-    "audit_receipt_sha256": "dc5c4b756da864a04940c26b74380fff6ed3dabe5997cd9d93906f518ba78e54",
+    "audit_receipt_sha256": "4865bf8603563dda89b7e0a84a0beb4d4780823abe997e875c52dc8dc0cd5e73",
     "total_access_attempts": 4,
     "permitted_count": 0,
     "denied_count": 4,
@@ -65,7 +65,7 @@
     }
   },
   "integrity": {
-    "content_sha256": "e2a006d7c53390660ced483feef3795a369a3d18af63c7bd2e32b2750979215d",
+    "content_sha256": "c4b82e78a5afea5bc1fd0fecd9b392f6f1cd870162950724d9e80baa8836d4a8",
     "signature_scheme": "sha256-json-canonical"
   }
 }
