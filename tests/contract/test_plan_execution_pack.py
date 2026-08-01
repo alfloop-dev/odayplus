@@ -297,6 +297,48 @@ def test_live_validation_accepts_completed_packet_from_official_archive(tmp_path
     )
 
 
+def test_live_validation_accepts_only_frozen_legacy_archive_contract(tmp_path: Path) -> None:
+    validator = _load_validator()
+    packet_data, status_path, archive_root = _write_live_fixture(tmp_path, validator)
+    target = packet_data["task_packets"][0]
+    target_id = target["task_id"]
+    status = json.loads(status_path.read_text(encoding="utf-8"))
+    archived_task = next(task for task in status["tasks"] if task["id"] == target_id)
+    archived_task["acceptance"] = validator.build_legacy_acceptance(target)
+    archived_task["artifacts"] = [validator.LEGACY_ARCHIVE_ARTIFACT_ANCHORS[target_id]]
+    for field in (
+        "execution_packet_deliverables",
+        "execution_packet_must_reject",
+        "execution_packet_evidence",
+        "execution_packet_handoff_gate",
+        "deployment_contract",
+    ):
+        archived_task.pop(field)
+    status["tasks"] = [task for task in status["tasks"] if task["id"] != target_id]
+    status_path.write_text(json.dumps(status), encoding="utf-8")
+    _archive_task(archive_root, archived_task)
+
+    assert (
+        validator.validate_packet(
+            live_status_path=status_path,
+            live_archive_root=archive_root,
+        )
+        == []
+    )
+
+    archive_path = archive_root / "tasks" / f"{target_id}.json"
+    snapshot = json.loads(archive_path.read_text(encoding="utf-8"))
+    snapshot["task"]["artifacts"] = ["arbitrary artifact"]
+    archive_path.write_text(json.dumps(snapshot), encoding="utf-8")
+
+    errors = validator.validate_packet(
+        live_status_path=status_path,
+        live_archive_root=archive_root,
+    )
+
+    assert any("legacy archive artifacts do not match" in error for error in errors)
+
+
 def test_live_validation_rejects_packet_missing_from_active_and_archive(tmp_path: Path) -> None:
     validator = _load_validator()
     packet_data, status_path, archive_root = _write_live_fixture(tmp_path, validator)

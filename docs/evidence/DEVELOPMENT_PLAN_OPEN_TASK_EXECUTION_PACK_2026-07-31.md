@@ -115,6 +115,12 @@ AI 代簽或只修單一 reviewer 範例，就不得 handoff。
 - Supervisor 透過官方 CLI 同步時，必須把這個 deployment contract 寫入 live
   metadata 與 task-specific acceptance；active、completed archive、superseded
   replacement 都必須與原 packet exact-match。
+- Schema 1.1 生效前已完成且不可原地改寫的 3 個官方 archives（OSS license、
+  Acceptance real execution、NetPlan acceptance）只允許 frozen schema 1.0
+  compatibility：舊 acceptance 必須仍與本 packet 的 deliverable／fail-closed／
+  evidence／handoff／batch 逐字一致，verification、gap、source 與 task-specific
+  artifact anchor 也必須完整；任一新欄位若存在則必須 exact-match。這項例外不適用
+  active task、新 archive 或 superseded replacement，亦不賦予 deployment authority。
 - 一般 implementation task 只允許本機／CI／必要的 read-only provider
   verification，不得因 focused tests 通過就部署 production。
 - 計畫中的 staging/live deployment 只由

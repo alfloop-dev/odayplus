@@ -135,6 +135,11 @@ DEPLOYMENT_MODE_FORBIDDEN = "forbidden"
 DEPLOYMENT_MODE_NOT_APPLICABLE = "not_applicable"
 PACKET_MD = "docs/evidence/DEVELOPMENT_PLAN_OPEN_TASK_EXECUTION_PACK_2026-07-31.md"
 PACKET_JSON = "docs/evidence/DEVELOPMENT_PLAN_OPEN_TASK_EXECUTION_PACK_2026-07-31.json"
+LEGACY_ARCHIVE_ARTIFACT_ANCHORS = {
+    "ODP-PLAN-OSS-LICENSE-GATE-001": "scripts/security/",
+    "ODP-PLAN-ACCEPTANCE-REAL-EXEC-001": "tests/e2e/",
+    "ODP-PLAN-NETPLAN-ACCEPTANCE-001": "solver/netplan/",
+}
 
 REQUIRED_ACCEPTANCE_PREFIXES = (
     "Deliverable:",
@@ -205,6 +210,12 @@ def build_expected_acceptance(packet: dict[str, Any]) -> list[str]:
         deployment_acceptance(packet["deployment_contract"]),
     ]
     return list(dict.fromkeys(item.strip() for item in criteria if item.strip()))
+
+
+def build_legacy_acceptance(packet: dict[str, Any]) -> list[str]:
+    """Return the immutable schema-1.0 contract archived before deployment metadata."""
+
+    return build_expected_acceptance(packet)[:-1]
 
 
 def validate_packet(
@@ -429,6 +440,7 @@ def _validate_task_contract(
     packet: dict[str, Any],
     *,
     label: str,
+    allow_legacy_archive: bool = False,
 ) -> list[str]:
     errors: list[str] = []
     task_id = packet["task_id"]
@@ -454,6 +466,8 @@ def _validate_task_contract(
             f"does not match packet {packet.get('class')!r}"
         )
     acceptance = task.get("acceptance")
+    normalized_acceptance: list[str] = []
+    legacy_contract = False
     if (
         not isinstance(acceptance, list)
         or len(acceptance) < 5
@@ -462,19 +476,23 @@ def _validate_task_contract(
         errors.append(f"{label}: acceptance must contain at least five non-empty granular criteria")
     else:
         normalized_acceptance = [item.strip() for item in acceptance]
+        expected_acceptance = build_expected_acceptance(packet)
+        legacy_contract = allow_legacy_archive and normalized_acceptance == build_legacy_acceptance(
+            packet
+        )
         if len(normalized_acceptance) != len(set(normalized_acceptance)):
             errors.append(f"{label}: acceptance criteria must be unique, not repeated generic text")
         missing_prefixes = [
             prefix
             for prefix in REQUIRED_ACCEPTANCE_PREFIXES
             if not any(item.startswith(prefix) for item in normalized_acceptance)
+            and not (legacy_contract and prefix == "Deployment:")
         ]
         if missing_prefixes:
             errors.append(
                 f"{label}: acceptance is not granular; missing criterion classes {missing_prefixes}"
             )
-        expected_acceptance = build_expected_acceptance(packet)
-        if normalized_acceptance != expected_acceptance:
+        if normalized_acceptance != expected_acceptance and not legacy_contract:
             errors.append(f"{label}: acceptance must exactly match the task execution packet")
     source_docs = task.get("source_docs")
     if not isinstance(source_docs, list) or PACKET_JSON not in source_docs:
@@ -486,6 +504,10 @@ def _validate_task_contract(
         or not all(isinstance(item, str) and item.strip() for item in artifacts)
     ):
         errors.append(f"{label}: artifacts must be a non-empty string list")
+    elif legacy_contract:
+        artifact_anchor = LEGACY_ARCHIVE_ARTIFACT_ANCHORS.get(task_id)
+        if artifact_anchor is None or artifact_anchor not in artifacts:
+            errors.append(f"{label}: legacy archive artifacts do not match the frozen task anchor")
     elif not {PACKET_MD, PACKET_JSON}.issubset(artifacts):
         errors.append(f"{label}: artifacts must preserve both control-pack authorities")
     verification = task.get("verification")
@@ -507,6 +529,8 @@ def _validate_task_contract(
         "deployment_contract": packet.get("deployment_contract"),
     }
     for field, expected in exact_fields.items():
+        if legacy_contract and field not in task:
+            continue
         if task.get(field) != expected:
             errors.append(f"{label}: {field} must exactly match the task execution packet")
     gap_ids = task.get("gap_ids")
@@ -624,7 +648,14 @@ def validate_archived_packet_state(
     archived_task, errors = _load_archive_snapshot(archive_path, task_id)
     if archived_task is None:
         return None, errors
-    errors.extend(_validate_task_contract(archived_task, packet, label=f"{task_id}: archive"))
+    errors.extend(
+        _validate_task_contract(
+            archived_task,
+            packet,
+            label=f"{task_id}: archive",
+            allow_legacy_archive=True,
+        )
+    )
     if (archived_task.get("terminal_outcome") or "completed") == "superseded":
         errors.extend(
             _validate_replacement_chain(
