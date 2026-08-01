@@ -2,18 +2,18 @@
   "schema_version": "2.0.0",
   "runner": "pytest",
   "source": {
-    "commit_sha": "4ce01b7342deb0839f51cbe73311e78b284bccd2",
-    "tree_sha": "3c3113a7bd0992b15968ea818cda394c69048e2a"
+    "commit_sha": "84393c3b7ef4507057fdddb1c167e5392d88097b",
+    "tree_sha": "3cad6445910909ad24b062c98a3b28b092140a3b"
   },
   "run": {
-    "command": "/tmp/pantheon-worker-worktrees/oday-plus-supervisor-live/odp-plan-netplan-acceptance-001/.venv/bin/python3 -m pytest -q tests/integration/test_avm_official_outcome_contract.py::test_official_outcome_migration_has_bounded_source_and_provenance_contracts tests/integration/test_intervention_workflow.py::test_full_lifecycle_reaches_completed_with_causal_evidence_and_label tests/integration/test_priceops_constraints.py::test_full_pilot_lifecycle_records_complete_status_history tests/integration/test_adlift_incrementality.py::test_difference_in_differences_isolates_ad_lift_from_market_movement tests/integration/test_learninghub_release.py::test_governed_release_invokes_remote_mlflow_alias_updates tests/integration/test_learninghub_release.py::test_learninghub_validates_releases_and_rolls_back_model_aliases tests/integration/test_learninghub_release.py::test_learninghub_blocks_release_without_passed_validation_or_model_card tests/data/test_pit_snapshot.py::test_point_in_time_validation_rejects_future_feature_snapshot tests/security/test_rbac_abac.py::test_rbac_denies_action_outside_role tests/security/test_rbac_abac.py::test_tenant_isolation_blocks_other_tenant",
+    "command": "/tmp/pantheon-worker-worktrees/oday-plus-supervisor-live/odp-deploy-job-queue-health-contract-001/.venv/bin/python3 -m pytest -q tests/integration/test_avm_official_outcome_contract.py::test_official_outcome_migration_has_bounded_source_and_provenance_contracts tests/integration/test_intervention_workflow.py::test_full_lifecycle_reaches_completed_with_causal_evidence_and_label tests/integration/test_priceops_constraints.py::test_full_pilot_lifecycle_records_complete_status_history tests/integration/test_adlift_incrementality.py::test_difference_in_differences_isolates_ad_lift_from_market_movement tests/integration/test_learninghub_release.py::test_governed_release_invokes_remote_mlflow_alias_updates tests/integration/test_learninghub_release.py::test_learninghub_validates_releases_and_rolls_back_model_aliases tests/integration/test_learninghub_release.py::test_learninghub_blocks_release_without_passed_validation_or_model_card tests/data/test_pit_snapshot.py::test_point_in_time_validation_rejects_future_feature_snapshot tests/security/test_rbac_abac.py::test_rbac_denies_action_outside_role tests/security/test_rbac_abac.py::test_tenant_isolation_blocks_other_tenant",
     "version": "pytest 9.1.1; python 3.12.3",
-    "started_at": "2026-08-01T02:27:50.530717Z",
-    "ended_at": "2026-08-01T02:28:16.089853Z",
+    "started_at": "2026-07-31T23:38:04.093545Z",
+    "ended_at": "2026-07-31T23:38:32.545397Z",
     "exit_code": 0,
     "environment": {
       "platform": "linux",
-      "python_executable": "/tmp/pantheon-worker-worktrees/oday-plus-supervisor-live/odp-plan-netplan-acceptance-001/.venv/bin/python3",
+      "python_executable": "/tmp/pantheon-worker-worktrees/oday-plus-supervisor-live/odp-deploy-job-queue-health-contract-001/.venv/bin/python3",
       "node_id_count": "10"
     }
   },
@@ -35,19 +35,19 @@
         {
           "phase": "setup",
           "outcome": "passed",
-          "duration_seconds": 0.04762827802915126,
+          "duration_seconds": 0.046186606981791556,
           "longrepr": null
         },
         {
           "phase": "call",
           "outcome": "passed",
-          "duration_seconds": 0.002061559003777802,
+          "duration_seconds": 0.0008050440228544176,
           "longrepr": null
         },
         {
           "phase": "teardown",
           "outcome": "passed",
-          "duration_seconds": 0.0005885509890504181,
+          "duration_seconds": 0.0003833550144918263,
           "longrepr": null
         }
       ],
@@ -55,19 +55,19 @@
         {
           "phase": "setup",
           "outcome": "passed",
-          "duration_seconds": 0.0008383599924854934,
+          "duration_seconds": 0.0006435769610106945,
           "longrepr": null
         },
         {
           "phase": "call",
           "outcome": "passed",
-          "duration_seconds": 0.001958466018550098,
+          "duration_seconds": 0.00154405104694888,
           "longrepr": null
         },
         {
           "phase": "teardown",
           "outcome": "passed",
-          "duration_seconds": 0.0003538760356605053,
+          "duration_seconds": 0.0005635319976136088,
           "longrepr": null
         }
       ],
@@ -75,19 +75,19 @@
         {
           "phase": "setup",
           "outcome": "passed",
-          "duration_seconds": 0.0006612519500777125,
+          "duration_seconds": 0.0008687759982421994,
           "longrepr": null
         },
         {
           "phase": "call",
           "outcome": "passed",
-          "duration_seconds": 0.0011725020012818277,
+          "duration_seconds": 0.00114566704723984,
           "longrepr": null
         },
         {
           "phase": "teardown",
           "outcome": "passed",
-          "duration_seconds": 0.00027383299311622977,
+          "duration_seconds": 0.0003547219675965607,
           "longrepr": null
         }
       ],
@@ -95,19 +95,19 @@
         {
           "phase": "setup",
           "outcome": "passed",
-          "duration_seconds": 0.000693237001542002,
+          "duration_seconds": 0.0009303960250690579,
           "longrepr": null
         },
         {
           "phase": "call",
           "outcome": "passed",
-          "duration_seconds": 2.1226987119880505,
+          "duration_seconds": 6.054202920990065,
           "longrepr": null
         },
         {
           "phase": "teardown",
           "outcome": "passed",
-          "duration_seconds": 0.0004829009994864464,
+          "duration_seconds": 0.0005995280225761235,
           "longrepr": null
         }
       ],
@@ -115,19 +115,19 @@
         {
           "phase": "setup",
           "outcome": "passed",
-          "duration_seconds": 0.0007463800138793886,
+          "duration_seconds": 0.0010224709985777736,
           "longrepr": null
         },
         {
           "phase": "call",
           "outcome": "passed",
-          "duration_seconds": 4.013556200021412,
+          "duration_seconds": 3.7897916510119103,
           "longrepr": null
         },
         {
           "phase": "teardown",
           "outcome": "passed",
-          "duration_seconds": 0.0005249850219115615,
+          "duration_seconds": 0.0006142379716038704,
           "longrepr": null
         }
       ],
@@ -135,19 +135,19 @@
         {
           "phase": "setup",
           "outcome": "passed",
-          "duration_seconds": 0.0007925739628262818,
+          "duration_seconds": 0.0010928359697572887,
           "longrepr": null
         },
         {
           "phase": "call",
           "outcome": "passed",
-          "duration_seconds": 6.867041398014408,
+          "duration_seconds": 5.928119228046853,
           "longrepr": null
         },
         {
           "phase": "teardown",
           "outcome": "passed",
-          "duration_seconds": 0.0004886109963990748,
+          "duration_seconds": 0.000631810980848968,
           "longrepr": null
         }
       ],
@@ -155,19 +155,19 @@
         {
           "phase": "setup",
           "outcome": "passed",
-          "duration_seconds": 0.0007496070466004312,
+          "duration_seconds": 0.0009285979904234409,
           "longrepr": null
         },
         {
           "phase": "call",
           "outcome": "passed",
-          "duration_seconds": 2.740872745984234,
+          "duration_seconds": 2.5535874409833923,
           "longrepr": null
         },
         {
           "phase": "teardown",
           "outcome": "passed",
-          "duration_seconds": 0.0005100789712741971,
+          "duration_seconds": 0.0006387499743141234,
           "longrepr": null
         }
       ],
@@ -175,19 +175,19 @@
         {
           "phase": "setup",
           "outcome": "passed",
-          "duration_seconds": 0.000730230996850878,
+          "duration_seconds": 0.001060962036717683,
           "longrepr": null
         },
         {
           "phase": "call",
           "outcome": "passed",
-          "duration_seconds": 0.0003306040307506919,
+          "duration_seconds": 0.0005032910266891122,
           "longrepr": null
         },
         {
           "phase": "teardown",
           "outcome": "passed",
-          "duration_seconds": 0.0004214709624648094,
+          "duration_seconds": 0.0003059589653275907,
           "longrepr": null
         }
       ],
@@ -195,19 +195,19 @@
         {
           "phase": "setup",
           "outcome": "passed",
-          "duration_seconds": 0.0006514749838970602,
+          "duration_seconds": 0.0007172739715315402,
           "longrepr": null
         },
         {
           "phase": "call",
           "outcome": "passed",
-          "duration_seconds": 0.0002872549812309444,
+          "duration_seconds": 0.00039876799564808607,
           "longrepr": null
         },
         {
           "phase": "teardown",
           "outcome": "passed",
-          "duration_seconds": 0.0003389819758012891,
+          "duration_seconds": 0.0003931710380129516,
           "longrepr": null
         }
       ],
@@ -215,30 +215,30 @@
         {
           "phase": "setup",
           "outcome": "passed",
-          "duration_seconds": 0.0005618800059892237,
+          "duration_seconds": 0.0006322049885056913,
           "longrepr": null
         },
         {
           "phase": "call",
           "outcome": "passed",
-          "duration_seconds": 0.0007751269731670618,
+          "duration_seconds": 0.0005268080276437104,
           "longrepr": null
         },
         {
           "phase": "teardown",
           "outcome": "passed",
-          "duration_seconds": 0.00048011000035330653,
+          "duration_seconds": 0.00039747596019878983,
           "longrepr": null
         }
       ]
     },
     "collection_errors": [],
     "runner_start_source": {
-      "commit_sha": "4ce01b7342deb0839f51cbe73311e78b284bccd2",
-      "tree_sha": "3c3113a7bd0992b15968ea818cda394c69048e2a"
+      "commit_sha": "84393c3b7ef4507057fdddb1c167e5392d88097b",
+      "tree_sha": "3cad6445910909ad24b062c98a3b28b092140a3b"
     }
   },
-  "payload_sha256": "c213969282fdb16a6a54601a405194bfc40dcfb1eaf3a5a6bdeafb6d9dc3de3d",
+  "payload_sha256": "098f9ce297ae8c0f2eb10ce10051dc7c9b2bde107978ddf66abdff69f3e5db15",
   "counts": {
     "total_specs": 0,
     "total_tests": 10,
@@ -254,24 +254,24 @@
     {
       "test_id": "tests/integration/test_avm_official_outcome_contract.py::test_official_outcome_migration_has_bounded_source_and_provenance_contracts",
       "status": "passed",
-      "duration_ms": 50.278,
+      "duration_ms": 47.375,
       "phases": [
         {
           "phase": "setup",
           "outcome": "passed",
-          "duration_seconds": 0.04762827802915126,
+          "duration_seconds": 0.046186606981791556,
           "longrepr": null
         },
         {
           "phase": "call",
           "outcome": "passed",
-          "duration_seconds": 0.002061559003777802,
+          "duration_seconds": 0.0008050440228544176,
           "longrepr": null
         },
         {
           "phase": "teardown",
           "outcome": "passed",
-          "duration_seconds": 0.0005885509890504181,
+          "duration_seconds": 0.0003833550144918263,
           "longrepr": null
         }
       ]
@@ -279,24 +279,24 @@
     {
       "test_id": "tests/integration/test_intervention_workflow.py::test_full_lifecycle_reaches_completed_with_causal_evidence_and_label",
       "status": "passed",
-      "duration_ms": 3.151,
+      "duration_ms": 2.751,
       "phases": [
         {
           "phase": "setup",
           "outcome": "passed",
-          "duration_seconds": 0.0008383599924854934,
+          "duration_seconds": 0.0006435769610106945,
           "longrepr": null
         },
         {
           "phase": "call",
           "outcome": "passed",
-          "duration_seconds": 0.001958466018550098,
+          "duration_seconds": 0.00154405104694888,
           "longrepr": null
         },
         {
           "phase": "teardown",
           "outcome": "passed",
-          "duration_seconds": 0.0003538760356605053,
+          "duration_seconds": 0.0005635319976136088,
           "longrepr": null
         }
       ]
@@ -304,24 +304,24 @@
     {
       "test_id": "tests/integration/test_priceops_constraints.py::test_full_pilot_lifecycle_records_complete_status_history",
       "status": "passed",
-      "duration_ms": 2.108,
+      "duration_ms": 2.369,
       "phases": [
         {
           "phase": "setup",
           "outcome": "passed",
-          "duration_seconds": 0.0006612519500777125,
+          "duration_seconds": 0.0008687759982421994,
           "longrepr": null
         },
         {
           "phase": "call",
           "outcome": "passed",
-          "duration_seconds": 0.0011725020012818277,
+          "duration_seconds": 0.00114566704723984,
           "longrepr": null
         },
         {
           "phase": "teardown",
           "outcome": "passed",
-          "duration_seconds": 0.00027383299311622977,
+          "duration_seconds": 0.0003547219675965607,
           "longrepr": null
         }
       ]
@@ -329,24 +329,24 @@
     {
       "test_id": "tests/integration/test_adlift_incrementality.py::test_difference_in_differences_isolates_ad_lift_from_market_movement",
       "status": "passed",
-      "duration_ms": 2123.875,
+      "duration_ms": 6055.733,
       "phases": [
         {
           "phase": "setup",
           "outcome": "passed",
-          "duration_seconds": 0.000693237001542002,
+          "duration_seconds": 0.0009303960250690579,
           "longrepr": null
         },
         {
           "phase": "call",
           "outcome": "passed",
-          "duration_seconds": 2.1226987119880505,
+          "duration_seconds": 6.054202920990065,
           "longrepr": null
         },
         {
           "phase": "teardown",
           "outcome": "passed",
-          "duration_seconds": 0.0004829009994864464,
+          "duration_seconds": 0.0005995280225761235,
           "longrepr": null
         }
       ]
@@ -354,24 +354,24 @@
     {
       "test_id": "tests/integration/test_learninghub_release.py::test_governed_release_invokes_remote_mlflow_alias_updates",
       "status": "passed",
-      "duration_ms": 4014.828,
+      "duration_ms": 3791.428,
       "phases": [
         {
           "phase": "setup",
           "outcome": "passed",
-          "duration_seconds": 0.0007463800138793886,
+          "duration_seconds": 0.0010224709985777736,
           "longrepr": null
         },
         {
           "phase": "call",
           "outcome": "passed",
-          "duration_seconds": 4.013556200021412,
+          "duration_seconds": 3.7897916510119103,
           "longrepr": null
         },
         {
           "phase": "teardown",
           "outcome": "passed",
-          "duration_seconds": 0.0005249850219115615,
+          "duration_seconds": 0.0006142379716038704,
           "longrepr": null
         }
       ]
@@ -379,24 +379,24 @@
     {
       "test_id": "tests/integration/test_learninghub_release.py::test_learninghub_validates_releases_and_rolls_back_model_aliases",
       "status": "passed",
-      "duration_ms": 6868.323,
+      "duration_ms": 5929.844,
       "phases": [
         {
           "phase": "setup",
           "outcome": "passed",
-          "duration_seconds": 0.0007925739628262818,
+          "duration_seconds": 0.0010928359697572887,
           "longrepr": null
         },
         {
           "phase": "call",
           "outcome": "passed",
-          "duration_seconds": 6.867041398014408,
+          "duration_seconds": 5.928119228046853,
           "longrepr": null
         },
         {
           "phase": "teardown",
           "outcome": "passed",
-          "duration_seconds": 0.0004886109963990748,
+          "duration_seconds": 0.000631810980848968,
           "longrepr": null
         }
       ]
@@ -404,24 +404,24 @@
     {
       "test_id": "tests/integration/test_learninghub_release.py::test_learninghub_blocks_release_without_passed_validation_or_model_card",
       "status": "passed",
-      "duration_ms": 2742.132,
+      "duration_ms": 2555.155,
       "phases": [
         {
           "phase": "setup",
           "outcome": "passed",
-          "duration_seconds": 0.0007496070466004312,
+          "duration_seconds": 0.0009285979904234409,
           "longrepr": null
         },
         {
           "phase": "call",
           "outcome": "passed",
-          "duration_seconds": 2.740872745984234,
+          "duration_seconds": 2.5535874409833923,
           "longrepr": null
         },
         {
           "phase": "teardown",
           "outcome": "passed",
-          "duration_seconds": 0.0005100789712741971,
+          "duration_seconds": 0.0006387499743141234,
           "longrepr": null
         }
       ]
@@ -429,24 +429,24 @@
     {
       "test_id": "tests/data/test_pit_snapshot.py::test_point_in_time_validation_rejects_future_feature_snapshot",
       "status": "passed",
-      "duration_ms": 1.482,
+      "duration_ms": 1.87,
       "phases": [
         {
           "phase": "setup",
           "outcome": "passed",
-          "duration_seconds": 0.000730230996850878,
+          "duration_seconds": 0.001060962036717683,
           "longrepr": null
         },
         {
           "phase": "call",
           "outcome": "passed",
-          "duration_seconds": 0.0003306040307506919,
+          "duration_seconds": 0.0005032910266891122,
           "longrepr": null
         },
         {
           "phase": "teardown",
           "outcome": "passed",
-          "duration_seconds": 0.0004214709624648094,
+          "duration_seconds": 0.0003059589653275907,
           "longrepr": null
         }
       ]
@@ -454,24 +454,24 @@
     {
       "test_id": "tests/security/test_rbac_abac.py::test_rbac_denies_action_outside_role",
       "status": "passed",
-      "duration_ms": 1.278,
+      "duration_ms": 1.509,
       "phases": [
         {
           "phase": "setup",
           "outcome": "passed",
-          "duration_seconds": 0.0006514749838970602,
+          "duration_seconds": 0.0007172739715315402,
           "longrepr": null
         },
         {
           "phase": "call",
           "outcome": "passed",
-          "duration_seconds": 0.0002872549812309444,
+          "duration_seconds": 0.00039876799564808607,
           "longrepr": null
         },
         {
           "phase": "teardown",
           "outcome": "passed",
-          "duration_seconds": 0.0003389819758012891,
+          "duration_seconds": 0.0003931710380129516,
           "longrepr": null
         }
       ]
@@ -479,29 +479,29 @@
     {
       "test_id": "tests/security/test_rbac_abac.py::test_tenant_isolation_blocks_other_tenant",
       "status": "passed",
-      "duration_ms": 1.817,
+      "duration_ms": 1.556,
       "phases": [
         {
           "phase": "setup",
           "outcome": "passed",
-          "duration_seconds": 0.0005618800059892237,
+          "duration_seconds": 0.0006322049885056913,
           "longrepr": null
         },
         {
           "phase": "call",
           "outcome": "passed",
-          "duration_seconds": 0.0007751269731670618,
+          "duration_seconds": 0.0005268080276437104,
           "longrepr": null
         },
         {
           "phase": "teardown",
           "outcome": "passed",
-          "duration_seconds": 0.00048011000035330653,
+          "duration_seconds": 0.00039747596019878983,
           "longrepr": null
         }
       ]
     }
   ],
   "integrity_errors": [],
-  "normalized_artifact_sha256": "0fa895c2ae6b3686a2146924ef702ffc5786665bf648ef1502307038f37c85f2"
+  "normalized_artifact_sha256": "b0207ed5f947c50aa5d5f6d352f503ea50d49f37fca94c23fe8617b7bc2d9586"
 }

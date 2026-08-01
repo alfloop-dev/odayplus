@@ -580,7 +580,12 @@ else:
             )
 
             queue_ok = True
-            queue_details = "healthy"
+            if bundle.mode == "postgresql":
+                queue_details = "healthy (durable postgresql job queue)"
+            elif bundle.mode == "durable":
+                queue_details = "healthy (durable sqlite job queue)"
+            else:
+                queue_details = "healthy (in-memory job queue)"
             try:
                 if bundle.is_durable:
                     bundle.engine.query("SELECT COUNT(*) FROM durable_jobs")
@@ -947,8 +952,7 @@ else:
                 production_model_capabilities.get("forecastops", {}).get("available") is True
             )
             all_required_resolved = all(
-                production_model_capabilities[service]["available"]
-                or service in _governed_disabled
+                production_model_capabilities[service]["available"] or service in _governed_disabled
                 for service in required_model_services
             )
             production_model_bindings_ready = (
@@ -1178,8 +1182,7 @@ else:
                 require_live_data=require_live_data,
                 persistence_mode=persistence_mode,
                 provider_mode=provider_mode,
-                allow_test_reset=os.environ.get("ODP_E2E_MODE", "").strip().lower()
-                == "true",
+                allow_test_reset=os.environ.get("ODP_E2E_MODE", "").strip().lower() == "true",
             ),
         )
 

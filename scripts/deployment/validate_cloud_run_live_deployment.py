@@ -1539,6 +1539,17 @@ def _contains_forbidden_marker(value: str) -> bool:
     return any(marker in normalized for marker in FORBIDDEN_DATA_MARKERS)
 
 
+def is_valid_job_queue_health(job_queue: str) -> bool:
+    """Validate that the job queue health payload reports healthy and uses a durable worker queue."""
+    return (
+        bool(job_queue)
+        and "healthy" in job_queue
+        and not _contains_forbidden_marker(job_queue)
+        and any(marker in job_queue for marker in ("worker", "cloud", "durable"))
+    )
+
+
+
 def _operator_readiness_check(payload: Mapping[str, Any]) -> CheckResult:
     """Require a passing live repository probe with read provenance."""
 
@@ -1676,19 +1687,14 @@ def smoke_checks(
     checks.extend(_provider_probe_checks(health))
     checks.append(_operator_readiness_check(payloads.get("readiness", {})))
     job_queue = _dependency_text(health, "job_queue")
+    job_queue_ok = is_valid_job_queue_health(job_queue)
     checks.append(
         CheckResult(
-            ok=bool(job_queue)
-            and "healthy" in job_queue
-            and not _contains_forbidden_marker(job_queue)
-            and any(marker in job_queue for marker in ("worker", "cloud", "durable")),
+            ok=job_queue_ok,
             name="smoke:/platform/health:job_queue",
             detail=(
                 "external worker queue healthy"
-                if job_queue
-                and "healthy" in job_queue
-                and not _contains_forbidden_marker(job_queue)
-                and any(marker in job_queue for marker in ("worker", "cloud", "durable"))
+                if job_queue_ok
                 else "missing or non-worker/in-memory job queue"
             ),
         )

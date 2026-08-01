@@ -88,7 +88,7 @@ def test_health_detailed_healthy() -> None:
     assert body["correlation_id"] == "corr-test-99"
     assert "time" in body
     assert body["dependencies"]["database"] == "healthy (in-memory)"
-    assert body["dependencies"]["job_queue"] == "healthy"
+    assert body["dependencies"]["job_queue"] == "healthy (in-memory job queue)"
     providers = body["dependencies"]["external_providers"]
     assert providers["status"] == "healthy"
     assert providers["configuration_valid"] is True

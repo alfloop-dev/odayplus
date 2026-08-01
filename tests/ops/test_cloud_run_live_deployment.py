@@ -4716,3 +4716,79 @@ def test_live_e2e_gate_refuses_to_run_without_a_deployment_mode() -> None:
         )
         == "production"
     )
+
+
+def test_real_app_platform_health_job_queue_contract(tmp_path: Path) -> None:
+    """Regression: /platform/health job_queue text is derived from bundle.mode.
+
+    - mode="postgresql" → positive marker passes validator gate.
+    - mode="durable" (SQLite) → "sqlite" in text → fails closed (forbidden marker).
+    - mode="memory" (in-memory) → "in-memory" in text → fails closed (forbidden marker).
+    - bare "healthy" → missing required marker → validator rejects.
+
+    If main.py is reverted to the old bundle.is_durable path this test fails,
+    because the SQLite durable bundle would emit "durable postgresql" and
+    appear to pass the validator when it should not.
+    """
+    import dataclasses
+
+    from fastapi.testclient import TestClient
+
+    from apps.api.oday_api.main import create_app
+    from shared.infrastructure.persistence.factory import _durable_bundle, _memory_bundle
+
+    # 1. mode="postgresql" bundle — constructed from a durable SQLite base with mode
+    #    overridden so the engine is present for the DB query path, but the health
+    #    payload reflects the honest PostgreSQL label (the only mode that should pass).
+    sqlite_base = _durable_bundle(tmp_path / "test.db")
+    pg_mode_bundle = dataclasses.replace(sqlite_base, mode="postgresql")
+    pg_app = create_app(persistence=pg_mode_bundle)
+    pg_payload = TestClient(pg_app).get("/platform/health").json()
+
+    pg_queue_text = validator._dependency_text(pg_payload, "job_queue")
+    assert "healthy" in pg_queue_text, "postgresql-mode queue must be healthy"
+    assert not validator._contains_forbidden_marker(pg_queue_text), (
+        f"postgresql-mode queue must not contain forbidden markers; got: {pg_queue_text!r}"
+    )
+    assert validator.is_valid_job_queue_health(pg_queue_text), (
+        f"postgresql-mode queue must pass is_valid_job_queue_health; got: {pg_queue_text!r}"
+    )
+
+    # 2. mode="durable" (SQLite) bundle — must fail closed: "sqlite" is a forbidden marker.
+    durable_bundle = _durable_bundle(tmp_path / "sqlite_test.db")
+    assert durable_bundle.mode == "durable", "sanity: _durable_bundle returns mode='durable'"
+    sqlite_app = create_app(persistence=durable_bundle)
+    sqlite_payload = TestClient(sqlite_app).get("/platform/health").json()
+
+    sqlite_queue_text = validator._dependency_text(sqlite_payload, "job_queue")
+    assert "healthy" in sqlite_queue_text, "sqlite-mode queue payload must contain 'healthy'"
+    assert "sqlite" in sqlite_queue_text, (
+        f"sqlite-mode queue text must contain 'sqlite' to fail closed; got: {sqlite_queue_text!r}"
+    )
+    assert validator._contains_forbidden_marker(sqlite_queue_text), (
+        f"sqlite-mode queue must fail closed via forbidden marker; got: {sqlite_queue_text!r}"
+    )
+    assert not validator.is_valid_job_queue_health(sqlite_queue_text), (
+        f"sqlite-mode queue must fail is_valid_job_queue_health; got: {sqlite_queue_text!r}"
+    )
+
+    # 3. mode="memory" (in-memory) bundle — fails closed: "in-memory" is a forbidden marker.
+    mem_bundle = _memory_bundle()
+    mem_app = create_app(persistence=mem_bundle)
+    mem_payload = TestClient(mem_app).get("/platform/health").json()
+
+    mem_queue_text = validator._dependency_text(mem_payload, "job_queue")
+    assert "healthy" in mem_queue_text, "in-memory queue payload must contain 'healthy'"
+    assert validator._contains_forbidden_marker(mem_queue_text), (
+        f"in-memory queue must fail closed via forbidden marker; got: {mem_queue_text!r}"
+    )
+    assert not validator.is_valid_job_queue_health(mem_queue_text), (
+        f"in-memory queue must fail is_valid_job_queue_health; got: {mem_queue_text!r}"
+    )
+
+    # 4. Bare "healthy" payload — fails closed: no required marker.
+    bare_payload = {"dependencies": {"job_queue": "healthy"}}
+    bare_queue_text = validator._dependency_text(bare_payload, "job_queue")
+    assert not validator.is_valid_job_queue_health(bare_queue_text), (
+        f"bare 'healthy' must fail is_valid_job_queue_health; got: {bare_queue_text!r}"
+    )
