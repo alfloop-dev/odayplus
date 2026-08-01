@@ -137,6 +137,7 @@ else:
         intervention_workflow: Any = None,
         intervention_repository: Any = None,
         intervention_label_registry: Any = None,
+        operator_live_repository: Any = None,
         persistence: Any = None,
         external_provider_validation: Any = None,
         external_provider_connectivity_probe: Any = None,
@@ -163,8 +164,7 @@ else:
         production_persistence_supported = persistence_mode in {"postgres", "postgresql"} and bool(
             bundle.is_production
         )
-        operator_live_repository: Any | None = None
-        if require_live_data and production_persistence_supported:
+        if operator_live_repository is None and require_live_data and production_persistence_supported:
             from modules.opsboard.application.operator_live_repository import (
                 OperatorLiveRepository,
             )

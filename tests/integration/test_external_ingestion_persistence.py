@@ -371,3 +371,87 @@ def test_cross_tenant_api_fault_isolation() -> None:
     )
     assert res.status_code == 500, res.text
     assert res.json()["detail"] == "Failed to execute tenant ingestion run: Tenant store factory failure"
+
+
+def test_resolver_call_count_and_non_stable_factory_isolation() -> None:
+    call_counts: dict[str, int] = {}
+
+    def non_stable_factory(tenant_id: str) -> InMemoryIngestionRunStore:
+        call_counts[tenant_id] = call_counts.get(tenant_id, 0) + 1
+        return InMemoryIngestionRunStore()
+
+    service = ExternalIngestionService(
+        ingestion_run_store_for_tenant=non_stable_factory,
+        audit_log=InMemoryAuditLog(),
+    )
+
+    w_start = datetime(2026, 6, 28, 8, 0, tzinfo=UTC)
+    w_end = datetime(2026, 6, 28, 9, 0, tzinfo=UTC)
+    run_1 = service.ingest(
+        tenant_id="tenant-non-stable",
+        api_idempotency_key="key-ns-1",
+        window_start=w_start,
+        window_end=w_end,
+    )
+    assert run_1.created is True
+    assert call_counts["tenant-non-stable"] == 1
+
+    run_replay = service.ingest(
+        tenant_id="tenant-non-stable",
+        api_idempotency_key="key-ns-1",
+        window_start=w_start,
+        window_end=w_end,
+    )
+    assert run_replay.created is False
+    assert run_replay.record.run_id == run_1.record.run_id
+    assert call_counts["tenant-non-stable"] == 1
+
+    run_window_replay = service.ingest(
+        tenant_id="tenant-non-stable",
+        window_start=w_start,
+        window_end=w_end,
+    )
+    assert run_window_replay.created is False
+    assert run_window_replay.record.run_id == run_1.record.run_id
+    assert call_counts["tenant-non-stable"] == 1
+
+
+def test_same_api_key_and_same_window_tenant_ab_isolation() -> None:
+    stores = {
+        "tenant-alpha": InMemoryIngestionRunStore(),
+        "tenant-beta": InMemoryIngestionRunStore(),
+    }
+    service = ExternalIngestionService(
+        ingestion_run_store_for_tenant=lambda tid: stores[tid],
+        audit_log=InMemoryAuditLog(),
+    )
+
+    w_start = datetime(2026, 6, 28, 8, 0, tzinfo=UTC)
+    w_end = datetime(2026, 6, 28, 9, 0, tzinfo=UTC)
+    shared_key = "shared-tenant-api-key"
+
+    run_alpha = service.ingest(
+        tenant_id="tenant-alpha",
+        api_idempotency_key=shared_key,
+        window_start=w_start,
+        window_end=w_end,
+        correlation_id="corr-alpha",
+    )
+    assert run_alpha.created is True
+    assert run_alpha.record.tenant_id == "tenant-alpha"
+
+    run_beta = service.ingest(
+        tenant_id="tenant-beta",
+        api_idempotency_key=shared_key,
+        window_start=w_start,
+        window_end=w_end,
+        correlation_id="corr-beta",
+    )
+    assert run_beta.created is True
+    assert run_beta.record.tenant_id == "tenant-beta"
+    assert run_beta.record.run_id != run_alpha.record.run_id
+
+    assert len(stores["tenant-alpha"].list_runs()) == 1
+    assert stores["tenant-alpha"].list_runs()[0].run_id == run_alpha.record.run_id
+    assert len(stores["tenant-beta"].list_runs()) == 1
+    assert stores["tenant-beta"].list_runs()[0].run_id == run_beta.record.run_id

@@ -2,52 +2,58 @@
 
 ## Task Context
 - Task ID: `ODP-OPERATOR-LIVE-PROVENANCE-HEALTH-001`
-- Owner: `Antigravity4`
-- Reviewer: `Codex7`
+- Owner: `Antigravity2`
+- Reviewer: `Codex8`
 - Branch: `task/ODP-OPERATOR-LIVE-PROVENANCE-HEALTH-001`
-- Baseline: `origin/dev` @ `97e3ae2e`
+- Baseline: `origin/dev` @ `a0333308`
 - Target Run: Deploy Dev run `30680943677`
 
 ## Summary of Remediations
 
-### 1. Canonical Writer Restart Provenance & Tenant Ownership (P0-1 Resolution)
-- **Tenant-Aware Canonical Production Writers**: Extended `Listing`, `SiteScoreDecision`, `IngestionRunRecord`, and `HeatZoneBatchScoreResult` to include explicit `tenant_id` ownership fields. Updated product routes (`listings`, `sitescore`, `external_data`, `heatzone`) to resolve tenant-scoped repositories (`bundle.listing_repository_for_tenant`, `bundle.sitescore_decision_store_for_tenant`, `bundle.ingestion_run_store_for_tenant`, `bundle.heatzone_store_for_tenant`) when tenant context is present.
-- **Fail-Closed Unscoped Fallback & Factory Resolution**: In `shared/infrastructure/persistence/operator_domains.py`, `TenantScopedDocumentStore._item_matches_tenant` returns `False` when an unscoped fallback object lacks `tenant_id`/`tenantId`, enforcing strict fail-closed isolation so ownership-less records in unscoped collections cannot be claimed or enumerated by any tenant fallback. In route resolvers (`external_data`, `sitescore`, `heatzone`), if a tenant ID is present but tenant-scoped store resolution returns `None`, the resolvers fail closed with an HTTP 500 error instead of falling back to unscoped global stores.
-- **Restart Regression via API Path**: Updated `test_canonical_writer_restart_provenance` in `tests/integration/test_operator_live_repository.py` to write canonical records through the actual API endpoint (`POST /api/v1/listings/import` with `x-tenant-id: tenant-canonical`, `x-roles: expansion_user`, and complete valid payload), write an ownership-less record directly to unscoped store, close and reopen the durable bundle, and verify `tenant-canonical` retrieves its own records (`recordCount=1`, `listings` available, `dataMode="live"`, `complete=True`), while `tenant-b` retrieves 0 records and ownership-less records are rejected.
+### 1. Single Tenant Store Resolution & Ingestion Isolation (Codex8 Rejection Remediation)
+- **Exactly-Once Tenant Store Resolution**: Updated `ExternalIngestionService` in `modules/external_data/application/ingestion_service.py` to resolve and cache tenant-scoped stores in `self._tenant_stores` so that tenant store resolution happens exactly once per tenant on the service instance. Passed `target_store` directly into `_get_scheduler_and_captures(tenant_id, target_store=target_store)` so scheduler state rehydration and ingest writes execute against the identical store instance.
+- **Call-Count & Non-Stable Factory Regression**: Added `test_resolver_call_count_and_non_stable_factory_isolation` in `tests/integration/test_external_ingestion_persistence.py` verifying that tenant store resolver is called exactly once per tenant and that non-stable factories (returning a new store instance on every call) preserve idempotency and window state.
+- **Same-Key & Same-Window Tenant A/B Isolation**: Added `test_same_api_key_and_same_window_tenant_ab_isolation` in `tests/integration/test_external_ingestion_persistence.py` verifying that tenant A and tenant B submitting identical API idempotency keys and identical time windows execute as independent runs in their respective tenant stores without cross-tenant replay leaks.
 
-### 2. ForecastOps Scope Boundaries & Platform Health Readiness (P0-2 & P0-3 Resolution)
-- **Scope Restoration**: Restored `models/shared_ml/production_contracts.py`, `scripts/e2e/check_live_e2e_gate.py`, and `tests/e2e/test_live_e2e_gate.py` to `origin/dev` tip to preserve canonical model contracts and release gate integrity without out-of-scope modifications.
-- **Platform Health & Readiness Decoupling**: Updated `apps/api/oday_api/main.py` so `/platform/health` and `/readiness` return HTTP 200 OK with `status: "ok"`, `liveReady: True`, and empty `blockingReasons: []` when core Operator database, provider, and repository probes are ready. Unverified/absent model capability aliases (such as ForecastOps) set `modes.models.capabilities.forecastops.available=False` and `reasonCode="PRODUCTION_BINDING_NOT_RESOLVED"` without triggering global HTTP 503 service unavailable.
-- **Zero-Drift Release Gates**: Preserved MLflow registry payloads in release gate checks without `IndexError` regressions or empty-registry bypasses.
+### 2. Canonical Operator Endpoint Verification & Restart Provenance
+- **Canonical Route Test Wiring**: Updated `test_canonical_writer_restart_provenance` in `tests/integration/test_operator_live_repository.py` to replace the nonexistent `/api/v1/operator` endpoint with the canonical `/api/v1/operator/bootstrap` endpoint.
+- **App Wiring & Live Repository Double**: Updated `create_app` in `apps/api/oday_api/main.py` to accept `operator_live_repository: Any = None` and updated `create_operator_router` in `apps/api/app/routes/operator.py` to evaluate `effective_require_live_data = require_live_data or (live_repository is not None)`.
+- **Restart Isolation Proof**: Passed `operator_live_repository=OperatorLiveRepository(bundle2)` to the second `create_app` instance and verified that post-restart `tenant-canonical` retrieves its authoritative records (`recordCount=1`, `listings` available, `dataMode="live"`, `complete=True`), while `tenant-b` receives `recordCount=0` and ownership-less records remain excluded.
 
-### 3. Replay Test Suite & Code Quality
-- **Ruff Clean**: Resolved all import ordering and lint errors (`ruff check .` clean, 0 errors).
+### 3. ForecastOps Scope Boundaries & Platform Health Readiness
+- **Scope Restoration**: Preserved `models/shared_ml/production_contracts.py`, `scripts/e2e/check_live_e2e_gate.py`, and `tests/e2e/test_live_e2e_gate.py` at `origin/dev` tip to preserve canonical model contracts and release gate integrity without out-of-scope modifications.
+- **Platform Health & Readiness Decoupling**: Preserved `/platform/health` and `/readiness` returning HTTP 200 OK when core Operator database, provider, and repository probes are ready. Unverified model capability aliases set `modes.models.capabilities.forecastops.available=False` without triggering global HTTP 503.
+
+### 4. Replay Test Suite & Code Quality
+- **Ruff Clean**: Resolved all import ordering and lint errors (`ruff check modules/external_data/ apps/api/ tests/integration/` clean, 0 errors).
 - **Git Diff Clean**: Confirmed `git diff --check` passes cleanly (0 errors).
-- **5-Suite Replay**: All 160+ unit, integration, deployment gate, and ops tests across 5 test suites pass cleanly.
+- **5-Suite Replay**: All 40 tests across the 5 focused integration and repository test suites (`test_external_ingestion_persistence.py`, `test_external_ingestion_multisource.py`, `test_operator_live_provenance_health.py`, `test_operator_live_repository.py`, `test_production_api_composition.py`) pass cleanly.
 
 ## Modified File Inventory (relative to origin/dev)
 1. `apps/api/app/routes/external_data.py`
 2. `apps/api/app/routes/listings.py`
-3. `apps/api/app/routes/sitescore.py`
-4. `apps/api/oday_api/main.py`
-5. `apps/api/oday_api/routes/heatzone.py`
-6. `docs/evidence/runtime/ODP-OPERATOR-LIVE-PROVENANCE-HEALTH-001/verification_report.md`
-7. `modules/external_data/application/ingestion_service.py`
-8. `modules/external_data/application/ingestion_store.py`
-9. `modules/heatzone/workers/scoring_worker.py`
-10. `modules/opsboard/application/operator_live_repository.py`
-11. `shared/domain/models.py`
-12. `shared/infrastructure/persistence/external_data.py`
-13. `shared/infrastructure/persistence/factory.py`
-14. `shared/infrastructure/persistence/operator_domains.py`
-15. `shared/infrastructure/persistence/repositories.py`
-16. `shared/workflow/sitescore.py`
-17. `tests/integration/test_operator_live_provenance_health.py`
-18. `tests/integration/test_operator_live_repository.py`
-19. `tests/integration/test_production_api_composition.py`
-20. `tests/ops/test_cloud_run_live_deployment.py`
+3. `apps/api/app/routes/operator.py`
+4. `apps/api/app/routes/sitescore.py`
+5. `apps/api/oday_api/main.py`
+6. `apps/api/oday_api/routes/heatzone.py`
+7. `docs/evidence/runtime/ODP-OPERATOR-LIVE-PROVENANCE-HEALTH-001/verification_report.md`
+8. `modules/external_data/application/ingestion_service.py`
+9. `modules/external_data/application/ingestion_store.py`
+10. `modules/heatzone/workers/scoring_worker.py`
+11. `modules/opsboard/application/operator_live_repository.py`
+12. `shared/domain/models.py`
+13. `shared/infrastructure/persistence/external_data.py`
+14. `shared/infrastructure/persistence/factory.py`
+15. `shared/infrastructure/persistence/operator_domains.py`
+16. `shared/infrastructure/persistence/repositories.py`
+17. `shared/workflow/sitescore.py`
+18. `tests/integration/test_external_ingestion_persistence.py`
+19. `tests/integration/test_operator_live_provenance_health.py`
+20. `tests/integration/test_operator_live_repository.py`
+21. `tests/integration/test_production_api_composition.py`
+22. `tests/ops/test_cloud_run_live_deployment.py`
 
 ## Verification Replay
-- Command: `/home/lupin/oday-plus/.venv/bin/pytest -q tests/integration/test_operator_live_repository.py tests/integration/test_operator_live_provenance_health.py tests/integration/test_production_api_composition.py tests/ops/test_cloud_run_live_deployment.py`
-- Command: `/home/lupin/oday-plus/.venv/bin/ruff check .` (0 errors)
+- Command: `/home/lupin/oday-plus/.venv/bin/pytest -q tests/integration/test_external_ingestion_persistence.py tests/integration/test_external_ingestion_multisource.py tests/integration/test_operator_live_provenance_health.py tests/integration/test_operator_live_repository.py tests/integration/test_production_api_composition.py` (40 passed, 1 skipped)
+- Command: `/home/lupin/oday-plus/.venv/bin/ruff check modules/external_data/ apps/api/ tests/integration/` (0 errors)
 - Command: `git diff --check` (0 errors)

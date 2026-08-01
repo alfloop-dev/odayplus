@@ -80,26 +80,32 @@ class ExternalIngestionService:
 
         self._tenant_schedulers: dict[str, ExternalFetchScheduler] = {}
         self._tenant_captures: dict[str, dict[str, Any]] = {}
+        self._tenant_stores: dict[str, Any] = {}
         if self.ingestion_run_store_for_tenant is None:
             self._get_scheduler_and_captures("")
 
     def _resolve_store(self, tenant_id: str = "") -> Any:
         clean_tid = str(tenant_id).strip() if tenant_id else ""
+        if clean_tid in self._tenant_stores:
+            return self._tenant_stores[clean_tid]
         if clean_tid and self.ingestion_run_store_for_tenant is not None:
             scoped = self.ingestion_run_store_for_tenant(clean_tid)
             if scoped is None:
                 raise RuntimeError(f"Tenant store factory returned None for tenant '{clean_tid}'")
+            self._tenant_stores[clean_tid] = scoped
             return scoped
+        self._tenant_stores[clean_tid] = self.store
         return self.store
 
     def _get_scheduler_and_captures(
-        self, tenant_id: str = ""
+        self, tenant_id: str = "", target_store: Any | None = None
     ) -> tuple[ExternalFetchScheduler, dict[str, Any]]:
         clean_tid = str(tenant_id).strip() if tenant_id else ""
         if clean_tid in self._tenant_schedulers:
             return self._tenant_schedulers[clean_tid], self._tenant_captures[clean_tid]
 
-        target_store = self._resolve_store(clean_tid)
+        if target_store is None:
+            target_store = self._resolve_store(clean_tid)
         captures: dict[str, Any] = {}
 
         base_factories = dict(
@@ -202,7 +208,7 @@ class ExternalIngestionService:
             interval=interval or self.default_interval,
             freshness_sla=sla,
         )
-        scheduler, captures = self._get_scheduler_and_captures(tenant_id)
+        scheduler, captures = self._get_scheduler_and_captures(tenant_id, target_store=target_store)
         captures.pop(provider_id, None)
         run = scheduler.run_once(
             spec,

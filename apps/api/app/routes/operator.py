@@ -177,7 +177,8 @@ def create_operator_router(
     # Shared state service — one instance per router lifetime. A live-required
     # router accepts only a state service backed by the injected live
     # repository; fixture services can never cross this composition boundary.
-    if require_live_data:
+    effective_require_live_data = require_live_data or (live_repository is not None)
+    if effective_require_live_data:
         svc = (
             state_service
             if state_service is not None and state_service.live_repository is not None
@@ -232,13 +233,13 @@ def create_operator_router(
     operator_view_guard = require_operator_permission(
         OPERATOR_CONSOLE_RESOURCE,
         Action.VIEW,
-        tenant_id=None if require_live_data else OPERATOR_TENANT_ID,
+        tenant_id=None if effective_require_live_data else OPERATOR_TENANT_ID,
         engine=authz_engine,
     )
     operator_write_guard = require_operator_permission(
         OPERATOR_CONSOLE_RESOURCE,
         Action.UPDATE,
-        tenant_id=None if require_live_data else OPERATOR_TENANT_ID,
+        tenant_id=None if effective_require_live_data else OPERATOR_TENANT_ID,
         engine=authz_engine,
     )
 
@@ -295,7 +296,7 @@ def create_operator_router(
             )
         return effective_store
 
-    if require_live_data:
+    if effective_require_live_data:
         # Production exposes only read surfaces backed by the live repository.
         # Seed reset and modules whose services still own process-local state
         # are not mounted at all.

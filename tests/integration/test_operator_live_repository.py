@@ -961,8 +961,8 @@ def test_canonical_writer_restart_provenance(tmp_path: Path) -> None:
         assert "dec-unscoped" not in str(state_b)
         assert "list-canonical-api" not in str(state_b)
 
-        # Verify restart recovery and multi-tenant isolation through a second create_app / TestClient calling /api/v1/operator
-        app2 = create_app(persistence=bundle2)
+        # Verify restart recovery and multi-tenant isolation through a second create_app / TestClient calling /api/v1/operator/bootstrap
+        app2 = create_app(persistence=bundle2, operator_live_repository=OperatorLiveRepository(bundle2))
         with TestClient(app2) as client2:
             h_canonical = {
                 "x-tenant-id": "tenant-canonical",
@@ -975,27 +975,27 @@ def test_canonical_writer_restart_provenance(tmp_path: Path) -> None:
                 "x-roles": "operations_manager",
             }
             res_canonical = client2.get(
-                "/api/v1/operator?store_ids=store-canonical",
+                "/api/v1/operator/bootstrap",
                 headers=h_canonical,
             )
             assert res_canonical.status_code == 200, res_canonical.text
             data_c = res_canonical.json()
-            assert data_c["_meta"]["dataMode"] == "live"
-            assert data_c["_meta"]["sections"]["listings"]["recordCount"] == 1
-            assert data_c["_meta"]["sections"]["heatZones"]["recordCount"] == 1
-            assert data_c["_meta"]["sections"]["ingestionRuns"]["recordCount"] == 1
-            assert data_c["_meta"]["sections"]["siteScoreDecisions"]["recordCount"] == 1
+            assert data_c["meta"]["dataMode"] == "live"
+            assert data_c["meta"]["sections"]["listings"]["recordCount"] == 1
+            assert data_c["meta"]["sections"]["heatZones"]["recordCount"] == 1
+            assert data_c["meta"]["sections"]["ingestionRuns"]["recordCount"] == 1
+            assert data_c["meta"]["sections"]["siteScoreDecisions"]["recordCount"] == 1
 
             res_b = client2.get(
-                "/api/v1/operator?store_ids=store-b",
+                "/api/v1/operator/bootstrap",
                 headers=h_b,
             )
             assert res_b.status_code == 200, res_b.text
             data_b = res_b.json()
-            assert data_b["_meta"]["sections"]["listings"]["recordCount"] == 0
-            assert data_b["_meta"]["sections"]["heatZones"]["recordCount"] == 0
-            assert data_b["_meta"]["sections"]["ingestionRuns"]["recordCount"] == 0
-            assert data_b["_meta"]["sections"]["siteScoreDecisions"]["recordCount"] == 0
+            assert data_b["meta"]["sections"]["listings"]["recordCount"] == 0
+            assert data_b["meta"]["sections"]["heatZones"]["recordCount"] == 0
+            assert data_b["meta"]["sections"]["ingestionRuns"]["recordCount"] == 0
+            assert data_b["meta"]["sections"]["siteScoreDecisions"]["recordCount"] == 0
             assert "list-canonical-api" not in res_b.text
             assert "listing-ownership-less" not in res_b.text
     finally:
