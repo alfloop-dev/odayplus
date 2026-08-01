@@ -1970,3 +1970,121 @@ def test_web_login_redirect_contract_matches_the_deployed_middleware() -> None:
 
     assert 'new URL("/login", request.url)' in middleware
     assert '"returnTo",' in middleware
+
+
+def test_negative_deploy_gate_regression_unverified_model_bindings_fails_closed() -> None:
+    """Negative regression test: missing model bindings or unverified mode fails closed under mlflow dependency."""
+    response = gate.HttpResponse(
+        status=200,
+        payload={
+            "status": "ok",
+            "details": {
+                "requireLiveData": True,
+                "deploymentMode": "dev",
+                "persistence": {
+                    "configuredMode": "postgresql",
+                    "runtimeMode": "postgresql",
+                    "durable": True,
+                    "reachable": True,
+                    "production_persistence_supported": True,
+                },
+                "provider": {
+                    "mode": "live",
+                    "configurationValid": True,
+                    "connectivityHealthy": True,
+                    "live": True,
+                },
+                "models": {
+                    "mode": "mlflow-production-unverified",
+                    "productionBindingsReady": False,
+                    "autoSeeded": False,
+                    "error": "PRODUCTION_MODEL_BINDINGS_UNVERIFIED",
+                    "capabilities": {
+                        "forecastops": {"available": False, "reasonCode": "PRODUCTION_MODEL_BINDINGS_UNVERIFIED"},
+                    },
+                },
+                "data": {
+                    "mode": "live",
+                    "liveReady": True,
+                    "operatorRepositoryReady": True,
+                    "origin": {"kind": "authoritative", "persistenceMode": "postgresql"},
+                    "operatorRepositoryProbe": {"ready": True},
+                    "blockingReasons": [],
+                },
+            },
+        },
+    )
+
+    checks: list[gate.CheckResult] = []
+    config = gate.GateConfig(
+        api_url="https://api.example.com",
+        expected_sha="a" * 40,
+        bearer_token="token",
+        operator_role="ops",
+        web_url="https://web.example.com",
+        expected_deployment="dev",
+    )
+
+    gate._check_runtime_readiness(response, config=config, checks=checks)
+
+    model_binding_check = next(c for c in checks if c.name == "runtime:model_bindings")
+    assert model_binding_check.ok is False
+    assert model_binding_check.dependency == "mlflow"
+
+
+def test_negative_deploy_gate_regression_contradictory_degraded_sections_fails_closed() -> None:
+    """Negative regression test: degraded or missing data origin fails closed under postgresql dependency."""
+    response = gate.HttpResponse(
+        status=200,
+        payload={
+            "status": "ok",
+            "details": {
+                "requireLiveData": True,
+                "deploymentMode": "dev",
+                "persistence": {
+                    "configuredMode": "postgresql",
+                    "runtimeMode": "postgresql",
+                    "durable": True,
+                    "reachable": True,
+                    "production_persistence_supported": True,
+                },
+                "provider": {
+                    "mode": "live",
+                    "configurationValid": True,
+                    "connectivityHealthy": True,
+                    "live": True,
+                },
+                "models": {
+                    "mode": "mlflow-production",
+                    "productionBindingsReady": True,
+                    "autoSeeded": False,
+                    "error": None,
+                    "capabilities": {},
+                },
+                "data": {
+                    "mode": "degraded",
+                    "liveReady": False,
+                    "operatorRepositoryReady": True,
+                    "origin": {"kind": "degraded", "persistenceMode": "postgresql"},
+                    "operatorRepositoryProbe": {"ready": True},
+                    "blockingReasons": ["OPERATOR_TENANT_INGESTION_RUNS_UNAVAILABLE"],
+                },
+            },
+        },
+    )
+
+    checks: list[gate.CheckResult] = []
+    config = gate.GateConfig(
+        api_url="https://api.example.com",
+        expected_sha="a" * 40,
+        bearer_token="token",
+        operator_role="ops",
+        web_url="https://web.example.com",
+        expected_deployment="dev",
+    )
+
+    gate._check_runtime_readiness(response, config=config, checks=checks)
+
+    data_origin_check = next(c for c in checks if c.name == "runtime:data_origin")
+    assert data_origin_check.ok is False
+    assert data_origin_check.dependency == "postgresql"

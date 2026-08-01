@@ -942,11 +942,6 @@ else:
                 "; ".join(production_composition_errors) if production_composition_errors else None
             )
             # productionBindingsReady is True when:
-            # - ForecastOps is active (available=True, the only MLflow alias required)
-            # - Every other required service is either active or governed-disabled
-            # - The MLflow runtime and LearningHub registry are both live
-            # A governed-disabled service contributes to readiness because it has
-            # explicit evidence and fails closed; it does NOT require a production alias.
             forecastops_active = (
                 production_model_capabilities.get("forecastops", {}).get("available") is True
             )

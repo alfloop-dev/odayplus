@@ -621,32 +621,20 @@ class OperatorLiveRepository:
             name: availability.to_dict()
             for name, availability in sections.items()
         }
-        core_section_names = (
-            "stores",
-            "transactions",
-            "interventions",
-            "forecastAlerts",
-            "listings",
-            "candidates",
-            "siteScoreDecisions",
-            "auditEvents",
-            "activeJobs",
-            "riskRows",
-        )
         unavailable_sections = sorted(
             name
-            for name in core_section_names
-            if sections[name].state == "unavailable"
+            for name, availability in sections.items()
+            if availability.state == "unavailable"
         )
         degraded_sections = sorted(
             name
-            for name in core_section_names
-            if sections[name].state == "degraded"
+            for name, availability in sections.items()
+            if availability.state == "degraded"
         )
         available_sections = sorted(
             name
-            for name in core_section_names
-            if sections[name].available
+            for name, availability in sections.items()
+            if availability.available
         )
         data_mode = (
             "unavailable"
@@ -853,6 +841,17 @@ class OperatorLiveRepository:
                 message="risk projection requires an available tenant-scoped store set",
             )
 
+        interventions_available = sections["interventions"].state == "available"
+        alerts_available = sections["forecastAlerts"].state == "available"
+        signal_repos_ok = interventions_available and alerts_available
+
+        if not interventions_available and not alerts_available:
+            return [], self._unavailable(
+                "operator-tenant-risk-projection",
+                reason_code="OPERATOR_RISK_SIGNALS_UNAVAILABLE",
+                message="authoritative risk signal repositories are unavailable",
+            )
+
         rows: list[dict[str, Any]] = []
         for store in stores:
             store_id = str(_value(store, "store_id", ""))
@@ -885,6 +884,10 @@ class OperatorLiveRepository:
                 for i in store_interventions:
                     signals.append(f"{_status(_value(i, 'kind', ''))} intervention")
                 signal_text = " + ".join(signals[:2]) or "Operational risk"
+            elif not signal_repos_ok:
+                score = 50
+                tone = "warning"
+                signal_text = "Risk signal degraded"
             else:
                 score = 35 if store_status == "open" else 15
                 tone = "success" if store_status == "open" else "neutral"
@@ -900,7 +903,7 @@ class OperatorLiveRepository:
                 }
             )
 
-        degraded = (
+        degraded = not signal_repos_ok or (
             sections["interventions"].state == "degraded"
             or sections["forecastAlerts"].state == "degraded"
         )
@@ -909,7 +912,7 @@ class OperatorLiveRepository:
                 "operator-tenant-risk-projection",
                 rows,
                 reason_code="OPERATOR_RISK_ROWS_PARTIAL",
-                message="risk projection compiled with partial alert or intervention signals",
+                message="risk projection compiled with degraded or unavailable risk signals",
             )
             if degraded
             else self._available("operator-tenant-risk-projection", rows)
