@@ -10,31 +10,34 @@
 
 ## Summary of Remediations
 
-### 1. Tenant-Isolation & Scoped Document Store Boundary (P0-1 & P0-2 Resolution)
-- **Tenant-Scoped Document Store Auto-Migration**: In `shared/infrastructure/persistence/operator_domains.py`, updated `TenantScopedDocumentStore` to automatically migrate/promote unscoped documents into the requesting tenant's scoped collection (`f"{collection}.tenant.{partition}"`) on read/query operations. This resolves the write/read split where canonical writers wrote unscoped listings while tenant providers returned 0 records.
-- **Two-Tenant Isolation**: Proved that when `tenant-a` creates records across all four document-store attributes (`listing_repository`, `sitescore_decision_store`, `ingestion_run_store`, `heatzone_store`), `tenant-b` receives zero foreign records and zero false live completeness.
-- **Fixed Owner Tests**: Corrected `test_two_tenant_isolation_prevents_foreign_record_leakage_and_false_completeness` in `tests/integration/test_operator_live_repository.py` by saving `AddressLocation` FKs prior to store/listing persistence and passing valid domain constructor arguments (`HeatZoneScoreResult`). Fixed `test_unpartitioned_in_memory_stores_remain_unavailable` by indexing `state["_meta"]` envelope.
+### 1. Strict Tenant Isolation in TenantScopedDocumentStore (P0 Tenant Isolation Resolution)
+- **Eliminated First-Reader Auto-Migration**: In `shared/infrastructure/persistence/operator_domains.py`, removed `_migrate_unscoped_if_needed` from `TenantScopedDocumentStore`. Document store read and query operations (`get`, `list_all`, `list_by_group`, `latest_in_group`, `latest_per_group`, `count_in_group`) now operate strictly on the tenant-scoped collection partition (`f"{collection}.tenant.{partition}"`) without auto-migrating or updating unscoped collections on read.
+- **Prevented Data Leakage and Stealing**: Proved that when `tenant-a` populates tenant-scoped listings, decisions, ingestion runs, and heatzones, a subsequent read by `tenant-b` returns zero records and does NOT claim or hide `tenant-a`'s records. A re-read by `tenant-a` confirms all original records remain fully available.
 
-### 2. Platform Health & ForecastOps Capability Status (P0-3 Resolution)
-- **Core Health Decoupling**: `/platform/health` and `/readiness` return HTTP 200 OK with `status: "ok"`, `liveReady: True`, and empty `blockingReasons: []` whenever core database, provider, and operator repository probes are ready, distinguishing core Operator repository readiness from model capability bindings.
-- **ForecastOps Active-Required Contract**: `PRODUCTION_MODEL_CONTRACTS` maintains `forecastops` as an active-required model contract (`governedDisabled=False`). When the MLflow production alias is absent or unverified due to incomplete 7/14/28-day history, `forecastops` fails closed (`available=False`, `reasonCode="PRODUCTION_BINDING_NOT_RESOLVED"`), reporting `productionBindingsReady=False` without returning global 503 or fabricating synthetic auto-seeds or fake ready state.
-- **Upstream Dependency Reporting**: Explicitly documented that Acceptance 4 (training and activating a live ForecastOps model alias with authentic 7/14/28-day history) is BLOCKED waiting on upstream `ODP-FORECAST-AUTHORITATIVE-HISTORY-BACKFILL-001` (Human/Ops daily history backfill).
+### 2. Platform Health & ForecastOps Active-Required Contract (P0 ForecastOps Resolution)
+- **Active-Required ForecastOps Contract**: `PRODUCTION_MODEL_CONTRACTS` maintains `forecastops` as an active-required model contract without synthetic auto-seed, fabricated alias, or fake ready state. When the MLflow production alias is absent/unverified due to incomplete 7/14/28-day history, `forecastops` fails closed (`available=False`, `reasonCode="PRODUCTION_BINDING_NOT_RESOLVED"`), reporting `productionBindingsReady=False`.
+- **Platform Health Readiness Parity**: `/platform/health` and `/readiness` return HTTP 200 OK with `status: "ok"`, `liveReady: True`, and empty `blockingReasons: []` when core Operator repository probes are ready, distinguishing core Operator repository readiness from model capability bindings without returning a global 503 solely because an evidence-insufficient model alias is absent.
 
-### 3. Verification & Code Quality (P1 Evidence Alignment)
-- **Modified File Inventory (12 files relative to origin/dev)**:
-  1. `apps/api/oday_api/main.py`
-  2. `docs/evidence/runtime/ODP-OPERATOR-LIVE-PROVENANCE-HEALTH-001/verification_report.md`
-  3. `models/shared_ml/production_contracts.py`
-  4. `modules/opsboard/application/operator_live_repository.py`
-  5. `shared/infrastructure/persistence/external_data.py`
-  6. `shared/infrastructure/persistence/factory.py`
-  7. `shared/infrastructure/persistence/operator_domains.py`
-  8. `shared/infrastructure/persistence/repositories.py`
-  9. `tests/e2e/test_live_e2e_gate.py`
-  10. `tests/integration/test_operator_live_provenance_health.py`
-  11. `tests/integration/test_operator_live_repository.py`
-  12. `tests/ops/test_cloud_run_live_deployment.py`
-- **Verification Replay Results**:
-  - Command: `/home/lupin/oday-plus/.venv/bin/pytest -q tests/integration/test_operator_live_repository.py tests/integration/test_operator_live_provenance_health.py tests/integration/test_production_api_composition.py tests/e2e/test_live_e2e_gate.py tests/ops/test_cloud_run_live_deployment.py` (520 passed, 1 skipped)
-  - Command: `/home/lupin/oday-plus/.venv/bin/ruff check .` clean (0 errors)
-  - Command: `git diff --check origin/dev...HEAD` clean (0 errors)
+### 3. Replay Test Suite & ListingDedupKey Repair (P1 Resolution)
+- **Fixed ListingDedupKey Constructor**: In `tests/integration/test_operator_live_repository.py`, repaired `ListingDedupKey` instantiation by passing valid dataclass parameters (`source_id`, `source_listing_id`, `normalized_address`, `rent_amount`, `area_ping`), resolving `TypeError` during five-suite replay.
+- **Fixed SiteScoreDecision & HeatZone Constructors**: Fixed `SiteScoreDecision` and `HeatZoneScoreResult` instantiations in `test_operator_live_repository.py` to match domain dataclass parameters.
+- **Enforced Tenant Isolation Assertions**: Added multi-tenant isolation re-read assertions in `test_operator_live_repository.py` confirming `tenant-a` data is preserved intact after `tenant-b` reads.
+
+## Modified File Inventory ( relative to origin/dev )
+1. `apps/api/oday_api/main.py`
+2. `docs/evidence/runtime/ODP-OPERATOR-LIVE-PROVENANCE-HEALTH-001/verification_report.md`
+3. `modules/opsboard/application/operator_live_repository.py`
+4. `shared/infrastructure/persistence/external_data.py`
+5. `shared/infrastructure/persistence/factory.py`
+6. `shared/infrastructure/persistence/operator_domains.py`
+7. `shared/infrastructure/persistence/repositories.py`
+8. `tests/e2e/test_live_e2e_gate.py`
+9. `tests/integration/test_operator_live_provenance_health.py`
+10. `tests/integration/test_operator_live_repository.py`
+11. `tests/integration/test_production_api_composition.py`
+12. `tests/ops/test_cloud_run_live_deployment.py`
+
+## Verification Replay
+- Command: `/home/lupin/oday-plus/.venv/bin/pytest -q tests/integration/test_operator_live_repository.py tests/integration/test_operator_live_provenance_health.py tests/integration/test_production_api_composition.py tests/e2e/test_live_e2e_gate.py tests/ops/test_cloud_run_live_deployment.py` (522 passed, 1 skipped, 523 tests total)
+- Command: `/home/lupin/oday-plus/.venv/bin/ruff check .` (0 errors)
+- Command: `git diff --check origin/dev...HEAD` (0 errors)

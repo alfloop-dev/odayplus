@@ -41,32 +41,6 @@ class TenantScopedDocumentStore:
     def _collection(self, collection: str) -> str:
         return f"{collection}.tenant.{self._partition}"
 
-    def _migrate_unscoped_if_needed(self, collection: str) -> None:
-        scoped_coll = self._collection(collection)
-        if not self._store.list_all(scoped_coll):
-            unscoped_items = self._store.list_all(collection)
-            if unscoped_items:
-                engine = getattr(self._store, "engine", None)
-                if engine is not None and hasattr(engine, "execute"):
-                    import threading
-                    with getattr(engine, "lock", threading.Lock()):
-                        engine.execute(
-                            "UPDATE durable_documents SET collection = ? WHERE collection = ?",
-                            (scoped_coll, collection),
-                        )
-                else:
-                    for item in unscoped_items:
-                        doc_id = (
-                            getattr(item, "listing_id", None)
-                            or getattr(item, "decision_id", None)
-                            or getattr(item, "run_id", None)
-                            or getattr(item, "job_id", None)
-                            or getattr(item, "id", None)
-                            or str(id(item))
-                        )
-                        self._store.put(scoped_coll, str(doc_id), item)
-                    self._store.delete_collection(collection)
-
     def put(
         self,
         collection: str,
@@ -87,30 +61,24 @@ class TenantScopedDocumentStore:
         )
 
     def get(self, collection: str, doc_id: str) -> Any | None:
-        self._migrate_unscoped_if_needed(collection)
         return self._store.get(self._collection(collection), doc_id)
 
     def list_all(self, collection: str) -> list[Any]:
-        self._migrate_unscoped_if_needed(collection)
         return self._store.list_all(self._collection(collection))
 
     def list_by_group(self, collection: str, group_key: str) -> list[Any]:
-        self._migrate_unscoped_if_needed(collection)
         return self._store.list_by_group(self._collection(collection), group_key)
 
     def latest_in_group(self, collection: str, group_key: str) -> Any | None:
-        self._migrate_unscoped_if_needed(collection)
         return self._store.latest_in_group(
             self._collection(collection),
             group_key,
         )
 
     def latest_per_group(self, collection: str) -> list[Any]:
-        self._migrate_unscoped_if_needed(collection)
         return self._store.latest_per_group(self._collection(collection))
 
     def count_in_group(self, collection: str, group_key: str) -> int:
-        self._migrate_unscoped_if_needed(collection)
         return self._store.count_in_group(
             self._collection(collection),
             group_key,

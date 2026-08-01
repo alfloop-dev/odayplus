@@ -508,44 +508,104 @@ def test_two_tenant_isolation_prevents_foreign_record_leakage_and_false_complete
             listing_id="listing-tenant-a",
             address_id="addr-a",
         )
-        key_a = ListingDedupKey(source_key="src-a", property_key="prop-a")
+        key_a = ListingDedupKey(
+            source_id="src-a",
+            source_listing_id="list-a",
+            normalized_address="addr-a",
+            rent_amount=1000.0,
+            area_ping=30.0,
+        )
         repo_a = bundle.listing_repository_for_tenant("tenant-a")
         assert repo_a is not None
         repo_a.save_listing(listing_a, address_a, key_a)
 
+        from shared.workflow.sitescore import DecisionStatus, SiteScoreRecommendation, SiteScoreDecision
+
         decision_a = SiteScoreDecision(
             decision_id="dec-tenant-a",
             candidate_site_id="cand-a",
-            decision="approved",
+            report_id="rep-a",
+            report_version=1,
+            recommendation=SiteScoreRecommendation.GO,
+            status=DecisionStatus.APPROVED,
+            policy_version="v1",
+            model_version="v1",
+            created_by="user-a",
+            created_at=datetime.now(UTC),
         )
         decision_store_a = bundle.sitescore_decision_store_for_tenant("tenant-a")
         assert decision_store_a is not None
         decision_store_a.save_decision(decision_a)
 
+        from modules.external_data.workers.scheduled_fetch import SourceFreshnessEvidence
+
+        now = datetime.now(UTC)
         ingestion_a = IngestionRunRecord(
             run_id="run-tenant-a",
             provider_id="prov-a",
+            schedule_id="sched-a",
+            trigger="scheduled",
+            idempotency_key="key-a",
             status="completed",
-            item_count=10,
+            data_status="fresh",
+            window_start=now,
+            window_end=now,
+            started_at=now,
+            completed_at=now,
+            raw_snapshot_id="raw-a",
+            canonical_snapshot_id="can-a",
+            source_snapshot_id="src-a",
+            provider_observed_at=now,
+            ingested_at=now,
+            last_success_watermark_before=now,
+            last_success_watermark_after=now,
+            correlation_id="corr-a",
+            accepted_count=10,
+            quarantined_count=0,
+            total_count=10,
+            freshness=SourceFreshnessEvidence(
+                provider_id="prov-a",
+                source_snapshot_id="src-a",
+                data_status="fresh",
+                provider_observed_at=now,
+                ingested_at=now,
+                freshness_sla_seconds=86400,
+                correlation_id="corr-a",
+            ),
         )
         ingestion_store_a = bundle.ingestion_run_store_for_tenant("tenant-a")
         assert ingestion_store_a is not None
         ingestion_store_a.save(ingestion_a)
+
+        from modules.heatzone.domain import HeatZoneState
 
         hz_result_a = HeatZoneBatchScoreResult(
             job_id="job-tenant-a",
             status="completed",
             scores=(
                 HeatZoneScoreResult(
-                    geo_cell_id="cell-a",
-                    h3_index="h3-a",
-                    heat_score=0.9,
-                    recommendation_tier="tier1",
+                    heat_zone_id="hz-a",
+                    h3_index="8928308280fffff",
+                    h3_resolution=9,
+                    score=0.9,
+                    priority_rank=1,
+                    unmet_demand_score=0.9,
+                    format_fit_score=0.9,
+                    cannibalization_risk_score=0.1,
+                    rent_feasibility_score=0.8,
+                    listing_availability_score=0.9,
                     confidence=0.95,
-                    ranked_reasons=("high_density",),
+                    state=HeatZoneState.UNTOUCHED,
+                    feature_snapshot_time=now,
+                    prediction_origin_time=now,
+                    last_scored_at=now,
+                    model_version="v1",
+                    feature_version="v1",
+                    source_snapshot_ids=("src-a",),
+                    reasons=("high_density",),
                 ),
             ),
-            completed_at=datetime.now(UTC),
+            completed_at=now,
         )
         heatzone_store_a = bundle.heatzone_store_for_tenant("tenant-a")
         assert heatzone_store_a is not None
@@ -581,6 +641,17 @@ def test_two_tenant_isolation_prevents_foreign_record_leakage_and_false_complete
         assert "dec-tenant-a" not in str(state_b)
         assert "run-tenant-a" not in str(state_b)
         assert "job-tenant-a" not in str(state_b)
+
+        # Confirm tenant-a data remains intact after tenant-b read
+        state_a_again = live_repo.load_state(
+            tenant_id="tenant-a",
+            store_ids=("store-tenant-a",),
+        )
+        sections_a_again = state_a_again["_meta"]["sections"]
+        assert sections_a_again["listings"]["recordCount"] == 1
+        assert sections_a_again["siteScoreDecisions"]["recordCount"] == 1
+        assert sections_a_again["ingestionRuns"]["recordCount"] == 1
+        assert sections_a_again["heatZones"]["recordCount"] == 1
     finally:
         bundle.engine.close()
 
