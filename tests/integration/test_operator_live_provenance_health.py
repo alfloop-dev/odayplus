@@ -350,3 +350,102 @@ def test_operator_live_provenance_real_postgresql_integration(monkeypatch: Any) 
     bundle = build_persistence(mode="postgresql")
     assert bundle.mode == "postgresql"
     assert bundle.engine.is_production is True
+
+
+def test_durable_tenant_scoped_ingestion_runs_latest_per_provider_deduplication(
+    tmp_path: Path,
+) -> None:
+    """Regression test (Run 30680943677 P1 remediation):
+    TenantScopedDocumentStore.latest_per_group correctly partitions and returns only the newest run per provider.
+    Multiple runs for the same tenant and provider produce freshness_rows=1 instead of returning duplicate runs.
+    """
+    from datetime import UTC, datetime, timedelta
+
+    from modules.external_data.application.ingestion_store import IngestionRunRecord
+    from modules.external_data.workers.scheduled_fetch import SourceFreshnessEvidence
+
+    db_path = tmp_path / "durable_ingestion.sqlite3"
+    bundle = build_persistence(mode="durable", db_path=str(db_path))
+    ingestion_store = bundle.ingestion_run_store_for_tenant("tenant-prov-test")
+    assert ingestion_store is not None
+
+    t1 = datetime.now(UTC) - timedelta(hours=2)
+    t2 = datetime.now(UTC)
+
+    run1 = IngestionRunRecord(
+        run_id="run-window-1",
+        provider_id="provider-alpha",
+        schedule_id="sched-1",
+        trigger="scheduled",
+        idempotency_key="key-window-1",
+        status="completed",
+        data_status="fresh",
+        window_start=t1,
+        window_end=t1,
+        started_at=t1,
+        completed_at=t1,
+        raw_snapshot_id="raw-1",
+        canonical_snapshot_id="can-1",
+        source_snapshot_id="src-1",
+        provider_observed_at=t1,
+        ingested_at=t1,
+        last_success_watermark_before=t1,
+        last_success_watermark_after=t1,
+        correlation_id="corr-1",
+        accepted_count=5,
+        quarantined_count=0,
+        total_count=5,
+        freshness=SourceFreshnessEvidence(
+            provider_id="provider-alpha",
+            source_snapshot_id="src-1",
+            data_status="fresh",
+            provider_observed_at=t1,
+            ingested_at=t1,
+            freshness_sla_seconds=86400,
+            correlation_id="corr-1",
+        ),
+    )
+
+    run2 = IngestionRunRecord(
+        run_id="run-window-2",
+        provider_id="provider-alpha",
+        schedule_id="sched-1",
+        trigger="scheduled",
+        idempotency_key="key-window-2",
+        status="completed",
+        data_status="fresh",
+        window_start=t2,
+        window_end=t2,
+        started_at=t2,
+        completed_at=t2,
+        raw_snapshot_id="raw-2",
+        canonical_snapshot_id="can-2",
+        source_snapshot_id="src-2",
+        provider_observed_at=t2,
+        ingested_at=t2,
+        last_success_watermark_before=t2,
+        last_success_watermark_after=t2,
+        correlation_id="corr-2",
+        accepted_count=10,
+        quarantined_count=0,
+        total_count=10,
+        freshness=SourceFreshnessEvidence(
+            provider_id="provider-alpha",
+            source_snapshot_id="src-2",
+            data_status="fresh",
+            provider_observed_at=t2,
+            ingested_at=t2,
+            freshness_sla_seconds=86400,
+            correlation_id="corr-2",
+        ),
+    )
+
+    ingestion_store.save(run1)
+    ingestion_store.save(run2)
+
+    latest_runs = ingestion_store.latest_per_provider()
+    assert len(latest_runs) == 1
+    assert latest_runs[0].run_id == "run-window-2"
+
+    freshness_rows = ingestion_store.freshness()
+    assert len(freshness_rows) == 1

@@ -103,16 +103,10 @@ class TenantScopedDocumentStore:
         return self._store.latest_in_group(self._collection(collection), group_key)
 
     def latest_per_group(self, collection: str) -> list[Any]:
-        items = self.list_all(collection)
-        by_group: dict[str, Any] = {}
-        for item in items:
-            g_key = getattr(item, "group_key", None) or getattr(item, "candidate_site_id", None)
-            if g_key is not None:
-                by_group[str(g_key)] = item
-        return list(by_group.values()) if by_group else items
+        return self._store.latest_per_group(self._collection(collection))
 
     def count_in_group(self, collection: str, group_key: str) -> int:
-        return len(self.list_by_group(collection, group_key))
+        return self._store.count_in_group(self._collection(collection), group_key)
 
     def append_version(
         self,
