@@ -212,9 +212,12 @@ else:
 
         from modules.external_data.application.ingestion_service import ExternalIngestionService
 
+        ingestion_run_store_for_tenant = (
+            bundle.ingestion_run_store_for_tenant if bundle.is_durable else None
+        )
         ingestion_service = external_ingestion_service or ExternalIngestionService(
             store=bundle.ingestion_run_store,
-            ingestion_run_store_for_tenant=bundle.ingestion_run_store_for_tenant,
+            ingestion_run_store_for_tenant=ingestion_run_store_for_tenant,
             state_store=bundle.external_fetch_state_store,
             audit_log=audit_log,
         )
@@ -986,7 +989,7 @@ else:
             api,
             create_external_data_router(
                 ingestion_service=ingestion_service,
-                ingestion_run_store_for_tenant=bundle.ingestion_run_store_for_tenant,
+                ingestion_run_store_for_tenant=ingestion_run_store_for_tenant,
                 audit_log=audit_log,
                 require_provider=require_live_external_provider,
             ),

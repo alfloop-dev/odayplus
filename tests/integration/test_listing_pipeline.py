@@ -1,13 +1,15 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime
+from typing import Any
 
-from fastapi import Request
 from fastapi.testclient import TestClient
 
 from apps.api.oday_api.main import create_app
 from modules.external_data.geo import GeocodeCandidate, GeoPipeline, StaticGeocodeProvider
 from modules.listing import InMemoryListingRepository, ListingPipeline
+from shared.auth import Principal, Role, Scope
+from shared.infrastructure.persistence.factory import _memory_bundle
 from tests.integration._authz import LISTING_HEADERS
 
 
@@ -178,7 +180,9 @@ def test_listing_api_import_endpoint_and_candidate_inbox() -> None:
     assert len(inbox.json()["candidates"]) == 1
 
 
-def test_listing_import_rejects_missing_or_mismatched_tenant_scope() -> None:
+def test_listing_import_rejects_missing_or_mismatched_tenant_scope(
+    monkeypatch: Any,
+) -> None:
     client = TestClient(create_app())
     payload = {
         "records": [
@@ -200,18 +204,26 @@ def test_listing_import_rejects_missing_or_mismatched_tenant_scope() -> None:
     assert res_missing.status_code == 403
     assert "TENANT_SCOPE_DENIED" in res_missing.text
 
-    # 2. Mismatched tenant scope (header x-tenant-id="tenant-victim" vs request.state.operator_principal tenant_id="tenant-attacker")
-    app = create_app()
+    # 2. The authentication dependency verifies tenant-attacker while the
+    # untrusted routing header asks for tenant-victim. Exercise the same
+    # dependency that writes request.state.operator_principal in production;
+    # middleware injection would be overwritten before the route executes.
+    verified_attacker = Principal(
+        subject_id="attacker",
+        roles=frozenset({Role.EXPANSION_USER}),
+        scope=Scope(tenant_id="tenant-attacker"),
+    )
 
-    @app.middleware("http")
-    async def _inject_attacker_principal(request: Request, call_next):
-        from shared.auth import Principal, Scope
-        request.state.operator_principal = Principal(
-            subject_id="attacker",
-            roles=frozenset(),
-            scope=Scope(tenant_id="tenant-attacker"),
-        )
-        return await call_next(request)
+    def _verified_principal(_headers: Any, *, boundary: Any = None) -> Principal:
+        return verified_attacker
+
+    monkeypatch.setattr(
+        "apps.api.oday_api.security.dependencies.principal_from_headers",
+        _verified_principal,
+    )
+    persistence = _memory_bundle()
+    app = create_app(persistence=persistence)
+    listings_before_attack = list(persistence.listing_repository.listings)
 
     mismatched_client = TestClient(app)
     mismatched_headers = {
@@ -224,4 +236,4 @@ def test_listing_import_rejects_missing_or_mismatched_tenant_scope() -> None:
     )
     assert res_mismatch.status_code == 403
     assert "TENANT_SCOPE_DENIED" in res_mismatch.text
-
+    assert persistence.listing_repository.listings == listings_before_attack

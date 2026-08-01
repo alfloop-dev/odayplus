@@ -496,4 +496,3 @@ def test_per_request_resolver_failure_and_rotation() -> None:
         )
 
     assert len(calls) == 2
-

@@ -1088,4 +1088,3 @@ def test_tenant_scoped_document_store_never_queries_unpartitioned_collections() 
     for coll in called_collections:
         assert coll.startswith(f"{base_coll}.tenant.")
         assert coll != base_coll
-
