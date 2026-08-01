@@ -209,5 +209,9 @@ jobs:
           npm ci
           npx playwright install --with-deps chromium
 
-      - name: Run product E2E release gate
-        run: make product-release-gate
+      # A reviewed task PR must prove its current source through the complete
+      # deterministic E2E runner. It must not manufacture production release
+      # authority: a well-formed NO-GO Gate 0-6 registry is valid here, while
+      # dev -> main promotion separately requires an authentic GO decision.
+      - name: Run product E2E dev merge gate
+        run: make product-e2e-gate

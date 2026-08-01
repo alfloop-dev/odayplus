@@ -24,6 +24,7 @@ from typing import Any
 
 ROOT = Path(__file__).resolve().parents[2]
 CHECKER = ROOT / "scripts/e2e/check_release_gate_registry.py"
+PRODUCT_GATE = ROOT / "scripts/e2e/check_product_release_gate.py"
 REGISTRY = ROOT / "docs/evidence/gates/RELEASE_GATE_REGISTRY.json"
 REGISTRY_README = ROOT / "docs/evidence/gates/README.md"
 
@@ -79,6 +80,16 @@ def clear_all_gates(registry: dict[str, Any]) -> None:
 def run_checker(*args: str) -> subprocess.CompletedProcess[str]:
     return subprocess.run(
         [sys.executable, str(CHECKER), *args],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+
+def run_product_gate(*args: str) -> subprocess.CompletedProcess[str]:
+    return subprocess.run(
+        [sys.executable, str(PRODUCT_GATE), *args],
+        cwd=ROOT,
         capture_output=True,
         text=True,
         check=False,
@@ -474,3 +485,48 @@ def test_registry_is_documented_and_wired_into_the_release_gate() -> None:
         assert token in release_gate
 
     assert "check_release_gate_registry.py" in makefile
+
+
+def test_dev_merge_gate_accepts_valid_no_go_but_release_gate_fails_closed() -> None:
+    dev_merge = run_product_gate("--dev-merge")
+    assert dev_merge.returncode == 0, dev_merge.stdout + dev_merge.stderr
+    assert "dev merge gate static checks passed" in dev_merge.stdout
+
+    production_release = run_product_gate("--require-go")
+    assert production_release.returncode == 1
+    assert "NO-GO" in production_release.stdout
+
+
+def test_ci_and_promotion_workflows_use_separate_gate_modes() -> None:
+    ci_workflow = (ROOT / ".github/workflows/ci.yml").read_text(encoding="utf-8")
+    promotion_workflow = (ROOT / ".github/workflows/promote-dev-to-main.yml").read_text(
+        encoding="utf-8"
+    )
+    makefile = (ROOT / "Makefile").read_text(encoding="utf-8")
+
+    assert "run: make product-e2e-gate" in ci_workflow
+    assert "run: make product-release-gate" not in ci_workflow
+    assert "run: make product-release-gate" in promotion_workflow
+    assert "github.event.workflow_run.head_sha" in promotion_workflow
+    assert "check_product_release_gate.py --dev-merge" in makefile
+    assert "check_product_release_gate.py --require-go" in makefile
+
+
+def test_registry_does_not_report_archived_done_tasks_as_open() -> None:
+    blockers = "\n".join(
+        blocker
+        for gate in load_committed_registry()["gates"]
+        for blocker in gate["blockers"]
+    )
+    for task_id in (
+        "ODP-PLAN-SOLVER-RUNTIME-COMPAT-001",
+        "ODP-PLAN-HEATZONE-OUTCOME-001",
+        "ODP-PLAN-NETPLAN-ACCEPTANCE-001",
+        "ODP-PLAN-OSS-LICENSE-GATE-001",
+        "ODP-PLAN-DEFERRED-OSS-ADR-001",
+        "ODP-PLAN-ACCEPTANCE-REAL-EXEC-001",
+        "ODP-PLAN-CANONICAL-SHELL-LIVE-001",
+    ):
+        assert f"{task_id} is open" not in blockers
+    assert "archived done" in blockers
+    assert load_committed_registry()["release"]["decision"] == "no-go"

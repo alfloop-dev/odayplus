@@ -32,6 +32,22 @@ jobs:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
+          ref: ${{ github.event.workflow_run.head_sha }}
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Install production release gate dependencies
+        run: npm ci
+
+      # Green task/dev CI is necessary but never sufficient release authority.
+      # This final boundary fails closed until the registry records authentic,
+      # exact-candidate Gate 0-6 receipts and Human/Ops GO sign-off. The static
+      # release packet check also retains exact-source E2E receipt validation.
+      - name: Require final production release GO
+        run: make product-release-gate
 
       - name: Open or reuse promote PR (dev -> main)
         id: pr
