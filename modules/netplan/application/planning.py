@@ -143,6 +143,17 @@ class NetPlanService:
                 constraints=scenario.constraints,
                 alternative_limit=alternative_limit,
             )
+        target = (
+            NetPlanScenarioStatus.INFEASIBLE
+            if result.solver_status == STATUS_INFEASIBLE
+            else NetPlanScenarioStatus.SOLVED
+        )
+        transitioned = scenario.transition(
+            target,
+            actor=actor,
+            reason=reason,
+            occurred_at=now,
+        )
         solve = self.repository.save_solve(
             ScenarioSolveRecord(
                 scenario_id=scenario.scenario_id,
@@ -152,12 +163,7 @@ class NetPlanService:
                 execution_metadata=execution_metadata,
             )
         )
-        target = (
-            NetPlanScenarioStatus.INFEASIBLE
-            if result.solver_status == STATUS_INFEASIBLE
-            else NetPlanScenarioStatus.SOLVED
-        )
-        self._advance(scenario, target, actor=actor, reason=reason, occurred_at=now)
+        self.repository.save_scenario(transitioned)
         return solve
 
     def submit_for_approval(
@@ -210,26 +216,31 @@ class NetPlanService:
             authority_receipt = verification.receipt
             authority_verification = verification
             verification_violations = verification.violations
-        approval = self.repository.save_approval(
-            ApprovalRecord(
-                approval_id=f"netplan-approval-{uuid4()}",
-                scenario_id=scenario.scenario_id,
-                actor_id=actor_id,
-                decision=normalized,
-                reason=reason,
-                decided_at=now,
-                policy_version=scenario.constraints.policy_version,
-                authority_receipt=authority_receipt,
-                authority_verification=authority_verification,
-                verification_violations=verification_violations,
-            )
+        approval = ApprovalRecord(
+            approval_id=f"netplan-approval-{uuid4()}",
+            scenario_id=scenario.scenario_id,
+            actor_id=actor_id,
+            decision=normalized,
+            reason=reason,
+            decided_at=now,
+            policy_version=scenario.constraints.policy_version,
+            authority_receipt=authority_receipt,
+            authority_verification=authority_verification,
+            verification_violations=verification_violations,
         )
         target = (
             NetPlanScenarioStatus.APPROVED
             if approval.is_approved
             else NetPlanScenarioStatus.REJECTED
         )
-        self._advance(scenario, target, actor=actor_id, reason=reason, occurred_at=now)
+        transitioned = scenario.transition(
+            target,
+            actor=actor_id,
+            reason=reason,
+            occurred_at=now,
+        )
+        self.repository.save_approval(approval)
+        self.repository.save_scenario(transitioned)
         return approval
 
     def execute(
@@ -258,6 +269,12 @@ class NetPlanService:
                 "persisted approval does not match authoritative management readback"
             )
         now = executed_at or datetime.now(UTC)
+        transitioned = scenario.transition(
+            NetPlanScenarioStatus.EXECUTED,
+            actor=executed_by,
+            reason="network plan actions executed",
+            occurred_at=now,
+        )
         execution = self.repository.save_execution(
             ExecutionRecord(
                 execution_id=f"netplan-execution-{uuid4()}",
@@ -267,13 +284,7 @@ class NetPlanService:
                 executed_at=now,
             )
         )
-        self._advance(
-            scenario,
-            NetPlanScenarioStatus.EXECUTED,
-            actor=executed_by,
-            reason="network plan actions executed",
-            occurred_at=now,
-        )
+        self.repository.save_scenario(transitioned)
         return execution
 
     def record_outcome(
@@ -288,6 +299,12 @@ class NetPlanService:
         scenario = self._require_scenario(scenario_id)
         solve = self._require_solve(scenario_id)
         now = observed_at or datetime.now(UTC)
+        transitioned = scenario.transition(
+            NetPlanScenarioStatus.OUTCOME_OBSERVED,
+            actor=actor,
+            reason="network plan outcome observed",
+            occurred_at=now,
+        )
         outcome = self.repository.save_outcome(
             build_outcome_record(
                 scenario_id=scenario_id,
@@ -297,13 +314,7 @@ class NetPlanService:
                 source_snapshot_ids=source_snapshot_ids,
             )
         )
-        self._advance(
-            scenario,
-            NetPlanScenarioStatus.OUTCOME_OBSERVED,
-            actor=actor,
-            reason="network plan outcome observed",
-            occurred_at=now,
-        )
+        self.repository.save_scenario(transitioned)
         return outcome
 
     def close(

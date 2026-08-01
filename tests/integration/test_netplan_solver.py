@@ -239,6 +239,7 @@ def _pending_authoritative_service(
     *,
     solve_alternative_limit: int = 3,
     receipt_alternative_limit: int = 3,
+    submit_for_approval: bool = True,
 ) -> tuple[
     InMemoryNetPlanRepository,
     NetPlanService,
@@ -297,11 +298,12 @@ def _pending_authoritative_service(
         solved_at=MOMENT,
         alternative_limit=solve_alternative_limit,
     )
-    service.submit_for_approval(
-        scenario.scenario_id,
-        actor="network-planner",
-        occurred_at=MOMENT,
-    )
+    if submit_for_approval:
+        service.submit_for_approval(
+            scenario.scenario_id,
+            actor="network-planner",
+            occurred_at=MOMENT,
+        )
     return repository, service, scenario.scenario_id, authority_receipt
 
 
@@ -655,6 +657,76 @@ def test_execution_api_revalidates_solve_after_authentic_approval(
     scenario = repository.get_scenario(scenario_id)
     assert scenario is not None
     assert scenario.status is NetPlanScenarioStatus.APPROVED
+
+
+@pytest.mark.parametrize("surface", ["service", "api"])
+def test_out_of_order_decision_and_execution_leave_no_persisted_records(
+    surface: str,
+) -> None:
+    repository, service, scenario_id, authority_receipt = (
+        _pending_authoritative_service(submit_for_approval=False)
+    )
+    client = TestClient(
+        create_app(
+            netplan_repository=repository,
+            netplan_approval_verifier=_approval_verifier(authority_receipt),
+        ),
+        headers=auth_headers(Role.EXECUTIVE),
+    )
+    decision = {
+        "actor_id": APPROVAL_PRINCIPAL,
+        "reason": "attempt approval before submission",
+        "decision": "approved",
+        "approval_receipt_id": authority_receipt.receipt_id,
+        "decided_at": MOMENT.isoformat(),
+    }
+
+    if surface == "service":
+        with pytest.raises(InvalidNetPlanTransitionError, match="solved to approved"):
+            service.decide(
+                scenario_id,
+                actor_id=decision["actor_id"],
+                reason=decision["reason"],
+                decision=decision["decision"],
+                approval_receipt_id=decision["approval_receipt_id"],
+                decided_at=MOMENT,
+            )
+        service.submit_for_approval(
+            scenario_id,
+            actor="network-planner",
+            occurred_at=MOMENT,
+        )
+        with pytest.raises(NetPlanApprovalError, match="authentic management approval"):
+            service.execute(
+                scenario_id,
+                executed_by="ops-runner",
+                executed_at=MOMENT,
+            )
+    else:
+        decide_response = client.post(
+            f"/api/v1/netplan/scenarios/{scenario_id}/decide",
+            json=decision,
+        )
+        assert decide_response.status_code == 422
+        assert "solved to approved" in decide_response.json()["detail"]
+
+        submit_response = client.post(
+            f"/api/v1/netplan/scenarios/{scenario_id}/submit",
+            json={"actor": "network-planner", "occurred_at": MOMENT.isoformat()},
+        )
+        assert submit_response.status_code == 200
+        execute_response = client.post(
+            f"/api/v1/netplan/scenarios/{scenario_id}/execute",
+            json={"executed_by": "ops-runner", "executed_at": MOMENT.isoformat()},
+        )
+        assert execute_response.status_code == 422
+        assert "authentic management approval" in execute_response.json()["detail"]
+
+    assert repository.list_approvals(scenario_id) == []
+    assert repository.get_execution(scenario_id) is None
+    scenario = repository.get_scenario(scenario_id)
+    assert scenario is not None
+    assert scenario.status is NetPlanScenarioStatus.PENDING_APPROVAL
 
 
 def test_backdated_decision_cannot_revive_an_expired_authority_receipt() -> None:
