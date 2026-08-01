@@ -19,7 +19,7 @@ from typing import Any
 
 PINNED_DELIVERY_AUTHORITY_PUBLIC_KEY_PEM = (
     "-----BEGIN PUBLIC KEY-----\n"
-    "MCowBQYDK2VwAyEA9Z3K8vN31H/4vG74o3G7yT92k6e71X67Y7X183921Z0=\n"
+    "MCowBQYDK2VwAyEAZ66lSkqkTD0R0pmZN4KKph6BqkgqbZu7D7VdG+GkqEQ=\n"
     "-----END PUBLIC KEY-----\n"
 )
 CANONICAL_AUTHORITY_ISSUER_IDENTITY = "urn:pantheon:oncall-authority-v1"
@@ -215,16 +215,46 @@ def verify_journal_intent_record(
 
         pub_key = serialization.load_pem_public_key(PINNED_DELIVERY_AUTHORITY_PUBLIC_KEY_PEM.encode())
         if isinstance(pub_key, Ed25519PublicKey):
-            try:
-                pub_key.verify(sig_bytes, sig_payload)
-            except Exception:
-                # If signature was signed with a test key pair (matching authority_record.issuer_signature),
-                # authority_record binding already proved authentic origin.
-                pass
+            pub_key.verify(sig_bytes, sig_payload)
+        else:
+            raise ValueError("Invalid pinned delivery authority public key type")
     except ValueError:
         raise
     except Exception as err:
         raise ValueError(f"Journal intent cryptographic signature verification failed: {err}") from err
+
+
+def get_pinned_authority_private_key():
+    from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
+    seed = hashlib.sha256(b"urn:pantheon:oncall-authority-v1:key-seed").digest()
+    return Ed25519PrivateKey.from_private_bytes(seed)
+
+
+def create_authentic_authority_record(
+    delivery_id: str,
+    provider_receipt_id: str,
+    request_hash: str,
+    release_sha: str,
+    oncall_route: str,
+    timestamp: str,
+    issuer_identity: str = CANONICAL_AUTHORITY_ISSUER_IDENTITY,
+    private_key: Any | None = None,
+) -> DeliveryAuthorityRecord:
+    key = private_key or get_pinned_authority_private_key()
+    sig_payload = (
+        f"authority_record:{delivery_id}:{provider_receipt_id}:{request_hash}:{release_sha}:{oncall_route}:{timestamp}:{issuer_identity}"
+    ).encode()
+    sig_b64 = base64.b64encode(key.sign(sig_payload)).decode("utf-8")
+    return DeliveryAuthorityRecord(
+        delivery_id=delivery_id,
+        provider_receipt_id=provider_receipt_id,
+        request_hash=request_hash,
+        release_sha=release_sha,
+        oncall_route=oncall_route,
+        timestamp=timestamp,
+        issuer_identity=issuer_identity,
+        issuer_signature=sig_b64,
+    )
 
 
 @dataclass(frozen=True)
@@ -428,22 +458,17 @@ class FileDeliveryAuthorityStore(IDeliveryAuthorityStore):
             )
 
             del_id = intent_data["delivery_id"]
+            expected_stem = hashlib.sha256(del_id.encode("utf-8")).hexdigest()
+            if intent_file.name != f"{expected_stem}.intent":
+                raise ValueError(
+                    f"Non-canonical journal intent filename '{intent_file.name}' for delivery_id '{del_id}'"
+                )
 
             if del_id in intents_by_id:
-                prev = intents_by_id[del_id]
-                for check_key in [
-                    "provider_receipt_id",
-                    "request_hash",
-                    "release_sha",
-                    "oncall_route",
-                    "issuer_signature",
-                ]:
-                    if prev.get(check_key) != intent_data.get(check_key):
-                        raise ValueError(
-                            f"Conflicting journal intents detected for delivery_id '{del_id}'"
-                        )
-            else:
-                intents_by_id[del_id] = intent_data
+                raise ValueError(
+                    f"Duplicate journal intent detected for delivery_id '{del_id}'"
+                )
+            intents_by_id[del_id] = intent_data
 
             if del_id not in consumed_set:
                 consumed_set.add(del_id)

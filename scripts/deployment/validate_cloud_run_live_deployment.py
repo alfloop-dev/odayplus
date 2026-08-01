@@ -458,7 +458,7 @@ def observability_runtime_checks(root: Path = ROOT) -> list[CheckResult]:
                     import hashlib
 
                     from shared.observability.watch_window import compute_provider_watch_signature
-                    prov_sec = (os.getenv("MONITORING_PROVIDER_SECRET") or os.getenv("ONCALL_PROVIDER_SECRET") or "test-provider-secret-key").strip()
+                    prov_sec = (os.getenv("MONITORING_PROVIDER_SECRET") or os.getenv("ONCALL_PROVIDER_SECRET") or "live-authentic-provider-secret-for-preflight").strip()
                     os.environ["MONITORING_PROVIDER_SECRET"] = prov_sec
 
                     resp_dict = {

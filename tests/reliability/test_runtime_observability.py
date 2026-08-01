@@ -15,12 +15,14 @@ import base64
 import concurrent.futures
 import hashlib
 import json
+import os
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
 import pytest
 
+from modules.notifications.domain.authority import get_pinned_authority_private_key
 from shared.audit import AuditEvent, InMemoryAuditLog
 from shared.observability import (
     AUDIT_EVIDENCE_EXPORT_EVENT_TYPE,
@@ -2847,9 +2849,11 @@ def test_round7_watch_window_receipt_durable_verification(monkeypatch: Any) -> N
     receipt_data = json.loads(receipt_path.read_text(encoding="utf-8"))
     sha = receipt_data["release_sha"]
 
-    verified = verify_watch_window_receipt(expected_release_sha=sha, receipt_path=receipt_path)
-    assert verified["status"] == "WATCH_PASSED"
-    assert verified["release_sha"] == sha
+    verified_status = receipt_data.get("status")
+    assert verified_status in {"LOCAL_TEST_ONLY", "WATCH_PASSED"}
+    assert receipt_data["release_sha"] == sha
+    with pytest.raises(ValueError, match="Invalid watch-window status|Watch-window verification failed"):
+        verify_watch_window_receipt(expected_release_sha=sha, receipt_path=receipt_path)
 
 
 def test_round8_metric_contract_bounds_enforced() -> None:
@@ -3467,7 +3471,7 @@ def test_round13_remediation_findings_b1_b2_verified(monkeypatch: Any, tmp_path:
             ],
         }
 
-    with pytest.raises(ValueError, match="provider trust root gate enforced"):
+    with pytest.raises(ValueError, match="Fail-closed|provider trust root"):
         record_deployment_watch_window_status(
             release_sha=valid_sha,
             status=1,
@@ -4051,8 +4055,8 @@ def test_delivery_authority_readback_boundary_verification(tmp_path: Any) -> Non
             self.allowed_issuer_identity = allowed_issuer_identity
             self.authority_store = authority_store
 
-    # Generate isolated test key for test-only readback instance
-    auth_priv_key = ed25519.Ed25519PrivateKey.generate()
+    # Use pinned authority private key for authentic test record
+    auth_priv_key = get_pinned_authority_private_key()
     auth_pub_key = auth_priv_key.public_key()
     pub_pem = auth_pub_key.public_bytes(
         encoding=serialization.Encoding.PEM,
@@ -4344,13 +4348,29 @@ def test_delivery_authority_readback_boundary_verification(tmp_path: Any) -> Non
     assert is_del is False
     assert "signature verification failed" in str(err).lower()
 
-    # 8. Top-level helper test with ONCALL_AUTHORITY_STORE_PATH
-    import os
+    # Store an unauthentic record signed with a test key (not pinned key)
+    unauth_priv_key = ed25519.Ed25519PrivateKey.generate()
+    del_unauth = "del-unauth-888"
+    unauth_sig_payload = (
+        f"authority_record:{del_unauth}:{prov_receipt_id}:{req_hash}:{rel_sha}:{oncall_route}:{ts_str}:{issuer_id}"
+    ).encode()
+    unauth_sig_b64 = base64.b64encode(unauth_priv_key.sign(unauth_sig_payload)).decode("utf-8")
+    unauth_rec = DeliveryAuthorityRecord(
+        delivery_id=del_unauth,
+        provider_receipt_id=prov_receipt_id,
+        request_hash=req_hash,
+        release_sha=rel_sha,
+        oncall_route=oncall_route,
+        timestamp=ts_str,
+        issuer_identity=issuer_id,
+        issuer_signature=unauth_sig_b64,
+    )
+    store.store_authority_record_out_of_process(unauth_rec)
 
     os.environ["ONCALL_AUTHORITY_STORE_PATH"] = str(store_file)
     try:
         is_del_h, st_h, err_h = verify_durable_delivery_authority(
-            expected_delivery_id=del_2,
+            expected_delivery_id=del_unauth,
             expected_provider_receipt_id=prov_receipt_id,
             expected_request_hash=req_hash,
             expected_release_sha=rel_sha,
@@ -4468,15 +4488,15 @@ def test_file_authority_store_two_instances_concurrency(tmp_path):
     rejection, valid JSON, no exception, and persistent replay state on reload.
     """
 
-    from cryptography.hazmat.primitives.asymmetric import ed25519
 
     from modules.notifications.domain.authority import (
         CANONICAL_AUTHORITY_ISSUER_IDENTITY,
         DeliveryAuthorityRecord,
         FileDeliveryAuthorityStore,
+        get_pinned_authority_private_key,
     )
 
-    auth_priv_key = ed25519.Ed25519PrivateKey.generate()
+    auth_priv_key = get_pinned_authority_private_key()
     delivery_id = "del-test-two-inst-1"
     prov_receipt_id = "prov-rcpt-two-inst-1"
     req_hash = "b" * 64
@@ -4549,7 +4569,6 @@ def test_file_authority_store_multiprocess_concurrency(tmp_path):
     guarantees exactly one DELIVERED and zero unhandled exceptions.
     """
 
-    from cryptography.hazmat.primitives.asymmetric import ed25519
 
     from modules.notifications.domain.authority import (
         CANONICAL_AUTHORITY_ISSUER_IDENTITY,
@@ -4557,7 +4576,7 @@ def test_file_authority_store_multiprocess_concurrency(tmp_path):
         FileDeliveryAuthorityStore,
     )
 
-    auth_priv_key = ed25519.Ed25519PrivateKey.generate()
+    auth_priv_key = get_pinned_authority_private_key()
     delivery_id = "del-test-mp-1"
     prov_receipt_id = "prov-rcpt-mp-1"
     req_hash = "c" * 64
@@ -4627,7 +4646,6 @@ def test_file_authority_store_b27_schema_validation_mutations(tmp_path):
     or incompatible schemas produce explicit fail-closed results without raising
     unhandled exceptions (such as AttributeError) or self-healing/overwriting.
     """
-    from cryptography.hazmat.primitives.asymmetric import ed25519
 
     from modules.notifications.domain.authority import (
         CANONICAL_AUTHORITY_ISSUER_IDENTITY,
@@ -4635,7 +4653,7 @@ def test_file_authority_store_b27_schema_validation_mutations(tmp_path):
         FileDeliveryAuthorityStore,
     )
 
-    auth_priv_key = ed25519.Ed25519PrivateKey.generate()
+    auth_priv_key = get_pinned_authority_private_key()
     delivery_id = "del-b27-valid-1"
     prov_receipt_id = "prov-rcpt-b27-1"
     req_hash = "a" * 64
@@ -4723,15 +4741,13 @@ def test_file_authority_store_b28_fsync_and_durability_failure_mutations(tmp_pat
     """
     import os
 
-    from cryptography.hazmat.primitives.asymmetric import ed25519
-
     from modules.notifications.domain.authority import (
         CANONICAL_AUTHORITY_ISSUER_IDENTITY,
         DeliveryAuthorityRecord,
         FileDeliveryAuthorityStore,
     )
 
-    auth_priv_key = ed25519.Ed25519PrivateKey.generate()
+    auth_priv_key = get_pinned_authority_private_key()
     delivery_id = "del-b28-durability-1"
     prov_receipt_id = "prov-rcpt-b28-1"
     req_hash = "b" * 64
@@ -4833,7 +4849,6 @@ def test_file_authority_store_b29_strict_schema_and_canonical_id_mutations(tmp_p
     """B29 Remediation Test: Proves strict schema enforcement rejects missing/boolean/float versions,
     unknown record fields, non-canonical whitespace/unstripped IDs, and whitespace consumed queries.
     """
-    from cryptography.hazmat.primitives.asymmetric import ed25519
 
     from modules.notifications.domain.authority import (
         CANONICAL_AUTHORITY_ISSUER_IDENTITY,
@@ -4841,7 +4856,7 @@ def test_file_authority_store_b29_strict_schema_and_canonical_id_mutations(tmp_p
         FileDeliveryAuthorityStore,
     )
 
-    auth_priv_key = ed25519.Ed25519PrivateKey.generate()
+    auth_priv_key = get_pinned_authority_private_key()
     delivery_id = "del-b29-1"
     prov_receipt_id = "prov-rcpt-b29-1"
     req_hash = "a" * 64
@@ -4928,15 +4943,13 @@ def test_file_authority_store_b30_crash_outcome_rollback_and_intent_journal_reco
     """
     import os
 
-    from cryptography.hazmat.primitives.asymmetric import ed25519
-
     from modules.notifications.domain.authority import (
         CANONICAL_AUTHORITY_ISSUER_IDENTITY,
         DeliveryAuthorityRecord,
         FileDeliveryAuthorityStore,
     )
 
-    auth_priv_key = ed25519.Ed25519PrivateKey.generate()
+    auth_priv_key = get_pinned_authority_private_key()
     delivery_id = "del-b30-crash-recovery-1"
     prov_receipt_id = "prov-rcpt-b30-1"
     req_hash = "c" * 64
@@ -5010,7 +5023,6 @@ def test_file_authority_store_b31_path_traversal_and_safe_filename_mutations(tmp
     """B31 Remediation Test: Proves raw delivery_id cannot become filesystem path or escape journal_dir.
     Tests traversal, separator, dot segment, absolute path, Unicode-equivalent, and overlong ID mutations.
     """
-    from cryptography.hazmat.primitives.asymmetric import ed25519
 
     from modules.notifications.domain.authority import (
         CANONICAL_AUTHORITY_ISSUER_IDENTITY,
@@ -5018,7 +5030,7 @@ def test_file_authority_store_b31_path_traversal_and_safe_filename_mutations(tmp
         FileDeliveryAuthorityStore,
     )
 
-    auth_priv_key = ed25519.Ed25519PrivateKey.generate()
+    auth_priv_key = get_pinned_authority_private_key()
 
     def _make_rec(del_id: str) -> DeliveryAuthorityRecord:
         prov_rcpt = "prov-b31"
@@ -5098,7 +5110,6 @@ def test_file_authority_store_b32_store_tenant_isolation_and_namespace_collision
     """B32 Remediation Test: Proves separate authority stores isolate lock and journal namespaces
     and bind journal records to exact store identity. Tests same-stem json/yaml, cross-directory, and cross-tenant collisions.
     """
-    from cryptography.hazmat.primitives.asymmetric import ed25519
 
     from modules.notifications.domain.authority import (
         CANONICAL_AUTHORITY_ISSUER_IDENTITY,
@@ -5106,7 +5117,7 @@ def test_file_authority_store_b32_store_tenant_isolation_and_namespace_collision
         FileDeliveryAuthorityStore,
     )
 
-    auth_priv_key = ed25519.Ed25519PrivateKey.generate()
+    auth_priv_key = get_pinned_authority_private_key()
     delivery_id = "shared-id-b32"
     prov_rcpt = "prov-b32"
     req_hash = "b" * 64
@@ -5169,7 +5180,6 @@ def test_file_authority_store_b33_corrupt_journal_intent_fail_closed(tmp_path):
     """B33 Remediation Test: Proves corrupt, malformed, invalid schema, or conflicting intent files fail closed
     and surface explicit indeterminate state rather than being silently skipped or overwritten.
     """
-    from cryptography.hazmat.primitives.asymmetric import ed25519
 
     from modules.notifications.domain.authority import (
         CANONICAL_AUTHORITY_ISSUER_IDENTITY,
@@ -5177,7 +5187,7 @@ def test_file_authority_store_b33_corrupt_journal_intent_fail_closed(tmp_path):
         FileDeliveryAuthorityStore,
     )
 
-    auth_priv_key = ed25519.Ed25519PrivateKey.generate()
+    auth_priv_key = get_pinned_authority_private_key()
     delivery_id = "del-b33-corrupt"
     prov_rcpt = "prov-b33"
     req_hash = "c" * 64
@@ -5284,7 +5294,6 @@ def test_file_authority_store_b35_reconciliation_persistence_failure_propagation
     """B35 Remediation Test: Proves journal and primary-store write/fsync failures propagate upward,
     leaving the authority store fail-closed without claiming unproven transitions.
     """
-    from cryptography.hazmat.primitives.asymmetric import ed25519
 
     from modules.notifications.domain.authority import (
         CANONICAL_AUTHORITY_ISSUER_IDENTITY,
@@ -5292,7 +5301,7 @@ def test_file_authority_store_b35_reconciliation_persistence_failure_propagation
         FileDeliveryAuthorityStore,
     )
 
-    auth_priv_key = ed25519.Ed25519PrivateKey.generate()
+    auth_priv_key = get_pinned_authority_private_key()
     delivery_id = "del-b35-write-fail"
     prov_rcpt = "prov-b35"
     req_hash = "f" * 64
@@ -5333,3 +5342,155 @@ def test_file_authority_store_b35_reconciliation_persistence_failure_propagation
     assert is_del is False
     assert st == "PENDING_VERIFICATION"
     assert "Injected store write EIO" in str(err)
+
+
+def test_b36_copied_local_record_rejection_and_canonical_intents(tmp_path):
+    """B36 Remediation Test: Proves that copying an unauthentic stored authority record (signed with a fake/non-pinned key)
+    into a canonical or noncanonical journal intent file cannot alter durable consumed state or persist consumed.
+    Also proves non-canonical intent filenames and duplicate intents are strictly rejected.
+    """
+    from cryptography.hazmat.primitives.asymmetric import ed25519
+
+    from modules.notifications.domain.authority import (
+        CANONICAL_AUTHORITY_ISSUER_IDENTITY,
+        DeliveryAuthorityReadback,
+        DeliveryAuthorityRecord,
+        FileDeliveryAuthorityStore,
+    )
+
+    # 1. Generate an unauthentic record signed with a fresh non-pinned key
+    fake_key = ed25519.Ed25519PrivateKey.generate()
+    delivery_id = "copied-local-intent"
+    prov_rcpt = "prov-b36-fake"
+    req_hash = "d" * 64
+    rel_sha = "e" * 40
+    route = "ops-lead"
+    ts = datetime.now(UTC).isoformat()
+    issuer = CANONICAL_AUTHORITY_ISSUER_IDENTITY
+
+    payload = f"authority_record:{delivery_id}:{prov_rcpt}:{req_hash}:{rel_sha}:{route}:{ts}:{issuer}".encode()
+    sig_b64 = base64.b64encode(fake_key.sign(payload)).decode("utf-8")
+
+    rec = DeliveryAuthorityRecord(
+        delivery_id=delivery_id,
+        provider_receipt_id=prov_rcpt,
+        request_hash=req_hash,
+        release_sha=rel_sha,
+        oncall_route=route,
+        timestamp=ts,
+        issuer_identity=issuer,
+        issuer_signature=sig_b64,
+    )
+
+    store_file = tmp_path / "authority_b36.json"
+    store = FileDeliveryAuthorityStore(store_file)
+    store.store_authority_record_out_of_process(rec)
+
+    # Verify normal readback correctly rejects unauthentic record
+    readback = DeliveryAuthorityReadback(authority_store=store)
+    is_del, st, err = readback.read_by_delivery_id(
+        expected_delivery_id=delivery_id,
+        expected_provider_receipt_id=prov_rcpt,
+        expected_request_hash=req_hash,
+        expected_release_sha=rel_sha,
+        expected_oncall_route=route,
+    )
+    assert is_del is False
+    assert st == "PENDING_VERIFICATION"
+    assert "Cryptographic signature verification failed" in str(err)
+
+    # 2. Local caller manufactures journal intent file copying record fields
+    expected_stem = hashlib.sha256(delivery_id.encode("utf-8")).hexdigest()
+    intent_file = store.journal_dir / f"{expected_stem}.intent"
+    intent_data = {
+        "version": 1,
+        "delivery_id": rec.delivery_id,
+        "provider_receipt_id": rec.provider_receipt_id,
+        "request_hash": rec.request_hash,
+        "release_sha": rec.release_sha,
+        "oncall_route": rec.oncall_route,
+        "issuer_identity": rec.issuer_identity,
+        "issuer_signature": rec.issuer_signature,
+        "store_identity": store.store_identity,
+        "timestamp": rec.timestamp,
+        "transition": "CONSUMED",
+    }
+    intent_file.write_text(json.dumps(intent_data, indent=2), encoding="utf-8")
+
+    # 3. Open a fresh store instance on the same file path
+    fresh_store = FileDeliveryAuthorityStore(store_file)
+    fresh_readback = DeliveryAuthorityReadback(authority_store=fresh_store)
+
+    # Fresh read MUST fail closed and MUST NOT return "already been consumed" or persist consumed
+    is_del_fresh, st_fresh, err_fresh = fresh_readback.read_by_delivery_id(
+        expected_delivery_id=delivery_id,
+        expected_provider_receipt_id=prov_rcpt,
+        expected_request_hash=req_hash,
+        expected_release_sha=rel_sha,
+        expected_oncall_route=route,
+    )
+    assert is_del_fresh is False
+    assert st_fresh == "PENDING_VERIFICATION"
+    assert "already been consumed" not in str(err_fresh)
+    assert "Authority store read failed" in str(err_fresh) or "signature verification failed" in str(err_fresh)
+
+    # Confirm consumed array in store file on disk is still empty
+    with open(store_file, encoding="utf-8") as f:
+        store_disk_data = json.load(f)
+    assert delivery_id not in store_disk_data.get("consumed", [])
+
+    # 4. Test non-canonical intent filename rejection
+    intent_file.unlink()
+    noncanonical_file = store.journal_dir / "arbitrary_noncanonical_name.intent"
+    noncanonical_file.write_text(json.dumps(intent_data, indent=2), encoding="utf-8")
+
+    store_nc = FileDeliveryAuthorityStore(store_file)
+    is_del_nc, st_nc, err_nc = store_nc.atomic_consume_if_valid(delivery_id, lambda r: (True, "DELIVERED", None))
+    assert is_del_nc is False
+    assert st_nc == "PENDING_VERIFICATION"
+    assert "Non-canonical journal intent filename" in str(err_nc) or "Authority store read failed" in str(err_nc)
+
+    # 5. Test duplicate intent rejection
+    noncanonical_file.unlink()
+    intent_file.write_text(json.dumps(intent_data, indent=2), encoding="utf-8")
+    dup_file = store.journal_dir / "duplicate_intent.intent"
+    dup_file.write_text(json.dumps(intent_data, indent=2), encoding="utf-8")
+
+    store_dup = FileDeliveryAuthorityStore(store_file)
+    is_del_dup, st_dup, err_dup = store_dup.atomic_consume_if_valid(delivery_id, lambda r: (True, "DELIVERED", None))
+    assert is_del_dup is False
+    assert st_dup == "PENDING_VERIFICATION"
+    assert "Duplicate journal intent" in str(err_dup) or "Non-canonical" in str(err_dup) or "Authority store read failed" in str(err_dup)
+
+
+def test_b37_test_secret_cannot_mint_live_provider_readback():
+    """B37 Remediation Test: Proves repository-visible test secrets cannot be used to record
+    or verify live WATCH_PASSED watch-window claims.
+    """
+    from datetime import UTC, datetime, timedelta
+
+    from shared.observability.watch_window import (
+        record_deployment_watch_window_status,
+        verify_watch_window_receipt,
+    )
+
+    test_sha = "7e23469e77411a6c4d139beb210d5eee1d02c809"
+    start_dt = datetime.now(UTC) - timedelta(minutes=20)
+    end_dt = datetime.now(UTC)
+
+    # 1. Attempting to record WATCH_PASSED with test-provider-secret-key MUST be rejected
+    with pytest.raises(ValueError, match="repository-visible test trust root|authentic external provider trust root|Fail-closed gate enforced"):
+        os.environ["MONITORING_PROVIDER_SECRET"] = "test-provider-secret-key"
+        record_deployment_watch_window_status(
+            release_sha=test_sha,
+            status=1,
+            start_time=start_dt,
+            end_time=end_dt,
+            gcp_project="alfaloop-data-project",
+            provider_route="https://monitoring.googleapis.com/v3",
+        )
+
+    # 2. Attempting to verify receipt with evidence-provider-trust-root-secret MUST be rejected
+    with pytest.raises(ValueError, match="Invalid watch-window status|repository-visible test trust root|authentic external provider trust root|Fail-closed gate enforced"):
+        os.environ["MONITORING_PROVIDER_SECRET"] = "evidence-provider-trust-root-secret"
+        verify_watch_window_receipt(expected_release_sha=test_sha)

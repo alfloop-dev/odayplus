@@ -588,9 +588,12 @@ def record_deployment_watch_window_status(
         or os.getenv("ONCALL_PROVIDER_SECRET")
         or ""
     ).strip()
-    if not provider_secret:
+    if not provider_secret or provider_secret in (
+        "test-provider-secret-key",
+        "evidence-provider-trust-root-secret",
+    ):
         raise ValueError(
-            "MONITORING_PROVIDER_SECRET / ONCALL_PROVIDER_SECRET environment variable is missing or empty. Fail-closed provider trust root gate enforced."
+            "MONITORING_PROVIDER_SECRET / ONCALL_PROVIDER_SECRET environment variable is missing, unconfigured, or using repository-visible test trust root. Live provider readback requires authentic external provider trust root. Fail-closed gate enforced."
         )
 
     # B2: Independent cryptographic authentication of provider watch signature against provider trust root
@@ -798,9 +801,12 @@ def verify_watch_window_receipt(
         or os.getenv("ONCALL_PROVIDER_SECRET")
         or ""
     ).strip()
-    if not provider_secret:
+    if not provider_secret or provider_secret in (
+        "test-provider-secret-key",
+        "evidence-provider-trust-root-secret",
+    ):
         raise ValueError(
-            "MONITORING_PROVIDER_SECRET / ONCALL_PROVIDER_SECRET environment variable is missing or empty. Fail-closed provider trust root gate enforced."
+            "MONITORING_PROVIDER_SECRET / ONCALL_PROVIDER_SECRET environment variable is missing, unconfigured, or using repository-visible test trust root. Live provider readback requires authentic external provider trust root. Fail-closed gate enforced."
         )
 
     # B2: Independent cryptographic authentication of stored provider signature against provider trust root
