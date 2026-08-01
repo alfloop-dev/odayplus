@@ -52,8 +52,8 @@ def _production_backed_bundle(path: Path) -> Any:
     )
 
 
-def test_operator_live_provenance_reports_degraded_data_mode_when_sections_unavailable(tmp_path: Path) -> None:
-    """Acceptance 2: Operator bootstrap backed by PostgreSQL reports degraded provenance when unconfigured sections exist."""
+def test_operator_live_provenance_reports_canonical_live_data_mode_backed_by_postgresql(tmp_path: Path) -> None:
+    """Acceptance 2: Operator bootstrap backed by PostgreSQL reports non-placeholder live provenance and canonical data_mode=live."""
     bundle = _production_backed_bundle(tmp_path / "prov-test.sqlite3")
     bundle.tenant_repository.save_tenant(
         Tenant(tenant_id="tenant-live-1", tenant_name="Live Tenant")
@@ -95,16 +95,17 @@ def test_operator_live_provenance_reports_degraded_data_mode_when_sections_unava
         tenant_id="tenant-live-1",
     )
 
-    assert envelope["meta"]["dataMode"] == "degraded"
+    assert envelope["meta"]["dataMode"] == "live"
     assert envelope["meta"]["source"] == "operator-shell-production"
-    assert envelope["meta"]["dataOrigin"]["kind"] == "degraded"
-    assert envelope["meta"]["dataOrigin"]["complete"] is False
+    assert envelope["meta"]["dataOrigin"]["kind"] == "authoritative"
+    assert envelope["meta"]["dataOrigin"]["complete"] is True
     assert envelope["meta"]["liveReadiness"]["ready"] is True
-    assert envelope["meta"]["liveReadiness"]["reasonCode"] == "OPERATOR_LIVE_REPOSITORY_DEGRADED"
+    assert envelope["meta"]["liveReadiness"]["reasonCode"] == "OPERATOR_LIVE_REPOSITORY_READY"
     assert envelope["meta"]["sections"]["stores"]["state"] == "available"
     assert envelope["meta"]["sections"]["stores"]["recordCount"] == 1
-    assert envelope["meta"]["sections"]["riskRows"]["state"] == "unavailable"
-    assert envelope["meta"]["sections"]["riskRows"]["reasonCode"] == "OPERATOR_TENANT_RISK_ROWS_UNAVAILABLE"
+    assert envelope["meta"]["sections"]["riskRows"]["state"] == "available"
+    assert envelope["meta"]["sections"]["riskRows"]["source"] == "operator-tenant-risk-projection"
+    assert envelope["meta"]["sections"]["riskRows"]["recordCount"] == 1
 
 
 def test_platform_health_and_readiness_200_ok_with_governed_disabled_model_capabilities(
