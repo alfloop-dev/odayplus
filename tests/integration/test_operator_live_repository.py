@@ -720,14 +720,17 @@ def test_canonical_writer_restart_provenance(tmp_path: Path) -> None:
                 headers={
                     "x-tenant-id": "tenant-canonical",
                     "x-subject-id": "user-canonical",
-                    "x-roles": "admin",
+                    "x-roles": "expansion_user",
                 },
                 json={
                     "records": [
                         {
                             "source_id": "src-canonical",
                             "source_listing_id": "list-canonical-api",
+                            "address_raw": "123 Canonical St",
                             "raw_address": "123 Canonical St",
+                            "listing_status": "active",
+                            "snapshot_id": "snap-canonical",
                             "rent_amount": 2000.0,
                             "area_ping": 50.0,
                         }

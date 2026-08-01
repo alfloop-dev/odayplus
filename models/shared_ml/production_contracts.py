@@ -185,18 +185,6 @@ PRODUCTION_MODEL_CONTRACTS: Mapping[str, ProductionModelContract] = (
                 training_spec_key="forecastops",
                 required_for_platform_readiness=True,
                 outcome_contract_required=True,
-                unavailable_reason="CANONICAL_HORIZON_HISTORY_INSUFFICIENT",
-                governed_disabled_binding=_governed_disabled_binding(
-                    "forecastops",
-                    reason_code="CANONICAL_HORIZON_HISTORY_INSUFFICIENT",
-                    activation_threshold=28,
-                    owner="forecastops-platform-team",
-                    activation_gate=(
-                        "Requires authentic >= 7/14/28-day per-store horizon windows "
-                        "in model_ready.forecast_training_view and independent model "
-                        "release approval (ODP-FORECAST-AUTHORITATIVE-HISTORY-BACKFILL-001)"
-                    ),
-                ),
             ),
             "avm": ProductionModelContract(
                 service="avm",

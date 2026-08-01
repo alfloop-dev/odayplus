@@ -257,10 +257,13 @@ def test_forecastops_absent_alias_fails_closed_without_synthetic_seed_or_fake_re
         forecast_cap = models_section["capabilities"]["forecastops"]
 
         assert forecast_cap["available"] is False
-        assert forecast_cap["governedDisabled"] is True
-        assert forecast_cap["governedDisabledEvidence"] is not None
-        assert forecast_cap["reasonCode"] == "CANONICAL_HORIZON_HISTORY_INSUFFICIENT"
-        assert models_section["productionBindingsReady"] is True
+        assert forecast_cap["governedDisabled"] is False
+        assert forecast_cap["governedDisabledEvidence"] is None
+        assert forecast_cap["reasonCode"] in {
+            "PRODUCTION_BINDING_NOT_RESOLVED",
+            "PRODUCTION_MODEL_REGISTRY_UNAVAILABLE",
+        }
+        assert models_section["productionBindingsReady"] is False
         assert models_section["autoSeeded"] is False
 
         # Accessing model execution endpoint without authorization fails closed
