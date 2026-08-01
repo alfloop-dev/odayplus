@@ -6,7 +6,6 @@ import atexit
 import copy
 import fcntl
 import fnmatch
-import importlib
 import json
 import math
 import os
@@ -29,7 +28,19 @@ SCRIPTS_DIR = THIS_DIR.parent / "scripts"
 if str(SCRIPTS_DIR) not in sys.path:
     sys.path.insert(0, str(SCRIPTS_DIR))
 
+EXPECTED_AI_STATUS_PATH = (SCRIPTS_DIR / "ai_status.py").resolve()
+existing_ai_status = sys.modules.get("ai_status")
+if existing_ai_status is not None and Path(
+    str(getattr(existing_ai_status, "__file__", ""))
+).resolve() != EXPECTED_AI_STATUS_PATH:
+    sys.modules.pop("ai_status", None)
+import ai_status as runtime_ai_status
 
+if Path(str(runtime_ai_status.__file__)).resolve() != EXPECTED_AI_STATUS_PATH:
+    raise RuntimeError(
+        "Supervisor must load ai_status from its immutable runtime: "
+        f"expected {EXPECTED_AI_STATUS_PATH}, got {runtime_ai_status.__file__}"
+    )
 import model_rotation
 from adapters import build_adapter
 from adapters.base import DeliveryRequest
@@ -503,20 +514,9 @@ def summarize_runtime(state: dict[str, Any], approval_state: dict[str, Any]) -> 
 
 def refresh_dashboard_runtime_artifacts(config: dict[str, Any]) -> None:
     try:
-        repo_root = config_path(config, "status_file").parent
-    except KeyError:
-        repo_root = THIS_DIR.parent
-    scripts_dir = repo_root / "scripts"
-    if not scripts_dir.exists():
-        return
-    scripts_path = str(scripts_dir)
-    if scripts_path not in sys.path:
-        sys.path.insert(0, scripts_path)
-    try:
-        ai_status = importlib.import_module("ai_status")
-        status_state = ai_status.load_state()
-        ai_status.write_dashboard_bundle(status_state)
-        ai_status.sync_docs_site(status_state)
+        status_state = runtime_ai_status.load_state()
+        runtime_ai_status.write_dashboard_bundle(status_state)
+        runtime_ai_status.sync_docs_site(status_state)
     except Exception as exc:
         console_log(
             f"dashboard bundle refresh failed: {type(exc).__name__}: {exc}",
@@ -5038,9 +5038,7 @@ def resolve_task_progress_head(task_id: str | None) -> str | None:
     if not task_id:
         return None
     try:
-        from ai_status import resolve_task_sha
-
-        head = resolve_task_sha(task_id)
+        head = runtime_ai_status.resolve_task_sha(task_id)
     except Exception:
         return None
     return str(head).strip() if head else None
@@ -9013,15 +9011,15 @@ def dispatch_priority_for_task(
         if not approved_head:
             return None
         try:
-            from ai_status import resolve_task_sha
-            curr_head = resolve_task_sha(str(task.get("id") or ""), force_refresh=True)
+            curr_head = runtime_ai_status.resolve_task_sha(
+                str(task.get("id") or ""), force_refresh=True
+            )
             if not curr_head or curr_head != approved_head:
                 return None
         except Exception:
             return None
         try:
-            from ai_status import task_pr_ci_status
-            _pr_st, ci_status = task_pr_ci_status(str(task.get("id") or ""))
+            _pr_st, ci_status = runtime_ai_status.task_pr_ci_status(str(task.get("id") or ""))
             if ci_status not in {"success", "none"}:
                 return None
         except Exception:
@@ -9573,8 +9571,7 @@ def dispatch_ready_tasks(
                 approved_head = task.get("approved_head")
                 current_head = None
                 try:
-                    from ai_status import resolve_task_sha
-                    current_head = resolve_task_sha(task_id, force_refresh=True)
+                    current_head = runtime_ai_status.resolve_task_sha(task_id, force_refresh=True)
                 except Exception as err:
                     console_log(f"Failed to resolve sha for {task_id}: {err}", quiet=SUPERVISOR_LOG_QUIET)
                 # B22: a task in a finalize status with no approved_head has no
@@ -9652,8 +9649,7 @@ def dispatch_ready_tasks(
 
                 ci_status = "unknown"
                 try:
-                    from ai_status import task_pr_ci_status
-                    _pr_st, ci_status = task_pr_ci_status(task_id)
+                    _pr_st, ci_status = runtime_ai_status.task_pr_ci_status(task_id)
                 except Exception as err:
                     console_log(f"Failed to check CI status for {task_id}: {err}", quiet=SUPERVISOR_LOG_QUIET)
 
