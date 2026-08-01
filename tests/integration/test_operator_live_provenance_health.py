@@ -144,12 +144,13 @@ def test_operator_live_provenance_reports_live_data_mode_when_postgresql_ready(t
     assert envelope["meta"]["source"] == "operator-shell-production"
     assert envelope["meta"]["sections"]["stores"]["state"] == "available"
     assert envelope["meta"]["sections"]["stores"]["recordCount"] == 1
-    assert envelope["meta"]["sections"]["riskRows"]["state"] == "available"
-    assert envelope["meta"]["sections"]["riskRows"]["source"] == "operator-tenant-risk-projection"
-    assert envelope["meta"]["unavailableSections"] == []
-    assert envelope["meta"]["dataMode"] == "live"
-    assert envelope["meta"]["dataOrigin"]["kind"] == "authoritative"
-    assert envelope["meta"]["dataOrigin"]["complete"] is True
+    assert envelope["meta"]["sections"]["riskRows"]["state"] == "unavailable"
+    assert envelope["meta"]["sections"]["listings"]["state"] == "unavailable"
+    assert envelope["meta"]["dataMode"] == "degraded"
+    assert envelope["meta"]["dataOrigin"]["kind"] == "degraded"
+    assert envelope["meta"]["dataOrigin"]["complete"] is False
+    assert "riskRows" in envelope["meta"]["unavailableSections"]
+    assert "listings" in envelope["meta"]["unavailableSections"]
 
 
 def test_platform_health_and_readiness_200_ok_when_core_repository_is_ready(

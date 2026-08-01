@@ -309,24 +309,7 @@ class OperatorLiveRepository:
             except Exception as exc:
                 return None, f"{type(exc).__name__}: {exc}"
 
-        repository = getattr(self._persistence, attribute, None)
-        if repository is None:
-            return None, "tenant-aware repository is not configured"
-        store = getattr(repository, "_store", None)
-        if store is None:
-            if self._mode in {"memory", "unknown"}:
-                return repository, None
-            return None, "tenant-aware document store is not configured"
-        try:
-            from shared.infrastructure.persistence.operator_domains import (
-                TenantScopedDocumentStore,
-            )
-
-            return type(repository)(
-                TenantScopedDocumentStore(store, scope.tenant_id)
-            ), None
-        except Exception as exc:
-            return None, f"{type(exc).__name__}: {exc}"
+        return None, "tenant-aware repository is not configured"
 
     def _read_sources(self, scope: OperatorReadScope) -> dict[str, Any]:
         sections: dict[str, OperatorSectionAvailability] = {}
@@ -860,90 +843,11 @@ class OperatorLiveRepository:
         alerts: list[Any],
         sections: dict[str, OperatorSectionAvailability],
     ) -> tuple[list[dict[str, Any]], OperatorSectionAvailability]:
-        if not stores or not sections["stores"].available:
-            return [], self._unavailable(
-                "operator-tenant-risk-projection",
-                reason_code="OPERATOR_STORES_DEPENDENCY_UNAVAILABLE",
-                message="risk projection requires an available tenant-scoped store set",
-            )
-
-        interventions_available = sections["interventions"].state == "available"
-        alerts_available = sections["forecastAlerts"].state == "available"
-        signal_repos_ok = interventions_available and alerts_available
-
-        if not interventions_available and not alerts_available:
-            return [], self._unavailable(
-                "operator-tenant-risk-projection",
-                reason_code="OPERATOR_RISK_SIGNALS_UNAVAILABLE",
-                message="authoritative risk signal repositories are unavailable",
-            )
-
-        rows: list[dict[str, Any]] = []
-        for store in stores:
-            store_id = str(_value(store, "store_id", ""))
-            store_name = str(_value(store, "store_name", store_id))
-            store_status = _status(_value(store, "store_status")).lower()
-
-            store_alerts = [
-                a
-                for a in alerts
-                if str(_value(a, "store_id", "")) == store_id
-                and _status(_value(a, "status")).lower() != "closed"
-            ]
-            store_interventions = [
-                i
-                for i in interventions
-                if str(_value(i, "store_id", "")) == store_id
-                and _status(_value(i, "status")).upper() not in _INTERVENTION_TERMINAL
-            ]
-
-            if store_alerts or store_interventions:
-                critical = any(
-                    _status(_value(a, "alert_level")).lower() in {"critical", "red"}
-                    for a in store_alerts
-                )
-                score = 85 if critical else 70
-                tone = "danger" if critical else "warning"
-                signals: list[str] = []
-                for a in store_alerts:
-                    signals.append(str(_value(a, "alert_reason_code", "Forecast alert")))
-                for i in store_interventions:
-                    signals.append(f"{_status(_value(i, 'kind', ''))} intervention")
-                signal_text = " + ".join(signals[:2]) or "Operational risk"
-            elif not signal_repos_ok:
-                score = 50
-                tone = "warning"
-                signal_text = "Risk signal degraded"
-            else:
-                score = 35 if store_status == "open" else 15
-                tone = "success" if store_status == "open" else "neutral"
-                signal_text = "Normal operation" if store_status == "open" else "Inactive store"
-
-            rows.append(
-                {
-                    "label": store_name,
-                    "score": score,
-                    "signal": signal_text,
-                    "tone": tone,
-                    "storeId": store_id,
-                }
-            )
-
-        degraded = not signal_repos_ok or (
-            sections["interventions"].state == "degraded"
-            or sections["forecastAlerts"].state == "degraded"
+        return [], self._unavailable(
+            "operator-tenant-risk-projection",
+            reason_code="OPERATOR_RISK_CONTRACT_UNAVAILABLE",
+            message="authoritative risk contract is not configured",
         )
-        availability = (
-            self._degraded(
-                "operator-tenant-risk-projection",
-                rows,
-                reason_code="OPERATOR_RISK_ROWS_PARTIAL",
-                message="risk projection compiled with degraded or unavailable risk signals",
-            )
-            if degraded
-            else self._available("operator-tenant-risk-projection", rows)
-        )
-        return rows, availability
 
     def _alert_tasks(self, alerts: list[Any]) -> list[dict[str, Any]]:
         rows: list[dict[str, Any]] = []

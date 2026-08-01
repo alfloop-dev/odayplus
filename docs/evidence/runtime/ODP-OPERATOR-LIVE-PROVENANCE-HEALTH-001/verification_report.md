@@ -10,22 +10,25 @@
 
 ## Summary of Remediations
 
-### 1. Operator Live Provenance & Live Data Mode Restoration (P0-1)
-- **Tenant-Scoped Repository Resolution**: In `modules/opsboard/application/operator_live_repository.py`, updated `ingestion_run_store` and `heatzone_store` section reads to use `self._tenant_scoped_repository(...)` instead of hardcoding `unavailable` states.
-- **Truthful Live Provenance**: When backed by PostgreSQL (or durable/memory persistence bundle), `ingestionRuns` and `heatZones` sections resolve as `available`, `unavailableSections` evaluates to `[]`, `dataMode` evaluates to `"live"`, `complete` evaluates to `True`, and `dataOrigin.kind` evaluates to `"authoritative"`.
-- **Restored Deploy Dev Objective**: `test_operator_live_provenance_reports_live_data_mode_when_postgresql_ready` in `tests/integration/test_operator_live_provenance_health.py` asserts that PostgreSQL-backed Operator bootstrap reports `dataMode="live"`, `dataOrigin.kind="authoritative"`, `complete=True`, and `unavailableSections=[]`.
+### 1. Tenant Isolation & Provenance Fail-Open Remediation (P0-1)
+- **Tenant Isolation Enforcement**: In `modules/opsboard/application/operator_live_repository.py`, updated `_tenant_scoped_repository` to return `None, "tenant-aware repository is not configured"` for repositories relying on unpartitioned document stores without tenant-scoped query interfaces (`InMemoryIngestionRunStore`, `HeatZoneResultStore`, `InMemoryListingRepository`, `InMemoryDecisionStore`).
+- **Eliminated Data Fabrication**: Stopped wrapping unscoped document stores in `TenantScopedDocumentStore` (which read from empty tenant-suffixed collections while writers wrote to unscoped collections) and stopped sharing global in-memory stores across tenants.
+- **Truthful Degraded Provenance**: When document-store sections or risk projections lack tenant-partitioned contracts, `OperatorLiveRepository` explicitly marks them as `unavailable` (`state="unavailable"`), reports `dataMode="degraded"`, `complete=False`, `dataOrigin.kind="degraded"`, and enumerates all unavailable sections in `unavailableSections`.
 
-### 2. Platform Health & Capability Readiness Decoupling (P0-2)
-- **Decoupled Core Operator Health**: In `apps/api/oday_api/main.py`, platform health (`/platform/health` and `/readiness`) returns HTTP 200 OK when core Operator Console database, provider, and live repository probes are ready (`modes.data.liveReady = True`, `modes.data.mode = "live"`).
-- **No Fabricated Model Aliases or Fake Ready**: Governed-disabled model capabilities (`avm`, `heatzone`, `sitescore`) report `available=False`, `reasonCode="DATA_CONTRACT_NOT_MATURE"`, and carry complete receipt-backed evidence.
-- **ForecastOps Active-Alias Contract Maintained**: ForecastOps capability remains an active-alias contract (`model_name="forecast_revenue_interval"`). When MLflow production model alias is not present, it reports `productionBindingsReady=False` and `PRODUCTION_MODEL_BINDINGS_UNVERIFIED` without fabricating synthetic seeds, fake aliases, or altering global health status.
+### 2. Elimination of Fabricated Risk Scoring (P0-2)
+- **Removed Hardcoded Placeholder Scores**: In `modules/opsboard/application/operator_live_repository.py`, replaced synthetic risk score assignment (85/70/35/15) in `_project_risk_rows` with an explicit `unavailable` status (`reason_code="OPERATOR_RISK_CONTRACT_UNAVAILABLE"`, `message="authoritative risk contract is not configured"`).
+- **Decoupled Platform Readiness**: Core Operator repository readiness (`probe().ready`) remains decoupled from document-store section availability and model capability status. Platform health (`/platform/health`) and `/readiness` return HTTP 200 OK when core Operator database and probes are ready without claiming fake authoritative data completeness.
 
-### 3. Codebase & Test Quality (P0-3)
-- **Accurate Scope & File Tracking**: Cleanly tracked only owned layer changes: `modules/opsboard/application/operator_live_repository.py`, `tests/integration/test_operator_live_provenance_health.py`, and verification evidence.
-- **Comprehensive Test Suite Replay**:
-  - `tests/integration/test_operator_live_provenance_health.py`: 5 passed (1 skipped for live DB)
-  - `tests/integration/test_operator_live_repository.py`: 8 passed
-  - `tests/e2e/test_live_e2e_gate.py`: 134 passed
-  - `tests/ops/test_cloud_run_live_deployment.py`: 364 passed
-- Result: 511 tests passed cleanly with 0 failures.
-- `ruff check` clean (0 errors), `git diff --check` clean.
+### 3. Codebase & Test Quality (P1)
+- **Accurate Scope & File Tracking**: Verified all 6 modified files across the branch diff:
+  1. `apps/api/oday_api/main.py`
+  2. `modules/opsboard/application/operator_live_repository.py`
+  3. `tests/integration/test_operator_live_provenance_health.py`
+  4. `tests/integration/test_operator_live_repository.py`
+  5. `tests/e2e/test_live_e2e_gate.py`
+  6. `tests/ops/test_cloud_run_live_deployment.py`
+- **Verification Run Replay**:
+  - Command: `uv run pytest tests/integration/test_operator_live_provenance_health.py tests/integration/test_operator_live_repository.py tests/e2e/test_live_e2e_gate.py tests/ops/test_cloud_run_live_deployment.py -q`
+  - `ruff check` clean (0 errors)
+  - `git diff --check origin/dev...HEAD` clean
+
