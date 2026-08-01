@@ -10,8 +10,14 @@ from typing import Any
 from uuid import uuid4
 
 from solver.netplan import (
+    BUSINESS_UAT_UNVERIFIED,
+    BUSINESS_UAT_VERIFIED,
+    GOVERNED_DISABLED,
+    GOVERNED_ENABLED,
     SOLVER_VERSION,
     ActionOption,
+    ManagementApprovalReceipt,
+    ManagementApprovalVerification,
     NetPlanConstraints,
     NetworkAction,
     NetworkPlanSolveResult,
@@ -235,6 +241,7 @@ class ScenarioSolveRecord:
     scenario_id: str
     result: NetworkPlanSolveResult
     solved_at: datetime
+    alternative_limit: int = 3
     execution_metadata: dict[str, Any] = field(default_factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -242,6 +249,7 @@ class ScenarioSolveRecord:
             "scenario_id": self.scenario_id,
             "result": self.result.to_dict(),
             "solved_at": self.solved_at.isoformat(),
+            "alternative_limit": self.alternative_limit,
             "execution_metadata": self.execution_metadata,
         }
 
@@ -255,10 +263,28 @@ class ApprovalRecord:
     reason: str
     decided_at: datetime
     policy_version: str
+    authority_receipt: ManagementApprovalReceipt | None = None
+    authority_verification: ManagementApprovalVerification | None = None
+    verification_violations: tuple[str, ...] = ()
 
     @property
     def is_approved(self) -> bool:
         return self.decision == "approved"
+
+    @property
+    def authentic_approval_verified(self) -> bool:
+        return (
+            self.is_approved
+            and self.authority_receipt is not None
+            and self.authority_verification is not None
+            and not self.verification_violations
+            and self.scenario_id == self.authority_receipt.scenario_id
+            and self.actor_id == self.authority_receipt.principal_id
+            and self.policy_version == self.authority_receipt.policy_version
+            and self.authority_verification.authority_attests_receipt(
+                self.authority_receipt
+            )
+        )
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -269,6 +295,53 @@ class ApprovalRecord:
             "reason": self.reason,
             "decided_at": self.decided_at.isoformat(),
             "policy_version": self.policy_version,
+            "approval_receipt_id": (
+                self.authority_receipt.receipt_id if self.authority_receipt else None
+            ),
+            "approval_reference_id": (
+                self.authority_receipt.approval_reference_id
+                if self.authority_receipt
+                else None
+            ),
+            "approval_source_system": (
+                self.authority_receipt.source_system if self.authority_receipt else None
+            ),
+            "approval_principal_id": (
+                self.authority_receipt.principal_id if self.authority_receipt else None
+            ),
+            "approval_principal_role": (
+                self.authority_receipt.principal_role if self.authority_receipt else None
+            ),
+            "approval_receipt_hash": (
+                self.authority_receipt.receipt_hash if self.authority_receipt else None
+            ),
+            "authority_attestation_id": (
+                self.authority_verification.authority_attestation_id
+                if self.authority_verification
+                else None
+            ),
+            "authority_binding_hash": (
+                self.authority_verification.authority_binding_hash
+                if self.authority_verification
+                else None
+            ),
+            "authority_verified_at": (
+                self.authority_verification.authority_verified_at
+                if self.authority_verification
+                else None
+            ),
+            "verification_violations": list(self.verification_violations),
+            "authentic_approval_verified": self.authentic_approval_verified,
+            "business_uat_status": (
+                BUSINESS_UAT_VERIFIED
+                if self.authentic_approval_verified
+                else BUSINESS_UAT_UNVERIFIED
+            ),
+            "governance_status": (
+                GOVERNED_ENABLED
+                if self.authentic_approval_verified
+                else GOVERNED_DISABLED
+            ),
         }
 
 

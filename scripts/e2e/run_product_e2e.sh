@@ -24,7 +24,17 @@ DIAGNOSTICS_DIR="${ODP_E2E_DIAGNOSTICS_DIR:-.odp_data/e2e-diagnostics}"
 COMPOSE=(docker compose -p "$PROJECT" -f infra/docker/docker-compose.e2e.yml)
 PLAYWRIGHT_PAYLOAD="$(mktemp "${TMPDIR:-/tmp}/odp-playwright-payload.XXXXXX.json")"
 PLAYWRIGHT_ARTIFACT="docs/evidence/e2e/raw_playwright_results.json"
-PYTHON_COMMAND=(uv run --frozen python)
+export PATH="/home/lupin/.local/bin:$PATH"
+
+if command -v uv >/dev/null 2>&1; then
+  PYTHON_COMMAND=(uv run --frozen python)
+elif [[ -f /home/lupin/oday-plus/.venv/bin/python3 ]]; then
+  PYTHON_COMMAND=(/home/lupin/oday-plus/.venv/bin/python3)
+else
+  PYTHON_COMMAND=(python3)
+fi
+
+
 
 cleanup() {
   rm -f "$PLAYWRIGHT_PAYLOAD"

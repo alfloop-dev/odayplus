@@ -11,7 +11,7 @@ from shared.audit import AuditEvent, InMemoryAuditLog
 
 try:
     from fastapi import APIRouter, Depends, HTTPException, Request, status
-    from pydantic import BaseModel, Field
+    from pydantic import BaseModel, ConfigDict, Field
 except ModuleNotFoundError:  # pragma: no cover
     APIRouter = None  # type: ignore[assignment]
 else:
@@ -22,7 +22,7 @@ else:
         NetPlanService,
     )
     from modules.netplan.infrastructure import InMemoryNetPlanRepository
-    from solver.netplan import NetPlanConstraints
+    from solver.netplan import ManagementApprovalReceiptVerifier, NetPlanConstraints
 
 
     class NetPlanScenarioPayload(BaseModel):
@@ -50,9 +50,12 @@ else:
 
 
     class NetPlanDecisionPayload(BaseModel):
+        model_config = ConfigDict(extra="forbid")
+
         actor_id: str = Field(min_length=1)
         reason: str = Field(min_length=1)
         decision: str = "approved"
+        approval_receipt_id: str = ""
         decided_at: str | None = None
 
 
@@ -73,6 +76,7 @@ else:
         repository: InMemoryNetPlanRepository | None = None,
         audit_log: InMemoryAuditLog | None = None,
         production_executor: NetPlanProductionExecutor | None = None,
+        approval_verifier: ManagementApprovalReceiptVerifier | None = None,
         runtime_mode: str | None = None,
     ) -> APIRouter:
         from apps.api.oday_api.security.dependencies import build_engine, require_permission
@@ -89,6 +93,7 @@ else:
             service = NetPlanService(
                 repository=active_repository,
                 production_executor=production_executor,
+                approval_verifier=approval_verifier,
                 runtime_mode=runtime_mode,
             )
         except ProductionExecutionConfigurationError as exc:
@@ -202,6 +207,7 @@ else:
                     actor_id=body.actor_id,
                     reason=body.reason,
                     decision=body.decision,
+                    approval_receipt_id=body.approval_receipt_id,
                     decided_at=_parse_time(body.decided_at),
                 ),
                 active_audit_log,
