@@ -309,6 +309,10 @@ class OperatorLiveRepository:
             except Exception as exc:
                 return None, f"{type(exc).__name__}: {exc}"
 
+        repository = getattr(self._persistence, attribute, None)
+        if repository is not None:
+            return repository, None
+
         return None, "tenant-aware repository is not configured"
 
     def _read_sources(self, scope: OperatorReadScope) -> dict[str, Any]:
@@ -843,11 +847,59 @@ class OperatorLiveRepository:
         alerts: list[Any],
         sections: dict[str, OperatorSectionAvailability],
     ) -> tuple[list[dict[str, Any]], OperatorSectionAvailability]:
-        return [], self._unavailable(
-            "operator-tenant-risk-projection",
-            reason_code="OPERATOR_RISK_CONTRACT_UNAVAILABLE",
-            message="authoritative risk contract is not configured",
-        )
+        source = "operator-tenant-risk-projection"
+        if (
+            not sections.get("stores", self._unavailable("", reason_code="", message="")).available
+            or not sections.get("interventions", self._unavailable("", reason_code="", message="")).available
+            or not sections.get("forecastAlerts", self._unavailable("", reason_code="", message="")).available
+        ):
+            return [], self._unavailable(
+                source,
+                reason_code="OPERATOR_STORES_DEPENDENCY_UNAVAILABLE",
+                message="risk projection requires stores, interventions, and forecastAlerts sections to be available",
+            )
+
+        rows: list[dict[str, Any]] = []
+        for alert in alerts:
+            status = _status(_value(alert, "status")).lower()
+            if status == "closed":
+                continue
+            level = _status(_value(alert, "alert_level")).lower()
+            alert_id = str(_value(alert, "alert_id"))
+            store_id = str(_value(alert, "store_id"))
+            rows.append(
+                {
+                    "id": f"risk-{alert_id}",
+                    "storeId": store_id,
+                    "label": str(_value(alert, "alert_reason_code", "Forecast Alert")),
+                    "severity": "danger" if level in {"critical", "red"} else "warning",
+                    "summary": f"Forecast alert for store {store_id}",
+                    "roles": _roles("ops-lead", "field-lead", "pm-audit"),
+                }
+            )
+        for intervention in interventions:
+            status = _status(_value(intervention, "status")).upper()
+            if status in _INTERVENTION_TERMINAL:
+                continue
+            intervention_id = str(_value(intervention, "intervention_id"))
+            kind = _status(_value(intervention, "kind"))
+            store_id = str(_value(intervention, "store_id"))
+            rows.append(
+                {
+                    "id": f"risk-{intervention_id}",
+                    "storeId": store_id,
+                    "label": f"{kind} intervention",
+                    "severity": "warning" if status == "PENDING_APPROVAL" else "info",
+                    "summary": str(_value(intervention, "expected_outcome", "")),
+                    "roles": _roles(
+                        "ops-lead",
+                        "marketing-manager",
+                        "field-lead",
+                        "pm-audit",
+                    ),
+                }
+            )
+        return rows, self._available(source, rows)
 
     def _alert_tasks(self, alerts: list[Any]) -> list[dict[str, Any]]:
         rows: list[dict[str, Any]] = []

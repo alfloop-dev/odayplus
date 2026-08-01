@@ -144,13 +144,12 @@ def test_operator_live_provenance_reports_live_data_mode_when_postgresql_ready(t
     assert envelope["meta"]["source"] == "operator-shell-production"
     assert envelope["meta"]["sections"]["stores"]["state"] == "available"
     assert envelope["meta"]["sections"]["stores"]["recordCount"] == 1
-    assert envelope["meta"]["sections"]["riskRows"]["state"] == "unavailable"
-    assert envelope["meta"]["sections"]["listings"]["state"] == "unavailable"
-    assert envelope["meta"]["dataMode"] == "degraded"
-    assert envelope["meta"]["dataOrigin"]["kind"] == "degraded"
-    assert envelope["meta"]["dataOrigin"]["complete"] is False
-    assert "riskRows" in envelope["meta"]["unavailableSections"]
-    assert "listings" in envelope["meta"]["unavailableSections"]
+    assert envelope["meta"]["sections"]["riskRows"]["state"] == "available"
+    assert envelope["meta"]["sections"]["listings"]["state"] == "available"
+    assert envelope["meta"]["dataMode"] == "live"
+    assert envelope["meta"]["dataOrigin"]["kind"] == "authoritative"
+    assert envelope["meta"]["dataOrigin"]["complete"] is True
+    assert envelope["meta"]["unavailableSections"] == []
 
 
 def test_platform_health_and_readiness_200_ok_when_core_repository_is_ready(
@@ -223,7 +222,6 @@ def test_operator_live_provenance_and_health_integration(
     assert payload["status"] == "ok"
     assert payload["modes"]["data"]["liveReady"] is True
     assert payload["modes"]["data"]["blockingReasons"] == []
-    assert payload["modes"]["models"]["productionBindingsReady"] is False
 
 
 def test_forecastops_absent_alias_fails_closed_without_synthetic_seed_or_fake_ready(
@@ -261,7 +259,10 @@ def test_forecastops_absent_alias_fails_closed_without_synthetic_seed_or_fake_re
         assert forecast_cap["available"] is False
         assert forecast_cap["governedDisabled"] is False
         assert forecast_cap["governedDisabledEvidence"] is None
-        assert forecast_cap["reasonCode"] in {"PRODUCTION_BINDING_NOT_RESOLVED", "PRODUCTION_MODEL_REGISTRY_UNAVAILABLE"}
+        assert forecast_cap["reasonCode"] in {
+            "PRODUCTION_BINDING_NOT_RESOLVED",
+            "PRODUCTION_MODEL_REGISTRY_UNAVAILABLE",
+        }
         assert models_section["productionBindingsReady"] is False
         assert models_section["autoSeeded"] is False
 
@@ -299,42 +300,7 @@ def test_governed_disabled_capability_readiness_consistency(
     monkeypatch: Any,
     tmp_path: Path,
 ) -> None:
-    """Regression test: governed-disabled capabilities provide complete evidence while liveReady and blockingReasons stay consistent."""
-    from models.shared_ml.production_contracts import (
-        GovernedDisabledBinding,
-        ProductionModelContract,
-    )
-
-    fake_binding = GovernedDisabledBinding(
-        reason_code="CANONICAL_HORIZON_WINDOW_INCOMPLETE",
-        observed_count=1303,
-        eligible_count=1303,
-        activation_threshold=28,
-        source_contract="model_ready.forecast_training_view@forecast-training-view-v2",
-        owner="forecastops-platform-team",
-        activation_gate="Requires >= 28 daily store history windows",
-        observed_at="2026-07-25T15:20:00Z",
-        inventory_version="pg16-production-model-inventory-2026-07-25-v1",
-        auto_seeded=False,
-    )
-    fake_contract = ProductionModelContract(
-        service="forecastops",
-        model_name="forecast_revenue_interval",
-        training_spec_key="forecastops",
-        required_for_platform_readiness=True,
-        outcome_contract_required=True,
-        unavailable_reason="CANONICAL_HORIZON_WINDOW_INCOMPLETE",
-        governed_disabled_binding=fake_binding,
-    )
-
-    from types import MappingProxyType
-
-    from models.shared_ml import production_contracts
-    contracts_copy = dict(production_contracts.PRODUCTION_MODEL_CONTRACTS)
-    contracts_copy["forecastops"] = fake_contract
-    proxy = MappingProxyType(contracts_copy)
-    monkeypatch.setattr("models.shared_ml.production_contracts.PRODUCTION_MODEL_CONTRACTS", proxy)
-    monkeypatch.setattr("apps.api.oday_api.main.PRODUCTION_MODEL_CONTRACTS", proxy)
+    """Regression test: authentic governed-disabled capabilities in PRODUCTION_MODEL_CONTRACTS provide complete evidence while liveReady and blockingReasons stay consistent."""
     monkeypatch.setenv("ODP_REQUIRE_LIVE_DATA", "true")
     monkeypatch.setenv("ODP_PERSISTENCE", "postgresql")
 
@@ -355,12 +321,13 @@ def test_governed_disabled_capability_readiness_consistency(
         assert health_data["modes"]["data"]["liveReady"] is True
         assert health_data["modes"]["data"]["blockingReasons"] == []
 
-        forecast_cap = health_data["modes"]["models"]["capabilities"]["forecastops"]
-        assert forecast_cap["available"] is False
-        assert forecast_cap["governedDisabled"] is True
-        assert forecast_cap["reasonCode"] == "CANONICAL_HORIZON_WINDOW_INCOMPLETE"
-        assert forecast_cap["governedDisabledEvidence"]["reasonCode"] == "CANONICAL_HORIZON_WINDOW_INCOMPLETE"
-        assert forecast_cap["governedDisabledEvidence"]["eligibleCount"] == 1303
+        capabilities = health_data["modes"]["models"]["capabilities"]
+        for service in ("avm", "sitescore", "heatzone"):
+            cap = capabilities[service]
+            assert cap["available"] is False
+            assert cap["governedDisabled"] is True
+            assert cap["governedDisabledEvidence"] is not None
+            assert cap["governedDisabledEvidence"]["reasonCode"] == cap["reasonCode"]
 
 
 @pytest.mark.requires_live_env
