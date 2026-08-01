@@ -8,6 +8,7 @@ from typing import Any
 
 import pytest
 from fastapi import HTTPException, Response
+from fastapi.testclient import TestClient
 from starlette.requests import Request
 
 from apps.api.app.routes.operator import _live_operator_request_context
@@ -710,21 +711,31 @@ def test_canonical_writer_restart_provenance(tmp_path: Path) -> None:
                 address_id="addr-canonical",
             )
         )
-        listing_canonical = Listing(
-            listing_id="listing-canonical-write",
-            address_id="addr-canonical",
-            listing_status="manual_review",
-        )
-        key_canonical = ListingDedupKey(
-            source_id="src-canonical",
-            source_listing_id="list-canonical",
-            normalized_address="addr-canonical",
-            rent_amount=2000.0,
-            area_ping=50.0,
-        )
-        repo_canonical = bundle1.listing_repository_for_tenant("tenant-canonical")
-        assert repo_canonical is not None
-        repo_canonical.save_listing(listing_canonical, address_a, key_canonical)
+
+        # Write canonical record through actual API / canonical writer path with tenant header
+        app1 = create_app(persistence=bundle1)
+        with TestClient(app1) as client1:
+            res = client1.post(
+                "/api/v1/listings/import",
+                headers={
+                    "x-tenant-id": "tenant-canonical",
+                    "x-subject-id": "user-canonical",
+                    "x-roles": "admin",
+                },
+                json={
+                    "records": [
+                        {
+                            "source_id": "src-canonical",
+                            "source_listing_id": "list-canonical-api",
+                            "raw_address": "123 Canonical St",
+                            "rent_amount": 2000.0,
+                            "area_ping": 50.0,
+                        }
+                    ],
+                    "source_id": "src-canonical",
+                },
+            )
+            assert res.status_code == 202, res.text
 
         # Write an ownership-less record directly to unscoped store
         listing_ownership_less = Listing(
@@ -749,9 +760,8 @@ def test_canonical_writer_restart_provenance(tmp_path: Path) -> None:
     try:
         repo_canonical2 = bundle2.listing_repository_for_tenant("tenant-canonical")
         assert repo_canonical2 is not None
-        saved_listing = repo_canonical2.get_listing("listing-canonical-write")
-        assert saved_listing is not None
-        assert saved_listing.listing_id == "listing-canonical-write"
+        listings_saved = repo_canonical2.list_listings()
+        assert len(listings_saved) == 1
 
         live_repo = OperatorLiveRepository(bundle2)
         state_canonical = live_repo.load_state(
@@ -764,7 +774,6 @@ def test_canonical_writer_restart_provenance(tmp_path: Path) -> None:
         assert sections_canonical["listings"]["recordCount"] == 1
         assert meta_canonical["dataMode"] == "live"
         assert meta_canonical["dataOrigin"]["complete"] is True
-        assert "listing-canonical-write" in str(state_canonical)
         assert "listing-ownership-less" not in str(state_canonical)
 
         # Prove tenant-b cannot read tenant-canonical's writes nor ownership-less record
@@ -774,7 +783,6 @@ def test_canonical_writer_restart_provenance(tmp_path: Path) -> None:
         )
         sections_b = state_b["_meta"]["sections"]
         assert sections_b["listings"]["recordCount"] == 0
-        assert "listing-canonical-write" not in str(state_b)
         assert "listing-ownership-less" not in str(state_b)
     finally:
         bundle2.engine.close()

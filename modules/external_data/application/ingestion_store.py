@@ -120,6 +120,7 @@ class IngestionRunRecord:
     lineage: tuple[LineageRecord, ...] = ()
     alerts: tuple[dict[str, Any], ...] = ()
     audit_events: tuple[dict[str, Any], ...] = ()
+    tenant_id: str = ""
 
     def freshness_dict(self) -> dict[str, Any]:
         return self.freshness.to_dict()
@@ -152,6 +153,7 @@ class IngestionRunRecord:
             "total_count": self.total_count,
             "retry_after": _iso(self.retry_after),
             "message": self.message,
+            "tenant_id": self.tenant_id,
             "freshness": self.freshness.to_dict(),
             "quarantine": [record.to_dict() for record in self.quarantine],
             "lineage": [record.to_dict() for record in self.lineage],

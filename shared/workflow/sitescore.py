@@ -89,6 +89,7 @@ class SiteScoreDecision:
     created_by: str
     created_at: datetime
     history: tuple[DecisionTransition, ...] = ()
+    tenant_id: str = ""
 
     @property
     def is_terminal(self) -> bool:
@@ -107,6 +108,7 @@ class SiteScoreDecision:
             "created_by": self.created_by,
             "created_at": self.created_at.isoformat(),
             "history": [transition.to_dict() for transition in self.history],
+            "tenant_id": self.tenant_id,
         }
 
 

@@ -3849,6 +3849,26 @@ else:
 
 
     def _repository(request: Request, bound_repository: Any = None):
+        tenant_id = (
+            request.headers.get("x-tenant-id")
+            or request.headers.get("tenant_id")
+            or getattr(getattr(getattr(request, "state", None), "principal", None), "tenant_id", None)
+        )
+        if tenant_id and str(tenant_id).strip():
+            clean_tenant = str(tenant_id).strip()
+            bundle = getattr(request.app.state, "persistence_bundle", None) or getattr(request.app.state, "persistence", None)
+            if bundle is not None and hasattr(bundle, "listing_repository_for_tenant"):
+                scoped = bundle.listing_repository_for_tenant(clean_tenant)
+                if scoped is not None:
+                    return scoped
+            target_repo = bound_repository or getattr(request.app.state, "listing_repository", None)
+            if target_repo is not None and hasattr(target_repo, "_store"):
+                base_store = getattr(target_repo._store, "_store", target_repo._store)
+                if hasattr(base_store, "get") and hasattr(base_store, "put"):
+                    from shared.infrastructure.persistence.operator_domains import (
+                        TenantScopedDocumentStore,
+                    )
+                    return type(target_repo)(TenantScopedDocumentStore(base_store, clean_tenant))
         if bound_repository is not None:
             return bound_repository
         repository = getattr(request.app.state, "listing_repository", None)

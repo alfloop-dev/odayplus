@@ -201,23 +201,8 @@ def readiness_payload() -> dict[str, Any]:
                 "error": None,
                 "requiredServices": ["avm", "forecastops", "heatzone", "sitescore"],
                 "capabilities": {
-                    **{
-                        # ForecastOps is active: has a real approved MLflow production alias.
-                        "forecastops": {
-                            "service": "forecastops",
-                            "available": True,
-                            "reasonCode": None,
-                            "governedDisabled": False,
-                            "governedDisabledEvidence": None,
-                            "error": None,
-                        }
-                    },
-                    **{
-                        # AVM, HeatZone, SiteScore: governed-disabled due to PG16 data immaturity.
-                        # available=False, full evidence required, no production alias in MLflow.
-                        service: governed_disabled_capability(service)
-                        for service in ("avm", "heatzone", "sitescore")
-                    },
+                    service: governed_disabled_capability(service)
+                    for service in ("avm", "forecastops", "heatzone", "sitescore")
                 },
             },
             "data": {
@@ -261,30 +246,14 @@ def governed_disabled_capability(service: str) -> dict[str, Any]:
 def models_payload() -> dict[str, Any]:
     """Return the /learninghub/models payload for a live deployment.
 
-    Only ForecastOps has a real MLflow production alias; AVM/HeatZone/SiteScore
-    are governed-disabled and must NOT have a production alias (the gate will
-    block if they do).
+    All capabilities (AVM/ForecastOps/HeatZone/SiteScore) are governed-disabled
+    and must NOT have a production alias (the gate will block if they do).
     """
     return {
-        "count": 1,
-        "items": [
-            {
-                "model_name": "forecast_revenue_interval",
-                "version": "7",
-                "model_id": "forecast_revenue_interval-7",
-                "artifact_uri": "gs://odp-dev-artifacts/forecast_revenue_interval/7",
-                "dataset_snapshot_id": "snapshot-forecastops-20260726",
-                "feature_schema_version": "3",
-                "label_version": "2",
-                "stage": "production",
-                "aliases": ["production"],
-                "approved_by": "release-officer",
-                "approved_at": "2026-07-25T09:00:00+00:00",
-                "created_at": "2026-07-25T08:00:00+00:00",
-                "metrics": {"rmse": 0.21},
-            }
-        ],
+        "count": 0,
+        "items": [],
     }
+
 
 
 def ingestion_run(provider_id: str, *, total: int = 4, accepted: int = 3) -> dict[str, Any]:

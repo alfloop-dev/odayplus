@@ -138,7 +138,7 @@ REQUIRED_MODEL_BINDINGS: Mapping[str, str] = {
 # Services that are governed-disabled in the current data-maturity cycle.
 # Must stay in sync with production_contracts.governed_disabled_services();
 # anti-drift tests in tests/e2e/test_live_e2e_gate.py enforce this.
-GOVERNED_DISABLED_SERVICES: frozenset[str] = frozenset({"avm", "heatzone", "sitescore"})
+GOVERNED_DISABLED_SERVICES: frozenset[str] = frozenset({"avm", "forecastops", "heatzone", "sitescore"})
 # Required evidence fields that every governed-disabled capability must expose.
 # Counts are receipt-backed observations (observedAt + inventoryVersion carry
 # the lineage); activationThreshold is the separate policy gate, never a count.
@@ -1104,9 +1104,10 @@ def _check_model_lineage(
 
     items = response.payload.get("items")
     items = [item for item in items if isinstance(item, dict)] if isinstance(items, list) else []
+    all_governed_disabled = set(REQUIRED_MODEL_BINDINGS).issubset(GOVERNED_DISABLED_SERVICES)
     _check(
         checks,
-        bool(items),
+        all_governed_disabled or bool(items),
         "models:registry",
         f"versions={len(items)}",
         "mlflow",

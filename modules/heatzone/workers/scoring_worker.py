@@ -31,6 +31,7 @@ class HeatZoneBatchScoreResult:
     completed_at: datetime
     warnings: tuple[str, ...] = ()
     model_inference: ModelInferenceResult | None = None
+    tenant_id: str = ""
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -40,6 +41,7 @@ class HeatZoneBatchScoreResult:
             "map_features": [score.to_map_feature() for score in self.scores],
             "completed_at": self.completed_at.isoformat(),
             "warnings": list(self.warnings),
+            "tenant_id": self.tenant_id,
         }
 
 
