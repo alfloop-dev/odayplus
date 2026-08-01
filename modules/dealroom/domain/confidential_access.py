@@ -129,7 +129,10 @@ def assert_no_confidential_leak(payload: Any, *, forbidden_raw_values: Sequence[
             )
 
 
-from modules.avm.domain.outcome import get_production_authority_verifier_key
+from modules.avm.domain.outcome import (
+    _assert_valid_signing_key,
+    get_production_authority_verifier_key,
+)
 
 
 def create_identity_proof(
@@ -142,8 +145,7 @@ def create_identity_proof(
     event_id: str | None = None,
 ) -> str:
     """Generate cryptographic identity proof bound to actor, role, tenant, purpose, and authority key."""
-    if not authority_key:
-        raise ValueError("Fail-closed: Invalid or missing authority key for identity proof creation")
+    _assert_valid_signing_key(authority_key)
     role_str = role.value if isinstance(role, Role) else str(role)
     evt = event_id or "default-identity-event"
     canonical = f"{actor_id}:{role_str}:{tenant_id}:{purpose}:{evt}:{authority_key}"

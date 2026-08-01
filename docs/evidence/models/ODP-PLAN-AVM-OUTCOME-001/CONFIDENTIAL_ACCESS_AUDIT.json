@@ -3,7 +3,7 @@
   "task_id": "ODP-PLAN-AVM-OUTCOME-001",
   "model_version": "dealroom-avm-baseline-v1",
   "dataset_snapshot_hash": "86d4b28ff48929469cc683ca9b2ce209c0831c266a6124b68c6ee701fe56ed96",
-  "audited_at": "2026-07-31T17:10:24.353521+00:00",
+  "audited_at": "2026-08-01T14:58:08.739998+00:00",
   "total_access_attempts": 4,
   "permitted_count": 0,
   "denied_count": 4,
@@ -17,7 +17,7 @@
       "decision": "DENY",
       "reason": "Principal 'usr-fin-001' identity and role authority are not authoritatively verified",
       "tenant_id": "tenant-avm-001",
-      "evaluated_at": "2026-07-31T17:10:24.353567+00:00",
+      "evaluated_at": "2026-08-01T14:58:08.740056+00:00",
       "identity_proof_sha256": "",
       "redacted_sample": "[REDACTED_CONFIDENTIAL_VALUE]"
     },
@@ -30,7 +30,7 @@
       "decision": "DENY",
       "reason": "Principal 'usr-sup-002' identity and role authority are not authoritatively verified",
       "tenant_id": "tenant-avm-001",
-      "evaluated_at": "2026-07-31T17:10:24.353606+00:00",
+      "evaluated_at": "2026-08-01T14:58:08.740115+00:00",
       "identity_proof_sha256": "",
       "redacted_sample": "[REDACTED_CONFIDENTIAL_VALUE]"
     },
@@ -43,7 +43,7 @@
       "decision": "DENY",
       "reason": "Principal 'usr-adm-003' identity and role authority are not authoritatively verified",
       "tenant_id": "tenant-avm-001",
-      "evaluated_at": "2026-07-31T17:10:24.353628+00:00",
+      "evaluated_at": "2026-08-01T14:58:08.740148+00:00",
       "identity_proof_sha256": "",
       "redacted_sample": "[REDACTED_CONFIDENTIAL_VALUE]"
     },
@@ -56,7 +56,7 @@
       "decision": "DENY",
       "reason": "Principal 'usr-frc-004' identity and role authority are not authoritatively verified",
       "tenant_id": "tenant-avm-001",
-      "evaluated_at": "2026-07-31T17:10:24.353644+00:00",
+      "evaluated_at": "2026-08-01T14:58:08.740175+00:00",
       "identity_proof_sha256": "",
       "redacted_sample": "[REDACTED_CONFIDENTIAL_VALUE]"
     }
@@ -65,5 +65,5 @@
     "confidential_raw_values_masked": true,
     "zero_leak_verified": true
   },
-  "sha256": "dc5c4b756da864a04940c26b74380fff6ed3dabe5997cd9d93906f518ba78e54"
+  "sha256": "4865bf8603563dda89b7e0a84a0beb4d4780823abe997e875c52dc8dc0cd5e73"
 }
