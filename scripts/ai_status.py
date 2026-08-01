@@ -4640,7 +4640,7 @@ def command_restore_approved(state: dict[str, Any], args: list[str]) -> None:
             "reviewer can re-examine the work. No restore was recorded."
         )
     try:
-        current_sha = resolve_task_sha(task_id)
+        current_sha = resolve_task_sha(task_id, force_refresh=True)
     except Exception as exc:
         raise SystemExit(
             f"Cannot restore {task_id}: unable to resolve the current branch HEAD ({exc}). "
@@ -4724,7 +4724,7 @@ def command_restore_approved_head(state: dict[str, Any], args: list[str]) -> Non
             "40-character commit sha. Name the exact reviewed commit, not an abbreviation."
         )
     try:
-        current_sha = resolve_task_sha(task_id)
+        current_sha = resolve_task_sha(task_id, force_refresh=True)
     except Exception as exc:
         raise SystemExit(
             f"Cannot restore the approved head for {task_id}: unable to resolve the branch HEAD "
@@ -4793,7 +4793,7 @@ def command_done(state: dict[str, Any], args: list[str]) -> None:
         )
     current_sha = None
     try:
-        current_sha = resolve_task_sha(task_id)
+        current_sha = resolve_task_sha(task_id, force_refresh=True)
     except Exception as exc:
         raise SystemExit(
             f"Cannot finalize task {task_id}: unable to resolve current branch HEAD ({exc}). "
@@ -4908,7 +4908,7 @@ def command_approve(state: dict[str, Any], args: list[str]) -> None:
     # any mutation, so an unresolvable head aborts the approval outright rather
     # than leaving the task review_approved-but-unfrozen.
     try:
-        approved_sha = resolve_task_sha(task_id)
+        approved_sha = resolve_task_sha(task_id, force_refresh=True)
     except Exception as exc:
         raise SystemExit(
             f"Cannot approve task {task_id}: unable to resolve the branch HEAD to freeze ({exc}). "
@@ -5093,82 +5093,48 @@ def command_wave(state: dict[str, Any], args: list[str]) -> None:
         raise SystemExit(f"Unknown wave subcommand: {subcommand!r}. Use: open <wave-id>, close, freeze")
 
 
-def resolve_task_sha(task_id: str, max_age_seconds: float = 5.0) -> str | None:
+def resolve_task_sha(
+    task_id: str,
+    max_age_seconds: float = 5.0,
+    force_refresh: bool = False,
+    fresh: bool = False,
+) -> str | None:
     now = time.time()
-    if task_id in _TASK_SHA_CACHE:
-        ts, val = _TASK_SHA_CACHE[task_id]
-        if now - ts < max_age_seconds:
-            return val
+    if not (force_refresh or fresh) and max_age_seconds > 0:
+        if task_id in _TASK_SHA_CACHE:
+            ts, cached_sha = _TASK_SHA_CACHE[task_id]
+            if now - ts < max_age_seconds:
+                return cached_sha
 
-    # 1. Fallback/Primary: gh pr view for task/TASK-ID (checks remote PR head SHA)
-    for branch_name in [f"task/{task_id}", f"task-{task_id}"]:
-        result = subprocess.run(
-            [get_gh_executable(), "pr", "view", branch_name, "--json", "headRefOid"],
-            capture_output=True,
-            text=True,
-            check=False,
-            cwd=ROOT,
-        )
-        if result.returncode == 0:
-            try:
-                data = json.loads(result.stdout)
-                sha = data.get("headRefOid")
-                if sha:
-                    _TASK_SHA_CACHE[task_id] = (now, sha)
-                    return sha
-            except Exception:
-                pass
+    branch_names = [f"task/{task_id}", f"task-{task_id}"]
 
-    # 2. Try git rev-parse for local branches
-    for branch_name in [f"task/{task_id}", f"task-{task_id}"]:
-        result = subprocess.run(
-            ["git", "rev-parse", "--verify", branch_name],
-            capture_output=True,
-            text=True,
-            check=False,
-            cwd=ROOT,
-        )
-        if result.returncode == 0 and result.stdout.strip():
-            sha = result.stdout.strip()
-            _TASK_SHA_CACHE[task_id] = (now, sha)
-            return sha
-
-    # 3. Try git rev-parse for current HEAD if current branch matches task_id
-    current_branch_result = subprocess.run(
-        ["git", "branch", "--show-current"],
+    remote_refs = [f"refs/heads/{branch_name}" for branch_name in branch_names]
+    result = subprocess.run(
+        ["git", "ls-remote", "--heads", "origin", *remote_refs],
         capture_output=True,
         text=True,
         check=False,
         cwd=ROOT,
     )
-    if current_branch_result.returncode == 0:
-        current_branch = current_branch_result.stdout.strip()
-        if task_id.lower() in current_branch.lower():
-            result = subprocess.run(
-                ["git", "rev-parse", "HEAD"],
-                capture_output=True,
-                text=True,
-                check=False,
-                cwd=ROOT,
-            )
-            if result.returncode == 0 and result.stdout.strip():
-                sha = result.stdout.strip()
-                _TASK_SHA_CACHE[task_id] = (now, sha)
-                return sha
-
-    # 4. Try git rev-parse for remote branches
-    for branch_name in [f"origin/task/{task_id}", f"origin/task-{task_id}"]:
-        result = subprocess.run(
-            ["git", "rev-parse", "--verify", branch_name],
-            capture_output=True,
-            text=True,
-            check=False,
-            cwd=ROOT,
-        )
-        if result.returncode == 0 and result.stdout.strip():
-            sha = result.stdout.strip()
-            _TASK_SHA_CACHE[task_id] = (now, sha)
-            return sha
+    matches: list[str] = []
+    if result.returncode == 0:
+        for line in result.stdout.splitlines():
+            fields = line.split()
+            if (
+                len(fields) == 2
+                and fields[1] in remote_refs
+                and (
+                    re.fullmatch(r"[0-9a-fA-F]{40}", fields[0])
+                    or re.fullmatch(r"[0-9a-fA-F]{64}", fields[0])
+                )
+            ):
+                matches.append(fields[0])
+    # Fail closed unless origin returns exactly one valid canonical task ref.
+    # Local HEAD, local task refs, cached origin refs, and old PR heads are not
+    # authoritative active-task review/freeze evidence.
+    if result.returncode == 0 and len(matches) == 1:
+        _TASK_SHA_CACHE[task_id] = (now, matches[0])
+        return matches[0]
 
     _TASK_SHA_CACHE[task_id] = (now, None)
     return None
