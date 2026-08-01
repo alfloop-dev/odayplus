@@ -472,6 +472,11 @@ def test_two_tenant_isolation_prevents_foreign_record_leakage_and_false_complete
                 brand_name="Brand B",
             )
         )
+        address_a = AddressLocation(address_id="addr-a", raw_address="Address A")
+        address_b = AddressLocation(address_id="addr-b", raw_address="Address B")
+        bundle.address_location_repository.save_address(address_a)
+        bundle.address_location_repository.save_address(address_b)
+
         bundle.store_repository.save_store(
             Store(
                 store_id="store-tenant-a",
@@ -479,6 +484,7 @@ def test_two_tenant_isolation_prevents_foreign_record_leakage_and_false_complete
                 brand_id="brand-a",
                 store_name="Tenant A Store",
                 store_status="open",
+                address_id="addr-a",
             )
         )
         bundle.store_repository.save_store(
@@ -488,21 +494,20 @@ def test_two_tenant_isolation_prevents_foreign_record_leakage_and_false_complete
                 brand_id="brand-b",
                 store_name="Tenant B Store",
                 store_status="open",
+                address_id="addr-b",
             )
         )
 
         from modules.external_data.application.ingestion_store import IngestionRunRecord
-        from modules.heatzone.workers import HeatZoneBatchScoreResult, HeatZoneScore
+        from modules.heatzone.domain import HeatZoneScoreResult
+        from modules.heatzone.workers import HeatZoneBatchScoreResult
         from modules.listing.domain.models import ListingDedupKey
         from shared.workflow.sitescore import SiteScoreDecision
 
         listing_a = Listing(
             listing_id="listing-tenant-a",
-            source_system="test",
-            source_url="http://example.com/a",
-            title="Tenant A Listing",
+            address_id="addr-a",
         )
-        address_a = AddressLocation(address_id="addr-a", raw_address="Address A")
         key_a = ListingDedupKey(source_key="src-a", property_key="prop-a")
         repo_a = bundle.listing_repository_for_tenant("tenant-a")
         assert repo_a is not None
@@ -530,7 +535,17 @@ def test_two_tenant_isolation_prevents_foreign_record_leakage_and_false_complete
         hz_result_a = HeatZoneBatchScoreResult(
             job_id="job-tenant-a",
             status="completed",
-            scores=[HeatZoneScore(zone_id="z-a", score=0.9)],
+            scores=(
+                HeatZoneScoreResult(
+                    geo_cell_id="cell-a",
+                    h3_index="h3-a",
+                    heat_score=0.9,
+                    recommendation_tier="tier1",
+                    confidence=0.95,
+                    ranked_reasons=("high_density",),
+                ),
+            ),
+            completed_at=datetime.now(UTC),
         )
         heatzone_store_a = bundle.heatzone_store_for_tenant("tenant-a")
         assert heatzone_store_a is not None
@@ -542,7 +557,7 @@ def test_two_tenant_isolation_prevents_foreign_record_leakage_and_false_complete
             tenant_id="tenant-a",
             store_ids=("store-tenant-a",),
         )
-        sections_a = state_a["meta"]["sections"]
+        sections_a = state_a["_meta"]["sections"]
         assert sections_a["listings"]["state"] == "available"
         assert sections_a["listings"]["recordCount"] == 1
         assert sections_a["siteScoreDecisions"]["state"] == "available"
@@ -556,7 +571,7 @@ def test_two_tenant_isolation_prevents_foreign_record_leakage_and_false_complete
             tenant_id="tenant-b",
             store_ids=("store-tenant-b",),
         )
-        sections_b = state_b["meta"]["sections"]
+        sections_b = state_b["_meta"]["sections"]
         assert sections_b["listings"]["recordCount"] == 0
         assert sections_b["siteScoreDecisions"]["recordCount"] == 0
         assert sections_b["ingestionRuns"]["recordCount"] == 0
@@ -575,7 +590,7 @@ def test_unpartitioned_in_memory_stores_remain_unavailable() -> None:
     live_repo = OperatorLiveRepository(bundle)
 
     state = live_repo.load_state(tenant_id="tenant-test")
-    sections = state["meta"]["sections"]
+    sections = state["_meta"]["sections"]
     for section_name in (
         "listings",
         "candidates",
@@ -586,4 +601,4 @@ def test_unpartitioned_in_memory_stores_remain_unavailable() -> None:
         assert sections[section_name]["state"] == "unavailable"
         assert "OPERATOR_TENANT_" in sections[section_name]["reasonCode"]
 
-    assert state["meta"]["dataOrigin"]["complete"] is False
+    assert state["_meta"]["dataOrigin"]["complete"] is False
