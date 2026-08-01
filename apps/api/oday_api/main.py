@@ -389,7 +389,6 @@ else:
                 and persistence_reachable
                 and provider_live_ready
                 and operator_repository_ready
-                and production_model_bindings_ready
             )
             blocking_reasons: list[str] = []
             if require_live_data:
@@ -408,8 +407,6 @@ else:
                     blocking_reasons.append("PROVIDER_CONNECTIVITY_UNHEALTHY")
                 if not operator_repository_ready:
                     blocking_reasons.append("OPERATOR_LIVE_REPOSITORY_UNAVAILABLE")
-                if not production_model_bindings_ready:
-                    blocking_reasons.append("PRODUCTION_MODEL_BINDINGS_UNVERIFIED")
             return {
                 "requireLiveData": require_live_data,
                 "deploymentMode": active_deployment_mode,

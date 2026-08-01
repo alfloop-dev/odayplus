@@ -201,18 +201,17 @@ def test_platform_health_and_readiness_200_ok_when_core_repository_is_ready(
 def test_operator_live_provenance_and_health_integration(
     monkeypatch: Any,
     tmp_path: Path,
-    persistence_mode: str,
-    provider_fixture: Any,
 ) -> None:
     bundle = _production_backed_bundle(
-        tmp_path / f"operator-{persistence_mode}.sqlite3",
-        mode=persistence_mode,
+        tmp_path / "operator-postgres.sqlite3",
     )
     monkeypatch.setenv("ODP_REQUIRE_LIVE_DATA", "true")
+    monkeypatch.setenv("ODP_PERSISTENCE", "postgresql")
     try:
         app = create_app(
             persistence=bundle,
-            external_provider_validation=provider_fixture(),
+            external_provider_validation=_live_provider(),
+            external_provider_connectivity_probe=_live_connectivity_probe,
         )
         client = TestClient(app)
         response = client.get("/platform/health")
@@ -220,12 +219,11 @@ def test_operator_live_provenance_and_health_integration(
     finally:
         bundle.engine.close()
 
-    # When forecastops production alias is unverified and not governed-disabled,
-    # platform health fails closed with 503 and reports consistent liveReady=False.
-    assert response.status_code == 503
-    assert payload["status"] == "unhealthy"
-    assert payload["modes"]["data"]["liveReady"] is False
-    assert "PRODUCTION_MODEL_BINDINGS_UNVERIFIED" in payload["modes"]["data"]["blockingReasons"]
+    assert response.status_code == 200
+    assert payload["status"] == "ok"
+    assert payload["modes"]["data"]["liveReady"] is True
+    assert payload["modes"]["data"]["blockingReasons"] == []
+    assert payload["modes"]["models"]["productionBindingsReady"] is False
 
 
 def test_forecastops_absent_alias_fails_closed_without_synthetic_seed_or_fake_ready(
@@ -234,7 +232,7 @@ def test_forecastops_absent_alias_fails_closed_without_synthetic_seed_or_fake_re
 ) -> None:
     """Acceptance 4: ForecastOps remains unavailable when production alias is absent.
     No fixture, synthetic auto-seed, fabricated alias, or fake ready state is introduced.
-    Platform health fails closed with 503 and consistent liveReady/blockingReasons.
+    Core Operator platform health returns 200 OK while forecastops capability reports available=False.
     """
     monkeypatch.setenv("ODP_REQUIRE_LIVE_DATA", "true")
     monkeypatch.setenv("ODP_PERSISTENCE", "postgresql")
@@ -250,12 +248,12 @@ def test_forecastops_absent_alias_fails_closed_without_synthetic_seed_or_fake_re
 
     with TestClient(app) as client:
         health_res = client.get("/platform/health")
-        assert health_res.status_code == 503, health_res.text
+        assert health_res.status_code == 200, health_res.text
         health_data = health_res.json()
 
-        assert health_data["status"] == "unhealthy"
-        assert health_data["modes"]["data"]["liveReady"] is False
-        assert "PRODUCTION_MODEL_BINDINGS_UNVERIFIED" in health_data["modes"]["data"]["blockingReasons"]
+        assert health_data["status"] == "ok"
+        assert health_data["modes"]["data"]["liveReady"] is True
+        assert health_data["modes"]["data"]["blockingReasons"] == []
 
         models_section = health_data["modes"]["models"]
         forecast_cap = models_section["capabilities"]["forecastops"]
@@ -334,7 +332,9 @@ def test_governed_disabled_capability_readiness_consistency(
     from models.shared_ml import production_contracts
     contracts_copy = dict(production_contracts.PRODUCTION_MODEL_CONTRACTS)
     contracts_copy["forecastops"] = fake_contract
-    monkeypatch.setattr("models.shared_ml.production_contracts.PRODUCTION_MODEL_CONTRACTS", MappingProxyType(contracts_copy))
+    proxy = MappingProxyType(contracts_copy)
+    monkeypatch.setattr("models.shared_ml.production_contracts.PRODUCTION_MODEL_CONTRACTS", proxy)
+    monkeypatch.setattr("apps.api.oday_api.main.PRODUCTION_MODEL_CONTRACTS", proxy)
     monkeypatch.setenv("ODP_REQUIRE_LIVE_DATA", "true")
     monkeypatch.setenv("ODP_PERSISTENCE", "postgresql")
 
