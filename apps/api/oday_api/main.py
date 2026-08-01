@@ -212,8 +212,14 @@ else:
 
         from modules.external_data.application.ingestion_service import ExternalIngestionService
 
+        heatzone_store_for_tenant = (
+            bundle.heatzone_store_for_tenant if bundle.is_durable else None
+        )
         ingestion_run_store_for_tenant = (
             bundle.ingestion_run_store_for_tenant if bundle.is_durable else None
+        )
+        sitescore_decision_store_for_tenant = (
+            bundle.sitescore_decision_store_for_tenant if bundle.is_durable else None
         )
         ingestion_service = external_ingestion_service or ExternalIngestionService(
             store=bundle.ingestion_run_store,
@@ -975,7 +981,7 @@ else:
             api,
             create_heatzone_router(
                 store=heatzone_store,
-                heatzone_store_for_tenant=bundle.heatzone_store_for_tenant,
+                heatzone_store_for_tenant=heatzone_store_for_tenant,
                 audit_log=audit_log,
                 model_binding=scoring_bindings.get("heatzone"),
                 model_runtime=model_runtime,
@@ -1071,7 +1077,7 @@ else:
             create_sitescore_router(
                 repository=site_repository,
                 workflow=decision_workflow,
-                sitescore_decision_repository_for_tenant=bundle.sitescore_decision_store_for_tenant,
+                sitescore_decision_repository_for_tenant=sitescore_decision_store_for_tenant,
                 realization_hook=realization_hook,
                 audit_log=audit_log,
                 model_binding=scoring_bindings.get("sitescore"),
