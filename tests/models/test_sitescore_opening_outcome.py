@@ -1010,7 +1010,7 @@ def test_sitescore_opening_outcome_non_empty_population_counts_populated_and_ver
     assert receipt["benchmark_summary"]["interval_bounds_count"] == 10
     assert receipt["benchmark_summary"]["in_p80_count"] == 10
 
-    verif = verify_sitescore_gate2_receipt(receipt, model_card_artifact=model_card)
+    verif = verify_sitescore_gate2_receipt(receipt, model_card_artifact=model_card, dataset_manifest=records)
     assert verif.is_valid is True
     assert verif.reason_code == "RECEIPT_VALIDATED"
 
@@ -2173,7 +2173,7 @@ def test_sitescore_gate2_receipt_verifier_re_review_d20d7483_probes_b1_b2_b3():
         r_b1["benchmark_summary"]["handback_payload"]["outcome_backfill_contract"][key] = 1000099.0 if key == "realized_revenue_sum" else 500049.5
 
     rebound_b1 = _rebind_hashes(r_b1, mc_b1)
-    res_b1 = verify_sitescore_gate2_receipt(rebound_b1, model_card_artifact=mc_b1)
+    res_b1 = verify_sitescore_gate2_receipt(rebound_b1, model_card_artifact=mc_b1, dataset_manifest=rec_partial)
     assert res_b1.is_valid is False
     assert any("population_aggregate_digest mismatch" in e for e in res_b1.errors)
 
@@ -2244,3 +2244,81 @@ def test_sitescore_gate2_receipt_verifier_re_review_d20d7483_probes_b1_b2_b3():
     res_truthy = evaluate_sitescore_opening_outcome_benchmark(rec_truthy_non_bool, provenance="provided_records")
     assert res_truthy.eligible_count == 0
     assert res_truthy.mature_label_count == 0
+
+
+def test_sitescore_opening_outcome_forged_active_with_absent_lineage_fails_closed():
+    # B1 Regression test: A receipt trying to forge ACTIVE by submitting reason_code GATE2_CRITERIA_MET or status ACTIVE fails closed
+    records = _generate_candidate_records(
+        220,
+        include_m6_m12_realized=True,
+        include_bounds=True,
+    )
+    result = evaluate_sitescore_opening_outcome_benchmark(records, provenance="provided_records")
+    mc = build_sitescore_opening_outcome_model_card(result)
+    receipt = build_sitescore_gate2_receipt(result, model_card=mc)
+    mc_dict = mc.to_dict()
+
+    r_forged = json.loads(json.dumps(receipt))
+    r_forged["gate_status"] = "PASSED"
+    r_forged["is_governed_disabled"] = False
+    r_forged["handback"]["governed_disabled"] = False
+    r_forged["benchmark_summary"]["status"] = "ACTIVE"
+    r_forged["handback"]["status"] = "ACTIVE"
+    r_forged["benchmark_summary"]["handback_payload"]["status"] = "ACTIVE"
+    r_forged["benchmark_summary"]["reason_code"] = "GATE2_CRITERIA_MET"
+    r_forged["handback"]["reason_code"] = "GATE2_CRITERIA_MET"
+    r_forged["benchmark_summary"]["handback_payload"]["reason_code"] = "GATE2_CRITERIA_MET"
+    r_forged["benchmark_summary"]["is_gate2_passed"] = True
+
+    rebound = _rebind_receipt_hashes(r_forged, mc_dict)
+    res = verify_sitescore_gate2_receipt(rebound, model_card_artifact=mc_dict)
+    assert res.is_valid is False
+    assert any("Forged ACTIVE or PASSED verdict detected" in e or "mismatch" in e for e in res.errors)
+
+
+def test_sitescore_opening_outcome_forged_population_digest_fails_closed():
+    # B2 Regression test: Mutating mature_population_digest fails closed when verified against dataset_manifest or when unverified
+    records = _generate_candidate_records(
+        220,
+        include_m6_m12_realized=True,
+        include_bounds=True,
+    )
+    result = evaluate_sitescore_opening_outcome_benchmark(records, provenance="provided_records")
+    mc = build_sitescore_opening_outcome_model_card(result)
+    receipt = build_sitescore_gate2_receipt(result, model_card=mc)
+    mc_dict = mc.to_dict()
+
+    r_forged = json.loads(json.dumps(receipt))
+    fake_digest = "a" * 64
+    r_forged["benchmark_summary"]["mature_population_digest"] = fake_digest
+    r_forged["handback"]["mature_population_digest"] = fake_digest
+    r_forged["benchmark_summary"]["handback_payload"]["mature_population_digest"] = fake_digest
+    r_forged["handback"]["outcome_backfill_contract"]["mature_population_digest"] = fake_digest
+    r_forged["benchmark_summary"]["handback_payload"]["outcome_backfill_contract"]["mature_population_digest"] = fake_digest
+
+    from models.sitescore.opening_outcome import compute_population_aggregate_digest
+    fake_agg_dig = compute_population_aggregate_digest(
+        fake_digest,
+        result.mature_label_count,
+        result.matched_prediction_count,
+        result.realized_revenue_sum,
+        result.matched_mean_y,
+        result.unmatched_mean_y,
+    )
+    r_forged["benchmark_summary"]["population_aggregate_digest"] = fake_agg_dig
+    r_forged["handback"]["population_aggregate_digest"] = fake_agg_dig
+    r_forged["benchmark_summary"]["handback_payload"]["population_aggregate_digest"] = fake_agg_dig
+    r_forged["handback"]["outcome_backfill_contract"]["population_aggregate_digest"] = fake_agg_dig
+    r_forged["benchmark_summary"]["handback_payload"]["outcome_backfill_contract"]["population_aggregate_digest"] = fake_agg_dig
+
+    rebound = _rebind_receipt_hashes(r_forged, mc_dict)
+
+    # Path A: Verify with dataset_manifest
+    res_manifest = verify_sitescore_gate2_receipt(rebound, model_card_artifact=mc_dict, dataset_manifest=records)
+    assert res_manifest.is_valid is False
+    assert any("mature_population_digest" in e and "does not match digest derived from authoritative dataset manifest" in e for e in res_manifest.errors)
+
+    # Path B: Verify without dataset_manifest when dataset snapshot is UNVERIFIED
+    res_unverified = verify_sitescore_gate2_receipt(rebound, model_card_artifact=mc_dict)
+    assert res_unverified.is_valid is False
+    assert any("mature_population_digest must be 'UNAVAILABLE'" in e for e in res_unverified.errors)

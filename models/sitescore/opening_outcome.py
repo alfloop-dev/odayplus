@@ -912,6 +912,7 @@ def verify_sitescore_gate2_receipt(
     receipt: dict[str, Any],
     *,
     model_card_artifact: dict[str, Any] | ModelCard | None = None,
+    dataset_manifest: Sequence[dict[str, Any]] | None = None,
 ) -> Gate2ReceiptVerificationResult:
     """Fail-closed verifier for Gate 2 receipt content, duplicate drift, and integrity (Fix for B1-B3)."""
     import re
@@ -929,7 +930,11 @@ def verify_sitescore_gate2_receipt(
         mc_dict = model_card_artifact.to_dict() if hasattr(model_card_artifact, "to_dict") else model_card_artifact
         if not isinstance(mc_dict, dict):
             errors.append("model_card_artifact must be a dictionary or ModelCard instance")
-            mc_dict = None
+    # B1: Derive verifier lineage strictly from authenticated prediction-source evidence.
+    # Until ODP-PLAN-SITESCORE-PREDICTION-SOURCE-001 provides an authoritative prediction-source resolver,
+    # prediction-source lineage is unverified and lineage_governed must be False.
+    # Submitted reason codes, statuses, or arbitrary strings must never establish lineage authority.
+    lineage_governed = False
 
     try:
         # 1. Integrity hash envelope check
@@ -1239,11 +1244,35 @@ def verify_sitescore_gate2_receipt(
         sum_unmatched_mean_y = _check_strict_float(sum_unmatched_raw, "benchmark_summary.unmatched_mean_y") if sum_unmatched_raw is not None else None
         sum_rev_sum = _check_strict_float(summary.get("realized_revenue_sum"), "benchmark_summary.realized_revenue_sum")
 
-        if mat == 0:
+        if dataset_manifest is not None:
+            sorted_mature_manifest = sorted(
+                [
+                    r for r in dataset_manifest
+                    if _is_strictly_eligible(r)
+                    and _is_valid_realized_outcome(r.get("realized_90d_net_revenue"))
+                ],
+                key=lambda r: str(r.get("store_id") or r.get("entity_id") or ""),
+            )
+            if sorted_mature_manifest:
+                canonical_manifest_list = [
+                    [
+                        str(r.get("store_id") or r.get("entity_id") or idx),
+                        float(r.get("realized_90d_net_revenue", 0)),
+                        float(r["predicted_revenue"]) if _is_finite_float(r.get("predicted_revenue")) else None,
+                    ]
+                    for idx, r in enumerate(sorted_mature_manifest)
+                ]
+                exp_manifest_pop_dig = hashlib.sha256(json.dumps(canonical_manifest_list, sort_keys=True).encode("utf-8")).hexdigest()
+            else:
+                exp_manifest_pop_dig = "UNAVAILABLE"
+            if sum_pop_dig != exp_manifest_pop_dig:
+                errors.append(f"mature_population_digest ({sum_pop_dig!r}) does not match digest derived from authoritative dataset manifest ({exp_manifest_pop_dig!r})")
+
+        if mat == 0 or (dataset_manifest is None and not lineage_governed):
             if sum_pop_dig != "UNAVAILABLE":
-                errors.append(f"mature_population_digest must be 'UNAVAILABLE' when mature_label_count is 0 (got {sum_pop_dig!r})")
+                errors.append(f"mature_population_digest must be 'UNAVAILABLE' when dataset snapshot is UNVERIFIED and no authoritative dataset manifest is provided (got {sum_pop_dig!r})")
             if sum_agg_dig != "UNAVAILABLE":
-                errors.append(f"population_aggregate_digest must be 'UNAVAILABLE' when mature_label_count is 0 (got {sum_agg_dig!r})")
+                errors.append(f"population_aggregate_digest must be 'UNAVAILABLE' when dataset snapshot is UNVERIFIED and no authoritative dataset manifest is provided (got {sum_agg_dig!r})")
         elif mat is not None and mat > 0:
             if not isinstance(sum_pop_dig, str) or not re.fullmatch(HEX64_PATTERN, sum_pop_dig):
                 errors.append(f"Invalid mature_population_digest format: {sum_pop_dig!r}")
@@ -1940,6 +1969,18 @@ def verify_sitescore_gate2_receipt(
                 if declared_mc_hash != recomputed_mc_hash:
                     errors.append(f"Model card artifact hash mismatch: declared {declared_mc_hash}, recomputed {recomputed_mc_hash}")
 
+                if not lineage_governed:
+                    if mc_dict.get("release_status") not in (None, "GOVERNED_DISABLED"):
+                        errors.append(f"model_card.release_status must be 'GOVERNED_DISABLED' when lineage is not governed (got {mc_dict.get('release_status')!r})")
+                    if mc_dict.get("is_approved") is True:
+                        errors.append("model_card.is_approved must be False when lineage is not governed")
+                    for unv_key in ("validation_run_id", "feature_set_id", "label_set_id", "privacy_review", "security_review"):
+                        val = mc_dict.get(unv_key)
+                        if val not in (None, "UNVERIFIED", "UNAVAILABLE"):
+                            errors.append(f"model_card.{unv_key} must be 'UNVERIFIED' when lineage is not governed (got {val!r})")
+                    if mc_dict.get("approvals"):
+                        errors.append("model_card.approvals must be empty when lineage is not governed")
+
         # Provenance, reason_code, status, and threshold validation & cross-checks
         ALLOWED_PROVENANCES = {"no_source", "unreachable_db", "provided_records", "pg16_query", "authenticated_governed_records"}
         rec_prov = receipt.get("provenance")
@@ -2001,22 +2042,11 @@ def verify_sitescore_gate2_receipt(
         min_cov_thresh_val = MIN_COVERAGE_THRESHOLD
         max_mae_thresh_val = MAX_MAE_THRESHOLD
 
-        lineage_governed = bool(
-            rec_prov in ("pg16_query", "authenticated_governed_records")
-            and (
-                (
-                    summary.get("dataset_snapshot_id") not in (None, "UNAVAILABLE", "UNVERIFIED")
-                    and summary.get("model_version") not in (None, "UNAVAILABLE", "UNVERIFIED")
-                    and summary.get("artifact_lineage_id") not in (None, "UNAVAILABLE", "UNVERIFIED")
-                )
-                or sum_reason not in (
-                    "DB_INVENTORY_UNREACHABLE",
-                    "NO_SOURCE_INVENTORY",
-                    "UNAUTHENTICATED_PROVENANCE",
-                    "MISSING_GOVERNED_LINEAGE",
-                )
-            )
-        )
+        # B1: Derive verifier lineage strictly from authenticated prediction-source evidence.
+        # Until ODP-PLAN-SITESCORE-PREDICTION-SOURCE-001 provides an authoritative prediction-source resolver,
+        # prediction-source lineage is unverified and lineage_governed must be False.
+        # Submitted reason codes, statuses, or arbitrary strings must never establish lineage authority.
+        lineage_governed = False
 
         labels_sufficient = (mat is not None and mat >= act_thresh_val)
         pred_cov_passed = (pred_cov is not None and pred_cov >= min_cov_thresh_val)
