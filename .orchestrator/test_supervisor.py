@@ -85,6 +85,74 @@ def load_test_config() -> dict[str, Any]:
 
 
 class RuntimeConfigTests(unittest.TestCase):
+    def test_supervisor_pins_ai_status_to_immutable_runtime(self) -> None:
+        self.assertEqual(
+            Path(supervisor.runtime_ai_status.__file__).resolve(),
+            (SCRIPTS_DIR / "ai_status.py").resolve(),
+        )
+
+    def test_dashboard_refresh_does_not_prepend_status_root_scripts(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="pantheon-stale-status-root-") as tmp:
+            status_root = Path(tmp)
+            stale_scripts = status_root / "scripts"
+            stale_scripts.mkdir()
+            (stale_scripts / "ai_status.py").write_text(
+                "raise RuntimeError('stale status-root ai_status imported')\n",
+                encoding="utf-8",
+            )
+            config = {"paths": {"status_file": str(status_root / "ai-status.json")}}
+
+            with mock.patch.object(supervisor.runtime_ai_status, "load_state", return_value={}), \
+                 mock.patch.object(supervisor.runtime_ai_status, "write_dashboard_bundle"), \
+                 mock.patch.object(supervisor.runtime_ai_status, "sync_docs_site"):
+                supervisor.refresh_dashboard_runtime_artifacts(config)
+
+            self.assertNotIn(str(stale_scripts), sys.path)
+
+    def test_task_head_resolution_ignores_poisoned_ai_status_module(self) -> None:
+        stale_module = mock.Mock()
+        stale_module.resolve_task_sha.side_effect = TypeError(
+            "resolve_task_sha() got an unexpected keyword argument 'force_refresh'"
+        )
+        with mock.patch.dict(sys.modules, {"ai_status": stale_module}), \
+             mock.patch.object(
+                 supervisor.runtime_ai_status,
+                 "resolve_task_sha",
+                 return_value="1111111122222222333333334444444455555555",
+             ) as pinned_resolver, \
+             mock.patch.object(
+                 supervisor.runtime_ai_status,
+                 "task_pr_ci_status",
+                 return_value=("OPEN", "success"),
+             ):
+            self.assertEqual(
+                supervisor.resolve_task_progress_head("PINNED-RUNTIME-001"),
+                "1111111122222222333333334444444455555555",
+            )
+            self.assertEqual(
+                supervisor.dispatch_priority_for_task(
+                    load_test_config(),
+                    {
+                        "id": "PINNED-RUNTIME-001",
+                        "owner": "Codex2",
+                        "reviewer": "Codex",
+                        "status": "review_approved",
+                        "approved_head": "1111111122222222333333334444444455555555",
+                    },
+                    "Codex2",
+                ),
+                1,
+            )
+
+        self.assertEqual(
+            pinned_resolver.call_args_list,
+            [
+                mock.call("PINNED-RUNTIME-001"),
+                mock.call("PINNED-RUNTIME-001", force_refresh=True),
+            ],
+        )
+        stale_module.resolve_task_sha.assert_not_called()
+
     def test_test_config_coordination_paths_are_temporary_and_absolute(self) -> None:
         config = load_test_config()
 
