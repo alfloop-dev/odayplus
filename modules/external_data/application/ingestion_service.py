@@ -91,6 +91,17 @@ class ExternalIngestionService:
         )
         self._rehydrate()
 
+    def _resolve_store(self, tenant_id: str = "") -> Any:
+        if self.ingestion_run_store_for_tenant is not None:
+            clean_tid = str(tenant_id).strip() if tenant_id else ""
+            if not clean_tid:
+                raise ValueError("Tenant ID required for tenant-scoped ingestion store resolution")
+            scoped = self.ingestion_run_store_for_tenant(clean_tid)
+            if scoped is None:
+                raise RuntimeError(f"Tenant store factory returned None for tenant '{clean_tid}'")
+            return scoped
+        return self.store
+
     # -- public API -------------------------------------------------------
 
     def ingest(
@@ -110,11 +121,12 @@ class ExternalIngestionService:
         tenant_id: str = "",
     ) -> IngestionOutcome:
         sla = freshness_sla or self.freshness_sla
+        target_store = self._resolve_store(tenant_id)
 
         # Route-level idempotency: an ``Idempotency-Key`` replay never re-runs
         # the provider and is recorded as ``idempotent_replay``.
         if api_idempotency_key:
-            existing = self.store.get_by_api_key(api_idempotency_key)
+            existing = target_store.get_by_api_key(api_idempotency_key)
             if existing is not None:
                 return self._replay(
                     existing,
@@ -141,10 +153,10 @@ class ExternalIngestionService:
 
         # Window idempotency: the scheduler already deduped this window, so the
         # persisted run for that window is the authoritative replay target.
-        existing = self.store.get_by_window_key(run.idempotency_key)
+        existing = target_store.get_by_window_key(run.idempotency_key)
         if existing is not None:
             if api_idempotency_key:
-                self.store.link_api_key(api_idempotency_key, existing.run_id)
+                target_store.link_api_key(api_idempotency_key, existing.run_id)
             return self._replay(
                 existing,
                 trigger=trigger,
@@ -161,14 +173,6 @@ class ExternalIngestionService:
             api_idempotency_key=api_idempotency_key,
             tenant_id=tenant_id,
         )
-        target_store = self.store
-        if self.ingestion_run_store_for_tenant is not None and tenant_id:
-            try:
-                scoped = self.ingestion_run_store_for_tenant(tenant_id)
-                if scoped is not None:
-                    target_store = scoped
-            except Exception:
-                pass
         saved = target_store.save(record)
         audit = self._record_audit(saved, created=True, actor=actor, correlation_id=run.correlation_id)
         return IngestionOutcome(record=saved, created=True, audit_event_id=audit.event_id)

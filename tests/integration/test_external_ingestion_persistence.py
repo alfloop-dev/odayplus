@@ -13,6 +13,7 @@ from __future__ import annotations
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
+import pytest
 from fastapi.testclient import TestClient
 
 from apps.api.oday_api.main import create_app
@@ -254,3 +255,86 @@ def test_ingestion_run_survives_restart_and_replays(tmp_path) -> None:
         assert runs.json()["count"] == 1
     finally:
         reopened.engine.close()
+
+
+def test_cross_tenant_ingestion_store_isolation_and_factory_failure_negatives() -> None:
+    store_a = InMemoryIngestionRunStore()
+
+    def resolver(tenant_id: str) -> InMemoryIngestionRunStore:
+        if tenant_id == "tenant-a":
+            return store_a
+        if tenant_id == "tenant-b":
+            raise RuntimeError("Tenant B store failed to resolve")
+        raise ValueError(f"Unknown tenant {tenant_id}")
+
+    service = ExternalIngestionService(
+        ingestion_run_store_for_tenant=resolver,
+        audit_log=InMemoryAuditLog(),
+    )
+
+    # Tenant A ingests successfully into tenant A store
+    outcome_a = service.ingest(
+        tenant_id="tenant-a",
+        api_idempotency_key="shared-api-key",
+    )
+    assert outcome_a.created is True
+    assert outcome_a.record.tenant_id == "tenant-a"
+    assert len(store_a.list_runs()) == 1
+
+    # Tenant B attempt with factory failure propagates exception immediately (no fallback to global/unscoped store or tenant A run)
+    with pytest.raises(RuntimeError, match="Tenant B store failed to resolve"):
+        service.ingest(
+            tenant_id="tenant-b",
+            api_idempotency_key="shared-api-key",
+        )
+
+    # Global store and tenant A store remain unpolluted by tenant B's failed resolution
+    assert len(service.store.list_runs()) == 0
+    assert len(store_a.list_runs()) == 1
+
+    # Tenant B with working store isolation gets distinct run and store idempotency key
+    store_b = InMemoryIngestionRunStore()
+    store_map = {"tenant-a": store_a, "tenant-b": store_b}
+    service_working = ExternalIngestionService(
+        ingestion_run_store_for_tenant=lambda tid: store_map[tid],
+        audit_log=InMemoryAuditLog(),
+    )
+
+    outcome_b = service_working.ingest(
+        tenant_id="tenant-b",
+        api_idempotency_key="shared-api-key",
+    )
+    assert outcome_b.created is True
+    assert outcome_b.record.tenant_id == "tenant-b"
+    assert outcome_b.record.run_id != outcome_a.record.run_id
+    assert len(store_b.list_runs()) == 1
+    assert store_b.get_by_api_key("shared-api-key") is not None
+
+
+def test_cross_tenant_api_fault_isolation() -> None:
+    def failing_resolver(tenant_id: str) -> InMemoryIngestionRunStore:
+        if tenant_id == "tenant-fault":
+            raise RuntimeError("Tenant store factory failure")
+        return InMemoryIngestionRunStore()
+
+    app = create_app()
+
+    # Re-wire external data router to use failing resolver
+    from apps.api.app.routes.external_data import create_external_data_router
+
+    router = create_external_data_router(ingestion_run_store_for_tenant=failing_resolver)
+    app.include_router(router, prefix="/api/v1")
+
+    client = TestClient(app)
+    headers = {
+        **EXTERNAL_DATA_HEADERS,
+        "x-tenant-id": "tenant-fault",
+        "Idempotency-Key": "fault-key",
+    }
+    res = client.post(
+        "/api/v1/external-data/ingestion-runs",
+        json=_run_payload(),
+        headers=headers,
+    )
+    assert res.status_code == 500, res.text
+    assert "Failed to execute tenant ingestion run" in res.json()["detail"] or "Failed to resolve" in res.json()["detail"]

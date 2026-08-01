@@ -91,10 +91,23 @@ else:
 
         def store_for_request(request: Request) -> Any:
             tid = resolve_tenant_id(request)
-            if ingestion_run_store_for_tenant is not None and tid:
-                scoped = ingestion_run_store_for_tenant(tid)
-                if scoped is not None:
-                    return scoped
+            if ingestion_run_store_for_tenant is not None:
+                if not tid:
+                    raise HTTPException(
+                        status_code=status.HTTP_400_BAD_REQUEST,
+                        detail="Tenant ID required for ingestion store resolution",
+                    )
+                try:
+                    scoped = ingestion_run_store_for_tenant(tid)
+                    if scoped is not None:
+                        return scoped
+                except HTTPException:
+                    raise
+                except Exception as exc:
+                    raise HTTPException(
+                        status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                        detail=f"Failed to resolve tenant-scoped ingestion store: {exc}",
+                    ) from exc
                 raise HTTPException(
                     status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
                     detail="Failed to resolve tenant-scoped ingestion store",
@@ -176,16 +189,29 @@ else:
         ) -> dict[str, Any]:
             effective_idempotency_key = body.idempotency_key or idempotency_key
             tid = resolve_tenant_id(request)
-            outcome = service.ingest(
-                provider_id=body.provider_id,
-                schedule_id=body.schedule_id,
-                trigger="manual",
-                window_start=_parse_dt(body.window_start),
-                window_end=_parse_dt(body.window_end),
-                correlation_id=request.state.correlation_id,
-                api_idempotency_key=effective_idempotency_key,
-                tenant_id=tid,
-            )
+            try:
+                outcome = service.ingest(
+                    provider_id=body.provider_id,
+                    schedule_id=body.schedule_id,
+                    trigger="manual",
+                    window_start=_parse_dt(body.window_start),
+                    window_end=_parse_dt(body.window_end),
+                    correlation_id=request.state.correlation_id,
+                    api_idempotency_key=effective_idempotency_key,
+                    tenant_id=tid,
+                )
+            except ValueError as exc:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail=str(exc),
+                ) from exc
+            except HTTPException:
+                raise
+            except Exception as exc:
+                raise HTTPException(
+                    status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                    detail=f"Failed to execute tenant ingestion run: {exc}",
+                ) from exc
             payload = outcome.record.to_dict()
             payload["created"] = outcome.created
             payload["audit_event_id"] = outcome.audit_event_id

@@ -214,6 +214,7 @@ else:
 
         ingestion_service = external_ingestion_service or ExternalIngestionService(
             store=bundle.ingestion_run_store,
+            ingestion_run_store_for_tenant=bundle.ingestion_run_store_for_tenant,
             state_store=bundle.external_fetch_state_store,
             audit_log=audit_log,
         )
