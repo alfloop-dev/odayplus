@@ -26,6 +26,20 @@ This is a volatile preparation snapshot, not an approval:
 
 Recompute all values before handoff. The current parent `verification_report.md` still names baseline `97e3ae2e`, omits the newest external-ingestion test scope, and does not attest `a0333308`; it must be refreshed by the parent owner before review.
 
+## Sidecar CI reconciliation
+
+PR `#560` reached exact pushed head `a7e8b7b87c629ef4eb11a2f05b18cc4d8cbb3f68` with a one-file diff containing only this packet. Its CI run `30723040164` passed `orchestrator` and `performance-gate`, but job `91429808881` failed `product-e2e-gate` before merge. The authoritative GitHub log reports:
+
+```text
+Product release gate failed:
+- intervening commits touch non-evidence paths: support/sidecars/ODP-OPERATOR-LIVE-PROVENANCE-HEALTH-001/ODP-OPERATOR-LIVE-PROVENANCE-HEALTH-001-SIDECAR-ACCEPTANCE.md
+make: *** [Makefile:79: product-e2e-gate] Error 1
+```
+
+This is a shared CI/sidecar compatibility blocker, not a failed packet assertion: the current receipt validator treats the required `support/sidecars/**` artifact as a product-runtime mutation requiring a fresh Product E2E receipt. Refreshing product evidence or changing `.github`, `Makefile`, or `scripts/e2e/**` is outside this support-only task. Resolution is owned by `ODP-CI-DEV-MERGE-RELEASE-NOGO-DEADLOCK-001`; after that task merges, rebase or merge the repaired `origin/dev`, rerun PR checks, and request independent re-review at the new exact pushed head.
+
+Do not work around this blocker by moving the packet into product evidence, manufacturing a receipt, weakening the fail-closed release gate, or editing canonical CI from this sidecar lane.
+
 ## P0 acceptance checklist
 
 | Gate | Required proof | Fail conditions |
