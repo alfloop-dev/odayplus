@@ -69,7 +69,7 @@ class TenantScopedDocumentStore:
         else:
             item_tenant = getattr(obj, "tenant_id", None) or getattr(obj, "tenantId", None)
         if item_tenant is None or not str(item_tenant).strip():
-            return True
+            return False
         return str(item_tenant).strip() == self._tenant_id
 
     @staticmethod

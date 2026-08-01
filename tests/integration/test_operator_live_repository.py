@@ -665,12 +665,23 @@ def test_canonical_writer_restart_provenance(tmp_path: Path) -> None:
         bundle1.tenant_repository.save_tenant(
             Tenant(tenant_id="tenant-canonical", tenant_name="Canonical Tenant")
         )
+        bundle1.tenant_repository.save_tenant(
+            Tenant(tenant_id="tenant-b", tenant_name="Tenant B")
+        )
         bundle1.brand_repository.save_brand(
             Brand(
                 brand_id="brand-canonical",
                 tenant_id="tenant-canonical",
                 brand_code="brand-canonical",
                 brand_name="Canonical Brand",
+            )
+        )
+        bundle1.brand_repository.save_brand(
+            Brand(
+                brand_id="brand-b",
+                tenant_id="tenant-b",
+                brand_code="brand-b",
+                brand_name="Brand B",
             )
         )
         address_a = AddressLocation(
@@ -689,9 +700,20 @@ def test_canonical_writer_restart_provenance(tmp_path: Path) -> None:
                 address_id="addr-canonical",
             )
         )
+        bundle1.store_repository.save_store(
+            Store(
+                store_id="store-b",
+                tenant_id="tenant-b",
+                brand_id="brand-b",
+                store_name="Tenant B Store",
+                store_status="open",
+                address_id="addr-canonical",
+            )
+        )
         listing_canonical = Listing(
-            listing_id="listing-canonical-unscoped",
+            listing_id="listing-canonical-write",
             address_id="addr-canonical",
+            listing_status="manual_review",
         )
         key_canonical = ListingDedupKey(
             source_id="src-canonical",
@@ -700,23 +722,60 @@ def test_canonical_writer_restart_provenance(tmp_path: Path) -> None:
             rent_amount=2000.0,
             area_ping=50.0,
         )
-        bundle1.listing_repository.save_listing(listing_canonical, address_a, key_canonical)
+        repo_canonical = bundle1.listing_repository_for_tenant("tenant-canonical")
+        assert repo_canonical is not None
+        repo_canonical.save_listing(listing_canonical, address_a, key_canonical)
+
+        # Write an ownership-less record directly to unscoped store
+        listing_ownership_less = Listing(
+            listing_id="listing-ownership-less",
+            address_id="addr-canonical",
+            listing_status="manual_review",
+        )
+        key_ownership_less = ListingDedupKey(
+            source_id="src-unscoped",
+            source_listing_id="list-unscoped",
+            normalized_address="addr-unscoped",
+            rent_amount=1500.0,
+            area_ping=40.0,
+        )
+        bundle1.listing_repository.save_listing(
+            listing_ownership_less, address_a, key_ownership_less
+        )
     finally:
         bundle1.engine.close()
 
     bundle2 = _durable_bundle(db_path)
     try:
+        repo_canonical2 = bundle2.listing_repository_for_tenant("tenant-canonical")
+        assert repo_canonical2 is not None
+        saved_listing = repo_canonical2.get_listing("listing-canonical-write")
+        assert saved_listing is not None
+        assert saved_listing.listing_id == "listing-canonical-write"
+
         live_repo = OperatorLiveRepository(bundle2)
-        state = live_repo.load_state(
+        state_canonical = live_repo.load_state(
             tenant_id="tenant-canonical",
             store_ids=("store-canonical",),
         )
-        meta = state["_meta"]
-        sections = meta["sections"]
-        assert sections["listings"]["state"] == "available"
-        assert sections["listings"]["recordCount"] == 1
-        assert meta["dataMode"] == "live"
-        assert meta["dataOrigin"]["complete"] is True
+        meta_canonical = state_canonical["_meta"]
+        sections_canonical = meta_canonical["sections"]
+        assert sections_canonical["listings"]["state"] == "available"
+        assert sections_canonical["listings"]["recordCount"] == 1
+        assert meta_canonical["dataMode"] == "live"
+        assert meta_canonical["dataOrigin"]["complete"] is True
+        assert "listing-canonical-write" in str(state_canonical)
+        assert "listing-ownership-less" not in str(state_canonical)
+
+        # Prove tenant-b cannot read tenant-canonical's writes nor ownership-less record
+        state_b = live_repo.load_state(
+            tenant_id="tenant-b",
+            store_ids=("store-b",),
+        )
+        sections_b = state_b["_meta"]["sections"]
+        assert sections_b["listings"]["recordCount"] == 0
+        assert "listing-canonical-write" not in str(state_b)
+        assert "listing-ownership-less" not in str(state_b)
     finally:
         bundle2.engine.close()
 
