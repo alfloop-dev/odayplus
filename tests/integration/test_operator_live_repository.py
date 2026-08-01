@@ -712,16 +712,18 @@ def test_canonical_writer_restart_provenance(tmp_path: Path) -> None:
             )
         )
 
-        # Write canonical record through actual API / canonical writer path with tenant header
+        # Write canonical records through actual API / canonical writer paths with tenant header
         app1 = create_app(persistence=bundle1)
         with TestClient(app1) as client1:
-            res = client1.post(
+            headers = {
+                "x-tenant-id": "tenant-canonical",
+                "x-subject-id": "user-canonical",
+                "x-roles": "data_owner,expansion_user,operations_manager",
+            }
+            # 1. Listing import
+            res_list = client1.post(
                 "/api/v1/listings/import",
-                headers={
-                    "x-tenant-id": "tenant-canonical",
-                    "x-subject-id": "user-canonical",
-                    "x-roles": "expansion_user",
-                },
+                headers=headers,
                 json={
                     "records": [
                         {
@@ -738,9 +740,70 @@ def test_canonical_writer_restart_provenance(tmp_path: Path) -> None:
                     "source_id": "src-canonical",
                 },
             )
-            assert res.status_code == 202, res.text
+            assert res_list.status_code == 202, res_list.text
 
-        # Write an ownership-less record directly to unscoped store
+            # 2. HeatZone batch score job
+            res_hz = client1.post(
+                "/api/v1/heatzones/score-jobs",
+                headers=headers,
+                json={
+                    "features": [
+                        {
+                            "h3_index": "8928308280fffff",
+                            "h3_resolution": 9,
+                            "unmet_demand_score": 0.8,
+                            "format_fit_score": 0.8,
+                            "cannibalization_risk_score": 0.2,
+                            "rent_feasibility_score": 0.7,
+                            "listing_availability_score": 0.8,
+                            "confidence": 0.9,
+                        }
+                    ]
+                },
+            )
+            assert res_hz.status_code == 202, res_hz.text
+
+            # 3. External data ingestion run
+            res_ing = client1.post(
+                "/api/v1/external-data/ingestion-runs",
+                headers=headers,
+                json={
+                    "provider_id": "listing.partner_feed",
+                    "schedule_id": "manual",
+                },
+            )
+            assert res_ing.status_code == 202, res_ing.text
+
+            # 4. SiteScore score job & decision open
+            res_ss = client1.post(
+                "/api/v1/sitescore/score-jobs",
+                headers=headers,
+                json={
+                    "features": [
+                        {
+                            "candidate_site_id": "cand-canonical-1",
+                            "heat_zone_score": 80.0,
+                            "monthly_rent": 50000.0,
+                            "area_ping": 30.0,
+                            "source_snapshot_ids": ["snap-canonical"],
+                        }
+                    ]
+                },
+            )
+            assert res_ss.status_code == 202, res_ss.text
+            report_id = res_ss.json()["reports"][0]["report_id"]
+
+            res_dec = client1.post(
+                "/api/v1/sitescore/decisions",
+                headers=headers,
+                json={
+                    "report_id": report_id,
+                    "created_by": "user-canonical",
+                },
+            )
+            assert res_dec.status_code == 201, res_dec.text
+
+        # Write ownership-less records directly to unscoped base stores
         listing_ownership_less = Listing(
             listing_id="listing-ownership-less",
             address_id="addr-canonical",
@@ -756,6 +819,97 @@ def test_canonical_writer_restart_provenance(tmp_path: Path) -> None:
         bundle1.listing_repository.save_listing(
             listing_ownership_less, address_a, key_ownership_less
         )
+
+        from modules.heatzone.domain import HeatZoneScoreResult, HeatZoneState
+        from modules.heatzone.workers import HeatZoneBatchScoreResult
+        now = datetime.now(UTC)
+        unscoped_hz = HeatZoneBatchScoreResult(
+            job_id="job-unscoped",
+            status="completed",
+            scores=(
+                HeatZoneScoreResult(
+                    heat_zone_id="hz-unscoped",
+                    h3_index="8928308280ffff1",
+                    h3_resolution=9,
+                    score=0.5,
+                    priority_rank=2,
+                    unmet_demand_score=0.5,
+                    format_fit_score=0.5,
+                    cannibalization_risk_score=0.5,
+                    rent_feasibility_score=0.5,
+                    listing_availability_score=0.5,
+                    confidence=0.5,
+                    state=HeatZoneState.UNTOUCHED,
+                    feature_snapshot_time=now,
+                    prediction_origin_time=now,
+                    last_scored_at=now,
+                    model_version="v1",
+                    feature_version="v1",
+                    source_snapshot_ids=("snap-u",),
+                ),
+            ),
+            completed_at=now,
+            tenant_id="",
+        )
+        bundle1.heatzone_store.put(unscoped_hz)
+
+        from modules.external_data.application.ingestion_store import IngestionRunRecord
+        from modules.external_data.workers.scheduled_fetch import SourceFreshnessEvidence
+        unscoped_ing = IngestionRunRecord(
+            run_id="run-unscoped",
+            provider_id="prov-unscoped",
+            schedule_id="manual",
+            trigger="manual",
+            idempotency_key="key-unscoped",
+            status="completed",
+            data_status="fresh",
+            window_start=now,
+            window_end=now,
+            started_at=now,
+            completed_at=now,
+            raw_snapshot_id="raw-u",
+            canonical_snapshot_id="can-u",
+            source_snapshot_id="src-u",
+            provider_observed_at=now,
+            ingested_at=now,
+            last_success_watermark_before=now,
+            last_success_watermark_after=now,
+            correlation_id="corr-u",
+            accepted_count=5,
+            quarantined_count=0,
+            total_count=5,
+            tenant_id="",
+            freshness=SourceFreshnessEvidence(
+                provider_id="prov-unscoped",
+                source_snapshot_id="src-u",
+                data_status="fresh",
+                provider_observed_at=now,
+                ingested_at=now,
+                freshness_sla_seconds=86400,
+                correlation_id="corr-u",
+            ),
+        )
+        bundle1.ingestion_run_store.save(unscoped_ing)
+
+        from shared.workflow.sitescore import (
+            DecisionStatus,
+            SiteScoreDecision,
+            SiteScoreRecommendation,
+        )
+        unscoped_dec = SiteScoreDecision(
+            decision_id="dec-unscoped",
+            candidate_site_id="cand-unscoped",
+            report_id="rep-unscoped",
+            report_version=1,
+            recommendation=SiteScoreRecommendation.GO,
+            status=DecisionStatus.APPROVED,
+            policy_version="v1",
+            model_version="v1",
+            created_by="user-unscoped",
+            created_at=now,
+            tenant_id="",
+        )
+        bundle1.sitescore_decision_store.save_decision(unscoped_dec)
     finally:
         bundle1.engine.close()
 
@@ -773,20 +927,39 @@ def test_canonical_writer_restart_provenance(tmp_path: Path) -> None:
         )
         meta_canonical = state_canonical["_meta"]
         sections_canonical = meta_canonical["sections"]
+
         assert sections_canonical["listings"]["state"] == "available"
         assert sections_canonical["listings"]["recordCount"] == 1
+        assert sections_canonical["heatZones"]["state"] == "available"
+        assert sections_canonical["heatZones"]["recordCount"] == 1
+        assert sections_canonical["ingestionRuns"]["state"] == "available"
+        assert sections_canonical["ingestionRuns"]["recordCount"] == 1
+        assert sections_canonical["siteScoreDecisions"]["state"] == "available"
+        assert sections_canonical["siteScoreDecisions"]["recordCount"] == 1
+
         assert meta_canonical["dataMode"] == "live"
         assert meta_canonical["dataOrigin"]["complete"] is True
         assert "listing-ownership-less" not in str(state_canonical)
+        assert "job-unscoped" not in str(state_canonical)
+        assert "run-unscoped" not in str(state_canonical)
+        assert "dec-unscoped" not in str(state_canonical)
 
-        # Prove tenant-b cannot read tenant-canonical's writes nor ownership-less record
+        # Prove tenant-b cannot read tenant-canonical's writes nor ownership-less records
         state_b = live_repo.load_state(
             tenant_id="tenant-b",
             store_ids=("store-b",),
         )
         sections_b = state_b["_meta"]["sections"]
         assert sections_b["listings"]["recordCount"] == 0
+        assert sections_b["heatZones"]["recordCount"] == 0
+        assert sections_b["ingestionRuns"]["recordCount"] == 0
+        assert sections_b["siteScoreDecisions"]["recordCount"] == 0
+
         assert "listing-ownership-less" not in str(state_b)
+        assert "job-unscoped" not in str(state_b)
+        assert "run-unscoped" not in str(state_b)
+        assert "dec-unscoped" not in str(state_b)
+        assert "list-canonical-api" not in str(state_b)
     finally:
         bundle2.engine.close()
 

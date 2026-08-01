@@ -65,6 +65,7 @@ class HeatZoneScoringWorker:
         job_id: str | None = None,
         features: Iterable[HeatZoneFeatureInput | GeoFeatureSnapshot | Mapping[str, Any]],
         prediction_origin_time: datetime | str | None = None,
+        tenant_id: str = "",
     ) -> HeatZoneBatchScoreResult:
         effective_job_id = job_id or f"heatzone-score-{uuid4()}"
         feature_rows = list(features)
@@ -109,6 +110,7 @@ class HeatZoneScoringWorker:
             completed_at=datetime.now(UTC),
             warnings=warnings,
             model_inference=inference,
+            tenant_id=tenant_id,
         )
 
 
@@ -119,6 +121,7 @@ def run_heatzone_batch_score(
     prediction_origin_time: datetime | str | None = None,
     model_runtime: ProductionModelRuntime | None = None,
     require_production_model: bool | None = None,
+    tenant_id: str = "",
 ) -> HeatZoneBatchScoreResult:
     return HeatZoneScoringWorker(
         model_runtime=model_runtime,
@@ -127,6 +130,7 @@ def run_heatzone_batch_score(
         job_id=job_id,
         features=features,
         prediction_origin_time=prediction_origin_time,
+        tenant_id=tenant_id,
     )
 
 

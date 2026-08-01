@@ -32,6 +32,7 @@ else:
     def create_heatzone_router(
         *,
         store: HeatZoneResultStore | None = None,
+        heatzone_store_for_tenant: Any | None = None,
         audit_log: InMemoryAuditLog | None = None,
         model_binding: ModelBinding | None = None,
         model_runtime: ProductionModelRuntime | None = None,
@@ -50,14 +51,44 @@ else:
             else require_production_model
         )
 
+        def resolve_tenant_id(request: Request) -> str:
+            principal = getattr(request.state, "operator_principal", None)
+            if principal is None:
+                from apps.api.oday_api.security.dependencies import principal_from_headers
+
+                try:
+                    principal = principal_from_headers(request.headers)
+                except Exception:
+                    principal = None
+            if principal is not None:
+                val = getattr(getattr(principal, "scope", None), "tenant_id", None) or getattr(
+                    principal, "tenant_id", None
+                )
+                if val and str(val).strip():
+                    return str(val).strip()
+            return (request.headers.get("x-tenant-id") or "").strip()
+
+        def store_for_request(request: Request) -> Any:
+            tid = resolve_tenant_id(request)
+            if heatzone_store_for_tenant is not None and tid:
+                try:
+                    scoped = heatzone_store_for_tenant(tid)
+                    if scoped is not None:
+                        return scoped
+                except Exception:
+                    pass
+            return result_store
+
         @router.get("", dependencies=[Depends(require_permission("heatzone", Action.VIEW, engine=authz_engine))])
-        def list_heatzones(limit: int = 100) -> dict[str, Any]:
-            scores = result_store.list_scores()[: max(0, limit)]
+        def list_heatzones(request: Request, limit: int = 100) -> dict[str, Any]:
+            active_store = store_for_request(request)
+            scores = active_store.list_scores()[: max(0, limit)]
             return {"items": scores, "count": len(scores)}
 
         @router.get("/map", dependencies=[Depends(require_permission("heatzone", Action.VIEW, engine=authz_engine))])
-        def heatzone_map() -> dict[str, Any]:
-            features = result_store.map_features()
+        def heatzone_map(request: Request) -> dict[str, Any]:
+            active_store = store_for_request(request)
+            features = active_store.map_features()
             return {
                 "type": "FeatureCollection",
                 "features": features,
@@ -75,7 +106,9 @@ else:
             idempotency_key: str | None = Header(default=None, alias="Idempotency-Key"),
         ) -> dict[str, Any]:
             effective_idempotency_key = body.idempotency_key or idempotency_key
-            existing = result_store.find_by_idempotency_key(effective_idempotency_key)
+            active_store = store_for_request(request)
+            tid = resolve_tenant_id(request)
+            existing = active_store.find_by_idempotency_key(effective_idempotency_key)
             if existing is not None:
                 result, created = existing, False
             else:
@@ -87,12 +120,13 @@ else:
                         status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)
                     ) from exc
                 try:
-                    result, created = result_store.put(
+                    result, created = active_store.put(
                         run_heatzone_batch_score(
                             features=body.features,
                             prediction_origin_time=body.prediction_origin_time,
                             model_runtime=model_runtime,
                             require_production_model=production_model_required,
+                            tenant_id=tid,
                         ),
                         idempotency_key=effective_idempotency_key,
                     )
@@ -139,15 +173,17 @@ else:
             return payload
 
         @router.get("/snapshots/{snapshot_id}", dependencies=[Depends(require_permission("heatzone", Action.VIEW, engine=authz_engine))])
-        def snapshot(snapshot_id: str) -> dict[str, Any] | None:
-            result = result_store.snapshot(snapshot_id)
+        def snapshot(snapshot_id: str, request: Request) -> dict[str, Any] | None:
+            active_store = store_for_request(request)
+            result = active_store.snapshot(snapshot_id)
             if result is None:
                 return None
             return result.to_dict()
 
         @router.get("/{h3_index}", dependencies=[Depends(require_permission("heatzone", Action.VIEW, engine=authz_engine))])
-        def heatzone_detail(h3_index: str) -> dict[str, Any] | None:
-            for item in result_store.list_scores():
+        def heatzone_detail(h3_index: str, request: Request) -> dict[str, Any] | None:
+            active_store = store_for_request(request)
+            for item in active_store.list_scores():
                 if item["h3_index"] == h3_index:
                     return item
             return None

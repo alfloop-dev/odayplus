@@ -200,6 +200,7 @@ def build_ingestion_run_record(
     freshness_sla: timedelta,
     trigger: str,
     api_idempotency_key: str | None = None,
+    tenant_id: str = "",
 ) -> IngestionRunRecord:
     """Fold a scheduler run + provider result into one persistable aggregate."""
 
@@ -279,6 +280,7 @@ def build_ingestion_run_record(
         total_count=total_count,
         message=run.message,
         retry_after=run.retry_after,
+        tenant_id=tenant_id,
         freshness=freshness,
         quarantine=tuple(quarantine),
         lineage=tuple(lineage),

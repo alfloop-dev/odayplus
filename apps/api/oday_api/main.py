@@ -971,6 +971,7 @@ else:
             api,
             create_heatzone_router(
                 store=heatzone_store,
+                heatzone_store_for_tenant=bundle.heatzone_store_for_tenant,
                 audit_log=audit_log,
                 model_binding=scoring_bindings.get("heatzone"),
                 model_runtime=model_runtime,
@@ -984,6 +985,7 @@ else:
             api,
             create_external_data_router(
                 ingestion_service=ingestion_service,
+                ingestion_run_store_for_tenant=bundle.ingestion_run_store_for_tenant,
                 audit_log=audit_log,
                 require_provider=require_live_external_provider,
             ),
@@ -1065,6 +1067,7 @@ else:
             create_sitescore_router(
                 repository=site_repository,
                 workflow=decision_workflow,
+                sitescore_decision_repository_for_tenant=bundle.sitescore_decision_store_for_tenant,
                 realization_hook=realization_hook,
                 audit_log=audit_log,
                 model_binding=scoring_bindings.get("sitescore"),

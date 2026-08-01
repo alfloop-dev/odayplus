@@ -57,6 +57,7 @@ class ExternalIngestionService:
         self,
         *,
         store: Any | None = None,
+        ingestion_run_store_for_tenant: Any | None = None,
         state_store: Any | None = None,
         audit_log: Any | None = None,
         provider_factories: dict[str, ProviderFactory] | None = None,
@@ -66,6 +67,7 @@ class ExternalIngestionService:
         env: Mapping[str, str] | None = None,
     ) -> None:
         self.store = store or InMemoryIngestionRunStore()
+        self.ingestion_run_store_for_tenant = ingestion_run_store_for_tenant
         self.audit_log = audit_log or InMemoryAuditLog()
         self.freshness_sla = freshness_sla
         self.default_interval = default_interval
@@ -105,6 +107,7 @@ class ExternalIngestionService:
         window_end: datetime | None = None,
         correlation_id: str | None = None,
         api_idempotency_key: str | None = None,
+        tenant_id: str = "",
     ) -> IngestionOutcome:
         sla = freshness_sla or self.freshness_sla
 
@@ -156,8 +159,17 @@ class ExternalIngestionService:
             freshness_sla=sla,
             trigger=trigger,
             api_idempotency_key=api_idempotency_key,
+            tenant_id=tenant_id,
         )
-        saved = self.store.save(record)
+        target_store = self.store
+        if self.ingestion_run_store_for_tenant is not None and tenant_id:
+            try:
+                scoped = self.ingestion_run_store_for_tenant(tenant_id)
+                if scoped is not None:
+                    target_store = scoped
+            except Exception:
+                pass
+        saved = target_store.save(record)
         audit = self._record_audit(saved, created=True, actor=actor, correlation_id=run.correlation_id)
         return IngestionOutcome(record=saved, created=True, audit_event_id=audit.event_id)
 

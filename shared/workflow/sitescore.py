@@ -325,6 +325,7 @@ class SiteScoreDecisionWorkflow:
         *,
         created_by: str,
         correlation_id: str = "",
+        tenant_id: str = "",
     ) -> SiteScoreDecision:
         """Seed a decision from a SiteScore report (system recommendation)."""
         now = datetime.now(UTC)
@@ -339,6 +340,7 @@ class SiteScoreDecisionWorkflow:
             model_version=report.model_version,
             created_by=created_by,
             created_at=now,
+            tenant_id=tenant_id,
         )
         self._store.save_report(decision.decision_id, report)
         self._store.save_decision(decision)
