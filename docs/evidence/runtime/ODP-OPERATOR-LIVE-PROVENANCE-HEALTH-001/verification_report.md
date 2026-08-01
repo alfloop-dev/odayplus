@@ -7,7 +7,7 @@
 - Branch: `task/ODP-OPERATOR-LIVE-PROVENANCE-HEALTH-001`
 - Baseline: `origin/dev` @ `eed83c0937f491211247ee3fdb0bdf8d932564fb` (exact `eed83c09`)
 - Target Run: Deploy Dev run `30680943677`
-- Replacement implementation anchor: `cdf589937e3df0dd02c3bf7b5cd67044607f6682`
+- Replacement implementation anchor: `0480302923b2e44344f936e5533636301bf4fba2`
 
 ## Summary of Remediations (Codex8 Rejection Batch)
 
@@ -43,6 +43,12 @@
 - Removed the three terminal blank lines reported by `git diff --check` in `test_external_ingestion_persistence.py`, `test_listing_pipeline.py`, and `test_operator_live_domain_modules.py`.
 - Expanded the replay from seven integration files to the required eight-file suite by including `tests/ops/test_cloud_run_live_deployment.py`.
 
+### B8. HeatZone And SiteScore Memory/POC Writer Routing
+- **Non-Durable Compatibility**: `create_app` now injects the HeatZone and SiteScore tenant-store factories only for durable persistence bundles, matching the existing ingestion composition rule. Memory/POC bundles retain their process-local `HeatZoneResultStore` and `SiteScoreDecisionWorkflow` instead of invoking a factory that cannot scope those in-memory stores.
+- **Durable Boundary Preserved**: SQLite and PostgreSQL bundles still inject `heatzone_store_for_tenant` and `sitescore_decision_store_for_tenant`; unresolved tenant stores continue to fail closed with no global fallback.
+- **Rejected Route Regressions Covered**: The full `test_domain_api_rbac.py`, `test_heatzone_flow.py`, and `test_sitescore_decision.py` suites pass. This includes the four cases rejected at `2d3d1097`: authorized HeatZone listing, HeatZone batch scoring, absent-feature validation, and the SiteScore decision loop.
+- **Restart Composition Covered**: `test_canonical_writer_restart_provenance` and the production composition suite pass with durable tenant factories still active.
+
 ## Modified File Inventory (relative to origin/dev)
 1. `apps/api/app/routes/external_data.py`
 2. `apps/api/app/routes/listings.py`
@@ -71,8 +77,9 @@
 25. `tests/ops/test_cloud_run_live_deployment.py`
 
 ## Verification Replay
-- Command: `/home/lupin/oday-plus/.venv/bin/pytest -q tests/integration/test_external_ingestion_persistence.py tests/integration/test_external_ingestion_multisource.py tests/integration/test_operator_live_provenance_health.py tests/integration/test_operator_live_repository.py tests/integration/test_production_api_composition.py tests/integration/test_operator_live_domain_modules.py tests/integration/test_listing_pipeline.py tests/ops/test_cloud_run_live_deployment.py` (exit 0; full eight-file replay passed)
-- Command: `/home/lupin/oday-plus/.venv/bin/ruff check $(git diff --name-only origin/dev...HEAD -- '*.py')` (0 errors)
+- Command: `pytest -q tests/integration/test_external_ingestion_persistence.py tests/integration/test_external_ingestion_multisource.py tests/integration/test_operator_live_provenance_health.py tests/integration/test_operator_live_repository.py tests/integration/test_production_api_composition.py tests/integration/test_operator_live_domain_modules.py tests/integration/test_listing_pipeline.py tests/ops/test_cloud_run_live_deployment.py` (exit 0; full eight-file replay passed, with the existing environment-conditional skip)
+- Command: `pytest -q tests/integration/test_domain_api_rbac.py tests/integration/test_heatzone_flow.py tests/integration/test_sitescore_decision.py` (exit 0; full rejected-route regression replay passed)
+- Command: `ruff check <all Python files changed from origin/dev>` (0 errors)
 - Command: `git diff --check origin/dev...HEAD` (0 errors)
 - Command: `git diff --name-only origin/dev...HEAD -- <task forbidden paths>` (empty; Package 10 visuals/routes/design archive, deploy workflows, model/release contracts, retired-path inventory, orchestrator, and GitHub workflows unchanged)
-- Warning: one pre-existing Starlette `TestClient` / `httpx` deprecation warning remains; it does not fail the replay.
+- Warning: pre-existing Starlette `TestClient` / `httpx` and HTTP 422 constant deprecation warnings remain; they do not fail the replay.
