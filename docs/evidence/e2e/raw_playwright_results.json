@@ -2,8 +2,8 @@
   "schema_version": "2.0.0",
   "runner": "playwright",
   "source": {
-    "commit_sha": "6164567bf03c04ba7046be3a1c0cf25c8185e65a",
-    "tree_sha": "e72b24e3d34fa315b8e42ab39d7a2eeb7d1db51e"
+    "commit_sha": "76a9f7362a4725d7942513f284a8c0a5ecb96486",
+    "tree_sha": "bf83787e823ef4d8e12bc2de1cff9b1cae1ebc7a"
   },
   "run": {
     "command": "npx playwright test tests/e2e/e2e-network-find-areas-api-binding.spec.ts tests/e2e/e2e-operator-console.spec.ts tests/e2e/operator-assisted-listing-intake-a11y.spec.ts tests/e2e/operator-assisted-listing-intake-mobile.spec.ts tests/e2e/operator-assisted-listing-intake.spec.ts tests/e2e/operator-governance.spec.ts tests/e2e/operator-growth.spec.ts tests/e2e/operator-network-assisted-intake.spec.ts tests/e2e/operator-network-listings.spec.ts tests/e2e/operator-network-rebalance.spec.ts tests/e2e/operator-network-review.spec.ts tests/e2e/operator-network-scoring.spec.ts tests/e2e/operator-shell-today.spec.ts tests/e2e/operator-store-ops.spec.ts tests/e2e/product-e2e-env.spec.ts tests/e2e/shell-resource-binding.spec.ts --workers=1 --retries=0 --project=chromium --reporter=json",
@@ -5500,5 +5500,5 @@
     }
   ],
   "integrity_errors": [],
-  "normalized_artifact_sha256": "3b14af1afeec17eb080cff29934cc77f256f55d1d582a48ee2a6c1ffb2e6dc50"
+  "normalized_artifact_sha256": "93aa0fcbe62198d452a1fee4b9d9bf9a3c127d9b83d6a3a47afbee9edfde804e"
 }
