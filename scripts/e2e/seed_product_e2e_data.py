@@ -40,6 +40,7 @@ def main() -> int:
 
     source_fixture = get_json(f"{source_stub_url}/external/listing_raw_snapshot.valid.json")
     health = get_json(f"{api_url}/platform/health")
+    ingestion_run = seed_tenant_ingestion(api_url)
     freshness = wait_for_persisted_freshness(api_url)
     avm_case = post_json(
         f"{api_url}/avm/cases",
@@ -158,6 +159,7 @@ def main() -> int:
         "api": health,
         "source_fixture_keys": sorted(source_fixture.keys()),
         "external_freshness": freshness,
+        "external_ingestion_run_id": ingestion_run["run_id"],
         "avm_case_id": avm_case["case_id"],
         "heatzone_job_id": heatzone_job["job_id"],
         "scheduler_job_id": queued_job["job_id"],
@@ -172,18 +174,30 @@ def main() -> int:
     return 0
 
 
+def seed_tenant_ingestion(api_url: str) -> dict[str, Any]:
+    """Create deterministic evidence through the tenant-scoped product API."""
+
+    return post_json(
+        f"{api_url}/external-data/ingestion-runs",
+        {
+            "provider_id": "listing.partner_feed",
+            "schedule_id": "product-e2e-seed",
+            "window_start": "2026-06-28T08:00:00Z",
+            "window_end": "2026-06-28T09:00:00Z",
+            "idempotency_key": "product-e2e-external-ingestion-001",
+        },
+    )
+
+
 def wait_for_persisted_freshness(
     api_url: str, *, timeout_seconds: float = 180
 ) -> dict[str, Any]:
-    """Wait until the scheduled external-fetch worker has persisted its evidence.
+    """Wait until the tenant-scoped ingestion API has persisted its evidence.
 
-    The E2E stack runs a scheduler that enqueues `external-fetch` and a worker
-    that executes it; the worker persists an `IngestionRunRecord`, so
-    `/external-data/freshness` serves durable evidence instead of the poc
-    fixture fallback that only fires while the store is empty. Seeding waits for
-    that transition rather than racing it, otherwise the expansion spec asserts
-    against whichever of the two the container start-up timing happened to
-    produce.
+    The seed writes an `IngestionRunRecord` through the public API, so
+    `/external-data/freshness` must read durable evidence from that same tenant
+    partition instead of the poc fixture fallback that only applies while the
+    partition is empty.
     """
     deadline = time.time() + timeout_seconds
     last: dict[str, Any] | None = None
@@ -195,8 +209,8 @@ def wait_for_persisted_freshness(
             break
         time.sleep(2)
     raise RuntimeError(
-        "timed out waiting for persisted external-data freshness: the scheduled "
-        "external-fetch worker path wrote no ingestion run. Last response: "
+        "timed out waiting for persisted external-data freshness: the tenant-scoped "
+        "ingestion API wrote no readable run. Last response: "
         + json.dumps(last, sort_keys=True)
     )
 

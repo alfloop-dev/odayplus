@@ -44,6 +44,32 @@ def test_seed_requests_carry_verified_tenant_scope(monkeypatch) -> None:
     ]
 
 
+def test_seed_creates_ingestion_run_through_tenant_scoped_api(monkeypatch) -> None:
+    calls = []
+
+    def post(url, payload):
+        calls.append((url, payload))
+        return {"run_id": "ingestion-run-e2e"}
+
+    monkeypatch.setattr(seed_product_e2e_data, "post_json", post)
+
+    result = seed_product_e2e_data.seed_tenant_ingestion("http://api")
+
+    assert result["run_id"] == "ingestion-run-e2e"
+    assert calls == [
+        (
+            "http://api/external-data/ingestion-runs",
+            {
+                "provider_id": "listing.partner_feed",
+                "schedule_id": "product-e2e-seed",
+                "window_start": "2026-06-28T08:00:00Z",
+                "window_end": "2026-06-28T09:00:00Z",
+                "idempotency_key": "product-e2e-external-ingestion-001",
+            },
+        )
+    ]
+
+
 def test_web_readiness_retries_transient_disconnect(monkeypatch) -> None:
     attempts = iter((OSError("server closed startup connection"), None))
 
@@ -96,5 +122,5 @@ def test_seed_fails_loudly_when_no_ingestion_run_is_ever_persisted(monkeypatch) 
         )
 
     message = str(excinfo.value)
-    assert "external-fetch worker path wrote no ingestion run" in message
+    assert "tenant-scoped ingestion API wrote no readable run" in message
     assert "fixture" in message
