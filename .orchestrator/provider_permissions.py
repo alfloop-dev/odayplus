@@ -726,7 +726,8 @@ def provider_capabilities(config: dict[str, Any] | None = None) -> dict[str, Any
     desired_workspace = desired_workspace_settings(config)
     desired_claude = desired_claude_local_settings(config, current=claude_local)
     desired_gemini = desired_gemini_settings(config, "gemini")
-    codex_binary = command_exists("codex")
+    codex_profile = config.get("providers", {}).get("codex", {}).get("codex", {})
+    codex_binary = command_exists(codex_profile.get("cli") or "codex")
     gemini_binary = _configured_provider_binary(config, "gemini", "gemini", "gemini")
     copilot_binary = _configured_provider_binary(config, "copilot", "local", "copilot")
     gh_binary = command_exists(config.get("providers", {}).get("copilot", {}).get("cloud", {}).get("cli") or "gh")
@@ -736,7 +737,6 @@ def provider_capabilities(config: dict[str, Any] | None = None) -> dict[str, Any
     copilot_settings = config.get("providers", {}).get("copilot", {})
     copilot_model_preference = copilot_settings.get("model_preference", {})
     bool(gemini_path or gemini_binary)
-    codex_installed = bool(openai_path or codex_binary)
     copilot_installed = bool(copilot_path or copilot_binary or gh_binary)
 
     claude_applied = (
@@ -761,7 +761,6 @@ def provider_capabilities(config: dict[str, Any] | None = None) -> dict[str, Any
         )
     )
 
-    codex_profile = config.get("providers", {}).get("codex", {}).get("codex", {})
     (
         codex_profile.get("ask_for_approval", "never") == "never"
         and codex_profile.get("sandbox_mode", "workspace-write") == "workspace-write"
@@ -814,6 +813,8 @@ def provider_capabilities(config: dict[str, Any] | None = None) -> dict[str, Any
     def codex_provider_report(provider_id: str) -> dict[str, Any]:
         provider_settings = config.get("providers", {}).get(provider_id, {}) or {}
         profile = provider_settings.get("codex", {}) or codex_profile
+        provider_binary = command_exists(profile.get("cli")) if profile.get("cli") else codex_binary
+        provider_installed = bool(openai_path or provider_binary)
         config_path_for_provider = _codex_config_path(config, provider_id)
         config_health = codex_config_health(config, provider_id)
         applied = (
@@ -827,8 +828,12 @@ def provider_capabilities(config: dict[str, Any] | None = None) -> dict[str, Any
         if not config_health.get("valid", True):
             notes.insert(0, str(config_health.get("error") or "Codex config is invalid."))
         return {
-            "installed": codex_installed,
-            "host_layer": "CLI + VS Code extension" if openai_path and codex_binary else ("CLI" if codex_binary else "VS Code extension"),
+            "installed": provider_installed,
+            "host_layer": (
+                "CLI + VS Code extension"
+                if openai_path and provider_binary
+                else ("CLI" if provider_binary else "VS Code extension")
+            ),
             "delivery_mode": "codex",
             "quota_group": provider_settings.get("quota_group"),
             "approval_mode": f"orchestrator:{profile.get('ask_for_approval', 'never')}",
@@ -836,10 +841,10 @@ def provider_capabilities(config: dict[str, Any] | None = None) -> dict[str, Any
             "default_auto_approve_supported": True,
             "full_access_supported": True,
             "per_tool_allow_supported": False,
-            "local_cli_worker_supported": bool(codex_binary),
+            "local_cli_worker_supported": bool(provider_binary),
             "vscode_link_supported": bool(openai_path),
             "cloud_agent_supported": False,
-            "supports_auto_approve": bool(codex_binary),
+            "supports_auto_approve": bool(provider_binary),
             "supports_defer_resume": False,
             "supported_models": [],
             "selected_model": None,
@@ -847,13 +852,17 @@ def provider_capabilities(config: dict[str, Any] | None = None) -> dict[str, Any
             "config_valid": bool(config_health.get("valid", True)),
             "config_error": config_health.get("error"),
             "config_checks": config_health.get("checks") or {},
-            "verified": "blocked" if not config_health.get("valid", True) else ("partial" if codex_installed else "unavailable"),
+            "verified": (
+                "blocked"
+                if not config_health.get("valid", True)
+                else ("partial" if provider_installed else "unavailable")
+            ),
             "version": openai_version,
             "paths": {
                 "extension": str(openai_path) if openai_path else None,
                 "config": str(config_path_for_provider),
                 "home": str(_codex_home(config, provider_id)),
-                "binary": codex_binary,
+                "binary": provider_binary,
             },
             "settings": {
                 "orchestrator.ask_for_approval": profile.get("ask_for_approval", "never"),

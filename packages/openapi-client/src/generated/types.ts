@@ -779,6 +779,7 @@ export type NetPlanActorPayload = {
 /** NetPlanDecisionPayload */
 export type NetPlanDecisionPayload = {
   actor_id: string;
+  approval_receipt_id?: string;
   decided_at?: string | null;
   decision?: string;
   reason: string;

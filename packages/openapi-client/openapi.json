@@ -3884,10 +3884,16 @@
         "type": "object"
       },
       "NetPlanDecisionPayload": {
+        "additionalProperties": false,
         "properties": {
           "actor_id": {
             "minLength": 1,
             "title": "Actor Id",
+            "type": "string"
+          },
+          "approval_receipt_id": {
+            "default": "",
+            "title": "Approval Receipt Id",
             "type": "string"
           },
           "decided_at": {
