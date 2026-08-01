@@ -30,10 +30,12 @@ from solver.netplan import (
     STATUS_INFEASIBLE,
     ManagementApprovalExpectation,
     ManagementApprovalReceiptVerifier,
+    ManagementApprovalVerification,
     ManagementBaselineInput,
     NetPlanConstraints,
     compute_solver_problem_hash,
     solve_network_plan,
+    validate_network_plan_solve_result,
 )
 
 
@@ -146,6 +148,7 @@ class NetPlanService:
                 scenario_id=scenario.scenario_id,
                 result=result,
                 solved_at=now,
+                alternative_limit=alternative_limit,
                 execution_metadata=execution_metadata,
             )
         )
@@ -193,66 +196,13 @@ class NetPlanService:
         authority_verification = None
         verification_violations: tuple[str, ...] = ()
         if normalized == "approved":
-            if self.approval_verifier is None:
-                raise NetPlanApprovalError(
-                    "authoritative management approval verifier is not configured"
-                )
             solve = self._require_solve(scenario_id)
-            actions_by_entity = {
-                action.entity_id: action.action for action in solve.result.selected_actions
-            }
-            source_snapshot_ids = tuple(
-                sorted(
-                    {
-                        snapshot_id
-                        for action in solve.result.selected_actions
-                        for snapshot_id in action.source_snapshot_ids
-                    }
-                )
-            )
-            baseline = ManagementBaselineInput(
-                baseline_id=scenario.scenario_id,
-                baseline_name=scenario.scenario_name,
-                scenario_id=scenario.scenario_id,
-                actions_by_entity=actions_by_entity,
+            verification = self._verify_authoritative_solve(
+                scenario,
+                solve,
                 approval_receipt_id=approval_receipt_id,
-                source_snapshot_ids=source_snapshot_ids,
-                scope=f"tenant:{scenario.tenant_id}",
-                release_id=scenario.planning_horizon,
             )
-            problem_hash = compute_solver_problem_hash(
-                scenario.options_by_entity,
-                scenario.constraints,
-                100_000.0,
-            )
-            verification = self.approval_verifier.verify(
-                ManagementApprovalExpectation(
-                    receipt_id=approval_receipt_id,
-                    scenario_id=scenario.scenario_id,
-                    baseline_id=scenario.scenario_id,
-                    baseline_name=scenario.scenario_name,
-                    scope=baseline.scope,
-                    release_id=baseline.release_id,
-                    policy_version=scenario.constraints.policy_version,
-                    actions_by_entity=actions_by_entity,
-                    source_snapshot_ids=source_snapshot_ids,
-                    baseline_content_hash=baseline.compute_canonical_hash(
-                        constraints=scenario.constraints
-                    ),
-                    solver_problem_hash=problem_hash,
-                ),
-            )
-            if (
-                verification.receipt is None
-                or not verification.authority_attests_receipt(verification.receipt)
-            ):
-                detail = ",".join(
-                    verification.violations
-                    or ("authority_verification_attestation_missing",)
-                )
-                raise NetPlanApprovalError(
-                    f"authoritative management approval readback failed: {detail}"
-                )
+            assert verification.receipt is not None
             if actor_id != verification.receipt.principal_id:
                 raise NetPlanApprovalError(
                     "audit actor does not match the verified approval principal"
@@ -291,6 +241,22 @@ class NetPlanService:
     ) -> ExecutionRecord:
         scenario = self._require_scenario(scenario_id)
         solve = self._require_solve(scenario_id)
+        approval = self._require_authentic_approval(scenario_id)
+        assert approval.authority_receipt is not None
+        verification = self._verify_authoritative_solve(
+            scenario,
+            solve,
+            approval_receipt_id=approval.authority_receipt.receipt_id,
+        )
+        assert verification.receipt is not None
+        if (
+            approval.actor_id != verification.receipt.principal_id
+            or approval.authority_receipt.receipt_hash
+            != verification.receipt.receipt_hash
+        ):
+            raise NetPlanApprovalError(
+                "persisted approval does not match authoritative management readback"
+            )
         now = executed_at or datetime.now(UTC)
         execution = self.repository.save_execution(
             ExecutionRecord(
@@ -385,6 +351,102 @@ class NetPlanService:
         if solve is None:
             raise NetPlanNotFoundError(f"scenario {scenario_id} has no solve record")
         return solve
+
+    def _require_authentic_approval(self, scenario_id: str) -> ApprovalRecord:
+        approvals = self.repository.list_approvals(scenario_id)
+        approval = next(
+            (
+                candidate
+                for candidate in reversed(approvals)
+                if candidate.is_approved
+            ),
+            None,
+        )
+        if approval is None or not approval.authentic_approval_verified:
+            raise NetPlanApprovalError(
+                "governed execution requires an authentic management approval"
+            )
+        return approval
+
+    def _verify_authoritative_solve(
+        self,
+        scenario: NetPlanScenario,
+        solve: ScenarioSolveRecord,
+        *,
+        approval_receipt_id: str,
+    ) -> ManagementApprovalVerification:
+        if self.approval_verifier is None:
+            raise NetPlanApprovalError(
+                "authoritative management approval verifier is not configured"
+            )
+        solve_violations = validate_network_plan_solve_result(
+            options_by_entity=scenario.options_by_entity,
+            constraints=scenario.constraints,
+            solve_result=solve.result,
+            alternative_limit=solve.alternative_limit,
+        )
+        if solve_violations:
+            raise NetPlanApprovalError(
+                "persisted solve result verification failed: "
+                + ",".join(solve_violations)
+            )
+
+        actions_by_entity = {
+            action.entity_id: action.action for action in solve.result.selected_actions
+        }
+        source_snapshot_ids = tuple(
+            sorted(
+                {
+                    snapshot_id
+                    for action in solve.result.selected_actions
+                    for snapshot_id in action.source_snapshot_ids
+                }
+            )
+        )
+        baseline = ManagementBaselineInput(
+            baseline_id=scenario.scenario_id,
+            baseline_name=scenario.scenario_name,
+            scenario_id=scenario.scenario_id,
+            actions_by_entity=actions_by_entity,
+            approval_receipt_id=approval_receipt_id,
+            source_snapshot_ids=source_snapshot_ids,
+            scope=f"tenant:{scenario.tenant_id}",
+            release_id=scenario.planning_horizon,
+        )
+        verification = self.approval_verifier.verify(
+            ManagementApprovalExpectation(
+                receipt_id=approval_receipt_id,
+                scenario_id=scenario.scenario_id,
+                baseline_id=scenario.scenario_id,
+                baseline_name=scenario.scenario_name,
+                scope=baseline.scope,
+                release_id=baseline.release_id,
+                policy_version=scenario.constraints.policy_version,
+                actions_by_entity=actions_by_entity,
+                source_snapshot_ids=source_snapshot_ids,
+                baseline_content_hash=baseline.compute_canonical_hash(
+                    constraints=scenario.constraints
+                ),
+                solver_problem_hash=compute_solver_problem_hash(
+                    scenario.options_by_entity,
+                    scenario.constraints,
+                    100_000.0,
+                    solve.alternative_limit,
+                ),
+            ),
+        )
+        if (
+            verification.receipt is None
+            or not verification.authority_attests_receipt(verification.receipt)
+        ):
+            detail = ",".join(
+                verification.violations
+                or ("authority_verification_attestation_missing",)
+            )
+            raise NetPlanApprovalError(
+                f"authoritative management approval readback failed: {detail}"
+            )
+        return verification
 
 
 __all__ = [

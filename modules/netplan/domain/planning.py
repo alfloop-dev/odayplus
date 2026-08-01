@@ -241,6 +241,7 @@ class ScenarioSolveRecord:
     scenario_id: str
     result: NetworkPlanSolveResult
     solved_at: datetime
+    alternative_limit: int = 3
     execution_metadata: dict[str, Any] = field(default_factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -248,6 +249,7 @@ class ScenarioSolveRecord:
             "scenario_id": self.scenario_id,
             "result": self.result.to_dict(),
             "solved_at": self.solved_at.isoformat(),
+            "alternative_limit": self.alternative_limit,
             "execution_metadata": self.execution_metadata,
         }
 

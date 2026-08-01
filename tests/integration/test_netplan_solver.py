@@ -48,6 +48,7 @@ from solver.netplan import (
     STATUS_INFEASIBLE,
     STATUS_OPTIMAL,
     ActionOption,
+    InfeasibilityDiagnosis,
     NetPlanConstraints,
     NetworkAction,
     NetworkPlanSolveResult,
@@ -160,6 +161,8 @@ def _approval_receipt(
     baseline: ManagementBaselineInput,
     options: dict[str, tuple],
     constraints: NetPlanConstraints,
+    *,
+    alternative_limit: int = 3,
     **changes: object,
 ) -> ManagementApprovalReceipt:
     receipt = ManagementApprovalReceipt(
@@ -180,7 +183,12 @@ def _approval_receipt(
         actions_by_entity=baseline.actions_by_entity,
         source_snapshot_ids=baseline.source_snapshot_ids,
         baseline_content_hash=baseline.compute_canonical_hash(constraints=constraints),
-        solver_problem_hash=compute_solver_problem_hash(options, constraints, 100_000.0),
+        solver_problem_hash=compute_solver_problem_hash(
+            options,
+            constraints,
+            100_000.0,
+            alternative_limit,
+        ),
         receipt_hash="",
     )
     receipt = replace(receipt, **changes)
@@ -225,6 +233,128 @@ def _compare(
             else None
         ),
     )
+
+
+def _pending_authoritative_service(
+    *,
+    solve_alternative_limit: int = 3,
+    receipt_alternative_limit: int = 3,
+) -> tuple[
+    InMemoryNetPlanRepository,
+    NetPlanService,
+    str,
+    ManagementApprovalReceipt,
+]:
+    options = build_scenario_options(existing_stores=_stores(), candidate_sites=_sites())
+    constraints = _constraints()
+    solved = solve_network_plan(
+        options_by_entity=options,
+        constraints=constraints,
+        alternative_limit=solve_alternative_limit,
+    )
+    scenario_id = "netplan-lifecycle-verification-001"
+    baseline = _management_baseline(
+        actions_by_entity={
+            action.entity_id: action.action for action in solved.selected_actions
+        },
+        baseline_id=scenario_id,
+        baseline_name="lifecycle verification",
+        scenario_id=scenario_id,
+        source_snapshot_ids=tuple(
+            sorted(
+                {
+                    snapshot_id
+                    for action in solved.selected_actions
+                    for snapshot_id in action.source_snapshot_ids
+                }
+            )
+        ),
+    )
+    authority_receipt = _approval_receipt(
+        baseline,
+        options,
+        constraints,
+        alternative_limit=receipt_alternative_limit,
+    )
+    repository = InMemoryNetPlanRepository()
+    service = NetPlanService(
+        repository=repository,
+        approval_verifier=_approval_verifier(authority_receipt),
+    )
+    scenario = service.create_scenario(
+        tenant_id="tenant-1",
+        scenario_name=baseline.baseline_name,
+        planning_horizon="2026Q3",
+        existing_stores=_stores(),
+        candidate_sites=_sites(),
+        constraints=constraints,
+        scenario_id=scenario_id,
+        correlation_id="corr-lifecycle-verification",
+        created_at=MOMENT,
+    )
+    service.solve(
+        scenario.scenario_id,
+        solved_at=MOMENT,
+        alternative_limit=solve_alternative_limit,
+    )
+    service.submit_for_approval(
+        scenario.scenario_id,
+        actor="network-planner",
+        occurred_at=MOMENT,
+    )
+    return repository, service, scenario.scenario_id, authority_receipt
+
+
+def _forge_lifecycle_result(
+    result: NetworkPlanSolveResult,
+    mutation: str,
+) -> NetworkPlanSolveResult:
+    if mutation == "solver_status":
+        return replace(result, solver_status=STATUS_FEASIBLE)
+    if mutation == "infeasible":
+        return replace(result, infeasible=True)
+    if mutation == "objective_value":
+        return replace(result, objective_value=result.objective_value + 1.0)
+    if mutation == "expected_gross_margin":
+        return replace(
+            result,
+            expected_gross_margin=result.expected_gross_margin + 1.0,
+        )
+    if mutation == "budget_usage":
+        return replace(result, budget_usage=result.budget_usage + 1.0)
+    if mutation == "average_risk":
+        return replace(result, average_risk=result.average_risk + 0.01)
+    if mutation == "capacity_delta":
+        return replace(result, capacity_delta=result.capacity_delta + 1)
+    if mutation == "action_counts":
+        forged_counts = dict(result.action_counts)
+        forged_counts[NetworkAction.OPEN] = forged_counts.get(NetworkAction.OPEN, 0) + 1
+        return replace(result, action_counts=forged_counts)
+    if mutation == "binding_constraints":
+        return replace(
+            result,
+            binding_constraints=(*result.binding_constraints, "forged_constraint"),
+        )
+    if mutation == "selected_actions":
+        return replace(result, selected_actions=result.alternatives[0].actions)
+    if mutation == "alternatives":
+        return replace(result, alternatives=())
+    if mutation == "diagnostics":
+        return replace(
+            result,
+            diagnostics=(
+                InfeasibilityDiagnosis(
+                    violated_constraint="forged_constraint",
+                    affected_stores=("forged-store",),
+                    required_relaxation="forged relaxation",
+                    business_impact="forged impact",
+                    suggested_action="forged action",
+                ),
+            ),
+        )
+    if mutation == "solver_version":
+        return replace(result, solver_version="forged-solver")
+    raise AssertionError(f"unknown lifecycle mutation: {mutation}")
 
 
 def test_scenario_builder_and_solver_return_optimal_plan_with_alternatives() -> None:
@@ -357,6 +487,174 @@ def test_service_lifecycle_tracks_approval_execution_and_outcome() -> None:
         NetPlanScenarioStatus.CLOSED,
     ]
     assert all(transition.actor and transition.reason for transition in closed.status_history)
+
+
+@pytest.mark.parametrize("surface", ["service", "api"])
+@pytest.mark.parametrize(
+    ("mutation", "expected_violation"),
+    [
+        ("solver_status", "solve_status_mismatch"),
+        ("infeasible", "solve_feasibility_flag_mismatch"),
+        ("objective_value", "solve_objective_mismatch"),
+        ("expected_gross_margin", "solve_expected_gross_margin_mismatch"),
+        ("budget_usage", "solve_budget_usage_mismatch"),
+        ("average_risk", "solve_average_risk_mismatch"),
+        ("capacity_delta", "solve_capacity_delta_mismatch"),
+        ("action_counts", "solve_action_counts_mismatch"),
+        ("binding_constraints", "solve_binding_constraints_mismatch"),
+        ("selected_actions", "solve_objective_mismatch"),
+        ("alternatives", "alternative_count_mismatch"),
+        ("diagnostics", "feasible_result_has_diagnostics"),
+        ("solver_version", "solver_version_mismatch"),
+    ],
+)
+def test_decision_lifecycle_recomputes_every_persisted_solve_field(
+    surface: str,
+    mutation: str,
+    expected_violation: str,
+) -> None:
+    repository, service, scenario_id, authority_receipt = (
+        _pending_authoritative_service()
+    )
+    solve = repository.get_solve(scenario_id)
+    assert solve is not None
+    repository.save_solve(
+        replace(
+            solve,
+            result=_forge_lifecycle_result(solve.result, mutation),
+        )
+    )
+
+    if surface == "service":
+        with pytest.raises(NetPlanApprovalError, match=expected_violation):
+            service.decide(
+                scenario_id,
+                actor_id=APPROVAL_PRINCIPAL,
+                reason="attempt approval of a mutated solve",
+                approval_receipt_id=authority_receipt.receipt_id,
+                decided_at=MOMENT,
+            )
+    else:
+        client = TestClient(
+            create_app(
+                netplan_repository=repository,
+                netplan_approval_verifier=_approval_verifier(authority_receipt),
+            ),
+            headers=auth_headers(Role.EXECUTIVE),
+        )
+        response = client.post(
+            f"/api/v1/netplan/scenarios/{scenario_id}/decide",
+            json={
+                "actor_id": APPROVAL_PRINCIPAL,
+                "reason": "attempt approval of a mutated solve",
+                "decision": "approved",
+                "approval_receipt_id": authority_receipt.receipt_id,
+                "decided_at": MOMENT.isoformat(),
+            },
+        )
+        assert response.status_code == 422
+        assert expected_violation in response.json()["detail"]
+
+    assert repository.list_approvals(scenario_id) == []
+    scenario = repository.get_scenario(scenario_id)
+    assert scenario is not None
+    assert scenario.status is NetPlanScenarioStatus.PENDING_APPROVAL
+
+
+@pytest.mark.parametrize("surface", ["service", "api"])
+def test_decision_lifecycle_binds_authoritative_alternative_limit(surface: str) -> None:
+    repository, service, scenario_id, authority_receipt = (
+        _pending_authoritative_service(
+            solve_alternative_limit=1,
+            receipt_alternative_limit=3,
+        )
+    )
+    solve = repository.get_solve(scenario_id)
+    assert solve is not None
+    assert solve.alternative_limit == 1
+    assert solve.to_dict()["alternative_limit"] == 1
+
+    if surface == "service":
+        with pytest.raises(
+            NetPlanApprovalError,
+            match="approval_solver_problem_hash_mismatch",
+        ):
+            service.decide(
+                scenario_id,
+                actor_id=APPROVAL_PRINCIPAL,
+                reason="attempt approval with mismatched alternative authority",
+                approval_receipt_id=authority_receipt.receipt_id,
+                decided_at=MOMENT,
+            )
+    else:
+        client = TestClient(
+            create_app(
+                netplan_repository=repository,
+                netplan_approval_verifier=_approval_verifier(authority_receipt),
+            ),
+            headers=auth_headers(Role.EXECUTIVE),
+        )
+        response = client.post(
+            f"/api/v1/netplan/scenarios/{scenario_id}/decide",
+            json={
+                "actor_id": APPROVAL_PRINCIPAL,
+                "reason": "attempt approval with mismatched alternative authority",
+                "decision": "approved",
+                "approval_receipt_id": authority_receipt.receipt_id,
+                "decided_at": MOMENT.isoformat(),
+            },
+        )
+        assert response.status_code == 422
+        assert "approval_solver_problem_hash_mismatch" in response.json()["detail"]
+
+    assert repository.list_approvals(scenario_id) == []
+
+
+@pytest.mark.parametrize(
+    "mutation",
+    ["solver_status", "infeasible", "objective_value", "alternatives"],
+)
+def test_execution_api_revalidates_solve_after_authentic_approval(
+    mutation: str,
+) -> None:
+    repository, service, scenario_id, authority_receipt = (
+        _pending_authoritative_service()
+    )
+    approval = service.decide(
+        scenario_id,
+        actor_id=APPROVAL_PRINCIPAL,
+        reason="approve the authentic solve before mutation",
+        approval_receipt_id=authority_receipt.receipt_id,
+        decided_at=MOMENT,
+    )
+    assert approval.authentic_approval_verified is True
+    solve = repository.get_solve(scenario_id)
+    assert solve is not None
+    repository.save_solve(
+        replace(
+            solve,
+            result=_forge_lifecycle_result(solve.result, mutation),
+        )
+    )
+
+    client = TestClient(
+        create_app(
+            netplan_repository=repository,
+            netplan_approval_verifier=_approval_verifier(authority_receipt),
+        ),
+        headers=auth_headers(Role.EXECUTIVE),
+    )
+    response = client.post(
+        f"/api/v1/netplan/scenarios/{scenario_id}/execute",
+        json={"executed_by": "ops-runner", "executed_at": MOMENT.isoformat()},
+    )
+
+    assert response.status_code == 422
+    assert "persisted solve result verification failed" in response.json()["detail"]
+    assert repository.get_execution(scenario_id) is None
+    scenario = repository.get_scenario(scenario_id)
+    assert scenario is not None
+    assert scenario.status is NetPlanScenarioStatus.APPROVED
 
 
 def test_backdated_decision_cannot_revive_an_expired_authority_receipt() -> None:

@@ -30,6 +30,7 @@ from solver.netplan.optimizer import (
     compute_solver_problem_hash,
     diagnose_infeasible,
     solve_network_plan,
+    validate_network_plan_solve_result,
 )
 
 __all__ = [
@@ -60,4 +61,5 @@ __all__ = [
     "compute_solver_problem_hash",
     "diagnose_infeasible",
     "solve_network_plan",
+    "validate_network_plan_solve_result",
 ]

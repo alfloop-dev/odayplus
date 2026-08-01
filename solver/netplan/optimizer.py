@@ -816,6 +816,25 @@ def _verify_solve_result(
     return tuple(dict.fromkeys(violations)), recomputed
 
 
+def validate_network_plan_solve_result(
+    *,
+    options_by_entity: dict[str, tuple[ActionOption, ...]],
+    constraints: NetPlanConstraints,
+    solve_result: NetworkPlanSolveResult,
+    risk_penalty: float = 100_000.0,
+    alternative_limit: int = DEFAULT_ALTERNATIVE_LIMIT,
+) -> tuple[str, ...]:
+    """Independently recompute and validate one persisted solver result."""
+    violations, _ = _verify_solve_result(
+        options_by_entity=options_by_entity,
+        constraints=constraints,
+        solve_result=solve_result,
+        risk_penalty=risk_penalty,
+        alternative_limit=alternative_limit,
+    )
+    return violations
+
+
 def compare_solver_against_management_baseline(
     *,
     options_by_entity: dict[str, tuple[ActionOption, ...]],
