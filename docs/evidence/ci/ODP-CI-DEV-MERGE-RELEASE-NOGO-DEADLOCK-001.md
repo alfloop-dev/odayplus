@@ -1,10 +1,10 @@
 # Dev Merge / Production Release Gate Separation
 
-Task: `ODP-CI-DEV-MERGE-RELEASE-NOGO-DEADLOCK-001`  
-Owner: Codex9  
-Reviewer: Codex8  
-Observed parent head: `8812479dee7fb12453799fd54ff0710af9f30d86` (unchanged)  
-Observed GitHub Actions run: `30722312049`
+- Task: `ODP-CI-DEV-MERGE-RELEASE-NOGO-DEADLOCK-001`
+- Owner: Codex9
+- Reviewer: Codex8
+- Observed parent head: `8812479dee7fb12453799fd54ff0710af9f30d86` (unchanged)
+- Observed GitHub Actions run: `30722312049`
 
 ## Reproduction
 
@@ -62,8 +62,26 @@ observability/on-call readiness, and the final Stage 0-7 / Gate 0-6 audit.
 
 ## Verification
 
-The final task commit records the exact focused verification commands in its `Verified`
-trailer. Required semantic regressions prove both directions:
+The final verification batch was:
+
+```text
+uv run pytest -q tests/e2e/test_release_gate_registry.py tests/e2e/test_acceptance_coverage.py tests/integration/test_flow_002_expansion_persistence.py tests/security/test_branch_protection_policy.py
+uv run ruff check scripts/e2e/check_product_release_gate.py scripts/e2e/product_e2e_receipt.py tests/e2e/test_release_gate_registry.py tests/integration/test_flow_002_expansion_persistence.py
+python3 scripts/e2e/check_release_gate_registry.py
+python3 scripts/e2e/check_product_release_gate.py --dev-merge
+git diff --check
+```
+
+An independent temporary detached worktree merged task head `76b5a43e` with immutable
+parent head `8812479d` without conflict. After an isolated `npm ci`, these original
+failure selectors and the composed dev-merge checker passed:
+
+```text
+pytest -q tests/e2e/test_acceptance_coverage.py::test_no_deleted_specs_referenced_and_inventory_consistent tests/integration/test_flow_002_expansion_persistence.py::test_expansion_flow_persists_across_restart
+python3 scripts/e2e/check_product_release_gate.py --dev-merge
+```
+
+Required semantic regressions prove both directions:
 
 - positive: the dev-merge checker exits zero while the committed registry is valid
   `NO-GO`;
