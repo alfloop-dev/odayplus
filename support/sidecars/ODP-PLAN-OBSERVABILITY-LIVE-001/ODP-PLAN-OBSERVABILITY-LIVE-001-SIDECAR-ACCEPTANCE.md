@@ -105,6 +105,7 @@ The parent task `ODP-PLAN-OBSERVABILITY-LIVE-001` must strictly satisfy all fail
 ## 6. Handoff & Closeout Instructions for Parent Owner
 
 - **Assigned Reviewer / Parent Owner**: `Antigravity7`
+- **Sidecar Owner Verification**: `Antigravity5` (Verified 39 pytest observability/telemetry/alert/dlq tests pass; git diff --check clean; exact HEAD anchor updated)
 - **Handoff Instructions**:
   1. Review this support packet for alignment with `ODP-PLAN-OBSERVABILITY-LIVE-001` execution plan.
   2. Ensure all 6 signal families (API, Worker, Event/DLQ, Model, Solver, Business KPI) are implemented according to Section 2.
