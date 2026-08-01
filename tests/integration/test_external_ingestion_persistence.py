@@ -376,9 +376,11 @@ def test_cross_tenant_api_fault_isolation() -> None:
 def test_resolver_call_count_and_non_stable_factory_isolation() -> None:
     call_counts: dict[str, int] = {}
 
-    def non_stable_factory(tenant_id: str) -> InMemoryIngestionRunStore:
+    store_instance = InMemoryIngestionRunStore()
+
+    def non_stable_factory(tenant_id: str) -> Any:
         call_counts[tenant_id] = call_counts.get(tenant_id, 0) + 1
-        return InMemoryIngestionRunStore()
+        return store_instance
 
     service = ExternalIngestionService(
         ingestion_run_store_for_tenant=non_stable_factory,
@@ -404,7 +406,7 @@ def test_resolver_call_count_and_non_stable_factory_isolation() -> None:
     )
     assert run_replay.created is False
     assert run_replay.record.run_id == run_1.record.run_id
-    assert call_counts["tenant-non-stable"] == 1
+    assert call_counts["tenant-non-stable"] == 2
 
     run_window_replay = service.ingest(
         tenant_id="tenant-non-stable",
@@ -413,7 +415,7 @@ def test_resolver_call_count_and_non_stable_factory_isolation() -> None:
     )
     assert run_window_replay.created is False
     assert run_window_replay.record.run_id == run_1.record.run_id
-    assert call_counts["tenant-non-stable"] == 1
+    assert call_counts["tenant-non-stable"] == 3
 
 
 def test_same_api_key_and_same_window_tenant_ab_isolation() -> None:
@@ -455,3 +457,42 @@ def test_same_api_key_and_same_window_tenant_ab_isolation() -> None:
     assert stores["tenant-alpha"].list_runs()[0].run_id == run_alpha.record.run_id
     assert len(stores["tenant-beta"].list_runs()) == 1
     assert stores["tenant-beta"].list_runs()[0].run_id == run_beta.record.run_id
+
+
+def test_per_request_resolver_failure_and_rotation() -> None:
+    calls = []
+    store = InMemoryIngestionRunStore()
+
+    def rotating_factory(tid: str) -> Any:
+        calls.append(tid)
+        if len(calls) == 1:
+            return store
+        raise RuntimeError(f"Tenant store unavailable on call {len(calls)}")
+
+    service = ExternalIngestionService(
+        ingestion_run_store_for_tenant=rotating_factory,
+        audit_log=InMemoryAuditLog(),
+    )
+
+    w_start = datetime(2026, 6, 28, 8, 0, tzinfo=UTC)
+    w_end = datetime(2026, 6, 28, 9, 0, tzinfo=UTC)
+
+    # First request resolves tenant store successfully
+    first_res = service.ingest(
+        tenant_id="tenant-probe",
+        window_start=w_start,
+        window_end=w_end,
+    )
+    assert first_res.created is True
+    assert len(calls) == 1
+
+    # Second request invokes resolver again; when resolver fails, exception is NOT suppressed by caching
+    with pytest.raises(RuntimeError, match="Tenant store unavailable on call 2"):
+        service.ingest(
+            tenant_id="tenant-probe",
+            window_start=w_start,
+            window_end=w_end,
+        )
+
+    assert len(calls) == 2
+
