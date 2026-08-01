@@ -78,7 +78,9 @@ jobs:
           node-version: "20"
 
       - name: Install dependencies
-        run: uv sync
+        run: |
+          uv sync
+          npm ci
 
       - name: Prepare local config
         run: make bootstrap
@@ -183,6 +185,18 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          # Receipt validation proves the complete evidence-only ancestry from
+          # the tested source commit, which is unavailable in a depth-1 clone.
+          fetch-depth: 0
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+
+      - name: Set up Python
+        run: uv python install 3.12
 
       - name: Set up Node
         uses: actions/setup-node@v4
@@ -191,6 +205,7 @@ jobs:
 
       - name: Install product E2E dependencies
         run: |
+          uv sync --frozen
           npm ci
           npx playwright install --with-deps chromium
 
