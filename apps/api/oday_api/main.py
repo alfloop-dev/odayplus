@@ -389,6 +389,7 @@ else:
                 and persistence_reachable
                 and provider_live_ready
                 and operator_repository_ready
+                and production_model_bindings_ready
             )
             blocking_reasons: list[str] = []
             if require_live_data:
