@@ -78,6 +78,16 @@ Captured at `2026-08-01T23:17:19Z` after PR `#551` was returned to the owner:
 
 Required routing: Antigravity should preserve this packet as support evidence and route the release-gate/path-classification conflict to the owner of that canonical policy. The parent owner decides whether and how to absorb the packet; the sidecar supplies no gate override.
 
+### Canonical dependency update
+
+Rechecked at `2026-08-01T23:47:04Z`:
+
+- PR `#551` exact head `f347dfdc1d5d215f005b16685e2eb93fc338d3ec` reproduced the same two failures in CI run `30723127257`: `product-e2e-gate` rejected the support packet as an intervening non-evidence path, while the product job completed 2,474 tests with only the corresponding acceptance-coverage assertion failing. Orchestrator and performance checks passed.
+- Canonical policy owner task `ODP-CI-DEV-MERGE-RELEASE-NOGO-DEADLOCK-001` now has PR `#562` at exact head `b047aa18baa81b4b47fda8b58fba0b7a7d4bb1d7`. It separates ordinary task/dev-merge evidence from production Gate 0-6 authorization and decouples static inventory checks from stale exact-source receipts.
+- PR `#562`'s `product-e2e-gate` passed, demonstrating that the conflict has a canonical, fail-closed repair path. At capture time PR `#562` remained open: its product job was still running and its task-review gate was not approved. No `#562` bytes are copied into this sidecar.
+
+Closeout dependency: wait for the canonical CI-boundary repair to merge into `dev`, then refresh PR `#551` from `dev` and rerun required checks. Until then this sidecar remains complete at the support layer but cannot honestly claim merge-ready CI.
+
 ## Reviewer handoff
 
 Antigravity should use this packet as supporting evidence and may absorb it into the parent closeout record if useful. Before parent finalization:
@@ -88,4 +98,4 @@ Antigravity should use this packet as supporting evidence and may absorb it into
 4. Do not treat this sidecar packet as authority to modify or activate canonical SiteScore behavior.
 5. Treat PR `#551`'s release-gate failure as an external closeout dependency: do not ask this sidecar to edit the allowlist or canonical E2E receipt.
 
-Packet disposition: `READY_FOR_RE_REVIEW` for the sidecar task; parent implementation evidence supports the recorded exact-head approval, while merge closeout remains fail-closed on the release-gate/path-classification conflict above.
+Packet disposition: `READY_FOR_RE_REVIEW` for the sidecar task; parent implementation evidence supports the recorded exact-head approval, while merge closeout remains fail-closed pending canonical dependency PR `#562` and a clean PR `#551` rerun.
