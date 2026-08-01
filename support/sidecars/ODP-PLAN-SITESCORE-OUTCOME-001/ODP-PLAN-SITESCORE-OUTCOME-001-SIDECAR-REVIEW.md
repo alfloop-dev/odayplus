@@ -65,6 +65,19 @@ The owner regressions additionally cover the prior fully hash-rebound aggregate 
 - `task-review-gate` was successful. The new CI run was still in progress at capture time.
 - The immediately preceding run at `fb42ef7a` had green orchestrator/performance checks and a failing `product-e2e-gate`. Its log failed in `check_product_release_gate.py` because intervening commits touched the parent task's non-evidence paths; it was not a failure of the 59/103 SiteScore-focused tests. This merge-state/release-gate condition remains for the parent owner to resolve and is outside the sidecar's writable scope.
 
+## Sidecar CI follow-up
+
+Captured at `2026-08-01T23:17:19Z` after PR `#551` was returned to the owner:
+
+- PR `#551` still points to the previously approved sidecar head `9ef60d3b19c3749b6253250660b15e2e964763c3`, based on `dev` commit `eed83c0937f491211247ee3fdb0bdf8d932564fb`.
+- CI run `30706244856` passed `orchestrator` and `performance-gate`. The `product` job completed with 2,474 passing tests and one failing acceptance-coverage assertion; `product-e2e-gate` failed at the same release-gate check.
+- Both failures have one shared diagnostic: `support/sidecars/ODP-PLAN-SITESCORE-OUTCOME-001/ODP-PLAN-SITESCORE-OUTCOME-001-SIDECAR-REVIEW.md` is an intervening non-evidence path relative to the recorded product E2E source.
+- `scripts/e2e/product_e2e_receipt.py` currently restricts `EVIDENCE_COMMIT_ALLOWLIST` to the two raw E2E result files and `PRODUCT_E2E_EXECUTION_RECEIPT.json`. Therefore a committed packet at the task-required `support/sidecars/**` path cannot make this check green without changing the cross-cutting release-gate policy or regenerating canonical product E2E evidence.
+- Neither action is authorized for this support-only sidecar. This packet records the conflict instead of weakening the gate, rebinding a product receipt, or broadening canonical truth.
+- Parent PR `#525` remains open, `BEHIND`, and exact head `b2d9250f`; its task remains `review_approved` with the same CI family blocking finalization.
+
+Required routing: Antigravity should preserve this packet as support evidence and route the release-gate/path-classification conflict to the owner of that canonical policy. The parent owner decides whether and how to absorb the packet; the sidecar supplies no gate override.
+
 ## Reviewer handoff
 
 Antigravity should use this packet as supporting evidence and may absorb it into the parent closeout record if useful. Before parent finalization:
@@ -73,5 +86,6 @@ Antigravity should use this packet as supporting evidence and may absorb it into
 2. Require all mandatory CI and branch-protection checks to reach a mergeable state; `BEHIND`, pending checks, or an open PR are not closeout.
 3. Preserve the current `GOVERNED_DISABLED` claim and the explicit prediction-source/outcome-backfill dependencies.
 4. Do not treat this sidecar packet as authority to modify or activate canonical SiteScore behavior.
+5. Treat PR `#551`'s release-gate failure as an external closeout dependency: do not ask this sidecar to edit the allowlist or canonical E2E receipt.
 
-Packet disposition: `READY_FOR_REVIEW` for the sidecar task; parent implementation evidence supports the recorded exact-head approval, subject to normal PR/CI closeout.
+Packet disposition: `READY_FOR_RE_REVIEW` for the sidecar task; parent implementation evidence supports the recorded exact-head approval, while merge closeout remains fail-closed on the release-gate/path-classification conflict above.
