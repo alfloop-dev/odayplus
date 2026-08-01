@@ -455,32 +455,11 @@ def observability_runtime_checks(root: Path = ROOT) -> list[CheckResult]:
                                 ],
                             },
                         ]
-                    import hashlib
-
-                    from shared.observability.watch_window import compute_provider_watch_signature
-                    prov_sec = (os.getenv("MONITORING_PROVIDER_SECRET") or os.getenv("ONCALL_PROVIDER_SECRET") or "live-authentic-provider-secret-for-preflight").strip()
-                    os.environ["MONITORING_PROVIDER_SECRET"] = prov_sec
-
-                    resp_dict = {
+                    return 200, {
                         "gcp_project": g_proj,
                         "release_sha": r_sha,
                         "timeSeries": ts_return,
                     }
-                    prov_rcpt = f"prov-rcpt-{g_proj}-{r_sha[:8]}"
-                    proof_hash = hashlib.sha256(json.dumps(resp_dict, sort_keys=True).encode("utf-8")).hexdigest()
-                    sig_token, rb_token = compute_provider_watch_signature(
-                        provider_secret=prov_sec,
-                        provider_receipt_id=prov_rcpt,
-                        gcp_project=g_proj,
-                        release_sha=r_sha,
-                        start_iso=past_iso,
-                        end_iso=now_iso,
-                        proof_hash=proof_hash,
-                    )
-                    resp_dict["provider_receipt_id"] = prov_rcpt
-                    resp_dict["provider_signature"] = sig_token
-                    resp_dict["provider_readback_identity"] = rb_token
-                    return 200, resp_dict
             elif "dashboards" in url:
                 if method == "POST":
                     return 200, {"name": f"projects/{g_proj}/dashboards/platform-health"}
@@ -614,21 +593,26 @@ def observability_runtime_checks(root: Path = ROOT) -> list[CheckResult]:
         except RuntimeError:
             fail_closed_rejection = True
 
-        # Verify watch window recording with monitoring query execution transport
+        # Verify watch window recording fails closed when passed caller-supplied mock transport
         from datetime import UTC, datetime, timedelta
 
         start_time = datetime.now(UTC) - timedelta(minutes=20)
         end_time = datetime.now(UTC)
-        watch_receipt = record_deployment_watch_window_status(
-            release_sha=test_sha,
-            status=1,
-            start_time=start_time,
-            end_time=end_time,
-            gcp_project="alfaloop-data-project",
-            provider_route=monitoring_route,
-            query_transport=mock_provider_transport,
-        )
-        watch_window_ok = watch_receipt.get("status") == "WATCH_PASSED"
+        watch_window_fail_closed = False
+        try:
+            record_deployment_watch_window_status(
+                release_sha=test_sha,
+                status=1,
+                start_time=start_time,
+                end_time=end_time,
+                gcp_project="alfaloop-data-project",
+                provider_route=monitoring_route,
+                query_transport=mock_provider_transport,
+            )
+        except ValueError:
+            watch_window_fail_closed = True
+
+        watch_window_ok = watch_window_fail_closed
 
         # Verify notification adapter fails closed without ONCALL_ENDPOINT_URL when in production
         notification_fail_closed = False

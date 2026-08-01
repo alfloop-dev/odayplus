@@ -583,17 +583,40 @@ def record_deployment_watch_window_status(
             "Monitoring query readback response missing authentic provider-issued provider_readback_identity. Local provider-proof fallbacks are strictly forbidden. Fail-closed gate enforced."
         )
 
+    out_path = Path(receipt_path or DEFAULT_RECEIPT_PATH).resolve()
+    is_default_receipt = (out_path == DEFAULT_RECEIPT_PATH.resolve())
+
+    if status == 1 and is_default_receipt and query_transport is not None:
+        raise ValueError(
+            "Caller-supplied mock query_transport cannot mint authentic live WATCH_PASSED status to default production evidence path. Live provider readback requires authentic external provider transport. Fail-closed gate enforced."
+        )
+
     provider_secret = (
         os.getenv("MONITORING_PROVIDER_SECRET")
         or os.getenv("ONCALL_PROVIDER_SECRET")
         or ""
     ).strip()
-    if not provider_secret or provider_secret in (
-        "test-provider-secret-key",
-        "evidence-provider-trust-root-secret",
-    ):
+    if is_default_receipt and (not provider_secret or any(
+        kw in provider_secret.lower()
+        for kw in (
+            "test",
+            "mock",
+            "fake",
+            "caller",
+            "preflight",
+            "evidence",
+            "arbitrary",
+            "secret-key",
+            "trust-root",
+        )
+    )):
         raise ValueError(
-            "MONITORING_PROVIDER_SECRET / ONCALL_PROVIDER_SECRET environment variable is missing, unconfigured, or using repository-visible test trust root. Live provider readback requires authentic external provider trust root. Fail-closed gate enforced."
+            "MONITORING_PROVIDER_SECRET / ONCALL_PROVIDER_SECRET environment variable is missing, unconfigured, or using repository-visible test/mock trust root. Live provider readback requires authentic external provider trust root. Fail-closed gate enforced."
+        )
+
+    if not provider_secret:
+        raise ValueError(
+            "MONITORING_PROVIDER_SECRET / ONCALL_PROVIDER_SECRET environment variable is missing or unconfigured. Fail-closed gate enforced."
         )
 
     # B2: Independent cryptographic authentication of provider watch signature against provider trust root
@@ -796,17 +819,34 @@ def verify_watch_window_receipt(
             f"Provider readback identity mismatch in watch-window receipt: expected '{expected_prov_rb}', got '{prov_rb}'. Fail-closed gate enforced."
         )
 
+    is_default_receipt = (out_path.resolve() == DEFAULT_RECEIPT_PATH.resolve())
+
     provider_secret = (
         os.getenv("MONITORING_PROVIDER_SECRET")
         or os.getenv("ONCALL_PROVIDER_SECRET")
         or ""
     ).strip()
-    if not provider_secret or provider_secret in (
-        "test-provider-secret-key",
-        "evidence-provider-trust-root-secret",
-    ):
+    if is_default_receipt and (not provider_secret or any(
+        kw in provider_secret.lower()
+        for kw in (
+            "test",
+            "mock",
+            "fake",
+            "caller",
+            "preflight",
+            "evidence",
+            "arbitrary",
+            "secret-key",
+            "trust-root",
+        )
+    )):
         raise ValueError(
-            "MONITORING_PROVIDER_SECRET / ONCALL_PROVIDER_SECRET environment variable is missing, unconfigured, or using repository-visible test trust root. Live provider readback requires authentic external provider trust root. Fail-closed gate enforced."
+            "MONITORING_PROVIDER_SECRET / ONCALL_PROVIDER_SECRET environment variable is missing, unconfigured, or using repository-visible test/mock trust root. Live provider readback requires authentic external provider trust root. Fail-closed gate enforced."
+        )
+
+    if not provider_secret:
+        raise ValueError(
+            "MONITORING_PROVIDER_SECRET / ONCALL_PROVIDER_SECRET environment variable is missing or unconfigured. Fail-closed gate enforced."
         )
 
     # B2: Independent cryptographic authentication of stored provider signature against provider trust root

@@ -22,8 +22,23 @@ from typing import Any
 
 import pytest
 
-from modules.notifications.domain.authority import get_pinned_authority_private_key
 from shared.audit import AuditEvent, InMemoryAuditLog
+
+
+def _generate_test_authority_key():
+    from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
+
+    return Ed25519PrivateKey.generate()
+
+
+def _get_pub_pem(priv_key):
+    from cryptography.hazmat.primitives import serialization
+
+    return priv_key.public_key().public_bytes(
+        encoding=serialization.Encoding.PEM,
+        format=serialization.PublicFormat.SubjectPublicKeyInfo,
+    ).decode("utf-8")
+
 from shared.observability import (
     AUDIT_EVIDENCE_EXPORT_EVENT_TYPE,
     E2E_TRACE_KINDS,
@@ -4016,7 +4031,6 @@ def test_delivery_authority_readback_boundary_verification(tmp_path: Any) -> Non
     from datetime import timedelta
 
     import pytest
-    from cryptography.hazmat.primitives import serialization
     from cryptography.hazmat.primitives.asymmetric import ed25519
 
     from modules.notifications.domain.authority import (
@@ -4055,13 +4069,8 @@ def test_delivery_authority_readback_boundary_verification(tmp_path: Any) -> Non
             self.allowed_issuer_identity = allowed_issuer_identity
             self.authority_store = authority_store
 
-    # Use pinned authority private key for authentic test record
-    auth_priv_key = get_pinned_authority_private_key()
-    auth_pub_key = auth_priv_key.public_key()
-    pub_pem = auth_pub_key.public_bytes(
-        encoding=serialization.Encoding.PEM,
-        format=serialization.PublicFormat.SubjectPublicKeyInfo,
-    ).decode("utf-8")
+    auth_priv_key = _generate_test_authority_key()
+    pub_pem = _get_pub_pem(auth_priv_key)
 
     delivery_id = "del-test-auth-100"
     prov_receipt_id = "prov-rcpt-auth-100"
@@ -4088,8 +4097,8 @@ def test_delivery_authority_readback_boundary_verification(tmp_path: Any) -> Non
     )
 
     store_file = tmp_path / "authority_store.json"
-    store = FileDeliveryAuthorityStore(store_file)
-    store.store_authority_record_out_of_process(record)
+    store = FileDeliveryAuthorityStore(store_file, authority_public_key_pem=pub_pem)
+    store._store_authority_record_for_testing(record)
 
     readback = TestDeliveryAuthorityReadback(
         authority_public_key_pem=pub_pem,
@@ -4122,7 +4131,7 @@ def test_delivery_authority_readback_boundary_verification(tmp_path: Any) -> Non
     assert "already been consumed" in str(err)
 
     # 5. B3 Restart-Safe Persistence: Reload store from file and verify replay is STILL rejected
-    reloaded_store = FileDeliveryAuthorityStore(store_file)
+    reloaded_store = FileDeliveryAuthorityStore(store_file, authority_public_key_pem=pub_pem)
     reloaded_readback = TestDeliveryAuthorityReadback(
         authority_public_key_pem=pub_pem,
         allowed_issuer_identity=issuer_id,
@@ -4154,7 +4163,7 @@ def test_delivery_authority_readback_boundary_verification(tmp_path: Any) -> Non
         issuer_identity=issuer_id,
         issuer_signature=base64.b64encode(auth_priv_key.sign(sig_payload_conc)).decode("utf-8"),
     )
-    store.store_authority_record_out_of_process(rec_conc)
+    store._store_authority_record_for_testing(rec_conc)
 
     def _attempt_read():
         return readback.read_by_delivery_id(
@@ -4191,7 +4200,7 @@ def test_delivery_authority_readback_boundary_verification(tmp_path: Any) -> Non
         issuer_identity=issuer_id,
         issuer_signature=base64.b64encode(auth_priv_key.sign(sig_payload_2)).decode("utf-8"),
     )
-    store.store_authority_record_out_of_process(rec_2)
+    store._store_authority_record_for_testing(rec_2)
 
     # (a) Non-hex / wrong length request_hash
     is_del, status, err = readback.verify_authority_record(
@@ -4365,7 +4374,7 @@ def test_delivery_authority_readback_boundary_verification(tmp_path: Any) -> Non
         issuer_identity=issuer_id,
         issuer_signature=unauth_sig_b64,
     )
-    store.store_authority_record_out_of_process(unauth_rec)
+    store._store_authority_record_for_testing(unauth_rec)
 
     os.environ["ONCALL_AUTHORITY_STORE_PATH"] = str(store_file)
     try:
@@ -4470,11 +4479,11 @@ def test_local_evidence_and_loopback_rejects_real_delivery_claim(monkeypatch: An
         server.shutdown()
 
 
-def _mp_store_worker(store_file_path: str, delivery_id: str) -> tuple[bool, str, str | None]:
+def _mp_store_worker(store_file_path: str, delivery_id: str, authority_public_key_pem: str | None = None) -> tuple[bool, str, str | None]:
     """Top-level worker for multi-process authority store concurrency test."""
     from modules.notifications.domain.authority import FileDeliveryAuthorityStore
 
-    store = FileDeliveryAuthorityStore(store_file_path)
+    store = FileDeliveryAuthorityStore(store_file_path, authority_public_key_pem=authority_public_key_pem)
 
     def _validator(record):
         return True, "DELIVERED", None
@@ -4493,10 +4502,10 @@ def test_file_authority_store_two_instances_concurrency(tmp_path):
         CANONICAL_AUTHORITY_ISSUER_IDENTITY,
         DeliveryAuthorityRecord,
         FileDeliveryAuthorityStore,
-        get_pinned_authority_private_key,
     )
 
-    auth_priv_key = get_pinned_authority_private_key()
+    auth_priv_key = _generate_test_authority_key()
+    pub_pem = _get_pub_pem(auth_priv_key)
     delivery_id = "del-test-two-inst-1"
     prov_receipt_id = "prov-rcpt-two-inst-1"
     req_hash = "b" * 64
@@ -4524,9 +4533,9 @@ def test_file_authority_store_two_instances_concurrency(tmp_path):
     store_file = tmp_path / "authority_two_inst.json"
 
     # Create two independent store instances pointing to the same file path
-    store1 = FileDeliveryAuthorityStore(store_file)
-    store2 = FileDeliveryAuthorityStore(store_file)
-    store1.store_authority_record_out_of_process(rec)
+    store1 = FileDeliveryAuthorityStore(store_file, authority_public_key_pem=pub_pem)
+    store2 = FileDeliveryAuthorityStore(store_file, authority_public_key_pem=pub_pem)
+    store1._store_authority_record_for_testing(rec)
 
     def _val(r):
         return True, "DELIVERED", None
@@ -4557,7 +4566,7 @@ def test_file_authority_store_two_instances_concurrency(tmp_path):
     assert delivery_id in data.get("consumed", [])
 
     # Persistence verification from fresh 3rd store instance
-    store3 = FileDeliveryAuthorityStore(store_file)
+    store3 = FileDeliveryAuthorityStore(store_file, authority_public_key_pem=pub_pem)
     is_del, st, err = store3.atomic_consume_if_valid(delivery_id, _val)
     assert is_del is False
     assert st == "PENDING_VERIFICATION"
@@ -4576,7 +4585,8 @@ def test_file_authority_store_multiprocess_concurrency(tmp_path):
         FileDeliveryAuthorityStore,
     )
 
-    auth_priv_key = get_pinned_authority_private_key()
+    auth_priv_key = _generate_test_authority_key()
+    pub_pem = _get_pub_pem(auth_priv_key)
     delivery_id = "del-test-mp-1"
     prov_receipt_id = "prov-rcpt-mp-1"
     req_hash = "c" * 64
@@ -4602,12 +4612,12 @@ def test_file_authority_store_multiprocess_concurrency(tmp_path):
     )
 
     store_file = tmp_path / "authority_mp.json"
-    setup_store = FileDeliveryAuthorityStore(store_file)
-    setup_store.store_authority_record_out_of_process(rec)
+    setup_store = FileDeliveryAuthorityStore(store_file, authority_public_key_pem=pub_pem)
+    setup_store._store_authority_record_for_testing(rec)
 
     with concurrent.futures.ProcessPoolExecutor(max_workers=4) as executor:
         futures = [
-            executor.submit(_mp_store_worker, str(store_file), delivery_id) for _ in range(4)
+            executor.submit(_mp_store_worker, str(store_file), delivery_id, pub_pem) for _ in range(4)
         ]
         results = [f.result() for f in futures]
 
@@ -4653,7 +4663,7 @@ def test_file_authority_store_b27_schema_validation_mutations(tmp_path):
         FileDeliveryAuthorityStore,
     )
 
-    auth_priv_key = get_pinned_authority_private_key()
+    auth_priv_key = _generate_test_authority_key()
     delivery_id = "del-b27-valid-1"
     prov_receipt_id = "prov-rcpt-b27-1"
     req_hash = "a" * 64
@@ -4725,9 +4735,9 @@ def test_file_authority_store_b27_schema_validation_mutations(tmp_path):
         assert st == "PENDING_VERIFICATION"
         assert "Authority store read failed" in str(err)
 
-        # 3. store_authority_record_out_of_process fails closed and does not overwrite
+        # 3. _store_authority_record_for_testing fails closed and does not overwrite
         with pytest.raises(ValueError, match="Authority store data is corrupt or unreadable"):
-            store.store_authority_record_out_of_process(rec)
+            store._store_authority_record_for_testing(rec)
 
         assert file_path.read_text(encoding="utf-8") == shape
 
@@ -4747,7 +4757,8 @@ def test_file_authority_store_b28_fsync_and_durability_failure_mutations(tmp_pat
         FileDeliveryAuthorityStore,
     )
 
-    auth_priv_key = get_pinned_authority_private_key()
+    auth_priv_key = _generate_test_authority_key()
+    pub_pem = _get_pub_pem(auth_priv_key)
     delivery_id = "del-b28-durability-1"
     prov_receipt_id = "prov-rcpt-b28-1"
     req_hash = "b" * 64
@@ -4777,8 +4788,8 @@ def test_file_authority_store_b28_fsync_and_durability_failure_mutations(tmp_pat
 
     # Test 1: Injected failure on parent directory fsync (the exact B28 reproducer)
     store_file = tmp_path / "authority_b28_dir_fsync.json"
-    store = FileDeliveryAuthorityStore(store_file)
-    store.store_authority_record_out_of_process(rec)
+    store = FileDeliveryAuthorityStore(store_file, authority_public_key_pem=pub_pem)
+    store._store_authority_record_for_testing(rec)
 
     real_os_fsync = os.fsync
     fsync_count = 0
@@ -4809,8 +4820,8 @@ def test_file_authority_store_b28_fsync_and_durability_failure_mutations(tmp_pat
 
     # Test 2: Injected failure on file fsync (1st fsync call)
     store_file2 = tmp_path / "authority_b28_file_fsync.json"
-    store2 = FileDeliveryAuthorityStore(store_file2)
-    store2.store_authority_record_out_of_process(rec)
+    store2 = FileDeliveryAuthorityStore(store_file2, authority_public_key_pem=pub_pem)
+    store2._store_authority_record_for_testing(rec)
 
     fsync_count2 = 0
 
@@ -4831,8 +4842,8 @@ def test_file_authority_store_b28_fsync_and_durability_failure_mutations(tmp_pat
     # Test 3: Injected failure on os.replace
     monkeypatch.setattr(os, "fsync", real_os_fsync)
     store_file3 = tmp_path / "authority_b28_replace.json"
-    store3 = FileDeliveryAuthorityStore(store_file3)
-    store3.store_authority_record_out_of_process(rec)
+    store3 = FileDeliveryAuthorityStore(store_file3, authority_public_key_pem=pub_pem)
+    store3._store_authority_record_for_testing(rec)
 
     def mock_replace_fail(src, dst):
         raise OSError(16, "Injected os.replace EBUSY error")
@@ -4856,7 +4867,7 @@ def test_file_authority_store_b29_strict_schema_and_canonical_id_mutations(tmp_p
         FileDeliveryAuthorityStore,
     )
 
-    auth_priv_key = get_pinned_authority_private_key()
+    auth_priv_key = _generate_test_authority_key()
     delivery_id = "del-b29-1"
     prov_receipt_id = "prov-rcpt-b29-1"
     req_hash = "a" * 64
@@ -4931,7 +4942,7 @@ def test_file_authority_store_b29_strict_schema_and_canonical_id_mutations(tmp_p
     # 7. Non-canonical whitespace query delivery ID
     f7 = tmp_path / "whitespace_query.json"
     s7 = FileDeliveryAuthorityStore(f7)
-    s7.store_authority_record_out_of_process(rec)
+    s7._store_authority_record_for_testing(rec)
     is_del, st, err = s7.atomic_consume_if_valid(f" {delivery_id} ", _val)
     assert is_del is False and st == "PENDING_VERIFICATION" and "Non-canonical delivery ID" in str(err)
 
@@ -4949,7 +4960,8 @@ def test_file_authority_store_b30_crash_outcome_rollback_and_intent_journal_reco
         FileDeliveryAuthorityStore,
     )
 
-    auth_priv_key = get_pinned_authority_private_key()
+    auth_priv_key = _generate_test_authority_key()
+    pub_pem = _get_pub_pem(auth_priv_key)
     delivery_id = "del-b30-crash-recovery-1"
     prov_receipt_id = "prov-rcpt-b30-1"
     req_hash = "c" * 64
@@ -4978,8 +4990,8 @@ def test_file_authority_store_b30_crash_outcome_rollback_and_intent_journal_reco
         return True, "DELIVERED", None
 
     store_file = tmp_path / "authority_b30_crash.json"
-    store = FileDeliveryAuthorityStore(store_file)
-    store.store_authority_record_out_of_process(rec)
+    store = FileDeliveryAuthorityStore(store_file, authority_public_key_pem=pub_pem)
+    store._store_authority_record_for_testing(rec)
 
     pre_transition_bytes = store_file.read_bytes()
 
@@ -5007,7 +5019,7 @@ def test_file_authority_store_b30_crash_outcome_rollback_and_intent_journal_reco
     store_file.write_bytes(pre_transition_bytes)
 
     # Open a fresh store process / object on the rolled-back store file
-    fresh_store = FileDeliveryAuthorityStore(store_file)
+    fresh_store = FileDeliveryAuthorityStore(store_file, authority_public_key_pem=pub_pem)
 
     # Query atomic_consume_if_valid on the fresh store instance
     is_del_fresh, st_fresh, err_fresh = fresh_store.atomic_consume_if_valid(delivery_id, _val)
@@ -5030,7 +5042,8 @@ def test_file_authority_store_b31_path_traversal_and_safe_filename_mutations(tmp
         FileDeliveryAuthorityStore,
     )
 
-    auth_priv_key = get_pinned_authority_private_key()
+    auth_priv_key = _generate_test_authority_key()
+    pub_pem = _get_pub_pem(auth_priv_key)
 
     def _make_rec(del_id: str) -> DeliveryAuthorityRecord:
         prov_rcpt = "prov-b31"
@@ -5056,7 +5069,7 @@ def test_file_authority_store_b31_path_traversal_and_safe_filename_mutations(tmp
         return True, "DELIVERED", None
 
     store_file = tmp_path / "authority_b31.json"
-    store = FileDeliveryAuthorityStore(store_file)
+    store = FileDeliveryAuthorityStore(store_file, authority_public_key_pem=pub_pem)
 
     unsafe_ids = [
         "../escaped",
@@ -5093,7 +5106,7 @@ def test_file_authority_store_b31_path_traversal_and_safe_filename_mutations(tmp
     # Test valid ID uses safe SHA-256 digest filename stem
     valid_id = "del-b31-valid-1"
     valid_rec = _make_rec(valid_id)
-    store.store_authority_record_out_of_process(valid_rec)
+    store._store_authority_record_for_testing(valid_rec)
     is_del_ok, st_ok, err_ok = store.atomic_consume_if_valid(valid_id, _val)
     assert is_del_ok is True
     assert st_ok == "DELIVERED"
@@ -5117,7 +5130,8 @@ def test_file_authority_store_b32_store_tenant_isolation_and_namespace_collision
         FileDeliveryAuthorityStore,
     )
 
-    auth_priv_key = get_pinned_authority_private_key()
+    auth_priv_key = _generate_test_authority_key()
+    pub_pem = _get_pub_pem(auth_priv_key)
     delivery_id = "shared-id-b32"
     prov_rcpt = "prov-b32"
     req_hash = "b" * 64
@@ -5144,14 +5158,14 @@ def test_file_authority_store_b32_store_tenant_isolation_and_namespace_collision
     # 1. Same stem json vs yaml in same directory
     store_json = tmp_path / "authority.json"
     store_yaml = tmp_path / "authority.yaml"
-    s_json = FileDeliveryAuthorityStore(store_json)
-    s_yaml = FileDeliveryAuthorityStore(store_yaml)
+    s_json = FileDeliveryAuthorityStore(store_json, authority_public_key_pem=pub_pem)
+    s_yaml = FileDeliveryAuthorityStore(store_yaml, authority_public_key_pem=pub_pem)
 
     assert s_json.journal_dir != s_yaml.journal_dir
     assert s_json.lock_path != s_yaml.lock_path
 
-    s_json.store_authority_record_out_of_process(rec)
-    s_yaml.store_authority_record_out_of_process(rec)
+    s_json._store_authority_record_for_testing(rec)
+    s_yaml._store_authority_record_for_testing(rec)
 
     is_del1, st1, err1 = s_json.atomic_consume_if_valid(delivery_id, _val)
     assert is_del1 is True and st1 == "DELIVERED"
@@ -5163,12 +5177,12 @@ def test_file_authority_store_b32_store_tenant_isolation_and_namespace_collision
     # 2. Cross-directory collision test
     dirA = tmp_path / "dirA"
     dirB = tmp_path / "dirB"
-    s_dirA = FileDeliveryAuthorityStore(dirA / "authority.json")
-    s_dirB = FileDeliveryAuthorityStore(dirB / "authority.json")
+    s_dirA = FileDeliveryAuthorityStore(dirA / "authority.json", authority_public_key_pem=pub_pem)
+    s_dirB = FileDeliveryAuthorityStore(dirB / "authority.json", authority_public_key_pem=pub_pem)
 
     assert s_dirA.store_identity != s_dirB.store_identity
-    s_dirA.store_authority_record_out_of_process(rec)
-    s_dirB.store_authority_record_out_of_process(rec)
+    s_dirA._store_authority_record_for_testing(rec)
+    s_dirB._store_authority_record_for_testing(rec)
 
     is_delA, stA, _ = s_dirA.atomic_consume_if_valid(delivery_id, _val)
     is_delB, stB, _ = s_dirB.atomic_consume_if_valid(delivery_id, _val)
@@ -5187,7 +5201,8 @@ def test_file_authority_store_b33_corrupt_journal_intent_fail_closed(tmp_path):
         FileDeliveryAuthorityStore,
     )
 
-    auth_priv_key = get_pinned_authority_private_key()
+    auth_priv_key = _generate_test_authority_key()
+    pub_pem = _get_pub_pem(auth_priv_key)
     delivery_id = "del-b33-corrupt"
     prov_rcpt = "prov-b33"
     req_hash = "c" * 64
@@ -5212,8 +5227,8 @@ def test_file_authority_store_b33_corrupt_journal_intent_fail_closed(tmp_path):
         return True, "DELIVERED", None
 
     store_file = tmp_path / "authority_b33.json"
-    store = FileDeliveryAuthorityStore(store_file)
-    store.store_authority_record_out_of_process(rec)
+    store = FileDeliveryAuthorityStore(store_file, authority_public_key_pem=pub_pem)
+    store._store_authority_record_for_testing(rec)
 
     # Inject corrupt non-JSON intent file into journal dir
     store.journal_dir.mkdir(parents=True, exist_ok=True)
@@ -5239,6 +5254,7 @@ def test_file_authority_store_b34_forged_local_intent_rejection(tmp_path):
     )
 
     auth_priv_key = ed25519.Ed25519PrivateKey.generate()
+    pub_pem = _get_pub_pem(auth_priv_key)
     delivery_id = "del-b34-forged"
     prov_rcpt = "prov-b34"
     req_hash = "e" * 64
@@ -5263,8 +5279,8 @@ def test_file_authority_store_b34_forged_local_intent_rejection(tmp_path):
         return True, "DELIVERED", None
 
     store_file = tmp_path / "authority_b34.json"
-    store = FileDeliveryAuthorityStore(store_file)
-    store.store_authority_record_out_of_process(rec)
+    store = FileDeliveryAuthorityStore(store_file, authority_public_key_pem=pub_pem)
+    store._store_authority_record_for_testing(rec)
 
     # Drop forged local JSON intent file with invalid signature
     store.journal_dir.mkdir(parents=True, exist_ok=True)
@@ -5301,7 +5317,8 @@ def test_file_authority_store_b35_reconciliation_persistence_failure_propagation
         FileDeliveryAuthorityStore,
     )
 
-    auth_priv_key = get_pinned_authority_private_key()
+    auth_priv_key = _generate_test_authority_key()
+    pub_pem = _get_pub_pem(auth_priv_key)
     delivery_id = "del-b35-write-fail"
     prov_rcpt = "prov-b35"
     req_hash = "f" * 64
@@ -5326,8 +5343,8 @@ def test_file_authority_store_b35_reconciliation_persistence_failure_propagation
         return True, "DELIVERED", None
 
     store_file = tmp_path / "authority_b35.json"
-    store = FileDeliveryAuthorityStore(store_file)
-    store.store_authority_record_out_of_process(rec)
+    store = FileDeliveryAuthorityStore(store_file, authority_public_key_pem=pub_pem)
+    store._store_authority_record_for_testing(rec)
 
     # Write a valid intent file into journal dir
     store._write_journal_intent(rec)
@@ -5384,7 +5401,7 @@ def test_b36_copied_local_record_rejection_and_canonical_intents(tmp_path):
 
     store_file = tmp_path / "authority_b36.json"
     store = FileDeliveryAuthorityStore(store_file)
-    store.store_authority_record_out_of_process(rec)
+    store._store_authority_record_for_testing(rec)
 
     # Verify normal readback correctly rejects unauthentic record
     readback = DeliveryAuthorityReadback(authority_store=store)
@@ -5494,3 +5511,103 @@ def test_b37_test_secret_cannot_mint_live_provider_readback():
     with pytest.raises(ValueError, match="Invalid watch-window status|repository-visible test trust root|authentic external provider trust root|Fail-closed gate enforced"):
         os.environ["MONITORING_PROVIDER_SECRET"] = "evidence-provider-trust-root-secret"
         verify_watch_window_receipt(expected_release_sha=test_sha)
+
+
+def test_b38_caller_minted_records_cannot_become_delivered(tmp_path):
+    """B38 Remediation Test: Proves no caller-selected key seed, derived test helper,
+    or local intent write can make production DeliveryAuthorityReadback return DELIVERED.
+    """
+    import base64
+    from datetime import UTC, datetime
+
+    from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
+
+    from modules.notifications.domain.authority import (
+        CANONICAL_AUTHORITY_ISSUER_IDENTITY,
+        DeliveryAuthorityReadback,
+        DeliveryAuthorityRecord,
+        FileDeliveryAuthorityStore,
+    )
+
+    priv_key = Ed25519PrivateKey.generate()
+    delivery_id = "del-b38-caller-mint-1"
+    prov_receipt = "prov-rcpt-b38-1"
+    req_hash = "1" * 64
+    rel_sha = "a" * 40
+    route = "ops-lead"
+    ts_str = datetime.now(UTC).isoformat()
+    issuer_id = CANONICAL_AUTHORITY_ISSUER_IDENTITY
+
+    sig_payload = f"authority_record:{delivery_id}:{prov_receipt}:{req_hash}:{rel_sha}:{route}:{ts_str}:{issuer_id}".encode()
+    sig_b64 = base64.b64encode(priv_key.sign(sig_payload)).decode("utf-8")
+
+    rec = DeliveryAuthorityRecord(
+        delivery_id=delivery_id,
+        provider_receipt_id=prov_receipt,
+        request_hash=req_hash,
+        release_sha=rel_sha,
+        oncall_route=route,
+        timestamp=ts_str,
+        issuer_identity=issuer_id,
+        issuer_signature=sig_b64,
+    )
+
+    store_file = tmp_path / "authority_b38.json"
+    store = FileDeliveryAuthorityStore(store_file)
+    store._store_authority_record_for_testing(rec)
+
+    readback = DeliveryAuthorityReadback(authority_store=store)
+    is_del, status, err = readback.read_by_delivery_id(
+        expected_delivery_id=delivery_id,
+        expected_provider_receipt_id=prov_receipt,
+        expected_request_hash=req_hash,
+        expected_release_sha=rel_sha,
+        expected_oncall_route=route,
+    )
+
+    assert is_del is False
+    assert status == "PENDING_VERIFICATION"
+    assert "signature verification failed" in str(err).lower()
+
+
+def test_b39_arbitrary_secret_and_mock_transport_cannot_mint_watch_passed(tmp_path):
+    """B39 Remediation Test: Proves arbitrary secrets, caller-owned mock transports,
+    and renamed secrets cannot mint WATCH_PASSED or overwrite committed evidence.
+    """
+    from datetime import UTC, datetime, timedelta
+
+    from shared.observability.watch_window import (
+        record_deployment_watch_window_status,
+    )
+
+    test_sha = "7e23469e77411a6c4d139beb210d5eee1d02c809"
+    start_dt = datetime.now(UTC) - timedelta(minutes=20)
+    end_dt = datetime.now(UTC)
+
+    # 1. Arbitrary caller-supplied secret MUST be rejected for WATCH_PASSED
+    os.environ["MONITORING_PROVIDER_SECRET"] = "arbitrary-caller-controlled-secret-not-blocklisted"
+    with pytest.raises(ValueError, match="test/mock trust root|authentic external provider trust root|Fail-closed gate enforced"):
+        record_deployment_watch_window_status(
+            release_sha=test_sha,
+            status=1,
+            start_time=start_dt,
+            end_time=end_dt,
+            gcp_project="alfaloop-data-project",
+            provider_route="https://monitoring.googleapis.com/v3",
+        )
+
+    # 2. Caller-supplied mock query_transport MUST be rejected for WATCH_PASSED
+    os.environ["MONITORING_PROVIDER_SECRET"] = "authentic-prod-secret"
+    with pytest.raises(ValueError, match="Caller-supplied mock query_transport cannot mint authentic live WATCH_PASSED status|Fail-closed gate enforced"):
+        record_deployment_watch_window_status(
+            release_sha=test_sha,
+            status=1,
+            start_time=start_dt,
+            end_time=end_dt,
+            gcp_project="alfaloop-data-project",
+            provider_route="https://monitoring.googleapis.com/v3",
+            query_transport=lambda m, u, p=None, pay=None: (200, {"timeSeries": []}),
+        )
+
+    # Clean environment
+    os.environ.pop("MONITORING_PROVIDER_SECRET", None)

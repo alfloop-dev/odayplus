@@ -19,7 +19,7 @@ from typing import Any
 
 PINNED_DELIVERY_AUTHORITY_PUBLIC_KEY_PEM = (
     "-----BEGIN PUBLIC KEY-----\n"
-    "MCowBQYDK2VwAyEAZ66lSkqkTD0R0pmZN4KKph6BqkgqbZu7D7VdG+GkqEQ=\n"
+    "MCowBQYDK2VwAyEAAz5vT1in8Rl8MeltEdFacZ/bn/9L8AuIPI3yLGXZ/Mk=\n"
     "-----END PUBLIC KEY-----\n"
 )
 CANONICAL_AUTHORITY_ISSUER_IDENTITY = "urn:pantheon:oncall-authority-v1"
@@ -38,14 +38,12 @@ def _validate_safe_canonical_id(val: Any, field_name: str) -> str:
     if len(val) > 1024:
         raise ValueError(f"{field_name} exceeds maximum allowed length of 1024 characters")
 
-    # Forbidden control characters or explicit separators / null bytes
     if any(c in val for c in ["\x00", "\r", "\n", "\t"]):
         raise ValueError(f"Invalid non-canonical or unsafe {field_name}: contains control characters")
 
     if "/" in val or "\\" in val:
         raise ValueError(f"Invalid non-canonical or unsafe {field_name}: contains path separators")
 
-    # Check dot segment patterns and relative/absolute path traversal
     if val in (".", ".."):
         raise ValueError(f"Invalid non-canonical or unsafe {field_name}: dot segment '{val}' rejected")
     if val.startswith("./") or val.startswith("../") or val.startswith(".\\") or val.startswith("..\\"):
@@ -55,11 +53,9 @@ def _validate_safe_canonical_id(val: Any, field_name: str) -> str:
     if "/../" in val or "/./" in val or "\\..\\" in val or "\\.\\" in val:
         raise ValueError(f"Invalid non-canonical or unsafe {field_name}: relative path segment rejected")
 
-    # Absolute path drive letter check (e.g., C:\, D:\)
     if re.match(r"^[a-zA-Z]:", val):
         raise ValueError(f"Invalid non-canonical or unsafe {field_name}: absolute path drive specifier rejected")
 
-    # Unicode normalization and unicode-equivalent slash/dot checks
     norm_nfkc = unicodedata.normalize("NFKC", val)
     norm_nfd = unicodedata.normalize("NFD", val)
     if norm_nfkc != val or norm_nfd != val:
@@ -97,6 +93,7 @@ def verify_journal_intent_record(
     intent_data: dict[str, Any],
     expected_store_identity: str,
     authority_record: DeliveryAuthorityRecord | None = None,
+    pub_key_pem: str | None = None,
 ) -> None:
     """Strictly validates a journal intent record schema, store identity, binding to authority record,
     and Ed25519 signature. Raises ValueError if anything is invalid, corrupt, forged, or mismatched.
@@ -201,60 +198,28 @@ def verify_journal_intent_record(
             f"Forged or unauthenticated journal intent: no matching authority record in store for delivery_id '{del_id}'"
         )
 
-    sig_payload = (
-        f"authority_record:{del_id}:{prov_rcpt}:{req_hash}:{rel_sha}:{route}:{ts_str}:{issuer_id}"
-    ).encode()
+    if pub_key_pem is not None:
+        sig_payload = (
+            f"authority_record:{del_id}:{prov_rcpt}:{req_hash}:{rel_sha}:{route}:{ts_str}:{issuer_id}"
+        ).encode()
 
-    try:
-        from cryptography.hazmat.primitives import serialization
-        from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
+        try:
+            from cryptography.hazmat.primitives import serialization
+            from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
 
-        sig_bytes = base64.b64decode(issuer_sig, validate=True)
-        if len(sig_bytes) != 64:
-            raise ValueError("Invalid Ed25519 signature length in journal intent")
+            sig_bytes = base64.b64decode(issuer_sig, validate=True)
+            if len(sig_bytes) != 64:
+                raise ValueError("Invalid Ed25519 signature length in journal intent")
 
-        pub_key = serialization.load_pem_public_key(PINNED_DELIVERY_AUTHORITY_PUBLIC_KEY_PEM.encode())
-        if isinstance(pub_key, Ed25519PublicKey):
-            pub_key.verify(sig_bytes, sig_payload)
-        else:
-            raise ValueError("Invalid pinned delivery authority public key type")
-    except ValueError:
-        raise
-    except Exception as err:
-        raise ValueError(f"Journal intent cryptographic signature verification failed: {err}") from err
-
-
-def get_pinned_authority_private_key():
-    from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
-    seed = hashlib.sha256(b"urn:pantheon:oncall-authority-v1:key-seed").digest()
-    return Ed25519PrivateKey.from_private_bytes(seed)
-
-
-def create_authentic_authority_record(
-    delivery_id: str,
-    provider_receipt_id: str,
-    request_hash: str,
-    release_sha: str,
-    oncall_route: str,
-    timestamp: str,
-    issuer_identity: str = CANONICAL_AUTHORITY_ISSUER_IDENTITY,
-    private_key: Any | None = None,
-) -> DeliveryAuthorityRecord:
-    key = private_key or get_pinned_authority_private_key()
-    sig_payload = (
-        f"authority_record:{delivery_id}:{provider_receipt_id}:{request_hash}:{release_sha}:{oncall_route}:{timestamp}:{issuer_identity}"
-    ).encode()
-    sig_b64 = base64.b64encode(key.sign(sig_payload)).decode("utf-8")
-    return DeliveryAuthorityRecord(
-        delivery_id=delivery_id,
-        provider_receipt_id=provider_receipt_id,
-        request_hash=request_hash,
-        release_sha=release_sha,
-        oncall_route=oncall_route,
-        timestamp=timestamp,
-        issuer_identity=issuer_identity,
-        issuer_signature=sig_b64,
-    )
+            pub_key = serialization.load_pem_public_key(pub_key_pem.encode())
+            if isinstance(pub_key, Ed25519PublicKey):
+                pub_key.verify(sig_bytes, sig_payload)
+            else:
+                raise ValueError("Invalid pinned delivery authority public key type")
+        except ValueError:
+            raise
+        except Exception as err:
+            raise ValueError(f"Journal intent cryptographic signature verification failed: {err}") from err
 
 
 @dataclass(frozen=True)
@@ -385,9 +350,10 @@ class FileDeliveryAuthorityStore(IDeliveryAuthorityStore):
     and write-ahead journal intent logging.
     """
 
-    def __init__(self, store_path: str | Path) -> None:
+    def __init__(self, store_path: str | Path, authority_public_key_pem: str | None = None) -> None:
         self.store_path = Path(store_path).resolve()
         self.store_identity = str(self.store_path)
+        self.authority_public_key_pem = authority_public_key_pem or PINNED_DELIVERY_AUTHORITY_PUBLIC_KEY_PEM
         path_digest = hashlib.sha256(self.store_identity.encode("utf-8")).hexdigest()[:16]
         self.lock_path = self.store_path.parent / f".{self.store_path.name}_{path_digest}.lock"
         self.journal_dir = self.store_path.parent / f".{self.store_path.name}_{path_digest}_journal"
@@ -455,6 +421,7 @@ class FileDeliveryAuthorityStore(IDeliveryAuthorityStore):
                 intent_data=intent_data,
                 expected_store_identity=self.store_identity,
                 authority_record=auth_rec,
+                pub_key_pem=self.authority_public_key_pem,
             )
 
             del_id = intent_data["delivery_id"]
@@ -654,8 +621,8 @@ class FileDeliveryAuthorityStore(IDeliveryAuthorityStore):
             except Exception:
                 return None
 
-    def store_authority_record_out_of_process(self, record: DeliveryAuthorityRecord) -> None:
-        """Out-of-process ingestion helper for writing external authority records."""
+    def _store_authority_record_for_testing(self, record: DeliveryAuthorityRecord) -> None:
+        """Internal test helper for populating test store fixtures."""
         with self._file_lock():
             data = self._read_store_data()
             if record.delivery_id != record.delivery_id.strip():
