@@ -2,12 +2,14 @@
 
 ## Task Context
 - Task ID: `ODP-OPERATOR-LIVE-PROVENANCE-HEALTH-001`
-- Owner: `Codex9`
-- Reviewer: `Codex8`
+- Owner: `Codex`
+- Assigned reviewer: `Codex9`
+- Prior rejection reviewer: `Codex8`
 - Branch: `task/ODP-OPERATOR-LIVE-PROVENANCE-HEALTH-001`
 - Baseline: `origin/dev` @ `eed83c0937f491211247ee3fdb0bdf8d932564fb` (exact `eed83c09`)
 - Target Run: Deploy Dev run `30680943677`
 - Replacement implementation anchor: `1fd5d02f992e86e733a367f56ac512287b0a48ec`
+- Owner-dispatch verification input: `1becb9bc6f6af3b9aee304921992c280c154ba17`
 
 ## Summary of Remediations (Codex8 Rejection Batch)
 
@@ -54,6 +56,12 @@
 - **Explicit Model Blocker Preserved**: When required production bindings are unresolved, `/platform/health` and `/readiness` now expose `models.blockingReasons=["PRODUCTION_MODEL_BINDINGS_UNVERIFIED"]`. The data layer does not claim that model failure as a data blocker.
 - **ForecastOps Still Fails Closed**: The change does not alter the required active ForecastOps contract, create an MLflow alias, seed a model, or weaken the unchanged release gate. `productionBindingsReady=false` and the explicit model blocker remain visible until approved production bindings exist.
 - **POC Tenant Boundary Aligned**: The established external-data freshness contract request now supplies `x-tenant-id: tenant-test`, matching the verified data-owner principal scope required by the intentional tenant boundary.
+
+## Owner-Dispatch Verification Refresh (2026-08-01)
+
+- `Codex` replayed the complete 15-file focused suite from implementation head `1becb9bc6f6af3b9aee304921992c280c154ba17`; the command exited `0` with the existing environment-conditional skip and deprecation warnings only.
+- Changed Python files pass Ruff, `git diff --check origin/dev...HEAD` is clean, and the forbidden-path audit is empty.
+- The refresh changes no runtime behavior. ForecastOps remains a required active capability with unresolved production bindings exposed as a model-scoped blocker; no model alias, fixture, seed, minimum-row policy, release gate, deployment workflow, Package 10 surface, or canonical design artifact changed.
 
 ## Modified File Inventory (relative to origin/dev)
 1. `apps/api/app/routes/external_data.py`
