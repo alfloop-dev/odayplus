@@ -14,6 +14,7 @@
 | [30376737123](https://github.com/alfloop-dev/odayplus/actions/runs/30376737123) | `dda726155a` (PR #479) | push | failure | `jobs-smoke:migration:secret_bindings` fail-closed |
 | [30402570022](https://github.com/alfloop-dev/odayplus/actions/runs/30402570022) | `7d13f8e162` (PR #484) | push | failure | `migration-compatibility-smoke` probe timeout (`/platform/version` & `/platform/health`) |
 | [30412416116](https://github.com/alfloop-dev/odayplus/actions/runs/30412416116) | `79cf9b67e6` (PR #488) | push | failure | `worker Cloud Run Job` execution failure (`oday-worker-r-79cf9b67e62c-6fhw5`) |
+| [30680943677](https://github.com/alfloop-dev/odayplus/actions/runs/30680943677) | `97e3ae2e26` (dev) | push | failure | Candidate revision smoke fail-closed (`/platform/health` & `/readiness` 503, operator bootstrap degraded data_mode/provenance, forecastops unverified model bindings) |
 
 
 This directory is evidence only. Per the task conflict gate, no product code,
@@ -526,5 +527,83 @@ HOME=/home/lupin /usr/bin/gh run download 30412416116 -R alfloop-dev/odayplus -n
 cat cloud-run-dev-validation/cloud-run-migration-compatibility.json
 python3 scripts/e2e/check_product_grade_ci_gates.py --report
 ```
+
+---
+
+## 23. Deploy Dev run 30680943677 (SHA 97e3ae2e26, dev tip)
+
+`Deploy Dev` run [`30680943677`](https://github.com/alfloop-dev/odayplus/actions/runs/30680943677)
+was triggered by push to `origin/dev` at `2026-08-01T02:54:54Z`,
+running on exact SHA `97e3ae2e264d00254b574d5e27ab771688f04768`.
+
+| Field | Value |
+|---|---|
+| Head branch / SHA | `dev` / `97e3ae2e264d00254b574d5e27ab771688f04768` |
+| Event | `push` |
+| `e2e-operational-evidence` job | **success** |
+| `deploy` job | **failure** at step 13 |
+| Started | `2026-08-01T02:54:54Z` |
+| Completed | `2026-08-01T03:13:46Z` |
+
+Full step-by-step receipt: `deploy-run-30680943677.json`.
+
+### What changed from previous runs
+
+`ODP-DEPLOY-WORKER-JOB-EXECUTION-001` (PR #494) resolved worker Cloud Run job execution failures. As a result:
+- Preflight: 72 checks, 0 failures (`cloud-run-preflight-run-30680943677.json`)
+- Migration Cloud Run Job (`oday-migration-r-97e3ae2e264d-bczn7`): **PASSED**
+- Migration compatibility smoke: **PASSED** (`cloud-run-migration-compatibility-run-30680943677.json`)
+- Scheduler Cloud Run Job (`oday-scheduler-r-97e3ae2e264d-2nz95`): **PASSED**
+- Worker Cloud Run Job (`oday-worker-r-97e3ae2e264d-895lx`): **PASSED (RESOLVED)**
+- Cloud Run candidate revisions for API and Web were created and deployed.
+
+### Where run 30680943677 failed
+
+The deploy failed closed during release-aware candidate smoke testing (`cloud-run-smoke-run-30680943677.json`):
+1. `/platform/health` & `/readiness` returned HTTP 503 (`smoke:/platform/health:http` and `smoke:/readiness:http` failed)
+2. `data_mode` reported as missing (`smoke:/platform/health:live_data_mode` and `smoke:/readiness:live_data_mode` failed)
+3. `/api/v1/operator/bootstrap` returned `data_mode=degraded data_source=operator-shell-production` instead of authoritative live data (`smoke:/api/v1/operator/bootstrap:provenance` failed)
+4. Read provenance reported `origin_kind=degraded` while persistence mode was `postgresql` and `live_ready=True` (`smoke:/api/v1/operator/bootstrap:read_provenance` failed)
+5. `forecastops` capability reported `PRODUCTION_MODEL_REGISTRY_UNAVAILABLE: forecast_revenue_interval: configured MLflow registry has no production alias`, resulting in `productionBindingsReady=false` and `modes.data.mode=unavailable` (`blockingReasons: ["PRODUCTION_MODEL_BINDINGS_UNVERIFIED"]`).
+
+Verbatim excerpt: `deploy-failure-excerpt-run-30680943677.log`.
+
+## 24. Cloud Run state after run 30680943677 rollback
+
+Automated rollback performed successfully:
+- Serving API revision `oday-api-00005-gin` restored to 100% traffic (0% candidate)
+- Serving Web revision `oday-web-00008-ws4` restored to 100% traffic (0% candidate)
+- Migration job `oday-migration-r-97e3ae2e264d`, scheduler job `oday-scheduler-r-97e3ae2e264d`, worker job `oday-worker-r-97e3ae2e264d` all executed successfully.
+
+Snapshot receipt: `cloud-run-post-rollback-state-run-30680943677.json`.
+
+## 25. Acceptance status (run 30680943677)
+
+| # | Acceptance criterion | Status | Basis |
+|---|---|---|---|
+| 1 | Deploy Dev runs from exact merged `origin/dev` SHA and completes successfully | **FAIL** | Ran on `97e3ae2e26`; concluded `failure`; `deploy-run-30680943677.json` |
+| 2 | Cloud Run API and web revisions report the deployed release SHA | **FAIL** | Candidate revisions rolled back to 0% traffic; `cloud-run-post-rollback-state-run-30680943677.json` |
+| 3 | Operator API returns live non-placeholder data and fails closed on invalid access | **NOT REACHED** | Candidate candidate smoke failed closed |
+| 4 | `/operator` leaves loading state and renders Package 10 canonical shell at desktop and mobile | **NOT REACHED** | Candidate candidate smoke failed closed |
+| 5 | All 40 Package 10 screen contracts and 117 retired visual paths remain verified | **PASS (source scope)** | `package10-contract-verification.txt` (40/40 screen labels, 117 retired paths, 0 survivors) |
+| 6 | Independent Codex6 evidence review and CI pass before closeout | **PENDING** | Requires this evidence PR |
+
+## 26. Required remediation task
+
+A separate P0 Fleet remediation task must be created to resolve live-data/provenance health composition:
+- **Scope:** resolve live data mode and model registry production alias binding so candidate revisions pass `/platform/health`, `/readiness`, `/api/v1/operator/bootstrap` provenance gates with live non-degraded data.
+- **Dependency:** task `ODP-P10-DEV-REDEPLOY-VERIFY-001` remains blocked on reviewed merge of the remediation task.
+
+## 27. Verification commands (run 30680943677)
+
+```text
+git fetch origin dev --prune
+git rev-parse origin/dev                              # 97e3ae2e264d00254b574d5e27ab771688f04768
+HOME=/home/lupin /usr/bin/gh run view 30680943677 -R alfloop-dev/odayplus --json status,conclusion,jobs
+HOME=/home/lupin /usr/bin/gh run download 30680943677 -R alfloop-dev/odayplus -n cloud-run-dev-validation
+cat cloud-run-dev-validation/cloud-run-smoke.json
+python3 scripts/e2e/check_product_grade_ci_gates.py --report
+```
+
 
 
