@@ -71,12 +71,13 @@ else:
         def store_for_request(request: Request) -> Any:
             tid = resolve_tenant_id(request)
             if heatzone_store_for_tenant is not None and tid:
-                try:
-                    scoped = heatzone_store_for_tenant(tid)
-                    if scoped is not None:
-                        return scoped
-                except Exception:
-                    pass
+                scoped = heatzone_store_for_tenant(tid)
+                if scoped is not None:
+                    return scoped
+                raise HTTPException(
+                    status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                    detail="Failed to resolve tenant-scoped heatzone store",
+                )
             return result_store
 
         @router.get("", dependencies=[Depends(require_permission("heatzone", Action.VIEW, engine=authz_engine))])

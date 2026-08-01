@@ -92,12 +92,13 @@ else:
         def store_for_request(request: Request) -> Any:
             tid = resolve_tenant_id(request)
             if ingestion_run_store_for_tenant is not None and tid:
-                try:
-                    scoped = ingestion_run_store_for_tenant(tid)
-                    if scoped is not None:
-                        return scoped
-                except Exception:
-                    pass
+                scoped = ingestion_run_store_for_tenant(tid)
+                if scoped is not None:
+                    return scoped
+                raise HTTPException(
+                    status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                    detail="Failed to resolve tenant-scoped ingestion store",
+                )
             return service.store
 
         @router.get("/freshness", dependencies=[view_guard])

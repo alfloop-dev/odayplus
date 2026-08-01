@@ -154,17 +154,18 @@ else:
         def workflow_for_request(request: Request) -> SiteScoreDecisionWorkflow:
             tid = resolve_tenant_id(request)
             if sitescore_decision_repository_for_tenant is not None and tid:
-                try:
-                    scoped_store = sitescore_decision_repository_for_tenant(tid)
-                    if scoped_store is not None:
-                        return SiteScoreDecisionWorkflow(
-                            audit_log=active_audit_log,
-                            hooks=decision_workflow.hooks,
-                            policy_version=decision_workflow.policy_version,
-                            store=scoped_store,
-                        )
-                except Exception:
-                    pass
+                scoped_store = sitescore_decision_repository_for_tenant(tid)
+                if scoped_store is not None:
+                    return SiteScoreDecisionWorkflow(
+                        audit_log=active_audit_log,
+                        hooks=decision_workflow.hooks,
+                        policy_version=decision_workflow.policy_version,
+                        store=scoped_store,
+                    )
+                raise HTTPException(
+                    status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                    detail="Failed to resolve tenant-scoped sitescore decision store",
+                )
             return decision_workflow
 
         router = APIRouter(
