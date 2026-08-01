@@ -2,16 +2,16 @@
   "schema_version": "2.0.0",
   "receipt_id": "ODP-PRODUCT-E2E-RECEIPT-002",
   "task_id": "ODP-PLAN-ACCEPTANCE-REAL-EXEC-001",
-  "run_id": "product-e2e-2026-08-01T05:56:32.814432Z",
-  "generated_at": "2026-08-01T05:56:32.814459Z",
+  "run_id": "product-e2e-2026-08-01T06:37:55.775116Z",
+  "generated_at": "2026-08-01T06:37:55.775149Z",
   "tested_source": {
-    "commit_sha": "caaf2b1cd5bcb74eed0d16733519007bbec2cc1c",
-    "tree_sha": "ce00189a0cc09e6ba7216be164a4ca7a05f81337"
+    "commit_sha": "6164567bf03c04ba7046be3a1c0cf25c8185e65a",
+    "tree_sha": "e72b24e3d34fa315b8e42ab39d7a2eeb7d1db51e"
   },
   "evidence_proof_at_generation": {
-    "tested_source_sha": "caaf2b1cd5bcb74eed0d16733519007bbec2cc1c",
-    "tested_tree_sha": "ce00189a0cc09e6ba7216be164a4ca7a05f81337",
-    "evidence_head_sha": "caaf2b1cd5bcb74eed0d16733519007bbec2cc1c",
+    "tested_source_sha": "6164567bf03c04ba7046be3a1c0cf25c8185e65a",
+    "tested_tree_sha": "e72b24e3d34fa315b8e42ab39d7a2eeb7d1db51e",
+    "evidence_head_sha": "6164567bf03c04ba7046be3a1c0cf25c8185e65a",
     "relation": "exact_source_head",
     "intervening_touched_paths": [],
     "working_tree_paths": [
@@ -28,12 +28,12 @@
     {
       "runner": "playwright",
       "path": "docs/evidence/e2e/raw_playwright_results.json",
-      "sha256": "6d1640df87f6b49fc47ca65b061bbdce32d4f3110e030f5f378f1dd6a9d72215",
-      "normalized_artifact_sha256": "a6e73b3015ac827fdf4912d1443b2ad5b6c642ea4f248635f649b3f9dc0c76fd",
+      "sha256": "947b797c3e42f5b8c17e19143f25fa5fa1ae55c2161f9f1226f20389f4f756d0",
+      "normalized_artifact_sha256": "3b14af1afeec17eb080cff29934cc77f256f55d1d582a48ee2a6c1ffb2e6dc50",
       "command": "npx playwright test tests/e2e/e2e-network-find-areas-api-binding.spec.ts tests/e2e/e2e-operator-console.spec.ts tests/e2e/operator-assisted-listing-intake-a11y.spec.ts tests/e2e/operator-assisted-listing-intake-mobile.spec.ts tests/e2e/operator-assisted-listing-intake.spec.ts tests/e2e/operator-governance.spec.ts tests/e2e/operator-growth.spec.ts tests/e2e/operator-network-assisted-intake.spec.ts tests/e2e/operator-network-listings.spec.ts tests/e2e/operator-network-rebalance.spec.ts tests/e2e/operator-network-review.spec.ts tests/e2e/operator-network-scoring.spec.ts tests/e2e/operator-shell-today.spec.ts tests/e2e/operator-store-ops.spec.ts tests/e2e/product-e2e-env.spec.ts tests/e2e/shell-resource-binding.spec.ts --workers=1 --retries=0 --project=chromium --reporter=json",
       "version": "Version 1.61.1",
-      "started_at": "2026-08-01T05:47:10Z",
-      "ended_at": "2026-08-01T05:55:46Z",
+      "started_at": "2026-08-01T06:29:02Z",
+      "ended_at": "2026-08-01T06:37:23Z",
       "exit_code": 0,
       "environment": {
         "project": "chromium",
@@ -44,16 +44,16 @@
     {
       "runner": "pytest",
       "path": "docs/evidence/e2e/raw_pytest_results.json",
-      "sha256": "1fb7c651820853d05391147affe72acd9ed4c0beae7ea41e8835e4b5f1edc564",
-      "normalized_artifact_sha256": "7cae2c8810f2510f61f3aedad3a75294521febdb544c044fc12456c275db50d3",
-      "command": "/tmp/pantheon-worker-worktrees/oday-plus-supervisor-live/odp-supervisor-status-root-module-pin-001/.venv/bin/python -m pytest -q tests/integration/test_avm_official_outcome_contract.py::test_official_outcome_migration_has_bounded_source_and_provenance_contracts tests/integration/test_intervention_workflow.py::test_full_lifecycle_reaches_completed_with_causal_evidence_and_label tests/integration/test_priceops_constraints.py::test_full_pilot_lifecycle_records_complete_status_history tests/integration/test_adlift_incrementality.py::test_difference_in_differences_isolates_ad_lift_from_market_movement tests/integration/test_learninghub_release.py::test_governed_release_invokes_remote_mlflow_alias_updates tests/integration/test_learninghub_release.py::test_learninghub_validates_releases_and_rolls_back_model_aliases tests/integration/test_learninghub_release.py::test_learninghub_blocks_release_without_passed_validation_or_model_card tests/data/test_pit_snapshot.py::test_point_in_time_validation_rejects_future_feature_snapshot tests/security/test_rbac_abac.py::test_rbac_denies_action_outside_role tests/security/test_rbac_abac.py::test_tenant_isolation_blocks_other_tenant",
+      "sha256": "ad7166e58a2bbcf5217c149a5874072baf22e1734d73920298800eba07943efc",
+      "normalized_artifact_sha256": "4e78d03ca5bcaae0378d524fc2ed59f44d2b078770a6811f991cd025b998421c",
+      "command": "/tmp/pantheon-worker-worktrees/oday-plus-supervisor-live/odp-plan-netplan-acceptance-001/.venv/bin/python3 -m pytest -q tests/integration/test_avm_official_outcome_contract.py::test_official_outcome_migration_has_bounded_source_and_provenance_contracts tests/integration/test_intervention_workflow.py::test_full_lifecycle_reaches_completed_with_causal_evidence_and_label tests/integration/test_priceops_constraints.py::test_full_pilot_lifecycle_records_complete_status_history tests/integration/test_adlift_incrementality.py::test_difference_in_differences_isolates_ad_lift_from_market_movement tests/integration/test_learninghub_release.py::test_governed_release_invokes_remote_mlflow_alias_updates tests/integration/test_learninghub_release.py::test_learninghub_validates_releases_and_rolls_back_model_aliases tests/integration/test_learninghub_release.py::test_learninghub_blocks_release_without_passed_validation_or_model_card tests/data/test_pit_snapshot.py::test_point_in_time_validation_rejects_future_feature_snapshot tests/security/test_rbac_abac.py::test_rbac_denies_action_outside_role tests/security/test_rbac_abac.py::test_tenant_isolation_blocks_other_tenant",
       "version": "pytest 9.1.1; python 3.12.3",
-      "started_at": "2026-08-01T05:55:48.808767Z",
-      "ended_at": "2026-08-01T05:56:29.847593Z",
+      "started_at": "2026-08-01T06:37:24.570829Z",
+      "ended_at": "2026-08-01T06:37:53.499996Z",
       "exit_code": 0,
       "environment": {
         "platform": "linux",
-        "python_executable": "/tmp/pantheon-worker-worktrees/oday-plus-supervisor-live/odp-supervisor-status-root-module-pin-001/.venv/bin/python",
+        "python_executable": "/tmp/pantheon-worker-worktrees/oday-plus-supervisor-live/odp-plan-netplan-acceptance-001/.venv/bin/python3",
         "node_id_count": "10"
       }
     }
@@ -111,14 +111,14 @@
             "attempts": [
               {
                 "status": "passed",
-                "duration_ms": 6254,
+                "duration_ms": 5947,
                 "retry": 0,
-                "started_at": "2026-08-01T05:55:25.967Z"
+                "started_at": "2026-08-01T06:37:04.371Z"
               }
             ]
           },
           "artifact_path": "docs/evidence/e2e/raw_playwright_results.json",
-          "artifact_sha256": "6d1640df87f6b49fc47ca65b061bbdce32d4f3110e030f5f378f1dd6a9d72215"
+          "artifact_sha256": "947b797c3e42f5b8c17e19143f25fa5fa1ae55c2161f9f1226f20389f4f756d0"
         }
       ]
     },
@@ -142,14 +142,14 @@
             "attempts": [
               {
                 "status": "passed",
-                "duration_ms": 6326,
+                "duration_ms": 6333,
                 "retry": 0,
-                "started_at": "2026-08-01T05:54:05.523Z"
+                "started_at": "2026-08-01T06:35:39.846Z"
               }
             ]
           },
           "artifact_path": "docs/evidence/e2e/raw_playwright_results.json",
-          "artifact_sha256": "6d1640df87f6b49fc47ca65b061bbdce32d4f3110e030f5f378f1dd6a9d72215"
+          "artifact_sha256": "947b797c3e42f5b8c17e19143f25fa5fa1ae55c2161f9f1226f20389f4f756d0"
         }
       ]
     },
@@ -178,30 +178,30 @@
           "raw_result": {
             "test_id": "tests/integration/test_avm_official_outcome_contract.py::test_official_outcome_migration_has_bounded_source_and_provenance_contracts",
             "status": "passed",
-            "duration_ms": 114.642,
+            "duration_ms": 67.057,
             "phases": [
               {
                 "phase": "setup",
                 "outcome": "passed",
-                "duration_seconds": 0.11200478300452232,
+                "duration_seconds": 0.06469136301893741,
                 "longrepr": null
               },
               {
                 "phase": "call",
                 "outcome": "passed",
-                "duration_seconds": 0.0019948730478063226,
+                "duration_seconds": 0.0018511200323700905,
                 "longrepr": null
               },
               {
                 "phase": "teardown",
                 "outcome": "passed",
-                "duration_seconds": 0.0006423890008591115,
+                "duration_seconds": 0.0005140680004842579,
                 "longrepr": null
               }
             ]
           },
           "artifact_path": "docs/evidence/e2e/raw_pytest_results.json",
-          "artifact_sha256": "1fb7c651820853d05391147affe72acd9ed4c0beae7ea41e8835e4b5f1edc564"
+          "artifact_sha256": "ad7166e58a2bbcf5217c149a5874072baf22e1734d73920298800eba07943efc"
         }
       ]
     },
@@ -225,14 +225,14 @@
             "attempts": [
               {
                 "status": "passed",
-                "duration_ms": 848,
+                "duration_ms": 815,
                 "retry": 0,
-                "started_at": "2026-08-01T05:55:41.901Z"
+                "started_at": "2026-08-01T06:37:19.251Z"
               }
             ]
           },
           "artifact_path": "docs/evidence/e2e/raw_playwright_results.json",
-          "artifact_sha256": "6d1640df87f6b49fc47ca65b061bbdce32d4f3110e030f5f378f1dd6a9d72215"
+          "artifact_sha256": "947b797c3e42f5b8c17e19143f25fa5fa1ae55c2161f9f1226f20389f4f756d0"
         }
       ]
     },
@@ -251,30 +251,30 @@
           "raw_result": {
             "test_id": "tests/integration/test_intervention_workflow.py::test_full_lifecycle_reaches_completed_with_causal_evidence_and_label",
             "status": "passed",
-            "duration_ms": 2.866,
+            "duration_ms": 2.553,
             "phases": [
               {
                 "phase": "setup",
                 "outcome": "passed",
-                "duration_seconds": 0.0007552169845439494,
+                "duration_seconds": 0.0006635019672103226,
                 "longrepr": null
               },
               {
                 "phase": "call",
                 "outcome": "passed",
-                "duration_seconds": 0.0016226560110226274,
+                "duration_seconds": 0.0014879110385663807,
                 "longrepr": null
               },
               {
                 "phase": "teardown",
                 "outcome": "passed",
-                "duration_seconds": 0.00048814999172464013,
+                "duration_seconds": 0.000401310040615499,
                 "longrepr": null
               }
             ]
           },
           "artifact_path": "docs/evidence/e2e/raw_pytest_results.json",
-          "artifact_sha256": "1fb7c651820853d05391147affe72acd9ed4c0beae7ea41e8835e4b5f1edc564"
+          "artifact_sha256": "ad7166e58a2bbcf5217c149a5874072baf22e1734d73920298800eba07943efc"
         }
       ]
     },
@@ -293,30 +293,30 @@
           "raw_result": {
             "test_id": "tests/integration/test_priceops_constraints.py::test_full_pilot_lifecycle_records_complete_status_history",
             "status": "passed",
-            "duration_ms": 2.439,
+            "duration_ms": 2.137,
             "phases": [
               {
                 "phase": "setup",
                 "outcome": "passed",
-                "duration_seconds": 0.0009062939789146185,
+                "duration_seconds": 0.0005981189897283912,
                 "longrepr": null
               },
               {
                 "phase": "call",
                 "outcome": "passed",
-                "duration_seconds": 0.0011342100333422422,
+                "duration_seconds": 0.0011296989978291094,
                 "longrepr": null
               },
               {
                 "phase": "teardown",
                 "outcome": "passed",
-                "duration_seconds": 0.0003980869660153985,
+                "duration_seconds": 0.0004095530021004379,
                 "longrepr": null
               }
             ]
           },
           "artifact_path": "docs/evidence/e2e/raw_pytest_results.json",
-          "artifact_sha256": "1fb7c651820853d05391147affe72acd9ed4c0beae7ea41e8835e4b5f1edc564"
+          "artifact_sha256": "ad7166e58a2bbcf5217c149a5874072baf22e1734d73920298800eba07943efc"
         }
       ]
     },
@@ -335,30 +335,30 @@
           "raw_result": {
             "test_id": "tests/integration/test_adlift_incrementality.py::test_difference_in_differences_isolates_ad_lift_from_market_movement",
             "status": "passed",
-            "duration_ms": 6024.721,
+            "duration_ms": 3073.676,
             "phases": [
               {
                 "phase": "setup",
                 "outcome": "passed",
-                "duration_seconds": 0.0006542130140587687,
+                "duration_seconds": 0.0005947879981249571,
                 "longrepr": null
               },
               {
                 "phase": "call",
                 "outcome": "passed",
-                "duration_seconds": 6.02332081500208,
+                "duration_seconds": 3.0725236590369605,
                 "longrepr": null
               },
               {
                 "phase": "teardown",
                 "outcome": "passed",
-                "duration_seconds": 0.0007459030020982027,
+                "duration_seconds": 0.0005577280535362661,
                 "longrepr": null
               }
             ]
           },
           "artifact_path": "docs/evidence/e2e/raw_pytest_results.json",
-          "artifact_sha256": "1fb7c651820853d05391147affe72acd9ed4c0beae7ea41e8835e4b5f1edc564"
+          "artifact_sha256": "ad7166e58a2bbcf5217c149a5874072baf22e1734d73920298800eba07943efc"
         }
       ]
     },
@@ -382,14 +382,14 @@
             "attempts": [
               {
                 "status": "passed",
-                "duration_ms": 7480,
+                "duration_ms": 6627,
                 "retry": 0,
-                "started_at": "2026-08-01T05:54:52.372Z"
+                "started_at": "2026-08-01T06:36:31.948Z"
               }
             ]
           },
           "artifact_path": "docs/evidence/e2e/raw_playwright_results.json",
-          "artifact_sha256": "6d1640df87f6b49fc47ca65b061bbdce32d4f3110e030f5f378f1dd6a9d72215"
+          "artifact_sha256": "947b797c3e42f5b8c17e19143f25fa5fa1ae55c2161f9f1226f20389f4f756d0"
         }
       ]
     },
@@ -413,14 +413,14 @@
             "attempts": [
               {
                 "status": "passed",
-                "duration_ms": 7480,
+                "duration_ms": 6627,
                 "retry": 0,
-                "started_at": "2026-08-01T05:54:52.372Z"
+                "started_at": "2026-08-01T06:36:31.948Z"
               }
             ]
           },
           "artifact_path": "docs/evidence/e2e/raw_playwright_results.json",
-          "artifact_sha256": "6d1640df87f6b49fc47ca65b061bbdce32d4f3110e030f5f378f1dd6a9d72215"
+          "artifact_sha256": "947b797c3e42f5b8c17e19143f25fa5fa1ae55c2161f9f1226f20389f4f756d0"
         }
       ]
     },
@@ -439,30 +439,30 @@
           "raw_result": {
             "test_id": "tests/integration/test_learninghub_release.py::test_governed_release_invokes_remote_mlflow_alias_updates",
             "status": "passed",
-            "duration_ms": 3969.098,
+            "duration_ms": 3887.566,
             "phases": [
               {
                 "phase": "setup",
                 "outcome": "passed",
-                "duration_seconds": 0.0008124230080284178,
+                "duration_seconds": 0.0007723220041953027,
                 "longrepr": null
               },
               {
                 "phase": "call",
                 "outcome": "passed",
-                "duration_seconds": 3.967636259039864,
+                "duration_seconds": 3.8861703089787625,
                 "longrepr": null
               },
               {
                 "phase": "teardown",
                 "outcome": "passed",
-                "duration_seconds": 0.0006498079746961594,
+                "duration_seconds": 0.0006230699946172535,
                 "longrepr": null
               }
             ]
           },
           "artifact_path": "docs/evidence/e2e/raw_pytest_results.json",
-          "artifact_sha256": "1fb7c651820853d05391147affe72acd9ed4c0beae7ea41e8835e4b5f1edc564"
+          "artifact_sha256": "ad7166e58a2bbcf5217c149a5874072baf22e1734d73920298800eba07943efc"
         }
       ]
     },
@@ -481,30 +481,30 @@
           "raw_result": {
             "test_id": "tests/integration/test_learninghub_release.py::test_learninghub_validates_releases_and_rolls_back_model_aliases",
             "status": "passed",
-            "duration_ms": 5846.415,
+            "duration_ms": 5928.338,
             "phases": [
               {
                 "phase": "setup",
                 "outcome": "passed",
-                "duration_seconds": 0.0007912750006653368,
+                "duration_seconds": 0.0011111710336990654,
                 "longrepr": null
               },
               {
                 "phase": "call",
                 "outcome": "passed",
-                "duration_seconds": 5.845132910995744,
+                "duration_seconds": 5.926714000990614,
                 "longrepr": null
               },
               {
                 "phase": "teardown",
                 "outcome": "passed",
-                "duration_seconds": 0.0004903200315311551,
+                "duration_seconds": 0.0005128629854880273,
                 "longrepr": null
               }
             ]
           },
           "artifact_path": "docs/evidence/e2e/raw_pytest_results.json",
-          "artifact_sha256": "1fb7c651820853d05391147affe72acd9ed4c0beae7ea41e8835e4b5f1edc564"
+          "artifact_sha256": "ad7166e58a2bbcf5217c149a5874072baf22e1734d73920298800eba07943efc"
         }
       ]
     },
@@ -524,30 +524,30 @@
           "raw_result": {
             "test_id": "tests/integration/test_learninghub_release.py::test_learninghub_blocks_release_without_passed_validation_or_model_card",
             "status": "passed",
-            "duration_ms": 3099.542,
+            "duration_ms": 2729.067,
             "phases": [
               {
                 "phase": "setup",
                 "outcome": "passed",
-                "duration_seconds": 0.0006875820108689368,
+                "duration_seconds": 0.0007013360154815018,
                 "longrepr": null
               },
               {
                 "phase": "call",
                 "outcome": "passed",
-                "duration_seconds": 3.0984180080122314,
+                "duration_seconds": 2.7278247349895537,
                 "longrepr": null
               },
               {
                 "phase": "teardown",
                 "outcome": "passed",
-                "duration_seconds": 0.00043610500870272517,
+                "duration_seconds": 0.0005410819430835545,
                 "longrepr": null
               }
             ]
           },
           "artifact_path": "docs/evidence/e2e/raw_pytest_results.json",
-          "artifact_sha256": "1fb7c651820853d05391147affe72acd9ed4c0beae7ea41e8835e4b5f1edc564"
+          "artifact_sha256": "ad7166e58a2bbcf5217c149a5874072baf22e1734d73920298800eba07943efc"
         },
         {
           "runner": "pytest",
@@ -555,30 +555,30 @@
           "raw_result": {
             "test_id": "tests/data/test_pit_snapshot.py::test_point_in_time_validation_rejects_future_feature_snapshot",
             "status": "passed",
-            "duration_ms": 1.418,
+            "duration_ms": 1.42,
             "phases": [
               {
                 "phase": "setup",
                 "outcome": "passed",
-                "duration_seconds": 0.0007304130122065544,
+                "duration_seconds": 0.0007628230378031731,
                 "longrepr": null
               },
               {
                 "phase": "call",
                 "outcome": "passed",
-                "duration_seconds": 0.00033808499574661255,
+                "duration_seconds": 0.00033993105171248317,
                 "longrepr": null
               },
               {
                 "phase": "teardown",
                 "outcome": "passed",
-                "duration_seconds": 0.00034999597119167447,
+                "duration_seconds": 0.00031706999288871884,
                 "longrepr": null
               }
             ]
           },
           "artifact_path": "docs/evidence/e2e/raw_pytest_results.json",
-          "artifact_sha256": "1fb7c651820853d05391147affe72acd9ed4c0beae7ea41e8835e4b5f1edc564"
+          "artifact_sha256": "ad7166e58a2bbcf5217c149a5874072baf22e1734d73920298800eba07943efc"
         }
       ]
     },
@@ -602,14 +602,14 @@
             "attempts": [
               {
                 "status": "passed",
-                "duration_ms": 845,
+                "duration_ms": 854,
                 "retry": 0,
-                "started_at": "2026-08-01T05:50:50.073Z"
+                "started_at": "2026-08-01T06:32:26.166Z"
               }
             ]
           },
           "artifact_path": "docs/evidence/e2e/raw_playwright_results.json",
-          "artifact_sha256": "6d1640df87f6b49fc47ca65b061bbdce32d4f3110e030f5f378f1dd6a9d72215"
+          "artifact_sha256": "947b797c3e42f5b8c17e19143f25fa5fa1ae55c2161f9f1226f20389f4f756d0"
         }
       ]
     },
@@ -629,30 +629,30 @@
           "raw_result": {
             "test_id": "tests/security/test_rbac_abac.py::test_rbac_denies_action_outside_role",
             "status": "passed",
-            "duration_ms": 1.198,
+            "duration_ms": 1.411,
             "phases": [
               {
                 "phase": "setup",
                 "outcome": "passed",
-                "duration_seconds": 0.0005894409841857851,
+                "duration_seconds": 0.0006330469623208046,
                 "longrepr": null
               },
               {
                 "phase": "call",
                 "outcome": "passed",
-                "duration_seconds": 0.00029748602537438273,
+                "duration_seconds": 0.00034475798020139337,
                 "longrepr": null
               },
               {
                 "phase": "teardown",
                 "outcome": "passed",
-                "duration_seconds": 0.0003111909609287977,
+                "duration_seconds": 0.0004331099917180836,
                 "longrepr": null
               }
             ]
           },
           "artifact_path": "docs/evidence/e2e/raw_pytest_results.json",
-          "artifact_sha256": "1fb7c651820853d05391147affe72acd9ed4c0beae7ea41e8835e4b5f1edc564"
+          "artifact_sha256": "ad7166e58a2bbcf5217c149a5874072baf22e1734d73920298800eba07943efc"
         },
         {
           "runner": "pytest",
@@ -660,30 +660,30 @@
           "raw_result": {
             "test_id": "tests/security/test_rbac_abac.py::test_tenant_isolation_blocks_other_tenant",
             "status": "passed",
-            "duration_ms": 1.442,
+            "duration_ms": 1.536,
             "phases": [
               {
                 "phase": "setup",
                 "outcome": "passed",
-                "duration_seconds": 0.000540603999979794,
+                "duration_seconds": 0.0005552030052058399,
                 "longrepr": null
               },
               {
                 "phase": "call",
                 "outcome": "passed",
-                "duration_seconds": 0.0005441800458356738,
+                "duration_seconds": 0.0005376019980758429,
                 "longrepr": null
               },
               {
                 "phase": "teardown",
                 "outcome": "passed",
-                "duration_seconds": 0.0003571119741536677,
+                "duration_seconds": 0.00044279504800215364,
                 "longrepr": null
               }
             ]
           },
           "artifact_path": "docs/evidence/e2e/raw_pytest_results.json",
-          "artifact_sha256": "1fb7c651820853d05391147affe72acd9ed4c0beae7ea41e8835e4b5f1edc564"
+          "artifact_sha256": "ad7166e58a2bbcf5217c149a5874072baf22e1734d73920298800eba07943efc"
         }
       ]
     },
@@ -701,5 +701,5 @@
   "validation_errors": [],
   "exit_code": 0,
   "status": "passed",
-  "normalized_receipt_sha256": "bfa7fdf7b79108c3376c15de15821a90e2b5ca13260060397eb28b01f672d4e2"
+  "normalized_receipt_sha256": "46543fa86284c6c473f2dfe7f1fd739a865ea2c4c09d6d306ae00afa8201ca12"
 }
