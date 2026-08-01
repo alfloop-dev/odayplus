@@ -97,6 +97,45 @@ def _is_valid_realized_outcome(val: Any) -> bool:
     return float(val) >= 0.0
 
 
+def _build_canonical_manifest_record(idx: int, r: dict[str, Any]) -> list[Any]:
+    """Canonicalize complete evidence-bearing row schema for dataset manifest integrity."""
+    identity = str(r.get("store_id") or r.get("entity_id") or idx)
+    eligible = bool(_is_strictly_eligible(r))
+    opened_on = str(r.get("opened_on") or "")
+    m6_days = int(r["m6_days"]) if _is_finite_float(r.get("m6_days")) else (int(r["store_age_days"]) if _is_finite_float(r.get("store_age_days")) else None)
+    m12_days = int(r["m12_days"]) if _is_finite_float(r.get("m12_days")) else (int(r["store_age_days"]) if _is_finite_float(r.get("store_age_days")) else None)
+    m6_cov = bool(r.get("m6_covered")) if r.get("m6_covered") is not None else None
+    m12_cov = bool(r.get("m12_covered")) if r.get("m12_covered") is not None else None
+
+    r90 = float(r["realized_90d_net_revenue"]) if _is_valid_realized_outcome(r.get("realized_90d_net_revenue")) else None
+
+    m6_val = r.get("realized_m6_net_revenue")
+    if m6_val is None:
+        m6_val = r.get("m6_outcome")
+    if m6_val is None:
+        m6_val = r.get("realized_180d_net_revenue")
+    if m6_val is None:
+        m6_val = r.get("realized_m6_revenue")
+    rm6 = float(m6_val) if _is_valid_realized_outcome(m6_val) else None
+
+    m12_val = r.get("realized_m12_net_revenue")
+    if m12_val is None:
+        m12_val = r.get("m12_outcome")
+    if m12_val is None:
+        m12_val = r.get("realized_365d_net_revenue")
+    if m12_val is None:
+        m12_val = r.get("realized_m12_revenue")
+    rm12 = float(m12_val) if _is_valid_realized_outcome(m12_val) else None
+
+    pred = float(r["predicted_revenue"]) if _is_finite_float(r.get("predicted_revenue")) else None
+    p10 = float(r["p10"]) if _is_finite_float(r.get("p10")) else None
+    p90 = float(r["p90"]) if _is_finite_float(r.get("p90")) else None
+    fmt = str(r.get("target_format_code", "UNKNOWN"))
+
+    return [identity, eligible, opened_on, m6_days, m12_days, m6_cov, m12_cov, r90, rm6, rm12, pred, p10, p90, fmt]
+
+
+
 @dataclass(frozen=True)
 class SiteScoreOpeningOutcomeBenchmarkResult:
     observed_count: int
@@ -654,11 +693,7 @@ def evaluate_sitescore_opening_outcome_benchmark(
     if mature_label_count > 0:
         sorted_mature = sorted(mature_records, key=lambda r: str(r.get("store_id") or r.get("entity_id") or ""))
         canonical_list = [
-            [
-                str(r.get("store_id") or r.get("entity_id") or idx),
-                float(r.get("realized_90d_net_revenue", 0)),
-                float(r["predicted_revenue"]) if _is_finite_float(r.get("predicted_revenue")) else None,
-            ]
+            _build_canonical_manifest_record(idx, r)
             for idx, r in enumerate(sorted_mature)
         ]
         raw_payload = json.dumps(canonical_list, sort_keys=True)
@@ -1243,30 +1278,74 @@ def verify_sitescore_gate2_receipt(
         sum_unmatched_raw = summary.get("unmatched_mean_y")
         sum_unmatched_mean_y = _check_strict_float(sum_unmatched_raw, "benchmark_summary.unmatched_mean_y") if sum_unmatched_raw is not None else None
         sum_rev_sum = _check_strict_float(summary.get("realized_revenue_sum"), "benchmark_summary.realized_revenue_sum")
+        sum_mean_rev = _check_strict_float(summary.get("mean_realized_revenue"), "benchmark_summary.mean_realized_revenue")
 
         if dataset_manifest is not None:
-            sorted_mature_manifest = sorted(
-                [
-                    r for r in dataset_manifest
-                    if _is_strictly_eligible(r)
-                    and _is_valid_realized_outcome(r.get("realized_90d_net_revenue"))
-                ],
-                key=lambda r: str(r.get("store_id") or r.get("entity_id") or ""),
+            exp_bench = evaluate_sitescore_opening_outcome_benchmark(
+                records=dataset_manifest,
+                observed_at=receipt.get("observed_at") or summary.get("observed_at"),
+                provenance=summary.get("provenance") or "provided_records",
             )
-            if sorted_mature_manifest:
-                canonical_manifest_list = [
-                    [
-                        str(r.get("store_id") or r.get("entity_id") or idx),
-                        float(r.get("realized_90d_net_revenue", 0)),
-                        float(r["predicted_revenue"]) if _is_finite_float(r.get("predicted_revenue")) else None,
-                    ]
-                    for idx, r in enumerate(sorted_mature_manifest)
-                ]
-                exp_manifest_pop_dig = hashlib.sha256(json.dumps(canonical_manifest_list, sort_keys=True).encode("utf-8")).hexdigest()
-            else:
-                exp_manifest_pop_dig = "UNAVAILABLE"
-            if sum_pop_dig != exp_manifest_pop_dig:
-                errors.append(f"mature_population_digest ({sum_pop_dig!r}) does not match digest derived from authoritative dataset manifest ({exp_manifest_pop_dig!r})")
+            if sum_pop_dig != exp_bench.mature_population_digest:
+                errors.append(f"mature_population_digest ({sum_pop_dig!r}) does not match digest derived from authoritative dataset manifest ({exp_bench.mature_population_digest!r})")
+            if sum_agg_dig != exp_bench.population_aggregate_digest:
+                errors.append(f"population_aggregate_digest mismatch: declared {sum_agg_dig!r}, re-derived from authoritative dataset manifest {exp_bench.population_aggregate_digest!r}")
+
+            if obs != exp_bench.observed_count:
+                errors.append(f"summary.observed_count ({obs}) drifts from authoritative dataset manifest ({exp_bench.observed_count})")
+            if elg != exp_bench.eligible_count:
+                errors.append(f"summary.eligible_count ({elg}) drifts from authoritative dataset manifest ({exp_bench.eligible_count})")
+            if mat != exp_bench.mature_label_count:
+                errors.append(f"summary.mature_label_count ({mat}) drifts from authoritative dataset manifest ({exp_bench.mature_label_count})")
+            if match_cnt != exp_bench.matched_prediction_count:
+                errors.append(f"summary.matched_prediction_count ({match_cnt}) drifts from authoritative dataset manifest ({exp_bench.matched_prediction_count})")
+            if m6_mat != exp_bench.m6_mature_count:
+                errors.append(f"summary.m6_mature_count ({m6_mat}) drifts from authoritative dataset manifest ({exp_bench.m6_mature_count})")
+            if m12_mat != exp_bench.m12_mature_count:
+                errors.append(f"summary.m12_mature_count ({m12_mat}) drifts from authoritative dataset manifest ({exp_bench.m12_mature_count})")
+            if bounds_cnt != exp_bench.interval_bounds_count:
+                errors.append(f"summary.interval_bounds_count ({bounds_cnt}) drifts from authoritative dataset manifest ({exp_bench.interval_bounds_count})")
+            if p80_cnt != exp_bench.in_p80_count:
+                errors.append(f"summary.in_p80_count ({p80_cnt}) drifts from authoritative dataset manifest ({exp_bench.in_p80_count})")
+
+            exp_matched_mean_y = round(exp_bench.matched_mean_y, 2)
+            exp_unmatched_mean_y = round(exp_bench.unmatched_mean_y, 2)
+            exp_rev_sum = round(exp_bench.realized_revenue_sum, 2)
+            exp_mean_rev = round(exp_bench.mean_realized_revenue, 2)
+
+            if sum_matched_mean_y is not None and sum_matched_mean_y != exp_matched_mean_y:
+                errors.append(f"summary.matched_mean_y ({sum_matched_mean_y}) drifts from authoritative dataset manifest ({exp_matched_mean_y})")
+            if sum_unmatched_mean_y is not None and sum_unmatched_mean_y != exp_unmatched_mean_y:
+                errors.append(f"summary.unmatched_mean_y ({sum_unmatched_mean_y}) drifts from authoritative dataset manifest ({exp_unmatched_mean_y})")
+            if sum_rev_sum is not None and sum_rev_sum != exp_rev_sum:
+                errors.append(f"summary.realized_revenue_sum ({sum_rev_sum}) drifts from authoritative dataset manifest ({exp_rev_sum})")
+            if sum_mean_rev is not None and sum_mean_rev != exp_mean_rev:
+                errors.append(f"summary.mean_realized_revenue ({sum_mean_rev}) drifts from authoritative dataset manifest ({exp_mean_rev})")
+
+            exp_m6_cov = round(exp_bench.m6_coverage_ratio, 4)
+            exp_m12_cov = round(exp_bench.m12_coverage_ratio, 4)
+            exp_pred_cov = round(exp_bench.prediction_coverage_ratio, 4)
+            exp_bounds_cov = round(exp_bench.interval_bounds_coverage_ratio, 4)
+            exp_norm_mae = round(exp_bench.normalized_mae, 4) if math.isfinite(exp_bench.normalized_mae) else 999.0
+            exp_p80_cov = round(exp_bench.p80_coverage, 4)
+
+            if m6_cov is not None and m6_cov != exp_m6_cov:
+                errors.append(f"summary.m6_coverage_ratio ({m6_cov}) drifts from authoritative dataset manifest ({exp_m6_cov})")
+            if m12_cov is not None and m12_cov != exp_m12_cov:
+                errors.append(f"summary.m12_coverage_ratio ({m12_cov}) drifts from authoritative dataset manifest ({exp_m12_cov})")
+            if pred_cov is not None and pred_cov != exp_pred_cov:
+                errors.append(f"summary.prediction_coverage_ratio ({pred_cov}) drifts from authoritative dataset manifest ({exp_pred_cov})")
+            if bounds_cov is not None and bounds_cov != exp_bounds_cov:
+                errors.append(f"summary.interval_bounds_coverage_ratio ({bounds_cov}) drifts from authoritative dataset manifest ({exp_bounds_cov})")
+            if norm_mae is not None and norm_mae != exp_norm_mae:
+                errors.append(f"summary.normalized_mae ({norm_mae}) drifts from authoritative dataset manifest ({exp_norm_mae})")
+            if p80_cov is not None and p80_cov != exp_p80_cov:
+                errors.append(f"summary.p80_coverage ({p80_cov}) drifts from authoritative dataset manifest ({exp_p80_cov})")
+
+            if summary.get("calibration_summary") != exp_bench.calibration_summary:
+                errors.append(f"summary.calibration_summary ({summary.get('calibration_summary')}) drifts from authoritative dataset manifest ({exp_bench.calibration_summary})")
+            if summary.get("segment_metrics") != list(exp_bench.segment_metrics):
+                errors.append("summary.segment_metrics drifts from authoritative dataset manifest")
 
         if mat == 0 or (dataset_manifest is None and not lineage_governed):
             if sum_pop_dig != "UNAVAILABLE":

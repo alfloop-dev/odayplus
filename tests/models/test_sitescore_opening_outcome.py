@@ -2322,3 +2322,156 @@ def test_sitescore_opening_outcome_forged_population_digest_fails_closed():
     res_unverified = verify_sitescore_gate2_receipt(rebound, model_card_artifact=mc_dict)
     assert res_unverified.is_valid is False
     assert any("mature_population_digest must be 'UNAVAILABLE'" in e for e in res_unverified.errors)
+
+
+def test_sitescore_verifier_rejects_rebound_aggregate_forgery_against_unchanged_manifest_b1():
+    # B1 Re-review test (ebe994b1 head): Producer reports matched mean 100, unmatched mean 300, revenue sum 400, overall mean 200.
+    # Attacker keeps dataset_manifest unchanged, replaces unmatched mean with 999999, revenue sum with 1000099, overall mean with 500049.5,
+    # recomputes population_aggregate_digest and all artifact hashes. Verifier MUST fail closed.
+    from models.sitescore.opening_outcome import compute_population_aggregate_digest
+
+    rec_manifest = [
+        {
+            "entity_id": "site-1",
+            "store_id": "101",
+            "target_format_code": "STANDARD",
+            "opened_on": "2024-01-01",
+            "is_training_eligible": True,
+            "realized_90d_net_revenue": 100.0,
+            "realized_180d_net_revenue": 200.0,
+            "realized_365d_net_revenue": 400.0,
+            "store_age_days": 400,
+            "predicted_revenue": 100.0,
+            "p10": 80.0,
+            "p90": 120.0,
+        },
+        {
+            "entity_id": "site-2",
+            "store_id": "102",
+            "target_format_code": "STANDARD",
+            "opened_on": "2024-01-01",
+            "is_training_eligible": True,
+            "realized_90d_net_revenue": 300.0,
+            "realized_180d_net_revenue": 600.0,
+            "realized_365d_net_revenue": 1200.0,
+            "store_age_days": 400,
+            "predicted_revenue": None,
+        },
+    ]
+    res_bench = evaluate_sitescore_opening_outcome_benchmark(rec_manifest, provenance="provided_records")
+    assert res_bench.mature_label_count == 2
+    assert res_bench.matched_prediction_count == 1
+    assert res_bench.matched_mean_y == 100.0
+    assert res_bench.unmatched_mean_y == 300.0
+    assert res_bench.realized_revenue_sum == 400.0
+    assert res_bench.mean_realized_revenue == 200.0
+
+    mc = build_sitescore_opening_outcome_model_card(res_bench)
+    receipt = build_sitescore_gate2_receipt(res_bench, model_card=mc)
+    mc_dict = mc.to_dict()
+
+    r_forged = json.loads(json.dumps(receipt))
+    mc_forged = json.loads(json.dumps(mc_dict))
+
+    r_forged["benchmark_summary"]["unmatched_mean_y"] = 999999.0
+    r_forged["handback"]["unmatched_mean_y"] = 999999.0
+    r_forged["benchmark_summary"]["handback_payload"]["unmatched_mean_y"] = 999999.0
+
+    for key in ("realized_revenue_sum", "mean_realized_revenue"):
+        val = 1000099.0 if key == "realized_revenue_sum" else 500049.5
+        r_forged["benchmark_summary"][key] = val
+        r_forged["handback"][key] = val
+        r_forged["benchmark_summary"]["handback_payload"][key] = val
+        r_forged["handback"]["outcome_backfill_contract"][key] = val
+        r_forged["benchmark_summary"]["handback_payload"]["outcome_backfill_contract"][key] = val
+
+    fake_agg_dig = compute_population_aggregate_digest(
+        res_bench.mature_population_digest,
+        2,
+        1,
+        1000099.0,
+        100.0,
+        999999.0,
+    )
+    r_forged["benchmark_summary"]["population_aggregate_digest"] = fake_agg_dig
+    r_forged["handback"]["population_aggregate_digest"] = fake_agg_dig
+    r_forged["benchmark_summary"]["handback_payload"]["population_aggregate_digest"] = fake_agg_dig
+    r_forged["handback"]["outcome_backfill_contract"]["population_aggregate_digest"] = fake_agg_dig
+    r_forged["benchmark_summary"]["handback_payload"]["outcome_backfill_contract"]["population_aggregate_digest"] = fake_agg_dig
+
+    rebound = _rebind_receipt_hashes(r_forged, mc_forged)
+    verif = verify_sitescore_gate2_receipt(rebound, model_card_artifact=mc_forged, dataset_manifest=rec_manifest)
+
+    assert verif.is_valid is False
+    assert any("drifts from authoritative dataset manifest" in e or "population_aggregate_digest mismatch" in e for e in verif.errors)
+
+
+def test_sitescore_verifier_rejects_rebound_m6_coverage_forgery_against_unchanged_manifest_b2():
+    # B2 Re-review test (ebe994b1 head): 2-record manifest where both records contain valid mature M6/M12 outcomes and intervals.
+    # Attacker changes m6_mature_count and m6_coverage_ratio from 2/100% to 0/0% in every receipt, handback, model-card, segment copy,
+    # and rebinds all hashes. Verifier MUST fail closed.
+    rec_manifest = [
+        {
+            "entity_id": "site-1",
+            "store_id": "101",
+            "target_format_code": "STANDARD",
+            "opened_on": "2024-01-01",
+            "is_training_eligible": True,
+            "realized_90d_net_revenue": 100.0,
+            "realized_180d_net_revenue": 200.0,
+            "realized_365d_net_revenue": 400.0,
+            "store_age_days": 400,
+            "predicted_revenue": 100.0,
+            "p10": 80.0,
+            "p90": 120.0,
+        },
+        {
+            "entity_id": "site-2",
+            "store_id": "102",
+            "target_format_code": "STANDARD",
+            "opened_on": "2024-01-01",
+            "is_training_eligible": True,
+            "realized_90d_net_revenue": 300.0,
+            "realized_180d_net_revenue": 600.0,
+            "realized_365d_net_revenue": 1200.0,
+            "store_age_days": 400,
+            "predicted_revenue": 300.0,
+            "p10": 240.0,
+            "p90": 360.0,
+        },
+    ]
+    res_bench = evaluate_sitescore_opening_outcome_benchmark(rec_manifest, provenance="provided_records")
+    assert res_bench.mature_label_count == 2
+    assert res_bench.m6_mature_count == 2
+    assert res_bench.m6_coverage_ratio == 1.0
+
+    mc = build_sitescore_opening_outcome_model_card(res_bench)
+    receipt = build_sitescore_gate2_receipt(res_bench, model_card=mc)
+    mc_dict = mc.to_dict()
+
+    r_forged = json.loads(json.dumps(receipt))
+    mc_forged = json.loads(json.dumps(mc_dict))
+
+    r_forged["benchmark_summary"]["m6_mature_count"] = 0
+    r_forged["handback"]["m6_mature_count"] = 0
+    r_forged["benchmark_summary"]["handback_payload"]["m6_mature_count"] = 0
+    r_forged["handback"]["outcome_backfill_contract"]["m6_mature_count"] = 0
+    r_forged["benchmark_summary"]["handback_payload"]["outcome_backfill_contract"]["m6_mature_count"] = 0
+
+    r_forged["benchmark_summary"]["m6_coverage_ratio"] = 0.0
+    r_forged["handback"]["m6_coverage_ratio"] = 0.0
+    r_forged["benchmark_summary"]["handback_payload"]["m6_coverage_ratio"] = 0.0
+
+    mc_forged["metrics_summary"]["m6_coverage_ratio"] = 0.0
+    r_forged["benchmark_summary"]["segment_metrics"][0]["metrics"]["m6_coverage"] = 0.0
+    if "segment_metrics" in r_forged["handback"]:
+        r_forged["handback"]["segment_metrics"][0]["metrics"]["m6_coverage"] = 0.0
+    if "segment_metrics" in r_forged["benchmark_summary"]["handback_payload"]:
+        r_forged["benchmark_summary"]["handback_payload"]["segment_metrics"][0]["metrics"]["m6_coverage"] = 0.0
+    mc_forged["segment_metrics"][0]["metrics"]["m6_coverage"] = 0.0
+
+    rebound = _rebind_receipt_hashes(r_forged, mc_forged)
+    verif = verify_sitescore_gate2_receipt(rebound, model_card_artifact=mc_forged, dataset_manifest=rec_manifest)
+
+    assert verif.is_valid is False
+    assert any("drifts from authoritative dataset manifest" in e or "mature_population_digest" in e for e in verif.errors)
