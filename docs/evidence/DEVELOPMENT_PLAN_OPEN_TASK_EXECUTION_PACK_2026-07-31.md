@@ -6,6 +6,7 @@ program_id: ODP-PLAN-GAP-CLOSEOUT-2026-07-30
 status: execution-contract-hardening
 release_claim: no-go-until-final-gate-audit
 machine_readable: docs/evidence/DEVELOPMENT_PLAN_OPEN_TASK_EXECUTION_PACK_2026-07-31.json
+schema_version: 1.1.0
 ---
 
 # Development Plan Open Task Execution Control Pack
@@ -106,6 +107,14 @@ AI 代簽或只修單一 reviewer 範例，就不得 handoff。
 
 ### 3.5 Deployment 邊界
 
+- 每個 machine-readable task packet 都必須帶 `deployment_contract`；12 個
+  implementation packets 中只有 `ODP-PLAN-LIVE-STAGING-PROOF-001` 可為
+  `staging_live_allowed`，其餘 11 個必須為 `forbidden`，7 個 human gates
+  必須為 `not_applicable`。缺欄位、改成未知值，或把任何其他 task 提權都要
+  fail closed。
+- Supervisor 透過官方 CLI 同步時，必須把這個 deployment contract 寫入 live
+  metadata 與 task-specific acceptance；active、completed archive、superseded
+  replacement 都必須與原 packet exact-match。
 - 一般 implementation task 只允許本機／CI／必要的 read-only provider
   verification，不得因 focused tests 通過就部署 production。
 - 計畫中的 staging/live deployment 只由

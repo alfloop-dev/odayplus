@@ -18,22 +18,25 @@ try:
     from scripts.ops.validate_plan_execution_pack import (
         EXPECTED_HUMAN_OWNERS,
         EXPECTED_HUMAN_REVIEWERS,
+        PACKET_JSON,
+        PACKET_MD,
         _archive_snapshot_path,
+        build_expected_acceptance,
         validate_archived_packet_state,
     )
 except ModuleNotFoundError:  # Direct script execution puts scripts/ops on sys.path.
     from validate_plan_execution_pack import (
         EXPECTED_HUMAN_OWNERS,
         EXPECTED_HUMAN_REVIEWERS,
+        PACKET_JSON,
+        PACKET_MD,
         _archive_snapshot_path,
+        build_expected_acceptance,
         validate_archived_packet_state,
     )
 
 ROOT = Path(__file__).resolve().parents[2]
 DEFAULT_PACKET = ROOT / "docs/evidence/DEVELOPMENT_PLAN_OPEN_TASK_EXECUTION_PACK_2026-07-31.json"
-PACKET_MD = "docs/evidence/DEVELOPMENT_PLAN_OPEN_TASK_EXECUTION_PACK_2026-07-31.md"
-PACKET_JSON = "docs/evidence/DEVELOPMENT_PLAN_OPEN_TASK_EXECUTION_PACK_2026-07-31.json"
-
 DEFAULT_HUMAN_ARTIFACTS = {
     "ODP-PLAN-HEATZONE-LABEL-BACKFILL-001": ["docs/evidence/models/heatzone/human-data-gate/"],
     "ODP-PLAN-SITESCORE-OUTCOME-BACKFILL-001": ["docs/evidence/models/sitescore/human-data-gate/"],
@@ -57,17 +60,7 @@ def _unique_strings(values: list[Any]) -> list[str]:
 
 
 def build_acceptance(packet: dict[str, Any]) -> list[str]:
-    criteria = [
-        *(f"Deliverable: {item}" for item in packet["batch_deliverables"]),
-        *(f"Fail-closed: {item}" for item in packet["must_reject"]),
-        f"Evidence set: {'; '.join(packet['evidence'])}",
-        f"Handoff gate: {packet['handoff_gate']}",
-        (
-            "Batch rule: re-audit every criterion after reopen; do not hand off, "
-            "open/refresh PR, or deploy after fixing only the latest reviewer example."
-        ),
-    ]
-    return _unique_strings(criteria)
+    return build_expected_acceptance(packet)
 
 
 def build_task_metadata(task: dict[str, Any], packet: dict[str, Any]) -> dict[str, Any]:
@@ -83,6 +76,8 @@ def build_task_metadata(task: dict[str, Any], packet: dict[str, Any]) -> dict[st
         [
             *(task.get("artifacts") or []),
             *DEFAULT_HUMAN_ARTIFACTS.get(task_id, []),
+            PACKET_MD,
+            PACKET_JSON,
         ]
     )
     verification = _unique_strings(
@@ -97,10 +92,15 @@ def build_task_metadata(task: dict[str, Any], packet: dict[str, Any]) -> dict[st
         "artifacts": artifacts,
         "verification": verification,
         "task_class": packet["class"],
-        "gap_ids": _unique_strings([*(task.get("gap_ids") or []), *packet["gap_ids"]]),
+        "gap_ids": list(packet["gap_ids"]),
         "execution_packet_id": "ODP-PLAN-EXECUTION-CONTROL-PACK-001",
         "execution_packet_path": PACKET_JSON,
         "execution_mode": "complete-batch-before-handoff-pr-or-deploy",
+        "execution_packet_deliverables": list(packet["batch_deliverables"]),
+        "execution_packet_must_reject": list(packet["must_reject"]),
+        "execution_packet_evidence": list(packet["evidence"]),
+        "execution_packet_handoff_gate": packet["handoff_gate"],
+        "deployment_contract": packet["deployment_contract"],
     }
 
 

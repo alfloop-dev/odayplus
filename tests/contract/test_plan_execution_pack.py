@@ -27,7 +27,7 @@ def _load_sync():
     return module
 
 
-def _task_for_packet(packet: dict, *, task_id: str | None = None) -> dict:
+def _task_for_packet(packet: dict, validator, *, task_id: str | None = None) -> dict:
     owner = "OwnerAgent"
     reviewer = "ReviewerAgent"
     if packet["task_id"] in {
@@ -49,17 +49,16 @@ def _task_for_packet(packet: dict, *, task_id: str | None = None) -> dict:
         "owner": owner,
         "reviewer": reviewer,
         "task_class": packet["class"],
-        "acceptance": [
-            "Deliverable: complete the scoped result.",
-            "Fail-closed: reject incomplete or forged evidence.",
-            "Evidence set: authoritative receipts and hashes.",
-            "Handoff gate: all criteria pass before review.",
-            "Batch rule: re-audit the complete packet after changes.",
-        ],
+        "acceptance": validator.build_expected_acceptance(packet),
         "source_docs": ["docs/evidence/DEVELOPMENT_PLAN_OPEN_TASK_EXECUTION_PACK_2026-07-31.json"],
-        "artifacts": ["docs/evidence/"],
-        "verification": ["pytest -q"],
+        "artifacts": [validator.PACKET_MD, validator.PACKET_JSON],
+        "verification": list(packet["verification"]),
         "execution_packet_id": "ODP-PLAN-EXECUTION-CONTROL-PACK-001",
+        "execution_packet_deliverables": list(packet["batch_deliverables"]),
+        "execution_packet_must_reject": list(packet["must_reject"]),
+        "execution_packet_evidence": list(packet["evidence"]),
+        "execution_packet_handoff_gate": packet["handoff_gate"],
+        "deployment_contract": packet["deployment_contract"],
         "gap_ids": list(packet["gap_ids"]),
     }
 
@@ -70,7 +69,13 @@ def _write_live_fixture(tmp_path: Path, validator) -> tuple[dict, Path, Path]:
     archive_root = tmp_path / "ai-task-archive"
     (archive_root / "tasks").mkdir(parents=True)
     status_path.write_text(
-        json.dumps({"tasks": [_task_for_packet(packet) for packet in packet_data["task_packets"]]}),
+        json.dumps(
+            {
+                "tasks": [
+                    _task_for_packet(packet, validator) for packet in packet_data["task_packets"]
+                ]
+            }
+        ),
         encoding="utf-8",
     )
     return packet_data, status_path, archive_root
@@ -169,12 +174,67 @@ def test_execution_control_pack_recomputes_source_matrix_and_ledger(tmp_path: Pa
         ledger_path=bad_ledger,
     )
 
-    assert any("source RTM matrix must contain 84 unique rows" in error for error in errors)
+    assert any("source RTM matrix must contain the exact 84 row ids" in error for error in errors)
     assert any("source RTM matrix stage distribution drifted" in error for error in errors)
     assert any("source execution ledger must contain the exact 26" in error for error in errors)
 
 
-def test_sync_metadata_expands_granular_acceptance_and_preserves_task_fields() -> None:
+def test_execution_control_pack_rejects_same_stage_rtm_and_ledger_scope_substitution(
+    tmp_path: Path,
+) -> None:
+    validator = _load_validator()
+    bad_matrix = tmp_path / "matrix.md"
+    bad_ledger = tmp_path / "ledger.md"
+    bad_matrix.write_text(
+        validator.DEFAULT_MATRIX.read_text(encoding="utf-8").replace(
+            "| PLAN-S0-001 |", "| PLAN-S0-999 |", 1
+        ),
+        encoding="utf-8",
+    )
+    bad_ledger.write_text(
+        validator.DEFAULT_LEDGER.read_text(encoding="utf-8").replace(
+            "| A | `ODP-PLAN-OSS-LICENSE-GATE-001` | P1-007 |",
+            "| A | `ODP-PLAN-OSS-LICENSE-GATE-001` | WRONG-SCOPE |",
+            1,
+        ),
+        encoding="utf-8",
+    )
+
+    errors = validator.validate_packet(matrix_path=bad_matrix, ledger_path=bad_ledger)
+
+    assert any("source RTM matrix must contain the exact 84 row ids" in error for error in errors)
+    assert any(
+        "source execution ledger scope for ODP-PLAN-OSS-LICENSE-GATE-001" in error
+        for error in errors
+    )
+
+
+@pytest.mark.parametrize("mutation", ["missing", "escalated"])
+def test_execution_control_pack_rejects_deployment_contract_mutation(
+    tmp_path: Path, mutation: str
+) -> None:
+    validator = _load_validator()
+    packet = json.loads(validator.DEFAULT_PACKET.read_text(encoding="utf-8"))
+    target = next(
+        item
+        for item in packet["task_packets"]
+        if item["task_id"] == "ODP-PLAN-OSS-LICENSE-GATE-001"
+    )
+    if mutation == "missing":
+        target.pop("deployment_contract")
+    else:
+        target["deployment_contract"] = "staging_live_allowed"
+    bad_packet = tmp_path / f"packet-{mutation}.json"
+    bad_packet.write_text(json.dumps(packet), encoding="utf-8")
+
+    errors = validator.validate_packet(packet_path=bad_packet)
+
+    assert any("deployment_contract must equal 'forbidden'" in error for error in errors)
+    if mutation == "escalated":
+        assert any("exactly ODP-PLAN-LIVE-STAGING-PROOF-001 may allow" in error for error in errors)
+
+
+def test_sync_metadata_expands_and_binds_granular_contract() -> None:
     import json
 
     validator = _load_validator()
@@ -202,9 +262,19 @@ def test_sync_metadata_expands_granular_acceptance_and_preserves_task_fields() -
     assert any(item.startswith("Fail-closed:") for item in metadata["acceptance"])
     assert any(item.startswith("Evidence set:") for item in metadata["acceptance"])
     assert any(item.startswith("Handoff gate:") for item in metadata["acceptance"])
+    assert any(item.startswith("Deployment:") for item in metadata["acceptance"])
     assert synchronizer.PACKET_JSON in metadata["source_docs"]
-    assert metadata["artifacts"] == ["scripts/security/"]
+    assert metadata["artifacts"] == [
+        "scripts/security/",
+        synchronizer.PACKET_MD,
+        synchronizer.PACKET_JSON,
+    ]
     assert "old focused test" in metadata["verification"]
+    assert metadata["execution_packet_deliverables"] == packet["batch_deliverables"]
+    assert metadata["execution_packet_must_reject"] == packet["must_reject"]
+    assert metadata["execution_packet_evidence"] == packet["evidence"]
+    assert metadata["execution_packet_handoff_gate"] == packet["handoff_gate"]
+    assert metadata["deployment_contract"] == "forbidden"
     assert metadata["execution_mode"] == "complete-batch-before-handoff-pr-or-deploy"
 
 
@@ -364,6 +434,98 @@ def test_live_validation_rejects_repeated_generic_acceptance(tmp_path: Path) -> 
     assert any("missing criterion classes" in error for error in errors)
 
 
+@pytest.mark.parametrize("mutation", ["generic_prefixed", "omitted", "extra_scope"])
+def test_live_validation_rejects_task_contract_substitution(tmp_path: Path, mutation: str) -> None:
+    validator = _load_validator()
+    packet_data, status_path, archive_root = _write_live_fixture(tmp_path, validator)
+    target = packet_data["task_packets"][0]
+    status = json.loads(status_path.read_text(encoding="utf-8"))
+    task = next(item for item in status["tasks"] if item["id"] == target["task_id"])
+    if mutation == "generic_prefixed":
+        task["acceptance"] = [
+            "Deliverable: unrelated generic result.",
+            "Fail-closed: unrelated generic rejection.",
+            "Evidence set: unrelated generic evidence.",
+            "Handoff gate: unrelated generic handoff.",
+            "Batch rule: unrelated generic batch.",
+            "Deployment: forbidden; unrelated generic boundary.",
+        ]
+    elif mutation == "omitted":
+        task["acceptance"] = task["acceptance"][:-1]
+    else:
+        task["gap_ids"].append("WRONG-EXTRA-SCOPE")
+    status_path.write_text(json.dumps(status), encoding="utf-8")
+
+    errors = validator.validate_packet(
+        live_status_path=status_path,
+        live_archive_root=archive_root,
+    )
+
+    expected = (
+        "acceptance must exactly match"
+        if mutation != "extra_scope"
+        else "gap_ids must exactly equal"
+    )
+    assert any(expected in error for error in errors)
+
+
+@pytest.mark.parametrize("lifecycle", ["archive", "superseded_replacement"])
+def test_live_validation_rejects_packet_contract_drift_across_lifecycle(
+    tmp_path: Path, lifecycle: str
+) -> None:
+    validator = _load_validator()
+    packet_data, status_path, archive_root = _write_live_fixture(tmp_path, validator)
+    target = packet_data["task_packets"][0]
+    target_id = target["task_id"]
+    status = json.loads(status_path.read_text(encoding="utf-8"))
+    original = next(task for task in status["tasks"] if task["id"] == target_id)
+    status["tasks"] = [task for task in status["tasks"] if task["id"] != target_id]
+    if lifecycle == "archive":
+        original["execution_packet_evidence"] = ["arbitrary evidence"]
+        _archive_task(archive_root, original)
+    else:
+        replacement_id = f"{target_id}-CONTRACT-DRIFT"
+        original["superseded_by"] = replacement_id
+        replacement = _task_for_packet(target, validator, task_id=replacement_id)
+        replacement["verification"] = ["arbitrary verification"]
+        status["tasks"].append(replacement)
+        _archive_task(archive_root, original, outcome="superseded")
+    status_path.write_text(json.dumps(status), encoding="utf-8")
+
+    errors = validator.validate_packet(
+        live_status_path=status_path,
+        live_archive_root=archive_root,
+    )
+
+    expected = (
+        "execution_packet_evidence must exactly match"
+        if lifecycle == "archive"
+        else "verification must contain the complete packet verification"
+    )
+    assert any(expected in error for error in errors)
+
+
+def test_live_validation_rejects_deployment_privilege_escalation(tmp_path: Path) -> None:
+    validator = _load_validator()
+    packet_data, status_path, archive_root = _write_live_fixture(tmp_path, validator)
+    target = next(
+        item
+        for item in packet_data["task_packets"]
+        if item["task_id"] == "ODP-PLAN-OSS-LICENSE-GATE-001"
+    )
+    status = json.loads(status_path.read_text(encoding="utf-8"))
+    task = next(item for item in status["tasks"] if item["id"] == target["task_id"])
+    task["deployment_contract"] = "staging_live_allowed"
+    status_path.write_text(json.dumps(status), encoding="utf-8")
+
+    errors = validator.validate_packet(
+        live_status_path=status_path,
+        live_archive_root=archive_root,
+    )
+
+    assert any("deployment_contract must exactly match" in error for error in errors)
+
+
 def test_sync_dry_run_skips_valid_archive_and_continues_active_packets(
     tmp_path: Path, capsys
 ) -> None:
@@ -465,7 +627,7 @@ def test_live_validation_accepts_scope_preserving_superseded_replacement(tmp_pat
     archived_task = next(task for task in status["tasks"] if task["id"] == target_id)
     archived_task["superseded_by"] = replacement_id
     status["tasks"] = [task for task in status["tasks"] if task["id"] != target_id]
-    status["tasks"].append(_task_for_packet(target, task_id=replacement_id))
+    status["tasks"].append(_task_for_packet(target, validator, task_id=replacement_id))
     status_path.write_text(json.dumps(status), encoding="utf-8")
     _archive_task(archive_root, archived_task, outcome="superseded")
 
@@ -488,7 +650,7 @@ def test_live_validation_rejects_superseded_replacement_scope_drift(tmp_path: Pa
     archived_task = next(task for task in status["tasks"] if task["id"] == target_id)
     archived_task["superseded_by"] = replacement_id
     status["tasks"] = [task for task in status["tasks"] if task["id"] != target_id]
-    replacement = _task_for_packet(target, task_id=replacement_id)
+    replacement = _task_for_packet(target, validator, task_id=replacement_id)
     replacement["gap_ids"] = []
     status["tasks"].append(replacement)
     status_path.write_text(json.dumps(status), encoding="utf-8")
@@ -499,7 +661,7 @@ def test_live_validation_rejects_superseded_replacement_scope_drift(tmp_path: Pa
         live_archive_root=archive_root,
     )
 
-    assert any("gap_ids must preserve the packet scope" in error for error in errors)
+    assert any("gap_ids must exactly equal the packet scope" in error for error in errors)
 
 
 def test_live_validation_rejects_superseded_replacement_cycle(tmp_path: Path) -> None:
@@ -511,7 +673,7 @@ def test_live_validation_rejects_superseded_replacement_cycle(tmp_path: Path) ->
     status = json.loads(status_path.read_text(encoding="utf-8"))
     archived_task = next(task for task in status["tasks"] if task["id"] == target_id)
     archived_task["superseded_by"] = replacement_id
-    replacement = _task_for_packet(target, task_id=replacement_id)
+    replacement = _task_for_packet(target, validator, task_id=replacement_id)
     replacement["superseded_by"] = target_id
     status["tasks"] = [task for task in status["tasks"] if task["id"] != target_id]
     status_path.write_text(json.dumps(status), encoding="utf-8")

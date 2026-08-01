@@ -98,12 +98,51 @@ EXPECTED_GAP_IDS = {
     "ODP-PLAN-UAT-SIGNOFF-001": {"GAP-P0-005"},
 }
 
+EXPECTED_RTM_IDS = {
+    *(
+        f"PLAN-S{stage}-{item:03d}"
+        for stage, count in enumerate((11, 11, 9, 8, 10, 11, 10, 6))
+        for item in range(1, count + 1)
+    ),
+    *(f"PLAN-S{stage}-GATE" for stage in range(8)),
+}
+
+EXPECTED_LEDGER_SCOPES = {
+    "ODP-PLAN-ACCEPTANCE-REAL-EXEC-001": "P0-002",
+    "ODP-PLAN-AVM-OUTCOME-001": "P1-003",
+    "ODP-PLAN-AVM-OUTCOME-BACKFILL-001": "P1-003 data gate",
+    "ODP-PLAN-ENGINEERING-HARDENING-001": "P2",
+    "ODP-PLAN-FINAL-GATE-AUDIT-001": "final",
+    "ODP-PLAN-FORECAST-BUSINESS-001": "P1-004",
+    "ODP-PLAN-FORECAST-RELEASE-EVIDENCE-001": "P0-004",
+    "ODP-PLAN-HEATZONE-LABEL-BACKFILL-001": "P1-001 data gate",
+    "ODP-PLAN-LIVE-STAGING-PROOF-001": "P0-006",
+    "ODP-PLAN-NETPLAN-ACCEPTANCE-001": "P1-006 technical gate",
+    "ODP-PLAN-NETPLAN-BASELINE-APPROVAL-001": "P1-006 business gate",
+    "ODP-PLAN-OBSERVABILITY-LIVE-001": "P1-008",
+    "ODP-PLAN-OSS-LEGAL-POLICY-001": "P1-007 legal gate",
+    "ODP-PLAN-OSS-LICENSE-GATE-001": "P1-007",
+    "ODP-PLAN-PRICE-ADLIFT-PILOT-001": "P1-005",
+    "ODP-PLAN-SITESCORE-OUTCOME-001": "P1-002",
+    "ODP-PLAN-SITESCORE-OUTCOME-BACKFILL-001": "P1-002 data gate",
+    "ODP-PLAN-SITESCORE-PREDICTION-SOURCE-001": "P1-002",
+    "ODP-PLAN-UAT-SIGNOFF-001": "P0-005",
+}
+
+DEPLOYMENT_TASK_ID = "ODP-PLAN-LIVE-STAGING-PROOF-001"
+DEPLOYMENT_MODE_ALLOWED = "staging_live_allowed"
+DEPLOYMENT_MODE_FORBIDDEN = "forbidden"
+DEPLOYMENT_MODE_NOT_APPLICABLE = "not_applicable"
+PACKET_MD = "docs/evidence/DEVELOPMENT_PLAN_OPEN_TASK_EXECUTION_PACK_2026-07-31.md"
+PACKET_JSON = "docs/evidence/DEVELOPMENT_PLAN_OPEN_TASK_EXECUTION_PACK_2026-07-31.json"
+
 REQUIRED_ACCEPTANCE_PREFIXES = (
     "Deliverable:",
     "Fail-closed:",
     "Evidence set:",
     "Handoff gate:",
     "Batch rule:",
+    "Deployment:",
 )
 
 REQUIRED_PACKET_LIST_FIELDS = (
@@ -131,6 +170,43 @@ def _load_object(path: Path) -> dict[str, Any]:
     return data
 
 
+def expected_deployment_mode(packet: dict[str, Any]) -> str:
+    if packet.get("task_id") == DEPLOYMENT_TASK_ID:
+        return DEPLOYMENT_MODE_ALLOWED
+    if packet.get("class") == "human_gate":
+        return DEPLOYMENT_MODE_NOT_APPLICABLE
+    return DEPLOYMENT_MODE_FORBIDDEN
+
+
+def deployment_acceptance(mode: str) -> str:
+    if mode == DEPLOYMENT_MODE_ALLOWED:
+        return (
+            "Deployment: staging/live allowed only for exact merged dev after all declared "
+            "dependencies are done; production GO remains forbidden before final Human/Ops gate."
+        )
+    if mode == DEPLOYMENT_MODE_NOT_APPLICABLE:
+        return "Deployment: not applicable; this Human/Ops gate grants no deployment authority."
+    return (
+        "Deployment: forbidden; this task may run only local/CI/read-only verification and "
+        "grants no staging/live/production authority."
+    )
+
+
+def build_expected_acceptance(packet: dict[str, Any]) -> list[str]:
+    criteria = [
+        *(f"Deliverable: {item}" for item in packet["batch_deliverables"]),
+        *(f"Fail-closed: {item}" for item in packet["must_reject"]),
+        f"Evidence set: {'; '.join(packet['evidence'])}",
+        f"Handoff gate: {packet['handoff_gate']}",
+        (
+            "Batch rule: re-audit every criterion after reopen; do not hand off, "
+            "open/refresh PR, or deploy after fixing only the latest reviewer example."
+        ),
+        deployment_acceptance(packet["deployment_contract"]),
+    ]
+    return list(dict.fromkeys(item.strip() for item in criteria if item.strip()))
+
+
 def validate_packet(
     packet_path: Path = DEFAULT_PACKET,
     markdown_path: Path = DEFAULT_MARKDOWN,
@@ -155,8 +231,8 @@ def validate_packet(
     except (OSError, ValueError, json.JSONDecodeError) as exc:
         return [f"execution packet is unreadable: {exc}"]
 
-    if packet.get("schema_version") != "1.0.0":
-        errors.append("schema_version must be 1.0.0")
+    if packet.get("schema_version") != "1.1.0":
+        errors.append("schema_version must be 1.1.0")
     if packet.get("packet_id") != "ODP-PLAN-EXECUTION-CONTROL-PACK-001":
         errors.append("unexpected packet_id")
     if packet.get("program_id") != "ODP-PLAN-GAP-CLOSEOUT-2026-07-30":
@@ -172,10 +248,11 @@ def validate_packet(
     stage_distribution = [
         sum(stage == str(index) for _, stage in rtm_matches) for index in range(8)
     ]
-    if len(rtm_ids) != 84 or len(set(rtm_ids)) != 84:
+    if len(rtm_ids) != 84 or set(rtm_ids) != EXPECTED_RTM_IDS:
         errors.append(
-            f"source RTM matrix must contain 84 unique rows; "
-            f"got rows={len(rtm_ids)} unique={len(set(rtm_ids))}"
+            "source RTM matrix must contain the exact 84 row ids; "
+            f"rows={len(rtm_ids)} missing={sorted(EXPECTED_RTM_IDS - set(rtm_ids))} "
+            f"extra={sorted(set(rtm_ids) - EXPECTED_RTM_IDS)}"
         )
     if stage_distribution != [12, 12, 10, 9, 11, 12, 11, 7]:
         errors.append(f"source RTM matrix stage distribution drifted: {stage_distribution}")
@@ -198,6 +275,20 @@ def validate_packet(
     )
     if missing_contracts:
         errors.append(f"source execution ledger task contracts must be unique: {missing_contracts}")
+    ledger_scope_rows = {
+        task_id: scope.strip()
+        for task_id, scope in re.findall(
+            r"^\| [A-E] \| `([^`]+)` \| ([^|]+) \|",
+            ledger,
+            flags=re.MULTILINE,
+        )
+    }
+    for task_id, expected_scope in EXPECTED_LEDGER_SCOPES.items():
+        if ledger_scope_rows.get(task_id) != expected_scope:
+            errors.append(
+                f"source execution ledger scope for {task_id} must equal "
+                f"{expected_scope!r}, got {ledger_scope_rows.get(task_id)!r}"
+            )
 
     coverage = packet.get("coverage")
     if not isinstance(coverage, dict):
@@ -266,6 +357,13 @@ def validate_packet(
         expected_class = "human_gate" if task_id in EXPECTED_HUMAN_GATES else "implementation"
         if task_class != expected_class:
             errors.append(f"{task_id}: class must be {expected_class}")
+        deployment_mode = item.get("deployment_contract")
+        expected_mode = expected_deployment_mode(item)
+        if deployment_mode != expected_mode:
+            errors.append(
+                f"{task_id}: deployment_contract must equal {expected_mode!r}, "
+                f"got {deployment_mode!r}"
+            )
         gap_ids = item.get("gap_ids")
         expected_gap_ids = EXPECTED_GAP_IDS.get(task_id)
         if (
@@ -300,6 +398,16 @@ def validate_packet(
         errors.append(
             f"task class distribution must be implementation=12, human_gate=7; "
             f"got {implementation_count}/{human_count}"
+        )
+    deployment_allowed = [
+        item.get("task_id")
+        for item in task_packets
+        if isinstance(item, dict) and item.get("deployment_contract") == DEPLOYMENT_MODE_ALLOWED
+    ]
+    if deployment_allowed != [DEPLOYMENT_TASK_ID]:
+        errors.append(
+            f"exactly {DEPLOYMENT_TASK_ID} may allow staging/live deployment; "
+            f"got {deployment_allowed}"
         )
 
     if "每修一個 finding 就開 PR 或部署" not in markdown:
@@ -365,9 +473,11 @@ def _validate_task_contract(
             errors.append(
                 f"{label}: acceptance is not granular; missing criterion classes {missing_prefixes}"
             )
-    packet_source = "docs/evidence/DEVELOPMENT_PLAN_OPEN_TASK_EXECUTION_PACK_2026-07-31.json"
+        expected_acceptance = build_expected_acceptance(packet)
+        if normalized_acceptance != expected_acceptance:
+            errors.append(f"{label}: acceptance must exactly match the task execution packet")
     source_docs = task.get("source_docs")
-    if not isinstance(source_docs, list) or packet_source not in source_docs:
+    if not isinstance(source_docs, list) or PACKET_JSON not in source_docs:
         errors.append(f"{label}: source_docs must reference the control-pack JSON")
     artifacts = task.get("artifacts")
     if (
@@ -376,6 +486,8 @@ def _validate_task_contract(
         or not all(isinstance(item, str) and item.strip() for item in artifacts)
     ):
         errors.append(f"{label}: artifacts must be a non-empty string list")
+    elif not {PACKET_MD, PACKET_JSON}.issubset(artifacts):
+        errors.append(f"{label}: artifacts must preserve both control-pack authorities")
     verification = task.get("verification")
     if (
         not isinstance(verification, list)
@@ -383,11 +495,23 @@ def _validate_task_contract(
         or not all(isinstance(item, str) and item.strip() for item in verification)
     ):
         errors.append(f"{label}: verification must be a non-empty string list")
+    elif not set(packet.get("verification") or []).issubset(verification):
+        errors.append(f"{label}: verification must contain the complete packet verification")
     if task.get("execution_packet_id") != "ODP-PLAN-EXECUTION-CONTROL-PACK-001":
         errors.append(f"{label}: execution_packet_id must reference the control pack")
+    exact_fields = {
+        "execution_packet_deliverables": packet.get("batch_deliverables"),
+        "execution_packet_must_reject": packet.get("must_reject"),
+        "execution_packet_evidence": packet.get("evidence"),
+        "execution_packet_handoff_gate": packet.get("handoff_gate"),
+        "deployment_contract": packet.get("deployment_contract"),
+    }
+    for field, expected in exact_fields.items():
+        if task.get(field) != expected:
+            errors.append(f"{label}: {field} must exactly match the task execution packet")
     gap_ids = task.get("gap_ids")
-    if not isinstance(gap_ids, list) or not set(packet.get("gap_ids") or []).issubset(gap_ids):
-        errors.append(f"{label}: gap_ids must preserve the packet scope for {task_id}")
+    if gap_ids != packet.get("gap_ids"):
+        errors.append(f"{label}: gap_ids must exactly equal the packet scope for {task_id}")
 
     return errors
 
