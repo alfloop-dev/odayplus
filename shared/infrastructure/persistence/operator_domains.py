@@ -60,29 +60,95 @@ class TenantScopedDocumentStore:
             correlation_id=correlation_id,
         )
 
+    def _item_matches_tenant(self, obj: Any) -> bool:
+        if obj is None:
+            return False
+        item_tenant = None
+        if isinstance(obj, dict):
+            item_tenant = obj.get("tenant_id") or obj.get("tenantId")
+        else:
+            item_tenant = getattr(obj, "tenant_id", None) or getattr(obj, "tenantId", None)
+        if item_tenant is None or not str(item_tenant).strip():
+            return True
+        return str(item_tenant).strip() == self._tenant_id
+
+    @staticmethod
+    def _object_key(obj: Any) -> Any:
+        for attr in (
+            "doc_id",
+            "listing_id",
+            "decision_id",
+            "run_id",
+            "candidate_site_id",
+            "address_id",
+            "report_id",
+            "score_id",
+            "id",
+        ):
+            val = getattr(obj, attr, None) if not isinstance(obj, dict) else obj.get(attr)
+            if val is not None and str(val).strip():
+                return (attr, str(val).strip())
+        return id(obj)
+
     def get(self, collection: str, doc_id: str) -> Any | None:
-        return self._store.get(self._collection(collection), doc_id)
+        result = self._store.get(self._collection(collection), doc_id)
+        if result is not None:
+            return result
+        unscoped_result = self._store.get(collection, doc_id)
+        if unscoped_result is not None and self._item_matches_tenant(unscoped_result):
+            return unscoped_result
+        return None
 
     def list_all(self, collection: str) -> list[Any]:
-        return self._store.list_all(self._collection(collection))
+        scoped = self._store.list_all(self._collection(collection))
+        unscoped = self._store.list_all(collection)
+        seen_keys = set()
+        results = []
+        for item in scoped:
+            key = self._object_key(item)
+            seen_keys.add(key)
+            results.append(item)
+        for item in unscoped:
+            key = self._object_key(item)
+            if key not in seen_keys and self._item_matches_tenant(item):
+                results.append(item)
+        return results
 
     def list_by_group(self, collection: str, group_key: str) -> list[Any]:
-        return self._store.list_by_group(self._collection(collection), group_key)
+        scoped = self._store.list_by_group(self._collection(collection), group_key)
+        unscoped = self._store.list_by_group(collection, group_key)
+        seen_keys = set()
+        results = []
+        for item in scoped:
+            key = self._object_key(item)
+            seen_keys.add(key)
+            results.append(item)
+        for item in unscoped:
+            key = self._object_key(item)
+            if key not in seen_keys and self._item_matches_tenant(item):
+                results.append(item)
+        return results
 
     def latest_in_group(self, collection: str, group_key: str) -> Any | None:
-        return self._store.latest_in_group(
-            self._collection(collection),
-            group_key,
-        )
+        scoped = self._store.latest_in_group(self._collection(collection), group_key)
+        if scoped is not None:
+            return scoped
+        unscoped = self._store.latest_in_group(collection, group_key)
+        if unscoped is not None and self._item_matches_tenant(unscoped):
+            return unscoped
+        return None
 
     def latest_per_group(self, collection: str) -> list[Any]:
-        return self._store.latest_per_group(self._collection(collection))
+        items = self.list_all(collection)
+        by_group: dict[str, Any] = {}
+        for item in items:
+            g_key = getattr(item, "group_key", None) or getattr(item, "candidate_site_id", None)
+            if g_key is not None:
+                by_group[str(g_key)] = item
+        return list(by_group.values()) if by_group else items
 
     def count_in_group(self, collection: str, group_key: str) -> int:
-        return self._store.count_in_group(
-            self._collection(collection),
-            group_key,
-        )
+        return len(self.list_by_group(collection, group_key))
 
     def append_version(
         self,

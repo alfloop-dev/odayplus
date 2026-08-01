@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import replace
 from datetime import UTC, datetime
+from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
 
@@ -16,6 +17,7 @@ from apps.api.oday_api.security.dependencies import (
     require_operator_permission,
 )
 from modules.forecastops.domain.forecasting import Alert, AlertLevel
+from modules.listing.domain.models import ListingDedupKey
 from modules.opsboard.application.operator_live_repository import (
     OperatorLiveRepository,
     OperatorTenantScopeRequiredError,
@@ -519,7 +521,7 @@ def test_two_tenant_isolation_prevents_foreign_record_leakage_and_false_complete
         assert repo_a is not None
         repo_a.save_listing(listing_a, address_a, key_a)
 
-        from shared.workflow.sitescore import DecisionStatus, SiteScoreRecommendation, SiteScoreDecision
+        from shared.workflow.sitescore import DecisionStatus, SiteScoreRecommendation
 
         decision_a = SiteScoreDecision(
             decision_id="dec-tenant-a",
@@ -654,6 +656,69 @@ def test_two_tenant_isolation_prevents_foreign_record_leakage_and_false_complete
         assert sections_a_again["heatZones"]["recordCount"] == 1
     finally:
         bundle.engine.close()
+
+
+def test_canonical_writer_restart_provenance(tmp_path: Path) -> None:
+    db_path = tmp_path / "test_canonical_writer_restart.sqlite3"
+    bundle1 = _durable_bundle(db_path)
+    try:
+        bundle1.tenant_repository.save_tenant(
+            Tenant(tenant_id="tenant-canonical", tenant_name="Canonical Tenant")
+        )
+        bundle1.brand_repository.save_brand(
+            Brand(
+                brand_id="brand-canonical",
+                tenant_id="tenant-canonical",
+                brand_code="brand-canonical",
+                brand_name="Canonical Brand",
+            )
+        )
+        address_a = AddressLocation(
+            address_id="addr-canonical",
+            raw_address="123 Canonical St",
+            city="Taipei",
+        )
+        bundle1.address_location_repository.save_address(address_a)
+        bundle1.store_repository.save_store(
+            Store(
+                store_id="store-canonical",
+                tenant_id="tenant-canonical",
+                brand_id="brand-canonical",
+                store_name="Canonical Store",
+                store_status="open",
+                address_id="addr-canonical",
+            )
+        )
+        listing_canonical = Listing(
+            listing_id="listing-canonical-unscoped",
+            address_id="addr-canonical",
+        )
+        key_canonical = ListingDedupKey(
+            source_id="src-canonical",
+            source_listing_id="list-canonical",
+            normalized_address="addr-canonical",
+            rent_amount=2000.0,
+            area_ping=50.0,
+        )
+        bundle1.listing_repository.save_listing(listing_canonical, address_a, key_canonical)
+    finally:
+        bundle1.engine.close()
+
+    bundle2 = _durable_bundle(db_path)
+    try:
+        live_repo = OperatorLiveRepository(bundle2)
+        state = live_repo.load_state(
+            tenant_id="tenant-canonical",
+            store_ids=("store-canonical",),
+        )
+        meta = state["_meta"]
+        sections = meta["sections"]
+        assert sections["listings"]["state"] == "available"
+        assert sections["listings"]["recordCount"] == 1
+        assert meta["dataMode"] == "live"
+        assert meta["dataOrigin"]["complete"] is True
+    finally:
+        bundle2.engine.close()
 
 
 def test_unpartitioned_in_memory_stores_remain_unavailable() -> None:
