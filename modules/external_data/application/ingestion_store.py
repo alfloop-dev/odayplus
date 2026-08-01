@@ -252,9 +252,11 @@ def build_ingestion_run_record(
                 )
 
     freshness = freshness_evidence_from_run(run, freshness_sla=freshness_sla)
+    clean_tid = str(tenant_id).strip() if tenant_id else ""
+    record_run_id = f"{run.job_id}:{clean_tid}" if clean_tid else run.job_id
 
     return IngestionRunRecord(
-        run_id=run.job_id,
+        run_id=record_run_id,
         provider_id=run.provider_id,
         schedule_id=run.schedule_id,
         trigger=trigger,

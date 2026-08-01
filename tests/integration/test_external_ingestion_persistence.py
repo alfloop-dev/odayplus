@@ -292,23 +292,58 @@ def test_cross_tenant_ingestion_store_isolation_and_factory_failure_negatives() 
     assert len(service.store.list_runs()) == 0
     assert len(store_a.list_runs()) == 1
 
-    # Tenant B with working store isolation gets distinct run and store idempotency key
+    # Same-service same-window A/B isolation: single service instance handles both tenant A and B
     store_b = InMemoryIngestionRunStore()
     store_map = {"tenant-a": store_a, "tenant-b": store_b}
-    service_working = ExternalIngestionService(
+    service_single = ExternalIngestionService(
         ingestion_run_store_for_tenant=lambda tid: store_map[tid],
         audit_log=InMemoryAuditLog(),
     )
 
-    outcome_b = service_working.ingest(
-        tenant_id="tenant-b",
-        api_idempotency_key="shared-api-key",
+    # First ingest on tenant A with explicit window & correlation
+    w_start = datetime(2026, 6, 28, 8, 0, tzinfo=UTC)
+    w_end = datetime(2026, 6, 28, 9, 0, tzinfo=UTC)
+    run_a = service_single.ingest(
+        tenant_id="tenant-a",
+        window_start=w_start,
+        window_end=w_end,
+        correlation_id="corr-tenant-a",
     )
-    assert outcome_b.created is True
-    assert outcome_b.record.tenant_id == "tenant-b"
-    assert outcome_b.record.run_id != outcome_a.record.run_id
+    assert run_a.created is True
+    assert run_a.record.tenant_id == "tenant-a"
+    assert run_a.record.correlation_id == "corr-tenant-a"
+
+    # Next ingest on tenant B on SAME service instance with SAME window & different correlation
+    run_b = service_single.ingest(
+        tenant_id="tenant-b",
+        window_start=w_start,
+        window_end=w_end,
+        correlation_id="corr-tenant-b",
+    )
+    assert run_b.created is True
+    assert run_b.record.tenant_id == "tenant-b"
+    assert run_b.record.correlation_id == "corr-tenant-b"
+    assert run_b.record.run_id != run_a.record.run_id
     assert len(store_b.list_runs()) == 1
-    assert store_b.get_by_api_key("shared-api-key") is not None
+
+    # Same-service window replay dedupes per tenant
+    replay_a = service_single.ingest(
+        tenant_id="tenant-a",
+        window_start=w_start,
+        window_end=w_end,
+        correlation_id="corr-tenant-a-replay",
+    )
+    assert replay_a.created is False
+    assert replay_a.record.run_id == run_a.record.run_id
+
+    replay_b = service_single.ingest(
+        tenant_id="tenant-b",
+        window_start=w_start,
+        window_end=w_end,
+        correlation_id="corr-tenant-b-replay",
+    )
+    assert replay_b.created is False
+    assert replay_b.record.run_id == run_b.record.run_id
 
 
 def test_cross_tenant_api_fault_isolation() -> None:
@@ -317,13 +352,11 @@ def test_cross_tenant_api_fault_isolation() -> None:
             raise RuntimeError("Tenant store factory failure")
         return InMemoryIngestionRunStore()
 
-    app = create_app()
-
-    # Re-wire external data router to use failing resolver
-    from apps.api.app.routes.external_data import create_external_data_router
-
-    router = create_external_data_router(ingestion_run_store_for_tenant=failing_resolver)
-    app.include_router(router, prefix="/api/v1")
+    failing_service = ExternalIngestionService(
+        ingestion_run_store_for_tenant=failing_resolver,
+        audit_log=InMemoryAuditLog(),
+    )
+    app = create_app(external_ingestion_service=failing_service)
 
     client = TestClient(app)
     headers = {
@@ -337,4 +370,4 @@ def test_cross_tenant_api_fault_isolation() -> None:
         headers=headers,
     )
     assert res.status_code == 500, res.text
-    assert "Failed to execute tenant ingestion run" in res.json()["detail"] or "Failed to resolve" in res.json()["detail"]
+    assert res.json()["detail"] == "Failed to execute tenant ingestion run: Tenant store factory failure"

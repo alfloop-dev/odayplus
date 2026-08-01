@@ -91,12 +91,7 @@ else:
 
         def store_for_request(request: Request) -> Any:
             tid = resolve_tenant_id(request)
-            if ingestion_run_store_for_tenant is not None:
-                if not tid:
-                    raise HTTPException(
-                        status_code=status.HTTP_400_BAD_REQUEST,
-                        detail="Tenant ID required for ingestion store resolution",
-                    )
+            if tid and ingestion_run_store_for_tenant is not None:
                 try:
                     scoped = ingestion_run_store_for_tenant(tid)
                     if scoped is not None:

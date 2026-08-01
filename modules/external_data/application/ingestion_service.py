@@ -72,35 +72,95 @@ class ExternalIngestionService:
         self.freshness_sla = freshness_sla
         self.default_interval = default_interval
         self.env = os.environ if env is None else env
-        self._captures: dict[str, Any] = {}
+        self.provider_factories = (
+            dict(provider_factories) if provider_factories is not None else None
+        )
+        self.resilience_policy = resilience_policy
+        self.initial_state_store = state_store
 
-        base_factories = dict(
-            default_external_fetch_provider_factories(self.env)
-            if provider_factories is None
-            else provider_factories
-        )
-        wrapped = {
-            provider_id: self._wrap_factory(provider_id, factory)
-            for provider_id, factory in base_factories.items()
-        }
-        self.scheduler = ExternalFetchScheduler(
-            state_store=state_store,
-            provider_factories=wrapped,
-            resilience_policy=resilience_policy,
-            env=self.env,
-        )
-        self._rehydrate()
+        self._tenant_schedulers: dict[str, ExternalFetchScheduler] = {}
+        self._tenant_captures: dict[str, dict[str, Any]] = {}
+        if self.ingestion_run_store_for_tenant is None:
+            self._get_scheduler_and_captures("")
 
     def _resolve_store(self, tenant_id: str = "") -> Any:
-        if self.ingestion_run_store_for_tenant is not None:
-            clean_tid = str(tenant_id).strip() if tenant_id else ""
-            if not clean_tid:
-                raise ValueError("Tenant ID required for tenant-scoped ingestion store resolution")
+        clean_tid = str(tenant_id).strip() if tenant_id else ""
+        if clean_tid and self.ingestion_run_store_for_tenant is not None:
             scoped = self.ingestion_run_store_for_tenant(clean_tid)
             if scoped is None:
                 raise RuntimeError(f"Tenant store factory returned None for tenant '{clean_tid}'")
             return scoped
         return self.store
+
+    def _get_scheduler_and_captures(
+        self, tenant_id: str = ""
+    ) -> tuple[ExternalFetchScheduler, dict[str, Any]]:
+        clean_tid = str(tenant_id).strip() if tenant_id else ""
+        if clean_tid in self._tenant_schedulers:
+            return self._tenant_schedulers[clean_tid], self._tenant_captures[clean_tid]
+
+        target_store = self._resolve_store(clean_tid)
+        captures: dict[str, Any] = {}
+
+        base_factories = dict(
+            default_external_fetch_provider_factories(self.env)
+            if self.provider_factories is None
+            else self.provider_factories
+        )
+
+        def _wrap_factory(provider_id: str, factory: ProviderFactory) -> ProviderFactory:
+            def make() -> Any:
+                inner = factory()
+
+                class _CapturingProvider:
+                    def fetch_and_ingest(self, **kwargs: Any) -> Any:
+                        result = inner.fetch_and_ingest(**kwargs)
+                        captures[provider_id] = result
+                        return result
+
+                return _CapturingProvider()
+
+            return make
+
+        wrapped = {
+            provider_id: _wrap_factory(provider_id, factory)
+            for provider_id, factory in base_factories.items()
+        }
+
+        state_store = (
+            self.initial_state_store
+            if (clean_tid == "" and self.initial_state_store is not None)
+            else None
+        )
+
+        scheduler = ExternalFetchScheduler(
+            state_store=state_store,
+            provider_factories=wrapped,
+            resilience_policy=self.resilience_policy,
+            env=self.env,
+        )
+
+        if hasattr(target_store, "list_runs"):
+            for record in target_store.list_runs():
+                scheduler.state_store.save_run(record.to_external_fetch_run())
+
+        self._tenant_schedulers[clean_tid] = scheduler
+        self._tenant_captures[clean_tid] = captures
+        return scheduler, captures
+
+    @property
+    def scheduler(self) -> ExternalFetchScheduler:
+        if "" in self._tenant_schedulers:
+            return self._tenant_schedulers[""]
+        scheduler, _ = self._get_scheduler_and_captures("")
+        return scheduler
+
+    @property
+    def _captures(self) -> dict[str, Any]:
+        if "" in self._tenant_captures:
+            return self._tenant_captures[""]
+        _, captures = self._get_scheduler_and_captures("")
+        return captures
 
     # -- public API -------------------------------------------------------
 
@@ -142,8 +202,9 @@ class ExternalIngestionService:
             interval=interval or self.default_interval,
             freshness_sla=sla,
         )
-        self._captures.pop(provider_id, None)
-        run = self.scheduler.run_once(
+        scheduler, captures = self._get_scheduler_and_captures(tenant_id)
+        captures.pop(provider_id, None)
+        run = scheduler.run_once(
             spec,
             scheduled_at=scheduled_at,
             window_start=window_start,
@@ -167,7 +228,7 @@ class ExternalIngestionService:
 
         record = build_ingestion_run_record(
             run=run,
-            ingestion_result=self._captures.get(provider_id),
+            ingestion_result=captures.get(provider_id),
             freshness_sla=sla,
             trigger=trigger,
             api_idempotency_key=api_idempotency_key,
@@ -265,10 +326,14 @@ class ExternalIngestionService:
         return make
 
     def _rehydrate(self) -> None:
-        """Re-seed scheduler watermark/idempotency from persisted runs."""
-
-        for record in self.store.list_runs():
-            self.scheduler.state_store.save_run(record.to_external_fetch_run())
+        """Re-seed scheduler watermark/idempotency from persisted runs across active tenants."""
+        if not self._tenant_schedulers:
+            self._get_scheduler_and_captures("")
+        for clean_tid, scheduler in list(self._tenant_schedulers.items()):
+            target_store = self._resolve_store(clean_tid)
+            if hasattr(target_store, "list_runs"):
+                for record in target_store.list_runs():
+                    scheduler.state_store.save_run(record.to_external_fetch_run())
 
 
 __all__ = [
