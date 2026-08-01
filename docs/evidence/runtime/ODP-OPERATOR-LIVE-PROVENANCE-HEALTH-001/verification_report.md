@@ -7,7 +7,7 @@
 - Branch: `task/ODP-OPERATOR-LIVE-PROVENANCE-HEALTH-001`
 - Baseline: `origin/dev` @ `eed83c0937f491211247ee3fdb0bdf8d932564fb` (exact `eed83c09`)
 - Target Run: Deploy Dev run `30680943677`
-- Replacement implementation anchor: `0480302923b2e44344f936e5533636301bf4fba2`
+- Replacement implementation anchor: `1fd5d02f992e86e733a367f56ac512287b0a48ec`
 
 ## Summary of Remediations (Codex8 Rejection Batch)
 
@@ -49,6 +49,12 @@
 - **Rejected Route Regressions Covered**: The full `test_domain_api_rbac.py`, `test_heatzone_flow.py`, and `test_sitescore_decision.py` suites pass. This includes the four cases rejected at `2d3d1097`: authorized HeatZone listing, HeatZone batch scoring, absent-feature validation, and the SiteScore decision loop.
 - **Restart Composition Covered**: `test_canonical_writer_restart_provenance` and the production composition suite pass with durable tenant factories still active.
 
+### B9. Model-Scoped Blocker Contract And Tenant-Aware POC Read
+- **Readiness Layers Remain Decoupled**: Production model readiness is not part of the `data.liveReady` calculation. A serviceable live PostgreSQL/provider/Operator composition can therefore report `data.liveReady=true` and core health 200 while model execution remains unavailable.
+- **Explicit Model Blocker Preserved**: When required production bindings are unresolved, `/platform/health` and `/readiness` now expose `models.blockingReasons=["PRODUCTION_MODEL_BINDINGS_UNVERIFIED"]`. The data layer does not claim that model failure as a data blocker.
+- **ForecastOps Still Fails Closed**: The change does not alter the required active ForecastOps contract, create an MLflow alias, seed a model, or weaken the unchanged release gate. `productionBindingsReady=false` and the explicit model blocker remain visible until approved production bindings exist.
+- **POC Tenant Boundary Aligned**: The established external-data freshness contract request now supplies `x-tenant-id: tenant-test`, matching the verified data-owner principal scope required by the intentional tenant boundary.
+
 ## Modified File Inventory (relative to origin/dev)
 1. `apps/api/app/routes/external_data.py`
 2. `apps/api/app/routes/listings.py`
@@ -67,19 +73,20 @@
 15. `shared/infrastructure/persistence/operator_domains.py`
 16. `shared/infrastructure/persistence/repositories.py`
 17. `shared/workflow/sitescore.py`
-18. `tests/integration/_authz.py`
-19. `tests/integration/test_external_ingestion_persistence.py`
-20. `tests/integration/test_listing_pipeline.py`
-21. `tests/integration/test_operator_live_domain_modules.py`
-22. `tests/integration/test_operator_live_provenance_health.py`
-23. `tests/integration/test_operator_live_repository.py`
-24. `tests/integration/test_production_api_composition.py`
-25. `tests/ops/test_cloud_run_live_deployment.py`
+18. `tests/contract/test_platform_api.py`
+19. `tests/integration/_authz.py`
+20. `tests/integration/test_external_ingestion_persistence.py`
+21. `tests/integration/test_listing_pipeline.py`
+22. `tests/integration/test_operator_live_domain_modules.py`
+23. `tests/integration/test_operator_live_provenance_health.py`
+24. `tests/integration/test_operator_live_repository.py`
+25. `tests/integration/test_production_api_composition.py`
+26. `tests/ops/test_cloud_run_live_deployment.py`
+27. `tests/reliability/test_live_data_fail_closed.py`
 
 ## Verification Replay
-- Command: `pytest -q tests/integration/test_external_ingestion_persistence.py tests/integration/test_external_ingestion_multisource.py tests/integration/test_operator_live_provenance_health.py tests/integration/test_operator_live_repository.py tests/integration/test_production_api_composition.py tests/integration/test_operator_live_domain_modules.py tests/integration/test_listing_pipeline.py tests/ops/test_cloud_run_live_deployment.py` (exit 0; full eight-file replay passed, with the existing environment-conditional skip)
-- Command: `pytest -q tests/integration/test_domain_api_rbac.py tests/integration/test_heatzone_flow.py tests/integration/test_sitescore_decision.py` (exit 0; full rejected-route regression replay passed)
-- Command: `ruff check <all Python files changed from origin/dev>` (0 errors)
+- Command: `uv run --frozen pytest -q tests/reliability/test_health_endpoints.py tests/reliability/test_live_data_fail_closed.py tests/contract/test_platform_api.py tests/integration/test_external_scheduled_fetch_worker.py tests/integration/test_external_ingestion_persistence.py tests/integration/test_external_ingestion_multisource.py tests/integration/test_operator_live_provenance_health.py tests/integration/test_operator_live_repository.py tests/integration/test_production_api_composition.py tests/integration/test_operator_live_domain_modules.py tests/integration/test_listing_pipeline.py tests/ops/test_cloud_run_live_deployment.py tests/integration/test_domain_api_rbac.py tests/integration/test_heatzone_flow.py tests/integration/test_sitescore_decision.py` (exit 0; reviewer-requested four broader reliability/contract files plus the original eleven-file replay passed, with the existing environment-conditional skip)
+- Command: `git diff --name-only --diff-filter=ACMR -z origin/dev...HEAD -- '*.py' | xargs -0 uv run --frozen ruff check` (0 errors)
 - Command: `git diff --check origin/dev...HEAD` (0 errors)
 - Command: `git diff --name-only origin/dev...HEAD -- <task forbidden paths>` (empty; Package 10 visuals/routes/design archive, deploy workflows, model/release contracts, retired-path inventory, orchestrator, and GitHub workflows unchanged)
 - Warning: pre-existing Starlette `TestClient` / `httpx` and HTTP 422 constant deprecation warnings remain; they do not fail the replay.
