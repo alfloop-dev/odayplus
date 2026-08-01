@@ -106,6 +106,37 @@ read-only comparison against the intended current source lineage. Later
 legitimate deployments can change current hashes or PID values and should not
 retroactively be treated as failure of the recorded rollout.
 
+## Sidecar CI reconciliation
+
+PR `#556` reached exact pushed head
+`0f0898ce7b121e06319b523b9d8955e5bccc1be1` with a one-file diff containing
+only this packet. CI run `30723004448` passed `orchestrator` and
+`performance-gate`, while `product` job `91429713978` and
+`product-e2e-gate` job `91429713958` failed on the same release-gate
+classification:
+
+```text
+intervening commits touch non-evidence paths:
+support/sidecars/ODP-ORCH-ACTOR-REF-LIVE-ROLLOUT-001/ODP-ORCH-ACTOR-REF-LIVE-ROLLOUT-001-SIDECAR-ACCEPTANCE.md
+```
+
+The `product` job otherwise reported 2,474 passing tests, and the packet did
+not change a product or runtime path. The current receipt validator restricts
+intervening commits to its three product E2E receipt files, so the required
+`support/sidecars/**` artifact cannot satisfy that exact-source rule. A focused
+local reproduction reached the same path-classification failure; it also
+reported the locally absent `@playwright/test` dependency, which is not a
+packet assertion or a basis for changing this support-only slice.
+
+This is a shared CI/sidecar compatibility dependency, not authority for this
+task to weaken the fail-closed gate, move the packet into product evidence,
+manufacture a product receipt, or modify CI. The scoped repair is tracked by
+`ODP-CI-DEV-MERGE-RELEASE-NOGO-DEADLOCK-001`, PR `#562`; at capture time its
+head was `b047aa18baa81b4b47fda8b58fba0b7a7d4bb1`, the PR remained open, and
+the task was `in_progress`. After that repair merges, refresh this branch from
+`origin/dev`, rerun required PR checks, and re-enter exact-head review before
+closeout.
+
 ## Operational follow-ups, not absorbed here
 
 The parent evidence flags two configuration drifts:
