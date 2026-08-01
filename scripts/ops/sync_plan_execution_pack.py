@@ -16,11 +16,15 @@ from typing import Any
 
 try:
     from scripts.ops.validate_plan_execution_pack import (
+        EXPECTED_HUMAN_OWNERS,
+        EXPECTED_HUMAN_REVIEWERS,
         _archive_snapshot_path,
         validate_archived_packet_state,
     )
 except ModuleNotFoundError:  # Direct script execution puts scripts/ops on sys.path.
     from validate_plan_execution_pack import (
+        EXPECTED_HUMAN_OWNERS,
+        EXPECTED_HUMAN_REVIEWERS,
         _archive_snapshot_path,
         validate_archived_packet_state,
     )
@@ -145,6 +149,16 @@ def sync(packet_path: Path, status_root: Path, actor: str, dry_run: bool) -> Non
             raise ValueError(f"task exists in both active and official archive state: {task_id}")
         owner = task.get("owner")
         reviewer = task.get("reviewer")
+        if task_id in EXPECTED_HUMAN_OWNERS:
+            if owner != "Human/Ops":
+                if reviewer == "Human/Ops":
+                    reviewer = str(owner)
+                owner = "Human/Ops"
+        if task_id in EXPECTED_HUMAN_REVIEWERS:
+            if reviewer != "Human/Ops":
+                if owner == "Human/Ops":
+                    owner = str(reviewer)
+                reviewer = "Human/Ops"
         if not owner or not reviewer or owner == reviewer:
             raise ValueError(f"invalid owner/reviewer for {task_id}: {owner}/{reviewer}")
 
