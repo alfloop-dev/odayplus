@@ -11,6 +11,7 @@ from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
 
 CORRELATION_ID = "corr-product-e2e-seed-001"
+TENANT_ID = "tenant-a"
 
 
 def main() -> int:
@@ -233,6 +234,7 @@ def get_json(url: str) -> dict[str, Any]:
         headers={
             "x-correlation-id": CORRELATION_ID,
             "x-subject-id": "product-e2e-seed",
+            "x-tenant-id": TENANT_ID,
             "x-roles": "finance_legal,expansion_user,operations_manager,regional_supervisor,site_reviewer,data_owner,auditor,executive",
         }
     )
@@ -248,6 +250,7 @@ def post_json(url: str, payload: dict[str, Any]) -> dict[str, Any]:
             "content-type": "application/json",
             "x-correlation-id": CORRELATION_ID,
             "x-subject-id": "product-e2e-seed",
+            "x-tenant-id": TENANT_ID,
             "x-roles": "finance_legal,expansion_user,operations_manager,regional_supervisor,site_reviewer,data_owner,auditor,executive",
         },
         method="POST",

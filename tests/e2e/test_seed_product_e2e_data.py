@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import json
+
 import pytest
 
 from scripts.e2e import seed_product_e2e_data
@@ -12,6 +14,34 @@ PERSISTED_FRESHNESS = {
     "availability": {"status": "AVAILABLE", "source": "persisted"},
     "freshness": [{"source_snapshot_id": "listing-2026-06-26"}],
 }
+
+
+def test_seed_requests_carry_verified_tenant_scope(monkeypatch) -> None:
+    requests = []
+
+    class JsonResponse:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args) -> None:
+            return None
+
+        def read(self) -> bytes:
+            return json.dumps({"ok": True}).encode()
+
+    def open_url(request, *, timeout: int):
+        requests.append((request, timeout))
+        return JsonResponse()
+
+    monkeypatch.setattr(seed_product_e2e_data, "urlopen", open_url)
+
+    seed_product_e2e_data.get_json("http://api/external-data/freshness")
+    seed_product_e2e_data.post_json("http://api/heatzones/score-jobs", {})
+
+    assert [request.get_header("X-tenant-id") for request, _timeout in requests] == [
+        seed_product_e2e_data.TENANT_ID,
+        seed_product_e2e_data.TENANT_ID,
+    ]
 
 
 def test_web_readiness_retries_transient_disconnect(monkeypatch) -> None:
