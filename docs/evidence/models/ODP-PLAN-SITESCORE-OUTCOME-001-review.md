@@ -1961,3 +1961,63 @@ source records. These directly violate the authoritative inventory, population-a
 M6/M12 evidence, and self-consistent-forged-receipt acceptance clauses. Re-audit the complete batch
 after remediation and return one new exact pushed head. No owner implementation content was
 changed by this review.
+
+---
+
+# Codex Re-review Approval Addendum — 2026-08-01, exact owner head `fb42ef7a`
+
+The supervisor re-dispatched the task after the owner remediated the `ebe994b1` B1/B2 findings.
+The local task branch and `origin/task/ODP-PLAN-SITESCORE-OUTCOME-001` both resolved to exact pushed
+commit `fb42ef7a1bc92a2eb1191ddc8bbda677d97f8eac`. The only untracked files were the
+orchestrator-seeded task brief, collaboration guide, and state snapshot; there were no tracked
+uncommitted implementation changes.
+
+## Verification at the exact owner head
+
+```bash
+PYTHONPATH=. .venv/bin/pytest -q tests/models -k "sitescore or opening_outcome"
+PYTHONPATH=. .venv/bin/pytest -q tests -k "sitescore or opening_outcome or model_ready"
+.venv/bin/ruff check scripts/models models tests/models
+git diff --check
+git diff --check 62e662cf..fb42ef7a
+PYTHONPATH=. .venv/bin/python <independent committed-artifact verifier/hash probe>
+```
+
+- Task-scoped selector: **59 passed**.
+- Full focused selector: **103 passed**.
+- Ruff and both whitespace checks are clean.
+- The committed governed-disabled receipt verifies as `RECEIPT_VALIDATED`; its receipt content hash
+  and separately supplied model-card artifact hash both match independent recomputation.
+- The owner regressions reproduce the prior fully hash-rebound aggregate and M6 coverage forgeries
+  against an unchanged manifest and now reject both.
+
+## Complete-batch acceptance audit
+
+- **Authoritative inventory and population binding:** when `dataset_manifest` is supplied, the
+  verifier now runs the benchmark evaluator over that manifest and compares observed, eligible,
+  mature, matched-prediction, M6/M12, interval, and in-P80 counts. The mature-population digest now
+  binds eligibility, opening/maturity evidence, M6/M12 realized values, prediction and interval
+  evidence, and segment identity; the aggregate digest is also recomputed from the manifest.
+- **Population-aligned metrics:** matched/unmatched means, realized sum/mean, all coverage ratios,
+  normalized MAE, calibration summary, and segment metrics are independently regenerated from the
+  same manifest and compared to the receipt. Duplicate handback and model-card copies remain
+  reconciled and hash-bound.
+- **Governance and fail-closed behavior:** submitted reason/status fields cannot establish lineage.
+  The verifier deliberately keeps `lineage_governed=False` until the authoritative prediction-source
+  dependency lands, so forged `ACTIVE`/`PASSED` claims remain rejected even with public hashes
+  rebound. Governance fields and approvals remain unavailable/unverified in the model card.
+- **Outcome semantics and handback:** true explicit M6/M12 outcomes plus elapsed maturity are required;
+  store age alone is not an outcome. The receipt remains `REJECTED_GOVERNED_DISABLED` with concrete
+  Human/Ops outcome-backfill and prediction-source contracts, required evidence fields, task IDs,
+  and freshness/lineage placeholders.
+- **Malformed and synthetic evidence:** strict eligibility, finite numeric and interval checks,
+  closed schemas, timestamp freshness, count/hash drift, unsupported synthetic horizon metrics, and
+  self-consistent hash-rebinding mutations retain regression coverage.
+
+## Decision
+
+**Approved.** Exact owner head `fb42ef7a` satisfies the task acceptance batch. The prior B1/B2
+manifest-binding blockers are cleared, the submitted artifacts truthfully represent the current
+no-source state, and SiteScore remains governed-disabled pending the authoritative outcome backfill
+and prediction-source dependencies. This review changes only this approval evidence; it does not
+modify owner implementation or generated Gate 2 artifacts.
