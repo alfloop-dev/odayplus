@@ -298,6 +298,11 @@ class OperatorLiveRepository:
     ) -> tuple[Any | None, str | None]:
         """Resolve a repository without ever enumerating an unscoped document set."""
 
+        if not scope.tenant_id or not scope.tenant_id.strip():
+            return None, "tenant_id is required to resolve a tenant-scoped repository"
+
+        tenant_id = scope.tenant_id.strip()
+
         provider = getattr(
             self._persistence,
             f"{attribute}_for_tenant",
@@ -305,15 +310,38 @@ class OperatorLiveRepository:
         )
         if callable(provider):
             try:
-                return provider(scope.tenant_id), None
+                repo = provider(tenant_id)
+                if repo is not None:
+                    return repo, None
             except Exception as exc:
                 return None, f"{type(exc).__name__}: {exc}"
 
         repository = getattr(self._persistence, attribute, None)
         if repository is not None:
-            return repository, None
+            repo_tenant_id = str(getattr(repository, "tenant_id", "") or "").strip()
+            if repo_tenant_id == tenant_id:
+                return repository, None
 
-        return None, "tenant-aware repository is not configured"
+            store = getattr(repository, "_store", None)
+            if store is not None:
+                base_store = getattr(store, "_store", store)
+                if (
+                    hasattr(base_store, "get")
+                    and hasattr(base_store, "put")
+                    and hasattr(base_store, "list_all")
+                ):
+                    from shared.infrastructure.persistence.operator_domains import (
+                        TenantScopedDocumentStore,
+                    )
+
+                    try:
+                        scoped_store = TenantScopedDocumentStore(base_store, tenant_id)
+                        scoped_repo = type(repository)(scoped_store)
+                        return scoped_repo, None
+                    except Exception as exc:
+                        return None, f"Failed to scope {attribute} for tenant: {exc}"
+
+        return None, f"tenant-aware repository for {attribute} is not configured"
 
     def _read_sources(self, scope: OperatorReadScope) -> dict[str, Any]:
         sections: dict[str, OperatorSectionAvailability] = {}

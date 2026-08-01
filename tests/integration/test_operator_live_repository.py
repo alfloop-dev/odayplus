@@ -23,7 +23,7 @@ from modules.opsboard.application.operator_live_repository import (
 from modules.opsboard.application.operator_state import OperatorStateService
 from shared.audit import AuditEvent
 from shared.auth import Action, Role
-from shared.domain import AddressLocation, Brand, Store, Tenant, Transaction
+from shared.domain import AddressLocation, Brand, Listing, Store, Tenant, Transaction
 from shared.infrastructure.persistence.factory import _durable_bundle, _memory_bundle
 
 
@@ -89,7 +89,8 @@ def test_empty_live_repository_is_ready_without_seed_rows() -> None:
     assert envelope["meta"]["sections"]["stores"]["recordCount"] == 0
     assert envelope["meta"]["sections"]["listings"]["state"] == "unavailable"
     assert envelope["meta"]["sections"]["listings"]["recordCount"] is None
-    assert envelope["meta"]["sections"]["riskRows"]["state"] == "unavailable"
+    assert envelope["meta"]["sections"]["riskRows"]["state"] == "available"
+    assert envelope["meta"]["sections"]["riskRows"]["recordCount"] == 0
     assert envelope["workQueue"] == []
     assert envelope["approvals"] == []
     kpis = {item["label"]: item["value"] for item in envelope["kpis"]}
@@ -440,3 +441,149 @@ def _operator_request(
             "server": ("testserver", 443),
         }
     )
+
+
+def test_two_tenant_isolation_prevents_foreign_record_leakage_and_false_completeness(
+    tmp_path: Any,
+) -> None:
+    db_path = tmp_path / "two_tenant_isolation.sqlite3"
+    bundle = _durable_bundle(db_path)
+
+    try:
+        bundle.tenant_repository.save_tenant(
+            Tenant(tenant_id="tenant-a", tenant_name="Tenant A")
+        )
+        bundle.tenant_repository.save_tenant(
+            Tenant(tenant_id="tenant-b", tenant_name="Tenant B")
+        )
+        bundle.brand_repository.save_brand(
+            Brand(
+                brand_id="brand-a",
+                tenant_id="tenant-a",
+                brand_code="brand-a",
+                brand_name="Brand A",
+            )
+        )
+        bundle.brand_repository.save_brand(
+            Brand(
+                brand_id="brand-b",
+                tenant_id="tenant-b",
+                brand_code="brand-b",
+                brand_name="Brand B",
+            )
+        )
+        bundle.store_repository.save_store(
+            Store(
+                store_id="store-tenant-a",
+                tenant_id="tenant-a",
+                brand_id="brand-a",
+                store_name="Tenant A Store",
+                store_status="open",
+            )
+        )
+        bundle.store_repository.save_store(
+            Store(
+                store_id="store-tenant-b",
+                tenant_id="tenant-b",
+                brand_id="brand-b",
+                store_name="Tenant B Store",
+                store_status="open",
+            )
+        )
+
+        from modules.external_data.application.ingestion_store import IngestionRunRecord
+        from modules.heatzone.workers import HeatZoneBatchScoreResult, HeatZoneScore
+        from modules.listing.domain.models import ListingDedupKey
+        from shared.workflow.sitescore import SiteScoreDecision
+
+        listing_a = Listing(
+            listing_id="listing-tenant-a",
+            source_system="test",
+            source_url="http://example.com/a",
+            title="Tenant A Listing",
+        )
+        address_a = AddressLocation(address_id="addr-a", raw_address="Address A")
+        key_a = ListingDedupKey(source_key="src-a", property_key="prop-a")
+        repo_a = bundle.listing_repository_for_tenant("tenant-a")
+        assert repo_a is not None
+        repo_a.save_listing(listing_a, address_a, key_a)
+
+        decision_a = SiteScoreDecision(
+            decision_id="dec-tenant-a",
+            candidate_site_id="cand-a",
+            decision="approved",
+        )
+        decision_store_a = bundle.sitescore_decision_store_for_tenant("tenant-a")
+        assert decision_store_a is not None
+        decision_store_a.save_decision(decision_a)
+
+        ingestion_a = IngestionRunRecord(
+            run_id="run-tenant-a",
+            provider_id="prov-a",
+            status="completed",
+            item_count=10,
+        )
+        ingestion_store_a = bundle.ingestion_run_store_for_tenant("tenant-a")
+        assert ingestion_store_a is not None
+        ingestion_store_a.save(ingestion_a)
+
+        hz_result_a = HeatZoneBatchScoreResult(
+            job_id="job-tenant-a",
+            status="completed",
+            scores=[HeatZoneScore(zone_id="z-a", score=0.9)],
+        )
+        heatzone_store_a = bundle.heatzone_store_for_tenant("tenant-a")
+        assert heatzone_store_a is not None
+        heatzone_store_a.put(hz_result_a)
+
+        live_repo = OperatorLiveRepository(bundle)
+
+        state_a = live_repo.load_state(
+            tenant_id="tenant-a",
+            store_ids=("store-tenant-a",),
+        )
+        sections_a = state_a["meta"]["sections"]
+        assert sections_a["listings"]["state"] == "available"
+        assert sections_a["listings"]["recordCount"] == 1
+        assert sections_a["siteScoreDecisions"]["state"] == "available"
+        assert sections_a["siteScoreDecisions"]["recordCount"] == 1
+        assert sections_a["ingestionRuns"]["state"] == "available"
+        assert sections_a["ingestionRuns"]["recordCount"] == 1
+        assert sections_a["heatZones"]["state"] == "available"
+        assert sections_a["heatZones"]["recordCount"] == 1
+
+        state_b = live_repo.load_state(
+            tenant_id="tenant-b",
+            store_ids=("store-tenant-b",),
+        )
+        sections_b = state_b["meta"]["sections"]
+        assert sections_b["listings"]["recordCount"] == 0
+        assert sections_b["siteScoreDecisions"]["recordCount"] == 0
+        assert sections_b["ingestionRuns"]["recordCount"] == 0
+        assert sections_b["heatZones"]["recordCount"] == 0
+
+        assert "listing-tenant-a" not in str(state_b)
+        assert "dec-tenant-a" not in str(state_b)
+        assert "run-tenant-a" not in str(state_b)
+        assert "job-tenant-a" not in str(state_b)
+    finally:
+        bundle.engine.close()
+
+
+def test_unpartitioned_in_memory_stores_remain_unavailable() -> None:
+    bundle = _memory_bundle()
+    live_repo = OperatorLiveRepository(bundle)
+
+    state = live_repo.load_state(tenant_id="tenant-test")
+    sections = state["meta"]["sections"]
+    for section_name in (
+        "listings",
+        "candidates",
+        "siteScoreDecisions",
+        "ingestionRuns",
+        "heatZones",
+    ):
+        assert sections[section_name]["state"] == "unavailable"
+        assert "OPERATOR_TENANT_" in sections[section_name]["reasonCode"]
+
+    assert state["meta"]["dataOrigin"]["complete"] is False
