@@ -1794,3 +1794,90 @@ truthy eligibility. These directly violate the authoritative inventory, populati
 self-consistent-forged-receipt, malformed-evidence, and concrete handoff acceptance clauses.
 Re-audit every criterion after remediation and return one new exact pushed head. No owner
 implementation content was changed by this review.
+
+---
+
+# Codex Re-review Addendum — 2026-08-01, exact owner head `b11aeace`
+
+The supervisor re-dispatched the task after the owner reported remediation of the `e269f95e`
+findings. The local task branch and
+`origin/task/ODP-PLAN-SITESCORE-OUTCOME-001` both resolved to exact pushed commit
+`b11aeace95369c93fe140c251bc489c3fda423bd`. The worktree contained no tracked
+uncommitted implementation changes; its only untracked files were the orchestrator-seeded task
+context and state files.
+
+## Verification at the exact owner head
+
+```bash
+PYTHONPATH=. .venv/bin/pytest -q tests/models -k "sitescore or opening_outcome"
+PYTHONPATH=. .venv/bin/pytest -q tests -k "sitescore or opening_outcome or model_ready"
+.venv/bin/ruff check scripts/models models tests/models
+git diff --check
+git diff --check e269f95e..b11aeace
+PYTHONPATH=. .venv/bin/python <independent in-memory mutation probes>
+```
+
+- Task-scoped selector: **55 passed**.
+- Full focused selector: **99 passed**.
+- Ruff and both whitespace checks are clean.
+- The owner's direct B1-B3 regressions pass.
+- A freshly generated 200-record receipt is governed-disabled by the producer because the
+  prediction-source dependency is not authoritative. After an independent mutation changed the
+  verdict to ACTIVE and rebound all public hashes, the verifier returned `is_valid=True`,
+  `reason_code="RECEIPT_VALIDATED"`, and no errors even though all three lineage fields remained
+  absent and the model-card governance fields remained `UNAVAILABLE`/`UNVERIFIED`.
+- A separate partial-population mutation replaced the source-derived population digest with an
+  attacker-chosen 64-hex value and changed realized revenue sum from `400.0` to `1000099.0`.
+  After recomputing the aggregate, artifact, and receipt hashes, the verifier again returned
+  `is_valid=True`, `reason_code="RECEIPT_VALIDATED"`, and no errors.
+
+## Blocking findings
+
+### B1 — A receipt reason code can substitute for missing governed lineage and forge ACTIVE
+
+`SiteScoreOpeningOutcomeBenchmarkResult.is_lineage_governed` correctly remains hard-disabled at
+`models/sitescore/opening_outcome.py:134-138`, so the producer rejects even otherwise passing
+records until the authoritative prediction-source dependency exists. The verifier reconstructs a
+different policy at `models/sitescore/opening_outcome.py:2004-2019`: for a governed-looking
+provenance, it treats either three non-placeholder lineage fields **or a submitted reason code not
+in the four missing-evidence codes** as proof that lineage is governed.
+
+That second branch is circular. Setting `reason_code=GATE2_CRITERIA_MET`, the Gate booleans and
+statuses to ACTIVE/PASSED, and rebinding the public hashes makes `lineage_governed=True` while
+`dataset_snapshot_id`, `model_version`, and `artifact_lineage_id` are all still `None`. The active
+path also does not reject a model card whose validation run, feature/label ids, privacy/security
+reviews, and approvals remain unverified. This directly violates the governed-disabled dependency,
+invented-governance, missing-lineage, and forged-ACTIVE fail-closed criteria.
+
+Derive verifier lineage only from independently authenticated prediction-source evidence. Until
+`ODP-PLAN-SITESCORE-PREDICTION-SOURCE-001` supplies that evidence, the verifier must mirror the
+producer's hard-disabled policy; submitted status or reason fields must never establish authority.
+Add an end-to-end hash-rebound ACTIVE mutation with all lineage/governance fields absent.
+
+### B2 — The new population digest is still replaceable self-attestation
+
+The producer hashes its in-memory mature rows at
+`models/sitescore/opening_outcome.py:651-674`, but the receipt verifier at
+`models/sitescore/opening_outcome.py:1219-1263` receives neither those rows nor an independently
+authenticated dataset manifest. It only checks that `mature_population_digest` is 64-hex and that
+the second digest recomputes from the receipt's own first digest and aggregate scalars.
+
+Consequently an attacker can replace the true population digest with any 64-hex value, forge the
+unmatched mean/revenue sum/overall mean consistently, recompute `population_aggregate_digest`,
+update every duplicate, and rebind the public artifact/content hashes. The verifier accepts the
+forged population. The owner's regression changes the aggregate but intentionally leaves the new
+digest stale, so it proves only drift detection, not authoritative source binding.
+
+Bind the mature-population digest to an independently supplied authoritative dataset snapshot or
+require the verifier to receive and canonicalize the source population/manifest itself. Add a
+mutation that changes **both** the population digest and all dependent hashes; it must fail closed.
+
+## Decision
+
+**Changes requested.** Exact owner head `b11aeace` is not approved. All prescribed checks and the
+literal prior-round regressions are green, but the complete batch still permits a missing-lineage
+forged ACTIVE verdict and a fully rebound forged mature population/aggregate. These are direct
+violations of the authoritative prediction dependency, evidence lineage, population alignment,
+self-consistent-forged-receipt, and governed-disabled acceptance clauses. Re-audit the entire
+acceptance batch after remediation and return one new exact pushed head. No owner implementation
+content was changed by this review.
