@@ -389,7 +389,6 @@ else:
                 and persistence_reachable
                 and provider_live_ready
                 and operator_repository_ready
-                and production_model_bindings_ready
             )
             blocking_reasons: list[str] = []
             if require_live_data:
@@ -871,7 +870,7 @@ else:
                 )
             except ProductionModelRuntimeError as exc:
                 for service, capability in production_model_capabilities.items():
-                    if capability["trainable"]:
+                    if capability["trainable"] and service not in _governed_disabled:
                         capability["reasonCode"] = exc.code
                         capability["error"] = str(exc)
                         if service in required_model_services:

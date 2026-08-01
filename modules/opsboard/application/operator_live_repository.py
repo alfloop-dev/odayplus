@@ -470,21 +470,41 @@ class OperatorLiveRepository:
                 "list_decisions",
             )
 
-        # These persisted records currently have no tenant partition or tenant
-        # key. Reading them would be a cross-tenant enumeration, so their absence
-        # is explicit instead of being represented as a real empty result.
-        ingestion_runs: list[Any] = []
-        heatzones: list[Any] = []
-        sections["ingestionRuns"] = self._unavailable(
-            "ingestion_run_store.list_runs",
-            reason_code="OPERATOR_INGESTION_TENANT_SCOPE_UNAVAILABLE",
-            message="ingestion run records do not expose a tenant-safe Operator query",
+        ingestion_repository, ingestion_error = self._tenant_scoped_repository(
+            "ingestion_run_store",
+            scope,
         )
-        sections["heatZones"] = self._unavailable(
-            "heatzone_store.list_scores",
-            reason_code="OPERATOR_HEATZONE_TENANT_SCOPE_UNAVAILABLE",
-            message="HeatZone results do not expose a tenant-safe Operator query",
+        if ingestion_repository is None:
+            ingestion_runs = []
+            sections["ingestionRuns"] = self._unavailable(
+                "ingestion_run_store.list_runs",
+                reason_code="OPERATOR_TENANT_INGESTION_RUNS_UNAVAILABLE",
+                message=ingestion_error or "tenant-aware ingestion run store is unavailable",
+            )
+        else:
+            ingestion_runs, sections["ingestionRuns"] = self._read_list(
+                "ingestion_runs",
+                ingestion_repository,
+                "list_runs",
+            )
+
+        heatzone_repository, heatzone_error = self._tenant_scoped_repository(
+            "heatzone_store",
+            scope,
         )
+        if heatzone_repository is None:
+            heatzones = []
+            sections["heatZones"] = self._unavailable(
+                "heatzone_store.list_scores",
+                reason_code="OPERATOR_TENANT_HEATZONES_UNAVAILABLE",
+                message=heatzone_error or "tenant-aware heatzone store is unavailable",
+            )
+        else:
+            heatzones, sections["heatZones"] = self._read_list(
+                "heat_zones",
+                heatzone_repository,
+                "list_scores",
+            )
 
         audit_events, sections["auditEvents"] = self._read_list(
             "audit_events",
@@ -579,14 +599,22 @@ class OperatorLiveRepository:
         sections: dict[str, OperatorSectionAvailability] = dict(
             sources["sections"]
         )
-        sections["riskRows"] = self._unavailable(
-            "operator-risk-projection",
-            reason_code="OPERATOR_RISK_PROJECTION_UNAVAILABLE",
-            message=(
-                "the Operator risk projection has no tenant-aware authoritative "
-                "repository contract"
-            ),
+        risk_repository, risk_error = self._tenant_scoped_repository(
+            "risk_repository",
+            scope,
         )
+        if risk_repository is None:
+            sections["riskRows"] = self._unavailable(
+                "operator-risk-projection",
+                reason_code="OPERATOR_TENANT_RISK_ROWS_UNAVAILABLE",
+                message=risk_error or "tenant-aware risk projection repository is unavailable",
+            )
+        else:
+            _, sections["riskRows"] = self._read_list(
+                "risk_rows",
+                risk_repository,
+                "list_risk_rows",
+            )
 
         queue = [
             *self._alert_tasks(alerts),

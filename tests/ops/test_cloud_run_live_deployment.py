@@ -283,7 +283,7 @@ def test_deploy_preflight_imports_runtime_dependencies_via_locked_python(
     env = complete_env()
     env.update(
         {
-            "PATH": f"{tmp_path}{os.pathsep}{os.environ['PATH']}",
+            "PATH": f"{tmp_path}{os.pathsep}/home/lupin/.local/bin{os.pathsep}{ROOT / '.venv' / 'bin'}{os.pathsep}{os.environ['PATH']}",
             "API_SERVICE": "oday-api",
             "WEB_SERVICE": "oday-web",
             "MIGRATION_JOB": "oday-migrate",
