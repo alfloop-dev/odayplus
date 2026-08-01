@@ -60,17 +60,38 @@ else:
                     principal = principal_from_headers(request.headers)
                 except Exception:
                     principal = None
-            if principal is not None:
-                val = getattr(getattr(principal, "scope", None), "tenant_id", None) or getattr(
-                    principal, "tenant_id", None
+
+            if principal is None:
+                raise HTTPException(
+                    status_code=status.HTTP_403_FORBIDDEN,
+                    detail="TENANT_SCOPE_DENIED: Missing verified principal",
                 )
-                if val and str(val).strip():
-                    return str(val).strip()
-            return (request.headers.get("x-tenant-id") or "").strip()
+
+            principal_tenant = getattr(getattr(principal, "scope", None), "tenant_id", None) or getattr(
+                principal, "tenant_id", None
+            )
+            if not principal_tenant or not str(principal_tenant).strip():
+                raise HTTPException(
+                    status_code=status.HTTP_403_FORBIDDEN,
+                    detail="TENANT_SCOPE_DENIED: Missing verified tenant scope",
+                )
+            clean_tenant = str(principal_tenant).strip()
+
+            header_tenant = (
+                request.headers.get("x-tenant-id")
+                or request.headers.get("tenant_id")
+                or ""
+            ).strip()
+            if header_tenant and header_tenant != clean_tenant:
+                raise HTTPException(
+                    status_code=status.HTTP_403_FORBIDDEN,
+                    detail="TENANT_SCOPE_DENIED: Tenant header does not match verified principal scope",
+                )
+            return clean_tenant
 
         def store_for_request(request: Request) -> Any:
             tid = resolve_tenant_id(request)
-            if heatzone_store_for_tenant is not None and tid:
+            if heatzone_store_for_tenant is not None:
                 scoped = heatzone_store_for_tenant(tid)
                 if scoped is not None:
                     return scoped
@@ -78,6 +99,13 @@ else:
                     status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
                     detail="Failed to resolve tenant-scoped heatzone store",
                 )
+            if hasattr(result_store, "_store"):
+                base_store = getattr(result_store._store, "_store", result_store._store)
+                if hasattr(base_store, "get") and hasattr(base_store, "put"):
+                    from shared.infrastructure.persistence.operator_domains import (
+                        TenantScopedDocumentStore,
+                    )
+                    return type(result_store)(TenantScopedDocumentStore(base_store, tid))
             return result_store
 
         @router.get("", dependencies=[Depends(require_permission("heatzone", Action.VIEW, engine=authz_engine))])

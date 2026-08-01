@@ -81,17 +81,38 @@ else:
                     principal = principal_from_headers(request.headers)
                 except Exception:
                     principal = None
-            if principal is not None:
-                val = getattr(getattr(principal, "scope", None), "tenant_id", None) or getattr(
-                    principal, "tenant_id", None
+
+            if principal is None:
+                raise HTTPException(
+                    status_code=status.HTTP_403_FORBIDDEN,
+                    detail="TENANT_SCOPE_DENIED: Missing verified principal",
                 )
-                if val and str(val).strip():
-                    return str(val).strip()
-            return (request.headers.get("x-tenant-id") or "").strip()
+
+            principal_tenant = getattr(getattr(principal, "scope", None), "tenant_id", None) or getattr(
+                principal, "tenant_id", None
+            )
+            if not principal_tenant or not str(principal_tenant).strip():
+                raise HTTPException(
+                    status_code=status.HTTP_403_FORBIDDEN,
+                    detail="TENANT_SCOPE_DENIED: Missing verified tenant scope",
+                )
+            clean_tenant = str(principal_tenant).strip()
+
+            header_tenant = (
+                request.headers.get("x-tenant-id")
+                or request.headers.get("tenant_id")
+                or ""
+            ).strip()
+            if header_tenant and header_tenant != clean_tenant:
+                raise HTTPException(
+                    status_code=status.HTTP_403_FORBIDDEN,
+                    detail="TENANT_SCOPE_DENIED: Tenant header does not match verified principal scope",
+                )
+            return clean_tenant
 
         def store_for_request(request: Request) -> Any:
             tid = resolve_tenant_id(request)
-            if tid and ingestion_run_store_for_tenant is not None:
+            if ingestion_run_store_for_tenant is not None:
                 try:
                     scoped = ingestion_run_store_for_tenant(tid)
                     if scoped is not None:
@@ -107,6 +128,8 @@ else:
                     status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
                     detail="Failed to resolve tenant-scoped ingestion store",
                 )
+            if hasattr(service, "_resolve_store"):
+                return service._resolve_store(tid)
             return service.store
 
         @router.get("/freshness", dependencies=[view_guard])

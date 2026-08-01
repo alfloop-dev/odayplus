@@ -175,3 +175,52 @@ def test_listing_api_import_endpoint_and_candidate_inbox() -> None:
 
     assert inbox.status_code == 200
     assert len(inbox.json()["candidates"]) == 1
+
+
+def test_listing_import_rejects_missing_or_mismatched_tenant_scope() -> None:
+    client = TestClient(create_app())
+    payload = {
+        "records": [
+            {
+                "source_listing_id": "LST-BYPASS-001",
+                "address_raw": "台北市信義區松高路1號",
+                "rent_amount": 80000.0,
+                "area_ping": 30.0,
+            }
+        ]
+    }
+
+    # 1. Missing x-tenant-id -> 403 TENANT_SCOPE_DENIED
+    missing_scope_headers = {
+        "x-subject-id": "operator-attacker",
+        "x-roles": "expansion_user",
+    }
+    res_missing = client.post("/listings/import", json=payload, headers=missing_scope_headers)
+    assert res_missing.status_code == 403
+    assert "TENANT_SCOPE_DENIED" in res_missing.text
+
+    # 2. Mismatched tenant scope (header x-tenant-id="tenant-victim" vs request.state.operator_principal tenant_id="tenant-attacker")
+    app = create_app()
+
+    @app.middleware("http")
+    async def _inject_attacker_principal(request: Request, call_next):
+        from shared.auth import Principal, Scope
+        request.state.operator_principal = Principal(
+            subject_id="attacker",
+            roles=frozenset(),
+            scope=Scope(tenant_id="tenant-attacker"),
+        )
+        return await call_next(request)
+
+    mismatched_client = TestClient(app)
+    mismatched_headers = {
+        "x-subject-id": "operator-attacker",
+        "x-roles": "expansion_user",
+        "x-tenant-id": "tenant-victim",
+    }
+    res_mismatch = mismatched_client.post(
+        "/listings/import", json=payload, headers=mismatched_headers
+    )
+    assert res_mismatch.status_code == 403
+    assert "TENANT_SCOPE_DENIED" in res_mismatch.text
+

@@ -143,17 +143,38 @@ else:
                     principal = principal_from_headers(request.headers)
                 except Exception:
                     principal = None
-            if principal is not None:
-                val = getattr(getattr(principal, "scope", None), "tenant_id", None) or getattr(
-                    principal, "tenant_id", None
+
+            if principal is None:
+                raise HTTPException(
+                    status_code=status.HTTP_403_FORBIDDEN,
+                    detail="TENANT_SCOPE_DENIED: Missing verified principal",
                 )
-                if val and str(val).strip():
-                    return str(val).strip()
-            return (request.headers.get("x-tenant-id") or "").strip()
+
+            principal_tenant = getattr(getattr(principal, "scope", None), "tenant_id", None) or getattr(
+                principal, "tenant_id", None
+            )
+            if not principal_tenant or not str(principal_tenant).strip():
+                raise HTTPException(
+                    status_code=status.HTTP_403_FORBIDDEN,
+                    detail="TENANT_SCOPE_DENIED: Missing verified tenant scope",
+                )
+            clean_tenant = str(principal_tenant).strip()
+
+            header_tenant = (
+                request.headers.get("x-tenant-id")
+                or request.headers.get("tenant_id")
+                or ""
+            ).strip()
+            if header_tenant and header_tenant != clean_tenant:
+                raise HTTPException(
+                    status_code=status.HTTP_403_FORBIDDEN,
+                    detail="TENANT_SCOPE_DENIED: Tenant header does not match verified principal scope",
+                )
+            return clean_tenant
 
         def workflow_for_request(request: Request) -> SiteScoreDecisionWorkflow:
             tid = resolve_tenant_id(request)
-            if sitescore_decision_repository_for_tenant is not None and tid:
+            if sitescore_decision_repository_for_tenant is not None:
                 scoped_store = sitescore_decision_repository_for_tenant(tid)
                 if scoped_store is not None:
                     return SiteScoreDecisionWorkflow(
