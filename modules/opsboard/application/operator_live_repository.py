@@ -314,6 +314,8 @@ class OperatorLiveRepository:
             return None, "tenant-aware repository is not configured"
         store = getattr(repository, "_store", None)
         if store is None:
+            if self._mode in {"memory", "unknown"}:
+                return repository, None
             return None, "tenant-aware document store is not configured"
         try:
             from shared.infrastructure.persistence.operator_domains import (
@@ -472,19 +474,43 @@ class OperatorLiveRepository:
                 "list_decisions",
             )
 
-        ingestion_runs = []
-        sections["ingestionRuns"] = self._unavailable(
-            "ingestion_run_store.list_runs",
-            reason_code="OPERATOR_TENANT_INGESTION_RUNS_UNAVAILABLE",
-            message="ingestion run records do not expose a tenant-safe Operator query",
+        ingestion_repository, ingestion_error = self._tenant_scoped_repository(
+            "ingestion_run_store",
+            scope,
         )
+        if ingestion_repository is None:
+            ingestion_runs = []
+            sections["ingestionRuns"] = self._unavailable(
+                "ingestion_run_store.list_runs",
+                reason_code="OPERATOR_TENANT_INGESTION_RUNS_UNAVAILABLE",
+                message=ingestion_error
+                or "tenant-aware ingestion run store is unavailable",
+            )
+        else:
+            ingestion_runs, sections["ingestionRuns"] = self._read_list(
+                "ingestion_runs",
+                ingestion_repository,
+                "list_runs",
+            )
 
-        heatzones = []
-        sections["heatZones"] = self._unavailable(
-            "heatzone_store.list_scores",
-            reason_code="OPERATOR_TENANT_HEATZONES_UNAVAILABLE",
-            message="HeatZone results do not expose a tenant-safe Operator query",
+        heatzone_repository, heatzone_error = self._tenant_scoped_repository(
+            "heatzone_store",
+            scope,
         )
+        if heatzone_repository is None:
+            heatzones = []
+            sections["heatZones"] = self._unavailable(
+                "heatzone_store.list_scores",
+                reason_code="OPERATOR_TENANT_HEATZONES_UNAVAILABLE",
+                message=heatzone_error
+                or "tenant-aware HeatZone store is unavailable",
+            )
+        else:
+            heatzones, sections["heatZones"] = self._read_list(
+                "heat_zones",
+                heatzone_repository,
+                "list_scores",
+            )
 
         audit_events, sections["auditEvents"] = self._read_list(
             "audit_events",

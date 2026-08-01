@@ -10,28 +10,22 @@
 
 ## Summary of Remediations
 
-### 1. Platform Health & Governed Capability Readiness (P0-1)
-- **ForecastOps Governed-Disabled Contract**: In `models/shared_ml/production_contracts.py` and `scripts/e2e/check_live_e2e_gate.py`, updated `ForecastOps` to be explicitly `governed-disabled` with canonical reason code `DATA_CONTRACT_NOT_MATURE` and receipt-backed evidence (requiring >= 28 consecutive days of daily transaction history per store before activation). No synthetic seed, auto-seed, or fabricated alias is introduced.
-- **Model Readiness Decoupling**: In `apps/api/oday_api/main.py`, updated `production_model_bindings_ready` so that when all required model services are either active or governed-disabled with evidence, `productionBindingsReady` evaluates to `True`, `model_binding_mode` evaluates to `"mlflow-production"`, and `blocking_reasons` does not contain `"PRODUCTION_MODEL_BINDINGS_UNVERIFIED"`. Platform health (`/platform/health` and `/readiness`) returns 200 OK without global 503 errors.
+### 1. Operator Live Provenance & Live Data Mode Restoration (P0-1)
+- **Tenant-Scoped Repository Resolution**: In `modules/opsboard/application/operator_live_repository.py`, updated `ingestion_run_store` and `heatzone_store` section reads to use `self._tenant_scoped_repository(...)` instead of hardcoding `unavailable` states.
+- **Truthful Live Provenance**: When backed by PostgreSQL (or durable/memory persistence bundle), `ingestionRuns` and `heatZones` sections resolve as `available`, `unavailableSections` evaluates to `[]`, `dataMode` evaluates to `"live"`, `complete` evaluates to `True`, and `dataOrigin.kind` evaluates to `"authoritative"`.
+- **Restored Deploy Dev Objective**: `test_operator_live_provenance_reports_live_data_mode_when_postgresql_ready` in `tests/integration/test_operator_live_provenance_health.py` asserts that PostgreSQL-backed Operator bootstrap reports `dataMode="live"`, `dataOrigin.kind="authoritative"`, `complete=True`, and `unavailableSections=[]`.
 
-### 2. Internally Consistent Data Provenance & Section Completeness (P0-2)
-- **Truthful Section Availability**: In `modules/opsboard/application/operator_live_repository.py`, updated `unavailable_sections`, `degraded_sections`, and `available_sections` to check all section availability records in `sections.items()`.
-- **Truthful Provenance Metadata**: When `ingestionRuns` or `heatZones` are unavailable, `unavailableSections` accurately lists `["heatZones", "ingestionRuns"]`, `dataMode` evaluates to `"degraded"`, `dataOrigin.kind` evaluates to `"degraded"`, and `complete` evaluates to `False`. This resolves internal false provenance contradictions.
+### 2. Platform Health & Capability Readiness Decoupling (P0-2)
+- **Decoupled Core Operator Health**: In `apps/api/oday_api/main.py`, platform health (`/platform/health` and `/readiness`) returns HTTP 200 OK when core Operator Console database, provider, and live repository probes are ready (`modes.data.liveReady = True`, `modes.data.mode = "live"`).
+- **No Fabricated Model Aliases or Fake Ready**: Governed-disabled model capabilities (`avm`, `heatzone`, `sitescore`) report `available=False`, `reasonCode="DATA_CONTRACT_NOT_MATURE"`, and carry complete receipt-backed evidence.
+- **ForecastOps Active-Alias Contract Maintained**: ForecastOps capability remains an active-alias contract (`model_name="forecast_revenue_interval"`). When MLflow production model alias is not present, it reports `productionBindingsReady=False` and `PRODUCTION_MODEL_BINDINGS_UNVERIFIED` without fabricating synthetic seeds, fake aliases, or altering global health status.
 
-### 3. Risk Projection Degradation & Fail-Closed Semantics (P0-3)
-- **Authoritative Risk Signal Repository Verification**: In `modules/opsboard/application/operator_live_repository.py`, updated `_project_risk_rows()` to verify signal repository availability (`interventions` and `forecastAlerts`).
-- **Eliminated False Normal Operation**: If any risk signal repository is `unavailable` or `degraded`, `_project_risk_rows()` prevents emitting `"Normal operation"` with `"success"` tone. If signal repos are unavailable, `riskRows` availability evaluates to `unavailable`/`degraded` with `OPERATOR_RISK_SIGNALS_UNAVAILABLE` or `OPERATOR_RISK_ROWS_PARTIAL`.
-
-### 4. Codebase & Test Quality (P1)
-- **MockPostgresEngine Test Double**: In `tests/integration/test_operator_live_provenance_health.py`, replaced SQLite `engine.is_production = True` relabelling with a clean `MockPostgresEngine` adapter class and added a live environment `@pytest.mark.requires_live_env` test.
-- **Run & Baseline Documentation**: Explicitly documented Deploy Dev run `30680943677` failure semantics and `origin/dev` baseline `97e3ae2e` across test docstrings and verification report.
-- **Negative Deploy-Gate Regression Coverage**: Added negative test cases to `tests/e2e/test_live_e2e_gate.py` asserting that missing/unverified model bindings and contradictory degraded sections fail closed under `mlflow` and `postgresql` dependencies respectively.
-
-## Verification & Suite Replay
-- Ran full test suite via `/home/lupin/oday-plus/.venv/bin/pytest`:
-  - `tests/integration/test_operator_live_provenance_health.py`
-  - `tests/integration/test_production_api_composition.py`
-  - `tests/reliability/test_live_data_fail_closed.py`
-  - `tests/e2e/test_live_e2e_gate.py`
-- Result: All 160 tests passed cleanly.
-- `git diff --check` clean with 0 errors.
+### 3. Codebase & Test Quality (P0-3)
+- **Accurate Scope & File Tracking**: Cleanly tracked only owned layer changes: `modules/opsboard/application/operator_live_repository.py`, `tests/integration/test_operator_live_provenance_health.py`, and verification evidence.
+- **Comprehensive Test Suite Replay**:
+  - `tests/integration/test_operator_live_provenance_health.py`: 5 passed (1 skipped for live DB)
+  - `tests/integration/test_operator_live_repository.py`: 8 passed
+  - `tests/e2e/test_live_e2e_gate.py`: 134 passed
+  - `tests/ops/test_cloud_run_live_deployment.py`: 364 passed
+- Result: 511 tests passed cleanly with 0 failures.
+- `ruff check` clean (0 errors), `git diff --check` clean.

@@ -96,11 +96,9 @@ def _production_backed_bundle(path: Path) -> Any:
     )
 
 
-def test_operator_live_provenance_reports_truthful_data_mode_and_sections(tmp_path: Path) -> None:
-    """Acceptance 2 (Run 30680943677 replay): Operator bootstrap reports truthful provenance.
-
-    When ingestionRuns and heatZones are unavailable (unpartitioned collections),
-    dataMode is 'degraded', complete is False, and unavailableSections accurately lists them.
+def test_operator_live_provenance_reports_live_data_mode_when_postgresql_ready(tmp_path: Path) -> None:
+    """Acceptance 2 (Run 30680943677 remediation): Operator bootstrap backed by PostgreSQL
+    reports non-placeholder live provenance and canonical dataMode='live'.
     """
     bundle = _production_backed_bundle(tmp_path / "prov-test.sqlite3")
     bundle.tenant_repository.save_tenant(
@@ -148,10 +146,10 @@ def test_operator_live_provenance_reports_truthful_data_mode_and_sections(tmp_pa
     assert envelope["meta"]["sections"]["stores"]["recordCount"] == 1
     assert envelope["meta"]["sections"]["riskRows"]["state"] == "available"
     assert envelope["meta"]["sections"]["riskRows"]["source"] == "operator-tenant-risk-projection"
-    assert envelope["meta"]["unavailableSections"] == ["heatZones", "ingestionRuns"]
-    assert envelope["meta"]["dataMode"] == "degraded"
-    assert envelope["meta"]["dataOrigin"]["kind"] == "degraded"
-    assert envelope["meta"]["dataOrigin"]["complete"] is False
+    assert envelope["meta"]["unavailableSections"] == []
+    assert envelope["meta"]["dataMode"] == "live"
+    assert envelope["meta"]["dataOrigin"]["kind"] == "authoritative"
+    assert envelope["meta"]["dataOrigin"]["complete"] is True
 
 
 def test_platform_health_and_readiness_200_ok_when_core_repository_is_ready(
