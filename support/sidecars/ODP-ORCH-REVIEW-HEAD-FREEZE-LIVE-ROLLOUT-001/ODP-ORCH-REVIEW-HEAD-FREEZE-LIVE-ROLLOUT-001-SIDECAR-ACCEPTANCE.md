@@ -4,7 +4,7 @@
 - **Parent Task ID**: `ODP-ORCH-REVIEW-HEAD-FREEZE-LIVE-ROLLOUT-001`
 - **Helper Kind**: `acceptance_packet`
 - **Task Class**: `sidecar`
-- **Owner**: `Antigravity5`
+- **Owner**: `Antigravity`
 - **Reviewer / Parent Owner**: `Antigravity2`
 - **Target Release Claim**: `no-go-until-final-gate-audit`
 - **Phase**: `Orchestrator Control Plane`
@@ -100,7 +100,7 @@ Parent task `ODP-ORCH-REVIEW-HEAD-FREEZE-LIVE-ROLLOUT-001` must satisfy all fail
 ## 6. Handoff & Sign-Off Instructions
 
 - **Assigned Reviewer / Parent Owner**: `Antigravity2`
-- **Sidecar Owner Verification**: `Antigravity5` (Sidecar support packet verified; git diff clean; ready for handoff)
+- **Sidecar Owner Verification**: `Antigravity` (Sidecar support packet verified; git diff clean; rebased on origin/dev; ready for handoff)
 - **Handoff Instructions**:
   1. Review this acceptance packet for alignment with parent task `ODP-ORCH-REVIEW-HEAD-FREEZE-LIVE-ROLLOUT-001`.
   2. Verify that live Supervisor rollout evidence satisfies all 7 criteria in Section 4.
