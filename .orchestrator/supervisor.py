@@ -1830,13 +1830,13 @@ def materialize_worker_context_files(
                 ".orchestrator/task-briefs/",
                 ".orchestrator/reviews/",
             ]
-            new_lines = [l for l in lines_to_add if l not in existing_exclude.splitlines()]
+            new_lines = [entry for entry in lines_to_add if entry not in existing_exclude.splitlines()]
             if new_lines:
                 with open(exclude_path, "a", encoding="utf-8") as ef:
                     if existing_exclude and not existing_exclude.endswith("\n"):
                         ef.write("\n")
-                    for l in new_lines:
-                        ef.write(f"{l}\n")
+                    for entry in new_lines:
+                        ef.write(f"{entry}\n")
         except OSError:
             pass
 
@@ -9045,7 +9045,6 @@ def _quarantine_and_preserve_dirty_worktree(
     try:
         resolved_top = Path(top_level).resolve()
         wt_gd = Path(wt_git_dir) if Path(wt_git_dir).is_absolute() else (worktree_path / wt_git_dir)
-        repo_gd = Path(repo_git_dir) if Path(repo_git_dir).is_absolute() else (repo_root / repo_git_dir)
 
         wt_cd = Path(worktree_common) if Path(worktree_common).is_absolute() else (wt_gd / worktree_common)
         repo_cd = Path(repo_common) if Path(repo_common).is_absolute() else (repo_root / repo_common)
