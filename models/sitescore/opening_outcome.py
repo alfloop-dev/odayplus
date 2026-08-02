@@ -178,6 +178,8 @@ class SiteScoreOpeningOutcomeBenchmarkResult:
             return False
         if not self.dataset_snapshot_id or not self.model_version or not self.artifact_lineage_id:
             return False
+        if not self.prediction_receipt_hash or len(self.prediction_receipt_hash) != 64:
+            return False
         if self.provenance not in ("authenticated_governed_records", "pg16_query", "pg16_prediction_query", "authenticated_prediction_registry"):
             return False
         return True

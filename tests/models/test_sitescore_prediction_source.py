@@ -548,8 +548,9 @@ def test_sitescore_prediction_source_b1_arbitrary_caller_receipt_lacking_authori
         dataset_snapshot_id="sitescore-snapshot-2026-07-31-v1",
         model_version=CANONICAL_MODEL_VERSION,
         artifact_lineage_id="sitescore-artifact-sha256-v1",
-        authority_attestation="caller-self-attested",
     )
+    receipt["authority_attestation"] = "caller-self-attested"
+    receipt["integrity"]["content_sha256"] = compute_prediction_source_receipt_sha256(receipt)
     res = verify_sitescore_prediction_source(records, prediction_receipt=receipt)
     assert res.is_valid is False
     assert res.reason_code == "UNAUTHENTICATED_PREDICTION_PROVENANCE"
@@ -563,6 +564,123 @@ def test_sitescore_prediction_source_b1_arbitrary_caller_receipt_lacking_authori
     assert result.is_gate2_passed is False
     assert result.prediction_source_verified is False
     assert result.status == "GOVERNED_DISABLED"
+
+
+def test_sitescore_prediction_source_b1_registry_evidence_without_explicit_receipt_hash_fails_closed():
+    # B1 Re-audit: Registry evidence with approved strings BUT no explicit 64-hex prediction_receipt_hash fails closed
+    records = _generate_valid_prediction_records(220, include_outcomes=True)
+    reg_evidence = {
+        "model_name": CANONICAL_PREDICTION_MODEL_NAME,
+        "authority_attestation": "authenticated_prediction_registry",
+        "provider_identity": "model_ready.sitescore_predictions",
+        "versions": [
+            {
+                "version": CANONICAL_MODEL_VERSION,
+                "dataset_snapshot_id": "sitescore-snapshot-2026-07-31-v1",
+                "git_sha": "sitescore-artifact-sha256-v1",
+            }
+        ],
+    }
+    res = verify_sitescore_prediction_source(records, model_registry_evidence=reg_evidence)
+    assert res.is_valid is False
+    assert res.prediction_receipt_hash is None
+    assert any("prediction_receipt_hash" in err for err in res.errors)
+
+    result = evaluate_sitescore_opening_outcome_benchmark(
+        records,
+        model_registry_evidence=reg_evidence,
+        provenance="authenticated_prediction_registry",
+    )
+    assert result.is_gate2_passed is False
+    assert result.status == "GOVERNED_DISABLED"
+
+
+def test_sitescore_prediction_source_b2_unapproved_provider_identity_rejected():
+    # B2 Re-audit: Unapproved provider identity like evil.attacker fails closed
+    records = _generate_valid_prediction_records(220, include_outcomes=True)
+    receipt = build_sitescore_prediction_source_receipt(
+        records,
+        dataset_snapshot_id="sitescore-snapshot-2026-07-31-v1",
+        model_version=CANONICAL_MODEL_VERSION,
+        artifact_lineage_id="sitescore-artifact-sha256-v1",
+    )
+    receipt["provider_identity"] = "evil.attacker"
+    receipt["integrity"]["content_sha256"] = compute_prediction_source_receipt_sha256(receipt)
+    res = verify_sitescore_prediction_source(records, prediction_receipt=receipt)
+    assert res.is_valid is False
+    assert res.reason_code == "UNAUTHENTICATED_PREDICTION_PROVENANCE"
+    assert any("provider identity" in err for err in res.errors)
+
+
+def test_sitescore_prediction_source_b3_registry_wrong_version_fallback_rejected():
+    # B3 Re-audit: Registry evidence containing candidate-site-view-v1 fails closed when v2 requested
+    records = _generate_valid_prediction_records(220, include_outcomes=True)
+    reg_evidence = {
+        "model_name": CANONICAL_PREDICTION_MODEL_NAME,
+        "authority_attestation": "authenticated_prediction_registry",
+        "provider_identity": "model_ready.sitescore_predictions",
+        "prediction_receipt_hash": "a" * 64,
+        "versions": [
+            {
+                "version": "candidate-site-view-v1",
+                "dataset_snapshot_id": "sitescore-snapshot-2026-07-31-v1",
+                "git_sha": "sitescore-artifact-sha256-v1",
+            }
+        ],
+    }
+    res = verify_sitescore_prediction_source(
+        records,
+        model_registry_evidence=reg_evidence,
+        expected_model_version=CANONICAL_MODEL_VERSION,
+    )
+    assert res.is_valid is False
+    assert any("exact requested model version" in err for err in res.errors)
+
+
+def test_sitescore_prediction_source_b4_prediction_as_of_mismatch_opened_on_rejected():
+    # B4 Re-audit: prediction_as_of != opened_on fails closed
+    records = _generate_valid_prediction_records(220, include_outcomes=True)
+    records[0]["prediction_as_of"] = "2025-06-01"  # opened_on is 2025-01-01
+    receipt = build_sitescore_prediction_source_receipt(
+        _generate_valid_prediction_records(220, include_outcomes=True),
+        dataset_snapshot_id="sitescore-snapshot-2026-07-31-v1",
+        model_version=CANONICAL_MODEL_VERSION,
+        artifact_lineage_id="sitescore-artifact-sha256-v1",
+    )
+    res = verify_sitescore_prediction_source(records, prediction_receipt=receipt)
+    assert res.is_valid is False
+    assert any("prediction_as_of" in err for err in res.errors)
+
+
+def test_sitescore_prediction_source_b5_disallowed_horizon_code_rejected():
+    # B5 Re-audit: arbitrary horizon_code legacy-unknown fails closed
+    records = _generate_valid_prediction_records(220, include_outcomes=True)
+    records[0]["horizon_code"] = "legacy-unknown"
+    receipt = build_sitescore_prediction_source_receipt(
+        _generate_valid_prediction_records(220, include_outcomes=True),
+        dataset_snapshot_id="sitescore-snapshot-2026-07-31-v1",
+        model_version=CANONICAL_MODEL_VERSION,
+        artifact_lineage_id="sitescore-artifact-sha256-v1",
+    )
+    res = verify_sitescore_prediction_source(records, prediction_receipt=receipt)
+    assert res.is_valid is False
+    assert any("horizon_code" in err for err in res.errors)
+
+
+def test_sitescore_prediction_source_b6_receipt_record_count_mismatch_rejected():
+    # B6 Re-audit: record_count=999 with 220 records fails closed
+    records = _generate_valid_prediction_records(220, include_outcomes=True)
+    receipt = build_sitescore_prediction_source_receipt(
+        records,
+        dataset_snapshot_id="sitescore-snapshot-2026-07-31-v1",
+        model_version=CANONICAL_MODEL_VERSION,
+        artifact_lineage_id="sitescore-artifact-sha256-v1",
+    )
+    receipt["record_count"] = 999
+    receipt["integrity"]["content_sha256"] = compute_prediction_source_receipt_sha256(receipt)
+    res = verify_sitescore_prediction_source(records, prediction_receipt=receipt)
+    assert res.is_valid is False
+    assert any("record_count mismatch" in err for err in res.errors)
 
 
 def test_sitescore_opening_outcome_b2_caller_record_prediction_drift_from_verified_receipt_fails_closed():
