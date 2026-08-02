@@ -1378,7 +1378,11 @@ def _git_commit_oid(cwd: Path, ref: str) -> str | None:
 
 
 def _git_operation_in_progress(worktree_path: Path) -> bool:
-    for marker in ("MERGE_HEAD", "REBASE_HEAD", "CHERRY_PICK_HEAD", "REVERT_HEAD"):
+    # REBASE_HEAD records the commit currently being replayed, but Git may
+    # retain it after a successful rebase has finished.  The authoritative
+    # in-progress signals are rebase-merge/rebase-apply below; treating a stale
+    # REBASE_HEAD as active permanently jams an otherwise reusable worktree.
+    for marker in ("MERGE_HEAD", "CHERRY_PICK_HEAD", "REVERT_HEAD"):
         returncode, _ = _git_output(worktree_path, "rev-parse", "--verify", "-q", marker)
         if returncode == 0:
             return True

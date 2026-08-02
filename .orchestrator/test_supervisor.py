@@ -7716,6 +7716,19 @@ class ReusedWorkerWorktreeBaseAdvanceTests(unittest.TestCase):
         self.assertFalse(ok)
         self.assertEqual(status, "unresolved_git_operation")
 
+    def test_stale_rebase_head_after_completed_rebase_does_not_block(self) -> None:
+        raw_marker = self._git(self.worktree, "rev-parse", "--git-path", "REBASE_HEAD").stdout.strip()
+        marker = Path(raw_marker)
+        if not marker.is_absolute():
+            marker = self.worktree / marker
+        marker.write_text(self.initial_head + "\n", encoding="utf-8")
+
+        ok, status = self._refresh()
+
+        self.assertTrue(ok)
+        self.assertTrue(status.startswith("base_advance_rebase_required:"), status)
+        self.assertEqual(marker.read_text(encoding="utf-8").strip(), self.initial_head)
+
     def test_unverifiable_fetched_base_blocks(self) -> None:
         with mock.patch.object(supervisor, "_git_commit_oid", side_effect=[self.task_head, None]):
             ok, status = self._refresh()
