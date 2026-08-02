@@ -5006,19 +5006,19 @@ def command_done(state: dict[str, Any], args: list[str]) -> None:
     pull_request_raw = delivery.get("pull_request")
     pull_request = pull_request_raw if isinstance(pull_request_raw, dict) else {}
     head_ref_oid = str(pull_request.get("head_sha") or "").strip()
-    if head_ref_oid != approved_head:
-        display_sha = head_ref_oid[:8] if head_ref_oid else "unresolved"
-        raise SystemExit(
-            f"Cannot finalize task {task_id}: merged PR headRefOid ({display_sha}) "
-            f"differs from reviewer-approved head ({approved_head[:8]}). "
-            "Immutable approved-head PR provenance failed closed."
-        )
     merge_commit = str(pull_request.get("merge_commit") or "").strip()
     if merge_commit and current_sha == merge_commit:
         raise SystemExit(
             f"Cannot finalize task {task_id}: the task-owned checkout HEAD ({current_sha[:8]}) "
             "is the PR merge commit, not the reviewed branch head. The merge commit was never "
             "reviewed and cannot satisfy the approved-head freeze."
+        )
+    if head_ref_oid != approved_head:
+        display_sha = head_ref_oid[:8] if head_ref_oid else "unresolved"
+        raise SystemExit(
+            f"Cannot finalize task {task_id}: merged PR headRefOid ({display_sha}) "
+            f"differs from reviewer-approved head ({approved_head[:8]}). "
+            "Immutable approved-head PR provenance failed closed."
         )
 
     delivery["approved_head"] = approved_head
