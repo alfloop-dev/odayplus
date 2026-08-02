@@ -9104,7 +9104,7 @@ def dispatch_priority_for_task(
             curr_head = runtime_ai_status.resolve_task_sha(
                 str(task.get("id") or ""), force_refresh=True
             )
-            if not curr_head or curr_head != approved_head:
+            if not curr_head or not runtime_ai_status.is_approved_head_satisfied(task, curr_head, approved_head):
                 return None
         except Exception:
             return None
@@ -9692,8 +9692,8 @@ def dispatch_ready_tasks(
                         )
                     continue
 
-                if not current_head or current_head != approved_head:
-                    if current_head and current_head != approved_head:
+                if not current_head or not runtime_ai_status.is_approved_head_satisfied(task, current_head, approved_head):
+                    if current_head and not runtime_ai_status.is_approved_head_satisfied(task, current_head, approved_head):
                         task["status"] = "review"
                         task["last_update"] = utc_now()
                         task["next"] = (

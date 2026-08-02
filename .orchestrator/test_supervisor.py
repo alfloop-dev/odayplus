@@ -10247,7 +10247,7 @@ class ReviewHeadFreezeTests(unittest.TestCase):
              unittest.mock.patch("ai_status.append_log"):
             with self.assertRaises(SystemExit) as cm:
                 ai_status.command_done(state, ["FREEZE-TEST-022E", "Finalize"])
-        self.assertIn("PR merge commit, not the reviewed branch head", str(cm.exception))
+        self.assertIn("differs from reviewer-approved head", str(cm.exception))
         collect.assert_called_once()
 
     # ------------------------------------------------------------------

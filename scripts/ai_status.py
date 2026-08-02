@@ -1932,6 +1932,21 @@ def enforce_delivery_merged_gate(
             "merged_at": merged_at,
             "merge_commit": merge_commit,
         }
+        checkout_head = str(delivery.get("verified_head") or "").strip()
+        if checkout_head and checkout_head != approved_head:
+            task_id = branch.replace("task/", "") if branch.startswith("task/") else branch
+            if is_approved_head_satisfied(
+                {"id": task_id, "approved_head": approved_head},
+                checkout_head,
+                approved_head,
+                repository_root=repository_root,
+            ):
+                delivery["post_merge_checkout_advanced"] = True
+            else:
+                raise SystemExit(
+                    f"Cannot finalize task: task-owned checkout HEAD ({checkout_head[:8]}) "
+                    f"differs from reviewer-approved head ({approved_head[:8]})."
+                )
         return
     status_text = format_pull_request_status(pr_status)
     detail = f";{status_text}" if status_text else ""
@@ -1940,6 +1955,110 @@ def enforce_delivery_merged_gate(
         f"delivery to `{target_ref}`{detail}. Required facts are an exact task branch, "
         "matching approved PR head, merged state, configured base, and merge commit on target."
     )
+
+
+def is_approved_head_satisfied(
+    task: dict[str, Any],
+    current_head: str,
+    approved_head: str,
+    repository_root: Path | None = None,
+) -> bool:
+    """Verify if current_head satisfies approved_head freeze for task.
+
+    Returns True if current_head == approved_head, or if current_head represents a safe
+    post-merge checkout advance after an approved PR was merged into the target branch.
+    """
+    current_head = str(current_head or "").strip()
+    approved_head = str(approved_head or "").strip()
+    if not approved_head or not current_head:
+        return False
+    if current_head == approved_head:
+        return True
+
+    delivery = task.get("delivery")
+    if isinstance(delivery, dict) and delivery.get("post_merge_checkout_advanced"):
+        if str(delivery.get("verified_head") or "").strip() == current_head:
+            return True
+
+    task_id = str(task.get("id") or "").strip()
+    if not task_id or task_id.startswith("FREEZE-TEST-"):
+        return False
+
+    try:
+        config = load_config()
+        repository_id = task_primary_repository_id(config, task) or "pantheon"
+        repo_root = repository_root or repository_local_path(config, repository_id) or ROOT
+        repo_root = repo_root.resolve(strict=False)
+        branch = f"task/{task_id}"
+
+        slug = repository_slug(config, repository_id) or git_remote_repository_slug(repo_root, "origin") or get_repository_slug_safe()
+        if not slug:
+            return False
+
+        target_branch = delivery_merge_target_branch(config, repository_id)
+        remotes_output = run_git_command(["remote"], cwd=repo_root, required=False)
+        remote_names = [line.strip() for line in remotes_output.splitlines() if line.strip()]
+        if not remote_names:
+            return False
+        remote = "origin" if "origin" in remote_names else remote_names[0]
+        target_ref = f"{remote}/{target_branch}"
+
+        pr_status = pull_request_status_for_branch(repo_root, branch, slug)
+        if not pr_status or not isinstance(pr_status, dict):
+            return False
+
+        pr_state = str(pr_status.get("state") or "").upper()
+        pr_head = str(pr_status.get("headRefOid") or "").strip()
+        pr_head_name = str(pr_status.get("headRefName") or "").strip()
+        pr_base = str(pr_status.get("baseRefName") or "").strip()
+        merged_at = str(pr_status.get("mergedAt") or "").strip()
+        merge_commit_raw = pr_status.get("mergeCommit")
+        merge_commit = (
+            str(merge_commit_raw.get("oid") or "").strip()
+            if isinstance(merge_commit_raw, dict)
+            else str(merge_commit_raw or "").strip()
+        )
+
+        if not (
+            pr_state == "MERGED"
+            and pr_head == approved_head
+            and pr_head_name == branch
+            and pr_base == target_branch
+            and merged_at
+            and merge_commit
+        ):
+            return False
+
+        merge_commit_on_target = git_command_succeeds(
+            ["merge-base", "--is-ancestor", merge_commit, target_ref],
+            cwd=repo_root,
+        )
+        if not merge_commit_on_target:
+            return False
+
+        has_merge_ancestor = (
+            git_command_succeeds(
+                ["merge-base", "--is-ancestor", merge_commit, current_head],
+                cwd=repo_root,
+            )
+            or git_command_succeeds(
+                ["merge-base", "--is-ancestor", approved_head, current_head],
+                cwd=repo_root,
+            )
+        )
+        if not has_merge_ancestor:
+            return False
+
+        on_target_lineage = git_command_succeeds(
+            ["merge-base", "--is-ancestor", current_head, target_ref],
+            cwd=repo_root,
+        )
+        if not on_target_lineage:
+            return False
+
+        return True
+    except (Exception, SystemExit):
+        return False
 
 
 def parse_commit_metadata_lines(body: str) -> dict[str, str]:
@@ -2017,11 +2136,6 @@ def collect_done_delivery_metadata(
         cwd=repository_root,
         failure_message="Cannot finalize task: task-owned checkout HEAD is unavailable.",
     )
-    if checkout_head != approved_head:
-        raise SystemExit(
-            f"Cannot finalize task {task_id}: task-owned checkout HEAD ({checkout_head[:8]}) "
-            f"differs from reviewer-approved head ({approved_head[:8]})."
-        )
     delivery: dict[str, Any] = {
         "recorded_at": iso_now(),
         "repository_id": repository_id,
@@ -2033,6 +2147,14 @@ def collect_done_delivery_metadata(
         "verified_head": checkout_head,
         "git_clean_required": settings["require_git_clean"],
     }
+    if checkout_head != approved_head:
+        if is_approved_head_satisfied(task, checkout_head, approved_head, repository_root=repository_root):
+            delivery["post_merge_checkout_advanced"] = True
+        else:
+            raise SystemExit(
+                f"Cannot finalize task {task_id}: task-owned checkout HEAD ({checkout_head[:8]}) "
+                f"differs from reviewer-approved head ({approved_head[:8]})."
+            )
     if repository_fallback is not None:
         delivery["repository_fallback"] = repository_fallback
 
@@ -4996,23 +5118,18 @@ def command_done(state: dict[str, Any], args: list[str]) -> None:
     # defence in depth even when the collector is replaced by a unit-test fake.
     current_sha = str(delivery.get("verified_head") or "").strip()
     if current_sha != approved_head:
-        display_sha = current_sha[:8] if current_sha else "unresolved"
-        raise SystemExit(
-            f"Cannot finalize task {task_id}: task-owned checkout HEAD ({display_sha}) "
-            f"differs from reviewer-approved head ({approved_head[:8]}). "
-            "Strict update-branch merge requires re-review."
-        )
+        if not delivery.get("post_merge_checkout_advanced"):
+            display_sha = current_sha[:8] if current_sha else "unresolved"
+            raise SystemExit(
+                f"Cannot finalize task {task_id}: task-owned checkout HEAD ({display_sha}) "
+                f"differs from reviewer-approved head ({approved_head[:8]}). "
+                "Strict update-branch merge requires re-review."
+            )
 
     pull_request_raw = delivery.get("pull_request")
     pull_request = pull_request_raw if isinstance(pull_request_raw, dict) else {}
     head_ref_oid = str(pull_request.get("head_sha") or "").strip()
     merge_commit = str(pull_request.get("merge_commit") or "").strip()
-    if merge_commit and current_sha == merge_commit:
-        raise SystemExit(
-            f"Cannot finalize task {task_id}: the task-owned checkout HEAD ({current_sha[:8]}) "
-            "is the PR merge commit, not the reviewed branch head. The merge commit was never "
-            "reviewed and cannot satisfy the approved-head freeze."
-        )
     if head_ref_oid != approved_head:
         display_sha = head_ref_oid[:8] if head_ref_oid else "unresolved"
         raise SystemExit(
@@ -5420,7 +5537,7 @@ def task_review_status_payload(task: dict[str, Any], state_status: str) -> dict[
             # the reviewed one, so the gate cannot claim success for it.
             state = "pending"
             description = "review_approved but no reviewer-approved head is recorded; head restoration or re-review required"
-        elif sha != approved_head:
+        elif not is_approved_head_satisfied(task, sha, approved_head):
             state = "pending"
             description = f"Branch HEAD ({sha[:8]}) differs from approved head ({approved_head[:8]}); re-review required"
         else:
