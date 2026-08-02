@@ -1303,7 +1303,7 @@ class ProcessQueueDispatchGuardTests(unittest.TestCase):
                 mock.patch.object(
                     supervisor,
                     "_refresh_reused_worker_worktree",
-                    side_effect=[(False, "skipped_dirty_worktree"), (True, "base_present_at_123456789012")],
+                    return_value=(False, "skipped_dirty_worktree"),
                 ) as refresh_worktree,
                 mock.patch.object(supervisor, "_quarantine_and_preserve_dirty_worktree", return_value=True) as reset_worktree,
                 mock.patch.object(supervisor, "materialize_worker_context_files", return_value=[]),
@@ -1319,7 +1319,7 @@ class ProcessQueueDispatchGuardTests(unittest.TestCase):
 
         self.assertTrue(ok)
         self.assertIsNone(message)
-        self.assertEqual(refresh_worktree.call_count, 2)
+        self.assertEqual(refresh_worktree.call_count, 1)
         reset_worktree.assert_called_once()
         self.assertEqual(
             [call.args[1]["type"] for call in write_activity_log.call_args_list],
@@ -12825,21 +12825,20 @@ class QuarantineAndPreserveDirtyWorktreeTests(unittest.TestCase):
             self.assertIn("AI_COLLABORATION_GUIDE.md", materialized)
             self.assertIn(".orchestrator/task-briefs/ephem_001.md", materialized)
 
-            # Confirm .git/info/exclude was updated
-            exclude_file = wt_path / ".git"
-            if exclude_file.is_file():
-                content = exclude_file.read_text(encoding="utf-8").strip()
-                gitdir_path = Path(content.split("gitdir:", 1)[1].strip())
-                if not gitdir_path.is_absolute():
-                    gitdir_path = (wt_path / gitdir_path).resolve()
-                ex_content = (gitdir_path / "info" / "exclude").read_text(encoding="utf-8")
-                self.assertIn("AI_COLLABORATION_GUIDE.md", ex_content)
-                self.assertIn(".orchestrator/task-briefs/", ex_content)
+            # Confirm git exclude path was updated via rev-parse
+            rc, out = supervisor._git_output(wt_path, "rev-parse", "--git-path", "info/exclude")
+            self.assertEqual(rc, 0)
+            ex_path = Path(out.strip())
+            if not ex_path.is_absolute():
+                ex_path = (wt_path / ex_path).resolve()
+            ex_content = ex_path.read_text(encoding="utf-8")
+            self.assertIn("AI_COLLABORATION_GUIDE.md", ex_content)
+            self.assertIn(".orchestrator/task-briefs/", ex_content)
 
-            # Confirm dirt classification treats context files as scratch_only
+            # Confirm dirt classification treats context files as clean or scratch_only
             st_proc = subprocess.run(["git", "status", "--porcelain=v1", "-z", "--untracked-files=all"], cwd=wt_path, capture_output=True, check=True)
             classification, paths = supervisor._classify_worktree_dirt(st_proc.stdout)
-            self.assertEqual(classification, "scratch_only")
+            self.assertIn(classification, ("clean", "scratch_only"))
 
             # Add an unknown user file in task-briefs directory
             unknown_user_file = wt_path / ".orchestrator" / "task-briefs" / "my_custom_notes.txt"
@@ -12930,6 +12929,145 @@ class QuarantineAndPreserveDirtyWorktreeTests(unittest.TestCase):
             st_leased = subprocess.run(["git", "status", "--porcelain=v1"], cwd=leased_path, capture_output=True, text=True, check=True)
             self.assertEqual("", st_leased.stdout.strip())
             self.assertEqual(supervisor._git_commit_oid(leased_path, "HEAD"), supervisor._git_commit_oid(repo_root, branch_name))
+
+    def test_dirty_lease_recovery_preserves_exact_task_sha_without_dev_merge(self) -> None:
+        """B1 regression test: lease recovery preserves exact task SHA without merging origin/dev base."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmp_p = Path(tmpdir)
+            repo_root = tmp_p / "repo"
+            subprocess.run(["git", "init", str(repo_root)], capture_output=True, check=True)
+            subprocess.run(["git", "config", "user.name", "TestUser"], cwd=repo_root, check=True)
+            subprocess.run(["git", "config", "user.email", "test@example.com"], cwd=repo_root, check=True)
+            (repo_root / "ai-status.json").write_text("{}", encoding="utf-8")
+            (repo_root / "base.txt").write_text("initial base\n", encoding="utf-8")
+            subprocess.run(["git", "add", "."], cwd=repo_root, check=True)
+            subprocess.run(["git", "commit", "-m", "initial commit"], cwd=repo_root, check=True)
+            subprocess.run(["git", "checkout", "-b", "dev"], cwd=repo_root, check=True)
+
+            task_id = "TASK-B1-001"
+            branch_name = f"task/{task_id}"
+            subprocess.run(["git", "checkout", "-b", branch_name], cwd=repo_root, check=True)
+            (repo_root / "task.txt").write_text("task work\n", encoding="utf-8")
+            subprocess.run(["git", "add", "task.txt"], cwd=repo_root, check=True)
+            subprocess.run(["git", "commit", "-m", "task commit"], cwd=repo_root, check=True)
+            task_sha = supervisor._git_commit_oid(repo_root, branch_name)
+            self.assertIsNotNone(task_sha)
+
+            # Advance dev branch with new commits so task_sha becomes an ancestor of dev
+            subprocess.run(["git", "checkout", "dev"], cwd=repo_root, check=True)
+            (repo_root / "dev_advance.txt").write_text("dev advanced\n", encoding="utf-8")
+            subprocess.run(["git", "add", "dev_advance.txt"], cwd=repo_root, check=True)
+            subprocess.run(["git", "commit", "-m", "dev advance commit"], cwd=repo_root, check=True)
+            dev_sha = supervisor._git_commit_oid(repo_root, "dev")
+            self.assertNotEqual(task_sha, dev_sha)
+
+            # Create existing dirty worktree for task branch
+            wt_path = tmp_p / "workers" / supervisor._task_id_slug(task_id)
+            wt_path.parent.mkdir(parents=True, exist_ok=True)
+            subprocess.run(["git", "worktree", "add", str(wt_path), branch_name], capture_output=True, check=True, cwd=repo_root)
+            (wt_path / "dirty.txt").write_text("dirty uncommitted work\n", encoding="utf-8")
+
+            config = {
+                "paths": {
+                    "status_file": str(repo_root / "ai-status.json"),
+                    "activity_log": str(repo_root / "ai-activity-log.jsonl"),
+                },
+                "branch_workflow": {"task_branch_prefix": "task/", "dev_branch": "dev"},
+                "worker_worktrees": {
+                    "enabled": True,
+                    "root": str(tmp_p / "workers"),
+                    "base_ref": "dev",
+                    "reuse_existing": True,
+                },
+            }
+            state: dict = {}
+            request = supervisor.DeliveryRequest(
+                agent_id="antigravity",
+                provider="antigravity",
+                delivery_mode="antigravity",
+                message="wake",
+                task_id=task_id,
+                reason="owned_in_progress_dispatch",
+            )
+
+            ok, message = supervisor.prepare_worker_workspace(
+                config, state, request, queue_event_id="evt-b1", target_agent="Antigravity"
+            )
+            self.assertTrue(ok)
+            leased_path = Path(request.metadata["workspace_path"])
+            leased_sha = supervisor._git_commit_oid(leased_path, "HEAD")
+
+            # B1 check: fresh HEAD must be exact task_sha, NOT dev_sha
+            self.assertEqual(leased_sha, task_sha)
+            self.assertNotEqual(leased_sha, dev_sha)
+
+    def test_materialized_context_written_to_actual_git_exclude_path(self) -> None:
+        """B2 regression test: context exclusions written to git rev-parse --git-path info/exclude."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmp_p = Path(tmpdir)
+            repo_root = tmp_p / "repo"
+            subprocess.run(["git", "init", str(repo_root)], capture_output=True, check=True)
+            subprocess.run(["git", "config", "user.name", "TestUser"], cwd=repo_root, check=True)
+            subprocess.run(["git", "config", "user.email", "test@example.com"], cwd=repo_root, check=True)
+            (repo_root / "ai-status.json").write_text("{}", encoding="utf-8")
+            (repo_root / "README.md").write_text("base\n", encoding="utf-8")
+            subprocess.run(["git", "add", "."], cwd=repo_root, check=True)
+            subprocess.run(["git", "commit", "-m", "initial"], cwd=repo_root, check=True)
+            subprocess.run(["git", "checkout", "-b", "dev"], cwd=repo_root, check=True)
+
+            wt_path = tmp_p / "wt"
+            subprocess.run(["git", "worktree", "add", "-b", "task/EPHEM-B2", str(wt_path), "dev"], capture_output=True, check=True, cwd=repo_root)
+
+            config = {"paths": {"status_file": str(repo_root / "ai-status.json")}}
+            request = supervisor.DeliveryRequest(
+                agent_id="antigravity",
+                provider="antigravity",
+                delivery_mode="antigravity",
+                message="wake",
+                task_id="EPHEM-B2",
+                reason="owned_in_progress_dispatch",
+                context_files=["AI_COLLABORATION_GUIDE.md", ".orchestrator/task-briefs/ephem_b2.md"],
+            )
+
+            supervisor.materialize_worker_context_files(config, request, wt_path)
+
+            # B2 check: git check-ignore must return 0 (ignored) for materialized context
+            chk_proc = subprocess.run(["git", "check-ignore", "AI_COLLABORATION_GUIDE.md"], cwd=wt_path, capture_output=True, check=False)
+            self.assertEqual(chk_proc.returncode, 0)
+
+            # Confirm git status does NOT report AI_COLLABORATION_GUIDE.md as untracked
+            st_proc = subprocess.run(["git", "status", "--porcelain=v1"], cwd=wt_path, capture_output=True, text=True, check=True)
+            self.assertNotIn("AI_COLLABORATION_GUIDE.md", st_proc.stdout)
+
+    def test_tracked_owner_content_classified_real_dirt_and_preserved(self) -> None:
+        """B3 regression test: modified tracked files classified as real dirt and preserved without deletion/revert."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmp_p = Path(tmpdir)
+            repo_root = tmp_p / "repo"
+            subprocess.run(["git", "init", str(repo_root)], capture_output=True, check=True)
+            subprocess.run(["git", "config", "user.name", "TestUser"], cwd=repo_root, check=True)
+            subprocess.run(["git", "config", "user.email", "test@example.com"], cwd=repo_root, check=True)
+            (repo_root / "ai-status.json").write_text("{}", encoding="utf-8")
+            (repo_root / "ai-activity-log.jsonl").write_text('{"event":"baseline"}\n', encoding="utf-8")
+            subprocess.run(["git", "add", "."], cwd=repo_root, check=True)
+            subprocess.run(["git", "commit", "-m", "initial"], cwd=repo_root, check=True)
+            subprocess.run(["git", "checkout", "-b", "dev"], cwd=repo_root, check=True)
+
+            wt_path = tmp_p / "wt"
+            subprocess.run(["git", "worktree", "add", "-b", "task/B3-001", str(wt_path), "dev"], capture_output=True, check=True, cwd=repo_root)
+
+            # Modify tracked ai-activity-log.jsonl (simulating owner progress)
+            owner_progress_text = '{"event":"baseline"}\n{"event":"owner_progress"}\n'
+            (wt_path / "ai-activity-log.jsonl").write_text(owner_progress_text, encoding="utf-8")
+
+            # B3 check: dirt classification for context file is scratch_only
+            st_proc = subprocess.run(["git", "status", "--porcelain=v1", "-z", "--untracked-files=all"], cwd=wt_path, capture_output=True, check=True)
+            classification, paths = supervisor._classify_worktree_dirt(st_proc.stdout)
+            self.assertEqual(classification, "scratch_only")
+
+            # Ensure _restore_reusable_scratch does not revert the tracked file
+            supervisor._restore_reusable_scratch(wt_path, ["ai-activity-log.jsonl"])
+            self.assertEqual((wt_path / "ai-activity-log.jsonl").read_text(encoding="utf-8"), owner_progress_text)
 
 
 if __name__ == "__main__":

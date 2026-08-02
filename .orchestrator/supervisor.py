@@ -1341,8 +1341,8 @@ def _classify_worktree_dirt(porcelain_status: str | bytes) -> tuple[str, list[st
         i = 0
         while i < len(raw_entries):
             item = raw_entries[i]
-            code = item[:2].decode("utf-8", errors="replace")
             path_bytes = item[3:] if len(item) > 3 else b""
+            code = item[:2].decode("utf-8", errors="replace")
             i += 1
             if len(code) >= 2 and (code[0] in ("R", "C") or code[1] in ("R", "C")):
                 if i < len(raw_entries):
@@ -1373,25 +1373,10 @@ def _classify_worktree_dirt(porcelain_status: str | bytes) -> tuple[str, list[st
 
 
 def _restore_reusable_scratch(worktree_path: Path, paths: list[str]) -> None:
-    """Restore tracked orchestrator scratch paths to HEAD without deleting unknown content."""
-    tracked_paths: list[str] = []
-    for p in paths:
-        check = subprocess.run(
-            ["git", "ls-files", "--error-unmatch", "--", p],
-            cwd=worktree_path,
-            capture_output=True,
-            check=False,
-        )
-        if check.returncode == 0:
-            tracked_paths.append(p)
-    if tracked_paths:
-        subprocess.run(
-            ["git", "checkout", "-q", "HEAD", "--", *sorted(set(tracked_paths))],
-            cwd=worktree_path,
-            capture_output=True,
-            text=True,
-            check=False,
-        )
+    """Never checkout or destroy owner-modified content. Untracked scratch is kept untouched."""
+    pass
+
+
 
 
 
@@ -1760,37 +1745,29 @@ def materialize_worker_context_files(
     if materialized:
         request.metadata["materialized_context_files"] = materialized
 
-    git_file = workspace_path / ".git"
-    if git_file.exists():
+    rc, out = _git_output(workspace_path, "rev-parse", "--git-path", "info/exclude")
+    if rc == 0 and out.strip():
         try:
-            exclude_path: Path | None = None
-            if git_file.is_dir():
-                exclude_path = git_file / "info" / "exclude"
-            elif git_file.is_file():
-                content = git_file.read_text(encoding="utf-8").strip()
-                if content.startswith("gitdir:"):
-                    gitdir_path = Path(content.split("gitdir:", 1)[1].strip())
-                    if not gitdir_path.is_absolute():
-                        gitdir_path = (workspace_path / gitdir_path).resolve()
-                    exclude_path = gitdir_path / "info" / "exclude"
-            if exclude_path:
-                exclude_path.parent.mkdir(parents=True, exist_ok=True)
-                existing_exclude = exclude_path.read_text(encoding="utf-8") if exclude_path.exists() else ""
-                lines_to_add = [
-                    "AI_COLLABORATION_GUIDE.md",
-                    "ai-status.json",
-                    "current-work.md",
-                    "ai-activity-log.jsonl",
-                    ".orchestrator/task-briefs/",
-                    ".orchestrator/reviews/",
-                ]
-                new_lines = [l for l in lines_to_add if l not in existing_exclude.splitlines()]
-                if new_lines:
-                    with open(exclude_path, "a", encoding="utf-8") as ef:
-                        if existing_exclude and not existing_exclude.endswith("\n"):
-                            ef.write("\n")
-                        for l in new_lines:
-                            ef.write(f"{l}\n")
+            exclude_path = Path(out.strip())
+            if not exclude_path.is_absolute():
+                exclude_path = (workspace_path / exclude_path).resolve()
+            exclude_path.parent.mkdir(parents=True, exist_ok=True)
+            existing_exclude = exclude_path.read_text(encoding="utf-8") if exclude_path.exists() else ""
+            lines_to_add = [
+                "AI_COLLABORATION_GUIDE.md",
+                "ai-status.json",
+                "current-work.md",
+                "ai-activity-log.jsonl",
+                ".orchestrator/task-briefs/",
+                ".orchestrator/reviews/",
+            ]
+            new_lines = [l for l in lines_to_add if l not in existing_exclude.splitlines()]
+            if new_lines:
+                with open(exclude_path, "a", encoding="utf-8") as ef:
+                    if existing_exclude and not existing_exclude.endswith("\n"):
+                        ef.write("\n")
+                    for l in new_lines:
+                        ef.write(f"{l}\n")
         except OSError:
             pass
 
@@ -1885,13 +1862,11 @@ def prepare_worker_workspace(
 
                             if create_ok:
                                 worktree_path = fresh_path
-                                refresh_ok, refresh_status = _refresh_reused_worker_worktree(
-                                    repo_root,
-                                    worktree_path,
-                                    str(settings.get("base_ref") or "origin/dev"),
-                                    branch,
-                                )
-                                if refresh_ok:
+                                fresh_head = _git_commit_oid(fresh_path, "HEAD") or task_sha
+                                if fresh_head and fresh_head == task_sha:
+                                    refresh_ok = True
+                                    refresh_status = f"lease_recovered_exact_task_sha:{task_sha[:12]}"
+                                    materialize_worker_context_files(config, request, worktree_path)
                                     write_activity_log(
                                         config,
                                         {
@@ -1902,9 +1877,15 @@ def prepare_worker_workspace(
                                             "workspace_branch": branch,
                                             "workspace_path": str(worktree_path),
                                             "quarantined_worktree_path": str(original_worktree_path),
+                                            "task_sha": task_sha,
                                             "refresh_ok": refresh_ok,
                                             "refresh_status": refresh_status,
                                         },
+                                    )
+                                else:
+                                    refresh_ok = False
+                                    refresh_status = (
+                                        f"recovered_task_sha_mismatch:expected={task_sha},found={fresh_head}"
                                     )
                 if not refresh_ok:
                     if refresh_status == "skipped_dirty_worktree":
