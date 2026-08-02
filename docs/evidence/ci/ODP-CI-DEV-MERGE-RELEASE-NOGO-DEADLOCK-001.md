@@ -151,3 +151,27 @@ git diff --check origin/dev...HEAD  # exit 0
 Because the required base composition changes the exact pushed HEAD, the prior
 frozen-head approval cannot be reused for `done`. This evidence reseal and the
 normally pushed composed branch require an exact-head re-review before closeout.
+
+## 2026-08-02 latest-base re-seal composition
+
+Re-seal dispatch resumed after PR #582 merge (`80ba278623b8d4ad4ce81ea749a5aee030e5c18d`).
+`origin/dev` advanced from `5f3be1e04b192f5be3a59076c405be335d9bfe3b` to
+`80ba278623b8d4ad4ce81ea749a5aee030e5c18d`. The branch histories diverged,
+so current `origin/dev` was merge-composed into `task/ODP-CI-DEV-MERGE-RELEASE-NOGO-DEADLOCK-001`
+without force-pushing, resetting, or discarding task history. The merge completed smoothly
+without conflicts (`2a86e08200c91a7b0f2845cd24923313c6b14072`).
+
+Verification on that composed implementation head:
+
+```text
+pytest -q tests/e2e/test_release_gate_registry.py tests/e2e/test_acceptance_coverage.py tests/integration/test_flow_002_expansion_persistence.py tests/security/test_branch_protection_policy.py  # exit 0
+ruff check scripts/e2e/check_product_release_gate.py scripts/e2e/check_release_gate_registry.py scripts/e2e/product_e2e_receipt.py tests/e2e/test_release_gate_registry.py tests/integration/test_flow_002_expansion_persistence.py  # exit 0
+python3 scripts/e2e/check_release_gate_registry.py  # exit 0; NO-GO registry valid, 0/7 gates cleared
+python3 scripts/e2e/check_product_release_gate.py --dev-merge  # exit 0
+python3 scripts/e2e/check_product_release_gate.py --require-go --expected-sha <HEAD>  # exit 1 as required; authentic NO-GO
+python3 -c workflow YAML safe-load for ci.yml and promote-dev-to-main.yml  # exit 0
+git diff --check origin/dev...HEAD  # exit 0
+```
+
+Because base composition advanced `origin/dev`, this evidence re-seal and normal push of the composed branch are submitted for exact-head re-review by Codex2.
+
