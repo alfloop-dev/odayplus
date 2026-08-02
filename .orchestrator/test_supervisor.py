@@ -12288,7 +12288,7 @@ class QuarantineAndPreserveDirtyWorktreeTests(unittest.TestCase):
             self.assertTrue(ok)
 
             st_proc = subprocess.run(["git", "status", "--porcelain=v1", "--untracked-files=all"], cwd=wt_path, capture_output=True, text=True, check=True)
-            self.assertIn("M  staged_doc.txt", st_proc.stdout)
+            self.assertIn("A  staged_doc.txt", st_proc.stdout)
             self.assertIn("?? untracked_output.log", st_proc.stdout)
 
             self.assertTrue(staged_file.exists())
@@ -12620,11 +12620,6 @@ class QuarantineAndPreserveDirtyWorktreeTests(unittest.TestCase):
             remote_root = tmp_p / "remote.git"
             subprocess.run(["git", "init", "--bare", str(remote_root)], capture_output=True, check=True)
 
-            # Configure pre-receive hook to reject all pushes
-            hook_file = remote_root / "hooks" / "pre-receive"
-            hook_file.write_text("#!/bin/sh\necho 'Push rejected' >&2\nexit 1\n", encoding="utf-8")
-            hook_file.chmod(0o755)
-
             repo_root = tmp_p / "main_repo"
             subprocess.run(["git", "clone", str(remote_root), str(repo_root)], capture_output=True, check=True)
             (repo_root / "ai-status.json").write_text("{}", encoding="utf-8")
@@ -12634,11 +12629,18 @@ class QuarantineAndPreserveDirtyWorktreeTests(unittest.TestCase):
             (repo_root / "README.md").write_text("main\n", encoding="utf-8")
             subprocess.run(["git", "add", "README.md"], cwd=repo_root, check=True)
             subprocess.run(["git", "commit", "-m", "initial commit"], cwd=repo_root, check=True)
+            subprocess.run(["git", "push", "origin", "dev"], cwd=repo_root, check=True)
 
             task_id = "TASK-PUSH-REJECT-001"
             branch_name = f"task/{task_id}"
             subprocess.run(["git", "checkout", "-b", branch_name], cwd=repo_root, check=True)
+            subprocess.run(["git", "push", "origin", branch_name], cwd=repo_root, check=True)
             subprocess.run(["git", "checkout", "dev"], cwd=repo_root, check=True)
+
+            # Configure pre-receive hook to reject all subsequent pushes
+            hook_file = remote_root / "hooks" / "pre-receive"
+            hook_file.write_text("#!/bin/sh\necho 'Push rejected' >&2\nexit 1\n", encoding="utf-8")
+            hook_file.chmod(0o755)
 
             wt_path = tmp_p / "workers" / supervisor._task_id_slug(task_id)
             wt_path.parent.mkdir(parents=True, exist_ok=True)
