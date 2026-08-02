@@ -255,7 +255,7 @@ class GitHubBusCommandTests(unittest.TestCase):
         }
 
         with (
-            mock.patch.object(github_bus, "branch_exists", return_value=True),
+            mock.patch.object(github_bus, "branch_exists", side_effect=lambda branch: branch == "feature/lin-001"),
             mock.patch.object(github_bus, "branch_head_sha", return_value="abc123"),
             mock.patch.object(github_bus, "remote_branch_exists", return_value=True),
             mock.patch.object(github_bus, "branch_has_diff", return_value=True),
@@ -306,7 +306,7 @@ class GitHubBusCommandTests(unittest.TestCase):
         }
 
         with (
-            mock.patch.object(github_bus, "branch_exists", return_value=True),
+            mock.patch.object(github_bus, "branch_exists", side_effect=lambda branch: branch == "feature/lin-001"),
             mock.patch.object(github_bus, "branch_head_sha", return_value="abc123"),
             mock.patch.object(github_bus, "remote_branch_exists", return_value=False),
             mock.patch.object(github_bus, "write_activity_log") as write_activity_log,
@@ -356,7 +356,7 @@ class GitHubBusCommandTests(unittest.TestCase):
         }
 
         with (
-            mock.patch.object(github_bus, "branch_exists", return_value=True),
+            mock.patch.object(github_bus, "branch_exists", side_effect=lambda branch: branch == "feature/lin-001"),
             mock.patch.object(github_bus, "branch_head_sha", return_value="abc123"),
             mock.patch.object(github_bus, "remote_branch_exists") as remote_branch_exists,
         ):
@@ -401,7 +401,7 @@ class GitHubBusCommandTests(unittest.TestCase):
         }
 
         with (
-            mock.patch.object(github_bus, "branch_exists", return_value=True),
+            mock.patch.object(github_bus, "branch_exists", side_effect=lambda branch: branch == "feature/lin-001"),
             mock.patch.object(github_bus, "branch_head_sha", return_value="abc123"),
             mock.patch.object(github_bus, "remote_branch_exists", return_value=False) as remote_branch_exists,
         ):
@@ -528,6 +528,189 @@ class GitHubCoordinationCommandTests(unittest.TestCase):
         queue = github_bus.load_jsonl(Path(self.config["paths"]["event_queue"]))
         self.assertEqual(len(queue), 1)
         self.assertEqual(queue[0]["metadata"]["coordination"]["worker_kind"], "engine-worker")
+
+
+class TaskPRDiscoveryTests(unittest.TestCase):
+    def test_review_branch_for_task_prioritizes_immutable_task_ref_over_unrelated_agent_branch(self) -> None:
+        config = {"branch_workflow": {"task_branch_prefix": "task/"}}
+        status = {
+            "agents": [
+                {
+                    "name": "Antigravity",
+                    "branch": "task/ODP-RUNTIME-GCP-001",
+                }
+            ]
+        }
+        task = {
+            "id": "ODP-API-HEALTH-DATA-MODE-CONTRACT-001",
+            "owner": "Antigravity",
+            "title": "Health data mode contract",
+        }
+
+        def mock_exists(branch_name: str) -> bool:
+            return branch_name in {
+                "task/ODP-RUNTIME-GCP-001",
+                "task/ODP-API-HEALTH-DATA-MODE-CONTRACT-001",
+            }
+
+        with mock.patch.object(github_bus, "branch_exists", side_effect=mock_exists):
+            found_branch = github_bus.review_branch_for_task(config, status, task)
+
+        self.assertEqual(found_branch, "task/ODP-API-HEALTH-DATA-MODE-CONTRACT-001")
+
+    def test_review_branch_for_task_rejects_related_sidecar_agent_branch(self) -> None:
+        config = {"branch_workflow": {"task_branch_prefix": "task/"}}
+        status = {
+            "agents": [
+                {
+                    "name": "Codex",
+                    "branch": "task/ODP-FOO-001-SIDECAR-ACCEPTANCE",
+                }
+            ]
+        }
+        task = {
+            "id": "ODP-FOO-001",
+            "owner": "Codex",
+            "title": "Parent task",
+            "github": {"head_branch": "task/ODP-FOO-001-SIDECAR-ACCEPTANCE"},
+        }
+
+        def mock_exists(branch_name: str) -> bool:
+            return branch_name in {
+                "task/ODP-FOO-001",
+                "task/ODP-FOO-001-SIDECAR-ACCEPTANCE",
+            }
+
+        with mock.patch.object(github_bus, "branch_exists", side_effect=mock_exists):
+            found_branch = github_bus.review_branch_for_task(config, status, task)
+
+        self.assertEqual(found_branch, "task/ODP-FOO-001")
+        self.assertTrue(github_bus.task_id_matches_branch("ODP-FOO-001", "origin/task/ODP-FOO-001"))
+        self.assertFalse(github_bus.task_id_matches_branch("ODP-FOO-001", "task/ODP-FOO-001-SIDECAR-ACCEPTANCE"))
+        self.assertFalse(github_bus.task_id_matches_branch("ODP-FOO-001", "task/ODP-FOO-0010"))
+
+    def test_review_branch_for_task_rejects_unrelated_agent_or_current_branch_when_canonical_absent(self) -> None:
+        config = {"branch_workflow": {"task_branch_prefix": "task/"}}
+        status = {
+            "agents": [
+                {
+                    "name": "Codex",
+                    "branch": "feat/unrelated-branch",
+                }
+            ]
+        }
+        task = {
+            "id": "ODP-FOO-001",
+            "owner": "Codex",
+            "title": "Parent task with missing canonical branch",
+        }
+
+        queried_branches: list[str] = []
+
+        def mock_exists(branch_name: str) -> bool:
+            queried_branches.append(branch_name)
+            return branch_name == "feat/unrelated-branch"
+
+        with mock.patch.object(github_bus, "branch_exists", side_effect=mock_exists):
+            with mock.patch.object(github_bus, "current_branch", return_value="feat/unrelated-branch"):
+                found_branch = github_bus.review_branch_for_task(config, status, task)
+
+        self.assertIsNone(found_branch)
+        self.assertIn("task/ODP-FOO-001", queried_branches)
+
+    def test_review_branch_for_task_returns_none_when_canonical_absent_and_only_sidecar_or_unrelated_branch_exists(self) -> None:
+        config = {"branch_workflow": {"task_branch_prefix": "task/"}}
+        status = {
+            "agents": [
+                {
+                    "name": "Codex",
+                    "branch": "task/ODP-FOO-001-SIDECAR-ACCEPTANCE",
+                }
+            ]
+        }
+        task = {
+            "id": "ODP-FOO-001",
+            "owner": "Codex",
+            "title": "Parent task with missing canonical branch",
+        }
+
+        def mock_exists(branch_name: str) -> bool:
+            return branch_name in {
+                "task/ODP-FOO-001-SIDECAR-ACCEPTANCE",
+                "feat/unrelated-branch",
+            }
+
+        with mock.patch.object(github_bus, "branch_exists", side_effect=mock_exists):
+            with mock.patch.object(github_bus, "current_branch", return_value="task/ODP-FOO-001-SIDECAR-ACCEPTANCE"):
+                found_branch = github_bus.review_branch_for_task(config, status, task)
+
+        self.assertIsNone(found_branch)
+
+    def test_review_branch_for_task_accepts_exact_matching_agent_branch_when_canonical_prefix_absent(self) -> None:
+        config = {"branch_workflow": {"task_branch_prefix": "task/"}}
+        status = {
+            "agents": [
+                {
+                    "name": "Codex",
+                    "branch": "custom-prefix/ODP-FOO-001",
+                }
+            ]
+        }
+        task = {
+            "id": "ODP-FOO-001",
+            "owner": "Codex",
+            "title": "Parent task with custom prefix branch",
+        }
+
+        def mock_exists(branch_name: str) -> bool:
+            return branch_name == "custom-prefix/ODP-FOO-001"
+
+        with mock.patch.object(github_bus, "branch_exists", side_effect=mock_exists):
+            found_branch = github_bus.review_branch_for_task(config, status, task)
+
+        self.assertEqual(found_branch, "custom-prefix/ODP-FOO-001")
+
+    def test_branch_ref_resolution_supports_remote_tracking_refs(self) -> None:
+        def mock_cmd(cmd: list[str], cwd: str | Path | None = None) -> subprocess.CompletedProcess[str]:
+            cmd_str = " ".join(cmd)
+            if "show-ref" in cmd_str and "refs/remotes/origin/task/ODP-REMOTE-001" in cmd_str:
+                return subprocess.CompletedProcess(cmd, 0, "sha123 refs/remotes/origin/task/ODP-REMOTE-001\n", "")
+            if "rev-parse origin/task/ODP-REMOTE-001" in cmd_str:
+                return subprocess.CompletedProcess(cmd, 0, "70ea2d817c1d60db346869a0b284a6942fe78d2a\n", "")
+            if "rev-list --count" in cmd_str and "origin/dev..origin/task/ODP-REMOTE-001" in cmd_str:
+                return subprocess.CompletedProcess(cmd, 0, "3\n", "")
+            return subprocess.CompletedProcess(cmd, 1, "", "ref not found")
+
+        with mock.patch.object(github_bus, "run_command", side_effect=mock_cmd):
+            self.assertTrue(github_bus.branch_exists("task/ODP-REMOTE-001"))
+            self.assertEqual(github_bus.branch_head_sha("task/ODP-REMOTE-001"), "70ea2d817c1d60db346869a0b284a6942fe78d2a")
+            self.assertTrue(github_bus.branch_has_diff("dev", "task/ODP-REMOTE-001"))
+
+    def test_branch_ref_resolution_prefers_coherent_remote_refs_over_stale_local_refs(self) -> None:
+        calls: list[str] = []
+
+        def mock_cmd(cmd: list[str], cwd: str | Path | None = None) -> subprocess.CompletedProcess[str]:
+            cmd_str = " ".join(cmd)
+            calls.append(cmd_str)
+            if "rev-parse refs/remotes/origin/task/ODP-REMOTE-001" in cmd_str:
+                return subprocess.CompletedProcess(cmd, 0, "2222222222222222222222222222222222222222\n", "")
+            if "rev-parse task/ODP-REMOTE-001" in cmd_str:
+                return subprocess.CompletedProcess(cmd, 0, "1111111111111111111111111111111111111111\n", "")
+            if "rev-list --count refs/remotes/origin/dev..refs/remotes/origin/task/ODP-REMOTE-001" in cmd_str:
+                return subprocess.CompletedProcess(cmd, 0, "3\n", "")
+            if "rev-list --count dev..task/ODP-REMOTE-001" in cmd_str:
+                return subprocess.CompletedProcess(cmd, 0, "0\n", "")
+            return subprocess.CompletedProcess(cmd, 1, "", "ref not found")
+
+        with mock.patch.object(github_bus, "run_command", side_effect=mock_cmd):
+            self.assertEqual(
+                github_bus.branch_head_sha("task/ODP-REMOTE-001"),
+                "2222222222222222222222222222222222222222",
+            )
+            self.assertTrue(github_bus.branch_has_diff("dev", "task/ODP-REMOTE-001"))
+
+        self.assertNotIn("git rev-parse task/ODP-REMOTE-001", calls)
+        self.assertNotIn("git rev-list --count dev..task/ODP-REMOTE-001", calls)
 
 
 if __name__ == "__main__":
