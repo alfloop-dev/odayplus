@@ -112,7 +112,7 @@ def test_sitescore_gate2_active_path_when_prediction_and_outcome_criteria_satisf
     assert result.reason_code == "GATE2_CRITERIA_MET"
 
     model_card = build_sitescore_opening_outcome_model_card(result, version=CANONICAL_MODEL_VERSION)
-    gate2_receipt = build_sitescore_gate2_receipt(result, inventory_version=CANONICAL_MODEL_VERSION, model_card=model_card)
+    gate2_receipt = build_sitescore_gate2_receipt(result, inventory_version=CANONICAL_MODEL_VERSION, model_card=model_card, prediction_receipt=receipt)
 
     assert gate2_receipt["gate_status"] == "PASSED"
     assert gate2_receipt["is_governed_disabled"] is False
@@ -293,7 +293,13 @@ def test_sitescore_prediction_source_rejects_disallowed_self_attested_and_stale_
         model_version="stale-alias-v0",
         artifact_lineage_id="not-a-hash",
     )
-    res = verify_sitescore_prediction_source(records)
+    receipt = build_sitescore_prediction_source_receipt(
+        records,
+        dataset_snapshot_id="caller-self-attested",
+        model_version="stale-alias-v0",
+        artifact_lineage_id="not-a-hash",
+    )
+    res = verify_sitescore_prediction_source(records, prediction_receipt=receipt)
 
     assert res.is_valid is False
     assert res.reason_code == "MISSING_GOVERNED_LINEAGE"
@@ -382,3 +388,153 @@ def test_sitescore_gate2_receipt_tampered_prediction_receipt_hash_rejected():
 
     assert verif_res.is_valid is False
     assert any("prediction_receipt_hash" in err for err in verif_res.errors)
+
+
+def test_sitescore_prediction_source_general_no_receipt_plausible_hex_bypass_fails_closed():
+    # Mutation test: caller passes plausible 64-hex IDs in records, but NO receipt and NO registry evidence.
+    # Must fail closed as MISSING_GOVERNED_LINEAGE and GOVERNED_DISABLED.
+    records = _generate_valid_prediction_records(
+        220,
+        include_outcomes=True,
+        dataset_snapshot_id="a1b2c3d4" * 8,
+        model_version=CANONICAL_MODEL_VERSION,
+        artifact_lineage_id="e5f67890" * 8,
+    )
+    verif_res = verify_sitescore_prediction_source(records, prediction_receipt=None, model_registry_evidence=None)
+    assert verif_res.is_valid is False
+    assert verif_res.reason_code == "MISSING_GOVERNED_LINEAGE"
+    assert verif_res.prediction_receipt_hash is None
+    assert any("Missing authoritative prediction receipt" in err for err in verif_res.errors)
+
+    result = evaluate_sitescore_opening_outcome_benchmark(
+        records,
+        prediction_receipt=None,
+        model_registry_evidence=None,
+        provenance="authenticated_governed_records",
+    )
+    assert result.is_gate2_passed is False
+    assert result.prediction_source_verified is False
+    assert result.is_lineage_governed is False
+    assert result.status == "GOVERNED_DISABLED"
+    assert result.reason_code == "MISSING_GOVERNED_LINEAGE"
+
+
+def test_sitescore_outcome_benchmark_pg16_query_path_with_receipt_active(monkeypatch):
+    # PG-path mutation test: run_benchmark_from_inventory under pg16_query with a valid receipt achieves ACTIVE
+    from scripts.models.sitescore_outcome_benchmark import run_benchmark_from_inventory
+
+    records = _generate_valid_prediction_records(220, include_outcomes=True)
+    for r in records:
+        r["opened_on"] = "2024-01-01"
+        r["prediction_as_of"] = "2024-01-01"
+    receipt = build_sitescore_prediction_source_receipt(
+        records,
+        dataset_snapshot_id="sitescore-snapshot-2026-07-31-v1",
+        model_version=CANONICAL_MODEL_VERSION,
+        artifact_lineage_id="sitescore-artifact-sha256-v1",
+    )
+
+    db_rows = []
+    for r in records:
+        db_rows.append((
+            r["entity_id"],
+            r["store_id"],
+            r["target_format_code"],
+            r["opened_on"],
+            r["is_training_eligible"],
+            r["realized_90d_net_revenue"],
+            r["realized_m6_net_revenue"],
+            r["realized_m12_net_revenue"],
+            380,
+            r["prediction_as_of"],
+            r["model_version"],
+            r.get("horizon_code", "90d"),
+            r["predicted_revenue"],
+            r["p10"],
+            r["p90"],
+            r["p50"],
+            r["dataset_snapshot_id"],
+            r["artifact_lineage_id"],
+        ))
+
+    class MockCursor:
+        def execute(self, query):
+            pass
+        def fetchall(self):
+            return db_rows
+        def __enter__(self):
+            return self
+        def __exit__(self, *args):
+            pass
+
+    class MockConn:
+        def cursor(self):
+            return MockCursor()
+
+    import psycopg
+    monkeypatch.setattr(psycopg, "connect", lambda url: MockConn())
+
+    res = run_benchmark_from_inventory(db_url="postgresql://localhost:5432/test_db", prediction_receipt=receipt)
+    assert res.provenance == "pg16_query"
+    assert res.prediction_source_verified is True
+    assert res.is_lineage_governed is True
+    assert res.is_gate2_passed is True
+    assert res.status == "ACTIVE"
+    assert res.reason_code == "GATE2_CRITERIA_MET"
+
+
+def test_sitescore_outcome_benchmark_pg16_query_path_without_receipt_governed_disabled(monkeypatch):
+    # PG-path mutation test: run_benchmark_from_inventory under pg16_query WITHOUT a receipt stays GOVERNED_DISABLED
+    from scripts.models.sitescore_outcome_benchmark import run_benchmark_from_inventory
+
+    records = _generate_valid_prediction_records(220, include_outcomes=True)
+    for r in records:
+        r["opened_on"] = "2024-01-01"
+        r["prediction_as_of"] = "2024-01-01"
+    db_rows = []
+    for r in records:
+        db_rows.append((
+            r["entity_id"],
+            r["store_id"],
+            r["target_format_code"],
+            r["opened_on"],
+            r["is_training_eligible"],
+            r["realized_90d_net_revenue"],
+            r["realized_m6_net_revenue"],
+            r["realized_m12_net_revenue"],
+            380,
+            r["prediction_as_of"],
+            r["model_version"],
+            r.get("horizon_code", "90d"),
+            r["predicted_revenue"],
+            r["p10"],
+            r["p90"],
+            r["p50"],
+            r["dataset_snapshot_id"],
+            r["artifact_lineage_id"],
+        ))
+
+    class MockCursor:
+        def execute(self, query):
+            pass
+        def fetchall(self):
+            return db_rows
+        def __enter__(self):
+            return self
+        def __exit__(self, *args):
+            pass
+
+    class MockConn:
+        def cursor(self):
+            return MockCursor()
+
+    import psycopg
+    monkeypatch.setattr(psycopg, "connect", lambda url: MockConn())
+
+    res = run_benchmark_from_inventory(db_url="postgresql://localhost:5432/test_db", prediction_receipt=None)
+    assert res.provenance == "pg16_query"
+    assert res.prediction_source_verified is False
+    assert res.is_lineage_governed is False
+    assert res.is_gate2_passed is False
+    assert res.status == "GOVERNED_DISABLED"
+    assert res.reason_code == "MISSING_GOVERNED_LINEAGE"

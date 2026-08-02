@@ -16,6 +16,9 @@ from models.sitescore.opening_outcome import (
     evaluate_sitescore_opening_outcome_benchmark,
     verify_sitescore_gate2_receipt,
 )
+from models.sitescore.prediction_source import (
+    build_sitescore_prediction_source_receipt,
+)
 from scripts.models.sitescore_outcome_benchmark import (
     run_benchmark_from_inventory,
     write_evidence_markdown,
@@ -105,7 +108,13 @@ def test_sitescore_opening_outcome_90d_only_old_stores_fails_coverage():
         model_version="candidate-site-view-v2",
         artifact_lineage_id="art_sitescore_sha256",
     )
-    result = evaluate_sitescore_opening_outcome_benchmark(records, provenance="authenticated_governed_records")
+    receipt = build_sitescore_prediction_source_receipt(
+        records,
+        dataset_snapshot_id="snapshot_sitescore_v2",
+        model_version="candidate-site-view-v2",
+        artifact_lineage_id="art_sitescore_sha256",
+    )
+    result = evaluate_sitescore_opening_outcome_benchmark(records, prediction_receipt=receipt, provenance="authenticated_governed_records")
 
     assert result.mature_label_count == 220
     assert result.m6_coverage_ratio == 0.0

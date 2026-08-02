@@ -214,13 +214,29 @@ def verify_sitescore_prediction_source(
         "unverified", "not_a_hash", "none", "null"
     )
 
-    if provenance not in ("authenticated_governed_records", "pg16_prediction_query", "authenticated_prediction_registry"):
+    GOVERNED_PROVENANCES = (
+        "authenticated_governed_records",
+        "pg16_query",
+        "pg16_prediction_query",
+        "authenticated_prediction_registry",
+    )
+    if provenance not in GOVERNED_PROVENANCES:
         return SiteScorePredictionSourceVerificationResult(
             is_valid=False,
             reason_code="UNAUTHENTICATED_PREDICTION_PROVENANCE",
             errors=(
                 f"Unauthenticated prediction provenance: '{provenance}'. "
                 "Self-attestation from caller records is unauthenticated.",
+            ),
+        )
+
+    if receipt_to_verify is None and model_registry_evidence is None:
+        return SiteScorePredictionSourceVerificationResult(
+            is_valid=False,
+            reason_code="MISSING_GOVERNED_LINEAGE",
+            errors=(
+                "Missing authoritative prediction receipt or model registry evidence; "
+                "self-attested caller records without verified receipt or registry readback are forbidden",
             ),
         )
 
@@ -295,34 +311,77 @@ def verify_sitescore_prediction_source(
                     if sid and sid != eid:
                         receipt_records_lookup[(sid, as_of, ver, hor)] = item
 
-    if model_registry_evidence is not None:
-        reg_model_name = getattr(model_registry_evidence, "model_name", None) or (model_registry_evidence.get("model_name") if isinstance(model_registry_evidence, dict) else None)
+    elif model_registry_evidence is not None:
+        reg_model_name = getattr(model_registry_evidence, "model_name", None) or (
+            model_registry_evidence.get("model_name") if isinstance(model_registry_evidence, dict) else None
+        )
         if reg_model_name != CANONICAL_PREDICTION_MODEL_NAME:
-            errors.append(f"Model registry evidence model_name ({reg_model_name!r}) mismatch with canonical '{CANONICAL_PREDICTION_MODEL_NAME}'")
+            errors.append(
+                f"Model registry evidence model_name ({reg_model_name!r}) mismatch with canonical '{CANONICAL_PREDICTION_MODEL_NAME}'"
+            )
 
-    if receipt_to_verify is None:
-        if records and isinstance(records[0], dict):
-            r0 = records[0]
-            if not dataset_snapshot_id:
-                dataset_snapshot_id = str(r0.get("dataset_snapshot_id") or r0.get("dataset_snapshot_hash") or "").strip() or None
-            if not model_version:
-                model_version = str(r0.get("model_version") or "").strip() or None
+        versions = (
+            getattr(model_registry_evidence, "versions", None)
+            or (model_registry_evidence.get("versions") if isinstance(model_registry_evidence, dict) else None)
+            or []
+        )
+        matched_v = None
+        target_ver = expected_model_version or CANONICAL_MODEL_VERSION
+        for v in versions:
+            v_ver = getattr(v, "version", None) or (v.get("version") if isinstance(v, dict) else None)
+            if v_ver == target_ver or matched_v is None:
+                matched_v = v
+
+        if matched_v is not None:
+            dataset_snapshot_id = getattr(matched_v, "dataset_snapshot_id", None) or (
+                matched_v.get("dataset_snapshot_id") if isinstance(matched_v, dict) else None
+            )
+            model_version = getattr(matched_v, "version", None) or (
+                matched_v.get("version") if isinstance(matched_v, dict) else None
+            )
+            arts = getattr(matched_v, "artifacts", None) or (
+                matched_v.get("artifacts") if isinstance(matched_v, dict) else None
+            ) or []
+            if arts and isinstance(arts, list):
+                art0 = arts[0]
+                artifact_lineage_id = (
+                    getattr(art0, "content_sha256", None)
+                    or (art0.get("content_sha256") if isinstance(art0, dict) else None)
+                    or getattr(art0, "artifact_id", None)
+                )
             if not artifact_lineage_id:
-                artifact_lineage_id = str(r0.get("artifact_lineage_id") or r0.get("artifact_hash") or "").strip() or None
+                artifact_lineage_id = getattr(matched_v, "git_sha", None) or (
+                    matched_v.get("git_sha") if isinstance(matched_v, dict) else None
+                )
+        else:
+            errors.append("Model registry evidence has no matching version entry")
 
-        if not dataset_snapshot_id or any(sub in dataset_snapshot_id.lower() for sub in DISALLOWED_SNAPSHOT_SUBSTRINGS):
-            errors.append(f"Invalid or disallowed dataset_snapshot_id: '{dataset_snapshot_id}'")
-        if not model_version or model_version.lower() in DISALLOWED_MODEL_VERSIONS or model_version not in APPROVED_MODEL_VERSIONS:
-            errors.append(f"Invalid or disallowed model_version: '{model_version}'")
-        if not artifact_lineage_id or any(sub in artifact_lineage_id.lower() for sub in DISALLOWED_LINEAGE_SUBSTRINGS):
-            errors.append(f"Invalid or disallowed artifact_lineage_id: '{artifact_lineage_id}'")
+        rec_snap = str(dataset_snapshot_id or "").strip()
+        rec_ver = str(model_version or "").strip()
+        rec_lin = str(artifact_lineage_id or "").strip()
 
-        if expected_snapshot_id and dataset_snapshot_id != expected_snapshot_id:
-            errors.append(f"Dataset snapshot ID '{dataset_snapshot_id}' mismatch with expected '{expected_snapshot_id}'")
-        if expected_model_version and model_version != expected_model_version:
-            errors.append(f"Model version '{model_version}' mismatch with expected '{expected_model_version}'")
-        if expected_lineage_id and artifact_lineage_id != expected_lineage_id:
-            errors.append(f"Artifact lineage ID '{artifact_lineage_id}' mismatch with expected '{expected_lineage_id}'")
+        if not rec_snap or any(sub in rec_snap.lower() for sub in DISALLOWED_SNAPSHOT_SUBSTRINGS):
+            errors.append(f"Invalid or disallowed dataset_snapshot_id in model registry evidence: '{rec_snap}'")
+        if not rec_ver or rec_ver.lower() in DISALLOWED_MODEL_VERSIONS or rec_ver not in APPROVED_MODEL_VERSIONS:
+            errors.append(f"Invalid or disallowed model_version in model registry evidence: '{rec_ver}'")
+        if not rec_lin or any(sub in rec_lin.lower() for sub in DISALLOWED_LINEAGE_SUBSTRINGS):
+            errors.append(f"Invalid or disallowed artifact_lineage_id in model registry evidence: '{rec_lin}'")
+
+        if expected_snapshot_id and rec_snap != expected_snapshot_id:
+            errors.append(f"Model registry evidence dataset_snapshot_id '{rec_snap}' mismatch with expected '{expected_snapshot_id}'")
+        if expected_model_version and rec_ver != expected_model_version:
+            errors.append(f"Model registry evidence model_version '{rec_ver}' mismatch with expected '{expected_model_version}'")
+        if expected_lineage_id and rec_lin != expected_lineage_id:
+            errors.append(f"Model registry evidence artifact_lineage_id '{rec_lin}' mismatch with expected '{expected_lineage_id}'")
+
+        if not errors and rec_snap and rec_ver and rec_lin:
+            gen_receipt = build_sitescore_prediction_source_receipt(
+                records,
+                dataset_snapshot_id=rec_snap,
+                model_version=rec_ver,
+                artifact_lineage_id=rec_lin,
+            )
+            verified_receipt_hash = gen_receipt["integrity"]["content_sha256"]
 
     if errors:
         reason_code = "MISSING_GOVERNED_LINEAGE"
@@ -463,15 +522,6 @@ def verify_sitescore_prediction_source(
     ]
     if age_substituted:
         errors.append(f"Illegal store age substitution detected: {len(age_substituted)} records claim M6 coverage based on store_age_days without explicit realized M6 revenue")
-
-    if verified_receipt_hash is None and not errors and dataset_snapshot_id and model_version and artifact_lineage_id:
-        gen_receipt = build_sitescore_prediction_source_receipt(
-            records,
-            dataset_snapshot_id=dataset_snapshot_id,
-            model_version=model_version,
-            artifact_lineage_id=artifact_lineage_id,
-        )
-        verified_receipt_hash = gen_receipt["integrity"]["content_sha256"]
 
     population_report = {
         "observed_records": len(records),

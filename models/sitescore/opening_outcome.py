@@ -178,7 +178,7 @@ class SiteScoreOpeningOutcomeBenchmarkResult:
             return False
         if not self.dataset_snapshot_id or not self.model_version or not self.artifact_lineage_id:
             return False
-        if self.provenance not in ("authenticated_governed_records", "pg16_prediction_query", "authenticated_prediction_registry"):
+        if self.provenance not in ("authenticated_governed_records", "pg16_query", "pg16_prediction_query", "authenticated_prediction_registry"):
             return False
         return True
 
@@ -496,7 +496,7 @@ def evaluate_sitescore_opening_outcome_benchmark(
 
     prediction_source_verified = False
     prediction_receipt_hash: str | None = None
-    if records and provenance in ("authenticated_governed_records", "pg16_prediction_query", "authenticated_prediction_registry"):
+    if records and provenance in ("authenticated_governed_records", "pg16_query", "pg16_prediction_query", "authenticated_prediction_registry"):
         from models.sitescore.prediction_source import verify_sitescore_prediction_source
         verif_res = verify_sitescore_prediction_source(
             records,
@@ -505,6 +505,7 @@ def evaluate_sitescore_opening_outcome_benchmark(
             expected_snapshot_id=dataset_snapshot_id,
             expected_model_version=model_version,
             expected_lineage_id=artifact_lineage_id,
+            provenance=provenance,
         )
         if verif_res.is_valid:
             prediction_source_verified = True
@@ -911,6 +912,7 @@ def build_sitescore_gate2_receipt(
     observed_at: str | None = None,
     model_card: ModelCard | dict[str, Any] | None = None,
     model_card_hash: str | None = None,
+    prediction_receipt: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Build Gate 2 audit receipt payload with integrity envelope and artifact hash bindings."""
     ts = observed_at or benchmark.observed_at or datetime.now(UTC).isoformat().replace("+00:00", "Z")
@@ -949,6 +951,8 @@ def build_sitescore_gate2_receipt(
             "prediction_receipt_hash": pred_receipt_hash,
         },
     }
+    if prediction_receipt is not None:
+        payload["prediction_receipt"] = prediction_receipt
     if benchmark.db_error:
         payload["db_error"] = benchmark.db_error
     payload["integrity"] = {
@@ -1059,7 +1063,7 @@ def verify_sitescore_gate2_receipt(
             "gate", "gate_status", "is_governed_disabled", "benchmark_summary",
             "handback", "artifact_hashes", "integrity",
         }
-        ALLOWED_RECEIPT_KEYS = REQUIRED_RECEIPT_KEYS | {"db_error"}
+        ALLOWED_RECEIPT_KEYS = REQUIRED_RECEIPT_KEYS | {"db_error", "prediction_receipt"}
         for k in receipt.keys():
             if k not in ALLOWED_RECEIPT_KEYS:
                 errors.append(f"Forbidden or unknown field in top-level receipt: {k!r}")
@@ -1307,6 +1311,7 @@ def verify_sitescore_gate2_receipt(
         if dataset_manifest is not None:
             exp_bench = evaluate_sitescore_opening_outcome_benchmark(
                 records=dataset_manifest,
+                prediction_receipt=receipt.get("prediction_receipt"),
                 observed_at=receipt.get("observed_at") or summary.get("observed_at"),
                 provenance=summary.get("provenance") or "provided_records",
                 dataset_snapshot_id=summary.get("dataset_snapshot_id"),
@@ -2091,14 +2096,16 @@ def verify_sitescore_gate2_receipt(
         sum_ver = summary.get("model_version")
         sum_lin = summary.get("artifact_lineage_id")
 
-        if rec_prov in ("authenticated_governed_records", "pg16_prediction_query", "authenticated_prediction_registry"):
+        if rec_prov in ("authenticated_governed_records", "pg16_query", "pg16_prediction_query", "authenticated_prediction_registry"):
             if dataset_manifest is not None:
                 from models.sitescore.prediction_source import verify_sitescore_prediction_source
                 verif_res = verify_sitescore_prediction_source(
                     dataset_manifest,
+                    prediction_receipt=receipt.get("prediction_receipt"),
                     expected_snapshot_id=str(sum_snap) if sum_snap and sum_snap not in ("UNAVAILABLE", "UNVERIFIED") else None,
                     expected_model_version=str(sum_ver) if sum_ver and sum_ver not in ("UNAVAILABLE", "UNVERIFIED") else None,
                     expected_lineage_id=str(sum_lin) if sum_lin and sum_lin not in ("UNAVAILABLE", "UNVERIFIED") else None,
+                    provenance=str(rec_prov or "authenticated_governed_records"),
                 )
                 if verif_res.is_valid:
                     lineage_governed = True
@@ -2132,7 +2139,7 @@ def verify_sitescore_gate2_receipt(
                         errors.append("model_card.approvals must be empty when lineage is not governed")
 
         # Provenance, reason_code, status, and threshold validation & cross-checks
-        ALLOWED_PROVENANCES = {"no_source", "unreachable_db", "provided_records", "pg16_query", "authenticated_governed_records"}
+        ALLOWED_PROVENANCES = {"no_source", "unreachable_db", "provided_records", "pg16_query", "pg16_prediction_query", "authenticated_governed_records", "authenticated_prediction_registry"}
         rec_prov = receipt.get("provenance")
         sum_prov = summary.get("provenance")
         hb_prov = handback.get("provenance")
