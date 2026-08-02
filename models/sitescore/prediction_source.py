@@ -356,8 +356,9 @@ def verify_sitescore_prediction_source(
 
         if expected_snapshot_id and rec_snap != expected_snapshot_id:
             errors.append(f"Prediction receipt dataset_snapshot_id '{rec_snap}' mismatch with expected '{expected_snapshot_id}'")
-        if expected_model_version and rec_ver != expected_model_version:
-            errors.append(f"Prediction receipt model_version '{rec_ver}' mismatch with expected '{expected_model_version}'")
+        target_model_ver = expected_model_version or CANONICAL_MODEL_VERSION
+        if rec_ver != target_model_ver:
+            errors.append(f"Prediction receipt model_version '{rec_ver}' mismatch with expected '{target_model_ver}'")
         if expected_lineage_id and rec_lin != expected_lineage_id:
             errors.append(f"Prediction receipt artifact_lineage_id '{rec_lin}' mismatch with expected '{expected_lineage_id}'")
 
@@ -483,14 +484,33 @@ def verify_sitescore_prediction_source(
             or (model_registry_evidence.get("records") if isinstance(model_registry_evidence, dict) else None)
         )
         if isinstance(reg_records, list):
+            declared_reg_count = (
+                getattr(model_registry_evidence, "record_count", None)
+                or (model_registry_evidence.get("record_count") if isinstance(model_registry_evidence, dict) else None)
+            )
+            if declared_reg_count is not None and (not isinstance(declared_reg_count, int) or declared_reg_count != len(reg_records)):
+                errors.append(f"Model registry evidence record_count mismatch: declared {declared_reg_count}, actual records length {len(reg_records)}")
+            if len(reg_records) != len(records):
+                errors.append(f"Model registry evidence record count ({len(reg_records)}) does not match evaluated records count ({len(records)})")
+
+            seen_reg_keys: set[tuple[str, str, str, str]] = set()
             for item in reg_records:
                 if isinstance(item, dict):
                     eid = str(item.get("entity_id") or item.get("store_id") or "")
                     item_opened_on = str(item.get("opened_on") or "")
                     as_of = str(item.get("prediction_as_of") or item_opened_on)
+                    if item_opened_on and as_of and as_of != item_opened_on:
+                        errors.append(f"Model registry prediction record prediction_as_of '{as_of}' mismatch with opened_on '{item_opened_on}' for entity '{eid}'")
                     ver = str(item.get("model_version") or model_version or "")
                     hor = str(item.get("horizon_code") or "90d")
-                    receipt_records_lookup[(eid, as_of, ver, hor)] = item
+                    if hor not in APPROVED_HORIZON_CODES:
+                        errors.append(f"Model registry prediction record contains disallowed horizon_code '{hor}' for entity '{eid}'")
+                    rk = (eid, as_of, ver, hor)
+                    if rk in seen_reg_keys:
+                        duplicate_count += 1
+                        errors.append(f"Duplicate prediction record key in model registry evidence for entity '{eid}' as-of '{as_of}' version '{ver}' horizon '{hor}'")
+                    seen_reg_keys.add(rk)
+                    receipt_records_lookup[rk] = item
                     sid = str(item.get("store_id") or "")
                     if sid and sid != eid:
                         receipt_records_lookup[(sid, as_of, ver, hor)] = item
@@ -562,8 +582,6 @@ def verify_sitescore_prediction_source(
             rec_from_receipt = receipt_records_lookup.get((entity_id, pred_as_of, rec_ver, rec_hor))
             if rec_from_receipt is None and store_id != entity_id:
                 rec_from_receipt = receipt_records_lookup.get((store_id, pred_as_of, rec_ver, rec_hor))
-            if rec_from_receipt is None:
-                rec_from_receipt = receipt_records_lookup.get((entity_id, pred_as_of, rec_ver, "90d"))
 
             if rec_from_receipt is None:
                 unmatched_count += 1

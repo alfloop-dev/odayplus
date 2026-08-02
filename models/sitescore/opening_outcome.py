@@ -35,6 +35,17 @@ def compute_population_aggregate_digest(
     return hashlib.sha256(payload.encode("utf-8")).hexdigest()
 
 
+def _is_valid_sha256_hex(val: Any) -> bool:
+    """Check if value is a valid 64-character hexadecimal SHA256 string."""
+    if not isinstance(val, str) or len(val) != 64:
+        return False
+    try:
+        int(val, 16)
+        return True
+    except ValueError:
+        return False
+
+
 def _is_finite_float(val: Any) -> bool:
     """Check if value is a finite float (not None, bool, NaN, inf, or -inf)."""
     if val is None or isinstance(val, bool):
@@ -178,7 +189,9 @@ class SiteScoreOpeningOutcomeBenchmarkResult:
             return False
         if not self.dataset_snapshot_id or not self.model_version or not self.artifact_lineage_id:
             return False
-        if not self.prediction_receipt_hash or len(self.prediction_receipt_hash) != 64:
+        if not self.prediction_receipt_hash or not _is_valid_sha256_hex(self.prediction_receipt_hash):
+            return False
+        if self.model_version != CANONICAL_INVENTORY_VERSION:
             return False
         if self.provenance not in ("authenticated_governed_records", "pg16_query", "pg16_prediction_query", "authenticated_prediction_registry"):
             return False
@@ -519,9 +532,20 @@ def evaluate_sitescore_opening_outcome_benchmark(
             if not artifact_lineage_id:
                 artifact_lineage_id = verif_res.artifact_lineage_id
 
+            auth_records = None
             if prediction_receipt and isinstance(prediction_receipt.get("records"), list):
+                auth_records = prediction_receipt["records"]
+            elif model_registry_evidence:
+                auth_records = (
+                    getattr(model_registry_evidence, "prediction_records", None)
+                    or (model_registry_evidence.get("prediction_records") if isinstance(model_registry_evidence, dict) else None)
+                    or getattr(model_registry_evidence, "records", None)
+                    or (model_registry_evidence.get("records") if isinstance(model_registry_evidence, dict) else None)
+                )
+
+            if auth_records and isinstance(auth_records, list):
                 rec_lookup = {}
-                for rec_item in prediction_receipt["records"]:
+                for rec_item in auth_records:
                     if isinstance(rec_item, dict):
                         eid = str(rec_item.get("entity_id") or rec_item.get("store_id") or "")
                         as_of = str(rec_item.get("prediction_as_of") or rec_item.get("opened_on") or "")

@@ -743,3 +743,130 @@ def test_sitescore_prediction_source_b3_unauthenticated_dict_model_registry_evid
     assert res.is_valid is False
     assert res.reason_code == "UNAUTHENTICATED_PREDICTION_PROVENANCE"
     assert res.prediction_receipt_hash is None
+
+
+def test_b1_re_audit_model_registry_evidence_duplicate_keys_and_cardinality():
+    records = _generate_valid_prediction_records(10)
+    reg_records = _generate_valid_prediction_records(10)
+    reg_records.append(dict(reg_records[0]))
+    reg_evidence = {
+        "model_name": CANONICAL_PREDICTION_MODEL_NAME,
+        "authority_attestation": "authenticated_prediction_registry",
+        "provider_identity": "model_ready.sitescore_predictions",
+        "prediction_receipt_hash": "a" * 64,
+        "versions": [
+            {
+                "version": CANONICAL_MODEL_VERSION,
+                "dataset_snapshot_id": "sitescore-snapshot-2026-07-31-v1",
+                "git_sha": "sitescore-artifact-sha256-v1",
+            }
+        ],
+        "prediction_records": reg_records,
+    }
+    res = verify_sitescore_prediction_source(records, model_registry_evidence=reg_evidence)
+    assert res.is_valid is False
+    assert res.duplicate_count >= 1 or any("Duplicate" in e or "cardinality" in e or "count" in e for e in res.errors)
+
+
+def test_b2_re_audit_model_registry_evidence_predictions_bind_to_benchmark():
+    records = _generate_valid_prediction_records(220, include_outcomes=True)
+    reg_records = _generate_valid_prediction_records(220, include_outcomes=True)
+    for r in reg_records:
+        r["predicted_revenue"] = 10_000_000.0
+
+    reg_evidence = {
+        "model_name": CANONICAL_PREDICTION_MODEL_NAME,
+        "authority_attestation": "authenticated_prediction_registry",
+        "provider_identity": "model_ready.sitescore_predictions",
+        "prediction_receipt_hash": "a" * 64,
+        "versions": [
+            {
+                "version": CANONICAL_MODEL_VERSION,
+                "dataset_snapshot_id": "sitescore-snapshot-2026-07-31-v1",
+                "git_sha": "sitescore-artifact-sha256-v1",
+            }
+        ],
+        "prediction_records": reg_records,
+    }
+
+    result = evaluate_sitescore_opening_outcome_benchmark(
+        records,
+        model_registry_evidence=reg_evidence,
+        provenance="authenticated_prediction_registry",
+    )
+    assert result.is_gate2_passed is False
+    assert result.status == "GOVERNED_DISABLED"
+    assert result.reason_code == "NORMALIZED_MAE_EXCEEDED"
+
+
+def test_b3_re_audit_exact_horizon_join_no_fallback_to_90d():
+    records = _generate_valid_prediction_records(10)
+    for r in records:
+        r["horizon_code"] = "M6"
+    receipt_records = _generate_valid_prediction_records(10)
+    for r in receipt_records:
+        r["horizon_code"] = "90d"
+
+    receipt = build_sitescore_prediction_source_receipt(
+        receipt_records,
+        dataset_snapshot_id="sitescore-snapshot-2026-07-31-v1",
+        model_version=CANONICAL_MODEL_VERSION,
+        artifact_lineage_id="sitescore-artifact-sha256-v1",
+    )
+    res = verify_sitescore_prediction_source(records, prediction_receipt=receipt)
+    assert res.is_valid is False
+    assert res.unmatched_count == 10
+    assert res.reason_code == "UNMATCHED_PREDICTION_SOURCE"
+
+
+def test_b4_re_audit_non_hex_receipt_hash_rejected_by_is_lineage_governed():
+    records = _generate_valid_prediction_records(220, include_outcomes=True)
+    receipt = build_sitescore_prediction_source_receipt(
+        records,
+        dataset_snapshot_id="sitescore-snapshot-2026-07-31-v1",
+        model_version=CANONICAL_MODEL_VERSION,
+        artifact_lineage_id="sitescore-artifact-sha256-v1",
+    )
+    result = evaluate_sitescore_opening_outcome_benchmark(
+        records,
+        prediction_receipt=receipt,
+        provenance="authenticated_governed_records",
+    )
+    from models.sitescore.opening_outcome import SiteScoreOpeningOutcomeBenchmarkResult
+    mutated_res = SiteScoreOpeningOutcomeBenchmarkResult(
+        observed_count=result.observed_count,
+        eligible_count=result.eligible_count,
+        mature_label_count=result.mature_label_count,
+        m6_coverage_ratio=result.m6_coverage_ratio,
+        m12_coverage_ratio=result.m12_coverage_ratio,
+        normalized_mae=result.normalized_mae,
+        p80_coverage=result.p80_coverage,
+        prediction_coverage_ratio=result.prediction_coverage_ratio,
+        interval_bounds_coverage_ratio=result.interval_bounds_coverage_ratio,
+        matched_prediction_count=result.matched_prediction_count,
+        m6_mature_count=result.m6_mature_count,
+        m12_mature_count=result.m12_mature_count,
+        interval_bounds_count=result.interval_bounds_count,
+        in_p80_count=result.in_p80_count,
+        dataset_snapshot_id=result.dataset_snapshot_id,
+        model_version=result.model_version,
+        artifact_lineage_id=result.artifact_lineage_id,
+        provenance=result.provenance,
+        prediction_source_verified=True,
+        prediction_receipt_hash="z" * 64,
+    )
+    assert mutated_res.is_lineage_governed is False
+    assert mutated_res.status == "GOVERNED_DISABLED"
+
+
+def test_b5_re_audit_receipt_v1_fails_without_expected_version():
+    records = _generate_valid_prediction_records(220, include_outcomes=True, model_version="candidate-site-view-v1")
+    receipt = build_sitescore_prediction_source_receipt(
+        records,
+        dataset_snapshot_id="sitescore-snapshot-2026-07-31-v1",
+        model_version="candidate-site-view-v1",
+        artifact_lineage_id="sitescore-artifact-sha256-v1",
+    )
+    res = verify_sitescore_prediction_source(records, prediction_receipt=receipt)
+    assert res.is_valid is False
+    assert any("candidate-site-view-v2" in e for e in res.errors)
