@@ -28,11 +28,50 @@ class AlertRouter:
         self._load_config()
 
     def _load_config(self) -> None:
-        if os.path.exists(self.alerts_cfg_path):
-            with open(self.alerts_cfg_path, encoding="utf-8") as f:
-                self.config = json.load(f)
-        else:
+        if not self.alerts_cfg_path or not os.path.exists(self.alerts_cfg_path):
             self.config = {"alerts": [], "routing": {}}
+            raise ValueError(f"Alert configuration file missing or not found at '{self.alerts_cfg_path}'. Fail-closed gate enforced.")
+        with open(self.alerts_cfg_path, encoding="utf-8") as f:
+            self.config = json.load(f)
+        self.validate_routing_config()
+
+    def validate_routing_config(self) -> None:
+        """Validates that alert routing configuration is present and fail-closed.
+
+        If routing or default_receiver is missing/empty, or an alert severity is unmapped,
+        a ValueError is raised to fail closed.
+        """
+        if not self.alerts_cfg_path or not os.path.exists(self.alerts_cfg_path):
+            raise ValueError(f"Alert configuration file missing or not found at '{self.alerts_cfg_path}'. Fail-closed gate enforced.")
+
+        if not hasattr(self, "config") or not isinstance(self.config, dict):
+            raise ValueError("Alert configuration is invalid. Fail-closed gate enforced.")
+
+        routing = self.config.get("routing")
+        if not routing or not isinstance(routing, dict):
+            raise ValueError("Alert routing configuration is missing or invalid. Fail-closed gate enforced.")
+
+        default_receiver = routing.get("default_receiver")
+        routes = routing.get("routes", [])
+
+        if not default_receiver and not routes:
+            raise ValueError("Alert routing default_receiver or routes must be configured. Fail-closed gate enforced.")
+
+        sev_map = {
+            r.get("severity"): r.get("receiver")
+            for r in routes
+            if isinstance(r, dict) and r.get("severity") and r.get("receiver")
+        }
+
+        alerts = self.config.get("alerts", [])
+        for alert in alerts:
+            alert_id = alert.get("id", "unknown")
+            severity = alert.get("severity", "P3")
+            receiver = sev_map.get(severity) or default_receiver
+            if not receiver:
+                raise ValueError(
+                    f"On-call route for alert '{alert_id}' (severity '{severity}') is unconfigured. Fail-closed gate enforced."
+                )
 
     def get_alert_definition(self, alert_id: str) -> dict[str, Any] | None:
         for alert in self.config.get("alerts", []):
@@ -47,14 +86,22 @@ class AlertRouter:
 
         severity = alert.get("severity", "P3")
         routing = self.config.get("routing", {})
-        default_receiver = routing.get("default_receiver", "admin")
+        default_receiver = routing.get("default_receiver")
 
-        receiver = default_receiver
+        receiver = None
         routes = routing.get("routes", [])
         for route in routes:
             if route.get("severity") == severity:
-                receiver = route.get("receiver", default_receiver)
+                receiver = route.get("receiver")
                 break
+
+        if not receiver:
+            receiver = default_receiver
+
+        if not receiver:
+            raise ValueError(
+                f"On-call route for alert '{alert_id}' (severity '{severity}') is unconfigured. Fail-closed gate enforced."
+            )
 
         return {
             "alert_id": alert_id,

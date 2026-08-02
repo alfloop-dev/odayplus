@@ -41,7 +41,9 @@ from shared.observability.metrics import (
     MetricDefinition,
     MetricsRegistry,
     MetricType,
+    ProductionMetricsExporter,
     default_registry,
+    render_dashboard_provisioning,
 )
 from shared.observability.runtime import Telemetry
 from shared.observability.tracing import (
@@ -51,6 +53,10 @@ from shared.observability.tracing import (
     SpanStatus,
     TraceContext,
     Tracer,
+)
+from shared.observability.watch_window import (
+    record_deployment_watch_window_status,
+    verify_watch_window_receipt,
 )
 
 __all__ = [
@@ -79,7 +85,9 @@ __all__ = [
     "MetricsRegistry",
     "MetricType",
     "PLATFORM_METRICS",
+    "ProductionMetricsExporter",
     "default_registry",
+    "render_dashboard_provisioning",
     "Telemetry",
     "E2E_TRACE_KINDS",
     "Span",
@@ -90,4 +98,6 @@ __all__ = [
     "build_audit_event",
     "build_evidence_bundle",
     "check_audit_completeness",
+    "record_deployment_watch_window_status",
+    "verify_watch_window_receipt",
 ]
