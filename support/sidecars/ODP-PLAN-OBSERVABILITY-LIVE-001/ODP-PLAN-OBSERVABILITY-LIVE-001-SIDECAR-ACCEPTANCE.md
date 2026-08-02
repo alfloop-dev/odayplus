@@ -5,11 +5,11 @@
 - **Gap ID**: `GAP-P1-008` (Observability production wiring)
 - **Helper Kind**: `acceptance_packet`
 - **Task Class**: `sidecar`
-- **Owner**: `Antigravity`
-- **Reviewer**: `Antigravity5`
-- **Parent Task Owner**: `Antigravity`
-- **Parent Task Reviewer**: `Antigravity7`
-- **Parent Task Approved HEAD**: `166f6c713becd2a89b8178fccca562200a046c2d`
+- **Owner**: `Antigravity5`
+- **Reviewer**: `Antigravity`
+- **Parent Task Owner**: `Codex`
+- **Parent Task Reviewer**: `Codex2`
+- **Parent Task Approved HEAD**: `f6c344972881f1c7a5c9aee37c11869efd56dde2` (Merged via PR #558 at `ddded7ed586d68ae2ab42b932289b4c85c051175`)
 - **Target Release Claim**: `no-go-until-final-gate-audit`
 - **Program ID**: `ODP-PLAN-GAP-CLOSEOUT-2026-07-30`
 - **Execution Packet ID**: `ODP-PLAN-EXECUTION-CONTROL-PACK-001`
@@ -107,11 +107,11 @@ The parent task `ODP-PLAN-OBSERVABILITY-LIVE-001` must strictly satisfy all fail
 
 ## 6. Handoff & Closeout Instructions for Parent Owner
 
-- **Assigned Reviewer**: `Antigravity5`
-- **Parent Task Owner**: `Antigravity`
-- **Parent Task Reviewer**: `Antigravity7`
-- **Sidecar Owner Verification**: `Antigravity` (Verified pytest observability/telemetry/alert/dlq tests pass; ruff clean; git diff --check clean)
+- **Assigned Reviewer**: `Antigravity`
+- **Parent Task Owner**: `Codex`
+- **Parent Task Reviewer**: `Codex2`
+- **Sidecar Owner Verification**: `Antigravity5` (Rebased cleanly onto latest `origin/dev` commit `475f6d5e`; verified 85 pytest observability/telemetry/alert/dlq tests passed 100%; ruff check clean; git diff --check clean)
 - **Handoff Instructions**:
-  1. Review this support packet for alignment with `ODP-PLAN-OBSERVABILITY-LIVE-001` execution plan.
+  1. Review this support packet for alignment with `ODP-PLAN-OBSERVABILITY-LIVE-001` execution plan and merged PR #558.
   2. Ensure all 6 signal families (API, Worker, Event/DLQ, Model, Solver, Business KPI) are implemented according to Section 2.
   3. Validate all fail-closed rules (Section 4) in the parent implementation evidence prior to submitting `ODP-PLAN-OBSERVABILITY-LIVE-001` for review.
