@@ -1,100 +1,78 @@
 # Verification Report: ODP-OPERATOR-LIVE-PROVENANCE-HEALTH-001
 
-## Task Context
-- Task ID: `ODP-OPERATOR-LIVE-PROVENANCE-HEALTH-001`
-- Owner: `Codex`
-- Assigned reviewer: `Codex9`
-- Prior rejection reviewer: `Codex8`
+## Review Scope
+
+- Owner: `Antigravity`
+- Reviewer: `Codex`
 - Branch: `task/ODP-OPERATOR-LIVE-PROVENANCE-HEALTH-001`
-- Baseline: `origin/dev` @ `eed83c0937f491211247ee3fdb0bdf8d932564fb` (exact `eed83c09`)
-- Target Run: Deploy Dev run `30680943677`
-- Replacement implementation anchor: `1fd5d02f992e86e733a367f56ac512287b0a48ec`
-- Owner-dispatch verification input: `1becb9bc6f6af3b9aee304921992c280c154ba17`
+- Reopen baseline: `origin/dev` at `475f6d5e9b36f097a1eb4ab3dbe4bd8b1b1d7c2f`
+- Reopened branch head: `82f4c57e3d47b4738c818a375c5a3ec4bd0c91dc`
+- Health-contract anchor: `010ceef74e8fd661ad7964c741f19dc75cfaae9f`
+- Failed deployment evidence: Deploy Dev run `30735077825`
+- Failed equivalent-tree CI evidence: run `30735077838`
 
-## Summary of Remediations (Codex8 Rejection Batch)
+The reopened head had the same tree as the baseline. Its real
+`/platform/health` and `/readiness` responses reported `status=ok` and carried
+the live mode only under `modes.data.mode` or `details.data.mode`. The unchanged
+deployment validator accepted a direct declared mode and consequently reported
+`data_mode=<missing>` during candidate smoke.
 
-### B1. Tenant Authorization Scope Verification & Global Fallback Removal
-- **Scope Verification**: Updated `_repository` in `apps/api/app/routes/listings.py`, `resolve_tenant_id` and `store_for_request` in `apps/api/app/routes/external_data.py`, `apps/api/oday_api/routes/heatzone.py`, and `apps/api/app/routes/sitescore.py` to derive tenant ID strictly from verified `request.state.operator_principal` scope.
-- **Strict Scope Rejection**: Rejects missing principal or tenant scope with HTTP 403 `TENANT_SCOPE_DENIED`. If `x-tenant-id` header is present and does not match the verified principal tenant scope, rejects with HTTP 403 `TENANT_SCOPE_DENIED`.
-- **Global Fallback Removal**: Removed fallback to unpartitioned/global stores across Listing, ExternalData, HeatZone, and SiteScore routes when operating under tenant scope.
-- **Negative API Coverage**: Added `test_listing_import_rejects_missing_or_mismatched_tenant_scope` in `tests/integration/test_listing_pipeline.py` verifying that bypass attempts are denied with 403 and write 0 records.
+## Reopen Remediation
 
-### B2. Unsafe Authoritative Reads (TenantScopedDocumentStore Partition-Only Reads)
-- **Partition-Only Reads**: Updated `TenantScopedDocumentStore` (`get`, `list_all`, `list_by_group`, `latest_in_group`) in `shared/infrastructure/persistence/operator_domains.py` to query only tenant-partitioned collections (`<collection>.tenant.<partition>`). Removed all fallback calls to unpartitioned base collections.
-- **No-Unscoped-Call Regression Test**: Added `test_tenant_scoped_document_store_never_queries_unpartitioned_collections` in `tests/integration/test_operator_live_domain_modules.py` proving zero calls reach unpartitioned collections.
+- `/platform/health` now exposes top-level `data_mode` from the exact same
+  `modes["data"]["mode"]` value used by the existing nested contract.
+- `/readiness` exposes the same top-level field for both healthy and unhealthy
+  responses while preserving `details.data.mode`.
+- The deployment validator and deployment workflow remain unchanged.
+- A real `create_app()` regression feeds health and readiness payloads into the
+  unchanged validator and proves three states:
+  - serviceable PostgreSQL/live composition: HTTP 200, `status=ok`,
+    `data_mode=live`, accepted;
+  - live-required memory composition: HTTP 503, `status=unhealthy`,
+    `data_mode=unavailable`, rejected;
+  - non-live memory composition: HTTP 200, `status=ok`, `data_mode=fixture`,
+    rejected by the live-mode condition.
 
-### B3. Per-Request Resolver Contract (ExternalIngestionService)
-- **Per-Request Resolution**: Removed lifetime store caching (`self._tenant_stores`) in `ExternalIngestionService` (`modules/external_data/application/ingestion_service.py`). The tenant store factory `ingestion_run_store_for_tenant` is invoked on every ingest request.
-- **Failure & Rotation Propagation**: Passed resolved `target_store` through replay, scheduler, and write operations.
-- **Per-Request Tests**: Updated `test_resolver_call_count_and_non_stable_factory_isolation` and added `test_per_request_resolver_failure_and_rotation` in `tests/integration/test_external_ingestion_persistence.py` proving per-request resolver call counts and verifying that second-request resolver failures propagate without suppression.
+The response field is provenance only; it does not reclassify ForecastOps,
+alter production model bindings, weaken the release gate, fabricate an alias,
+or change the model/history row policy. ForecastOps remains required and
+unresolved until authentic 7/14/28-day history and an independently approved
+MLflow production alias exist.
 
-### B4. Verification Precision & Exact Decoupling Assertions
-- **Exact Baseline SHA Labeling**: Corrected `verification_report.md` baseline labeling to exact `origin/dev` SHA `eed83c0937f491211247ee3fdb0bdf8d932564fb`.
-- **Restored Exact Assertion**: Restored exact assertion `assert operator.json()["meta"]["dataMode"] == "live"` in `test_production_routes_gate_only_the_dependency_they_use` in `tests/integration/test_production_api_composition.py`.
+## Current Modified File Inventory
 
-### B5. Memory Compatibility And Durable Fail-Closed Resolution
-- **Memory/POC Compatibility**: `create_app` now keeps the process-local ingestion store for a non-durable persistence bundle. This restores fixture ingestion, persisted freshness, idempotency, quarantine, and cold live-provider availability behavior in memory/POC modes.
-- **Durable Tenant Boundary Preserved**: SQLite and PostgreSQL bundles still inject `ingestion_run_store_for_tenant`. Every durable request resolves its store before API-key replay, window replay, or writes, and resolver `None`/exceptions propagate without falling back to the global store.
-- **Rejected Regression Set**: The six memory/POC ingestion regressions from rejected head `2c02f8cb` pass at replacement implementation anchor `cdf58993`.
+Relative to the reopen baseline, this task owns only:
 
-### B6. Dependency-Accurate Authenticated Tenant Mismatch
-- **Verified Principal Path**: The listing mismatch regression now stubs the authentication dependency that writes `request.state.operator_principal`, instead of injecting middleware state that the real dependency overwrites.
-- **Zero Victim Writes**: A verified `tenant-attacker` principal paired with untrusted `x-tenant-id: tenant-victim` receives HTTP 403 `TENANT_SCOPE_DENIED`; the listing repository is asserted exactly unchanged after the request.
+1. `apps/api/oday_api/main.py`
+2. `tests/integration/test_operator_live_provenance_health.py`
+3. `tests/ops/test_cloud_run_live_deployment.py`
+4. `docs/evidence/runtime/ODP-OPERATOR-LIVE-PROVENANCE-HEALTH-001/verification_report.md`
 
-### B7. Diff Hygiene And Final Replay Scope
-- Removed the three terminal blank lines reported by `git diff --check` in `test_external_ingestion_persistence.py`, `test_listing_pipeline.py`, and `test_operator_live_domain_modules.py`.
-- Expanded the replay from seven integration files to the required eight-file suite by including `tests/ops/test_cloud_run_live_deployment.py`.
+There are no task diffs in deployment/model gates, Package 10 visuals or
+routes, design/archive documents, retired-path inventory, orchestrator files,
+or GitHub workflows. The concurrent health-contract PR #574 overlaps the API
+response shape, but this task branch deliberately does not import its validator
+changes; review must use this task's exact pushed head.
 
-### B8. HeatZone And SiteScore Memory/POC Writer Routing
-- **Non-Durable Compatibility**: `create_app` now injects the HeatZone and SiteScore tenant-store factories only for durable persistence bundles, matching the existing ingestion composition rule. Memory/POC bundles retain their process-local `HeatZoneResultStore` and `SiteScoreDecisionWorkflow` instead of invoking a factory that cannot scope those in-memory stores.
-- **Durable Boundary Preserved**: SQLite and PostgreSQL bundles still inject `heatzone_store_for_tenant` and `sitescore_decision_store_for_tenant`; unresolved tenant stores continue to fail closed with no global fallback.
-- **Rejected Route Regressions Covered**: The full `test_domain_api_rbac.py`, `test_heatzone_flow.py`, and `test_sitescore_decision.py` suites pass. This includes the four cases rejected at `2d3d1097`: authorized HeatZone listing, HeatZone batch scoring, absent-feature validation, and the SiteScore decision loop.
-- **Restart Composition Covered**: `test_canonical_writer_restart_provenance` and the production composition suite pass with durable tenant factories still active.
+## Local Verification
 
-### B9. Model-Scoped Blocker Contract And Tenant-Aware POC Read
-- **Readiness Layers Remain Decoupled**: Production model readiness is not part of the `data.liveReady` calculation. A serviceable live PostgreSQL/provider/Operator composition can therefore report `data.liveReady=true` and core health 200 while model execution remains unavailable.
-- **Explicit Model Blocker Preserved**: When required production bindings are unresolved, `/platform/health` and `/readiness` now expose `models.blockingReasons=["PRODUCTION_MODEL_BINDINGS_UNVERIFIED"]`. The data layer does not claim that model failure as a data blocker.
-- **ForecastOps Still Fails Closed**: The change does not alter the required active ForecastOps contract, create an MLflow alias, seed a model, or weaken the unchanged release gate. `productionBindingsReady=false` and the explicit model blocker remain visible until approved production bindings exist.
-- **POC Tenant Boundary Aligned**: The established external-data freshness contract request now supplies `x-tenant-id: tenant-test`, matching the verified data-owner principal scope required by the intentional tenant boundary.
+- Full focused replay (15 files): `uv run --frozen pytest -q` over health,
+  fail-closed, platform contract, external ingestion, Operator repository and
+  composition, tenant routing, HeatZone, SiteScore, and deployment-validator
+  suites; exit `0`, with one existing conditional skip and deprecation warnings
+  only.
+- Reopen regression after adding the unavailable-state assertion:
+  `uv run --frozen pytest -q tests/ops/test_cloud_run_live_deployment.py::test_real_app_health_data_mode_matches_unchanged_deploy_validator`; exit `0`.
+- Narrow pre-anchor replay: the Operator health integration case plus the real
+  app-to-validator regression; exit `0`.
+- Ruff on the three touched Python files: clean.
+- `git diff --check`: clean.
 
-## Owner-Dispatch Verification Refresh (2026-08-01)
+## Pending External Evidence
 
-- `Codex` replayed the complete 15-file focused suite from implementation head `1becb9bc6f6af3b9aee304921992c280c154ba17`; the command exited `0` with the existing environment-conditional skip and deprecation warnings only.
-- Changed Python files pass Ruff, `git diff --check origin/dev...HEAD` is clean, and the forbidden-path audit is empty.
-- The refresh changes no runtime behavior. ForecastOps remains a required active capability with unresolved production bindings exposed as a model-scoped blocker; no model alias, fixture, seed, minimum-row policy, release gate, deployment workflow, Package 10 surface, or canonical design artifact changed.
-
-## Modified File Inventory (relative to origin/dev)
-1. `apps/api/app/routes/external_data.py`
-2. `apps/api/app/routes/listings.py`
-3. `apps/api/app/routes/operator.py`
-4. `apps/api/app/routes/sitescore.py`
-5. `apps/api/oday_api/main.py`
-6. `apps/api/oday_api/routes/heatzone.py`
-7. `docs/evidence/runtime/ODP-OPERATOR-LIVE-PROVENANCE-HEALTH-001/verification_report.md`
-8. `modules/external_data/application/ingestion_service.py`
-9. `modules/external_data/application/ingestion_store.py`
-10. `modules/heatzone/workers/scoring_worker.py`
-11. `modules/opsboard/application/operator_live_repository.py`
-12. `shared/domain/models.py`
-13. `shared/infrastructure/persistence/external_data.py`
-14. `shared/infrastructure/persistence/factory.py`
-15. `shared/infrastructure/persistence/operator_domains.py`
-16. `shared/infrastructure/persistence/repositories.py`
-17. `shared/workflow/sitescore.py`
-18. `tests/contract/test_platform_api.py`
-19. `tests/integration/_authz.py`
-20. `tests/integration/test_external_ingestion_persistence.py`
-21. `tests/integration/test_listing_pipeline.py`
-22. `tests/integration/test_operator_live_domain_modules.py`
-23. `tests/integration/test_operator_live_provenance_health.py`
-24. `tests/integration/test_operator_live_repository.py`
-25. `tests/integration/test_production_api_composition.py`
-26. `tests/ops/test_cloud_run_live_deployment.py`
-27. `tests/reliability/test_live_data_fail_closed.py`
-
-## Verification Replay
-- Command: `uv run --frozen pytest -q tests/reliability/test_health_endpoints.py tests/reliability/test_live_data_fail_closed.py tests/contract/test_platform_api.py tests/integration/test_external_scheduled_fetch_worker.py tests/integration/test_external_ingestion_persistence.py tests/integration/test_external_ingestion_multisource.py tests/integration/test_operator_live_provenance_health.py tests/integration/test_operator_live_repository.py tests/integration/test_production_api_composition.py tests/integration/test_operator_live_domain_modules.py tests/integration/test_listing_pipeline.py tests/ops/test_cloud_run_live_deployment.py tests/integration/test_domain_api_rbac.py tests/integration/test_heatzone_flow.py tests/integration/test_sitescore_decision.py` (exit 0; reviewer-requested four broader reliability/contract files plus the original eleven-file replay passed, with the existing environment-conditional skip)
-- Command: `git diff --name-only --diff-filter=ACMR -z origin/dev...HEAD -- '*.py' | xargs -0 uv run --frozen ruff check` (0 errors)
-- Command: `git diff --check origin/dev...HEAD` (0 errors)
-- Command: `git diff --name-only origin/dev...HEAD -- <task forbidden paths>` (empty; Package 10 visuals/routes/design archive, deploy workflows, model/release contracts, retired-path inventory, orchestrator, and GitHub workflows unchanged)
-- Warning: pre-existing Starlette `TestClient` / `httpx` and HTTP 422 constant deprecation warnings remain; they do not fail the replay.
+The old `82f4c57e` head had no GitHub check-runs. Exact-head CI, independent
+Codex review, PR merge, and a post-merge Deploy Dev replay are still required;
+this report does not claim them complete. Even after the direct health mode
+contract deploys, `ODP-P10-DEV-REDEPLOY-VERIFY-001` remains blocked on the real
+ForecastOps history/model release if the unchanged deployment gate still
+requires the authentic production alias.
