@@ -123,3 +123,31 @@ python3 YAML safe-load of .github/workflows/ci.yml and .github/workflows/promote
 The production negative assertion remains a required pass condition: this task
 separates dev-merge execution from production authority; it does not change the
 registry's authentic `NO-GO`, clear any Gate 0-6 blocker, or grant release GO.
+
+## 2026-08-02 latest-base closeout composition
+
+Closeout dispatch resumed from the frozen reviewer-approved and pushed task head
+`bd4e7d461074ddf1d27fb146ac64a7fd37563b03`. Since that review, `origin/dev`
+advanced from `6963ca40ff9f5666e977603c8c418edc7ca320d5` to
+`5f3be1e04b192f5be3a59076c405be335d9bfe3b`. The branch histories had diverged,
+so the current base was merge-composed without rebasing, force-pushing, or
+discarding any task history. The merge completed without conflicts because the
+six files changed on the new base did not overlap the task-owned nine-file diff.
+The resulting composed implementation head was
+`7338962c2fe21a39266db0ac6b98a3f79c79bd7b`.
+
+Verification on that composed implementation head:
+
+```text
+uv run pytest -q tests/e2e/test_release_gate_registry.py tests/e2e/test_acceptance_coverage.py tests/integration/test_flow_002_expansion_persistence.py tests/security/test_branch_protection_policy.py  # exit 0
+uv run ruff check scripts/e2e/check_product_release_gate.py scripts/e2e/check_release_gate_registry.py scripts/e2e/product_e2e_receipt.py tests/e2e/test_release_gate_registry.py tests/integration/test_flow_002_expansion_persistence.py  # exit 0
+python3 scripts/e2e/check_release_gate_registry.py  # exit 0; NO-GO registry valid, 0/7 gates cleared
+python3 scripts/e2e/check_product_release_gate.py --dev-merge  # exit 0
+python3 scripts/e2e/check_product_release_gate.py --require-go --expected-sha 7338962c2fe21a39266db0ac6b98a3f79c79bd7b  # exit 1 as required; authentic NO-GO
+python3 -c workflow YAML safe-load for ci.yml and promote-dev-to-main.yml  # exit 0
+git diff --check origin/dev...HEAD  # exit 0
+```
+
+Because the required base composition changes the exact pushed HEAD, the prior
+frozen-head approval cannot be reused for `done`. This evidence reseal and the
+normally pushed composed branch require an exact-head re-review before closeout.
