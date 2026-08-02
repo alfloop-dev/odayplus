@@ -14,7 +14,7 @@ This is a support-only acceptance checklist and dependency map. It records the p
 
 ## Current parent snapshot & blocker record
 
-Observed snapshot (updated `2026-08-02T11:33:00Z` following parent review rejection):
+Observed snapshot (updated `2026-08-02T11:40:00Z` following parent review rejection):
 
 - Parent live status: `blocked` / `in_progress` (re-opened/rejected by Codex7 after PR #567 merge attempt).
 - Parent owner: Codex4; Parent reviewer: Codex7.
