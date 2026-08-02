@@ -1371,6 +1371,32 @@ class ProcessQueueDispatchGuardTests(unittest.TestCase):
         self.assertIn("must fetch and rebase/compose", request.message)
         self.assertTrue(request.message.endswith("original owner dispatch"))
 
+    def test_failed_queue_finalization_preserves_worker_worktree(self) -> None:
+        state = {
+            "queue": {"events": {"evt-failed": {"status": "started"}}},
+            "workers": {},
+        }
+        worker = {
+            "run_id": "run-failed",
+            "queue_event_id": "evt-failed",
+            "task_id": "OPS-WORKTREE-PRESERVE-001",
+            "workspace_path": "/tmp/worker-preserve",
+        }
+
+        with mock.patch.object(supervisor, "reset_worker_worktree_after_failure") as reset_worktree:
+            supervisor.finalize_queue_event_record(
+                self.config,
+                state,
+                worker,
+                "failed",
+                "worker failed with task-owned dirt",
+            )
+
+        reset_worktree.assert_not_called()
+        record = state["queue"]["events"]["evt-failed"]
+        self.assertEqual(record["status"], "failed")
+        self.assertEqual(record["error"], "worker failed with task-owned dirt")
+
     def test_process_queue_checks_worker_guard_inside_isolated_workspace(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             repo_root = Path(tmpdir) / "pantheon"
@@ -7614,6 +7640,21 @@ class ReusedWorkerWorktreeBaseAdvanceTests(unittest.TestCase):
         self.assertEqual(dirty_path.read_text(encoding="utf-8"), "uncommitted owner work\n")
         self.assertEqual(self._git(self.worktree, "rev-parse", "HEAD").stdout.strip(), before_head)
 
+    def test_dirty_tracked_orchestrator_scratch_also_blocks(self) -> None:
+        scratch = self.worktree / ".orchestrator" / "task-briefs" / "context.md"
+        scratch.parent.mkdir(parents=True)
+        scratch.write_text("tracked context\n", encoding="utf-8")
+        self._git(self.worktree, "add", str(scratch.relative_to(self.worktree)))
+        self._git(self.worktree, "commit", "-m", "track task context")
+        self._git(self.worktree, "push", "origin", f"HEAD:{self.task_branch}")
+        scratch.write_text("owner annotation\n", encoding="utf-8")
+
+        ok, status = self._refresh()
+
+        self.assertFalse(ok)
+        self.assertEqual(status, "skipped_dirty_worktree")
+        self.assertEqual(scratch.read_text(encoding="utf-8"), "owner annotation\n")
+
     def test_local_and_remote_task_head_mismatch_blocks(self) -> None:
         (self.worktree / "local-only.txt").write_text("local\n", encoding="utf-8")
         self._git(self.worktree, "add", "local-only.txt")
@@ -7657,6 +7698,18 @@ class ReusedWorkerWorktreeBaseAdvanceTests(unittest.TestCase):
     def test_unresolved_git_operation_blocks(self) -> None:
         marker = Path(self._git(self.worktree, "rev-parse", "--git-path", "MERGE_HEAD").stdout.strip())
         marker.write_text(self.base_head + "\n", encoding="utf-8")
+
+        ok, status = self._refresh()
+
+        self.assertFalse(ok)
+        self.assertEqual(status, "unresolved_git_operation")
+
+    def test_unresolved_rebase_blocks(self) -> None:
+        raw_marker = self._git(self.worktree, "rev-parse", "--git-path", "rebase-merge").stdout.strip()
+        marker = Path(raw_marker)
+        if not marker.is_absolute():
+            marker = self.worktree / marker
+        marker.mkdir(parents=True)
 
         ok, status = self._refresh()
 

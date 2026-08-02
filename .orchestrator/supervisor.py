@@ -8931,12 +8931,6 @@ def finalize_queue_event_record(config: dict[str, Any], state: dict[str, Any], w
         record["lease_owner"] = worker.get("run_id")
     if error:
         record["error"] = error
-    if status == "failed":
-        try:
-            reset_worker_worktree_after_failure(config, state, worker)
-        except Exception:  # noqa: BLE001 - worktree recovery must never break finalize
-            pass
-
 
 
 def save_event_queue(config: dict[str, Any], events: list[dict[str, Any]]) -> None:
