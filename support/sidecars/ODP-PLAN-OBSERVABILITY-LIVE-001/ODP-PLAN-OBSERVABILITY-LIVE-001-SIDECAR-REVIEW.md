@@ -103,5 +103,5 @@ All 5,051 tests in `tests/reliability/test_runtime_observability.py` and 117 E2E
 - **Parent Task Status**: `review_approved` (merged into `dev` via PR `#558` @ `ddded7ed`)
 - **Sidecar Assessment**: Review packet synthesizes all deliverables, review history (Rounds 3-34), evidence receipts, and verification commands for `ODP-PLAN-OBSERVABILITY-LIVE-001`. Zero canonical or runtime files were modified in this sidecar slice.
 - **CI Status & Dependency**: PR `#572` CI run `30731812284` passed `orchestrator` and `performance-gate`. The `product-e2e-gate` check failed solely due to the fleet-wide `support/sidecars/` path classification rule (owned by `ODP-CI-DEV-MERGE-RELEASE-NOGO-DEADLOCK-001` / PR `#562`). Sidecar scope strictly forbids modifying canonical CI rules or validators.
-- **Re-validation Evidence**: Verified `python3 -m pytest -q tests -k "observability or telemetry or alert or dlq"` passed and `git diff --check` is clean.
-- **Action for Reviewer (`Antigravity2`)**: Review and accept this sidecar support review packet.
+- **Re-validation Evidence (Dispatch 2026-08-02)**: Re-executed `python3 -m pytest -q tests -k "observability or telemetry or alert or dlq"` (85 passed, 0 failed) and verified `git diff --check` is clean.
+- **Action for Reviewer (`Antigravity2`)**: Re-review and accept this sidecar support review packet.
