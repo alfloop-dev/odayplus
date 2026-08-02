@@ -22,6 +22,8 @@ import sys
 from pathlib import Path
 from typing import Any
 
+import pytest
+
 ROOT = Path(__file__).resolve().parents[2]
 CHECKER = ROOT / "scripts/e2e/check_release_gate_registry.py"
 PRODUCT_GATE = ROOT / "scripts/e2e/check_product_release_gate.py"
@@ -436,11 +438,48 @@ def test_cli_expected_sha_mismatch_fails_closed() -> None:
     result = run_checker("--expected-sha", OTHER_SHA)
 
     assert result.returncode == 1
-    assert "--expected-sha" in result.stdout
+    assert "not an ancestor" in result.stdout or "--expected-sha" in result.stdout
+
+
+def test_cli_expected_sha_ancestry_evidence_only_descendant_passes(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    module = load_checker_module()
+    candidate_sha = load_committed_registry()["release"]["candidate_sha"]
+    expected_sha = OTHER_SHA
+
+    def mock_run(cmd: list[str], **kwargs: Any) -> subprocess.CompletedProcess[str]:
+        if "log" in cmd:
+            return subprocess.CompletedProcess(
+                cmd, 0, stdout="docs/evidence/gates/RELEASE_GATE_REGISTRY.json\n"
+            )
+        return subprocess.CompletedProcess(cmd, 0, stdout="")
+
+    monkeypatch.setattr(subprocess, "run", mock_run)
+    errors = module.check_candidate_ancestry(candidate_sha, expected_sha, ROOT)
+
+    assert errors == []
+
+
+def test_cli_expected_sha_ancestry_non_evidence_descendant_fails_closed() -> None:
+    module = load_checker_module()
+    dev_ancestor = "eed83c0937f491211247ee3fdb0bdf8d932564fb"
+    head_sha = subprocess.run(
+        ["git", "rev-parse", "HEAD"], cwd=ROOT, capture_output=True, text=True, check=True
+    ).stdout.strip()
+    errors = module.check_candidate_ancestry(dev_ancestor, head_sha, ROOT)
+
+    assert any("intervening commits touch non-evidence paths" in err for err in errors)
 
 
 def test_cli_expected_sha_match_passes() -> None:
     result = run_checker("--expected-sha", CANDIDATE_SHA)
+
+    assert result.returncode == 0, result.stdout + result.stderr
+
+
+def test_product_gate_accepts_expected_sha() -> None:
+    result = run_product_gate("--dev-merge", "--expected-sha", CANDIDATE_SHA)
 
     assert result.returncode == 0, result.stdout + result.stderr
 
@@ -506,7 +545,9 @@ def test_ci_and_promotion_workflows_use_separate_gate_modes() -> None:
 
     assert "run: make product-e2e-gate" in ci_workflow
     assert "run: make product-release-gate" not in ci_workflow
-    assert "run: make product-release-gate" in promotion_workflow
+    assert 'EXPECTED_SHA="${{ github.event.workflow_run.head_sha }}"' in promotion_workflow
+    assert "PROMOTION_SHA" in promotion_workflow
+    assert "Promotion SHA drift detected" in promotion_workflow
     assert "github.event.workflow_run.head_sha" in promotion_workflow
     assert "check_product_release_gate.py --dev-merge" in makefile
     assert "check_product_release_gate.py --require-go" in makefile

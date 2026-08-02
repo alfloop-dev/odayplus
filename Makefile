@@ -81,7 +81,7 @@ product-e2e-gate: release-gate-registry
 	scripts/e2e/run_product_e2e.sh
 
 product-release-gate:
-	python3 scripts/e2e/check_product_release_gate.py --require-go
+	python3 scripts/e2e/check_product_release_gate.py --require-go $(if $(EXPECTED_SHA),--expected-sha $(EXPECTED_SHA))
 
 ci: bootstrap lint security test smoke node-check
 

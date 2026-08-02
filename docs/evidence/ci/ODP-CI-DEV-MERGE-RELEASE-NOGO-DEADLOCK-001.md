@@ -36,11 +36,12 @@ so this change does not weaken or bypass dependency installation.
   E2E suite to emit a fresh exact-source receipt on the runner.
 - Dev-to-main promotion checks out the exact successful dev workflow head and runs the
   production release mode before it opens or auto-merges a promotion PR.
-- Production release mode retains committed exact-source receipt validation and adds
-  `--require-go`. A green dev CI run cannot substitute for Gate 0-6 receipts or Human/Ops
-  authorization.
-- Flow-002 supplies a verified tenant id. The API remains fail-closed for missing tenant
-  scope; no route or authorization bypass was introduced.
+## TOCTOU and Candidate Ancestry Remediation
+
+- **Immutable promotion SHA**: `promote-dev-to-main.yml` binds `PROMOTION_SHA` to `${{ github.event.workflow_run.head_sha }}` and passes `EXPECTED_SHA` into `make product-release-gate`.
+- **PR-head drift failure**: `promote-dev-to-main.yml` asserts that `PR headRefOid` matches `PROMOTION_SHA`. If `dev` advances after CI validation, the workflow logs `::error::Promotion SHA drift detected!...` and aborts before status stamping or auto-merging.
+- **Candidate ancestry policy**: `scripts/e2e/check_release_gate_registry.py` accepts `--expected-sha` and verifies that the registry's `release.candidate_sha` is either an exact match or an evidence-only ancestor (where intervening commits touch only `docs/evidence/`, `docs/release/`, `docs/runbooks/`, etc.). Intervening non-evidence (product or test code) commits fail closed.
+- **Negative dev-advance regression**: `tests/e2e/test_release_gate_registry.py` tests `check_candidate_ancestry` against simulated non-evidence commit diffs to guarantee that un-attested product advances are rejected.
 
 ## Release truth after reconciliation
 

@@ -141,6 +141,13 @@ def main(argv: list[str] | None = None) -> int:
         action="store_true",
         help="fail unless the Gate 0-6 registry records an authentic GO decision",
     )
+    parser.add_argument(
+        "--expected-sha",
+        help=(
+            "fail unless release gate registry candidate_sha matches or is an "
+            "evidence-only ancestor of this exact SHA"
+        ),
+    )
     args = parser.parse_args(argv)
     errors: list[str] = []
 
@@ -177,7 +184,7 @@ def main(argv: list[str] | None = None) -> int:
     ):
         if required_token not in staging_workflow_text:
             errors.append(f"remote staging workflow missing token: {required_token}")
-    if "TODO: replace with real deploy" in staging_workflow_text:
+    if "TODO: replace with replace with real deploy" in staging_workflow_text or "TODO: replace with real deploy" in staging_workflow_text:
         errors.append("remote staging workflow still contains placeholder deploy TODO")
 
     external_followup_workflow = ROOT / ".github/workflows/external-proof-followup.yml"
@@ -222,6 +229,8 @@ def main(argv: list[str] | None = None) -> int:
     registry_command = [sys.executable, "scripts/e2e/check_release_gate_registry.py"]
     if args.require_go:
         registry_command.append("--require-go")
+    if args.expected_sha:
+        registry_command.extend(["--expected-sha", args.expected_sha])
     gate_registry_check = subprocess.run(
         registry_command,
         cwd=ROOT,

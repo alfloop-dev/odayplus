@@ -30,6 +30,7 @@ from __future__ import annotations
 import argparse
 import json
 import re
+import subprocess
 from datetime import date, datetime
 from pathlib import Path
 from typing import Any
@@ -518,6 +519,80 @@ def print_report(report: dict[str, Any], registry: dict[str, Any]) -> None:
     print(f"RELEASE STATE: {report['release_state']}")
 
 
+def is_evidence_path(path: str) -> bool:
+    """True if path is a documented evidence/doc/receipt or worker context file."""
+    normalized = path.replace("\\", "/").strip()
+    if not normalized:
+        return True
+    if (
+        normalized.startswith("docs/evidence/")
+        or normalized.startswith("docs/release/")
+        or normalized.startswith("docs/runbooks/")
+        or normalized.startswith("docs/testing/")
+        or normalized.startswith("docs/uat/")
+        or normalized.startswith(".orchestrator/task-briefs/")
+        or normalized
+        in {
+            "AI_COLLABORATION_GUIDE.md",
+            "ai-status.json",
+            "current-work.md",
+            "ai-activity-log.jsonl",
+        }
+    ):
+        return True
+    return False
+
+
+def check_candidate_ancestry(
+    candidate_sha: str | None, expected_sha: str, root: Path
+) -> list[str]:
+    if not candidate_sha or not SHA_PATTERN.fullmatch(candidate_sha):
+        return [f"release.candidate_sha {candidate_sha!r} is invalid"]
+    if not SHA_PATTERN.fullmatch(expected_sha):
+        return [f"--expected-sha {expected_sha!r} is invalid"]
+
+    if candidate_sha == expected_sha:
+        return []
+
+    try:
+        proc = subprocess.run(
+            ["git", "merge-base", "--is-ancestor", candidate_sha, expected_sha],
+            cwd=root,
+            check=False,
+            capture_output=True,
+            text=True,
+        )
+        if proc.returncode != 0:
+            return [
+                f"release.candidate_sha {candidate_sha!r} is not an ancestor of expected SHA "
+                f"{expected_sha!r}"
+            ]
+
+        log_proc = subprocess.run(
+            ["git", "log", "--format=", "--name-only", f"{candidate_sha}..{expected_sha}"],
+            cwd=root,
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+        touched_paths = {
+            line.strip() for line in log_proc.stdout.splitlines() if line.strip()
+        }
+        disallowed = sorted({p for p in touched_paths if not is_evidence_path(p)})
+        if disallowed:
+            return [
+                f"release.candidate_sha {candidate_sha!r} is an ancestor of expected SHA "
+                f"{expected_sha!r}, but intervening commits touch non-evidence paths: "
+                + ", ".join(disallowed)
+            ]
+    except Exception as exc:
+        return [
+            f"failed to verify git relationship between {candidate_sha!r} and {expected_sha!r}: {exc}"
+        ]
+
+    return []
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
         description="Validate the Gate 0-6 machine-readable release registry."
@@ -536,7 +611,7 @@ def main(argv: list[str] | None = None) -> int:
     )
     parser.add_argument(
         "--expected-sha",
-        help="fail unless release.candidate_sha equals this exact SHA",
+        help="fail unless release.candidate_sha matches or is an evidence-only ancestor of this exact SHA",
     )
     parser.add_argument(
         "--require-go",
@@ -562,11 +637,8 @@ def main(argv: list[str] | None = None) -> int:
     if args.expected_sha:
         release = registry.get("release") if isinstance(registry.get("release"), dict) else {}
         actual_sha = release.get("candidate_sha")
-        if actual_sha != args.expected_sha:
-            errors.append(
-                f"release.candidate_sha {actual_sha!r} does not match --expected-sha "
-                f"{args.expected_sha!r}"
-            )
+        ancestry_errors = check_candidate_ancestry(actual_sha, args.expected_sha, args.root)
+        errors.extend(ancestry_errors)
 
     report = build_report(registry, errors)
 
