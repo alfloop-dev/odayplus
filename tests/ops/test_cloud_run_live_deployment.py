@@ -271,6 +271,24 @@ def test_deploy_preflight_imports_runtime_dependencies_via_locked_python(
     )
     python_stub.chmod(0o755)
 
+    uv_stub = tmp_path / "uv"
+    uv_stub.write_text(
+        "#!/bin/sh\n"
+        'if [ "${1:-}" = "run" ]; then\n'
+        "  shift\n"
+        "  while [ $# -gt 0 ]; do\n"
+        '    case "$1" in\n'
+        "      --frozen|--no-sync|python) shift ;;\n"
+        "      *) break ;;\n"
+        "    esac\n"
+        "  done\n"
+        f'  exec "{sys.executable}" "$@"\n'
+        "fi\n"
+        f'exec "{sys.executable}" "$@"\n',
+        encoding="utf-8",
+    )
+    uv_stub.chmod(0o755)
+
     for command in ("gcloud", "docker"):
         stub = tmp_path / command
         stub.write_text(
@@ -283,7 +301,7 @@ def test_deploy_preflight_imports_runtime_dependencies_via_locked_python(
     env = complete_env()
     env.update(
         {
-            "PATH": f"{tmp_path}{os.pathsep}{os.environ['PATH']}",
+            "PATH": f"{tmp_path}{os.pathsep}{Path.home() / '.local' / 'bin'}{os.pathsep}{ROOT / '.venv' / 'bin'}{os.pathsep}{os.environ['PATH']}",
             "API_SERVICE": "oday-api",
             "WEB_SERVICE": "oday-web",
             "MIGRATION_JOB": "oday-migrate",

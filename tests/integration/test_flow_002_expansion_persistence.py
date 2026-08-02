@@ -28,7 +28,7 @@ SNAPSHOT_TIME = "2026-06-28T01:00:00Z"
 HEADERS = {
     "x-correlation-id": CORRELATION_ID,
     "x-subject-id": "flow-002-test",
-    "x-tenant-id": "tenant-a",
+    "x-tenant-id": "tenant-flow-002",
     "x-roles": (
         "finance_legal,expansion_user,operations_manager,regional_supervisor,"
         "site_reviewer,data_owner,auditor,executive,model_owner,release_owner,"
