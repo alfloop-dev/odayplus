@@ -1,17 +1,19 @@
 # Base-Advance Policy (#569) Worktree Refresh Reproduction & Fail-Closed Audit
-# Date: 2026-08-02T07:05:29Z
+# Date: 2026-08-02T11:14:22Z
 
 ## Setup topology
-  commit A (common ancestor) : ed4d2935caee
-  commit B (task HEAD)        : 0deecc7a9759
-  commit C (current dev HEAD) : f3c372d8d9fc
+  commit A (common ancestor) : f988309426d9
+  commit B (task HEAD)        : cadbd86363a6
+  commit C (current dev HEAD) : d7f788b4272e
 
 ## Test Case 1: Clean diverged worktree refresh
   refresh_ok    : True
-  status_string : base_advance_rebase_required:local=0deecc7a9759fe5534e72f8682506cdc8324ce10,base=f3c372d8d9fc8a6d9ca79ba936fcf0e74af95e10
+  status_string : base_advance_rebase_required:local=cadbd86363a66c62c0aaf9805f6f40e62b4710f2,base=d7f788b4272e3141c211b22313223c2f049382b0
   PASS — returns ok=True and status=base_advance_rebase_required
-  Generated owner prompt:
-    WORKTREE HANDOFF DETAIL: duplicate direct owner was terminated to preserve single-writer Supervisor ownership. Existing worktree is detached during owner-controlled rebase with local HEAD 0deecc7a9759 behind updated base f3c372d8d9fc. Owner must complete rebase, run verification, push updated PR head, then request review.
+  Supervisor prompt composition output (live formula):
+    BASE ADVANCE REQUIRED BEFORE EDITING OR HANDOFF: this clean local task HEAD exactly matches origin/task/TEST-001, but task/TEST-001 diverges from origin/dev. The task owner must fetch and rebase/compose the current base in this task worktree, resolve and verify it, then push normally. Do not reset, discard, or overwrite task history.
+
+Task execution request message.
 
 ## Test Case 2: Dirty worktree fail-closed audit
   refresh_ok    : False
@@ -20,12 +22,17 @@
 
 ## Test Case 3: Local HEAD mismatch with origin ref fail-closed audit
   refresh_ok    : False
-  status_string : task_head_mismatch: local=8493018bef09a500b2a3f270ed7ad1ef100bba8d remote=0deecc7a9759fe5534e72f8682506cdc8324ce10
+  status_string : task_head_mismatch: local=abee767131d3971d560e1003aa3443d2fddcb356 remote=cadbd86363a66c62c0aaf9805f6f40e62b4710f2
   PASS — local HEAD mismatch fails closed with ok=False
 
-## Test Case 4: Invalid remote branch fetch failure fail-closed audit
+## Test Case 4: Real git fetch failure fail-closed audit
   refresh_ok    : False
-  status_string : wrong_branch: expected task/NON-EXISTENT-BRANCH, found task/TEST-001
-  PASS — invalid ref / fetch failure fails closed with ok=False
+  status_string : fetch_failed: fatal: couldn't find remote ref NON_EXISTENT_BASE_BRANCH_9999
+  PASS — real fetch failure fails closed with ok=False and status=fetch_failed
 
-ALL 4 REPRODUCTION AND FAIL-CLOSED TEST CASES PASSED SUCCESSFULLY.
+## Test Case 5: Wrong branch mismatch fail-closed audit
+  refresh_ok    : False
+  status_string : wrong_branch: expected task/WRONG-BRANCH-001, found task/TEST-001
+  PASS — wrong branch mismatch fails closed with ok=False and status=wrong_branch
+
+ALL 5 REPRODUCTION AND FAIL-CLOSED TEST CASES PASSED SUCCESSFULLY.

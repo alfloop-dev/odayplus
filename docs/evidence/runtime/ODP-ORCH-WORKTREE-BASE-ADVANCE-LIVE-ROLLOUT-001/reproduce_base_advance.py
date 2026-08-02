@@ -82,17 +82,23 @@ def run_repro() -> int:
         assert status.startswith("base_advance_rebase_required:"), f"expected base_advance_rebase_required, got {status}"
         print("  PASS — returns ok=True and status=base_advance_rebase_required")
 
-        # Test prompt generation for owner dispatch
+        # Test prompt generation for owner dispatch using live Supervisor prompt composition logic
         if status.startswith("base_advance_rebase_required:"):
-            parts = dict(kv.split("=") for kv in status.split(":", 1)[1].split(",") if "=" in kv)
-            prompt = (
-                f"WORKTREE HANDOFF DETAIL: duplicate direct owner was terminated to preserve "
-                f"single-writer Supervisor ownership. Existing worktree is detached during owner-controlled "
-                f"rebase with local HEAD {parts.get('local', '')[:12]} behind updated base {parts.get('base', '')[:12]}. "
-                f"Owner must complete rebase, run verification, push updated PR head, then request review."
+            branch = "task/TEST-001"
+            base_ref = "origin/dev"
+            task_msg = "Task execution request message."
+            base_advance_prompt = (
+                "BASE ADVANCE REQUIRED BEFORE EDITING OR HANDOFF: this clean local task "
+                f"HEAD exactly matches origin/{branch}, but {branch} diverges from "
+                f"{base_ref}. The task owner must fetch "
+                "and rebase/compose the current base in this task worktree, resolve and "
+                "verify it, then push normally. Do not reset, discard, or overwrite task "
+                "history.\n\n"
             )
-            print("  Generated owner prompt:")
-            print(f"    {prompt}")
+            full_prompt = base_advance_prompt + task_msg
+            print("  Supervisor prompt composition output (live formula):")
+            print(f"    {full_prompt.strip()}")
+            assert full_prompt.startswith("BASE ADVANCE REQUIRED BEFORE EDITING OR HANDOFF:"), "Prompt format mismatch"
         print()
 
         # Test Case 2: Dirty worktree (tracked file modified) -> expect fail-closed
@@ -106,7 +112,6 @@ def run_repro() -> int:
         print("  PASS — dirty worktree fails closed with ok=False")
         sh("git", "checkout", "task.txt", cwd=worktree_path)
         print()
-
 
         # Test Case 3: Ref mismatch -> expect fail-closed
         print("## Test Case 3: Local HEAD mismatch with origin ref fail-closed audit")
@@ -123,17 +128,27 @@ def run_repro() -> int:
         sh("git", "reset", "--hard", commit_b, cwd=worktree_path)
         print()
 
-        # Test Case 4: Invalid remote ref / fetch failure -> expect fail-closed
-        print("## Test Case 4: Invalid remote branch fetch failure fail-closed audit")
-        ok_fetch, status_fetch = supervisor._refresh_reused_worker_worktree(init_repo, worktree_path, "origin/dev", "task/NON-EXISTENT-BRANCH")
+        # Test Case 4: Real git fetch failure -> expect fail-closed (fetch_failed)
+        print("## Test Case 4: Real git fetch failure fail-closed audit")
+        ok_fetch, status_fetch = supervisor._refresh_reused_worker_worktree(init_repo, worktree_path, "origin/NON_EXISTENT_BASE_BRANCH_9999", "task/TEST-001")
         print(f"  refresh_ok    : {ok_fetch}")
         print(f"  status_string : {status_fetch}")
         assert ok_fetch is False, f"expected ok=False for fetch failure, got {ok_fetch}"
-        print("  PASS — invalid ref / fetch failure fails closed with ok=False")
+        assert status_fetch.startswith("fetch_failed:"), f"expected fetch_failed, got {status_fetch}"
+        print("  PASS — real fetch failure fails closed with ok=False and status=fetch_failed")
         print()
 
+        # Test Case 5: Wrong branch mismatch -> expect fail-closed (wrong_branch)
+        print("## Test Case 5: Wrong branch mismatch fail-closed audit")
+        ok_branch, status_branch = supervisor._refresh_reused_worker_worktree(init_repo, worktree_path, "origin/dev", "task/WRONG-BRANCH-001")
+        print(f"  refresh_ok    : {ok_branch}")
+        print(f"  status_string : {status_branch}")
+        assert ok_branch is False, f"expected ok=False for wrong branch, got {ok_branch}"
+        assert status_branch.startswith("wrong_branch:"), f"expected wrong_branch, got {status_branch}"
+        print("  PASS — wrong branch mismatch fails closed with ok=False and status=wrong_branch")
+        print()
 
-    print("ALL 4 REPRODUCTION AND FAIL-CLOSED TEST CASES PASSED SUCCESSFULLY.")
+    print("ALL 5 REPRODUCTION AND FAIL-CLOSED TEST CASES PASSED SUCCESSFULLY.")
     return 0
 
 

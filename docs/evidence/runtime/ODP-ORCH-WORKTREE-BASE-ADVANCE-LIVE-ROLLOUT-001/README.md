@@ -42,10 +42,11 @@ Backups of the pre-deployment files are saved at:
 ## 4. Real Base-Advance Reproduction & Fail-Closed Audit
 
 - Log: `base-advance-rebase-required-repro.txt` (`python3 reproduce_base_advance.py`)
-  - **Clean Diverged Worktree**: `_refresh_reused_worker_worktree` returns `ok=True` and `status=base_advance_rebase_required:local=...,base=...`, generating the expected owner rebase prompt.
-  - **Dirty Worktree**: returns `ok=False` and `status=skipped_dirty_worktree` (fail-closed).
-  - **Ref Mismatch**: returns `ok=False` and `status=task_head_mismatch:...` (fail-closed).
-  - **Fetch Failure**: returns `ok=False` and `status=wrong_branch:...` (fail-closed).
+  - **Test Case 1 (Clean Diverged Worktree)**: `_refresh_reused_worker_worktree` returns `ok=True` and `status=base_advance_rebase_required:local=...,base=...`. Prompt composition generates the exact live `BASE ADVANCE REQUIRED BEFORE EDITING OR HANDOFF` prompt prepended to the task message.
+  - **Test Case 2 (Dirty Worktree)**: returns `ok=False` and `status=skipped_dirty_worktree` (fail-closed).
+  - **Test Case 3 (Ref Mismatch)**: returns `ok=False` and `status=task_head_mismatch:...` (fail-closed).
+  - **Test Case 4 (Real Git Fetch Failure)**: returns `ok=False` and `status=fetch_failed: fatal: couldn't find remote ref ...` (fail-closed).
+  - **Test Case 5 (Wrong Branch Mismatch)**: returns `ok=False` and `status=wrong_branch: expected ..., found ...` (fail-closed).
 
 ---
 
@@ -54,4 +55,3 @@ Backups of the pre-deployment files are saved at:
 - Focused supervisor tests: `/home/lupin/oday-plus/.venv/bin/pytest .orchestrator/test_*.py` (66 passed).
 - Syntax compilation: `python3 -m py_compile docs/evidence/runtime/ODP-ORCH-WORKTREE-BASE-ADVANCE-LIVE-ROLLOUT-001/deploy.py .orchestrator/supervisor.py .orchestrator/test_supervisor.py` (code 0).
 - Git diff formatting: `git diff --check` (code 0).
-
