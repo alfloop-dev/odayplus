@@ -6,7 +6,7 @@ import time
 from datetime import UTC, datetime
 from typing import Any
 
-from modules.notifications import ConsoleNotificationAdapter, NotificationService
+from modules.notifications import NotificationService, get_notification_adapter
 from modules.opsboard.application.network_listings import (
     InMemoryAssistedIntakeRepository,
     NetworkListingService,
@@ -23,6 +23,7 @@ from shared.jobs.queue import JobRecord, JobStatus, NonRetryableJobError
 from shared.observability import AlertRouter, default_registry
 
 logger = logging.getLogger("assisted-listing-intake-worker")
+
 
 INTAKE_JOB_TYPE = "assisted-listing-intake"
 
@@ -156,7 +157,7 @@ def handle_assisted_listing_intake(job: JobRecord, persistence: PersistenceBundl
                 notification_repo = persistence.notification_repository
                 if notification_repo:
                     ns = NotificationService(
-                        repository=notification_repo, adapter=ConsoleNotificationAdapter()
+                        repository=notification_repo, adapter=get_notification_adapter()
                     )
                     ar = AlertRouter(notification_service=ns)
                     ar.trigger_alert(

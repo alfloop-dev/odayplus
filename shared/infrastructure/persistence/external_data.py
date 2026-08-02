@@ -29,6 +29,11 @@ class DurableIngestionRunStore:
     def __init__(self, store: SqliteDocumentStore) -> None:
         self._store = store
 
+    @property
+    def tenant_id(self) -> str:
+        return getattr(self._store, "tenant_id", "")
+
+
     def save(self, record: IngestionRunRecord) -> IngestionRunRecord:
         # Runs are write-once (a fresh run_id per accepted ingestion); an
         # existing run_id upserts in place and keeps its version/ordinal.

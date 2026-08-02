@@ -89,6 +89,7 @@ class SiteScoreDecision:
     created_by: str
     created_at: datetime
     history: tuple[DecisionTransition, ...] = ()
+    tenant_id: str = ""
 
     @property
     def is_terminal(self) -> bool:
@@ -107,6 +108,7 @@ class SiteScoreDecision:
             "created_by": self.created_by,
             "created_at": self.created_at.isoformat(),
             "history": [transition.to_dict() for transition in self.history],
+            "tenant_id": self.tenant_id,
         }
 
 
@@ -323,6 +325,7 @@ class SiteScoreDecisionWorkflow:
         *,
         created_by: str,
         correlation_id: str = "",
+        tenant_id: str = "",
     ) -> SiteScoreDecision:
         """Seed a decision from a SiteScore report (system recommendation)."""
         now = datetime.now(UTC)
@@ -337,6 +340,7 @@ class SiteScoreDecisionWorkflow:
             model_version=report.model_version,
             created_by=created_by,
             created_at=now,
+            tenant_id=tenant_id,
         )
         self._store.save_report(decision.decision_id, report)
         self._store.save_decision(decision)

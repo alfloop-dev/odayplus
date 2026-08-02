@@ -47,6 +47,7 @@ else:
     def create_external_data_router(
         *,
         ingestion_service: ExternalIngestionService | None = None,
+        ingestion_run_store_for_tenant: Any | None = None,
         audit_log: InMemoryAuditLog | None = None,
         require_provider: Callable[[], None] | None = None,
     ) -> APIRouter:
@@ -55,8 +56,12 @@ else:
 
         active_audit_log = audit_log or InMemoryAuditLog()
         service = ingestion_service or ExternalIngestionService(
-            store=InMemoryIngestionRunStore(), audit_log=active_audit_log
+            store=InMemoryIngestionRunStore(),
+            ingestion_run_store_for_tenant=ingestion_run_store_for_tenant,
+            audit_log=active_audit_log,
         )
+        if ingestion_run_store_for_tenant is not None and getattr(service, "ingestion_run_store_for_tenant", None) is None:
+            service.ingestion_run_store_for_tenant = ingestion_run_store_for_tenant
         authz_engine = build_engine(audit_log=active_audit_log)
 
         router = APIRouter(prefix="/external-data", tags=["external-data"])
@@ -67,9 +72,70 @@ else:
         if require_provider is not None:
             ingestion_dependencies.append(Depends(require_provider))
 
+        def resolve_tenant_id(request: Request) -> str:
+            principal = getattr(request.state, "operator_principal", None)
+            if principal is None:
+                from apps.api.oday_api.security.dependencies import principal_from_headers
+
+                try:
+                    principal = principal_from_headers(request.headers)
+                except Exception:
+                    principal = None
+
+            if principal is None:
+                raise HTTPException(
+                    status_code=status.HTTP_403_FORBIDDEN,
+                    detail="TENANT_SCOPE_DENIED: Missing verified principal",
+                )
+
+            principal_tenant = getattr(getattr(principal, "scope", None), "tenant_id", None) or getattr(
+                principal, "tenant_id", None
+            )
+            if not principal_tenant or not str(principal_tenant).strip():
+                raise HTTPException(
+                    status_code=status.HTTP_403_FORBIDDEN,
+                    detail="TENANT_SCOPE_DENIED: Missing verified tenant scope",
+                )
+            clean_tenant = str(principal_tenant).strip()
+
+            header_tenant = (
+                request.headers.get("x-tenant-id")
+                or request.headers.get("tenant_id")
+                or ""
+            ).strip()
+            if header_tenant and header_tenant != clean_tenant:
+                raise HTTPException(
+                    status_code=status.HTTP_403_FORBIDDEN,
+                    detail="TENANT_SCOPE_DENIED: Tenant header does not match verified principal scope",
+                )
+            return clean_tenant
+
+        def store_for_request(request: Request) -> Any:
+            tid = resolve_tenant_id(request)
+            if ingestion_run_store_for_tenant is not None:
+                try:
+                    scoped = ingestion_run_store_for_tenant(tid)
+                    if scoped is not None:
+                        return scoped
+                except HTTPException:
+                    raise
+                except Exception as exc:
+                    raise HTTPException(
+                        status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                        detail=f"Failed to resolve tenant-scoped ingestion store: {exc}",
+                    ) from exc
+                raise HTTPException(
+                    status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                    detail="Failed to resolve tenant-scoped ingestion store",
+                )
+            if hasattr(service, "_resolve_store"):
+                return service._resolve_store(tid)
+            return service.store
+
         @router.get("/freshness", dependencies=[view_guard])
         def list_external_data_freshness(request: Request) -> dict[str, Any]:
-            evidence = service.store.freshness()
+            active_store = store_for_request(request)
+            evidence = active_store.freshness()
             fixture_used = False
             if not evidence and _fixture_freshness_enabled():
                 fixture_used = True
@@ -105,16 +171,18 @@ else:
 
         @router.get("/ingestion-runs", dependencies=[view_guard])
         def list_ingestion_runs(
-            provider_id: str | None = None, limit: int = 100
+            request: Request, provider_id: str | None = None, limit: int = 100
         ) -> dict[str, Any]:
-            runs = service.store.list_runs(provider_id=provider_id)
+            active_store = store_for_request(request)
+            runs = active_store.list_runs(provider_id=provider_id)
             if limit >= 0:
                 runs = runs[-limit:] if limit else []
             return {"items": [run.to_dict() for run in runs], "count": len(runs)}
 
         @router.get("/ingestion-runs/{run_id}", dependencies=[view_guard])
-        def get_ingestion_run(run_id: str) -> dict[str, Any]:
-            run = service.store.get(run_id)
+        def get_ingestion_run(run_id: str, request: Request) -> dict[str, Any]:
+            active_store = store_for_request(request)
+            run = active_store.get(run_id)
             if run is None:
                 raise HTTPException(
                     status_code=status.HTTP_404_NOT_FOUND, detail="ingestion run not found"
@@ -122,8 +190,9 @@ else:
             return run.to_dict()
 
         @router.get("/quarantine", dependencies=[view_guard])
-        def list_quarantine(provider_id: str | None = None) -> dict[str, Any]:
-            rows = service.store.quarantine_records(provider_id=provider_id)
+        def list_quarantine(request: Request, provider_id: str | None = None) -> dict[str, Any]:
+            active_store = store_for_request(request)
+            rows = active_store.quarantine_records(provider_id=provider_id)
             return {"items": rows, "count": len(rows)}
 
         @router.post(
@@ -137,15 +206,30 @@ else:
             idempotency_key: str | None = Header(default=None, alias="Idempotency-Key"),
         ) -> dict[str, Any]:
             effective_idempotency_key = body.idempotency_key or idempotency_key
-            outcome = service.ingest(
-                provider_id=body.provider_id,
-                schedule_id=body.schedule_id,
-                trigger="manual",
-                window_start=_parse_dt(body.window_start),
-                window_end=_parse_dt(body.window_end),
-                correlation_id=request.state.correlation_id,
-                api_idempotency_key=effective_idempotency_key,
-            )
+            tid = resolve_tenant_id(request)
+            try:
+                outcome = service.ingest(
+                    provider_id=body.provider_id,
+                    schedule_id=body.schedule_id,
+                    trigger="manual",
+                    window_start=_parse_dt(body.window_start),
+                    window_end=_parse_dt(body.window_end),
+                    correlation_id=request.state.correlation_id,
+                    api_idempotency_key=effective_idempotency_key,
+                    tenant_id=tid,
+                )
+            except ValueError as exc:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail=str(exc),
+                ) from exc
+            except HTTPException:
+                raise
+            except Exception as exc:
+                raise HTTPException(
+                    status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                    detail=f"Failed to execute tenant ingestion run: {exc}",
+                ) from exc
             payload = outcome.record.to_dict()
             payload["created"] = outcome.created
             payload["audit_event_id"] = outcome.audit_event_id
