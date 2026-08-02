@@ -60,8 +60,11 @@ class AVMOutcomeAccessAuditPack:
         dataset_snapshot_hash: str = "",
         model_version: str = "dealroom-avm-baseline-v1",
         task_id: str = "ODP-PLAN-AVM-OUTCOME-001",
+        authority_key: str | None = None,
     ) -> dict[str, Any]:
         """Build redacted audit receipt and verify zero confidential value leaks."""
+        from modules.avm.domain.outcome import TRUST_ANCHOR_VERIFIER, get_production_authority_verifier_key
+
         summary = {
             "kind": "avm-confidential-access-audit-receipt",
             "task_id": task_id,
@@ -82,10 +85,23 @@ class AVMOutcomeAccessAuditPack:
             },
         }
 
-        # Calculate sha256 digest of receipt body
-        body_json = json.dumps(summary, sort_keys=True, separators=(",", ":"))
+        # Calculate sha256 digest of receipt body (excluding sha256 and authority_proof)
+        body = {k: v for k, v in summary.items() if k not in ("sha256", "authority_proof")}
+        body_json = json.dumps(body, sort_keys=True, separators=(",", ":"))
         digest = hashlib.sha256(body_json.encode("utf-8")).hexdigest()
         summary["sha256"] = digest
+
+        key = authority_key or get_production_authority_verifier_key()
+        if key:
+            evt_id = hashlib.sha256(f"evt-audit:{dataset_snapshot_hash}:{self.audited_at.isoformat()}:{digest}".encode()).hexdigest()
+            canonical_audit = f"Human/Ops:human-ops-key-v1:avm_confidential_access_audit:{task_id}:{model_version}:{dataset_snapshot_hash}:{len(self.audit_events)}:{digest}:{evt_id}"
+            sig = TRUST_ANCHOR_VERIFIER.sign_payload(canonical_audit, key)
+            summary["authority_proof"] = {
+                "authority_id": "Human/Ops",
+                "issuer_key_id": "human-ops-key-v1",
+                "event_id": evt_id,
+                "signature_digest": sig,
+            }
 
         # Fail-closed assertion: ensure zero confidential values leaked into receipt
         assert_no_confidential_leak(summary, forbidden_raw_values=tuple(self.forbidden_values_seen))
@@ -97,26 +113,29 @@ def verify_audit_receipt(
     *,
     expected_snapshot_hash: str = "",
     authority_key: str | None = None,
+    verifier: Any | None = None,
+    allow_replayed: bool = False,
 ) -> bool:
     """Recompute body integrity, check count reconciliation, and verify zero leak & lineage binding."""
     if not isinstance(audit_receipt, dict):
         return False
 
-    from modules.avm.domain.outcome import get_production_authority_verifier_key
+    from modules.avm.domain.outcome import TRUST_ANCHOR_VERIFIER, get_production_authority_verifier_key
     from modules.dealroom.domain.confidential_access import create_identity_proof
 
-    key = authority_key or get_production_authority_verifier_key()
+    v = verifier or TRUST_ANCHOR_VERIFIER
+    key = authority_key or v.verifier_key
     if not key:
         return False
 
-    # M3 Fix: Enforce structural confidential leak validation before accepting audit receipt body
+    # M3 & B39 Fix: Enforce structural confidential leak validation before accepting audit receipt body
     try:
         assert_no_confidential_leak(audit_receipt)
     except Exception:
         return False
 
     sha256_digest = audit_receipt.get("sha256", "")
-    if not isinstance(sha256_digest, str) or not len(sha256_digest) == 64:
+    if not isinstance(sha256_digest, str) or len(sha256_digest) != 64:
         return False
 
     # Enforce lowercase hex SHA256 format
@@ -124,8 +143,27 @@ def verify_audit_receipt(
     if not re.match(r"^[0-9a-f]{64}$", sha256_digest):
         return False
 
-    # Recompute body integrity digest
-    body = {k: v for k, v in audit_receipt.items() if k != "sha256"}
+    # B39: Verify authority_proof if present
+    auth_proof = audit_receipt.get("authority_proof")
+    if auth_proof is not None:
+        if not isinstance(auth_proof, dict):
+            return False
+        evt_id = str(auth_proof.get("event_id", ""))
+        sig_digest = str(auth_proof.get("signature_digest", ""))
+        if not evt_id or not sig_digest:
+            return False
+        if not allow_replayed and v.is_event_replayed(evt_id):
+            return False
+        task_id = str(audit_receipt.get("task_id", "ODP-PLAN-AVM-OUTCOME-001"))
+        model_ver = str(audit_receipt.get("model_version", "dealroom-avm-baseline-v1"))
+        snap_hash = str(audit_receipt.get("dataset_snapshot_hash", ""))
+        tot_cnt = audit_receipt.get("total_access_attempts", 0)
+        canonical_audit = f"Human/Ops:human-ops-key-v1:avm_confidential_access_audit:{task_id}:{model_ver}:{snap_hash}:{tot_cnt}:{sha256_digest}:{evt_id}"
+        if not v.verify_payload_signature(canonical_audit, sig_digest, verifier_key=key):
+            return False
+
+    # Recompute body integrity digest (excluding sha256 and authority_proof)
+    body = {k: v for k, v in audit_receipt.items() if k not in ("sha256", "authority_proof")}
     body_json = json.dumps(body, sort_keys=True, separators=(",", ":"))
     expected_digest = hashlib.sha256(body_json.encode("utf-8")).hexdigest()
     if sha256_digest != expected_digest:
@@ -144,9 +182,22 @@ def verify_audit_receipt(
     valid_permitted = 0
     valid_denied = 0
 
+    allowed_resources = ConfidentialAccessAuditor.ALLOWED_RESOURCES
+    allowed_actions = {"VIEW", "EXPORT", "Action.VIEW", "Action.EXPORT"}
+
     for e in events:
         if not isinstance(e, dict):
             return False
+        res = str(e.get("resource", ""))
+        act = str(e.get("action", ""))
+        if not res or not act:
+            return False
+        # B39: Reject unauthorized resource or action (e.g. unrelated-secret-vault or DELETE)
+        if res not in allowed_resources and not res.startswith("dealroom/") and not res.startswith("avm/"):
+            return False
+        if act.upper() not in ("VIEW", "EXPORT") and act not in allowed_actions:
+            return False
+
         dec = e.get("decision")
         if dec == "PERMIT":
             actor_id = str(e.get("actor_id", ""))
@@ -157,13 +208,9 @@ def verify_audit_receipt(
                 return False
             if role_str not in ("FINANCE_LEGAL", "PLATFORM_ADMIN", "finance_legal", "platform_admin"):
                 return False
-            try:
-                expected_proof = create_identity_proof(
-                    actor_id, role_str, tenant_id, authority_key=key, event_id=e.get("event_id")
-                )
-            except Exception:
-                return False
-            if proof != expected_proof:
+            evt = e.get("event_id") or "default-identity-event"
+            canonical_id = f"{actor_id}:{role_str.lower()}:{tenant_id}:avm_confidential_access:{evt}"
+            if not v.verify_payload_signature(canonical_id, proof, verifier_key=key):
                 return False
             valid_permitted += 1
         elif dec == "DENY":
@@ -186,6 +233,9 @@ def verify_audit_receipt(
         rcpt_snapshot = audit_receipt.get("dataset_snapshot_hash", "")
         if rcpt_snapshot != expected_snapshot_hash:
             return False
+
+    if auth_proof is not None and isinstance(auth_proof, dict) and auth_proof.get("event_id"):
+        v.record_event_id(str(auth_proof["event_id"]))
 
     return True
 
@@ -216,4 +266,5 @@ def generate_dealroom_outcome_audit_receipt(
         dataset_snapshot_hash=dataset_snapshot_hash,
         model_version=model_version,
         task_id=task_id,
+        authority_key=authority_key,
     )

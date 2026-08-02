@@ -27,6 +27,14 @@ def get_production_authority_verifier_key() -> str:
     return os.environ.get("ODP_AVM_AUTHORITY_VERIFIER_KEY", "").strip() or os.environ.get("ODP_AVM_AUTHORITY_PUBLIC_KEY", "").strip()
 
 
+def is_test_authority_key(key: str | None) -> bool:
+    """Check if key is a repo-public test key or test issuer."""
+    if not key:
+        return False
+    k = str(key).strip().lower()
+    return k == TEST_ONLY_AUTHORITY_KEY or "test-only" in k or "test-authority" in k
+
+
 class AVMTrustAnchorVerifier:
     """External trust anchor verifier for AVM outcome activation, query source, and confidential access evidence."""
 
@@ -53,6 +61,41 @@ class AVMTrustAnchorVerifier:
     def reset_replay_cache(self) -> None:
         self._seen_event_ids.clear()
 
+    def sign_payload(self, canonical_payload: str, authority_key: str) -> str:
+        """Sign canonical payload using Ed25519 private key or HMAC-SHA256."""
+        if not authority_key:
+            raise AVMOutcomeValidationError("Fail-closed: Missing authority key for signing")
+        if authority_key.startswith("ed25519-priv:"):
+            try:
+                from cryptography.hazmat.primitives.asymmetric import ed25519
+                raw_priv = bytes.fromhex(authority_key[len("ed25519-priv:"):])
+                priv_key = ed25519.Ed25519PrivateKey.from_private_bytes(raw_priv)
+                return priv_key.sign(canonical_payload.encode("utf-8")).hex()
+            except Exception as err:
+                raise AVMOutcomeValidationError(f"Fail-closed: Ed25519 signing failed: {err}") from err
+        canonical = f"{canonical_payload}:{authority_key}"
+        return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+
+    def verify_payload_signature(
+        self, canonical_payload: str, signature_digest: str, verifier_key: str | None = None
+    ) -> bool:
+        """Verify signature using Ed25519 public key or HMAC-SHA256."""
+        key = verifier_key or self.verifier_key
+        if not key or not signature_digest:
+            return False
+        if key.startswith("ed25519-pub:"):
+            try:
+                from cryptography.hazmat.primitives.asymmetric import ed25519
+                raw_pub = bytes.fromhex(key[len("ed25519-pub:"):])
+                pub_key = ed25519.Ed25519PublicKey.from_public_bytes(raw_pub)
+                pub_key.verify(bytes.fromhex(signature_digest), canonical_payload.encode("utf-8"))
+                return True
+            except Exception:
+                return False
+        canonical = f"{canonical_payload}:{key}"
+        expected_sig = hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+        return signature_digest == expected_sig
+
 
 TRUST_ANCHOR_VERIFIER = AVMTrustAnchorVerifier()
 
@@ -61,10 +104,11 @@ def _assert_valid_signing_key(authority_key: str) -> None:
     if not authority_key:
         raise AVMOutcomeValidationError("Fail-closed: Invalid or missing authority key for receipt creation")
     verifier_key = get_production_authority_verifier_key()
-    if verifier_key and verifier_key != TEST_ONLY_AUTHORITY_KEY and authority_key == verifier_key:
-        raise AVMOutcomeValidationError(
-            "Fail-closed: Public verifier key cannot be used as shared signing secret for receipt creation"
-        )
+    if verifier_key and not is_test_authority_key(verifier_key) and verifier_key.startswith("ed25519-pub:"):
+        if authority_key == verifier_key:
+            raise AVMOutcomeValidationError(
+                "Fail-closed: Public verifier key cannot be used as shared signing secret for receipt creation"
+            )
 
 
 @dataclass(frozen=True)
@@ -95,9 +139,11 @@ class AVMActivationAuthorityReceipt:
         expected_purpose: str = "avm_outcome_activation",
         max_age_seconds: int = 86400,
         authority_key: str | None = None,
-        verifier: AVMTrustAnchorVerifier | None = None,
+        verifier: Any | None = None,
+        allow_replayed: bool = False,
     ) -> bool:
-        key = authority_key or TRUST_ANCHOR_VERIFIER.verifier_key
+        v = verifier or TRUST_ANCHOR_VERIFIER
+        key = authority_key or v.verifier_key
         if not key:
             return False
         if self.authority_id not in ("Human/Ops", "human-ops-label-authority"):
@@ -116,11 +162,10 @@ class AVMActivationAuthorityReceipt:
             return False
         if not self.event_id or not SHA256_REGEX.match(self.event_id):
             return False
-        if verifier is not None:
-            if verifier.is_event_replayed(self.event_id):
-                return False
-            verifier.record_event_id(self.event_id)
-        if not self.signature_digest or not SHA256_REGEX.match(self.signature_digest):
+        # B38: Mandatory replay enforcement
+        if not allow_replayed and v.is_event_replayed(self.event_id):
+            return False
+        if not self.signature_digest or (len(self.signature_digest) != 64 and len(self.signature_digest) != 128):
             return False
         ts_utc = self.issued_at.astimezone(UTC) if self.issued_at.tzinfo else self.issued_at.replace(tzinfo=UTC)
         now_utc = datetime.now(UTC)
@@ -131,9 +176,11 @@ class AVMActivationAuthorityReceipt:
             exp_utc = self.expires_at.astimezone(UTC) if self.expires_at.tzinfo else self.expires_at.replace(tzinfo=UTC)
             if now_utc > exp_utc:
                 return False
-        canonical = f"{self.authority_id}:{self.issuer_key_id}:{self.approval_status}:{self.tenant_id}:{self.purpose}:{self.dataset_snapshot_hash}:{self.model_artifact_hash}:{self.event_id}:{ts_utc.isoformat()}:{key}"
-        expected_sig = hashlib.sha256(canonical.encode("utf-8")).hexdigest()
-        return self.signature_digest == expected_sig
+        canonical = f"{self.authority_id}:{self.issuer_key_id}:{self.approval_status}:{self.tenant_id}:{self.purpose}:{self.dataset_snapshot_hash}:{self.model_artifact_hash}:{self.event_id}:{ts_utc.isoformat()}"
+        if not v.verify_payload_signature(canonical, self.signature_digest, verifier_key=key):
+            return False
+        v.record_event_id(self.event_id)
+        return True
 
 
 def create_avm_activation_receipt(
@@ -152,9 +199,10 @@ def create_avm_activation_receipt(
 ) -> AVMActivationAuthorityReceipt:
     _assert_valid_signing_key(authority_key)
     ts = issued_at or datetime.now(UTC)
-    evt = event_id or hashlib.sha256(f"evt-act:{dataset_snapshot_hash}:{model_artifact_hash}:{ts.isoformat()}".encode()).hexdigest()
-    canonical = f"{authority_id}:{issuer_key_id}:{approval_status}:{tenant_id}:{purpose}:{dataset_snapshot_hash}:{model_artifact_hash}:{evt}:{ts.isoformat()}:{authority_key}"
-    sig = hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+    ts_utc = ts.astimezone(UTC) if ts.tzinfo else ts.replace(tzinfo=UTC)
+    evt = event_id or hashlib.sha256(f"evt-act:{dataset_snapshot_hash}:{model_artifact_hash}:{ts_utc.isoformat()}".encode()).hexdigest()
+    canonical = f"{authority_id}:{issuer_key_id}:{approval_status}:{tenant_id}:{purpose}:{dataset_snapshot_hash}:{model_artifact_hash}:{evt}:{ts_utc.isoformat()}"
+    sig = TRUST_ANCHOR_VERIFIER.sign_payload(canonical, authority_key)
     return AVMActivationAuthorityReceipt(
         authority_id=authority_id,
         approval_status=approval_status,
@@ -164,7 +212,7 @@ def create_avm_activation_receipt(
         tenant_id=tenant_id,
         purpose=purpose,
         event_id=evt,
-        issued_at=ts,
+        issued_at=ts_utc,
         expires_at=expires_at,
         signature_digest=sig,
     )
@@ -199,11 +247,14 @@ class AVMQuerySourceReceipt:
         expected_purpose: str = "avm_query_source",
         max_age_seconds: int = 86400,
         authority_key: str | None = None,
-        verifier: AVMTrustAnchorVerifier | None = None,
+        verifier: Any | None = None,
+        allow_replayed: bool = False,
     ) -> bool:
-        key = authority_key or TRUST_ANCHOR_VERIFIER.verifier_key
+        v = verifier or TRUST_ANCHOR_VERIFIER
+        key = authority_key or v.verifier_key
         if not key:
             return False
+
         if self.relation != "model_ready.valuation_view":
             return False
         if self.authority_id not in ("Human/Ops", "human-ops-label-authority"):
@@ -236,11 +287,10 @@ class AVMQuerySourceReceipt:
             return False
         if not self.event_id or not SHA256_REGEX.match(self.event_id):
             return False
-        if verifier is not None:
-            if verifier.is_event_replayed(self.event_id):
-                return False
-            verifier.record_event_id(self.event_id)
-        if not self.receipt_sha256 or not SHA256_REGEX.match(self.receipt_sha256):
+        # B38: Mandatory replay enforcement
+        if not allow_replayed and v.is_event_replayed(self.event_id):
+            return False
+        if not self.receipt_sha256 or (len(self.receipt_sha256) != 64 and len(self.receipt_sha256) != 128):
             return False
         ts_utc = self.query_timestamp.astimezone(UTC) if self.query_timestamp.tzinfo else self.query_timestamp.replace(tzinfo=UTC)
         now_utc = datetime.now(UTC)
@@ -251,9 +301,11 @@ class AVMQuerySourceReceipt:
             exp_utc = self.expires_at.astimezone(UTC) if self.expires_at.tzinfo else self.expires_at.replace(tzinfo=UTC)
             if now_utc > exp_utc:
                 return False
-        canonical = f"{self.authority_id}:{self.issuer_key_id}:model_ready.valuation_view:{self.tenant_id}:{self.purpose}:{self.dataset_snapshot_id}:{self.dataset_snapshot_hash}:{self.observed_labeled_count}:{self.eligible_mature_count}:{self.population_keys_sha256}:{self.event_id}:{ts_utc.isoformat()}:{key}"
-        expected_sig = hashlib.sha256(canonical.encode("utf-8")).hexdigest()
-        return self.receipt_sha256 == expected_sig
+        canonical = f"{self.authority_id}:{self.issuer_key_id}:{self.relation}:{self.tenant_id}:{self.purpose}:{self.dataset_snapshot_id}:{self.dataset_snapshot_hash}:{self.observed_labeled_count}:{self.eligible_mature_count}:{self.population_keys_sha256}:{self.event_id}:{ts_utc.isoformat()}"
+        if not v.verify_payload_signature(canonical, self.receipt_sha256, verifier_key=key):
+            return False
+        v.record_event_id(self.event_id)
+        return True
 
 
 def create_avm_query_source_receipt(
@@ -274,13 +326,14 @@ def create_avm_query_source_receipt(
 ) -> AVMQuerySourceReceipt:
     _assert_valid_signing_key(authority_key)
     ts = query_timestamp or datetime.now(UTC)
+    ts_utc = ts.astimezone(UTC) if ts.tzinfo else ts.replace(tzinfo=UTC)
     pop_sha = hashlib.sha256(",".join(sorted(population_keys)).encode("utf-8")).hexdigest() if population_keys else ""
-    evt = event_id or hashlib.sha256(f"evt-query:{dataset_snapshot_id}:{dataset_snapshot_hash}:{pop_sha}:{ts.isoformat()}".encode()).hexdigest()
-    canonical = f"{authority_id}:{issuer_key_id}:model_ready.valuation_view:{tenant_id}:{purpose}:{dataset_snapshot_id}:{dataset_snapshot_hash}:{observed_labeled_count}:{eligible_mature_count}:{pop_sha}:{evt}:{ts.isoformat()}:{authority_key}"
-    sig = hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+    evt = event_id or hashlib.sha256(f"evt-query:{dataset_snapshot_id}:{dataset_snapshot_hash}:{pop_sha}:{ts_utc.isoformat()}".encode()).hexdigest()
+    canonical = f"{authority_id}:{issuer_key_id}:model_ready.valuation_view:{tenant_id}:{purpose}:{dataset_snapshot_id}:{dataset_snapshot_hash}:{observed_labeled_count}:{eligible_mature_count}:{pop_sha}:{evt}:{ts_utc.isoformat()}"
+    sig = TRUST_ANCHOR_VERIFIER.sign_payload(canonical, authority_key)
     return AVMQuerySourceReceipt(
         relation="model_ready.valuation_view",
-        query_timestamp=ts,
+        query_timestamp=ts_utc,
         dataset_snapshot_id=dataset_snapshot_id,
         dataset_snapshot_hash=dataset_snapshot_hash,
         observed_labeled_count=observed_labeled_count,
@@ -310,13 +363,12 @@ class AuthorityDatasetSourceAttestation:
         key = authority_key or TRUST_ANCHOR_VERIFIER.verifier_key
         if not key:
             return False
-        if not self.signature_digest or not SHA256_REGEX.match(self.signature_digest):
+        if not self.signature_digest or (len(self.signature_digest) != 64 and len(self.signature_digest) != 128):
             return False
         if not self.issuer_key_id or self.issuer_key_id.startswith("unknown"):
             return False
-        canonical = f"{self.authority_id}:{self.issuer_key_id}:{self.dataset_snapshot_id}:{self.dataset_snapshot_hash}:{self.population_keys_sha256}:{self.record_count}:{key}"
-        expected_sig = hashlib.sha256(canonical.encode("utf-8")).hexdigest()
-        return self.signature_digest == expected_sig
+        canonical = f"{self.authority_id}:{self.issuer_key_id}:{self.dataset_snapshot_id}:{self.dataset_snapshot_hash}:{self.population_keys_sha256}:{self.record_count}"
+        return TRUST_ANCHOR_VERIFIER.verify_payload_signature(canonical, self.signature_digest, verifier_key=key)
 
 
 def create_authority_dataset_attestation(
@@ -331,8 +383,8 @@ def create_authority_dataset_attestation(
     _assert_valid_signing_key(authority_key)
     pop_sha = hashlib.sha256(",".join(sorted(population_keys)).encode("utf-8")).hexdigest()
     cnt = len(population_keys)
-    canonical = f"{authority_id}:{issuer_key_id}:{dataset_snapshot_id}:{dataset_snapshot_hash}:{pop_sha}:{cnt}:{authority_key}"
-    sig = hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+    canonical = f"{authority_id}:{issuer_key_id}:{dataset_snapshot_id}:{dataset_snapshot_hash}:{pop_sha}:{cnt}"
+    sig = TRUST_ANCHOR_VERIFIER.sign_payload(canonical, authority_key)
     return AuthorityDatasetSourceAttestation(
         authority_id=authority_id,
         dataset_snapshot_id=dataset_snapshot_id,
@@ -360,21 +412,34 @@ class AuthoritativeOutcomeSourceAdapter:
         authority_key: str | None = None,
         source_attestation: AuthorityDatasetSourceAttestation | None = None,
     ) -> tuple[list[AVMOutcomeTransaction], AVMQuerySourceReceipt | None]:
-        """Readback transaction outcomes from authoritative source partition and return query receipt."""
+        """Readback transaction outcomes from authoritative source partition and return query receipt.
+
+        B40: Rejects any prohibited, synthetic, immature, or invalid-partition source row.
+        """
         key = authority_key or TRUST_ANCHOR_VERIFIER.verifier_key
         if not outcomes:
             return [], None
 
-        verified_outcomes: list[AVMOutcomeTransaction] = []
+        # B40: Strict contamination & prohibited row rejection (fail-closed immediately on any bad row)
         for o in outcomes:
-            if o.is_synthetic or not o.is_mature:
-                continue
+            if o.is_synthetic:
+                raise AVMOutcomeValidationError(
+                    f"Fail-closed: Prohibited synthetic transaction row detected in inventory: {o.transaction_id!r}"
+                )
+            if not o.is_mature:
+                raise AVMOutcomeValidationError(
+                    f"Fail-closed: Prohibited immature transaction row detected in inventory: {o.transaction_id!r}"
+                )
             if o.authority_partition != self.authority_partition:
-                continue
+                raise AVMOutcomeValidationError(
+                    f"Fail-closed: Prohibited non-authoritative partition {o.authority_partition!r} for transaction {o.transaction_id!r}"
+                )
             if not SHA256_REGEX.match(o.raw_record_sha256):
-                continue
-            verified_outcomes.append(o)
+                raise AVMOutcomeValidationError(
+                    f"Fail-closed: Invalid raw_record_sha256 {o.raw_record_sha256!r} for transaction {o.transaction_id!r}"
+                )
 
+        verified_outcomes = list(outcomes)
         if not key:
             return verified_outcomes, None
 
@@ -404,6 +469,7 @@ class AuthoritativeOutcomeSourceAdapter:
             tenant_id=self.tenant_id,
         )
         return verified_outcomes, receipt
+
 
 
 class AVMOutcomeValidationError(RuntimeError):
@@ -776,13 +842,17 @@ def compute_avm_outcome_calibration(
     if not model_artifact_hash or not SHA256_REGEX.match(model_artifact_hash):
         raise AVMOutcomeValidationError("Fail-closed: Unbound or invalid model_artifact_hash")
 
-    # B12 & B17: Activation authority receipt verification (require Human/Ops attestation with valid signature key)
+    # B12, B17 & B36: Activation authority receipt verification (require Human/Ops attestation with valid non-test production signature key)
     authentic_data_activated = False
     if activation_receipt is not None:
-        authentic_data_activated = activation_receipt.verify_attestation(
+        is_valid_attestation = activation_receipt.verify_attestation(
             expected_dataset_snapshot_hash=dataset_snapshot_hash,
             expected_model_artifact_hash=model_artifact_hash,
         )
+        # B36: Test keys cannot activate production PASS / authentic_data_activated
+        configured_key = get_production_authority_verifier_key()
+        if is_valid_attestation and not is_test_authority_key(activation_receipt.issuer_key_id) and not is_test_authority_key(configured_key):
+            authentic_data_activated = True
 
     # B14 & B18: Confidential access audit verification with full body integrity, count reconciliation, and snapshot lineage
     access_audit_verified = verify_audit_receipt(

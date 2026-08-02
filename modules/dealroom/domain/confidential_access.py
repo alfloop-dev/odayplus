@@ -145,11 +145,12 @@ def create_identity_proof(
     event_id: str | None = None,
 ) -> str:
     """Generate cryptographic identity proof bound to actor, role, tenant, purpose, and authority key."""
+    from modules.avm.domain.outcome import TRUST_ANCHOR_VERIFIER
     _assert_valid_signing_key(authority_key)
-    role_str = role.value if isinstance(role, Role) else str(role)
+    role_str = (role.value if isinstance(role, Role) else str(role)).lower()
     evt = event_id or "default-identity-event"
-    canonical = f"{actor_id}:{role_str}:{tenant_id}:{purpose}:{evt}:{authority_key}"
-    return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+    canonical = f"{actor_id}:{role_str}:{tenant_id}:{purpose}:{evt}"
+    return TRUST_ANCHOR_VERIFIER.sign_payload(canonical, authority_key)
 
 
 class ConfidentialAccessAuditor:

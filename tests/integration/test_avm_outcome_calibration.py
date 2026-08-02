@@ -42,14 +42,16 @@ VALID_DATASET_HASH = "a1b2c3d4e5f60718293a4b5c6d7e8f901234567890abcdef1234567890
 VALID_MODEL_HASH = "b2c3d4e5f60718293a4b5c6d7e8f901234567890abcdef1234567890abcdef01"
 RAW_SHA = "1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef"
 
+PROD_AUTHORITY_KEY = "prod-avm-outcome-authority-key-v1"
+
 
 @pytest.fixture(autouse=True)
 def setup_test_authority_key(monkeypatch: pytest.MonkeyPatch) -> None:
     TRUST_ANCHOR_VERIFIER.reset_replay_cache()
-    monkeypatch.setenv("ODP_AVM_AUTHORITY_VERIFIER_KEY", TEST_ONLY_AUTHORITY_KEY)
+    monkeypatch.setenv("ODP_AVM_AUTHORITY_VERIFIER_KEY", PROD_AUTHORITY_KEY)
 
 
-def _make_valid_audit_receipt(snapshot_hash: str = VALID_DATASET_HASH, key: str = TEST_ONLY_AUTHORITY_KEY) -> dict:
+def _make_valid_audit_receipt(snapshot_hash: str = VALID_DATASET_HASH, key: str = PROD_AUTHORITY_KEY) -> dict:
     ctx_fin = {
         "authenticated": True,
         "verified_identity": True,
@@ -81,7 +83,7 @@ def _make_valid_query_receipt(
     observed: int = 120,
     eligible: int = 120,
     population_keys: list[str] | tuple[str, ...] | None = None,
-    key: str = TEST_ONLY_AUTHORITY_KEY,
+    key: str = PROD_AUTHORITY_KEY,
 ) -> AVMQuerySourceReceipt:
     if population_keys is None and observed == 120:
         population_keys = [f"tx-low-{i}" for i in range(40)] + [f"tx-mid-{i}" for i in range(40)] + [f"tx-high-{i}" for i in range(40)]
@@ -143,7 +145,7 @@ def test_avm_outcome_alignment_computes_coverage_calibration_and_value_bands() -
     aligned = _make_balanced_aligned_pairs()
     assert len(aligned) == 120
 
-    activation_rcpt = create_avm_activation_receipt(VALID_DATASET_HASH, VALID_MODEL_HASH, authority_key=TEST_ONLY_AUTHORITY_KEY)
+    activation_rcpt = create_avm_activation_receipt(VALID_DATASET_HASH, VALID_MODEL_HASH, authority_key=PROD_AUTHORITY_KEY)
     audit_rcpt = _make_valid_audit_receipt()
     query_rcpt = _make_valid_query_receipt()
 
@@ -452,7 +454,8 @@ def test_b8_and_b12_activation_authority_gate_fails_closed_without_attestation()
     assert unactivated_report.reason_code == "AUTHENTIC_DATA_ACTIVATION_PENDING"
 
     # With valid Human/Ops activation receipt and query receipt: produces PASS
-    valid_activation = create_avm_activation_receipt(VALID_DATASET_HASH, VALID_MODEL_HASH, authority_key=TEST_ONLY_AUTHORITY_KEY)
+    TRUST_ANCHOR_VERIFIER.reset_replay_cache()
+    valid_activation = create_avm_activation_receipt(VALID_DATASET_HASH, VALID_MODEL_HASH, authority_key=PROD_AUTHORITY_KEY)
     activated_report = compute_avm_outcome_calibration(
         aligned,
         observed_count=120,
@@ -504,7 +507,7 @@ def test_b13_missing_abac_authority_context_fails_closed() -> None:
 
 def test_b14_calibration_pass_gated_by_access_audit() -> None:
     aligned = _make_balanced_aligned_pairs()
-    valid_activation = create_avm_activation_receipt(VALID_DATASET_HASH, VALID_MODEL_HASH, authority_key=TEST_ONLY_AUTHORITY_KEY)
+    valid_activation = create_avm_activation_receipt(VALID_DATASET_HASH, VALID_MODEL_HASH, authority_key=PROD_AUTHORITY_KEY)
     query_rcpt = _make_valid_query_receipt()
 
     # Missing audit receipt: fails closed with ACCESS_AUDIT_NOT_VERIFIED
@@ -595,7 +598,7 @@ def test_b18_mutation_caller_naked_boolean_without_identity_proof_fails() -> Non
 
 def test_b19_mutation_missing_or_tampered_query_source_receipt_fails_closed() -> None:
     aligned = _make_balanced_aligned_pairs()
-    activation_rcpt = create_avm_activation_receipt(VALID_DATASET_HASH, VALID_MODEL_HASH, authority_key=TEST_ONLY_AUTHORITY_KEY)
+    activation_rcpt = create_avm_activation_receipt(VALID_DATASET_HASH, VALID_MODEL_HASH, authority_key=PROD_AUTHORITY_KEY)
     audit_rcpt = _make_valid_audit_receipt()
 
     report_no_query = compute_avm_outcome_calibration(
@@ -676,7 +679,7 @@ def test_b21_mutation_single_low_band_population_fails_closed() -> None:
         predictions.append(AVMPredictionRecord(f"pred-{i}", f"s-{i}", p50 * 0.8, p50, p50 * 1.2, predicted_at=pred_time))
 
     aligned = align_outcomes_and_predictions(outcomes, predictions)
-    activation_rcpt = create_avm_activation_receipt(VALID_DATASET_HASH, VALID_MODEL_HASH, authority_key=TEST_ONLY_AUTHORITY_KEY)
+    activation_rcpt = create_avm_activation_receipt(VALID_DATASET_HASH, VALID_MODEL_HASH, authority_key=PROD_AUTHORITY_KEY)
     audit_rcpt = _make_valid_audit_receipt()
     query_rcpt = _make_valid_query_receipt()
 
@@ -737,7 +740,7 @@ def test_b24_audit_with_zero_permitted_count_fails_verification() -> None:
     assert verify_audit_receipt(audit_rcpt, expected_snapshot_hash=VALID_DATASET_HASH) is False
 
     aligned = _make_balanced_aligned_pairs()
-    activation_rcpt = create_avm_activation_receipt(VALID_DATASET_HASH, VALID_MODEL_HASH, authority_key=TEST_ONLY_AUTHORITY_KEY)
+    activation_rcpt = create_avm_activation_receipt(VALID_DATASET_HASH, VALID_MODEL_HASH, authority_key=PROD_AUTHORITY_KEY)
     query_rcpt = _make_valid_query_receipt()
 
     report = compute_avm_outcome_calibration(
@@ -765,7 +768,7 @@ def test_b25_query_receipt_population_mismatch_fails_reconciliation() -> None:
         observed_labeled_count=121,
         eligible_mature_count=121,
     )
-    activation_rcpt = create_avm_activation_receipt(VALID_DATASET_HASH, VALID_MODEL_HASH, authority_key=TEST_ONLY_AUTHORITY_KEY)
+    activation_rcpt = create_avm_activation_receipt(VALID_DATASET_HASH, VALID_MODEL_HASH, authority_key=PROD_AUTHORITY_KEY)
     audit_rcpt = _make_valid_audit_receipt()
 
     with pytest.raises(AVMOutcomeValidationError, match="Reconciled count mismatch"):
@@ -784,7 +787,7 @@ def test_b25_query_receipt_population_mismatch_fails_reconciliation() -> None:
 
 def test_b26_gate1_receipt_boundary_revalidates_value_bands_and_rejects_empty_metrics() -> None:
     aligned = _make_balanced_aligned_pairs()
-    activation_rcpt = create_avm_activation_receipt(VALID_DATASET_HASH, VALID_MODEL_HASH, authority_key=TEST_ONLY_AUTHORITY_KEY)
+    activation_rcpt = create_avm_activation_receipt(VALID_DATASET_HASH, VALID_MODEL_HASH, authority_key=PROD_AUTHORITY_KEY)
     audit_rcpt = _make_valid_audit_receipt()
     query_rcpt = _make_valid_query_receipt()
 
@@ -831,7 +834,7 @@ def test_b26_gate1_receipt_boundary_revalidates_value_bands_and_rejects_empty_me
 def test_m2_query_receipt_population_key_mismatch_fails_closed() -> None:
     """M2: Query receipt over attacker population keys differing from aligned tx IDs must fail-close calibration."""
     aligned = _make_balanced_aligned_pairs(120)
-    activation_rcpt = create_avm_activation_receipt(VALID_DATASET_HASH, VALID_MODEL_HASH, authority_key=TEST_ONLY_AUTHORITY_KEY)
+    activation_rcpt = create_avm_activation_receipt(VALID_DATASET_HASH, VALID_MODEL_HASH, authority_key=PROD_AUTHORITY_KEY)
     audit_rcpt = _make_valid_audit_receipt()
 
     # Query receipt signed over 120 attacker-controlled population keys
@@ -903,7 +906,7 @@ def test_m4_gate1_receipt_generator_rejects_omitted_or_forged_receipts_for_pass_
     import json
 
     aligned = _make_balanced_aligned_pairs(120)
-    activation_rcpt = create_avm_activation_receipt(VALID_DATASET_HASH, VALID_MODEL_HASH, authority_key=TEST_ONLY_AUTHORITY_KEY)
+    activation_rcpt = create_avm_activation_receipt(VALID_DATASET_HASH, VALID_MODEL_HASH, authority_key=PROD_AUTHORITY_KEY)
     audit_rcpt = _make_valid_audit_receipt()
     query_rcpt = _make_valid_query_receipt()
 
@@ -976,7 +979,7 @@ def test_b27_forged_audit_event_with_invalid_identity_proof_fails_closed() -> No
     assert verify_audit_receipt(audit_rcpt, expected_snapshot_hash=VALID_DATASET_HASH) is False
 
     aligned = _make_balanced_aligned_pairs(120)
-    activation_rcpt = create_avm_activation_receipt(VALID_DATASET_HASH, VALID_MODEL_HASH, authority_key=TEST_ONLY_AUTHORITY_KEY)
+    activation_rcpt = create_avm_activation_receipt(VALID_DATASET_HASH, VALID_MODEL_HASH, authority_key=PROD_AUTHORITY_KEY)
     query_rcpt = _make_valid_query_receipt()
 
     report = compute_avm_outcome_calibration(
@@ -999,7 +1002,7 @@ def test_b27_forged_audit_event_with_invalid_identity_proof_fails_closed() -> No
 def test_b28_gate1_generator_rejects_query_receipt_with_mismatched_population_keys() -> None:
     """B28: Gate 1 receipt generator must reject a replacement query receipt with population keys differing from canonical report."""
     aligned = _make_balanced_aligned_pairs(120)
-    activation_rcpt = create_avm_activation_receipt(VALID_DATASET_HASH, VALID_MODEL_HASH, authority_key=TEST_ONLY_AUTHORITY_KEY)
+    activation_rcpt = create_avm_activation_receipt(VALID_DATASET_HASH, VALID_MODEL_HASH, authority_key=PROD_AUTHORITY_KEY)
     audit_rcpt = _make_valid_audit_receipt()
     query_rcpt = _make_valid_query_receipt()
 
@@ -1195,7 +1198,7 @@ def test_expired_and_future_timestamp_receipts_fail_closed() -> None:
 
 def test_b33_configured_public_verifier_key_cannot_be_used_as_signing_secret(monkeypatch: pytest.MonkeyPatch) -> None:
     """B33: Public verifier key cannot be passed as signing secret to mint receipts."""
-    public_verifier = "attacker-known-public-verifier-key-v1"
+    public_verifier = "ed25519-pub:00112233445566778899aabbccddeeff00112233445566778899aabbccddeeff"
     monkeypatch.setenv("ODP_AVM_AUTHORITY_VERIFIER_KEY", public_verifier)
 
     with pytest.raises(AVMOutcomeValidationError, match="Public verifier key cannot be used as shared signing secret"):
@@ -1264,3 +1267,146 @@ def test_b35_expired_query_source_receipt_fails_verification() -> None:
         "snapshot-001", VALID_DATASET_HASH, authority_key=TEST_ONLY_AUTHORITY_KEY, expires_at=past_exp
     )
     assert query_rcpt.verify_query_receipt(VALID_DATASET_HASH, authority_key=TEST_ONLY_AUTHORITY_KEY) is False
+
+
+def test_b36_test_only_authority_key_produces_governed_disabled_and_fails_closed(monkeypatch: pytest.MonkeyPatch) -> None:
+    """B36: Configuring ODP_AVM_AUTHORITY_VERIFIER_KEY to TEST_ONLY_AUTHORITY_KEY forces authentic_data_activated=False and verdict=FAIL_CLOSED."""
+    monkeypatch.setenv("ODP_AVM_AUTHORITY_VERIFIER_KEY", TEST_ONLY_AUTHORITY_KEY)
+    TRUST_ANCHOR_VERIFIER.reset_replay_cache()
+    aligned = _make_balanced_aligned_pairs()
+
+    activation_rcpt = create_avm_activation_receipt(VALID_DATASET_HASH, VALID_MODEL_HASH, authority_key=TEST_ONLY_AUTHORITY_KEY)
+    audit_rcpt = _make_valid_audit_receipt(key=TEST_ONLY_AUTHORITY_KEY)
+    query_rcpt = _make_valid_query_receipt(key=TEST_ONLY_AUTHORITY_KEY)
+
+    report = compute_avm_outcome_calibration(
+        aligned,
+        observed_count=120,
+        eligible_count=120,
+        dataset_snapshot_id="snapshot-002",
+        dataset_snapshot_hash=VALID_DATASET_HASH,
+        model_artifact_hash=VALID_MODEL_HASH,
+        activation_receipt=activation_rcpt,
+        audit_receipt=audit_rcpt,
+        query_source_receipt=query_rcpt,
+    )
+
+    assert report.is_governed_disabled is True
+    assert report.verdict == AVMVerdict.FAIL_CLOSED
+    assert report.authentic_data_activated is False
+    assert report.reason_code == "AUTHENTIC_DATA_ACTIVATION_PENDING"
+
+
+def test_b37_asymmetric_ed25519_key_pair_verification(monkeypatch: pytest.MonkeyPatch) -> None:
+    """B37: Separately held asymmetric Ed25519 authority signer material verifies through configured public verifier key."""
+    from cryptography.hazmat.primitives.asymmetric import ed25519
+
+    priv_key = ed25519.Ed25519PrivateKey.generate()
+    pub_key = priv_key.public_key()
+
+    priv_str = "ed25519-priv:" + priv_key.private_bytes_raw().hex()
+    pub_str = "ed25519-pub:" + pub_key.public_bytes_raw().hex()
+
+    monkeypatch.setenv("ODP_AVM_AUTHORITY_VERIFIER_KEY", pub_str)
+    TRUST_ANCHOR_VERIFIER.reset_replay_cache()
+
+    aligned = _make_balanced_aligned_pairs()
+    act_rcpt = create_avm_activation_receipt(VALID_DATASET_HASH, VALID_MODEL_HASH, authority_key=priv_str)
+    audit_rcpt = _make_valid_audit_receipt(key=priv_str)
+    query_rcpt = _make_valid_query_receipt(key=priv_str)
+
+    assert act_rcpt.verify_attestation(VALID_DATASET_HASH, VALID_MODEL_HASH, authority_key=pub_str) is True
+    assert query_rcpt.verify_query_receipt(VALID_DATASET_HASH, authority_key=pub_str) is True
+    assert verify_audit_receipt(audit_rcpt, expected_snapshot_hash=VALID_DATASET_HASH, authority_key=pub_str) is True
+
+    TRUST_ANCHOR_VERIFIER.reset_replay_cache()
+
+    report = compute_avm_outcome_calibration(
+        aligned,
+        observed_count=120,
+        eligible_count=120,
+        dataset_snapshot_id="snapshot-002",
+        dataset_snapshot_hash=VALID_DATASET_HASH,
+        model_artifact_hash=VALID_MODEL_HASH,
+        activation_receipt=act_rcpt,
+        audit_receipt=audit_rcpt,
+        query_source_receipt=query_rcpt,
+    )
+
+    assert report.is_governed_disabled is False
+    assert report.verdict == AVMVerdict.PASS
+    assert report.authentic_data_activated is True
+
+
+def test_b38_mandatory_replay_enforcement() -> None:
+    """B38: Mandatory replay enforcement rejects replayed activation and query receipts."""
+    TRUST_ANCHOR_VERIFIER.reset_replay_cache()
+
+    evt_act = "1" * 64
+    evt_query = "2" * 64
+
+    act_rcpt = create_avm_activation_receipt(
+        VALID_DATASET_HASH, VALID_MODEL_HASH, authority_key=PROD_AUTHORITY_KEY, event_id=evt_act
+    )
+    query_rcpt = create_avm_query_source_receipt(
+        "snapshot-002",
+        VALID_DATASET_HASH,
+        authority_key=PROD_AUTHORITY_KEY,
+        event_id=evt_query,
+        observed_labeled_count=120,
+        eligible_mature_count=120,
+        population_keys=[f"tx-{i}" for i in range(120)],
+    )
+
+    # First verification passes
+    assert act_rcpt.verify_attestation(VALID_DATASET_HASH, VALID_MODEL_HASH, authority_key=PROD_AUTHORITY_KEY, verifier=TRUST_ANCHOR_VERIFIER) is True
+    assert query_rcpt.verify_query_receipt(VALID_DATASET_HASH, authority_key=PROD_AUTHORITY_KEY, verifier=TRUST_ANCHOR_VERIFIER) is True
+
+    # Replay attempt fails
+    assert act_rcpt.verify_attestation(VALID_DATASET_HASH, VALID_MODEL_HASH, authority_key=PROD_AUTHORITY_KEY, verifier=TRUST_ANCHOR_VERIFIER) is False
+    assert query_rcpt.verify_query_receipt(VALID_DATASET_HASH, authority_key=PROD_AUTHORITY_KEY, verifier=TRUST_ANCHOR_VERIFIER) is False
+
+
+def test_b39_audit_receipt_body_tampering_and_unauthorized_event_policy_fails_verification() -> None:
+    """B39: Audit authority signs full body; tampering event body or inserting unauthorized resource/action fails verification."""
+    TRUST_ANCHOR_VERIFIER.reset_replay_cache()
+    audit_rcpt = _make_valid_audit_receipt(key=PROD_AUTHORITY_KEY)
+
+    # 1. Attacker inserts raw confidential price and recomputes self-hash
+    import copy, json, hashlib
+    tampered1 = copy.deepcopy(audit_rcpt)
+    tampered1["audit_events"][0]["realized_price"] = 15800000
+    body1 = {k: v for k, v in tampered1.items() if k not in ("sha256", "authority_proof")}
+    tampered1["sha256"] = hashlib.sha256(json.dumps(body1, sort_keys=True, separators=(",", ":")).encode("utf-8")).hexdigest()
+    assert verify_audit_receipt(tampered1, expected_snapshot_hash=VALID_DATASET_HASH, authority_key=PROD_AUTHORITY_KEY) is False
+
+    # 2. Attacker rewrites resource to unrelated-secret-vault and action to DELETE
+    tampered2 = copy.deepcopy(audit_rcpt)
+    tampered2["audit_events"][0]["resource"] = "unrelated-secret-vault"
+    tampered2["audit_events"][0]["action"] = "DELETE"
+    body2 = {k: v for k, v in tampered2.items() if k not in ("sha256", "authority_proof")}
+    tampered2["sha256"] = hashlib.sha256(json.dumps(body2, sort_keys=True, separators=(",", ":")).encode("utf-8")).hexdigest()
+    assert verify_audit_receipt(tampered2, expected_snapshot_hash=VALID_DATASET_HASH, authority_key=PROD_AUTHORITY_KEY) is False
+
+
+def test_b40_authoritative_adapter_rejects_injected_prohibited_or_synthetic_row() -> None:
+    """B40: AuthoritativeOutcomeSourceAdapter fails closed and raises AVMOutcomeValidationError when 121st synthetic/immature row is present."""
+    adapter = AuthoritativeOutcomeSourceAdapter(tenant_id="tenant-avm-001", authority_partition="official_real_estate")
+    now = datetime.now(UTC) - timedelta(days=1)
+
+    outcomes = [
+        AVMOutcomeTransaction(f"tx-{i}", f"s-{i}", 10_000_000.0, now, is_mature=True, authority_partition="official_real_estate", raw_record_sha256=RAW_SHA)
+        for i in range(120)
+    ]
+    # Inject 121st synthetic row
+    outcomes.append(
+        AVMOutcomeTransaction("tx-synthetic-121", "s-121", 10_000_000.0, now, is_mature=True, is_synthetic=True, raw_record_sha256=RAW_SHA)
+    )
+
+    with pytest.raises(AVMOutcomeValidationError, match="Prohibited synthetic transaction row detected"):
+        adapter.readback_authoritative_outcome_inventory(
+            outcomes,
+            dataset_snapshot_id="snapshot-002",
+            dataset_snapshot_hash=VALID_DATASET_HASH,
+            authority_key=PROD_AUTHORITY_KEY,
+        )

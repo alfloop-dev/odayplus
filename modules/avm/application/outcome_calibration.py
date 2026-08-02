@@ -57,6 +57,7 @@ def generate_gate1_benchmark_receipt(
         audit_receipt,
         expected_snapshot_hash=dataset_snapshot_hash,
         authority_key=authority_key,
+        allow_replayed=True,
     )
 
     # B26 & M4: Revalidate verdict, disabled-state, audit, activation, query source, and value-band invariants at receipt boundary
@@ -80,6 +81,7 @@ def generate_gate1_benchmark_receipt(
             expected_dataset_snapshot_hash=dataset_snapshot_hash,
             expected_model_artifact_hash=model_artifact_hash,
             authority_key=authority_key,
+            allow_replayed=True,
         ):
             raise AVMOutcomeValidationError(
                 "Fail-closed: Gate 1 receipt generation received invalid activation_receipt attestation"
@@ -96,6 +98,7 @@ def generate_gate1_benchmark_receipt(
                 expected_aligned=report.aligned_count,
                 expected_population_sha256=report.population_keys_sha256,
                 authority_key=authority_key,
+                allow_replayed=True,
             )
         ):
             raise AVMOutcomeValidationError(
