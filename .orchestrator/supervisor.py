@@ -1765,25 +1765,44 @@ def prepare_worker_workspace(
                         trigger="lease_recovery",
                     )
                     if recovered:
+                        quarantine_path: Path | None = None
+                        if worktree_path and worktree_path.exists():
+                            q_stamp = datetime.now(UTC).strftime("%Y%m%dT%H%M%SZ") + f"_{uuid.uuid4().hex[:8]}"
+                            quarantine_path = worktree_path.parent / f"{worktree_path.name}.quarantine.{q_stamp}"
+                            try:
+                                _git_output(worktree_path, "checkout", "--detach", "HEAD")
+                                shutil.move(str(worktree_path), str(quarantine_path))
+                                subprocess.run(["git", "worktree", "prune"], cwd=repo_root, capture_output=True, check=False)
+                                _create_worker_worktree(
+                                    repo_root,
+                                    worktree_path,
+                                    branch,
+                                    str(settings.get("base_ref") or "origin/dev"),
+                                )
+                            except Exception:
+                                pass
+
                         refresh_ok, refresh_status = _refresh_reused_worker_worktree(
                             repo_root,
                             worktree_path,
                             str(settings.get("base_ref") or "origin/dev"),
                             branch,
                         )
-                        write_activity_log(
-                            config,
-                            {
-                                "type": "worker_worktree_lease_recovered",
-                                "task_id": request.task_id,
-                                "target_agent": target_agent,
-                                "queue_event_id": queue_event_id,
-                                "workspace_branch": branch,
-                                "workspace_path": str(worktree_path),
-                                "refresh_ok": refresh_ok,
-                                "refresh_status": refresh_status,
-                            },
-                        )
+                        if refresh_ok:
+                            write_activity_log(
+                                config,
+                                {
+                                    "type": "worker_worktree_lease_recovered",
+                                    "task_id": request.task_id,
+                                    "target_agent": target_agent,
+                                    "queue_event_id": queue_event_id,
+                                    "workspace_branch": branch,
+                                    "workspace_path": str(worktree_path),
+                                    "quarantine_path": str(quarantine_path) if quarantine_path else None,
+                                    "refresh_ok": refresh_ok,
+                                    "refresh_status": refresh_status,
+                                },
+                            )
                 if not refresh_ok:
                     if refresh_status == "skipped_dirty_worktree":
                         reason = (
@@ -9017,51 +9036,6 @@ def _quarantine_and_preserve_dirty_worktree(
     except Exception:
         return False
 
-    add_proc = subprocess.run(["git", "add", "-A"], cwd=worktree_path, capture_output=True, text=True, check=False)
-    if add_proc.returncode != 0:
-        return False
-
-    commit_msg = (
-        f"{task_id or 'UNKNOWN'}: preserve dirty worktree state ({trigger or 'lease_recovery'})\n\n"
-        f"Preserved uncommitted tracked, staged, and untracked worktree state before lease recovery.\n"
-        f"Backup manifest: {manifest_path}\n\n"
-        f"LLM-Agent: Supervisor\n"
-        f"Task-ID: {task_id or 'UNKNOWN'}\n"
-        f"Reviewer: Codex6\n"
-    )
-    commit_proc = subprocess.run(["git", "commit", "-m", commit_msg], cwd=worktree_path, capture_output=True, text=True, check=False)
-    if commit_proc.returncode != 0:
-        return False
-
-    remote_check = subprocess.run(
-        ["git", "remote", "get-url", "origin"],
-        cwd=worktree_path,
-        capture_output=True,
-        text=True,
-        check=False,
-    )
-    if remote_check.returncode == 0:
-        push_proc = subprocess.run(
-            ["git", "push", "origin", f"HEAD:{current_branch}"],
-            cwd=worktree_path,
-            capture_output=True,
-            text=True,
-            check=False,
-        )
-        if push_proc.returncode != 0:
-            return False
-
-    post_status = subprocess.run(
-        ["git", "status", "--porcelain=v1", "--untracked-files=all"],
-        cwd=worktree_path,
-        capture_output=True,
-        text=True,
-        check=False,
-    )
-    if post_status.returncode != 0 or post_status.stdout.strip():
-        return False
-
-    preserved_commit = _git_commit_oid(worktree_path, "HEAD")
     write_activity_log(
         config,
         {
@@ -9071,9 +9045,9 @@ def _quarantine_and_preserve_dirty_worktree(
             "trigger": trigger,
             "workspace_path": str(worktree_path),
             "backup_dir": str(task_backup_dir),
-            "preserved_commit_sha": preserved_commit,
+            "head_sha": local_head,
             "message": (
-                f"Preserved dirty worktree for {task_id} ({trigger or 'cleanup'}) as commit {preserved_commit[:12] if preserved_commit else 'unknown'}; "
+                f"Quarantined dirty worktree for {task_id} ({trigger or 'cleanup'}); "
                 f"backup saved to {task_backup_dir}."
             ),
         },
@@ -9206,6 +9180,23 @@ def reset_worker_worktree_after_failure(config: dict[str, Any], state: dict[str,
         run_id=worker.get("run_id"),
         trigger="worker_failed",
     )
+    if worktree_path and worktree_path.exists():
+        st_proc = subprocess.run(
+            ["git", "status", "--porcelain=v1", "--untracked-files=all"],
+            cwd=worktree_path,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        if st_proc.returncode == 0 and st_proc.stdout.strip():
+            _git_output(worktree_path, "checkout", "--detach", "HEAD")
+            q_stamp = datetime.now(UTC).strftime("%Y%m%dT%H%M%SZ") + f"_{uuid.uuid4().hex[:8]}"
+            quarantine_path = worktree_path.parent / f"{worktree_path.name}.quarantine.{q_stamp}"
+            try:
+                shutil.move(str(worktree_path), str(quarantine_path))
+                subprocess.run(["git", "worktree", "prune"], cwd=repo_root, capture_output=True, check=False)
+            except Exception:
+                pass
 
 
 def finalize_queue_event_record(config: dict[str, Any], state: dict[str, Any], worker: dict[str, Any], status: str, error: str | None = None) -> None:

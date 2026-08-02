@@ -12288,7 +12288,8 @@ class QuarantineAndPreserveDirtyWorktreeTests(unittest.TestCase):
             self.assertTrue(ok)
 
             st_proc = subprocess.run(["git", "status", "--porcelain=v1", "--untracked-files=all"], cwd=wt_path, capture_output=True, text=True, check=True)
-            self.assertEqual("", st_proc.stdout.strip())
+            self.assertIn("M  staged_doc.txt", st_proc.stdout)
+            self.assertIn("?? untracked_output.log", st_proc.stdout)
 
             self.assertTrue(staged_file.exists())
             self.assertEqual("staged content", staged_file.read_text(encoding="utf-8"))
@@ -12597,7 +12598,7 @@ class QuarantineAndPreserveDirtyWorktreeTests(unittest.TestCase):
             st_proc = subprocess.run(["git", "status", "--porcelain=v1"], cwd=wt_path, capture_output=True, text=True, check=True)
             self.assertEqual("", st_proc.stdout.strip())
 
-            # Confirm bare remote has received the preserved commit
+            # Confirm bare remote task branch was NOT polluted with dirty commits
             remote_task_head = subprocess.run(
                 ["git", "rev-parse", f"refs/heads/{branch_name}"],
                 cwd=remote_root,
@@ -12607,6 +12608,86 @@ class QuarantineAndPreserveDirtyWorktreeTests(unittest.TestCase):
             ).stdout.strip()
             wt_head = supervisor._git_commit_oid(wt_path, "HEAD")
             self.assertEqual(wt_head, remote_task_head)
+
+            # Confirm backup manifest exists
+            backups_dir = repo_root / ".orchestrator" / "worktree-dirt-backups"
+            self.assertTrue(backups_dir.exists())
+            self.assertGreater(len(list(backups_dir.glob("task-remote-bare-001-*"))), 0)
+
+    def test_rejected_push_has_no_head_mismatch_and_no_unknown_publication(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmp_p = Path(tmpdir)
+            remote_root = tmp_p / "remote.git"
+            subprocess.run(["git", "init", "--bare", str(remote_root)], capture_output=True, check=True)
+
+            # Configure pre-receive hook to reject all pushes
+            hook_file = remote_root / "hooks" / "pre-receive"
+            hook_file.write_text("#!/bin/sh\necho 'Push rejected' >&2\nexit 1\n", encoding="utf-8")
+            hook_file.chmod(0o755)
+
+            repo_root = tmp_p / "main_repo"
+            subprocess.run(["git", "clone", str(remote_root), str(repo_root)], capture_output=True, check=True)
+            (repo_root / "ai-status.json").write_text("{}", encoding="utf-8")
+            subprocess.run(["git", "config", "user.name", "TestUser"], cwd=repo_root, check=True)
+            subprocess.run(["git", "config", "user.email", "test@example.com"], cwd=repo_root, check=True)
+            subprocess.run(["git", "checkout", "-b", "dev"], cwd=repo_root, check=True)
+            (repo_root / "README.md").write_text("main\n", encoding="utf-8")
+            subprocess.run(["git", "add", "README.md"], cwd=repo_root, check=True)
+            subprocess.run(["git", "commit", "-m", "initial commit"], cwd=repo_root, check=True)
+
+            task_id = "TASK-PUSH-REJECT-001"
+            branch_name = f"task/{task_id}"
+            subprocess.run(["git", "checkout", "-b", branch_name], cwd=repo_root, check=True)
+            subprocess.run(["git", "checkout", "dev"], cwd=repo_root, check=True)
+
+            wt_path = tmp_p / "workers" / supervisor._task_id_slug(task_id)
+            wt_path.parent.mkdir(parents=True, exist_ok=True)
+            subprocess.run(["git", "worktree", "add", str(wt_path), branch_name], cwd=repo_root, capture_output=True, check=True)
+
+            # Add dirt to worktree
+            (wt_path / "secret.txt").write_text("abandoned dirty secret\n", encoding="utf-8")
+
+            config = {
+                "paths": {
+                    "status_file": str(repo_root / "ai-status.json"),
+                    "activity_log": str(repo_root / "ai-activity-log.jsonl"),
+                },
+                "branch_workflow": {"task_branch_prefix": "task/", "dev_branch": "dev"},
+                "worker_worktrees": {
+                    "enabled": True,
+                    "root": str(tmp_p / "workers"),
+                    "base_ref": "origin/dev",
+                    "reuse_existing": True,
+                },
+            }
+            state: dict = {}
+            request = supervisor.DeliveryRequest(
+                agent_id="codex",
+                provider="codex",
+                delivery_mode="codex",
+                message="wake",
+                task_id=task_id,
+                reason="owned_in_progress_dispatch",
+            )
+
+            ok, message = supervisor.prepare_worker_workspace(
+                config,
+                state,
+                request,
+                queue_event_id="evt-push-reject",
+                target_agent="Codex",
+            )
+            self.assertTrue(ok)
+            self.assertIsNone(message)
+
+            # Confirm leased worktree is clean
+            st_proc = subprocess.run(["git", "status", "--porcelain=v1"], cwd=wt_path, capture_output=True, text=True, check=True)
+            self.assertEqual("", st_proc.stdout.strip())
+
+            # Confirm refresh succeeds without task_head_mismatch
+            ref_ok, ref_status = supervisor._refresh_reused_worker_worktree(repo_root, wt_path, "origin/dev", branch_name)
+            self.assertTrue(ref_ok)
+            self.assertNotEqual("task_head_mismatch", ref_status)
 
 
 if __name__ == "__main__":
