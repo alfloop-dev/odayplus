@@ -4810,3 +4810,21 @@ def test_real_app_platform_health_job_queue_contract(tmp_path: Path) -> None:
     assert not validator.is_valid_job_queue_health(bare_queue_text), (
         f"bare 'healthy' must fail is_valid_job_queue_health; got: {bare_queue_text!r}"
     )
+
+
+def test_declared_data_mode_handles_all_envelope_shapes() -> None:
+    """Verify validator._declared_data_mode extracts data_mode from all supported envelope shapes."""
+    # 1. /platform/health shape (modes.data.mode)
+    assert validator._declared_data_mode({"modes": {"data": {"mode": "live"}}}) == "live"
+    # 2. /readiness shape (details.data.mode)
+    assert validator._declared_data_mode({"details": {"data": {"mode": "live"}}}) == "live"
+    # 3. Top-level data_mode / dataMode
+    assert validator._declared_data_mode({"data_mode": "live"}) == "live"
+    assert validator._declared_data_mode({"dataMode": "live"}) == "live"
+    # 4. details.data_mode / details.dataMode
+    assert validator._declared_data_mode({"details": {"data_mode": "live"}}) == "live"
+    # 5. Operator bootstrap shape (meta.dataMode)
+    assert validator._declared_data_mode({"meta": {"dataMode": "live"}}) == "live"
+    # 6. Missing / empty returns ""
+    assert validator._declared_data_mode({}) == ""
+    assert validator._declared_data_mode({"status": "ok"}) == ""
