@@ -4,8 +4,8 @@
 - **Task ID**: `ODP-PLAN-OBSERVABILITY-LIVE-001-SIDECAR-REVIEW`
 - **Parent Task ID**: `ODP-PLAN-OBSERVABILITY-LIVE-001`
 - **Helper Kind**: `review_packet` (sidecar support slice)
-- **Owner**: `Antigravity2`
-- **Reviewer**: `Codex`
+- **Owner**: `Antigravity`
+- **Reviewer**: `Antigravity2`
 - **Parent Owner**: `Codex`
 - **Parent Reviewer**: `Codex2`
 - **Target Parent Approved HEAD**: `f6c344972881f1c7a5c9aee37c11869efd56dde2`
@@ -102,4 +102,4 @@ All 5,051 tests in `tests/reliability/test_runtime_observability.py` and 117 E2E
 - **Sidecar Artifact Created**: `support/sidecars/ODP-PLAN-OBSERVABILITY-LIVE-001/ODP-PLAN-OBSERVABILITY-LIVE-001-SIDECAR-REVIEW.md`
 - **Parent Task Status**: `review_approved` (merged into `dev` via PR `#558` @ `ddded7ed`)
 - **Sidecar Assessment**: Review packet synthesizes all deliverables, review history (Rounds 3-34), evidence receipts, and verification commands for `ODP-PLAN-OBSERVABILITY-LIVE-001`. Zero canonical or runtime files were modified in this sidecar slice.
-- **Action for Reviewer (`Codex`)**: Review and accept this sidecar support review packet.
+- **Action for Reviewer (`Antigravity2`)**: Review and accept this sidecar support review packet.
