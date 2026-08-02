@@ -219,20 +219,34 @@ def branch_head_sha(branch: str) -> str | None:
 
 
 def branch_has_diff(base: str, branch: str) -> bool:
-    proc = run_command(["git", "rev-list", "--count", f"{base}..{branch}"], cwd=ROOT)
+    for base_ref in (f"origin/{base}", base):
+        proc = run_command(["git", "rev-list", "--count", f"{base_ref}..{branch}"], cwd=ROOT)
+        if proc.returncode != 0:
+            continue
+        try:
+            return int((proc.stdout or "0").strip() or "0") > 0
+        except ValueError:
+            continue
+    return False
+
+
+def remote_branch_head_sha(branch: str, remote: str = "origin") -> str | None:
+    remote_ref = f"refs/heads/{branch}"
+    proc = run_command(["git", "ls-remote", "--heads", remote, remote_ref], cwd=ROOT)
     if proc.returncode != 0:
-        return False
-    try:
-        return int((proc.stdout or '0').strip() or '0') > 0
-    except ValueError:
-        return False
+        return None
+    for line in (proc.stdout or "").splitlines():
+        fields = line.split()
+        if len(fields) != 2 or fields[1] != remote_ref:
+            continue
+        sha = fields[0].lower()
+        if re.fullmatch(r"[0-9a-f]{40,64}", sha):
+            return sha
+    return None
 
 
 def remote_branch_exists(branch: str, remote: str = "origin") -> bool:
-    proc = run_command(["git", "ls-remote", "--heads", remote, branch], cwd=ROOT)
-    if proc.returncode != 0:
-        return False
-    return bool((proc.stdout or "").strip())
+    return remote_branch_head_sha(branch, remote) is not None
 
 
 def run_gh_process(
@@ -388,16 +402,27 @@ def edit_label_args(labels: list[str]) -> list[str]:
 
 def review_branch_for_task(config: dict[str, Any], status: dict[str, Any], task: dict[str, Any]) -> str | None:
     meta = task.get("github") or {}
-    explicit = meta.get("head_branch")
-    if explicit and branch_exists(str(explicit)):
-        return str(explicit)
+    explicit = meta.get("head_branch") or task.get("branch")
+    if explicit:
+        explicit_branch = str(explicit)
+        if remote_branch_exists(explicit_branch) or branch_exists(explicit_branch):
+            return explicit_branch
+
+    task_id = str(task.get("id") or "").strip()
+    task_branch_prefix = str((config.get("branch_workflow", {}) or {}).get("task_branch_prefix") or "task/")
+    if task_id:
+        task_branch = f"{task_branch_prefix}{task_id}"
+        if remote_branch_exists(task_branch) or branch_exists(task_branch):
+            return task_branch
 
     owner = task.get("owner")
     for agent in status.get("agents", []):
         if agent.get("name") == owner:
             branch = agent.get("branch")
-            if branch and branch_exists(str(branch)):
-                return str(branch)
+            if branch:
+                owner_branch = str(branch)
+                if remote_branch_exists(owner_branch) or branch_exists(owner_branch):
+                    return owner_branch
 
     branch = current_branch()
     if branch and branch != default_branch(config):
@@ -649,21 +674,21 @@ def upsert_review_pr(config: dict[str, Any], bus_state: dict[str, Any], status: 
             {
                 "type": "github_review_pr_skipped",
                 "task_id": task["id"],
-                "message": "Review task is in review, but no non-default local branch is available for PR creation.",
+                "message": "Review task is in review, but no task-scoped origin ref or non-default fallback branch is available for PR creation.",
             },
         )
         return True
 
     base = default_branch(config)
     title = f"[ReviewBus] {task['id']} {task['title']}"
-    head_sha = branch_head_sha(branch)
+    local_head_sha = branch_head_sha(branch)
     skip_hash = json.dumps(
         {
             "state": "skipped_unpublished_branch",
             "task_id": task["id"],
             "branch": branch,
             "base": base,
-            "head_sha": head_sha,
+            "head_sha": local_head_sha,
         },
         ensure_ascii=False,
         sort_keys=True,
@@ -672,15 +697,15 @@ def upsert_review_pr(config: dict[str, Any], bus_state: dict[str, Any], status: 
         isinstance(pr_ref, dict)
         and pr_ref.get("state") == "skipped_unpublished_branch"
         and pr_ref.get("branch") == branch
-        and pr_ref.get("head_sha") == head_sha
+        and pr_ref.get("head_sha") == local_head_sha
         and entry.get("last_review_hash") == skip_hash
     )
-    if previous_unpublished:
-        last_check = _parse_iso(str(pr_ref.get("last_remote_branch_check_at") or ""))
-        if last_check and (_iso_now_dt() - last_check).total_seconds() < unpublished_branch_recheck_seconds(config):
-            return False
-
-    if not remote_branch_exists(branch):
+    remote_head_sha = remote_branch_head_sha(branch)
+    if not remote_head_sha:
+        if previous_unpublished:
+            last_check = _parse_iso(str(pr_ref.get("last_remote_branch_check_at") or ""))
+            if last_check and (_iso_now_dt() - last_check).total_seconds() < unpublished_branch_recheck_seconds(config):
+                return False
         checked_at = utc_now()
         entry["review_pr"] = {
             "number": (pr_ref or {}).get("number"),
@@ -688,7 +713,7 @@ def upsert_review_pr(config: dict[str, Any], bus_state: dict[str, Any], status: 
             "title": title,
             "branch": branch,
             "state": "skipped_unpublished_branch",
-            "head_sha": head_sha,
+            "head_sha": local_head_sha,
             "last_remote_branch_check_at": checked_at,
         }
         entry["last_review_hash"] = skip_hash
@@ -703,6 +728,8 @@ def upsert_review_pr(config: dict[str, Any], bus_state: dict[str, Any], status: 
             },
         )
         return True
+    head_sha = remote_head_sha
+    remote_ref = f"refs/heads/{branch}"
     variables = {
         "marker": COMMENT_MARKER,
         "task_id": task["id"],
@@ -723,7 +750,7 @@ def upsert_review_pr(config: dict[str, Any], bus_state: dict[str, Any], status: 
     if entry.get("last_review_hash") == pr_hash and pr_ref:
         return False
 
-    if not branch_has_diff(base, branch):
+    if not branch_has_diff(base, head_sha):
         entry["review_pr"] = {
             "number": (pr_ref or {}).get("number"),
             "url": (pr_ref or {}).get("url"),
@@ -731,6 +758,7 @@ def upsert_review_pr(config: dict[str, Any], bus_state: dict[str, Any], status: 
             "branch": branch,
             "state": "skipped_no_commits",
             "head_sha": head_sha,
+            "remote_ref": remote_ref,
         }
         entry["last_review_hash"] = pr_hash
         write_activity_log(
@@ -774,6 +802,8 @@ def upsert_review_pr(config: dict[str, Any], bus_state: dict[str, Any], status: 
         "title": title,
         "branch": branch,
         "state": "open",
+        "head_sha": head_sha,
+        "remote_ref": remote_ref,
         "last_remote_branch_check_at": utc_now(),
     }
     entry["last_review_hash"] = pr_hash
