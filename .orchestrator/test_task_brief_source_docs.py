@@ -873,6 +873,194 @@ class TaskBriefSourceDocsTests(unittest.TestCase):
                     common.generate_task_brief_content(config, "ODP-AMBIG-001")
                 self.assertIn("Archived-task ambiguity for task ODP-AMBIG-001", str(ctx.exception))
 
+    def test_b12_directory_source_doc_materialization_tree_mismatch_fails_closed(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmp_path = Path(tmpdir)
+            status_root = tmp_path / "pantheon"
+            status_root.mkdir()
+            status_file = status_root / "ai-status.json"
+
+            inv_dir = status_root / "docs" / "evidence" / "inventory"
+            inv_dir.mkdir(parents=True)
+            (inv_dir / "manifest.json").write_text('{"version": 1}\n', encoding="utf-8")
+            (inv_dir / "fileA.txt").write_text("content A\n", encoding="utf-8")
+            (inv_dir / "fileB.txt").write_text("content B\n", encoding="utf-8")
+
+            task = {
+                "id": "ODP-B12-DIR-001",
+                "title": "Directory Materialization B12 Task",
+                "priority": "P0",
+                "mutates_canonical": True,
+                "status": "in_progress",
+                "owner": "Antigravity",
+                "reviewer": "Codex5",
+                "source_docs": ["docs/evidence/inventory"],
+            }
+            status_data = {"tasks": [task]}
+            status_file.write_text(json.dumps(status_data), encoding="utf-8")
+            config = {"paths": {"status_file": str(status_file)}}
+
+            # Owner worktree: clean materialization
+            worktree_owner = tmp_path / "worktree_owner"
+            worktree_owner.mkdir()
+            req_owner = supervisor.DeliveryRequest(
+                agent_id="Antigravity",
+                provider="antigravity",
+                delivery_mode="antigravity",
+                message="wake",
+                task_id="ODP-B12-DIR-001",
+                context_files=["docs/evidence/inventory"],
+            )
+            mat_owner = supervisor.materialize_worker_context_files(config, req_owner, worktree_owner)
+            self.assertEqual(mat_owner, ["docs/evidence/inventory"])
+            manifest_owner = req_owner.metadata.get("materialized_source_manifest")
+            self.assertIsNotNone(manifest_owner)
+            sha_owner = manifest_owner[0]["sha256"]
+            self.assertTrue(bool(sha_owner))
+
+            # Reviewer worktree: pre-existing reviewer-only extra file
+            worktree_reviewer = tmp_path / "worktree_reviewer"
+            worktree_reviewer.mkdir()
+            dest_inv_rev = worktree_reviewer / "docs" / "evidence" / "inventory"
+            dest_inv_rev.mkdir(parents=True)
+            extra_file = dest_inv_rev / "reviewer_extra.txt"
+            extra_file.write_text("reviewer extra data\n", encoding="utf-8")
+
+            req_reviewer = supervisor.DeliveryRequest(
+                agent_id="Codex5",
+                provider="codex",
+                delivery_mode="codex",
+                message="review",
+                task_id="ODP-B12-DIR-001",
+                context_files=["docs/evidence/inventory"],
+            )
+            with self.assertRaises(ValueError) as ctx:
+                supervisor.materialize_worker_context_files(config, req_reviewer, worktree_reviewer)
+            self.assertIn("final source and destination tree mismatch", str(ctx.exception))
+            self.assertTrue(extra_file.exists())
+
+    def test_b13_archived_ambiguity_canonical_metadata_conflicts(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            status_root = Path(tmpdir) / "pantheon"
+            status_root.mkdir()
+            archive_dir = status_root / "ai-task-archive" / "tasks"
+            archive_dir.mkdir(parents=True)
+
+            archived_task = {
+                "id": "ODP-B13-AMBIG-001",
+                "title": "Archived Title",
+                "phase": "Archived Phase",
+                "summary_zh": "Archived Summary",
+                "status": "in_progress",
+                "owner": "Antigravity",
+                "reviewer": "Codex5",
+                "last_update": "2026-08-02T10:00:00Z",
+            }
+            snapshot = {
+                "version": 1,
+                "task_id": "ODP-B13-AMBIG-001",
+                "task": archived_task,
+            }
+            (archive_dir / "ODP-B13-AMBIG-001.json").write_text(json.dumps(snapshot), encoding="utf-8")
+
+            active_task = {
+                "id": "ODP-B13-AMBIG-001",
+                "title": "Active Title Conflict",
+                "phase": "Archived Phase",
+                "summary_zh": "Archived Summary",
+                "status": "in_progress",
+                "owner": "Antigravity",
+                "reviewer": "Codex5",
+                "last_update": "2026-08-02T10:00:00Z",
+            }
+            config = {"paths": {"status_file": str(status_root / "ai-status.json")}}
+
+            with mock.patch.object(common, "load_status", return_value={"tasks": [active_task]}):
+                with self.assertRaises(ValueError) as ctx:
+                    common.validate_task_archive_ambiguity(config, "ODP-B13-AMBIG-001")
+                self.assertIn("Archived-task ambiguity for task ODP-B13-AMBIG-001: active title=", str(ctx.exception))
+
+                with self.assertRaises(ValueError) as ctx:
+                    common.generate_task_brief_content(config, "ODP-B13-AMBIG-001")
+                self.assertIn("Archived-task ambiguity", str(ctx.exception))
+
+    def test_b13_write_task_brief_bypasses_cache_on_ambiguity(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            status_root = Path(tmpdir) / "pantheon"
+            status_root.mkdir()
+            archive_dir = status_root / "ai-task-archive" / "tasks"
+            archive_dir.mkdir(parents=True)
+
+            archived_task = {
+                "id": "ODP-B13-CACHE-001",
+                "title": "Archived Title",
+                "summary_zh": "Archived Summary",
+                "status": "in_progress",
+                "owner": "Antigravity",
+                "reviewer": "Codex5",
+                "last_update": "2026-08-02T10:00:00Z",
+            }
+            (archive_dir / "ODP-B13-CACHE-001.json").write_text(
+                json.dumps({"version": 1, "task_id": "ODP-B13-CACHE-001", "task": archived_task}),
+                encoding="utf-8",
+            )
+
+            active_task = dict(archived_task)
+            active_task["summary_zh"] = "Conflicting Active Summary"
+
+            brief_path = status_root / ".orchestrator" / "task-briefs" / "odp_b13_cache_001.md"
+            brief_path.parent.mkdir(parents=True)
+            brief_path.write_text("Fresh cached brief content\n", encoding="utf-8")
+
+            config = {"paths": {"status_file": str(status_root / "ai-status.json")}}
+            with mock.patch.object(common, "load_status", return_value={"tasks": [active_task]}):
+                with self.assertRaises(ValueError) as ctx:
+                    common.write_task_brief(config, "ODP-B13-CACHE-001")
+                self.assertIn("Archived-task ambiguity", str(ctx.exception))
+
+    def test_b13_materialize_worker_context_files_fails_closed_on_ambiguity(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmp_path = Path(tmpdir)
+            status_root = tmp_path / "pantheon"
+            status_root.mkdir()
+            archive_dir = status_root / "ai-task-archive" / "tasks"
+            archive_dir.mkdir(parents=True)
+
+            archived_task = {
+                "id": "ODP-B13-DISPATCH-001",
+                "title": "Archived Title",
+                "priority": "P0",
+                "mutates_canonical": True,
+                "status": "in_progress",
+                "owner": "Antigravity",
+                "reviewer": "Codex5",
+                "last_update": "2026-08-02T10:00:00Z",
+            }
+            (archive_dir / "ODP-B13-DISPATCH-001.json").write_text(
+                json.dumps({"version": 1, "task_id": "ODP-B13-DISPATCH-001", "task": archived_task}),
+                encoding="utf-8",
+            )
+
+            active_task = dict(archived_task)
+            active_task["phase"] = "Conflicting Phase"
+            (status_root / "ai-status.json").write_text(json.dumps({"tasks": [active_task]}), encoding="utf-8")
+
+            config = {"paths": {"status_file": str(status_root / "ai-status.json")}}
+            worktree = tmp_path / "worktree"
+            worktree.mkdir()
+            req = supervisor.DeliveryRequest(
+                agent_id="Antigravity",
+                provider="antigravity",
+                delivery_mode="antigravity",
+                message="wake",
+                task_id="ODP-B13-DISPATCH-001",
+                context_files=[".orchestrator/task-briefs/odp_b13_dispatch_001.md"],
+            )
+
+            with self.assertRaises(ValueError) as ctx:
+                supervisor.materialize_worker_context_files(config, req, worktree)
+            self.assertIn("Archived-task ambiguity", str(ctx.exception))
+
 
 if __name__ == "__main__":
     unittest.main()

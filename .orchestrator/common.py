@@ -1064,6 +1064,46 @@ def is_task_brief_stale(text: str, task: dict[str, Any]) -> bool:
     return False
 
 
+def validate_task_archive_ambiguity(config: dict[str, Any], task_id: str | None) -> None:
+    if not task_id:
+        return
+    status_data = load_status(config)
+    tasks = status_data.get("tasks", []) or []
+    active_task = next((t for t in tasks if str(t.get("id") or "").strip() == task_id), None)
+    s_root = delivery_status_root(config)
+    archive_file = s_root / "ai-task-archive" / "tasks" / f"{task_id}.json"
+    archived_task = None
+    if archive_file.exists():
+        snapshot = load_json(archive_file, default=None)
+        if isinstance(snapshot, dict) and isinstance(snapshot.get("task"), dict):
+            archived_task = snapshot["task"]
+    if not archived_task:
+        from task_archive import load_archived_task
+        archived_task = load_archived_task(task_id)
+
+    if active_task and archived_task:
+        for k in ("status", "owner", "reviewer", "last_update", "title", "phase", "summary_zh", "next"):
+            active_val = str(active_task.get(k) or "").strip()
+            archived_val = str(archived_task.get(k) or "").strip()
+            if active_val != archived_val:
+                raise ValueError(
+                    f"Archived-task ambiguity for task {task_id}: active {k}='{active_task.get(k)}' != archived {k}='{archived_task.get(k)}'"
+                )
+
+        for k in ("depends_on", "artifacts", "source_docs", "acceptance", "verification"):
+            if k == "source_docs":
+                active_list = [normalize_source_doc_path(str(x)) for x in (active_task.get(k) or []) if str(x).strip()]
+                archived_list = [normalize_source_doc_path(str(x)) for x in (archived_task.get(k) or []) if str(x).strip()]
+            else:
+                active_list = [str(x).strip() for x in (active_task.get(k) or []) if str(x).strip()]
+                archived_list = [str(x).strip() for x in (archived_task.get(k) or []) if str(x).strip()]
+
+            if active_list != archived_list:
+                raise ValueError(
+                    f"Archived-task ambiguity for task {task_id}: active {k}={active_list} != archived {k}={archived_list}"
+                )
+
+
 def generate_task_brief_content(
     config: dict[str, Any],
     task_id: str | None,
@@ -1088,12 +1128,7 @@ def generate_task_brief_content(
         from task_archive import load_archived_task
         archived_task = load_archived_task(task_id)
 
-    if active_task and archived_task:
-        for k in ("status", "owner", "reviewer", "last_update"):
-            if str(active_task.get(k) or "").strip() != str(archived_task.get(k) or "").strip():
-                raise ValueError(
-                    f"Archived-task ambiguity for task {task_id}: active {k}='{active_task.get(k)}' != archived {k}='{archived_task.get(k)}'"
-                )
+    validate_task_archive_ambiguity(config, task_id)
 
     task = active_task or archived_task
     if task is None:
@@ -1222,6 +1257,7 @@ def generate_task_brief_content(
 def write_task_brief(config: dict[str, Any], task_id: str | None) -> Path | None:
     if not task_id:
         return None
+    validate_task_archive_ambiguity(config, task_id)
     path = task_brief_path(task_id)
     ensure_parent(path)
 

@@ -75,6 +75,7 @@ from common import (
     utc_now,
     validate_destination_context_path,
     validate_source_doc_path,
+    validate_task_archive_ambiguity,
     worker_runtime_paths,
     write_activity_log,
     write_failure_evidence,
@@ -1590,7 +1591,9 @@ def _generated_worker_task_brief(config: dict[str, Any], task_id: str | None) ->
     try:
         text, _, _ = generate_task_brief_content(config, str(task_id or ""))
         return text
-    except Exception:
+    except ValueError as err:
+        if "Archived-task ambiguity" in str(err):
+            raise
         task = task_index_from_status(config, load_status(config)).get(str(task_id or ""))
         if not task:
             return "\n".join(
@@ -1635,6 +1638,18 @@ def _generated_worker_task_brief(config: dict[str, Any], task_id: str | None) ->
 # copies: the reuse-dirt guard runs `git status --untracked-files=no`, so untracked
 # seeds never block re-dispatch.
 _SEEDABLE_UNTRACKED_CONTEXT = ("ai-status.json", "current-work.md", "ai-activity-log.jsonl")
+
+
+def _task_brief_context_candidates(task_id: str | None, rel_value: str) -> list[str]:
+    candidates = [rel_value]
+    clean_task_id = str(task_id or "").strip()
+    if clean_task_id:
+        lower_id = clean_task_id.lower().replace("-", "_")
+        target_name = f"{lower_id}.md"
+        default_rel = f".orchestrator/task-briefs/{target_name}"
+        if default_rel not in candidates:
+            candidates.append(default_rel)
+    return candidates
 
 
 def _generated_collaboration_guide(config: dict[str, Any]) -> str:
@@ -1725,6 +1740,15 @@ def materialize_worker_context_files(
             continue
 
         if ".orchestrator/task-briefs/" in rel_value:
+            try:
+                validate_task_archive_ambiguity(config, request.task_id)
+            except ValueError as err:
+                if is_mutating_or_p0:
+                    raise ValueError(
+                        f"Fail-closed on workspace materialization for task {request.task_id}: {err}"
+                    ) from err
+                continue
+
             destination.parent.mkdir(parents=True, exist_ok=True)
             copied = False
             found_src = None
@@ -1740,7 +1764,14 @@ def materialize_worker_context_files(
                 found_src = source
                 break
             if not copied:
-                text = _generated_worker_task_brief(config, request.task_id)
+                try:
+                    text = _generated_worker_task_brief(config, request.task_id)
+                except ValueError as err:
+                    if is_mutating_or_p0:
+                        raise ValueError(
+                            f"Fail-closed on workspace materialization for task {request.task_id}: {err}"
+                        ) from err
+                    continue
                 destination.write_text(text, encoding="utf-8")
                 for candidate in _task_brief_context_candidates(request.task_id, rel_value):
                     canon_brief = status_root / candidate
@@ -1857,11 +1888,20 @@ def materialize_worker_context_files(
                     ) from err
                 continue
 
+            source_hash = _file_or_dir_hash(source)
+            final_dest_hash = _file_or_dir_hash(destination)
+            if source_hash and final_dest_hash and source_hash != final_dest_hash:
+                if is_mutating_or_p0:
+                    raise ValueError(
+                        f"Fail-closed on workspace materialization for task {request.task_id}: final source and destination tree mismatch for '{rel_value}' (canonical sha {source_hash} vs destination sha {final_dest_hash})"
+                    )
+                continue
+
             materialized.append(rel_value)
             manifest_entries.append({
                 "relative_path": rel_value,
                 "canonical_source_path": str(source.resolve()),
-                "sha256": _file_or_dir_hash(destination) or _file_or_dir_hash(source),
+                "sha256": source_hash or final_dest_hash,
             })
         elif rel_value == "AI_COLLABORATION_GUIDE.md" and not destination.exists():
             destination.parent.mkdir(parents=True, exist_ok=True)
