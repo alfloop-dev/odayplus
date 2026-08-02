@@ -207,25 +207,36 @@ def current_branch() -> str | None:
 
 def branch_exists(branch: str) -> bool:
     proc = run_command(["git", "show-ref", "--verify", f"refs/heads/{branch}"], cwd=ROOT)
-    return proc.returncode == 0
+    if proc.returncode == 0:
+        return True
+    proc = run_command(["git", "show-ref", "--verify", f"refs/remotes/origin/{branch}"], cwd=ROOT)
+    if proc.returncode == 0:
+        return True
+    return remote_branch_exists(branch)
 
 
 def branch_head_sha(branch: str) -> str | None:
-    proc = run_command(["git", "rev-parse", branch], cwd=ROOT)
-    if proc.returncode != 0:
-        return None
-    sha = (proc.stdout or '').strip()
-    return sha or None
+    for ref in (branch, f"origin/{branch}", f"refs/remotes/origin/{branch}"):
+        proc = run_command(["git", "rev-parse", ref], cwd=ROOT)
+        if proc.returncode == 0:
+            sha = (proc.stdout or '').strip()
+            if sha:
+                return sha
+    return None
 
 
 def branch_has_diff(base: str, branch: str) -> bool:
-    proc = run_command(["git", "rev-list", "--count", f"{base}..{branch}"], cwd=ROOT)
-    if proc.returncode != 0:
-        return False
-    try:
-        return int((proc.stdout or '0').strip() or '0') > 0
-    except ValueError:
-        return False
+    branch_refs = [branch, f"origin/{branch}", f"refs/remotes/origin/{branch}"]
+    base_refs = [base, f"origin/{base}", f"refs/remotes/origin/{base}"]
+    for b_ref in branch_refs:
+        for a_ref in base_refs:
+            proc = run_command(["git", "rev-list", "--count", f"{a_ref}..{b_ref}"], cwd=ROOT)
+            if proc.returncode == 0:
+                try:
+                    return int((proc.stdout or '0').strip() or '0') > 0
+                except ValueError:
+                    pass
+    return False
 
 
 def remote_branch_exists(branch: str, remote: str = "origin") -> bool:
@@ -386,18 +397,51 @@ def edit_label_args(labels: list[str]) -> list[str]:
     return args
 
 
+def task_id_matches_branch(task_id: str, branch: str) -> bool:
+    if not task_id or not branch:
+        return False
+    t_clean = task_id.lower().replace("_", "-")
+    b_clean = branch.lower().replace("_", "-")
+    return t_clean in b_clean or b_clean in t_clean
+
+
 def review_branch_for_task(config: dict[str, Any], status: dict[str, Any], task: dict[str, Any]) -> str | None:
     meta = task.get("github") or {}
-    explicit = meta.get("head_branch")
+    explicit = meta.get("head_branch") or task.get("branch")
     if explicit and branch_exists(str(explicit)):
         return str(explicit)
 
+    task_id = str(task.get("id") or "").strip()
+    prefix = str((config.get("branch_workflow", {}) or {}).get("task_branch_prefix") or "task/")
+
     owner = task.get("owner")
-    for agent in status.get("agents", []):
-        if agent.get("name") == owner:
-            branch = agent.get("branch")
-            if branch and branch_exists(str(branch)):
-                return str(branch)
+    agent_branch: str | None = None
+    if owner:
+        for agent in status.get("agents", []):
+            if agent.get("name") == owner:
+                b = agent.get("branch")
+                if b:
+                    agent_branch = str(b)
+                break
+
+    # If owner agent's registered branch specifically matches this task ID, try it first
+    if agent_branch and task_id and task_id_matches_branch(task_id, agent_branch) and branch_exists(agent_branch):
+        return agent_branch
+
+    # Try canonical immutable task branch refs
+    if task_id:
+        candidates = [
+            f"{prefix}{task_id}",
+            f"{prefix}{task_id.lower()}",
+            f"{prefix}{task_id.lower().replace('_', '-')}",
+        ]
+        for candidate in candidates:
+            if branch_exists(candidate):
+                return candidate
+
+    # Fallback to owner agent's branch if it exists
+    if agent_branch and branch_exists(agent_branch):
+        return agent_branch
 
     branch = current_branch()
     if branch and branch != default_branch(config):

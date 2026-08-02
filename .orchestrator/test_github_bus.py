@@ -530,5 +530,50 @@ class GitHubCoordinationCommandTests(unittest.TestCase):
         self.assertEqual(queue[0]["metadata"]["coordination"]["worker_kind"], "engine-worker")
 
 
+class TaskPRDiscoveryTests(unittest.TestCase):
+    def test_review_branch_for_task_prioritizes_immutable_task_ref_over_unrelated_agent_branch(self) -> None:
+        config = {"branch_workflow": {"task_branch_prefix": "task/"}}
+        status = {
+            "agents": [
+                {
+                    "name": "Antigravity",
+                    "branch": "task/ODP-RUNTIME-GCP-001",
+                }
+            ]
+        }
+        task = {
+            "id": "ODP-API-HEALTH-DATA-MODE-CONTRACT-001",
+            "owner": "Antigravity",
+            "title": "Health data mode contract",
+        }
+
+        def mock_exists(branch_name: str) -> bool:
+            return branch_name in {
+                "task/ODP-RUNTIME-GCP-001",
+                "task/ODP-API-HEALTH-DATA-MODE-CONTRACT-001",
+            }
+
+        with mock.patch.object(github_bus, "branch_exists", side_effect=mock_exists):
+            found_branch = github_bus.review_branch_for_task(config, status, task)
+
+        self.assertEqual(found_branch, "task/ODP-API-HEALTH-DATA-MODE-CONTRACT-001")
+
+    def test_branch_ref_resolution_supports_remote_tracking_refs(self) -> None:
+        def mock_cmd(cmd: list[str], cwd: str | Path | None = None) -> subprocess.CompletedProcess[str]:
+            cmd_str = " ".join(cmd)
+            if "show-ref" in cmd_str and "refs/remotes/origin/task/ODP-REMOTE-001" in cmd_str:
+                return subprocess.CompletedProcess(cmd, 0, "sha123 refs/remotes/origin/task/ODP-REMOTE-001\n", "")
+            if "rev-parse origin/task/ODP-REMOTE-001" in cmd_str:
+                return subprocess.CompletedProcess(cmd, 0, "70ea2d817c1d60db346869a0b284a6942fe78d2a\n", "")
+            if "rev-list --count" in cmd_str and "origin/dev..origin/task/ODP-REMOTE-001" in cmd_str:
+                return subprocess.CompletedProcess(cmd, 0, "3\n", "")
+            return subprocess.CompletedProcess(cmd, 1, "", "ref not found")
+
+        with mock.patch.object(github_bus, "run_command", side_effect=mock_cmd):
+            self.assertTrue(github_bus.branch_exists("task/ODP-REMOTE-001"))
+            self.assertEqual(github_bus.branch_head_sha("task/ODP-REMOTE-001"), "70ea2d817c1d60db346869a0b284a6942fe78d2a")
+            self.assertTrue(github_bus.branch_has_diff("dev", "task/ODP-REMOTE-001"))
+
+
 if __name__ == "__main__":
     unittest.main()
