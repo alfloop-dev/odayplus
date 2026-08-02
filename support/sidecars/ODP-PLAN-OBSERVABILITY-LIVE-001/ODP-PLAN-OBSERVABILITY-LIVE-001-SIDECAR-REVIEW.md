@@ -107,7 +107,7 @@ All 5,051 tests in `tests/reliability/test_runtime_observability.py` and 117 E2E
 - **Re-validation Evidence (Dispatch 2026-08-02T05:32:11Z)**: Re-executed `python3 -m pytest -q tests -k "observability or telemetry or alert or dlq"` (85 passed, 0 failed) and verified `git diff --check` is clean. Scope remains strictly limited to support artifact `support/sidecars/ODP-PLAN-OBSERVABILITY-LIVE-001/ODP-PLAN-OBSERVABILITY-LIVE-001-SIDECAR-REVIEW.md`.
 - **Re-validation Evidence (Dispatch 2026-08-02T05:35:32Z)**: Re-executed `python3 -m pytest -q tests -k "observability or telemetry or alert or dlq"` (85 passed, 0 failed) and verified `git diff --check` is clean. Scope remains strictly limited to support artifact `support/sidecars/ODP-PLAN-OBSERVABILITY-LIVE-001/ODP-PLAN-OBSERVABILITY-LIVE-001-SIDECAR-REVIEW.md`.
 - **Re-validation Evidence (Dispatch 2026-08-02T05:41:00Z)**: Re-executed `python3 -m pytest -q tests -k "observability or telemetry or alert or dlq"` (85 passed, 0 failed), `python3 -m ruff check shared/observability tests/reliability scripts/deployment` (All checks passed!), and verified `git diff --check` is clean. Scope remains strictly limited to support artifact `support/sidecars/ODP-PLAN-OBSERVABILITY-LIVE-001/ODP-PLAN-OBSERVABILITY-LIVE-001-SIDECAR-REVIEW.md`.
-- **Re-validation Evidence (Dispatch 2026-08-02T05:46:00Z)**: Re-executed `./.venv/bin/pytest -q tests -k "observability or telemetry or alert or dlq"` (85 passed, 0 failed), `./.venv/bin/ruff check shared/observability tests/reliability scripts/deployment` (All checks passed!), and verified `git diff --check` is clean. Scope remains strictly limited to support artifact `support/sidecars/ODP-PLAN-OBSERVABILITY-LIVE-001/ODP-PLAN-OBSERVABILITY-LIVE-001-SIDECAR-REVIEW.md`.
+- **Re-validation Evidence (Dispatch 2026-08-02T05:47:40Z)**: Re-executed `./.venv/bin/pytest -q tests -k "observability or telemetry or alert or dlq"` (85 passed, 0 failed), `./.venv/bin/ruff check shared/observability tests/reliability scripts/deployment` (All checks passed!), and verified `git diff --check` is clean. Scope remains strictly limited to support artifact `support/sidecars/ODP-PLAN-OBSERVABILITY-LIVE-001/ODP-PLAN-OBSERVABILITY-LIVE-001-SIDECAR-REVIEW.md`.
 - **Action for Reviewer (`Antigravity2`)**: Re-review and accept this sidecar support review packet.
 
 ---
@@ -115,9 +115,9 @@ All 5,051 tests in `tests/reliability/test_runtime_observability.py` and 117 E2E
 ## 7. Final Reviewer Audit & Signoff (`Antigravity2`)
 
 - **Reviewer Identity**: `Antigravity2`
-- **Audit Timestamp**: `2026-08-02T05:46:00Z`
+- **Audit Timestamp**: `2026-08-02T05:47:40Z`
 - **Task ID**: `ODP-PLAN-OBSERVABILITY-LIVE-001-SIDECAR-REVIEW`
 - **Scope Verification**: Strictly support artifact `support/sidecars/ODP-PLAN-OBSERVABILITY-LIVE-001/ODP-PLAN-OBSERVABILITY-LIVE-001-SIDECAR-REVIEW.md`. Zero canonical or runtime code modified.
-- **Test Verification**: Executed `pytest -q tests -k "observability or telemetry or alert or dlq"` — 85 passed, 0 failed.
-- **Formatting Verification**: Executed `git diff --check` — 0 whitespace or formatting errors.
-- **Review Decision**: **APPROVED**. Re-verified support-only review packet and evidence summary for parent task `ODP-PLAN-OBSERVABILITY-LIVE-001` at HEAD `a99808d2`. All deliverables, review history (Rounds 3-34), evidence receipts, and verification commands are accurately captured without mutating L1 canonical truth or runtime code.
+- **Test Verification**: Executed `./.venv/bin/pytest -q tests -k "observability or telemetry or alert or dlq"` — 85 passed, 0 failed.
+- **Linter & Formatting Verification**: Executed `./.venv/bin/ruff check shared/observability tests/reliability scripts/deployment` (clean) and `git diff --check` (0 whitespace errors).
+- **Review Decision**: **APPROVED**. Re-verified support-only review packet and evidence summary for parent task `ODP-PLAN-OBSERVABILITY-LIVE-001` at HEAD `557143ac`. All deliverables, review history (Rounds 3-34), evidence receipts, and verification commands are accurately captured without mutating L1 canonical truth or runtime code.
