@@ -1061,6 +1061,106 @@ class TaskBriefSourceDocsTests(unittest.TestCase):
                 supervisor.materialize_worker_context_files(config, req, worktree)
             self.assertIn("Archived-task ambiguity", str(ctx.exception))
 
+    def test_b15_task_brief_context_candidates_preserves_hyphen_and_agent_id_candidates(self) -> None:
+        task_id = "ODP-ORCH-SOURCE-DOC-MATERIALIZATION-001"
+        rel_path = ".orchestrator/task-briefs/odp_orch_source_doc_materialization_001.md"
+        candidates = supervisor._task_brief_context_candidates(task_id, rel_path)
+        self.assertIn(".orchestrator/task-briefs/odp_orch_source_doc_materialization_001.md", candidates)
+        self.assertIn(".orchestrator/task-briefs/odp-orch-source-doc-materialization-001.md", candidates)
+        self.assertGreaterEqual(len(candidates), 2)
+
+    def test_b14_integrity_hash_failure_fails_closed_for_mutating_task(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmp_path = Path(tmpdir)
+            status_root = tmp_path / "pantheon"
+            status_root.mkdir()
+            doc_file = status_root / "docs" / "source.md"
+            doc_file.parent.mkdir(parents=True)
+            doc_file.write_text("Canonical Content\n", encoding="utf-8")
+
+            task = {
+                "id": "ODP-B14-HASH-001",
+                "title": "B14 Task",
+                "priority": "P0",
+                "mutates_canonical": True,
+                "status": "in_progress",
+                "owner": "Antigravity",
+                "reviewer": "Codex5",
+            }
+            (status_root / "ai-status.json").write_text(json.dumps({"tasks": [task]}), encoding="utf-8")
+            config = {"paths": {"status_file": str(status_root / "ai-status.json")}}
+
+            worktree = tmp_path / "worktree"
+            worktree.mkdir()
+            req = supervisor.DeliveryRequest(
+                agent_id="Antigravity",
+                provider="antigravity",
+                delivery_mode="antigravity",
+                message="wake",
+                task_id="ODP-B14-HASH-001",
+                reason="owned_in_progress_dispatch",
+                context_files=["docs/source.md"],
+            )
+
+            # When _file_or_dir_hash returns None (swallowed exception or failure to hash),
+            # materialize_worker_context_files MUST fail closed for mutating/P0 tasks!
+            with (
+                mock.patch.object(supervisor, "load_status", return_value={"tasks": [task]}),
+                mock.patch.object(common, "load_status", return_value={"tasks": [task]}),
+                mock.patch.object(supervisor, "_file_or_dir_hash", return_value=None),
+            ):
+                with self.assertRaises(ValueError) as ctx:
+                    supervisor.materialize_worker_context_files(config, req, worktree)
+                self.assertIn("unable to establish valid 64-hex SHA256 integrity hash", str(ctx.exception))
+
+    def test_b14_early_existing_destination_hash_failure_fails_closed(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmp_path = Path(tmpdir)
+            status_root = tmp_path / "pantheon"
+            status_root.mkdir()
+            doc_file = status_root / "docs" / "source.md"
+            doc_file.parent.mkdir(parents=True)
+            doc_file.write_text("Canonical Content\n", encoding="utf-8")
+
+            task = {
+                "id": "ODP-B14-HASH-002",
+                "title": "B14 Task 2",
+                "priority": "P0",
+                "mutates_canonical": True,
+                "status": "in_progress",
+                "owner": "Antigravity",
+                "reviewer": "Codex5",
+            }
+            (status_root / "ai-status.json").write_text(json.dumps({"tasks": [task]}), encoding="utf-8")
+            config = {"paths": {"status_file": str(status_root / "ai-status.json")}}
+
+            worktree = tmp_path / "worktree"
+            worktree.mkdir()
+            dest_file = worktree / "docs" / "source.md"
+            dest_file.parent.mkdir(parents=True)
+            dest_file.write_text("Canonical Content\n", encoding="utf-8")
+
+            req = supervisor.DeliveryRequest(
+                agent_id="Antigravity",
+                provider="antigravity",
+                delivery_mode="antigravity",
+                message="wake",
+                task_id="ODP-B14-HASH-002",
+                reason="owned_in_progress_dispatch",
+                context_files=["docs/source.md"],
+            )
+
+            # When existing destination check encounters hash failure (None), fail closed!
+            with (
+                mock.patch.object(supervisor, "load_status", return_value={"tasks": [task]}),
+                mock.patch.object(common, "load_status", return_value={"tasks": [task]}),
+                mock.patch.object(supervisor, "_file_or_dir_hash", return_value=None),
+            ):
+                with self.assertRaises(ValueError) as ctx:
+                    supervisor.materialize_worker_context_files(config, req, worktree)
+                self.assertIn("unable to establish valid 64-hex SHA256 integrity hash", str(ctx.exception))
+
 
 if __name__ == "__main__":
     unittest.main()
+

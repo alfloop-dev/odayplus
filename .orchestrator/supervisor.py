@@ -1587,6 +1587,10 @@ def _file_or_dir_hash(path: Path) -> str | None:
     return None
 
 
+def _is_valid_sha256(h: str | None) -> bool:
+    return bool(h and isinstance(h, str) and len(h) == 64 and all(c in "0123456789abcdefABCDEF" for c in h))
+
+
 def _generated_worker_task_brief(config: dict[str, Any], task_id: str | None) -> str:
     try:
         text, _, _ = generate_task_brief_content(config, str(task_id or ""))
@@ -1638,18 +1642,6 @@ def _generated_worker_task_brief(config: dict[str, Any], task_id: str | None) ->
 # copies: the reuse-dirt guard runs `git status --untracked-files=no`, so untracked
 # seeds never block re-dispatch.
 _SEEDABLE_UNTRACKED_CONTEXT = ("ai-status.json", "current-work.md", "ai-activity-log.jsonl")
-
-
-def _task_brief_context_candidates(task_id: str | None, rel_value: str) -> list[str]:
-    candidates = [rel_value]
-    clean_task_id = str(task_id or "").strip()
-    if clean_task_id:
-        lower_id = clean_task_id.lower().replace("-", "_")
-        target_name = f"{lower_id}.md"
-        default_rel = f".orchestrator/task-briefs/{target_name}"
-        if default_rel not in candidates:
-            candidates.append(default_rel)
-    return candidates
 
 
 def _generated_collaboration_guide(config: dict[str, Any]) -> str:
@@ -1782,11 +1774,18 @@ def materialize_worker_context_files(
                     except OSError:
                         pass
                     break
+            brief_hash = _file_or_dir_hash(destination)
+            if is_mutating_or_p0 and not _is_valid_sha256(brief_hash):
+                raise ValueError(
+                    f"Fail-closed on workspace materialization for task {request.task_id}: unable to establish valid 64-hex SHA256 integrity hash for task brief '{rel_value}'"
+                )
+            if not _is_valid_sha256(brief_hash):
+                continue
             materialized.append(rel_value)
             manifest_entries.append({
                 "relative_path": rel_value,
                 "canonical_source_path": str(found_src.resolve()) if found_src else str((status_root / rel_value).resolve()),
-                "sha256": _file_or_dir_hash(destination),
+                "sha256": brief_hash,
             })
             continue
 
@@ -1802,6 +1801,11 @@ def materialize_worker_context_files(
             if destination.exists() and not always_refresh:
                 source_hash = _file_or_dir_hash(source)
                 dest_hash = _file_or_dir_hash(destination)
+                if is_mutating_or_p0:
+                    if not _is_valid_sha256(source_hash) or not _is_valid_sha256(dest_hash):
+                        raise ValueError(
+                            f"Fail-closed on workspace materialization for task {request.task_id}: unable to establish valid 64-hex SHA256 integrity hash for '{rel_value}' (canonical sha {source_hash} vs destination sha {dest_hash})"
+                        )
                 if source_hash and dest_hash and source_hash == dest_hash:
                     materialized.append(rel_value)
                     manifest_entries.append({
@@ -1826,11 +1830,11 @@ def materialize_worker_context_files(
                     for src_item in source.rglob("*"):
                         try:
                             src_item.resolve().relative_to(resolved_status_root)
-                        except Exception:
+                        except Exception as err:
                             if is_mutating_or_p0:
                                 raise ValueError(
                                     f"Fail-closed on workspace materialization for task {request.task_id}: directory child symlink '{src_item}' points outside status root"
-                                )
+                                ) from err
                             dir_failed = True
                             break
 
@@ -1850,6 +1854,10 @@ def materialize_worker_context_files(
                             if child_dest.exists() and not always_refresh:
                                 src_h = _file_or_dir_hash(src_item)
                                 dst_h = _file_or_dir_hash(child_dest)
+                                if is_mutating_or_p0 and (not _is_valid_sha256(src_h) or not _is_valid_sha256(dst_h)):
+                                    raise ValueError(
+                                        f"Fail-closed on workspace materialization for task {request.task_id}: unable to establish valid 64-hex SHA256 integrity hash for directory item '{child_rel_value}'"
+                                    )
                                 if src_h and dst_h and src_h == dst_h:
                                     continue
                                 if _is_tracked_in_worktree(workspace_path, child_rel_value):
@@ -1890,27 +1898,40 @@ def materialize_worker_context_files(
 
             source_hash = _file_or_dir_hash(source)
             final_dest_hash = _file_or_dir_hash(destination)
-            if source_hash and final_dest_hash and source_hash != final_dest_hash:
-                if is_mutating_or_p0:
+            if is_mutating_or_p0:
+                if not _is_valid_sha256(source_hash) or not _is_valid_sha256(final_dest_hash):
+                    raise ValueError(
+                        f"Fail-closed on workspace materialization for task {request.task_id}: unable to establish valid 64-hex SHA256 integrity hash for '{rel_value}' (canonical sha {source_hash} vs destination sha {final_dest_hash})"
+                    )
+                if source_hash != final_dest_hash:
                     raise ValueError(
                         f"Fail-closed on workspace materialization for task {request.task_id}: final source and destination tree mismatch for '{rel_value}' (canonical sha {source_hash} vs destination sha {final_dest_hash})"
                     )
-                continue
+            else:
+                if not _is_valid_sha256(source_hash) or not _is_valid_sha256(final_dest_hash) or source_hash != final_dest_hash:
+                    continue
 
             materialized.append(rel_value)
             manifest_entries.append({
                 "relative_path": rel_value,
                 "canonical_source_path": str(source.resolve()),
-                "sha256": source_hash or final_dest_hash,
+                "sha256": source_hash,
             })
         elif rel_value == "AI_COLLABORATION_GUIDE.md" and not destination.exists():
             destination.parent.mkdir(parents=True, exist_ok=True)
             destination.write_text(_generated_collaboration_guide(config), encoding="utf-8")
+            guide_hash = _file_or_dir_hash(destination)
+            if is_mutating_or_p0 and not _is_valid_sha256(guide_hash):
+                raise ValueError(
+                    f"Fail-closed on workspace materialization for task {request.task_id}: unable to establish valid 64-hex SHA256 integrity hash for generated '{rel_value}'"
+                )
+            if not _is_valid_sha256(guide_hash):
+                continue
             materialized.append(rel_value)
             manifest_entries.append({
                 "relative_path": rel_value,
                 "canonical_source_path": str((status_root / rel_value).resolve()),
-                "sha256": _file_or_dir_hash(destination),
+                "sha256": guide_hash,
             })
 
     if materialized:
