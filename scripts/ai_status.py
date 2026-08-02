@@ -264,7 +264,7 @@ EXTERNAL_TASK_ARTIFACT_PREFIXES = (
 TASK_TERMINAL_SUPERSEDED = "superseded"
 DEFAULT_DELIVERY_GATES = {
     "require_commit_hash": True,
-    "require_git_clean": False,
+    "require_git_clean": True,
     "record_remote_status": True,
     "require_merged_pr": True,
 }
@@ -1589,16 +1589,25 @@ def delivery_merge_target_branch(config: dict[str, Any], repository_id: str) -> 
     return branch or "main"
 
 
-def pull_request_status_for_branch(repository_root: Path, branch: str) -> dict[str, Any] | None:
+def pull_request_status_for_branch(
+    repository_root: Path,
+    branch: str,
+    repository_slug_value: str | None = None,
+) -> dict[str, Any] | None:
     if not branch or branch == "HEAD":
         return None
+    repo_args = ["--repo", repository_slug_value] if repository_slug_value else []
     return run_gh_json_command(
         [
             "pr",
             "view",
             branch,
+            *repo_args,
             "--json",
-            "number,state,mergeStateStatus,mergedAt,mergeCommit,autoMergeRequest,url,headRefOid,baseRefName",
+            (
+                "number,state,mergeStateStatus,mergedAt,mergeCommit,autoMergeRequest,url,"
+                "headRefOid,headRefName,baseRefName,statusCheckRollup"
+            ),
         ],
         cwd=repository_root,
     )
@@ -1705,6 +1714,118 @@ def format_pull_request_status(pr: dict[str, Any] | None) -> str:
     return "; ".join(parts)
 
 
+def normalized_green_pr_checks(pr_status: dict[str, Any]) -> list[dict[str, Any]]:
+    """Return auditable successful PR checks, failing closed on every other shape."""
+
+    raw_checks = pr_status.get("statusCheckRollup")
+    if not isinstance(raw_checks, list) or not raw_checks:
+        raise SystemExit(
+            "Cannot finalize task: merged PR has no verifiable CI status checks."
+        )
+
+    checks: list[dict[str, Any]] = []
+    pending: list[str] = []
+    failed: list[str] = []
+    for index, raw_check in enumerate(raw_checks, start=1):
+        if not isinstance(raw_check, dict):
+            failed.append(f"check-{index} (malformed)")
+            continue
+        check_type = str(raw_check.get("__typename") or "").strip()
+        name = str(raw_check.get("name") or raw_check.get("context") or f"check-{index}").strip()
+        conclusion = str(raw_check.get("conclusion") or "").upper()
+        status = str(raw_check.get("status") or "").upper()
+        state = str(raw_check.get("state") or "").upper()
+
+        if check_type == "CheckRun":
+            if status != "COMPLETED" or not conclusion:
+                pending.append(name)
+            elif conclusion not in {"SUCCESS", "NEUTRAL", "SKIPPED"}:
+                failed.append(name)
+        elif check_type == "StatusContext":
+            if state in {"PENDING", "EXPECTED"} or not state:
+                pending.append(name)
+            elif state != "SUCCESS":
+                failed.append(name)
+        else:
+            failed.append(f"{name} (unrecognized status type)")
+
+        checks.append(
+            {
+                "type": check_type or None,
+                "name": name,
+                "status": status or state or None,
+                "conclusion": conclusion or state or None,
+                "details_url": raw_check.get("detailsUrl") or raw_check.get("targetUrl") or None,
+            }
+        )
+
+    if failed or pending:
+        issues: list[str] = []
+        if failed:
+            issues.append(f"red or unverifiable checks: {', '.join(failed)}")
+        if pending:
+            issues.append(f"pending checks: {', '.join(pending)}")
+        raise SystemExit(f"Cannot finalize task: merged PR CI is not green ({'; '.join(issues)}).")
+    return checks
+
+
+def parse_git_worktree_porcelain(payload: str) -> list[dict[str, str]]:
+    entries: list[dict[str, str]] = []
+    current: dict[str, str] = {}
+    for line in [*payload.splitlines(), ""]:
+        if not line.strip():
+            if current:
+                entries.append(current)
+                current = {}
+            continue
+        key, _, value = line.partition(" ")
+        current[key] = value.strip()
+    return entries
+
+
+def task_delivery_checkout(repository_root: Path, task_id: str) -> tuple[Path, str]:
+    """Resolve the one checkout owned by ``task_id`` instead of central writer HEAD."""
+
+    branch_names = [f"task/{task_id}", f"task-{task_id}"]
+    current_branch = run_git_command(
+        ["rev-parse", "--abbrev-ref", "HEAD"],
+        cwd=repository_root,
+        required=False,
+    )
+    if current_branch in branch_names:
+        return repository_root.resolve(strict=False), current_branch
+
+    payload = run_git_command(
+        ["worktree", "list", "--porcelain"],
+        cwd=repository_root,
+        failure_message="Cannot finalize task: git worktree inventory is unavailable.",
+    )
+    matches = [
+        entry
+        for entry in parse_git_worktree_porcelain(payload)
+        if entry.get("branch") in {f"refs/heads/{name}" for name in branch_names}
+        and entry.get("worktree")
+    ]
+    if len(matches) != 1:
+        raise SystemExit(
+            f"Cannot finalize task {task_id}: expected exactly one task-owned delivery "
+            f"checkout for {', '.join(branch_names)}, found {len(matches)}."
+        )
+    checkout = Path(matches[0]["worktree"]).resolve(strict=False)
+    branch = str(matches[0]["branch"]).removeprefix("refs/heads/")
+    return checkout, branch
+
+
+def git_remote_repository_slug(repository_root: Path, remote: str) -> str | None:
+    remote_url = run_git_command(
+        ["remote", "get-url", remote],
+        cwd=repository_root,
+        required=False,
+    )
+    match = re.search(r"github\.com[:/]([^/\s]+/[^/\s]+?)(?:\.git)?$", remote_url)
+    return match.group(1) if match else None
+
+
 def enforce_delivery_merged_gate(
     config: dict[str, Any],
     delivery: dict[str, Any],
@@ -1713,6 +1834,8 @@ def enforce_delivery_merged_gate(
     repository_id: str,
     branch: str,
     remote_names: list[str],
+    approved_head: str,
+    repository_slug_value: str | None,
 ) -> None:
     target_branch = delivery_merge_target_branch(config, repository_id)
     delivery["merge_target_branch"] = target_branch
@@ -1737,57 +1860,68 @@ def enforce_delivery_merged_gate(
         )
     delivery["merge_target_sha"] = target_sha
     merged = git_command_succeeds(
-        ["merge-base", "--is-ancestor", "HEAD", target_ref],
+        ["merge-base", "--is-ancestor", approved_head, target_ref],
         cwd=repository_root,
     )
     delivery["head_merged_to_target"] = merged
-    if merged:
+    if not repository_slug_value:
+        raise SystemExit(
+            "Cannot finalize task: configured repository slug is unavailable for PR verification."
+        )
+    pr_status = pull_request_status_for_branch(repository_root, branch, repository_slug_value)
+    if not pr_status:
+        raise SystemExit(
+            "Cannot finalize task: unable to verify the task PR from GitHub. "
+            "Network and repository provenance fail closed."
+        )
+    pr_state = str(pr_status.get("state") or "").upper()
+    pr_head = str(pr_status.get("headRefOid") or "").strip()
+    pr_head_name = str(pr_status.get("headRefName") or "").strip()
+    pr_base = str(pr_status.get("baseRefName") or "").strip()
+    merged_at = str(pr_status.get("mergedAt") or "").strip()
+    merge_commit_raw = pr_status.get("mergeCommit")
+    merge_commit = (
+        str(merge_commit_raw.get("oid") or "").strip()
+        if isinstance(merge_commit_raw, dict)
+        else str(merge_commit_raw or "").strip()
+    )
+    merge_commit_on_target = bool(
+        merge_commit
+        and git_command_succeeds(
+            ["merge-base", "--is-ancestor", merge_commit, target_ref],
+            cwd=repository_root,
+        )
+    )
+    if (
+        pr_state == "MERGED"
+        and pr_head == approved_head
+        and pr_head_name == branch
+        and pr_base == target_branch
+        and merged_at
+        and merge_commit
+        and merge_commit_on_target
+    ):
+        checks = normalized_green_pr_checks(pr_status)
+        delivery["merge_verified_via_pr"] = True
+        delivery["ci_status"] = "success"
+        delivery["ci_checks"] = checks
+        delivery["pull_request"] = {
+            "number": pr_status.get("number"),
+            "url": pr_status.get("url"),
+            "repository": repository_slug_value,
+            "head_branch": pr_head_name,
+            "head_sha": pr_head,
+            "base_branch": pr_base,
+            "merged_at": merged_at,
+            "merge_commit": merge_commit,
+        }
         return
-    pr_status = pull_request_status_for_branch(repository_root, branch)
-    head_sha = run_git_command(["rev-parse", "HEAD"], cwd=repository_root)
-    if pr_status:
-        pr_state = str(pr_status.get("state") or "").upper()
-        pr_head = str(pr_status.get("headRefOid") or "").strip()
-        pr_base = str(pr_status.get("baseRefName") or "").strip()
-        merged_at = str(pr_status.get("mergedAt") or "").strip()
-        merge_commit_raw = pr_status.get("mergeCommit")
-        merge_commit = (
-            str(merge_commit_raw.get("oid") or "").strip()
-            if isinstance(merge_commit_raw, dict)
-            else str(merge_commit_raw or "").strip()
-        )
-        merge_commit_on_target = bool(
-            merge_commit
-            and git_command_succeeds(
-                ["merge-base", "--is-ancestor", merge_commit, target_ref],
-                cwd=repository_root,
-            )
-        )
-        if (
-            pr_state == "MERGED"
-            and pr_head == head_sha
-            and pr_base == target_branch
-            and merged_at
-            and merge_commit
-            and merge_commit_on_target
-        ):
-            delivery["merge_verified_via_pr"] = True
-            delivery["pull_request"] = {
-                "number": pr_status.get("number"),
-                "url": pr_status.get("url"),
-                "head_sha": pr_head,
-                "base_branch": pr_base,
-                "merged_at": merged_at,
-                "merge_commit": merge_commit,
-            }
-            return
     status_text = format_pull_request_status(pr_status)
     detail = f";{status_text}" if status_text else ""
     raise SystemExit(
-        "Cannot finalize task: the task branch HEAD is not merged into "
-        f"`{target_ref}` yet{detail}. Keep the task in `review_approved`, "
-        "refresh the PR branch if it is behind, and run `done` only after "
-        "GitHub reports the PR merged."
+        "Cannot finalize task: immutable approved-head PR provenance does not prove "
+        f"delivery to `{target_ref}`{detail}. Required facts are an exact task branch, "
+        "matching approved PR head, merged state, configured base, and merge commit on target."
     )
 
 
@@ -1805,10 +1939,34 @@ def parse_commit_metadata_lines(body: str) -> dict[str, str]:
     return metadata
 
 
-def collect_done_delivery_metadata(task: dict[str, Any], actor: str) -> dict[str, Any]:
+def collect_done_delivery_metadata(
+    task: dict[str, Any],
+    actor: str,
+    *,
+    approved_head: str | None = None,
+) -> dict[str, Any]:
     settings = delivery_gate_settings()
     commit_rules = commit_convention_settings()
+    # A `done` transition is governance, not a configurable convenience path.
+    # Local/env settings may make recording stricter, but may not switch off the
+    # immutable commit, clean checkout, remote status, merged PR, or CI gates.
+    settings.update(
+        {
+            "require_commit_hash": True,
+            "require_git_clean": True,
+            "record_remote_status": True,
+            "require_merged_pr": True,
+        }
+    )
+    commit_rules["subject_must_include_task_id"] = True
+    commit_rules["required_body_fields"] = ["LLM-Agent", "Task-ID", "Reviewer"]
     config = load_config()
+    task_id = str(task.get("id") or "").strip()
+    approved_head = str(approved_head or task.get("approved_head") or "").strip()
+    if not approved_head:
+        raise SystemExit(
+            f"Cannot finalize task {task_id}: delivery metadata requires an immutable approved head."
+        )
     repository_id = task_primary_repository_id(config, task)
     if repository_id is None:
         repo_ids = [repo_id for repo_id in task_artifact_repository_ids(config, task) if repo_id != "pantheon"]
@@ -1834,52 +1992,57 @@ def collect_done_delivery_metadata(task: dict[str, Any], actor: str) -> dict[str
             }
             repository_id = "pantheon"
             repository_root = pantheon_root
-    repository_root = repository_root.resolve(strict=False)
-    repository_slug_value = repository_slug(config, repository_id)
-    branch = run_git_command(
-        ["rev-parse", "--abbrev-ref", "HEAD"],
+    configured_repository_root = repository_root.resolve(strict=False)
+    repository_root, branch = task_delivery_checkout(configured_repository_root, task_id)
+    configured_repository_slug = repository_slug(config, repository_id)
+    checkout_head = run_git_command(
+        ["rev-parse", "HEAD"],
         cwd=repository_root,
-        failure_message="Cannot finalize task: git branch information is unavailable.",
+        failure_message="Cannot finalize task: task-owned checkout HEAD is unavailable.",
     )
+    if checkout_head != approved_head:
+        raise SystemExit(
+            f"Cannot finalize task {task_id}: task-owned checkout HEAD ({checkout_head[:8]}) "
+            f"differs from reviewer-approved head ({approved_head[:8]})."
+        )
     delivery: dict[str, Any] = {
         "recorded_at": iso_now(),
         "repository_id": repository_id,
         "repository_path": str(repository_root),
-        "repository_slug": repository_slug_value,
+        "configured_repository_path": str(configured_repository_root),
+        "repository_slug": configured_repository_slug,
         "branch": branch,
+        "approved_head": approved_head,
+        "verified_head": checkout_head,
         "git_clean_required": settings["require_git_clean"],
     }
     if repository_fallback is not None:
         delivery["repository_fallback"] = repository_fallback
 
     if settings["require_commit_hash"]:
-        commit_hash = run_git_command(
-            ["rev-parse", "HEAD"],
-            cwd=repository_root,
-            failure_message="Cannot finalize task: a HEAD commit hash is required before moving to done.",
-        )
+        commit_hash = approved_head
         if not commit_hash:
             raise SystemExit("Cannot finalize task: a HEAD commit hash is required before moving to done.")
         delivery["commit"] = commit_hash
         subject = run_git_command(
-            ["show", "-s", "--format=%s", "HEAD"],
+            ["show", "-s", "--format=%s", approved_head],
             cwd=repository_root,
-            failure_message="Cannot finalize task: latest commit subject is unavailable.",
+            failure_message="Cannot finalize task: approved commit subject is unavailable.",
         )
         body = run_git_command(
-            ["show", "-s", "--format=%b", "HEAD"],
+            ["show", "-s", "--format=%b", approved_head],
             cwd=repository_root,
-            failure_message="Cannot finalize task: latest commit body is unavailable.",
+            failure_message="Cannot finalize task: approved commit body is unavailable.",
         )
         author_name = run_git_command(
-            ["show", "-s", "--format=%an", "HEAD"],
+            ["show", "-s", "--format=%an", approved_head],
             cwd=repository_root,
-            failure_message="Cannot finalize task: latest commit author name is unavailable.",
+            failure_message="Cannot finalize task: approved commit author name is unavailable.",
         )
         author_email = run_git_command(
-            ["show", "-s", "--format=%ae", "HEAD"],
+            ["show", "-s", "--format=%ae", approved_head],
             cwd=repository_root,
-            failure_message="Cannot finalize task: latest commit author email is unavailable.",
+            failure_message="Cannot finalize task: approved commit author email is unavailable.",
         )
         delivery["commit_subject"] = subject
         delivery["commit_author"] = {
@@ -1887,10 +2050,9 @@ def collect_done_delivery_metadata(task: dict[str, Any], actor: str) -> dict[str
             "email": author_email,
         }
 
-        task_id = str(task.get("id") or "").strip()
         if commit_rules["subject_must_include_task_id"] and task_id and task_id not in subject:
             raise SystemExit(
-                f"Cannot finalize task: latest commit subject must include task id {task_id}."
+                f"Cannot finalize task: approved commit subject must include task id {task_id}."
             )
 
         metadata_fields = parse_commit_metadata_lines(body)
@@ -1914,13 +2076,13 @@ def collect_done_delivery_metadata(task: dict[str, Any], actor: str) -> dict[str
             issues: list[str] = []
             if missing_fields:
                 missing_list = ", ".join(f"`{field_name}: ...`" for field_name in missing_fields)
-                issues.append(f"latest commit body must include {missing_list}")
+                issues.append(f"approved commit body must include {missing_list}")
             if mismatched_fields:
                 mismatch_list = ", ".join(
                     f"`{field_name}` must be `{expected_value}`"
                     for field_name, expected_value in mismatched_fields
                 )
-                issues.append(f"latest commit body fields must match task metadata: {mismatch_list}")
+                issues.append(f"approved commit body fields must match task metadata: {mismatch_list}")
             raise SystemExit(f"Cannot finalize task: {'; '.join(issues)}.")
         delivery["commit_metadata"] = metadata_fields
 
@@ -1947,6 +2109,18 @@ def collect_done_delivery_metadata(task: dict[str, Any], actor: str) -> dict[str
     delivery["remote_present"] = bool(remote_names)
     if remote_names:
         delivery["remote_names"] = remote_names
+    remote = "origin" if "origin" in remote_names else (remote_names[0] if remote_names else "")
+    remote_repository_slug = git_remote_repository_slug(repository_root, remote) if remote else None
+    if configured_repository_slug and remote_repository_slug and (
+        configured_repository_slug.casefold() != remote_repository_slug.casefold()
+    ):
+        raise SystemExit(
+            "Cannot finalize task: task-owned checkout remote repository "
+            f"`{remote_repository_slug}` does not match configured repository "
+            f"`{configured_repository_slug}`."
+        )
+    repository_slug_value = configured_repository_slug or remote_repository_slug
+    delivery["repository_slug"] = repository_slug_value
 
     if settings["record_remote_status"] and remote_names:
         upstream = run_git_command(
@@ -1981,6 +2155,8 @@ def collect_done_delivery_metadata(task: dict[str, Any], actor: str) -> dict[str
             repository_id=repository_id,
             branch=branch,
             remote_names=remote_names,
+            approved_head=approved_head,
+            repository_slug_value=repository_slug_value,
         )
 
     return delivery
@@ -4807,21 +4983,12 @@ def command_done(state: dict[str, Any], args: list[str]) -> None:
             "Strict update-branch merge requires re-review."
         )
 
-    # B22-3: record the two commits as distinct facts. `resolve_task_sha` prefers
-    # the PR headRefOid, so a merged PR is verified against the immutable reviewed
-    # head above; the merge commit GitHub created is evidence, never an anchor.
-    head_ref_oid, merge_commit = task_pr_head_and_merge_commit(task_id)
-    if merge_commit and current_sha == merge_commit:
-        raise SystemExit(
-            f"Cannot finalize task {task_id}: the resolved head ({current_sha[:8]}) is the "
-            "PR merge commit, not the reviewed branch head. The merge commit was never "
-            "reviewed and cannot satisfy the approved-head freeze."
-        )
-
     timestamp = iso_now()
-    delivery = collect_done_delivery_metadata(task, actor)
-    delivery["approved_head"] = approved_head
-    delivery["verified_head"] = current_sha
+    delivery = collect_done_delivery_metadata(task, actor, approved_head=approved_head)
+    delivery["remote_task_head"] = current_sha
+    pull_request = delivery.get("pull_request") or {}
+    head_ref_oid = pull_request.get("head_sha")
+    merge_commit = pull_request.get("merge_commit")
     if head_ref_oid:
         delivery["pr_head_ref_oid"] = head_ref_oid
     if merge_commit:
