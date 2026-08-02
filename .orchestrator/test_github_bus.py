@@ -589,6 +589,58 @@ class TaskPRDiscoveryTests(unittest.TestCase):
         self.assertFalse(github_bus.task_id_matches_branch("ODP-FOO-001", "task/ODP-FOO-001-SIDECAR-ACCEPTANCE"))
         self.assertFalse(github_bus.task_id_matches_branch("ODP-FOO-001", "task/ODP-FOO-0010"))
 
+    def test_review_branch_for_task_returns_none_when_canonical_absent_and_only_sidecar_or_unrelated_branch_exists(self) -> None:
+        config = {"branch_workflow": {"task_branch_prefix": "task/"}}
+        status = {
+            "agents": [
+                {
+                    "name": "Codex",
+                    "branch": "task/ODP-FOO-001-SIDECAR-ACCEPTANCE",
+                }
+            ]
+        }
+        task = {
+            "id": "ODP-FOO-001",
+            "owner": "Codex",
+            "title": "Parent task with missing canonical branch",
+        }
+
+        def mock_exists(branch_name: str) -> bool:
+            return branch_name in {
+                "task/ODP-FOO-001-SIDECAR-ACCEPTANCE",
+                "feat/unrelated-branch",
+            }
+
+        with mock.patch.object(github_bus, "branch_exists", side_effect=mock_exists):
+            with mock.patch.object(github_bus, "current_branch", return_value="task/ODP-FOO-001-SIDECAR-ACCEPTANCE"):
+                found_branch = github_bus.review_branch_for_task(config, status, task)
+
+        self.assertIsNone(found_branch)
+
+    def test_review_branch_for_task_accepts_exact_matching_agent_branch_when_canonical_prefix_absent(self) -> None:
+        config = {"branch_workflow": {"task_branch_prefix": "task/"}}
+        status = {
+            "agents": [
+                {
+                    "name": "Codex",
+                    "branch": "custom-prefix/ODP-FOO-001",
+                }
+            ]
+        }
+        task = {
+            "id": "ODP-FOO-001",
+            "owner": "Codex",
+            "title": "Parent task with custom prefix branch",
+        }
+
+        def mock_exists(branch_name: str) -> bool:
+            return branch_name == "custom-prefix/ODP-FOO-001"
+
+        with mock.patch.object(github_bus, "branch_exists", side_effect=mock_exists):
+            found_branch = github_bus.review_branch_for_task(config, status, task)
+
+        self.assertEqual(found_branch, "custom-prefix/ODP-FOO-001")
+
     def test_branch_ref_resolution_supports_remote_tracking_refs(self) -> None:
         def mock_cmd(cmd: list[str], cwd: str | Path | None = None) -> subprocess.CompletedProcess[str]:
             cmd_str = " ".join(cmd)

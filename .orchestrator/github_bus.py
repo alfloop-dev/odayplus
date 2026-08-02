@@ -444,16 +444,13 @@ def review_branch_for_task(config: dict[str, Any], status: dict[str, Any], task:
 
     # An exact task-matching agent branch is useful when a deployment uses a
     # non-canonical prefix, but substring-related task IDs are not equivalent.
-    if agent_branch and task_id and task_id_matches_branch(task_id, agent_branch) and branch_exists(agent_branch):
-        return agent_branch
-
-    # Fallback to owner agent's branch if it exists
-    if agent_branch and branch_exists(agent_branch):
+    if agent_branch and (not task_id or task_id_matches_branch(task_id, agent_branch)) and branch_exists(agent_branch):
         return agent_branch
 
     branch = current_branch()
-    if branch and branch != default_branch(config):
+    if branch and branch != default_branch(config) and (not task_id or task_id_matches_branch(task_id, branch)) and branch_exists(branch):
         return branch
+
     return None
 
 
