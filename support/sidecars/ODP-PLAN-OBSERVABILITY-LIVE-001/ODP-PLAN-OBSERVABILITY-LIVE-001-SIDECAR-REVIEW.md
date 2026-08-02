@@ -105,4 +105,3 @@ All 5,051 tests in `tests/reliability/test_runtime_observability.py` and 117 E2E
 - **CI Status & Dependency**: PR `#572` CI run `30732795657` passed `orchestrator` and `performance-gate`. The `product-e2e-gate` check failed solely due to the fleet-wide `support/sidecars/` path classification rule (owned by `ODP-CI-DEV-MERGE-RELEASE-NOGO-DEADLOCK-001` / PR `#562`). Sidecar scope strictly forbids modifying canonical CI rules or validators.
 - **Re-validation Evidence (Dispatch 2026-08-02T04:51:00Z)**: Re-executed `python3 -m pytest -q tests -k "observability or telemetry or alert or dlq"` (85 passed, 0 failed) and verified `git diff --check` is clean.
 - **Action for Reviewer (`Antigravity2`)**: Re-review and accept this sidecar support review packet.
-
