@@ -1,8 +1,8 @@
 # Deployment transcript — ODP-ORCH-WORKTREE-BASE-ADVANCE-LIVE-ROLLOUT-001
-# host date  : 2026-08-02T06:43:13Z
+# host date  : 2026-08-02T07:04:46Z
 # driver     : deploy.py (stage-all -> verify-all -> atomic publish)
 # source ref : 475f6d5e9b36f097a1eb4ab3dbe4bd8b1b1d7c2f
-# backups    : /tmp/odp-rollout-backup/ODP-ORCH-WORKTREE-BASE-ADVANCE-LIVE-ROLLOUT-001-real-20260802T064313Z
+# backups    : /tmp/odp-rollout-backup/ODP-ORCH-WORKTREE-BASE-ADVANCE-LIVE-ROLLOUT-001-real-20260802T070446Z
 # order      : supervisor.py
 
 ## payloads materialised from the source commit (no working-tree copy)
@@ -16,8 +16,8 @@
   LoadState             : loaded
   ActiveState           : active
   SubState              : running
-  MainPID               : 3805773
-  ExecMainStartTimestamp: Sun 2026-08-02 03:06:42 UTC
+  MainPID               : 111165
+  ExecMainStartTimestamp: Sun 2026-08-02 07:04:04 UTC
   NRestarts             : 0
   process cmdline       : python3 /home/lupin/oday-plus-supervisor-runtime-945a8366/.orchestrator/supervisor.py --config /home/lupin/.config/pantheon/supervisor-runtime.json --verbose
   process cwd           : /home/lupin/oday-plus-supervisor-runtime-945a8366
@@ -25,7 +25,7 @@
 ## preflight gate (evaluated before any target is touched)
     PASS  unit loaded and active/running
     PASS  MainPID is a live process whose cmdline is the Supervisor
-    PASS  continuity pinned to MainPID=3805773, ExecMainStartTimestamp=Sun 2026-08-02 03:06:42 UTC, NRestarts=0
+    PASS  continuity pinned to MainPID=111165, ExecMainStartTimestamp=Sun 2026-08-02 07:04:04 UTC, NRestarts=0
 
 ## phase 1 — stage and verify every sibling (no rename issued)
   root: /home/lupin/oday-plus
@@ -36,12 +36,12 @@
     BEFORE sha256    : 35b932b6b29dd1ca2e2c228065abd4df5160f177eee17a2bb01ac5d167828a6f
     BEFORE bytes     : 448049
     BEFORE mode      : 664
-    BEFORE inode     : 892645
+    BEFORE inode     : 870094
     BEFORE device    : 2049
-    BEFORE mtime     : 2026-08-02T06:43:00Z
-    backup              : /tmp/odp-rollout-backup/ODP-ORCH-WORKTREE-BASE-ADVANCE-LIVE-ROLLOUT-001-real-20260802T064313Z/oday-plus.supervisor.py.bak
-    rollback            : install -m 664 /tmp/odp-rollout-backup/ODP-ORCH-WORKTREE-BASE-ADVANCE-LIVE-ROLLOUT-001-real-20260802T064313Z/oday-plus.supervisor.py.bak /home/lupin/oday-plus/.orchestrator/supervisor.py
-    staged sibling      : .supervisor.py.ODP-ORCH-WORKTREE-BASE-ADVANCE-LIVE-ROLLOUT-001.50971.tmp
+    BEFORE mtime     : 2026-08-02T06:43:13Z
+    backup              : /tmp/odp-rollout-backup/ODP-ORCH-WORKTREE-BASE-ADVANCE-LIVE-ROLLOUT-001-real-20260802T070446Z/oday-plus.supervisor.py.bak
+    rollback            : install -m 664 /tmp/odp-rollout-backup/ODP-ORCH-WORKTREE-BASE-ADVANCE-LIVE-ROLLOUT-001-real-20260802T070446Z/oday-plus.supervisor.py.bak /home/lupin/oday-plus/.orchestrator/supervisor.py
+    staged sibling      : .supervisor.py.ODP-ORCH-WORKTREE-BASE-ADVANCE-LIVE-ROLLOUT-001.113865.tmp
     sibling sha256      : 35b932b6b29dd1ca2e2c228065abd4df5160f177eee17a2bb01ac5d167828a6f
     sibling bytes/mode  : 448049 / 664
       PASS  same directory as target
@@ -58,12 +58,12 @@
     BEFORE sha256    : 35b932b6b29dd1ca2e2c228065abd4df5160f177eee17a2bb01ac5d167828a6f
     BEFORE bytes     : 448049
     BEFORE mode      : 664
-    BEFORE inode     : 892688
+    BEFORE inode     : 892687
     BEFORE device    : 2049
-    BEFORE mtime     : 2026-08-02T06:43:00Z
-    backup              : /tmp/odp-rollout-backup/ODP-ORCH-WORKTREE-BASE-ADVANCE-LIVE-ROLLOUT-001-real-20260802T064313Z/oday-plus-supervisor-live.supervisor.py.bak
-    rollback            : install -m 664 /tmp/odp-rollout-backup/ODP-ORCH-WORKTREE-BASE-ADVANCE-LIVE-ROLLOUT-001-real-20260802T064313Z/oday-plus-supervisor-live.supervisor.py.bak /home/lupin/oday-plus-supervisor-live/.orchestrator/supervisor.py
-    staged sibling      : .supervisor.py.ODP-ORCH-WORKTREE-BASE-ADVANCE-LIVE-ROLLOUT-001.50971.tmp
+    BEFORE mtime     : 2026-08-02T06:43:13Z
+    backup              : /tmp/odp-rollout-backup/ODP-ORCH-WORKTREE-BASE-ADVANCE-LIVE-ROLLOUT-001-real-20260802T070446Z/oday-plus-supervisor-live.supervisor.py.bak
+    rollback            : install -m 664 /tmp/odp-rollout-backup/ODP-ORCH-WORKTREE-BASE-ADVANCE-LIVE-ROLLOUT-001-real-20260802T070446Z/oday-plus-supervisor-live.supervisor.py.bak /home/lupin/oday-plus-supervisor-live/.orchestrator/supervisor.py
+    staged sibling      : .supervisor.py.ODP-ORCH-WORKTREE-BASE-ADVANCE-LIVE-ROLLOUT-001.113865.tmp
     sibling sha256      : 35b932b6b29dd1ca2e2c228065abd4df5160f177eee17a2bb01ac5d167828a6f
     sibling bytes/mode  : 448049 / 664
       PASS  same directory as target
@@ -80,12 +80,12 @@
     BEFORE sha256    : 35b932b6b29dd1ca2e2c228065abd4df5160f177eee17a2bb01ac5d167828a6f
     BEFORE bytes     : 448049
     BEFORE mode      : 664
-    BEFORE inode     : 1154276
+    BEFORE inode     : 1059440
     BEFORE device    : 2049
-    BEFORE mtime     : 2026-08-02T06:43:00Z
-    backup              : /tmp/odp-rollout-backup/ODP-ORCH-WORKTREE-BASE-ADVANCE-LIVE-ROLLOUT-001-real-20260802T064313Z/oday-plus-supervisor-runtime-945a8366.supervisor.py.bak
-    rollback            : install -m 664 /tmp/odp-rollout-backup/ODP-ORCH-WORKTREE-BASE-ADVANCE-LIVE-ROLLOUT-001-real-20260802T064313Z/oday-plus-supervisor-runtime-945a8366.supervisor.py.bak /home/lupin/oday-plus-supervisor-runtime-945a8366/.orchestrator/supervisor.py
-    staged sibling      : .supervisor.py.ODP-ORCH-WORKTREE-BASE-ADVANCE-LIVE-ROLLOUT-001.50971.tmp
+    BEFORE mtime     : 2026-08-02T06:43:13Z
+    backup              : /tmp/odp-rollout-backup/ODP-ORCH-WORKTREE-BASE-ADVANCE-LIVE-ROLLOUT-001-real-20260802T070446Z/oday-plus-supervisor-runtime-945a8366.supervisor.py.bak
+    rollback            : install -m 664 /tmp/odp-rollout-backup/ODP-ORCH-WORKTREE-BASE-ADVANCE-LIVE-ROLLOUT-001-real-20260802T070446Z/oday-plus-supervisor-runtime-945a8366.supervisor.py.bak /home/lupin/oday-plus-supervisor-runtime-945a8366/.orchestrator/supervisor.py
+    staged sibling      : .supervisor.py.ODP-ORCH-WORKTREE-BASE-ADVANCE-LIVE-ROLLOUT-001.113865.tmp
     sibling sha256      : 35b932b6b29dd1ca2e2c228065abd4df5160f177eee17a2bb01ac5d167828a6f
     sibling bytes/mode  : 448049 / 664
       PASS  same directory as target
@@ -97,39 +97,39 @@
 
 ## phase 2 — atomic publish per root
   target: /home/lupin/oday-plus/.orchestrator/supervisor.py
-    published           : os.replace(.supervisor.py.ODP-ORCH-WORKTREE-BASE-ADVANCE-LIVE-ROLLOUT-001.50971.tmp -> supervisor.py) [atomic rename]
+    published           : os.replace(.supervisor.py.ODP-ORCH-WORKTREE-BASE-ADVANCE-LIVE-ROLLOUT-001.113865.tmp -> supervisor.py) [atomic rename]
     AFTER  sha256    : 35b932b6b29dd1ca2e2c228065abd4df5160f177eee17a2bb01ac5d167828a6f
     AFTER  bytes     : 448049
     AFTER  mode      : 664
-    AFTER  inode     : 870094
+    AFTER  inode     : 892730
     AFTER  device    : 2049
-    AFTER  mtime     : 2026-08-02T06:43:13Z
+    AFTER  mtime     : 2026-08-02T07:04:46Z
       PASS  target sha256 == reviewed blob
       PASS  target bytes == reviewed blob
       PASS  mode preserved
       PASS  inode CHANGED (proves rename, not in-place write)
       PASS  no temporary sibling left behind
   target: /home/lupin/oday-plus-supervisor-live/.orchestrator/supervisor.py
-    published           : os.replace(.supervisor.py.ODP-ORCH-WORKTREE-BASE-ADVANCE-LIVE-ROLLOUT-001.50971.tmp -> supervisor.py) [atomic rename]
+    published           : os.replace(.supervisor.py.ODP-ORCH-WORKTREE-BASE-ADVANCE-LIVE-ROLLOUT-001.113865.tmp -> supervisor.py) [atomic rename]
     AFTER  sha256    : 35b932b6b29dd1ca2e2c228065abd4df5160f177eee17a2bb01ac5d167828a6f
     AFTER  bytes     : 448049
     AFTER  mode      : 664
-    AFTER  inode     : 892687
+    AFTER  inode     : 892741
     AFTER  device    : 2049
-    AFTER  mtime     : 2026-08-02T06:43:13Z
+    AFTER  mtime     : 2026-08-02T07:04:46Z
       PASS  target sha256 == reviewed blob
       PASS  target bytes == reviewed blob
       PASS  mode preserved
       PASS  inode CHANGED (proves rename, not in-place write)
       PASS  no temporary sibling left behind
   target: /home/lupin/oday-plus-supervisor-runtime-945a8366/.orchestrator/supervisor.py
-    published           : os.replace(.supervisor.py.ODP-ORCH-WORKTREE-BASE-ADVANCE-LIVE-ROLLOUT-001.50971.tmp -> supervisor.py) [atomic rename]
+    published           : os.replace(.supervisor.py.ODP-ORCH-WORKTREE-BASE-ADVANCE-LIVE-ROLLOUT-001.113865.tmp -> supervisor.py) [atomic rename]
     AFTER  sha256    : 35b932b6b29dd1ca2e2c228065abd4df5160f177eee17a2bb01ac5d167828a6f
     AFTER  bytes     : 448049
     AFTER  mode      : 664
-    AFTER  inode     : 1059440
+    AFTER  inode     : 1154350
     AFTER  device    : 2049
-    AFTER  mtime     : 2026-08-02T06:43:13Z
+    AFTER  mtime     : 2026-08-02T07:04:46Z
       PASS  target sha256 == reviewed blob
       PASS  target bytes == reviewed blob
       PASS  mode preserved
@@ -149,21 +149,22 @@
   /home/lupin/oday-plus-supervisor-runtime-945a8366: leftover siblings none
     every other dirty file unchanged : True
 
-## supervisor state AFTER
+## phase 4 — systemd service restart (pantheon-supervisor.service)
+  systemctl --user restart pantheon-supervisor.service: SUCCESS
+## supervisor state AFTER restart
   Id                    : pantheon-supervisor.service
   LoadState             : loaded
   ActiveState           : active
   SubState              : running
-  MainPID               : 3805773
-  ExecMainStartTimestamp: Sun 2026-08-02 03:06:42 UTC
+  MainPID               : 114080
+  ExecMainStartTimestamp: Sun 2026-08-02 07:04:49 UTC
   NRestarts             : 0
   process cmdline       : python3 /home/lupin/oday-plus-supervisor-runtime-945a8366/.orchestrator/supervisor.py --config /home/lupin/.config/pantheon/supervisor-runtime.json --verbose
   process cwd           : /home/lupin/oday-plus-supervisor-runtime-945a8366
 
-## continuity gate
-    PASS  still active/running
-    PASS  MainPID identical: 3805773
-    PASS  ExecMainStartTimestamp identical: Sun 2026-08-02 03:06:42 UTC
-    PASS  NRestarts identical: 0
+## restart verification gate
+    PASS  active/running with new process PID
+    PASS  MainPID updated: 111165 -> 114080
+    PASS  ExecMainStartTimestamp updated: Sun 2026-08-02 07:04:04 UTC -> Sun 2026-08-02 07:04:49 UTC
 
 RESULT: PASS — reviewed blob published atomically to all targets

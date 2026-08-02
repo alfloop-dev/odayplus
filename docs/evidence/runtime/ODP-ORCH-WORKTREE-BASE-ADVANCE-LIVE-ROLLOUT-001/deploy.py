@@ -129,18 +129,24 @@ def preflight_failures(state: dict[str, str]) -> list[str]:
     return failures
 
 
-def continuity_failures(before: dict[str, str], after: dict[str, str]) -> list[str]:
+def restart_verification_failures(before: dict[str, str], after: dict[str, str]) -> list[str]:
     failures: list[str] = []
     if after["ActiveState"] != "active" or after["SubState"] != "running":
         failures.append(
-            f"supervisor is {after['ActiveState']}/{after['SubState']} after deploy"
+            f"supervisor is {after['ActiveState']}/{after['SubState']} after restart"
         )
     if after["LoadState"] != "loaded":
-        failures.append(f"LoadState became {after['LoadState']!r} after deploy")
-    for field in CONTINUITY_FIELDS:
-        if before[field] != after[field]:
-            failures.append(f"{field} changed across deploy: {before[field]!r} -> {after[field]!r}")
+        failures.append(f"LoadState became {after['LoadState']!r} after restart")
+    if before["MainPID"] == after["MainPID"]:
+        failures.append(
+            f"MainPID remained unchanged across restart: {before['MainPID']}"
+        )
+    if before["ExecMainStartTimestamp"] == after["ExecMainStartTimestamp"]:
+        failures.append(
+            f"ExecMainStartTimestamp remained unchanged across restart: {before['ExecMainStartTimestamp']}"
+        )
     return failures
+
 
 
 def supervisor_block(heading: str, state: dict[str, str]) -> None:
@@ -410,27 +416,37 @@ def main() -> int:
             failures.append(f"{root}: unrelated dirty inventory changed")
     print()
 
-    if before_state is not None:
+    if before_state is not None and not args.skip_supervisor_gate:
+        print("## phase 4 — systemd service restart (pantheon-supervisor.service)")
+        try:
+            sh("systemctl", "--user", "restart", SUPERVISOR_UNIT)
+            print("  systemctl --user restart pantheon-supervisor.service: SUCCESS")
+            time.sleep(3)
+        except Exception as exc:
+            print(f"  systemctl restart FAILED: {exc}")
+            failures.append(f"systemctl restart failed: {exc}")
+
         try:
             after_state: dict[str, str] | None = probe_supervisor()
         except SupervisorProbeError as exc:
             after_state = None
-            print("## supervisor state AFTER")
+            print("## supervisor state AFTER restart")
             print(f"  PROBE FAILED: {exc}")
             print()
-            failures.append(f"supervisor state unreadable after deploy: {exc}")
+            failures.append(f"supervisor state unreadable after restart: {exc}")
         if after_state is not None:
-            supervisor_block("AFTER", after_state)
-            continuity = continuity_failures(before_state, after_state)
-            print("## continuity gate")
-            for label in continuity:
+            supervisor_block("AFTER restart", after_state)
+            restart_gate = restart_verification_failures(before_state, after_state)
+            print("## restart verification gate")
+            for label in restart_gate:
                 print(f"    FAIL  {label}")
-            failures.extend(continuity)
-            if not continuity:
-                print("    PASS  still active/running")
-                for field in CONTINUITY_FIELDS:
-                    print(f"    PASS  {field} identical: {before_state[field]}")
+            failures.extend(restart_gate)
+            if not restart_gate:
+                print("    PASS  active/running with new process PID")
+                print(f"    PASS  MainPID updated: {before_state['MainPID']} -> {after_state['MainPID']}")
+                print(f"    PASS  ExecMainStartTimestamp updated: {before_state['ExecMainStartTimestamp']} -> {after_state['ExecMainStartTimestamp']}")
     print()
+
 
     if args.corrupt_payload:
         gate_fired = (not all_staged_ok) and not failures

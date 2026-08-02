@@ -1,12 +1,12 @@
 # ODP-ORCH-WORKTREE-BASE-ADVANCE-LIVE-ROLLOUT-001: Roll out reviewed worktree base-advance policy to live Supervisor
 
-Owner: Antigravity · Reviewer: Antigravity3 · Phase: Orchestrator Control Plane
+Owner: Antigravity3 · Reviewer: Antigravity5 · Phase: Orchestrator Control Plane
 
 Depends on ODP-ORCH-WORKTREE-BASE-ADVANCE-001 (PR #569, merged).
 
-This task rolls out the reviewed worktree base-advance policy (`.orchestrator/supervisor.py`) from commit `475f6d5e9b36f097a1eb4ab3dbe4bd8b1b1d7c2f` to all authoritative live Supervisor roots. Receipts and deployment driver live under `docs/evidence/runtime/ODP-ORCH-WORKTREE-BASE-ADVANCE-LIVE-ROLLOUT-001/`.
+This task rolls out the reviewed worktree base-advance policy (`.orchestrator/supervisor.py`) from commit `475f6d5e9b36f097a1eb4ab3dbe4bd8b1b1d7c2f` to all authoritative live Supervisor roots and executes a systemd service restart to execute the reviewed code in-memory. Receipts, driver script, and reproduction logs live under `docs/evidence/runtime/ODP-ORCH-WORKTREE-BASE-ADVANCE-LIVE-ROLLOUT-001/`.
 
-**Status: Deployed & verified, submitted for review.**
+**Status: Deployed, systemd restarted & verified, submitted for re-review.**
 
 ---
 
@@ -22,8 +22,8 @@ This task rolls out the reviewed worktree base-advance policy (`.orchestrator/su
 The deployed code delivers the fail-closed reusable worker-worktree lease policy:
 - Fast-forwards clean task branches behind fetched base.
 - Preserves clean task branches already containing fetched base.
-- Supplies explicit rebase-required prompts for clean matching diverged task HEADs.
-- Fail-closed blocking for dirty state, branch/repo mismatches, fetch failures, or unverifiable refs.
+- Supplies explicit rebase-required prompts for clean matching diverged task HEADs (`base_advance_rebase_required`).
+- Fail-closed blocking for dirty state (`skipped_dirty_worktree`), branch/repo mismatches (`task_head_mismatch`), fetch failures, or unverifiable refs.
 
 ---
 
@@ -39,30 +39,50 @@ Before deployment, backups of existing files were created under `/tmp/odp-rollou
 
 ---
 
-## 3. Deployment Safety Protocol & Atomic Publish
+## 3. Deployment Safety Protocol & Systemd Restart
 
 Deployment was driven by `docs/evidence/runtime/ODP-ORCH-WORKTREE-BASE-ADVANCE-LIVE-ROLLOUT-001/deploy.py`:
 
-1. **Preflight Gate**: Checked systemd unit `pantheon-supervisor.service` via `systemctl --user show`. Asserted `LoadState=loaded`, `ActiveState=active`, `SubState=running`, `MainPID=3805773`, `ExecMainStartTimestamp="Sun 2026-08-02 03:06:42 UTC"`, and `NRestarts=0`. Verified process cmdline is python3 running `supervisor.py`.
+1. **Preflight Gate**: Checked systemd unit `pantheon-supervisor.service` via `systemctl --user show`. Verified preflight process state (`MainPID=111165`). Verified process cmdline is python3 running `supervisor.py`.
 2. **Phase 1 (Staging & Verification)**: Materialized exact blob `de7c5eb2e3dddba2e91f37b90b0be8fdf3fd43ce` from commit `475f6d5e9b36f097a1eb4ab3dbe4bd8b1b1d7c2f`. Staged same-directory temporary siblings (`.supervisor.py.ODP-ORCH-WORKTREE-BASE-ADVANCE-LIVE-ROLLOUT-001.<pid>.tmp`), performed `os.fsync`, `os.chmod` matching target mode, and verified same filesystem, sha256 match, byte length, mode, and byte-for-byte compare.
 3. **Phase 2 (Atomic Publish)**: Issued `os.replace(sibling, target)` and directory `os.fsync` across all target roots. Asserted post-publish target sha256, byte length, mode, and confirmed inode changed (proving atomic rename).
 4. **Phase 3 (Import Smoke Test)**: Executed Python import probe (`python3 -B -c "import supervisor; assert hasattr(supervisor, '_refresh_reused_worker_worktree')"`) inside each root directory. All roots passed cleanly.
-5. **Continuity Gate**: Re-probed `pantheon-supervisor.service` post-publish. `MainPID` (3805773), `ExecMainStartTimestamp`, and `NRestarts` (0) were 100% identical to preflight state.
-6. **Negative Rehearsal**: Executed `deploy.py --corrupt-payload` to prove that any checksum or byte-verification failure immediately unlinks the temporary sibling and aborts without touching target files.
+5. **Phase 4 (Systemd Restart & Gate)**: Executed `systemctl --user restart pantheon-supervisor.service`. Probed `pantheon-supervisor.service` post-restart and verified:
+   - `ActiveState=active`, `SubState=running`
+   - `MainPID` updated (`111165` -> `114080`)
+   - `ExecMainStartTimestamp` updated (`Sun 2026-08-02 07:04:04 UTC` -> `Sun 2026-08-02 07:04:49 UTC`)
+6. **Supervisor Health Check**: `python3 scripts/supervisor_runtime_health.py` confirmed `healthy=True`, `lifecycle=running`, fresh heartbeat, and `last_loop_error=null`.
+7. **Negative Rehearsal**: Executed `deploy.py --corrupt-payload` to prove that any checksum or byte-verification failure immediately unlinks the temporary sibling and aborts without touching target files.
 
 ---
 
-## 4. Verification & Testing
+## 4. Real Worktree Base-Advance Reproduction & Fail-Closed Audit
 
-- **Focused Unit Tests**: Executed `PYTHONPATH=.orchestrator python3 -m unittest test_supervisor.ReusedWorkerWorktreeBaseAdvanceTests test_supervisor.ProcessQueueDispatchGuardTests` (27 tests passed cleanly).
+Executed `docs/evidence/runtime/ODP-ORCH-WORKTREE-BASE-ADVANCE-LIVE-ROLLOUT-001/reproduce_base_advance.py` on real isolated worktrees:
+- **Test Case 1 (Clean Diverged Worktree)**: Verified `_refresh_reused_worker_worktree` returns `ok=True` and `status=base_advance_rebase_required:local=...,base=...` and generates owner prompt.
+- **Test Case 2 (Dirty Worktree)**: Verified `ok=False` and `status=skipped_dirty_worktree` (fail-closed).
+- **Test Case 3 (Ref Mismatch)**: Verified `ok=False` and `status=task_head_mismatch:...` (fail-closed).
+- **Test Case 4 (Fetch Failure / Invalid Ref)**: Verified `ok=False` and `status=wrong_branch:...` (fail-closed).
+
+Output logged to `docs/evidence/runtime/ODP-ORCH-WORKTREE-BASE-ADVANCE-LIVE-ROLLOUT-001/base-advance-rebase-required-repro.txt`.
+
+---
+
+## 5. Verification & Testing
+
+- **Focused Unit Tests**: Executed `/home/lupin/oday-plus/.venv/bin/pytest .orchestrator/test_*.py` (66 tests passed cleanly).
 - **Compilation Check**: `python3 -m py_compile docs/evidence/runtime/ODP-ORCH-WORKTREE-BASE-ADVANCE-LIVE-ROLLOUT-001/deploy.py .orchestrator/supervisor.py .orchestrator/test_supervisor.py` passed with code 0.
 - **Diff Check**: `git diff --check` passed cleanly with exit code 0.
 
 ---
 
-## 5. Artifacts and Transcripts
+## 6. Artifacts and Transcripts
 
 - Deployment Script: `docs/evidence/runtime/ODP-ORCH-WORKTREE-BASE-ADVANCE-LIVE-ROLLOUT-001/deploy.py`
 - Deployment Transcript: `docs/evidence/runtime/ODP-ORCH-WORKTREE-BASE-ADVANCE-LIVE-ROLLOUT-001/deploy-transcript.txt`
 - Negative Rehearsal Transcript: `docs/evidence/runtime/ODP-ORCH-WORKTREE-BASE-ADVANCE-LIVE-ROLLOUT-001/atomic-publish-rehearsal-negative.txt`
+- Worktree Base-Advance Reproduction Log: `docs/evidence/runtime/ODP-ORCH-WORKTREE-BASE-ADVANCE-LIVE-ROLLOUT-001/base-advance-rebase-required-repro.txt`
+- Reproduction Driver Script: `docs/evidence/runtime/ODP-ORCH-WORKTREE-BASE-ADVANCE-LIVE-ROLLOUT-001/reproduce_base_advance.py`
 - Detailed Evidence Readme: `docs/evidence/runtime/ODP-ORCH-WORKTREE-BASE-ADVANCE-LIVE-ROLLOUT-001/README.md`
+- Task Brief: `.orchestrator/task-briefs/odp_orch_worktree_base_advance_live_rollout_001.md`
+
