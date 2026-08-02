@@ -522,7 +522,7 @@ class DeliveryMetadataValidationTests(unittest.TestCase):
                 return "Codex"
             if args == ["show", "-s", "--format=%ae", "abc123"]:
                 return "codex@example.com"
-            if args == ["status", "--porcelain"]:
+            if args == ["status", "--porcelain", "--untracked-files=all"]:
                 return ""
             if args == ["remote"]:
                 return "origin"
@@ -585,7 +585,7 @@ class DeliveryMetadataValidationTests(unittest.TestCase):
                 return "Codex"
             if args == ["show", "-s", "--format=%ae", "abc123"]:
                 return "codex@example.com"
-            if args == ["status", "--porcelain"]:
+            if args == ["status", "--porcelain", "--untracked-files=all"]:
                 return ""
             if args == ["remote"]:
                 return "origin"
@@ -643,7 +643,7 @@ class DeliveryMetadataValidationTests(unittest.TestCase):
                 ("show", "-s", "--format=%b", "sourcehead"): "LLM-Agent: Codex\nTask-ID: REG-002\nReviewer: Claude\n",
                 ("show", "-s", "--format=%an", "sourcehead"): "Codex",
                 ("show", "-s", "--format=%ae", "sourcehead"): "codex@example.com",
-                ("status", "--porcelain"): "",
+                ("status", "--porcelain", "--untracked-files=all"): "",
                 ("remote",): "origin",
                 ("rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{upstream}"): "origin/task/REG-002",
                 ("rev-list", "--left-right", "--count", "origin/task/REG-002...HEAD"): "0 0",
@@ -838,6 +838,20 @@ class DoneDeliveryProvenanceRegressionTests(unittest.TestCase):
         self.assertEqual(checkout, task_path)
         self.assertEqual(branch, f"task/{self.TASK_ID}")
 
+    def test_git_clean_gate_ignores_only_exact_worker_seed_context(self) -> None:
+        entries = [
+            "?? AI_COLLABORATION_GUIDE.md",
+            "?? ai-status.json",
+            "?? .orchestrator/task-briefs/odp_operator_live_provenance_health_001.md",
+            "?? .orchestrator/task-briefs/other-task.md",
+            " M scripts/ai_status.py",
+        ]
+
+        owned, ignored = ai_status.split_task_owned_dirty_entries(entries, self.TASK_ID)
+
+        self.assertEqual(ignored, entries[:3])
+        self.assertEqual(owned, entries[3:])
+
     def test_collector_rejects_moved_or_dirty_task_checkout_even_if_env_disables_gates(self) -> None:
         task = {
             "id": self.TASK_ID,
@@ -861,7 +875,7 @@ class DoneDeliveryProvenanceRegressionTests(unittest.TestCase):
                 ("show", "-s", "--format=%b", self.APPROVED_HEAD): f"LLM-Agent: Codex\nTask-ID: {self.TASK_ID}\nReviewer: Codex8\n",
                 ("show", "-s", "--format=%an", self.APPROVED_HEAD): "Codex",
                 ("show", "-s", "--format=%ae", self.APPROVED_HEAD): "codex@example.com",
-                ("status", "--porcelain"): " M scripts/ai_status.py",
+                ("status", "--porcelain", "--untracked-files=all"): " M scripts/ai_status.py",
             }
             key = tuple(args)
             if key not in responses:
@@ -880,7 +894,7 @@ class DoneDeliveryProvenanceRegressionTests(unittest.TestCase):
             mock.patch.object(ai_status, "task_delivery_checkout", return_value=(Path("/task"), f"task/{self.TASK_ID}")),
             mock.patch.object(ai_status, "run_git_command", side_effect=fake_git),
         ):
-            with self.assertRaisesRegex(SystemExit, "git working tree is dirty"):
+            with self.assertRaisesRegex(SystemExit, "task-owned git working tree is dirty"):
                 ai_status.collect_done_delivery_metadata(task, "Codex")
 
     def test_collector_rejects_checkout_from_wrong_repository(self) -> None:
@@ -900,7 +914,7 @@ class DoneDeliveryProvenanceRegressionTests(unittest.TestCase):
                 ("show", "-s", "--format=%b", self.APPROVED_HEAD): f"LLM-Agent: Codex\nTask-ID: {self.TASK_ID}\nReviewer: Codex8\n",
                 ("show", "-s", "--format=%an", self.APPROVED_HEAD): "Codex",
                 ("show", "-s", "--format=%ae", self.APPROVED_HEAD): "codex@example.com",
-                ("status", "--porcelain"): "",
+                ("status", "--porcelain", "--untracked-files=all"): "",
                 ("remote",): "origin",
             }
             key = tuple(args)
@@ -3850,7 +3864,7 @@ class ActorReferenceValidationTests(unittest.TestCase):
 
     def _roster_state_for_prune(self) -> dict:
         state = self._state()
-        for name in (self.TASK_ID, "Codex7", "Nessie9"):
+        for name in (self.TASK_ID, "Codex77", "Nessie9"):
             state["agents"].append(
                 {
                     "name": name,
@@ -3890,9 +3904,9 @@ class ActorReferenceValidationTests(unittest.TestCase):
             ai_status.command_prune_agents(state, ["--apply", "cleanup"])
 
         roster = [agent["name"] for agent in state["agents"]]
-        # Removed: the task-id entry and the undeclared, unreferenced Codex7.
+        # Removed: the task-id entry and the undeclared, unreferenced Codex77.
         self.assertNotIn(self.TASK_ID, roster)
-        self.assertNotIn("Codex7", roster)
+        self.assertNotIn("Codex77", roster)
         # Kept: configured agents and the undeclared-but-referenced Nessie9.
         self.assertIn("Claude", roster)
         self.assertIn("Codex2", roster)

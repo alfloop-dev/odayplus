@@ -1783,6 +1783,23 @@ def parse_git_worktree_porcelain(payload: str) -> list[dict[str, str]]:
     return entries
 
 
+def split_task_owned_dirty_entries(entries: list[str], task_id: str) -> tuple[list[str], list[str]]:
+    """Separate delivery dirtiness from known untracked worker context seeds."""
+
+    task_brief = f".orchestrator/task-briefs/{task_id.lower().replace('-', '_')}.md"
+    seed_paths = {"AI_COLLABORATION_GUIDE.md", "ai-status.json", task_brief}
+    owned: list[str] = []
+    ignored_seeds: list[str] = []
+    for entry in entries:
+        status = entry[:2]
+        path = entry[3:].strip() if len(entry) > 3 else ""
+        if status == "??" and path in seed_paths:
+            ignored_seeds.append(entry)
+        else:
+            owned.append(entry)
+    return owned, ignored_seeds
+
+
 def task_delivery_checkout(repository_root: Path, task_id: str) -> tuple[Path, str]:
     """Resolve the one checkout owned by ``task_id`` instead of central writer HEAD."""
 
@@ -2087,17 +2104,20 @@ def collect_done_delivery_metadata(
         delivery["commit_metadata"] = metadata_fields
 
     porcelain = run_git_command(
-        ["status", "--porcelain"],
+        ["status", "--porcelain", "--untracked-files=all"],
         cwd=repository_root,
         failure_message="Cannot finalize task: git status is unavailable.",
     )
-    dirty_entries = [line for line in porcelain.splitlines() if line.strip()]
+    all_dirty_entries = [line for line in porcelain.splitlines() if line.strip()]
+    dirty_entries, ignored_seed_entries = split_task_owned_dirty_entries(all_dirty_entries, task_id)
     delivery["git_clean"] = not dirty_entries
     delivery["dirty_entry_count"] = len(dirty_entries)
+    delivery["ignored_worker_seed_entry_count"] = len(ignored_seed_entries)
 
     if settings["require_git_clean"] and dirty_entries:
         raise SystemExit(
-            "Cannot finalize task: git working tree is dirty while delivery_gates.require_git_clean is enabled."
+            "Cannot finalize task: task-owned git working tree is dirty while "
+            "delivery_gates.require_git_clean is enabled."
         )
 
     remotes_output = run_git_command(
@@ -4983,12 +5003,26 @@ def command_done(state: dict[str, Any], args: list[str]) -> None:
             "Strict update-branch merge requires re-review."
         )
 
+    # Keep the reviewed PR head and GitHub-created merge commit distinct before
+    # collection. The collector independently re-fetches the full merged PR and
+    # CI proof; this early check prevents a merge commit from ever being treated
+    # as the review anchor, even when a caller replaces the collector in tests.
+    head_ref_oid, merge_commit = task_pr_head_and_merge_commit(task_id)
+    if merge_commit and current_sha == merge_commit:
+        raise SystemExit(
+            f"Cannot finalize task {task_id}: the resolved head ({current_sha[:8]}) is the "
+            "PR merge commit, not the reviewed branch head. The merge commit was never "
+            "reviewed and cannot satisfy the approved-head freeze."
+        )
+
     timestamp = iso_now()
     delivery = collect_done_delivery_metadata(task, actor, approved_head=approved_head)
+    delivery["approved_head"] = approved_head
+    delivery["verified_head"] = current_sha
     delivery["remote_task_head"] = current_sha
     pull_request = delivery.get("pull_request") or {}
-    head_ref_oid = pull_request.get("head_sha")
-    merge_commit = pull_request.get("merge_commit")
+    head_ref_oid = pull_request.get("head_sha") or head_ref_oid
+    merge_commit = pull_request.get("merge_commit") or merge_commit
     if head_ref_oid:
         delivery["pr_head_ref_oid"] = head_ref_oid
     if merge_commit:
