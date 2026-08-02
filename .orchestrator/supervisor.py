@@ -9924,16 +9924,20 @@ def dispatch_ready_tasks(
             task_id = str(task.get(task_id_field) or "")
             if not task_id or task_id in active_task_ids or task_id in pending_task_ids:
                 continue
-            helper_message = (
-                f"Helper-claimed by {target_agent} while {task_owner} is dispatch-paused."
-                if owner_paused
-                else (
-                    f"Helper-claimed by idle {target_agent}; previous owner {task_owner} becomes reviewer."
-                    if helper_settings.get("claim_idle_work", False)
-                    else f"Helper-claimed by {target_agent} while {task_owner} completes higher-priority work."
-                )
+            new_reviewer = (
+                task_reviewer
+                if task_reviewer and task_reviewer != target_agent
+                else str(task_owner or "")
             )
-            new_reviewer = str(task_owner or task_reviewer or "")
+            if owner_paused:
+                helper_message = f"Helper-claimed by {target_agent} while {task_owner} is dispatch-paused."
+            elif helper_settings.get("claim_idle_work", False):
+                if new_reviewer == task_reviewer:
+                    helper_message = f"Helper-claimed by idle {target_agent}; designated reviewer {task_reviewer} preserved."
+                else:
+                    helper_message = f"Helper-claimed by idle {target_agent}; previous owner {task_owner} becomes reviewer."
+            else:
+                helper_message = f"Helper-claimed by {target_agent} while {task_owner} completes higher-priority work."
             if not persist_task_reassignment(
                 config,
                 task_id=task_id,
