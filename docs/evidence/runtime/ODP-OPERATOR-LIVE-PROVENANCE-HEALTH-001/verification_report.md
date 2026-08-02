@@ -2,8 +2,8 @@
 
 ## Review Scope
 
-- Owner: `Codex`
-- Reviewer: `Codex8`
+- Owner: `Antigravity`
+- Reviewer: `Codex`
 - Branch: `task/ODP-OPERATOR-LIVE-PROVENANCE-HEALTH-001`
 - Reopen baseline: `origin/dev` at `475f6d5e9b36f097a1eb4ab3dbe4bd8b1b1d7c2f`
 - Reopened branch head: `82f4c57e3d47b4738c818a375c5a3ec4bd0c91dc`
@@ -71,7 +71,7 @@ changes; review must use this task's exact pushed head.
 ## Pending External Evidence
 
 The old `82f4c57e` head had no GitHub check-runs. Exact-head CI, independent
-Codex8 review, PR merge, and a post-merge Deploy Dev replay are still required;
+Codex review, PR merge, and a post-merge Deploy Dev replay are still required;
 this report does not claim them complete. Even after the direct health mode
 contract deploys, `ODP-P10-DEV-REDEPLOY-VERIFY-001` remains blocked on the real
 ForecastOps history/model release if the unchanged deployment gate still
