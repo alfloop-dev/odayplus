@@ -412,6 +412,26 @@ class GitHubBusCommandTests(unittest.TestCase):
 
 
 class GitHubBusProcessTests(unittest.TestCase):
+    def test_edit_pull_request_uses_rest_without_projects_classic_graphql(self) -> None:
+        with mock.patch.object(github_bus, "run_gh") as run_gh:
+            github_bus.edit_pull_request_rest(
+                "alfloop-dev/odayplus",
+                593,
+                "[ReviewBus] TASK Review",
+                "body\n",
+                ["pantheon-bus", "pantheon-review"],
+            )
+
+        self.assertEqual(run_gh.call_count, 2)
+        edit_args = run_gh.call_args_list[0].args[0]
+        self.assertEqual(edit_args[:4], ["api", "--method", "PATCH", "repos/alfloop-dev/odayplus/pulls/593"])
+        self.assertIn("title=[ReviewBus] TASK Review", edit_args)
+        self.assertIn("body=body\n", edit_args)
+        label_args = run_gh.call_args_list[1].args[0]
+        self.assertEqual(label_args[:4], ["api", "--method", "POST", "repos/alfloop-dev/odayplus/issues/593/labels"])
+        self.assertIn("labels[]=pantheon-bus", label_args)
+        self.assertIn("labels[]=pantheon-review", label_args)
+
     def test_run_gh_process_kills_process_group_on_timeout(self) -> None:
         class FakePopen:
             def __init__(self) -> None:
