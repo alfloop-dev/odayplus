@@ -99,6 +99,17 @@ Rechecked after the canonical dependency's independent review at `2026-08-01T23:
 
 Disposition remains fail-closed: the packet is reviewable as support evidence, but sidecar merge/finalization must wait for a reviewer-approved canonical repair to merge and for PR `#551` to rerun cleanly on that baseline.
 
+### Owner re-dispatch audit
+
+Rechecked at `2026-08-02T00:10:51Z` after the supervisor returned the sidecar to `in_progress` for required-check failure:
+
+- PR `#551` remains open at exact approved head `e10f43bbd0fb2cb41c6cdb97568a160f81e1ae2f`. CI run `30724447866` passed `orchestrator` and `performance-gate`; `product-e2e-gate` failed again at the release-gate step, while the long-running `product` job was still executing at capture time.
+- `task-review-gate` reports failure because the task was mechanically reopened to `in_progress` after CI failure. Antigravity's content review at the same exact head remains recorded as approved; no new packet-content rejection or SiteScore implementation finding was issued.
+- Canonical dependency PR `#562` remains open at unchanged head `b047aa18baa81b4b47fda8b58fba0b7a7d4bb1d7`, and its task remains `in_progress` after the release-authority TOCTOU rejection. No reviewer-approved repair has merged into `dev`, so refreshing PR `#551` cannot yet supply the required repaired baseline.
+- Parent PR `#525` has advanced to `b669017f7787e309573ab0edbe600b41095334a1` through a `dev` merge, but remains open and blocked with failing `product` and `product-e2e-gate` checks. This does not alter the exact `fb42ef7a` implementation evidence assessed by the packet or authorize parent closeout.
+
+This re-dispatch produces no authorized local CI repair: changing workflow policy, broadening an evidence allowlist, or regenerating canonical product E2E truth would violate the sidecar boundary. The correct next action remains independent re-review of this updated support packet, followed by a clean rerun only after the canonical CI-boundary repair merges.
+
 ## Reviewer handoff
 
 Antigravity should use this packet as supporting evidence and may absorb it into the parent closeout record if useful. Before parent finalization:
