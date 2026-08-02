@@ -589,6 +589,35 @@ class TaskPRDiscoveryTests(unittest.TestCase):
         self.assertFalse(github_bus.task_id_matches_branch("ODP-FOO-001", "task/ODP-FOO-001-SIDECAR-ACCEPTANCE"))
         self.assertFalse(github_bus.task_id_matches_branch("ODP-FOO-001", "task/ODP-FOO-0010"))
 
+    def test_review_branch_for_task_rejects_unrelated_agent_or_current_branch_when_canonical_absent(self) -> None:
+        config = {"branch_workflow": {"task_branch_prefix": "task/"}}
+        status = {
+            "agents": [
+                {
+                    "name": "Codex",
+                    "branch": "feat/unrelated-branch",
+                }
+            ]
+        }
+        task = {
+            "id": "ODP-FOO-001",
+            "owner": "Codex",
+            "title": "Parent task with missing canonical branch",
+        }
+
+        queried_branches: list[str] = []
+
+        def mock_exists(branch_name: str) -> bool:
+            queried_branches.append(branch_name)
+            return branch_name == "feat/unrelated-branch"
+
+        with mock.patch.object(github_bus, "branch_exists", side_effect=mock_exists):
+            with mock.patch.object(github_bus, "current_branch", return_value="feat/unrelated-branch"):
+                found_branch = github_bus.review_branch_for_task(config, status, task)
+
+        self.assertIsNone(found_branch)
+        self.assertIn("task/ODP-FOO-001", queried_branches)
+
     def test_review_branch_for_task_returns_none_when_canonical_absent_and_only_sidecar_or_unrelated_branch_exists(self) -> None:
         config = {"branch_workflow": {"task_branch_prefix": "task/"}}
         status = {
