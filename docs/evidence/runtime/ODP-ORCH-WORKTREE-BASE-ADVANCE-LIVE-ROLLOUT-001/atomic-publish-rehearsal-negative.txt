@@ -1,0 +1,130 @@
+# Deployment transcript — ODP-ORCH-WORKTREE-BASE-ADVANCE-LIVE-ROLLOUT-001
+# host date  : 2026-08-02T06:42:43Z
+# driver     : deploy.py (stage-all -> verify-all -> atomic publish)
+# source ref : 475f6d5e9b36f097a1eb4ab3dbe4bd8b1b1d7c2f
+# backups    : /tmp/odp-rollout-backup/ODP-ORCH-WORKTREE-BASE-ADVANCE-LIVE-ROLLOUT-001-negative
+# order      : supervisor.py
+# MODE       : NEGATIVE REHEARSAL — payload is corrupted after hashing;
+#              staging gate must abort before any rename is issued.
+
+## payloads materialised from the source commit (no working-tree copy)
+  .orchestrator/supervisor.py
+    blob   : de7c5eb2e3dddba2e91f37b90b0be8fdf3fd43ce
+    sha256 : 35b932b6b29dd1ca2e2c228065abd4df5160f177eee17a2bb01ac5d167828a6f
+    bytes  : 448049
+
+## supervisor state BEFORE
+  Id                    : pantheon-supervisor.service
+  LoadState             : loaded
+  ActiveState           : active
+  SubState              : running
+  MainPID               : 3805773
+  ExecMainStartTimestamp: Sun 2026-08-02 03:06:42 UTC
+  NRestarts             : 0
+  process cmdline       : python3 /home/lupin/oday-plus-supervisor-runtime-945a8366/.orchestrator/supervisor.py --config /home/lupin/.config/pantheon/supervisor-runtime.json --verbose
+  process cwd           : /home/lupin/oday-plus-supervisor-runtime-945a8366
+
+## preflight gate (evaluated before any target is touched)
+    PASS  unit loaded and active/running
+    PASS  MainPID is a live process whose cmdline is the Supervisor
+    PASS  continuity pinned to MainPID=3805773, ExecMainStartTimestamp=Sun 2026-08-02 03:06:42 UTC, NRestarts=0
+
+## phase 1 — stage and verify every sibling (no rename issued)
+  root: /home/lupin/oday-plus
+    git branch          : main
+    git HEAD            : e6e12324617d91b4965defaed125ba755dd36932
+    dirty files         : 19
+  target: /home/lupin/oday-plus/.orchestrator/supervisor.py
+    BEFORE sha256    : f68d152f4fa1d71ff49173b0fa895fe68f8941470f45cc7544b275c0474beb79
+    BEFORE bytes     : 427993
+    BEFORE mode      : 664
+    BEFORE inode     : 795646
+    BEFORE device    : 2049
+    BEFORE mtime     : 2026-08-02T03:05:46Z
+    backup              : /tmp/odp-rollout-backup/ODP-ORCH-WORKTREE-BASE-ADVANCE-LIVE-ROLLOUT-001-negative/oday-plus.supervisor.py.bak
+    rollback            : install -m 664 /tmp/odp-rollout-backup/ODP-ORCH-WORKTREE-BASE-ADVANCE-LIVE-ROLLOUT-001-negative/oday-plus.supervisor.py.bak /home/lupin/oday-plus/.orchestrator/supervisor.py
+    staged sibling      : .supervisor.py.ODP-ORCH-WORKTREE-BASE-ADVANCE-LIVE-ROLLOUT-001.49504.tmp
+    sibling sha256      : 480718d57db3d461fc0be317e0748699f7a6a8ed734cd3aabf26000f694091cd
+    sibling bytes/mode  : 448049 / 664
+      PASS  same directory as target
+      PASS  same filesystem (rename is atomic)
+      FAIL  sha256 == reviewed blob
+      PASS  byte length == reviewed blob
+      PASS  mode == target's existing mode
+      FAIL  byte-for-byte compare vs blob
+    VERIFICATION FAILED -> sibling unlinked, target NOT touched
+  root: /home/lupin/oday-plus-supervisor-live
+    git branch          : dev
+    git HEAD            : e496be62c47c45d758681b8a4d3abfae16f1c96d
+    dirty files         : 35
+  target: /home/lupin/oday-plus-supervisor-live/.orchestrator/supervisor.py
+    BEFORE sha256    : d5b3d64fa853986f3556493fa66b10a49c43ccee62e8b03d63bfc9078e1f0687
+    BEFORE bytes     : 428326
+    BEFORE mode      : 664
+    BEFORE inode     : 870094
+    BEFORE device    : 2049
+    BEFORE mtime     : 2026-08-02T03:06:18Z
+    backup              : /tmp/odp-rollout-backup/ODP-ORCH-WORKTREE-BASE-ADVANCE-LIVE-ROLLOUT-001-negative/oday-plus-supervisor-live.supervisor.py.bak
+    rollback            : install -m 664 /tmp/odp-rollout-backup/ODP-ORCH-WORKTREE-BASE-ADVANCE-LIVE-ROLLOUT-001-negative/oday-plus-supervisor-live.supervisor.py.bak /home/lupin/oday-plus-supervisor-live/.orchestrator/supervisor.py
+    staged sibling      : .supervisor.py.ODP-ORCH-WORKTREE-BASE-ADVANCE-LIVE-ROLLOUT-001.49504.tmp
+    sibling sha256      : 480718d57db3d461fc0be317e0748699f7a6a8ed734cd3aabf26000f694091cd
+    sibling bytes/mode  : 448049 / 664
+      PASS  same directory as target
+      PASS  same filesystem (rename is atomic)
+      FAIL  sha256 == reviewed blob
+      PASS  byte length == reviewed blob
+      PASS  mode == target's existing mode
+      FAIL  byte-for-byte compare vs blob
+    VERIFICATION FAILED -> sibling unlinked, target NOT touched
+  root: /home/lupin/oday-plus-supervisor-runtime-945a8366
+    git branch          : HEAD
+    git HEAD            : 945a836616a547e60a008d7c15bf79bb87c77f39
+    dirty files         : 9
+  target: /home/lupin/oday-plus-supervisor-runtime-945a8366/.orchestrator/supervisor.py
+    BEFORE sha256    : abb945d6ab7ae9095f1c785712d502639d09a3c3aaa8a8480fe3a417fe20d202
+    BEFORE bytes     : 451864
+    BEFORE mode      : 664
+    BEFORE inode     : 1059440
+    BEFORE device    : 2049
+    BEFORE mtime     : 2026-08-02T03:06:18Z
+    backup              : /tmp/odp-rollout-backup/ODP-ORCH-WORKTREE-BASE-ADVANCE-LIVE-ROLLOUT-001-negative/oday-plus-supervisor-runtime-945a8366.supervisor.py.bak
+    rollback            : install -m 664 /tmp/odp-rollout-backup/ODP-ORCH-WORKTREE-BASE-ADVANCE-LIVE-ROLLOUT-001-negative/oday-plus-supervisor-runtime-945a8366.supervisor.py.bak /home/lupin/oday-plus-supervisor-runtime-945a8366/.orchestrator/supervisor.py
+    staged sibling      : .supervisor.py.ODP-ORCH-WORKTREE-BASE-ADVANCE-LIVE-ROLLOUT-001.49504.tmp
+    sibling sha256      : 480718d57db3d461fc0be317e0748699f7a6a8ed734cd3aabf26000f694091cd
+    sibling bytes/mode  : 448049 / 664
+      PASS  same directory as target
+      PASS  same filesystem (rename is atomic)
+      FAIL  sha256 == reviewed blob
+      PASS  byte length == reviewed blob
+      PASS  mode == target's existing mode
+      FAIL  byte-for-byte compare vs blob
+    VERIFICATION FAILED -> sibling unlinked, target NOT touched
+
+## phase 2 — SKIPPED: staging failed, so no rename is issued anywhere
+
+## leftover staging siblings and dirty inventory
+  /home/lupin/oday-plus: leftover siblings none
+    every other dirty file unchanged : True
+  /home/lupin/oday-plus-supervisor-live: leftover siblings none
+    every other dirty file unchanged : True
+  /home/lupin/oday-plus-supervisor-runtime-945a8366: leftover siblings none
+    every other dirty file unchanged : True
+
+## supervisor state AFTER
+  Id                    : pantheon-supervisor.service
+  LoadState             : loaded
+  ActiveState           : active
+  SubState              : running
+  MainPID               : 3805773
+  ExecMainStartTimestamp: Sun 2026-08-02 03:06:42 UTC
+  NRestarts             : 0
+  process cmdline       : python3 /home/lupin/oday-plus-supervisor-runtime-945a8366/.orchestrator/supervisor.py --config /home/lupin/.config/pantheon/supervisor-runtime.json --verbose
+  process cwd           : /home/lupin/oday-plus-supervisor-runtime-945a8366
+
+## continuity gate
+    PASS  still active/running
+    PASS  MainPID identical: 3805773
+    PASS  ExecMainStartTimestamp identical: Sun 2026-08-02 03:06:42 UTC
+    PASS  NRestarts identical: 0
+
+RESULT: PASS — staging gate aborted corrupted payload and left targets untouched
