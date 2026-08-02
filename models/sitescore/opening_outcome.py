@@ -255,8 +255,6 @@ class SiteScoreOpeningOutcomeBenchmarkResult:
         reasons = []
 
         if self.is_gate2_passed:
-            handback_required = False
-            governed_disabled = False
             handback_action = "SiteScore opening outcome M6/M12 coverage calibration benchmark passed Gate 2."
         elif self.provenance == "unreachable_db":
             err_msg = f": {self.db_error}" if self.db_error else ""
@@ -470,6 +468,8 @@ class SiteScoreOpeningOutcomeBenchmarkResult:
 def evaluate_sitescore_opening_outcome_benchmark(
     records: Sequence[dict[str, Any]] | None = None,
     *,
+    prediction_receipt: dict[str, Any] | None = None,
+    model_registry_evidence: Any | None = None,
     provenance: str = "provided_records",
     db_error: str | None = None,
     dataset_snapshot_id: str | None = None,
@@ -493,6 +493,8 @@ def evaluate_sitescore_opening_outcome_benchmark(
         from models.sitescore.prediction_source import verify_sitescore_prediction_source
         verif_res = verify_sitescore_prediction_source(
             records,
+            prediction_receipt=prediction_receipt,
+            model_registry_evidence=model_registry_evidence,
             expected_snapshot_id=dataset_snapshot_id,
             expected_model_version=model_version,
             expected_lineage_id=artifact_lineage_id,
