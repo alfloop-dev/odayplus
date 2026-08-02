@@ -4854,6 +4854,20 @@ def test_real_app_health_data_mode_matches_unchanged_deploy_validator(
         assert payload["data_mode"] == "live"
         assert validator._declared_data_mode(payload) == "live"
 
+    unavailable_app = create_app(persistence=_memory_bundle())
+    with TestClient(unavailable_app) as client:
+        unavailable_responses = [
+            client.get("/platform/health"),
+            client.get("/readiness"),
+        ]
+
+    for response in unavailable_responses:
+        payload = response.json()
+        assert response.status_code == 503
+        assert payload["status"] == "unhealthy"
+        assert payload["data_mode"] == "unavailable"
+        assert validator._declared_data_mode(payload) == "unavailable"
+
     monkeypatch.delenv("ODP_REQUIRE_LIVE_DATA")
     monkeypatch.delenv("ODP_PERSISTENCE")
     fixture_app = create_app(persistence=_memory_bundle())
