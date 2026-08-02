@@ -4810,3 +4810,63 @@ def test_real_app_platform_health_job_queue_contract(tmp_path: Path) -> None:
     assert not validator.is_valid_job_queue_health(bare_queue_text), (
         f"bare 'healthy' must fail is_valid_job_queue_health; got: {bare_queue_text!r}"
     )
+
+
+def test_real_app_health_data_mode_matches_unchanged_deploy_validator(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Real API payloads satisfy the direct live mode contract without gate changes."""
+    from fastapi.testclient import TestClient
+
+    from apps.api.oday_api.main import create_app
+    from models.shared_ml import MlflowProductionModelRuntime
+    from shared.infrastructure.persistence.factory import _memory_bundle
+    from tests.integration.test_operator_live_provenance_health import (
+        _live_connectivity_probe,
+        _live_provider,
+        _production_backed_bundle,
+    )
+    from tests.integration.test_production_api_composition import RecordingProductionRuntime
+
+    monkeypatch.setenv("ODP_REQUIRE_LIVE_DATA", "true")
+    monkeypatch.setenv("ODP_PERSISTENCE", "postgresql")
+    monkeypatch.setattr(
+        MlflowProductionModelRuntime,
+        "from_environment",
+        classmethod(lambda _cls, **_kwargs: RecordingProductionRuntime()),
+    )
+    live_bundle = _production_backed_bundle(tmp_path / "health-data-mode.sqlite3")
+    live_app = create_app(
+        persistence=live_bundle,
+        external_provider_validation=_live_provider(),
+        external_provider_connectivity_probe=_live_connectivity_probe,
+    )
+
+    with TestClient(live_app) as client:
+        live_payloads = [
+            client.get("/platform/health").json(),
+            client.get("/readiness").json(),
+        ]
+
+    for payload in live_payloads:
+        assert payload["status"] == "ok"
+        assert payload["data_mode"] == "live"
+        assert validator._declared_data_mode(payload) == "live"
+
+    monkeypatch.delenv("ODP_REQUIRE_LIVE_DATA")
+    monkeypatch.delenv("ODP_PERSISTENCE")
+    fixture_app = create_app(persistence=_memory_bundle())
+    with TestClient(fixture_app) as client:
+        fixture_payloads = [
+            client.get("/platform/health").json(),
+            client.get("/readiness").json(),
+        ]
+
+    for payload in fixture_payloads:
+        assert payload["status"] == "ok"
+        assert payload["data_mode"] == "fixture"
+        assert validator._declared_data_mode(payload) == "fixture"
+        assert not (
+            payload["status"] == "ok" and validator._declared_data_mode(payload) == "live"
+        )

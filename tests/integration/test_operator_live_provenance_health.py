@@ -184,6 +184,7 @@ def test_platform_health_and_readiness_200_ok_when_core_repository_is_ready(
         assert health_res.status_code == 200, health_res.text
         health_data = health_res.json()
         assert health_data["status"] == "ok"
+        assert health_data["data_mode"] == "live"
         assert health_data["modes"]["data"]["mode"] == "live"
         assert health_data["modes"]["data"]["operatorRepositoryReady"] is True
         assert health_data["modes"]["data"]["liveReady"] is True
@@ -193,6 +194,7 @@ def test_platform_health_and_readiness_200_ok_when_core_repository_is_ready(
         assert readiness_res.status_code == 200, readiness_res.text
         readiness_data = readiness_res.json()
         assert readiness_data["status"] == "ok"
+        assert readiness_data["data_mode"] == "live"
         assert readiness_data["details"]["data"]["mode"] == "live"
         assert readiness_data["details"]["data"]["liveReady"] is True
 
