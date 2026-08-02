@@ -216,26 +216,32 @@ def branch_exists(branch: str) -> bool:
 
 
 def branch_head_sha(branch: str) -> str | None:
-    for ref in (branch, f"origin/{branch}", f"refs/remotes/origin/{branch}"):
+    # Review PRs concern the published branch, so a stale local branch must not
+    # hide the remote-tracking ref that GitHub will actually review.
+    for ref in (f"refs/remotes/origin/{branch}", f"origin/{branch}", branch):
         proc = run_command(["git", "rev-parse", ref], cwd=ROOT)
         if proc.returncode == 0:
-            sha = (proc.stdout or '').strip()
+            sha = (proc.stdout or "").strip()
             if sha:
                 return sha
     return None
 
 
 def branch_has_diff(base: str, branch: str) -> bool:
-    branch_refs = [branch, f"origin/{branch}", f"refs/remotes/origin/{branch}"]
-    base_refs = [base, f"origin/{base}", f"refs/remotes/origin/{base}"]
-    for b_ref in branch_refs:
-        for a_ref in base_refs:
-            proc = run_command(["git", "rev-list", "--count", f"{a_ref}..{b_ref}"], cwd=ROOT)
-            if proc.returncode == 0:
-                try:
-                    return int((proc.stdout or '0').strip() or '0') > 0
-                except ValueError:
-                    pass
+    # Keep base and head in the same namespace. Mixing a local base with a
+    # published head (or vice versa) can manufacture or suppress a PR delta.
+    ref_pairs = [
+        (f"refs/remotes/origin/{base}", f"refs/remotes/origin/{branch}"),
+        (f"origin/{base}", f"origin/{branch}"),
+        (base, branch),
+    ]
+    for base_ref, branch_ref in ref_pairs:
+        proc = run_command(["git", "rev-list", "--count", f"{base_ref}..{branch_ref}"], cwd=ROOT)
+        if proc.returncode == 0:
+            try:
+                return int((proc.stdout or "0").strip() or "0") > 0
+            except ValueError:
+                pass
     return False
 
 
@@ -400,18 +406,18 @@ def edit_label_args(labels: list[str]) -> list[str]:
 def task_id_matches_branch(task_id: str, branch: str) -> bool:
     if not task_id or not branch:
         return False
-    t_clean = task_id.lower().replace("_", "-")
-    b_clean = branch.lower().replace("_", "-")
-    return t_clean in b_clean or b_clean in t_clean
+    task_ref = task_id.strip("/").lower().replace("_", "-")
+    branch_ref = branch.strip("/").lower().replace("_", "-")
+    return branch_ref == task_ref or branch_ref.endswith(f"/{task_ref}")
 
 
 def review_branch_for_task(config: dict[str, Any], status: dict[str, Any], task: dict[str, Any]) -> str | None:
+    task_id = str(task.get("id") or "").strip()
     meta = task.get("github") or {}
     explicit = meta.get("head_branch") or task.get("branch")
-    if explicit and branch_exists(str(explicit)):
+    if explicit and (not task_id or task_id_matches_branch(task_id, str(explicit))) and branch_exists(str(explicit)):
         return str(explicit)
 
-    task_id = str(task.get("id") or "").strip()
     prefix = str((config.get("branch_workflow", {}) or {}).get("task_branch_prefix") or "task/")
 
     owner = task.get("owner")
@@ -424,11 +430,8 @@ def review_branch_for_task(config: dict[str, Any], status: dict[str, Any], task:
                     agent_branch = str(b)
                 break
 
-    # If owner agent's registered branch specifically matches this task ID, try it first
-    if agent_branch and task_id and task_id_matches_branch(task_id, agent_branch) and branch_exists(agent_branch):
-        return agent_branch
-
-    # Try canonical immutable task branch refs
+    # Canonical per-task refs are immutable task identity. Resolve them before
+    # mutable agent registration, including related sidecar or prefix branches.
     if task_id:
         candidates = [
             f"{prefix}{task_id}",
@@ -438,6 +441,11 @@ def review_branch_for_task(config: dict[str, Any], status: dict[str, Any], task:
         for candidate in candidates:
             if branch_exists(candidate):
                 return candidate
+
+    # An exact task-matching agent branch is useful when a deployment uses a
+    # non-canonical prefix, but substring-related task IDs are not equivalent.
+    if agent_branch and task_id and task_id_matches_branch(task_id, agent_branch) and branch_exists(agent_branch):
+        return agent_branch
 
     # Fallback to owner agent's branch if it exists
     if agent_branch and branch_exists(agent_branch):
