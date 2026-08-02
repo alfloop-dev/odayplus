@@ -276,12 +276,13 @@ def test_deploy_preflight_imports_runtime_dependencies_via_locked_python(
         "#!/bin/sh\n"
         'if [ "${1:-}" = "run" ]; then\n'
         "  shift\n"
-        '  if [ "${1:-}" = "--frozen" ]; then\n'
-        "    shift\n"
-        "  fi\n"
-        '  if [ "${1:-}" = "python" ]; then\n'
-        "    shift\n"
-        "  fi\n"
+        "  while [ $# -gt 0 ]; do\n"
+        '    case "$1" in\n'
+        "      --frozen|--no-sync|python) shift ;;\n"
+        "      *) break ;;\n"
+        "    esac\n"
+        "  done\n"
+        f'  exec "{sys.executable}" "$@"\n'
         "fi\n"
         f'exec "{sys.executable}" "$@"\n',
         encoding="utf-8",

@@ -1360,21 +1360,83 @@ def _restore_reusable_scratch(worktree_path: Path, paths: list[str]) -> None:
     )
 
 
-def _refresh_reused_worker_worktree(repo_root: Path, worktree_path: Path, base_ref: str) -> tuple[bool, str]:
-    """Fast-forward a reused worker worktree to the current base ref tip.
+def _git_output(cwd: Path, *args: str) -> tuple[int, str]:
+    proc = subprocess.run(
+        ["git", *args],
+        cwd=cwd,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    return proc.returncode, (proc.stdout or "").strip()
 
-    Reused worktrees may carry the worker's per-task branch from days ago,
-    which means their copy of `scripts/ai_status.py` / supervisor / skills can
-    be older than the supervisor root. That stale snapshot has bypassed gates
-    such as ORCH-CLOSEOUT-MERGE-GATE (require_merged_pr). Refresh on lease so
-    the worker always sees current control-plane code.
 
-    Strategy: fetch + `git merge --ff-only origin/<base>`. Never auto-resolve
-    a real merge — if the branch genuinely diverged, leave it for the worker
-    to handle. Dirty reused worktrees are blocked before dispatch so workers
-    cannot inherit unrelated staged or tracked changes.
+def _git_commit_oid(cwd: Path, ref: str) -> str | None:
+    returncode, output = _git_output(cwd, "rev-parse", "--verify", f"{ref}^{{commit}}")
+    oid = output.splitlines()[0].strip() if output else ""
+    return oid if returncode == 0 and re.fullmatch(r"[0-9a-fA-F]{40,64}", oid) else None
+
+
+def _git_operation_in_progress(worktree_path: Path) -> bool:
+    for marker in ("MERGE_HEAD", "REBASE_HEAD", "CHERRY_PICK_HEAD", "REVERT_HEAD"):
+        returncode, _ = _git_output(worktree_path, "rev-parse", "--verify", "-q", marker)
+        if returncode == 0:
+            return True
+    for marker in ("rebase-merge", "rebase-apply"):
+        returncode, raw_path = _git_output(worktree_path, "rev-parse", "--git-path", marker)
+        if returncode != 0 or not raw_path:
+            return True
+        marker_path = Path(raw_path)
+        if not marker_path.is_absolute():
+            marker_path = worktree_path / marker_path
+        if marker_path.exists():
+            return True
+    return False
+
+
+def _refresh_reused_worker_worktree(
+    repo_root: Path,
+    worktree_path: Path,
+    base_ref: str,
+    expected_branch: str,
+) -> tuple[bool, str]:
+    """Lease a clean reused worktree using a fail-closed three-way policy.
+
+    A branch behind the current base may be fast-forwarded. A branch already
+    containing the base is left untouched. A genuinely diverged branch is
+    dispatchable only when its local HEAD exactly matches the freshly fetched
+    remote task HEAD; the owner then receives an explicit rebase-required
+    prompt. Every unverifiable or mutable condition blocks without resetting,
+    cleaning, rebasing, or otherwise discarding worker state.
     """
     base = base_ref.split("/", 1)[1] if base_ref.startswith("origin/") else base_ref
+    worktree_path = worktree_path.resolve()
+    repo_root = repo_root.resolve()
+
+    top_rc, top_level = _git_output(worktree_path, "rev-parse", "--show-toplevel")
+    worktree_common_rc, worktree_common = _git_output(worktree_path, "rev-parse", "--git-common-dir")
+    repo_common_rc, repo_common = _git_output(repo_root, "rev-parse", "--git-common-dir")
+    try:
+        resolved_top = Path(top_level).resolve()
+        resolved_worktree_common = (worktree_path / worktree_common).resolve()
+        resolved_repo_common = (repo_root / repo_common).resolve()
+    except (OSError, RuntimeError, ValueError):
+        return False, "wrong_worktree: unable to resolve repository identity"
+    if (
+        top_rc != 0
+        or worktree_common_rc != 0
+        or repo_common_rc != 0
+        or resolved_top != worktree_path
+        or resolved_worktree_common != resolved_repo_common
+    ):
+        return False, "wrong_worktree: path is not the expected repository worktree"
+
+    branch_rc, branch = _git_output(worktree_path, "symbolic-ref", "--quiet", "--short", "HEAD")
+    if branch_rc != 0 or branch != expected_branch:
+        return False, f"wrong_branch: expected {expected_branch}, found {branch or 'detached HEAD'}"
+    if _git_operation_in_progress(worktree_path):
+        return False, "unresolved_git_operation"
+
     fetch_proc = subprocess.run(
         ["git", "fetch", "origin", base, "--quiet"],
         cwd=worktree_path,
@@ -1393,45 +1455,79 @@ def _refresh_reused_worker_worktree(repo_root: Path, worktree_path: Path, base_r
         text=True,
         check=False,
     )
-    scratch_restored = False
-    if status_proc.returncode == 0 and status_proc.stdout.strip():
-        classification, scratch_paths = _classify_worktree_dirt(status_proc.stdout)
-        if classification == "real":
-            return False, "skipped_dirty_worktree"
-        # Only orchestrator-managed scratch is dirty: restore it and reuse the
-        # worktree instead of jamming dispatch on regenerable bookkeeping churn.
-        _restore_reusable_scratch(worktree_path, scratch_paths)
-        verify_proc = subprocess.run(
-            ["git", "status", "--porcelain", "--untracked-files=no"],
-            cwd=worktree_path,
-            capture_output=True,
-            text=True,
-            check=False,
-        )
-        if verify_proc.returncode == 0 and verify_proc.stdout.strip():
-            return False, "skipped_dirty_worktree"
-        scratch_restored = True
+    if status_proc.returncode != 0:
+        return False, "status_failed"
+    if status_proc.stdout.strip():
+        return False, "skipped_dirty_worktree"
 
-    merge_proc = subprocess.run(
-        ["git", "merge", "--ff-only", f"origin/{base}"],
+    local_head = _git_commit_oid(worktree_path, "HEAD")
+    base_head = _git_commit_oid(worktree_path, f"origin/{base}")
+    if not local_head or not base_head:
+        return False, "unverifiable_refs: missing local HEAD or fetched base"
+
+    remote_query = subprocess.run(
+        ["git", "ls-remote", "--exit-code", "origin", f"refs/heads/{expected_branch}"],
         cwd=worktree_path,
         capture_output=True,
         text=True,
         check=False,
     )
-    if merge_proc.returncode == 0:
-        head_proc = subprocess.run(
-            ["git", "rev-parse", "--short", "HEAD"],
+    remote_task_exists = remote_query.returncode == 0
+    if remote_query.returncode not in {0, 2}:
+        details = (remote_query.stderr or remote_query.stdout or "").strip()
+        return False, f"fetch_failed: {details}"
+    remote_task_head: str | None = None
+    if remote_task_exists:
+        fetch_task_proc = subprocess.run(
+            [
+                "git",
+                "fetch",
+                "origin",
+                "--quiet",
+                f"+refs/heads/{expected_branch}:refs/remotes/origin/{expected_branch}",
+            ],
             cwd=worktree_path,
             capture_output=True,
             text=True,
             check=False,
         )
-        head = (head_proc.stdout or "").strip()
-        suffix = "+scratch_restored" if scratch_restored else ""
-        return True, (f"ff_to_{head}{suffix}" if head else f"ff_ok{suffix}")
-    details = (merge_proc.stderr or merge_proc.stdout or "").strip().splitlines()[0] if (merge_proc.stderr or merge_proc.stdout) else "unknown"
-    return False, f"non_fast_forward: {details}"
+        if fetch_task_proc.returncode != 0:
+            details = (fetch_task_proc.stderr or fetch_task_proc.stdout or "").strip()
+            return False, f"fetch_failed: {details}"
+        remote_task_head = _git_commit_oid(worktree_path, f"origin/{expected_branch}")
+        if not remote_task_head:
+            return False, "unverifiable_refs: missing fetched remote task HEAD"
+        if local_head != remote_task_head:
+            return False, f"task_head_mismatch: local={local_head} remote={remote_task_head}"
+
+    base_contains_rc, _ = _git_output(
+        worktree_path, "merge-base", "--is-ancestor", local_head, base_head
+    )
+    if base_contains_rc not in {0, 1}:
+        return False, "unverifiable_refs: cannot compare local HEAD with fetched base"
+    if base_contains_rc == 0:
+        merge_proc = subprocess.run(
+            ["git", "merge", "--ff-only", f"origin/{base}"],
+            cwd=worktree_path,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        if merge_proc.returncode != 0:
+            details = (merge_proc.stderr or merge_proc.stdout or "").strip().splitlines()
+            return False, f"fast_forward_failed: {details[0] if details else 'unknown'}"
+        return True, f"ff_to_{base_head[:12]}"
+
+    task_contains_rc, _ = _git_output(
+        worktree_path, "merge-base", "--is-ancestor", base_head, local_head
+    )
+    if task_contains_rc not in {0, 1}:
+        return False, "unverifiable_refs: cannot compare fetched base with local HEAD"
+    if task_contains_rc == 0:
+        return True, f"base_present_at_{local_head[:12]}"
+    if not remote_task_head:
+        return False, "unverifiable_refs: diverged task branch has no fetched remote task HEAD"
+    return True, f"base_advance_rebase_required:local={local_head},base={base_head}"
 
 
 def _task_brief_context_candidates(task_id: str | None, rel_context_path: str) -> list[str]:
@@ -1633,7 +1729,10 @@ def prepare_worker_workspace(
             worktree_path = existing
             reused = True
             refresh_ok, refresh_status = _refresh_reused_worker_worktree(
-                repo_root, worktree_path, str(settings.get("base_ref") or "origin/dev")
+                repo_root,
+                worktree_path,
+                str(settings.get("base_ref") or "origin/dev"),
+                branch,
             )
             write_activity_log(
                 config,
@@ -1648,36 +1747,17 @@ def prepare_worker_workspace(
                     "refresh_status": refresh_status,
                 },
             )
-            if not refresh_ok and refresh_status == "skipped_dirty_worktree":
-                # Orphaned dirt from a prior worker that never cleaned up jams the reuse
-                # lease and, once enough worktrees are dirty, deadlocks the whole fleet.
-                # Back up and reset it (only when no live worker for this task holds it),
-                # then retry the refresh so this dispatch proceeds instead of blocking
-                # forever. This self-heals both future and pre-existing dirty worktrees.
-                if _backup_and_reset_dirty_worktree(
-                    config, state, worktree_path, workspace_task_id, trigger="lease_blocked"
-                ):
-                    refresh_ok, refresh_status = _refresh_reused_worker_worktree(
-                        repo_root, worktree_path, str(settings.get("base_ref") or "origin/dev")
+            if not refresh_ok:
+                if refresh_status == "skipped_dirty_worktree":
+                    reason = (
+                        "has dirty tracked or staged changes. Preserve and commit the "
+                        "task-owned work before dispatch."
                     )
-                    write_activity_log(
-                        config,
-                        {
-                            "type": "worker_worktree_reset_released",
-                            "task_id": request.task_id,
-                            "target_agent": target_agent,
-                            "queue_event_id": queue_event_id,
-                            "workspace_branch": branch,
-                            "workspace_path": str(worktree_path),
-                            "refresh_ok": refresh_ok,
-                            "refresh_status": refresh_status,
-                        },
-                    )
-            if not refresh_ok and refresh_status == "skipped_dirty_worktree":
+                else:
+                    reason = f"failed the fail-closed refresh policy ({refresh_status})."
                 message = (
                     f"Cannot lease isolated worker worktree for {workspace_task_id}: "
-                    f"reused worktree {worktree_path} has dirty tracked or staged changes. "
-                    "Clean or remove that worktree before dispatch."
+                    f"reused worktree {worktree_path} {reason}"
                 )
                 write_activity_log(
                     config,
@@ -1694,6 +1774,22 @@ def prepare_worker_workspace(
                     },
                 )
                 return False, message
+            if refresh_status.startswith("base_advance_rebase_required:"):
+                base_advance_prompt = (
+                    "BASE ADVANCE REQUIRED BEFORE EDITING OR HANDOFF: this clean local task "
+                    f"HEAD exactly matches origin/{branch}, but {branch} diverges from "
+                    f"{settings.get('base_ref') or 'origin/dev'}. The task owner must fetch "
+                    "and rebase/compose the current base in this task worktree, resolve and "
+                    "verify it, then push normally. Do not reset, discard, or overwrite task "
+                    "history.\n\n"
+                )
+                request.message = base_advance_prompt + request.message
+                request.metadata.update(
+                    {
+                        "base_advance_required": True,
+                        "worktree_refresh_status": refresh_status,
+                    }
+                )
 
     if not reused:
         if _branch_checked_out_in_root(repo_root, branch):
@@ -8835,12 +8931,6 @@ def finalize_queue_event_record(config: dict[str, Any], state: dict[str, Any], w
         record["lease_owner"] = worker.get("run_id")
     if error:
         record["error"] = error
-    if status == "failed":
-        try:
-            reset_worker_worktree_after_failure(config, state, worker)
-        except Exception:  # noqa: BLE001 - worktree recovery must never break finalize
-            pass
-
 
 
 def save_event_queue(config: dict[str, Any], events: list[dict[str, Any]]) -> None:
