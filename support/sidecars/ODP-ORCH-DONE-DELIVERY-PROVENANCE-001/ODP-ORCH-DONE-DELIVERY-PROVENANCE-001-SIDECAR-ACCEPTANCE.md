@@ -1,12 +1,13 @@
 # ODP-ORCH-DONE-DELIVERY-PROVENANCE-001 acceptance packet
 
-Status: support packet ready for parent-owner review  
-Parent task: `ODP-ORCH-DONE-DELIVERY-PROVENANCE-001`  
-Sidecar task: `ODP-ORCH-DONE-DELIVERY-PROVENANCE-001-SIDECAR-ACCEPTANCE`  
-Prepared by: Antigravity  
-Assigned sidecar reviewer: Codex  
-Parent owner: Codex7  
-Parent reviewer: Codex8
+- Status: support packet ready for parent-owner review
+- Parent task: `ODP-ORCH-DONE-DELIVERY-PROVENANCE-001`
+- Sidecar task: `ODP-ORCH-DONE-DELIVERY-PROVENANCE-001-SIDECAR-ACCEPTANCE`
+- Prepared by: Antigravity
+- Assigned sidecar reviewer: Codex
+- Parent owner: Codex7
+- Parent reviewer: Codex8
+
 
 ## Scope boundary
 
