@@ -102,7 +102,7 @@ Before parent task `ODP-OPERATOR-LIVE-PROVENANCE-HEALTH-001` is resubmitted to `
 ## 5. Reviewer Handoff Summary
 
 - **Sidecar Artifact Updated**: `support/sidecars/ODP-OPERATOR-LIVE-PROVENANCE-HEALTH-001/ODP-OPERATOR-LIVE-PROVENANCE-HEALTH-001-SIDECAR-REVIEW.md`
-- **Pushed Head**: `edbb90fd40201598871451f735bc7acc03a2bbae` (PR #563)
+- **Pushed Head**: `55868a918a20ecb404d0fa3dd4195152eb4d5bd1` (PR #563)
 - **CI & Release Gate Audit**: GitHub Actions CI run 30723932416 passed `orchestrator` and `performance-gate`. The `product` and `product-e2e-gate` checks failed on the `support/sidecars/` non-evidence path due to fleet-wide release validator deadlock owned by `ODP-CI-DEV-MERGE-RELEASE-NOGO-DEADLOCK-001`.
 - **Assessment**: The sidecar review packet synthesizes Codex8's rejection audit findings (B1–B4) on parent SHA `4423e011` and details the required remediation steps for `Antigravity2`. Zero canonical or runtime files modified.
 - **Recommended Action for `Antigravity2`**:
