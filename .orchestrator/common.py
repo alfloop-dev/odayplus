@@ -974,15 +974,11 @@ def validate_destination_context_path(
     for part in parts:
         curr = curr / part
         if os.path.islink(curr) or curr.is_symlink():
-            try:
-                resolved_curr = curr.resolve()
-                resolved_curr.relative_to(resolved_workspace)
-            except (ValueError, RuntimeError):
-                return (
-                    False,
-                    destination,
-                    f"destination component '{part}' is an unsafe symlink escaping workspace root",
-                )
+            return (
+                False,
+                destination,
+                f"destination component '{part}' is a symlink",
+            )
 
     return True, destination, ""
 

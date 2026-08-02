@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+import subprocess
 import tempfile
 import unittest
 from pathlib import Path
@@ -1159,6 +1160,121 @@ class TaskBriefSourceDocsTests(unittest.TestCase):
                 with self.assertRaises(ValueError) as ctx:
                     supervisor.materialize_worker_context_files(config, req, worktree)
                 self.assertIn("unable to establish valid 64-hex SHA256 integrity hash", str(ctx.exception))
+
+    def test_b16_internal_symlink_source_doc_materialization_rejection(self) -> None:
+        """Verify that a P0 task materializing a source doc whose destination is an internal symlink fails closed without modifying target bytes."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmp_path = Path(tmpdir)
+            status_root = tmp_path / "pantheon"
+            status_root.mkdir()
+            src_doc = status_root / "docs" / "source.md"
+            src_doc.parent.mkdir(parents=True)
+            src_doc.write_text("CANONICAL-BYTES", encoding="utf-8")
+
+            # Initialize a real git repo for worktree
+            worktree = tmp_path / "worktree"
+            worktree.mkdir()
+            readme = worktree / "README.md"
+            readme.write_text("OWNER-BYTES", encoding="utf-8")
+            subprocess.run(["git", "init"], cwd=worktree, check=True, capture_output=True)
+            subprocess.run(["git", "config", "user.name", "Test"], cwd=worktree, check=True)
+            subprocess.run(["git", "config", "user.email", "test@example.com"], cwd=worktree, check=True)
+            subprocess.run(["git", "add", "README.md"], cwd=worktree, check=True)
+            subprocess.run(["git", "commit", "-m", "initial"], cwd=worktree, check=True)
+
+            # Create internal symlink docs/source.md -> ../README.md
+            docs_dir = worktree / "docs"
+            docs_dir.mkdir(parents=True)
+            symlink_dest = docs_dir / "source.md"
+            symlink_dest.symlink_to("../README.md")
+
+            task = {
+                "id": "ODP-B16-SYMLINK-001",
+                "title": "B16 Symlink Test",
+                "status": "in_progress",
+                "owner": "Antigravity",
+                "reviewer": "Codex5",
+                "priority": "P0",
+                "source_docs": ["docs/source.md"],
+            }
+            config = {"paths": {"status_file": str(status_root / "ai-status.json")}}
+            req = supervisor.DeliveryRequest(
+                agent_id="Antigravity",
+                provider="antigravity",
+                delivery_mode="antigravity",
+                message="wake",
+                task_id="ODP-B16-SYMLINK-001",
+                reason="owned_in_progress_dispatch",
+                context_files=["docs/source.md"],
+            )
+
+            with (
+                mock.patch.object(supervisor, "load_status", return_value={"tasks": [task]}),
+                mock.patch.object(common, "load_status", return_value={"tasks": [task]}),
+            ):
+                with self.assertRaises(ValueError) as ctx:
+                    supervisor.materialize_worker_context_files(config, req, worktree)
+                self.assertIn("is a symlink", str(ctx.exception))
+
+            # Verify target README.md was NOT overwritten
+            self.assertEqual(readme.read_text(encoding="utf-8"), "OWNER-BYTES")
+
+            # Verify git status remains unchanged for README.md
+            proc = subprocess.run(["git", "status", "--porcelain"], cwd=worktree, check=True, capture_output=True, text=True)
+            self.assertNotIn("M README.md", proc.stdout)
+
+    def test_b16_internal_symlink_task_brief_materialization_rejection(self) -> None:
+        """Verify that a P0 task materializing a task brief whose destination is an internal symlink fails closed without modifying target bytes."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmp_path = Path(tmpdir)
+            status_root = tmp_path / "pantheon"
+            status_root.mkdir()
+
+            worktree = tmp_path / "worktree"
+            worktree.mkdir()
+            readme = worktree / "README.md"
+            readme.write_text("OWNER-BYTES", encoding="utf-8")
+            subprocess.run(["git", "init"], cwd=worktree, check=True, capture_output=True)
+            subprocess.run(["git", "config", "user.name", "Test"], cwd=worktree, check=True)
+            subprocess.run(["git", "config", "user.email", "test@example.com"], cwd=worktree, check=True)
+            subprocess.run(["git", "add", "README.md"], cwd=worktree, check=True)
+            subprocess.run(["git", "commit", "-m", "initial"], cwd=worktree, check=True)
+
+            brief_dir = worktree / ".orchestrator" / "task-briefs"
+            brief_dir.mkdir(parents=True)
+            brief_symlink = brief_dir / "odp_b16_symlink_002.md"
+            brief_symlink.symlink_to("../../README.md")
+
+            task = {
+                "id": "ODP-B16-SYMLINK-002",
+                "title": "B16 Symlink Test 2",
+                "status": "in_progress",
+                "owner": "Antigravity",
+                "reviewer": "Codex5",
+                "priority": "P0",
+            }
+            config = {"paths": {"status_file": str(status_root / "ai-status.json")}}
+            req = supervisor.DeliveryRequest(
+                agent_id="Antigravity",
+                provider="antigravity",
+                delivery_mode="antigravity",
+                message="wake",
+                task_id="ODP-B16-SYMLINK-002",
+                reason="owned_in_progress_dispatch",
+                context_files=[".orchestrator/task-briefs/odp_b16_symlink_002.md"],
+            )
+
+            with (
+                mock.patch.object(supervisor, "load_status", return_value={"tasks": [task]}),
+                mock.patch.object(common, "load_status", return_value={"tasks": [task]}),
+            ):
+                with self.assertRaises(ValueError) as ctx:
+                    supervisor.materialize_worker_context_files(config, req, worktree)
+                self.assertIn("is a symlink", str(ctx.exception))
+
+            self.assertEqual(readme.read_text(encoding="utf-8"), "OWNER-BYTES")
+            proc = subprocess.run(["git", "status", "--porcelain"], cwd=worktree, check=True, capture_output=True, text=True)
+            self.assertNotIn("M README.md", proc.stdout)
 
 
 if __name__ == "__main__":
