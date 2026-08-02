@@ -7705,16 +7705,42 @@ class ReusedWorkerWorktreeBaseAdvanceTests(unittest.TestCase):
         self.assertEqual(status, "unresolved_git_operation")
 
     def test_unresolved_rebase_blocks(self) -> None:
-        raw_marker = self._git(self.worktree, "rev-parse", "--git-path", "rebase-merge").stdout.strip()
+        raw_rebase_head = self._git(
+            self.worktree, "rev-parse", "--git-path", "REBASE_HEAD"
+        ).stdout.strip()
+        rebase_head = Path(raw_rebase_head)
+        if not rebase_head.is_absolute():
+            rebase_head = self.worktree / rebase_head
+        rebase_head.write_text(self.initial_head + "\n", encoding="utf-8")
+
+        for marker_name in ("rebase-merge", "rebase-apply"):
+            with self.subTest(marker=marker_name):
+                raw_marker = self._git(
+                    self.worktree, "rev-parse", "--git-path", marker_name
+                ).stdout.strip()
+                marker = Path(raw_marker)
+                if not marker.is_absolute():
+                    marker = self.worktree / marker
+                marker.mkdir(parents=True)
+
+                ok, status = self._refresh()
+
+                self.assertFalse(ok)
+                self.assertEqual(status, "unresolved_git_operation")
+                marker.rmdir()
+
+    def test_stale_rebase_head_after_completed_rebase_does_not_block(self) -> None:
+        raw_marker = self._git(self.worktree, "rev-parse", "--git-path", "REBASE_HEAD").stdout.strip()
         marker = Path(raw_marker)
         if not marker.is_absolute():
             marker = self.worktree / marker
-        marker.mkdir(parents=True)
+        marker.write_text(self.initial_head + "\n", encoding="utf-8")
 
         ok, status = self._refresh()
 
-        self.assertFalse(ok)
-        self.assertEqual(status, "unresolved_git_operation")
+        self.assertTrue(ok)
+        self.assertTrue(status.startswith("base_advance_rebase_required:"), status)
+        self.assertEqual(marker.read_text(encoding="utf-8").strip(), self.initial_head)
 
     def test_unverifiable_fetched_base_blocks(self) -> None:
         with mock.patch.object(supervisor, "_git_commit_oid", side_effect=[self.task_head, None]):
