@@ -12212,13 +12212,14 @@ class ProcessQueueAgentOverrideTests(unittest.TestCase):
             prio = supervisor.dispatch_priority_for_task(config, task_item, "Antigravity", task_map=task_map)
             self.assertEqual(prio, 1)
 
-            # 3. Verify _reconcile_active_task_dispatches retains review_approved status and does not set approved_head_unresolved
+            # 3. Verify dispatch_ready_tasks retains review_approved status and does not set approved_head_unresolved
             status = {"tasks": [task_item]}
-            with mock.patch("supervisor.config_path", return_value="/tmp/fake_status.json"), \
+            with mock.patch("supervisor.load_status", return_value=status), \
+                 mock.patch("supervisor.config_path", return_value="/tmp/fake_status.json"), \
                  mock.patch("supervisor.write_json"), \
                  mock.patch("supervisor.sync_status_pipeline"), \
                  mock.patch("supervisor.write_activity_log"):
-                changed = supervisor._reconcile_active_task_dispatches(config, status, "Antigravity")
+                supervisor.dispatch_ready_tasks(config, {}, agent_ids_override=["antigravity"])
             self.assertEqual(task_item["status"], "review_approved")
             self.assertNotIn("Cannot verify branch HEAD", task_item.get("next", ""))
 
