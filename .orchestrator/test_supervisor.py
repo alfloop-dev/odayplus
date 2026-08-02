@@ -1246,6 +1246,7 @@ class ProcessQueueDispatchGuardTests(unittest.TestCase):
                     "_refresh_reused_worker_worktree",
                     return_value=(False, "skipped_dirty_worktree"),
                 ) as refresh_worktree,
+                mock.patch.object(supervisor, "_backup_and_reset_dirty_worktree") as reset_worktree,
                 mock.patch.object(supervisor, "_create_worker_worktree") as create_worktree,
                 mock.patch.object(supervisor, "write_activity_log") as write_activity_log,
             ):
@@ -1263,12 +1264,138 @@ class ProcessQueueDispatchGuardTests(unittest.TestCase):
         self.assertNotIn("workspace_path", request.metadata)
         self.assertNotIn("worker_worktrees", state)
         refresh_worktree.assert_called_once()
+        reset_worktree.assert_not_called()
         create_worktree.assert_not_called()
         self.assertEqual(
             [call.args[1]["type"] for call in write_activity_log.call_args_list],
             ["worker_worktree_refreshed", "dispatch_blocked_worktree_lease"],
         )
         self.assertEqual(write_activity_log.call_args_list[-1].args[1]["refresh_status"], "skipped_dirty_worktree")
+
+    def test_prepare_worker_workspace_blocks_every_other_unsafe_refresh(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo_root = Path(tmpdir) / "pantheon"
+            repo_root.mkdir()
+            worktree_path = Path(tmpdir) / "workers" / "pantheon" / "ops-worktree-unsafe-001"
+            config = {
+                **self.config,
+                "paths": {"status_file": str(repo_root / "ai-status.json")},
+                "branch_workflow": {"task_branch_prefix": "task/", "dev_branch": "dev"},
+                "worker_worktrees": {
+                    "enabled": True,
+                    "root": str(Path(tmpdir) / "workers"),
+                    "base_ref": "origin/dev",
+                    "reuse_existing": True,
+                },
+            }
+            request = supervisor.DeliveryRequest(
+                agent_id="codex",
+                provider="codex",
+                delivery_mode="codex",
+                message="wake",
+                task_id="OPS-WORKTREE-UNSAFE-001",
+                reason="owned_in_progress_dispatch",
+            )
+
+            with (
+                mock.patch.object(supervisor, "_existing_worktree_for_branch", return_value=worktree_path),
+                mock.patch.object(
+                    supervisor,
+                    "_refresh_reused_worker_worktree",
+                    return_value=(False, "task_head_mismatch: local=a remote=b"),
+                ),
+                mock.patch.object(supervisor, "write_activity_log") as write_activity_log,
+            ):
+                ok, message = supervisor.prepare_worker_workspace(
+                    config,
+                    {},
+                    request,
+                    queue_event_id="evt-unsafe",
+                    target_agent="Codex",
+                )
+
+        self.assertFalse(ok)
+        self.assertIn("fail-closed refresh policy", message or "")
+        self.assertEqual(write_activity_log.call_args_list[-1].args[1]["type"], "dispatch_blocked_worktree_lease")
+
+    def test_prepare_worker_workspace_prompts_owner_to_advance_diverged_base(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo_root = Path(tmpdir) / "pantheon"
+            repo_root.mkdir()
+            worktree_path = Path(tmpdir) / "workers" / "pantheon" / "ops-worktree-rebase-001"
+            config = {
+                **self.config,
+                "paths": {"status_file": str(repo_root / "ai-status.json")},
+                "branch_workflow": {"task_branch_prefix": "task/", "dev_branch": "dev"},
+                "worker_worktrees": {
+                    "enabled": True,
+                    "root": str(Path(tmpdir) / "workers"),
+                    "base_ref": "origin/dev",
+                    "reuse_existing": True,
+                },
+            }
+            state: dict[str, object] = {}
+            request = supervisor.DeliveryRequest(
+                agent_id="codex",
+                provider="codex",
+                delivery_mode="codex",
+                message="original owner dispatch",
+                task_id="OPS-WORKTREE-REBASE-001",
+                reason="owned_in_progress_dispatch",
+            )
+            refresh_status = "base_advance_rebase_required:local=" + "a" * 40 + ",base=" + "b" * 40
+
+            with (
+                mock.patch.object(supervisor, "_existing_worktree_for_branch", return_value=worktree_path),
+                mock.patch.object(
+                    supervisor,
+                    "_refresh_reused_worker_worktree",
+                    return_value=(True, refresh_status),
+                ),
+                mock.patch.object(supervisor, "materialize_worker_context_files", return_value=[]),
+                mock.patch.object(supervisor, "write_activity_log"),
+            ):
+                ok, message = supervisor.prepare_worker_workspace(
+                    config,
+                    state,
+                    request,
+                    queue_event_id="evt-rebase",
+                    target_agent="Codex",
+                )
+
+        self.assertTrue(ok)
+        self.assertIsNone(message)
+        self.assertTrue(request.metadata["base_advance_required"])
+        self.assertEqual(request.metadata["worktree_refresh_status"], refresh_status)
+        self.assertIn("BASE ADVANCE REQUIRED BEFORE EDITING OR HANDOFF", request.message)
+        self.assertIn("must fetch and rebase/compose", request.message)
+        self.assertTrue(request.message.endswith("original owner dispatch"))
+
+    def test_failed_queue_finalization_preserves_worker_worktree(self) -> None:
+        state = {
+            "queue": {"events": {"evt-failed": {"status": "started"}}},
+            "workers": {},
+        }
+        worker = {
+            "run_id": "run-failed",
+            "queue_event_id": "evt-failed",
+            "task_id": "OPS-WORKTREE-PRESERVE-001",
+            "workspace_path": "/tmp/worker-preserve",
+        }
+
+        with mock.patch.object(supervisor, "reset_worker_worktree_after_failure") as reset_worktree:
+            supervisor.finalize_queue_event_record(
+                self.config,
+                state,
+                worker,
+                "failed",
+                "worker failed with task-owned dirt",
+            )
+
+        reset_worktree.assert_not_called()
+        record = state["queue"]["events"]["evt-failed"]
+        self.assertEqual(record["status"], "failed")
+        self.assertEqual(record["error"], "worker failed with task-owned dirt")
 
     def test_process_queue_checks_worker_guard_inside_isolated_workspace(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -7396,6 +7523,205 @@ class WorktreeDirtClassificationTests(unittest.TestCase):
         status = "R  old/file.py -> services/new/file.py\n"
         kind, _ = supervisor._classify_worktree_dirt(status)
         self.assertEqual(kind, "real")
+
+
+class ReusedWorkerWorktreeBaseAdvanceTests(unittest.TestCase):
+    """Regression matrix for the clean divergence topology observed on PR #562."""
+
+    task_branch = "task/ODP-CI-DEV-MERGE-RELEASE-NOGO-DEADLOCK-001"
+
+    def setUp(self) -> None:
+        self.tmp = tempfile.TemporaryDirectory()
+        root = Path(self.tmp.name)
+        self.origin = root / "origin.git"
+        seed = root / "seed"
+        self.repo_root = root / "supervisor"
+        self.worktree = root / "worker"
+
+        self._git(root, "init", "--bare", str(self.origin))
+        self._git(root, "init", "-b", "dev", str(seed))
+        self._git(seed, "config", "user.name", "Supervisor Test")
+        self._git(seed, "config", "user.email", "supervisor-test@example.invalid")
+        (seed / "tracked.txt").write_text("initial\n", encoding="utf-8")
+        self._git(seed, "add", "tracked.txt")
+        self._git(seed, "commit", "-m", "initial")
+        self.initial_head = self._git(seed, "rev-parse", "HEAD").stdout.strip()
+        self._git(seed, "remote", "add", "origin", str(self.origin))
+        self._git(seed, "push", "-u", "origin", "dev")
+        self._git(self.origin, "symbolic-ref", "HEAD", "refs/heads/dev")
+
+        self._git(seed, "switch", "-c", self.task_branch)
+        (seed / "task.txt").write_text("task commit\n", encoding="utf-8")
+        self._git(seed, "add", "task.txt")
+        self._git(seed, "commit", "-m", "task change")
+        self._git(seed, "push", "-u", "origin", self.task_branch)
+        self.task_head = self._git(seed, "rev-parse", "HEAD").stdout.strip()
+
+        self._git(seed, "switch", "dev")
+        (seed / "base.txt").write_text("advanced dev\n", encoding="utf-8")
+        self._git(seed, "add", "base.txt")
+        self._git(seed, "commit", "-m", "advance dev")
+        self._git(seed, "push", "origin", "dev")
+        self.base_head = self._git(seed, "rev-parse", "HEAD").stdout.strip()
+
+        self._git(root, "clone", "--branch", "dev", str(self.origin), str(self.repo_root))
+        self._git(
+            self.repo_root,
+            "worktree",
+            "add",
+            "-b",
+            self.task_branch,
+            str(self.worktree),
+            f"origin/{self.task_branch}",
+        )
+        self._git(self.worktree, "config", "user.name", "Supervisor Test")
+        self._git(self.worktree, "config", "user.email", "supervisor-test@example.invalid")
+
+    def tearDown(self) -> None:
+        self.tmp.cleanup()
+
+    def _git(self, cwd: Path, *args: str, check: bool = True) -> subprocess.CompletedProcess[str]:
+        return subprocess.run(
+            ["git", *args],
+            cwd=cwd,
+            capture_output=True,
+            text=True,
+            check=check,
+        )
+
+    def _refresh(self) -> tuple[bool, str]:
+        return supervisor._refresh_reused_worker_worktree(
+            self.repo_root,
+            self.worktree,
+            "origin/dev",
+            self.task_branch,
+        )
+
+    def test_clean_matching_task_head_diverged_from_dev_dispatches_for_owner_rebase(self) -> None:
+        before = self._git(self.worktree, "rev-parse", "HEAD").stdout.strip()
+
+        ok, status = self._refresh()
+
+        self.assertTrue(ok)
+        self.assertTrue(status.startswith("base_advance_rebase_required:"), status)
+        self.assertEqual(self._git(self.worktree, "rev-parse", "HEAD").stdout.strip(), before)
+        self.assertEqual(before, self.task_head)
+
+    def test_task_containing_current_base_is_left_untouched(self) -> None:
+        self._git(self.worktree, "merge", "--no-edit", "origin/dev")
+        self._git(self.worktree, "push", "origin", f"HEAD:{self.task_branch}")
+        composed_head = self._git(self.worktree, "rev-parse", "HEAD").stdout.strip()
+
+        ok, status = self._refresh()
+
+        self.assertTrue(ok)
+        self.assertTrue(status.startswith("base_present_at_"), status)
+        self.assertEqual(self._git(self.worktree, "rev-parse", "HEAD").stdout.strip(), composed_head)
+
+    def test_task_behind_current_base_fast_forwards(self) -> None:
+        self._git(self.worktree, "reset", "--hard", self.initial_head)
+        self._git(self.repo_root, "push", "origin", "--delete", self.task_branch)
+
+        ok, status = self._refresh()
+
+        self.assertTrue(ok)
+        self.assertEqual(status, f"ff_to_{self.base_head[:12]}")
+        self.assertEqual(self._git(self.worktree, "rev-parse", "HEAD").stdout.strip(), self.base_head)
+
+    def test_dirty_tracked_state_blocks_without_discarding_it(self) -> None:
+        dirty_path = self.worktree / "task.txt"
+        dirty_path.write_text("uncommitted owner work\n", encoding="utf-8")
+        before_head = self._git(self.worktree, "rev-parse", "HEAD").stdout.strip()
+
+        ok, status = self._refresh()
+
+        self.assertFalse(ok)
+        self.assertEqual(status, "skipped_dirty_worktree")
+        self.assertEqual(dirty_path.read_text(encoding="utf-8"), "uncommitted owner work\n")
+        self.assertEqual(self._git(self.worktree, "rev-parse", "HEAD").stdout.strip(), before_head)
+
+    def test_dirty_tracked_orchestrator_scratch_also_blocks(self) -> None:
+        scratch = self.worktree / ".orchestrator" / "task-briefs" / "context.md"
+        scratch.parent.mkdir(parents=True)
+        scratch.write_text("tracked context\n", encoding="utf-8")
+        self._git(self.worktree, "add", str(scratch.relative_to(self.worktree)))
+        self._git(self.worktree, "commit", "-m", "track task context")
+        self._git(self.worktree, "push", "origin", f"HEAD:{self.task_branch}")
+        scratch.write_text("owner annotation\n", encoding="utf-8")
+
+        ok, status = self._refresh()
+
+        self.assertFalse(ok)
+        self.assertEqual(status, "skipped_dirty_worktree")
+        self.assertEqual(scratch.read_text(encoding="utf-8"), "owner annotation\n")
+
+    def test_local_and_remote_task_head_mismatch_blocks(self) -> None:
+        (self.worktree / "local-only.txt").write_text("local\n", encoding="utf-8")
+        self._git(self.worktree, "add", "local-only.txt")
+        self._git(self.worktree, "commit", "-m", "local only")
+
+        ok, status = self._refresh()
+
+        self.assertFalse(ok)
+        self.assertTrue(status.startswith("task_head_mismatch:"), status)
+
+    def test_wrong_branch_blocks(self) -> None:
+        self._git(self.worktree, "switch", "-c", "task/WRONG-BRANCH")
+
+        ok, status = self._refresh()
+
+        self.assertFalse(ok)
+        self.assertTrue(status.startswith("wrong_branch:"), status)
+
+    def test_wrong_repository_worktree_blocks(self) -> None:
+        other = Path(self.tmp.name) / "other"
+        self._git(Path(self.tmp.name), "init", "-b", "dev", str(other))
+
+        ok, status = supervisor._refresh_reused_worker_worktree(
+            self.repo_root,
+            other,
+            "origin/dev",
+            self.task_branch,
+        )
+
+        self.assertFalse(ok)
+        self.assertTrue(status.startswith("wrong_worktree:"), status)
+
+    def test_fetch_failure_blocks(self) -> None:
+        self._git(self.worktree, "remote", "set-url", "origin", str(Path(self.tmp.name) / "missing.git"))
+
+        ok, status = self._refresh()
+
+        self.assertFalse(ok)
+        self.assertTrue(status.startswith("fetch_failed:"), status)
+
+    def test_unresolved_git_operation_blocks(self) -> None:
+        marker = Path(self._git(self.worktree, "rev-parse", "--git-path", "MERGE_HEAD").stdout.strip())
+        marker.write_text(self.base_head + "\n", encoding="utf-8")
+
+        ok, status = self._refresh()
+
+        self.assertFalse(ok)
+        self.assertEqual(status, "unresolved_git_operation")
+
+    def test_unresolved_rebase_blocks(self) -> None:
+        raw_marker = self._git(self.worktree, "rev-parse", "--git-path", "rebase-merge").stdout.strip()
+        marker = Path(raw_marker)
+        if not marker.is_absolute():
+            marker = self.worktree / marker
+        marker.mkdir(parents=True)
+
+        ok, status = self._refresh()
+
+        self.assertFalse(ok)
+        self.assertEqual(status, "unresolved_git_operation")
+
+    def test_unverifiable_fetched_base_blocks(self) -> None:
+        with mock.patch.object(supervisor, "_git_commit_oid", side_effect=[self.task_head, None]):
+            ok, status = self._refresh()
+
+        self.assertFalse(ok)
+        self.assertTrue(status.startswith("unverifiable_refs:"), status)
 
 
 class WorkerReassignmentTests(unittest.TestCase):

@@ -477,6 +477,10 @@ else:
                 },
             }
 
+        class TelemetryMiddleware:
+            """Production HTTP telemetry middleware recording api_request_count, api_error_count, and api_latency_ms."""
+            pass
+
         @api.middleware("http")
         async def attach_correlation_id(request: Request, call_next: Any) -> Response:
             context = CorrelationContext.from_header(request.headers.get(CORRELATION_ID_HEADER))
@@ -487,6 +491,8 @@ else:
                 actor_id="user",
                 request_id=context.correlation_id,
             )
+
+            start_t = time.monotonic()
 
             with telemetry.operation(
                 name=f"HTTP {request.method} {request.url.path}",
@@ -502,6 +508,12 @@ else:
                     "/openapi.json",
                     "/platform/health",
                     "/platform/version",
+                    "/platform/observability",
+                    "/api/v1/platform/observability",
+                    "/platform/metrics/export",
+                    "/api/v1/platform/metrics/export",
+                    "/platform/dashboards/provisioned",
+                    "/api/v1/platform/dashboards/provisioned",
                     "/readiness",
                     "/docs",
                     "/docs/oauth2-redirect",
@@ -538,11 +550,19 @@ else:
                         response.headers[CORRELATION_ID_HEADER] = context.correlation_id
                         span.status = SpanStatus.ERROR
                         span.error_code = "HTTP_503"
+                        status_str = "503"
+                        telemetry.metrics.increment("api_request_count", labels={"service": "oday-api", "route": request.url.path, "status": status_str})
+                        telemetry.metrics.increment("api_error_count", labels={"service": "oday-api", "route": request.url.path, "status": status_str})
                         return response
                 response = await call_next(request)
+                status_str = str(response.status_code)
+                duration_ms = (time.monotonic() - start_t) * 1000.0
+                telemetry.metrics.increment("api_request_count", labels={"service": "oday-api", "route": request.url.path, "status": status_str})
+                telemetry.metrics.observe("api_latency_ms", duration_ms, labels={"service": "oday-api", "route": request.url.path})
                 if response.status_code >= 400:
                     span.status = SpanStatus.ERROR
                     span.error_code = f"HTTP_{response.status_code}"
+                    telemetry.metrics.increment("api_error_count", labels={"service": "oday-api", "route": request.url.path, "status": status_str})
                 response.headers[CORRELATION_ID_HEADER] = context.correlation_id
                 return response
 
@@ -643,6 +663,55 @@ else:
         @api.get("/platform/version", tags=["platform"])
         def platform_version(request: Request) -> dict[str, str]:
             return release_version_payload(correlation_id=request.state.correlation_id)
+
+        platform_observability_router = APIRouter()
+
+        @platform_observability_router.get("/platform/observability", tags=["platform"])
+        @platform_observability_router.get("/platform/metrics/export", tags=["platform"])
+        def platform_metrics_export(request: Request) -> dict[str, Any]:
+            from shared.observability import ProductionMetricsExporter, default_registry
+
+            sha = release_sha_from_environment()
+            if require_live_data and (not sha or sha.strip() == "local"):
+                raise ApiError(
+                    status.HTTP_503_SERVICE_UNAVAILABLE,
+                    "Production metrics export requires an exact full 40-character release SHA in environment. Fail-closed gate enforced.",
+                    code="invalid_release_sha",
+                )
+            try:
+                exporter = ProductionMetricsExporter(release_sha=sha, registry=default_registry())
+                return exporter.export_metrics()
+            except ValueError as exc:
+                raise ApiError(
+                    status.HTTP_503_SERVICE_UNAVAILABLE,
+                    f"Production metrics export failed-closed: {exc}",
+                    code="invalid_release_sha",
+                ) from exc
+
+        @platform_observability_router.get("/platform/dashboards/provisioned", tags=["platform"])
+        def platform_dashboards_provisioned(request: Request) -> dict[str, Any]:
+            from shared.observability import render_dashboard_provisioning
+
+            sha = release_sha_from_environment()
+            if require_live_data and (not sha or sha.strip() == "local"):
+                raise ApiError(
+                    status.HTTP_503_SERVICE_UNAVAILABLE,
+                    "Production dashboard provisioning requires an exact full 40-character release SHA in environment. Fail-closed gate enforced.",
+                    code="invalid_release_sha",
+                )
+            try:
+                return render_dashboard_provisioning(release_sha=sha)
+            except ValueError as exc:
+                raise ApiError(
+                    status.HTTP_503_SERVICE_UNAVAILABLE,
+                    f"Production dashboard provisioning failed-closed: {exc}",
+                    code="invalid_release_sha",
+                ) from exc
+
+        mount_versioned(api, platform_observability_router)
+
+
+
 
         # Jobs and audit-event reads are product operations, so they are
         # versioned like every domain router rather than declared inline on the

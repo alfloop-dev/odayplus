@@ -130,9 +130,22 @@ Recovery checks:
 4. Evidence exports are visible as `audit.evidence_export.v1` events and
    `audit_evidence_export_count` samples under the same `correlation_id`.
 
+## Release-SHA Dashboard Traceability & Watch-Window Receipt
+
+All production deployments tag platform metrics with the exact deployment `release_sha`.
+Cloud Monitoring dashboards in `infra/monitoring/dashboards.json` support exact `release_sha` filtering for live observability and watch-window verification.
+
+### Watch-Window Receipt Procedure
+
+1. **Watch-Window Activation**: Following deployment of SHA `release_sha`, monitor the 15-minute post-deploy watch window via `platform-health` dashboard.
+2. **Traceability Verification**: Ensure `deployment_watch_window_status` metric reports `WATCH_PASSED` for the deployed `release_sha`.
+3. **Telemetry Receipt**: Confirm `api_error_count`, `job_failure_count`, and `dlq_message_count` filtered by `release_sha` remain zero or within SLO thresholds throughout the watch window.
+4. **Audit Evidence**: Store the watch-window receipt containing `release_sha`, `watch_window_minutes`, `status`, and `timestamp` in execution evidence logs before release finalization.
+
 ## Acceptance
 
 - Covers API, frontend, job, data, model, solver and audit paths.
 - High-risk operations have an explicit mitigation.
 - Audit failure and PriceOps hard-constraint failure are treated as high severity.
 - Every alert in `infra/monitoring/alerts.json` resolves to a section here.
+- Dashboard traceability and watch-window receipt are verified against exact `release_sha`.
