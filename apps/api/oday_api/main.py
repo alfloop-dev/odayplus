@@ -600,8 +600,18 @@ else:
 
             if not overall_ok:
                 response.status_code = status.HTTP_503_SERVICE_UNAVAILABLE
-                return {"status": "unhealthy", "service": "oday-api", "details": details}
-            return {"status": "ok", "service": "oday-api", "details": details}
+                return {
+                    "status": "unhealthy",
+                    "service": "oday-api",
+                    "data_mode": modes["data"]["mode"],
+                    "details": details,
+                }
+            return {
+                "status": "ok",
+                "service": "oday-api",
+                "data_mode": modes["data"]["mode"],
+                "details": details,
+            }
 
         @api.get("/health", tags=["platform"])
         @api.get("/platform/health", tags=["platform"])
@@ -652,6 +662,7 @@ else:
                 "version": API_VERSION,
                 "time": datetime.now(UTC).isoformat(),
                 "correlation_id": request.state.correlation_id,
+                "data_mode": modes["data"]["mode"],
                 "dependencies": {
                     "database": db_details,
                     "job_queue": queue_details,
