@@ -311,9 +311,16 @@ class SiteScoreOpeningOutcomeBenchmarkResult:
             )
 
         executable_query = (
-            "SELECT entity_id, store_id, target_format_code, opened_on, is_training_eligible, "
-            "realized_90d_net_revenue, (CURRENT_DATE - opened_on)::integer AS store_age_days "
-            "FROM model_ready.candidate_site_view;"
+            "SELECT c.entity_id, c.store_id, c.target_format_code, c.opened_on, c.is_training_eligible, "
+            "c.realized_90d_net_revenue, c.realized_180d_net_revenue, c.realized_365d_net_revenue, "
+            "(CURRENT_DATE - c.opened_on)::integer AS store_age_days, "
+            "p.prediction_as_of, p.model_version, p.horizon_code, p.predicted_revenue, "
+            "p.p10, p.p90, p.p50, p.dataset_snapshot_id, p.artifact_lineage_id "
+            "FROM model_ready.candidate_site_view c "
+            "LEFT JOIN model_ready.sitescore_predictions p "
+            "ON (c.entity_id = p.entity_id OR c.store_id = p.store_id) "
+            "AND c.opened_on = p.prediction_as_of "
+            "AND p.model_version = 'candidate-site-view-v2';"
         )
         return {
             "handback_required": not self.is_gate2_passed,
