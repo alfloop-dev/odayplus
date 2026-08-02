@@ -14,7 +14,7 @@ from typing import Annotated, Any, Literal
 from uuid import UUID, uuid4
 
 from modules.external_data.geo import GeoPipeline
-from modules.listing import InMemoryListingRepository, ListingPipeline
+from modules.listing import ListingPipeline
 from shared.audit import InMemoryAuditLog
 
 _CURSOR_SIGNING_KEY_ENV = "ODP_INTAKE_CURSOR_SIGNING_KEY"
@@ -3849,10 +3849,66 @@ else:
 
 
     def _repository(request: Request, bound_repository: Any = None):
+        principal = getattr(request.state, "operator_principal", None)
+        if principal is None:
+            from apps.api.oday_api.security.dependencies import principal_from_headers
+
+            try:
+                principal = principal_from_headers(request.headers)
+            except Exception:
+                principal = None
+
+        if principal is None:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="TENANT_SCOPE_DENIED: Missing verified principal",
+            )
+
+        principal_tenant = getattr(getattr(principal, "scope", None), "tenant_id", None) or getattr(
+            principal, "tenant_id", None
+        )
+        if not principal_tenant or not str(principal_tenant).strip():
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="TENANT_SCOPE_DENIED: Missing verified tenant scope",
+            )
+        clean_tenant = str(principal_tenant).strip()
+
+        header_tenant = (
+            request.headers.get("x-tenant-id")
+            or request.headers.get("tenant_id")
+            or ""
+        ).strip()
+        if header_tenant and header_tenant != clean_tenant:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="TENANT_SCOPE_DENIED: Tenant header does not match verified principal scope",
+            )
+
+        bundle = getattr(request.app.state, "persistence_bundle", None) or getattr(
+            request.app.state, "persistence", None
+        )
+        if bundle is not None and hasattr(bundle, "listing_repository_for_tenant"):
+            scoped = bundle.listing_repository_for_tenant(clean_tenant)
+            if scoped is not None:
+                return scoped
+
+        target_repo = bound_repository or getattr(request.app.state, "listing_repository", None)
+        if target_repo is not None and hasattr(target_repo, "_store"):
+            base_store = getattr(target_repo._store, "_store", target_repo._store)
+            if hasattr(base_store, "get") and hasattr(base_store, "put"):
+                from shared.infrastructure.persistence.operator_domains import (
+                    TenantScopedDocumentStore,
+                )
+                return type(target_repo)(TenantScopedDocumentStore(base_store, clean_tenant))
+
         if bound_repository is not None:
             return bound_repository
+
         repository = getattr(request.app.state, "listing_repository", None)
         if repository is None:
+            from modules.listing import InMemoryListingRepository
+
             repository = InMemoryListingRepository()
             request.app.state.listing_repository = repository
         return repository

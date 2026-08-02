@@ -145,8 +145,10 @@ def test_explicit_live_gate_fails_closed_for_memory_and_fixtures(
         "MEMORY_PERSISTENCE",
         "PROVIDER_NOT_LIVE",
         "OPERATOR_LIVE_REPOSITORY_UNAVAILABLE",
-        "PRODUCTION_MODEL_BINDINGS_UNVERIFIED",
     }
+    assert readiness_details["models"]["blockingReasons"] == [
+        "PRODUCTION_MODEL_BINDINGS_UNVERIFIED"
+    ]
 
     health_response = Response()
     health_body = route_for(app, "/platform/health").endpoint(
@@ -196,10 +198,7 @@ def test_live_gate_does_not_seed_or_promote_baseline_models(
     assert models["productionBindingsReady"] is False
     assert models["autoSeeded"] is False
     assert "MLFLOW_TRACKING_URI" in models["error"]
-    assert (
-        "PRODUCTION_MODEL_BINDINGS_UNVERIFIED"
-        in response_body["details"]["data"]["blockingReasons"]
-    )
+    assert models["blockingReasons"] == ["PRODUCTION_MODEL_BINDINGS_UNVERIFIED"]
     assert app.state.scoring_bindings == {}
     assert app.state.model_runtime is None
 

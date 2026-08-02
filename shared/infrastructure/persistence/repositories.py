@@ -1940,6 +1940,10 @@ class DurableHeatZoneResultStore:
     def __init__(self, store: SqliteDocumentStore) -> None:
         self._store = store
 
+    @property
+    def tenant_id(self) -> str:
+        return getattr(self._store, "tenant_id", "")
+
     def put(
         self,
         result: HeatZoneBatchScoreResult,
@@ -2054,6 +2058,10 @@ class DurableDecisionStore:
     def __init__(self, store: SqliteDocumentStore) -> None:
         self._store = store
 
+    @property
+    def tenant_id(self) -> str:
+        return getattr(self._store, "tenant_id", "")
+
     def save_decision(self, decision: SiteScoreDecision) -> None:
         self._store.put(self._DECISIONS, decision.decision_id, decision)
 
@@ -2081,6 +2089,10 @@ class DurableRealizedSiteStore:
 
     def __init__(self, store: SqliteDocumentStore) -> None:
         self._store = store
+
+    @property
+    def tenant_id(self) -> str:
+        return getattr(self._store, "tenant_id", "")
 
     def put(self, site: RealizedSite) -> None:
         self._store.put(self._C, site.candidate_site_id, site)
