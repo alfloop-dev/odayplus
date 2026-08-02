@@ -1663,8 +1663,10 @@ def _json_request(
 def _declared_data_mode(payload: Mapping[str, Any]) -> str:
     """Read the declared data mode from whichever envelope shape carries it.
 
-    The health/readiness endpoints nest it under ``modes.data.mode`` or ``details.data.mode``
-    or top-level ``data_mode``; the operator envelope declares it as ``meta.dataMode``.
+    Canonical contract:
+      - Top-level ``data_mode`` key on response root (e.g. /platform/health, /readiness).
+      - Nested ``modes.data.mode`` (/platform/health) or ``details.data.mode`` (/readiness).
+      - Operator bootstrap envelope ``meta.dataMode``.
     """
     modes = payload.get("modes") if isinstance(payload.get("modes"), Mapping) else {}
     details = payload.get("details") if isinstance(payload.get("details"), Mapping) else {}
@@ -1673,10 +1675,10 @@ def _declared_data_mode(payload: Mapping[str, Any]) -> str:
     meta = payload.get("meta") if isinstance(payload.get("meta"), Mapping) else {}
 
     candidates = (
-        modes_data.get("mode"),
-        details_data.get("mode"),
         payload.get("data_mode"),
         payload.get("dataMode"),
+        modes_data.get("mode"),
+        details_data.get("mode"),
         details.get("data_mode"),
         details.get("dataMode"),
         meta.get("dataMode"),

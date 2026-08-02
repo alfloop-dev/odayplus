@@ -4828,3 +4828,150 @@ def test_declared_data_mode_handles_all_envelope_shapes() -> None:
     # 6. Missing / empty returns ""
     assert validator._declared_data_mode({}) == ""
     assert validator._declared_data_mode({"status": "ok"}) == ""
+
+
+def test_real_app_platform_health_and_readiness_data_mode_contract(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Verify real /platform/health and /readiness endpoint payloads feed validator._declared_data_mode truthfully.
+
+    Validates:
+      1. Truthful Live State: Live-configured API returns status=ok and top-level + nested data_mode="live",
+         which validator._declared_data_mode parses as "live" and smoke check accepts.
+      2. Truthful Unavailable/Unhealthy State: When live requirements are active but runtime persistence/gates
+         are unavailable, endpoints return status=unhealthy (503) and data_mode="unavailable", which
+         validator._declared_data_mode parses as "unavailable" and smoke check rejects.
+      3. Fixture/Seed/Memory Rejection: Non-live development API returns data_mode="fixture", which
+         validator._declared_data_mode parses as "fixture" and deployment smoke check strictly rejects.
+    """
+    import dataclasses
+    from typing import Any
+
+    from fastapi.testclient import TestClient
+
+    from apps.api.oday_api.main import create_app
+    from shared.infrastructure.persistence.factory import _durable_bundle, _memory_bundle
+
+    # 1. Truthful Live State: PostgreSQL live bundle + ODP_REQUIRE_LIVE_DATA=true
+    monkeypatch.setenv("ODP_REQUIRE_LIVE_DATA", "true")
+    monkeypatch.setenv("ODP_PERSISTENCE", "postgresql")
+
+    class MockPostgresEngine:
+        def __init__(self, delegate: Any) -> None:
+            self._delegate = delegate
+
+        @property
+        def is_production(self) -> bool:
+            return True
+
+        def query(self, sql: str, *args: Any, **kwargs: Any) -> list[dict[str, Any]]:
+            if sql.strip().upper() == "SELECT 1":
+                return [{"ready": 1}]
+            return self._delegate.query(sql, *args, **kwargs)
+
+        def query_one(self, sql: str, *args: Any, **kwargs: Any) -> dict[str, Any] | None:
+            if sql.strip().upper() in {"SELECT 1", "SELECT 1 AS READY"}:
+                return {"ready": 1}
+            return self._delegate.query_one(sql, *args, **kwargs)
+
+        def execute(self, sql: str, *args: Any, **kwargs: Any) -> Any:
+            return self._delegate.execute(sql, *args, **kwargs)
+
+        def __getattr__(self, name: str) -> Any:
+            return getattr(self._delegate, name)
+
+    sqlite_base = _durable_bundle(tmp_path / "live_contract_test.db")
+    mock_engine = MockPostgresEngine(sqlite_base.engine)
+    pg_mode_bundle = dataclasses.replace(
+        sqlite_base,
+        engine=mock_engine,
+        mode="postgresql",
+        assisted_intake_store=SimpleNamespace(),
+    )
+    live_provider = SimpleNamespace(
+        mode=SimpleNamespace(value="live"),
+        ok=True,
+        errors=(),
+    )
+
+    def live_probe(**_kwargs: Any) -> Any:
+        return SimpleNamespace(
+            ok=True,
+            to_dict=lambda: {
+                "connectivity_healthy": True,
+                "probes": [],
+                "status": "healthy",
+            },
+        )
+    live_app = create_app(
+        persistence=pg_mode_bundle,
+        external_provider_validation=live_provider,
+        external_provider_connectivity_probe=live_probe,
+    )
+    live_client = TestClient(live_app)
+
+    live_health = live_client.get("/platform/health").json()
+    live_readiness = live_client.get("/readiness").json()
+
+    assert live_health.get("status") == "ok"
+    assert live_readiness.get("status") == "ok"
+    assert live_health.get("data_mode") == "live"
+    assert live_readiness.get("data_mode") == "live"
+    assert live_health.get("modes", {}).get("data", {}).get("mode") == "live"
+    assert live_readiness.get("details", {}).get("data", {}).get("mode") == "live"
+
+    assert validator._declared_data_mode(live_health) == "live"
+    assert validator._declared_data_mode(live_readiness) == "live"
+
+    # Smoke gate validation for live endpoints
+    assert live_health.get("status") == "ok" and validator._declared_data_mode(live_health) == "live"
+    assert live_readiness.get("status") == "ok" and validator._declared_data_mode(live_readiness) == "live"
+
+    # 2. Truthful Unavailable / Unhealthy State: ODP_REQUIRE_LIVE_DATA=true with in-memory persistence
+    monkeypatch.setenv("ODP_REQUIRE_LIVE_DATA", "true")
+    unavail_app = create_app(persistence=_memory_bundle())
+    unavail_client = TestClient(unavail_app)
+
+    unavail_health_res = unavail_client.get("/platform/health")
+    unavail_readiness_res = unavail_client.get("/readiness")
+
+    assert unavail_health_res.status_code == 503
+    assert unavail_readiness_res.status_code == 503
+
+    unavail_health = unavail_health_res.json()
+    unavail_readiness = unavail_readiness_res.json()
+
+    assert unavail_health.get("status") == "unhealthy"
+    assert unavail_readiness.get("status") == "unhealthy"
+    assert unavail_health.get("data_mode") == "unavailable"
+    assert unavail_readiness.get("data_mode") == "unavailable"
+    assert unavail_health.get("modes", {}).get("data", {}).get("mode") == "unavailable"
+    assert unavail_readiness.get("details", {}).get("data", {}).get("mode") == "unavailable"
+
+    assert validator._declared_data_mode(unavail_health) == "unavailable"
+    assert validator._declared_data_mode(unavail_readiness) == "unavailable"
+
+    # Smoke gate validation fails closed for unavailable endpoints
+    assert not (unavail_health.get("status") == "ok" and validator._declared_data_mode(unavail_health) == "live")
+    assert not (unavail_readiness.get("status") == "ok" and validator._declared_data_mode(unavail_readiness) == "live")
+
+    # 3. Proving Fixture / Seed / Memory remain Rejected by Live Deployment Validation
+    monkeypatch.delenv("ODP_REQUIRE_LIVE_DATA", raising=False)
+    monkeypatch.delenv("ODP_DEPLOY_ENV", raising=False)
+    dev_app = create_app(persistence=_memory_bundle())
+    dev_client = TestClient(dev_app)
+
+    dev_health = dev_client.get("/platform/health").json()
+    dev_readiness = dev_client.get("/readiness").json()
+
+    assert dev_health.get("status") == "ok"
+    assert dev_readiness.get("status") == "ok"
+    assert dev_health.get("data_mode") == "fixture"
+    assert dev_readiness.get("data_mode") == "fixture"
+
+    assert validator._declared_data_mode(dev_health) == "fixture"
+    assert validator._declared_data_mode(dev_readiness) == "fixture"
+
+    # Crucial: Live deployment smoke check strictly rejects fixture data_mode
+    assert not (dev_health.get("status") == "ok" and validator._declared_data_mode(dev_health) == "live")
+    assert not (dev_readiness.get("status") == "ok" and validator._declared_data_mode(dev_readiness) == "live")
