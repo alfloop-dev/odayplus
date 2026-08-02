@@ -5457,6 +5457,85 @@ def resolve_task_sha(
     return None
 
 
+def resolve_task_checkout_sha(
+    task: dict[str, Any] | str,
+    force_refresh: bool = False,
+    repository_root: Path | None = None,
+) -> str | None:
+    """Resolve active remote task branch SHA or post-merge checkout HEAD for a task.
+
+    Returns:
+    - The remote task branch SHA from origin/task/<id> (via resolve_task_sha) if present.
+    - If origin has no task branch (e.g. deleted after PR auto-merge), checks candidate
+      checkout HEADs (local checkout HEAD, target branch SHA, delivery verified_head) and
+      returns the first candidate that satisfies `is_approved_head_satisfied`.
+    - None if no remote branch exists and no post-merge checkout HEAD satisfies approved_head.
+    """
+    if isinstance(task, str):
+        task_id = task.strip()
+        state = load_status()
+        task_dict = get_task(state, task_id) or {"id": task_id}
+    else:
+        task_dict = task
+        task_id = str(task_dict.get("id") or "").strip()
+
+    if not task_id:
+        return None
+
+    remote_sha = resolve_task_sha(task_id, force_refresh=force_refresh)
+    if remote_sha:
+        return remote_sha
+
+    approved_head = str(task_dict.get("approved_head") or "").strip()
+    if not approved_head:
+        return None
+
+    try:
+        config = load_config()
+        repository_id = task_primary_repository_id(config, task_dict) or "pantheon"
+        repo_root = repository_root or repository_local_path(config, repository_id) or ROOT
+        repo_root = repo_root.resolve(strict=False)
+
+        candidates: list[str] = []
+
+        local_head = run_git_command(["rev-parse", "HEAD"], cwd=repo_root, required=False)
+        if local_head:
+            candidates.append(local_head.strip())
+
+        target_branch = delivery_merge_target_branch(config, repository_id)
+        remotes_output = run_git_command(["remote"], cwd=repo_root, required=False)
+        remote_names = [line.strip() for line in remotes_output.splitlines() if line.strip()]
+        if remote_names:
+            remote = "origin" if "origin" in remote_names else remote_names[0]
+            target_ref = f"{remote}/{target_branch}"
+            run_git_command(["fetch", remote, target_branch], cwd=repo_root, required=False)
+            target_sha = run_git_command(["rev-parse", "--verify", target_ref], cwd=repo_root, required=False)
+            if target_sha:
+                candidates.append(target_sha.strip())
+
+        delivery = task_dict.get("delivery")
+        if isinstance(delivery, dict):
+            v_head = str(delivery.get("verified_head") or "").strip()
+            if v_head:
+                candidates.append(v_head)
+
+        seen = set()
+        unique_candidates: list[str] = []
+        for c in candidates:
+            if c and c not in seen:
+                seen.add(c)
+                unique_candidates.append(c)
+
+        for candidate in unique_candidates:
+            if is_approved_head_satisfied(task_dict, candidate, approved_head, repository_root=repo_root):
+                return candidate
+    except Exception:
+        pass
+
+    return None
+
+
+
 def task_pr_head_and_merge_commit(task_id: str) -> tuple[str | None, str | None]:
     """Return ``(headRefOid, mergeCommit_oid)`` for the task PR, or ``(None, None)``.
 
