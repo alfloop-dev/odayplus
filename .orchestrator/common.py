@@ -904,6 +904,9 @@ def normalize_source_doc_path(rel_path: str) -> str:
 
 
 def validate_source_doc_path(rel_path: str, status_root: Path, *, task: dict[str, Any] | None = None) -> tuple[bool, str, str | None]:
+    raw_str = str(rel_path or "").strip().replace("\\", "/")
+    if raw_str.startswith("/") or Path(raw_str).is_absolute():
+        return False, raw_str, "raw absolute path rejected"
     norm = normalize_source_doc_path(rel_path)
     if not norm:
         return False, norm, "empty path"
@@ -925,6 +928,13 @@ def validate_source_doc_path(rel_path: str, status_root: Path, *, task: dict[str
         has_inventory = any((target / inv).exists() for inv in inventory_candidates)
         if not has_inventory:
             return False, norm, "directory without inventory manifest"
+
+        for item in target.rglob("*"):
+            try:
+                resolved_item = item.resolve()
+                resolved_item.relative_to(resolved_status_root)
+            except Exception:
+                return False, norm, f"external directory child symlink rejected for '{item.relative_to(status_root)}'"
 
     return True, norm, None
 
@@ -983,14 +993,20 @@ def task_brief_canonical_hash(task: dict[str, Any]) -> str:
     source_docs = [normalize_source_doc_path(str(item)) for item in (task.get("source_docs") or []) if str(item).strip()]
     acceptance = [str(item).strip() for item in (task.get("acceptance") or []) if str(item).strip()]
     verification = [str(item).strip() for item in (task.get("verification") or []) if str(item).strip()]
+    depends_on = [str(item).strip() for item in (task.get("depends_on") or []) if str(item).strip()]
+    artifacts = [str(item).strip() for item in (task.get("artifacts") or []) if str(item).strip()]
     canonical_payload = {
         "id": task_id,
         "title": task.get("title"),
         "status": str(task.get("status") or "-"),
         "owner": str(task.get("owner") or "-"),
         "reviewer": str(task.get("reviewer") or "-"),
+        "phase": str(task.get("phase") or "-"),
+        "summary_zh": str(task.get("summary_zh") or "-"),
         "last_update": str(task.get("last_update") or "-"),
         "next": task.get("next"),
+        "depends_on": depends_on,
+        "artifacts": artifacts,
         "source_docs": source_docs,
         "acceptance": acceptance,
         "verification": verification,
@@ -1061,9 +1077,18 @@ def generate_task_brief_content(
     resolver = TaskResolver(tasks)
 
     active_task = next((t for t in tasks if str(t.get("id") or "").strip() == task_id), None)
-    archived_task = resolver.get(task_id)
+    s_root = delivery_status_root(config)
+    archive_file = s_root / "ai-task-archive" / "tasks" / f"{task_id}.json"
+    archived_task = None
+    if archive_file.exists():
+        snapshot = load_json(archive_file, default=None)
+        if isinstance(snapshot, dict) and isinstance(snapshot.get("task"), dict):
+            archived_task = snapshot["task"]
+    if not archived_task:
+        from task_archive import load_archived_task
+        archived_task = load_archived_task(task_id)
 
-    if active_task and archived_task and active_task is not archived_task:
+    if active_task and archived_task:
         for k in ("status", "owner", "reviewer", "last_update"):
             if str(active_task.get(k) or "").strip() != str(archived_task.get(k) or "").strip():
                 raise ValueError(

@@ -1697,6 +1697,7 @@ def materialize_worker_context_files(
         return []
     status_root = config_path(config, "status_file").parents[0].resolve()
     materialized: list[str] = []
+    manifest_entries: list[dict[str, Any]] = []
 
     status_data = load_status(config)
     tasks = status_data.get("tasks", []) or []
@@ -1726,6 +1727,7 @@ def materialize_worker_context_files(
         if ".orchestrator/task-briefs/" in rel_value:
             destination.parent.mkdir(parents=True, exist_ok=True)
             copied = False
+            found_src = None
             for candidate in _task_brief_context_candidates(request.task_id, rel_value):
                 source = status_root / candidate
                 if not source.exists() or not source.is_file():
@@ -1735,6 +1737,7 @@ def materialize_worker_context_files(
                     break
                 shutil.copy2(source, destination)
                 copied = True
+                found_src = source
                 break
             if not copied:
                 text = _generated_worker_task_brief(config, request.task_id)
@@ -1744,10 +1747,16 @@ def materialize_worker_context_files(
                     try:
                         canon_brief.parent.mkdir(parents=True, exist_ok=True)
                         canon_brief.write_text(text, encoding="utf-8")
+                        found_src = canon_brief
                     except OSError:
                         pass
                     break
             materialized.append(rel_value)
+            manifest_entries.append({
+                "relative_path": rel_value,
+                "canonical_source_path": str(found_src.resolve()) if found_src else str((status_root / rel_value).resolve()),
+                "sha256": _file_or_dir_hash(destination),
+            })
             continue
 
         source = status_root / rel_value
@@ -1760,13 +1769,21 @@ def materialize_worker_context_files(
         always_refresh = rel_value in _SEEDABLE_UNTRACKED_CONTEXT
         if source.exists():
             if destination.exists() and not always_refresh:
-                if _is_tracked_in_worktree(workspace_path, rel_value):
-                    materialized.append(rel_value)
-                    continue
                 source_hash = _file_or_dir_hash(source)
                 dest_hash = _file_or_dir_hash(destination)
                 if source_hash and dest_hash and source_hash == dest_hash:
                     materialized.append(rel_value)
+                    manifest_entries.append({
+                        "relative_path": rel_value,
+                        "canonical_source_path": str(source.resolve()),
+                        "sha256": source_hash,
+                    })
+                    continue
+                if _is_tracked_in_worktree(workspace_path, rel_value):
+                    if is_mutating_or_p0:
+                        raise ValueError(
+                            f"Fail-closed on workspace materialization for task {request.task_id}: tracked document '{rel_value}' hash mismatch between worktree and canonical source"
+                        )
                     continue
 
             destination.parent.mkdir(parents=True, exist_ok=True)
@@ -1774,7 +1791,18 @@ def materialize_worker_context_files(
                 if source.is_dir():
                     destination.mkdir(parents=True, exist_ok=True)
                     dir_failed = False
+                    resolved_status_root = status_root.resolve()
                     for src_item in source.rglob("*"):
+                        try:
+                            src_item.resolve().relative_to(resolved_status_root)
+                        except Exception:
+                            if is_mutating_or_p0:
+                                raise ValueError(
+                                    f"Fail-closed on workspace materialization for task {request.task_id}: directory child symlink '{src_item}' points outside status root"
+                                )
+                            dir_failed = True
+                            break
+
                         rel_child = src_item.relative_to(source)
                         child_rel_value = (Path(rel_value) / rel_child).as_posix()
                         valid_child, child_dest, child_err = validate_destination_context_path(child_rel_value, workspace_path)
@@ -1789,28 +1817,66 @@ def materialize_worker_context_files(
                             child_dest.mkdir(parents=True, exist_ok=True)
                         elif src_item.is_file():
                             if child_dest.exists() and not always_refresh:
-                                if _is_tracked_in_worktree(workspace_path, child_rel_value):
-                                    continue
                                 src_h = _file_or_dir_hash(src_item)
                                 dst_h = _file_or_dir_hash(child_dest)
                                 if src_h and dst_h and src_h == dst_h:
                                     continue
+                                if _is_tracked_in_worktree(workspace_path, child_rel_value):
+                                    if is_mutating_or_p0:
+                                        raise ValueError(
+                                            f"Fail-closed on workspace materialization for task {request.task_id}: tracked document item '{child_rel_value}' hash mismatch between worktree and canonical source"
+                                        )
+                                    dir_failed = True
+                                    break
+
                             child_dest.parent.mkdir(parents=True, exist_ok=True)
-                            shutil.copy2(src_item, child_dest)
+                            try:
+                                shutil.copy2(src_item, child_dest)
+                            except OSError as err:
+                                if is_mutating_or_p0:
+                                    raise ValueError(
+                                        f"Fail-closed on workspace materialization for task {request.task_id}: failed to copy directory source item '{child_rel_value}': {err}"
+                                    ) from err
+                                dir_failed = True
+                                break
                     if dir_failed:
                         continue
                 else:
-                    shutil.copy2(source, destination)
-            except OSError:
+                    try:
+                        shutil.copy2(source, destination)
+                    except OSError as err:
+                        if is_mutating_or_p0:
+                            raise ValueError(
+                                f"Fail-closed on workspace materialization for task {request.task_id}: failed to copy source document '{rel_value}': {err}"
+                            ) from err
+                        continue
+            except OSError as err:
+                if is_mutating_or_p0:
+                    raise ValueError(
+                        f"Fail-closed on workspace materialization for task {request.task_id}: failed to copy source document '{rel_value}': {err}"
+                    ) from err
                 continue
+
             materialized.append(rel_value)
+            manifest_entries.append({
+                "relative_path": rel_value,
+                "canonical_source_path": str(source.resolve()),
+                "sha256": _file_or_dir_hash(destination) or _file_or_dir_hash(source),
+            })
         elif rel_value == "AI_COLLABORATION_GUIDE.md" and not destination.exists():
             destination.parent.mkdir(parents=True, exist_ok=True)
             destination.write_text(_generated_collaboration_guide(config), encoding="utf-8")
             materialized.append(rel_value)
+            manifest_entries.append({
+                "relative_path": rel_value,
+                "canonical_source_path": str((status_root / rel_value).resolve()),
+                "sha256": _file_or_dir_hash(destination),
+            })
 
     if materialized:
         request.metadata["materialized_context_files"] = materialized
+        request.metadata["materialized_source_manifest"] = manifest_entries
+        request.metadata["source_manifest"] = manifest_entries
     return materialized
 
 
@@ -1965,6 +2031,8 @@ def prepare_worker_workspace(
         "last_target_agent": target_agent,
         "last_used_at": utc_now(),
         "materialized_context_files": materialized_context_files,
+        "materialized_source_manifest": request.metadata.get("materialized_source_manifest", []),
+        "source_manifest": request.metadata.get("source_manifest", []),
     }
     write_activity_log(
         config,

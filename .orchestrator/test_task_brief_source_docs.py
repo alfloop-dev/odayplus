@@ -363,14 +363,16 @@ class TaskBriefSourceDocsTests(unittest.TestCase):
                 context_files=["docs/evidence/source.txt"],
             )
 
-            # When destination is tracked in worktree (_is_tracked_in_worktree=True),
-            # task-owned edits in worktree MUST NOT be overwritten!
+            # When destination is tracked in worktree (_is_tracked_in_worktree=True) and differs,
+            # it MUST fail closed with ValueError and MUST NOT overwrite task-owned edits!
             with (
                 mock.patch.object(supervisor, "load_status", return_value={"tasks": [task]}),
                 mock.patch.object(common, "load_status", return_value={"tasks": [task]}),
                 mock.patch.object(supervisor, "_is_tracked_in_worktree", return_value=True),
             ):
-                supervisor.materialize_worker_context_files(config, req, worktree_path)
+                with self.assertRaises(ValueError) as ctx:
+                    supervisor.materialize_worker_context_files(config, req, worktree_path)
+                self.assertIn("tracked document 'docs/evidence/source.txt' hash mismatch", str(ctx.exception))
 
             self.assertEqual(dest_doc.read_text(encoding="utf-8"), "version 0 (worker task-owned edits)")
 
@@ -581,6 +583,295 @@ class TaskBriefSourceDocsTests(unittest.TestCase):
                 self.assertIn("escapes workspace root", str(ctx.exception))
 
             self.assertEqual(outside_file.read_text(encoding="utf-8"), "DO NOT TOUCH")
+
+    def test_tracked_source_hash_mismatch_fail_closed(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmp_path = Path(tmpdir)
+            status_root = tmp_path / "pantheon"
+            status_root.mkdir()
+            src_doc = status_root / "docs" / "source.md"
+            src_doc.parent.mkdir(parents=True)
+            src_doc.write_text("CANONICAL-V2", encoding="utf-8")
+
+            worktree_path = tmp_path / "worktree"
+            worktree_path.mkdir()
+            dest_doc = worktree_path / "docs" / "source.md"
+            dest_doc.parent.mkdir(parents=True)
+            dest_doc.write_text("STALE-V1", encoding="utf-8")
+
+            task = {
+                "id": "ODP-B7-TEST-001",
+                "title": "Tracked Freshness Test",
+                "status": "todo",
+                "owner": "Antigravity",
+                "reviewer": "Codex5",
+                "priority": "P0",
+                "source_docs": ["docs/source.md"],
+            }
+            config = {"paths": {"status_file": str(status_root / "ai-status.json")}}
+
+            req = supervisor.DeliveryRequest(
+                agent_id="Antigravity",
+                provider="antigravity",
+                delivery_mode="antigravity",
+                message="wake",
+                task_id="ODP-B7-TEST-001",
+                reason="owned_ready_dispatch",
+                context_files=["docs/source.md"],
+            )
+
+            with (
+                mock.patch.object(supervisor, "load_status", return_value={"tasks": [task]}),
+                mock.patch.object(common, "load_status", return_value={"tasks": [task]}),
+                mock.patch.object(supervisor, "_is_tracked_in_worktree", return_value=True),
+            ):
+                with self.assertRaises(ValueError) as ctx:
+                    supervisor.materialize_worker_context_files(config, req, worktree_path)
+                self.assertIn("tracked document 'docs/source.md' hash mismatch", str(ctx.exception))
+
+            self.assertEqual(dest_doc.read_text(encoding="utf-8"), "STALE-V1")
+
+    def test_immutable_source_manifest_in_metadata_and_owner_reviewer_equality(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmp_path = Path(tmpdir)
+            status_root = tmp_path / "pantheon"
+            status_root.mkdir()
+            src_doc = status_root / "docs" / "source.md"
+            src_doc.parent.mkdir(parents=True)
+            src_doc.write_text("CANONICAL CONTENT", encoding="utf-8")
+
+            worktree_owner = tmp_path / "worktree_owner"
+            worktree_owner.mkdir()
+
+            worktree_reviewer = tmp_path / "worktree_reviewer"
+            worktree_reviewer.mkdir()
+
+            task = {
+                "id": "ODP-B8-TEST-001",
+                "title": "Manifest Test",
+                "status": "todo",
+                "owner": "Antigravity",
+                "reviewer": "Codex5",
+                "priority": "P0",
+                "source_docs": ["docs/source.md"],
+            }
+            config = {"paths": {"status_file": str(status_root / "ai-status.json")}}
+
+            req_owner = supervisor.DeliveryRequest(
+                agent_id="Antigravity",
+                provider="antigravity",
+                delivery_mode="antigravity",
+                message="wake",
+                task_id="ODP-B8-TEST-001",
+                reason="owned_ready_dispatch",
+                context_files=["docs/source.md"],
+            )
+
+            req_reviewer = supervisor.DeliveryRequest(
+                agent_id="Codex5",
+                provider="codex",
+                delivery_mode="codex",
+                message="review",
+                task_id="ODP-B8-TEST-001",
+                reason="review_dispatch",
+                context_files=["docs/source.md"],
+            )
+
+            with (
+                mock.patch.object(supervisor, "load_status", return_value={"tasks": [task]}),
+                mock.patch.object(common, "load_status", return_value={"tasks": [task]}),
+                mock.patch.object(supervisor, "_is_tracked_in_worktree", return_value=False),
+            ):
+                supervisor.materialize_worker_context_files(config, req_owner, worktree_owner)
+                supervisor.materialize_worker_context_files(config, req_reviewer, worktree_reviewer)
+
+            manifest_owner = req_owner.metadata.get("materialized_source_manifest")
+            manifest_reviewer = req_reviewer.metadata.get("materialized_source_manifest")
+
+            self.assertIsNotNone(manifest_owner)
+            self.assertIsNotNone(manifest_reviewer)
+            self.assertEqual(len(manifest_owner), 1)
+            self.assertEqual(manifest_owner[0]["relative_path"], "docs/source.md")
+            self.assertEqual(manifest_owner[0]["canonical_source_path"], str(src_doc.resolve()))
+            self.assertEqual(len(manifest_owner[0]["sha256"]), 64)
+
+            self.assertEqual(manifest_owner[0]["sha256"], manifest_reviewer[0]["sha256"])
+
+    def test_read_copy_failure_fail_closed(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmp_path = Path(tmpdir)
+            status_root = tmp_path / "pantheon"
+            status_root.mkdir()
+            src_doc = status_root / "docs" / "source.md"
+            src_doc.parent.mkdir(parents=True)
+            src_doc.write_text("CANONICAL", encoding="utf-8")
+
+            worktree_path = tmp_path / "worktree"
+            worktree_path.mkdir()
+
+            task = {
+                "id": "ODP-B9-TEST-001",
+                "title": "Copy Failure Test",
+                "status": "todo",
+                "owner": "Antigravity",
+                "reviewer": "Codex5",
+                "priority": "P0",
+                "source_docs": ["docs/source.md"],
+            }
+            config = {"paths": {"status_file": str(status_root / "ai-status.json")}}
+
+            req = supervisor.DeliveryRequest(
+                agent_id="Antigravity",
+                provider="antigravity",
+                delivery_mode="antigravity",
+                message="wake",
+                task_id="ODP-B9-TEST-001",
+                reason="owned_ready_dispatch",
+                context_files=["docs/source.md"],
+            )
+
+            with (
+                mock.patch.object(supervisor, "load_status", return_value={"tasks": [task]}),
+                mock.patch.object(common, "load_status", return_value={"tasks": [task]}),
+                mock.patch("shutil.copy2", side_effect=OSError("Disk read failure")),
+            ):
+                with self.assertRaises(ValueError) as ctx:
+                    supervisor.materialize_worker_context_files(config, req, worktree_path)
+                self.assertIn("failed to copy source document", str(ctx.exception))
+
+    def test_raw_absolute_path_and_directory_child_symlink_rejection(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmp_path = Path(tmpdir)
+            status_root = tmp_path / "pantheon"
+            status_root.mkdir()
+
+            # Test raw absolute path rejection
+            valid, norm, err = common.validate_source_doc_path("/docs/source.md", status_root)
+            self.assertFalse(valid)
+            self.assertIn("raw absolute path rejected", err or "")
+
+            # Test directory child symlink pointing outside status_root
+            outside_dir = tmp_path / "outside"
+            outside_dir.mkdir()
+            outside_file = outside_dir / "secret.txt"
+            outside_file.write_text("SECRET", encoding="utf-8")
+
+            dir_source = status_root / "docs_dir"
+            dir_source.mkdir()
+            (dir_source / "manifest.json").write_text("{}", encoding="utf-8")
+            (dir_source / "child_symlink").symlink_to(outside_file)
+
+            valid_dir, norm_dir, err_dir = common.validate_source_doc_path("docs_dir", status_root)
+            self.assertFalse(valid_dir)
+            self.assertIn("external directory child symlink rejected", err_dir or "")
+
+            task = {
+                "id": "ODP-B10-TEST-001",
+                "title": "Directory Symlink Test",
+                "status": "todo",
+                "owner": "Antigravity",
+                "reviewer": "Codex5",
+                "priority": "P0",
+                "source_docs": ["docs_dir"],
+            }
+            config = {"paths": {"status_file": str(status_root / "ai-status.json")}}
+
+            req = supervisor.DeliveryRequest(
+                agent_id="Antigravity",
+                provider="antigravity",
+                delivery_mode="antigravity",
+                message="wake",
+                task_id="ODP-B10-TEST-001",
+                reason="owned_ready_dispatch",
+                context_files=["docs_dir"],
+            )
+
+            worktree_path = tmp_path / "worktree"
+            worktree_path.mkdir()
+
+            with (
+                mock.patch.object(supervisor, "load_status", return_value={"tasks": [task]}),
+                mock.patch.object(common, "load_status", return_value={"tasks": [task]}),
+            ):
+                with self.assertRaises(ValueError) as ctx:
+                    supervisor.materialize_worker_context_files(config, req, worktree_path)
+                self.assertIn("external directory child symlink rejected", str(ctx.exception))
+
+    def test_canonical_hash_binds_rendered_metadata_and_archived_ambiguity(self) -> None:
+        task1 = {
+            "id": "ODP-B11-TEST-001",
+            "title": "Hash Metadata Test",
+            "status": "todo",
+            "owner": "Antigravity",
+            "reviewer": "Codex5",
+            "last_update": "2026-08-02T11:00:00Z",
+            "artifacts": ["apps/web/src/app.tsx"],
+            "depends_on": ["ODP-DEP-001"],
+            "phase": "Phase 1",
+            "summary_zh": "Summary Zh 1",
+        }
+        h1 = common.task_brief_canonical_hash(task1)
+
+        task2 = dict(task1)
+        task2["artifacts"] = ["apps/web/src/app.tsx", "apps/api/src/server.ts"]
+        h2 = common.task_brief_canonical_hash(task2)
+
+        self.assertNotEqual(h1, h2)
+
+        brief_text = (
+            "# Task Brief: ODP-B11-TEST-001\n"
+            "- Status: todo\n"
+            "- Owner: Antigravity\n"
+            "- Reviewer: Codex5\n"
+            "- Last update: 2026-08-02T11:00:00Z\n"
+            f"- SHA256: {h1}\n"
+            "\n"
+            "## Source Documents\n"
+            "- none\n"
+        )
+        self.assertTrue(common.is_task_brief_stale(brief_text, task2))
+
+        # Test archived ambiguity check
+        with tempfile.TemporaryDirectory() as tmpdir:
+            status_root = Path(tmpdir) / "pantheon"
+            status_root.mkdir()
+            archive_dir = status_root / "ai-task-archive" / "tasks"
+            archive_dir.mkdir(parents=True)
+
+            archived_task = {
+                "id": "ODP-AMBIG-001",
+                "title": "Ambiguity Test Task",
+                "status": "done",
+                "owner": "Claude",
+                "reviewer": "Codex5",
+                "last_update": "2026-08-01T00:00:00Z",
+            }
+            snapshot = {
+                "version": 1,
+                "task_id": "ODP-AMBIG-001",
+                "archived_at": "2026-08-01T00:00:00Z",
+                "terminal_status": "done",
+                "terminal_outcome": "completed",
+                "task": archived_task,
+            }
+            (archive_dir / "ODP-AMBIG-001.json").write_text(json.dumps(snapshot), encoding="utf-8")
+
+            active_task = {
+                "id": "ODP-AMBIG-001",
+                "title": "Ambiguity Test Task",
+                "status": "in_progress",
+                "owner": "Antigravity",
+                "reviewer": "Codex5",
+                "last_update": "2026-08-02T11:00:00Z",
+            }
+            config = {"paths": {"status_file": str(status_root / "ai-status.json")}}
+
+            with (
+                mock.patch.object(common, "load_status", return_value={"tasks": [active_task]}),
+            ):
+                with self.assertRaises(ValueError) as ctx:
+                    common.generate_task_brief_content(config, "ODP-AMBIG-001")
+                self.assertIn("Archived-task ambiguity for task ODP-AMBIG-001", str(ctx.exception))
 
 
 if __name__ == "__main__":
