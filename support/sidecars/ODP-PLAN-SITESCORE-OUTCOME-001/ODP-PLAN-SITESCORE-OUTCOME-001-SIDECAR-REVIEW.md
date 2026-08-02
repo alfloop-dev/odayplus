@@ -88,6 +88,17 @@ Rechecked at `2026-08-01T23:47:04Z`:
 
 Closeout dependency: wait for the canonical CI-boundary repair to merge into `dev`, then refresh PR `#551` from `dev` and rerun required checks. Until then this sidecar remains complete at the support layer but cannot honestly claim merge-ready CI.
 
+### Canonical dependency re-review result
+
+Rechecked after the canonical dependency's independent review at `2026-08-01T23:59:15Z`:
+
+- PR `#562` remained open at exact head `b047aa18baa81b4b47fda8b58fba0b7a7d4bb1d7`. Its orchestrator, product, performance, and product-E2E jobs were green, but reviewer Codex9 rejected the task for an uncovered release-authority race in `.github/workflows/promote-dev-to-main.yml`.
+- The recorded defect allows an older successful workflow run to validate one `dev` SHA while PR creation/reuse and the `task-review-gate` can act on a later mutable `dev` head. The canonical task must bind both `origin/dev` and the queried promotion PR head to `github.event.workflow_run.head_sha` before status emission or auto-merge.
+- Because `#562` is back in progress and has not merged, PR `#551` cannot yet refresh from a repaired `dev` baseline or obtain an honest clean product-E2E rerun. The current `#551` failure remains the previously documented support-path classification conflict, not a SiteScore packet-content failure.
+- The workflow and release-authority correction belongs to `ODP-CI-DEV-MERGE-RELEASE-NOGO-DEADLOCK-001`. This support-only sidecar does not copy, modify, or pre-approve that repair.
+
+Disposition remains fail-closed: the packet is reviewable as support evidence, but sidecar merge/finalization must wait for a reviewer-approved canonical repair to merge and for PR `#551` to rerun cleanly on that baseline.
+
 ## Reviewer handoff
 
 Antigravity should use this packet as supporting evidence and may absorb it into the parent closeout record if useful. Before parent finalization:
