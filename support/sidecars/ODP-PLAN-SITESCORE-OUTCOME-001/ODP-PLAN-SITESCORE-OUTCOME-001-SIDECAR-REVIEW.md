@@ -130,11 +130,22 @@ Rechecked at `2026-08-02T00:59:26Z` after the supervisor's latest CI-failure dis
 
 There is therefore no honest sidecar-local CI repair. Weakening the evidence path policy, editing the promotion workflow, or regenerating canonical E2E receipts would exceed this helper's support-only authority. The packet is resubmitted for exact-head review so the reviewer can preserve the support evidence while the canonical policy owner resolves and merges PR `#562`.
 
+### Current exact-head re-review packet
+
+Rechecked at `2026-08-02T01:13:34Z` for the current owner dispatch:
+
+- PR `#551` is open and `BEHIND` at exact sidecar head `b1a0c71edafe4ba5f3ed44a95d3c8c73507b560e`. CI run `30726319250` has green `orchestrator` and `performance-gate` jobs, a failed `product-e2e-gate`, and an in-progress `product` job. The `task-review-gate` is failing because the supervisor returned the task to `in_progress` after CI failure; no new content-review rejection is recorded.
+- The failed gate is the already evidenced support-path classification conflict. The only tracked task artifact remains this packet under `support/sidecars/**`; no canonical contract, runtime, workflow, allowlist, receipt, registry, or model-card file is in the sidecar diff.
+- Canonical repair PR `#562` has advanced again to exact head `1a381de9037b712f34ab513e036b62ba7f5d4331`, but GitHub reports it `OPEN` and `DIRTY`, with only a pending `task-review-gate` and no completed required checks at capture time. It has not merged into `dev`, so this sidecar cannot yet refresh onto a reviewer-approved repaired baseline.
+- Parent PR `#525` remains open and `BEHIND` at `b669017f7787e309573ab0edbe600b41095334a1`; its `product` and `product-e2e-gate` checks remain failed. This packet does not reinterpret that head or widen the earlier exact-head SiteScore assessment.
+
+Owner disposition: no authorized local repair exists. Submit this exact packet head for Antigravity re-review, preserve the external dependency on a merged canonical repair, and rerun PR `#551` only after that repair is present on `dev`.
+
 ## Reviewer handoff
 
 Antigravity should use this packet as supporting evidence and may absorb it into the parent closeout record if useful. Before parent finalization:
 
-1. Confirm PR `#525` still points to `b2d9250f` or re-evaluate any later head.
+1. Treat the implementation assessment as exact-head evidence for `fb42ef7a`; independently evaluate parent PR `#525` at its current or any later head before parent finalization.
 2. Require all mandatory CI and branch-protection checks to reach a mergeable state; `BEHIND`, pending checks, or an open PR are not closeout.
 3. Preserve the current `GOVERNED_DISABLED` claim and the explicit prediction-source/outcome-backfill dependencies.
 4. Do not treat this sidecar packet as authority to modify or activate canonical SiteScore behavior.
