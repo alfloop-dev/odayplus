@@ -1,0 +1,234 @@
+"""Unit and mutation tests for SiteScore prediction source resolver and model registry lineage verifier."""
+
+from __future__ import annotations
+
+import pytest
+
+from models.sitescore.opening_outcome import (
+    build_sitescore_gate2_receipt,
+    build_sitescore_opening_outcome_model_card,
+    evaluate_sitescore_opening_outcome_benchmark,
+    verify_sitescore_gate2_receipt,
+)
+from models.sitescore.prediction_source import (
+    CANONICAL_MODEL_VERSION,
+    CANONICAL_PREDICTION_MODEL_NAME,
+    CANONICAL_PREDICTION_SERVICE,
+    PREDICTION_SOURCE_RECEIPT_KIND,
+    SiteScorePredictionRecord,
+    build_sitescore_prediction_source_receipt,
+    compute_prediction_source_receipt_sha256,
+    verify_sitescore_prediction_source,
+)
+
+
+def _generate_valid_prediction_records(
+    count: int = 220,
+    *,
+    dataset_snapshot_id: str = "sitescore-snapshot-2026-07-31-v1",
+    model_version: str = CANONICAL_MODEL_VERSION,
+    artifact_lineage_id: str = "sitescore-artifact-sha256-v1",
+    base_revenue: float = 500_000.0,
+    include_outcomes: bool = True,
+) -> list[dict]:
+    records = []
+    for i in range(count):
+        # Vary revenues realistically across stores so it's not constant
+        rev = base_revenue + (i * 1000.0)
+        pred = rev * 0.95  # True prediction != realized revenue
+        r = {
+            "entity_id": f"tenant-001:store-{i:04d}",
+            "store_id": f"store-{i:04d}",
+            "target_format_code": "CONVENIENCE_STANDARD",
+            "opened_on": "2025-01-01",
+            "is_training_eligible": True,
+            "predicted_revenue": pred,
+            "p10": pred * 0.85,
+            "p90": pred * 1.15,
+            "p50": pred * 1.0,
+            "m6_days": 200,
+            "m12_days": 380,
+            "dataset_snapshot_id": dataset_snapshot_id,
+            "model_version": model_version,
+            "artifact_lineage_id": artifact_lineage_id,
+        }
+        if include_outcomes:
+            r["realized_90d_net_revenue"] = rev
+            # Realized M6 and M12 with realistic non-fixed variation
+            r["realized_m6_net_revenue"] = rev * 2.15 + (i % 7) * 500.0
+            r["realized_m12_net_revenue"] = rev * 4.30 + (i % 11) * 1000.0
+        records.append(r)
+    return records
+
+
+def test_verify_sitescore_prediction_source_passes_valid_records():
+    records = _generate_valid_prediction_records(220)
+    res = verify_sitescore_prediction_source(
+        records,
+        expected_snapshot_id="sitescore-snapshot-2026-07-31-v1",
+        expected_model_version=CANONICAL_MODEL_VERSION,
+        expected_lineage_id="sitescore-artifact-sha256-v1",
+    )
+    assert res.is_valid is True
+    assert res.reason_code == "PREDICTION_SOURCE_VERIFIED"
+    assert res.matched_count == 220
+    assert res.unmatched_count == 0
+    assert res.duplicate_count == 0
+    assert res.malformed_interval_count == 0
+    assert res.prediction_receipt_hash is not None
+    assert len(res.prediction_receipt_hash) == 64
+
+
+def test_sitescore_gate2_active_path_when_prediction_and_outcome_criteria_satisfied():
+    records = _generate_valid_prediction_records(220, include_outcomes=True)
+    result = evaluate_sitescore_opening_outcome_benchmark(
+        records,
+        provenance="authenticated_governed_records",
+        dataset_snapshot_id="sitescore-snapshot-2026-07-31-v1",
+        model_version=CANONICAL_MODEL_VERSION,
+        artifact_lineage_id="sitescore-artifact-sha256-v1",
+    )
+
+    assert result.mature_label_count == 220
+    assert result.matched_prediction_count == 220
+    assert result.prediction_source_verified is True
+    assert result.is_lineage_governed is True
+    assert result.is_labels_sufficient is True
+    assert result.is_coverage_passed is True
+    assert result.is_interval_bounds_passed is True
+    assert result.is_mae_passed is True
+    assert result.is_gate2_passed is True
+    assert result.status == "ACTIVE"
+    assert result.reason_code == "GATE2_CRITERIA_MET"
+
+    model_card = build_sitescore_opening_outcome_model_card(result, version=CANONICAL_MODEL_VERSION)
+    receipt = build_sitescore_gate2_receipt(result, inventory_version=CANONICAL_MODEL_VERSION, model_card=model_card)
+
+    assert receipt["gate_status"] == "PASSED"
+    assert receipt["is_governed_disabled"] is False
+
+    verif_res = verify_sitescore_gate2_receipt(receipt, model_card_artifact=model_card, dataset_manifest=records)
+    assert verif_res.is_valid is True
+    assert verif_res.reason_code == "RECEIPT_VALIDATED"
+
+
+def test_verify_sitescore_prediction_source_fails_on_duplicate_entities():
+    records = _generate_valid_prediction_records(10)
+    # Duplicate first record
+    records.append(dict(records[0]))
+
+    res = verify_sitescore_prediction_source(records)
+    assert res.is_valid is False
+    assert res.reason_code == "DUPLICATE_PREDICTION_SOURCE"
+    assert res.duplicate_count == 1
+    assert any("Duplicate prediction record" in err for err in res.errors)
+
+
+def test_verify_sitescore_prediction_source_fails_on_malformed_intervals_p10_greater_than_p90():
+    records = _generate_valid_prediction_records(10)
+    # Set p10 > p90 in record 3
+    records[3]["p10"] = 600_000.0
+    records[3]["p90"] = 400_000.0
+
+    res = verify_sitescore_prediction_source(records)
+    assert res.is_valid is False
+    assert res.reason_code == "MALFORMED_INTERVAL_BOUNDS"
+    assert res.malformed_interval_count >= 1
+    assert any("p10 (600000.0) > p90 (400000.0)" in err for err in res.errors)
+
+
+def test_verify_sitescore_prediction_source_fails_on_malformed_intervals_negative_bounds():
+    records = _generate_valid_prediction_records(10)
+    records[2]["p10"] = -100.0
+
+    res = verify_sitescore_prediction_source(records)
+    assert res.is_valid is False
+    assert res.reason_code == "MALFORMED_INTERVAL_BOUNDS"
+    assert any("Negative interval bounds" in err for err in res.errors)
+
+
+def test_verify_sitescore_prediction_source_fails_on_malformed_intervals_p50_outside_bounds():
+    records = _generate_valid_prediction_records(10)
+    records[4]["p10"] = 400_000.0
+    records[4]["p50"] = 600_000.0  # p50 > p90
+    records[4]["p90"] = 500_000.0
+
+    res = verify_sitescore_prediction_source(records)
+    assert res.is_valid is False
+    assert res.reason_code == "MALFORMED_INTERVAL_BOUNDS"
+    assert any("p50 (600000.0) outside [400000.0, 500000.0]" in err for err in res.errors)
+
+
+def test_verify_sitescore_prediction_source_fails_on_ypred_ytrue_substitution():
+    records = _generate_valid_prediction_records(20, include_outcomes=True)
+    # Artificially substitute predicted_revenue = realized_90d_net_revenue for all rows
+    for r in records:
+        r["predicted_revenue"] = r["realized_90d_net_revenue"]
+
+    res = verify_sitescore_prediction_source(records)
+    assert res.is_valid is False
+    assert res.reason_code == "SYNTHETIC_SUBSTITUTION_REJECTED"
+    assert any("Illegal y_pred=y_true substitution detected" in err for err in res.errors)
+
+
+def test_verify_sitescore_prediction_source_fails_on_fixed_multiplier_horizon():
+    records = _generate_valid_prediction_records(20, include_outcomes=True)
+    # Artificially set realized_m6_net_revenue = realized_90d * 2.0 for all rows
+    for r in records:
+        r["realized_m6_net_revenue"] = r["realized_90d_net_revenue"] * 2.0
+
+    res = verify_sitescore_prediction_source(records)
+    assert res.is_valid is False
+    assert res.reason_code == "SYNTHETIC_SUBSTITUTION_REJECTED"
+    assert any("Illegal fixed multiplier horizon metric detected" in err for err in res.errors)
+
+
+def test_verify_sitescore_prediction_source_fails_on_store_age_alias():
+    records = _generate_valid_prediction_records(20, include_outcomes=False)
+    # Claim m6_covered based on store_age_days without explicit realized_m6_net_revenue
+    for r in records:
+        r["store_age_days"] = 250
+        r["m6_covered"] = True
+
+    res = verify_sitescore_prediction_source(records)
+    assert res.is_valid is False
+    assert res.reason_code == "SYNTHETIC_SUBSTITUTION_REJECTED"
+    assert any("Illegal store age substitution detected" in err for err in res.errors)
+
+
+def test_verify_sitescore_prediction_source_fails_on_missing_or_mismatched_model_version():
+    records = _generate_valid_prediction_records(10, model_version="wrong-model-v99")
+    res = verify_sitescore_prediction_source(records, expected_model_version=CANONICAL_MODEL_VERSION)
+
+    assert res.is_valid is False
+    assert res.reason_code == "MISSING_GOVERNED_LINEAGE"
+    assert any("Model version mismatch" in err for err in res.errors)
+
+
+def test_verify_sitescore_prediction_source_fails_on_missing_or_mismatched_snapshot_id():
+    records = _generate_valid_prediction_records(10, dataset_snapshot_id="wrong-snapshot-hash")
+    res = verify_sitescore_prediction_source(records, expected_snapshot_id="expected-snapshot-hash")
+
+    assert res.is_valid is False
+    assert res.reason_code == "MISSING_GOVERNED_LINEAGE"
+    assert any("Dataset snapshot ID mismatch" in err for err in res.errors)
+
+
+def test_prediction_source_receipt_integrity():
+    records = _generate_valid_prediction_records(10)
+    receipt = build_sitescore_prediction_source_receipt(
+        records,
+        dataset_snapshot_id="snap-test-01",
+        model_version=CANONICAL_MODEL_VERSION,
+        artifact_lineage_id="lin-test-01",
+    )
+
+    assert receipt["kind"] == PREDICTION_SOURCE_RECEIPT_KIND
+    assert receipt["model_name"] == CANONICAL_PREDICTION_MODEL_NAME
+    assert receipt["service"] == CANONICAL_PREDICTION_SERVICE
+    assert receipt["record_count"] == 10
+    assert "integrity" in receipt
+    assert "content_sha256" in receipt["integrity"]
+
+    expected_sha = compute_prediction_source_receipt_sha256(receipt)
+    assert receipt["integrity"]["content_sha256"] == expected_sha

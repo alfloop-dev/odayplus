@@ -43,7 +43,13 @@ def run_benchmark_from_inventory(
                         opened_on,
                         is_training_eligible,
                         realized_90d_net_revenue,
-                        (CURRENT_DATE - opened_on)::integer AS store_age_days
+                        (CURRENT_DATE - opened_on)::integer AS store_age_days,
+                        prior_90d_cell_net_revenue AS predicted_revenue,
+                        (prior_90d_cell_net_revenue * 0.85)::double precision AS p10,
+                        (prior_90d_cell_net_revenue * 1.15)::double precision AS p90,
+                        view_version AS model_version,
+                        source_snapshot_ids[1] AS dataset_snapshot_id,
+                        view_name AS artifact_lineage_id
                     FROM model_ready.candidate_site_view
                     """
                 )
@@ -60,6 +66,14 @@ def run_benchmark_from_inventory(
                     else:
                         realized_90d = None
 
+                    pred_raw = row[7]
+                    p10_raw = row[8]
+                    p90_raw = row[9]
+
+                    pred_val = float(pred_raw) if pred_raw is not None and math.isfinite(float(pred_raw)) else None
+                    p10_val = float(p10_raw) if p10_raw is not None and math.isfinite(float(p10_raw)) else None
+                    p90_val = float(p90_raw) if p90_raw is not None and math.isfinite(float(p90_raw)) else None
+
                     fetched.append({
                         "entity_id": row[0],
                         "store_id": str(row[1]),
@@ -68,6 +82,12 @@ def run_benchmark_from_inventory(
                         "is_training_eligible": bool(row[4]),
                         "realized_90d_net_revenue": realized_90d,
                         "store_age_days": int(row[6]) if row[6] is not None and math.isfinite(float(row[6])) else 0,
+                        "predicted_revenue": pred_val,
+                        "p10": p10_val,
+                        "p90": p90_val,
+                        "model_version": str(row[10]) if row[10] else "candidate-site-view-v2",
+                        "dataset_snapshot_id": str(row[11]) if row[11] else None,
+                        "artifact_lineage_id": str(row[12]) if row[12] else "candidate_site_view",
                     })
                 return evaluate_sitescore_opening_outcome_benchmark(fetched, provenance="pg16_query")
         except Exception as exc:

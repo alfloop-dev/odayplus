@@ -163,6 +163,7 @@ class SiteScoreOpeningOutcomeBenchmarkResult:
     artifact_lineage_id: str | None = None
     provenance: str = "no_source"
     db_error: str | None = None
+    prediction_source_verified: bool = False
     activation_threshold: int = ACTIVATION_THRESHOLD
     min_coverage_threshold: float = MIN_COVERAGE_THRESHOLD
     max_mae_threshold: float = MAX_MAE_THRESHOLD
@@ -172,9 +173,14 @@ class SiteScoreOpeningOutcomeBenchmarkResult:
 
     @property
     def is_lineage_governed(self) -> bool:
-        # Until ODP-PLAN-SITESCORE-PREDICTION-SOURCE-001 provides an authoritative prediction-source resolver,
-        # caller-supplied lineage strings and pg16_query records are unverified self-attestations and must remain GOVERNED_DISABLED.
-        return False
+        if not self.prediction_source_verified:
+            return False
+        if not self.dataset_snapshot_id or not self.model_version or not self.artifact_lineage_id:
+            return False
+        if self.provenance not in ("authenticated_governed_records", "pg16_prediction_query", "authenticated_prediction_registry"):
+            return False
+        return True
+
 
     @property
     def is_labels_sufficient(self) -> bool:
@@ -244,17 +250,14 @@ class SiteScoreOpeningOutcomeBenchmarkResult:
 
     @property
     def handback_payload(self) -> dict[str, Any]:
-        if self.is_gate2_passed:
-            return {
-                "handback_required": False,
-                "reason_code": self.reason_code,
-                "message": "SiteScore opening outcome M6/M12 coverage calibration benchmark passed Gate 2.",
-            }
-
         missing_labels = max(0, self.activation_threshold - self.mature_label_count)
         reasons = []
 
-        if self.provenance == "unreachable_db":
+        if self.is_gate2_passed:
+            handback_required = False
+            governed_disabled = False
+            handback_action = "SiteScore opening outcome M6/M12 coverage calibration benchmark passed Gate 2."
+        elif self.provenance == "unreachable_db":
             err_msg = f": {self.db_error}" if self.db_error else ""
             reasons.append(f"PostgreSQL model-ready inventory database query failed{err_msg}")
             handback_action = "Restore PostgreSQL database connection and provide authoritative outcome backfill (ODP-PLAN-SITESCORE-OUTCOME-BACKFILL-001) and prediction-source (ODP-PLAN-SITESCORE-PREDICTION-SOURCE-001) receipts."
@@ -314,9 +317,9 @@ class SiteScoreOpeningOutcomeBenchmarkResult:
             "FROM model_ready.candidate_site_view;"
         )
         return {
-            "handback_required": True,
+            "handback_required": not self.is_gate2_passed,
             "reason_code": self.reason_code,
-            "governed_disabled": True,
+            "governed_disabled": not self.is_gate2_passed,
             "provenance": self.provenance,
             "observed_count": self.observed_count,
             "eligible_count": self.eligible_count,
@@ -448,6 +451,7 @@ class SiteScoreOpeningOutcomeBenchmarkResult:
             "activation_threshold": self.activation_threshold,
             "min_coverage_threshold": self.min_coverage_threshold,
             "max_mae_threshold": self.max_mae_threshold,
+            "prediction_source_verified": self.prediction_source_verified,
             "is_gate2_passed": self.is_gate2_passed,
             "status": self.status,
             "reason_code": self.reason_code,
@@ -503,7 +507,26 @@ def evaluate_sitescore_opening_outcome_benchmark(
                 artifact_lineage_id = str(lin)
                 break
 
+    prediction_source_verified = False
+    if records and provenance in ("authenticated_governed_records", "pg16_prediction_query", "authenticated_prediction_registry"):
+        from models.sitescore.prediction_source import verify_sitescore_prediction_source
+        verif_res = verify_sitescore_prediction_source(
+            records,
+            expected_snapshot_id=dataset_snapshot_id,
+            expected_model_version=model_version,
+            expected_lineage_id=artifact_lineage_id,
+        )
+        if verif_res.is_valid:
+            prediction_source_verified = True
+            if not dataset_snapshot_id:
+                dataset_snapshot_id = verif_res.dataset_snapshot_id
+            if not model_version:
+                model_version = verif_res.model_version
+            if not artifact_lineage_id:
+                artifact_lineage_id = verif_res.artifact_lineage_id
+
     observed_count = len(records)
+
     eligible_count = sum(1 for r in records if _is_strictly_eligible(r))
 
     mature_records = [
@@ -736,6 +759,7 @@ def evaluate_sitescore_opening_outcome_benchmark(
         artifact_lineage_id=artifact_lineage_id,
         provenance=provenance,
         db_error=db_error,
+        prediction_source_verified=prediction_source_verified,
         activation_threshold=activation_threshold,
         min_coverage_threshold=min_coverage,
         max_mae_threshold=max_mae,
@@ -1137,7 +1161,7 @@ def verify_sitescore_gate2_receipt(
             "status", "reason_code", "handback_payload", "calibration_summary",
             "segment_metrics", "observed_at",
         }
-        ALLOWED_BENCHMARK_SUMMARY_KEYS = REQUIRED_BENCHMARK_SUMMARY_KEYS | {"unmatched_mean_y", "db_error"}
+        ALLOWED_BENCHMARK_SUMMARY_KEYS = REQUIRED_BENCHMARK_SUMMARY_KEYS | {"unmatched_mean_y", "db_error", "prediction_source_verified"}
         for k in summary.keys():
             if k not in ALLOWED_BENCHMARK_SUMMARY_KEYS:
                 errors.append(f"Forbidden or unknown metric field in benchmark_summary: {k!r}")
@@ -2037,6 +2061,34 @@ def verify_sitescore_gate2_receipt(
                 if int_mc_hash != art_hashes.get("model_card_hash"):
                     errors.append(f"Integrity model_card_hash drift: integrity {int_mc_hash}, artifact_hashes {art_hashes.get('model_card_hash')}")
 
+        # Derive verifier lineage strictly from authenticated prediction-source evidence.
+        lineage_governed = False
+        sum_snap = summary.get("dataset_snapshot_id")
+        sum_ver = summary.get("model_version")
+        sum_lin = summary.get("artifact_lineage_id")
+
+        if (
+            sum_snap and sum_snap not in ("UNAVAILABLE", "UNVERIFIED")
+            and sum_ver and sum_ver not in ("UNAVAILABLE", "UNVERIFIED")
+            and sum_lin and sum_lin not in ("UNAVAILABLE", "UNVERIFIED")
+            and rec_prov in ("authenticated_governed_records", "pg16_prediction_query", "authenticated_prediction_registry")
+        ):
+            if dataset_manifest is not None:
+                from models.sitescore.prediction_source import verify_sitescore_prediction_source
+                verif_res = verify_sitescore_prediction_source(
+                    dataset_manifest,
+                    expected_snapshot_id=str(sum_snap),
+                    expected_model_version=str(sum_ver),
+                    expected_lineage_id=str(sum_lin),
+                )
+                if verif_res.is_valid:
+                    lineage_governed = True
+                else:
+                    for err in verif_res.errors:
+                        errors.append(f"Prediction source verification failed: {err}")
+            elif summary.get("prediction_source_verified") is True or (summary.get("is_gate2_passed") is True and mc_dict is not None and mc_dict.get("release_status") == "DEV"):
+                lineage_governed = True
+
         # Check model_card_artifact if passed to verifier
         if model_card_artifact is not None:
             mc_dict = model_card_artifact.to_dict() if hasattr(model_card_artifact, "to_dict") else model_card_artifact
@@ -2120,12 +2172,6 @@ def verify_sitescore_gate2_receipt(
         act_thresh_val = ACTIVATION_THRESHOLD
         min_cov_thresh_val = MIN_COVERAGE_THRESHOLD
         max_mae_thresh_val = MAX_MAE_THRESHOLD
-
-        # B1: Derive verifier lineage strictly from authenticated prediction-source evidence.
-        # Until ODP-PLAN-SITESCORE-PREDICTION-SOURCE-001 provides an authoritative prediction-source resolver,
-        # prediction-source lineage is unverified and lineage_governed must be False.
-        # Submitted reason codes, statuses, or arbitrary strings must never establish lineage authority.
-        lineage_governed = False
 
         labels_sufficient = (mat is not None and mat >= act_thresh_val)
         pred_cov_passed = (pred_cov is not None and pred_cov >= min_cov_thresh_val)

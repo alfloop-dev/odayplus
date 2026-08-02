@@ -111,7 +111,8 @@ def test_sitescore_opening_outcome_90d_only_old_stores_fails_coverage():
     assert not result.is_coverage_passed
     assert not result.is_gate2_passed
     assert result.status == "GOVERNED_DISABLED"
-    assert result.reason_code == "MISSING_GOVERNED_LINEAGE"
+    assert result.reason_code == "M6_M12_COVERAGE_INSUFFICIENT"
+
 
 
 def test_sitescore_opening_outcome_missing_interval_bounds_fails_closed():
@@ -435,7 +436,7 @@ def test_sitescore_opening_outcome_zero_outcome_cohort_non_zero_mae_fails_closed
     assert not result.is_mae_passed
     assert not result.is_gate2_passed
     assert result.status == "GOVERNED_DISABLED"
-    assert result.reason_code == "MISSING_GOVERNED_LINEAGE"
+    assert result.reason_code == "NORMALIZED_MAE_EXCEEDED"
     assert any("exceeds maximum threshold" in r for r in result.handback_payload["reasons"])
 
 
