@@ -12215,6 +12215,7 @@ class ProcessQueueAgentOverrideTests(unittest.TestCase):
             # 3. Verify dispatch_ready_tasks retains review_approved status and does not set approved_head_unresolved
             status = {"tasks": [task_item]}
             with mock.patch("supervisor.load_status", return_value=status), \
+                 mock.patch("supervisor.load_event_queue", return_value=[]), \
                  mock.patch("supervisor.config_path", return_value="/tmp/fake_status.json"), \
                  mock.patch("supervisor.write_json"), \
                  mock.patch("supervisor.sync_status_pipeline"), \
