@@ -255,9 +255,14 @@ class ReviewApprovedWorkflowTests(unittest.TestCase):
 
         with (
             mock.patch.dict(os.environ, {"AI_NAME": "Codex"}, clear=False),
-            mock.patch.object(ai_status, "resolve_task_sha", return_value=approved_head),
-            mock.patch.object(ai_status, "task_pr_head_and_merge_commit", return_value=(approved_head, None)),
-            mock.patch.object(ai_status, "collect_done_delivery_metadata", return_value={}),
+            mock.patch.object(
+                ai_status,
+                "collect_done_delivery_metadata",
+                return_value={
+                    "verified_head": approved_head,
+                    "pull_request": {"head_sha": approved_head, "merge_commit": "merge-sha"},
+                },
+            ),
             mock.patch.object(ai_status, "archive_task_snapshot", return_value={"task_id": "REG-002"}) as archive_task_snapshot,
         ):
             ai_status.command_done(self.state, ["REG-002", "Owner finalized approved task"])
@@ -931,26 +936,67 @@ class DoneDeliveryProvenanceRegressionTests(unittest.TestCase):
             with self.assertRaisesRegex(SystemExit, "does not match configured repository"):
                 ai_status.collect_done_delivery_metadata(task, "Codex")
 
-    def test_command_done_rejects_missing_or_moved_remote_task_head(self) -> None:
-        for label, remote_head in (("missing", None), ("moved", "b" * 40)):
-            with self.subTest(label=label):
-                state = {
-                    "tasks": [
-                        {
-                            "id": self.TASK_ID,
-                            "owner": "Codex7",
-                            "reviewer": "Codex8",
-                            "status": "review_approved",
-                            "approved_head": self.APPROVED_HEAD,
-                        }
-                    ]
+    def done_state(self) -> dict[str, object]:
+        return {
+            "agents": [],
+            "tasks": [
+                {
+                    "id": self.TASK_ID,
+                    "owner": "Codex7",
+                    "reviewer": "Codex8",
+                    "status": "review_approved",
+                    "approved_head": self.APPROVED_HEAD,
                 }
+            ],
+            "handoffs": [],
+            "blockers": [],
+        }
+
+    def done_delivery(self, *, checkout_head: str | None = None, pr_head: str | None = None) -> dict[str, object]:
+        return {
+            "verified_head": checkout_head or self.APPROVED_HEAD,
+            "pull_request": {
+                "head_sha": pr_head or self.APPROVED_HEAD,
+                "merge_commit": self.MERGE_COMMIT,
+            },
+        }
+
+    def test_command_done_allows_deleted_remote_ref_after_merged_pr_provenance(self) -> None:
+        state = self.done_state()
+        registered_actor = {"AI_NAME": "Codex7", "AI_STATUS_EXTRA_AGENTS": "Codex7,Codex8"}
+        with (
+            mock.patch.dict(os.environ, registered_actor, clear=False),
+            mock.patch.object(
+                ai_status,
+                "resolve_task_sha",
+                side_effect=AssertionError("done must not require an ephemeral remote task ref"),
+            ),
+            mock.patch.object(ai_status, "collect_done_delivery_metadata", return_value=self.done_delivery()),
+            mock.patch.object(ai_status, "archive_task_snapshot", return_value={"task_id": self.TASK_ID}),
+            mock.patch.object(ai_status, "append_log"),
+        ):
+            ai_status.command_done(state, [self.TASK_ID, "done"])
+
+        self.assertEqual(state["tasks"], [])
+
+    def test_command_done_rejects_moved_checkout_or_pr_head(self) -> None:
+        cases = {
+            "checkout-moved": self.done_delivery(checkout_head="b" * 40),
+            "pr-head-moved": self.done_delivery(pr_head="b" * 40),
+            "pr-head-missing": {
+                "verified_head": self.APPROVED_HEAD,
+                "pull_request": {"merge_commit": self.MERGE_COMMIT},
+            },
+        }
+        registered_actor = {"AI_NAME": "Codex7", "AI_STATUS_EXTRA_AGENTS": "Codex7,Codex8"}
+        for label, delivery in cases.items():
+            with self.subTest(label=label):
                 with (
-                    mock.patch.dict(os.environ, {"AI_NAME": "Codex7"}, clear=False),
-                    mock.patch.object(ai_status, "resolve_task_sha", return_value=remote_head),
+                    mock.patch.dict(os.environ, registered_actor, clear=False),
+                    mock.patch.object(ai_status, "collect_done_delivery_metadata", return_value=delivery),
                 ):
                     with self.assertRaisesRegex(SystemExit, "differs from reviewer-approved head"):
-                        ai_status.command_done(state, [self.TASK_ID, "done"])
+                        ai_status.command_done(self.done_state(), [self.TASK_ID, "done"])
 
 
 class ArchiveWorkflowTests(unittest.TestCase):
@@ -3433,7 +3479,7 @@ class StatusCheckEmissionTests(unittest.TestCase):
             fourth_sha = ai_status.resolve_task_sha(task_id, force_refresh=True)
             self.assertIsNone(fourth_sha)
 
-    def test_governance_transitions_force_fresh_query_and_reject_warmed_stale_sha(self) -> None:
+    def test_active_branch_governance_refreshes_but_done_uses_delivery_provenance(self) -> None:
         task_id = "ODP-GOV-TEST-001"
         stale_sha = "1" * 40
         remote_sha = "2" * 40
@@ -3456,17 +3502,25 @@ class StatusCheckEmissionTests(unittest.TestCase):
             self.assertEqual(task["approved_head"], remote_sha)
             self.assertNotEqual(task["approved_head"], stale_sha)
 
-        # 3. Test command_done when origin returns remote error
+        # 3. Once merged, command_done uses the unique checkout and immutable
+        # PR head from delivery provenance, not the now-ephemeral remote ref.
         state_done = {
             "tasks": [{"id": task_id, "status": "review_approved", "approved_head": stale_sha, "owner": "Codex", "reviewer": "Claude"}]
         }
-        with mock.patch("subprocess.run", return_value=mock_warm):
-            ai_status.clear_ai_status_caches()
-            self.assertEqual(ai_status.resolve_task_sha(task_id), stale_sha)
-
-        mock_err = mock.Mock(returncode=1, stdout="")
         with mock.patch.dict(os.environ, {"AI_NAME": "Codex"}, clear=False), \
-             mock.patch("subprocess.run", return_value=mock_err):
+             mock.patch.object(
+                 ai_status,
+                 "resolve_task_sha",
+                 side_effect=AssertionError("done must not query the ephemeral remote ref"),
+             ), \
+             mock.patch.object(
+                 ai_status,
+                 "collect_done_delivery_metadata",
+                 return_value={
+                     "verified_head": remote_sha,
+                     "pull_request": {"head_sha": stale_sha, "merge_commit": "3" * 40},
+                 },
+             ):
             with self.assertRaises(SystemExit) as cm:
                 ai_status.command_done(state_done, [task_id, "Done attempt"])
             self.assertIn("differs from reviewer-approved head", str(cm.exception))

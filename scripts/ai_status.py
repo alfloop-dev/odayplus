@@ -4987,44 +4987,43 @@ def command_done(state: dict[str, Any], args: list[str]) -> None:
             f"attest the exact reviewed commit, or `re_review {task_id} <reason>` for a "
             "fresh review. No finalization was recorded."
         )
-    current_sha = None
-    try:
-        current_sha = resolve_task_sha(task_id, force_refresh=True)
-    except Exception as exc:
-        raise SystemExit(
-            f"Cannot finalize task {task_id}: unable to resolve current branch HEAD ({exc}). "
-            "Integrity gate failed closed."
-        ) from exc
-    if not current_sha or current_sha != approved_head:
+    timestamp = iso_now()
+    delivery = collect_done_delivery_metadata(task, actor, approved_head=approved_head)
+    # The task branch is ephemeral and GitHub may delete its remote ref as soon
+    # as the PR merges.  Do not make that deleted ref a second closeout
+    # authority.  The collector resolves the unique task-owned checkout and
+    # verifies the immutable merged PR instead; keep both heads exact here as
+    # defence in depth even when the collector is replaced by a unit-test fake.
+    current_sha = str(delivery.get("verified_head") or "").strip()
+    if current_sha != approved_head:
         display_sha = current_sha[:8] if current_sha else "unresolved"
         raise SystemExit(
-            f"Cannot finalize task {task_id}: current branch HEAD ({display_sha}) "
+            f"Cannot finalize task {task_id}: task-owned checkout HEAD ({display_sha}) "
             f"differs from reviewer-approved head ({approved_head[:8]}). "
             "Strict update-branch merge requires re-review."
         )
 
-    # Keep the reviewed PR head and GitHub-created merge commit distinct before
-    # collection. The collector independently re-fetches the full merged PR and
-    # CI proof; this early check prevents a merge commit from ever being treated
-    # as the review anchor, even when a caller replaces the collector in tests.
-    head_ref_oid, merge_commit = task_pr_head_and_merge_commit(task_id)
+    pull_request_raw = delivery.get("pull_request")
+    pull_request = pull_request_raw if isinstance(pull_request_raw, dict) else {}
+    head_ref_oid = str(pull_request.get("head_sha") or "").strip()
+    if head_ref_oid != approved_head:
+        display_sha = head_ref_oid[:8] if head_ref_oid else "unresolved"
+        raise SystemExit(
+            f"Cannot finalize task {task_id}: merged PR headRefOid ({display_sha}) "
+            f"differs from reviewer-approved head ({approved_head[:8]}). "
+            "Immutable approved-head PR provenance failed closed."
+        )
+    merge_commit = str(pull_request.get("merge_commit") or "").strip()
     if merge_commit and current_sha == merge_commit:
         raise SystemExit(
-            f"Cannot finalize task {task_id}: the resolved head ({current_sha[:8]}) is the "
-            "PR merge commit, not the reviewed branch head. The merge commit was never "
+            f"Cannot finalize task {task_id}: the task-owned checkout HEAD ({current_sha[:8]}) "
+            "is the PR merge commit, not the reviewed branch head. The merge commit was never "
             "reviewed and cannot satisfy the approved-head freeze."
         )
 
-    timestamp = iso_now()
-    delivery = collect_done_delivery_metadata(task, actor, approved_head=approved_head)
     delivery["approved_head"] = approved_head
     delivery["verified_head"] = current_sha
-    delivery["remote_task_head"] = current_sha
-    pull_request = delivery.get("pull_request") or {}
-    head_ref_oid = pull_request.get("head_sha") or head_ref_oid
-    merge_commit = pull_request.get("merge_commit") or merge_commit
-    if head_ref_oid:
-        delivery["pr_head_ref_oid"] = head_ref_oid
+    delivery["pr_head_ref_oid"] = head_ref_oid
     if merge_commit:
         delivery["pr_merge_commit"] = merge_commit
     delivery["recorded_at"] = timestamp
