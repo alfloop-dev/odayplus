@@ -575,7 +575,9 @@ class ProductionMetricsExporter:
         self.release_sha = validate_full_sha(release_sha, "release_sha")
         self.registry = registry or default_registry()
         self.gcp_project = (
-            gcp_project or os.getenv("GCP_PROJECT") or os.getenv("GOOGLE_CLOUD_PROJECT")
+            gcp_project
+            if gcp_project is not None
+            else (os.getenv("GCP_PROJECT") or os.getenv("GOOGLE_CLOUD_PROJECT"))
         )
         self.provider_route = provider_route
         self.http_transport = http_transport or self._default_http_transport

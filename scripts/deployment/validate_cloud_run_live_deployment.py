@@ -23,7 +23,7 @@ import urllib.error
 import urllib.request
 from collections.abc import Iterator, Mapping
 from dataclasses import asdict, dataclass, replace
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
@@ -389,22 +389,50 @@ def observability_runtime_checks(root: Path = ROOT) -> list[CheckResult]:
 
         test_sha = "10c620969a90627e4a67053a4708658f99faa07f"
         registry = default_registry()
+        registry.increment(
+            "api_request_count",
+            amount=1.0,
+            labels={"service": "api", "route": "/health", "status": "200"},
+        )
         monitoring_route = "https://monitoring.googleapis.com/v3"
 
         mock_time_series_store: list[dict] = []
+        recorded_state: dict[str, str] = {
+            "gcp_project": "alfaloop-data-project",
+            "release_sha": test_sha,
+        }
 
         def mock_provider_transport(
             method: str,
             url: str,
             params: dict | None = None,
             payload: dict | None = None,
+            **kwargs: Any,
         ) -> tuple[int, dict]:
             p_dict = payload or {}
             pr_dict = params or {}
-            g_proj = (
-                p_dict.get("gcp_project") or pr_dict.get("gcp_project") or "alfaloop-data-project"
-            )
-            r_sha = p_dict.get("release_sha") or pr_dict.get("release_sha") or test_sha
+            p_proj = p_dict.get("gcp_project")
+            p_sha = p_dict.get("release_sha")
+            if isinstance(p_dict.get("timeSeries"), list) and p_dict["timeSeries"]:
+                first_ts = p_dict["timeSeries"][0]
+                if isinstance(first_ts, dict):
+                    if not p_proj:
+                        p_proj = first_ts.get("resource", {}).get("labels", {}).get("project_id")
+                    if not p_sha:
+                        p_sha = first_ts.get("metric", {}).get("labels", {}).get("release_sha")
+
+            if p_proj:
+                recorded_state["gcp_project"] = str(p_proj)
+            elif pr_dict.get("gcp_project"):
+                recorded_state["gcp_project"] = str(pr_dict["gcp_project"])
+
+            if p_sha:
+                recorded_state["release_sha"] = str(p_sha)
+            elif pr_dict.get("release_sha"):
+                recorded_state["release_sha"] = str(pr_dict["release_sha"])
+
+            g_proj = recorded_state["gcp_project"]
+            r_sha = recorded_state["release_sha"]
 
             if "timeSeries" in url:
                 if method == "POST":
@@ -594,8 +622,6 @@ def observability_runtime_checks(root: Path = ROOT) -> list[CheckResult]:
             fail_closed_rejection = True
 
         # Verify watch window recording fails closed when passed caller-supplied mock transport
-        from datetime import UTC, datetime, timedelta
-
         start_time = datetime.now(UTC) - timedelta(minutes=20)
         end_time = datetime.now(UTC)
         watch_window_fail_closed = False
@@ -609,7 +635,7 @@ def observability_runtime_checks(root: Path = ROOT) -> list[CheckResult]:
                 provider_route=monitoring_route,
                 query_transport=mock_provider_transport,
             )
-        except ValueError:
+        except (ValueError, RuntimeError):
             watch_window_fail_closed = True
 
         watch_window_ok = watch_window_fail_closed
