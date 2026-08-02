@@ -10066,12 +10066,20 @@ def choose_helper_claim_agent(
     if not owner_name or owner_name == idle_agent_name:
         return False
     fallbacks = get_agent_reassignment_candidates(config, owner_name, role="owner", task=task)
-    if not fallbacks:
+    normalized_idle_agent = normalize_agent_id(idle_agent_name)
+    idle_agent_config = (config.get("agents", {}) or {}).get(normalized_idle_agent)
+    registered_idle_allowed = bool(
+        helper_settings.get("include_registered_idle_agents", False)
+        and isinstance(idle_agent_config, dict)
+        and not agent_is_dispatch_slot(idle_agent_config)
+    )
+    idle_agent_allowed = idle_agent_name in fallbacks or registered_idle_allowed
+    if not idle_agent_allowed:
         return False
     if owner_paused:
-        return idle_agent_name in fallbacks
+        return True
     if helper_settings.get("claim_idle_work", False):
-        return idle_agent_name in fallbacks
+        return True
     owner_loads = agent_loads.get(owner_name, [])
     if helper_settings.get("require_owner_higher_priority_load", True):
         dispatch_reason_for_status = {
@@ -10081,7 +10089,7 @@ def choose_helper_claim_agent(
         current_priority = dispatch_reason_priority(dispatch_reason_for_status)
         if current_priority is None or not any(priority < current_priority for priority in owner_loads):
             return False
-    return idle_agent_name in fallbacks
+    return True
 
 
 def is_sidecar_review_of_current_parent(
@@ -10416,7 +10424,7 @@ def dispatch_ready_tasks(
     active_statuses = {str(value) for value in settings.get("active_worker_statuses", [])}
     max_dispatches_per_tick = max(1, int(max_dispatches_override or settings.get("max_dispatches_per_tick", 4)))
 
-    _active_agents, active_task_agents = active_worker_indexes(state, active_statuses)
+    active_agents, active_task_agents = active_worker_indexes(state, active_statuses)
     pending_agents, pending_task_agents, pending_event_keys = outstanding_delivery_indexes(config, state)
     active_task_ids = {task_id for task_id, _agent_id in active_task_agents if task_id}
     pending_task_ids = {task_id for task_id, _agent_id in pending_task_agents if task_id}
@@ -10474,6 +10482,13 @@ def dispatch_ready_tasks(
         considered_agents += 1
         target_agent = display_name_for(config, agent_id)
         if agent_auto_dispatch_block_reason(config, state, agent_id, provider_report):
+            continue
+        # A logical agent without explicit worker slots can run only one
+        # process at a time. Do not build a same-agent queue backlog that
+        # prevents registered idle helpers from claiming the work instead.
+        if not logical_worker_slot_ids(config, agent_id) and (
+            agent_id in active_agents or agent_id in pending_agents
+        ):
             continue
         quota_limit = quota_group_concurrency_limit(config, agent_id, settings)
         quota_group = agent_quota_group_id(config, agent_id)
