@@ -2,8 +2,8 @@
   "schema_version": "2.0.0",
   "runner": "pytest",
   "source": {
-    "commit_sha": "e9a5ba0b49fd34b72c02a76fc91d23f08e70c4f3",
-    "tree_sha": "37701a88e42ada936642768943254f5814120178"
+    "commit_sha": "3736c9bfdb796aeb8309e0df5a50a9ab06c73f25",
+    "tree_sha": "4d6486daf8a51659a28e3026b2d86cc6048cd194"
   },
   "run": {
     "command": "/tmp/pantheon-worker-worktrees/oday-plus-supervisor-live/odp-orch-task-pr-discovery-001/.venv/bin/python -m pytest -q tests/integration/test_avm_official_outcome_contract.py::test_official_outcome_migration_has_bounded_source_and_provenance_contracts tests/integration/test_intervention_workflow.py::test_full_lifecycle_reaches_completed_with_causal_evidence_and_label tests/integration/test_priceops_constraints.py::test_full_pilot_lifecycle_records_complete_status_history tests/integration/test_adlift_incrementality.py::test_difference_in_differences_isolates_ad_lift_from_market_movement tests/integration/test_learninghub_release.py::test_governed_release_invokes_remote_mlflow_alias_updates tests/integration/test_learninghub_release.py::test_learninghub_validates_releases_and_rolls_back_model_aliases tests/integration/test_learninghub_release.py::test_learninghub_blocks_release_without_passed_validation_or_model_card tests/data/test_pit_snapshot.py::test_point_in_time_validation_rejects_future_feature_snapshot tests/security/test_rbac_abac.py::test_rbac_denies_action_outside_role tests/security/test_rbac_abac.py::test_tenant_isolation_blocks_other_tenant",
@@ -234,11 +234,11 @@
     },
     "collection_errors": [],
     "runner_start_source": {
-      "commit_sha": "e9a5ba0b49fd34b72c02a76fc91d23f08e70c4f3",
-      "tree_sha": "37701a88e42ada936642768943254f5814120178"
+      "commit_sha": "3736c9bfdb796aeb8309e0df5a50a9ab06c73f25",
+      "tree_sha": "4d6486daf8a51659a28e3026b2d86cc6048cd194"
     }
   },
-  "payload_sha256": "578e61a077b61e178347f0782bec2937b553b7d52b220e4f736a945c438f889b",
+  "payload_sha256": "c4a38ec008e79df8b8e8c722f939f1461185ac3b2c40686a5bf2e61c5d3ae777",
   "counts": {
     "total_specs": 0,
     "total_tests": 10,
@@ -503,5 +503,5 @@
     }
   ],
   "integrity_errors": [],
-  "normalized_artifact_sha256": "1fa33de7a747a91887d4a5acec87102f26676681f7b6d19818a918eee66d63fb"
+  "normalized_artifact_sha256": "e216ec87e3aefe52aec31a56af92cf9a235ec4173a416d35a247812a1d9d214d"
 }
