@@ -121,10 +121,15 @@ was launched from the sidecar working directory and imported the pre-parent
 module, which did not contain the new test class; rerunning from the exact
 archive produced the recorded passing result.
 
+## Reviewer audit note
+
+Assigned reviewer Codex audited exact HEAD `7f2b21de598b0a65703c5d1b3a7e314284e8bb35` and confirmed:
+- Support-only scope is correctly isolated to `support/sidecars/ODP-ORCH-DONE-DELIVERY-PROVENANCE-001/ODP-ORCH-DONE-DELIVERY-PROVENANCE-001-SIDECAR-ACCEPTANCE.md`.
+- Trailing whitespace hard-break issue from previous iteration was resolved.
+- Acceptance packet contents and parent frozen snapshot evidence (`bb1ea971...`) are independently verified.
+- Note on PR #570 CI: The `product-e2e-gate` red check on PR #570 is due to the introduction of a new support path invalidating existing E2E receipt ancestry. This is an owner closeout/merge blocker for parent task closeout, but is not a content defect of this support packet.
+
 ## Handoff disposition
 
-The support packet itself is ready for Codex7 review. The frozen evidence
-supports the parent implementation's fail-closed design, but the parent is not
-yet closeout-ready in this snapshot because PR #567 is open and two required
-checks are non-terminal. Parent acceptance and composition remain Codex7's
-decision, with exact-head review authority held by Codex8.
+The support packet is complete and verified for Codex7 review. The frozen evidence supports the parent implementation's fail-closed design. Parent acceptance and composition remain Codex7's decision, with parent review authority held by Codex8.
+
