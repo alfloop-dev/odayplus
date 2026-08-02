@@ -3366,7 +3366,7 @@ class ProcessQueueDispatchGuardTests(unittest.TestCase):
             mock.patch.object(supervisor, "load_status", side_effect=[initial_status, persisted_status]),
             mock.patch.object(supervisor, "load_event_queue", return_value=[]),
             mock.patch.object(supervisor, "persist_task_reassignment", return_value=True) as persist,
-            mock.patch.object(supervisor, "queue_delivery_event", return_value=True) as queue_delivery_event,
+            mock.patch.object(supervisor, "queue_delivery_event", return_value=True),
             mock.patch.object(supervisor, "write_activity_log"),
         ):
             changed = supervisor.dispatch_ready_tasks(config, {"queue": {"events": {}}, "workers": {}})
@@ -3427,7 +3427,7 @@ class ProcessQueueDispatchGuardTests(unittest.TestCase):
             mock.patch.object(supervisor, "load_status", side_effect=[initial_status, persisted_status]),
             mock.patch.object(supervisor, "load_event_queue", return_value=[]),
             mock.patch.object(supervisor, "persist_task_reassignment", return_value=True) as persist,
-            mock.patch.object(supervisor, "queue_delivery_event", return_value=True) as queue_delivery_event,
+            mock.patch.object(supervisor, "queue_delivery_event", return_value=True),
             mock.patch.object(supervisor, "write_activity_log"),
         ):
             changed = supervisor.dispatch_ready_tasks(config, {"queue": {"events": {}}, "workers": {}}, agent_ids_override=["codex"])
