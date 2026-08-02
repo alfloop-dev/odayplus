@@ -16,6 +16,7 @@ import shutil
 import signal
 import subprocess
 import sys
+import tempfile
 import time
 import uuid
 from datetime import UTC, datetime, timedelta
@@ -1469,6 +1470,69 @@ def _git_commit_oid(cwd: Path, ref: str) -> str | None:
     return oid if returncode == 0 and re.fullmatch(r"[0-9a-fA-F]{40,64}", oid) else None
 
 
+def _fetch_authoritative_task_head(
+    repo_root: Path,
+    worktree_path: Path,
+    branch: str,
+) -> tuple[str | None, str]:
+    """Resolve the immutable commit used for dirty-worktree lease recovery.
+
+    Repositories with an ``origin`` must resolve the exact remote task ref after
+    fetching it.  A mutable local branch (or the dirty worktree's HEAD) is never
+    allowed to win over the published task ref.  Local-only repositories retain
+    the existing branch-ref behavior for tests and offline development.
+    """
+    remotes_rc, remotes = _git_output(worktree_path, "remote")
+    has_origin = remotes_rc == 0 and "origin" in remotes.splitlines()
+    if not has_origin:
+        local_head = _git_commit_oid(repo_root, f"refs/heads/{branch}")
+        if local_head:
+            return local_head, "local_only_task_ref"
+        return None, "unverifiable_refs: missing local task branch"
+
+    remote_query = subprocess.run(
+        ["git", "ls-remote", "--exit-code", "origin", f"refs/heads/{branch}"],
+        cwd=worktree_path,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if remote_query.returncode == 2:
+        return None, "unverifiable_refs: remote task branch is missing"
+    if remote_query.returncode != 0:
+        details = (remote_query.stderr or remote_query.stdout or "").strip()
+        return None, f"fetch_failed: {details}"
+
+    advertised = (remote_query.stdout or "").strip().split()
+    advertised_head = advertised[0] if advertised else ""
+    if not re.fullmatch(r"[0-9a-fA-F]{40,64}", advertised_head):
+        return None, "unverifiable_refs: invalid advertised remote task HEAD"
+
+    fetch_proc = subprocess.run(
+        [
+            "git",
+            "fetch",
+            "origin",
+            "--quiet",
+            f"+refs/heads/{branch}:refs/remotes/origin/{branch}",
+        ],
+        cwd=worktree_path,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if fetch_proc.returncode != 0:
+        details = (fetch_proc.stderr or fetch_proc.stdout or "").strip()
+        return None, f"fetch_failed: {details}"
+    fetched_head = _git_commit_oid(repo_root, f"refs/remotes/origin/{branch}")
+    if not fetched_head or fetched_head.lower() != advertised_head.lower():
+        return None, (
+            "unverifiable_refs: fetched remote task HEAD does not match "
+            f"advertised HEAD ({fetched_head or 'none'} != {advertised_head})"
+        )
+    return fetched_head, "remote_exact_task_ref"
+
+
 def _git_operation_in_progress(worktree_path: Path) -> bool:
     for marker in ("MERGE_HEAD", "REBASE_HEAD", "CHERRY_PICK_HEAD", "REVERT_HEAD"):
         returncode, _ = _git_output(worktree_path, "rev-parse", "--verify", "-q", marker)
@@ -1661,6 +1725,50 @@ def _task_brief_context_candidates(task_id: str | None, rel_context_path: str) -
             seen.add(candidate)
             ordered.append(candidate)
     return ordered
+
+
+def _atomic_replace_context_bytes(
+    destination: Path,
+    payload: bytes,
+    *,
+    source_stat: os.stat_result | None = None,
+) -> None:
+    """Write context bytes without following an existing destination inode.
+
+    In particular, replacing the directory entry prevents an untracked hard link
+    at the destination from mutating a tracked file that shares the same inode.
+    """
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    descriptor, temp_name = tempfile.mkstemp(
+        prefix=f".{destination.name}.context-",
+        dir=str(destination.parent),
+    )
+    temp_path = Path(temp_name)
+    try:
+        with os.fdopen(descriptor, "wb") as temp_file:
+            temp_file.write(payload)
+            temp_file.flush()
+            os.fsync(temp_file.fileno())
+        if source_stat is not None:
+            os.chmod(temp_path, source_stat.st_mode & 0o777)
+        os.replace(temp_path, destination)
+    finally:
+        try:
+            temp_path.unlink()
+        except FileNotFoundError:
+            pass
+
+
+def _atomic_copy_context_file(source: Path, destination: Path) -> None:
+    _atomic_replace_context_bytes(
+        destination,
+        source.read_bytes(),
+        source_stat=source.stat(follow_symlinks=False),
+    )
+
+
+def _atomic_write_context_text(destination: Path, text: str) -> None:
+    _atomic_replace_context_bytes(destination, text.encode("utf-8"))
 
 
 def _is_tracked_in_worktree(worktree_path: Path, rel_path: str) -> bool:
@@ -1863,7 +1971,7 @@ def materialize_worker_context_files(
                 existing_text = source.read_text(encoding="utf-8")
                 if task and is_task_brief_stale(existing_text, task):
                     break
-                shutil.copy2(source, destination)
+                _atomic_copy_context_file(source, destination)
                 copied = True
                 found_src = source
                 break
@@ -1876,7 +1984,7 @@ def materialize_worker_context_files(
                             f"Fail-closed on workspace materialization for task {request.task_id}: {err}"
                         ) from err
                     continue
-                destination.write_text(text, encoding="utf-8")
+                _atomic_write_context_text(destination, text)
                 for candidate in _task_brief_context_candidates(request.task_id, rel_value):
                     canon_brief = status_root / candidate
                     try:
@@ -1982,7 +2090,7 @@ def materialize_worker_context_files(
 
                             child_dest.parent.mkdir(parents=True, exist_ok=True)
                             try:
-                                shutil.copy2(src_item, child_dest)
+                                _atomic_copy_context_file(src_item, child_dest)
                             except OSError as err:
                                 if is_mutating_or_p0:
                                     raise ValueError(
@@ -1994,7 +2102,7 @@ def materialize_worker_context_files(
                         continue
                 else:
                     try:
-                        shutil.copy2(source, destination)
+                        _atomic_copy_context_file(source, destination)
                     except OSError as err:
                         if is_mutating_or_p0:
                             raise ValueError(
@@ -2031,7 +2139,7 @@ def materialize_worker_context_files(
             })
         elif rel_value == "AI_COLLABORATION_GUIDE.md" and not destination.exists():
             destination.parent.mkdir(parents=True, exist_ok=True)
-            destination.write_text(_generated_collaboration_guide(config), encoding="utf-8")
+            _atomic_write_context_text(destination, _generated_collaboration_guide(config))
             guide_hash = _file_or_dir_hash(destination)
             if is_mutating_or_p0 and not _is_valid_sha256(guide_hash):
                 raise ValueError(
@@ -2129,7 +2237,12 @@ def prepare_worker_workspace(
             )
             if not refresh_ok:
                 if refresh_status == "skipped_dirty_worktree":
-                    recovered = _quarantine_and_preserve_dirty_worktree(
+                    task_sha, task_sha_source = _fetch_authoritative_task_head(
+                        repo_root,
+                        worktree_path,
+                        branch,
+                    )
+                    recovered = bool(task_sha) and _quarantine_and_preserve_dirty_worktree(
                         config,
                         state,
                         worktree_path,
@@ -2138,18 +2251,12 @@ def prepare_worker_workspace(
                         run_id=None,
                         trigger="lease_recovery",
                     )
+                    if not task_sha:
+                        refresh_status = task_sha_source
                     if recovered:
                         original_worktree_path = worktree_path
                         q_stamp = datetime.now(UTC).strftime("%Y%m%dT%H%M%SZ") + f"_{uuid.uuid4().hex[:8]}"
                         fresh_path = worktree_path.parent / f"{worktree_path.name}.lease_{q_stamp}"
-                        task_sha = (
-                            _git_commit_oid(repo_root, f"refs/heads/{branch}")
-                            or _git_commit_oid(repo_root, f"origin/{branch}")
-                            or _git_commit_oid(repo_root, branch)
-                            or _git_commit_oid(worktree_path, "HEAD")
-                            or _git_commit_oid(repo_root, str(settings.get("base_ref") or "origin/dev"))
-                            or "HEAD"
-                        )
                         if task_sha:
                             fresh_path.parent.mkdir(parents=True, exist_ok=True)
                             create_proc = subprocess.run(
@@ -2183,6 +2290,8 @@ def prepare_worker_workspace(
                                             "workspace_path": str(worktree_path),
                                             "quarantined_worktree_path": str(original_worktree_path),
                                             "task_sha": task_sha,
+                                            "task_sha_source": task_sha_source,
+                                            "leased_remote_exact": task_sha_source == "remote_exact_task_ref",
                                             "refresh_ok": refresh_ok,
                                             "refresh_status": refresh_status,
                                         },
@@ -5174,6 +5283,31 @@ def _task_failure_streak_bucket(state: dict[str, Any]) -> dict[str, Any]:
     return _provider_guardrail_bucket(state).setdefault("task_failure_streaks", {})
 
 
+def provider_auth_identity_hash(config: dict[str, Any], provider: str | None) -> str | None:
+    """Return a non-secret stable identity for the account behind a provider.
+
+    A quota pause belongs to the account that produced it.  If an operator
+    switches the local Codex profile, retaining the old account's multi-hour
+    pause strands every alias in the shared quota group.
+    """
+    provider_id = normalize_agent_id(provider or "")
+    group_id = provider_dispatch_group_id(config, provider_id) or provider_id
+    if group_id != "codex" and provider_id != "codex":
+        return None
+    provider_cfg = provider_config_for(config, provider_id) or provider_config_for(config, "codex")
+    configured_home = str(provider_cfg.get("codex_home") or "").strip()
+    codex_home = Path(configured_home).expanduser() if configured_home else Path.home() / ".codex"
+    auth = load_json(codex_home / "auth.json", default={})
+    if not isinstance(auth, dict):
+        return None
+    tokens = auth.get("tokens") or {}
+    account_id = str(tokens.get("account_id") or auth.get("account_id") or "").strip()
+    auth_mode = str(auth.get("auth_mode") or "").strip()
+    if not account_id:
+        return None
+    return hashlib.sha256(f"{auth_mode}:{account_id}".encode("utf-8")).hexdigest()
+
+
 def _failure_streak_key(task_id: str, provider: str) -> str:
     return f"{task_id}:{provider}"
 
@@ -5405,6 +5539,9 @@ def mark_provider_dispatch_paused(
         "task_id": task_id,
         "worker_run_id": worker_run_id,
     }
+    auth_identity_hash = provider_auth_identity_hash(config, provider_id)
+    if auth_identity_hash:
+        bucket[pause_provider_id]["auth_identity_hash"] = auth_identity_hash
     if hinted_blocked_until:
         bucket[pause_provider_id]["hint_blocked_until"] = hinted_blocked_until
         bucket[pause_provider_id]["hint_capped"] = hint_capped
@@ -5474,17 +5611,26 @@ def expire_provider_dispatch_pauses(config: dict[str, Any], state: dict[str, Any
     if not bucket:
         return False
     now = datetime.now(UTC)
-    expired: list[tuple[str, dict[str, Any]]] = []
+    expired: list[tuple[str, dict[str, Any], str]] = []
     for provider_id, entry in list(bucket.items()):
         if not isinstance(entry, dict):
+            continue
+        recorded_identity = str(entry.get("auth_identity_hash") or "")
+        current_identity = provider_auth_identity_hash(
+            config,
+            str(entry.get("trigger_provider") or provider_id),
+        )
+        if recorded_identity and current_identity and recorded_identity != current_identity:
+            expired.append((provider_id, dict(entry), "provider account identity changed"))
+            bucket.pop(provider_id, None)
             continue
         blocked_until = _parse_iso_utc(str(entry.get("blocked_until") or ""))
         if blocked_until is None or blocked_until > now:
             continue
-        expired.append((provider_id, dict(entry)))
+        expired.append((provider_id, dict(entry), f"pause expired at {entry.get('blocked_until')}"))
         bucket.pop(provider_id, None)
 
-    for provider_id, entry in expired:
+    for provider_id, entry, resume_reason in expired:
         write_activity_log(
             config,
             {
@@ -5492,7 +5638,7 @@ def expire_provider_dispatch_pauses(config: dict[str, Any], state: dict[str, Any
                 "provider": provider_id,
                 "task_id": entry.get("task_id"),
                 "worker_run_id": entry.get("worker_run_id"),
-                "message": f"Dispatch pause for {provider_id} expired at {entry.get('blocked_until')}; dispatch is enabled again.",
+                "message": f"Dispatch pause for {provider_id} cleared because {resume_reason}; dispatch is enabled again.",
                 "raw_ref": entry.get("raw_ref"),
             },
         )
@@ -10644,16 +10790,20 @@ def dispatch_ready_tasks(
             task_id = str(task.get(task_id_field) or "")
             if not task_id or task_id in active_task_ids or task_id in pending_task_ids:
                 continue
-            helper_message = (
-                f"Helper-claimed by {target_agent} while {task_owner} is dispatch-paused."
-                if owner_paused
-                else (
-                    f"Helper-claimed by idle {target_agent}; previous owner {task_owner} becomes reviewer."
-                    if helper_settings.get("claim_idle_work", False)
-                    else f"Helper-claimed by {target_agent} while {task_owner} completes higher-priority work."
-                )
+            new_reviewer = (
+                task_reviewer
+                if task_reviewer and task_reviewer != target_agent
+                else str(task_owner or "")
             )
-            new_reviewer = str(task_owner or task_reviewer or "")
+            if owner_paused:
+                helper_message = f"Helper-claimed by {target_agent} while {task_owner} is dispatch-paused."
+            elif helper_settings.get("claim_idle_work", False):
+                if new_reviewer == task_reviewer:
+                    helper_message = f"Helper-claimed by idle {target_agent}; designated reviewer {task_reviewer} preserved."
+                else:
+                    helper_message = f"Helper-claimed by idle {target_agent}; previous owner {task_owner} becomes reviewer."
+            else:
+                helper_message = f"Helper-claimed by {target_agent} while {task_owner} completes higher-priority work."
             if not persist_task_reassignment(
                 config,
                 task_id=task_id,

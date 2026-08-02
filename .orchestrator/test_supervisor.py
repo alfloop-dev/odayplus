@@ -845,6 +845,36 @@ class DetectWorkerFailureTests(unittest.TestCase):
         write_activity_log.assert_called_once()
         self.assertEqual(write_activity_log.call_args.args[1]["type"], "provider_dispatch_resumed")
 
+    def test_expire_provider_dispatch_pauses_clears_quota_pause_after_account_switch(self) -> None:
+        config = {
+            "paths": {"activity_log": "/tmp/test-activity-log.jsonl"},
+            "providers": {"codex": {"quota_group": "codex"}},
+        }
+        state = {
+            "provider_guardrails": {
+                "dispatch_pauses": {
+                    "codex": {
+                        "provider": "codex",
+                        "trigger_provider": "codex",
+                        "blocked_until": "2999-01-01T00:00:00Z",
+                        "pause_kind": "quota_terminal",
+                        "auth_identity_hash": "old-account",
+                    }
+                }
+            }
+        }
+
+        with (
+            mock.patch.object(supervisor, "provider_auth_identity_hash", return_value="new-account"),
+            mock.patch.object(supervisor, "write_activity_log") as write_activity_log,
+        ):
+            changed = supervisor.expire_provider_dispatch_pauses(config, state)
+
+        self.assertTrue(changed)
+        self.assertEqual(state["provider_guardrails"]["dispatch_pauses"], {})
+        message = write_activity_log.call_args.args[1]["message"]
+        self.assertIn("account identity changed", message)
+
     def test_clear_provider_dispatch_pause_removes_group_pause(self) -> None:
         config = {
             "paths": {"activity_log": "/tmp/test-activity-log.jsonl"},
@@ -2743,10 +2773,10 @@ class ProcessQueueDispatchGuardTests(unittest.TestCase):
                     "id": "FB-003",
                     "status": "todo",
                     "owner": "Codex",
-                    "reviewer": "Copilot",
+                    "reviewer": "Claude",
                     "depends_on": [],
                     "last_update": "2026-05-13T09:30:00Z",
-                    "next": "Helper-claimed by idle Codex; previous owner Copilot becomes reviewer.",
+                    "next": "Helper-claimed by idle Codex; designated reviewer Claude preserved.",
                 },
             ]
         }
@@ -2765,7 +2795,7 @@ class ProcessQueueDispatchGuardTests(unittest.TestCase):
         kwargs = persist.call_args.kwargs
         self.assertEqual(kwargs["task_id"], "FB-003")
         self.assertEqual(kwargs["new_owner"], "Codex")
-        self.assertEqual(kwargs["new_reviewer"], "Copilot")
+        self.assertEqual(kwargs["new_reviewer"], "Claude")
         queued_event = queue_delivery_event.call_args.args[1]
         self.assertEqual(queued_event["task_id"], "FB-003")
         self.assertEqual(queued_event["target_agent"], "Codex")
@@ -2952,7 +2982,7 @@ class ProcessQueueDispatchGuardTests(unittest.TestCase):
         kwargs = persist.call_args.kwargs
         self.assertEqual(kwargs["task_id"], "FB-009-SIDECAR-BFF-HANDOFF")
         self.assertEqual(kwargs["new_owner"], "Codex")
-        self.assertEqual(kwargs["new_reviewer"], "Gemini2")
+        self.assertEqual(kwargs["new_reviewer"], "Claude")
         queued_event = queue_delivery_event.call_args.args[1]
         self.assertEqual(queued_event["task_id"], "FB-009-SIDECAR-BFF-HANDOFF")
         self.assertEqual(queued_event["target_agent"], "Codex")
@@ -3005,7 +3035,7 @@ class ProcessQueueDispatchGuardTests(unittest.TestCase):
                     "id": "FB-009-SIDECAR-BFF-HANDOFF",
                     "status": "todo",
                     "owner": "Codex",
-                    "reviewer": "Gemini2",
+                    "reviewer": "Claude",
                     "depends_on": [],
                     "task_class": "sidecar",
                     "helper_parent": "FB-009",
@@ -3029,7 +3059,7 @@ class ProcessQueueDispatchGuardTests(unittest.TestCase):
         kwargs = persist.call_args.kwargs
         self.assertEqual(kwargs["task_id"], "FB-009-SIDECAR-BFF-HANDOFF")
         self.assertEqual(kwargs["new_owner"], "Codex")
-        self.assertEqual(kwargs["new_reviewer"], "Gemini2")
+        self.assertEqual(kwargs["new_reviewer"], "Claude")
         queued_event = queue_delivery_event.call_args.args[1]
         self.assertEqual(queued_event["task_id"], "FB-009-SIDECAR-BFF-HANDOFF")
         self.assertEqual(queued_event["target_agent"], "Codex")
@@ -3164,7 +3194,7 @@ class ProcessQueueDispatchGuardTests(unittest.TestCase):
         kwargs = persist.call_args.kwargs
         self.assertEqual(kwargs["task_id"], "WB-006")
         self.assertEqual(kwargs["new_owner"], "Copilot")
-        self.assertEqual(kwargs["new_reviewer"], "Qwen")
+        self.assertEqual(kwargs["new_reviewer"], "Claude")
         queued_event = queue_delivery_event.call_args.args[1]
         self.assertEqual(queued_event["task_id"], "WB-006")
         self.assertEqual(queued_event["target_agent"], "Copilot")
@@ -12613,6 +12643,13 @@ class QuarantineAndPreserveDirtyWorktreeTests(unittest.TestCase):
             subprocess.run(["git", "config", "user.name", "TestUser"], cwd=wt_path, check=True)
             subprocess.run(["git", "config", "user.email", "test@example.com"], cwd=wt_path, check=True)
 
+            # Create an unpushed local commit. Recovery must lease the immutable
+            # remote task head, never this newer mutable local branch ref.
+            (wt_path / "local_only.txt").write_text("unpushed local commit\n", encoding="utf-8")
+            subprocess.run(["git", "add", "local_only.txt"], cwd=wt_path, check=True)
+            subprocess.run(["git", "commit", "-m", "local unpushed task commit"], cwd=wt_path, check=True)
+            local_unpushed_head = supervisor._git_commit_oid(wt_path, "HEAD")
+
             # Introduce uncommitted dirty changes into the reused worker worktree
             dirty_file = wt_path / "dirty_work.txt"
             dirty_file.write_text("uncommitted progress\n", encoding="utf-8")
@@ -12675,6 +12712,7 @@ class QuarantineAndPreserveDirtyWorktreeTests(unittest.TestCase):
             ).stdout.strip()
             leased_head = supervisor._git_commit_oid(leased_path, "HEAD")
             self.assertEqual(leased_head, remote_task_head)
+            self.assertNotEqual(leased_head, local_unpushed_head)
 
             # Confirm backup manifest exists
             backups_dir = repo_root / ".orchestrator" / "worktree-dirt-backups"
@@ -13282,6 +13320,59 @@ class QuarantineAndPreserveDirtyWorktreeTests(unittest.TestCase):
             self.assertNotIn("ai-status.json", materialized)
             self.assertEqual(readme.read_text(encoding="utf-8"), "original owner readme content\n")
             self.assertTrue(os.path.islink(symlink))
+
+    def test_materialize_worker_context_files_replaces_hardlink_without_mutating_tracked_inode(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmp_p = Path(tmpdir)
+            status_root = tmp_p / "status_root"
+            status_root.mkdir()
+            canonical = b'{"project":"canonical"}\n'
+            (status_root / "ai-status.json").write_bytes(canonical)
+
+            wt_path = tmp_p / "worker"
+            wt_path.mkdir()
+            subprocess.run(["git", "init"], cwd=wt_path, capture_output=True, check=True)
+            subprocess.run(["git", "config", "user.name", "TestUser"], cwd=wt_path, check=True)
+            subprocess.run(["git", "config", "user.email", "test@example.com"], cwd=wt_path, check=True)
+            readme = wt_path / "README.md"
+            owner_bytes = b"tracked owner bytes\n"
+            readme.write_bytes(owner_bytes)
+            subprocess.run(["git", "add", "README.md"], cwd=wt_path, check=True)
+            subprocess.run(["git", "commit", "-m", "tracked baseline"], cwd=wt_path, capture_output=True, check=True)
+
+            destination = wt_path / "ai-status.json"
+            os.link(readme, destination)
+            self.assertEqual(readme.stat().st_ino, destination.stat().st_ino)
+
+            config = {
+                "paths": {
+                    "status_file": str(status_root / "ai-status.json"),
+                    "activity_log": str(status_root / "ai-activity-log.jsonl"),
+                },
+            }
+            request = supervisor.DeliveryRequest(
+                agent_id="codex",
+                provider="codex",
+                delivery_mode="codex",
+                message="wake",
+                task_id="TASK-HARDLINK-001",
+                reason="owned_in_progress_dispatch",
+                context_files=["ai-status.json"],
+            )
+
+            materialized = supervisor.materialize_worker_context_files(config, request, wt_path)
+
+            self.assertIn("ai-status.json", materialized)
+            self.assertEqual(readme.read_bytes(), owner_bytes)
+            self.assertEqual(destination.read_bytes(), canonical)
+            self.assertNotEqual(readme.stat().st_ino, destination.stat().st_ino)
+            diff = subprocess.run(
+                ["git", "diff", "--exit-code", "--", "README.md"],
+                cwd=wt_path,
+                capture_output=True,
+                check=False,
+            )
+            self.assertEqual(diff.returncode, 0, diff.stdout.decode(errors="replace"))
 
     def test_prepare_worker_workspace_recovers_dirty_worktree_lease_with_untracked_symlink(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
