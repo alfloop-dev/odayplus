@@ -120,6 +120,16 @@ Rechecked at `2026-08-02T00:20:00Z` after the canonical CI-boundary owner pushed
 
 No sidecar-owned correction can precede dependency review and merge. Re-review should confirm this packet remains support-only, then retain the external closeout dependency until the repaired canonical baseline is present on `dev` and PR `#551` receives a clean required-check rerun.
 
+### Latest return-to-owner assessment
+
+Rechecked at `2026-08-02T00:59:26Z` after the supervisor's latest CI-failure dispatch:
+
+- PR `#551` remains open at exact head `a727da7919254332a803f9ebf0ee39c85f777cf0`. CI run `30725047368` passed `orchestrator` and `performance-gate`; `product-e2e-gate` failed because the task-required `support/sidecars/**` packet is an intervening non-evidence path, and `product` reported the same single acceptance-coverage failure after 2,474 passing tests. The task-review status is failing because the task is back in `in_progress`, not because of a new content-review finding.
+- The canonical policy repair has not merged. PR `#562` is in `review` at new exact head `cfcfeb2e65847dd422026e2ccd9f628bcc1a6aae` after its owner added merge-commit ancestry coverage for a separately reviewed fail-open defect. At capture time GitHub reported the PR `DIRTY` with no checks recorded for that head; this packet neither validates nor pre-approves those canonical bytes.
+- Parent PR `#525` remains open at `b669017f7787e309573ab0edbe600b41095334a1` with the same `product` and `product-e2e-gate` failure family. No parent implementation or governed activation claim is changed by this sidecar update.
+
+There is therefore no honest sidecar-local CI repair. Weakening the evidence path policy, editing the promotion workflow, or regenerating canonical E2E receipts would exceed this helper's support-only authority. The packet is resubmitted for exact-head review so the reviewer can preserve the support evidence while the canonical policy owner resolves and merges PR `#562`.
+
 ## Reviewer handoff
 
 Antigravity should use this packet as supporting evidence and may absorb it into the parent closeout record if useful. Before parent finalization:
