@@ -7705,16 +7705,29 @@ class ReusedWorkerWorktreeBaseAdvanceTests(unittest.TestCase):
         self.assertEqual(status, "unresolved_git_operation")
 
     def test_unresolved_rebase_blocks(self) -> None:
-        raw_marker = self._git(self.worktree, "rev-parse", "--git-path", "rebase-merge").stdout.strip()
-        marker = Path(raw_marker)
-        if not marker.is_absolute():
-            marker = self.worktree / marker
-        marker.mkdir(parents=True)
+        raw_rebase_head = self._git(
+            self.worktree, "rev-parse", "--git-path", "REBASE_HEAD"
+        ).stdout.strip()
+        rebase_head = Path(raw_rebase_head)
+        if not rebase_head.is_absolute():
+            rebase_head = self.worktree / rebase_head
+        rebase_head.write_text(self.initial_head + "\n", encoding="utf-8")
 
-        ok, status = self._refresh()
+        for marker_name in ("rebase-merge", "rebase-apply"):
+            with self.subTest(marker=marker_name):
+                raw_marker = self._git(
+                    self.worktree, "rev-parse", "--git-path", marker_name
+                ).stdout.strip()
+                marker = Path(raw_marker)
+                if not marker.is_absolute():
+                    marker = self.worktree / marker
+                marker.mkdir(parents=True)
 
-        self.assertFalse(ok)
-        self.assertEqual(status, "unresolved_git_operation")
+                ok, status = self._refresh()
+
+                self.assertFalse(ok)
+                self.assertEqual(status, "unresolved_git_operation")
+                marker.rmdir()
 
     def test_stale_rebase_head_after_completed_rebase_does_not_block(self) -> None:
         raw_marker = self._git(self.worktree, "rev-parse", "--git-path", "REBASE_HEAD").stdout.strip()
