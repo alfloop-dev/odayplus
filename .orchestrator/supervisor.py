@@ -1749,31 +1749,61 @@ def prepare_worker_workspace(
             )
             if not refresh_ok:
                 if refresh_status == "skipped_dirty_worktree":
-                    reason = (
-                        "has dirty tracked or staged changes. Preserve and commit the "
-                        "task-owned work before dispatch."
+                    recovered = _backup_and_reset_dirty_worktree(
+                        config,
+                        state,
+                        worktree_path,
+                        workspace_task_id,
+                        run_id=request.agent_id,
+                        trigger="lease_recovery",
                     )
-                else:
-                    reason = f"failed the fail-closed refresh policy ({refresh_status})."
-                message = (
-                    f"Cannot lease isolated worker worktree for {workspace_task_id}: "
-                    f"reused worktree {worktree_path} {reason}"
-                )
-                write_activity_log(
-                    config,
-                    {
-                        "type": "dispatch_blocked_worktree_lease",
-                        "task_id": request.task_id,
-                        "workspace_task_id": workspace_task_id,
-                        "target_agent": target_agent,
-                        "queue_event_id": queue_event_id,
-                        "message": message,
-                        "workspace_branch": branch,
-                        "workspace_path": str(worktree_path),
-                        "refresh_status": refresh_status,
-                    },
-                )
-                return False, message
+                    if recovered:
+                        refresh_ok, refresh_status = _refresh_reused_worker_worktree(
+                            repo_root,
+                            worktree_path,
+                            str(settings.get("base_ref") or "origin/dev"),
+                            branch,
+                        )
+                        write_activity_log(
+                            config,
+                            {
+                                "type": "worker_worktree_lease_recovered",
+                                "task_id": request.task_id,
+                                "target_agent": target_agent,
+                                "queue_event_id": queue_event_id,
+                                "workspace_branch": branch,
+                                "workspace_path": str(worktree_path),
+                                "refresh_ok": refresh_ok,
+                                "refresh_status": refresh_status,
+                            },
+                        )
+                if not refresh_ok:
+                    if refresh_status == "skipped_dirty_worktree":
+                        reason = (
+                            "has dirty tracked or staged changes. Preserve and commit the "
+                            "task-owned work before dispatch."
+                        )
+                    else:
+                        reason = f"failed the fail-closed refresh policy ({refresh_status})."
+                    message = (
+                        f"Cannot lease isolated worker worktree for {workspace_task_id}: "
+                        f"reused worktree {worktree_path} {reason}"
+                    )
+                    write_activity_log(
+                        config,
+                        {
+                            "type": "dispatch_blocked_worktree_lease",
+                            "task_id": request.task_id,
+                            "workspace_task_id": workspace_task_id,
+                            "target_agent": target_agent,
+                            "queue_event_id": queue_event_id,
+                            "message": message,
+                            "workspace_branch": branch,
+                            "workspace_path": str(worktree_path),
+                            "refresh_status": refresh_status,
+                        },
+                    )
+                    return False, message
             if refresh_status.startswith("base_advance_rebase_required:"):
                 base_advance_prompt = (
                     "BASE ADVANCE REQUIRED BEFORE EDITING OR HANDOFF: this clean local task "
