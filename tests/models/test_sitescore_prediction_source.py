@@ -538,3 +538,90 @@ def test_sitescore_outcome_benchmark_pg16_query_path_without_receipt_governed_di
     assert res.is_gate2_passed is False
     assert res.status == "GOVERNED_DISABLED"
     assert res.reason_code == "MISSING_GOVERNED_LINEAGE"
+
+
+def test_sitescore_prediction_source_b1_arbitrary_caller_receipt_lacking_authority_attestation_rejected():
+    # B1 Re-audit mutation test: Receipt with disallowed or self-attested authority fails closed as UNAUTHENTICATED_PREDICTION_PROVENANCE
+    records = _generate_valid_prediction_records(220, include_outcomes=True)
+    receipt = build_sitescore_prediction_source_receipt(
+        records,
+        dataset_snapshot_id="sitescore-snapshot-2026-07-31-v1",
+        model_version=CANONICAL_MODEL_VERSION,
+        artifact_lineage_id="sitescore-artifact-sha256-v1",
+        authority_attestation="caller-self-attested",
+    )
+    res = verify_sitescore_prediction_source(records, prediction_receipt=receipt)
+    assert res.is_valid is False
+    assert res.reason_code == "UNAUTHENTICATED_PREDICTION_PROVENANCE"
+    assert any("authority attestation" in err for err in res.errors)
+
+    result = evaluate_sitescore_opening_outcome_benchmark(
+        records,
+        prediction_receipt=receipt,
+        provenance="authenticated_governed_records",
+    )
+    assert result.is_gate2_passed is False
+    assert result.prediction_source_verified is False
+    assert result.status == "GOVERNED_DISABLED"
+
+
+def test_sitescore_opening_outcome_b2_caller_record_prediction_drift_from_verified_receipt_fails_closed():
+    # B2 Re-audit mutation test: Receipt has 2.0x predictions (1,000,000), caller passes 0.95x predictions (475,000).
+    # Benchmark binds verified receipt values (1,000,000), causing MAE/P80 to evaluate on verified receipt predictions.
+    receipt_records = _generate_valid_prediction_records(
+        220,
+        base_revenue=500_000.0,
+        include_outcomes=True,
+    )
+    # Mutate receipt_records to have 2.0x predictions and non-covering intervals
+    for r in receipt_records:
+        r["predicted_revenue"] = 1_000_000.0
+        r["p10"] = 990_000.0
+        r["p90"] = 1_010_000.0
+
+    receipt = build_sitescore_prediction_source_receipt(
+        receipt_records,
+        dataset_snapshot_id="sitescore-snapshot-2026-07-31-v1",
+        model_version=CANONICAL_MODEL_VERSION,
+        artifact_lineage_id="sitescore-artifact-sha256-v1",
+    )
+
+    # Caller records have 0.95x predictions and wide intervals
+    caller_records = _generate_valid_prediction_records(
+        220,
+        base_revenue=500_000.0,
+        include_outcomes=True,
+    )
+
+    result = evaluate_sitescore_opening_outcome_benchmark(
+        caller_records,
+        prediction_receipt=receipt,
+        provenance="authenticated_governed_records",
+    )
+
+    # Because receipt has 2.0x predictions (1.0M) while realized revenue is ~500k,
+    # the bound receipt predictions produce normalized MAE ~1.0 > 0.25 threshold, so Gate 2 FAILS!
+    assert result.is_gate2_passed is False
+    assert result.status == "GOVERNED_DISABLED"
+    assert result.reason_code in ("UNMATCHED_PREDICTION_SOURCE", "MISSING_GOVERNED_LINEAGE", "NORMALIZED_MAE_EXCEEDED", "INTERVAL_BOUNDS_MISSING")
+
+
+def test_sitescore_prediction_source_b3_unauthenticated_dict_model_registry_evidence_rejected():
+    # B3 Re-audit mutation test: Caller dict passed as model_registry_evidence without authority attestation
+    # fails closed and does NOT self-synthesize a verified_receipt_hash.
+    records = _generate_valid_prediction_records(220, include_outcomes=True)
+    fake_registry_dict = {
+        "model_name": CANONICAL_PREDICTION_MODEL_NAME,
+        "authority_attestation": "caller-self-attested",
+        "versions": [
+            {
+                "version": CANONICAL_MODEL_VERSION,
+                "dataset_snapshot_id": "sitescore-snapshot-2026-07-31-v1",
+                "git_sha": "sitescore-artifact-sha256-v1",
+            }
+        ],
+    }
+    res = verify_sitescore_prediction_source(records, model_registry_evidence=fake_registry_dict)
+    assert res.is_valid is False
+    assert res.reason_code == "UNAUTHENTICATED_PREDICTION_PROVENANCE"
+    assert res.prediction_receipt_hash is None

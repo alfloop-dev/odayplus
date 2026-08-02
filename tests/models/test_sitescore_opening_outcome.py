@@ -196,7 +196,13 @@ def test_sitescore_opening_outcome_insufficient_labels_fails_closed():
         model_version="candidate-site-view-v2",
         artifact_lineage_id="art_sitescore_sha256",
     )
-    result = evaluate_sitescore_opening_outcome_benchmark(records, provenance="authenticated_governed_records")
+    receipt = build_sitescore_prediction_source_receipt(
+        records,
+        dataset_snapshot_id="snapshot_sitescore_v2",
+        model_version="candidate-site-view-v2",
+        artifact_lineage_id="art_sitescore_sha256",
+    )
+    result = evaluate_sitescore_opening_outcome_benchmark(records, prediction_receipt=receipt, provenance="authenticated_governed_records")
 
     assert result.observed_count == 50
     assert result.mature_label_count == 50
@@ -440,7 +446,13 @@ def test_sitescore_opening_outcome_zero_outcome_cohort_non_zero_mae_fails_closed
         model_version="candidate-site-view-v2",
         artifact_lineage_id="art_sitescore_sha256",
     )
-    result = evaluate_sitescore_opening_outcome_benchmark(records, provenance="authenticated_governed_records")
+    receipt = build_sitescore_prediction_source_receipt(
+        records,
+        dataset_snapshot_id="snapshot_sitescore_v2",
+        model_version="candidate-site-view-v2",
+        artifact_lineage_id="art_sitescore_sha256",
+    )
+    result = evaluate_sitescore_opening_outcome_benchmark(records, prediction_receipt=receipt, provenance="authenticated_governed_records")
 
     assert result.mature_label_count == 220
     assert result.normalized_mae == 999.0  # Zero-denominator fail closed
@@ -1004,7 +1016,13 @@ def test_sitescore_opening_outcome_non_empty_population_counts_populated_and_ver
         model_version="candidate-site-view-v2",
         artifact_lineage_id="art_sitescore_sha256",
     )
-    result = evaluate_sitescore_opening_outcome_benchmark(records, provenance="authenticated_governed_records")
+    receipt_source = build_sitescore_prediction_source_receipt(
+        records,
+        dataset_snapshot_id="snapshot_sitescore_v2",
+        model_version="candidate-site-view-v2",
+        artifact_lineage_id="art_sitescore_sha256",
+    )
+    result = evaluate_sitescore_opening_outcome_benchmark(records, prediction_receipt=receipt_source, provenance="authenticated_governed_records")
 
     assert result.observed_count == 10
     assert result.eligible_count == 10
@@ -1016,7 +1034,7 @@ def test_sitescore_opening_outcome_non_empty_population_counts_populated_and_ver
     assert result.in_p80_count == 10
 
     model_card = build_sitescore_opening_outcome_model_card(result)
-    receipt = build_sitescore_gate2_receipt(result, model_card=model_card)
+    receipt = build_sitescore_gate2_receipt(result, model_card=model_card, prediction_receipt=receipt_source)
     assert receipt["benchmark_summary"]["m6_mature_count"] == 10
     assert receipt["benchmark_summary"]["m12_mature_count"] == 10
     assert receipt["benchmark_summary"]["interval_bounds_count"] == 10

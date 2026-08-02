@@ -517,6 +517,36 @@ def evaluate_sitescore_opening_outcome_benchmark(
             if not artifact_lineage_id:
                 artifact_lineage_id = verif_res.artifact_lineage_id
 
+            if prediction_receipt and isinstance(prediction_receipt.get("records"), list):
+                rec_lookup = {}
+                for rec_item in prediction_receipt["records"]:
+                    if isinstance(rec_item, dict):
+                        eid = str(rec_item.get("entity_id") or rec_item.get("store_id") or "")
+                        as_of = str(rec_item.get("prediction_as_of") or rec_item.get("opened_on") or "")
+                        ver = str(rec_item.get("model_version") or model_version or "")
+                        hor = str(rec_item.get("horizon_code") or "90d")
+                        rec_lookup[(eid, as_of, ver, hor)] = rec_item
+                        sid = str(rec_item.get("store_id") or "")
+                        if sid and sid != eid:
+                            rec_lookup[(sid, as_of, ver, hor)] = rec_item
+
+                bound_records = []
+                for r in records:
+                    r_copy = dict(r)
+                    eid = str(r_copy.get("entity_id") or r_copy.get("store_id") or "")
+                    sid = str(r_copy.get("store_id") or eid)
+                    as_of = str(r_copy.get("prediction_as_of") or r_copy.get("opened_on") or "")
+                    ver = str(r_copy.get("model_version") or model_version or "")
+                    hor = str(r_copy.get("horizon_code") or "90d")
+                    matched_rec = rec_lookup.get((eid, as_of, ver, hor)) or rec_lookup.get((sid, as_of, ver, hor))
+                    if matched_rec is not None:
+                        r_copy["predicted_revenue"] = matched_rec.get("predicted_revenue")
+                        r_copy["p10"] = matched_rec.get("p10")
+                        r_copy["p90"] = matched_rec.get("p90")
+                        r_copy["p50"] = matched_rec.get("p50")
+                    bound_records.append(r_copy)
+                records = bound_records
+
     observed_count = len(records)
 
     eligible_count = sum(1 for r in records if _is_strictly_eligible(r))

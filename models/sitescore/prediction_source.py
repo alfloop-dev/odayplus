@@ -114,6 +114,8 @@ def build_sitescore_prediction_source_receipt(
     model_version: str,
     artifact_lineage_id: str,
     observed_at: str | None = None,
+    provider_identity: str = "model_ready.sitescore_predictions",
+    authority_attestation: str = "authenticated_sitescore_prediction_source_v1",
 ) -> dict[str, Any]:
     """Build an immutable SiteScore prediction source receipt payload with integrity envelope."""
     ts = observed_at or datetime.now(UTC).isoformat().replace("+00:00", "Z")
@@ -153,6 +155,8 @@ def build_sitescore_prediction_source_receipt(
         "observed_at": ts,
         "model_name": CANONICAL_PREDICTION_MODEL_NAME,
         "service": CANONICAL_PREDICTION_SERVICE,
+        "provider_identity": provider_identity,
+        "authority_attestation": authority_attestation,
         "dataset_snapshot_id": dataset_snapshot_id,
         "model_version": model_version,
         "artifact_lineage_id": artifact_lineage_id,
@@ -201,6 +205,13 @@ def verify_sitescore_prediction_source(
     model_version: str | None = expected_model_version
     artifact_lineage_id: str | None = expected_lineage_id
 
+    matched_count = 0
+    unmatched_count = 0
+    duplicate_count = 0
+    malformed_interval_count = 0
+    m6_matched_count = 0
+    m12_matched_count = 0
+
     DISALLOWED_SNAPSHOT_SUBSTRINGS = (
         "caller-self-attested", "arbitrary-caller-snapshot", "fresh-caller-snapshot",
         "unverified", "self-attested", "caller-attested", "none", "null"
@@ -213,6 +224,19 @@ def verify_sitescore_prediction_source(
         "not-a-hash", "arbitrary-caller-artifact", "opaque-caller-lineage",
         "unverified", "not_a_hash", "none", "null"
     )
+
+    DISALLOWED_AUTHORITY_SUBSTRINGS = (
+        "self-attested", "caller-self-attested", "caller", "unverified",
+        "self-hash", "none", "null", "arbitrary", "opaque"
+    )
+
+    APPROVED_AUTHORITY_ATTESTATIONS = {
+        "authenticated_sitescore_prediction_source_v1",
+        "pg16_prediction_query",
+        "model_ready.sitescore_predictions",
+        "authenticated_prediction_registry",
+        "sitescore_platform_authority_v1",
+    }
 
     GOVERNED_PROVENANCES = (
         "authenticated_governed_records",
@@ -258,6 +282,13 @@ def verify_sitescore_prediction_source(
         if receipt_to_verify.get("service") != CANONICAL_PREDICTION_SERVICE:
             errors.append(f"Invalid prediction receipt service: expected {CANONICAL_PREDICTION_SERVICE}, got {receipt_to_verify.get('service')}")
 
+        auth_att = str(receipt_to_verify.get("authority_attestation") or "").strip()
+        prov_id = str(receipt_to_verify.get("provider_identity") or "").strip()
+        if not auth_att or any(sub in auth_att.lower() for sub in DISALLOWED_AUTHORITY_SUBSTRINGS) or auth_att not in APPROVED_AUTHORITY_ATTESTATIONS:
+            errors.append(f"Prediction receipt lacks valid authority attestation: '{auth_att}'")
+        if not prov_id or any(sub in prov_id.lower() for sub in DISALLOWED_AUTHORITY_SUBSTRINGS):
+            errors.append(f"Prediction receipt lacks valid provider identity: '{prov_id}'")
+
         integrity = receipt_to_verify.get("integrity")
         if not isinstance(integrity, dict) or not integrity.get("content_sha256"):
             errors.append("Missing integrity.content_sha256 envelope in prediction receipt")
@@ -300,13 +331,19 @@ def verify_sitescore_prediction_source(
         verified_receipt_hash = integrity.get("content_sha256") if isinstance(integrity, dict) else None
 
         if isinstance(rec_list, list):
+            seen_receipt_keys: set[tuple[str, str, str, str]] = set()
             for item in rec_list:
                 if isinstance(item, dict):
                     eid = str(item.get("entity_id") or item.get("store_id") or "")
                     as_of = str(item.get("prediction_as_of") or item.get("opened_on") or "")
                     ver = str(item.get("model_version") or model_version or "")
                     hor = str(item.get("horizon_code") or "90d")
-                    receipt_records_lookup[(eid, as_of, ver, hor)] = item
+                    rk = (eid, as_of, ver, hor)
+                    if rk in seen_receipt_keys:
+                        duplicate_count += 1
+                        errors.append(f"Duplicate prediction record key in prediction receipt for entity '{eid}' as-of '{as_of}' version '{ver}' horizon '{hor}'")
+                    seen_receipt_keys.add(rk)
+                    receipt_records_lookup[rk] = item
                     sid = str(item.get("store_id") or "")
                     if sid and sid != eid:
                         receipt_records_lookup[(sid, as_of, ver, hor)] = item
@@ -315,10 +352,22 @@ def verify_sitescore_prediction_source(
         reg_model_name = getattr(model_registry_evidence, "model_name", None) or (
             model_registry_evidence.get("model_name") if isinstance(model_registry_evidence, dict) else None
         )
+        reg_authority = getattr(model_registry_evidence, "authority_attestation", None) or (
+            model_registry_evidence.get("authority_attestation") if isinstance(model_registry_evidence, dict) else None
+        )
+        reg_provider = getattr(model_registry_evidence, "provider_identity", None) or (
+            model_registry_evidence.get("provider_identity") if isinstance(model_registry_evidence, dict) else None
+        )
+
         if reg_model_name != CANONICAL_PREDICTION_MODEL_NAME:
             errors.append(
                 f"Model registry evidence model_name ({reg_model_name!r}) mismatch with canonical '{CANONICAL_PREDICTION_MODEL_NAME}'"
             )
+
+        if not reg_authority or any(sub in str(reg_authority).lower() for sub in DISALLOWED_AUTHORITY_SUBSTRINGS) or str(reg_authority) not in APPROVED_AUTHORITY_ATTESTATIONS:
+            errors.append(f"Model registry evidence lacks valid authority attestation: '{reg_authority}'")
+        if reg_provider and any(sub in str(reg_provider).lower() for sub in DISALLOWED_AUTHORITY_SUBSTRINGS):
+            errors.append(f"Model registry evidence lacks valid provider identity: '{reg_provider}'")
 
         versions = (
             getattr(model_registry_evidence, "versions", None)
@@ -374,31 +423,36 @@ def verify_sitescore_prediction_source(
         if expected_lineage_id and rec_lin != expected_lineage_id:
             errors.append(f"Model registry evidence artifact_lineage_id '{rec_lin}' mismatch with expected '{expected_lineage_id}'")
 
-        if not errors and rec_snap and rec_ver and rec_lin:
-            gen_receipt = build_sitescore_prediction_source_receipt(
-                records,
-                dataset_snapshot_id=rec_snap,
-                model_version=rec_ver,
-                artifact_lineage_id=rec_lin,
-            )
-            verified_receipt_hash = gen_receipt["integrity"]["content_sha256"]
+        # B3 fix: Do NOT self-synthesize verified_receipt_hash from caller records!
+        # Use explicit prediction_receipt_hash or content_sha256 provided by model_registry_evidence if present.
+        verified_receipt_hash = (
+            getattr(model_registry_evidence, "prediction_receipt_hash", None)
+            or (model_registry_evidence.get("prediction_receipt_hash") if isinstance(model_registry_evidence, dict) else None)
+            or getattr(model_registry_evidence, "content_sha256", None)
+            or (model_registry_evidence.get("content_sha256") if isinstance(model_registry_evidence, dict) else None)
+        )
 
     if errors:
         reason_code = "MISSING_GOVERNED_LINEAGE"
-        if any("content_sha256" in e or "records_sha256" in e for e in errors):
+        if any("duplicate" in e.lower() for e in errors):
+            reason_code = "DUPLICATE_PREDICTION_SOURCE"
+        elif any("interval" in e.lower() or "p10" in e.lower() or "p90" in e.lower() for e in errors):
+            reason_code = "MALFORMED_INTERVAL_BOUNDS"
+        elif any("unmatched" in e.lower() for e in errors):
+            reason_code = "UNMATCHED_PREDICTION_SOURCE"
+        elif any("content_sha256" in e or "records_sha256" in e for e in errors):
             reason_code = "INTEGRITY_HASH_MISMATCH"
+        elif any("unauthenticated" in e.lower() or "attestation" in e.lower() or "identity" in e.lower() for e in errors):
+            reason_code = "UNAUTHENTICATED_PREDICTION_PROVENANCE"
         return SiteScorePredictionSourceVerificationResult(
             is_valid=False,
             reason_code=reason_code,
+            matched_count=matched_count,
+            unmatched_count=unmatched_count,
+            duplicate_count=duplicate_count,
+            malformed_interval_count=malformed_interval_count,
             errors=tuple(errors),
         )
-
-    matched_count = 0
-    unmatched_count = 0
-    duplicate_count = 0
-    malformed_interval_count = 0
-    m6_matched_count = 0
-    m12_matched_count = 0
 
     seen_entity_asof_version_horizon: set[tuple[str, str, str, str]] = set()
 
