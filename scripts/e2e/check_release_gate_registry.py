@@ -576,7 +576,15 @@ def check_candidate_ancestry(
             text=True,
         )
         log_proc = subprocess.run(
-            ["git", "log", "--format=", "--name-only", "-m", f"{candidate_sha}..{expected_sha}"],
+            [
+                "git",
+                "log",
+                "--format=",
+                "--name-only",
+                "--first-parent",
+                "-m",
+                f"{candidate_sha}..{expected_sha}",
+            ],
             cwd=root,
             check=True,
             capture_output=True,

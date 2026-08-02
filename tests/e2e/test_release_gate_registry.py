@@ -517,6 +517,49 @@ def test_cli_expected_sha_ancestry_merge_commit_product_change_fails_closed(
     assert any("app.py" in err for err in errors)
 
 
+def test_cli_expected_sha_ancestry_stale_second_parent_evidence_merge_passes(
+    tmp_path: Path,
+) -> None:
+    module = load_checker_module()
+    repo = tmp_path / "repo"
+    repo.mkdir()
+
+    def run_git(*args: str) -> str:
+        res = subprocess.run(
+            ["git", *args], cwd=repo, capture_output=True, text=True, check=True
+        )
+        return res.stdout.strip()
+
+    run_git("init")
+    run_git("config", "user.email", "test@example.com")
+    run_git("config", "user.name", "Test")
+
+    (repo / "base.txt").write_text("base\n")
+    run_git("add", ".")
+    run_git("commit", "-m", "base commit")
+
+    run_git("checkout", "-b", "stale-task-branch")
+    (repo / "docs" / "evidence" / "completion" / "ODP-OC-R4-006").mkdir(parents=True)
+    (repo / "docs" / "evidence" / "completion" / "ODP-OC-R4-006" / "receipt.json").write_text(
+        '{"status": "ok"}\n'
+    )
+    run_git("add", ".")
+    run_git("commit", "-m", "add evidence on task branch")
+
+    run_git("checkout", "master")
+    (repo / "apps" / "api").mkdir(parents=True)
+    (repo / "apps" / "api" / "server.py").write_text("print('api')\n")
+    run_git("add", ".")
+    run_git("commit", "-m", "candidate product change")
+    candidate_sha = run_git("rev-parse", "HEAD")
+
+    run_git("merge", "stale-task-branch", "--no-ff", "-m", "merge evidence task branch")
+    merge_sha = run_git("rev-parse", "HEAD")
+
+    errors = module.check_candidate_ancestry(candidate_sha, merge_sha, repo)
+    assert errors == []
+
+
 def test_cli_expected_sha_match_passes() -> None:
     result = run_checker("--expected-sha", CANDIDATE_SHA)
 
