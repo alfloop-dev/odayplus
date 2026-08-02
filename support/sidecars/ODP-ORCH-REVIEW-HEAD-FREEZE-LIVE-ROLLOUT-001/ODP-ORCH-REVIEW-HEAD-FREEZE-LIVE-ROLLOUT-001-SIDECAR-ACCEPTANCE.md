@@ -92,7 +92,7 @@ Parent task `ODP-ORCH-REVIEW-HEAD-FREEZE-LIVE-ROLLOUT-001` must satisfy all fail
    ```
 3. **Live Probe Verification (Isolated Environment)**:
    ```bash
-   PANTHEON_STATUS_ROOT=/tmp/test-status-root AI_NAME=Antigravity5 python3 -m pytest .orchestrator/test_supervisor.py -k "B23 or B24 or N3"
+   PANTHEON_STATUS_ROOT=/tmp/test-status-root AI_NAME=Antigravity5 /home/lupin/oday-plus/.venv/bin/pytest .orchestrator/test_supervisor.py -q
    ```
 
 ---
