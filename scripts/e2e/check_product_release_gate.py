@@ -10,6 +10,7 @@ product environment smoke.
 
 from __future__ import annotations
 
+import argparse
 import subprocess
 import sys
 from pathlib import Path
@@ -122,7 +123,32 @@ REQUIRED_REPORT_TOKENS = (
 )
 
 
-def main() -> int:
+def main(argv: list[str] | None = None) -> int:
+    parser = argparse.ArgumentParser(
+        description="Validate product E2E surfaces for dev merge or production release."
+    )
+    mode = parser.add_mutually_exclusive_group()
+    mode.add_argument(
+        "--dev-merge",
+        action="store_true",
+        help=(
+            "validate CI/E2E structure while accepting an internally valid NO-GO "
+            "registry; the subsequent runner must emit a fresh exact-source receipt"
+        ),
+    )
+    mode.add_argument(
+        "--require-go",
+        action="store_true",
+        help="fail unless the Gate 0-6 registry records an authentic GO decision",
+    )
+    parser.add_argument(
+        "--expected-sha",
+        help=(
+            "fail unless release gate registry candidate_sha matches or is an "
+            "evidence-only ancestor of this exact SHA"
+        ),
+    )
+    args = parser.parse_args(argv)
     errors: list[str] = []
 
     for label, relative_path in REQUIRED_FILES.items():
@@ -200,8 +226,13 @@ def main() -> int:
         )
         errors.append(f"external proof follow-up workflow check failed: {output}")
 
+    registry_command = [sys.executable, "scripts/e2e/check_release_gate_registry.py"]
+    if args.require_go:
+        registry_command.append("--require-go")
+    if args.expected_sha:
+        registry_command.extend(["--expected-sha", args.expected_sha])
     gate_registry_check = subprocess.run(
-        [sys.executable, "scripts/e2e/check_release_gate_registry.py"],
+        registry_command,
         cwd=ROOT,
         check=False,
         capture_output=True,
@@ -245,10 +276,13 @@ def main() -> int:
             sys.path.insert(0, str(ROOT))
         from scripts.e2e.product_e2e_receipt import (
             validate_acceptance_scenarios_and_inventory,
+            validate_receipt_packet,
         )
         scenario_errors = validate_acceptance_scenarios_and_inventory(ROOT)
         if scenario_errors:
             errors.extend(scenario_errors)
+        if not args.dev_merge:
+            errors.extend(validate_receipt_packet(ROOT))
     except Exception as exc:
         errors.append(f"acceptance scenario/inventory validator error: {exc}")
 
@@ -488,12 +522,19 @@ def main() -> int:
                     pass
 
     if errors:
-        print("Product release gate failed:")
+        gate_name = "dev merge gate" if args.dev_merge else "production release gate"
+        print(f"Product {gate_name} failed:")
         for error in errors:
             print(f"- {error}")
         return 1
 
-    print("Product release gate static checks passed.")
+    if args.dev_merge:
+        print(
+            "Product dev merge gate static checks passed; release authorization "
+            "remains governed independently by the Gate 0-6 registry."
+        )
+    else:
+        print("Product production release gate static checks passed.")
     return 0
 
 
