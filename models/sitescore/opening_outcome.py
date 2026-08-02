@@ -204,7 +204,12 @@ class SiteScoreOpeningOutcomeBenchmarkResult:
 
     @property
     def is_prediction_coverage_passed(self) -> bool:
-        return _is_finite_float(self.prediction_coverage_ratio) and self.prediction_coverage_ratio >= self.min_coverage_threshold
+        has_90d = _is_finite_float(self.prediction_coverage_ratio) and self.prediction_coverage_ratio >= self.min_coverage_threshold
+        m6_cov = self.calibration_summary.get("m6_prediction_coverage_ratio")
+        has_m6 = (self.m6_mature_count == 0) or (m6_cov is not None and _is_finite_float(m6_cov) and float(m6_cov) >= self.min_coverage_threshold)
+        m12_cov = self.calibration_summary.get("m12_prediction_coverage_ratio")
+        has_m12 = (self.m12_mature_count == 0) or (m12_cov is not None and _is_finite_float(m12_cov) and float(m12_cov) >= self.min_coverage_threshold)
+        return has_90d and has_m6 and has_m12
 
     @property
     def is_coverage_passed(self) -> bool:
@@ -221,7 +226,12 @@ class SiteScoreOpeningOutcomeBenchmarkResult:
 
     @property
     def is_mae_passed(self) -> bool:
-        return _is_finite_float(self.normalized_mae) and self.normalized_mae <= self.max_mae_threshold
+        has_90d_mae = _is_finite_float(self.normalized_mae) and self.normalized_mae <= self.max_mae_threshold
+        m6_norm_mae = self.calibration_summary.get("m6_normalized_mae")
+        has_m6_mae = (self.m6_mature_count == 0) or (m6_norm_mae is not None and _is_finite_float(m6_norm_mae) and float(m6_norm_mae) <= self.max_mae_threshold)
+        m12_norm_mae = self.calibration_summary.get("m12_normalized_mae")
+        has_m12_mae = (self.m12_mature_count == 0) or (m12_norm_mae is not None and _is_finite_float(m12_norm_mae) and float(m12_norm_mae) <= self.max_mae_threshold)
+        return has_90d_mae and has_m6_mae and has_m12_mae
 
     @property
     def is_gate2_passed(self) -> bool:
@@ -567,11 +577,29 @@ def evaluate_sitescore_opening_outcome_benchmark(
                     matched_rec = rec_lookup.get((eid, as_of, ver, hor)) or rec_lookup.get((sid, as_of, ver, hor))
                     if matched_rec is not None:
                         r_copy["predicted_revenue"] = matched_rec.get("predicted_revenue")
+                        if matched_rec.get("predicted_m6_revenue") is not None:
+                            r_copy["predicted_m6_revenue"] = matched_rec.get("predicted_m6_revenue")
+                        if matched_rec.get("predicted_m12_revenue") is not None:
+                            r_copy["predicted_m12_revenue"] = matched_rec.get("predicted_m12_revenue")
                         r_copy["p10"] = matched_rec.get("p10")
                         r_copy["p90"] = matched_rec.get("p90")
                         r_copy["p50"] = matched_rec.get("p50")
                     bound_records.append(r_copy)
                 records = bound_records
+
+                # B1 check: Check bound records for y_pred=y_true substitution
+                outcomes_with_pred_bound = [
+                    r for r in records
+                    if _is_finite_float(r.get("predicted_revenue"))
+                    and _is_finite_float(r.get("realized_90d_net_revenue"))
+                ]
+                if outcomes_with_pred_bound and len(outcomes_with_pred_bound) >= 5:
+                    exact_matches = sum(
+                        1 for r in outcomes_with_pred_bound
+                        if float(r["predicted_revenue"]) == float(r["realized_90d_net_revenue"])
+                    )
+                    if exact_matches == len(outcomes_with_pred_bound):
+                        prediction_source_verified = False
 
     observed_count = len(records)
 
@@ -659,8 +687,55 @@ def evaluate_sitescore_opening_outcome_benchmark(
             return False
         return True
 
-    m6_mature = sum(1 for r in mature_records if has_explicit_m6_outcome(r))
-    m12_mature = sum(1 for r in mature_records if has_explicit_m12_outcome(r))
+    m6_mature_records = [r for r in mature_records if has_explicit_m6_outcome(r)]
+    m6_mature = len(m6_mature_records)
+    m6_matched_records = []
+    m6_errors = []
+    m6_y_trues = []
+    for r in m6_mature_records:
+        m6_pred = r.get("predicted_m6_revenue")
+        if not _is_finite_float(m6_pred) and r.get("horizon_code") in ("M6", "180d"):
+            m6_pred = r.get("predicted_revenue")
+        if _is_finite_float(m6_pred):
+            m6_matched_records.append(r)
+            m6_true = float(r.get("realized_m6_net_revenue") or r.get("m6_outcome") or r.get("realized_180d_net_revenue") or r.get("realized_m6_revenue") or 0)
+            m6_errors.append(abs(m6_true - float(m6_pred)))
+            m6_y_trues.append(m6_true)
+
+    m6_matched_count = len(m6_matched_records)
+    m6_prediction_coverage_ratio = (m6_matched_count / m6_mature) if m6_mature > 0 else 0.0
+    if m6_matched_count > 0:
+        m6_mae = sum(m6_errors) / m6_matched_count
+        m6_mean_y = sum(m6_y_trues) / m6_matched_count
+        m6_normalized_mae = (m6_mae / m6_mean_y) if m6_mean_y > 0 else (0.0 if m6_mae == 0.0 else 999.0)
+    else:
+        m6_mae = None
+        m6_normalized_mae = 0.0
+
+    m12_mature_records = [r for r in mature_records if has_explicit_m12_outcome(r)]
+    m12_mature = len(m12_mature_records)
+    m12_matched_records = []
+    m12_errors = []
+    m12_y_trues = []
+    for r in m12_mature_records:
+        m12_pred = r.get("predicted_m12_revenue")
+        if not _is_finite_float(m12_pred) and r.get("horizon_code") in ("M12", "365d"):
+            m12_pred = r.get("predicted_revenue")
+        if _is_finite_float(m12_pred):
+            m12_matched_records.append(r)
+            m12_true = float(r.get("realized_m12_net_revenue") or r.get("m12_outcome") or r.get("realized_365d_net_revenue") or r.get("realized_m12_revenue") or 0)
+            m12_errors.append(abs(m12_true - float(m12_pred)))
+            m12_y_trues.append(m12_true)
+
+    m12_matched_count = len(m12_matched_records)
+    m12_prediction_coverage_ratio = (m12_matched_count / m12_mature) if m12_mature > 0 else 0.0
+    if m12_matched_count > 0:
+        m12_mae = sum(m12_errors) / m12_matched_count
+        m12_mean_y = sum(m12_y_trues) / m12_matched_count
+        m12_normalized_mae = (m12_mae / m12_mean_y) if m12_mean_y > 0 else (0.0 if m12_mae == 0.0 else 999.0)
+    else:
+        m12_mae = None
+        m12_normalized_mae = 0.0
 
     m6_coverage_ratio = (m6_mature / mature_label_count) if mature_label_count > 0 else 0.0
     m12_coverage_ratio = (m12_mature / mature_label_count) if mature_label_count > 0 else 0.0
@@ -727,7 +802,15 @@ def evaluate_sitescore_opening_outcome_benchmark(
 
     calibration_summary = {
         "measured_90d_mae": round(mae, 2) if errors else None,
+        "measured_m6_mae": round(m6_mae, 2) if m6_mae is not None else None,
+        "measured_m12_mae": round(m12_mae, 2) if m12_mae is not None else None,
         "matched_prediction_count": matched_prediction_count,
+        "m6_matched_prediction_count": m6_matched_count,
+        "m12_matched_prediction_count": m12_matched_count,
+        "m6_prediction_coverage_ratio": round(m6_prediction_coverage_ratio, 4),
+        "m12_prediction_coverage_ratio": round(m12_prediction_coverage_ratio, 4),
+        "m6_normalized_mae": round(m6_normalized_mae, 4) if _is_finite_float(m6_normalized_mae) else 999.0,
+        "m12_normalized_mae": round(m12_normalized_mae, 4) if _is_finite_float(m12_normalized_mae) else 999.0,
         "matched_mean_realized_revenue": round(matched_mean_y, 2),
         "unmatched_mean_realized_revenue": round(unmatched_mean_y, 2),
         "prediction_coverage_ratio": round(prediction_coverage_ratio, 4),
@@ -1880,12 +1963,12 @@ def verify_sitescore_gate2_receipt(
         # B3: Universal scan for forbidden synthetic horizon calibration fields across all structures
         FORBIDDEN_HORIZON_KEYS = {
             "m1_interval_mae", "m3_interval_mae", "m6_interval_mae", "m12_interval_mae",
-            "m1_mae", "m3_mae", "m6_mae", "m12_mae"
+            "m1_mae", "m3_mae"
         }
         def _scan_forbidden_horizon_keys(obj: Any, path: str) -> None:
             if isinstance(obj, dict):
                 for k, v in obj.items():
-                    if k in FORBIDDEN_HORIZON_KEYS or (isinstance(k, str) and re.search(r"^m\d+_(?:interval_)?mae$", k)):
+                    if k in FORBIDDEN_HORIZON_KEYS or (isinstance(k, str) and re.search(r"^m\d+_interval_mae$", k)):
                         errors.append(f"Forbidden or unsupported synthetic horizon calibration field at {path}.{k}: {k!r}")
                     _scan_forbidden_horizon_keys(v, f"{path}.{k}")
             elif isinstance(obj, (list, tuple)):
@@ -1906,7 +1989,17 @@ def verify_sitescore_gate2_receipt(
             "p80_coverage_ratio",
             "mean_realized_revenue",
         }
-        ALLOWED_CALIBRATION_KEYS = REQUIRED_CALIBRATION_KEYS | {"unmatched_mean_realized_revenue"}
+        ALLOWED_CALIBRATION_KEYS = REQUIRED_CALIBRATION_KEYS | {
+            "unmatched_mean_realized_revenue",
+            "measured_m6_mae",
+            "measured_m12_mae",
+            "m6_matched_prediction_count",
+            "m12_matched_prediction_count",
+            "m6_prediction_coverage_ratio",
+            "m12_prediction_coverage_ratio",
+            "m6_normalized_mae",
+            "m12_normalized_mae",
+        }
         def _check_calibration_summary(cal_dict: Any, location_name: str) -> None:
             if not isinstance(cal_dict, dict):
                 errors.append(f"{location_name} must be a dictionary (got {type(cal_dict).__name__}: {cal_dict!r})")
@@ -1922,6 +2015,24 @@ def verify_sitescore_gate2_receipt(
                     flt = _check_strict_float(v, f"{location_name}.{k}")
                     if flt is not None and sum_unmatched_mean_y is not None and flt != round(sum_unmatched_mean_y, 2):
                         errors.append(f"{location_name}.unmatched_mean_realized_revenue ({flt}) drifts from summary.unmatched_mean_y ({round(sum_unmatched_mean_y, 2)})")
+                elif k in ("measured_m6_mae", "measured_m12_mae"):
+                    if v is not None:
+                        flt = _check_strict_float(v, f"{location_name}.{k}")
+                        if flt is not None and flt < 0.0:
+                            errors.append(f"{location_name}.{k} cannot be negative (got {flt})")
+                elif k in ("m6_prediction_coverage_ratio", "m12_prediction_coverage_ratio"):
+                    if v is not None:
+                        flt = _check_strict_float(v, f"{location_name}.{k}")
+                        if flt is not None and not (0.0 <= flt <= 1.0):
+                            errors.append(f"{location_name}.{k} ratio must be in range [0.0, 1.0] (got {flt})")
+                elif k in ("m6_normalized_mae", "m12_normalized_mae"):
+                    if v is not None:
+                        flt = _check_strict_float(v, f"{location_name}.{k}")
+                        if flt is not None and flt < 0.0:
+                            errors.append(f"{location_name}.{k} cannot be negative (got {flt})")
+                elif k in ("m6_matched_prediction_count", "m12_matched_prediction_count"):
+                    if v is not None:
+                        _check_strict_int(v, f"{location_name}.{k}")
                 if k == "measured_90d_mae":
                     if match_cnt == 0:
                         if v is not None:

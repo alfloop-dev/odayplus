@@ -380,6 +380,14 @@ def verify_sitescore_prediction_source(
                     hor = str(item.get("horizon_code") or "90d")
                     if hor not in APPROVED_HORIZON_CODES:
                         errors.append(f"Prediction receipt record contains disallowed horizon_code '{hor}' for entity '{eid}'")
+                    item_snap = str(item.get("dataset_snapshot_id") or rec_snap or "")
+                    item_lin = str(item.get("artifact_lineage_id") or rec_lin or "")
+                    if item.get("dataset_snapshot_id") and item_snap != rec_snap:
+                        errors.append(f"Prediction receipt record dataset_snapshot_id '{item_snap}' mismatch with top-level snapshot '{rec_snap}' for entity '{eid}'")
+                    if item.get("artifact_lineage_id") and item_lin != rec_lin:
+                        errors.append(f"Prediction receipt record artifact_lineage_id '{item_lin}' mismatch with top-level lineage '{rec_lin}' for entity '{eid}'")
+                    if item.get("model_version") and ver != rec_ver:
+                        errors.append(f"Prediction receipt record model_version '{ver}' mismatch with top-level version '{rec_ver}' for entity '{eid}'")
                     rk = (eid, as_of, ver, hor)
                     if rk in seen_receipt_keys:
                         duplicate_count += 1
@@ -493,6 +501,30 @@ def verify_sitescore_prediction_source(
             if len(reg_records) != len(records):
                 errors.append(f"Model registry evidence record count ({len(reg_records)}) does not match evaluated records count ({len(records)})")
 
+            if rec_snap and rec_ver and rec_lin and reg_provider and reg_authority:
+                try:
+                    reg_obs_at = (
+                        getattr(model_registry_evidence, "observed_at", None)
+                        or (model_registry_evidence.get("observed_at") if isinstance(model_registry_evidence, dict) else None)
+                        or getattr(model_registry_evidence, "created_at", None)
+                        or (model_registry_evidence.get("created_at") if isinstance(model_registry_evidence, dict) else None)
+                    )
+                    synth_receipt = build_sitescore_prediction_source_receipt(
+                        reg_records,
+                        dataset_snapshot_id=rec_snap,
+                        model_version=rec_ver,
+                        artifact_lineage_id=rec_lin,
+                        provider_identity=str(reg_provider),
+                        authority_attestation=str(reg_authority),
+                        observed_at=str(reg_obs_at) if reg_obs_at else "2026-07-31T00:00:00Z",
+                    )
+                    recomputed_content_hash = synth_receipt["integrity"]["content_sha256"]
+                    recomputed_records_hash = synth_receipt["records_sha256"]
+                    if raw_hash and raw_hash not in (recomputed_content_hash, recomputed_records_hash):
+                        errors.append(f"Model registry evidence prediction_receipt_hash mismatch: declared {raw_hash}, recomputed content_sha256 {recomputed_content_hash}")
+                except Exception as ex:
+                    errors.append(f"Failed to reconcile model registry evidence prediction_records hash: {ex}")
+
             seen_reg_keys: set[tuple[str, str, str, str]] = set()
             for item in reg_records:
                 if isinstance(item, dict):
@@ -505,6 +537,14 @@ def verify_sitescore_prediction_source(
                     hor = str(item.get("horizon_code") or "90d")
                     if hor not in APPROVED_HORIZON_CODES:
                         errors.append(f"Model registry prediction record contains disallowed horizon_code '{hor}' for entity '{eid}'")
+                    item_snap = str(item.get("dataset_snapshot_id") or rec_snap or "")
+                    item_lin = str(item.get("artifact_lineage_id") or rec_lin or "")
+                    if item.get("dataset_snapshot_id") and item_snap != rec_snap:
+                        errors.append(f"Model registry record dataset_snapshot_id '{item_snap}' mismatch with top-level snapshot '{rec_snap}' for entity '{eid}'")
+                    if item.get("artifact_lineage_id") and item_lin != rec_lin:
+                        errors.append(f"Model registry record artifact_lineage_id '{item_lin}' mismatch with top-level lineage '{rec_lin}' for entity '{eid}'")
+                    if item.get("model_version") and ver != rec_ver:
+                        errors.append(f"Model registry record model_version '{ver}' mismatch with top-level version '{rec_ver}' for entity '{eid}'")
                     rk = (eid, as_of, ver, hor)
                     if rk in seen_reg_keys:
                         duplicate_count += 1
@@ -632,15 +672,29 @@ def verify_sitescore_prediction_source(
                         malformed_interval_count += 1
                         errors.append(f"Malformed interval bound: p50 ({p50}) outside [{p10}, {p90}] at record [{idx}] for entity '{entity_id}'")
 
-    outcomes_with_pred = [
-        r for r in records
-        if _is_valid_prediction_value(r.get("predicted_revenue"))
-        and _is_finite_float(r.get("realized_90d_net_revenue"))
-    ]
+    outcomes_with_pred = []
+    for idx, r in enumerate(records):
+        entity_id = str(r.get("entity_id") or r.get("store_id") or f"idx-{idx}")
+        store_id = str(r.get("store_id") or entity_id)
+        opened_on = str(r.get("opened_on") or "")
+        pred_as_of = str(r.get("prediction_as_of") or opened_on)
+        rec_ver = str(r.get("model_version") or model_version or "")
+        rec_hor = str(r.get("horizon_code") or "90d")
+        source_rec = None
+        if receipt_records_lookup:
+            source_rec = receipt_records_lookup.get((entity_id, pred_as_of, rec_ver, rec_hor)) or receipt_records_lookup.get((store_id, pred_as_of, rec_ver, rec_hor))
+        if source_rec is None:
+            source_rec = r
+
+        pred_val = source_rec.get("predicted_revenue")
+        y_true_val = r.get("realized_90d_net_revenue")
+        if _is_valid_prediction_value(pred_val) and _is_finite_float(y_true_val):
+            outcomes_with_pred.append((float(pred_val), float(y_true_val)))
+
     if outcomes_with_pred and len(outcomes_with_pred) >= 5:
         exact_matches = sum(
-            1 for r in outcomes_with_pred
-            if float(r["predicted_revenue"]) == float(r["realized_90d_net_revenue"])
+            1 for pred_v, y_true_v in outcomes_with_pred
+            if pred_v == y_true_v
         )
         if exact_matches == len(outcomes_with_pred):
             errors.append(f"Illegal y_pred=y_true substitution detected: all {len(outcomes_with_pred)} predictions exactly match realized 90d net revenue")

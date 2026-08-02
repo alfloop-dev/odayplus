@@ -1,6 +1,7 @@
 """Unit and mutation tests for SiteScore prediction source resolver and model registry lineage verifier."""
 
-from __future__ import annotations
+import hashlib
+import json
 
 from models.sitescore.opening_outcome import (
     build_sitescore_gate2_receipt,
@@ -53,6 +54,8 @@ def _generate_valid_prediction_records(
             r["realized_90d_net_revenue"] = rev
             r["realized_m6_net_revenue"] = rev * 2.15 + (i % 7) * 500.0
             r["realized_m12_net_revenue"] = rev * 4.30 + (i % 11) * 1000.0
+            r["predicted_m6_revenue"] = pred * 2.15 + (i % 7) * 500.0
+            r["predicted_m12_revenue"] = pred * 4.30 + (i % 11) * 1000.0
         records.append(r)
     return records
 
@@ -774,11 +777,21 @@ def test_b2_re_audit_model_registry_evidence_predictions_bind_to_benchmark():
     for r in reg_records:
         r["predicted_revenue"] = 10_000_000.0
 
+    synth_receipt = build_sitescore_prediction_source_receipt(
+        reg_records,
+        dataset_snapshot_id="sitescore-snapshot-2026-07-31-v1",
+        model_version=CANONICAL_MODEL_VERSION,
+        artifact_lineage_id="sitescore-artifact-sha256-v1",
+        provider_identity="model_ready.sitescore_predictions",
+        authority_attestation="authenticated_prediction_registry",
+        observed_at="2026-07-31T00:00:00Z",
+    )
+
     reg_evidence = {
         "model_name": CANONICAL_PREDICTION_MODEL_NAME,
         "authority_attestation": "authenticated_prediction_registry",
         "provider_identity": "model_ready.sitescore_predictions",
-        "prediction_receipt_hash": "a" * 64,
+        "prediction_receipt_hash": synth_receipt["integrity"]["content_sha256"],
         "versions": [
             {
                 "version": CANONICAL_MODEL_VERSION,
@@ -870,3 +883,122 @@ def test_b5_re_audit_receipt_v1_fails_without_expected_version():
     res = verify_sitescore_prediction_source(records, prediction_receipt=receipt)
     assert res.is_valid is False
     assert any("candidate-site-view-v2" in e for e in res.errors)
+
+
+def test_batch_reaudit_b1_bound_receipt_records_ypred_ytrue_fails_closed():
+    # B1 batch re-audit: caller passes predictions=0.95*y_true, but receipt records have predictions=y_true.
+    # When evaluated, binding receipt predictions causes y_pred=y_true detection on bound records and fails closed.
+    caller_records = _generate_valid_prediction_records(220, include_outcomes=True)
+
+    receipt_records = _generate_valid_prediction_records(220, include_outcomes=True)
+    for r in receipt_records:
+        r["predicted_revenue"] = r["realized_90d_net_revenue"]
+
+    receipt = build_sitescore_prediction_source_receipt(
+        receipt_records,
+        dataset_snapshot_id="sitescore-snapshot-2026-07-31-v1",
+        model_version=CANONICAL_MODEL_VERSION,
+        artifact_lineage_id="sitescore-artifact-sha256-v1",
+    )
+    result = evaluate_sitescore_opening_outcome_benchmark(
+        caller_records,
+        prediction_receipt=receipt,
+        provenance="authenticated_governed_records",
+    )
+    assert result.is_gate2_passed is False
+    assert result.prediction_source_verified is False
+    assert result.status == "GOVERNED_DISABLED"
+
+
+def test_batch_reaudit_b2_missing_m6_m12_prediction_evidence_fails_closed():
+    # B2 batch re-audit: mature M6/M12 outcomes exist, but prediction records lack M6/M12 prediction evidence.
+    # Gate 2 must require aligned M6 and M12 prediction evidence and calibration.
+    records = _generate_valid_prediction_records(220, include_outcomes=True)
+    # Remove m6/m12 predictions from prediction records
+    for r in records:
+        r.pop("predicted_m6_revenue", None)
+        r.pop("predicted_m12_revenue", None)
+        r["horizon_code"] = "90d"
+
+    receipt = build_sitescore_prediction_source_receipt(
+        records,
+        dataset_snapshot_id="sitescore-snapshot-2026-07-31-v1",
+        model_version=CANONICAL_MODEL_VERSION,
+        artifact_lineage_id="sitescore-artifact-sha256-v1",
+    )
+    result = evaluate_sitescore_opening_outcome_benchmark(
+        records,
+        prediction_receipt=receipt,
+        provenance="authenticated_governed_records",
+    )
+    assert "measured_m6_mae" in result.calibration_summary
+    assert "measured_m12_mae" in result.calibration_summary
+    assert result.calibration_summary["m6_matched_prediction_count"] == 0
+    assert result.calibration_summary["m12_matched_prediction_count"] == 0
+    assert result.is_prediction_coverage_passed is False
+    assert result.is_gate2_passed is False
+    assert result.status == "GOVERNED_DISABLED"
+    assert result.reason_code == "PREDICTION_EVIDENCE_MISSING" or result.reason_code == "M6_M12_COVERAGE_INSUFFICIENT"
+
+
+def test_batch_reaudit_b3_per_record_lineage_drift_fails_closed():
+    # B3 batch re-audit: a single record's dataset_snapshot_id or artifact_lineage_id in receipt drifts from top-level lineage.
+    records = _generate_valid_prediction_records(220, include_outcomes=True)
+    receipt = build_sitescore_prediction_source_receipt(
+        records,
+        dataset_snapshot_id="sitescore-snapshot-2026-07-31-v1",
+        model_version=CANONICAL_MODEL_VERSION,
+        artifact_lineage_id="sitescore-artifact-sha256-v1",
+    )
+    # Mutate per-record snapshot ID inside receipt
+    receipt["records"][5]["dataset_snapshot_id"] = "mutated-snapshot-id-drift"
+    rec_payload = json.dumps(receipt["records"], sort_keys=True, separators=(",", ":"), allow_nan=False)
+    receipt["records_sha256"] = hashlib.sha256(rec_payload.encode("utf-8")).hexdigest()
+    receipt["integrity"]["records_sha256"] = receipt["records_sha256"]
+    receipt["integrity"]["content_sha256"] = compute_prediction_source_receipt_sha256(receipt)
+
+    res = verify_sitescore_prediction_source(records, prediction_receipt=receipt)
+    assert res.is_valid is False
+    assert res.reason_code == "INTEGRITY_HASH_MISMATCH" or res.reason_code == "MISSING_GOVERNED_LINEAGE"
+    assert any("mismatch" in err.lower() for err in res.errors)
+
+
+def test_batch_reaudit_b3_model_registry_evidence_hash_mismatch_fails_closed():
+    # B3 batch re-audit: model_registry_evidence has mutated prediction_records under an unmatching prediction_receipt_hash.
+    records = _generate_valid_prediction_records(220, include_outcomes=True)
+    reg_records = _generate_valid_prediction_records(220, include_outcomes=True)
+    for r in reg_records:
+        r["predicted_revenue"] = 9_999_999.0
+
+    # Build a receipt from ORIGINAL records to get a hash for original predictions
+    orig_receipt = build_sitescore_prediction_source_receipt(
+        records,
+        dataset_snapshot_id="sitescore-snapshot-2026-07-31-v1",
+        model_version=CANONICAL_MODEL_VERSION,
+        artifact_lineage_id="sitescore-artifact-sha256-v1",
+        provider_identity="model_ready.sitescore_predictions",
+        authority_attestation="authenticated_prediction_registry",
+        observed_at="2026-07-31T00:00:00Z",
+    )
+
+    # Pass mutated reg_records alongside original_hash -> hash mismatch!
+    reg_evidence = {
+        "model_name": CANONICAL_PREDICTION_MODEL_NAME,
+        "authority_attestation": "authenticated_prediction_registry",
+        "provider_identity": "model_ready.sitescore_predictions",
+        "prediction_receipt_hash": orig_receipt["integrity"]["content_sha256"],
+        "observed_at": "2026-07-31T00:00:00Z",
+        "versions": [
+            {
+                "version": CANONICAL_MODEL_VERSION,
+                "dataset_snapshot_id": "sitescore-snapshot-2026-07-31-v1",
+                "git_sha": "sitescore-artifact-sha256-v1",
+            }
+        ],
+        "prediction_records": reg_records,
+    }
+
+    res = verify_sitescore_prediction_source(records, model_registry_evidence=reg_evidence, provenance="authenticated_prediction_registry")
+    assert res.is_valid is False
+    assert res.reason_code == "INTEGRITY_HASH_MISMATCH" or res.reason_code == "MISSING_GOVERNED_LINEAGE"
+    assert any("mismatch" in err.lower() for err in res.errors)

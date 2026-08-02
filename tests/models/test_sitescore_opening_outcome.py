@@ -58,6 +58,9 @@ def _generate_candidate_records(
         if include_m6_m12_realized:
             r["realized_m6_net_revenue"] = (cur_rev * 2.15) + ((i % 7) * 500.0)
             r["realized_m12_net_revenue"] = (cur_rev * 4.30) + ((i % 11) * 1000.0)
+            if cur_pred is not None:
+                r["predicted_m6_revenue"] = (cur_pred * 2.15) + ((i % 7) * 500.0)
+                r["predicted_m12_revenue"] = (cur_pred * 4.30) + ((i % 11) * 1000.0)
         if include_bounds and cur_pred is not None:
             r["p10"] = cur_pred * 0.85
             r["p90"] = cur_pred * 1.15
