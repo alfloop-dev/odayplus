@@ -1,6 +1,6 @@
 # ODP-ORCH-DONE-DELIVERY-PROVENANCE-001 acceptance packet
 
-- Status: support packet ready for parent-owner review
+- Status: post-merge checkout-liveness blocker recorded; support packet refreshed for reviewer
 - Parent task: `ODP-ORCH-DONE-DELIVERY-PROVENANCE-001`
 - Sidecar task: `ODP-ORCH-DONE-DELIVERY-PROVENANCE-001-SIDECAR-ACCEPTANCE`
 - Prepared by: Antigravity
@@ -10,76 +10,57 @@
 
 ## Scope boundary
 
-This is a support-only acceptance checklist and dependency map. It does not change `scripts/ai_status.py`, supervisor behavior, task truth, canonical documents, registry/governance policy, runtime code, or release state. Codex4 decides whether and how to use this packet in the parent review. Nothing here is approval of the parent task or permission to run `done`.
+This is a support-only acceptance checklist and dependency map. It records the post-merge checkout-liveness blocker encountered during parent task finalization. It does not change `scripts/ai_status.py`, supervisor behavior, task truth, canonical documents, registry/governance policy, runtime code, or release state. Codex4 and Codex7 decide whether and how to remediate the parent task. Parent acceptance or closeout readiness is NOT claimed.
 
-## Frozen parent snapshot
+## Current parent snapshot & blocker record
 
-Observed at `2026-08-02T10:02:45Z`:
+Observed snapshot (updated `2026-08-02T11:33:00Z` following parent review rejection):
 
-- Parent live status: `review_approved`; owner Codex4; reviewer Codex7.
+- Parent live status: `blocked` / `in_progress` (re-opened/rejected by Codex7 after PR #567 merge attempt).
+- Parent owner: Codex4; Parent reviewer: Codex7.
 - Task branch: `task/ODP-ORCH-DONE-DELIVERY-PROVENANCE-001`.
-- Exact pushed parent HEAD: `b664a8ea9fed476c6224a339994fa66163c574fa`.
-- Code and regression-test HEAD: `7054cf54d480f978d8acae9a871241d26dacbfc2`.
-- Descendant `b664a8ea...` changes only the three Product E2E evidence files and binds those results to code HEAD `7054cf54...`.
+- Approved source HEAD: `b664a8ea9fed476c6224a339994fa66163c574fa`.
 - PR: `#567`, base `dev`, status: `MERGED` (merge commit `5f3be1e04b192f5be3a59076c405be335d9bfe3b`).
-- PR head reported by GitHub equals `b664a8ea...`.
-- Completed successful checks: All five checks (`orchestrator`, `performance-gate`, `product-e2e-gate`, `product`, `task-review-gate`) are terminal green.
-- Parent diff from the baseline `origin/dev` tip contains six paths: `scripts/ai_status.py`, `scripts/test_ai_status.py`, `.orchestrator/test_supervisor.py`, and three `docs/evidence/e2e/*` artifacts.
-- Parent commit trailer lineage (`6963ca40..b664a8ea`, 9 task commits): earlier 5 commits (`91a6eee3`..`bb1ea971`) carry `LLM-Agent: Codex7` / `Reviewer: Codex8` (reconciling PR #567 body's initial `Reviewer: Codex8`); latest 4 commits (`f187ba97`..`b664a8ea`) carry `LLM-Agent: Codex4` / `Reviewer: Codex7` (matching live parent task owner: Codex4, reviewer: Codex7).
-
-Any parent commit after `b664a8ea...`, changed PR head, changed base, or new task-owned diff invalidates this snapshot and requires a fresh packet check.
+- Live checkout movement: Following PR #567 merge, supervisor fast-forwarded the task checkout `b664a8ea` -> `5f3be1e0` -> `80ba2786` (`origin/dev` tip).
+- Live closeout liveness failure: `collect_done_delivery_metadata` in `scripts/ai_status.py` enforces `checkout HEAD == approved_head`. When owner Codex4 attempted `done`, the execution failed closed with `task-owned checkout HEAD (80ba2786) differs from reviewer-approved head (b664a8ea)`.
+- GitHub gate status: `task-review-gate` reported `FAILURE` on PR #567 closeout delivery evaluation due to this post-merge checkout HEAD fast-forward, invalidating any previous all-green claims.
+- Rejection reason: Reviewer Codex7 rejected PR #567 delivery because the closeout path is unusable after normal post-merge worktree checkout advance. Parent task `ODP-ORCH-DONE-DELIVERY-PROVENANCE-001` must implement a protocol that finalizes from immutable merged-PR provenance despite safe post-merge checkout/base advance (or prevents checkout advance until `done` completes).
 
 ## Dependency map
 
 | Authority / input | Consumer and recorded output | Required pass condition | Fail-closed coverage |
 | --- | --- | --- | --- |
-| Lifecycle freeze: task is `review_approved` with immutable `approved_head` | `command_done` and delivery metadata | approved head exists; task-owned checkout HEAD and merged PR `headRefOid` both equal it | missing or moved checkout/PR head is rejected; merge commit cannot substitute for the reviewed branch head |
+| Lifecycle freeze & Post-merge checkout liveness | `command_done` and delivery metadata | approved head exists; post-merge checkout advance must be reconciled with immutable merged PR provenance | `checkout HEAD != approved_head` post-merge fast-forward causes `done` to fail closed and `task-review-gate` to report `FAILURE` |
 | Configured artifact repository and local path | `task_delivery_checkout` and delivery repository fields | exactly one checkout owns `task/<TASK-ID>`; configured and Git remote repository slugs agree | zero/multiple task checkouts, unresolved HEAD, or wrong remote repository are rejected |
 | Task branch and commit metadata | delivery branch, commit, author, subject, and trailer fields | exact task branch; subject contains task ID; `LLM-Agent`, `Task-ID`, and `Reviewer` match live task metadata | mismatched branch, subject, or trailer metadata is rejected |
 | Task-owned checkout status | `git_clean`, dirty count, ignored seed count | no tracked or untracked task-owned changes | only the exact injected guide, status snapshot, and task brief paths may be ignored; every other entry remains dirty |
 | GitHub PR provenance | delivery `pull_request` object | PR is `MERGED`; head branch is exact task branch; head SHA is approved head; base is configured target; merge timestamp and merge commit exist | open/closed PR, network failure, moved head, wrong task branch/base, or missing merge facts are rejected |
 | Target branch topology | merge target SHA and merge-commit ancestry | PR merge commit is an ancestor of fetched target ref | missing target ref or merge commit outside target is rejected; squash merge is supported without requiring source-head ancestry |
-| GitHub check rollup | normalized `ci_checks` and `ci_status=success` | non-empty rollup; every CheckRun completed with `SUCCESS`, `NEUTRAL`, or `SKIPPED`; every StatusContext is `SUCCESS` | empty, malformed, pending, failed, or unknown check shapes are rejected |
+| GitHub check rollup | normalized `ci_checks` and `ci_status=success` | non-empty rollup; every CheckRun completed with `SUCCESS`, `NEUTRAL`, or `SKIPPED`; every StatusContext is `SUCCESS` | `task-review-gate` failure or unmerged/moved PR state is rejected |
 | Ephemeral remote task ref | no second closeout authority | merged PR provenance remains authoritative after GitHub deletes the task ref | regression proves `done` does not resolve or require a deleted remote task ref |
 | Live canonical writer | status transition, archive, handoff and delivery record | owner invokes the live-root status wrapper only after exact-head approval and merged delivery are proven | no manual JSON/log mutation; local or environment delivery-gate relaxation cannot disable mandatory `done` gates |
 
 ## Acceptance checklist
 
-### Packet evidence at exact parent HEAD
+### Packet evidence & Parent status audit
 
-- [x] GitHub PR head equals frozen HEAD `b664a8ea...`.
-- [x] Frozen parent diff is limited to the three implementation/test paths and three Product E2E evidence paths listed above.
-- [x] All 9 parent task commits on branch `task/ODP-ORCH-DONE-DELIVERY-PROVENANCE-001` (`6963ca40..b664a8ea`) contain `Task-ID: ODP-ORCH-DONE-DELIVERY-PROVENANCE-001` with an accurate ownership/reviewer trailer lineage: the earlier 5 commits (`91a6eee3`..`bb1ea971`) carry `LLM-Agent: Codex7` and `Reviewer: Codex8` (reconciling PR #567 body's initial `Reviewer: Codex8`), while the latest 4 commits (`f187ba97`..`b664a8ea`) carry `LLM-Agent: Codex4` and `Reviewer: Codex7` matching current live parent metadata (owner: Codex4, reviewer: Codex7).
-- [x] `git diff --check origin/dev...b664a8ea...` passes.
-- [x] Ten `DoneDeliveryProvenanceRegressionTests` pass on an archive of exact HEAD `b664a8ea...`.
-- [x] The focused supervisor freeze regression for unresolved/moved delivery checkout state passes on the same archive.
-- [x] Regression coverage includes squash topology, wrong PR state/head/task/base, missing network or merge proof, red/pending/unknown checks, canonical-writer versus task-checkout selection, exact seed exclusions, dirty checkout, wrong repository, deleted remote ref, and moved checkout/PR head.
-
-### Conditions satisfied / required for parent closeout
-
-- [x] PR #567 is merged into `dev` at merge commit `5f3be1e04b192f5be3a59076c405be335d9bfe3b`.
-- [x] All five CI checks (`orchestrator`, `performance-gate`, `product-e2e-gate`, `product`, `task-review-gate`) completed successfully (green).
-- [x] Codex7 reviews and approves exact HEAD `b664a8ea...`.
-- [x] Live task truth records `review_approved` and freezes `approved_head=b664a8ea9fed476c6224a339994fa66163c574fa`.
-- [ ] Live canonical status writer adopts PR #567 so `AI_NAME=Codex4 "$PANTHEON_STATUS_ROOT/scripts/ai-status.sh" done ...` can complete without subject mismatch on live root.
+- [x] GitHub PR #567 is merged into `dev` at merge commit `5f3be1e04b192f5be3a59076c405be335d9bfe3b`.
+- [x] Initial approved HEAD `b664a8ea...` passed 10/10 `DoneDeliveryProvenanceRegressionTests`, supervisor freeze tests, and `git diff --check`.
+- [ ] All five CI checks green: **FAILED/BLOCKED**. GitHub `task-review-gate` reported `FAILURE` following supervisor task checkout advance to `80ba2786...`.
+- [ ] Parent closeout conditions satisfied: **NOT SATISFIED**. `collect_done_delivery_metadata` fails closed when task checkout HEAD (`80ba2786`) differs from `approved_head` (`b664a8ea`).
+- [ ] Parent closeout readiness: **NOT READY**. Parent task `ODP-ORCH-DONE-DELIVERY-PROVENANCE-001` is in `blocked` / `in_progress` state awaiting protocol remediation for post-merge checkout liveness.
 
 ## Reviewer replay
 
-Run the focused code checks from an exact checkout/archive of `b664a8ea...`:
-
-```bash
-python3 -m unittest scripts.test_ai_status.DoneDeliveryProvenanceRegressionTests
-python3 .orchestrator/test_supervisor.py \
-  ReviewHeadFreezeTests.test_command_done_fails_closed_when_delivery_checkout_sha_unresolved_or_collector_raises
-git diff --check origin/dev...HEAD
-```
-
-Before accepting the parent, query PR #567 and verify the head and base have not moved, every check is terminal green, and the PR is merged. After fetching `origin/dev`, verify the PR-reported merge commit `5f3be1e0...` is an ancestor of that ref. Do not treat source-head ancestry as mandatory because GitHub squash merges do not preserve it.
+1. Inspect parent task `ODP-ORCH-DONE-DELIVERY-PROVENANCE-001` in `ai-status.json` and note Codex7's rejection of PR #567 closeout delivery.
+2. Observe that PR #567 was merged at `5f3be1e0...`, but supervisor advanced the task checkout HEAD to `80ba2786...`.
+3. Reproduce the liveness failure by attempting delivery metadata collection when checkout HEAD (`80ba2786`) differs from approved head (`b664a8ea`); verify it raises `task-owned checkout HEAD differs from reviewer-approved head`.
+4. Verify sidecar branch `task/ODP-ORCH-DONE-DELIVERY-PROVENANCE-001-SIDECAR-ACCEPTANCE` diff against `origin/dev` contains only this support artifact and passes `git diff --check`.
 
 ## Independent verification record
 
-The packet preparer materialized `b664a8ea...` with `git archive` into a fresh temporary directory and ran the focused commands above. Results: 10/10 delivery provenance tests passed, 1/1 supervisor freeze test passed, 118/118 `scripts.test_ai_status` passed, and parent diff check passed.
+The packet preparer verified that sidecar diff is strictly limited to `support/sidecars/ODP-ORCH-DONE-DELIVERY-PROVENANCE-001/ODP-ORCH-DONE-DELIVERY-PROVENANCE-001-SIDECAR-ACCEPTANCE.md`. `git diff --check` passes with exit code 0. Latest `origin/dev` (`80ba2786...`) is composed.
 
 ## Handoff disposition
 
-The support packet is updated and verified for Codex reviewer. The frozen evidence supports parent `ODP-ORCH-DONE-DELIVERY-PROVENANCE-001` (owner: Codex4, reviewer: Codex7), whose PR #567 is merged into `dev` at `5f3be1e0...` with all 5 green checks. Parent acceptance and closeout disposition remain Codex4's and Codex7's decision.
+The support packet is updated to record the post-merge checkout-liveness blocker for parent task `ODP-ORCH-DONE-DELIVERY-PROVENANCE-001`. Parent closeout readiness and acceptance are explicitly NOT claimed. Handed off to sidecar reviewer Codex for review.
