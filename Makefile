@@ -16,7 +16,8 @@ help:
 	@printf "  make security    Run dependency audit and security acceptance tests\n"
 	@printf "  make node-check  Run Node workspace checks when a lockfile exists\n"
 	@printf "  make release-gate-registry  Validate the Gate 0-6 release registry\n"
-	@printf "  make product-e2e-gate  Run product E2E release gate checks\n"
+	@printf "  make product-e2e-gate  Run ordinary dev-merge product E2E checks\n"
+	@printf "  make product-release-gate  Require final production GO authorization\n"
 	@printf "  make ci          Run the full CI baseline\n"
 	@printf "  make clean       Remove local test and lint caches\n"
 
@@ -76,10 +77,11 @@ release-gate-registry:
 	python3 scripts/e2e/check_release_gate_registry.py
 
 product-e2e-gate: release-gate-registry
-	python3 scripts/e2e/check_product_release_gate.py
-
-product-release-gate: product-e2e-gate
+	python3 scripts/e2e/check_product_release_gate.py --dev-merge
 	scripts/e2e/run_product_e2e.sh
+
+product-release-gate:
+	python3 scripts/e2e/check_product_release_gate.py --require-go $(if $(EXPECTED_SHA),--expected-sha $(EXPECTED_SHA))
 
 ci: bootstrap lint security test smoke node-check
 
