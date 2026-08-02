@@ -591,6 +591,7 @@ else:
             details = {
                 "database": db_details,
                 "external_providers": provider_report,
+                "data_mode": modes["data"]["mode"],
                 **modes,
             }
 
