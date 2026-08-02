@@ -4884,3 +4884,12 @@ def test_real_app_health_data_mode_matches_unchanged_deploy_validator(
         assert not (
             payload["status"] == "ok" and validator._declared_data_mode(payload) == "live"
         )
+
+
+def test_deploy_dev_workflow_documents_smoke_principal_least_privilege_composite_roles() -> None:
+    """ODP-OPERATOR-SMOKE-RBAC-LIVE-001: deploy-dev.yml documents composite least-privilege roles."""
+    text = (ROOT / ".github/workflows/deploy-dev.yml").read_text(encoding="utf-8")
+    assert "ODP-OPERATOR-SMOKE-RBAC-LIVE-001" in text
+    assert "operations_manager" in text
+    assert "model_owner" in text
+    assert "data_owner" in text
