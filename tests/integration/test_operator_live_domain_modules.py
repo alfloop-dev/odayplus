@@ -680,6 +680,44 @@ def test_durable_listings_seed_canonical_state_only_behind_test_reset_gate(
         bundle.engine.close()
 
 
+def test_local_durable_operator_writes_use_the_fixed_verified_tenant_partition(
+    tmp_path: Path,
+) -> None:
+    bundle = _durable_bundle(tmp_path / "operator-local-e2e-scope.sqlite3")
+    document_store = SqliteDocumentStore(bundle.engine)
+
+    def listing_for_tenant(tenant_id: str) -> DurableListingRepository:
+        return DurableListingRepository(TenantScopedDocumentStore(document_store, tenant_id))
+
+    app = FastAPI()
+    app.include_router(
+        create_operator_router(
+            audit_log=bundle.audit_log,
+            document_store=document_store,
+            listing_repository=bundle.listing_repository,
+            listing_repository_for_tenant=listing_for_tenant,
+            allow_test_reset=True,
+        ),
+        prefix="/api/v1",
+    )
+    try:
+        with TestClient(app) as client:
+            reset = client.post(
+                f"{BASE}/network-listings/reset",
+                headers=_headers("tenant-a"),
+            )
+
+        assert reset.status_code == 200
+        scoped_ids = {
+            listing.listing_id
+            for listing in listing_for_tenant("tenant-a").list_listings()
+        }
+        assert {"L-2024", "L-2025", "L-2029", "L-2030"} <= scoped_ids
+        assert bundle.listing_repository.list_listings() == []
+    finally:
+        bundle.engine.close()
+
+
 def test_live_router_rejects_every_network_reset(tmp_path: Path) -> None:
     app, bundle = _live_app(tmp_path / "operator-live-reset-denied.sqlite3")
     try:
