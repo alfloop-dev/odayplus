@@ -14,11 +14,29 @@ import subprocess
 from pathlib import Path
 from typing import Any
 
+try:
+    from scripts.ops.validate_plan_execution_pack import (
+        EXPECTED_HUMAN_OWNERS,
+        EXPECTED_HUMAN_REVIEWERS,
+        PACKET_JSON,
+        PACKET_MD,
+        _archive_snapshot_path,
+        build_expected_acceptance,
+        validate_archived_packet_state,
+    )
+except ModuleNotFoundError:  # Direct script execution puts scripts/ops on sys.path.
+    from validate_plan_execution_pack import (
+        EXPECTED_HUMAN_OWNERS,
+        EXPECTED_HUMAN_REVIEWERS,
+        PACKET_JSON,
+        PACKET_MD,
+        _archive_snapshot_path,
+        build_expected_acceptance,
+        validate_archived_packet_state,
+    )
+
 ROOT = Path(__file__).resolve().parents[2]
 DEFAULT_PACKET = ROOT / "docs/evidence/DEVELOPMENT_PLAN_OPEN_TASK_EXECUTION_PACK_2026-07-31.json"
-PACKET_MD = "docs/evidence/DEVELOPMENT_PLAN_OPEN_TASK_EXECUTION_PACK_2026-07-31.md"
-PACKET_JSON = "docs/evidence/DEVELOPMENT_PLAN_OPEN_TASK_EXECUTION_PACK_2026-07-31.json"
-
 DEFAULT_HUMAN_ARTIFACTS = {
     "ODP-PLAN-HEATZONE-LABEL-BACKFILL-001": ["docs/evidence/models/heatzone/human-data-gate/"],
     "ODP-PLAN-SITESCORE-OUTCOME-BACKFILL-001": ["docs/evidence/models/sitescore/human-data-gate/"],
@@ -42,17 +60,7 @@ def _unique_strings(values: list[Any]) -> list[str]:
 
 
 def build_acceptance(packet: dict[str, Any]) -> list[str]:
-    criteria = [
-        *(f"Deliverable: {item}" for item in packet["batch_deliverables"]),
-        *(f"Fail-closed: {item}" for item in packet["must_reject"]),
-        f"Evidence set: {'; '.join(packet['evidence'])}",
-        f"Handoff gate: {packet['handoff_gate']}",
-        (
-            "Batch rule: re-audit every criterion after reopen; do not hand off, "
-            "open/refresh PR, or deploy after fixing only the latest reviewer example."
-        ),
-    ]
-    return _unique_strings(criteria)
+    return build_expected_acceptance(packet)
 
 
 def build_task_metadata(task: dict[str, Any], packet: dict[str, Any]) -> dict[str, Any]:
@@ -68,6 +76,8 @@ def build_task_metadata(task: dict[str, Any], packet: dict[str, Any]) -> dict[st
         [
             *(task.get("artifacts") or []),
             *DEFAULT_HUMAN_ARTIFACTS.get(task_id, []),
+            PACKET_MD,
+            PACKET_JSON,
         ]
     )
     verification = _unique_strings(
@@ -82,10 +92,15 @@ def build_task_metadata(task: dict[str, Any], packet: dict[str, Any]) -> dict[st
         "artifacts": artifacts,
         "verification": verification,
         "task_class": packet["class"],
-        "gap_ids": _unique_strings([*(task.get("gap_ids") or []), *packet["gap_ids"]]),
+        "gap_ids": list(packet["gap_ids"]),
         "execution_packet_id": "ODP-PLAN-EXECUTION-CONTROL-PACK-001",
         "execution_packet_path": PACKET_JSON,
         "execution_mode": "complete-batch-before-handoff-pr-or-deploy",
+        "execution_packet_deliverables": list(packet["batch_deliverables"]),
+        "execution_packet_must_reject": list(packet["must_reject"]),
+        "execution_packet_evidence": list(packet["evidence"]),
+        "execution_packet_handoff_gate": packet["handoff_gate"],
+        "deployment_contract": packet["deployment_contract"],
     }
 
 
@@ -106,9 +121,44 @@ def sync(packet_path: Path, status_root: Path, actor: str, dry_run: bool) -> Non
         task_id = packet["task_id"]
         task = tasks.get(task_id)
         if task is None:
-            raise ValueError(f"live task missing: {task_id}")
+            archived_task, archive_errors = validate_archived_packet_state(
+                packet=packet,
+                active_tasks=tasks,
+                archive_root=status_root / "ai-task-archive",
+            )
+            if archive_errors:
+                raise ValueError(
+                    f"official archive invalid for {task_id}: {'; '.join(archive_errors)}"
+                )
+            if archived_task is None:
+                raise ValueError(f"live task missing: {task_id}")
+            if dry_run:
+                print(
+                    json.dumps(
+                        {
+                            "task_id": task_id,
+                            "state": "official_archive_validated",
+                            "action": "skip",
+                        },
+                        ensure_ascii=False,
+                    )
+                )
+            continue
+        archive_path = _archive_snapshot_path(status_root / "ai-task-archive", task_id)
+        if archive_path.is_file():
+            raise ValueError(f"task exists in both active and official archive state: {task_id}")
         owner = task.get("owner")
         reviewer = task.get("reviewer")
+        if task_id in EXPECTED_HUMAN_OWNERS:
+            if owner != "Human/Ops":
+                if reviewer == "Human/Ops":
+                    reviewer = str(owner)
+                owner = "Human/Ops"
+        if task_id in EXPECTED_HUMAN_REVIEWERS:
+            if reviewer != "Human/Ops":
+                if owner == "Human/Ops":
+                    owner = str(reviewer)
+                reviewer = "Human/Ops"
         if not owner or not reviewer or owner == reviewer:
             raise ValueError(f"invalid owner/reviewer for {task_id}: {owner}/{reviewer}")
 
