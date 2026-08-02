@@ -5,8 +5,11 @@
 - **Gap ID**: `GAP-P1-008` (Observability production wiring)
 - **Helper Kind**: `acceptance_packet`
 - **Task Class**: `sidecar`
-- **Owner**: `Antigravity5`
-- **Reviewer / Parent Owner**: `Antigravity7`
+- **Owner**: `Antigravity`
+- **Reviewer**: `Antigravity5`
+- **Parent Task Owner**: `Antigravity`
+- **Parent Task Reviewer**: `Antigravity7`
+- **Parent Task Approved HEAD**: `1adf7ed18420b528374ca8a341724824e8965595`
 - **Target Release Claim**: `no-go-until-final-gate-audit`
 - **Program ID**: `ODP-PLAN-GAP-CLOSEOUT-2026-07-30`
 - **Execution Packet ID**: `ODP-PLAN-EXECUTION-CONTROL-PACK-001`
@@ -104,8 +107,10 @@ The parent task `ODP-PLAN-OBSERVABILITY-LIVE-001` must strictly satisfy all fail
 
 ## 6. Handoff & Closeout Instructions for Parent Owner
 
-- **Assigned Reviewer / Parent Owner**: `Antigravity7`
-- **Sidecar Owner Verification**: `Antigravity5` (Verified 39 pytest observability/telemetry/alert/dlq tests pass; git diff --check clean; exact HEAD anchor updated)
+- **Assigned Reviewer**: `Antigravity5`
+- **Parent Task Owner**: `Antigravity`
+- **Parent Task Reviewer**: `Antigravity7`
+- **Sidecar Owner Verification**: `Antigravity` (Verified pytest observability/telemetry/alert/dlq tests pass; ruff clean; git diff --check clean)
 - **Handoff Instructions**:
   1. Review this support packet for alignment with `ODP-PLAN-OBSERVABILITY-LIVE-001` execution plan.
   2. Ensure all 6 signal families (API, Worker, Event/DLQ, Model, Solver, Business KPI) are implemented according to Section 2.
