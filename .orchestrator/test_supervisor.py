@@ -1614,6 +1614,81 @@ class ProcessQueueDispatchGuardTests(unittest.TestCase):
         ]
         self.assertEqual(failure_events[0]["task_id"], "BAD-001")
 
+    def test_process_queue_isolates_request_construction_exception(self) -> None:
+        events = [
+            {
+                "event_id": event_id,
+                "task_id": task_id,
+                "target_agent": "codex",
+                "target_display_name": "Codex",
+                "provider": "codex",
+                "reason": "owned_in_progress_dispatch",
+                "message": "wake",
+            }
+            for event_id, task_id in (("evt-bad", "BAD-REQUEST"), ("evt-good", "GOOD-REQUEST"))
+        ]
+        tasks = [
+            {
+                "id": event["task_id"],
+                "status": "in_progress",
+                "owner": "Codex",
+                "reviewer": "Reviewer",
+            }
+            for event in events
+        ]
+
+        def build_request(_config, event, **_kwargs):
+            if event["task_id"] == "BAD-REQUEST":
+                raise ValueError("invalid task source metadata")
+            return supervisor.DeliveryRequest(
+                agent_id="codex",
+                provider="codex",
+                delivery_mode="codex",
+                message="wake",
+                task_id="GOOD-REQUEST",
+                reason="owned_in_progress_dispatch",
+            )
+
+        state = {"queue": {"events": {}}, "workers": {}}
+        with (
+            mock.patch.object(supervisor, "load_event_queue", return_value=events),
+            mock.patch.object(supervisor, "load_status", return_value={"tasks": tasks}),
+            mock.patch.object(supervisor, "build_request", side_effect=build_request),
+            mock.patch.object(supervisor, "select_dispatch_agent_id", return_value="codex"),
+            mock.patch.object(supervisor, "prepare_worker_workspace", return_value=(True, None)),
+            mock.patch.object(supervisor, "check_worker_tree_clean", return_value=(True, None)),
+            mock.patch.object(
+                supervisor,
+                "start_worker_for_request",
+                return_value=(True, "run-good", {"manual_confirmation_required": False, "auto_delivered": True}),
+            ) as start_worker,
+            mock.patch.object(supervisor, "sync_dispatched_task_status", return_value=True),
+            mock.patch.object(supervisor, "write_activity_log"),
+        ):
+            changed = supervisor.process_queue(self.config, state, self.provider_report)
+
+        self.assertTrue(changed)
+        self.assertEqual(state["queue"]["events"]["evt-bad"]["status"], "failed")
+        self.assertIn("invalid task source metadata", state["queue"]["events"]["evt-bad"]["error"])
+        self.assertEqual(state["queue"]["events"]["evt-good"]["status"], "started")
+        start_worker.assert_called_once()
+
+    def test_queue_dispatch_event_safely_contains_source_metadata_error(self) -> None:
+        event = {"task_id": "BAD-EVENT", "target_agent": "Antigravity"}
+        with (
+            mock.patch.object(
+                supervisor,
+                "queue_delivery_event",
+                side_effect=ValueError("missing source document"),
+            ),
+            mock.patch.object(supervisor, "write_activity_log") as write_activity_log,
+        ):
+            queued = supervisor.queue_dispatch_event_safely(self.config, event)
+
+        self.assertFalse(queued)
+        self.assertEqual(write_activity_log.call_args.args[1]["type"], "dispatch_event_rejected")
+        self.assertIn("missing source document", write_activity_log.call_args.args[1]["message"])
+
     def test_build_request_uses_provider_model_preference_for_qwen_agent(self) -> None:
         config = {
             "schema": {

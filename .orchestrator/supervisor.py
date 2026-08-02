@@ -2789,7 +2789,25 @@ def process_queue(
             )
             changed = True
             continue
-        request = build_request(config, event)
+        try:
+            request = build_request(config, event)
+        except Exception as exc:
+            record["status"] = "failed"
+            record["processed_at"] = utc_now()
+            record["error"] = f"Worker request construction failed closed: {type(exc).__name__}: {exc}"
+            write_activity_log(
+                config,
+                {
+                    "type": "wake_failed",
+                    "task_id": event.get("task_id"),
+                    "target_agent": event.get("target_display_name") or event.get("target_agent"),
+                    "provider": event.get("provider"),
+                    "message": record["error"],
+                    "queue_event_id": event_id,
+                },
+            )
+            changed = True
+            continue
         request_provider = getattr(request, "provider", event.get("provider"))
         pause_entry = current_provider_dispatch_pause(state, request_provider, config)
         if pause_entry:
@@ -10484,6 +10502,27 @@ def build_dispatch_event(task: dict[str, Any], target_agent: str, reason: str, t
     }
 
 
+def queue_dispatch_event_safely(config: dict[str, Any], event: dict[str, Any]) -> bool:
+    try:
+        return bool(queue_delivery_event(config, event))
+    except Exception as exc:
+        message = f"Dispatch event failed closed: {type(exc).__name__}: {exc}"
+        write_activity_log(
+            config,
+            {
+                "type": "dispatch_event_rejected",
+                "task_id": event.get("task_id"),
+                "target_agent": event.get("target_agent"),
+                "message": message,
+            },
+        )
+        console_log(
+            f"dispatch event rejected: task={event.get('task_id')} target={event.get('target_agent')} error={exc}",
+            quiet=SUPERVISOR_LOG_QUIET,
+        )
+        return False
+
+
 def dispatch_discussion_planning(
     config: dict[str, Any],
     state: dict[str, Any],
@@ -10923,7 +10962,7 @@ def dispatch_ready_tasks(
         queued_for_agent = 0
         for _, _, task, reason in candidates[:per_occurrence_limit]:
             event = build_dispatch_event(task, target_agent, reason, task_map)
-            if queue_delivery_event(config, event):
+            if queue_dispatch_event_safely(config, event):
                 seen[event["key"]] = utc_now()
                 pending_event_keys.add(event["key"])
                 pending_agents.add(agent_id)
@@ -11002,7 +11041,7 @@ def dispatch_ready_tasks(
                 task["last_update"] = utc_now()
 
             event = build_dispatch_event(task, target_agent, helper_dispatch_reason, task_map)
-            if event["key"] not in pending_event_keys and queue_delivery_event(config, event):
+            if event["key"] not in pending_event_keys and queue_dispatch_event_safely(config, event):
                 seen[event["key"]] = utc_now()
                 pending_event_keys.add(event["key"])
                 pending_agents.add(agent_id)
@@ -11339,7 +11378,7 @@ def dispatch_underutilization_sidecars(
         event = build_dispatch_event(sidecar_task, selected_owner, "owned_ready_dispatch", task_map)
         if event["key"] in pending_event_keys:
             continue
-        if queue_delivery_event(config, event):
+        if queue_dispatch_event_safely(config, event):
             seen[event["key"]] = utc_now()
             pending_event_keys.add(event["key"])
 
