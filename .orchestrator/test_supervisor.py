@@ -13117,6 +13117,83 @@ class QuarantineAndPreserveDirtyWorktreeTests(unittest.TestCase):
             # Original dirty worktree bytes must remain 100% byte-identical and untouched
             self.assertEqual((wt_path / "ai-activity-log.jsonl").read_text(encoding="utf-8"), owner_progress_text)
 
+    def test_materialization_refuses_to_overwrite_tracked_files_with_differing_source_bytes(self) -> None:
+        """B4 regression test: materialization refuses to overwrite any Git-tracked destination even when live source differs."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmp_p = Path(tmpdir)
+            repo_root = tmp_p / "repo"
+            subprocess.run(["git", "init", str(repo_root)], capture_output=True, check=True)
+            subprocess.run(["git", "config", "user.name", "TestUser"], cwd=repo_root, check=True)
+            subprocess.run(["git", "config", "user.email", "test@example.com"], cwd=repo_root, check=True)
+
+            # Create tracked files on dev: ai-status.json, ai-activity-log.jsonl, and a task brief
+            (repo_root / "ai-status.json").write_text('{"project":"tracked_baseline"}\n', encoding="utf-8")
+            (repo_root / "ai-activity-log.jsonl").write_text('{"event":"tracked_log_baseline"}\n', encoding="utf-8")
+            tb_dir = repo_root / ".orchestrator" / "task-briefs"
+            tb_dir.mkdir(parents=True, exist_ok=True)
+            tracked_brief = tb_dir / "b4_task_001.md"
+            tracked_brief.write_text("# Tracked Brief Baseline\n", encoding="utf-8")
+            (repo_root / "README.md").write_text("base readme\n", encoding="utf-8")
+
+            subprocess.run(["git", "add", "."], cwd=repo_root, check=True)
+            subprocess.run(["git", "commit", "-m", "initial tracked baseline"], cwd=repo_root, check=True)
+            subprocess.run(["git", "checkout", "-b", "dev"], cwd=repo_root, check=True)
+
+            task_id = "B4-TASK-001"
+            branch_name = f"task/{task_id}"
+            subprocess.run(["git", "checkout", "-b", branch_name], cwd=repo_root, check=True)
+
+            # Now modify live status_root files (repo_root) to differ from the tracked baseline
+            (repo_root / "ai-activity-log.jsonl").write_text('{"event":"live_canonical_log_differs"}\n', encoding="utf-8")
+            tracked_brief.write_text("# Live Brief Modified Bytes\n", encoding="utf-8")
+            (repo_root / "AI_COLLABORATION_GUIDE.md").write_text("# Live Collaboration Guide\n", encoding="utf-8")
+
+            # Checkout dev in repo_root so task branch can be checked out in worktree
+            subprocess.run(["git", "checkout", "dev"], cwd=repo_root, check=True)
+
+            wt_path = tmp_p / "wt_b4"
+            subprocess.run(["git", "worktree", "add", str(wt_path), branch_name], capture_output=True, check=True, cwd=repo_root)
+
+            config = {
+                "paths": {
+                    "status_file": str(repo_root / "ai-status.json"),
+                    "activity_log": str(repo_root / "ai-activity-log.jsonl"),
+                },
+                "branch_workflow": {"task_branch_prefix": "task/", "dev_branch": "dev"},
+            }
+            request = supervisor.DeliveryRequest(
+                agent_id="antigravity",
+                provider="antigravity",
+                delivery_mode="antigravity",
+                message="wake",
+                task_id=task_id,
+                reason="owned_in_progress_dispatch",
+                context_files=[
+                    "AI_COLLABORATION_GUIDE.md",
+                    "ai-activity-log.jsonl",
+                    ".orchestrator/task-briefs/b4_task_001.md",
+                    "ai-status.json",
+                ],
+            )
+
+            materialized = supervisor.materialize_worker_context_files(config, request, wt_path)
+
+            # 1. Untracked file AI_COLLABORATION_GUIDE.md was materialized
+            self.assertIn("AI_COLLABORATION_GUIDE.md", materialized)
+
+            # 2. Tracked files MUST NOT be in materialized list, and MUST NOT be overwritten
+            self.assertNotIn("ai-activity-log.jsonl", materialized)
+            self.assertNotIn(".orchestrator/task-briefs/b4_task_001.md", materialized)
+            self.assertNotIn("ai-status.json", materialized)
+
+            self.assertEqual((wt_path / "ai-activity-log.jsonl").read_text(encoding="utf-8"), '{"event":"tracked_log_baseline"}\n')
+            self.assertEqual((wt_path / ".orchestrator" / "task-briefs" / "b4_task_001.md").read_text(encoding="utf-8"), "# Tracked Brief Baseline\n")
+            self.assertEqual((wt_path / "ai-status.json").read_text(encoding="utf-8"), '{"project":"tracked_baseline"}\n')
+
+            # 3. git status MUST remain 100% clean after materialization
+            st_proc = subprocess.run(["git", "status", "--porcelain=v1"], cwd=wt_path, capture_output=True, text=True, check=True)
+            self.assertEqual("", st_proc.stdout.strip())
+
 
 if __name__ == "__main__":
     unittest.main()

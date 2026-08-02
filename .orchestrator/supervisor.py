@@ -1715,6 +1715,11 @@ def materialize_worker_context_files(
         if not rel_value or Path(rel_value).is_absolute():
             continue
         destination = workspace_path / rel_value
+        is_tracked_rc, _ = _git_output(workspace_path, "ls-files", "--error-unmatch", rel_value)
+        if is_tracked_rc == 0:
+            # Never clobber any destination tracked by Git; doing so when live source bytes
+            # differ from the tracked baseline mutates tracked content and makes the fresh worktree dirty.
+            continue
         if ".orchestrator/task-briefs/" in rel_value:
             destination.parent.mkdir(parents=True, exist_ok=True)
             copied = False
