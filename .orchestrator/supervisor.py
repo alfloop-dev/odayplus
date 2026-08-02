@@ -6,6 +6,7 @@ import atexit
 import copy
 import fcntl
 import fnmatch
+import hashlib
 import json
 import math
 import os
@@ -16,6 +17,7 @@ import signal
 import subprocess
 import sys
 import time
+import uuid
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
@@ -1449,7 +1451,7 @@ def _refresh_reused_worker_worktree(
         return False, f"fetch_failed: {details}"
 
     status_proc = subprocess.run(
-        ["git", "status", "--porcelain", "--untracked-files=no"],
+        ["git", "status", "--porcelain", "--untracked-files=all"],
         cwd=worktree_path,
         capture_output=True,
         text=True,
@@ -1458,7 +1460,11 @@ def _refresh_reused_worker_worktree(
     if status_proc.returncode != 0:
         return False, "status_failed"
     if status_proc.stdout.strip():
-        return False, "skipped_dirty_worktree"
+        classification, scratch_paths = _classify_worktree_dirt(status_proc.stdout)
+        if classification == "scratch_only":
+            _restore_reusable_scratch(worktree_path, scratch_paths)
+        else:
+            return False, "skipped_dirty_worktree"
 
     local_head = _git_commit_oid(worktree_path, "HEAD")
     base_head = _git_commit_oid(worktree_path, f"origin/{base}")
@@ -1749,12 +1755,13 @@ def prepare_worker_workspace(
             )
             if not refresh_ok:
                 if refresh_status == "skipped_dirty_worktree":
-                    recovered = _backup_and_reset_dirty_worktree(
+                    recovered = _quarantine_and_preserve_dirty_worktree(
                         config,
                         state,
                         worktree_path,
                         workspace_task_id,
-                        run_id=request.agent_id,
+                        expected_branch=branch,
+                        run_id=None,
                         trigger="lease_recovery",
                     )
                     if recovered:
@@ -8833,25 +8840,20 @@ def outstanding_delivery_indexes(config: dict[str, Any], state: dict[str, Any]) 
     return agents, task_agents, event_keys
 
 
-def _backup_and_reset_dirty_worktree(
+def _quarantine_and_preserve_dirty_worktree(
     config: dict[str, Any],
     state: dict[str, Any],
     worktree_path: Path | str | None,
     task_id: str | None,
     *,
+    expected_branch: str | None = None,
     run_id: str | None = None,
     trigger: str = "",
 ) -> bool:
-    """Back up tracked dirt then hard-reset an orphaned dirty worktree.
+    """Quarantine and preserve dirty worktree state as a durable commit without destructive reset/clean/stash.
 
-    Returns True iff it found *real* (tracked/staged) dirt and reset the worktree to a
-    clean, leaseable state. A worker killed/timed out before committing — or one that
-    advanced its task but never cleaned up — leaves dirt that makes `reuse_existing`
-    fail the lease guard forever (`skipped_dirty_worktree`); once enough worktrees are
-    dirty the whole fleet deadlocks (the supervisor keeps emitting dispatch events that
-    never spawn a worker). Uncommitted work is never silently destroyed: the tracked
-    diff is dumped to `.orchestrator/worktree-dirt-backups/` first. Refuses to touch a
-    worktree a live worker for the same task is still using.
+    Returns True iff it inventoried tracked/staged/untracked dirt, wrote verified immutable
+    backup to `.orchestrator/worktree-dirt-backups/`, and committed the changes to HEAD.
     """
     if worktree_path is None:
         return False
@@ -8863,16 +8865,62 @@ def _backup_and_reset_dirty_worktree(
     if worktree_path == repo_root or not (worktree_path / ".git").exists():
         return False
 
-    # Never reset a worktree another live worker for this task is still using.
+    wt_git_rc, wt_git_dir = _git_output(worktree_path, "rev-parse", "--git-dir")
+    repo_git_rc, repo_git_dir = _git_output(repo_root, "rev-parse", "--git-dir")
+    top_rc, top_level = _git_output(worktree_path, "rev-parse", "--show-toplevel")
+    worktree_common_rc, worktree_common = _git_output(worktree_path, "rev-parse", "--git-common-dir")
+    repo_common_rc, repo_common = _git_output(repo_root, "rev-parse", "--git-common-dir")
+    try:
+        resolved_top = Path(top_level).resolve()
+        wt_gd = Path(wt_git_dir) if Path(wt_git_dir).is_absolute() else (worktree_path / wt_git_dir)
+        repo_gd = Path(repo_git_dir) if Path(repo_git_dir).is_absolute() else (repo_root / repo_git_dir)
+
+        wt_cd = Path(worktree_common) if Path(worktree_common).is_absolute() else (wt_gd / worktree_common)
+        repo_cd = Path(repo_common) if Path(repo_common).is_absolute() else (repo_root / repo_common)
+
+        resolved_worktree_common = wt_cd.resolve()
+        resolved_repo_common = repo_cd.resolve()
+    except (OSError, RuntimeError, ValueError):
+        return False
+    if (
+        top_rc != 0
+        or worktree_common_rc != 0
+        or repo_common_rc != 0
+        or wt_git_rc != 0
+        or repo_git_rc != 0
+        or resolved_top != worktree_path
+        or resolved_worktree_common != resolved_repo_common
+    ):
+        return False
+
+    branch_rc, current_branch = _git_output(worktree_path, "symbolic-ref", "--quiet", "--short", "HEAD")
+    if branch_rc != 0 or not current_branch:
+        return False
+    if expected_branch and current_branch != expected_branch:
+        return False
+    if _git_operation_in_progress(worktree_path):
+        return False
+
+    local_head = _git_commit_oid(worktree_path, "HEAD")
+    if not local_head:
+        return False
+
     active_statuses = {str(value) for value in ready_dispatch_settings(config).get("active_worker_statuses", [])}
     for other in state.get("workers", {}).values():
-        if run_id and other.get("run_id") == run_id:
+        if not isinstance(other, dict):
             continue
-        if other.get("task_id") == task_id and other.get("status") in active_statuses:
-            return False
+        other_status = str(other.get("status") or "")
+        if other_status in active_statuses:
+            other_run_id = str(other.get("run_id") or "")
+            if run_id and other_run_id == run_id:
+                continue
+            other_task_id = str(other.get("task_id") or "")
+            other_path = str(other.get("workspace_path") or "")
+            if (task_id and other_task_id == task_id) or (other_path and Path(other_path).resolve() == worktree_path):
+                return False
 
     status_proc = subprocess.run(
-        ["git", "status", "--porcelain", "--untracked-files=no"],
+        ["git", "status", "--porcelain=v1", "--untracked-files=all"],
         cwd=worktree_path,
         capture_output=True,
         text=True,
@@ -8880,46 +8928,199 @@ def _backup_and_reset_dirty_worktree(
     )
     if status_proc.returncode != 0 or not status_proc.stdout.strip():
         return False
-    classification, _paths = _classify_worktree_dirt(status_proc.stdout)
-    if classification != "real":
-        return False  # clean or scratch-only -> the reuse guard already handles it
 
-    backup_patch: Path | None = None
+    inventory_files: list[dict[str, Any]] = []
+    for line in status_proc.stdout.splitlines():
+        if not line.strip():
+            continue
+        code = line[:2]
+        body = line[3:] if len(line) > 3 else line.strip()
+        rel_path = body.split(" -> ")[-1].strip().strip('"')
+        if not rel_path:
+            continue
+        full_p = worktree_path / rel_path
+        sha256_val: str | None = None
+        if full_p.exists() and full_p.is_file():
+            try:
+                h = hashlib.sha256()
+                with open(full_p, "rb") as f:
+                    while chunk := f.read(65536):
+                        h.update(chunk)
+                sha256_val = h.hexdigest()
+            except OSError:
+                sha256_val = None
+        inventory_files.append({
+            "path": rel_path,
+            "status_code": code,
+            "sha256": sha256_val,
+        })
+
     try:
         backup_dir = repo_root / ".orchestrator" / "worktree-dirt-backups"
         backup_dir.mkdir(parents=True, exist_ok=True)
-        stamp = re.sub(r"[^0-9A-Za-z_-]+", "-", str(run_id or trigger or "orphan")) or "orphan"
-        backup_patch = backup_dir / f"{_task_id_slug(task_id)}-{stamp}.patch"
-        diff_proc = subprocess.run(
-            ["git", "diff", "HEAD", "--binary"],
-            cwd=worktree_path,
-            capture_output=True,
-            text=True,
-            check=False,
-        )
-        backup_patch.write_text(diff_proc.stdout or "", encoding="utf-8")
-    except OSError:
-        backup_patch = None
+        now_str = datetime.now(UTC).strftime("%Y%m%dT%H%M%SZ")
+        stamp = f"{now_str}_{uuid.uuid4().hex[:8]}"
+        task_backup_dir = backup_dir / f"{_task_id_slug(task_id)}-{stamp}"
+        task_backup_dir.mkdir(parents=True, exist_ok=False)
 
-    subprocess.run(["git", "reset", "--hard", "HEAD"], cwd=worktree_path, capture_output=True, text=True, check=False)
-    subprocess.run(["git", "clean", "-fdq"], cwd=worktree_path, capture_output=True, text=True, check=False)
+        manifest = {
+            "task_id": task_id,
+            "branch": current_branch,
+            "head_sha": local_head,
+            "trigger": trigger,
+            "run_id": run_id,
+            "timestamp": now_str,
+            "files": inventory_files,
+        }
+        manifest_path = task_backup_dir / "manifest.json"
+        manifest_path.write_text(json.dumps(manifest, indent=2), encoding="utf-8")
+
+        staged_proc = subprocess.run(["git", "diff", "--cached", "--binary"], cwd=worktree_path, capture_output=True, check=False)
+        if staged_proc.returncode != 0:
+            raise RuntimeError("failed to capture staged diff")
+        (task_backup_dir / "staged.patch").write_bytes(staged_proc.stdout)
+
+        unstaged_proc = subprocess.run(["git", "diff", "--binary"], cwd=worktree_path, capture_output=True, check=False)
+        if unstaged_proc.returncode != 0:
+            raise RuntimeError("failed to capture unstaged diff")
+        (task_backup_dir / "unstaged.patch").write_bytes(unstaged_proc.stdout)
+
+        untracked_base = task_backup_dir / "untracked"
+        for file_entry in inventory_files:
+            if file_entry["sha256"]:
+                src_path = worktree_path / file_entry["path"]
+                if src_path.exists() and src_path.is_file():
+                    dst_path = untracked_base / file_entry["path"]
+                    dst_path.parent.mkdir(parents=True, exist_ok=True)
+                    shutil.copy2(src_path, dst_path)
+                    h_check = hashlib.sha256()
+                    with open(dst_path, "rb") as f_chk:
+                        while ch := f_chk.read(65536):
+                            h_check.update(ch)
+                    if h_check.hexdigest() != file_entry["sha256"]:
+                        raise RuntimeError(f"backup checksum mismatch for {file_entry['path']}")
+
+        checksums: dict[str, str] = {}
+        for b_root, _, b_files in os.walk(task_backup_dir):
+            for bf in b_files:
+                if bf == "backup_checksums.sha256":
+                    continue
+                fp = Path(b_root) / bf
+                rel_bp = fp.relative_to(task_backup_dir).as_posix()
+                h_b = hashlib.sha256()
+                with open(fp, "rb") as f_b:
+                    while ch := f_b.read(65536):
+                        h_b.update(ch)
+                checksums[rel_bp] = h_b.hexdigest()
+        (task_backup_dir / "backup_checksums.sha256").write_text(json.dumps(checksums, indent=2), encoding="utf-8")
+
+    except Exception:
+        return False
+
+    add_proc = subprocess.run(["git", "add", "-A"], cwd=worktree_path, capture_output=True, text=True, check=False)
+    if add_proc.returncode != 0:
+        return False
+
+    commit_msg = (
+        f"{task_id or 'UNKNOWN'}: preserve dirty worktree state ({trigger or 'lease_recovery'})\n\n"
+        f"Preserved uncommitted tracked, staged, and untracked worktree state before lease recovery.\n"
+        f"Backup manifest: {manifest_path}\n\n"
+        f"LLM-Agent: Supervisor\n"
+        f"Task-ID: {task_id or 'UNKNOWN'}\n"
+        f"Reviewer: Codex6\n"
+    )
+    commit_proc = subprocess.run(["git", "commit", "-m", commit_msg], cwd=worktree_path, capture_output=True, text=True, check=False)
+    if commit_proc.returncode != 0:
+        return False
+
+    post_status = subprocess.run(
+        ["git", "status", "--porcelain=v1", "--untracked-files=all"],
+        cwd=worktree_path,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if post_status.returncode != 0 or post_status.stdout.strip():
+        return False
+
+    preserved_commit = _git_commit_oid(worktree_path, "HEAD")
     write_activity_log(
         config,
         {
-            "type": "worker_worktree_reset",
+            "type": "worker_worktree_preserved",
             "task_id": task_id,
             "run_id": run_id,
             "trigger": trigger,
             "workspace_path": str(worktree_path),
-            "backup_patch": str(backup_patch) if backup_patch else None,
+            "backup_dir": str(task_backup_dir),
+            "preserved_commit_sha": preserved_commit,
             "message": (
-                f"Hard-reset dirty worktree for {task_id} ({trigger or 'cleanup'}) so dispatch "
-                f"can lease it"
-                + (f"; uncommitted work backed up to {backup_patch}." if backup_patch else ".")
+                f"Preserved dirty worktree for {task_id} ({trigger or 'cleanup'}) as commit {preserved_commit[:12] if preserved_commit else 'unknown'}; "
+                f"backup saved to {task_backup_dir}."
             ),
         },
     )
     return True
+
+
+def restore_quarantined_worktree_backup(
+    backup_dir: Path | str,
+    target_dir: Path | str,
+) -> tuple[bool, str]:
+    """Restore a quarantined worktree backup manifest and files into target_dir."""
+    backup_path = Path(backup_dir).expanduser().resolve()
+    target_path = Path(target_dir).expanduser().resolve()
+    manifest_file = backup_path / "manifest.json"
+    checksums_file = backup_path / "backup_checksums.sha256"
+    if not manifest_file.exists() or not checksums_file.exists():
+        return False, "missing manifest or checksums file"
+
+    try:
+        checksums = json.loads(checksums_file.read_text(encoding="utf-8"))
+        for rel_bp, expected_sha in checksums.items():
+            fp = backup_path / rel_bp
+            if not fp.exists():
+                return False, f"corrupted backup: missing {rel_bp}"
+            h_b = hashlib.sha256()
+            with open(fp, "rb") as f_b:
+                while ch := f_b.read(65536):
+                    h_b.update(ch)
+            if h_b.hexdigest() != expected_sha:
+                return False, f"corrupted backup: checksum mismatch for {rel_bp}"
+
+        manifest = json.loads(manifest_file.read_text(encoding="utf-8"))
+        untracked_base = backup_path / "untracked"
+        for file_entry in manifest.get("files", []):
+            rel_p = file_entry.get("path")
+            expected_sha = file_entry.get("sha256")
+            if rel_p and expected_sha:
+                src_fp = untracked_base / rel_p
+                dst_fp = target_path / rel_p
+                dst_fp.parent.mkdir(parents=True, exist_ok=True)
+                shutil.copy2(src_fp, dst_fp)
+        return True, "restored"
+    except Exception as exc:
+        return False, f"restoration_failed: {exc}"
+
+
+def _backup_and_reset_dirty_worktree(
+    config: dict[str, Any],
+    state: dict[str, Any],
+    worktree_path: Path | str | None,
+    task_id: str | None,
+    *,
+    run_id: str | None = None,
+    trigger: str = "",
+) -> bool:
+    return _quarantine_and_preserve_dirty_worktree(
+        config,
+        state,
+        worktree_path,
+        task_id,
+        expected_branch=worker_task_branch(config, task_id) if task_id else None,
+        run_id=run_id,
+        trigger=trigger,
+    )
 
 
 def reset_worker_worktree_after_failure(config: dict[str, Any], state: dict[str, Any], worker: dict[str, Any]) -> None:
@@ -8938,8 +9139,14 @@ def reset_worker_worktree_after_failure(config: dict[str, Any], state: dict[str,
         worktree_path = _existing_worktree_for_branch(repo_root, branch, exclude_root=True) or worker_task_worktree_path(
             config, task_id, settings
         )
-    _backup_and_reset_dirty_worktree(
-        config, state, worktree_path, task_id, run_id=worker.get("run_id"), trigger="worker_failed"
+    _quarantine_and_preserve_dirty_worktree(
+        config,
+        state,
+        worktree_path,
+        task_id,
+        expected_branch=worker_task_branch(config, task_id) if task_id else None,
+        run_id=worker.get("run_id"),
+        trigger="worker_failed",
     )
 
 

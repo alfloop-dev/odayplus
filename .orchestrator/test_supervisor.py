@@ -1246,7 +1246,7 @@ class ProcessQueueDispatchGuardTests(unittest.TestCase):
                     "_refresh_reused_worker_worktree",
                     return_value=(False, "skipped_dirty_worktree"),
                 ) as refresh_worktree,
-                mock.patch.object(supervisor, "_backup_and_reset_dirty_worktree", return_value=False) as reset_worktree,
+                mock.patch.object(supervisor, "_quarantine_and_preserve_dirty_worktree", return_value=False) as reset_worktree,
                 mock.patch.object(supervisor, "_create_worker_worktree") as create_worktree,
                 mock.patch.object(supervisor, "write_activity_log") as write_activity_log,
             ):
@@ -1305,7 +1305,7 @@ class ProcessQueueDispatchGuardTests(unittest.TestCase):
                     "_refresh_reused_worker_worktree",
                     side_effect=[(False, "skipped_dirty_worktree"), (True, "base_present_at_123456789012")],
                 ) as refresh_worktree,
-                mock.patch.object(supervisor, "_backup_and_reset_dirty_worktree", return_value=True) as reset_worktree,
+                mock.patch.object(supervisor, "_quarantine_and_preserve_dirty_worktree", return_value=True) as reset_worktree,
                 mock.patch.object(supervisor, "materialize_worker_context_files", return_value=[]),
                 mock.patch.object(supervisor, "write_activity_log") as write_activity_log,
             ):
@@ -12227,6 +12227,233 @@ class ProcessQueueAgentOverrideTests(unittest.TestCase):
         self.assertFalse(changed)
         self.assertEqual(state["queue"]["events"]["evt-targetless-complete"]["status"], "pending")
         mock_build_req.assert_not_called()
+
+class QuarantineAndPreserveDirtyWorktreeTests(unittest.TestCase):
+
+    def _create_git_repo_and_worktree(self, tmpdir_path: Path, task_id: str = "TASK-001") -> tuple[Path, Path, str]:
+        repo_root = tmpdir_path / "main_repo"
+        repo_root.mkdir()
+        (repo_root / "ai-status.json").write_text("{}", encoding="utf-8")
+        subprocess.run(["git", "init", "-b", "dev"], cwd=repo_root, capture_output=True, check=True)
+        subprocess.run(["git", "config", "user.name", "TestUser"], cwd=repo_root, check=True)
+        subprocess.run(["git", "config", "user.email", "test@example.com"], cwd=repo_root, check=True)
+        (repo_root / "README.md").write_text("main\n", encoding="utf-8")
+        subprocess.run(["git", "add", "README.md"], cwd=repo_root, check=True)
+        subprocess.run(["git", "commit", "-m", "initial commit"], cwd=repo_root, check=True)
+
+        branch_name = f"task/{task_id}"
+        subprocess.run(["git", "branch", branch_name], cwd=repo_root, check=True)
+
+        wt_path = tmpdir_path / "workers" / supervisor._task_id_slug(task_id)
+        wt_path.parent.mkdir(parents=True, exist_ok=True)
+        subprocess.run(["git", "worktree", "add", str(wt_path), branch_name], cwd=repo_root, capture_output=True, check=True)
+        subprocess.run(["git", "config", "user.name", "TestUser"], cwd=wt_path, check=True)
+        subprocess.run(["git", "config", "user.email", "test@example.com"], cwd=wt_path, check=True)
+        return repo_root, wt_path, branch_name
+
+    def test_untracked_preservation_and_staged_content(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmp_p = Path(tmpdir)
+            repo_root, wt_path, branch_name = self._create_git_repo_and_worktree(tmp_p, "TASK-REAL-001")
+
+            staged_file = wt_path / "staged_doc.txt"
+            staged_file.write_text("staged content", encoding="utf-8")
+            subprocess.run(["git", "add", "staged_doc.txt"], cwd=wt_path, check=True)
+
+            unstaged_file = wt_path / "README.md"
+            unstaged_file.write_text("modified main\n", encoding="utf-8")
+
+            untracked_file = wt_path / "untracked_output.log"
+            untracked_file.write_text("untracked context data", encoding="utf-8")
+
+            config = {
+                "paths": {
+                    "status_file": str(repo_root / "ai-status.json"),
+                    "activity_log": str(repo_root / "ai-activity-log.jsonl"),
+                },
+                "branch_workflow": {"task_branch_prefix": "task/", "dev_branch": "dev"},
+            }
+            state: dict = {}
+
+            ok = supervisor._quarantine_and_preserve_dirty_worktree(
+                config,
+                state,
+                wt_path,
+                "TASK-REAL-001",
+                expected_branch=branch_name,
+                run_id=None,
+                trigger="unit_test",
+            )
+
+            self.assertTrue(ok)
+
+            st_proc = subprocess.run(["git", "status", "--porcelain=v1", "--untracked-files=all"], cwd=wt_path, capture_output=True, text=True, check=True)
+            self.assertEqual("", st_proc.stdout.strip())
+
+            self.assertTrue(staged_file.exists())
+            self.assertEqual("staged content", staged_file.read_text(encoding="utf-8"))
+            self.assertTrue(untracked_file.exists())
+            self.assertEqual("untracked context data", untracked_file.read_text(encoding="utf-8"))
+
+            backups_dir = repo_root / ".orchestrator" / "worktree-dirt-backups"
+            self.assertTrue(backups_dir.exists())
+            task_backups = list(backups_dir.glob("task-real-001-*"))
+            self.assertEqual(1, len(task_backups))
+            b_dir = task_backups[0]
+            manifest_file = b_dir / "manifest.json"
+            self.assertTrue(manifest_file.exists())
+            manifest = json.loads(manifest_file.read_text(encoding="utf-8"))
+            self.assertEqual("TASK-REAL-001", manifest["task_id"])
+            paths_in_manifest = [f["path"] for f in manifest["files"]]
+            self.assertIn("staged_doc.txt", paths_in_manifest)
+            self.assertIn("untracked_output.log", paths_in_manifest)
+            self.assertTrue((b_dir / "untracked" / "untracked_output.log").exists())
+            self.assertTrue((b_dir / "backup_checksums.sha256").exists())
+
+    def test_backup_failure_fails_closed(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmp_p = Path(tmpdir)
+            repo_root, wt_path, branch_name = self._create_git_repo_and_worktree(tmp_p, "TASK-FAIL-001")
+
+            untracked_file = wt_path / "untracked_data.txt"
+            untracked_file.write_text("important data", encoding="utf-8")
+
+            config = {
+                "paths": {
+                    "status_file": str(repo_root / "ai-status.json"),
+                    "activity_log": str(repo_root / "ai-activity-log.jsonl"),
+                },
+                "branch_workflow": {"task_branch_prefix": "task/", "dev_branch": "dev"},
+            }
+            state: dict = {}
+
+            with mock.patch("shutil.copy2", side_effect=OSError("Disk full")):
+                ok = supervisor._quarantine_and_preserve_dirty_worktree(
+                    config,
+                    state,
+                    wt_path,
+                    "TASK-FAIL-001",
+                    expected_branch=branch_name,
+                    run_id=None,
+                    trigger="unit_test",
+                )
+
+            self.assertFalse(ok)
+            st_proc = subprocess.run(["git", "status", "--porcelain=v1", "--untracked-files=all"], cwd=wt_path, capture_output=True, text=True, check=True)
+            self.assertIn("untracked_data.txt", st_proc.stdout)
+            self.assertTrue(untracked_file.exists())
+
+    def test_ref_and_branch_mismatch_fails_closed(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmp_p = Path(tmpdir)
+            repo_root, wt_path, branch_name = self._create_git_repo_and_worktree(tmp_p, "TASK-MISMATCH-001")
+
+            (wt_path / "file.txt").write_text("dirt", encoding="utf-8")
+
+            config = {
+                "paths": {
+                    "status_file": str(repo_root / "ai-status.json"),
+                    "activity_log": str(repo_root / "ai-activity-log.jsonl"),
+                },
+                "branch_workflow": {"task_branch_prefix": "task/", "dev_branch": "dev"},
+            }
+            state: dict = {}
+
+            ok = supervisor._quarantine_and_preserve_dirty_worktree(
+                config,
+                state,
+                wt_path,
+                "TASK-MISMATCH-001",
+                expected_branch="task/OTHER-BRANCH",
+                run_id=None,
+                trigger="unit_test",
+            )
+            self.assertFalse(ok)
+
+    def test_active_run_exclusion_fails_closed(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmp_p = Path(tmpdir)
+            repo_root, wt_path, branch_name = self._create_git_repo_and_worktree(tmp_p, "TASK-ACTIVE-001")
+
+            (wt_path / "file.txt").write_text("dirt", encoding="utf-8")
+
+            config = {
+                "paths": {
+                    "status_file": str(repo_root / "ai-status.json"),
+                    "activity_log": str(repo_root / "ai-activity-log.jsonl"),
+                },
+                "branch_workflow": {"task_branch_prefix": "task/", "dev_branch": "dev"},
+            }
+            state = {
+                "workers": {
+                    "w1": {
+                        "run_id": "run-active-123",
+                        "task_id": "TASK-ACTIVE-001",
+                        "status": "running",
+                        "workspace_path": str(wt_path),
+                    }
+                }
+            }
+
+            ok = supervisor._quarantine_and_preserve_dirty_worktree(
+                config,
+                state,
+                wt_path,
+                "TASK-ACTIVE-001",
+                expected_branch=branch_name,
+                run_id=None,
+                trigger="lease_recovery",
+            )
+            self.assertFalse(ok)
+
+            ok_self = supervisor._quarantine_and_preserve_dirty_worktree(
+                config,
+                state,
+                wt_path,
+                "TASK-ACTIVE-001",
+                expected_branch=branch_name,
+                run_id="run-active-123",
+                trigger="worker_failed",
+            )
+            self.assertTrue(ok_self)
+
+    def test_exact_restoration(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmp_p = Path(tmpdir)
+            repo_root, wt_path, branch_name = self._create_git_repo_and_worktree(tmp_p, "TASK-RESTORE-001")
+
+            untracked_file = wt_path / "sub" / "data.csv"
+            untracked_file.parent.mkdir()
+            untracked_file.write_text("col1,col2\nval1,val2\n", encoding="utf-8")
+
+            config = {
+                "paths": {
+                    "status_file": str(repo_root / "ai-status.json"),
+                    "activity_log": str(repo_root / "ai-activity-log.jsonl"),
+                },
+                "branch_workflow": {"task_branch_prefix": "task/", "dev_branch": "dev"},
+            }
+            state: dict = {}
+
+            supervisor._quarantine_and_preserve_dirty_worktree(
+                config,
+                state,
+                wt_path,
+                "TASK-RESTORE-001",
+                expected_branch=branch_name,
+                run_id=None,
+                trigger="unit_test",
+            )
+
+            backups_dir = repo_root / ".orchestrator" / "worktree-dirt-backups"
+            b_dir = list(backups_dir.glob("task-restore-001-*"))[0]
+
+            target_restore_dir = tmp_p / "restored_location"
+            restored_ok, msg = supervisor.restore_quarantined_worktree_backup(b_dir, target_restore_dir)
+            self.assertTrue(restored_ok)
+            restored_file = target_restore_dir / "sub" / "data.csv"
+            self.assertTrue(restored_file.exists())
+            self.assertEqual("col1,col2\nval1,val2\n", restored_file.read_text(encoding="utf-8"))
 
 
 if __name__ == "__main__":
