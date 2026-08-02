@@ -249,9 +249,10 @@ class ProviderPermissionsTest(unittest.TestCase):
 
     @pytest.mark.requires_live_env
     def test_edit_allows_configured_execute_plans_workspace_root(self) -> None:
+        target_path = (ROOT.parent / "execute-plans" / "src" / "lib" / "bff" / "client.ts").resolve()
         evaluation = permission_broker.evaluate_tool_request(
             "Edit",
-            {"file_path": "/home/lupin/code/execute-plans/src/lib/bff/client.ts"},
+            {"file_path": str(target_path)},
             {
                 "permission_broker": {
                     "allowed_workspace_roots": ["../execute-plans"],
