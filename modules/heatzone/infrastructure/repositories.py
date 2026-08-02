@@ -64,5 +64,15 @@ class HeatZoneResultStore:
             return self._latest
         return self._jobs.get(snapshot_id)
 
+    def get_measured_topk_adoption_rate(self) -> float | None:
+        """Calculate measured top-K survey adoption rate from stored survey outcome records.
+
+        Returns float in [0.0, 1.0] if authoritative measured survey adoption lineage exists, or None if unmeasured/NO-GO.
+        """
+        survey_repo = getattr(self, "_survey_outcome_repository", None)
+        if survey_repo is not None and hasattr(survey_repo, "get_measured_topk_adoption_rate"):
+            return survey_repo.get_measured_topk_adoption_rate()
+        return None
+
 
 __all__ = ["HeatZoneResultStore"]
