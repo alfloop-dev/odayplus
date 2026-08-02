@@ -1324,7 +1324,60 @@ _REUSABLE_CONTEXT_FILES = (
 )
 
 
-def _classify_worktree_dirt(porcelain_status: str | bytes) -> tuple[str, list[str]]:
+def _is_safe_context_destination(workspace_path: Path, rel_value: str) -> bool:
+    """Validate that rel_value destination inside workspace_path is safe to write or read context.
+
+    Returns False if:
+    - rel_value is empty, absolute, or contains path traversal ('..')
+    - destination or any parent directory within workspace_path is a symlink (os.path.islink)
+    - destination or any parent within workspace_path exists and is a non-regular file/dir
+    - destination or any parent resolves outside workspace_path
+    """
+    rel_clean = str(rel_value or "").replace("\\", "/").strip()
+    if not rel_clean or Path(rel_clean).is_absolute() or ".." in rel_clean.split("/"):
+        return False
+
+    try:
+        workspace_resolved = workspace_path.resolve()
+        curr = workspace_path
+        parts = Path(rel_clean).parts
+
+        for part in parts[:-1]:
+            curr = curr / part
+            if os.path.islink(curr):
+                return False
+            if curr.exists():
+                if not curr.is_dir():
+                    return False
+                try:
+                    curr_resolved = curr.resolve()
+                    if curr_resolved != workspace_resolved and workspace_resolved not in curr_resolved.parents:
+                        return False
+                except (OSError, RuntimeError, ValueError):
+                    return False
+
+        destination = workspace_path / rel_clean
+        if os.path.islink(destination):
+            return False
+        if destination.exists():
+            if not destination.is_file():
+                return False
+            try:
+                dest_resolved = destination.resolve()
+                if dest_resolved != workspace_resolved and workspace_resolved not in dest_resolved.parents:
+                    return False
+            except (OSError, RuntimeError, ValueError):
+                return False
+
+        return True
+    except Exception:
+        return False
+
+
+def _classify_worktree_dirt(
+    porcelain_status: str | bytes,
+    worktree_path: Path | None = None,
+) -> tuple[str, list[str]]:
     """Classify reused-worktree dirtiness from `git status --porcelain` output.
 
     Returns (classification, paths):
@@ -1373,6 +1426,8 @@ def _classify_worktree_dirt(porcelain_status: str | bytes) -> tuple[str, list[st
         if code.strip() not in ("??", "!!"):
             return "real", []
         if not _is_reusable(path):
+            return "real", []
+        if worktree_path and not _is_safe_context_destination(worktree_path, path):
             return "real", []
         scratch_paths.append(path)
 
@@ -1501,7 +1556,7 @@ def _refresh_reused_worker_worktree(
     if status_proc.returncode != 0:
         return False, "status_failed"
     if status_proc.stdout:
-        classification, scratch_paths = _classify_worktree_dirt(status_proc.stdout)
+        classification, scratch_paths = _classify_worktree_dirt(status_proc.stdout, worktree_path=worktree_path)
         if classification == "scratch_only":
             _restore_reusable_scratch(worktree_path, scratch_paths)
         else:
@@ -1713,6 +1768,8 @@ def materialize_worker_context_files(
     for rel_context_path in request.context_files:
         rel_value = str(rel_context_path or "").strip().replace("\\", "/")
         if not rel_value or Path(rel_value).is_absolute():
+            continue
+        if not _is_safe_context_destination(workspace_path, rel_value):
             continue
         destination = workspace_path / rel_value
         is_tracked_rc, _ = _git_output(workspace_path, "ls-files", "--error-unmatch", rel_value)

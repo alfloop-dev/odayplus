@@ -13194,6 +13194,126 @@ class QuarantineAndPreserveDirtyWorktreeTests(unittest.TestCase):
             st_proc = subprocess.run(["git", "status", "--porcelain=v1"], cwd=wt_path, capture_output=True, text=True, check=True)
             self.assertEqual("", st_proc.stdout.strip())
 
+    def test_materialize_worker_context_files_skips_symlinks_and_unsafe_destinations(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmp_p = Path(tmpdir)
+            repo_root = tmp_p / "main_repo"
+            repo_root.mkdir()
+            (repo_root / "ai-status.json").write_text('{"project":"canonical"}', encoding="utf-8")
+
+            wt_path = tmp_p / "wt_b5"
+            wt_path.mkdir()
+
+            # Create target file README.md
+            readme = wt_path / "README.md"
+            readme.write_text("original owner readme content\n", encoding="utf-8")
+
+            # Create untracked symlink ai-status.json -> README.md
+            symlink = wt_path / "ai-status.json"
+            symlink.symlink_to("README.md")
+
+            config = {
+                "paths": {
+                    "status_file": str(repo_root / "ai-status.json"),
+                    "activity_log": str(repo_root / "ai-activity-log.jsonl"),
+                },
+            }
+            request = supervisor.DeliveryRequest(
+                agent_id="antigravity",
+                provider="antigravity",
+                delivery_mode="antigravity",
+                message="wake",
+                task_id="TASK-B5-001",
+                reason="owned_in_progress_dispatch",
+                context_files=["ai-status.json"],
+            )
+
+            materialized = supervisor.materialize_worker_context_files(config, request, wt_path)
+
+            self.assertNotIn("ai-status.json", materialized)
+            self.assertEqual(readme.read_text(encoding="utf-8"), "original owner readme content\n")
+            self.assertTrue(os.path.islink(symlink))
+
+    def test_prepare_worker_workspace_recovers_dirty_worktree_lease_with_untracked_symlink(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmp_p = Path(tmpdir)
+            remote_root = tmp_p / "remote.git"
+            subprocess.run(["git", "init", "--bare", str(remote_root)], capture_output=True, check=True)
+
+            repo_root = tmp_p / "main_repo"
+            subprocess.run(["git", "clone", str(remote_root), str(repo_root)], capture_output=True, check=True)
+            (repo_root / "ai-status.json").write_text('{"project":"canonical"}', encoding="utf-8")
+            subprocess.run(["git", "config", "user.name", "TestUser"], cwd=repo_root, check=True)
+            subprocess.run(["git", "config", "user.email", "test@example.com"], cwd=repo_root, check=True)
+            subprocess.run(["git", "checkout", "-b", "dev"], cwd=repo_root, check=True)
+            (repo_root / "README.md").write_text("main owner content\n", encoding="utf-8")
+            subprocess.run(["git", "add", "README.md"], cwd=repo_root, check=True)
+            subprocess.run(["git", "commit", "-m", "initial commit"], cwd=repo_root, check=True)
+            subprocess.run(["git", "push", "origin", "dev"], cwd=repo_root, check=True)
+
+            task_id = "TASK-B5-LEASE-001"
+            branch_name = f"task/{task_id}"
+            subprocess.run(["git", "checkout", "-b", branch_name], cwd=repo_root, check=True)
+            subprocess.run(["git", "push", "origin", branch_name], cwd=repo_root, check=True)
+            subprocess.run(["git", "checkout", "dev"], cwd=repo_root, check=True)
+
+            wt_path = tmp_p / "workers" / supervisor._task_id_slug(task_id)
+            wt_path.parent.mkdir(parents=True, exist_ok=True)
+            subprocess.run(["git", "worktree", "add", str(wt_path), branch_name], capture_output=True, check=True, cwd=repo_root)
+            subprocess.run(["git", "config", "user.name", "TestUser"], cwd=wt_path, check=True)
+            subprocess.run(["git", "config", "user.email", "test@example.com"], cwd=wt_path, check=True)
+
+            # Introduce an untracked symlink ai-status.json -> README.md into the reused worktree
+            symlink = wt_path / "ai-status.json"
+            symlink.symlink_to("README.md")
+
+            config = {
+                "paths": {
+                    "status_file": str(repo_root / "ai-status.json"),
+                    "activity_log": str(repo_root / "ai-activity-log.jsonl"),
+                },
+                "branch_workflow": {"task_branch_prefix": "task/", "dev_branch": "dev"},
+                "worker_worktrees": {
+                    "enabled": True,
+                    "root": str(tmp_p / "workers"),
+                    "base_ref": "origin/dev",
+                    "reuse_existing": True,
+                },
+            }
+            state: dict = {}
+            request = supervisor.DeliveryRequest(
+                agent_id="antigravity",
+                provider="antigravity",
+                delivery_mode="antigravity",
+                message="wake",
+                task_id=task_id,
+                reason="owned_in_progress_dispatch",
+                context_files=["ai-status.json"],
+            )
+
+            ok, message = supervisor.prepare_worker_workspace(
+                config,
+                state,
+                request,
+                queue_event_id="evt-b5-recover",
+                target_agent="antigravity",
+            )
+            self.assertTrue(ok)
+            self.assertIsNone(message)
+
+            leased_path = Path(request.metadata["workspace_path"])
+            # Fresh clean workspace allocated at a distinct path
+            self.assertNotEqual(leased_path, wt_path)
+
+            # Original dirty worktree at wt_path remains 100% byte-identical and untouched
+            self.assertEqual((wt_path / "README.md").read_text(encoding="utf-8"), "main owner content\n")
+            self.assertTrue(os.path.islink(wt_path / "ai-status.json"))
+
+            # Fresh recovery workspace has regular materialized ai-status.json
+            self.assertTrue(leased_path.exists())
+            self.assertFalse(os.path.islink(leased_path / "ai-status.json"))
+            self.assertEqual((leased_path / "ai-status.json").read_text(encoding="utf-8"), '{"project":"canonical"}')
+
 
 if __name__ == "__main__":
     unittest.main()
