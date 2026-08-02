@@ -79,7 +79,7 @@ Any base refresh, force push, or commit of a new PR head invalidates this observ
 
 | ID | Required proof | Reject when | Status | Evidence |
 |---|---|---|---|---|
-| E1 | 59 task-scoped tests, 103 focused tests, and 28 acceptance-coverage tests pass cleanly. | Test suite fails, skips required assertions, or swallows exceptions. | `PASSED` | `pytest -q tests -k "sitescore or opening_outcome"` |
+| E1 | Task file suite (57 passed), focused models suite (59 passed), broad filter suite (107 passed at frozen parent HEAD `d77785af`; 78 passed at current composed HEAD `830c1bfd`), and acceptance coverage suite (28 passed) all pass cleanly. | Test suite fails, skips required assertions, or swallows exceptions. | `PASSED` | `.venv/bin/pytest -q tests/models/test_sitescore_opening_outcome.py` (57 passed), `.venv/bin/pytest -q tests/models -k "sitescore or opening_outcome"` (59 passed), `.venv/bin/pytest -q tests -k "sitescore or opening_outcome"` (78 passed at composed HEAD), `.venv/bin/pytest -q tests/e2e/test_acceptance_coverage.py` (28 passed) |
 | E2 | Ruff linter passes with zero errors; `git diff --check` reports clean formatting. | Lint errors, unused imports, or trailing whitespace are present. | `PASSED` | `ruff check scripts/models models tests/models` |
 | E3 | Product release gate and E2E checks verify zero regressions across 117 tests. | Product release gate fails or E2E tests report validation errors. | `PASSED` | `docs/evidence/e2e/PRODUCT_E2E_EXECUTION_RECEIPT.json` |
 
@@ -90,44 +90,52 @@ graph TD
     A["ODP-PLAN-SITESCORE-PREDICTION-SOURCE-001<br/>(Authoritative Prediction Source)"] -->|Required for ACTIVE| C["ODP-PLAN-SITESCORE-OUTCOME-001<br/>(SiteScore Outcome Closed Loop & Gate 2 Receipt)"]
     B["ODP-PLAN-SITESCORE-OUTCOME-BACKFILL-001<br/>(Authoritative M6/M12 Outcome Backfill)"] -->|Required for ACTIVE| C
     C -->|Approved Source HEAD d77785af| D["ODP-PLAN-SITESCORE-OUTCOME-001-SIDECAR-ACCEPTANCE<br/>(Acceptance Packet & Dependency Map)"]
-    C -->|Support Packet Handoff| E["ODP-PLAN-SITESCORE-OUTCOME-001-SIDECAR-REVIEW<br/>(Sidecar Review Packet - Codex3)"]
+    C -.->|Unmerged / Finalization Pending| E["ODP-PLAN-SITESCORE-OUTCOME-001-SIDECAR-REVIEW<br/>(Unmerged Sidecar Task - Codex3)"]
     C -->|Merged PR #525| F["origin/dev (6963ca40ff9f5666e977603c8c418edc7ca320d5)"]
 ```
 
 ## Required verification ledger
 
-Executed against approved parent source HEAD `d77785afa366213ce6976207a52aaba5b7c6a551` / merged dev tip `6963ca40ff9f5666e977603c8c418edc7ca320d5`:
+Normalized verification results mapping each command to frozen parent source HEAD (`d77785afa366213ce6976207a52aaba5b7c6a551` / merged dev `6963ca40`) and current composed HEAD (`830c1bfdab9c4de962d5b64f57e7906fbf1845da`):
 
 ```bash
-# 1. Broad pytest filter for sitescore or opening_outcome
-uv run pytest -q tests -k "sitescore or opening_outcome"
-# Result: exit code 0, 107 passed
+# 1. Task-file pytest suite
+.venv/bin/pytest -q tests/models/test_sitescore_opening_outcome.py
+# Frozen parent HEAD (d77785af / dev 6963ca40): exit code 0, 57 passed
+# Current composed HEAD (830c1bfd):            exit code 0, 57 passed
 
-# 2. Focused pytest for models tests
-uv run pytest -q tests/models -k "sitescore or opening_outcome"
-# Result: exit code 0, 59 passed (57 passed in tests/models/test_sitescore_opening_outcome.py)
+# 2. Focused models pytest filter
+.venv/bin/pytest -q tests/models -k "sitescore or opening_outcome"
+# Frozen parent HEAD (d77785af / dev 6963ca40): exit code 0, 59 passed
+# Current composed HEAD (830c1bfd):            exit code 0, 59 passed
 
-# 3. Acceptance coverage suite
-uv run pytest -q tests/e2e/test_acceptance_coverage.py
-# Result: exit code 0 (with node_modules/@playwright/test present), 28/28 passed
+# 3. Broad pytest filter
+.venv/bin/pytest -q tests -k "sitescore or opening_outcome"
+# Frozen parent HEAD (d77785af / dev 6963ca40): exit code 0, 107 passed
+# Current composed HEAD (830c1bfd):            exit code 0, 78 passed
 
-# 4. Ruff static analysis
-ruff check scripts/models models tests/models
-# Result: exit code 0, 0 errors (clean)
+# 4. Acceptance coverage suite
+.venv/bin/pytest -q tests/e2e/test_acceptance_coverage.py
+# Frozen parent HEAD (d77785af / dev 6963ca40): exit code 0, 28 passed
+# Current composed HEAD (830c1bfd):            exit code 0, 28 passed
 
-# 5. Git diff check
+# 5. Ruff static analysis
+.venv/bin/ruff check scripts/models models tests/models
+# Result: exit code 0, 0 errors (clean) on both frozen parent HEAD and composed HEAD
+
+# 6. Git diff check
 git diff --check
-# Result: exit code 0, clean (0 errors)
+# Result: exit code 0, clean (0 errors) on both frozen parent HEAD and composed HEAD
 ```
 
-Verification Summary:
-- Broad pytest (`tests -k "sitescore or opening_outcome"`): 107 passed (exit code 0)
-- Task-scoped pytest (`tests/models/test_sitescore_opening_outcome.py`): 57 passed (exit code 0)
-- Focused models pytest (`tests/models -k "sitescore or opening_outcome"`): 59 passed (exit code 0)
-- Acceptance-coverage pytest (`tests/e2e/test_acceptance_coverage.py`): 28 test items (28 passed in full environment with Playwright node_modules)
-- Ruff check (`scripts/models models tests/models`): clean (0 errors, exit code 0)
-- Git diff check: clean (0 errors, exit code 0)
-- Product E2E: 117/117 passed, zero validation errors
+Verification Ledger Summary:
+- **Task-file pytest suite** (`tests/models/test_sitescore_opening_outcome.py`): 57 passed (frozen parent HEAD & current composed HEAD)
+- **Focused models pytest** (`tests/models -k "sitescore or opening_outcome"`): 59 passed (frozen parent HEAD & current composed HEAD)
+- **Broad pytest** (`tests -k "sitescore or opening_outcome"`): 107 passed at frozen parent HEAD `d77785af` / 78 passed at current composed HEAD `830c1bfd`
+- **Acceptance-coverage pytest** (`tests/e2e/test_acceptance_coverage.py`): 28 passed (28/28 in full environment with Playwright node_modules)
+- **Ruff check** (`scripts/models models tests/models`): clean (0 errors, exit code 0)
+- **Git diff check**: clean (0 errors, exit code 0)
+- **Product E2E**: 117/117 passed, zero validation errors
 
 ## Reviewer handoff record
 
@@ -146,4 +154,6 @@ Assigned sidecar reviewer: `Codex2` (Parent Owner).
 - Parent task brief `.orchestrator/task-briefs/odp_plan_sitescore_outcome_001_sidecar_acceptance.md`.
 - Parent implementation approved source HEAD `d77785afa366213ce6976207a52aaba5b7c6a551` and merged dev commit `6963ca40ff9f5666e977603c8c418edc7ca320d5` (PR `#525`).
 - Parent review log `docs/evidence/models/ODP-PLAN-SITESCORE-OUTCOME-001-review.md`.
-- Sidecar review packet `support/sidecars/ODP-PLAN-SITESCORE-OUTCOME-001/ODP-PLAN-SITESCORE-OUTCOME-001-SIDECAR-REVIEW.md`.
+
+*Note on excluded source files*: `support/sidecars/ODP-PLAN-SITESCORE-OUTCOME-001/ODP-PLAN-SITESCORE-OUTCOME-001-SIDECAR-REVIEW.md` (task `ODP-PLAN-SITESCORE-OUTCOME-001-SIDECAR-REVIEW`) is unmerged in `origin/dev` (finalization pending CI deadlock resolution) and absent from this HEAD. It is explicitly excluded as a source file to ensure full packet reproducibility.
+
