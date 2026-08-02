@@ -519,6 +519,38 @@ def issue_mutation_with_label_fallback(command: list[str]) -> subprocess.Complet
         return run_gh(rebuilt)
 
 
+def edit_pull_request_rest(repo: str, number: int, title: str, body: str, labels: list[str]) -> None:
+    """Update a review-bus PR without the deprecated Projects Classic query.
+
+    ``gh pr edit`` still asks GraphQL for ``projectCards`` before applying an
+    otherwise unrelated title/body edit. GitHub now rejects that field, which
+    leaves the review bus stale after an exact-head re-review. The REST pull
+    request and issue-label endpoints avoid that deprecated query entirely.
+    """
+    run_gh(
+        [
+            "api",
+            "--method",
+            "PATCH",
+            f"repos/{repo}/pulls/{number}",
+            "--raw-field",
+            f"title={title}",
+            "--raw-field",
+            f"body={body}",
+        ]
+    )
+    if not labels:
+        return
+    label_args = ["api", "--method", "POST", f"repos/{repo}/issues/{number}/labels"]
+    for label in labels:
+        label_args.extend(["--raw-field", f"labels[]={label}"])
+    try:
+        run_gh(label_args)
+    except GitHubBusError as exc:
+        if "label" not in str(exc).lower():
+            raise
+
+
 def upsert_ops_issue(config: dict[str, Any], bus_state: dict[str, Any], repo: str, task: dict[str, Any], reason: str, details: str) -> bool:
     entry = task_bus_entry(bus_state, task["id"])
     issue_ref = entry.get("ops_issue")
@@ -796,13 +828,13 @@ def upsert_review_pr(config: dict[str, Any], bus_state: dict[str, Any], status: 
     try:
         if pr_ref and pr_ref.get("number"):
             number = int(pr_ref["number"])
-            run_gh(["pr", "edit", str(number), "--repo", repo, "--title", title, "--body-file", str(body_file), *edit_label_args(labels)])
+            edit_pull_request_rest(repo, number, title, body, labels)
             pr = dict(pr_ref)
         else:
             found = find_existing_pr(repo, task["id"], branch)
             if found:
                 number = int(found["number"])
-                run_gh(["pr", "edit", str(number), "--repo", repo, "--title", title, "--body-file", str(body_file), *edit_label_args(labels)])
+                edit_pull_request_rest(repo, number, title, body, labels)
                 pr = {"number": number, "url": found.get("url"), "title": title, "headRefName": branch}
             else:
                 create_args = ["pr", "create", "--repo", repo, "--draft", "--title", title, "--body-file", str(body_file), "--base", base, "--head", branch]

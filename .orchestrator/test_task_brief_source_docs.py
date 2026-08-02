@@ -734,7 +734,11 @@ class TaskBriefSourceDocsTests(unittest.TestCase):
             with (
                 mock.patch.object(supervisor, "load_status", return_value={"tasks": [task]}),
                 mock.patch.object(common, "load_status", return_value={"tasks": [task]}),
-                mock.patch("shutil.copy2", side_effect=OSError("Disk read failure")),
+                mock.patch.object(
+                    supervisor,
+                    "_atomic_copy_context_file",
+                    side_effect=OSError("Disk read failure"),
+                ),
             ):
                 with self.assertRaises(ValueError) as ctx:
                     supervisor.materialize_worker_context_files(config, req, worktree_path)
@@ -1279,4 +1283,3 @@ class TaskBriefSourceDocsTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
-
