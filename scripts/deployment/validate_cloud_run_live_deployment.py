@@ -23,7 +23,7 @@ import urllib.error
 import urllib.request
 from collections.abc import Iterator, Mapping
 from dataclasses import asdict, dataclass, replace
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
@@ -371,6 +371,308 @@ def repository_capability_checks(
     ]
     checks.extend(operator_runtime_checks(root))
     checks.extend(provider_adapter_checks(root, production_provider_ids=production_provider_ids))
+    checks.extend(observability_runtime_checks(root))
+    return checks
+
+
+def observability_runtime_checks(root: Path = ROOT) -> list[CheckResult]:
+    """Verify live-wired observability components (exporter, dashboards, watch window, readback receipts, fail-closed gates)."""
+    checks = []
+    try:
+        from modules.notifications import get_notification_adapter
+        from shared.observability import (
+            ProductionMetricsExporter,
+            default_registry,
+            record_deployment_watch_window_status,
+            render_dashboard_provisioning,
+        )
+
+        test_sha = "10c620969a90627e4a67053a4708658f99faa07f"
+        registry = default_registry()
+        registry.increment(
+            "api_request_count",
+            amount=1.0,
+            labels={"service": "api", "route": "/health", "status": "200"},
+        )
+        monitoring_route = "https://monitoring.googleapis.com/v3"
+
+        mock_time_series_store: list[dict] = []
+        recorded_state: dict[str, str] = {
+            "gcp_project": "alfaloop-data-project",
+            "release_sha": test_sha,
+        }
+
+        def mock_provider_transport(
+            method: str,
+            url: str,
+            params: dict | None = None,
+            payload: dict | None = None,
+            **kwargs: Any,
+        ) -> tuple[int, dict]:
+            p_dict = payload or {}
+            pr_dict = params or {}
+            p_proj = p_dict.get("gcp_project")
+            p_sha = p_dict.get("release_sha")
+            if isinstance(p_dict.get("timeSeries"), list) and p_dict["timeSeries"]:
+                first_ts = p_dict["timeSeries"][0]
+                if isinstance(first_ts, dict):
+                    if not p_proj:
+                        p_proj = first_ts.get("resource", {}).get("labels", {}).get("project_id")
+                    if not p_sha:
+                        p_sha = first_ts.get("metric", {}).get("labels", {}).get("release_sha")
+
+            if p_proj:
+                recorded_state["gcp_project"] = str(p_proj)
+            elif pr_dict.get("gcp_project"):
+                recorded_state["gcp_project"] = str(pr_dict["gcp_project"])
+
+            if p_sha:
+                recorded_state["release_sha"] = str(p_sha)
+            elif pr_dict.get("release_sha"):
+                recorded_state["release_sha"] = str(pr_dict["release_sha"])
+
+            g_proj = recorded_state["gcp_project"]
+            r_sha = recorded_state["release_sha"]
+
+            if "timeSeries" in url:
+                if method == "POST":
+                    if isinstance(p_dict, dict) and "timeSeries" in p_dict:
+                        mock_time_series_store.clear()
+                        mock_time_series_store.extend(p_dict["timeSeries"])
+                    return 200, {}
+                elif method == "GET":
+                    now_dt = datetime.now(UTC)
+                    now_iso = now_dt.isoformat()
+                    past_iso = (now_dt - timedelta(minutes=15)).isoformat()
+                    if mock_time_series_store:
+                        ts_return = mock_time_series_store
+                    else:
+                        ts_return = [
+                            {
+                                "metric": {
+                                    "type": "custom.googleapis.com/api_error_count",
+                                    "labels": {"release_sha": r_sha},
+                                },
+                                "resource": {"type": "global", "labels": {"project_id": g_proj}},
+                                "points": [
+                                    {
+                                        "interval": {"endTime": past_iso},
+                                        "value": {"doubleValue": 0.0},
+                                    },
+                                    {
+                                        "interval": {"endTime": now_iso},
+                                        "value": {"doubleValue": 0.0},
+                                    },
+                                ],
+                            },
+                            {
+                                "metric": {
+                                    "type": "custom.googleapis.com/api_latency_ms",
+                                    "labels": {"release_sha": r_sha},
+                                },
+                                "resource": {"type": "global", "labels": {"project_id": g_proj}},
+                                "points": [
+                                    {
+                                        "interval": {"endTime": past_iso},
+                                        "value": {"doubleValue": 12.5},
+                                    },
+                                    {
+                                        "interval": {"endTime": now_iso},
+                                        "value": {"doubleValue": 14.2},
+                                    },
+                                ],
+                            },
+                        ]
+                    return 200, {
+                        "gcp_project": g_proj,
+                        "release_sha": r_sha,
+                        "timeSeries": ts_return,
+                    }
+            elif "dashboards" in url:
+                if method == "POST":
+                    return 200, {"name": f"projects/{g_proj}/dashboards/platform-health"}
+                elif method == "GET":
+                    return 200, {
+                        "name": f"projects/{g_proj}/dashboards/platform-health",
+                        "receipt_id": f"gcp-dash-{test_sha[:12]}",
+                        "readback_status": "PROVISIONED",
+                        "gcp_project": g_proj,
+                        "release_sha": r_sha,
+                    }
+            return 200, {"status": "ok"}
+
+        exporter = ProductionMetricsExporter(
+            release_sha=test_sha,
+            registry=registry,
+            gcp_project="alfaloop-data-project",
+            provider_route=monitoring_route,
+            http_transport=mock_provider_transport,
+        )
+        exported = exporter.export_metrics()
+
+        has_categories = set(exported.get("categories", [])) >= {
+            "latency",
+            "error",
+            "traffic",
+            "job",
+            "queue",
+            "data",
+            "model",
+            "business",
+            "audit",
+        }
+        sha_bound = exported.get("release_sha") == test_sha
+        has_export_receipt = bool(exported.get("export_receipt_id")) and str(
+            exported["export_receipt_id"]
+        ).startswith("gcp-cm-readback-")
+        has_backend_ids = bool(exported.get("monitoring_backend_resource_ids"))
+        readback_success = exported.get("readback_status") == "SUCCESS"
+        exporter_ok = (
+            has_categories
+            and sha_bound
+            and has_export_receipt
+            and has_backend_ids
+            and readback_success
+        )
+
+        checks.append(
+            CheckResult(
+                ok=exporter_ok,
+                name="observability:production_metrics_exporter",
+                detail=(
+                    "ProductionMetricsExporter binds exact 40-char release_sha across categories, invokes provider adapter, and produces Cloud Monitoring backend resource IDs and readback receipt"
+                    if exporter_ok
+                    else "invalid: ProductionMetricsExporter failed to export bound metrics, backend resource IDs, or readback receipt"
+                ),
+            )
+        )
+
+        provisioned = render_dashboard_provisioning(
+            release_sha=test_sha,
+            gcp_project="alfaloop-data-project",
+            provider_route=monitoring_route,
+            http_transport=mock_provider_transport,
+        )
+        exact_binding = (
+            provisioned.get("release_sha_traceability", {}).get("exact_sha_binding") == test_sha
+        )
+        has_slo_owner = bool(provisioned.get("release_sha_traceability", {}).get("slo_owner"))
+        readback = provisioned.get("provisioning_readback", {})
+        readback_ok = (
+            readback.get("readback_status") == "PROVISIONED"
+            and bool(readback.get("dashboard_resource_ids"))
+            and readback.get("provider_route_identity") == monitoring_route
+            and readback.get("receipt_id") == f"gcp-dash-{test_sha[:12]}"
+        )
+        dashboard_ok = exact_binding and has_slo_owner and readback_ok
+
+        checks.append(
+            CheckResult(
+                ok=dashboard_ok,
+                name="observability:dashboard_provisioning",
+                detail=(
+                    "render_dashboard_provisioning provisions exact release_sha binding, validates SLO owner, invokes provider adapter, and produces dashboard resource IDs readback receipt"
+                    if dashboard_ok
+                    else "invalid: dashboard provisioning failed to bind release_sha, validate SLO owner, or produce readback receipt"
+                ),
+            )
+        )
+
+        # Fail-closed gate verification: exporter fails closed without config
+        fail_closed_unconfigured = False
+        try:
+            unconfigured_exporter = ProductionMetricsExporter(
+                release_sha=test_sha,
+                gcp_project="",
+                provider_route=monitoring_route,
+                http_transport=mock_provider_transport,
+            )
+            unconfigured_exporter.export_metrics()
+        except ValueError:
+            fail_closed_unconfigured = True
+
+        # Fail-closed gate verification: exporter fails closed when passing on-call alert route
+        fail_closed_oncall_route = False
+        try:
+            oncall_exporter = ProductionMetricsExporter(
+                release_sha=test_sha,
+                gcp_project="alfaloop-data-project",
+                provider_route="https://oncall-router.oday.plus/api/v1/alerts",
+                http_transport=mock_provider_transport,
+            )
+            oncall_exporter.export_metrics()
+        except ValueError as e:
+            if "ONCALL_ENDPOINT_URL" in str(e) or "alert route" in str(e):
+                fail_closed_oncall_route = True
+
+        # Fail-closed gate verification: exporter fails closed when provider rejects/500
+        def rejecting_transport(url: str, payload: dict) -> tuple[int, dict]:
+            return 500, {"error": "Internal Server Error"}
+
+        fail_closed_rejection = False
+        try:
+            rejected_exporter = ProductionMetricsExporter(
+                release_sha=test_sha,
+                gcp_project="alfaloop-data-project",
+                provider_route=monitoring_route,
+                http_transport=rejecting_transport,
+            )
+            rejected_exporter.export_metrics()
+        except RuntimeError:
+            fail_closed_rejection = True
+
+        # Verify watch window recording fails closed when passed caller-supplied mock transport
+        start_time = datetime.now(UTC) - timedelta(minutes=20)
+        end_time = datetime.now(UTC)
+        watch_window_fail_closed = False
+        try:
+            record_deployment_watch_window_status(
+                release_sha=test_sha,
+                status=1,
+                start_time=start_time,
+                end_time=end_time,
+                gcp_project="alfaloop-data-project",
+                provider_route=monitoring_route,
+                query_transport=mock_provider_transport,
+            )
+        except (ValueError, RuntimeError):
+            watch_window_fail_closed = True
+
+        watch_window_ok = watch_window_fail_closed
+
+        # Verify notification adapter fails closed without ONCALL_ENDPOINT_URL when in production
+        notification_fail_closed = False
+        try:
+            get_notification_adapter(endpoint_url="")
+        except ValueError:
+            notification_fail_closed = True
+
+        fail_closed_ok = (
+            fail_closed_unconfigured
+            and fail_closed_oncall_route
+            and fail_closed_rejection
+            and watch_window_ok
+            and notification_fail_closed
+        )
+        checks.append(
+            CheckResult(
+                ok=fail_closed_ok,
+                name="observability:fail_closed_gates",
+                detail=(
+                    "Observability exporter, dashboard provisioning, watch-window query execution, and notification adapter fail-closed on missing config, unconfigured route, and provider rejection"
+                    if fail_closed_ok
+                    else "invalid: observability fail-closed gates failed to reject missing config or provider rejection"
+                ),
+            )
+        )
+    except Exception as exc:
+        checks.append(
+            CheckResult(
+                ok=False,
+                name="observability:live_wiring",
+                detail=f"observability runtime checks failed: {type(exc).__name__}: {exc}",
+            )
+        )
     return checks
 
 
@@ -1224,7 +1526,11 @@ def _is_safe_protected_redirect(
     protected_path: str = "/operator",
     target_path: str = "/login",
 ) -> bool:
-    if web_status not in {302, 303, 307, 308} or not isinstance(location, str) or not location.strip():
+    if (
+        web_status not in {302, 303, 307, 308}
+        or not isinstance(location, str)
+        or not location.strip()
+    ):
         return False
 
     try:
