@@ -25,6 +25,7 @@ Observed at `2026-08-02T10:02:45Z`:
 - PR head reported by GitHub equals `b664a8ea...`.
 - Completed successful checks: All five checks (`orchestrator`, `performance-gate`, `product-e2e-gate`, `product`, `task-review-gate`) are terminal green.
 - Parent diff from the baseline `origin/dev` tip contains six paths: `scripts/ai_status.py`, `scripts/test_ai_status.py`, `.orchestrator/test_supervisor.py`, and three `docs/evidence/e2e/*` artifacts.
+- Parent commit trailer lineage (`6963ca40..b664a8ea`, 9 task commits): earlier 5 commits (`91a6eee3`..`bb1ea971`) carry `LLM-Agent: Codex7` / `Reviewer: Codex8` (reconciling PR #567 body's initial `Reviewer: Codex8`); latest 4 commits (`f187ba97`..`b664a8ea`) carry `LLM-Agent: Codex4` / `Reviewer: Codex7` (matching live parent task owner: Codex4, reviewer: Codex7).
 
 Any parent commit after `b664a8ea...`, changed PR head, changed base, or new task-owned diff invalidates this snapshot and requires a fresh packet check.
 
@@ -48,7 +49,7 @@ Any parent commit after `b664a8ea...`, changed PR head, changed base, or new tas
 
 - [x] GitHub PR head equals frozen HEAD `b664a8ea...`.
 - [x] Frozen parent diff is limited to the three implementation/test paths and three Product E2E evidence paths listed above.
-- [x] All parent task commits contain the expected task ID plus `LLM-Agent: Codex4`, `Task-ID: ODP-ORCH-DONE-DELIVERY-PROVENANCE-001`, and `Reviewer: Codex7` trailers.
+- [x] All 9 parent task commits on branch `task/ODP-ORCH-DONE-DELIVERY-PROVENANCE-001` (`6963ca40..b664a8ea`) contain `Task-ID: ODP-ORCH-DONE-DELIVERY-PROVENANCE-001` with an accurate ownership/reviewer trailer lineage: the earlier 5 commits (`91a6eee3`..`bb1ea971`) carry `LLM-Agent: Codex7` and `Reviewer: Codex8` (reconciling PR #567 body's initial `Reviewer: Codex8`), while the latest 4 commits (`f187ba97`..`b664a8ea`) carry `LLM-Agent: Codex4` and `Reviewer: Codex7` matching current live parent metadata (owner: Codex4, reviewer: Codex7).
 - [x] `git diff --check origin/dev...b664a8ea...` passes.
 - [x] Ten `DoneDeliveryProvenanceRegressionTests` pass on an archive of exact HEAD `b664a8ea...`.
 - [x] The focused supervisor freeze regression for unresolved/moved delivery checkout state passes on the same archive.
