@@ -111,10 +111,9 @@ All 5,051 tests in `tests/reliability/test_runtime_observability.py` and 117 E2E
 ## 7. Final Reviewer Audit & Signoff (`Antigravity2`)
 
 - **Reviewer Identity**: `Antigravity2`
-- **Audit Timestamp**: `2026-08-02T05:26:00Z`
+- **Audit Timestamp**: `2026-08-02T05:29:00Z`
 - **Task ID**: `ODP-PLAN-OBSERVABILITY-LIVE-001-SIDECAR-REVIEW`
 - **Scope Verification**: Strictly support artifact `support/sidecars/ODP-PLAN-OBSERVABILITY-LIVE-001/ODP-PLAN-OBSERVABILITY-LIVE-001-SIDECAR-REVIEW.md`. Zero canonical or runtime code modified.
-- **Test Verification**: Executed `.venv/bin/pytest -q tests -k "observability or telemetry or alert or dlq"` — 85 passed, 0 failed.
+- **Test Verification**: Executed `pytest -q tests -k "observability or telemetry or alert or dlq"` — 85 passed, 0 failed.
 - **Formatting Verification**: Executed `git diff --check` — 0 whitespace or formatting errors.
 - **Review Decision**: **APPROVED**. The review packet and evidence summary accurately reflect parent task `ODP-PLAN-OBSERVABILITY-LIVE-001` deliverables and verification status without mutating L1 canonical truth or runtime code.
-
