@@ -472,6 +472,51 @@ def test_cli_expected_sha_ancestry_non_evidence_descendant_fails_closed() -> Non
     assert any("intervening commits touch non-evidence paths" in err for err in errors)
 
 
+def test_cli_expected_sha_ancestry_merge_commit_product_change_fails_closed(
+    tmp_path: Path,
+) -> None:
+    module = load_checker_module()
+    repo = tmp_path / "repo"
+    repo.mkdir()
+
+    def run_git(*args: str) -> str:
+        res = subprocess.run(
+            ["git", *args], cwd=repo, capture_output=True, text=True, check=True
+        )
+        return res.stdout.strip()
+
+    run_git("init")
+    run_git("config", "user.email", "test@example.com")
+    run_git("config", "user.name", "Test")
+
+    (repo / "docs" / "evidence").mkdir(parents=True)
+    (repo / "docs" / "evidence" / "init.md").write_text("init\n")
+    (repo / "app.py").write_text("print('v1')\n")
+    run_git("add", ".")
+    run_git("commit", "-m", "candidate")
+    candidate_sha = run_git("rev-parse", "HEAD")
+
+    run_git("checkout", "-b", "branch-a")
+    (repo / "docs" / "evidence" / "a.md").write_text("evidence a\n")
+    run_git("add", ".")
+    run_git("commit", "-m", "branch-a commit")
+
+    run_git("checkout", "master")
+    (repo / "docs" / "evidence" / "b.md").write_text("evidence b\n")
+    run_git("add", ".")
+    run_git("commit", "-m", "branch-b commit")
+
+    run_git("merge", "branch-a", "--no-ff", "-m", "merge commit")
+    (repo / "app.py").write_text("print('v2')\n")
+    run_git("add", "app.py")
+    run_git("commit", "--amend", "--no-edit")
+    merge_sha = run_git("rev-parse", "HEAD")
+
+    errors = module.check_candidate_ancestry(candidate_sha, merge_sha, repo)
+    assert any("intervening commits touch non-evidence paths" in err for err in errors)
+    assert any("app.py" in err for err in errors)
+
+
 def test_cli_expected_sha_match_passes() -> None:
     result = run_checker("--expected-sha", CANDIDATE_SHA)
 

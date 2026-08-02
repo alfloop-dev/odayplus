@@ -568,14 +568,23 @@ def check_candidate_ancestry(
                 f"{expected_sha!r}"
             ]
 
+        diff_proc = subprocess.run(
+            ["git", "diff", "--name-only", candidate_sha, expected_sha],
+            cwd=root,
+            check=True,
+            capture_output=True,
+            text=True,
+        )
         log_proc = subprocess.run(
-            ["git", "log", "--format=", "--name-only", f"{candidate_sha}..{expected_sha}"],
+            ["git", "log", "--format=", "--name-only", "-m", f"{candidate_sha}..{expected_sha}"],
             cwd=root,
             check=True,
             capture_output=True,
             text=True,
         )
         touched_paths = {
+            line.strip() for line in diff_proc.stdout.splitlines() if line.strip()
+        } | {
             line.strip() for line in log_proc.stdout.splitlines() if line.strip()
         }
         disallowed = sorted({p for p in touched_paths if not is_evidence_path(p)})
