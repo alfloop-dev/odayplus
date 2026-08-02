@@ -2864,13 +2864,31 @@ def process_queue(
             continue
         if dispatch_agent_id != request_agent_id:
             request = build_request(config, event, agent_id_override=dispatch_agent_id)
-        workspace_ok, workspace_message = prepare_worker_workspace(
-            config,
-            state,
-            request,
-            queue_event_id=str(event_id or ""),
-            target_agent=str(event.get("target_display_name") or event.get("target_agent") or ""),
-        )
+        try:
+            workspace_ok, workspace_message = prepare_worker_workspace(
+                config,
+                state,
+                request,
+                queue_event_id=str(event_id or ""),
+                target_agent=str(event.get("target_display_name") or event.get("target_agent") or ""),
+            )
+        except Exception as exc:
+            record["status"] = "failed"
+            record["processed_at"] = utc_now()
+            record["error"] = f"Worker workspace preparation failed closed: {type(exc).__name__}: {exc}"
+            write_activity_log(
+                config,
+                {
+                    "type": "wake_failed",
+                    "task_id": event.get("task_id"),
+                    "target_agent": event.get("target_display_name") or event.get("target_agent"),
+                    "provider": request.provider,
+                    "message": record["error"],
+                    "queue_event_id": event_id,
+                },
+            )
+            changed = True
+            continue
         if not workspace_ok:
             record["status"] = "pending"
             record["last_wait_reason"] = workspace_message

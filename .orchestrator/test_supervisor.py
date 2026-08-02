@@ -1555,6 +1555,65 @@ class ProcessQueueDispatchGuardTests(unittest.TestCase):
         self.assertTrue(changed)
         self.assertEqual(guard.call_args.kwargs["cwd"], workspace)
 
+    def test_process_queue_isolates_workspace_exception_and_starts_next_event(self) -> None:
+        tasks = [
+            {
+                "id": task_id,
+                "status": "in_progress",
+                "owner": "Codex",
+                "reviewer": "Reviewer",
+                "depends_on": [],
+            }
+            for task_id in ("BAD-001", "GOOD-001")
+        ]
+        events = [
+            {
+                "event_id": event_id,
+                "task_id": task_id,
+                "target_agent": "codex",
+                "target_display_name": "Codex",
+                "provider": "codex",
+                "reason": "owned_in_progress_dispatch",
+                "message": "wake",
+            }
+            for event_id, task_id in (("evt-bad", "BAD-001"), ("evt-good", "GOOD-001"))
+        ]
+        state = {"queue": {"events": {}}, "workers": {}}
+
+        def prepare_workspace(_config, _state, request, **_kwargs):
+            if request.task_id == "BAD-001":
+                raise ValueError("missing required source document")
+            request.metadata["workspace_path"] = "/tmp/good-workspace"
+            return True, None
+
+        with (
+            mock.patch.object(supervisor, "load_event_queue", return_value=events),
+            mock.patch.object(supervisor, "load_status", return_value={"tasks": tasks}),
+            mock.patch.object(supervisor, "select_dispatch_agent_id", return_value="codex"),
+            mock.patch.object(supervisor, "prepare_worker_workspace", side_effect=prepare_workspace),
+            mock.patch.object(supervisor, "check_worker_tree_clean", return_value=(True, None)),
+            mock.patch.object(
+                supervisor,
+                "start_worker_for_request",
+                return_value=(True, "run-good", {"manual_confirmation_required": False, "auto_delivered": True}),
+            ) as start_worker,
+            mock.patch.object(supervisor, "sync_dispatched_task_status", return_value=True),
+            mock.patch.object(supervisor, "write_activity_log") as write_activity_log,
+        ):
+            changed = supervisor.process_queue(self.config, state, self.provider_report)
+
+        self.assertTrue(changed)
+        self.assertEqual(state["queue"]["events"]["evt-bad"]["status"], "failed")
+        self.assertIn("missing required source document", state["queue"]["events"]["evt-bad"]["error"])
+        self.assertEqual(state["queue"]["events"]["evt-good"]["status"], "started")
+        start_worker.assert_called_once()
+        failure_events = [
+            call.args[1]
+            for call in write_activity_log.call_args_list
+            if call.args[1].get("type") == "wake_failed"
+        ]
+        self.assertEqual(failure_events[0]["task_id"], "BAD-001")
+
     def test_build_request_uses_provider_model_preference_for_qwen_agent(self) -> None:
         config = {
             "schema": {
