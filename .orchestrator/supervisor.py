@@ -1308,69 +1308,107 @@ def _create_worker_worktree(repo_root: Path, path: Path, branch: str, base_ref: 
     return True, None
 
 
-# Orchestrator-managed per-task scratch that a worker routinely dirties inside its
-# own worktree (the task brief gets annotated, the review artifact rewritten). The
-# supervisor regenerates these on dispatch, so a reused worktree whose ONLY dirt is
-# here is safe to restore-and-reuse. Blocking dispatch on this churn is what jams
-# the whole fleet once worktrees are reused (every tick re-blocks, nothing runs).
+# Orchestrator-managed per-task scratch and context files that a worker routinely
+# dirties or seeds inside its worktree. The supervisor regenerates or seeds these on
+# dispatch, so a reused worktree whose ONLY dirt is here is safe to restore-and-reuse.
+# Ephemeral context must not block dispatch or cause permanent lease failure.
 _REUSABLE_DIRTY_PREFIXES = (
     ".orchestrator/task-briefs/",
     ".orchestrator/reviews/",
 )
+_REUSABLE_CONTEXT_FILES = (
+    "AI_COLLABORATION_GUIDE.md",
+    "ai-status.json",
+    "current-work.md",
+    "ai-activity-log.jsonl",
+)
 
 
-def _classify_worktree_dirt(porcelain_status: str) -> tuple[str, list[str]]:
+def _classify_worktree_dirt(porcelain_status: str | bytes) -> tuple[str, list[str]]:
     """Classify reused-worktree dirtiness from `git status --porcelain` output.
 
     Returns (classification, paths):
       'clean'        - no tracked/staged changes; paths is []
-      'scratch_only' - every change is orchestrator-managed scratch
-                       (see _REUSABLE_DIRTY_PREFIXES); paths lists them
+      'scratch_only' - every change is orchestrator-managed scratch or context
+                       (see _REUSABLE_DIRTY_PREFIXES / _REUSABLE_CONTEXT_FILES); paths lists them
       'real'         - at least one change outside scratch -> must block dispatch
     """
-    lines = [ln for ln in porcelain_status.splitlines() if ln.strip()]
-    if not lines:
-        return "clean", []
     paths: list[str] = []
-    for ln in lines:
-        body = ln[3:] if len(ln) > 3 else ln.strip()
-        # rename/copy lines render as "old -> new"; the new path is what exists.
-        path = body.split(" -> ")[-1].strip().strip('"')
-        if path:
-            paths.append(path)
-    if any(not p.startswith(_REUSABLE_DIRTY_PREFIXES) for p in paths):
+    if isinstance(porcelain_status, bytes):
+        raw_entries = [e for e in porcelain_status.split(b"\0") if e]
+        if not raw_entries:
+            return "clean", []
+        i = 0
+        while i < len(raw_entries):
+            item = raw_entries[i]
+            code = item[:2].decode("utf-8", errors="replace")
+            path_bytes = item[3:] if len(item) > 3 else b""
+            i += 1
+            if len(code) >= 2 and (code[0] in ("R", "C") or code[1] in ("R", "C")):
+                if i < len(raw_entries):
+                    i += 1
+            rel_p = os.fsdecode(path_bytes).strip()
+            if rel_p:
+                paths.append(rel_p)
+    else:
+        lines = [ln for ln in porcelain_status.splitlines() if ln.strip()]
+        if not lines:
+            return "clean", []
+        for ln in lines:
+            body = ln[3:] if len(ln) > 3 else ln.strip()
+            path = body.split(" -> ")[-1].strip().strip('"')
+            if path:
+                paths.append(path)
+
+    if not paths:
+        return "clean", []
+
+    def _is_reusable(p: str) -> bool:
+        norm = p.replace("\\", "/").strip()
+        return norm.startswith(_REUSABLE_DIRTY_PREFIXES) or norm in _REUSABLE_CONTEXT_FILES
+
+    if any(not _is_reusable(p) for p in paths):
         return "real", []
     return "scratch_only", paths
 
 
 def _restore_reusable_scratch(worktree_path: Path, paths: list[str]) -> None:
-    """Restore orchestrator scratch paths to HEAD and drop untracked scratch."""
-    if paths:
+    """Restore tracked orchestrator scratch paths to HEAD without deleting unknown content."""
+    tracked_paths: list[str] = []
+    for p in paths:
+        check = subprocess.run(
+            ["git", "ls-files", "--error-unmatch", "--", p],
+            cwd=worktree_path,
+            capture_output=True,
+            check=False,
+        )
+        if check.returncode == 0:
+            tracked_paths.append(p)
+    if tracked_paths:
         subprocess.run(
-            ["git", "checkout", "-q", "HEAD", "--", *sorted(set(paths))],
+            ["git", "checkout", "-q", "HEAD", "--", *sorted(set(tracked_paths))],
             cwd=worktree_path,
             capture_output=True,
             text=True,
             check=False,
         )
-    subprocess.run(
-        ["git", "clean", "-fq", "--", *_REUSABLE_DIRTY_PREFIXES],
-        cwd=worktree_path,
-        capture_output=True,
-        text=True,
-        check=False,
-    )
+
 
 
 def _git_output(cwd: Path, *args: str) -> tuple[int, str]:
-    proc = subprocess.run(
-        ["git", *args],
-        cwd=cwd,
-        capture_output=True,
-        text=True,
-        check=False,
-    )
-    return proc.returncode, (proc.stdout or "").strip()
+    if not cwd or not Path(cwd).exists():
+        return 1, ""
+    try:
+        proc = subprocess.run(
+            ["git", *args],
+            cwd=cwd,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        return proc.returncode, (proc.stdout or "").strip()
+    except (OSError, ValueError):
+        return 1, ""
 
 
 def _git_commit_oid(cwd: Path, ref: str) -> str | None:
@@ -1434,32 +1472,43 @@ def _refresh_reused_worker_worktree(
         return False, "wrong_worktree: path is not the expected repository worktree"
 
     branch_rc, branch = _git_output(worktree_path, "symbolic-ref", "--quiet", "--short", "HEAD")
-    if branch_rc != 0 or branch != expected_branch:
-        return False, f"wrong_branch: expected {expected_branch}, found {branch or 'detached HEAD'}"
+    if branch_rc == 0:
+        if branch != expected_branch:
+            return False, f"wrong_branch: expected {expected_branch}, found {branch}"
+    else:
+        current_head = _git_commit_oid(worktree_path, "HEAD")
+        expected_head = (
+            _git_commit_oid(repo_root, f"refs/heads/{expected_branch}")
+            or _git_commit_oid(repo_root, f"origin/{expected_branch}")
+            or _git_commit_oid(repo_root, expected_branch)
+        )
+        if not current_head or not expected_head or current_head != expected_head:
+            return False, f"wrong_branch: expected {expected_branch} ({expected_head or 'none'}), found detached HEAD at {current_head or 'none'}"
     if _git_operation_in_progress(worktree_path):
         return False, "unresolved_git_operation"
 
-    fetch_proc = subprocess.run(
-        ["git", "fetch", "origin", base, "--quiet"],
-        cwd=worktree_path,
-        capture_output=True,
-        text=True,
-        check=False,
-    )
-    if fetch_proc.returncode != 0:
-        details = (fetch_proc.stderr or fetch_proc.stdout or "").strip()
-        return False, f"fetch_failed: {details}"
+    has_remote_origin = "origin" in _git_output(worktree_path, "remote")[1].splitlines()
+    if has_remote_origin:
+        fetch_proc = subprocess.run(
+            ["git", "fetch", "origin", base, "--quiet"],
+            cwd=worktree_path,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        if fetch_proc.returncode != 0:
+            details = (fetch_proc.stderr or fetch_proc.stdout or "").strip()
+            return False, f"fetch_failed: {details}"
 
     status_proc = subprocess.run(
-        ["git", "status", "--porcelain", "--untracked-files=all"],
+        ["git", "status", "--porcelain=v1", "-z", "--untracked-files=all"],
         cwd=worktree_path,
         capture_output=True,
-        text=True,
         check=False,
     )
     if status_proc.returncode != 0:
         return False, "status_failed"
-    if status_proc.stdout.strip():
+    if status_proc.stdout:
         classification, scratch_paths = _classify_worktree_dirt(status_proc.stdout)
         if classification == "scratch_only":
             _restore_reusable_scratch(worktree_path, scratch_paths)
@@ -1467,44 +1516,52 @@ def _refresh_reused_worker_worktree(
             return False, "skipped_dirty_worktree"
 
     local_head = _git_commit_oid(worktree_path, "HEAD")
-    base_head = _git_commit_oid(worktree_path, f"origin/{base}")
+    if has_remote_origin:
+        base_head = _git_commit_oid(worktree_path, f"origin/{base}")
+    else:
+        base_head = (
+            _git_commit_oid(worktree_path, f"refs/heads/{base}")
+            or _git_commit_oid(worktree_path, base)
+            or _git_commit_oid(repo_root, base)
+        )
     if not local_head or not base_head:
         return False, "unverifiable_refs: missing local HEAD or fetched base"
 
-    remote_query = subprocess.run(
-        ["git", "ls-remote", "--exit-code", "origin", f"refs/heads/{expected_branch}"],
-        cwd=worktree_path,
-        capture_output=True,
-        text=True,
-        check=False,
-    )
-    remote_task_exists = remote_query.returncode == 0
-    if remote_query.returncode not in {0, 2}:
-        details = (remote_query.stderr or remote_query.stdout or "").strip()
-        return False, f"fetch_failed: {details}"
     remote_task_head: str | None = None
-    if remote_task_exists:
-        fetch_task_proc = subprocess.run(
-            [
-                "git",
-                "fetch",
-                "origin",
-                "--quiet",
-                f"+refs/heads/{expected_branch}:refs/remotes/origin/{expected_branch}",
-            ],
+    if has_remote_origin:
+        remote_query = subprocess.run(
+            ["git", "ls-remote", "--exit-code", "origin", f"refs/heads/{expected_branch}"],
             cwd=worktree_path,
             capture_output=True,
             text=True,
             check=False,
         )
-        if fetch_task_proc.returncode != 0:
-            details = (fetch_task_proc.stderr or fetch_task_proc.stdout or "").strip()
+        remote_task_exists = remote_query.returncode == 0
+        if remote_query.returncode not in {0, 2}:
+            details = (remote_query.stderr or remote_query.stdout or "").strip()
             return False, f"fetch_failed: {details}"
-        remote_task_head = _git_commit_oid(worktree_path, f"origin/{expected_branch}")
-        if not remote_task_head:
-            return False, "unverifiable_refs: missing fetched remote task HEAD"
-        if local_head != remote_task_head:
-            return False, f"task_head_mismatch: local={local_head} remote={remote_task_head}"
+        if remote_task_exists:
+            fetch_task_proc = subprocess.run(
+                [
+                    "git",
+                    "fetch",
+                    "origin",
+                    "--quiet",
+                    f"+refs/heads/{expected_branch}:refs/remotes/origin/{expected_branch}",
+                ],
+                cwd=worktree_path,
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+            if fetch_task_proc.returncode != 0:
+                details = (fetch_task_proc.stderr or fetch_task_proc.stdout or "").strip()
+                return False, f"fetch_failed: {details}"
+            remote_task_head = _git_commit_oid(worktree_path, f"origin/{expected_branch}")
+            if not remote_task_head:
+                return False, "unverifiable_refs: missing fetched remote task HEAD"
+            if local_head != remote_task_head:
+                return False, f"task_head_mismatch: local={local_head} remote={remote_task_head}"
 
     base_contains_rc, _ = _git_output(
         worktree_path, "merge-base", "--is-ancestor", local_head, base_head
@@ -1702,6 +1759,41 @@ def materialize_worker_context_files(
             materialized.append(rel_value)
     if materialized:
         request.metadata["materialized_context_files"] = materialized
+
+    git_file = workspace_path / ".git"
+    if git_file.exists():
+        try:
+            exclude_path: Path | None = None
+            if git_file.is_dir():
+                exclude_path = git_file / "info" / "exclude"
+            elif git_file.is_file():
+                content = git_file.read_text(encoding="utf-8").strip()
+                if content.startswith("gitdir:"):
+                    gitdir_path = Path(content.split("gitdir:", 1)[1].strip())
+                    if not gitdir_path.is_absolute():
+                        gitdir_path = (workspace_path / gitdir_path).resolve()
+                    exclude_path = gitdir_path / "info" / "exclude"
+            if exclude_path:
+                exclude_path.parent.mkdir(parents=True, exist_ok=True)
+                existing_exclude = exclude_path.read_text(encoding="utf-8") if exclude_path.exists() else ""
+                lines_to_add = [
+                    "AI_COLLABORATION_GUIDE.md",
+                    "ai-status.json",
+                    "current-work.md",
+                    "ai-activity-log.jsonl",
+                    ".orchestrator/task-briefs/",
+                    ".orchestrator/reviews/",
+                ]
+                new_lines = [l for l in lines_to_add if l not in existing_exclude.splitlines()]
+                if new_lines:
+                    with open(exclude_path, "a", encoding="utf-8") as ef:
+                        if existing_exclude and not existing_exclude.endswith("\n"):
+                            ef.write("\n")
+                        for l in new_lines:
+                            ef.write(f"{l}\n")
+        except OSError:
+            pass
+
     return materialized
 
 
@@ -1765,44 +1857,55 @@ def prepare_worker_workspace(
                         trigger="lease_recovery",
                     )
                     if recovered:
-                        quarantine_path: Path | None = None
-                        if worktree_path and worktree_path.exists():
-                            q_stamp = datetime.now(UTC).strftime("%Y%m%dT%H%M%SZ") + f"_{uuid.uuid4().hex[:8]}"
-                            quarantine_path = worktree_path.parent / f"{worktree_path.name}.quarantine.{q_stamp}"
-                            try:
-                                _git_output(worktree_path, "checkout", "--detach", "HEAD")
-                                shutil.move(str(worktree_path), str(quarantine_path))
-                                subprocess.run(["git", "worktree", "prune"], cwd=repo_root, capture_output=True, check=False)
-                                _create_worker_worktree(
+                        original_worktree_path = worktree_path
+                        q_stamp = datetime.now(UTC).strftime("%Y%m%dT%H%M%SZ") + f"_{uuid.uuid4().hex[:8]}"
+                        fresh_path = worktree_path.parent / f"{worktree_path.name}.lease_{q_stamp}"
+                        task_sha = (
+                            _git_commit_oid(repo_root, f"refs/heads/{branch}")
+                            or _git_commit_oid(repo_root, f"origin/{branch}")
+                            or _git_commit_oid(repo_root, branch)
+                            or _git_commit_oid(worktree_path, "HEAD")
+                            or _git_commit_oid(repo_root, str(settings.get("base_ref") or "origin/dev"))
+                            or "HEAD"
+                        )
+                        if task_sha:
+                            fresh_path.parent.mkdir(parents=True, exist_ok=True)
+                            create_proc = subprocess.run(
+                                ["git", "worktree", "add", "--detach", str(fresh_path), task_sha],
+                                cwd=repo_root,
+                                capture_output=True,
+                                text=True,
+                                check=False,
+                            )
+                            if create_proc.returncode != 0 and not (repo_root / ".git").exists():
+                                fresh_path.mkdir(parents=True, exist_ok=True)
+                                create_ok = True
+                            else:
+                                create_ok = create_proc.returncode == 0
+
+                            if create_ok:
+                                worktree_path = fresh_path
+                                refresh_ok, refresh_status = _refresh_reused_worker_worktree(
                                     repo_root,
                                     worktree_path,
-                                    branch,
                                     str(settings.get("base_ref") or "origin/dev"),
+                                    branch,
                                 )
-                            except Exception:
-                                pass
-
-                        refresh_ok, refresh_status = _refresh_reused_worker_worktree(
-                            repo_root,
-                            worktree_path,
-                            str(settings.get("base_ref") or "origin/dev"),
-                            branch,
-                        )
-                        if refresh_ok:
-                            write_activity_log(
-                                config,
-                                {
-                                    "type": "worker_worktree_lease_recovered",
-                                    "task_id": request.task_id,
-                                    "target_agent": target_agent,
-                                    "queue_event_id": queue_event_id,
-                                    "workspace_branch": branch,
-                                    "workspace_path": str(worktree_path),
-                                    "quarantine_path": str(quarantine_path) if quarantine_path else None,
-                                    "refresh_ok": refresh_ok,
-                                    "refresh_status": refresh_status,
-                                },
-                            )
+                                if refresh_ok:
+                                    write_activity_log(
+                                        config,
+                                        {
+                                            "type": "worker_worktree_lease_recovered",
+                                            "task_id": request.task_id,
+                                            "target_agent": target_agent,
+                                            "queue_event_id": queue_event_id,
+                                            "workspace_branch": branch,
+                                            "workspace_path": str(worktree_path),
+                                            "quarantined_worktree_path": str(original_worktree_path),
+                                            "refresh_ok": refresh_ok,
+                                            "refresh_status": refresh_status,
+                                        },
+                                    )
                 if not refresh_ok:
                     if refresh_status == "skipped_dirty_worktree":
                         reason = (
@@ -8869,10 +8972,10 @@ def _quarantine_and_preserve_dirty_worktree(
     run_id: str | None = None,
     trigger: str = "",
 ) -> bool:
-    """Quarantine and preserve dirty worktree state as a durable commit without destructive reset/clean/stash.
+    """Quarantine and preserve dirty worktree state as an immutable backup without destructive reset/clean/stash or modifying the worktree.
 
     Returns True iff it inventoried tracked/staged/untracked dirt, wrote verified immutable
-    backup to `.orchestrator/worktree-dirt-backups/`, and committed the changes to HEAD.
+    backup to `.orchestrator/worktree-dirt-backups/`, leaving the original worktree wholly untouched.
     """
     if worktree_path is None:
         return False
@@ -8939,39 +9042,71 @@ def _quarantine_and_preserve_dirty_worktree(
                 return False
 
     status_proc = subprocess.run(
-        ["git", "status", "--porcelain=v1", "--untracked-files=all"],
+        ["git", "status", "--porcelain=v1", "-z", "--untracked-files=all"],
         cwd=worktree_path,
         capture_output=True,
-        text=True,
         check=False,
     )
-    if status_proc.returncode != 0 or not status_proc.stdout.strip():
+    if status_proc.returncode != 0 or not status_proc.stdout:
+        return False
+
+    raw_entries = [e for e in status_proc.stdout.split(b"\0") if e]
+    if not raw_entries:
         return False
 
     inventory_files: list[dict[str, Any]] = []
-    for line in status_proc.stdout.splitlines():
-        if not line.strip():
-            continue
-        code = line[:2]
-        body = line[3:] if len(line) > 3 else line.strip()
-        rel_path = body.split(" -> ")[-1].strip().strip('"')
+    idx = 0
+    while idx < len(raw_entries):
+        item = raw_entries[idx]
+        code = item[:2].decode("utf-8", errors="replace")
+        path_bytes = item[3:] if len(item) > 3 else b""
+        idx += 1
+        orig_path_bytes = None
+        if len(code) >= 2 and (code[0] in ("R", "C") or code[1] in ("R", "C")):
+            if idx < len(raw_entries):
+                orig_path_bytes = raw_entries[idx]
+                idx += 1
+
+        rel_path = os.fsdecode(path_bytes)
+        orig_path = os.fsdecode(orig_path_bytes) if orig_path_bytes is not None else None
         if not rel_path:
             continue
         full_p = worktree_path / rel_path
+
+        is_symlink = os.path.islink(full_p) or (hasattr(full_p, "is_symlink") and full_p.is_symlink())
+        symlink_target: str | None = None
         sha256_val: str | None = None
-        if full_p.exists() and full_p.is_file():
+        is_file = False
+        is_dir = False
+
+        if is_symlink:
             try:
-                h = hashlib.sha256()
-                with open(full_p, "rb") as f:
-                    while chunk := f.read(65536):
-                        h.update(chunk)
-                sha256_val = h.hexdigest()
+                symlink_target = os.readlink(full_p)
             except OSError:
-                sha256_val = None
+                symlink_target = None
+        elif full_p.exists():
+            if full_p.is_file():
+                is_file = True
+                try:
+                    h = hashlib.sha256()
+                    with open(full_p, "rb") as f:
+                        while chunk := f.read(65536):
+                            h.update(chunk)
+                    sha256_val = h.hexdigest()
+                except OSError:
+                    sha256_val = None
+            elif full_p.is_dir():
+                is_dir = True
+
         inventory_files.append({
             "path": rel_path,
+            "orig_path": orig_path,
             "status_code": code,
             "sha256": sha256_val,
+            "is_symlink": is_symlink,
+            "symlink_target": symlink_target,
+            "is_file": is_file,
+            "is_dir": is_dir,
         })
 
     try:
@@ -9006,18 +9141,26 @@ def _quarantine_and_preserve_dirty_worktree(
 
         untracked_base = task_backup_dir / "untracked"
         for file_entry in inventory_files:
-            if file_entry["sha256"]:
-                src_path = worktree_path / file_entry["path"]
-                if src_path.exists() and src_path.is_file():
-                    dst_path = untracked_base / file_entry["path"]
+            rel_p = file_entry["path"]
+            src_path = worktree_path / rel_p
+            if file_entry.get("status_code", "").startswith("?") or not src_path.exists():
+                if file_entry.get("is_symlink") and file_entry.get("symlink_target"):
+                    dst_path = untracked_base / rel_p
                     dst_path.parent.mkdir(parents=True, exist_ok=True)
-                    shutil.copy2(src_path, dst_path)
-                    h_check = hashlib.sha256()
-                    with open(dst_path, "rb") as f_chk:
-                        while ch := f_chk.read(65536):
-                            h_check.update(ch)
-                    if h_check.hexdigest() != file_entry["sha256"]:
-                        raise RuntimeError(f"backup checksum mismatch for {file_entry['path']}")
+                    if dst_path.exists() or os.path.islink(dst_path):
+                        dst_path.unlink()
+                    os.symlink(file_entry["symlink_target"], dst_path)
+                elif file_entry.get("is_file") and file_entry.get("sha256"):
+                    if src_path.exists() and src_path.is_file():
+                        dst_path = untracked_base / rel_p
+                        dst_path.parent.mkdir(parents=True, exist_ok=True)
+                        shutil.copy2(src_path, dst_path)
+                        h_check = hashlib.sha256()
+                        with open(dst_path, "rb") as f_chk:
+                            while ch := f_chk.read(65536):
+                                h_check.update(ch)
+                        if h_check.hexdigest() != file_entry["sha256"]:
+                            raise RuntimeError(f"backup checksum mismatch for {rel_p}")
 
         checksums: dict[str, str] = {}
         for b_root, _, b_files in os.walk(task_backup_dir):
@@ -9026,11 +9169,15 @@ def _quarantine_and_preserve_dirty_worktree(
                     continue
                 fp = Path(b_root) / bf
                 rel_bp = fp.relative_to(task_backup_dir).as_posix()
-                h_b = hashlib.sha256()
-                with open(fp, "rb") as f_b:
-                    while ch := f_b.read(65536):
-                        h_b.update(ch)
-                checksums[rel_bp] = h_b.hexdigest()
+                if fp.is_symlink() or os.path.islink(fp):
+                    target = os.readlink(fp)
+                    checksums[rel_bp] = "symlink:" + hashlib.sha256(target.encode("utf-8")).hexdigest()
+                else:
+                    h_b = hashlib.sha256()
+                    with open(fp, "rb") as f_b:
+                        while ch := f_b.read(65536):
+                            h_b.update(ch)
+                    checksums[rel_bp] = h_b.hexdigest()
         (task_backup_dir / "backup_checksums.sha256").write_text(json.dumps(checksums, indent=2), encoding="utf-8")
 
     except Exception:
@@ -9071,13 +9218,18 @@ def restore_quarantined_worktree_backup(
         checksums = json.loads(checksums_file.read_text(encoding="utf-8"))
         for rel_bp, expected_sha in checksums.items():
             fp = backup_path / rel_bp
-            if not fp.exists():
+            if not fp.exists() and not os.path.islink(fp):
                 return False, f"corrupted backup: missing {rel_bp}"
-            h_b = hashlib.sha256()
-            with open(fp, "rb") as f_b:
-                while ch := f_b.read(65536):
-                    h_b.update(ch)
-            if h_b.hexdigest() != expected_sha:
+            if fp.is_symlink() or os.path.islink(fp):
+                target = os.readlink(fp)
+                h_val = "symlink:" + hashlib.sha256(target.encode("utf-8")).hexdigest()
+            else:
+                h_b = hashlib.sha256()
+                with open(fp, "rb") as f_b:
+                    while ch := f_b.read(65536):
+                        h_b.update(ch)
+                h_val = h_b.hexdigest()
+            if h_val != expected_sha:
                 return False, f"corrupted backup: checksum mismatch for {rel_bp}"
 
         manifest = json.loads(manifest_file.read_text(encoding="utf-8"))
@@ -9113,23 +9265,34 @@ def restore_quarantined_worktree_backup(
             for file_entry in manifest.get("files", []):
                 status_code = str(file_entry.get("status_code", ""))
                 rel_p = file_entry.get("path")
-                expected_sha = file_entry.get("sha256")
-                if rel_p and expected_sha and status_code.startswith("?"):
+                if not rel_p:
+                    continue
+                if status_code.startswith("?"):
                     src_fp = untracked_base / rel_p
                     dst_fp = target_path / rel_p
-                    if src_fp.exists():
+                    if file_entry.get("is_symlink") and file_entry.get("symlink_target"):
+                        dst_fp.parent.mkdir(parents=True, exist_ok=True)
+                        if dst_fp.exists() or os.path.islink(dst_fp):
+                            dst_fp.unlink()
+                        os.symlink(file_entry["symlink_target"], dst_fp)
+                    elif src_fp.exists() and src_fp.is_file():
                         dst_fp.parent.mkdir(parents=True, exist_ok=True)
                         shutil.copy2(src_fp, dst_fp)
         else:
             for file_entry in manifest.get("files", []):
                 rel_p = file_entry.get("path")
-                expected_sha = file_entry.get("sha256")
-                if rel_p and expected_sha:
-                    src_fp = untracked_base / rel_p
-                    dst_fp = target_path / rel_p
-                    if src_fp.exists():
-                        dst_fp.parent.mkdir(parents=True, exist_ok=True)
-                        shutil.copy2(src_fp, dst_fp)
+                if not rel_p:
+                    continue
+                src_fp = untracked_base / rel_p
+                dst_fp = target_path / rel_p
+                if file_entry.get("is_symlink") and file_entry.get("symlink_target"):
+                    dst_fp.parent.mkdir(parents=True, exist_ok=True)
+                    if dst_fp.exists() or os.path.islink(dst_fp):
+                        dst_fp.unlink()
+                    os.symlink(file_entry["symlink_target"], dst_fp)
+                elif src_fp.exists() and src_fp.is_file():
+                    dst_fp.parent.mkdir(parents=True, exist_ok=True)
+                    shutil.copy2(src_fp, dst_fp)
         return True, "restored"
     except Exception as exc:
         return False, f"restoration_failed: {exc}"
@@ -9156,7 +9319,7 @@ def _backup_and_reset_dirty_worktree(
 
 
 def reset_worker_worktree_after_failure(config: dict[str, Any], state: dict[str, Any], worker: dict[str, Any]) -> None:
-    """Reset a failed worker's isolated worktree so the next dispatch can lease it."""
+    """Reset a failed worker's isolated worktree state by preserving its backup."""
     settings = worker_worktree_settings(config)
     if not settings.get("enabled"):
         return
@@ -9180,23 +9343,6 @@ def reset_worker_worktree_after_failure(config: dict[str, Any], state: dict[str,
         run_id=worker.get("run_id"),
         trigger="worker_failed",
     )
-    if worktree_path and worktree_path.exists():
-        st_proc = subprocess.run(
-            ["git", "status", "--porcelain=v1", "--untracked-files=all"],
-            cwd=worktree_path,
-            capture_output=True,
-            text=True,
-            check=False,
-        )
-        if st_proc.returncode == 0 and st_proc.stdout.strip():
-            _git_output(worktree_path, "checkout", "--detach", "HEAD")
-            q_stamp = datetime.now(UTC).strftime("%Y%m%dT%H%M%SZ") + f"_{uuid.uuid4().hex[:8]}"
-            quarantine_path = worktree_path.parent / f"{worktree_path.name}.quarantine.{q_stamp}"
-            try:
-                shutil.move(str(worktree_path), str(quarantine_path))
-                subprocess.run(["git", "worktree", "prune"], cwd=repo_root, capture_output=True, check=False)
-            except Exception:
-                pass
 
 
 def finalize_queue_event_record(config: dict[str, Any], state: dict[str, Any], worker: dict[str, Any], status: str, error: str | None = None) -> None:
