@@ -1,8 +1,8 @@
 # Dev Merge / Production Release Gate Separation
 
 - Task: `ODP-CI-DEV-MERGE-RELEASE-NOGO-DEADLOCK-001`
-- Owner: Codex9
-- Reviewer: Codex8
+- Current owner: Codex
+- Current reviewer: Codex2
 - Observed parent head: `8812479dee7fb12453799fd54ff0710af9f30d86` (unchanged)
 - Observed GitHub Actions run: `30722312049`
 
@@ -91,3 +91,35 @@ Required semantic regressions prove both directions:
 
 No Package 10 UI files, fake receipts, gate status, Human/Ops approval, deployment state,
 or parent PR head were changed.
+
+## 2026-08-02 current-base composition
+
+Owner dispatch resumed from published task head
+`1a381de9037b712f34ab513e036b62ba7f5d4331`. The task branch was 92 commits
+behind and five commits ahead of `origin/dev`. To preserve the already-pushed
+task history and satisfy normal-push policy, current `origin/dev` head
+`475f6d5e9b36f097a1eb4ab3dbe4bd8b1b1d7c2f` was merge-composed rather than
+rebasing or force-pushing it.
+
+The only conflict was the tenant header in
+`tests/integration/test_flow_002_expansion_persistence.py`. The resolution keeps
+the latest-base test-specific value `tenant-flow-002`; this preserves the task's
+tenant-scope coverage while avoiding the older generic `tenant-a` identity. The
+resolved, base-advanced implementation head is
+`50baea9095ca7ccf62fca8c1789c0e4ecac00c56`, pushed normally to PR #562.
+
+Verification on that exact implementation head:
+
+```text
+uv run pytest -q tests/e2e/test_release_gate_registry.py tests/e2e/test_acceptance_coverage.py tests/integration/test_flow_002_expansion_persistence.py tests/security/test_branch_protection_policy.py  # exit 0
+uv run ruff check scripts/e2e/check_product_release_gate.py scripts/e2e/check_release_gate_registry.py scripts/e2e/product_e2e_receipt.py tests/e2e/test_release_gate_registry.py tests/integration/test_flow_002_expansion_persistence.py  # exit 0
+python3 scripts/e2e/check_release_gate_registry.py  # exit 0; NO-GO registry valid, 0/7 gates cleared
+python3 scripts/e2e/check_product_release_gate.py --dev-merge  # exit 0
+python3 scripts/e2e/check_product_release_gate.py --require-go  # exit 1 as required; explicit NO-GO
+git diff --check origin/dev...HEAD  # exit 0
+python3 YAML safe-load of .github/workflows/ci.yml and .github/workflows/promote-dev-to-main.yml  # exit 0
+```
+
+The production negative assertion remains a required pass condition: this task
+separates dev-merge execution from production authority; it does not change the
+registry's authentic `NO-GO`, clear any Gate 0-6 blocker, or grant release GO.

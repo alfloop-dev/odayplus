@@ -184,7 +184,7 @@ def main(argv: list[str] | None = None) -> int:
     ):
         if required_token not in staging_workflow_text:
             errors.append(f"remote staging workflow missing token: {required_token}")
-    if "TODO: replace with replace with real deploy" in staging_workflow_text or "TODO: replace with real deploy" in staging_workflow_text:
+    if "TODO: replace with real deploy" in staging_workflow_text:
         errors.append("remote staging workflow still contains placeholder deploy TODO")
 
     external_followup_workflow = ROOT / ".github/workflows/external-proof-followup.yml"
