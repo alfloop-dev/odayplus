@@ -230,9 +230,9 @@ def test_forecastops_absent_alias_fails_closed_without_synthetic_seed_or_fake_re
     monkeypatch: Any,
     tmp_path: Path,
 ) -> None:
-    """Acceptance 4: ForecastOps remains explicitly governed-disabled with reason evidence until authentic 7/14/28-day history exists.
+    """Acceptance 4: ForecastOps remains required-active but unavailable until authentic 7/14/28-day history and an approved alias exist.
     No fixture, synthetic auto-seed, fabricated alias, or fake ready state is introduced.
-    Core Operator platform health returns 200 OK while forecastops capability reports available=False and governedDisabled=True.
+    Core Operator platform health returns 200 OK while forecastops reports available=False and governedDisabled=False.
     """
     monkeypatch.setenv("ODP_REQUIRE_LIVE_DATA", "true")
     monkeypatch.setenv("ODP_PERSISTENCE", "postgresql")
