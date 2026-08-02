@@ -842,7 +842,10 @@ def task_brief_path(task_id: str | None) -> Path:
 
 
 def _recent_task_activity(config: dict[str, Any], task_id: str, *, limit: int = 6) -> list[dict[str, Any]]:
-    path = config_path(config, "activity_log")
+    try:
+        path = config_path(config, "activity_log")
+    except Exception:
+        return []
     if not path.exists():
         return []
 
@@ -891,29 +894,135 @@ def _recent_task_activity(config: dict[str, Any], task_id: str, *, limit: int = 
     return entries
 
 
-def write_task_brief(config: dict[str, Any], task_id: str | None) -> Path | None:
+def normalize_source_doc_path(rel_path: str) -> str:
+    path_str = str(rel_path or "").strip().replace("\\", "/")
+    while path_str.startswith("./"):
+        path_str = path_str[2:]
+    return path_str.lstrip("/")
+
+
+def validate_source_doc_path(rel_path: str, status_root: Path, *, task: dict[str, Any] | None = None) -> tuple[bool, str, str | None]:
+    norm = normalize_source_doc_path(rel_path)
+    if not norm:
+        return False, norm, "empty path"
+    parts = Path(norm).parts
+    if ".." in parts:
+        return False, norm, "traversal path rejected"
+    try:
+        resolved_status_root = status_root.resolve()
+        target = (status_root / norm).resolve()
+        target.relative_to(resolved_status_root)
+    except Exception:
+        return False, norm, "external or traversal path rejected"
+
+    if not target.exists():
+        return False, norm, "missing source document"
+
+    if target.is_dir():
+        inventory_candidates = ["manifest.json", "inventory.json", ".inventory", "LATEST.json"]
+        has_inventory = any((target / inv).exists() for inv in inventory_candidates)
+        if not has_inventory:
+            return False, norm, "directory without inventory manifest"
+
+    return True, norm, None
+
+
+def is_task_brief_stale(text: str, task: dict[str, Any]) -> bool:
+    if not text or not isinstance(task, dict):
+        return True
+
+    patterns = {
+        "status": [r"^-\s*Status:\s*(.+)$"],
+        "owner": [r"^-\s*Owner:\s*(.+)$"],
+        "reviewer": [r"^-\s*Reviewer:\s*(.+)$"],
+        "last_update": [r"^-\s*Last update:\s*(.+)$", r"^-\s*Last Update:\s*(.+)$", r"^-\s*Task Last Update:\s*(.+)$"],
+    }
+
+    for field, regexes in patterns.items():
+        expected = str(task.get(field) or "").strip()
+        if not expected or expected == "-":
+            continue
+        found_val = None
+        for regex in regexes:
+            match = re.search(regex, text, re.MULTILINE | re.IGNORECASE)
+            if match:
+                found_val = match.group(1).strip()
+                break
+        if found_val is not None and found_val.lower() != expected.lower():
+            return True
+
+    return False
+
+
+def generate_task_brief_content(
+    config: dict[str, Any],
+    task_id: str | None,
+    *,
+    generated_at: str | None = None,
+) -> tuple[str, str, dict[str, Any]]:
     if not task_id:
-        return None
-    status = load_status(config)
-    tasks = status.get("tasks", []) or []
-    task = next((item for item in tasks if str(item.get("id") or "").strip() == task_id), None)
-    if task is None:
-        return None
+        raise ValueError("task_id is required")
+    status_data = load_status(config)
+    tasks = status_data.get("tasks", []) or []
     resolver = TaskResolver(tasks)
+
+    active_task = next((t for t in tasks if str(t.get("id") or "").strip() == task_id), None)
+    archived_task = resolver.get(task_id)
+
+    if active_task and archived_task and active_task is not archived_task:
+        for k in ("status", "owner", "reviewer", "last_update"):
+            if str(active_task.get(k) or "").strip() != str(archived_task.get(k) or "").strip():
+                raise ValueError(
+                    f"Archived-task ambiguity for task {task_id}: active {k}='{active_task.get(k)}' != archived {k}='{archived_task.get(k)}'"
+                )
+
+    task = active_task or archived_task
+    if task is None:
+        raise ValueError(f"Task not found: {task_id}")
+
     deps = [resolver.get(dep_id) for dep_id in (task.get("depends_on") or [])]
     deps = [item for item in deps if item]
     planning_state = load_json(PLANNING_STATE_PATH, default={}) or {}
     planning_active = str(planning_state.get("status") or "") in {"active", "human_required", "accepted"}
     source_ref = task.get("source_ref") if isinstance(task.get("source_ref"), dict) else {}
     source_plane = str(task.get("source_plane") or "").strip()
-    source_docs = [str(item).strip() for item in (task.get("source_docs") or []) if str(item).strip()]
+    source_docs = [normalize_source_doc_path(str(item)) for item in (task.get("source_docs") or []) if str(item).strip()]
     acceptance = [str(item).strip() for item in (task.get("acceptance") or []) if str(item).strip()]
     verification = [str(item).strip() for item in (task.get("verification") or []) if str(item).strip()]
     recent = _recent_task_activity(config, task_id)
-    path = task_brief_path(task_id)
-    ensure_parent(path)
-    body = [
+    artifacts = [str(item).strip() for item in (task.get("artifacts") or []) if str(item).strip()]
+
+    rel_source_path = relpath(task_brief_path(task_id))
+    gen_time = generated_at or utc_now()
+    task_last_update = str(task.get("last_update") or "-")
+    task_status_val = str(task.get("status") or "-")
+    task_owner_val = str(task.get("owner") or "-")
+    task_reviewer_val = str(task.get("reviewer") or "-")
+
+    canonical_payload = {
+        "id": task_id,
+        "title": task.get("title"),
+        "status": task_status_val,
+        "owner": task_owner_val,
+        "reviewer": task_reviewer_val,
+        "last_update": task_last_update,
+        "next": task.get("next"),
+        "source_docs": source_docs,
+        "acceptance": acceptance,
+        "verification": verification,
+    }
+    sha256_hash = hashlib.sha256(json.dumps(canonical_payload, sort_keys=True).encode("utf-8")).hexdigest()
+
+    header_lines = [
         f"# Task Brief: {task_id}",
+        "",
+        f"- Source Path: {rel_source_path}",
+        f"- Generated At: {gen_time}",
+        f"- Task Last Update: {task_last_update}",
+        f"- Status: {task_status_val}",
+        f"- Owner: {task_owner_val}",
+        f"- Reviewer: {task_reviewer_val}",
+        f"- SHA256: {sha256_hash}",
         "",
         "This file is generated by the orchestrator for task-scoped execution context.",
         "Treat `ai-status.json` as the durable execution source of truth only when you need to verify or update state.",
@@ -921,11 +1030,11 @@ def write_task_brief(config: dict[str, Any], task_id: str | None) -> Path | None
         "",
         "## Task",
         f"- Title: {task.get('title') or '-'}",
-        f"- Status: {task.get('status') or '-'}",
-        f"- Owner: {task.get('owner') or '-'}",
-        f"- Reviewer: {task.get('reviewer') or '-'}",
+        f"- Status: {task_status_val}",
+        f"- Owner: {task_owner_val}",
+        f"- Reviewer: {task_reviewer_val}",
         f"- Phase: {task.get('phase') or '-'}",
-        f"- Last update: {task.get('last_update') or '-'}",
+        f"- Last update: {task_last_update}",
         f"- Next: {compact_whitespace(task.get('next') or '-')}",
         "",
         "## Summary",
@@ -933,6 +1042,8 @@ def write_task_brief(config: dict[str, Any], task_id: str | None) -> Path | None
         "",
         "## Dependencies",
     ]
+
+    body = list(header_lines)
     if deps:
         body.extend(
             f"- {dep.get('id')}: {resolver.dependency_status(dep.get('id'))} · {compact_whitespace(dep.get('title') or dep.get('summary_zh') or '-')}"
@@ -940,8 +1051,8 @@ def write_task_brief(config: dict[str, Any], task_id: str | None) -> Path | None
         )
     else:
         body.append("- none")
+
     body.extend(["", "## Artifacts"])
-    artifacts = [str(item).strip() for item in (task.get("artifacts") or []) if str(item).strip()]
     body.extend([f"- {item}" for item in artifacts] or ["- none"])
     body.extend(["", "## Source Documents"])
     body.extend([f"- {item}" for item in source_docs] or ["- none"])
@@ -957,6 +1068,7 @@ def write_task_brief(config: dict[str, Any], task_id: str | None) -> Path | None
         )
     else:
         body.append("- none")
+
     body.extend(["", "## Relevant Canonical Files", "- AI_COLLABORATION_GUIDE.md", "- ai-status.json"])
     if planning_active:
         session_file = str(planning_state.get("session_file") or "").strip()
@@ -966,6 +1078,7 @@ def write_task_brief(config: dict[str, Any], task_id: str | None) -> Path | None
             fallback_planning_files = planning_shared_files(planning_state)
             if fallback_planning_files:
                 body.append(f"- {relpath(fallback_planning_files[0])}")
+
     if source_plane or source_ref:
         body.extend(["", "## Planning Origin"])
         body.append(f"- Source plane: {source_plane or '-'}")
@@ -982,6 +1095,7 @@ def write_task_brief(config: dict[str, Any], task_id: str | None) -> Path | None
                 value = str(source_ref.get(key) or "").strip()
                 if value:
                     body.append(f"- {label}: {value}")
+
     body.extend([f"- {item}" for item in artifacts[:6] if item not in {"AI_COLLABORATION_GUIDE.md", "ai-status.json"}])
     body.extend(
         [
@@ -993,15 +1107,64 @@ def write_task_brief(config: dict[str, Any], task_id: str | None) -> Path | None
             "",
         ]
     )
-    path.write_text("\n".join(body), encoding="utf-8")
+
+    full_text = "\n".join(body)
+    return full_text, sha256_hash, task
+
+
+def write_task_brief(config: dict[str, Any], task_id: str | None) -> Path | None:
+    if not task_id:
+        return None
+    path = task_brief_path(task_id)
+    ensure_parent(path)
+
+    status_data = load_status(config)
+    tasks = status_data.get("tasks", []) or []
+    resolver = TaskResolver(tasks)
+    task = resolver.get(task_id)
+    if task is None:
+        return None
+
+    if path.exists():
+        existing_text = path.read_text(encoding="utf-8")
+        if not is_task_brief_stale(existing_text, task):
+            return path
+
+    text, _, _ = generate_task_brief_content(config, task_id)
+    path.write_text(text, encoding="utf-8")
     return path
 
 
 def execution_context_files(config: dict[str, Any], task_id: str | None) -> list[str]:
     files = ["AI_COLLABORATION_GUIDE.md"]
+    status_root = config_path(config, "status_file").parents[0].resolve()
+
+    status_data = load_status(config)
+    tasks = status_data.get("tasks", []) or []
+    resolver = TaskResolver(tasks)
+    task = resolver.get(task_id)
+
+    is_mutating_or_p0 = False
+    if task:
+        is_mutating_or_p0 = (
+            str(task.get("priority") or "").upper() == "P0"
+            or bool(task.get("mutates_canonical"))
+            or str(task.get("phase") or "").strip() != "Unassigned"
+        )
+        source_docs = task.get("source_docs") or []
+        for doc_entry in source_docs:
+            valid, norm_path, err_reason = validate_source_doc_path(doc_entry, status_root, task=task)
+            if not valid:
+                if is_mutating_or_p0:
+                    raise ValueError(f"Fail-closed on task {task_id}: {err_reason} for source_doc '{doc_entry}'")
+            else:
+                files.append(norm_path)
+
     try:
         brief = write_task_brief(config, task_id)
     except Exception as exc:
+        if is_mutating_or_p0:
+            raise
         write_activity_log(
             config,
             {
@@ -1012,6 +1175,7 @@ def execution_context_files(config: dict[str, Any], task_id: str | None) -> list
         )
         files.append("ai-status.json")
         return unique_strings(files)
+
     if brief is not None:
         files.append(relpath(brief))
     if WORKER_ANCHOR_SPEC_PATH.exists():

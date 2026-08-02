@@ -56,12 +56,15 @@ from common import (
     config_path,
     display_name_for,
     execution_context_files,
+    generate_task_brief_content,
     is_github_cli_auth_failure,
+    is_task_brief_stale,
     load_config,
     load_json,
     load_status,
     new_runtime_id,
     normalize_agent_id,
+    normalize_source_doc_path,
     preserve_github_cli_auth_env,
     relpath,
     selected_shared_files,
@@ -70,6 +73,7 @@ from common import (
     spawn_background_process,
     summarize_failure_reason,
     utc_now,
+    validate_source_doc_path,
     worker_runtime_paths,
     write_activity_log,
     write_failure_evidence,
@@ -1548,21 +1552,58 @@ def _task_brief_context_candidates(task_id: str | None, rel_context_path: str) -
     return ordered
 
 
-def _generated_worker_task_brief(config: dict[str, Any], task_id: str | None) -> str:
-    task = task_index_from_status(config, load_status(config)).get(str(task_id or ""))
-    if not task:
-        return "\n".join(
-            [
-                f"# Task Brief: {task_id or 'unknown-task'}",
-                "",
-                "Generated in the worker workspace because the supervisor root did not have a task brief file.",
-                "",
-            ]
+def _is_tracked_in_worktree(worktree_path: Path, rel_path: str) -> bool:
+    try:
+        res = subprocess.run(
+            ["git", "ls-files", "--error-unmatch", "--", rel_path],
+            cwd=str(worktree_path),
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            check=False,
         )
-    source_docs = [str(item).strip() for item in (task.get("source_docs") or []) if str(item).strip()]
-    acceptance = [str(item).strip() for item in (task.get("acceptance") or []) if str(item).strip()]
-    verification = [str(item).strip() for item in (task.get("verification") or []) if str(item).strip()]
-    body = [
+        return res.returncode == 0
+    except Exception:
+        return False
+
+
+def _file_or_dir_hash(path: Path) -> str | None:
+    try:
+        if not path.exists():
+            return None
+        if path.is_file():
+            return hashlib.sha256(path.read_bytes()).hexdigest()
+        if path.is_dir():
+            hasher = hashlib.sha256()
+            for subfile in sorted(path.rglob("*")):
+                if subfile.is_file():
+                    rel = str(subfile.relative_to(path))
+                    hasher.update(rel.encode("utf-8"))
+                    hasher.update(subfile.read_bytes())
+            return hasher.hexdigest()
+    except Exception:
+        return None
+    return None
+
+
+def _generated_worker_task_brief(config: dict[str, Any], task_id: str | None) -> str:
+    try:
+        text, _, _ = generate_task_brief_content(config, str(task_id or ""))
+        return text
+    except Exception:
+        task = task_index_from_status(config, load_status(config)).get(str(task_id or ""))
+        if not task:
+            return "\n".join(
+                [
+                    f"# Task Brief: {task_id or 'unknown-task'}",
+                    "",
+                    "Generated in the worker workspace because the supervisor root did not have a task brief file.",
+                    "",
+                ]
+            )
+        source_docs = [str(item).strip() for item in (task.get("source_docs") or []) if str(item).strip()]
+        acceptance = [str(item).strip() for item in (task.get("acceptance") or []) if str(item).strip()]
+        verification = [str(item).strip() for item in (task.get("verification") or []) if str(item).strip()]
+        body = [
             f"# Task Brief: {task.get('id') or task_id}",
             "",
             "Generated in the worker workspace because the supervisor root did not have a task brief file.",
@@ -1579,13 +1620,13 @@ def _generated_worker_task_brief(config: dict[str, Any], task_id: str | None) ->
             "",
             "## Source Documents",
         ]
-    body.extend([f"- {item}" for item in source_docs] or ["- none"])
-    body.extend(["", "## Acceptance"])
-    body.extend([f"- {item}" for item in acceptance] or ["- none"])
-    body.extend(["", "## Verification"])
-    body.extend([f"- `{item}`" for item in verification] or ["- none"])
-    body.append("")
-    return "\n".join(body)
+        body.extend([f"- {item}" for item in source_docs] or ["- none"])
+        body.extend(["", "## Acceptance"])
+        body.extend([f"- {item}" for item in acceptance] or ["- none"])
+        body.extend(["", "## Verification"])
+        body.extend([f"- `{item}`" for item in verification] or ["- none"])
+        body.append("")
+        return "\n".join(body)
 
 
 # Canonical worker context that lives in the supervisor root but is gitignored, so a
@@ -1655,11 +1696,25 @@ def materialize_worker_context_files(
         return []
     status_root = config_path(config, "status_file").parents[0].resolve()
     materialized: list[str] = []
+
+    status_data = load_status(config)
+    tasks = status_data.get("tasks", []) or []
+    resolver = TaskResolver(tasks)
+    task = resolver.get(request.task_id)
+    is_mutating_or_p0 = False
+    if task:
+        is_mutating_or_p0 = (
+            str(task.get("priority") or "").upper() == "P0"
+            or bool(task.get("mutates_canonical"))
+            or str(task.get("phase") or "").strip() != "Unassigned"
+        )
+
     for rel_context_path in request.context_files:
         rel_value = str(rel_context_path or "").strip().replace("\\", "/")
         if not rel_value or Path(rel_value).is_absolute():
             continue
         destination = workspace_path / rel_value
+
         if ".orchestrator/task-briefs/" in rel_value:
             destination.parent.mkdir(parents=True, exist_ok=True)
             copied = False
@@ -1667,26 +1722,49 @@ def materialize_worker_context_files(
                 source = status_root / candidate
                 if not source.exists() or not source.is_file():
                     continue
+                existing_text = source.read_text(encoding="utf-8")
+                if task and is_task_brief_stale(existing_text, task):
+                    break
                 shutil.copy2(source, destination)
                 copied = True
                 break
             if not copied:
-                destination.write_text(_generated_worker_task_brief(config, request.task_id), encoding="utf-8")
+                text = _generated_worker_task_brief(config, request.task_id)
+                destination.write_text(text, encoding="utf-8")
+                for candidate in _task_brief_context_candidates(request.task_id, rel_value):
+                    canon_brief = status_root / candidate
+                    try:
+                        canon_brief.parent.mkdir(parents=True, exist_ok=True)
+                        canon_brief.write_text(text, encoding="utf-8")
+                    except OSError:
+                        pass
+                    break
             materialized.append(rel_value)
             continue
-        # Non-task-brief canonical context. Never clobber a file the branch already
-        # tracks (that would create real dirt and block the lease); always refresh the
-        # known-gitignored status files so the worker sees current state, otherwise
-        # only fill a gap. AI_COLLABORATION_GUIDE.md is untracked everywhere, so
-        # generate it when missing.
+
         source = status_root / rel_value
+        valid, norm_path, err_reason = validate_source_doc_path(rel_value, status_root, task=task)
+        if not valid and rel_value not in _SEEDABLE_UNTRACKED_CONTEXT and rel_value != "AI_COLLABORATION_GUIDE.md":
+            if is_mutating_or_p0:
+                raise ValueError(f"Fail-closed on workspace materialization for task {request.task_id}: {err_reason} for '{rel_value}'")
+            continue
+
         always_refresh = rel_value in _SEEDABLE_UNTRACKED_CONTEXT
-        if source.exists() and source.is_file():
+        if source.exists():
             if destination.exists() and not always_refresh:
-                continue
+                if _is_tracked_in_worktree(workspace_path, rel_value):
+                    source_hash = _file_or_dir_hash(source)
+                    dest_hash = _file_or_dir_hash(destination)
+                    if source_hash and dest_hash and source_hash == dest_hash:
+                        materialized.append(rel_value)
+                        continue
+
             destination.parent.mkdir(parents=True, exist_ok=True)
             try:
-                shutil.copy2(source, destination)
+                if source.is_dir():
+                    shutil.copytree(source, destination, dirs_exist_ok=True)
+                else:
+                    shutil.copy2(source, destination)
             except OSError:
                 continue
             materialized.append(rel_value)
@@ -1694,6 +1772,7 @@ def materialize_worker_context_files(
             destination.parent.mkdir(parents=True, exist_ok=True)
             destination.write_text(_generated_collaboration_guide(config), encoding="utf-8")
             materialized.append(rel_value)
+
     if materialized:
         request.metadata["materialized_context_files"] = materialized
     return materialized
