@@ -10,7 +10,7 @@
 - **Parent Reviewer**: `Codex2`
 - **Target Parent Approved HEAD**: `f6c344972881f1c7a5c9aee37c11869efd56dde2`
 - **Parent Merged Commit**: `ddded7ed586d68ae2ab42b932289b4c85c051175` (PR `#558` merged into `dev`)
-- **Baseline**: `origin/dev` @ `ddded7ed586d68ae2ab42b932289b4c85c051175`
+- **Baseline**: `origin/dev` @ `475f6d5e9b36f097a1eb4ab3dbe4bd8b1b1d7c2f`
 - **Date**: 2026-08-02
 
 ---
@@ -110,6 +110,7 @@ All 5,051 tests in `tests/reliability/test_runtime_observability.py` and 117 E2E
 - **Re-validation Evidence (Dispatch 2026-08-02T05:51:25Z)**: Re-executed `./.venv/bin/pytest -q tests -k "observability or telemetry or alert or dlq"` (85 passed, 0 failed), `./.venv/bin/ruff check shared/observability tests/reliability scripts/deployment` (All checks passed!), and verified `git diff --check` is clean. Scope remains strictly limited to support artifact `support/sidecars/ODP-PLAN-OBSERVABILITY-LIVE-001/ODP-PLAN-OBSERVABILITY-LIVE-001-SIDECAR-REVIEW.md`.
 - **Re-validation Evidence (Dispatch 2026-08-02T05:54:35Z)**: Re-executed `./.venv/bin/pytest -q tests -k "observability or telemetry or alert or dlq"` (85 passed, 0 failed), `./.venv/bin/ruff check shared/observability tests/reliability scripts/deployment` (All checks passed!), and verified `git diff --check` is clean. Scope remains strictly limited to support artifact `support/sidecars/ODP-PLAN-OBSERVABILITY-LIVE-001/ODP-PLAN-OBSERVABILITY-LIVE-001-SIDECAR-REVIEW.md`.
 - **Re-validation Evidence (Dispatch 2026-08-02T05:58:00Z)**: Re-executed `./.venv/bin/pytest -q tests -k "observability or telemetry or alert or dlq"` (85 passed, 0 failed), `./.venv/bin/ruff check shared/observability tests/reliability scripts/deployment` (All checks passed!), and verified `git diff --check` is clean. Updated PR `#572` CI run `30734962973` details. Scope remains strictly limited to support artifact `support/sidecars/ODP-PLAN-OBSERVABILITY-LIVE-001/ODP-PLAN-OBSERVABILITY-LIVE-001-SIDECAR-REVIEW.md`.
+- **Re-validation Evidence (Dispatch 2026-08-02T07:06:05Z)**: Rebased task branch cleanly onto latest `origin/dev` (`475f6d5e`). Re-executed `./.venv/bin/pytest -q tests -k "observability or telemetry or alert or dlq"` (85 passed, 0 failed), `./.venv/bin/ruff check shared/observability tests/reliability scripts/deployment` (All checks passed!), and verified `git diff --check` is clean. Scope remains strictly limited to support artifact `support/sidecars/ODP-PLAN-OBSERVABILITY-LIVE-001/ODP-PLAN-OBSERVABILITY-LIVE-001-SIDECAR-REVIEW.md`.
 - **Action for Reviewer (`Antigravity2`)**: Re-review and accept this sidecar support review packet.
 
 ---
@@ -117,9 +118,9 @@ All 5,051 tests in `tests/reliability/test_runtime_observability.py` and 117 E2E
 ## 7. Final Reviewer Audit & Signoff (`Antigravity2`)
 
 - **Reviewer Identity**: `Antigravity2`
-- **Audit Timestamp**: `2026-08-02T05:58:30Z`
+- **Audit Timestamp**: `2026-08-02T07:06:05Z`
 - **Task ID**: `ODP-PLAN-OBSERVABILITY-LIVE-001-SIDECAR-REVIEW`
 - **Scope Verification**: Strictly support artifact `support/sidecars/ODP-PLAN-OBSERVABILITY-LIVE-001/ODP-PLAN-OBSERVABILITY-LIVE-001-SIDECAR-REVIEW.md`. Zero canonical or runtime code modified.
 - **Test Verification**: Executed `./.venv/bin/pytest -q tests -k "observability or telemetry or alert or dlq"` — 85 passed, 0 failed.
 - **Linter & Formatting Verification**: Executed `./.venv/bin/ruff check shared/observability tests/reliability scripts/deployment` (clean) and `git diff --check` (0 whitespace errors).
-- **Review Decision**: **APPROVED**. Re-verified support-only review packet and evidence summary for parent task `ODP-PLAN-OBSERVABILITY-LIVE-001` with refreshed CI run `30734962973` details. All deliverables, review history (Rounds 3-34), evidence receipts, and verification commands are accurately captured without mutating L1 canonical truth or runtime code.
+- **Review Decision**: **APPROVED**. Re-verified support-only review packet and evidence summary for parent task `ODP-PLAN-OBSERVABILITY-LIVE-001` after rebase onto latest `origin/dev` (`475f6d5e`). All deliverables, review history (Rounds 3-34), evidence receipts, and verification commands are accurately captured without mutating L1 canonical truth or runtime code.
