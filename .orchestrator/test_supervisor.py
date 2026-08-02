@@ -7696,8 +7696,8 @@ class ReusedWorkerWorktreeBaseAdvanceTests(unittest.TestCase):
         self.assertEqual(self._git(self.worktree, "rev-parse", "HEAD").stdout.strip(), before_head)
 
     def test_dirty_tracked_orchestrator_scratch_also_blocks(self) -> None:
-        scratch = self.worktree / ".orchestrator" / "task-briefs" / "context.md"
-        scratch.parent.mkdir(parents=True)
+        scratch = self.worktree / ".orchestrator" / "config.json"
+        scratch.parent.mkdir(parents=True, exist_ok=True)
         scratch.write_text("tracked context\n", encoding="utf-8")
         self._git(self.worktree, "add", str(scratch.relative_to(self.worktree)))
         self._git(self.worktree, "commit", "-m", "track task context")
@@ -12454,6 +12454,159 @@ class QuarantineAndPreserveDirtyWorktreeTests(unittest.TestCase):
             restored_file = target_restore_dir / "sub" / "data.csv"
             self.assertTrue(restored_file.exists())
             self.assertEqual("col1,col2\nval1,val2\n", restored_file.read_text(encoding="utf-8"))
+
+    def test_exact_restoration_mixed_staged_unstaged_untracked(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmp_p = Path(tmpdir)
+            repo_root, wt_path, branch_name = self._create_git_repo_and_worktree(tmp_p, "TASK-RESTORE-MIXED-001")
+
+            # 1. Staged addition
+            staged_add = wt_path / "staged_add.txt"
+            staged_add.write_text("staged addition", encoding="utf-8")
+            subprocess.run(["git", "add", "staged_add.txt"], cwd=wt_path, check=True)
+
+            # 2. Staged modification + unstaged modification (MM)
+            readme = wt_path / "README.md"
+            readme.write_text("staged readme edit\n", encoding="utf-8")
+            subprocess.run(["git", "add", "README.md"], cwd=wt_path, check=True)
+            readme.write_text("staged readme edit\nunstaged readme edit\n", encoding="utf-8")
+
+            # 3. Untracked file
+            untracked = wt_path / "untracked.log"
+            untracked.write_text("untracked log data", encoding="utf-8")
+
+            config = {
+                "paths": {
+                    "status_file": str(repo_root / "ai-status.json"),
+                    "activity_log": str(repo_root / "ai-activity-log.jsonl"),
+                },
+                "branch_workflow": {"task_branch_prefix": "task/", "dev_branch": "dev"},
+            }
+            state: dict = {}
+
+            ok = supervisor._quarantine_and_preserve_dirty_worktree(
+                config,
+                state,
+                wt_path,
+                "TASK-RESTORE-MIXED-001",
+                expected_branch=branch_name,
+                run_id=None,
+                trigger="unit_test",
+            )
+            self.assertTrue(ok)
+
+            backups_dir = repo_root / ".orchestrator" / "worktree-dirt-backups"
+            b_dir = list(backups_dir.glob("task-restore-mixed-001-*"))[0]
+
+            # Create target clean git worktree at the original head
+            target_repo = tmp_p / "target_repo"
+            target_repo.mkdir()
+            subprocess.run(["git", "init", "-b", "dev"], cwd=target_repo, capture_output=True, check=True)
+            subprocess.run(["git", "config", "user.name", "TestUser"], cwd=target_repo, check=True)
+            subprocess.run(["git", "config", "user.email", "test@example.com"], cwd=target_repo, check=True)
+            (target_repo / "README.md").write_text("main\n", encoding="utf-8")
+            subprocess.run(["git", "add", "README.md"], cwd=target_repo, check=True)
+            subprocess.run(["git", "commit", "-m", "initial commit"], cwd=target_repo, check=True)
+
+            restored_ok, msg = supervisor.restore_quarantined_worktree_backup(b_dir, target_repo)
+            self.assertTrue(restored_ok, msg)
+
+            status_proc = subprocess.run(
+                ["git", "status", "--porcelain=v1", "--untracked-files=all"],
+                cwd=target_repo,
+                capture_output=True,
+                text=True,
+                check=True,
+            )
+            lines = sorted(status_proc.stdout.strip().splitlines())
+            self.assertEqual(len(lines), 3)
+            self.assertTrue(any(line.startswith("A  staged_add.txt") for line in lines))
+            self.assertTrue(any(line.startswith("MM README.md") for line in lines))
+            self.assertTrue(any(line.startswith("?? untracked.log") for line in lines))
+
+    def test_prepare_worker_workspace_recovers_dirty_worktree_lease_with_real_bare_remote(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmp_p = Path(tmpdir)
+            remote_root = tmp_p / "remote.git"
+            subprocess.run(["git", "init", "--bare", str(remote_root)], capture_output=True, check=True)
+
+            repo_root = tmp_p / "main_repo"
+            subprocess.run(["git", "clone", str(remote_root), str(repo_root)], capture_output=True, check=True)
+            (repo_root / "ai-status.json").write_text("{}", encoding="utf-8")
+            subprocess.run(["git", "config", "user.name", "TestUser"], cwd=repo_root, check=True)
+            subprocess.run(["git", "config", "user.email", "test@example.com"], cwd=repo_root, check=True)
+            subprocess.run(["git", "checkout", "-b", "dev"], cwd=repo_root, check=True)
+            (repo_root / "README.md").write_text("main\n", encoding="utf-8")
+            subprocess.run(["git", "add", "README.md"], cwd=repo_root, check=True)
+            subprocess.run(["git", "commit", "-m", "initial commit"], cwd=repo_root, check=True)
+            subprocess.run(["git", "push", "origin", "dev"], cwd=repo_root, check=True)
+
+            task_id = "TASK-REMOTE-BARE-001"
+            branch_name = f"task/{task_id}"
+            subprocess.run(["git", "checkout", "-b", branch_name], cwd=repo_root, check=True)
+            subprocess.run(["git", "push", "origin", branch_name], cwd=repo_root, check=True)
+            subprocess.run(["git", "checkout", "dev"], cwd=repo_root, check=True)
+
+            wt_path = tmp_p / "workers" / supervisor._task_id_slug(task_id)
+            wt_path.parent.mkdir(parents=True, exist_ok=True)
+            subprocess.run(["git", "worktree", "add", str(wt_path), branch_name], cwd=repo_root, capture_output=True, check=True)
+            subprocess.run(["git", "config", "user.name", "TestUser"], cwd=wt_path, check=True)
+            subprocess.run(["git", "config", "user.email", "test@example.com"], cwd=wt_path, check=True)
+
+            # Introduce uncommitted dirty changes into the reused worker worktree
+            dirty_file = wt_path / "dirty_work.txt"
+            dirty_file.write_text("uncommitted progress\n", encoding="utf-8")
+            subprocess.run(["git", "add", "dirty_work.txt"], cwd=wt_path, check=True)
+
+            config = {
+                "paths": {
+                    "status_file": str(repo_root / "ai-status.json"),
+                    "activity_log": str(repo_root / "ai-activity-log.jsonl"),
+                },
+                "branch_workflow": {"task_branch_prefix": "task/", "dev_branch": "dev"},
+                "worker_worktrees": {
+                    "enabled": True,
+                    "root": str(tmp_p / "workers"),
+                    "base_ref": "origin/dev",
+                    "reuse_existing": True,
+                },
+            }
+            state: dict = {}
+            request = supervisor.DeliveryRequest(
+                agent_id="codex",
+                provider="codex",
+                delivery_mode="codex",
+                message="wake",
+                task_id=task_id,
+                reason="owned_in_progress_dispatch",
+            )
+
+            # Execute real prepare_worker_workspace without mocking refresh or quarantine
+            ok, message = supervisor.prepare_worker_workspace(
+                config,
+                state,
+                request,
+                queue_event_id="evt-remote-recover",
+                target_agent="Codex",
+            )
+
+            self.assertTrue(ok)
+            self.assertIsNone(message)
+
+            # Confirm worktree status is now clean
+            st_proc = subprocess.run(["git", "status", "--porcelain=v1"], cwd=wt_path, capture_output=True, text=True, check=True)
+            self.assertEqual("", st_proc.stdout.strip())
+
+            # Confirm bare remote has received the preserved commit
+            remote_task_head = subprocess.run(
+                ["git", "rev-parse", f"refs/heads/{branch_name}"],
+                cwd=remote_root,
+                capture_output=True,
+                text=True,
+                check=True,
+            ).stdout.strip()
+            wt_head = supervisor._git_commit_oid(wt_path, "HEAD")
+            self.assertEqual(wt_head, remote_task_head)
 
 
 if __name__ == "__main__":

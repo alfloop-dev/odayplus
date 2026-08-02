@@ -9033,6 +9033,24 @@ def _quarantine_and_preserve_dirty_worktree(
     if commit_proc.returncode != 0:
         return False
 
+    remote_check = subprocess.run(
+        ["git", "remote", "get-url", "origin"],
+        cwd=worktree_path,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if remote_check.returncode == 0:
+        push_proc = subprocess.run(
+            ["git", "push", "origin", f"HEAD:{current_branch}"],
+            cwd=worktree_path,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        if push_proc.returncode != 0:
+            return False
+
     post_status = subprocess.run(
         ["git", "status", "--porcelain=v1", "--untracked-files=all"],
         cwd=worktree_path,
@@ -9090,14 +9108,54 @@ def restore_quarantined_worktree_backup(
 
         manifest = json.loads(manifest_file.read_text(encoding="utf-8"))
         untracked_base = backup_path / "untracked"
-        for file_entry in manifest.get("files", []):
-            rel_p = file_entry.get("path")
-            expected_sha = file_entry.get("sha256")
-            if rel_p and expected_sha:
-                src_fp = untracked_base / rel_p
-                dst_fp = target_path / rel_p
-                dst_fp.parent.mkdir(parents=True, exist_ok=True)
-                shutil.copy2(src_fp, dst_fp)
+        staged_patch = backup_path / "staged.patch"
+        unstaged_patch = backup_path / "unstaged.patch"
+
+        is_git_repo = (target_path / ".git").exists()
+
+        if is_git_repo:
+            if staged_patch.exists() and staged_patch.stat().st_size > 0:
+                apply_staged = subprocess.run(
+                    ["git", "apply", "--index", "--binary", str(staged_patch)],
+                    cwd=target_path,
+                    capture_output=True,
+                    text=True,
+                    check=False,
+                )
+                if apply_staged.returncode != 0:
+                    return False, f"restoration_failed: failed to apply staged patch: {apply_staged.stderr}"
+
+            if unstaged_patch.exists() and unstaged_patch.stat().st_size > 0:
+                apply_unstaged = subprocess.run(
+                    ["git", "apply", "--binary", str(unstaged_patch)],
+                    cwd=target_path,
+                    capture_output=True,
+                    text=True,
+                    check=False,
+                )
+                if apply_unstaged.returncode != 0:
+                    return False, f"restoration_failed: failed to apply unstaged patch: {apply_unstaged.stderr}"
+
+            for file_entry in manifest.get("files", []):
+                status_code = str(file_entry.get("status_code", ""))
+                rel_p = file_entry.get("path")
+                expected_sha = file_entry.get("sha256")
+                if rel_p and expected_sha and status_code.startswith("?"):
+                    src_fp = untracked_base / rel_p
+                    dst_fp = target_path / rel_p
+                    if src_fp.exists():
+                        dst_fp.parent.mkdir(parents=True, exist_ok=True)
+                        shutil.copy2(src_fp, dst_fp)
+        else:
+            for file_entry in manifest.get("files", []):
+                rel_p = file_entry.get("path")
+                expected_sha = file_entry.get("sha256")
+                if rel_p and expected_sha:
+                    src_fp = untracked_base / rel_p
+                    dst_fp = target_path / rel_p
+                    if src_fp.exists():
+                        dst_fp.parent.mkdir(parents=True, exist_ok=True)
+                        shutil.copy2(src_fp, dst_fp)
         return True, "restored"
     except Exception as exc:
         return False, f"restoration_failed: {exc}"
