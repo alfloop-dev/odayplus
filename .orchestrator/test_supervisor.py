@@ -10247,7 +10247,7 @@ class ReviewHeadFreezeTests(unittest.TestCase):
              unittest.mock.patch("ai_status.append_log"):
             with self.assertRaises(SystemExit) as cm:
                 ai_status.command_done(state, ["FREEZE-TEST-022E", "Finalize"])
-        self.assertIn("PR merge commit, not the reviewed branch head", str(cm.exception))
+        self.assertIn("differs from reviewer-approved head", str(cm.exception))
         collect.assert_called_once()
 
     # ------------------------------------------------------------------
@@ -12172,6 +12172,56 @@ class ProcessQueueAgentOverrideTests(unittest.TestCase):
         self.assertFalse(changed)
         self.assertEqual(state["queue"]["events"]["evt-targetless-complete"]["status"], "pending")
         mock_build_req.assert_not_called()
+
+    def test_post_merge_deleted_remote_branch_finalize_dispatch(self) -> None:
+        """B1 regression: when origin branch task/<id> is deleted on PR merge,
+        resolve_task_checkout_sha resolves the post-merge checkout HEAD, enabling
+        supervisor priority dispatch and reconciliation gates to issue owned_finalize_dispatch."""
+        approved_head = "b664a8ea9fed476c6224a339994fa66163c574fa"
+        checkout_head = "80ba278631111111222222223333333344444444"
+        task_id = "B1-TEST-POST-MERGE-001"
+        task_item = {
+            "id": task_id,
+            "status": "review_approved",
+            "owner": "Antigravity",
+            "reviewer": "Antigravity4",
+            "approved_head": approved_head,
+        }
+        task_map = {task_id: task_item}
+
+        with mock.patch("ai_status.resolve_task_sha", return_value=None), \
+             mock.patch("ai_status.is_approved_head_satisfied", return_value=True) as mock_satisfied, \
+             mock.patch("ai_status.run_git_command") as mock_git, \
+             mock.patch("ai_status.task_pr_ci_status", return_value=("CLOSED", "success")):
+            def git_side_effect(cmd, **kwargs):
+                if cmd[0] == "rev-parse" and cmd[1] == "HEAD":
+                    return checkout_head
+                if cmd[0] == "remote":
+                    return "origin\n"
+                if cmd[0] == "rev-parse" and cmd[1] == "--verify":
+                    return checkout_head
+                return ""
+            mock_git.side_effect = git_side_effect
+
+            # 1. Verify resolve_task_checkout_sha returns checkout_head despite resolve_task_sha returning None
+            resolved = ai_status.resolve_task_checkout_sha(task_item, force_refresh=True)
+            self.assertEqual(resolved, checkout_head)
+
+            # 2. Verify dispatch_priority_for_task returns 1 (owned_finalize_dispatch priority)
+            config = {"status_file": "/tmp/fake_status.json", "branch_workflow": {"dev_branch": "dev"}}
+            prio = supervisor.dispatch_priority_for_task(config, task_item, "Antigravity", task_map=task_map)
+            self.assertEqual(prio, 1)
+
+            # 3. Verify dispatch_ready_tasks retains review_approved status and does not set approved_head_unresolved
+            status = {"tasks": [task_item]}
+            with mock.patch("supervisor.load_status", return_value=status), \
+                 mock.patch("supervisor.config_path", return_value="/tmp/fake_status.json"), \
+                 mock.patch("supervisor.write_json"), \
+                 mock.patch("supervisor.sync_status_pipeline"), \
+                 mock.patch("supervisor.write_activity_log"):
+                supervisor.dispatch_ready_tasks(config, {}, agent_ids_override=["antigravity"])
+            self.assertEqual(task_item["status"], "review_approved")
+            self.assertNotIn("Cannot verify branch HEAD", task_item.get("next", ""))
 
 
 if __name__ == "__main__":

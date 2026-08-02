@@ -9101,10 +9101,10 @@ def dispatch_priority_for_task(
         if not approved_head:
             return None
         try:
-            curr_head = runtime_ai_status.resolve_task_sha(
-                str(task.get("id") or ""), force_refresh=True
+            curr_head = runtime_ai_status.resolve_task_checkout_sha(
+                task, force_refresh=True
             )
-            if not curr_head or curr_head != approved_head:
+            if not curr_head or not runtime_ai_status.is_approved_head_satisfied(task, curr_head, approved_head):
                 return None
         except Exception:
             return None
@@ -9661,7 +9661,7 @@ def dispatch_ready_tasks(
                 approved_head = task.get("approved_head")
                 current_head = None
                 try:
-                    current_head = runtime_ai_status.resolve_task_sha(task_id, force_refresh=True)
+                    current_head = runtime_ai_status.resolve_task_checkout_sha(task, force_refresh=True)
                 except Exception as err:
                     console_log(f"Failed to resolve sha for {task_id}: {err}", quiet=SUPERVISOR_LOG_QUIET)
                 # B22: a task in a finalize status with no approved_head has no
@@ -9692,8 +9692,8 @@ def dispatch_ready_tasks(
                         )
                     continue
 
-                if not current_head or current_head != approved_head:
-                    if current_head and current_head != approved_head:
+                if not current_head or not runtime_ai_status.is_approved_head_satisfied(task, current_head, approved_head):
+                    if current_head and not runtime_ai_status.is_approved_head_satisfied(task, current_head, approved_head):
                         task["status"] = "review"
                         task["last_update"] = utc_now()
                         task["next"] = (
