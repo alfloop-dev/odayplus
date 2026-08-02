@@ -436,6 +436,152 @@ class TaskBriefSourceDocsTests(unittest.TestCase):
                     common.execution_context_files(config, "ODP-FAIL-003")
                 self.assertIn("directory without inventory manifest", str(ctx.exception))
 
+    def test_destination_escape_file_symlink_rejection(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmp_path = Path(tmpdir)
+            status_root = tmp_path / "pantheon"
+            status_root.mkdir()
+            src_doc = status_root / "docs" / "source.txt"
+            src_doc.parent.mkdir(parents=True)
+            src_doc.write_text("CANONICAL", encoding="utf-8")
+
+            outside_dir = tmp_path / "outside"
+            outside_dir.mkdir()
+            outside_file = outside_dir / "source.txt"
+            outside_file.write_text("DO NOT TOUCH", encoding="utf-8")
+
+            worktree_path = tmp_path / "worktree"
+            worktree_path.mkdir()
+            (worktree_path / "docs").symlink_to(outside_dir)
+
+            task = {
+                "id": "ODP-ESCAPE-001",
+                "title": "Escape Test 1",
+                "status": "todo",
+                "owner": "Antigravity",
+                "reviewer": "Codex5",
+                "priority": "P0",
+                "source_docs": ["docs/source.txt"],
+            }
+            config = {"paths": {"status_file": str(status_root / "ai-status.json")}}
+            req = supervisor.DeliveryRequest(
+                agent_id="Antigravity",
+                provider="antigravity",
+                delivery_mode="antigravity",
+                message="wake",
+                task_id="ODP-ESCAPE-001",
+                reason="owned_ready_dispatch",
+                context_files=["docs/source.txt"],
+            )
+
+            with (
+                mock.patch.object(supervisor, "load_status", return_value={"tasks": [task]}),
+                mock.patch.object(common, "load_status", return_value={"tasks": [task]}),
+            ):
+                with self.assertRaises(ValueError) as ctx:
+                    supervisor.materialize_worker_context_files(config, req, worktree_path)
+                self.assertIn("escapes workspace root", str(ctx.exception))
+
+            self.assertEqual(outside_file.read_text(encoding="utf-8"), "DO NOT TOUCH")
+
+    def test_destination_escape_dir_symlink_rejection(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmp_path = Path(tmpdir)
+            status_root = tmp_path / "pantheon"
+            status_root.mkdir()
+            src_dir = status_root / "docs"
+            src_dir.mkdir(parents=True)
+            (src_dir / "manifest.json").write_text("{}", encoding="utf-8")
+            (src_dir / "source.txt").write_text("CANONICAL", encoding="utf-8")
+
+            outside_dir = tmp_path / "outside"
+            outside_dir.mkdir()
+            outside_file = outside_dir / "source.txt"
+            outside_file.write_text("DO NOT TOUCH", encoding="utf-8")
+
+            worktree_path = tmp_path / "worktree"
+            worktree_path.mkdir()
+            (worktree_path / "docs").symlink_to(outside_dir)
+
+            task = {
+                "id": "ODP-ESCAPE-002",
+                "title": "Escape Test 2",
+                "status": "todo",
+                "owner": "Antigravity",
+                "reviewer": "Codex5",
+                "priority": "P0",
+                "source_docs": ["docs"],
+            }
+            config = {"paths": {"status_file": str(status_root / "ai-status.json")}}
+            req = supervisor.DeliveryRequest(
+                agent_id="Antigravity",
+                provider="antigravity",
+                delivery_mode="antigravity",
+                message="wake",
+                task_id="ODP-ESCAPE-002",
+                reason="owned_ready_dispatch",
+                context_files=["docs"],
+            )
+
+            with (
+                mock.patch.object(supervisor, "load_status", return_value={"tasks": [task]}),
+                mock.patch.object(common, "load_status", return_value={"tasks": [task]}),
+            ):
+                with self.assertRaises(ValueError) as ctx:
+                    supervisor.materialize_worker_context_files(config, req, worktree_path)
+                self.assertIn("escapes workspace root", str(ctx.exception))
+
+            self.assertEqual(outside_file.read_text(encoding="utf-8"), "DO NOT TOUCH")
+
+    def test_destination_escape_direct_file_symlink_rejection(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmp_path = Path(tmpdir)
+            status_root = tmp_path / "pantheon"
+            status_root.mkdir()
+            src_doc = status_root / "docs" / "source.txt"
+            src_doc.parent.mkdir(parents=True)
+            src_doc.write_text("CANONICAL", encoding="utf-8")
+
+            outside_dir = tmp_path / "outside"
+            outside_dir.mkdir()
+            outside_file = outside_dir / "source.txt"
+            outside_file.write_text("DO NOT TOUCH", encoding="utf-8")
+
+            worktree_path = tmp_path / "worktree"
+            dest_dir = worktree_path / "docs"
+            dest_dir.mkdir(parents=True)
+            (dest_dir / "source.txt").symlink_to(outside_file)
+
+            task = {
+                "id": "ODP-ESCAPE-003",
+                "title": "Escape Test 3",
+                "status": "todo",
+                "owner": "Antigravity",
+                "reviewer": "Codex5",
+                "priority": "P0",
+                "source_docs": ["docs/source.txt"],
+            }
+            config = {"paths": {"status_file": str(status_root / "ai-status.json")}}
+            req = supervisor.DeliveryRequest(
+                agent_id="Antigravity",
+                provider="antigravity",
+                delivery_mode="antigravity",
+                message="wake",
+                task_id="ODP-ESCAPE-003",
+                reason="owned_ready_dispatch",
+                context_files=["docs/source.txt"],
+            )
+
+            with (
+                mock.patch.object(supervisor, "load_status", return_value={"tasks": [task]}),
+                mock.patch.object(common, "load_status", return_value={"tasks": [task]}),
+            ):
+                with self.assertRaises(ValueError) as ctx:
+                    supervisor.materialize_worker_context_files(config, req, worktree_path)
+                self.assertIn("escapes workspace root", str(ctx.exception))
+
+            self.assertEqual(outside_file.read_text(encoding="utf-8"), "DO NOT TOUCH")
+
 
 if __name__ == "__main__":
     unittest.main()

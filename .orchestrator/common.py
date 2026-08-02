@@ -929,6 +929,55 @@ def validate_source_doc_path(rel_path: str, status_root: Path, *, task: dict[str
     return True, norm, None
 
 
+def validate_destination_context_path(
+    rel_context_path: str,
+    workspace_path: Path,
+) -> tuple[bool, Path, str]:
+    """Validate that a relative context file destination path stays safely beneath workspace_path.
+
+    Returns (is_valid, destination_path, error_reason).
+    """
+    rel_str = str(rel_context_path or "").strip().replace("\\", "/")
+    if not rel_str or Path(rel_str).is_absolute():
+        return False, workspace_path, "empty or absolute destination path rejected"
+
+    norm_rel = normalize_source_doc_path(rel_str)
+    if not norm_rel:
+        return False, workspace_path, "empty destination path rejected"
+
+    parts = Path(norm_rel).parts
+    if ".." in parts:
+        return False, workspace_path, f"traversal destination path rejected for '{rel_str}'"
+
+    resolved_workspace = workspace_path.resolve()
+    destination = workspace_path / norm_rel
+
+    # Check 1: Destination resolution
+    try:
+        resolved_dest = destination.resolve()
+        resolved_dest.relative_to(resolved_workspace)
+    except (ValueError, RuntimeError):
+        return False, destination, f"destination path '{rel_str}' escapes workspace root"
+
+    # Check 2: Check every path component from workspace_path to destination
+    curr = workspace_path
+    for part in parts:
+        curr = curr / part
+        if os.path.islink(curr) or curr.is_symlink():
+            try:
+                resolved_curr = curr.resolve()
+                resolved_curr.relative_to(resolved_workspace)
+            except (ValueError, RuntimeError):
+                return (
+                    False,
+                    destination,
+                    f"destination component '{part}' is an unsafe symlink escaping workspace root",
+                )
+
+    return True, destination, ""
+
+
+
 def task_brief_canonical_hash(task: dict[str, Any]) -> str:
     task_id = str(task.get("id") or "").strip()
     source_docs = [normalize_source_doc_path(str(item)) for item in (task.get("source_docs") or []) if str(item).strip()]

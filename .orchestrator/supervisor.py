@@ -73,6 +73,7 @@ from common import (
     spawn_background_process,
     summarize_failure_reason,
     utc_now,
+    validate_destination_context_path,
     validate_source_doc_path,
     worker_runtime_paths,
     write_activity_log,
@@ -1713,7 +1714,14 @@ def materialize_worker_context_files(
         rel_value = str(rel_context_path or "").strip().replace("\\", "/")
         if not rel_value or Path(rel_value).is_absolute():
             continue
-        destination = workspace_path / rel_value
+
+        valid_dest, destination, dest_err = validate_destination_context_path(rel_value, workspace_path)
+        if not valid_dest:
+            if is_mutating_or_p0:
+                raise ValueError(
+                    f"Fail-closed on workspace materialization for task {request.task_id}: {dest_err}"
+                )
+            continue
 
         if ".orchestrator/task-briefs/" in rel_value:
             destination.parent.mkdir(parents=True, exist_ok=True)
@@ -1764,7 +1772,33 @@ def materialize_worker_context_files(
             destination.parent.mkdir(parents=True, exist_ok=True)
             try:
                 if source.is_dir():
-                    shutil.copytree(source, destination, dirs_exist_ok=True)
+                    destination.mkdir(parents=True, exist_ok=True)
+                    dir_failed = False
+                    for src_item in source.rglob("*"):
+                        rel_child = src_item.relative_to(source)
+                        child_rel_value = (Path(rel_value) / rel_child).as_posix()
+                        valid_child, child_dest, child_err = validate_destination_context_path(child_rel_value, workspace_path)
+                        if not valid_child:
+                            if is_mutating_or_p0:
+                                raise ValueError(
+                                    f"Fail-closed on workspace materialization for task {request.task_id}: {child_err}"
+                                )
+                            dir_failed = True
+                            break
+                        if src_item.is_dir():
+                            child_dest.mkdir(parents=True, exist_ok=True)
+                        elif src_item.is_file():
+                            if child_dest.exists() and not always_refresh:
+                                if _is_tracked_in_worktree(workspace_path, child_rel_value):
+                                    continue
+                                src_h = _file_or_dir_hash(src_item)
+                                dst_h = _file_or_dir_hash(child_dest)
+                                if src_h and dst_h and src_h == dst_h:
+                                    continue
+                            child_dest.parent.mkdir(parents=True, exist_ok=True)
+                            shutil.copy2(src_item, child_dest)
+                    if dir_failed:
+                        continue
                 else:
                     shutil.copy2(source, destination)
             except OSError:
