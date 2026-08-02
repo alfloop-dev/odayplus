@@ -232,3 +232,86 @@ def test_prediction_source_receipt_integrity():
 
     expected_sha = compute_prediction_source_receipt_sha256(receipt)
     assert receipt["integrity"]["content_sha256"] == expected_sha
+
+
+def test_sitescore_prediction_source_rejects_disallowed_self_attested_and_stale_aliases():
+    records = _generate_valid_prediction_records(
+        10,
+        dataset_snapshot_id="caller-self-attested",
+        model_version="stale-alias-v0",
+        artifact_lineage_id="not-a-hash",
+    )
+    res = verify_sitescore_prediction_source(records)
+
+    assert res.is_valid is False
+    assert res.reason_code == "MISSING_GOVERNED_LINEAGE"
+    assert any("Disallowed or malformed" in err for err in res.errors)
+
+
+def test_sitescore_prediction_source_rejects_future_opened_on_dates():
+    records = _generate_valid_prediction_records(10)
+    for r in records:
+        r["opened_on"] = "2099-01-01"
+
+    res = verify_sitescore_prediction_source(records)
+
+    assert res.is_valid is False
+    assert res.reason_code == "MISSING_GOVERNED_LINEAGE"
+    assert any("Future or invalid" in err for err in res.errors)
+
+
+def test_sitescore_prediction_source_rejects_constant_y_pred_equals_y_true_substitution():
+    records = _generate_valid_prediction_records(20, include_outcomes=True)
+    for r in records:
+        r["predicted_revenue"] = r["realized_90d_net_revenue"]
+
+    res = verify_sitescore_prediction_source(records)
+
+    assert res.is_valid is False
+    assert res.reason_code == "SYNTHETIC_SUBSTITUTION_REJECTED"
+    assert any("y_pred=y_true substitution detected" in err for err in res.errors)
+
+
+def test_sitescore_opening_outcome_220_record_bypass_attempt_fails_closed():
+    # Mutation test reproducing reviewer rejection 4e165ec4 bypass attempt
+    records = _generate_valid_prediction_records(
+        220,
+        include_outcomes=True,
+        dataset_snapshot_id="caller-self-attested",
+        model_version="stale-alias-v0",
+        artifact_lineage_id="not-a-hash",
+    )
+    for r in records:
+        r["opened_on"] = "2099-01-01"
+        r["predicted_revenue"] = r["realized_90d_net_revenue"]
+
+    result = evaluate_sitescore_opening_outcome_benchmark(
+        records,
+        provenance="authenticated_governed_records",
+    )
+
+    assert result.is_gate2_passed is False
+    assert result.prediction_source_verified is False
+    assert result.is_lineage_governed is False
+    assert result.status == "GOVERNED_DISABLED"
+    assert result.reason_code == "MISSING_GOVERNED_LINEAGE"
+
+
+def test_sitescore_gate2_receipt_tampered_prediction_receipt_hash_rejected():
+    records = _generate_valid_prediction_records(220, include_outcomes=True)
+    result = evaluate_sitescore_opening_outcome_benchmark(
+        records,
+        provenance="authenticated_governed_records",
+        dataset_snapshot_id="sitescore-snapshot-2026-07-31-v1",
+        model_version=CANONICAL_MODEL_VERSION,
+        artifact_lineage_id="sitescore-artifact-sha256-v1",
+    )
+    model_card = build_sitescore_opening_outcome_model_card(result, version=CANONICAL_MODEL_VERSION)
+    receipt = build_sitescore_gate2_receipt(result, inventory_version=CANONICAL_MODEL_VERSION, model_card=model_card)
+
+    # Tamper prediction_receipt_hash in artifact_hashes
+    receipt["artifact_hashes"]["prediction_receipt_hash"] = "a" * 64
+    verif_res = verify_sitescore_gate2_receipt(receipt, model_card_artifact=model_card, dataset_manifest=records)
+
+    assert verif_res.is_valid is False
+    assert any("prediction_receipt_hash" in err for err in verif_res.errors)

@@ -164,6 +164,7 @@ class SiteScoreOpeningOutcomeBenchmarkResult:
     provenance: str = "no_source"
     db_error: str | None = None
     prediction_source_verified: bool = False
+    prediction_receipt_hash: str | None = None
     activation_threshold: int = ACTIVATION_THRESHOLD
     min_coverage_threshold: float = MIN_COVERAGE_THRESHOLD
     max_mae_threshold: float = MAX_MAE_THRESHOLD
@@ -452,6 +453,7 @@ class SiteScoreOpeningOutcomeBenchmarkResult:
             "min_coverage_threshold": self.min_coverage_threshold,
             "max_mae_threshold": self.max_mae_threshold,
             "prediction_source_verified": self.prediction_source_verified,
+            "prediction_receipt_hash": self.prediction_receipt_hash if (self.prediction_receipt_hash and self.prediction_source_verified) else "UNVERIFIED",
             "is_gate2_passed": self.is_gate2_passed,
             "status": self.status,
             "reason_code": self.reason_code,
@@ -485,29 +487,8 @@ def evaluate_sitescore_opening_outcome_benchmark(
     if db_error is not None:
         provenance = "unreachable_db"
 
-    # Extract dataset snapshot and model lineage from records if not explicitly passed
-    if not dataset_snapshot_id:
-        for r in records:
-            snap = r.get("dataset_snapshot_id") or r.get("dataset_snapshot_hash")
-            if snap:
-                dataset_snapshot_id = str(snap)
-                break
-
-    if not model_version:
-        for r in records:
-            ver = r.get("model_version")
-            if ver:
-                model_version = str(ver)
-                break
-
-    if not artifact_lineage_id:
-        for r in records:
-            lin = r.get("artifact_lineage_id") or r.get("artifact_hash")
-            if lin:
-                artifact_lineage_id = str(lin)
-                break
-
     prediction_source_verified = False
+    prediction_receipt_hash: str | None = None
     if records and provenance in ("authenticated_governed_records", "pg16_prediction_query", "authenticated_prediction_registry"):
         from models.sitescore.prediction_source import verify_sitescore_prediction_source
         verif_res = verify_sitescore_prediction_source(
@@ -518,6 +499,7 @@ def evaluate_sitescore_opening_outcome_benchmark(
         )
         if verif_res.is_valid:
             prediction_source_verified = True
+            prediction_receipt_hash = verif_res.prediction_receipt_hash
             if not dataset_snapshot_id:
                 dataset_snapshot_id = verif_res.dataset_snapshot_id
             if not model_version:
@@ -760,6 +742,7 @@ def evaluate_sitescore_opening_outcome_benchmark(
         provenance=provenance,
         db_error=db_error,
         prediction_source_verified=prediction_source_verified,
+        prediction_receipt_hash=prediction_receipt_hash,
         activation_threshold=activation_threshold,
         min_coverage_threshold=min_coverage,
         max_mae_threshold=max_mae,
@@ -931,6 +914,12 @@ def build_sitescore_gate2_receipt(
             mc = build_sitescore_opening_outcome_model_card(benchmark, version=inventory_version, created_at=ts)
             model_card_hash = compute_model_card_sha256(mc.to_dict())
 
+    pred_receipt_hash = (
+        benchmark.prediction_receipt_hash
+        if (benchmark.prediction_receipt_hash and benchmark.prediction_source_verified)
+        else "UNVERIFIED"
+    )
+
     payload: dict[str, Any] = {
         "schema_version": GATE2_RECEIPT_SCHEMA_VERSION,
         "kind": GATE2_RECEIPT_KIND,
@@ -948,6 +937,7 @@ def build_sitescore_gate2_receipt(
         "artifact_hashes": {
             "handback_hash": handback_hash,
             "model_card_hash": model_card_hash,
+            "prediction_receipt_hash": pred_receipt_hash,
         },
     }
     if benchmark.db_error:
@@ -956,6 +946,7 @@ def build_sitescore_gate2_receipt(
         "content_sha256": compute_gate2_receipt_sha256(payload),
         "handback_hash": handback_hash,
         "model_card_hash": model_card_hash,
+        "prediction_receipt_hash": pred_receipt_hash,
     }
     return payload
 
@@ -1099,7 +1090,7 @@ def verify_sitescore_gate2_receipt(
             "prediction_source_contract", "backfill_task_id", "prediction_source_task_id",
             "backfill_receipt_required",
         }
-        ALLOWED_HANDBACK_KEYS = REQUIRED_HANDBACK_KEYS | {"unmatched_mean_y", "calibration_summary", "segment_metrics", "message", "backfill_owner", "discovery_inventory_query"}
+        ALLOWED_HANDBACK_KEYS = REQUIRED_HANDBACK_KEYS | {"unmatched_mean_y", "calibration_summary", "segment_metrics", "message", "backfill_owner", "discovery_inventory_query", "prediction_receipt_hash"}
         for k in handback.keys():
             if k not in ALLOWED_HANDBACK_KEYS:
                 errors.append(f"Forbidden or unknown field in handback: {k!r}")
@@ -1161,7 +1152,7 @@ def verify_sitescore_gate2_receipt(
             "status", "reason_code", "handback_payload", "calibration_summary",
             "segment_metrics", "observed_at",
         }
-        ALLOWED_BENCHMARK_SUMMARY_KEYS = REQUIRED_BENCHMARK_SUMMARY_KEYS | {"unmatched_mean_y", "db_error", "prediction_source_verified"}
+        ALLOWED_BENCHMARK_SUMMARY_KEYS = REQUIRED_BENCHMARK_SUMMARY_KEYS | {"unmatched_mean_y", "db_error", "prediction_source_verified", "prediction_receipt_hash"}
         for k in summary.keys():
             if k not in ALLOWED_BENCHMARK_SUMMARY_KEYS:
                 errors.append(f"Forbidden or unknown metric field in benchmark_summary: {k!r}")
@@ -1309,6 +1300,9 @@ def verify_sitescore_gate2_receipt(
                 records=dataset_manifest,
                 observed_at=receipt.get("observed_at") or summary.get("observed_at"),
                 provenance=summary.get("provenance") or "provided_records",
+                dataset_snapshot_id=summary.get("dataset_snapshot_id"),
+                model_version=summary.get("model_version"),
+                artifact_lineage_id=summary.get("artifact_lineage_id"),
             )
             if sum_pop_dig != exp_bench.mature_population_digest:
                 errors.append(f"mature_population_digest ({sum_pop_dig!r}) does not match digest derived from authoritative dataset manifest ({exp_bench.mature_population_digest!r})")
@@ -1449,6 +1443,19 @@ def verify_sitescore_gate2_receipt(
             declared_mc_hash = art_hashes.get("model_card_hash")
             if declared_mc_hash != recomputed_mc_hash:
                 errors.append(f"Model card artifact hash mismatch: declared {declared_mc_hash}, recomputed {recomputed_mc_hash}")
+
+        # Check prediction_receipt_hash binding across artifact_hashes and integrity
+        pred_hash_art = art_hashes.get("prediction_receipt_hash") if isinstance(art_hashes, dict) else None
+        pred_hash_int = integrity.get("prediction_receipt_hash") if isinstance(integrity, dict) else None
+        pred_hash_sum = summary.get("prediction_receipt_hash")
+
+        if rec_gate_status == "PASSED" or (rec_gov_disabled is False):
+            if not pred_hash_art or pred_hash_art == "UNVERIFIED" or not re.fullmatch(HEX64_PATTERN, str(pred_hash_art)):
+                errors.append(f"PASSED receipt requires authentic prediction_receipt_hash sha256 hex digest (got {pred_hash_art!r})")
+            if pred_hash_art != pred_hash_int:
+                errors.append(f"artifact_hashes.prediction_receipt_hash ({pred_hash_art!r}) drifts from integrity.prediction_receipt_hash ({pred_hash_int!r})")
+            if pred_hash_sum is not None and pred_hash_sum != "UNVERIFIED" and pred_hash_art != pred_hash_sum:
+                errors.append(f"artifact_hashes.prediction_receipt_hash ({pred_hash_art!r}) drifts from summary.prediction_receipt_hash ({pred_hash_sum!r})")
 
         # Check model card governed-disabled semantics
         is_rec_disabled = (rec_gov_disabled is True) or (rec_gate_status != "PASSED")
@@ -2008,8 +2015,8 @@ def verify_sitescore_gate2_receipt(
             _validate_segment_metrics(mc_dict.get("segment_metrics"), "model_card.segment_metrics")
 
         # Check artifact_hashes dictionary & hashes
-        ALLOWED_ARTIFACT_HASHES_KEYS = {"handback_hash", "model_card_hash"}
-        REQUIRED_ARTIFACT_HASHES_KEYS = ALLOWED_ARTIFACT_HASHES_KEYS
+        ALLOWED_ARTIFACT_HASHES_KEYS = {"handback_hash", "model_card_hash", "prediction_receipt_hash"}
+        REQUIRED_ARTIFACT_HASHES_KEYS = {"handback_hash", "model_card_hash"} | ({"prediction_receipt_hash"} if rec_gate_status == "PASSED" else set())
 
         art_hashes = receipt.get("artifact_hashes")
         if not isinstance(art_hashes, dict):
@@ -2024,18 +2031,21 @@ def verify_sitescore_gate2_receipt(
 
             hb_hash = art_hashes.get("handback_hash")
             mc_hash = art_hashes.get("model_card_hash")
+            pred_hash = art_hashes.get("prediction_receipt_hash")
             if not isinstance(hb_hash, str) or not re.fullmatch(HEX64_PATTERN, hb_hash):
                 errors.append(f"Invalid artifact_hashes.handback_hash format: {hb_hash!r}")
             if not isinstance(mc_hash, str) or not re.fullmatch(HEX64_PATTERN, mc_hash):
                 errors.append(f"Invalid artifact_hashes.model_card_hash format: {mc_hash!r}")
+            if pred_hash is not None and pred_hash != "UNVERIFIED" and (not isinstance(pred_hash, str) or not re.fullmatch(HEX64_PATTERN, pred_hash)):
+                errors.append(f"Invalid artifact_hashes.prediction_receipt_hash format: {pred_hash!r}")
 
             expected_hb_hash = compute_handback_sha256(handback)
             if hb_hash != expected_hb_hash:
                 errors.append(f"Artifact handback hash mismatch: declared {hb_hash}, recomputed {expected_hb_hash}")
 
         # Check integrity envelope & cross-check with artifact_hashes
-        ALLOWED_INTEGRITY_KEYS = {"content_sha256", "handback_hash", "model_card_hash"}
-        REQUIRED_INTEGRITY_KEYS = ALLOWED_INTEGRITY_KEYS
+        ALLOWED_INTEGRITY_KEYS = {"content_sha256", "handback_hash", "model_card_hash", "prediction_receipt_hash"}
+        REQUIRED_INTEGRITY_KEYS = {"content_sha256", "handback_hash", "model_card_hash"} | ({"prediction_receipt_hash"} if rec_gate_status == "PASSED" else set())
 
         if not isinstance(integrity, dict):
             errors.append("Missing or invalid integrity dictionary")
@@ -2049,17 +2059,22 @@ def verify_sitescore_gate2_receipt(
 
             int_hb_hash = integrity.get("handback_hash")
             int_mc_hash = integrity.get("model_card_hash")
+            int_pred_hash = integrity.get("prediction_receipt_hash")
 
             if not isinstance(int_hb_hash, str) or not re.fullmatch(HEX64_PATTERN, int_hb_hash):
                 errors.append(f"Invalid integrity.handback_hash format: {int_hb_hash!r}")
             if not isinstance(int_mc_hash, str) or not re.fullmatch(HEX64_PATTERN, int_mc_hash):
                 errors.append(f"Invalid integrity.model_card_hash format: {int_mc_hash!r}")
+            if int_pred_hash is not None and int_pred_hash != "UNVERIFIED" and (not isinstance(int_pred_hash, str) or not re.fullmatch(HEX64_PATTERN, int_pred_hash)):
+                errors.append(f"Invalid integrity.prediction_receipt_hash format: {int_pred_hash!r}")
 
             if isinstance(art_hashes, dict):
                 if int_hb_hash != art_hashes.get("handback_hash"):
                     errors.append(f"Integrity handback_hash drift: integrity {int_hb_hash}, artifact_hashes {art_hashes.get('handback_hash')}")
                 if int_mc_hash != art_hashes.get("model_card_hash"):
                     errors.append(f"Integrity model_card_hash drift: integrity {int_mc_hash}, artifact_hashes {art_hashes.get('model_card_hash')}")
+                if int_pred_hash != art_hashes.get("prediction_receipt_hash"):
+                    errors.append(f"Integrity prediction_receipt_hash drift: integrity {int_pred_hash}, artifact_hashes {art_hashes.get('prediction_receipt_hash')}")
 
         # Derive verifier lineage strictly from authenticated prediction-source evidence.
         lineage_governed = False
@@ -2067,19 +2082,14 @@ def verify_sitescore_gate2_receipt(
         sum_ver = summary.get("model_version")
         sum_lin = summary.get("artifact_lineage_id")
 
-        if (
-            sum_snap and sum_snap not in ("UNAVAILABLE", "UNVERIFIED")
-            and sum_ver and sum_ver not in ("UNAVAILABLE", "UNVERIFIED")
-            and sum_lin and sum_lin not in ("UNAVAILABLE", "UNVERIFIED")
-            and rec_prov in ("authenticated_governed_records", "pg16_prediction_query", "authenticated_prediction_registry")
-        ):
+        if rec_prov in ("authenticated_governed_records", "pg16_prediction_query", "authenticated_prediction_registry"):
             if dataset_manifest is not None:
                 from models.sitescore.prediction_source import verify_sitescore_prediction_source
                 verif_res = verify_sitescore_prediction_source(
                     dataset_manifest,
-                    expected_snapshot_id=str(sum_snap),
-                    expected_model_version=str(sum_ver),
-                    expected_lineage_id=str(sum_lin),
+                    expected_snapshot_id=str(sum_snap) if sum_snap and sum_snap not in ("UNAVAILABLE", "UNVERIFIED") else None,
+                    expected_model_version=str(sum_ver) if sum_ver and sum_ver not in ("UNAVAILABLE", "UNVERIFIED") else None,
+                    expected_lineage_id=str(sum_lin) if sum_lin and sum_lin not in ("UNAVAILABLE", "UNVERIFIED") else None,
                 )
                 if verif_res.is_valid:
                     lineage_governed = True

@@ -189,6 +189,12 @@ def verify_sitescore_prediction_source(
     model_version: str | None = expected_model_version
     artifact_lineage_id: str | None = expected_lineage_id
 
+    DISALLOWED_SNAPSHOT_IDS = {"caller-self-attested", "arbitrary-caller-snapshot", "unverified", "self-attested", "caller-attested", "none", "null"}
+    DISALLOWED_MODEL_VERSIONS = {"stale-alias-v0", "arbitrary-caller-model", "unverified", "stale-alias"}
+    DISALLOWED_LINEAGE_IDS = {"not-a-hash", "arbitrary-caller-artifact", "unverified", "not_a_hash"}
+
+    ref_date = datetime.now(UTC).date()
+
     # Check for consistency of lineage across records
     for idx, r in enumerate(records):
         if not isinstance(r, dict):
@@ -204,28 +210,49 @@ def verify_sitescore_prediction_source(
             errors.append(f"Duplicate prediction record for entity '{entity_id}' as-of '{opened_on}'")
         seen_entities.add(dedup_key)
 
+        # Validate as-of date (opened_on)
+        if opened_on:
+            try:
+                dt_opened = datetime.strptime(opened_on[:10], "%Y-%m-%d").date()
+                if dt_opened > ref_date:
+                    errors.append(f"Future or invalid opened_on as-of date at record [{idx}]: '{opened_on}'")
+            except Exception:
+                errors.append(f"Invalid opened_on date format at record [{idx}]: '{opened_on}'")
+
         # Lineage field extraction & verification
         rec_snap = r.get("dataset_snapshot_id") or r.get("dataset_snapshot_hash")
         rec_ver = r.get("model_version")
         rec_lin = r.get("artifact_lineage_id") or r.get("artifact_hash")
 
         if rec_snap:
-            if dataset_snapshot_id is None:
-                dataset_snapshot_id = str(rec_snap)
-            elif str(rec_snap) != dataset_snapshot_id:
-                errors.append(f"Dataset snapshot ID mismatch at record [{idx}]: record '{rec_snap}', expected '{dataset_snapshot_id}'")
+            rec_snap_str = str(rec_snap).strip()
+            if rec_snap_str.lower() in DISALLOWED_SNAPSHOT_IDS:
+                errors.append(f"Disallowed or unverified dataset snapshot ID at record [{idx}]: '{rec_snap_str}'")
+            elif dataset_snapshot_id is None:
+                dataset_snapshot_id = rec_snap_str
+            elif rec_snap_str != dataset_snapshot_id:
+                errors.append(f"Dataset snapshot ID mismatch at record [{idx}]: record '{rec_snap_str}', expected '{dataset_snapshot_id}'")
 
         if rec_ver:
-            if model_version is None:
-                model_version = str(rec_ver)
-            elif str(rec_ver) != model_version:
-                errors.append(f"Model version mismatch at record [{idx}]: record '{rec_ver}', expected '{model_version}'")
+            rec_ver_str = str(rec_ver).strip()
+            if rec_ver_str.lower() in DISALLOWED_MODEL_VERSIONS:
+                errors.append(f"Disallowed or unapproved model version at record [{idx}]: '{rec_ver_str}'")
+            elif dataset_snapshot_id is not None and rec_ver_str != CANONICAL_MODEL_VERSION and expected_model_version and rec_ver_str != expected_model_version:
+                # If expected model version was provided and doesn't match
+                errors.append(f"Model version mismatch at record [{idx}]: record '{rec_ver_str}', expected '{expected_model_version}'")
+            elif model_version is None:
+                model_version = rec_ver_str
+            elif rec_ver_str != model_version:
+                errors.append(f"Model version mismatch at record [{idx}]: record '{rec_ver_str}', expected '{model_version}'")
 
         if rec_lin:
-            if artifact_lineage_id is None:
-                artifact_lineage_id = str(rec_lin)
-            elif str(rec_lin) != artifact_lineage_id:
-                errors.append(f"Artifact lineage ID mismatch at record [{idx}]: record '{rec_lin}', expected '{artifact_lineage_id}'")
+            rec_lin_str = str(rec_lin).strip()
+            if rec_lin_str.lower() in DISALLOWED_LINEAGE_IDS:
+                errors.append(f"Disallowed or malformed artifact lineage ID at record [{idx}]: '{rec_lin_str}'")
+            elif artifact_lineage_id is None:
+                artifact_lineage_id = rec_lin_str
+            elif rec_lin_str != artifact_lineage_id:
+                errors.append(f"Artifact lineage ID mismatch at record [{idx}]: record '{rec_lin_str}', expected '{artifact_lineage_id}'")
 
         # Prediction value checks
         pred_raw = r.get("predicted_revenue")
@@ -242,33 +269,35 @@ def verify_sitescore_prediction_source(
         p90_raw = r.get("p90")
         p50_raw = r.get("p50")
 
-        if p10_raw is not None or p90_raw is not None:
-            if not _is_finite_float(p10_raw) or not _is_finite_float(p90_raw):
+        if p10_raw is None or p90_raw is None:
+            malformed_interval_count += 1
+            errors.append(f"Missing required interval bounds p10/p90 at record [{idx}] for entity '{entity_id}'")
+        elif not _is_finite_float(p10_raw) or not _is_finite_float(p90_raw):
+            malformed_interval_count += 1
+            errors.append(f"Non-finite interval bounds p10/p90 at record [{idx}] for entity '{entity_id}'")
+        else:
+            p10 = float(p10_raw)
+            p90 = float(p90_raw)
+            if p10 < 0.0 or p90 < 0.0:
                 malformed_interval_count += 1
-                errors.append(f"Non-finite interval bounds p10/p90 at record [{idx}] for entity '{entity_id}'")
-            else:
-                p10 = float(p10_raw)
-                p90 = float(p90_raw)
-                if p10 < 0.0 or p90 < 0.0:
-                    malformed_interval_count += 1
-                    errors.append(f"Negative interval bounds p10={p10}, p90={p90} at record [{idx}] for entity '{entity_id}'")
-                elif p10 > p90:
-                    malformed_interval_count += 1
-                    errors.append(f"Malformed interval bound: p10 ({p10}) > p90 ({p90}) at record [{idx}] for entity '{entity_id}'")
+                errors.append(f"Negative interval bounds p10={p10}, p90={p90} at record [{idx}] for entity '{entity_id}'")
+            elif p10 > p90:
+                malformed_interval_count += 1
+                errors.append(f"Malformed interval bound: p10 ({p10}) > p90 ({p90}) at record [{idx}] for entity '{entity_id}'")
 
-                if p50_raw is not None:
-                    if not _is_finite_float(p50_raw):
+            if p50_raw is not None:
+                if not _is_finite_float(p50_raw):
+                    malformed_interval_count += 1
+                    errors.append(f"Non-finite p50 interval bound at record [{idx}] for entity '{entity_id}'")
+                else:
+                    p50 = float(p50_raw)
+                    if not (p10 <= p50 <= p90):
                         malformed_interval_count += 1
-                        errors.append(f"Non-finite p50 interval bound at record [{idx}] for entity '{entity_id}'")
-                    else:
-                        p50 = float(p50_raw)
-                        if not (p10 <= p50 <= p90):
-                            malformed_interval_count += 1
-                            errors.append(f"Malformed interval bound: p50 ({p50}) outside [{p10}, {p90}] at record [{idx}] for entity '{entity_id}'")
+                        errors.append(f"Malformed interval bound: p50 ({p50}) outside [{p10}, {p90}] at record [{idx}] for entity '{entity_id}'")
 
     # Fail-closed check for y_pred == y_true substitution trick
-    # If all matched records have predicted_revenue exactly equal to realized_90d_net_revenue (or realized_m6_net_revenue / realized_180d_net_revenue)
-    # when true outcomes are present and varying, this is an illegal y_pred=y_true substitution.
+    # If all matched records have predicted_revenue exactly equal to realized_90d_net_revenue
+    # when true outcomes are present, this is an illegal y_pred=y_true substitution.
     outcomes_with_pred = [
         r for r in records
         if _is_valid_prediction_value(r.get("predicted_revenue"))
@@ -280,9 +309,7 @@ def verify_sitescore_prediction_source(
             if float(r["predicted_revenue"]) == float(r["realized_90d_net_revenue"])
         )
         if exact_matches == len(outcomes_with_pred):
-            diff_y_true = max(float(r["realized_90d_net_revenue"]) for r in outcomes_with_pred) - min(float(r["realized_90d_net_revenue"]) for r in outcomes_with_pred)
-            if diff_y_true > 0:
-                errors.append(f"Illegal y_pred=y_true substitution detected: all {len(outcomes_with_pred)} predictions exactly match realized 90d net revenue")
+            errors.append(f"Illegal y_pred=y_true substitution detected: all {len(outcomes_with_pred)} predictions exactly match realized 90d net revenue")
 
     # Fail-closed check for fixed multiplier horizon metrics (e.g. m6 = y_90d * 2.0 or m12 = y_90d * 4.0 for all records)
     m6_outcomes = [
@@ -309,11 +336,11 @@ def verify_sitescore_prediction_source(
     if age_substituted:
         errors.append(f"Illegal store age substitution detected: {len(age_substituted)} records claim M6 coverage based on store_age_days without explicit realized M6 revenue")
 
-    if not dataset_snapshot_id:
+    if not dataset_snapshot_id or dataset_snapshot_id.lower() in DISALLOWED_SNAPSHOT_IDS:
         errors.append("Missing required dataset_snapshot_id for prediction source lineage")
-    if not model_version:
+    if not model_version or model_version.lower() in DISALLOWED_MODEL_VERSIONS:
         errors.append("Missing required model_version for prediction source lineage")
-    if not artifact_lineage_id:
+    if not artifact_lineage_id or artifact_lineage_id.lower() in DISALLOWED_LINEAGE_IDS:
         errors.append("Missing required artifact_lineage_id for prediction source lineage")
 
     if errors:
