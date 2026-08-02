@@ -1373,7 +1373,9 @@ def test_b39_audit_receipt_body_tampering_and_unauthorized_event_policy_fails_ve
     audit_rcpt = _make_valid_audit_receipt(key=PROD_AUTHORITY_KEY)
 
     # 1. Attacker inserts raw confidential price and recomputes self-hash
-    import copy, json, hashlib
+    import copy
+    import hashlib
+    import json
     tampered1 = copy.deepcopy(audit_rcpt)
     tampered1["audit_events"][0]["realized_price"] = 15800000
     body1 = {k: v for k, v in tampered1.items() if k not in ("sha256", "authority_proof")}

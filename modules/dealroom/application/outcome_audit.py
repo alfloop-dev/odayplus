@@ -63,7 +63,10 @@ class AVMOutcomeAccessAuditPack:
         authority_key: str | None = None,
     ) -> dict[str, Any]:
         """Build redacted audit receipt and verify zero confidential value leaks."""
-        from modules.avm.domain.outcome import TRUST_ANCHOR_VERIFIER, get_production_authority_verifier_key
+        from modules.avm.domain.outcome import (
+            TRUST_ANCHOR_VERIFIER,
+            get_production_authority_verifier_key,
+        )
 
         summary = {
             "kind": "avm-confidential-access-audit-receipt",
@@ -120,8 +123,9 @@ def verify_audit_receipt(
     if not isinstance(audit_receipt, dict):
         return False
 
-    from modules.avm.domain.outcome import TRUST_ANCHOR_VERIFIER, get_production_authority_verifier_key
-    from modules.dealroom.domain.confidential_access import create_identity_proof
+    from modules.avm.domain.outcome import (
+        TRUST_ANCHOR_VERIFIER,
+    )
 
     v = verifier or TRUST_ANCHOR_VERIFIER
     key = authority_key or v.verifier_key

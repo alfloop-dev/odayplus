@@ -56,7 +56,6 @@ EMPTY_SNAPSHOT_HASH = hashlib.sha256(b"model_ready.valuation_view:empty_snapshot
 UNACTIVATED_MODEL_HASH = hashlib.sha256(b"dealroom-avm-baseline-v1:unactivated_artifact_v1").hexdigest()
 
 
-from modules.avm.domain.outcome import get_production_authority_verifier_key
 
 
 def generate_avm_outcome_evidence_pack(
