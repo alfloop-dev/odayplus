@@ -1276,6 +1276,11 @@ class ProcessQueueDispatchGuardTests(unittest.TestCase):
                     "_refresh_reused_worker_worktree",
                     return_value=(False, "skipped_dirty_worktree"),
                 ) as refresh_worktree,
+                mock.patch.object(
+                    supervisor,
+                    "_fetch_authoritative_task_head",
+                    return_value=("a" * 40, "local_only_task_ref"),
+                ),
                 mock.patch.object(supervisor, "_quarantine_and_preserve_dirty_worktree", return_value=False) as reset_worktree,
                 mock.patch.object(supervisor, "_create_worker_worktree") as create_worktree,
                 mock.patch.object(supervisor, "write_activity_log") as write_activity_log,
@@ -1335,6 +1340,11 @@ class ProcessQueueDispatchGuardTests(unittest.TestCase):
                     "_refresh_reused_worker_worktree",
                     return_value=(False, "skipped_dirty_worktree"),
                 ) as refresh_worktree,
+                mock.patch.object(
+                    supervisor,
+                    "_fetch_authoritative_task_head",
+                    return_value=("a" * 40, "local_only_task_ref"),
+                ),
                 mock.patch.object(supervisor, "_quarantine_and_preserve_dirty_worktree", return_value=True) as reset_worktree,
                 mock.patch.object(supervisor, "materialize_worker_context_files", return_value=[]),
                 mock.patch.object(supervisor, "write_activity_log") as write_activity_log,
@@ -5737,6 +5747,39 @@ class ChairReviewDispatchTests(unittest.TestCase):
 
         self.assertFalse(changed)
         queue_delivery_event.assert_not_called()
+
+    def test_dispatch_ready_ignores_stale_logic_streak_after_environmental_failure(self) -> None:
+        state = {
+            "queue": {"events": {}},
+            "workers": {},
+            "provider_guardrails": {
+                "task_failure_streaks": {
+                    "T-REVIEW:codex2": {
+                        "task_id": "T-REVIEW",
+                        "provider": "codex2",
+                        "count": 3,
+                        "last_reason": "Codex usage limit reached",
+                        "last_failure_kind": "quota_terminal",
+                        "last_environmental_failure_at": "2026-08-02T13:22:47Z",
+                    }
+                }
+            },
+        }
+        status = {"tasks": [{"id": "T-REVIEW", "status": "review", "owner": "Codex", "reviewer": "Codex2"}]}
+
+        with (
+            mock.patch.object(supervisor, "load_status", return_value=status),
+            mock.patch.object(supervisor, "load_event_queue", return_value=[]),
+            mock.patch.object(supervisor, "queue_delivery_event", return_value=True) as queue_delivery_event,
+        ):
+            changed = supervisor.dispatch_ready_tasks(
+                self.config,
+                state,
+                agent_ids_override=["codex2"],
+            )
+
+        self.assertTrue(changed)
+        queue_delivery_event.assert_called_once()
 
     def test_dispatch_ready_skips_only_task_agent_pair_in_failure_loop(self) -> None:
         state = {
@@ -12311,7 +12354,7 @@ class ProcessQueueAgentOverrideTests(unittest.TestCase):
         task_map = {task_id: task_item}
 
         with mock.patch("ai_status.resolve_task_sha", return_value=None), \
-             mock.patch("ai_status.is_approved_head_satisfied", return_value=True) as mock_satisfied, \
+             mock.patch("ai_status.is_approved_head_satisfied", return_value=True), \
              mock.patch("ai_status.run_git_command") as mock_git, \
              mock.patch("ai_status.task_pr_ci_status", return_value=("CLOSED", "success")):
             def git_side_effect(cmd, **kwargs):
@@ -12336,6 +12379,8 @@ class ProcessQueueAgentOverrideTests(unittest.TestCase):
             # 3. Verify dispatch_ready_tasks retains review_approved status and does not set approved_head_unresolved
             status = {"tasks": [task_item]}
             with mock.patch("supervisor.load_status", return_value=status), \
+                 mock.patch("supervisor.load_event_queue", return_value=[]), \
+                 mock.patch("supervisor.queue_delivery_event", return_value=False), \
                  mock.patch("supervisor.config_path", return_value="/tmp/fake_status.json"), \
                  mock.patch("supervisor.write_json"), \
                  mock.patch("supervisor.sync_status_pipeline"), \

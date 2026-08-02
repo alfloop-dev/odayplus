@@ -2179,13 +2179,13 @@ def materialize_worker_context_files(
                 ".orchestrator/task-briefs/",
                 ".orchestrator/reviews/",
             ]
-            new_lines = [l for l in lines_to_add if l not in existing_exclude.splitlines()]
+            new_lines = [line for line in lines_to_add if line not in existing_exclude.splitlines()]
             if new_lines:
                 with open(exclude_path, "a", encoding="utf-8") as ef:
                     if existing_exclude and not existing_exclude.endswith("\n"):
                         ef.write("\n")
-                    for l in new_lines:
-                        ef.write(f"{l}\n")
+                    for line in new_lines:
+                        ef.write(f"{line}\n")
         except OSError:
             pass
     return materialized
@@ -4267,6 +4267,19 @@ def chair_review_report_path(config: dict[str, Any], agent_name: str, *, issued_
     return chair_review_output_dir(config) / filename
 
 
+def task_failure_record_requires_triage(record: dict[str, Any], threshold: int) -> bool:
+    """Keep provider outages from freezing a task's older logic-failure streak."""
+    try:
+        count = int(record.get("count", 0))
+    except (TypeError, ValueError):
+        return False
+    if count < threshold:
+        return False
+    last_kind = str(record.get("last_failure_kind") or "")
+    last_reason = str(record.get("last_reason") or "")
+    return not should_pause_dispatch_for_failure_kind(last_kind) and not is_transient_infra_reason(last_reason)
+
+
 def chair_review_failure_loop_details(config: dict[str, Any], state: dict[str, Any]) -> list[dict[str, Any]]:
     settings = chair_review_settings(config)
     if not settings.get("reassignment_actions_enabled", True):
@@ -4288,12 +4301,9 @@ def chair_review_failure_loop_details(config: dict[str, Any], state: dict[str, A
     for key, record in ((state.get("provider_guardrails", {}) or {}).get("task_failure_streaks", {}) or {}).items():
         if not isinstance(record, dict):
             continue
-        try:
-            count = int(record.get("count", 0))
-        except (TypeError, ValueError):
+        if not task_failure_record_requires_triage(record, threshold):
             continue
-        if count < threshold:
-            continue
+        count = int(record.get("count", 0))
         task_id = str(record.get("task_id") or str(key).rsplit(":", 1)[0] or "").strip()
         provider = normalize_agent_id(str(record.get("provider") or str(key).rsplit(":", 1)[-1] or ""))
         task = task_map.get(task_id)
@@ -4435,10 +4445,7 @@ def chair_reassignment_triage_needed_for_task(
     )
     if not isinstance(record, dict):
         return False
-    try:
-        return int(record.get("count", 0)) >= threshold
-    except (TypeError, ValueError):
-        return False
+    return task_failure_record_requires_triage(record, threshold)
 
 
 def failure_loop_task_agents_for_task_map(
@@ -4458,11 +4465,7 @@ def failure_loop_task_agents_for_task_map(
     for key, record in ((state.get("provider_guardrails", {}) or {}).get("task_failure_streaks", {}) or {}).items():
         if not isinstance(record, dict):
             continue
-        try:
-            count = int(record.get("count", 0))
-        except (TypeError, ValueError):
-            continue
-        if count < threshold:
+        if not task_failure_record_requires_triage(record, threshold):
             continue
         task_id = str(record.get("task_id") or str(key).rsplit(":", 1)[0] or "").strip()
         provider = normalize_agent_id(str(record.get("provider") or str(key).rsplit(":", 1)[-1] or ""))
@@ -5309,7 +5312,7 @@ def provider_auth_identity_hash(config: dict[str, Any], provider: str | None) ->
     auth_mode = str(auth.get("auth_mode") or "").strip()
     if not account_id:
         return None
-    return hashlib.sha256(f"{auth_mode}:{account_id}".encode("utf-8")).hexdigest()
+    return hashlib.sha256(f"{auth_mode}:{account_id}".encode()).hexdigest()
 
 
 def _failure_streak_key(task_id: str, provider: str) -> str:
@@ -9426,15 +9429,13 @@ def _quarantine_and_preserve_dirty_worktree(
         return False
 
     wt_git_rc, wt_git_dir = _git_output(worktree_path, "rev-parse", "--git-dir")
-    repo_git_rc, repo_git_dir = _git_output(repo_root, "rev-parse", "--git-dir")
+    repo_git_rc, _repo_git_dir = _git_output(repo_root, "rev-parse", "--git-dir")
     top_rc, top_level = _git_output(worktree_path, "rev-parse", "--show-toplevel")
     worktree_common_rc, worktree_common = _git_output(worktree_path, "rev-parse", "--git-common-dir")
     repo_common_rc, repo_common = _git_output(repo_root, "rev-parse", "--git-common-dir")
     try:
         resolved_top = Path(top_level).resolve()
         wt_gd = Path(wt_git_dir) if Path(wt_git_dir).is_absolute() else (worktree_path / wt_git_dir)
-        repo_gd = Path(repo_git_dir) if Path(repo_git_dir).is_absolute() else (repo_root / repo_git_dir)
-
         wt_cd = Path(worktree_common) if Path(worktree_common).is_absolute() else (wt_gd / worktree_common)
         repo_cd = Path(repo_common) if Path(repo_common).is_absolute() else (repo_root / repo_common)
 

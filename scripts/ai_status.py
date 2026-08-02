@@ -5473,7 +5473,7 @@ def resolve_task_checkout_sha(
     """
     if isinstance(task, str):
         task_id = task.strip()
-        state = load_status()
+        state = load_state()
         task_dict = get_task(state, task_id) or {"id": task_id}
     else:
         task_dict = task
