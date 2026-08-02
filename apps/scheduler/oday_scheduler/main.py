@@ -1,13 +1,20 @@
 from __future__ import annotations
 
 import logging
+import os
 import time
 from datetime import UTC, datetime
 from typing import Any
 
 from shared.infrastructure.persistence.factory import PersistenceBundle, build_persistence
 from shared.jobs.queue import JobRequest
-from shared.observability import SpanKind, Telemetry, TraceContext, new_correlation_id
+from shared.observability import (
+    ProductionMetricsExporter,
+    SpanKind,
+    Telemetry,
+    TraceContext,
+    new_correlation_id,
+)
 
 logger = logging.getLogger("oday-scheduler")
 
@@ -70,7 +77,33 @@ class ODayScheduler:
                     error_code=type(exc).__name__,
                 )
 
+    def export_metrics(self) -> dict[str, Any] | None:
+        """Export scheduler metrics snapshot via ProductionMetricsExporter if exact 40-char release SHA is present in environment."""
+        sha = (os.getenv("RELEASE_SHA") or os.getenv("GITHUB_SHA") or "").strip().lower()
+        if sha and len(sha) == 40 and sha != "local":
+            try:
+                exporter = ProductionMetricsExporter(release_sha=sha, registry=self.telemetry.metrics)
+                return exporter.export_metrics()
+            except Exception as exc:
+                self.telemetry.logger.error(
+                    f"Scheduler metrics export failed: {exc}",
+                    correlation_id="unknown",
+                    resource="scheduler/metrics",
+                    error_code=type(exc).__name__,
+                )
+                raise
+        return None
+
     def loop(self, stop_event: Any = None, interval: float = 30.0) -> None:
         while stop_event is None or not stop_event.is_set():
             self.run_once()
+            try:
+                self.export_metrics()
+            except Exception as exc:
+                self.telemetry.logger.error(
+                    f"Scheduler lifecycle export_metrics failed: {exc}",
+                    correlation_id="unknown",
+                    resource="scheduler/metrics",
+                    error_code=type(exc).__name__,
+                )
             time.sleep(interval)
