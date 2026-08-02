@@ -974,24 +974,27 @@ def is_task_brief_stale(text: str, task: dict[str, Any]) -> bool:
             return True
 
     sha_match = re.search(r"^-\s*SHA256:\s*([a-fA-F0-9]{64})$", text, re.MULTILINE)
-    if sha_match:
-        expected_hash = task_brief_canonical_hash(task)
-        if sha_match.group(1).lower() != expected_hash.lower():
-            return True
+    if not sha_match:
+        return True
+    expected_hash = task_brief_canonical_hash(task)
+    if sha_match.group(1).lower() != expected_hash.lower():
+        return True
 
     expected_docs = [normalize_source_doc_path(str(item)) for item in (task.get("source_docs") or []) if str(item).strip()]
     source_docs_match = re.search(r"^##\s*Source Documents\s*\n((?:(?!\n##\s).)*)", text, re.MULTILINE | re.DOTALL)
-    if source_docs_match:
-        block = source_docs_match.group(1)
-        found_docs: list[str] = []
-        for line in block.splitlines():
-            line_str = line.strip()
-            if line_str.startswith("-"):
-                val = line_str[1:].strip()
-                if val and val.lower() != "none":
-                    found_docs.append(normalize_source_doc_path(val))
-        if found_docs != expected_docs:
-            return True
+    if not source_docs_match:
+        return True
+
+    block = source_docs_match.group(1)
+    found_docs: list[str] = []
+    for line in block.splitlines():
+        line_str = line.strip()
+        if line_str.startswith("-"):
+            val = line_str[1:].strip()
+            if val and val.lower() != "none":
+                found_docs.append(normalize_source_doc_path(val))
+    if found_docs != expected_docs:
+        return True
 
     return False
 

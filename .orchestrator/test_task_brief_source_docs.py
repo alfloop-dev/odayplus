@@ -9,7 +9,6 @@ from unittest import mock
 
 import common
 import supervisor
-from task_archive import archive_task_snapshot, save_archive_index
 
 SOURCE_DOCS = [
     "docs_archive/00_source_zips/operator_console/LATEST.json",
@@ -120,14 +119,49 @@ class TaskBriefSourceDocsTests(unittest.TestCase):
         )
         self.assertTrue(common.is_task_brief_stale(stale_text, task))
 
+        sha_val = common.task_brief_canonical_hash(task)
         fresh_text = (
             "# Task Brief: ODP-PRODUCTION-MODEL-REGISTRY-001\n"
             "- Status: blocked\n"
             "- Owner: Codex5\n"
             "- Reviewer: Codex8\n"
             "- Last update: 2026-07-29T05:36:49Z\n"
+            f"- SHA256: {sha_val}\n"
+            "\n"
+            "## Source Documents\n"
+            "- none\n"
         )
         self.assertFalse(common.is_task_brief_stale(fresh_text, task))
+
+    def test_missing_sha256_or_source_docs_is_stale(self) -> None:
+        task = {
+            "id": "ODP-LEGACY-001",
+            "title": "Legacy Brief Task",
+            "status": "in_progress",
+            "owner": "Antigravity",
+            "reviewer": "Codex5",
+            "last_update": "2026-08-02T11:00:00Z",
+            "source_docs": ["docs/new.md"],
+        }
+        legacy_text = (
+            "# Task Brief: ODP-LEGACY-001\n"
+            "- Status: in_progress\n"
+            "- Owner: Antigravity\n"
+            "- Reviewer: Codex5\n"
+            "- Last update: 2026-08-02T11:00:00Z\n"
+        )
+        self.assertTrue(common.is_task_brief_stale(legacy_text, task))
+
+        sha_val = common.task_brief_canonical_hash(task)
+        missing_docs_text = (
+            "# Task Brief: ODP-LEGACY-001\n"
+            "- Status: in_progress\n"
+            "- Owner: Antigravity\n"
+            "- Reviewer: Codex5\n"
+            "- Last update: 2026-08-02T11:00:00Z\n"
+            f"- SHA256: {sha_val}\n"
+        )
+        self.assertTrue(common.is_task_brief_stale(missing_docs_text, task))
 
     def test_source_docs_change_stale_brief_rejection(self) -> None:
         task = {
@@ -139,12 +173,14 @@ class TaskBriefSourceDocsTests(unittest.TestCase):
             "last_update": "2026-08-02T11:00:00Z",
             "source_docs": ["docs/new.md"],
         }
+        sha_val = common.task_brief_canonical_hash(task)
         old_brief_text = (
             "# Task Brief: ODP-SRC-CHANGE-001\n"
             "- Status: in_progress\n"
             "- Owner: Antigravity\n"
             "- Reviewer: Codex5\n"
             "- Last update: 2026-08-02T11:00:00Z\n"
+            f"- SHA256: {sha_val}\n"
             "\n"
             "## Source Documents\n"
             "- docs/old.md\n"
@@ -257,7 +293,7 @@ class TaskBriefSourceDocsTests(unittest.TestCase):
                 mock.patch.object(supervisor, "load_status", return_value={"tasks": [task]}),
                 mock.patch.object(common, "load_status", return_value={"tasks": [task]}),
             ):
-                materialized = supervisor.materialize_worker_context_files(config, req, worktree_path)
+                _ = supervisor.materialize_worker_context_files(config, req, worktree_path)
 
             dest_brief = worktree_path / ".orchestrator" / "task-briefs" / "odp_stale_001.md"
             self.assertTrue(dest_brief.exists())
@@ -265,23 +301,51 @@ class TaskBriefSourceDocsTests(unittest.TestCase):
             self.assertIn("Status: blocked", text)
             self.assertIn("Owner: NewOwner", text)
 
-    def test_source_change_invalidation(self) -> None:
+    def test_file_or_dir_hash(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmp_path = Path(tmpdir)
+            f1 = tmp_path / "f1.txt"
+            f2 = tmp_path / "f2.txt"
+            f1.write_text("hello world", encoding="utf-8")
+            f2.write_text("hello world", encoding="utf-8")
+
+            h1 = supervisor._file_or_dir_hash(f1)
+            h2 = supervisor._file_or_dir_hash(f2)
+            self.assertIsNotNone(h1)
+            self.assertEqual(len(h1), 64)
+            self.assertEqual(h1, h2)
+
+            f2.write_text("different content", encoding="utf-8")
+            h2_diff = supervisor._file_or_dir_hash(f2)
+            self.assertNotEqual(h1, h2_diff)
+
+            non_existent = tmp_path / "non_existent.txt"
+            self.assertIsNone(supervisor._file_or_dir_hash(non_existent))
+
+            d1 = tmp_path / "dir1"
+            d1.mkdir()
+            (d1 / "a.txt").write_text("file a", encoding="utf-8")
+            dh1 = supervisor._file_or_dir_hash(d1)
+            self.assertIsNotNone(dh1)
+            self.assertEqual(len(dh1), 64)
+
+    def test_tracked_worktree_file_no_clobber(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             status_root = Path(tmpdir) / "pantheon"
             status_root.mkdir()
             src_doc = status_root / "docs" / "evidence" / "source.txt"
             src_doc.parent.mkdir(parents=True)
-            src_doc.write_text("version 1", encoding="utf-8")
+            src_doc.write_text("version 1 (supervisor tip)", encoding="utf-8")
 
             worktree_path = Path(tmpdir) / "worktree"
             worktree_path.mkdir()
             dest_doc = worktree_path / "docs" / "evidence" / "source.txt"
             dest_doc.parent.mkdir(parents=True)
-            dest_doc.write_text("version 0 (old)", encoding="utf-8")
+            dest_doc.write_text("version 0 (worker task-owned edits)", encoding="utf-8")
 
             task = {
-                "id": "ODP-INVALIDATE-001",
-                "title": "Invalidation Test",
+                "id": "ODP-NOCLOBBER-001",
+                "title": "No Clobber Test",
                 "status": "todo",
                 "owner": "Antigravity",
                 "reviewer": "Codex5",
@@ -294,11 +358,13 @@ class TaskBriefSourceDocsTests(unittest.TestCase):
                 provider="antigravity",
                 delivery_mode="antigravity",
                 message="wake",
-                task_id="ODP-INVALIDATE-001",
+                task_id="ODP-NOCLOBBER-001",
                 reason="owned_ready_dispatch",
                 context_files=["docs/evidence/source.txt"],
             )
 
+            # When destination is tracked in worktree (_is_tracked_in_worktree=True),
+            # task-owned edits in worktree MUST NOT be overwritten!
             with (
                 mock.patch.object(supervisor, "load_status", return_value={"tasks": [task]}),
                 mock.patch.object(common, "load_status", return_value={"tasks": [task]}),
@@ -306,7 +372,18 @@ class TaskBriefSourceDocsTests(unittest.TestCase):
             ):
                 supervisor.materialize_worker_context_files(config, req, worktree_path)
 
-            self.assertEqual(dest_doc.read_text(encoding="utf-8"), "version 1")
+            self.assertEqual(dest_doc.read_text(encoding="utf-8"), "version 0 (worker task-owned edits)")
+
+            # When destination is untracked in worktree (_is_tracked_in_worktree=False),
+            # differing untracked destination IS updated to match supervisor root.
+            with (
+                mock.patch.object(supervisor, "load_status", return_value={"tasks": [task]}),
+                mock.patch.object(common, "load_status", return_value={"tasks": [task]}),
+                mock.patch.object(supervisor, "_is_tracked_in_worktree", return_value=False),
+            ):
+                supervisor.materialize_worker_context_files(config, req, worktree_path)
+
+            self.assertEqual(dest_doc.read_text(encoding="utf-8"), "version 1 (supervisor tip)")
 
     def test_fail_closed_validation(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:

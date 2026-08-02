@@ -6,6 +6,7 @@ import atexit
 import copy
 import fcntl
 import fnmatch
+import hashlib
 import json
 import math
 import os
@@ -64,7 +65,6 @@ from common import (
     load_status,
     new_runtime_id,
     normalize_agent_id,
-    normalize_source_doc_path,
     preserve_github_cli_auth_env,
     relpath,
     selected_shared_files,
@@ -1753,11 +1753,13 @@ def materialize_worker_context_files(
         if source.exists():
             if destination.exists() and not always_refresh:
                 if _is_tracked_in_worktree(workspace_path, rel_value):
-                    source_hash = _file_or_dir_hash(source)
-                    dest_hash = _file_or_dir_hash(destination)
-                    if source_hash and dest_hash and source_hash == dest_hash:
-                        materialized.append(rel_value)
-                        continue
+                    materialized.append(rel_value)
+                    continue
+                source_hash = _file_or_dir_hash(source)
+                dest_hash = _file_or_dir_hash(destination)
+                if source_hash and dest_hash and source_hash == dest_hash:
+                    materialized.append(rel_value)
+                    continue
 
             destination.parent.mkdir(parents=True, exist_ok=True)
             try:
