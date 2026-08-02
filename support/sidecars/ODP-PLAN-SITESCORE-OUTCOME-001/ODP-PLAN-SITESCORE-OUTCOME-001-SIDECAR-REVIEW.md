@@ -110,6 +110,16 @@ Rechecked at `2026-08-02T00:10:51Z` after the supervisor returned the sidecar to
 
 This re-dispatch produces no authorized local CI repair: changing workflow policy, broadening an evidence allowlist, or regenerating canonical product E2E truth would violate the sidecar boundary. The correct next action remains independent re-review of this updated support packet, followed by a clean rerun only after the canonical CI-boundary repair merges.
 
+### Canonical repair-head update
+
+Rechecked at `2026-08-02T00:20:00Z` after the canonical CI-boundary owner pushed a TOCTOU remediation:
+
+- Dependency PR `#562` advanced from rejected head `b047aa18baa81b4b47fda8b58fba0b7a7d4bb1d7` to `26ebc052cf60c181d685cce26b4f34b1110fe3ee`. The new commit claims to bind promotion checks, the queried promotion PR, and status emission to an immutable promotion SHA and adds negative dev-advance coverage. This packet records the claim and head movement only; it does not independently validate or approve canonical workflow changes.
+- At capture time PR `#562` had no recorded GitHub review decision. Its CI run `30724778021` had green `orchestrator` and `performance-gate` jobs, while `product` and `product-e2e-gate` were still running and `task-review-gate` was pending. Therefore the dependency was neither reviewer-approved nor merged into `dev`.
+- Sidecar PR `#551` advanced to exact head `a7445254e2ece5c8ad43c0223ee0738dc31252b7`. Its CI run `30724784872` again passed `orchestrator` and `performance-gate` but failed `product-e2e-gate` at `Run product E2E release gate`; the product job was still running at capture time. The task-review status was failing because the supervisor had returned the sidecar to `in_progress`.
+
+No sidecar-owned correction can precede dependency review and merge. Re-review should confirm this packet remains support-only, then retain the external closeout dependency until the repaired canonical baseline is present on `dev` and PR `#551` receives a clean required-check rerun.
+
 ## Reviewer handoff
 
 Antigravity should use this packet as supporting evidence and may absorb it into the parent closeout record if useful. Before parent finalization:
