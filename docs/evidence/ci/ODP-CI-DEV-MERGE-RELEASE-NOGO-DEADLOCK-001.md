@@ -1,8 +1,8 @@
 # Dev Merge / Production Release Gate Separation
 
 - Task: `ODP-CI-DEV-MERGE-RELEASE-NOGO-DEADLOCK-001`
-- Current owner: Codex
-- Current reviewer: Codex2
+- Current owner: Codex2
+- Current reviewer: Antigravity3
 - Observed parent head: `8812479dee7fb12453799fd54ff0710af9f30d86` (unchanged)
 - Observed GitHub Actions run: `30722312049`
 
@@ -175,3 +175,31 @@ git diff --check origin/dev...HEAD  # exit 0
 
 Because base composition advanced `origin/dev`, this evidence re-seal and normal push of the composed branch are submitted for exact-head re-review by Codex2.
 
+## 2026-08-02 owner-dispatch base advance
+
+Owner dispatch resumed from clean published task head
+`4038981d7545269b08595a38450c572fa829bf2e`. After fetching remote refs,
+`origin/dev` was at `96f94cda56d509f44eb5929997b3ab7a67f1c65c`; the histories
+had diverged by 11 base commits and 12 task-side commits. To preserve all
+published task history and keep the push non-forced, current `origin/dev` was
+merge-composed into the task branch. The merge completed without conflicts at
+`756f3cb5ead6b8cc428681e5a04da9e195be4999` and was pushed normally to PR
+#562.
+
+Verification on that composed implementation head:
+
+```text
+uv run pytest -q tests/e2e/test_release_gate_registry.py tests/e2e/test_acceptance_coverage.py tests/integration/test_flow_002_expansion_persistence.py tests/security/test_branch_protection_policy.py  # exit 0
+uv run ruff check scripts/e2e/check_product_release_gate.py scripts/e2e/check_release_gate_registry.py scripts/e2e/product_e2e_receipt.py tests/e2e/test_release_gate_registry.py tests/integration/test_flow_002_expansion_persistence.py  # exit 0
+python3 scripts/e2e/check_release_gate_registry.py  # exit 0; NO-GO registry valid, 0/7 gates cleared
+python3 scripts/e2e/check_product_release_gate.py --dev-merge  # exit 0
+python3 scripts/e2e/check_product_release_gate.py --require-go --expected-sha 756f3cb5ead6b8cc428681e5a04da9e195be4999  # exit 1 as required; authentic NO-GO
+python3 -c workflow YAML safe-load for ci.yml and promote-dev-to-main.yml  # exit 0
+git merge-base --is-ancestor origin/dev HEAD  # exit 0
+git diff --check origin/dev...HEAD  # exit 0 after this evidence reseal removes the pre-existing blank line at EOF
+```
+
+PR #562 reported the `orchestrator` check successful on the composed head while
+`product`, `performance-gate`, and `product-e2e-gate` were still running. The
+final evidence-only reseal commit therefore requires Antigravity3 to review the
+new exact pushed head; no earlier frozen approval is being reused.
