@@ -2965,6 +2965,91 @@ class ProcessQueueDispatchGuardTests(unittest.TestCase):
         self.assertFalse(changed)
         queue_delivery_event.assert_not_called()
 
+    def test_dispatcher_spreads_paused_review_to_registered_idle_reviewer(self) -> None:
+        config = {
+            "schema": {
+                "tasks_path": "tasks",
+                "task_id_field": "id",
+                "assignee_field": "owner",
+                "reviewer_field": "reviewer",
+            },
+            "ready_dispatcher": {
+                "review_statuses": ["review"],
+                "active_worker_statuses": ["running"],
+                "helper_claim": {
+                    "enabled": True,
+                    "include_registered_idle_agents": True,
+                },
+            },
+            "agents": {
+                "codex": {"id": "codex", "display_name": "Codex", "provider": "codex"},
+                "antigravity": {
+                    "id": "antigravity",
+                    "display_name": "Antigravity",
+                    "provider": "antigravity",
+                },
+                "antigravity2": {
+                    "id": "antigravity2",
+                    "display_name": "Antigravity2",
+                    "provider": "antigravity2",
+                },
+            },
+            "providers": {},
+        }
+        state = {
+            "queue": {"events": {}},
+            "workers": {},
+            "provider_guardrails": {
+                "dispatch_pauses": {
+                    "codex": {
+                        "provider": "codex",
+                        "blocked_until": "2999-01-01T00:00:00Z",
+                        "summary": "Codex usage limit reached",
+                    }
+                }
+            },
+        }
+        initial_status = {
+            "tasks": [
+                {
+                    "id": "REVIEW-002",
+                    "status": "review",
+                    "owner": "Antigravity",
+                    "reviewer": "Codex",
+                    "depends_on": [],
+                }
+            ]
+        }
+        persisted_status = {
+            "tasks": [
+                {
+                    "id": "REVIEW-002",
+                    "status": "review",
+                    "owner": "Antigravity",
+                    "reviewer": "Antigravity2",
+                    "depends_on": [],
+                    "last_update": "2026-08-02T14:05:00Z",
+                }
+            ]
+        }
+
+        with (
+            mock.patch.object(supervisor, "load_status", side_effect=[initial_status, persisted_status]),
+            mock.patch.object(supervisor, "load_event_queue", return_value=[]),
+            mock.patch.object(supervisor, "persist_task_reassignment", return_value=True) as persist,
+            mock.patch.object(supervisor, "queue_delivery_event", return_value=True) as queue_delivery_event,
+            mock.patch.object(supervisor, "write_activity_log"),
+        ):
+            changed = supervisor.dispatch_ready_tasks(config, state)
+
+        self.assertTrue(changed)
+        self.assertEqual(persist.call_args.kwargs["new_owner"], "Antigravity")
+        self.assertEqual(persist.call_args.kwargs["new_reviewer"], "Antigravity2")
+        queued_event = queue_delivery_event.call_args.args[1]
+        self.assertEqual(queued_event["task_id"], "REVIEW-002")
+        self.assertEqual(queued_event["target_agent"], "Antigravity2")
+        self.assertEqual(queued_event["reason"], "review_ready_dispatch")
+
     def test_dispatcher_helper_claims_unrelated_task_during_failure_loop(self) -> None:
         config = {
             "schema": {

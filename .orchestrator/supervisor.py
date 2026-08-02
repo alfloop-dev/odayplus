@@ -10092,6 +10092,120 @@ def choose_helper_claim_agent(
     return True
 
 
+def reassign_paused_reviewers_to_registered_idle_agents(
+    config: dict[str, Any],
+    state: dict[str, Any],
+    status: dict[str, Any],
+    *,
+    provider_report: dict[str, Any] | None = None,
+) -> bool:
+    settings = ready_dispatch_settings(config)
+    helper_settings = helper_claim_settings(config)
+    if not (
+        helper_settings.get("enabled", True)
+        and helper_settings.get("include_registered_idle_agents", False)
+    ):
+        return False
+
+    schema = config.get("schema", {})
+    tasks_path = schema.get("tasks_path", "tasks")
+    task_id_field = schema.get("task_id_field", "id")
+    owner_field = schema.get("assignee_field", "owner")
+    reviewer_field = schema.get("reviewer_field", "reviewer")
+    review_statuses = {str(value).lower() for value in settings.get("review_statuses", ["review"])}
+    active_statuses = {str(value) for value in settings.get("active_worker_statuses", [])}
+    active_agents, active_task_agents = active_worker_indexes(state, active_statuses)
+    pending_agents, pending_task_agents, _pending_event_keys = outstanding_delivery_indexes(config, state)
+    reserved_agents = set(active_agents) | set(pending_agents)
+    reserved_tasks = {task_id for task_id, _agent_id in active_task_agents | pending_task_agents}
+    candidate_agent_ids = weighted_dispatch_agent_ids(config, settings)
+    changed = False
+
+    for task in status.get(tasks_path, []) or []:
+        task_id = str(task.get(task_id_field) or "")
+        if not task_id or task_id in reserved_tasks:
+            continue
+        if str(task.get("status") or "").lower() not in review_statuses:
+            continue
+        owner = str(task.get(owner_field) or "").strip()
+        reviewer = str(task.get(reviewer_field) or "").strip()
+        if not reviewer or is_human_gate_agent(reviewer):
+            continue
+        reviewer_block_reason = agent_auto_dispatch_block_reason(
+            config,
+            state,
+            normalize_agent_id(reviewer),
+            provider_report,
+        )
+        if not reviewer_block_reason:
+            continue
+
+        replacement = ""
+        replacement_id = ""
+        for candidate_id in candidate_agent_ids:
+            candidate = display_name_for(config, candidate_id)
+            candidate_config = (config.get("agents", {}) or {}).get(candidate_id)
+            if (
+                not candidate
+                or candidate in {owner, reviewer}
+                or candidate_id in reserved_agents
+                or not isinstance(candidate_config, dict)
+                or agent_is_dispatch_slot(candidate_config)
+                or is_human_gate_agent(candidate)
+                or not agent_can_take_task(config, candidate, task)
+                or agent_auto_dispatch_block_reason(config, state, candidate_id, provider_report)
+                or not agent_within_target_workload_for_assignment(
+                    status,
+                    candidate,
+                    owner_field=reviewer_field,
+                    previous_owner=reviewer,
+                )
+            ):
+                continue
+            replacement = candidate
+            replacement_id = candidate_id
+            break
+        if not replacement:
+            continue
+
+        message = (
+            f"Helper-claimed review by {replacement} while reviewer {reviewer} "
+            f"is dispatch-paused: {reviewer_block_reason}"
+        )
+        if not persist_task_reassignment(
+            config,
+            task_id=task_id,
+            new_owner=owner,
+            new_reviewer=replacement,
+            message=message,
+            handoff_to=replacement,
+            handoff_from=reviewer,
+        ):
+            continue
+        task[reviewer_field] = replacement
+        task["next"] = message
+        reserved_agents.add(replacement_id)
+        reserved_tasks.add(task_id)
+        changed = True
+        write_activity_log(
+            config,
+            {
+                "type": "task_review_helper_claimed",
+                "task_id": task_id,
+                "message": message,
+                "owner": owner,
+                "from_reviewer": reviewer,
+                "to_reviewer": replacement,
+            },
+        )
+        console_log(
+            f"review helper claim: task={task_id} from={reviewer} to={replacement}",
+            quiet=SUPERVISOR_LOG_QUIET,
+        )
+
+    return changed
+
+
 def is_sidecar_review_of_current_parent(
     candidate_task: dict[str, Any],
     current_task: dict[str, Any] | None,
@@ -10446,6 +10560,19 @@ def dispatch_ready_tasks(
         normalized = normalize_mainline_task_assignment(config, task) or normalized
 
     if normalized:
+        changed = True
+        status = load_status(config)
+        tasks = [task for task in status.get(tasks_path, []) if task.get(task_id_field)]
+        task_map = {task.get(task_id_field): task for task in tasks}
+        failure_loop_task_agents = failure_loop_task_agents_for_task_map(config, state, task_map)
+        failure_loop_task_ids = {task_id for task_id, _agent_name in failure_loop_task_agents}
+
+    if reassign_paused_reviewers_to_registered_idle_agents(
+        config,
+        state,
+        status,
+        provider_report=provider_report,
+    ):
         changed = True
         status = load_status(config)
         tasks = [task for task in status.get(tasks_path, []) if task.get(task_id_field)]
