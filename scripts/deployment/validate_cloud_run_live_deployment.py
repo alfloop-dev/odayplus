@@ -1661,16 +1661,34 @@ def _json_request(
 
 
 def _declared_data_mode(payload: Mapping[str, Any]) -> str:
-    containers: list[Mapping[str, Any]] = [payload]
-    for key in ("details", "dependencies", "meta"):
-        value = payload.get(key)
-        if isinstance(value, Mapping):
-            containers.append(value)
-    for container in containers:
-        for key in ("data_mode", "dataMode", "binding_mode", "bindingMode"):
-            value = container.get(key)
-            if isinstance(value, str) and value.strip():
-                return value.strip().lower()
+    """Read the declared data mode from whichever envelope shape carries it.
+
+    Canonical contract:
+      - Top-level ``data_mode`` key on response root (e.g. /platform/health, /readiness).
+      - Nested ``modes.data.mode`` (/platform/health) or ``details.data.mode`` (/readiness).
+      - Operator bootstrap envelope ``meta.dataMode``.
+    """
+    modes = payload.get("modes") if isinstance(payload.get("modes"), Mapping) else {}
+    details = payload.get("details") if isinstance(payload.get("details"), Mapping) else {}
+    modes_data = modes.get("data") if isinstance(modes.get("data"), Mapping) else {}
+    details_data = details.get("data") if isinstance(details.get("data"), Mapping) else {}
+    meta = payload.get("meta") if isinstance(payload.get("meta"), Mapping) else {}
+
+    candidates = (
+        payload.get("data_mode"),
+        payload.get("dataMode"),
+        modes_data.get("mode"),
+        details_data.get("mode"),
+        details.get("data_mode"),
+        details.get("dataMode"),
+        meta.get("dataMode"),
+        meta.get("data_mode"),
+        payload.get("binding_mode"),
+        payload.get("bindingMode"),
+    )
+    for candidate in candidates:
+        if isinstance(candidate, str) and candidate.strip():
+            return candidate.strip().lower()
     return ""
 
 
