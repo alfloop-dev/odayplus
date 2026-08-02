@@ -1328,12 +1328,12 @@ def _classify_worktree_dirt(porcelain_status: str | bytes) -> tuple[str, list[st
     """Classify reused-worktree dirtiness from `git status --porcelain` output.
 
     Returns (classification, paths):
-      'clean'        - no tracked/staged changes; paths is []
-      'scratch_only' - every change is orchestrator-managed scratch or context
+      'clean'        - no changes; paths is []
+      'scratch_only' - every change is an untracked or ignored ephemeral seed
                        (see _REUSABLE_DIRTY_PREFIXES / _REUSABLE_CONTEXT_FILES); paths lists them
-      'real'         - at least one change outside scratch -> must block dispatch
+      'real'         - at least one change is tracked/staged or outside scratch -> must block reuse
     """
-    paths: list[str] = []
+    entries: list[tuple[str, str]] = []
     if isinstance(porcelain_status, bytes):
         raw_entries = [e for e in porcelain_status.split(b"\0") if e]
         if not raw_entries:
@@ -1341,35 +1341,42 @@ def _classify_worktree_dirt(porcelain_status: str | bytes) -> tuple[str, list[st
         i = 0
         while i < len(raw_entries):
             item = raw_entries[i]
-            path_bytes = item[3:] if len(item) > 3 else b""
             code = item[:2].decode("utf-8", errors="replace")
+            path_bytes = item[3:] if len(item) > 3 else b""
             i += 1
             if len(code) >= 2 and (code[0] in ("R", "C") or code[1] in ("R", "C")):
                 if i < len(raw_entries):
                     i += 1
             rel_p = os.fsdecode(path_bytes).strip()
             if rel_p:
-                paths.append(rel_p)
+                entries.append((code, rel_p))
     else:
         lines = [ln for ln in porcelain_status.splitlines() if ln.strip()]
         if not lines:
             return "clean", []
         for ln in lines:
+            code = ln[:2]
             body = ln[3:] if len(ln) > 3 else ln.strip()
             path = body.split(" -> ")[-1].strip().strip('"')
             if path:
-                paths.append(path)
+                entries.append((code, path))
 
-    if not paths:
+    if not entries:
         return "clean", []
 
     def _is_reusable(p: str) -> bool:
         norm = p.replace("\\", "/").strip()
         return norm.startswith(_REUSABLE_DIRTY_PREFIXES) or norm in _REUSABLE_CONTEXT_FILES
 
-    if any(not _is_reusable(p) for p in paths):
-        return "real", []
-    return "scratch_only", paths
+    scratch_paths: list[str] = []
+    for code, path in entries:
+        if code.strip() not in ("??", "!!"):
+            return "real", []
+        if not _is_reusable(path):
+            return "real", []
+        scratch_paths.append(path)
+
+    return "scratch_only", scratch_paths
 
 
 def _restore_reusable_scratch(worktree_path: Path, paths: list[str]) -> None:

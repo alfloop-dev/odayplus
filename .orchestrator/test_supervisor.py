@@ -7550,10 +7550,10 @@ class WorktreeDirtClassificationTests(unittest.TestCase):
         self.assertEqual(supervisor._classify_worktree_dirt("\n  \n"), ("clean", []))
 
     def test_scratch_only_is_reusable(self) -> None:
-        # Exactly the dirt that jammed the fleet: brief modified + review re-staged.
+        # Untracked scratch/context paths are classified as scratch_only.
         status = (
-            "MM .orchestrator/task-briefs/mgmt_ai_persist_p1_attach_007.md\n"
-            "D  .orchestrator/reviews/mgmt_ai_persist_p1_attach_007_review.md\n"
+            "?? .orchestrator/task-briefs/mgmt_ai_persist_p1_attach_007.md\n"
+            "?? .orchestrator/reviews/mgmt_ai_persist_p1_attach_007_review.md\n"
         )
         kind, paths = supervisor._classify_worktree_dirt(status)
         self.assertEqual(kind, "scratch_only")
@@ -7564,6 +7564,16 @@ class WorktreeDirtClassificationTests(unittest.TestCase):
                 ".orchestrator/reviews/mgmt_ai_persist_p1_attach_007_review.md",
             },
         )
+
+    def test_tracked_or_staged_context_dirt_classified_as_real(self) -> None:
+        # Tracked/staged modifications under context or scratch paths are real dirt.
+        status = (
+            "MM .orchestrator/task-briefs/mgmt_ai_persist_p1_attach_007.md\n"
+            " M ai-status.json\n"
+        )
+        kind, paths = supervisor._classify_worktree_dirt(status)
+        self.assertEqual(kind, "real")
+        self.assertEqual(paths, [])
 
     def test_real_product_dirt_still_blocks(self) -> None:
         status = (
@@ -13040,7 +13050,7 @@ class QuarantineAndPreserveDirtyWorktreeTests(unittest.TestCase):
             self.assertNotIn("AI_COLLABORATION_GUIDE.md", st_proc.stdout)
 
     def test_tracked_owner_content_classified_real_dirt_and_preserved(self) -> None:
-        """B3 regression test: modified tracked files classified as real dirt and preserved without deletion/revert."""
+        """B3 regression test: modified tracked context files classified as real dirt, quarantined, and recovered cleanly."""
         with tempfile.TemporaryDirectory() as tmpdir:
             tmp_p = Path(tmpdir)
             repo_root = tmp_p / "repo"
@@ -13053,20 +13063,58 @@ class QuarantineAndPreserveDirtyWorktreeTests(unittest.TestCase):
             subprocess.run(["git", "commit", "-m", "initial"], cwd=repo_root, check=True)
             subprocess.run(["git", "checkout", "-b", "dev"], cwd=repo_root, check=True)
 
-            wt_path = tmp_p / "wt"
-            subprocess.run(["git", "worktree", "add", "-b", "task/B3-001", str(wt_path), "dev"], capture_output=True, check=True, cwd=repo_root)
+            task_id = "B3-001"
+            branch_name = f"task/{task_id}"
+            wt_path = tmp_p / "workers" / supervisor._task_id_slug(task_id)
+            wt_path.parent.mkdir(parents=True, exist_ok=True)
+            subprocess.run(["git", "worktree", "add", "-b", branch_name, str(wt_path), "dev"], capture_output=True, check=True, cwd=repo_root)
 
             # Modify tracked ai-activity-log.jsonl (simulating owner progress)
             owner_progress_text = '{"event":"baseline"}\n{"event":"owner_progress"}\n'
             (wt_path / "ai-activity-log.jsonl").write_text(owner_progress_text, encoding="utf-8")
 
-            # B3 check: dirt classification for context file is scratch_only
+            # B3 check 1: dirt classification for tracked context file MUST be real
             st_proc = subprocess.run(["git", "status", "--porcelain=v1", "-z", "--untracked-files=all"], cwd=wt_path, capture_output=True, check=True)
             classification, paths = supervisor._classify_worktree_dirt(st_proc.stdout)
-            self.assertEqual(classification, "scratch_only")
+            self.assertEqual(classification, "real")
+            self.assertEqual(paths, [])
 
-            # Ensure _restore_reusable_scratch does not revert the tracked file
-            supervisor._restore_reusable_scratch(wt_path, ["ai-activity-log.jsonl"])
+            # B3 check 2: end-to-end prepare_worker_workspace interaction
+            config = {
+                "paths": {
+                    "status_file": str(repo_root / "ai-status.json"),
+                    "activity_log": str(repo_root / "ai-activity-log.jsonl"),
+                },
+                "branch_workflow": {"task_branch_prefix": "task/", "dev_branch": "dev"},
+                "worker_worktrees": {
+                    "enabled": True,
+                    "root": str(tmp_p / "workers"),
+                    "base_ref": "dev",
+                    "reuse_existing": True,
+                },
+            }
+            state: dict = {}
+            request = supervisor.DeliveryRequest(
+                agent_id="antigravity",
+                provider="antigravity",
+                delivery_mode="antigravity",
+                message="wake",
+                task_id=task_id,
+                reason="owned_in_progress_dispatch",
+                context_files=["ai-status.json", "ai-activity-log.jsonl"],
+            )
+
+            ok, message = supervisor.prepare_worker_workspace(
+                config, state, request, queue_event_id="evt-b3", target_agent="Antigravity"
+            )
+            self.assertTrue(ok)
+            self.assertIsNone(message)
+
+            leased_path = Path(request.metadata["workspace_path"])
+            # Fresh clean workspace must be allocated at a distinct path
+            self.assertNotEqual(leased_path, wt_path)
+
+            # Original dirty worktree bytes must remain 100% byte-identical and untouched
             self.assertEqual((wt_path / "ai-activity-log.jsonl").read_text(encoding="utf-8"), owner_progress_text)
 
 
