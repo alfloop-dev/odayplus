@@ -1,11 +1,18 @@
 # ODP-ORCH-REVIEW-HEAD-FREEZE-LIVE-ROLLOUT-001: Roll merged review-head freeze into live Supervisor
 
-Owner: Antigravity2 · Reviewer: Antigravity5 · Phase: Orchestrator Control Plane Live Rollout
+Original rollout owner: Antigravity2 · Original reviewer: Antigravity5 · Current remediation owner: Codex · Current reviewer: Codex2 · Phase: Orchestrator Control Plane Live Rollout
 Deployed: 2026-07-31T14:27:07Z (gated atomic publish & controlled restart)
 
 Depends on ODP-ORCH-REVIEW-HEAD-FREEZE-001, merged as PR #505 (`6af7b86ba4aa34d5bf26142f64f3cb96c429b557`).
 
 This task deploys the reviewed PR #505 exact-head freeze control plane into the live Supervisor. It changes no Package 10 UI, no API worker logic, and no cloud resources. Detailed runtime receipts live under `docs/evidence/runtime/ODP-ORCH-REVIEW-HEAD-FREEZE-LIVE-ROLLOUT-001/`.
+
+Current acceptance disposition (Codex2 reopen, 2026-08-02): **BLOCKED**. The exact PR #505 bytes remain deployed and no second restart is authorized, but two rollout acceptance criteria are not proven:
+
+- **No unrelated worker termination — NOT MET.** The only restart terminated two unrelated active workers by SIGTERM. Later reconciliation and re-dispatch preserve incident truth but do not retroactively satisfy the no-termination criterion. Closeout requires an explicit operator-authorized acceptance waiver or other canonical incident disposition.
+- **Pre-write heartbeat — UNPROVEN.** The receipt captured pre-write systemd unit state and active workers, but no contemporaneous heartbeat value. The recorded `ai-status.json updated_at` is post-restart and must not be used as pre-write proof.
+
+This remediation corrects the N3 mismatch probe and the evidence claims only. It performs no live publication and no Supervisor restart.
 
 ---
 
@@ -22,7 +29,7 @@ Receipt: `docs/evidence/runtime/ODP-ORCH-REVIEW-HEAD-FREEZE-LIVE-ROLLOUT-001/sou
 
 ---
 
-## 2. Preflight State Snapshot
+## 2. Preflight Unit State Snapshot (Heartbeat Not Captured)
 
 Preflight query of `pantheon-supervisor.service` before any live file mutation:
 
@@ -43,6 +50,11 @@ Active Worker Inventory & Restart Reconciliation:
 - Controlled Restart Impact (14:27:07Z): Both worker processes were terminated by SIGTERM (exit_code=-15, signal=15) when systemd restarted `pantheon-supervisor.service`.
 - Boot Reconciliation & Re-dispatch (14:27:07Z+): Reconciled as `worker_failed` ("Worker process missing during supervisor boot reconciliation.") by Supervisor PID 262802 and re-dispatched (`ODP-PLAN-SITESCORE-OUTCOME-001` re-dispatched to `Antigravity3`, run ID `antigravity3-20260731T145319Z-5a02b1c7`).
 - Disabled Agents Configuration: `ready_dispatcher.disabled_agents` = `["Claude", "Claude2", "Claude3"]` updated in live `/home/lupin/oday-plus-supervisor-live/.orchestrator/config.json`.
+
+Acceptance limitations:
+
+- The presence of the two active workers meant the safe-window/no-preemption gate was not satisfied. Both processes were subsequently terminated by the restart.
+- No pre-write heartbeat value was recorded in the contemporaneous receipts. The later `2026-07-31T14:27:13Z` `ai-status.json updated_at` value is post-restart evidence only. The required preflight heartbeat therefore remains unproven.
 
 ---
 
@@ -80,7 +92,7 @@ Exactly ONE controlled restart was issued via systemd at 14:27:07Z:
 systemctl --user restart pantheon-supervisor.service
 ```
 
-STOP GATE Compliance: The deployed PR #505 bytes (`3bb01341fee9b...` / `bc1ba0c2f6...`) and live MainPID `262802` are preserved without any second restart.
+Post-incident safety freeze: The deployed PR #505 bytes (`3bb01341fee9b...` / `bc1ba0c2f6...`) and live MainPID `262802` are preserved without any second restart. This preservation does not waive the unrelated-worker termination finding.
 
 Post-restart verification:
 
@@ -92,7 +104,7 @@ SubState               : running
 MainPID                : 262802  (NEW live MainPID, changed from 199392)
 ExecMainStartTimestamp : Fri 2026-07-31 14:27:07 UTC  (FRESH start timestamp)
 NRestarts              : 0  (Unchanged manual restart count)
-ai-status.json updated : 2026-07-31T14:27:13Z  (FRESH heartbeat)
+ai-status.json updated : 2026-07-31T14:27:13Z  (post-restart heartbeat only; not preflight proof)
 ```
 
 Process identity:
@@ -117,7 +129,7 @@ Live probes executed via `live_probes.py` against an isolated temporary status r
    - Result: **PASS**
 
 3. **N3 Probe (`test_n3_probe_restore_approved_head_check_emission`)**:
-   - Asserts `restore_approved_head` repairs missing-head shapes by setting `approved_head` and `last_approved_head` when matching the exact reviewed branch head, asserts that `emit_status_checks_for_changed_tasks` emits `task-review-gate=success` to GitHub API for matching heads and `task-review-gate=failure` for non-approved states, and fails closed with `SystemExit` when sha mismatches.
+   - Asserts `restore_approved_head` repairs missing-head shapes by setting `approved_head` and `last_approved_head` when matching the exact reviewed branch head, asserts that `emit_status_checks_for_changed_tasks` emits `task-review-gate=success` to GitHub API for matching heads and `task-review-gate=failure` for non-approved states, and uses a separate fresh missing-head task to prove the requested-SHA/current-branch-HEAD mismatch path fails closed with its exact mismatch error.
    - Result: **PASS**
 
 No live status files or dashboard artifacts were mutated during probe execution.

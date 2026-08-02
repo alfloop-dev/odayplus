@@ -8,7 +8,6 @@ Does NOT mutate live status or dashboard artifacts.
 from __future__ import annotations
 
 import copy
-import json
 import os
 import shutil
 import sys
@@ -107,7 +106,7 @@ class LiveFreezeProbes(unittest.TestCase):
         self.assertFalse(result, "Unapproved task missing approved_head must not trigger preemption")
 
     def test_n3_probe_restore_approved_head_check_emission(self):
-        """N3 Probe: restore_approved_head repairs missing-head shape, asserts task-review-gate emission, and fails closed on sha mismatch."""
+        """N3 Probe: repair/emission pass and a fresh missing-head SHA mismatch fails closed."""
         state_before = ai_status.load_state()
         state = copy.deepcopy(state_before)
         task = {
@@ -152,10 +151,31 @@ class LiveFreezeProbes(unittest.TestCase):
             self.assertIn("context=task-review-gate", cmd_args_pending)
             self.assertIn("state=failure", cmd_args_pending)
 
-            # Mismatch probe: must fail closed when requested sha != current branch head
+            # Mismatch probe: use a fresh missing-head task so the request reaches
+            # the requested-SHA/current-branch-HEAD comparison instead of being
+            # rejected by the existing-approved-head guard above.
+            mismatch_task = {
+                "id": "PROBE-TASK-N3-MISMATCH",
+                "owner": "Antigravity2",
+                "reviewer": "Antigravity5",
+                "status": "review_approved",
+                # No approved_head set (fresh missing-head shape)
+                "review_notes_zh": "Approved in prior round",
+            }
+            state["tasks"].append(mismatch_task)
             with self.assertRaises(SystemExit) as cm:
-                ai_status.command_restore_approved_head(state, ["PROBE-TASK-N3", "ffff1111bbbb2222cccc3333dddd4444eeee5555", "Wrong sha"])
-            self.assertIn("already carries one", str(cm.exception).lower())
+                ai_status.command_restore_approved_head(
+                    state,
+                    [
+                        "PROBE-TASK-N3-MISMATCH",
+                        "ffff1111bbbb2222cccc3333dddd4444eeee5555",
+                        "Wrong sha",
+                    ],
+                )
+            mismatch_error = str(cm.exception).lower()
+            self.assertIn("does not match the task branch head", mismatch_error)
+            self.assertIn("ffff1111", mismatch_error)
+            self.assertIn("aaaa1111", mismatch_error)
 
 
 if __name__ == "__main__":
