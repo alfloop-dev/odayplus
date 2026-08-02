@@ -182,6 +182,8 @@ def load_config(config_path: str | Path | None = None) -> dict[str, Any]:
 
 
 def config_path(config: dict[str, Any], key: str, default: str | None = None) -> Path:
+    if key == "status_file" and default is None:
+        default = str(ROOT / "ai-status.json")
     value = config.get("paths", {}).get(key, default)
     path = resolve_path(value)
     if path is None:
@@ -927,6 +929,26 @@ def validate_source_doc_path(rel_path: str, status_root: Path, *, task: dict[str
     return True, norm, None
 
 
+def task_brief_canonical_hash(task: dict[str, Any]) -> str:
+    task_id = str(task.get("id") or "").strip()
+    source_docs = [normalize_source_doc_path(str(item)) for item in (task.get("source_docs") or []) if str(item).strip()]
+    acceptance = [str(item).strip() for item in (task.get("acceptance") or []) if str(item).strip()]
+    verification = [str(item).strip() for item in (task.get("verification") or []) if str(item).strip()]
+    canonical_payload = {
+        "id": task_id,
+        "title": task.get("title"),
+        "status": str(task.get("status") or "-"),
+        "owner": str(task.get("owner") or "-"),
+        "reviewer": str(task.get("reviewer") or "-"),
+        "last_update": str(task.get("last_update") or "-"),
+        "next": task.get("next"),
+        "source_docs": source_docs,
+        "acceptance": acceptance,
+        "verification": verification,
+    }
+    return hashlib.sha256(json.dumps(canonical_payload, sort_keys=True).encode("utf-8")).hexdigest()
+
+
 def is_task_brief_stale(text: str, task: dict[str, Any]) -> bool:
     if not text or not isinstance(task, dict):
         return True
@@ -949,6 +971,26 @@ def is_task_brief_stale(text: str, task: dict[str, Any]) -> bool:
                 found_val = match.group(1).strip()
                 break
         if found_val is not None and found_val.lower() != expected.lower():
+            return True
+
+    sha_match = re.search(r"^-\s*SHA256:\s*([a-fA-F0-9]{64})$", text, re.MULTILINE)
+    if sha_match:
+        expected_hash = task_brief_canonical_hash(task)
+        if sha_match.group(1).lower() != expected_hash.lower():
+            return True
+
+    expected_docs = [normalize_source_doc_path(str(item)) for item in (task.get("source_docs") or []) if str(item).strip()]
+    source_docs_match = re.search(r"^##\s*Source Documents\s*\n((?:(?!\n##\s).)*)", text, re.MULTILINE | re.DOTALL)
+    if source_docs_match:
+        block = source_docs_match.group(1)
+        found_docs: list[str] = []
+        for line in block.splitlines():
+            line_str = line.strip()
+            if line_str.startswith("-"):
+                val = line_str[1:].strip()
+                if val and val.lower() != "none":
+                    found_docs.append(normalize_source_doc_path(val))
+        if found_docs != expected_docs:
             return True
 
     return False
@@ -999,19 +1041,7 @@ def generate_task_brief_content(
     task_owner_val = str(task.get("owner") or "-")
     task_reviewer_val = str(task.get("reviewer") or "-")
 
-    canonical_payload = {
-        "id": task_id,
-        "title": task.get("title"),
-        "status": task_status_val,
-        "owner": task_owner_val,
-        "reviewer": task_reviewer_val,
-        "last_update": task_last_update,
-        "next": task.get("next"),
-        "source_docs": source_docs,
-        "acceptance": acceptance,
-        "verification": verification,
-    }
-    sha256_hash = hashlib.sha256(json.dumps(canonical_payload, sort_keys=True).encode("utf-8")).hexdigest()
+    sha256_hash = task_brief_canonical_hash(task)
 
     header_lines = [
         f"# Task Brief: {task_id}",
@@ -1137,7 +1167,10 @@ def write_task_brief(config: dict[str, Any], task_id: str | None) -> Path | None
 
 def execution_context_files(config: dict[str, Any], task_id: str | None) -> list[str]:
     files = ["AI_COLLABORATION_GUIDE.md"]
-    status_root = config_path(config, "status_file").parents[0].resolve()
+    try:
+        status_root = config_path(config, "status_file", default=str(ROOT / "ai-status.json")).parents[0].resolve()
+    except KeyError:
+        status_root = ROOT.resolve()
 
     status_data = load_status(config)
     tasks = status_data.get("tasks", []) or []

@@ -129,6 +129,35 @@ class TaskBriefSourceDocsTests(unittest.TestCase):
         )
         self.assertFalse(common.is_task_brief_stale(fresh_text, task))
 
+    def test_source_docs_change_stale_brief_rejection(self) -> None:
+        task = {
+            "id": "ODP-SRC-CHANGE-001",
+            "title": "Source Doc Change Test",
+            "status": "in_progress",
+            "owner": "Antigravity",
+            "reviewer": "Codex5",
+            "last_update": "2026-08-02T11:00:00Z",
+            "source_docs": ["docs/new.md"],
+        }
+        old_brief_text = (
+            "# Task Brief: ODP-SRC-CHANGE-001\n"
+            "- Status: in_progress\n"
+            "- Owner: Antigravity\n"
+            "- Reviewer: Codex5\n"
+            "- Last update: 2026-08-02T11:00:00Z\n"
+            "\n"
+            "## Source Documents\n"
+            "- docs/old.md\n"
+        )
+        self.assertTrue(common.is_task_brief_stale(old_brief_text, task))
+
+    def test_execution_context_files_without_status_file_config(self) -> None:
+        empty_config: dict[str, object] = {}
+        with mock.patch.object(common, "load_status", return_value={"tasks": []}):
+            files = common.execution_context_files(empty_config, None)
+        self.assertIn("AI_COLLABORATION_GUIDE.md", files)
+        self.assertIn("ai-status.json", files)
+
     def test_archived_readiness_task_brief_generation(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             status_root = Path(tmpdir) / "pantheon"
