@@ -1562,12 +1562,14 @@ def _refresh_reused_worker_worktree(
 ) -> tuple[bool, str]:
     """Lease a clean reused worktree using a fail-closed three-way policy.
 
-    A branch behind the current base may be fast-forwarded. A branch already
+    A branch behind the current base may be fast-forwarded. A clean local task
+    branch behind its freshly fetched remote task branch may also be
+    fast-forwarded to that authoritative published HEAD. A branch already
     containing the base is left untouched. A genuinely diverged branch is
-    dispatchable only when its local HEAD exactly matches the freshly fetched
-    remote task HEAD; the owner then receives an explicit rebase-required
-    prompt. Every unverifiable or mutable condition blocks without resetting,
-    cleaning, rebasing, or otherwise discarding worker state.
+    dispatchable only when its local HEAD exactly matches the remote task HEAD;
+    the owner then receives an explicit rebase-required prompt. Every
+    unverifiable or mutable condition blocks without resetting, cleaning,
+    rebasing, or otherwise discarding worker state.
     """
     base = base_ref.split("/", 1)[1] if base_ref.startswith("origin/") else base_ref
     worktree_path = worktree_path.resolve()
@@ -1681,7 +1683,30 @@ def _refresh_reused_worker_worktree(
             if not remote_task_head:
                 return False, "unverifiable_refs: missing fetched remote task HEAD"
             if local_head != remote_task_head:
-                return False, f"task_head_mismatch: local={local_head} remote={remote_task_head}"
+                remote_contains_local_rc, _ = _git_output(
+                    worktree_path,
+                    "merge-base",
+                    "--is-ancestor",
+                    local_head,
+                    remote_task_head,
+                )
+                if remote_contains_local_rc not in {0, 1}:
+                    return False, "unverifiable_refs: cannot compare local and remote task HEADs"
+                if remote_contains_local_rc != 0:
+                    return False, f"task_head_mismatch: local={local_head} remote={remote_task_head}"
+                task_ff_proc = subprocess.run(
+                    ["git", "merge", "--ff-only", f"origin/{expected_branch}"],
+                    cwd=worktree_path,
+                    capture_output=True,
+                    text=True,
+                    check=False,
+                )
+                if task_ff_proc.returncode != 0:
+                    details = (task_ff_proc.stderr or task_ff_proc.stdout or "").strip().splitlines()
+                    return False, f"task_fast_forward_failed: {details[0] if details else 'unknown'}"
+                local_head = _git_commit_oid(worktree_path, "HEAD")
+                if local_head != remote_task_head:
+                    return False, "task_fast_forward_failed: resulting HEAD did not match remote task HEAD"
 
     base_contains_rc, _ = _git_output(
         worktree_path, "merge-base", "--is-ancestor", local_head, base_head

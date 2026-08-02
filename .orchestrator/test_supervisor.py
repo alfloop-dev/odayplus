@@ -8176,6 +8176,23 @@ class ReusedWorkerWorktreeBaseAdvanceTests(unittest.TestCase):
         self.assertFalse(ok)
         self.assertTrue(status.startswith("task_head_mismatch:"), status)
 
+    def test_clean_local_task_behind_remote_fast_forwards_to_published_head(self) -> None:
+        self._git(self.repo_root, "fetch", "origin", self.task_branch)
+        self._git(self.repo_root, "switch", "--detach", f"origin/{self.task_branch}")
+        self._git(self.repo_root, "config", "user.name", "Supervisor Test")
+        self._git(self.repo_root, "config", "user.email", "supervisor-test@example.invalid")
+        (self.repo_root / "published.txt").write_text("published task update\n", encoding="utf-8")
+        self._git(self.repo_root, "add", "published.txt")
+        self._git(self.repo_root, "commit", "-m", "publish task update")
+        self._git(self.repo_root, "push", "origin", f"HEAD:{self.task_branch}")
+        published_head = self._git(self.repo_root, "rev-parse", "HEAD").stdout.strip()
+
+        ok, status = self._refresh()
+
+        self.assertTrue(ok, status)
+        self.assertTrue(status.startswith("base_advance_rebase_required:"), status)
+        self.assertEqual(self._git(self.worktree, "rev-parse", "HEAD").stdout.strip(), published_head)
+
     def test_wrong_branch_blocks(self) -> None:
         self._git(self.worktree, "switch", "-c", "task/WRONG-BRANCH")
 
