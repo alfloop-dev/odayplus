@@ -137,6 +137,7 @@ else:
         intervention_workflow: Any = None,
         intervention_repository: Any = None,
         intervention_label_registry: Any = None,
+        operator_live_repository: Any = None,
         persistence: Any = None,
         external_provider_validation: Any = None,
         external_provider_connectivity_probe: Any = None,
@@ -163,8 +164,7 @@ else:
         production_persistence_supported = persistence_mode in {"postgres", "postgresql"} and bool(
             bundle.is_production
         )
-        operator_live_repository: Any | None = None
-        if require_live_data and production_persistence_supported:
+        if operator_live_repository is None and require_live_data and production_persistence_supported:
             from modules.opsboard.application.operator_live_repository import (
                 OperatorLiveRepository,
             )
@@ -212,8 +212,18 @@ else:
 
         from modules.external_data.application.ingestion_service import ExternalIngestionService
 
+        heatzone_store_for_tenant = (
+            bundle.heatzone_store_for_tenant if bundle.is_durable else None
+        )
+        ingestion_run_store_for_tenant = (
+            bundle.ingestion_run_store_for_tenant if bundle.is_durable else None
+        )
+        sitescore_decision_store_for_tenant = (
+            bundle.sitescore_decision_store_for_tenant if bundle.is_durable else None
+        )
         ingestion_service = external_ingestion_service or ExternalIngestionService(
             store=bundle.ingestion_run_store,
+            ingestion_run_store_for_tenant=ingestion_run_store_for_tenant,
             state_store=bundle.external_fetch_state_store,
             audit_log=audit_log,
         )
@@ -389,7 +399,11 @@ else:
                 and persistence_reachable
                 and provider_live_ready
                 and operator_repository_ready
-                and production_model_bindings_ready
+            )
+            model_blocking_reasons = (
+                ["PRODUCTION_MODEL_BINDINGS_UNVERIFIED"]
+                if require_live_data and not production_model_bindings_ready
+                else []
             )
             blocking_reasons: list[str] = []
             if require_live_data:
@@ -408,8 +422,6 @@ else:
                     blocking_reasons.append("PROVIDER_CONNECTIVITY_UNHEALTHY")
                 if not operator_repository_ready:
                     blocking_reasons.append("OPERATOR_LIVE_REPOSITORY_UNAVAILABLE")
-                if not production_model_bindings_ready:
-                    blocking_reasons.append("PRODUCTION_MODEL_BINDINGS_UNVERIFIED")
             return {
                 "requireLiveData": require_live_data,
                 "deploymentMode": active_deployment_mode,
@@ -439,6 +451,7 @@ else:
                     "capabilities": production_model_capabilities,
                     "error": production_model_error,
                     "autoSeeded": (not require_live_data and production_model_bindings_ready),
+                    "blockingReasons": model_blocking_reasons,
                 },
                 "data": {
                     "mode": (
@@ -940,7 +953,7 @@ else:
                 )
             except ProductionModelRuntimeError as exc:
                 for service, capability in production_model_capabilities.items():
-                    if capability["trainable"]:
+                    if capability["trainable"] and service not in _governed_disabled:
                         capability["reasonCode"] = exc.code
                         capability["error"] = str(exc)
                         if service in required_model_services:
@@ -1012,11 +1025,6 @@ else:
                 "; ".join(production_composition_errors) if production_composition_errors else None
             )
             # productionBindingsReady is True when:
-            # - ForecastOps is active (available=True, the only MLflow alias required)
-            # - Every other required service is either active or governed-disabled
-            # - The MLflow runtime and LearningHub registry are both live
-            # A governed-disabled service contributes to readiness because it has
-            # explicit evidence and fails closed; it does NOT require a production alias.
             forecastops_active = (
                 production_model_capabilities.get("forecastops", {}).get("available") is True
             )
@@ -1048,6 +1056,7 @@ else:
             api,
             create_heatzone_router(
                 store=heatzone_store,
+                heatzone_store_for_tenant=heatzone_store_for_tenant,
                 audit_log=audit_log,
                 model_binding=scoring_bindings.get("heatzone"),
                 model_runtime=model_runtime,
@@ -1061,6 +1070,7 @@ else:
             api,
             create_external_data_router(
                 ingestion_service=ingestion_service,
+                ingestion_run_store_for_tenant=ingestion_run_store_for_tenant,
                 audit_log=audit_log,
                 require_provider=require_live_external_provider,
             ),
@@ -1142,6 +1152,7 @@ else:
             create_sitescore_router(
                 repository=site_repository,
                 workflow=decision_workflow,
+                sitescore_decision_repository_for_tenant=sitescore_decision_store_for_tenant,
                 realization_hook=realization_hook,
                 audit_log=audit_log,
                 model_binding=scoring_bindings.get("sitescore"),

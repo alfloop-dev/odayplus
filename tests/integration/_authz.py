@@ -37,14 +37,26 @@ FORECASTOPS_HEADERS = {
 }
 # Expansion domain: EXPANSION_USER holds heatzone view/create and listing
 # view/create/update (ROLE_PERMISSIONS in shared.auth.rbac).
-HEATZONE_HEADERS = auth_headers(Role.EXPANSION_USER)
-LISTING_HEADERS = auth_headers(Role.EXPANSION_USER)
+HEATZONE_HEADERS = {
+    **auth_headers(Role.EXPANSION_USER),
+    "x-tenant-id": "tenant-a",
+}
+LISTING_HEADERS = {
+    **auth_headers(Role.EXPANSION_USER),
+    "x-tenant-id": "tenant-a",
+}
 # External-data freshness is an integration-domain read; DATA_OWNER holds the
 # integration view grant.
-EXTERNAL_DATA_HEADERS = auth_headers(Role.DATA_OWNER)
+EXTERNAL_DATA_HEADERS = {
+    **auth_headers(Role.DATA_OWNER),
+    "x-tenant-id": "tenant-a",
+}
 # Intervention lifecycle spans create/approve (operations manager) and execute
 # (regional supervisor); a principal may hold both roles.
 INTERVENTION_HEADERS = auth_headers(Role.OPERATIONS_MANAGER, Role.REGIONAL_SUPERVISOR)
 # PriceOps view/create/approve/execute is held by the pricing manager.
 PRICEOPS_HEADERS = auth_headers(Role.PRICING_MANAGER)
-SITESCORE_HEADERS = auth_headers(Role.SITE_REVIEWER)
+SITESCORE_HEADERS = {
+    **auth_headers(Role.SITE_REVIEWER),
+    "x-tenant-id": "tenant-a",
+}

@@ -85,6 +85,42 @@ class PersistenceBundle:
             getattr(self.engine, "is_production", False)
         )
 
+    def listing_repository_for_tenant(self, tenant_id: str) -> Any | None:
+        return self._scoped_repository("listing_repository", tenant_id)
+
+    def sitescore_decision_store_for_tenant(self, tenant_id: str) -> Any | None:
+        return self._scoped_repository("sitescore_decision_store", tenant_id)
+
+    def ingestion_run_store_for_tenant(self, tenant_id: str) -> Any | None:
+        return self._scoped_repository("ingestion_run_store", tenant_id)
+
+    def heatzone_store_for_tenant(self, tenant_id: str) -> Any | None:
+        return self._scoped_repository("heatzone_store", tenant_id)
+
+    def _scoped_repository(self, attribute: str, tenant_id: str) -> Any | None:
+        if not tenant_id or not tenant_id.strip():
+            return None
+        repo = getattr(self, attribute, None)
+        if repo is None:
+            return None
+        clean_tenant = tenant_id.strip()
+        if str(getattr(repo, "tenant_id", "") or "").strip() == clean_tenant:
+            return repo
+        store = getattr(repo, "_store", None)
+        if store is not None:
+            base_store = getattr(store, "_store", store)
+            if (
+                hasattr(base_store, "get")
+                and hasattr(base_store, "put")
+                and hasattr(base_store, "list_all")
+            ):
+                from shared.infrastructure.persistence.operator_domains import (
+                    TenantScopedDocumentStore,
+                )
+
+                return type(repo)(TenantScopedDocumentStore(base_store, clean_tenant))
+        return None
+
 
 def _memory_bundle(worm_sink: AuditWormSink | None = None) -> PersistenceBundle:
     from models.shared_ml.artifact_store import InMemoryArtifactStore
