@@ -9383,12 +9383,21 @@ class ReviewHeadFreezeTests(unittest.TestCase):
             ]
         }
         with unittest.mock.patch("ai_status.current_actor_validated", return_value="Antigravity4"):
-            with unittest.mock.patch("ai_status.resolve_task_sha", return_value="9999999922222222333333334444444455555555"):
+            with unittest.mock.patch(
+                "ai_status.collect_done_delivery_metadata",
+                return_value={
+                    "verified_head": "9999999922222222333333334444444455555555",
+                    "pull_request": {
+                        "head_sha": "1111111122222222333333334444444455555555",
+                        "merge_commit": "aaaaaaaa22222222333333334444444455555555",
+                    },
+                },
+            ):
                 with self.assertRaises(SystemExit) as cm:
                     ai_status.command_done(state, ["FREEZE-TEST-003", "Finalize done"])
                 self.assertIn("differs from reviewer-approved head", str(cm.exception))
 
-    def test_command_done_fails_closed_when_sha_unresolved_or_raises(self) -> None:
+    def test_command_done_fails_closed_when_delivery_checkout_sha_unresolved_or_collector_raises(self) -> None:
         state = {
             "tasks": [
                 {
@@ -9401,15 +9410,27 @@ class ReviewHeadFreezeTests(unittest.TestCase):
             ]
         }
         with unittest.mock.patch("ai_status.current_actor_validated", return_value="Antigravity4"):
-            with unittest.mock.patch("ai_status.resolve_task_sha", return_value=None):
+            with unittest.mock.patch(
+                "ai_status.collect_done_delivery_metadata",
+                return_value={
+                    "verified_head": None,
+                    "pull_request": {
+                        "head_sha": "1111111122222222333333334444444455555555",
+                        "merge_commit": "aaaaaaaa22222222333333334444444455555555",
+                    },
+                },
+            ):
                 with self.assertRaises(SystemExit) as cm:
                     ai_status.command_done(state, ["FREEZE-TEST-003B", "Finalize done"])
                 self.assertIn("differs from reviewer-approved head", str(cm.exception))
 
-            with unittest.mock.patch("ai_status.resolve_task_sha", side_effect=RuntimeError("git error")):
+            with unittest.mock.patch(
+                "ai_status.collect_done_delivery_metadata",
+                side_effect=SystemExit("Cannot finalize task: task-owned checkout HEAD is unavailable."),
+            ):
                 with self.assertRaises(SystemExit) as cm:
                     ai_status.command_done(state, ["FREEZE-TEST-003B", "Finalize done"])
-                self.assertIn("unable to resolve current branch HEAD", str(cm.exception))
+                self.assertIn("task-owned checkout HEAD is unavailable", str(cm.exception))
 
     def test_supervisor_reverts_mutated_approved_head_to_review_on_disk(self) -> None:
         import tempfile
@@ -10303,7 +10324,13 @@ class ReviewHeadFreezeTests(unittest.TestCase):
                     1,
                 )
             with unittest.mock.patch("ai_status.current_actor_validated", return_value="Antigravity4"), \
-                 unittest.mock.patch("ai_status.collect_done_delivery_metadata", return_value={}), \
+                 unittest.mock.patch(
+                     "ai_status.collect_done_delivery_metadata",
+                     return_value={
+                         "verified_head": head,
+                         "pull_request": {"head_sha": head, "merge_commit": merge},
+                     },
+                 ), \
                  unittest.mock.patch("ai_status.archive_terminal_task_from_state"):
                 ai_status.command_done(state, [task_id, "Finalize"])
 
@@ -10330,17 +10357,21 @@ class ReviewHeadFreezeTests(unittest.TestCase):
         }
         ai_status.clear_ai_status_caches()
         with unittest.mock.patch("ai_status.current_actor_validated", return_value="Antigravity4"), \
-             unittest.mock.patch("ai_status.resolve_task_sha", return_value=merge), \
              unittest.mock.patch(
-                 "ai_status.task_pr_head_and_merge_commit",
-                 return_value=("e0147acb22222222333333334444444455555555", merge),
-             ), \
-             unittest.mock.patch("ai_status.collect_done_delivery_metadata") as collect, \
+                 "ai_status.collect_done_delivery_metadata",
+                 return_value={
+                     "verified_head": merge,
+                     "pull_request": {
+                         "head_sha": "e0147acb22222222333333334444444455555555",
+                         "merge_commit": merge,
+                     },
+                 },
+             ) as collect, \
              unittest.mock.patch("ai_status.append_log"):
             with self.assertRaises(SystemExit) as cm:
                 ai_status.command_done(state, ["FREEZE-TEST-022E", "Finalize"])
         self.assertIn("PR merge commit, not the reviewed branch head", str(cm.exception))
-        collect.assert_not_called()
+        collect.assert_called_once()
 
     # ------------------------------------------------------------------
     # B21 -- `restore_approved` is the second producer of `review_approved`.
@@ -10421,13 +10452,21 @@ class ReviewHeadFreezeTests(unittest.TestCase):
 
         # And the restored task is frozen: a later push is still refused.
         with unittest.mock.patch("ai_status.current_actor_validated", return_value="Antigravity4"), \
-             unittest.mock.patch("ai_status.resolve_task_sha", return_value="bbbbbbbb22222222333333334444444455555555"), \
-             unittest.mock.patch("ai_status.collect_done_delivery_metadata") as collect, \
+             unittest.mock.patch(
+                 "ai_status.collect_done_delivery_metadata",
+                 return_value={
+                     "verified_head": "bbbbbbbb22222222333333334444444455555555",
+                     "pull_request": {
+                         "head_sha": approved,
+                         "merge_commit": "aaaaaaaa22222222333333334444444455555555",
+                     },
+                 },
+             ) as collect, \
              unittest.mock.patch("ai_status.append_log"):
             with self.assertRaises(SystemExit) as cm:
                 ai_status.command_done(state, ["FREEZE-TEST-021C", "Finalize"])
         self.assertIn("differs from reviewer-approved head", str(cm.exception))
-        collect.assert_not_called()
+        collect.assert_called_once()
 
     def test_restore_approved_fails_closed_when_head_unresolvable(self) -> None:
         approved = "1111111122222222333333334444444455555555"
