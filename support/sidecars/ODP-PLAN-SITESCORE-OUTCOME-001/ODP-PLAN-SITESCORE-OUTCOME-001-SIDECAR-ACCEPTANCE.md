@@ -156,4 +156,3 @@ Assigned sidecar reviewer: `Codex2` (Parent Owner).
 - Parent review log `docs/evidence/models/ODP-PLAN-SITESCORE-OUTCOME-001-review.md`.
 
 *Note on excluded source files*: `support/sidecars/ODP-PLAN-SITESCORE-OUTCOME-001/ODP-PLAN-SITESCORE-OUTCOME-001-SIDECAR-REVIEW.md` (task `ODP-PLAN-SITESCORE-OUTCOME-001-SIDECAR-REVIEW`) is unmerged in `origin/dev` (finalization pending CI deadlock resolution) and absent from this HEAD. It is explicitly excluded as a source file to ensure full packet reproducibility.
-
