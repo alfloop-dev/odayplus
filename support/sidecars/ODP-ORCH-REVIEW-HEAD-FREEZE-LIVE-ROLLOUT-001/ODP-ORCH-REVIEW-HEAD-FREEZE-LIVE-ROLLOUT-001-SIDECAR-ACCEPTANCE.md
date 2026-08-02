@@ -90,9 +90,9 @@ Parent task `ODP-ORCH-REVIEW-HEAD-FREEZE-LIVE-ROLLOUT-001` must satisfy all fail
    /home/lupin/oday-plus/.venv/bin/ruff check .orchestrator scripts
    git diff --check
    ```
-3. **Live Probe Verification (Isolated Environment)**:
+3. **Live Probe & Review Freeze Verification (Isolated Environment)**:
    ```bash
-   PANTHEON_STATUS_ROOT=/tmp/test-status-root AI_NAME=Antigravity5 /home/lupin/oday-plus/.venv/bin/pytest .orchestrator/test_supervisor.py -q
+   PANTHEON_STATUS_ROOT=/tmp/test-status-root AI_NAME=Antigravity5 /home/lupin/oday-plus/.venv/bin/pytest .orchestrator/test_supervisor.py -k "ReviewHeadFreezeTests" -q
    ```
 
 ---
