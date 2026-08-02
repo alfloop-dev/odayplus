@@ -83,11 +83,11 @@ Parent task `ODP-ORCH-REVIEW-HEAD-FREEZE-LIVE-ROLLOUT-001` must satisfy all fail
 ### Required Verification Commands
 1. **Orchestrator Unit Test Suite**:
    ```bash
-   /home/lupin/oday-plus-supervisor-live/.venv/bin/pytest .orchestrator scripts -q -m "not requires_live_env"
+   /home/lupin/oday-plus/.venv/bin/pytest .orchestrator scripts -q -m "not requires_live_env"
    ```
 2. **Code & Style Integrity**:
    ```bash
-   ruff check .orchestrator scripts
+   /home/lupin/oday-plus/.venv/bin/ruff check .orchestrator scripts
    git diff --check
    ```
 3. **Live Probe Verification (Isolated Environment)**:
