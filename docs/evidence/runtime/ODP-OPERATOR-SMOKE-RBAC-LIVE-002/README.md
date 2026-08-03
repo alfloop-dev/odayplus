@@ -86,6 +86,17 @@ This task activates the least-privilege composite role mapping (`operations_mana
 
 ## Verification & Deployment Run Evidence
 
-- Triggered **Deploy Dev** run `30809256501` on exact origin/dev SHA `b147631c7ab0f69675e25a699132fc63f32a20aa`.
-- Local verification tests passed:
-  `tests/integration/test_auth_boundary_authz.py`, `tests/e2e/test_live_e2e_gate.py`, and `tests/ops/test_cloud_run_live_deployment.py`.
+- **Replacement Deploy Dev Run**: `30809922826` on exact current `origin/dev` SHA `5a1aee5b0a9d6fdd2311b4cbd3569527c5f89837`.
+- **Superseded Run**: Prior run `30809256501` (on `b147631c`) was cancelled by dev merge PR #602 (`5a1aee5b0a9d6fdd2311b4cbd3569527c5f89837`).
+- **Verified Composite Roles & Endpoints**:
+  - `ODP_OPERATOR_SMOKE_ROLE`: `operations_manager,model_owner,data_owner`
+  - Secret Manager (`oday-plus-dev-auth-principal-map` v3): `operations_manager,model_owner,data_owner` for subject `110296401444439097904` and email `oday-dev-smoke-operator@alfaloop-data-project.iam.gserviceaccount.com`.
+  - `GET /api/v1/operator/bootstrap`: `200 OK` (`operator_console:view`)
+  - `GET /api/v1/learninghub/models`: `200 OK` (`model:view`, former 403 resolved)
+  - `GET /api/v1/external-data/ingestion-runs`: `200 OK` (`integration:view`, former 403 resolved)
+  - `GET /api/v1/audit/events`: `200 OK` (`audit:view`)
+  - Anonymous / unauthenticated access: `401 Unauthorized` / `403 Forbidden` retained.
+- **Local Suite Verification**:
+  - `python3 -m pytest tests/integration/test_auth_boundary_authz.py tests/e2e/test_live_e2e_gate.py tests/ops/test_cloud_run_live_deployment.py -q` passed (147 passed).
+  - `python3 -m ruff check tests/integration/test_auth_boundary_authz.py tests/e2e/test_live_e2e_gate.py tests/ops/test_cloud_run_live_deployment.py docs/evidence/runtime/ODP-OPERATOR-SMOKE-RBAC-LIVE-002/` passed (0 errors).
+  - `git diff --stat origin/dev...HEAD` clean evidence-only diff.

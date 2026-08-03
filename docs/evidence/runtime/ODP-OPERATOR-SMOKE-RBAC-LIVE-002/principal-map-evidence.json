@@ -58,5 +58,12 @@
     "platform_admin_granted": false,
     "production_x_roles_header_bypass": false,
     "tokens_or_secrets_exposed": false
+  },
+  "deploy_dev_run": {
+    "run_id": "30809922826",
+    "dev_sha": "5a1aee5b0a9d6fdd2311b4cbd3569527c5f89837",
+    "status": "completed",
+    "superseded_run_id": "30809256501"
   }
 }
+

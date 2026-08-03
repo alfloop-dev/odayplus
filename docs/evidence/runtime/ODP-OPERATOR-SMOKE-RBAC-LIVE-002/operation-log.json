@@ -11,14 +11,19 @@
     },
     "secret_map": {
       "secret_name": "oday-plus-dev-auth-principal-map",
+      "secret_version": "projects/1067163562451/secrets/oday-plus-dev-auth-principal-map/versions/3",
       "project": "alfaloop-data-project",
-      "status": "blocked",
-      "status_detail": "gcloud auth refresh failed: invalid_rapt in non-interactive execution"
+      "status": "completed",
+      "readback_verified": true
+    },
+    "deploy_dev_run": {
+      "run_id": "30809922826",
+      "dev_sha": "5a1aee5b0a9d6fdd2311b4cbd3569527c5f89837",
+      "status": "completed",
+      "superseded_run_id": "30809256501"
     }
   },
   "required_next": [
-    "reauth_gcp_and_read_secret_map",
-    "confirm_composite_roles_for_subject_and_email",
-    "run_deploy_dev_live_gate_verification"
+    "re_review_pushed_head"
   ]
 }
