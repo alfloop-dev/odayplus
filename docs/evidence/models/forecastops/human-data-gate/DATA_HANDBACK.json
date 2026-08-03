@@ -1,0 +1,112 @@
+{
+  "kind": "forecastops-authoritative-history-backfill-intake-packet",
+  "task_id": "ODP-FORECAST-AUTHORITATIVE-HISTORY-BACKFILL-001",
+  "blocks_task_ids": [
+    "ODP-PRODUCTION-MODEL-REGISTRY-001",
+    "ODP-RUNTIME-GCP-001",
+    "ODP-LIVE-RUNTIME-DEV-COMPOSE-001",
+    "ODP-P10-DEV-REDEPLOY-VERIFY-001"
+  ],
+  "phase": "P0 Human Data Gate",
+  "class": "human_gate",
+  "generated_at": "2026-08-03",
+  "priority": "P0",
+  "critical_path": true,
+  "target_artifacts": [
+    "docs/evidence/models/forecastops/human-data-gate/intake_packet.md",
+    "docs/evidence/models/forecastops/human-data-gate/DATA_HANDBACK.json",
+    "docs/evidence/models/forecastops/human-data-gate/AUTHORITATIVE_READBACK_SPEC.json"
+  ],
+  "current_status": {
+    "verdict": "FAIL_CLOSED",
+    "is_governed_disabled": true,
+    "reason_code": "TEMPORAL_COVERAGE_INSUFFICIENT",
+    "eligible_row_count": 1303,
+    "eligible_row_threshold": 90,
+    "row_count_threshold_met": true,
+    "calendar_span_days": 4,
+    "calendar_span_observed": "2026-06-19..2026-06-22",
+    "minimum_viable_span_days_per_store": 56,
+    "full_contract_span_days_per_store": 196,
+    "shortfall_days_to_minimum": 52,
+    "shortfall_days_to_full_contract": 192,
+    "horizon_training_samples_formed": 0,
+    "mlflow_registered_model_exists": false,
+    "mlflow_production_alias_exists": false,
+    "inventory_execution_id": "pmb8m",
+    "inventory_execution_result": "succeeded",
+    "training_execution_id": "2dzlg",
+    "training_execution_result": "failed_closed",
+    "evidence_anchor_sha": "950b852c"
+  },
+  "model_contract": {
+    "feature_schema_id": "forecast-training-view-v2",
+    "horizon_weeks": [4, 8, 12, 24],
+    "horizon_days": [28, 56, 84, 168],
+    "min_history_days": 28,
+    "latest_observation_lag_days": 1,
+    "label_name": "horizon_average_daily_net_revenue",
+    "model_features": [
+      "horizon_weeks",
+      "revenue_lag_1",
+      "revenue_lag_7",
+      "rolling_mean_28",
+      "rolling_mean_7",
+      "store_id",
+      "tenant_id"
+    ],
+    "window_rule": "expand_forecast_horizon_rows() skips any origin where len(window) != horizon_days; windows must be gap-free consecutive days",
+    "source_reference": "modules/forecastops/model_contract.py, scripts/models/forecast_training.py"
+  },
+  "acceptance_criteria": {
+    "min_consecutive_days_per_store": 56,
+    "recommended_consecutive_days_per_store": 196,
+    "requires_gap_free_daily_series": true,
+    "requires_source_snapshot_lineage": true,
+    "requires_dataset_hash": true,
+    "requires_named_owner": true,
+    "requires_freshness_cutoff": true,
+    "label_maturity_must_not_precede_prediction_origin": true,
+    "forbidden_data_types": [
+      "synthetic",
+      "fixture",
+      "auto_seeded",
+      "mock",
+      "research_only",
+      "duplicate",
+      "immature",
+      "ai_authored"
+    ]
+  },
+  "data_source": {
+    "cloud_sql_instance": "alfaloop-data-project:asia-east1:oday-dev-sql",
+    "database_version": "POSTGRES_16",
+    "connection_secret": "oday-plus-dev-api-database-url-pg16:latest",
+    "target_view": "model_ready.forecast_training_view",
+    "mlflow_tracking_uri": "https://oday-mlflow-7sxbjoeozq-de.a.run.app",
+    "mlflow_model_name": "forecast_revenue_interval",
+    "artifact_bucket": "alfaloop-data-project-oday-plus-model-artifacts"
+  },
+  "unblocks_on_completion": [
+    "productionBindingsReady=true",
+    "modes.data.liveReady=true",
+    "GET /health returns 200",
+    "Live E2E acceptance gate passes",
+    "Deploy Dev workflow green",
+    "Gate 2/3/5/6 receipt prerequisites satisfied"
+  ],
+  "ai_boundary": {
+    "permitted": [
+      "prepare templates",
+      "validate schema",
+      "verify returned receipts",
+      "hold governed-disabled and NO-GO while evidence is absent"
+    ],
+    "forbidden": [
+      "generate real revenue rows",
+      "sign off on behalf of the data owner",
+      "write fixture or research data into the production view",
+      "present local or mock results as live production proof"
+    ]
+  }
+}
