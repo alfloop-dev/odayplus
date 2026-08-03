@@ -11,7 +11,7 @@
   "class": "human_gate",
   "generated_at": "2026-08-03",
   "priority": "P0",
-  "critical_path": true,
+  "critical_path": "one_of_two",
   "target_artifacts": [
     "docs/evidence/models/forecastops/human-data-gate/intake_packet.md",
     "docs/evidence/models/forecastops/human-data-gate/DATA_HANDBACK.json",
@@ -41,8 +41,18 @@
   },
   "model_contract": {
     "feature_schema_id": "forecast-training-view-v2",
-    "horizon_weeks": [4, 8, 12, 24],
-    "horizon_days": [28, 56, 84, 168],
+    "horizon_weeks": [
+      4,
+      8,
+      12,
+      24
+    ],
+    "horizon_days": [
+      28,
+      56,
+      84,
+      168
+    ],
     "min_history_days": 28,
     "latest_observation_lag_days": 1,
     "label_name": "horizon_average_daily_net_revenue",
@@ -88,12 +98,9 @@
     "artifact_bucket": "alfaloop-data-project-oday-plus-model-artifacts"
   },
   "unblocks_on_completion": [
-    "productionBindingsReady=true",
-    "modes.data.liveReady=true",
-    "GET /health returns 200",
-    "Live E2E acceptance gate passes",
-    "Deploy Dev workflow green",
-    "Gate 2/3/5/6 receipt prerequisites satisfied"
+    "models:registry versions > 0",
+    "models:forecastops:production_alias versionsWithProductionAlias = 1",
+    "productionBindingsReady=true"
   ],
   "ai_boundary": {
     "permitted": [
@@ -108,5 +115,12 @@
       "write fixture or research data into the production view",
       "present local or mock results as live production proof"
     ]
-  }
+  },
+  "critical_path_note": "The live E2E gate has two independent blocker groups. This packet clears the model-registry group only. The external-data group (data:ingestion_runs=0, admin_boundary.official_dataset and poi.commercial_api have no persisted ingestion run) must be cleared separately by provider credentials, licensing and a real ingestion run.",
+  "still_blocked_after_completion": [
+    "data:ingestion_runs runs=0 (external-data group)",
+    "data:admin_boundary.official_dataset:run_exists",
+    "data:poi.commercial_api:run_exists",
+    "task dependency graph repair (see docs/runbooks/task-dependency-graph-repair.md)"
+  ]
 }

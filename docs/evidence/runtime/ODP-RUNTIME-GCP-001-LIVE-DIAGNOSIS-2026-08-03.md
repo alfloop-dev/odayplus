@@ -1,7 +1,8 @@
 ---
 doc_id: ODP-RUNTIME-GCP-001-LIVE-DIAGNOSIS-2026-08-03
 title: Live GCP Runtime Inventory and Deployment Gate Root-Cause Diagnosis
-status: diagnosis-complete
+status: superseded-with-corrections
+superseded_by: docs/evidence/ODAY_PLUS_CONSOLIDATED_GAP_AUDIT_2026-08-03.md
 audit_date: 2026-08-03
 audited_release_sha: 40338298a8088c558376a560e2e7fb98e93ef21d
 gcp_project: alfaloop-data-project
@@ -10,6 +11,24 @@ language: zh-TW
 ---
 
 # Live GCP Runtime 盤點與部署 Gate 根因診斷
+
+> **更正通知（2026-08-03）**
+>
+> 本文件原稱 Live E2E gate「唯一 blocking reason 是 ForecastOps 沒有 MLflow
+> production alias」。**這是錯的。** 原始判讀以帶關鍵字的 grep 讀取失敗日誌，
+> 濾掉了 external-data ingestion 相關行。完整日誌顯示有**兩組獨立 blocker**：
+>
+> 1. `external-data`：`data:ingestion_runs: runs=0`，`admin_boundary.official_dataset`
+>    與 `poi.commercial_api` 皆無 persisted ingestion run
+> 2. `model registry`：`models:registry: versions=0`、
+>    `versionsWithProductionAlias=0`
+>
+> 兩組必須各自獨立解決，補齊 ForecastOps 資料**不會**讓 gate 通過。
+> 受影響段落為 §3、§5、§7-R4。GCP 資源盤點（§2）、provider gateway 冷啟動
+> 診斷（§4.2）與 dependency 圖譜分析（§6）不受此更正影響。
+>
+> 正確且完整的版本見
+> `docs/evidence/ODAY_PLUS_CONSOLIDATED_GAP_AUDIT_2026-08-03.md`。
 
 ## 1. 執行摘要
 
@@ -20,8 +39,9 @@ language: zh-TW
 2. **`Deploy Dev` workflow 失敗點只有最後一關**。build / push / deploy /
    migration smoke / scheduler smoke / worker smoke / Cloud Run live smoke
    全部通過，只有 **Live E2E acceptance gate** 失敗。
-3. **Live E2E gate 只有一個 blocking reason**：ForecastOps 在 MLflow
-   沒有 production alias。追根究柢是資料問題，不是基礎設施問題。
+3. **Live E2E gate 有兩組獨立 blocking reason**（見上方更正通知）：
+   external-data ingestion runs=0，以及 model registry 無 production alias。
+   兩者追根究柢都是資料問題，不是基礎設施問題，但必須各自解決。
 
 ## 2. Live 資源盤點（`ODP-RUNTIME-GCP-001` 驗收項 #3）
 
@@ -117,7 +137,8 @@ Live E2E gate failed. Blocking runtime dependencies:
 report=.odp_data/deployment/live-e2e-gate.json
 ```
 
-**唯一 blocking reason 是 ForecastOps 沒有 MLflow production alias。**
+**[已更正] 實際有兩組獨立 blocker：external-data ingestion runs=0，以及 model
+registry 無 production alias。原文此處誤稱只有後者，見文件開頭更正通知。**
 
 `e2e-operational-evidence` job 本身 success。
 
@@ -197,7 +218,8 @@ ForecastOps 權威資料 1,303 rows 只涵蓋 2026-06-19..22（4 個日曆天）
   → Gate 2 / 3 / 5 / 6 無法取得 receipt
 ```
 
-**單一關鍵路徑：ForecastOps 權威日資料歷史回填。**
+**[已更正] 這是兩條關鍵路徑之一。另一條是 required provider 的真實 ingestion，
+兩者必須各自解決。**
 
 ## 6. Task dependency 圖譜損壞
 
@@ -269,7 +291,7 @@ ODP-RUNTIME-GCP-001  ──depends_on──▶  ODP-PRODUCTION-MODEL-REGISTRY-00
 
 如此 `ODP-RUNTIME-GCP-001` 只需依賴 `…-INFRA-001`，即可先取得基礎設施驗收。
 
-### R4 — 唯一關鍵路徑（Human/Ops）
+### R4 — 關鍵路徑之一（Human/Ops）
 
 `ODP-FORECAST-AUTHORITATIVE-HISTORY-BACKFILL-001`：回填權威每日交易歷史。
 需求規格見 `docs/evidence/models/forecastops/human-data-gate/`。

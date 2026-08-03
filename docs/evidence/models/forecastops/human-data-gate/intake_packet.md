@@ -6,22 +6,30 @@
 - **Class**: `human_gate`
 - **Owner**: `Human/Ops`（資料所有者）
 - **Generated At**: 2026-08-03
-- **Priority**: **P0 — 這是目前整個上線鏈的唯一關鍵路徑**
+- **Priority**: **P0 — 上線鏈的兩條關鍵路徑之一**（另一條是 required provider
+  的真實 ingestion，見 `ODAY_PLUS_CONSOLIDATED_GAP_AUDIT_2026-08-03.md` §5.2）
 
 ---
 
 ## 1. 為什麼這份 packet 是最高優先
 
-本日 live 診斷（`docs/evidence/runtime/ODP-RUNTIME-GCP-001-LIVE-DIAGNOSIS-2026-08-03.md`）
-證明 `Deploy Dev` workflow 的所有步驟都通過，只有最後的 Live E2E acceptance gate
-失敗，而且只有一個 blocking reason：
+`Deploy Dev` workflow 的 build / push / deploy / migration / scheduler / worker /
+Cloud Run smoke 全部通過，只有最後的 Live E2E acceptance gate 失敗。
+該 gate 有**兩組獨立 blocker**，本 packet 負責解除其中的 model registry 這一組：
 
 ```
-forecastops: PRODUCTION_MODEL_REGISTRY_UNAVAILABLE:
-forecast_revenue_interval: configured MLflow registry has no production alias
+[本 packet 負責]
+  - runtime:model_bindings: forecastops: PRODUCTION_MODEL_REGISTRY_UNAVAILABLE
+  - models:registry: versions=0
+  - models:forecastops:production_alias: versionsWithProductionAlias=0
+
+[另一組，需獨立解決 — 見 §7]
+  - data:ingestion_runs: runs=0
+  - data:admin_boundary.official_dataset:run_exists
+  - data:poi.commercial_api:run_exists
 ```
 
-追根究柢：資料的**時間跨度**不足，不是筆數不足。
+model registry 這組追根究柢：資料的**時間跨度**不足，不是筆數不足。
 
 ---
 
@@ -165,12 +173,24 @@ ForecastOps 歷史回填
   → 訓練可產生 horizon 樣本
   → DEV → SHADOW → production alias
   → productionBindingsReady = true
-  → modes.data.liveReady = true
-  → /health 200
-  → Live E2E acceptance gate 通過
-  → Deploy Dev workflow 綠燈
-  → ODP-P10-DEV-REDEPLOY-VERIFY-001 / ODP-LIVE-RUNTIME-DEV-COMPOSE-001 /
-    ODP-RUNTIME-GCP-001 可解除 blocked
+  → models:registry / production_alias blocker 解除
+```
+
+**但這還不足以讓 Live E2E gate 通過。** 必須同時完成另一組 external-data blocker：
+
+```
+required provider 憑證 + 授權 + 實際執行 ingestion
+  → data:ingestion_runs > 0
+  → admin_boundary.official_dataset / poi.commercial_api 有 persisted run
+```
+
+兩組都解除後才會：
+
+```
+  → modes.data.liveReady = true → /health 200
+  → Live E2E acceptance gate 通過 → Deploy Dev workflow 綠燈
+  → 三個部署 task 可解除 blocked（另需先修 dependency 圖譜，見
+    docs/runbooks/task-dependency-graph-repair.md）
   → Gate 2 / 3 / 5 / 6 具備取得 receipt 的前提
 ```
 
