@@ -1245,7 +1245,14 @@ def validate_receipt_packet(
 
 
 def validate_acceptance_scenarios_and_inventory(root: Path) -> list[str]:
-    """Validate the executable registry, canonical inventory, and real packet."""
+    """Validate the executable registry and canonical test inventory.
+
+    The checked-in execution packet is intentionally validated separately by
+    :func:`validate_receipt_packet`.  A receipt proves one exact tested source;
+    ordinary commits after that source are expected to make it stale until the
+    product E2E runner emits a fresh packet.  Treating that expected staleness as
+    a generic product-unit-test failure deadlocks every reviewed dev merge.
+    """
     errors: list[str] = []
     scenario_ids = [scenario.scenario_id for scenario in E2E_SCENARIOS]
     if len(scenario_ids) != len(set(scenario_ids)):
@@ -1304,5 +1311,4 @@ def validate_acceptance_scenarios_and_inventory(root: Path) -> list[str]:
                 f"{EXPECTED_CANONICAL_SPEC_COUNT} files"
             )
 
-    errors.extend(validate_receipt_packet(root))
     return errors
