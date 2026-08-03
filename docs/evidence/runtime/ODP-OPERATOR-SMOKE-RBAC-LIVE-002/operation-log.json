@@ -1,0 +1,24 @@
+{
+  "task_id": "ODP-OPERATOR-SMOKE-RBAC-LIVE-002",
+  "date": "2026-08-03",
+  "actions": {
+    "github_env_variable": {
+      "name": "ODP_OPERATOR_SMOKE_ROLE",
+      "environment": "dev",
+      "before": "operations_manager",
+      "after": "operations_manager,model_owner,data_owner",
+      "readback_verified": true
+    },
+    "secret_map": {
+      "secret_name": "oday-plus-dev-auth-principal-map",
+      "project": "alfaloop-data-project",
+      "status": "blocked",
+      "status_detail": "gcloud auth refresh failed: invalid_rapt in non-interactive execution"
+    }
+  },
+  "required_next": [
+    "reauth_gcp_and_read_secret_map",
+    "confirm_composite_roles_for_subject_and_email",
+    "run_deploy_dev_live_gate_verification"
+  ]
+}
