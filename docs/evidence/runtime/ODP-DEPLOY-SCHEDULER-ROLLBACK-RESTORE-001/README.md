@@ -55,12 +55,18 @@ Passed 8/8 tests:
 7. `test_scheduler_trigger_restore_fails_closed_when_readback_drift_detected` (fail-closed configuration drift failure assertion)
 8. `test_scheduler_trigger_compare_verifies_redacted_equality_and_detects_drift` (readback equality assertion)
 
-### Static Checks:
-- `.venv/bin/ruff check scripts/deployment/cloud_scheduler_trigger.py tests/ops/test_cloud_run_live_deployment.py` — Passed cleanly.
+### Static & Test Suite Verification:
+- `python3 -m ruff check scripts/deployment/cloud_scheduler_trigger.py tests/ops/test_cloud_run_live_deployment.py` — Passed cleanly (0 errors).
+- `python3 -m pytest tests/ops/test_cloud_run_live_deployment.py` — Passed 373/373 tests.
 - `bash -n scripts/deployment/cloud_run_release_traffic.sh` — Clean.
 - `bash -n scripts/deploy_cloud_run_waji.sh` — Clean.
+
+### Base Advance & PR Retargeting:
+- Merged latest `origin/dev` cleanly into task branch `task/ODP-DEPLOY-SCHEDULER-ROLLBACK-RESTORE-001`.
+- Retargeted PR #597 base branch from `main` to `dev` (`base: "dev"`).
 
 ### Live Drill Evidence Receipts:
 - Pre-deploy snapshots: `pre-deploy-worker-trigger.json`, `pre-deploy-scheduler-trigger.json`
 - Post-rollback readback: `post-rollback-readback-worker.json`, `post-rollback-readback-scheduler.json`
 - Readback equality verification: `readback-equality-verification.json` (`PASSED_ZERO_DRIFT`)
+
