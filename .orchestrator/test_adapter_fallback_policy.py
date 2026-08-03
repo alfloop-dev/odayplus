@@ -106,6 +106,53 @@ class AdapterFallbackPolicyTests(unittest.TestCase):
         self.assertNotIn("CODEX_THREAD_ID", env)
         self.assertNotIn("CODEX_SESSION_ID", env)
 
+    def test_codex_model_setting_is_passed_to_command(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            config = {
+                "paths": {"status_file": str(root / "ai-status.json")},
+                "agents": {
+                    "codex2": {
+                        "id": "codex2",
+                        "display_name": "Codex2",
+                        "provider": "codex2",
+                        "adapter": "codex",
+                    }
+                },
+                "providers": {
+                    "codex2": {
+                        "codex": {
+                            "cli": "codex",
+                            "model": "codex-5.3-spark",
+                        }
+                    }
+                },
+            }
+            request = DeliveryRequest(
+                agent_id="codex2",
+                provider="codex2",
+                delivery_mode="codex",
+                message="wake",
+            )
+            adapter = CodexAdapter(config=config, provider_capabilities={})
+            fake_process = mock.Mock(pid=1234)
+
+            with (
+                mock.patch("adapters.codex.command_exists", return_value="codex"),
+                mock.patch(
+                    "adapters.codex.spawn_background_process",
+                    return_value=(fake_process, Path("/tmp/codex2.log")),
+                ) as spawn,
+            ):
+                result = adapter.deliver(request)
+
+            self.assertTrue(result.ok)
+            self.assertIn("--model", result.command)
+            self.assertEqual(
+                result.command[result.command.index("--model") + 1],
+                "gpt-5.3-codex-spark",
+            )
+
     def test_codex_without_api_key_env_does_not_inherit_parent_openai_key(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             root = Path(tmpdir)
