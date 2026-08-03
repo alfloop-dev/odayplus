@@ -1,6 +1,6 @@
 # ODP-DEPLOY-SCHEDULER-ROLLBACK-RESTORE-001: Cloud Scheduler Trigger Restoration Evidence
 
-Owner: Antigravity6 · Reviewer: Codex7 · Phase: Live Runtime Remediation · 2026-08-02
+Owner: Antigravity6 · Reviewer: Codex3 · Phase: Live Runtime Remediation · 2026-08-02
 
 Reproduction, diagnosis, and remediation of the Cloud Scheduler trigger restoration defect during Deploy Dev rollback.
 
