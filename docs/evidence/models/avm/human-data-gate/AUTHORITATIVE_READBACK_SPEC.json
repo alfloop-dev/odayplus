@@ -1,0 +1,31 @@
+{
+  "kind": "avm-authoritative-readback-spec",
+  "task_id": "ODP-PLAN-AVM-OUTCOME-BACKFILL-001",
+  "gap_id": "GAP-P1-003-DATA",
+  "generated_at": "2026-08-03T00:50:00.000000+00:00",
+  "target_view": "model_ready.valuation_view",
+  "required_join_keys": [
+    "prediction_id",
+    "property_id",
+    "transaction_date",
+    "realized_price",
+    "appraisal_value"
+  ],
+  "confidentiality_policy": {
+    "level": "HIGH",
+    "masking_required": true,
+    "raw_value_exposure_permitted": false,
+    "allowed_roles": [
+      "finance_legal",
+      "platform_admin"
+    ]
+  },
+  "validation_protocol": [
+    "Verify target view model_ready.valuation_view exists in production PostgreSQL cluster",
+    "Execute query: SELECT COUNT(*) FROM model_ready.valuation_view WHERE is_mature = true AND is_eligible = true AND is_synthetic = false",
+    "Verify count >= 120",
+    "Verify dataset SHA-256 snapshot hash against Human/Ops attestation",
+    "Verify RBAC audit log confirms all high-confidentiality access requests pass identity authorization",
+    "Confirm AVM model version dealroom-avm-baseline-v1 calibration ratio between 0.95 and 1.05"
+  ]
+}
