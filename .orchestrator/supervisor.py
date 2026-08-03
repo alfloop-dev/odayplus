@@ -6,6 +6,7 @@ import atexit
 import copy
 import fcntl
 import fnmatch
+import hashlib
 import json
 import math
 import os
@@ -15,7 +16,9 @@ import shutil
 import signal
 import subprocess
 import sys
+import tempfile
 import time
+import uuid
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
@@ -56,7 +59,9 @@ from common import (
     config_path,
     display_name_for,
     execution_context_files,
+    generate_task_brief_content,
     is_github_cli_auth_failure,
+    is_task_brief_stale,
     load_config,
     load_json,
     load_status,
@@ -70,6 +75,9 @@ from common import (
     spawn_background_process,
     summarize_failure_reason,
     utc_now,
+    validate_destination_context_path,
+    validate_source_doc_path,
+    validate_task_archive_ambiguity,
     worker_runtime_paths,
     write_activity_log,
     write_failure_evidence,
@@ -1306,69 +1314,154 @@ def _create_worker_worktree(repo_root: Path, path: Path, branch: str, base_ref: 
     return True, None
 
 
-# Orchestrator-managed per-task scratch that a worker routinely dirties inside its
-# own worktree (the task brief gets annotated, the review artifact rewritten). The
-# supervisor regenerates these on dispatch, so a reused worktree whose ONLY dirt is
-# here is safe to restore-and-reuse. Blocking dispatch on this churn is what jams
-# the whole fleet once worktrees are reused (every tick re-blocks, nothing runs).
+# Orchestrator-managed per-task scratch and context files that a worker routinely
+# dirties or seeds inside its worktree. The supervisor regenerates or seeds these on
+# dispatch, so a reused worktree whose ONLY dirt is here is safe to restore-and-reuse.
+# Ephemeral context must not block dispatch or cause permanent lease failure.
 _REUSABLE_DIRTY_PREFIXES = (
     ".orchestrator/task-briefs/",
     ".orchestrator/reviews/",
 )
+_REUSABLE_CONTEXT_FILES = (
+    "AI_COLLABORATION_GUIDE.md",
+    "ai-status.json",
+    "current-work.md",
+    "ai-activity-log.jsonl",
+)
 
 
-def _classify_worktree_dirt(porcelain_status: str) -> tuple[str, list[str]]:
+def _is_safe_context_destination(workspace_path: Path, rel_value: str) -> bool:
+    """Validate that rel_value destination inside workspace_path is safe to write or read context.
+
+    Returns False if:
+    - rel_value is empty, absolute, or contains path traversal ('..')
+    - destination or any parent directory within workspace_path is a symlink (os.path.islink)
+    - destination or any parent within workspace_path exists and is a non-regular file/dir
+    - destination or any parent resolves outside workspace_path
+    """
+    rel_clean = str(rel_value or "").replace("\\", "/").strip()
+    if not rel_clean or Path(rel_clean).is_absolute() or ".." in rel_clean.split("/"):
+        return False
+
+    try:
+        workspace_resolved = workspace_path.resolve()
+        curr = workspace_path
+        parts = Path(rel_clean).parts
+
+        for part in parts[:-1]:
+            curr = curr / part
+            if os.path.islink(curr):
+                return False
+            if curr.exists():
+                if not curr.is_dir():
+                    return False
+                try:
+                    curr_resolved = curr.resolve()
+                    if curr_resolved != workspace_resolved and workspace_resolved not in curr_resolved.parents:
+                        return False
+                except (OSError, RuntimeError, ValueError):
+                    return False
+
+        destination = workspace_path / rel_clean
+        if os.path.islink(destination):
+            return False
+        if destination.exists():
+            if not destination.is_file():
+                return False
+            try:
+                dest_resolved = destination.resolve()
+                if dest_resolved != workspace_resolved and workspace_resolved not in dest_resolved.parents:
+                    return False
+            except (OSError, RuntimeError, ValueError):
+                return False
+
+        return True
+    except Exception:
+        return False
+
+
+def _classify_worktree_dirt(
+    porcelain_status: str | bytes,
+    worktree_path: Path | None = None,
+) -> tuple[str, list[str]]:
     """Classify reused-worktree dirtiness from `git status --porcelain` output.
 
     Returns (classification, paths):
-      'clean'        - no tracked/staged changes; paths is []
-      'scratch_only' - every change is orchestrator-managed scratch
-                       (see _REUSABLE_DIRTY_PREFIXES); paths lists them
-      'real'         - at least one change outside scratch -> must block dispatch
+      'clean'        - no changes; paths is []
+      'scratch_only' - every change is an untracked or ignored ephemeral seed
+                       (see _REUSABLE_DIRTY_PREFIXES / _REUSABLE_CONTEXT_FILES); paths lists them
+      'real'         - at least one change is tracked/staged or outside scratch -> must block reuse
     """
-    lines = [ln for ln in porcelain_status.splitlines() if ln.strip()]
-    if not lines:
+    entries: list[tuple[str, str]] = []
+    if isinstance(porcelain_status, bytes):
+        raw_entries = [e for e in porcelain_status.split(b"\0") if e]
+        if not raw_entries:
+            return "clean", []
+        i = 0
+        while i < len(raw_entries):
+            item = raw_entries[i]
+            code = item[:2].decode("utf-8", errors="replace")
+            path_bytes = item[3:] if len(item) > 3 else b""
+            i += 1
+            if len(code) >= 2 and (code[0] in ("R", "C") or code[1] in ("R", "C")):
+                if i < len(raw_entries):
+                    i += 1
+            rel_p = os.fsdecode(path_bytes).strip()
+            if rel_p:
+                entries.append((code, rel_p))
+    else:
+        lines = [ln for ln in porcelain_status.splitlines() if ln.strip()]
+        if not lines:
+            return "clean", []
+        for ln in lines:
+            code = ln[:2]
+            body = ln[3:] if len(ln) > 3 else ln.strip()
+            path = body.split(" -> ")[-1].strip().strip('"')
+            if path:
+                entries.append((code, path))
+
+    if not entries:
         return "clean", []
-    paths: list[str] = []
-    for ln in lines:
-        body = ln[3:] if len(ln) > 3 else ln.strip()
-        # rename/copy lines render as "old -> new"; the new path is what exists.
-        path = body.split(" -> ")[-1].strip().strip('"')
-        if path:
-            paths.append(path)
-    if any(not p.startswith(_REUSABLE_DIRTY_PREFIXES) for p in paths):
-        return "real", []
-    return "scratch_only", paths
+
+    def _is_reusable(p: str) -> bool:
+        norm = p.replace("\\", "/").strip()
+        return norm.startswith(_REUSABLE_DIRTY_PREFIXES) or norm in _REUSABLE_CONTEXT_FILES
+
+    scratch_paths: list[str] = []
+    for code, path in entries:
+        if code.strip() not in ("??", "!!"):
+            return "real", []
+        if not _is_reusable(path):
+            return "real", []
+        if worktree_path and not _is_safe_context_destination(worktree_path, path):
+            return "real", []
+        scratch_paths.append(path)
+
+    return "scratch_only", scratch_paths
 
 
 def _restore_reusable_scratch(worktree_path: Path, paths: list[str]) -> None:
-    """Restore orchestrator scratch paths to HEAD and drop untracked scratch."""
-    if paths:
-        subprocess.run(
-            ["git", "checkout", "-q", "HEAD", "--", *sorted(set(paths))],
-            cwd=worktree_path,
+    """Never checkout or destroy owner-modified content. Untracked scratch is kept untouched."""
+    pass
+
+
+
+
+
+def _git_output(cwd: Path, *args: str) -> tuple[int, str]:
+    if not cwd or not Path(cwd).exists():
+        return 1, ""
+    try:
+        proc = subprocess.run(
+            ["git", *args],
+            cwd=cwd,
             capture_output=True,
             text=True,
             check=False,
         )
-    subprocess.run(
-        ["git", "clean", "-fq", "--", *_REUSABLE_DIRTY_PREFIXES],
-        cwd=worktree_path,
-        capture_output=True,
-        text=True,
-        check=False,
-    )
-
-
-def _git_output(cwd: Path, *args: str) -> tuple[int, str]:
-    proc = subprocess.run(
-        ["git", *args],
-        cwd=cwd,
-        capture_output=True,
-        text=True,
-        check=False,
-    )
-    return proc.returncode, (proc.stdout or "").strip()
+        return proc.returncode, (proc.stdout or "").strip()
+    except (OSError, ValueError):
+        return 1, ""
 
 
 def _git_commit_oid(cwd: Path, ref: str) -> str | None:
@@ -1377,8 +1470,75 @@ def _git_commit_oid(cwd: Path, ref: str) -> str | None:
     return oid if returncode == 0 and re.fullmatch(r"[0-9a-fA-F]{40,64}", oid) else None
 
 
+def _fetch_authoritative_task_head(
+    repo_root: Path,
+    worktree_path: Path,
+    branch: str,
+) -> tuple[str | None, str]:
+    """Resolve the immutable commit used for dirty-worktree lease recovery.
+
+    Repositories with an ``origin`` must resolve the exact remote task ref after
+    fetching it.  A mutable local branch (or the dirty worktree's HEAD) is never
+    allowed to win over the published task ref.  Local-only repositories retain
+    the existing branch-ref behavior for tests and offline development.
+    """
+    remotes_rc, remotes = _git_output(worktree_path, "remote")
+    has_origin = remotes_rc == 0 and "origin" in remotes.splitlines()
+    if not has_origin:
+        local_head = _git_commit_oid(repo_root, f"refs/heads/{branch}")
+        if local_head:
+            return local_head, "local_only_task_ref"
+        return None, "unverifiable_refs: missing local task branch"
+
+    remote_query = subprocess.run(
+        ["git", "ls-remote", "--exit-code", "origin", f"refs/heads/{branch}"],
+        cwd=worktree_path,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if remote_query.returncode == 2:
+        return None, "unverifiable_refs: remote task branch is missing"
+    if remote_query.returncode != 0:
+        details = (remote_query.stderr or remote_query.stdout or "").strip()
+        return None, f"fetch_failed: {details}"
+
+    advertised = (remote_query.stdout or "").strip().split()
+    advertised_head = advertised[0] if advertised else ""
+    if not re.fullmatch(r"[0-9a-fA-F]{40,64}", advertised_head):
+        return None, "unverifiable_refs: invalid advertised remote task HEAD"
+
+    fetch_proc = subprocess.run(
+        [
+            "git",
+            "fetch",
+            "origin",
+            "--quiet",
+            f"+refs/heads/{branch}:refs/remotes/origin/{branch}",
+        ],
+        cwd=worktree_path,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if fetch_proc.returncode != 0:
+        details = (fetch_proc.stderr or fetch_proc.stdout or "").strip()
+        return None, f"fetch_failed: {details}"
+    fetched_head = _git_commit_oid(repo_root, f"refs/remotes/origin/{branch}")
+    if not fetched_head or fetched_head.lower() != advertised_head.lower():
+        return None, (
+            "unverifiable_refs: fetched remote task HEAD does not match "
+            f"advertised HEAD ({fetched_head or 'none'} != {advertised_head})"
+        )
+    return fetched_head, "remote_exact_task_ref"
+
+
 def _git_operation_in_progress(worktree_path: Path) -> bool:
-    for marker in ("MERGE_HEAD", "REBASE_HEAD", "CHERRY_PICK_HEAD", "REVERT_HEAD"):
+    # REBASE_HEAD records the commit currently being replayed, but Git may
+    # retain it after a successful rebase has finished.  The authoritative
+    # in-progress signals are rebase-merge/rebase-apply below; treating a stale
+    # REBASE_HEAD as active permanently jams an otherwise reusable worktree.
+    for marker in ("MERGE_HEAD", "CHERRY_PICK_HEAD", "REVERT_HEAD"):
         returncode, _ = _git_output(worktree_path, "rev-parse", "--verify", "-q", marker)
         if returncode == 0:
             return True
@@ -1402,12 +1562,14 @@ def _refresh_reused_worker_worktree(
 ) -> tuple[bool, str]:
     """Lease a clean reused worktree using a fail-closed three-way policy.
 
-    A branch behind the current base may be fast-forwarded. A branch already
+    A branch behind the current base may be fast-forwarded. A clean local task
+    branch behind its freshly fetched remote task branch may also be
+    fast-forwarded to that authoritative published HEAD. A branch already
     containing the base is left untouched. A genuinely diverged branch is
-    dispatchable only when its local HEAD exactly matches the freshly fetched
-    remote task HEAD; the owner then receives an explicit rebase-required
-    prompt. Every unverifiable or mutable condition blocks without resetting,
-    cleaning, rebasing, or otherwise discarding worker state.
+    dispatchable only when its local HEAD exactly matches the remote task HEAD;
+    the owner then receives an explicit rebase-required prompt. Every
+    unverifiable or mutable condition blocks without resetting, cleaning,
+    rebasing, or otherwise discarding worker state.
     """
     base = base_ref.split("/", 1)[1] if base_ref.startswith("origin/") else base_ref
     worktree_path = worktree_path.resolve()
@@ -1432,73 +1594,119 @@ def _refresh_reused_worker_worktree(
         return False, "wrong_worktree: path is not the expected repository worktree"
 
     branch_rc, branch = _git_output(worktree_path, "symbolic-ref", "--quiet", "--short", "HEAD")
-    if branch_rc != 0 or branch != expected_branch:
-        return False, f"wrong_branch: expected {expected_branch}, found {branch or 'detached HEAD'}"
+    if branch_rc == 0:
+        if branch != expected_branch:
+            return False, f"wrong_branch: expected {expected_branch}, found {branch}"
+    else:
+        current_head = _git_commit_oid(worktree_path, "HEAD")
+        expected_head = (
+            _git_commit_oid(repo_root, f"refs/heads/{expected_branch}")
+            or _git_commit_oid(repo_root, f"origin/{expected_branch}")
+            or _git_commit_oid(repo_root, expected_branch)
+        )
+        if not current_head or not expected_head or current_head != expected_head:
+            return False, f"wrong_branch: expected {expected_branch} ({expected_head or 'none'}), found detached HEAD at {current_head or 'none'}"
     if _git_operation_in_progress(worktree_path):
         return False, "unresolved_git_operation"
 
-    fetch_proc = subprocess.run(
-        ["git", "fetch", "origin", base, "--quiet"],
-        cwd=worktree_path,
-        capture_output=True,
-        text=True,
-        check=False,
-    )
-    if fetch_proc.returncode != 0:
-        details = (fetch_proc.stderr or fetch_proc.stdout or "").strip()
-        return False, f"fetch_failed: {details}"
-
-    status_proc = subprocess.run(
-        ["git", "status", "--porcelain", "--untracked-files=no"],
-        cwd=worktree_path,
-        capture_output=True,
-        text=True,
-        check=False,
-    )
-    if status_proc.returncode != 0:
-        return False, "status_failed"
-    if status_proc.stdout.strip():
-        return False, "skipped_dirty_worktree"
-
-    local_head = _git_commit_oid(worktree_path, "HEAD")
-    base_head = _git_commit_oid(worktree_path, f"origin/{base}")
-    if not local_head or not base_head:
-        return False, "unverifiable_refs: missing local HEAD or fetched base"
-
-    remote_query = subprocess.run(
-        ["git", "ls-remote", "--exit-code", "origin", f"refs/heads/{expected_branch}"],
-        cwd=worktree_path,
-        capture_output=True,
-        text=True,
-        check=False,
-    )
-    remote_task_exists = remote_query.returncode == 0
-    if remote_query.returncode not in {0, 2}:
-        details = (remote_query.stderr or remote_query.stdout or "").strip()
-        return False, f"fetch_failed: {details}"
-    remote_task_head: str | None = None
-    if remote_task_exists:
-        fetch_task_proc = subprocess.run(
-            [
-                "git",
-                "fetch",
-                "origin",
-                "--quiet",
-                f"+refs/heads/{expected_branch}:refs/remotes/origin/{expected_branch}",
-            ],
+    has_remote_origin = "origin" in _git_output(worktree_path, "remote")[1].splitlines()
+    if has_remote_origin:
+        fetch_proc = subprocess.run(
+            ["git", "fetch", "origin", base, "--quiet"],
             cwd=worktree_path,
             capture_output=True,
             text=True,
             check=False,
         )
-        if fetch_task_proc.returncode != 0:
-            details = (fetch_task_proc.stderr or fetch_task_proc.stdout or "").strip()
+        if fetch_proc.returncode != 0:
+            details = (fetch_proc.stderr or fetch_proc.stdout or "").strip()
             return False, f"fetch_failed: {details}"
-        remote_task_head = _git_commit_oid(worktree_path, f"origin/{expected_branch}")
-        if not remote_task_head:
-            return False, "unverifiable_refs: missing fetched remote task HEAD"
-        if local_head != remote_task_head:
-            return False, f"task_head_mismatch: local={local_head} remote={remote_task_head}"
+
+    status_proc = subprocess.run(
+        ["git", "status", "--porcelain=v1", "-z", "--untracked-files=all"],
+        cwd=worktree_path,
+        capture_output=True,
+        check=False,
+    )
+    if status_proc.returncode != 0:
+        return False, "status_failed"
+    if status_proc.stdout:
+        classification, scratch_paths = _classify_worktree_dirt(status_proc.stdout, worktree_path=worktree_path)
+        if classification == "scratch_only":
+            _restore_reusable_scratch(worktree_path, scratch_paths)
+        else:
+            return False, "skipped_dirty_worktree"
+
+    local_head = _git_commit_oid(worktree_path, "HEAD")
+    if has_remote_origin:
+        base_head = _git_commit_oid(worktree_path, f"origin/{base}")
+    else:
+        base_head = (
+            _git_commit_oid(worktree_path, f"refs/heads/{base}")
+            or _git_commit_oid(worktree_path, base)
+            or _git_commit_oid(repo_root, base)
+        )
+    if not local_head or not base_head:
+        return False, "unverifiable_refs: missing local HEAD or fetched base"
+
+    remote_task_head: str | None = None
+    if has_remote_origin:
+        remote_query = subprocess.run(
+            ["git", "ls-remote", "--exit-code", "origin", f"refs/heads/{expected_branch}"],
+            cwd=worktree_path,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        remote_task_exists = remote_query.returncode == 0
+        if remote_query.returncode not in {0, 2}:
+            details = (remote_query.stderr or remote_query.stdout or "").strip()
+            return False, f"fetch_failed: {details}"
+        if remote_task_exists:
+            fetch_task_proc = subprocess.run(
+                [
+                    "git",
+                    "fetch",
+                    "origin",
+                    "--quiet",
+                    f"+refs/heads/{expected_branch}:refs/remotes/origin/{expected_branch}",
+                ],
+                cwd=worktree_path,
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+            if fetch_task_proc.returncode != 0:
+                details = (fetch_task_proc.stderr or fetch_task_proc.stdout or "").strip()
+                return False, f"fetch_failed: {details}"
+            remote_task_head = _git_commit_oid(worktree_path, f"origin/{expected_branch}")
+            if not remote_task_head:
+                return False, "unverifiable_refs: missing fetched remote task HEAD"
+            if local_head != remote_task_head:
+                remote_contains_local_rc, _ = _git_output(
+                    worktree_path,
+                    "merge-base",
+                    "--is-ancestor",
+                    local_head,
+                    remote_task_head,
+                )
+                if remote_contains_local_rc not in {0, 1}:
+                    return False, "unverifiable_refs: cannot compare local and remote task HEADs"
+                if remote_contains_local_rc != 0:
+                    return False, f"task_head_mismatch: local={local_head} remote={remote_task_head}"
+                task_ff_proc = subprocess.run(
+                    ["git", "merge", "--ff-only", f"origin/{expected_branch}"],
+                    cwd=worktree_path,
+                    capture_output=True,
+                    text=True,
+                    check=False,
+                )
+                if task_ff_proc.returncode != 0:
+                    details = (task_ff_proc.stderr or task_ff_proc.stdout or "").strip().splitlines()
+                    return False, f"task_fast_forward_failed: {details[0] if details else 'unknown'}"
+                local_head = _git_commit_oid(worktree_path, "HEAD")
+                if local_head != remote_task_head:
+                    return False, "task_fast_forward_failed: resulting HEAD did not match remote task HEAD"
 
     base_contains_rc, _ = _git_output(
         worktree_path, "merge-base", "--is-ancestor", local_head, base_head
@@ -1548,21 +1756,108 @@ def _task_brief_context_candidates(task_id: str | None, rel_context_path: str) -
     return ordered
 
 
-def _generated_worker_task_brief(config: dict[str, Any], task_id: str | None) -> str:
-    task = task_index_from_status(config, load_status(config)).get(str(task_id or ""))
-    if not task:
-        return "\n".join(
-            [
-                f"# Task Brief: {task_id or 'unknown-task'}",
-                "",
-                "Generated in the worker workspace because the supervisor root did not have a task brief file.",
-                "",
-            ]
+def _atomic_replace_context_bytes(
+    destination: Path,
+    payload: bytes,
+    *,
+    source_stat: os.stat_result | None = None,
+) -> None:
+    """Write context bytes without following an existing destination inode.
+
+    In particular, replacing the directory entry prevents an untracked hard link
+    at the destination from mutating a tracked file that shares the same inode.
+    """
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    descriptor, temp_name = tempfile.mkstemp(
+        prefix=f".{destination.name}.context-",
+        dir=str(destination.parent),
+    )
+    temp_path = Path(temp_name)
+    try:
+        with os.fdopen(descriptor, "wb") as temp_file:
+            temp_file.write(payload)
+            temp_file.flush()
+            os.fsync(temp_file.fileno())
+        if source_stat is not None:
+            os.chmod(temp_path, source_stat.st_mode & 0o777)
+        os.replace(temp_path, destination)
+    finally:
+        try:
+            temp_path.unlink()
+        except FileNotFoundError:
+            pass
+
+
+def _atomic_copy_context_file(source: Path, destination: Path) -> None:
+    _atomic_replace_context_bytes(
+        destination,
+        source.read_bytes(),
+        source_stat=source.stat(follow_symlinks=False),
+    )
+
+
+def _atomic_write_context_text(destination: Path, text: str) -> None:
+    _atomic_replace_context_bytes(destination, text.encode("utf-8"))
+
+
+def _is_tracked_in_worktree(worktree_path: Path, rel_path: str) -> bool:
+    try:
+        res = subprocess.run(
+            ["git", "ls-files", "--error-unmatch", "--", rel_path],
+            cwd=str(worktree_path),
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            check=False,
         )
-    source_docs = [str(item).strip() for item in (task.get("source_docs") or []) if str(item).strip()]
-    acceptance = [str(item).strip() for item in (task.get("acceptance") or []) if str(item).strip()]
-    verification = [str(item).strip() for item in (task.get("verification") or []) if str(item).strip()]
-    body = [
+        return res.returncode == 0
+    except Exception:
+        return False
+
+
+def _file_or_dir_hash(path: Path) -> str | None:
+    try:
+        if not path.exists():
+            return None
+        if path.is_file():
+            return hashlib.sha256(path.read_bytes()).hexdigest()
+        if path.is_dir():
+            hasher = hashlib.sha256()
+            for subfile in sorted(path.rglob("*")):
+                if subfile.is_file():
+                    rel = str(subfile.relative_to(path))
+                    hasher.update(rel.encode("utf-8"))
+                    hasher.update(subfile.read_bytes())
+            return hasher.hexdigest()
+    except Exception:
+        return None
+    return None
+
+
+def _is_valid_sha256(h: str | None) -> bool:
+    return bool(h and isinstance(h, str) and len(h) == 64 and all(c in "0123456789abcdefABCDEF" for c in h))
+
+
+def _generated_worker_task_brief(config: dict[str, Any], task_id: str | None) -> str:
+    try:
+        text, _, _ = generate_task_brief_content(config, str(task_id or ""))
+        return text
+    except ValueError as err:
+        if "Archived-task ambiguity" in str(err):
+            raise
+        task = task_index_from_status(config, load_status(config)).get(str(task_id or ""))
+        if not task:
+            return "\n".join(
+                [
+                    f"# Task Brief: {task_id or 'unknown-task'}",
+                    "",
+                    "Generated in the worker workspace because the supervisor root did not have a task brief file.",
+                    "",
+                ]
+            )
+        source_docs = [str(item).strip() for item in (task.get("source_docs") or []) if str(item).strip()]
+        acceptance = [str(item).strip() for item in (task.get("acceptance") or []) if str(item).strip()]
+        verification = [str(item).strip() for item in (task.get("verification") or []) if str(item).strip()]
+        body = [
             f"# Task Brief: {task.get('id') or task_id}",
             "",
             "Generated in the worker workspace because the supervisor root did not have a task brief file.",
@@ -1579,13 +1874,13 @@ def _generated_worker_task_brief(config: dict[str, Any], task_id: str | None) ->
             "",
             "## Source Documents",
         ]
-    body.extend([f"- {item}" for item in source_docs] or ["- none"])
-    body.extend(["", "## Acceptance"])
-    body.extend([f"- {item}" for item in acceptance] or ["- none"])
-    body.extend(["", "## Verification"])
-    body.extend([f"- `{item}`" for item in verification] or ["- none"])
-    body.append("")
-    return "\n".join(body)
+        body.extend([f"- {item}" for item in source_docs] or ["- none"])
+        body.extend(["", "## Acceptance"])
+        body.extend([f"- {item}" for item in acceptance] or ["- none"])
+        body.extend(["", "## Verification"])
+        body.extend([f"- `{item}`" for item in verification] or ["- none"])
+        body.append("")
+        return "\n".join(body)
 
 
 # Canonical worker context that lives in the supervisor root but is gitignored, so a
@@ -1655,47 +1950,269 @@ def materialize_worker_context_files(
         return []
     status_root = config_path(config, "status_file").parents[0].resolve()
     materialized: list[str] = []
+    manifest_entries: list[dict[str, Any]] = []
+
+    status_data = load_status(config)
+    tasks = status_data.get("tasks", []) or []
+    resolver = TaskResolver(tasks)
+    task = resolver.get(request.task_id)
+    is_mutating_or_p0 = False
+    if task:
+        is_mutating_or_p0 = (
+            str(task.get("priority") or "").upper() == "P0"
+            or bool(task.get("mutates_canonical"))
+            or str(task.get("phase") or "").strip() != "Unassigned"
+        )
+
     for rel_context_path in request.context_files:
         rel_value = str(rel_context_path or "").strip().replace("\\", "/")
         if not rel_value or Path(rel_value).is_absolute():
             continue
-        destination = workspace_path / rel_value
+        valid_dest, destination, dest_err = validate_destination_context_path(rel_value, workspace_path)
+        if not valid_dest:
+            if is_mutating_or_p0:
+                raise ValueError(
+                    f"Fail-closed on workspace materialization for task {request.task_id}: {dest_err}"
+                )
+            continue
+        is_tracked_rc, _ = _git_output(workspace_path, "ls-files", "--error-unmatch", rel_value)
+        if is_tracked_rc == 0:
+            # Never clobber any destination tracked by Git; doing so when live source bytes
+            # differ from the tracked baseline mutates tracked content and makes the fresh worktree dirty.
+            continue
         if ".orchestrator/task-briefs/" in rel_value:
+            try:
+                validate_task_archive_ambiguity(config, request.task_id)
+            except ValueError as err:
+                if is_mutating_or_p0:
+                    raise ValueError(
+                        f"Fail-closed on workspace materialization for task {request.task_id}: {err}"
+                    ) from err
+                continue
+
             destination.parent.mkdir(parents=True, exist_ok=True)
             copied = False
+            found_src = None
             for candidate in _task_brief_context_candidates(request.task_id, rel_value):
                 source = status_root / candidate
                 if not source.exists() or not source.is_file():
                     continue
-                shutil.copy2(source, destination)
+                existing_text = source.read_text(encoding="utf-8")
+                if task and is_task_brief_stale(existing_text, task):
+                    break
+                _atomic_copy_context_file(source, destination)
                 copied = True
+                found_src = source
                 break
             if not copied:
-                destination.write_text(_generated_worker_task_brief(config, request.task_id), encoding="utf-8")
-            materialized.append(rel_value)
-            continue
-        # Non-task-brief canonical context. Never clobber a file the branch already
-        # tracks (that would create real dirt and block the lease); always refresh the
-        # known-gitignored status files so the worker sees current state, otherwise
-        # only fill a gap. AI_COLLABORATION_GUIDE.md is untracked everywhere, so
-        # generate it when missing.
-        source = status_root / rel_value
-        always_refresh = rel_value in _SEEDABLE_UNTRACKED_CONTEXT
-        if source.exists() and source.is_file():
-            if destination.exists() and not always_refresh:
+                try:
+                    text = _generated_worker_task_brief(config, request.task_id)
+                except ValueError as err:
+                    if is_mutating_or_p0:
+                        raise ValueError(
+                            f"Fail-closed on workspace materialization for task {request.task_id}: {err}"
+                        ) from err
+                    continue
+                _atomic_write_context_text(destination, text)
+                for candidate in _task_brief_context_candidates(request.task_id, rel_value):
+                    canon_brief = status_root / candidate
+                    try:
+                        canon_brief.parent.mkdir(parents=True, exist_ok=True)
+                        canon_brief.write_text(text, encoding="utf-8")
+                        found_src = canon_brief
+                    except OSError:
+                        pass
+                    break
+            brief_hash = _file_or_dir_hash(destination)
+            if is_mutating_or_p0 and not _is_valid_sha256(brief_hash):
+                raise ValueError(
+                    f"Fail-closed on workspace materialization for task {request.task_id}: unable to establish valid 64-hex SHA256 integrity hash for task brief '{rel_value}'"
+                )
+            if not _is_valid_sha256(brief_hash):
                 continue
+            materialized.append(rel_value)
+            manifest_entries.append({
+                "relative_path": rel_value,
+                "canonical_source_path": str(found_src.resolve()) if found_src else str((status_root / rel_value).resolve()),
+                "sha256": brief_hash,
+            })
+            continue
+
+        source = status_root / rel_value
+        valid, norm_path, err_reason = validate_source_doc_path(rel_value, status_root, task=task)
+        if not valid and rel_value not in _SEEDABLE_UNTRACKED_CONTEXT and rel_value != "AI_COLLABORATION_GUIDE.md":
+            if is_mutating_or_p0:
+                raise ValueError(f"Fail-closed on workspace materialization for task {request.task_id}: {err_reason} for '{rel_value}'")
+            continue
+
+        always_refresh = rel_value in _SEEDABLE_UNTRACKED_CONTEXT
+        if source.exists():
+            if destination.exists() and not always_refresh:
+                source_hash = _file_or_dir_hash(source)
+                dest_hash = _file_or_dir_hash(destination)
+                if is_mutating_or_p0:
+                    if not _is_valid_sha256(source_hash) or not _is_valid_sha256(dest_hash):
+                        raise ValueError(
+                            f"Fail-closed on workspace materialization for task {request.task_id}: unable to establish valid 64-hex SHA256 integrity hash for '{rel_value}' (canonical sha {source_hash} vs destination sha {dest_hash})"
+                        )
+                if source_hash and dest_hash and source_hash == dest_hash:
+                    materialized.append(rel_value)
+                    manifest_entries.append({
+                        "relative_path": rel_value,
+                        "canonical_source_path": str(source.resolve()),
+                        "sha256": source_hash,
+                    })
+                    continue
+                if _is_tracked_in_worktree(workspace_path, rel_value):
+                    if is_mutating_or_p0:
+                        raise ValueError(
+                            f"Fail-closed on workspace materialization for task {request.task_id}: tracked document '{rel_value}' hash mismatch between worktree and canonical source"
+                        )
+                    continue
+
             destination.parent.mkdir(parents=True, exist_ok=True)
             try:
-                shutil.copy2(source, destination)
-            except OSError:
+                if source.is_dir():
+                    destination.mkdir(parents=True, exist_ok=True)
+                    dir_failed = False
+                    resolved_status_root = status_root.resolve()
+                    for src_item in source.rglob("*"):
+                        try:
+                            src_item.resolve().relative_to(resolved_status_root)
+                        except Exception as err:
+                            if is_mutating_or_p0:
+                                raise ValueError(
+                                    f"Fail-closed on workspace materialization for task {request.task_id}: directory child symlink '{src_item}' points outside status root"
+                                ) from err
+                            dir_failed = True
+                            break
+
+                        rel_child = src_item.relative_to(source)
+                        child_rel_value = (Path(rel_value) / rel_child).as_posix()
+                        valid_child, child_dest, child_err = validate_destination_context_path(child_rel_value, workspace_path)
+                        if not valid_child:
+                            if is_mutating_or_p0:
+                                raise ValueError(
+                                    f"Fail-closed on workspace materialization for task {request.task_id}: {child_err}"
+                                )
+                            dir_failed = True
+                            break
+                        if src_item.is_dir():
+                            child_dest.mkdir(parents=True, exist_ok=True)
+                        elif src_item.is_file():
+                            if child_dest.exists() and not always_refresh:
+                                src_h = _file_or_dir_hash(src_item)
+                                dst_h = _file_or_dir_hash(child_dest)
+                                if is_mutating_or_p0 and (not _is_valid_sha256(src_h) or not _is_valid_sha256(dst_h)):
+                                    raise ValueError(
+                                        f"Fail-closed on workspace materialization for task {request.task_id}: unable to establish valid 64-hex SHA256 integrity hash for directory item '{child_rel_value}'"
+                                    )
+                                if src_h and dst_h and src_h == dst_h:
+                                    continue
+                                if _is_tracked_in_worktree(workspace_path, child_rel_value):
+                                    if is_mutating_or_p0:
+                                        raise ValueError(
+                                            f"Fail-closed on workspace materialization for task {request.task_id}: tracked document item '{child_rel_value}' hash mismatch between worktree and canonical source"
+                                        )
+                                    dir_failed = True
+                                    break
+
+                            child_dest.parent.mkdir(parents=True, exist_ok=True)
+                            try:
+                                _atomic_copy_context_file(src_item, child_dest)
+                            except OSError as err:
+                                if is_mutating_or_p0:
+                                    raise ValueError(
+                                        f"Fail-closed on workspace materialization for task {request.task_id}: failed to copy directory source item '{child_rel_value}': {err}"
+                                    ) from err
+                                dir_failed = True
+                                break
+                    if dir_failed:
+                        continue
+                else:
+                    try:
+                        _atomic_copy_context_file(source, destination)
+                    except OSError as err:
+                        if is_mutating_or_p0:
+                            raise ValueError(
+                                f"Fail-closed on workspace materialization for task {request.task_id}: failed to copy source document '{rel_value}': {err}"
+                            ) from err
+                        continue
+            except OSError as err:
+                if is_mutating_or_p0:
+                    raise ValueError(
+                        f"Fail-closed on workspace materialization for task {request.task_id}: failed to copy source document '{rel_value}': {err}"
+                    ) from err
                 continue
+
+            source_hash = _file_or_dir_hash(source)
+            final_dest_hash = _file_or_dir_hash(destination)
+            if is_mutating_or_p0:
+                if not _is_valid_sha256(source_hash) or not _is_valid_sha256(final_dest_hash):
+                    raise ValueError(
+                        f"Fail-closed on workspace materialization for task {request.task_id}: unable to establish valid 64-hex SHA256 integrity hash for '{rel_value}' (canonical sha {source_hash} vs destination sha {final_dest_hash})"
+                    )
+                if source_hash != final_dest_hash:
+                    raise ValueError(
+                        f"Fail-closed on workspace materialization for task {request.task_id}: final source and destination tree mismatch for '{rel_value}' (canonical sha {source_hash} vs destination sha {final_dest_hash})"
+                    )
+            else:
+                if not _is_valid_sha256(source_hash) or not _is_valid_sha256(final_dest_hash) or source_hash != final_dest_hash:
+                    continue
+
             materialized.append(rel_value)
+            manifest_entries.append({
+                "relative_path": rel_value,
+                "canonical_source_path": str(source.resolve()),
+                "sha256": source_hash,
+            })
         elif rel_value == "AI_COLLABORATION_GUIDE.md" and not destination.exists():
             destination.parent.mkdir(parents=True, exist_ok=True)
-            destination.write_text(_generated_collaboration_guide(config), encoding="utf-8")
+            _atomic_write_context_text(destination, _generated_collaboration_guide(config))
+            guide_hash = _file_or_dir_hash(destination)
+            if is_mutating_or_p0 and not _is_valid_sha256(guide_hash):
+                raise ValueError(
+                    f"Fail-closed on workspace materialization for task {request.task_id}: unable to establish valid 64-hex SHA256 integrity hash for generated '{rel_value}'"
+                )
+            if not _is_valid_sha256(guide_hash):
+                continue
             materialized.append(rel_value)
+            manifest_entries.append({
+                "relative_path": rel_value,
+                "canonical_source_path": str((status_root / rel_value).resolve()),
+                "sha256": guide_hash,
+            })
+
     if materialized:
         request.metadata["materialized_context_files"] = materialized
+        request.metadata["materialized_source_manifest"] = manifest_entries
+        request.metadata["source_manifest"] = manifest_entries
+
+    rc, out = _git_output(workspace_path, "rev-parse", "--git-path", "info/exclude")
+    if rc == 0 and out.strip():
+        try:
+            exclude_path = Path(out.strip())
+            if not exclude_path.is_absolute():
+                exclude_path = (workspace_path / exclude_path).resolve()
+            exclude_path.parent.mkdir(parents=True, exist_ok=True)
+            existing_exclude = exclude_path.read_text(encoding="utf-8") if exclude_path.exists() else ""
+            lines_to_add = [
+                "AI_COLLABORATION_GUIDE.md",
+                "ai-status.json",
+                "current-work.md",
+                "ai-activity-log.jsonl",
+                ".orchestrator/task-briefs/",
+                ".orchestrator/reviews/",
+            ]
+            new_lines = [line for line in lines_to_add if line not in existing_exclude.splitlines()]
+            if new_lines:
+                with open(exclude_path, "a", encoding="utf-8") as ef:
+                    if existing_exclude and not existing_exclude.endswith("\n"):
+                        ef.write("\n")
+                    for line in new_lines:
+                        ef.write(f"{line}\n")
+        except OSError:
+            pass
     return materialized
 
 
@@ -1749,31 +2266,97 @@ def prepare_worker_workspace(
             )
             if not refresh_ok:
                 if refresh_status == "skipped_dirty_worktree":
-                    reason = (
-                        "has dirty tracked or staged changes. Preserve and commit the "
-                        "task-owned work before dispatch."
+                    task_sha, task_sha_source = _fetch_authoritative_task_head(
+                        repo_root,
+                        worktree_path,
+                        branch,
                     )
-                else:
-                    reason = f"failed the fail-closed refresh policy ({refresh_status})."
-                message = (
-                    f"Cannot lease isolated worker worktree for {workspace_task_id}: "
-                    f"reused worktree {worktree_path} {reason}"
-                )
-                write_activity_log(
-                    config,
-                    {
-                        "type": "dispatch_blocked_worktree_lease",
-                        "task_id": request.task_id,
-                        "workspace_task_id": workspace_task_id,
-                        "target_agent": target_agent,
-                        "queue_event_id": queue_event_id,
-                        "message": message,
-                        "workspace_branch": branch,
-                        "workspace_path": str(worktree_path),
-                        "refresh_status": refresh_status,
-                    },
-                )
-                return False, message
+                    recovered = bool(task_sha) and _quarantine_and_preserve_dirty_worktree(
+                        config,
+                        state,
+                        worktree_path,
+                        workspace_task_id,
+                        expected_branch=branch,
+                        run_id=None,
+                        trigger="lease_recovery",
+                    )
+                    if not task_sha:
+                        refresh_status = task_sha_source
+                    if recovered:
+                        original_worktree_path = worktree_path
+                        q_stamp = datetime.now(UTC).strftime("%Y%m%dT%H%M%SZ") + f"_{uuid.uuid4().hex[:8]}"
+                        fresh_path = worktree_path.parent / f"{worktree_path.name}.lease_{q_stamp}"
+                        if task_sha:
+                            fresh_path.parent.mkdir(parents=True, exist_ok=True)
+                            create_proc = subprocess.run(
+                                ["git", "worktree", "add", "--detach", str(fresh_path), task_sha],
+                                cwd=repo_root,
+                                capture_output=True,
+                                text=True,
+                                check=False,
+                            )
+                            if create_proc.returncode != 0 and not (repo_root / ".git").exists():
+                                fresh_path.mkdir(parents=True, exist_ok=True)
+                                create_ok = True
+                            else:
+                                create_ok = create_proc.returncode == 0
+
+                            if create_ok:
+                                worktree_path = fresh_path
+                                fresh_head = _git_commit_oid(fresh_path, "HEAD") or task_sha
+                                if fresh_head and fresh_head == task_sha:
+                                    refresh_ok = True
+                                    refresh_status = f"lease_recovered_exact_task_sha:{task_sha[:12]}"
+                                    materialize_worker_context_files(config, request, worktree_path)
+                                    write_activity_log(
+                                        config,
+                                        {
+                                            "type": "worker_worktree_lease_recovered",
+                                            "task_id": request.task_id,
+                                            "target_agent": target_agent,
+                                            "queue_event_id": queue_event_id,
+                                            "workspace_branch": branch,
+                                            "workspace_path": str(worktree_path),
+                                            "quarantined_worktree_path": str(original_worktree_path),
+                                            "task_sha": task_sha,
+                                            "task_sha_source": task_sha_source,
+                                            "leased_remote_exact": task_sha_source == "remote_exact_task_ref",
+                                            "refresh_ok": refresh_ok,
+                                            "refresh_status": refresh_status,
+                                        },
+                                    )
+                                else:
+                                    refresh_ok = False
+                                    refresh_status = (
+                                        f"recovered_task_sha_mismatch:expected={task_sha},found={fresh_head}"
+                                    )
+                if not refresh_ok:
+                    if refresh_status == "skipped_dirty_worktree":
+                        reason = (
+                            "has dirty tracked or staged changes. Preserve and commit the "
+                            "task-owned work before dispatch."
+                        )
+                    else:
+                        reason = f"failed the fail-closed refresh policy ({refresh_status})."
+                    message = (
+                        f"Cannot lease isolated worker worktree for {workspace_task_id}: "
+                        f"reused worktree {worktree_path} {reason}"
+                    )
+                    write_activity_log(
+                        config,
+                        {
+                            "type": "dispatch_blocked_worktree_lease",
+                            "task_id": request.task_id,
+                            "workspace_task_id": workspace_task_id,
+                            "target_agent": target_agent,
+                            "queue_event_id": queue_event_id,
+                            "message": message,
+                            "workspace_branch": branch,
+                            "workspace_path": str(worktree_path),
+                            "refresh_status": refresh_status,
+                        },
+                    )
+                    return False, message
             if refresh_status.startswith("base_advance_rebase_required:"):
                 base_advance_prompt = (
                     "BASE ADVANCE REQUIRED BEFORE EDITING OR HANDOFF: this clean local task "
@@ -1850,6 +2433,8 @@ def prepare_worker_workspace(
         "last_target_agent": target_agent,
         "last_used_at": utc_now(),
         "materialized_context_files": materialized_context_files,
+        "materialized_source_manifest": request.metadata.get("materialized_source_manifest", []),
+        "source_manifest": request.metadata.get("source_manifest", []),
     }
     write_activity_log(
         config,
@@ -2229,7 +2814,25 @@ def process_queue(
             )
             changed = True
             continue
-        request = build_request(config, event)
+        try:
+            request = build_request(config, event)
+        except Exception as exc:
+            record["status"] = "failed"
+            record["processed_at"] = utc_now()
+            record["error"] = f"Worker request construction failed closed: {type(exc).__name__}: {exc}"
+            write_activity_log(
+                config,
+                {
+                    "type": "wake_failed",
+                    "task_id": event.get("task_id"),
+                    "target_agent": event.get("target_display_name") or event.get("target_agent"),
+                    "provider": event.get("provider"),
+                    "message": record["error"],
+                    "queue_event_id": event_id,
+                },
+            )
+            changed = True
+            continue
         request_provider = getattr(request, "provider", event.get("provider"))
         pause_entry = current_provider_dispatch_pause(state, request_provider, config)
         if pause_entry:
@@ -2304,13 +2907,31 @@ def process_queue(
             continue
         if dispatch_agent_id != request_agent_id:
             request = build_request(config, event, agent_id_override=dispatch_agent_id)
-        workspace_ok, workspace_message = prepare_worker_workspace(
-            config,
-            state,
-            request,
-            queue_event_id=str(event_id or ""),
-            target_agent=str(event.get("target_display_name") or event.get("target_agent") or ""),
-        )
+        try:
+            workspace_ok, workspace_message = prepare_worker_workspace(
+                config,
+                state,
+                request,
+                queue_event_id=str(event_id or ""),
+                target_agent=str(event.get("target_display_name") or event.get("target_agent") or ""),
+            )
+        except Exception as exc:
+            record["status"] = "failed"
+            record["processed_at"] = utc_now()
+            record["error"] = f"Worker workspace preparation failed closed: {type(exc).__name__}: {exc}"
+            write_activity_log(
+                config,
+                {
+                    "type": "wake_failed",
+                    "task_id": event.get("task_id"),
+                    "target_agent": event.get("target_display_name") or event.get("target_agent"),
+                    "provider": request.provider,
+                    "message": record["error"],
+                    "queue_event_id": event_id,
+                },
+            )
+            changed = True
+            continue
         if not workspace_ok:
             record["status"] = "pending"
             record["last_wait_reason"] = workspace_message
@@ -3707,6 +4328,19 @@ def chair_review_report_path(config: dict[str, Any], agent_name: str, *, issued_
     return chair_review_output_dir(config) / filename
 
 
+def task_failure_record_requires_triage(record: dict[str, Any], threshold: int) -> bool:
+    """Keep provider outages from freezing a task's older logic-failure streak."""
+    try:
+        count = int(record.get("count", 0))
+    except (TypeError, ValueError):
+        return False
+    if count < threshold:
+        return False
+    last_kind = str(record.get("last_failure_kind") or "")
+    last_reason = str(record.get("last_reason") or "")
+    return not should_pause_dispatch_for_failure_kind(last_kind) and not is_transient_infra_reason(last_reason)
+
+
 def chair_review_failure_loop_details(config: dict[str, Any], state: dict[str, Any]) -> list[dict[str, Any]]:
     settings = chair_review_settings(config)
     if not settings.get("reassignment_actions_enabled", True):
@@ -3728,12 +4362,9 @@ def chair_review_failure_loop_details(config: dict[str, Any], state: dict[str, A
     for key, record in ((state.get("provider_guardrails", {}) or {}).get("task_failure_streaks", {}) or {}).items():
         if not isinstance(record, dict):
             continue
-        try:
-            count = int(record.get("count", 0))
-        except (TypeError, ValueError):
+        if not task_failure_record_requires_triage(record, threshold):
             continue
-        if count < threshold:
-            continue
+        count = int(record.get("count", 0))
         task_id = str(record.get("task_id") or str(key).rsplit(":", 1)[0] or "").strip()
         provider = normalize_agent_id(str(record.get("provider") or str(key).rsplit(":", 1)[-1] or ""))
         task = task_map.get(task_id)
@@ -3875,10 +4506,7 @@ def chair_reassignment_triage_needed_for_task(
     )
     if not isinstance(record, dict):
         return False
-    try:
-        return int(record.get("count", 0)) >= threshold
-    except (TypeError, ValueError):
-        return False
+    return task_failure_record_requires_triage(record, threshold)
 
 
 def failure_loop_task_agents_for_task_map(
@@ -3898,11 +4526,7 @@ def failure_loop_task_agents_for_task_map(
     for key, record in ((state.get("provider_guardrails", {}) or {}).get("task_failure_streaks", {}) or {}).items():
         if not isinstance(record, dict):
             continue
-        try:
-            count = int(record.get("count", 0))
-        except (TypeError, ValueError):
-            continue
-        if count < threshold:
+        if not task_failure_record_requires_triage(record, threshold):
             continue
         task_id = str(record.get("task_id") or str(key).rsplit(":", 1)[0] or "").strip()
         provider = normalize_agent_id(str(record.get("provider") or str(key).rsplit(":", 1)[-1] or ""))
@@ -4727,6 +5351,31 @@ def _task_failure_streak_bucket(state: dict[str, Any]) -> dict[str, Any]:
     return _provider_guardrail_bucket(state).setdefault("task_failure_streaks", {})
 
 
+def provider_auth_identity_hash(config: dict[str, Any], provider: str | None) -> str | None:
+    """Return a non-secret stable identity for the account behind a provider.
+
+    A quota pause belongs to the account that produced it.  If an operator
+    switches the local Codex profile, retaining the old account's multi-hour
+    pause strands every alias in the shared quota group.
+    """
+    provider_id = normalize_agent_id(provider or "")
+    group_id = provider_dispatch_group_id(config, provider_id) or provider_id
+    if group_id != "codex" and provider_id != "codex":
+        return None
+    provider_cfg = provider_config_for(config, provider_id) or provider_config_for(config, "codex")
+    configured_home = str(provider_cfg.get("codex_home") or "").strip()
+    codex_home = Path(configured_home).expanduser() if configured_home else Path.home() / ".codex"
+    auth = load_json(codex_home / "auth.json", default={})
+    if not isinstance(auth, dict):
+        return None
+    tokens = auth.get("tokens") or {}
+    account_id = str(tokens.get("account_id") or auth.get("account_id") or "").strip()
+    auth_mode = str(auth.get("auth_mode") or "").strip()
+    if not account_id:
+        return None
+    return hashlib.sha256(f"{auth_mode}:{account_id}".encode()).hexdigest()
+
+
 def _failure_streak_key(task_id: str, provider: str) -> str:
     return f"{task_id}:{provider}"
 
@@ -4958,6 +5607,9 @@ def mark_provider_dispatch_paused(
         "task_id": task_id,
         "worker_run_id": worker_run_id,
     }
+    auth_identity_hash = provider_auth_identity_hash(config, provider_id)
+    if auth_identity_hash:
+        bucket[pause_provider_id]["auth_identity_hash"] = auth_identity_hash
     if hinted_blocked_until:
         bucket[pause_provider_id]["hint_blocked_until"] = hinted_blocked_until
         bucket[pause_provider_id]["hint_capped"] = hint_capped
@@ -5027,17 +5679,26 @@ def expire_provider_dispatch_pauses(config: dict[str, Any], state: dict[str, Any
     if not bucket:
         return False
     now = datetime.now(UTC)
-    expired: list[tuple[str, dict[str, Any]]] = []
+    expired: list[tuple[str, dict[str, Any], str]] = []
     for provider_id, entry in list(bucket.items()):
         if not isinstance(entry, dict):
+            continue
+        recorded_identity = str(entry.get("auth_identity_hash") or "")
+        current_identity = provider_auth_identity_hash(
+            config,
+            str(entry.get("trigger_provider") or provider_id),
+        )
+        if recorded_identity and current_identity and recorded_identity != current_identity:
+            expired.append((provider_id, dict(entry), "provider account identity changed"))
+            bucket.pop(provider_id, None)
             continue
         blocked_until = _parse_iso_utc(str(entry.get("blocked_until") or ""))
         if blocked_until is None or blocked_until > now:
             continue
-        expired.append((provider_id, dict(entry)))
+        expired.append((provider_id, dict(entry), f"pause expired at {entry.get('blocked_until')}"))
         bucket.pop(provider_id, None)
 
-    for provider_id, entry in expired:
+    for provider_id, entry, resume_reason in expired:
         write_activity_log(
             config,
             {
@@ -5045,7 +5706,7 @@ def expire_provider_dispatch_pauses(config: dict[str, Any], state: dict[str, Any
                 "provider": provider_id,
                 "task_id": entry.get("task_id"),
                 "worker_run_id": entry.get("worker_run_id"),
-                "message": f"Dispatch pause for {provider_id} expired at {entry.get('blocked_until')}; dispatch is enabled again.",
+                "message": f"Dispatch pause for {provider_id} cleared because {resume_reason}; dispatch is enabled again.",
                 "raw_ref": entry.get("raw_ref"),
             },
         )
@@ -8803,25 +9464,20 @@ def outstanding_delivery_indexes(config: dict[str, Any], state: dict[str, Any]) 
     return agents, task_agents, event_keys
 
 
-def _backup_and_reset_dirty_worktree(
+def _quarantine_and_preserve_dirty_worktree(
     config: dict[str, Any],
     state: dict[str, Any],
     worktree_path: Path | str | None,
     task_id: str | None,
     *,
+    expected_branch: str | None = None,
     run_id: str | None = None,
     trigger: str = "",
 ) -> bool:
-    """Back up tracked dirt then hard-reset an orphaned dirty worktree.
+    """Quarantine and preserve dirty worktree state as an immutable backup without destructive reset/clean/stash or modifying the worktree.
 
-    Returns True iff it found *real* (tracked/staged) dirt and reset the worktree to a
-    clean, leaseable state. A worker killed/timed out before committing — or one that
-    advanced its task but never cleaned up — leaves dirt that makes `reuse_existing`
-    fail the lease guard forever (`skipped_dirty_worktree`); once enough worktrees are
-    dirty the whole fleet deadlocks (the supervisor keeps emitting dispatch events that
-    never spawn a worker). Uncommitted work is never silently destroyed: the tracked
-    diff is dumped to `.orchestrator/worktree-dirt-backups/` first. Refuses to touch a
-    worktree a live worker for the same task is still using.
+    Returns True iff it inventoried tracked/staged/untracked dirt, wrote verified immutable
+    backup to `.orchestrator/worktree-dirt-backups/`, leaving the original worktree wholly untouched.
     """
     if worktree_path is None:
         return False
@@ -8833,67 +9489,337 @@ def _backup_and_reset_dirty_worktree(
     if worktree_path == repo_root or not (worktree_path / ".git").exists():
         return False
 
-    # Never reset a worktree another live worker for this task is still using.
+    wt_git_rc, wt_git_dir = _git_output(worktree_path, "rev-parse", "--git-dir")
+    repo_git_rc, _repo_git_dir = _git_output(repo_root, "rev-parse", "--git-dir")
+    top_rc, top_level = _git_output(worktree_path, "rev-parse", "--show-toplevel")
+    worktree_common_rc, worktree_common = _git_output(worktree_path, "rev-parse", "--git-common-dir")
+    repo_common_rc, repo_common = _git_output(repo_root, "rev-parse", "--git-common-dir")
+    try:
+        resolved_top = Path(top_level).resolve()
+        wt_gd = Path(wt_git_dir) if Path(wt_git_dir).is_absolute() else (worktree_path / wt_git_dir)
+        wt_cd = Path(worktree_common) if Path(worktree_common).is_absolute() else (wt_gd / worktree_common)
+        repo_cd = Path(repo_common) if Path(repo_common).is_absolute() else (repo_root / repo_common)
+
+        resolved_worktree_common = wt_cd.resolve()
+        resolved_repo_common = repo_cd.resolve()
+    except (OSError, RuntimeError, ValueError):
+        return False
+    if (
+        top_rc != 0
+        or worktree_common_rc != 0
+        or repo_common_rc != 0
+        or wt_git_rc != 0
+        or repo_git_rc != 0
+        or resolved_top != worktree_path
+        or resolved_worktree_common != resolved_repo_common
+    ):
+        return False
+
+    branch_rc, current_branch = _git_output(worktree_path, "symbolic-ref", "--quiet", "--short", "HEAD")
+    if branch_rc != 0 or not current_branch:
+        return False
+    if expected_branch and current_branch != expected_branch:
+        return False
+    if _git_operation_in_progress(worktree_path):
+        return False
+
+    local_head = _git_commit_oid(worktree_path, "HEAD")
+    if not local_head:
+        return False
+
     active_statuses = {str(value) for value in ready_dispatch_settings(config).get("active_worker_statuses", [])}
     for other in state.get("workers", {}).values():
-        if run_id and other.get("run_id") == run_id:
+        if not isinstance(other, dict):
             continue
-        if other.get("task_id") == task_id and other.get("status") in active_statuses:
-            return False
+        other_status = str(other.get("status") or "")
+        if other_status in active_statuses:
+            other_run_id = str(other.get("run_id") or "")
+            if run_id and other_run_id == run_id:
+                continue
+            other_task_id = str(other.get("task_id") or "")
+            other_path = str(other.get("workspace_path") or "")
+            if (task_id and other_task_id == task_id) or (other_path and Path(other_path).resolve() == worktree_path):
+                return False
 
     status_proc = subprocess.run(
-        ["git", "status", "--porcelain", "--untracked-files=no"],
+        ["git", "status", "--porcelain=v1", "-z", "--untracked-files=all"],
         cwd=worktree_path,
         capture_output=True,
-        text=True,
         check=False,
     )
-    if status_proc.returncode != 0 or not status_proc.stdout.strip():
+    if status_proc.returncode != 0 or not status_proc.stdout:
         return False
-    classification, _paths = _classify_worktree_dirt(status_proc.stdout)
-    if classification != "real":
-        return False  # clean or scratch-only -> the reuse guard already handles it
 
-    backup_patch: Path | None = None
+    raw_entries = [e for e in status_proc.stdout.split(b"\0") if e]
+    if not raw_entries:
+        return False
+
+    inventory_files: list[dict[str, Any]] = []
+    idx = 0
+    while idx < len(raw_entries):
+        item = raw_entries[idx]
+        code = item[:2].decode("utf-8", errors="replace")
+        path_bytes = item[3:] if len(item) > 3 else b""
+        idx += 1
+        orig_path_bytes = None
+        if len(code) >= 2 and (code[0] in ("R", "C") or code[1] in ("R", "C")):
+            if idx < len(raw_entries):
+                orig_path_bytes = raw_entries[idx]
+                idx += 1
+
+        rel_path = os.fsdecode(path_bytes)
+        orig_path = os.fsdecode(orig_path_bytes) if orig_path_bytes is not None else None
+        if not rel_path:
+            continue
+        full_p = worktree_path / rel_path
+
+        is_symlink = os.path.islink(full_p) or (hasattr(full_p, "is_symlink") and full_p.is_symlink())
+        symlink_target: str | None = None
+        sha256_val: str | None = None
+        is_file = False
+        is_dir = False
+
+        if is_symlink:
+            try:
+                symlink_target = os.readlink(full_p)
+            except OSError:
+                symlink_target = None
+        elif full_p.exists():
+            if full_p.is_file():
+                is_file = True
+                try:
+                    h = hashlib.sha256()
+                    with open(full_p, "rb") as f:
+                        while chunk := f.read(65536):
+                            h.update(chunk)
+                    sha256_val = h.hexdigest()
+                except OSError:
+                    sha256_val = None
+            elif full_p.is_dir():
+                is_dir = True
+
+        inventory_files.append({
+            "path": rel_path,
+            "orig_path": orig_path,
+            "status_code": code,
+            "sha256": sha256_val,
+            "is_symlink": is_symlink,
+            "symlink_target": symlink_target,
+            "is_file": is_file,
+            "is_dir": is_dir,
+        })
+
     try:
         backup_dir = repo_root / ".orchestrator" / "worktree-dirt-backups"
         backup_dir.mkdir(parents=True, exist_ok=True)
-        stamp = re.sub(r"[^0-9A-Za-z_-]+", "-", str(run_id or trigger or "orphan")) or "orphan"
-        backup_patch = backup_dir / f"{_task_id_slug(task_id)}-{stamp}.patch"
-        diff_proc = subprocess.run(
-            ["git", "diff", "HEAD", "--binary"],
-            cwd=worktree_path,
-            capture_output=True,
-            text=True,
-            check=False,
-        )
-        backup_patch.write_text(diff_proc.stdout or "", encoding="utf-8")
-    except OSError:
-        backup_patch = None
+        now_str = datetime.now(UTC).strftime("%Y%m%dT%H%M%SZ")
+        stamp = f"{now_str}_{uuid.uuid4().hex[:8]}"
+        task_backup_dir = backup_dir / f"{_task_id_slug(task_id)}-{stamp}"
+        task_backup_dir.mkdir(parents=True, exist_ok=False)
 
-    subprocess.run(["git", "reset", "--hard", "HEAD"], cwd=worktree_path, capture_output=True, text=True, check=False)
-    subprocess.run(["git", "clean", "-fdq"], cwd=worktree_path, capture_output=True, text=True, check=False)
+        manifest = {
+            "task_id": task_id,
+            "branch": current_branch,
+            "head_sha": local_head,
+            "trigger": trigger,
+            "run_id": run_id,
+            "timestamp": now_str,
+            "files": inventory_files,
+        }
+        manifest_path = task_backup_dir / "manifest.json"
+        manifest_path.write_text(json.dumps(manifest, indent=2), encoding="utf-8")
+
+        staged_proc = subprocess.run(["git", "diff", "--cached", "--binary"], cwd=worktree_path, capture_output=True, check=False)
+        if staged_proc.returncode != 0:
+            raise RuntimeError("failed to capture staged diff")
+        (task_backup_dir / "staged.patch").write_bytes(staged_proc.stdout)
+
+        unstaged_proc = subprocess.run(["git", "diff", "--binary"], cwd=worktree_path, capture_output=True, check=False)
+        if unstaged_proc.returncode != 0:
+            raise RuntimeError("failed to capture unstaged diff")
+        (task_backup_dir / "unstaged.patch").write_bytes(unstaged_proc.stdout)
+
+        untracked_base = task_backup_dir / "untracked"
+        for file_entry in inventory_files:
+            rel_p = file_entry["path"]
+            src_path = worktree_path / rel_p
+            if file_entry.get("status_code", "").startswith("?") or not src_path.exists():
+                if file_entry.get("is_symlink") and file_entry.get("symlink_target"):
+                    dst_path = untracked_base / rel_p
+                    dst_path.parent.mkdir(parents=True, exist_ok=True)
+                    if dst_path.exists() or os.path.islink(dst_path):
+                        dst_path.unlink()
+                    os.symlink(file_entry["symlink_target"], dst_path)
+                elif file_entry.get("is_file") and file_entry.get("sha256"):
+                    if src_path.exists() and src_path.is_file():
+                        dst_path = untracked_base / rel_p
+                        dst_path.parent.mkdir(parents=True, exist_ok=True)
+                        shutil.copy2(src_path, dst_path)
+                        h_check = hashlib.sha256()
+                        with open(dst_path, "rb") as f_chk:
+                            while ch := f_chk.read(65536):
+                                h_check.update(ch)
+                        if h_check.hexdigest() != file_entry["sha256"]:
+                            raise RuntimeError(f"backup checksum mismatch for {rel_p}")
+
+        checksums: dict[str, str] = {}
+        for b_root, _, b_files in os.walk(task_backup_dir):
+            for bf in b_files:
+                if bf == "backup_checksums.sha256":
+                    continue
+                fp = Path(b_root) / bf
+                rel_bp = fp.relative_to(task_backup_dir).as_posix()
+                if fp.is_symlink() or os.path.islink(fp):
+                    target = os.readlink(fp)
+                    checksums[rel_bp] = "symlink:" + hashlib.sha256(target.encode("utf-8")).hexdigest()
+                else:
+                    h_b = hashlib.sha256()
+                    with open(fp, "rb") as f_b:
+                        while ch := f_b.read(65536):
+                            h_b.update(ch)
+                    checksums[rel_bp] = h_b.hexdigest()
+        (task_backup_dir / "backup_checksums.sha256").write_text(json.dumps(checksums, indent=2), encoding="utf-8")
+
+    except Exception:
+        return False
+
     write_activity_log(
         config,
         {
-            "type": "worker_worktree_reset",
+            "type": "worker_worktree_preserved",
             "task_id": task_id,
             "run_id": run_id,
             "trigger": trigger,
             "workspace_path": str(worktree_path),
-            "backup_patch": str(backup_patch) if backup_patch else None,
+            "backup_dir": str(task_backup_dir),
+            "head_sha": local_head,
             "message": (
-                f"Hard-reset dirty worktree for {task_id} ({trigger or 'cleanup'}) so dispatch "
-                f"can lease it"
-                + (f"; uncommitted work backed up to {backup_patch}." if backup_patch else ".")
+                f"Quarantined dirty worktree for {task_id} ({trigger or 'cleanup'}); "
+                f"backup saved to {task_backup_dir}."
             ),
         },
     )
     return True
 
 
+def restore_quarantined_worktree_backup(
+    backup_dir: Path | str,
+    target_dir: Path | str,
+) -> tuple[bool, str]:
+    """Restore a quarantined worktree backup manifest and files into target_dir."""
+    backup_path = Path(backup_dir).expanduser().resolve()
+    target_path = Path(target_dir).expanduser().resolve()
+    manifest_file = backup_path / "manifest.json"
+    checksums_file = backup_path / "backup_checksums.sha256"
+    if not manifest_file.exists() or not checksums_file.exists():
+        return False, "missing manifest or checksums file"
+
+    try:
+        checksums = json.loads(checksums_file.read_text(encoding="utf-8"))
+        for rel_bp, expected_sha in checksums.items():
+            fp = backup_path / rel_bp
+            if not fp.exists() and not os.path.islink(fp):
+                return False, f"corrupted backup: missing {rel_bp}"
+            if fp.is_symlink() or os.path.islink(fp):
+                target = os.readlink(fp)
+                h_val = "symlink:" + hashlib.sha256(target.encode("utf-8")).hexdigest()
+            else:
+                h_b = hashlib.sha256()
+                with open(fp, "rb") as f_b:
+                    while ch := f_b.read(65536):
+                        h_b.update(ch)
+                h_val = h_b.hexdigest()
+            if h_val != expected_sha:
+                return False, f"corrupted backup: checksum mismatch for {rel_bp}"
+
+        manifest = json.loads(manifest_file.read_text(encoding="utf-8"))
+        untracked_base = backup_path / "untracked"
+        staged_patch = backup_path / "staged.patch"
+        unstaged_patch = backup_path / "unstaged.patch"
+
+        is_git_repo = (target_path / ".git").exists()
+
+        if is_git_repo:
+            if staged_patch.exists() and staged_patch.stat().st_size > 0:
+                apply_staged = subprocess.run(
+                    ["git", "apply", "--index", "--binary", str(staged_patch)],
+                    cwd=target_path,
+                    capture_output=True,
+                    text=True,
+                    check=False,
+                )
+                if apply_staged.returncode != 0:
+                    return False, f"restoration_failed: failed to apply staged patch: {apply_staged.stderr}"
+
+            if unstaged_patch.exists() and unstaged_patch.stat().st_size > 0:
+                apply_unstaged = subprocess.run(
+                    ["git", "apply", "--binary", str(unstaged_patch)],
+                    cwd=target_path,
+                    capture_output=True,
+                    text=True,
+                    check=False,
+                )
+                if apply_unstaged.returncode != 0:
+                    return False, f"restoration_failed: failed to apply unstaged patch: {apply_unstaged.stderr}"
+
+            for file_entry in manifest.get("files", []):
+                status_code = str(file_entry.get("status_code", ""))
+                rel_p = file_entry.get("path")
+                if not rel_p:
+                    continue
+                if status_code.startswith("?"):
+                    src_fp = untracked_base / rel_p
+                    dst_fp = target_path / rel_p
+                    if file_entry.get("is_symlink") and file_entry.get("symlink_target"):
+                        dst_fp.parent.mkdir(parents=True, exist_ok=True)
+                        if dst_fp.exists() or os.path.islink(dst_fp):
+                            dst_fp.unlink()
+                        os.symlink(file_entry["symlink_target"], dst_fp)
+                    elif src_fp.exists() and src_fp.is_file():
+                        dst_fp.parent.mkdir(parents=True, exist_ok=True)
+                        shutil.copy2(src_fp, dst_fp)
+        else:
+            for file_entry in manifest.get("files", []):
+                rel_p = file_entry.get("path")
+                if not rel_p:
+                    continue
+                src_fp = untracked_base / rel_p
+                dst_fp = target_path / rel_p
+                if file_entry.get("is_symlink") and file_entry.get("symlink_target"):
+                    dst_fp.parent.mkdir(parents=True, exist_ok=True)
+                    if dst_fp.exists() or os.path.islink(dst_fp):
+                        dst_fp.unlink()
+                    os.symlink(file_entry["symlink_target"], dst_fp)
+                elif src_fp.exists() and src_fp.is_file():
+                    dst_fp.parent.mkdir(parents=True, exist_ok=True)
+                    shutil.copy2(src_fp, dst_fp)
+        return True, "restored"
+    except Exception as exc:
+        return False, f"restoration_failed: {exc}"
+
+
+def _backup_and_reset_dirty_worktree(
+    config: dict[str, Any],
+    state: dict[str, Any],
+    worktree_path: Path | str | None,
+    task_id: str | None,
+    *,
+    run_id: str | None = None,
+    trigger: str = "",
+) -> bool:
+    return _quarantine_and_preserve_dirty_worktree(
+        config,
+        state,
+        worktree_path,
+        task_id,
+        expected_branch=worker_task_branch(config, task_id) if task_id else None,
+        run_id=run_id,
+        trigger=trigger,
+    )
+
+
 def reset_worker_worktree_after_failure(config: dict[str, Any], state: dict[str, Any], worker: dict[str, Any]) -> None:
-    """Reset a failed worker's isolated worktree so the next dispatch can lease it."""
+    """Reset a failed worker's isolated worktree state by preserving its backup."""
     settings = worker_worktree_settings(config)
     if not settings.get("enabled"):
         return
@@ -8908,8 +9834,14 @@ def reset_worker_worktree_after_failure(config: dict[str, Any], state: dict[str,
         worktree_path = _existing_worktree_for_branch(repo_root, branch, exclude_root=True) or worker_task_worktree_path(
             config, task_id, settings
         )
-    _backup_and_reset_dirty_worktree(
-        config, state, worktree_path, task_id, run_id=worker.get("run_id"), trigger="worker_failed"
+    _quarantine_and_preserve_dirty_worktree(
+        config,
+        state,
+        worktree_path,
+        task_id,
+        expected_branch=worker_task_branch(config, task_id) if task_id else None,
+        run_id=worker.get("run_id"),
+        trigger="worker_failed",
     )
 
 
@@ -9101,10 +10033,10 @@ def dispatch_priority_for_task(
         if not approved_head:
             return None
         try:
-            curr_head = runtime_ai_status.resolve_task_sha(
-                str(task.get("id") or ""), force_refresh=True
+            curr_head = runtime_ai_status.resolve_task_checkout_sha(
+                task, force_refresh=True
             )
-            if not curr_head or curr_head != approved_head:
+            if not curr_head or not runtime_ai_status.is_approved_head_satisfied(task, curr_head, approved_head):
                 return None
         except Exception:
             return None
@@ -9195,12 +10127,20 @@ def choose_helper_claim_agent(
     if not owner_name or owner_name == idle_agent_name:
         return False
     fallbacks = get_agent_reassignment_candidates(config, owner_name, role="owner", task=task)
-    if not fallbacks:
+    normalized_idle_agent = normalize_agent_id(idle_agent_name)
+    idle_agent_config = (config.get("agents", {}) or {}).get(normalized_idle_agent)
+    registered_idle_allowed = bool(
+        helper_settings.get("include_registered_idle_agents", False)
+        and isinstance(idle_agent_config, dict)
+        and not agent_is_dispatch_slot(idle_agent_config)
+    )
+    idle_agent_allowed = idle_agent_name in fallbacks or registered_idle_allowed
+    if not idle_agent_allowed:
         return False
     if owner_paused:
-        return idle_agent_name in fallbacks
+        return True
     if helper_settings.get("claim_idle_work", False):
-        return idle_agent_name in fallbacks
+        return True
     owner_loads = agent_loads.get(owner_name, [])
     if helper_settings.get("require_owner_higher_priority_load", True):
         dispatch_reason_for_status = {
@@ -9210,7 +10150,121 @@ def choose_helper_claim_agent(
         current_priority = dispatch_reason_priority(dispatch_reason_for_status)
         if current_priority is None or not any(priority < current_priority for priority in owner_loads):
             return False
-    return idle_agent_name in fallbacks
+    return True
+
+
+def reassign_paused_reviewers_to_registered_idle_agents(
+    config: dict[str, Any],
+    state: dict[str, Any],
+    status: dict[str, Any],
+    *,
+    provider_report: dict[str, Any] | None = None,
+) -> bool:
+    settings = ready_dispatch_settings(config)
+    helper_settings = helper_claim_settings(config)
+    if not (
+        helper_settings.get("enabled", True)
+        and helper_settings.get("include_registered_idle_agents", False)
+    ):
+        return False
+
+    schema = config.get("schema", {})
+    tasks_path = schema.get("tasks_path", "tasks")
+    task_id_field = schema.get("task_id_field", "id")
+    owner_field = schema.get("assignee_field", "owner")
+    reviewer_field = schema.get("reviewer_field", "reviewer")
+    review_statuses = {str(value).lower() for value in settings.get("review_statuses", ["review"])}
+    active_statuses = {str(value) for value in settings.get("active_worker_statuses", [])}
+    active_agents, active_task_agents = active_worker_indexes(state, active_statuses)
+    pending_agents, pending_task_agents, _pending_event_keys = outstanding_delivery_indexes(config, state)
+    reserved_agents = set(active_agents) | set(pending_agents)
+    reserved_tasks = {task_id for task_id, _agent_id in active_task_agents | pending_task_agents}
+    candidate_agent_ids = weighted_dispatch_agent_ids(config, settings)
+    changed = False
+
+    for task in status.get(tasks_path, []) or []:
+        task_id = str(task.get(task_id_field) or "")
+        if not task_id or task_id in reserved_tasks:
+            continue
+        if str(task.get("status") or "").lower() not in review_statuses:
+            continue
+        owner = str(task.get(owner_field) or "").strip()
+        reviewer = str(task.get(reviewer_field) or "").strip()
+        if not reviewer or is_human_gate_agent(reviewer):
+            continue
+        reviewer_block_reason = agent_auto_dispatch_block_reason(
+            config,
+            state,
+            normalize_agent_id(reviewer),
+            provider_report,
+        )
+        if not reviewer_block_reason:
+            continue
+
+        replacement = ""
+        replacement_id = ""
+        for candidate_id in candidate_agent_ids:
+            candidate = display_name_for(config, candidate_id)
+            candidate_config = (config.get("agents", {}) or {}).get(candidate_id)
+            if (
+                not candidate
+                or candidate in {owner, reviewer}
+                or candidate_id in reserved_agents
+                or not isinstance(candidate_config, dict)
+                or agent_is_dispatch_slot(candidate_config)
+                or is_human_gate_agent(candidate)
+                or not agent_can_take_task(config, candidate, task)
+                or agent_auto_dispatch_block_reason(config, state, candidate_id, provider_report)
+                or not agent_within_target_workload_for_assignment(
+                    status,
+                    candidate,
+                    owner_field=reviewer_field,
+                    previous_owner=reviewer,
+                )
+            ):
+                continue
+            replacement = candidate
+            replacement_id = candidate_id
+            break
+        if not replacement:
+            continue
+
+        message = (
+            f"Helper-claimed review by {replacement} while reviewer {reviewer} "
+            f"is dispatch-paused: {reviewer_block_reason}"
+        )
+        if not persist_task_reassignment(
+            config,
+            task_id=task_id,
+            new_owner=owner,
+            new_reviewer=replacement,
+            message=message,
+            handoff_to=replacement,
+            handoff_from=reviewer,
+        ):
+            continue
+        task[reviewer_field] = replacement
+        task["next"] = message
+        reserved_agents.add(replacement_id)
+        reserved_tasks.add(task_id)
+        changed = True
+        write_activity_log(
+            config,
+            {
+                "type": "task_review_helper_claimed",
+                "task_id": task_id,
+                "message": message,
+                "owner": owner,
+                "from_reviewer": reviewer,
+                "to_reviewer": replacement,
+            },
+        )
+        console_log(
+            f"review helper claim: task={task_id} from={reviewer} to={replacement}",
+            quiet=SUPERVISOR_LOG_QUIET,
+        )
+
+    return changed
 
 
 def is_sidecar_review_of_current_parent(
@@ -9473,6 +10527,27 @@ def build_dispatch_event(task: dict[str, Any], target_agent: str, reason: str, t
     }
 
 
+def queue_dispatch_event_safely(config: dict[str, Any], event: dict[str, Any]) -> bool:
+    try:
+        return bool(queue_delivery_event(config, event))
+    except Exception as exc:
+        message = f"Dispatch event failed closed: {type(exc).__name__}: {exc}"
+        write_activity_log(
+            config,
+            {
+                "type": "dispatch_event_rejected",
+                "task_id": event.get("task_id"),
+                "target_agent": event.get("target_agent"),
+                "message": message,
+            },
+        )
+        console_log(
+            f"dispatch event rejected: task={event.get('task_id')} target={event.get('target_agent')} error={exc}",
+            quiet=SUPERVISOR_LOG_QUIET,
+        )
+        return False
+
+
 def dispatch_discussion_planning(
     config: dict[str, Any],
     state: dict[str, Any],
@@ -9545,7 +10620,7 @@ def dispatch_ready_tasks(
     active_statuses = {str(value) for value in settings.get("active_worker_statuses", [])}
     max_dispatches_per_tick = max(1, int(max_dispatches_override or settings.get("max_dispatches_per_tick", 4)))
 
-    _active_agents, active_task_agents = active_worker_indexes(state, active_statuses)
+    active_agents, active_task_agents = active_worker_indexes(state, active_statuses)
     pending_agents, pending_task_agents, pending_event_keys = outstanding_delivery_indexes(config, state)
     active_task_ids = {task_id for task_id, _agent_id in active_task_agents if task_id}
     pending_task_ids = {task_id for task_id, _agent_id in pending_task_agents if task_id}
@@ -9567,6 +10642,19 @@ def dispatch_ready_tasks(
         normalized = normalize_mainline_task_assignment(config, task) or normalized
 
     if normalized:
+        changed = True
+        status = load_status(config)
+        tasks = [task for task in status.get(tasks_path, []) if task.get(task_id_field)]
+        task_map = {task.get(task_id_field): task for task in tasks}
+        failure_loop_task_agents = failure_loop_task_agents_for_task_map(config, state, task_map)
+        failure_loop_task_ids = {task_id for task_id, _agent_name in failure_loop_task_agents}
+
+    if reassign_paused_reviewers_to_registered_idle_agents(
+        config,
+        state,
+        status,
+        provider_report=provider_report,
+    ):
         changed = True
         status = load_status(config)
         tasks = [task for task in status.get(tasks_path, []) if task.get(task_id_field)]
@@ -9603,6 +10691,13 @@ def dispatch_ready_tasks(
         considered_agents += 1
         target_agent = display_name_for(config, agent_id)
         if agent_auto_dispatch_block_reason(config, state, agent_id, provider_report):
+            continue
+        # A logical agent without explicit worker slots can run only one
+        # process at a time. Do not build a same-agent queue backlog that
+        # prevents registered idle helpers from claiming the work instead.
+        if not logical_worker_slot_ids(config, agent_id) and (
+            agent_id in active_agents or agent_id in pending_agents
+        ):
             continue
         quota_limit = quota_group_concurrency_limit(config, agent_id, settings)
         quota_group = agent_quota_group_id(config, agent_id)
@@ -9661,7 +10756,7 @@ def dispatch_ready_tasks(
                 approved_head = task.get("approved_head")
                 current_head = None
                 try:
-                    current_head = runtime_ai_status.resolve_task_sha(task_id, force_refresh=True)
+                    current_head = runtime_ai_status.resolve_task_checkout_sha(task, force_refresh=True)
                 except Exception as err:
                     console_log(f"Failed to resolve sha for {task_id}: {err}", quiet=SUPERVISOR_LOG_QUIET)
                 # B22: a task in a finalize status with no approved_head has no
@@ -9692,8 +10787,8 @@ def dispatch_ready_tasks(
                         )
                     continue
 
-                if not current_head or current_head != approved_head:
-                    if current_head and current_head != approved_head:
+                if not current_head or not runtime_ai_status.is_approved_head_satisfied(task, current_head, approved_head):
+                    if current_head and not runtime_ai_status.is_approved_head_satisfied(task, current_head, approved_head):
                         task["status"] = "review"
                         task["last_update"] = utc_now()
                         task["next"] = (
@@ -9892,7 +10987,7 @@ def dispatch_ready_tasks(
         queued_for_agent = 0
         for _, _, task, reason in candidates[:per_occurrence_limit]:
             event = build_dispatch_event(task, target_agent, reason, task_map)
-            if queue_delivery_event(config, event):
+            if queue_dispatch_event_safely(config, event):
                 seen[event["key"]] = utc_now()
                 pending_event_keys.add(event["key"])
                 pending_agents.add(agent_id)
@@ -9924,16 +11019,20 @@ def dispatch_ready_tasks(
             task_id = str(task.get(task_id_field) or "")
             if not task_id or task_id in active_task_ids or task_id in pending_task_ids:
                 continue
-            helper_message = (
-                f"Helper-claimed by {target_agent} while {task_owner} is dispatch-paused."
-                if owner_paused
-                else (
-                    f"Helper-claimed by idle {target_agent}; previous owner {task_owner} becomes reviewer."
-                    if helper_settings.get("claim_idle_work", False)
-                    else f"Helper-claimed by {target_agent} while {task_owner} completes higher-priority work."
-                )
+            new_reviewer = (
+                task_reviewer
+                if task_reviewer and task_reviewer != target_agent
+                else str(task_owner or "")
             )
-            new_reviewer = str(task_owner or task_reviewer or "")
+            if owner_paused:
+                helper_message = f"Helper-claimed by {target_agent} while {task_owner} is dispatch-paused."
+            elif helper_settings.get("claim_idle_work", False):
+                if new_reviewer == task_reviewer:
+                    helper_message = f"Helper-claimed by idle {target_agent}; designated reviewer {task_reviewer} preserved."
+                else:
+                    helper_message = f"Helper-claimed by idle {target_agent}; previous owner {task_owner} becomes reviewer."
+            else:
+                helper_message = f"Helper-claimed by {target_agent} while {task_owner} completes higher-priority work."
             if not persist_task_reassignment(
                 config,
                 task_id=task_id,
@@ -9967,7 +11066,7 @@ def dispatch_ready_tasks(
                 task["last_update"] = utc_now()
 
             event = build_dispatch_event(task, target_agent, helper_dispatch_reason, task_map)
-            if event["key"] not in pending_event_keys and queue_delivery_event(config, event):
+            if event["key"] not in pending_event_keys and queue_dispatch_event_safely(config, event):
                 seen[event["key"]] = utc_now()
                 pending_event_keys.add(event["key"])
                 pending_agents.add(agent_id)
@@ -10304,7 +11403,7 @@ def dispatch_underutilization_sidecars(
         event = build_dispatch_event(sidecar_task, selected_owner, "owned_ready_dispatch", task_map)
         if event["key"] in pending_event_keys:
             continue
-        if queue_delivery_event(config, event):
+        if queue_dispatch_event_safely(config, event):
             seen[event["key"]] = utc_now()
             pending_event_keys.add(event["key"])
 
