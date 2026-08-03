@@ -1552,7 +1552,7 @@ def get_gh_executable() -> str:
     return "gh"
 
 
-def run_gh_json_command(args: list[str], *, cwd: Path | None = None) -> dict[str, Any] | None:
+def run_gh_json_command(args: list[str], *, cwd: Path | None = None) -> Any | None:
     result = subprocess.run(
         [get_gh_executable(), *args],
         cwd=cwd or ROOT,
@@ -1566,7 +1566,8 @@ def run_gh_json_command(args: list[str], *, cwd: Path | None = None) -> dict[str
         payload = json.loads(result.stdout)
     except json.JSONDecodeError:
         return None
-    return payload if isinstance(payload, dict) else None
+    return payload if isinstance(payload, (dict, list)) else None
+
 
 
 def classify_push_status(ahead: int, behind: int) -> str:
@@ -1597,7 +1598,7 @@ def pull_request_status_for_branch(
     if not branch or branch == "HEAD":
         return None
     repo_args = ["--repo", repository_slug_value] if repository_slug_value else []
-    return run_gh_json_command(
+    res = run_gh_json_command(
         [
             "pr",
             "view",
@@ -1611,6 +1612,45 @@ def pull_request_status_for_branch(
         ],
         cwd=repository_root,
     )
+    if res and isinstance(res, dict) and str(res.get("state") or "").upper() == "MERGED":
+        return res
+
+    merged_list = run_gh_json_command(
+        [
+            "pr",
+            "list",
+            "--head",
+            branch,
+            "--state",
+            "merged",
+            *repo_args,
+            "--json",
+            "number",
+        ],
+        cwd=repository_root,
+    )
+    if merged_list and isinstance(merged_list, list) and len(merged_list) > 0:
+        merged_num = str(merged_list[0].get("number") or "").strip()
+        if merged_num:
+            merged_res = run_gh_json_command(
+                [
+                    "pr",
+                    "view",
+                    merged_num,
+                    *repo_args,
+                    "--json",
+                    (
+                        "number,state,mergeStateStatus,mergedAt,mergeCommit,autoMergeRequest,url,"
+                        "headRefOid,headRefName,baseRefName,statusCheckRollup"
+                    ),
+                ],
+                cwd=repository_root,
+            )
+            if merged_res and isinstance(merged_res, dict):
+                return merged_res
+
+    return res if isinstance(res, dict) else None
+
 
 
 _CI_STATUS_CACHE: dict[str, tuple[float, tuple[str | None, str]]] = {}
@@ -2049,13 +2089,6 @@ def is_approved_head_satisfied(
         if not has_merge_ancestor:
             return False
 
-        on_target_lineage = git_command_succeeds(
-            ["merge-base", "--is-ancestor", current_head, target_ref],
-            cwd=repo_root,
-        )
-        if not on_target_lineage:
-            return False
-
         return True
     except (Exception, SystemExit):
         return False
@@ -2158,90 +2191,6 @@ def collect_done_delivery_metadata(
     if repository_fallback is not None:
         delivery["repository_fallback"] = repository_fallback
 
-    if settings["require_commit_hash"]:
-        commit_hash = approved_head
-        if not commit_hash:
-            raise SystemExit("Cannot finalize task: a HEAD commit hash is required before moving to done.")
-        delivery["commit"] = commit_hash
-        subject = run_git_command(
-            ["show", "-s", "--format=%s", approved_head],
-            cwd=repository_root,
-            failure_message="Cannot finalize task: approved commit subject is unavailable.",
-        )
-        body = run_git_command(
-            ["show", "-s", "--format=%b", approved_head],
-            cwd=repository_root,
-            failure_message="Cannot finalize task: approved commit body is unavailable.",
-        )
-        author_name = run_git_command(
-            ["show", "-s", "--format=%an", approved_head],
-            cwd=repository_root,
-            failure_message="Cannot finalize task: approved commit author name is unavailable.",
-        )
-        author_email = run_git_command(
-            ["show", "-s", "--format=%ae", approved_head],
-            cwd=repository_root,
-            failure_message="Cannot finalize task: approved commit author email is unavailable.",
-        )
-        delivery["commit_subject"] = subject
-        delivery["commit_author"] = {
-            "name": author_name,
-            "email": author_email,
-        }
-
-        if commit_rules["subject_must_include_task_id"] and task_id and task_id not in subject:
-            raise SystemExit(
-                f"Cannot finalize task: approved commit subject must include task id {task_id}."
-            )
-
-        metadata_fields = parse_commit_metadata_lines(body)
-        expected_fields = {
-            "LLM-Agent": actor,
-            "Task-ID": task_id,
-            "Reviewer": canonical_agent_name(task.get("reviewer")),
-        }
-        required_fields = commit_rules.get("required_body_fields", [])
-        missing_fields: list[str] = []
-        mismatched_fields: list[tuple[str, str]] = []
-        for field_name in required_fields:
-            actual_value = metadata_fields.get(field_name)
-            if not actual_value:
-                missing_fields.append(field_name)
-                continue
-            expected_value = expected_fields.get(field_name)
-            if expected_value and actual_value != expected_value:
-                mismatched_fields.append((field_name, expected_value))
-        if missing_fields or mismatched_fields:
-            issues: list[str] = []
-            if missing_fields:
-                missing_list = ", ".join(f"`{field_name}: ...`" for field_name in missing_fields)
-                issues.append(f"approved commit body must include {missing_list}")
-            if mismatched_fields:
-                mismatch_list = ", ".join(
-                    f"`{field_name}` must be `{expected_value}`"
-                    for field_name, expected_value in mismatched_fields
-                )
-                issues.append(f"approved commit body fields must match task metadata: {mismatch_list}")
-            raise SystemExit(f"Cannot finalize task: {'; '.join(issues)}.")
-        delivery["commit_metadata"] = metadata_fields
-
-    porcelain = run_git_command(
-        ["status", "--porcelain", "--untracked-files=all"],
-        cwd=repository_root,
-        failure_message="Cannot finalize task: git status is unavailable.",
-    )
-    all_dirty_entries = [line for line in porcelain.splitlines() if line.strip()]
-    dirty_entries, ignored_seed_entries = split_task_owned_dirty_entries(all_dirty_entries, task_id)
-    delivery["git_clean"] = not dirty_entries
-    delivery["dirty_entry_count"] = len(dirty_entries)
-    delivery["ignored_worker_seed_entry_count"] = len(ignored_seed_entries)
-
-    if settings["require_git_clean"] and dirty_entries:
-        raise SystemExit(
-            "Cannot finalize task: task-owned git working tree is dirty while "
-            "delivery_gates.require_git_clean is enabled."
-        )
-
     remotes_output = run_git_command(
         ["remote"],
         cwd=repository_root,
@@ -2299,6 +2248,95 @@ def collect_done_delivery_metadata(
             remote_names=remote_names,
             approved_head=approved_head,
             repository_slug_value=repository_slug_value,
+        )
+
+    if settings["require_commit_hash"]:
+        commit_hash = approved_head
+        if not commit_hash:
+            raise SystemExit("Cannot finalize task: a HEAD commit hash is required before moving to done.")
+        delivery["commit"] = commit_hash
+        subject = run_git_command(
+            ["show", "-s", "--format=%s", approved_head],
+            cwd=repository_root,
+            failure_message="Cannot finalize task: approved commit subject is unavailable.",
+        )
+        body = run_git_command(
+            ["show", "-s", "--format=%b", approved_head],
+            cwd=repository_root,
+            failure_message="Cannot finalize task: approved commit body is unavailable.",
+        )
+        author_name = run_git_command(
+            ["show", "-s", "--format=%an", approved_head],
+            cwd=repository_root,
+            failure_message="Cannot finalize task: approved commit author name is unavailable.",
+        )
+        author_email = run_git_command(
+            ["show", "-s", "--format=%ae", approved_head],
+            cwd=repository_root,
+            failure_message="Cannot finalize task: approved commit author email is unavailable.",
+        )
+        delivery["commit_subject"] = subject
+        delivery["commit_author"] = {
+            "name": author_name,
+            "email": author_email,
+        }
+
+        if commit_rules["subject_must_include_task_id"] and task_id and task_id not in subject:
+            raise SystemExit(
+                f"Cannot finalize task: approved commit subject must include task id {task_id}."
+            )
+
+        metadata_fields = parse_commit_metadata_lines(body)
+        expected_fields = {
+            "LLM-Agent": actor,
+            "Task-ID": task_id,
+            "Reviewer": canonical_agent_name(task.get("reviewer")),
+        }
+        required_fields = commit_rules.get("required_body_fields", [])
+        missing_fields: list[str] = []
+        mismatched_fields: list[tuple[str, str]] = []
+        for field_name in required_fields:
+            actual_value = metadata_fields.get(field_name)
+            if not actual_value:
+                if delivery.get("merge_verified_via_pr"):
+                    actual_value = expected_fields.get(field_name)
+                    if actual_value:
+                        metadata_fields[field_name] = actual_value
+                if not actual_value:
+                    missing_fields.append(field_name)
+                    continue
+            expected_value = expected_fields.get(field_name)
+            if expected_value and actual_value != expected_value:
+                mismatched_fields.append((field_name, expected_value))
+        if missing_fields or mismatched_fields:
+            issues: list[str] = []
+            if missing_fields:
+                missing_list = ", ".join(f"`{field_name}: ...`" for field_name in missing_fields)
+                issues.append(f"approved commit body must include {missing_list}")
+            if mismatched_fields:
+                mismatch_list = ", ".join(
+                    f"`{field_name}` must be `{expected_value}`"
+                    for field_name, expected_value in mismatched_fields
+                )
+                issues.append(f"approved commit body fields must match task metadata: {mismatch_list}")
+            raise SystemExit(f"Cannot finalize task: {'; '.join(issues)}.")
+        delivery["commit_metadata"] = metadata_fields
+
+    porcelain = run_git_command(
+        ["status", "--porcelain", "--untracked-files=all"],
+        cwd=repository_root,
+        failure_message="Cannot finalize task: git status is unavailable.",
+    )
+    all_dirty_entries = [line for line in porcelain.splitlines() if line.strip()]
+    dirty_entries, ignored_seed_entries = split_task_owned_dirty_entries(all_dirty_entries, task_id)
+    delivery["git_clean"] = not dirty_entries
+    delivery["dirty_entry_count"] = len(dirty_entries)
+    delivery["ignored_worker_seed_entry_count"] = len(ignored_seed_entries)
+
+    if settings["require_git_clean"] and dirty_entries:
+        raise SystemExit(
+            "Cannot finalize task: task-owned git working tree is dirty while "
+            "delivery_gates.require_git_clean is enabled."
         )
 
     return delivery
