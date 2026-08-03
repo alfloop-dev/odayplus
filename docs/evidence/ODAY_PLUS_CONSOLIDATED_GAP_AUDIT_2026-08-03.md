@@ -209,8 +209,16 @@ materialization evidence，不解除任何產品 blocker。
 | `ODP-LIVE-RUNTIME-DEV-COMPOSE-001` | 6 | 無法派工 |
 | `ODP-FORECAST-AUTHORITATIVE-HISTORY-BACKFILL-001` | 2 | 無法派工 |
 
-9 個不重複的 dangling id 中，6 個在 `docs/evidence/` 有完成證據但未進官方 archive，
-3 個查無任何證據。依 Control Pack §3.1，dependency 必須在 live board 或官方 archive
+9 個不重複的 dangling id **全部**在 `origin/dev` 上有合併 commit
+（PR #419/#425/#440/#443/#447/#451/#456/#457/#460，均於 2026-07-28 合併），
+屬於「已完成但從未寫入 `ai-task-archive/`」。
+
+> 初次分析曾把它們分成「6 個有證據」與「3 個查無證據」，那是因為只搜尋了
+> `docs/evidence/` 路徑。改以 git 合併記錄為統一基準後全部成立。
+> 文件措辭不可作為完成判準——`ODP-P10-DEV-LANDING-FIX-001` 的 evidence 檔
+> 最後一行仍寫「still requires ... before merge」，但它已由 PR #419 合併。
+
+依 Control Pack §3.1，dependency 必須在 live board 或官方 archive
 解析成立才能派工，**這 4 個 task 在圖譜修復前永遠不會被派工**。
 
 另有循環依賴：`ODP-RUNTIME-GCP-001` → `ODP-PRODUCTION-MODEL-REGISTRY-001`，
@@ -308,12 +316,18 @@ NETPLAN-BASELINE-APPROVAL、UAT-SIGNOFF、FINAL-GATE-AUDIT
 
 ### 11.0 P-1：執行層前置（不做則以下多數工項無法派工）
 
-| # | 待辦 | 類型 |
-|---|---|---|
-| E-1 | 修復 task dependency 圖譜（14 個 dangling、9 個 id） | 需停機窗口 |
-| E-2 | 拆分 `ODP-PRODUCTION-MODEL-REGISTRY-001` 為 INFRA／GOVERNANCE，打破循環依賴 | 治理決策 |
-| E-3 | `save_state()` 加 file lock；CLI 新增 `archive_import` | 工程 |
-| E-4 | U-1~U-5 範圍決策（A／B／C） | Product Lead |
+| # | 待辦 | 類型 | 狀態 |
+|---|---|---|---|
+| E-1 | 修復 task dependency 圖譜（14 個 dangling、9 個 id） | **一道指令，不需停機** | 工具與離線驗證已完成，待執行 |
+| E-2 | 拆分 `ODP-PRODUCTION-MODEL-REGISTRY-001` 為 INFRA／GOVERNANCE | 治理決策 | 有價值但**非解除阻塞的必要條件** |
+| E-3 | `save_state()` 加 file lock；CLI 新增 `archive_import` | 工程 | 防復發 |
+| E-4 | U-1~U-5 範圍決策（A／B／C） | Product Lead | 待決策 |
+
+E-1 的執行方式與離線驗證結果見
+`docs/runbooks/task-dependency-graph-repair.md` §4.3 與 §6.1：
+對 live 狀態副本演練的結果為 **14 failure → 0**，且完全不需修改 `depends_on`。
+9 個依賴皆有 `origin/dev` 上的合併 commit（PR #419/#425/#440/#443/#447/#451/#456/#457/#460，
+均於 2026-07-28 合併），屬於「已完成但未歸檔」，非偽造完成紀錄。
 
 ### 11.1 P0：不完成就不能部署候選版
 

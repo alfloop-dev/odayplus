@@ -22,10 +22,17 @@ owner: "Platform/Ops"
 | `ODP-FORECAST-AUTHORITATIVE-HISTORY-BACKFILL-001` | 2 | blocked |
 
 依 Control Pack §3.1，dependency 必須在 live board 或官方 archive 解析成立才能派工。
-這 4 個 task **在圖譜修好之前永遠不會被派工**，其中包含目前的唯一關鍵路徑
-`ODP-FORECAST-AUTHORITATIVE-HISTORY-BACKFILL-001`。
+這 4 個 task **在圖譜修好之前永遠不會被派工**，其中包含兩條關鍵路徑之一的
+`ODP-FORECAST-AUTHORITATIVE-HISTORY-BACKFILL-001`（另一條是 required provider
+的真實 ingestion）。
 
-## 2. 為什麼不能直接改
+## 2. 哪些部分需要停機，哪些不需要
+
+> **更正（2026-08-03）**：本節初版斷定整份修復都需要停機窗口。
+> 實際查證 `task_archive.py` 後，**§4 的 archive 回填不需要停機**
+> （理由見 §4.4）。只有修改 `depends_on` 需要，而在 §4 完成後通常不需要改它。
+
+## 2bis. 為什麼 `ai-status.json` 不能直接改
 
 ### 2.1 並發寫入風險
 
@@ -50,8 +57,11 @@ live supervisor（本次觀測 PID `1452119`）持續在跑，`ai-status.json` �
 
 ## 3. 前置條件
 
-1. 取得維護窗口，**停止 live supervisor**（PID 於執行時重新確認）。
-2. 備份：
+§4 的 archive 回填**不需要停機**，但仍必須先備份。
+只有需要改 `depends_on`（§5）時才要停止 live supervisor。
+
+1. 若要進行 §5，取得維護窗口並**停止 live supervisor**（PID 於執行時重新確認）。
+2. 備份（兩種情況都要）：
    ```bash
    cp ai-status.json ai-status.json.bak-$(date +%Y%m%dT%H%M%SZ)
    tar czf ai-task-archive.bak-$(date +%Y%m%dT%H%M%SZ).tgz ai-task-archive/
@@ -60,50 +70,101 @@ live supervisor（本次觀測 PID `1452119`）持續在跑，`ai-status.json` �
 
 ## 4. 9 個 dangling 依賴的處置
 
-### 4.1 有 repo 完成證據 → 補 archive snapshot（6 個）
+> **更正（2026-08-03）**：本節初版把 9 個依賴分成「6 個有 repo 證據」與
+> 「3 個查無證據、不得建 snapshot」。**該分類是錯的**，因為只搜尋了
+> `docs/evidence/` 路徑。改以 git 合併記錄為統一客觀基準後，
+> **9 個全部都有合併進 `origin/dev` 的證據**，全部可回溯歸檔。
 
-| 依賴 id | repo 證據路徑 |
-|---|---|
-| `ODP-AUTH-RUNTIME-RECONCILE-001` | `docs/evidence/runtime/ODP-AUTH-RUNTIME-RECONCILE-001.md` |
-| `ODP-MODEL-READY-COMPOSE-001` | `docs/evidence/model_ready/ODP-MODEL-READY-COMPOSE-001.md` |
-| `ODP-LEARNINGHUB-PROD-FIX-001` | `docs/evidence/completion/ODP-LEARNINGHUB-PROD-FIX-001` |
-| `ODP-HEATZONE-PIT-LABEL-AUTHORITY-001` | `docs/evidence/runtime/ODP-HEATZONE-PIT-LABEL-AUTHORITY-001` |
-| `ODP-P10-DEV-LANDING-FIX-001` | `docs/evidence/fleet_dispatch/package10_20260726/ODP-P10-DEV-LANDING-FIX-001.md` |
-| `ODP-OPERATOR-LIVE-PREFLIGHT-001` | `docs/evidence/completion/ODP-OPERATOR-LIVE-PREFLIGHT-001` |
+### 4.1 統一判定基準
 
-每個補一份 `ai-task-archive/tasks/<id>.json`，最低必要欄位（比照既有 snapshot）：
+不採用文件措辭（「closeout」「完成」等易誤判——例如
+`ODP-P10-DEV-LANDING-FIX-001` 的 evidence 文件最後一行仍寫「still requires
+all three GitHub CI jobs ... before merge」，但該 task 實際已由 PR #419 合併）。
+
+改用可機器驗證的基準：**`origin/dev` 上存在該 task 的合併 commit**。
+
+### 4.2 驗證結果（全部 9 個，合併時間集中於 2026-07-28）
+
+| 依賴 id | PR | 合併 commit |
+|---|---|---|
+| `ODP-MODEL-READY-COMPOSE-001` | #425 | `f7f5465f27caa91028a2adf03110c0825c5f7a73` |
+| `ODP-P10-R3CD-DEV-COMPOSE-001` | #456 | `726b0b0ddf2ef1f608580c4311d31f18fd9d1a99` |
+| `ODP-P10-DEV-LANDING-FIX-001` | #419 | `c7c6e925ebdc5a5026b25ca2c3319ca9139ec7e7` |
+| `ODP-HEATZONE-PIT-LABEL-AUTHORITY-001` | #443 | `ceb9435aaaf36c23a8fdc203ff749157d5beb3bf` |
+| `ODP-AUTH-RUNTIME-RECONCILE-001` | #447 | `bd0f46284ab75469c1ec176820074875a7df43ac` |
+| `ODP-LEARNINGHUB-PROD-FIX-001` | #440 | `b607d216144869014b5eca50ab552c5ba7f6bb41` |
+| `ODP-OPERATOR-LIVE-PREFLIGHT-001` | #460 | `afdb7e215e7cc087f9d4209b75e01330a1a5d280` |
+| `ODP-FORECAST-LEARNINGHUB-TEMPORAL-COMPOSE-001` | #451 | `e874ec4f70ce4eb116fdec0094923685f39ee5a3` |
+| `ODP-MODEL-CAPABILITY-READINESS-001` | #457 | `3ecdcdf1c2f0a98e5218a7989d4dae9bd48617c4` |
+
+這是一批 2026-07-28 完成並合併、但從未寫入 `ai-task-archive/` 的 task。
+
+### 4.3 執行方式
+
+使用 `scripts/orchestrator/backfill_task_archive_snapshots.py`。它會在寫入前
+**自行重新驗證每個 task 的合併 commit**，查不到就 fail closed 跳過該筆，
+因此不會依賴本文件表格是否過時。
+
+```bash
+# 先看計畫，不寫入
+python3 scripts/orchestrator/backfill_task_archive_snapshots.py \
+  --archive-dir <path>/ai-task-archive/tasks --repo . --dry-run
+
+# 確認後寫入
+python3 scripts/orchestrator/backfill_task_archive_snapshots.py \
+  --archive-dir <path>/ai-task-archive/tasks --repo . --apply
+```
+
+寫入的 snapshot 形狀（符合 `task_archive.py` 的解析規則
+`task_satisfies_dependency` = `task.status == "done"` 且
+`terminal_outcome != "superseded"`）：
 
 ```json
 {
   "version": 1,
   "task_id": "<ID>",
-  "archived_at": "<ISO-8601>",
+  "archived_at": "<merge commit committer date>",
   "terminal_status": "done",
   "terminal_outcome": "completed",
   "task": {
     "id": "<ID>",
     "status": "done",
-    "owner": "<原 owner，若不可考則記 UNKNOWN-HISTORICAL>",
-    "reviewer": "<原 reviewer，同上>",
-    "artifacts": ["<上表 repo 證據路徑>"]
+    "owner": "UNKNOWN-HISTORICAL",
+    "reviewer": "UNKNOWN-HISTORICAL",
+    "artifacts": ["<repo evidence paths if any>"]
   },
-  "backfill_note": "Retroactive archive snapshot created by ODP-RUNBOOK-TASK-DEPENDENCY-GRAPH-REPAIR on <date>. Terminal status derived from repository completion evidence, not from a live lifecycle transition."
+  "handoffs": [],
+  "blockers": [],
+  "backfill": {
+    "retroactive": true,
+    "created_by": "ODP-RUNBOOK-TASK-DEPENDENCY-GRAPH-REPAIR",
+    "basis": "merge commit on origin/dev",
+    "merge_commit": "<sha>",
+    "merge_pr": "<#NNN>",
+    "note": "Derived from repository merge evidence, not from a live lifecycle transition."
+  }
 }
 ```
 
-> `backfill_note` 是必要的誠實標記：這些 snapshot 是回溯建立的，不是真實
-> lifecycle 轉換產生的。稽核時必須能分辨兩者。
+`backfill.retroactive` 是必要的誠實標記，稽核時必須能分辨回溯歸檔與真實
+lifecycle 轉換。
 
-### 4.2 查無任何證據 → 需人工裁決（3 個）
+### 4.4 為什麼這一步不需要停機
 
-| 依賴 id | 建議處置 |
-|---|---|
-| `ODP-FORECAST-LEARNINGHUB-TEMPORAL-COMPOSE-001` | 確認是否真的存在過。若否，從 `depends_on` 移除並記錄決策 |
-| `ODP-MODEL-CAPABILITY-READINESS-001` | 同上 |
-| `ODP-P10-R3CD-DEV-COMPOSE-001` | 同上 |
+`task_archive.load_archived_snapshot()` 依 **檔名直接解析**
+（`ARCHIVE_DIR/tasks/<id>.json`），不經 `index.json`；而 `save_state()`
+只寫 `ai-status.json`。兩者互不重疊，因此**新增 archive 檔案不會與執行中的
+supervisor 產生 lost-update**。
 
-**不得**為這三個建立 archive snapshot —— 沒有證據就宣告 done 等同偽造完成紀錄。
-正確做法是移除依賴並在 task note 記錄「依賴不存在，經 <owner> 於 <date> 裁決移除」。
+`index.json` 僅供 `recent_terminal_summaries()` 顯示用，且
+`rebuild_archive_index()` 是 glob 重建，會自行收斂。**不要手動改 `index.json`**
+——那才是共用檔案。
+
+### 4.5 仍需停機的部分
+
+`depends_on` 欄位若需修改（例如 §5 的循環依賴拆解），因位於 `ai-status.json`
+內，仍必須在停機窗口進行。但完成 4.3 後，9 個 dangling 依賴全部可解析，
+**14 個 failure 應全數消除，不需要改任何 `depends_on`**。
 
 ## 5. 打破循環依賴（R3）
 
@@ -131,7 +192,23 @@ replacement 必須存在於 canonical state、保存相同 packet/gap scope、�
 
 ## 6. 驗證
 
-修復完成後、**重啟 supervisor 之前**執行：
+### 6.1 已完成的離線模擬（2026-08-03）
+
+在 scratchpad 對 live 狀態的**副本**完整演練過，結果：
+
+```
+BEFORE:  Task dependency resolvability: 14 failure(s)
+APPLY:   Wrote 9 snapshot(s)
+AFTER:   Task dependency resolvability: OK (46 task(s) scanned)
+```
+
+**14 個 failure 全數消除，且完全沒有修改任何 `depends_on`。**
+因此 §5 的循環依賴拆解雖仍有治理價值，但**不是解除這 4 個 task 阻塞的必要條件**，
+也不需要停機窗口。
+
+### 6.2 正式執行後的驗證
+
+修復完成後執行：
 
 ```bash
 make task-dependency-check \
