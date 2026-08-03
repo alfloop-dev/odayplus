@@ -142,7 +142,7 @@ class AdapterFallbackPolicyTests(unittest.TestCase):
                 mock.patch(
                     "adapters.codex.spawn_background_process",
                     return_value=(fake_process, Path("/tmp/codex2.log")),
-                ) as spawn,
+                ),
             ):
                 result = adapter.deliver(request)
 
