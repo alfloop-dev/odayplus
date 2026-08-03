@@ -9754,6 +9754,7 @@ class ReviewHeadFreezeTests(unittest.TestCase):
         config = load_test_config()
         ready_disp = config.setdefault("ready_dispatcher", {})
         ready_disp["enabled"] = True
+        ready_disp["disabled_agents"] = []
         ready_disp["review_statuses"] = ["review"]
         ready_disp["finalize_statuses"] = ["review_approved"]
         ready_disp["owned_statuses"] = ["in_progress", "todo"]
@@ -11463,6 +11464,16 @@ class SupervisorFailureLoopCoverageTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmpdir:
             tmp_root = Path(tmpdir)
             cfg = deepcopy(self.config)
+            ready_disp = cfg.setdefault("ready_dispatcher", {})
+            ready_disp["enabled"] = True
+            ready_disp["disabled_agents"] = []
+            ready_disp.setdefault("max_tasks_per_agent_by_agent", {})["Antigravity4"] = 5
+            ready_disp.setdefault("max_concurrent_per_quota_group", {})["antigravity"] = 5
+            cfg.setdefault("agents", {})["antigravity4"] = {
+                "display_name": "Antigravity4",
+                "provider": "antigravity",
+                "adapter": "antigravity",
+            }
             live_activity_path = ROOT_DIR / "ai-activity-log.jsonl"
             live_activity_before = (
                 live_activity_path.read_bytes()
@@ -11491,6 +11502,13 @@ class SupervisorFailureLoopCoverageTests(unittest.TestCase):
             cfg.setdefault("watchdog", {})["metrics_file"] = str(tmp_root / ".orchestrator" / "watchdog-metrics.jsonl")
 
             status_todo = {
+                "agents": [
+                    {
+                        "name": "Antigravity4",
+                        "status": "idle",
+                        "current_task_ids": [],
+                    }
+                ],
                 "tasks": [
                     {
                         "id": "ODP-CONC-001",
@@ -11501,12 +11519,15 @@ class SupervisorFailureLoopCoverageTests(unittest.TestCase):
                 ]
             }
 
+            ai_status.clear_ai_status_caches()
             initial_state = supervisor.load_runtime_state(cfg)
             with (
                 mock.patch.object(supervisor, "load_status", return_value=status_todo),
                 mock.patch.object(supervisor, "scan_live_worker_pids_by_agent", return_value={}),
+                mock.patch.object(supervisor, "outstanding_delivery_indexes", return_value=(set(), set(), set())),
+                mock.patch.object(supervisor, "agent_dispatch_loads", return_value={}),
             ):
-                supervisor.dispatch_ready_tasks(cfg, initial_state, {})
+                supervisor.dispatch_ready_tasks(cfg, initial_state, agent_ids_override=["antigravity4"])
             supervisor.save_runtime_state(cfg, initial_state)
 
             main_loop_state = supervisor.load_runtime_state(cfg)
