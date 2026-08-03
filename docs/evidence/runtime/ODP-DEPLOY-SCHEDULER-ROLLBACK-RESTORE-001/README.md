@@ -1,6 +1,6 @@
 # ODP-DEPLOY-SCHEDULER-ROLLBACK-RESTORE-001: Cloud Scheduler Trigger Restoration Evidence
 
-Owner: Antigravity6 · Reviewer: Codex3 · Phase: Live Runtime Remediation · 2026-08-02
+Owner: Antigravity · Reviewer: Codex3 · Phase: Live Runtime Remediation · 2026-08-03
 
 Reproduction, diagnosis, and remediation of the Cloud Scheduler trigger restoration defect during Deploy Dev rollback.
 
@@ -22,6 +22,9 @@ Deploy Dev runs `30745285034` and `30747676117` failed during rollback when atte
 3. **Absence & Multi-Trigger Error Isolation:**
    When a trigger was absent before deployment (`exists: false`), restoration did not safely delete candidate triggers created during deploy. Additionally, a failure restoring one trigger could abort execution before attempting the second trigger.
 
+4. **Fail-Closed Readback Verification:**
+   `restore_scheduler_trigger` originally wrapped post-restore describe and equality checks in an `if` condition that bypassed validation if `gcloud describe` returned non-zero or empty text, returning success (0) without proving trigger equality. The function now fails closed if `gcloud describe`, JSON validation, or `compare` fail.
+
 ## 2. Remediation Architecture
 
 ### A. Python Helper (`scripts/deployment/cloud_scheduler_trigger.py`):
@@ -35,20 +38,22 @@ Deploy Dev runs `30745285034` and `30747676117` failed during rollback when atte
   - Dynamically selects `update` or `create` based on current trigger existence.
   - Safely reads null-delimited restore flags via `mapfile -d ''`.
   - Restores paused state (`gcloud scheduler jobs pause` if pre-deploy state was `PAUSED`).
-  - Performs post-restore describe readback equality check via `cloud_scheduler_trigger.py compare`.
+  - Performs post-restore describe readback equality check via `cloud_scheduler_trigger.py compare` and fails closed on describe error, validation error, or configuration drift.
   - Emits per-trigger diagnostic log messages and isolates failures between triggers.
 
 ## 3. Verification & Live Rollback Drill
 
 ### Unit & Integration Suite:
 `.venv/bin/pytest -q tests/ops/test_cloud_run_live_deployment.py -k "scheduler_trigger"`
-Passed 6/6 tests:
+Passed 8/8 tests:
 1. `test_scheduler_trigger_restore_uses_recorded_target_and_schedule` (OAuth restoration)
 2. `test_scheduler_trigger_restore_supports_oidc_token` (OIDC restoration & retry bounds)
 3. `test_scheduler_trigger_restore_handles_paused_state` (`PAUSED` job state restoration)
 4. `test_scheduler_trigger_restore_deletes_absent_pre_deploy_trigger` (`exists: false` cleanup)
 5. `test_scheduler_trigger_restore_partial_failure_continues_and_reports_diagnostics` (per-trigger isolation)
-6. `test_scheduler_trigger_compare_verifies_redacted_equality_and_detects_drift` (readback equality assertion)
+6. `test_scheduler_trigger_restore_fails_closed_when_readback_describe_fails` (fail-closed readback capture failure assertion)
+7. `test_scheduler_trigger_restore_fails_closed_when_readback_drift_detected` (fail-closed configuration drift failure assertion)
+8. `test_scheduler_trigger_compare_verifies_redacted_equality_and_detects_drift` (readback equality assertion)
 
 ### Static Checks:
 - `.venv/bin/ruff check scripts/deployment/cloud_scheduler_trigger.py tests/ops/test_cloud_run_live_deployment.py` — Passed cleanly.
