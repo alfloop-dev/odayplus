@@ -318,14 +318,20 @@ NETPLAN-BASELINE-APPROVAL、UAT-SIGNOFF、FINAL-GATE-AUDIT
 
 | # | 待辦 | 類型 | 狀態 |
 |---|---|---|---|
-| E-1 | 修復 task dependency 圖譜（14 個 dangling、9 個 id） | **一道指令，不需停機** | 工具與離線驗證已完成，待執行 |
-| E-2 | 拆分 `ODP-PRODUCTION-MODEL-REGISTRY-001` 為 INFRA／GOVERNANCE | 治理決策 | 有價值但**非解除阻塞的必要條件** |
+| E-1 | 修復 task dependency 圖譜（14 個 dangling、9 個 id） | 一道指令，不需停機 | **✅ 已於 2026-08-03T15:05Z 完成** |
+| E-2 | 拆分 `ODP-PRODUCTION-MODEL-REGISTRY-001` 為 INFRA／GOVERNANCE | 治理決策 | **仍為必要**，見下方說明 |
 | E-3 | `save_state()` 加 file lock；CLI 新增 `archive_import` | 工程 | 防復發 |
 | E-4 | U-1~U-5 範圍決策（A／B／C） | Product Lead | 待決策 |
 
-E-1 的執行方式與離線驗證結果見
-`docs/runbooks/task-dependency-graph-repair.md` §4.3 與 §6.1：
-對 live 狀態副本演練的結果為 **14 failure → 0**，且完全不需修改 `depends_on`。
+E-1 已完成：9 個回溯 archive snapshot 寫入，`14 failure → 0`，
+supervisor 未停機且 `ai-status.json` 未被觸碰。
+`ODP-FORECAST-AUTHORITATIVE-HISTORY-BACKFILL-001`（關鍵路徑）與
+`ODP-PRODUCTION-MODEL-REGISTRY-001` 的依賴現在全部滿足，可派工。
+
+E-2 仍為必要：`ODP-RUNTIME-GCP-001` 與 `ODP-LIVE-RUNTIME-DEV-COMPOSE-001`
+仍卡在 §7 描述的循環（GCP runtime 等 model registry，而 model registry 的
+acceptance 需要 live MLflow）。拆分 INFRA／GOVERNANCE 才能打破。
+詳見 `docs/runbooks/task-dependency-graph-repair.md` §5、§6.2。
 9 個依賴皆有 `origin/dev` 上的合併 commit（PR #419/#425/#440/#443/#447/#451/#456/#457/#460，
 均於 2026-07-28 合併），屬於「已完成但未歸檔」，非偽造完成紀錄。
 

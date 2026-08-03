@@ -192,21 +192,48 @@ replacement 必須存在於 canonical state、保存相同 packet/gap scope、�
 
 ## 6. 驗證
 
-### 6.1 已完成的離線模擬（2026-08-03）
+### 6.1 正式執行記錄（2026-08-03T15:05Z，已完成）
 
-在 scratchpad 對 live 狀態的**副本**完整演練過，結果：
+於 live 狀態實際執行，supervisor 未停機：
 
 ```
-BEFORE:  Task dependency resolvability: 14 failure(s)
-APPLY:   Wrote 9 snapshot(s)
-AFTER:   Task dependency resolvability: OK (46 task(s) scanned)
+備份 STAMP  20260803T150519Z
+APPLY       Wrote 9 snapshot(s)
+CHECK       Task dependency resolvability: OK (46 task(s) scanned)
 ```
 
-**14 個 failure 全數消除，且完全沒有修改任何 `depends_on`。**
-因此 §5 的循環依賴拆解雖仍有治理價值，但**不是解除這 4 個 task 阻塞的必要條件**，
-也不需要停機窗口。
+執行後驗證：
 
-### 6.2 正式執行後的驗證
+- supervisor（PID 1452119）持續執行未中斷
+- `ai-status.json` 最後寫入時間仍為 14:21:00Z，**未被觸碰**，確認無 race
+- archive 檔案數 33 → 42
+- 完全沒有修改任何 `depends_on`
+
+### 6.2 「可解析」與「已滿足」是兩件事
+
+`check_task_dependency_resolvability.py` 驗的是 Control Pack §3.1 的
+**resolvable**（依賴存在於 board 或 archive）。官方
+`TaskResolver.dependency_satisfied()` 另外要求依賴本身 **status = done**。
+
+用官方 resolver 對 4 個受影響 task 複驗：
+
+| Task | deps | 未滿足 | 說明 |
+|---|---:|---:|---|
+| `ODP-FORECAST-AUTHORITATIVE-HISTORY-BACKFILL-001` | 2 | **0** | 可派工 |
+| `ODP-PRODUCTION-MODEL-REGISTRY-001` | 5 | **0** | 可派工 |
+| `ODP-LIVE-RUNTIME-DEV-COMPOSE-001` | 7 | 1 | 等 MODEL-REGISTRY 完成 |
+| `ODP-RUNTIME-GCP-001` | 3 | 2 | 等上述兩者完成 |
+
+後兩者的未滿足依賴是**正常的工序先後**，不是圖譜損壞——它們等的是
+board 上尚未完成的真實 task。
+
+> **更正**：本文件先前寫「§5 的循環依賴拆解不是解除阻塞的必要條件」。
+> **該敘述錯誤。** 對 resolvability 而言正確，但 `ODP-RUNTIME-GCP-001`
+> 仍卡在 §5 描述的循環：它等 `ODP-PRODUCTION-MODEL-REGISTRY-001` 完成，
+> 而後者的 acceptance 要求 remote MLflow 解析 production alias，
+> 那需要 live GCP runtime。**§5 的 INFRA／GOVERNANCE 拆分仍是必要的。**
+
+### 6.3 正式執行後的例行驗證
 
 修復完成後執行：
 
