@@ -2220,7 +2220,11 @@ def test_scheduler_trigger_restore_uses_recorded_target_and_schedule(
     fake_bin.mkdir()
     fake_gcloud = fake_bin / "gcloud"
     fake_gcloud.write_text(
-        '#!/usr/bin/env bash\nprintf \'%s\\n\' "$*" >>"${GCLOUD_LOG}"\n',
+        '#!/usr/bin/env bash\n'
+        'printf \'%s\\n\' "$*" >>"${GCLOUD_LOG}"\n'
+        'if [[ "$*" == *"scheduler jobs describe"* && "$*" == *"--format=json"* ]]; then\n'
+        f'  cat "{snapshot}"\n'
+        'fi\n',
         encoding="utf-8",
     )
     fake_gcloud.chmod(0o755)
@@ -2285,7 +2289,11 @@ def test_scheduler_trigger_restore_supports_oidc_token(tmp_path: Path) -> None:
     fake_bin.mkdir()
     fake_gcloud = fake_bin / "gcloud"
     fake_gcloud.write_text(
-        '#!/usr/bin/env bash\nprintf \'%s\\n\' "$*" >>"${GCLOUD_LOG}"\n',
+        '#!/usr/bin/env bash\n'
+        'printf \'%s\\n\' "$*" >>"${GCLOUD_LOG}"\n'
+        'if [[ "$*" == *"scheduler jobs describe"* && "$*" == *"--format=json"* ]]; then\n'
+        f'  cat "{snapshot}"\n'
+        'fi\n',
         encoding="utf-8",
     )
     fake_gcloud.chmod(0o755)
@@ -2339,7 +2347,11 @@ def test_scheduler_trigger_restore_handles_paused_state(tmp_path: Path) -> None:
     fake_bin.mkdir()
     fake_gcloud = fake_bin / "gcloud"
     fake_gcloud.write_text(
-        '#!/usr/bin/env bash\nprintf \'%s\\n\' "$*" >>"${GCLOUD_LOG}"\n',
+        '#!/usr/bin/env bash\n'
+        'printf \'%s\\n\' "$*" >>"${GCLOUD_LOG}"\n'
+        'if [[ "$*" == *"scheduler jobs describe"* && "$*" == *"--format=json"* ]]; then\n'
+        f'  cat "{snapshot}"\n'
+        'fi\n',
         encoding="utf-8",
     )
     fake_gcloud.chmod(0o755)
@@ -2446,7 +2458,14 @@ def test_scheduler_trigger_restore_partial_failure_continues_and_reports_diagnos
         '  echo "Simulated error on trigger1" >&2\n'
         '  exit 1\n'
         'fi\n'
-        'printf \'%s\\n\' "$*" >>"${GCLOUD_LOG}"\n',
+        'printf \'%s\\n\' "$*" >>"${GCLOUD_LOG}"\n'
+        'if [[ "$*" == *"scheduler jobs describe"* && "$*" == *"--format=json"* ]]; then\n'
+        '  if [[ "$*" == *"trigger2"* ]]; then\n'
+        f'    cat "{snap2}"\n'
+        '  else\n'
+        f'    cat "{snap1}"\n'
+        '  fi\n'
+        'fi\n',
         encoding="utf-8",
     )
     fake_gcloud.chmod(0o755)
@@ -2477,6 +2496,131 @@ def test_scheduler_trigger_restore_partial_failure_continues_and_reports_diagnos
     assert "Error: failed to update Cloud Scheduler trigger 'trigger1'." in result.stderr
     call = gcloud_log.read_text(encoding="utf-8")
     assert "trigger2" in call
+
+
+def test_scheduler_trigger_restore_fails_closed_when_readback_describe_fails(
+    tmp_path: Path,
+) -> None:
+    snapshot = tmp_path / "scheduler.json"
+    snapshot.write_text(
+        json.dumps(
+            {
+                "schedule": "0 * * * *",
+                "timeZone": "Asia/Taipei",
+                "httpTarget": {
+                    "uri": "https://example.test/job:run",
+                    "oidcToken": {"serviceAccountEmail": "sa@example.test"},
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    gcloud_log = tmp_path / "gcloud.log"
+    fake_bin = tmp_path / "bin"
+    fake_bin.mkdir()
+    fake_gcloud = fake_bin / "gcloud"
+    fake_gcloud.write_text(
+        '#!/usr/bin/env bash\n'
+        'if [[ "$*" == *"scheduler jobs describe"* && "$*" == *"--format=json"* ]]; then\n'
+        '  echo "gcloud describe error" >&2\n'
+        '  exit 1\n'
+        'fi\n'
+        'printf \'%s\\n\' "$*" >>"${GCLOUD_LOG}"\n',
+        encoding="utf-8",
+    )
+    fake_gcloud.chmod(0o755)
+    command = (
+        f'source "{TRAFFIC_SHELL_HELPER}"\n'
+        f'restore_scheduler_trigger "worker-trigger" "{snapshot}"\n'
+    )
+    result = subprocess.run(
+        ["bash", "-c", command],
+        cwd=ROOT,
+        env={
+            **os.environ,
+            "PATH": f"{fake_bin}:{os.environ['PATH']}",
+            "GCLOUD_LOG": str(gcloud_log),
+            "GCP_PROJECT": "test-project",
+            "GCP_REGION": "test-region",
+            "ODP_SCHEDULER_HELPER": str(SCHEDULER_HELPER_PATH),
+        },
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+
+    assert result.returncode != 0
+    assert "Error: failed to capture or validate readback snapshot for Cloud Scheduler trigger 'worker-trigger'." in result.stderr
+
+
+def test_scheduler_trigger_restore_fails_closed_when_readback_drift_detected(
+    tmp_path: Path,
+) -> None:
+    snapshot = tmp_path / "scheduler.json"
+    snapshot.write_text(
+        json.dumps(
+            {
+                "schedule": "0 * * * *",
+                "timeZone": "Asia/Taipei",
+                "httpTarget": {
+                    "uri": "https://example.test/job:run",
+                    "oidcToken": {"serviceAccountEmail": "sa@example.test"},
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    drifted_snapshot = tmp_path / "drifted.json"
+    drifted_snapshot.write_text(
+        json.dumps(
+            {
+                "schedule": "0 * * * *",
+                "timeZone": "UTC",  # drifted timeZone
+                "httpTarget": {
+                    "uri": "https://example.test/job:run",
+                    "oidcToken": {"serviceAccountEmail": "sa@example.test"},
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    gcloud_log = tmp_path / "gcloud.log"
+    fake_bin = tmp_path / "bin"
+    fake_bin.mkdir()
+    fake_gcloud = fake_bin / "gcloud"
+    fake_gcloud.write_text(
+        '#!/usr/bin/env bash\n'
+        'if [[ "$*" == *"scheduler jobs describe"* && "$*" == *"--format=json"* ]]; then\n'
+        f'  cat "{drifted_snapshot}"\n'
+        '  exit 0\n'
+        'fi\n'
+        'printf \'%s\\n\' "$*" >>"${GCLOUD_LOG}"\n',
+        encoding="utf-8",
+    )
+    fake_gcloud.chmod(0o755)
+    command = (
+        f'source "{TRAFFIC_SHELL_HELPER}"\n'
+        f'restore_scheduler_trigger "worker-trigger" "{snapshot}"\n'
+    )
+    result = subprocess.run(
+        ["bash", "-c", command],
+        cwd=ROOT,
+        env={
+            **os.environ,
+            "PATH": f"{fake_bin}:{os.environ['PATH']}",
+            "GCLOUD_LOG": str(gcloud_log),
+            "GCP_PROJECT": "test-project",
+            "GCP_REGION": "test-region",
+            "ODP_SCHEDULER_HELPER": str(SCHEDULER_HELPER_PATH),
+        },
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+
+    assert result.returncode != 0
+    assert "Error: trigger 'worker-trigger' readback configuration drift detected." in result.stderr
+
 
 
 def test_scheduler_trigger_compare_verifies_redacted_equality_and_detects_drift() -> None:

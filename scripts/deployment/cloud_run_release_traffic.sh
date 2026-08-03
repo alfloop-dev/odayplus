@@ -153,20 +153,23 @@ restore_scheduler_trigger() {
 
   local readback_file
   readback_file="$(mktemp)"
-  if gcloud scheduler jobs describe "${trigger}" \
+  if ! gcloud scheduler jobs describe "${trigger}" \
     --location="${GCP_REGION}" \
     --project="${GCP_PROJECT}" \
     --format=json >"${readback_file}" 2>/dev/null \
-    && [ -s "${readback_file}" ] \
-    && python3 "${ODP_SCHEDULER_HELPER}" validate --description="${readback_file}" >/dev/null 2>&1; then
-    if ! python3 "${ODP_SCHEDULER_HELPER}" compare --before="${snapshot}" --after="${readback_file}"; then
-      echo "Warning: trigger '${trigger}' readback configuration drift detected." >&2
-      rm -f "${readback_file}"
-      return 1
-    fi
+    || [ ! -s "${readback_file}" ] \
+    || ! python3 "${ODP_SCHEDULER_HELPER}" validate --description="${readback_file}" >/dev/null 2>&1; then
+    echo "Error: failed to capture or validate readback snapshot for Cloud Scheduler trigger '${trigger}'." >&2
+    rm -f "${readback_file}"
+    return 1
+  fi
+
+  if ! python3 "${ODP_SCHEDULER_HELPER}" compare --before="${snapshot}" --after="${readback_file}"; then
+    echo "Error: trigger '${trigger}' readback configuration drift detected." >&2
+    rm -f "${readback_file}"
+    return 1
   fi
   rm -f "${readback_file}"
-
 
   echo "Cloud Scheduler trigger '${trigger}' successfully restored." >&2
   return 0
