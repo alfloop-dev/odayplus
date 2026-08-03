@@ -1,0 +1,62 @@
+{
+  "task_id": "ODP-OPERATOR-SMOKE-RBAC-LIVE-002",
+  "secret_name": "oday-plus-dev-auth-principal-map",
+  "secret_version": "projects/1067163562451/secrets/oday-plus-dev-auth-principal-map/versions/3",
+  "secret_values_redacted": true,
+  "pre_change_evidence": {
+    "github_actions_env_var_ODP_OPERATOR_SMOKE_ROLE": "operations_manager",
+    "secret_manager_mapping": {
+      "110296401444439097904": {
+        "roles": [
+          "operations_manager"
+        ],
+        "tenant_id": "a11ce505-70bc-56d9-8564-ad22efa23c9e"
+      },
+      "oday-dev-smoke-operator@alfaloop-data-project.iam.gserviceaccount.com": {
+        "roles": [
+          "operations_manager"
+        ]
+      }
+    }
+  },
+  "post_change_readback": {
+    "github_actions_env_var_ODP_OPERATOR_SMOKE_ROLE": "operations_manager,model_owner,data_owner",
+    "secret_manager_version_3_mapping": {
+      "110296401444439097904": {
+        "roles": [
+          "operations_manager",
+          "model_owner",
+          "data_owner"
+        ],
+        "tenant_id": "a11ce505-70bc-56d9-8564-ad22efa23c9e"
+      },
+      "oday-dev-smoke-operator@alfaloop-data-project.iam.gserviceaccount.com": {
+        "roles": [
+          "operations_manager",
+          "model_owner",
+          "data_owner"
+        ]
+      }
+    }
+  },
+  "roles_and_permissions_mapping": {
+    "operations_manager": [
+      "operator_console:view",
+      "audit:view"
+    ],
+    "model_owner": [
+      "model:view",
+      "audit:view"
+    ],
+    "data_owner": [
+      "integration:view",
+      "audit:view"
+    ]
+  },
+  "security_guarantees": {
+    "global_rbac_matrix_unmodified": true,
+    "platform_admin_granted": false,
+    "production_x_roles_header_bypass": false,
+    "tokens_or_secrets_exposed": false
+  }
+}
