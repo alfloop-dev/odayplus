@@ -4594,3 +4594,47 @@ class EvidenceOnlyAdvanceTests(unittest.TestCase):
                 {"id": "FREEZE-TEST-001"}, current, approved, repository_root=repo
             )
         )
+
+
+class ReviewGateHeadDriftTests(unittest.TestCase):
+    """The gate must exist on the head that GitHub is actually gating.
+
+    A GitHub status belongs to one commit. Emission fired only on a status
+    transition and nothing else in the orchestrator posted this check, so a branch
+    that advanced afterwards left the new head with no gate. Since it is a
+    *required* check, absent reads as unmergeable and nothing would put it back.
+    Seen live on 2026-08-04: #616 and #622 had four green checks and no gate;
+    #628, whose head had not moved, had all five.
+    """
+
+    def test_drift_detected_when_head_moved_past_recorded_gate(self) -> None:
+        with mock.patch.object(ai_status, "resolve_task_sha", return_value="b" * 40):
+            self.assertTrue(
+                ai_status.review_gate_head_drifted(
+                    {"id": "ODP-T-1", "review_gate_sha": "a" * 40}
+                )
+            )
+
+    def test_no_drift_when_head_matches_recorded_gate(self) -> None:
+        with mock.patch.object(ai_status, "resolve_task_sha", return_value="a" * 40):
+            self.assertFalse(
+                ai_status.review_gate_head_drifted(
+                    {"id": "ODP-T-1", "review_gate_sha": "a" * 40}
+                )
+            )
+
+    def test_no_drift_claimed_when_gate_was_never_recorded(self) -> None:
+        """Without a recorded SHA every sync would re-post for unrelated tasks."""
+        with mock.patch.object(ai_status, "resolve_task_sha", return_value="b" * 40):
+            self.assertFalse(ai_status.review_gate_head_drifted({"id": "ODP-T-1"}))
+
+    def test_no_drift_claimed_when_head_cannot_be_resolved(self) -> None:
+        with mock.patch.object(ai_status, "resolve_task_sha", return_value=None):
+            self.assertFalse(
+                ai_status.review_gate_head_drifted(
+                    {"id": "ODP-T-1", "review_gate_sha": "a" * 40}
+                )
+            )
+
+    def test_missing_task_id_is_not_drift(self) -> None:
+        self.assertFalse(ai_status.review_gate_head_drifted({"review_gate_sha": "a" * 40}))

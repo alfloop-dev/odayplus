@@ -5845,12 +5845,46 @@ def reconcile_status_check_outbox(state: dict[str, Any]) -> tuple[int, int]:
     return delivered, retained
 
 
+def review_gate_head_drifted(task: dict[str, Any]) -> bool:
+    """True when the branch has advanced past the commit that carries the gate.
+
+    Emission used to fire only on a status transition, and nothing else in the
+    orchestrator ever posts this check. So a branch that moved after its last
+    transition -- composing the base, or recording closeout evidence -- left the
+    new head with no `task-review-gate` at all. Because it is a *required* check,
+    absent reads as unmergeable, and no code path would ever put it back.
+
+    Observed live on 2026-08-04: PRs #616 and #622 both carried four green checks
+    and no gate, while #628, whose head had not moved since registration, carried
+    all five.
+    """
+
+    task_id = str(task.get("id") or "").strip()
+    if not task_id:
+        return False
+
+    last = str(task.get("review_gate_sha") or "").strip()
+    if not last:
+        # Never emitted, or emitted before this field existed. A status transition
+        # covers the first case; re-posting here would fire on every unrelated
+        # sync for the second, so stay quiet and let the transition drive it.
+        return False
+
+    current = resolve_task_sha(task_id)
+    return bool(current) and current != last
+
+
 def emit_task_review_status_check(task: dict[str, Any], state_status: str) -> None:
     payload = task_review_status_payload(task, state_status)
     if payload is None:
         return
     ok, error = post_task_review_status_payload(payload)
     if ok:
+        # Remember which commit carries the gate. A GitHub status belongs to one
+        # SHA, so once the branch advances the new head has no gate at all and the
+        # required check reads as absent rather than failing. Recording the SHA is
+        # what lets the next sync notice the drift and re-post.
+        task["review_gate_sha"] = payload.get("sha") or task.get("review_gate_sha")
         print(
             f"Successfully emitted status check '{payload['context']}'="
             f"{payload['state']} to GitHub API.",
@@ -5895,7 +5929,7 @@ def emit_status_checks_for_changed_tasks(state_before: dict[str, Any], state_aft
         after_status = after_task.get("status")
 
         is_target = target_task_id and (str(task_id).upper() == str(target_task_id).upper())
-        if after_status != before_status or is_target:
+        if after_status != before_status or is_target or review_gate_head_drifted(after_task):
             emit_task_review_status_check(after_task, after_status)
 
 
