@@ -197,6 +197,24 @@ def default_branch(config: dict[str, Any]) -> str:
     return "main"
 
 
+def task_pr_base_branch(config: dict[str, Any]) -> str:
+    # Task PRs belong to the branch workflow, not to the repository default.
+    # Work lands on the dev branch and is promoted to the default branch only
+    # after dev CI is green; basing task PRs on default_branch() would route
+    # them straight at main and bypass that promotion entirely.
+    branch_workflow = config.get("branch_workflow") or {}
+    if isinstance(branch_workflow, dict) and branch_workflow.get("enabled", True):
+        task_pr = branch_workflow.get("task_pr") or {}
+        if isinstance(task_pr, dict):
+            target = str(task_pr.get("target_branch") or "").strip()
+            if target:
+                return target
+        dev_branch = str(branch_workflow.get("dev_branch") or "").strip()
+        if dev_branch:
+            return dev_branch
+    return default_branch(config)
+
+
 def current_branch() -> str | None:
     proc = run_command(["git", "rev-parse", "--abbrev-ref", "HEAD"], cwd=ROOT)
     if proc.returncode != 0:
@@ -735,7 +753,7 @@ def upsert_review_pr(config: dict[str, Any], bus_state: dict[str, Any], status: 
         )
         return True
 
-    base = default_branch(config)
+    base = task_pr_base_branch(config)
     title = f"[ReviewBus] {task['id']} {task['title']}"
     head_sha = branch_head_sha(branch)
     skip_hash = json.dumps(
