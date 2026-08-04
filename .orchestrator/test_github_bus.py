@@ -732,6 +732,29 @@ class TaskPRDiscoveryTests(unittest.TestCase):
         self.assertNotIn("git rev-parse task/ODP-REMOTE-001", calls)
         self.assertNotIn("git rev-list --count dev..task/ODP-REMOTE-001", calls)
 
+    def test_current_branch_returns_none_when_detached_head(self) -> None:
+        def mock_cmd(cmd: list[str], cwd: str | Path | None = None) -> subprocess.CompletedProcess[str]:
+            if "symbolic-ref" in cmd:
+                return subprocess.CompletedProcess(cmd, 1, "", "fatal: ref HEAD is not a symbolic ref")
+            return subprocess.CompletedProcess(cmd, 0, "HEAD\n", "")
+
+        with mock.patch.object(github_bus, "run_command", side_effect=mock_cmd):
+            self.assertIsNone(github_bus.current_branch())
+
+    def test_branch_exists_returns_false_for_head(self) -> None:
+        self.assertFalse(github_bus.branch_exists("HEAD"))
+        self.assertFalse(github_bus.branch_exists("origin/HEAD"))
+
+    def test_review_branch_for_task_rejects_head_branch_name(self) -> None:
+        config = {"branch_workflow": {"task_branch_prefix": "task/"}}
+        status = {"agents": [{"name": "Codex", "branch": "HEAD"}]}
+        task = {"id": "ODP-FOO-001", "owner": "Codex", "branch": "HEAD"}
+
+        with mock.patch.object(github_bus, "current_branch", return_value=None):
+            found_branch = github_bus.review_branch_for_task(config, status, task)
+
+        self.assertIsNone(found_branch)
+
 
 class DetachedHeadBranchResolutionTests(unittest.TestCase):
     """A detached worktree has no branch, and must not claim one.
