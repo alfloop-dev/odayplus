@@ -207,25 +207,42 @@ def current_branch() -> str | None:
 
 def branch_exists(branch: str) -> bool:
     proc = run_command(["git", "show-ref", "--verify", f"refs/heads/{branch}"], cwd=ROOT)
-    return proc.returncode == 0
+    if proc.returncode == 0:
+        return True
+    proc = run_command(["git", "show-ref", "--verify", f"refs/remotes/origin/{branch}"], cwd=ROOT)
+    if proc.returncode == 0:
+        return True
+    return remote_branch_exists(branch)
 
 
 def branch_head_sha(branch: str) -> str | None:
-    proc = run_command(["git", "rev-parse", branch], cwd=ROOT)
-    if proc.returncode != 0:
-        return None
-    sha = (proc.stdout or '').strip()
-    return sha or None
+    # Review PRs concern the published branch, so a stale local branch must not
+    # hide the remote-tracking ref that GitHub will actually review.
+    for ref in (f"refs/remotes/origin/{branch}", f"origin/{branch}", branch):
+        proc = run_command(["git", "rev-parse", ref], cwd=ROOT)
+        if proc.returncode == 0:
+            sha = (proc.stdout or "").strip()
+            if sha:
+                return sha
+    return None
 
 
 def branch_has_diff(base: str, branch: str) -> bool:
-    proc = run_command(["git", "rev-list", "--count", f"{base}..{branch}"], cwd=ROOT)
-    if proc.returncode != 0:
-        return False
-    try:
-        return int((proc.stdout or '0').strip() or '0') > 0
-    except ValueError:
-        return False
+    # Keep base and head in the same namespace. Mixing a local base with a
+    # published head (or vice versa) can manufacture or suppress a PR delta.
+    ref_pairs = [
+        (f"refs/remotes/origin/{base}", f"refs/remotes/origin/{branch}"),
+        (f"origin/{base}", f"origin/{branch}"),
+        (base, branch),
+    ]
+    for base_ref, branch_ref in ref_pairs:
+        proc = run_command(["git", "rev-list", "--count", f"{base_ref}..{branch_ref}"], cwd=ROOT)
+        if proc.returncode == 0:
+            try:
+                return int((proc.stdout or "0").strip() or "0") > 0
+            except ValueError:
+                pass
+    return False
 
 
 def remote_branch_exists(branch: str, remote: str = "origin") -> bool:
@@ -386,22 +403,54 @@ def edit_label_args(labels: list[str]) -> list[str]:
     return args
 
 
+def task_id_matches_branch(task_id: str, branch: str) -> bool:
+    if not task_id or not branch:
+        return False
+    task_ref = task_id.strip("/").lower().replace("_", "-")
+    branch_ref = branch.strip("/").lower().replace("_", "-")
+    return branch_ref == task_ref or branch_ref.endswith(f"/{task_ref}")
+
+
 def review_branch_for_task(config: dict[str, Any], status: dict[str, Any], task: dict[str, Any]) -> str | None:
+    task_id = str(task.get("id") or "").strip()
     meta = task.get("github") or {}
-    explicit = meta.get("head_branch")
-    if explicit and branch_exists(str(explicit)):
+    explicit = meta.get("head_branch") or task.get("branch")
+    if explicit and (not task_id or task_id_matches_branch(task_id, str(explicit))) and branch_exists(str(explicit)):
         return str(explicit)
 
+    prefix = str((config.get("branch_workflow", {}) or {}).get("task_branch_prefix") or "task/")
+
     owner = task.get("owner")
-    for agent in status.get("agents", []):
-        if agent.get("name") == owner:
-            branch = agent.get("branch")
-            if branch and branch_exists(str(branch)):
-                return str(branch)
+    agent_branch: str | None = None
+    if owner:
+        for agent in status.get("agents", []):
+            if agent.get("name") == owner:
+                b = agent.get("branch")
+                if b:
+                    agent_branch = str(b)
+                break
+
+    # Canonical per-task refs are immutable task identity. Resolve them before
+    # mutable agent registration, including related sidecar or prefix branches.
+    if task_id:
+        candidates = [
+            f"{prefix}{task_id}",
+            f"{prefix}{task_id.lower()}",
+            f"{prefix}{task_id.lower().replace('_', '-')}",
+        ]
+        for candidate in candidates:
+            if branch_exists(candidate):
+                return candidate
+
+    # An exact task-matching agent branch is useful when a deployment uses a
+    # non-canonical prefix, but substring-related task IDs are not equivalent.
+    if agent_branch and (not task_id or task_id_matches_branch(task_id, agent_branch)) and branch_exists(agent_branch):
+        return agent_branch
 
     branch = current_branch()
-    if branch and branch != default_branch(config):
+    if branch and branch != default_branch(config) and (not task_id or task_id_matches_branch(task_id, branch)) and branch_exists(branch):
         return branch
+
     return None
 
 
@@ -468,6 +517,38 @@ def issue_mutation_with_label_fallback(command: list[str]) -> subprocess.Complet
                 continue
             rebuilt.append(item)
         return run_gh(rebuilt)
+
+
+def edit_pull_request_rest(repo: str, number: int, title: str, body: str, labels: list[str]) -> None:
+    """Update a review-bus PR without the deprecated Projects Classic query.
+
+    ``gh pr edit`` still asks GraphQL for ``projectCards`` before applying an
+    otherwise unrelated title/body edit. GitHub now rejects that field, which
+    leaves the review bus stale after an exact-head re-review. The REST pull
+    request and issue-label endpoints avoid that deprecated query entirely.
+    """
+    run_gh(
+        [
+            "api",
+            "--method",
+            "PATCH",
+            f"repos/{repo}/pulls/{number}",
+            "--raw-field",
+            f"title={title}",
+            "--raw-field",
+            f"body={body}",
+        ]
+    )
+    if not labels:
+        return
+    label_args = ["api", "--method", "POST", f"repos/{repo}/issues/{number}/labels"]
+    for label in labels:
+        label_args.extend(["--raw-field", f"labels[]={label}"])
+    try:
+        run_gh(label_args)
+    except GitHubBusError as exc:
+        if "label" not in str(exc).lower():
+            raise
 
 
 def upsert_ops_issue(config: dict[str, Any], bus_state: dict[str, Any], repo: str, task: dict[str, Any], reason: str, details: str) -> bool:
@@ -747,13 +828,13 @@ def upsert_review_pr(config: dict[str, Any], bus_state: dict[str, Any], status: 
     try:
         if pr_ref and pr_ref.get("number"):
             number = int(pr_ref["number"])
-            run_gh(["pr", "edit", str(number), "--repo", repo, "--title", title, "--body-file", str(body_file), *edit_label_args(labels)])
+            edit_pull_request_rest(repo, number, title, body, labels)
             pr = dict(pr_ref)
         else:
             found = find_existing_pr(repo, task["id"], branch)
             if found:
                 number = int(found["number"])
-                run_gh(["pr", "edit", str(number), "--repo", repo, "--title", title, "--body-file", str(body_file), *edit_label_args(labels)])
+                edit_pull_request_rest(repo, number, title, body, labels)
                 pr = {"number": number, "url": found.get("url"), "title": title, "headRefName": branch}
             else:
                 create_args = ["pr", "create", "--repo", repo, "--draft", "--title", title, "--body-file", str(body_file), "--base", base, "--head", branch]
