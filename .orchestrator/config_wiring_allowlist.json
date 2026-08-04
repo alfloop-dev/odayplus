@@ -37,8 +37,6 @@
     "branch_workflow.promote.promote_pr_label": "See branch_workflow.promote.target_branch.",
     "branch_workflow.promote.auto_merge": "See branch_workflow.promote.target_branch.",
     "branch_workflow.promote.auto_revert_on_red_main_ci": "See branch_workflow.promote.target_branch.",
-    "branch_workflow.task_pr": "Container for the task PR policy below.",
-    "branch_workflow.task_pr.target_branch": "PR #611 wires this into github_bus.task_pr_base_branch(). Delete this entry when #611 merges -- the guard fails until it is removed.",
     "branch_workflow.task_pr.auto_merge": "No code auto-merges task PRs; merges happen through ReviewBus approval or by hand.",
     "branch_workflow.task_pr.required_status_checks": "Required checks are defined by GitHub branch protection on dev, not from config. The two lists are maintained independently and already differ.",
     "branch_workflow.task_pr.max_open_hours": "Nothing tracks how long a task PR stays open. #588 sat for over a day and #589 for two days with no signal.",
