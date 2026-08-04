@@ -63,6 +63,8 @@ def load_test_config() -> dict[str, Any]:
     # common.config_path() resolves them against the checked-out code root, not
     # PANTHEON_STATUS_ROOT. Rewrite the complete coordination path table to the
     # module-scoped temporary root before any Supervisor helper can persist.
+    config.setdefault("ready_dispatcher", {})["disabled_agents"] = []
+
     isolated_paths: dict[str, str] = {}
     for key, value in (config.get("paths") or {}).items():
         raw_path = Path(str(value))
@@ -11460,6 +11462,7 @@ class SupervisorFailureLoopCoverageTests(unittest.TestCase):
         """R1: Prove concurrent claim/main-loop state save preserves live worker, reconciles event, and avoids double-dispatch."""
         import tempfile
         from pathlib import Path
+        ai_status.clear_ai_status_caches()
         with tempfile.TemporaryDirectory() as tmpdir:
             tmp_root = Path(tmpdir)
             cfg = deepcopy(self.config)
@@ -11484,6 +11487,9 @@ class SupervisorFailureLoopCoverageTests(unittest.TestCase):
                 "provider_capabilities": tmp_root / ".orchestrator" / "provider_capabilities.json",
                 "claude_mcp_config": tmp_root / ".orchestrator" / "claude-approval-broker.mcp.json",
             }
+            (tmp_root / ".orchestrator").mkdir(parents=True, exist_ok=True)
+            (tmp_root / ".orchestrator" / "event-queue.jsonl").write_text("", encoding="utf-8")
+            (tmp_root / ".orchestrator" / "state.json").write_text("{}", encoding="utf-8")
             cfg["paths"] = {key: str(value) for key, value in isolated_paths.items()}
             cfg.setdefault("worker_worktrees", {})["root"] = str(tmp_root / "worker-worktrees")
             cfg.setdefault("permission_broker", {})["allowed_workspace_roots"] = [str(tmp_root)]
@@ -11496,17 +11502,18 @@ class SupervisorFailureLoopCoverageTests(unittest.TestCase):
                         "id": "ODP-CONC-001",
                         "status": "todo",
                         "owner": "Antigravity4",
-                        "reviewer": "Codex6",
+                        "reviewer": "Codex",
                     }
                 ]
             }
 
             initial_state = supervisor.load_runtime_state(cfg)
+            initial_state["seen_event_keys"] = {}
             with (
                 mock.patch.object(supervisor, "load_status", return_value=status_todo),
                 mock.patch.object(supervisor, "scan_live_worker_pids_by_agent", return_value={}),
             ):
-                supervisor.dispatch_ready_tasks(cfg, initial_state, {})
+                supervisor.dispatch_ready_tasks(cfg, initial_state, {}, agent_ids_override=["antigravity4"])
             supervisor.save_runtime_state(cfg, initial_state)
 
             main_loop_state = supervisor.load_runtime_state(cfg)

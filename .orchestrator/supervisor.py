@@ -10023,9 +10023,13 @@ def dispatch_priority_for_task(
     task_status = str(task.get("status") or "").lower()
     tmap = task_map if task_map is not None else {str(task.get("id") or ""): task}
 
-    if task_status in review_statuses and task.get(reviewer_field) == agent_name:
+    norm_target = normalize_agent_id(agent_name or "")
+    task_owner = normalize_agent_id(str(task.get(owner_field) or ""))
+    task_reviewer = normalize_agent_id(str(task.get(reviewer_field) or ""))
+
+    if task_status in review_statuses and task_reviewer == norm_target:
         return 0
-    if task_status in finalize_statuses and task.get(owner_field) == agent_name:
+    if task_status in finalize_statuses and task_owner == norm_target:
         approved_head = task.get("approved_head")
         # B22: a missing approved_head is not "no freeze configured", it is a task
         # whose reviewed commit is unknown. Fail closed like every other branch of
@@ -10049,13 +10053,13 @@ def dispatch_priority_for_task(
         return 1
     if (
         task_status == "in_progress"
-        and task.get(owner_field) == agent_name
+        and task_owner == norm_target
         and dependencies_satisfied(task, tmap, dependency_done_statuses)
     ):
         return 2
     if (
         task_status == "todo"
-        and task.get(owner_field) == agent_name
+        and task_owner == norm_target
         and dependencies_satisfied(task, tmap, dependency_done_statuses)
     ):
         return 3
@@ -10736,23 +10740,25 @@ def dispatch_ready_tasks(
                 )
             )
 
+            norm_target = normalize_agent_id(target_agent or "")
+            norm_task_owner = normalize_agent_id(str(task_owner or ""))
+            norm_task_reviewer = normalize_agent_id(str(task_reviewer or ""))
+
             if (task_id, agent_id) in active_task_agents or (task_id, agent_id) in pending_task_agents:
                 continue
 
             reason = None
             priority = None
-            if task_status in review_statuses and task_reviewer == target_agent:
+            if task_status in review_statuses and norm_task_reviewer == norm_target:
                 # The status CLI rejects identical owner/reviewer assignments,
                 # but dispatch must still fail closed if a stale or externally
                 # edited snapshot reaches the Supervisor. Never spend a worker
                 # slot on an approval that would be an owner self-review.
-                if normalize_agent_id(str(task_owner or "")) == normalize_agent_id(
-                    str(task_reviewer or "")
-                ):
+                if norm_task_owner == norm_task_reviewer:
                     continue
                 reason = "review_ready_dispatch"
                 priority = 0
-            elif task_status in finalize_statuses and task_owner == target_agent:
+            elif task_status in finalize_statuses and norm_task_owner == norm_target:
                 approved_head = task.get("approved_head")
                 current_head = None
                 try:
@@ -10905,10 +10911,10 @@ def dispatch_ready_tasks(
 
                 reason = "owned_finalize_dispatch"
                 priority = 1
-            elif task_status == "in_progress" and task_owner == target_agent and dependencies_satisfied(task, task_map, dependency_done_statuses):
+            elif task_status == "in_progress" and norm_task_owner == norm_target and dependencies_satisfied(task, task_map, dependency_done_statuses):
                 reason = "owned_in_progress_dispatch"
                 priority = 2
-            elif task_status == "todo" and task_owner == target_agent and dependencies_satisfied(task, task_map, dependency_done_statuses):
+            elif task_status == "todo" and norm_task_owner == norm_target and dependencies_satisfied(task, task_map, dependency_done_statuses):
                 reason = "owned_ready_dispatch"
                 priority = 3
 

@@ -92,3 +92,85 @@ def test_require_watchdog_fails_when_probe_is_stale(tmp_path: Path) -> None:
     assert report["healthy"] is False
     failed = {item["name"] for item in report["checks"] if not item["ok"]}
     assert "watchdog_probe_fresh" in failed
+
+
+def test_health_checks_dashboard_when_present_and_fresh(tmp_path: Path) -> None:
+    repo = tmp_path
+    now = datetime(2026, 6, 6, 6, 30, tzinfo=UTC)
+    write_json(
+        repo / ".orchestrator" / "config.json",
+        {
+            "paths": {
+                "state_file": ".orchestrator/state.json",
+                "status_file": ".orchestrator/ai-status.json",
+            },
+            "supervisor": {"poll_interval_seconds": 300},
+        },
+    )
+    write_json(
+        repo / ".orchestrator" / "state.json",
+        {
+            "supervisor": {
+                "last_heartbeat_at": "2026-06-06T06:29:50Z",
+                "lifecycle": "running",
+                "pid": 12345,
+            }
+        },
+    )
+    write_json(
+        repo / ".orchestrator" / "dashboard-bundle.json",
+        {
+            "generated_at": "2026-06-06T06:29:58Z",
+            "runtime_summary": {"supervisor_pid": 12345},
+        },
+    )
+    write_json(
+        repo / ".orchestrator" / "ai-status.json",
+        {"runtime_summary": {"supervisor_pid": 12345}},
+    )
+
+    report = evaluate_runtime_health(repo, now=now)
+
+    # Supervisor process won't exist in test env, but dashboard checks should still be evaluated.
+    assert report["healthy"] is False
+    names = {item["name"] for item in report["checks"]}
+    assert {
+        "dashboard_bundle_present",
+        "dashboard_bundle_valid",
+        "dashboard_bundle_fresh",
+        "dashboard_supervisor_pid_matches",
+    }.issubset(names)
+    assert report["dashboard"]["present"] is True
+
+
+def test_require_dashboard_fails_when_missing(tmp_path: Path) -> None:
+    repo = tmp_path
+    now = datetime(2026, 6, 6, 6, 30, tzinfo=UTC)
+    write_json(
+        repo / ".orchestrator" / "config.json",
+        {
+            "paths": {"state_file": ".orchestrator/state.json", "status_file": ".orchestrator/ai-status.json"},
+            "supervisor": {"poll_interval_seconds": 300},
+        },
+    )
+    write_json(
+        repo / ".orchestrator" / "state.json",
+        {
+            "supervisor": {
+                "last_heartbeat_at": "2026-06-06T06:29:50Z",
+                "lifecycle": "running",
+                "pid": 6789,
+            }
+        },
+    )
+
+    report = evaluate_runtime_health(repo, now=now, require_dashboard=True)
+
+    assert report["healthy"] is False
+    failed = {item["name"] for item in report["checks"] if not item["ok"]}
+    assert {
+        "dashboard_bundle_present",
+        "dashboard_bundle_valid",
+        "dashboard_bundle_fresh",
+        "dashboard_supervisor_pid_matches",
+    }.issubset(failed)
