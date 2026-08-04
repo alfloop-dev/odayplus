@@ -23,6 +23,15 @@ CODEX_INHERITED_SESSION_ENV = (
 )
 
 
+def _normalize_codex_model_name(model: str) -> str:
+    """Map historical aliases to supported Codex model identifiers."""
+    value = str(model or "").strip()
+    normalized = value.lower()
+    if normalized in {"codex-5.3-spark", "5.3-spark", "codex-5.3"}:
+        return "gpt-5.3-codex-spark"
+    return value
+
+
 class CodexAdapter(BaseAdapter):
     name = "codex"
 
@@ -90,6 +99,9 @@ class CodexAdapter(BaseAdapter):
             codex_settings.get("sandbox_mode", "workspace-write"),
             "--skip-git-repo-check",
         ]
+        model = _normalize_codex_model_name(codex_settings.get("model"))
+        if model:
+            command.extend(["--model", model])
         if codex_settings.get("dangerously_bypass"):
             command.append("--dangerously-bypass-approvals-and-sandbox")
         command.append(request.message)

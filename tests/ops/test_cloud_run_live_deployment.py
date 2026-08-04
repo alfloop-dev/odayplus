@@ -2220,7 +2220,11 @@ def test_scheduler_trigger_restore_uses_recorded_target_and_schedule(
     fake_bin.mkdir()
     fake_gcloud = fake_bin / "gcloud"
     fake_gcloud.write_text(
-        '#!/usr/bin/env bash\nprintf \'%s\\n\' "$*" >>"${GCLOUD_LOG}"\n',
+        '#!/usr/bin/env bash\n'
+        'printf \'%s\\n\' "$*" >>"${GCLOUD_LOG}"\n'
+        'if [[ "$*" == *"scheduler jobs describe"* && "$*" == *"--format=json"* ]]; then\n'
+        f'  cat "{snapshot}"\n'
+        'fi\n',
         encoding="utf-8",
     )
     fake_gcloud.chmod(0o755)
@@ -2251,8 +2255,436 @@ def test_scheduler_trigger_restore_uses_recorded_target_and_schedule(
     assert "/jobs/old-job:run" in call
 
 
+def test_scheduler_trigger_restore_supports_oidc_token(tmp_path: Path) -> None:
+    snapshot = tmp_path / "scheduler.json"
+    snapshot.write_text(
+        json.dumps(
+            {
+                "schedule": "0 * * * *",
+                "timeZone": "Asia/Taipei",
+                "state": "ENABLED",
+                "httpTarget": {
+                    "uri": "https://run.googleapis.com/v2/projects/p/locations/r/jobs/worker-job:run",
+                    "httpMethod": "POST",
+                    "headers": {"Content-Type": "application/json"},
+                    "body": "e30=",
+                    "oidcToken": {
+                        "serviceAccountEmail": "scheduler-sa@example.test",
+                        "audience": "https://run.googleapis.com/v2/projects/p/locations/r/jobs/worker-job:run",
+                    },
+                },
+                "retryConfig": {
+                    "maxRetryAttempts": 3,
+                    "maxRetryDuration": "1800s",
+                    "minBackoffDuration": "10s",
+                    "maxBackoffDuration": "600s",
+                    "maxDoublings": 3,
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    gcloud_log = tmp_path / "gcloud.log"
+    fake_bin = tmp_path / "bin"
+    fake_bin.mkdir()
+    fake_gcloud = fake_bin / "gcloud"
+    fake_gcloud.write_text(
+        '#!/usr/bin/env bash\n'
+        'printf \'%s\\n\' "$*" >>"${GCLOUD_LOG}"\n'
+        'if [[ "$*" == *"scheduler jobs describe"* && "$*" == *"--format=json"* ]]; then\n'
+        f'  cat "{snapshot}"\n'
+        'fi\n',
+        encoding="utf-8",
+    )
+    fake_gcloud.chmod(0o755)
+    command = (
+        f'source "{TRAFFIC_SHELL_HELPER}"\n'
+        f'restore_scheduler_trigger "worker-trigger" "{snapshot}"\n'
+    )
+    result = subprocess.run(
+        ["bash", "-c", command],
+        cwd=ROOT,
+        env={
+            **os.environ,
+            "PATH": f"{fake_bin}:{os.environ['PATH']}",
+            "GCLOUD_LOG": str(gcloud_log),
+            "GCP_PROJECT": "test-project",
+            "GCP_REGION": "test-region",
+            "ODP_SCHEDULER_HELPER": str(SCHEDULER_HELPER_PATH),
+        },
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+
+    assert result.returncode == 0, result.stderr
+    call = gcloud_log.read_text(encoding="utf-8")
+    assert "--oidc-service-account-email=scheduler-sa@example.test" in call
+    assert "--oidc-token-audience=https://run.googleapis.com/v2/projects/p/locations/r/jobs/worker-job:run" in call
+    assert "--max-retry-attempts=3" in call
+
+
+def test_scheduler_trigger_restore_handles_paused_state(tmp_path: Path) -> None:
+    snapshot = tmp_path / "scheduler.json"
+    snapshot.write_text(
+        json.dumps(
+            {
+                "schedule": "0 12 * * *",
+                "timeZone": "UTC",
+                "state": "PAUSED",
+                "httpTarget": {
+                    "uri": "https://run.googleapis.com/v2/projects/p/locations/r/jobs/scheduler-job:run",
+                    "oidcToken": {
+                        "serviceAccountEmail": "scheduler-sa@example.test",
+                    },
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    gcloud_log = tmp_path / "gcloud.log"
+    fake_bin = tmp_path / "bin"
+    fake_bin.mkdir()
+    fake_gcloud = fake_bin / "gcloud"
+    fake_gcloud.write_text(
+        '#!/usr/bin/env bash\n'
+        'printf \'%s\\n\' "$*" >>"${GCLOUD_LOG}"\n'
+        'if [[ "$*" == *"scheduler jobs describe"* && "$*" == *"--format=json"* ]]; then\n'
+        f'  cat "{snapshot}"\n'
+        'fi\n',
+        encoding="utf-8",
+    )
+    fake_gcloud.chmod(0o755)
+    command = (
+        f'source "{TRAFFIC_SHELL_HELPER}"\n'
+        f'restore_scheduler_trigger "paused-trigger" "{snapshot}"\n'
+    )
+    result = subprocess.run(
+        ["bash", "-c", command],
+        cwd=ROOT,
+        env={
+            **os.environ,
+            "PATH": f"{fake_bin}:{os.environ['PATH']}",
+            "GCLOUD_LOG": str(gcloud_log),
+            "GCP_PROJECT": "test-project",
+            "GCP_REGION": "test-region",
+            "ODP_SCHEDULER_HELPER": str(SCHEDULER_HELPER_PATH),
+        },
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+
+    assert result.returncode == 0, result.stderr
+    call = gcloud_log.read_text(encoding="utf-8")
+    assert "scheduler jobs pause paused-trigger" in call
+
+
+def test_scheduler_trigger_restore_deletes_absent_pre_deploy_trigger(tmp_path: Path) -> None:
+    snapshot = tmp_path / "scheduler.json"
+    snapshot.write_text('{"exists": false}\n', encoding="utf-8")
+    gcloud_log = tmp_path / "gcloud.log"
+    fake_bin = tmp_path / "bin"
+    fake_bin.mkdir()
+    fake_gcloud = fake_bin / "gcloud"
+    fake_gcloud.write_text(
+        '#!/usr/bin/env bash\nprintf \'%s\\n\' "$*" >>"${GCLOUD_LOG}"\n',
+        encoding="utf-8",
+    )
+    fake_gcloud.chmod(0o755)
+    command = (
+        f'source "{TRAFFIC_SHELL_HELPER}"\n'
+        f'restore_scheduler_trigger "absent-trigger" "{snapshot}"\n'
+    )
+    result = subprocess.run(
+        ["bash", "-c", command],
+        cwd=ROOT,
+        env={
+            **os.environ,
+            "PATH": f"{fake_bin}:{os.environ['PATH']}",
+            "GCLOUD_LOG": str(gcloud_log),
+            "GCP_PROJECT": "test-project",
+            "GCP_REGION": "test-region",
+            "ODP_SCHEDULER_HELPER": str(SCHEDULER_HELPER_PATH),
+        },
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+
+    assert result.returncode == 0, result.stderr
+    call = gcloud_log.read_text(encoding="utf-8")
+    assert "scheduler jobs delete absent-trigger" in call
+
+
+def test_scheduler_trigger_restore_partial_failure_continues_and_reports_diagnostics(
+    tmp_path: Path,
+) -> None:
+    snap1 = tmp_path / "snap1.json"
+    snap1.write_text(
+        json.dumps(
+            {
+                "schedule": "0 * * * *",
+                "timeZone": "UTC",
+                "httpTarget": {
+                    "uri": "https://example.test/1",
+                    "oidcToken": {"serviceAccountEmail": "sa1@example.test"},
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    snap2 = tmp_path / "snap2.json"
+    snap2.write_text(
+        json.dumps(
+            {
+                "schedule": "0 * * * *",
+                "timeZone": "UTC",
+                "httpTarget": {
+                    "uri": "https://example.test/2",
+                    "oidcToken": {"serviceAccountEmail": "sa2@example.test"},
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    gcloud_log = tmp_path / "gcloud.log"
+    fake_bin = tmp_path / "bin"
+    fake_bin.mkdir()
+    fake_gcloud = fake_bin / "gcloud"
+    fake_gcloud.write_text(
+        '#!/usr/bin/env bash\n'
+        'if [[ "$*" == *"trigger1"* && "$*" == *"update"* ]]; then\n'
+        '  echo "Simulated error on trigger1" >&2\n'
+        '  exit 1\n'
+        'fi\n'
+        'printf \'%s\\n\' "$*" >>"${GCLOUD_LOG}"\n'
+        'if [[ "$*" == *"scheduler jobs describe"* && "$*" == *"--format=json"* ]]; then\n'
+        '  if [[ "$*" == *"trigger2"* ]]; then\n'
+        f'    cat "{snap2}"\n'
+        '  else\n'
+        f'    cat "{snap1}"\n'
+        '  fi\n'
+        'fi\n',
+        encoding="utf-8",
+    )
+    fake_gcloud.chmod(0o755)
+    command = (
+        f'source "{TRAFFIC_SHELL_HELPER}"\n'
+        f'rollback_status=0\n'
+        f'restore_scheduler_trigger "trigger1" "{snap1}" || rollback_status=$?\n'
+        f'restore_scheduler_trigger "trigger2" "{snap2}" || rollback_status=$?\n'
+        f'exit "${{rollback_status}}"\n'
+    )
+    result = subprocess.run(
+        ["bash", "-c", command],
+        cwd=ROOT,
+        env={
+            **os.environ,
+            "PATH": f"{fake_bin}:{os.environ['PATH']}",
+            "GCLOUD_LOG": str(gcloud_log),
+            "GCP_PROJECT": "test-project",
+            "GCP_REGION": "test-region",
+            "ODP_SCHEDULER_HELPER": str(SCHEDULER_HELPER_PATH),
+        },
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+
+    assert result.returncode != 0
+    assert "Error: failed to update Cloud Scheduler trigger 'trigger1'." in result.stderr
+    call = gcloud_log.read_text(encoding="utf-8")
+    assert "trigger2" in call
+
+
+def test_scheduler_trigger_restore_fails_closed_when_readback_describe_fails(
+    tmp_path: Path,
+) -> None:
+    snapshot = tmp_path / "scheduler.json"
+    snapshot.write_text(
+        json.dumps(
+            {
+                "schedule": "0 * * * *",
+                "timeZone": "Asia/Taipei",
+                "httpTarget": {
+                    "uri": "https://example.test/job:run",
+                    "oidcToken": {"serviceAccountEmail": "sa@example.test"},
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    gcloud_log = tmp_path / "gcloud.log"
+    fake_bin = tmp_path / "bin"
+    fake_bin.mkdir()
+    fake_gcloud = fake_bin / "gcloud"
+    fake_gcloud.write_text(
+        '#!/usr/bin/env bash\n'
+        'if [[ "$*" == *"scheduler jobs describe"* && "$*" == *"--format=json"* ]]; then\n'
+        '  echo "gcloud describe error" >&2\n'
+        '  exit 1\n'
+        'fi\n'
+        'printf \'%s\\n\' "$*" >>"${GCLOUD_LOG}"\n',
+        encoding="utf-8",
+    )
+    fake_gcloud.chmod(0o755)
+    command = (
+        f'source "{TRAFFIC_SHELL_HELPER}"\n'
+        f'restore_scheduler_trigger "worker-trigger" "{snapshot}"\n'
+    )
+    result = subprocess.run(
+        ["bash", "-c", command],
+        cwd=ROOT,
+        env={
+            **os.environ,
+            "PATH": f"{fake_bin}:{os.environ['PATH']}",
+            "GCLOUD_LOG": str(gcloud_log),
+            "GCP_PROJECT": "test-project",
+            "GCP_REGION": "test-region",
+            "ODP_SCHEDULER_HELPER": str(SCHEDULER_HELPER_PATH),
+        },
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+
+    assert result.returncode != 0
+    assert "Error: failed to capture or validate readback snapshot for Cloud Scheduler trigger 'worker-trigger'." in result.stderr
+
+
+def test_scheduler_trigger_restore_fails_closed_when_readback_drift_detected(
+    tmp_path: Path,
+) -> None:
+    snapshot = tmp_path / "scheduler.json"
+    snapshot.write_text(
+        json.dumps(
+            {
+                "schedule": "0 * * * *",
+                "timeZone": "Asia/Taipei",
+                "httpTarget": {
+                    "uri": "https://example.test/job:run",
+                    "oidcToken": {"serviceAccountEmail": "sa@example.test"},
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    drifted_snapshot = tmp_path / "drifted.json"
+    drifted_snapshot.write_text(
+        json.dumps(
+            {
+                "schedule": "0 * * * *",
+                "timeZone": "UTC",  # drifted timeZone
+                "httpTarget": {
+                    "uri": "https://example.test/job:run",
+                    "oidcToken": {"serviceAccountEmail": "sa@example.test"},
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    gcloud_log = tmp_path / "gcloud.log"
+    fake_bin = tmp_path / "bin"
+    fake_bin.mkdir()
+    fake_gcloud = fake_bin / "gcloud"
+    fake_gcloud.write_text(
+        '#!/usr/bin/env bash\n'
+        'if [[ "$*" == *"scheduler jobs describe"* && "$*" == *"--format=json"* ]]; then\n'
+        f'  cat "{drifted_snapshot}"\n'
+        '  exit 0\n'
+        'fi\n'
+        'printf \'%s\\n\' "$*" >>"${GCLOUD_LOG}"\n',
+        encoding="utf-8",
+    )
+    fake_gcloud.chmod(0o755)
+    command = (
+        f'source "{TRAFFIC_SHELL_HELPER}"\n'
+        f'restore_scheduler_trigger "worker-trigger" "{snapshot}"\n'
+    )
+    result = subprocess.run(
+        ["bash", "-c", command],
+        cwd=ROOT,
+        env={
+            **os.environ,
+            "PATH": f"{fake_bin}:{os.environ['PATH']}",
+            "GCLOUD_LOG": str(gcloud_log),
+            "GCP_PROJECT": "test-project",
+            "GCP_REGION": "test-region",
+            "ODP_SCHEDULER_HELPER": str(SCHEDULER_HELPER_PATH),
+        },
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+
+    assert result.returncode != 0
+    assert "Error: trigger 'worker-trigger' readback configuration drift detected." in result.stderr
+
+
+
+def test_scheduler_trigger_compare_verifies_redacted_equality_and_detects_drift() -> None:
+    spec = importlib.util.spec_from_file_location("cloud_scheduler_trigger", SCHEDULER_HELPER_PATH)
+    assert spec and spec.loader
+    helper = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(helper)
+
+    before = {
+        "userUpdateTime": "2026-08-01T10:00:00Z",
+        "schedule": "0 * * * *",
+        "timeZone": "Asia/Taipei",
+        "state": "ENABLED",
+        "httpTarget": {
+            "uri": "https://run.googleapis.com/v2/projects/p/locations/r/jobs/j:run",
+            "httpMethod": "POST",
+            "headers": {"Content-Type": "application/json"},
+            "body": "e30=",
+            "oidcToken": {
+                "serviceAccountEmail": "sa@example.test",
+                "audience": "https://run.googleapis.com/v2/projects/p/locations/r/jobs/j:run",
+            },
+        },
+    }
+    after_same = {
+        "userUpdateTime": "2026-08-02T15:20:00Z",
+        "schedule": "0 * * * *",
+        "timeZone": "Asia/Taipei",
+        "state": "ENABLED",
+        "httpTarget": {
+            "uri": "https://run.googleapis.com/v2/projects/p/locations/r/jobs/j:run",
+            "httpMethod": "POST",
+            "headers": {"Content-Type": "application/json"},
+            "body": "e30=",
+            "oidcToken": {
+                "serviceAccountEmail": "sa@example.test",
+                "audience": "https://run.googleapis.com/v2/projects/p/locations/r/jobs/j:run",
+            },
+        },
+    }
+    after_drift = {
+        "userUpdateTime": "2026-08-02T15:20:00Z",
+        "schedule": "0 * * * *",
+        "timeZone": "Asia/Taipei",
+        "state": "ENABLED",
+        "httpTarget": {
+            "uri": "https://run.googleapis.com/v2/projects/p/locations/r/jobs/DIFFERENT-job:run",
+            "httpMethod": "POST",
+            "headers": {"Content-Type": "application/json"},
+            "body": "e30=",
+            "oidcToken": {
+                "serviceAccountEmail": "sa@example.test",
+                "audience": "https://run.googleapis.com/v2/projects/p/locations/r/jobs/j:run",
+            },
+        },
+    }
+
+    assert helper.compare_snapshots(before, after_same) is True
+    assert helper.compare_snapshots(before, after_drift) is False
+
+
 def test_web_image_carries_release_and_live_binding_metadata() -> None:
     dockerfile = (ROOT / "infra/docker/web.Dockerfile").read_text(encoding="utf-8")
+
 
     for token in (
         "ARG ODAY_RELEASE_SHA",
@@ -4810,3 +5242,86 @@ def test_real_app_platform_health_job_queue_contract(tmp_path: Path) -> None:
     assert not validator.is_valid_job_queue_health(bare_queue_text), (
         f"bare 'healthy' must fail is_valid_job_queue_health; got: {bare_queue_text!r}"
     )
+
+
+def test_real_app_health_data_mode_matches_unchanged_deploy_validator(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Real API payloads satisfy the direct live mode contract without gate changes."""
+    from fastapi.testclient import TestClient
+
+    from apps.api.oday_api.main import create_app
+    from models.shared_ml import MlflowProductionModelRuntime
+    from shared.infrastructure.persistence.factory import _memory_bundle
+    from tests.integration.test_operator_live_provenance_health import (
+        _live_connectivity_probe,
+        _live_provider,
+        _production_backed_bundle,
+    )
+    from tests.integration.test_production_api_composition import RecordingProductionRuntime
+
+    monkeypatch.setenv("ODP_REQUIRE_LIVE_DATA", "true")
+    monkeypatch.setenv("ODP_PERSISTENCE", "postgresql")
+    monkeypatch.setattr(
+        MlflowProductionModelRuntime,
+        "from_environment",
+        classmethod(lambda _cls, **_kwargs: RecordingProductionRuntime()),
+    )
+    live_bundle = _production_backed_bundle(tmp_path / "health-data-mode.sqlite3")
+    live_app = create_app(
+        persistence=live_bundle,
+        external_provider_validation=_live_provider(),
+        external_provider_connectivity_probe=_live_connectivity_probe,
+    )
+
+    with TestClient(live_app) as client:
+        live_payloads = [
+            client.get("/platform/health").json(),
+            client.get("/readiness").json(),
+        ]
+
+    for payload in live_payloads:
+        assert payload["status"] == "ok"
+        assert payload["data_mode"] == "live"
+        assert validator._declared_data_mode(payload) == "live"
+
+    unavailable_app = create_app(persistence=_memory_bundle())
+    with TestClient(unavailable_app) as client:
+        unavailable_responses = [
+            client.get("/platform/health"),
+            client.get("/readiness"),
+        ]
+
+    for response in unavailable_responses:
+        payload = response.json()
+        assert response.status_code == 503
+        assert payload["status"] == "unhealthy"
+        assert payload["data_mode"] == "unavailable"
+        assert validator._declared_data_mode(payload) == "unavailable"
+
+    monkeypatch.delenv("ODP_REQUIRE_LIVE_DATA")
+    monkeypatch.delenv("ODP_PERSISTENCE")
+    fixture_app = create_app(persistence=_memory_bundle())
+    with TestClient(fixture_app) as client:
+        fixture_payloads = [
+            client.get("/platform/health").json(),
+            client.get("/readiness").json(),
+        ]
+
+    for payload in fixture_payloads:
+        assert payload["status"] == "ok"
+        assert payload["data_mode"] == "fixture"
+        assert validator._declared_data_mode(payload) == "fixture"
+        assert not (
+            payload["status"] == "ok" and validator._declared_data_mode(payload) == "live"
+        )
+
+
+def test_deploy_dev_workflow_documents_smoke_principal_least_privilege_composite_roles() -> None:
+    """ODP-OPERATOR-SMOKE-RBAC-LIVE-001: deploy-dev.yml documents composite least-privilege roles."""
+    text = (ROOT / ".github/workflows/deploy-dev.yml").read_text(encoding="utf-8")
+    assert "ODP-OPERATOR-SMOKE-RBAC-LIVE-001" in text
+    assert "operations_manager" in text
+    assert "model_owner" in text
+    assert "data_owner" in text
