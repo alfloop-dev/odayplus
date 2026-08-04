@@ -1594,23 +1594,66 @@ def pull_request_status_for_branch(
     branch: str,
     repository_slug_value: str | None = None,
 ) -> dict[str, Any] | None:
+    """Look up the PR for a branch, preferring MERGED PRs.
+
+    ``gh pr view <branch>`` returns whichever PR was most recently updated, which
+    can be a CLOSED ReviewBus PR against ``main`` instead of the correctly MERGED
+    task PR against ``dev``.  When the primary lookup is non-MERGED we fall back to
+    ``gh pr list --head <branch> --state merged`` and return the first MERGED result
+    so that delivery-gate checks are not incorrectly blocked.
+    """
     if not branch or branch == "HEAD":
         return None
     repo_args = ["--repo", repository_slug_value] if repository_slug_value else []
-    return run_gh_json_command(
+    pr_json_fields = (
+        "number,state,mergeStateStatus,mergedAt,mergeCommit,autoMergeRequest,url,"
+        "headRefOid,headRefName,baseRefName,statusCheckRollup"
+    )
+    primary = run_gh_json_command(
         [
             "pr",
             "view",
             branch,
             *repo_args,
             "--json",
-            (
-                "number,state,mergeStateStatus,mergedAt,mergeCommit,autoMergeRequest,url,"
-                "headRefOid,headRefName,baseRefName,statusCheckRollup"
-            ),
+            pr_json_fields,
         ],
         cwd=repository_root,
     )
+    if primary and str(primary.get("state") or "").upper() == "MERGED":
+        return primary
+
+    # Primary lookup returned a non-MERGED PR (e.g. a CLOSED ReviewBus PR against
+    # main).  Try the merged-PR list as a disambiguation fallback.
+    try:
+        list_result = subprocess.run(
+            [
+                get_gh_executable(),
+                "pr",
+                "list",
+                "--head",
+                branch,
+                "--state",
+                "merged",
+                *repo_args,
+                "--json",
+                pr_json_fields,
+            ],
+            cwd=repository_root or ROOT,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        if list_result.returncode == 0 and list_result.stdout.strip():
+            payload = json.loads(list_result.stdout)
+            if isinstance(payload, list) and payload:
+                merged_candidate = payload[0]
+                if isinstance(merged_candidate, dict):
+                    return merged_candidate
+    except (json.JSONDecodeError, Exception):  # noqa: BLE001
+        pass
+
+    return primary
 
 
 _CI_STATUS_CACHE: dict[str, tuple[float, tuple[str | None, str]]] = {}
