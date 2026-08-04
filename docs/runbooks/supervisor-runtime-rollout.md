@@ -1,7 +1,7 @@
 ---
 doc_id: ODP-RUNBOOK-SUPERVISOR-RUNTIME-ROLLOUT
 title: Supervisor Runtime Rollout
-status: precheck-complete-awaiting-execution
+status: executed
 date: 2026-08-04
 language: zh-TW
 owner: "Platform/Ops"
@@ -197,3 +197,68 @@ cp "/home/lupin/oday-plus-supervisor-live/ai-status.json.bak-${STAMP}" \
 在 rollout 具備自動化或至少具備「runtime 落後告警」之前，這個落差會持續累積。
 建議後續建立一個檢查：**runtime HEAD 與 `origin/dev` 的距離超過門檻即告警**，
 這樣落後 126 個 commit 的狀況不會再無聲累積數日。
+
+## 9. 執行記錄（2026-08-04）
+
+### 9.1 主 supervisor — 已完成
+
+```
+before  detached HEAD @ d9c4b474,  落後 origin/dev 126
+after   branch runtime-live @ 7367f37f,  落後 0
+```
+
+服務 `active`、`NRestarts=0`、無 error 日誌。新 supervisor 起來後立即接手佇列中的工作。
+
+備份：`ai-status.json.bak-20260804T131655Z`、
+`ai-task-archive.bak-20260804T131655Z.tgz`、回滾 SHA `d9c4b4740cf8`。
+
+**執行時發現的關鍵事實**：`pantheon-supervisor.service` 是 systemd user service 且
+`Restart=always`。直接 `kill` PID 會在 3 秒後用**舊程式碼**拉回，rollout 等於未發生。
+必須走 `systemctl --user stop/start`。`KillMode=process` 只殺主程序，
+執行中的 worker 得以跑完，不會被中斷。
+
+### 9.2 穩定路徑 — 已改用 symlink
+
+目錄名 `oday-plus-supervisor-runtime-d9c4b474` 在推進後裝的是 `7367f37f`，名稱誤導。
+改名不可行——`oday-plus-supervisor-runtime` 已被一個廢棄的 checkout 佔用
+（450 落後、無程序使用）。
+
+改用 symlink，保留 SHA 命名慣例的同時給 systemd 穩定指向：
+
+```
+oday-plus-supervisor-runtime-current -> oday-plus-supervisor-runtime-<sha>
+```
+
+`pantheon-supervisor.service` 與 `pantheon-runtime-freshness.service` 都已改指 symlink。
+**往後 rollout 只需重指 symlink，不必再編輯 systemd unit。**
+
+### 9.3 定期檢查 — 已啟用
+
+`pantheon-runtime-freshness.timer`（每小時，`Persistent=true`）執行
+`ops/check_runtime_freshness.py`，同時檢查兩個 runtime。
+
+首次執行即抓到真問題（見 §9.4），service 以 `status=1/FAILURE` 收場——
+這正是預期行為：漂移不再無聲。
+
+### 9.4 未處理：watchdog runtime
+
+`pantheon-supervisor-watchdog.service` 指向**另一個** runtime
+`oday-plus-supervisor-runtime-945a8366`，**落後 origin/dev 381 個 commit**，
+且處於 detached HEAD。
+
+**刻意未推進。** 該 checkout 有 6 個未提交的程式碼修改（`supervisor.py` +169/-75、
+`ai_status.py` +68/-4、`supervisor_runtime_health.py` +28/-6、`wakeup.txt` +3/-3）。
+比對後其中 `remote_branch_exists` 在 `origin/dev` **完全不存在**——推進會直接覆蓋掉
+未進版控的工作。
+
+完整 diff 已保全於
+`oday-plus-supervisor-live/watchdog-runtime-uncommitted-20260804.diff`（604 行）。
+
+處理前必須先由知情者判斷那些修改是否仍需要。在那之前，watchdog 持續執行 381 個
+commit 之前的程式碼。
+
+### 9.5 其他堆積的 runtime 目錄
+
+現場另有數個 SHA 命名的 runtime checkout（`f7e76207`、`c4a5c106`、`ed74fbfa`、
+`59b43428`、`4bba7ca3` 等），多數無程序使用。建議建立清理政策，
+否則每次 rollout 都會再留下一個。
