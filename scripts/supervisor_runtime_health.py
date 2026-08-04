@@ -106,6 +106,8 @@ def evaluate_runtime_health(
     max_heartbeat_age: float | None = None,
     require_watchdog: bool = False,
     max_watchdog_age: float = 180.0,
+    require_dashboard: bool = False,
+    max_dashboard_age: float | None = None,
 ) -> dict[str, Any]:
     now = (now or datetime.now(UTC)).astimezone(UTC)
     config_path_resolved = config_path_arg or (repo_root / ".orchestrator" / "config.json")
@@ -158,6 +160,52 @@ def evaluate_runtime_health(
         ),
     ]
 
+    status_path = config_path(repo_root, config, "status_file", "ai-status.json")
+    dashboard_path = status_path.parent / "dashboard-bundle.json"
+    dashboard_exists = dashboard_path.is_file()
+    dashboard_payload = load_json(dashboard_path, default=None)
+    dashboard_valid = isinstance(dashboard_payload, dict)
+    dashboard_summary = (
+        dashboard_payload.get("runtime_summary", {})
+        if dashboard_valid and isinstance(dashboard_payload.get("runtime_summary"), dict)
+        else {}
+    )
+    dashboard_generated = parse_utc_timestamp(
+        dashboard_payload.get("generated_at") if dashboard_valid else None
+    )
+    dashboard_age = (now - dashboard_generated).total_seconds() if dashboard_generated is not None else None
+    if max_dashboard_age is None:
+        max_dashboard_age = max(max_heartbeat_age, float(configured_supervisor.get("poll_interval_seconds", 300.0)) * 3.0)
+    dashboard_pid = dashboard_summary.get("supervisor_pid")
+    dashboard_report = {
+        "path": str(dashboard_path),
+        "present": dashboard_exists,
+        "valid": dashboard_valid,
+        "generated_at": dashboard_generated.isoformat().replace("+00:00", "Z") if dashboard_generated else None,
+        "age_seconds": dashboard_age,
+        "max_age_seconds": max_dashboard_age,
+        "supervisor_pid": dashboard_pid,
+        "runtime_state_pid": supervisor.get("pid"),
+        "pid_file_pid": pid,
+    }
+    # Existing dashboard artifacts are always part of health. The explicit flag
+    # additionally makes a missing artifact a failure for dashboard deployments.
+    if dashboard_exists or require_dashboard:
+        checks.extend(
+            [
+                check("dashboard_bundle_present", dashboard_exists, dashboard_report),
+                check("dashboard_bundle_valid", dashboard_valid, dashboard_report),
+                check("dashboard_bundle_fresh", dashboard_age is not None and dashboard_age <= max_dashboard_age, dashboard_report),
+                check(
+                    "dashboard_supervisor_pid_matches",
+                    dashboard_pid is not None
+                    and dashboard_pid == supervisor.get("pid")
+                    and (pid is None or dashboard_pid == pid),
+                    dashboard_report,
+                ),
+            ]
+        )
+
     watchdog_report: dict[str, Any] | None = None
     if require_watchdog:
         watchdog_settings = config.get("watchdog", {}) if isinstance(config.get("watchdog"), dict) else {}
@@ -201,6 +249,7 @@ def evaluate_runtime_health(
             "lifecycle": supervisor.get("lifecycle"),
             "last_loop_error": supervisor.get("last_loop_error"),
         },
+        "dashboard": dashboard_report,
         "watchdog": watchdog_report,
         "checks": checks,
     }
@@ -213,6 +262,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--max-heartbeat-age", type=float, default=None)
     parser.add_argument("--require-watchdog", action="store_true")
     parser.add_argument("--max-watchdog-age", type=float, default=180.0)
+    parser.add_argument("--require-dashboard", action="store_true")
+    parser.add_argument("--max-dashboard-age", type=float, default=None)
     parser.add_argument("--json", action="store_true", help="Print machine-readable output.")
     return parser.parse_args()
 
@@ -226,6 +277,8 @@ def main() -> int:
         max_heartbeat_age=args.max_heartbeat_age,
         require_watchdog=args.require_watchdog,
         max_watchdog_age=args.max_watchdog_age,
+        require_dashboard=args.require_dashboard,
+        max_dashboard_age=args.max_dashboard_age,
     )
     if args.json:
         print(json.dumps(report, indent=2, sort_keys=True))

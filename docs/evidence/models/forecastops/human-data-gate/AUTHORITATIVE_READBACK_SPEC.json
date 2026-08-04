@@ -1,0 +1,44 @@
+{
+  "kind": "forecastops-authoritative-readback-spec",
+  "task_id": "ODP-FORECAST-AUTHORITATIVE-HISTORY-BACKFILL-001",
+  "generated_at": "2026-08-03",
+  "target_view": "model_ready.forecast_training_view",
+  "feature_schema_id": "forecast-training-view-v2",
+  "required_columns": [
+    "tenant_id",
+    "store_id",
+    "observation_date",
+    "daily_net_revenue",
+    "is_training_eligible",
+    "source_snapshot_id"
+  ],
+  "confidentiality_policy": {
+    "level": "MEDIUM",
+    "masking_required": true,
+    "raw_value_exposure_permitted": false,
+    "allowed_roles": ["data_owner", "model_owner", "platform_admin"]
+  },
+  "validation_protocol": [
+    "Verify model_ready.forecast_training_view exists in Cloud SQL alfaloop-data-project:asia-east1:oday-dev-sql (POSTGRES_16)",
+    "Per-store temporal coverage: SELECT tenant_id, store_id, MIN(observation_date), MAX(observation_date), COUNT(DISTINCT observation_date) AS distinct_days, (MAX(observation_date)-MIN(observation_date))::int + 1 AS calendar_span FROM model_ready.forecast_training_view GROUP BY tenant_id, store_id",
+    "Assert distinct_days = calendar_span for every store (gap-free requirement)",
+    "Assert at least one store has calendar_span >= 56 (minimum viable, 4-week horizon only)",
+    "Assert full-contract readiness requires calendar_span >= 196 for 4/8/12/24-week horizons",
+    "Gap detection: any LAG(observation_date) difference > 1 day fails closed",
+    "Eligibility count: SELECT COUNT(*) FROM model_ready.forecast_training_view WHERE is_training_eligible IS TRUE",
+    "Assert every row carries a non-null source_snapshot_id (forecast_training.py rejects rows without source snapshot lineage)",
+    "Assert horizon label maturity never precedes prediction origin",
+    "Re-run training and assert expand_forecast_horizon_rows() yields > 0 horizon samples and does not raise 'daily forecast rows do not contain a complete canonical horizon window'",
+    "Verify MLflow registered model forecast_revenue_interval exists at https://oday-mlflow-7sxbjoeozq-de.a.run.app and resolves an approved production alias",
+    "Verify no synthetic, fixture, auto-seeded, mock, or research-only rows are present",
+    "Verify dataset SHA-256 snapshot hash against the Human/Ops attestation"
+  ],
+  "fail_closed_conditions": [
+    "any per-store daily series contains a gap",
+    "no store reaches 56 consecutive days",
+    "any row lacks source snapshot lineage",
+    "label maturity precedes prediction origin",
+    "dataset hash does not reconcile with the Human/Ops attestation",
+    "MLflow alias is fabricated rather than produced by a governed training run"
+  ]
+}
