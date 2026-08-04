@@ -160,3 +160,37 @@ def test_exit_code_signals_stuck_tasks(tmp_path: Path, monkeypatch) -> None:
     monkeypatch.setattr(doc, "_git", lambda *a, **k: "")
 
     assert doc.main(["--status", str(p), "--repo", str(tmp_path)]) == 1
+
+
+def test_already_merged_outranks_no_pr(tmp_path: Path, monkeypatch) -> None:
+    """Work that has landed must not be reported as a missing-PR problem.
+
+    Live case: a task sat at review_approved for two days after its branch merged.
+    Trying to open a PR for it fails with "No commits between ...", which hides
+    the real state.
+    """
+    monkeypatch.setattr(doc, "branch_merged_into_base", lambda *a: True)
+    monkeypatch.setattr(doc, "find_pr", lambda b, r: None)
+
+    f = doc.classify({"id": "T1"}, tmp_path, "dev", ALL_REQUIRED)
+
+    assert f["cause"] == doc.ALREADY_MERGED
+    assert "already an ancestor" in f["detail"]
+
+
+def test_already_merged_remediation_closes_task_not_opens_pr() -> None:
+    lines = doc.remediation(
+        {"cause": doc.ALREADY_MERGED, "branch": "task/T1", "task_id": "T1"}, "dev"
+    )
+
+    assert any("ai_status.py done" in line for line in lines)
+    assert not any("gh pr create" in line for line in lines)
+
+
+def test_unmerged_branch_still_classified_normally(tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.setattr(doc, "branch_merged_into_base", lambda *a: False)
+    monkeypatch.setattr(
+        doc, "find_pr", lambda b, r: {"number": 9, "statusCheckRollup": green_rollup()}
+    )
+
+    assert doc.classify({"id": "T1"}, tmp_path, "dev", ALL_REQUIRED)["cause"] == doc.READY

@@ -55,6 +55,7 @@ from typing import Any
 FINALIZE_STATUSES = ("review_approved",)
 DEFAULT_REQUIRED_CHECKS = ("orchestrator", "product", "product-e2e-gate", "task-review-gate")
 
+ALREADY_MERGED = "ALREADY_MERGED"
 NO_PR = "NO_PR"
 MISSING_REQUIRED_CHECK = "MISSING_REQUIRED_CHECK"
 CI_STALE = "CI_STALE"
@@ -63,7 +64,15 @@ CI_PENDING = "CI_PENDING"
 READY = "READY"
 
 # Ordered worst-first so the report leads with what blocks the most work.
-SEVERITY = (NO_PR, MISSING_REQUIRED_CHECK, CI_STALE, CI_FAILED, CI_PENDING, READY)
+SEVERITY = (
+    ALREADY_MERGED,
+    NO_PR,
+    MISSING_REQUIRED_CHECK,
+    CI_STALE,
+    CI_FAILED,
+    CI_PENDING,
+    READY,
+)
 
 
 def _gh_json(args: list[str], cwd: Path) -> Any:
@@ -125,6 +134,25 @@ def rollup_verdict(rollup: list[dict[str, Any]]) -> tuple[str, list[str], list[s
     return "success", [], present
 
 
+def branch_merged_into_base(branch: str, base: str, repo_root: Path) -> bool:
+    """True when the branch tip is already an ancestor of the base.
+
+    Found on live state: a task sat at ``review_approved`` for two days after its
+    work had merged. The board never learned, so the finalize probe kept asking
+    about a PR that had nothing left to propose. Creating a PR for it fails with
+    "No commits between ...", which is a confusing way to be told the work is done.
+    """
+
+    proc = subprocess.run(
+        ["git", "merge-base", "--is-ancestor", f"origin/{branch}", f"origin/{base}"],
+        cwd=repo_root,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    return proc.returncode == 0
+
+
 def branch_is_behind(branch: str, base: str, repo_root: Path) -> bool:
     behind = _git(repo_root, "rev-list", "--count", f"origin/{branch}..origin/{base}")
     try:
@@ -140,6 +168,16 @@ def classify(
     required_checks: tuple[str, ...],
 ) -> dict[str, Any]:
     branch = branch_for(task)
+
+    if branch_merged_into_base(branch, base, repo_root):
+        return {
+            "task_id": task.get("id"),
+            "branch": branch,
+            "pr": None,
+            "cause": ALREADY_MERGED,
+            "detail": f"branch is already an ancestor of origin/{base}; the work has landed",
+        }
+
     pr = find_pr(branch, repo_root)
     finding: dict[str, Any] = {
         "task_id": task.get("id"),
@@ -194,6 +232,11 @@ def remediation(finding: dict[str, Any], base: str) -> list[str]:
     cause = finding["cause"]
     branch = finding["branch"]
     task_id = finding["task_id"]
+    if cause == ALREADY_MERGED:
+        return [
+            f"# {task_id}: work already in {base}; close the task rather than opening a PR",
+            f"AI_NAME=<owner> python3 scripts/ai_status.py done {task_id} \"<closeout note>\"",
+        ]
     if cause == NO_PR:
         if not finding.get("remote_branch"):
             return [f"# {task_id}: no remote branch - the work was never pushed"]
