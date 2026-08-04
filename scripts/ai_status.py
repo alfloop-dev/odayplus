@@ -1957,6 +1957,77 @@ def enforce_delivery_merged_gate(
     )
 
 
+# Paths whose content is a *record of* the review rather than a subject of it.
+# Control Pack 3.3.3 scopes approval invalidation to "source, config or test";
+# an evidence note is none of those. Deliberately narrow: anything not listed
+# here invalidates, so the check fails closed.
+APPROVAL_EVIDENCE_PATH_PREFIXES = ("docs/evidence/",)
+
+
+def is_evidence_only_advance(
+    approved_head: str,
+    current_head: str,
+    repository_root: Path | None = None,
+) -> bool:
+    """True when ``current_head`` only records evidence on top of ``approved_head``.
+
+    Closing a task out requires writing evidence, and writing evidence is a commit.
+    That commit moves the branch head, and because ``task-review-gate`` is a GitHub
+    status bound to a commit SHA, the approval stops applying to the new head and
+    the task is pushed back into review -- where the same closeout will move the
+    head again. Between 2026-07-20 and 2026-08-04 that loop produced 62 evidence
+    commits, one task resealing seven times.
+
+    The policy was never "any change invalidates"; it is "source, config or test".
+    This restores that scope. Approval carries forward only when:
+
+    * the advance is a fast-forward (rewritten history is never carried forward), and
+    * every changed path sits under an evidence prefix.
+
+    A commit that records evidence *and* edits source fails both halves of the
+    intent, so it correctly invalidates.
+    """
+
+    approved_head = str(approved_head or "").strip()
+    current_head = str(current_head or "").strip()
+    if not approved_head or not current_head or approved_head == current_head:
+        return False
+
+    root = repository_root or ROOT
+
+    def _git(*args: str) -> subprocess.CompletedProcess[str] | None:
+        # A missing or unreadable root makes subprocess raise rather than return a
+        # non-zero code, so both paths have to fail closed: an approval is never
+        # carried forward on the strength of a check that did not run.
+        try:
+            return subprocess.run(
+                ["git", *args],
+                cwd=root,
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+        except OSError:
+            return None
+
+    ancestry = _git("merge-base", "--is-ancestor", approved_head, current_head)
+    if ancestry is None or ancestry.returncode != 0:
+        return False
+
+    diff = _git("diff", "--name-only", approved_head, current_head)
+    if diff is None or diff.returncode != 0:
+        return False
+
+    changed = [line.strip() for line in diff.stdout.splitlines() if line.strip()]
+    if not changed:
+        return False
+
+    return all(
+        any(path.startswith(prefix) for prefix in APPROVAL_EVIDENCE_PATH_PREFIXES)
+        for path in changed
+    )
+
+
 def is_approved_head_satisfied(
     task: dict[str, Any],
     current_head: str,
@@ -1979,6 +2050,9 @@ def is_approved_head_satisfied(
     if isinstance(delivery, dict) and delivery.get("post_merge_checkout_advanced"):
         if str(delivery.get("verified_head") or "").strip() == current_head:
             return True
+
+    if is_evidence_only_advance(approved_head, current_head, repository_root):
+        return True
 
     task_id = str(task.get("id") or "").strip()
     if not task_id or task_id.startswith("FREEZE-TEST-"):
