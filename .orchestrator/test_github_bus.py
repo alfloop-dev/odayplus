@@ -733,5 +733,87 @@ class TaskPRDiscoveryTests(unittest.TestCase):
         self.assertNotIn("git rev-list --count dev..task/ODP-REMOTE-001", calls)
 
 
+class TaskPRBaseBranchTests(unittest.TestCase):
+    def test_task_pr_base_uses_branch_workflow_target_not_repo_default(self) -> None:
+        config = {
+            "github_bus": {"default_branch": "main"},
+            "branch_workflow": {"enabled": True, "dev_branch": "dev", "task_pr": {"target_branch": "dev"}},
+        }
+
+        self.assertEqual(github_bus.task_pr_base_branch(config), "dev")
+        # The repository default is still reported truthfully for callers that
+        # genuinely mean "the default branch".
+        self.assertEqual(github_bus.default_branch(config), "main")
+
+    def test_task_pr_base_falls_back_to_dev_branch_when_target_absent(self) -> None:
+        config = {
+            "github_bus": {"default_branch": "main"},
+            "branch_workflow": {"enabled": True, "dev_branch": "dev", "task_pr": {"auto_merge": True}},
+        }
+
+        self.assertEqual(github_bus.task_pr_base_branch(config), "dev")
+
+    def test_task_pr_base_falls_back_to_default_when_branch_workflow_disabled(self) -> None:
+        config = {
+            "github_bus": {"default_branch": "main"},
+            "branch_workflow": {"enabled": False, "dev_branch": "dev", "task_pr": {"target_branch": "dev"}},
+        }
+
+        self.assertEqual(github_bus.task_pr_base_branch(config), "main")
+
+    def test_upsert_review_pr_creates_against_branch_workflow_target(self) -> None:
+        config = {
+            "github_bus": {
+                "default_branch": "main",
+                "labels": {"review": ["pantheon-bus", "pantheon-review"]},
+                "templates": {"review_pr": ".orchestrator/templates/github_review_pr.md"},
+            },
+            "branch_workflow": {"enabled": True, "dev_branch": "dev", "task_pr": {"target_branch": "dev"}},
+        }
+        bus_state = {"tasks": {}}
+        status = {
+            "agents": [{"name": "Codex", "branch": "task/LIN-001"}],
+            "tasks": [],
+        }
+        task = {
+            "id": "LIN-001",
+            "title": "Lineage task",
+            "summary_zh": "review me",
+            "status": "review",
+            "owner": "Codex",
+            "reviewer": "Claude",
+            "depends_on": [],
+            "artifacts": ["foo.md"],
+            "next": "ready for review",
+        }
+
+        with (
+            mock.patch.object(github_bus, "branch_exists", side_effect=lambda branch: branch == "task/LIN-001"),
+            mock.patch.object(github_bus, "branch_head_sha", return_value="abc123"),
+            mock.patch.object(github_bus, "remote_branch_exists", return_value=True),
+            mock.patch.object(github_bus, "branch_has_diff", return_value=True),
+            mock.patch.object(github_bus, "find_existing_pr", return_value=None),
+            mock.patch.object(github_bus, "build_template_body", return_value="body\n"),
+            mock.patch.object(
+                github_bus,
+                "run_gh",
+                return_value=subprocess.CompletedProcess(
+                    ["gh"],
+                    0,
+                    "https://github.com/ajoe734/pantheon/pull/12\n",
+                    "",
+                ),
+            ) as run_gh,
+            mock.patch.object(github_bus, "write_activity_log"),
+        ):
+            changed = github_bus.upsert_review_pr(config, bus_state, status, "ajoe734/pantheon", task)
+
+        self.assertTrue(changed)
+        args = run_gh.call_args.args[0]
+        # A task PR must never be opened straight against the promotion target:
+        # it has to land on dev and reach main only through dev CI.
+        self.assertEqual(args[args.index("--base") + 1], "dev")
+
+
 if __name__ == "__main__":
     unittest.main()
