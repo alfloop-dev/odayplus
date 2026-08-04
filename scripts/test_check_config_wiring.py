@@ -13,7 +13,7 @@ import check_config_wiring as guard
 class ConfigWiringAuditTests(unittest.TestCase):
     def test_key_no_code_reads_is_reported(self) -> None:
         config = {"branch_workflow": {"task_pr": {"target_branch": "dev"}}}
-        sources = 'base = default_branch(config)\n'
+        sources = {"a.py": "base = default_branch(config)\n"}
 
         unexpected, stale = guard.audit(config, sources, allowlist={})
 
@@ -22,11 +22,13 @@ class ConfigWiringAuditTests(unittest.TestCase):
 
     def test_wired_key_is_accepted(self) -> None:
         config = {"branch_workflow": {"task_pr": {"target_branch": "dev"}}}
-        sources = (
-            'workflow = config.get("branch_workflow") or {}\n'
-            'task_pr = workflow.get("task_pr") or {}\n'
-            'target = task_pr.get("target_branch")\n'
-        )
+        sources = {
+            "github_bus.py": (
+                'workflow = config.get("branch_workflow") or {}\n'
+                'task_pr = workflow.get("task_pr") or {}\n'
+                'target = task_pr.get("target_branch")\n'
+            )
+        }
 
         unexpected, stale = guard.audit(config, sources, allowlist={})
 
@@ -34,7 +36,7 @@ class ConfigWiringAuditTests(unittest.TestCase):
 
     def test_allowlisted_key_is_accepted(self) -> None:
         config = {"branch_workflow": {"drift_alarms": {"soak_days": 1}}}
-        sources = ""
+        sources: dict[str, str] = {}
         allowlist = {
             "branch_workflow": "unimplemented",
             "branch_workflow.drift_alarms": "unimplemented",
@@ -50,13 +52,47 @@ class ConfigWiringAuditTests(unittest.TestCase):
         # Otherwise the allowlist silently keeps excusing a key that is now
         # read, and the next genuinely dead key hides behind a stale entry.
         config = {"branch_workflow": {"task_pr": {"target_branch": "dev"}}}
-        sources = 'config.get("branch_workflow", {}).get("task_pr", {}).get("target_branch")\n'
+        sources = {
+            "github_bus.py": 'config.get("branch_workflow", {}).get("task_pr", {}).get("target_branch")\n'
+        }
         allowlist = {"branch_workflow.task_pr.target_branch": "not wired yet"}
 
         unexpected, stale = guard.audit(config, sources, allowlist)
 
         self.assertEqual(unexpected, [])
         self.assertIn("branch_workflow.task_pr.target_branch", stale)
+
+    def test_settings_sharing_a_leaf_name_are_judged_separately(self) -> None:
+        # The bug this pins: wiring task_pr.target_branch used to mark
+        # promote.target_branch as read too, so a dead key sailed through.
+        config = {
+            "branch_workflow": {
+                "task_pr": {"target_branch": "dev"},
+                "promote": {"target_branch": "main"},
+            }
+        }
+        sources = {
+            "github_bus.py": (
+                'workflow = config.get("branch_workflow") or {}\n'
+                'task_pr = workflow.get("task_pr") or {}\n'
+                'target = task_pr.get("target_branch")\n'
+            )
+        }
+
+        unexpected, _ = guard.audit(config, sources, allowlist={})
+
+        self.assertIn("branch_workflow.promote.target_branch", unexpected)
+        self.assertNotIn("branch_workflow.task_pr.target_branch", unexpected)
+
+    def test_parent_bound_to_a_variable_still_counts_as_wired(self) -> None:
+        # The opposite failure: `schema["status_field"]` never quotes `schema`,
+        # so demanding a quoted parent reported live settings as dead.
+        config = {"schema": {"status_field": "status"}}
+        sources = {"common.py": 'value = schema["status_field"]\n'}
+
+        unexpected, _ = guard.audit(config, sources, allowlist={"schema": "container"})
+
+        self.assertNotIn("schema.status_field", unexpected)
 
     def test_data_container_children_are_not_settings(self) -> None:
         # Agent ids are data. Requiring code to mention every deployed agent by

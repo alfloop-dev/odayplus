@@ -59,8 +59,8 @@ def iter_setting_paths(node: Any, prefix: tuple[str, ...] = ()) -> list[tuple[st
     return paths
 
 
-def load_sources() -> str:
-    chunks: list[str] = []
+def load_sources() -> dict[str, str]:
+    sources: dict[str, str] = {}
     for directory in SOURCE_DIRS:
         if not directory.is_dir():
             continue
@@ -71,15 +71,44 @@ def load_sources() -> str:
             # mask a genuinely unwired setting.
             if path.name.startswith("test_"):
                 continue
-            chunks.append(path.read_text(encoding="utf-8", errors="ignore"))
-    return "\n".join(chunks)
+            sources[str(path)] = path.read_text(encoding="utf-8", errors="ignore")
+    return sources
 
 
-def is_wired(key: str, sources: str) -> bool:
-    # Deliberately generous: any quoted mention counts, in any construct. The
-    # guard is here to catch keys nothing references at all, not to police how
-    # they are read.
-    return re.search(r"[\"']" + re.escape(key) + r"[\"']", sources) is not None
+def _quoted(key: str) -> re.Pattern[str]:
+    return re.compile(r"[\"']" + re.escape(key) + r"[\"']")
+
+
+def _mentioned(name: str) -> re.Pattern[str]:
+    return re.compile(r"\b" + re.escape(name) + r"\b")
+
+
+def is_wired(path: tuple[str, ...], sources: dict[str, str]) -> bool:
+    """Does some source file read this setting?
+
+    The leaf name alone is not enough, because distinct settings share leaf
+    names: wiring branch_workflow.task_pr.target_branch would otherwise mark
+    branch_workflow.promote.target_branch as read too, and the guard would wave
+    through a genuinely dead key. So the parent must appear in the same file.
+
+    The two names are matched differently on purpose. A leaf is read through its
+    literal string, so it must appear quoted. A parent is usually already bound
+    to a variable by the time the leaf is read -- `schema["status_field"]` never
+    quotes `schema` -- so requiring quotes there would report live settings as
+    dead. Matching the parent as a bare word covers both forms.
+
+    Within a file the check stays generous: any mention counts, in any
+    construct. The guard catches keys nothing references at all; it does not
+    police how they are read.
+    """
+    key = path[-1]
+    parent = path[-2] if len(path) > 1 else None
+    for text in sources.values():
+        if not _quoted(key).search(text):
+            continue
+        if parent is None or _mentioned(parent).search(text):
+            return True
+    return False
 
 
 def load_allowlist() -> dict[str, str]:
@@ -90,12 +119,14 @@ def load_allowlist() -> dict[str, str]:
     return {str(k): str(v) for k, v in entries.items()}
 
 
-def audit(config: dict[str, Any], sources: str, allowlist: dict[str, str]) -> tuple[list[str], list[str]]:
+def audit(
+    config: dict[str, Any], sources: dict[str, str], allowlist: dict[str, str]
+) -> tuple[list[str], list[str]]:
     """Return (unwired keys not allowlisted, allowlist entries now wired)."""
     unwired: list[str] = []
     for path in iter_setting_paths(config):
         dotted = ".".join(path)
-        if is_wired(path[-1], sources):
+        if is_wired(path, sources):
             continue
         unwired.append(dotted)
 
@@ -121,7 +152,7 @@ def main() -> int:
         unwired = [
             ".".join(path)
             for path in iter_setting_paths(config)
-            if not is_wired(path[-1], sources)
+            if not is_wired(path, sources)
         ]
         payload = {
             "_comment": (
