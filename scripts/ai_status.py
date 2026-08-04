@@ -1597,6 +1597,36 @@ def pull_request_status_for_branch(
     if not branch or branch == "HEAD":
         return None
     repo_args = ["--repo", repository_slug_value] if repository_slug_value else []
+    fields = (
+        "number,state,mergeStateStatus,mergedAt,mergeCommit,autoMergeRequest,url,"
+        "headRefOid,headRefName,baseRefName,statusCheckRollup"
+    )
+    prs = run_gh_json_command(
+        [
+            "pr",
+            "list",
+            "--head",
+            branch,
+            "--state",
+            "all",
+            *repo_args,
+            "--json",
+            fields,
+        ],
+        cwd=repository_root,
+    )
+    if isinstance(prs, list) and prs:
+        merged_prs = [
+            p for p in prs if isinstance(p, dict) and str(p.get("state") or "").upper() == "MERGED"
+        ]
+        if merged_prs:
+            return merged_prs[0]
+        open_prs = [
+            p for p in prs if isinstance(p, dict) and str(p.get("state") or "").upper() == "OPEN"
+        ]
+        if open_prs:
+            return open_prs[0]
+        return prs[0]
     return run_gh_json_command(
         [
             "pr",
@@ -1604,10 +1634,7 @@ def pull_request_status_for_branch(
             branch,
             *repo_args,
             "--json",
-            (
-                "number,state,mergeStateStatus,mergedAt,mergeCommit,autoMergeRequest,url,"
-                "headRefOid,headRefName,baseRefName,statusCheckRollup"
-            ),
+            fields,
         ],
         cwd=repository_root,
     )
