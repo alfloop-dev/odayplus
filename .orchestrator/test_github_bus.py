@@ -733,5 +733,42 @@ class TaskPRDiscoveryTests(unittest.TestCase):
         self.assertNotIn("git rev-list --count dev..task/ODP-REMOTE-001", calls)
 
 
+class DetachedHeadBranchResolutionTests(unittest.TestCase):
+    """A detached worktree has no branch, and must not claim one.
+
+    `git rev-parse --abbrev-ref HEAD` answers the literal string "HEAD" when
+    detached. Every guard downstream accepts it -- it is truthy, it is not the
+    default branch, and branch_exists("HEAD") succeeds because HEAD always
+    resolves -- so the bus once recorded "HEAD" as a task's review branch.
+    """
+
+    def test_detached_head_yields_no_branch(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="pantheon-detached-") as tmp:
+            repo = Path(tmp)
+            for args in (
+                ["git", "init", "-q", str(repo)],
+                ["git", "-C", str(repo), "-c", "user.email=t@t", "-c", "user.name=t",
+                 "commit", "-q", "--allow-empty", "-m", "init"],
+                ["git", "-C", str(repo), "-c", "advice.detachedHead=false", "checkout", "-q", "--detach", "HEAD"],
+            ):
+                subprocess.run(args, check=True, capture_output=True)
+
+            with mock.patch.object(github_bus, "ROOT", repo):
+                self.assertIsNone(github_bus.current_branch())
+
+    def test_named_branch_is_still_returned(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="pantheon-named-") as tmp:
+            repo = Path(tmp)
+            for args in (
+                ["git", "init", "-q", "-b", "task/ODP-X-001", str(repo)],
+                ["git", "-C", str(repo), "-c", "user.email=t@t", "-c", "user.name=t",
+                 "commit", "-q", "--allow-empty", "-m", "init"],
+            ):
+                subprocess.run(args, check=True, capture_output=True)
+
+            with mock.patch.object(github_bus, "ROOT", repo):
+                self.assertEqual(github_bus.current_branch(), "task/ODP-X-001")
+
+
 if __name__ == "__main__":
     unittest.main()

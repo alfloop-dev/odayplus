@@ -198,7 +198,13 @@ def default_branch(config: dict[str, Any]) -> str:
 
 
 def current_branch() -> str | None:
-    proc = run_command(["git", "rev-parse", "--abbrev-ref", "HEAD"], cwd=ROOT)
+    # `rev-parse --abbrev-ref HEAD` answers the literal string "HEAD" on a
+    # detached checkout, and every downstream guard lets it through: it is
+    # truthy, it differs from the default branch, and branch_exists("HEAD")
+    # succeeds because HEAD always resolves. A worker on a detached worktree
+    # therefore offered "HEAD" as its review branch, which is not a branch name
+    # at all. symbolic-ref fails cleanly on a detached HEAD instead.
+    proc = run_command(["git", "symbolic-ref", "--short", "-q", "HEAD"], cwd=ROOT)
     if proc.returncode != 0:
         return None
     branch = (proc.stdout or "").strip()
