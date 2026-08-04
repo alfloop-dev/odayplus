@@ -35,6 +35,9 @@ jobs:
       - name: Lint orchestrator code
         run: uv run ruff check .orchestrator scripts
 
+      - name: Check config wiring
+        run: uv run python scripts/check_config_wiring.py
+
       - name: Test orchestrator code
         run: uv run pytest -m "not requires_live_env" .orchestrator scripts
 
