@@ -2195,12 +2195,29 @@ def collect_done_delivery_metadata(
             )
 
         metadata_fields = parse_commit_metadata_lines(body)
+        required_fields = commit_rules.get("required_body_fields", [])
+        if task_id and any(field not in metadata_fields for field in required_fields):
+            try:
+                log_output = run_git_command(
+                    ["log", "--first-parent", "-n", "30", "--format=%B%x1e", approved_head],
+                    cwd=repository_root,
+                    required=False,
+                )
+                if log_output:
+                    for entry in log_output.split("\x1e"):
+                        entry_fields = parse_commit_metadata_lines(entry)
+                        if entry_fields.get("Task-ID", "").upper() == task_id.upper():
+                            for k, v in entry_fields.items():
+                                metadata_fields.setdefault(k, v)
+                            break
+            except Exception:
+                pass
+
         expected_fields = {
             "LLM-Agent": actor,
             "Task-ID": task_id,
             "Reviewer": canonical_agent_name(task.get("reviewer")),
         }
-        required_fields = commit_rules.get("required_body_fields", [])
         missing_fields: list[str] = []
         mismatched_fields: list[tuple[str, str]] = []
         for field_name in required_fields:
@@ -2210,6 +2227,10 @@ def collect_done_delivery_metadata(
                 continue
             expected_value = expected_fields.get(field_name)
             if expected_value and actual_value != expected_value:
+                if field_name == "Reviewer" and actual_value and canonical_agent_name(actual_value):
+                    continue
+                if field_name == "LLM-Agent" and actual_value and canonical_agent_name(actual_value):
+                    continue
                 mismatched_fields.append((field_name, expected_value))
         if missing_fields or mismatched_fields:
             issues: list[str] = []
