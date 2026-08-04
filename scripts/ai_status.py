@@ -2051,12 +2051,16 @@ def is_approved_head_satisfied(
         if str(delivery.get("verified_head") or "").strip() == current_head:
             return True
 
-    if is_evidence_only_advance(approved_head, current_head, repository_root):
-        return True
-
     task_id = str(task.get("id") or "").strip()
     if not task_id or task_id.startswith("FREEZE-TEST-"):
         return False
+
+    # Placed after the FREEZE-TEST guard on purpose. That guard keeps the freeze
+    # tests deterministic by short-circuiting before anything shells out; running
+    # git above it made those tests observe three subprocess calls where they
+    # assert one.
+    if is_evidence_only_advance(approved_head, current_head, repository_root):
+        return True
 
     try:
         config = load_config()
