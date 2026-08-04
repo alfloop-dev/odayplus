@@ -22,11 +22,12 @@ DEFAULT_EVIDENCE_DOC_PATH = DEFAULT_EVIDENCE_DIR / "ODP-PLAN-SITESCORE-OUTCOME-0
 def run_benchmark_from_inventory(
     db_url: str | None = None,
     records: Sequence[dict[str, Any]] | None = None,
+    prediction_receipt: dict[str, Any] | None = None,
 ) -> Any:
     """Load inventory records or evaluate provided candidate site records."""
     if records is not None:
         provenance = "provided_records" if records else "no_source"
-        return evaluate_sitescore_opening_outcome_benchmark(records, provenance=provenance)
+        return evaluate_sitescore_opening_outcome_benchmark(records, prediction_receipt=prediction_receipt, provenance=provenance)
 
     # In PG16 environment if DB URL is provided
     if db_url and "postgresql" in db_url.lower():
@@ -37,39 +38,64 @@ def run_benchmark_from_inventory(
                 cur.execute(
                     """
                     SELECT
-                        entity_id,
-                        store_id,
-                        target_format_code,
-                        opened_on,
-                        is_training_eligible,
-                        realized_90d_net_revenue,
-                        (CURRENT_DATE - opened_on)::integer AS store_age_days
-                    FROM model_ready.candidate_site_view
+                        c.entity_id,
+                        c.store_id,
+                        c.target_format_code,
+                        c.opened_on,
+                        c.is_training_eligible,
+                        c.realized_90d_net_revenue,
+                        c.realized_180d_net_revenue,
+                        c.realized_365d_net_revenue,
+                        (CURRENT_DATE - c.opened_on)::integer AS store_age_days,
+                        p.prediction_as_of,
+                        p.model_version,
+                        p.horizon_code,
+                        p.predicted_revenue,
+                        p.p10,
+                        p.p90,
+                        p.p50,
+                        p.dataset_snapshot_id,
+                        p.artifact_lineage_id
+                    FROM model_ready.candidate_site_view c
+                    LEFT JOIN model_ready.sitescore_predictions p
+                        ON (c.entity_id = p.entity_id OR c.store_id = p.store_id)
+                       AND c.opened_on = p.prediction_as_of
+                       AND p.model_version = 'candidate-site-view-v2'
                     """
                 )
                 rows = cur.fetchall()
                 fetched = []
                 for row in rows:
-                    rev_raw = row[5]
-                    if rev_raw is not None:
-                        try:
-                            rev_val = float(rev_raw)
-                            realized_90d = rev_val if math.isfinite(rev_val) else None
-                        except (ValueError, TypeError):
-                            realized_90d = None
-                    else:
-                        realized_90d = None
+                    def _parse_float(val: Any) -> float | None:
+                        if val is not None:
+                            try:
+                                v = float(val)
+                                return v if math.isfinite(v) else None
+                            except (ValueError, TypeError):
+                                return None
+                        return None
 
                     fetched.append({
-                        "entity_id": row[0],
+                        "entity_id": str(row[0]),
                         "store_id": str(row[1]),
-                        "target_format_code": row[2],
+                        "target_format_code": str(row[2]),
                         "opened_on": str(row[3]) if row[3] else None,
                         "is_training_eligible": bool(row[4]),
-                        "realized_90d_net_revenue": realized_90d,
-                        "store_age_days": int(row[6]) if row[6] is not None and math.isfinite(float(row[6])) else 0,
+                        "realized_90d_net_revenue": _parse_float(row[5]),
+                        "realized_m6_net_revenue": _parse_float(row[6]),
+                        "realized_m12_net_revenue": _parse_float(row[7]),
+                        "store_age_days": int(row[8]) if row[8] is not None and math.isfinite(float(row[8])) else 0,
+                        "prediction_as_of": str(row[9]) if row[9] else None,
+                        "model_version": str(row[10]) if row[10] else None,
+                        "horizon_code": str(row[11]) if row[11] else "90d",
+                        "predicted_revenue": _parse_float(row[12]),
+                        "p10": _parse_float(row[13]),
+                        "p90": _parse_float(row[14]),
+                        "p50": _parse_float(row[15]),
+                        "dataset_snapshot_id": str(row[16]) if row[16] else None,
+                        "artifact_lineage_id": str(row[17]) if row[17] else None,
                     })
-                return evaluate_sitescore_opening_outcome_benchmark(fetched, provenance="pg16_query")
+                return evaluate_sitescore_opening_outcome_benchmark(fetched, prediction_receipt=prediction_receipt, provenance="pg16_query")
         except Exception as exc:
             print(f"Notice: PostgreSQL inventory query failed ({exc}); failing closed.", file=sys.stderr)
             return evaluate_sitescore_opening_outcome_benchmark(
