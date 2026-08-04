@@ -48,15 +48,15 @@ def tearDownModule() -> None:
 
 
 def load_test_config() -> dict[str, Any]:
-    config_file = Path(__file__).with_name("config.json")
-    if not config_file.exists():
-        try:
-            from ai_status import STATUS_ROOT
-            config_file = STATUS_ROOT / ".orchestrator" / "config.json"
-        except Exception:
-            pass
-    if not config_file.exists():
-        config_file = Path(__file__).with_name("config.example.json")
+    # The committed example is the fixture. config.json is gitignored and holds
+    # whatever roster the machine currently runs, so reading it would make these
+    # assertions depend on the box rather than on the code: a deployment that
+    # trims agents out of owner_fallbacks turns reassignment tests red locally
+    # while CI -- which has no config.json and bootstraps from the example --
+    # stays green, and a machine with a laxer config hides real failures the
+    # same way. Point PANTHEON_TEST_CONFIG at a file to opt into another one.
+    override = os.environ.get("PANTHEON_TEST_CONFIG", "").strip()
+    config_file = Path(override) if override else Path(__file__).with_name("config.example.json")
     config = json.loads(config_file.read_text(encoding="utf-8"))
 
     # A test config must never retain repository-relative coordination paths:
@@ -84,6 +84,44 @@ def load_test_config() -> dict[str, Any]:
         str((_TEST_STATUS_ROOT / "workspace").resolve())
     ]
     return config
+
+
+class TestConfigFixtureTests(unittest.TestCase):
+    """The fixture must be the committed example, never the machine's config.
+
+    config.json is gitignored and tracks whatever roster is deployed, so reading
+    it makes these tests assert on the box instead of the code -- green on CI,
+    red on a machine whose owner_fallbacks were trimmed, and silently permissive
+    on a machine whose config is laxer than the example.
+    """
+
+    def _example(self) -> dict[str, Any]:
+        return json.loads(
+            (Path(supervisor.__file__).with_name("config.example.json")).read_text(encoding="utf-8")
+        )
+
+    def test_fixture_roster_matches_committed_example(self) -> None:
+        config = load_test_config()
+        example = self._example()
+
+        self.assertEqual(sorted(config.get("agents") or {}), sorted(example.get("agents") or {}))
+        for table in ("owner_fallbacks", "reviewer_fallbacks"):
+            with self.subTest(table=table):
+                self.assertEqual(
+                    (config.get("worker_reassignment") or {}).get(table),
+                    (example.get("worker_reassignment") or {}).get(table),
+                )
+
+    def test_explicit_override_is_honoured(self) -> None:
+        example = self._example()
+        example["agents"] = {"solo": example["agents"][next(iter(example["agents"]))]}
+        with tempfile.TemporaryDirectory(prefix="pantheon-test-config-") as tmp:
+            override = Path(tmp) / "config.json"
+            override.write_text(json.dumps(example), encoding="utf-8")
+            with mock.patch.dict(os.environ, {"PANTHEON_TEST_CONFIG": str(override)}):
+                config = load_test_config()
+
+        self.assertEqual(sorted(config.get("agents") or {}), ["solo"])
 
 
 class RuntimeConfigTests(unittest.TestCase):
