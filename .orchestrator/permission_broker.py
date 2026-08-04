@@ -67,7 +67,6 @@ SAFE_BASH_PATTERNS = [
     re.compile(r"^git submodule status(\s|$)"),
     re.compile(r"^git -C .+ (status|diff|show|log|remote -v|submodule status)(\s|$)"),
     re.compile(r"^gh issue comment(\s|$)"),
-    re.compile(r"^gh pr create(\s|$)"),
     re.compile(r"^git remote -v$"),
     re.compile(r"^git -C .+ (add|commit|push|remote set-url|submodule|rm)"),
     re.compile(r"^git rm(\s|$)"),
@@ -132,6 +131,12 @@ DEFER_BASH_PATTERNS = [
     re.compile(r"^docker(\s|$)"),
 ]
 DENY_BASH_PATTERNS = [
+    # Task PRs are opened by ReviewBus (github_bus.upsert_review_pr), which
+    # bases them on the branch workflow target. An agent running `gh pr create`
+    # picks its own --base and can route work straight at the promotion target,
+    # bypassing dev CI. ReviewBus itself shells out directly and never reaches
+    # this broker, so denying here closes the bypass without disabling it.
+    re.compile(r"^gh pr create(\s|$)"),
     re.compile(r"^git reset --hard"),
     re.compile(r"^git checkout --(\s|$)"),
     re.compile(r"^git push(?:\s|$).*?(?:--force(?:-with-lease)?|-f|--mirror|--delete|--all|--tags|--prune|--atomic)(?:\s|$)"),
