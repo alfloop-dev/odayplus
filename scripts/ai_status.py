@@ -2000,6 +2000,77 @@ def enforce_delivery_merged_gate(
     )
 
 
+# Paths whose content is a *record of* the review rather than a subject of it.
+# Control Pack 3.3.3 scopes approval invalidation to "source, config or test";
+# an evidence note is none of those. Deliberately narrow: anything not listed
+# here invalidates, so the check fails closed.
+APPROVAL_EVIDENCE_PATH_PREFIXES = ("docs/evidence/",)
+
+
+def is_evidence_only_advance(
+    approved_head: str,
+    current_head: str,
+    repository_root: Path | None = None,
+) -> bool:
+    """True when ``current_head`` only records evidence on top of ``approved_head``.
+
+    Closing a task out requires writing evidence, and writing evidence is a commit.
+    That commit moves the branch head, and because ``task-review-gate`` is a GitHub
+    status bound to a commit SHA, the approval stops applying to the new head and
+    the task is pushed back into review -- where the same closeout will move the
+    head again. Between 2026-07-20 and 2026-08-04 that loop produced 62 evidence
+    commits, one task resealing seven times.
+
+    The policy was never "any change invalidates"; it is "source, config or test".
+    This restores that scope. Approval carries forward only when:
+
+    * the advance is a fast-forward (rewritten history is never carried forward), and
+    * every changed path sits under an evidence prefix.
+
+    A commit that records evidence *and* edits source fails both halves of the
+    intent, so it correctly invalidates.
+    """
+
+    approved_head = str(approved_head or "").strip()
+    current_head = str(current_head or "").strip()
+    if not approved_head or not current_head or approved_head == current_head:
+        return False
+
+    root = repository_root or ROOT
+
+    def _git(*args: str) -> subprocess.CompletedProcess[str] | None:
+        # A missing or unreadable root makes subprocess raise rather than return a
+        # non-zero code, so both paths have to fail closed: an approval is never
+        # carried forward on the strength of a check that did not run.
+        try:
+            return subprocess.run(
+                ["git", *args],
+                cwd=root,
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+        except OSError:
+            return None
+
+    ancestry = _git("merge-base", "--is-ancestor", approved_head, current_head)
+    if ancestry is None or ancestry.returncode != 0:
+        return False
+
+    diff = _git("diff", "--name-only", approved_head, current_head)
+    if diff is None or diff.returncode != 0:
+        return False
+
+    changed = [line.strip() for line in diff.stdout.splitlines() if line.strip()]
+    if not changed:
+        return False
+
+    return all(
+        any(path.startswith(prefix) for prefix in APPROVAL_EVIDENCE_PATH_PREFIXES)
+        for path in changed
+    )
+
+
 def is_approved_head_satisfied(
     task: dict[str, Any],
     current_head: str,
@@ -2026,6 +2097,13 @@ def is_approved_head_satisfied(
     task_id = str(task.get("id") or "").strip()
     if not task_id or task_id.startswith("FREEZE-TEST-"):
         return False
+
+    # Placed after the FREEZE-TEST guard on purpose. That guard keeps the freeze
+    # tests deterministic by short-circuiting before anything shells out; running
+    # git above it made those tests observe three subprocess calls where they
+    # assert one.
+    if is_evidence_only_advance(approved_head, current_head, repository_root):
+        return True
 
     try:
         config = load_config()
@@ -5814,12 +5892,46 @@ def reconcile_status_check_outbox(state: dict[str, Any]) -> tuple[int, int]:
     return delivered, retained
 
 
+def review_gate_head_drifted(task: dict[str, Any]) -> bool:
+    """True when the branch has advanced past the commit that carries the gate.
+
+    Emission used to fire only on a status transition, and nothing else in the
+    orchestrator ever posts this check. So a branch that moved after its last
+    transition -- composing the base, or recording closeout evidence -- left the
+    new head with no `task-review-gate` at all. Because it is a *required* check,
+    absent reads as unmergeable, and no code path would ever put it back.
+
+    Observed live on 2026-08-04: PRs #616 and #622 both carried four green checks
+    and no gate, while #628, whose head had not moved since registration, carried
+    all five.
+    """
+
+    task_id = str(task.get("id") or "").strip()
+    if not task_id:
+        return False
+
+    last = str(task.get("review_gate_sha") or "").strip()
+    if not last:
+        # Never emitted, or emitted before this field existed. A status transition
+        # covers the first case; re-posting here would fire on every unrelated
+        # sync for the second, so stay quiet and let the transition drive it.
+        return False
+
+    current = resolve_task_sha(task_id)
+    return bool(current) and current != last
+
+
 def emit_task_review_status_check(task: dict[str, Any], state_status: str) -> None:
     payload = task_review_status_payload(task, state_status)
     if payload is None:
         return
     ok, error = post_task_review_status_payload(payload)
     if ok:
+        # Remember which commit carries the gate. A GitHub status belongs to one
+        # SHA, so once the branch advances the new head has no gate at all and the
+        # required check reads as absent rather than failing. Recording the SHA is
+        # what lets the next sync notice the drift and re-post.
+        task["review_gate_sha"] = payload.get("sha") or task.get("review_gate_sha")
         print(
             f"Successfully emitted status check '{payload['context']}'="
             f"{payload['state']} to GitHub API.",
@@ -5864,7 +5976,7 @@ def emit_status_checks_for_changed_tasks(state_before: dict[str, Any], state_aft
         after_status = after_task.get("status")
 
         is_target = target_task_id and (str(task_id).upper() == str(target_task_id).upper())
-        if after_status != before_status or is_target:
+        if after_status != before_status or is_target or review_gate_head_drifted(after_task):
             emit_task_review_status_check(after_task, after_status)
 
 

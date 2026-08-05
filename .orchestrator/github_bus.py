@@ -197,6 +197,27 @@ def default_branch(config: dict[str, Any]) -> str:
     return "main"
 
 
+def pr_backed_statuses(config: dict[str, Any]) -> set[str]:
+    """Statuses whose tasks must have a review PR.
+
+    Keying PR creation on `review` alone loses any task that leaves that status
+    before the bus next polls. A reviewer approving within the poll interval
+    moves it to `review_approved`, and nothing opens its PR -- ever. The
+    supervisor then reads `unknown` CI (there is no PR to read), fails closed on
+    finalize, and no code path exists that would go back and create the missing
+    PR. Observed on ODP-ORCH-CLAUDE-SESSION-LIMIT-REVIEW-001, approved minutes
+    after handoff and stuck with no PR at all.
+
+    Both statuses need the PR for the same reason: it is what CI and the review
+    gate attach to. upsert_review_pr adopts an existing PR before creating one,
+    so widening this set re-checks rather than duplicates.
+    """
+    settings = config.get("ready_dispatcher") if isinstance(config.get("ready_dispatcher"), dict) else {}
+    statuses = {str(value).strip().lower() for value in (settings.get("review_statuses") or ["review"])}
+    statuses.update(str(value).strip().lower() for value in (settings.get("finalize_statuses") or ["review_approved"]))
+    return {status for status in statuses if status}
+
+
 def task_pr_base_branch(config: dict[str, Any]) -> str:
     # Task PRs belong to the branch workflow, not to the repository default.
     # Work lands on the dev branch and is promoted to the default branch only
@@ -1590,7 +1611,7 @@ def consume_cloud_relay_commands(
 def sync_outbound(config: dict[str, Any], bus_state: dict[str, Any], status: dict[str, Any], runtime_state: dict[str, Any], repo: str) -> bool:
     changed = False
     blocked_tasks = {task.get("id"): task for task in status.get("tasks", []) if task.get("status") == "blocked"}
-    review_tasks = [task for task in status.get("tasks", []) if task.get("status") == "review"]
+    review_tasks = [task for task in status.get("tasks", []) if task.get("status") in pr_backed_statuses(config)]
 
     blocker_by_task = {item.get("task_id"): item for item in status.get("blockers", []) if item.get("status") == "open"}
 

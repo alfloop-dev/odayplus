@@ -5,6 +5,8 @@ import ast
 import io
 import json
 import os
+import shutil
+import subprocess
 import sys
 import tempfile
 import unittest
@@ -4459,3 +4461,180 @@ class ActorCommandMutationGuardTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class EvidenceOnlyAdvanceTests(unittest.TestCase):
+    """Approval must survive a commit that only records the review.
+
+    Closeout requires writing evidence; writing evidence is a commit; the commit
+    moves the head; task-review-gate is bound to a commit SHA, so approval stops
+    applying and the task bounces back to review, where closeout moves the head
+    again. 62 evidence commits between 2026-07-20 and 2026-08-04 came out of that
+    loop, one task resealing seven times.
+    """
+
+    def _repo(self) -> Path:
+        repo = Path(tempfile.mkdtemp())
+        self.addCleanup(shutil.rmtree, repo, ignore_errors=True)
+
+
+        def run(*a: str) -> None:
+            subprocess.run(list(a), cwd=repo, check=True, capture_output=True)
+
+        run("git", "init", "-q")
+        run("git", "config", "user.email", "t@example.com")
+        run("git", "config", "user.name", "t")
+        (repo / "src.py").write_text("x = 1\n", encoding="utf-8")
+        run("git", "add", "-A")
+        run("git", "commit", "-q", "-m", "base")
+        return repo
+
+    def _head(self, repo: Path) -> str:
+        return subprocess.run(
+            ["git", "rev-parse", "HEAD"], cwd=repo, capture_output=True, text=True, check=True
+        ).stdout.strip()
+
+    def _commit(self, repo: Path, rel: str, body: str, message: str) -> str:
+        target = repo / rel
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text(body, encoding="utf-8")
+        subprocess.run(["git", "add", "-A"], cwd=repo, check=True, capture_output=True)
+        subprocess.run(
+            ["git", "commit", "-q", "-m", message], cwd=repo, check=True, capture_output=True
+        )
+        return self._head(repo)
+
+    def test_evidence_only_commit_carries_approval_forward(self) -> None:
+        repo = self._repo()
+        approved = self._head(repo)
+        current = self._commit(
+            repo, "docs/evidence/REVIEW.md", "reviewed\n", "record review evidence"
+        )
+
+        self.assertTrue(ai_status.is_evidence_only_advance(approved, current, repo))
+
+    def test_source_change_invalidates_even_when_evidence_is_included(self) -> None:
+        repo = self._repo()
+        approved = self._head(repo)
+        (repo / "docs" / "evidence").mkdir(parents=True, exist_ok=True)
+        (repo / "docs/evidence/REVIEW.md").write_text("reviewed\n", encoding="utf-8")
+        (repo / "src.py").write_text("x = 2\n", encoding="utf-8")
+        subprocess.run(["git", "add", "-A"], cwd=repo, check=True, capture_output=True)
+        subprocess.run(
+            ["git", "commit", "-q", "-m", "evidence and source"],
+            cwd=repo,
+            check=True,
+            capture_output=True,
+        )
+
+        self.assertFalse(
+            ai_status.is_evidence_only_advance(approved, self._head(repo), repo)
+        )
+
+    def test_rewritten_history_is_never_carried_forward(self) -> None:
+        repo = self._repo()
+        approved = self._head(repo)
+        self._commit(repo, "docs/evidence/A.md", "a\n", "evidence a")
+        subprocess.run(
+            ["git", "reset", "--hard", approved], cwd=repo, check=True, capture_output=True
+        )
+        diverged = self._commit(repo, "docs/evidence/B.md", "b\n", "evidence b")
+        subprocess.run(
+            ["git", "commit", "-q", "--amend", "-m", "amended"],
+            cwd=repo,
+            check=True,
+            capture_output=True,
+        )
+        rewritten = self._head(repo)
+
+        self.assertNotEqual(diverged, rewritten)
+        # A head that is not a descendant of the approved head must never be
+        # carried forward, however evidence-shaped its diff looks.
+        self.assertFalse(ai_status.is_evidence_only_advance(approved, "0" * 40, repo))
+
+    def test_unreadable_repository_root_fails_closed(self) -> None:
+        """A check that could not run must never carry an approval forward.
+
+        subprocess raises on a missing cwd instead of returning a non-zero code,
+        so the returncode guard alone let the exception escape and broke an
+        unrelated provenance test.
+        """
+        self.assertFalse(
+            ai_status.is_evidence_only_advance(
+                "a" * 40, "b" * 40, Path("/nonexistent-repo-root")
+            )
+        )
+
+    def test_identical_heads_do_not_use_this_path(self) -> None:
+        repo = self._repo()
+        approved = self._head(repo)
+
+        self.assertFalse(ai_status.is_evidence_only_advance(approved, approved, repo))
+
+    def test_approved_head_satisfied_accepts_evidence_only_advance(self) -> None:
+        repo = self._repo()
+        approved = self._head(repo)
+        current = self._commit(
+            repo, "docs/evidence/REVIEW.md", "reviewed\n", "record review evidence"
+        )
+
+        self.assertTrue(
+            ai_status.is_approved_head_satisfied(
+                {"id": "ODP-T-001"}, current, approved, repository_root=repo
+            )
+        )
+
+    def test_approved_head_satisfied_still_rejects_source_change(self) -> None:
+        repo = self._repo()
+        approved = self._head(repo)
+        current = self._commit(repo, "src.py", "x = 2\n", "change source")
+
+        self.assertFalse(
+            ai_status.is_approved_head_satisfied(
+                {"id": "FREEZE-TEST-001"}, current, approved, repository_root=repo
+            )
+        )
+
+
+class ReviewGateHeadDriftTests(unittest.TestCase):
+    """The gate must exist on the head that GitHub is actually gating.
+
+    A GitHub status belongs to one commit. Emission fired only on a status
+    transition and nothing else in the orchestrator posted this check, so a branch
+    that advanced afterwards left the new head with no gate. Since it is a
+    *required* check, absent reads as unmergeable and nothing would put it back.
+    Seen live on 2026-08-04: #616 and #622 had four green checks and no gate;
+    #628, whose head had not moved, had all five.
+    """
+
+    def test_drift_detected_when_head_moved_past_recorded_gate(self) -> None:
+        with mock.patch.object(ai_status, "resolve_task_sha", return_value="b" * 40):
+            self.assertTrue(
+                ai_status.review_gate_head_drifted(
+                    {"id": "ODP-T-1", "review_gate_sha": "a" * 40}
+                )
+            )
+
+    def test_no_drift_when_head_matches_recorded_gate(self) -> None:
+        with mock.patch.object(ai_status, "resolve_task_sha", return_value="a" * 40):
+            self.assertFalse(
+                ai_status.review_gate_head_drifted(
+                    {"id": "ODP-T-1", "review_gate_sha": "a" * 40}
+                )
+            )
+
+    def test_no_drift_claimed_when_gate_was_never_recorded(self) -> None:
+        """Without a recorded SHA every sync would re-post for unrelated tasks."""
+        with mock.patch.object(ai_status, "resolve_task_sha", return_value="b" * 40):
+            self.assertFalse(ai_status.review_gate_head_drifted({"id": "ODP-T-1"}))
+
+    def test_no_drift_claimed_when_head_cannot_be_resolved(self) -> None:
+        with mock.patch.object(ai_status, "resolve_task_sha", return_value=None):
+            self.assertFalse(
+                ai_status.review_gate_head_drifted(
+                    {"id": "ODP-T-1", "review_gate_sha": "a" * 40}
+                )
+            )
+
+    def test_missing_task_id_is_not_drift(self) -> None:
+        self.assertFalse(ai_status.review_gate_head_drifted({"review_gate_sha": "a" * 40}))
