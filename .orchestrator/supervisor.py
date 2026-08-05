@@ -4955,6 +4955,50 @@ def is_antigravity_quota_banner(config: dict[str, Any] | None, provider: str | N
     return bool(AGY_QUOTA_SIGNATURE_PATTERN.search(str(reason)))
 
 
+# Claude CLI 5-hour session limit. The real banner is
+# "You've hit your session limit · resets 5pm (UTC)", which the generic
+# "hit your limit"/"hit your usage limit" markers do NOT match because of the
+# extra "session" token — so it used to classify as a plain `terminal` failure,
+# skipping both the provider pause path and the environmental-failure exemption
+# in record_task_failure_streak (observed: a single session-limit window drove
+# ODP-STORE-OPENING-001:claude to count=34).
+#
+# Deliberately NOT a bare "hit your session limit" substring: provider scoping
+# alone cannot separate the banner from task output, because a Claude worker
+# reports its own application/assertion text too. "AssertionError: expected
+# You've hit your session limit banner to be hidden" is a genuine task failure
+# and must stay `terminal`. Matching therefore requires the banner's reset
+# continuation (observed separator: "·"; also accept the plain/dash forms and
+# an explicit "resets at"), mirroring AGY_QUOTA_SIGNATURE_PATTERN above.
+CLAUDE_SESSION_LIMIT_PATTERN = re.compile(
+    r"hit\s+your\s+session\s+limit\b"
+    r"[\s.,!·•|\-–—]*"
+    r"(?:resets?\b|try\s+again\s+(?:in|at|after)\b)",
+    re.IGNORECASE,
+)
+
+
+def is_claude_provider(config: dict[str, Any] | None, provider: str | None) -> bool:
+    """True when `provider` is served by the Claude CLI adapter."""
+    provider_id = str(provider or "").strip().lower()
+    if not provider_id:
+        return False
+    if provider_id.startswith("claude"):
+        return True
+    providers = (config or {}).get("providers")
+    entry = providers.get(provider_id) if isinstance(providers, dict) else None
+    if not isinstance(entry, dict):
+        return False
+    return str(entry.get("adapter") or entry.get("type") or "").strip().lower() in {"claude", "claude_cli"}
+
+
+def is_claude_session_limit_banner(config: dict[str, Any] | None, provider: str | None, reason: str | None) -> bool:
+    """True only for the Claude CLI session-limit banner on a Claude provider."""
+    if not reason or not is_claude_provider(config, provider):
+        return False
+    return bool(CLAUDE_SESSION_LIMIT_PATTERN.search(str(reason)))
+
+
 def classify_worker_failure(config: dict[str, Any], worker: dict[str, Any], reason: str | None) -> dict[str, Any]:
     provider = str(worker.get("provider") or worker.get("agent_id") or "").strip().lower()
     normalized = str(reason or "").lower()
@@ -5014,6 +5058,8 @@ def classify_worker_failure(config: dict[str, Any], worker: dict[str, Any], reas
     if any(marker in normalized for marker in auth_markers):
         return {"kind": "auth", "transient": False, "label": "auth"}
     if is_antigravity_quota_banner(config, provider, reason):
+        return {"kind": "quota_terminal", "transient": False, "label": "quota terminal"}
+    if is_claude_session_limit_banner(config, provider, reason):
         return {"kind": "quota_terminal", "transient": False, "label": "quota terminal"}
     if any(marker in normalized for marker in terminal_quota_markers):
         return {"kind": "quota_terminal", "transient": False, "label": "quota terminal"}
