@@ -255,7 +255,7 @@ class GitHubBusCommandTests(unittest.TestCase):
         }
 
         with (
-            mock.patch.object(github_bus, "branch_exists", return_value=True),
+            mock.patch.object(github_bus, "branch_exists", side_effect=lambda branch: branch == "feature/lin-001"),
             mock.patch.object(github_bus, "branch_head_sha", return_value="abc123"),
             mock.patch.object(github_bus, "remote_branch_exists", return_value=True),
             mock.patch.object(github_bus, "branch_has_diff", return_value=True),
@@ -306,7 +306,7 @@ class GitHubBusCommandTests(unittest.TestCase):
         }
 
         with (
-            mock.patch.object(github_bus, "branch_exists", return_value=True),
+            mock.patch.object(github_bus, "branch_exists", side_effect=lambda branch: branch == "feature/lin-001"),
             mock.patch.object(github_bus, "branch_head_sha", return_value="abc123"),
             mock.patch.object(github_bus, "remote_branch_exists", return_value=False),
             mock.patch.object(github_bus, "write_activity_log") as write_activity_log,
@@ -356,7 +356,7 @@ class GitHubBusCommandTests(unittest.TestCase):
         }
 
         with (
-            mock.patch.object(github_bus, "branch_exists", return_value=True),
+            mock.patch.object(github_bus, "branch_exists", side_effect=lambda branch: branch == "feature/lin-001"),
             mock.patch.object(github_bus, "branch_head_sha", return_value="abc123"),
             mock.patch.object(github_bus, "remote_branch_exists") as remote_branch_exists,
         ):
@@ -401,7 +401,7 @@ class GitHubBusCommandTests(unittest.TestCase):
         }
 
         with (
-            mock.patch.object(github_bus, "branch_exists", return_value=True),
+            mock.patch.object(github_bus, "branch_exists", side_effect=lambda branch: branch == "feature/lin-001"),
             mock.patch.object(github_bus, "branch_head_sha", return_value="abc123"),
             mock.patch.object(github_bus, "remote_branch_exists", return_value=False) as remote_branch_exists,
         ):
@@ -412,6 +412,26 @@ class GitHubBusCommandTests(unittest.TestCase):
 
 
 class GitHubBusProcessTests(unittest.TestCase):
+    def test_edit_pull_request_uses_rest_without_projects_classic_graphql(self) -> None:
+        with mock.patch.object(github_bus, "run_gh") as run_gh:
+            github_bus.edit_pull_request_rest(
+                "alfloop-dev/odayplus",
+                593,
+                "[ReviewBus] TASK Review",
+                "body\n",
+                ["pantheon-bus", "pantheon-review"],
+            )
+
+        self.assertEqual(run_gh.call_count, 2)
+        edit_args = run_gh.call_args_list[0].args[0]
+        self.assertEqual(edit_args[:4], ["api", "--method", "PATCH", "repos/alfloop-dev/odayplus/pulls/593"])
+        self.assertIn("title=[ReviewBus] TASK Review", edit_args)
+        self.assertIn("body=body\n", edit_args)
+        label_args = run_gh.call_args_list[1].args[0]
+        self.assertEqual(label_args[:4], ["api", "--method", "POST", "repos/alfloop-dev/odayplus/issues/593/labels"])
+        self.assertIn("labels[]=pantheon-bus", label_args)
+        self.assertIn("labels[]=pantheon-review", label_args)
+
     def test_run_gh_process_kills_process_group_on_timeout(self) -> None:
         class FakePopen:
             def __init__(self) -> None:
@@ -528,6 +548,332 @@ class GitHubCoordinationCommandTests(unittest.TestCase):
         queue = github_bus.load_jsonl(Path(self.config["paths"]["event_queue"]))
         self.assertEqual(len(queue), 1)
         self.assertEqual(queue[0]["metadata"]["coordination"]["worker_kind"], "engine-worker")
+
+
+class TaskPRDiscoveryTests(unittest.TestCase):
+    def test_review_branch_for_task_prioritizes_immutable_task_ref_over_unrelated_agent_branch(self) -> None:
+        config = {"branch_workflow": {"task_branch_prefix": "task/"}}
+        status = {
+            "agents": [
+                {
+                    "name": "Antigravity",
+                    "branch": "task/ODP-RUNTIME-GCP-001",
+                }
+            ]
+        }
+        task = {
+            "id": "ODP-API-HEALTH-DATA-MODE-CONTRACT-001",
+            "owner": "Antigravity",
+            "title": "Health data mode contract",
+        }
+
+        def mock_exists(branch_name: str) -> bool:
+            return branch_name in {
+                "task/ODP-RUNTIME-GCP-001",
+                "task/ODP-API-HEALTH-DATA-MODE-CONTRACT-001",
+            }
+
+        with mock.patch.object(github_bus, "branch_exists", side_effect=mock_exists):
+            found_branch = github_bus.review_branch_for_task(config, status, task)
+
+        self.assertEqual(found_branch, "task/ODP-API-HEALTH-DATA-MODE-CONTRACT-001")
+
+    def test_review_branch_for_task_rejects_related_sidecar_agent_branch(self) -> None:
+        config = {"branch_workflow": {"task_branch_prefix": "task/"}}
+        status = {
+            "agents": [
+                {
+                    "name": "Codex",
+                    "branch": "task/ODP-FOO-001-SIDECAR-ACCEPTANCE",
+                }
+            ]
+        }
+        task = {
+            "id": "ODP-FOO-001",
+            "owner": "Codex",
+            "title": "Parent task",
+            "github": {"head_branch": "task/ODP-FOO-001-SIDECAR-ACCEPTANCE"},
+        }
+
+        def mock_exists(branch_name: str) -> bool:
+            return branch_name in {
+                "task/ODP-FOO-001",
+                "task/ODP-FOO-001-SIDECAR-ACCEPTANCE",
+            }
+
+        with mock.patch.object(github_bus, "branch_exists", side_effect=mock_exists):
+            found_branch = github_bus.review_branch_for_task(config, status, task)
+
+        self.assertEqual(found_branch, "task/ODP-FOO-001")
+        self.assertTrue(github_bus.task_id_matches_branch("ODP-FOO-001", "origin/task/ODP-FOO-001"))
+        self.assertFalse(github_bus.task_id_matches_branch("ODP-FOO-001", "task/ODP-FOO-001-SIDECAR-ACCEPTANCE"))
+        self.assertFalse(github_bus.task_id_matches_branch("ODP-FOO-001", "task/ODP-FOO-0010"))
+
+    def test_review_branch_for_task_rejects_unrelated_agent_or_current_branch_when_canonical_absent(self) -> None:
+        config = {"branch_workflow": {"task_branch_prefix": "task/"}}
+        status = {
+            "agents": [
+                {
+                    "name": "Codex",
+                    "branch": "feat/unrelated-branch",
+                }
+            ]
+        }
+        task = {
+            "id": "ODP-FOO-001",
+            "owner": "Codex",
+            "title": "Parent task with missing canonical branch",
+        }
+
+        queried_branches: list[str] = []
+
+        def mock_exists(branch_name: str) -> bool:
+            queried_branches.append(branch_name)
+            return branch_name == "feat/unrelated-branch"
+
+        with mock.patch.object(github_bus, "branch_exists", side_effect=mock_exists):
+            with mock.patch.object(github_bus, "current_branch", return_value="feat/unrelated-branch"):
+                found_branch = github_bus.review_branch_for_task(config, status, task)
+
+        self.assertIsNone(found_branch)
+        self.assertIn("task/ODP-FOO-001", queried_branches)
+
+    def test_review_branch_for_task_returns_none_when_canonical_absent_and_only_sidecar_or_unrelated_branch_exists(self) -> None:
+        config = {"branch_workflow": {"task_branch_prefix": "task/"}}
+        status = {
+            "agents": [
+                {
+                    "name": "Codex",
+                    "branch": "task/ODP-FOO-001-SIDECAR-ACCEPTANCE",
+                }
+            ]
+        }
+        task = {
+            "id": "ODP-FOO-001",
+            "owner": "Codex",
+            "title": "Parent task with missing canonical branch",
+        }
+
+        def mock_exists(branch_name: str) -> bool:
+            return branch_name in {
+                "task/ODP-FOO-001-SIDECAR-ACCEPTANCE",
+                "feat/unrelated-branch",
+            }
+
+        with mock.patch.object(github_bus, "branch_exists", side_effect=mock_exists):
+            with mock.patch.object(github_bus, "current_branch", return_value="task/ODP-FOO-001-SIDECAR-ACCEPTANCE"):
+                found_branch = github_bus.review_branch_for_task(config, status, task)
+
+        self.assertIsNone(found_branch)
+
+    def test_review_branch_for_task_accepts_exact_matching_agent_branch_when_canonical_prefix_absent(self) -> None:
+        config = {"branch_workflow": {"task_branch_prefix": "task/"}}
+        status = {
+            "agents": [
+                {
+                    "name": "Codex",
+                    "branch": "custom-prefix/ODP-FOO-001",
+                }
+            ]
+        }
+        task = {
+            "id": "ODP-FOO-001",
+            "owner": "Codex",
+            "title": "Parent task with custom prefix branch",
+        }
+
+        def mock_exists(branch_name: str) -> bool:
+            return branch_name == "custom-prefix/ODP-FOO-001"
+
+        with mock.patch.object(github_bus, "branch_exists", side_effect=mock_exists):
+            found_branch = github_bus.review_branch_for_task(config, status, task)
+
+        self.assertEqual(found_branch, "custom-prefix/ODP-FOO-001")
+
+    def test_branch_ref_resolution_supports_remote_tracking_refs(self) -> None:
+        def mock_cmd(cmd: list[str], cwd: str | Path | None = None) -> subprocess.CompletedProcess[str]:
+            cmd_str = " ".join(cmd)
+            if "show-ref" in cmd_str and "refs/remotes/origin/task/ODP-REMOTE-001" in cmd_str:
+                return subprocess.CompletedProcess(cmd, 0, "sha123 refs/remotes/origin/task/ODP-REMOTE-001\n", "")
+            if "rev-parse origin/task/ODP-REMOTE-001" in cmd_str:
+                return subprocess.CompletedProcess(cmd, 0, "70ea2d817c1d60db346869a0b284a6942fe78d2a\n", "")
+            if "rev-list --count" in cmd_str and "origin/dev..origin/task/ODP-REMOTE-001" in cmd_str:
+                return subprocess.CompletedProcess(cmd, 0, "3\n", "")
+            return subprocess.CompletedProcess(cmd, 1, "", "ref not found")
+
+        with mock.patch.object(github_bus, "run_command", side_effect=mock_cmd):
+            self.assertTrue(github_bus.branch_exists("task/ODP-REMOTE-001"))
+            self.assertEqual(github_bus.branch_head_sha("task/ODP-REMOTE-001"), "70ea2d817c1d60db346869a0b284a6942fe78d2a")
+            self.assertTrue(github_bus.branch_has_diff("dev", "task/ODP-REMOTE-001"))
+
+    def test_branch_ref_resolution_prefers_coherent_remote_refs_over_stale_local_refs(self) -> None:
+        calls: list[str] = []
+
+        def mock_cmd(cmd: list[str], cwd: str | Path | None = None) -> subprocess.CompletedProcess[str]:
+            cmd_str = " ".join(cmd)
+            calls.append(cmd_str)
+            if "rev-parse refs/remotes/origin/task/ODP-REMOTE-001" in cmd_str:
+                return subprocess.CompletedProcess(cmd, 0, "2222222222222222222222222222222222222222\n", "")
+            if "rev-parse task/ODP-REMOTE-001" in cmd_str:
+                return subprocess.CompletedProcess(cmd, 0, "1111111111111111111111111111111111111111\n", "")
+            if "rev-list --count refs/remotes/origin/dev..refs/remotes/origin/task/ODP-REMOTE-001" in cmd_str:
+                return subprocess.CompletedProcess(cmd, 0, "3\n", "")
+            if "rev-list --count dev..task/ODP-REMOTE-001" in cmd_str:
+                return subprocess.CompletedProcess(cmd, 0, "0\n", "")
+            return subprocess.CompletedProcess(cmd, 1, "", "ref not found")
+
+        with mock.patch.object(github_bus, "run_command", side_effect=mock_cmd):
+            self.assertEqual(
+                github_bus.branch_head_sha("task/ODP-REMOTE-001"),
+                "2222222222222222222222222222222222222222",
+            )
+            self.assertTrue(github_bus.branch_has_diff("dev", "task/ODP-REMOTE-001"))
+
+        self.assertNotIn("git rev-parse task/ODP-REMOTE-001", calls)
+        self.assertNotIn("git rev-list --count dev..task/ODP-REMOTE-001", calls)
+
+
+class TaskPRBaseBranchTests(unittest.TestCase):
+    def test_task_pr_base_uses_branch_workflow_target_not_repo_default(self) -> None:
+        config = {
+            "github_bus": {"default_branch": "main"},
+            "branch_workflow": {"enabled": True, "dev_branch": "dev", "task_pr": {"target_branch": "dev"}},
+        }
+
+        self.assertEqual(github_bus.task_pr_base_branch(config), "dev")
+        # The repository default is still reported truthfully for callers that
+        # genuinely mean "the default branch".
+        self.assertEqual(github_bus.default_branch(config), "main")
+
+    def test_task_pr_base_falls_back_to_dev_branch_when_target_absent(self) -> None:
+        config = {
+            "github_bus": {"default_branch": "main"},
+            "branch_workflow": {"enabled": True, "dev_branch": "dev", "task_pr": {"auto_merge": True}},
+        }
+
+        self.assertEqual(github_bus.task_pr_base_branch(config), "dev")
+
+    def test_task_pr_base_falls_back_to_default_when_branch_workflow_disabled(self) -> None:
+        config = {
+            "github_bus": {"default_branch": "main"},
+            "branch_workflow": {"enabled": False, "dev_branch": "dev", "task_pr": {"target_branch": "dev"}},
+        }
+
+        self.assertEqual(github_bus.task_pr_base_branch(config), "main")
+
+    def test_upsert_review_pr_creates_against_branch_workflow_target(self) -> None:
+        config = {
+            "github_bus": {
+                "default_branch": "main",
+                "labels": {"review": ["pantheon-bus", "pantheon-review"]},
+                "templates": {"review_pr": ".orchestrator/templates/github_review_pr.md"},
+            },
+            "branch_workflow": {"enabled": True, "dev_branch": "dev", "task_pr": {"target_branch": "dev"}},
+        }
+        bus_state = {"tasks": {}}
+        status = {
+            "agents": [{"name": "Codex", "branch": "task/LIN-001"}],
+            "tasks": [],
+        }
+        task = {
+            "id": "LIN-001",
+            "title": "Lineage task",
+            "summary_zh": "review me",
+            "status": "review",
+            "owner": "Codex",
+            "reviewer": "Claude",
+            "depends_on": [],
+            "artifacts": ["foo.md"],
+            "next": "ready for review",
+        }
+
+        with (
+            mock.patch.object(github_bus, "branch_exists", side_effect=lambda branch: branch == "task/LIN-001"),
+            mock.patch.object(github_bus, "branch_head_sha", return_value="abc123"),
+            mock.patch.object(github_bus, "remote_branch_exists", return_value=True),
+            mock.patch.object(github_bus, "branch_has_diff", return_value=True),
+            mock.patch.object(github_bus, "find_existing_pr", return_value=None),
+            mock.patch.object(github_bus, "build_template_body", return_value="body\n"),
+            mock.patch.object(
+                github_bus,
+                "run_gh",
+                return_value=subprocess.CompletedProcess(
+                    ["gh"],
+                    0,
+                    "https://github.com/ajoe734/pantheon/pull/12\n",
+                    "",
+                ),
+            ) as run_gh,
+            mock.patch.object(github_bus, "write_activity_log"),
+        ):
+            changed = github_bus.upsert_review_pr(config, bus_state, status, "ajoe734/pantheon", task)
+
+        self.assertTrue(changed)
+        args = run_gh.call_args.args[0]
+        # A task PR must never be opened straight against the promotion target:
+        # it has to land on dev and reach main only through dev CI.
+        self.assertEqual(args[args.index("--base") + 1], "dev")
+
+
+class PrBackedStatusCoverageTests(unittest.TestCase):
+    """A task approved inside one poll interval must still get its PR.
+
+    Keying PR creation on `review` alone drops any task that leaves that status
+    before the next poll: the supervisor then reads `unknown` CI because no PR
+    exists, fails closed on finalize, and nothing ever goes back to create it.
+    """
+
+    def _task(self, status: str) -> dict:
+        return {
+            "id": "ODP-X-001",
+            "title": "T",
+            "summary_zh": "s",
+            "status": status,
+            "owner": "Codex",
+            "reviewer": "Claude",
+            "depends_on": [],
+            "artifacts": [],
+            "next": "n",
+        }
+
+    def test_statuses_come_from_config_not_a_literal(self) -> None:
+        config = {"ready_dispatcher": {"review_statuses": ["reviewing"], "finalize_statuses": ["approved"]}}
+
+        self.assertEqual(github_bus.pr_backed_statuses(config), {"reviewing", "approved"})
+
+    def test_defaults_cover_review_and_review_approved(self) -> None:
+        self.assertEqual(github_bus.pr_backed_statuses({}), {"review", "review_approved"})
+
+    def _sync_and_capture_pr_tasks(self, tasks: list[dict]) -> list[str]:
+        config = {
+            "github_bus": {"repo": "o/r", "templates": {"review_pr": ".orchestrator/templates/github_review_pr.md"}},
+        }
+        seen: list[str] = []
+        with (
+            mock.patch.object(github_bus, "pull_commands", return_value=[]),
+            mock.patch.object(github_bus, "upsert_review_pr", side_effect=lambda c, b, s, r, t: seen.append(t["id"]) or False),
+            mock.patch.object(github_bus, "upsert_ops_issue", return_value=False),
+            mock.patch.object(github_bus, "write_activity_log"),
+        ):
+            github_bus.sync_outbound(config, {"tasks": {}}, {"tasks": tasks, "blockers": []}, {}, "o/r")
+        return seen
+
+    def test_review_approved_task_still_gets_a_pr(self) -> None:
+        seen = self._sync_and_capture_pr_tasks([self._task("review_approved")])
+
+        self.assertEqual(seen, ["ODP-X-001"])
+
+    def test_review_task_still_gets_a_pr(self) -> None:
+        seen = self._sync_and_capture_pr_tasks([self._task("review")])
+
+        self.assertEqual(seen, ["ODP-X-001"])
+
+    def test_unrelated_statuses_are_left_alone(self) -> None:
+        tasks = [self._task(s) for s in ("todo", "in_progress", "blocked", "done")]
+        for index, task in enumerate(tasks):
+            task["id"] = f"ODP-X-{index}"
+
+        self.assertEqual(self._sync_and_capture_pr_tasks(tasks), [])
 
 
 if __name__ == "__main__":

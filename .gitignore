@@ -85,3 +85,6 @@ mlruns/
 .orchestrator/event-queue.jsonl
 .orchestrator/*.jsonl
 .orchestrator/provider_capabilities.json
+
+# Claude Code local permissions (machine-specific paths)
+.claude/settings.local.json

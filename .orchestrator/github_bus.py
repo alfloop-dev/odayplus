@@ -197,6 +197,45 @@ def default_branch(config: dict[str, Any]) -> str:
     return "main"
 
 
+def pr_backed_statuses(config: dict[str, Any]) -> set[str]:
+    """Statuses whose tasks must have a review PR.
+
+    Keying PR creation on `review` alone loses any task that leaves that status
+    before the bus next polls. A reviewer approving within the poll interval
+    moves it to `review_approved`, and nothing opens its PR -- ever. The
+    supervisor then reads `unknown` CI (there is no PR to read), fails closed on
+    finalize, and no code path exists that would go back and create the missing
+    PR. Observed on ODP-ORCH-CLAUDE-SESSION-LIMIT-REVIEW-001, approved minutes
+    after handoff and stuck with no PR at all.
+
+    Both statuses need the PR for the same reason: it is what CI and the review
+    gate attach to. upsert_review_pr adopts an existing PR before creating one,
+    so widening this set re-checks rather than duplicates.
+    """
+    settings = config.get("ready_dispatcher") if isinstance(config.get("ready_dispatcher"), dict) else {}
+    statuses = {str(value).strip().lower() for value in (settings.get("review_statuses") or ["review"])}
+    statuses.update(str(value).strip().lower() for value in (settings.get("finalize_statuses") or ["review_approved"]))
+    return {status for status in statuses if status}
+
+
+def task_pr_base_branch(config: dict[str, Any]) -> str:
+    # Task PRs belong to the branch workflow, not to the repository default.
+    # Work lands on the dev branch and is promoted to the default branch only
+    # after dev CI is green; basing task PRs on default_branch() would route
+    # them straight at main and bypass that promotion entirely.
+    branch_workflow = config.get("branch_workflow") or {}
+    if isinstance(branch_workflow, dict) and branch_workflow.get("enabled", True):
+        task_pr = branch_workflow.get("task_pr") or {}
+        if isinstance(task_pr, dict):
+            target = str(task_pr.get("target_branch") or "").strip()
+            if target:
+                return target
+        dev_branch = str(branch_workflow.get("dev_branch") or "").strip()
+        if dev_branch:
+            return dev_branch
+    return default_branch(config)
+
+
 def current_branch() -> str | None:
     proc = run_command(["git", "rev-parse", "--abbrev-ref", "HEAD"], cwd=ROOT)
     if proc.returncode != 0:
@@ -207,25 +246,42 @@ def current_branch() -> str | None:
 
 def branch_exists(branch: str) -> bool:
     proc = run_command(["git", "show-ref", "--verify", f"refs/heads/{branch}"], cwd=ROOT)
-    return proc.returncode == 0
+    if proc.returncode == 0:
+        return True
+    proc = run_command(["git", "show-ref", "--verify", f"refs/remotes/origin/{branch}"], cwd=ROOT)
+    if proc.returncode == 0:
+        return True
+    return remote_branch_exists(branch)
 
 
 def branch_head_sha(branch: str) -> str | None:
-    proc = run_command(["git", "rev-parse", branch], cwd=ROOT)
-    if proc.returncode != 0:
-        return None
-    sha = (proc.stdout or '').strip()
-    return sha or None
+    # Review PRs concern the published branch, so a stale local branch must not
+    # hide the remote-tracking ref that GitHub will actually review.
+    for ref in (f"refs/remotes/origin/{branch}", f"origin/{branch}", branch):
+        proc = run_command(["git", "rev-parse", ref], cwd=ROOT)
+        if proc.returncode == 0:
+            sha = (proc.stdout or "").strip()
+            if sha:
+                return sha
+    return None
 
 
 def branch_has_diff(base: str, branch: str) -> bool:
-    proc = run_command(["git", "rev-list", "--count", f"{base}..{branch}"], cwd=ROOT)
-    if proc.returncode != 0:
-        return False
-    try:
-        return int((proc.stdout or '0').strip() or '0') > 0
-    except ValueError:
-        return False
+    # Keep base and head in the same namespace. Mixing a local base with a
+    # published head (or vice versa) can manufacture or suppress a PR delta.
+    ref_pairs = [
+        (f"refs/remotes/origin/{base}", f"refs/remotes/origin/{branch}"),
+        (f"origin/{base}", f"origin/{branch}"),
+        (base, branch),
+    ]
+    for base_ref, branch_ref in ref_pairs:
+        proc = run_command(["git", "rev-list", "--count", f"{base_ref}..{branch_ref}"], cwd=ROOT)
+        if proc.returncode == 0:
+            try:
+                return int((proc.stdout or "0").strip() or "0") > 0
+            except ValueError:
+                pass
+    return False
 
 
 def remote_branch_exists(branch: str, remote: str = "origin") -> bool:
@@ -386,22 +442,54 @@ def edit_label_args(labels: list[str]) -> list[str]:
     return args
 
 
+def task_id_matches_branch(task_id: str, branch: str) -> bool:
+    if not task_id or not branch:
+        return False
+    task_ref = task_id.strip("/").lower().replace("_", "-")
+    branch_ref = branch.strip("/").lower().replace("_", "-")
+    return branch_ref == task_ref or branch_ref.endswith(f"/{task_ref}")
+
+
 def review_branch_for_task(config: dict[str, Any], status: dict[str, Any], task: dict[str, Any]) -> str | None:
+    task_id = str(task.get("id") or "").strip()
     meta = task.get("github") or {}
-    explicit = meta.get("head_branch")
-    if explicit and branch_exists(str(explicit)):
+    explicit = meta.get("head_branch") or task.get("branch")
+    if explicit and (not task_id or task_id_matches_branch(task_id, str(explicit))) and branch_exists(str(explicit)):
         return str(explicit)
 
+    prefix = str((config.get("branch_workflow", {}) or {}).get("task_branch_prefix") or "task/")
+
     owner = task.get("owner")
-    for agent in status.get("agents", []):
-        if agent.get("name") == owner:
-            branch = agent.get("branch")
-            if branch and branch_exists(str(branch)):
-                return str(branch)
+    agent_branch: str | None = None
+    if owner:
+        for agent in status.get("agents", []):
+            if agent.get("name") == owner:
+                b = agent.get("branch")
+                if b:
+                    agent_branch = str(b)
+                break
+
+    # Canonical per-task refs are immutable task identity. Resolve them before
+    # mutable agent registration, including related sidecar or prefix branches.
+    if task_id:
+        candidates = [
+            f"{prefix}{task_id}",
+            f"{prefix}{task_id.lower()}",
+            f"{prefix}{task_id.lower().replace('_', '-')}",
+        ]
+        for candidate in candidates:
+            if branch_exists(candidate):
+                return candidate
+
+    # An exact task-matching agent branch is useful when a deployment uses a
+    # non-canonical prefix, but substring-related task IDs are not equivalent.
+    if agent_branch and (not task_id or task_id_matches_branch(task_id, agent_branch)) and branch_exists(agent_branch):
+        return agent_branch
 
     branch = current_branch()
-    if branch and branch != default_branch(config):
+    if branch and branch != default_branch(config) and (not task_id or task_id_matches_branch(task_id, branch)) and branch_exists(branch):
         return branch
+
     return None
 
 
@@ -468,6 +556,38 @@ def issue_mutation_with_label_fallback(command: list[str]) -> subprocess.Complet
                 continue
             rebuilt.append(item)
         return run_gh(rebuilt)
+
+
+def edit_pull_request_rest(repo: str, number: int, title: str, body: str, labels: list[str]) -> None:
+    """Update a review-bus PR without the deprecated Projects Classic query.
+
+    ``gh pr edit`` still asks GraphQL for ``projectCards`` before applying an
+    otherwise unrelated title/body edit. GitHub now rejects that field, which
+    leaves the review bus stale after an exact-head re-review. The REST pull
+    request and issue-label endpoints avoid that deprecated query entirely.
+    """
+    run_gh(
+        [
+            "api",
+            "--method",
+            "PATCH",
+            f"repos/{repo}/pulls/{number}",
+            "--raw-field",
+            f"title={title}",
+            "--raw-field",
+            f"body={body}",
+        ]
+    )
+    if not labels:
+        return
+    label_args = ["api", "--method", "POST", f"repos/{repo}/issues/{number}/labels"]
+    for label in labels:
+        label_args.extend(["--raw-field", f"labels[]={label}"])
+    try:
+        run_gh(label_args)
+    except GitHubBusError as exc:
+        if "label" not in str(exc).lower():
+            raise
 
 
 def upsert_ops_issue(config: dict[str, Any], bus_state: dict[str, Any], repo: str, task: dict[str, Any], reason: str, details: str) -> bool:
@@ -654,7 +774,7 @@ def upsert_review_pr(config: dict[str, Any], bus_state: dict[str, Any], status: 
         )
         return True
 
-    base = default_branch(config)
+    base = task_pr_base_branch(config)
     title = f"[ReviewBus] {task['id']} {task['title']}"
     head_sha = branch_head_sha(branch)
     skip_hash = json.dumps(
@@ -747,13 +867,13 @@ def upsert_review_pr(config: dict[str, Any], bus_state: dict[str, Any], status: 
     try:
         if pr_ref and pr_ref.get("number"):
             number = int(pr_ref["number"])
-            run_gh(["pr", "edit", str(number), "--repo", repo, "--title", title, "--body-file", str(body_file), *edit_label_args(labels)])
+            edit_pull_request_rest(repo, number, title, body, labels)
             pr = dict(pr_ref)
         else:
             found = find_existing_pr(repo, task["id"], branch)
             if found:
                 number = int(found["number"])
-                run_gh(["pr", "edit", str(number), "--repo", repo, "--title", title, "--body-file", str(body_file), *edit_label_args(labels)])
+                edit_pull_request_rest(repo, number, title, body, labels)
                 pr = {"number": number, "url": found.get("url"), "title": title, "headRefName": branch}
             else:
                 create_args = ["pr", "create", "--repo", repo, "--draft", "--title", title, "--body-file", str(body_file), "--base", base, "--head", branch]
@@ -1485,7 +1605,7 @@ def consume_cloud_relay_commands(
 def sync_outbound(config: dict[str, Any], bus_state: dict[str, Any], status: dict[str, Any], runtime_state: dict[str, Any], repo: str) -> bool:
     changed = False
     blocked_tasks = {task.get("id"): task for task in status.get("tasks", []) if task.get("status") == "blocked"}
-    review_tasks = [task for task in status.get("tasks", []) if task.get("status") == "review"]
+    review_tasks = [task for task in status.get("tasks", []) if task.get("status") in pr_backed_statuses(config)]
 
     blocker_by_task = {item.get("task_id"): item for item in status.get("blockers", []) if item.get("status") == "open"}
 
