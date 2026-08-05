@@ -815,5 +815,66 @@ class TaskPRBaseBranchTests(unittest.TestCase):
         self.assertEqual(args[args.index("--base") + 1], "dev")
 
 
+class PrBackedStatusCoverageTests(unittest.TestCase):
+    """A task approved inside one poll interval must still get its PR.
+
+    Keying PR creation on `review` alone drops any task that leaves that status
+    before the next poll: the supervisor then reads `unknown` CI because no PR
+    exists, fails closed on finalize, and nothing ever goes back to create it.
+    """
+
+    def _task(self, status: str) -> dict:
+        return {
+            "id": "ODP-X-001",
+            "title": "T",
+            "summary_zh": "s",
+            "status": status,
+            "owner": "Codex",
+            "reviewer": "Claude",
+            "depends_on": [],
+            "artifacts": [],
+            "next": "n",
+        }
+
+    def test_statuses_come_from_config_not_a_literal(self) -> None:
+        config = {"ready_dispatcher": {"review_statuses": ["reviewing"], "finalize_statuses": ["approved"]}}
+
+        self.assertEqual(github_bus.pr_backed_statuses(config), {"reviewing", "approved"})
+
+    def test_defaults_cover_review_and_review_approved(self) -> None:
+        self.assertEqual(github_bus.pr_backed_statuses({}), {"review", "review_approved"})
+
+    def _sync_and_capture_pr_tasks(self, tasks: list[dict]) -> list[str]:
+        config = {
+            "github_bus": {"repo": "o/r", "templates": {"review_pr": ".orchestrator/templates/github_review_pr.md"}},
+        }
+        seen: list[str] = []
+        with (
+            mock.patch.object(github_bus, "pull_commands", return_value=[]),
+            mock.patch.object(github_bus, "upsert_review_pr", side_effect=lambda c, b, s, r, t: seen.append(t["id"]) or False),
+            mock.patch.object(github_bus, "upsert_ops_issue", return_value=False),
+            mock.patch.object(github_bus, "write_activity_log"),
+        ):
+            github_bus.sync_outbound(config, {"tasks": {}}, {"tasks": tasks, "blockers": []}, {}, "o/r")
+        return seen
+
+    def test_review_approved_task_still_gets_a_pr(self) -> None:
+        seen = self._sync_and_capture_pr_tasks([self._task("review_approved")])
+
+        self.assertEqual(seen, ["ODP-X-001"])
+
+    def test_review_task_still_gets_a_pr(self) -> None:
+        seen = self._sync_and_capture_pr_tasks([self._task("review")])
+
+        self.assertEqual(seen, ["ODP-X-001"])
+
+    def test_unrelated_statuses_are_left_alone(self) -> None:
+        tasks = [self._task(s) for s in ("todo", "in_progress", "blocked", "done")]
+        for index, task in enumerate(tasks):
+            task["id"] = f"ODP-X-{index}"
+
+        self.assertEqual(self._sync_and_capture_pr_tasks(tasks), [])
+
+
 if __name__ == "__main__":
     unittest.main()
