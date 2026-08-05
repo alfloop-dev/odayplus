@@ -1,0 +1,22 @@
+deploy	Build, push, deploy, and verify Cloud Run	2026-07-29T08:25:35.3457170Z Creating execution...
+deploy	Build, push, deploy, and verify Cloud Run	2026-07-29T08:26:33.1593902Z Provisioning resources..........................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................done
+deploy	Build, push, deploy, and verify Cloud Run	2026-07-29T08:26:42.8919989Z Starting execution........................................................................................................done
+deploy	Build, push, deploy, and verify Cloud Run	2026-07-29T08:26:57.4089384Z Running execution..................................................................................................................................................................done
+deploy	Build, push, deploy, and verify Cloud Run	2026-07-29T08:26:57.6517695Z gcloud run jobs executions describe oday-migration-r-427e32909c38-4dpcb
+deploy	Build, push, deploy, and verify Cloud Run	2026-07-29T08:30:14.3940180Z Executing scheduler Cloud Run Job...
+deploy	Build, push, deploy, and verify Cloud Run	2026-07-29T08:30:14.9938692Z Creating execution...
+deploy	Build, push, deploy, and verify Cloud Run	2026-07-29T08:30:17.2381205Z Provisioning resources................done
+deploy	Build, push, deploy, and verify Cloud Run	2026-07-29T08:30:24.1590634Z Starting execution............................................................................done
+deploy	Build, push, deploy, and verify Cloud Run	2026-07-29T08:30:38.7046530Z Running execution..................................................................................................................................................................done
+deploy	Build, push, deploy, and verify Cloud Run	2026-07-29T08:30:38.9240167Z gcloud run jobs executions describe oday-scheduler-r-427e32909c38-vprt4
+deploy	Build, push, deploy, and verify Cloud Run	2026-07-29T08:30:44.1990471Z Cloud Run scheduler Job smoke passed.
+deploy	Build, push, deploy, and verify Cloud Run	2026-07-29T08:30:44.2268813Z Executing worker Cloud Run Job...
+deploy	Build, push, deploy, and verify Cloud Run	2026-07-29T08:30:44.8228946Z Creating execution...
+deploy	Build, push, deploy, and verify Cloud Run	2026-07-29T08:30:48.3405494Z Provisioning resources...........done
+deploy	Build, push, deploy, and verify Cloud Run	2026-07-29T08:30:58.0389544Z Starting execution.......................................................................................................done
+deploy	Build, push, deploy, and verify Cloud Run	2026-07-29T08:31:56.2155738Z Running execution.........................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................failed
+deploy	Build, push, deploy, and verify Cloud Run	2026-07-29T08:31:56.2158071Z Executing job failed
+deploy	Build, push, deploy, and verify Cloud Run	2026-07-29T08:31:56.2220200Z ERROR: (gcloud.run.jobs.execute) The execution failed.
+deploy	Build, push, deploy, and verify Cloud Run	2026-07-29T08:31:56.2221322Z gcloud run jobs executions describe oday-worker-r-427e32909c38-p8t9l
+deploy	Build, push, deploy, and verify Cloud Run	2026-07-29T08:31:59.2529731Z Error: worker Cloud Run Job failed; deployment stopped.
+deploy	Build, push, deploy, and verify Cloud Run	2026-07-29T08:31:59.2530794Z Deployment failed; restoring the recorded API/Web traffic split.

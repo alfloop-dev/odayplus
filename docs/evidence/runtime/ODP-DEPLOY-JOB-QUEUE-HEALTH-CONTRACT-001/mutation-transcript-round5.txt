@@ -1,0 +1,59 @@
+# Mutation transcript — ODP-DEPLOY-JOB-QUEUE-HEALTH-CONTRACT-001 round 5
+# Run by Claude3 on the task head after merging origin/dev (4b329493).
+# Target: tests/ops/test_cloud_run_live_deployment.py::test_real_app_platform_health_job_queue_contract
+#         tests/reliability/test_health_endpoints.py (6 tests)
+# Method: replace the shipped bundle.mode derivation in apps/api/oday_api/main.py with each
+#         predecessor implementation, run the test, restore. A mutant that leaves the test
+#         green would prove the test is not load-bearing.
+
+== BASELINE (unmutated) ==
+$ pytest tests/ops/...::test_real_app_platform_health_job_queue_contract tests/reliability/test_health_endpoints.py -p no:warnings
+7 passed in 31.20s
+
+== M1: revert main.py to the TRUE dev baseline (88dae2e1): bare queue_details = "healthy" ==
+E       AssertionError: postgresql-mode queue must contain a required marker; got: '"healthy"'
+E       assert False
+E        +  where False = any(<generator object test_real_app_platform_health_job_queue_contract.<locals>.<genexpr> at 0x7eece7f64c70>)
+FAILED tests/ops/test_cloud_run_live_deployment.py::test_real_app_platform_health_job_queue_contract
+1 failed in 8.84s
+-> M1 KILLED (Case 1: bare 'healthy' carries no required marker)
+
+== M2: revert main.py to this task's round-1 bundle.is_durable two-branch text (c07bbcb8) ==
+E       AssertionError: sqlite-mode queue text must contain 'sqlite' to fail closed; got: '"healthy (durable postgresql job queue)"'
+E       assert 'sqlite' in '"healthy (durable postgresql job queue)"'
+FAILED tests/ops/test_cloud_run_live_deployment.py::test_real_app_platform_health_job_queue_contract
+1 failed in 13.77s
+-> M2 KILLED (Case 2: SQLite durable bundle mislabelled as postgresql)
+
+== RESTORED (unmutated) ==
+7 passed in 34.64s
+
+RESULT: 2 mutants executed, 0 survived.
+
+== RE-VERIFICATION on task head 61766a45 (merge of origin/dev 4b329493) ==
+# The worker worktree was hard-reset between the first run and this commit, so the whole
+# transcript above was re-executed from scratch against the exact head being pushed.
+
+$ pytest tests/ops/...::test_real_app_platform_health_job_queue_contract tests/reliability/test_health_endpoints.py -p no:warnings
+7 passed in 30.51s
+
+M1 (bare queue_details = "healthy"):
+E       AssertionError: postgresql-mode queue must contain a required marker; got: '"healthy"'
+tests/ops/test_cloud_run_live_deployment.py:4412: AssertionError
+1 failed in 9.38s
+-> M1 KILLED
+
+M2 (round-1 bundle.is_durable two-branch text):
+E       AssertionError: sqlite-mode queue text must contain 'sqlite' to fail closed; got: '"healthy (durable postgresql job queue)"'
+1 failed
+-> M2 KILLED
+
+$ python3 -m ruff check apps/api/oday_api/main.py tests/ops/test_cloud_run_live_deployment.py tests/reliability/test_health_endpoints.py
+All checks passed!
+$ python3 -m ruff format --diff <same 3 files>
+3 files already formatted
+$ git diff origin/dev...HEAD --check
+(no output, exit 0)
+
+RE-VERIFICATION RESULT: 2 mutants executed, 0 survived; app/test code byte-identical to the
+first run (git diff --stat on apps/api/oday_api/main.py empty after restore).

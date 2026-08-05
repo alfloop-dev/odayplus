@@ -1,0 +1,14 @@
+{
+  "session_id": "ba800f49-1a23-4b80-9982-3d5403be58b1",
+  "stop_reason": "tool_deferred",
+  "terminal_reason": "tool_deferred",
+  "num_turns": 22,
+  "deferred_tool_use": {
+    "id": "toolu_01SCpJdoiFmVuQCncHLF5F7h",
+    "name": "Bash",
+    "input": {
+      "command": "wget --version",
+      "description": "Produce a real tool_deferred receipt for the live boot-reconciliation proof"
+    }
+  }
+}

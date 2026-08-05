@@ -3,9 +3,10 @@ from __future__ import annotations
 
 import argparse
 import atexit
+import copy
 import fcntl
 import fnmatch
-import importlib
+import hashlib
 import json
 import math
 import os
@@ -15,7 +16,9 @@ import shutil
 import signal
 import subprocess
 import sys
+import tempfile
 import time
+import uuid
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
@@ -24,18 +27,41 @@ from zoneinfo import ZoneInfo
 THIS_DIR = Path(__file__).resolve().parent
 if str(THIS_DIR) not in sys.path:
     sys.path.insert(0, str(THIS_DIR))
+SCRIPTS_DIR = THIS_DIR.parent / "scripts"
+if str(SCRIPTS_DIR) not in sys.path:
+    sys.path.insert(0, str(SCRIPTS_DIR))
 
+EXPECTED_AI_STATUS_PATH = (SCRIPTS_DIR / "ai_status.py").resolve()
+existing_ai_status = sys.modules.get("ai_status")
+if existing_ai_status is not None and Path(
+    str(getattr(existing_ai_status, "__file__", ""))
+).resolve() != EXPECTED_AI_STATUS_PATH:
+    sys.modules.pop("ai_status", None)
+import ai_status as runtime_ai_status
+
+if Path(str(runtime_ai_status.__file__)).resolve() != EXPECTED_AI_STATUS_PATH:
+    raise RuntimeError(
+        "Supervisor must load ai_status from its immutable runtime: "
+        f"expected {EXPECTED_AI_STATUS_PATH}, got {runtime_ai_status.__file__}"
+    )
 import model_rotation
 from adapters import build_adapter
 from adapters.base import DeliveryRequest
-from approval_queue import prune_stale_approvals, resolve_approval
+from approval_queue import (
+    ensure_worker_deferred_approval,
+    find_worker_deferred_approval,
+    prune_stale_approvals,
+    resolve_approval,
+)
 from common import (
     agent_config_for,
     command_exists,
     config_path,
     display_name_for,
     execution_context_files,
+    generate_task_brief_content,
     is_github_cli_auth_failure,
+    is_task_brief_stale,
     load_config,
     load_json,
     load_status,
@@ -49,6 +75,9 @@ from common import (
     spawn_background_process,
     summarize_failure_reason,
     utc_now,
+    validate_destination_context_path,
+    validate_source_doc_path,
+    validate_task_archive_ambiguity,
     worker_runtime_paths,
     write_activity_log,
     write_failure_evidence,
@@ -142,8 +171,12 @@ WORKER_FAILURE_FALSE_POSITIVE_PATTERNS = (
     re.compile(r"^error:\s+[A-Za-z_][A-Za-z0-9_<>{}\[\], :|?]+?\|\s*null$", re.IGNORECASE),
     re.compile(r"^[+-]?\s*console\.error\(", re.IGNORECASE),
     re.compile(r"^[+-]\s*[A-Za-z_][A-Za-z0-9_.]*\s*=\s*", re.IGNORECASE),
+    re.compile(
+        r"^[A-Za-z_][A-Za-z0-9_.]*\s*=\s*(?:[rubf]{0,4})(?:'''|\"\"\"|'|\")",
+        re.IGNORECASE,
+    ),
     re.compile(r"^-\s+\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z\s+·\s+", re.IGNORECASE),
-    re.compile(r"\bauto-reassigned\b.*\bafter repeated\b.*\bquota\b", re.IGNORECASE),
+    re.compile(r"\bauto-reassigned\b.*\bafter repeated\b", re.IGNORECASE),
 )
 SEARCH_RESULT_JSON_FIELD_PATTERN = re.compile(
     r"^(?:[^:\s][^:]*:)?\d+[:-]\s*\"[A-Za-z0-9_]+\"\s*:\s*",
@@ -162,6 +195,9 @@ COMMAND_OUTPUT_EXIT_LINE_PATTERN = re.compile(r"^exited\s+\d+\s+in\s+\S+:", re.I
 LOCAL_TZ = ZoneInfo("Asia/Taipei")
 SUPERVISOR_LOG_QUIET = False
 GENERIC_WORKER_EXIT_REASON = "Worker exited before the task reached a terminal status."
+NO_PROGRESS_WORKER_EXIT_REASON = (
+    "Worker exited successfully without the required task lifecycle transition or meaningful progress."
+)
 PLANNING_STATE_FILE = THIS_DIR / "planning-state.json"
 PLANNING_PHASE_DIR = THIS_DIR.parent / "docs" / "02-architecture" / "consensus" / "phase1"
 _UNSET = object()
@@ -486,20 +522,9 @@ def summarize_runtime(state: dict[str, Any], approval_state: dict[str, Any]) -> 
 
 def refresh_dashboard_runtime_artifacts(config: dict[str, Any]) -> None:
     try:
-        repo_root = config_path(config, "status_file").parent
-    except KeyError:
-        repo_root = THIS_DIR.parent
-    scripts_dir = repo_root / "scripts"
-    if not scripts_dir.exists():
-        return
-    scripts_path = str(scripts_dir)
-    if scripts_path not in sys.path:
-        sys.path.insert(0, scripts_path)
-    try:
-        ai_status = importlib.import_module("ai_status")
-        status_state = ai_status.load_state()
-        ai_status.write_dashboard_bundle(status_state)
-        ai_status.sync_docs_site(status_state)
+        status_state = runtime_ai_status.load_state()
+        runtime_ai_status.write_dashboard_bundle(status_state)
+        runtime_ai_status.sync_docs_site(status_state)
     except Exception as exc:
         console_log(
             f"dashboard bundle refresh failed: {type(exc).__name__}: {exc}",
@@ -1077,10 +1102,11 @@ def build_request(
     logical_agent_id = normalize_agent_id(str(logical_agent.get("id") or event.get("target_agent") or ""))
     if logical_agent_id and "logical_agent_id" not in metadata:
         metadata["logical_agent_id"] = logical_agent_id
+    if "target_display_name" not in metadata:
+        metadata["target_display_name"] = event.get("target_display_name") or display_name_for(config, logical_agent_id)
     if agent_id_override:
         metadata["dispatch_slot_id"] = agent["id"]
         metadata["dispatch_slot"] = agent.get("slot_id") or agent["id"]
-        metadata["target_display_name"] = event.get("target_display_name") or display_name_for(config, logical_agent_id)
     context_files = event.get("context_files")
     if context_files is None:
         context_files = execution_context_files(config, event.get("task_id"))
@@ -1288,77 +1314,208 @@ def _create_worker_worktree(repo_root: Path, path: Path, branch: str, base_ref: 
     return True, None
 
 
-# Orchestrator-managed per-task scratch that a worker routinely dirties inside its
-# own worktree (the task brief gets annotated, the review artifact rewritten). The
-# supervisor regenerates these on dispatch, so a reused worktree whose ONLY dirt is
-# here is safe to restore-and-reuse. Blocking dispatch on this churn is what jams
-# the whole fleet once worktrees are reused (every tick re-blocks, nothing runs).
+# Orchestrator-managed per-task scratch and context files that a worker routinely
+# dirties or seeds inside its worktree. The supervisor regenerates or seeds these on
+# dispatch, so a reused worktree whose ONLY dirt is here is safe to restore-and-reuse.
+# Ephemeral context must not block dispatch or cause permanent lease failure.
 _REUSABLE_DIRTY_PREFIXES = (
     ".orchestrator/task-briefs/",
     ".orchestrator/reviews/",
 )
+_REUSABLE_CONTEXT_FILES = (
+    "AI_COLLABORATION_GUIDE.md",
+    "ai-status.json",
+    "current-work.md",
+    "ai-activity-log.jsonl",
+)
 
 
-def _classify_worktree_dirt(porcelain_status: str) -> tuple[str, list[str]]:
+def _is_safe_context_destination(workspace_path: Path, rel_value: str) -> bool:
+    """Validate that rel_value destination inside workspace_path is safe to write or read context.
+
+    Returns False if:
+    - rel_value is empty, absolute, or contains path traversal ('..')
+    - destination or any parent directory within workspace_path is a symlink (os.path.islink)
+    - destination or any parent within workspace_path exists and is a non-regular file/dir
+    - destination or any parent resolves outside workspace_path
+    """
+    rel_clean = str(rel_value or "").replace("\\", "/").strip()
+    if not rel_clean or Path(rel_clean).is_absolute() or ".." in rel_clean.split("/"):
+        return False
+
+    try:
+        workspace_resolved = workspace_path.resolve()
+        curr = workspace_path
+        parts = Path(rel_clean).parts
+
+        for part in parts[:-1]:
+            curr = curr / part
+            if os.path.islink(curr):
+                return False
+            if curr.exists():
+                if not curr.is_dir():
+                    return False
+                try:
+                    curr_resolved = curr.resolve()
+                    if curr_resolved != workspace_resolved and workspace_resolved not in curr_resolved.parents:
+                        return False
+                except (OSError, RuntimeError, ValueError):
+                    return False
+
+        destination = workspace_path / rel_clean
+        if os.path.islink(destination):
+            return False
+        if destination.exists():
+            if not destination.is_file():
+                return False
+            try:
+                dest_resolved = destination.resolve()
+                if dest_resolved != workspace_resolved and workspace_resolved not in dest_resolved.parents:
+                    return False
+            except (OSError, RuntimeError, ValueError):
+                return False
+
+        return True
+    except Exception:
+        return False
+
+
+def _classify_worktree_dirt(
+    porcelain_status: str | bytes,
+    worktree_path: Path | None = None,
+) -> tuple[str, list[str]]:
     """Classify reused-worktree dirtiness from `git status --porcelain` output.
 
     Returns (classification, paths):
-      'clean'        - no tracked/staged changes; paths is []
-      'scratch_only' - every change is orchestrator-managed scratch
-                       (see _REUSABLE_DIRTY_PREFIXES); paths lists them
-      'real'         - at least one change outside scratch -> must block dispatch
+      'clean'        - no changes; paths is []
+      'scratch_only' - every change is an untracked or ignored ephemeral seed
+                       (see _REUSABLE_DIRTY_PREFIXES / _REUSABLE_CONTEXT_FILES); paths lists them
+      'real'         - at least one change is tracked/staged or outside scratch -> must block reuse
     """
-    lines = [ln for ln in porcelain_status.splitlines() if ln.strip()]
-    if not lines:
+    entries: list[tuple[str, str]] = []
+    if isinstance(porcelain_status, bytes):
+        raw_entries = [e for e in porcelain_status.split(b"\0") if e]
+        if not raw_entries:
+            return "clean", []
+        i = 0
+        while i < len(raw_entries):
+            item = raw_entries[i]
+            code = item[:2].decode("utf-8", errors="replace")
+            path_bytes = item[3:] if len(item) > 3 else b""
+            i += 1
+            if len(code) >= 2 and (code[0] in ("R", "C") or code[1] in ("R", "C")):
+                if i < len(raw_entries):
+                    i += 1
+            rel_p = os.fsdecode(path_bytes).strip()
+            if rel_p:
+                entries.append((code, rel_p))
+    else:
+        lines = [ln for ln in porcelain_status.splitlines() if ln.strip()]
+        if not lines:
+            return "clean", []
+        for ln in lines:
+            code = ln[:2]
+            body = ln[3:] if len(ln) > 3 else ln.strip()
+            path = body.split(" -> ")[-1].strip().strip('"')
+            if path:
+                entries.append((code, path))
+
+    if not entries:
         return "clean", []
-    paths: list[str] = []
-    for ln in lines:
-        body = ln[3:] if len(ln) > 3 else ln.strip()
-        # rename/copy lines render as "old -> new"; the new path is what exists.
-        path = body.split(" -> ")[-1].strip().strip('"')
-        if path:
-            paths.append(path)
-    if any(not p.startswith(_REUSABLE_DIRTY_PREFIXES) for p in paths):
-        return "real", []
-    return "scratch_only", paths
+
+    def _is_reusable(p: str) -> bool:
+        norm = p.replace("\\", "/").strip()
+        return norm.startswith(_REUSABLE_DIRTY_PREFIXES) or norm in _REUSABLE_CONTEXT_FILES
+
+    scratch_paths: list[str] = []
+    for code, path in entries:
+        if code.strip() not in ("??", "!!"):
+            return "real", []
+        if not _is_reusable(path):
+            return "real", []
+        if worktree_path and not _is_safe_context_destination(worktree_path, path):
+            return "real", []
+        scratch_paths.append(path)
+
+    return "scratch_only", scratch_paths
 
 
 def _restore_reusable_scratch(worktree_path: Path, paths: list[str]) -> None:
-    """Restore orchestrator scratch paths to HEAD and drop untracked scratch."""
-    if paths:
-        subprocess.run(
-            ["git", "checkout", "-q", "HEAD", "--", *sorted(set(paths))],
-            cwd=worktree_path,
+    """Never checkout or destroy owner-modified content. Untracked scratch is kept untouched."""
+    pass
+
+
+
+
+
+def _git_output(cwd: Path, *args: str) -> tuple[int, str]:
+    if not cwd or not Path(cwd).exists():
+        return 1, ""
+    try:
+        proc = subprocess.run(
+            ["git", *args],
+            cwd=cwd,
             capture_output=True,
             text=True,
             check=False,
         )
-    subprocess.run(
-        ["git", "clean", "-fq", "--", *_REUSABLE_DIRTY_PREFIXES],
+        return proc.returncode, (proc.stdout or "").strip()
+    except (OSError, ValueError):
+        return 1, ""
+
+
+def _git_commit_oid(cwd: Path, ref: str) -> str | None:
+    returncode, output = _git_output(cwd, "rev-parse", "--verify", f"{ref}^{{commit}}")
+    oid = output.splitlines()[0].strip() if output else ""
+    return oid if returncode == 0 and re.fullmatch(r"[0-9a-fA-F]{40,64}", oid) else None
+
+
+def _fetch_authoritative_task_head(
+    repo_root: Path,
+    worktree_path: Path,
+    branch: str,
+) -> tuple[str | None, str]:
+    """Resolve the immutable commit used for dirty-worktree lease recovery.
+
+    Repositories with an ``origin`` must resolve the exact remote task ref after
+    fetching it.  A mutable local branch (or the dirty worktree's HEAD) is never
+    allowed to win over the published task ref.  Local-only repositories retain
+    the existing branch-ref behavior for tests and offline development.
+    """
+    remotes_rc, remotes = _git_output(worktree_path, "remote")
+    has_origin = remotes_rc == 0 and "origin" in remotes.splitlines()
+    if not has_origin:
+        local_head = _git_commit_oid(repo_root, f"refs/heads/{branch}")
+        if local_head:
+            return local_head, "local_only_task_ref"
+        return None, "unverifiable_refs: missing local task branch"
+
+    remote_query = subprocess.run(
+        ["git", "ls-remote", "--exit-code", "origin", f"refs/heads/{branch}"],
         cwd=worktree_path,
         capture_output=True,
         text=True,
         check=False,
     )
+    if remote_query.returncode == 2:
+        return None, "unverifiable_refs: remote task branch is missing"
+    if remote_query.returncode != 0:
+        details = (remote_query.stderr or remote_query.stdout or "").strip()
+        return None, f"fetch_failed: {details}"
 
+    advertised = (remote_query.stdout or "").strip().split()
+    advertised_head = advertised[0] if advertised else ""
+    if not re.fullmatch(r"[0-9a-fA-F]{40,64}", advertised_head):
+        return None, "unverifiable_refs: invalid advertised remote task HEAD"
 
-def _refresh_reused_worker_worktree(repo_root: Path, worktree_path: Path, base_ref: str) -> tuple[bool, str]:
-    """Fast-forward a reused worker worktree to the current base ref tip.
-
-    Reused worktrees may carry the worker's per-task branch from days ago,
-    which means their copy of `scripts/ai_status.py` / supervisor / skills can
-    be older than the supervisor root. That stale snapshot has bypassed gates
-    such as ORCH-CLOSEOUT-MERGE-GATE (require_merged_pr). Refresh on lease so
-    the worker always sees current control-plane code.
-
-    Strategy: fetch + `git merge --ff-only origin/<base>`. Never auto-resolve
-    a real merge — if the branch genuinely diverged, leave it for the worker
-    to handle. Dirty reused worktrees are blocked before dispatch so workers
-    cannot inherit unrelated staged or tracked changes.
-    """
-    base = base_ref.split("/", 1)[1] if base_ref.startswith("origin/") else base_ref
     fetch_proc = subprocess.run(
-        ["git", "fetch", "origin", base, "--quiet"],
+        [
+            "git",
+            "fetch",
+            "origin",
+            "--quiet",
+            f"+refs/heads/{branch}:refs/remotes/origin/{branch}",
+        ],
         cwd=worktree_path,
         capture_output=True,
         text=True,
@@ -1366,54 +1523,219 @@ def _refresh_reused_worker_worktree(repo_root: Path, worktree_path: Path, base_r
     )
     if fetch_proc.returncode != 0:
         details = (fetch_proc.stderr or fetch_proc.stdout or "").strip()
-        return False, f"fetch_failed: {details}"
+        return None, f"fetch_failed: {details}"
+    fetched_head = _git_commit_oid(repo_root, f"refs/remotes/origin/{branch}")
+    if not fetched_head or fetched_head.lower() != advertised_head.lower():
+        return None, (
+            "unverifiable_refs: fetched remote task HEAD does not match "
+            f"advertised HEAD ({fetched_head or 'none'} != {advertised_head})"
+        )
+    return fetched_head, "remote_exact_task_ref"
+
+
+def _git_operation_in_progress(worktree_path: Path) -> bool:
+    # REBASE_HEAD records the commit currently being replayed, but Git may
+    # retain it after a successful rebase has finished.  The authoritative
+    # in-progress signals are rebase-merge/rebase-apply below; treating a stale
+    # REBASE_HEAD as active permanently jams an otherwise reusable worktree.
+    for marker in ("MERGE_HEAD", "CHERRY_PICK_HEAD", "REVERT_HEAD"):
+        returncode, _ = _git_output(worktree_path, "rev-parse", "--verify", "-q", marker)
+        if returncode == 0:
+            return True
+    for marker in ("rebase-merge", "rebase-apply"):
+        returncode, raw_path = _git_output(worktree_path, "rev-parse", "--git-path", marker)
+        if returncode != 0 or not raw_path:
+            return True
+        marker_path = Path(raw_path)
+        if not marker_path.is_absolute():
+            marker_path = worktree_path / marker_path
+        if marker_path.exists():
+            return True
+    return False
+
+
+def _refresh_reused_worker_worktree(
+    repo_root: Path,
+    worktree_path: Path,
+    base_ref: str,
+    expected_branch: str,
+) -> tuple[bool, str]:
+    """Lease a clean reused worktree using a fail-closed three-way policy.
+
+    A branch behind the current base may be fast-forwarded. A clean local task
+    branch behind its freshly fetched remote task branch may also be
+    fast-forwarded to that authoritative published HEAD. A branch already
+    containing the base is left untouched. A genuinely diverged branch is
+    dispatchable only when its local HEAD exactly matches the remote task HEAD;
+    the owner then receives an explicit rebase-required prompt. Every
+    unverifiable or mutable condition blocks without resetting, cleaning,
+    rebasing, or otherwise discarding worker state.
+    """
+    base = base_ref.split("/", 1)[1] if base_ref.startswith("origin/") else base_ref
+    worktree_path = worktree_path.resolve()
+    repo_root = repo_root.resolve()
+
+    top_rc, top_level = _git_output(worktree_path, "rev-parse", "--show-toplevel")
+    worktree_common_rc, worktree_common = _git_output(worktree_path, "rev-parse", "--git-common-dir")
+    repo_common_rc, repo_common = _git_output(repo_root, "rev-parse", "--git-common-dir")
+    try:
+        resolved_top = Path(top_level).resolve()
+        resolved_worktree_common = (worktree_path / worktree_common).resolve()
+        resolved_repo_common = (repo_root / repo_common).resolve()
+    except (OSError, RuntimeError, ValueError):
+        return False, "wrong_worktree: unable to resolve repository identity"
+    if (
+        top_rc != 0
+        or worktree_common_rc != 0
+        or repo_common_rc != 0
+        or resolved_top != worktree_path
+        or resolved_worktree_common != resolved_repo_common
+    ):
+        return False, "wrong_worktree: path is not the expected repository worktree"
+
+    branch_rc, branch = _git_output(worktree_path, "symbolic-ref", "--quiet", "--short", "HEAD")
+    if branch_rc == 0:
+        if branch != expected_branch:
+            return False, f"wrong_branch: expected {expected_branch}, found {branch}"
+    else:
+        current_head = _git_commit_oid(worktree_path, "HEAD")
+        expected_head = (
+            _git_commit_oid(repo_root, f"refs/heads/{expected_branch}")
+            or _git_commit_oid(repo_root, f"origin/{expected_branch}")
+            or _git_commit_oid(repo_root, expected_branch)
+        )
+        if not current_head or not expected_head or current_head != expected_head:
+            return False, f"wrong_branch: expected {expected_branch} ({expected_head or 'none'}), found detached HEAD at {current_head or 'none'}"
+    if _git_operation_in_progress(worktree_path):
+        return False, "unresolved_git_operation"
+
+    has_remote_origin = "origin" in _git_output(worktree_path, "remote")[1].splitlines()
+    if has_remote_origin:
+        fetch_proc = subprocess.run(
+            ["git", "fetch", "origin", base, "--quiet"],
+            cwd=worktree_path,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        if fetch_proc.returncode != 0:
+            details = (fetch_proc.stderr or fetch_proc.stdout or "").strip()
+            return False, f"fetch_failed: {details}"
 
     status_proc = subprocess.run(
-        ["git", "status", "--porcelain", "--untracked-files=no"],
+        ["git", "status", "--porcelain=v1", "-z", "--untracked-files=all"],
         cwd=worktree_path,
         capture_output=True,
-        text=True,
         check=False,
     )
-    scratch_restored = False
-    if status_proc.returncode == 0 and status_proc.stdout.strip():
-        classification, scratch_paths = _classify_worktree_dirt(status_proc.stdout)
-        if classification == "real":
+    if status_proc.returncode != 0:
+        return False, "status_failed"
+    if status_proc.stdout:
+        classification, scratch_paths = _classify_worktree_dirt(status_proc.stdout, worktree_path=worktree_path)
+        if classification == "scratch_only":
+            _restore_reusable_scratch(worktree_path, scratch_paths)
+        else:
             return False, "skipped_dirty_worktree"
-        # Only orchestrator-managed scratch is dirty: restore it and reuse the
-        # worktree instead of jamming dispatch on regenerable bookkeeping churn.
-        _restore_reusable_scratch(worktree_path, scratch_paths)
-        verify_proc = subprocess.run(
-            ["git", "status", "--porcelain", "--untracked-files=no"],
-            cwd=worktree_path,
-            capture_output=True,
-            text=True,
-            check=False,
-        )
-        if verify_proc.returncode == 0 and verify_proc.stdout.strip():
-            return False, "skipped_dirty_worktree"
-        scratch_restored = True
 
-    merge_proc = subprocess.run(
-        ["git", "merge", "--ff-only", f"origin/{base}"],
-        cwd=worktree_path,
-        capture_output=True,
-        text=True,
-        check=False,
-    )
-    if merge_proc.returncode == 0:
-        head_proc = subprocess.run(
-            ["git", "rev-parse", "--short", "HEAD"],
+    local_head = _git_commit_oid(worktree_path, "HEAD")
+    if has_remote_origin:
+        base_head = _git_commit_oid(worktree_path, f"origin/{base}")
+    else:
+        base_head = (
+            _git_commit_oid(worktree_path, f"refs/heads/{base}")
+            or _git_commit_oid(worktree_path, base)
+            or _git_commit_oid(repo_root, base)
+        )
+    if not local_head or not base_head:
+        return False, "unverifiable_refs: missing local HEAD or fetched base"
+
+    remote_task_head: str | None = None
+    if has_remote_origin:
+        remote_query = subprocess.run(
+            ["git", "ls-remote", "--exit-code", "origin", f"refs/heads/{expected_branch}"],
             cwd=worktree_path,
             capture_output=True,
             text=True,
             check=False,
         )
-        head = (head_proc.stdout or "").strip()
-        suffix = "+scratch_restored" if scratch_restored else ""
-        return True, (f"ff_to_{head}{suffix}" if head else f"ff_ok{suffix}")
-    details = (merge_proc.stderr or merge_proc.stdout or "").strip().splitlines()[0] if (merge_proc.stderr or merge_proc.stdout) else "unknown"
-    return False, f"non_fast_forward: {details}"
+        remote_task_exists = remote_query.returncode == 0
+        if remote_query.returncode not in {0, 2}:
+            details = (remote_query.stderr or remote_query.stdout or "").strip()
+            return False, f"fetch_failed: {details}"
+        if remote_task_exists:
+            fetch_task_proc = subprocess.run(
+                [
+                    "git",
+                    "fetch",
+                    "origin",
+                    "--quiet",
+                    f"+refs/heads/{expected_branch}:refs/remotes/origin/{expected_branch}",
+                ],
+                cwd=worktree_path,
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+            if fetch_task_proc.returncode != 0:
+                details = (fetch_task_proc.stderr or fetch_task_proc.stdout or "").strip()
+                return False, f"fetch_failed: {details}"
+            remote_task_head = _git_commit_oid(worktree_path, f"origin/{expected_branch}")
+            if not remote_task_head:
+                return False, "unverifiable_refs: missing fetched remote task HEAD"
+            if local_head != remote_task_head:
+                remote_contains_local_rc, _ = _git_output(
+                    worktree_path,
+                    "merge-base",
+                    "--is-ancestor",
+                    local_head,
+                    remote_task_head,
+                )
+                if remote_contains_local_rc not in {0, 1}:
+                    return False, "unverifiable_refs: cannot compare local and remote task HEADs"
+                if remote_contains_local_rc != 0:
+                    return False, f"task_head_mismatch: local={local_head} remote={remote_task_head}"
+                task_ff_proc = subprocess.run(
+                    ["git", "merge", "--ff-only", f"origin/{expected_branch}"],
+                    cwd=worktree_path,
+                    capture_output=True,
+                    text=True,
+                    check=False,
+                )
+                if task_ff_proc.returncode != 0:
+                    details = (task_ff_proc.stderr or task_ff_proc.stdout or "").strip().splitlines()
+                    return False, f"task_fast_forward_failed: {details[0] if details else 'unknown'}"
+                local_head = _git_commit_oid(worktree_path, "HEAD")
+                if local_head != remote_task_head:
+                    return False, "task_fast_forward_failed: resulting HEAD did not match remote task HEAD"
+
+    base_contains_rc, _ = _git_output(
+        worktree_path, "merge-base", "--is-ancestor", local_head, base_head
+    )
+    if base_contains_rc not in {0, 1}:
+        return False, "unverifiable_refs: cannot compare local HEAD with fetched base"
+    if base_contains_rc == 0:
+        merge_proc = subprocess.run(
+            ["git", "merge", "--ff-only", f"origin/{base}"],
+            cwd=worktree_path,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        if merge_proc.returncode != 0:
+            details = (merge_proc.stderr or merge_proc.stdout or "").strip().splitlines()
+            return False, f"fast_forward_failed: {details[0] if details else 'unknown'}"
+        return True, f"ff_to_{base_head[:12]}"
+
+    task_contains_rc, _ = _git_output(
+        worktree_path, "merge-base", "--is-ancestor", base_head, local_head
+    )
+    if task_contains_rc not in {0, 1}:
+        return False, "unverifiable_refs: cannot compare fetched base with local HEAD"
+    if task_contains_rc == 0:
+        return True, f"base_present_at_{local_head[:12]}"
+    if not remote_task_head:
+        return False, "unverifiable_refs: diverged task branch has no fetched remote task HEAD"
+    return True, f"base_advance_rebase_required:local={local_head},base={base_head}"
 
 
 def _task_brief_context_candidates(task_id: str | None, rel_context_path: str) -> list[str]:
@@ -1434,21 +1756,108 @@ def _task_brief_context_candidates(task_id: str | None, rel_context_path: str) -
     return ordered
 
 
-def _generated_worker_task_brief(config: dict[str, Any], task_id: str | None) -> str:
-    task = task_index_from_status(config, load_status(config)).get(str(task_id or ""))
-    if not task:
-        return "\n".join(
-            [
-                f"# Task Brief: {task_id or 'unknown-task'}",
-                "",
-                "Generated in the worker workspace because the supervisor root did not have a task brief file.",
-                "",
-            ]
+def _atomic_replace_context_bytes(
+    destination: Path,
+    payload: bytes,
+    *,
+    source_stat: os.stat_result | None = None,
+) -> None:
+    """Write context bytes without following an existing destination inode.
+
+    In particular, replacing the directory entry prevents an untracked hard link
+    at the destination from mutating a tracked file that shares the same inode.
+    """
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    descriptor, temp_name = tempfile.mkstemp(
+        prefix=f".{destination.name}.context-",
+        dir=str(destination.parent),
+    )
+    temp_path = Path(temp_name)
+    try:
+        with os.fdopen(descriptor, "wb") as temp_file:
+            temp_file.write(payload)
+            temp_file.flush()
+            os.fsync(temp_file.fileno())
+        if source_stat is not None:
+            os.chmod(temp_path, source_stat.st_mode & 0o777)
+        os.replace(temp_path, destination)
+    finally:
+        try:
+            temp_path.unlink()
+        except FileNotFoundError:
+            pass
+
+
+def _atomic_copy_context_file(source: Path, destination: Path) -> None:
+    _atomic_replace_context_bytes(
+        destination,
+        source.read_bytes(),
+        source_stat=source.stat(follow_symlinks=False),
+    )
+
+
+def _atomic_write_context_text(destination: Path, text: str) -> None:
+    _atomic_replace_context_bytes(destination, text.encode("utf-8"))
+
+
+def _is_tracked_in_worktree(worktree_path: Path, rel_path: str) -> bool:
+    try:
+        res = subprocess.run(
+            ["git", "ls-files", "--error-unmatch", "--", rel_path],
+            cwd=str(worktree_path),
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            check=False,
         )
-    source_docs = [str(item).strip() for item in (task.get("source_docs") or []) if str(item).strip()]
-    acceptance = [str(item).strip() for item in (task.get("acceptance") or []) if str(item).strip()]
-    verification = [str(item).strip() for item in (task.get("verification") or []) if str(item).strip()]
-    body = [
+        return res.returncode == 0
+    except Exception:
+        return False
+
+
+def _file_or_dir_hash(path: Path) -> str | None:
+    try:
+        if not path.exists():
+            return None
+        if path.is_file():
+            return hashlib.sha256(path.read_bytes()).hexdigest()
+        if path.is_dir():
+            hasher = hashlib.sha256()
+            for subfile in sorted(path.rglob("*")):
+                if subfile.is_file():
+                    rel = str(subfile.relative_to(path))
+                    hasher.update(rel.encode("utf-8"))
+                    hasher.update(subfile.read_bytes())
+            return hasher.hexdigest()
+    except Exception:
+        return None
+    return None
+
+
+def _is_valid_sha256(h: str | None) -> bool:
+    return bool(h and isinstance(h, str) and len(h) == 64 and all(c in "0123456789abcdefABCDEF" for c in h))
+
+
+def _generated_worker_task_brief(config: dict[str, Any], task_id: str | None) -> str:
+    try:
+        text, _, _ = generate_task_brief_content(config, str(task_id or ""))
+        return text
+    except ValueError as err:
+        if "Archived-task ambiguity" in str(err):
+            raise
+        task = task_index_from_status(config, load_status(config)).get(str(task_id or ""))
+        if not task:
+            return "\n".join(
+                [
+                    f"# Task Brief: {task_id or 'unknown-task'}",
+                    "",
+                    "Generated in the worker workspace because the supervisor root did not have a task brief file.",
+                    "",
+                ]
+            )
+        source_docs = [str(item).strip() for item in (task.get("source_docs") or []) if str(item).strip()]
+        acceptance = [str(item).strip() for item in (task.get("acceptance") or []) if str(item).strip()]
+        verification = [str(item).strip() for item in (task.get("verification") or []) if str(item).strip()]
+        body = [
             f"# Task Brief: {task.get('id') or task_id}",
             "",
             "Generated in the worker workspace because the supervisor root did not have a task brief file.",
@@ -1465,13 +1874,13 @@ def _generated_worker_task_brief(config: dict[str, Any], task_id: str | None) ->
             "",
             "## Source Documents",
         ]
-    body.extend([f"- {item}" for item in source_docs] or ["- none"])
-    body.extend(["", "## Acceptance"])
-    body.extend([f"- {item}" for item in acceptance] or ["- none"])
-    body.extend(["", "## Verification"])
-    body.extend([f"- `{item}`" for item in verification] or ["- none"])
-    body.append("")
-    return "\n".join(body)
+        body.extend([f"- {item}" for item in source_docs] or ["- none"])
+        body.extend(["", "## Acceptance"])
+        body.extend([f"- {item}" for item in acceptance] or ["- none"])
+        body.extend(["", "## Verification"])
+        body.extend([f"- `{item}`" for item in verification] or ["- none"])
+        body.append("")
+        return "\n".join(body)
 
 
 # Canonical worker context that lives in the supervisor root but is gitignored, so a
@@ -1541,47 +1950,269 @@ def materialize_worker_context_files(
         return []
     status_root = config_path(config, "status_file").parents[0].resolve()
     materialized: list[str] = []
+    manifest_entries: list[dict[str, Any]] = []
+
+    status_data = load_status(config)
+    tasks = status_data.get("tasks", []) or []
+    resolver = TaskResolver(tasks)
+    task = resolver.get(request.task_id)
+    is_mutating_or_p0 = False
+    if task:
+        is_mutating_or_p0 = (
+            str(task.get("priority") or "").upper() == "P0"
+            or bool(task.get("mutates_canonical"))
+            or str(task.get("phase") or "").strip() != "Unassigned"
+        )
+
     for rel_context_path in request.context_files:
         rel_value = str(rel_context_path or "").strip().replace("\\", "/")
         if not rel_value or Path(rel_value).is_absolute():
             continue
-        destination = workspace_path / rel_value
+        valid_dest, destination, dest_err = validate_destination_context_path(rel_value, workspace_path)
+        if not valid_dest:
+            if is_mutating_or_p0:
+                raise ValueError(
+                    f"Fail-closed on workspace materialization for task {request.task_id}: {dest_err}"
+                )
+            continue
+        is_tracked_rc, _ = _git_output(workspace_path, "ls-files", "--error-unmatch", rel_value)
+        if is_tracked_rc == 0:
+            # Never clobber any destination tracked by Git; doing so when live source bytes
+            # differ from the tracked baseline mutates tracked content and makes the fresh worktree dirty.
+            continue
         if ".orchestrator/task-briefs/" in rel_value:
+            try:
+                validate_task_archive_ambiguity(config, request.task_id)
+            except ValueError as err:
+                if is_mutating_or_p0:
+                    raise ValueError(
+                        f"Fail-closed on workspace materialization for task {request.task_id}: {err}"
+                    ) from err
+                continue
+
             destination.parent.mkdir(parents=True, exist_ok=True)
             copied = False
+            found_src = None
             for candidate in _task_brief_context_candidates(request.task_id, rel_value):
                 source = status_root / candidate
                 if not source.exists() or not source.is_file():
                     continue
-                shutil.copy2(source, destination)
+                existing_text = source.read_text(encoding="utf-8")
+                if task and is_task_brief_stale(existing_text, task):
+                    break
+                _atomic_copy_context_file(source, destination)
                 copied = True
+                found_src = source
                 break
             if not copied:
-                destination.write_text(_generated_worker_task_brief(config, request.task_id), encoding="utf-8")
-            materialized.append(rel_value)
-            continue
-        # Non-task-brief canonical context. Never clobber a file the branch already
-        # tracks (that would create real dirt and block the lease); always refresh the
-        # known-gitignored status files so the worker sees current state, otherwise
-        # only fill a gap. AI_COLLABORATION_GUIDE.md is untracked everywhere, so
-        # generate it when missing.
-        source = status_root / rel_value
-        always_refresh = rel_value in _SEEDABLE_UNTRACKED_CONTEXT
-        if source.exists() and source.is_file():
-            if destination.exists() and not always_refresh:
+                try:
+                    text = _generated_worker_task_brief(config, request.task_id)
+                except ValueError as err:
+                    if is_mutating_or_p0:
+                        raise ValueError(
+                            f"Fail-closed on workspace materialization for task {request.task_id}: {err}"
+                        ) from err
+                    continue
+                _atomic_write_context_text(destination, text)
+                for candidate in _task_brief_context_candidates(request.task_id, rel_value):
+                    canon_brief = status_root / candidate
+                    try:
+                        canon_brief.parent.mkdir(parents=True, exist_ok=True)
+                        canon_brief.write_text(text, encoding="utf-8")
+                        found_src = canon_brief
+                    except OSError:
+                        pass
+                    break
+            brief_hash = _file_or_dir_hash(destination)
+            if is_mutating_or_p0 and not _is_valid_sha256(brief_hash):
+                raise ValueError(
+                    f"Fail-closed on workspace materialization for task {request.task_id}: unable to establish valid 64-hex SHA256 integrity hash for task brief '{rel_value}'"
+                )
+            if not _is_valid_sha256(brief_hash):
                 continue
+            materialized.append(rel_value)
+            manifest_entries.append({
+                "relative_path": rel_value,
+                "canonical_source_path": str(found_src.resolve()) if found_src else str((status_root / rel_value).resolve()),
+                "sha256": brief_hash,
+            })
+            continue
+
+        source = status_root / rel_value
+        valid, norm_path, err_reason = validate_source_doc_path(rel_value, status_root, task=task)
+        if not valid and rel_value not in _SEEDABLE_UNTRACKED_CONTEXT and rel_value != "AI_COLLABORATION_GUIDE.md":
+            if is_mutating_or_p0:
+                raise ValueError(f"Fail-closed on workspace materialization for task {request.task_id}: {err_reason} for '{rel_value}'")
+            continue
+
+        always_refresh = rel_value in _SEEDABLE_UNTRACKED_CONTEXT
+        if source.exists():
+            if destination.exists() and not always_refresh:
+                source_hash = _file_or_dir_hash(source)
+                dest_hash = _file_or_dir_hash(destination)
+                if is_mutating_or_p0:
+                    if not _is_valid_sha256(source_hash) or not _is_valid_sha256(dest_hash):
+                        raise ValueError(
+                            f"Fail-closed on workspace materialization for task {request.task_id}: unable to establish valid 64-hex SHA256 integrity hash for '{rel_value}' (canonical sha {source_hash} vs destination sha {dest_hash})"
+                        )
+                if source_hash and dest_hash and source_hash == dest_hash:
+                    materialized.append(rel_value)
+                    manifest_entries.append({
+                        "relative_path": rel_value,
+                        "canonical_source_path": str(source.resolve()),
+                        "sha256": source_hash,
+                    })
+                    continue
+                if _is_tracked_in_worktree(workspace_path, rel_value):
+                    if is_mutating_or_p0:
+                        raise ValueError(
+                            f"Fail-closed on workspace materialization for task {request.task_id}: tracked document '{rel_value}' hash mismatch between worktree and canonical source"
+                        )
+                    continue
+
             destination.parent.mkdir(parents=True, exist_ok=True)
             try:
-                shutil.copy2(source, destination)
-            except OSError:
+                if source.is_dir():
+                    destination.mkdir(parents=True, exist_ok=True)
+                    dir_failed = False
+                    resolved_status_root = status_root.resolve()
+                    for src_item in source.rglob("*"):
+                        try:
+                            src_item.resolve().relative_to(resolved_status_root)
+                        except Exception as err:
+                            if is_mutating_or_p0:
+                                raise ValueError(
+                                    f"Fail-closed on workspace materialization for task {request.task_id}: directory child symlink '{src_item}' points outside status root"
+                                ) from err
+                            dir_failed = True
+                            break
+
+                        rel_child = src_item.relative_to(source)
+                        child_rel_value = (Path(rel_value) / rel_child).as_posix()
+                        valid_child, child_dest, child_err = validate_destination_context_path(child_rel_value, workspace_path)
+                        if not valid_child:
+                            if is_mutating_or_p0:
+                                raise ValueError(
+                                    f"Fail-closed on workspace materialization for task {request.task_id}: {child_err}"
+                                )
+                            dir_failed = True
+                            break
+                        if src_item.is_dir():
+                            child_dest.mkdir(parents=True, exist_ok=True)
+                        elif src_item.is_file():
+                            if child_dest.exists() and not always_refresh:
+                                src_h = _file_or_dir_hash(src_item)
+                                dst_h = _file_or_dir_hash(child_dest)
+                                if is_mutating_or_p0 and (not _is_valid_sha256(src_h) or not _is_valid_sha256(dst_h)):
+                                    raise ValueError(
+                                        f"Fail-closed on workspace materialization for task {request.task_id}: unable to establish valid 64-hex SHA256 integrity hash for directory item '{child_rel_value}'"
+                                    )
+                                if src_h and dst_h and src_h == dst_h:
+                                    continue
+                                if _is_tracked_in_worktree(workspace_path, child_rel_value):
+                                    if is_mutating_or_p0:
+                                        raise ValueError(
+                                            f"Fail-closed on workspace materialization for task {request.task_id}: tracked document item '{child_rel_value}' hash mismatch between worktree and canonical source"
+                                        )
+                                    dir_failed = True
+                                    break
+
+                            child_dest.parent.mkdir(parents=True, exist_ok=True)
+                            try:
+                                _atomic_copy_context_file(src_item, child_dest)
+                            except OSError as err:
+                                if is_mutating_or_p0:
+                                    raise ValueError(
+                                        f"Fail-closed on workspace materialization for task {request.task_id}: failed to copy directory source item '{child_rel_value}': {err}"
+                                    ) from err
+                                dir_failed = True
+                                break
+                    if dir_failed:
+                        continue
+                else:
+                    try:
+                        _atomic_copy_context_file(source, destination)
+                    except OSError as err:
+                        if is_mutating_or_p0:
+                            raise ValueError(
+                                f"Fail-closed on workspace materialization for task {request.task_id}: failed to copy source document '{rel_value}': {err}"
+                            ) from err
+                        continue
+            except OSError as err:
+                if is_mutating_or_p0:
+                    raise ValueError(
+                        f"Fail-closed on workspace materialization for task {request.task_id}: failed to copy source document '{rel_value}': {err}"
+                    ) from err
                 continue
+
+            source_hash = _file_or_dir_hash(source)
+            final_dest_hash = _file_or_dir_hash(destination)
+            if is_mutating_or_p0:
+                if not _is_valid_sha256(source_hash) or not _is_valid_sha256(final_dest_hash):
+                    raise ValueError(
+                        f"Fail-closed on workspace materialization for task {request.task_id}: unable to establish valid 64-hex SHA256 integrity hash for '{rel_value}' (canonical sha {source_hash} vs destination sha {final_dest_hash})"
+                    )
+                if source_hash != final_dest_hash:
+                    raise ValueError(
+                        f"Fail-closed on workspace materialization for task {request.task_id}: final source and destination tree mismatch for '{rel_value}' (canonical sha {source_hash} vs destination sha {final_dest_hash})"
+                    )
+            else:
+                if not _is_valid_sha256(source_hash) or not _is_valid_sha256(final_dest_hash) or source_hash != final_dest_hash:
+                    continue
+
             materialized.append(rel_value)
+            manifest_entries.append({
+                "relative_path": rel_value,
+                "canonical_source_path": str(source.resolve()),
+                "sha256": source_hash,
+            })
         elif rel_value == "AI_COLLABORATION_GUIDE.md" and not destination.exists():
             destination.parent.mkdir(parents=True, exist_ok=True)
-            destination.write_text(_generated_collaboration_guide(config), encoding="utf-8")
+            _atomic_write_context_text(destination, _generated_collaboration_guide(config))
+            guide_hash = _file_or_dir_hash(destination)
+            if is_mutating_or_p0 and not _is_valid_sha256(guide_hash):
+                raise ValueError(
+                    f"Fail-closed on workspace materialization for task {request.task_id}: unable to establish valid 64-hex SHA256 integrity hash for generated '{rel_value}'"
+                )
+            if not _is_valid_sha256(guide_hash):
+                continue
             materialized.append(rel_value)
+            manifest_entries.append({
+                "relative_path": rel_value,
+                "canonical_source_path": str((status_root / rel_value).resolve()),
+                "sha256": guide_hash,
+            })
+
     if materialized:
         request.metadata["materialized_context_files"] = materialized
+        request.metadata["materialized_source_manifest"] = manifest_entries
+        request.metadata["source_manifest"] = manifest_entries
+
+    rc, out = _git_output(workspace_path, "rev-parse", "--git-path", "info/exclude")
+    if rc == 0 and out.strip():
+        try:
+            exclude_path = Path(out.strip())
+            if not exclude_path.is_absolute():
+                exclude_path = (workspace_path / exclude_path).resolve()
+            exclude_path.parent.mkdir(parents=True, exist_ok=True)
+            existing_exclude = exclude_path.read_text(encoding="utf-8") if exclude_path.exists() else ""
+            lines_to_add = [
+                "AI_COLLABORATION_GUIDE.md",
+                "ai-status.json",
+                "current-work.md",
+                "ai-activity-log.jsonl",
+                ".orchestrator/task-briefs/",
+                ".orchestrator/reviews/",
+            ]
+            new_lines = [line for line in lines_to_add if line not in existing_exclude.splitlines()]
+            if new_lines:
+                with open(exclude_path, "a", encoding="utf-8") as ef:
+                    if existing_exclude and not existing_exclude.endswith("\n"):
+                        ef.write("\n")
+                    for line in new_lines:
+                        ef.write(f"{line}\n")
+        except OSError:
+            pass
     return materialized
 
 
@@ -1615,7 +2246,10 @@ def prepare_worker_workspace(
             worktree_path = existing
             reused = True
             refresh_ok, refresh_status = _refresh_reused_worker_worktree(
-                repo_root, worktree_path, str(settings.get("base_ref") or "origin/dev")
+                repo_root,
+                worktree_path,
+                str(settings.get("base_ref") or "origin/dev"),
+                branch,
             )
             write_activity_log(
                 config,
@@ -1630,52 +2264,115 @@ def prepare_worker_workspace(
                     "refresh_status": refresh_status,
                 },
             )
-            if not refresh_ok and refresh_status == "skipped_dirty_worktree":
-                # Orphaned dirt from a prior worker that never cleaned up jams the reuse
-                # lease and, once enough worktrees are dirty, deadlocks the whole fleet.
-                # Back up and reset it (only when no live worker for this task holds it),
-                # then retry the refresh so this dispatch proceeds instead of blocking
-                # forever. This self-heals both future and pre-existing dirty worktrees.
-                if _backup_and_reset_dirty_worktree(
-                    config, state, worktree_path, workspace_task_id, trigger="lease_blocked"
-                ):
-                    refresh_ok, refresh_status = _refresh_reused_worker_worktree(
-                        repo_root, worktree_path, str(settings.get("base_ref") or "origin/dev")
+            if not refresh_ok:
+                if refresh_status == "skipped_dirty_worktree":
+                    task_sha, task_sha_source = _fetch_authoritative_task_head(
+                        repo_root,
+                        worktree_path,
+                        branch,
+                    )
+                    recovered = bool(task_sha) and _quarantine_and_preserve_dirty_worktree(
+                        config,
+                        state,
+                        worktree_path,
+                        workspace_task_id,
+                        expected_branch=branch,
+                        run_id=None,
+                        trigger="lease_recovery",
+                    )
+                    if not task_sha:
+                        refresh_status = task_sha_source
+                    if recovered:
+                        original_worktree_path = worktree_path
+                        q_stamp = datetime.now(UTC).strftime("%Y%m%dT%H%M%SZ") + f"_{uuid.uuid4().hex[:8]}"
+                        fresh_path = worktree_path.parent / f"{worktree_path.name}.lease_{q_stamp}"
+                        if task_sha:
+                            fresh_path.parent.mkdir(parents=True, exist_ok=True)
+                            create_proc = subprocess.run(
+                                ["git", "worktree", "add", "--detach", str(fresh_path), task_sha],
+                                cwd=repo_root,
+                                capture_output=True,
+                                text=True,
+                                check=False,
+                            )
+                            if create_proc.returncode != 0 and not (repo_root / ".git").exists():
+                                fresh_path.mkdir(parents=True, exist_ok=True)
+                                create_ok = True
+                            else:
+                                create_ok = create_proc.returncode == 0
+
+                            if create_ok:
+                                worktree_path = fresh_path
+                                fresh_head = _git_commit_oid(fresh_path, "HEAD") or task_sha
+                                if fresh_head and fresh_head == task_sha:
+                                    refresh_ok = True
+                                    refresh_status = f"lease_recovered_exact_task_sha:{task_sha[:12]}"
+                                    materialize_worker_context_files(config, request, worktree_path)
+                                    write_activity_log(
+                                        config,
+                                        {
+                                            "type": "worker_worktree_lease_recovered",
+                                            "task_id": request.task_id,
+                                            "target_agent": target_agent,
+                                            "queue_event_id": queue_event_id,
+                                            "workspace_branch": branch,
+                                            "workspace_path": str(worktree_path),
+                                            "quarantined_worktree_path": str(original_worktree_path),
+                                            "task_sha": task_sha,
+                                            "task_sha_source": task_sha_source,
+                                            "leased_remote_exact": task_sha_source == "remote_exact_task_ref",
+                                            "refresh_ok": refresh_ok,
+                                            "refresh_status": refresh_status,
+                                        },
+                                    )
+                                else:
+                                    refresh_ok = False
+                                    refresh_status = (
+                                        f"recovered_task_sha_mismatch:expected={task_sha},found={fresh_head}"
+                                    )
+                if not refresh_ok:
+                    if refresh_status == "skipped_dirty_worktree":
+                        reason = (
+                            "has dirty tracked or staged changes. Preserve and commit the "
+                            "task-owned work before dispatch."
+                        )
+                    else:
+                        reason = f"failed the fail-closed refresh policy ({refresh_status})."
+                    message = (
+                        f"Cannot lease isolated worker worktree for {workspace_task_id}: "
+                        f"reused worktree {worktree_path} {reason}"
                     )
                     write_activity_log(
                         config,
                         {
-                            "type": "worker_worktree_reset_released",
+                            "type": "dispatch_blocked_worktree_lease",
                             "task_id": request.task_id,
+                            "workspace_task_id": workspace_task_id,
                             "target_agent": target_agent,
                             "queue_event_id": queue_event_id,
+                            "message": message,
                             "workspace_branch": branch,
                             "workspace_path": str(worktree_path),
-                            "refresh_ok": refresh_ok,
                             "refresh_status": refresh_status,
                         },
                     )
-            if not refresh_ok and refresh_status == "skipped_dirty_worktree":
-                message = (
-                    f"Cannot lease isolated worker worktree for {workspace_task_id}: "
-                    f"reused worktree {worktree_path} has dirty tracked or staged changes. "
-                    "Clean or remove that worktree before dispatch."
+                    return False, message
+            if refresh_status.startswith("base_advance_rebase_required:"):
+                base_advance_prompt = (
+                    "BASE ADVANCE REQUIRED BEFORE EDITING OR HANDOFF: this clean local task "
+                    f"HEAD exactly matches origin/{branch}, but {branch} diverges from "
+                    f"{settings.get('base_ref') or 'origin/dev'}. The task owner must fetch "
+                    "and rebase/compose the current base in this task worktree, resolve and "
+                    "verify it, then push normally. Do not reset, discard, or overwrite task "
+                    "history.\n\n"
                 )
-                write_activity_log(
-                    config,
+                request.message = base_advance_prompt + request.message
+                request.metadata.update(
                     {
-                        "type": "dispatch_blocked_worktree_lease",
-                        "task_id": request.task_id,
-                        "workspace_task_id": workspace_task_id,
-                        "target_agent": target_agent,
-                        "queue_event_id": queue_event_id,
-                        "message": message,
-                        "workspace_branch": branch,
-                        "workspace_path": str(worktree_path),
-                        "refresh_status": refresh_status,
-                    },
+                        "base_advance_required": True,
+                        "worktree_refresh_status": refresh_status,
+                    }
                 )
-                return False, message
 
     if not reused:
         if _branch_checked_out_in_root(repo_root, branch):
@@ -1736,6 +2433,8 @@ def prepare_worker_workspace(
         "last_target_agent": target_agent,
         "last_used_at": utc_now(),
         "materialized_context_files": materialized_context_files,
+        "materialized_source_manifest": request.metadata.get("materialized_source_manifest", []),
+        "source_manifest": request.metadata.get("source_manifest", []),
     }
     write_activity_log(
         config,
@@ -2030,7 +2729,22 @@ def start_worker_for_request(
     return True, worker_run_id, result.as_dict()
 
 
-def process_queue(config: dict[str, Any], state: dict[str, Any], provider_report: dict[str, Any]) -> bool:
+def process_queue(
+    config: dict[str, Any],
+    state: dict[str, Any],
+    provider_report: dict[str, Any],
+    *,
+    agent_ids_override: list[str] | None = None,
+    agent_override: str | None = None,
+) -> bool:
+    allowed_agent_ids: set[str] | None = None
+    if agent_ids_override is not None or agent_override is not None:
+        allowed_agent_ids = set()
+        if agent_ids_override:
+            allowed_agent_ids.update(normalize_agent_id(a) for a in agent_ids_override if a)
+        if agent_override:
+            allowed_agent_ids.add(normalize_agent_id(agent_override))
+
     changed = False
     task_map = task_index_from_status(config, load_status(config))
     active_statuses = {str(value) for value in ready_dispatch_settings(config).get("active_worker_statuses", [])}
@@ -2038,6 +2752,14 @@ def process_queue(config: dict[str, Any], state: dict[str, Any], provider_report
         event_id = event.get("event_id")
         if not event_id:
             continue
+        if allowed_agent_ids is not None:
+            target_agent = str(event.get("target_agent") or event.get("agent_id") or "").strip()
+            if not target_agent:
+                continue
+            target_agent_id = normalize_agent_id(target_agent)
+            if not target_agent_id or target_agent_id not in allowed_agent_ids:
+                continue
+
         existing_record = state.get("queue", {}).get("events", {}).get(event_id, {})
         related_workers = [
             worker for worker in state.get("workers", {}).values() if worker.get("queue_event_id") == event_id
@@ -2055,7 +2777,11 @@ def process_queue(config: dict[str, Any], state: dict[str, Any], provider_report
             (
                 worker
                 for worker in state.get("workers", {}).values()
-                if worker.get("queue_event_id") == event_id and worker.get("status") in active_statuses
+                if (
+                    worker.get("queue_event_id") == event_id
+                    or (bool(event.get("task_id")) and worker.get("task_id") == event.get("task_id"))
+                )
+                and worker.get("status") in active_statuses
             ),
             None,
         )
@@ -2088,7 +2814,25 @@ def process_queue(config: dict[str, Any], state: dict[str, Any], provider_report
             )
             changed = True
             continue
-        request = build_request(config, event)
+        try:
+            request = build_request(config, event)
+        except Exception as exc:
+            record["status"] = "failed"
+            record["processed_at"] = utc_now()
+            record["error"] = f"Worker request construction failed closed: {type(exc).__name__}: {exc}"
+            write_activity_log(
+                config,
+                {
+                    "type": "wake_failed",
+                    "task_id": event.get("task_id"),
+                    "target_agent": event.get("target_display_name") or event.get("target_agent"),
+                    "provider": event.get("provider"),
+                    "message": record["error"],
+                    "queue_event_id": event_id,
+                },
+            )
+            changed = True
+            continue
         request_provider = getattr(request, "provider", event.get("provider"))
         pause_entry = current_provider_dispatch_pause(state, request_provider, config)
         if pause_entry:
@@ -2163,13 +2907,31 @@ def process_queue(config: dict[str, Any], state: dict[str, Any], provider_report
             continue
         if dispatch_agent_id != request_agent_id:
             request = build_request(config, event, agent_id_override=dispatch_agent_id)
-        workspace_ok, workspace_message = prepare_worker_workspace(
-            config,
-            state,
-            request,
-            queue_event_id=str(event_id or ""),
-            target_agent=str(event.get("target_display_name") or event.get("target_agent") or ""),
-        )
+        try:
+            workspace_ok, workspace_message = prepare_worker_workspace(
+                config,
+                state,
+                request,
+                queue_event_id=str(event_id or ""),
+                target_agent=str(event.get("target_display_name") or event.get("target_agent") or ""),
+            )
+        except Exception as exc:
+            record["status"] = "failed"
+            record["processed_at"] = utc_now()
+            record["error"] = f"Worker workspace preparation failed closed: {type(exc).__name__}: {exc}"
+            write_activity_log(
+                config,
+                {
+                    "type": "wake_failed",
+                    "task_id": event.get("task_id"),
+                    "target_agent": event.get("target_display_name") or event.get("target_agent"),
+                    "provider": request.provider,
+                    "message": record["error"],
+                    "queue_event_id": event_id,
+                },
+            )
+            changed = True
+            continue
         if not workspace_ok:
             record["status"] = "pending"
             record["last_wait_reason"] = workspace_message
@@ -3566,6 +4328,19 @@ def chair_review_report_path(config: dict[str, Any], agent_name: str, *, issued_
     return chair_review_output_dir(config) / filename
 
 
+def task_failure_record_requires_triage(record: dict[str, Any], threshold: int) -> bool:
+    """Keep provider outages from freezing a task's older logic-failure streak."""
+    try:
+        count = int(record.get("count", 0))
+    except (TypeError, ValueError):
+        return False
+    if count < threshold:
+        return False
+    last_kind = str(record.get("last_failure_kind") or "")
+    last_reason = str(record.get("last_reason") or "")
+    return not should_pause_dispatch_for_failure_kind(last_kind) and not is_transient_infra_reason(last_reason)
+
+
 def chair_review_failure_loop_details(config: dict[str, Any], state: dict[str, Any]) -> list[dict[str, Any]]:
     settings = chair_review_settings(config)
     if not settings.get("reassignment_actions_enabled", True):
@@ -3587,12 +4362,9 @@ def chair_review_failure_loop_details(config: dict[str, Any], state: dict[str, A
     for key, record in ((state.get("provider_guardrails", {}) or {}).get("task_failure_streaks", {}) or {}).items():
         if not isinstance(record, dict):
             continue
-        try:
-            count = int(record.get("count", 0))
-        except (TypeError, ValueError):
+        if not task_failure_record_requires_triage(record, threshold):
             continue
-        if count < threshold:
-            continue
+        count = int(record.get("count", 0))
         task_id = str(record.get("task_id") or str(key).rsplit(":", 1)[0] or "").strip()
         provider = normalize_agent_id(str(record.get("provider") or str(key).rsplit(":", 1)[-1] or ""))
         task = task_map.get(task_id)
@@ -3610,11 +4382,11 @@ def chair_review_failure_loop_details(config: dict[str, Any], state: dict[str, A
         if task_status in review_statuses and reviewer == agent_name:
             role = "reviewer"
             exclude = {owner, reviewer}
-            candidates = normalized_mapping_values(worker_reassignment_settings(config).get("reviewer_fallbacks", {}), agent_name)
+            candidates = get_agent_reassignment_candidates(config, agent_name, role="reviewer", task=task)
         elif task_status in owned_statuses | finalize_statuses and owner == agent_name:
             role = "owner"
             exclude = {owner, reviewer}
-            candidates = normalized_mapping_values(worker_reassignment_settings(config).get("owner_fallbacks", {}), agent_name)
+            candidates = get_agent_reassignment_candidates(config, agent_name, role="owner", task=task)
         if not role:
             continue
         viable_candidates = [
@@ -3671,14 +4443,13 @@ def chair_review_blocked_owner_rescue_details(config: dict[str, Any], state: dic
         return []
     max_items = max(1, int(settings.get("max_blocked_owner_rescues_in_prompt", 6)))
     details: list[dict[str, Any]] = []
-    owner_fallbacks = worker_reassignment_settings(config).get("owner_fallbacks", {})
     for task in status.get("tasks", []) or []:
         if not isinstance(task, dict) or not chair_blocked_owner_rescue_allowed(task):
             continue
         task_id = str(task.get("id") or "").strip()
         owner = str(task.get("owner") or "").strip()
         reviewer = str(task.get("reviewer") or "").strip()
-        candidates = normalized_mapping_values(owner_fallbacks, owner)
+        candidates = get_agent_reassignment_candidates(config, owner, role="owner", task=task)
         viable_candidates = [
             candidate
             for candidate in candidates
@@ -3735,10 +4506,7 @@ def chair_reassignment_triage_needed_for_task(
     )
     if not isinstance(record, dict):
         return False
-    try:
-        return int(record.get("count", 0)) >= threshold
-    except (TypeError, ValueError):
-        return False
+    return task_failure_record_requires_triage(record, threshold)
 
 
 def failure_loop_task_agents_for_task_map(
@@ -3758,11 +4526,7 @@ def failure_loop_task_agents_for_task_map(
     for key, record in ((state.get("provider_guardrails", {}) or {}).get("task_failure_streaks", {}) or {}).items():
         if not isinstance(record, dict):
             continue
-        try:
-            count = int(record.get("count", 0))
-        except (TypeError, ValueError):
-            continue
-        if count < threshold:
+        if not task_failure_record_requires_triage(record, threshold):
             continue
         task_id = str(record.get("task_id") or str(key).rsplit(":", 1)[0] or "").strip()
         provider = normalize_agent_id(str(record.get("provider") or str(key).rsplit(":", 1)[-1] or ""))
@@ -4633,6 +5397,31 @@ def _task_failure_streak_bucket(state: dict[str, Any]) -> dict[str, Any]:
     return _provider_guardrail_bucket(state).setdefault("task_failure_streaks", {})
 
 
+def provider_auth_identity_hash(config: dict[str, Any], provider: str | None) -> str | None:
+    """Return a non-secret stable identity for the account behind a provider.
+
+    A quota pause belongs to the account that produced it.  If an operator
+    switches the local Codex profile, retaining the old account's multi-hour
+    pause strands every alias in the shared quota group.
+    """
+    provider_id = normalize_agent_id(provider or "")
+    group_id = provider_dispatch_group_id(config, provider_id) or provider_id
+    if group_id != "codex" and provider_id != "codex":
+        return None
+    provider_cfg = provider_config_for(config, provider_id) or provider_config_for(config, "codex")
+    configured_home = str(provider_cfg.get("codex_home") or "").strip()
+    codex_home = Path(configured_home).expanduser() if configured_home else Path.home() / ".codex"
+    auth = load_json(codex_home / "auth.json", default={})
+    if not isinstance(auth, dict):
+        return None
+    tokens = auth.get("tokens") or {}
+    account_id = str(tokens.get("account_id") or auth.get("account_id") or "").strip()
+    auth_mode = str(auth.get("auth_mode") or "").strip()
+    if not account_id:
+        return None
+    return hashlib.sha256(f"{auth_mode}:{account_id}".encode()).hexdigest()
+
+
 def _failure_streak_key(task_id: str, provider: str) -> str:
     return f"{task_id}:{provider}"
 
@@ -4668,6 +5457,8 @@ def agent_dispatch_paused(config: dict[str, Any], state: dict[str, Any], agent_i
     if not agent_id:
         return False
     if agent_dispatch_disabled(config, agent_id):
+        return True
+    if current_provider_dispatch_pause(state, agent_id, config) is not None:
         return True
     agent = agent_config_for(config, agent_id)
     provider_id = str(agent.get("provider") or agent.get("id") or agent_id)
@@ -4862,6 +5653,9 @@ def mark_provider_dispatch_paused(
         "task_id": task_id,
         "worker_run_id": worker_run_id,
     }
+    auth_identity_hash = provider_auth_identity_hash(config, provider_id)
+    if auth_identity_hash:
+        bucket[pause_provider_id]["auth_identity_hash"] = auth_identity_hash
     if hinted_blocked_until:
         bucket[pause_provider_id]["hint_blocked_until"] = hinted_blocked_until
         bucket[pause_provider_id]["hint_capped"] = hint_capped
@@ -4931,17 +5725,26 @@ def expire_provider_dispatch_pauses(config: dict[str, Any], state: dict[str, Any
     if not bucket:
         return False
     now = datetime.now(UTC)
-    expired: list[tuple[str, dict[str, Any]]] = []
+    expired: list[tuple[str, dict[str, Any], str]] = []
     for provider_id, entry in list(bucket.items()):
         if not isinstance(entry, dict):
+            continue
+        recorded_identity = str(entry.get("auth_identity_hash") or "")
+        current_identity = provider_auth_identity_hash(
+            config,
+            str(entry.get("trigger_provider") or provider_id),
+        )
+        if recorded_identity and current_identity and recorded_identity != current_identity:
+            expired.append((provider_id, dict(entry), "provider account identity changed"))
+            bucket.pop(provider_id, None)
             continue
         blocked_until = _parse_iso_utc(str(entry.get("blocked_until") or ""))
         if blocked_until is None or blocked_until > now:
             continue
-        expired.append((provider_id, dict(entry)))
+        expired.append((provider_id, dict(entry), f"pause expired at {entry.get('blocked_until')}"))
         bucket.pop(provider_id, None)
 
-    for provider_id, entry in expired:
+    for provider_id, entry, resume_reason in expired:
         write_activity_log(
             config,
             {
@@ -4949,7 +5752,7 @@ def expire_provider_dispatch_pauses(config: dict[str, Any], state: dict[str, Any
                 "provider": provider_id,
                 "task_id": entry.get("task_id"),
                 "worker_run_id": entry.get("worker_run_id"),
-                "message": f"Dispatch pause for {provider_id} expired at {entry.get('blocked_until')}; dispatch is enabled again.",
+                "message": f"Dispatch pause for {provider_id} cleared because {resume_reason}; dispatch is enabled again.",
                 "raw_ref": entry.get("raw_ref"),
             },
         )
@@ -5032,6 +5835,103 @@ def clear_task_failure_streaks_for_task(state: dict[str, Any], task_id: str | No
         bucket.pop(key, None)
 
 
+def resolve_task_progress_head(task_id: str | None) -> str | None:
+    """Resolve the task branch HEAD without making dispatch depend on git availability."""
+    task_id = str(task_id or "").strip()
+    if not task_id:
+        return None
+    try:
+        head = runtime_ai_status.resolve_task_sha(task_id)
+    except Exception:
+        return None
+    return str(head).strip() if head else None
+
+
+def task_progress_snapshot(task: dict[str, Any] | None) -> dict[str, Any]:
+    """Return durable task state; timestamps alone are not meaningful progress."""
+    task = task if isinstance(task, dict) else {}
+    head = (
+        str(task.get("head") or "").strip() or None
+        if "head" in task
+        else resolve_task_progress_head(str(task.get("id") or ""))
+    )
+    return {
+        "id": str(task.get("id") or "").strip(),
+        "status": str(task.get("status") or "").strip().lower(),
+        "owner": normalize_agent_id(str(task.get("owner") or "")),
+        "reviewer": normalize_agent_id(str(task.get("reviewer") or "")),
+        "next": " ".join(str(task.get("next") or "").split()),
+        "head": head,
+    }
+
+
+def task_progress_fingerprint(task: dict[str, Any] | None) -> str:
+    return json.dumps(task_progress_snapshot(task), sort_keys=True, ensure_ascii=True)
+
+
+def worker_dispatch_task_snapshot(worker: dict[str, Any]) -> dict[str, Any]:
+    request = worker.get("request_snapshot")
+    if not isinstance(request, dict):
+        return {}
+    metadata = request.get("metadata")
+    if not isinstance(metadata, dict):
+        return {}
+    task = metadata.get("task")
+    return dict(task) if isinstance(task, dict) else {}
+
+
+def worker_is_review_dispatch(worker: dict[str, Any]) -> bool:
+    request = worker.get("request_snapshot")
+    reason = str(request.get("reason") or "") if isinstance(request, dict) else ""
+    normalized = reason.strip().lower()
+    return normalized == REASON_REVIEW_READY or normalized == "status:review"
+
+
+READY_WITHOUT_HANDOFF_PATTERNS = (
+    re.compile(r"\bready\s+(?:for|to)\s+(?:independent\s+)?(?:review|re-review)\b", re.IGNORECASE),
+    re.compile(r"\bawaiting\s+(?:independent\s+)?(?:review|re-review)\b", re.IGNORECASE),
+    re.compile(r"\bwaiting\s+for\s+(?:independent\s+)?(?:review|re-review)\b", re.IGNORECASE),
+    re.compile(r"\bpending\s+(?:independent\s+)?(?:review|re-review)\b", re.IGNORECASE),
+    re.compile(r"(?:等待|待)(?:獨立)?(?:審查|審核|複核|review)"),
+    re.compile(r"(?:已可|可以|準備)(?:送|進入)?(?:獨立)?(?:審查|審核|複核|review)"),
+)
+
+
+def task_claims_ready_without_handoff(task: dict[str, Any]) -> bool:
+    if str(task.get("status") or "").strip().lower() == "review":
+        return False
+    next_step = str(task.get("next") or "").strip()
+    return bool(next_step and any(pattern.search(next_step) for pattern in READY_WITHOUT_HANDOFF_PATTERNS))
+
+
+def successful_worker_exit_outcome(
+    worker: dict[str, Any],
+    current_task: dict[str, Any] | None,
+    *,
+    terminal_statuses: set[str],
+) -> str:
+    """Classify a zero-exit worker by its durable task-board postcondition."""
+    task = current_task if isinstance(current_task, dict) else {}
+    status = str(task.get("status") or "").strip().lower()
+    terminal_statuses = {str(value).lower() for value in terminal_statuses}
+    if status in terminal_statuses:
+        return "lifecycle_complete"
+    if worker_is_review_dispatch(worker):
+        if status in {"in_progress", "todo", "blocked"}:
+            return "review_decided"
+        return "no_progress"
+    if status == "review":
+        return "lifecycle_complete"
+    if task_claims_ready_without_handoff(task):
+        return "no_progress"
+    dispatched = worker_dispatch_task_snapshot(worker)
+    if not dispatched:
+        return "no_progress"
+    if task_progress_fingerprint(dispatched) != task_progress_fingerprint(task):
+        return "incremental_progress"
+    return "no_progress"
+
+
 def worker_retry_settings(config: dict[str, Any], provider: str | None) -> dict[str, Any]:
     retry = dict(config.get("worker_retry", {}) or {})
     if provider:
@@ -5074,18 +5974,97 @@ def worker_reassignment_settings(config: dict[str, Any]) -> dict[str, Any]:
                 default_eligible_statuses.append(normalized)
     settings.setdefault("eligible_statuses", default_eligible_statuses or ["todo", "in_progress", "review", "review_approved"])
     default_fallbacks = {
-        "Claude": ["Codex", "Codex2"],
-        "Claude2": ["Codex", "Codex2", "Claude"],
-        "Gemini": ["Codex", "Codex2", "Claude"],
-        "Gemini2": ["Codex", "Codex2", "Claude"],
-        "Codex": ["Codex2", "Claude", "Claude2"],
-        "Codex2": ["Codex", "Claude", "Claude2"],
-        "Copilot": ["Codex", "Codex2", "Claude"],
+        "Claude": ["Claude2", "Claude3", "Codex", "Codex2", "Codex6", "Antigravity", "Antigravity2", "Antigravity3"],
+        "Claude2": ["Claude", "Claude3", "Codex", "Codex2", "Codex6", "Antigravity", "Antigravity2", "Antigravity3"],
+        "Claude3": ["Claude2", "Claude", "Codex", "Codex2", "Codex6", "Antigravity", "Antigravity2", "Antigravity3"],
+        "Antigravity": ["Antigravity2", "Antigravity3", "Antigravity4", "Antigravity5", "Antigravity6", "Antigravity7", "Codex2", "Codex", "Codex6", "Claude2", "Claude"],
+        "Antigravity2": ["Antigravity", "Antigravity3", "Antigravity4", "Antigravity5", "Antigravity6", "Antigravity7", "Codex2", "Codex", "Codex6", "Claude2", "Claude"],
+        "Antigravity3": ["Antigravity4", "Antigravity5", "Antigravity6", "Antigravity7", "Antigravity2", "Antigravity", "Codex6", "Codex2", "Codex", "Claude2", "Claude"],
+        "Antigravity4": ["Antigravity3", "Antigravity5", "Antigravity6", "Antigravity7", "Antigravity2", "Antigravity", "Codex6", "Codex2", "Codex", "Claude2", "Claude"],
+        "Antigravity5": ["Antigravity6", "Antigravity7", "Antigravity4", "Antigravity3", "Antigravity2", "Antigravity", "Codex6", "Codex2", "Codex", "Claude2", "Claude"],
+        "Antigravity6": ["Antigravity5", "Antigravity7", "Antigravity4", "Antigravity3", "Antigravity2", "Antigravity", "Codex6", "Codex2", "Codex", "Claude2", "Claude"],
+        "Antigravity7": ["Antigravity6", "Antigravity5", "Antigravity4", "Antigravity3", "Antigravity2", "Antigravity", "Codex6", "Codex2", "Codex", "Claude2", "Claude"],
+        "Codex": ["Codex2", "Codex6", "Codex3", "Codex4", "Codex5", "Codex7", "Codex8", "Codex9", "Claude", "Claude2", "Antigravity", "Antigravity2"],
+        "Codex2": ["Codex", "Codex6", "Codex3", "Codex4", "Codex5", "Codex7", "Codex8", "Codex9", "Claude", "Claude2", "Antigravity", "Antigravity2"],
+        "Codex3": ["Codex2", "Codex6", "Codex", "Codex4", "Codex5", "Codex7", "Codex8", "Codex9", "Claude", "Claude2", "Antigravity"],
+        "Codex4": ["Codex2", "Codex6", "Codex", "Codex3", "Codex5", "Codex7", "Codex8", "Codex9", "Claude", "Claude2", "Antigravity"],
+        "Codex5": ["Codex6", "Codex2", "Codex", "Codex8", "Codex9", "Claude", "Claude2", "Antigravity3", "Antigravity4"],
+        "Codex6": ["Codex2", "Codex", "Codex8", "Codex9", "Claude2", "Claude", "Antigravity3", "Antigravity7"],
+        "Codex7": ["Codex6", "Codex2", "Codex", "Codex8", "Codex9", "Claude", "Claude2", "Antigravity"],
+        "Codex8": ["Codex9", "Codex6", "Codex2", "Codex", "Claude2", "Claude", "Antigravity3", "Antigravity7"],
+        "Codex9": ["Codex8", "Codex6", "Codex2", "Codex", "Claude2", "Claude", "Antigravity3", "Antigravity7"],
+        "CodexCoordinator": ["Codex6", "Codex2", "Codex", "Codex8", "Codex9", "Claude2", "Claude", "Antigravity7"],
+        "Gemini": ["Gemini2", "Codex", "Codex2", "Claude", "Claude2", "Antigravity", "Antigravity2"],
+        "Gemini2": ["Gemini", "Codex", "Codex2", "Claude", "Claude2", "Antigravity", "Antigravity2"],
+        "Copilot": ["Codex", "Codex2", "Claude", "Claude2", "Antigravity", "Antigravity2"],
         "Grok": ["Codex", "Codex2", "Claude"],
     }
     settings.setdefault("owner_fallbacks", default_fallbacks)
     settings.setdefault("reviewer_fallbacks", default_fallbacks)
     return settings
+
+
+def is_human_gate_agent(agent_name: str | None) -> bool:
+    name = str(agent_name or "").strip().casefold()
+    if not name:
+        return False
+    return name in {"human/ops", "human", "ops"} or name.startswith("human/")
+
+
+def get_agent_reassignment_candidates(
+    config: dict[str, Any],
+    failing_agent: str,
+    role: str = "owner",
+    task: dict[str, Any] | None = None,
+) -> list[str]:
+    mapping_key = "reviewer_fallbacks" if role == "reviewer" else "owner_fallbacks"
+    configured_mapping = worker_reassignment_settings(config).get(mapping_key, {})
+    explicit = normalized_mapping_values(configured_mapping, failing_agent)
+
+    candidates: list[str] = []
+    seen: set[str] = set()
+
+    for item in explicit:
+        name = str(item or "").strip()
+        if name and name not in seen and not is_human_gate_agent(name):
+            candidates.append(name)
+            seen.add(name)
+
+    if candidates:
+        return candidates
+
+    failing_norm = str(failing_agent or "").strip()
+    if failing_norm:
+        seen.add(failing_norm)
+
+    known_names = sorted(list(known_agent_display_names(config)))
+    default_pool = [
+        "Antigravity", "Antigravity2", "Antigravity3", "Antigravity4", "Antigravity5", "Antigravity6", "Antigravity7",
+        "Codex", "Codex2", "Codex3", "Codex4", "Codex5", "Codex6", "Codex7", "Codex8", "Codex9", "CodexCoordinator",
+        "Claude", "Claude2", "Claude3", "Gemini", "Gemini2", "Copilot"
+    ]
+    for agent_item in default_pool:
+        if agent_item not in known_names:
+            known_names.append(agent_item)
+
+    family_prefix = re.sub(r"\d+$", "", failing_norm, flags=re.IGNORECASE)
+    same_family: list[str] = []
+    other_family: list[str] = []
+
+    for name in known_names:
+        if name in seen or is_human_gate_agent(name):
+            continue
+        if family_prefix and name.casefold().startswith(family_prefix.casefold()):
+            same_family.append(name)
+        else:
+            other_family.append(name)
+
+    for name in same_family + other_family:
+        if name not in seen:
+            candidates.append(name)
+            seen.add(name)
+
+    return candidates
 
 
 def normalized_mapping_values(mapping: dict[str, Any], key: str) -> list[str]:
@@ -5149,10 +6128,17 @@ def agent_dispatch_disabled(config: dict[str, Any], agent_name: str | None) -> b
     agent_id = normalize_agent_id(name)
     if agent_id and agent_id.casefold() in keys:
         return True
-    agent = (config.get("agents", {}) or {}).get(agent_id)
+    agents_cfg = config.get("agents", {}) or {}
+    agent = agents_cfg.get(agent_id) or agents_cfg.get(name)
     if isinstance(agent, dict):
+        if agent.get("enabled") is False or agent.get("disabled") is True or str(agent.get("status") or "").lower() in {"disabled", "unavailable"}:
+            return True
         display = str(agent.get("display_name") or agent.get("name") or agent_id).strip()
         provider = str(agent.get("provider") or "").strip()
+        if provider:
+            prov_cfg = (config.get("providers", {}) or {}).get(provider) or (config.get("providers", {}) or {}).get(normalize_agent_id(provider))
+            if isinstance(prov_cfg, dict) and (prov_cfg.get("enabled") is False or prov_cfg.get("disabled") is True):
+                return True
         return bool(
             (display and display.casefold() in keys)
             or (provider and provider.casefold() in keys)
@@ -5179,6 +6165,7 @@ def first_viable_agent(
     *,
     state: dict[str, Any] | None = None,
     task: dict[str, Any] | None = None,
+    provider_report: dict[str, Any] | None = None,
 ) -> str | None:
     known = known_agent_display_names(config)
     seen: set[str] = set()
@@ -5187,13 +6174,27 @@ def first_viable_agent(
         if not name or name in seen or name in exclude:
             continue
         seen.add(name)
+        if is_human_gate_agent(name):
+            continue
         if name in known:
-            if state is not None and agent_dispatch_paused(config, state, name):
+            if agent_dispatch_disabled(config, name):
                 continue
+            normalized = normalize_agent_id(name)
+            agent_cfg = (config.get("agents", {}) or {}).get(normalized) or (config.get("agents", {}) or {}).get(name)
+            provider_key = str((agent_cfg or {}).get("provider") or normalized or name)
+            if provider_runtime_config_block_reason(config, provider_key):
+                continue
+            if state is not None:
+                if agent_dispatch_paused(config, state, name):
+                    continue
+                block_reason = agent_auto_dispatch_block_reason(config, state, name, provider_report=provider_report)
+                if block_reason:
+                    continue
             if task is not None and not agent_can_take_task(config, name, task):
                 continue
             return name
     return None
+
 
 
 def agent_auto_dispatch_block_reason(
@@ -5579,6 +6580,8 @@ def maybe_reassign_task_after_worker_failure(
     task = next((item for item in status.get("tasks", []) if item.get("id") == task_id), None)
     if task is None:
         return None
+    if task_is_human_gate(task) or bool(task.get("non_dispatchable")):
+        return None
 
     task_status = str(task.get("status") or "").lower()
     if task_status not in {str(value).lower() for value in settings.get("eligible_statuses", [])}:
@@ -5590,6 +6593,9 @@ def maybe_reassign_task_after_worker_failure(
     owned_statuses = {str(value).lower() for value in dispatch_settings.get("owned_statuses", ["in_progress", "todo"])}
 
     failing_agent = display_name_for(config, str(worker.get("agent_id") or worker.get("provider") or ""))
+    if is_human_gate_agent(failing_agent):
+        return None
+
     failure = classify_worker_failure(config, worker, reason)
     failure_label = failure.get("label", "provider failure")
     failure_summary = summarize_failure_reason(reason, failing_agent).get("summary") or failure_label
@@ -5597,9 +6603,11 @@ def maybe_reassign_task_after_worker_failure(
     reviewer = str(task.get("reviewer") or "")
 
     if task_status in review_statuses and reviewer == failing_agent:
-        candidates = normalized_mapping_values(settings.get("reviewer_fallbacks", {}), failing_agent)
+        if is_human_gate_agent(reviewer):
+            return None
+        candidates = get_agent_reassignment_candidates(config, failing_agent, role="reviewer", task=task)
         new_reviewer = first_viable_agent(config, candidates, exclude={owner, reviewer}, state=state, task=task)
-        if not new_reviewer:
+        if not new_reviewer or is_human_gate_agent(new_reviewer):
             return None
         message = (
             f"Auto-reassigned review from {reviewer} to {new_reviewer} after repeated {failing_agent} {failure_label}: {failure_summary}"
@@ -5633,15 +6641,17 @@ def maybe_reassign_task_after_worker_failure(
         return new_reviewer
 
     if task_status in owned_statuses | finalize_statuses and owner == failing_agent:
-        candidates = normalized_mapping_values(settings.get("owner_fallbacks", {}), failing_agent)
+        if is_human_gate_agent(owner):
+            return None
+        candidates = get_agent_reassignment_candidates(config, failing_agent, role="owner", task=task)
         new_owner = first_viable_agent(config, candidates, exclude={owner, reviewer}, state=state, task=task)
-        if not new_owner:
+        if not new_owner or is_human_gate_agent(new_owner):
             return None
         reviewer_candidates = [reviewer]
-        reviewer_candidates.extend(normalized_mapping_values(settings.get("reviewer_fallbacks", {}), failing_agent))
-        reviewer_candidates.extend(normalized_mapping_values(settings.get("owner_fallbacks", {}), failing_agent))
+        reviewer_candidates.extend(get_agent_reassignment_candidates(config, failing_agent, role="reviewer", task=task))
+        reviewer_candidates.extend(get_agent_reassignment_candidates(config, failing_agent, role="owner", task=task))
         new_reviewer = first_viable_agent(config, reviewer_candidates, exclude={new_owner}, state=state, task=task)
-        if not new_reviewer:
+        if not new_reviewer or is_human_gate_agent(new_reviewer):
             return None
         requeue_for_fresh_dispatch = task_status in owned_statuses and task_status not in finalize_statuses
         message = (
@@ -5951,14 +6961,18 @@ def _claude_resume_allowed_tools(approval: dict[str, Any] | None) -> list[str]:
     for value in (
         approval.get("resume_override_rule"),
         approval.get("suggested_rule"),
-        approval.get("tool_name"),
     ):
         if not isinstance(value, str):
             continue
         normalized = value.strip()
         if normalized and normalized not in candidates:
             candidates.append(normalized)
-    return candidates
+    if candidates:
+        return candidates
+    tool_name = approval.get("tool_name")
+    if isinstance(tool_name, str) and tool_name.strip():
+        return [tool_name.strip()]
+    return []
 
 
 def _provider_uses_claude_cli(config: dict[str, Any], provider_id: str | None) -> bool:
@@ -5994,6 +7008,143 @@ def worker_supports_approval_resume(config: dict[str, Any], worker: dict[str, An
         _provider_uses_claude_cli(config, worker.get("provider"))
         and (worker.get("session_id") or worker.get("resume_token"))
     )
+
+
+DEFERRED_TOOL_RISK_CLASS = "claude_deferred_tool"
+
+
+def _deferred_tool_use_receipt(worker: dict[str, Any]) -> dict[str, Any] | None:
+    """Return the worker's `stop_reason=tool_deferred` payload when it is usable."""
+    payload = worker.get("deferred_tool_use")
+    if not isinstance(payload, dict):
+        return None
+    tool_name = str(payload.get("name") or "").strip()
+    if not tool_name:
+        return None
+    tool_input = payload.get("input")
+    return {
+        "tool_use_id": str(payload.get("id") or "").strip(),
+        "tool_name": tool_name,
+        "tool_input": tool_input if isinstance(tool_input, dict) else {},
+    }
+
+
+def _deferred_tool_suggested_rule(tool_name: str, tool_input: dict[str, Any]) -> str | None:
+    if tool_name == "Bash":
+        shell_command = tool_input.get("command") or tool_input.get("cmd") or tool_input.get("raw_command")
+        if shell_command:
+            return f"Bash({shell_command})"
+        return None
+    return tool_name or None
+
+
+def _deferred_tool_broker_decision(config: dict[str, Any], tool_name: str, tool_input: dict[str, Any]) -> dict[str, Any] | None:
+    try:
+        from permission_broker import evaluate_tool_request
+    except Exception:  # pragma: no cover - broker is optional at runtime
+        return None
+    try:
+        return evaluate_tool_request(tool_name, tool_input, config)
+    except Exception:  # pragma: no cover - never let classification break the poll loop
+        return None
+
+
+def correlate_deferred_tool_approval(
+    config: dict[str, Any],
+    worker: dict[str, Any],
+    approval_state: dict[str, Any],
+) -> dict[str, Any] | None:
+    """Make a Claude `tool_deferred` receipt durable in this supervisor's queue.
+
+    The Claude CLI can exit with `stop_reason=tool_deferred` while the approval
+    entry that the permission-broker hook was supposed to create never lands in
+    the queue this supervisor reads (a different status root, an uninstalled
+    hook, or a hook that died mid-write). The worker is then left in
+    `waiting_approval` with nothing pending, trips the "approval state
+    disappeared" branch, and its verified worktree gets hard-reset.
+
+    Adopting the receipt here correlates the deferred tool with the worker run
+    *before* any exit cleanup runs. It does not widen what is allowed: the
+    adopted entry is created as `pending` and still needs an explicit allow, and
+    a tool the broker classifies as `deny` is recorded and immediately denied so
+    the worker still fails closed.
+
+    Returns the adopted approval, or None when there is nothing to adopt.
+    """
+    if not _provider_uses_claude_cli(config, worker.get("provider")):
+        return None
+    receipt = _deferred_tool_use_receipt(worker)
+    if receipt is None:
+        return None
+    run_id = str(worker.get("run_id") or "").strip()
+    if not run_id:
+        return None
+    existing = find_worker_deferred_approval(
+        approval_state,
+        worker_run_id=run_id,
+        tool_use_id=receipt["tool_use_id"] or None,
+        tool_name=receipt["tool_name"],
+        tool_input=receipt["tool_input"],
+    )
+    if existing is not None:
+        return None
+
+    tool_name = receipt["tool_name"]
+    tool_input = receipt["tool_input"]
+    broker_decision = _deferred_tool_broker_decision(config, tool_name, tool_input)
+    approval, created = ensure_worker_deferred_approval(
+        config,
+        {
+            "provider": worker.get("provider"),
+            "agent_id": worker.get("agent_id"),
+            "task_id": worker.get("task_id"),
+            "worker_run_id": run_id,
+            "session_id": worker.get("session_id") or worker.get("resume_token"),
+            "tool_use_id": receipt["tool_use_id"] or None,
+            "tool_name": tool_name,
+            "tool_input": tool_input,
+            "risk_class": (broker_decision or {}).get("risk_class") or DEFERRED_TOOL_RISK_CLASS,
+            "suggested_rule": _deferred_tool_suggested_rule(tool_name, tool_input),
+            "correlation_source": "supervisor_deferred_tool_receipt",
+            "broker_decision": broker_decision,
+        },
+    )
+    approval_id = approval.get("approval_id")
+    worker["deferred_action"] = approval_id
+    worker["deferred_tool_use_id"] = receipt["tool_use_id"] or None
+    write_activity_log(
+        config,
+        {
+            "type": (
+                "worker_deferred_approval_recorded"
+                if created
+                else "worker_deferred_approval_correlated"
+            ),
+            "provider": worker.get("provider"),
+            "task_id": worker.get("task_id"),
+            "message": (
+                f"Recorded deferred {tool_name} approval {approval_id} from the worker's tool_deferred receipt."
+                if created
+                else f"Correlated existing deferred {tool_name} approval {approval_id} with the worker receipt."
+            ),
+            "worker_run_id": run_id,
+            "approval_id": approval_id,
+            "tool_name": tool_name,
+            "risk_class": approval.get("risk_class"),
+        },
+    )
+    if (broker_decision or {}).get("decision") == "deny" and approval_id:
+        try:
+            return resolve_approval(
+                config,
+                approval_id,
+                decision="deny",
+                note=str(broker_decision.get("reason") or "Deferred tool is denied by orchestrator policy."),
+                remember=False,
+            )
+        except KeyError:  # pragma: no cover - resolved concurrently
+            return approval
+    return approval
 
 
 def resume_claude_worker(
@@ -6059,6 +7210,7 @@ def resume_claude_worker(
             "ORCH_SESSION_ID": str(session_id),
             "PANTHEON_WORKTREE_ROOT": str(workspace_root),
             "PANTHEON_STATUS_ROOT": str(status_root),
+            "ORCH_STATUS_ROOT": str(status_root),
             "ORCH_WORKSPACE_PATH": str(workspace_root),
         }
     )
@@ -6080,6 +7232,8 @@ def resume_claude_worker(
     worker["pid"] = process.pid
     worker["status"] = "running"
     worker["deferred_action"] = None
+    worker["deferred_tool_use"] = None
+    worker["deferred_tool_use_id"] = None
     worker["last_event_at"] = _isoformat_utc(now_dt)
     worker["last_heartbeat_at"] = None
     worker["lease_acquired_at"] = _isoformat_utc(now_dt)
@@ -6133,6 +7287,16 @@ def poll_workers(config: dict[str, Any], state: dict[str, Any], provider_report:
     }
     workers = state.setdefault("workers", {})
     for run_id, worker in list(workers.items()):
+        # These records already have a durable terminal disposition. Re-reading
+        # their old marker/log after a later re-review or reviewer reopen must
+        # never count the same run again or reassign the current lifecycle.
+        if str(worker.get("status") or "").lower() in {
+            "completed",
+            "failed",
+            "superseded",
+            "reassigned",
+        }:
+            continue
         previous_last_event_at = worker.get("last_event_at")
         if worker.get("queue_event_id") and worker.get("queue_event_id") not in valid_queue_event_ids:
             if worker.get("status") in {"running", "waiting_approval", "retry_backoff", "manual_pending", "stalled"} and not pid_is_alive(worker.get("pid")):
@@ -6159,6 +7323,27 @@ def poll_workers(config: dict[str, Any], state: dict[str, Any], provider_report:
             poll_counts["marker_updates"] += 1
             changed = True
         update_from_log(config, worker)
+        try:
+            adopted_approval = correlate_deferred_tool_approval(config, worker, approval_state)
+        except Exception as error:  # pragma: no cover - queue write failures must fail closed, not crash
+            adopted_approval = None
+            write_activity_log(
+                config,
+                {
+                    "type": "worker_deferred_approval_failed",
+                    "provider": worker.get("provider"),
+                    "task_id": worker.get("task_id"),
+                    "message": f"Could not record deferred tool approval for {run_id}: {error}",
+                    "worker_run_id": run_id,
+                },
+            )
+        if adopted_approval is not None:
+            bucket = pending_by_run if adopted_approval.get("status") == "pending" else resolved_by_run
+            bucket.setdefault(run_id, []).append(adopted_approval)
+            approval_state.setdefault(
+                "pending" if adopted_approval.get("status") == "pending" else "history", []
+            ).append(adopted_approval)
+            changed = True
         alive = pid_is_alive(worker.get("pid"))
         if alive and worker.get("status") in active_worker_statuses and worker.get("last_heartbeat_at"):
             if not worker_heartbeat_is_stale(config, worker, now):
@@ -6230,9 +7415,23 @@ def poll_workers(config: dict[str, Any], state: dict[str, Any], provider_report:
                 or changed
             )
             continue
+        assignment_matches = worker_matches_current_assignment(config, worker, task_map)
+        accepted_dead_worker_transition = False
+        if not assignment_matches and not alive and worker_runner_succeeded(worker):
+            accepted_dead_worker_transition = successful_worker_exit_outcome(
+                worker,
+                task_map.get(str(worker.get("task_id") or ""), {}),
+                terminal_statuses={
+                    str(value).lower()
+                    for value in ready_dispatch_settings(config).get(
+                        "worker_terminal_statuses", ["done", "review_approved"]
+                    )
+                },
+            ) in {"lifecycle_complete", "review_decided"}
         if (
             worker.get("queue_event_id")
-            and not worker_matches_current_assignment(config, worker, task_map)
+            and not assignment_matches
+            and not accepted_dead_worker_transition
         ):
             if worker.get("status") == "superseded":
                 continue
@@ -6702,12 +7901,43 @@ def poll_workers(config: dict[str, Any], state: dict[str, Any], provider_report:
                 str(value).lower()
                 for value in ready_dispatch_settings(config).get("worker_terminal_statuses", ["done", "review_approved"])
             }
-            if task_status in redispatch_statuses:
+            current_task = task_map.get(worker.get("task_id"), {})
+            success_outcome = successful_worker_exit_outcome(
+                worker,
+                current_task,
+                terminal_statuses=terminal_statuses,
+            )
+            if success_outcome in {"lifecycle_complete", "review_decided", "incremental_progress"}:
+                worker["status"] = "completed"
+                worker["last_event_at"] = utc_now()
+                worker["progress_outcome"] = success_outcome
+                clear_task_failure_streak(state, worker=worker)
+                message = (
+                    "Background worker process exited after recording meaningful incremental progress; task remains dispatchable."
+                    if success_outcome == "incremental_progress"
+                    else "Background worker process exited after completing its required task lifecycle transition."
+                )
+                write_activity_log(
+                    config,
+                    {
+                        "type": "worker_progress_recorded" if success_outcome == "incremental_progress" else "worker_completed",
+                        "provider": worker.get("provider"),
+                        "task_id": worker.get("task_id"),
+                        "message": message,
+                        "worker_run_id": worker["run_id"],
+                        "pr_url": worker.get("pr_url"),
+                        "session_url": worker.get("session_url"),
+                        "progress_outcome": success_outcome,
+                    },
+                )
+                finalize_queue_event_record(config, state, worker, "completed")
+            elif task_status in redispatch_statuses:
+                failure_reason = NO_PROGRESS_WORKER_EXIT_REASON
                 failure_count = record_task_failure_streak(
                     state,
                     worker,
-                    GENERIC_WORKER_EXIT_REASON,
-                    failure_kind="generic_exit",
+                    failure_reason,
+                    failure_kind="no_progress",
                 )
                 generic_threshold = max(1, int(provider_guardrail_settings(config).get("generic_exit_reassign_after", 2)))
                 reassigned_to = None
@@ -6716,7 +7946,7 @@ def poll_workers(config: dict[str, Any], state: dict[str, Any], provider_report:
                         config,
                         state,
                         worker,
-                        GENERIC_WORKER_EXIT_REASON,
+                        failure_reason,
                         terminal=True,
                         force=True,
                         failure_count=failure_count,
@@ -6724,14 +7954,14 @@ def poll_workers(config: dict[str, Any], state: dict[str, Any], provider_report:
                 if reassigned_to:
                     worker["status"] = "reassigned"
                     worker["reassigned_to"] = reassigned_to
-                    worker["last_error"] = GENERIC_WORKER_EXIT_REASON
+                    worker["last_error"] = failure_reason
                     worker["last_event_at"] = utc_now()
                     finalize_queue_event_record(config, state, worker, "completed")
                     changed = True
                     continue
                 worker["status"] = "failed"
                 worker["last_event_at"] = utc_now()
-                worker["last_error"] = GENERIC_WORKER_EXIT_REASON
+                worker["last_error"] = failure_reason
                 write_activity_log(
                     config,
                     {
@@ -6745,23 +7975,6 @@ def poll_workers(config: dict[str, Any], state: dict[str, Any], provider_report:
                     },
                 )
                 finalize_queue_event_record(config, state, worker, "failed", worker["last_error"])
-            elif task_status in terminal_statuses:
-                worker["status"] = "completed"
-                worker["last_event_at"] = utc_now()
-                clear_task_failure_streak(state, worker=worker)
-                write_activity_log(
-                    config,
-                    {
-                        "type": "worker_completed",
-                        "provider": worker.get("provider"),
-                        "task_id": worker.get("task_id"),
-                        "message": "Background worker process exited.",
-                        "worker_run_id": worker["run_id"],
-                        "pr_url": worker.get("pr_url"),
-                        "session_url": worker.get("session_url"),
-                    },
-                )
-                finalize_queue_event_record(config, state, worker, "completed")
             else:
                 worker["status"] = "failed"
                 worker["last_event_at"] = utc_now()
@@ -7077,6 +8290,33 @@ def reconcile_runtime_on_boot(config: dict[str, Any], state: dict[str, Any]) -> 
         if marker_changed:
             counts["marker_updates"] += 1
             changed = True
+        status_before_log_update = worker.get("status")
+        if _provider_uses_claude_cli(config, worker.get("provider")):
+            update_from_log(config, worker)
+            if _deferred_tool_use_receipt(worker) is not None:
+                try:
+                    correlate_deferred_tool_approval(
+                        config,
+                        worker,
+                        load_approval_state(config),
+                    )
+                except Exception as error:  # pragma: no cover - queue write failures must fail closed
+                    worker["status"] = status_before_log_update
+                    write_activity_log(
+                        config,
+                        {
+                            "type": "worker_deferred_approval_failed",
+                            "provider": worker.get("provider"),
+                            "task_id": worker.get("task_id"),
+                            "message": f"Could not record deferred tool approval for {run_id} during boot: {error}",
+                            "worker_run_id": run_id,
+                        },
+                    )
+                else:
+                    # A flushed Claude result can outlive its runner process.
+                    # Preserve it for the normal poll path instead of treating
+                    # the missing PID as a generic worker exit.
+                    changed = True
         alive = pid_is_alive(worker.get("pid"))
         missing_process = worker.get("status") in {"running", "stalled"} and not alive
         expired_lease = alive and worker_lease_is_expired(config, worker, now)
@@ -7126,9 +8366,24 @@ def reconcile_runtime_on_boot(config: dict[str, Any], state: dict[str, Any]) -> 
             str(value).lower()
             for value in ready_dispatch_settings(config).get("worker_terminal_statuses", ["done", "review_approved"])
         }
-        if runner_succeeded and task_status in terminal_statuses:
+        current_task = task_map.get(str(worker.get("task_id") or ""), {})
+        success_outcome = (
+            successful_worker_exit_outcome(
+                worker,
+                current_task,
+                terminal_statuses=terminal_statuses,
+            )
+            if runner_succeeded
+            else None
+        )
+        if runner_succeeded and success_outcome in {
+            "lifecycle_complete",
+            "review_decided",
+            "incremental_progress",
+        }:
             worker["status"] = "completed"
             worker["last_event_at"] = worker.get("runner_finished_at") or utc_now()
+            worker["progress_outcome"] = success_outcome
             clear_task_failure_streak(state, worker=worker)
             finalize_queue_event_record(config, state, worker, "completed")
             write_activity_log(
@@ -7137,17 +8392,52 @@ def reconcile_runtime_on_boot(config: dict[str, Any], state: dict[str, Any]) -> 
                     "type": "worker_completed",
                     "provider": worker.get("provider"),
                     "task_id": worker.get("task_id"),
-                    "message": "Worker exited successfully during supervisor boot reconciliation.",
+                    "message": (
+                        "Worker recorded meaningful incremental progress before supervisor boot reconciliation; task remains dispatchable."
+                        if success_outcome == "incremental_progress"
+                        else "Worker completed its required task lifecycle transition before supervisor boot reconciliation."
+                    ),
                     "worker_run_id": run_id,
                     "pr_url": worker.get("pr_url"),
                     "session_url": worker.get("session_url"),
+                    "progress_outcome": success_outcome,
                 },
             )
             changed = True
             continue
 
         if runner_succeeded:
-            reason = GENERIC_WORKER_EXIT_REASON
+            reason = NO_PROGRESS_WORKER_EXIT_REASON
+            failure_count = record_task_failure_streak(
+                state,
+                worker,
+                reason,
+                failure_kind="no_progress",
+            )
+            generic_threshold = max(1, int(provider_guardrail_settings(config).get("generic_exit_reassign_after", 2)))
+            reassigned_to = None
+            if task_status in redispatch_statuses and failure_count >= generic_threshold:
+                reassigned_to = maybe_reassign_task_after_worker_failure(
+                    config,
+                    state,
+                    worker,
+                    reason,
+                    terminal=True,
+                    force=True,
+                    failure_count=failure_count,
+                )
+            if reassigned_to:
+                worker["status"] = "reassigned"
+                worker["reassigned_to"] = reassigned_to
+                worker["last_event_at"] = worker.get("runner_finished_at") or utc_now()
+                worker["last_error"] = reason
+                finalize_queue_event_record(config, state, worker, "completed")
+                if expired_lease:
+                    counts["expired_lease_workers_failed"] += 1
+                else:
+                    counts["missing_process_workers_failed"] += 1
+                changed = True
+                continue
 
         detected_reason = None if runner_succeeded else detect_worker_failure(worker)
         if detected_reason:
@@ -7308,7 +8598,10 @@ def helper_claim_settings(config: dict[str, Any]) -> dict[str, Any]:
 def worker_self_claim_settings(config: dict[str, Any]) -> dict[str, Any]:
     settings = dict(ready_dispatch_settings(config).get("worker_self_claim", {}) or {})
     settings.setdefault("enabled", False)
-    settings.setdefault("release_task_statuses", ["review", "review_approved", "done", "blocked"])
+    settings.setdefault(
+        "release_task_statuses",
+        ["in_progress", "review", "review_approved", "done", "blocked", "assigned"],
+    )
     return settings
 
 
@@ -7319,10 +8612,11 @@ def release_completed_worker_for_claim(
     agent_name: str,
     task_id: str | None,
 ) -> bool:
-    if not task_id:
+    if not task_id or not isinstance(task_id, str):
         return False
     settings = worker_self_claim_settings(config)
     allowed_statuses = {str(value).lower() for value in settings.get("release_task_statuses", [])}
+    allowed_statuses.update({"in_progress", "review", "review_approved", "done", "blocked", "assigned"})
     if not allowed_statuses:
         return False
     status = load_status(config)
@@ -7333,22 +8627,151 @@ def release_completed_worker_for_claim(
     normalized_agent = normalize_agent_id(agent_name)
     display_agent = display_name_for(config, normalized_agent)
     active_statuses = {str(value) for value in ready_dispatch_settings(config).get("active_worker_statuses", [])}
-    now = utc_now()
-    changed = False
-    for worker in state.get("workers", {}).values():
-        worker_agent = str(worker.get("logical_agent_id") or worker.get("agent_id") or "").strip()
+
+    workers_dict = state.get("workers", {})
+    if not isinstance(workers_dict, dict):
+        return False
+
+    matching_entries = []
+    for worker_key, worker in workers_dict.items():
+        if not isinstance(worker, dict):
+            continue
         if worker.get("task_id") != task_id:
             continue
-        if display_name_for(config, normalize_agent_id(worker_agent)) != display_agent:
+        worker_agent = str(worker.get("logical_agent_id") or worker.get("agent_id") or "").strip()
+        norm_w_agent = normalize_agent_id(worker_agent)
+        if norm_w_agent != normalized_agent and display_name_for(config, norm_w_agent) != display_agent:
             continue
         if worker.get("status") not in active_statuses:
             continue
-        worker["status"] = "completed"
-        worker["completed_at"] = now
-        worker["last_event_at"] = now
-        worker["last_error"] = None
+        matching_entries.append((worker_key, worker))
+
+    if len(matching_entries) != 1:
+        return False
+
+    worker_key, worker = matching_entries[0]
+    if not isinstance(worker_key, str) or not worker_key.strip():
+        return False
+    worker_key_str = worker_key.strip()
+
+    worker_pid = worker.get("pid")
+    if worker_pid is not None:
+        if type(worker_pid) is not int or worker_pid <= 0:
+            return False
+
+    worker_child_pid = worker.get("child_pid")
+    if worker_child_pid is not None:
+        if type(worker_child_pid) is not int or worker_child_pid <= 0:
+            return False
+
+    if (worker_pid is not None and pid_is_alive(worker_pid)) or (worker_child_pid is not None and pid_is_alive(worker_child_pid)):
+        return False
+
+    metadata = worker.get("metadata") if isinstance(worker.get("metadata"), dict) else {}
+    status_path_val = worker.get("runner_status_path") or worker.get("status_path") or metadata.get("runner_status_path") or metadata.get("status_path")
+    if not status_path_val or not isinstance(status_path_val, (str, Path)):
+        return False
+
+    receipt = _load_runtime_marker(status_path_val)
+    if not receipt or not isinstance(receipt, dict):
+        return False
+
+    receipt_status = receipt.get("status") or receipt.get("runner_status")
+    if not isinstance(receipt_status, str) or receipt_status.strip().lower() not in {"completed", "success", "succeeded"}:
+        return False
+
+    raw_exit = receipt.get("exit_code")
+    if type(raw_exit) is not int or raw_exit != 0:
+        return False
+
+    if receipt.get("signal") is not None or receipt.get("runner_signal") is not None:
+        return False
+
+    receipt_run_id_val = receipt.get("run_id")
+    receipt_w_run_id_val = receipt.get("worker_run_id")
+
+    if receipt_run_id_val is not None and not isinstance(receipt_run_id_val, str):
+        return False
+    if receipt_w_run_id_val is not None and not isinstance(receipt_w_run_id_val, str):
+        return False
+
+    raw_receipt_run_id = receipt_run_id_val if receipt_run_id_val is not None else receipt_w_run_id_val
+    if not isinstance(raw_receipt_run_id, str):
+        return False
+    receipt_run_id = raw_receipt_run_id.strip()
+    if not receipt_run_id:
+        return False
+
+    if receipt_run_id_val is not None and receipt_w_run_id_val is not None:
+        if receipt_run_id_val.strip() != receipt_w_run_id_val.strip():
+            return False
+
+    raw_worker_run_id = worker.get("run_id")
+    if raw_worker_run_id is not None and not isinstance(raw_worker_run_id, str):
+        return False
+    if isinstance(raw_worker_run_id, str) and raw_worker_run_id.strip():
+        if raw_worker_run_id.strip() != receipt_run_id:
+            return False
+
+    if receipt_run_id != worker_key_str:
+        return False
+
+    receipt_pid = receipt.get("pid")
+    if receipt_pid is not None:
+        if type(receipt_pid) is not int or receipt_pid <= 0:
+            return False
+
+    receipt_child_pid = receipt.get("child_pid")
+    if receipt_child_pid is not None:
+        if type(receipt_child_pid) is not int or receipt_child_pid <= 0:
+            return False
+
+    if worker_pid is not None:
+        if receipt_pid is None or receipt_pid != worker_pid:
+            return False
+
+    if worker_child_pid is not None:
+        if receipt_child_pid is None or receipt_child_pid != worker_child_pid:
+            return False
+
+    if (receipt_pid is not None and pid_is_alive(receipt_pid)) or (receipt_child_pid is not None and pid_is_alive(receipt_child_pid)):
+        return False
+
+    old_worker = copy.deepcopy(worker)
+    queue_event_id = worker.get("queue_event_id")
+    has_queue_event = False
+    old_queue_event = None
+    queue_events_dict = None
+
+    if queue_event_id and isinstance(state.get("queue"), dict):
+        events = state["queue"].get("events")
+        if isinstance(events, dict):
+            queue_events_dict = events
+            if queue_event_id in events and isinstance(events[queue_event_id], dict):
+                has_queue_event = True
+                old_queue_event = copy.deepcopy(events[queue_event_id])
+
+    now = utc_now()
+    worker["status"] = "completed"
+    worker["completed_at"] = now
+    worker["last_event_at"] = now
+    worker["last_error"] = None
+
+    def _rollback() -> None:
+        worker.clear()
+        worker.update(old_worker)
+        if queue_events_dict is not None and queue_event_id:
+            if has_queue_event and old_queue_event is not None:
+                if queue_event_id in queue_events_dict and isinstance(queue_events_dict[queue_event_id], dict):
+                    queue_events_dict[queue_event_id].clear()
+                    queue_events_dict[queue_event_id].update(old_queue_event)
+                else:
+                    queue_events_dict[queue_event_id] = copy.deepcopy(old_queue_event)
+            else:
+                queue_events_dict.pop(queue_event_id, None)
+
+    try:
         finalize_queue_event_record(config, state, worker, "completed")
-        changed = True
         write_activity_log(
             config,
             {
@@ -7359,7 +8782,12 @@ def release_completed_worker_for_claim(
                 "queue_event_id": worker.get("queue_event_id"),
             },
         )
-    return changed
+    except Exception:
+        _rollback()
+        return False
+
+    return True
+
 
 
 def underutilization_settings(config: dict[str, Any]) -> dict[str, Any]:
@@ -7566,23 +8994,27 @@ def normalize_mainline_task_assignment(config: dict[str, Any], task: dict[str, A
     changed_fields: list[str] = []
 
     if owner and not owner_allowed:
-        owner_candidates = normalized_mapping_values(settings.get("owner_fallbacks", {}), owner)
+        if is_human_gate_agent(owner):
+            return False
+        owner_candidates = get_agent_reassignment_candidates(config, owner, role="owner", task=task)
         replacement_owner = first_viable_agent(config, owner_candidates, exclude={owner, reviewer}, task=task)
-        if not replacement_owner:
+        if not replacement_owner or is_human_gate_agent(replacement_owner):
             return False
         new_owner = replacement_owner
         changed_fields.append(f"owner {owner} -> {new_owner}")
 
     if not reviewer or not reviewer_allowed or reviewer == new_owner:
+        if reviewer and is_human_gate_agent(reviewer):
+            return False
         reviewer_candidates: list[str] = []
         if reviewer:
             reviewer_candidates.append(reviewer)
-            reviewer_candidates.extend(normalized_mapping_values(settings.get("reviewer_fallbacks", {}), reviewer))
+            reviewer_candidates.extend(get_agent_reassignment_candidates(config, reviewer, role="reviewer", task=task))
         if owner:
-            reviewer_candidates.extend(normalized_mapping_values(settings.get("reviewer_fallbacks", {}), owner))
-            reviewer_candidates.extend(normalized_mapping_values(settings.get("owner_fallbacks", {}), owner))
+            reviewer_candidates.extend(get_agent_reassignment_candidates(config, owner, role="reviewer", task=task))
+            reviewer_candidates.extend(get_agent_reassignment_candidates(config, owner, role="owner", task=task))
         replacement_reviewer = first_viable_agent(config, reviewer_candidates, exclude={new_owner}, task=task)
-        if not replacement_reviewer:
+        if not replacement_reviewer or is_human_gate_agent(replacement_reviewer):
             return False
         new_reviewer = replacement_reviewer
         if replacement_reviewer != reviewer:
@@ -7638,26 +9070,23 @@ def agent_has_dispatchable_primary_work(
     task_map: dict[str, dict[str, Any]],
 ) -> bool:
     settings = ready_dispatch_settings(config)
-    review_statuses = {str(value).lower() for value in settings.get("review_statuses", ["review"])}
-    finalize_statuses = {str(value).lower() for value in settings.get("finalize_statuses", ["review_approved"])}
     dependency_done_statuses = {str(value).lower() for value in settings.get("dependency_done_statuses", ["done"])}
     for task in status.get("tasks", []) or []:
         if task_is_sidecar(task):
             continue
         if not agent_can_take_task(config, agent_name, task):
             continue
-        task_status = str(task.get("status") or "").lower()
-        if task_status in review_statuses and task.get("reviewer") == agent_name:
-            return True
-        if task_status in finalize_statuses and task.get("owner") == agent_name:
-            return True
-        if task.get("owner") != agent_name:
-            continue
-        if task_status == "in_progress" and dependencies_satisfied(task, task_map, dependency_done_statuses):
-            return True
-        if task_status == "todo" and dependencies_satisfied(task, task_map, dependency_done_statuses):
+        prio = dispatch_priority_for_task(
+            config,
+            task,
+            agent_name,
+            task_map=task_map,
+            dependencies_done_statuses=dependency_done_statuses,
+        )
+        if prio is not None:
             return True
     return False
+
 
 
 def count_open_sidecars_for_agent(status: dict[str, Any], agent_name: str) -> int:
@@ -8081,25 +9510,20 @@ def outstanding_delivery_indexes(config: dict[str, Any], state: dict[str, Any]) 
     return agents, task_agents, event_keys
 
 
-def _backup_and_reset_dirty_worktree(
+def _quarantine_and_preserve_dirty_worktree(
     config: dict[str, Any],
     state: dict[str, Any],
     worktree_path: Path | str | None,
     task_id: str | None,
     *,
+    expected_branch: str | None = None,
     run_id: str | None = None,
     trigger: str = "",
 ) -> bool:
-    """Back up tracked dirt then hard-reset an orphaned dirty worktree.
+    """Quarantine and preserve dirty worktree state as an immutable backup without destructive reset/clean/stash or modifying the worktree.
 
-    Returns True iff it found *real* (tracked/staged) dirt and reset the worktree to a
-    clean, leaseable state. A worker killed/timed out before committing — or one that
-    advanced its task but never cleaned up — leaves dirt that makes `reuse_existing`
-    fail the lease guard forever (`skipped_dirty_worktree`); once enough worktrees are
-    dirty the whole fleet deadlocks (the supervisor keeps emitting dispatch events that
-    never spawn a worker). Uncommitted work is never silently destroyed: the tracked
-    diff is dumped to `.orchestrator/worktree-dirt-backups/` first. Refuses to touch a
-    worktree a live worker for the same task is still using.
+    Returns True iff it inventoried tracked/staged/untracked dirt, wrote verified immutable
+    backup to `.orchestrator/worktree-dirt-backups/`, leaving the original worktree wholly untouched.
     """
     if worktree_path is None:
         return False
@@ -8111,67 +9535,337 @@ def _backup_and_reset_dirty_worktree(
     if worktree_path == repo_root or not (worktree_path / ".git").exists():
         return False
 
-    # Never reset a worktree another live worker for this task is still using.
+    wt_git_rc, wt_git_dir = _git_output(worktree_path, "rev-parse", "--git-dir")
+    repo_git_rc, _repo_git_dir = _git_output(repo_root, "rev-parse", "--git-dir")
+    top_rc, top_level = _git_output(worktree_path, "rev-parse", "--show-toplevel")
+    worktree_common_rc, worktree_common = _git_output(worktree_path, "rev-parse", "--git-common-dir")
+    repo_common_rc, repo_common = _git_output(repo_root, "rev-parse", "--git-common-dir")
+    try:
+        resolved_top = Path(top_level).resolve()
+        wt_gd = Path(wt_git_dir) if Path(wt_git_dir).is_absolute() else (worktree_path / wt_git_dir)
+        wt_cd = Path(worktree_common) if Path(worktree_common).is_absolute() else (wt_gd / worktree_common)
+        repo_cd = Path(repo_common) if Path(repo_common).is_absolute() else (repo_root / repo_common)
+
+        resolved_worktree_common = wt_cd.resolve()
+        resolved_repo_common = repo_cd.resolve()
+    except (OSError, RuntimeError, ValueError):
+        return False
+    if (
+        top_rc != 0
+        or worktree_common_rc != 0
+        or repo_common_rc != 0
+        or wt_git_rc != 0
+        or repo_git_rc != 0
+        or resolved_top != worktree_path
+        or resolved_worktree_common != resolved_repo_common
+    ):
+        return False
+
+    branch_rc, current_branch = _git_output(worktree_path, "symbolic-ref", "--quiet", "--short", "HEAD")
+    if branch_rc != 0 or not current_branch:
+        return False
+    if expected_branch and current_branch != expected_branch:
+        return False
+    if _git_operation_in_progress(worktree_path):
+        return False
+
+    local_head = _git_commit_oid(worktree_path, "HEAD")
+    if not local_head:
+        return False
+
     active_statuses = {str(value) for value in ready_dispatch_settings(config).get("active_worker_statuses", [])}
     for other in state.get("workers", {}).values():
-        if run_id and other.get("run_id") == run_id:
+        if not isinstance(other, dict):
             continue
-        if other.get("task_id") == task_id and other.get("status") in active_statuses:
-            return False
+        other_status = str(other.get("status") or "")
+        if other_status in active_statuses:
+            other_run_id = str(other.get("run_id") or "")
+            if run_id and other_run_id == run_id:
+                continue
+            other_task_id = str(other.get("task_id") or "")
+            other_path = str(other.get("workspace_path") or "")
+            if (task_id and other_task_id == task_id) or (other_path and Path(other_path).resolve() == worktree_path):
+                return False
 
     status_proc = subprocess.run(
-        ["git", "status", "--porcelain", "--untracked-files=no"],
+        ["git", "status", "--porcelain=v1", "-z", "--untracked-files=all"],
         cwd=worktree_path,
         capture_output=True,
-        text=True,
         check=False,
     )
-    if status_proc.returncode != 0 or not status_proc.stdout.strip():
+    if status_proc.returncode != 0 or not status_proc.stdout:
         return False
-    classification, _paths = _classify_worktree_dirt(status_proc.stdout)
-    if classification != "real":
-        return False  # clean or scratch-only -> the reuse guard already handles it
 
-    backup_patch: Path | None = None
+    raw_entries = [e for e in status_proc.stdout.split(b"\0") if e]
+    if not raw_entries:
+        return False
+
+    inventory_files: list[dict[str, Any]] = []
+    idx = 0
+    while idx < len(raw_entries):
+        item = raw_entries[idx]
+        code = item[:2].decode("utf-8", errors="replace")
+        path_bytes = item[3:] if len(item) > 3 else b""
+        idx += 1
+        orig_path_bytes = None
+        if len(code) >= 2 and (code[0] in ("R", "C") or code[1] in ("R", "C")):
+            if idx < len(raw_entries):
+                orig_path_bytes = raw_entries[idx]
+                idx += 1
+
+        rel_path = os.fsdecode(path_bytes)
+        orig_path = os.fsdecode(orig_path_bytes) if orig_path_bytes is not None else None
+        if not rel_path:
+            continue
+        full_p = worktree_path / rel_path
+
+        is_symlink = os.path.islink(full_p) or (hasattr(full_p, "is_symlink") and full_p.is_symlink())
+        symlink_target: str | None = None
+        sha256_val: str | None = None
+        is_file = False
+        is_dir = False
+
+        if is_symlink:
+            try:
+                symlink_target = os.readlink(full_p)
+            except OSError:
+                symlink_target = None
+        elif full_p.exists():
+            if full_p.is_file():
+                is_file = True
+                try:
+                    h = hashlib.sha256()
+                    with open(full_p, "rb") as f:
+                        while chunk := f.read(65536):
+                            h.update(chunk)
+                    sha256_val = h.hexdigest()
+                except OSError:
+                    sha256_val = None
+            elif full_p.is_dir():
+                is_dir = True
+
+        inventory_files.append({
+            "path": rel_path,
+            "orig_path": orig_path,
+            "status_code": code,
+            "sha256": sha256_val,
+            "is_symlink": is_symlink,
+            "symlink_target": symlink_target,
+            "is_file": is_file,
+            "is_dir": is_dir,
+        })
+
     try:
         backup_dir = repo_root / ".orchestrator" / "worktree-dirt-backups"
         backup_dir.mkdir(parents=True, exist_ok=True)
-        stamp = re.sub(r"[^0-9A-Za-z_-]+", "-", str(run_id or trigger or "orphan")) or "orphan"
-        backup_patch = backup_dir / f"{_task_id_slug(task_id)}-{stamp}.patch"
-        diff_proc = subprocess.run(
-            ["git", "diff", "HEAD", "--binary"],
-            cwd=worktree_path,
-            capture_output=True,
-            text=True,
-            check=False,
-        )
-        backup_patch.write_text(diff_proc.stdout or "", encoding="utf-8")
-    except OSError:
-        backup_patch = None
+        now_str = datetime.now(UTC).strftime("%Y%m%dT%H%M%SZ")
+        stamp = f"{now_str}_{uuid.uuid4().hex[:8]}"
+        task_backup_dir = backup_dir / f"{_task_id_slug(task_id)}-{stamp}"
+        task_backup_dir.mkdir(parents=True, exist_ok=False)
 
-    subprocess.run(["git", "reset", "--hard", "HEAD"], cwd=worktree_path, capture_output=True, text=True, check=False)
-    subprocess.run(["git", "clean", "-fdq"], cwd=worktree_path, capture_output=True, text=True, check=False)
+        manifest = {
+            "task_id": task_id,
+            "branch": current_branch,
+            "head_sha": local_head,
+            "trigger": trigger,
+            "run_id": run_id,
+            "timestamp": now_str,
+            "files": inventory_files,
+        }
+        manifest_path = task_backup_dir / "manifest.json"
+        manifest_path.write_text(json.dumps(manifest, indent=2), encoding="utf-8")
+
+        staged_proc = subprocess.run(["git", "diff", "--cached", "--binary"], cwd=worktree_path, capture_output=True, check=False)
+        if staged_proc.returncode != 0:
+            raise RuntimeError("failed to capture staged diff")
+        (task_backup_dir / "staged.patch").write_bytes(staged_proc.stdout)
+
+        unstaged_proc = subprocess.run(["git", "diff", "--binary"], cwd=worktree_path, capture_output=True, check=False)
+        if unstaged_proc.returncode != 0:
+            raise RuntimeError("failed to capture unstaged diff")
+        (task_backup_dir / "unstaged.patch").write_bytes(unstaged_proc.stdout)
+
+        untracked_base = task_backup_dir / "untracked"
+        for file_entry in inventory_files:
+            rel_p = file_entry["path"]
+            src_path = worktree_path / rel_p
+            if file_entry.get("status_code", "").startswith("?") or not src_path.exists():
+                if file_entry.get("is_symlink") and file_entry.get("symlink_target"):
+                    dst_path = untracked_base / rel_p
+                    dst_path.parent.mkdir(parents=True, exist_ok=True)
+                    if dst_path.exists() or os.path.islink(dst_path):
+                        dst_path.unlink()
+                    os.symlink(file_entry["symlink_target"], dst_path)
+                elif file_entry.get("is_file") and file_entry.get("sha256"):
+                    if src_path.exists() and src_path.is_file():
+                        dst_path = untracked_base / rel_p
+                        dst_path.parent.mkdir(parents=True, exist_ok=True)
+                        shutil.copy2(src_path, dst_path)
+                        h_check = hashlib.sha256()
+                        with open(dst_path, "rb") as f_chk:
+                            while ch := f_chk.read(65536):
+                                h_check.update(ch)
+                        if h_check.hexdigest() != file_entry["sha256"]:
+                            raise RuntimeError(f"backup checksum mismatch for {rel_p}")
+
+        checksums: dict[str, str] = {}
+        for b_root, _, b_files in os.walk(task_backup_dir):
+            for bf in b_files:
+                if bf == "backup_checksums.sha256":
+                    continue
+                fp = Path(b_root) / bf
+                rel_bp = fp.relative_to(task_backup_dir).as_posix()
+                if fp.is_symlink() or os.path.islink(fp):
+                    target = os.readlink(fp)
+                    checksums[rel_bp] = "symlink:" + hashlib.sha256(target.encode("utf-8")).hexdigest()
+                else:
+                    h_b = hashlib.sha256()
+                    with open(fp, "rb") as f_b:
+                        while ch := f_b.read(65536):
+                            h_b.update(ch)
+                    checksums[rel_bp] = h_b.hexdigest()
+        (task_backup_dir / "backup_checksums.sha256").write_text(json.dumps(checksums, indent=2), encoding="utf-8")
+
+    except Exception:
+        return False
+
     write_activity_log(
         config,
         {
-            "type": "worker_worktree_reset",
+            "type": "worker_worktree_preserved",
             "task_id": task_id,
             "run_id": run_id,
             "trigger": trigger,
             "workspace_path": str(worktree_path),
-            "backup_patch": str(backup_patch) if backup_patch else None,
+            "backup_dir": str(task_backup_dir),
+            "head_sha": local_head,
             "message": (
-                f"Hard-reset dirty worktree for {task_id} ({trigger or 'cleanup'}) so dispatch "
-                f"can lease it"
-                + (f"; uncommitted work backed up to {backup_patch}." if backup_patch else ".")
+                f"Quarantined dirty worktree for {task_id} ({trigger or 'cleanup'}); "
+                f"backup saved to {task_backup_dir}."
             ),
         },
     )
     return True
 
 
+def restore_quarantined_worktree_backup(
+    backup_dir: Path | str,
+    target_dir: Path | str,
+) -> tuple[bool, str]:
+    """Restore a quarantined worktree backup manifest and files into target_dir."""
+    backup_path = Path(backup_dir).expanduser().resolve()
+    target_path = Path(target_dir).expanduser().resolve()
+    manifest_file = backup_path / "manifest.json"
+    checksums_file = backup_path / "backup_checksums.sha256"
+    if not manifest_file.exists() or not checksums_file.exists():
+        return False, "missing manifest or checksums file"
+
+    try:
+        checksums = json.loads(checksums_file.read_text(encoding="utf-8"))
+        for rel_bp, expected_sha in checksums.items():
+            fp = backup_path / rel_bp
+            if not fp.exists() and not os.path.islink(fp):
+                return False, f"corrupted backup: missing {rel_bp}"
+            if fp.is_symlink() or os.path.islink(fp):
+                target = os.readlink(fp)
+                h_val = "symlink:" + hashlib.sha256(target.encode("utf-8")).hexdigest()
+            else:
+                h_b = hashlib.sha256()
+                with open(fp, "rb") as f_b:
+                    while ch := f_b.read(65536):
+                        h_b.update(ch)
+                h_val = h_b.hexdigest()
+            if h_val != expected_sha:
+                return False, f"corrupted backup: checksum mismatch for {rel_bp}"
+
+        manifest = json.loads(manifest_file.read_text(encoding="utf-8"))
+        untracked_base = backup_path / "untracked"
+        staged_patch = backup_path / "staged.patch"
+        unstaged_patch = backup_path / "unstaged.patch"
+
+        is_git_repo = (target_path / ".git").exists()
+
+        if is_git_repo:
+            if staged_patch.exists() and staged_patch.stat().st_size > 0:
+                apply_staged = subprocess.run(
+                    ["git", "apply", "--index", "--binary", str(staged_patch)],
+                    cwd=target_path,
+                    capture_output=True,
+                    text=True,
+                    check=False,
+                )
+                if apply_staged.returncode != 0:
+                    return False, f"restoration_failed: failed to apply staged patch: {apply_staged.stderr}"
+
+            if unstaged_patch.exists() and unstaged_patch.stat().st_size > 0:
+                apply_unstaged = subprocess.run(
+                    ["git", "apply", "--binary", str(unstaged_patch)],
+                    cwd=target_path,
+                    capture_output=True,
+                    text=True,
+                    check=False,
+                )
+                if apply_unstaged.returncode != 0:
+                    return False, f"restoration_failed: failed to apply unstaged patch: {apply_unstaged.stderr}"
+
+            for file_entry in manifest.get("files", []):
+                status_code = str(file_entry.get("status_code", ""))
+                rel_p = file_entry.get("path")
+                if not rel_p:
+                    continue
+                if status_code.startswith("?"):
+                    src_fp = untracked_base / rel_p
+                    dst_fp = target_path / rel_p
+                    if file_entry.get("is_symlink") and file_entry.get("symlink_target"):
+                        dst_fp.parent.mkdir(parents=True, exist_ok=True)
+                        if dst_fp.exists() or os.path.islink(dst_fp):
+                            dst_fp.unlink()
+                        os.symlink(file_entry["symlink_target"], dst_fp)
+                    elif src_fp.exists() and src_fp.is_file():
+                        dst_fp.parent.mkdir(parents=True, exist_ok=True)
+                        shutil.copy2(src_fp, dst_fp)
+        else:
+            for file_entry in manifest.get("files", []):
+                rel_p = file_entry.get("path")
+                if not rel_p:
+                    continue
+                src_fp = untracked_base / rel_p
+                dst_fp = target_path / rel_p
+                if file_entry.get("is_symlink") and file_entry.get("symlink_target"):
+                    dst_fp.parent.mkdir(parents=True, exist_ok=True)
+                    if dst_fp.exists() or os.path.islink(dst_fp):
+                        dst_fp.unlink()
+                    os.symlink(file_entry["symlink_target"], dst_fp)
+                elif src_fp.exists() and src_fp.is_file():
+                    dst_fp.parent.mkdir(parents=True, exist_ok=True)
+                    shutil.copy2(src_fp, dst_fp)
+        return True, "restored"
+    except Exception as exc:
+        return False, f"restoration_failed: {exc}"
+
+
+def _backup_and_reset_dirty_worktree(
+    config: dict[str, Any],
+    state: dict[str, Any],
+    worktree_path: Path | str | None,
+    task_id: str | None,
+    *,
+    run_id: str | None = None,
+    trigger: str = "",
+) -> bool:
+    return _quarantine_and_preserve_dirty_worktree(
+        config,
+        state,
+        worktree_path,
+        task_id,
+        expected_branch=worker_task_branch(config, task_id) if task_id else None,
+        run_id=run_id,
+        trigger=trigger,
+    )
+
+
 def reset_worker_worktree_after_failure(config: dict[str, Any], state: dict[str, Any], worker: dict[str, Any]) -> None:
-    """Reset a failed worker's isolated worktree so the next dispatch can lease it."""
+    """Reset a failed worker's isolated worktree state by preserving its backup."""
     settings = worker_worktree_settings(config)
     if not settings.get("enabled"):
         return
@@ -8186,8 +9880,14 @@ def reset_worker_worktree_after_failure(config: dict[str, Any], state: dict[str,
         worktree_path = _existing_worktree_for_branch(repo_root, branch, exclude_root=True) or worker_task_worktree_path(
             config, task_id, settings
         )
-    _backup_and_reset_dirty_worktree(
-        config, state, worktree_path, task_id, run_id=worker.get("run_id"), trigger="worker_failed"
+    _quarantine_and_preserve_dirty_worktree(
+        config,
+        state,
+        worktree_path,
+        task_id,
+        expected_branch=worker_task_branch(config, task_id) if task_id else None,
+        run_id=worker.get("run_id"),
+        trigger="worker_failed",
     )
 
 
@@ -8209,12 +9909,6 @@ def finalize_queue_event_record(config: dict[str, Any], state: dict[str, Any], w
         record["lease_owner"] = worker.get("run_id")
     if error:
         record["error"] = error
-    if status == "failed":
-        try:
-            reset_worker_worktree_after_failure(config, state, worker)
-        except Exception:  # noqa: BLE001 - worktree recovery must never break finalize
-            pass
-
 
 
 def save_event_queue(config: dict[str, Any], events: list[dict[str, Any]]) -> None:
@@ -8347,7 +10041,7 @@ def current_dispatch_event_key(config: dict[str, Any], event: dict[str, Any], ta
     elif reason == REASON_OWNED_IN_PROGRESS:
         eligible = task_status == "in_progress" and task.get(owner_field) == target_agent and dependencies_satisfied(task, task_map, dependency_done_statuses)
     elif reason == REASON_OWNED_READY:
-        eligible = task_status == "todo" and task.get(owner_field) == target_agent and dependencies_satisfied(task, task_map, dependency_done_statuses)
+        eligible = task_status in {"todo", "in_progress"} and task.get(owner_field) == target_agent and dependencies_satisfied(task, task_map, dependency_done_statuses)
 
     if not eligible:
         return None
@@ -8359,6 +10053,7 @@ def dispatch_priority_for_task(
     task: dict[str, Any],
     agent_name: str,
     *,
+    task_map: dict[str, dict[str, Any]] | None = None,
     dependencies_done_statuses: set[str] | None = None,
 ) -> int | None:
     settings = ready_dispatch_settings(config)
@@ -8372,23 +10067,50 @@ def dispatch_priority_for_task(
     owner_field = schema.get("assignee_field", "owner")
     reviewer_field = schema.get("reviewer_field", "reviewer")
     task_status = str(task.get("status") or "").lower()
-    if task_status in review_statuses and task.get(reviewer_field) == agent_name:
+    tmap = task_map if task_map is not None else {str(task.get("id") or ""): task}
+
+    norm_target = normalize_agent_id(agent_name or "")
+    task_owner = normalize_agent_id(str(task.get(owner_field) or ""))
+    task_reviewer = normalize_agent_id(str(task.get(reviewer_field) or ""))
+
+    if task_status in review_statuses and task_reviewer == norm_target:
         return 0
-    if task_status in finalize_statuses and task.get(owner_field) == agent_name:
+    if task_status in finalize_statuses and task_owner == norm_target:
+        approved_head = task.get("approved_head")
+        # B22: a missing approved_head is not "no freeze configured", it is a task
+        # whose reviewed commit is unknown. Fail closed like every other branch of
+        # this gate; the reviewer clears it with `restore_approved_head`.
+        if not approved_head:
+            return None
+        try:
+            curr_head = runtime_ai_status.resolve_task_checkout_sha(
+                task, force_refresh=True
+            )
+            if not curr_head or not runtime_ai_status.is_approved_head_satisfied(task, curr_head, approved_head):
+                return None
+        except Exception:
+            return None
+        try:
+            _pr_st, ci_status = runtime_ai_status.task_pr_ci_status(str(task.get("id") or ""))
+            if ci_status not in {"success", "none"}:
+                return None
+        except Exception:
+            return None
         return 1
     if (
         task_status == "in_progress"
-        and task.get(owner_field) == agent_name
-        and dependencies_satisfied(task, {str(task.get("id") or ""): task}, dependency_done_statuses)
+        and task_owner == norm_target
+        and dependencies_satisfied(task, tmap, dependency_done_statuses)
     ):
         return 2
     if (
         task_status == "todo"
-        and task.get(owner_field) == agent_name
-        and dependencies_satisfied(task, {str(task.get("id") or ""): task}, dependency_done_statuses)
+        and task_owner == norm_target
+        and dependencies_satisfied(task, tmap, dependency_done_statuses)
     ):
         return 3
     return None
+
 
 
 def agent_dispatch_loads(
@@ -8454,13 +10176,21 @@ def choose_helper_claim_agent(
         return False
     if not owner_name or owner_name == idle_agent_name:
         return False
-    fallbacks = normalized_mapping_values(worker_reassignment_settings(config).get("owner_fallbacks", {}), owner_name)
-    if not fallbacks:
+    fallbacks = get_agent_reassignment_candidates(config, owner_name, role="owner", task=task)
+    normalized_idle_agent = normalize_agent_id(idle_agent_name)
+    idle_agent_config = (config.get("agents", {}) or {}).get(normalized_idle_agent)
+    registered_idle_allowed = bool(
+        helper_settings.get("include_registered_idle_agents", False)
+        and isinstance(idle_agent_config, dict)
+        and not agent_is_dispatch_slot(idle_agent_config)
+    )
+    idle_agent_allowed = idle_agent_name in fallbacks or registered_idle_allowed
+    if not idle_agent_allowed:
         return False
     if owner_paused:
-        return idle_agent_name in fallbacks
+        return True
     if helper_settings.get("claim_idle_work", False):
-        return idle_agent_name in fallbacks
+        return True
     owner_loads = agent_loads.get(owner_name, [])
     if helper_settings.get("require_owner_higher_priority_load", True):
         dispatch_reason_for_status = {
@@ -8470,7 +10200,121 @@ def choose_helper_claim_agent(
         current_priority = dispatch_reason_priority(dispatch_reason_for_status)
         if current_priority is None or not any(priority < current_priority for priority in owner_loads):
             return False
-    return idle_agent_name in fallbacks
+    return True
+
+
+def reassign_paused_reviewers_to_registered_idle_agents(
+    config: dict[str, Any],
+    state: dict[str, Any],
+    status: dict[str, Any],
+    *,
+    provider_report: dict[str, Any] | None = None,
+) -> bool:
+    settings = ready_dispatch_settings(config)
+    helper_settings = helper_claim_settings(config)
+    if not (
+        helper_settings.get("enabled", True)
+        and helper_settings.get("include_registered_idle_agents", False)
+    ):
+        return False
+
+    schema = config.get("schema", {})
+    tasks_path = schema.get("tasks_path", "tasks")
+    task_id_field = schema.get("task_id_field", "id")
+    owner_field = schema.get("assignee_field", "owner")
+    reviewer_field = schema.get("reviewer_field", "reviewer")
+    review_statuses = {str(value).lower() for value in settings.get("review_statuses", ["review"])}
+    active_statuses = {str(value) for value in settings.get("active_worker_statuses", [])}
+    active_agents, active_task_agents = active_worker_indexes(state, active_statuses)
+    pending_agents, pending_task_agents, _pending_event_keys = outstanding_delivery_indexes(config, state)
+    reserved_agents = set(active_agents) | set(pending_agents)
+    reserved_tasks = {task_id for task_id, _agent_id in active_task_agents | pending_task_agents}
+    candidate_agent_ids = weighted_dispatch_agent_ids(config, settings)
+    changed = False
+
+    for task in status.get(tasks_path, []) or []:
+        task_id = str(task.get(task_id_field) or "")
+        if not task_id or task_id in reserved_tasks:
+            continue
+        if str(task.get("status") or "").lower() not in review_statuses:
+            continue
+        owner = str(task.get(owner_field) or "").strip()
+        reviewer = str(task.get(reviewer_field) or "").strip()
+        if not reviewer or is_human_gate_agent(reviewer):
+            continue
+        reviewer_block_reason = agent_auto_dispatch_block_reason(
+            config,
+            state,
+            normalize_agent_id(reviewer),
+            provider_report,
+        )
+        if not reviewer_block_reason:
+            continue
+
+        replacement = ""
+        replacement_id = ""
+        for candidate_id in candidate_agent_ids:
+            candidate = display_name_for(config, candidate_id)
+            candidate_config = (config.get("agents", {}) or {}).get(candidate_id)
+            if (
+                not candidate
+                or candidate in {owner, reviewer}
+                or candidate_id in reserved_agents
+                or not isinstance(candidate_config, dict)
+                or agent_is_dispatch_slot(candidate_config)
+                or is_human_gate_agent(candidate)
+                or not agent_can_take_task(config, candidate, task)
+                or agent_auto_dispatch_block_reason(config, state, candidate_id, provider_report)
+                or not agent_within_target_workload_for_assignment(
+                    status,
+                    candidate,
+                    owner_field=reviewer_field,
+                    previous_owner=reviewer,
+                )
+            ):
+                continue
+            replacement = candidate
+            replacement_id = candidate_id
+            break
+        if not replacement:
+            continue
+
+        message = (
+            f"Helper-claimed review by {replacement} while reviewer {reviewer} "
+            f"is dispatch-paused: {reviewer_block_reason}"
+        )
+        if not persist_task_reassignment(
+            config,
+            task_id=task_id,
+            new_owner=owner,
+            new_reviewer=replacement,
+            message=message,
+            handoff_to=replacement,
+            handoff_from=reviewer,
+        ):
+            continue
+        task[reviewer_field] = replacement
+        task["next"] = message
+        reserved_agents.add(replacement_id)
+        reserved_tasks.add(task_id)
+        changed = True
+        write_activity_log(
+            config,
+            {
+                "type": "task_review_helper_claimed",
+                "task_id": task_id,
+                "message": message,
+                "owner": owner,
+                "from_reviewer": reviewer,
+                "to_reviewer": replacement,
+            },
+        )
+        console_log(
+            f"review helper claim: task={task_id} from={reviewer} to={replacement}",
+            quiet=SUPERVISOR_LOG_QUIET,
+        )
+
+    return changed
 
 
 def is_sidecar_review_of_current_parent(
@@ -8526,7 +10370,6 @@ def higher_priority_ready_task_exists(
     settings = ready_dispatch_settings(config)
     active_statuses = {str(value) for value in settings.get("active_worker_statuses", [])}
     review_statuses = normalized_status_set(settings.get("review_statuses"), ["review"])
-    finalize_statuses = normalized_status_set(settings.get("finalize_statuses"), ["review_approved"])
     dependency_done_statuses = normalized_status_set(settings.get("dependency_done_statuses"), ["done"])
     schema = config.get("schema", {})
     owner_field = schema.get("assignee_field", "owner")
@@ -8554,20 +10397,14 @@ def higher_priority_ready_task_exists(
             ):
                 continue
             candidate_priority = 0
-        elif task_status in finalize_statuses and task.get(owner_field) == agent_name:
-            candidate_priority = 1
-        elif (
-            task_status == "in_progress"
-            and task.get(owner_field) == agent_name
-            and dependencies_satisfied(task, task_map, dependency_done_statuses)
-        ):
-            candidate_priority = 2
-        elif (
-            task_status == "todo"
-            and task.get(owner_field) == agent_name
-            and dependencies_satisfied(task, task_map, dependency_done_statuses)
-        ):
-            candidate_priority = 3
+        else:
+            candidate_priority = dispatch_priority_for_task(
+                config,
+                task,
+                agent_name,
+                task_map=task_map,
+                dependencies_done_statuses=dependency_done_statuses,
+            )
 
         if candidate_priority is not None and candidate_priority < current_priority:
             if (
@@ -8675,17 +10512,30 @@ def stale_dispatch_skip_message(config: dict[str, Any], event: dict[str, Any], t
 
     expected_key = current_dispatch_event_key(config, event, task_map)
     task_id = str(event.get("task_id") or "unknown task")
+    task = task_map.get(task_id) or {}
+    owner = str(task.get("owner") or "")
+    target = str(event.get("target_display_name") or display_name_for(config, str(event.get("target_agent") or "")))
+    task_status = str(task.get("status") or "").lower()
+
     if expected_key is None:
+        if reason == REASON_OWNED_READY and task_status == "in_progress" and owner == target:
+            return None
         return f"Skipped stale queued wake event for {task_id}: task is no longer eligible for {reason}."
 
     queued_key = str(event.get("event_key") or "")
     if queued_key and queued_key != expected_key:
+        if reason == REASON_OWNED_READY and task_status == "in_progress" and owner == target:
+            return None
         return f"Skipped stale queued wake event for {task_id}: task state changed after the wake-up was queued."
 
     return None
 
 
 def ready_dispatch_signature(task: dict[str, Any], reason: str, task_map: dict[str, dict[str, Any]]) -> str:
+    # `last_update` is deliberately excluded. Notes, status-check retries, and
+    # generated-view synchronization may update that timestamp after a wake is
+    # queued without changing who may execute the task. Role/status/dependency
+    # changes below remain part of the key and still invalidate stale wakes.
     return json.dumps(
         {
             "task_id": task.get("id"),
@@ -8693,7 +10543,6 @@ def ready_dispatch_signature(task: dict[str, Any], reason: str, task_map: dict[s
             "reason": reason,
             "owner": task.get("owner"),
             "reviewer": task.get("reviewer"),
-            "last_update": task.get("last_update"),
             "depends_on": list(task.get("depends_on", []) or []),
             "dependency_signature": task_dependency_signature(task, task_map),
         },
@@ -8704,9 +10553,9 @@ def ready_dispatch_signature(task: dict[str, Any], reason: str, task_map: dict[s
 
 def build_dispatch_event(task: dict[str, Any], target_agent: str, reason: str, task_map: dict[str, dict[str, Any]]) -> dict[str, Any]:
     task_payload = {
-        "id": task.get("id"),
+        **task_progress_snapshot(task),
         "artifacts": list(task.get("artifacts", []) or []),
-        "next": task.get("next"),
+        "last_update": task.get("last_update"),
     }
     for key in (
         "task_class",
@@ -8726,6 +10575,27 @@ def build_dispatch_event(task: dict[str, Any], target_agent: str, reason: str, t
         "reason": reason,
         "task": task_payload,
     }
+
+
+def queue_dispatch_event_safely(config: dict[str, Any], event: dict[str, Any]) -> bool:
+    try:
+        return bool(queue_delivery_event(config, event))
+    except Exception as exc:
+        message = f"Dispatch event failed closed: {type(exc).__name__}: {exc}"
+        write_activity_log(
+            config,
+            {
+                "type": "dispatch_event_rejected",
+                "task_id": event.get("task_id"),
+                "target_agent": event.get("target_agent"),
+                "message": message,
+            },
+        )
+        console_log(
+            f"dispatch event rejected: task={event.get('task_id')} target={event.get('target_agent')} error={exc}",
+            quiet=SUPERVISOR_LOG_QUIET,
+        )
+        return False
 
 
 def dispatch_discussion_planning(
@@ -8800,7 +10670,7 @@ def dispatch_ready_tasks(
     active_statuses = {str(value) for value in settings.get("active_worker_statuses", [])}
     max_dispatches_per_tick = max(1, int(max_dispatches_override or settings.get("max_dispatches_per_tick", 4)))
 
-    _active_agents, active_task_agents = active_worker_indexes(state, active_statuses)
+    active_agents, active_task_agents = active_worker_indexes(state, active_statuses)
     pending_agents, pending_task_agents, pending_event_keys = outstanding_delivery_indexes(config, state)
     active_task_ids = {task_id for task_id, _agent_id in active_task_agents if task_id}
     pending_task_ids = {task_id for task_id, _agent_id in pending_task_agents if task_id}
@@ -8822,6 +10692,19 @@ def dispatch_ready_tasks(
         normalized = normalize_mainline_task_assignment(config, task) or normalized
 
     if normalized:
+        changed = True
+        status = load_status(config)
+        tasks = [task for task in status.get(tasks_path, []) if task.get(task_id_field)]
+        task_map = {task.get(task_id_field): task for task in tasks}
+        failure_loop_task_agents = failure_loop_task_agents_for_task_map(config, state, task_map)
+        failure_loop_task_ids = {task_id for task_id, _agent_name in failure_loop_task_agents}
+
+    if reassign_paused_reviewers_to_registered_idle_agents(
+        config,
+        state,
+        status,
+        provider_report=provider_report,
+    ):
         changed = True
         status = load_status(config)
         tasks = [task for task in status.get(tasks_path, []) if task.get(task_id_field)]
@@ -8858,6 +10741,13 @@ def dispatch_ready_tasks(
         considered_agents += 1
         target_agent = display_name_for(config, agent_id)
         if agent_auto_dispatch_block_reason(config, state, agent_id, provider_report):
+            continue
+        # A logical agent without explicit worker slots can run only one
+        # process at a time. Do not build a same-agent queue backlog that
+        # prevents registered idle helpers from claiming the work instead.
+        if not logical_worker_slot_ids(config, agent_id) and (
+            agent_id in active_agents or agent_id in pending_agents
+        ):
             continue
         quota_limit = quota_group_concurrency_limit(config, agent_id, settings)
         quota_group = agent_quota_group_id(config, agent_id)
@@ -8896,21 +10786,181 @@ def dispatch_ready_tasks(
                 )
             )
 
+            norm_target = normalize_agent_id(target_agent or "")
+            norm_task_owner = normalize_agent_id(str(task_owner or ""))
+            norm_task_reviewer = normalize_agent_id(str(task_reviewer or ""))
+
             if (task_id, agent_id) in active_task_agents or (task_id, agent_id) in pending_task_agents:
                 continue
 
             reason = None
             priority = None
-            if task_status in review_statuses and task_reviewer == target_agent:
+            if task_status in review_statuses and norm_task_reviewer == norm_target:
+                # The status CLI rejects identical owner/reviewer assignments,
+                # but dispatch must still fail closed if a stale or externally
+                # edited snapshot reaches the Supervisor. Never spend a worker
+                # slot on an approval that would be an owner self-review.
+                if norm_task_owner == norm_task_reviewer:
+                    continue
                 reason = "review_ready_dispatch"
                 priority = 0
-            elif task_status in finalize_statuses and task_owner == target_agent:
+            elif task_status in finalize_statuses and norm_task_owner == norm_target:
+                approved_head = task.get("approved_head")
+                current_head = None
+                try:
+                    current_head = runtime_ai_status.resolve_task_checkout_sha(task, force_refresh=True)
+                except Exception as err:
+                    console_log(f"Failed to resolve sha for {task_id}: {err}", quiet=SUPERVISOR_LOG_QUIET)
+                # B22: a task in a finalize status with no approved_head has no
+                # verifiable reviewed commit, so finalize dispatch fails closed
+                # here too. Pre-freeze tasks do land in this shape, but backward
+                # compatibility has to be an explicit audited migration
+                # (`ai_status.py restore_approved_head`, reviewer-only), not an
+                # automatic bypass of the control this gate exists to apply.
+                # Say so once so the operator sees why the task is parked.
+                if not approved_head:
+                    msg = (
+                        f"Task {task_id} is {task_status} with no reviewer-approved head; "
+                        "finalize dispatch suppressed. The reviewer must attest the reviewed "
+                        f"commit (`restore_approved_head {task_id} <sha> <reason>`) or send it "
+                        "back for re-review."
+                    )
+                    if task.get("next") != msg:
+                        task["next"] = msg
+                        status_path = config_path(config, "status_file")
+                        write_json(status_path, status)
+                        write_activity_log(
+                            config,
+                            {
+                                "type": "approved_head_missing",
+                                "task_id": task_id,
+                                "message": msg,
+                            },
+                        )
+                    continue
+
+                if not current_head or not runtime_ai_status.is_approved_head_satisfied(task, current_head, approved_head):
+                    if current_head and not runtime_ai_status.is_approved_head_satisfied(task, current_head, approved_head):
+                        task["status"] = "review"
+                        task["last_update"] = utc_now()
+                        task["next"] = (
+                            f"Branch HEAD ({current_head[:8]}) mutated after reviewer approval "
+                            f"({approved_head[:8]}); re-review required."
+                        )
+                        task.pop("approved_head", None)
+                        status_path = config_path(config, "status_file")
+                        write_json(status_path, status)
+                        sync_status_pipeline(config)
+                        write_activity_log(
+                            config,
+                            {
+                                "type": "re-review_required",
+                                "task_id": task_id,
+                                "message": task["next"],
+                            },
+                        )
+                        changed = True
+                    else:
+                        # B20: head unresolvable. Suppressing finalize here
+                        # is correct, but doing it silently leaves the task
+                        # parked in review_approved with no explanation for
+                        # the operator. Emit once, not every cycle.
+                        msg = (
+                            f"Cannot verify branch HEAD for task {task_id} against the "
+                            f"reviewer-approved head ({approved_head[:8]}); finalize dispatch "
+                            "suppressed until it resolves."
+                        )
+                        if task.get("next") != msg:
+                            task["next"] = msg
+                            status_path = config_path(config, "status_file")
+                            write_json(status_path, status)
+                            write_activity_log(
+                                config,
+                                {
+                                    "type": "approved_head_unresolved",
+                                    "task_id": task_id,
+                                    "message": msg,
+                                },
+                            )
+                    continue
+
+                ci_status = "unknown"
+                try:
+                    _pr_st, ci_status = runtime_ai_status.task_pr_ci_status(task_id)
+                except Exception as err:
+                    console_log(f"Failed to check CI status for {task_id}: {err}", quiet=SUPERVISOR_LOG_QUIET)
+
+                if ci_status == "pending":
+                    now_ts = datetime.now(UTC).timestamp()
+                    start_ts = task.get("ci_pending_since_ts")
+                    if not start_ts:
+                        task["ci_pending_since_ts"] = now_ts
+                        task["ci_pending_since"] = utc_now()
+                        status_path = config_path(config, "status_file")
+                        write_json(status_path, status)
+                    elif now_ts - float(start_ts) > 1800:
+                        msg = f"CI status for task {task_id} has been pending for over 30 minutes; operator intervention required."
+                        if task.get("next") != msg:
+                            task["next"] = msg
+                            status_path = config_path(config, "status_file")
+                            write_json(status_path, status)
+                            write_activity_log(
+                                config,
+                                {
+                                    "type": "ci_pending_timeout",
+                                    "task_id": task_id,
+                                    "message": msg,
+                                },
+                            )
+                    continue
+                elif ci_status == "failure":
+                    task.pop("ci_pending_since_ts", None)
+                    msg = f"CI checks for task {task_id} failed; resolve failing checks before finalization."
+                    if task.get("next") != msg:
+                        task["next"] = msg
+                        status_path = config_path(config, "status_file")
+                        write_json(status_path, status)
+                        write_activity_log(
+                            config,
+                            {
+                                "type": "ci_failed",
+                                "task_id": task_id,
+                                "message": msg,
+                            },
+                        )
+                    continue
+                elif ci_status not in {"success", "none"}:
+                    # B20: catch-all for probe states that are neither pending,
+                    # failure, nor green (e.g. "unknown" when `gh` is
+                    # unreachable). Fail closed, but say so once.
+                    msg = (
+                        f"CI status for task {task_id} is unresolved ({ci_status}); "
+                        "finalize dispatch suppressed until it is conclusive."
+                    )
+                    if task.get("next") != msg:
+                        task["next"] = msg
+                        status_path = config_path(config, "status_file")
+                        write_json(status_path, status)
+                        write_activity_log(
+                            config,
+                            {
+                                "type": "ci_status_unresolved",
+                                "task_id": task_id,
+                                "message": msg,
+                            },
+                        )
+                    continue
+                else:
+                    if task.pop("ci_pending_since_ts", None) is not None:
+                        status_path = config_path(config, "status_file")
+                        write_json(status_path, status)
+
                 reason = "owned_finalize_dispatch"
                 priority = 1
-            elif task_status == "in_progress" and task_owner == target_agent and dependencies_satisfied(task, task_map, dependency_done_statuses):
+            elif task_status == "in_progress" and norm_task_owner == norm_target and dependencies_satisfied(task, task_map, dependency_done_statuses):
                 reason = "owned_in_progress_dispatch"
                 priority = 2
-            elif task_status == "todo" and task_owner == target_agent and dependencies_satisfied(task, task_map, dependency_done_statuses):
+            elif task_status == "todo" and norm_task_owner == norm_target and dependencies_satisfied(task, task_map, dependency_done_statuses):
                 reason = "owned_ready_dispatch"
                 priority = 3
 
@@ -8989,7 +11039,7 @@ def dispatch_ready_tasks(
         queued_for_agent = 0
         for _, _, task, reason in candidates[:per_occurrence_limit]:
             event = build_dispatch_event(task, target_agent, reason, task_map)
-            if queue_delivery_event(config, event):
+            if queue_dispatch_event_safely(config, event):
                 seen[event["key"]] = utc_now()
                 pending_event_keys.add(event["key"])
                 pending_agents.add(agent_id)
@@ -9021,16 +11071,20 @@ def dispatch_ready_tasks(
             task_id = str(task.get(task_id_field) or "")
             if not task_id or task_id in active_task_ids or task_id in pending_task_ids:
                 continue
-            helper_message = (
-                f"Helper-claimed by {target_agent} while {task_owner} is dispatch-paused."
-                if owner_paused
-                else (
-                    f"Helper-claimed by idle {target_agent}; previous owner {task_owner} becomes reviewer."
-                    if helper_settings.get("claim_idle_work", False)
-                    else f"Helper-claimed by {target_agent} while {task_owner} completes higher-priority work."
-                )
+            new_reviewer = (
+                task_reviewer
+                if task_reviewer and task_reviewer != target_agent
+                else str(task_owner or "")
             )
-            new_reviewer = str(task_owner or task_reviewer or "")
+            if owner_paused:
+                helper_message = f"Helper-claimed by {target_agent} while {task_owner} is dispatch-paused."
+            elif helper_settings.get("claim_idle_work", False):
+                if new_reviewer == task_reviewer:
+                    helper_message = f"Helper-claimed by idle {target_agent}; designated reviewer {task_reviewer} preserved."
+                else:
+                    helper_message = f"Helper-claimed by idle {target_agent}; previous owner {task_owner} becomes reviewer."
+            else:
+                helper_message = f"Helper-claimed by {target_agent} while {task_owner} completes higher-priority work."
             if not persist_task_reassignment(
                 config,
                 task_id=task_id,
@@ -9064,7 +11118,7 @@ def dispatch_ready_tasks(
                 task["last_update"] = utc_now()
 
             event = build_dispatch_event(task, target_agent, helper_dispatch_reason, task_map)
-            if event["key"] not in pending_event_keys and queue_delivery_event(config, event):
+            if event["key"] not in pending_event_keys and queue_dispatch_event_safely(config, event):
                 seen[event["key"]] = utc_now()
                 pending_event_keys.add(event["key"])
                 pending_agents.add(agent_id)
@@ -9097,6 +11151,15 @@ def dispatch_ready_tasks(
 
     if agent_sequence and considered_agents and not agent_ids_override:
         dispatch_state["weighted_cursor"] = (dispatch_cursor + considered_agents) % len(agent_sequence)
+        raw_cursor_revision = dispatch_state.get("weighted_cursor_revision", 0)
+        try:
+            if isinstance(raw_cursor_revision, bool):
+                raise ValueError
+            cursor_revision = int(raw_cursor_revision)
+        except (TypeError, ValueError):
+            cursor_revision = 0
+        dispatch_state["weighted_cursor_revision"] = max(0, cursor_revision) + 1
+        dispatch_state["weighted_cursor_updated_at"] = utc_now()
     return changed
 
 
@@ -9392,7 +11455,7 @@ def dispatch_underutilization_sidecars(
         event = build_dispatch_event(sidecar_task, selected_owner, "owned_ready_dispatch", task_map)
         if event["key"] in pending_event_keys:
             continue
-        if queue_delivery_event(config, event):
+        if queue_dispatch_event_safely(config, event):
             seen[event["key"]] = utc_now()
             pending_event_keys.add(event["key"])
 
@@ -9613,7 +11676,15 @@ def claim_next_task_for_agent(
             agent_ids_override=[agent_id],
             max_dispatches_override=1,
         ) or changed
-        changed = process_queue(config, state, provider_report) or changed
+        changed = (
+            process_queue(
+                config,
+                state,
+                provider_report,
+                agent_ids_override=[agent_id],
+            )
+            or changed
+        )
     supervisor_state = state.setdefault("supervisor", {})
     occupancy = compute_mode_occupancy(config, state)
     supervisor_state["mode_occupancy"] = occupancy

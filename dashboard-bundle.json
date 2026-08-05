@@ -1,15 +1,15 @@
 {
-  "generated_at": "2026-06-27T05:29:06Z",
+  "generated_at": "2026-08-04T13:12:50Z",
   "focus_mode": "execution",
-  "focus_mode_source": "planning_state_fallback",
+  "focus_mode_source": "supervisor",
   "runtime_summary": {
-    "supervisor_pid": null,
-    "heartbeat_at": null,
-    "queue_depth": 0,
+    "supervisor_pid": 2517294,
+    "heartbeat_at": "2026-08-03T02:15:22Z",
+    "queue_depth": 1,
     "pending_approvals": 0,
     "running_workers": 0,
     "pending_workers": 0,
-    "mismatch_count": 0,
+    "mismatch_count": 1,
     "mode_status": "idle",
     "mode_switch_requested": null,
     "mode_occupancy": {
@@ -21,7 +21,7 @@
       "execution": {
         "running": 0,
         "pending": 0,
-        "queued": 0
+        "queued": 1
       },
       "coordination": {
         "running": 0,
@@ -34,16 +34,30 @@
         "queued": 0
       }
     },
-    "lanes": {},
+    "lanes": {
+      "Codex2": {
+        "running": 0,
+        "pending": 0,
+        "transition": 0,
+        "completed": 0,
+        "failed": 0,
+        "stale": 1
+      }
+    },
     "dispatch_targets": {
-      "Claude": 5,
-      "Claude2": 5,
-      "Antigravity": 5,
+      "Claude": 20,
+      "Claude2": 10,
+      "Antigravity": 70,
       "Antigravity2": 5,
+      "Antigravity3": 5,
+      "Antigravity4": 5,
+      "Antigravity5": 5,
+      "Antigravity6": 5,
+      "Antigravity7": 5,
       "Gemini": 5,
       "Gemini2": 5,
-      "Codex": 35,
-      "Codex2": 35,
+      "Codex": 5,
+      "Codex2": 5,
       "Copilot": 5,
       "Human/Ops": 0
     }
@@ -58,7 +72,7 @@
     "done": 0,
     "superseded": 0,
     "live_attached": 0,
-    "mismatch_count": 0,
+    "mismatch_count": 1,
     "planning_backed_total": 0,
     "planning_backed_active": 0
   },
@@ -92,7 +106,7 @@
     "bff_consol_archived_ids": []
   },
   "coordination_summary": {
-    "last_scan_at": null,
+    "last_scan_at": "2026-08-03T02:15:20Z",
     "counts": {
       "tracked_features": 0,
       "lovable_ready": 0,
@@ -139,14 +153,14 @@
     "missing_source_ref_count": 0
   },
   "chair_summary": {
-    "current_index": 0,
-    "last_chair_agent": null,
-    "last_chair_run_at": null,
-    "last_chair_reason": null,
+    "current_index": 2,
+    "last_chair_agent": "Codex2",
+    "last_chair_run_at": "2026-08-03T02:15:20Z",
+    "last_chair_reason": "chair_review:operational_review",
     "last_review_path": null,
     "last_review_summary": [],
-    "pending_review_path": null,
-    "pending_review_agent": null,
+    "pending_review_path": ".orchestrator/chair-reviews/20260803-021520-codex2.md",
+    "pending_review_agent": "Codex2",
     "sidecar_approved_until": null
   },
   "dispatch_policy": {
@@ -179,5 +193,17 @@
   },
   "recent_helper_claims": [],
   "worker_task_links": [],
-  "truth_mismatches": []
+  "truth_mismatches": [
+    {
+      "id": "queue-without-worker:evt-20260803T021520Z-64d8e0fd",
+      "type": "queue_started_without_worker",
+      "severity": "medium",
+      "title": "Queue record 已啟動，但找不到 live worker",
+      "summary": "evt-20260803T021520Z-64d8e0fd 的 queue record 已是 started，但 runtime 沒有對應 worker。",
+      "task_id": null,
+      "queue_event_id": "evt-20260803T021520Z-64d8e0fd",
+      "detected_at": "2026-08-03T02:15:21Z",
+      "resolution_hint": "先檢查 queue record 是否卡在 started；如果 worker 已消失，重設 queue 或重新 dispatch。"
+    }
+  ]
 }

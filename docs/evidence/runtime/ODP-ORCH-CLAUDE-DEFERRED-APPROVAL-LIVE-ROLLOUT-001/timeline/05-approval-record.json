@@ -1,0 +1,12 @@
+{
+  "approval_id": "apr-20260729T060857Z-5c04969e",
+  "status": "pending",
+  "worker_run_id": "claude-20260729T060543Z-a962c8f8",
+  "task_id": "ODP-ORCH-CLAUDE-DEFERRED-APPROVAL-LIVE-ROLLOUT-001",
+  "tool_name": "Bash",
+  "tool_use_id": "toolu_01SCpJdoiFmVuQCncHLF5F7h",
+  "risk_class": "needs_review",
+  "correlation_source": "supervisor_deferred_tool_receipt",
+  "created_at": "2026-07-29T06:08:57Z",
+  "tool_input_preview": "wget --version"
+}

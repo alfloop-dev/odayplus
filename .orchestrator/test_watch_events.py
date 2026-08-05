@@ -8,6 +8,34 @@ import watch_events
 
 
 class WatcherBookkeepingTests(unittest.TestCase):
+    def test_execution_prompts_require_durable_owner_and_reviewer_transitions(self) -> None:
+        base = {
+            "schema": {},
+            "branch_workflow": {"dev_branch": "dev", "task_branch_prefix": "task/"},
+            "agents": {
+                "antigravity4": {"id": "antigravity4", "display_name": "Antigravity4", "wake_template": ".orchestrator/templates/wakeup.txt"},
+                "codex6": {"id": "codex6", "display_name": "Codex6", "wake_template": ".orchestrator/templates/wakeup.txt"},
+            },
+        }
+        owner_event = {
+            "task_id": "ODP-PROMPT-001",
+            "reason": "owned_in_progress_dispatch",
+            "context_files": ["AI_COLLABORATION_GUIDE.md"],
+            "task": {"artifacts": []},
+        }
+        reviewer_event = {
+            "task_id": "ODP-PROMPT-002",
+            "reason": "review_ready_dispatch",
+            "context_files": ["AI_COLLABORATION_GUIDE.md"],
+            "task": {"artifacts": []},
+        }
+        owner_message = watch_events.render_wakeup_message(base, owner_event, "antigravity4")
+        reviewer_message = watch_events.render_wakeup_message(base, reviewer_event, "codex6")
+        self.assertIn("必須用正式 handoff／re_review", owner_message)
+        self.assertIn("no-progress failure", owner_message)
+        self.assertIn("必須做出可稽核的 review 決定", reviewer_message)
+        self.assertIn("讓 task 留在 review", reviewer_message)
+
     def test_run_scan_updates_snapshot_without_queueing_when_runtime_enqueue_disabled(self) -> None:
         config = {
             "schema": {

@@ -1,9 +1,12 @@
 #!/usr/bin/env python3
 from __future__ import annotations
 
+import ast
 import io
 import json
 import os
+import shutil
+import subprocess
 import sys
 import tempfile
 import unittest
@@ -12,10 +15,120 @@ from unittest import mock
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-import ai_status
+_TEST_STATUS_ROOT_HANDLE = tempfile.TemporaryDirectory(prefix="pantheon-ai-status-tests-")
+_TEST_STATUS_ROOT = Path(_TEST_STATUS_ROOT_HANDLE.name).resolve()
+
+# Pytest imports every test module before it runs any module-level teardown.
+# test_supervisor may therefore have imported ai_status against its own
+# temporary status root already.  Only set the environment for a first import;
+# setUpModule below rebinds the shared module for this module's actual lifetime.
+_IMPORT_STATUS_ROOT = os.environ.get("PANTHEON_STATUS_ROOT")
+_IMPORT_ORCH_STATUS_ROOT = os.environ.get("ORCH_STATUS_ROOT")
+if "ai_status" not in sys.modules:
+    os.environ["PANTHEON_STATUS_ROOT"] = str(_TEST_STATUS_ROOT)
+    os.environ["ORCH_STATUS_ROOT"] = str(_TEST_STATUS_ROOT)
+try:
+    import ai_status
+    import task_archive
+finally:
+    if _IMPORT_STATUS_ROOT is None:
+        os.environ.pop("PANTHEON_STATUS_ROOT", None)
+    else:
+        os.environ["PANTHEON_STATUS_ROOT"] = _IMPORT_STATUS_ROOT
+    if _IMPORT_ORCH_STATUS_ROOT is None:
+        os.environ.pop("ORCH_STATUS_ROOT", None)
+    else:
+        os.environ["ORCH_STATUS_ROOT"] = _IMPORT_ORCH_STATUS_ROOT
+
+
+_AI_STATUS_ROOT_ATTRIBUTES = (
+    "STATUS_ROOT",
+    "STATUS_FILE",
+    "LOG_FILE",
+    "CURRENT_WORK_FILE",
+    "DOCS_SITE_DIR",
+    "STATUS_ROOT_CONFIG_LOCAL_FILE",
+    "PLANNING_STATE_FILE",
+    "ORCHESTRATOR_STATE_FILE",
+    "APPROVAL_QUEUE_FILE",
+    "DASHBOARD_BUNDLE_FILE",
+    "ARCHIVE_TASKS_DIR",
+)
+_TASK_ARCHIVE_ROOT_ATTRIBUTES = (
+    "STATUS_ROOT",
+    "ARCHIVE_DIR",
+    "ARCHIVE_TASKS_DIR",
+    "ARCHIVE_INDEX_FILE",
+)
+_RUNTIME_STATUS_ROOT: str | None = None
+_RUNTIME_ORCH_STATUS_ROOT: str | None = None
+_ORIGINAL_AI_STATUS_PATHS: dict[str, Path] = {}
+_ORIGINAL_TASK_ARCHIVE_PATHS: dict[str, Path] = {}
+
+
+def setUpModule() -> None:
+    global _RUNTIME_STATUS_ROOT, _RUNTIME_ORCH_STATUS_ROOT
+    global _ORIGINAL_AI_STATUS_PATHS, _ORIGINAL_TASK_ARCHIVE_PATHS
+
+    _RUNTIME_STATUS_ROOT = os.environ.get("PANTHEON_STATUS_ROOT")
+    _RUNTIME_ORCH_STATUS_ROOT = os.environ.get("ORCH_STATUS_ROOT")
+    _ORIGINAL_AI_STATUS_PATHS = {
+        name: getattr(ai_status, name) for name in _AI_STATUS_ROOT_ATTRIBUTES
+    }
+    _ORIGINAL_TASK_ARCHIVE_PATHS = {
+        name: getattr(task_archive, name) for name in _TASK_ARCHIVE_ROOT_ATTRIBUTES
+    }
+
+    os.environ["PANTHEON_STATUS_ROOT"] = str(_TEST_STATUS_ROOT)
+    os.environ["ORCH_STATUS_ROOT"] = str(_TEST_STATUS_ROOT)
+    ai_status.STATUS_ROOT = _TEST_STATUS_ROOT
+    ai_status.STATUS_FILE = _TEST_STATUS_ROOT / "ai-status.json"
+    ai_status.LOG_FILE = _TEST_STATUS_ROOT / "ai-activity-log.jsonl"
+    ai_status.CURRENT_WORK_FILE = _TEST_STATUS_ROOT / "current-work.md"
+    ai_status.DOCS_SITE_DIR = _TEST_STATUS_ROOT / "docs-site"
+    ai_status.STATUS_ROOT_CONFIG_LOCAL_FILE = _TEST_STATUS_ROOT / ".orchestrator" / "config.local.json"
+    ai_status.PLANNING_STATE_FILE = _TEST_STATUS_ROOT / ".orchestrator" / "planning-state.json"
+    ai_status.ORCHESTRATOR_STATE_FILE = _TEST_STATUS_ROOT / ".orchestrator" / "state.json"
+    ai_status.APPROVAL_QUEUE_FILE = _TEST_STATUS_ROOT / ".orchestrator" / "approval-queue.json"
+    ai_status.DASHBOARD_BUNDLE_FILE = _TEST_STATUS_ROOT / "dashboard-bundle.json"
+
+    task_archive.STATUS_ROOT = _TEST_STATUS_ROOT
+    task_archive.ARCHIVE_DIR = _TEST_STATUS_ROOT / "ai-task-archive"
+    task_archive.ARCHIVE_TASKS_DIR = task_archive.ARCHIVE_DIR / "tasks"
+    task_archive.ARCHIVE_INDEX_FILE = task_archive.ARCHIVE_DIR / "index.json"
+    ai_status.ARCHIVE_TASKS_DIR = task_archive.ARCHIVE_TASKS_DIR
+
+
+def tearDownModule() -> None:
+    for name, value in _ORIGINAL_AI_STATUS_PATHS.items():
+        setattr(ai_status, name, value)
+    for name, value in _ORIGINAL_TASK_ARCHIVE_PATHS.items():
+        setattr(task_archive, name, value)
+    if _RUNTIME_STATUS_ROOT is None:
+        os.environ.pop("PANTHEON_STATUS_ROOT", None)
+    else:
+        os.environ["PANTHEON_STATUS_ROOT"] = _RUNTIME_STATUS_ROOT
+    if _RUNTIME_ORCH_STATUS_ROOT is None:
+        os.environ.pop("ORCH_STATUS_ROOT", None)
+    else:
+        os.environ["ORCH_STATUS_ROOT"] = _RUNTIME_ORCH_STATUS_ROOT
+    _TEST_STATUS_ROOT_HANDLE.cleanup()
 
 
 class StatusRootRoutingTests(unittest.TestCase):
+    def test_orchestrator_status_root_wins_over_worker_shadow_override(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="ai-status-canonical-root-") as temp_dir:
+            root = Path(temp_dir)
+            canonical = root / "supervisor-live"
+            shadow = root / "task-worktree"
+            env = {
+                "ORCH_STATUS_ROOT": str(canonical),
+                "PANTHEON_STATUS_ROOT": str(shadow),
+            }
+            with mock.patch.dict(os.environ, env, clear=True):
+                self.assertEqual(ai_status.resolve_status_root(), canonical.resolve())
+                self.assertEqual(task_archive.status_root(), canonical.resolve())
+
     def test_load_local_coordination_payload_tolerates_missing_yaml(self) -> None:
         with tempfile.TemporaryDirectory(prefix="ai-status-no-yaml-") as temp_dir:
             root = Path(temp_dir)
@@ -110,11 +223,17 @@ class ReviewApprovedWorkflowTests(unittest.TestCase):
         }
 
     def test_approve_creates_owner_finalize_handoff(self) -> None:
-        with mock.patch.dict(os.environ, {"AI_NAME": "Claude", "REVIEW_NOTES_ZH": "審查通過||交回 owner 收尾"}, clear=False):
+        # resolve_task_sha is pinned so the approval freezes a known head:
+        # command_approve now fails closed when it cannot resolve one, and an
+        # unpatched probe would shell out to `gh`/`git` for a task id that has
+        # no branch, making this unit test environment-dependent.
+        with mock.patch.dict(os.environ, {"AI_NAME": "Claude", "REVIEW_NOTES_ZH": "審查通過||交回 owner 收尾"}, clear=False), \
+             mock.patch.object(ai_status, "resolve_task_sha", return_value="1111111122222222333333334444444455555555"):
             ai_status.command_approve(self.state, ["REG-002", "Review passed. Owner should finalize."])
 
         task = ai_status.get_task(self.state, "REG-002")
         self.assertEqual(task["status"], "review_approved")
+        self.assertEqual(task["approved_head"], "1111111122222222333333334444444455555555")
         self.assertEqual(task["review_notes_zh"], ["審查通過", "交回 owner 收尾"])
 
         pending = [handoff for handoff in self.state["handoffs"] if handoff["status"] != "done"]
@@ -129,6 +248,8 @@ class ReviewApprovedWorkflowTests(unittest.TestCase):
                 ai_status.command_done(self.state, ["REG-002", "Attempted direct completion"])
 
         self.state["tasks"][0]["status"] = "review_approved"
+        approved_head = "1111111122222222333333334444444455555555"
+        self.state["tasks"][0]["approved_head"] = approved_head
 
         with mock.patch.dict(os.environ, {"AI_NAME": "Claude"}, clear=False):
             with self.assertRaises(SystemExit):
@@ -136,7 +257,14 @@ class ReviewApprovedWorkflowTests(unittest.TestCase):
 
         with (
             mock.patch.dict(os.environ, {"AI_NAME": "Codex"}, clear=False),
-            mock.patch.object(ai_status, "collect_done_delivery_metadata", return_value={}),
+            mock.patch.object(
+                ai_status,
+                "collect_done_delivery_metadata",
+                return_value={
+                    "verified_head": approved_head,
+                    "pull_request": {"head_sha": approved_head, "merge_commit": "merge-sha"},
+                },
+            ),
             mock.patch.object(ai_status, "archive_task_snapshot", return_value={"task_id": "REG-002"}) as archive_task_snapshot,
         ):
             ai_status.command_done(self.state, ["REG-002", "Owner finalized approved task"])
@@ -172,6 +300,44 @@ class ReviewApprovedWorkflowTests(unittest.TestCase):
         self.assertEqual(len(pending), 1)
         self.assertEqual(pending[0]["from"], "Claude")
         self.assertEqual(pending[0]["to"], "Codex")
+
+    def test_restore_approved_refuses_when_reviewer_reopened(self) -> None:
+        """B23: restore_approved must refuse when the downgrade was a reviewer rejection."""
+        self.state["tasks"][0]["status"] = "review"
+        with mock.patch.dict(os.environ, {"AI_NAME": "Claude"}, clear=False), \
+             mock.patch.object(ai_status, "resolve_task_sha", return_value="1111111122222222333333334444444455555555"):
+            ai_status.command_approve(self.state, ["REG-002", "Approve first"])
+
+        task = ai_status.get_task(self.state, "REG-002")
+        self.assertEqual(task["status"], "review_approved")
+        self.assertEqual(task["last_approved_head"], "1111111122222222333333334444444455555555")
+
+        with mock.patch.dict(os.environ, {"AI_NAME": "Claude"}, clear=False):
+            ai_status.command_reopen(self.state, ["REG-002", "Please address changes"])
+
+        self.assertEqual(task["status"], "in_progress")
+        self.assertEqual(task["last_approved_head"], "1111111122222222333333334444444455555555")
+
+        task["review_notes_zh"] = ["prior note"]
+        with mock.patch.dict(os.environ, {"AI_NAME": "Codex"}, clear=False), \
+             mock.patch.object(ai_status, "resolve_task_sha", return_value="1111111122222222333333334444444455555555"):
+            with self.assertRaises(SystemExit) as cm:
+                ai_status.command_restore_approved(self.state, ["REG-002", "Attempt restore"])
+            self.assertIn("reopened by the reviewer", str(cm.exception))
+
+    def test_restore_approved_head_emits_status_check(self) -> None:
+        """N3: restore_approved_head must trigger status check emission."""
+        state_before = {
+            "tasks": [{"id": "REG-002", "status": "review_approved", "owner": "Codex", "reviewer": "Claude"}]
+        }
+        state_after = {
+            "tasks": [{"id": "REG-002", "status": "review_approved", "approved_head": "1111111122222222333333334444444455555555", "owner": "Codex", "reviewer": "Claude"}]
+        }
+        with mock.patch.object(ai_status, "emit_task_review_status_check") as mock_emit:
+            ai_status.emit_status_checks_for_changed_tasks(
+                state_before, state_after, "restore_approved_head", ["REG-002", "1111111122222222333333334444444455555555", "restore"]
+            )
+            mock_emit.assert_called_once()
 
     def test_normalize_handoffs_adds_finalize_handoff_for_approved_task(self) -> None:
         self.state["tasks"][0]["status"] = "review_approved"
@@ -217,7 +383,7 @@ class DeliveryMetadataValidationTests(unittest.TestCase):
     def test_collect_done_delivery_metadata_reports_all_missing_trailers_at_once(self) -> None:
         responses = iter(
             [
-                "feat/bg-006",
+                "task/BG-006",
                 "abc123",
                 "BG-006 finalize operator acceptance matrix",
                 "Co-Authored-By: Claude Sonnet 4.6 <noreply@anthropic.com>",
@@ -230,6 +396,7 @@ class DeliveryMetadataValidationTests(unittest.TestCase):
             "owner": "Claude",
             "reviewer": "Codex",
             "status": "review_approved",
+            "approved_head": "abc123",
         }
 
         with mock.patch.object(ai_status, "run_git_command", side_effect=lambda *args, **kwargs: next(responses)):
@@ -244,7 +411,7 @@ class DeliveryMetadataValidationTests(unittest.TestCase):
     def test_collect_done_delivery_metadata_uses_execute_plans_artifact_repo(self) -> None:
         responses = iter(
             [
-                "bff-luv-fe-006-dev-deploy",
+                "task/FE-INT-GATE-DUMMY",
                 "abc123",
                 "FE-INT-GATE-DUMMY finalize execute-plans artifact",
                 "LLM-Agent: Codex2\nTask-ID: FE-INT-GATE-DUMMY\nReviewer: Claude\n",
@@ -265,11 +432,13 @@ class DeliveryMetadataValidationTests(unittest.TestCase):
             "owner": "Codex2",
             "reviewer": "Claude",
             "status": "review_approved",
+            "approved_head": "abc123",
             "artifacts": ["execute-plans/e2e/dummy.spec.ts"],
         }
         with (
-            mock.patch.dict(os.environ, {"TASK_REQUIRE_MERGED_PR": "false"}, clear=False),
             mock.patch.object(ai_status, "run_git_command", side_effect=fake_run_git_command),
+            mock.patch.object(ai_status, "enforce_delivery_merged_gate"),
+            mock.patch.object(ai_status, "git_remote_repository_slug", return_value="ajoe734/execute-plans"),
         ):
             delivery = ai_status.collect_done_delivery_metadata(task, "Codex2")
 
@@ -277,7 +446,7 @@ class DeliveryMetadataValidationTests(unittest.TestCase):
         self.assertEqual(delivery["repository_id"], "execute_plans")
         self.assertEqual(delivery["repository_path"], str(execute_plans_root))
         self.assertEqual(delivery["repository_slug"], "ajoe734/execute-plans")
-        self.assertEqual(delivery["branch"], "bff-luv-fe-006-dev-deploy")
+        self.assertEqual(delivery["branch"], "task/FE-INT-GATE-DUMMY")
         self.assertTrue(calls)
         self.assertTrue(all(cwd == execute_plans_root for _, cwd in calls))
 
@@ -305,6 +474,7 @@ class DeliveryMetadataValidationTests(unittest.TestCase):
             "owner": "Codex2",
             "reviewer": "Claude2",
             "status": "review_approved",
+            "approved_head": "abc123",
             "artifacts": [
                 "execute-plans/src/lib/bff-v1/management.ts",
                 "services/control-plane/bff/main.py",
@@ -321,9 +491,10 @@ class DeliveryMetadataValidationTests(unittest.TestCase):
             return None
 
         with (
-            mock.patch.dict(os.environ, {"TASK_REQUIRE_MERGED_PR": "false"}, clear=False),
             mock.patch.object(ai_status, "run_git_command", side_effect=fake_run_git_command),
             mock.patch.object(ai_status, "repository_local_path", side_effect=fake_repository_local_path),
+            mock.patch.object(ai_status, "enforce_delivery_merged_gate"),
+            mock.patch.object(ai_status, "git_remote_repository_slug", return_value="alfloop-dev/odayplus"),
         ):
             delivery = ai_status.collect_done_delivery_metadata(task, "Codex2")
 
@@ -341,6 +512,7 @@ class DeliveryMetadataValidationTests(unittest.TestCase):
             "owner": "Codex",
             "reviewer": "Claude",
             "status": "review_approved",
+            "approved_head": "abc123",
             "artifacts": [],
         }
 
@@ -349,15 +521,15 @@ class DeliveryMetadataValidationTests(unittest.TestCase):
                 return "task/REG-002"
             if args == ["rev-parse", "HEAD"]:
                 return "abc123"
-            if args == ["show", "-s", "--format=%s", "HEAD"]:
+            if args == ["show", "-s", "--format=%s", "abc123"]:
                 return "REG-002 finalize"
-            if args == ["show", "-s", "--format=%b", "HEAD"]:
+            if args == ["show", "-s", "--format=%b", "abc123"]:
                 return "LLM-Agent: Codex\nTask-ID: REG-002\nReviewer: Claude\n"
-            if args == ["show", "-s", "--format=%an", "HEAD"]:
+            if args == ["show", "-s", "--format=%an", "abc123"]:
                 return "Codex"
-            if args == ["show", "-s", "--format=%ae", "HEAD"]:
+            if args == ["show", "-s", "--format=%ae", "abc123"]:
                 return "codex@example.com"
-            if args == ["status", "--porcelain"]:
+            if args == ["status", "--porcelain", "--untracked-files=all"]:
                 return ""
             if args == ["remote"]:
                 return "origin"
@@ -385,15 +557,17 @@ class DeliveryMetadataValidationTests(unittest.TestCase):
                     "url": "https://github.com/ajoe734/pantheon/pull/152",
                 },
             ),
+            mock.patch.object(ai_status, "repository_slug", return_value="alfloop-dev/odayplus"),
+            mock.patch.object(ai_status, "git_remote_repository_slug", return_value="alfloop-dev/odayplus"),
         ):
             with self.assertRaises(SystemExit) as exc_info:
                 ai_status.collect_done_delivery_metadata(task, "Codex")
 
         message = str(exc_info.exception)
-        self.assertIn("not merged into `origin/dev`", message)
+        self.assertIn("immutable approved-head PR provenance", message)
         self.assertIn("PR #152", message)
         self.assertIn("mergeState=BEHIND", message)
-        self.assertIn("review_approved", message)
+        self.assertIn("matching approved PR head", message)
 
     def test_collect_done_delivery_metadata_allows_head_merged_to_dev(self) -> None:
         task = {
@@ -401,6 +575,7 @@ class DeliveryMetadataValidationTests(unittest.TestCase):
             "owner": "Codex",
             "reviewer": "Claude",
             "status": "review_approved",
+            "approved_head": "abc123",
             "artifacts": [],
         }
 
@@ -409,15 +584,15 @@ class DeliveryMetadataValidationTests(unittest.TestCase):
                 return "task/REG-002"
             if args == ["rev-parse", "HEAD"]:
                 return "abc123"
-            if args == ["show", "-s", "--format=%s", "HEAD"]:
+            if args == ["show", "-s", "--format=%s", "abc123"]:
                 return "REG-002 finalize"
-            if args == ["show", "-s", "--format=%b", "HEAD"]:
+            if args == ["show", "-s", "--format=%b", "abc123"]:
                 return "LLM-Agent: Codex\nTask-ID: REG-002\nReviewer: Claude\n"
-            if args == ["show", "-s", "--format=%an", "HEAD"]:
+            if args == ["show", "-s", "--format=%an", "abc123"]:
                 return "Codex"
-            if args == ["show", "-s", "--format=%ae", "HEAD"]:
+            if args == ["show", "-s", "--format=%ae", "abc123"]:
                 return "codex@example.com"
-            if args == ["status", "--porcelain"]:
+            if args == ["status", "--porcelain", "--untracked-files=all"]:
                 return ""
             if args == ["remote"]:
                 return "origin"
@@ -431,9 +606,24 @@ class DeliveryMetadataValidationTests(unittest.TestCase):
                 return "devsha"
             raise AssertionError(f"unexpected git command: {args}")
 
+        merged_pr = {
+            "number": 152,
+            "state": "MERGED",
+            "headRefOid": "abc123",
+            "headRefName": "task/REG-002",
+            "baseRefName": "dev",
+            "mergedAt": "2026-08-02T00:55:48Z",
+            "mergeCommit": {"oid": "merge123"},
+            "statusCheckRollup": [
+                {"__typename": "CheckRun", "name": "orchestrator", "status": "COMPLETED", "conclusion": "SUCCESS"}
+            ],
+        }
         with (
             mock.patch.object(ai_status, "run_git_command", side_effect=fake_run_git_command),
             mock.patch.object(ai_status, "git_command_succeeds", return_value=True),
+            mock.patch.object(ai_status, "pull_request_status_for_branch", return_value=merged_pr),
+            mock.patch.object(ai_status, "repository_slug", return_value="alfloop-dev/odayplus"),
+            mock.patch.object(ai_status, "git_remote_repository_slug", return_value="alfloop-dev/odayplus"),
         ):
             delivery = ai_status.collect_done_delivery_metadata(task, "Codex")
 
@@ -441,6 +631,442 @@ class DeliveryMetadataValidationTests(unittest.TestCase):
         self.assertEqual(delivery["merge_target_ref"], "origin/dev")
         self.assertEqual(delivery["merge_target_sha"], "devsha")
         self.assertTrue(delivery["head_merged_to_target"])
+
+    def test_collect_done_delivery_metadata_allows_verified_dev_squash_merge(self) -> None:
+        task = {
+            "id": "REG-002",
+            "owner": "Codex",
+            "reviewer": "Claude",
+            "status": "review_approved",
+            "approved_head": "sourcehead",
+            "artifacts": [],
+        }
+
+        def fake_run_git_command(args: list[str], **kwargs: object) -> str:
+            responses = {
+                ("rev-parse", "--abbrev-ref", "HEAD"): "task/REG-002",
+                ("rev-parse", "HEAD"): "sourcehead",
+                ("show", "-s", "--format=%s", "sourcehead"): "REG-002 finalize",
+                ("show", "-s", "--format=%b", "sourcehead"): "LLM-Agent: Codex\nTask-ID: REG-002\nReviewer: Claude\n",
+                ("show", "-s", "--format=%an", "sourcehead"): "Codex",
+                ("show", "-s", "--format=%ae", "sourcehead"): "codex@example.com",
+                ("status", "--porcelain", "--untracked-files=all"): "",
+                ("remote",): "origin",
+                ("rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{upstream}"): "origin/task/REG-002",
+                ("rev-list", "--left-right", "--count", "origin/task/REG-002...HEAD"): "0 0",
+                ("fetch", "origin", "dev"): "",
+                ("rev-parse", "--verify", "origin/dev"): "devtip",
+            }
+            key = tuple(args)
+            if key not in responses:
+                raise AssertionError(f"unexpected git command: {args}")
+            return responses[key]
+
+        def fake_git_succeeds(args: list[str], **kwargs: object) -> bool:
+            if args == ["merge-base", "--is-ancestor", "sourcehead", "origin/dev"]:
+                return False
+            if args == ["merge-base", "--is-ancestor", "squashmerge", "origin/dev"]:
+                return True
+            raise AssertionError(f"unexpected git check: {args}")
+
+        with (
+            mock.patch.object(ai_status, "run_git_command", side_effect=fake_run_git_command),
+            mock.patch.object(ai_status, "git_command_succeeds", side_effect=fake_git_succeeds),
+            mock.patch.object(
+                ai_status,
+                "pull_request_status_for_branch",
+                return_value={
+                    "number": 533,
+                    "state": "MERGED",
+                    "headRefOid": "sourcehead",
+                    "headRefName": "task/REG-002",
+                    "baseRefName": "dev",
+                    "mergedAt": "2026-07-31T08:08:36Z",
+                    "mergeCommit": {"oid": "squashmerge"},
+                    "url": "https://github.com/example/repo/pull/533",
+                    "statusCheckRollup": [
+                        {"__typename": "CheckRun", "name": "orchestrator", "status": "COMPLETED", "conclusion": "SUCCESS"},
+                        {"__typename": "StatusContext", "context": "task-review-gate", "state": "SUCCESS"},
+                    ],
+                },
+            ),
+            mock.patch.object(ai_status, "repository_slug", return_value="alfloop-dev/odayplus"),
+            mock.patch.object(ai_status, "git_remote_repository_slug", return_value="alfloop-dev/odayplus"),
+        ):
+            delivery = ai_status.collect_done_delivery_metadata(task, "Codex")
+
+        self.assertFalse(delivery["head_merged_to_target"])
+        self.assertTrue(delivery["merge_verified_via_pr"])
+        self.assertEqual(delivery["pull_request"]["head_sha"], "sourcehead")
+        self.assertEqual(delivery["pull_request"]["base_branch"], "dev")
+        self.assertEqual(delivery["pull_request"]["merge_commit"], "squashmerge")
+
+
+class DoneDeliveryProvenanceRegressionTests(unittest.TestCase):
+    TASK_ID = "ODP-OPERATOR-LIVE-PROVENANCE-HEALTH-001"
+    APPROVED_HEAD = "ca262d1737fcb8d9fc077eca13efa803bc56d0bc"
+    MERGE_COMMIT = "8757c2d10fdfd6c972d586b0e6b7ac21712088c6"
+    REPOSITORY = "alfloop-dev/odayplus"
+
+    def pr_552(self) -> dict[str, object]:
+        return {
+            "number": 552,
+            "state": "MERGED",
+            "headRefOid": self.APPROVED_HEAD,
+            "headRefName": f"task/{self.TASK_ID}",
+            "baseRefName": "dev",
+            "mergedAt": "2026-08-02T00:55:48Z",
+            "mergeCommit": {"oid": self.MERGE_COMMIT},
+            "url": "https://github.com/alfloop-dev/odayplus/pull/552",
+            "statusCheckRollup": [
+                {
+                    "__typename": "CheckRun",
+                    "name": "orchestrator",
+                    "status": "COMPLETED",
+                    "conclusion": "SUCCESS",
+                },
+                {
+                    "__typename": "CheckRun",
+                    "name": "product",
+                    "status": "COMPLETED",
+                    "conclusion": "SUCCESS",
+                },
+                {
+                    "__typename": "StatusContext",
+                    "context": "task-review-gate",
+                    "state": "SUCCESS",
+                },
+            ],
+        }
+
+    def enforce_pr(self, pr_status: dict[str, object] | None, *, merge_on_target: bool = True) -> dict[str, object]:
+        delivery: dict[str, object] = {}
+
+        def fake_git(args: list[str], **kwargs: object) -> str:
+            if args == ["fetch", "origin", "dev"]:
+                return ""
+            if args == ["rev-parse", "--verify", "origin/dev"]:
+                return "dev-tip"
+            raise AssertionError(f"unexpected git command: {args}")
+
+        def fake_succeeds(args: list[str], **kwargs: object) -> bool:
+            if args == ["merge-base", "--is-ancestor", self.APPROVED_HEAD, "origin/dev"]:
+                return False
+            if args == ["merge-base", "--is-ancestor", self.MERGE_COMMIT, "origin/dev"]:
+                return merge_on_target
+            raise AssertionError(f"unexpected git check: {args}")
+
+        with (
+            mock.patch.object(ai_status, "run_git_command", side_effect=fake_git),
+            mock.patch.object(ai_status, "git_command_succeeds", side_effect=fake_succeeds),
+            mock.patch.object(ai_status, "pull_request_status_for_branch", return_value=pr_status),
+        ):
+            ai_status.enforce_delivery_merged_gate(
+                {"branch_workflow": {"dev_branch": "dev"}},
+                delivery,
+                repository_root=Path("/task-checkout"),
+                repository_id="pantheon",
+                branch=f"task/{self.TASK_ID}",
+                remote_names=["origin"],
+                approved_head=self.APPROVED_HEAD,
+                repository_slug_value=self.REPOSITORY,
+            )
+        return delivery
+
+    def test_pr_552_squash_topology_records_immutable_delivery_and_green_checks(self) -> None:
+        delivery = self.enforce_pr(self.pr_552())
+
+        self.assertFalse(delivery["head_merged_to_target"])
+        self.assertTrue(delivery["merge_verified_via_pr"])
+        self.assertEqual(delivery["pull_request"]["number"], 552)
+        self.assertEqual(delivery["pull_request"]["head_sha"], self.APPROVED_HEAD)
+        self.assertEqual(delivery["pull_request"]["merge_commit"], self.MERGE_COMMIT)
+        self.assertEqual(delivery["ci_status"], "success")
+        self.assertEqual([check["name"] for check in delivery["ci_checks"]], ["orchestrator", "product", "task-review-gate"])
+
+    def test_pr_provenance_rejects_unmerged_closed_moved_wrong_task_and_wrong_base(self) -> None:
+        cases = {
+            "open": {"state": "OPEN"},
+            "closed": {"state": "CLOSED"},
+            "moved-head": {"headRefOid": "b" * 40},
+            "wrong-task": {"headRefName": "task/OTHER-001"},
+            "wrong-base": {"baseRefName": "main"},
+            "missing-merge-time": {"mergedAt": ""},
+            "missing-merge-commit": {"mergeCommit": None},
+        }
+        for label, mutation in cases.items():
+            with self.subTest(label=label):
+                pr_status = self.pr_552()
+                pr_status.update(mutation)
+                with self.assertRaisesRegex(SystemExit, "immutable approved-head PR provenance"):
+                    self.enforce_pr(pr_status)
+
+    def test_pr_provenance_rejects_unverifiable_network_and_merge_commit(self) -> None:
+        with self.assertRaisesRegex(SystemExit, "Network and repository provenance fail closed"):
+            self.enforce_pr(None)
+        with self.assertRaisesRegex(SystemExit, "immutable approved-head PR provenance"):
+            self.enforce_pr(self.pr_552(), merge_on_target=False)
+
+    def test_pr_checks_reject_empty_red_pending_and_unknown_shapes(self) -> None:
+        cases = {
+            "empty": [],
+            "red": [{"__typename": "CheckRun", "name": "product", "status": "COMPLETED", "conclusion": "FAILURE"}],
+            "pending": [{"__typename": "CheckRun", "name": "product", "status": "IN_PROGRESS", "conclusion": ""}],
+            "unknown": [{"__typename": "Mystery", "name": "product", "state": "SUCCESS"}],
+        }
+        for label, checks in cases.items():
+            with self.subTest(label=label):
+                pr_status = self.pr_552()
+                pr_status["statusCheckRollup"] = checks
+                with self.assertRaises(SystemExit):
+                    self.enforce_pr(pr_status)
+
+    def test_task_checkout_resolution_ignores_unrelated_canonical_writer_head(self) -> None:
+        task_path = Path("/tmp/task-owned-checkout")
+        worktrees = (
+            "worktree /home/lupin/oday-plus-supervisor-live\n"
+            "HEAD e496be62c47c45d758681b8a4d3abfae16f1c96d\n"
+            "branch refs/heads/dev\n\n"
+            f"worktree {task_path}\n"
+            f"HEAD {self.APPROVED_HEAD}\n"
+            f"branch refs/heads/task/{self.TASK_ID}\n\n"
+        )
+
+        def fake_git(args: list[str], **kwargs: object) -> str:
+            if args == ["rev-parse", "--abbrev-ref", "HEAD"]:
+                return "dev"
+            if args == ["worktree", "list", "--porcelain"]:
+                return worktrees
+            raise AssertionError(f"unexpected git command: {args}")
+
+        with mock.patch.object(ai_status, "run_git_command", side_effect=fake_git):
+            checkout, branch = ai_status.task_delivery_checkout(Path("/home/lupin/oday-plus-supervisor-live"), self.TASK_ID)
+
+        self.assertEqual(checkout, task_path)
+        self.assertEqual(branch, f"task/{self.TASK_ID}")
+
+    def test_done_finalizes_from_merged_pr_despite_post_merge_checkout_advance(self) -> None:
+        task = {
+            "id": self.TASK_ID,
+            "owner": "Antigravity4",
+            "reviewer": "Codex4",
+            "status": "review_approved",
+            "approved_head": self.APPROVED_HEAD,
+            "artifacts": [],
+        }
+
+        POST_MERGE_DEV_HEAD = "80ba278623b8d4ad4ce81ea749a5aee030e5c18d"
+
+        def fake_git(args: list[str], **kwargs: object) -> str:
+            if args == ["rev-parse", "--abbrev-ref", "HEAD"]:
+                return f"task/{self.TASK_ID}"
+            if args == ["rev-parse", "HEAD"]:
+                return POST_MERGE_DEV_HEAD
+            if args == ["show", "-s", "--format=%s", self.APPROVED_HEAD]:
+                return f"{self.TASK_ID}: seal done provenance"
+            if args == ["show", "-s", "--format=%b", self.APPROVED_HEAD]:
+                return f"LLM-Agent: Antigravity4\nTask-ID: {self.TASK_ID}\nReviewer: Codex4\n"
+            if args == ["show", "-s", "--format=%an", self.APPROVED_HEAD]:
+                return "Antigravity4"
+            if args == ["show", "-s", "--format=%ae", self.APPROVED_HEAD]:
+                return "antigravity4@example.com"
+            if args == ["status", "--porcelain", "--untracked-files=all"]:
+                return ""
+            if args == ["remote"]:
+                return "origin"
+            if args == ["rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{upstream}"]:
+                return f"origin/task/{self.TASK_ID}"
+            if args == ["rev-list", "--left-right", "--count", f"origin/task/{self.TASK_ID}...HEAD"]:
+                return "0 0"
+            if args == ["fetch", "origin", "dev"]:
+                return ""
+            if args == ["rev-parse", "--verify", "origin/dev"]:
+                return POST_MERGE_DEV_HEAD
+            raise AssertionError(f"unexpected git command: {args}")
+
+        def fake_succeeds(args: list[str], **kwargs: object) -> bool:
+            if args == ["merge-base", "--is-ancestor", self.APPROVED_HEAD, "origin/dev"]:
+                return False
+            if args == ["merge-base", "--is-ancestor", self.MERGE_COMMIT, "origin/dev"]:
+                return True
+            if args == ["merge-base", "--is-ancestor", self.MERGE_COMMIT, POST_MERGE_DEV_HEAD]:
+                return True
+            if args == ["merge-base", "--is-ancestor", self.APPROVED_HEAD, POST_MERGE_DEV_HEAD]:
+                return True
+            if args == ["merge-base", "--is-ancestor", POST_MERGE_DEV_HEAD, "origin/dev"]:
+                return True
+            raise AssertionError(f"unexpected git check: {args}")
+
+        pr_status = self.pr_552()
+
+        with (
+            mock.patch.object(ai_status, "run_git_command", side_effect=fake_git),
+            mock.patch.object(ai_status, "git_command_succeeds", side_effect=fake_succeeds),
+            mock.patch.object(ai_status, "pull_request_status_for_branch", return_value=pr_status),
+            mock.patch.object(ai_status, "repository_slug", return_value=self.REPOSITORY),
+            mock.patch.object(ai_status, "git_remote_repository_slug", return_value=self.REPOSITORY),
+        ):
+            delivery = ai_status.collect_done_delivery_metadata(task, "Antigravity4", approved_head=self.APPROVED_HEAD)
+
+        self.assertTrue(delivery["merge_verified_via_pr"])
+        self.assertTrue(delivery["post_merge_checkout_advanced"])
+        self.assertEqual(delivery["verified_head"], POST_MERGE_DEV_HEAD)
+        self.assertEqual(delivery["approved_head"], self.APPROVED_HEAD)
+
+    def test_git_clean_gate_ignores_only_exact_worker_seed_context(self) -> None:
+        entries = [
+            "?? AI_COLLABORATION_GUIDE.md",
+            "?? ai-status.json",
+            "?? .orchestrator/task-briefs/odp_operator_live_provenance_health_001.md",
+            "?? .orchestrator/task-briefs/other-task.md",
+            " M scripts/ai_status.py",
+        ]
+
+        owned, ignored = ai_status.split_task_owned_dirty_entries(entries, self.TASK_ID)
+
+        self.assertEqual(ignored, entries[:3])
+        self.assertEqual(owned, entries[3:])
+
+    def test_collector_rejects_moved_or_dirty_task_checkout_even_if_env_disables_gates(self) -> None:
+        task = {
+            "id": self.TASK_ID,
+            "owner": "Codex",
+            "reviewer": "Codex8",
+            "status": "review_approved",
+            "approved_head": self.APPROVED_HEAD,
+            "artifacts": [],
+        }
+        with (
+            mock.patch.object(ai_status, "task_delivery_checkout", return_value=(Path("/task"), f"task/{self.TASK_ID}")),
+            mock.patch.object(ai_status, "run_git_command", return_value="b" * 40),
+        ):
+            with self.assertRaisesRegex(SystemExit, "task-owned checkout HEAD"):
+                ai_status.collect_done_delivery_metadata(task, "Codex")
+
+        def fake_git(args: list[str], **kwargs: object) -> str:
+            responses = {
+                ("rev-parse", "HEAD"): self.APPROVED_HEAD,
+                ("show", "-s", "--format=%s", self.APPROVED_HEAD): f"{self.TASK_ID}: bind E2E evidence",
+                ("show", "-s", "--format=%b", self.APPROVED_HEAD): f"LLM-Agent: Codex\nTask-ID: {self.TASK_ID}\nReviewer: Codex8\n",
+                ("show", "-s", "--format=%an", self.APPROVED_HEAD): "Codex",
+                ("show", "-s", "--format=%ae", self.APPROVED_HEAD): "codex@example.com",
+                ("status", "--porcelain", "--untracked-files=all"): " M scripts/ai_status.py",
+            }
+            key = tuple(args)
+            if key not in responses:
+                raise AssertionError(f"unexpected git command: {args}")
+            return responses[key]
+
+        disabled = {
+            "TASK_REQUIRE_COMMIT_HASH": "false",
+            "TASK_REQUIRE_GIT_CLEAN": "false",
+            "TASK_REQUIRE_MERGED_PR": "false",
+            "TASK_REQUIRE_SUBJECT_TASK_ID": "false",
+            "TASK_COMMIT_REQUIRED_FIELDS": "Verified",
+        }
+        with (
+            mock.patch.dict(os.environ, disabled, clear=False),
+            mock.patch.object(ai_status, "task_delivery_checkout", return_value=(Path("/task"), f"task/{self.TASK_ID}")),
+            mock.patch.object(ai_status, "run_git_command", side_effect=fake_git),
+        ):
+            with self.assertRaisesRegex(SystemExit, "task-owned git working tree is dirty"):
+                ai_status.collect_done_delivery_metadata(task, "Codex")
+
+    def test_collector_rejects_checkout_from_wrong_repository(self) -> None:
+        task = {
+            "id": self.TASK_ID,
+            "owner": "Codex",
+            "reviewer": "Codex8",
+            "status": "review_approved",
+            "approved_head": self.APPROVED_HEAD,
+            "artifacts": [],
+        }
+
+        def fake_git(args: list[str], **kwargs: object) -> str:
+            responses = {
+                ("rev-parse", "HEAD"): self.APPROVED_HEAD,
+                ("show", "-s", "--format=%s", self.APPROVED_HEAD): f"{self.TASK_ID}: bind E2E evidence",
+                ("show", "-s", "--format=%b", self.APPROVED_HEAD): f"LLM-Agent: Codex\nTask-ID: {self.TASK_ID}\nReviewer: Codex8\n",
+                ("show", "-s", "--format=%an", self.APPROVED_HEAD): "Codex",
+                ("show", "-s", "--format=%ae", self.APPROVED_HEAD): "codex@example.com",
+                ("status", "--porcelain", "--untracked-files=all"): "",
+                ("remote",): "origin",
+            }
+            key = tuple(args)
+            if key not in responses:
+                raise AssertionError(f"unexpected git command: {args}")
+            return responses[key]
+
+        with (
+            mock.patch.object(ai_status, "task_delivery_checkout", return_value=(Path("/task"), f"task/{self.TASK_ID}")),
+            mock.patch.object(ai_status, "run_git_command", side_effect=fake_git),
+            mock.patch.object(ai_status, "repository_slug", return_value=self.REPOSITORY),
+            mock.patch.object(ai_status, "git_remote_repository_slug", return_value="attacker/wrong-repo"),
+        ):
+            with self.assertRaisesRegex(SystemExit, "does not match configured repository"):
+                ai_status.collect_done_delivery_metadata(task, "Codex")
+
+    def done_state(self) -> dict[str, object]:
+        return {
+            "agents": [],
+            "tasks": [
+                {
+                    "id": self.TASK_ID,
+                    "owner": "Codex7",
+                    "reviewer": "Codex8",
+                    "status": "review_approved",
+                    "approved_head": self.APPROVED_HEAD,
+                }
+            ],
+            "handoffs": [],
+            "blockers": [],
+        }
+
+    def done_delivery(self, *, checkout_head: str | None = None, pr_head: str | None = None) -> dict[str, object]:
+        return {
+            "verified_head": checkout_head or self.APPROVED_HEAD,
+            "pull_request": {
+                "head_sha": pr_head or self.APPROVED_HEAD,
+                "merge_commit": self.MERGE_COMMIT,
+            },
+        }
+
+    def test_command_done_allows_deleted_remote_ref_after_merged_pr_provenance(self) -> None:
+        state = self.done_state()
+        registered_actor = {"AI_NAME": "Codex7", "AI_STATUS_EXTRA_AGENTS": "Codex7,Codex8"}
+        with (
+            mock.patch.dict(os.environ, registered_actor, clear=False),
+            mock.patch.object(
+                ai_status,
+                "resolve_task_sha",
+                side_effect=AssertionError("done must not require an ephemeral remote task ref"),
+            ),
+            mock.patch.object(ai_status, "collect_done_delivery_metadata", return_value=self.done_delivery()),
+            mock.patch.object(ai_status, "archive_task_snapshot", return_value={"task_id": self.TASK_ID}),
+            mock.patch.object(ai_status, "append_log"),
+        ):
+            ai_status.command_done(state, [self.TASK_ID, "done"])
+
+        self.assertEqual(state["tasks"], [])
+
+    def test_command_done_rejects_moved_checkout_or_pr_head(self) -> None:
+        cases = {
+            "checkout-moved": self.done_delivery(checkout_head="b" * 40),
+            "pr-head-moved": self.done_delivery(pr_head="b" * 40),
+            "pr-head-missing": {
+                "verified_head": self.APPROVED_HEAD,
+                "pull_request": {"merge_commit": self.MERGE_COMMIT},
+            },
+        }
+        registered_actor = {"AI_NAME": "Codex7", "AI_STATUS_EXTRA_AGENTS": "Codex7,Codex8"}
+        for label, delivery in cases.items():
+            with self.subTest(label=label):
+                with (
+                    mock.patch.dict(os.environ, registered_actor, clear=False),
+                    mock.patch.object(ai_status, "collect_done_delivery_metadata", return_value=delivery),
+                ):
+                    with self.assertRaisesRegex(SystemExit, "differs from reviewer-approved head"):
+                        ai_status.command_done(self.done_state(), [self.TASK_ID, "done"])
 
 
 class ArchiveWorkflowTests(unittest.TestCase):
@@ -505,6 +1131,7 @@ class ArchiveWorkflowTests(unittest.TestCase):
 
     def test_archive_migrate_moves_terminal_tasks_out_of_active_state(self) -> None:
         with (
+            mock.patch.dict(os.environ, {"AI_NAME": "Codex"}, clear=False),
             mock.patch.object(ai_status, "archive_task_snapshot", return_value={"task_id": "REG-100"}) as archive_task_snapshot,
             mock.patch.object(ai_status, "rebuild_archive_index") as rebuild_archive_index,
         ):
@@ -595,8 +1222,17 @@ class SidecarTaskTests(unittest.TestCase):
             "TASK_MUTATES_CANONICAL": "false",
             "TASK_AUTO_CREATED_BY": "supervisor-underutilization",
         }
-        with mock.patch.dict(os.environ, env, clear=False):
-            ai_status.command_assign(self.state, ["APP-001-SIDECAR-BFF-HANDOFF", "Gemini", "Copilot"])
+        with (
+            mock.patch.dict(os.environ, env, clear=False),
+            mock.patch.object(
+                ai_status,
+                "configured_agent_names",
+                return_value={"Codex", "Claude2", "Antigravity3"},
+            ),
+        ):
+            # Owner/reviewer must be configured workers: Gemini and Copilot are
+            # KNOWN_AGENTS leftovers the Supervisor cannot dispatch.
+            ai_status.command_assign(self.state, ["APP-001-SIDECAR-BFF-HANDOFF", "Claude2", "Antigravity3"])
 
         task = ai_status.get_task(self.state, "APP-001-SIDECAR-BFF-HANDOFF")
         self.assertIsNotNone(task)
@@ -2766,6 +3402,9 @@ class ActivityLogRotationTests(unittest.TestCase):
 
 
 class StatusCheckEmissionTests(unittest.TestCase):
+    def setUp(self) -> None:
+        ai_status.clear_ai_status_caches()
+
     def test_get_repository_slug_safe_env(self) -> None:
         with mock.patch.dict(os.environ, {"GITHUB_REPOSITORY": "test-owner/test-repo"}):
             self.assertEqual(ai_status.get_repository_slug_safe(), "test-owner/test-repo")
@@ -2776,40 +3415,255 @@ class StatusCheckEmissionTests(unittest.TestCase):
                  mock.patch.object(ai_status, "repository_slug", return_value="foo/bar"):
                 self.assertEqual(ai_status.get_repository_slug_safe(), "foo/bar")
 
-    def test_resolve_task_sha_gh_pr_view(self) -> None:
-        mock_result = mock.Mock()
-        mock_result.returncode = 0
-        mock_result.stdout = '{"headRefOid": "abc12345"}'
+    def test_resolve_task_sha_rejects_branch_absent_old_pr_and_local_head(self) -> None:
+        mock_result = mock.Mock(returncode=0, stdout="")
 
         with mock.patch("subprocess.run", return_value=mock_result) as mock_run, \
              mock.patch.object(ai_status, "get_gh_executable", return_value="gh"):
             sha = ai_status.resolve_task_sha("ODP-001")
-            self.assertEqual(sha, "abc12345")
-            mock_run.assert_any_call(
-                ["gh", "pr", "view", "task/ODP-001", "--json", "headRefOid"],
+            self.assertIsNone(sha)
+            mock_run.assert_called_once_with(
+                [
+                    "git",
+                    "ls-remote",
+                    "--heads",
+                    "origin",
+                    "refs/heads/task/ODP-001",
+                    "refs/heads/task-ODP-001",
+                ],
                 capture_output=True,
                 text=True,
                 check=False,
                 cwd=ai_status.ROOT,
             )
 
-    def test_resolve_task_sha_git_rev_parse(self) -> None:
-        def side_effect(cmd, **kwargs):
-            res = mock.Mock()
-            if "gh" in cmd:
-                res.returncode = 1
-                res.stdout = ""
-            elif "rev-parse" in cmd:
-                res.returncode = 0
-                res.stdout = "xyz789\n"
-            return res
+    def test_resolve_task_sha_prefers_pushed_remote_over_local_and_merged_pr(self) -> None:
+        task_id = "ODP-REMOTE-001"
+        remote_sha = "2" * 40
+        local_sha = "3" * 40
+        merged_pr_sha = "1" * 40
 
-        with mock.patch("subprocess.run", side_effect=side_effect):
-            sha = ai_status.resolve_task_sha("ODP-001")
-            self.assertEqual(sha, "xyz789")
+        def side_effect(cmd, **kwargs):
+            result = mock.Mock(returncode=1, stdout="")
+            if cmd[:4] == ["git", "ls-remote", "--heads", "origin"]:
+                result.returncode = 0
+                result.stdout = f"{remote_sha}\trefs/heads/task/{task_id}\n"
+            elif cmd == ["git", "branch", "--show-current"]:
+                result.returncode = 0
+                result.stdout = f"task/{task_id}\n"
+            elif cmd == ["git", "rev-parse", "HEAD"]:
+                result.returncode = 0
+                result.stdout = f"{local_sha}\n"
+            elif "pr" in cmd and "view" in cmd:
+                result.returncode = 0
+                result.stdout = json.dumps({"headRefOid": merged_pr_sha})
+            return result
+
+        with mock.patch("subprocess.run", side_effect=side_effect) as mock_run:
+            sha = ai_status.resolve_task_sha(task_id)
+
+        self.assertEqual(sha, remote_sha)
+        self.assertEqual(mock_run.call_count, 1)
+
+    def test_resolve_task_sha_rejects_remote_failure_without_cached_fallback(self) -> None:
+        with mock.patch(
+            "subprocess.run",
+            return_value=mock.Mock(returncode=1, stdout="stale-cached-ref"),
+        ) as mock_run:
+            self.assertIsNone(ai_status.resolve_task_sha("ODP-001"))
+        mock_run.assert_called_once()
+
+    def test_resolve_task_sha_rejects_ambiguous_or_malformed_remote_refs(self) -> None:
+        task_id = "ODP-001"
+        cases = (
+            "not-a-sha\trefs/heads/task/ODP-001\n",
+            (
+                f"{'1' * 40}\trefs/heads/task/{task_id}\n"
+                f"{'2' * 40}\trefs/heads/task-{task_id}\n"
+            ),
+        )
+        for stdout in cases:
+            with self.subTest(stdout=stdout), mock.patch(
+                "subprocess.run",
+                return_value=mock.Mock(returncode=0, stdout=stdout),
+            ):
+                ai_status.clear_ai_status_caches()
+                self.assertIsNone(ai_status.resolve_task_sha(task_id))
+
+    def test_resolve_task_sha_uses_bounded_warm_cache_for_ordinary_lookups(self) -> None:
+        task_id = "ODP-WARM-CACHE-001"
+        sha_initial = "a" * 40
+
+        mock_res = mock.Mock(returncode=0, stdout=f"{sha_initial}\trefs/heads/task/{task_id}\n")
+        with mock.patch.dict(os.environ, {"GITHUB_REPOSITORY": "alfloop-dev/odayplus"}, clear=False), \
+             mock.patch("subprocess.run", return_value=mock_res) as mock_run:
+            ai_status.clear_ai_status_caches()
+            # First ordinary call populates cache
+            first_sha = ai_status.resolve_task_sha(task_id)
+            self.assertEqual(first_sha, sha_initial)
+            self.assertEqual(mock_run.call_count, 1)
+
+            # Second ordinary call reuses warm cache without hitting origin
+            second_sha = ai_status.resolve_task_sha(task_id)
+            self.assertEqual(second_sha, sha_initial)
+            self.assertEqual(mock_run.call_count, 1)
+
+            # Non-governance payload call also reuses warm cache
+            payload = ai_status.task_review_status_payload({"id": task_id}, "review_approved")
+            self.assertIsNotNone(payload)
+            self.assertEqual(payload["sha"], sha_initial)
+            self.assertEqual(mock_run.call_count, 1)
+
+            # Force refresh query bypasses warm cache
+            refreshed_sha = ai_status.resolve_task_sha(task_id, force_refresh=True)
+            self.assertEqual(refreshed_sha, sha_initial)
+            self.assertEqual(mock_run.call_count, 2)
+
+    def test_resolve_task_sha_bypasses_warm_cache_on_remote_change_removal_or_failure(self) -> None:
+        task_id = "ODP-CACHE-TEST-001"
+        sha_initial = "a" * 40
+        sha_updated = "b" * 40
+
+        # Step 1: Initial call returns sha_initial and populates cache
+        mock_res1 = mock.Mock(returncode=0, stdout=f"{sha_initial}\trefs/heads/task/{task_id}\n")
+        with mock.patch("subprocess.run", return_value=mock_res1):
+            ai_status.clear_ai_status_caches()
+            first_sha = ai_status.resolve_task_sha(task_id)
+            self.assertEqual(first_sha, sha_initial)
+
+        # Step 2: Remote branch is updated (force-push to sha_updated). force_refresh=True returns sha_updated, NOT cached sha_initial.
+        mock_res2 = mock.Mock(returncode=0, stdout=f"{sha_updated}\trefs/heads/task/{task_id}\n")
+        with mock.patch("subprocess.run", return_value=mock_res2):
+            second_sha = ai_status.resolve_task_sha(task_id, force_refresh=True)
+            self.assertEqual(second_sha, sha_updated)
+
+        # Step 3: Remote branch is removed/deleted. fresh=True fails closed (returns None), NOT cached sha_updated.
+        mock_res3 = mock.Mock(returncode=0, stdout="")
+        with mock.patch("subprocess.run", return_value=mock_res3):
+            third_sha = ai_status.resolve_task_sha(task_id, fresh=True)
+            self.assertIsNone(third_sha)
+
+        # Step 4: Remote origin command fails. force_refresh=True fails closed (returns None), NOT cached sha_updated.
+        mock_res4 = mock.Mock(returncode=1, stdout="")
+        with mock.patch("subprocess.run", return_value=mock_res4):
+            fourth_sha = ai_status.resolve_task_sha(task_id, force_refresh=True)
+            self.assertIsNone(fourth_sha)
+
+    def test_active_branch_governance_refreshes_but_done_uses_delivery_provenance(self) -> None:
+        task_id = "ODP-GOV-TEST-001"
+        stale_sha = "1" * 40
+        remote_sha = "2" * 40
+
+        # 1. Warm cache with stale_sha
+        mock_warm = mock.Mock(returncode=0, stdout=f"{stale_sha}\trefs/heads/task/{task_id}\n")
+        with mock.patch("subprocess.run", return_value=mock_warm):
+            ai_status.clear_ai_status_caches()
+            self.assertEqual(ai_status.resolve_task_sha(task_id), stale_sha)
+
+        # 2. Test command_approve when origin changes to remote_sha
+        state_approve = {
+            "tasks": [{"id": task_id, "status": "review", "owner": "Codex", "reviewer": "Claude"}]
+        }
+        mock_changed = mock.Mock(returncode=0, stdout=f"{remote_sha}\trefs/heads/task/{task_id}\n")
+        with mock.patch.dict(os.environ, {"AI_NAME": "Claude"}, clear=False), \
+             mock.patch("subprocess.run", return_value=mock_changed):
+            ai_status.command_approve(state_approve, [task_id, "Approved new head"])
+            task = ai_status.get_task(state_approve, task_id)
+            self.assertEqual(task["approved_head"], remote_sha)
+            self.assertNotEqual(task["approved_head"], stale_sha)
+
+        # 3. Once merged, command_done uses the unique checkout and immutable
+        # PR head from delivery provenance, not the now-ephemeral remote ref.
+        state_done = {
+            "tasks": [{"id": task_id, "status": "review_approved", "approved_head": stale_sha, "owner": "Codex", "reviewer": "Claude"}]
+        }
+        with mock.patch.dict(os.environ, {"AI_NAME": "Codex"}, clear=False), \
+             mock.patch.object(
+                 ai_status,
+                 "resolve_task_sha",
+                 side_effect=AssertionError("done must not query the ephemeral remote ref"),
+             ), \
+             mock.patch.object(
+                 ai_status,
+                 "collect_done_delivery_metadata",
+                 return_value={
+                     "verified_head": remote_sha,
+                     "pull_request": {"head_sha": stale_sha, "merge_commit": "3" * 40},
+                 },
+             ):
+            with self.assertRaises(SystemExit) as cm:
+                ai_status.command_done(state_done, [task_id, "Done attempt"])
+            self.assertIn("differs from reviewer-approved head", str(cm.exception))
+
+        # 4. Test command_restore_approved when origin is removed
+        state_restore = {
+            "tasks": [{"id": task_id, "status": "in_progress", "last_approved_head": stale_sha, "review_notes_zh": ["note"], "owner": "Codex", "reviewer": "Claude"}],
+            "handoffs": [],
+            "blockers": []
+        }
+        with mock.patch("subprocess.run", return_value=mock_warm):
+            ai_status.clear_ai_status_caches()
+            self.assertEqual(ai_status.resolve_task_sha(task_id), stale_sha)
+
+        mock_removed = mock.Mock(returncode=0, stdout="")
+        with mock.patch.dict(os.environ, {"AI_NAME": "Codex"}, clear=False), \
+             mock.patch("subprocess.run", return_value=mock_removed):
+            with self.assertRaises(SystemExit) as cm:
+                ai_status.command_restore_approved(state_restore, [task_id, "Restore attempt"])
+            self.assertIn("branch HEAD could not be resolved", str(cm.exception))
+
+        # 5. Test command_restore_approved_head when origin changes
+        state_rah = {
+            "tasks": [{"id": task_id, "status": "review_approved", "owner": "Codex", "reviewer": "Claude"}]
+        }
+        with mock.patch("subprocess.run", return_value=mock_warm):
+            ai_status.clear_ai_status_caches()
+            self.assertEqual(ai_status.resolve_task_sha(task_id), stale_sha)
+
+        with mock.patch.dict(os.environ, {"AI_NAME": "Claude"}, clear=False), \
+             mock.patch("subprocess.run", return_value=mock_changed):
+            with self.assertRaises(SystemExit) as cm:
+                ai_status.command_restore_approved_head(state_rah, [task_id, stale_sha, "Restore head attempt"])
+            self.assertIn("does not match the task branch head", str(cm.exception))
+
+    def test_resolve_task_sha_accepts_exact_40_and_64_hex_lengths(self) -> None:
+        task_id = "ODP-HEX-001"
+        sha_40 = "a" * 40
+        sha_64 = "f" * 64
+
+        mock_40 = mock.Mock(returncode=0, stdout=f"{sha_40}\trefs/heads/task/{task_id}\n")
+        with mock.patch("subprocess.run", return_value=mock_40) as m_run:
+            ai_status.clear_ai_status_caches()
+            res = ai_status.resolve_task_sha(task_id)
+            self.assertEqual(res, sha_40)
+            self.assertTrue(m_run.called)
+
+        mock_64 = mock.Mock(returncode=0, stdout=f"{sha_64}\trefs/heads/task/{task_id}\n")
+        with mock.patch("subprocess.run", return_value=mock_64) as m_run:
+            ai_status.clear_ai_status_caches()
+            res = ai_status.resolve_task_sha(task_id)
+            self.assertEqual(res, sha_64)
+            self.assertTrue(m_run.called)
+
+        for invalid_len in (39, 41, 63, 65):
+            bad_sha = "c" * invalid_len
+            mock_bad = mock.Mock(returncode=0, stdout=f"{bad_sha}\trefs/heads/task/{task_id}\n")
+            with self.subTest(invalid_len=invalid_len), mock.patch("subprocess.run", return_value=mock_bad) as m_run:
+                ai_status.clear_ai_status_caches()
+                res = ai_status.resolve_task_sha(task_id)
+                self.assertIsNone(res)
+                self.assertTrue(m_run.called)
+
+        for nonhex_sha in ("g" * 40, "z" * 64, "G" * 40, "X" * 64, "123456789012345678901234567890123456789g"):
+            mock_nonhex = mock.Mock(returncode=0, stdout=f"{nonhex_sha}\trefs/heads/task/{task_id}\n")
+            with self.subTest(nonhex_sha=nonhex_sha), mock.patch("subprocess.run", return_value=mock_nonhex) as m_run:
+                ai_status.clear_ai_status_caches()
+                res = ai_status.resolve_task_sha(task_id)
+                self.assertIsNone(res)
+                self.assertTrue(m_run.called)
 
     def test_emit_task_review_status_check_approved(self) -> None:
-        task = {"id": "ODP-001", "reviewer": "Codex"}
+        task = {"id": "ODP-001", "reviewer": "Codex", "approved_head": "sha123"}
         mock_run = mock.Mock()
         mock_run.returncode = 0
 
@@ -2851,5 +3705,936 @@ class StatusCheckEmissionTests(unittest.TestCase):
             )
 
 
+class ActorReferenceValidationTests(unittest.TestCase):
+    """Actor-shaped fields must hold agent names, never prose or task ids.
+
+    Regression cover for the synthetic-agent fabrication path: a worker that
+    passed a blocker sentence where an agent name was expected used to mint a
+    permanent fleet agent in ai-status.json.
+    """
+
+    PROSE = (
+        "STOP FOR CODEX2 REVIEW ON EXACT HEAD 6ca4726c (revision 8). Two gates are "
+        "open at once and both need Codex2/coordinator action, not more owner work."
+    )
+    TASK_ID = "ODP-P10-FLEET-CONFLICT-REAUDIT-001"
+    # Stands in for the merged Supervisor config: config.json workers plus the
+    # config.local.json overlay that declares Codex3 through Codex9.
+    CONFIGURED = frozenset(
+        {"Claude", "Claude2", "Claude3", "Antigravity3", "Codex", "Codex2", "Codex5", "Codex8"}
+    )
+
+    def setUp(self) -> None:
+        self.addCleanup(self._restore_roster)
+        self._known_before = dict(ai_status.KNOWN_AGENTS)
+        self._quarantined_before = set(ai_status.QUARANTINED_AGENTS)
+        # Keep every case away from the real merged .orchestrator config.
+        patcher = mock.patch.object(
+            ai_status, "configured_agent_names", return_value=set(self.CONFIGURED)
+        )
+        patcher.start()
+        self.addCleanup(patcher.stop)
+
+    def _restore_roster(self) -> None:
+        ai_status.KNOWN_AGENTS.clear()
+        ai_status.KNOWN_AGENTS.update(self._known_before)
+        ai_status.QUARANTINED_AGENTS.clear()
+        ai_status.QUARANTINED_AGENTS.update(self._quarantined_before)
+
+    def _state(self) -> dict:
+        return {
+            "agents": [
+                {
+                    "name": name,
+                    "capability_lane": [],
+                    "status": "idle",
+                    "current_task_ids": [],
+                    "branch": "",
+                    "next": "",
+                    "last_update": None,
+                }
+                for name in ("Claude", "Codex2")
+            ],
+            "tasks": [
+                {
+                    "id": "ODP-ACTOR-REF-001",
+                    "title": "Actor reference fixture",
+                    "phase": "Fleet Control Plane Integrity",
+                    "owner": "Claude",
+                    "reviewer": "Codex2",
+                    "status": "in_progress",
+                    "depends_on": [],
+                    "artifacts": [],
+                    "acceptance": [],
+                    "next": "",
+                    "last_update": "2026-07-29T00:00:00Z",
+                }
+            ],
+            "handoffs": [],
+            "blockers": [],
+            "workload": {},
+            "workload_summary": {},
+        }
+
+    # -- shape validation ---------------------------------------------------
+
+    def test_valid_named_actors_are_accepted(self) -> None:
+        for name in ("Claude", "Claude2", "Antigravity7", "Codex2", "Human/Ops", "CodexCoordinator"):
+            self.assertIsNone(ai_status.actor_reference_problem(name), name)
+
+    def test_task_id_is_rejected(self) -> None:
+        problem = ai_status.actor_reference_problem(self.TASK_ID)
+        self.assertIsNotNone(problem)
+        self.assertIn("task id", problem)
+
+    def test_prose_is_rejected(self) -> None:
+        problem = ai_status.actor_reference_problem("Remediation task for migration-compat timeout")
+        self.assertIsNotNone(problem)
+        self.assertIn("prose", problem)
+
+    def test_oversized_string_is_rejected(self) -> None:
+        problem = ai_status.actor_reference_problem("x" * 400)
+        self.assertIsNotNone(problem)
+        self.assertIn("max 40", problem)
+
+    def test_empty_reference_is_rejected(self) -> None:
+        self.assertIsNotNone(ai_status.actor_reference_problem(""))
+        self.assertIsNotNone(ai_status.actor_reference_problem(None))
+
+    def test_aliases_and_human_ops_semantics_survive_validation(self) -> None:
+        for raw, expected in (
+            ("agy3", "Antigravity3"),
+            ("claude 2", "Claude2"),
+            ("human ops", "Human/Ops"),
+            ("ops", "Human/Ops"),
+        ):
+            self.assertEqual(
+                expected,
+                ai_status.resolve_actor_reference(raw, field="waiting-for"),
+                raw,
+            )
+
+    def test_unknown_but_well_shaped_actor_is_rejected(self) -> None:
+        with self.assertRaises(SystemExit) as ctx:
+            ai_status.resolve_actor_reference("Nessie9", field="owner")
+        self.assertIn("not a registered agent", str(ctx.exception))
+
+    def test_durable_roster_entry_is_not_an_authority_for_new_input(self) -> None:
+        """A name that only exists in agents[] must not legitimise itself.
+
+        agents[] is exactly where a fabricated actor lands, so accepting it as a
+        declaration would let one bad record validate the next command.
+        """
+        state = self._state()
+        state["agents"].append({"name": "Nessie9", "capability_lane": [], "status": "idle",
+                                "current_task_ids": [], "branch": "", "next": "", "last_update": None})
+        with self.assertRaises(SystemExit) as ctx:
+            ai_status.resolve_actor_reference("Nessie9", field="owner")
+        self.assertIn("agents[] is not a declaration", str(ctx.exception))
+        # The record itself stays readable — reading state must never abort.
+        ai_status.validate_state(state)
+        self.assertIn("Nessie9", [agent["name"] for agent in state["agents"]])
+
+    def test_static_known_agent_without_config_is_rejected(self) -> None:
+        """Gemini/Copilot survive in KNOWN_AGENTS but the Supervisor cannot dispatch them."""
+        for stale in ("Gemini", "Gemini2", "Copilot"):
+            self.assertIn(stale, ai_status.KNOWN_AGENTS, stale)
+            with self.assertRaises(SystemExit, msg=stale) as ctx:
+                ai_status.resolve_actor_reference(stale, field="owner")
+            self.assertIn("not a registered agent", str(ctx.exception))
+
+    def test_non_worker_actors_are_accepted_without_config(self) -> None:
+        for actor in ("Human/Ops", "Orchestrator", "CodexCoordinator"):
+            self.assertEqual(
+                actor, ai_status.resolve_actor_reference(actor, field="waiting-for"), actor
+            )
+
+    def test_extra_agents_env_registers_an_actor(self) -> None:
+        with self.assertRaises(SystemExit):
+            ai_status.resolve_actor_reference("Nessie9", field="owner")
+        with mock.patch.dict(os.environ, {"AI_STATUS_EXTRA_AGENTS": "Nessie9"}):
+            self.assertEqual(
+                "Nessie9", ai_status.resolve_actor_reference("Nessie9", field="owner")
+            )
+
+    # -- no durable mutation on rejection -----------------------------------
+
+    def test_blocker_command_rejects_prose_before_mutating_state(self) -> None:
+        state = self._state()
+        before = json.dumps(state, sort_keys=True)
+        with mock.patch.dict(os.environ, {"AI_NAME": "Claude"}):
+            with self.assertRaises(SystemExit):
+                ai_status.command_blocker(state, ["ODP-ACTOR-REF-001", "message", self.PROSE])
+        self.assertEqual(before, json.dumps(state, sort_keys=True))
+        self.assertNotIn(self.PROSE, ai_status.KNOWN_AGENTS)
+
+    def test_blocker_command_rejects_task_id_before_mutating_state(self) -> None:
+        state = self._state()
+        before = json.dumps(state, sort_keys=True)
+        with mock.patch.dict(os.environ, {"AI_NAME": "Claude"}):
+            with self.assertRaises(SystemExit):
+                ai_status.command_blocker(state, ["ODP-ACTOR-REF-001", "message", self.TASK_ID])
+        self.assertEqual(before, json.dumps(state, sort_keys=True))
+        self.assertNotIn(self.TASK_ID, ai_status.KNOWN_AGENTS)
+
+    def test_assign_rejects_prose_owner(self) -> None:
+        state = self._state()
+        with self.assertRaises(SystemExit):
+            ai_status.command_assign(state, ["ODP-NEW-001", self.PROSE, "Codex2"])
+        self.assertEqual(1, len(state["tasks"]))
+
+    # -- corrupt state on disk stays readable, but never grows the roster ---
+
+    def test_existing_prose_reference_does_not_become_a_durable_agent(self) -> None:
+        state = self._state()
+        state["blockers"].append(
+            {
+                "task_id": "ODP-ACTOR-REF-001",
+                "owner": "Claude",
+                "waiting_for": self.PROSE,
+                "message": "recorded before validation existed",
+                "status": "open",
+                "created_at": "2026-07-29T00:00:00Z",
+            }
+        )
+        ai_status.validate_state(state)
+        ai_status.recompute_agents(state)
+        ai_status.recompute_workload(state)
+
+        roster = [agent["name"] for agent in state["agents"]]
+        self.assertNotIn(self.PROSE, roster)
+        self.assertNotIn(self.PROSE, state["workload"])
+        self.assertIn("Claude", roster)
+
+    def test_invalid_actor_references_are_reported(self) -> None:
+        state = self._state()
+        state["tasks"][0]["waiting_for"] = self.TASK_ID
+        findings = ai_status.invalid_actor_references(state)
+        self.assertEqual(1, len(findings))
+        location, value, problem = findings[0]
+        self.assertIn("waiting_for", location)
+        self.assertEqual(self.TASK_ID, value)
+        self.assertIn("task id", problem)
+
+    # -- audited repair path ------------------------------------------------
+
+    def test_retarget_blocker_repairs_reference_and_keeps_original_text(self) -> None:
+        state = self._state()
+        state["tasks"][0]["status"] = "blocked"
+        state["tasks"][0]["waiting_for"] = self.PROSE
+        state["blockers"].append(
+            {
+                "task_id": "ODP-ACTOR-REF-001",
+                "owner": "Claude",
+                "waiting_for": self.PROSE,
+                "message": "rollout gate",
+                "status": "open",
+                "created_at": "2026-07-29T00:00:00Z",
+            }
+        )
+        with mock.patch.dict(os.environ, {"AI_NAME": "Claude"}), \
+                mock.patch.object(ai_status, "append_log") as logged:
+            ai_status.command_retarget_blocker(
+                state, ["ODP-ACTOR-REF-001", "Codex2", "reviewer owns the gate"]
+            )
+
+        blocker = state["blockers"][0]
+        self.assertEqual("Codex2", blocker["waiting_for"])
+        self.assertEqual(self.PROSE, blocker["original_waiting_for"])
+        self.assertIn(self.PROSE, blocker["message"])
+        self.assertEqual("Claude", blocker["retargeted_by"])
+        self.assertEqual("Codex2", state["tasks"][0]["waiting_for"])
+        logged.assert_called_once()
+
+    def test_retarget_blocker_rejects_a_prose_replacement(self) -> None:
+        state = self._state()
+        state["blockers"].append(
+            {
+                "task_id": "ODP-ACTOR-REF-001",
+                "owner": "Claude",
+                "waiting_for": self.PROSE,
+                "message": "rollout gate",
+                "status": "open",
+                "created_at": "2026-07-29T00:00:00Z",
+            }
+        )
+        with mock.patch.dict(os.environ, {"AI_NAME": "Claude"}):
+            with self.assertRaises(SystemExit):
+                ai_status.command_retarget_blocker(
+                    state, ["ODP-ACTOR-REF-001", self.TASK_ID, "bad replacement"]
+                )
+        self.assertEqual(self.PROSE, state["blockers"][0]["waiting_for"])
+
+    def test_retarget_blocker_leaves_another_owners_valid_blocker_alone(self) -> None:
+        state = self._state()
+        state["blockers"].append(
+            {
+                "task_id": "ODP-ACTOR-REF-001",
+                "owner": "Codex2",
+                "waiting_for": "Antigravity3",
+                "message": "valid blocker owned by someone else",
+                "status": "open",
+                "created_at": "2026-07-29T00:00:00Z",
+            }
+        )
+        with mock.patch.dict(os.environ, {"AI_NAME": "Claude"}), \
+                mock.patch.object(ai_status, "append_log"):
+            ai_status.command_retarget_blocker(
+                state, ["ODP-ACTOR-REF-001", "Claude2", "attempted reassignment"]
+            )
+        self.assertEqual("Antigravity3", state["blockers"][0]["waiting_for"])
+
+    # -- audited cleanup ----------------------------------------------------
+
+    def _roster_state_for_prune(self) -> dict:
+        state = self._state()
+        for name in (self.TASK_ID, "Codex77", "Nessie9"):
+            state["agents"].append(
+                {
+                    "name": name,
+                    "capability_lane": [],
+                    "status": "idle",
+                    "current_task_ids": [],
+                    "branch": "",
+                    "next": "",
+                    "last_update": None,
+                }
+            )
+        state["handoffs"].append(
+            {
+                "task_id": "ODP-ACTOR-REF-001",
+                "from": "Nessie9",
+                "to": "Claude",
+                "message": "still referenced",
+                "status": "done",
+                "created_at": "2026-07-29T00:00:00Z",
+            }
+        )
+        return state
+
+    def test_prune_is_dry_run_by_default(self) -> None:
+        state = self._roster_state_for_prune()
+        before = [agent["name"] for agent in state["agents"]]
+        with mock.patch.dict(os.environ, {"AI_NAME": "Claude"}), \
+                mock.patch("sys.stdout", new_callable=io.StringIO):
+            ai_status.command_prune_agents(state, [])
+        self.assertEqual(before, [agent["name"] for agent in state["agents"]])
+
+    def test_prune_removes_only_unreferenced_synthetic_entries(self) -> None:
+        state = self._roster_state_for_prune()
+        with mock.patch.dict(os.environ, {"AI_NAME": "Claude"}), \
+                mock.patch.object(ai_status, "append_log") as logged, \
+                mock.patch("sys.stdout", new_callable=io.StringIO):
+            ai_status.command_prune_agents(state, ["--apply", "cleanup"])
+
+        roster = [agent["name"] for agent in state["agents"]]
+        # Removed: the task-id entry and the undeclared, unreferenced Codex77.
+        self.assertNotIn(self.TASK_ID, roster)
+        self.assertNotIn("Codex77", roster)
+        # Kept: configured agents and the undeclared-but-referenced Nessie9.
+        self.assertIn("Claude", roster)
+        self.assertIn("Codex2", roster)
+        self.assertIn("Nessie9", roster)
+        self.assertEqual(2, logged.call_count)
+
+    def test_prune_never_removes_a_configured_agent_that_is_idle(self) -> None:
+        state = self._state()
+        state["agents"].append(
+            {
+                "name": "Codex5",
+                "capability_lane": [],
+                "status": "idle",
+                "current_task_ids": [],
+                "branch": "",
+                "next": "",
+                "last_update": None,
+            }
+        )
+        report = {entry["name"]: entry for entry in ai_status.synthetic_roster_entries(state)}
+        self.assertTrue(report["Codex5"]["keep"])
+        self.assertIn("config.local.json", report["Codex5"]["reason"])
+
+    def test_prune_does_not_advertise_static_lanes_as_removable(self) -> None:
+        """Gemini/Copilot are not registered actors, but pruning them is a no-op.
+
+        `recompute_agents()` recreates a roster row for every static
+        `KNOWN_AGENTS` lane, so reporting them as removable would churn the
+        roster on every sync and misreport the result.
+        """
+        state = self._state()
+        state["agents"].append(
+            {
+                "name": "Gemini2",
+                "capability_lane": [],
+                "status": "idle",
+                "current_task_ids": [],
+                "branch": "",
+                "next": "",
+                "last_update": None,
+            }
+        )
+        report = {entry["name"]: entry for entry in ai_status.synthetic_roster_entries(state)}
+        self.assertTrue(report["Gemini2"]["keep"])
+        self.assertIn("no-op", report["Gemini2"]["reason"])
+        # Being kept in the roster is not the same as being a usable actor.
+        with self.assertRaises(SystemExit):
+            ai_status.resolve_actor_reference("Gemini2", field="owner")
+
+    def test_prune_keeps_an_undeclared_agent_that_is_carrying_work(self) -> None:
+        """Cleanup is for dead synthetic entries, never for a busy actor."""
+        state = self._state()
+        state["agents"].append(
+            {
+                "name": "Nessie9",
+                "capability_lane": [],
+                "status": "working",
+                "current_task_ids": ["ODP-ACTOR-REF-001"],
+                "branch": "",
+                "next": "",
+                "last_update": None,
+            }
+        )
+        report = {entry["name"]: entry for entry in ai_status.synthetic_roster_entries(state)}
+        self.assertTrue(report["Nessie9"]["keep"])
+        self.assertIn("live workload", report["Nessie9"]["reason"])
+
+    def test_prune_never_removes_a_config_declared_agent(self) -> None:
+        state = self._state()
+        state["agents"].append(
+            {
+                "name": "Claude3",
+                "capability_lane": [],
+                "status": "idle",
+                "current_task_ids": [],
+                "branch": "",
+                "next": "",
+                "last_update": None,
+            }
+        )
+        with mock.patch.object(ai_status, "configured_agent_names", return_value={"Claude3"}):
+            report = {entry["name"]: entry for entry in ai_status.synthetic_roster_entries(state)}
+        self.assertTrue(report["Claude3"]["keep"])
+        self.assertIn("config.json", report["Claude3"]["reason"])
+
+
+class MergedConfigActorAuthorityTests(unittest.TestCase):
+    """Actor authority must be the config the Supervisor actually dispatches from.
+
+    `common.load_config()` deep-merges `.orchestrator/config.json` with the
+    gitignored `.orchestrator/config.local.json`. On this fleet the overlay is
+    the *only* place Codex3-Codex9 are declared, so reading the tracked half
+    alone would classify six live workers as synthetic.
+    """
+
+    BASE_AGENTS = {
+        "claude": {"display_name": "Claude", "provider": "claude"},
+        "codex2": {"display_name": "Codex2", "provider": "codex"},
+    }
+    OVERLAY_AGENTS = {
+        f"codex{index}": {"display_name": f"Codex{index}", "provider": "codex"}
+        for index in range(3, 10)
+    }
+
+    def setUp(self) -> None:
+        ai_status._MERGED_CONFIG_CACHE.clear()
+        self.addCleanup(ai_status._MERGED_CONFIG_CACHE.clear)
+        self._known_before = dict(ai_status.KNOWN_AGENTS)
+        self.addCleanup(self._restore_roster)
+
+    def _restore_roster(self) -> None:
+        ai_status.KNOWN_AGENTS.clear()
+        ai_status.KNOWN_AGENTS.update(self._known_before)
+
+    def _write_config(self, directory: Path, payload: dict, name: str = "config.json") -> Path:
+        directory.mkdir(parents=True, exist_ok=True)
+        path = directory / name
+        path.write_text(json.dumps(payload), encoding="utf-8")
+        return path
+
+    def test_local_overlay_workers_are_declared_and_match_common_deep_merge(self) -> None:
+        import common
+
+        with tempfile.TemporaryDirectory(prefix="ai-status-merged-config-") as temp_dir:
+            orchestrator_dir = Path(temp_dir) / ".orchestrator"
+            config_file = self._write_config(orchestrator_dir, {"agents": self.BASE_AGENTS})
+            self._write_config(
+                orchestrator_dir, {"agents": self.OVERLAY_AGENTS}, name="config.local.json"
+            )
+            missing_status_overlay = Path(temp_dir) / "status" / ".orchestrator" / "config.local.json"
+
+            with (
+                mock.patch.object(ai_status, "CONFIG_FILE", config_file),
+                mock.patch.object(
+                    ai_status, "STATUS_ROOT_CONFIG_LOCAL_FILE", missing_status_overlay
+                ),
+            ):
+                merged = ai_status.merged_orchestrator_config()
+                names = ai_status.configured_agent_names()
+                accepted = [
+                    ai_status.resolve_actor_reference(name, field="owner")
+                    for name in ("Codex5", "Codex6", "Codex8", "Codex9")
+                ]
+                # Case-folding must land on the declared spelling, not a new name.
+                folded = ai_status.canonical_agent_name("codex5")
+
+        expected = common.deep_merge({"agents": self.BASE_AGENTS}, {"agents": self.OVERLAY_AGENTS})
+        self.assertEqual(expected, merged)
+        self.assertEqual({"Claude", "Codex2"} | {f"Codex{i}" for i in range(3, 10)}, names)
+        self.assertEqual(["Codex5", "Codex6", "Codex8", "Codex9"], accepted)
+        self.assertEqual("Codex5", folded)
+
+    def test_without_the_overlay_the_same_workers_are_not_declared(self) -> None:
+        """Proves the overlay — not a static table — is what admits Codex3-Codex9."""
+        with tempfile.TemporaryDirectory(prefix="ai-status-base-only-") as temp_dir:
+            orchestrator_dir = Path(temp_dir) / ".orchestrator"
+            config_file = self._write_config(orchestrator_dir, {"agents": self.BASE_AGENTS})
+            missing_status_overlay = Path(temp_dir) / "status" / ".orchestrator" / "config.local.json"
+
+            with (
+                mock.patch.object(ai_status, "CONFIG_FILE", config_file),
+                mock.patch.object(
+                    ai_status, "STATUS_ROOT_CONFIG_LOCAL_FILE", missing_status_overlay
+                ),
+            ):
+                self.assertEqual({"Claude", "Codex2"}, ai_status.configured_agent_names())
+                with self.assertRaises(SystemExit):
+                    ai_status.resolve_actor_reference("Codex5", field="owner")
+
+    def test_status_root_overlay_covers_worker_worktrees(self) -> None:
+        """A worktree only checks out the tracked half of the config.
+
+        Workers run `ai_status.py` from a worktree while writing to the live
+        status root, so the live overlay has to be merged from there too or the
+        same command would reject Codex5 in a worktree and accept it at home.
+        """
+        with tempfile.TemporaryDirectory(prefix="ai-status-worktree-config-") as temp_dir:
+            worktree_dir = Path(temp_dir) / "worktree" / ".orchestrator"
+            config_file = self._write_config(worktree_dir, {"agents": self.BASE_AGENTS})
+            live_dir = Path(temp_dir) / "live" / ".orchestrator"
+            status_overlay = self._write_config(
+                live_dir, {"agents": self.OVERLAY_AGENTS}, name="config.local.json"
+            )
+
+            with (
+                mock.patch.object(ai_status, "CONFIG_FILE", config_file),
+                mock.patch.object(ai_status, "STATUS_ROOT_CONFIG_LOCAL_FILE", status_overlay),
+            ):
+                self.assertIn("Codex7", ai_status.configured_agent_names())
+                self.assertEqual(
+                    "Codex7", ai_status.resolve_actor_reference("Codex7", field="owner")
+                )
+
+    def test_live_path_delegates_to_common_load_config(self) -> None:
+        """When pointed at the real config path, use Supervisor's loader verbatim."""
+        import common
+
+        self.assertEqual(common.DEFAULT_CONFIG_PATH, ai_status.CONFIG_FILE)
+        with mock.patch.object(
+            common, "load_config", return_value={"agents": {"nessie": {"display_name": "Nessie9"}}}
+        ) as load_config:
+            ai_status._MERGED_CONFIG_CACHE.clear()
+            names = ai_status.configured_agent_names()
+        load_config.assert_called_once_with()
+        self.assertIn("Nessie9", names)
+
+    def test_codex3_is_its_own_worker_not_an_alias_of_codex(self) -> None:
+        """The retired `codex3 -> Codex` alias would silently reassign a real worker."""
+        self.assertNotIn("codex3", ai_status.AGENT_ALIASES)
+        with mock.patch.object(
+            ai_status, "configured_agent_names", return_value={"Codex", "Codex3"}
+        ):
+            self.assertEqual("Codex3", ai_status.canonical_agent_name("codex3"))
+            self.assertEqual(
+                "Codex3", ai_status.resolve_actor_reference("Codex3", field="owner")
+            )
+
+
+class ActorCommandMutationGuardTests(unittest.TestCase):
+    """Every mutating actor command must fail *before* it touches durable state."""
+
+    PROSE = (
+        "STOP FOR CODEX2 REVIEW ON EXACT HEAD 6ca4726c (revision 8). Two gates are "
+        "open at once and both need Codex2/coordinator action, not more owner work."
+    )
+    TASK_ID = "ODP-ACTOR-REF-001"
+
+    def setUp(self) -> None:
+        self._known_before = dict(ai_status.KNOWN_AGENTS)
+        self._quarantined_before = set(ai_status.QUARANTINED_AGENTS)
+        self.addCleanup(self._restore_roster)
+        patcher = mock.patch.object(
+            ai_status, "configured_agent_names", return_value={"Claude", "Codex2"}
+        )
+        patcher.start()
+        self.addCleanup(patcher.stop)
+        # A real durable write would be a test failure, not a fixture.
+        log_patcher = mock.patch.object(ai_status, "append_log")
+        self.append_log = log_patcher.start()
+        self.addCleanup(log_patcher.stop)
+
+    def _restore_roster(self) -> None:
+        ai_status.KNOWN_AGENTS.clear()
+        ai_status.KNOWN_AGENTS.update(self._known_before)
+        ai_status.QUARANTINED_AGENTS.clear()
+        ai_status.QUARANTINED_AGENTS.update(self._quarantined_before)
+
+    def _state(self) -> dict:
+        return {
+            "agents": [
+                {
+                    "name": name,
+                    "capability_lane": [],
+                    "status": "idle",
+                    "current_task_ids": [],
+                    "branch": "",
+                    "next": "",
+                    "last_update": None,
+                }
+                for name in ("Claude", "Codex2")
+            ],
+            "tasks": [
+                {
+                    "id": self.TASK_ID,
+                    "title": "Actor reference fixture",
+                    "phase": "Fleet Control Plane Integrity",
+                    "owner": "Claude",
+                    "reviewer": "Codex2",
+                    "status": "in_progress",
+                    "depends_on": [],
+                    "artifacts": [],
+                    "acceptance": [],
+                    "next": "",
+                    "last_update": "2026-07-29T00:00:00Z",
+                }
+            ],
+            "handoffs": [],
+            "blockers": [
+                {
+                    "task_id": self.TASK_ID,
+                    "owner": "Claude",
+                    "waiting_for": self.PROSE,
+                    "message": "recorded before validation existed",
+                    "status": "open",
+                    "created_at": "2026-07-29T00:00:00Z",
+                }
+            ],
+            "workload": {},
+            "workload_summary": {},
+        }
+
+    def _assert_rejected_without_mutation(self, command, args, env) -> None:
+        state = self._state()
+        before = json.dumps(state, sort_keys=True)
+        roster_before = set(ai_status.KNOWN_AGENTS)
+        with mock.patch.dict(os.environ, env, clear=False):
+            with mock.patch("sys.stdout", new_callable=io.StringIO):
+                with self.assertRaises(SystemExit):
+                    command(state, args)
+        self.assertEqual(before, json.dumps(state, sort_keys=True))
+        self.assertEqual(roster_before, set(ai_status.KNOWN_AGENTS))
+        self.append_log.assert_not_called()
+
+    def test_bad_actor_argument_is_rejected_by_every_mutating_command(self) -> None:
+        cases = {
+            "assign owner": (
+                ai_status.command_assign,
+                ["ODP-NEW-001", self.PROSE, "Codex2"],
+                {"AI_NAME": "Claude"},
+            ),
+            "assign reviewer": (
+                ai_status.command_assign,
+                ["ODP-NEW-001", "Claude", "ODP-P10-FLEET-CONFLICT-REAUDIT-001"],
+                {"AI_NAME": "Claude"},
+            ),
+            "handoff target": (
+                ai_status.command_handoff,
+                [self.TASK_ID, self.PROSE, "please review"],
+                {"AI_NAME": "Claude"},
+            ),
+            "blocker waiting-for": (
+                ai_status.command_blocker,
+                [self.TASK_ID, "blocked on the gate", self.PROSE],
+                {"AI_NAME": "Claude"},
+            ),
+            "retarget_blocker target": (
+                ai_status.command_retarget_blocker,
+                [self.TASK_ID, self.PROSE, "repair"],
+                {"AI_NAME": "Claude"},
+            ),
+        }
+        for label, (command, args, env) in cases.items():
+            with self.subTest(command=label):
+                self._assert_rejected_without_mutation(command, args, env)
+
+    def test_unregistered_actor_argument_is_rejected_by_every_mutating_command(self) -> None:
+        cases = {
+            "assign owner": (
+                ai_status.command_assign,
+                ["ODP-NEW-001", "Nessie9", "Codex2"],
+                {"AI_NAME": "Claude"},
+            ),
+            "handoff target": (
+                ai_status.command_handoff,
+                [self.TASK_ID, "Nessie9", "please review"],
+                {"AI_NAME": "Claude"},
+            ),
+            "blocker waiting-for": (
+                ai_status.command_blocker,
+                [self.TASK_ID, "blocked on the gate", "Nessie9"],
+                {"AI_NAME": "Claude"},
+            ),
+            "retarget_blocker target": (
+                ai_status.command_retarget_blocker,
+                [self.TASK_ID, "Nessie9", "repair"],
+                {"AI_NAME": "Claude"},
+            ),
+        }
+        for label, (command, args, env) in cases.items():
+            with self.subTest(command=label):
+                self._assert_rejected_without_mutation(command, args, env)
+
+    # Every mutating command that records an actor, with arguments that are
+    # valid enough to get past its usage check — so the only thing that can
+    # reject the call is the AI_NAME gate itself.
+    AI_NAME_CASES = {
+        "assign": ["ODP-NEW-001", "Claude", "Codex2"],
+        "start": [TASK_ID, "starting"],
+        "progress": [TASK_ID, "still going"],
+        "note": [TASK_ID, "a note"],
+        "reopen": [TASK_ID, "reopening"],
+        "re_review": [TASK_ID, "re-reviewing"],
+        "re-review": [TASK_ID, "re-reviewing"],
+        "handoff": [TASK_ID, "Codex2", "please review"],
+        "blocker": [TASK_ID, "blocked", "Codex2"],
+        "retarget_blocker": [TASK_ID, "Codex2", "repair"],
+        "prune_agents": ["--apply", "cleanup"],
+        "restore_approved": [TASK_ID, "restoring"],
+        "restore_approved_head": [TASK_ID, "1111111122222222333333334444444455555555", "attesting"],
+        "done": [TASK_ID, "finished"],
+        "supersede": [TASK_ID, "superseded"],
+        "approve": [TASK_ID, "approved"],
+        "archive_migrate": [],
+        "wave open": ["open", "W-2026-07-29"],
+        "wave close": ["close"],
+    }
+
+    def test_ai_name_case_table_covers_every_actor_bearing_command(self) -> None:
+        """The table below is the contract; this keeps it from silently rotting.
+
+        A new mutating command must either appear here or be declared actorless
+        on purpose. Without this check the table stays green while the surface
+        it claims to cover grows past it — which is exactly how the eleven
+        unvalidated call sites survived the first pass.
+        """
+        covered = {label.split()[0] for label in self.AI_NAME_CASES}
+        expected = set(ai_status.MUTATING_COMMANDS) - ai_status.ACTORLESS_MUTATING_COMMANDS
+        self.assertEqual(expected, covered)
+        self.assertEqual({"sync"}, set(ai_status.ACTORLESS_MUTATING_COMMANDS))
+
+    def test_bad_ai_name_is_rejected_by_every_mutating_command(self) -> None:
+        """Malformed prose and a well-shaped but unregistered name both fail closed.
+
+        `Nessie9` matters as much as the prose case: it passes every shape check
+        and would have been invented as a roster entry by the old tolerant path.
+        """
+        for label, args in self.AI_NAME_CASES.items():
+            command = ai_status.MUTATING_COMMANDS[label.split()[0]]
+            for bad_name in (self.PROSE, "Nessie9"):
+                with self.subTest(command=label, ai_name=bad_name[:24]):
+                    self._assert_rejected_without_mutation(command, args, {"AI_NAME": bad_name})
+
+    def test_no_unvalidated_actor_read_remains(self) -> None:
+        """The unvalidated `current_actor()` helper must stay deleted.
+
+        Codex2 found the eleven gaps by scanning for this call; encoding the
+        scan means the next one is caught by CI instead of by a reviewer.
+        """
+        tree = ast.parse(Path(ai_status.__file__).read_text(encoding="utf-8"))
+        offenders = [
+            f"line {node.lineno}"
+            for node in ast.walk(tree)
+            if isinstance(node, ast.Name) and node.id == "current_actor"
+        ]
+        self.assertEqual([], offenders)
+        self.assertFalse(hasattr(ai_status, "current_actor"))
+
+
 if __name__ == "__main__":
     unittest.main()
+
+
+class EvidenceOnlyAdvanceTests(unittest.TestCase):
+    """Approval must survive a commit that only records the review.
+
+    Closeout requires writing evidence; writing evidence is a commit; the commit
+    moves the head; task-review-gate is bound to a commit SHA, so approval stops
+    applying and the task bounces back to review, where closeout moves the head
+    again. 62 evidence commits between 2026-07-20 and 2026-08-04 came out of that
+    loop, one task resealing seven times.
+    """
+
+    def _repo(self) -> Path:
+        repo = Path(tempfile.mkdtemp())
+        self.addCleanup(shutil.rmtree, repo, ignore_errors=True)
+
+
+        def run(*a: str) -> None:
+            subprocess.run(list(a), cwd=repo, check=True, capture_output=True)
+
+        run("git", "init", "-q")
+        run("git", "config", "user.email", "t@example.com")
+        run("git", "config", "user.name", "t")
+        (repo / "src.py").write_text("x = 1\n", encoding="utf-8")
+        run("git", "add", "-A")
+        run("git", "commit", "-q", "-m", "base")
+        return repo
+
+    def _head(self, repo: Path) -> str:
+        return subprocess.run(
+            ["git", "rev-parse", "HEAD"], cwd=repo, capture_output=True, text=True, check=True
+        ).stdout.strip()
+
+    def _commit(self, repo: Path, rel: str, body: str, message: str) -> str:
+        target = repo / rel
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text(body, encoding="utf-8")
+        subprocess.run(["git", "add", "-A"], cwd=repo, check=True, capture_output=True)
+        subprocess.run(
+            ["git", "commit", "-q", "-m", message], cwd=repo, check=True, capture_output=True
+        )
+        return self._head(repo)
+
+    def test_evidence_only_commit_carries_approval_forward(self) -> None:
+        repo = self._repo()
+        approved = self._head(repo)
+        current = self._commit(
+            repo, "docs/evidence/REVIEW.md", "reviewed\n", "record review evidence"
+        )
+
+        self.assertTrue(ai_status.is_evidence_only_advance(approved, current, repo))
+
+    def test_source_change_invalidates_even_when_evidence_is_included(self) -> None:
+        repo = self._repo()
+        approved = self._head(repo)
+        (repo / "docs" / "evidence").mkdir(parents=True, exist_ok=True)
+        (repo / "docs/evidence/REVIEW.md").write_text("reviewed\n", encoding="utf-8")
+        (repo / "src.py").write_text("x = 2\n", encoding="utf-8")
+        subprocess.run(["git", "add", "-A"], cwd=repo, check=True, capture_output=True)
+        subprocess.run(
+            ["git", "commit", "-q", "-m", "evidence and source"],
+            cwd=repo,
+            check=True,
+            capture_output=True,
+        )
+
+        self.assertFalse(
+            ai_status.is_evidence_only_advance(approved, self._head(repo), repo)
+        )
+
+    def test_rewritten_history_is_never_carried_forward(self) -> None:
+        repo = self._repo()
+        approved = self._head(repo)
+        self._commit(repo, "docs/evidence/A.md", "a\n", "evidence a")
+        subprocess.run(
+            ["git", "reset", "--hard", approved], cwd=repo, check=True, capture_output=True
+        )
+        diverged = self._commit(repo, "docs/evidence/B.md", "b\n", "evidence b")
+        subprocess.run(
+            ["git", "commit", "-q", "--amend", "-m", "amended"],
+            cwd=repo,
+            check=True,
+            capture_output=True,
+        )
+        rewritten = self._head(repo)
+
+        self.assertNotEqual(diverged, rewritten)
+        # A head that is not a descendant of the approved head must never be
+        # carried forward, however evidence-shaped its diff looks.
+        self.assertFalse(ai_status.is_evidence_only_advance(approved, "0" * 40, repo))
+
+    def test_unreadable_repository_root_fails_closed(self) -> None:
+        """A check that could not run must never carry an approval forward.
+
+        subprocess raises on a missing cwd instead of returning a non-zero code,
+        so the returncode guard alone let the exception escape and broke an
+        unrelated provenance test.
+        """
+        self.assertFalse(
+            ai_status.is_evidence_only_advance(
+                "a" * 40, "b" * 40, Path("/nonexistent-repo-root")
+            )
+        )
+
+    def test_identical_heads_do_not_use_this_path(self) -> None:
+        repo = self._repo()
+        approved = self._head(repo)
+
+        self.assertFalse(ai_status.is_evidence_only_advance(approved, approved, repo))
+
+    def test_approved_head_satisfied_accepts_evidence_only_advance(self) -> None:
+        repo = self._repo()
+        approved = self._head(repo)
+        current = self._commit(
+            repo, "docs/evidence/REVIEW.md", "reviewed\n", "record review evidence"
+        )
+
+        self.assertTrue(
+            ai_status.is_approved_head_satisfied(
+                {"id": "ODP-T-001"}, current, approved, repository_root=repo
+            )
+        )
+
+    def test_approved_head_satisfied_still_rejects_source_change(self) -> None:
+        repo = self._repo()
+        approved = self._head(repo)
+        current = self._commit(repo, "src.py", "x = 2\n", "change source")
+
+        self.assertFalse(
+            ai_status.is_approved_head_satisfied(
+                {"id": "FREEZE-TEST-001"}, current, approved, repository_root=repo
+            )
+        )
+
+
+class ReviewGateHeadDriftTests(unittest.TestCase):
+    """The gate must exist on the head that GitHub is actually gating.
+
+    A GitHub status belongs to one commit. Emission fired only on a status
+    transition and nothing else in the orchestrator posted this check, so a branch
+    that advanced afterwards left the new head with no gate. Since it is a
+    *required* check, absent reads as unmergeable and nothing would put it back.
+    Seen live on 2026-08-04: #616 and #622 had four green checks and no gate;
+    #628, whose head had not moved, had all five.
+    """
+
+    def test_drift_detected_when_head_moved_past_recorded_gate(self) -> None:
+        with mock.patch.object(ai_status, "resolve_task_sha", return_value="b" * 40):
+            self.assertTrue(
+                ai_status.review_gate_head_drifted(
+                    {"id": "ODP-T-1", "review_gate_sha": "a" * 40}
+                )
+            )
+
+    def test_no_drift_when_head_matches_recorded_gate(self) -> None:
+        with mock.patch.object(ai_status, "resolve_task_sha", return_value="a" * 40):
+            self.assertFalse(
+                ai_status.review_gate_head_drifted(
+                    {"id": "ODP-T-1", "review_gate_sha": "a" * 40}
+                )
+            )
+
+    def test_no_drift_claimed_when_gate_was_never_recorded(self) -> None:
+        """Without a recorded SHA every sync would re-post for unrelated tasks."""
+        with mock.patch.object(ai_status, "resolve_task_sha", return_value="b" * 40):
+            self.assertFalse(ai_status.review_gate_head_drifted({"id": "ODP-T-1"}))
+
+    def test_no_drift_claimed_when_head_cannot_be_resolved(self) -> None:
+        with mock.patch.object(ai_status, "resolve_task_sha", return_value=None):
+            self.assertFalse(
+                ai_status.review_gate_head_drifted(
+                    {"id": "ODP-T-1", "review_gate_sha": "a" * 40}
+                )
+            )
+
+    def test_missing_task_id_is_not_drift(self) -> None:
+        self.assertFalse(ai_status.review_gate_head_drifted({"review_gate_sha": "a" * 40}))

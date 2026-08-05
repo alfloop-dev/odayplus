@@ -10,6 +10,7 @@ product environment smoke.
 
 from __future__ import annotations
 
+import argparse
 import subprocess
 import sys
 from pathlib import Path
@@ -22,9 +23,19 @@ REQUIRED_FILES = {
     "expansion evidence": "docs/evidence/e2e/EXPANSION_E2E_EVIDENCE.md",
     "ops price ad evidence": "docs/evidence/e2e/OPS_INTERVENTION_PRICE_AD_E2E_EVIDENCE.md",
     "avm netplan learning audit evidence": "docs/evidence/e2e/AVM_NETPLAN_LEARNING_AUDIT_E2E_EVIDENCE.md",
+    "raw playwright results": "docs/evidence/e2e/raw_playwright_results.json",
+    "raw pytest results": "docs/evidence/e2e/raw_pytest_results.json",
+    "playwright result recorder": "scripts/e2e/record_playwright_results.py",
+    "python acceptance runner": "scripts/e2e/run_python_e2e_tests.py",
+    "e2e receipt validation library": "scripts/e2e/product_e2e_receipt.py",
+    "e2e receipt generator": "scripts/e2e/generate_product_e2e_receipt.py",
+    "product e2e execution receipt": "docs/evidence/e2e/PRODUCT_E2E_EXECUTION_RECEIPT.json",
     "readiness report": "docs/evidence/PRODUCT_E2E_READINESS_REPORT.md",
     "go no-go": "docs/evidence/PRODUCT_RELEASE_GO_NO_GO.md",
     "go no-go checker": "scripts/e2e/check_product_go_no_go.py",
+    "release gate registry": "docs/evidence/gates/RELEASE_GATE_REGISTRY.json",
+    "release gate registry guide": "docs/evidence/gates/README.md",
+    "release gate registry checker": "scripts/e2e/check_release_gate_registry.py",
     "closeout manifest": "docs/evidence/PRODUCT_RELEASE_CLOSEOUT_MANIFEST.md",
     "closeout playbook": "docs/evidence/PRODUCT_RELEASE_CLOSEOUT_PLAYBOOK.md",
     "closeout queue": "docs/evidence/PRODUCT_RELEASE_CLOSEOUT_QUEUE.json",
@@ -112,7 +123,32 @@ REQUIRED_REPORT_TOKENS = (
 )
 
 
-def main() -> int:
+def main(argv: list[str] | None = None) -> int:
+    parser = argparse.ArgumentParser(
+        description="Validate product E2E surfaces for dev merge or production release."
+    )
+    mode = parser.add_mutually_exclusive_group()
+    mode.add_argument(
+        "--dev-merge",
+        action="store_true",
+        help=(
+            "validate CI/E2E structure while accepting an internally valid NO-GO "
+            "registry; the subsequent runner must emit a fresh exact-source receipt"
+        ),
+    )
+    mode.add_argument(
+        "--require-go",
+        action="store_true",
+        help="fail unless the Gate 0-6 registry records an authentic GO decision",
+    )
+    parser.add_argument(
+        "--expected-sha",
+        help=(
+            "fail unless release gate registry candidate_sha matches or is an "
+            "evidence-only ancestor of this exact SHA"
+        ),
+    )
+    args = parser.parse_args(argv)
     errors: list[str] = []
 
     for label, relative_path in REQUIRED_FILES.items():
@@ -190,17 +226,65 @@ def main() -> int:
         )
         errors.append(f"external proof follow-up workflow check failed: {output}")
 
+    registry_command = [sys.executable, "scripts/e2e/check_release_gate_registry.py"]
+    if args.require_go:
+        registry_command.append("--require-go")
+    if args.expected_sha:
+        registry_command.extend(["--expected-sha", args.expected_sha])
+    gate_registry_check = subprocess.run(
+        registry_command,
+        cwd=ROOT,
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    if gate_registry_check.returncode != 0:
+        output = "\n".join(
+            line
+            for line in (gate_registry_check.stdout + gate_registry_check.stderr).splitlines()
+            if line.strip()
+        )
+        errors.append(f"release gate registry check failed: {output}")
+
     runner = ROOT / "scripts/e2e/run_product_e2e.sh"
     runner_text = runner.read_text(encoding="utf-8") if runner.exists() else ""
     for spec in REQUIRED_RUNNER_SPECS:
         if spec not in runner_text:
             errors.append(f"product runner does not include {spec}")
+    for required_runner_token in (
+        "record_playwright_results.py",
+        "run_python_e2e_tests.py",
+        "generate_product_e2e_receipt.py",
+        'playwright_record_status=$?',
+        'pytest_status=$?',
+        'receipt_status=$?',
+    ):
+        if required_runner_token not in runner_text:
+            errors.append(
+                f"product runner does not propagate required stage: {required_runner_token}"
+            )
 
     readiness = ROOT / "docs/evidence/PRODUCT_E2E_READINESS_REPORT.md"
     readiness_text = readiness.read_text(encoding="utf-8") if readiness.exists() else ""
     for token in REQUIRED_REPORT_TOKENS:
         if token not in readiness_text:
             errors.append(f"readiness report does not mention {token}")
+
+    # Executable acceptance scenario and test inventory validator
+    try:
+        if str(ROOT) not in sys.path:
+            sys.path.insert(0, str(ROOT))
+        from scripts.e2e.product_e2e_receipt import (
+            validate_acceptance_scenarios_and_inventory,
+            validate_receipt_packet,
+        )
+        scenario_errors = validate_acceptance_scenarios_and_inventory(ROOT)
+        if scenario_errors:
+            errors.extend(scenario_errors)
+        if not args.dev_merge:
+            errors.extend(validate_receipt_packet(ROOT))
+    except Exception as exc:
+        errors.append(f"acceptance scenario/inventory validator error: {exc}")
 
     closeout_queue_check = subprocess.run(
         [sys.executable, "scripts/e2e/check_product_closeout_queue.py"],
@@ -438,12 +522,19 @@ def main() -> int:
                     pass
 
     if errors:
-        print("Product release gate failed:")
+        gate_name = "dev merge gate" if args.dev_merge else "production release gate"
+        print(f"Product {gate_name} failed:")
         for error in errors:
             print(f"- {error}")
         return 1
 
-    print("Product release gate static checks passed.")
+    if args.dev_merge:
+        print(
+            "Product dev merge gate static checks passed; release authorization "
+            "remains governed independently by the Gate 0-6 registry."
+        )
+    else:
+        print("Product production release gate static checks passed.")
     return 0
 
 

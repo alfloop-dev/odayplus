@@ -50,7 +50,10 @@ class ProviderPermissionsTest(unittest.TestCase):
                     "gemini": {},
                     "codex": {
                         "delivery_mode": "codex",
-                        "codex": {"codex_home": str(codex_home)},
+                        "codex": {
+                            "cli": "/opt/pantheon/bin/codex",
+                            "codex_home": str(codex_home),
+                        },
                     },
                     "copilot": {},
                 },
@@ -98,7 +101,11 @@ class ProviderPermissionsTest(unittest.TestCase):
                 mock.patch.object(
                     provider_permissions,
                     "command_exists",
-                    side_effect=lambda cmd: "/usr/bin/codex" if cmd == "codex" else None,
+                    side_effect=(
+                        lambda cmd: "/opt/pantheon/bin/codex"
+                        if cmd == "/opt/pantheon/bin/codex"
+                        else None
+                    ),
                 ),
                 mock.patch.object(provider_permissions, "claude_auth_ready", return_value=False),
             ):
@@ -109,6 +116,9 @@ class ProviderPermissionsTest(unittest.TestCase):
         self.assertEqual(codex_report["verified"], "blocked")
         self.assertIn("unsupported service_tier", codex_report["config_error"])
         self.assertEqual(codex_report["config_checks"]["service_tier"], "priority")
+        self.assertTrue(codex_report["local_cli_worker_supported"])
+        self.assertTrue(codex_report["supports_auto_approve"])
+        self.assertEqual(codex_report["paths"]["binary"], "/opt/pantheon/bin/codex")
 
     def test_verified_claude_hooks_use_absolute_broker_path(self) -> None:
         expected = str(Path(ROOT) / ".orchestrator" / "permission_broker.py")
@@ -239,9 +249,10 @@ class ProviderPermissionsTest(unittest.TestCase):
 
     @pytest.mark.requires_live_env
     def test_edit_allows_configured_execute_plans_workspace_root(self) -> None:
+        target_path = str((permission_broker.ROOT / "../execute-plans/src/lib/bff/client.ts").resolve())
         evaluation = permission_broker.evaluate_tool_request(
             "Edit",
-            {"file_path": "/home/lupin/code/execute-plans/src/lib/bff/client.ts"},
+            {"file_path": target_path},
             {
                 "permission_broker": {
                     "allowed_workspace_roots": ["../execute-plans"],
@@ -825,6 +836,53 @@ EOF
 
         self.assertEqual(evaluation["decision"], "allow")
         self.assertEqual(evaluation["risk_class"], "safe_bash")
+
+
+class AgentPRCreationIsDeniedTests(unittest.TestCase):
+    """`gh pr create` belongs to ReviewBus, not to agents.
+
+    ReviewBus bases task PRs on the branch workflow target; an agent that runs
+    `gh pr create` chooses its own --base and can route work straight at the
+    promotion target, bypassing dev CI.
+    """
+
+    def _evaluate(self, command: str) -> dict:
+        with (
+            mock.patch.object(permission_broker, "load_runtime_state", return_value={}),
+            mock.patch.object(permission_broker, "load_status", return_value={"tasks": []}),
+        ):
+            return permission_broker.evaluate_tool_request("Bash", {"command": command}, {})
+
+    def test_agent_gh_pr_create_is_denied(self) -> None:
+        for command in (
+            "gh pr create --base dev --head task/ODP-X-001 --title t --body b",
+            "gh pr create --base main --head task/ODP-X-001 --title t --body b",
+            "gh pr create --fill",
+        ):
+            with self.subTest(command=command):
+                evaluation = self._evaluate(command)
+                self.assertEqual(evaluation["decision"], "deny")
+                self.assertEqual(evaluation["risk_class"], "destructive_bash")
+
+    def test_neighbouring_gh_commands_are_unaffected(self) -> None:
+        evaluation = self._evaluate("gh issue comment 12 --body hello")
+
+        self.assertEqual(evaluation["decision"], "allow")
+        self.assertEqual(evaluation["risk_class"], "safe_bash")
+
+    def test_claude_policy_denies_pr_creation_and_does_not_allow_it(self) -> None:
+        policy = provider_permissions._verified_claude_policy({})
+
+        # `allow` wins over `deny` in desired_claude_local_settings, so the rule
+        # only takes effect if it is absent from the allow list.
+        self.assertNotIn("Bash(gh pr create *)", policy["allow"])
+        self.assertIn("Bash(gh pr create *)", policy["deny"])
+
+    def test_deny_rule_survives_merge_into_local_settings(self) -> None:
+        merged = provider_permissions.desired_claude_local_settings({}, {"permissions": {"allow": [], "ask": [], "deny": []}})
+
+        self.assertIn("Bash(gh pr create *)", merged["permissions"]["deny"])
+        self.assertNotIn("Bash(gh pr create *)", merged["permissions"]["allow"])
 
 
 if __name__ == "__main__":

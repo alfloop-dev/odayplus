@@ -141,7 +141,10 @@ class RoutePlanResult:
         }
 
 
-def solve_routeplan(
+from solver.process_isolation import run_in_process_isolation
+
+
+def _solve_routeplan_impl(
     *,
     options: tuple[RouteOption, ...],
     constraints: RouteConstraints,
@@ -579,6 +582,37 @@ def _scaled(value: float) -> int:
 
 def _near(left: float, right: float, tolerance: float = 1e-6) -> bool:
     return abs(left - right) <= tolerance
+
+
+def solve_routeplan(
+    *,
+    options: tuple[RouteOption, ...],
+    constraints: RouteConstraints,
+    cannibalization_penalty: float = 100_000.0,
+    risk_penalty: float = 100_000.0,
+    alternative_limit: int = 1,
+    max_time_seconds: float = 20.0,
+    isolate_process: bool = True,
+) -> RoutePlanResult:
+    """Public solver entrypoint with process isolation contract."""
+    if isolate_process:
+        return run_in_process_isolation(
+            _solve_routeplan_impl,
+            options=options,
+            constraints=constraints,
+            cannibalization_penalty=cannibalization_penalty,
+            risk_penalty=risk_penalty,
+            alternative_limit=alternative_limit,
+            max_time_seconds=max_time_seconds,
+        )
+    return _solve_routeplan_impl(
+        options=options,
+        constraints=constraints,
+        cannibalization_penalty=cannibalization_penalty,
+        risk_penalty=risk_penalty,
+        alternative_limit=alternative_limit,
+        max_time_seconds=max_time_seconds,
+    )
 
 
 __all__ = [

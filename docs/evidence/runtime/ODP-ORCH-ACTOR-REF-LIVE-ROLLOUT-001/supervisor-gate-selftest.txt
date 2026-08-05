@@ -1,0 +1,115 @@
+# Supervisor-gate self-test — deploy.py under a scripted fake systemctl
+# run at   : 2026-07-29T07:49:10Z
+# driver   : /tmp/pantheon-worker-worktrees/oday-plus-supervisor-live/odp-orch-actor-ref-live-rollout-001/docs/evidence/runtime/ODP-ORCH-ACTOR-REF-LIVE-ROLLOUT-001/deploy.py
+# merge    : 1d07de67b1b6d75345feb55c2f35e6f39c41817a
+# The live Supervisor is never queried, signalled or touched: a fake
+# `systemctl` is first on PATH and every target is a throwaway git root.
+
+# merged payload sha256 : 5e19c1c1ef4729f32470956cad3e3fe5972cb92dee5225a5d65db16df074950d (203611 bytes)
+
+### 1. positive control — steady unit
+  what systemd is made to report : active/running, same MainPID, timestamp and NRestarts on both sides
+  expected                       : rc 0, target published
+  observed                       : rc 0, target published
+  driver said                    : RESULT: PASS — merged blob published atomically to every target
+  PASS
+
+### 2. preflight — unit is inactive/dead
+  what systemd is made to report : BEFORE reports inactive/dead (the reviewer's probe)
+  expected                       : rc 2, target untouched
+  observed                       : rc 2, target untouched
+  driver said                    : FAIL  ActiveState is 'inactive', expected 'active'
+  driver said                    : RESULT: FAIL — preflight gate refused to deploy; no target was touched.
+  PASS
+
+### 3. preflight — MainPID names a dead process
+  what systemd is made to report : BEFORE claims active/running but MainPID 4000000 has no /proc entry
+  expected                       : rc 2, target untouched
+  observed                       : rc 2, target untouched
+  driver said                    : FAIL  MainPID 4000000 has no /proc entry — the process is gone
+  driver said                    : RESULT: FAIL — preflight gate refused to deploy; no target was touched.
+  PASS
+
+### 4. preflight — MainPID is not the Supervisor
+  what systemd is made to report : BEFORE points at live PID 1627189, a real process that is some other program
+  expected                       : rc 2, target untouched
+  observed                       : rc 2, target untouched
+  driver said                    : FAIL  MainPID 1627189 cmdline is not the Supervisor: '/usr/bin/python3 /tmp/odp-unrelated-n751e85d/unrelated-worker-stub.py'
+  driver said                    : RESULT: FAIL — preflight gate refused to deploy; no target was touched.
+  PASS
+
+### 5. preflight — unit not loaded
+  what systemd is made to report : BEFORE reports LoadState=not-found (unit renamed or removed)
+  expected                       : rc 2, target untouched
+  observed                       : rc 2, target untouched
+  driver said                    : FAIL  LoadState is 'not-found', expected 'loaded'
+  driver said                    : RESULT: FAIL — preflight gate refused to deploy; no target was touched.
+  PASS
+
+### 6. preflight — systemctl query fails
+  what systemd is made to report : BEFORE query exits 1 (no bus); an unreadable state must never read as healthy
+  expected                       : rc 2, target untouched
+  observed                       : rc 2, target untouched
+  driver said                    : PROBE FAILED: systemctl exited 1: Failed to connect to bus: No such file or directory
+  driver said                    : RESULT: FAIL — preflight gate: the Supervisor's state is unreadable,
+  PASS
+
+### 7. continuity — NRestarts drifts 0 -> 1
+  what systemd is made to report : AFTER is active/running with the same PID, but the restart counter moved
+  expected                       : rc 1, target published
+  observed                       : rc 1, target published
+  driver said                    : FAIL  NRestarts changed across the deploy: '0' -> '1'
+  driver said                    : - NRestarts changed across the deploy: '0' -> '1'
+  driver said                    : RESULT: FAIL
+  PASS
+
+### 8. continuity — unit died during the deploy
+  what systemd is made to report : AFTER reports inactive/dead with NRestarts 0 -> 1 (the exact rejected case)
+  expected                       : rc 1, target published
+  observed                       : rc 1, target published
+  driver said                    : FAIL  supervisor is inactive/dead after the deploy, expected active/running
+  driver said                    : - supervisor is inactive/dead after the deploy, expected active/running
+  driver said                    : FAIL  NRestarts changed across the deploy: '0' -> '1'
+  driver said                    : - NRestarts changed across the deploy: '0' -> '1'
+  driver said                    : RESULT: FAIL
+  PASS
+
+### 9. continuity — restarted with a new PID and start time
+  what systemd is made to report : AFTER shows a fresh MainPID, a later ExecMainStartTimestamp and NRestarts 1
+  expected                       : rc 1, target published
+  observed                       : rc 1, target published
+  driver said                    : FAIL  MainPID changed across the deploy: '1627188' -> '1627189'
+  driver said                    : - MainPID changed across the deploy: '1627188' -> '1627189'
+  driver said                    : RESULT: FAIL
+  PASS
+
+### 10. continuity — systemctl query fails afterwards
+  what systemd is made to report : BEFORE is healthy, the AFTER query exits 1; continuity is unprovable, so the run fails
+  expected                       : rc 1, target published
+  observed                       : rc 1, target published
+  driver said                    : PROBE FAILED: systemctl exited 1: Failed to connect to bus: No such file or directory
+  driver said                    : RESULT: FAIL
+  PASS
+
+### 11. rehearsal mode cannot launder a dead unit
+  what systemd is made to report : --corrupt-payload with AFTER inactive/dead: the payload gate firing must not mask it
+  expected                       : rc 1, target untouched
+  observed                       : rc 1, target untouched
+  driver said                    : RESULT: FAIL — the corrupted payload was not stopped cleanly
+  PASS
+
+## summary: 11/11 scenarios behaved as required
+  PASS  positive control — steady unit
+  PASS  preflight — unit is inactive/dead
+  PASS  preflight — MainPID names a dead process
+  PASS  preflight — MainPID is not the Supervisor
+  PASS  preflight — unit not loaded
+  PASS  preflight — systemctl query fails
+  PASS  continuity — NRestarts drifts 0 -> 1
+  PASS  continuity — unit died during the deploy
+  PASS  continuity — restarted with a new PID and start time
+  PASS  continuity — systemctl query fails afterwards
+  PASS  rehearsal mode cannot launder a dead unit
+
+RESULT: PASS — the gate refuses to start on an unhealthy unit and fails
+        the run on any restart drift, while a steady unit still deploys.

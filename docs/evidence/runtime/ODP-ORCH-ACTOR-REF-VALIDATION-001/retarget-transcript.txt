@@ -1,0 +1,54 @@
+### 1. rollout blocker -> Codex2
+Warning: 10 invalid actor reference(s) in durable state; commands still run, but these fields hold prose or task ids instead of agent names:
+  - task ODP-PRODUCTION-MODEL-REGISTRY-001 waiting_for: actor reference is 66 characters (max 40); this looks like prose, not an agent name ('Human/Data owner: authoritative ForecastOps daily-history backfill')
+  - blockers[5] waiting_for: actor reference is 66 characters (max 40); this looks like prose, not an agent name ('Human/Data owner: authoritative ForecastOps daily-history backfill')
+  - blockers[8] waiting_for: actor reference is 314 characters (max 40); this looks like prose, not an agent name ('Cannot run Deploy Dev until PR #484 (task/ODP-DEPLOY-JOB-SECRET-BIN...')
+  - blockers[9] waiting_for: actor reference is 58 characters (max 40); this looks like prose, not an agent name ('Remediation task for migration-compatibility-smoke timeout')
+  - agents[23] name: actor reference looks like a task id, not an agent name ('ODP-ORCH-ANTIGRAVITY-LIVE-FALLBACK-001')
+  - agents[24] name: actor reference looks like a task id, not an agent name ('ODP-P10-FLEET-CONFLICT-REAUDIT-001')
+  - agents[25] name: actor reference is 66 characters (max 40); this looks like prose, not an agent name ('Human/Data owner: authoritative ForecastOps daily-history backfill')
+  - agents[26] name: actor reference is 314 characters (max 40); this looks like prose, not an agent name ('Cannot run Deploy Dev until PR #484 (task/ODP-DEPLOY-JOB-SECRET-BIN...')
+  - agents[27] name: actor reference is 58 characters (max 40); this looks like prose, not an agent name ('Remediation task for migration-compatibility-smoke timeout')
+  - agents[29] name: actor reference is 1446 characters (max 40); this looks like prose, not an agent name ('STOP FOR CODEX2 REVIEW ON EXACT HEAD 6ca4726c31f44ca96a7f3f85da3676...')
+  Repair with: ai-status.sh retarget_blocker <task-id> <agent> <reason>
+  Then remove leftover roster entries with: ai-status.sh prune_agents --apply
+Retargeted 1 blocker record(s) for ODP-ORCH-CLAUDE-DEFERRED-APPROVAL-LIVE-ROLLOUT-001 to Codex2
+
+### 2. model registry blocker -> Human/Ops
+Warning: 8 invalid actor reference(s) in durable state; commands still run, but these fields hold prose or task ids instead of agent names:
+  - blockers[8] waiting_for: actor reference is 314 characters (max 40); this looks like prose, not an agent name ('Cannot run Deploy Dev until PR #484 (task/ODP-DEPLOY-JOB-SECRET-BIN...')
+  - blockers[9] waiting_for: actor reference is 58 characters (max 40); this looks like prose, not an agent name ('Remediation task for migration-compatibility-smoke timeout')
+  - agents[23] name: actor reference looks like a task id, not an agent name ('ODP-ORCH-ANTIGRAVITY-LIVE-FALLBACK-001')
+  - agents[24] name: actor reference looks like a task id, not an agent name ('ODP-P10-FLEET-CONFLICT-REAUDIT-001')
+  - agents[25] name: actor reference is 66 characters (max 40); this looks like prose, not an agent name ('Human/Data owner: authoritative ForecastOps daily-history backfill')
+  - agents[26] name: actor reference is 314 characters (max 40); this looks like prose, not an agent name ('Cannot run Deploy Dev until PR #484 (task/ODP-DEPLOY-JOB-SECRET-BIN...')
+  - agents[27] name: actor reference is 58 characters (max 40); this looks like prose, not an agent name ('Remediation task for migration-compatibility-smoke timeout')
+  - agents[29] name: actor reference is 1446 characters (max 40); this looks like prose, not an agent name ('STOP FOR CODEX2 REVIEW ON EXACT HEAD 6ca4726c31f44ca96a7f3f85da3676...')
+  Repair with: ai-status.sh retarget_blocker <task-id> <agent> <reason>
+  Then remove leftover roster entries with: ai-status.sh prune_agents --apply
+Retargeted 1 blocker record(s) and task waiting_for for ODP-PRODUCTION-MODEL-REGISTRY-001 to Human/Ops
+
+### 3. redeploy blocker[8] -> Claude2
+Warning: 7 invalid actor reference(s) in durable state; commands still run, but these fields hold prose or task ids instead of agent names:
+  - blockers[9] waiting_for: actor reference is 58 characters (max 40); this looks like prose, not an agent name ('Remediation task for migration-compatibility-smoke timeout')
+  - agents[23] name: actor reference looks like a task id, not an agent name ('ODP-ORCH-ANTIGRAVITY-LIVE-FALLBACK-001')
+  - agents[24] name: actor reference looks like a task id, not an agent name ('ODP-P10-FLEET-CONFLICT-REAUDIT-001')
+  - agents[25] name: actor reference is 66 characters (max 40); this looks like prose, not an agent name ('Human/Data owner: authoritative ForecastOps daily-history backfill')
+  - agents[26] name: actor reference is 314 characters (max 40); this looks like prose, not an agent name ('Cannot run Deploy Dev until PR #484 (task/ODP-DEPLOY-JOB-SECRET-BIN...')
+  - agents[27] name: actor reference is 58 characters (max 40); this looks like prose, not an agent name ('Remediation task for migration-compatibility-smoke timeout')
+  - agents[29] name: actor reference is 1446 characters (max 40); this looks like prose, not an agent name ('STOP FOR CODEX2 REVIEW ON EXACT HEAD 6ca4726c31f44ca96a7f3f85da3676...')
+  Repair with: ai-status.sh retarget_blocker <task-id> <agent> <reason>
+  Then remove leftover roster entries with: ai-status.sh prune_agents --apply
+Retargeted 1 blocker record(s) for ODP-P10-DEV-REDEPLOY-VERIFY-001 to Claude2
+
+### 4. redeploy blocker[9] -> Antigravity3
+Warning: 6 invalid actor reference(s) in durable state; commands still run, but these fields hold prose or task ids instead of agent names:
+  - agents[23] name: actor reference looks like a task id, not an agent name ('ODP-ORCH-ANTIGRAVITY-LIVE-FALLBACK-001')
+  - agents[24] name: actor reference looks like a task id, not an agent name ('ODP-P10-FLEET-CONFLICT-REAUDIT-001')
+  - agents[25] name: actor reference is 66 characters (max 40); this looks like prose, not an agent name ('Human/Data owner: authoritative ForecastOps daily-history backfill')
+  - agents[26] name: actor reference is 314 characters (max 40); this looks like prose, not an agent name ('Cannot run Deploy Dev until PR #484 (task/ODP-DEPLOY-JOB-SECRET-BIN...')
+  - agents[27] name: actor reference is 58 characters (max 40); this looks like prose, not an agent name ('Remediation task for migration-compatibility-smoke timeout')
+  - agents[29] name: actor reference is 1446 characters (max 40); this looks like prose, not an agent name ('STOP FOR CODEX2 REVIEW ON EXACT HEAD 6ca4726c31f44ca96a7f3f85da3676...')
+  Repair with: ai-status.sh retarget_blocker <task-id> <agent> <reason>
+  Then remove leftover roster entries with: ai-status.sh prune_agents --apply
+Retargeted 1 blocker record(s) for ODP-P10-DEV-REDEPLOY-VERIFY-001 to Antigravity3

@@ -1,0 +1,100 @@
+# Fail-closed CLI matrix — real CLI, isolated status root
+# ai_status.py under test : /tmp/pantheon-worker-worktrees/oday-plus-supervisor-live/odp-orch-actor-ref-live-rollout-001/scripts/ai_status.py
+#   sha256                : 5e19c1c1ef4729f32470956cad3e3fe5972cb92dee5225a5d65db16df074950d
+# sandbox status root     : /tmp/actor-ref-rollout-sandbox-8XCb
+# live root is read-only here; its fingerprints are re-checked at the end.
+
+## sandbox baseline
+  ai-status.json           0d782cd3d8798836
+  ai-activity-log.jsonl    112702e46a4aaa24
+  current-work.md          6b7715e4a9c010a7
+  roster                   740b61a3de164857
+
+## AI_NAME = malformed prose
+#   value (99 chars): 'STOP FOR CHAIR REVIEW: the rollout window is closed until the coordinator re-checks this exact head'
+assign                 exit=1 state=UNCHANGED log=UNCHANGED roster=UNCHANGED current-work=UNCHANGED
+  first line: Invalid AI_NAME: actor reference is 99 characters (max 40); this looks like prose, not an agent name
+start                  exit=1 state=UNCHANGED log=UNCHANGED roster=UNCHANGED current-work=UNCHANGED
+  first line: Invalid AI_NAME: actor reference is 99 characters (max 40); this looks like prose, not an agent name
+progress               exit=1 state=UNCHANGED log=UNCHANGED roster=UNCHANGED current-work=UNCHANGED
+  first line: Invalid AI_NAME: actor reference is 99 characters (max 40); this looks like prose, not an agent name
+note                   exit=1 state=UNCHANGED log=UNCHANGED roster=UNCHANGED current-work=UNCHANGED
+  first line: Invalid AI_NAME: actor reference is 99 characters (max 40); this looks like prose, not an agent name
+reopen                 exit=1 state=UNCHANGED log=UNCHANGED roster=UNCHANGED current-work=UNCHANGED
+  first line: Invalid AI_NAME: actor reference is 99 characters (max 40); this looks like prose, not an agent name
+handoff                exit=1 state=UNCHANGED log=UNCHANGED roster=UNCHANGED current-work=UNCHANGED
+  first line: Invalid AI_NAME: actor reference is 99 characters (max 40); this looks like prose, not an agent name
+blocker                exit=1 state=UNCHANGED log=UNCHANGED roster=UNCHANGED current-work=UNCHANGED
+  first line: Invalid AI_NAME: actor reference is 99 characters (max 40); this looks like prose, not an agent name
+retarget_blocker       exit=1 state=UNCHANGED log=UNCHANGED roster=UNCHANGED current-work=UNCHANGED
+  first line: Invalid AI_NAME: actor reference is 99 characters (max 40); this looks like prose, not an agent name
+prune_agents           exit=1 state=UNCHANGED log=UNCHANGED roster=UNCHANGED current-work=UNCHANGED
+  first line: Invalid AI_NAME: actor reference is 99 characters (max 40); this looks like prose, not an agent name
+restore_approved       exit=1 state=UNCHANGED log=UNCHANGED roster=UNCHANGED current-work=UNCHANGED
+  first line: Invalid AI_NAME: actor reference is 99 characters (max 40); this looks like prose, not an agent name
+done                   exit=1 state=UNCHANGED log=UNCHANGED roster=UNCHANGED current-work=UNCHANGED
+  first line: Invalid AI_NAME: actor reference is 99 characters (max 40); this looks like prose, not an agent name
+supersede              exit=1 state=UNCHANGED log=UNCHANGED roster=UNCHANGED current-work=UNCHANGED
+  first line: Invalid AI_NAME: actor reference is 99 characters (max 40); this looks like prose, not an agent name
+approve                exit=1 state=UNCHANGED log=UNCHANGED roster=UNCHANGED current-work=UNCHANGED
+  first line: Invalid AI_NAME: actor reference is 99 characters (max 40); this looks like prose, not an agent name
+archive_migrate        exit=1 state=UNCHANGED log=UNCHANGED roster=UNCHANGED current-work=UNCHANGED
+  first line: Invalid AI_NAME: actor reference is 99 characters (max 40); this looks like prose, not an agent name
+wave open              exit=1 state=UNCHANGED log=UNCHANGED roster=UNCHANGED current-work=UNCHANGED
+  first line: Invalid AI_NAME: actor reference is 99 characters (max 40); this looks like prose, not an agent name
+wave close             exit=1 state=UNCHANGED log=UNCHANGED roster=UNCHANGED current-work=UNCHANGED
+  first line: Invalid AI_NAME: actor reference is 99 characters (max 40); this looks like prose, not an agent name
+
+## AI_NAME = well-shaped but unregistered
+#   value: 'Nessie9'
+assign                 exit=1 state=UNCHANGED log=UNCHANGED roster=UNCHANGED current-work=UNCHANGED
+  first line: Unknown AI_NAME: 'Nessie9' is not a registered agent.
+start                  exit=1 state=UNCHANGED log=UNCHANGED roster=UNCHANGED current-work=UNCHANGED
+  first line: Unknown AI_NAME: 'Nessie9' is not a registered agent.
+progress               exit=1 state=UNCHANGED log=UNCHANGED roster=UNCHANGED current-work=UNCHANGED
+  first line: Unknown AI_NAME: 'Nessie9' is not a registered agent.
+note                   exit=1 state=UNCHANGED log=UNCHANGED roster=UNCHANGED current-work=UNCHANGED
+  first line: Unknown AI_NAME: 'Nessie9' is not a registered agent.
+reopen                 exit=1 state=UNCHANGED log=UNCHANGED roster=UNCHANGED current-work=UNCHANGED
+  first line: Unknown AI_NAME: 'Nessie9' is not a registered agent.
+handoff                exit=1 state=UNCHANGED log=UNCHANGED roster=UNCHANGED current-work=UNCHANGED
+  first line: Unknown AI_NAME: 'Nessie9' is not a registered agent.
+blocker                exit=1 state=UNCHANGED log=UNCHANGED roster=UNCHANGED current-work=UNCHANGED
+  first line: Unknown AI_NAME: 'Nessie9' is not a registered agent.
+retarget_blocker       exit=1 state=UNCHANGED log=UNCHANGED roster=UNCHANGED current-work=UNCHANGED
+  first line: Unknown AI_NAME: 'Nessie9' is not a registered agent.
+prune_agents           exit=1 state=UNCHANGED log=UNCHANGED roster=UNCHANGED current-work=UNCHANGED
+  first line: Unknown AI_NAME: 'Nessie9' is not a registered agent.
+restore_approved       exit=1 state=UNCHANGED log=UNCHANGED roster=UNCHANGED current-work=UNCHANGED
+  first line: Unknown AI_NAME: 'Nessie9' is not a registered agent.
+done                   exit=1 state=UNCHANGED log=UNCHANGED roster=UNCHANGED current-work=UNCHANGED
+  first line: Unknown AI_NAME: 'Nessie9' is not a registered agent.
+supersede              exit=1 state=UNCHANGED log=UNCHANGED roster=UNCHANGED current-work=UNCHANGED
+  first line: Unknown AI_NAME: 'Nessie9' is not a registered agent.
+approve                exit=1 state=UNCHANGED log=UNCHANGED roster=UNCHANGED current-work=UNCHANGED
+  first line: Unknown AI_NAME: 'Nessie9' is not a registered agent.
+archive_migrate        exit=1 state=UNCHANGED log=UNCHANGED roster=UNCHANGED current-work=UNCHANGED
+  first line: Unknown AI_NAME: 'Nessie9' is not a registered agent.
+wave open              exit=1 state=UNCHANGED log=UNCHANGED roster=UNCHANGED current-work=UNCHANGED
+  first line: Unknown AI_NAME: 'Nessie9' is not a registered agent.
+wave close             exit=1 state=UNCHANGED log=UNCHANGED roster=UNCHANGED current-work=UNCHANGED
+  first line: Unknown AI_NAME: 'Nessie9' is not a registered agent.
+
+## live root fingerprints (informational — the live Supervisor keeps running
+## and writes on its own cadence, so a change here is not attributable to us)
+  ai-status.json           before=0d782cd3d8798836 after=0d782cd3d8798836 identical=True
+  ai-activity-log.jsonl    before=112702e46a4aaa24 after=112702e46a4aaa24 identical=True
+  current-work.md          before=6b7715e4a9c010a7 after=6b7715e4a9c010a7 identical=True
+  roster                   before=740b61a3de164857 after=740b61a3de164857 identical=True
+
+## hard isolation assertion: the matrix added no occurrence of its own
+## actor strings to the live root (counts must be identical; a non-zero
+## baseline is prior evidence prose, not a write from this run)
+  Nessie9          in live ai-status.json           before=0 after=0 identical=True
+  Nessie9          in live ai-activity-log.jsonl    before=1 after=1 identical=True
+  Nessie9          in live current-work.md          before=0 after=0 identical=True
+  prose AI_NAME    in live ai-status.json           before=0 after=0 identical=True
+  prose AI_NAME    in live ai-activity-log.jsonl    before=0 after=0 identical=True
+  prose AI_NAME    in live current-work.md          before=0 after=0 identical=True
+
+RESULT: PASS — every actor-bearing command failed closed with zero mutation

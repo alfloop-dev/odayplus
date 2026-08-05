@@ -1,0 +1,90 @@
+# Fail-before-mutation receipt — real CLI, isolated status root (revision 2)
+# date: 2026-07-29T06:21:33Z   HEAD: 06d28b5b1fd9e3ece67f2a87e6cb4e0e1af4053c
+# sandbox status root: /tmp/actor-ref-sandbox-8h4A  (copied byte-for-byte from the live root; live root is never written)
+# expectation: exit != 0, state UNCHANGED, log UNCHANGED for every actor-bearing command.
+
+## AI_NAME = malformed prose
+assign                 AI_NAME=STOP FOR C exit=1 state=UNCHANGED log=UNCHANGED
+  first line: Invalid AI_NAME: actor reference is 87 characters (max 40); this looks like prose, not an agent name
+start                  AI_NAME=STOP FOR C exit=1 state=UNCHANGED log=UNCHANGED
+  first line: Invalid AI_NAME: actor reference is 87 characters (max 40); this looks like prose, not an agent name
+progress               AI_NAME=STOP FOR C exit=1 state=UNCHANGED log=UNCHANGED
+  first line: Invalid AI_NAME: actor reference is 87 characters (max 40); this looks like prose, not an agent name
+note                   AI_NAME=STOP FOR C exit=1 state=UNCHANGED log=UNCHANGED
+  first line: Invalid AI_NAME: actor reference is 87 characters (max 40); this looks like prose, not an agent name
+reopen                 AI_NAME=STOP FOR C exit=1 state=UNCHANGED log=UNCHANGED
+  first line: Invalid AI_NAME: actor reference is 87 characters (max 40); this looks like prose, not an agent name
+handoff                AI_NAME=STOP FOR C exit=1 state=UNCHANGED log=UNCHANGED
+  first line: Invalid AI_NAME: actor reference is 87 characters (max 40); this looks like prose, not an agent name
+blocker                AI_NAME=STOP FOR C exit=1 state=UNCHANGED log=UNCHANGED
+  first line: Invalid AI_NAME: actor reference is 87 characters (max 40); this looks like prose, not an agent name
+retarget_blocker       AI_NAME=STOP FOR C exit=1 state=UNCHANGED log=UNCHANGED
+  first line: Invalid AI_NAME: actor reference is 87 characters (max 40); this looks like prose, not an agent name
+prune_agents           AI_NAME=STOP FOR C exit=1 state=UNCHANGED log=UNCHANGED
+  first line: Invalid AI_NAME: actor reference is 87 characters (max 40); this looks like prose, not an agent name
+restore_approved       AI_NAME=STOP FOR C exit=1 state=UNCHANGED log=UNCHANGED
+  first line: Invalid AI_NAME: actor reference is 87 characters (max 40); this looks like prose, not an agent name
+done                   AI_NAME=STOP FOR C exit=1 state=UNCHANGED log=UNCHANGED
+  first line: Invalid AI_NAME: actor reference is 87 characters (max 40); this looks like prose, not an agent name
+supersede              AI_NAME=STOP FOR C exit=1 state=UNCHANGED log=UNCHANGED
+  first line: Invalid AI_NAME: actor reference is 87 characters (max 40); this looks like prose, not an agent name
+approve                AI_NAME=STOP FOR C exit=1 state=UNCHANGED log=UNCHANGED
+  first line: Invalid AI_NAME: actor reference is 87 characters (max 40); this looks like prose, not an agent name
+archive_migrate        AI_NAME=STOP FOR C exit=1 state=UNCHANGED log=UNCHANGED
+  first line: Invalid AI_NAME: actor reference is 87 characters (max 40); this looks like prose, not an agent name
+wave open              AI_NAME=STOP FOR C exit=1 state=UNCHANGED log=UNCHANGED
+  first line: Invalid AI_NAME: actor reference is 87 characters (max 40); this looks like prose, not an agent name
+wave close             AI_NAME=STOP FOR C exit=1 state=UNCHANGED log=UNCHANGED
+  first line: Invalid AI_NAME: actor reference is 87 characters (max 40); this looks like prose, not an agent name
+
+## AI_NAME = well-shaped but unregistered (Nessie9)
+assign                 AI_NAME=Nessie9    exit=1 state=UNCHANGED log=UNCHANGED
+  first line: Unknown AI_NAME: 'Nessie9' is not a registered agent.
+start                  AI_NAME=Nessie9    exit=1 state=UNCHANGED log=UNCHANGED
+  first line: Unknown AI_NAME: 'Nessie9' is not a registered agent.
+progress               AI_NAME=Nessie9    exit=1 state=UNCHANGED log=UNCHANGED
+  first line: Unknown AI_NAME: 'Nessie9' is not a registered agent.
+note                   AI_NAME=Nessie9    exit=1 state=UNCHANGED log=UNCHANGED
+  first line: Unknown AI_NAME: 'Nessie9' is not a registered agent.
+reopen                 AI_NAME=Nessie9    exit=1 state=UNCHANGED log=UNCHANGED
+  first line: Unknown AI_NAME: 'Nessie9' is not a registered agent.
+handoff                AI_NAME=Nessie9    exit=1 state=UNCHANGED log=UNCHANGED
+  first line: Unknown AI_NAME: 'Nessie9' is not a registered agent.
+blocker                AI_NAME=Nessie9    exit=1 state=UNCHANGED log=UNCHANGED
+  first line: Unknown AI_NAME: 'Nessie9' is not a registered agent.
+retarget_blocker       AI_NAME=Nessie9    exit=1 state=UNCHANGED log=UNCHANGED
+  first line: Unknown AI_NAME: 'Nessie9' is not a registered agent.
+prune_agents           AI_NAME=Nessie9    exit=1 state=UNCHANGED log=UNCHANGED
+  first line: Unknown AI_NAME: 'Nessie9' is not a registered agent.
+restore_approved       AI_NAME=Nessie9    exit=1 state=UNCHANGED log=UNCHANGED
+  first line: Unknown AI_NAME: 'Nessie9' is not a registered agent.
+done                   AI_NAME=Nessie9    exit=1 state=UNCHANGED log=UNCHANGED
+  first line: Unknown AI_NAME: 'Nessie9' is not a registered agent.
+supersede              AI_NAME=Nessie9    exit=1 state=UNCHANGED log=UNCHANGED
+  first line: Unknown AI_NAME: 'Nessie9' is not a registered agent.
+approve                AI_NAME=Nessie9    exit=1 state=UNCHANGED log=UNCHANGED
+  first line: Unknown AI_NAME: 'Nessie9' is not a registered agent.
+archive_migrate        AI_NAME=Nessie9    exit=1 state=UNCHANGED log=UNCHANGED
+  first line: Unknown AI_NAME: 'Nessie9' is not a registered agent.
+wave open              AI_NAME=Nessie9    exit=1 state=UNCHANGED log=UNCHANGED
+  first line: Unknown AI_NAME: 'Nessie9' is not a registered agent.
+wave close             AI_NAME=Nessie9    exit=1 state=UNCHANGED log=UNCHANGED
+  first line: Unknown AI_NAME: 'Nessie9' is not a registered agent.
+
+## positive control — the gate is fail-CLOSED, not fail-always
+# a registered actor must still be able to drive the same commands.
+note (AI_NAME=Claude, the real owner)   exit=0 state=MUTATED log_lines=4177->4178
+  logged actor: Claude / note / sandbox positive control
+
+## live root: not written by this receipt
+# ai-status.json is byte-identical to the pre-run fingerprint in
+# merged-config-authority-r2.txt (33c5c979c56fd01f).
+#
+# ai-activity-log.jsonl DID advance by one line during the run — honestly
+# reported rather than glossed. It is not from this receipt: every command
+# above ran with PANTHEON_STATUS_ROOT pointed at the sandbox, so it physically
+# cannot append here. The added line is the live Supervisor's own watchdog:
+#
+#   2026-07-29T06:21:53Z | Orchestrator | watchdog_probe | supervisor_healthy
+#
+# The sandbox positive-control note landed in the sandbox log, not this one.
