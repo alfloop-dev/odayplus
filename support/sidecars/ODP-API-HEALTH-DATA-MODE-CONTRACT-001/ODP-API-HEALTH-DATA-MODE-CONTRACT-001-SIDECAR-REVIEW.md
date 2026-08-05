@@ -2,10 +2,12 @@
 
 - Sidecar task: `ODP-API-HEALTH-DATA-MODE-CONTRACT-001-SIDECAR-REVIEW`
 - Parent task: `ODP-API-HEALTH-DATA-MODE-CONTRACT-001`
-- Sidecar owner: `Codex8`
-- Assigned sidecar reviewer / parent owner: `Antigravity4`
-- Parent reviewer: `Antigravity7`
+- Sidecar owner: `Codex8` (2026-08-02 capture) → `Claude` (2026-08-05 refresh)
+- Assigned sidecar reviewer: `Antigravity4`
+- Parent owner (current): `Antigravity4`
+- Parent reviewer at capture time: `Antigravity7`
 - Evidence captured: `2026-08-02` UTC
+- Evidence refreshed: `2026-08-05` UTC — see § Review delta 2026-08-05
 - Parent branch: `origin/task/ODP-API-HEALTH-DATA-MODE-CONTRACT-001`
 - Exact reviewed parent HEAD: `6b4d56e892b5d4886db932a4acaf20b192a23538`
 - Parent PR: `#574` (`dev` <- `task/ODP-API-HEALTH-DATA-MODE-CONTRACT-001`)
@@ -94,8 +96,107 @@ The live task state records `last_approved_head=def980ae9c38c0e6e76722f30812ae07
 - Keep the parent task in review until the exact head is stamped and PR `#574` is no longer blocked by the evidence-ancestry checks.
 - After merge, rerun the downstream exact-SHA deployment verification. Do not mark `ODP-P10-DEV-REDEPLOY-VERIFY-001` unblocked from this packet alone.
 
+## Review delta 2026-08-05
+
+Everything above is preserved as the original `2026-08-02` capture. This section records what changed since then. It is evidence only and still changes no canonical truth.
+
+Refresh reference points:
+
+- Sidecar refresh base: `d675044e` on `task/ODP-API-HEALTH-DATA-MODE-CONTRACT-001-SIDECAR-REVIEW`, which merges `origin/dev` at `77567b5e9b82707226bf008e2576c3f6e430b152`.
+- Parent branch `origin/task/ODP-API-HEALTH-DATA-MODE-CONTRACT-001` is unmoved at `6b4d56e892b5d4886db932a4acaf20b192a23538` (last PR update `2026-08-02T07:09:08Z`).
+- The `2026-08-02` capture itself merged to `dev` on `2026-08-05T05:47:26Z` as PR `#635`, squashed commit `865931a6`.
+
+### 1. Exact-head review completed; parent is now `review_approved`
+
+Reviewer attention point 1 has been satisfied. `Codex` approved exact pushed HEAD `6b4d56e8` at `2026-08-02T08:14:08Z`, `task-review-gate` flipped `Pending` → `SUCCESS`, and the live task now records `status=review_approved` with `approved_head=last_approved_head=6b4d56e892b5d4886db932a4acaf20b192a23538`. The stale `def980ae` stamp described above is no longer the operative one.
+
+### 2. The approved head can no longer merge — base advance is required
+
+This is the primary new blocker and it is different from the one recorded on `2026-08-02`.
+
+| Signal | 2026-08-02 capture | 2026-08-05 refresh |
+| --- | --- | --- |
+| `mergeStateStatus` | `BLOCKED` (failing checks) | `DIRTY` |
+| `mergeable` | not recorded | `CONFLICTING` |
+| Distance behind `origin/dev` | 0 (freshly rebased onto `475f6d5e`) | 296 commits |
+| `task-review-gate` | `Pending` | `SUCCESS` |
+| `product` | `Failure` | `Failure` — same `2026-08-02T07:09` run, never rerun |
+| `product-e2e-gate` | `Failure` | `Failure` — same run, never rerun |
+
+The merge conflict is narrow. A `git merge-tree --write-tree` probe of `origin/dev` against the parent HEAD reports exactly one conflicted path:
+
+```text
+CONFLICT (content): Merge conflict in tests/ops/test_cloud_run_live_deployment.py
+```
+
+Consequence for review sequencing: the parent cannot merge at `6b4d56e8`, so the owner must base-advance the branch, which produces a new HEAD, which invalidates `approved_head=6b4d56e8` under the same exact-head rule this packet raised in attention point 1. **The current approval will not survive the required base advance.** Plan for one more re-review rather than treating `review_approved` as terminal.
+
+### 3. Reviewed scope has shrunk: the producer-side change already landed on `dev` independently
+
+`apps/api/oday_api/main.py` is now byte-identical between `origin/dev` and the parent HEAD. The top-level `data_mode` on `/platform/health` and `/readiness` reached `dev` through a different lane:
+
+```text
+010ceef7  ODP-OPERATOR-LIVE-PROVENANCE-HEALTH-001: anchor health mode contract
+          LLM-Agent: Codex   Reviewer: Codex8   2026-08-02T08:21:08Z
+```
+
+That is roughly twenty minutes after this packet was first committed. The shared merge base `475f6d5e` contains no `data_mode` key in `main.py`, so this is convergent delivery of the same contract, not a pre-existing field.
+
+Revised four-file table as of `origin/dev` `77567b5e`:
+
+| File | Still unique to the parent branch? | Note |
+| --- | --- | --- |
+| `apps/api/oday_api/main.py` | **No — now a no-op** | Identical to `dev`; superseded by `010ceef7`. |
+| `scripts/deployment/validate_cloud_run_live_deployment.py` | Yes (+28 / −10) | Resolver broadening is the real remaining payload. |
+| `tests/ops/test_cloud_run_live_deployment.py` | Yes, and conflicting | `dev` gained `test_real_app_health_data_mode_matches_unchanged_deploy_validator` from the same `010ceef7` lane; it overlaps the parent's `test_real_app_platform_health_and_readiness_data_mode_contract`. |
+| `tests/reliability/test_health_endpoints.py` | Yes (+2) | Two `data_mode == "fixture"` assertions on the existing healthy-path tests. |
+
+### 4. The original failure mode is already closed on `dev`; the parent is now defense-in-depth
+
+`dev`'s `_declared_data_mode` still only walks `payload`, `details`, `dependencies`, and `meta` for the keys `data_mode` / `dataMode` / `binding_mode` / `bindingMode`. It does **not** read `modes.data.mode` or `details.data.mode`. But because `dev`'s health endpoints now emit `data_mode` at the response root, the resolver already returns the correct mode for `/platform/health` and `/readiness` today.
+
+So the parent's validator change no longer repairs a live break. It broadens the resolver to nested envelope shapes that the current API producers do not rely on. That is defensible hardening, but the owner and reviewer should re-justify it on those terms rather than on the original outage rationale, and should decide explicitly whether the nested-shape support is still wanted.
+
+### 5. Conflict resolution guidance for the base advance
+
+The single conflicted file needs reconciliation, not blind union. `dev` and the parent branch each grew a real-app health/data-mode composition test from the same root cause:
+
+- `dev`: `test_real_app_health_data_mode_matches_unchanged_deploy_validator` (`010ceef7`)
+- parent: `test_real_app_platform_health_and_readiness_data_mode_contract` (`6b4d56e8`)
+
+Keeping both verbatim would leave two overlapping real-app boots asserting the same contract. The parent's version additionally covers the `unavailable` 503 and `fixture` rejection cases, which the reviewer should confirm survive whichever reconciliation is chosen.
+
+### 6. Baseline verification at the refresh base
+
+Run in this sidecar worktree at `d675044e` (i.e. current `dev` content, no parent changes applied):
+
+```bash
+/home/lupin/oday-plus/.venv/bin/pytest tests/reliability/test_health_endpoints.py
+# 6 passed
+
+/home/lupin/oday-plus/.venv/bin/pytest tests/ops/test_cloud_run_live_deployment.py \
+  -k 'data_mode or declared'
+# 3 passed, 370 deselected
+
+git diff --check
+# clean
+```
+
+Both runs emitted only the existing Starlette/`httpx` TestClient deprecation warning. This establishes that `dev` is green on the health data-mode surface **without** the parent branch merged — which is the evidence behind § 4.
+
+### 7. Attention points that remain open
+
+- Attention point 1 (exact-head review): satisfied at `6b4d56e8`, but will reopen after the required base advance. See § 2.
+- Attention point 2 (focused green ≠ PR green): still true, and now compounded — `product` and `product-e2e-gate` have not been rerun since `2026-08-02T07:09`, so their results describe a 296-commit-stale tree and should not be read as current.
+- Attention point 3 (envelope disagreement untested): **still open.** Neither the `dev` resolver nor the parent resolver asserts anything when duplicate declarations disagree; both take first-non-empty precedence. No consistency test was added on either side.
+- Attention point 4 (deploy rerun): **still open.** `ODP-P10-DEV-REDEPLOY-VERIFY-001` remains `blocked` with `waiting_for=Human/Ops`, owner `Antigravity3`. Nothing in this packet unblocks it.
+
+### 8. Review-independence note
+
+On `2026-08-05T11:43:38Z` the parent's reviewer was auto-reassigned `Codex` → `Claude` because `Codex` is a sidecar-only lane, and the parent owner is now `Antigravity4`. `Claude` also owns this sidecar packet. Flagging the overlap so the parent lane can decide whether a different reviewer should stamp the post-base-advance head; this packet takes no position on the parent's disposition.
+
 ## Sidecar boundary and handoff
 
 This artifact is the only repository output of `ODP-API-HEALTH-DATA-MODE-CONTRACT-001-SIDECAR-REVIEW`. It records evidence and reviewer questions only. It does not modify or redefine the health contract, runtime behavior, release gates, canonical documents, or parent task disposition.
 
-Handoff target: `Antigravity4`. Parent owner should decide whether to incorporate these findings into the parent review exchange and coordinate the exact-head review with `Antigravity7`.
+Handoff target: `Antigravity4`, who is both the assigned sidecar reviewer and the current parent owner. The parent lane should decide whether to incorporate these findings into the parent review exchange, and in particular whether to act on § 2 (base advance invalidates the current approval) and § 4 (the remaining parent change is hardening, not outage repair).
