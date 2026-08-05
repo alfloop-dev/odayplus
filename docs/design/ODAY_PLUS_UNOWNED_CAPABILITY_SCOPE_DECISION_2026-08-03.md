@@ -1,12 +1,13 @@
 ---
 doc_id: ODP-UNOWNED-CAPABILITY-SCOPE-DECISION-2026-08-03
 title: Unowned Spec Capability Scope Decision Request
-status: decision-required
+status: decided
 date: 2026-08-03
 language: zh-TW
 owner: "Product Lead"
 approvers: "Product Lead / Architecture Owner / Program Manager"
-decision_due: pending
+decided_at: 2026-08-04
+decided_by: Human/Ops
 ---
 
 # 規格 MUST 能力但目前無 owner 的範圍決策請求
@@ -114,10 +115,64 @@ Inbox/Detail、`PRICE-002` Pricing Simulation 互動、`AD-002` Lift Report、
 
 ## 6. 決策記錄
 
+**Human/Ops 於 2026-08-04 對五項全部裁決為 A（排入下一個 release）。**
+無一項走 deviation 或範圍變更，因此 `ODP-SA-06` 與 `ODP-UX-03` 的原始 MUST 範圍
+維持不變，五項都必須實作到規格深度。
+
 | 能力 | 決策 | 決策者 | 日期 | 後續 task id |
 |---|---|---|---|---|
-| U-1 Model Release Controller UI | _pending_ | | | |
-| U-2 User and Role Management UI | _pending_ | | | |
-| U-3 Feature Flag Management UI | _pending_ | | | |
-| U-4 通知實際投遞 | _pending_ | | | |
-| U-5 任務附件 | _pending_ | | | |
+| U-3 Feature Flag Management UI | **A** | Human/Ops | 2026-08-04 | `ODP-CAP-FEATURE-FLAG-UI-001` |
+| U-4 通知實際投遞 | **A** | Human/Ops | 2026-08-04 | `ODP-CAP-NOTIFICATION-DELIVERY-001` |
+| U-5 任務附件 | **A** | Human/Ops | 2026-08-04 | `ODP-CAP-TASK-ATTACHMENTS-001` |
+| U-1 Model Release Controller UI | **A** | Human/Ops | 2026-08-04 | `ODP-CAP-MODEL-RELEASE-UI-001` |
+| U-2 User and Role Management UI | **A** | Human/Ops | 2026-08-04 | `ODP-CAP-USER-ROLE-UI-001` |
+
+排序依 §4 建議優先序，未按 U 編號。
+
+## 7. 五項的驗收要點
+
+每個 task 的驗收必須回到原始規格條文，不得以「有畫面」結案。
+
+### `ODP-CAP-FEATURE-FLAG-UI-001`（U-3）
+
+`FR-SHARED-004` 的原文是「未啟用 Feature Flag 時 **UI、API、Job 均不得執行**該功能」。
+因此驗收不只是管理介面，還要證明三個執行面都受同一個 flag 控制。這是
+`FR-GOV-009` 指定給 PriceOps、AdLift、NetPlan、模型發布與決策政策變更的
+kill-switch 機制，必須能在營運時段切換而不需重新部署。
+
+### `ODP-CAP-NOTIFICATION-DELIVERY-001`（U-4）
+
+`FR-SHARED-006` 要求站內、Email、Webhook。目前 webhook 已具備，缺的是另外兩者。
+`modules/notifications/domain/models.py` 的 `channels` 預設已是 `["email"]`，
+所以是補投遞實作而非改資料模型。驗收要涵蓋規格列舉的五種觸發：
+任務指派、逾時、核准、失敗、回滾。
+
+`ODP-PLAN-UAT-SIGNOFF-001` 的六角色簽核依賴此項——角色收不到指派通知就無法真實執行。
+
+### `ODP-CAP-TASK-ATTACHMENTS-001`（U-5）
+
+`FR-OPS-002` 列舉「任務、指派、留言、附件、核准、升級與通知」，目前只有附件缺。
+需一併處理儲存、權限範圍與 `FR-SHARED-007` 的敏感度遮罩，
+因為現勘照片與租約掃描屬受控資料。
+
+### `ODP-CAP-MODEL-RELEASE-UI-001`（U-1）
+
+後端 `apps/api/app/routes/learninghub.py` 已有 10 個 endpoint，
+含 `POST /releases` 與 `POST /releases/{release_id}/monitor`，所以是補操作面。
+`FR-LH-003` 要求 Backtest、Champion/Challenger、Shadow、Canary、Rollback 皆可操作，
+且依 `FR-GOV-009` 每個動作都要留下核准與稽核軌跡。
+
+### `ODP-CAP-USER-ROLE-UI-001`（U-2）
+
+`FR-OPS-003` 要求依 Tenant/Brand/Region/Store/Role/Attribute 控制資料。
+現行角色異動需改 `ODP_AUTH_PRINCIPAL_MAP` secret 並重新部署，
+既無自助管理也無異動稽核。驗收需包含異動的 audit trail。
+
+> 若實作中判定應由外部 IdP 承擔而非平台自建，屬範圍變更，
+> 須依 `ODP-00-04` 補 ADR 後才可調整此 task 的範圍——不得直接縮小交付。
+
+## 8. 對 RTM 與 Final Gate 的影響
+
+五項都是 A，代表 `ODP-PLAN-FINAL-GATE-AUDIT-001` 重跑 84-row RTM 時，
+這些能力會以「已排期、未交付」的形式出現，而非無法歸類的缺口。
+在五個 task 完成前，相關 FR 不得標記為 verified。
