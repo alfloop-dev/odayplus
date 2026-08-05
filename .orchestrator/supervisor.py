@@ -53,6 +53,7 @@ from approval_queue import (
     prune_stale_approvals,
     resolve_approval,
 )
+from branch_drift_alarms import check_branch_drift
 from common import (
     agent_config_for,
     command_exists,
@@ -11578,6 +11579,8 @@ def run_once(
         changed = reconcile_queue_records(config, state) or changed
         changed = prune_event_queue(config, state) or changed
         changed = sync_github_bus(config, state) or changed
+        # After the bus sync, so PR state is as fresh as this cycle can make it.
+        changed = check_branch_drift(config, state) or changed
         trim_worker_history(state, int(config.get("supervisor", {}).get("max_worker_history", 200)))
         trim_seen_events(state, int(config.get("watcher", {}).get("max_seen_events", 2000)))
         changed = prune_orphan_worktrees(config, state) or changed
