@@ -33,6 +33,9 @@ _STORE_OPS_FIXTURE_IDS = frozenset(
         "ISS-1008",
         "AUD-OPS-7001",
         "AUD-OPS-7002",
+        "ATT-1024-PHOTO",
+        "ATT-1024-LEASE",
+        "ATT-1021-DIAG",
     }
 )
 
@@ -396,6 +399,50 @@ def _seed_state() -> dict[str, Any]:
                 "metadata": {"issueId": "ISS-1024", "light": "operations", "lightStatus": "red"},
             },
         ],
+        "attachments": [
+            {
+                "id": "ATT-1024-PHOTO",
+                "issueId": "ISS-1024",
+                "tenantId": "tenant-a",
+                "filename": "site_inspection_photo_01.jpg",
+                "fileType": "image/jpeg",
+                "sizeBytes": 245760,
+                "classification": "site_photo",
+                "sensitivityLevel": "controlled",
+                "uploadedBy": "opsLead",
+                "uploadedAt": "2026-07-05T06:30:00.000Z",
+                "storageUri": "store-ops/attachments/ISS-1024/ATT-1024-PHOTO.jpg",
+                "contentBase64": "aW1hZ2UtYnl0ZXMtcGxhY2Vob2xkZXI=",
+            },
+            {
+                "id": "ATT-1024-LEASE",
+                "issueId": "ISS-1024",
+                "tenantId": "tenant-a",
+                "filename": "store_lease_agreement_scan.pdf",
+                "fileType": "application/pdf",
+                "sizeBytes": 1048576,
+                "classification": "lease_scan",
+                "sensitivityLevel": "controlled",
+                "uploadedBy": "opsLead",
+                "uploadedAt": "2026-07-05T06:35:00.000Z",
+                "storageUri": "store-ops/attachments/ISS-1024/ATT-1024-LEASE.pdf",
+                "contentBase64": "cGRmLWJ5dGVzLXBsYWNlaG9sZGVy",
+            },
+            {
+                "id": "ATT-1021-DIAG",
+                "issueId": "ISS-1021",
+                "tenantId": "tenant-a",
+                "filename": "hvac_diagnostic_log.txt",
+                "fileType": "text/plain",
+                "sizeBytes": 4096,
+                "classification": "general",
+                "sensitivityLevel": "public",
+                "uploadedBy": "facilitiesLead",
+                "uploadedAt": "2026-07-05T05:00:00.000Z",
+                "storageUri": "store-ops/attachments/ISS-1021/ATT-1021-DIAG.txt",
+                "contentBase64": "ZGlhZ25vc3RpYy1sb2ctY29udGVudA==",
+            },
+        ],
         "nextAuditOrdinal": 7003,
     }
 
@@ -588,6 +635,173 @@ class StoreOpsService:
         issue = _find_issue(state, issue_id)
         evidence = [item for item in state["evidence"] if item["id"] in issue["evidenceIds"]]
         return {"issue": _clone(issue), "evidence": _clone(evidence)}
+
+    def list_attachments(
+        self,
+        issue_id: str,
+        masking_profile: str = "masked",
+        user_roles: Iterable[str] | None = None,
+        tenant_id: str | None = None,
+    ) -> list[dict[str, Any]]:
+        state = self._repository.get_state()
+        _find_issue(state, issue_id)
+        raw_attachments = state.get("attachments", [])
+        result = []
+        for att in raw_attachments:
+            if att.get("issueId") == issue_id:
+                if tenant_id and att.get("tenantId") and att.get("tenantId") != tenant_id:
+                    continue
+                result.append(mask_attachment(att, masking_profile=masking_profile, user_roles=user_roles))
+        return result
+
+    def get_attachment(
+        self,
+        issue_id: str,
+        attachment_id: str,
+        masking_profile: str = "masked",
+        user_roles: Iterable[str] | None = None,
+        tenant_id: str | None = None,
+    ) -> dict[str, Any]:
+        state = self._repository.get_state()
+        _find_issue(state, issue_id)
+        for att in state.get("attachments", []):
+            if att.get("issueId") == issue_id and att.get("id") == attachment_id:
+                if tenant_id and att.get("tenantId") and att.get("tenantId") != tenant_id:
+                    raise StoreOpsNotFound(f"attachment not found for tenant: {attachment_id}")
+                return mask_attachment(att, masking_profile=masking_profile, user_roles=user_roles)
+        raise StoreOpsNotFound(f"attachment not found: {attachment_id}")
+
+    def add_attachment(
+        self,
+        *,
+        issue_id: str,
+        payload: Mapping[str, Any],
+        actor_role_id: str = "opsLead",
+        actor_name: str | None = None,
+        tenant_id: str = "tenant-a",
+        correlation_id: str = "",
+    ) -> dict[str, Any]:
+        state = self._repository.get_state()
+        _find_issue(state, issue_id)
+        filename = str(payload.get("filename", "")).strip()
+        if not filename:
+            raise StoreOpsPolicyError("attachment filename is required")
+
+        existing = [a for a in state.get("attachments", []) if a.get("issueId") == issue_id]
+        att_id = f"ATT-{issue_id.split('-')[-1]}-{len(existing) + 1:02d}"
+        file_type = str(payload.get("fileType", "application/octet-stream"))
+        classification = str(payload.get("classification", "site_photo"))
+        sensitivity = str(payload.get("sensitivityLevel", "controlled"))
+        content_b64 = payload.get("contentBase64") or None
+        size_bytes = len(content_b64) if content_b64 else int(payload.get("sizeBytes", 1024))
+
+        attachment_record = {
+            "id": att_id,
+            "issueId": issue_id,
+            "tenantId": tenant_id,
+            "filename": filename,
+            "fileType": file_type,
+            "sizeBytes": size_bytes,
+            "classification": classification,
+            "sensitivityLevel": sensitivity,
+            "uploadedBy": actor_name or actor_role_id,
+            "uploadedAt": _now_iso(),
+            "storageUri": f"store-ops/attachments/{issue_id}/{att_id}-{filename}",
+            "contentBase64": content_b64,
+        }
+        if "attachments" not in state:
+            state["attachments"] = []
+        state["attachments"].append(attachment_record)
+
+        _append_audit_event(
+            state,
+            actor_role_id=actor_role_id,
+            actor_name=actor_name or actor_role_id,
+            action="attachment.uploaded",
+            category="attachment",
+            message=f"Attachment {att_id} ({filename}) uploaded to issue {issue_id}.",
+            metadata={
+                "issueId": issue_id,
+                "attachmentId": att_id,
+                "classification": classification,
+                "sensitivityLevel": sensitivity,
+                "filename": filename,
+            },
+        )
+        self._repository.save_state(state)
+        return mask_attachment(attachment_record, masking_profile="masked")
+
+    def download_attachment(
+        self,
+        issue_id: str,
+        attachment_id: str,
+        masking_profile: str = "masked",
+        user_roles: Iterable[str] | None = None,
+        tenant_id: str | None = None,
+    ) -> dict[str, Any]:
+        att = self.get_attachment(
+            issue_id=issue_id,
+            attachment_id=attachment_id,
+            masking_profile=masking_profile,
+            user_roles=user_roles,
+            tenant_id=tenant_id,
+        )
+        state = self._repository.get_state()
+        roles_list = list(user_roles or ["opsLead"])
+        _append_audit_event(
+            state,
+            actor_role_id=roles_list[0] if roles_list else "opsLead",
+            actor_name=roles_list[0] if roles_list else "Operator",
+            action="attachment.downloaded",
+            category="attachment",
+            message=f"Attachment {attachment_id} downloaded for issue {issue_id} (masked={att.get('masked')}).",
+            metadata={
+                "issueId": issue_id,
+                "attachmentId": attachment_id,
+                "masked": att.get("masked"),
+            },
+        )
+        self._repository.save_state(state)
+        return att
+
+    def delete_attachment(
+        self,
+        *,
+        issue_id: str,
+        attachment_id: str,
+        actor_role_id: str = "opsLead",
+        actor_name: str | None = None,
+        tenant_id: str = "tenant-a",
+        correlation_id: str = "",
+    ) -> dict[str, Any]:
+        state = self._repository.get_state()
+        _find_issue(state, issue_id)
+        attachments = state.get("attachments", [])
+        found_idx = -1
+        for idx, att in enumerate(attachments):
+            if att.get("issueId") == issue_id and att.get("id") == attachment_id:
+                if tenant_id and att.get("tenantId") and att.get("tenantId") != tenant_id:
+                    raise StoreOpsNotFound(f"attachment not found for tenant: {attachment_id}")
+                found_idx = idx
+                break
+        if found_idx == -1:
+            raise StoreOpsNotFound(f"attachment not found: {attachment_id}")
+
+        attachments.pop(found_idx)
+        _append_audit_event(
+            state,
+            actor_role_id=actor_role_id,
+            actor_name=actor_name or actor_role_id,
+            action="attachment.deleted",
+            category="attachment",
+            message=f"Attachment {attachment_id} deleted from issue {issue_id}.",
+            metadata={
+                "issueId": issue_id,
+                "attachmentId": attachment_id,
+            },
+        )
+        self._repository.save_state(state)
+        return {"success": True, "deletedAttachmentId": attachment_id}
 
     def transition_issue(
         self,
@@ -912,6 +1126,49 @@ def _require_status(issue: Mapping[str, Any], allowed: set[str], action: str) ->
         raise StoreOpsConflict(
             f"{action} is invalid for issue {issue.get('id')} in status {status}; expected {allowed_list}"
         )
+
+
+def mask_attachment(
+    attachment: Mapping[str, Any],
+    masking_profile: str = "masked",
+    user_roles: Iterable[str] | None = None,
+) -> dict[str, Any]:
+    item = _clone(dict(attachment))
+    classification = str(item.get("classification", "general")).lower()
+    sensitivity = str(item.get("sensitivityLevel", "controlled")).lower()
+    is_controlled = (
+        classification in ("site_photo", "lease_scan", "controlled_document")
+        or sensitivity in ("controlled", "restricted")
+    )
+    roles = set(user_roles or [])
+    unmasked_roles = {
+        "compliance_officer",
+        "finance_legal",
+        "auditor",
+        "platform_admin",
+        "data_owner",
+        "privacy_admin",
+        "unmasked",
+        "attachments.unmasked",
+    }
+    has_unmasked_scope = bool(roles & unmasked_roles)
+
+    if is_controlled and (masking_profile == "masked" or not has_unmasked_scope):
+        att_id = item.get("id", "ATT-UNKNOWN")
+        class_label = classification.upper().replace("_", "-")
+        filename = str(item.get("filename", ""))
+        ext = filename.split(".")[-1] if "." in filename else "dat"
+        item["filename"] = f"[MASKED-{class_label}-{att_id}.{ext}]"
+        item["storageUri"] = f"[MASKED-STORAGE-URI-{att_id}]"
+        if "contentBase64" in item and item["contentBase64"] is not None:
+            item["contentBase64"] = "[MASKED-CONTROLLED-DATA-FR-SHARED-007]"
+        item["masked"] = True
+        item["maskedReason"] = "FR-SHARED-007 controlled data sensitivity masking applied"
+    else:
+        item["masked"] = False
+        item["maskedReason"] = None
+
+    return item
 
 
 def _find_issue(state: Mapping[str, Any], issue_id: str) -> MutableMapping[str, Any]:
