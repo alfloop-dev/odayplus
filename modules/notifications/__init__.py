@@ -15,7 +15,10 @@ from modules.notifications.domain import (
 from modules.notifications.infrastructure import (
     ConsoleNotificationAdapter,
     DurableNotificationRepository,
+    EmailNotificationAdapter,
+    InAppNotificationAdapter,
     InMemoryNotificationRepository,
+    MultiChannelNotificationAdapter,
     OnCallNotificationAdapter,
     get_notification_adapter,
 )
@@ -31,9 +34,13 @@ __all__ = [
     "InMemoryNotificationRepository",
     "DurableNotificationRepository",
     "ConsoleNotificationAdapter",
+    "EmailNotificationAdapter",
+    "InAppNotificationAdapter",
+    "MultiChannelNotificationAdapter",
     "OnCallNotificationAdapter",
     "get_notification_adapter",
     "NotificationAdapter",
     "MockNotificationAdapter",
     "NotificationService",
 ]
+

@@ -167,3 +167,115 @@ class NotificationService:
                 self.repository.save_receipt(receipt)
 
         return False
+
+    def send_task_assigned_notification(
+        self,
+        user_id: str,
+        task_id: str,
+        task_title: str,
+        assigner_id: str | None = None,
+    ) -> str | None:
+        """Trigger 1: Task Assignment Notification."""
+        title = f"[Task Assigned] {task_id}: {task_title}"
+        detail = (
+            f"Task ID: {task_id}\n"
+            f"Title: {task_title}\n"
+            f"Assigned To: {user_id}\n"
+            f"Assigned By: {assigner_id or 'System'}\n"
+            f"Timestamp: {datetime.now(UTC).isoformat()}"
+        )
+        return self.send_notification(
+            user_id=user_id,
+            title=title,
+            detail=detail,
+            severity="info",
+            dedup_key=f"task_assigned:{task_id}:{user_id}",
+        )
+
+    def send_timeout_notification(
+        self,
+        user_id: str,
+        task_id: str,
+        timeout_seconds: int | float,
+    ) -> str | None:
+        """Trigger 2: Timeout Notification."""
+        title = f"[Timeout Alert] Task {task_id} timed out after {timeout_seconds}s"
+        detail = (
+            f"Task ID: {task_id}\n"
+            f"Timeout Duration: {timeout_seconds} seconds\n"
+            f"User ID: {user_id}\n"
+            f"Timestamp: {datetime.now(UTC).isoformat()}"
+        )
+        return self.send_notification(
+            user_id=user_id,
+            title=title,
+            detail=detail,
+            severity="warning",
+            dedup_key=f"task_timeout:{task_id}:{int(timeout_seconds)}",
+        )
+
+    def send_approval_notification(
+        self,
+        user_id: str,
+        task_id: str,
+        approver_id: str | None = None,
+        note: str | None = None,
+    ) -> str | None:
+        """Trigger 3: Approval Notification."""
+        title = f"[Task Approved] Task {task_id} approved"
+        detail = (
+            f"Task ID: {task_id}\n"
+            f"Approved By: {approver_id or 'System'}\n"
+            f"Note: {note or 'N/A'}\n"
+            f"Timestamp: {datetime.now(UTC).isoformat()}"
+        )
+        return self.send_notification(
+            user_id=user_id,
+            title=title,
+            detail=detail,
+            severity="info",
+            dedup_key=f"task_approved:{task_id}:{approver_id or 'system'}",
+        )
+
+    def send_failure_notification(
+        self,
+        user_id: str,
+        task_id: str,
+        error_message: str | None = None,
+    ) -> str | None:
+        """Trigger 4: Failure Notification."""
+        title = f"[Task Failed] Task {task_id} execution failed"
+        detail = (
+            f"Task ID: {task_id}\n"
+            f"Error: {error_message or 'Unknown failure'}\n"
+            f"Timestamp: {datetime.now(UTC).isoformat()}"
+        )
+        return self.send_notification(
+            user_id=user_id,
+            title=title,
+            detail=detail,
+            severity="danger",
+            dedup_key=f"task_failed:{task_id}:{hash(error_message or '')}",
+        )
+
+    def send_rollback_notification(
+        self,
+        user_id: str,
+        task_id: str,
+        rollback_target: str | None = None,
+    ) -> str | None:
+        """Trigger 5: Rollback Notification."""
+        title = f"[Rollback Executed] Task {task_id} rolled back"
+        detail = (
+            f"Task ID: {task_id}\n"
+            f"Rollback Target: {rollback_target or 'Previous Stable State'}\n"
+            f"Timestamp: {datetime.now(UTC).isoformat()}"
+        )
+        return self.send_notification(
+            user_id=user_id,
+            title=title,
+            detail=detail,
+            severity="danger",
+            dedup_key=f"task_rollback:{task_id}:{rollback_target or 'default'}",
+        )
+

@@ -21,3 +21,15 @@ CREATE TABLE IF NOT EXISTS notification_receipts (
     error_message TEXT,
     delivered_at TEXT
 );
+
+CREATE TABLE IF NOT EXISTS notification_inapp_inbox (
+    notification_id TEXT PRIMARY KEY,
+    user_id TEXT NOT NULL,
+    title TEXT NOT NULL,
+    detail TEXT NOT NULL,
+    severity TEXT NOT NULL DEFAULT 'info',
+    created_at TEXT NOT NULL,
+    acknowledged INTEGER NOT NULL DEFAULT 0,
+    acknowledged_at TEXT
+);
+
