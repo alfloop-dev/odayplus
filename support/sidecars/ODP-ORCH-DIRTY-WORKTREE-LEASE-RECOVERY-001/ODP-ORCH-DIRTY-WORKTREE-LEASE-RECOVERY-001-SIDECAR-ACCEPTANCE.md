@@ -1,12 +1,12 @@
 # Sidecar Acceptance Packet & Dependency Map
 
-**Parent Task ID**: `ODP-ORCH-DIRTY-WORKTREE-LEASE-RECOVERY-001`  
-**Sidecar Task ID**: `ODP-ORCH-DIRTY-WORKTREE-LEASE-RECOVERY-001-SIDECAR-ACCEPTANCE`  
-**Helper Kind**: `acceptance_packet`  
-**Owner**: Antigravity4  
-**Reviewer**: Antigravity  
-**Created At**: 2026-08-02  
-**Status**: Support Packet Materialized  
+**Parent Task ID**: `ODP-ORCH-DIRTY-WORKTREE-LEASE-RECOVERY-001`
+**Sidecar Task ID**: `ODP-ORCH-DIRTY-WORKTREE-LEASE-RECOVERY-001-SIDECAR-ACCEPTANCE`
+**Helper Kind**: `acceptance_packet`
+**Owner**: Antigravity4
+**Reviewer**: Antigravity
+**Created At**: 2026-08-02
+**Status**: Support Packet Materialized
 
 ---
 
