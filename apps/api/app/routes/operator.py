@@ -1126,6 +1126,25 @@ def create_operator_router(
         )
     )
 
+    # Users & Roles — Self-service role assignment, scope axes, and audit logging (ODP-CAP-USER-ROLE-UI-001)
+    from apps.api.app.routes.operator_modules.users_roles import (
+        create_user_role_sub_router,
+    )
+    from modules.opsboard.application.user_role_management import (
+        UserRoleManagementService,
+    )
+
+    user_role_service = UserRoleManagementService(audit_log=active_audit_log)
+    router.include_router(
+        create_user_role_sub_router(
+            user_role_service,
+            require_view_permission_fn=operator_view_guard,
+            require_manage_permission_fn=require_operator_permission(
+                OPERATOR_CONSOLE_RESOURCE, Action.UPDATE, engine=authz_engine
+            ),
+        )
+    )
+
     return router
 
 

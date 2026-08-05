@@ -30,6 +30,7 @@ import {
 } from "./governance/governanceEnvelope";
 import { FeatureFlagsAdminWorkspace } from "./FeatureFlagsAdminWorkspace";
 import { OperatorDataUnavailableGate } from "./OperatorDataUnavailableGate";
+import { UserRoleManagementController } from "./UserRoleManagementController";
 import {
   isSeedDataSource,
   operatorFixturesAllowed,
@@ -39,7 +40,7 @@ import {
 } from "./operatorDataMode";
 import { ModelReleaseController } from "./governance/ModelReleaseController";
 
-type GovernanceTab = "approvals" | "decisions" | "audit" | "evidencePackage" | "statusBoard" | "featureFlags" | "learningHub";
+type GovernanceTab = "approvals" | "decisions" | "audit" | "userManagement" | "evidencePackage" | "statusBoard" | "featureFlags" | "learningHub";
 
 /**
  * Rendered wherever a governance field is absent or unusable. The row keeps its
@@ -271,6 +272,7 @@ const tabs: Array<{ id: GovernanceTab; label: string }> = [
   { id: "approvals", label: "核准中心" },
   { id: "decisions", label: "Decision Log" },
   { id: "audit", label: "Audit Trail" },
+  { id: "userManagement", label: "Users 角色權限" },
   { id: "evidencePackage", label: "Evidence Package" },
   { id: "statusBoard", label: "系統狀態" },
   { id: "featureFlags", label: "Feature Flags 功能開關" },
@@ -1394,6 +1396,12 @@ export function GovernanceWorkspace({
         </section>
       ) : null}
 
+      {activeTab === "userManagement" ? (
+        <section aria-label="User and Role Management">
+          <UserRoleManagementController currentRoleId={role} />
+        </section>
+      ) : null}
+
       {activeTab === "statusBoard" ? (
         <section className={styles.statusSection} aria-label="System status board">
           <div className={styles.viewHeader}>
@@ -1479,8 +1487,17 @@ export function GovernanceWorkspace({
               </div>
             </div>
 
-            <div className={styles.statusCard} data-testid="governance-users-card">
-              <div className={styles.statusCardTitle}>Users 角色與權限</div>
+            <div
+              className={styles.statusCard}
+              data-testid="governance-users-card"
+              onClick={() => setActiveTab("userManagement")}
+              style={{ cursor: "pointer" }}
+              title="點擊前往 Users 角色與權限自助管理"
+            >
+              <div className={styles.statusCardTitle} style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                <span>Users 角色與權限</span>
+                <span style={{ fontSize: "11px", color: "#2563eb", fontWeight: 600 }}>前往管理 →</span>
+              </div>
               <div style={{ display: "flex", flexDirection: "column" }}>
                 {usersRows.map((ur) => (
                   <div className={styles.statusRow} key={ur.name || ur.src}>
