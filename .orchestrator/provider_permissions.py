@@ -4,6 +4,7 @@ from __future__ import annotations
 import json
 import os
 import shutil
+import subprocess
 from pathlib import Path
 from typing import Any
 
@@ -34,6 +35,7 @@ GEMINI_SETTINGS_PATH = Path.home() / ".gemini" / "settings.json"
 GEMINI_OAUTH_CREDS_PATH = Path.home() / ".gemini" / "oauth_creds.json"
 CODEX_CONFIG_PATH = Path.home() / ".codex" / "config.toml"
 CODEX_ALLOWED_SERVICE_TIERS = ("fast", "flex")
+CLI_PROBE_TIMEOUT_SECONDS = 15.0
 EXTENSIONS_DIR = Path.home() / ".vscode-server" / "extensions"
 COPILOT_CONFIG_DIR = Path.home() / ".copilot"
 COPILOT_CONFIG_PATH = COPILOT_CONFIG_DIR / "config.json"
@@ -240,6 +242,46 @@ def _command_help_contains(command: list[str], needle: str) -> bool:
     result = run_command(command)
     output = (result.stdout or "") + (result.stderr or "")
     return needle in output
+
+
+def cli_probe(binary: str | None) -> dict[str, Any]:
+    """Report whether a resolved provider binary can actually run.
+
+    `shutil.which` proves only that a file exists and is executable. Every
+    provider CLI here is reached through a wrapper in `.orchestrator/bin/` that
+    execs the real binary from somewhere else, so when that real binary is
+    uninstalled the wrapper still resolves, still looks installed, and exits 1
+    in under a second on every dispatch.
+
+    That is not hypothetical. On 2026-08-05 the Codex CLI was removed from
+    `~/.npm-global`; `provider_capabilities.json` went on reporting
+    `codex.installed = true` through 194 consecutive instant failures, because
+    the only thing ever checked was that the wrapper file was there. Asking the
+    binary to identify itself is what distinguishes a working lane from a
+    wrapper pointing at nothing.
+    """
+
+    if not binary:
+        return {"ok": False, "returncode": None, "error": "no binary resolved"}
+    try:
+        result = run_command([binary, "--version"], timeout=CLI_PROBE_TIMEOUT_SECONDS)
+    except subprocess.TimeoutExpired:
+        return {
+            "ok": False,
+            "returncode": None,
+            "error": f"`--version` did not return within {CLI_PROBE_TIMEOUT_SECONDS}s",
+        }
+    except OSError as exc:
+        return {"ok": False, "returncode": None, "error": str(exc)}
+
+    if result.returncode != 0:
+        detail = ((result.stderr or "") + (result.stdout or "")).strip().splitlines()
+        return {
+            "ok": False,
+            "returncode": result.returncode,
+            "error": detail[0] if detail else f"`--version` exited {result.returncode}",
+        }
+    return {"ok": True, "returncode": 0, "error": None}
 
 
 def _gh_version(binary: str | None) -> tuple[int, int, int] | None:
@@ -577,6 +619,12 @@ def _claude_provider_report(
     runtime_env = _provider_runtime_env(config, provider_id)
     provider_binary = _configured_provider_binary(config, provider_id, "runtime", "claude")
     provider_auth_ready = claude_auth_ready(provider_binary, env=runtime_env, refresh_if_needed=False)
+    # Auth readiness is read off credential files and never executes the binary,
+    # so on its own it cannot tell a working CLI from a wrapper whose target is
+    # gone. `installed` stays broad here because Claude falls back to inbox
+    # delivery, but the claim that a local CLI worker can run must not.
+    probe = cli_probe(provider_binary)
+    cli_usable = bool(provider_binary) and bool(probe["ok"]) and bool(provider_auth_ready)
     provider_home = str((provider_settings.get("runtime", {}) or {}).get("home") or "").strip()
     credentials_path = claude_credentials_path(runtime_env)
     installed = bool(provider_binary or claude_path or claude_local or credentials_path.exists())
@@ -598,12 +646,13 @@ def _claude_provider_report(
         "default_auto_approve_supported": True,
         "full_access_supported": True,
         "per_tool_allow_supported": True,
-        "local_cli_worker_supported": bool(provider_binary and provider_auth_ready),
+        "local_cli_worker_supported": cli_usable,
         "vscode_link_supported": bool(claude_path),
         "cloud_agent_supported": False,
-        "supports_auto_approve": bool(provider_binary and provider_auth_ready),
+        "supports_auto_approve": cli_usable,
         "supports_defer_resume": bool(provider_binary),
         "auth_ready": provider_auth_ready,
+        "cli_probe": probe,
         "supported_models": claude_local.get("availableModels", []) or [],
         "selected_model": claude_local.get("model"),
         "applied": claude_applied,
@@ -648,11 +697,13 @@ def _gemini_provider_report(
     runtime_approval_mode = (provider_config.get("approval", {}) or {}).get("default_approval_mode")
     selected_model = str(gemini_runtime.get("model") or "").strip() or None
     provider_binary = _configured_provider_binary(config, provider_id, "gemini", "gemini")
+    probe = cli_probe(provider_binary)
     provider_settings = _gemini_settings(config, provider_id)
     oauth_creds_path = _gemini_oauth_creds_path(config, provider_id)
     runtime_env = _gemini_runtime_env(config, provider_id)
     auth_ready = _gemini_auth_ready(provider_settings, oauth_creds_path=oauth_creds_path, env=runtime_env)
     auth_type = _gemini_selected_auth_type(provider_settings, oauth_creds_path=oauth_creds_path, env=runtime_env)
+    cli_usable = bool(provider_binary) and bool(probe["ok"]) and bool(auth_ready)
     installed = bool(gemini_path or provider_binary)
     notes = [
         "Verified CLI approval flags and settings schema from the locally installed Gemini CLI package.",
@@ -672,14 +723,15 @@ def _gemini_provider_report(
         "default_auto_approve_supported": True,
         "full_access_supported": True,
         "per_tool_allow_supported": True,
-        "local_cli_worker_supported": bool(provider_binary and auth_ready),
+        "local_cli_worker_supported": cli_usable,
         "vscode_link_supported": bool(gemini_path),
         "cloud_agent_supported": False,
-        "supports_auto_approve": bool(provider_binary and auth_ready),
+        "supports_auto_approve": cli_usable,
         "supports_defer_resume": False,
         "supported_models": [selected_model] if selected_model else [],
         "selected_model": selected_model,
         "auth_ready": auth_ready,
+        "cli_probe": probe,
         "applied": gemini_applied,
         "verified": "verified" if installed else "unavailable",
         "version": gemini_version,
@@ -733,6 +785,8 @@ def provider_capabilities(config: dict[str, Any] | None = None) -> dict[str, Any
     codex_binary = command_exists(codex_profile.get("cli") or "codex")
     gemini_binary = _configured_provider_binary(config, "gemini", "gemini", "gemini")
     copilot_binary = _configured_provider_binary(config, "copilot", "local", "copilot")
+    copilot_probe = cli_probe(copilot_binary)
+    copilot_cli_usable = bool(copilot_binary) and bool(copilot_probe["ok"]) and bool(copilot_auth_ready)
     gh_binary = command_exists(config.get("providers", {}).get("copilot", {}).get("cloud", {}).get("cli") or "gh")
     gh_version = _gh_version(gh_binary)
     gh_auth_ready = _gh_auth_ready(gh_binary)
@@ -817,7 +871,12 @@ def provider_capabilities(config: dict[str, Any] | None = None) -> dict[str, Any
         provider_settings = config.get("providers", {}).get(provider_id, {}) or {}
         profile = provider_settings.get("codex", {}) or codex_profile
         provider_binary = command_exists(profile.get("cli")) if profile.get("cli") else codex_binary
-        provider_installed = bool(openai_path or provider_binary)
+        probe = cli_probe(provider_binary)
+        # Codex has no inbox or extension fallback: every dispatch shells out to
+        # this binary, so a binary that will not run is an uninstalled provider
+        # no matter how much of the VS Code extension is still on disk.
+        cli_usable = bool(provider_binary) and bool(probe["ok"])
+        provider_installed = cli_usable
         config_path_for_provider = _codex_config_path(config, provider_id)
         config_health = codex_config_health(config, provider_id)
         applied = (
@@ -830,12 +889,19 @@ def provider_capabilities(config: dict[str, Any] | None = None) -> dict[str, Any
         ]
         if not config_health.get("valid", True):
             notes.insert(0, str(config_health.get("error") or "Codex config is invalid."))
+        if not probe["ok"]:
+            notes.insert(
+                0,
+                f"Codex CLI at {provider_binary or '<unresolved>'} does not run "
+                f"({probe['error']}); every dispatch to this provider will fail immediately.",
+            )
         return {
             "installed": provider_installed,
+            "cli_probe": probe,
             "host_layer": (
                 "CLI + VS Code extension"
-                if openai_path and provider_binary
-                else ("CLI" if provider_binary else "VS Code extension")
+                if openai_path and cli_usable
+                else ("CLI" if cli_usable else "VS Code extension")
             ),
             "delivery_mode": "codex",
             "quota_group": provider_settings.get("quota_group"),
@@ -844,10 +910,10 @@ def provider_capabilities(config: dict[str, Any] | None = None) -> dict[str, Any
             "default_auto_approve_supported": True,
             "full_access_supported": True,
             "per_tool_allow_supported": False,
-            "local_cli_worker_supported": bool(provider_binary),
+            "local_cli_worker_supported": cli_usable,
             "vscode_link_supported": bool(openai_path),
             "cloud_agent_supported": False,
-            "supports_auto_approve": bool(provider_binary),
+            "supports_auto_approve": cli_usable,
             "supports_defer_resume": False,
             "supported_models": [],
             "selected_model": None,
@@ -937,10 +1003,11 @@ def provider_capabilities(config: dict[str, Any] | None = None) -> dict[str, Any
                 "default_auto_approve_supported": bool(copilot_binary and copilot_auth_ready),
                 "full_access_supported": bool(copilot_binary and copilot_auth_ready),
                 "per_tool_allow_supported": bool(copilot_binary and copilot_auth_ready),
-                "local_cli_worker_supported": bool(copilot_binary and copilot_auth_ready),
+                "local_cli_worker_supported": copilot_cli_usable,
+                "cli_probe": copilot_probe,
                 "vscode_link_supported": bool(copilot_path),
                 "cloud_agent_supported": bool(gh_binary and gh_version and gh_version >= (2, 80, 0) and gh_auth_ready),
-                "supports_auto_approve": bool(copilot_binary and copilot_auth_ready),
+                "supports_auto_approve": copilot_cli_usable,
                 "supports_defer_resume": False,
                 "auth_ready": copilot_auth_ready,
                 "supported_models": copilot_model_preference.get("supported", []),
@@ -982,10 +1049,11 @@ def provider_capabilities(config: dict[str, Any] | None = None) -> dict[str, Any
                 "default_auto_approve_supported": bool(copilot_binary and copilot_auth_ready),
                 "full_access_supported": bool(copilot_binary and copilot_auth_ready),
                 "per_tool_allow_supported": bool(copilot_binary and copilot_auth_ready),
-                "local_cli_worker_supported": bool(copilot_binary and copilot_auth_ready),
+                "local_cli_worker_supported": copilot_cli_usable,
+                "cli_probe": copilot_probe,
                 "vscode_link_supported": bool(copilot_path),
                 "cloud_agent_supported": False,
-                "supports_auto_approve": bool(copilot_binary and copilot_auth_ready),
+                "supports_auto_approve": copilot_cli_usable,
                 "supports_defer_resume": False,
                 "auth_ready": copilot_auth_ready,
                 "supported_models": [copilot_model_preference.get("grok")] if copilot_model_preference.get("grok") else [],

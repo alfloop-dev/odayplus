@@ -107,6 +107,11 @@ class ProviderPermissionsTest(unittest.TestCase):
                         else None
                     ),
                 ),
+                mock.patch.object(
+                    provider_permissions,
+                    "cli_probe",
+                    return_value={"ok": True, "returncode": 0, "error": None},
+                ),
                 mock.patch.object(provider_permissions, "claude_auth_ready", return_value=False),
             ):
                 report = provider_permissions.provider_capabilities(config)
@@ -119,6 +124,135 @@ class ProviderPermissionsTest(unittest.TestCase):
         self.assertTrue(codex_report["local_cli_worker_supported"])
         self.assertTrue(codex_report["supports_auto_approve"])
         self.assertEqual(codex_report["paths"]["binary"], "/opt/pantheon/bin/codex")
+
+    def test_cli_probe_rejects_wrapper_whose_target_is_gone(self) -> None:
+        """A wrapper that resolves but cannot exec is not an installed CLI.
+
+        This is the 2026-08-05 Codex outage in miniature: `~/.npm-global` was
+        removed, `.orchestrator/bin/codex` stayed exactly where it was, and the
+        capability report kept saying installed=true while every dispatch died
+        in under a second.
+        """
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            wrapper = Path(tmpdir) / "codex"
+            wrapper.write_text(
+                '#!/usr/bin/env bash\necho "Codex CLI binary not found." >&2\nexit 1\n',
+                encoding="utf-8",
+            )
+            wrapper.chmod(0o755)
+
+            probe = provider_permissions.cli_probe(str(wrapper))
+
+        self.assertFalse(probe["ok"])
+        self.assertEqual(probe["returncode"], 1)
+        self.assertIn("not found", probe["error"])
+
+    def test_cli_probe_accepts_binary_that_reports_a_version(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            binary = Path(tmpdir) / "codex"
+            binary.write_text('#!/usr/bin/env bash\necho "codex-cli 0.146.0"\n', encoding="utf-8")
+            binary.chmod(0o755)
+
+            probe = provider_permissions.cli_probe(str(binary))
+
+        self.assertTrue(probe["ok"])
+        self.assertEqual(probe["returncode"], 0)
+        self.assertIsNone(probe["error"])
+
+    def test_cli_probe_reports_missing_binary_without_raising(self) -> None:
+        probe = provider_permissions.cli_probe(None)
+        self.assertFalse(probe["ok"])
+        self.assertEqual(probe["error"], "no binary resolved")
+
+        probe = provider_permissions.cli_probe("/nonexistent/pantheon/bin/codex")
+        self.assertFalse(probe["ok"])
+        self.assertIsNotNone(probe["error"])
+
+    def test_codex_is_not_installed_when_its_cli_cannot_run(self) -> None:
+        """Dispatch is CLI-only, so a dead CLI has to read as an unavailable lane."""
+
+        config = {
+            "paths": {
+                "status_file": ".orchestrator/ai-status.json",
+                "activity_log": "ai-activity-log.jsonl",
+                "current_work": "current-work.md",
+                "dashboard": "dashboard-bundle.json",
+                "claude_mcp_config": ".orchestrator/claude-approval-broker.mcp.json",
+            },
+            "agents": {},
+            "providers": {
+                "claude": {},
+                "gemini": {},
+                "codex": {"delivery_mode": "codex", "codex": {"cli": "/opt/pantheon/bin/codex"}},
+                "copilot": {},
+            },
+        }
+
+        with (
+            mock.patch.object(provider_permissions, "_code_cli_info", return_value={}),
+            mock.patch.object(provider_permissions, "_workspace_settings", return_value={}),
+            # The VS Code extension is present, as it was throughout the outage.
+            mock.patch.object(provider_permissions, "_find_extension", return_value=(Path("/ext/openai.chatgpt"), "26.727.40816")),
+            mock.patch.object(provider_permissions, "_claude_local_settings", return_value={"permissions": {}}),
+            mock.patch.object(provider_permissions, "_gemini_settings", return_value={}),
+            mock.patch.object(provider_permissions, "_gemini_auth_ready", return_value=False),
+            mock.patch.object(provider_permissions, "_gemini_selected_auth_type", return_value=None),
+            mock.patch.object(provider_permissions, "_custom_agents_info", return_value={}),
+            mock.patch.object(provider_permissions, "_relevant_extensions", return_value=[]),
+            mock.patch.object(
+                provider_permissions,
+                "desired_workspace_settings",
+                return_value={
+                    "claudeCode.initialPermissionMode": "acceptEdits",
+                    "claudeCode.allowDangerouslySkipPermissions": False,
+                    "geminicodeassist.agentYoloMode": False,
+                    "github.copilot.chat.backgroundAgent.enabled": False,
+                    "github.copilot.chat.cloudAgent.enabled": False,
+                    "github.copilot.chat.claudeAgent.enabled": False,
+                },
+            ),
+            mock.patch.object(
+                provider_permissions,
+                "desired_claude_local_settings",
+                return_value={"permissions": {"defaultMode": "acceptEdits"}},
+            ),
+            mock.patch.object(
+                provider_permissions,
+                "desired_gemini_settings",
+                return_value={
+                    "general": {"defaultApprovalMode": "auto_edit"},
+                    "security": {
+                        "enablePermanentToolApproval": True,
+                        "autoAddToPolicyByDefault": True,
+                        "disableYoloMode": False,
+                    },
+                },
+            ),
+            # The wrapper is still on disk and still executable.
+            mock.patch.object(
+                provider_permissions,
+                "command_exists",
+                side_effect=(lambda cmd: "/opt/pantheon/bin/codex" if cmd == "/opt/pantheon/bin/codex" else None),
+            ),
+            mock.patch.object(
+                provider_permissions,
+                "cli_probe",
+                return_value={"ok": False, "returncode": 1, "error": "Codex CLI binary not found."},
+            ),
+            mock.patch.object(provider_permissions, "claude_auth_ready", return_value=False),
+        ):
+            report = provider_permissions.provider_capabilities(config)
+
+        codex_report = report["providers"]["codex"]
+        self.assertFalse(codex_report["installed"])
+        self.assertFalse(codex_report["local_cli_worker_supported"])
+        self.assertFalse(codex_report["supports_auto_approve"])
+        self.assertEqual(codex_report["verified"], "unavailable")
+        self.assertEqual(codex_report["host_layer"], "VS Code extension")
+        self.assertFalse(codex_report["cli_probe"]["ok"])
+        # The reason has to reach whoever reads doctor output, not just the bool.
+        self.assertTrue(any("does not run" in note for note in codex_report["notes"]))
 
     def test_verified_claude_hooks_use_absolute_broker_path(self) -> None:
         expected = str(Path(ROOT) / ".orchestrator" / "permission_broker.py")
@@ -619,6 +753,11 @@ EOF
                 "command_exists",
                 side_effect=lambda cmd: "/usr/bin/claude" if cmd == "claude" else None,
             ),
+            mock.patch.object(
+                provider_permissions,
+                "cli_probe",
+                return_value={"ok": True, "returncode": 0, "error": None},
+            ),
             mock.patch.object(provider_permissions, "claude_auth_ready", side_effect=fake_claude_auth_ready),
         ):
             report = provider_permissions.provider_capabilities(config)
@@ -713,6 +852,11 @@ EOF
                 },
             ),
             mock.patch.object(provider_permissions, "command_exists", side_effect=lambda cmd: "/usr/bin/gemini" if cmd == "gemini" else None),
+            mock.patch.object(
+                provider_permissions,
+                "cli_probe",
+                return_value={"ok": True, "returncode": 0, "error": None},
+            ),
             mock.patch.object(provider_permissions, "claude_auth_ready", return_value=False),
         ):
             report = provider_permissions.provider_capabilities(config)

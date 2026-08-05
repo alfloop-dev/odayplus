@@ -267,6 +267,53 @@ class DetectWorkerFailureTests(unittest.TestCase):
 
         self.assertIsNone(supervisor.detect_worker_failure(worker))
 
+    def test_detects_missing_provider_cli_from_wrapper_message(self) -> None:
+        """The 2026-08-05 Codex outage: this exact line sat in 194 worker logs.
+
+        It matched no failure pattern, so `detect_worker_failure` returned None
+        and every one of those dispatches was recorded as an unexplained exit
+        with nothing printed. The lane was dead for six hours and the console
+        showed only task reassignments.
+        """
+
+        worker = self._worker_for_log(
+            "Codex CLI binary not found at /home/lupin/.npm-global/bin/codex or on PATH.\n"
+        )
+
+        self.assertEqual(
+            supervisor.detect_worker_failure(worker),
+            "Codex CLI binary not found at /home/lupin/.npm-global/bin/codex or on PATH.",
+        )
+
+    def test_detects_missing_cli_for_every_provider_wrapper(self) -> None:
+        for message in (
+            "Codex CLI binary not found at /home/lupin/.npm-global/bin/codex or on PATH.",
+            "Antigravity CLI (agy) binary not found under ~/.local/bin or PATH.",
+            "Claude CLI binary not found under ~/.vscode-server/extensions.",
+            "Copilot CLI binary not found under ~/.local/share/pantheon-orchestrator-tools.",
+            "GitHub CLI binary not found under ~/.local/share/pantheon-orchestrator-tools.",
+        ):
+            with self.subTest(message=message):
+                worker = self._worker_for_log(message + "\n")
+                self.assertEqual(supervisor.detect_worker_failure(worker), message)
+
+    def test_missing_cli_wording_inside_task_output_is_not_a_lane_failure(self) -> None:
+        """Ordinary work that mentions the wording must not pause a live lane."""
+
+        worker = self._worker_for_log(
+            "\n".join(
+                [
+                    "codex",
+                    '+    raise RuntimeError("Codex CLI binary not found")',
+                    'assert "CLI binary not found" in caplog.text',
+                    "All tests passed.",
+                ]
+            )
+            + "\n"
+        )
+
+        self.assertIsNone(supervisor.detect_worker_failure(worker))
+
     def test_detects_real_model_availability_failure(self) -> None:
         worker = self._worker_for_log('Error: Model "grok-code-fast-1" from --model flag is not available.\n')
 
@@ -691,6 +738,54 @@ class DetectWorkerFailureTests(unittest.TestCase):
     def test_parse_quota_retry_hint_returns_none_when_absent(self) -> None:
         self.assertIsNone(supervisor.parse_quota_retry_hint("Credit balance is too low"))
         self.assertIsNone(supervisor.parse_quota_retry_hint(None))
+
+    def test_missing_provider_cli_classifies_as_provider_unavailable(self) -> None:
+        failure = supervisor.classify_worker_failure(
+            {},
+            {"provider": "codex"},
+            "Codex CLI binary not found at /home/lupin/.npm-global/bin/codex or on PATH.",
+        )
+
+        self.assertEqual(failure["kind"], "provider_unavailable")
+        self.assertFalse(failure["transient"])
+        self.assertTrue(supervisor.should_pause_dispatch_for_failure_kind(failure["kind"]))
+
+    def test_missing_provider_cli_pauses_dispatch_without_rotating_models(self) -> None:
+        """A dead binary has no second model pool to fall back onto."""
+
+        config = {
+            "provider_guardrails": {
+                "capacity_pause_seconds": 900,
+                "quota_terminal_pause_seconds": 900,
+                "provider_unavailable_pause_seconds": 900,
+            },
+            "paths": {"activity_log": "/tmp/test-activity-log.jsonl"},
+        }
+        state: dict = {}
+
+        with (
+            mock.patch.object(supervisor, "write_activity_log"),
+            mock.patch.object(supervisor.model_rotation, "record_exhaustion") as rotate,
+        ):
+            paused = supervisor.mark_provider_dispatch_paused(
+                config,
+                state,
+                "codex",
+                "Codex CLI binary not found at /home/lupin/.npm-global/bin/codex or on PATH.",
+                task_id="ODP-ORCH-EXAMPLE-001",
+                worker_run_id="codex-run-1",
+                failure_kind="provider_unavailable",
+                pause_kind="provider_unavailable",
+            )
+
+        self.assertTrue(paused)
+        rotate.assert_not_called()
+        entry = state["provider_guardrails"]["dispatch_pauses"]["codex"]
+        self.assertEqual(entry["pause_kind"], "provider_unavailable")
+        # Finite, so reinstalling the CLI brings the lane back without manual
+        # intervention -- and so a lane nobody fixes keeps re-announcing itself.
+        self.assertGreaterEqual(entry["reset_after_seconds"], 60)
+        self.assertTrue(entry["blocked_until"])
 
     def test_mark_provider_dispatch_paused_honors_codex_retry_at(self) -> None:
         from datetime import datetime

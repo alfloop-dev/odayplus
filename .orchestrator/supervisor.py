@@ -141,6 +141,21 @@ SESSION_ID_PATTERNS = [
     re.compile(r'"sessionId"\s*:\s*"([^"]+)"'),
 ]
 URL_PATTERN = re.compile(r"https://github\.com/[^\s)]+")
+# Every provider wrapper in `.orchestrator/bin/` reports a missing target the
+# same way -- "Codex CLI binary not found at ... or on PATH.", "Antigravity CLI
+# (agy) binary not found under ...", and so on -- and until 2026-08-05 none of
+# those lines matched any failure pattern. When the Codex CLI was uninstalled,
+# 194 consecutive dispatches died in under a second with that message sitting in
+# the worker log, and the supervisor recorded no failure for any of them: it just
+# bounced the tasks between agents, which reads exactly like healthy churn.
+#
+# Anchored to the start of the line so that a diff hunk or a test asserting on
+# this wording inside ordinary task output cannot masquerade as a dead lane.
+PROVIDER_LAUNCHER_MISSING_PATTERN = re.compile(
+    r"^[\w.-]+(?:\s+CLI)?\s*(?:\([^)]*\)\s*)?\s*binary not found\b",
+    re.IGNORECASE,
+)
+
 WORKER_FAILURE_PATTERNS = (
     re.compile(r"^Error when talking to gemini api\b", re.IGNORECASE),
     re.compile(r'"error"\s*:\s*"rate_limit"', re.IGNORECASE),
@@ -165,6 +180,7 @@ WORKER_FAILURE_PATTERNS = (
     re.compile(r"^Error loading config\.toml\b", re.IGNORECASE),
     re.compile(r"^An unexpected critical error occurred", re.IGNORECASE),
     re.compile(r"^(?:Error|error|fatal):", re.IGNORECASE),
+    PROVIDER_LAUNCHER_MISSING_PATTERN,
 )
 WORKER_FAILURE_FALSE_POSITIVE_PATTERNS = (
     re.compile(r"^(?:result|error|audit):\s+Optional\[Dict\[str,\s*Any\]\]\s*=\s*None,?$", re.IGNORECASE),
@@ -5051,6 +5067,11 @@ def classify_worker_failure(config: dict[str, Any], worker: dict[str, Any], reas
         "service_tier",
     }
 
+    # Checked before anything else: a lane whose CLI will not start cannot
+    # produce an auth, quota or config signal, and retrying it just burns the
+    # queue one sub-second failure at a time.
+    if PROVIDER_LAUNCHER_MISSING_PATTERN.search((reason or "").strip()):
+        return {"kind": "provider_unavailable", "transient": False, "label": "provider CLI missing"}
     if is_github_cli_auth_failure(reason):
         return {"kind": "tool_auth", "transient": False, "label": "tool auth"}
     if "config.toml" in normalized and any(marker in normalized for marker in provider_config_markers):
@@ -5482,12 +5503,17 @@ def is_provider_config_failure_kind(kind: str | None) -> bool:
     return str(kind or "").strip().lower() == "provider_config"
 
 
+def is_provider_unavailable_failure_kind(kind: str | None) -> bool:
+    return str(kind or "").strip().lower() == "provider_unavailable"
+
+
 def should_pause_dispatch_for_failure_kind(kind: str | None) -> bool:
     return (
         is_terminal_quota_failure_kind(kind)
         or is_retryable_capacity_failure_kind(kind)
         or is_auth_failure_kind(kind)
         or is_provider_config_failure_kind(kind)
+        or is_provider_unavailable_failure_kind(kind)
     )
 
 
@@ -5538,14 +5564,18 @@ def mark_provider_dispatch_paused(
     pause_provider_id = provider_dispatch_group_id(config, provider) or provider_id
     now = datetime.now(UTC)
     effective_pause_kind = str(pause_kind or failure_kind or "").strip().lower()
-    if effective_pause_kind in {"auth", "provider_config"}:
+    if effective_pause_kind in {"auth", "provider_config", "provider_unavailable"}:
         if not settings.get("pause_on_auth_failure", True):
             return False
-        pause_seconds_key = (
-            "provider_config_pause_seconds"
-            if effective_pause_kind == "provider_config"
-            else "auth_pause_seconds"
-        )
+        # A missing CLI is an installation fault, not a capacity one, so it must
+        # never feed model rotation -- there is no other pool to rotate onto. The
+        # pause is deliberately finite: reinstalling the binary lets the lane
+        # recover on its own, and if nobody does, it re-pauses and says so again
+        # instead of failing silently forever.
+        pause_seconds_key = {
+            "provider_config": "provider_config_pause_seconds",
+            "provider_unavailable": "provider_unavailable_pause_seconds",
+        }.get(effective_pause_kind, "auth_pause_seconds")
     else:
         if not settings.get("pause_on_capacity_failure", True):
             return False
@@ -7980,6 +8010,18 @@ def poll_workers(config: dict[str, Any], state: dict[str, Any], provider_report:
                 worker["status"] = "failed"
                 worker["last_event_at"] = utc_now()
                 worker["last_error"] = GENERIC_WORKER_EXIT_REASON
+                # This branch is reached when a worker died without producing any
+                # recognised failure line. It used to update state and write the
+                # activity log without printing anything, so a lane could fail
+                # every single dispatch and the console would show only the
+                # resulting reassignments. Whatever the cause, an unexplained
+                # exit is worth one line.
+                console_log(
+                    f"worker exited unexplained: provider={worker.get('provider')} "
+                    f"task={worker.get('task_id')} run={worker.get('run_id')} "
+                    f"exit_code={worker.get('exit_code')}",
+                    quiet=SUPERVISOR_LOG_QUIET,
+                )
                 write_activity_log(
                     config,
                     {
