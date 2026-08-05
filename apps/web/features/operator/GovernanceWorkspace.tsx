@@ -28,6 +28,7 @@ import {
   normalizeGovernanceEvidencePackages,
   normalizeGovernanceStatusBoard,
 } from "./governance/governanceEnvelope";
+import { FeatureFlagsAdminWorkspace } from "./FeatureFlagsAdminWorkspace";
 import { OperatorDataUnavailableGate } from "./OperatorDataUnavailableGate";
 import {
   isSeedDataSource,
@@ -37,7 +38,7 @@ import {
   type OperatorDataAvailability,
 } from "./operatorDataMode";
 
-type GovernanceTab = "approvals" | "decisions" | "audit" | "evidencePackage" | "statusBoard";
+type GovernanceTab = "approvals" | "decisions" | "audit" | "evidencePackage" | "statusBoard" | "featureFlags";
 
 /**
  * Rendered wherever a governance field is absent or unusable. The row keeps its
@@ -271,6 +272,7 @@ const tabs: Array<{ id: GovernanceTab; label: string }> = [
   { id: "audit", label: "Audit Trail" },
   { id: "evidencePackage", label: "Evidence Package" },
   { id: "statusBoard", label: "系統狀態" },
+  { id: "featureFlags", label: "Feature Flags 功能開關" },
 ];
 
 const baseAuditCategories: GovernanceAuditCategory[] = [
@@ -1515,6 +1517,10 @@ export function GovernanceWorkspace({
           </div>
           </div>
         </section>
+      ) : null}
+
+      {activeTab === "featureFlags" ? (
+        <FeatureFlagsAdminWorkspace />
       ) : null}
 
       {localToast ? <div className={styles.toast}>{localToast}</div> : null}
