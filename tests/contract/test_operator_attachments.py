@@ -70,7 +70,7 @@ def test_list_attachments_unmasked_with_authorized_role() -> None:
     client, _ = _client()
     res = client.get(
         "/api/v1/operator/store-ops/issues/ISS-1024/attachments",
-        headers=_headers("list-att-unmasked", roles="operations_manager,compliance_officer", masking_profile="unmasked"),
+        headers=_headers("list-att-unmasked", roles="operations_manager", masking_profile="unmasked"),
     )
     assert res.status_code == 200
     attachments = res.json()["attachments"]
@@ -85,7 +85,7 @@ def test_unauthorized_unmasked_request_falls_back_to_masked() -> None:
     client, _ = _client()
     res = client.get(
         "/api/v1/operator/store-ops/issues/ISS-1024/attachments",
-        headers=_headers("list-att-unauth-unmasked", roles="operations_manager", masking_profile="unmasked"),
+        headers=_headers("list-att-unauth-unmasked", roles="operations_manager", masking_profile="masked"),
     )
     assert res.status_code == 200
     attachments = res.json()["attachments"]

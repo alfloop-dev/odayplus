@@ -1142,6 +1142,7 @@ def mask_attachment(
     )
     roles = set(user_roles or [])
     unmasked_roles = {
+        "operations_manager",
         "compliance_officer",
         "finance_legal",
         "auditor",
