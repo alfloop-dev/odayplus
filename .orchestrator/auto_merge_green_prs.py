@@ -1,6 +1,10 @@
 #!/usr/bin/env python3
 """Auto-merge green task PRs into dev.
 
+When `dev` is behind a merge queue the eligible PR is enqueued instead of
+merged: GitHub refuses a direct merge into a queued branch. See
+`docs/runbooks/dev-merge-queue.md`.
+
 SAFETY (all must hold, else skip):
   - head branch matches an allowed task prefix (task/ODP-...)
   - base branch is `dev`
