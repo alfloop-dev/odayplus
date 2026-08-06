@@ -229,7 +229,7 @@ Every commit added on top of `387a326b` in this pass is owner-authored by
 | --- | --- |
 | `4b71db1f` | role refresh, ownership history, and this section |
 | `41e4bcad` | composes the `origin/dev` base advance (`bc7366d3`) so PR `#653` is not `BEHIND` at review time |
-| this commit | pins the provenance heads named here |
+| `42bfa505` | pins the provenance heads named here; frozen by the reviewer as `approved_head` |
 
 The compose merge carries the trailers explicitly rather than inheriting
 them via first-parent fallback, so whichever commit the reviewer freezes
@@ -253,3 +253,70 @@ untouched. The new owner must land one fresh task commit whose trailers
 match the new role pair *before* `done`; re-approving the old head is not
 enough. A base-advance merge with an empty body inherits its parent's
 trailers, so composing a base advance never repairs this on its own.
+
+## Second base advance and re-review (owner note, 2026-08-06)
+
+The provenance gate above is now satisfied, and the reviewer froze
+`approved_head` at `42bfa505` with every PR `#653` check green
+(`orchestrator`, `performance-gate`, `product`, `product-e2e-gate`,
+`task-review-gate`). Finalization was still blocked, for a different
+reason: `origin/dev` advanced again — from `bc7366d3` (composed by
+`41e4bcad`) to `a7fde1a8` — and GitHub re-flagged PR `#653` as
+`mergeStateStatus: BEHIND` while keeping `mergeable: MERGEABLE`.
+
+### What was done
+
+| Commit | Role |
+| --- | --- |
+| `4af5cb1e` | composes the second `origin/dev` base advance (`a7fde1a8`) |
+| this commit | records this round and re-pins the provenance heads |
+
+The merge was conflict-free. The only inbound paths are
+`.orchestrator/github_bus.py` and `.orchestrator/test_github_bus.py`,
+both arriving from `dev`; the branch still contributes nothing outside
+this support artifact, so the approved scope is unchanged.
+
+Re-verified at the composed head:
+
+```bash
+/home/lupin/oday-plus/.venv/bin/pytest -q \
+  .orchestrator/test_supervisor.py \
+  -k ReusedWorkerWorktreeBaseAdvanceTests
+# 14 passed
+
+/home/lupin/oday-plus/.venv/bin/ruff check \
+  .orchestrator/supervisor.py \
+  .orchestrator/test_supervisor.py
+# All checks passed!
+
+git diff --check
+# clean
+```
+
+### Why this returns to `review`, not `done`
+
+`is_approved_head_satisfied()` in `scripts/ai_status.py` carries an
+approval forward past `approved_head` in exactly three cases: an
+identical head, a `post_merge_checkout_advanced` delivery record, or an
+`is_evidence_only_advance()` fast-forward whose every changed path sits
+under `docs/evidence/`. A base-advance merge is none of them — it is not
+a fast-forward, and its changed paths are supervisor sources. The
+`task-review-gate` status is likewise bound to the `42bfa505` SHA and
+does not follow the branch.
+
+So composing the base advance necessarily invalidates the approval it
+was performed to make mergeable. The owner cannot close this out alone;
+the task goes back to `review` for `Antigravity` to re-approve at the new
+head. This is the expected cycle, not a defect — but it is why a sidecar
+can sit in `review_approved` through several rounds without a rework
+request ever being raised against its content.
+
+### Standing hazard
+
+Each `dev` advance during the approval window costs one full re-review
+round. The content of this packet has now been approved three times
+(`2a11aad0`, `387a326b` lineage, `42bfa505`) with zero substantive
+findings against it since the `01:57:36` reopen; every subsequent round
+has been provenance or base freshness. Nothing in this packet needs
+re-reading on its merits — a re-approval here is a check that the
+composed head is clean, not a re-review of the evidence.
