@@ -1,38 +1,44 @@
 # Sidecar Review Packet: ODP-CAP-NOTIFICATION-DELIVERY-001-SIDECAR-REVIEW
 
 - **Task ID**: `ODP-CAP-NOTIFICATION-DELIVERY-001-SIDECAR-REVIEW`
-- **Parent Task**: `ODP-CAP-NOTIFICATION-DELIVERY-001` (owner `Claude`, reviewer `Claude3`, status `in_progress`)
+- **Parent Task**: `ODP-CAP-NOTIFICATION-DELIVERY-001` (owner `Claude`, reviewer `Claude3`, status **`review_approved`**)
 - **Helper Kind**: `review_packet`
 - **Owner**: `Claude2`
 - **Reviewer**: `Antigravity4`
-- **Packet Revision**: **round 2 (2026-08-06)** — re-derived against parent head `c73a6710`; round 1 was derived against `2ab1ad64`
+- **Packet Revision**: **round 3 (2026-08-06)** — re-derived against parent `approved_head` `914a243c`; round 2 was derived against `c73a6710`, round 1 against `2ab1ad64`
 - **Target Artifact**: `support/sidecars/ODP-CAP-NOTIFICATION-DELIVERY-001/ODP-CAP-NOTIFICATION-DELIVERY-001-SIDECAR-REVIEW.md`
 
 ### Parent Pin (read this before trusting any number below)
 
-| Field | Round 1 pin | **Round 2 pin (current)** |
-|---|---|---|
-| Parent branch | `task/ODP-CAP-NOTIFICATION-DELIVERY-001` (local only) | `task/ODP-CAP-NOTIFICATION-DELIVERY-001` — **now on `origin`** |
-| Parent head | `2ab1ad64` — *anchor notification delivery handlers and triggers* | **`c73a6710`** — *fix round 1 review findings B1–B4* |
-| Parent `review_gate_sha` | — | `c73a6710` (matches head) |
-| Merge-base with `origin/dev` | `77567b5e` | `71d44d03` |
-| Landed on `dev`? | No | **Still no.** `git merge-base --is-ancestor c73a6710 origin/dev` → false; `gh pr list --head task/ODP-CAP-NOTIFICATION-DELIVERY-001 --state all` → `[]` |
-| Deliverable surface | 8 files, 703 ins / 3 del | **10 files, 1577 ins / 29 del** (see §7.2) |
-| `dev` at time of review | `71d44d03` | `5499b7a4` |
+| Field | Round 1 pin | Round 2 pin | **Round 3 pin (current)** |
+|---|---|---|---|
+| Parent status | `review` | `in_progress` | **`review_approved`** (approved by `Claude3`, round 2) |
+| Parent branch | `task/ODP-CAP-NOTIFICATION-DELIVERY-001` (local only) | now on `origin` | on `origin`; **PR #670 exists — and is a draft** (§9.3) |
+| Parent head | `2ab1ad64` — *anchor notification delivery handlers and triggers* | `c73a6710` — *fix round 1 review findings B1–B4* | **`914a243c`** — *record round 2 review approval* |
+| Parent `approved_head` | — | — | **`914a243c`** (`review_gate_sha` identical) |
+| Last **code**-touching commit | `2ab1ad64` | `c73a6710` | **still `c73a6710`** — §9.2 proves the delta since is docs-only |
+| Merge-base with `origin/dev` | `77567b5e` | `71d44d03` | `71d44d03` (unchanged) |
+| Landed on `dev`? | No | No, and no PR | **Still no.** `git merge-base --is-ancestor 914a243c origin/dev` → false; PR #670 open but `isDraft: true` |
+| Deliverable surface | 8 files, 703 ins / 3 del | 10 files, 1577 ins / 29 del (§7.2) | **11 files, 1817 ins / 29 del** (§9.2) — the +240 is two evidence docs |
+| `dev` at time of review | `71d44d03` | `5499b7a4` | `02c847dd` |
 
 > [!IMPORTANT]
 > **§2–§5 below are time-scoped to `2ab1ad64` and are superseded where §7 says
 > so.** The parent advanced two commits after round 1 (`048dad9a` record round 1
 > findings, `c73a6710` fix B1–B4) and that commit rewrote 237 lines of
 > `adapters.py`. Read **§7 first**: it re-derives every round-1 claim against
-> `c73a6710` and is the standing verdict. Round-1 line numbers and "does not
-> exist" statements apply only to `2ab1ad64`.
+> `c73a6710` and is the standing verdict on the code. **§9 is the round-3
+> delta** — it re-pins §7 onto the parent's `approved_head` and adds what
+> changed off-code (parent approval, parent PR, parent reviewer's own findings).
+> Round-1 line numbers and "does not exist" statements apply only to `2ab1ad64`.
 
 > [!WARNING]
 > **Round 1's two blocking findings are resolved at `c73a6710`.** F1 (production
 > factory bypass) and F2 (email mock-delivery reporting `SENT`) no longer
 > reproduce — see §7.3 for the probe transcript. **No blocking finding remains.**
-> F3, F6 and F7 still stand; F4, F5 and F8 are also resolved.
+> F3, F6 and F7 still stand; F4, F5 and F8 are also resolved. §9.2 re-confirms
+> all of this holds unchanged at the parent's `approved_head` `914a243c`, because
+> no code moved between `c73a6710` and `914a243c`.
 
 ---
 
@@ -229,7 +235,10 @@ The parent's `Verified:` trailer claims 10 passed. Reproduced — see §4.
 Ref IDs A1–A5 map to requirements R1–R5 of §1; A6–A8 are cross-cutting.
 
 The **Round 1** column is the verdict at `2ab1ad64`; the **Round 2** column is
-the standing verdict at `c73a6710` and is the one to act on.
+the standing verdict at `c73a6710` and is the one to act on. **Round 3 adds no
+column**: the parent's `approved_head` `914a243c` contains no code change versus
+`c73a6710` (§9.2), so every row below carries forward unchanged — A6 Met,
+A7 still NOT MET, everything else Met.
 
 | Ref | Req | Summary | Round 1 @ `2ab1ad64` | **Round 2 @ `c73a6710`** |
 |---|---|---|---|---|
@@ -810,7 +819,11 @@ Two lane observations for the parent owner, outside this sidecar's authority:
 
 ---
 
-## 8. Round 2 Handoff (standing)
+## 8. Round 2 Handoff (superseded by §10)
+
+> [!NOTE]
+> Time-scoped to the round-2 handoff at sidecar head `762b30d8`. Kept as the
+> audit record; the standing handoff is **§10**.
 
 - **Owner**: `Claude2` · **Reviewer**: `Antigravity4`
 - **Why re-review**: `origin/dev` advanced past the approved sidecar head
@@ -835,3 +848,206 @@ Two lane observations for the parent owner, outside this sidecar's authority:
   exposure is F3 (non-blocking) and the F6/F7 scope decisions.
 - **Next Action**: `re_review` to `Antigravity4`. On approval, the parent owner
   may absorb this packet into `ODP-CAP-NOTIFICATION-DELIVERY-001`.
+
+---
+
+## 9. Round 3 Re-derivation @ parent `approved_head` `914a243c`
+
+### 9.1 Why this round exists
+
+Round 2 was approved at sidecar commit `762b30d8`. `origin/dev` then advanced
+from `5499b7a4` to `02c847dd` (PR #664, `ODP-ORCH-MERGE-QUEUE-ENABLEMENT-001`),
+so PR #665 went `BEHIND` — `dev` sets `required_status_checks.strict = true`, so
+a behind branch cannot merge — and the approved head stopped being deliverable.
+Composing the base advance moves the head off `approved_head`, which is a
+re-review event by construction, not a mechanical refresh.
+
+The incoming `dev` delta is `.github/workflows/ci.yml` (+6) and
+`.github/workflows/merge-queue-review-gate.yml` (+84, new). It touches nothing
+this sidecar or its parent owns, and the merge was conflict-free.
+
+As in round 2, the packet file is unchanged by a base advance — which is exactly
+when a review packet is most likely to be silently stale. This round it was
+stale in three off-code ways, all recorded below.
+
+### 9.2 The parent's code did not move — proof, not assumption
+
+The parent advanced `c73a6710` → `ecde5dd2` → `914a243c`. Both new commits are
+evidence-only:
+
+```bash
+git worktree add --detach /tmp/odp-parent-pin-914a243c 914a243c
+cd /tmp/odp-parent-pin-914a243c
+git diff --numstat c73a6710 914a243c
+git diff --name-only c73a6710 914a243c -- . ':(exclude)docs/**'   # expect empty
+```
+
+| Path | ins | del |
+|---|---|---|
+| `docs/evidence/completion/…/review_findings_claude3_round2.md` | 226 | 0 |
+| `docs/evidence/completion/…/review_response_round1_fixes.md` | 14 | 0 |
+| **Total** | **240** | **0** |
+
+The exclusion probe returns **no paths**: nothing outside `docs/` changed.
+Corroborated by size: `adapters.py` 801 L, `service.py` 319 L,
+`repositories.py` 246 L, `test_notifications.py` 607 L — identical to the §7.2
+figures at `c73a6710`.
+
+> **Consequence for the reviewer:** every code claim in §7.3, §7.4 and the §3
+> acceptance matrix transfers to `914a243c` verbatim. F1/F2/F4/F5/F8 resolved;
+> **F3, F6, F7 still open**; A7 still NOT MET. §9.5 re-runs the suite and the
+> three still-open findings' probes at the new pin anyway rather than asserting
+> transfer.
+
+Full deliverable surface at `914a243c` versus merge-base `71d44d03`: **11 files,
+1817 ins / 29 del**. Code-only subtotal is unchanged at **1218 / 29**.
+
+### 9.3 Parent lane state — both round-2 observations superseded
+
+Round 2 recorded "the parent is in `in_progress`" and "there is still no PR".
+Both are now out of date, and the replacement facts matter more:
+
+| Round 2 observation | Round 3 state |
+|---|---|
+| Parent is `in_progress` under `Claude` / `Claude3` | **`review_approved`.** `Claude3` approved round 2 at reviewed head `ecde5dd2`; `ai-status.json` records `approved_head` = `review_gate_sha` = `914a243c`, the commit that records that approval. |
+| No PR for `task/ODP-CAP-NOTIFICATION-DELIVERY-001` | **PR #670 is open — and `isDraft: true`.** |
+
+> [!WARNING]
+> **PR #670 is a draft, and that is a silent merge stall.** A draft PR cannot
+> merge and cannot hold auto-merge (`gh pr merge --auto` fails with
+> `Pull request is a draft (enablePullRequestAutoMerge)`), while `gh pr checks`
+> and the review gate still read green — so the parent can sit approved and
+> green indefinitely with nothing to show why. `scripts/ai-status.sh done` will
+> refuse the parent because `914a243c` is not an ancestor of `dev`
+> (`git merge-base --is-ancestor 914a243c origin/dev` → exit 1).
+> **Suggested parent-owner action:** `gh pr ready 670`, then advance the base
+> onto `02c847dd` (the PR is 4+ commits behind), then merge. This is an
+> observation for the parent owner, outside this sidecar's authority.
+
+### 9.4 Cross-reference: parent reviewer's round-2 findings vs this packet
+
+`Claude3` recorded four non-blocking findings (N1–N4) in
+`docs/evidence/completion/ODP-CAP-NOTIFICATION-DELIVERY-001/review_findings_claude3_round2.md`.
+None of them overlaps this packet's open findings, in either direction — so the
+two sets are complementary and the union is the parent's real residual exposure.
+
+| Parent reviewer finding | In this packet? | Note |
+|---|---|---|
+| **N1** `notification_inapp_inbox` absent from `_REQUIRED_RELATIONS` (`postgresql.py:39`) | **No** — this sidecar missed it | Its three sibling notification tables are listed; the gap is in the redundant boot-time guard only, since both provisioning paths use `CREATE TABLE IF NOT EXISTS`. |
+| **N2** `OnCallNotificationAdapter.delivery_receipts` uncapped (5 append sites) | **No** — missed | Consistent with the "on-call adapter untouched" scope declaration; predates this task. Narrows the round-1 response note's claim that all receipt lists are capped at 500. |
+| **N3** `NOTIFICATION_ADAPTER_TYPE` outranks `REQUIRE_ONCALL_ROUTE` outside production | **No** — missed | Production is unaffected; this packet's §7.3 P1 probe covered only the prod arm, which is why the non-prod precedence went unrecorded here. |
+| **N4** direct `MultiChannelNotificationAdapter()` still defaults to console | Adjacent to **F1**, not the same | F1 was about the *factory* path and is resolved. N4 is about bypassing the factory entirely; no such call site exists today. |
+| — | **F3** — `send_notification()` returns the same truthy id on total delivery failure | **Not raised by the parent reviewer.** Sole reason A7 is NOT MET. |
+| — | **F6** — no production caller for any of the five triggers | **Not raised by the parent reviewer.** The gate on `ODP-PLAN-UAT-SIGNOFF-001`. |
+| — | **F7** — only `channels[0]` is delivered on the success path | **Not raised by the parent reviewer.** Failure escalation is failover, not fan-out. |
+
+This is the packet's residual value after the parent's own round-2 approval:
+**F3, F6 and F7 are carried by this sidecar alone.** Neither set is blocking, so
+neither changes the parent's approval — but a parent owner reading only
+`review_findings_claude3_round2.md` would close the task without F6 on record,
+and F6 is the item that gates the downstream UAT sign-off.
+
+### 9.5 Round 3 verification
+
+```bash
+# 0. Materialise the round-3 pin
+git fetch origin
+git worktree add --detach /tmp/odp-parent-pin-914a243c 914a243c
+cd /tmp/odp-parent-pin-914a243c
+
+# 1. Code-immobility proof (the load-bearing check this round)
+git diff --numstat c73a6710 914a243c
+git diff --name-only c73a6710 914a243c -- . ':(exclude)docs/**'
+wc -l modules/notifications/infrastructure/adapters.py \
+      modules/notifications/application/service.py \
+      modules/notifications/infrastructure/repositories.py \
+      tests/reliability/test_notifications.py
+
+# 2. Parent test surface + lint at the new pin
+/home/lupin/.local/bin/uv run pytest tests/reliability/test_notifications.py
+/home/lupin/.local/bin/uv run ruff check \
+  modules/notifications tests/reliability/test_notifications.py
+
+# 3. F6 probe — production callers of the five triggers
+grep -rn --include='*.py' --include='*.ts' --include='*.tsx' \
+  -e send_task_assigned_notification -e send_timeout_notification \
+  -e send_approval_notification -e send_failure_notification \
+  -e send_rollback_notification .
+
+# 4. Landing state
+git merge-base --is-ancestor 914a243c origin/dev; echo "ancestor-of-dev: $?"
+gh pr list --head task/ODP-CAP-NOTIFICATION-DELIVERY-001 --state all \
+  --json number,state,isDraft
+
+# 5. Cleanup
+cd - && git worktree remove /tmp/odp-parent-pin-914a243c
+```
+
+**Recorded results (owner run, round 3, 2026-08-06, `dev` = `02c847dd`):**
+
+| # | Command | Result |
+|---|---|---|
+| 1a | `git diff --numstat c73a6710 914a243c` | 2 files, **240 ins / 0 del**, both under `docs/evidence/` |
+| 1b | same diff excluding `docs/**` | **empty** — no non-docs path changed |
+| 1c | `wc -l` on the four modules | 801 / 319 / 246 / 607 — **identical to §7.2** |
+| 2a | `pytest tests/reliability/test_notifications.py` | **27 passed in 1.34s** (round 2: 27, round 1: 10) |
+| 2b | `ruff check modules/notifications tests/…` | **All checks passed!** |
+| 3 | five-trigger grep | **every hit is a definition in `service.py` (L206/230/252/275/300) or a call in `tests/reliability/test_notifications.py`. Zero production callers — F6 stands.** |
+| 4a | `git merge-base --is-ancestor 914a243c origin/dev` | exit 1 — **parent still not on `dev`** |
+| 4b | `gh pr list --head task/…-001` | `[{"number":670,"state":"OPEN","isDraft":true}]` — **PR now exists but is a draft** |
+
+The detached pin worktree was removed after the run. All checks are read-only;
+this branch changes exactly one file.
+
+### 9.6 What changed in the recommendation
+
+| Round 2 said | Round 3 says |
+|---|---|
+| "No blocking finding remains against the parent's code" | **Unchanged, and now independently confirmed** — the parent's own reviewer approved round 2 with zero blocking findings, reached via their own probes. |
+| "Only F3 remains as a scheduled non-blocking item" | Still true for this packet's set; the parent reviewer adds **N1–N4**, none overlapping. Combined non-blocking backlog: **F3, N1, N2, N3, N4**. |
+| "F6 is the only thing standing between this capability and `ODP-PLAN-UAT-SIGNOFF-001`" | **Unchanged, and now the packet's most load-bearing claim** — F6 appears in no parent-side document, so absorbing this packet is the only way it survives parent closeout. |
+| "The parent branch is pushed but has no PR" | **Superseded.** PR #670 exists and is a **draft**, which is a harder stall than no PR: it reads green everywhere but cannot merge (§9.3). |
+
+---
+
+## 10. Round 3 Handoff (standing)
+
+- **Owner**: `Claude2` · **Reviewer**: `Antigravity4`
+- **Why re-review**: `origin/dev` advanced `5499b7a4` → `02c847dd`, so PR #665
+  went `BEHIND` and sidecar `approved_head` `762b30d8` was no longer
+  deliverable. Composing the base advance moves the head off `approved_head` by
+  construction, so `done` is unreachable without a fresh approval.
+- **Sidecar scope compliance**: this branch still touches exactly one path,
+  `support/sidecars/ODP-CAP-NOTIFICATION-DELIVERY-001/ODP-CAP-NOTIFICATION-DELIVERY-001-SIDECAR-REVIEW.md`.
+  No canonical truth, contract, runtime, registry, or governance file is
+  touched. Confirm with `git diff --stat origin/dev...HEAD` → one file. All
+  round-3 verification was read-only against a throwaway detached worktree at
+  `914a243c`, removed afterwards.
+- **Reviewer diff shortcuts**:
+  - versus the previously approved head — `git diff 762b30d8 HEAD`
+  - the base advance alone — `git log --oneline 762b30d8..HEAD` (one merge of
+    `origin/dev` at `02c847dd`, one packet update)
+  - no finding record was deleted — `git diff --numstat 762b30d8 HEAD -- <packet>`
+    is **228 ins / 16 del**, and
+    `git diff 762b30d8 HEAD -- <packet> | grep -E '^-' | grep -v '^---'` shows
+    all 16 removals are rewritten-in-place lines: 2 header fields, the 11-line
+    round-2 pin table widened to a round-3 column, 2 lines inside the §3 and
+    §7-pointer notices, and the §8 heading. §5, §7 and every finding record are
+    untouched.
+- **What is substantively new**: §9 (round-3 re-derivation against the parent's
+  `approved_head` `914a243c`) and §10, plus a round-3 column in the parent pin
+  table and time-scoping notices on §3 and §8. §1–§8 content is otherwise
+  preserved as the audit record of rounds 1 and 2.
+- **The one thing to check if you read nothing else**: §9.4. The parent is now
+  `review_approved`, so this packet's remaining job is the three findings its
+  own reviewer did not raise — **F3, F6, F7** — and F6 is the gate on
+  `ODP-PLAN-UAT-SIGNOFF-001`.
+- **Known lane condition, recorded not fixed**: `gh pr merge 665 --auto --merge`
+  is the standing mitigation for the approved-then-BEHIND loop, and it is
+  routinely denied to background workers by the permission classifier. If the
+  denial recurs this round it is recorded in the `re_review` message for an
+  operator, not retried. The same draft-PR stall now also affects the **parent**
+  PR #670 (§9.3).
+- **Next Action**: `re_review` to `Antigravity4`. On approval, the parent owner
+  may absorb this packet into `ODP-CAP-NOTIFICATION-DELIVERY-001` — carrying
+  F3/F6/F7 across is the point.
