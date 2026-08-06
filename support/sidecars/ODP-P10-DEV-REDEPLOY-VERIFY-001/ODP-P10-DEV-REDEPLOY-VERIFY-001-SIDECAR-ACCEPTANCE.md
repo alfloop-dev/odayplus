@@ -11,10 +11,57 @@
 | Current parent owner / reviewer | `Antigravity3` / `Antigravity` |
 | Observed parent status | `blocked` (`waiting_for: Human/Ops`) |
 | Target branch | `task/ODP-P10-DEV-REDEPLOY-VERIFY-001-SIDECAR-ACCEPTANCE` |
-| Packet revision | `r2.3` — `r2` content unchanged; base advanced onto dev tip `a7fde1a8` (see § r2.3) |
+| Packet revision | `r2.4` — `r2` content unchanged; base advanced onto dev tip `85d60609` (see § r2.4) |
 | Packet verdict | **Support only; no parent acceptance, merge, or production GO claim** |
 
 This packet is a support-only review aid, acceptance checklist, and dependency map for parent task `ODP-P10-DEV-REDEPLOY-VERIFY-001`. It does not change canonical contracts, L1 architecture truth, or primary runtime/registry/governance implementations. The parent task owner (`Antigravity3`) decides whether to absorb this packet; the parent reviewer (`Antigravity`) retains sole authority over implementation acceptance.
+
+---
+
+## Revision r2.4 — fourth base advance only (2026-08-06T03:51Z)
+
+`r2.3` was re-approved at exact head `56103626` with all five PR #658 checks green (`orchestrator`, `product`, `performance-gate`, `product-e2e-gate`, `task-review-gate`). `dev` advanced twice more before the merge landed — through `b507f932` (`ODP-DEPLOY-SCHEDULER-ROLLBACK-RESTORE-001-SIDECAR-REVIEW`, PR #638) to `85d60609` (`ODP-FORECAST-AUTHORITATIVE-HISTORY-BACKFILL-001-SIDECAR-ACCEPTANCE`, PR #654) — putting PR #658 back to `BEHIND`. Merged `origin/dev` cleanly into `task/ODP-P10-DEV-REDEPLOY-VERIFY-001-SIDECAR-ACCEPTANCE`.
+
+| Aspect | r2.3 (approved) | r2.4 |
+|---|---|---|
+| Base | dev tip `a7fde1a8` | dev tip `85d60609` (merged in, no rebase, no force-push) |
+| Packet body | — | **Byte-identical to `56103626` apart from this section, the revision row, and the freshness line.** Verify with `git diff 56103626 HEAD -- support/sidecars/ODP-P10-DEV-REDEPLOY-VERIFY-001/` |
+| Merge conflicts | — | None. The two incoming commits add `support/sidecars/ODP-DEPLOY-SCHEDULER-ROLLBACK-RESTORE-001/` and `support/sidecars/ODP-FORECAST-AUTHORITATIVE-HISTORY-BACKFILL-001/` only — both disjoint from this packet's path. |
+
+Re-verification at the new base (2026-08-06T03:50Z) confirms every r2 finding still holds:
+
+```bash
+curl -sS https://oday-api-7sxbjoeozq-de.a.run.app/platform/version   # 200 · release_sha 8ec12c02 (unchanged)
+curl -sS https://oday-api-7sxbjoeozq-de.a.run.app/platform/health    # 503 · status unhealthy (unchanged)
+#   modes.models.mode = mlflow-production-unverified · productionBindingsReady = false
+#   modes.data.mode   = unavailable · liveReady = false · operatorRepositoryReady = true
+#   modes.data.blockingReasons = [PRODUCTION_MODEL_BINDINGS_UNVERIFIED]
+```
+
+Two further `deploy-dev.yml` runs failed since § r2.3, both at the same live E2E acceptance gate with the same two blocking dependencies:
+
+```bash
+gh run view 31067707135 --json jobs   # e2e-operational-evidence success · deploy failure
+gh api repos/:owner/:repo/actions/jobs/92509324242/logs
+```
+
+```text
+Live E2E gate failed. Blocking runtime dependencies:
+  - data:ingestion_runs: runs=0
+  - models:registry: versions=0
+  - models:forecastops:production_alias: versionsWithProductionAlias=0 (exactly one required)
+  - runtime:model_capability:forecastops: available=False reasonCode=PRODUCTION_MODEL_REGISTRY_UNAVAILABLE
+```
+
+| Run | Dev tip | Conclusion |
+|---|---|---|
+| `31066152606` | `a7fde1a8` | failure (same gate) |
+| `31067707135` | `b507f932` | failure (same gate, log quoted above) |
+| `31069257955` | `85d60609` | in progress at capture time; expected to fail at the same gate — the parent owner should read its conclusion directly rather than infer it from here |
+
+This is the third consecutive confirmation of § r2 blocking causes #1 (MLflow production alias absent) and #3 (`external-data` / zero ingestion runs), and it re-confirms § r2 recommendation 1: re-triggering Deploy Dev on each new `dev` tip has now added three more failed runs without moving any acceptance cell. The consecutive-failure count in § r2 should be read as *63 of the last 64* `deploy-dev.yml` runs failed, still zero successes.
+
+No status cell, dependency edge, recommendation, or execution step was re-scoped in r2.4.
 
 ---
 
@@ -383,4 +430,4 @@ Commit all receipts, the `.odp_data/deployment/live-e2e-gate.json` gate report, 
 - **Owned by this sidecar:** this file only.
 - **Not changed by this sidecar:** canonical truth, contracts, runtime/registry/governance implementation, deployment scripts, workflows, the parent's evidence directory, and `ai-status.json` task semantics beyond this sidecar's own status transitions.
 - **Authority:** advisory. Parent acceptance remains with parent owner `Antigravity3` and parent reviewer `Antigravity`.
-- **Freshness:** the live probes and run data in the r2 body were captured 2026-08-06T01:14–01:15Z against dev tip `a0e4dcf07e41def48b5e6efa61b5c24215b5ce45`, re-confirmed unchanged at 2026-08-06T01:46–01:47Z against dev tip `c879004a9713dfd4562939accf888e93112ca403` (see § r2.1), re-confirmed unchanged again at 2026-08-06T02:30Z against dev tip `bc7366d31518f9bbd21b3baed64f954d103e31fc` (see § r2.2), and re-confirmed unchanged again at 2026-08-06T02:39Z against dev tip `a7fde1a877ff43f3dbd98d249f3aa1fb1616c68e` (see § r2.3). Re-verify before relying on any status cell.
+- **Freshness:** the live probes and run data in the r2 body were captured 2026-08-06T01:14–01:15Z against dev tip `a0e4dcf07e41def48b5e6efa61b5c24215b5ce45`, re-confirmed unchanged at 2026-08-06T01:46–01:47Z against dev tip `c879004a9713dfd4562939accf888e93112ca403` (see § r2.1), re-confirmed unchanged again at 2026-08-06T02:30Z against dev tip `bc7366d31518f9bbd21b3baed64f954d103e31fc` (see § r2.2), re-confirmed unchanged again at 2026-08-06T02:39Z against dev tip `a7fde1a877ff43f3dbd98d249f3aa1fb1616c68e` (see § r2.3), and re-confirmed unchanged again at 2026-08-06T03:50Z against dev tip `85d60609a1239f6ae75a010d65299cdabd83efe8` (see § r2.4). Re-verify before relying on any status cell.
