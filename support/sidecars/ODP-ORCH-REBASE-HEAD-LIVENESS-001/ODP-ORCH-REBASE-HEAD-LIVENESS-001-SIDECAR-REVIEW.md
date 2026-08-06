@@ -220,11 +220,26 @@ matches the finalizing actor, but the `Reviewer` trailer still names
 
 ### Fix applied
 
-The commit that lands this section is owner-authored on top of
-`387a326b`, carries a subject containing the task id, and carries
+Every commit added on top of `387a326b` in this pass is owner-authored by
+`Claude2`, with a subject containing the task id and the trailers
 `LLM-Agent: Claude2` / `Task-ID: ODP-ORCH-REBASE-HEAD-LIVENESS-001-SIDECAR-REVIEW`
-/ `Reviewer: Antigravity`. It becomes the new branch head, so the gate
-reads its body directly and no first-parent fallback is involved.
+/ `Reviewer: Antigravity`:
+
+| Commit | Role |
+| --- | --- |
+| `4b71db1f` | role refresh, ownership history, and this section |
+| `41e4bcad` | composes the `origin/dev` base advance (`bc7366d3`) so PR `#653` is not `BEHIND` at review time |
+| this commit | pins the provenance heads named here |
+
+The compose merge carries the trailers explicitly rather than inheriting
+them via first-parent fallback, so whichever commit the reviewer freezes
+as `approved_head` satisfies the gate on its own body. Simulated against
+the live gate logic:
+
+```text
+head=4b71db1f actor=Claude2 reviewer=Antigravity -> PASS
+head=41e4bcad actor=Claude2 reviewer=Antigravity -> PASS
+```
 
 Precedent: `ODP-ORCH-DONE-DELIVERY-PROVENANCE-001-SIDECAR-REVIEW`
 finalized at merge head `5d552c8d` for the same structural reason — its
