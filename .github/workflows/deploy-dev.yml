@@ -62,6 +62,10 @@ jobs:
       ODP_AUTH_ISSUER: ${{ vars.ODP_AUTH_ISSUER }}
       ODP_AUTH_AUDIENCES: ${{ vars.ODP_AUTH_AUDIENCES }}
       ODP_AUTH_JWKS_URI: ${{ vars.ODP_AUTH_JWKS_URI }}
+      # ODP-OPERATOR-SMOKE-RBAC-LIVE-001: ODP_AUTH_PRINCIPAL_MAP_SECRET must map
+      # ODP_OPERATOR_SMOKE_SERVICE_ACCOUNT (numeric subject & SA email) to the least-privilege
+      # composite read roles ["operations_manager", "model_owner", "data_owner"] required
+      # by the canonical live E2E contract (operator_console:view, model:view, integration:view, audit:view).
       ODP_AUTH_PRINCIPAL_MAP_SECRET: ${{ vars.ODP_AUTH_PRINCIPAL_MAP_SECRET }}
       ODP_OPERATOR_SMOKE_SERVICE_ACCOUNT: ${{ vars.ODP_OPERATOR_SMOKE_SERVICE_ACCOUNT }}
       ODP_WEB_OIDC_ISSUER: ${{ vars.ODP_WEB_OIDC_ISSUER }}
