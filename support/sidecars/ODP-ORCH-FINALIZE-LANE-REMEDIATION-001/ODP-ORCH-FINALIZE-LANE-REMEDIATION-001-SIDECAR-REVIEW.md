@@ -6,7 +6,7 @@
 - **Owner**: `Claude2`
 - **Reviewer**: `Claude3`
 - **Status**: `review`
-- **Packet Revision**: round 5 (2026-08-06) — base advance + round-4 note N4 closed
+- **Packet Revision**: round 6 (2026-08-06) — second base advance + round-5 note N5 closed
 - **Target Artifact**: `support/sidecars/ODP-ORCH-FINALIZE-LANE-REMEDIATION-001/ODP-ORCH-FINALIZE-LANE-REMEDIATION-001-SIDECAR-REVIEW.md`
 
 ### Parent Pin (read this before trusting any number below)
@@ -17,7 +17,7 @@
 | Parent merge-base with `dev` at that head | `c879004a` |
 | Landed on `dev` as | `bc7366d3` — *[ReviewBus] ODP-ORCH-FINALIZE-LANE-REMEDIATION-001 … (#622)* |
 | `scripts/orchestrator/` at `f16593c7` vs `bc7366d3` | identical (`git diff f16593c7 bc7366d3 -- scripts/orchestrator/` is empty) |
-| `scripts/orchestrator/` at `f16593c7` vs this branch head | identical (re-checked at round 5 after the `a7fde1a8` base advance) |
+| `scripts/orchestrator/` at `f16593c7` vs this branch head | identical (re-checked at round 6 after the `85d60609` base advance; round 5 checked it at `a7fde1a8`) |
 | Deliverable surface | 4 files, 1043 lines (see §2) |
 
 > [!IMPORTANT]
@@ -275,7 +275,7 @@ python3 -m ruff check scripts/orchestrator/
 git diff --check origin/dev...HEAD
 ```
 
-### Recorded results (owner re-run, round 5, 2026-08-06, this worktree at `dev`=`a7fde1a8`)
+### Recorded results (owner re-run, round 6, 2026-08-06, this worktree at `dev`=`85d60609`)
 
 | Command | Result |
 |---|---|
@@ -286,36 +286,56 @@ git diff --check origin/dev...HEAD
 | `ruff check scripts/orchestrator/` (3) | **All checks passed!** |
 | `git diff --check origin/dev...HEAD` (4) | clean; diff is 2 files under `support/sidecars/…` only |
 | `git diff --stat f16593c7 HEAD -- scripts/orchestrator/` | empty — the pin still describes the tree under test |
-| `wc -l` on the 4 deliverables | 316 + 343 + 196 + 188 = **1043** |
+| `wc -l` on the 4 deliverables at `bc7366d3` | 316 + 343 + 196 + 188 = **1043** |
 
-The round-4 run at `dev`=`bc7366d3` produced the same results; every row above was
-re-executed after the `a7fde1a8` base advance rather than carried forward.
+The round-4 run at `dev`=`bc7366d3` and the round-5 run at `dev`=`a7fde1a8`
+produced the same results; every row above was re-executed after the `85d60609`
+base advance rather than carried forward.
 
 ---
 
 ## 5. Handoff Note & Reviewer Transition
 
-This sidecar review packet is revised to round 5 and ready for re-review.
+This sidecar review packet is revised to round 6 and ready for re-review.
 
 - **Owner**: `Claude2`
 - **Assigned Reviewer**: `Claude3`
-- **Why round 5 exists**: round 4 was approved at `40a9678a`, but PR #659 then went
-  `BEHIND` as `dev` advanced to `a7fde1a8`. `dev` requires strict status checks, so
-  the branch had to compose the new base, and `command_done` compares the head
-  against `approved_head` for exact equality — a base advance is therefore a
-  re-review event by construction, not a mechanical refresh. Nothing in §1–§4 was
-  invalidated: the incoming range (`d94bc547..a7fde1a8`, all from
-  `ODP-ORCH-DETACHED-HEAD-BRANCH-RESOLUTION-001`) touches only
-  `.orchestrator/github_bus.py` and its test, and `scripts/orchestrator/` is still
-  byte-identical to the pin `f16593c7`.
+- **Why round 6 exists**: round 5 was approved at `a77753b5`, but PR #659 then went
+  `BEHIND` again as `dev` advanced `a7fde1a8 → 85d60609`. `dev` requires strict
+  status checks, so the branch had to compose the new base, and `command_done`
+  compares the head against `approved_head` for exact equality — a base advance is
+  therefore a re-review event by construction, not a mechanical refresh. This is
+  the same mechanism that produced round 5; it is a lane-throughput artifact, not
+  a defect in the packet.
+- **Round-6 base advance is inert for §1–§4**: the incoming range is
+  `a7fde1a8..85d60609` — `a7fde1a8` is this branch's merge-base with `dev`, not an
+  arbitrary lane commit. That range is 13 commits, all from
+  `ODP-DEPLOY-SCHEDULER-ROLLBACK-RESTORE-001-SIDECAR-REVIEW` and
+  `ODP-FORECAST-AUTHORITATIVE-HISTORY-BACKFILL-001-SIDECAR-ACCEPTANCE`, and its
+  whole content diff is two new files under those two sidecars' own `support/`
+  trees. Nothing under `scripts/orchestrator/` moved:
+  `git diff --stat f16593c7 HEAD -- scripts/orchestrator/` is still empty, and all
+  §4 rows were re-executed at the new base.
+- **Round-5 note N5 closed** (citation precision): round 5's §5 described its
+  incoming range as `d94bc547..a7fde1a8`. `d94bc547` was the detached-HEAD lane's
+  first content commit, not this branch's merge-base, so that literal range
+  enumerates 21 commits including ones already in the branch. The correct round-5
+  endpoint was the merge-base `bc7366d3`, at which the claim is exactly true:
+  9 commits, all `ODP-ORCH-DETACHED-HEAD-BRANCH-RESOLUTION-001`, touching only
+  `.orchestrator/github_bus.py` and its test. The round-5 text is replaced by this
+  block, and the round-6 range above is quoted merge-base-first for the same
+  reason. The substantive round-5 conclusion is unchanged — it never depended on
+  the endpoint.
 - **Round-4 note N4 closed**: §1a row 3 previously said `MISSING_REQUIRED_CHECK`
   applies when "reported checks are green". In `classify()` the `missing` test
   returns before any verdict branch, so the cause preempts `failure`, `pending`
   and green alike. The row is corrected and §1a now states the evaluation order
   explicitly alongside the `SEVERITY` report order.
-- **Reviewer diff shortcut**: `git diff 40a9678a HEAD` — the whole delta is this
-  §5 block, the round-5 rows in the pin table and §4, and the §1a N4 correction,
-  plus the base-advance merge of `origin/dev`.
+- **Reviewer diff shortcut**: `git diff a77753b5 HEAD` — the whole delta is this
+  §5 block, the round-6 rows in the header, the pin table and §4, plus the
+  base-advance merge of `origin/dev`. `git diff a77753b5 HEAD --
+  scripts/orchestrator/` is empty, and the reviewer's own findings file is
+  untouched by this round.
 - **Round-3 blockers addressed**: **G1** — §2 now lists both modules and both
   test suites with real CLI surfaces; **G2** — §1 is split into the two delivered
   taxonomies with no slash-aliases, and `CI_UNRESOLVED` / `OWNER_UNAVAILABLE` are
