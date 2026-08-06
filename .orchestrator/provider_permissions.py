@@ -368,7 +368,6 @@ def _verified_claude_policy(config: dict[str, Any]) -> dict[str, Any]:
         "Bash(git submodule status*)",
         "Bash(git push *)",
         "Bash(gh issue comment *)",
-        "Bash(gh pr create *)",
         "Bash(bash scripts/ai-status.sh *)",
         "Bash(AI_NAME=* bash scripts/ai-status.sh *)",
         "Bash(AI_NAME=* bash */scripts/ai-status.sh *)",
@@ -438,6 +437,10 @@ def _verified_claude_policy(config: dict[str, Any]) -> dict[str, Any]:
         "Bash(docker compose exec *)",
     ]
     deny = [
+        # ReviewBus owns task PR creation and bases it on the branch workflow
+        # target; an agent choosing its own --base bypasses dev CI. Removed from
+        # the allow list above as well, because allow wins over deny below.
+        "Bash(gh pr create *)",
         "Bash(git reset --hard*)",
         "Bash(git checkout -- *)",
         "Bash(sudo *)",

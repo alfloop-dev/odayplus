@@ -1,5 +1,5 @@
 {
-  "generated_at": "2026-08-04T02:04:00Z",
+  "generated_at": "2026-08-04T13:12:50Z",
   "focus_mode": "execution",
   "focus_mode_source": "supervisor",
   "runtime_summary": {
@@ -100,7 +100,7 @@
       "completed_in_sprint": 0,
       "superseded_in_sprint": 0
     },
-    "sprint_started_at": "2026-08-04T02:04:00Z",
+    "sprint_started_at": null,
     "recent_terminal_ids": [],
     "recent_terminal_tasks": [],
     "bff_consol_archived_ids": []
