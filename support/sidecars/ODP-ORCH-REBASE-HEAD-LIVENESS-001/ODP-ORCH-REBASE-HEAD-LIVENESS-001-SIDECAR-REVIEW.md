@@ -2,12 +2,14 @@
 
 - Sidecar task: `ODP-ORCH-REBASE-HEAD-LIVENESS-001-SIDECAR-REVIEW`
 - Parent task: `ODP-ORCH-REBASE-HEAD-LIVENESS-001`
-- Sidecar owner: `Antigravity`
-- Assigned sidecar reviewer / parent owner: `Antigravity6`
+- Sidecar owner: `Claude2` (helper-claimed `2026-08-06T02:00:12Z`; original owner `Antigravity`)
+- Sidecar reviewer: `Antigravity`
+- Parent task owner: `Antigravity6`
 - Parent reviewer: `Antigravity5`
-- Evidence captured: `2026-08-05` UTC
+- Evidence captured: `2026-08-05` UTC; re-verified `2026-08-06` UTC
 - Parent branch: `origin/task/ODP-ORCH-REBASE-HEAD-LIVENESS-001`
-- Exact reviewed parent HEAD: `d518d04c441a0790fb31aeaf2cb6a1e218f6d331` (commit `0b3e9d9d32e2c8dfceb72b5696dedaefb909e243`, merged via PR `#577`)
+- Recorded parent approved head: `d518d04c441a0790fb31aeaf2cb6a1e218f6d331` (a post-`#577` base advance of the parent branch, not the reviewed change — see § Provenance clarification)
+- Reviewed change: `d6af8219`..`0b3e9d9d32e2c8dfceb72b5696dedaefb909e243`, merged into `dev` via PR `#577` at `71e2ce23`
 - Parent PR: `#577` (`dev` <- `task/ODP-ORCH-REBASE-HEAD-LIVENESS-001`)
 - Scope: Review packet and evidence summary only; no canonical truth or runtime core modified
 
@@ -68,15 +70,20 @@ git diff --check
 
 This review packet is a support artifact for `ODP-ORCH-REBASE-HEAD-LIVENESS-001`. It does not alter canonical architecture, governance rules, or supervisor core logic.
 
-Handoff target: `Antigravity6` (parent task owner and assigned sidecar reviewer).
+Absorption target: `Antigravity6` (parent task owner) decides whether this
+packet is folded into `ODP-ORCH-REBASE-HEAD-LIVENESS-001`.
 
-## Reviewer verification (Claude2, 2026-08-06)
+Sidecar review handoff target: `Antigravity` (current assigned sidecar
+reviewer). See § Ownership and role history for why these differ.
 
-Reviewer of record for this sidecar is `Claude2`, helper-claimed at
-`2026-08-06T01:15:46Z` while the assigned reviewer `Claude3` was
-dispatch-paused. `Antigravity6` remains the parent task owner and the
-absorption/handoff target named above; the "assigned sidecar reviewer"
-label on line 6 predates the helper claim.
+## Reviewer verification pass (Claude2, 2026-08-06)
+
+Recorded while `Claude2` held this sidecar as **reviewer** (helper-claimed
+at `2026-08-06T01:15:46Z` while the assigned reviewer `Claude3` was
+dispatch-paused). `Claude2` has since been helper-claimed as **owner**, so
+the pass below is a completed prior review, not the current review of
+record. `Antigravity6` remains the parent task owner and absorption
+target.
 
 ### Base advance
 
@@ -117,10 +124,11 @@ All three results match the packet's claimed evidence.
 | Parent PR `#577` merged at `71e2ce23` | `gh pr view 577`: `MERGED`, `mergedAt 2026-08-02T15:12:41Z`, merge commit `71e2ce235012787a978bbc0e5a5a3cad877e130a`, `dev` <- `task/ODP-ORCH-REBASE-HEAD-LIVENESS-001` | confirmed |
 | Sibling acceptance sidecar is `review_approved` | `ai-status.json` entry for `ODP-ORCH-REBASE-HEAD-LIVENESS-001-SIDECAR-ACCEPTANCE` | confirmed |
 
-### Provenance clarification (line 10)
+### Provenance clarification (parent head vs reviewed change)
 
-Both hashes on line 10 are real and resolvable, but the label conflates
-two distinct things:
+The original packet header carried a single "exact reviewed parent HEAD"
+line holding both hashes. Both are real and resolvable, but the label
+conflated two distinct things:
 
 - `d518d04c441a0790fb31aeaf2cb6a1e218f6d331` is the current tip of
   `origin/task/ODP-ORCH-REBASE-HEAD-LIVENESS-001` and the value frozen as
@@ -132,10 +140,9 @@ two distinct things:
   `0b3e9d9d` (`prove active rebase blocking`), merged into `dev` via PR
   `#577` at `71e2ce23`.
 
-Read line 10 as "recorded approved head = `d518d04c`; reviewed change =
-`d6af8219`..`0b3e9d9d` via PR `#577`". No claim in the packet depends on
-the conflation, so this is a precision fix rather than a correctness
-defect.
+The header now states the two separately: "Recorded parent approved head"
+and "Reviewed change". No claim in the packet depended on the conflation,
+so this was a precision fix rather than a correctness defect.
 
 ### Evidence matrix precision note
 
@@ -152,3 +159,82 @@ Approved. Scope holds (support artifact only, no canonical truth
 modified), every substantive claim reproduces, and the two issues found
 are documentation precision only, corrected in place above rather than
 returned to the owner.
+
+## Ownership and role history
+
+This sidecar changed hands twice on 2026-08-06. The table exists because
+the closeout gate compares commit trailers against the *current* owner
+and reviewer, so stale role labels are a finalization hazard, not just a
+documentation nit.
+
+| UTC | Event | Owner | Reviewer |
+| --- | --- | --- | --- |
+| (created) | supervisor auto-created sidecar | `Antigravity` | `Claude3` |
+| `01:15:46` | `task_review_helper_claimed` — `Claude3` dispatch-paused | `Antigravity` | `Claude2` |
+| `01:21:43` | `review_approved` by `Claude2` at head `2a11aad0` | `Antigravity` | `Claude2` |
+| `01:49:36` | `re_review` by `Antigravity` after composing the `origin/dev` base advance at head `387a326b` | `Antigravity` | `Claude2` |
+| `01:57:36` | `reopen` by `Claude2`: content approved, provenance blocked | `Antigravity` | `Claude2` |
+| `02:00:12` | `task_helper_claimed` by idle `Claude2`; previous owner becomes reviewer | `Claude2` | `Antigravity` |
+
+## Closeout provenance requirement (owner note, 2026-08-06)
+
+The packet content has been approved twice and needs no rework. The only
+thing standing between this sidecar and `done` is commit provenance.
+
+### The gate
+
+`collect_done_delivery_metadata()` in `scripts/ai_status.py` reads the
+approved head's commit body, and — when that body carries no metadata
+lines — falls back to the body of `<approved_head>^1`. It then requires:
+
+| Field | Required value |
+| --- | --- |
+| commit subject | must contain the task id |
+| `LLM-Agent` | the finalizing actor (the task owner) |
+| `Task-ID` | the task id |
+| `Reviewer` | `canonical_agent_name(task.reviewer)` |
+
+`Antigravity` and `Antigravity6` are distinct fleet members with distinct
+alias entries in `AGENT_ALIASES`, so they do not fold into each other.
+
+### Why head `387a326b` could not finalize
+
+`387a326b` is the base-advance merge commit; its body is empty, so the
+gate falls back to first parent `2a11aad0`, whose trailers are
+`LLM-Agent: Claude2` / `Reviewer: Antigravity6`. `2a11aad0` was written by
+`Claude2` acting as *reviewer* (owner was `Antigravity` at the time), and
+its `Reviewer` trailer names the parent owner `Antigravity6` rather than
+the sidecar reviewer, so it did not match the owner/reviewer pair under
+either role assignment. Simulated against the live gate logic:
+
+```text
+head=387a326b metadata_from=387a326b^1 (2a11aad0)
+  actor=Claude2  reviewer=Antigravity -> FAIL: Reviewer='Antigravity6' must be 'Antigravity'
+  actor=Antigravity reviewer=Claude2  -> FAIL: LLM-Agent='Claude2' must be 'Antigravity';
+                                               Reviewer='Antigravity6' must be 'Claude2'
+```
+
+The `02:00:12` role swap did not clear it: `LLM-Agent: Claude2` now
+matches the finalizing actor, but the `Reviewer` trailer still names
+`Antigravity6` rather than the current reviewer `Antigravity`.
+
+### Fix applied
+
+The commit that lands this section is owner-authored on top of
+`387a326b`, carries a subject containing the task id, and carries
+`LLM-Agent: Claude2` / `Task-ID: ODP-ORCH-REBASE-HEAD-LIVENESS-001-SIDECAR-REVIEW`
+/ `Reviewer: Antigravity`. It becomes the new branch head, so the gate
+reads its body directly and no first-parent fallback is involved.
+
+Precedent: `ODP-ORCH-DONE-DELIVERY-PROVENANCE-001-SIDECAR-REVIEW`
+finalized at merge head `5d552c8d` for the same structural reason — its
+first parent carried trailers matching that task's owner/reviewer pair.
+
+### Reusable rule for sidecars
+
+When a helper claim swaps a sidecar's owner and reviewer, every
+previously approved head goes provenance-stale even though its content is
+untouched. The new owner must land one fresh task commit whose trailers
+match the new role pair *before* `done`; re-approving the old head is not
+enough. A base-advance merge with an empty body inherits its parent's
+trailers, so composing a base advance never repairs this on its own.
