@@ -6,7 +6,7 @@
 - **Owner**: `Claude2`
 - **Reviewer**: `Claude3`
 - **Status**: `review`
-- **Packet Revision**: round 6 (2026-08-06) — second base advance + round-5 note N5 closed
+- **Packet Revision**: round 7 (2026-08-06) — third base advance + §1 runtime line citations re-anchored
 - **Target Artifact**: `support/sidecars/ODP-ORCH-FINALIZE-LANE-REMEDIATION-001/ODP-ORCH-FINALIZE-LANE-REMEDIATION-001-SIDECAR-REVIEW.md`
 
 ### Parent Pin (read this before trusting any number below)
@@ -17,8 +17,16 @@
 | Parent merge-base with `dev` at that head | `c879004a` |
 | Landed on `dev` as | `bc7366d3` — *[ReviewBus] ODP-ORCH-FINALIZE-LANE-REMEDIATION-001 … (#622)* |
 | `scripts/orchestrator/` at `f16593c7` vs `bc7366d3` | identical (`git diff f16593c7 bc7366d3 -- scripts/orchestrator/` is empty) |
-| `scripts/orchestrator/` at `f16593c7` vs this branch head | identical (re-checked at round 6 after the `85d60609` base advance; round 5 checked it at `a7fde1a8`) |
+| `scripts/orchestrator/` at `f16593c7` vs this branch head | identical (re-checked at round 7 after the `7dbe45e9` base advance; round 6 checked it at `85d60609`, round 5 at `a7fde1a8`) |
 | Deliverable surface | 4 files, 1043 lines (see §2) |
+
+> [!WARNING]
+> The pin above covers `scripts/orchestrator/` — the parent's *deliverable*
+> surface. It does **not** cover the `.orchestrator/` runtime files quoted in §1
+> as problem-statement evidence (`supervisor.py`, `github_bus.py`). Those are
+> live `dev` files that other lanes edit, so their line numbers move on every
+> base advance. §1 therefore cites them by enclosing function plus a line number
+> stamped at the current branch head; see the round-7 note N7 in §5.
 
 > [!IMPORTANT]
 > Every claim in this packet is derived from parent commit **`f16593c7`**, which
@@ -47,15 +55,27 @@ In the Pantheon Orchestrator architecture, the Supervisor's finalize step acts
 purely as an observer. When inspecting tasks in `review_approved` (or agents in
 `finalize` status), if the CI status probe returns failure or non-green status:
 
-- The supervisor writes a log line (`supervisor.py:10919` →
-  `"resolve failing checks before finalization."`; `supervisor.py:10825/10939` →
-  `"finalize dispatch suppressed"`) and `continue`s.
+- The supervisor writes a log line and `continue`s. All three sites live in
+  `supervisor.py` → `dispatch_ready_tasks()` (`L10813` at head): `L11085` →
+  `"resolve failing checks before finalization."`; `L10991` / `L11105` →
+  `"finalize dispatch suppressed"`.
 - There is no code path in `.orchestrator` that re-triggers CI workflows
   (`gh run rerun` / `workflow_dispatch`) or advances a stale task branch onto
   `dev`.
-- A related failure source is the ReviewBus detached-HEAD bug
-  (`github_bus.py:782/810` → `state="skipped_unpublished_branch"`), which leaves
-  a pushed branch with no PR at all.
+- A related failure source is the ReviewBus detached-HEAD bug —
+  `github_bus.py` → `upsert_review_pr()` (`L767` at head), which returns
+  `state="skipped_unpublished_branch"` at `L798` and `L826` and leaves a pushed
+  branch with no PR at all.
+
+> [!NOTE]
+> Line numbers in the three bullets above are stamped at branch head
+> `5747c335` (the round-7 base advance). They are **not** pinned to the parent
+> commit `f16593c7`: these are live `dev` runtime files, and both citations have
+> already drifted once — `+166` on `supervisor.py` from
+> `ODP-ORCH-WORKTREE-LEASE-DEADLOCK-001` in this round, and `+16`/`+16` on
+> `github_bus.py` from `ODP-ORCH-DETACHED-HEAD-BRANCH-RESOLUTION-001` in round 5.
+> The enclosing function names are the stable anchor; re-`grep` if the head has
+> moved again. Nothing in §2–§4 depends on these numbers.
 
 Consequently, tasks that are finished **and reviewed** can sit in
 `review_approved` indefinitely. `finalize_lane_doctor.py`'s module docstring
@@ -275,7 +295,7 @@ python3 -m ruff check scripts/orchestrator/
 git diff --check origin/dev...HEAD
 ```
 
-### Recorded results (owner re-run, round 6, 2026-08-06, this worktree at `dev`=`85d60609`)
+### Recorded results (owner re-run, round 7, 2026-08-06, this worktree at `dev`=`7dbe45e9`)
 
 | Command | Result |
 |---|---|
@@ -288,54 +308,80 @@ git diff --check origin/dev...HEAD
 | `git diff --stat f16593c7 HEAD -- scripts/orchestrator/` | empty — the pin still describes the tree under test |
 | `wc -l` on the 4 deliverables at `bc7366d3` | 316 + 343 + 196 + 188 = **1043** |
 
-The round-4 run at `dev`=`bc7366d3` and the round-5 run at `dev`=`a7fde1a8`
-produced the same results; every row above was re-executed after the `85d60609`
-base advance rather than carried forward.
+The round-4 run at `dev`=`bc7366d3`, the round-5 run at `dev`=`a7fde1a8` and the
+round-6 run at `dev`=`85d60609` produced the same results; every row above was
+re-executed after the `7dbe45e9` base advance rather than carried forward. Note
+for the reviewer reproducing row 3: `ruff` is not on `PATH` in the task
+worktree, so §4 command 3 must be run as `python3 -m ruff check`, exactly as
+written.
 
 ---
 
 ## 5. Handoff Note & Reviewer Transition
 
-This sidecar review packet is revised to round 6 and ready for re-review.
+This sidecar review packet is revised to round 7 and ready for re-review.
 
 - **Owner**: `Claude2`
 - **Assigned Reviewer**: `Claude3`
-- **Why round 6 exists**: round 5 was approved at `a77753b5`, but PR #659 then went
-  `BEHIND` again as `dev` advanced `a7fde1a8 → 85d60609`. `dev` requires strict
+- **Why round 7 exists**: round 6 was approved at `65c2cf7e`, but PR #659 then went
+  `BEHIND` again as `dev` advanced `85d60609 → 7dbe45e9`. `dev` requires strict
   status checks, so the branch had to compose the new base, and `command_done`
   compares the head against `approved_head` for exact equality — a base advance is
   therefore a re-review event by construction, not a mechanical refresh. This is
-  the same mechanism that produced round 5; it is a lane-throughput artifact, not
-  a defect in the packet.
-- **Round-6 base advance is inert for §1–§4**: the incoming range is
-  `a7fde1a8..85d60609` — `a7fde1a8` is this branch's merge-base with `dev`, not an
-  arbitrary lane commit. That range is 13 commits, all from
-  `ODP-DEPLOY-SCHEDULER-ROLLBACK-RESTORE-001-SIDECAR-REVIEW` and
-  `ODP-FORECAST-AUTHORITATIVE-HISTORY-BACKFILL-001-SIDECAR-ACCEPTANCE`, and its
-  whole content diff is two new files under those two sidecars' own `support/`
-  trees. Nothing under `scripts/orchestrator/` moved:
-  `git diff --stat f16593c7 HEAD -- scripts/orchestrator/` is still empty, and all
-  §4 rows were re-executed at the new base.
+  the same mechanism that produced rounds 5 and 6; it is a lane-throughput
+  artifact, not a defect in the packet.
+- **Round-7 base advance is inert for §2–§4, but not for §1**: the incoming range
+  is merge-base `85d60609..7dbe45e9`, 6 commits, all from
+  `ODP-ORCH-WORKTREE-LEASE-DEADLOCK-001`, whole content diff
+  `.orchestrator/supervisor.py` (+166) and `.orchestrator/test_supervisor.py`
+  (+148). Nothing under `scripts/orchestrator/` moved —
+  `git diff --stat f16593c7 HEAD -- scripts/orchestrator/` is still empty and all
+  §4 rows were re-executed at the new base. §1's problem-statement citations do
+  move, because they point into `supervisor.py`; see N7.
+- **New round-7 note N7 (blocking for §1 accuracy, self-found, now fixed)**: §1
+  cited runtime evidence as bare line numbers into `.orchestrator/supervisor.py`
+  and `.orchestrator/github_bus.py`. Those files are live `dev` code outside the
+  parent pin, so the numbers rot on base advances, and the packet's pin table did
+  not say so. Two drifts had accumulated: this round's `+166` on `supervisor.py`
+  (all six incoming hunks land before `L2600`, so `10825/10919/10939` →
+  `10991/11085/11105`), and an **undetected round-5 drift** of `+16` on
+  `github_bus.py` (`ODP-ORCH-DETACHED-HEAD-BRANCH-RESOLUTION-001` moved
+  `782/810` → `798/826`) that rounds 5 and 6 both carried forward unchecked — at
+  the time of the round-6 approval, `github_bus.py:782/810` at branch head
+  pointed at `entry["last_review_hash"] = skip_hash` and
+  `and pr_ref.get("branch") == branch`, not at the quoted
+  `state="skipped_unpublished_branch"`. All five citations are re-stamped at head
+  `5747c335`, re-anchored to their enclosing functions (`dispatch_ready_tasks()`,
+  `upsert_review_pr()`), and the pin table now carries a `[!WARNING]` scoping the
+  pin to `scripts/orchestrator/` only. The §1 *argument* — supervisor observes and
+  `continue`s, no re-trigger path, ReviewBus can leave a branch PR-less — was and
+  remains correct; only the coordinates were stale.
 - **Round-5 note N5 closed** (citation precision): round 5's §5 described its
   incoming range as `d94bc547..a7fde1a8`. `d94bc547` was the detached-HEAD lane's
   first content commit, not this branch's merge-base, so that literal range
-  enumerates 21 commits including ones already in the branch. The correct round-5
-  endpoint was the merge-base `bc7366d3`, at which the claim is exactly true:
-  9 commits, all `ODP-ORCH-DETACHED-HEAD-BRANCH-RESOLUTION-001`, touching only
-  `.orchestrator/github_bus.py` and its test. The round-5 text is replaced by this
-  block, and the round-6 range above is quoted merge-base-first for the same
-  reason. The substantive round-5 conclusion is unchanged — it never depended on
-  the endpoint.
+  enumerates commits already in the branch. The correct round-5 endpoint was the
+  merge-base `bc7366d3`, at which the claim is exactly true: 9 commits, all
+  `ODP-ORCH-DETACHED-HEAD-BRANCH-RESOLUTION-001`, touching only
+  `.orchestrator/github_bus.py` and its test. Ranges are quoted merge-base-first
+  from round 6 onward. The substantive round-5 conclusion is unchanged — it never
+  depended on the endpoint.
+- **Round-6 note N6 acknowledged** (reviewer, non-blocking): the round-6
+  retraction of N5 restated the bad range's size as 21 commits; the true count for
+  `d94bc547..a7fde1a8` is 95. The number was illustrative of an already-retracted
+  range, so no §1–§4 claim moves. The count is dropped rather than corrected in
+  place, since the range itself is retracted.
 - **Round-4 note N4 closed**: §1a row 3 previously said `MISSING_REQUIRED_CHECK`
   applies when "reported checks are green". In `classify()` the `missing` test
   returns before any verdict branch, so the cause preempts `failure`, `pending`
   and green alike. The row is corrected and §1a now states the evaluation order
   explicitly alongside the `SEVERITY` report order.
-- **Reviewer diff shortcut**: `git diff a77753b5 HEAD` — the whole delta is this
-  §5 block, the round-6 rows in the header, the pin table and §4, plus the
-  base-advance merge of `origin/dev`. `git diff a77753b5 HEAD --
-  scripts/orchestrator/` is empty, and the reviewer's own findings file is
-  untouched by this round.
+- **Reviewer diff shortcut**: `git diff 65c2cf7e HEAD` — the whole delta is this
+  §5 block, the round-7 rows in the header, the pin-table `[!WARNING]`, the §1
+  citation bullets and their `[!NOTE]`, the §4 result heading and footnote, plus
+  the base-advance merge of `origin/dev` (`.orchestrator/supervisor.py` +166 and
+  `.orchestrator/test_supervisor.py` +148, neither authored here).
+  `git diff 65c2cf7e HEAD -- scripts/orchestrator/` is empty, and the reviewer's
+  own findings file is untouched by this round.
 - **Round-3 blockers addressed**: **G1** — §2 now lists both modules and both
   test suites with real CLI surfaces; **G2** — §1 is split into the two delivered
   taxonomies with no slash-aliases, and `CI_UNRESOLVED` / `OWNER_UNAVAILABLE` are
