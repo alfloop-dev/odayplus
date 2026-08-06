@@ -154,10 +154,24 @@ Addressed:
 
 ## Verification
 
+All run on the post-base-advance head.
+
 ```bash
 /home/lupin/.local/bin/uv run pytest tests/reliability/test_notifications.py -q
 # 27 passed (was 10)
 
 /home/lupin/.local/bin/uv run pytest tests/reliability/test_runtime_observability.py -q
 # 71 passed — the on-call adapter and factory contract are unregressed
+
+/home/lupin/.local/bin/uv run pytest \
+  tests/integration/test_operator_shell_persistence.py \
+  tests/integration/test_operator_live_repository.py \
+  tests/integration/test_operator_live_domain_modules.py \
+  tests/contract/test_operator_shell_api.py \
+  tests/security/test_operator_shell_security.py \
+  tests/test_scaffold.py -q
+# 89 passed — every other suite that touches notifications
 ```
+
+The reviewer's four reproduction probes were also re-run verbatim against this
+worktree; their output is quoted under each finding above.
