@@ -614,3 +614,97 @@ All 18 tests in `ReusedWorkerWorktreeBaseAdvanceTests` pass, ruff is clean, and 
 
 Approved at current HEAD. The review packet and evidence summary are complete, accurate, and fully verified against `origin/dev` tip `0391ca8c`.
 
+## Seventh base advance and re-review (owner note, 2026-08-06)
+
+The cycle repeated a sixth time, again on the base clock alone.
+`Antigravity6` approved at head `b37ad8c1` (`04:42:24Z`) and the owner was
+dispatched to finalize (`owned_finalize_dispatch`, wake queued `05:06:33Z`).
+By dispatch time `origin/dev` had advanced from `0391ca8c` (composed by
+`9b4d764f`) to `42e3b207` (PR `#656`,
+`ODP-PLAN-ENGINEERING-HARDENING-001-SIDECAR-ACCEPTANCE`), and PR `#653` was
+`mergeStateStatus: BEHIND`, `mergeable: MERGEABLE`,
+`headRefOid b37ad8c1`, with all five checks green (`orchestrator`,
+`product`, `performance-gate`, `product-e2e-gate`, `task-review-gate` —
+the last recorded as "Approved by assigned reviewer Antigravity6"). `done`
+was therefore unreachable: the closeout gate requires the task branch head
+to be an ancestor of `dev`, and it was one commit behind.
+
+Provenance was again not a blocker — the owner/reviewer pair is unchanged
+since `03:26:12Z` (`Claude2` / `Antigravity6`), and both round-six commits
+already carry `Reviewer: Antigravity6`.
+
+### What was done
+
+| Commit | Role |
+| --- | --- |
+| `d5764310` | composes the seventh `origin/dev` base advance (`42e3b207`) |
+| this commit | records this round, re-pins the provenance heads, and strips a trailing blank line at EOF |
+
+Both commits are owner-authored by `Claude2` with subjects containing the
+task id and explicit `LLM-Agent: Claude2` /
+`Task-ID: ODP-ORCH-REBASE-HEAD-LIVENESS-001-SIDECAR-REVIEW` /
+`Reviewer: Antigravity6` trailers, matching the current role pair.
+
+The merge was conflict-free. The single inbound path is
+`support/sidecars/ODP-PLAN-ENGINEERING-HARDENING-001/ODP-PLAN-ENGINEERING-HARDENING-001-SIDECAR-ACCEPTANCE.md`
+(+136, new file) — another lane's support artifact, with no overlap on any
+runtime or contract surface. The branch still contributes nothing outside
+this support artifact:
+
+```bash
+git diff --name-only origin/dev...HEAD
+# support/sidecars/ODP-ORCH-REBASE-HEAD-LIVENESS-001/ODP-ORCH-REBASE-HEAD-LIVENESS-001-SIDECAR-REVIEW.md
+```
+
+So the approved scope is unchanged.
+
+### Re-verification at the composed head
+
+```bash
+python3 -m pytest -q \
+  .orchestrator/test_supervisor.py \
+  -k ReusedWorkerWorktreeBaseAdvanceTests
+# 18 passed
+
+python3 -m ruff check .orchestrator/
+# All checks passed!
+
+git diff --check origin/dev...HEAD
+# clean (after the EOF fix below)
+```
+
+The evidence matrix holds unchanged at the composed head: 18 cases in
+`ReusedWorkerWorktreeBaseAdvanceTests`, including the three this packet
+attests to (`test_stale_rebase_head_after_completed_rebase_does_not_block`,
+plus the `rebase-merge` and `rebase-apply` subtests of
+`test_unresolved_rebase_blocks`).
+
+One correction to the prior rounds' evidence lines: earlier rounds recorded
+`git diff --check` as clean, which was true of the *working tree* (clean
+after commit) but not of the branch's contributed diff. Run against the
+range, `git diff --check origin/dev...HEAD` flagged
+`...-SIDECAR-REVIEW.md:616: new blank line at EOF` — a trailing blank line
+this artifact has carried for several rounds. It is stripped in this
+commit, and the range form of the check is now clean. This is whitespace
+only; no recorded evidence, command, or verdict changes.
+
+### Why this again returns to `review`, not `done`
+
+Unchanged from rounds two through six: a base-advance merge is not an
+identical head, not a `post_merge_checkout_advanced` delivery record, and
+not an `is_evidence_only_advance()` fast-forward, so
+`is_approved_head_satisfied()` cannot carry the `b37ad8c1` approval forward
+to `d5764310`. The `task-review-gate` status remains pinned to the
+`b37ad8c1` SHA.
+
+### Standing hazard, seventh-round reading
+
+Six consecutive rounds have now been spent composing a base advance that
+invalidated the approval it was performed to enable. Nothing in the
+packet's content is in dispute, and no rework request has been raised
+against it since `01:57:36`. The loop terminates when a `dev` advance does
+not land inside the window between approval and the owner's finalize
+dispatch — the merge queue's pace, not this packet, is the gating variable.
+Rounds six and seven each closed in under 25 minutes wall-clock, so the
+window is narrowing; the packet remains ready to merge the first time it
+opens.
