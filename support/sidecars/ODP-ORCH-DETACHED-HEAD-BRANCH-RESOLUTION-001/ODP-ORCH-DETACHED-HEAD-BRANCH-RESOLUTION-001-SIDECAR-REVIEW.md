@@ -8,7 +8,7 @@
 - **Sidecar Owner**: `Claude3`
 - **Sidecar Reviewer**: `Claude`
 - **Phase**: Orchestrator reliability
-- **Last Updated**: 2026-08-06 (base advance only; §1–§4 unchanged since approval at `a58cf5d0`)
+- **Last Updated**: 2026-08-06 (third base advance; §1–§4 unchanged since approval at `a58cf5d0`)
 
 ---
 
@@ -302,7 +302,7 @@ rc=0                                                # empty output → no remote
 - **This packet's scope**: support artifact only. The single file touched by
   this sidecar task is
   `support/sidecars/ODP-ORCH-DETACHED-HEAD-BRANCH-RESOLUTION-001/ODP-ORCH-DETACHED-HEAD-BRANCH-RESOLUTION-001-SIDECAR-REVIEW.md`.
-- **Base advance**: performed twice, both by merge. No history was reset,
+- **Base advance**: performed three times, all by merge. No history was reset,
   force-pushed, or overwritten at any point.
   1. *2026-08-05, before editing* — branch was 1 ahead / 12 behind `origin/dev`;
      `origin/dev` merged in cleanly (`7129d3e0`), then the packet revision
@@ -318,6 +318,30 @@ rc=0                                                # empty output → no remote
      reviewer via `re_review` rather than being finalized at a stale head. The
      packet's substance is unchanged; `git diff --stat origin/dev...HEAD` is
      still exactly this one file and nothing else.
+  3. *2026-08-06, after the second approval* — the same loop repeated. The
+     re-review approved `52ad4722`, every CI check on PR #639 finished green
+     (`orchestrator`, `product`, `performance-gate`, `product-e2e-gate`,
+     `task-review-gate` all `SUCCESS`), but before the PR could be merged
+     `origin/dev` advanced by two more commits (`c879004a` #642, `bc7366d3`
+     #622) and `mergeStateStatus` went back to `BEHIND`. PR #639 has no
+     auto-merge request set (`autoMergeRequest: null`), so nothing merges it
+     while it is behind. `origin/dev` was merged in cleanly a third time
+     (`ec34a468`, no conflicts); this doc commit sits on top. Scope after the
+     merge is still exactly one file: `git diff --name-only origin/dev...HEAD`
+     returns only this packet, and the branch is 0 behind / 6 ahead.
+     `is_evidence_only_advance()` in `scripts/ai_status.py:2010` carries an
+     approval forward only when every changed path sits under `docs/evidence/`,
+     so a base-advance merge that pulls in orchestrator source necessarily
+     invalidates `approved_head` — `re_review` is the only correct route, and
+     `restore_approved_head` still refuses a moved branch.
+- **Known loop, for the parent owner / orchestrator**: this is now the second
+  consecutive round where an approved, fully green sidecar PR was overtaken by
+  `dev` before it merged, costing a full re-review cycle each time. The packet
+  content has not changed since `a58cf5d0`; only base-advance bookkeeping has.
+  Two mitigations are worth a follow-up decision (neither is in this sidecar's
+  scope): enable auto-merge on task PRs at approval time so the PR merges the
+  moment it is green and up to date, or let ReviewBus run `update-branch` +
+  merge as one step instead of leaving an approved PR to go stale.
 - **Sidecar reviewer**: `Claude` — please check §2 against
   `git diff origin/dev...origin/task/ODP-ORCH-DETACHED-HEAD-BRANCH-RESOLUTION-001`
   and confirm §3 draws the implemented/residual line where you would draw it.
