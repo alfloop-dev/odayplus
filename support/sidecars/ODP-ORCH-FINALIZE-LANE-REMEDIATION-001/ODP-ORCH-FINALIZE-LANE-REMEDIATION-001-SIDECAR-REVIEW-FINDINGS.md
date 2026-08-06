@@ -639,3 +639,106 @@ Closeout returns to owner `Claude2`: PR #659 must merge into `dev` before
 re-run S4/S5 first — a base advance that leaves `git diff f16593c7 HEAD --
 scripts/orchestrator/` empty is a mechanical refresh of this same approval, but
 one that does not is a genuine re-derivation of §1–§4.
+
+---
+
+# Re-Review Record (round 6)
+
+- **Reviewer**: `Claude3`
+- **Owner**: `Claude2`
+- **Reviewed Artifact**: `support/sidecars/ODP-ORCH-FINALIZE-LANE-REMEDIATION-001/ODP-ORCH-FINALIZE-LANE-REMEDIATION-001-SIDECAR-REVIEW.md` (packet revision round 6)
+- **Reviewed At**: `2026-08-06`
+- **Branch head reviewed**: `1ab6b20a` (= PR #659 `headRefOid`)
+- **Prior approved head**: `a77753b5` (round 5) — invalidated by the second base advance
+- **Base**: `origin/dev` = `85d60609`; parent pin `f16593c7`, landed at `bc7366d3`
+- **Verdict**: **APPROVE**
+
+## Why This Round Exists
+
+Round 5 was approved at `a77753b5`. `dev` then advanced `a7fde1a8 → 85d60609`,
+PR #659 went `BEHIND` a second time, and the branch composed the new base at
+`6f258a5e`. `command_approve` freezes an exact `approved_head` and `command_done`
+requires equality, so this is a re-review event by construction. Scope of the
+round is unchanged from round 5: (a) did the incoming base carry anything that
+invalidates a packet claim, and (b) is the round-6 packet delta itself correct.
+
+## Parent Pin Re-Anchored First
+
+The pin is checked against the parent's *current* record, not against the round-5
+packet text: `ai-task-archive/tasks/ODP-ORCH-FINALIZE-LANE-REMEDIATION-001.json`
+is terminal `done` with `approved_head` = `last_approved_head` =
+`f16593c770282c22d9737368c2d27823b725564f`. The packet's pin `f16593c7` is
+therefore still the parent's authoritative head, and no §1–§4 claim is anchored
+to a superseded commit.
+
+## Review Basis (round 6)
+
+| Ref | Command / source read | Result |
+|---|---|---|
+| T1 | `git merge-base a77753b5 85d60609` | `a7fde1a8` — the packet's merge-base-first citation is literally correct this round |
+| T2 | `git rev-list --count a7fde1a8..85d60609` | **13** — matches §5 |
+| T3 | `git log --format=%s a7fde1a8..85d60609` | all 13 subjects belong to `ODP-DEPLOY-SCHEDULER-ROLLBACK-RESTORE-001-SIDECAR-REVIEW` (incl. PR #638) and `ODP-FORECAST-AUTHORITATIVE-HISTORY-BACKFILL-001-SIDECAR-ACCEPTANCE` (incl. PR #654) — matches §5 |
+| T4 | `git diff --stat a7fde1a8 85d60609` | exactly 2 files, +465, both new files under those two sidecars' own `support/` trees. Nothing under `scripts/orchestrator/`, so no §1–§4 claim can have moved |
+| T5 | `git diff --stat f16593c7 HEAD -- scripts/orchestrator/` | **empty** — the pin still describes the tree under test byte-for-byte at the new base |
+| T6 | `git diff --name-status a77753b5 HEAD` | 3 paths: the packet (M) plus the two sidecar files (A) the base advance carried in. No edit outside `support/`, and the reviewer's own findings file is untouched (`git diff --stat a77753b5 HEAD -- …-FINDINGS.md` empty) — matches the §5 diff shortcut |
+| T7 | `git diff b33788d5 HEAD -- <packet>` | the packet delta is exactly the claimed set: header revision line, pin-table round-6 row, §4 heading + two rows, and the rewritten §5. §1, §2, §3 are byte-identical to the round-5 text that S1–S10 verified |
+| T8 | `git diff --shortstat $(git merge-base origin/dev f16593c7) f16593c7` + `--name-only` | 8 files / 2,383 insertions; 4 generated mirrors (`ai-status.json`, `current-work.md`, both `docs-site/` copies) + the 4 deliverables — §2's `[!NOTE]` re-derives clean |
+| T9 | `git show bc7366d3:…` + `wc -l` on the 4 deliverables | 316 + 343 + 196 + 188 = **1043** — §2 and the new §4 row (now correctly scoped "at `bc7366d3`") both hold |
+| T10 | source `finalize_lane_doctor.py` L55–56, L279, L284, L305 | `FINALIZE_STATUSES = ("review_approved",)`; `DEFAULT_REQUIRED_CHECKS` is the 4-name tuple; `required = tuple(args.required_check or DEFAULT_REQUIRED_CHECKS)` confirms **replace**, not append-to-default (N2); the `"SIDECAR" not in id` skip is in the scan filter (N3); `stuck = sum(v for k, v in counts.items() if k not in (READY, CI_PENDING))` confirms the unconditional exit code — §1a, §2 and A3/A4 still exact |
+| T11 | source `diagnose_finalize_lane_remediation.py` L41–47 | `ALL_CATEGORIES` declaration order still `CI_UNRESOLVED, CI_FAILED, STALE_BASE, MISSING_PR, OWNER_UNAVAILABLE`, i.e. still divergent from the evaluation order §1b tabulates |
+| T12 | `python3 -m pytest -q` both parent suites at the new base | **26 passed** (17 doctor + 9 diagnose) |
+| T13 | `python3 -m py_compile` both modules | clean |
+| T14 | `python3 -m ruff check scripts/orchestrator/` | **All checks passed!** |
+| T15 | `git diff --check origin/dev...HEAD` | clean |
+| T16 | `git diff --name-status origin/dev...HEAD` | 2 files, +997, both under `support/sidecars/ODP-ORCH-FINALIZE-LANE-REMEDIATION-001/` |
+| T17 | `ai-task-archive/tasks/ODP-ORCH-FINALIZE-LANE-REMEDIATION-001.json` | terminal `done`, `approved_head` `f16593c7…` — the pin is the parent's current head, not a stale one |
+| T18 | `gh pr view 659` | `OPEN`, base `dev`, head `1ab6b20a`, `mergeable: MERGEABLE`, `mergeStateStatus: BLOCKED` with `task-review-gate` `PENDING` — no longer `BEHIND`; the gate re-stamps on this approval |
+
+## Disposition of Round-5 Note
+
+| Finding | Verdict | Evidence |
+|---|---|---|
+| **N5** — the round-5 incoming-range endpoint was quoted imprecisely | **Closed** | §5's round-5 paragraph is deleted and replaced by an explicit retraction that names the merge-base `bc7366d3` as the correct endpoint, restates the true measurement there (9 commits, all `ODP-ORCH-DETACHED-HEAD-BRANCH-RESOLUTION-001`, only `.orchestrator/github_bus.py` + its test — re-confirmed this round), and quotes the round-6 range merge-base-first (T1). The fix is structural, not cosmetic: the packet now names *why* a merge-base endpoint is required |
+
+Round-3 blockers G1–G5, round-2 notes N1–N3 and round-4 note N4 remain closed.
+The load-bearing ones were re-measured against source rather than carried
+forward (T8–T11); the rest are covered by T5, which shows the reviewed tree is
+byte-identical to the pin.
+
+## Non-Blocking Note (round 6)
+
+**N6 — the retraction's illustrative commit count is itself wrong, and the error
+is mine.** §5's N5-closure paragraph says the mis-quoted range `d94bc547..a7fde1a8`
+"enumerates 21 commits including ones already in the branch". The owner took `21`
+from round-5 note N5, where I asserted it. It is not reproducible:
+`git rev-list --count d94bc547..a7fde1a8` is **95** (44 with `--no-merges`, 27
+with `--first-parent`, 11 with both). No counting mode yields 21. Everything else
+in the paragraph is verified true — `d94bc547` is a content commit of the
+detached-HEAD lane and not this branch's merge-base, `bc7366d3` is the correct
+endpoint, and the measurement at that endpoint is exact — so the retraction's
+conclusion stands and this is a stray figure in an illustration, not a load-bearing
+claim. Corrected here so the record is right at the source; if the parent owner
+absorbs the packet, replace `21` with `95` or drop the count, since the point is
+that the endpoint is wrong, not how wrong.
+
+## Scope Discipline
+
+Met. The branch's whole content diff versus `origin/dev` is two files under
+`support/sidecars/ODP-ORCH-FINALIZE-LANE-REMEDIATION-001/` (T16). The two
+sidecar files from other lanes visible against the old approved head are the
+composed `dev` base advance, not edits by this lane (T4, T6). No canonical L1
+document, contract, or runtime/registry/governance implementation is touched.
+
+## Approval
+
+Approved at branch head `1ab6b20a` plus this findings commit. The second base
+advance is inert for the reviewed surface (T4, T5), the packet delta is exactly
+what §5 claims and nothing more (T6, T7), the pin still matches the parent's
+authoritative approved head (T17), and round-5 note N5 is closed with a real
+structural correction — with one stray figure inside it recorded as N6 above.
+
+Closeout returns to owner `Claude2`: PR #659 must merge into `dev` before
+`ai-status.sh done`. If `origin/dev` advances again, T4/T5 are the two commands
+that decide the next round's shape — a base advance that leaves
+`git diff f16593c7 HEAD -- scripts/orchestrator/` empty is a mechanical refresh
+of this approval; one that does not is a genuine re-derivation of §1–§4.
