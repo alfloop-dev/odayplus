@@ -392,3 +392,65 @@ The sidecar branch's only content diff vs `origin/dev` is the two files under
 L1 document, contract, or runtime/registry/governance implementation is touched.
 Acceptance criteria *"create support artifacts only"* and *"do not edit canonical
 truth"* remain **met**. The reopen is on packet fidelity (G1–G4), not on scope.
+
+---
+
+# Owner Response to Round 3 (packet revision → round 4)
+
+- **Owner**: `Claude2` (helper-claimed 2026-08-06T02:12:41Z; designated reviewer
+  `Claude3` preserved)
+- **Reviewer**: `Claude3`
+- **Responded At**: `2026-08-06`
+- **Packet Revision**: round 4
+
+## Base Advance Performed First
+
+The task branch was behind `origin/dev`. Resolved by a non-destructive merge of
+`origin/dev` into `task/ODP-ORCH-FINALIZE-LANE-REMEDIATION-001-SIDECAR-REVIEW`.
+No history was reset, discarded, or force-pushed.
+
+Material change since round 3: **the parent landed.** `origin/dev` is now
+`bc7366d3` — *[ReviewBus] ODP-ORCH-FINALIZE-LANE-REMEDIATION-001 Diagnose tasks
+stranded in the finalize lane (#622)*. The parent deliverable is therefore no
+longer reachable only through parent-branch blobs; it is checked out in this
+worktree, and every round-4 claim was verified against real files rather than
+extracted temp-dir copies.
+
+| Ref | Command | Result |
+|---|---|---|
+| T1 | `git ls-tree -r --name-only origin/dev -- scripts/orchestrator/` | all four finalize-lane files present on `dev` |
+| T2 | `git diff --stat f16593c7 bc7366d3 -- scripts/orchestrator/` | **empty** — what landed is byte-identical to the parent approved head |
+| T3 | `git diff --stat $(git merge-base c879004a f16593c7) f16593c7` | 8 files, 2383 insertions |
+| T4 | `git diff --name-only c879004a bc7366d3` | same 8 paths: 4 generated mirrors + 4 deliverables |
+| T5 | `wc -l` on the four deliverables | 343 + 188 + 316 + 196 = **1043** |
+| T6 | `pytest -q` both suites together | **26 passed** |
+| T7 | `pytest -q test_diagnose_finalize_lane_remediation.py` | **9 passed** |
+| T8 | `pytest -q test_finalize_lane_doctor.py` | **17 passed** |
+| T9 | `python3 -m ruff check scripts/orchestrator/` | **All checks passed!** |
+| T10 | `python3 -m py_compile` on both modules | clean |
+| T11 | `grep '^def test'` on both suites | 9 + 17 names, each mapped to an acceptance row in §3 |
+| T12 | source read `diagnose_…py` L35–47, L101–189, L248–339 | `ALL_CATEGORIES`, first-match classification order, full flag set |
+| T13 | source read `finalize_lane_doctor.py` L54–75, L164–228, L260–316 | `FINALIZE_STATUSES`, `DEFAULT_REQUIRED_CHECKS`, `SEVERITY`, `classify()`, flag set, exit-code line |
+| T14 | `git diff --name-status origin/dev HEAD` | 2 files, both under `support/sidecars/ODP-ORCH-FINALIZE-LANE-REMEDIATION-001/` |
+
+## Disposition of Round-3 Findings
+
+| Finding | Required Correction | Disposition in round 4 |
+|---|---|---|
+| **G1** | List both modules and both test suites with the real CLI surface of `diagnose_finalize_lane_remediation.py` | **Fixed** — §2 now documents 4 delivered files. Both CLI surfaces are given as flag tables: doctor (`--status`, `--repo`, `--base`, `--emit-commands`, `--required-check`) and diagnose (`--status/-s`, `--config/-c`, `--task/-t`, `--category`, `--json`, `--remediate`, `--fail-on-stranded`). Test-suite entries name the 17 and 9 tests' coverage (T11). |
+| **G2** | Split §1 into the two delivered taxonomies; no slash-aliases; `CI_UNRESOLVED` and `OWNER_UNAVAILABLE` must appear | **Fixed** — §1 now carries a tool-comparison table plus §1a (doctor, 7 causes, severity-ordered, with the `CI_PENDING`/`READY` terminal split) and §1b (diagnose, 5 causes). The merged slash-alias list is explicitly retracted. §1b documents the *evaluation* order in `classify_stranded_task()`, which differs from the `ALL_CATEGORIES` declaration order (T12) — a detail the round-3 finding did not have to raise but which matters to any operator reading the tool's output. `OWNER_UNAVAILABLE` is called out as having no doctor counterpart. |
+| **G3** | Re-derive the `[!NOTE]` figures at `f16593c7` | **Fixed** — the note now reads 8 files / 2,383 insertions / 4 generated mirrors / 4 deliverables / 1,043 lines (T3–T5), names the four mirror paths, and records that the same shape landed on `dev` at `bc7366d3`. The `b3bb9de3` pin and the "sole core deliverables" claim are gone. |
+| **G4** | Add acceptance rows backed by the 9 diagnose tests; extend §4 to all 26 | **Fixed** — §3 is re-split: A1–A5 (doctor), A6–A10 (diagnose), A11 (cross-cutting lint/compile). Every one of the 26 test names maps to a row (T11). §4 command 1 runs both suites, command 2 `py_compile`s both modules, and a results table records the actual owner run (T6–T10). |
+| **G5 (pin)** | Pin the packet to a parent commit so staleness is detectable | **Fixed** — a "Parent Pin" block sits directly under the packet header with `f16593c7`, its merge-base `c879004a`, the landed `dev` commit `bc7366d3`, and an `[!IMPORTANT]` instructing re-derivation if the parent advances. |
+| **G5 (observation)** — two overlapping tools | Record which tool is authoritative | **Recorded, not resolved** — §1's comparison table states each tool's vantage point, scan scope, and network behaviour, and §5 flags the precedence question for parent owner `Antigravity` / parent reviewer `Antigravity2`. Declaring one authoritative is a parent decision; a sidecar packet asserting it would be inventing truth. |
+| **N1** *(round 2)* — reviewer name churn | — | **Resolved** — header, §5, and this file name owner `Claude2` / reviewer `Claude3`, matching the board. |
+| **N2** *(round 2)* — `--required-check` wording | Say it *replaces* the default set | **Adopted** — §2's doctor flag table states it replaces `DEFAULT_REQUIRED_CHECKS` and is repeatable, explicitly "not filter or add to them". |
+| **N3** *(round 2)* — undocumented scan scope | Note `review_approved`-only and the `SIDECAR` skip | **Adopted** — recorded in §1's comparison table and in acceptance row A3, and contrasted with diagnose's wider scope (config-driven `finalize_statuses` + owner-in-`finalize` tasks, no sidecar skip). |
+
+## Scope Discipline
+
+Unchanged and still met. The branch's only content diff vs `origin/dev` is the
+two files under `support/sidecars/ODP-ORCH-FINALIZE-LANE-REMEDIATION-001/`
+(T14). No canonical L1 document, contract, or runtime/registry/governance
+implementation was touched. The parent's `scripts/orchestrator/` files present in
+this worktree arrived via the `origin/dev` merge, not via any sidecar edit.
