@@ -122,13 +122,23 @@ what they asserted before.
   `python3 -m pytest .orchestrator/test_supervisor.py
   .orchestrator/test_provider_permissions.py` -> 435 passed, 145 subtests
   passed, exit 0.
+- Sixth closeout base advance: `origin/dev` advanced to `ee9b477e` (PR #653,
+  ODP-ORCH-REBASE-HEAD-LIVENESS-001-SIDECAR-REVIEW) while PR #662 sat approved
+  with all five checks green, leaving the PR `BEHIND` again. Composed as
+  `c285bf4e`; the merge brought in one docs file
+  (`support/sidecars/ODP-ORCH-REBASE-HEAD-LIVENESS-001/...-SIDECAR-REVIEW.md`)
+  and touched no runtime surface, and this task's diff against `origin/dev` is
+  still exactly one added file. Re-verified at `c285bf4e`:
+  `python3 -m pytest .orchestrator/test_supervisor.py
+  .orchestrator/test_provider_permissions.py` -> 435 passed, 145 subtests
+  passed, exit 0.
 
 No live supervisor rollout is claimed by this task; the change ships with `dev`
 through the normal PR path.
 
 ## Closeout loop observed on this task's own PR
 
-This task's own closeout has now been blocked five times by the same
+This task's own closeout has now been blocked six times by the same
 mechanism, which is worth recording because it is adjacent to — but distinct
 from — the deadlock the task fixed.
 
@@ -175,3 +185,36 @@ Two measurements from the fifth lap are worth handing to that lane:
    laps (a base-advance merge changes non-evidence paths regardless), but it
    does mean the existing mitigation silently does not apply to the directory
    the orchestrator's own tasks actually use.
+
+The sixth lap measured the race precisely, which changes the recommendation.
+`branches/dev/protection` requires four checks with `strict = true`:
+`orchestrator`, `product`, `product-e2e-gate`, `task-review-gate`
+(`performance-gate` is green but not required). On the fifth lap's run
+(`actions/runs/31077101714`) those took 59 s, **22 min 01 s**, and 8 min 34 s
+respectively, and `task-review-gate` was stamped 4 min after the push. So the
+reviewer round trip is *not* the bottleneck — the required `product` check is.
+Measured against `dev`'s first-parent merge cadence over the preceding eight
+merges (03:10, 03:44, 04:07, 04:32, 04:58, 05:24, 05:58, 06:33 UTC; mean gap
+≈ 29 min, min 23.6 min), a lap survives only if no unrelated PR merges during a
+22-minute window drawn from a ~29-minute mean gap. That is roughly a coin flip
+per lap, and it is lost outright whenever the worker cannot push early in the
+gap: the fifth lap pushed at 06:23:17, 24.5 min into a 35-min gap that had
+opened at 05:58:45, and `dev` took PR #653 at 06:33:47 — 10.5 min into a
+22-min check. Approval→owner-wake latency on that lap was 19.5 min (approved
+06:27:09, wake queued 06:46:39), so the controllable variable is how much of
+the gap is still left when the base advance is pushed, and the current dispatch
+path spends most of it before the CI clock even starts.
+
+That makes the second follow-up option the load-bearing one. Widening
+`APPROVAL_EVIDENCE_PATH_PREFIXES` cannot help, because a base-advance merge
+changes whatever paths `dev` changed. What removes the loop is carrying
+approval forward across a *target-branch compose*: if the advance merges the
+delivery target into the task branch and the task's own diff against the new
+merge base is byte-identical to its diff against the old one, then nothing the
+reviewer approved has changed and `task-review-gate` can be re-stamped at the
+new head without a review round trip. The task then never leaves
+`review_approved`, and the owner can push a base advance within seconds of a
+`dev` merge instead of after a full approve→dispatch cycle — which is what
+turns the 22-min-check-vs-29-min-gap race from a coin flip into a win. Still
+recorded as a follow-up candidate for the review-gate lane; not implemented
+under this task's scope.
