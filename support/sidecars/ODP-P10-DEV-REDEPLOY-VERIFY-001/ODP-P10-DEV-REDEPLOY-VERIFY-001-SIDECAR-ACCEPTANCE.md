@@ -11,10 +11,81 @@
 | Current parent owner / reviewer | `Antigravity3` / `Antigravity` |
 | Observed parent status | `blocked` (`waiting_for: Human/Ops`) |
 | Target branch | `task/ODP-P10-DEV-REDEPLOY-VERIFY-001-SIDECAR-ACCEPTANCE` |
-| Packet revision | `r2.4` — `r2` content unchanged; base advanced onto dev tip `85d60609` (see § r2.4) |
+| Packet revision | `r2.5` — `r2` content unchanged; base advanced onto dev tip `7dbe45e9`; adds one first-hand mid-deploy observation and two evidence corrections (see § r2.5) |
 | Packet verdict | **Support only; no parent acceptance, merge, or production GO claim** |
 
 This packet is a support-only review aid, acceptance checklist, and dependency map for parent task `ODP-P10-DEV-REDEPLOY-VERIFY-001`. It does not change canonical contracts, L1 architecture truth, or primary runtime/registry/governance implementations. The parent task owner (`Antigravity3`) decides whether to absorb this packet; the parent reviewer (`Antigravity`) retains sole authority over implementation acceptance.
+
+---
+
+## Revision r2.5 — fifth base advance, plus a mid-deploy capture (2026-08-06T04:30Z)
+
+`r2.4` was approved at exact head `297ae48d`. `dev` advanced again before the merge landed — to `7dbe45e9` (`ODP-ORCH-WORKTREE-LEASE-DEADLOCK-001`, PR #660) — putting PR #658 back to `BEHIND`. Merged `origin/dev` cleanly into `task/ODP-P10-DEV-REDEPLOY-VERIFY-001-SIDECAR-ACCEPTANCE`.
+
+| Aspect | r2.4 (approved) | r2.5 |
+|---|---|---|
+| Base | dev tip `85d60609` | dev tip `7dbe45e9` (merged in, no rebase, no force-push) |
+| Packet body | — | **Byte-identical to `297ae48d` apart from this section, the revision row, and the freshness line.** Verify with `git diff 297ae48d HEAD -- support/sidecars/ODP-P10-DEV-REDEPLOY-VERIFY-001/` |
+| Merge conflicts | — | None. The incoming commits touch `.orchestrator/supervisor.py` and `.orchestrator/test_supervisor.py` only — both disjoint from this packet's path. |
+
+Unlike § r2.1–§ r2.4, this round is **not** a pure re-stamp. The re-verification probes landed inside the promotion window of Deploy Dev run `31070368670`, so for the first time this packet observed the **dev tip actually serving live traffic**. That capture is recorded below. It changes no Criteria A–E verdict, but it corrects two readings in the r2 body and it is the strongest evidence yet about where the deploy actually stands.
+
+### The mid-deploy capture (04:27:55Z – 04:28:19Z)
+
+Run `31070368670` (dev tip `7dbe45e9`) promoted its candidate at `04:27:25Z`, failed the live E2E gate at `04:28:20Z`, and restored the rollback traffic split by `04:28:25Z`. The probes below were taken inside that ~55-second window:
+
+```bash
+curl -sS https://oday-api-7sxbjoeozq-de.a.run.app/platform/version           # 04:27:55Z · 200
+curl -sS https://oday-api-7sxbjoeozq-de.a.run.app/platform/health            # 04:27:55Z · 200
+curl -sS https://oday-api-7sxbjoeozq-de.a.run.app/release/platform/readiness # 04:28:17Z · 404
+```
+
+| Probe | Rollback release `8ec12c02` (all prior revisions) | Dev tip `7dbe45e9` while promoted |
+|---|---|---|
+| `/platform/version` → `release_sha` | `8ec12c02` | **`7dbe45e91514538544b83f36181f2971454910db`** |
+| `/platform/health` | `503` · `status: unhealthy` | **`200` · `status: ok` · `data_mode: live`** |
+| `modes.data` | `mode: unavailable` · `liveReady: false` · `blockingReasons: ["PRODUCTION_MODEL_BINDINGS_UNVERIFIED"]` | **`mode: live` · `liveReady: true` · `blockingReasons: []`** |
+| `modes.models` | `mlflow-production-unverified` · `productionBindingsReady: false` | `mlflow-production-unverified` · `productionBindingsReady: false` (**unchanged**) |
+| `/release/platform/readiness` | `404` | **`404`** |
+
+`/operator/bootstrap` → `401` and web `/operator` → `307` were captured at ~`04:28:18–19Z`, within two seconds of the rollback; treat those two as boundary-timed rather than cleanly attributable to either release.
+
+### Two corrections to the r2 body
+
+1. **`/release/platform/readiness` 404 is not a release marker.** The r2 live-endpoint table reads its `404` as "the endpoint ships in the newer release only; its absence is itself a marker that `8ec12c02` is serving." The capture above returned `404` while `release_sha` was `7dbe45e9`. The endpoint is absent from the dev tip too, so it distinguishes nothing. Use `/platform/version` → `release_sha` as the only reliable release marker.
+2. **`modes.data.mode = unavailable` is a property of the rollback release, not of the dev tip.** B1's evidence cell attributes the unavailable/`liveReady: false` data mode to live state generally. On the dev tip the same field reports `live` / `liveReady: true` / no blocking reasons — the newer release does not gate data mode behind model bindings. B1 nevertheless stays `BLOCKED`, for a different reason than r2 recorded: the release does not stay promoted, and the E2E gate's `data:ingestion_runs=0` check is a *persisted ingestion run* check that the health endpoint's readiness fields do not cover.
+
+Neither correction moves a Criteria A–E cell. D4 in particular is unaffected: a `liveReady: true` health verdict and a lineage-complete persisted ingestion run are different assertions, and only the latter is what D4 and the gate require.
+
+### Deploy runs since § r2.4
+
+```bash
+gh run view 31070368670 --json jobs   # e2e-operational-evidence success · deploy failure
+gh api repos/:owner/:repo/actions/jobs/92517411893/logs
+```
+
+| Run | Dev tip | Conclusion |
+|---|---|---|
+| `31069257955` | `85d60609` | failure (same gate; § r2.4 left this one in progress — this is its recorded conclusion) |
+| `31070368670` | `7dbe45e9` | failure (same gate, exact current base, log quoted below) |
+
+```text
+Live E2E gate failed. Blocking runtime dependencies:
+* external-data: ... the deployed release has no populated, lineage-complete ingestion run to serve.
+  - data:ingestion_runs: runs=0
+  - data:admin_boundary.official_dataset:run_exists: no persisted ingestion run for a required live provider
+  - data:poi.commercial_api:run_exists: no persisted ingestion run for a required live provider
+* mlflow: Publish/approve the MLflow model versions and point the 'production' alias at them.
+  - runtime:model_capability:forecastops: available=False reasonCode=PRODUCTION_MODEL_REGISTRY_UNAVAILABLE
+  - models:registry: versions=0
+  - models:forecastops:production_alias: model=forecast_revenue_interval versionsWithProductionAlias=0 (exactly one required)
+```
+
+This is the fifth consecutive confirmation of § r2 blocking causes #1 and #3, now measured on the exact current base. The consecutive-failure count in § r2 should be read as *64 of the last 65* `deploy-dev.yml` runs failed, one cancelled, still zero successes (window `2026-07-30T19:41Z .. 2026-08-06T04:07Z`).
+
+The capture sharpens § r2 recommendation 1 rather than softening it. Everything the parent task can influence from `origin/dev` now demonstrably comes up healthy the moment the dev tip is promoted — `/platform/health` returns `200 ok` on the dev tip. The deploy still fails, and it fails on the two environment prerequisites this packet has documented since r2. Re-triggering Deploy Dev remains the wrong move; the build is not what is broken.
+
+No status cell, dependency edge, recommendation, or execution step was re-scoped in r2.5.
 
 ---
 
@@ -430,4 +501,4 @@ Commit all receipts, the `.odp_data/deployment/live-e2e-gate.json` gate report, 
 - **Owned by this sidecar:** this file only.
 - **Not changed by this sidecar:** canonical truth, contracts, runtime/registry/governance implementation, deployment scripts, workflows, the parent's evidence directory, and `ai-status.json` task semantics beyond this sidecar's own status transitions.
 - **Authority:** advisory. Parent acceptance remains with parent owner `Antigravity3` and parent reviewer `Antigravity`.
-- **Freshness:** the live probes and run data in the r2 body were captured 2026-08-06T01:14–01:15Z against dev tip `a0e4dcf07e41def48b5e6efa61b5c24215b5ce45`, re-confirmed unchanged at 2026-08-06T01:46–01:47Z against dev tip `c879004a9713dfd4562939accf888e93112ca403` (see § r2.1), re-confirmed unchanged again at 2026-08-06T02:30Z against dev tip `bc7366d31518f9bbd21b3baed64f954d103e31fc` (see § r2.2), re-confirmed unchanged again at 2026-08-06T02:39Z against dev tip `a7fde1a877ff43f3dbd98d249f3aa1fb1616c68e` (see § r2.3), and re-confirmed unchanged again at 2026-08-06T03:50Z against dev tip `85d60609a1239f6ae75a010d65299cdabd83efe8` (see § r2.4). Re-verify before relying on any status cell.
+- **Freshness:** the live probes and run data in the r2 body were captured 2026-08-06T01:14–01:15Z against dev tip `a0e4dcf07e41def48b5e6efa61b5c24215b5ce45`, re-confirmed unchanged at 2026-08-06T01:46–01:47Z against dev tip `c879004a9713dfd4562939accf888e93112ca403` (see § r2.1), re-confirmed unchanged again at 2026-08-06T02:30Z against dev tip `bc7366d31518f9bbd21b3baed64f954d103e31fc` (see § r2.2), re-confirmed unchanged again at 2026-08-06T02:39Z against dev tip `a7fde1a877ff43f3dbd98d249f3aa1fb1616c68e` (see § r2.3), re-confirmed unchanged again at 2026-08-06T03:50Z against dev tip `85d60609a1239f6ae75a010d65299cdabd83efe8` (see § r2.4), and re-probed at 2026-08-06T04:27–04:28Z against dev tip `7dbe45e91514538544b83f36181f2971454910db` — that last probe landed inside a promotion window and observed the dev tip itself serving, which corrects two r2 readings without moving any status cell (see § r2.5). Re-verify before relying on any status cell.
