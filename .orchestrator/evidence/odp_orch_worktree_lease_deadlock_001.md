@@ -111,13 +111,24 @@ what they asserted before.
   `python3 -m pytest .orchestrator/test_supervisor.py
   .orchestrator/test_provider_permissions.py` → 435 passed, 145 subtests
   passed, exit 0.
+- Fifth closeout base advance: `origin/dev` advanced to `d5a52cb9` (PR #655,
+  ODP-LIVE-RUNTIME-DEV-COMPOSE-001-SIDECAR-ACCEPTANCE) while PR #662 sat
+  approved with all five checks green — including `task-review-gate` stamped
+  `SUCCESS` at the approved head — leaving the PR `BEHIND` again. Composed as
+  `3b8f793f`; the merge brought in one docs file
+  (`support/sidecars/ODP-LIVE-RUNTIME-DEV-COMPOSE-001/...-SIDECAR-ACCEPTANCE.md`)
+  and touched no runtime surface, and this task's diff against `origin/dev` is
+  still exactly one added file. Re-verified at `3b8f793f`:
+  `python3 -m pytest .orchestrator/test_supervisor.py
+  .orchestrator/test_provider_permissions.py` -> 435 passed, 145 subtests
+  passed, exit 0.
 
 No live supervisor rollout is claimed by this task; the change ships with `dev`
 through the normal PR path.
 
 ## Closeout loop observed on this task's own PR
 
-This task's own closeout has now been blocked four times by the same
+This task's own closeout has now been blocked five times by the same
 mechanism, which is worth recording because it is adjacent to — but distinct
 from — the deadlock the task fixed.
 
@@ -143,3 +154,24 @@ automatically when the base advance is a fast-forward compose that leaves the
 task's own diff byte-identical, or let auto-merge update the branch without
 resetting `approved_head`. Recorded here as a follow-up candidate; not
 implemented under this task's scope.
+
+Two measurements from the fifth lap are worth handing to that lane:
+
+1. `dev` advances faster than the required checks can re-run. The fourth lap
+   pushed at 05:48 and the slowest required check (`product`) did not report
+   until 06:16; `dev` had already taken PR #655 in the meantime. When base
+   churn is faster than the CI round trip, the up-to-date requirement
+   (`branches/dev/protection` has `required_status_checks.strict = true`) is
+   not just a latency cost — it is a livelock, and no number of laps
+   converges. PR #655's own history in this window (over a dozen consecutive
+   `merge origin/dev base advance` commits) is the same loop seen from the
+   other side.
+2. `ai_status.py` already has the carry-forward hook that would blunt this —
+   `is_evidence_only_advance` via `APPROVAL_EVIDENCE_PATH_PREFIXES` — but that
+   tuple currently lists only `docs/evidence/`. Evidence written under
+   `.orchestrator/evidence/`, which is where this task's note and its sibling
+   `odp_orch_worktree_base_advance_001.md` live, is outside the prefix and so
+   invalidates approval. Widening the prefix would not have saved these five
+   laps (a base-advance merge changes non-evidence paths regardless), but it
+   does mean the existing mitigation silently does not apply to the directory
+   the orchestrator's own tasks actually use.
