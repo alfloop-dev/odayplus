@@ -13,7 +13,7 @@
 
 ## 1. Executive Summary & Functional Objective
 
-The parent task **ODP-CAP-NOTIFICATION-DELIVERY-001** addresses critical functional requirement **FR-SHARED-006** (In-app, Email, and Webhook notification delivery). 
+The parent task **ODP-CAP-NOTIFICATION-DELIVERY-001** addresses critical functional requirement **FR-SHARED-006** (In-app, Email, and Webhook notification delivery).
 
 ### Current Gap Analysis
 An audit of `modules/notifications/` reveals:
