@@ -1,9 +1,44 @@
 from __future__ import annotations
 
+import hashlib
+import json
+import os
 import sys
+import uuid
 from collections.abc import Callable
 from datetime import UTC, datetime
 from typing import Any
+
+from modules.notifications.application.service import adapter_accepts_severity
+
+# Delivery-receipt / inbox mirrors kept in process memory are debug aids only;
+# the durable record lives in the repository. Cap them so a long-lived worker
+# cannot grow them without bound.
+_MAX_IN_PROCESS_RECORDS = 500
+
+_PRODUCTION_ENV_VALUES = {"prod", "production", "live", "staging"}
+
+
+def _current_env() -> str:
+    """Resolve the deployment environment from the canonical env var chain."""
+    return os.getenv(
+        "ODP_PRODUCT_MODE",
+        os.getenv(
+            "ODAY_PRODUCT_MODE",
+            os.getenv("APP_ENV", os.getenv("ENVIRONMENT", os.getenv("STAGE", os.getenv("ODAY_ENV", "")))),
+        ),
+    ).strip().lower()
+
+
+def _is_production_env() -> bool:
+    """True when the process is running against a production-class deployment."""
+    return _current_env() in _PRODUCTION_ENV_VALUES
+
+
+def _append_capped(records: list[dict], record: dict) -> None:
+    records.append(record)
+    if len(records) > _MAX_IN_PROCESS_RECORDS:
+        del records[: len(records) - _MAX_IN_PROCESS_RECORDS]
 
 
 class ConsoleNotificationAdapter:
@@ -21,6 +56,7 @@ class ConsoleNotificationAdapter:
         user_id: str,
         title: str,
         detail: str,
+        severity: str = "info",
     ) -> tuple[bool, str | None]:
         message = {
             "notification_id": notification_id,
@@ -28,9 +64,10 @@ class ConsoleNotificationAdapter:
             "user_id": user_id,
             "title": title,
             "detail": detail,
+            "severity": severity,
             "timestamp": datetime.now(UTC),
         }
-        self.sent_messages.append(message)
+        _append_capped(self.sent_messages, message)
 
         # Output to stdout/stderr so it's captured in process stdout logs.
         print(
@@ -150,12 +187,12 @@ class OnCallNotificationAdapter:
         user_id: str,
         title: str,
         detail: str,
+        severity: str = "info",
     ) -> tuple[bool, str | None]:
-        import hashlib
-        import json
-        import os
+        # ``severity`` is accepted so this adapter satisfies the same protocol as
+        # the in-app/email adapters, but it is deliberately kept out of the signed
+        # on-call payload: that request contract is owned elsewhere and unchanged.
         import re
-        import uuid
 
         delivery_id = f"del-{uuid.uuid4().hex[:12]}"
         now = datetime.now(UTC)
@@ -373,8 +410,6 @@ class EmailNotificationAdapter:
         smtp_transport: Callable[[dict], tuple[bool, str | None]] | None = None,
         trusted_release_sha: str | None = None,
     ) -> None:
-        import os
-
         self.smtp_host = smtp_host or os.getenv("SMTP_HOST") or os.getenv("EMAIL_SMTP_HOST")
         port_val = smtp_port or os.getenv("SMTP_PORT") or os.getenv("EMAIL_SMTP_PORT")
         self.smtp_port = int(port_val) if port_val else 587
@@ -384,6 +419,10 @@ class EmailNotificationAdapter:
 
         tls_val = use_tls if use_tls is not None else os.getenv("SMTP_USE_TLS", "true").lower() in {"1", "true", "yes"}
         self.use_tls = tls_val
+        # Remember whether delivery goes through the built-in SMTP transport: the
+        # mock branch below only exists for the default transport, so the
+        # fail-closed checks must not punish an explicitly injected one.
+        self.uses_default_transport = smtp_transport is None
         self.smtp_transport = smtp_transport or self._default_smtp_transport
         self.trusted_release_sha = (
             trusted_release_sha
@@ -397,6 +436,16 @@ class EmailNotificationAdapter:
         from email.mime.text import MIMEText
 
         if not self.smtp_host:
+            # Fail closed: a production deployment must never report a mocked
+            # stdout "delivery" as a sent email. `send()` already rejects this
+            # combination; this branch keeps the mock unreachable in production
+            # even if the transport is invoked directly.
+            if _is_production_env():
+                return False, (
+                    "Email notification delivery requires a configured SMTP_HOST in "
+                    f"'{_current_env()}' environment; mock stdout delivery is forbidden. "
+                    "Fail-closed gate enforced."
+                )
             print(
                 f"\n[MOCK EMAIL DELIVERY] Sent email to {message_data['user_id']}\n"
                 f"Subject: {message_data['title']}\n"
@@ -429,28 +478,36 @@ class EmailNotificationAdapter:
         user_id: str,
         title: str,
         detail: str,
+        severity: str = "info",
     ) -> tuple[bool, str | None]:
-        import hashlib
-        import json
-        import os
-        import uuid
-
         delivery_id = f"email-del-{uuid.uuid4().hex[:12]}"
         now = datetime.now(UTC)
 
         require_email = os.getenv("REQUIRE_EMAIL_ROUTE", "").strip().lower() in {"1", "true"}
-        if require_email and not self.smtp_host:
-            error_msg = "Email notification delivery requires a configured SMTP_HOST when REQUIRE_EMAIL_ROUTE is set. Fail-closed gate enforced."
+        # In production the mock stdout branch of the default transport would
+        # otherwise return success for mail that was never sent, so an
+        # unconfigured SMTP host is fail-closed there regardless of opt-in.
+        prod_unconfigured = _is_production_env() and self.uses_default_transport
+        if not self.smtp_host and (require_email or prod_unconfigured):
+            if require_email:
+                error_msg = "Email notification delivery requires a configured SMTP_HOST when REQUIRE_EMAIL_ROUTE is set. Fail-closed gate enforced."
+            else:
+                error_msg = (
+                    "Email notification delivery requires a configured SMTP_HOST in "
+                    f"'{_current_env()}' environment; mock stdout delivery is forbidden. "
+                    "Fail-closed gate enforced."
+                )
             receipt = {
                 "delivery_id": delivery_id,
                 "notification_id": notification_id,
                 "recipient": user_id,
                 "channel": "email",
+                "severity": severity,
                 "status": "FAILED",
                 "delivered_at": now.isoformat(),
                 "error": error_msg,
             }
-            self.delivery_receipts.append(receipt)
+            _append_capped(self.delivery_receipts, receipt)
             return False, error_msg
 
         payload = {
@@ -460,10 +517,14 @@ class EmailNotificationAdapter:
             "user_id": user_id,
             "title": title,
             "detail": detail,
+            "severity": severity,
             "timestamp": now.isoformat(),
             "sender": self.smtp_from_email,
         }
 
+        # Audit field only: the digest of the exact request handed to the
+        # transport, so a receipt can be tied back to the message body. Nothing
+        # verifies it at delivery time.
         req_bytes = json.dumps(payload, sort_keys=True).encode("utf-8")
         request_hash = hashlib.sha256(req_bytes).hexdigest()
 
@@ -479,15 +540,17 @@ class EmailNotificationAdapter:
             "notification_id": notification_id,
             "recipient": user_id,
             "channel": "email",
+            "severity": severity,
             "sender": self.smtp_from_email,
             "request_hash": request_hash,
+            "release_sha": self.trusted_release_sha or "unbound",
             "title": title,
             "detail": detail,
             "status": status,
             "delivered_at": now.isoformat(),
             "error": err_msg,
         }
-        self.delivery_receipts.append(receipt)
+        _append_capped(self.delivery_receipts, receipt)
         return success, err_msg
 
 
@@ -506,8 +569,8 @@ class InAppNotificationAdapter:
         user_id: str,
         title: str,
         detail: str,
+        severity: str = "info",
     ) -> tuple[bool, str | None]:
-        import uuid
         delivery_id = f"inapp-del-{uuid.uuid4().hex[:12]}"
         now_iso = datetime.now(UTC).isoformat()
 
@@ -516,7 +579,9 @@ class InAppNotificationAdapter:
             "user_id": user_id,
             "title": title,
             "detail": detail,
-            "severity": "info",
+            # The caller's severity is what makes the inbox filterable; a
+            # hardcoded default here would make the severity column dead.
+            "severity": severity or "info",
             "created_at": now_iso,
             "acknowledged": False,
             "acknowledged_at": None,
@@ -525,18 +590,19 @@ class InAppNotificationAdapter:
         if self.repository and hasattr(self.repository, "save_inapp_item"):
             self.repository.save_inapp_item(item)
         else:
-            self.inbox_items.append(item)
+            _append_capped(self.inbox_items, item)
 
         receipt = {
             "delivery_id": delivery_id,
             "notification_id": notification_id,
             "user_id": user_id,
             "channel": "in_app",
+            "severity": item["severity"],
             "status": "SENT",
             "delivered_at": now_iso,
             "error": None,
         }
-        self.delivery_receipts.append(receipt)
+        _append_capped(self.delivery_receipts, receipt)
 
         print(
             f"\n[IN-APP DELIVERY] Saved in-app notification to {user_id}\n"
@@ -599,28 +665,70 @@ class MultiChannelNotificationAdapter:
         user_id: str,
         title: str,
         detail: str,
+        severity: str = "info",
     ) -> tuple[bool, str | None]:
         norm_channel = (channel or "").lower().replace("-", "_")
         adapter = self.channel_adapters.get(norm_channel)
         if not adapter:
-            if norm_channel == "email":
-                adapter = self.channel_adapters.get("email", self.default_adapter)
-            elif norm_channel in {"in_app", "inapp"}:
+            # Only aliases can still resolve here: an exact-key lookup already
+            # missed, so `inapp` -> `in_app` and `oncall`/`webhook` are the
+            # remaining cases. Everything else falls back to the default.
+            if norm_channel == "inapp":
                 adapter = self.channel_adapters.get("in_app", self.default_adapter)
             elif norm_channel in {"webhook", "oncall"}:
                 adapter = self.channel_adapters.get("webhook", self.channel_adapters.get("oncall", self.default_adapter))
             else:
                 adapter = self.default_adapter
 
-        success, err = adapter.send(notification_id, channel, user_id, title, detail)
+        if adapter_accepts_severity(adapter):
+            success, err = adapter.send(notification_id, channel, user_id, title, detail, severity=severity)
+        else:
+            success, err = adapter.send(notification_id, channel, user_id, title, detail)
 
         if hasattr(adapter, "delivery_receipts") and adapter.delivery_receipts:
-            self.delivery_receipts.append(adapter.delivery_receipts[-1])
+            _append_capped(self.delivery_receipts, adapter.delivery_receipts[-1])
 
         return success, err
 
 
-import os
+_KNOWN_ADAPTER_TYPES = {"console", "oncall", "email", "in_app", "inapp", "in-app", "multi", "composite"}
+_IN_APP_ADAPTER_TYPES = {"in_app", "inapp", "in-app"}
+_MULTI_ADAPTER_TYPES = {"multi", "composite"}
+
+
+def _build_oncall_adapter(
+    raw_env_endpoint: str | None,
+    endpoint_url: str | None,
+    http_transport: Callable[[str, dict], tuple[int, str | dict]] | None,
+) -> OnCallNotificationAdapter:
+    """Build the webhook route, failing closed on a missing or non-HTTP endpoint."""
+    target_url = (raw_env_endpoint if raw_env_endpoint is not None else endpoint_url) or ""
+    target_url_str = target_url.strip()
+
+    if not target_url_str or not (target_url_str.startswith("http://") or target_url_str.startswith("https://")):
+        raise ValueError("Production mode or on-call route requires a configured valid ONCALL_ENDPOINT_URL. Fail-closed gate enforced.")
+    return OnCallNotificationAdapter(endpoint_url=target_url_str, http_transport=http_transport)
+
+
+def _build_prod_email_adapter() -> EmailNotificationAdapter:
+    """Build the email route, failing closed when no real SMTP host is configured."""
+    adapter = EmailNotificationAdapter()
+    if not adapter.smtp_host:
+        raise ValueError(
+            "Production mode email notification route requires a configured SMTP_HOST "
+            "(mock stdout delivery would report unsent mail as sent). Fail-closed gate enforced."
+        )
+    return adapter
+
+
+def _build_prod_inapp_adapter(repository: Any) -> InAppNotificationAdapter:
+    """Build the in-app route, failing closed without a durable repository."""
+    if repository is None:
+        raise ValueError(
+            "Production mode in-app notification route requires a durable repository; "
+            "the in-process inbox is lost on restart. Fail-closed gate enforced."
+        )
+    return InAppNotificationAdapter(repository=repository)
 
 
 def get_notification_adapter(
@@ -635,48 +743,59 @@ def get_notification_adapter(
       Instantiates OnCallNotificationAdapter with fail-closed configuration validation.
       Missing, empty, or non-HTTP endpoint URL raises ValueError to fail closed.
       ConsoleNotificationAdapter is strictly forbidden in production environments.
-    Otherwise:
+
+    The production gate is evaluated *before* the channel-specific adapter types so
+    that `email`, `in_app`, and `multi` cannot route around it. In production each of
+    those must be genuinely configured (real SMTP host, durable repository, valid
+    on-call endpoint) or the factory raises; no mock or console fallback survives.
+
+    Outside production:
       Defaults to ConsoleNotificationAdapter or specified channel adapter.
     """
     adapter_type = os.getenv("NOTIFICATION_ADAPTER_TYPE", "").strip().lower()
     raw_env_endpoint = os.getenv("ONCALL_ENDPOINT_URL")
-    env = os.getenv(
-        "ODP_PRODUCT_MODE",
-        os.getenv(
-            "ODAY_PRODUCT_MODE",
-            os.getenv("APP_ENV", os.getenv("ENVIRONMENT", os.getenv("STAGE", os.getenv("ODAY_ENV", "")))),
-        ),
-    ).strip().lower()
-    is_prod = env in {"prod", "production", "live", "staging"}
+    is_prod = _is_production_env()
     require_oncall = is_prod or adapter_type == "oncall" or raw_env_endpoint is not None or endpoint_url is not None or os.getenv("REQUIRE_ONCALL_ROUTE", "").strip().lower() in {"1", "true"}
 
-    if adapter_type == "email":
-        return EmailNotificationAdapter()
-
-    if adapter_type in {"in_app", "inapp", "in-app"}:
-        return InAppNotificationAdapter(repository=repository)
-
-    if adapter_type in {"multi", "composite"}:
-        multi = MultiChannelNotificationAdapter(default_adapter=ConsoleNotificationAdapter())
-        multi.register_adapter("email", EmailNotificationAdapter())
-        multi.register_adapter("in_app", InAppNotificationAdapter(repository=repository))
-        if raw_env_endpoint or endpoint_url:
-            multi.register_adapter("webhook", OnCallNotificationAdapter(endpoint_url=raw_env_endpoint or endpoint_url or "", http_transport=http_transport))
-        return multi
-
-    if require_oncall:
-        if is_prod and adapter_type == "console":
-            raise ValueError("ConsoleNotificationAdapter is forbidden in production environment. Fail-closed gate enforced.")
-
-        target_url = (raw_env_endpoint if raw_env_endpoint is not None else endpoint_url) or ""
-        target_url_str = target_url.strip()
-
-        if not target_url_str or not (target_url_str.startswith("http://") or target_url_str.startswith("https://")):
-            raise ValueError("Production mode or on-call route requires a configured valid ONCALL_ENDPOINT_URL. Fail-closed gate enforced.")
-        return OnCallNotificationAdapter(endpoint_url=target_url_str, http_transport=http_transport)
-
-    if adapter_type and adapter_type not in {"console", "oncall", "email", "in_app", "inapp", "in-app", "multi", "composite"}:
+    if adapter_type and adapter_type not in _KNOWN_ADAPTER_TYPES:
         raise ValueError(f"Unknown notification adapter type '{adapter_type}'. Fail-closed gate enforced.")
 
-    return ConsoleNotificationAdapter()
+    if is_prod:
+        if adapter_type == "console":
+            raise ValueError("ConsoleNotificationAdapter is forbidden in production environment. Fail-closed gate enforced.")
 
+        if adapter_type == "email":
+            return _build_prod_email_adapter()
+
+        if adapter_type in _IN_APP_ADAPTER_TYPES:
+            return _build_prod_inapp_adapter(repository)
+
+        if adapter_type in _MULTI_ADAPTER_TYPES:
+            # The composite default must be the on-call route, never the console
+            # adapter the production gate forbids.
+            oncall = _build_oncall_adapter(raw_env_endpoint, endpoint_url, http_transport)
+            multi = MultiChannelNotificationAdapter(default_adapter=oncall)
+            multi.register_adapter("email", _build_prod_email_adapter())
+            multi.register_adapter("in_app", _build_prod_inapp_adapter(repository))
+            multi.register_adapter("webhook", oncall)
+            return multi
+
+    else:
+        if adapter_type == "email":
+            return EmailNotificationAdapter()
+
+        if adapter_type in _IN_APP_ADAPTER_TYPES:
+            return InAppNotificationAdapter(repository=repository)
+
+        if adapter_type in _MULTI_ADAPTER_TYPES:
+            multi = MultiChannelNotificationAdapter(default_adapter=ConsoleNotificationAdapter())
+            multi.register_adapter("email", EmailNotificationAdapter())
+            multi.register_adapter("in_app", InAppNotificationAdapter(repository=repository))
+            if raw_env_endpoint or endpoint_url:
+                multi.register_adapter("webhook", OnCallNotificationAdapter(endpoint_url=raw_env_endpoint or endpoint_url or "", http_transport=http_transport))
+            return multi
+
+    if require_oncall:
+        return _build_oncall_adapter(raw_env_endpoint, endpoint_url, http_transport)
+
+    return ConsoleNotificationAdapter()

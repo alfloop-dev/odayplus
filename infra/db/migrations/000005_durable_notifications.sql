@@ -32,4 +32,3 @@ CREATE TABLE IF NOT EXISTS notification_inapp_inbox (
     acknowledged INTEGER NOT NULL DEFAULT 0,
     acknowledged_at TEXT
 );
-

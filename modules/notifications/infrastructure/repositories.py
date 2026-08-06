@@ -225,19 +225,22 @@ class DurableNotificationRepository:
         ]
 
     def acknowledge_inapp_item(self, user_id: str, notification_id: str) -> bool:
-        now_iso = datetime.now(UTC).isoformat()
-        try:
-            if user_id:
-                self._engine.execute(
-                    "UPDATE notification_inapp_inbox SET acknowledged = 1, acknowledged_at = ? WHERE notification_id = ? AND user_id = ?",
-                    (now_iso, notification_id, user_id),
-                )
-            else:
-                self._engine.execute(
-                    "UPDATE notification_inapp_inbox SET acknowledged = 1, acknowledged_at = ? WHERE notification_id = ?",
-                    (now_iso, notification_id),
-                )
-            return True
-        except Exception:
-            return False
+        """Acknowledge one inbox item, scoped to ``user_id`` when given.
 
+        Returns whether a row actually matched — the same contract as the
+        in-memory repository. Acknowledging a nonexistent notification, or one
+        owned by another user, must report ``False`` so an API layer built on
+        this cannot answer "acknowledged" to a cross-user attempt.
+        """
+        now_iso = datetime.now(UTC).isoformat()
+        if user_id:
+            result = self._engine.execute(
+                "UPDATE notification_inapp_inbox SET acknowledged = 1, acknowledged_at = ? WHERE notification_id = ? AND user_id = ?",
+                (now_iso, notification_id, user_id),
+            )
+        else:
+            result = self._engine.execute(
+                "UPDATE notification_inapp_inbox SET acknowledged = 1, acknowledged_at = ? WHERE notification_id = ?",
+                (now_iso, notification_id),
+            )
+        return int(getattr(result, "rowcount", -1)) > 0

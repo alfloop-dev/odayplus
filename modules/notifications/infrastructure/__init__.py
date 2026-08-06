@@ -21,4 +21,3 @@ __all__ = [
     "OnCallNotificationAdapter",
     "get_notification_adapter",
 ]
-

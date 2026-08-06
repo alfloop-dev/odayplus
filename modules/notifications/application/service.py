@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import hashlib
+import inspect
 import logging
 import uuid
 from datetime import UTC, datetime
@@ -18,9 +20,23 @@ class NotificationAdapter(Protocol):
         user_id: str,
         title: str,
         detail: str,
+        severity: str = "info",
     ) -> tuple[bool, str | None]:
         """Send a notification. Returns (success, error_message)."""
         ...
+
+
+def adapter_accepts_severity(adapter: Any) -> bool:
+    """True when ``adapter.send`` takes the optional ``severity`` argument.
+
+    ``severity`` was added to the protocol after the first adapters shipped, so a
+    duck-typed adapter written against the older five-argument signature is still
+    callable — it just does not get the severity.
+    """
+    try:
+        return "severity" in inspect.signature(adapter.send).parameters
+    except (TypeError, ValueError):
+        return False
 
 
 class MockNotificationAdapter:
@@ -35,6 +51,7 @@ class MockNotificationAdapter:
         user_id: str,
         title: str,
         detail: str,
+        severity: str = "info",
     ) -> tuple[bool, str | None]:
         fail_count = self.should_fail_channels.get(channel, 0)
         if fail_count > 0:
@@ -47,6 +64,7 @@ class MockNotificationAdapter:
             "user_id": user_id,
             "title": title,
             "detail": detail,
+            "severity": severity,
             "timestamp": datetime.now(UTC),
         })
         return True, None
@@ -62,6 +80,17 @@ class NotificationService:
         self.repository = repository
         self.adapter = adapter or MockNotificationAdapter()
         self.max_retries = max_retries
+
+    @property
+    def adapter(self) -> NotificationAdapter:
+        return self._adapter
+
+    @adapter.setter
+    def adapter(self, adapter: NotificationAdapter) -> None:
+        # Cache the capability check on assignment so swapping the adapter at
+        # runtime cannot leave a stale answer behind.
+        self._adapter = adapter
+        self._adapter_takes_severity = adapter_accepts_severity(adapter)
 
     def get_preferences(self, user_id: str) -> UserPreference:
         pref = self.repository.get_preference(user_id)
@@ -110,7 +139,7 @@ class NotificationService:
         )
         self.repository.save_receipt(receipt)
 
-        success = self._send_with_retries(receipt, user_id, title, detail)
+        success = self._send_with_retries(receipt, user_id, title, detail, severity)
         if success:
             return notification_id
 
@@ -130,7 +159,7 @@ class NotificationService:
             )
             self.repository.save_receipt(escalated_receipt)
 
-            esc_success = self._send_with_retries(escalated_receipt, user_id, title, detail)
+            esc_success = self._send_with_retries(escalated_receipt, user_id, title, detail, severity)
             if esc_success:
                 return notification_id
 
@@ -142,17 +171,23 @@ class NotificationService:
         user_id: str,
         title: str,
         detail: str,
+        severity: str = "info",
     ) -> bool:
         for attempt in range(1, self.max_retries + 1):
             receipt.last_attempt = datetime.now(UTC)
             receipt.retry_count = attempt - 1
 
+            # Severity is what lets the in-app inbox distinguish a rollback from
+            # a task assignment, so it must reach the adapter, not just the
+            # escalation branch above.
+            extra = {"severity": severity} if self._adapter_takes_severity else {}
             success, error_msg = self.adapter.send(
                 receipt.notification_id,
                 receipt.channel,
                 user_id,
                 title,
                 detail,
+                **extra,
             )
 
             if success:
@@ -244,6 +279,10 @@ class NotificationService:
         error_message: str | None = None,
     ) -> str | None:
         """Trigger 4: Failure Notification."""
+        # Deduplication is durable, so the key has to survive a restart and be
+        # identical across parallel workers. Builtin hash() is PYTHONHASHSEED
+        # randomized per process and would re-notify on every restart.
+        error_digest = hashlib.sha256((error_message or "").encode("utf-8")).hexdigest()[:16]
         title = f"[Task Failed] Task {task_id} execution failed"
         detail = (
             f"Task ID: {task_id}\n"
@@ -255,7 +294,7 @@ class NotificationService:
             title=title,
             detail=detail,
             severity="danger",
-            dedup_key=f"task_failed:{task_id}:{hash(error_message or '')}",
+            dedup_key=f"task_failed:{task_id}:{error_digest}",
         )
 
     def send_rollback_notification(
@@ -278,4 +317,3 @@ class NotificationService:
             severity="danger",
             dedup_key=f"task_rollback:{task_id}:{rollback_target or 'default'}",
         )
-

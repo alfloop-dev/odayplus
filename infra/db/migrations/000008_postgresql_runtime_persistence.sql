@@ -173,7 +173,6 @@ CREATE TABLE IF NOT EXISTS odp_runtime.notification_inapp_inbox (
 CREATE INDEX IF NOT EXISTS idx_runtime_notification_inapp_user
     ON odp_runtime.notification_inapp_inbox(user_id);
 
-
 CREATE TABLE IF NOT EXISTS odp_runtime.durable_outbox_events (
     outbox_event_id TEXT PRIMARY KEY,
     tenant_id TEXT NOT NULL,
