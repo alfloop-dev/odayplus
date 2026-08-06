@@ -267,6 +267,89 @@ class DetectWorkerFailureTests(unittest.TestCase):
 
         self.assertIsNone(supervisor.detect_worker_failure(worker))
 
+    def test_detects_missing_provider_cli_from_wrapper_message(self) -> None:
+        """The 2026-08-05 Codex outage: this exact line sat in 194 worker logs.
+
+        It matched no failure pattern, so `detect_worker_failure` returned None
+        and every one of those dispatches was recorded as an unexplained exit
+        with nothing printed. The lane was dead for six hours and the console
+        showed only task reassignments.
+        """
+
+        worker = self._worker_for_log(
+            "Codex CLI binary not found at /home/lupin/.npm-global/bin/codex or on PATH.\n"
+        )
+
+        self.assertEqual(
+            supervisor.detect_worker_failure(worker),
+            "Codex CLI binary not found at /home/lupin/.npm-global/bin/codex or on PATH.",
+        )
+
+    def test_detects_missing_cli_for_every_provider_wrapper(self) -> None:
+        for message in (
+            "Codex CLI binary not found at /home/lupin/.npm-global/bin/codex or on PATH.",
+            "Antigravity CLI (agy) binary not found under ~/.local/bin or PATH.",
+            "Claude CLI binary not found under ~/.vscode-server/extensions.",
+            "Copilot CLI binary not found under ~/.local/share/pantheon-orchestrator-tools.",
+            "GitHub CLI binary not found under ~/.local/share/pantheon-orchestrator-tools.",
+        ):
+            with self.subTest(message=message):
+                worker = self._worker_for_log(message + "\n")
+                self.assertEqual(supervisor.detect_worker_failure(worker), message)
+
+    def test_a_non_provider_binary_not_found_line_is_not_a_lane_failure(self) -> None:
+        """Ordinary build output must not pause a healthy lane for 900s.
+
+        An earlier pattern matched any line-initial "<token> binary not found",
+        so a toolchain message like "protoc binary not found" read as a dead
+        provider CLI.
+        """
+
+        for line in (
+            "protoc binary not found in PATH",
+            "ffmpeg binary not found",
+            "terraform binary not found under /usr/local/bin",
+        ):
+            with self.subTest(line=line):
+                worker = self._worker_for_log(line + "\n")
+                self.assertIsNone(supervisor.detect_worker_failure(worker))
+
+    def test_another_providers_launcher_error_does_not_kill_this_lane(self) -> None:
+        """A codex worker reporting Claude's launcher error says nothing about codex."""
+
+        reason = "Claude CLI binary not found under ~/.vscode-server/extensions."
+
+        own = supervisor.classify_worker_failure({}, {"provider": "claude2"}, reason)
+        other = supervisor.classify_worker_failure({}, {"provider": "codex3"}, reason)
+
+        self.assertEqual(own["kind"], "provider_unavailable")
+        self.assertNotEqual(other["kind"], "provider_unavailable")
+
+    def test_gemini_launcher_error_maps_to_the_antigravity_family(self) -> None:
+        failure = supervisor.classify_worker_failure(
+            {},
+            {"provider": "antigravity5"},
+            "Antigravity CLI (agy) binary not found under ~/.local/bin or PATH.",
+        )
+        self.assertEqual(failure["kind"], "provider_unavailable")
+
+    def test_missing_cli_wording_inside_task_output_is_not_a_lane_failure(self) -> None:
+        """Ordinary work that mentions the wording must not pause a live lane."""
+
+        worker = self._worker_for_log(
+            "\n".join(
+                [
+                    "codex",
+                    '+    raise RuntimeError("Codex CLI binary not found")',
+                    'assert "CLI binary not found" in caplog.text',
+                    "All tests passed.",
+                ]
+            )
+            + "\n"
+        )
+
+        self.assertIsNone(supervisor.detect_worker_failure(worker))
+
     def test_detects_real_model_availability_failure(self) -> None:
         worker = self._worker_for_log('Error: Model "grok-code-fast-1" from --model flag is not available.\n')
 
@@ -691,6 +774,103 @@ class DetectWorkerFailureTests(unittest.TestCase):
     def test_parse_quota_retry_hint_returns_none_when_absent(self) -> None:
         self.assertIsNone(supervisor.parse_quota_retry_hint("Credit balance is too low"))
         self.assertIsNone(supervisor.parse_quota_retry_hint(None))
+
+    def test_missing_provider_cli_classifies_as_provider_unavailable(self) -> None:
+        failure = supervisor.classify_worker_failure(
+            {},
+            {"provider": "codex"},
+            "Codex CLI binary not found at /home/lupin/.npm-global/bin/codex or on PATH.",
+        )
+
+        self.assertEqual(failure["kind"], "provider_unavailable")
+        self.assertFalse(failure["transient"])
+        self.assertTrue(supervisor.should_pause_dispatch_for_failure_kind(failure["kind"]))
+
+    # Rotation-enabled, as the seven antigravity providers in the live config
+    # are. Asserting no-rotation against a provider that cannot rotate passes
+    # whatever the code does, which is how the first version of this test missed
+    # the defect it was written to catch.
+    ROTATING_CONFIG = {
+        "provider_guardrails": {
+            "capacity_pause_seconds": 900,
+            "quota_terminal_pause_seconds": 900,
+        },
+        "paths": {"activity_log": "/tmp/test-activity-log.jsonl"},
+        "providers": {
+            "antigravity5": {
+                "antigravity": {
+                    "model_rotation": {
+                        "enabled": True,
+                        "primary_model": "",
+                        "fallback_model": "Claude Sonnet 4.6 (Thinking)",
+                    }
+                }
+            }
+        },
+    }
+
+    def test_missing_provider_cli_pauses_dispatch_without_rotating_models(self) -> None:
+        """A dead binary has no second model pool to fall back onto.
+
+        Rotation answers "this model pool is exhausted" by dispatching on the
+        other pool. When the binary itself is gone, neither pool is reachable,
+        so rotating just resumes the sub-second failure loop.
+        """
+
+        state: dict = {}
+        self.assertTrue(
+            supervisor.model_rotation.rotation_enabled(self.ROTATING_CONFIG, "antigravity5"),
+            "fixture must have rotation enabled or this test proves nothing",
+        )
+
+        with (
+            mock.patch.object(supervisor, "write_activity_log"),
+            mock.patch.object(supervisor.model_rotation, "record_exhaustion") as rotate,
+        ):
+            paused = supervisor.mark_provider_dispatch_paused(
+                self.ROTATING_CONFIG,
+                state,
+                "antigravity5",
+                "Antigravity CLI (agy) binary not found under ~/.local/bin or PATH.",
+                task_id="ODP-ORCH-EXAMPLE-001",
+                worker_run_id="agy-run-1",
+                failure_kind="provider_unavailable",
+                pause_kind="provider_unavailable",
+            )
+
+        self.assertTrue(paused)
+        rotate.assert_not_called()
+        entry = state["provider_guardrails"]["dispatch_pauses"]["antigravity5"]
+        self.assertEqual(entry["pause_kind"], "provider_unavailable")
+        # Finite, so reinstalling the CLI brings the lane back without manual
+        # intervention -- and so a lane nobody fixes keeps re-announcing itself.
+        self.assertGreaterEqual(entry["reset_after_seconds"], 60)
+        self.assertTrue(entry["blocked_until"])
+
+    def test_quota_on_the_same_provider_still_rotates(self) -> None:
+        """Guard the other direction: the exclusion must not disable rotation."""
+
+        state: dict = {}
+        with (
+            mock.patch.object(supervisor, "write_activity_log"),
+            mock.patch.object(supervisor.model_rotation, "record_exhaustion", return_value={"exhausted_pool": "gemini"}) as rotate,
+        ):
+            supervisor.mark_provider_dispatch_paused(
+                self.ROTATING_CONFIG,
+                state,
+                "antigravity5",
+                "Error: Individual quota reached. Please upgrade your subscription. Resets in 2h21m32s.",
+                task_id="ODP-ORCH-EXAMPLE-001",
+                worker_run_id="agy-run-2",
+                failure_kind="quota_terminal",
+                pause_kind="quota_terminal",
+            )
+
+        rotate.assert_called_once()
+
+    def test_provider_unavailable_pause_seconds_has_a_default(self) -> None:
+        settings = supervisor.provider_guardrail_settings({})
+        self.assertGreaterEqual(int(settings["provider_unavailable_pause_seconds"]), 60)
 
     def test_mark_provider_dispatch_paused_honors_codex_retry_at(self) -> None:
         from datetime import datetime
