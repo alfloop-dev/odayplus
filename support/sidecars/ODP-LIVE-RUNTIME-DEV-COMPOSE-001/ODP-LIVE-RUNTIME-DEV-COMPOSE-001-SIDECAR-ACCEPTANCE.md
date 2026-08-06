@@ -10,7 +10,7 @@
 | Sidecar owner / reviewer | `Antigravity` / `Antigravity3` |
 | Current parent owner / reviewer | `Codex9` / `Codex6` |
 | Observed parent branch | `task/ODP-LIVE-RUNTIME-DEV-COMPOSE-001` |
-| Observed dev tip HEAD | `c879004a` |
+| Observed dev tip HEAD | `bc7366d3` |
 | Packet verdict | **Support only; no parent acceptance, merge, or production GO claim** |
 
 This packet is a support-only review aid, acceptance checklist, and dependency map for parent task `ODP-LIVE-RUNTIME-DEV-COMPOSE-001`. It does not change canonical contracts, L1 architecture truth, runtime/registry/governance implementations, or model-card truth. The parent task owner (`Codex9`) decides whether to absorb this packet; the parent reviewer (`Codex6`) retains sole authority over implementation acceptance.
@@ -98,7 +98,7 @@ graph TD
 
 ## Verification ledger
 
-Summary of execution results on current `dev` tip (`c879004a`):
+Summary of execution results on current `dev` tip (`bc7366d3`):
 
 ```bash
 # 1. Static code analysis
