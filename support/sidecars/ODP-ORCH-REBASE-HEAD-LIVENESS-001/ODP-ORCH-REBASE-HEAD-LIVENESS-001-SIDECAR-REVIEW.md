@@ -3,7 +3,7 @@
 - Sidecar task: `ODP-ORCH-REBASE-HEAD-LIVENESS-001-SIDECAR-REVIEW`
 - Parent task: `ODP-ORCH-REBASE-HEAD-LIVENESS-001`
 - Sidecar owner: `Claude2` (helper-claimed `2026-08-06T02:00:12Z`; original owner `Antigravity`)
-- Sidecar reviewer: `Antigravity`
+- Sidecar reviewer: `Antigravity6` (helper-claimed `2026-08-06T03:26:12Z` while `Antigravity` was dispatch-paused)
 - Parent task owner: `Antigravity6`
 - Parent reviewer: `Antigravity5`
 - Evidence captured: `2026-08-05` UTC; re-verified `2026-08-06` UTC
@@ -73,8 +73,10 @@ This review packet is a support artifact for `ODP-ORCH-REBASE-HEAD-LIVENESS-001`
 Absorption target: `Antigravity6` (parent task owner) decides whether this
 packet is folded into `ODP-ORCH-REBASE-HEAD-LIVENESS-001`.
 
-Sidecar review handoff target: `Antigravity` (current assigned sidecar
-reviewer). See § Ownership and role history for why these differ.
+Sidecar review handoff target: `Antigravity6` (current assigned sidecar
+reviewer, helper-claimed at `03:26:12Z`). See § Ownership and role history
+for why these differ, and why the reviewer and the parent owner are now the
+same fleet member.
 
 ## Reviewer verification pass (Claude2, 2026-08-06)
 
@@ -162,10 +164,10 @@ returned to the owner.
 
 ## Ownership and role history
 
-This sidecar changed hands twice on 2026-08-06. The table exists because
-the closeout gate compares commit trailers against the *current* owner
-and reviewer, so stale role labels are a finalization hazard, not just a
-documentation nit.
+This sidecar changed hands three times on 2026-08-06. The table exists
+because the closeout gate compares commit trailers against the *current*
+owner and reviewer, so stale role labels are a finalization hazard, not
+just a documentation nit.
 
 | UTC | Event | Owner | Reviewer |
 | --- | --- | --- | --- |
@@ -175,6 +177,13 @@ documentation nit.
 | `01:49:36` | `re_review` by `Antigravity` after composing the `origin/dev` base advance at head `387a326b` | `Antigravity` | `Claude2` |
 | `01:57:36` | `reopen` by `Claude2`: content approved, provenance blocked | `Antigravity` | `Claude2` |
 | `02:00:12` | `task_helper_claimed` by idle `Claude2`; previous owner becomes reviewer | `Claude2` | `Antigravity` |
+| `03:26:12` | `task_review_helper_claimed` — `Antigravity` dispatch-paused (already had a live worker) | `Claude2` | `Antigravity6` |
+| `03:28:56` | `review_approved` by `Antigravity6` at head `ae88f6f8` | `Claude2` | `Antigravity6` |
+
+Note that after `03:26:12` the sidecar reviewer and the parent task owner
+are the same fleet member (`Antigravity6`). That is legal — the sidecar's
+owner/reviewer pair is still distinct — but it means the absorption
+decision and the sidecar approval now sit with one agent.
 
 ## Closeout provenance requirement (owner note, 2026-08-06)
 
@@ -388,3 +397,103 @@ composing a base advance that invalidated the approval it enabled. The
 loop terminates when a `dev` advance does not land inside the window
 between approval and the owner's finalize dispatch — not through any
 change to this packet.
+
+## Fourth base advance, reviewer swap, and re-review (owner note, 2026-08-06)
+
+The predicted cycle repeated a third time, and this round it stacked a
+second, independent blocker on top of the first.
+
+`Antigravity6` helper-claimed the reviewer role at `03:26:12Z` (the
+assigned reviewer `Antigravity` was dispatch-paused with a live worker),
+approved at head `ae88f6f8` at `03:28:56Z`, and the owner was dispatched
+to finalize at `03:51:46Z`. By dispatch time `origin/dev` had advanced
+from `b507f932` (composed by `03dc0040`) to `85d60609`, and PR `#653` was
+`mergeStateStatus: BEHIND`, `mergeable: MERGEABLE`, `headRefOid ae88f6f8`.
+
+### Two blockers, not one
+
+| Blocker | Detail |
+| --- | --- |
+| base freshness | `dev` advanced past the approved head, so the branch head is not an ancestor of `dev` and the closeout gate rejects `done` |
+| provenance staleness | the `03:26:12Z` reviewer swap left every commit through `ae88f6f8` carrying `Reviewer: Antigravity`, while the gate now requires `canonical_agent_name(task.reviewer)` = `Antigravity6` |
+
+The second blocker is the same failure mode recorded in § Closeout
+provenance requirement, re-triggered by a *reviewer*-side helper claim
+rather than an owner-side one. It would have blocked `done` at `ae88f6f8`
+even if `dev` had stood still:
+
+```text
+head=ae88f6f8 actor=Claude2 reviewer=Antigravity6
+  -> FAIL: Reviewer='Antigravity' must be 'Antigravity6'
+```
+
+### What was done
+
+| Commit | Role |
+| --- | --- |
+| `25996151` | composes the fourth `origin/dev` base advance (`85d60609`) |
+| this commit | records this round, refreshes the reviewer role labels, and re-pins the provenance heads |
+
+Both commits are owner-authored by `Claude2` with subjects containing the
+task id and explicit `LLM-Agent: Claude2` /
+`Task-ID: ODP-ORCH-REBASE-HEAD-LIVENESS-001-SIDECAR-REVIEW` /
+`Reviewer: Antigravity6` trailers, so they clear the provenance blocker on
+their own bodies without first-parent fallback, under the *current* role
+pair.
+
+The merge was conflict-free. The only inbound path is
+`support/sidecars/ODP-FORECAST-AUTHORITATIVE-HISTORY-BACKFILL-001/ODP-FORECAST-AUTHORITATIVE-HISTORY-BACKFILL-001-SIDECAR-ACCEPTANCE.md`
+— an unrelated sidecar packet merged into `dev` by PR `#654`, together
+with its own base-advance merges. Confirmed that the branch still
+contributes nothing outside this support artifact:
+
+```bash
+git diff --name-only origin/dev...HEAD
+# support/sidecars/ODP-ORCH-REBASE-HEAD-LIVENESS-001/ODP-ORCH-REBASE-HEAD-LIVENESS-001-SIDECAR-REVIEW.md
+```
+
+So the approved scope is unchanged.
+
+Re-verified at the composed head:
+
+```bash
+/home/lupin/oday-plus/.venv/bin/pytest -q \
+  .orchestrator/test_supervisor.py \
+  -k ReusedWorkerWorktreeBaseAdvanceTests
+# 14 passed
+
+/home/lupin/oday-plus/.venv/bin/ruff check \
+  .orchestrator/supervisor.py \
+  .orchestrator/test_supervisor.py
+# All checks passed!
+
+git diff --check
+# clean
+```
+
+### Why this again returns to `review`, not `done`
+
+Unchanged from the second and third rounds: a base-advance merge is not an
+identical head, not a `post_merge_checkout_advanced` delivery record, and
+not an `is_evidence_only_advance()` fast-forward, so
+`is_approved_head_satisfied()` cannot carry the `ae88f6f8` approval
+forward to `25996151`. The `task-review-gate` status remains pinned to the
+`ae88f6f8` SHA. The reviewer-swap blocker independently requires a fresh
+approval anyway, since no pre-swap head can satisfy the current pair.
+
+### Standing hazard, updated
+
+Two distinct clocks can invalidate an approval between approval and
+finalize dispatch, and this round both fired at once:
+
+1. a `dev` advance landing inside the approval window (rounds two, three,
+   four)
+2. a helper claim swapping either role of the owner/reviewer pair
+   (`02:00:12` owner side, `03:26:12` reviewer side)
+
+The content of this packet has now been approved four times (`2a11aad0`,
+`387a326b` lineage, `42bfa505`, `ae88f6f8`) with zero substantive findings
+against it since the `01:57:36` reopen. Every round since has been
+provenance or base freshness. A re-approval here is a check that the
+composed head is clean and that the trailers name the current pair — not a
+re-review of the evidence on its merits.
