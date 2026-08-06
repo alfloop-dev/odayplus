@@ -5,5 +5,23 @@
     "product-e2e-gate",
     "task-review-gate"
   ],
-  "enforce_admins": true
+  "enforce_admins": true,
+  "strict": true,
+  "branch_overrides": {
+    "dev": {
+      "strict": false
+    }
+  },
+  "merge_queue": {
+    "dev": {
+      "ruleset_name": "dev-merge-queue",
+      "merge_method": "MERGE",
+      "grouping_strategy": "ALLGREEN",
+      "max_entries_to_build": 5,
+      "max_entries_to_merge": 5,
+      "min_entries_to_merge": 1,
+      "min_entries_to_merge_wait_minutes": 5,
+      "check_response_timeout_minutes": 60
+    }
+  }
 }

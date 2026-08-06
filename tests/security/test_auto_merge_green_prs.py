@@ -318,3 +318,86 @@ def test_auto_merge_green_prs_list_json_invalid(temp_env, monkeypatch) -> None:
 
     exit_code = auto_merge_mod.main(argv=[])
     assert exit_code != 0
+
+
+def _mock_gh_with_queue(mock_gh_calls, queue_response):
+    """Build a `_gh` double whose GraphQL reply decides the merge queue state."""
+
+    def mock_gh(*args, **kwargs):
+        mock_gh_calls.append(args)
+        if args[0] == "pr" and args[1] == "list":
+            return (
+                0,
+                json.dumps(
+                    [
+                        {
+                            "number": 82,
+                            "headRefName": "task/ODP-OC-R5-012",
+                            "baseRefName": "dev",
+                            "isDraft": False,
+                            "mergeable": "MERGEABLE",
+                        }
+                    ]
+                ),
+                "",
+            )
+        if args[0] == "api" and args[1] == "graphql":
+            return queue_response
+        return (0, "", "")
+
+    return mock_gh
+
+
+def test_auto_merge_enqueues_when_merge_queue_active(temp_env, monkeypatch) -> None:
+    mock_gh_calls = []
+    queue_on = (
+        0,
+        json.dumps({"data": {"repository": {"mergeQueue": {"id": "MQ_kwDO"}}}}),
+        "",
+    )
+
+    monkeypatch.setattr(auto_merge_mod, "_gh", _mock_gh_with_queue(mock_gh_calls, queue_on))
+    monkeypatch.setattr(auto_merge_mod, "ROOT", temp_env["status"].parent)
+
+    exit_code = auto_merge_mod.main(argv=[], check_eligibility_func=lambda *a, **k: (True, []))
+    assert exit_code == 0
+
+    # A direct merge is refused by GitHub once dev is behind a queue; the PR has
+    # to be enqueued with --auto instead.
+    merge_calls = [c for c in mock_gh_calls if "merge" in c and "list" not in c]
+    assert len(merge_calls) == 1
+    assert merge_calls[0] == (
+        "pr", "merge", "82", "--merge", "--repo", "alfloop-dev/odayplus", "--auto",
+    )
+
+
+def test_auto_merge_direct_merges_when_merge_queue_absent(temp_env, monkeypatch) -> None:
+    mock_gh_calls = []
+    queue_off = (0, json.dumps({"data": {"repository": {"mergeQueue": None}}}), "")
+
+    monkeypatch.setattr(auto_merge_mod, "_gh", _mock_gh_with_queue(mock_gh_calls, queue_off))
+    monkeypatch.setattr(auto_merge_mod, "ROOT", temp_env["status"].parent)
+
+    exit_code = auto_merge_mod.main(argv=[], check_eligibility_func=lambda *a, **k: (True, []))
+    assert exit_code == 0
+
+    merge_calls = [c for c in mock_gh_calls if "merge" in c and "list" not in c]
+    assert len(merge_calls) == 1
+    assert "--auto" not in merge_calls[0]
+
+
+def test_auto_merge_queue_probe_failure_keeps_pre_queue_behaviour(temp_env, monkeypatch) -> None:
+    mock_gh_calls = []
+    probe_failed = (1, "", "GraphQL: rate limited")
+
+    monkeypatch.setattr(auto_merge_mod, "_gh", _mock_gh_with_queue(mock_gh_calls, probe_failed))
+    monkeypatch.setattr(auto_merge_mod, "ROOT", temp_env["status"].parent)
+
+    exit_code = auto_merge_mod.main(argv=[], check_eligibility_func=lambda *a, **k: (True, []))
+    assert exit_code == 0
+
+    # Failing closed here means "no queue": GitHub rejects a direct merge into a
+    # queued branch, so a wrong guess costs a retry rather than an unqueued merge.
+    merge_calls = [c for c in mock_gh_calls if "merge" in c and "list" not in c]
+    assert len(merge_calls) == 1
+    assert "--auto" not in merge_calls[0]

@@ -32,6 +32,11 @@ REPO = "alfloop-dev/odayplus"
 BASE = "dev"
 ALLOWED_HEAD = re.compile(r"^task/ODP-[A-Z0-9-]+", re.IGNORECASE)
 
+MERGE_QUEUE_QUERY = (
+    "query($owner: String!, $name: String!, $branch: String!) {"
+    " repository(owner: $owner, name: $name) { mergeQueue(branch: $branch) { id } } }"
+)
+
 
 def _gh(*args: str, timeout: int = 60) -> tuple[int, str, str]:
     gh_bin = get_gh_executable()
@@ -51,6 +56,37 @@ def check_pr_merge_eligibility_gh_runner(args: list[str], repo: str | None = Non
     if rc != 0:
         raise RuntimeError(f"GitHub CLI command failed: {' '.join(cmd_args)}\nStderr: {err}")
     return out
+
+
+def merge_queue_enabled(base: str = BASE) -> bool:
+    """Report whether `base` is behind a merge queue.
+
+    With a queue on the target branch, GitHub refuses a direct merge: the PR has
+    to be enqueued so its changes are tested on a ref built from the current
+    target branch. `gh pr merge --auto` is that enqueue path. Without a queue,
+    `--auto` is the wrong call for an already-green PR (GitHub rejects enabling
+    auto-merge on a PR that is mergeable right now), so the two cases need
+    different flags rather than one flag that happens to work today.
+
+    Fails closed to "no queue": a transient GraphQL error then leaves the
+    pre-queue behaviour, and a direct merge against a queued branch is refused
+    by GitHub rather than merging something unreviewed.
+    """
+    rc, out, _err = _gh(
+        "api", "graphql",
+        "-f", f"query={MERGE_QUEUE_QUERY}",
+        "-F", "owner=" + REPO.split("/")[0],
+        "-F", "name=" + REPO.split("/")[1],
+        "-F", f"branch={base}",
+    )
+    if rc != 0:
+        return False
+    try:
+        payload = json.loads(out or "{}")
+    except ValueError:
+        return False
+    repository = (payload.get("data") or {}).get("repository") or {}
+    return repository.get("mergeQueue") is not None
 
 
 def open_task_prs() -> list[dict]:
@@ -104,6 +140,10 @@ def main(argv: list[str] | None = None, check_eligibility_func=None) -> int:
             )
         check_eligibility_func = default_check_eligibility
 
+    queued = merge_queue_enabled()
+    if queued:
+        print(f"[{_now()}] merge queue is active on {BASE}: eligible PRs are enqueued, not merged directly", flush=True)
+
     merged = 0
     for p in sorted(prs, key=lambda x: x["number"]):
         if merged >= args.max:
@@ -136,7 +176,8 @@ def main(argv: list[str] | None = None, check_eligibility_func=None) -> int:
 
         if args.dry_run:
             draft = " (draft->ready)" if p.get("isDraft") else ""
-            print(f"[{_now()}] DRY would merge #{n} {head}{draft}", flush=True)
+            verb = "enqueue" if queued else "merge"
+            print(f"[{_now()}] DRY would {verb} #{n} {head}{draft}", flush=True)
             merged += 1
             continue
 
@@ -147,12 +188,17 @@ def main(argv: list[str] | None = None, check_eligibility_func=None) -> int:
                 continue
             print(f"[{_now()}] marked #{n} {head} ready (was draft, gates green)", flush=True)
 
-        rc, out, err = _gh("pr", "merge", str(n), "--merge", "--repo", REPO)
+        merge_args = ["pr", "merge", str(n), "--merge", "--repo", REPO]
+        if queued:
+            merge_args.append("--auto")
+
+        rc, out, err = _gh(*merge_args)
         if rc == 0:
-            print(f"[{_now()}] MERGED #{n} {head}", flush=True)
+            print(f"[{_now()}] {'ENQUEUED' if queued else 'MERGED'} #{n} {head}", flush=True)
             merged += 1
         else:
-            print(f"[{_now()}] merge #{n} FAILED: {(err or out)[:120]}", flush=True)
+            verb = "enqueue" if queued else "merge"
+            print(f"[{_now()}] {verb} #{n} FAILED: {(err or out)[:120]}", flush=True)
 
     return 0
 
