@@ -547,3 +547,95 @@ Closeout returns to owner `Claude2`: PR #659 must merge into `dev` before
 `ai-status.sh done`. If `origin/dev` advances past `bc7366d3` in a way that
 touches `scripts/orchestrator/`, re-derive §1–§4 per the packet's own
 `[!IMPORTANT]` block before finalizing.
+
+---
+
+# Re-Review Record (round 5)
+
+- **Reviewer**: `Claude3`
+- **Owner**: `Claude2`
+- **Reviewed Artifact**: `support/sidecars/ODP-ORCH-FINALIZE-LANE-REMEDIATION-001/ODP-ORCH-FINALIZE-LANE-REMEDIATION-001-SIDECAR-REVIEW.md` (packet revision round 5)
+- **Reviewed At**: `2026-08-06`
+- **Branch head reviewed**: `b33788d5` (= `review_gate_sha`)
+- **Prior approved head**: `40a9678a` (round 4) — invalidated by the base advance
+- **Base**: `origin/dev` = `a7fde1a8`; parent pin `f16593c7`, landed at `bc7366d3`
+- **Verdict**: **APPROVE**
+
+## Why This Round Exists
+
+Round 4 was approved at `40a9678a`. `dev` then advanced `40a9678a → a7fde1a8`,
+PR #659 went `BEHIND`, and the branch had to compose the new base. Because
+`command_approve` freezes an exact `approved_head` and `command_done` compares
+the head against it for equality, a base advance is a re-review event by
+construction. This round therefore asks two questions only: (a) did anything the
+base advance carried in invalidate a packet claim, and (b) is the round-5 packet
+delta itself correct.
+
+## Review Basis (round 5)
+
+| Ref | Command / source read | Result |
+|---|---|---|
+| S1 | `git diff --stat 40a9678a b33788d5` | 3 files: `.orchestrator/github_bus.py` (+30/−7 region), `.orchestrator/test_github_bus.py` (+58), and the packet (+38/−11). No sidecar edit outside `support/`, and the two `.orchestrator` files arrived via the merge, not via an edit on this lane |
+| S2 | `git merge-base 40a9678a a7fde1a8` | `bc7366d3` — the true incoming range is `bc7366d3..a7fde1a8` (see N5) |
+| S3 | `git log --oneline bc7366d3..a7fde1a8` | 9 commits, **all** `ODP-ORCH-DETACHED-HEAD-BRANCH-RESOLUTION-001` (1 content commit `d94bc547`, 1 anchor `1a8783c8`, 7 merge commits) |
+| S4 | `git diff --stat bc7366d3 a7fde1a8` | exactly 2 files — `.orchestrator/github_bus.py`, `.orchestrator/test_github_bus.py`. Nothing under `scripts/orchestrator/`, so no §1–§4 claim can have moved |
+| S5 | `git diff --stat f16593c7 HEAD -- scripts/orchestrator/` | **empty** — the pin still describes the tree under test at the new base; the packet's new Parent Pin row is correct |
+| S6 | `wc -l` on the four deliverables in this worktree | 316 + 343 + 196 + 188 = **1043** — §2's figures survive the base advance |
+| S7 | source read `finalize_lane_doctor.classify()` L164–228 | the `if missing:` branch is at L205 and `return`s before the `verdict == "failure"`, `verdict == "pending"`, and `READY` branches. N4's correction is exactly right |
+| S8 | packet §1a row 3 (corrected) | now reads "a required check never reported … preempts the rollup verdict entirely … even when the reported checks are failing, stale, or still pending, not only when they are green" — matches S7. The `DEFAULT_REQUIRED_CHECKS` list (`orchestrator`, `product`, `product-e2e-gate`, `task-review-gate`) still matches L56 |
+| S9 | packet §1a new evaluation-order paragraph | "already-merged → no PR → missing required check → `failure` (split by `branch_is_behind`) → `pending` → `READY`" reproduces L164–228 exactly, and the `SEVERITY`-is-a-report-order caveat matches `findings.sort(key=SEVERITY.index)` at L288 |
+| S10 | packet §1b re-checked against `classify_stranded_task()` L105–189 | unchanged and still exact; the §1a paragraph's "contrast §1b, where the two orders diverge" cross-reference is true — `ALL_CATEGORIES` declares `CI_UNRESOLVED` first while evaluation starts at `OWNER_UNAVAILABLE` |
+| S11 | `python3 -m pytest -q` both parent suites at the new base | **26 passed** (17 doctor + 9 diagnose) |
+| S12 | `python3 -m ruff check scripts/orchestrator/` | **All checks passed!** |
+| S13 | `git diff --check origin/dev...HEAD` | clean |
+| S14 | `git diff --stat origin/dev...HEAD` | 2 files, 885 insertions, both under `support/sidecars/ODP-ORCH-FINALIZE-LANE-REMEDIATION-001/` |
+| S15 | `gh pr view 659` | `OPEN`, base `dev`, head `b33788d5`, `mergeStateStatus: BLOCKED`, `task-review-gate` `PENDING` — consistent with the packet's stated expectation; the gate re-stamps on this approval |
+
+## Disposition of Round-4 Note
+
+| Finding | Verdict | Evidence |
+|---|---|---|
+| **N4** — §1a row 3 understated `MISSING_REQUIRED_CHECK`'s precedence | **Closed** | The row is rewritten to state the preemption over failing, stale and pending rollups, and §1a gains an explicit evaluation-order paragraph that also warns against reading `SEVERITY` as evaluation order (S7–S9) |
+
+Round-3 blockers G1–G5 and round-2 notes N1–N3 remain closed: nothing in the
+incoming range touches `scripts/orchestrator/` (S4, S5), so every round-4
+verification (R1–R21) still holds, and S6/S11/S12 re-measure the load-bearing
+ones rather than carrying them forward.
+
+## Non-Blocking Note (round 5)
+
+**N5 — the incoming-range endpoint is quoted imprecisely.** §5, the round-5
+commit message, and the task `next` note all describe the base advance as "the
+incoming dev range `d94bc547..a7fde1a8`". `d94bc547` is the detached-HEAD lane's
+first content commit, not this branch's merge-base; `git log d94bc547..a7fde1a8`
+actually enumerates 21 commits, including `bc7366d3` and several `ODP-CAP-*`
+commits that were already in the branch. The correct endpoint is the merge-base
+`bc7366d3` (S2), and at that endpoint the claim is exactly true: 9 commits, all
+from `ODP-ORCH-DETACHED-HEAD-BRANCH-RESOLUTION-001`, touching only
+`.orchestrator/github_bus.py` and its test (S3, S4). The substantive conclusion —
+that nothing invalidated §1–§4 — is verified independently by S1 and S5 and does
+not depend on which endpoint is quoted, so this is a citation-precision defect,
+not a factual one. Fold in the corrected endpoint if the parent owner absorbs the
+packet.
+
+## Scope Discipline
+
+Met. The branch's entire content diff versus `origin/dev` is two files under
+`support/sidecars/ODP-ORCH-FINALIZE-LANE-REMEDIATION-001/` (S14). The
+`.orchestrator/github_bus.py` and `.orchestrator/test_github_bus.py` changes
+visible against the old approved head are the merged `dev` base advance (S1–S4),
+not a sidecar edit. No canonical L1 document, contract, or
+runtime/registry/governance implementation is touched by this lane.
+
+## Approval
+
+Approved at branch head `b33788d5` plus this findings commit. The base advance
+carried in nothing that touches the reviewed surface, the pin still describes the
+tree under test byte-for-byte, and the one round-4 note is correctly closed
+against the source rather than against the owner's narrative.
+
+Closeout returns to owner `Claude2`: PR #659 must merge into `dev` before
+`ai-status.sh done`. If `origin/dev` advances again before the merge lands,
+re-run S4/S5 first — a base advance that leaves `git diff f16593c7 HEAD --
+scripts/orchestrator/` empty is a mechanical refresh of this same approval, but
+one that does not is a genuine re-derivation of §1–§4.
