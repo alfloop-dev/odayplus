@@ -215,3 +215,180 @@ factual claim in the packet was re-derived from the parent branch blobs and the
 live `.orchestrator/` source. `ODP-ORCH-FINALIZE-LANE-REMEDIATION-001-SIDECAR-REVIEW`
 is approved for closeout by owner `Antigravity`, and the packet is fit for
 absorption into parent task `ODP-ORCH-FINALIZE-LANE-REMEDIATION-001`.
+
+> [!IMPORTANT]
+> **Superseded by round 3.** The round-1 and round-2 records above were accurate
+> against parent commit `b3bb9de3` (2026-08-04T09:52:03Z), which was the parent
+> branch tip at the time. The parent has since landed `e2db8a71`
+> (2026-08-06T01:38:57Z) and advanced its approved head to `f16593c7`. Read
+> **F1**, **F2** and the round-2 approval as time-scoped to `b3bb9de3`, not as
+> standing claims about the repository. See § Re-Review Record (round 3).
+
+---
+
+# Re-Review Record (round 3)
+
+- **Reviewer**: `Claude3` (board reviewer of record)
+- **Reviewed Commit**: `8f46038c` — *"merge origin/dev base advance"*
+- **Reviewed Against**: parent approved head `f16593c7` (`ai-status.json` →
+  `ODP-ORCH-FINALIZE-LANE-REMEDIATION-001.approved_head`)
+- **Reviewed At**: `2026-08-06`
+- **Verdict**: **REOPEN** — the packet's deliverable inventory no longer matches
+  the parent's approved head; it omits the module the parent review actually
+  turned on.
+
+## Why This Round Exists
+
+The dispatch trigger was a base advance: the sidecar branch merged `origin/dev`
+at `8f46038c`. The packet files themselves are byte-identical to the approved
+`d13f7ff9` (`git diff d13f7ff9 HEAD -- support/…-SIDECAR-REVIEW.md` is empty);
+the only content the merge introduced is an unrelated sidecar doc for
+`ODP-ORCH-DONE-DELIVERY-PROVENANCE-001`. **The packet did not change — the parent
+it describes did.**
+
+Timeline (all `%cI`, UTC):
+
+| When | Event |
+|---|---|
+| 2026-08-04T09:52:03Z | `b3bb9de3` — parent tip carrying `finalize_lane_doctor.py` only. Basis for rounds 1–2. |
+| 2026-08-06T01:17:44Z | `59f32fc1` — owner's packet corrections |
+| 2026-08-06T01:25:24Z | `d13f7ff9` — round-2 **APPROVE** (correct as of `b3bb9de3`) |
+| 2026-08-06T01:38:57Z | `e2db8a71` — parent adds `diagnose_finalize_lane_remediation.py` (343) + `test_diagnose_finalize_lane_remediation.py` (188) |
+| 2026-08-06T01:39:38Z | `f16593c7` — parent base advance; becomes parent `approved_head` |
+| 2026-08-06T01:42:14Z | parent reviewer `Antigravity2` approves: *"Reviewed diagnose_finalize_lane_remediation.py and test suite."* |
+| 2026-08-06T01:52:25Z | owner submits this sidecar for base-advance re-review, packet unrefreshed |
+
+The owner submitted at 01:52 — 13 minutes after the parent's approved head already
+contained the new module. The packet was not re-derived against it.
+
+## Round-3 Verification
+
+All claims re-derived from parent blobs at `f16593c7`, extracted to a temp dir.
+
+| Ref | Command | Result |
+|---|---|---|
+| S1 | `git ls-tree -r --name-only f16593c7 -- scripts/orchestrator/` | **four** finalize-lane files: `diagnose_finalize_lane_remediation.py`, `test_diagnose_finalize_lane_remediation.py`, `finalize_lane_doctor.py`, `test_finalize_lane_doctor.py` |
+| S2 | `wc -l` on the four blobs | 343 + 188 + 316 + 196 = **1043** lines |
+| S3 | `git diff --stat $(git merge-base origin/dev f16593c7) f16593c7` | **8 files, 2383 insertions**; 4 generated mirrors (`ai-status.json`, `current-work.md`, `docs-site/*`) + 4 deliverable files |
+| S4 | `pytest -q test_diagnose_finalize_lane_remediation.py` | **9 passed** |
+| S5 | `pytest -q test_finalize_lane_doctor.py` | **17 passed** |
+| S6 | `pytest -q` both suites together | **26 passed** |
+| S7 | `python3 -m ruff check .` on the four blobs | **All checks passed** |
+| S8 | `python3 -m py_compile` on both modules | clean |
+| S9 | `grep -n add_argument` on `diagnose_finalize_lane_remediation.py` | `--status/-s`, `--config/-c`, `--task/-t`, `--category`, `--json`, `--remediate`, `--fail-on-stranded` |
+| S10 | source read, `diagnose_…py` L35–46 | `ALL_CATEGORIES = [CI_UNRESOLVED, CI_FAILED, STALE_BASE, MISSING_PR, OWNER_UNAVAILABLE]` |
+| S11 | source read, `finalize_lane_doctor.py` `SEVERITY` | `ALREADY_MERGED, NO_PR, MISSING_REQUIRED_CHECK, CI_STALE, CI_FAILED, CI_PENDING, READY` |
+| S12 | `git diff d13f7ff9 HEAD -- support/…SIDECAR-REVIEW.md` | empty — packet unchanged since approval |
+| S13 | `git diff --stat`/`--check` `origin/dev...HEAD` | 2 files / +344, both under `support/sidecars/ODP-ORCH-FINALIZE-LANE-REMEDIATION-001/`; whitespace clean |
+
+**The parent implementation is green** (S4–S8). Nothing below is a defect in the
+parent's code. Every blocking finding is a fidelity defect in the *packet*.
+
+## Blocking Findings
+
+### G1 — §2 "Delivered Modules" omits half the parent deliverable
+
+§2 lists exactly one module and one test suite. At the parent's approved head
+`f16593c7` there are two of each (S1). The missing pair —
+`diagnose_finalize_lane_remediation.py` (343 lines) and
+`test_diagnose_finalize_lane_remediation.py` (188 lines) — is **531 of the 1043
+deliverable lines** (S2), and is precisely the module the parent reviewer named
+in the approval that put the parent into `review_approved`.
+
+An evidence packet that omits the module the parent review turned on cannot
+serve as the parent's evidence record.
+
+### G2 — §1's five-category taxonomy matches neither delivered tool
+
+§1 presents one merged list using slash-aliases: `ALREADY_MERGED`,
+`NO_PR` / `MISSING_PR`, `MISSING_REQUIRED_CHECK`, `CI_STALE` / `STALE_BASE`,
+`CI_FAILED`. The two tools ship **two different five-category taxonomies**
+(S10, S11):
+
+| `finalize_lane_doctor.py` | `diagnose_finalize_lane_remediation.py` |
+|---|---|
+| `ALREADY_MERGED` | — |
+| `NO_PR` | `MISSING_PR` |
+| `MISSING_REQUIRED_CHECK` | — |
+| `CI_STALE` | `STALE_BASE` |
+| `CI_FAILED` | `CI_FAILED` |
+| `CI_PENDING`, `READY` (terminal, non-stranded) | `CI_UNRESOLVED` |
+| — | `OWNER_UNAVAILABLE` |
+
+The slash notation asserts these are aliases within one taxonomy. They are not:
+`ALREADY_MERGED` and `MISSING_REQUIRED_CHECK` exist only in the doctor, while
+**`CI_UNRESOLVED` and `OWNER_UNAVAILABLE` appear nowhere in the packet at all** —
+including `OWNER_UNAVAILABLE`, a cause with no counterpart in the doctor
+(unassigned owner, sidecar-only agent, or owner blocked/paused/quota-terminal).
+A reader of §1 would not learn that a stranded task can be diagnosed as
+owner-unavailable.
+
+### G3 — §2's `[!NOTE]` pins a stale commit and stale numbers
+
+The note reads: parent branch *"(commit `b3bb9de3`) contains 11 touched files
+(6,621 insertions), but 9 of those files are generated state mirrors… The sole
+core deliverables are `finalize_lane_doctor.py` (316 lines) and
+`test_finalize_lane_doctor.py` (196 lines)."*
+
+Against the approved head `f16593c7` (S3): **8** files, **2383** insertions,
+**4** generated mirrors, and **4** core deliverable files. Every number in the
+note is wrong for the head the parent was approved at, and *"the sole core
+deliverables"* is now an affirmatively false claim. The note also pins
+`b3bb9de3`, which is no longer the parent tip.
+
+*(This note exists because I asked for it as round-1 **F5**. The ask stands; the
+figures must be re-derived from `f16593c7`.)*
+
+### G4 — §3 acceptance matrix and §4 verification suite never exercise the new module
+
+Rows **A1–A5** all cite `scripts/orchestrator/test_finalize_lane_doctor.py` as
+the verification method, and §4 commands 1–2 name only `finalize_lane_doctor.py`.
+An absorber following §4 verbatim runs 17 of the parent's 26 tests (S4–S6) and
+never imports, compiles, or exercises `diagnose_finalize_lane_remediation.py`.
+Command 3 (`ruff check scripts/orchestrator/`) covers it only incidentally, as
+lint.
+
+This is the mirror image of round-1 **F3**: that round the §4 suite ran *red*
+against green code; this round it runs *green while skipping half the code*.
+Both leave the parent reviewer with a verdict the packet did not actually earn.
+
+## Required Corrections Before Re-Review
+
+1. Re-derive §2 against parent approved head `f16593c7`, listing **both**
+   modules and **both** test suites, with the real CLI surface of
+   `diagnose_finalize_lane_remediation.py` (S9): `--status/-s`, `--config/-c`,
+   `--task/-t` (repeatable), `--category` (choices = `ALL_CATEGORIES`),
+   `--json`, `--remediate`, `--fail-on-stranded`.
+2. Split §1 into the two taxonomies as delivered (G2 table), or state plainly
+   which tool §1 describes. Do not present slash-aliases across two independent
+   category sets. `CI_UNRESOLVED` and `OWNER_UNAVAILABLE` must appear.
+3. Replace the §2 `[!NOTE]` figures with the `f16593c7` values: 8 files, 2383
+   insertions, 4 generated mirrors, 4 deliverable files (343 + 188 + 316 + 196
+   = 1043 lines).
+4. Extend §3 with acceptance rows backed by
+   `test_diagnose_finalize_lane_remediation.py` (9 tests), and add its pytest /
+   `py_compile` invocations to §4 so the suite covers all 26 tests.
+5. Pin the packet to a parent commit explicitly (`f16593c7`) so the next base
+   advance makes staleness detectable rather than silent.
+
+## Non-Blocking Observations (for parent absorption)
+
+- **G5 — two overlapping tools, divergent taxonomies.** The parent branch now
+  carries two independent finalize-lane diagnostics with different category
+  vocabularies, different CLI surfaces, and different scan rules. That may well
+  be intentional (doctor = PR/check-centric, diagnose = board/owner-centric),
+  but the packet is the right place to record which one is authoritative for
+  operators. This is an observation for parent owner `Antigravity` and parent
+  reviewer `Antigravity2`, **not** a blocking finding on this sidecar.
+- **N1–N3 from round 2 still stand** (reviewer-name churn `Claude2`→`Claude3`;
+  `--required-check` *replaces* rather than filters the default set;
+  `finalize_lane_doctor.py` scans only `FINALIZE_STATUSES = ("review_approved",)`
+  and skips ids containing `SIDECAR`). None is a reopen reason.
+
+## Scope Discipline (unchanged, still met)
+
+The sidecar branch's only content diff vs `origin/dev` is the two files under
+`support/sidecars/ODP-ORCH-FINALIZE-LANE-REMEDIATION-001/` (S13). No canonical
+L1 document, contract, or runtime/registry/governance implementation is touched.
+Acceptance criteria *"create support artifacts only"* and *"do not edit canonical
+truth"* remain **met**. The reopen is on packet fidelity (G1–G4), not on scope.
