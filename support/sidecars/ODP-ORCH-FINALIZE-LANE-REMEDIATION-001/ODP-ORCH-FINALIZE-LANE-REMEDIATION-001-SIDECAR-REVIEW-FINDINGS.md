@@ -454,3 +454,96 @@ two files under `support/sidecars/ODP-ORCH-FINALIZE-LANE-REMEDIATION-001/`
 (T14). No canonical L1 document, contract, or runtime/registry/governance
 implementation was touched. The parent's `scripts/orchestrator/` files present in
 this worktree arrived via the `origin/dev` merge, not via any sidecar edit.
+
+---
+
+# Re-Review Record (round 4)
+
+- **Reviewer**: `Claude3`
+- **Owner**: `Claude2`
+- **Reviewed Artifact**: `support/sidecars/ODP-ORCH-FINALIZE-LANE-REMEDIATION-001/ODP-ORCH-FINALIZE-LANE-REMEDIATION-001-SIDECAR-REVIEW.md` (packet revision round 4)
+- **Reviewed At**: `2026-08-06`
+- **Branch head reviewed**: `c16e1508`
+- **Base**: `origin/dev` = `bc7366d3`; parent pin `f16593c7`
+- **Verdict**: **APPROVE**
+
+## Review Basis
+
+Round 3 reopened on packet *fidelity*, not on the parent implementation. This
+round therefore re-derived every load-bearing number and every taxonomy claim
+from the checked-out parent source, not from the packet's own narrative or from
+the owner's round-4 disposition table.
+
+| Ref | Command / source read | Result |
+|---|---|---|
+| R1 | `git cat-file -t f16593c7` | `commit` — the pin resolves |
+| R2 | `git diff --stat f16593c7 bc7366d3 -- scripts/orchestrator/` | **empty** — packet's "byte-identical" claim holds |
+| R3 | `git merge-base origin/dev f16593c7` | `c879004a` — matches the Parent Pin block |
+| R4 | `git diff --stat c879004a f16593c7` | **8 files, 2383 insertions**; 4 generated mirrors + 4 deliverables, exactly as §2's `[!NOTE]` states |
+| R5 | `git show bc7366d3:…` + `wc -l` on the four deliverables | 316 + 343 + 196 + 188 = **1043** — every per-file line count in §2 is correct |
+| R6 | `grep -n` on `finalize_lane_doctor.py` | `FINALIZE_STATUSES = ("review_approved",)` L55, `DEFAULT_REQUIRED_CHECKS` L56, `SEVERITY` L67 with exactly the 7 members and the worst-first order printed in §1a, `"SIDECAR" not in str(t.get("id"))` L284, `findings.sort(key=SEVERITY.index)` L288 |
+| R7 | source read `finalize_lane_doctor.classify()` L164–228 | evaluation order is `ALREADY_MERGED` → `NO_PR` (with the `remote_branch` sub-case) → `MISSING_REQUIRED_CHECK` → `CI_STALE`/`CI_FAILED` split on `branch_is_behind()` → `CI_PENDING` → `READY`; §1a's conditions match (one precision note below) |
+| R8 | source read `finalize_lane_doctor.remediation()` L231–256 | per-cause remedy strings match §1a's remedy column, including `ALREADY_MERGED` emitting `ai_status.py done` rather than `gh pr create`, and unpushed `NO_PR` emitting a comment only |
+| R9 | source read `finalize_lane_doctor.main()` L260–316 | flag set is exactly `--status/--repo/--base/--emit-commands/--required-check`; `parser.error` when `--status` and `$ODP_SUPERVISOR_STATUS_FILE` are both absent; `tuple(args.required_check or DEFAULT_REQUIRED_CHECKS)` confirms N2's *replaces* wording; `stuck = sum(v for k,v in counts.items() if k not in (READY, CI_PENDING))` → unconditional exit 1; no `--fail-on-stranded` on this tool, as §2 states |
+| R10 | source read `diagnose_finalize_lane_remediation.py` L35–47 | `ALL_CATEGORIES` declaration order is `CI_UNRESOLVED, CI_FAILED, STALE_BASE, MISSING_PR, OWNER_UNAVAILABLE` — matches §1b's stated declaration order |
+| R11 | source read `classify_stranded_task()` L105–189 | first-match evaluation order is `OWNER_UNAVAILABLE` (no owner / `sidecar-only` / `auto-reassigned` / owner status in `blocked, paused, quota_terminal`) → `STALE_BASE` (`behind, rebase, conflict, base advance, head_liveness`) → `CI_UNRESOLVED` (`unresolved, unknown, pending, in_progress, conclusive`) → `CI_FAILED` (`failed, failure, cancelled, timed_out, action_required`) → `MISSING_PR` (`pr_num is None`) → `CI_UNRESOLVED` fallback. §1b's table reproduces this exactly, including the keyword sets and the divergence from declaration order |
+| R12 | source read `find_finalize_tasks()` L65–99 | scan scope is `{"review_approved"}` ∪ `config.ready_dispatch.finalize_statuses` ∪ tasks whose owner agent status is `finalize`; no `SIDECAR` exclusion — §1's comparison table is correct on both halves |
+| R13 | source read `diagnose…main()` L255–341 | flag set is exactly `--status/-s`, `--config/-c`, `--task/-t`, `--category` (`choices=ALL_CATEGORIES`), `--json`, `--remediate`, `--fail-on-stranded`; `FinalizeDiagnosisError` → `FAIL:` on stderr + return 1 at L305–307, the exact lines A10 cites |
+| R14 | `grep '^def test_'` on both suites | 17 doctor + 9 diagnose = **26**; every test name cited in §2 and in acceptance rows A1–A10 exists verbatim, and no cited name is absent from the suites |
+| R15 | `python3 -m pytest -q` both suites (this worktree) | **26 passed** |
+| R16 | `python3 -m py_compile` both modules | clean |
+| R17 | `python3 -m ruff check scripts/orchestrator/` | **All checks passed!** |
+| R18 | `git diff --check origin/dev...HEAD` | clean |
+| R19 | `git diff --stat origin/dev...HEAD` | 2 files, 762 insertions, both under `support/sidecars/ODP-ORCH-FINALIZE-LANE-REMEDIATION-001/` |
+| R20 | `sed -n '10825p;10919p;10939p' .orchestrator/supervisor.py`; `grep -n skipped_unpublished_branch .orchestrator/github_bus.py` | all four line pins in §1 resolve to the quoted strings (`782` and `810` both carry the state literal) |
+| R21 | `finalize_lane_doctor.py` module docstring L1–25 | records the nine 2026-08-04 stranded tasks that §1 attributes to it |
+
+## Disposition of Round-3 Blockers
+
+| Finding | Verdict | Evidence |
+|---|---|---|
+| **G1** — §2 omitted half the deliverable | **Closed** | §2 now documents all four files with correct line counts (R5) and both real CLI flag tables, each flag confirmed against `main()` (R9, R13). The `--format json\|summary` flag invented in round 1 is gone. |
+| **G2** — merged five-category taxonomy matched neither tool | **Closed** | §1 is split into §1a (doctor, 7 `SEVERITY` causes, severity-ordered, `CI_PENDING`/`READY` marked terminal) and §1b (diagnose, 5 `ALL_CATEGORIES` causes). Both reproduce the source exactly (R6, R7, R10, R11). `CI_UNRESOLVED` and `OWNER_UNAVAILABLE` are present and correctly described; the slash-alias list is explicitly retracted. |
+| **G3** — stale `b3bb9de3` pin and stale figures | **Closed** | The `[!NOTE]` reads 8 / 2,383 / 4 mirrors / 4 deliverables / 1,043 lines, all re-derived and confirmed (R4, R5). No `b3bb9de3` reference and no "sole core deliverables" claim remains anywhere in the packet. |
+| **G4** — acceptance matrix and suite exercised 17 of 26 tests | **Closed** | §3 is A1–A5 doctor / A6–A10 diagnose / A11 cross-cutting; all 26 test names resolve (R14). §4 runs both suites, `py_compile`s both modules, and the recorded results table matches an independent re-run (R15–R17). |
+| **G5 (pin)** — packet staleness undetectable | **Closed** | The Parent Pin block carries `f16593c7`, merge-base `c879004a`, landed `bc7366d3`, plus an `[!IMPORTANT]` re-derivation instruction. All three commits verified (R1–R3). |
+| **G5 (observation)** — two overlapping tools | **Accepted as recorded** | §1's comparison table and §5 surface the precedence question to parent owner `Antigravity` / parent reviewer `Antigravity2` without asserting an answer. Correct call: a support packet declaring one tool authoritative would be manufacturing canonical truth the sidecar is not allowed to write. |
+
+Round-2 notes N1–N3 are also verifiably folded in: routing names match the board
+(`Claude2` / `Claude3`), `--required-check` is described as *replacing* the
+default set (confirmed at R9), and the doctor's `review_approved`-only scan plus
+`SIDECAR` skip appear in §1 and in A3 (confirmed at R6).
+
+## Non-Blocking Note (round 4)
+
+**N4 — §1a row 3 understates `MISSING_REQUIRED_CHECK`'s precedence.** The row
+reads "PR exists and reported checks are green, but a required check never
+reported." In `classify()` the `missing` test runs *before* the verdict is
+examined (R7), so `MISSING_REQUIRED_CHECK` wins over a `failure` or `pending`
+rollup too, not only over a green one. A1/A2's citation of
+`test_missing_check_outranks_green_verdict` is accurate as far as it goes; the
+prose in §1a is narrower than the code. This does not change any remedy, any
+exit code, or any acceptance outcome, so it is not a blocker — fold it in if the
+parent owner absorbs the packet.
+
+## Scope Discipline
+
+Met. The branch's entire content diff versus `origin/dev` is two files under
+`support/sidecars/ODP-ORCH-FINALIZE-LANE-REMEDIATION-001/` (R19). No canonical
+L1 document, contract, or runtime/registry/governance implementation is touched.
+The parent's `scripts/orchestrator/` files present in this worktree arrived via
+the `origin/dev` merge that carried `bc7366d3`, not via a sidecar edit.
+
+## Approval
+
+Approved at branch head `c16e1508` plus this findings commit. Every figure,
+flag, category, condition, and test name in the round-4 packet was checked
+against the parent source at the pinned commit and none was found wrong. The
+packet is now an accurate description of what
+`ODP-ORCH-FINALIZE-LANE-REMEDIATION-001` shipped, and it is safe for the parent
+owner to absorb.
+
+Closeout returns to owner `Claude2`: PR #659 must merge into `dev` before
+`ai-status.sh done`. If `origin/dev` advances past `bc7366d3` in a way that
+touches `scripts/orchestrator/`, re-derive §1–§4 per the packet's own
+`[!IMPORTANT]` block before finalizing.
