@@ -845,3 +845,149 @@ re-review, check `gh pr view <n> --json isDraft` before attributing the
 loop to base-clock churn. A draft task PR is an invisible closeout
 deadlock — the review gate, the checks, and the approval all behave
 normally, and only the merge step is silently disabled.
+
+## Ninth base advance and re-review (owner note, 2026-08-06)
+
+The round-eight draft fix held — PR `#653` is now `isDraft: false` with
+`autoMergeRequest` persisting from `05:42:32Z` (`MERGE`, enabled by
+`ajoe734`) across the round-eight push — and the reviewer approved at head
+`d41d6162` (`05:52:15Z`) with all five checks green:
+
+```
+orchestrator       pass  59s
+performance-gate   pass  1m3s
+product            pass  22m25s
+product-e2e-gate   pass  8m5s
+task-review-gate   pass  Approved by assigned reviewer Antigravity6
+```
+
+Yet the PR still did not merge. At owner finalize dispatch
+(`owned_finalize_dispatch`, wake queued `06:06:19Z`) `origin/dev` had
+advanced from `e301e274` to `d5a52cb9` (PR `#655`,
+`ODP-LIVE-RUNTIME-DEV-COMPOSE-001-SIDECAR-ACCEPTANCE`), leaving the task
+branch 21 commits behind, and PR `#653` read `mergeStateStatus: BEHIND`,
+`mergeable: MERGEABLE`, `headRefOid d41d6162`.
+
+Provenance was not a blocker — the owner/reviewer pair is unchanged since
+`03:26:12Z` (`Claude2` / `Antigravity6`), and the round-eight commits carry
+`Reviewer: Antigravity6`.
+
+### The draft flag was a real blocker but not the root cause
+
+Round eight concluded that the draft flag explained the whole loop, and
+predicted the PR would land "without a ninth round". That prediction was
+wrong, and the reason is visible in the branch protection on `dev`:
+
+```bash
+gh api repos/alfloop-dev/odayplus/branches/dev/protection \
+  --jq '.required_status_checks.strict'
+# true
+
+gh api repos/alfloop-dev/odayplus --jq '.allow_update_branch'
+# false
+```
+
+Those two settings together are the actual deadlock:
+
+| Setting | Value | Consequence |
+| --- | --- | --- |
+| `required_status_checks.strict` on `dev` | `true` | a PR whose head is not up to date with `dev` is `BEHIND` and cannot merge, regardless of check state or approval |
+| `allow_update_branch` on the repo | `false` | GitHub will never advance the PR head branch itself; auto-merge waits but does not update |
+
+So auto-merge does not resolve `BEHIND` here. It parks the PR until the
+head is up to date, and nothing in the platform will make it up to date.
+Only an owner-pushed base advance can — and that push moves the head off
+the approved SHA, which unpins `task-review-gate` and voids the approval
+under `is_approved_head_satisfied()`. Composing the base advance is
+therefore both the only way forward and the thing that resets the round.
+
+The draft flag was a genuine second blocker stacked on top of this one:
+before round eight, the PR could not have merged even from an up-to-date
+head. Clearing it was necessary, just not sufficient.
+
+### What actually determines whether a round is the last one
+
+The merge fires only if no `dev` advance lands between the reviewer's
+approval and auto-merge evaluating an up-to-date head. Round eight
+narrowed that window usefully — with auto-merge armed, the merge no longer
+waits for an owner finalize dispatch (tens of minutes) and instead fires
+within seconds of the gate going green. Round nine lost anyway because
+`dev` moved during the ~14 minutes between approval (`05:52:15Z`) and
+dispatch (`06:06:19Z`); the head was already `BEHIND` before this worker
+was awake to observe it.
+
+This round is winnable on the same terms: push the composed head, let the
+four required contexts (`orchestrator`, `product`, `product-e2e-gate`,
+`task-review-gate` — note `performance-gate` is *not* in the required set)
+go green, and have the reviewer approve while the head is still current.
+
+### What was done
+
+| Commit | Role |
+| --- | --- |
+| `8e8f1285` | composes the ninth `origin/dev` base advance (`d5a52cb9`) |
+| this commit | records this round, the branch-protection root cause, and re-pins the provenance heads |
+
+Both commits are owner-authored by `Claude2` with subjects containing the
+task id and explicit `LLM-Agent: Claude2` /
+`Task-ID: ODP-ORCH-REBASE-HEAD-LIVENESS-001-SIDECAR-REVIEW` /
+`Reviewer: Antigravity6` trailers, matching the current role pair, so
+whichever head the reviewer freezes satisfies the done gate on its own body
+without first-parent fallback.
+
+The merge was conflict-free. The single inbound path is
+`support/sidecars/ODP-LIVE-RUNTIME-DEV-COMPOSE-001/ODP-LIVE-RUNTIME-DEV-COMPOSE-001-SIDECAR-ACCEPTANCE.md`
+(+130, new file) — another lane's support artifact, no runtime or contract
+surface touched, unlike round eight's provider-lane delta. The branch still
+contributes nothing outside this support artifact:
+
+```bash
+git diff --name-only origin/dev...HEAD
+# support/sidecars/ODP-ORCH-REBASE-HEAD-LIVENESS-001/ODP-ORCH-REBASE-HEAD-LIVENESS-001-SIDECAR-REVIEW.md
+```
+
+So the approved scope is unchanged.
+
+### Re-verification at the composed head
+
+```bash
+/home/lupin/oday-plus/.venv/bin/pytest -q \
+  .orchestrator/test_supervisor.py \
+  -k ReusedWorkerWorktreeBaseAdvanceTests
+# 18 passed
+
+/home/lupin/oday-plus/.venv/bin/ruff check .orchestrator/
+# All checks passed!
+
+git diff --check origin/dev...HEAD
+# clean
+```
+
+`ReusedWorkerWorktreeBaseAdvanceTests` holds at 18 collected cases,
+including the three this packet attests to
+(`test_stale_rebase_head_after_completed_rebase_does_not_block`, plus the
+`rebase-merge` and `rebase-apply` subtests of
+`test_unresolved_rebase_blocks`). The parent task's `approved_head` is
+still `d518d04c441a0790fb31aeaf2cb6a1e218f6d331`, unchanged since round
+one, so every claim about the parent deliverable is re-derived against the
+same commit it was written against.
+
+### Why this again returns to `review`, not `done`
+
+Unchanged from rounds two through eight: a base-advance merge is not an
+identical head, not a `post_merge_checkout_advanced` delivery record, and
+not an `is_evidence_only_advance()` fast-forward, so
+`is_approved_head_satisfied()` cannot carry the `d41d6162` approval forward
+to `8e8f1285`. The `task-review-gate` status remains pinned to the
+`d41d6162` SHA.
+
+**Reusable rule, corrected:** a task PR that survives repeated
+base-advance re-reviews has *two* candidate causes, and round eight found
+only the first. Check `gh pr view <n> --json isDraft` first; if that is
+clean, check
+`gh api repos/<owner>/<repo>/branches/<base>/protection --jq '.required_status_checks.strict'`
+against `gh api repos/<owner>/<repo> --jq '.allow_update_branch'`. Strict
+checks with branch auto-update disabled means the platform will never
+clear a `BEHIND` PR on its own, so every `dev` advance inside the approval
+window costs exactly one re-review round. Arming auto-merge shortens that
+window to seconds but cannot close it.
