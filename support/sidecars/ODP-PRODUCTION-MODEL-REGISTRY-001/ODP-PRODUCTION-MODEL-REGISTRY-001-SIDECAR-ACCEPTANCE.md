@@ -7,7 +7,7 @@
 | Sidecar task | `ODP-PRODUCTION-MODEL-REGISTRY-001-SIDECAR-ACCEPTANCE` |
 | Parent task | `ODP-PRODUCTION-MODEL-REGISTRY-001` |
 | Helper kind | `acceptance_packet` |
-| Sidecar owner / reviewer | `Antigravity` / `Codex6` |
+| Sidecar owner / reviewer | `Antigravity` / `Antigravity6` |
 | Current parent owner / reviewer | `Codex5` / `Codex8` |
 | Observed parent branch | `feat/codex5-branch` / `task/ODP-PRODUCTION-MODEL-REGISTRY-001` |
 | Parent task status | `blocked` (Waiting for `Human/Ops` / `Antigravity` daily history backfill) |
@@ -137,7 +137,7 @@ Verification Ledger Summary:
 
 ## Reviewer handoff record
 
-Assigned sidecar reviewer: `Codex6`.
+Assigned sidecar reviewer: `Antigravity6`.
 Parent owner / reviewer: `Codex5` / `Codex8`.
 
 | Review question | Expected answer |
