@@ -411,6 +411,139 @@ class GitHubBusCommandTests(unittest.TestCase):
         remote_branch_exists.assert_called_once_with("feature/lin-001")
 
 
+class FindExistingReviewPrTests(unittest.TestCase):
+    """PRs opened by workers carry no [ReviewBus] prefix and must still be found."""
+
+    WORKER_PR = {
+        "number": 554,
+        "title": "ODP-PLAN-OBSERVABILITY-LIVE-001-SIDECAR-ACCEPTANCE: support acceptance packet",
+        "url": "https://github.com/alfloop-dev/odayplus/pull/554",
+        "headRefName": "task/ODP-PLAN-OBSERVABILITY-LIVE-001-SIDECAR-ACCEPTANCE",
+        "baseRefName": "dev",
+        "state": "OPEN",
+    }
+
+    def test_finds_a_worker_opened_pr_by_head_branch(self) -> None:
+        """The regression: 2674 failed creations against a PR that was already open."""
+
+        branch = "task/ODP-PLAN-OBSERVABILITY-LIVE-001-SIDECAR-ACCEPTANCE"
+
+        def fake_gh_json(args: list[str]) -> list[dict]:
+            # The title search is what used to run, and it matches nothing here.
+            if "--search" in args:
+                return []
+            return [self.WORKER_PR]
+
+        with mock.patch.object(github_bus, "gh_json", side_effect=fake_gh_json) as gh_json:
+            found = github_bus.find_existing_pr(
+                "alfloop-dev/odayplus", "ODP-PLAN-OBSERVABILITY-LIVE-001-SIDECAR-ACCEPTANCE", branch
+            )
+
+        self.assertIsNotNone(found)
+        self.assertEqual(found["number"], 554)
+        # The branch lookup must come first and carry no title filter.
+        first_args = gh_json.call_args_list[0].args[0]
+        self.assertIn("--head", first_args)
+        self.assertIn(branch, first_args)
+        self.assertNotIn("--search", first_args)
+
+    @staticmethod
+    def _fake_gh(prs: list[dict]):
+        """Stand in for gh, reproducing the behaviour that matters here.
+
+        `--head` alone filters exactly. Combined with `--search`, gh degrades it
+        into a fuzzy `head:` qualifier that also matches branches which merely
+        start with the given name -- which is how a parent task reaches its own
+        sidecar PRs. The previous fake ignored `--head` entirely and so could not
+        express either behaviour.
+        """
+
+        def run(args: list[str]) -> list[dict]:
+            head = args[args.index("--head") + 1] if "--head" in args else None
+            searching = "--search" in args
+            out = []
+            for pr in prs:
+                ref = pr.get("headRefName") or ""
+                if head is not None:
+                    if searching:
+                        if not ref.startswith(head):
+                            continue
+                    elif ref != head:
+                        continue
+                out.append(pr)
+            return out
+
+        return run
+
+    def test_falls_back_to_the_title_search_when_no_pr_is_open_from_the_branch(self) -> None:
+        moved = {
+            "number": 777,
+            "title": "[ReviewBus] ODP-X something",
+            "url": "https://github.com/alfloop-dev/odayplus/pull/777",
+            "headRefName": "task/ODP-X-renamed",
+            "baseRefName": "dev",
+            "state": "OPEN",
+        }
+
+        with mock.patch.object(github_bus, "gh_json", side_effect=self._fake_gh([moved])):
+            found = github_bus.find_existing_pr("alfloop-dev/odayplus", "ODP-X", "task/ODP-X")
+
+        self.assertEqual(found["number"], 777)
+
+    def test_a_parent_task_never_adopts_its_sidecars_pr(self) -> None:
+        """The fuzzy-head regression: this would retitle and overwrite PR 639.
+
+        Reproduced live against the real repo -- searching for the parent id with
+        `--head task/<parent>` returns the parent's PR 621 *and* sidecar PR 639.
+        The fallback only runs when the parent branch has no open PR, so the
+        sidecar was first in the list and would have been adopted.
+        """
+
+        parent = "ODP-ORCH-DETACHED-HEAD-BRANCH-RESOLUTION-001"
+        sidecar_pr = {
+            "number": 639,
+            "title": f"[ReviewBus] {parent}-SIDECAR-REVIEW anchor review packet",
+            "url": "https://github.com/alfloop-dev/odayplus/pull/639",
+            "headRefName": f"task/{parent}-SIDECAR-REVIEW",
+            "baseRefName": "dev",
+            "state": "OPEN",
+        }
+
+        # The parent's own branch has no open PR; only the sidecar does.
+        with mock.patch.object(github_bus, "gh_json", side_effect=self._fake_gh([sidecar_pr])):
+            found = github_bus.find_existing_pr("alfloop-dev/odayplus", parent, f"task/{parent}")
+
+        self.assertIsNone(found)
+
+        # And the sidecar task itself still finds its own PR.
+        with mock.patch.object(github_bus, "gh_json", side_effect=self._fake_gh([sidecar_pr])):
+            own = github_bus.find_existing_pr(
+                "alfloop-dev/odayplus", f"{parent}-SIDECAR-REVIEW", f"task/{parent}-SIDECAR-REVIEW"
+            )
+
+        self.assertEqual(own["number"], 639)
+
+    def test_returns_none_when_nothing_matches(self) -> None:
+        with mock.patch.object(github_bus, "gh_json", return_value=[]):
+            self.assertIsNone(github_bus.find_existing_pr("repo", "ODP-X", "task/ODP-X"))
+
+    def test_adopts_the_pr_url_gh_reports_as_already_existing(self) -> None:
+        message = (
+            'Warning: 54 uncommitted changes\n'
+            'a pull request for branch "task/ODP-X" into branch "dev" already exists: '
+            "https://github.com/alfloop-dev/odayplus/pull/554"
+        )
+
+        url = github_bus._existing_pr_url_from_error(message)
+
+        self.assertEqual(url, "https://github.com/alfloop-dev/odayplus/pull/554")
+        self.assertEqual(github_bus.parse_number_from_url(url), 554)
+
+    def test_unrelated_gh_failures_are_not_mistaken_for_an_existing_pr(self) -> None:
+        self.assertIsNone(github_bus._existing_pr_url_from_error("connection reset by peer"))
+        self.assertIsNone(github_bus._existing_pr_url_from_error(""))
+
+
 class GitHubBusProcessTests(unittest.TestCase):
     def test_edit_pull_request_uses_rest_without_projects_classic_graphql(self) -> None:
         with mock.patch.object(github_bus, "run_gh") as run_gh:
