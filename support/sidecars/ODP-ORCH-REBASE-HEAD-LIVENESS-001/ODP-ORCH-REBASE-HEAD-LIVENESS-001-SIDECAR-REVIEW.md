@@ -708,3 +708,111 @@ dispatch — the merge queue's pace, not this packet, is the gating variable.
 Rounds six and seven each closed in under 25 minutes wall-clock, so the
 window is narrowing; the packet remains ready to merge the first time it
 opens.
+
+## Eighth base advance and re-review (owner note, 2026-08-06)
+
+The cycle repeated a seventh time, again on the base clock alone.
+`Antigravity6` approved at head `340e389f` (`05:16:04Z`) and the owner was
+dispatched to finalize (`owned_finalize_dispatch`, wake queued `05:36:58Z`).
+By dispatch time `origin/dev` had advanced from `42e3b207` (composed by
+`d5764310`) to `e301e274` (PR `#650`,
+`ODP-ORCH-PROVIDER-LANE-LIVENESS-001`), leaving the task branch ten
+commits behind. PR `#653` was `mergeStateStatus: BEHIND`,
+`mergeable: MERGEABLE`, `headRefOid 340e389f`, with all five checks green
+(`orchestrator`, `product`, `performance-gate`, `product-e2e-gate`,
+`task-review-gate`). `done` was therefore unreachable: the closeout gate
+requires the task branch head to be an ancestor of `dev`.
+
+Provenance was again not a blocker — the owner/reviewer pair is unchanged
+since `03:26:12Z` (`Claude2` / `Antigravity6`), and both round-seven
+commits already carry `Reviewer: Antigravity6`.
+
+### What was done
+
+| Commit | Role |
+| --- | --- |
+| `f08870ba` | composes the eighth `origin/dev` base advance (`e301e274`) |
+| this commit | records this round and re-pins the provenance heads |
+
+Both commits are owner-authored by `Claude2` with subjects containing the
+task id and explicit `LLM-Agent: Claude2` /
+`Task-ID: ODP-ORCH-REBASE-HEAD-LIVENESS-001-SIDECAR-REVIEW` /
+`Reviewer: Antigravity6` trailers, matching the current role pair.
+
+### Inbound delta is runtime this round, and it was checked
+
+Unlike rounds one through seven — where every inbound path was another
+lane's support artifact — this base advance carries live runtime code:
+
+```
+.orchestrator/common.py                     |  36 ++
+.orchestrator/provider_permissions.py       | 127 ++-
+.orchestrator/supervisor.py                 |  61 ++-
+.orchestrator/test_provider_permissions.py  | 256 ++
+.orchestrator/test_supervisor.py            | 180 ++
+docs/runbooks/supervisor-runtime-rollout.md |  11 +-
+```
+
+All six paths come from `ODP-ORCH-PROVIDER-LANE-LIVENESS-001` (dead
+provider CLI detection, `provider_unavailable` rotation exclusion). The
+merge was conflict-free, and the inbound `supervisor.py` hunks land at
+lines 55/69/165/5217/5544/5648/5704/5731/8146 — none inside
+`_git_operation_in_progress()` (line 1541), the single function this
+packet's evidence matrix attests to. Re-read at the composed head, that
+function still iterates `MERGE_HEAD`, `CHERRY_PICK_HEAD`, `REVERT_HEAD`
+only, with `rebase-merge` / `rebase-apply` directory checks retained
+immediately after — exactly the behavior recorded in
+§ Independent verification. The inbound `test_supervisor.py` additions
+introduce no new class and leave
+`ReusedWorkerWorktreeBaseAdvanceTests` at 18 collected cases.
+
+The branch still contributes nothing outside this support artifact:
+
+```bash
+git diff --name-only origin/dev...HEAD
+# support/sidecars/ODP-ORCH-REBASE-HEAD-LIVENESS-001/ODP-ORCH-REBASE-HEAD-LIVENESS-001-SIDECAR-REVIEW.md
+```
+
+So the approved scope is unchanged.
+
+### Re-verification at the composed head
+
+```bash
+/home/lupin/oday-plus/.venv/bin/pytest -q \
+  .orchestrator/test_supervisor.py \
+  -k ReusedWorkerWorktreeBaseAdvanceTests
+# 18 passed
+
+/home/lupin/oday-plus/.venv/bin/ruff check .orchestrator/
+# All checks passed!
+
+git diff --check origin/dev...HEAD
+# clean
+```
+
+The parent task's `approved_head` is still
+`d518d04c441a0790fb31aeaf2cb6a1e218f6d331`, unchanged since round one, so
+every claim this packet makes about the parent deliverable is re-derived
+against the same commit it was written against.
+
+### Why this again returns to `review`, not `done`
+
+Unchanged from rounds two through seven: a base-advance merge is not an
+identical head, not a `post_merge_checkout_advanced` delivery record, and
+not an `is_evidence_only_advance()` fast-forward, so
+`is_approved_head_satisfied()` cannot carry the `340e389f` approval
+forward to `f08870ba`. The `task-review-gate` status remains pinned to the
+`340e389f` SHA.
+
+### Standing hazard, eighth-round reading
+
+Seven consecutive rounds have now been spent composing a base advance that
+invalidated the approval it was performed to enable. Nothing in the
+packet's content is in dispute, and no rework request has been raised
+against it since `01:57:36`. One observation for the parent owner: PR
+`#653` still reports `autoMergeRequest: null` at the start of this round
+despite auto-merge being requested in round seven, so the mitigation is
+not sticking across rounds and should be re-checked rather than assumed.
+The loop terminates when a `dev` advance does not land inside the window
+between approval and the owner's finalize dispatch — the merge queue's
+pace, not this packet, is the gating variable.
