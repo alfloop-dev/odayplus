@@ -809,10 +809,39 @@ forward to `f08870ba`. The `task-review-gate` status remains pinned to the
 Seven consecutive rounds have now been spent composing a base advance that
 invalidated the approval it was performed to enable. Nothing in the
 packet's content is in dispute, and no rework request has been raised
-against it since `01:57:36`. One observation for the parent owner: PR
-`#653` still reports `autoMergeRequest: null` at the start of this round
-despite auto-merge being requested in round seven, so the mitigation is
-not sticking across rounds and should be re-checked rather than assumed.
-The loop terminates when a `dev` advance does not land inside the window
-between approval and the owner's finalize dispatch — the merge queue's
-pace, not this packet, is the gating variable.
+against it since `01:57:36`.
+
+### Root cause of the loop, found in round eight: PR #653 was a draft
+
+Prior rounds read this loop as bad luck against the merge queue's pace.
+It was not. Attempting the round-eight auto-merge mitigation returned:
+
+```
+GraphQL: Pull request Pull request is a draft (enablePullRequestAutoMerge)
+```
+
+`gh pr view 653 --json isDraft` returned `true`. PR `#653` had been in
+draft since it was opened at `2026-08-06T01:18:28Z` — that is, for every
+one of the eight rounds. **A draft PR cannot merge and cannot hold
+auto-merge**, which explains both standing symptoms: why
+`autoMergeRequest` read back `null` after each round's mitigation, and why
+an approved, five-checks-green PR sat idle until `dev` moved and reset it
+to `BEHIND`. Every comparable sidecar PR that reached `dev` (`#652`,
+`#654`, `#656`, `#657`, `#660`) is non-draft, so this was specific to
+`#653`, not the ReviewBus template.
+
+The loop was never terminating on its own: the merge window this packet's
+earlier notes described as "narrowing" was in fact closed the entire time.
+
+Fixed in this round with `gh pr ready 653`; `gh pr merge 653 --auto
+--merge` then succeeded and auto-merge is recorded as enabled at
+`05:42:32Z`. The PR is now `BLOCKED` only on `task-review-gate`, which is
+pending because the head moved off `340e389f` — the normal post-push
+intermediate state. On reviewer re-approval the gate goes green on the
+re-approved head and auto-merge should land the PR without a ninth round.
+
+**Reusable rule:** when a task PR survives more than one base-advance
+re-review, check `gh pr view <n> --json isDraft` before attributing the
+loop to base-clock churn. A draft task PR is an invisible closeout
+deadlock — the review gate, the checks, and the approval all behave
+normally, and only the merge step is silently disabled.
