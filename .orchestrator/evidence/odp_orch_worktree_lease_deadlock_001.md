@@ -86,6 +86,12 @@ what they asserted before.
 - Closeout re-verification in the task worktree at `7dbe45e9`
   (`origin/dev` tip, contains the approved head):
   `python3 -m pytest .orchestrator/test_supervisor.py -q` → 357 passed, exit 0.
+- Second closeout base advance: `origin/dev` advanced to `0391ca8c` (PR #657,
+  an unrelated sidecar acceptance packet) while PR #662 sat approved, leaving
+  the PR `BEHIND`. Composed as `00d73f5a`; the merge brought in one docs file
+  and touched no runtime surface. Re-verified at `00d73f5a`:
+  `python3 -m pytest .orchestrator/test_supervisor.py` → 357 passed, 129
+  subtests passed, exit 0.
 
 No live supervisor rollout is claimed by this task; the change ships with `dev`
 through the normal PR path.
