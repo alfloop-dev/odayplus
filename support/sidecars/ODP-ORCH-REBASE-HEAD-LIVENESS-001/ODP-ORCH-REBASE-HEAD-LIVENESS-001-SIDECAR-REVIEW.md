@@ -320,3 +320,71 @@ findings against it since the `01:57:36` reopen; every subsequent round
 has been provenance or base freshness. Nothing in this packet needs
 re-reading on its merits — a re-approval here is a check that the
 composed head is clean, not a re-review of the evidence.
+
+## Third base advance and re-review (owner note, 2026-08-06)
+
+The predicted cycle repeated. The reviewer approved at the composed head
+`dbe3d499` (`03:02:50Z`), and the owner was dispatched to finalize
+(`owned_finalize_dispatch`, `03:19:04Z`). By dispatch time `origin/dev`
+had advanced again — from `a7fde1a8` (composed by `4af5cb1e`) to
+`b507f932` — and PR `#653` was `mergeStateStatus: BEHIND`,
+`mergeable: MERGEABLE`, `headRefOid dbe3d499`. `done` was therefore
+unreachable: the closeout gate requires the task branch head to be an
+ancestor of `dev`, and it is not.
+
+### What was done
+
+| Commit | Role |
+| --- | --- |
+| `03dc0040` | composes the third `origin/dev` base advance (`b507f932`) |
+| this commit | records this round and re-pins the provenance heads |
+
+The merge was conflict-free. The only inbound path is
+`support/sidecars/ODP-DEPLOY-SCHEDULER-ROLLBACK-RESTORE-001/ODP-DEPLOY-SCHEDULER-ROLLBACK-RESTORE-001-SIDECAR-REVIEW.md`
+— an unrelated sidecar packet merged into `dev` by PR `#638`. Confirmed
+that the branch still contributes nothing outside this support artifact:
+
+```bash
+git diff --name-only origin/dev...HEAD
+# support/sidecars/ODP-ORCH-REBASE-HEAD-LIVENESS-001/ODP-ORCH-REBASE-HEAD-LIVENESS-001-SIDECAR-REVIEW.md
+```
+
+So the approved scope is unchanged.
+
+Re-verified at the composed head:
+
+```bash
+/home/lupin/oday-plus/.venv/bin/pytest -q \
+  .orchestrator/test_supervisor.py \
+  -k ReusedWorkerWorktreeBaseAdvanceTests
+# 14 passed
+
+/home/lupin/oday-plus/.venv/bin/ruff check \
+  .orchestrator/supervisor.py \
+  .orchestrator/test_supervisor.py
+# All checks passed!
+
+git diff --check
+# clean
+```
+
+Provenance is unaffected: both commits in this round are owner-authored by
+`Claude2` with subjects containing the task id and explicit
+`LLM-Agent: Claude2` / `Task-ID: ODP-ORCH-REBASE-HEAD-LIVENESS-001-SIDECAR-REVIEW`
+/ `Reviewer: Antigravity` trailers, so whichever head the reviewer freezes
+satisfies the done gate on its own body without first-parent fallback.
+
+### Why this again returns to `review`, not `done`
+
+Unchanged from the second round above: a base-advance merge is not an
+identical head, not a `post_merge_checkout_advanced` delivery record, and
+not an `is_evidence_only_advance()` fast-forward, so
+`is_approved_head_satisfied()` cannot carry the `dbe3d499` approval
+forward to `03dc0040`. The `task-review-gate` status remains pinned to the
+`dbe3d499` SHA.
+
+This is the third consecutive round in which the *only* work performed was
+composing a base advance that invalidated the approval it enabled. The
+loop terminates when a `dev` advance does not land inside the window
+between approval and the owner's finalize dispatch — not through any
+change to this packet.
