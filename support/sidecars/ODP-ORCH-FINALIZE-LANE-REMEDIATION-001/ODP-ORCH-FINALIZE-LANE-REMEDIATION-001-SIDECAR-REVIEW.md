@@ -4,7 +4,7 @@
 - **Parent Task**: `ODP-ORCH-FINALIZE-LANE-REMEDIATION-001`
 - **Helper Kind**: `review_packet`
 - **Owner**: `Antigravity`
-- **Reviewer**: `Codex2`
+- **Reviewer**: `Claude2`
 - **Status**: `review`
 - **Created At**: `2026-08-05`
 - **Target Artifact**: `support/sidecars/ODP-ORCH-FINALIZE-LANE-REMEDIATION-001/ODP-ORCH-FINALIZE-LANE-REMEDIATION-001-SIDECAR-REVIEW.md`
@@ -56,7 +56,7 @@ Parent task `ODP-ORCH-FINALIZE-LANE-REMEDIATION-001` delivers diagnostic tools i
 │                        Finalize Lane Remediation Diagnostics                           │
 ├────────────────────────────────────────────────────────────────────────────────────────┤
 │                                                                                        │
-│  [ ai-status.json ] ──► diagnose_finalize_lane_remediation.py / finalize_lane_doctor  │
+│  [ ai-status.json ] ──────────────► finalize_lane_doctor.py                           │
 │                                           │                                            │
 │                      ┌────────────────────┼────────────────────┐                       │
 │                      ▼                    ▼                    ▼                       │
@@ -74,13 +74,15 @@ Parent task `ODP-ORCH-FINALIZE-LANE-REMEDIATION-001` delivers diagnostic tools i
 ### Delivered Modules
 1. **`scripts/orchestrator/finalize_lane_doctor.py`**:
    - Classifies stranded finalize tasks against severity order (`ALREADY_MERGED`, `NO_PR`, `MISSING_REQUIRED_CHECK`, `CI_STALE`, `CI_FAILED`, `CI_PENDING`, `READY`).
-   - Supports `--emit-commands` to output precise, non-destructive remedy commands without mutating state.
-2. **`scripts/orchestrator/diagnose_finalize_lane_remediation.py`**:
-   - Offers CLI wrapper with options like `--fail-on-stranded`, `--format json|summary`, and status/config loading.
-3. **Test Suites**:
+   - Supports CLI flags: `--status` (path to `ai-status.json`), `--repo` (repo root), `--base` (base branch name, default: `dev`), `--emit-commands` (output precise non-destructive remedy commands), `--required-check` (filter required checks).
+   - Exit code signals stranded task status (exit 1 if tasks require remediation, exit 0 if all clean or only pending/ready).
+2. **Test Suites**:
    - `scripts/orchestrator/test_finalize_lane_doctor.py`
-   - `scripts/orchestrator/test_diagnose_finalize_lane_remediation.py`
-   - Covers severity ranking (`ALREADY_MERGED` > `NO_PR`), missing required check rules, unmerged branch handling, and JSON input validations.
+   - Covers severity ranking (`ALREADY_MERGED` > `NO_PR`), missing required check rules, unmerged branch handling, exit code calculations, and JSON status parsing.
+
+> [!NOTE]
+> **Parent Branch Scope & Generated State Mirrors**:
+> Parent branch `task/ODP-ORCH-FINALIZE-LANE-REMEDIATION-001` (commit `b3bb9de3`) contains 11 touched files (6,621 insertions), but 9 of those files are generated state mirrors (`ai-status.json`, `current-work.md`, `dashboard-bundle.json`, `docs-site/*`). The sole core deliverables are `scripts/orchestrator/finalize_lane_doctor.py` (316 lines) and `scripts/orchestrator/test_finalize_lane_doctor.py` (196 lines).
 
 ---
 
@@ -90,7 +92,7 @@ Parent task `ODP-ORCH-FINALIZE-LANE-REMEDIATION-001` delivers diagnostic tools i
 |---|---|---|---|
 | **A1** | Diagnosis Categorization | Correctly identifies and separates the 5 root causes (`ALREADY_MERGED`, `NO_PR`, `MISSING_REQUIRED_CHECK`, `CI_STALE`, `CI_FAILED`). | `scripts/orchestrator/test_finalize_lane_doctor.py` |
 | **A2** | Landed Work Handling | `ALREADY_MERGED` outranks `NO_PR` and prevents invalid `gh pr create` calls. | `test_finalize_lane_doctor.py::test_already_merged_outranks_no_pr` |
-| **A3** | CLI Diagnostic Tool | `diagnose_finalize_lane_remediation.py` parses `ai-status.json` and reports stranded tasks cleanly. | `scripts/orchestrator/test_diagnose_finalize_lane_remediation.py` |
+| **A3** | CLI Diagnostic Surface | `finalize_lane_doctor.py` parses `ai-status.json` and reports stranded tasks with remedies & exit code signals. | `scripts/orchestrator/test_finalize_lane_doctor.py` |
 | **A4** | Non-Destructive Operation | Read-only diagnosis; `--emit-commands` prints explicit remedies without executing state mutations. | Source inspection & test suite |
 | **A5** | Code Quality | Clean PEP 8 / Ruff linting and zero type/syntax errors across diagnostic tools. | `ruff check` & `py_compile` |
 
@@ -102,10 +104,10 @@ To run and verify the diagnostic tools and test suite:
 
 ```bash
 # 1. Run orchestrator test suite
-python3 -m pytest -q scripts/orchestrator/test_finalize_lane_doctor.py scripts/orchestrator/test_diagnose_finalize_lane_remediation.py
+python3 -m pytest -q scripts/orchestrator/test_finalize_lane_doctor.py
 
 # 2. Check syntax compilation
-python3 -m py_compile scripts/orchestrator/finalize_lane_doctor.py scripts/orchestrator/diagnose_finalize_lane_remediation.py
+python3 -m py_compile scripts/orchestrator/finalize_lane_doctor.py
 
 # 3. Run ruff code linter
 python3 -m ruff check scripts/orchestrator/
@@ -120,6 +122,6 @@ git diff --check origin/dev...HEAD
 
 This sidecar review packet (`support/sidecars/ODP-ORCH-FINALIZE-LANE-REMEDIATION-001/ODP-ORCH-FINALIZE-LANE-REMEDIATION-001-SIDECAR-REVIEW.md`) is completed and ready for review.
 
-- **Assigned Reviewer**: `Codex2`
-- **Next Action**: Hand off task `ODP-ORCH-FINALIZE-LANE-REMEDIATION-001-SIDECAR-REVIEW` to reviewer `Codex2`.
-- **Parent Task Alignment**: Upon approval by `Codex2`, parent task owner `Antigravity` can incorporate this review packet into parent task `ODP-ORCH-FINALIZE-LANE-REMEDIATION-001` closeout.
+- **Assigned Reviewer**: `Claude2`
+- **Next Action**: Hand off task `ODP-ORCH-FINALIZE-LANE-REMEDIATION-001-SIDECAR-REVIEW` to reviewer `Claude2`.
+- **Parent Task Alignment**: Upon approval by `Claude2`, parent task owner `Antigravity` can incorporate this review packet into parent task `ODP-ORCH-FINALIZE-LANE-REMEDIATION-001` closeout.
