@@ -6,6 +6,12 @@ on:
     branches: [main, dev]
   pull_request:
     branches: [main, dev]
+  # A merge queue tests each candidate on a temporary ref built from the target
+  # branch plus the queued PRs, and it waits for the *required* checks to report
+  # against that ref. Without this trigger the jobs below never run there, every
+  # queued PR times out and is ejected, and the queue silently blocks all merges.
+  merge_group:
+    types: [checks_requested]
 
 jobs:
   orchestrator:
