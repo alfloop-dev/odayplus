@@ -5399,6 +5399,7 @@ def provider_guardrail_settings(config: dict[str, Any]) -> dict[str, Any]:
     settings.setdefault("capacity_pause_seconds", 900)
     settings.setdefault("auth_pause_seconds", int(settings.get("capacity_pause_seconds", 900)))
     settings.setdefault("provider_config_pause_seconds", int(settings.get("auth_pause_seconds", 900)))
+    settings.setdefault("provider_unavailable_pause_seconds", int(settings.get("auth_pause_seconds", 900)))
     settings.setdefault("quota_terminal_pause_seconds", int(settings.get("capacity_pause_seconds", 900)))
     settings.setdefault("generic_exit_reassign_after", int(worker_reassignment_settings(config).get("after_attempts", 2)))
     return settings
@@ -5595,7 +5596,13 @@ def mark_provider_dispatch_paused(
     # can rotate models (Gemini <-> Claude/GPT), record the exhausted pool and
     # keep dispatching on the other pool instead of hard-pausing. Only fall
     # through to a real pause when BOTH pools are exhausted.
-    if effective_pause_kind not in {"auth", "provider_config"} and model_rotation.rotation_enabled(config, provider_id):
+    # `provider_unavailable` belongs with auth/provider_config, not with the
+    # capacity kinds: rotation answers "this model pool is exhausted" by moving
+    # to the other pool, but a missing binary means no pool is reachable at all.
+    # Letting it rotate would keep dispatching into the exact sub-second failure
+    # loop this kind exists to stop -- and on the rotation-enabled antigravity
+    # providers that is most of the fleet.
+    if effective_pause_kind not in {"auth", "provider_config", "provider_unavailable"} and model_rotation.rotation_enabled(config, provider_id):
         rotate_cooldown = min(int(pause_seconds), ROTATION_PROBE_COOLDOWN_SECONDS)
         # A real agy quota banner carries an authoritative reset countdown.
         # Persist it across task completion/review/reopen so another alias on

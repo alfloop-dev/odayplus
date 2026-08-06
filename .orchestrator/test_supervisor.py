@@ -750,42 +750,91 @@ class DetectWorkerFailureTests(unittest.TestCase):
         self.assertFalse(failure["transient"])
         self.assertTrue(supervisor.should_pause_dispatch_for_failure_kind(failure["kind"]))
 
-    def test_missing_provider_cli_pauses_dispatch_without_rotating_models(self) -> None:
-        """A dead binary has no second model pool to fall back onto."""
+    # Rotation-enabled, as the seven antigravity providers in the live config
+    # are. Asserting no-rotation against a provider that cannot rotate passes
+    # whatever the code does, which is how the first version of this test missed
+    # the defect it was written to catch.
+    ROTATING_CONFIG = {
+        "provider_guardrails": {
+            "capacity_pause_seconds": 900,
+            "quota_terminal_pause_seconds": 900,
+        },
+        "paths": {"activity_log": "/tmp/test-activity-log.jsonl"},
+        "providers": {
+            "antigravity5": {
+                "antigravity": {
+                    "model_rotation": {
+                        "enabled": True,
+                        "primary_model": "",
+                        "fallback_model": "Claude Sonnet 4.6 (Thinking)",
+                    }
+                }
+            }
+        },
+    }
 
-        config = {
-            "provider_guardrails": {
-                "capacity_pause_seconds": 900,
-                "quota_terminal_pause_seconds": 900,
-                "provider_unavailable_pause_seconds": 900,
-            },
-            "paths": {"activity_log": "/tmp/test-activity-log.jsonl"},
-        }
+    def test_missing_provider_cli_pauses_dispatch_without_rotating_models(self) -> None:
+        """A dead binary has no second model pool to fall back onto.
+
+        Rotation answers "this model pool is exhausted" by dispatching on the
+        other pool. When the binary itself is gone, neither pool is reachable,
+        so rotating just resumes the sub-second failure loop.
+        """
+
         state: dict = {}
+        self.assertTrue(
+            supervisor.model_rotation.rotation_enabled(self.ROTATING_CONFIG, "antigravity5"),
+            "fixture must have rotation enabled or this test proves nothing",
+        )
 
         with (
             mock.patch.object(supervisor, "write_activity_log"),
             mock.patch.object(supervisor.model_rotation, "record_exhaustion") as rotate,
         ):
             paused = supervisor.mark_provider_dispatch_paused(
-                config,
+                self.ROTATING_CONFIG,
                 state,
-                "codex",
-                "Codex CLI binary not found at /home/lupin/.npm-global/bin/codex or on PATH.",
+                "antigravity5",
+                "Antigravity CLI (agy) binary not found under ~/.local/bin or PATH.",
                 task_id="ODP-ORCH-EXAMPLE-001",
-                worker_run_id="codex-run-1",
+                worker_run_id="agy-run-1",
                 failure_kind="provider_unavailable",
                 pause_kind="provider_unavailable",
             )
 
         self.assertTrue(paused)
         rotate.assert_not_called()
-        entry = state["provider_guardrails"]["dispatch_pauses"]["codex"]
+        entry = state["provider_guardrails"]["dispatch_pauses"]["antigravity5"]
         self.assertEqual(entry["pause_kind"], "provider_unavailable")
         # Finite, so reinstalling the CLI brings the lane back without manual
         # intervention -- and so a lane nobody fixes keeps re-announcing itself.
         self.assertGreaterEqual(entry["reset_after_seconds"], 60)
         self.assertTrue(entry["blocked_until"])
+
+    def test_quota_on_the_same_provider_still_rotates(self) -> None:
+        """Guard the other direction: the exclusion must not disable rotation."""
+
+        state: dict = {}
+        with (
+            mock.patch.object(supervisor, "write_activity_log"),
+            mock.patch.object(supervisor.model_rotation, "record_exhaustion", return_value={"exhausted_pool": "gemini"}) as rotate,
+        ):
+            supervisor.mark_provider_dispatch_paused(
+                self.ROTATING_CONFIG,
+                state,
+                "antigravity5",
+                "Error: Individual quota reached. Please upgrade your subscription. Resets in 2h21m32s.",
+                task_id="ODP-ORCH-EXAMPLE-001",
+                worker_run_id="agy-run-2",
+                failure_kind="quota_terminal",
+                pause_kind="quota_terminal",
+            )
+
+        rotate.assert_called_once()
+
+    def test_provider_unavailable_pause_seconds_has_a_default(self) -> None:
+        settings = supervisor.provider_guardrail_settings({})
+        self.assertGreaterEqual(int(settings["provider_unavailable_pause_seconds"]), 60)
 
     def test_mark_provider_dispatch_paused_honors_codex_retry_at(self) -> None:
         from datetime import datetime
