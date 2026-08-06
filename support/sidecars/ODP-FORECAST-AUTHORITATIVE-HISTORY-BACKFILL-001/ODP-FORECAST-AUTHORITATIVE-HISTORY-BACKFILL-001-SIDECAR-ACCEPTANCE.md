@@ -7,7 +7,7 @@
 | Sidecar task | `ODP-FORECAST-AUTHORITATIVE-HISTORY-BACKFILL-001-SIDECAR-ACCEPTANCE` |
 | Parent task | `ODP-FORECAST-AUTHORITATIVE-HISTORY-BACKFILL-001` |
 | Helper kind | `acceptance_packet` |
-| Sidecar owner / reviewer | `Antigravity` / `Codex4` |
+| Sidecar owner / reviewer | `Antigravity` / `Antigravity7` |
 | Current parent owner / reviewer | `Antigravity` / `Codex8` |
 | Observed parent branch | `task/ODP-FORECAST-AUTHORITATIVE-HISTORY-BACKFILL-001` |
 | Parent dependencies | `ODP-FORECAST-LEARNINGHUB-TEMPORAL-COMPOSE-001` (done), `ODP-MODEL-CAPABILITY-READINESS-001` (done) |
@@ -148,7 +148,7 @@ WHERE source_snapshot_id IS NULL;
 
 ## Reviewer handoff record
 
-Assigned sidecar reviewer: `Codex4`.
+Assigned sidecar reviewer: `Antigravity7`.
 
 | Review question | Expected answer |
 |---|---|
