@@ -1555,6 +1555,132 @@ def _git_operation_in_progress(worktree_path: Path) -> bool:
     return False
 
 
+def _record_worktree_lease_block(
+    config: dict[str, Any],
+    state: dict[str, Any],
+    *,
+    task_id: str,
+    refresh_status: str,
+    message: str,
+) -> int:
+    """Count consecutive lease blocks and escalate once they stop being noise.
+
+    A single blocked lease is ordinary: the next tick usually clears it. What is
+    not ordinary is the same block repeating unchanged forever. On 2026-08-05 ten
+    tasks were blocked 1713 times over ~8h without one escalation, because each
+    attempt only appended an activity record and returned. `active_workers=0`
+    alongside a non-empty queue is not itself an alarm condition, so the fleet
+    read as healthy the entire time.
+
+    Returns the current consecutive count.
+    """
+
+    bucket = state.setdefault("worker_worktree_lease_blocks", {})
+    key = normalize_agent_id(task_id) or task_id
+    entry = bucket.get(key)
+    if not isinstance(entry, dict) or entry.get("refresh_status") != refresh_status:
+        entry = {"count": 0, "first_at": utc_now(), "refresh_status": refresh_status, "escalated": False}
+    entry["count"] = int(entry.get("count") or 0) + 1
+    entry["last_at"] = utc_now()
+    entry["message"] = message
+    bucket[key] = entry
+
+    threshold = max(2, int(worker_runtime_settings(config).get("lease_block_escalate_after", 5)))
+    if entry["count"] >= threshold and not entry.get("escalated"):
+        entry["escalated"] = True
+        console_log(
+            f"worktree lease blocked repeatedly: task={task_id} count={entry['count']} "
+            f"status={refresh_status} -- dispatch for this task is stuck and needs an owner decision",
+            quiet=SUPERVISOR_LOG_QUIET,
+        )
+        write_activity_log(
+            config,
+            {
+                "type": "dispatch_blocked_worktree_lease_escalated",
+                "task_id": task_id,
+                "message": (
+                    f"Worktree lease has been blocked {entry['count']} consecutive times with "
+                    f"`{refresh_status}`. This will not clear on its own: {message}"
+                ),
+                "refresh_status": refresh_status,
+                "consecutive_blocks": entry["count"],
+                "first_blocked_at": entry.get("first_at"),
+            },
+        )
+    return int(entry["count"])
+
+
+def _clear_worktree_lease_block(state: dict[str, Any], task_id: str) -> None:
+    bucket = state.get("worker_worktree_lease_blocks")
+    if isinstance(bucket, dict):
+        bucket.pop(normalize_agent_id(task_id) or task_id, None)
+
+
+def _publish_unpublished_task_branch(
+    worktree_path: Path,
+    expected_branch: str,
+) -> tuple[bool, str]:
+    """Fast-forward-publish a clean task branch whose commits were never pushed.
+
+    The fail-closed refresh policy calls a branch dispatchable only when its
+    local HEAD exactly matches the remote task HEAD. A worker that commits but
+    exits before pushing leaves a state that can never reach that condition on
+    its own: leasing is what would run the worker that would push, and leasing
+    is exactly what the policy refuses. On 2026-08-05 eight tasks sat in that
+    deadlock for ~8h, each re-reported ~300 times, while the fleet ran no work
+    at all.
+
+    Publishing does not weaken the policy -- it satisfies it, by turning an
+    unverifiable local state into the exact local==remote state the policy
+    already accepts. It is therefore allowed only where that equivalence holds
+    and nothing can be lost:
+
+    * the worktree must be clean, so no unreviewed working-tree state is
+      published as a side effect of dispatch;
+    * the push must be a genuine fast-forward -- either the remote branch does
+      not exist yet, or its HEAD is an ancestor of the local HEAD.
+
+    A genuinely diverged branch (ahead *and* behind) is never published here.
+    That needs a rebase decision only the task owner can make, and the caller
+    escalates it instead.
+
+    Returns (published, detail).
+    """
+
+    dirty_rc, dirty_out = _git_output(worktree_path, "status", "--porcelain")
+    if dirty_rc != 0:
+        return False, "cannot read worktree status"
+    if dirty_out.strip():
+        return False, "worktree is not clean"
+
+    local_head = _git_commit_oid(worktree_path, "HEAD")
+    if not local_head:
+        return False, "missing local HEAD"
+
+    remote_head = _git_commit_oid(worktree_path, f"origin/{expected_branch}")
+    if remote_head:
+        if remote_head == local_head:
+            return False, "already published"
+        ancestor_rc, _ = _git_output(
+            worktree_path, "merge-base", "--is-ancestor", remote_head, local_head
+        )
+        if ancestor_rc != 0:
+            # Remote holds commits the local branch does not: a real divergence.
+            return False, f"diverged from remote ({remote_head[:12]})"
+
+    push_proc = subprocess.run(
+        ["git", "push", "origin", f"refs/heads/{expected_branch}:refs/heads/{expected_branch}"],
+        cwd=worktree_path,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if push_proc.returncode != 0:
+        details = (push_proc.stderr or push_proc.stdout or "").strip().splitlines()
+        return False, f"push failed: {details[0] if details else 'unknown'}"
+    return True, f"published {local_head[:12]}"
+
+
 def _refresh_reused_worker_worktree(
     repo_root: Path,
     worktree_path: Path,
@@ -2331,6 +2457,38 @@ def prepare_worker_workspace(
                                     refresh_status = (
                                         f"recovered_task_sha_mismatch:expected={task_sha},found={fresh_head}"
                                     )
+                if not refresh_ok and refresh_status != "skipped_dirty_worktree":
+                    # The clean-but-unpublished deadlock. Publishing is only
+                    # attempted for fast-forwards on a clean worktree; anything
+                    # genuinely diverged falls through to the escalation below.
+                    published, publish_detail = _publish_unpublished_task_branch(worktree_path, branch)
+                    if published:
+                        refresh_ok, refresh_status = _refresh_reused_worker_worktree(
+                            repo_root,
+                            worktree_path,
+                            str(settings.get("base_ref") or "origin/dev"),
+                            branch,
+                        )
+                        write_activity_log(
+                            config,
+                            {
+                                "type": "worker_worktree_branch_published",
+                                "task_id": request.task_id,
+                                "target_agent": target_agent,
+                                "queue_event_id": queue_event_id,
+                                "workspace_branch": branch,
+                                "workspace_path": str(worktree_path),
+                                "publish_detail": publish_detail,
+                                "refresh_ok": refresh_ok,
+                                "refresh_status": refresh_status,
+                            },
+                        )
+                        console_log(
+                            f"worktree branch published: task={request.task_id} branch={branch} "
+                            f"{publish_detail} refresh_ok={refresh_ok}",
+                            quiet=SUPERVISOR_LOG_QUIET,
+                        )
+
                 if not refresh_ok:
                     if refresh_status == "skipped_dirty_worktree":
                         reason = (
@@ -2357,7 +2515,15 @@ def prepare_worker_workspace(
                             "refresh_status": refresh_status,
                         },
                     )
+                    _record_worktree_lease_block(
+                        config,
+                        state,
+                        task_id=str(request.task_id or workspace_task_id),
+                        refresh_status=refresh_status,
+                        message=message,
+                    )
                     return False, message
+                _clear_worktree_lease_block(state, str(request.task_id or workspace_task_id))
             if refresh_status.startswith("base_advance_rebase_required:"):
                 base_advance_prompt = (
                     "BASE ADVANCE REQUIRED BEFORE EDITING OR HANDOFF: this clean local task "
