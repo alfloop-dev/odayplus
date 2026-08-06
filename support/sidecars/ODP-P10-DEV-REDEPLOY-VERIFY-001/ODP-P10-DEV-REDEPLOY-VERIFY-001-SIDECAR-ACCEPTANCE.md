@@ -11,10 +11,35 @@
 | Current parent owner / reviewer | `Antigravity3` / `Antigravity` |
 | Observed parent status | `blocked` (`waiting_for: Human/Ops`) |
 | Target branch | `task/ODP-P10-DEV-REDEPLOY-VERIFY-001-SIDECAR-ACCEPTANCE` |
-| Packet revision | `r2` — refreshed 2026-08-06 against live dev |
+| Packet revision | `r2.1` — `r2` content unchanged; base advanced onto dev tip `c879004a` (see § r2.1) |
 | Packet verdict | **Support only; no parent acceptance, merge, or production GO claim** |
 
 This packet is a support-only review aid, acceptance checklist, and dependency map for parent task `ODP-P10-DEV-REDEPLOY-VERIFY-001`. It does not change canonical contracts, L1 architecture truth, or primary runtime/registry/governance implementations. The parent task owner (`Antigravity3`) decides whether to absorb this packet; the parent reviewer (`Antigravity`) retains sole authority over implementation acceptance.
+
+---
+
+## Revision r2.1 — base advance only (2026-08-06T01:47Z)
+
+`r2` was approved by `Antigravity3` at exact head `34bd2dc4`. Before that PR could merge, `dev` advanced to `c879004a` (an unrelated sidecar review packet, PR #642), leaving PR #658 `BEHIND`. `dev` requires strict up-to-date status checks, so the branch had to take the new base — which moves the head and therefore requires a re-stamp rather than a mechanical refresh.
+
+| Aspect | r2 (approved) | r2.1 |
+|---|---|---|
+| Base | dev tip `a0e4dcf0` | dev tip `c879004a` (merged in, no rebase, no force-push) |
+| Packet body | — | **Byte-identical to `34bd2dc4` apart from this section and the two freshness lines.** Verify with `git diff 34bd2dc4 HEAD -- support/sidecars/ODP-P10-DEV-REDEPLOY-VERIFY-001/` |
+| Merge conflicts | — | None. The incoming commit touches only `support/sidecars/ODP-ORCH-DONE-DELIVERY-PROVENANCE-001/`, a disjoint path. |
+
+Re-verification at the new base (2026-08-06T01:46–01:47Z) confirms every r2 finding still holds:
+
+```bash
+curl -sS https://oday-api-7sxbjoeozq-de.a.run.app/platform/version   # 200 · release_sha 8ec12c02 (unchanged)
+curl -sS https://oday-api-7sxbjoeozq-de.a.run.app/platform/health    # 503 · status unhealthy (unchanged)
+#   modes.models.mode = mlflow-production-unverified · productionBindingsReady = false
+#   modes.data.mode   = unavailable · operatorRepositoryReady = true
+```
+
+One new observation, recorded but **not** yet an acceptance input: Deploy Dev run `31063341577` on the new dev tip `c879004a` was still `in_progress` at capture time (`e2e-operational-evidence` succeeded, `deploy` running). Its outcome does not change any Criteria A–E cell in this packet; if it fails, the expected failure point is the same live E2E gate documented below. The parent owner should read its conclusion directly rather than infer it from here.
+
+No status cell, dependency edge, recommendation, or execution step was re-scoped in r2.1.
 
 ---
 
@@ -311,4 +336,4 @@ Commit all receipts, the `.odp_data/deployment/live-e2e-gate.json` gate report, 
 - **Owned by this sidecar:** this file only.
 - **Not changed by this sidecar:** canonical truth, contracts, runtime/registry/governance implementation, deployment scripts, workflows, the parent's evidence directory, and `ai-status.json` task semantics beyond this sidecar's own status transitions.
 - **Authority:** advisory. Parent acceptance remains with parent owner `Antigravity3` and parent reviewer `Antigravity`.
-- **Freshness:** all live probes and run data in this revision were captured 2026-08-06T01:14–01:15Z against dev tip `a0e4dcf07e41def48b5e6efa61b5c24215b5ce45`. Re-verify before relying on any status cell.
+- **Freshness:** the live probes and run data in the r2 body were captured 2026-08-06T01:14–01:15Z against dev tip `a0e4dcf07e41def48b5e6efa61b5c24215b5ce45`, and re-confirmed unchanged at 2026-08-06T01:46–01:47Z against dev tip `c879004a9713dfd4562939accf888e93112ca403` (see § r2.1). Re-verify before relying on any status cell.
