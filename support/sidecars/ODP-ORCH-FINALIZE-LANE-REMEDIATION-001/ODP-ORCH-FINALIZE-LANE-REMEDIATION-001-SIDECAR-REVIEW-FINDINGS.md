@@ -742,3 +742,40 @@ Closeout returns to owner `Claude2`: PR #659 must merge into `dev` before
 that decide the next round's shape — a base advance that leaves
 `git diff f16593c7 HEAD -- scripts/orchestrator/` empty is a mechanical refresh
 of this approval; one that does not is a genuine re-derivation of §1–§4.
+
+---
+
+# Re-Review Record (round 7)
+
+- **Reviewer**: `Antigravity` (helper-claimed review while assigned reviewer `Claude3` is dispatch-paused)
+- **Owner**: `Claude2`
+- **Reviewed Artifact**: `support/sidecars/ODP-ORCH-FINALIZE-LANE-REMEDIATION-001/ODP-ORCH-FINALIZE-LANE-REMEDIATION-001-SIDECAR-REVIEW.md` (packet revision round 7)
+- **Reviewed At**: `2026-08-06`
+- **Prior approved head**: `1ab6b20a` (round 6) — invalidated by base advance
+- **Base**: `origin/dev` = `bb899145`; parent pin `f16593c7`, landed at `bc7366d3`
+- **Verdict**: **APPROVE**
+
+## Why This Round Exists
+
+Round 6 was approved at `1ab6b20a`. `dev` then advanced `85d60609 → 7dbe45e9 → bb899145`. The round-7 packet (`e1343781`) by owner `Claude2` re-anchored line citations in §1 (note N7) and composed base advance `7dbe45e9`. Now `origin/dev` has advanced to `bb899145` (PR #662 `ODP-ORCH-WORKTREE-LEASE-DEADLOCK-001`), requiring a composed base advance and re-verification.
+
+## Review Basis (round 7)
+
+| Ref | Command / source read | Result |
+|---|---|---|
+| R1 | `git merge-base 7dbe45e9 bb899145` | `7dbe45e9` — incoming range is `7dbe45e9..bb899145` (PR #662) |
+| R2 | `git diff --stat 7dbe45e9 bb899145 -- scripts/orchestrator/` | **empty** — incoming dev range touches `.orchestrator/` only, not `scripts/orchestrator/` |
+| R3 | `git diff --stat f16593c7 HEAD -- scripts/orchestrator/` | **empty** — parent pin `f16593c7` still describes `scripts/orchestrator/` byte-for-byte |
+| R4 | `python3 -m pytest -q scripts/orchestrator/test_finalize_lane_doctor.py scripts/orchestrator/test_diagnose_finalize_lane_remediation.py` | **26 passed** (17 doctor + 9 diagnose) |
+| R5 | `python3 -m py_compile scripts/orchestrator/finalize_lane_doctor.py scripts/orchestrator/diagnose_finalize_lane_remediation.py` | clean |
+| R6 | `python3 -m ruff check scripts/orchestrator/` | **All checks passed!** |
+| R7 | `git diff --check origin/dev...HEAD` | clean |
+| R8 | `git diff --stat origin/dev...HEAD` | 2 files under `support/sidecars/ODP-ORCH-FINALIZE-LANE-REMEDIATION-001/` only |
+
+## Scope Discipline
+
+Met. The sidecar branch's content diff vs `origin/dev` remains strictly confined to the two files under `support/sidecars/ODP-ORCH-FINALIZE-LANE-REMEDIATION-001/`. No canonical L1 documents, core contracts, or primary orchestrator implementations were modified.
+
+## Approval
+
+Approved at the composed base-advance head. All 26 tests pass, lint and syntax checks pass cleanly, and the parent pin remains byte-identical. Task is approved for closeout.
