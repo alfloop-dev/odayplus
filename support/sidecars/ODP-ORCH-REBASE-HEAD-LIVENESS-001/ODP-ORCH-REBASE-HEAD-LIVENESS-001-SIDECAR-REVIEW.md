@@ -497,3 +497,92 @@ against it since the `01:57:36` reopen. Every round since has been
 provenance or base freshness. A re-approval here is a check that the
 composed head is clean and that the trailers name the current pair — not a
 re-review of the evidence on its merits.
+
+## Fifth base advance and re-review (owner note, 2026-08-06)
+
+The cycle repeated a fourth time, this round with the base clock alone.
+`Antigravity6` approved at head `581156c4` (`03:59:22Z`) and the owner was
+dispatched to finalize (`owned_finalize_dispatch`, `04:29:13Z`). By
+dispatch time `origin/dev` had advanced from `85d60609` (composed by
+`25996151`) to `7dbe45e9`, and PR `#653` was `mergeStateStatus: BEHIND`,
+`mergeable: MERGEABLE`, `headRefOid 581156c4`, with all five checks green
+(`orchestrator`, `product`, `performance-gate`, `product-e2e-gate`,
+`task-review-gate`). `done` was therefore unreachable: the closeout gate
+requires the task branch head to be an ancestor of `dev`, and it is not.
+
+Provenance was **not** a blocker this round — the owner/reviewer pair is
+unchanged since `03:26:12Z` (`Claude2` / `Antigravity6`) and the round-four
+commits already carry `Reviewer: Antigravity6`.
+
+### What was done
+
+| Commit | Role |
+| --- | --- |
+| `59b3e6a7` | composes the fifth `origin/dev` base advance (`7dbe45e9`) |
+| this commit | records this round and re-pins the provenance heads |
+
+Both commits are owner-authored by `Claude2` with subjects containing the
+task id and explicit `LLM-Agent: Claude2` /
+`Task-ID: ODP-ORCH-REBASE-HEAD-LIVENESS-001-SIDECAR-REVIEW` /
+`Reviewer: Antigravity6` trailers, matching the current role pair, so
+whichever head the reviewer freezes satisfies the done gate on its own
+body without first-parent fallback.
+
+The merge was conflict-free. The inbound paths are
+`.orchestrator/supervisor.py` (+166) and `.orchestrator/test_supervisor.py`
+(+148), both arriving from `dev` via PR `#660`
+(`ODP-ORCH-WORKTREE-LEASE-DEADLOCK-001`, unpublished-commit lease
+deadlock). Confirmed that the branch still contributes nothing outside this
+support artifact:
+
+```bash
+git diff --name-only origin/dev...HEAD
+# support/sidecars/ODP-ORCH-REBASE-HEAD-LIVENESS-001/ODP-ORCH-REBASE-HEAD-LIVENESS-001-SIDECAR-REVIEW.md
+```
+
+So the approved scope is unchanged.
+
+### Re-verification at the composed head
+
+```bash
+/home/lupin/oday-plus/.venv/bin/pytest -q \
+  .orchestrator/test_supervisor.py \
+  -k ReusedWorkerWorktreeBaseAdvanceTests
+# 18 passed
+
+/home/lupin/oday-plus/.venv/bin/ruff check \
+  .orchestrator/supervisor.py \
+  .orchestrator/test_supervisor.py
+# All checks passed!
+
+git diff --check
+# clean
+```
+
+The suite grew from 14 to 18 cases in this round — the four additions come
+from PR `#660`'s lease-deadlock work, which lands in the same
+`ReusedWorkerWorktreeBaseAdvanceTests` class. The three cases this packet
+attests to
+(`test_stale_rebase_head_after_completed_rebase_does_not_block`, plus the
+`rebase-merge` and `rebase-apply` subtests of
+`test_unresolved_rebase_blocks`) are unchanged and still pass, so the
+packet's evidence matrix holds at the composed head.
+
+### Why this again returns to `review`, not `done`
+
+Unchanged from rounds two through four: a base-advance merge is not an
+identical head, not a `post_merge_checkout_advanced` delivery record, and
+not an `is_evidence_only_advance()` fast-forward, so
+`is_approved_head_satisfied()` cannot carry the `581156c4` approval forward
+to `59b3e6a7`. The `task-review-gate` status remains pinned to the
+`581156c4` SHA.
+
+### Standing hazard, fifth-round reading
+
+Four consecutive rounds have now been spent composing a base advance that
+invalidated the approval it was performed to enable. The two clocks named
+above still apply; this round only the base clock fired. Nothing in the
+packet's content is in dispute, and no rework request has been raised
+against it since `01:57:36`. The loop terminates when a `dev` advance does
+not land inside the window between approval and the owner's finalize
+dispatch — the merge queue's pace, not this packet, is the gating variable.
