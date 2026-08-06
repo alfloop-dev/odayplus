@@ -9,7 +9,7 @@
 - **Sidecar Reviewer**: `Claude`
 - **Phase**: Orchestrator reliability
 - **Parent head reviewed by this packet**: `6968de59`
-- **Last Updated**: 2026-08-06 (§1–§4 re-derived against `6968de59`; prior round preserved as §6)
+- **Last Updated**: 2026-08-06 (§1–§4 re-derived against `6968de59`; prior round preserved as §6; `3e048a0b` reviewer count correction absorbed after round-4 base advance)
 
 ---
 
@@ -178,11 +178,17 @@ Five further functions now reject `HEAD`-shaped names. This is the part the
 | `branch_head_sha` | same predicate → `return None` | No plausible-looking SHA for a non-branch |
 | `remote_branch_exists` | same predicate → `return False` | |
 | `branch_has_diff` | `if not base or not branch or base == "HEAD" or branch == "HEAD": return False` | Note: bare literal only, no `/HEAD` suffix arm — see R5 |
-| `review_branch_for_task` | four inline `!= "HEAD"` checks: on `explicit`, on the agent-record `branch`, on each `candidate`, and on the `current_branch()` fallback | Rejects `"HEAD"` on every one of the four resolution paths, including the `not task_id` disjunct |
+| `review_branch_for_task` | **five** inline `!= "HEAD"` checks (lines 473, 484, 497, 502, 506): on `explicit`, on the agent-record `branch` at capture, on each `candidate`, on `agent_branch` at use, and on the `current_branch()` fallback | Rejects `"HEAD"` on every one of the four resolution paths, including the `not task_id` disjunct |
 
 The `review_branch_for_task` guards are inline string comparisons repeated at
-four sites rather than one shared predicate. That is a maintainability
+five sites rather than one shared predicate. That is a maintainability
 observation, not a defect — see review observation 3.
+
+Note on the count (correction absorbed from the sidecar reviewer, round 2): the
+five comparisons cover **four** resolution paths, not five — the agent branch is
+guarded twice, once when it is captured from the agent record (484) and again
+when it is used (502). So "rejects `HEAD` on all four resolution paths" (A6, R4)
+is correct as written; only the *site* count was understated.
 
 ### Test coverage added (`.orchestrator/test_github_bus.py`)
 
@@ -229,8 +235,9 @@ Two tests pass on unfixed source, for different and both-legitimate reasons:
 3. **Guard predicate is duplicated, not centralized.** `branch_exists`,
    `branch_head_sha`, and `remote_branch_exists` each carry an identical
    `not branch or branch == "HEAD" or branch.endswith("/HEAD")` line, and
-   `review_branch_for_task` carries four more inline `!= "HEAD"` comparisons —
-   eight guard sites in one file with no shared helper. `branch_has_diff` has
+   `review_branch_for_task` carries five more inline `!= "HEAD"` comparisons
+   (473, 484, 497, 502, 506) — **nine** guard sites in one file with no shared
+   helper, across four distinct resolution paths. `branch_has_diff` has
    already drifted from the other three (R5), which is exactly the failure mode
    duplication invites. A one-line `def _is_head_ref(name) -> bool` would make
    the invariant single-sourced. Non-blocking.
@@ -454,6 +461,17 @@ rc=0                                                # empty output → no remote
      so a base-advance merge that pulls in orchestrator source necessarily
      invalidates `approved_head` — `re_review` is the only correct route, and
      `restore_approved_head` still refuses a moved branch.
+  4. *2026-08-06, after the third approval* — the loop repeated a fourth time.
+     The reviewer had pre-emptively merged `origin/dev` into the sidecar branch
+     *before* approving (approval head `3e048a0b`, 0 behind / 9 ahead at that
+     moment), but `origin/dev` still advanced by five commits (through
+     `b507f932` #638) before PR #639 merged, so `mergeStateStatus` was `BEHIND`
+     again at finalize dispatch. `origin/dev` was merged in cleanly a fourth
+     time (no conflicts); this doc commit sits on top. Scope after the merge is
+     still exactly one file — `git diff --name-only origin/dev...HEAD` returns
+     only this packet — and the branch is 0 behind / 10 ahead. Reviewer merging
+     ahead of approval does not break the loop; only auto-merge or an atomic
+     update-branch-and-merge would.
 - **This round (2026-08-06 reopen at `07d8507c`)**: not a base advance. The
   reviewer confirmed scope and hygiene were fine and blocked on **content**: the
   packet still reviewed `d32a73d2` while the parent had advanced to
@@ -502,6 +520,41 @@ Every point in the reopen note is addressed:
   `test_github_bus.py:794`), and the §5 base-advance history.
 - The superseded `d32a73d2` round is preserved as §6, explicitly time-scoped.
 
+### Changes since the `3e048a0b` approval (base advance, 2026-08-06)
+
+This revision carries **no** new claims about the parent diff. Two changes only:
+
+- **Reviewer correction absorbed.** The `3e048a0b` approval note recorded one
+  non-blocking correction: `review_branch_for_task` carries five inline
+  `!= "HEAD"` comparisons (github_bus.py lines 473, 484, 497, 502, 506), not
+  four, so §2 observation 3's "eight guard sites" is nine. Re-verified in source
+  and applied in the §2 layer-2 table, §2 observation 3, and the §6 summary of
+  `1a8783c8`. The four-resolution-path claim behind **A6** and **R4** is
+  unaffected and stays as written — `agent_branch` is guarded twice (at capture,
+  484, and at use, 502), which is where the extra site comes from.
+- **Base advance recorded.** §5 gains round 4 of the base-advance history.
+
+Verification for this revision:
+
+```
+$ git diff --name-only origin/dev...HEAD
+support/sidecars/ODP-ORCH-DETACHED-HEAD-BRANCH-RESOLUTION-001/ODP-ORCH-DETACHED-HEAD-BRANCH-RESOLUTION-001-SIDECAR-REVIEW.md
+
+$ git rev-list --left-right --count origin/dev...HEAD
+0	10
+
+$ grep -n '"HEAD"' .orchestrator/github_bus.py   # review_branch_for_task sites
+473: … if explicit and str(explicit) != "HEAD" …
+484:                if b and str(b) != "HEAD":
+497:            if candidate != "HEAD" and branch_exists(candidate):
+502:    if agent_branch and agent_branch != "HEAD" …
+506:    if branch and branch != "HEAD" and branch != default_branch(config) …
+```
+
+Reviewer `Claude`: the substantive diff versus the approved head `3e048a0b` is
+`git diff 3e048a0b HEAD -- support/sidecars/` — a count correction you yourself
+filed, plus one history bullet. Everything else in the merge is `origin/dev`.
+
 ---
 
 ## 6. Superseded round record — packet as reviewed at `d32a73d2`
@@ -535,7 +588,7 @@ The suite had 32 tests. Against **that** head the packet correctly recorded:
 
 `1a8783c8` is that follow-up, implemented on the same branch: it added the
 `*/HEAD` guards to `branch_exists`/`branch_head_sha`/`remote_branch_exists`, a
-base/branch guard to `branch_has_diff`, four `!= "HEAD"` checks to
+base/branch guard to `branch_has_diff`, five `!= "HEAD"` checks to
 `review_branch_for_task`, the `branch == "HEAD"` check inside `current_branch()`,
 and three further tests. The `d32a73d2`-era R1–R4 are therefore closed at
 `6968de59`, as recorded in §3.
