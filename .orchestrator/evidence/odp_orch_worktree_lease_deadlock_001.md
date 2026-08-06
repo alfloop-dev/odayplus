@@ -100,13 +100,24 @@ what they asserted before.
   and touched no runtime surface. Re-verified at `d1e9cb23`:
   `python3 -m pytest .orchestrator/test_supervisor.py` → 357 passed, 129
   subtests passed, exit 0.
+- Fourth closeout base advance: `origin/dev` advanced to `e301e274` (PR #650,
+  ODP-ORCH-PROVIDER-LANE-LIVENESS-001) while PR #662 sat approved with all five
+  checks green, again leaving the PR `BEHIND`. Unlike the previous three, this
+  base advance lands on the *same runtime surface* this task changed —
+  `.orchestrator/supervisor.py`, `common.py`, `provider_permissions.py`, and
+  `test_supervisor.py`. Composed as `3400fad5`; the merge applied cleanly with
+  no conflicts and this task's own diff against `origin/dev` is still exactly
+  one added file. Re-verified at `3400fad5` over both touched suites:
+  `python3 -m pytest .orchestrator/test_supervisor.py
+  .orchestrator/test_provider_permissions.py` → 435 passed, 145 subtests
+  passed, exit 0.
 
 No live supervisor rollout is claimed by this task; the change ships with `dev`
 through the normal PR path.
 
 ## Closeout loop observed on this task's own PR
 
-This task's own closeout has now been blocked three times by the same
+This task's own closeout has now been blocked four times by the same
 mechanism, which is worth recording because it is adjacent to — but distinct
 from — the deadlock the task fixed.
 
@@ -120,9 +131,13 @@ that round trip. Approval throughput on `dev` is the loop's clock, so a task
 whose only remaining content is a docs file can be starved indefinitely by
 merges it has nothing to do with.
 
-Each round trip so far has been a clean auto-merge of an unrelated docs file
-with a re-verified test suite, so nothing here is unsound — the cost is
-latency and reviewer cycles, not correctness. A durable fix belongs to the
+The first three round trips were clean auto-merges of unrelated docs files with
+a re-verified test suite. The fourth composed a real runtime change onto the
+same files this task touched, still without conflict, and the re-verification
+widened to cover it — so nothing here is unsound. The cost is latency and
+reviewer cycles, not correctness, but the fourth round trip is the point where
+the starvation stops being free: each additional lap now has a genuine chance
+of landing a conflicting runtime change. A durable fix belongs to the
 review-gate lane rather than this task: either re-approve at the new head
 automatically when the base advance is a fast-forward compose that leaves the
 task's own diff byte-identical, or let auto-merge update the branch without
