@@ -586,3 +586,31 @@ packet's content is in dispute, and no rework request has been raised
 against it since `01:57:36`. The loop terminates when a `dev` advance does
 not land inside the window between approval and the owner's finalize
 dispatch — the merge queue's pace, not this packet, is the gating variable.
+
+## Sixth base advance and reviewer re-approval (reviewer note, 2026-08-06)
+
+Upon reviewer dispatch (`review_ready_dispatch`), `origin/dev` had advanced from `7dbe45e9` to `0391ca8c` (PR `#657`). The reviewer composed the `origin/dev` base advance into `task/ODP-ORCH-REBASE-HEAD-LIVENESS-001-SIDECAR-REVIEW` (`9b4d764f`).
+
+### Verification at current composed head
+
+```bash
+/home/lupin/oday-plus/.venv/bin/pytest -q \
+  .orchestrator/test_supervisor.py \
+  -k ReusedWorkerWorktreeBaseAdvanceTests
+# 18 passed
+
+/home/lupin/oday-plus/.venv/bin/ruff check \
+  .orchestrator/supervisor.py \
+  .orchestrator/test_supervisor.py
+# All checks passed!
+
+git diff --check
+# clean
+```
+
+All 18 tests in `ReusedWorkerWorktreeBaseAdvanceTests` pass, ruff is clean, and `git diff --check` is clean. The sidecar scope remains strictly limited to support artifacts.
+
+### Disposition
+
+Approved at current HEAD. The review packet and evidence summary are complete, accurate, and fully verified against `origin/dev` tip `0391ca8c`.
+
