@@ -22,6 +22,7 @@ from common import (
     config_path,
     load_config,
     load_json,
+    provider_launcher_missing_cli,
     run_command,
     to_bool,
     utc_now,
@@ -245,43 +246,68 @@ def _command_help_contains(command: list[str], needle: str) -> bool:
 
 
 def cli_probe(binary: str | None) -> dict[str, Any]:
-    """Report whether a resolved provider binary can actually run.
+    """Ask a provider binary to identify itself, and say how much that proved.
 
     `shutil.which` proves only that a file exists and is executable. Every
     provider CLI here is reached through a wrapper in `.orchestrator/bin/` that
     execs the real binary from somewhere else, so when that real binary is
     uninstalled the wrapper still resolves, still looks installed, and exits 1
-    in under a second on every dispatch.
+    in under a second on every dispatch. On 2026-08-05 the Codex CLI was removed
+    from `~/.npm-global` and `provider_capabilities.json` went on reporting
+    `codex.installed = true` through 194 consecutive instant failures.
 
-    That is not hypothetical. On 2026-08-05 the Codex CLI was removed from
-    `~/.npm-global`; `provider_capabilities.json` went on reporting
-    `codex.installed = true` through 194 consecutive instant failures, because
-    the only thing ever checked was that the wrapper file was there. Asking the
-    binary to identify itself is what distinguishes a working lane from a
-    wrapper pointing at nothing.
+    The verdict is deliberately three-valued, because a non-zero exit is not
+    evidence of death. `--version` is a convention, not a contract: the Copilot
+    wrapper answers it with exit 2 and no output while being perfectly healthy,
+    and any CLI can start returning non-zero for a login or update prompt. A
+    two-valued probe would read those as dead lanes and block dispatch on them,
+    which is the same silent-shutdown failure this probe exists to prevent, only
+    pointed the other way.
+
+    Only three signals are trusted as proof that the lane is gone: nothing
+    resolves, exec itself fails, or the wrapper prints its own "binary not
+    found" sentence. Everything else is `inconclusive` and must not downgrade a
+    capability.
+
+    verdict: "ran" | "missing" | "inconclusive"
     """
 
     if not binary:
-        return {"ok": False, "returncode": None, "error": "no binary resolved"}
+        return {"ok": False, "verdict": "missing", "returncode": None, "error": "no binary resolved"}
     try:
         result = run_command([binary, "--version"], timeout=CLI_PROBE_TIMEOUT_SECONDS)
     except subprocess.TimeoutExpired:
+        # A hung binary is not a missing one; report it without condemning it.
         return {
             "ok": False,
+            "verdict": "inconclusive",
             "returncode": None,
             "error": f"`--version` did not return within {CLI_PROBE_TIMEOUT_SECONDS}s",
         }
     except OSError as exc:
-        return {"ok": False, "returncode": None, "error": str(exc)}
+        return {"ok": False, "verdict": "missing", "returncode": None, "error": str(exc)}
 
-    if result.returncode != 0:
-        detail = ((result.stderr or "") + (result.stdout or "")).strip().splitlines()
-        return {
-            "ok": False,
-            "returncode": result.returncode,
-            "error": detail[0] if detail else f"`--version` exited {result.returncode}",
-        }
-    return {"ok": True, "returncode": 0, "error": None}
+    if result.returncode == 0:
+        return {"ok": True, "verdict": "ran", "returncode": 0, "error": None}
+
+    output = ((result.stderr or "") + "\n" + (result.stdout or "")).strip()
+    for line in output.splitlines():
+        if provider_launcher_missing_cli(line):
+            return {"ok": False, "verdict": "missing", "returncode": result.returncode, "error": line.strip()}
+
+    detail = output.splitlines()
+    return {
+        "ok": False,
+        "verdict": "inconclusive",
+        "returncode": result.returncode,
+        "error": detail[0] if detail else f"`--version` exited {result.returncode} with no output",
+    }
+
+
+def cli_is_dead(probe: dict[str, Any]) -> bool:
+    """True only when the probe proved the CLI is gone, not merely unhappy."""
+
+    return str(probe.get("verdict") or "") == "missing"
 
 
 def _gh_version(binary: str | None) -> tuple[int, int, int] | None:
@@ -624,7 +650,7 @@ def _claude_provider_report(
     # gone. `installed` stays broad here because Claude falls back to inbox
     # delivery, but the claim that a local CLI worker can run must not.
     probe = cli_probe(provider_binary)
-    cli_usable = bool(provider_binary) and bool(probe["ok"]) and bool(provider_auth_ready)
+    cli_usable = bool(provider_binary) and not cli_is_dead(probe) and bool(provider_auth_ready)
     provider_home = str((provider_settings.get("runtime", {}) or {}).get("home") or "").strip()
     credentials_path = claude_credentials_path(runtime_env)
     installed = bool(provider_binary or claude_path or claude_local or credentials_path.exists())
@@ -703,7 +729,7 @@ def _gemini_provider_report(
     runtime_env = _gemini_runtime_env(config, provider_id)
     auth_ready = _gemini_auth_ready(provider_settings, oauth_creds_path=oauth_creds_path, env=runtime_env)
     auth_type = _gemini_selected_auth_type(provider_settings, oauth_creds_path=oauth_creds_path, env=runtime_env)
-    cli_usable = bool(provider_binary) and bool(probe["ok"]) and bool(auth_ready)
+    cli_usable = bool(provider_binary) and not cli_is_dead(probe) and bool(auth_ready)
     installed = bool(gemini_path or provider_binary)
     notes = [
         "Verified CLI approval flags and settings schema from the locally installed Gemini CLI package.",
@@ -790,7 +816,7 @@ def provider_capabilities(config: dict[str, Any] | None = None) -> dict[str, Any
     gh_version = _gh_version(gh_binary)
     gh_auth_ready = _gh_auth_ready(gh_binary)
     copilot_auth_ready = _copilot_auth_ready(gh_binary)
-    copilot_cli_usable = bool(copilot_binary) and bool(copilot_probe["ok"]) and bool(copilot_auth_ready)
+    copilot_cli_usable = bool(copilot_binary) and not cli_is_dead(copilot_probe) and bool(copilot_auth_ready)
     copilot_settings = config.get("providers", {}).get("copilot", {})
     copilot_model_preference = copilot_settings.get("model_preference", {})
     bool(gemini_path or gemini_binary)
@@ -875,7 +901,7 @@ def provider_capabilities(config: dict[str, Any] | None = None) -> dict[str, Any
         # Codex has no inbox or extension fallback: every dispatch shells out to
         # this binary, so a binary that will not run is an uninstalled provider
         # no matter how much of the VS Code extension is still on disk.
-        cli_usable = bool(provider_binary) and bool(probe["ok"])
+        cli_usable = bool(provider_binary) and not cli_is_dead(probe)
         provider_installed = cli_usable
         config_path_for_provider = _codex_config_path(config, provider_id)
         config_health = codex_config_health(config, provider_id)
@@ -889,11 +915,18 @@ def provider_capabilities(config: dict[str, Any] | None = None) -> dict[str, Any
         ]
         if not config_health.get("valid", True):
             notes.insert(0, str(config_health.get("error") or "Codex config is invalid."))
-        if not probe["ok"]:
+        if cli_is_dead(probe):
             notes.insert(
                 0,
-                f"Codex CLI at {provider_binary or '<unresolved>'} does not run "
+                f"Codex CLI at {provider_binary or '<unresolved>'} is not installed "
                 f"({probe['error']}); every dispatch to this provider will fail immediately.",
+            )
+        elif probe["verdict"] == "inconclusive":
+            # Reported, not acted on: `--version` is a convention, and treating a
+            # non-zero answer as death is how a live lane gets shut off.
+            notes.append(
+                f"Codex CLI at {provider_binary or '<unresolved>'} did not answer `--version` "
+                f"cleanly ({probe['error']}); treated as inconclusive, capability left intact.",
             )
         return {
             "installed": provider_installed,

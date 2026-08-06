@@ -297,6 +297,42 @@ class DetectWorkerFailureTests(unittest.TestCase):
                 worker = self._worker_for_log(message + "\n")
                 self.assertEqual(supervisor.detect_worker_failure(worker), message)
 
+    def test_a_non_provider_binary_not_found_line_is_not_a_lane_failure(self) -> None:
+        """Ordinary build output must not pause a healthy lane for 900s.
+
+        An earlier pattern matched any line-initial "<token> binary not found",
+        so a toolchain message like "protoc binary not found" read as a dead
+        provider CLI.
+        """
+
+        for line in (
+            "protoc binary not found in PATH",
+            "ffmpeg binary not found",
+            "terraform binary not found under /usr/local/bin",
+        ):
+            with self.subTest(line=line):
+                worker = self._worker_for_log(line + "\n")
+                self.assertIsNone(supervisor.detect_worker_failure(worker))
+
+    def test_another_providers_launcher_error_does_not_kill_this_lane(self) -> None:
+        """A codex worker reporting Claude's launcher error says nothing about codex."""
+
+        reason = "Claude CLI binary not found under ~/.vscode-server/extensions."
+
+        own = supervisor.classify_worker_failure({}, {"provider": "claude2"}, reason)
+        other = supervisor.classify_worker_failure({}, {"provider": "codex3"}, reason)
+
+        self.assertEqual(own["kind"], "provider_unavailable")
+        self.assertNotEqual(other["kind"], "provider_unavailable")
+
+    def test_gemini_launcher_error_maps_to_the_antigravity_family(self) -> None:
+        failure = supervisor.classify_worker_failure(
+            {},
+            {"provider": "antigravity5"},
+            "Antigravity CLI (agy) binary not found under ~/.local/bin or PATH.",
+        )
+        self.assertEqual(failure["kind"], "provider_unavailable")
+
     def test_missing_cli_wording_inside_task_output_is_not_a_lane_failure(self) -> None:
         """Ordinary work that mentions the wording must not pause a live lane."""
 

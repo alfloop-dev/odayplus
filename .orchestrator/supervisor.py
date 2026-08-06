@@ -55,6 +55,8 @@ from approval_queue import (
 )
 from branch_drift_alarms import check_branch_drift
 from common import (
+    PROVIDER_CLI_FAMILY,
+    PROVIDER_LAUNCHER_MISSING_PATTERN,
     agent_config_for,
     command_exists,
     config_path,
@@ -69,6 +71,7 @@ from common import (
     new_runtime_id,
     normalize_agent_id,
     preserve_github_cli_auth_env,
+    provider_launcher_missing_cli,
     relpath,
     selected_shared_files,
     shell_quote,
@@ -141,21 +144,6 @@ SESSION_ID_PATTERNS = [
     re.compile(r'"sessionId"\s*:\s*"([^"]+)"'),
 ]
 URL_PATTERN = re.compile(r"https://github\.com/[^\s)]+")
-# Every provider wrapper in `.orchestrator/bin/` reports a missing target the
-# same way -- "Codex CLI binary not found at ... or on PATH.", "Antigravity CLI
-# (agy) binary not found under ...", and so on -- and until 2026-08-05 none of
-# those lines matched any failure pattern. When the Codex CLI was uninstalled,
-# 194 consecutive dispatches died in under a second with that message sitting in
-# the worker log, and the supervisor recorded no failure for any of them: it just
-# bounced the tasks between agents, which reads exactly like healthy churn.
-#
-# Anchored to the start of the line so that a diff hunk or a test asserting on
-# this wording inside ordinary task output cannot masquerade as a dead lane.
-PROVIDER_LAUNCHER_MISSING_PATTERN = re.compile(
-    r"^[\w.-]+(?:\s+CLI)?\s*(?:\([^)]*\)\s*)?\s*binary not found\b",
-    re.IGNORECASE,
-)
-
 WORKER_FAILURE_PATTERNS = (
     re.compile(r"^Error when talking to gemini api\b", re.IGNORECASE),
     re.compile(r'"error"\s*:\s*"rate_limit"', re.IGNORECASE),
@@ -5070,8 +5058,18 @@ def classify_worker_failure(config: dict[str, Any], worker: dict[str, Any], reas
     # Checked before anything else: a lane whose CLI will not start cannot
     # produce an auth, quota or config signal, and retrying it just burns the
     # queue one sub-second failure at a time.
-    if PROVIDER_LAUNCHER_MISSING_PATTERN.search((reason or "").strip()):
-        return {"kind": "provider_unavailable", "transient": False, "label": "provider CLI missing"}
+    #
+    # The named CLI must belong to this worker's provider family. A codex worker
+    # that shells out to `claude` and reports Claude's launcher error says
+    # nothing about the codex lane, and pausing it for 900s on that basis would
+    # be a self-inflicted outage -- the same reasoning that makes
+    # AGY_QUOTA_SIGNATURE_PATTERN insist on an antigravity provider.
+    missing_cli = provider_launcher_missing_cli(reason)
+    if missing_cli:
+        provider_id = normalize_agent_id(str(provider or ""))
+        expected_family = PROVIDER_CLI_FAMILY.get(missing_cli)
+        if not provider_id or not expected_family or provider_id.startswith(expected_family):
+            return {"kind": "provider_unavailable", "transient": False, "label": "provider CLI missing"}
     if is_github_cli_auth_failure(reason):
         return {"kind": "tool_auth", "transient": False, "label": "tool auth"}
     if "config.toml" in normalized and any(marker in normalized for marker in provider_config_markers):
