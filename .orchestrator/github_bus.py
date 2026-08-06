@@ -237,14 +237,24 @@ def task_pr_base_branch(config: dict[str, Any]) -> str:
 
 
 def current_branch() -> str | None:
-    proc = run_command(["git", "rev-parse", "--abbrev-ref", "HEAD"], cwd=ROOT)
+    # `rev-parse --abbrev-ref HEAD` answers the literal string "HEAD" on a
+    # detached checkout, and every downstream guard lets it through: it is
+    # truthy, it differs from the default branch, and branch_exists("HEAD")
+    # succeeds because HEAD always resolves. A worker on a detached worktree
+    # therefore offered "HEAD" as its review branch, which is not a branch name
+    # at all. symbolic-ref fails cleanly on a detached HEAD instead.
+    proc = run_command(["git", "symbolic-ref", "--short", "-q", "HEAD"], cwd=ROOT)
     if proc.returncode != 0:
         return None
     branch = (proc.stdout or "").strip()
-    return branch or None
+    if not branch or branch == "HEAD":
+        return None
+    return branch
 
 
 def branch_exists(branch: str) -> bool:
+    if not branch or branch == "HEAD" or branch.endswith("/HEAD"):
+        return False
     proc = run_command(["git", "show-ref", "--verify", f"refs/heads/{branch}"], cwd=ROOT)
     if proc.returncode == 0:
         return True
@@ -255,6 +265,8 @@ def branch_exists(branch: str) -> bool:
 
 
 def branch_head_sha(branch: str) -> str | None:
+    if not branch or branch == "HEAD" or branch.endswith("/HEAD"):
+        return None
     # Review PRs concern the published branch, so a stale local branch must not
     # hide the remote-tracking ref that GitHub will actually review.
     for ref in (f"refs/remotes/origin/{branch}", f"origin/{branch}", branch):
@@ -267,6 +279,8 @@ def branch_head_sha(branch: str) -> str | None:
 
 
 def branch_has_diff(base: str, branch: str) -> bool:
+    if not base or not branch or base == "HEAD" or branch == "HEAD":
+        return False
     # Keep base and head in the same namespace. Mixing a local base with a
     # published head (or vice versa) can manufacture or suppress a PR delta.
     ref_pairs = [
@@ -285,6 +299,8 @@ def branch_has_diff(base: str, branch: str) -> bool:
 
 
 def remote_branch_exists(branch: str, remote: str = "origin") -> bool:
+    if not branch or branch == "HEAD" or branch.endswith("/HEAD"):
+        return False
     proc = run_command(["git", "ls-remote", "--heads", remote, branch], cwd=ROOT)
     if proc.returncode != 0:
         return False
@@ -454,7 +470,7 @@ def review_branch_for_task(config: dict[str, Any], status: dict[str, Any], task:
     task_id = str(task.get("id") or "").strip()
     meta = task.get("github") or {}
     explicit = meta.get("head_branch") or task.get("branch")
-    if explicit and (not task_id or task_id_matches_branch(task_id, str(explicit))) and branch_exists(str(explicit)):
+    if explicit and str(explicit) != "HEAD" and (not task_id or task_id_matches_branch(task_id, str(explicit))) and branch_exists(str(explicit)):
         return str(explicit)
 
     prefix = str((config.get("branch_workflow", {}) or {}).get("task_branch_prefix") or "task/")
@@ -465,7 +481,7 @@ def review_branch_for_task(config: dict[str, Any], status: dict[str, Any], task:
         for agent in status.get("agents", []):
             if agent.get("name") == owner:
                 b = agent.get("branch")
-                if b:
+                if b and str(b) != "HEAD":
                     agent_branch = str(b)
                 break
 
@@ -478,16 +494,16 @@ def review_branch_for_task(config: dict[str, Any], status: dict[str, Any], task:
             f"{prefix}{task_id.lower().replace('_', '-')}",
         ]
         for candidate in candidates:
-            if branch_exists(candidate):
+            if candidate != "HEAD" and branch_exists(candidate):
                 return candidate
 
     # An exact task-matching agent branch is useful when a deployment uses a
     # non-canonical prefix, but substring-related task IDs are not equivalent.
-    if agent_branch and (not task_id or task_id_matches_branch(task_id, agent_branch)) and branch_exists(agent_branch):
+    if agent_branch and agent_branch != "HEAD" and (not task_id or task_id_matches_branch(task_id, agent_branch)) and branch_exists(agent_branch):
         return agent_branch
 
     branch = current_branch()
-    if branch and branch != default_branch(config) and (not task_id or task_id_matches_branch(task_id, branch)) and branch_exists(branch):
+    if branch and branch != "HEAD" and branch != default_branch(config) and (not task_id or task_id_matches_branch(task_id, branch)) and branch_exists(branch):
         return branch
 
     return None
