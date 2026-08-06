@@ -536,6 +536,22 @@ def find_existing_issue(repo: str, task_id: str) -> dict[str, Any] | None:
     return None
 
 
+def _pr_title_names_task(title: str | None, task_id: str) -> bool:
+    """True when a `[ReviewBus] <task_id>` title names exactly this task.
+
+    Task ids nest by prefix: `...-001-SIDECAR-REVIEW` starts with `...-001`. A
+    substring test would let a parent adopt its own sidecar's PR, so the id must
+    be followed by a separator or the end of the title.
+    """
+
+    text = str(title or "")
+    marker = f"[ReviewBus] {task_id}"
+    if not text.startswith(marker):
+        return False
+    rest = text[len(marker) :]
+    return rest == "" or rest[0].isspace()
+
+
 def find_existing_pr(repo: str, task_id: str, branch: str | None) -> dict[str, Any] | None:
     """Find the open PR for a task, preferring its head branch over its title.
 
@@ -559,17 +575,25 @@ def find_existing_pr(repo: str, task_id: str, branch: str | None) -> dict[str, A
             return data[0]
 
     # No branch known, or no PR open from it: fall back to the title convention,
-    # which still catches PRs this bus opened from a branch that has since moved.
-    args = [
+    # which still catches a PR this bus opened from a branch that has since moved.
+    #
+    # `--head` is deliberately NOT passed here. Combined with `--search`, gh
+    # degrades it into a fuzzy `head:` qualifier, so a parent task matches its
+    # own sidecar branches too. Verified live: searching for
+    # ODP-ORCH-DETACHED-HEAD-BRANCH-RESOLUTION-001 with
+    # `--head task/ODP-ORCH-DETACHED-HEAD-BRANCH-RESOLUTION-001` returns PR 621
+    # *and* sidecar PR 639. This fallback only runs when the parent branch has no
+    # open PR, so data[0] would have been the sidecar -- and upsert_review_pr
+    # would then retitle and overwrite somebody else's PR.
+    data = gh_json([
         "pr", "list", "--repo", repo, "--state", "open",
         "--search", f'"[ReviewBus] {task_id}" in:title',
         "--json", fields,
-    ]
-    if branch:
-        args.extend(["--head", branch])
-    data = gh_json(args)
-    if isinstance(data, list) and data:
-        return data[0]
+    ])
+    if isinstance(data, list):
+        for candidate in data:
+            if _pr_title_names_task(candidate.get("title"), task_id):
+                return candidate
     return None
 
 
