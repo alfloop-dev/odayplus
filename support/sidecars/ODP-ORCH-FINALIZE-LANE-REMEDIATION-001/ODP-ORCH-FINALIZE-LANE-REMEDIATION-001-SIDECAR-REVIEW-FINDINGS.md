@@ -141,3 +141,77 @@ worktree lease refresh policy (`dispatch_blocked_worktree_lease`,
 `unverifiable_refs`). Resolved during this review by a non-destructive merge of
 `origin/dev` into the task branch (`99bda1cd` + `origin/dev` → `69e13e07`),
 pushed normally. No history was reset, discarded, or overwritten.
+
+---
+
+# Re-Review Record (round 2)
+
+- **Reviewer**: `Claude3` (board reviewer of record; helper-claimed while `Claude2`
+  is dispatch-paused with live worker PIDs 1154511/1154512)
+- **Reviewed Commit**: `59f32fc1` — *"anchor review packet corrections"*
+- **Reviewed At**: `2026-08-06`
+- **Verdict**: **APPROVE**
+
+## Disposition of Round-1 Findings
+
+| Finding | Required Correction | Status in `59f32fc1` |
+|---|---|---|
+| **F1** | Drop `diagnose_finalize_lane_remediation.py`; document the real CLI surface | **Fixed** — §2 now lists one module and quotes the actual flags (`--status`, `--repo`, `--base`, `--emit-commands`, `--required-check`); the ASCII diagram no longer names the phantom module |
+| **F2** | Drop `test_diagnose_finalize_lane_remediation.py`; make **A3** runnable | **Fixed** — A3 retargeted to `test_finalize_lane_doctor.py` and reworded to "CLI Diagnostic Surface" |
+| **F3** | Replace §4 commands 1–2 | **Fixed** — both now name only `finalize_lane_doctor.py` / `test_finalize_lane_doctor.py` |
+| **F4** | Correct stale reviewer routing (`Codex2`) | **Fixed** — header and §5 updated (see N1 below for the residual churn) |
+| **F5** *(non-blocking)* | Note the generated-state mirrors on the parent branch | **Adopted** — new `[!NOTE]` in §2 records 11 files / 6,621 insertions with 9 generated mirrors, and isolates the 316 + 196 line deliverable |
+
+## Independent Re-Verification
+
+Claims were re-checked against the parent branch blobs, not against the round-1
+findings file.
+
+| Ref | Command | Result |
+|---|---|---|
+| R1 | `git ls-tree --name-only b3bb9de3 scripts/orchestrator/` | `finalize_lane_doctor.py` + `test_finalize_lane_doctor.py` present; no phantom module remains cited |
+| R2 | `git diff --stat $(git merge-base origin/dev b3bb9de3) b3bb9de3` | 11 files, 6621 insertions — matches the §2 note verbatim |
+| R3 | `wc -l` on both parent blobs | 316 / 196 — matches the §2 note verbatim |
+| R4 | `python3 -m pytest -q test_finalize_lane_doctor.py` (parent blobs, temp dir) | **17 passed** |
+| R5 | `python3 -m ruff check` on the extracted parent modules | **All checks passed** |
+| R6 | `python3 -m py_compile finalize_lane_doctor.py` | clean |
+| R7 | `grep -n add_argument finalize_lane_doctor.py` | all five documented flags exist, `--base` default is `dev` — §2 flag list is accurate |
+| R8 | source read of `main()` (L305–312) | `stuck = sum(v for k, v in counts.items() if k not in (READY, CI_PENDING))` → `return 1` else `return 0` — the packet's exit-code sentence is exact |
+| R9 | source read of `SEVERITY` (L67–75) | tuple order is `ALREADY_MERGED, NO_PR, MISSING_REQUIRED_CHECK, CI_STALE, CI_FAILED, CI_PENDING, READY` — matches §2 item 1 and the §1 taxonomy |
+| R10 | `grep '^def test' test_finalize_lane_doctor.py` | every §2 coverage claim has a backing test: severity ranking (`test_already_merged_outranks_no_pr`, `test_missing_check_outranks_green_verdict`), missing-required-check (`test_missing_required_check_is_detected`), unmerged-branch (`test_unmerged_branch_still_classified_normally`), exit code (`test_exit_code_signals_stuck_tasks`), JSON status parsing (`test_only_review_approved_tasks_are_scanned`) |
+| R11 | `grep -rn` in `.orchestrator/` for the §1 background strings | `supervisor.py:10919` `"resolve failing checks before finalization."`, `supervisor.py:10825/10939` `"finalize dispatch suppressed"`, `github_bus.py:782/810` `state="skipped_unpublished_branch"` — §1's problem statement is grounded in real code, not paraphrase |
+| R12 | `git diff --stat origin/dev...HEAD` and `git diff --check origin/dev...HEAD` | 2 files / +270 lines, both under `support/sidecars/ODP-ORCH-FINALIZE-LANE-REMEDIATION-001/`; whitespace clean |
+
+**A1–A5 all substantiated.** Sidecar scope discipline holds: no canonical L1
+document, contract, or runtime/registry/governance implementation is touched
+(R12), so the acceptance criteria "create support artifacts only" and "do not
+edit canonical truth" are met.
+
+## Non-Blocking Notes (for parent absorption, not re-review)
+
+- **N1 — reviewer name churn.** §2/§5 name `Claude2`, which was correct when
+  `59f32fc1` was written; the board has since moved the reviewer of record to
+  `Claude3`. This is orchestrator dispatch churn, not an owner defect, and it is
+  resolved by this approval — the packet's real downstream target is parent owner
+  `Antigravity` / parent reviewer `Antigravity2`. Not a reason to reopen.
+- **N2 — `--required-check` wording.** §2 describes it as "filter required
+  checks"; the flag actually *replaces* the default set
+  (`DEFAULT_REQUIRED_CHECKS = ("orchestrator", "product", "product-e2e-gate",
+  "task-review-gate")`) when supplied, and is repeatable. Worth a word change if
+  the packet is ever revised.
+- **N3 — undocumented scan scope.** `finalize_lane_doctor.py` scans only
+  `FINALIZE_STATUSES = ("review_approved",)` and explicitly skips task ids
+  containing `SIDECAR`. Neither is wrong, but a parent reviewer reading §2 would
+  not learn that sidecar tasks are excluded from the doctor's own report.
+
+None of N1–N3 changes an acceptance verdict; all are additive polish the parent
+owner may fold in when absorbing the packet.
+
+## Approval
+
+The round-1 blockers (F1–F3) are genuinely fixed rather than reworded, the
+verification suite in §4 now runs green against the parent deliverable, and every
+factual claim in the packet was re-derived from the parent branch blobs and the
+live `.orchestrator/` source. `ODP-ORCH-FINALIZE-LANE-REMEDIATION-001-SIDECAR-REVIEW`
+is approved for closeout by owner `Antigravity`, and the packet is fit for
+absorption into parent task `ODP-ORCH-FINALIZE-LANE-REMEDIATION-001`.
