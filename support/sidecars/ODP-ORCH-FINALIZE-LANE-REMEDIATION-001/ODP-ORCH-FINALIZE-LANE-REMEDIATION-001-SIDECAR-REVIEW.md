@@ -6,7 +6,7 @@
 - **Owner**: `Claude2`
 - **Reviewer**: `Claude3`
 - **Status**: `review`
-- **Packet Revision**: round 4 (2026-08-06)
+- **Packet Revision**: round 5 (2026-08-06) — base advance + round-4 note N4 closed
 - **Target Artifact**: `support/sidecars/ODP-ORCH-FINALIZE-LANE-REMEDIATION-001/ODP-ORCH-FINALIZE-LANE-REMEDIATION-001-SIDECAR-REVIEW.md`
 
 ### Parent Pin (read this before trusting any number below)
@@ -17,6 +17,7 @@
 | Parent merge-base with `dev` at that head | `c879004a` |
 | Landed on `dev` as | `bc7366d3` — *[ReviewBus] ODP-ORCH-FINALIZE-LANE-REMEDIATION-001 … (#622)* |
 | `scripts/orchestrator/` at `f16593c7` vs `bc7366d3` | identical (`git diff f16593c7 bc7366d3 -- scripts/orchestrator/` is empty) |
+| `scripts/orchestrator/` at `f16593c7` vs this branch head | identical (re-checked at round 5 after the `a7fde1a8` base advance) |
 | Deliverable surface | 4 files, 1043 lines (see §2) |
 
 > [!IMPORTANT]
@@ -83,7 +84,7 @@ list with slash-aliases; that list was wrong for both tools and is retracted.
 |---|---|---|---|
 | 1 | `ALREADY_MERGED` | Branch is already an ancestor of `origin/dev`; the work landed but the board was never updated. | Close the task out directly — **not** `gh pr create`, which would fail with "No commits between dev and task/…". |
 | 2 | `NO_PR` | Branch pushed but no PR exists (usually the ReviewBus detached-HEAD bug). Sub-case: no remote branch at all → "the work was never pushed", and no `gh pr create` is emitted. | `gh pr create --base dev --head <branch>` |
-| 3 | `MISSING_REQUIRED_CHECK` | PR exists and reported checks are green, but a required check never reported. Defaults: `orchestrator`, `product`, `product-e2e-gate`, `task-review-gate`. | Register the task on the board so the gate fires. |
+| 3 | `MISSING_REQUIRED_CHECK` | A PR exists and a required check never reported. Defaults: `orchestrator`, `product`, `product-e2e-gate`, `task-review-gate`. In `classify()` the `missing` test runs *before* every verdict branch, so this cause **preempts the rollup verdict entirely** — a PR with a missing required check is reported here even when the reported checks are failing, stale, or still pending, not only when they are green. | Register the task on the board so the gate fires. |
 | 4 | `CI_STALE` | Rollup verdict is `failure` **and** the branch is behind `origin/dev` — the red verdict may be phantom. | `git merge --no-edit origin/dev && git push`, then rerun checks. |
 | 5 | `CI_FAILED` | Rollup verdict is `failure` on a branch that is **not** behind base — a genuine failure. | Same branch-advance block, then inspect logs and push a fix. |
 | 6 | `CI_PENDING` | A check has not concluded yet. | — (terminal, non-stranded) |
@@ -91,6 +92,13 @@ list with slash-aliases; that list was wrong for both tools and is retracted.
 
 Causes 1–5 count as *stranded*; `CI_PENDING` and `READY` do not. That split is
 exactly what drives the exit code (§2).
+
+The table's row order is `SEVERITY`, which is a *report* ordering. The actual
+decision order inside `classify()` is: already-merged → no PR → missing required
+check → `failure` (split `CI_STALE` / `CI_FAILED` by `branch_is_behind`) →
+`pending` → `READY`. The two orders agree here, but only because
+`MISSING_REQUIRED_CHECK` is checked first in both — do not read `SEVERITY` as
+the evaluation order in general (contrast §1b, where the two orders diverge).
 
 #### 1b. `diagnose_finalize_lane_remediation.py` — 5 causes
 
@@ -267,7 +275,7 @@ python3 -m ruff check scripts/orchestrator/
 git diff --check origin/dev...HEAD
 ```
 
-### Recorded results (owner run, 2026-08-06, this worktree at `dev`=`bc7366d3`)
+### Recorded results (owner re-run, round 5, 2026-08-06, this worktree at `dev`=`a7fde1a8`)
 
 | Command | Result |
 |---|---|
@@ -277,15 +285,37 @@ git diff --check origin/dev...HEAD
 | `py_compile` both modules (2) | clean |
 | `ruff check scripts/orchestrator/` (3) | **All checks passed!** |
 | `git diff --check origin/dev...HEAD` (4) | clean; diff is 2 files under `support/sidecars/…` only |
+| `git diff --stat f16593c7 HEAD -- scripts/orchestrator/` | empty — the pin still describes the tree under test |
+| `wc -l` on the 4 deliverables | 316 + 343 + 196 + 188 = **1043** |
+
+The round-4 run at `dev`=`bc7366d3` produced the same results; every row above was
+re-executed after the `a7fde1a8` base advance rather than carried forward.
 
 ---
 
 ## 5. Handoff Note & Reviewer Transition
 
-This sidecar review packet is revised to round 4 and ready for re-review.
+This sidecar review packet is revised to round 5 and ready for re-review.
 
 - **Owner**: `Claude2`
 - **Assigned Reviewer**: `Claude3`
+- **Why round 5 exists**: round 4 was approved at `40a9678a`, but PR #659 then went
+  `BEHIND` as `dev` advanced to `a7fde1a8`. `dev` requires strict status checks, so
+  the branch had to compose the new base, and `command_done` compares the head
+  against `approved_head` for exact equality — a base advance is therefore a
+  re-review event by construction, not a mechanical refresh. Nothing in §1–§4 was
+  invalidated: the incoming range (`d94bc547..a7fde1a8`, all from
+  `ODP-ORCH-DETACHED-HEAD-BRANCH-RESOLUTION-001`) touches only
+  `.orchestrator/github_bus.py` and its test, and `scripts/orchestrator/` is still
+  byte-identical to the pin `f16593c7`.
+- **Round-4 note N4 closed**: §1a row 3 previously said `MISSING_REQUIRED_CHECK`
+  applies when "reported checks are green". In `classify()` the `missing` test
+  returns before any verdict branch, so the cause preempts `failure`, `pending`
+  and green alike. The row is corrected and §1a now states the evaluation order
+  explicitly alongside the `SEVERITY` report order.
+- **Reviewer diff shortcut**: `git diff 40a9678a HEAD` — the whole delta is this
+  §5 block, the round-5 rows in the pin table and §4, and the §1a N4 correction,
+  plus the base-advance merge of `origin/dev`.
 - **Round-3 blockers addressed**: **G1** — §2 now lists both modules and both
   test suites with real CLI surfaces; **G2** — §1 is split into the two delivered
   taxonomies with no slash-aliases, and `CI_UNRESOLVED` / `OWNER_UNAVAILABLE` are
