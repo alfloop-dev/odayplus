@@ -1,0 +1,543 @@
+{
+  "project": "pantheon",
+  "sprint": "2026-04-09-canonical-adoption-platform-plan",
+  "objective": "Adopt the layered canonical document system, align architecture and planning truth, and publish the full Pantheon platform backlog without overwriting historical collaboration records.",
+  "updated_at": "2026-08-04T02:04:00Z",
+  "canonical_document_layers": {
+    "L0 Collaboration & State": [
+      "AI_COLLABORATION_GUIDE.md",
+      "ai-status.json",
+      "ai-activity-log.jsonl"
+    ],
+    "L0.5 Derived Narrative": [
+      "current-work.md"
+    ],
+    "L1 Platform Architecture & Policy": [
+      "TARGET_ARCHITECTURE.md",
+      "OPENCLAW_RUNTIME_CONTRACT.md",
+      "PERSONA_RUNTIME_MODEL.md",
+      "BINDING_AND_DEPLOYMENT_SEMANTICS.md",
+      "PAPER_CANARY_LIVE_POLICY.md",
+      "ROLLBACK_AND_POSITION_SEMANTICS.md",
+      "LINEAGE_AND_TELEMETRY_STORAGE_DECISIONS.md",
+      "EVOLUTION_REVIEW_AND_THRESHOLDS.md",
+      "CROSS_SERVICE_CONSISTENCY_AND_SAGA_POLICY.md",
+      "KILL_SWITCH_AND_SAFE_MODE_EXECUTION_POLICY.md",
+      "MULTI_PERSONA_AGGREGATION_AND_CONFLICT_RESOLUTION.md",
+      "TELEMETRY_INGEST_AND_STORAGE_ARCHITECTURE.md",
+      "DATABASE_OWNERSHIP_AND_SHARED_CLUSTER_POLICY.md",
+      "EVENT_ORDERING_AND_DELIVERY_GUARANTEES.md",
+      "EVOLUTION_COOLDOWN_AND_CONVERGENCE_POLICY.md",
+      "BFF_HA_AND_CONTROL_PLANE_RESILIENCE.md",
+      "LOOP_TRIGGER_AND_CONCURRENCY_POLICY.md"
+    ],
+    "L2 Planning & Execution": [
+      "CANONICAL_DOCUMENT_MAP.md",
+      "DOCUMENT_AUTHORITY_AND_RECORD_BOUNDARY.md",
+      "ROADMAP.md",
+      "DEVELOPMENT_WORKBREAKDOWN.md",
+      "WORKBENCH_DELIVERY_BACKLOG.md",
+      "DELIVERY_CLOSURE_AND_LOOP_STATES.md",
+      "EXECUTION_PROOF_AND_MATURITY_LEVELS.md",
+      "OSS_INTEGRATION_CHECKLIST.md"
+    ],
+    "L3 Supporting Design & Migration": [
+      "CANONICAL_CONTRACT_MIGRATION_DECISION.md",
+      "WORK_REBASELINE.md",
+      "Pantheon_總索引版系統分析文件.md",
+      "Pantheon_資料表_Schema_設計版.md",
+      "Pantheon_API_Service_Contract_設計版.md"
+    ]
+  },
+  "canonical_files": [
+    "AI_COLLABORATION_GUIDE.md",
+    "ai-status.json",
+    "ai-activity-log.jsonl",
+    "current-work.md",
+    "TARGET_ARCHITECTURE.md",
+    "OPENCLAW_RUNTIME_CONTRACT.md",
+    "PERSONA_RUNTIME_MODEL.md",
+    "BINDING_AND_DEPLOYMENT_SEMANTICS.md",
+    "PAPER_CANARY_LIVE_POLICY.md",
+    "ROLLBACK_AND_POSITION_SEMANTICS.md",
+    "LINEAGE_AND_TELEMETRY_STORAGE_DECISIONS.md",
+    "EVOLUTION_REVIEW_AND_THRESHOLDS.md",
+    "CROSS_SERVICE_CONSISTENCY_AND_SAGA_POLICY.md",
+    "KILL_SWITCH_AND_SAFE_MODE_EXECUTION_POLICY.md",
+    "MULTI_PERSONA_AGGREGATION_AND_CONFLICT_RESOLUTION.md",
+    "TELEMETRY_INGEST_AND_STORAGE_ARCHITECTURE.md",
+    "DATABASE_OWNERSHIP_AND_SHARED_CLUSTER_POLICY.md",
+    "EVENT_ORDERING_AND_DELIVERY_GUARANTEES.md",
+    "EVOLUTION_COOLDOWN_AND_CONVERGENCE_POLICY.md",
+    "BFF_HA_AND_CONTROL_PLANE_RESILIENCE.md",
+    "LOOP_TRIGGER_AND_CONCURRENCY_POLICY.md",
+    "CANONICAL_DOCUMENT_MAP.md",
+    "DOCUMENT_AUTHORITY_AND_RECORD_BOUNDARY.md",
+    "ROADMAP.md",
+    "DEVELOPMENT_WORKBREAKDOWN.md",
+    "WORKBENCH_DELIVERY_BACKLOG.md",
+    "DELIVERY_CLOSURE_AND_LOOP_STATES.md",
+    "EXECUTION_PROOF_AND_MATURITY_LEVELS.md",
+    "OSS_INTEGRATION_CHECKLIST.md",
+    "CANONICAL_CONTRACT_MIGRATION_DECISION.md",
+    "WORK_REBASELINE.md",
+    "Pantheon_總索引版系統分析文件.md",
+    "Pantheon_資料表_Schema_設計版.md",
+    "Pantheon_API_Service_Contract_設計版.md"
+  ],
+  "agents": [
+    {
+      "name": "Claude",
+      "capability_lane": [
+        "execution",
+        "control-plane",
+        "governance-review"
+      ],
+      "status": "waiting",
+      "current_task_ids": [
+        "P3-001",
+        "P4-001"
+      ],
+      "branch": "feat/claude-execution-control",
+      "next": "Connect signal intake to execution plane",
+      "last_update": null
+    },
+    {
+      "name": "Claude2",
+      "capability_lane": [
+        "execution",
+        "control-plane",
+        "governance-review"
+      ],
+      "status": "idle",
+      "current_task_ids": [],
+      "branch": "feat/claude2-execution-control",
+      "next": "",
+      "last_update": null
+    },
+    {
+      "name": "Antigravity",
+      "capability_lane": [
+        "gcp",
+        "ci-cd",
+        "runtime-packaging",
+        "worker-ops"
+      ],
+      "status": "idle",
+      "current_task_ids": [],
+      "branch": "feat/antigravity-research-runtime",
+      "next": "",
+      "last_update": null
+    },
+    {
+      "name": "Antigravity2",
+      "capability_lane": [
+        "gcp",
+        "ci-cd",
+        "runtime-packaging",
+        "worker-ops"
+      ],
+      "status": "idle",
+      "current_task_ids": [],
+      "branch": "feat/antigravity2-research-runtime",
+      "next": "",
+      "last_update": null
+    },
+    {
+      "name": "Antigravity3",
+      "capability_lane": [
+        "gcp",
+        "ci-cd",
+        "runtime-packaging",
+        "worker-ops"
+      ],
+      "status": "idle",
+      "current_task_ids": [],
+      "branch": "feat/antigravity3-research-runtime",
+      "next": "",
+      "last_update": null
+    },
+    {
+      "name": "Antigravity4",
+      "capability_lane": [
+        "gcp",
+        "ci-cd",
+        "runtime-packaging",
+        "worker-ops"
+      ],
+      "status": "idle",
+      "current_task_ids": [],
+      "branch": "feat/antigravity4-research-runtime",
+      "next": "",
+      "last_update": null
+    },
+    {
+      "name": "Antigravity5",
+      "capability_lane": [
+        "gcp",
+        "ci-cd",
+        "runtime-packaging",
+        "worker-ops"
+      ],
+      "status": "idle",
+      "current_task_ids": [],
+      "branch": "feat/antigravity5-research-runtime",
+      "next": "",
+      "last_update": null
+    },
+    {
+      "name": "Antigravity6",
+      "capability_lane": [
+        "gcp",
+        "ci-cd",
+        "runtime-packaging",
+        "worker-ops"
+      ],
+      "status": "idle",
+      "current_task_ids": [],
+      "branch": "feat/antigravity6-research-runtime",
+      "next": "",
+      "last_update": null
+    },
+    {
+      "name": "Antigravity7",
+      "capability_lane": [
+        "gcp",
+        "ci-cd",
+        "runtime-packaging",
+        "worker-ops"
+      ],
+      "status": "idle",
+      "current_task_ids": [],
+      "branch": "feat/antigravity7-research-runtime",
+      "next": "",
+      "last_update": null
+    },
+    {
+      "name": "Gemini",
+      "capability_lane": [
+        "gcp",
+        "ci-cd",
+        "runtime-packaging",
+        "worker-ops"
+      ],
+      "status": "waiting",
+      "current_task_ids": [
+        "P2-001"
+      ],
+      "branch": "feat/gemini-research-runtime",
+      "next": "Publish worker payload contract",
+      "last_update": null
+    },
+    {
+      "name": "Gemini2",
+      "capability_lane": [
+        "gcp",
+        "ci-cd",
+        "runtime-packaging",
+        "worker-ops"
+      ],
+      "status": "idle",
+      "current_task_ids": [],
+      "branch": "feat/gemini2-research-runtime",
+      "next": "",
+      "last_update": null
+    },
+    {
+      "name": "Codex",
+      "capability_lane": [
+        "integration",
+        "status-system",
+        "schema",
+        "acceptance"
+      ],
+      "status": "ready",
+      "current_task_ids": [
+        "P1-001"
+      ],
+      "branch": "feat/codex-collab-system",
+      "next": "Lock interface for downstream work",
+      "last_update": null
+    },
+    {
+      "name": "Codex2",
+      "capability_lane": [
+        "integration",
+        "status-system",
+        "schema",
+        "acceptance"
+      ],
+      "status": "idle",
+      "current_task_ids": [],
+      "branch": "feat/codex-collab-system",
+      "next": "",
+      "last_update": null
+    },
+    {
+      "name": "Copilot",
+      "capability_lane": [
+        "research-ingest",
+        "external-search",
+        "spec-review",
+        "critique"
+      ],
+      "status": "idle",
+      "current_task_ids": [],
+      "branch": "feat/copilot-research-critique",
+      "next": "",
+      "last_update": null
+    },
+    {
+      "name": "Human/Ops",
+      "capability_lane": [
+        "human-gate",
+        "operations",
+        "signoff"
+      ],
+      "status": "idle",
+      "current_task_ids": [],
+      "branch": "human/ops",
+      "next": "",
+      "last_update": null
+    }
+  ],
+  "tasks": [
+    {
+      "id": "P1-001",
+      "title": "Define SignalStoreClient contract",
+      "phase": "Phase 1",
+      "owner": "Codex",
+      "reviewer": "Gemini",
+      "status": "todo",
+      "depends_on": [],
+      "artifacts": [
+        "services/signal-store/client.py"
+      ],
+      "acceptance": [
+        "interface documented",
+        "example payload added",
+        "consumer assumptions listed"
+      ],
+      "next": "Lock interface for downstream work",
+      "last_update": null
+    },
+    {
+      "id": "P2-001",
+      "title": "Define signal JSON schema",
+      "phase": "Phase 2",
+      "owner": "Gemini",
+      "reviewer": "Claude",
+      "status": "todo",
+      "depends_on": [
+        "P1-001"
+      ],
+      "artifacts": [
+        "services/research/schema.json"
+      ],
+      "acceptance": [
+        "payload keys documented",
+        "worker contract references same schema"
+      ],
+      "next": "Publish worker payload contract",
+      "last_update": null
+    },
+    {
+      "id": "P3-001",
+      "title": "Wire LEAN runtime signal consumer",
+      "phase": "Phase 3",
+      "owner": "Claude",
+      "reviewer": "Gemini",
+      "status": "todo",
+      "depends_on": [
+        "P1-001",
+        "P2-001"
+      ],
+      "artifacts": [
+        "services/execution/lean-runtime/"
+      ],
+      "acceptance": [
+        "runtime can consume signal payload",
+        "broker config edge documented"
+      ],
+      "next": "Connect signal intake to execution plane",
+      "last_update": null
+    },
+    {
+      "id": "P4-001",
+      "title": "Draft control-plane routing contract",
+      "phase": "Phase 4",
+      "owner": "Claude",
+      "reviewer": "Codex",
+      "status": "todo",
+      "depends_on": [
+        "P2-001"
+      ],
+      "artifacts": [
+        "services/control-plane/router/"
+      ],
+      "acceptance": [
+        "router contract documented",
+        "monitoring handoff documented"
+      ],
+      "next": "Define router and monitoring handoff",
+      "last_update": null
+    }
+  ],
+  "handoffs": [],
+  "blockers": [],
+  "workload": {
+    "Claude": 20,
+    "Claude2": 10,
+    "Antigravity": 70,
+    "Antigravity2": 5,
+    "Antigravity3": 5,
+    "Antigravity4": 5,
+    "Antigravity5": 5,
+    "Antigravity6": 5,
+    "Antigravity7": 5,
+    "Gemini": 5,
+    "Gemini2": 5,
+    "Codex": 5,
+    "Codex2": 5,
+    "Copilot": 5,
+    "Human/Ops": 0
+  },
+  "workload_summary": {
+    "Claude": {
+      "total": 2,
+      "active": 0,
+      "blocked": 0,
+      "done": 0,
+      "review": 0,
+      "review_approved": 0,
+      "todo": 2
+    },
+    "Claude2": {
+      "total": 0,
+      "active": 0,
+      "blocked": 0,
+      "done": 0,
+      "review": 0,
+      "review_approved": 0,
+      "todo": 0
+    },
+    "Antigravity": {
+      "total": 0,
+      "active": 0,
+      "blocked": 0,
+      "done": 0,
+      "review": 0,
+      "review_approved": 0,
+      "todo": 0
+    },
+    "Antigravity2": {
+      "total": 0,
+      "active": 0,
+      "blocked": 0,
+      "done": 0,
+      "review": 0,
+      "review_approved": 0,
+      "todo": 0
+    },
+    "Antigravity3": {
+      "total": 0,
+      "active": 0,
+      "blocked": 0,
+      "done": 0,
+      "review": 0,
+      "review_approved": 0,
+      "todo": 0
+    },
+    "Antigravity4": {
+      "total": 0,
+      "active": 0,
+      "blocked": 0,
+      "done": 0,
+      "review": 0,
+      "review_approved": 0,
+      "todo": 0
+    },
+    "Antigravity5": {
+      "total": 0,
+      "active": 0,
+      "blocked": 0,
+      "done": 0,
+      "review": 0,
+      "review_approved": 0,
+      "todo": 0
+    },
+    "Antigravity6": {
+      "total": 0,
+      "active": 0,
+      "blocked": 0,
+      "done": 0,
+      "review": 0,
+      "review_approved": 0,
+      "todo": 0
+    },
+    "Antigravity7": {
+      "total": 0,
+      "active": 0,
+      "blocked": 0,
+      "done": 0,
+      "review": 0,
+      "review_approved": 0,
+      "todo": 0
+    },
+    "Gemini": {
+      "total": 1,
+      "active": 0,
+      "blocked": 0,
+      "done": 0,
+      "review": 0,
+      "review_approved": 0,
+      "todo": 1
+    },
+    "Gemini2": {
+      "total": 0,
+      "active": 0,
+      "blocked": 0,
+      "done": 0,
+      "review": 0,
+      "review_approved": 0,
+      "todo": 0
+    },
+    "Codex": {
+      "total": 1,
+      "active": 0,
+      "blocked": 0,
+      "done": 0,
+      "review": 0,
+      "review_approved": 0,
+      "todo": 1
+    },
+    "Codex2": {
+      "total": 0,
+      "active": 0,
+      "blocked": 0,
+      "done": 0,
+      "review": 0,
+      "review_approved": 0,
+      "todo": 0
+    },
+    "Copilot": {
+      "total": 0,
+      "active": 0,
+      "blocked": 0,
+      "done": 0,
+      "review": 0,
+      "review_approved": 0,
+      "todo": 0
+    },
+    "Human/Ops": {
+      "total": 0,
+      "active": 0,
+      "blocked": 0,
+      "done": 0,
+      "review": 0,
+      "review_approved": 0,
+      "todo": 0
+    }
+  },
+  "sprint_started_at": "2026-08-04T02:04:00Z"
+}
