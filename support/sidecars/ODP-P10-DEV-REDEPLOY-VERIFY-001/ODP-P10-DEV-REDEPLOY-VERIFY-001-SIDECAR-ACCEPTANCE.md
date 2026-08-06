@@ -11,10 +11,24 @@
 | Current parent owner / reviewer | `Antigravity3` / `Antigravity` |
 | Observed parent status | `blocked` (`waiting_for: Human/Ops`) |
 | Target branch | `task/ODP-P10-DEV-REDEPLOY-VERIFY-001-SIDECAR-ACCEPTANCE` |
-| Packet revision | `r2.2` — `r2` content unchanged; base advanced onto dev tip `bc7366d3` (see § r2.2) |
+| Packet revision | `r2.3` — `r2` content unchanged; base advanced onto dev tip `a7fde1a8` (see § r2.3) |
 | Packet verdict | **Support only; no parent acceptance, merge, or production GO claim** |
 
 This packet is a support-only review aid, acceptance checklist, and dependency map for parent task `ODP-P10-DEV-REDEPLOY-VERIFY-001`. It does not change canonical contracts, L1 architecture truth, or primary runtime/registry/governance implementations. The parent task owner (`Antigravity3`) decides whether to absorb this packet; the parent reviewer (`Antigravity`) retains sole authority over implementation acceptance.
+
+---
+
+## Revision r2.3 — third base advance only (2026-08-06T02:39Z)
+
+`r2.2` was re-submitted at exact head `3e7d57e2` with PR #658 green. `dev` advanced again before review completion — to `a7fde1a8` (`ODP-ORCH-DETACHED-HEAD-BRANCH-RESOLUTION-001`, PR #616) — putting PR #658 back to `BEHIND`. Merged `origin/dev` cleanly into `task/ODP-P10-DEV-REDEPLOY-VERIFY-001-SIDECAR-ACCEPTANCE`.
+
+| Aspect | r2.2 | r2.3 |
+|---|---|---|
+| Base | dev tip `bc7366d3` | dev tip `a7fde1a8` (merged in, no rebase, no force-push) |
+| Packet body | — | **Byte-identical to `3e7d57e2` apart from this section, the revision row, and the freshness line.** Verify with `git diff 3e7d57e2 HEAD -- support/sidecars/ODP-P10-DEV-REDEPLOY-VERIFY-001/` |
+| Merge conflicts | — | None. The incoming commit touches `.orchestrator/github_bus.py` and `.orchestrator/test_github_bus.py` — both disjoint from this packet's path. |
+
+No status cell, dependency edge, recommendation, or execution step was re-scoped in r2.3.
 
 ---
 
@@ -369,4 +383,4 @@ Commit all receipts, the `.odp_data/deployment/live-e2e-gate.json` gate report, 
 - **Owned by this sidecar:** this file only.
 - **Not changed by this sidecar:** canonical truth, contracts, runtime/registry/governance implementation, deployment scripts, workflows, the parent's evidence directory, and `ai-status.json` task semantics beyond this sidecar's own status transitions.
 - **Authority:** advisory. Parent acceptance remains with parent owner `Antigravity3` and parent reviewer `Antigravity`.
-- **Freshness:** the live probes and run data in the r2 body were captured 2026-08-06T01:14–01:15Z against dev tip `a0e4dcf07e41def48b5e6efa61b5c24215b5ce45`, re-confirmed unchanged at 2026-08-06T01:46–01:47Z against dev tip `c879004a9713dfd4562939accf888e93112ca403` (see § r2.1), and re-confirmed unchanged again at 2026-08-06T02:30Z against dev tip `bc7366d31518f9bbd21b3baed64f954d103e31fc` (see § r2.2). Re-verify before relying on any status cell.
+- **Freshness:** the live probes and run data in the r2 body were captured 2026-08-06T01:14–01:15Z against dev tip `a0e4dcf07e41def48b5e6efa61b5c24215b5ce45`, re-confirmed unchanged at 2026-08-06T01:46–01:47Z against dev tip `c879004a9713dfd4562939accf888e93112ca403` (see § r2.1), re-confirmed unchanged again at 2026-08-06T02:30Z against dev tip `bc7366d31518f9bbd21b3baed64f954d103e31fc` (see § r2.2), and re-confirmed unchanged again at 2026-08-06T02:39Z against dev tip `a7fde1a877ff43f3dbd98d249f3aa1fb1616c68e` (see § r2.3). Re-verify before relying on any status cell.
