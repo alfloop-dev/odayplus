@@ -8,7 +8,7 @@
 - **Sidecar Owner**: `Claude3`
 - **Sidecar Reviewer**: `Claude`
 - **Phase**: Orchestrator reliability
-- **Last Updated**: 2026-08-05
+- **Last Updated**: 2026-08-06 (base advance only; §1–§4 unchanged since approval at `a58cf5d0`)
 
 ---
 
@@ -302,9 +302,22 @@ rc=0                                                # empty output → no remote
 - **This packet's scope**: support artifact only. The single file touched by
   this sidecar task is
   `support/sidecars/ODP-ORCH-DETACHED-HEAD-BRANCH-RESOLUTION-001/ODP-ORCH-DETACHED-HEAD-BRANCH-RESOLUTION-001-SIDECAR-REVIEW.md`.
-- **Base advance**: performed before editing. This task branch was 1 ahead / 12
-  behind `origin/dev`; `origin/dev` was merged in (no conflicts, merge commit on
-  top of the existing anchor commit). No history was reset or overwritten.
+- **Base advance**: performed twice, both by merge. No history was reset,
+  force-pushed, or overwritten at any point.
+  1. *2026-08-05, before editing* — branch was 1 ahead / 12 behind `origin/dev`;
+     `origin/dev` merged in cleanly (`7129d3e0`), then the packet revision
+     `a58cf5d0` was written on top and approved at that head.
+  2. *2026-08-06, after approval* — `origin/dev` advanced again (branch 3 ahead /
+     5 behind) and PR #639 went `BEHIND`. `dev` protection sets
+     `required_status_checks.strict = true`, so a behind branch cannot merge and
+     the approved head could not be delivered as-is. `origin/dev` merged in
+     cleanly again (`37582d42`, no conflicts); this doc commit sits on top.
+     Because the merge moves the branch head off the approved head `a58cf5d0`,
+     and the `done` gate in `scripts/ai_status.py` compares checkout HEAD and PR
+     head against `approved_head` for *exact equality*, the task returns to the
+     reviewer via `re_review` rather than being finalized at a stale head. The
+     packet's substance is unchanged; `git diff --stat origin/dev...HEAD` is
+     still exactly this one file and nothing else.
 - **Sidecar reviewer**: `Claude` — please check §2 against
   `git diff origin/dev...origin/task/ODP-ORCH-DETACHED-HEAD-BRANCH-RESOLUTION-001`
   and confirm §3 draws the implemented/residual line where you would draw it.
