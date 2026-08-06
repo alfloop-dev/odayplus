@@ -493,6 +493,19 @@ def review_branch_for_task(config: dict[str, Any], status: dict[str, Any], task:
     return None
 
 
+_EXISTING_PR_URL_PATTERN = re.compile(
+    r"already exists[^\n]*?(https://\S*?/(?:pull)/\d+)",
+    re.IGNORECASE,
+)
+
+
+def _existing_pr_url_from_error(message: str) -> str | None:
+    """Pull the PR URL out of gh's "a pull request ... already exists" error."""
+
+    match = _EXISTING_PR_URL_PATTERN.search(message or "")
+    return match.group(1).rstrip(".,)") if match else None
+
+
 def parse_number_from_url(url: str) -> int | None:
     match = re.search(r"/(issues|pull)/(\d+)$", url)
     if match:
@@ -508,8 +521,34 @@ def find_existing_issue(repo: str, task_id: str) -> dict[str, Any] | None:
 
 
 def find_existing_pr(repo: str, task_id: str, branch: str | None) -> dict[str, Any] | None:
-    search = f'"[ReviewBus] {task_id}" in:title'
-    args = ["pr", "list", "--repo", repo, "--state", "open", "--search", search, "--json", "number,title,url,headRefName,state"]
+    """Find the open PR for a task, preferring its head branch over its title.
+
+    Title was the only lookup until 2026-08-05, matched as
+    `"[ReviewBus] {task_id}" in:title`. That prefix exists only on PRs this bus
+    opened itself; a PR opened by the worker carries a plain
+    `{task_id}: {summary}` title, so the search returned nothing, the bus tried
+    to create a PR that was already there, GitHub refused, and the failure was
+    logged and retried on every cycle. Nine tasks accumulated 2674 such
+    failures in a day, none of which could ever succeed.
+
+    GitHub allows exactly one open PR per (head, base) pair, so the head branch
+    is the authoritative key and the title is a heuristic. Trying the branch
+    first also self-heals bus-state entries left with `number: null`.
+    """
+
+    fields = "number,title,url,headRefName,baseRefName,state"
+    if branch:
+        data = gh_json(["pr", "list", "--repo", repo, "--state", "open", "--head", branch, "--json", fields])
+        if isinstance(data, list) and data:
+            return data[0]
+
+    # No branch known, or no PR open from it: fall back to the title convention,
+    # which still catches PRs this bus opened from a branch that has since moved.
+    args = [
+        "pr", "list", "--repo", repo, "--state", "open",
+        "--search", f'"[ReviewBus] {task_id}" in:title',
+        "--json", fields,
+    ]
     if branch:
         args.extend(["--head", branch])
     data = gh_json(args)
@@ -882,8 +921,18 @@ def upsert_review_pr(config: dict[str, Any], bus_state: dict[str, Any], status: 
                 if (config.get("github_bus", {}) or {}).get("auto_request_reviewers", True):
                     for handle in reviewer_handles(config, task):
                         create_args.extend(["--reviewer", handle])
-                proc = run_gh(create_args)
-                url = (proc.stdout or "").strip().splitlines()[-1]
+                try:
+                    proc = run_gh(create_args)
+                    url = (proc.stdout or "").strip().splitlines()[-1]
+                except GitHubBusError as exc:
+                    # "already exists" is GitHub telling us the PR we wanted is
+                    # there. Treating it as an error means retrying forever
+                    # against a condition that can only become more true; the
+                    # message carries the URL, so adopt it instead.
+                    existing_url = _existing_pr_url_from_error(str(exc))
+                    if not existing_url:
+                        raise
+                    url = existing_url
                 pr = {"number": parse_number_from_url(url), "url": url, "title": title, "headRefName": branch}
     finally:
         body_file.unlink(missing_ok=True)
