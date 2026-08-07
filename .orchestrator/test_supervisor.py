@@ -48,15 +48,15 @@ def tearDownModule() -> None:
 
 
 def load_test_config() -> dict[str, Any]:
-    config_file = Path(__file__).with_name("config.json")
-    if not config_file.exists():
-        try:
-            from ai_status import STATUS_ROOT
-            config_file = STATUS_ROOT / ".orchestrator" / "config.json"
-        except Exception:
-            pass
-    if not config_file.exists():
-        config_file = Path(__file__).with_name("config.example.json")
+    # The committed example is the fixture. config.json is gitignored and holds
+    # whatever roster the machine currently runs, so reading it would make these
+    # assertions depend on the box rather than on the code: a deployment that
+    # trims agents out of owner_fallbacks turns reassignment tests red locally
+    # while CI -- which has no config.json and bootstraps from the example --
+    # stays green, and a machine with a laxer config hides real failures the
+    # same way. Point PANTHEON_TEST_CONFIG at a file to opt into another one.
+    override = os.environ.get("PANTHEON_TEST_CONFIG", "").strip()
+    config_file = Path(override) if override else Path(__file__).with_name("config.example.json")
     config = json.loads(config_file.read_text(encoding="utf-8"))
 
     # A test config must never retain repository-relative coordination paths:
@@ -84,6 +84,44 @@ def load_test_config() -> dict[str, Any]:
         str((_TEST_STATUS_ROOT / "workspace").resolve())
     ]
     return config
+
+
+class TestConfigFixtureTests(unittest.TestCase):
+    """The fixture must be the committed example, never the machine's config.
+
+    config.json is gitignored and tracks whatever roster is deployed, so reading
+    it makes these tests assert on the box instead of the code -- green on CI,
+    red on a machine whose owner_fallbacks were trimmed, and silently permissive
+    on a machine whose config is laxer than the example.
+    """
+
+    def _example(self) -> dict[str, Any]:
+        return json.loads(
+            (Path(supervisor.__file__).with_name("config.example.json")).read_text(encoding="utf-8")
+        )
+
+    def test_fixture_roster_matches_committed_example(self) -> None:
+        config = load_test_config()
+        example = self._example()
+
+        self.assertEqual(sorted(config.get("agents") or {}), sorted(example.get("agents") or {}))
+        for table in ("owner_fallbacks", "reviewer_fallbacks"):
+            with self.subTest(table=table):
+                self.assertEqual(
+                    (config.get("worker_reassignment") or {}).get(table),
+                    (example.get("worker_reassignment") or {}).get(table),
+                )
+
+    def test_explicit_override_is_honoured(self) -> None:
+        example = self._example()
+        example["agents"] = {"solo": example["agents"][next(iter(example["agents"]))]}
+        with tempfile.TemporaryDirectory(prefix="pantheon-test-config-") as tmp:
+            override = Path(tmp) / "config.json"
+            override.write_text(json.dumps(example), encoding="utf-8")
+            with mock.patch.dict(os.environ, {"PANTHEON_TEST_CONFIG": str(override)}):
+                config = load_test_config()
+
+        self.assertEqual(sorted(config.get("agents") or {}), ["solo"])
 
 
 class RuntimeConfigTests(unittest.TestCase):
@@ -3786,6 +3824,129 @@ class ProcessQueueDispatchGuardTests(unittest.TestCase):
         self.assertEqual(queued_event["target_agent"], "Claude")
         self.assertEqual(queued_event["reason"], "owned_in_progress_dispatch")
 
+    def test_dispatcher_helper_claim_preserves_designated_reviewer_when_target_is_not_reviewer(self) -> None:
+        config = {
+            "schema": {
+                "tasks_path": "tasks",
+                "task_id_field": "id",
+                "assignee_field": "owner",
+                "reviewer_field": "reviewer",
+            },
+            "ready_dispatcher": {
+                "helper_claim": {
+                    "enabled": True,
+                    "task_statuses": ["todo"],
+                    "claim_idle_work": True,
+                }
+            },
+            "worker_reassignment": {
+                "owner_fallbacks": {
+                    "Copilot": ["Antigravity", "Codex"],
+                }
+            },
+            "agents": {
+                "antigravity": {"id": "antigravity", "display_name": "Antigravity", "provider": "antigravity"},
+                "copilot": {"id": "copilot", "display_name": "Copilot", "provider": "copilot"},
+                "codex": {"id": "codex", "display_name": "Codex", "provider": "codex"},
+            },
+            "providers": {},
+        }
+        initial_status = {
+            "tasks": [
+                {"id": "TASK-001", "status": "todo", "owner": "Copilot", "reviewer": "Codex", "depends_on": []},
+            ]
+        }
+        persisted_status = {
+            "tasks": [
+                {
+                    "id": "TASK-001",
+                    "status": "todo",
+                    "owner": "Antigravity",
+                    "reviewer": "Codex",
+                    "depends_on": [],
+                    "last_update": "2026-05-13T09:30:00Z",
+                    "next": "Helper-claimed by idle Antigravity; designated reviewer Codex preserved.",
+                },
+            ]
+        }
+
+        with (
+            mock.patch.object(supervisor, "load_status", side_effect=[initial_status, persisted_status]),
+            mock.patch.object(supervisor, "load_event_queue", return_value=[]),
+            mock.patch.object(supervisor, "persist_task_reassignment", return_value=True) as persist,
+            mock.patch.object(supervisor, "queue_delivery_event", return_value=True),
+            mock.patch.object(supervisor, "write_activity_log"),
+        ):
+            changed = supervisor.dispatch_ready_tasks(config, {"queue": {"events": {}}, "workers": {}})
+
+        self.assertTrue(changed)
+        persist.assert_called_once()
+        kwargs = persist.call_args.kwargs
+        self.assertEqual(kwargs["task_id"], "TASK-001")
+        self.assertEqual(kwargs["new_owner"], "Antigravity")
+        self.assertEqual(kwargs["new_reviewer"], "Codex")
+
+    def test_dispatcher_helper_claim_replaces_reviewer_when_target_is_reviewer(self) -> None:
+        config = {
+            "schema": {
+                "tasks_path": "tasks",
+                "task_id_field": "id",
+                "assignee_field": "owner",
+                "reviewer_field": "reviewer",
+            },
+            "ready_dispatcher": {
+                "helper_claim": {
+                    "enabled": True,
+                    "task_statuses": ["todo"],
+                    "claim_idle_work": True,
+                }
+            },
+            "worker_reassignment": {
+                "owner_fallbacks": {
+                    "Copilot": ["Codex"],
+                }
+            },
+            "agents": {
+                "codex": {"id": "codex", "display_name": "Codex", "provider": "codex"},
+                "copilot": {"id": "copilot", "display_name": "Copilot", "provider": "copilot"},
+            },
+            "providers": {},
+        }
+        initial_status = {
+            "tasks": [
+                {"id": "TASK-002", "status": "todo", "owner": "Copilot", "reviewer": "Codex", "depends_on": []},
+            ]
+        }
+        persisted_status = {
+            "tasks": [
+                {
+                    "id": "TASK-002",
+                    "status": "todo",
+                    "owner": "Codex",
+                    "reviewer": "Copilot",
+                    "depends_on": [],
+                    "last_update": "2026-05-13T09:30:00Z",
+                    "next": "Helper-claimed by idle Codex; previous owner Copilot becomes reviewer.",
+                },
+            ]
+        }
+
+        with (
+            mock.patch.object(supervisor, "load_status", side_effect=[initial_status, persisted_status]),
+            mock.patch.object(supervisor, "load_event_queue", return_value=[]),
+            mock.patch.object(supervisor, "persist_task_reassignment", return_value=True) as persist,
+            mock.patch.object(supervisor, "queue_delivery_event", return_value=True),
+            mock.patch.object(supervisor, "write_activity_log"),
+        ):
+            changed = supervisor.dispatch_ready_tasks(config, {"queue": {"events": {}}, "workers": {}}, agent_ids_override=["codex"])
+
+        self.assertTrue(changed)
+        persist.assert_called_once()
+        kwargs = persist.call_args.kwargs
+        self.assertEqual(kwargs["task_id"], "TASK-002")
+        self.assertEqual(kwargs["new_owner"], "Codex")
+        self.assertEqual(kwargs["new_reviewer"], "Copilot")
+
     def test_dispatcher_reassigns_mainline_qwen_owner_before_dispatch(self) -> None:
         config = {
             "schema": {
@@ -4523,6 +4684,7 @@ class RunOnceSupervisorStateTests(unittest.TestCase):
             )
             stack.enter_context(mock.patch.object(supervisor, "process_queue", return_value=False))
             stack.enter_context(mock.patch.object(supervisor, "sync_github_bus", return_value=False))
+            stack.enter_context(mock.patch.object(supervisor, "check_branch_drift", return_value=False))
             stack.enter_context(mock.patch.object(supervisor, "trim_worker_history"))
             stack.enter_context(mock.patch.object(supervisor, "trim_seen_events"))
             stack.enter_context(mock.patch.object(supervisor, "prune_orphan_worktrees", return_value=False))
@@ -4596,6 +4758,7 @@ class RunOnceSupervisorStateTests(unittest.TestCase):
             )
             process_queue = stack.enter_context(mock.patch.object(supervisor, "process_queue", return_value=True))
             stack.enter_context(mock.patch.object(supervisor, "sync_github_bus", return_value=False))
+            stack.enter_context(mock.patch.object(supervisor, "check_branch_drift", return_value=False))
             stack.enter_context(mock.patch.object(supervisor, "trim_worker_history"))
             stack.enter_context(mock.patch.object(supervisor, "trim_seen_events"))
             stack.enter_context(mock.patch.object(supervisor, "prune_orphan_worktrees", return_value=False))
@@ -4707,6 +4870,7 @@ class RunOnceSupervisorStateTests(unittest.TestCase):
                 stack.enter_context(mock.patch.object(supervisor, "dispatch_underutilization_sidecars", return_value=False))
                 stack.enter_context(mock.patch.object(supervisor, "process_queue", return_value=False))
                 stack.enter_context(mock.patch.object(supervisor, "sync_github_bus", return_value=False))
+                stack.enter_context(mock.patch.object(supervisor, "check_branch_drift", return_value=False))
                 stack.enter_context(mock.patch.object(supervisor, "trim_worker_history"))
                 stack.enter_context(mock.patch.object(supervisor, "trim_seen_events"))
                 stack.enter_context(mock.patch.object(supervisor, "refresh_dashboard_runtime_artifacts"))

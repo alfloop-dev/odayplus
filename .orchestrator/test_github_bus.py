@@ -732,7 +732,65 @@ class TaskPRDiscoveryTests(unittest.TestCase):
         self.assertNotIn("git rev-parse task/ODP-REMOTE-001", calls)
         self.assertNotIn("git rev-list --count dev..task/ODP-REMOTE-001", calls)
 
+    def test_current_branch_returns_none_when_detached_head(self) -> None:
+        def mock_cmd(cmd: list[str], cwd: str | Path | None = None) -> subprocess.CompletedProcess[str]:
+            if "symbolic-ref" in cmd:
+                return subprocess.CompletedProcess(cmd, 1, "", "fatal: ref HEAD is not a symbolic ref")
+            return subprocess.CompletedProcess(cmd, 0, "HEAD\n", "")
 
+        with mock.patch.object(github_bus, "run_command", side_effect=mock_cmd):
+            self.assertIsNone(github_bus.current_branch())
+
+    def test_branch_exists_returns_false_for_head(self) -> None:
+        self.assertFalse(github_bus.branch_exists("HEAD"))
+        self.assertFalse(github_bus.branch_exists("origin/HEAD"))
+
+    def test_review_branch_for_task_rejects_head_branch_name(self) -> None:
+        config = {"branch_workflow": {"task_branch_prefix": "task/"}}
+        status = {"agents": [{"name": "Codex", "branch": "HEAD"}]}
+        task = {"id": "ODP-FOO-001", "owner": "Codex", "branch": "HEAD"}
+
+        with mock.patch.object(github_bus, "current_branch", return_value=None):
+            found_branch = github_bus.review_branch_for_task(config, status, task)
+
+        self.assertIsNone(found_branch)
+
+
+class DetachedHeadBranchResolutionTests(unittest.TestCase):
+    """A detached worktree has no branch, and must not claim one.
+
+    `git rev-parse --abbrev-ref HEAD` answers the literal string "HEAD" when
+    detached. Every guard downstream accepts it -- it is truthy, it is not the
+    default branch, and branch_exists("HEAD") succeeds because HEAD always
+    resolves -- so the bus once recorded "HEAD" as a task's review branch.
+    """
+
+    def test_detached_head_yields_no_branch(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="pantheon-detached-") as tmp:
+            repo = Path(tmp)
+            for args in (
+                ["git", "init", "-q", str(repo)],
+                ["git", "-C", str(repo), "-c", "user.email=t@t", "-c", "user.name=t",
+                 "commit", "-q", "--allow-empty", "-m", "init"],
+                ["git", "-C", str(repo), "-c", "advice.detachedHead=false", "checkout", "-q", "--detach", "HEAD"],
+            ):
+                subprocess.run(args, check=True, capture_output=True)
+
+            with mock.patch.object(github_bus, "ROOT", repo):
+                self.assertIsNone(github_bus.current_branch())
+
+    def test_named_branch_is_still_returned(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="pantheon-named-") as tmp:
+            repo = Path(tmp)
+            for args in (
+                ["git", "init", "-q", "-b", "task/ODP-X-001", str(repo)],
+                ["git", "-C", str(repo), "-c", "user.email=t@t", "-c", "user.name=t",
+                 "commit", "-q", "--allow-empty", "-m", "init"],
+            ):
+                subprocess.run(args, check=True, capture_output=True)
+
+            with mock.patch.object(github_bus, "ROOT", repo):
+                self.assertEqual(github_bus.current_branch(), "task/ODP-X-001")
 class TaskPRBaseBranchTests(unittest.TestCase):
     def test_task_pr_base_uses_branch_workflow_target_not_repo_default(self) -> None:
         config = {
@@ -813,6 +871,67 @@ class TaskPRBaseBranchTests(unittest.TestCase):
         # A task PR must never be opened straight against the promotion target:
         # it has to land on dev and reach main only through dev CI.
         self.assertEqual(args[args.index("--base") + 1], "dev")
+
+
+class PrBackedStatusCoverageTests(unittest.TestCase):
+    """A task approved inside one poll interval must still get its PR.
+
+    Keying PR creation on `review` alone drops any task that leaves that status
+    before the next poll: the supervisor then reads `unknown` CI because no PR
+    exists, fails closed on finalize, and nothing ever goes back to create it.
+    """
+
+    def _task(self, status: str) -> dict:
+        return {
+            "id": "ODP-X-001",
+            "title": "T",
+            "summary_zh": "s",
+            "status": status,
+            "owner": "Codex",
+            "reviewer": "Claude",
+            "depends_on": [],
+            "artifacts": [],
+            "next": "n",
+        }
+
+    def test_statuses_come_from_config_not_a_literal(self) -> None:
+        config = {"ready_dispatcher": {"review_statuses": ["reviewing"], "finalize_statuses": ["approved"]}}
+
+        self.assertEqual(github_bus.pr_backed_statuses(config), {"reviewing", "approved"})
+
+    def test_defaults_cover_review_and_review_approved(self) -> None:
+        self.assertEqual(github_bus.pr_backed_statuses({}), {"review", "review_approved"})
+
+    def _sync_and_capture_pr_tasks(self, tasks: list[dict]) -> list[str]:
+        config = {
+            "github_bus": {"repo": "o/r", "templates": {"review_pr": ".orchestrator/templates/github_review_pr.md"}},
+        }
+        seen: list[str] = []
+        with (
+            mock.patch.object(github_bus, "pull_commands", return_value=[]),
+            mock.patch.object(github_bus, "upsert_review_pr", side_effect=lambda c, b, s, r, t: seen.append(t["id"]) or False),
+            mock.patch.object(github_bus, "upsert_ops_issue", return_value=False),
+            mock.patch.object(github_bus, "write_activity_log"),
+        ):
+            github_bus.sync_outbound(config, {"tasks": {}}, {"tasks": tasks, "blockers": []}, {}, "o/r")
+        return seen
+
+    def test_review_approved_task_still_gets_a_pr(self) -> None:
+        seen = self._sync_and_capture_pr_tasks([self._task("review_approved")])
+
+        self.assertEqual(seen, ["ODP-X-001"])
+
+    def test_review_task_still_gets_a_pr(self) -> None:
+        seen = self._sync_and_capture_pr_tasks([self._task("review")])
+
+        self.assertEqual(seen, ["ODP-X-001"])
+
+    def test_unrelated_statuses_are_left_alone(self) -> None:
+        tasks = [self._task(s) for s in ("todo", "in_progress", "blocked", "done")]
+        for index, task in enumerate(tasks):
+            task["id"] = f"ODP-X-{index}"
+
+        self.assertEqual(self._sync_and_capture_pr_tasks(tasks), [])
 
 
 if __name__ == "__main__":
