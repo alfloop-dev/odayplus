@@ -282,16 +282,20 @@ for c in r.get('checks', []):
 checkout，一次 rollout 同時更新兩者；`945a8366` 保留原地但退出服務與監控。
 詳見 `ODP-ORCH-WATCHDOG-RUNTIME-RETIRE-001`。原始判斷仍記錄如下：
 
-** 該 checkout 有 6 個未提交的程式碼修改（`supervisor.py` +169/-75、
+該 checkout 有 6 個未提交的程式碼修改（`supervisor.py` +169/-75、
 `ai_status.py` +68/-4、`supervisor_runtime_health.py` +28/-6、`wakeup.txt` +3/-3）。
 比對後其中 `remote_branch_exists` 在 `origin/dev` **完全不存在**——推進會直接覆蓋掉
 未進版控的工作。
 
 完整 diff 已保全於
-`oday-plus-supervisor-live/watchdog-runtime-uncommitted-20260804.diff`（604 行）。
+`docs/evidence/runtime/ODP-ORCH-WATCHDOG-RUNTIME-RETIRE-001/uncommitted-945a8366.diff`
+（604 行）。原先保全的路徑
+`oday-plus-supervisor-live/watchdog-runtime-uncommitted-20260804.diff` 已隨該 repo
+重置消失——稽核產物不能住在被稽核的系統裡，故改放版控。
 
-處理前必須先由知情者判斷那些修改是否仍需要。在那之前，watchdog 持續執行 381 個
-commit 之前的程式碼。
+處理前必須先由知情者判斷那些修改是否仍需要。逐項比對結果見上述 evidence 目錄的
+`README.md`：多數已由 PR #602 等正式合併，`task_is_in_transition` 是唯一建議單獨
+評估的。watchdog 已不再執行這份程式碼。
 
 ### 9.5 其他堆積的 runtime 目錄
 
