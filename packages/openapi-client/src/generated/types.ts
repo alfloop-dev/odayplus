@@ -130,6 +130,18 @@ export type AssignmentTransferRequest = {
   target_owner_subject_id: string;
 };
 
+/** Write body for POST /operator/store-ops/issues/{issue_id}/attachments. */
+export type AttachmentUploadRequest = {
+  actorName?: string | null;
+  actorRoleId: string;
+  classification?: "site_photo" | "lease_scan" | "controlled_document" | "general";
+  contentBase64?: string | null;
+  fileType?: string;
+  filename: string;
+  note?: string | null;
+  sensitivityLevel?: "controlled" | "restricted" | "public";
+};
+
 /** AuditReference */
 export type AuditReference = {
   action: string;
@@ -1544,6 +1556,9 @@ export const API_PATHS = {
   "/api/v1/operator/shell/tasks/{task_id}/assignment": ["POST"],
   "/api/v1/operator/store-ops/issues": ["GET"],
   "/api/v1/operator/store-ops/issues/{issue_id}": ["GET"],
+  "/api/v1/operator/store-ops/issues/{issue_id}/attachments": ["GET", "POST"],
+  "/api/v1/operator/store-ops/issues/{issue_id}/attachments/{attachment_id}": ["DELETE", "GET"],
+  "/api/v1/operator/store-ops/issues/{issue_id}/attachments/{attachment_id}/download": ["GET"],
   "/api/v1/operator/store-ops/issues/{issue_id}/camera-purpose": ["POST"],
   "/api/v1/operator/store-ops/issues/{issue_id}/evidence": ["GET"],
   "/api/v1/operator/store-ops/issues/{issue_id}/{action_type}": ["POST"],
