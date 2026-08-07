@@ -99,6 +99,11 @@ export type ApprovalDecisionResponse = {
   newStatus: string;
 };
 
+/** ApproveFlagPayload */
+export type ApproveFlagPayload = {
+  approver: string;
+};
+
 /** AssignmentReceipt */
 export type AssignmentReceipt = {
   assignment_id: string;
@@ -292,6 +297,11 @@ export type EligibilityPayload = {
   actor: string;
   eligible: boolean;
   reasons?: string[];
+};
+
+/** EnableFlagPayload */
+export type EnableFlagPayload = {
+  approvals?: string[];
 };
 
 /** The single error contract for every endpoint. */
@@ -1033,6 +1043,16 @@ export type RebalanceSubmitPayload = {
   simulateUnavailable?: boolean;
 };
 
+/** RegisterFlagPayload */
+export type RegisterFlagPayload = {
+  description?: string;
+  expires_on?: string | null;
+  high_risk?: boolean;
+  key: string;
+  owner: string;
+  readiness?: string;
+};
+
 /** ReleaseHoldPayload */
 export type ReleaseHoldPayload = {
   approvedBy: string;
@@ -1375,6 +1395,11 @@ export const API_PATHS = {
   "/api/v1/adlift/incrementality-jobs/{job_id}": ["GET"],
   "/api/v1/adlift/reports": ["GET"],
   "/api/v1/adlift/reports/{campaign_id}": ["GET"],
+  "/api/v1/admin/feature-flags": ["GET", "POST"],
+  "/api/v1/admin/feature-flags/{key}": ["GET"],
+  "/api/v1/admin/feature-flags/{key}/approve": ["POST"],
+  "/api/v1/admin/feature-flags/{key}/disable": ["POST"],
+  "/api/v1/admin/feature-flags/{key}/enable": ["POST"],
   "/api/v1/assignments/{assignment_id}/actions/claim": ["POST"],
   "/api/v1/assignments/{assignment_id}/actions/complete": ["POST"],
   "/api/v1/assignments/{assignment_id}/actions/transfer": ["POST"],
@@ -1398,6 +1423,7 @@ export const API_PATHS = {
   "/api/v1/external-data/ingestion-runs": ["GET", "POST"],
   "/api/v1/external-data/ingestion-runs/{run_id}": ["GET"],
   "/api/v1/external-data/quarantine": ["GET"],
+  "/api/v1/feature-flags": ["GET"],
   "/api/v1/forecastops/alerts": ["GET"],
   "/api/v1/forecastops/alerts/{alert_id}/acknowledge": ["POST"],
   "/api/v1/forecastops/forecast-jobs": ["POST"],

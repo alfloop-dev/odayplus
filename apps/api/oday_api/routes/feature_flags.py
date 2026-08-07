@@ -51,7 +51,7 @@ else:
             flags = [f.to_dict() for f in flag_registry.all()]
             return {"status": "ok", "count": len(flags), "flags": flags}
 
-        @router.get("/admin/feature-flags/{key:path}")
+        @router.get("/admin/feature-flags/{key}")
         def get_feature_flag(key: str) -> dict[str, Any]:
             flag = flag_registry.get(key)
             if flag is None:
@@ -61,7 +61,7 @@ else:
                 )
             return {"status": "ok", "flag": flag.to_dict()}
 
-        @router.post("/admin/feature-flags/{key:path}/enable")
+        @router.post("/admin/feature-flags/{key}/enable")
         def enable_feature_flag(key: str, body: EnableFlagPayload | None = None) -> dict[str, Any]:
             approvals = frozenset(body.approvals if body else [])
             try:
@@ -95,7 +95,7 @@ else:
             )
             return {"status": "ok", "flag": updated.to_dict()}
 
-        @router.post("/admin/feature-flags/{key:path}/disable")
+        @router.post("/admin/feature-flags/{key}/disable")
         def disable_feature_flag(key: str) -> dict[str, Any]:
             try:
                 updated = flag_registry.disable(key)
@@ -118,7 +118,7 @@ else:
             )
             return {"status": "ok", "flag": updated.to_dict()}
 
-        @router.post("/admin/feature-flags/{key:path}/approve")
+        @router.post("/admin/feature-flags/{key}/approve")
         def approve_feature_flag(key: str, body: ApproveFlagPayload) -> dict[str, Any]:
             try:
                 updated = flag_registry.add_approval(key, body.approver)
