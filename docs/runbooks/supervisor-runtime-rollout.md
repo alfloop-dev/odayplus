@@ -235,7 +235,12 @@ oday-plus-supervisor-runtime-current -> oday-plus-supervisor-runtime-<sha>
 ### 9.3 定期檢查 — 已啟用
 
 `pantheon-runtime-freshness.timer`（每小時，`Persistent=true`）執行
-`scripts/orchestrator/check_runtime_freshness.py`，同時檢查兩個 runtime。
+`scripts/orchestrator/check_runtime_freshness.py`。
+
+原本同時檢查兩個 runtime。2026-08-04 起只檢查 `runtime-current`——watchdog 已改為
+共用同一份 checkout（§9.4），`945a8366` 不再服務任何東西，留在清單裡只會每小時
+回報一個持續擴大、且沒有任何動作能清除的 FAIL。一個永遠不會轉綠的告警，
+只會讓人學會忽略整組告警。
 
 unit 從 `/home/lupin/oday-plus`（dev checkout）執行這支腳本，不是從 runtime
 執行：檢查程式若住在它要稽核的東西裡面，會在那個東西過期時一起消失。
@@ -267,13 +272,17 @@ for c in r.get('checks', []):
 "
 ```
 
-### 9.4 未處理：watchdog runtime
+### 9.4 watchdog runtime（2026-08-04 已退役）
 
 `pantheon-supervisor-watchdog.service` 指向**另一個** runtime
 `oday-plus-supervisor-runtime-945a8366`，**落後 origin/dev 381 個 commit**，
 且處於 detached HEAD。
 
-**刻意未推進。** 該 checkout 有 6 個未提交的程式碼修改（`supervisor.py` +169/-75、
+**刻意未推進，後改為退役。** watchdog 已改指 `runtime-current`，兩個服務共用同一份
+checkout，一次 rollout 同時更新兩者；`945a8366` 保留原地但退出服務與監控。
+詳見 `ODP-ORCH-WATCHDOG-RUNTIME-RETIRE-001`。原始判斷仍記錄如下：
+
+** 該 checkout 有 6 個未提交的程式碼修改（`supervisor.py` +169/-75、
 `ai_status.py` +68/-4、`supervisor_runtime_health.py` +28/-6、`wakeup.txt` +3/-3）。
 比對後其中 `remote_branch_exists` 在 `origin/dev` **完全不存在**——推進會直接覆蓋掉
 未進版控的工作。
