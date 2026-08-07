@@ -235,7 +235,16 @@ oday-plus-supervisor-runtime-current -> oday-plus-supervisor-runtime-<sha>
 ### 9.3 定期檢查 — 已啟用
 
 `pantheon-runtime-freshness.timer`（每小時，`Persistent=true`）執行
-`ops/check_runtime_freshness.py`，同時檢查兩個 runtime。
+`scripts/orchestrator/check_runtime_freshness.py`，同時檢查兩個 runtime。
+
+unit 從 `/home/lupin/oday-plus`（dev checkout）執行這支腳本，不是從 runtime
+執行：檢查程式若住在它要稽核的東西裡面，會在那個東西過期時一起消失。
+
+> 這行原本寫 `ops/check_runtime_freshness.py`，unit 也照抄。實作最後落在
+> `scripts/orchestrator/`，於是 unit 從安裝當天起每小時以
+> `No such file or directory` 失敗，從未真的檢查過任何東西——直到
+> 2026-08-05 才發現。改動 unit 路徑後，務必 `systemctl --user start
+> pantheon-runtime-freshness.service` 確認它真的跑得出結果。
 
 首次執行即抓到真問題（見 §9.4），service 以 `status=1/FAILURE` 收場——
 這正是預期行為：漂移不再無聲。
