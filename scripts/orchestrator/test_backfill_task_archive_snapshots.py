@@ -187,3 +187,47 @@ def test_missing_archive_dir_fails_closed(tmp_path: Path) -> None:
     )
 
     assert exit_code == 1
+
+
+def test_newer_unrelated_commit_does_not_hide_real_merge(tmp_path: Path) -> None:
+    """--grep matches whole messages, so the newest hit may be someone else's commit.
+
+    Live false negative: ODP-PLAN-AVM-OUTCOME-001 had a real merge, but a newer
+    commit from another task mentioned the id in its body, and taking only one
+    candidate reported the task as unverifiable.
+    """
+    repo = init_repo(
+        tmp_path,
+        [
+            "Merge pull request #587 from org/task/TASK-A",
+            "TASK-B: unrelated work that cites TASK-A in passing",
+        ],
+    )
+
+    evidence = find_merge_evidence(repo, "TASK-A", "HEAD")
+
+    assert evidence is not None
+    assert evidence["merge_pr"] == "#587"
+
+
+def test_squash_merge_found_behind_newer_mentions(tmp_path: Path) -> None:
+    repo = init_repo(
+        tmp_path,
+        [
+            "TASK-C: deliver the thing (#601)",
+            "TASK-D: refer to TASK-C without delivering it",
+            "TASK-E: also mentions TASK-C",
+        ],
+    )
+
+    evidence = find_merge_evidence(repo, "TASK-C", "HEAD")
+
+    assert evidence is not None
+    assert evidence["merge_pr"] == "#601"
+
+
+def test_only_body_mentions_still_yield_nothing(tmp_path: Path) -> None:
+    """Scanning more candidates must not start accepting mere citations."""
+    repo = init_repo(tmp_path, ["TASK-F: mentions TASK-GHOST in body only"])
+
+    assert find_merge_evidence(repo, "TASK-GHOST", "HEAD") is None

@@ -65,6 +65,9 @@ CANDIDATE_TASK_IDS = (
 
 PR_PATTERN = re.compile(r"#(\d+)")
 
+# How many --grep hits to inspect before giving up on a pattern.
+MERGE_CANDIDATE_SCAN = 30
+
 
 class MergeEvidence(dict):
     """Merge commit, ISO date and PR number backing one task id."""
@@ -81,6 +84,31 @@ def _git(repo: Path, *args: str) -> str:
     return result.stdout.strip() if result.returncode == 0 else ""
 
 
+def subject_delivers(subject: str, task_id: str) -> bool:
+    """True when this commit subject is the delivery of ``task_id``.
+
+    Merely containing the id is not enough. "TASK-E: also mentions TASK-C" cites
+    TASK-C without delivering it, and accepting that would archive a task on the
+    strength of someone else's commit. Two shapes deliver:
+
+    * ``Merge pull request #N from org/task/<id>`` -- the branch names the task
+    * ``<id>: summary (#N)``, optionally behind a ``[ReviewBus] `` prefix -- the
+      squash form, where the subject *starts* with the id
+
+    The trailing boundary check keeps ``TASK-C`` from matching ``TASK-C2``.
+    """
+
+    subject = subject.strip()
+    if f"task/{task_id}" in subject:
+        return True
+
+    body = subject.removeprefix("[ReviewBus]").lstrip()
+    if not body.startswith(task_id):
+        return False
+    rest = body[len(task_id):]
+    return rest == "" or not (rest[0].isalnum() or rest[0] == "-")
+
+
 def find_merge_evidence(repo: Path, task_id: str, ref: str) -> MergeEvidence | None:
     """Return merge evidence for ``task_id`` on ``ref``, or None when absent.
 
@@ -90,27 +118,33 @@ def find_merge_evidence(repo: Path, task_id: str, ref: str) -> MergeEvidence | N
     """
 
     for pattern in (f"Merge pull request.*{task_id}", task_id):
-        line = _git(
+        # --grep matches the whole commit message, so the newest hit is often an
+        # unrelated commit that merely mentions this id in its body. Taking only
+        # one candidate made the search a false negative: ODP-PLAN-AVM-OUTCOME-001
+        # had a real merge at 90bfcf6a but was reported unverifiable because a
+        # newer commit mentioned it first.
+        out = _git(
             repo,
             "log",
             ref,
             "--format=%H|%cI|%s",
             f"--grep={pattern}",
-            "--max-count=1",
+            f"--max-count={MERGE_CANDIDATE_SCAN}",
         )
-        if not line:
+        if not out:
             continue
-        sha, _, rest = line.partition("|")
-        iso_date, _, subject = rest.partition("|")
-        if task_id not in subject and "Merge pull request" not in subject:
-            continue
-        pr_match = PR_PATTERN.search(subject)
-        return MergeEvidence(
-            merge_commit=sha,
-            merged_at=iso_date,
-            merge_pr=f"#{pr_match.group(1)}" if pr_match else None,
-            subject=subject,
-        )
+        for line in out.splitlines():
+            sha, _, rest = line.partition("|")
+            iso_date, _, subject = rest.partition("|")
+            if not subject_delivers(subject, task_id):
+                continue
+            pr_match = PR_PATTERN.search(subject)
+            return MergeEvidence(
+                merge_commit=sha,
+                merged_at=iso_date,
+                merge_pr=f"#{pr_match.group(1)}" if pr_match else None,
+                subject=subject,
+            )
     return None
 
 
