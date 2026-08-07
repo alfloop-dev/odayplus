@@ -1,10 +1,10 @@
 {
   "bomFormat": "CycloneDX",
   "specVersion": "1.5",
-  "serialNumber": "urn:uuid:sha256-459c672b6baa26f7b38277b9fb83fa50",
+  "serialNumber": "urn:uuid:sha256-9b7f80665e9cb97755b70fd4c16dc7de",
   "version": 1,
   "metadata": {
-    "timestamp": "2026-07-26T16:31:23.989491+00:00",
+    "timestamp": "2026-08-07T11:35:58.107675+00:00",
     "component": {
       "name": "oday-plus",
       "version": "0.1.0",
@@ -13,15 +13,15 @@
     "properties": [
       {
         "name": "git-sha",
-        "value": "cf68e42dfd91c0d8be8ce43dde8bcb9d6a8f08fe"
+        "value": "4a096af29e69805f8df7f95eeb2965bd459e11bf"
       },
       {
         "name": "sbom-hash",
-        "value": "459c672b6baa26f7b38277b9fb83fa509773acf41f6289219542e1b942414d44"
+        "value": "9b7f80665e9cb97755b70fd4c16dc7de54ea282158d34a088bbdaa2a1fbf65c6"
       },
       {
         "name": "sbom-content-digest",
-        "value": "sha256:bf45c1fd525255f38416ecf233962503c3ff635cee72a0b28726bfa0314bb37c"
+        "value": "sha256:8824b534eac76590f093f2054741cd12dc27e4c3d019ae63ca9c4fc4fc8b7b67"
       }
     ]
   },
@@ -4136,6 +4136,13 @@
       "bom-ref": "pkg:pypi/evidently@0.7.21"
     },
     {
+      "name": "execnet",
+      "version": "2.1.2",
+      "type": "library",
+      "purl": "pkg:pypi/execnet@2.1.2",
+      "bom-ref": "pkg:pypi/execnet@2.1.2"
+    },
+    {
       "name": "faker",
       "version": "40.35.0",
       "type": "library",
@@ -5002,6 +5009,13 @@
       "type": "library",
       "purl": "pkg:pypi/pytest@9.1.1",
       "bom-ref": "pkg:pypi/pytest@9.1.1"
+    },
+    {
+      "name": "pytest-xdist",
+      "version": "3.8.0",
+      "type": "library",
+      "purl": "pkg:pypi/pytest-xdist@3.8.0",
+      "bom-ref": "pkg:pypi/pytest-xdist@3.8.0"
     },
     {
       "name": "python-dateutil",
