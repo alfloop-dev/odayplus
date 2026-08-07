@@ -129,6 +129,25 @@ Inbox/Detail、`PRICE-002` Pricing Simulation 互動、`AD-002` Lift Report、
 
 排序依 §4 建議優先序，未按 U 編號。
 
+### 6.1 選項 A 後續動作的落實確認
+
+§3 對選項 A 要求的後續動作是「建立 execution task packet，指派 owner/reviewer，
+納入 RTM」。五項都已建立 task 並指派到人，因此不會退回「既未實作、也未正式排除」
+的狀態。以下為 2026-08-07 對 `ai-status.json` 與 `ai-task-archive/tasks/` 的快照，
+owner/reviewer 會隨 helper claim 或 reassign 變動，以當時的 status root 為準：
+
+| Task | Owner | Reviewer | 2026-08-07 狀態 |
+|---|---|---|---|
+| `ODP-CAP-FEATURE-FLAG-UI-001` | Antigravity | Antigravity2 | review_approved |
+| `ODP-CAP-NOTIFICATION-DELIVERY-001` | Claude | Claude3 | done（2026-08-07 封存） |
+| `ODP-CAP-TASK-ATTACHMENTS-001` | Antigravity | Antigravity6 | review_approved |
+| `ODP-CAP-MODEL-RELEASE-UI-001` | Antigravity4 | Antigravity6 | done（2026-08-05 封存） |
+| `ODP-CAP-USER-ROLE-UI-001` | Antigravity | CodexCoordinator | review |
+
+已封存為 done 的兩項仍受 §7 驗收要點約束——封存代表該 task 走完流程，
+不等於 §8 的 FR 可標記 verified，那要由 `ODP-PLAN-FINAL-GATE-AUDIT-001`
+重跑 RTM 時逐條認定。
+
 ## 7. 五項的驗收要點
 
 每個 task 的驗收必須回到原始規格條文，不得以「有畫面」結案。
